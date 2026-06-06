@@ -1,0 +1,273 @@
+# 🎬 FFmpeg++
+
+<div align="center">
+
+**Professional Video Processing Desktop Application — 100% AI-Generated Code**
+
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue?logo=windows)](https://www.microsoft.com/windows)
+[![Flutter](https://img.shields.io/badge/Flutter-3.44+-02569B?logo=flutter)](https://flutter.dev)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python)](https://python.org)
+[![FFmpeg](https://img.shields.io/badge/FFmpeg-8.0-007808?logo=ffmpeg)](https://ffmpeg.org)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+[English](#english) | [中文](#chinese)
+
+</div>
+
+---
+
+## English <a id="english"></a>
+
+### 📖 Overview
+
+FFmpeg++ wraps FFmpeg's powerful command-line capabilities into an intuitive desktop GUI. Built with **Flutter** (Material Design 3 frontend) and **Python** (Nuitka-compiled backend), communicating via JSON over stdin/stdout.
+
+### 🏗 Architecture
+
+```
+┌──────────────────────────────────┐
+│   Flutter Desktop GUI (Dart)     │  ← Material Design 3
+│   stdin/stdout JSON Protocol     │
+├──────────────────────────────────┤
+│   Python Backend (server.exe)    │  ← Nuitka-compiled, no Python runtime needed
+│   subprocess → ffmpeg / ffprobe  │
+├──────────────────────────────────┤
+│   FFmpeg / FFprobe               │  ← External dependency (user-installed)
+└──────────────────────────────────┘
+```
+
+### ✨ Features
+
+| Module | Description |
+|--------|-------------|
+| 🎬 **Projects** | Multi-video import, auto ffprobe probing, thumbnail preview |
+| 📋 **Queue** | Sequential batch processing, real-time ffmpeg stderr progress parsing |
+| 🎞 **Transcode** | 28 codecs (H.264/H.265/AV1/VP9/ProRes/FFV1), GPU acceleration (NVIDIA/AMD/Intel) |
+| 🎵 **Audio** | AAC / MP3 / Opus / FLAC encoding, channel selection |
+| 📝 **Subtitles** | Burn-in external SRT/ASS/SSA or embedded subtitle tracks |
+| 🧠 **Command** | Manual ffmpeg command input + built-in parameter reference |
+| 🤖 **AI** | DeepSeek / OpenAI-compatible API for natural-language command generation |
+| ⚙️ **Settings** | Dark/Light theme, 55+ fonts, 7 accent colors + HSV picker, background image, card 3D |
+
+### 📦 Installation (Users)
+
+1. Download the latest `setup.exe` from [Releases](https://github.com/ffmpeg-plus-plus/ffmpeg-plus-plus/releases)
+2. Run the installer
+3. Make sure [FFmpeg](https://ffmpeg.org/download.html) is installed and in your PATH
+
+### 🔧 Development
+
+#### Prerequisites
+- Windows 10/11 with Developer Mode enabled
+- [Flutter SDK](https://flutter.dev) 3.44+
+- [Python](https://python.org) 3.11+ (for backend development)
+- [FFmpeg](https://ffmpeg.org) in PATH
+- [Inno Setup](https://jrsoftware.org/isinfo.php) 6+ (for building the installer)
+
+#### Quick Start
+
+```bash
+# 1. Compile Python backend → server.exe
+cd ffmpeg_video_tool
+python -m nuitka --onefile --include-package=backend --include-package=backend.utils \
+    --output-filename=server.exe server.py
+
+# 2. Run Flutter GUI
+cd ffmpegpp_gui
+flutter pub get
+flutter run -d windows
+```
+
+#### Production Build
+
+```bash
+# 1. Compile backend
+cd ffmpeg_video_tool
+python -m nuitka --onefile --include-package=backend --include-package=backend.utils \
+    --output-filename=server.exe server.py
+
+# 2. Build Flutter
+cd ffmpegpp_gui
+flutter build windows --release
+
+# 3. Assemble
+copy ..\server.exe build\windows\x64\runner\Release\server.exe
+
+# 4. Build installer with Inno Setup
+# Open make/setup.iss in Inno Setup Compiler and click Compile
+```
+
+### 📁 Project Structure
+
+```
+ffmpeg++
+├── make/                         # Installer resources
+│   ├── app_icon.ico              # Application icon
+│   ├── FFmpeg++.png              # Icon source PNG
+│   ├── setup.iss                 # Inno Setup installer script
+│   ├── requirements.txt          # Python dependencies
+│   └── server.exe                # Pre-compiled backend (reference)
+├── ffmpeg_video_tool/
+│   ├── backend/                  # Python backend modules
+│   │   ├── installer.py          # FFmpeg detection + install guide
+│   │   ├── probe.py              # ffprobe media probing
+│   │   ├── transcoder.py         # Video/audio transcoding
+│   │   ├── subtitle.py           # Subtitle burning
+│   │   ├── executor.py           # Single-task subprocess executor
+│   │   ├── parser.py             # FFmpeg command string parser
+│   │   └── utils/                # Constants, exceptions, validators
+│   ├── server.py                 # JSON protocol server (stdin/stdout)
+│   ├── cli.py                    # CLI entry point
+│   ├── requirements.txt
+│   └── ffmpegpp_gui/             # Flutter desktop application
+│       ├── lib/
+│       │   ├── main.dart         # Entry point + crash logger
+│       │   ├── app.dart          # MaterialApp + theme + window
+│       │   ├── theme/            # MD3 themes, i18n strings
+│       │   ├── models/           # Data models
+│       │   ├── services/         # Python process, backend client, config
+│       │   ├── providers/        # AppState (ChangeNotifier)
+│       │   ├── pages/            # 5 pages (Projects/Queue/Command/AI/Settings)
+│       │   └── widgets/          # Sidebar, VideoCard, TaskCard, ConfigDialog
+│       ├── windows/              # Windows native config + runner
+│       ├── pubspec.yaml
+│       └── analysis_options.yaml
+└── README.md
+```
+
+### 🛠 Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| UI Framework | Flutter 3.44, Material Design 3 |
+| State Management | Provider (ChangeNotifier) |
+| Backend | Python 3.11, compiled to native EXE via Nuitka |
+| Video Engine | FFmpeg 8.0 / ffprobe |
+| AI Integration | DeepSeek API / OpenAI-compatible |
+| Installer | Inno Setup 6 |
+| Build Tools | MSVC, CMake, Nuitka, Flutter toolchain |
+
+### ⭐ Star History
+
+<a href="https://star-history.com/#ffmpeg-plus-plus/ffmpeg-plus-plus&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=ffmpeg-plus-plus/ffmpeg-plus-plus&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=ffmpeg-plus-plus/ffmpeg-plus-plus&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=ffmpeg-plus-plus/ffmpeg-plus-plus&type=Date" />
+  </picture>
+</a>
+
+---
+
+## 中文 <a id="chinese"></a>
+
+### 📖 概述
+
+FFmpeg++ 是一款基于 **Flutter**（Material Design 3 前端）+ **Python**（Nuitka 编译后端）的现代化桌面视频处理工具，100% AI 代码生成。前后端通过 stdin/stdout JSON 协议通信。
+
+### 🏗 架构
+
+```
+┌──────────────────────────────────┐
+│   Flutter 桌面 GUI (Dart)        │  ← Material Design 3
+│   stdin/stdout JSON 协议         │
+├──────────────────────────────────┤
+│   Python 后端 (server.exe)       │  ← Nuitka 编译，无需 Python 运行环境
+│   subprocess → ffmpeg / ffprobe  │
+├──────────────────────────────────┤
+│   FFmpeg / FFprobe               │  ← 外部依赖（用户自行安装）
+└──────────────────────────────────┘
+```
+
+### ✨ 功能
+
+| 模块 | 说明 |
+|------|------|
+| 🎬 **项目** | 多视频导入、ffprobe 自动探测、缩略图预览 |
+| 📋 **处理队列** | 顺序批量处理、ffmpeg stderr 实时进度解析 |
+| 🎞 **视频转码** | 28 种编码器（H.264/H.265/AV1/VP9/ProRes/FFV1），GPU 加速（NVIDIA/AMD/Intel）|
+| 🎵 **音频** | AAC / MP3 / Opus / FLAC 编码，声道选择 |
+| 📝 **字幕** | 烧录外挂 SRT/ASS/SSA 或内嵌字幕轨道 |
+| 🧠 **命令** | 手动输入 ffmpeg 命令 + 内置参数参考 |
+| 🤖 **AI** | DeepSeek / OpenAI 兼容 API，自然语言生成命令 |
+| ⚙️ **设置** | 暗/亮主题、55+ 字体、7 种主题色 + HSV 拾色器、背景图片、卡片 3D |
+
+### 📦 安装（用户）
+
+1. 从 [Releases](https://github.com/ffmpeg-plus-plus/ffmpeg-plus-plus/releases) 下载 `setup.exe`
+2. 运行安装程序
+3. 确保已安装 [FFmpeg](https://ffmpeg.org/download.html) 并加入 PATH 环境变量
+
+### 🔧 开发
+
+#### 环境要求
+- Windows 10/11，启用开发者模式
+- [Flutter SDK](https://flutter.dev) 3.44+
+- [Python](https://python.org) 3.11+
+- [FFmpeg](https://ffmpeg.org) 在 PATH 中
+- [Inno Setup](https://jrsoftware.org/isinfo.php) 6+（构建安装包时需要）
+
+#### 开发模式
+
+```bash
+# 1. 编译 Python 后端 → server.exe
+cd ffmpeg_video_tool
+python -m nuitka --onefile --include-package=backend --include-package=backend.utils \
+    --output-filename=server.exe server.py
+
+# 2. 启动 Flutter GUI
+cd ffmpegpp_gui
+flutter pub get
+flutter run -d windows
+```
+
+#### 生产构建
+
+```bash
+# 1. 编译后端
+cd ffmpeg_video_tool
+python -m nuitka --onefile --include-package=backend --include-package=backend.utils \
+    --output-filename=server.exe server.py
+
+# 2. 构建 Flutter
+cd ffmpegpp_gui
+flutter build windows --release
+
+# 3. 组装
+copy ..\server.exe build\windows\x64\runner\Release\server.exe
+
+# 4. 使用 Inno Setup 构建安装包
+# 在 Inno Setup Compiler 中打开 make/setup.iss 并编译
+```
+
+### 🛠 技术栈
+
+| 层级 | 技术 |
+|------|------|
+| UI 框架 | Flutter 3.44, Material Design 3 |
+| 状态管理 | Provider (ChangeNotifier) |
+| 后端 | Python 3.11, Nuitka 编译为原生 EXE |
+| 视频引擎 | FFmpeg 8.0 / ffprobe |
+| AI 集成 | DeepSeek API / OpenAI 兼容 |
+| 安装包 | Inno Setup 6 |
+| 构建工具 | MSVC, CMake, Nuitka, Flutter toolchain |
+
+### ⭐ Star 历史
+
+<a href="https://star-history.com/#ffmpeg-plus-plus/ffmpeg-plus-plus&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=ffmpeg-plus-plus/ffmpeg-plus-plus&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=ffmpeg-plus-plus/ffmpeg-plus-plus&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=ffmpeg-plus-plus/ffmpeg-plus-plus&type=Date" />
+  </picture>
+</a>
+
+### 📄 许可证
+
+MIT License — 详见 [LICENSE](LICENSE)
+
+---
+
+<div align="center">
+  <sub>Built with ❤️ using Flutter + FFmpeg</sub>
+</div>
