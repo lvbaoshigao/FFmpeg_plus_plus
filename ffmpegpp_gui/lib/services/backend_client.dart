@@ -11,11 +11,12 @@ class BackendClient {
 
   BackendClient(this._process) {
     _process.responses.listen((obj) {
-      if (obj['type'] == 'progress') {
+      final t = obj['type'] as String?;
+      if (t == 'progress') {
         try {
           _progressController.add(ProgressUpdate.fromJson(obj));
         } catch (_) {}
-      } else if (obj['type'] == 'audit') {
+      } else if (t == 'audit') {
         try {
           final warnings = (obj['warnings'] as List).cast<String>();
           _auditController.add(warnings);
@@ -33,9 +34,9 @@ class BackendClient {
     return resp;
   }
 
-  /// 探测视频文件信息
+  /// 探测视频文件信息（15s 超时，防止 HDD 卡死）
   Future<Map<String, dynamic>> probe(String filepath) async {
-    final resp = await _process.request('probe', {'filepath': filepath});
+    final resp = await _process.requestWithTimeout('probe', 15, {'filepath': filepath});
     return resp;
   }
 

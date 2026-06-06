@@ -186,11 +186,11 @@ class SubtitleStream {
 class TranscodeConfig {
   String videoCodec, gpu, preset;
   int? crf;
-  int videoBitrate;
+  int? videoBitrate;       // null = keep original
   double? framerate;
   int? resolutionW, resolutionH;
   String audioCodec;
-  int audioBitrate;
+  int? audioBitrate;       // null = keep original
   int? audioChannels;
   bool subtitleEnabled;
   String subtitleSource;
@@ -210,12 +210,16 @@ class TranscodeConfig {
   Map<String, dynamic> toBackendOptions() {
     final opts = <String, dynamic>{
       'video_codec': videoCodec, 'gpu': gpu, 'preset': preset,
-      'audio_codec': audioCodec, 'audio_bitrate': audioBitrate, 'overwrite': true,
+      'audio_codec': audioCodec, 'overwrite': true,
     };
-    if (crf != null) { opts['crf'] = crf; }
-    else { opts['video_bitrate'] = videoBitrate; }
+    if (crf != null) {
+      opts['crf'] = crf;
+    } else if (videoBitrate != null) {
+      opts['video_bitrate'] = videoBitrate;
+    }
     if (framerate != null) opts['framerate'] = framerate;
     if (resolutionW != null && resolutionH != null) opts['resolution'] = [resolutionW, resolutionH];
+    if (audioBitrate != null) opts['audio_bitrate'] = audioBitrate;
     if (audioChannels != null) opts['audio_channels'] = audioChannels;
     return opts;
   }

@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import '../main.dart';
 import '../models/models.dart';
 import '../services/python_process.dart';
 import '../services/backend_client.dart';
@@ -44,22 +43,17 @@ class AppState extends ChangeNotifier {
   int get selectedNav => _selectedNav;
 
   Future<void> init(String serverScript) async {
-    startupLogAdd('6-config loading...');
     await configService.load();
-    startupLogAdd('6-config loaded');
     try {
       await pythonProcess.start(serverScript);
-      startupLogAdd('7-process started');
     } catch (e) {
       _initError = 'Python backend failed: $e';
       _envChecked = true; _envOk = false; notifyListeners(); return;
     }
     try {
-      startupLogAdd('7b-waiting for ready...');
       final ready = await pythonProcess.responses
           .firstWhere((o) => o['type'] == 'ready')
           .timeout(const Duration(seconds: 30), onTimeout: () => {'type': 'timeout'});
-      startupLogAdd('7c-ready received: ${ready['type']}');
       if (ready['type'] != 'ready') {
         _initError = 'Backend not ready'; _envChecked = true; _envOk = false; notifyListeners(); return;
       }

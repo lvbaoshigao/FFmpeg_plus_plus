@@ -17,11 +17,9 @@ class SettingsPage extends StatelessWidget {
   ];
   static const _sysFonts = [
     ('System Default', ''),
-    // 中文
     ('Microsoft YaHei', 'Microsoft YaHei'), ('SimHei', 'SimHei'), ('SimSun', 'SimSun'),
     ('KaiTi', 'KaiTi'), ('FangSong', 'FangSong'), ('Microsoft JhengHei', 'Microsoft JhengHei'),
     ('MingLiU', 'MingLiU'), ('NSimSun', 'NSimSun'), ('DFKai-SB', 'DFKai-SB'),
-    // 英文
     ('Arial', 'Arial'), ('Arial Black', 'Arial Black'), ('Calibri', 'Calibri'),
     ('Cambria', 'Cambria'), ('Candara', 'Candara'), ('Comic Sans MS', 'Comic Sans MS'),
     ('Consolas', 'Consolas'), ('Constantia', 'Constantia'), ('Corbel', 'Corbel'),
@@ -53,184 +51,151 @@ class SettingsPage extends StatelessWidget {
 
         return Scaffold(
           appBar: AppBar(title: Text(s.settingsTitle)),
-          body: SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(children: [
-              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Expanded(child: _glass(context, s.appearance, [
-                  SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-                      title: Text(s.darkMode, style: TextStyle(color: clr)), value: state.darkMode,
-                      onChanged: (v) => state.toggleDarkMode(v)),
-                  SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-                      title: Text(s.qGlass, style: TextStyle(color: clr)),
-                      subtitle: Text(s.qGlassHint, style: TextStyle(fontSize: 11, color: scheme.outline)),
-                      value: cfg.glassEffect,
-                      onChanged: (v) => state.updateConfig((c) => c..glassEffect = v)),
-                  // 背景图片（仅3D开启时可见）
-                  if (cfg.glassEffect) ...[
-                    ListTile(dense: true, contentPadding: EdgeInsets.zero,
-                        title: Text(s.bgTitle, style: TextStyle(color: clr, fontSize: 13)),
-                        subtitle: Text(cfg.backgroundImage.isEmpty ? s.bgNone : cfg.backgroundImage.split(RegExp(r'[\\/]')).last,
-                            style: TextStyle(fontSize: 11, color: scheme.outline)),
-                        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                          if (cfg.backgroundImage.isNotEmpty)
-                            IconButton(icon: Icon(Icons.close, size: 16, color: scheme.error),
-                                onPressed: () => state.updateConfig((c) => c..backgroundImage = ''),
-                                padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 24, minHeight: 24)),
-                          IconButton(icon: Icon(Icons.image, size: 18, color: scheme.primary),
-                              onPressed: () async {
-                                final r = await FilePicker.platform.pickFiles(
-                                    type: FileType.custom, allowedExtensions: ['jpg', 'jpeg', 'png', 'bmp', 'webp']);
-                                if (r != null && r.files.isNotEmpty && r.files.first.path != null) {
-                                  state.updateConfig((c) => c..backgroundImage = r.files.first.path!);
-                                }
-                              }, padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 24, minHeight: 24)),
+          body: LayoutBuilder(
+            builder: (context, constraints) {
+              final gap = 12.0;
+              final cardW = (constraints.maxWidth - 32 - gap) / 2; // 32 = outer padding (16*2)
+              return SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Wrap(
+                  spacing: gap,
+                  runSpacing: gap,
+                  children: [
+                    // Row 1
+                    SizedBox(width: cardW, child: _glass(context, s.appearance, [
+                      SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+                          title: Text(s.darkMode, style: TextStyle(color: clr)), value: state.darkMode,
+                          onChanged: (v) => state.toggleDarkMode(v)),
+                      SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+                          title: Text(s.qGlass, style: TextStyle(color: clr)),
+                          subtitle: Text(s.qGlassHint, style: TextStyle(fontSize: 11, color: scheme.outline)),
+                          value: cfg.glassEffect,
+                          onChanged: (v) => state.updateConfig((c) => c..glassEffect = v)),
+                      if (cfg.glassEffect) ...[
+                        ListTile(dense: true, contentPadding: EdgeInsets.zero,
+                            title: Text(s.bgTitle, style: TextStyle(color: clr, fontSize: 13)),
+                            subtitle: Text(cfg.backgroundImage.isEmpty ? s.bgNone : cfg.backgroundImage.split(RegExp(r'[\\/]')).last,
+                                style: TextStyle(fontSize: 11, color: scheme.outline)),
+                            trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                              if (cfg.backgroundImage.isNotEmpty)
+                                IconButton(icon: Icon(Icons.close, size: 16, color: scheme.error),
+                                    onPressed: () => state.updateConfig((c) => c..backgroundImage = ''),
+                                    padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 24, minHeight: 24)),
+                              IconButton(icon: Icon(Icons.image, size: 18, color: scheme.primary),
+                                  onPressed: () async {
+                                    final r = await FilePicker.platform.pickFiles(
+                                        type: FileType.custom, allowedExtensions: ['jpg', 'jpeg', 'png', 'bmp', 'webp']);
+                                    if (r != null && r.files.isNotEmpty && r.files.first.path != null) {
+                                      state.updateConfig((c) => c..backgroundImage = r.files.first.path!);
+                                    }
+                                  }, padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 24, minHeight: 24)),
+                            ]),
+                        ),
+                        if (cfg.backgroundImage.isNotEmpty)
+                          Row(children: [
+                            Text('${s.bgOpacity}: ${(cfg.backgroundOpacity * 100).round()}%',
+                                style: TextStyle(color: clr, fontSize: 11)),
+                            Expanded(child: Slider(
+                                value: cfg.backgroundOpacity, min: 0.0, max: 1.0, divisions: 100,
+                                onChanged: (v) => state.updateConfig((c) => c..backgroundOpacity = v))),
+                          ]),
+                      ],
+                      if (cfg.glassEffect)
+                        Row(children: [
+                          Text('${s.cardOpacity}: ${(cfg.cardOpacity * 100).round()}%',
+                              style: TextStyle(color: clr, fontSize: 11)),
+                          Expanded(child: Slider(
+                              value: cfg.cardOpacity, min: 0.1, max: 1.0, divisions: 90,
+                              onChanged: (v) => state.updateConfig((c) => c..cardOpacity = v))),
                         ]),
-                    ),
-                    if (cfg.backgroundImage.isNotEmpty)
-                      Row(children: [
-                        Text('${s.bgOpacity}: ${(cfg.backgroundOpacity * 100).round()}%',
-                            style: TextStyle(color: clr, fontSize: 11)),
-                        Expanded(child: Slider(
-                            value: cfg.backgroundOpacity, min: 0.0, max: 1.0, divisions: 100,
-                            onChanged: (v) => state.updateConfig((c) => c..backgroundOpacity = v))),
+                      Text(s.accentColor, style: TextStyle(color: clr, fontSize: 12)),
+                      const SizedBox(height: 6),
+                      Wrap(spacing: 8, runSpacing: 8, children: [
+                        ..._presets.map((p) => _dot(scheme, cfg.themeColor == p.$2, Color(p.$2), p.$1,
+                            () => state.updateConfig((c) => c..themeColor = p.$2))),
+                        _rainbow(scheme, () => _pickColor(context, state)),
                       ]),
+                    ])),
+                    SizedBox(width: cardW, child: _glass(context, s.language, [
+                      Text(s.languageInterface, style: TextStyle(color: clr, fontSize: 12)),
+                      const SizedBox(height: 6),
+                      SegmentedButton<String>(
+                        segments: const [
+                          ButtonSegment(value: 'zh', label: Text('中文')),
+                          ButtonSegment(value: 'en', label: Text('English')),
+                        ],
+                        selected: {cfg.language},
+                        onSelectionChanged: (v) => state.updateConfig((c) => c..language = v.first),
+                        style: const ButtonStyle(visualDensity: VisualDensity.compact),
+                      ),
+                    ])),
+                    // Row 2
+                    SizedBox(width: cardW, child: _glass(context, s.font, [
+                      Row(children: [
+                        Expanded(child: TextField(
+                          controller: TextEditingController(text: cfg.fontFamily),
+                          style: TextStyle(fontSize: 13, color: clr),
+                          decoration: const InputDecoration(isDense: false, hintText: 'Font name...'),
+                          onChanged: (v) => state.updateConfig((c) => c..fontFamily = v),
+                        )),
+                        PopupMenuButton<String>(icon: const Icon(Icons.arrow_drop_down),
+                            onSelected: (v) => state.updateConfig((c) => c..fontFamily = v),
+                            itemBuilder: (_) => _sysFonts.map((f) => PopupMenuItem<String>(
+                                value: f.$2, child: Text(f.$1, style: TextStyle(fontFamily: f.$2.isNotEmpty ? f.$2 : null)))).toList()),
+                        IconButton(icon: const Icon(Icons.file_open), tooltip: s.importFont,
+                            onPressed: () => _pickFont(context, state)),
+                      ]),
+                      const SizedBox(height: 10),
+                      Row(children: [
+                        Text('${s.fontSize}: ${cfg.fontSize.round()}', style: TextStyle(color: clr, fontSize: 12)),
+                        Expanded(child: Slider(value: cfg.fontSize, min: 10, max: 21, divisions: 11,
+                            onChanged: (v) => state.updateConfig((c) => c..fontSize = v))),
+                      ]),
+                      Text(s.qWeight, style: TextStyle(color: clr, fontSize: 12)),
+                      SegmentedButton<int>(
+                        segments: List.generate(AppConfig.fontWeightLabels.length, (i) =>
+                            ButtonSegment(value: i, label: Text(AppConfig.fontWeightLabels[i], style: const TextStyle(fontSize: 10)))),
+                        selected: {cfg.fontWeightIndex},
+                        onSelectionChanged: (v) => state.updateConfig((c) => c..fontWeightIndex = v.first),
+                        style: const ButtonStyle(visualDensity: VisualDensity.compact),
+                      ),
+                    ])),
+                    // FFmpeg card — redesigned
+                    SizedBox(width: cardW, child: _FfmpegCard(state: state)),
+                    // Row 3
+                    SizedBox(width: cardW, child: _glass(context, s.output, [
+                      _pf(context, s.outputDir, cfg.defaultOutputDir,
+                          (v) => state.updateConfig((c) => c..defaultOutputDir = v),
+                          () async {
+                            final d = await FilePicker.platform.getDirectoryPath();
+                            if (d != null) state.updateConfig((c) => c..defaultOutputDir = d);
+                          }),
+                    ])),
+                    SizedBox(width: cardW, child: _glass(context, s.dDebug, [
+                      SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+                          title: Text(s.dDebugMode, style: TextStyle(color: clr, fontSize: 13)), value: cfg.debugMode,
+                          onChanged: (v) => state.updateConfig((c) => c..debugMode = v)),
+                      SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+                          title: Text(s.dSaveLogs, style: TextStyle(color: clr, fontSize: 13)), value: cfg.saveLogs,
+                          onChanged: (v) => state.updateConfig((c) => c..saveLogs = v)),
+                      if (cfg.saveLogs)
+                        _pf(context, s.dLogPath, cfg.logSavePath,
+                            (v) => state.updateConfig((c) => c..logSavePath = v),
+                            () async {
+                              final d = await FilePicker.platform.getDirectoryPath();
+                              if (d != null) state.updateConfig((c) => c..logSavePath = d);
+                            }),
+                    ])),
                   ],
-                  if (cfg.glassEffect)
-                    Row(children: [
-                      Text('${s.cardOpacity}: ${(cfg.cardOpacity * 100).round()}%',
-                          style: TextStyle(color: clr, fontSize: 11)),
-                      Expanded(child: Slider(
-                          value: cfg.cardOpacity, min: 0.1, max: 1.0, divisions: 90,
-                          onChanged: (v) => state.updateConfig((c) => c..cardOpacity = v))),
-                    ]),
-                  Text(s.accentColor, style: TextStyle(color: clr, fontSize: 12)),
-                  const SizedBox(height: 6),
-                  Wrap(spacing: 8, runSpacing: 8, children: [
-                    ..._presets.map((p) => _dot(scheme, cfg.themeColor == p.$2, Color(p.$2), p.$1,
-                        () => state.updateConfig((c) => c..themeColor = p.$2))),
-                    _rainbow(scheme, () => _pickColor(context, state)),
-                  ]),
-                ])),
-                const SizedBox(width: 12),
-                Expanded(child: _glass(context, s.language, [
-                  Text(s.languageInterface, style: TextStyle(color: clr, fontSize: 12)),
-                  const SizedBox(height: 6),
-                  SegmentedButton<String>(
-                    segments: const [
-                      ButtonSegment(value: 'zh', label: Text('中文')),
-                      ButtonSegment(value: 'en', label: Text('English')),
-                    ],
-                    selected: {cfg.language},
-                    onSelectionChanged: (v) => state.updateConfig((c) => c..language = v.first),
-                    style: const ButtonStyle(visualDensity: VisualDensity.compact),
-                  ),
-                ])),
-              ]),
-              const SizedBox(height: 8),
-
-              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Expanded(child: _glass(context, s.font, [
-                  Row(children: [
-                    Expanded(child: TextField(
-                      controller: TextEditingController(text: cfg.fontFamily),
-                      style: TextStyle(fontSize: 13, color: clr),
-                      decoration: const InputDecoration(isDense: false, hintText: 'Font name...'),
-                      onChanged: (v) => state.updateConfig((c) => c..fontFamily = v),
-                    )),
-                    PopupMenuButton<String>(icon: const Icon(Icons.arrow_drop_down),
-                        onSelected: (v) => state.updateConfig((c) => c..fontFamily = v),
-                        itemBuilder: (_) => _sysFonts.map((f) => PopupMenuItem<String>(
-                            value: f.$2, child: Text(f.$1, style: TextStyle(fontFamily: f.$2.isNotEmpty ? f.$2 : null)))).toList()),
-                    IconButton(icon: const Icon(Icons.file_open), tooltip: s.importFont,
-                        onPressed: () => _pickFont(context, state)),
-                  ]),
-                  const SizedBox(height: 10),
-                  Row(children: [
-                    Text('${s.fontSize}: ${cfg.fontSize.round()}', style: TextStyle(color: clr, fontSize: 12)),
-                    Expanded(child: Slider(value: cfg.fontSize, min: 10, max: 21, divisions: 11,
-                        onChanged: (v) => state.updateConfig((c) => c..fontSize = v))),
-                  ]),
-                  Text(s.qWeight, style: TextStyle(color: clr, fontSize: 12)),
-                  SegmentedButton<int>(
-                    segments: List.generate(AppConfig.fontWeightLabels.length, (i) =>
-                        ButtonSegment(value: i, label: Text(AppConfig.fontWeightLabels[i], style: const TextStyle(fontSize: 10)))),
-                    selected: {cfg.fontWeightIndex},
-                    onSelectionChanged: (v) => state.updateConfig((c) => c..fontWeightIndex = v.first),
-                    style: const ButtonStyle(visualDensity: VisualDensity.compact),
-                  ),
-                ])),
-                const SizedBox(width: 12),
-                Expanded(child: _glass(context, s.ffmpegSettings, [
-                  Row(children: [
-                    Icon(state.envOk ? Icons.check_circle : Icons.error, size: 14,
-                        color: state.envOk ? Colors.green : scheme.error),
-                    const SizedBox(width: 4),
-                    Expanded(child: Text(state.envOk ? s.ffmpegFound : s.ffmpegNotFound,
-                        style: TextStyle(color: clr, fontSize: 11))),
-                    SizedBox(height: 26, child: FilledButton.tonalIcon(
-                        icon: const Icon(Icons.refresh, size: 12), label: Text(s.recheck, style: const TextStyle(fontSize: 10)),
-                        onPressed: () async {
-                          await state.recheckEnv();
-                          if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text(state.envOk ? s.ffmpegFound : s.ffmpegNotFound)));
-                        },
-                        style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8), visualDensity: VisualDensity.compact))),
-                  ]),
-                  if (state.envOk && state.ffmpegVersion.isNotEmpty)
-                    Padding(padding: const EdgeInsets.only(top: 2, bottom: 4),
-                        child: Text(state.ffmpegVersion, style: TextStyle(fontSize: 9, color: scheme.outline))),
-                  const SizedBox(height: 8),
-                  _pr(context, 'ffmpeg', cfg.ffmpegPath, (v) => state.updateConfig((c) => c..ffmpegPath = v)),
-                  const SizedBox(height: 4),
-                  _pr(context, 'ffprobe', cfg.ffprobePath, (v) => state.updateConfig((c) => c..ffprobePath = v)),
-                  const SizedBox(height: 8),
-                  Wrap(spacing: 4, runSpacing: 4, children: [
-                    _link('ffmpeg.org', 'https://ffmpeg.org'),
-                    _link('gyan.dev', 'https://github.com/AnimMouse/ffmpeg-stable-autobuild'),
-                    _link('BtbN', 'https://github.com/BtbN/FFmpeg-Builds/releases'),
-                  ]),
-                ])),
-              ]),
-              const SizedBox(height: 8),
-
-              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Expanded(child: _glass(context, s.output, [
-                  _pf(context, s.outputDir, cfg.defaultOutputDir,
-                      (v) => state.updateConfig((c) => c..defaultOutputDir = v),
-                      () async {
-                        final d = await FilePicker.platform.getDirectoryPath();
-                        if (d != null) state.updateConfig((c) => c..defaultOutputDir = d);
-                      }),
-                ])),
-                const SizedBox(width: 12),
-                Expanded(child: _glass(context, s.dDebug, [
-                  SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-                      title: Text(s.dDebugMode, style: TextStyle(color: clr, fontSize: 13)), value: cfg.debugMode,
-                      onChanged: (v) => state.updateConfig((c) => c..debugMode = v)),
-                  SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-                      title: Text(s.dSaveLogs, style: TextStyle(color: clr, fontSize: 13)), value: cfg.saveLogs,
-                      onChanged: (v) => state.updateConfig((c) => c..saveLogs = v)),
-                  if (cfg.saveLogs)
-                    _pf(context, s.dLogPath, cfg.logSavePath,
-                        (v) => state.updateConfig((c) => c..logSavePath = v),
-                        () async {
-                          final d = await FilePicker.platform.getDirectoryPath();
-                          if (d != null) state.updateConfig((c) => c..logSavePath = d);
-                        }),
-                ])),
-              ]),
-              const SizedBox(height: 24),
-              Center(child: Text(s.swFooter,
-                  style: TextStyle(fontSize: 10, color: scheme.outline.withAlpha(100)), textAlign: TextAlign.center)),
-            ]),
+                ),
+              );
+            },
           ),
         );
       },
     );
   }
 
-  // ── 3D 选项卡效果 ──
   static Widget _glass(BuildContext ctx, String title, List<Widget> children) {
     final scheme = Theme.of(ctx).colorScheme;
     final cfg = ctx.read<AppState>().config;
@@ -258,24 +223,6 @@ class SettingsPage extends StatelessWidget {
         child: inner,
       ),
     );
-  }
-
-  static Widget _pr(BuildContext ctx, String label, String value, ValueChanged<String> onChange) {
-    final scheme = Theme.of(ctx).colorScheme;
-    return Row(children: [
-      SizedBox(width: 55, child: Text(label, style: TextStyle(fontSize: 10, color: scheme.outline))),
-      Expanded(child: TextField(
-        controller: TextEditingController(text: value),
-        style: TextStyle(fontSize: 12, color: scheme.onSurface),
-        decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 6)),
-        onChanged: onChange,
-      )),
-      IconButton(icon: Icon(Icons.folder_open, size: 16, color: scheme.primary),
-          onPressed: () async {
-            final r = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['exe', '', 'bat', 'cmd']);
-            if (r != null && r.files.isNotEmpty && r.files.first.path != null) onChange(r.files.first.path!);
-          }, padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 24, minHeight: 24)),
-    ]);
   }
 
   static Widget _pf(BuildContext ctx, String label, String value, ValueChanged<String> onChange, VoidCallback onBrowse) {
@@ -307,18 +254,12 @@ class SettingsPage extends StatelessWidget {
             gradient: const SweepGradient(colors: [Colors.red, Colors.yellow, Colors.green, Colors.cyan, Colors.blue, Colors.purple, Colors.red])),
         child: const Icon(Icons.add, size: 12, color: Colors.white)));
 
-  static Widget _link(String label, String url) => SizedBox(height: 22, child: OutlinedButton(
-      onPressed: () => Process.run('cmd', ['/c', 'start', url]),
-      style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 6), minimumSize: Size.zero, visualDensity: VisualDensity.compact),
-      child: Text(label, style: const TextStyle(fontSize: 9))));
-
   static Future<void> _pickFont(BuildContext ctx, AppState state) async {
     final r = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['ttf', 'otf']);
     if (r != null && r.files.isNotEmpty && r.files.first.path != null) {
       final path = r.files.first.path!;
       final name = path.split(RegExp(r'[\\/]')).last.replaceAll(RegExp(r'\.[^.]+$'), '');
       state.updateConfig((c) => c..fontFamily = name);
-      // 打开字体文件让 Windows 安装
       Process.run('cmd', ['/c', 'start', '', path]);
       if (ctx.mounted) ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
           content: Text('Opening font: "$name" — click Install in the preview window, then restart the app'),
@@ -331,6 +272,238 @@ class SettingsPage extends StatelessWidget {
     if (picked != null) state.updateConfig((c) => c..themeColor = picked.toARGB32());
   }
 }
+
+// ═══════════════════════════════════════════
+// FFmpeg 检测卡片（独立 StatefulWidget）
+// ═══════════════════════════════════════════
+
+class _FfmpegCard extends StatefulWidget {
+  final AppState state;
+  const _FfmpegCard({required this.state});
+  @override
+  State<_FfmpegCard> createState() => _FfmpegCardState();
+}
+
+class _FfmpegCardState extends State<_FfmpegCard> {
+  bool _checking = false;
+  bool _found = false;
+  String _version = '';
+  String _path = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _found = widget.state.envOk;
+    _version = widget.state.ffmpegVersion;
+    _path = widget.state.config.ffmpegPath;
+  }
+
+  Future<void> _detect() async {
+    setState(() => _checking = true);
+    await widget.state.recheckEnv();
+    if (!mounted) return;
+    setState(() {
+      _checking = false;
+      _found = widget.state.envOk;
+      _version = widget.state.ffmpegVersion;
+      _path = widget.state.config.ffmpegPath;
+    });
+  }
+
+  Future<void> _browseFfmpeg() async {
+    final r = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['exe'],
+      dialogTitle: 'Select ffmpeg.exe',
+    );
+    if (r == null || r.files.isEmpty || r.files.first.path == null) return;
+
+    final exePath = r.files.first.path!;
+    setState(() => _checking = true);
+
+    // Verify this is actually ffmpeg
+    try {
+      final result = await Process.run(exePath, ['-version'], runInShell: false);
+      if (result.exitCode == 0 && result.stdout.toString().contains('ffmpeg version')) {
+        final versionLine = result.stdout.toString().split('\n').first;
+        final dir = exePath.replaceAll(RegExp(r'[\\/][^\\/]+$'), '');
+
+        setState(() {
+          _found = true;
+          _version = versionLine;
+          _path = exePath;
+          _checking = false;
+        });
+        widget.state.updateConfig((c) => c
+          ..ffmpegPath = exePath
+          ..ffprobePath = '$dir\\ffprobe.exe');
+
+        // Add to PATH
+        await _addToPath(dir);
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('FFmpeg found at: $dir\n已添加到用户环境变量 PATH'), duration: const Duration(seconds: 3)),
+        );
+      } else {
+        setState(() => _checking = false);
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('所选文件不是有效的 ffmpeg.exe，请重新选择'), backgroundColor: Colors.red),
+        );
+      }
+    } catch (e) {
+      setState(() => _checking = false);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('检测失败: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  Future<void> _addToPath(String dir) async {
+    try {
+      // Read current user PATH
+      final regResult = await Process.run('cmd', ['/c', 'echo %PATH%']);
+      final currentPath = regResult.stdout.toString().trim();
+      if (currentPath.contains(dir)) return; // already in PATH
+
+      // Check via registry
+      final regResult2 = await Process.run('reg', ['query', r'HKCU\Environment', '/v', 'Path']);
+      var existingPath = '';
+      if (regResult2.exitCode == 0) {
+        final lines = regResult2.stdout.toString().split('\n');
+        for (final line in lines) {
+          if (line.contains('Path') && line.contains('REG_')) {
+            existingPath = line.split('REG_').last.trim();
+            if (RegExp(r'\w+').hasMatch(existingPath)) {
+              existingPath = existingPath.replaceFirst(RegExp(r'^\w+\s+'), '');
+            }
+            break;
+          }
+        }
+      }
+
+      // Remove surrounding whitespace
+      existingPath = existingPath.trim();
+      if (existingPath.contains(dir)) return; // already in PATH
+
+      final newPath = existingPath.isEmpty ? dir : '$existingPath;$dir';
+      await Process.run('setx', ['Path', newPath]);
+    } catch (_) {
+      // setx might fail silently; still OK if ffmpeg config is saved
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final cfg = widget.state.config;
+    final clr = scheme.onSurface;
+    final s = AppStrings.of(cfg.language);
+
+    return _glass(context, s.ffmpegSettings, [
+      // Status indicator
+      if (_found) ...[
+        Row(children: [
+          const Icon(Icons.check_circle, size: 16, color: Colors.green),
+          const SizedBox(width: 8),
+          Expanded(child: Text(
+            s.ffmpegFound,
+            style: TextStyle(fontSize: 13, color: Colors.green, fontWeight: FontWeight.w600),
+          )),
+        ]),
+        if (_version.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 4, bottom: 6),
+            child: Text(_version, style: TextStyle(fontSize: 10, color: scheme.outline), maxLines: 2, overflow: TextOverflow.ellipsis),
+          ),
+        if (_path.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text(_path, style: TextStyle(fontSize: 9, color: scheme.outline.withAlpha(150)), maxLines: 2, overflow: TextOverflow.ellipsis),
+          ),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            icon: const Icon(Icons.refresh, size: 14),
+            label: Text(s.recheck, style: const TextStyle(fontSize: 11)),
+            onPressed: _checking ? null : _detect,
+          ),
+        ),
+      ] else ...[
+        Row(children: [
+          const Icon(Icons.error_outline, size: 16, color: Colors.red),
+          const SizedBox(width: 8),
+          Expanded(child: Text(s.ffmpegNotFound, style: TextStyle(fontSize: 13, color: scheme.error))),
+        ]),
+        const SizedBox(height: 10),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            icon: _checking
+                ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Icon(Icons.search, size: 16),
+            label: Text(_checking ? '检测中...' : (langZh(cfg) ? '自动检测' : 'Auto Detect'), style: const TextStyle(fontSize: 12)),
+            onPressed: _checking ? null : _detect,
+          ),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            icon: const Icon(Icons.folder_open, size: 14),
+            label: Text(langZh(cfg) ? '手动选择 ffmpeg.exe' : 'Select ffmpeg.exe', style: const TextStyle(fontSize: 11)),
+            onPressed: _checking ? null : _browseFfmpeg,
+          ),
+        ),
+      ],
+      const SizedBox(height: 8),
+      // Download links
+      Wrap(spacing: 4, runSpacing: 4, children: [
+        _link('ffmpeg.org', 'https://ffmpeg.org'),
+        _link('gyan.dev', 'https://github.com/AnimMouse/ffmpeg-stable-autobuild'),
+        _link('BtbN', 'https://github.com/BtbN/FFmpeg-Builds/releases'),
+      ]),
+    ]);
+  }
+
+  bool langZh(AppConfig cfg) => cfg.language == 'zh';
+
+  static Widget _glass(BuildContext ctx, String title, List<Widget> children) {
+    final scheme = Theme.of(ctx).colorScheme;
+    final cfg = ctx.read<AppState>().config;
+    final glass = cfg.glassEffect;
+    final cardAlpha = (cfg.cardOpacity * 255).round().clamp(0, 255);
+    final inner = Card(
+      elevation: glass ? 4 : 0,
+      shadowColor: glass ? scheme.shadow : null,
+      color: glass ? scheme.surface.withAlpha(cardAlpha) : null,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: glass ? BorderSide(color: scheme.outlineVariant.withAlpha(60), width: 1) : BorderSide.none,
+      ),
+      child: Padding(padding: const EdgeInsets.all(12), child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+        Text(title, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.primary)),
+        const SizedBox(height: 8), ...children,
+      ])),
+    );
+    if (!glass) return inner;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+        child: inner,
+      ),
+    );
+  }
+
+  static Widget _link(String label, String url) => SizedBox(height: 22, child: OutlinedButton(
+      onPressed: () => Process.run('cmd', ['/c', 'start', url]),
+      style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 6), minimumSize: Size.zero, visualDensity: VisualDensity.compact),
+      child: Text(label, style: const TextStyle(fontSize: 9))));
+}
+
+// ═══════════════════════════════════════════
+// Color picker dialog
+// ═══════════════════════════════════════════
 
 class _CP extends StatefulWidget { final Color initial; const _CP({required this.initial}); @override State<_CP> createState() => _CPState(); }
 class _CPState extends State<_CP> {

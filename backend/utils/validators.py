@@ -81,16 +81,33 @@ def validate_video_file(filepath) -> bool:
     """
     验证视频文件
     - 路径非空
-    - 文件存在且为普通文件
+    - 文件存在且为普通文件（带超时，防止外置硬盘休眠卡死）
     - 扩展名在白名单中
     - 文件大小 > 0
     """
+    import threading
+    import time
+
     if not filepath:
         raise InvalidParameterException("filepath", "文件路径为空")
 
     path = Path(filepath)
 
-    if not path.exists():
+    # path.exists() 在休眠外置硬盘上可能阻塞很久，用线程超时
+    exists_result = []
+    def _check():
+        try:
+            exists_result.append(path.exists())
+        except Exception:
+            exists_result.append(False)
+
+    t = threading.Thread(target=_check, daemon=True)
+    t.start()
+    t.join(timeout=5)  # 最多等 5 秒
+
+    if not exists_result:
+        raise FileNotFoundError(f"无法访问文件（外置硬盘可能处于休眠状态）: {filepath}")
+    if not exists_result[0]:
         raise FileNotFoundError(f"文件不存在: {filepath}")
 
     if not path.is_file():

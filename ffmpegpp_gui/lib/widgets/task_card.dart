@@ -53,6 +53,16 @@ class TaskCard extends StatelessWidget {
                       onPressed: () => state.cancelProcessing(),
                       style: TextButton.styleFrom(foregroundColor: scheme.error,
                           padding: const EdgeInsets.symmetric(horizontal: 6))),
+                if (task.status == TaskStatus.completed) ...[
+                  IconButton(
+                    icon: const Icon(Icons.folder_open, size: 18), tooltip: 'Open Folder',
+                    onPressed: () => Process.run('explorer', ['/select,', task.outputPath]),
+                    padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 28, minHeight: 28)),
+                  IconButton(
+                    icon: const Icon(Icons.play_circle_outline, size: 18), tooltip: 'Open File',
+                    onPressed: () => Process.run('cmd', ['/c', 'start', '', task.outputPath]),
+                    padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 28, minHeight: 28)),
+                ],
                 Text(statusLabel(), style: TextStyle(fontSize: 11, color: _statusColor(scheme))),
                 const SizedBox(width: 8),
                 Icon(task.expanded ? Icons.expand_less : Icons.expand_more, size: 20, color: scheme.outline),

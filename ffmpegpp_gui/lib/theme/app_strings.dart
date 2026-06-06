@@ -106,7 +106,7 @@ class AppStrings {
   String get swVersion => lang == 'zh' ? '版本' : 'Version';
   String get swBuild => lang == 'zh' ? '构建日期' : 'Build';
   String get swProtocol => lang == 'zh' ? '协议' : 'Protocol';
-  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v1.0.0  |  构建 2026-06-06  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v1.0.0  |  Build 2026-06-06  |  JSON v0.1.0';
+  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v1.0.1  |  构建 2026-06-06  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v1.0.1  |  Build 2026-06-06  |  JSON v0.1.0';
   String get languageInterface => lang == 'zh' ? '界面语言' : 'Interface Language';
   String get ffmpegFound => lang == 'zh' ? 'FFmpeg 已检测到' : 'FFmpeg detected';
   String get ffmpegNotFound => lang == 'zh' ? 'FFmpeg 未检测到' : 'FFmpeg not found';
@@ -139,6 +139,7 @@ class AppStrings {
   String get cfgRate => lang == 'zh' ? '码率' : 'Rate';
   String get cfgBitrate => lang == 'zh' ? '码率 (kbps)' : 'Bitrate';
   String get cfgCrf => lang == 'zh' ? 'CRF 质量' : 'CRF';
+  String get cfgRateKeep => lang == 'zh' ? '不变 (保持原码率)' : 'Keep (original)';
   String get cfgRes => lang == 'zh' ? '分辨率' : 'Res';
   String get cfgResOrig => lang == 'zh' ? '保持原分辨率' : 'Original';
   String get cfgRes4k => lang == 'zh' ? '4K' : '4K';

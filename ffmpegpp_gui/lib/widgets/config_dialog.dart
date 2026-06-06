@@ -153,12 +153,19 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
         final codecs = _compatibleCodecs();
         _cfg.videoCodec = codecs.first;
       })),
-      _dd(sc, s.cfgRate, _cfg.crf == null ? 'bitrate' : 'crf', ['bitrate', 'crf'],
-          [s.cfgBitrate, s.cfgCrf], (v) => setState(() => _cfg.crf = v == 'crf' ? 23 : null)),
+      _dd(sc, s.cfgRate,
+          _cfg.crf != null ? 'crf' : (_cfg.videoBitrate != null ? 'bitrate' : 'keep'),
+          ['bitrate', 'crf', 'keep'],
+          [s.cfgBitrate, s.cfgCrf, s.cfgRateKeep],
+          (v) => setState(() {
+            if (v == 'crf') { _cfg.crf = 23; _cfg.videoBitrate = null; }
+            else if (v == 'bitrate') { _cfg.crf = null; _cfg.videoBitrate = 2000; }
+            else { _cfg.crf = null; _cfg.videoBitrate = null; }
+          })),
       if (_cfg.crf != null)
         _sl(sc, s.cfgCrf, _cfg.crf!, 0, 51, (v) => setState(() => _cfg.crf = v))
-      else
-        _num(sc, s.cfgBitrate, _cfg.videoBitrate, (v) => setState(() => _cfg.videoBitrate = v)),
+      else if (_cfg.videoBitrate != null)
+        _num(sc, s.cfgBitrate, _cfg.videoBitrate!, (v) => setState(() => _cfg.videoBitrate = v)),
       if (_cfg.gpu == 'CPU')
         _dd(sc, 'Preset', _cfg.preset, ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'],
             ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'],
@@ -191,13 +198,20 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
   }
 
   // ═══ Audio ═══
+  static const _audBitratePresets = [null, 64, 96, 128, 160, 192, 256, 320];
+  static const _audBitrateLabels = ['Keep (original)', '64 kbps', '96 kbps', '128 kbps', '160 kbps', '192 kbps', '256 kbps', '320 kbps'];
+
   Widget _audTab(AppStrings s, ColorScheme sc) {
     final aVals = _audioCodecs.values.toList();
     final aLabels = _audioCodecs.keys.toList();
     return ListView(children: [
       _dd(sc, s.cfgAudioCodec, _cfg.audioCodec, aVals, aLabels,
           (v) => setState(() => _cfg.audioCodec = v)),
-      _num(sc, s.cfgAudioBitrate, _cfg.audioBitrate, (v) => setState(() => _cfg.audioBitrate = v)),
+      _dd(sc, s.cfgAudioBitrate,
+          '${_cfg.audioBitrate ?? 'keep'}',
+          _audBitratePresets.map((p) => '${p ?? 'keep'}').toList(),
+          _audBitrateLabels.toList(),
+          (v) => setState(() => _cfg.audioBitrate = v == 'keep' ? null : int.tryParse(v))),
       _dd(sc, s.cfgChannels, '${_cfg.audioChannels ?? 'keep'}', ['keep', '1', '2', '6'],
           [s.cfgChKeep, s.cfgChMono, s.cfgChStereo, s.cfgCh51],
           (v) => setState(() { _cfg.audioChannels = v == 'keep' ? null : int.tryParse(v); })),

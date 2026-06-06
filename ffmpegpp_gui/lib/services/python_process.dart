@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import '../main.dart';
+
 
 class PythonProcessManager {
   Process? _process;
@@ -25,16 +25,12 @@ class PythonProcessManager {
     if (isExe) {
       executable = serverPath;
       args = [];
-      startupLogAdd('6a-isExe: $serverPath');
     } else {
       executable = await _findPython();
-      startupLogAdd('6a-found python: $executable');
       args = ['-u', serverPath];
     }
 
-    startupLogAdd('6b-calling Process.start...');
     _process = await Process.start(executable, args, mode: ProcessStartMode.normal);
-    startupLogAdd('6c-Process.start returned');
 
     _process!.stdout
         .transform(utf8.decoder)
@@ -47,8 +43,7 @@ class PythonProcessManager {
         .transform(utf8.decoder)
         .transform(const LineSplitter())
         .listen((line) {
-      startupLogAdd('PY-stderr: $line');
-      _errorController.add(line);
+_errorController.add(line);
     });
 
     _process!.exitCode.then((code) {
@@ -57,6 +52,14 @@ class PythonProcessManager {
   }
 
   Future<Map<String, dynamic>> request(String action, [Map<String, dynamic>? params]) async {
+    return _doRequest(action, params, 120);
+  }
+
+  Future<Map<String, dynamic>> requestWithTimeout(String action, int timeoutSec, [Map<String, dynamic>? params]) async {
+    return _doRequest(action, params, timeoutSec);
+  }
+
+  Future<Map<String, dynamic>> _doRequest(String action, Map<String, dynamic>? params, int timeoutSec) async {
     final id = 'req_${++_reqCounter}';
     final completer = Completer<Map<String, dynamic>>();
     _pendingCompleters[id] = completer;
@@ -68,10 +71,10 @@ class PythonProcessManager {
     await _process!.stdin.flush();
 
     return completer.future.timeout(
-      const Duration(seconds: 300),
+      Duration(seconds: timeoutSec),
       onTimeout: () {
         _pendingCompleters.remove(id);
-        return {'id': id, 'success': false, 'error': '请求超时'};
+        return {'id': id, 'success': false, 'error': '请求超时 (${timeoutSec}s)'};
       },
     );
   }
@@ -118,14 +121,15 @@ class PythonProcessManager {
     try {
       final obj = jsonDecode(line) as Map<String, dynamic>;
       if (obj.containsKey('type')) {
-        // forward ALL typed messages (ready, progress, audit, error, etc.)
         _responseController.add(obj);
       } else if (obj.containsKey('id')) {
         final id = obj['id'] as String;
         final completer = _pendingCompleters.remove(id);
         if (completer != null) completer.complete(obj);
       }
-    } catch (_) {}
+    } catch (e) {
+      _errorController.add('stdout parse error: $e');
+    }
   }
 
   Future<String> _findPython() async {

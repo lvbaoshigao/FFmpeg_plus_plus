@@ -16,12 +16,14 @@ class Sidebar extends StatelessWidget {
     final s = AppStrings.of(lang);
     final clr = scheme.onSurfaceVariant;
 
+    final debug = context.watch<AppState>().config.debugMode;
     final items = <(IconData, String)>[
       (Icons.movie_outlined, s.navProjects),
       (Icons.list_alt_outlined, s.navQueue),
       (Icons.terminal_outlined, s.navCommand),
       (Icons.auto_awesome, s.navAI),
       (Icons.settings_outlined, s.navSettings),
+      if (debug) (Icons.terminal, 'Logs'),
     ];
 
     return SizedBox(
