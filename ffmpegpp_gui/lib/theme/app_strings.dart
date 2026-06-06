@@ -1,0 +1,169 @@
+/// 全局多语言字符串
+/// 使用: Strings.of(context).xxx 或直接 Strings.zh / Strings.en
+class AppStrings {
+  final String lang;
+  const AppStrings(this.lang);
+
+  static const zh = AppStrings('zh');
+  static const en = AppStrings('en');
+
+  factory AppStrings.of(String lang) => lang == 'zh' ? zh : en;
+
+  // ── 侧边栏 ──
+  String get navProjects => lang == 'zh' ? '项目' : 'Projects';
+  String get navQueue => lang == 'zh' ? '处理队列' : 'Queue';
+  String get navCommand => lang == 'zh' ? '命令' : 'Command';
+  String get navSettings => lang == 'zh' ? '设置' : 'Settings';
+  String get backendConnected => lang == 'zh' ? '后端已连接' : 'Backend connected';
+
+  // ── 项目页 ──
+  String get addVideo => lang == 'zh' ? '添加视频' : 'Add Video';
+  String get noVideos => lang == 'zh' ? '还没有添加视频' : 'No videos added';
+  String get clickAdd => lang == 'zh' ? '点击上方「添加视频」按钮开始' : 'Click Add Video to start';
+  String get probing => lang == 'zh' ? '解析中...' : 'Probing...';
+  String get edit => lang == 'zh' ? '编辑' : 'Edit';
+  String get addToQueue => lang == 'zh' ? '加入处理队列' : 'Add to queue';
+  String get remove => lang == 'zh' ? '移除' : 'Remove';
+
+  // ── 队列页 ──
+  String get startProcessing => lang == 'zh' ? '开始处理' : 'Start';
+  String get cancelAll => lang == 'zh' ? '取消全部' : 'Cancel All';
+  String get clearCompleted => lang == 'zh' ? '清除已完成' : 'Clear done';
+  String get emptyQueue => lang == 'zh' ? '处理队列为空' : 'Queue empty';
+  String get emptyQueueHint => lang == 'zh' ? '在项目页添加视频并点击 ▶ 按钮' : 'Add videos in Projects and click ▶';
+  String get pending => lang == 'zh' ? '等待中' : 'Pending';
+  String get processing => lang == 'zh' ? '处理中' : 'Processing';
+  String get completed => lang == 'zh' ? '已完成' : 'Completed';
+  String get failed => lang == 'zh' ? '失败' : 'Failed';
+  String get cancelled => lang == 'zh' ? '已取消' : 'Cancelled';
+  String get remaining => lang == 'zh' ? '剩余' : 'Remaining';
+  String get cancel => lang == 'zh' ? '取消' : 'Cancel';
+  // Queue detail labels
+  String get qInput => lang == 'zh' ? '输入' : 'Input';
+  String get qOutput => lang == 'zh' ? '输出' : 'Output';
+  String get qCmd => 'FFmpeg';
+  String get qLogs => lang == 'zh' ? '日志' : 'Logs';
+  String get qError => lang == 'zh' ? '错误' : 'Error';
+  String get qWeight => lang == 'zh' ? '字重' : 'Weight';
+  String get qGlass => lang == 'zh' ? '选项卡3D效果' : '3D Tab Effect';
+  String get qGlassHint => lang == 'zh' ? '卡片毛玻璃模糊 + 渐变边框' : 'Frosted blur + gradient border';
+  // Debug
+  String get dDebug => lang == 'zh' ? '调试' : 'Debug';
+  String get dDebugMode => lang == 'zh' ? '调试模式' : 'Debug mode';
+  String get dSaveLogs => lang == 'zh' ? '保存日志' : 'Save logs';
+  String get dLogPath => lang == 'zh' ? '日志路径' : 'Log path';
+  // Background
+  String get bgTitle => lang == 'zh' ? '背景' : 'Background';
+  String get bgNone => lang == 'zh' ? '无' : 'None';
+  String get bgOpacity => lang == 'zh' ? '背景不透明度' : 'BG Opacity';
+  String get cardOpacity => lang == 'zh' ? '卡片不透明度' : 'Card Opacity';
+  // AI tab
+  String get navAI => 'AI';
+  String get aiMasterSwitch => lang == 'zh' ? '启用AI' : 'Enable AI';
+  String get aiDescription => lang == 'zh' ? '使用AI生成ffmpeg命令' : 'Use AI to generate ffmpeg commands';
+  String get aiModel => lang == 'zh' ? '模型名称' : 'Model';
+  String get aiEndpoint => lang == 'zh' ? 'API地址' : 'Endpoint';
+  String get aiKey => 'API Key';
+  String get aiTest => lang == 'zh' ? '测试连接' : 'Test';
+  String get aiRequest => lang == 'zh' ? '请求AI' : 'Request';
+  String get aiPrompt => lang == 'zh' ? '提示词' : 'Prompt';
+  String get aiTesting => lang == 'zh' ? '测试中...' : 'Testing...';
+  String get aiSuccess => lang == 'zh' ? '连接成功' : 'Connected';
+  String get aiFailed => lang == 'zh' ? '连接失败' : 'Failed';
+  String get aiGenerating => lang == 'zh' ? 'AI生成中...' : 'Generating...';
+  String get aiResult => lang == 'zh' ? 'AI返回结果' : 'AI Result';
+  // Resource monitor
+  String get resCpu => 'CPU';
+  String get resGpu => 'GPU';
+  String get resRam => lang == 'zh' ? '内存' : 'RAM';
+  // Command page
+  String get cmdRef => lang == 'zh' ? '命令参考' : 'Command Reference';
+  String get cmdExamples => lang == 'zh' ? '常用示例' : 'Examples';
+  String get cmdParams => lang == 'zh' ? '参数说明' : 'Parameters';
+  String get cmdPlaceholders => lang == 'zh' ? '占位符' : 'Placeholders';
+  String get cmdPlaceholderDesc => lang == 'zh' ? '{input}→输入文件  {output}→输出文件' : '{input}→input file  {output}→output file';
+  String get cmdExecute => lang == 'zh' ? '执行' : 'Execute';
+  String get cmdHint => lang == 'zh' ? '命令执行功能将在后续版本实现' : 'Command execution coming in next version';
+
+  // ── 设置页 ──
+  String get settingsTitle => lang == 'zh' ? '设置' : 'Settings';
+  String get software => lang == 'zh' ? '软件信息' : 'Software';
+  String get appearance => lang == 'zh' ? '外观' : 'Appearance';
+  String get language => lang == 'zh' ? '语言' : 'Language';
+  String get font => lang == 'zh' ? '字体' : 'Font';
+  String get ffmpegSettings => lang == 'zh' ? 'FFmpeg' : 'FFmpeg';
+  String get output => lang == 'zh' ? '输出' : 'Output';
+  String get darkMode => lang == 'zh' ? '暗色模式' : 'Dark Mode';
+  String get accentColor => lang == 'zh' ? '主题色' : 'Accent Color';
+  String get fontFamily => lang == 'zh' ? '字体名称' : 'Font Family';
+  String get fontSize => lang == 'zh' ? '字号' : 'Font Size';
+  String get importFont => lang == 'zh' ? '选择系统字体' : 'Pick System Font';
+  String get fontOrSelect => lang == 'zh' ? '输入字体名或从列表选择' : 'Type name or pick from list';
+  String get fontBuiltin => lang == 'zh' ? '内置字体' : 'Built-in fonts';
+
+  // ── 软件信息 ──
+  String get swName => lang == 'zh' ? '软件名称' : 'Name';
+  String get swVersion => lang == 'zh' ? '版本' : 'Version';
+  String get swBuild => lang == 'zh' ? '构建日期' : 'Build';
+  String get swProtocol => lang == 'zh' ? '协议' : 'Protocol';
+  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v1.0.0  |  构建 2026-06-06  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v1.0.0  |  Build 2026-06-06  |  JSON v0.1.0';
+  String get languageInterface => lang == 'zh' ? '界面语言' : 'Interface Language';
+  String get ffmpegFound => lang == 'zh' ? 'FFmpeg 已检测到' : 'FFmpeg detected';
+  String get ffmpegNotFound => lang == 'zh' ? 'FFmpeg 未检测到' : 'FFmpeg not found';
+  String get recheck => lang == 'zh' ? '重新检测' : 'Re-check';
+  String get ffmpegPath => lang == 'zh' ? 'FFmpeg 路径' : 'FFmpeg path';
+  String get ffprobePath => lang == 'zh' ? 'FFprobe 路径' : 'FFprobe path';
+  String get outputDir => lang == 'zh' ? '默认输出目录' : 'Default output dir';
+  String get browse => lang == 'zh' ? '浏览' : 'Browse';
+  String get save => lang == 'zh' ? '保存' : 'Save';
+
+  // ── 编辑配置 ──
+  String get editTitle => lang == 'zh' ? '编辑' : 'Edit';
+  String get tabOutput => lang == 'zh' ? '输出' : 'Output';
+  String get tabVideo => lang == 'zh' ? '视频' : 'Video';
+  String get tabAudio => lang == 'zh' ? '音频' : 'Audio';
+  String get tabSubtitle => lang == 'zh' ? '字幕' : 'Subtitle';
+  String get saveConfig => lang == 'zh' ? '保存配置' : 'Save Config';
+  // Output tab
+  String get cfgFormat => lang == 'zh' ? '格式' : 'Format';
+  String get cfgFormatKeep => lang == 'zh' ? '保持原格式' : 'Original';
+  String get cfgNaming => lang == 'zh' ? '命名' : 'Naming';
+  String get cfgNamingKeep => lang == 'zh' ? '保持原名' : 'Original';
+  String get cfgNamingSuffix => lang == 'zh' ? '添加后缀' : 'Suffix';
+  String get cfgNamingCustom => lang == 'zh' ? '自定义' : 'Custom';
+  String get cfgSuffix => lang == 'zh' ? '后缀' : 'Suffix';
+  String get cfgFilename => lang == 'zh' ? '文件名' : 'Filename';
+  // Video tab
+  String get cfgCodec => lang == 'zh' ? '编码器' : 'Codec';
+  String get cfgGpu => lang == 'zh' ? 'GPU' : 'GPU';
+  String get cfgRate => lang == 'zh' ? '码率' : 'Rate';
+  String get cfgBitrate => lang == 'zh' ? '码率 (kbps)' : 'Bitrate';
+  String get cfgCrf => lang == 'zh' ? 'CRF 质量' : 'CRF';
+  String get cfgRes => lang == 'zh' ? '分辨率' : 'Res';
+  String get cfgResOrig => lang == 'zh' ? '保持原分辨率' : 'Original';
+  String get cfgRes4k => lang == 'zh' ? '4K' : '4K';
+  String get cfgRes1080p => '1080p';
+  String get cfgRes720p => '720p';
+  String get cfgRes480p => '480p';
+  String get cfgResCustom => lang == 'zh' ? '自定义' : 'Custom';
+  String get cfgFps => 'FPS';
+  String get cfgFpsKeep => lang == 'zh' ? '保持' : 'Original';
+  String get cfgFps24 => '24';
+  String get cfgFps30 => '30';
+  String get cfgFps60 => '60';
+  String get cfgFpsCustom => lang == 'zh' ? '自定义' : 'Custom';
+  // Audio tab
+  String get cfgAudioCodec => lang == 'zh' ? '编码器' : 'Codec';
+  String get cfgAudioBitrate => lang == 'zh' ? '码率' : 'Bitrate';
+  String get cfgChannels => lang == 'zh' ? '声道' : 'Ch';
+  String get cfgChKeep => lang == 'zh' ? '保持' : 'Original';
+  String get cfgChMono => lang == 'zh' ? '单声道' : 'Mono';
+  String get cfgChStereo => lang == 'zh' ? '立体声' : 'Stereo';
+  String get cfgCh51 => lang == 'zh' ? '5.1环绕' : '5.1';
+  // Subtitle tab
+  String get cfgBurn => lang == 'zh' ? '烧录字幕' : 'Burn subtitles';
+  String get cfgSubSource => lang == 'zh' ? '来源' : 'Source';
+  String get cfgSubExternal => lang == 'zh' ? '外挂文件' : 'External file';
+  String get cfgSubEmbedded => lang == 'zh' ? '内嵌轨道' : 'Embedded track';
+  String get cfgSubNotSel => lang == 'zh' ? '未选择' : 'Not selected';
+}

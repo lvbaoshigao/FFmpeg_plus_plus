@@ -1,0 +1,417 @@
+#!/usr/bin/env python
+"""
+FFmpeg++ JSON 协议服务器
+
+通过 stdin/stdout 与前端（Flutter）通信。
+每行一个完整 JSON 对象，以换行符分隔。
+
+请求格式 (stdin):
+    {"id": "req_001", "action": "probe", "params": {"filepath": "C:/video.mp4"}}
+    {"id": "req_002", "action": "transcode", "params": {...}}
+    {"id": "req_003", "action": "cancel"}
+
+响应格式 (stdout):
+    {"id": "req_001", "success": true, "data": {...}, "error": null}
+
+进度推送 (stdout):
+    {"type": "progress", "task_id": "req_002", "progress": 45.2, ...}
+"""
+
+import sys
+import json
+import time
+import signal
+import threading
+import subprocess
+import re
+from pathlib import Path
+
+# ── 确保 stdout 行缓冲（即使编译为 exe 也保证实时输出）──
+sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
+sys.stderr.reconfigure(encoding="utf-8")
+_stdout_lock = threading.Lock()  # 防止多线程 stdout 交错
+
+
+# ═══════════════════════════════════════════════
+# 进度解析器（从 ffmpeg stderr 提取进度）
+# ═══════════════════════════════════════════════
+
+class ProgressParser:
+    """实时解析 ffmpeg stderr 输出"""
+
+    def __init__(self, total_duration: float = 0.0):
+        self.total_duration = total_duration
+        self.current_time = 0.0
+        self.speed = 0.0
+        self.fps = 0.0
+        self.bitrate = 0.0
+        self.frame = 0
+
+        # 正则
+        self._time_re = re.compile(r"time=(\d{2}):(\d{2}):(\d{2}\.\d{2})")
+        self._speed_re = re.compile(r"speed=\s*(\d+\.?\d*)x")
+        self._fps_re = re.compile(r"fps=\s*(\d+\.?\d*)")
+        self._bitrate_re = re.compile(r"bitrate=\s*(\d+\.?\d*)\s*kbits/s")
+        self._frame_re = re.compile(r"frame=\s*(\d+)")
+
+    def feed(self, line: str):
+        """喂入一行 stderr"""
+        m = self._time_re.search(line)
+        if m:
+            self.current_time = (
+                int(m.group(1)) * 3600 +
+                int(m.group(2)) * 60 +
+                float(m.group(3))
+            )
+        m = self._speed_re.search(line)
+        if m:
+            self.speed = float(m.group(1))
+        m = self._fps_re.search(line)
+        if m:
+            self.fps = float(m.group(1))
+        m = self._bitrate_re.search(line)
+        if m:
+            self.bitrate = float(m.group(1))
+        m = self._frame_re.search(line)
+        if m:
+            self.frame = int(m.group(1))
+
+    @property
+    def progress(self) -> float:
+        if self.total_duration <= 0:
+            return 0.0
+        return min(self.current_time / self.total_duration * 100.0, 100.0)
+
+    @property
+    def remaining_seconds(self) -> float:
+        if self.speed <= 0 or self.total_duration <= 0:
+            return -1
+        return (self.total_duration - self.current_time) / self.speed
+
+    def stats(self) -> dict:
+        remaining = self.remaining_seconds
+        return {
+            "progress": round(self.progress, 1),
+            "current_time": _fmt_time(self.current_time),
+            "total_time": _fmt_time(self.total_duration),
+            "speed": f"{self.speed:.2f}x",
+            "fps": f"{self.fps:.1f}",
+            "bitrate": f"{self.bitrate:.1f} kb/s",
+            "frame": self.frame,
+            "remaining": _fmt_time(remaining) if remaining >= 0 else "N/A",
+        }
+
+
+def _fmt_time(seconds: float) -> str:
+    if seconds < 0:
+        seconds = 0
+    total = int(seconds)
+    h, m, s = total // 3600, (total % 3600) // 60, total % 60
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+# ═══════════════════════════════════════════════
+# 输出辅助
+# ═══════════════════════════════════════════════
+
+def _send(obj: dict):
+    """线程安全地将 dict 序列化为一行 JSON 写入 stdout"""
+    line = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+    with _stdout_lock:
+        sys.stdout.write(line + "\n")
+        sys.stdout.flush()
+
+
+def _reply(req_id: str, success: bool, data=None, error: str = None):
+    _send({"id": req_id, "success": success, "data": data, "error": error})
+
+
+# ═══════════════════════════════════════════
+# 命令冲突审计
+# ═══════════════════════════════════════════
+
+def _audit_command(cmd: list) -> list[str]:
+    """检查 ffmpeg 命令中的已知冲突，返回警告列表"""
+    warnings = []
+    has_hwaccel = any(a in cmd for a in ["-hwaccel"])
+    has_hwaccel_fmt = any(a in cmd for a in ["-hwaccel_output_format"])
+    has_scale = any(a in cmd for a in ["-s", "-vf", "-filter_complex"])
+    has_nvenc = any("nvenc" in str(a) for a in cmd)
+    has_input = "-i" in cmd
+    has_output = len([a for a in cmd if not a.startswith("-") and a != "ffmpeg" and a not in ["-i", "-y", "-n"]]) > 1
+
+    # CUDA + CPU filter conflict
+    if has_hwaccel and has_hwaccel_fmt and has_scale:
+        warnings.append(
+            "CONFLICT: -hwaccel + -hwaccel_output_format keeps frames in GPU memory, "
+            "but -s/-vf filters require CPU memory. This will cause 'Impossible to convert' error. "
+            "Solution: remove -hwaccel flags, or use GPU-native filters (scale_cuda, etc)."
+        )
+    if has_hwaccel and has_scale:
+        warnings.append(
+            "WARNING: -hwaccel with CPU scaling may cause format conversion errors. "
+            "Consider removing -hwaccel for compatibility."
+        )
+
+    # Output = Input check
+    input_files = [cmd[i+1] for i, a in enumerate(cmd) if a == "-i" and i+1 < len(cmd)]
+    output_file = None
+    for a in reversed(cmd):
+        if not a.startswith("-") and a != "ffmpeg":
+            output_file = a
+            break
+    if output_file and output_file in input_files:
+        warnings.append("ERROR: Output file is the same as input file. This would overwrite the source.")
+
+    # nvenc without proper format
+    if has_nvenc and has_hwaccel_fmt:
+        warnings.append("INFO: hwaccel_output_format may cause issues with nvenc on some driver versions. "
+                        "If encoding fails, try removing -hwaccel_output_format.")
+
+    return warnings
+
+
+def _progress(task_id: str, stats: dict):
+    _send({"type": "progress", "task_id": task_id, **stats})
+
+
+# ═══════════════════════════════════════════════
+# 请求分发
+# ═══════════════════════════════════════════════
+
+def _handle_check_env(req: dict):
+    """检测 ffmpeg 环境"""
+    try:
+        from backend.installer import ensure_ffmpeg, get_install_guide
+        env = ensure_ffmpeg()
+        guide = get_install_guide() if not env["all_ok"] else None
+
+        data = {
+            "ffmpeg_found": env["ffmpeg"].found,
+            "ffmpeg_path": env["ffmpeg"].path,
+            "ffmpeg_version": env["ffmpeg"].version,
+            "ffprobe_found": env["ffprobe"].found,
+            "ffprobe_path": env["ffprobe"].path,
+            "ffprobe_version": env["ffprobe"].version,
+            "all_ok": env["all_ok"],
+        }
+        if guide:
+            data["install_guide"] = {
+                "platform": guide.platform,
+                "download_url": guide.download_url,
+                "steps": guide.steps,
+            }
+        _reply(req["id"], True, data)
+    except Exception as e:
+        _reply(req["id"], False, error=str(e))
+
+
+def _handle_probe(req: dict):
+    """探测视频文件信息"""
+    params = req.get("params", {})
+    filepath = params.get("filepath", "")
+
+    try:
+        from backend.probe import probe_video
+        result = probe_video(filepath)
+        if result.success:
+            _reply(req["id"], True, result.info)
+        else:
+            _reply(req["id"], False, error=result.error)
+    except Exception as e:
+        _reply(req["id"], False, error=str(e))
+
+
+def _handle_transcode(req: dict, cancel_event: threading.Event):
+    """视频转码（同步执行 + 进度推送）"""
+    params = req.get("params", {})
+    input_path = params.get("input", "")
+    output_path = params.get("output", "")
+    options = params.get("options", {})
+
+    try:
+        from backend.transcoder import build_transcode_command
+        cmd = build_transcode_command(input_path, output_path, options)
+    except Exception as e:
+        _reply(req["id"], False, error=f"命令构建失败: {e}")
+        return
+
+    # 命令审计
+    audit_warnings = _audit_command(cmd)
+    if audit_warnings:
+        _send({"type": "audit", "task_id": req["id"], "warnings": audit_warnings})
+
+    _run_ffmpeg_process(req["id"], cmd, cancel_event, output_path)
+
+
+def _handle_subtitle(req: dict, cancel_event: threading.Event):
+    """字幕烧录"""
+    params = req.get("params", {})
+    input_path = params.get("input", "")
+    output_path = params.get("output", "")
+    subtitle_options = params.get("subtitle_options", {})
+    video_options = params.get("video_options")
+
+    try:
+        from backend.subtitle import build_subtitle_command
+        cmd = build_subtitle_command(input_path, output_path, subtitle_options, video_options)
+    except Exception as e:
+        _reply(req["id"], False, error=f"命令构建失败: {e}")
+        return
+
+    # 命令审计
+    audit_warnings = _audit_command(cmd)
+    if audit_warnings:
+        _send({"type": "audit", "task_id": req["id"], "warnings": audit_warnings})
+
+    _run_ffmpeg_process(req["id"], cmd, cancel_event, output_path)
+
+
+def _run_ffmpeg_process(task_id: str, cmd: list, cancel_event: threading.Event,
+                        output_path: str):
+    """执行 ffmpeg 子进程并实时推送进度"""
+    # 获取视频时长用于进度计算
+    total_duration = 0.0
+    try:
+        from backend.probe import probe_video
+        for i, arg in enumerate(cmd):
+            if arg == "-i" and i + 1 < len(cmd):
+                probe_result = probe_video(cmd[i + 1])
+                if probe_result.success and probe_result.info:
+                    total_duration = probe_result.info.get("duration", 0.0)
+                break
+    except Exception:
+        pass
+
+    parser = ProgressParser(total_duration)
+    start_time = time.time()
+    stderr_lines = []
+    process = None
+
+    # 发送初始进度 0%
+    _progress(task_id, parser.stats())
+
+    try:
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+
+        # 读取 stderr 线程
+        def read_stderr():
+            for line in process.stderr:
+                stripped = line.rstrip()
+                if stripped:
+                    stderr_lines.append(stripped)
+                    parser.feed(stripped)
+                    _progress(task_id, parser.stats())
+
+        reader = threading.Thread(target=read_stderr, daemon=True)
+        reader.start()
+
+        # 轮询等待（每 100ms 检查取消标志）
+        while process.poll() is None:
+            if cancel_event.is_set():
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                reader.join(timeout=1)
+                _reply(task_id, False, error="任务已取消")
+                return
+            time.sleep(0.1)
+
+        reader.join(timeout=2)
+        returncode = process.returncode
+        elapsed = time.time() - start_time
+
+        if returncode == 0:
+            # 最后推送 100% 进度
+            _progress(task_id, {**parser.stats(), "progress": 100.0})
+
+            out_size = 0
+            if output_path and Path(output_path).exists():
+                out_size = Path(output_path).stat().st_size
+
+            _reply(task_id, True, data={
+                "output_path": output_path,
+                "output_size": out_size,
+                "duration": round(elapsed, 2),
+                "command": cmd,
+            })
+        else:
+            error_msg = "; ".join(stderr_lines[-5:]) if stderr_lines else f"退出码 {returncode}"
+            _reply(task_id, False, error=error_msg, data={
+                "log_lines": stderr_lines[-100:],
+                "command": cmd,
+            })
+
+    except FileNotFoundError:
+        _reply(task_id, False, error="ffmpeg 可执行文件未找到")
+    except Exception as e:
+        _reply(task_id, False, error=str(e))
+    finally:
+        cancel_event.clear()
+
+
+# ═══════════════════════════════════════════════
+# 主循环
+# ═══════════════════════════════════════════════
+
+def main():
+    """JSON 协议主循环"""
+    _t0 = time.time()
+    sys.stderr.write(f"[server.py] main() entered at t=0ms\n")
+    sys.stderr.flush()
+    _send({"type": "ready", "version": "0.1.0"})
+    sys.stderr.write(f"[server.py] ready sent at t={int((time.time()-_t0)*1000)}ms\n")
+    sys.stderr.flush()
+
+    cancel_event = threading.Event()
+
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+
+        try:
+            req = json.loads(line)
+        except json.JSONDecodeError:
+            _send({"type": "error", "error": "无效的 JSON"})
+            continue
+
+        action = req.get("action", "")
+
+        if action == "check_env":
+            _handle_check_env(req)
+
+        elif action == "probe":
+            _handle_probe(req)
+
+        elif action == "transcode":
+            _handle_transcode(req, cancel_event)
+
+        elif action == "subtitle":
+            _handle_subtitle(req, cancel_event)
+
+        elif action == "cancel":
+            cancel_event.set()
+            _reply(req["id"], True, data={"message": "取消信号已发送"})
+
+        elif action == "shutdown":
+            _reply(req["id"], True, data={"message": "服务器关闭"})
+            break
+
+        elif action == "ping":
+            _reply(req["id"], True, data={"pong": True})
+
+        else:
+            _reply(req["id"], False, error=f"未知 action: {action}")
+
+
+if __name__ == "__main__":
+    main()
