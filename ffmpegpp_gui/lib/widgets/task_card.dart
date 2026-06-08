@@ -63,6 +63,11 @@ class TaskCard extends StatelessWidget {
                     onPressed: () => Process.run('cmd', ['/c', 'start', '', task.outputPath]),
                     padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 28, minHeight: 28)),
                 ],
+                if (task.status == TaskStatus.cancelled || task.status == TaskStatus.failed)
+                  IconButton(
+                    icon: Icon(Icons.delete_outline, size: 18, color: scheme.error), tooltip: s.cancel,
+                    onPressed: () => state.removeTask(task.id),
+                    padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 28, minHeight: 28)),
                 Text(statusLabel(), style: TextStyle(fontSize: 11, color: _statusColor(scheme))),
                 const SizedBox(width: 8),
                 Icon(task.expanded ? Icons.expand_less : Icons.expand_more, size: 20, color: scheme.outline),

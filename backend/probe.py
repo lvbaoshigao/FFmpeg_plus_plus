@@ -356,3 +356,103 @@ def probe_subtitle(filepath: str) -> ProbeResult:
             error=f"解析字幕信息时出错: {e}",
             raw_json=data,
         )
+
+
+# ─────────────────────────────────────────────
+# FFmpeg 功能查询
+# ─────────────────────────────────────────────
+
+def _run(cmd: list[str], timeout: int = 15) -> str:
+    """运行命令，返回 stdout"""
+    try:
+        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           encoding="utf-8", errors="replace", timeout=timeout)
+        return r.stdout
+    except Exception:
+        return ""
+
+
+def query_ffmpeg_features() -> dict:
+    """查询当前 FFmpeg 版本支持的所有功能"""
+    features: dict[str, list[str]] = {}
+
+    raw = _run(["ffmpeg", "-codecs", "-hide_banner"])
+    for line in raw.splitlines():
+        line = line.strip()
+        if len(line) < 8 or line.startswith("-") or line.startswith("Codecs") or line.startswith("-------"):
+            continue
+        flags = line[:6]
+        parts = line[6:].split(None, 2)
+        if not parts:
+            continue
+        name = parts[0]
+        desc = parts[2] if len(parts) > 2 else ""
+        can_encode = "E" in flags[1:2]
+        can_decode = "D" in flags[0:1]
+        category = "other"
+        if "V" in flags[2:3]:
+            category = "video"
+        elif "A" in flags[2:3]:
+            category = "audio"
+        elif "S" in flags[2:3]:
+            category = "subtitle"
+        entry = name
+        if can_encode:
+            entry += " [E]"
+        if can_decode:
+            entry += " [D]"
+        if desc:
+            entry += f" — {desc}"
+        features.setdefault(f"codec_{category}", []).append(entry)
+
+    raw = _run(["ffmpeg", "-formats", "-hide_banner"])
+    for line in raw.splitlines():
+        line = line.strip()
+        if len(line) < 5 or line.startswith("--") or line.startswith("File") or line.startswith("D"):
+            continue
+        flags = line[:4]
+        parts = line[4:].split(None, 1)
+        if not parts:
+            continue
+        name = parts[0]
+        desc = parts[1] if len(parts) > 1 else ""
+        entry = name
+        if desc:
+            entry += f" — {desc}"
+        features.setdefault("format", []).append(entry)
+
+    raw = _run(["ffmpeg", "-filters", "-hide_banner"])
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line.startswith(" ") and not line.startswith("T") and not line.startswith("..."):
+            continue
+        parts = line.split(None, 4)
+        if len(parts) < 3:
+            continue
+        # line format: " T.. = name  description"
+        name = parts[2] if len(parts) > 2 else parts[-1]
+        desc = parts[4] if len(parts) > 4 else ""
+        entry = name
+        if desc:
+            entry += f" — {desc}"
+        features.setdefault("filter", []).append(entry)
+
+    raw = _run(["ffmpeg", "-protocols", "-hide_banner"])
+    in_output = False
+    for line in raw.splitlines():
+        line = line.strip()
+        if line.startswith("Output:"):
+            in_output = True
+            continue
+        if line.startswith("Input:"):
+            in_output = True
+            continue
+        if not line or line.startswith("---"):
+            continue
+        if in_output and line and not line.startswith(" "):
+            features.setdefault("protocol", []).append(line)
+            in_output = False
+
+    # 清理空分类
+    features = {k: v for k, v in features.items() if v}
+    return features

@@ -212,6 +212,15 @@ def _handle_probe(req: dict):
         _reply(req["id"], False, error=str(e))
 
 
+def _handle_query_features(req: dict):
+    try:
+        from backend.probe import query_ffmpeg_features
+        features = query_ffmpeg_features()
+        _reply(req["id"], True, features)
+    except Exception as e:
+        _reply(req["id"], False, error=str(e))
+
+
 def _run_ffmpeg_process(task_id: str, cmd: list, cancel_event: threading.Event,
                         output_path: str):
     """执行 ffmpeg 子进程并实时推送进度"""
@@ -410,6 +419,9 @@ def main():
 
         elif action == "probe":
             _handle_probe(req)
+
+        elif action == "query_ffmpeg_features":
+            _handle_query_features(req)
 
         elif action == "transcode":
             _handle_transcode(req, cancel_event)

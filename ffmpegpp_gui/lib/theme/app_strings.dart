@@ -29,6 +29,7 @@ class AppStrings {
   String get startProcessing => lang == 'zh' ? '开始处理' : 'Start';
   String get cancelAll => lang == 'zh' ? '取消全部' : 'Cancel All';
   String get clearCompleted => lang == 'zh' ? '清除已完成' : 'Clear done';
+  String get clearAll => lang == 'zh' ? '移除所有' : 'Remove all';
   String get emptyQueue => lang == 'zh' ? '处理队列为空' : 'Queue empty';
   String get emptyQueueHint => lang == 'zh' ? '在项目页添加视频并点击 ▶ 按钮' : 'Add videos in Projects and click ▶';
   String get pending => lang == 'zh' ? '等待中' : 'Pending';
@@ -106,7 +107,7 @@ class AppStrings {
   String get swVersion => lang == 'zh' ? '版本' : 'Version';
   String get swBuild => lang == 'zh' ? '构建日期' : 'Build';
   String get swProtocol => lang == 'zh' ? '协议' : 'Protocol';
-  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v1.0.1  |  构建 2026-06-06  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v1.0.1  |  Build 2026-06-06  |  JSON v0.1.0';
+  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v1.5.1  |  构建 2026-06-07  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v1.5.1  |  Build 2026-06-07  |  JSON v0.1.0';
   String get languageInterface => lang == 'zh' ? '界面语言' : 'Interface Language';
   String get ffmpegFound => lang == 'zh' ? 'FFmpeg 已检测到' : 'FFmpeg detected';
   String get ffmpegNotFound => lang == 'zh' ? 'FFmpeg 未检测到' : 'FFmpeg not found';
@@ -167,4 +168,18 @@ class AppStrings {
   String get cfgSubExternal => lang == 'zh' ? '外挂文件' : 'External file';
   String get cfgSubEmbedded => lang == 'zh' ? '内嵌轨道' : 'Embedded track';
   String get cfgSubNotSel => lang == 'zh' ? '未选择' : 'Not selected';
+  // About
+  String get aboutTitle => lang == 'zh' ? '关于' : 'About';
+  String get aboutVersion => lang == 'zh' ? '版本' : 'Version';
+  String get aboutBuildDate => lang == 'zh' ? '编译日期' : 'Build Date';
+  String get aboutBlog => lang == 'zh' ? '作者博客' : 'Blog';
+  String get aboutGithub => lang == 'zh' ? '开源地址' : 'GitHub';
+  String get aboutSponsor => lang == 'zh' ? '赞助支持' : 'Sponsor';
+  String get aboutSponsorBtn => lang == 'zh' ? '查看收款码' : 'View QR Codes';
+  String get aboutBlogLink => lang == 'zh' ? '博客' : 'Blog';
+  String get aboutThanks => lang == 'zh' ? '感谢您的支持！' : 'Thank you for your support!';
+  String get aboutWxTitle => lang == 'zh' ? '微信收款码' : 'WeChat Pay';
+  String get aboutZfbTitle => lang == 'zh' ? '支付宝收款码' : 'Alipay';
+  String get aboutClose => lang == 'zh' ? '关闭' : 'Close';
+  String get aboutZoomHint => lang == 'zh' ? '点击放大' : 'Tap to zoom';
 }

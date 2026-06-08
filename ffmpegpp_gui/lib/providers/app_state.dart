@@ -37,6 +37,45 @@ class AppState extends ChangeNotifier {
   String? get aiGeneratedCommand => _aiGeneratedCommand;
   void setAICommand(String cmd) { _aiGeneratedCommand = cmd; notifyListeners(); }
 
+  // ── Log entries ──
+  final List<LogEntry> _logEntries = [];
+  bool _logNotifyPending = false;
+  List<LogEntry> get logEntries => List.unmodifiable(_logEntries);
+  void addLog(String message, {String category = 'general'}) {
+    _logEntries.add(LogEntry(timestamp: DateTime.now(), message: message, category: category));
+    // Progress logs notify immediately for real-time UI updates
+    if (category == 'progress') {
+      notifyListeners();
+      return;
+    }
+    // Other logs batch via microtask to prevent UI blocking
+    if (!_logNotifyPending) {
+      _logNotifyPending = true;
+      scheduleMicrotask(() {
+        _logNotifyPending = false;
+        notifyListeners();
+      });
+    }
+  }
+  void clearLogs() { _logEntries.clear(); notifyListeners(); }
+
+  // ── FFmpeg features ──
+  Map<String, List<String>> _ffmpegFeatures = {};
+  Map<String, List<String>> get ffmpegFeatures => _ffmpegFeatures;
+  bool get featuresDetected => _ffmpegFeatures.isNotEmpty;
+  Future<void> queryFeatures() async {
+    addLog('正在查询 FFmpeg 支持的功能...', category: 'info');
+    final resp = await backend.queryFeatures();
+    if (resp['success'] == true) {
+      final data = resp['data'] as Map<String, dynamic>;
+      _ffmpegFeatures = data.map((k, v) => MapEntry(k, (v as List).cast<String>()));
+      addLog('功能查询完成: ${_ffmpegFeatures.keys.join(', ')}', category: 'info');
+    } else {
+      addLog('功能查询失败: ${resp['error']}', category: 'error');
+    }
+    notifyListeners();
+  }
+
   AppConfig get config => configService.config;
   bool get darkMode => config.darkMode;
   int _selectedNav = 0;
@@ -62,6 +101,42 @@ class AppState extends ChangeNotifier {
     }
     _envChecked = false; _envOk = false;
     notifyListeners();
+    // Register log listeners once (they stay alive for app lifetime)
+    _setupLogListeners();
+  }
+
+  void _setupLogListeners() {
+    // stdout messages (typed: progress, audit, error, etc.)
+    pythonProcess.responses.listen((obj) {
+      final t = obj['type'] as String? ?? '';
+      if (t == 'progress') {
+        addLog('进度: ${obj['progress']}% ${obj['speed']}', category: 'progress');
+      } else if (t == 'audit') {
+        final warnings = (obj['warnings'] as List?)?.join('; ') ?? '';
+        addLog('审计: $warnings', category: 'error');
+      } else if (t != 'ready') {
+        addLog('$t: $obj', category: 'info');
+      }
+    });
+    // stderr (ffmpeg output, simplified)
+    pythonProcess.errors.listen((line) {
+      // Skip ffmpeg header lines
+      if (line.startsWith('ffmpeg version') || line.startsWith('  built with') ||
+          line.startsWith('  configuration:') || line.startsWith('  libav') ||
+          line.startsWith('  libsw') || line.trim().isEmpty) {
+        return;
+      }
+      // Simplify progress lines
+      final timeMatch = RegExp(r'time=(\d{2}:\d{2}:\d{2})').firstMatch(line);
+      final speedMatch = RegExp(r'speed=\s*([\d.]+)x').firstMatch(line);
+      if (timeMatch != null && speedMatch != null) {
+        addLog('转码 ${timeMatch.group(1)} ${speedMatch.group(1)}x', category: 'progress');
+        return;
+      }
+      addLog(line, category: 'ffmpeg');
+    });
+    // Initial log
+    addLog('日志面板已就绪', category: 'info');
   }
 
   void selectNav(int i) { _selectedNav = i; notifyListeners(); }
@@ -163,6 +238,8 @@ class AppState extends ChangeNotifier {
   }
 
   void clearCompletedTasks() { _tasks.removeWhere((t) => t.status == TaskStatus.completed || t.status == TaskStatus.failed || t.status == TaskStatus.cancelled); notifyListeners(); }
+  void removeTask(String id) { _tasks.removeWhere((t) => t.id == id); notifyListeners(); }
+  void clearAllTasks() { if (!_processing) { _tasks.clear(); notifyListeners(); } }
   void toggleTaskExpanded(String tid) { final i = _tasks.indexWhere((t) => t.id == tid); if (i >= 0) { _tasks[i] = _tasks[i].copyWith(expanded: !_tasks[i].expanded); notifyListeners(); } }
 
   Future<void> toggleDarkMode(bool v) async { await configService.update((c) => c..darkMode = v); notifyListeners(); }

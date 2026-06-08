@@ -120,8 +120,8 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
         [s.cfgFormatKeep, 'MP4', 'MKV', 'MOV', 'AVI', 'WEBM'], (v) => setState(() => _cfg.outputFormat = v)),
     _dd(sc, s.cfgNaming, _cfg.namingMode, ['keep', 'suffix', 'custom'],
         [s.cfgNamingKeep, s.cfgNamingSuffix, s.cfgNamingCustom], (v) => setState(() => _cfg.namingMode = v)),
-    if (_cfg.namingMode == 'suffix') _tf(sc, s.cfgSuffix, _cfg.namingValue, (v) => _cfg.namingValue = v),
-    if (_cfg.namingMode == 'custom') _tf(sc, s.cfgFilename, _cfg.namingValue, (v) => _cfg.namingValue = v),
+    if (_cfg.namingMode == 'suffix') _tf(sc, s.cfgSuffix, _cfg.namingValue, (v) => setState(() => _cfg.namingValue = v)),
+    if (_cfg.namingMode == 'custom') _tf(sc, s.cfgFilename, _cfg.namingValue, (v) => setState(() => _cfg.namingValue = v)),
     Padding(padding: const EdgeInsets.only(top: 8), child: Text('→ ${_previewPath()}',
         style: TextStyle(fontSize: 10, color: sc.outline, fontFamily: 'monospace'))),
   ]);
@@ -131,7 +131,10 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
     final ext = _cfg.outputFormat == 'keep' ? widget.video.filepath.split('.').last : _cfg.outputFormat;
     if (_cfg.namingMode == 'keep') return '$base.$ext';
     if (_cfg.namingMode == 'suffix') return '$base${_cfg.namingValue}.$ext';
-    return '${_cfg.namingValue}.$ext';
+    // custom: user enters full filename (with or without extension)
+    final custom = _cfg.namingValue;
+    if (custom.contains('.')) return custom; // already has extension
+    return '$custom.$ext';
   }
 
   // ═══ Video ═══
@@ -238,12 +241,13 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
   // ═══ Helpers ═══
   Widget _dd(ColorScheme sc, String l, String v, List<String> vals, List<String> labels, ValueChanged<String> cb) =>
       Padding(padding: const EdgeInsets.only(bottom: 6), child: Row(children: [
-        SizedBox(width: 64, child: Text(l, style: TextStyle(fontSize: 12, color: sc.onSurface))),
+        SizedBox(width: 50, child: Text(l, style: TextStyle(fontSize: 11, color: sc.onSurface), overflow: TextOverflow.ellipsis)),
         Expanded(child: DropdownButtonFormField<String>(
-            value: vals.contains(v) ? v : vals.first, isDense: true,
+            value: vals.contains(v) ? v : vals.first, isDense: true, isExpanded: true,
             style: TextStyle(fontSize: 12, color: sc.onSurface), dropdownColor: sc.surface,
+            menuMaxHeight: 300,
             items: List.generate(vals.length, (i) => DropdownMenuItem(value: vals[i],
-                child: Text(labels[i], style: TextStyle(fontSize: 12, color: sc.onSurface)))),
+                child: Text(labels[i], style: TextStyle(fontSize: 11, color: sc.onSurface), overflow: TextOverflow.ellipsis))),
             onChanged: (x) { if (x != null) cb(x); },
             decoration: InputDecoration(isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(4)),

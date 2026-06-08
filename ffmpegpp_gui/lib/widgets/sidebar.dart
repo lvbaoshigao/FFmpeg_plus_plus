@@ -36,7 +36,9 @@ class Sidebar extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
               child: Row(children: [
-                Icon(Icons.play_circle_fill, color: scheme.primary, size: 28),
+                ClipRRect(borderRadius: BorderRadius.circular(6),
+                    child: Image.asset('rele/icon.png', width: 28, height: 28, fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Icon(Icons.play_circle_fill, color: scheme.primary, size: 28))),
                 const SizedBox(width: 10),
                 Text('FFmpeg++', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: scheme.primary)),
               ]),

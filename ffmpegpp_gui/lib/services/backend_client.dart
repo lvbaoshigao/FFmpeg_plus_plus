@@ -40,6 +40,12 @@ class BackendClient {
     return resp;
   }
 
+  /// 查询 FFmpeg 支持的功能（codecs/formats/filters/protocols，20s 超时）
+  Future<Map<String, dynamic>> queryFeatures() async {
+    final resp = await _process.requestWithTimeout('query_ffmpeg_features', 20);
+    return resp;
+  }
+
   /// 视频转码（taskId 用于匹配进度推送）
   Future<Map<String, dynamic>> transcode(String taskId, {
     required String input,

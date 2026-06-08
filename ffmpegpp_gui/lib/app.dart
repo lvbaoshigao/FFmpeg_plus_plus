@@ -27,6 +27,14 @@ class FfmpegppApp extends StatelessWidget {
           darkTheme: AppTheme.dark(seedColor: cfg.themeColor, fontFamily: cfg.fontFamily,
               fontSize: cfg.fontSize, fontWeight: cfg.fontWeightValue, glass: cfg.glassEffect),
           themeMode: state.darkMode ? ThemeMode.dark : ThemeMode.light,
+          // 全局文字缩放：放在 builder 里覆盖 MaterialApp 内部的 MediaQuery
+          builder: (context, child) {
+            final scale = cfg.fontSize / 14.0;
+            return MediaQuery(
+              data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(scale)),
+              child: child!,
+            );
+          },
           home: const AppShell(),
         );
       },
@@ -64,13 +72,18 @@ class _AppShellState extends State<AppShell> with WindowListener {
     return Consumer<AppState>(
       builder: (context, state, _) {
         final bg = state.config.backgroundImage;
-        if (bg.isEmpty) return Scaffold(body: body);
-        // 缓存文件存在性避免每次重建都调 existsSync
-        if (!_bgFileExists(bg)) return Scaffold(body: body);
+        final hasBg = bg.isNotEmpty && _bgFileExists(bg);
+        if (!hasBg) return Scaffold(body: body);
+        // 有壁纸时：壁纸铺底 + 半透明遮罩 + 透明 Scaffold（让子页面也能看到壁纸）
         final a = ((1.0 - state.config.backgroundOpacity) * 220).round().clamp(20, 240);
         return Stack(children: [
           Positioned.fill(child: Image.file(File(bg), fit: BoxFit.cover)),
-          Scaffold(backgroundColor: scheme.surface.withAlpha(a), body: body),
+          Positioned.fill(child: Container(color: scheme.surface.withAlpha(a))),
+          // 用 Theme 覆盖 scaffoldBackgroundColor 为透明，让子页面 Scaffold 不遮壁纸
+          Theme(
+            data: Theme.of(context).copyWith(scaffoldBackgroundColor: Colors.transparent),
+            child: Scaffold(backgroundColor: Colors.transparent, body: body),
+          ),
         ]);
       },
     );

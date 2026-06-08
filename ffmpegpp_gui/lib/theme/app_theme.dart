@@ -33,7 +33,7 @@ class AppTheme {
       colorScheme: scheme,
       fontFamilyFallback: const ['Microsoft YaHei', 'SimHei', 'SimSun', 'KaiTi', 'sans-serif'],
       textTheme: appliedTt,
-      scaffoldBackgroundColor: glass ? Colors.transparent : scheme.surface,
+      scaffoldBackgroundColor: scheme.surface,
       cardTheme: CardThemeData(
         elevation: 0,
         color: glass ? scheme.surface.withAlpha(180) : null,

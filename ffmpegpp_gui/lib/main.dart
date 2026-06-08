@@ -4,10 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 import 'providers/app_state.dart';
+import 'services/integrity.dart';
 import 'app.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 启动完整性校验 — 不匹配直接闪退
+  await IntegrityCheck.verify();
 
   FlutterError.onError = (details) {
     FlutterError.presentError(details);

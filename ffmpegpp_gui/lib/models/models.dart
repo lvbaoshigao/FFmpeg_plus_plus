@@ -376,3 +376,15 @@ class AppConfig {
         'ai_endpoint': aiEndpoint, 'ai_key': aiKey, 'ai_prompt': aiPrompt,
       };
 }
+
+// ═══════════════════════════════════════════
+// 日志条目
+// ═══════════════════════════════════════════
+
+class LogEntry {
+  final DateTime timestamp;
+  final String message;
+  final String category; // 'info', 'ffmpeg', 'progress', 'error', 'general'
+
+  LogEntry({required this.timestamp, required this.message, this.category = 'general'});
+}
