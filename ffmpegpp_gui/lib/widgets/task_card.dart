@@ -55,11 +55,11 @@ class TaskCard extends StatelessWidget {
                           padding: const EdgeInsets.symmetric(horizontal: 6))),
                 if (task.status == TaskStatus.completed) ...[
                   IconButton(
-                    icon: const Icon(Icons.folder_open, size: 18), tooltip: 'Open Folder',
+                    icon: const Icon(Icons.folder_open, size: 18), tooltip: s.language == 'zh' ? '打开文件夹' : 'Open Folder',
                     onPressed: () => Process.run('explorer', ['/select,', task.outputPath]),
                     padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 28, minHeight: 28)),
                   IconButton(
-                    icon: const Icon(Icons.play_circle_outline, size: 18), tooltip: 'Open File',
+                    icon: const Icon(Icons.play_circle_outline, size: 18), tooltip: s.language == 'zh' ? '打开文件' : 'Open File',
                     onPressed: () => Process.run('cmd', ['/c', 'start', '', task.outputPath]),
                     padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 28, minHeight: 28)),
                 ],
@@ -104,15 +104,15 @@ class TaskCard extends StatelessWidget {
       _row(s.qInput, task.inputPath, scheme.outline, clr),
       _row(s.qOutput, task.outputPath, scheme.outline, clr),
       _row('FPS', task.fps, scheme.outline, clr),
-      _row('Bitrate', task.bitrate, scheme.outline, clr),
-      _row('Size', task.outputSizeStr, scheme.outline, clr),
+      _row(s.language == 'zh' ? '码率' : 'Bitrate', task.bitrate, scheme.outline, clr),
+      _row(s.language == 'zh' ? '大小' : 'Size', task.outputSizeStr, scheme.outline, clr),
       if (task.command != null) ...[
         const SizedBox(height: 8),
         Text('${s.qCmd}:', style: TextStyle(fontSize: 11, color: scheme.outline)),
         Container(
           width: double.infinity, padding: const EdgeInsets.all(8), margin: const EdgeInsets.only(top: 4),
           decoration: BoxDecoration(color: scheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(6)),
-          child: SelectableText(task.command!.join(' '),
+          child: SelectableText((task.command ?? []).join(' '),
               style: TextStyle(fontFamily: 'monospace', fontSize: 10, color: clr)),
         ),
       ],

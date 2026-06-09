@@ -82,35 +82,49 @@ class AppState extends ChangeNotifier {
   int get selectedNav => _selectedNav;
 
   Future<void> init(String serverScript) async {
+    debugPrint('[init] 1-configService.load');
     await configService.load();
+    debugPrint('[init] 2-configService.load done');
     try {
+      debugPrint('[init] 3-calling pythonProcess.start($serverScript)');
       await pythonProcess.start(serverScript);
+      debugPrint('[init] 4-pythonProcess.start done, isRunning=${pythonProcess.isRunning}');
     } catch (e) {
+      debugPrint('[init] 4-ERROR: $e');
       _initError = 'Python backend failed: $e';
       _envChecked = true; _envOk = false; notifyListeners(); return;
     }
     try {
-      final ready = await pythonProcess.responses
-          .firstWhere((o) => o['type'] == 'ready')
-          .timeout(const Duration(seconds: 30), onTimeout: () => {'type': 'timeout'});
+      debugPrint('[init] 5-waiting for ready...');
+      final ready = await pythonProcess.waitForReady(timeout: const Duration(seconds: 30));
+      debugPrint('[init] 6-ready result: ${ready['type']}');
       if (ready['type'] != 'ready') {
         _initError = 'Backend not ready'; _envChecked = true; _envOk = false; notifyListeners(); return;
       }
     } catch (e) {
+      debugPrint('[init] 6-ERROR: $e');
       _initError = 'Backend start failed: $e'; _envChecked = true; _envOk = false; notifyListeners(); return;
     }
     _envChecked = false; _envOk = false;
     notifyListeners();
-    // Register log listeners once (they stay alive for app lifetime)
+    debugPrint('[init] 7-setup log listeners');
     _setupLogListeners();
   }
 
   void _setupLogListeners() {
+    double _lastProgressLog = -1;
     // stdout messages (typed: progress, audit, error, etc.)
     pythonProcess.responses.listen((obj) {
       final t = obj['type'] as String? ?? '';
       if (t == 'progress') {
-        addLog('进度: ${obj['progress']}% ${obj['speed']}', category: 'progress');
+        final p = (obj['progress'] as num?)?.toDouble() ?? 0;
+        final speed = obj['speed'] as String? ?? '';
+        // 只在进度变化 >=5% 或转码完成时记录，避免刷屏
+        if (p > 0 && (p - _lastProgressLog >= 5 || p >= 100)) {
+          _lastProgressLog = p;
+          addLog('进度: ${p.toStringAsFixed(0)}% $speed', category: 'progress');
+        }
+        if (p == 0) _lastProgressLog = 0;
       } else if (t == 'audit') {
         final warnings = (obj['warnings'] as List?)?.join('; ') ?? '';
         addLog('审计: $warnings', category: 'error');
@@ -143,16 +157,19 @@ class AppState extends ChangeNotifier {
 
   Future<void> addVideos(List<String> filepaths) async {
     _probingVideos = true; notifyListeners();
+    addLog('添加 ${filepaths.length} 个文件', category: 'info');
     for (final fp in filepaths) {
       final vf = VideoFile.fromFilepath(fp); _videos.add(vf); notifyListeners();
+      addLog('探测: ${vf.filename}', category: 'info');
       try {
         final resp = await backend.probe(fp);
         if (resp['success'] == true) {
           final info = resp['data'] as Map<String, dynamic>;
           final idx = _videos.indexWhere((v) => v.id == vf.id);
           if (idx >= 0) { _videos[idx] = VideoFile.fromProbeResult(fp, info, id: vf.id); _probeErrors.remove(fp); notifyListeners(); }
-        } else { _probeErrors[fp] = resp['error'] as String? ?? 'Unknown'; notifyListeners(); }
-      } catch (e) { _probeErrors[fp] = 'Error: $e'; notifyListeners(); }
+          addLog('探测成功: ${vf.filename} (${info['resolution']})', category: 'ffmpeg');
+        } else { _probeErrors[fp] = resp['error'] as String? ?? 'Unknown'; notifyListeners(); addLog('探测失败: ${resp['error']}', category: 'error'); }
+      } catch (e) { _probeErrors[fp] = 'Error: $e'; notifyListeners(); addLog('探测异常: $e', category: 'error'); }
     }
     _probingVideos = false; notifyListeners();
   }
@@ -191,27 +208,51 @@ class AppState extends ChangeNotifier {
     if (pi < 0) return;
     _processing = true; final task = _tasks[pi]; _currentTaskId = task.id;
     _tasks[pi] = task.copyWith(status: TaskStatus.processing); notifyListeners();
+    addLog('开始处理: ${task.filename}', category: 'info');
+    addLog('输入: ${task.inputPath}', category: 'info');
+    addLog('输出: ${task.outputPath}', category: 'info');
+    addLog('编码器: ${task.config.videoCodec}, GPU: ${task.config.gpu}', category: 'info');
 
     if (config.aiEnabled) {
+      addLog('AI 已启用，开始生成命令...', category: 'info');
       final cmd = await _generateAICommand(task);
       if (cmd == null) {
+        addLog('AI 命令生成失败，跳过任务', category: 'error');
         _tasks[pi] = _tasks[pi].copyWith(status: TaskStatus.failed, error: 'AI generation failed. Check API config or disable AI.');
         _processing = false; _currentTaskId = null; notifyListeners(); return;
       }
       _aiGeneratedCommand = cmd;
+      addLog('AI 命令生成成功: $cmd', category: 'info');
+    } else {
+      addLog('AI 未启用，使用默认编码参数', category: 'info');
     }
 
     StreamSubscription<ProgressUpdate>? sub;
     sub = backend.progressStream.listen((u) {
+      debugPrint('[Progress] taskId=${u.taskId} current=$_currentTaskId progress=${u.progress}');
       if (u.taskId == _currentTaskId) {
         final i = _tasks.indexWhere((t) => t.id == _currentTaskId);
-        if (i >= 0) { _tasks[i] = _tasks[i].copyWith(status: TaskStatus.processing, progress: u.progress, elapsed: u.currentTime, remaining: u.remaining, speed: u.speed, fps: u.fps, bitrate: u.bitrate, frame: u.frame); notifyListeners(); }
+        if (i >= 0) {
+          _tasks[i] = _tasks[i].copyWith(status: TaskStatus.processing, progress: u.progress, elapsed: u.currentTime, remaining: u.remaining, speed: u.speed, fps: u.fps, bitrate: u.bitrate, frame: u.frame);
+          notifyListeners();
+        }
       }
     });
 
     Map<String, dynamic> resp;
     if (task.config.subtitleEnabled) {
-      resp = await backend.subtitle(task.id, input: task.inputPath, output: task.outputPath, subtitleOptions: {'source': task.config.subtitleSource, if (task.config.subtitleFile != null) 'subtitle_file': task.config.subtitleFile, 'subtitle_index': task.config.subtitleIndex}, videoOptions: task.config.toBackendOptions());
+      resp = await backend.subtitle(task.id, input: task.inputPath, output: task.outputPath, subtitleOptions: {
+        'source': task.config.subtitleSource,
+        if (task.config.subtitleFile != null) 'subtitle_file': task.config.subtitleFile,
+        'subtitle_index': task.config.subtitleIndex,
+        'style': {
+          'font_name': task.config.subtitleFontName,
+          'font_size': task.config.subtitleFontSize,
+          'font_color': task.config.subtitleFontColor,
+          'outline_width': task.config.subtitleOutlineWidth,
+          'outline_color': task.config.subtitleOutlineColor,
+        },
+      }, videoOptions: task.config.toBackendOptions());
     } else {
       resp = await backend.transcode(task.id, input: task.inputPath, output: task.outputPath, options: task.config.toBackendOptions());
     }
@@ -222,8 +263,10 @@ class AppState extends ChangeNotifier {
       if (resp['success'] == true) {
         final d = resp['data'] as Map<String, dynamic>?;
         _tasks[fi] = _tasks[fi].copyWith(status: TaskStatus.completed, progress: 100, outputSize: d?['output_size'] as int?, duration: (d?['duration'] as num?)?.toDouble(), command: (d?['command'] as List?)?.cast<String>());
+        addLog('任务完成: ${task.filename} (${d?['duration']}s)', category: 'info');
       } else {
         _tasks[fi] = _tasks[fi].copyWith(status: TaskStatus.failed, error: resp['error'] as String?, logLines: (resp['data']?['log_lines'] as List?)?.cast<String>() ?? [], command: (resp['data']?['command'] as List?)?.cast<String>());
+        addLog('任务失败: ${task.filename} - ${resp['error']}', category: 'error');
       }
       notifyListeners();
     }
@@ -255,6 +298,7 @@ class AppState extends ChangeNotifier {
   Future<String?> _generateAICommand(TaskInfo task) async {
     final c = config;
     if (c.aiEndpoint.isEmpty || c.aiKey.isEmpty) return null;
+    addLog('AI 请求: ${c.aiModel} → ${c.aiEndpoint}', category: 'info');
     String p = c.aiPrompt
         .replaceAll('{input}', task.inputPath).replaceAll('{output}', task.outputPath)
         .replaceAll('{video_codec}', task.config.videoCodec).replaceAll('{gpu}', task.config.gpu)
@@ -264,16 +308,27 @@ class AppState extends ChangeNotifier {
         .replaceAll('{audio_channels}', '${task.config.audioChannels ?? 'none'}')
         .replaceAll('{subtitle}', task.config.subtitleEnabled ? (task.config.subtitleFile ?? 'embedded') : 'none')
         .replaceAll('{extra}', '');
+    addLog('AI Prompt 已构建 (${p.length} chars)', category: 'info');
     try {
       final resp = await http.post(Uri.parse('${c.aiEndpoint}/v1/chat/completions'),
           headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ${c.aiKey}'},
           body: jsonEncode({'model': c.aiModel, 'messages': [{'role': 'user', 'content': p}], 'temperature': 0.3}))
           .timeout(const Duration(seconds: 90));
-      if (resp.statusCode != 200) return null;
+      addLog('AI 响应: HTTP ${resp.statusCode}', category: 'info');
+      if (resp.statusCode != 200) {
+        addLog('AI 请求失败: ${resp.body}', category: 'error');
+        return null;
+      }
       final data = jsonDecode(resp.body);
       final text = data['choices']?[0]?['message']?['content'] ?? '';
-      return _extractAICommand(text);
-    } catch (_) { return null; }
+      final cmd = _extractAICommand(text);
+      if (cmd != null) {
+        addLog('AI 生成命令: $cmd', category: 'info');
+      } else {
+        addLog('AI 未能从响应中提取 ffmpeg 命令', category: 'error');
+      }
+      return cmd;
+    } catch (e) { addLog('AI 请求异常: $e', category: 'error'); return null; }
   }
 
   String? _extractAICommand(String text) {

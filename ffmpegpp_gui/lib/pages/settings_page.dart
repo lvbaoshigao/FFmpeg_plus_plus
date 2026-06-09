@@ -107,7 +107,7 @@ class SettingsPage extends StatelessWidget {
                                 final r = await FilePicker.platform.pickFiles(
                                     type: FileType.custom, allowedExtensions: ['jpg', 'jpeg', 'png', 'bmp', 'webp']);
                                 if (r != null && r.files.isNotEmpty && r.files.first.path != null) {
-                                  state.updateConfig((c) => c..backgroundImage = r.files.first.path!);
+                                  state.updateConfig((c) => c..backgroundImage = r.files.first.path ?? '');
                                 }
                               }, padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 24, minHeight: 24)),
                         ])),
@@ -157,7 +157,7 @@ class SettingsPage extends StatelessWidget {
                     Expanded(child: TextField(
                       controller: TextEditingController(text: cfg.fontFamily),
                       style: TextStyle(fontSize: 13, color: clr),
-                      decoration: const InputDecoration(isDense: false, hintText: 'Font name...'),
+                      decoration: InputDecoration(isDense: false, hintText: s.fontOrSelect),
                       onChanged: (v) => state.updateConfig((c) => c..fontFamily = v),
                     )),
                     PopupMenuButton<String>(icon: const Icon(Icons.arrow_drop_down),
@@ -224,12 +224,12 @@ class SettingsPage extends StatelessWidget {
                             errorBuilder: (_, __, ___) => Icon(Icons.play_circle_fill, size: 48, color: scheme.primary))),
                     const SizedBox(height: 8),
                     Text('FFmpeg++', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: scheme.primary)),
-                    Text('v1.5.1', style: TextStyle(fontSize: 12, color: scheme.outline)),
+                    Text('v2.0.0', style: TextStyle(fontSize: 12, color: scheme.outline)),
                     const SizedBox(height: 12),
                   ])),
                   const SizedBox(height: 4),
-                  _infoRow(s.aboutVersion, 'v1.5.1', scheme),
-                  _infoRow(s.aboutBuildDate, '2026-06-07', scheme),
+                  _infoRow(s.aboutVersion, 'v2.0.0', scheme),
+                  _infoRow(s.aboutBuildDate, '2026-06-09 20:00', scheme),
                   _infoRow(s.aboutBlog, 'blog-clstone.netlify.app', scheme),
                   _infoRow(s.aboutGithub, 'github.com/pity-Fox/FFmpeg_plus_plus', scheme),
                   _infoRow(s.aboutSponsor, '', scheme, trailing: TextButton.icon(
@@ -310,29 +310,33 @@ class SettingsPage extends StatelessWidget {
     final r = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['ttf', 'otf']);
     if (r == null || r.files.isEmpty || r.files.first.path == null) return;
 
-    final path = r.files.first.path!;
+    final path = r.files.first.path;
+    if (path == null) return;
     final fileName = path.split(RegExp(r'[\\/]')).last;
     final defaultName = fileName.replaceAll(RegExp(r'\.[^.]+$'), '');
 
     if (!ctx.mounted) return;
     final nameCtrl = TextEditingController(text: defaultName);
+    final isZh = ctx.read<AppState>().config.language == 'zh';
     final confirmed = await showDialog<bool>(
       context: ctx,
       builder: (_) => AlertDialog(
-        title: const Text('导入字体 / Import Font'),
+        title: Text(isZh ? '导入字体' : 'Import Font'),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text('输入字体族名称（Font Family Name）：',
+          Text(isZh ? '输入字体族名称：' : 'Enter font family name:',
               style: const TextStyle(fontSize: 13)),
           const SizedBox(height: 12),
           TextField(controller: nameCtrl,
-              decoration: const InputDecoration(labelText: 'Font Family', hintText: 'e.g. Microsoft YaHei', isDense: true)),
+              decoration: InputDecoration(labelText: isZh ? '字体族名' : 'Font Family', hintText: 'e.g. Microsoft YaHei', isDense: true)),
           const SizedBox(height: 8),
-          Text('提示：名称通常显示在字体预览窗口标题栏，\n如 "华文黑体"、"HYWenHei" 等，不是文件名。',
+          Text(isZh
+              ? '提示：名称通常显示在字体预览窗口标题栏，\n如 "华文黑体"、"HYWenHei" 等，不是文件名。'
+              : 'Hint: The name is shown in the font preview title bar,\nnot the filename.',
               style: TextStyle(fontSize: 11, color: Theme.of(ctx).colorScheme.outline)),
         ]),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('应用')),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(isZh ? '取消' : 'Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(isZh ? '应用' : 'Apply')),
         ],
       ),
     );
@@ -501,10 +505,11 @@ class _FfmpegCardState extends State<_FfmpegCard> {
 
   Future<void> _browseFfmpeg() async {
     final r = await FilePicker.platform.pickFiles(
-      type: FileType.custom, allowedExtensions: ['exe'], dialogTitle: 'Select ffmpeg.exe',
+      type: FileType.custom, allowedExtensions: ['exe'], dialogTitle: context.read<AppState>().config.language == 'zh' ? '选择 ffmpeg.exe' : 'Select ffmpeg.exe',
     );
     if (r == null || r.files.isEmpty || r.files.first.path == null) return;
-    final exePath = r.files.first.path!;
+    final exePath = r.files.first.path;
+    if (exePath == null) return;
     setState(() => _checking = true);
     try {
       final result = await Process.run(exePath, ['-version'], runInShell: false);
@@ -631,14 +636,15 @@ class _FfmpegCardState extends State<_FfmpegCard> {
                   labelStyle: const TextStyle(fontSize: 11), unselectedLabelStyle: const TextStyle(fontSize: 11),
                   tabs: _features.keys.map((k) {
                     final label = k.startsWith('codec_') ? k.replaceFirst('codec_', '${isZh ? "编码" : "Codec"} ') : k;
-                    return Tab(text: '$label (${_features[k]!.length})');
+                    final items = _features[k] ?? [];
+                    return Tab(text: '$label (${items.length})');
                   }).toList()),
               SizedBox(height: 180, child: TabBarView(
                 children: _features.keys.map((k) => ListView.builder(
                   padding: const EdgeInsets.symmetric(vertical: 4),
-                  itemCount: _features[k]!.length,
+                  itemCount: (_features[k] ?? []).length,
                   itemBuilder: (_, i) => Padding(padding: const EdgeInsets.symmetric(vertical: 1),
-                      child: Text(_features[k]![i], style: TextStyle(fontSize: 10, fontFamily: 'Consolas', color: scheme.onSurface))),
+                      child: Text((_features[k] ?? [])[i], style: TextStyle(fontSize: 10, fontFamily: 'Consolas', color: scheme.onSurface))),
                 )).toList(),
               )),
             ]),

@@ -9,7 +9,7 @@ class IntegrityCheck {
     'zfb.jpg': '405c5edd469221d63c56e9bb6d284387',
   };
 
-  static Future<void> verify() async {
+  static Future<bool> verify() async {
     final exeDir = Directory(Platform.resolvedExecutable).parent;
     final candidates = [
       '${exeDir.path}/data/flutter_assets/rele',
@@ -23,14 +23,21 @@ class IntegrityCheck {
         break;
       }
     }
-    if (dir == null) exit(1);
+    if (dir == null) {
+      exit(1);
+    }
 
     for (final entry in _expectedMd5.entries) {
       final file = File('$dir/${entry.key}');
-      if (!file.existsSync()) exit(1);
+      if (!await file.exists()) {
+        exit(1);
+      }
       final bytes = await file.readAsBytes();
       final actual = md5.convert(bytes).toString();
-      if (actual != entry.value) exit(1);
+      if (actual != entry.value) {
+        exit(1);
+      }
     }
+    return true;
   }
 }

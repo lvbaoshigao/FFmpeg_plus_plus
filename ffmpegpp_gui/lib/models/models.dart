@@ -196,14 +196,24 @@ class TranscodeConfig {
   String subtitleSource;
   String? subtitleFile;
   int subtitleIndex;
+  // 字幕样式
+  String subtitleFontName;
+  int subtitleFontSize;
+  String subtitleFontColor;     // hex: #FFFFFF
+  int subtitleOutlineWidth;
+  String subtitleOutlineColor;  // hex: #000000
   String outputFormat, namingMode, namingValue;
 
   TranscodeConfig({
     this.videoCodec = 'h264', this.gpu = 'CPU', this.preset = 'medium', this.crf,
-    this.videoBitrate = 2000, this.framerate, this.resolutionW, this.resolutionH,
+    this.videoBitrate, this.framerate, this.resolutionW, this.resolutionH,
     this.audioCodec = 'aac', this.audioBitrate = 128, this.audioChannels,
     this.subtitleEnabled = false, this.subtitleSource = 'external', this.subtitleFile,
-    this.subtitleIndex = 0, this.outputFormat = 'keep', this.namingMode = 'keep',
+    this.subtitleIndex = 0,
+    this.subtitleFontName = 'Arial', this.subtitleFontSize = 24,
+    this.subtitleFontColor = '#FFFFFF', this.subtitleOutlineWidth = 2,
+    this.subtitleOutlineColor = '#000000',
+    this.outputFormat = 'keep', this.namingMode = 'keep',
     this.namingValue = '_processed',
   });
 

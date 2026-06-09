@@ -130,7 +130,8 @@ class _AIPageState extends State<AIPage> {
     if (result != null && result.isNotEmpty && mounted) {
       final cmd = _extractCmd(result);
       st.setAICommand(cmd);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(cmd.isNotEmpty ? 'Command: $cmd' : 'No ffmpeg command found')));
+      final isZh = context.read<AppState>().config.language == 'zh';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(cmd.isNotEmpty ? (isZh ? '命令: $cmd' : 'Command: $cmd') : (isZh ? '未找到 ffmpeg 命令' : 'No ffmpeg command found'))));
     }
   }
 

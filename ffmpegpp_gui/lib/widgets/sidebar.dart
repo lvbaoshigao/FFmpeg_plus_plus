@@ -23,7 +23,7 @@ class Sidebar extends StatelessWidget {
       (Icons.terminal_outlined, s.navCommand),
       (Icons.auto_awesome, s.navAI),
       (Icons.settings_outlined, s.navSettings),
-      if (debug) (Icons.terminal, 'Logs'),
+      if (debug) (Icons.terminal, lang == 'zh' ? '日志' : 'Logs'),
     ];
 
     return SizedBox(
@@ -75,9 +75,17 @@ class Sidebar extends StatelessWidget {
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), color: scheme.surfaceContainerHighest),
               child: Row(children: [
-                Container(width: 8, height: 8, decoration: BoxDecoration(shape: BoxShape.circle, color: scheme.primary)),
+                Builder(builder: (ctx) {
+                  final running = ctx.watch<AppState>().pythonProcess.isRunning;
+                  debugPrint('[Sidebar] isRunning=$running');
+                  return Container(width: 8, height: 8, decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: running ? scheme.primary : scheme.error));
+                }),
                 const SizedBox(width: 8),
-                Expanded(child: Text(s.backendConnected, style: TextStyle(fontSize: 11, color: clr))),
+                Expanded(child: Text(
+                    context.watch<AppState>().pythonProcess.isRunning ? s.backendConnected : (lang == 'zh' ? '后端已断开' : 'Backend disconnected'),
+                    style: TextStyle(fontSize: 11, color: clr))),
               ]),
             )),
           ]),

@@ -63,16 +63,18 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
     _cfg = TranscodeConfig(
       videoCodec: initCodec, gpu: v.gpu, preset: v.preset, crf: v.crf,
       videoBitrate: v.videoBitrate, framerate: v.framerate,
-      resolutionW: v.resolutionW ?? widget.video.width,
-      resolutionH: v.resolutionH ?? widget.video.height,
+      resolutionW: v.resolutionW, resolutionH: v.resolutionH,
       audioCodec: v.audioCodec, audioBitrate: v.audioBitrate, audioChannels: v.audioChannels,
       subtitleEnabled: v.subtitleEnabled, subtitleSource: v.subtitleSource,
       subtitleFile: v.subtitleFile, subtitleIndex: v.subtitleIndex,
+      subtitleFontName: v.subtitleFontName, subtitleFontSize: v.subtitleFontSize,
+      subtitleFontColor: v.subtitleFontColor, subtitleOutlineWidth: v.subtitleOutlineWidth,
+      subtitleOutlineColor: v.subtitleOutlineColor,
       outputFormat: v.outputFormat, namingMode: v.namingMode, namingValue: v.namingValue,
     );
     _fpsValue = v.framerate;
-    // 判断当前分辨率预设
-    if (v.resolutionW == widget.video.width && v.resolutionH == widget.video.height) {
+    // 判断当前分辨率预设（null = 保持原分辨率）
+    if (v.resolutionW == null && v.resolutionH == null) {
       _resPreset = 'original';
     } else if (v.resolutionW == 3840 && v.resolutionH == 2160) {
       _resPreset = '2160p';
@@ -178,7 +180,7 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
           [s.cfgResOrig, s.cfgRes4k, s.cfgRes1080p, s.cfgRes720p, s.cfgRes480p, s.cfgResCustom], (v) {
         setState(() => _resPreset = v);
         final m = {'2160p': (3840, 2160), '1080p': (1920, 1080), '720p': (1280, 720), '480p': (854, 480)};
-        if (v == 'original') { _cfg.resolutionW = widget.video.width; _cfg.resolutionH = widget.video.height; }
+        if (v == 'original') { _cfg.resolutionW = null; _cfg.resolutionH = null; }
         else if (m.containsKey(v)) { final (w, h) = m[v]!; _cfg.resolutionW = w; _cfg.resolutionH = h; }
       }),
       if (_resPreset == 'custom')
@@ -222,6 +224,13 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
   }
 
   // ═══ Subtitle ═══
+  // 常用字体列表
+  static const _subtitleFonts = [
+    'Arial', 'Microsoft YaHei', 'SimHei', 'SimSun', 'KaiTi',
+    'Consolas', 'Segoe UI', 'Tahoma', 'Times New Roman', 'Verdana',
+    'Noto Sans CJK SC', 'Source Han Sans CN', 'Roboto', 'Open Sans',
+  ];
+
   Widget _subTab(AppStrings s, ColorScheme sc) => ListView(children: [
     SwitchListTile(title: Text(s.cfgBurn, style: TextStyle(color: sc.onSurface)),
         value: _cfg.subtitleEnabled, onChanged: (v) => setState(() => _cfg.subtitleEnabled = v),
@@ -235,6 +244,25 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
           trailing: Icon(Icons.folder_open, size: 16, color: sc.onSurface),
           onTap: _pickSub, dense: true, contentPadding: EdgeInsets.zero,
         ),
+      const Divider(),
+      // ── 字幕样式 — 两列布局 ──
+      Text(s.cfgSubStyle, style: TextStyle(fontSize: 11, color: sc.outline)),
+      const SizedBox(height: 6),
+      Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // 左列：字体 + 大小
+        Expanded(child: Column(children: [
+          _dd(sc, s.cfgSubFont, _cfg.subtitleFontName, _subtitleFonts, _subtitleFonts,
+              (v) => setState(() => _cfg.subtitleFontName = v)),
+          _sl(sc, s.cfgSubSize, _cfg.subtitleFontSize, 12, 72, (v) => setState(() => _cfg.subtitleFontSize = v)),
+        ])),
+        const SizedBox(width: 12),
+        // 右列：描边 + 颜色
+        Expanded(child: Column(children: [
+          _sl(sc, s.cfgSubOutline, _cfg.subtitleOutlineWidth, 0, 8, (v) => setState(() => _cfg.subtitleOutlineWidth = v)),
+          _colorRow(sc, s.cfgSubColor, _cfg.subtitleFontColor, (v) => setState(() => _cfg.subtitleFontColor = v)),
+          _colorRow(sc, s.cfgSubOutlineColor, _cfg.subtitleOutlineColor, (v) => setState(() => _cfg.subtitleOutlineColor = v)),
+        ])),
+      ]),
     ],
   ]);
 
@@ -287,8 +315,73 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
             onChanged: cb)),
       ]));
 
+  Widget _colorRow(ColorScheme sc, String label, String hexValue, ValueChanged<String> cb) =>
+      Padding(padding: const EdgeInsets.only(bottom: 6), child: Row(children: [
+        SizedBox(width: 50, child: Text(label, style: TextStyle(fontSize: 11, color: sc.onSurface))),
+        Expanded(child: TextField(
+            controller: TextEditingController(text: hexValue),
+            style: TextStyle(fontSize: 12, color: sc.onSurface),
+            decoration: InputDecoration(isDense: true, hintText: '#FFFFFF',
+                contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(4)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(4),
+                    borderSide: BorderSide(color: sc.outline.withAlpha(120)))),
+            onChanged: cb)),
+        const SizedBox(width: 6),
+        GestureDetector(
+          onTap: () async {
+            final initial = _hexToColor(hexValue);
+            final picked = await showDialog<Color>(context: context, builder: (_) => _ColorPicker(initial: initial));
+            if (picked != null) {
+              final hex = '#${picked.toARGB32().toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}';
+              cb(hex);
+            }
+          },
+          child: Container(width: 24, height: 24,
+            decoration: BoxDecoration(color: _hexToColor(hexValue), borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: sc.outline.withAlpha(120)))),
+        ),
+      ]));
+
+  static Color _hexToColor(String hex) {
+    hex = hex.replaceAll('#', '');
+    if (hex.length == 6) hex = 'FF$hex';
+    return Color(int.tryParse(hex, radix: 16) ?? 0xFFFFFFFF);
+  }
+
   Future<void> _pickSub() async {
     final r = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['srt', 'ass', 'ssa', 'sub', 'vtt']);
     if (r != null && r.files.isNotEmpty && r.files.first.path != null) setState(() => _cfg.subtitleFile = r.files.first.path!);
   }
+}
+
+// 简单的 HSV 颜色选择器
+class _ColorPicker extends StatefulWidget {
+  final Color initial;
+  const _ColorPicker({required this.initial});
+  @override
+  State<_ColorPicker> createState() => _ColorPickerState();
+}
+class _ColorPickerState extends State<_ColorPicker> {
+  late double _h, _s, _v;
+  @override void initState() { super.initState(); final c = HSVColor.fromColor(widget.initial); _h = c.hue; _s = c.saturation; _v = c.value; }
+  Color get c => HSVColor.fromAHSV(1, _h, _s, _v).toColor();
+  @override Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Select Color'),
+    content: SizedBox(width: 260, child: Column(mainAxisSize: MainAxisSize.min, children: [
+      Container(height: 50, decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(8))),
+      const SizedBox(height: 10),
+      _sl('H', _h, 0, 360, (v) => setState(() => _h = v)),
+      _sl('S', _s, 0, 1, (v) => setState(() => _s = v)),
+      _sl('V', _v, 0, 1, (v) => setState(() => _v = v)),
+    ])),
+    actions: [
+      TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+      FilledButton(onPressed: () => Navigator.pop(context, c), child: const Text('OK')),
+    ],
+  );
+  Widget _sl(String l, double v, double min, double max, ValueChanged<double> cb) => Row(children: [
+    SizedBox(width: 20, child: Text(l, style: const TextStyle(fontSize: 10))),
+    Expanded(child: Slider(value: v, min: min, max: max, onChanged: cb)),
+  ]);
 }

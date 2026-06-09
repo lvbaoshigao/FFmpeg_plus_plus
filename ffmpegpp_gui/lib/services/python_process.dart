@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 
 
 class PythonProcessManager {
@@ -10,11 +11,22 @@ class PythonProcessManager {
   final _pendingCompleters = <String, Completer<Map<String, dynamic>>>{};
   int _reqCounter = 0;
 
+  // ready 消息缓存 + Completer
+  Map<String, dynamic>? _cachedReady;
+  Completer<Map<String, dynamic>>? _readyCompleter;
+
   Stream<Map<String, dynamic>> get responses => _responseController.stream;
   Stream<String> get errors => _errorController.stream;
   bool get isRunning => _process != null;
 
-  /// 启动后端（支持 .exe 直接运行 或 .py 通过 python 解释）
+  Future<Map<String, dynamic>> waitForReady({Duration timeout = const Duration(seconds: 30)}) async {
+    if (_cachedReady != null) return _cachedReady!;
+    if (_readyCompleter == null) return {'type': 'timeout'};
+    return _readyCompleter!.future.timeout(timeout, onTimeout: () {
+      return {'type': 'timeout'};
+    });
+  }
+
   Future<void> start(String serverPath) async {
     if (_process != null) return;
 
@@ -30,23 +42,59 @@ class PythonProcessManager {
       args = ['-u', serverPath];
     }
 
+    _readyCompleter = Completer<Map<String, dynamic>>();
+    debugPrint('[PyProc] starting: $executable ${args.join(" ")}');
     _process = await Process.start(executable, args, mode: ProcessStartMode.normal);
+    debugPrint('[PyProc] started, pid=${_process!.pid}');
+
+    // 写文件日志到 exe 目录，确认 stdout 是否真的收到数据
+    final logFile = File('${Directory(Platform.resolvedExecutable).parent.path}/flutter_stdout.log');
+    logFile.writeAsStringSync('');
+    int lineCount = 0;
 
     _process!.stdout
         .transform(utf8.decoder)
         .transform(const LineSplitter())
-        .listen(_onStdoutLine, onError: (e) {
+        .listen((line) {
+      lineCount++;
+      final ts = DateTime.now().toIso8601String().substring(11, 23);
+      final preview = line.length > 300 ? line.substring(0, 300) : line;
+      logFile.writeAsStringSync('[$ts] #$lineCount: $preview\n', mode: FileMode.append);
+      try {
+        final obj = jsonDecode(line) as Map<String, dynamic>;
+        if (obj.containsKey('type')) {
+          if (obj['type'] == 'ready') {
+            _cachedReady = obj;
+            if (_readyCompleter != null && !_readyCompleter!.isCompleted) {
+              _readyCompleter!.complete(obj);
+            }
+          }
+          _responseController.add(obj);
+        } else if (obj.containsKey('id')) {
+          final id = obj['id'] as String;
+          final completer = _pendingCompleters.remove(id);
+          if (completer != null) completer.complete(obj);
+        }
+      } catch (e) {
+        _errorController.add('stdout parse error: $e');
+      }
+    }, onError: (e) {
+      logFile.writeAsStringSync('[ERROR] $e\n', mode: FileMode.append);
       _errorController.add('stdout error: $e');
+    }, onDone: () {
+      logFile.writeAsStringSync('[DONE] stdout closed after $lineCount lines\n', mode: FileMode.append);
     });
-
     _process!.stderr
         .transform(utf8.decoder)
         .transform(const LineSplitter())
         .listen((line) {
-_errorController.add(line);
+      debugPrint('[PyProc] stderr: $line');
+      _errorController.add(line);
     });
 
     _process!.exitCode.then((code) {
+      debugPrint('[PyProc] EXITED with code=$code');
+      _errorController.add('server process exited with code $code');
       _process = null;
     });
   }
@@ -59,7 +107,32 @@ _errorController.add(line);
     return _doRequest(action, params, timeoutSec);
   }
 
+  Future<Map<String, dynamic>> requestWithId(String id, String action, [Map<String, dynamic>? params]) async {
+    if (_process == null) {
+      return {'id': id, 'success': false, 'error': '后端进程未启动'};
+    }
+    final completer = Completer<Map<String, dynamic>>();
+    _pendingCompleters[id] = completer;
+
+    final Map<String, dynamic> req = {'id': id, 'action': action};
+    if (params != null) req['params'] = params;
+
+    _process!.stdin.writeln(jsonEncode(req));
+    await _process!.stdin.flush();
+
+    return completer.future.timeout(
+      const Duration(seconds: 3600),
+      onTimeout: () {
+        _pendingCompleters.remove(id);
+        return {'id': id, 'success': false, 'error': '超时'};
+      },
+    );
+  }
+
   Future<Map<String, dynamic>> _doRequest(String action, Map<String, dynamic>? params, int timeoutSec) async {
+    if (_process == null) {
+      return {'success': false, 'error': '后端进程未启动'};
+    }
     final id = 'req_${++_reqCounter}';
     final completer = Completer<Map<String, dynamic>>();
     _pendingCompleters[id] = completer;
@@ -77,19 +150,6 @@ _errorController.add(line);
         return {'id': id, 'success': false, 'error': '请求超时 (${timeoutSec}s)'};
       },
     );
-  }
-
-  Future<Map<String, dynamic>> requestWithId(String id, String action, [Map<String, dynamic>? params]) async {
-    final completer = Completer<Map<String, dynamic>>();
-    _pendingCompleters[id] = completer;
-    final Map<String, dynamic> req = {'id': id, 'action': action};
-    if (params != null) req['params'] = params;
-    _process!.stdin.writeln(jsonEncode(req));
-    await _process!.stdin.flush();
-    return completer.future.timeout(const Duration(seconds: 3600), onTimeout: () {
-      _pendingCompleters.remove(id);
-      return {'id': id, 'success': false, 'error': '超时'};
-    });
   }
 
   void cancel() {
@@ -115,21 +175,6 @@ _errorController.add(line);
     shutdown();
     _responseController.close();
     _errorController.close();
-  }
-
-  void _onStdoutLine(String line) {
-    try {
-      final obj = jsonDecode(line) as Map<String, dynamic>;
-      if (obj.containsKey('type')) {
-        _responseController.add(obj);
-      } else if (obj.containsKey('id')) {
-        final id = obj['id'] as String;
-        final completer = _pendingCompleters.remove(id);
-        if (completer != null) completer.complete(obj);
-      }
-    } catch (e) {
-      _errorController.add('stdout parse error: $e');
-    }
   }
 
   Future<String> _findPython() async {

@@ -24,6 +24,15 @@ class AppStrings {
   String get edit => lang == 'zh' ? '编辑' : 'Edit';
   String get addToQueue => lang == 'zh' ? '加入处理队列' : 'Add to queue';
   String get remove => lang == 'zh' ? '移除' : 'Remove';
+  String get dropToAdd => lang == 'zh' ? '松开以添加视频' : 'Drop to add videos';
+  String get dragDropHint => lang == 'zh' ? '或拖拽视频文件到此处' : 'or drag & drop video files here';
+  String get noMatch => lang == 'zh' ? '未找到匹配的视频' : 'No matching videos';
+  String get searchVideos => lang == 'zh' ? '搜索视频...' : 'Search videos...';
+  String get search => lang == 'zh' ? '搜索' : 'Search';
+  String get close => lang == 'zh' ? '关闭' : 'Close';
+  String get selectAll => lang == 'zh' ? '全选' : 'Select all';
+  String get deselectAll => lang == 'zh' ? '取消全选' : 'Deselect all';
+  String get deleteSelected => lang == 'zh' ? '删除选中' : 'Delete selected';
 
   // ── 队列页 ──
   String get startProcessing => lang == 'zh' ? '开始处理' : 'Start';
@@ -107,7 +116,7 @@ class AppStrings {
   String get swVersion => lang == 'zh' ? '版本' : 'Version';
   String get swBuild => lang == 'zh' ? '构建日期' : 'Build';
   String get swProtocol => lang == 'zh' ? '协议' : 'Protocol';
-  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v1.5.1  |  构建 2026-06-07  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v1.5.1  |  Build 2026-06-07  |  JSON v0.1.0';
+  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v2.0.0  |  构建 2026-06-09 20:00  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v2.0.0  |  Build 2026-06-09 20:00  |  JSON v0.1.0';
   String get languageInterface => lang == 'zh' ? '界面语言' : 'Interface Language';
   String get ffmpegFound => lang == 'zh' ? 'FFmpeg 已检测到' : 'FFmpeg detected';
   String get ffmpegNotFound => lang == 'zh' ? 'FFmpeg 未检测到' : 'FFmpeg not found';
@@ -168,6 +177,13 @@ class AppStrings {
   String get cfgSubExternal => lang == 'zh' ? '外挂文件' : 'External file';
   String get cfgSubEmbedded => lang == 'zh' ? '内嵌轨道' : 'Embedded track';
   String get cfgSubNotSel => lang == 'zh' ? '未选择' : 'Not selected';
+  // Subtitle style
+  String get cfgSubStyle => lang == 'zh' ? '字幕样式 (ASS/SSA)' : 'Subtitle Style (ASS/SSA)';
+  String get cfgSubFont => lang == 'zh' ? '字体' : 'Font';
+  String get cfgSubSize => lang == 'zh' ? '大小' : 'Size';
+  String get cfgSubColor => lang == 'zh' ? '颜色' : 'Color';
+  String get cfgSubOutline => lang == 'zh' ? '描边' : 'Outline';
+  String get cfgSubOutlineColor => lang == 'zh' ? '描边颜色' : 'Outline Color';
   // About
   String get aboutTitle => lang == 'zh' ? '关于' : 'About';
   String get aboutVersion => lang == 'zh' ? '版本' : 'Version';

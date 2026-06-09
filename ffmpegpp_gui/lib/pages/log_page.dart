@@ -16,7 +16,15 @@ class _LogPageState extends State<LogPage> {
   String _filter = 'all';
 
   static const _filters = ['all', 'info', 'ffmpeg', 'progress', 'error'];
-  static const _filterLabels = {'all': '全部', 'info': '信息', 'ffmpeg': 'FFmpeg', 'progress': '进度', 'error': '错误'};
+
+  String _filterLabel(String f, bool isZh) => switch (f) {
+    'all'      => isZh ? '全部' : 'All',
+    'info'     => isZh ? '信息' : 'Info',
+    'ffmpeg'   => 'FFmpeg',
+    'progress' => isZh ? '进度' : 'Progress',
+    'error'    => isZh ? '错误' : 'Error',
+    _          => f,
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -24,64 +32,69 @@ class _LogPageState extends State<LogPage> {
     final cfg = context.watch<AppState>().config;
     final entries = context.watch<AppState>().logEntries;
     final glass = cfg.glassEffect;
+    final isZh = cfg.language == 'zh';
     final filtered = _filter == 'all' ? entries : entries.where((e) => e.category == _filter).toList();
 
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: Column(children: [
-        _toolbar(scheme, cfg, entries, filtered),
-        _filterBar(scheme, cfg),
+        _toolbar(scheme, cfg, entries, filtered, isZh),
+        _filterBar(scheme, isZh),
         Expanded(child: filtered.isEmpty
-            ? Center(child: Text(cfg.language == 'zh' ? '暂无日志' : 'No logs yet',
+            ? Center(child: Text(isZh ? '暂无日志' : 'No logs yet',
                 style: TextStyle(color: scheme.outline, fontSize: 13)))
-            : _buildList(filtered, scheme, glass, cfg)),
+            : _buildList(filtered, scheme, glass, cfg, isZh)),
       ]),
     );
   }
 
-  Widget _toolbar(ColorScheme scheme, AppConfig cfg, List<LogEntry> entries, List<LogEntry> filtered) {
+  Widget _toolbar(ColorScheme scheme, AppConfig cfg, List<LogEntry> entries, List<LogEntry> filtered, bool isZh) {
     final hasSelection = _selectedIndices.isNotEmpty;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       child: Row(children: [
-        Text(cfg.language == 'zh' ? '日志' : 'Logs', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: scheme.onSurface)),
+        Text(isZh ? '日志' : 'Logs', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: scheme.onSurface)),
         const SizedBox(width: 12),
-        Text('${filtered.length} ${cfg.language == 'zh' ? '条' : 'entries'}', style: TextStyle(fontSize: 11, color: scheme.outline)),
+        Text('${filtered.length} ${isZh ? '条' : 'entries'}', style: TextStyle(fontSize: 11, color: scheme.outline)),
         if (hasSelection) ...[
           const SizedBox(width: 8),
-          Text('已选 ${_selectedIndices.length} 条', style: TextStyle(fontSize: 11, color: scheme.primary)),
+          Text('${isZh ? '已选' : 'Selected'} ${_selectedIndices.length}', style: TextStyle(fontSize: 11, color: scheme.primary)),
         ],
         const Spacer(),
         if (hasSelection) IconButton(
-          icon: const Icon(Icons.copy, size: 18), tooltip: '复制选中',
+          icon: const Icon(Icons.copy, size: 18), tooltip: isZh ? '复制选中' : 'Copy selected',
           onPressed: () {
             final selected = _selectedIndices.where((i) => i < filtered.length).map((i) => _fmt(filtered[i])).join('\n');
             Clipboard.setData(ClipboardData(text: selected));
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已复制 ${_selectedIndices.length} 条'), duration: const Duration(seconds: 2)));
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Text(isZh ? '已复制 ${_selectedIndices.length} 条' : 'Copied ${_selectedIndices.length} entries'),
+                duration: const Duration(seconds: 2)));
           },
         ),
         IconButton(
-          icon: const Icon(Icons.copy_all, size: 18), tooltip: '复制全部',
+          icon: const Icon(Icons.copy_all, size: 18), tooltip: isZh ? '复制全部' : 'Copy all',
           onPressed: () {
             Clipboard.setData(ClipboardData(text: filtered.map(_fmt).join('\n')));
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已复制全部 ${filtered.length} 条'), duration: const Duration(seconds: 2)));
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Text(isZh ? '已复制全部 ${filtered.length} 条' : 'Copied all ${filtered.length} entries'),
+                duration: const Duration(seconds: 2)));
           },
         ),
         IconButton(
-          icon: const Icon(Icons.delete_outline, size: 18), tooltip: '清空',
+          icon: const Icon(Icons.delete_outline, size: 18), tooltip: isZh ? '清空' : 'Clear',
           onPressed: () { setState(() => _selectedIndices.clear()); context.read<AppState>().clearLogs(); },
         ),
       ]),
     );
   }
 
-  Widget _filterBar(ColorScheme scheme, AppConfig cfg) {
+  Widget _filterBar(ColorScheme scheme, bool isZh) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: _filters.map((f) {
         final sel = _filter == f;
         return Padding(padding: const EdgeInsets.only(right: 6), child: FilterChip(
-          label: Text(_filterLabels[f] ?? f, style: TextStyle(fontSize: 11, color: sel ? scheme.onPrimaryContainer : scheme.onSurface)),
+          label: Text(_filterLabel(f, isZh), style: TextStyle(fontSize: 11, color: sel ? scheme.onPrimaryContainer : scheme.onSurface)),
           selected: sel,
           onSelected: (v) => setState(() => _filter = f),
           selectedColor: scheme.primaryContainer,
@@ -94,7 +107,7 @@ class _LogPageState extends State<LogPage> {
     );
   }
 
-  Widget _buildList(List<LogEntry> filtered, ColorScheme scheme, bool glass, AppConfig cfg) {
+  Widget _buildList(List<LogEntry> filtered, ColorScheme scheme, bool glass, AppConfig cfg, bool isZh) {
     return ListView.builder(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       itemCount: filtered.length,
@@ -103,7 +116,6 @@ class _LogPageState extends State<LogPage> {
         final selected = _selectedIndices.contains(i);
         final catColor = _catColor(entry.category, scheme);
 
-        // 主题色蒙版
         final bgColor = selected
             ? scheme.primaryContainer.withAlpha(100)
             : scheme.primary.withAlpha(12);
@@ -115,7 +127,9 @@ class _LogPageState extends State<LogPage> {
           }),
           onLongPress: () {
             Clipboard.setData(ClipboardData(text: _fmt(entry)));
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已复制'), duration: Duration(seconds: 1)));
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Text(isZh ? '已复制' : 'Copied'),
+                duration: const Duration(seconds: 1)));
           },
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -135,7 +149,6 @@ class _LogPageState extends State<LogPage> {
           ),
         );
 
-        // 3D 效果：高斯模糊 + 玻璃质感
         if (glass) {
           row = ClipRRect(
             borderRadius: BorderRadius.circular(4),
