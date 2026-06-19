@@ -148,14 +148,6 @@ FFmpeg_plus_plus/
 │   ├── include/                   # 头文件
 │   ├── CMakeLists.txt             # CMake 构建配置
 │   └── build_server.bat           # 快速编译脚本
-├── make/                          # 安装包资源
-│   ├── app_icon.ico               # 应用图标
-│   ├── setup.iss                  # Inno Setup 安装脚本
-│   └── requirements.txt           # Python 依赖
-├── build/                         # 构建输出（编译后生成）
-│   ├── ffmpegpp_gui.exe           # Flutter GUI
-│   ├── data/                      # Flutter AOT 资源
-│   └── server.dist/               # Python 后端（standalone）
 ├── rel/                           # 发布资源
 │   ├── view.png                   # 软件主界面截图
 │   └── view1.png                  # 软件使用演示截图
