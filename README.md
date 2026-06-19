@@ -2,7 +2,7 @@
 
 <div align="center">
 
-**现代化视频处理桌面应用 — 100% AI 生成代码**
+**使用flutter,C++编写的现代化视频处理桌面应用**
 
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue?logo=windows)](https://www.microsoft.com/windows)
 [![Flutter](https://img.shields.io/badge/Flutter-3.44+-02569B?logo=flutter)](https://flutter.dev)
