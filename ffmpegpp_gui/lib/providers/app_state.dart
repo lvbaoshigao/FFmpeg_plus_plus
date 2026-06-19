@@ -192,6 +192,25 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 从命令页面添加自定义 FFmpeg 命令任务
+  void addCustomTask({
+    required String inputPath,
+    required String outputPath,
+    required String command,
+    required String filename,
+  }) {
+    _tasks.add(TaskInfo(
+      id: 'task_${_tasks.length}_${DateTime.now().millisecondsSinceEpoch}',
+      videoId: '',
+      filename: filename,
+      inputPath: inputPath,
+      outputPath: outputPath,
+      config: TranscodeConfig(),
+      command: command.split(' '),
+    ));
+    notifyListeners();
+  }
+
   void processSingleTask(String tid) {
     if (_processing) return;
     final i = _tasks.indexWhere((t) => t.id == tid);
@@ -245,6 +264,7 @@ class AppState extends ChangeNotifier {
         'source': task.config.subtitleSource,
         if (task.config.subtitleFile != null) 'subtitle_file': task.config.subtitleFile,
         'subtitle_index': task.config.subtitleIndex,
+        if (task.config.subtitleIndex2 != null) 'subtitle_index2': task.config.subtitleIndex2,
         'style': {
           'font_name': task.config.subtitleFontName,
           'font_size': task.config.subtitleFontSize,

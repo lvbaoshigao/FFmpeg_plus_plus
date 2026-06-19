@@ -55,14 +55,26 @@ std::string formatDuration(double seconds) {
 
 ProbeResult probeFile(const std::string& filepath) {
     ProbeResult result;
+    // 增大 probesize 和 analyzeduration，避免外部存储设备探测失败
     std::vector<std::string> cmd = {
         "ffprobe", "-v", "quiet", "-print_format", "json",
+        "-probesize", "50000000", "-analyzeduration", "100000000",
         "-show_format", "-show_streams", filepath
     };
-    auto pr = Subprocess::run(cmd, 60);
+    auto pr = Subprocess::run(cmd, 120);
     if (pr.exit_code != 0) {
-        result.error = "ffprobe 执行失败: " + pr.stderr_output;
-        return result;
+        // 尝试用引号包裹路径再试一次（处理特殊字符）
+        std::vector<std::string> cmd2 = {
+            "ffprobe", "-v", "quiet", "-print_format", "json",
+            "-probesize", "50000000", "-analyzeduration", "100000000",
+            "-show_format", "-show_streams", "\"" + filepath + "\""
+        };
+        pr = Subprocess::run(cmd2, 120);
+        if (pr.exit_code != 0) {
+            result.error = "ffprobe 执行失败 (" + std::to_string(pr.exit_code) + "): " +
+                           (pr.stderr_output.empty() ? "无法读取文件，请检查路径或文件权限" : pr.stderr_output.substr(0, 200));
+            return result;
+        }
     }
     try {
         result.info = json::parse(pr.stdout_output);
@@ -85,6 +97,7 @@ ProbeResult probeVideo(const std::string& filepath) {
 
         json video, audio;
         json subtitles = json::array();
+        int sub_counter = 0;  // 字幕流序号（si 参数用，从 0 开始）
         for (auto& s : streams) {
             std::string type = s.value("codec_type", "");
             if (type == "video" && video.is_null()) video = s;
@@ -93,13 +106,15 @@ ProbeResult probeVideo(const std::string& filepath) {
                 auto tags = s.value("tags", json::object());
                 auto disp = s.value("disposition", json::object());
                 subtitles.push_back({
-                    {"index", s.value("index", 0)},
+                    {"index", sub_counter},       // 字幕流序号（si 用）
+                    {"stream_index", s.value("index", 0)},  // 全局流索引（仅供参考）
                     {"codec", s.value("codec_name", "N/A")},
                     {"language", tags.value("language", "N/A")},
                     {"title", tags.value("title", "N/A")},
                     {"forced", disp.value("forced", 0) == 1},
                     {"default", disp.value("default", 0) == 1},
                 });
+                sub_counter++;
             }
         }
 

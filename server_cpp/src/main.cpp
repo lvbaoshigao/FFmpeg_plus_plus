@@ -27,7 +27,7 @@
 using json = nlohmann::json;
 using namespace ffmpegpp;
 
-static const char* SERVER_VERSION = "2.0.0";
+static const char* SERVER_VERSION = "2.2.1";
 
 // 文件日志（写到 exe 同目录的 server_debug.log）
 static FILE* g_logFile = nullptr;
@@ -504,12 +504,20 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // 打开日志文件
+    // 打开日志文件（写到用户可写目录，避免 Program Files 权限问题）
     char logPath[MAX_PATH];
-    GetModuleFileNameA(nullptr, logPath, MAX_PATH);
-    // 替换 exe 名为 server_debug.log
-    char* lastSlash = strrchr(logPath, '\\');
-    if (lastSlash) strcpy(lastSlash + 1, "server_debug.log");
+    const char* appdata = getenv("APPDATA");
+    if (appdata) {
+        snprintf(logPath, MAX_PATH, "%s\\FFmpeg++\\server_debug.log", appdata);
+        // 确保目录存在
+        char dirPath[MAX_PATH];
+        snprintf(dirPath, MAX_PATH, "%s\\FFmpeg++", appdata);
+        CreateDirectoryA(dirPath, nullptr);
+    } else {
+        // 回退到临时目录
+        GetTempPathA(MAX_PATH, logPath);
+        strcat(logPath, "FFmpeg++_server_debug.log");
+    }
     g_logFile = fopen(logPath, "w");
 
     slog("=== SERVER START v%s ===", SERVER_VERSION);

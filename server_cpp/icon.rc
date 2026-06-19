@@ -1,0 +1,4 @@
+// icon.rc - Embed icon into server.exe
+#include <winuser.h>
+1 RT_MANIFEST "server.exe.manifest"
+1 ICON "app_icon.ico"

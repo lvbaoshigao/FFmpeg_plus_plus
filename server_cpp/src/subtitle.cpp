@@ -13,16 +13,17 @@ std::string escapeFilterPath(const std::string& filepath) {
     std::string p = filepath;
     // 反斜杠 → 正斜杠
     std::replace(p.begin(), p.end(), '\\', '/');
-    // 盘符冒号 → \:
-    auto colon = p.find(':');
-    if (colon != std::string::npos) {
-        p.replace(colon, 1, "\\:");
-    }
-    // 单引号 → '\''
+    // 转义 ffmpeg 滤镜路径中的特殊字符
     std::string result;
-    for (char c : p) {
-        if (c == '\'') {
-            result += "'\\''";
+    for (size_t i = 0; i < p.size(); ++i) {
+        char c = p[i];
+        if (c == ':' && i == 1) {
+            // 盘符冒号（如 J:）→ \:
+            result += "\\:";
+        } else if (c == '\'' || c == '\\' || c == '[' || c == ']') {
+            // 单引号、反斜杠、方括号 → 前缀反斜杠
+            result += '\\';
+            result += c;
         } else {
             result += c;
         }

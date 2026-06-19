@@ -9,11 +9,33 @@
 
 namespace ffmpegpp {
 
+// UTF-8 → UTF-16 宽字符串转换
+static std::wstring utf8ToWide(const std::string& s) {
+    if (s.empty()) return L"";
+    int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), nullptr, 0);
+    if (len <= 0) return L"";
+    std::wstring ws(len, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), &ws[0], len);
+    return ws;
+}
+
+// 判断参数是否需要加引号（含空格、逗号、中文等特殊字符）
+static bool needsQuoting(const std::string& s) {
+    for (char c : s) {
+        if (c == ' ' || c == '\t' || c == '"' || c == ',' || c == ';' || c == '='
+            || c == '[' || c == ']' || c == '(' || c == ')' || c == '&' || c == '^' || c == '%')
+            return true;
+        // 非 ASCII 字符（中文等）也需要加引号
+        if ((unsigned char)c > 127) return true;
+    }
+    return false;
+}
+
 std::string Subprocess::vectorToCommandLine(const std::vector<std::string>& cmd) {
     std::ostringstream oss;
     for (size_t i = 0; i < cmd.size(); ++i) {
         if (i > 0) oss << " ";
-        if (cmd[i].find(' ') != std::string::npos) {
+        if (needsQuoting(cmd[i])) {
             oss << "\"" << cmd[i] << "\"";
         } else {
             oss << cmd[i];
@@ -27,6 +49,7 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
     if (cmd.empty()) { result.exit_code = -1; return result; }
 
     std::string cmdline = vectorToCommandLine(cmd);
+    std::wstring wcmdline = utf8ToWide(cmdline);
 
     SECURITY_ATTRIBUTES sa = {sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
     HANDLE hStdoutRead, hStdoutWrite, hStderrRead, hStderrWrite;
@@ -35,7 +58,7 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
     SetHandleInformation(hStdoutRead, HANDLE_FLAG_INHERIT, 0);
     SetHandleInformation(hStderrRead, HANDLE_FLAG_INHERIT, 0);
 
-    STARTUPINFOA si = {};
+    STARTUPINFOW si = {};
     si.cb = sizeof(si);
     si.hStdOutput = hStdoutWrite;
     si.hStdError = hStderrWrite;
@@ -43,7 +66,10 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
     si.dwFlags = STARTF_USESTDHANDLES;
 
     PROCESS_INFORMATION pi = {};
-    BOOL ok = CreateProcessA(nullptr, (LPSTR)cmdline.c_str(),
+    // CreateProcessW 要求可修改的命令行缓冲区
+    std::vector<wchar_t> cmdBuf(wcmdline.begin(), wcmdline.end());
+    cmdBuf.push_back(L'\0');
+    BOOL ok = CreateProcessW(nullptr, cmdBuf.data(),
                              nullptr, nullptr, TRUE, CREATE_NO_WINDOW,
                              nullptr, nullptr, &si, &pi);
     CloseHandle(hStdoutWrite);
@@ -123,6 +149,7 @@ ProcessResult Subprocess::runWithProgress(
     if (cmd.empty()) { result.exit_code = -1; return result; }
 
     std::string cmdline = vectorToCommandLine(cmd);
+    std::wstring wcmdline = utf8ToWide(cmdline);
 
     SECURITY_ATTRIBUTES sa = {sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
     HANDLE hStdoutRead, hStdoutWrite, hStderrRead, hStderrWrite;
@@ -131,17 +158,19 @@ ProcessResult Subprocess::runWithProgress(
     SetHandleInformation(hStdoutRead, HANDLE_FLAG_INHERIT, 0);
     SetHandleInformation(hStderrRead, HANDLE_FLAG_INHERIT, 0);
 
-    STARTUPINFOA si = {};
+    STARTUPINFOW si = {};
     si.cb = sizeof(si);
     si.hStdOutput = hStdoutWrite;
     si.hStdError = hStderrWrite;
     // stdin 设为 NUL，不继承父进程的 stdin（它会干扰管道读取，导致 stderr 数据被缓冲）
-    HANDLE hNul = CreateFileA("NUL", GENERIC_READ, FILE_SHARE_READ, &sa, OPEN_EXISTING, 0, nullptr);
+    HANDLE hNul = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ, &sa, OPEN_EXISTING, 0, nullptr);
     si.hStdInput = (hNul != INVALID_HANDLE_VALUE) ? hNul : GetStdHandle(STD_INPUT_HANDLE);
     si.dwFlags = STARTF_USESTDHANDLES;
 
     PROCESS_INFORMATION pi = {};
-    BOOL ok = CreateProcessA(nullptr, (LPSTR)cmdline.c_str(),
+    std::vector<wchar_t> cmdBuf(wcmdline.begin(), wcmdline.end());
+    cmdBuf.push_back(L'\0');
+    BOOL ok = CreateProcessW(nullptr, cmdBuf.data(),
                              nullptr, nullptr, TRUE, CREATE_NO_WINDOW,
                              nullptr, nullptr, &si, &pi);
     CloseHandle(hStdoutWrite);

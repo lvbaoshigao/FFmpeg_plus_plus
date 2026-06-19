@@ -1,0 +1,21 @@
+# Build directories
+build/
+build_*/
+build_cmake/
+release/
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.log
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+.ninja_deps
+.ninja_log
+
+# VSCode
+.vscode/settings.json

@@ -196,6 +196,7 @@ class TranscodeConfig {
   String subtitleSource;
   String? subtitleFile;
   int subtitleIndex;
+  int? subtitleIndex2;     // 第二字幕轨道（可选）
   // 字幕样式
   String subtitleFontName;
   int subtitleFontSize;
@@ -209,7 +210,7 @@ class TranscodeConfig {
     this.videoBitrate, this.framerate, this.resolutionW, this.resolutionH,
     this.audioCodec = 'aac', this.audioBitrate = 128, this.audioChannels,
     this.subtitleEnabled = false, this.subtitleSource = 'external', this.subtitleFile,
-    this.subtitleIndex = 0,
+    this.subtitleIndex = 0, this.subtitleIndex2,
     this.subtitleFontName = 'Arial', this.subtitleFontSize = 24,
     this.subtitleFontColor = '#FFFFFF', this.subtitleOutlineWidth = 2,
     this.subtitleOutlineColor = '#000000',

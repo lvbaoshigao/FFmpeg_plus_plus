@@ -8,6 +8,7 @@ class AppStrings {
   static const en = AppStrings('en');
 
   factory AppStrings.of(String lang) => lang == 'zh' ? zh : en;
+  bool get isZh => lang == 'zh';
 
   // ── 侧边栏 ──
   String get navProjects => lang == 'zh' ? '项目' : 'Projects';
@@ -116,7 +117,7 @@ class AppStrings {
   String get swVersion => lang == 'zh' ? '版本' : 'Version';
   String get swBuild => lang == 'zh' ? '构建日期' : 'Build';
   String get swProtocol => lang == 'zh' ? '协议' : 'Protocol';
-  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v2.0.0  |  构建 2026-06-09 20:00  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v2.0.0  |  Build 2026-06-09 20:00  |  JSON v0.1.0';
+  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v2.2.1  |  构建 2026-06-19  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v2.2.1  |  Build 2026-06-19  |  JSON v0.1.0';
   String get languageInterface => lang == 'zh' ? '界面语言' : 'Interface Language';
   String get ffmpegFound => lang == 'zh' ? 'FFmpeg 已检测到' : 'FFmpeg detected';
   String get ffmpegNotFound => lang == 'zh' ? 'FFmpeg 未检测到' : 'FFmpeg not found';

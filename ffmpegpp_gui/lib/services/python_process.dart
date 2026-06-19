@@ -47,9 +47,11 @@ class PythonProcessManager {
     _process = await Process.start(executable, args, mode: ProcessStartMode.normal);
     debugPrint('[PyProc] started, pid=${_process!.pid}');
 
-    // 写文件日志到 exe 目录，确认 stdout 是否真的收到数据
-    final logFile = File('${Directory(Platform.resolvedExecutable).parent.path}/flutter_stdout.log');
-    logFile.writeAsStringSync('');
+    // 写文件日志到用户可写目录（避免 Program Files 权限问题）
+    final logDir = Directory('${Platform.environment['APPDATA'] ?? Directory.systemTemp.path}/FFmpeg++');
+    if (!logDir.existsSync()) logDir.createSync(recursive: true);
+    final logFile = File('${logDir.path}/flutter_stdout.log');
+    try { logFile.writeAsStringSync(''); } catch (_) {}
     int lineCount = 0;
 
     _process!.stdout

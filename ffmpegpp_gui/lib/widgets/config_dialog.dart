@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
+import 'font_picker.dart';
 
 class ConfigDialog extends StatefulWidget {
   final VideoFile video;
@@ -99,9 +100,11 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
     final s = AppStrings.of(context.read<AppState>().config.language);
 
     return AlertDialog(
-      title: Text('${s.editTitle} — ${widget.video.filename}',
-          style: theme.textTheme.titleMedium?.copyWith(color: scheme.onSurface)),
-      content: SizedBox(width: 520, height: 440, child: Column(mainAxisSize: MainAxisSize.min, children: [
+      title: _MarqueeTitle(
+        text: '${s.editTitle} — ${widget.video.filename}',
+        style: theme.textTheme.titleMedium?.copyWith(color: scheme.onSurface),
+      ),
+      content: SizedBox(width: 520, height: 380, child: Column(mainAxisSize: MainAxisSize.min, children: [
         TabBar(controller: _tab, tabAlignment: TabAlignment.fill, tabs: [
           Tab(text: s.tabOutput), Tab(text: s.tabVideo), Tab(text: s.tabAudio), Tab(text: s.tabSubtitle),
         ]),
@@ -224,47 +227,113 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
   }
 
   // ═══ Subtitle ═══
-  // 常用字体列表
-  static const _subtitleFonts = [
-    'Arial', 'Microsoft YaHei', 'SimHei', 'SimSun', 'KaiTi',
-    'Consolas', 'Segoe UI', 'Tahoma', 'Times New Roman', 'Verdana',
-    'Noto Sans CJK SC', 'Source Han Sans CN', 'Roboto', 'Open Sans',
-  ];
-
-  Widget _subTab(AppStrings s, ColorScheme sc) => ListView(children: [
-    SwitchListTile(title: Text(s.cfgBurn, style: TextStyle(color: sc.onSurface)),
-        value: _cfg.subtitleEnabled, onChanged: (v) => setState(() => _cfg.subtitleEnabled = v),
-        contentPadding: EdgeInsets.zero, dense: true),
-    if (_cfg.subtitleEnabled) ...[
-      _dd(sc, s.cfgSubSource, _cfg.subtitleSource, ['external', 'embedded'],
-          [s.cfgSubExternal, s.cfgSubEmbedded], (v) => setState(() => _cfg.subtitleSource = v)),
-      if (_cfg.subtitleSource == 'external')
-        ListTile(
-          title: Text(_cfg.subtitleFile ?? s.cfgSubNotSel, style: TextStyle(fontSize: 12, color: sc.onSurface)),
-          trailing: Icon(Icons.folder_open, size: 16, color: sc.onSurface),
-          onTap: _pickSub, dense: true, contentPadding: EdgeInsets.zero,
+  Widget _subtitleFontPicker(ColorScheme sc, AppStrings s) {
+    final lang = context.read<AppState>().config.language;
+    return Padding(padding: const EdgeInsets.only(bottom: 6), child: Row(children: [
+      SizedBox(width: 50, child: Text(s.cfgSubFont, style: TextStyle(fontSize: 11, color: sc.onSurface))),
+      Expanded(child: GestureDetector(
+        onTap: () => _openFontDialog(lang),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          decoration: BoxDecoration(
+            border: Border.all(color: sc.outline.withAlpha(120)),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Row(children: [
+            Expanded(child: Text(_cfg.subtitleFontName,
+                style: TextStyle(fontSize: 12, fontFamily: _cfg.subtitleFontName, color: sc.onSurface))),
+            Icon(Icons.arrow_drop_down, size: 18, color: sc.outline),
+          ]),
         ),
-      const Divider(),
-      // ── 字幕样式 — 两列布局 ──
-      Text(s.cfgSubStyle, style: TextStyle(fontSize: 11, color: sc.outline)),
-      const SizedBox(height: 6),
-      Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // 左列：字体 + 大小
-        Expanded(child: Column(children: [
-          _dd(sc, s.cfgSubFont, _cfg.subtitleFontName, _subtitleFonts, _subtitleFonts,
-              (v) => setState(() => _cfg.subtitleFontName = v)),
-          _sl(sc, s.cfgSubSize, _cfg.subtitleFontSize, 12, 72, (v) => setState(() => _cfg.subtitleFontSize = v)),
-        ])),
-        const SizedBox(width: 12),
-        // 右列：描边 + 颜色
-        Expanded(child: Column(children: [
-          _sl(sc, s.cfgSubOutline, _cfg.subtitleOutlineWidth, 0, 8, (v) => setState(() => _cfg.subtitleOutlineWidth = v)),
-          _colorRow(sc, s.cfgSubColor, _cfg.subtitleFontColor, (v) => setState(() => _cfg.subtitleFontColor = v)),
-          _colorRow(sc, s.cfgSubOutlineColor, _cfg.subtitleOutlineColor, (v) => setState(() => _cfg.subtitleOutlineColor = v)),
-        ])),
-      ]),
-    ],
-  ]);
+      )),
+    ]));
+  }
+
+  void _openFontDialog(String lang) {
+    showDialog(
+      context: context,
+      builder: (_) {
+        final scheme = Theme.of(context).colorScheme;
+        return AlertDialog(
+          title: Text(lang == 'zh' ? '选择字体' : 'Select Font', style: TextStyle(color: scheme.onSurface)),
+          content: SizedBox(width: 320, child: FontPicker(
+            currentFont: _cfg.subtitleFontName,
+            language: lang,
+            onSelected: (v) {
+              setState(() => _cfg.subtitleFontName = v);
+              Navigator.pop(context);
+            },
+          )),
+        );
+      },
+    );
+  }
+
+  Widget _subTab(AppStrings s, ColorScheme sc) {
+    final subs = widget.video.subtitles;
+    final hasEmbeddedSubs = subs.isNotEmpty;
+    // 判断是否有有效的字幕源（外挂文件已选 或 内嵌轨道存在）
+    final hasValidSource = _cfg.subtitleSource == 'external'
+        ? (_cfg.subtitleFile != null && _cfg.subtitleFile!.isNotEmpty)
+        : hasEmbeddedSubs;
+    return ListView(children: [
+      SwitchListTile(title: Text(s.cfgBurn, style: TextStyle(color: sc.onSurface)),
+          value: _cfg.subtitleEnabled, onChanged: (v) => setState(() => _cfg.subtitleEnabled = v),
+          contentPadding: EdgeInsets.zero, dense: true),
+      if (_cfg.subtitleEnabled) ...[
+        _dd(sc, s.cfgSubSource, _cfg.subtitleSource, ['external', 'embedded'],
+            [s.cfgSubExternal, s.cfgSubEmbedded], (v) => setState(() {
+              _cfg.subtitleSource = v;
+              if (v == 'embedded' && subs.isNotEmpty) {
+                _cfg.subtitleIndex = subs.first.index;
+              }
+            })),
+        if (_cfg.subtitleSource == 'external')
+          ListTile(
+            title: Text(_cfg.subtitleFile ?? s.cfgSubNotSel, style: TextStyle(fontSize: 12, color: sc.onSurface)),
+            trailing: Icon(Icons.folder_open, size: 16, color: sc.onSurface),
+            onTap: _pickSub, dense: true, contentPadding: EdgeInsets.zero,
+          ),
+        if (_cfg.subtitleSource == 'embedded') ...[
+          if (!hasEmbeddedSubs)
+            Padding(padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(s.isZh ? '此视频无内嵌字幕轨道' : 'No embedded subtitle tracks found',
+                    style: TextStyle(fontSize: 11, color: sc.error)))
+          else ...[
+            _dd(sc, s.isZh ? '轨道1' : 'Track 1', '${_cfg.subtitleIndex}',
+                subs.map((t) => '${t.index}').toList(),
+                subs.map((t) => '#${t.index} [${t.codec}] ${t.language}${t.title.isNotEmpty ? " - ${t.title}" : ""}').toList(),
+                (v) => setState(() => _cfg.subtitleIndex = int.tryParse(v) ?? 0)),
+            if (subs.length > 1) ...[
+              _dd(sc, s.isZh ? '轨道2' : 'Track 2',
+                  _cfg.subtitleIndex2 != null ? '$_cfg.subtitleIndex2' : 'none',
+                  ['none', ...subs.map((t) => '${t.index}')],
+                  [s.isZh ? '无' : 'None', ...subs.map((t) => '#${t.index} [${t.codec}] ${t.language}${t.title.isNotEmpty ? " - ${t.title}" : ""}')],
+                  (v) => setState(() => _cfg.subtitleIndex2 = v == 'none' ? null : int.tryParse(v))),
+            ],
+          ],
+        ],
+        // 仅当有有效字幕源时显示样式区域
+        if (hasValidSource) ...[
+          const Divider(),
+          Text(s.cfgSubStyle, style: TextStyle(fontSize: 11, color: sc.outline)),
+          const SizedBox(height: 6),
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Expanded(child: Column(children: [
+              _subtitleFontPicker(sc, s),
+              _sl(sc, s.cfgSubSize, _cfg.subtitleFontSize, 12, 72, (v) => setState(() => _cfg.subtitleFontSize = v)),
+            ])),
+            const SizedBox(width: 12),
+            Expanded(child: Column(children: [
+              _sl(sc, s.cfgSubOutline, _cfg.subtitleOutlineWidth, 0, 8, (v) => setState(() => _cfg.subtitleOutlineWidth = v)),
+              _colorRow(sc, s.cfgSubColor, _cfg.subtitleFontColor, (v) => setState(() => _cfg.subtitleFontColor = v)),
+              _colorRow(sc, s.cfgSubOutlineColor, _cfg.subtitleOutlineColor, (v) => setState(() => _cfg.subtitleOutlineColor = v)),
+            ])),
+          ]),
+        ],
+      ],
+    ]);
+  }
 
   // ═══ Helpers ═══
   Widget _dd(ColorScheme sc, String l, String v, List<String> vals, List<String> labels, ValueChanged<String> cb) =>
@@ -331,7 +400,8 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
         GestureDetector(
           onTap: () async {
             final initial = _hexToColor(hexValue);
-            final picked = await showDialog<Color>(context: context, builder: (_) => _ColorPicker(initial: initial));
+            final lang = context.read<AppState>().config.language;
+            final picked = await showDialog<Color>(context: context, builder: (_) => _ColorPicker(initial: initial, language: lang));
             if (picked != null) {
               final hex = '#${picked.toARGB32().toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}';
               cb(hex);
@@ -355,10 +425,87 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
   }
 }
 
+// 滚动标题 — 文字超长时自动滚动（广告牌效果）
+class _MarqueeTitle extends StatefulWidget {
+  final String text;
+  final TextStyle? style;
+  const _MarqueeTitle({required this.text, this.style});
+  @override
+  State<_MarqueeTitle> createState() => _MarqueeTitleState();
+}
+
+class _MarqueeTitleState extends State<_MarqueeTitle> with SingleTickerProviderStateMixin {
+  ScrollController? _scrollCtrl;
+  AnimationController? _animCtrl;
+  bool _scrolling = false;
+
+  @override
+  void dispose() {
+    _animCtrl?.dispose();
+    _scrollCtrl?.dispose();
+    super.dispose();
+  }
+
+  void _startScroll(double textW) {
+    if (_scrolling) return;
+    _scrolling = true;
+    _scrollCtrl = ScrollController();
+    _animCtrl = AnimationController(vsync: this, duration: Duration(milliseconds: (textW * 25).toInt()));
+    _animCtrl!.addListener(() {
+      if (_scrollCtrl != null && _scrollCtrl!.hasClients) {
+        _scrollCtrl!.jumpTo(_animCtrl!.value * textW);
+      }
+    });
+    _animCtrl!.addStatusListener((status) {
+      if (status == AnimationStatus.completed) {
+        Future.delayed(const Duration(seconds: 1), () {
+          if (mounted) {
+            _scrollCtrl?.jumpTo(0);
+            _animCtrl?.forward();
+          }
+        });
+      }
+    });
+    Future.delayed(const Duration(seconds: 1), () {
+      if (mounted) _animCtrl?.forward();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (_, constraints) {
+      final tp = TextPainter(
+        text: TextSpan(text: widget.text, style: widget.style),
+        maxLines: 1, textDirection: TextDirection.ltr,
+      )..layout();
+      final needsScroll = tp.size.width > constraints.maxWidth + 10;
+
+      if (needsScroll && !_scrolling) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _startScroll(tp.size.width);
+        });
+      }
+
+      return SizedBox(
+        height: (widget.style?.fontSize ?? 16) * 1.5,
+        child: needsScroll && _scrollCtrl != null
+            ? SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                controller: _scrollCtrl,
+                physics: const NeverScrollableScrollPhysics(),
+                child: Text(widget.text, style: widget.style, maxLines: 1),
+              )
+            : Text(widget.text, style: widget.style, maxLines: 1, overflow: TextOverflow.ellipsis),
+      );
+    });
+  }
+}
+
 // 简单的 HSV 颜色选择器
 class _ColorPicker extends StatefulWidget {
   final Color initial;
-  const _ColorPicker({required this.initial});
+  final String language;
+  const _ColorPicker({required this.initial, this.language = 'zh'});
   @override
   State<_ColorPicker> createState() => _ColorPickerState();
 }
@@ -366,22 +513,29 @@ class _ColorPickerState extends State<_ColorPicker> {
   late double _h, _s, _v;
   @override void initState() { super.initState(); final c = HSVColor.fromColor(widget.initial); _h = c.hue; _s = c.saturation; _v = c.value; }
   Color get c => HSVColor.fromAHSV(1, _h, _s, _v).toColor();
-  @override Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Select Color'),
-    content: SizedBox(width: 260, child: Column(mainAxisSize: MainAxisSize.min, children: [
-      Container(height: 50, decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(8))),
-      const SizedBox(height: 10),
-      _sl('H', _h, 0, 360, (v) => setState(() => _h = v)),
-      _sl('S', _s, 0, 1, (v) => setState(() => _s = v)),
-      _sl('V', _v, 0, 1, (v) => setState(() => _v = v)),
-    ])),
-    actions: [
-      TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-      FilledButton(onPressed: () => Navigator.pop(context, c), child: const Text('OK')),
-    ],
-  );
-  Widget _sl(String l, double v, double min, double max, ValueChanged<double> cb) => Row(children: [
-    SizedBox(width: 20, child: Text(l, style: const TextStyle(fontSize: 10))),
+  @override Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final isZh = widget.language == 'zh';
+    final labelStyle = TextStyle(fontSize: 10, color: scheme.onSurface);
+    return AlertDialog(
+      title: Text(isZh ? '选择颜色' : 'Select Color', style: TextStyle(color: scheme.onSurface)),
+      content: SizedBox(width: 260, child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Container(height: 50, decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(8))),
+        const SizedBox(height: 10),
+        _sl(isZh ? '色相' : 'H', _h, 0, 360, labelStyle, (v) => setState(() => _h = v)),
+        _sl(isZh ? '饱和' : 'S', _s, 0, 1, labelStyle, (v) => setState(() => _s = v)),
+        _sl(isZh ? '明度' : 'V', _v, 0, 1, labelStyle, (v) => setState(() => _v = v)),
+        Text('#${c.toARGB32().toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}',
+            style: TextStyle(fontFamily: 'monospace', fontSize: 11, color: scheme.onSurface)),
+      ])),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: Text(isZh ? '取消' : 'Cancel')),
+        FilledButton(onPressed: () => Navigator.pop(context, c), child: Text(isZh ? '选择' : 'Select')),
+      ],
+    );
+  }
+  Widget _sl(String l, double v, double min, double max, TextStyle labelStyle, ValueChanged<double> cb) => Row(children: [
+    SizedBox(width: 30, child: Text(l, style: labelStyle)),
     Expanded(child: Slider(value: v, min: min, max: max, onChanged: cb)),
   ]);
 }

@@ -8,6 +8,24 @@ import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import '../widgets/masonry_grid.dart';
+import '../widgets/font_picker.dart';
+
+/// 复制文件到程序目录下的子文件夹，返回新路径（失败返回 null）
+Future<String?> _copyToAppDir(String srcPath, String subDir) async {
+  try {
+    final exeDir = Directory(Platform.resolvedExecutable).parent;
+    final targetDir = Directory('${exeDir.path}/$subDir');
+    if (!targetDir.existsSync()) targetDir.createSync(recursive: true);
+    final fileName = srcPath.split(RegExp(r'[\\/]')).last;
+    final destPath = '${targetDir.path}/$fileName';
+    final srcFile = File(srcPath);
+    if (srcFile.existsSync()) {
+      await srcFile.copy(destPath);
+      return destPath;
+    }
+  } catch (_) {}
+  return null;
+}
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
@@ -16,52 +34,6 @@ class SettingsPage extends StatelessWidget {
     ('Linear Purple', 0xFF5E6AD2), ('Ocean Blue', 0xFF3B82F6),
     ('Emerald', 0xFF10B981), ('Amber', 0xFFF59E0B),
     ('Rose', 0xFFEF4444), ('Cyan', 0xFF06B6D4), ('Violet', 0xFF8B5CF6),
-  ];
-  static const _sysFonts = [
-    ('System Default', ''),
-    // ── 中文字体 ──
-    ('微软雅黑', 'Microsoft YaHei'), ('黑体', 'SimHei'), ('宋体', 'SimSun'),
-    ('楷体', 'KaiTi'), ('仿宋', 'FangSong'), ('微軟正黑體', 'Microsoft JhengHei'),
-    ('新細明體', 'MingLiU'), ('新宋体', 'NSimSun'), ('標楷體', 'DFKai-SB'),
-    ('华文中宋', 'STZhongsong'), ('华文彩云', 'STCaiyun'), ('华文行楷', 'STXingkai'),
-    ('华文细黑', 'STXihei'), ('隶书', 'LiSu'), ('幼圆', 'YouYuan'),
-    // ── 英文字体 ──
-    ('Arial', 'Arial'), ('Arial Black', 'Arial Black'), ('Bahnschrift', 'Bahnschrift'),
-    ('Calibri', 'Calibri'), ('Calibri Light', 'Calibri Light'),
-    ('Cambria', 'Cambria'), ('Candara', 'Candara'), ('Candara Light', 'Candara Light'),
-    ('Comic Sans MS', 'Comic Sans MS'), ('Consolas', 'Consolas'),
-    ('Constantia', 'Constantia'), ('Corbel', 'Corbel'), ('Corbel Light', 'Corbel Light'),
-    ('Courier New', 'Courier New'), ('Ebrima', 'Ebrima'),
-    ('Franklin Gothic', 'Franklin Gothic Medium'), ('Gabriola', 'Gabriola'),
-    ('Georgia', 'Georgia'), ('Impact', 'Impact'), ('Ink Free', 'Ink Free'),
-    ('Javanese Text', 'Javanese Text'), ('Leelawadee UI', 'Leelawadee UI'),
-    ('Lucida Console', 'Lucida Console'), ('Lucida Sans Unicode', 'Lucida Sans Unicode'),
-    ('Malgun Gothic', 'Malgun Gothic'), ('Marlett', 'Marlett'),
-    ('Microsoft Himalaya', 'Microsoft Himalaya'), ('Microsoft JhengHei', 'Microsoft JhengHei'),
-    ('Microsoft New Tai Lue', 'Microsoft New Tai Lue'), ('Microsoft PhagsPa', 'Microsoft PhagsPa'),
-    ('Microsoft Tai Le', 'Microsoft Tai Le'), ('Microsoft YaHei', 'Microsoft YaHei'),
-    ('MingLiU-ExtB', 'MingLiU-ExtB'), ('Mongolian Baiti', 'Mongolian Baiti'),
-    ('MS Gothic', 'MS Gothic'), ('MV Boli', 'MV Boli'), ('Myanmar Text', 'Myanmar Text'),
-    ('Nirmala UI', 'Nirmala UI'), ('Palatino Linotype', 'Palatino Linotype'),
-    ('Segoe MDL2 Assets', 'Segoe MDL2 Assets'), ('Segoe Print', 'Segoe Print'),
-    ('Segoe Script', 'Segoe Script'), ('Segoe UI', 'Segoe UI'),
-    ('Segoe UI Black', 'Segoe UI Black'), ('Segoe UI Emoji', 'Segoe UI Emoji'),
-    ('Segoe UI Historic', 'Segoe UI Historic'), ('Segoe UI Light', 'Segoe UI Light'),
-    ('Segoe UI Semibold', 'Segoe UI Semibold'), ('Segoe UI Semilight', 'Segoe UI Semilight'),
-    ('Segoe UI Symbol', 'Segoe UI Symbol'), ('Sitka', 'Sitka'),
-    ('Sylfaen', 'Sylfaen'), ('Tahoma', 'Tahoma'),
-    ('Times New Roman', 'Times New Roman'), ('Trebuchet MS', 'Trebuchet MS'),
-    ('Verdana', 'Verdana'), ('Webdings', 'Webdings'), ('Wingdings', 'Wingdings'),
-    ('Yu Gothic', 'Yu Gothic'), ('Yu Gothic UI', 'Yu Gothic UI'),
-    // ── 第三方 ──
-    ('Noto Sans', 'Noto Sans'), ('Noto Serif', 'Noto Serif'),
-    ('Noto Sans CJK SC', 'Noto Sans CJK SC'), ('Noto Serif CJK SC', 'Noto Serif CJK SC'),
-    ('Source Han Sans CN', 'Source Han Sans CN'), ('Source Han Serif CN', 'Source Han Serif CN'),
-    ('思源黑体', 'Source Han Sans CN'), ('思源宋体', 'Source Han Serif CN'),
-    ('Droid Sans', 'Droid Sans'), ('Roboto', 'Roboto'), ('Open Sans', 'Open Sans'),
-    ('Lato', 'Lato'), ('Montserrat', 'Montserrat'), ('Oswald', 'Oswald'),
-    ('Raleway', 'Raleway'), ('Ubuntu', 'Ubuntu'), ('Fira Code', 'Fira Code'),
-    ('JetBrains Mono', 'JetBrains Mono'),
   ];
 
   @override
@@ -107,7 +79,10 @@ class SettingsPage extends StatelessWidget {
                                 final r = await FilePicker.platform.pickFiles(
                                     type: FileType.custom, allowedExtensions: ['jpg', 'jpeg', 'png', 'bmp', 'webp']);
                                 if (r != null && r.files.isNotEmpty && r.files.first.path != null) {
-                                  state.updateConfig((c) => c..backgroundImage = r.files.first.path ?? '');
+                                  final srcPath = r.files.first.path!;
+                                  // 复制到程序目录
+                                  final copied = await _copyToAppDir(srcPath, 'background');
+                                  state.updateConfig((c) => c..backgroundImage = copied ?? srcPath);
                                 }
                               }, padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 24, minHeight: 24)),
                         ])),
@@ -153,20 +128,13 @@ class SettingsPage extends StatelessWidget {
 
                 // ── Font ──
                 _glass(context, s.font, [
-                  Row(children: [
-                    Expanded(child: TextField(
-                      controller: TextEditingController(text: cfg.fontFamily),
-                      style: TextStyle(fontSize: 13, color: clr),
-                      decoration: InputDecoration(isDense: false, hintText: s.fontOrSelect),
-                      onChanged: (v) => state.updateConfig((c) => c..fontFamily = v),
-                    )),
-                    PopupMenuButton<String>(icon: const Icon(Icons.arrow_drop_down),
-                        onSelected: (v) => state.updateConfig((c) => c..fontFamily = v),
-                        itemBuilder: (_) => _sysFonts.map((f) => PopupMenuItem<String>(
-                            value: f.$2, child: Text(f.$1, style: TextStyle(fontFamily: f.$2.isNotEmpty ? f.$2 : null)))).toList()),
-                    IconButton(icon: const Icon(Icons.file_open), tooltip: s.importFont,
-                        onPressed: () => _pickFont(context, state)),
-                  ]),
+                  FontPicker(
+                    currentFont: cfg.fontFamily,
+                    language: cfg.language,
+                    showImport: true,
+                    onImport: () => _pickFont(context, state),
+                    onSelected: (v) => state.updateConfig((c) => c..fontFamily = v),
+                  ),
                   const SizedBox(height: 10),
                   Row(children: [
                     Text('${s.fontSize}: ${cfg.fontSize.round()}', style: TextStyle(color: clr, fontSize: 12)),
@@ -215,6 +183,17 @@ class SettingsPage extends StatelessWidget {
                         }),
                 ]),
 
+                // ── Cache ──
+                _glass(context, s.isZh ? '缓存' : 'Cache', [
+                  SizedBox(width: double.infinity, child: OutlinedButton.icon(
+                    icon: Icon(Icons.delete_sweep, size: 18, color: scheme.error),
+                    label: Text(s.isZh ? '清除缓存' : 'Clear Cache', style: TextStyle(fontSize: 12, color: scheme.onSurface)),
+                    onPressed: () => _clearCache(context, state, scheme, s),
+                  )),
+                  Text(s.isZh ? '清除已导入的字体文件和背景图片' : 'Clear imported fonts and background images',
+                      style: TextStyle(fontSize: 10, color: scheme.outline)),
+                ]),
+
                 // ── About ──
                 _glass(context, s.aboutTitle, [
                   Center(child: Column(children: [
@@ -224,12 +203,12 @@ class SettingsPage extends StatelessWidget {
                             errorBuilder: (_, __, ___) => Icon(Icons.play_circle_fill, size: 48, color: scheme.primary))),
                     const SizedBox(height: 8),
                     Text('FFmpeg++', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: scheme.primary)),
-                    Text('v2.0.0', style: TextStyle(fontSize: 12, color: scheme.outline)),
+                    Text('v2.2.1', style: TextStyle(fontSize: 12, color: scheme.outline)),
                     const SizedBox(height: 12),
                   ])),
                   const SizedBox(height: 4),
-                  _infoRow(s.aboutVersion, 'v2.0.0', scheme),
-                  _infoRow(s.aboutBuildDate, '2026-06-09 20:00', scheme),
+                  _infoRow(s.aboutVersion, 'v2.2.1', scheme),
+                  _infoRow(s.aboutBuildDate, '2026-06-19', scheme),
                   _infoRow(s.aboutBlog, 'blog-clstone.netlify.app', scheme),
                   _infoRow(s.aboutGithub, 'github.com/pity-Fox/FFmpeg_plus_plus', scheme),
                   _infoRow(s.aboutSponsor, '', scheme, trailing: TextButton.icon(
@@ -313,63 +292,93 @@ class SettingsPage extends StatelessWidget {
     final path = r.files.first.path;
     if (path == null) return;
     final fileName = path.split(RegExp(r'[\\/]')).last;
-    final defaultName = fileName.replaceAll(RegExp(r'\.[^.]+$'), '');
+    final fontName = fileName.replaceAll(RegExp(r'\.[^.]+$'), '');
+    final isZh = state.config.language == 'zh';
 
-    if (!ctx.mounted) return;
-    final nameCtrl = TextEditingController(text: defaultName);
-    final isZh = ctx.read<AppState>().config.language == 'zh';
+    // 复制字体文件到程序目录 fonts/ 子文件夹
+    final copiedPath = await _copyToAppDir(path, 'fonts');
+    final fontFilePath = copiedPath ?? path;
+
+    // 热加载字体：用 FontLoader 动态加载，无需重启，无需弹窗
+    try {
+      final fontLoader = FontLoader(fontName);
+      final fontFile = File(fontFilePath);
+      if (await fontFile.exists()) {
+        final bytes = await fontFile.readAsBytes();
+        fontLoader.addFont(Future.value(ByteData.view(bytes.buffer)));
+        await fontLoader.load();
+        state.updateConfig((c) => c..fontFamily = fontName);
+        if (ctx.mounted) {
+          ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+              content: Text(isZh ? '字体 "$fontName" 已加载并应用' : 'Font "$fontName" loaded and applied'),
+              duration: const Duration(seconds: 2)));
+        }
+      }
+    } catch (e) {
+      state.updateConfig((c) => c..fontFamily = fontName);
+      if (ctx.mounted) {
+        ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+            content: Text(isZh ? '热加载失败: $e' : 'Load failed: $e'),
+            duration: const Duration(seconds: 3)));
+      }
+    }
+  }
+
+  static Future<void> _clearCache(BuildContext ctx, AppState state, ColorScheme scheme, AppStrings s) async {
     final confirmed = await showDialog<bool>(
       context: ctx,
       builder: (_) => AlertDialog(
-        title: Text(isZh ? '导入字体' : 'Import Font'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text(isZh ? '输入字体族名称：' : 'Enter font family name:',
-              style: const TextStyle(fontSize: 13)),
-          const SizedBox(height: 12),
-          TextField(controller: nameCtrl,
-              decoration: InputDecoration(labelText: isZh ? '字体族名' : 'Font Family', hintText: 'e.g. Microsoft YaHei', isDense: true)),
-          const SizedBox(height: 8),
-          Text(isZh
-              ? '提示：名称通常显示在字体预览窗口标题栏，\n如 "华文黑体"、"HYWenHei" 等，不是文件名。'
-              : 'Hint: The name is shown in the font preview title bar,\nnot the filename.',
-              style: TextStyle(fontSize: 11, color: Theme.of(ctx).colorScheme.outline)),
-        ]),
+        title: Text(s.isZh ? '确认清除缓存' : 'Confirm Clear Cache'),
+        content: Text(s.isZh
+            ? '将清除已导入的字体文件和背景图片。\n清除后需要重新选择字体和背景。\n\n确定继续？'
+            : 'This will clear imported fonts and background images.\nYou will need to re-select them.\n\nContinue?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(isZh ? '取消' : 'Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(isZh ? '应用' : 'Apply')),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(s.isZh ? '取消' : 'Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true),
+              style: FilledButton.styleFrom(backgroundColor: scheme.error),
+              child: Text(s.isZh ? '清除' : 'Clear')),
         ],
       ),
     );
-
-    if (confirmed == true && nameCtrl.text.trim().isNotEmpty) {
-      final fontName = nameCtrl.text.trim();
-      // 热加载字体：用 FontLoader 动态加载，无需重启
-      try {
-        final fontLoader = FontLoader(fontName);
-        final fontFile = File(path);
-        if (await fontFile.exists()) {
-          final bytes = await fontFile.readAsBytes();
-          fontLoader.addFont(Future.value(ByteData.view(bytes.buffer)));
-          await fontLoader.load();
-          // 字体已加载到引擎，立即应用
-          state.updateConfig((c) => c..fontFamily = fontName);
-          if (ctx.mounted) ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-              content: Text('字体 "$fontName" 已加载并应用'),
-              duration: const Duration(seconds: 3)));
+    if (confirmed != true || !ctx.mounted) return;
+    try {
+      final exeDir = Directory(Platform.resolvedExecutable).parent;
+      // 清除字体缓存
+      final fontsDir = Directory('${exeDir.path}/fonts');
+      if (fontsDir.existsSync()) {
+        for (final f in fontsDir.listSync().whereType<File>()) {
+          try { f.deleteSync(); } catch (_) {}
         }
-      } catch (e) {
-        // 回退：仅设置名称，需要系统已安装该字体
-        state.updateConfig((c) => c..fontFamily = fontName);
-        if (ctx.mounted) ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-            content: Text('热加载失败: $e\n已设置字体名，如系统已安装该字体则生效'),
-            duration: const Duration(seconds: 5)));
+      }
+      // 清除背景缓存
+      final bgDir = Directory('${exeDir.path}/background');
+      if (bgDir.existsSync()) {
+        for (final f in bgDir.listSync().whereType<File>()) {
+          try { f.deleteSync(); } catch (_) {}
+        }
+      }
+      // 重置配置中的背景
+      state.updateConfig((c) => c..backgroundImage = '');
+      if (ctx.mounted) {
+        ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+            content: Text(s.isZh ? '缓存已清除' : 'Cache cleared'),
+            duration: const Duration(seconds: 2)));
+      }
+    } catch (e) {
+      if (ctx.mounted) {
+        ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+            content: Text(s.isZh ? '清除失败: $e' : 'Clear failed: $e'),
+            duration: const Duration(seconds: 3)));
       }
     }
   }
 
   static Future<void> _pickColor(BuildContext ctx, AppState state) async {
-    final picked = await showDialog<Color>(context: ctx, builder: (_) => _CP(initial: Color(state.config.themeColor)));
-    if (picked != null) state.updateConfig((c) => c..themeColor = picked.toARGB32());
+    final isZh = state.config.language == 'zh';
+    final picked = await showDialog<Color>(context: ctx, builder: (_) => _CP(initial: Color(state.config.themeColor), isZh: isZh));
+    if (picked != null) {
+      state.updateConfig((c) => c..themeColor = picked.toARGB32());
+    }
   }
 
   static Widget _infoRow(String label, String value, ColorScheme scheme, {Widget? trailing}) => Padding(
@@ -461,8 +470,6 @@ class _FfmpegCardState extends State<_FfmpegCard> {
   bool _found = false;
   String _version = '';
   String _path = '';
-  Map<String, List<String>> _features = {};
-  bool _featuresLoading = false;
 
   @override
   void initState() {
@@ -470,9 +477,6 @@ class _FfmpegCardState extends State<_FfmpegCard> {
     _found = widget.state.envOk;
     _version = widget.state.ffmpegVersion;
     _path = widget.state.config.ffmpegPath;
-    if (_found && widget.state.featuresDetected) {
-      _features = widget.state.ffmpegFeatures;
-    }
   }
 
   Future<void> _detect() async {
@@ -487,20 +491,9 @@ class _FfmpegCardState extends State<_FfmpegCard> {
     });
     if (_found) {
       widget.state.addLog('FFmpeg detected: $_version', category: 'ffmpeg');
-      await _loadFeatures();
     } else {
       widget.state.addLog('FFmpeg not found', category: 'error');
     }
-  }
-
-  Future<void> _loadFeatures() async {
-    setState(() => _featuresLoading = true);
-    await widget.state.queryFeatures();
-    if (!mounted) return;
-    setState(() {
-      _features = widget.state.ffmpegFeatures;
-      _featuresLoading = false;
-    });
   }
 
   Future<void> _browseFfmpeg() async {
@@ -520,17 +513,22 @@ class _FfmpegCardState extends State<_FfmpegCard> {
         widget.state.updateConfig((c) => c..ffmpegPath = exePath..ffprobePath = '$dir\\ffprobe.exe');
         await _addToPath(dir);
         widget.state.addLog('FFmpeg configured: $_version', category: 'ffmpeg');
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('FFmpeg found at: $dir\n已添加到用户环境变量 PATH'), duration: const Duration(seconds: 3)));
-        await _loadFeatures();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('FFmpeg found at: $dir\n已添加到用户环境变量 PATH'), duration: const Duration(seconds: 3)));
+        }
       } else {
         setState(() => _checking = false);
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('所选文件不是有效的 ffmpeg.exe'), backgroundColor: Colors.red));
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('所选文件不是有效的 ffmpeg.exe'), backgroundColor: Colors.red));
+        }
       }
     } catch (e) {
       setState(() => _checking = false);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('检测失败: $e'), backgroundColor: Colors.red));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('检测失败: $e'), backgroundColor: Colors.red));
+      }
     }
   }
 
@@ -596,8 +594,8 @@ class _FfmpegCardState extends State<_FfmpegCard> {
         Center(child: Text(isZh ? '正在检测...' : 'Detecting...', style: TextStyle(fontSize: 12, color: scheme.outline))),
       ]);
     } else {
-      // Found: status + features
-      final featureWidgets = <Widget>[
+      // Found: show version only
+      card = _card(scheme, glass, cardAlpha, cfg, s.ffmpegSettings, [
         Row(children: [
           const Icon(Icons.check_circle, size: 16, color: Colors.green),
           const SizedBox(width: 8),
@@ -612,56 +610,13 @@ class _FfmpegCardState extends State<_FfmpegCard> {
         SizedBox(width: double.infinity, child: OutlinedButton.icon(
             icon: const Icon(Icons.refresh, size: 14), label: Text(s.recheck, style: const TextStyle(fontSize: 11)),
             onPressed: _detect)),
-      ];
-
-      if (_featuresLoading) {
-        featureWidgets.addAll([
-          const SizedBox(height: 8),
-          Row(children: [
-            const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
-            const SizedBox(width: 8),
-            Text(isZh ? '正在查询支持的功能...' : 'Querying supported features...', style: TextStyle(fontSize: 11, color: scheme.outline)),
-          ]),
-        ]);
-      } else if (_features.isNotEmpty) {
-        featureWidgets.addAll([
-          Divider(color: scheme.outline.withAlpha(60)),
-          const SizedBox(height: 4),
-          Text(isZh ? '支持的功能' : 'Supported Features', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: scheme.primary)),
-          const SizedBox(height: 6),
-          DefaultTabController(
-            length: _features.length,
-            child: Column(children: [
-              TabBar(isScrollable: true, tabAlignment: TabAlignment.start,
-                  labelStyle: const TextStyle(fontSize: 11), unselectedLabelStyle: const TextStyle(fontSize: 11),
-                  tabs: _features.keys.map((k) {
-                    final label = k.startsWith('codec_') ? k.replaceFirst('codec_', '${isZh ? "编码" : "Codec"} ') : k;
-                    final items = _features[k] ?? [];
-                    return Tab(text: '$label (${items.length})');
-                  }).toList()),
-              SizedBox(height: 180, child: TabBarView(
-                children: _features.keys.map((k) => ListView.builder(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  itemCount: (_features[k] ?? []).length,
-                  itemBuilder: (_, i) => Padding(padding: const EdgeInsets.symmetric(vertical: 1),
-                      child: Text((_features[k] ?? [])[i], style: TextStyle(fontSize: 10, fontFamily: 'Consolas', color: scheme.onSurface))),
-                )).toList(),
-              )),
-            ]),
-          ),
-        ]);
-      }
-
-      featureWidgets.addAll([
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
         Wrap(spacing: 4, runSpacing: 4, children: [
           _link('ffmpeg.org', 'https://ffmpeg.org'),
           _link('gyan.dev', 'https://github.com/AnimMouse/ffmpeg-stable-autobuild'),
           _link('BtbN', 'https://github.com/BtbN/FFmpeg-Builds/releases'),
         ]),
       ]);
-
-      card = _card(scheme, glass, cardAlpha, cfg, s.ffmpegSettings, featureWidgets);
     }
 
     return card;
@@ -701,7 +656,8 @@ class _FfmpegCardState extends State<_FfmpegCard> {
 
 class _CP extends StatefulWidget {
   final Color initial;
-  const _CP({required this.initial});
+  final bool isZh;
+  const _CP({required this.initial, required this.isZh});
   @override
   State<_CP> createState() => _CPState();
 }
@@ -718,25 +674,29 @@ class _CPState extends State<_CP> {
   Color get c => HSVColor.fromAHSV(1, _h, _s, _v).toColor();
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Custom Color'),
-    content: SizedBox(width: 260, child: Column(mainAxisSize: MainAxisSize.min, children: [
-      Container(height: 60, decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(8))),
-      const SizedBox(height: 10),
-      _sl('Hue', _h, 0, 360, (v) => setState(() => _h = v)),
-      _sl('Sat', _s, 0, 1, (v) => setState(() => _s = v)),
-      _sl('Val', _v, 0, 1, (v) => setState(() => _v = v)),
-      Text('#${c.toARGB32().toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}',
-          style: const TextStyle(fontFamily: 'monospace', fontSize: 11)),
-    ])),
-    actions: [
-      TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-      FilledButton(onPressed: () => Navigator.pop(context, c), child: const Text('Select')),
-    ],
-  );
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final labelStyle = TextStyle(fontSize: 10, color: scheme.onSurface);
+    return AlertDialog(
+      title: Text(widget.isZh ? '自定义颜色' : 'Custom Color', style: TextStyle(color: scheme.onSurface)),
+      content: SizedBox(width: 260, child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Container(height: 60, decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(8))),
+        const SizedBox(height: 10),
+        _sl(widget.isZh ? '色相' : 'Hue', _h, 0, 360, labelStyle, (v) => setState(() => _h = v)),
+        _sl(widget.isZh ? '饱和' : 'Sat', _s, 0, 1, labelStyle, (v) => setState(() => _s = v)),
+        _sl(widget.isZh ? '明度' : 'Val', _v, 0, 1, labelStyle, (v) => setState(() => _v = v)),
+        Text('#${c.toARGB32().toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}',
+            style: TextStyle(fontFamily: 'monospace', fontSize: 11, color: scheme.onSurface)),
+      ])),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: Text(widget.isZh ? '取消' : 'Cancel')),
+        FilledButton(onPressed: () => Navigator.pop(context, c), child: Text(widget.isZh ? '选择' : 'Select')),
+      ],
+    );
+  }
 
-  Widget _sl(String l, double v, double min, double max, ValueChanged<double> cb) => Row(children: [
-    SizedBox(width: 30, child: Text(l, style: const TextStyle(fontSize: 10))),
+  Widget _sl(String l, double v, double min, double max, TextStyle labelStyle, ValueChanged<double> cb) => Row(children: [
+    SizedBox(width: 30, child: Text(l, style: labelStyle)),
     Expanded(child: Slider(value: v, min: min, max: max, onChanged: cb)),
   ]);
 }
