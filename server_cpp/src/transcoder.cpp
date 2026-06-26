@@ -154,6 +154,12 @@ std::vector<std::string> buildTranscodeCommand(
 
     std::vector<std::string> cmd = {"ffmpeg"};
 
+    // 片段截取：-ss 放在 -i 之前（input seeking，更快）
+    if (options.contains("start_time") && !options["start_time"].is_null()) {
+        cmd.push_back("-ss");
+        cmd.push_back(std::to_string(options["start_time"].get<double>()));
+    }
+
     // 硬件加速解码
     if (HWACCEL_PARAMS.count(gpu) && encoder != "copy") {
         for (auto& p : HWACCEL_PARAMS.at(gpu)) {
@@ -163,6 +169,12 @@ std::vector<std::string> buildTranscodeCommand(
 
     cmd.push_back("-i");
     cmd.push_back(input_path);
+
+    // 片段截取结束时间
+    if (options.contains("end_time") && !options["end_time"].is_null()) {
+        cmd.push_back("-to");
+        cmd.push_back(std::to_string(options["end_time"].get<double>()));
+    }
 
     // 编码参数
     auto enc_params = buildEncodingParams(options, input_pix_fmt);

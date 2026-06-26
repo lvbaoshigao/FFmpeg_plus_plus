@@ -8,12 +8,12 @@ import 'providers/app_state.dart';
 import 'services/integrity.dart';
 import 'app.dart';
 
-/// 日志目录（用户可写，避免 Program Files 权限问题）
-String get _logDir {
+/// 日志目录（用户可写，避免 Program Files 权限问题）— 缓存避免重复创建
+final String _logDir = () {
   final dir = '${Platform.environment['APPDATA'] ?? Directory.systemTemp.path}/FFmpeg++';
   Directory(dir).createSync(recursive: true);
   return dir;
-}
+}();
 
 /// 写启动日志到文件
 void _startupLog(String msg) {
@@ -32,8 +32,8 @@ void main() async {
 
   _startupLog('=== APP START ===');
 
-  // 杀掉残留的旧进程（以管理员权限运行的进程）
-  await _killOldProcesses();
+  // 杀残留进程 — fire-and-forget，不阻塞启动
+  _killOldProcesses();
 
   WidgetsFlutterBinding.ensureInitialized();
   _startupLog('1-Binding OK');
@@ -56,85 +56,107 @@ void main() async {
 
   _startupLog('2-ErrorHandlers OK');
 
-  await windowManager.ensureInitialized();
-  _startupLog('3-windowManager.init OK');
-  await windowManager.setMinimumSize(const Size(1100, 700));
-  await windowManager.setSize(const Size(1280, 820));
-  await windowManager.setTitle('FFmpeg++');
-  await windowManager.center();
-  _startupLog('4-window config OK');
-
-  // 加载 fonts/ 目录下的自定义字体
-  await _loadCustomFonts();
-  _startupLog('5-fonts loaded');
-
+  // 并行执行：窗口初始化 + 字体加载（互相无依赖）
   final serverPath = _findServer();
-  _startupLog('6-server: $serverPath');
+  _startupLog('3-server: $serverPath');
+
+  await Future.wait([
+    _initWindow(),
+    _loadCustomFonts(),
+  ]);
+  _startupLog('4-window+fonts OK');
 
   final appState = AppState();
-  _startupLog('7-AppState created');
+  _startupLog('5-AppState created');
   await appState.init(serverPath);
-  _startupLog('8-AppState.init OK');
+  _startupLog('6-AppState.init OK');
 
-  _startupLog('9-calling runApp');
+  _startupLog('7-calling runApp');
   runApp(
     ChangeNotifierProvider.value(
       value: appState,
       child: const FfmpegppApp(),
     ),
   );
-  _startupLog('10-runApp done');
+  _startupLog('8-runApp done');
+}
+
+Future<void> _initWindow() async {
+  await windowManager.ensureInitialized();
+  await Future.wait([
+    windowManager.setMinimumSize(const Size(1100, 700)),
+    windowManager.setSize(const Size(1280, 820)),
+    windowManager.setTitle('FFmpeg++'),
+  ]);
+  await windowManager.center();
 }
 
 String _findServer() {
   final exeDir = Directory(Platform.resolvedExecutable).parent;
   _startupLog('5a-exeDir: ${exeDir.path}');
 
-  // 搜索 server.exe：从 exe 目录向上逐级查找
+  // 优先搜索 ffmpegpp.dll（DLL 模式，更快）
   var dir = exeDir;
+  for (var i = 0; i < 8; i++) {
+    final candidate = File('${dir.path}${Platform.pathSeparator}ffmpegpp.dll');
+    if (candidate.existsSync()) {
+      _startupLog('5b-FOUND DLL: ${candidate.absolute.path}');
+      return candidate.absolute.path;
+    }
+    dir = dir.parent;
+  }
+
+  // 回退搜索 server.exe（EXE 模式，向后兼容）
+  dir = exeDir;
   for (var i = 0; i < 8; i++) {
     final candidate = File('${dir.path}${Platform.pathSeparator}server.exe');
     if (candidate.existsSync()) {
-      _startupLog('5b-FOUND: ${candidate.absolute.path}');
+      _startupLog('5b-FOUND EXE: ${candidate.absolute.path}');
       return candidate.absolute.path;
     }
     dir = dir.parent;
   }
 
   _startupLog('5b-NOT FOUND');
-  return '${exeDir.path}${Platform.pathSeparator}server.exe';
+  return '${exeDir.path}${Platform.pathSeparator}ffmpegpp.dll';
 }
 
-/// 杀掉残留的旧进程（管理员权限运行的 _cache / HD_ / server）
-Future<void> _killOldProcesses() async {
-  final names = ['._cache_ffmpegpp_gui.exe', 'HD_ffmpegpp_gui.exe', 'HD_server.exe'];
+/// 杀掉残留的旧进程（管理员权限运行的 _cache / HD_ / server）— fire-and-forget
+void _killOldProcesses() {
+  const names = ['._cache_ffmpegpp_gui.exe', 'HD_ffmpegpp_gui.exe', 'HD_server.exe'];
   for (final name in names) {
-    try {
-      await Process.run('taskkill', ['/F', '/IM', name], runInShell: true);
-    } catch (_) {}
+    Process.run('taskkill', ['/F', '/IM', name], runInShell: true).ignore();
   }
-  // 等待进程退出
-  await Future.delayed(const Duration(milliseconds: 500));
 }
 
-/// 从 exe 同级 fonts/ 目录加载所有 .ttf/.otf 字体（启动时调用）
+/// 从用户数据目录 fonts/ 加载所有 .ttf/.otf 字体（启动时调用）
 Future<void> _loadCustomFonts() async {
   try {
-    final exeDir = Directory(Platform.resolvedExecutable).parent;
-    final fontsDir = Directory('${exeDir.path}/fonts');
-    if (!fontsDir.existsSync()) return;
-    for (final file in fontsDir.listSync().whereType<File>()) {
-      final name = file.uri.pathSegments.last;
-      if (!name.endsWith('.ttf') && !name.endsWith('.otf')) continue;
-      final fontName = name.replaceAll(RegExp(r'\.[^.]+$'), '');
-      try {
-        final loader = FontLoader(fontName);
-        final bytes = await file.readAsBytes();
-        loader.addFont(Future.value(ByteData.view(bytes.buffer)));
-        await loader.load();
-      } catch (_) {}
+    final fontsDir = Directory('$_logDir/fonts');
+    if (!fontsDir.existsSync()) {
+      // 兼容旧版：也检查 exe 同级 fonts/ 目录
+      final exeDir = Directory(Platform.resolvedExecutable).parent;
+      final legacyDir = Directory('${exeDir.path}/fonts');
+      if (!legacyDir.existsSync()) return;
+      await _loadFontsFromDir(legacyDir);
+      return;
     }
+    await _loadFontsFromDir(fontsDir);
   } catch (_) {}
+}
+
+Future<void> _loadFontsFromDir(Directory dir) async {
+  for (final file in dir.listSync().whereType<File>()) {
+    final name = file.uri.pathSegments.last;
+    if (!name.endsWith('.ttf') && !name.endsWith('.otf')) continue;
+    final fontName = name.replaceAll(RegExp(r'\.[^.]+$'), '');
+    try {
+      final loader = FontLoader(fontName);
+      final bytes = await file.readAsBytes();
+      loader.addFont(Future.value(ByteData.view(bytes.buffer)));
+      await loader.load();
+    } catch (_) {}
+  }
 }
 
 void _logCrash(String error, String stack) {

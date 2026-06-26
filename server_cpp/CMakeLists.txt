@@ -7,10 +7,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # 避免 Windows.h 的 min/max 宏冲突
 add_definitions(-DNOMINMAX)
 
-# Windows 子系统：控制台（有 stdin/stdout，不弹窗）
-add_executable(server
-    src/main.cpp
+# 共享源文件列表（两个目标共用）
+set(SHARED_SOURCES
+    src/handlers.cpp
     src/json_io.cpp
+    src/message_queues.cpp
     src/subprocess.cpp
     src/probe.cpp
     src/transcoder.cpp
@@ -21,18 +22,22 @@ add_executable(server
     src/ffmpeg_features.cpp
 )
 
+# ═══════════════════════════════════════════════
+# EXE 目标（调试/向后兼容）
+# ═══════════════════════════════════════════════
+add_executable(server
+    src/main.cpp
+    ${SHARED_SOURCES}
+)
+
 target_include_directories(server PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-# Windows 特定链接
 target_link_libraries(server PRIVATE kernel32 user32)
-# 关键：WIN32_EXECUTABLE=FALSE → 编译为 console 子系统（有 stdin/stdout）
-# ShowWindow(GetConsoleWindow(), SW_HIDE) 在 main() 中隐藏窗口
 set_target_properties(server PROPERTIES WIN32_EXECUTABLE FALSE)
 
-# Release 优化 + UTF-8 编码 + 并行编译
 if(MSVC)
     target_compile_options(server PRIVATE /O2 /W3 /utf-8 /MP12)
 else()
@@ -41,7 +46,6 @@ endif()
 
 # 构建后用 mt.exe 替换 UAC manifest（asInvoker，不需要管理员权限）
 if(MSVC)
-    # 编译图标资源
     set(ICON_RC "${CMAKE_CURRENT_SOURCE_DIR}/icon.rc")
     set(ICON_RES "${CMAKE_CURRENT_BINARY_DIR}/icon.res")
     if(EXISTS "${ICON_RC}")
@@ -54,7 +58,6 @@ if(MSVC)
         target_sources(server PRIVATE "${ICON_RES}")
     endif()
 
-    # 查找 Windows SDK 的 mt.exe
     find_program(MT_EXECUTABLE mt.exe
         HINTS
             "C:/Program Files (x86)/Windows Kits/10/bin/10.0.26100.0/x64"
@@ -72,3 +75,35 @@ if(MSVC)
         message(WARNING "mt.exe not found - server.exe will require admin privileges!")
     endif()
 endif()
+
+# ═══════════════════════════════════════════════
+# DLL 目标（主要部署方式）
+# ═══════════════════════════════════════════════
+add_library(ffmpegpp SHARED
+    src/dll_main.cpp
+    ${SHARED_SOURCES}
+)
+
+target_include_directories(ffmpegpp PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_compile_definitions(ffmpegpp PRIVATE
+    FFMPEGPP_DLL_MODE
+    FFMPEGPP_BUILDING_DLL
+    NOMINMAX
+)
+
+target_link_libraries(ffmpegpp PRIVATE kernel32 user32)
+
+if(MSVC)
+    target_compile_options(ffmpegpp PRIVATE /O2 /W3 /utf-8 /MP12)
+else()
+    target_compile_options(ffmpegpp PRIVATE -O2 -Wall)
+endif()
+
+set_target_properties(ffmpegpp PROPERTIES
+    OUTPUT_NAME "ffmpegpp"
+    PREFIX ""
+)

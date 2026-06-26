@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
+import '../pages/pipeline_editor_page.dart';
 import 'config_dialog.dart';
 
 class VideoCard extends StatelessWidget {
@@ -53,7 +54,30 @@ class VideoCard extends StatelessWidget {
   }
 
   void _openConfig(BuildContext context, AppState state) {
-    showDialog(context: context, builder: (_) => ConfigDialog(video: video, onSave: (cfg) => state.updateVideoConfig(video.id, cfg)));
+    if (state.config.useNodeEditor) {
+      Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => PipelineEditorPage(
+          video: video,
+          onSave: (graph) {
+            state.updateVideoConfig(video.id, video.config);
+            final idx = state.videos.indexWhere((v) => v.id == video.id);
+            if (idx >= 0) {
+              state.updateVideoPipeline(video.id, graph);
+            }
+          },
+        ),
+      ));
+    } else {
+      showDialog(
+        context: context,
+        builder: (_) => ConfigDialog(
+          video: video,
+          onSave: (cfg) {
+            state.updateVideoConfig(video.id, cfg);
+          },
+        ),
+      );
+    }
   }
 }
 

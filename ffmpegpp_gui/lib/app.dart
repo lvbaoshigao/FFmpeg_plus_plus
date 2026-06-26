@@ -7,7 +7,6 @@ import 'theme/app_theme.dart';
 import 'pages/project_page.dart';
 import 'pages/queue_page.dart';
 import 'pages/command_page.dart';
-import 'pages/ai_page.dart';
 import 'pages/settings_page.dart';
 import 'pages/log_page.dart';
 import 'widgets/sidebar.dart';
@@ -20,7 +19,7 @@ class FfmpegppApp extends StatelessWidget {
       builder: (context, state, _) {
         final cfg = state.config;
         return MaterialApp(
-          key: ValueKey('app_${cfg.fontFamily}_${cfg.fontSize}_${cfg.darkMode}_${cfg.themeColor}'),
+          key: ValueKey('app_${cfg.fontFamily}_${cfg.fontWeightValue}'),
           title: 'FFmpeg++', debugShowCheckedModeBanner: false,
           theme: AppTheme.light(seedColor: cfg.themeColor, fontFamily: cfg.fontFamily,
               fontSize: cfg.fontSize, fontWeight: cfg.fontWeightValue, glass: cfg.glassEffect),
@@ -97,8 +96,8 @@ class _AppShellState extends State<AppShell> with WindowListener {
 
   Widget _page(int i) => switch (i) {
     0 => const ProjectPage(), 1 => const QueuePage(),
-    2 => const CommandPage(), 3 => const AIPage(),
-    4 => const SettingsPage(), 5 => const LogPage(),
+    2 => const CommandPage(), 3 => const SettingsPage(),
+    4 => const LogPage(),
     _ => const ProjectPage(),
   };
 }

@@ -1,12 +1,11 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 import '../models/models.dart';
 import '../services/python_process.dart';
 import '../services/backend_client.dart';
 import '../services/config_service.dart';
+import '../services/graph_executor.dart';
 
 class AppState extends ChangeNotifier {
   final PythonProcessManager pythonProcess = PythonProcessManager();
@@ -32,10 +31,6 @@ class AppState extends ChangeNotifier {
   bool _processing = false;
   bool get processing => _processing;
   String? _currentTaskId;
-
-  String? _aiGeneratedCommand;
-  String? get aiGeneratedCommand => _aiGeneratedCommand;
-  void setAICommand(String cmd) { _aiGeneratedCommand = cmd; notifyListeners(); }
 
   // ── Log entries ──
   final List<LogEntry> _logEntries = [];
@@ -151,6 +146,7 @@ class AppState extends ChangeNotifier {
     });
     // Initial log
     addLog('日志面板已就绪', category: 'info');
+    addLog('后端模式: ${pythonProcess.isRunning ? "已连接" : "未连接"}', category: 'info');
   }
 
   void selectNav(int i) { _selectedNav = i; notifyListeners(); }
@@ -158,29 +154,63 @@ class AppState extends ChangeNotifier {
   Future<void> addVideos(List<String> filepaths) async {
     _probingVideos = true; notifyListeners();
     addLog('添加 ${filepaths.length} 个文件', category: 'info');
+
+    // 先全部加入列表（立即显示占位卡片），再逐个探测
+    final entries = <VideoFile>[];
     for (final fp in filepaths) {
-      final vf = VideoFile.fromFilepath(fp); _videos.add(vf); notifyListeners();
-      addLog('探测: ${vf.filename}', category: 'info');
-      try {
-        final resp = await backend.probe(fp);
-        if (resp['success'] == true) {
-          final info = resp['data'] as Map<String, dynamic>;
-          final idx = _videos.indexWhere((v) => v.id == vf.id);
-          if (idx >= 0) { _videos[idx] = VideoFile.fromProbeResult(fp, info, id: vf.id); _probeErrors.remove(fp); notifyListeners(); }
-          addLog('探测成功: ${vf.filename} (${info['resolution']})', category: 'ffmpeg');
-        } else { _probeErrors[fp] = resp['error'] as String? ?? 'Unknown'; notifyListeners(); addLog('探测失败: ${resp['error']}', category: 'error'); }
-      } catch (e) { _probeErrors[fp] = 'Error: $e'; notifyListeners(); addLog('探测异常: $e', category: 'error'); }
+      final vf = VideoFile.fromFilepath(fp);
+      _videos.add(vf);
+      entries.add(vf);
     }
+    notifyListeners();
+
+    for (final vf in entries) {
+      await _probeOne(vf);
+    }
+
     _probingVideos = false; notifyListeners();
+  }
+
+  Future<void> _probeOne(VideoFile vf) async {
+    addLog('探测: ${vf.filename}', category: 'info');
+    try {
+      final resp = await backend.probe(vf.filepath);
+      if (resp['success'] == true) {
+        final info = resp['data'] as Map<String, dynamic>;
+        final idx = _videos.indexWhere((v) => v.id == vf.id);
+        if (idx >= 0) { _videos[idx] = VideoFile.fromProbeResult(vf.filepath, info, id: vf.id); _probeErrors.remove(vf.filepath); notifyListeners(); }
+        addLog('探测成功: ${vf.filename}', category: 'ffmpeg');
+        addLog('  编码: ${info['codec']} | 分辨率: ${info['resolution']} | 帧率: ${info['fps']}fps', category: 'ffmpeg');
+        addLog('  时长: ${info['duration_str']} | 大小: ${(info['size_mb'] as num?)?.toStringAsFixed(1) ?? '?'}MB | 像素: ${info['pix_fmt']}', category: 'ffmpeg');
+        addLog('  音频: ${info['audio_codec']} ${info['audio_channels']}ch ${info['audio_sample_rate']}Hz', category: 'ffmpeg');
+        if (info['has_subtitles'] == true) addLog('  字幕: ${info['subtitle_count']} 轨道', category: 'ffmpeg');
+        if (info['is_hdr'] == true) addLog('  HDR: 是', category: 'ffmpeg');
+      } else { _probeErrors[vf.filepath] = resp['error'] as String? ?? 'Unknown'; notifyListeners(); addLog('探测失败: ${resp['error']}', category: 'error'); }
+    } catch (e) { _probeErrors[vf.filepath] = 'Error: $e'; notifyListeners(); addLog('探测异常: $e', category: 'error'); }
   }
 
   void removeVideo(String id) { _videos.removeWhere((v) => v.id == id); notifyListeners(); }
   void updateVideoConfig(String id, TranscodeConfig c) { final i = _videos.indexWhere((v) => v.id == id); if (i >= 0) { _videos[i] = _videos[i].copyWith(config: c); notifyListeners(); } }
 
+  void updateVideoPipeline(String id, PipelineGraph graph) {
+    final i = _videos.indexWhere((v) => v.id == id);
+    if (i >= 0) {
+      _videos[i] = _videos[i].copyWith(pipelineGraph: graph);
+      notifyListeners();
+    }
+  }
+
   void addTask(String videoId) {
     final idx = _videos.indexWhere((v) => v.id == videoId);
     if (idx < 0) return;
-    final video = _videos[idx]; final cfg = video.config;
+    final video = _videos[idx];
+
+    if (video.pipelineGraph.nodes.isNotEmpty) {
+      _addTasksFromGraph(video);
+      return;
+    }
+
+    final cfg = video.config;
     final ext = cfg.outputFormat == 'keep' ? video.filepath.split('.').last : cfg.outputFormat;
     final base = video.filename.replaceAll(RegExp(r'\.[^.]+$'), '');
     String fn = cfg.namingMode == 'keep' ? '$base.$ext' : cfg.namingMode == 'suffix' ? '$base${cfg.namingValue}.$ext' : '${cfg.namingValue}.$ext';
@@ -189,6 +219,31 @@ class AppState extends ChangeNotifier {
     var out = '$dir$fn';
     if (out == video.filepath) { final be = fn.replaceAll(RegExp(r'\.[^.]+$'), ''); final ee = fn.split('.').last; out = '${dir}${be}_processed.$ee'; }
     _tasks.add(TaskInfo(id: 'task_${_tasks.length}_${DateTime.now().millisecondsSinceEpoch}', videoId: videoId, filename: video.filename, inputPath: video.filepath, outputPath: out, config: cfg));
+    notifyListeners();
+  }
+
+  void _addTasksFromGraph(VideoFile video) {
+    final plans = GraphExecutor.resolvePlans(video.pipelineGraph);
+    if (plans.isEmpty) {
+      addLog('节点图中未找到完整的 源文件→输出 任务', category: 'error');
+      return;
+    }
+    for (var i = 0; i < plans.length; i++) {
+      final plan = plans[i];
+      final outputPath = GraphExecutor.resolveOutputPath(plan, video, config);
+      final calls = GraphExecutor.buildBackendCalls(plan, video.filepath, outputPath);
+      if (calls.isEmpty) continue;
+      final label = plans.length > 1 ? '${video.filename} [任务${i + 1}]' : video.filename;
+      _tasks.add(TaskInfo(
+        id: 'task_${_tasks.length}_${DateTime.now().millisecondsSinceEpoch}',
+        videoId: video.id,
+        filename: label,
+        inputPath: video.filepath,
+        outputPath: outputPath,
+        config: TranscodeConfig(),
+        pipelineCalls: calls,
+      ));
+    }
     notifyListeners();
   }
 
@@ -230,25 +285,30 @@ class AppState extends ChangeNotifier {
     addLog('开始处理: ${task.filename}', category: 'info');
     addLog('输入: ${task.inputPath}', category: 'info');
     addLog('输出: ${task.outputPath}', category: 'info');
-    addLog('编码器: ${task.config.videoCodec}, GPU: ${task.config.gpu}', category: 'info');
 
-    if (config.aiEnabled) {
-      addLog('AI 已启用，开始生成命令...', category: 'info');
-      final cmd = await _generateAICommand(task);
-      if (cmd == null) {
-        addLog('AI 命令生成失败，跳过任务', category: 'error');
-        _tasks[pi] = _tasks[pi].copyWith(status: TaskStatus.failed, error: 'AI generation failed. Check API config or disable AI.');
-        _processing = false; _currentTaskId = null; notifyListeners(); return;
-      }
-      _aiGeneratedCommand = cmd;
-      addLog('AI 命令生成成功: $cmd', category: 'info');
+    if (task.pipelineCalls != null && task.pipelineCalls!.isNotEmpty) {
+      await _processPipelineTask(pi);
     } else {
-      addLog('AI 未启用，使用默认编码参数', category: 'info');
+      await _processLegacyTask(pi, task);
     }
+
+    _processing = false; _currentTaskId = null;
+    if (_tasks.any((t) => t.status == TaskStatus.pending)) processNextTask();
+  }
+
+  Future<void> _processLegacyTask(int pi, TaskInfo task) async {
+    final c = task.config;
+    addLog('编码器: ${c.videoCodec}, GPU: ${c.gpu}, 预设: ${c.preset}', category: 'info');
+    if (c.crf != null) addLog('  CRF: ${c.crf}', category: 'info');
+    if (c.videoBitrate != null) addLog('  视频码率: ${c.videoBitrate}kbps', category: 'info');
+    if (c.resolutionW != null) addLog('  分辨率: ${c.resolutionW}x${c.resolutionH}', category: 'info');
+    if (c.framerate != null) addLog('  帧率: ${c.framerate}fps', category: 'info');
+    addLog('  音频: ${c.audioCodec} ${c.audioBitrate ?? '默认'}kbps ${c.audioChannels ?? '原始'}ch', category: 'info');
+    if (c.subtitleEnabled) addLog('  字幕: ${c.subtitleSource} ${c.subtitleFile ?? '内嵌#${c.subtitleIndex}'}', category: 'info');
+    if (c.startTime != null || c.endTime != null) addLog('  截取: ${c.startTime ?? 0}s - ${c.endTime ?? '末尾'}', category: 'info');
 
     StreamSubscription<ProgressUpdate>? sub;
     sub = backend.progressStream.listen((u) {
-      debugPrint('[Progress] taskId=${u.taskId} current=$_currentTaskId progress=${u.progress}');
       if (u.taskId == _currentTaskId) {
         final i = _tasks.indexWhere((t) => t.id == _currentTaskId);
         if (i >= 0) {
@@ -284,14 +344,152 @@ class AppState extends ChangeNotifier {
         final d = resp['data'] as Map<String, dynamic>?;
         _tasks[fi] = _tasks[fi].copyWith(status: TaskStatus.completed, progress: 100, outputSize: d?['output_size'] as int?, duration: (d?['duration'] as num?)?.toDouble(), command: (d?['command'] as List?)?.cast<String>());
         addLog('任务完成: ${task.filename} (${d?['duration']}s)', category: 'info');
+        final sz = d?['output_size'] as int?;
+        if (sz != null) addLog('  输出大小: ${(sz / 1024 / 1024).toStringAsFixed(1)}MB', category: 'info');
+        final cmd = (d?['command'] as List?)?.cast<String>();
+        if (cmd != null) addLog('  命令: ${cmd.join(' ')}', category: 'ffmpeg');
       } else {
         _tasks[fi] = _tasks[fi].copyWith(status: TaskStatus.failed, error: resp['error'] as String?, logLines: (resp['data']?['log_lines'] as List?)?.cast<String>() ?? [], command: (resp['data']?['command'] as List?)?.cast<String>());
         addLog('任务失败: ${task.filename} - ${resp['error']}', category: 'error');
       }
       notifyListeners();
     }
-    _processing = false; _currentTaskId = null;
-    if (_tasks.any((t) => t.status == TaskStatus.pending)) processNextTask();
+  }
+
+  Future<void> _processPipelineTask(int pi) async {
+    final task = _tasks[pi];
+    final calls = task.pipelineCalls!;
+    final realCalls = calls.where((c) => c.action != '_cleanup').toList();
+    final cleanupCalls = calls.where((c) => c.action == '_cleanup').toList();
+
+    addLog('节点图任务: ${realCalls.length} 步', category: 'info');
+
+    for (var ci = 0; ci < realCalls.length; ci++) {
+      final call = realCalls[ci];
+      final stepProgress = ci / realCalls.length;
+
+      final fi = _tasks.indexWhere((t) => t.id == _currentTaskId);
+      if (fi >= 0) {
+        _tasks[fi] = _tasks[fi].copyWith(currentCallIndex: ci, progress: stepProgress * 100);
+        notifyListeners();
+      }
+
+      addLog('步骤 ${ci + 1}/${realCalls.length}: ${call.action}', category: 'info');
+
+      StreamSubscription<ProgressUpdate>? sub;
+      sub = backend.progressStream.listen((u) {
+        if (u.taskId == _currentTaskId) {
+          final i = _tasks.indexWhere((t) => t.id == _currentTaskId);
+          if (i >= 0) {
+            final overallProgress = (stepProgress + u.progress / 100 / realCalls.length) * 100;
+            _tasks[i] = _tasks[i].copyWith(
+              status: TaskStatus.processing,
+              progress: overallProgress.clamp(0, 100),
+              elapsed: u.currentTime, remaining: u.remaining,
+              speed: u.speed, fps: u.fps, bitrate: u.bitrate, frame: u.frame,
+            );
+            notifyListeners();
+          }
+        }
+      });
+
+      Map<String, dynamic> resp;
+      final p = call.params;
+      switch (call.action) {
+        case 'transcode':
+          resp = await backend.transcode(task.id,
+              input: p['input'] as String, output: p['output'] as String,
+              options: p['options'] as Map<String, dynamic>);
+          break;
+        case 'subtitle':
+          resp = await backend.subtitle(task.id,
+              input: p['input'] as String, output: p['output'] as String,
+              subtitleOptions: p['subtitle_options'] as Map<String, dynamic>,
+              videoOptions: p['video_options'] as Map<String, dynamic>?);
+          break;
+        case 'extract_frame':
+          resp = await backend.extractFrame(task.id,
+              input: p['input'] as String, output: p['output'] as String,
+              time: (p['time'] as num).toDouble());
+          break;
+        case 'extract_frames_range':
+        case 'extract_frames_all':
+          resp = await _runFrameExtraction(p);
+          break;
+        default:
+          resp = {'success': false, 'error': '未知动作: ${call.action}'};
+      }
+      await sub.cancel();
+
+      if (resp['success'] != true) {
+        final fi2 = _tasks.indexWhere((t) => t.id == _currentTaskId);
+        if (fi2 >= 0) {
+          _tasks[fi2] = _tasks[fi2].copyWith(
+            status: TaskStatus.failed,
+            error: '步骤 ${ci + 1} 失败: ${resp['error']}',
+            logLines: (resp['data']?['log_lines'] as List?)?.cast<String>() ?? [],
+            command: (resp['data']?['command'] as List?)?.cast<String>(),
+          );
+          addLog('步骤 ${ci + 1} 失败: ${resp['error']}', category: 'error');
+          notifyListeners();
+        }
+        _cleanupTempFiles(cleanupCalls);
+        return;
+      }
+      addLog('步骤 ${ci + 1} 完成', category: 'info');
+    }
+
+    final fi3 = _tasks.indexWhere((t) => t.id == _currentTaskId);
+    if (fi3 >= 0) {
+      final outFile = File(task.outputPath);
+      final outSize = outFile.existsSync() ? outFile.lengthSync() : null;
+      _tasks[fi3] = _tasks[fi3].copyWith(status: TaskStatus.completed, progress: 100, outputSize: outSize);
+      addLog('任务完成: ${task.filename}', category: 'info');
+      notifyListeners();
+    }
+
+    _cleanupTempFiles(cleanupCalls);
+  }
+
+  Future<Map<String, dynamic>> _runFrameExtraction(Map<String, dynamic> p) async {
+    final input = p['input'] as String;
+    final outDir = p['output_dir'] as String;
+    final fps = (p['fps'] as num?)?.toDouble() ?? 1.0;
+    final fmt = p['format'] as String? ?? 'png';
+    final startTime = p['start_time'] as double?;
+    final endTime = p['end_time'] as double?;
+
+    try {
+      final dir = Directory(outDir);
+      if (!dir.existsSync()) dir.createSync(recursive: true);
+
+      final args = <String>['ffmpeg', '-y'];
+      if (startTime != null) args.addAll(['-ss', '$startTime']);
+      args.addAll(['-i', input]);
+      if (endTime != null) args.addAll(['-to', '${endTime - (startTime ?? 0)}']);
+      args.addAll(['-vf', 'fps=$fps', '$outDir/frame_%06d.$fmt']);
+
+      addLog('帧提取: ${args.join(' ')}', category: 'info');
+      final result = await Process.run(args[0], args.sublist(1));
+      if (result.exitCode == 0) {
+        final count = dir.listSync().where((f) => f.path.endsWith('.$fmt')).length;
+        addLog('帧提取完成: $count 帧 → $outDir', category: 'info');
+        return {'success': true, 'data': {'output_path': outDir, 'frame_count': count}};
+      } else {
+        return {'success': false, 'error': '帧提取失败: ${(result.stderr as String).split('\n').last}'};
+      }
+    } catch (e) {
+      return {'success': false, 'error': '帧提取异常: $e'};
+    }
+  }
+
+  void _cleanupTempFiles(List<BackendCall> cleanupCalls) {
+    for (final c in cleanupCalls) {
+      final path = c.params['path'] as String?;
+      if (path != null) {
+        try { File(path).deleteSync(); } catch (_) {}
+      }
+    }
   }
 
   void cancelProcessing() {
@@ -309,54 +507,18 @@ class AppState extends ChangeNotifier {
   Future<void> updateConfig(AppConfig Function(AppConfig) f) async { await configService.update(f); notifyListeners(); }
 
   Future<Map<String, dynamic>> recheckEnv() async {
+    addLog('检测 FFmpeg 环境...', category: 'info');
     final env = await backend.checkEnv();
     _envChecked = true; _envOk = env['success'] == true && (env['data']?['all_ok'] as bool? ?? false);
     _ffmpegVersion = env['data']?['ffmpeg_version'] as String? ?? '';
+    if (_envOk) {
+      addLog('FFmpeg 环境正常: $_ffmpegVersion', category: 'info');
+      final path = env['data']?['ffmpeg_path'] as String?;
+      if (path != null) addLog('  路径: $path', category: 'info');
+    } else {
+      addLog('FFmpeg 环境异常: ${env['error'] ?? '未知错误'}', category: 'error');
+    }
     notifyListeners(); return env;
-  }
-
-  Future<String?> _generateAICommand(TaskInfo task) async {
-    final c = config;
-    if (c.aiEndpoint.isEmpty || c.aiKey.isEmpty) return null;
-    addLog('AI 请求: ${c.aiModel} → ${c.aiEndpoint}', category: 'info');
-    String p = c.aiPrompt
-        .replaceAll('{input}', task.inputPath).replaceAll('{output}', task.outputPath)
-        .replaceAll('{video_codec}', task.config.videoCodec).replaceAll('{gpu}', task.config.gpu)
-        .replaceAll('{resolution}', '${task.config.resolutionW ?? 'none'}x${task.config.resolutionH ?? 'none'}')
-        .replaceAll('{bitrate}', '${task.config.videoBitrate}').replaceAll('{framerate}', '${task.config.framerate ?? 'none'}')
-        .replaceAll('{audio_codec}', task.config.audioCodec).replaceAll('{audio_bitrate}', '${task.config.audioBitrate}')
-        .replaceAll('{audio_channels}', '${task.config.audioChannels ?? 'none'}')
-        .replaceAll('{subtitle}', task.config.subtitleEnabled ? (task.config.subtitleFile ?? 'embedded') : 'none')
-        .replaceAll('{extra}', '');
-    addLog('AI Prompt 已构建 (${p.length} chars)', category: 'info');
-    try {
-      final resp = await http.post(Uri.parse('${c.aiEndpoint}/v1/chat/completions'),
-          headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ${c.aiKey}'},
-          body: jsonEncode({'model': c.aiModel, 'messages': [{'role': 'user', 'content': p}], 'temperature': 0.3}))
-          .timeout(const Duration(seconds: 90));
-      addLog('AI 响应: HTTP ${resp.statusCode}', category: 'info');
-      if (resp.statusCode != 200) {
-        addLog('AI 请求失败: ${resp.body}', category: 'error');
-        return null;
-      }
-      final data = jsonDecode(resp.body);
-      final text = data['choices']?[0]?['message']?['content'] ?? '';
-      final cmd = _extractAICommand(text);
-      if (cmd != null) {
-        addLog('AI 生成命令: $cmd', category: 'info');
-      } else {
-        addLog('AI 未能从响应中提取 ffmpeg 命令', category: 'error');
-      }
-      return cmd;
-    } catch (e) { addLog('AI 请求异常: $e', category: 'error'); return null; }
-  }
-
-  String? _extractAICommand(String text) {
-    for (final line in text.split('\n')) { final t = line.trim(); if (t.startsWith('ffmpeg ')) return t; }
-    final m = RegExp(r'```(?:bash|sh|shell)?\s*\n?(ffmpeg[^\n]*)', multiLine: true).firstMatch(text);
-    if (m != null) return m.group(1)!.trim();
-    for (final line in text.split('\n')) { if (line.contains('ffmpeg ')) { final s = line.indexOf('ffmpeg '); return line.substring(s).trim(); } }
-    return null;
   }
 
   Future<void> shutdown() async { await pythonProcess.shutdown(); }

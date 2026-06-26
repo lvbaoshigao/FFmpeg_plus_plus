@@ -3,6 +3,10 @@
 #include <windows.h>
 #include <io.h>
 
+#ifdef FFMPEGPP_DLL_MODE
+#include "message_queues.h"
+#endif
+
 namespace ffmpegpp {
 
 std::queue<std::string> JsonWriter::_queue;
@@ -11,9 +15,26 @@ std::condition_variable JsonWriter::_cv;
 std::atomic<bool> JsonWriter::_running{false};
 std::thread JsonWriter::_writerThread;
 
+#ifdef FFMPEGPP_DLL_MODE
+
+// DLL 模式：直接推入内存队列，无需写入线程
 void JsonWriter::start() {
-    // 在主线程捕获 stdout handle，传给 writer 线程
-    // GetStdHandle 在不同线程可能返回不同值
+    _running.store(true);
+}
+
+void JsonWriter::stop() {
+    _running.store(false);
+}
+
+void JsonWriter::send(const json& obj) {
+    std::string line = obj.dump() + "\n";
+    pushOutput(line);
+}
+
+#else
+
+// EXE 模式：通过写入线程写 stdout（原有逻辑）
+void JsonWriter::start() {
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
     _running.store(true);
     _writerThread = std::thread([hOut]() {
@@ -52,6 +73,9 @@ void JsonWriter::send(const json& obj) {
     _cv.notify_one();
 }
 
+#endif // FFMPEGPP_DLL_MODE
+
+// 以下方法两种模式共用（都调用 send）
 void JsonWriter::reply(const std::string& id, bool success,
                        const json& data, const std::string& error) {
     json obj = {{"id", id}, {"success", success}};
@@ -71,6 +95,9 @@ void JsonWriter::audit(const std::string& task_id, const std::vector<std::string
     send(obj);
 }
 
+#ifndef FFMPEGPP_DLL_MODE
+
+// EXE 模式才需要 stdin 读取
 bool JsonReader::readLine(json& out) {
     static std::string buffer;
     char ch;
@@ -97,5 +124,7 @@ bool JsonReader::readLine(json& out) {
         buffer += ch;
     }
 }
+
+#endif // !FFMPEGPP_DLL_MODE
 
 } // namespace ffmpegpp

@@ -139,11 +139,17 @@ class _LogPageState extends State<LogPage> {
               border: selected ? Border.all(color: scheme.primary.withAlpha(100), width: 1) : null,
             ),
             child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Container(width: 6, height: 6, margin: const EdgeInsets.only(top: 5, right: 8),
+              Container(width: 6, height: 6, margin: const EdgeInsets.only(top: 5, right: 6),
                   decoration: BoxDecoration(color: catColor, shape: BoxShape.circle)),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                margin: const EdgeInsets.only(right: 6),
+                decoration: BoxDecoration(color: catColor.withAlpha(30), borderRadius: BorderRadius.circular(3)),
+                child: Text(entry.category.toUpperCase(), style: TextStyle(fontSize: 8, fontWeight: FontWeight.w600, color: catColor)),
+              ),
               Text(_ts(entry.timestamp), style: TextStyle(fontSize: 10, fontFamily: 'Consolas', color: scheme.outline)),
               const SizedBox(width: 8),
-              Expanded(child: Text(entry.message, style: TextStyle(fontSize: 11, fontFamily: 'Consolas',
+              Expanded(child: SelectableText(entry.message, style: TextStyle(fontSize: 11, fontFamily: 'Consolas',
                   color: entry.category == 'error' ? scheme.error : scheme.onSurface))),
             ]),
           ),
@@ -171,8 +177,8 @@ class _LogPageState extends State<LogPage> {
     );
   }
 
-  String _fmt(LogEntry e) => '[${_ts(e.timestamp)}] ${e.message}';
-  String _ts(DateTime t) => '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}:${t.second.toString().padLeft(2, '0')}';
+  String _fmt(LogEntry e) => '[${_ts(e.timestamp)}] [${e.category.toUpperCase()}] ${e.message}';
+  String _ts(DateTime t) => '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}:${t.second.toString().padLeft(2, '0')}.${t.millisecond.toString().padLeft(3, '0')}';
   Color _catColor(String cat, ColorScheme scheme) => switch (cat) {
     'info' => scheme.primary, 'ffmpeg' => Colors.teal, 'progress' => Colors.blue, 'error' => scheme.error, _ => scheme.outline,
   };

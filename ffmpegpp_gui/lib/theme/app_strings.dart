@@ -68,21 +68,6 @@ class AppStrings {
   String get bgNone => lang == 'zh' ? '无' : 'None';
   String get bgOpacity => lang == 'zh' ? '背景不透明度' : 'BG Opacity';
   String get cardOpacity => lang == 'zh' ? '卡片不透明度' : 'Card Opacity';
-  // AI tab
-  String get navAI => 'AI';
-  String get aiMasterSwitch => lang == 'zh' ? '启用AI' : 'Enable AI';
-  String get aiDescription => lang == 'zh' ? '使用AI生成ffmpeg命令' : 'Use AI to generate ffmpeg commands';
-  String get aiModel => lang == 'zh' ? '模型名称' : 'Model';
-  String get aiEndpoint => lang == 'zh' ? 'API地址' : 'Endpoint';
-  String get aiKey => 'API Key';
-  String get aiTest => lang == 'zh' ? '测试连接' : 'Test';
-  String get aiRequest => lang == 'zh' ? '请求AI' : 'Request';
-  String get aiPrompt => lang == 'zh' ? '提示词' : 'Prompt';
-  String get aiTesting => lang == 'zh' ? '测试中...' : 'Testing...';
-  String get aiSuccess => lang == 'zh' ? '连接成功' : 'Connected';
-  String get aiFailed => lang == 'zh' ? '连接失败' : 'Failed';
-  String get aiGenerating => lang == 'zh' ? 'AI生成中...' : 'Generating...';
-  String get aiResult => lang == 'zh' ? 'AI返回结果' : 'AI Result';
   // Resource monitor
   String get resCpu => 'CPU';
   String get resGpu => 'GPU';
@@ -117,7 +102,7 @@ class AppStrings {
   String get swVersion => lang == 'zh' ? '版本' : 'Version';
   String get swBuild => lang == 'zh' ? '构建日期' : 'Build';
   String get swProtocol => lang == 'zh' ? '协议' : 'Protocol';
-  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v2.2.1  |  构建 2026-06-19  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v2.2.1  |  Build 2026-06-19  |  JSON v0.1.0';
+  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v3.0.0  |  构建 2026-06-26  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v3.0.0  |  Build 2026-06-26  |  JSON v0.1.0';
   String get languageInterface => lang == 'zh' ? '界面语言' : 'Interface Language';
   String get ffmpegFound => lang == 'zh' ? 'FFmpeg 已检测到' : 'FFmpeg detected';
   String get ffmpegNotFound => lang == 'zh' ? 'FFmpeg 未检测到' : 'FFmpeg not found';
@@ -199,4 +184,17 @@ class AppStrings {
   String get aboutZfbTitle => lang == 'zh' ? '支付宝收款码' : 'Alipay';
   String get aboutClose => lang == 'zh' ? '关闭' : 'Close';
   String get aboutZoomHint => lang == 'zh' ? '点击放大' : 'Tap to zoom';
+
+  // ── 步骤编辑器 ──
+  String get stepStart => lang == 'zh' ? '开始' : 'Start';
+  String get stepAvProcess => lang == 'zh' ? '音视频处理' : 'AV Process';
+  String get keepIntermediate => lang == 'zh' ? '保留中间文件' : 'Keep intermediate files';
+  String get intermediateDir => lang == 'zh' ? '中间文件目录' : 'Intermediate Dir';
+  String get intermediateHint => lang == 'zh' ? '为空则使用系统临时目录' : 'Empty = system temp';
+
+  // ── 流程图编辑器 ──
+  String get pipelineAddChain => lang == 'zh' ? '添加链' : 'Add Chain';
+  String get pipelineParallel => lang == 'zh' ? '并行' : 'Parallel';
+  String get pipelineAddStage => lang == 'zh' ? '添加阶段' : 'Add Stage';
+  String get pipelineAddParallel => lang == 'zh' ? '添加并行步骤' : 'Add Parallel';
 }

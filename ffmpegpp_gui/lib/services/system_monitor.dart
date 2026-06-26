@@ -11,6 +11,7 @@ class SystemMonitor {
   double gpuPercent = 0;
 
   Timer? _timer;
+  bool _gpuNameCached = false;
 
   void start() {
     _tick();
@@ -28,19 +29,14 @@ class SystemMonitor {
 
   Future<void> _updateCpuRam() async {
     try {
-      // 用 WMIC 查询 CPU 和内存
-      final cpuResult = await Process.run('wmic', ['cpu', 'get', 'loadpercentage', '/value'], runInShell: true);
-      final ramResult = await Process.run('wmic', ['OS', 'get', 'FreePhysicalMemory,TotalVisibleMemorySize', '/value'], runInShell: true);
-
-      // 解析 CPU
-      for (final line in cpuResult.stdout.toString().split('\n')) {
+      final result = await Process.run('wmic', ['cpu', 'get', 'loadpercentage', '/value'], runInShell: true);
+      for (final line in result.stdout.toString().split('\n')) {
         if (line.contains('LoadPercentage=')) {
-          final val = line.split('=').last.trim();
-          cpuPercent = double.tryParse(val) ?? 0;
+          cpuPercent = double.tryParse(line.split('=').last.trim()) ?? 0;
         }
       }
 
-      // 解析内存 (KB → GB)
+      final ramResult = await Process.run('wmic', ['OS', 'get', 'FreePhysicalMemory,TotalVisibleMemorySize', '/value'], runInShell: true);
       double freeKB = 0, totalKB = 0;
       for (final line in ramResult.stdout.toString().split('\n')) {
         if (line.contains('FreePhysicalMemory=')) {
@@ -60,7 +56,6 @@ class SystemMonitor {
 
   Future<void> _updateGpu() async {
     try {
-      // 用 WMIC 查询 GPU 负载
       final result = await Process.run('wmic', ['path', 'win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine', 'where', 'name like \'%3D\'', 'get', 'utilizationpercentage', '/value'], runInShell: true);
       double maxGpu = 0;
       for (final line in result.stdout.toString().split('\n')) {
@@ -71,12 +66,12 @@ class SystemMonitor {
       }
       gpuPercent = maxGpu;
 
-      // 获取 GPU 名称
-      if (gpuName.isEmpty) {
+      if (!_gpuNameCached) {
         final nameResult = await Process.run('wmic', ['path', 'win32_VideoController', 'get', 'name', '/value'], runInShell: true);
         for (final line in nameResult.stdout.toString().split('\n')) {
           if (line.contains('Name=') && !line.contains('Name=Node')) {
             gpuName = line.split('=').last.trim();
+            _gpuNameCached = true;
             break;
           }
         }

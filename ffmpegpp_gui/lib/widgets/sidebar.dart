@@ -21,7 +21,6 @@ class Sidebar extends StatelessWidget {
       (Icons.movie_outlined, s.navProjects),
       (Icons.list_alt_outlined, s.navQueue),
       (Icons.terminal_outlined, s.navCommand),
-      (Icons.auto_awesome, s.navAI),
       (Icons.settings_outlined, s.navSettings),
       if (debug) (Icons.terminal, lang == 'zh' ? '日志' : 'Logs'),
     ];

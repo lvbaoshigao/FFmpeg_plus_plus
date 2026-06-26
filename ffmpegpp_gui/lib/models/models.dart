@@ -3,6 +3,125 @@ import 'package:uuid/uuid.dart';
 const _uuid = Uuid();
 
 // ═══════════════════════════════════════════
+// 流水线步骤
+// ═══════════════════════════════════════════
+
+enum PipelineStepType {
+  start,
+  avProcess,
+  subtitle,
+  clip,
+  frame,
+  output,
+}
+
+class PipelineStep {
+  final String id;
+  PipelineStepType type;
+  Map<String, dynamic> params;
+
+  PipelineStep({required this.id, required this.type, Map<String, dynamic>? params})
+      : params = params ?? {};
+
+  PipelineStep copy() => PipelineStep(id: _uuid.v4(), type: type, params: Map.of(params));
+
+  String get label {
+    switch (type) {
+      case PipelineStepType.start: return '开始';
+      case PipelineStepType.avProcess: return '音视频处理';
+      case PipelineStepType.subtitle: return '字幕烧录';
+      case PipelineStepType.clip: return '片段截取';
+      case PipelineStepType.frame: return '帧提取';
+      case PipelineStepType.output: return '输出';
+    }
+  }
+
+  String get labelEn {
+    switch (type) {
+      case PipelineStepType.start: return 'Start';
+      case PipelineStepType.avProcess: return 'AV Process';
+      case PipelineStepType.subtitle: return 'Subtitle';
+      case PipelineStepType.clip: return 'Clip';
+      case PipelineStepType.frame: return 'Frame';
+      case PipelineStepType.output: return 'Output';
+    }
+  }
+}
+
+class PipelineNode {
+  final String id;
+  PipelineStepType type;
+  Map<String, dynamic> params;
+  double x, y;
+
+  PipelineNode({required this.id, required this.type, Map<String, dynamic>? params, this.x = 0, this.y = 0})
+      : params = params ?? {};
+
+  PipelineNode copy() => PipelineNode(id: _uuid.v4(), type: type, params: Map.of(params), x: x, y: y);
+
+  String get label {
+    switch (type) {
+      case PipelineStepType.start: return '源文件';
+      case PipelineStepType.avProcess: return '音视频处理';
+      case PipelineStepType.subtitle: return '字幕烧录';
+      case PipelineStepType.clip: return '片段截取';
+      case PipelineStepType.frame: return '帧提取';
+      case PipelineStepType.output: return '输出';
+    }
+  }
+
+  String get labelEn {
+    switch (type) {
+      case PipelineStepType.start: return 'Source';
+      case PipelineStepType.avProcess: return 'AV Process';
+      case PipelineStepType.subtitle: return 'Subtitle';
+      case PipelineStepType.clip: return 'Clip';
+      case PipelineStepType.frame: return 'Frame';
+      case PipelineStepType.output: return 'Output';
+    }
+  }
+
+  bool get hasInput => type != PipelineStepType.start;
+  bool get hasOutput => type != PipelineStepType.output;
+}
+
+class PipelineConnection {
+  final String id;
+  final String fromNodeId;
+  final String toNodeId;
+
+  PipelineConnection({required this.id, required this.fromNodeId, required this.toNodeId});
+
+  PipelineConnection copy() => PipelineConnection(id: _uuid.v4(), fromNodeId: fromNodeId, toNodeId: toNodeId);
+}
+
+class PipelineGraph {
+  final List<PipelineNode> nodes;
+  final List<PipelineConnection> connections;
+
+  PipelineGraph({List<PipelineNode>? nodes, List<PipelineConnection>? connections})
+      : nodes = nodes ?? [],
+        connections = connections ?? [];
+
+  PipelineGraph copy() {
+    final idMap = <String, String>{};
+    final newNodes = nodes.map((n) {
+      final newId = _uuid.v4();
+      idMap[n.id] = newId;
+      return PipelineNode(id: newId, type: n.type, params: Map.of(n.params), x: n.x, y: n.y);
+    }).toList();
+    final newConns = connections.map((c) => PipelineConnection(
+      id: _uuid.v4(),
+      fromNodeId: idMap[c.fromNodeId] ?? c.fromNodeId,
+      toNodeId: idMap[c.toNodeId] ?? c.toNodeId,
+    )).toList();
+    return PipelineGraph(nodes: newNodes, connections: newConns);
+  }
+}
+
+enum PipelineMode { merged, sequential }
+
+// ═══════════════════════════════════════════
 // JSON 协议消息
 // ═══════════════════════════════════════════
 
@@ -93,6 +212,8 @@ class VideoFile {
   final int subtitleCount;
   final List<SubtitleStream> subtitles;
   final TranscodeConfig config;
+  final PipelineGraph pipelineGraph;
+  final PipelineMode pipelineMode;
   final bool parsed;
 
   VideoFile({
@@ -103,8 +224,10 @@ class VideoFile {
     this.pixFmt = '', this.isHdr = false, this.audioCodec = '',
     this.audioChannels = 0, this.audioSampleRate = '',
     this.hasSubtitles = false, this.subtitleCount = 0, this.subtitles = const [],
-    TranscodeConfig? config, this.parsed = false,
-  }) : config = config ?? TranscodeConfig();
+    TranscodeConfig? config, PipelineGraph? pipelineGraph,
+    this.pipelineMode = PipelineMode.merged, this.parsed = false,
+  }) : config = config ?? TranscodeConfig(),
+       pipelineGraph = pipelineGraph ?? PipelineGraph();
 
   VideoFile copyWith({
     String? filepath, String? filename, String? format, double? sizeMb,
@@ -113,7 +236,8 @@ class VideoFile {
     String? resolution, double? fps, String? pixFmt, bool? isHdr,
     String? audioCodec, int? audioChannels, String? audioSampleRate,
     bool? hasSubtitles, int? subtitleCount, List<SubtitleStream>? subtitles,
-    TranscodeConfig? config, bool? parsed,
+    TranscodeConfig? config, PipelineGraph? pipelineGraph,
+    PipelineMode? pipelineMode, bool? parsed,
   }) => VideoFile(
         id: id, filepath: filepath ?? this.filepath,
         filename: filename ?? this.filename, format: format ?? this.format,
@@ -126,7 +250,9 @@ class VideoFile {
         audioCodec: audioCodec ?? this.audioCodec, audioChannels: audioChannels ?? this.audioChannels,
         audioSampleRate: audioSampleRate ?? this.audioSampleRate,
         hasSubtitles: hasSubtitles ?? this.hasSubtitles, subtitleCount: subtitleCount ?? this.subtitleCount,
-        subtitles: subtitles ?? this.subtitles, config: config ?? this.config, parsed: parsed ?? this.parsed,
+        subtitles: subtitles ?? this.subtitles, config: config ?? this.config,
+        pipelineGraph: pipelineGraph ?? this.pipelineGraph,
+        pipelineMode: pipelineMode ?? this.pipelineMode, parsed: parsed ?? this.parsed,
       );
 
   factory VideoFile.fromFilepath(String filepath, {String? id}) => VideoFile(
@@ -204,6 +330,7 @@ class TranscodeConfig {
   int subtitleOutlineWidth;
   String subtitleOutlineColor;  // hex: #000000
   String outputFormat, namingMode, namingValue;
+  double? startTime, endTime;
 
   TranscodeConfig({
     this.videoCodec = 'h264', this.gpu = 'CPU', this.preset = 'medium', this.crf,
@@ -216,6 +343,7 @@ class TranscodeConfig {
     this.subtitleOutlineColor = '#000000',
     this.outputFormat = 'keep', this.namingMode = 'keep',
     this.namingValue = '_processed',
+    this.startTime, this.endTime,
   });
 
   Map<String, dynamic> toBackendOptions() {
@@ -232,6 +360,8 @@ class TranscodeConfig {
     if (resolutionW != null && resolutionH != null) opts['resolution'] = [resolutionW, resolutionH];
     if (audioBitrate != null) opts['audio_bitrate'] = audioBitrate;
     if (audioChannels != null) opts['audio_channels'] = audioChannels;
+    if (startTime != null) opts['start_time'] = startTime;
+    if (endTime != null) opts['end_time'] = endTime;
     return opts;
   }
 }
@@ -241,6 +371,12 @@ class TranscodeConfig {
 // ═══════════════════════════════════════════
 
 enum TaskStatus { pending, processing, completed, failed, cancelled }
+
+class BackendCall {
+  final String action;
+  final Map<String, dynamic> params;
+  BackendCall({required this.action, required this.params});
+}
 
 class TaskInfo {
   final String id, videoId, filename, inputPath, outputPath;
@@ -255,6 +391,8 @@ class TaskInfo {
   final int? outputSize;
   final double? duration;
   final List<String>? command;
+  final List<BackendCall>? pipelineCalls;
+  final int currentCallIndex;
 
   TaskInfo({
     required this.id, required this.videoId, required this.filename,
@@ -263,12 +401,14 @@ class TaskInfo {
     this.elapsed = '', this.remaining = '', this.speed = '', this.fps = '', this.bitrate = '',
     this.frame = 0, this.error, this.logLines = const [],
     required this.config, this.expanded = false, this.outputSize, this.duration, this.command,
+    this.pipelineCalls, this.currentCallIndex = 0,
   });
 
   TaskInfo copyWith({
     TaskStatus? status, double? progress, String? elapsed, String? remaining,
     String? speed, String? fps, String? bitrate, int? frame, String? error,
     List<String>? logLines, bool? expanded, int? outputSize, double? duration, List<String>? command,
+    int? currentCallIndex,
   }) => TaskInfo(
         id: id, videoId: videoId, filename: filename, inputPath: inputPath, outputPath: outputPath,
         status: status ?? this.status, progress: progress ?? this.progress,
@@ -278,6 +418,7 @@ class TaskInfo {
         logLines: logLines ?? this.logLines, config: config,
         expanded: expanded ?? this.expanded, outputSize: outputSize ?? this.outputSize,
         duration: duration ?? this.duration, command: command ?? this.command,
+        pipelineCalls: pipelineCalls, currentCallIndex: currentCallIndex ?? this.currentCallIndex,
       );
 
   String get statusLabel {
@@ -302,24 +443,19 @@ class TaskInfo {
 // ═══════════════════════════════════════════
 
 class AppConfig {
-  String language, ffmpegPath, ffprobePath, defaultOutputDir, fontFamily;
+  String language, ffmpegPath, ffprobePath, defaultOutputDir, intermediateDir, fontFamily;
   bool darkMode;
   int themeColor;
   double fontSize;
   int fontWeightIndex;
   bool glassEffect;
   String backgroundImage;
-  double backgroundOpacity; // 0.0 ~ 1.0
-  double cardOpacity;       // 0.0 ~ 1.0 (3D卡片透明度)
+  double backgroundOpacity;
+  double cardOpacity;
   bool debugMode;
   bool saveLogs;
   String logSavePath;
-  // AI
-  bool aiEnabled;
-  String aiModel;
-  String aiEndpoint;
-  String aiKey;
-  String aiPrompt;
+  bool useNodeEditor;
 
   static const fontWeightValues = [300, 400, 500, 600, 700];
   static const fontWeightLabels = ['Light', 'Regular', 'Medium', 'SemiBold', 'Bold'];
@@ -327,19 +463,11 @@ class AppConfig {
 
   AppConfig({
     this.language = 'zh', this.ffmpegPath = '', this.ffprobePath = '',
-    this.defaultOutputDir = '', this.darkMode = true, this.themeColor = 0xFF5E6AD2,
+    this.defaultOutputDir = '', this.intermediateDir = '', this.darkMode = true, this.themeColor = 0xFF5E6AD2,
     this.fontFamily = 'Microsoft YaHei', this.fontSize = 17.0, this.fontWeightIndex = 1,
     this.glassEffect = false, this.backgroundImage = '', this.backgroundOpacity = 0.8, this.cardOpacity = 0.7,
     this.debugMode = false, this.saveLogs = false, this.logSavePath = '',
-    this.aiEnabled = false, this.aiModel = 'deepseek-chat',
-    this.aiEndpoint = 'https://api.deepseek.com', this.aiKey = '',
-    this.aiPrompt = 'You are an FFmpeg expert. Generate ONLY the ffmpeg command, no explanation.\n\n'
-        'Requirements:\n- Input: {input}\n- Output: {output}\n- Codec: {video_codec}\n'
-        '- GPU: {gpu}\n- Resolution: {resolution}\n- Bitrate: {bitrate} kbps\n'
-        '- Framerate: {framerate}\n- Audio: {audio_codec} at {audio_bitrate}k {audio_channels}ch\n'
-        '- Subtitle: {subtitle}\n- Extra: {extra}\n\n'
-        'Rules:\n1. Skip if "none" or empty.\n2. ONLY output the command, nothing else.\n'
-        '3. Use correct GPU encoder names.\n4. Include -y flag.',
+    this.useNodeEditor = true,
   });
 
   factory AppConfig.fromJson(Map<String, dynamic> json) => AppConfig(
@@ -347,6 +475,7 @@ class AppConfig {
         ffmpegPath: json['ffmpeg_path'] as String? ?? '',
         ffprobePath: json['ffprobe_path'] as String? ?? '',
         defaultOutputDir: json['default_output_dir'] as String? ?? '',
+        intermediateDir: json['intermediate_dir'] as String? ?? '',
         darkMode: json['dark_mode'] as bool? ?? true,
         themeColor: json['theme_color'] as int? ?? 0xFF5E6AD2,
         fontFamily: json['font_family'] as String? ?? 'Microsoft YaHei',
@@ -359,32 +488,19 @@ class AppConfig {
         debugMode: json['debug_mode'] as bool? ?? false,
         saveLogs: json['save_logs'] as bool? ?? false,
         logSavePath: json['log_save_path'] as String? ?? '',
-        aiEnabled: json['ai_enabled'] as bool? ?? false,
-        aiModel: json['ai_model'] as String? ?? 'deepseek-chat',
-        aiEndpoint: json['ai_endpoint'] as String? ?? 'https://api.deepseek.com',
-        aiKey: json['ai_key'] as String? ?? '',
-        aiPrompt: (json['ai_prompt'] as String?)?.isNotEmpty == true
-            ? json['ai_prompt'] as String
-            : 'You are an FFmpeg expert. Generate ONLY the ffmpeg command, no explanation.\n\n'
-              'Requirements:\n- Input: {input}\n- Output: {output}\n- Codec: {video_codec}\n'
-              '- GPU: {gpu}\n- Resolution: {resolution}\n- Bitrate: {bitrate} kbps\n'
-              '- Framerate: {framerate}\n- Audio: {audio_codec} at {audio_bitrate}k {audio_channels}ch\n'
-              '- Subtitle: {subtitle}\n- Extra: {extra}\n\n'
-              'Rules:\n1. Skip if "none" or empty.\n2. ONLY output the command, nothing else.\n'
-              '3. Use correct GPU encoder names.\n4. Include -y flag.',
+        useNodeEditor: json['use_node_editor'] as bool? ?? true,
       );
 
   Map<String, dynamic> toJson() => {
         'language': language, 'ffmpeg_path': ffmpegPath, 'ffprobe_path': ffprobePath,
-        'default_output_dir': defaultOutputDir, 'dark_mode': darkMode,
+        'default_output_dir': defaultOutputDir, 'intermediate_dir': intermediateDir, 'dark_mode': darkMode,
         'theme_color': themeColor, 'font_family': fontFamily, 'font_size': fontSize,
         'font_weight': fontWeightIndex, 'glass_effect': glassEffect,
         'background_image': backgroundImage, 'background_opacity': backgroundOpacity,
         'card_opacity': cardOpacity,
         'debug_mode': debugMode,
         'save_logs': saveLogs, 'log_save_path': logSavePath,
-        'ai_enabled': aiEnabled, 'ai_model': aiModel,
-        'ai_endpoint': aiEndpoint, 'ai_key': aiKey, 'ai_prompt': aiPrompt,
+        'use_node_editor': useNodeEditor,
       };
 }
 

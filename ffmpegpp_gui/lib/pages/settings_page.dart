@@ -10,11 +10,15 @@ import '../theme/app_strings.dart';
 import '../widgets/masonry_grid.dart';
 import '../widgets/font_picker.dart';
 
-/// 复制文件到程序目录下的子文件夹，返回新路径（失败返回 null）
+/// 获取用户数据目录（%APPDATA%/FFmpeg++/），避免 Program Files 权限问题
+String _userDataDir() {
+  return '${Platform.environment['APPDATA'] ?? Directory.systemTemp.path}/FFmpeg++';
+}
+
+/// 复制文件到用户数据目录下的子文件夹，返回新路径（失败返回 null）
 Future<String?> _copyToAppDir(String srcPath, String subDir) async {
   try {
-    final exeDir = Directory(Platform.resolvedExecutable).parent;
-    final targetDir = Directory('${exeDir.path}/$subDir');
+    final targetDir = Directory('${_userDataDir()}/$subDir');
     if (!targetDir.existsSync()) targetDir.createSync(recursive: true);
     final fileName = srcPath.split(RegExp(r'[\\/]')).last;
     final destPath = '${targetDir.path}/$fileName';
@@ -162,6 +166,37 @@ class SettingsPage extends StatelessWidget {
                         final d = await FilePicker.platform.getDirectoryPath();
                         if (d != null) state.updateConfig((c) => c..defaultOutputDir = d);
                       }),
+                  const SizedBox(height: 8),
+                  _pf(context, s.intermediateDir, cfg.intermediateDir,
+                      (v) => state.updateConfig((c) => c..intermediateDir = v),
+                      () async {
+                        final d = await FilePicker.platform.getDirectoryPath();
+                        if (d != null) state.updateConfig((c) => c..intermediateDir = d);
+                      }),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(s.intermediateHint, style: TextStyle(fontSize: 11, color: scheme.outline)),
+                  ),
+                ]),
+
+                // ── 编辑模式 ──
+                _glass(context, s.isZh ? '编辑模式' : 'Editor Mode', [
+                  RadioListTile<bool>(
+                    dense: true, contentPadding: EdgeInsets.zero,
+                    title: Text(s.isZh ? '节点编辑器 (新)' : 'Node Editor (New)', style: TextStyle(color: clr, fontSize: 13)),
+                    subtitle: Text(s.isZh ? '蓝图式节点画布，可处理复杂的多步骤逻辑' : 'Blueprint-style canvas for complex multi-step logic', style: TextStyle(fontSize: 11, color: scheme.outline)),
+                    value: true,
+                    groupValue: cfg.useNodeEditor,
+                    onChanged: (v) => state.updateConfig((c) => c..useNodeEditor = true),
+                  ),
+                  RadioListTile<bool>(
+                    dense: true, contentPadding: EdgeInsets.zero,
+                    title: Text(s.isZh ? '传统模式' : 'Classic Mode', style: TextStyle(color: clr, fontSize: 13)),
+                    subtitle: Text(s.isZh ? '傻瓜式操作，适合简单的视频处理任务' : 'Simple step-by-step, ideal for basic tasks', style: TextStyle(fontSize: 11, color: scheme.outline)),
+                    value: false,
+                    groupValue: cfg.useNodeEditor,
+                    onChanged: (v) => state.updateConfig((c) => c..useNodeEditor = false),
+                  ),
                 ]),
 
                 // ── Debug ──
@@ -203,11 +238,11 @@ class SettingsPage extends StatelessWidget {
                             errorBuilder: (_, __, ___) => Icon(Icons.play_circle_fill, size: 48, color: scheme.primary))),
                     const SizedBox(height: 8),
                     Text('FFmpeg++', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: scheme.primary)),
-                    Text('v2.2.1', style: TextStyle(fontSize: 12, color: scheme.outline)),
+                    Text('v3.0.0', style: TextStyle(fontSize: 12, color: scheme.outline)),
                     const SizedBox(height: 12),
                   ])),
                   const SizedBox(height: 4),
-                  _infoRow(s.aboutVersion, 'v2.2.1', scheme),
+                  _infoRow(s.aboutVersion, 'v3.0.0', scheme),
                   _infoRow(s.aboutBuildDate, '2026-06-19', scheme),
                   _infoRow(s.aboutBlog, 'blog-clstone.netlify.app', scheme),
                   _infoRow(s.aboutGithub, 'github.com/pity-Fox/FFmpeg_plus_plus', scheme),
@@ -259,12 +294,7 @@ class SettingsPage extends StatelessWidget {
   static Widget _pf(BuildContext ctx, String label, String value, ValueChanged<String> onChange, VoidCallback onBrowse) {
     final scheme = Theme.of(ctx).colorScheme;
     return Row(children: [
-      Expanded(child: TextField(
-        controller: TextEditingController(text: value),
-        style: TextStyle(fontSize: 13, color: scheme.onSurface),
-        decoration: InputDecoration(labelText: label, isDense: false, labelStyle: TextStyle(fontSize: 11, color: scheme.outline)),
-        onChanged: onChange,
-      )),
+      Expanded(child: _PathField(value: value, label: label, scheme: scheme, onChange: onChange)),
       const SizedBox(width: 4),
       IconButton(icon: Icon(Icons.folder_open, size: 20, color: scheme.primary), onPressed: onBrowse, padding: const EdgeInsets.all(8)),
     ]);
@@ -342,16 +372,16 @@ class SettingsPage extends StatelessWidget {
     );
     if (confirmed != true || !ctx.mounted) return;
     try {
-      final exeDir = Directory(Platform.resolvedExecutable).parent;
+      final dataDir = _userDataDir();
       // 清除字体缓存
-      final fontsDir = Directory('${exeDir.path}/fonts');
+      final fontsDir = Directory('$dataDir/fonts');
       if (fontsDir.existsSync()) {
         for (final f in fontsDir.listSync().whereType<File>()) {
           try { f.deleteSync(); } catch (_) {}
         }
       }
       // 清除背景缓存
-      final bgDir = Directory('${exeDir.path}/background');
+      final bgDir = Directory('$dataDir/background');
       if (bgDir.existsSync()) {
         for (final f in bgDir.listSync().whereType<File>()) {
           try { f.deleteSync(); } catch (_) {}
@@ -699,4 +729,37 @@ class _CPState extends State<_CP> {
     SizedBox(width: 30, child: Text(l, style: labelStyle)),
     Expanded(child: Slider(value: v, min: min, max: max, onChanged: cb)),
   ]);
+}
+
+class _PathField extends StatefulWidget {
+  final String value;
+  final String label;
+  final ColorScheme scheme;
+  final ValueChanged<String> onChange;
+  const _PathField({required this.value, required this.label, required this.scheme, required this.onChange});
+  @override
+  State<_PathField> createState() => _PathFieldState();
+}
+
+class _PathFieldState extends State<_PathField> {
+  late final TextEditingController _ctrl = TextEditingController(text: widget.value);
+
+  @override
+  void didUpdateWidget(_PathField old) {
+    super.didUpdateWidget(old);
+    if (old.value != widget.value && _ctrl.text != widget.value) {
+      _ctrl.text = widget.value;
+    }
+  }
+
+  @override
+  void dispose() { _ctrl.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) => TextField(
+    controller: _ctrl,
+    style: TextStyle(fontSize: 13, color: widget.scheme.onSurface),
+    decoration: InputDecoration(labelText: widget.label, isDense: false, labelStyle: TextStyle(fontSize: 11, color: widget.scheme.outline)),
+    onChanged: widget.onChange,
+  );
 }

@@ -79,6 +79,20 @@ class BackendClient {
   /// 取消当前任务
   void cancel() => _process.cancel();
 
+  /// 帧提取
+  Future<Map<String, dynamic>> extractFrame(String taskId, {
+    required String input,
+    required String output,
+    required double time,
+  }) async {
+    final resp = await _process.requestWithId(taskId, 'extract_frame', {
+      'input': input,
+      'output': output,
+      'time': time,
+    });
+    return resp;
+  }
+
   /// ping 检测连接
   Future<bool> ping() async {
     try {
