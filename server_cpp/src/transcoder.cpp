@@ -63,6 +63,10 @@ std::string resolveEncoder(const std::string& gpu, const std::string& codec_key)
 std::vector<std::string> buildEncodingParams(const json& options, const std::string& input_pix_fmt) {
     std::string gpu = options.value("gpu", "CPU");
     std::string video_codec = options.value("video_codec", "h264");
+    bool has_vf = options.contains("vf_filters") && options["vf_filters"].is_array() && !options["vf_filters"].empty();
+    if (has_vf && video_codec == "copy") {
+        video_codec = "h264";
+    }
     std::string encoder = resolveEncoder(gpu, video_codec);
 
     std::vector<std::string> params;
@@ -115,6 +119,10 @@ std::vector<std::string> buildEncodingParams(const json& options, const std::str
 
     // 音频
     std::string audio_codec = options.value("audio_codec", "aac");
+    bool has_af = options.contains("af_filters") && options["af_filters"].is_array() && !options["af_filters"].empty();
+    if (has_af && (audio_codec == "copy" || audio_codec.empty())) {
+        audio_codec = "aac";
+    }
     if (!audio_codec.empty()) {
         params.push_back("-c:a");
         params.push_back(audio_codec);
@@ -179,6 +187,28 @@ std::vector<std::string> buildTranscodeCommand(
     // 编码参数
     auto enc_params = buildEncodingParams(options, input_pix_fmt);
     cmd.insert(cmd.end(), enc_params.begin(), enc_params.end());
+
+    // 视频滤镜（如变速 setpts）
+    if (options.contains("vf_filters") && options["vf_filters"].is_array() && !options["vf_filters"].empty()) {
+        std::string vf;
+        for (auto& f : options["vf_filters"]) {
+            if (!vf.empty()) vf += ",";
+            vf += f.get<std::string>();
+        }
+        cmd.push_back("-vf");
+        cmd.push_back(vf);
+    }
+
+    // 音频滤镜（如变速 atempo）
+    if (options.contains("af_filters") && options["af_filters"].is_array() && !options["af_filters"].empty()) {
+        std::string af;
+        for (auto& f : options["af_filters"]) {
+            if (!af.empty()) af += ",";
+            af += f.get<std::string>();
+        }
+        cmd.push_back("-af");
+        cmd.push_back(af);
+    }
 
     // 覆盖输出
     if (options.value("overwrite", true)) {

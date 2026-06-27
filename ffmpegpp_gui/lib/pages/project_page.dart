@@ -1,8 +1,11 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:desktop_drop/desktop_drop.dart';
+import '../models/models.dart';
 import '../providers/app_state.dart';
+import '../services/config_export.dart';
 import '../theme/app_strings.dart';
 import '../widgets/video_card.dart';
 
@@ -100,6 +103,11 @@ class _ProjectPageState extends State<ProjectPage> {
                     _selectedIds.clear();
                   }),
                 ),
+              IconButton(
+                icon: const Icon(Icons.file_download_outlined, size: 20),
+                tooltip: s.isZh ? '导入配置' : 'Import Config',
+                onPressed: state.videos.isEmpty ? null : () => _importConfig(state, s),
+              ),
               FilledButton.icon(
                 icon: const Icon(Icons.add, size: 18),
                 label: Text(s.addVideo),
@@ -165,6 +173,152 @@ class _ProjectPageState extends State<ProjectPage> {
           Expanded(child: VideoCard(video: video)),
         ]);
       },
+    );
+  }
+
+  Future<void> _importConfig(AppState state, AppStrings s) async {
+    final zh = s.isZh;
+    final r = await FilePicker.platform.pickFiles(
+      type: FileType.custom, allowedExtensions: ['fppx'],
+      dialogTitle: zh ? '选择配置文件' : 'Select Config File',
+    );
+    if (r == null || r.files.isEmpty || r.files.first.path == null) return;
+
+    final bytes = await File(r.files.first.path!).readAsBytes();
+    final fppx = FppxExporter.import(bytes);
+
+    if (fppx == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(zh ? '无法解析配置文件（格式错误）' : 'Cannot parse config file (invalid format)'),
+          backgroundColor: Colors.red,
+        ));
+      }
+      return;
+    }
+
+    if (!mounted) return;
+    final scheme = Theme.of(context).colorScheme;
+    final selectedVideos = <String>{};
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setDlgState) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(children: [
+            Icon(Icons.file_download_outlined, size: 20, color: scheme.primary),
+            const SizedBox(width: 8),
+            Text(zh ? '导入配置' : 'Import Config', style: TextStyle(color: scheme.onSurface)),
+          ]),
+          content: SizedBox(width: 480, child: SingleChildScrollView(child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 兼容性错误
+              if (fppx.errors.isNotEmpty)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(color: scheme.errorContainer, borderRadius: BorderRadius.circular(8)),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Row(children: [
+                      Icon(Icons.error_outline, size: 16, color: scheme.error),
+                      const SizedBox(width: 6),
+                      Text(zh ? '加载失败' : 'Load Failed',
+                          style: TextStyle(fontSize: 13, color: scheme.error, fontWeight: FontWeight.w700)),
+                    ]),
+                    const SizedBox(height: 6),
+                    ...fppx.errors.map((e) => Padding(
+                      padding: const EdgeInsets.only(bottom: 3),
+                      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text('• ', style: TextStyle(color: scheme.error)),
+                        Expanded(child: Text(e, style: TextStyle(fontSize: 12, color: scheme.onErrorContainer))),
+                      ]),
+                    )),
+                  ]),
+                ),
+
+              // 信息
+              _infoRow(scheme, zh ? '配置版本' : 'Config Version', fppx.configVersionStr),
+              _infoRow(scheme, zh ? '兼容软件' : 'Compatible', fppx.softwareRangeStr),
+              _infoRow(scheme, zh ? '模式' : 'Mode', fppx.isNodeEditor
+                  ? (zh ? '节点编辑器' : 'Node Editor')
+                  : (zh ? '传统模式' : 'Legacy')),
+              if (fppx.graph != null)
+                _infoRow(scheme, zh ? '内容' : 'Content',
+                    '${fppx.graph!.nodes.length} ${zh ? '节点' : 'nodes'}, ${fppx.graph!.connections.length} ${zh ? '连线' : 'links'}'),
+
+              // 介绍
+              if (fppx.description.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text(zh ? '介绍' : 'Description', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.primary)),
+                const SizedBox(height: 4),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainerHighest.withAlpha(80),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(fppx.description, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+                ),
+              ],
+
+              // 选择视频
+              const SizedBox(height: 16),
+              Text(zh ? '应用到哪些视频？' : 'Apply to which videos?',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+              const SizedBox(height: 8),
+              ...state.videos.where((v) => v.parsed).map((v) => CheckboxListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: Text(v.filename, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+                subtitle: Text(v.resolution, style: TextStyle(fontSize: 11, color: scheme.outline)),
+                value: selectedVideos.contains(v.id),
+                onChanged: (checked) => setDlgState(() {
+                  if (checked == true) { selectedVideos.add(v.id); } else { selectedVideos.remove(v.id); }
+                }),
+              )),
+              if (state.videos.where((v) => v.parsed).isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Text(zh ? '没有可用的视频' : 'No videos available',
+                      style: TextStyle(fontSize: 12, color: scheme.outline)),
+                ),
+            ],
+          ))),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: Text(s.cancel)),
+            FilledButton(
+              onPressed: (selectedVideos.isEmpty || !fppx.isCompatible) ? null : () {
+                for (final vid in selectedVideos) {
+                  if (fppx.graph != null) {
+                    state.updateVideoPipeline(vid, fppx.graph!.copy());
+                  }
+                }
+                Navigator.pop(ctx);
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text(zh ? '已应用到 ${selectedVideos.length} 个视频' : 'Applied to ${selectedVideos.length} videos'),
+                  backgroundColor: Colors.green,
+                ));
+              },
+              child: Text(zh ? '应用' : 'Apply'),
+            ),
+          ],
+        );
+      }),
+    );
+  }
+
+  Widget _infoRow(ColorScheme scheme, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(children: [
+        SizedBox(width: 90, child: Text(label, style: TextStyle(fontSize: 12, color: scheme.outline))),
+        Text(value, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: scheme.onSurface)),
+      ]),
     );
   }
 

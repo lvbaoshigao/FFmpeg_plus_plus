@@ -1,6 +1,6 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import '../font_picker.dart';
 
 class SubtitleStepEditor extends StatefulWidget {
   final Map<String, dynamic> params;
@@ -75,39 +75,6 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> {
     );
   }
 
-  void _pickFont() async {
-    final fonts = await _getSystemFonts();
-    if (!mounted) return;
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => _FontPickerDialog(fonts: fonts, current: p['font_name'] as String? ?? 'Arial', isZh: widget.isZh),
-    );
-    if (result != null) _update('font_name', result);
-  }
-
-  Future<List<String>> _getSystemFonts() async {
-    final fonts = <String>[];
-    try {
-      final fontDir = Directory('C:\\Windows\\Fonts');
-      if (fontDir.existsSync()) {
-        for (final f in fontDir.listSync()) {
-          if (f is File) {
-            final name = f.uri.pathSegments.last;
-            if (name.endsWith('.ttf') || name.endsWith('.otf') || name.endsWith('.ttc')) {
-              fonts.add(name.replaceAll(RegExp(r'\.[^.]+$'), ''));
-            }
-          }
-        }
-      }
-    } catch (_) {}
-    if (fonts.isEmpty) {
-      fonts.addAll(['Arial', 'Microsoft YaHei', 'SimSun', 'SimHei', 'KaiTi', 'FangSong',
-          'Times New Roman', 'Consolas', 'Segoe UI', 'Tahoma', 'Verdana', 'Calibri']);
-    }
-    fonts.sort();
-    return fonts.toSet().toList();
-  }
-
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -160,18 +127,11 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> {
           const SizedBox(height: 12),
 
           // 字体选择
-          Row(children: [
-            Expanded(child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                border: Border.all(color: cs.outline.withAlpha(120)),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(p['font_name'] as String? ?? 'Arial', style: TextStyle(fontSize: 13, color: cs.onSurface)),
-            )),
-            const SizedBox(width: 8),
-            FilledButton.tonalIcon(onPressed: _pickFont, icon: const Icon(Icons.font_download, size: 16), label: Text(zh ? '选择字体' : 'Font')),
-          ]),
+          FontPicker(
+            currentFont: p['font_name'] as String? ?? 'Arial',
+            language: zh ? 'zh' : 'en',
+            onSelected: (v) => _update('font_name', v),
+          ),
           const SizedBox(height: 8),
 
           // 字体+字号预览
@@ -351,82 +311,6 @@ class _ColorPickerDialogState extends State<_ColorPickerDialog> {
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
         FilledButton(onPressed: () { widget.onPicked(_color); Navigator.pop(context); }, child: const Text('确定')),
-      ],
-    );
-  }
-}
-
-// ── 字体选择对话框 ──
-
-class _FontPickerDialog extends StatefulWidget {
-  final List<String> fonts;
-  final String current;
-  final bool isZh;
-  const _FontPickerDialog({required this.fonts, required this.current, required this.isZh});
-  @override
-  State<_FontPickerDialog> createState() => _FontPickerDialogState();
-}
-
-class _FontPickerDialogState extends State<_FontPickerDialog> {
-  late TextEditingController _searchCtrl;
-  late List<String> _filtered;
-
-  @override
-  void initState() {
-    super.initState();
-    _searchCtrl = TextEditingController();
-    _filtered = widget.fonts;
-  }
-
-  @override
-  void dispose() { _searchCtrl.dispose(); super.dispose(); }
-
-  void _filter(String q) {
-    setState(() {
-      _filtered = q.isEmpty ? widget.fonts : widget.fonts.where((f) => f.toLowerCase().contains(q.toLowerCase())).toList();
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: Text(widget.isZh ? '选择字体' : 'Select Font', style: TextStyle(fontSize: 16, color: cs.onSurface)),
-      content: SizedBox(
-        width: 320, height: 400,
-        child: Column(children: [
-          TextField(
-            controller: _searchCtrl,
-            decoration: InputDecoration(
-              hintText: widget.isZh ? '搜索字体...' : 'Search fonts...',
-              prefixIcon: const Icon(Icons.search, size: 18), isDense: true,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            ),
-            onChanged: _filter,
-          ),
-          const SizedBox(height: 8),
-          Expanded(child: ListView.builder(
-            itemCount: _filtered.length,
-            itemBuilder: (ctx, i) {
-              final name = _filtered[i];
-              final selected = name == widget.current;
-              return ListTile(
-                dense: true, visualDensity: VisualDensity.compact,
-                selected: selected,
-                selectedTileColor: cs.primaryContainer.withAlpha(80),
-                title: Text(name, style: TextStyle(fontSize: 13, fontWeight: selected ? FontWeight.w600 : FontWeight.w400)),
-                subtitle: Text('AaBbCc 你好世界 123', style: TextStyle(fontSize: 12, fontFamily: name, color: cs.onSurfaceVariant)),
-                trailing: selected ? Icon(Icons.check, size: 16, color: cs.primary) : null,
-                onTap: () => Navigator.pop(context, name),
-              );
-            },
-          )),
-        ]),
-      ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: Text(widget.isZh ? '取消' : 'Cancel')),
       ],
     );
   }

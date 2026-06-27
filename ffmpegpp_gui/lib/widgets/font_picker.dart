@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 
 /// 通用字体选择器 — 点击弹出字体列表对话框
@@ -17,8 +18,8 @@ class FontPicker extends StatelessWidget {
     this.language = 'zh',
   });
 
-  // Windows 常见已安装字体
-  static const _fonts = [
+  // Windows 常见已安装字体（显示名, 字体族名）— 作为基础列表
+  static const _builtinFonts = [
     ('微软雅黑', 'Microsoft YaHei'), ('黑体', 'SimHei'), ('宋体', 'SimSun'),
     ('楷体', 'KaiTi'), ('仿宋', 'FangSong'), ('微軟正黑體', 'Microsoft JhengHei'),
     ('新細明體', 'MingLiU'), ('新宋体', 'NSimSun'), ('標楷體', 'DFKai-SB'),
@@ -51,12 +52,54 @@ class FontPicker extends StatelessWidget {
     ('JetBrains Mono', 'JetBrains Mono'),
   ];
 
+  static List<(String, String)>? _cachedFonts;
+
+  static Future<List<(String, String)>> _getAllFonts() async {
+    if (_cachedFonts != null) return _cachedFonts!;
+
+    final builtinFamilies = <String>{for (final (_, f) in _builtinFonts) f};
+    final merged = <(String, String)>[..._builtinFonts];
+
+    try {
+      final result = await Process.run('reg', [
+        'query',
+        r'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts',
+      ]);
+      if (result.exitCode == 0) {
+        final lines = result.stdout.toString().split('\n');
+        for (final line in lines) {
+          final trimmed = line.trim();
+          if (trimmed.isEmpty || trimmed.startsWith('HKEY_')) continue;
+          // Format: "FontName (TrueType)    REG_SZ    filename.ttf"
+          final regMatch = RegExp(r'^(.+?)\s+REG_SZ\s+').firstMatch(trimmed);
+          if (regMatch == null) continue;
+          var displayName = regMatch.group(1)!.trim();
+          // Strip type suffixes
+          displayName = displayName
+              .replaceAll(RegExp(r'\s*\(TrueType\)', caseSensitive: false), '')
+              .replaceAll(RegExp(r'\s*\(OpenType\)', caseSensitive: false), '')
+              .replaceAll(RegExp(r'\s*\(TrueType Collection\)', caseSensitive: false), '')
+              .trim();
+          if (displayName.isEmpty) continue;
+          // Use display name as family name (registry doesn't give family names directly)
+          if (!builtinFamilies.contains(displayName)) {
+            builtinFamilies.add(displayName);
+            merged.add((displayName, displayName));
+          }
+        }
+      }
+    } catch (_) {}
+
+    merged.sort((a, b) => a.$1.toLowerCase().compareTo(b.$1.toLowerCase()));
+    _cachedFonts = merged;
+    return merged;
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    // 找到当前字体的显示名
     String displayName = currentFont;
-    for (final (label, family) in _fonts) {
+    for (final (label, family) in _builtinFonts) {
       if (family == currentFont) { displayName = label; break; }
     }
 
@@ -113,11 +156,16 @@ class _FontPickerDialog extends StatefulWidget {
 class _FontPickerDialogState extends State<_FontPickerDialog> {
   String _filter = '';
   late TextEditingController _ctrl;
+  List<(String, String)>? _fonts;
+  bool _loading = true;
 
   @override
   void initState() {
     super.initState();
     _ctrl = TextEditingController();
+    FontPicker._getAllFonts().then((fonts) {
+      if (mounted) setState(() { _fonts = fonts; _loading = false; });
+    });
   }
 
   @override
@@ -131,16 +179,20 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
     final scheme = Theme.of(context).colorScheme;
     final isZh = widget.language == 'zh';
 
+    final allFonts = _fonts ?? FontPicker._builtinFonts;
     final filtered = _filter.isEmpty
-        ? FontPicker._fonts
-        : FontPicker._fonts.where((f) =>
+        ? allFonts
+        : allFonts.where((f) =>
             f.$1.toLowerCase().contains(_filter.toLowerCase()) ||
             f.$2.toLowerCase().contains(_filter.toLowerCase())).toList();
 
     return AlertDialog(
-      title: Text(isZh ? '选择字体' : 'Select Font', style: TextStyle(fontSize: 16, color: scheme.onSurface)),
-      content: SizedBox(width: 320, height: 380, child: Column(children: [
-        // 搜索框
+      title: Row(children: [
+        Expanded(child: Text(isZh ? '选择字体' : 'Select Font', style: TextStyle(fontSize: 16, color: scheme.onSurface))),
+        if (!_loading)
+          Text('${allFonts.length}', style: TextStyle(fontSize: 11, color: scheme.outline)),
+      ]),
+      content: SizedBox(width: 320, height: 420, child: Column(children: [
         TextField(
           controller: _ctrl,
           autofocus: true,
@@ -156,33 +208,35 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
           onChanged: (v) => setState(() => _filter = v),
         ),
         const SizedBox(height: 8),
-        // 字体列表
-        Expanded(child: ListView.builder(
-          itemCount: filtered.length,
-          itemBuilder: (_, i) {
-            final (label, family) = filtered[i];
-            final isSelected = family == widget.currentFont;
-            return InkWell(
-              onTap: () => widget.onSelected(family),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                color: isSelected ? scheme.primary.withAlpha(30) : null,
-                child: Row(children: [
-                  Expanded(child: Text(label, style: TextStyle(
-                    fontSize: 13,
-                    fontFamily: family.isNotEmpty ? family : null,
-                    color: scheme.onSurface,
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                  ))),
-                  if (family.isNotEmpty && family != label)
-                    Text(family, style: TextStyle(fontSize: 10, color: scheme.outline)),
-                  if (isSelected)
-                    Icon(Icons.check, size: 16, color: scheme.primary),
-                ]),
-              ),
-            );
-          },
-        )),
+        if (_loading)
+          const Expanded(child: Center(child: CircularProgressIndicator()))
+        else
+          Expanded(child: ListView.builder(
+            itemCount: filtered.length,
+            itemBuilder: (_, i) {
+              final (label, family) = filtered[i];
+              final isSelected = family == widget.currentFont;
+              return InkWell(
+                onTap: () => widget.onSelected(family),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  color: isSelected ? scheme.primary.withAlpha(30) : null,
+                  child: Row(children: [
+                    Expanded(child: Text(label, style: TextStyle(
+                      fontSize: 13,
+                      fontFamily: family.isNotEmpty ? family : null,
+                      color: scheme.onSurface,
+                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                    ))),
+                    if (family.isNotEmpty && family != label)
+                      Text(family, style: TextStyle(fontSize: 10, color: scheme.outline)),
+                    if (isSelected)
+                      Icon(Icons.check, size: 16, color: scheme.primary),
+                  ]),
+                ),
+              );
+            },
+          )),
       ])),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context),

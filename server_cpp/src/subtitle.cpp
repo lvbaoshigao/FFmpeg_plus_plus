@@ -93,10 +93,32 @@ std::vector<std::string> buildSubtitleCommand(
 
     std::vector<std::string> cmd = {"ffmpeg", "-i", input_path};
 
-    // 字幕滤镜
+    // 构建视频滤镜链：先追加外部 vf_filters（如 setpts），再追加字幕滤镜
     std::string sub_filter = buildSubtitleFilter(input_path, subtitle_options);
+    std::string vf = sub_filter;
+    if (!video_options.is_null() && video_options.contains("vf_filters") &&
+        video_options["vf_filters"].is_array() && !video_options["vf_filters"].empty()) {
+        std::string prefix;
+        for (auto& f : video_options["vf_filters"]) {
+            if (!prefix.empty()) prefix += ",";
+            prefix += f.get<std::string>();
+        }
+        vf = prefix + "," + sub_filter;
+    }
     cmd.push_back("-vf");
-    cmd.push_back(sub_filter);
+    cmd.push_back(vf);
+
+    // 音频滤镜（如变速 atempo）
+    if (!video_options.is_null() && video_options.contains("af_filters") &&
+        video_options["af_filters"].is_array() && !video_options["af_filters"].empty()) {
+        std::string af;
+        for (auto& f : video_options["af_filters"]) {
+            if (!af.empty()) af += ",";
+            af += f.get<std::string>();
+        }
+        cmd.push_back("-af");
+        cmd.push_back(af);
+    }
 
     // 视频+音频编码（烧录字幕必须重新编码）
     json vopts;

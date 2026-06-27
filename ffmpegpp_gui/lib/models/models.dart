@@ -12,6 +12,7 @@ enum PipelineStepType {
   subtitle,
   clip,
   frame,
+  speed,
   output,
 }
 
@@ -32,6 +33,7 @@ class PipelineStep {
       case PipelineStepType.subtitle: return '字幕烧录';
       case PipelineStepType.clip: return '片段截取';
       case PipelineStepType.frame: return '帧提取';
+      case PipelineStepType.speed: return '变速';
       case PipelineStepType.output: return '输出';
     }
   }
@@ -43,6 +45,7 @@ class PipelineStep {
       case PipelineStepType.subtitle: return 'Subtitle';
       case PipelineStepType.clip: return 'Clip';
       case PipelineStepType.frame: return 'Frame';
+      case PipelineStepType.speed: return 'Speed';
       case PipelineStepType.output: return 'Output';
     }
   }
@@ -59,6 +62,18 @@ class PipelineNode {
 
   PipelineNode copy() => PipelineNode(id: _uuid.v4(), type: type, params: Map.of(params), x: x, y: y);
 
+  Map<String, dynamic> toJson() => {
+    'id': id, 'type': type.name, 'params': params, 'x': x, 'y': y,
+  };
+
+  factory PipelineNode.fromJson(Map<String, dynamic> json) => PipelineNode(
+    id: json['id'] as String? ?? _uuid.v4(),
+    type: PipelineStepType.values.firstWhere((t) => t.name == json['type'], orElse: () => PipelineStepType.start),
+    params: (json['params'] as Map<String, dynamic>?) ?? {},
+    x: (json['x'] as num?)?.toDouble() ?? 0,
+    y: (json['y'] as num?)?.toDouble() ?? 0,
+  );
+
   String get label {
     switch (type) {
       case PipelineStepType.start: return '源文件';
@@ -66,6 +81,7 @@ class PipelineNode {
       case PipelineStepType.subtitle: return '字幕烧录';
       case PipelineStepType.clip: return '片段截取';
       case PipelineStepType.frame: return '帧提取';
+      case PipelineStepType.speed: return '变速';
       case PipelineStepType.output: return '输出';
     }
   }
@@ -77,6 +93,7 @@ class PipelineNode {
       case PipelineStepType.subtitle: return 'Subtitle';
       case PipelineStepType.clip: return 'Clip';
       case PipelineStepType.frame: return 'Frame';
+      case PipelineStepType.speed: return 'Speed';
       case PipelineStepType.output: return 'Output';
     }
   }
@@ -93,6 +110,14 @@ class PipelineConnection {
   PipelineConnection({required this.id, required this.fromNodeId, required this.toNodeId});
 
   PipelineConnection copy() => PipelineConnection(id: _uuid.v4(), fromNodeId: fromNodeId, toNodeId: toNodeId);
+
+  Map<String, dynamic> toJson() => {'id': id, 'from': fromNodeId, 'to': toNodeId};
+
+  factory PipelineConnection.fromJson(Map<String, dynamic> json) => PipelineConnection(
+    id: json['id'] as String? ?? _uuid.v4(),
+    fromNodeId: json['from'] as String,
+    toNodeId: json['to'] as String,
+  );
 }
 
 class PipelineGraph {
@@ -117,6 +142,16 @@ class PipelineGraph {
     )).toList();
     return PipelineGraph(nodes: newNodes, connections: newConns);
   }
+
+  Map<String, dynamic> toJson() => {
+    'nodes': nodes.map((n) => n.toJson()).toList(),
+    'connections': connections.map((c) => c.toJson()).toList(),
+  };
+
+  factory PipelineGraph.fromJson(Map<String, dynamic> json) => PipelineGraph(
+    nodes: (json['nodes'] as List?)?.map((n) => PipelineNode.fromJson(n as Map<String, dynamic>)).toList(),
+    connections: (json['connections'] as List?)?.map((c) => PipelineConnection.fromJson(c as Map<String, dynamic>)).toList(),
+  );
 }
 
 enum PipelineMode { merged, sequential }

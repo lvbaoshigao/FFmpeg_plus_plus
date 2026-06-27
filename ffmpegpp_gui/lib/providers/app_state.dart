@@ -104,6 +104,33 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     debugPrint('[init] 7-setup log listeners');
     _setupLogListeners();
+    _autoDetectLocalFfmpeg();
+  }
+
+  void _autoDetectLocalFfmpeg() {
+    final exeDir = Directory(Platform.resolvedExecutable).parent.path;
+    final localFfmpeg = File('$exeDir${Platform.pathSeparator}ffmpeg.exe');
+    final localFfprobe = File('$exeDir${Platform.pathSeparator}ffprobe.exe');
+    bool changed = false;
+    if (localFfmpeg.existsSync()) {
+      final cfgPath = config.ffmpegPath;
+      if (cfgPath.isEmpty || !File(cfgPath).existsSync()) {
+        config.ffmpegPath = localFfmpeg.path;
+        addLog('自动检测到本地 ffmpeg: ${localFfmpeg.path}', category: 'info');
+        changed = true;
+      }
+    }
+    if (localFfprobe.existsSync()) {
+      final cfgPath = config.ffprobePath;
+      if (cfgPath.isEmpty || !File(cfgPath).existsSync()) {
+        config.ffprobePath = localFfprobe.path;
+        addLog('自动检测到本地 ffprobe: ${localFfprobe.path}', category: 'info');
+        changed = true;
+      }
+    }
+    if (changed) {
+      recheckEnv();
+    }
   }
 
   void _setupLogListeners() {

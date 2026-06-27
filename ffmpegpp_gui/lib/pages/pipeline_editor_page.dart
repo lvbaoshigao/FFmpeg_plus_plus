@@ -3,18 +3,21 @@ import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../services/graph_executor.dart';
 import '../theme/app_strings.dart';
+import '../services/config_export.dart';
 import '../widgets/step_editors/start_step_editor.dart';
 import '../widgets/step_editors/av_process_step_editor.dart';
 import '../widgets/step_editors/subtitle_step_editor.dart';
 import '../widgets/step_editors/output_step_editor.dart';
 import '../widgets/step_editors/clip_step_editor.dart';
 import '../widgets/step_editors/frame_step_editor.dart';
+import '../widgets/step_editors/speed_step_editor.dart';
 
 const _uuid = Uuid();
 
@@ -91,6 +94,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
       case PipelineStepType.subtitle: return Icons.subtitles_outlined;
       case PipelineStepType.clip: return Icons.content_cut;
       case PipelineStepType.frame: return Icons.photo_camera_outlined;
+      case PipelineStepType.speed: return Icons.speed;
       case PipelineStepType.output: return Icons.save_alt_outlined;
     }
   }
@@ -226,6 +230,115 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
     Navigator.pop(context);
   }
 
+  Future<void> _exportConfig(AppStrings s) async {
+    final graph = PipelineGraph(nodes: _nodes, connections: _connections);
+    final errors = GraphExecutor.validateGraph(graph);
+    if (errors.isNotEmpty) {
+      final scheme = Theme.of(context).colorScheme;
+      final zh = s.isZh;
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(children: [
+            Icon(Icons.error_outline, size: 20, color: scheme.error),
+            const SizedBox(width: 8),
+            Text(zh ? '无法导出' : 'Cannot Export', style: TextStyle(color: scheme.onSurface)),
+          ]),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(zh ? '配置存在逻辑错误，请先修复：' : 'Config has logic errors. Fix them first:',
+                  style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
+              const SizedBox(height: 8),
+              ...errors.map((e) => Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('• ', style: TextStyle(color: scheme.error, fontWeight: FontWeight.bold)),
+                  Expanded(child: Text(e, style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13))),
+                ]),
+              )),
+            ],
+          ),
+          actions: [
+            FilledButton(onPressed: () => Navigator.pop(ctx), child: Text(zh ? '知道了' : 'OK')),
+          ],
+        ),
+      );
+      return;
+    }
+
+    final descCtrl = TextEditingController();
+    final scheme = Theme.of(context).colorScheme;
+    final zh = s.isZh;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(children: [
+          Icon(Icons.file_upload_outlined, size: 20, color: scheme.primary),
+          const SizedBox(width: 8),
+          Text(zh ? '导出配置' : 'Export Config', style: TextStyle(color: scheme.onSurface)),
+        ]),
+        content: SizedBox(width: 400, child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text(zh ? '将当前节点配置导出为 .fppx 文件，可应用于其他视频。' : 'Export current node config as .fppx file for reuse.',
+              style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(color: scheme.surfaceContainerHighest.withAlpha(80), borderRadius: BorderRadius.circular(8)),
+            child: Row(children: [
+              Icon(Icons.info_outline, size: 14, color: scheme.outline),
+              const SizedBox(width: 6),
+              Text('${_nodes.length} ${zh ? '节点' : 'nodes'}  •  ${_connections.length} ${zh ? '连线' : 'links'}',
+                  style: TextStyle(fontSize: 12, color: scheme.outline)),
+            ]),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: descCtrl, maxLines: 4,
+            decoration: InputDecoration(
+              labelText: zh ? '配置介绍（可选）' : 'Description (optional)',
+              hintText: zh ? '描述这个配置的用途...' : 'Describe what this config does...',
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              alignLabelWithHint: true,
+            ),
+            style: TextStyle(fontSize: 13, color: scheme.onSurface),
+          ),
+        ])),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(s.cancel)),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(zh ? '导出' : 'Export')),
+        ],
+      ),
+    );
+
+    if (confirmed != true) { descCtrl.dispose(); return; }
+
+    final desc = descCtrl.text;
+    descCtrl.dispose();
+
+    final result = await FilePicker.platform.saveFile(
+      dialogTitle: zh ? '保存配置文件' : 'Save Config File',
+      fileName: '${widget.video.filename.replaceAll(RegExp(r'\.[^.]+$'), '')}_config.fppx',
+      type: FileType.custom,
+      allowedExtensions: ['fppx'],
+    );
+    if (result == null) return;
+
+    final bytes = FppxExporter.exportGraph(graph, desc);
+    await File(result).writeAsBytes(bytes);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(zh ? '已导出: $result' : 'Exported: $result'),
+        backgroundColor: Colors.green,
+      ));
+    }
+  }
+
   Future<bool> _onWillPop() async {
     if (_nodes.isEmpty) return true;
     final scheme = Theme.of(context).colorScheme;
@@ -269,6 +382,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
       PipelineStepType.subtitle,
       PipelineStepType.clip,
       PipelineStepType.frame,
+      PipelineStepType.speed,
       PipelineStepType.output,
     ];
 
@@ -344,6 +458,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
         return ClipStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, videoPath: v.filepath, videoDuration: v.duration, isZh: isZh);
       case PipelineStepType.frame:
         return FrameStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, videoPath: v.filepath, videoDuration: v.duration, isZh: isZh);
+      case PipelineStepType.speed:
+        return SpeedStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
     }
   }
 
@@ -374,6 +490,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
             style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
           ),
           actions: [
+            IconButton(
+              icon: const Icon(Icons.file_upload_outlined, size: 20),
+              tooltip: s.isZh ? '导出配置' : 'Export Config',
+              onPressed: _nodes.isEmpty ? null : () => _exportConfig(s),
+            ),
             Padding(
               padding: const EdgeInsets.only(right: 12),
               child: FilledButton.icon(

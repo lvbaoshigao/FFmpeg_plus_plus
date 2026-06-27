@@ -8,7 +8,9 @@ import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import '../widgets/masonry_grid.dart';
+import '../widgets/install_dialog.dart';
 import '../widgets/font_picker.dart';
+import '../services/ffmpeg_installer.dart';
 
 /// 获取用户数据目录（%APPDATA%/FFmpeg++/），避免 Program Files 权限问题
 String _userDataDir() {
@@ -238,12 +240,12 @@ class SettingsPage extends StatelessWidget {
                             errorBuilder: (_, __, ___) => Icon(Icons.play_circle_fill, size: 48, color: scheme.primary))),
                     const SizedBox(height: 8),
                     Text('FFmpeg++', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: scheme.primary)),
-                    Text('v3.0.0', style: TextStyle(fontSize: 12, color: scheme.outline)),
+                    Text('v3.2.0', style: TextStyle(fontSize: 12, color: scheme.outline)),
                     const SizedBox(height: 12),
                   ])),
                   const SizedBox(height: 4),
-                  _infoRow(s.aboutVersion, 'v3.0.0', scheme),
-                  _infoRow(s.aboutBuildDate, '2026-06-19', scheme),
+                  _infoRow(s.aboutVersion, 'v3.2.0', scheme),
+                  _infoRow(s.aboutBuildDate, '2026-06-27', scheme),
                   _infoRow(s.aboutBlog, 'blog-clstone.netlify.app', scheme),
                   _infoRow(s.aboutGithub, 'github.com/pity-Fox/FFmpeg_plus_plus', scheme),
                   _infoRow(s.aboutSponsor, '', scheme, trailing: TextButton.icon(
@@ -504,6 +506,16 @@ class _FfmpegCardState extends State<_FfmpegCard> {
   @override
   void initState() {
     super.initState();
+    _syncState();
+  }
+
+  @override
+  void didUpdateWidget(_FfmpegCard old) {
+    super.didUpdateWidget(old);
+    if (!_checking) _syncState();
+  }
+
+  void _syncState() {
     _found = widget.state.envOk;
     _version = widget.state.ffmpegVersion;
     _path = widget.state.config.ffmpegPath;
@@ -582,6 +594,43 @@ class _FfmpegCardState extends State<_FfmpegCard> {
     } catch (_) {}
   }
 
+  Future<void> _confirmDelete(bool isZh) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final s = Theme.of(ctx).colorScheme;
+        return AlertDialog(
+          icon: Icon(Icons.delete_forever, color: s.error, size: 32),
+          title: Text(isZh ? '删除 FFmpeg' : 'Delete FFmpeg'),
+          content: Text(
+            isZh ? '将删除程序目录下的 ffmpeg.exe 和 ffprobe.exe，确定？'
+                 : 'Delete ffmpeg.exe and ffprobe.exe from the app directory?',
+            style: TextStyle(fontSize: 13, color: s.onSurface),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false),
+                child: Text(isZh ? '取消' : 'Cancel')),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: FilledButton.styleFrom(backgroundColor: s.error),
+              child: Text(isZh ? '删除' : 'Delete'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true || !mounted) return;
+    FfmpegInstaller.uninstall();
+    widget.state.updateConfig((c) => c..ffmpegPath = ''..ffprobePath = '');
+    setState(() { _found = false; _version = ''; _path = ''; });
+    widget.state.addLog('已删除程序目录下的 FFmpeg', category: 'info');
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(isZh ? 'FFmpeg 已删除' : 'FFmpeg deleted')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -596,18 +645,32 @@ class _FfmpegCardState extends State<_FfmpegCard> {
       // Initial: just detect button
       card = _card(scheme, glass, cardAlpha, cfg, s.ffmpegSettings, [
         Center(child: Column(children: [
+          Icon(Icons.warning_amber, size: 32, color: Colors.orange),
           const SizedBox(height: 8),
+          Text(s.ffmpegNotFound, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.orange)),
+          const SizedBox(height: 12),
           FilledButton.icon(
-            icon: const Icon(Icons.search, size: 18),
-            label: Text(isZh ? '检测 FFmpeg' : 'Detect FFmpeg', style: const TextStyle(fontSize: 12)),
-            onPressed: _detect,
+            icon: const Icon(Icons.download, size: 18),
+            label: Text(isZh ? '自动安装 FFmpeg' : 'Install FFmpeg', style: const TextStyle(fontSize: 13)),
+            onPressed: () async {
+              final ok = await FfmpegInstallDialog.show(context);
+              if (ok == true) _detect();
+            },
           ),
           const SizedBox(height: 8),
-          TextButton.icon(
-            icon: const Icon(Icons.folder_open, size: 14),
-            label: Text(isZh ? '手动选择' : 'Manual Select', style: const TextStyle(fontSize: 11)),
-            onPressed: _browseFfmpeg,
-          ),
+          Row(mainAxisSize: MainAxisSize.min, children: [
+            FilledButton.tonalIcon(
+              icon: const Icon(Icons.search, size: 16),
+              label: Text(isZh ? '检测' : 'Detect', style: const TextStyle(fontSize: 11)),
+              onPressed: _detect,
+            ),
+            const SizedBox(width: 8),
+            TextButton.icon(
+              icon: const Icon(Icons.folder_open, size: 14),
+              label: Text(isZh ? '手动选择' : 'Manual', style: const TextStyle(fontSize: 11)),
+              onPressed: _browseFfmpeg,
+            ),
+          ]),
         ])),
         const SizedBox(height: 4),
         Wrap(spacing: 4, runSpacing: 4, alignment: WrapAlignment.center, children: [
@@ -624,7 +687,9 @@ class _FfmpegCardState extends State<_FfmpegCard> {
         Center(child: Text(isZh ? '正在检测...' : 'Detecting...', style: TextStyle(fontSize: 12, color: scheme.outline))),
       ]);
     } else {
-      // Found: show version only
+      // Found: show version + optional delete for bundled ffmpeg
+      final isBundled = FfmpegInstaller.isInstalled &&
+          _path.isNotEmpty && _path.startsWith(Directory(Platform.resolvedExecutable).parent.path);
       card = _card(scheme, glass, cardAlpha, cfg, s.ffmpegSettings, [
         Row(children: [
           const Icon(Icons.check_circle, size: 16, color: Colors.green),
@@ -637,9 +702,22 @@ class _FfmpegCardState extends State<_FfmpegCard> {
         if (_path.isNotEmpty)
           Padding(padding: const EdgeInsets.only(bottom: 6),
               child: Text(_path, style: TextStyle(fontSize: 9, color: scheme.outline.withAlpha(150)), maxLines: 2, overflow: TextOverflow.ellipsis)),
-        SizedBox(width: double.infinity, child: OutlinedButton.icon(
-            icon: const Icon(Icons.refresh, size: 14), label: Text(s.recheck, style: const TextStyle(fontSize: 11)),
-            onPressed: _detect)),
+        Row(children: [
+          Expanded(child: OutlinedButton.icon(
+              icon: const Icon(Icons.refresh, size: 14), label: Text(s.recheck, style: const TextStyle(fontSize: 11)),
+              onPressed: _detect)),
+          if (isBundled) ...[
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              icon: Icon(Icons.delete_outline, size: 14, color: scheme.error),
+              label: Text(isZh ? '删除' : 'Delete', style: TextStyle(fontSize: 11, color: scheme.error)),
+              style: OutlinedButton.styleFrom(
+                side: BorderSide(color: scheme.error.withAlpha(120)),
+              ),
+              onPressed: () => _confirmDelete(isZh),
+            ),
+          ],
+        ]),
         const SizedBox(height: 4),
         Wrap(spacing: 4, runSpacing: 4, children: [
           _link('ffmpeg.org', 'https://ffmpeg.org'),

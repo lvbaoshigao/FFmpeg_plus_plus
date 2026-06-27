@@ -89,7 +89,7 @@ class GraphExecutor {
       for (var si = 0; si < plan.steps.length; si++) {
         final step = plan.steps[si];
         final types = step.nodes.map((n) => n.type).toSet();
-        final hasMergeable = types.contains(PipelineStepType.avProcess) || types.contains(PipelineStepType.subtitle);
+        final hasMergeable = types.contains(PipelineStepType.avProcess) || types.contains(PipelineStepType.subtitle) || types.contains(PipelineStepType.speed);
         final hasSequential = types.contains(PipelineStepType.clip) || types.contains(PipelineStepType.frame);
         if (hasMergeable && hasSequential) {
           final names = step.nodes.map((n) => n.label).join(', ');
@@ -185,7 +185,7 @@ class GraphExecutor {
         continue;
       }
       final types = processing.map((n) => n.type).toSet();
-      if (types.every((t) => t == PipelineStepType.avProcess || t == PipelineStepType.subtitle)) {
+      if (types.every((t) => t == PipelineStepType.avProcess || t == PipelineStepType.subtitle || t == PipelineStepType.speed)) {
         steps.add(ExecutionStep('merged', processing));
       } else {
         for (final n in processing) {
@@ -228,9 +228,16 @@ class GraphExecutor {
         case 'merged':
           final avNodes = step.nodes.where((n) => n.type == PipelineStepType.avProcess).toList();
           final subNodes = step.nodes.where((n) => n.type == PipelineStepType.subtitle).toList();
+          final speedNodes = step.nodes.where((n) => n.type == PipelineStepType.speed).toList();
+
+          final speedFilters = speedNodes.isNotEmpty ? _speedFilters(_effectiveSpeed(speedNodes.first.params)) : null;
 
           if (subNodes.isNotEmpty) {
             final avOpts = avNodes.isNotEmpty ? _avOptions(avNodes.first) : _defaultAvOptions();
+            if (speedFilters != null) {
+              avOpts['vf_filters'] = [speedFilters.$1];
+              avOpts['af_filters'] = [speedFilters.$2];
+            }
             calls.add(BackendCall(
               action: 'subtitle',
               params: {
@@ -241,9 +248,22 @@ class GraphExecutor {
               },
             ));
           } else if (avNodes.isNotEmpty) {
+            final opts = _avOptions(avNodes.first);
+            if (speedFilters != null) {
+              opts['vf_filters'] = [speedFilters.$1];
+              opts['af_filters'] = [speedFilters.$2];
+            }
             calls.add(BackendCall(
               action: 'transcode',
-              params: {'input': currentInput, 'output': currentOutput, 'options': _avOptions(avNodes.first)},
+              params: {'input': currentInput, 'output': currentOutput, 'options': opts},
+            ));
+          } else if (speedNodes.isNotEmpty) {
+            final opts = _defaultAvOptions();
+            opts['vf_filters'] = [speedFilters!.$1];
+            opts['af_filters'] = [speedFilters.$2];
+            calls.add(BackendCall(
+              action: 'transcode',
+              params: {'input': currentInput, 'output': currentOutput, 'options': opts},
             ));
           }
           break;
@@ -313,6 +333,15 @@ class GraphExecutor {
                 'subtitle_options': _subtitleOptions(node),
                 'video_options': _defaultAvOptions(),
               },
+            ));
+          } else if (node.type == PipelineStepType.speed) {
+            final sf = _speedFilters(_effectiveSpeed(node.params));
+            final opts = _defaultAvOptions();
+            opts['vf_filters'] = [sf.$1];
+            opts['af_filters'] = [sf.$2];
+            calls.add(BackendCall(
+              action: 'transcode',
+              params: {'input': currentInput, 'output': currentOutput, 'options': opts},
             ));
           }
           break;
@@ -398,6 +427,10 @@ class GraphExecutor {
               else if (fm == 'range') descs.add('范围分帧(${n.params['range_start'] ?? 0}s-${n.params['range_end'] ?? '?'}s @${n.params['fps_rate'] ?? 1}fps)');
               else descs.add('全部分帧(@${n.params['fps_rate'] ?? 1}fps)');
               break;
+            case PipelineStepType.speed:
+              final sp = _effectiveSpeed(n.params);
+              descs.add('变速(${sp}x)');
+              break;
             default: break;
           }
         }
@@ -452,6 +485,32 @@ class GraphExecutor {
     'video_codec': 'h264', 'gpu': 'CPU', 'preset': 'medium',
     'audio_codec': 'aac', 'overwrite': true,
   };
+
+  static double _effectiveSpeed(Map<String, dynamic> params) {
+    final isCustom = params['custom_speed'] as bool? ?? false;
+    if (isCustom) {
+      return (params['custom_speed_value'] as num?)?.toDouble() ?? 10.0;
+    }
+    return (params['speed'] as num?)?.toDouble() ?? 1.0;
+  }
+
+  static (String, String) _speedFilters(double speed) {
+    final ptsFactor = (1.0 / speed).toStringAsFixed(6);
+    final vf = 'setpts=$ptsFactor*PTS';
+
+    final afParts = <String>[];
+    var remaining = speed;
+    while (remaining > 2.0) {
+      afParts.add('atempo=2.0');
+      remaining /= 2.0;
+    }
+    while (remaining < 0.5) {
+      afParts.add('atempo=0.5');
+      remaining /= 0.5;
+    }
+    afParts.add('atempo=${remaining.toStringAsFixed(6)}');
+    return (vf, afParts.join(','));
+  }
 
   static Map<String, dynamic> _subtitleOptions(PipelineNode node) {
     final p = node.params;
