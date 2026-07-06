@@ -25,7 +25,7 @@ class FrameStepEditor extends StatefulWidget {
 }
 
 class _FrameStepEditorState extends State<FrameStepEditor> {
-  late TextEditingController _timeCtrl, _startCtrl, _endCtrl;
+  late TextEditingController _timeCtrl, _startCtrl, _endCtrl, _fpsCtrl;
   String? _previewPath;
   Timer? _debounceTimer;
   bool _loading = false;
@@ -46,12 +46,13 @@ class _FrameStepEditorState extends State<FrameStepEditor> {
     _timeCtrl = TextEditingController(text: _fmt(p['time'] as double));
     _startCtrl = TextEditingController(text: _fmt(p['range_start'] as double));
     _endCtrl = TextEditingController(text: _fmt(p['range_end'] as double));
+    _fpsCtrl = TextEditingController(text: '${(p['fps_rate'] as num?)?.toDouble() ?? 1.0}');
     _generatePreview();
   }
 
   @override
   void dispose() {
-    _timeCtrl.dispose(); _startCtrl.dispose(); _endCtrl.dispose();
+    _timeCtrl.dispose(); _startCtrl.dispose(); _endCtrl.dispose(); _fpsCtrl.dispose();
     _debounceTimer?.cancel();
     super.dispose();
   }
@@ -118,7 +119,11 @@ class _FrameStepEditorState extends State<FrameStepEditor> {
             ButtonSegment(value: 'all', label: Text(zh ? '全部' : 'All', style: const TextStyle(fontSize: 12)), icon: const Icon(Icons.video_library, size: 14)),
           ],
           selected: {mode},
-          onSelectionChanged: (v) { setState(() => p['extract_mode'] = v.first); widget.onChanged(); },
+          onSelectionChanged: (v) {
+            setState(() => p['extract_mode'] = v.first);
+            widget.onChanged();
+            _generatePreview();
+          },
           style: const ButtonStyle(visualDensity: VisualDensity.compact),
         ),
         const SizedBox(height: 12),
@@ -224,7 +229,7 @@ class _FrameStepEditorState extends State<FrameStepEditor> {
       Row(children: [
         Text(zh ? '提取帧率: ' : 'FPS: ', style: TextStyle(fontSize: 13, color: cs.onSurface)),
         SizedBox(width: 80, child: TextFormField(
-          initialValue: '$fpsRate', keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          controller: _fpsCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
           decoration: _dec('fps'), style: TextStyle(fontSize: 13, color: cs.onSurface),
           onChanged: (v) { p['fps_rate'] = double.tryParse(v) ?? 1.0; setState(() {}); widget.onChanged(); },
         )),
@@ -241,7 +246,7 @@ class _FrameStepEditorState extends State<FrameStepEditor> {
       Row(children: [
         Text(zh ? '提取帧率: ' : 'FPS: ', style: TextStyle(fontSize: 13, color: cs.onSurface)),
         SizedBox(width: 80, child: TextFormField(
-          initialValue: '$fpsRate', keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          controller: _fpsCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
           decoration: _dec('fps'), style: TextStyle(fontSize: 13, color: cs.onSurface),
           onChanged: (v) { p['fps_rate'] = double.tryParse(v) ?? 1.0; setState(() {}); widget.onChanged(); },
         )),

@@ -39,7 +39,7 @@ ToolCheck checkTool(const std::string& name) {
         result.error = name + " 未在 PATH 或常见安装目录中找到";
         return result;
     }
-    auto pr = Subprocess::run({name, "-version"}, 10);
+    auto pr = Subprocess::run({result.path, "-version"}, 10);
     if (pr.exit_code == 0 && !pr.stdout_output.empty()) {
         auto nl = pr.stdout_output.find('\n');
         result.version = (nl != std::string::npos) ? pr.stdout_output.substr(0, nl) : pr.stdout_output;
@@ -56,13 +56,62 @@ ToolCheck checkTool(const std::string& name) {
 ToolCheck findFFmpeg() { return checkTool("ffmpeg"); }
 ToolCheck findFFprobe() { return checkTool("ffprobe"); }
 
+// 缓存已解析的完整路径，避免每次构建命令都重新搜索
+static std::string g_ffmpegPath;
+static std::string g_ffprobePath;
+
+const std::string& getFFmpegPath() {
+    if (g_ffmpegPath.empty()) {
+        g_ffmpegPath = findExecutable("ffmpeg");
+        if (g_ffmpegPath.empty()) g_ffmpegPath = "ffmpeg";
+    }
+    return g_ffmpegPath;
+}
+
+const std::string& getFFprobePath() {
+    if (g_ffprobePath.empty()) {
+        g_ffprobePath = findExecutable("ffprobe");
+        if (g_ffprobePath.empty()) g_ffprobePath = "ffprobe";
+    }
+    return g_ffprobePath;
+}
+
 json ensureFFmpeg() {
-    auto ff = findFFmpeg();
-    auto fp = findFFprobe();
+    auto ff_path = getFFmpegPath();
+    auto fp_path = getFFprobePath();
+    bool ff_found = !ff_path.empty() && ff_path != "ffmpeg";
+    bool fp_found = !fp_path.empty() && fp_path != "ffprobe";
+
+    std::string ff_version, fp_version, ff_error, fp_error;
+    if (ff_found) {
+        auto pr = Subprocess::run({ff_path, "-version"}, 10);
+        if (pr.exit_code == 0 && !pr.stdout_output.empty()) {
+            auto nl = pr.stdout_output.find('\n');
+            ff_version = (nl != std::string::npos) ? pr.stdout_output.substr(0, nl) : pr.stdout_output;
+            if (!ff_version.empty() && ff_version.back() == '\r') ff_version.pop_back();
+        } else {
+            ff_error = "执行 -version 失败";
+        }
+    } else {
+        ff_error = "ffmpeg 未在 PATH 或常见安装目录中找到";
+    }
+    if (fp_found) {
+        auto pr = Subprocess::run({fp_path, "-version"}, 10);
+        if (pr.exit_code == 0 && !pr.stdout_output.empty()) {
+            auto nl = pr.stdout_output.find('\n');
+            fp_version = (nl != std::string::npos) ? pr.stdout_output.substr(0, nl) : pr.stdout_output;
+            if (!fp_version.empty() && fp_version.back() == '\r') fp_version.pop_back();
+        } else {
+            fp_error = "执行 -version 失败";
+        }
+    } else {
+        fp_error = "ffprobe 未在 PATH 或常见安装目录中找到";
+    }
+
     return {
-        {"ffmpeg", {{"found", ff.found}, {"path", ff.path}, {"version", ff.version}, {"error", ff.error}}},
-        {"ffprobe", {{"found", fp.found}, {"path", fp.path}, {"version", fp.version}, {"error", fp.error}}},
-        {"all_ok", ff.found && fp.found},
+        {"ffmpeg", {{"found", ff_found}, {"path", ff_path}, {"version", ff_version}, {"error", ff_error}}},
+        {"ffprobe", {{"found", fp_found}, {"path", fp_path}, {"version", fp_version}, {"error", fp_error}}},
+        {"all_ok", ff_found && fp_found},
     };
 }
 

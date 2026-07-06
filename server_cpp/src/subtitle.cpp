@@ -2,6 +2,7 @@
 #include "constants.h"
 #include "transcoder.h"
 #include "probe.h"
+#include "installer.h"
 #include <stdexcept>
 #include <sstream>
 #include <algorithm>
@@ -13,15 +14,15 @@ std::string escapeFilterPath(const std::string& filepath) {
     std::string p = filepath;
     // 反斜杠 → 正斜杠
     std::replace(p.begin(), p.end(), '\\', '/');
-    // 转义 ffmpeg 滤镜路径中的特殊字符
+    // 转义 ffmpeg 滤镜路径中的所有特殊字符
     std::string result;
     for (size_t i = 0; i < p.size(); ++i) {
         char c = p[i];
         if (c == ':' && i == 1) {
             // 盘符冒号（如 J:）→ \:
             result += "\\:";
-        } else if (c == '\'' || c == '\\' || c == '[' || c == ']') {
-            // 单引号、反斜杠、方括号 → 前缀反斜杠
+        } else if (c == '\'' || c == '\\' || c == '[' || c == ']'
+                   || c == ';' || c == ',' || c == '=' || c == '%') {
             result += '\\';
             result += c;
         } else {
@@ -34,6 +35,11 @@ std::string escapeFilterPath(const std::string& filepath) {
 std::string hexToASS(const std::string& hex) {
     std::string h = hex;
     if (!h.empty() && h[0] == '#') h = h.substr(1);
+    // 严格验证：只允许十六进制字符
+    for (char c : h) {
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')))
+            throw std::runtime_error("颜色值包含非法字符");
+    }
     // RGB → ASS BGR 格式 (&HBBGGRR&)
     if (h.size() >= 6) {
         return "&H" + h.substr(4, 2) + h.substr(2, 2) + h.substr(0, 2) + "&";
@@ -49,6 +55,7 @@ std::string buildSubtitleFilter(const std::string& input_path, const json& opts)
     if (source == "external") {
         std::string sub_file = opts.value("subtitle_file", "");
         if (sub_file.empty()) throw std::runtime_error("外挂字幕模式需要提供 subtitle_file");
+        if (!isPathSafe(sub_file)) throw std::runtime_error("字幕路径包含不安全字符");
         filter << "subtitles='" << escapeFilterPath(sub_file) << "'";
     } else if (source == "embedded") {
         int sub_index = opts.value("subtitle_index", 0);
@@ -61,8 +68,21 @@ std::string buildSubtitleFilter(const std::string& input_path, const json& opts)
     if (opts.contains("style") && !opts["style"].is_null()) {
         auto& style = opts["style"];
         std::vector<std::string> parts;
-        if (style.contains("font_name") && !style["font_name"].is_null())
-            parts.push_back("FontName=" + style["font_name"].get<std::string>());
+        if (style.contains("font_name") && !style["font_name"].is_null()) {
+            std::string fn = style["font_name"].get<std::string>();
+            // 字体名仅允许字母、数字、空格、连字符、下划线和中文
+            bool fn_safe = true;
+            for (char c : fn) {
+                if (c == ';' || c == '\'' || c == '"' || c == '\\' || c == '|'
+                    || c == '`' || c == '$' || c == '\n' || c == '\r'
+                    || c == ',' || c == '=' || c == '[' || c == ']') {
+                    fn_safe = false;
+                    break;
+                }
+            }
+            if (!fn_safe) throw std::runtime_error("字体名包含不安全字符");
+            parts.push_back("FontName=" + fn);
+        }
         if (style.contains("font_size") && !style["font_size"].is_null())
             parts.push_back("FontSize=" + std::to_string(style["font_size"].get<int>()));
         if (style.contains("font_color") && !style["font_color"].is_null())
@@ -91,7 +111,13 @@ std::vector<std::string> buildSubtitleCommand(
     const json& subtitle_options,
     const json& video_options) {
 
-    std::vector<std::string> cmd = {"ffmpeg", "-i", input_path};
+    // ── 输入/输出路径安全检查 ──
+    if (!isPathSafe(input_path))
+        throw std::runtime_error("输入路径包含不安全字符");
+    if (!isPathSafe(output_path))
+        throw std::runtime_error("输出路径包含不安全字符");
+
+    std::vector<std::string> cmd = {getFFmpegPath(), "-i", input_path};
 
     // 构建视频滤镜链：先追加外部 vf_filters（如 setpts），再追加字幕滤镜
     std::string sub_filter = buildSubtitleFilter(input_path, subtitle_options);
@@ -100,8 +126,11 @@ std::vector<std::string> buildSubtitleCommand(
         video_options["vf_filters"].is_array() && !video_options["vf_filters"].empty()) {
         std::string prefix;
         for (auto& f : video_options["vf_filters"]) {
+            std::string fs = f.get<std::string>();
+            if (!isFilterSafe(fs))
+                throw std::runtime_error("视频滤镜包含不安全内容: " + fs);
             if (!prefix.empty()) prefix += ",";
-            prefix += f.get<std::string>();
+            prefix += fs;
         }
         vf = prefix + "," + sub_filter;
     }
@@ -113,8 +142,11 @@ std::vector<std::string> buildSubtitleCommand(
         video_options["af_filters"].is_array() && !video_options["af_filters"].empty()) {
         std::string af;
         for (auto& f : video_options["af_filters"]) {
+            std::string fs = f.get<std::string>();
+            if (!isFilterSafe(fs))
+                throw std::runtime_error("音频滤镜包含不安全内容: " + fs);
             if (!af.empty()) af += ",";
-            af += f.get<std::string>();
+            af += fs;
         }
         cmd.push_back("-af");
         cmd.push_back(af);

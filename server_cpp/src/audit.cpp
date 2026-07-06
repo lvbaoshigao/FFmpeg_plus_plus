@@ -29,7 +29,7 @@ std::vector<std::string> auditCommand(const std::vector<std::string>& cmd) {
         if (cmd[i] == "-i" && i + 1 < cmd.size()) input_files.push_back(cmd[i + 1]);
     }
     for (int i = (int)cmd.size() - 1; i >= 0; --i) {
-        if (cmd[i][0] != '-' && cmd[i] != "ffmpeg") {
+        if (cmd[i][0] != '-' && cmd[i].find("ffmpeg") == std::string::npos) {
             output_file = cmd[i];
             break;
         }

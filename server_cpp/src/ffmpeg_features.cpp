@@ -1,5 +1,6 @@
 #include "ffmpeg_features.h"
 #include "subprocess.h"
+#include "installer.h"
 #include <sstream>
 #include <algorithm>
 
@@ -156,38 +157,38 @@ json queryFFmpegFeatures() {
     json result;
 
     // 使用 -encoders / -decoders（比 -codecs 更清晰）
-    auto enc_pr = Subprocess::run({"ffmpeg", "-encoders"}, 10);
+    auto enc_pr = Subprocess::run({getFFmpegPath(), "-encoders"}, 10);
     if (enc_pr.exit_code == 0) {
         result["encoders_video"] = parseCodecsByType(enc_pr.stdout_output, 'V', true);
         result["encoders_audio"] = parseCodecsByType(enc_pr.stdout_output, 'A', true);
     }
 
-    auto dec_pr = Subprocess::run({"ffmpeg", "-decoders"}, 10);
+    auto dec_pr = Subprocess::run({getFFmpegPath(), "-decoders"}, 10);
     if (dec_pr.exit_code == 0) {
         result["decoders_video"] = parseCodecsByType(dec_pr.stdout_output, 'V', false);
         result["decoders_audio"] = parseCodecsByType(dec_pr.stdout_output, 'A', false);
     }
 
     // 格式（容器）
-    auto fmt_pr = Subprocess::run({"ffmpeg", "-formats"}, 10);
+    auto fmt_pr = Subprocess::run({getFFmpegPath(), "-formats"}, 10);
     if (fmt_pr.exit_code == 0) {
         result["formats"] = parseFormats(fmt_pr.stdout_output);
     }
 
     // 滤镜
-    auto flt_pr = Subprocess::run({"ffmpeg", "-filters"}, 10);
+    auto flt_pr = Subprocess::run({getFFmpegPath(), "-filters"}, 10);
     if (flt_pr.exit_code == 0) {
         result["filters"] = parseFilters(flt_pr.stdout_output);
     }
 
     // 协议
-    auto pro_pr = Subprocess::run({"ffmpeg", "-protocols"}, 10);
+    auto pro_pr = Subprocess::run({getFFmpegPath(), "-protocols"}, 10);
     if (pro_pr.exit_code == 0) {
         result["protocols"] = parseProtocols(pro_pr.stdout_output);
     }
 
     // 硬件加速
-    auto hw_pr = Subprocess::run({"ffmpeg", "-hwaccels"}, 10);
+    auto hw_pr = Subprocess::run({getFFmpegPath(), "-hwaccels"}, 10);
     if (hw_pr.exit_code == 0) {
         result["hwaccels"] = parseHwAccels(hw_pr.stdout_output);
     }

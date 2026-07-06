@@ -18,17 +18,17 @@ class AppStrings {
   String get backendConnected => lang == 'zh' ? '后端已连接' : 'Backend connected';
 
   // ── 项目页 ──
-  String get addVideo => lang == 'zh' ? '添加视频' : 'Add Video';
-  String get noVideos => lang == 'zh' ? '还没有添加视频' : 'No videos added';
-  String get clickAdd => lang == 'zh' ? '点击上方「添加视频」按钮开始' : 'Click Add Video to start';
+  String get addVideo => lang == 'zh' ? '添加文件' : 'Add File';
+  String get noVideos => lang == 'zh' ? '还没有添加文件' : 'No files added';
+  String get clickAdd => lang == 'zh' ? '点击上方「添加文件」按钮开始' : 'Click Add File to start';
   String get probing => lang == 'zh' ? '解析中...' : 'Probing...';
   String get edit => lang == 'zh' ? '编辑' : 'Edit';
   String get addToQueue => lang == 'zh' ? '加入处理队列' : 'Add to queue';
   String get remove => lang == 'zh' ? '移除' : 'Remove';
-  String get dropToAdd => lang == 'zh' ? '松开以添加视频' : 'Drop to add videos';
-  String get dragDropHint => lang == 'zh' ? '或拖拽视频文件到此处' : 'or drag & drop video files here';
-  String get noMatch => lang == 'zh' ? '未找到匹配的视频' : 'No matching videos';
-  String get searchVideos => lang == 'zh' ? '搜索视频...' : 'Search videos...';
+  String get dropToAdd => lang == 'zh' ? '松开以添加文件' : 'Drop to add files';
+  String get dragDropHint => lang == 'zh' ? '或拖拽文件到此处' : 'or drag & drop files here';
+  String get noMatch => lang == 'zh' ? '未找到匹配的文件' : 'No matching files';
+  String get searchVideos => lang == 'zh' ? '搜索文件...' : 'Search files...';
   String get search => lang == 'zh' ? '搜索' : 'Search';
   String get close => lang == 'zh' ? '关闭' : 'Close';
   String get selectAll => lang == 'zh' ? '全选' : 'Select all';
@@ -41,7 +41,7 @@ class AppStrings {
   String get clearCompleted => lang == 'zh' ? '清除已完成' : 'Clear done';
   String get clearAll => lang == 'zh' ? '移除所有' : 'Remove all';
   String get emptyQueue => lang == 'zh' ? '处理队列为空' : 'Queue empty';
-  String get emptyQueueHint => lang == 'zh' ? '在项目页添加视频并点击 ▶ 按钮' : 'Add videos in Projects and click ▶';
+  String get emptyQueueHint => lang == 'zh' ? '在项目页添加文件并点击 ▶ 按钮' : 'Add files in Projects and click ▶';
   String get pending => lang == 'zh' ? '等待中' : 'Pending';
   String get processing => lang == 'zh' ? '处理中' : 'Processing';
   String get completed => lang == 'zh' ? '已完成' : 'Completed';
@@ -56,8 +56,6 @@ class AppStrings {
   String get qLogs => lang == 'zh' ? '日志' : 'Logs';
   String get qError => lang == 'zh' ? '错误' : 'Error';
   String get qWeight => lang == 'zh' ? '字重' : 'Weight';
-  String get qGlass => lang == 'zh' ? '选项卡3D效果' : '3D Tab Effect';
-  String get qGlassHint => lang == 'zh' ? '卡片毛玻璃模糊 + 渐变边框' : 'Frosted blur + gradient border';
   // Debug
   String get dDebug => lang == 'zh' ? '调试' : 'Debug';
   String get dDebugMode => lang == 'zh' ? '调试模式' : 'Debug mode';
@@ -102,7 +100,7 @@ class AppStrings {
   String get swVersion => lang == 'zh' ? '版本' : 'Version';
   String get swBuild => lang == 'zh' ? '构建日期' : 'Build';
   String get swProtocol => lang == 'zh' ? '协议' : 'Protocol';
-  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v3.2.0  |  构建 2026-06-27  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v3.2.0  |  Build 2026-06-27  |  JSON v0.1.0';
+  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v4.0.0  |  构建 2026-07-06  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v4.0.0  |  Build 2026-07-06  |  JSON v0.1.0';
   String get languageInterface => lang == 'zh' ? '界面语言' : 'Interface Language';
   String get ffmpegFound => lang == 'zh' ? 'FFmpeg 已检测到' : 'FFmpeg detected';
   String get ffmpegNotFound => lang == 'zh' ? 'FFmpeg 未检测到' : 'FFmpeg not found';

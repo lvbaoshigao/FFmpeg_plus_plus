@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
@@ -18,13 +19,18 @@ import '../widgets/step_editors/output_step_editor.dart';
 import '../widgets/step_editors/clip_step_editor.dart';
 import '../widgets/step_editors/frame_step_editor.dart';
 import '../widgets/step_editors/speed_step_editor.dart';
+import '../widgets/step_editors/image_convert_step_editor.dart';
+import '../widgets/step_editors/audio_convert_step_editor.dart';
+import '../widgets/step_editors/extract_audio_step_editor.dart';
+import '../widgets/step_editors/image_crop_step_editor.dart';
+import '../widgets/toast.dart';
 
 const _uuid = Uuid();
 
-const _nodeW = 160.0;
-const _nodeH = 56.0;
+const _nodeW = 200.0;
+const _nodeH = 68.0;
 const _canvasSize = 6000.0;
-const _portZoneW = 14.0;
+const _portZoneW = 18.0;
 const _totalNodeW = _portZoneW + _nodeW + _portZoneW;
 
 class PipelineEditorPage extends StatefulWidget {
@@ -38,15 +44,26 @@ class PipelineEditorPage extends StatefulWidget {
 class _PipelineEditorPageState extends State<PipelineEditorPage> {
   final List<PipelineNode> _nodes = [];
   final List<PipelineConnection> _connections = [];
-  String? _selectedNodeId;
+  Set<String> _selectedNodeIds = {};
+  String? _lastSelectedId;
 
-  // 连线拖拽状态
   String? _dragFromNodeId;
   bool _dragIsOutput = true;
   Offset? _dragLineEnd;
 
-  // 缩略图缓存
+  // Box-select state
+  Offset? _boxSelectStart;
+  Rect? _boxSelectRect;
+  bool _isBoxSelecting = false;
+
+  // Right-click drag-to-pan state
+  Offset? _rightClickStart;
+  Offset? _rightClickGlobal;
+  bool _isRightDragging = false;
+
   String? _thumbPath;
+  bool _toolboxExpanded = true;
+  bool _editorExpanded = true;
 
   final TransformationController _transformCtrl = TransformationController();
 
@@ -58,6 +75,27 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
       final copied = g.copy();
       _nodes.addAll(copied.nodes);
       _connections.addAll(copied.connections);
+    } else {
+      final cx = _canvasSize / 2;
+      final cy = _canvasSize / 2;
+      final startNode = PipelineNode(
+        id: _uuid.v4(), type: PipelineStepType.start,
+        x: cx - 100, y: cy,
+        params: {'file_media_type': widget.video.fileMediaType.name},
+      );
+      final outputNode = PipelineNode(
+        id: _uuid.v4(), type: PipelineStepType.output,
+        x: cx + 200, y: cy,
+      );
+      _nodes.addAll([startNode, outputNode]);
+      _connections.add(PipelineConnection(
+        id: _uuid.v4(), fromNodeId: startNode.id, toNodeId: outputNode.id,
+      ));
+    }
+    for (final n in _nodes) {
+      if (n.type == PipelineStepType.start) {
+        n.params['file_media_type'] = widget.video.fileMediaType.name;
+      }
     }
     _genThumb();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -82,8 +120,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
   }
 
   PipelineNode? get _selectedNode {
-    if (_selectedNodeId == null) return null;
-    final idx = _nodes.indexWhere((n) => n.id == _selectedNodeId);
+    if (_lastSelectedId == null) return null;
+    final idx = _nodes.indexWhere((n) => n.id == _lastSelectedId);
     return idx >= 0 ? _nodes[idx] : null;
   }
 
@@ -95,6 +133,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
       case PipelineStepType.clip: return Icons.content_cut;
       case PipelineStepType.frame: return Icons.photo_camera_outlined;
       case PipelineStepType.speed: return Icons.speed;
+      case PipelineStepType.imageConvert: return Icons.image;
+      case PipelineStepType.audioConvert: return Icons.audiotrack;
+      case PipelineStepType.extractAudio: return Icons.music_note;
+      case PipelineStepType.imageCrop: return Icons.crop;
       case PipelineStepType.output: return Icons.save_alt_outlined;
     }
   }
@@ -110,11 +152,29 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
   // ── 节点操作 ──
 
   void _addNodeAt(PipelineStepType type, Offset canvasPos) {
-    setState(() {
-      _nodes.add(PipelineNode(
-        id: _uuid.v4(), type: type,
-        x: canvasPos.dx, y: canvasPos.dy,
-      ));
+    final node = PipelineNode(
+      id: _uuid.v4(), type: type,
+      x: canvasPos.dx, y: canvasPos.dy,
+    );
+    if (type == PipelineStepType.start) {
+      node.params['file_media_type'] = widget.video.fileMediaType.name;
+    }
+    setState(() => _nodes.add(node));
+    _trackUsage(type);
+  }
+
+  void _addNodeAtCenter(PipelineStepType type) {
+    final rb = context.findRenderObject() as RenderBox;
+    final center = rb.size.center(Offset.zero);
+    final canvasPos = _screenToCanvas(center);
+    _addNodeAt(type, canvasPos);
+  }
+
+  void _trackUsage(PipelineStepType type) {
+    final state = context.read<AppState>();
+    state.updateConfig((c) {
+      c.nodeUsageCount[type.name] = (c.nodeUsageCount[type.name] ?? 0) + 1;
+      return c;
     });
   }
 
@@ -122,16 +182,45 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
     setState(() {
       _nodes.removeWhere((n) => n.id == nodeId);
       _connections.removeWhere((c) => c.fromNodeId == nodeId || c.toNodeId == nodeId);
-      if (_selectedNodeId == nodeId) _selectedNodeId = null;
+      _selectedNodeIds.remove(nodeId);
+      if (_lastSelectedId == nodeId) {
+        _lastSelectedId = _selectedNodeIds.isEmpty ? null : _selectedNodeIds.last;
+      }
+    });
+  }
+
+  void _deleteSelectedNodes() {
+    if (_selectedNodeIds.isEmpty) return;
+    setState(() {
+      final ids = Set<String>.from(_selectedNodeIds);
+      for (final id in ids) {
+        _nodes.removeWhere((n) => n.id == id);
+        _connections.removeWhere((c) => c.fromNodeId == id || c.toNodeId == id);
+      }
+      _selectedNodeIds.clear();
+      _lastSelectedId = null;
     });
   }
 
   void _addConnection(String fromId, String toId) {
     if (fromId == toId) return;
-    final fromNode = _nodes.firstWhere((n) => n.id == fromId, orElse: () => _nodes.first);
-    final toNode = _nodes.firstWhere((n) => n.id == toId, orElse: () => _nodes.first);
+    final fromIdx = _nodes.indexWhere((n) => n.id == fromId);
+    final toIdx = _nodes.indexWhere((n) => n.id == toId);
+    if (fromIdx < 0 || toIdx < 0) return; // 节点不存在，静默返回
+    final fromNode = _nodes[fromIdx];
+    final toNode = _nodes[toIdx];
     if (!fromNode.hasOutput || !toNode.hasInput) return;
     if (_connections.any((c) => c.fromNodeId == fromId && c.toNodeId == toId)) return;
+    final outType = fromNode.outputType;
+    final inTypes = toNode.inputTypes;
+    if (outType != null && inTypes.isNotEmpty && !inTypes.contains(outType)) {
+      final zh = context.read<AppState>().config.language == 'zh';
+      showToast(context, zh
+            ? '类型不兼容：${fromNode.label} 输出 ${outType.name}，${toNode.label} 需要 ${inTypes.map((t) => t.name).join("/")}'
+            : 'Incompatible: ${fromNode.labelEn} outputs ${outType.name}, ${toNode.labelEn} needs ${inTypes.map((t) => t.name).join("/")}',
+          type: ToastType.error);
+      return;
+    }
     setState(() {
       _connections.add(PipelineConnection(id: _uuid.v4(), fromNodeId: fromId, toNodeId: toId));
     });
@@ -332,10 +421,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
     await File(result).writeAsBytes(bytes);
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(zh ? '已导出: $result' : 'Exported: $result'),
-        backgroundColor: Colors.green,
-      ));
+      showToast(context, zh ? '已导出: $result' : 'Exported: $result', type: ToastType.success);
     }
   }
 
@@ -371,40 +457,88 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
 
   // ── 右键菜单 ──
 
+  static const _allNodeTypes = [
+    PipelineStepType.start,
+    PipelineStepType.avProcess,
+    PipelineStepType.subtitle,
+    PipelineStepType.clip,
+    PipelineStepType.frame,
+    PipelineStepType.speed,
+    PipelineStepType.imageConvert,
+    PipelineStepType.audioConvert,
+    PipelineStepType.extractAudio,
+    PipelineStepType.imageCrop,
+    PipelineStepType.output,
+  ];
+
+  List<PipelineStepType> _top5Types() {
+    final counts = context.read<AppState>().config.nodeUsageCount;
+    final sorted = List<PipelineStepType>.from(_allNodeTypes)
+      ..sort((a, b) => (counts[b.name] ?? 0).compareTo(counts[a.name] ?? 0));
+    final top = sorted.take(5).toList();
+    if (!top.contains(PipelineStepType.start)) top[4] = PipelineStepType.start;
+    if (!top.contains(PipelineStepType.output)) {
+      final idx = top.indexWhere((t) => t != PipelineStepType.start && (counts[t.name] ?? 0) == 0);
+      if (idx >= 0) top[idx] = PipelineStepType.output;
+      else top[3] = PipelineStepType.output;
+    }
+    return top;
+  }
+
   void _showCanvasMenu(Offset screenPos) {
     final s = AppStrings.of(context.read<AppState>().config.language);
     final scheme = Theme.of(context).colorScheme;
     final canvasPos = _screenToCanvas(screenPos);
+    final top5 = _top5Types();
 
-    final allTypes = [
-      PipelineStepType.start,
-      PipelineStepType.avProcess,
-      PipelineStepType.subtitle,
-      PipelineStepType.clip,
-      PipelineStepType.frame,
-      PipelineStepType.speed,
-      PipelineStepType.output,
-    ];
+    PopupMenuItem<PipelineStepType> _item(PipelineStepType t) {
+      final dummy = PipelineNode(id: '', type: t);
+      return PopupMenuItem(
+        value: t,
+        child: Row(children: [
+          Container(
+            width: 22, height: 22,
+            decoration: BoxDecoration(color: _nodeColor(t, scheme), borderRadius: BorderRadius.circular(5)),
+            child: Icon(_stepIcon(t), size: 13, color: scheme.onSurface),
+          ),
+          const SizedBox(width: 8),
+          Text(s.isZh ? dummy.label : dummy.labelEn, style: const TextStyle(fontSize: 13)),
+          if (dummy.mediaTag.isNotEmpty) ...[
+            const SizedBox(width: 6),
+            Text(dummy.mediaTag, style: TextStyle(fontSize: 9, color: scheme.outline)),
+          ],
+        ]),
+      );
+    }
 
     showMenu<PipelineStepType>(
       context: context,
       position: RelativeRect.fromLTRB(screenPos.dx, screenPos.dy, screenPos.dx + 1, screenPos.dy + 1),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      items: allTypes.map((t) {
-        final dummy = PipelineNode(id: '', type: t);
-        return PopupMenuItem(
-          value: t,
-          child: Row(children: [
-            Container(
-              width: 22, height: 22,
-              decoration: BoxDecoration(color: _nodeColor(t, scheme), borderRadius: BorderRadius.circular(5)),
-              child: Icon(_stepIcon(t), size: 13, color: scheme.onSurface),
-            ),
-            const SizedBox(width: 8),
-            Text(s.isZh ? dummy.label : dummy.labelEn, style: const TextStyle(fontSize: 13)),
-          ]),
-        );
-      }).toList(),
+      items: [
+        ...top5.map(_item),
+        const PopupMenuDivider(),
+        PopupMenuItem(
+          value: null,
+          enabled: false,
+          height: 0,
+          child: PopupMenuButton<PipelineStepType>(
+            tooltip: '',
+            offset: const Offset(200, 0),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            itemBuilder: (_) => _allNodeTypes.map(_item).toList(),
+            onSelected: (type) {
+              Navigator.pop(context);
+              _addNodeAt(type, canvasPos);
+            },
+            child: Row(children: [
+              Icon(Icons.more_horiz, size: 16, color: scheme.outline),
+              const SizedBox(width: 8),
+              Text(s.isZh ? '全部元素...' : 'All elements...', style: TextStyle(fontSize: 13, color: scheme.outline)),
+            ]),
+          ),
+        ),
+      ],
     ).then((type) {
       if (type != null) _addNodeAt(type, canvasPos);
     });
@@ -412,6 +546,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
 
   void _showNodeMenu(Offset screenPos, String nodeId) {
     final s = AppStrings.of(context.read<AppState>().config.language);
+    final multiSelected = _selectedNodeIds.length > 1 && _selectedNodeIds.contains(nodeId);
     showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(screenPos.dx, screenPos.dy, screenPos.dx + 1, screenPos.dy + 1),
@@ -422,13 +557,44 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
           const SizedBox(width: 6),
           Text(s.isZh ? '删除节点' : 'Delete Node', style: const TextStyle(fontSize: 13)),
         ])),
+        if (multiSelected)
+          PopupMenuItem(value: 'delete_selected', child: Row(children: [
+            Icon(Icons.delete_sweep_outlined, size: 16, color: Theme.of(context).colorScheme.error),
+            const SizedBox(width: 6),
+            Text(s.isZh ? '删除选中 (${_selectedNodeIds.length}个)' : 'Delete Selected (${_selectedNodeIds.length})',
+                style: const TextStyle(fontSize: 13)),
+          ])),
       ],
     ).then((action) {
-      if (action == 'delete') _deleteNode(nodeId);
+      if (action == 'delete') {
+        _deleteNode(nodeId);
+      } else if (action == 'delete_selected') {
+        _deleteSelectedNodes();
+      }
     });
   }
 
   // ── 构建步骤编辑器 ──
+
+  String? _resolveSourceImagePath(PipelineNode node) {
+    final visited = <String>{};
+    String? trace(String nodeId) {
+      if (visited.contains(nodeId)) return null;
+      visited.add(nodeId);
+      for (final conn in _connections.where((c) => c.toNodeId == nodeId)) {
+        final srcIdx = _nodes.indexWhere((n) => n.id == conn.fromNodeId);
+        if (srcIdx < 0) continue;
+        final src = _nodes[srcIdx];
+        if (src.type == PipelineStepType.start && src.outputType == MediaType.image) {
+          return widget.video.filepath;
+        }
+        final result = trace(src.id);
+        if (result != null) return result;
+      }
+      return null;
+    }
+    return trace(node.id);
+  }
 
   Widget _buildStepEditor(PipelineNode node, bool isZh) {
     void onChanged() => setState(() {});
@@ -460,6 +626,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
         return FrameStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, videoPath: v.filepath, videoDuration: v.duration, isZh: isZh);
       case PipelineStepType.speed:
         return SpeedStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+      case PipelineStepType.imageConvert:
+        return ImageConvertStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+      case PipelineStepType.audioConvert:
+        return AudioConvertStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+      case PipelineStepType.extractAudio:
+        return ExtractAudioStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+      case PipelineStepType.imageCrop:
+        return ImageCropStepEditor(
+          key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh,
+          sourceImagePath: _resolveSourceImagePath(node),
+        );
     }
   }
 
@@ -544,7 +721,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
 
   Widget _glassWrap(Widget child, ColorScheme scheme) {
     final cfg = context.read<AppState>().config;
-    if (!cfg.glassEffect) return child;
     final ca = (cfg.cardOpacity * 255).round().clamp(0, 255);
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
@@ -564,26 +740,118 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
 
   // ── 画布 ──
 
+  bool _isCtrlPressed() {
+    final keys = HardwareKeyboard.instance.logicalKeysPressed;
+    return keys.contains(LogicalKeyboardKey.controlLeft) || keys.contains(LogicalKeyboardKey.controlRight);
+  }
+
   Widget _buildCanvas(ColorScheme scheme, AppStrings s) {
-    final glass = context.read<AppState>().config.glassEffect;
 
     final canvas = Listener(
       onPointerDown: (e) {
         if (e.kind == PointerDeviceKind.mouse && e.buttons == kSecondaryMouseButton) {
+          // Right-click: record start for drag-to-pan vs menu detection
+          _rightClickStart = e.position;
+          _rightClickGlobal = e.position;
+          _isRightDragging = false;
+        } else if (e.kind == PointerDeviceKind.mouse && e.buttons == kPrimaryMouseButton) {
+          // Left-click on empty canvas: start box-select or deselect
           final canvasPos = _screenToCanvas(e.localPosition);
           final hitNode = _findNodeAtCanvasPos(canvasPos);
-          if (hitNode != null) return;
-          final hitConn = _hitTestConnection(canvasPos);
-          if (hitConn != null) {
-            _showConnectionMenu(e.position, hitConn);
-          } else {
-            _showCanvasMenu(e.position);
+          if (hitNode == null) {
+            final hitConn = _hitTestConnection(canvasPos);
+            if (hitConn == null) {
+              // No node or connection hit: start box-select
+              setState(() {
+                _boxSelectStart = canvasPos;
+                _boxSelectRect = null;
+                _isBoxSelecting = true;
+                if (!_isCtrlPressed()) {
+                  _selectedNodeIds.clear();
+                  _lastSelectedId = null;
+                }
+              });
+            }
           }
+        }
+      },
+      onPointerMove: (e) {
+        // Right-click drag-to-pan
+        if (e.kind == PointerDeviceKind.mouse && (e.buttons & kSecondaryMouseButton) != 0 && _rightClickStart != null) {
+          if (!_isRightDragging) {
+            if ((_rightClickStart! - e.position).distance > 8) {
+              _isRightDragging = true;
+            }
+          }
+          if (_isRightDragging) {
+            final delta = e.position - _rightClickGlobal!;
+            _rightClickGlobal = e.position;
+            _transformCtrl.value = _transformCtrl.value.clone()..translate(delta.dx, delta.dy);
+          }
+        }
+        // Left-click box-select drag
+        if (_isBoxSelecting && _boxSelectStart != null && (e.buttons & kPrimaryMouseButton) != 0) {
+          final canvasPos = _screenToCanvas(e.localPosition);
+          setState(() {
+            _boxSelectRect = Rect.fromPoints(_boxSelectStart!, canvasPos);
+          });
+        }
+      },
+      onPointerUp: (e) {
+        // Right-click release
+        if (e.kind == PointerDeviceKind.mouse && _rightClickStart != null) {
+          if (!_isRightDragging) {
+            // Was a click, not a drag → show context menu
+            final canvasPos = _screenToCanvas(e.localPosition);
+            final hitNode = _findNodeAtCanvasPos(canvasPos);
+            if (hitNode != null) {
+              // handled by node's onSecondaryTapUp
+            } else {
+              final hitConn = _hitTestConnection(canvasPos);
+              if (hitConn != null) {
+                _showConnectionMenu(e.position, hitConn);
+              } else {
+                _showCanvasMenu(e.position);
+              }
+            }
+          }
+          _rightClickStart = null;
+          _rightClickGlobal = null;
+          _isRightDragging = false;
+        }
+        // Box-select release
+        if (_isBoxSelecting) {
+          if (_boxSelectRect != null) {
+            final rect = _boxSelectRect!;
+            setState(() {
+              for (final n in _nodes) {
+                final nodeRect = Rect.fromLTWH(n.x, n.y, _totalNodeW, _nodeH);
+                if (rect.overlaps(nodeRect)) {
+                  _selectedNodeIds.add(n.id);
+                  _lastSelectedId = n.id;
+                }
+              }
+            });
+          } else {
+            // Click on empty canvas without drag: deselect all
+            if (!_isCtrlPressed()) {
+              setState(() {
+                _selectedNodeIds.clear();
+                _lastSelectedId = null;
+              });
+            }
+          }
+          setState(() {
+            _boxSelectStart = null;
+            _boxSelectRect = null;
+            _isBoxSelecting = false;
+          });
         }
       },
       child: InteractiveViewer(
         transformationController: _transformCtrl,
         constrained: false,
+        panEnabled: !_isBoxSelecting,
         boundaryMargin: const EdgeInsets.all(double.infinity),
         minScale: 0.3,
         maxScale: 2.0,
@@ -600,7 +868,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
                 nodes: _nodes,
                 connections: _connections,
                 color: scheme.primary.withAlpha(140),
-                selectedNodeId: _selectedNodeId,
+                selectedNodeIds: _selectedNodeIds,
               ),
             ),
             // 临时拖拽连线
@@ -623,9 +891,59 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
                 left: node.x, top: node.y,
                 child: _buildNodeWidget(node, scheme, s),
               ),
+            // Box-select overlay
+            if (_boxSelectRect != null)
+              CustomPaint(
+                size: Size(_canvasSize, _canvasSize),
+                painter: _BoxSelectPainter(rect: _boxSelectRect!, color: scheme.primary),
+              ),
           ]),
         ),
       ),
+    );
+
+    // Wrap canvas area with Focus for Ctrl+A
+    final focusedCanvas = Focus(
+      autofocus: true,
+      onKeyEvent: (node, event) {
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+        final bindings = context.read<AppState>().config.keyBindings;
+
+        // Select all (Ctrl+A)
+        final selectAll = bindings['canvas_select_all'] ?? ['Control', 'A'];
+        if (selectAll.isNotEmpty && _isCtrlPressed() && event.logicalKey == LogicalKeyboardKey.keyA) {
+          if (selectAll.contains('Control') && selectAll.contains('A')) {
+            setState(() {
+              _selectedNodeIds = _nodes.map((n) => n.id).toSet();
+              if (_nodes.isNotEmpty) _lastSelectedId = _nodes.last.id;
+            });
+            return KeyEventResult.handled;
+          }
+        }
+
+        // Delete selected (Delete key by default)
+        final delBinding = bindings['canvas_delete_selected'] ?? ['Delete'];
+        if (delBinding.isNotEmpty && _selectedNodeIds.isNotEmpty) {
+          final keyLabel = event.logicalKey.keyLabel;
+          final nonModifiers = delBinding.where((b) => !const {'Control', 'Shift', 'Alt', 'Meta'}.contains(b)).toList();
+          final modifiers = delBinding.where((b) => const {'Control', 'Shift', 'Alt', 'Meta'}.contains(b)).toSet();
+          final pressed = HardwareKeyboard.instance.logicalKeysPressed;
+          final heldMods = <String>{};
+          for (final k in pressed) {
+            if (k == LogicalKeyboardKey.controlLeft || k == LogicalKeyboardKey.controlRight) heldMods.add('Control');
+            if (k == LogicalKeyboardKey.shiftLeft || k == LogicalKeyboardKey.shiftRight) heldMods.add('Shift');
+            if (k == LogicalKeyboardKey.altLeft || k == LogicalKeyboardKey.altRight) heldMods.add('Alt');
+          }
+          if (heldMods.length == modifiers.length && heldMods.containsAll(modifiers) &&
+              nonModifiers.length == 1 && keyLabel.toLowerCase() == nonModifiers.first.toLowerCase()) {
+            _deleteSelectedNodes();
+            return KeyEventResult.handled;
+          }
+        }
+
+        return KeyEventResult.ignored;
+      },
+      child: canvas,
     );
 
     final inner = Column(children: [
@@ -644,29 +962,29 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
       const Divider(height: 1, indent: 12, endIndent: 12),
       Expanded(child: ClipRRect(
         borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(12), bottomRight: Radius.circular(12)),
-        child: Stack(children: [
-          canvas,
-          if (context.read<AppState>().config.debugMode)
-            Positioned(
-              left: 8, bottom: 8, right: 8,
-              child: IgnorePointer(child: Text(
-                GraphExecutor.describeGraph(PipelineGraph(nodes: _nodes, connections: _connections)),
-                style: TextStyle(fontSize: 10, color: scheme.onSurface.withAlpha(128), height: 1.4),
-              )),
-            ),
-        ]),
+        child: DragTarget<PipelineStepType>(
+          onAcceptWithDetails: (details) {
+            final rb = context.findRenderObject() as RenderBox;
+            final local = rb.globalToLocal(details.offset);
+            final canvasPos = _screenToCanvas(local);
+            _addNodeAt(details.data, canvasPos);
+          },
+          builder: (ctx, candidateData, rejectedData) => Stack(children: [
+            focusedCanvas,
+            if (context.read<AppState>().config.debugMode)
+              Positioned(
+                left: 8, bottom: 8, right: 8,
+                child: IgnorePointer(child: Text(
+                  GraphExecutor.describeGraph(PipelineGraph(nodes: _nodes, connections: _connections)),
+                  style: TextStyle(fontSize: 10, color: scheme.onSurface.withAlpha(128), height: 1.4),
+                )),
+              ),
+          ]),
+        ),
       )),
     ]);
 
-    if (glass) return _glassWrap(inner, scheme);
-    return Container(
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
-      ),
-      child: inner,
-    );
+    return _glassWrap(inner, scheme);
   }
 
   // ── 节点 Widget ──
@@ -705,7 +1023,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
   }
 
   Widget _buildNodeWidget(PipelineNode node, ColorScheme scheme, AppStrings s) {
-    final selected = node.id == _selectedNodeId;
+    final selected = _selectedNodeIds.contains(node.id);
 
     Widget portZone(bool isOutput) {
       final hasPort = isOutput ? node.hasOutput : node.hasInput;
@@ -721,7 +1039,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
             width: _portZoneW,
             height: _nodeH,
             child: Center(child: Container(
-              width: 10, height: 10,
+              width: 12, height: 12,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: hasPort
@@ -743,11 +1061,43 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
         behavior: HitTestBehavior.opaque,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTap: () => setState(() => _selectedNodeId = node.id),
-          onPanUpdate: (d) {
+          onTap: () {
             setState(() {
-              node.x += d.delta.dx;
-              node.y += d.delta.dy;
+              if (_isCtrlPressed()) {
+                // Ctrl+click: toggle in/out of selection
+                if (_selectedNodeIds.contains(node.id)) {
+                  _selectedNodeIds.remove(node.id);
+                  _lastSelectedId = _selectedNodeIds.isEmpty ? null : _selectedNodeIds.last;
+                } else {
+                  _selectedNodeIds.add(node.id);
+                  _lastSelectedId = node.id;
+                }
+              } else {
+                // Single click: select only this node
+                _selectedNodeIds.clear();
+                _selectedNodeIds.add(node.id);
+                _lastSelectedId = node.id;
+              }
+            });
+          },
+          onPanUpdate: (d) {
+            final scale = _transformCtrl.value.getMaxScaleOnAxis();
+            final dx = d.delta.dx / scale;
+            final dy = d.delta.dy / scale;
+            setState(() {
+              if (_selectedNodeIds.contains(node.id)) {
+                // Move all selected nodes together
+                for (final n in _nodes) {
+                  if (_selectedNodeIds.contains(n.id)) {
+                    n.x += dx;
+                    n.y += dy;
+                  }
+                }
+              } else {
+                // Dragging an unselected node: move only it
+                node.x += dx;
+                node.y += dy;
+              }
             });
           },
           onSecondaryTapUp: (d) => _showNodeMenu(d.globalPosition, node.id),
@@ -763,15 +1113,22 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
               ),
               boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(30), blurRadius: 6, offset: const Offset(0, 2))],
             ),
-            padding: const EdgeInsets.symmetric(horizontal: 6),
-            child: Row(children: [
-              Icon(_stepIcon(node.type), size: 16, color: selected ? scheme.primary : scheme.onSurface),
-              const SizedBox(width: 4),
-              Expanded(child: Text(
-                s.isZh ? node.label : node.labelEn,
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: scheme.onSurface),
-                overflow: TextOverflow.ellipsis,
-              )),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Icon(_stepIcon(node.type), size: 17, color: selected ? scheme.primary : scheme.onSurface),
+                const SizedBox(width: 5),
+                Expanded(child: Text(
+                  s.isZh ? node.label : node.labelEn,
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: scheme.onSurface),
+                  overflow: TextOverflow.ellipsis,
+                )),
+              ]),
+              if (node.mediaTag.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(left: 22, top: 2),
+                  child: Text(node.mediaTag, style: TextStyle(fontSize: 10, color: scheme.outline, fontWeight: FontWeight.w600)),
+                ),
             ]),
           ),
         ),
@@ -799,48 +1156,122 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
 
   // ── 右侧面板 ──
 
+
   Widget _buildRightPanel(ColorScheme scheme, AppStrings s) {
-    final glass = context.read<AppState>().config.glassEffect;
     final node = _selectedNode;
 
-    Widget inner;
-    if (node != null) {
-      inner = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Container(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-          decoration: BoxDecoration(border: Border(bottom: BorderSide(color: scheme.outlineVariant.withAlpha(40)))),
-          child: Row(children: [
-            Icon(_stepIcon(node.type), size: 18, color: scheme.primary),
-            const SizedBox(width: 8),
-            Expanded(child: Text(s.isZh ? node.label : node.labelEn,
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: scheme.onSurface))),
+    Widget inner = Column(children: [
+      // ── 元素工具栏 ──
+      _buildCollapsibleHeader(
+        scheme: scheme,
+        icon: Icons.widgets_outlined,
+        title: s.isZh ? '元素' : 'Elements',
+        expanded: _toolboxExpanded,
+        onToggle: () => setState(() => _toolboxExpanded = !_toolboxExpanded),
+        trailing: Text('${_allNodeTypes.length}', style: TextStyle(fontSize: 10, color: scheme.outline)),
+      ),
+      if (_toolboxExpanded)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+          child: Wrap(spacing: 4, runSpacing: 4, children: [
+            for (final t in _allNodeTypes)
+              _buildToolboxItem(t, scheme, s),
           ]),
         ),
-        Expanded(child: SingleChildScrollView(
-          padding: const EdgeInsets.all(4),
-          child: _buildStepEditor(node, s.isZh),
-        )),
-      ]);
-    } else {
-      inner = Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Icon(Icons.touch_app_outlined, size: 40, color: scheme.outline.withAlpha(80)),
-        const SizedBox(height: 12),
-        Text(s.isZh ? '选择节点开始编辑' : 'Select a node to edit',
-            style: TextStyle(color: scheme.outline, fontSize: 14)),
-        const SizedBox(height: 6),
-        Text(s.isZh ? '右键画布添加节点' : 'Right-click canvas to add',
-            style: TextStyle(color: scheme.outline.withAlpha(120), fontSize: 12)),
-      ]));
-    }
+      Divider(height: 1, color: scheme.outlineVariant.withAlpha(40)),
 
-    if (glass) return _glassWrap(inner, scheme);
+      // ── 属性编辑器 ──
+      _buildCollapsibleHeader(
+        scheme: scheme,
+        icon: node != null ? _stepIcon(node.type) : Icons.tune_outlined,
+        title: node != null
+            ? (s.isZh ? node.label : node.labelEn)
+            : (s.isZh ? '属性' : 'Properties'),
+        expanded: _editorExpanded,
+        onToggle: () => setState(() => _editorExpanded = !_editorExpanded),
+      ),
+      if (_editorExpanded)
+        Expanded(child: node != null
+            ? SingleChildScrollView(
+                padding: const EdgeInsets.all(4),
+                child: _buildStepEditor(node, s.isZh),
+              )
+            : Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.touch_app_outlined, size: 32, color: scheme.outline.withAlpha(80)),
+                const SizedBox(height: 8),
+                Text(s.isZh ? '选择节点开始编辑' : 'Select a node to edit',
+                    style: TextStyle(color: scheme.outline, fontSize: 12)),
+              ])),
+        )
+      else
+        const SizedBox.shrink(),
+    ]);
+
+    return _glassWrap(inner, scheme);
+  }
+
+  Widget _buildCollapsibleHeader({
+    required ColorScheme scheme, required IconData icon, required String title,
+    required bool expanded, required VoidCallback onToggle, Widget? trailing,
+  }) {
+    return InkWell(
+      onTap: onToggle,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(children: [
+          Icon(icon, size: 15, color: scheme.primary),
+          const SizedBox(width: 6),
+          Expanded(child: Text(title, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.onSurface))),
+          if (trailing != null) ...[trailing, const SizedBox(width: 6)],
+          Icon(expanded ? Icons.expand_less : Icons.expand_more, size: 16, color: scheme.outline),
+        ]),
+      ),
+    );
+  }
+
+  Widget _buildToolboxItem(PipelineStepType t, ColorScheme scheme, AppStrings s) {
+    final dummy = PipelineNode(id: '', type: t);
+    final tag = dummy.mediaTag;
+    return Draggable<PipelineStepType>(
+      data: t,
+      feedback: Material(
+        elevation: 6,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(color: _nodeColor(t, scheme), borderRadius: BorderRadius.circular(8)),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(_stepIcon(t), size: 14, color: scheme.onSurface),
+            const SizedBox(width: 4),
+            Text(s.isZh ? dummy.label : dummy.labelEn, style: TextStyle(fontSize: 11, color: scheme.onSurface, decoration: TextDecoration.none)),
+          ]),
+        ),
+      ),
+      childWhenDragging: Opacity(opacity: 0.3, child: _toolboxChip(t, dummy, tag, scheme, s)),
+      child: GestureDetector(
+        onDoubleTap: () => _addNodeAtCenter(t),
+        child: _toolboxChip(t, dummy, tag, scheme, s),
+      ),
+    );
+  }
+
+  Widget _toolboxChip(PipelineStepType t, PipelineNode dummy, String tag, ColorScheme scheme, AppStrings s) {
     return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
-        color: scheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(12),
+        color: _nodeColor(t, scheme).withAlpha(180),
+        borderRadius: BorderRadius.circular(6),
         border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
       ),
-      child: inner,
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(_stepIcon(t), size: 14, color: scheme.onSurface),
+        const SizedBox(width: 4),
+        Text(s.isZh ? dummy.label : dummy.labelEn, style: TextStyle(fontSize: 12, color: scheme.onSurface)),
+        if (tag.isNotEmpty) ...[
+          const SizedBox(width: 4),
+          Text(tag, style: TextStyle(fontSize: 9, color: scheme.outline, fontWeight: FontWeight.w600)),
+        ],
+      ]),
     );
   }
 
@@ -896,9 +1327,9 @@ class _ConnectionPainter extends CustomPainter {
   final List<PipelineNode> nodes;
   final List<PipelineConnection> connections;
   final Color color;
-  final String? selectedNodeId;
+  final Set<String> selectedNodeIds;
 
-  _ConnectionPainter({required this.nodes, required this.connections, required this.color, this.selectedNodeId});
+  _ConnectionPainter({required this.nodes, required this.connections, required this.color, required this.selectedNodeIds});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -914,7 +1345,7 @@ class _ConnectionPainter extends CustomPainter {
       final p2 = Offset(to.x + _portZoneW / 2, to.y + _nodeH / 2);
       final dx = (p2.dx - p1.dx).abs() * 0.5;
 
-      final highlighted = conn.fromNodeId == selectedNodeId || conn.toNodeId == selectedNodeId;
+      final highlighted = selectedNodeIds.contains(conn.fromNodeId) || selectedNodeIds.contains(conn.toNodeId);
       final paint = Paint()
         ..color = highlighted ? color : color.withAlpha(80)
         ..strokeWidth = highlighted ? 2.5 : 1.5
@@ -957,4 +1388,55 @@ class _TempLinePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_TempLinePainter old) => old.from != from || old.to != to;
+}
+
+// ── 框选绘制 ──
+
+class _BoxSelectPainter extends CustomPainter {
+  final Rect rect;
+  final Color color;
+  _BoxSelectPainter({required this.rect, required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Semi-transparent fill
+    final fillPaint = Paint()
+      ..color = color.withAlpha(25)
+      ..style = PaintingStyle.fill;
+    canvas.drawRect(rect, fillPaint);
+
+    // Dashed border
+    final borderPaint = Paint()
+      ..color = color.withAlpha(140)
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+
+    const dashLen = 6.0;
+    const gapLen = 4.0;
+
+    void drawDashedLine(Offset start, Offset end) {
+      final d = end - start;
+      final len = d.distance;
+      if (len == 0) return;
+      final dir = d / len;
+      var drawn = 0.0;
+      while (drawn < len) {
+        final segEnd = (drawn + dashLen).clamp(0.0, len);
+        canvas.drawLine(
+          start + dir * drawn,
+          start + dir * segEnd,
+          borderPaint,
+        );
+        drawn += dashLen + gapLen;
+      }
+    }
+
+    drawDashedLine(rect.topLeft, rect.topRight);
+    drawDashedLine(rect.topRight, rect.bottomRight);
+    drawDashedLine(rect.bottomRight, rect.bottomLeft);
+    drawDashedLine(rect.bottomLeft, rect.topLeft);
+  }
+
+  @override
+  bool shouldRepaint(_BoxSelectPainter old) => old.rect != rect || old.color != color;
 }

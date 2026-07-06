@@ -95,23 +95,15 @@ String _findServer() {
   final exeDir = Directory(Platform.resolvedExecutable).parent;
   _startupLog('5a-exeDir: ${exeDir.path}');
 
-  // 优先搜索 ffmpegpp.dll（DLL 模式，更快）
+  // 仅搜索 exe 目录和上一级目录（防止 DLL 劫持）
+  const maxSearchDepth = 2;
+
+  // 搜索 ffmpegpp.dll（DLL 模式）
   var dir = exeDir;
-  for (var i = 0; i < 8; i++) {
+  for (var i = 0; i < maxSearchDepth; i++) {
     final candidate = File('${dir.path}${Platform.pathSeparator}ffmpegpp.dll');
     if (candidate.existsSync()) {
       _startupLog('5b-FOUND DLL: ${candidate.absolute.path}');
-      return candidate.absolute.path;
-    }
-    dir = dir.parent;
-  }
-
-  // 回退搜索 server.exe（EXE 模式，向后兼容）
-  dir = exeDir;
-  for (var i = 0; i < 8; i++) {
-    final candidate = File('${dir.path}${Platform.pathSeparator}server.exe');
-    if (candidate.existsSync()) {
-      _startupLog('5b-FOUND EXE: ${candidate.absolute.path}');
       return candidate.absolute.path;
     }
     dir = dir.parent;
@@ -121,9 +113,9 @@ String _findServer() {
   return '${exeDir.path}${Platform.pathSeparator}ffmpegpp.dll';
 }
 
-/// 杀掉残留的旧进程（管理员权限运行的 _cache / HD_ / server）— fire-and-forget
+/// 杀掉残留的旧进程 — fire-and-forget
 void _killOldProcesses() {
-  const names = ['._cache_ffmpegpp_gui.exe', 'HD_ffmpegpp_gui.exe', 'HD_server.exe'];
+  const names = ['._cache_ffmpegpp_gui.exe', 'HD_ffmpegpp_gui.exe'];
   for (final name in names) {
     Process.run('taskkill', ['/F', '/IM', name], runInShell: true).ignore();
   }

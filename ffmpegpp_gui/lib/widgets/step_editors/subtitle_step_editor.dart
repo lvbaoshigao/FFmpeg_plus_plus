@@ -164,7 +164,7 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> {
           Row(children: [
             Text('${zh ? "字号" : "Size"}: ${p['font_size']}', style: TextStyle(fontSize: 13, color: cs.onSurface)),
             Expanded(child: Slider(
-              value: (p['font_size'] as int).toDouble(), min: 12, max: 72, divisions: 60, label: '${p['font_size']}',
+              value: (p['font_size'] as num?)?.toDouble() ?? 24, min: 12, max: 72, divisions: 60, label: '${p['font_size']}',
               onChanged: (v) => _update('font_size', v.round()),
             )),
           ]),
@@ -174,7 +174,7 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> {
           Row(children: [
             Text('${zh ? "描边" : "Outline"}: ${p['outline_width']}', style: TextStyle(fontSize: 13, color: cs.onSurface)),
             Expanded(child: Slider(
-              value: (p['outline_width'] as int).toDouble(), min: 0, max: 8, divisions: 8, label: '${p['outline_width']}',
+              value: (p['outline_width'] as num?)?.toDouble() ?? 2, min: 0, max: 8, divisions: 8, label: '${p['outline_width']}',
               onChanged: (v) => _update('outline_width', v.round()),
             )),
           ]),

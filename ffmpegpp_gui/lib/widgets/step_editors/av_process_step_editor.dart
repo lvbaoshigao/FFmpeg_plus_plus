@@ -77,6 +77,10 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
     p.putIfAbsent('audio_codec', () => 'aac');
     p.putIfAbsent('audio_channels', () => 'keep');
     p.putIfAbsent('pix_fmt', () => 'auto');
+    // 验证 video_codec 是否有效，无效则重置为默认值
+    if (!_allCodecs.contains(p['video_codec'])) {
+      p['video_codec'] = 'libx264';
+    }
     _bitrateCtrl = TextEditingController(text: '${p['video_bitrate'] ?? ''}');
     _resWCtrl = TextEditingController(text: '${p['resolution_w'] ?? ''}');
     _resHCtrl = TextEditingController(text: '${p['resolution_h'] ?? ''}');
@@ -92,6 +96,11 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
   void _update(String key, dynamic value) {
     setState(() => p[key] = value);
     widget.onChanged();
+  }
+
+  static int _crfMaxForCodec(String codec) {
+    if (codec.contains('av1') || codec.contains('vp9') || codec == 'libvpx-vp9' || codec == 'libaom-av1' || codec == 'libsvtav1') return 63;
+    return 51; // H.264/H.265
   }
 
   static const _allCodecs = [
@@ -164,7 +173,6 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final zh = widget.isZh;
-    if (!_allCodecs.contains(p['video_codec'])) p['video_codec'] = 'libx264';
 
     return Padding(
       padding: const EdgeInsets.all(16),
@@ -211,7 +219,10 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
         if (p['rate_mode'] == 'crf')
           Padding(padding: const EdgeInsets.only(bottom: 12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('CRF: ${p['crf'] ?? 23}', style: TextStyle(fontSize: 13, color: cs.onSurface)),
-            Slider(value: (p['crf'] as int? ?? 23).toDouble(), min: 0, max: 51, divisions: 51, label: '${p['crf'] ?? 23}',
+            Slider(value: (p['crf'] as int? ?? 23).toDouble(), min: 0,
+              max: _crfMaxForCodec(p['video_codec'] as String? ?? 'libx264').toDouble(),
+              divisions: _crfMaxForCodec(p['video_codec'] as String? ?? 'libx264'),
+              label: '${p['crf'] ?? 23}',
               onChanged: (v) => _update('crf', v.round())),
           ])),
         if (p['gpu'] == 'CPU') ...[

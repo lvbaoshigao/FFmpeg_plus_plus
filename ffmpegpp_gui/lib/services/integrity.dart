@@ -4,7 +4,7 @@ import 'package:crypto/crypto.dart';
 /// 启动完整性校验：验证关键资源文件 MD5，不匹配则跳过（不闪退）
 class IntegrityCheck {
   static const _expectedMd5 = {
-    'icon.png': '6bcb28d5d8662516b2cddf61f419caa7',
+    'icon.png': '5493df3e8d4afef9d6a479fd97715cb5',
     'wx.png': '1775d9410c7dc0679f64f9211c810979',
     'zfb.jpg': '405c5edd469221d63c56e9bb6d284387',
   };

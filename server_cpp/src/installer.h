@@ -28,4 +28,8 @@ json getInstallGuide();
 // 格式化检测报告
 std::string formatCheckReport(const json& check_result);
 
+// 获取已解析的 ffmpeg/ffprobe 完整路径（优先使用，避免 PATH 劫持）
+const std::string& getFFmpegPath();
+const std::string& getFFprobePath();
+
 } // namespace ffmpegpp

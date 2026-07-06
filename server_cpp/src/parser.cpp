@@ -45,8 +45,8 @@ json explainCommand(const std::string& command_str) {
         return {{"success", false}, {"explanations", json::array()}, {"categories", json::object()}, {"error", "命令中未找到有效参数"}};
     }
 
-    // 跳过 ffmpeg
-    if (tokens[0] == "ffmpeg") tokens.erase(tokens.begin());
+    // 跳过 ffmpeg（可能是裸名或完整路径）
+    if (!tokens.empty() && tokens[0].find("ffmpeg") != std::string::npos) tokens.erase(tokens.begin());
 
     // 提取输出文件
     std::string output_file;

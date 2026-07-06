@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <algorithm>
 
 namespace ffmpegpp {
 
@@ -81,6 +82,102 @@ inline std::map<std::string, ParamInfo> FFMPEG_PARAMS_DESCRIPTION = {
     {"-metadata", {"元数据", "其他", "设置文件元数据"}},
     {"-threads", {"线程数", "其他", "设置编码线程数"}},
 };
+
+// ═══════════════════════════════════════════════
+// 输入校验
+// ═══════════════════════════════════════════════
+
+// 检查文件路径是否包含危险字符（防止命令注入）
+inline bool isPathSafe(const std::string& path) {
+    if (path.empty()) return false;
+    // 禁止 UNC 路径（防止 NTLM 凭证泄漏）
+    if (path.size() >= 2 && path[0] == '\\' && path[1] == '\\') return false;
+    if (path.size() >= 2 && path[0] == '/' && path[1] == '/') return false;
+    for (char c : path) {
+        if (c == '|' || c == '`' || c == '$' || c == '\n' || c == '\r' || c == '\0')
+            return false;
+    }
+    // 禁止路径穿越
+    if (path.find("..") != std::string::npos) return false;
+    return true;
+}
+
+// 允许的视频/音频/字幕扩展名集合（用于输出路径校验）
+inline std::vector<std::string> ALL_OUTPUT_EXTENSIONS = {
+    "mp4", "avi", "mkv", "mov", "flv", "wmv", "webm", "m4v",
+    "mpg", "mpeg", "3gp", "ts", "m2ts", "m4a", "mp3", "aac",
+    "flac", "ogg", "opus", "wav", "wma", "ac3", "jpg", "jpeg",
+    "png", "bmp", "tiff", "webp", "gif",
+    "srt", "ass", "ssa", "sub", "vtt",
+};
+
+// 允许的 preset 值白名单
+inline std::vector<std::string> VALID_PRESETS = {
+    "ultrafast", "superfast", "veryfast", "faster", "fast",
+    "medium", "slow", "slower", "veryslow", "placebo",
+    "default", "hp", "hq", "bd", "ll", "llhq", "llhp", "lossless", "losslesshp",
+    "speed", "quality", "balanced",
+};
+
+// 允许的像素格式白名单
+inline std::vector<std::string> VALID_PIX_FMTS = {
+    "yuv420p", "yuv422p", "yuv444p", "nv12", "nv21",
+    "yuv420p10le", "yuv422p10le", "yuv444p10le",
+    "p010le", "rgb24", "bgr24", "rgba", "bgra",
+    "gray", "gray16le",
+};
+
+// 允许的音频编码器白名单
+inline std::vector<std::string> VALID_AUDIO_CODECS = {
+    "aac", "libmp3lame", "libopus", "flac", "libfdk_aac",
+    "ac3", "eac3", "pcm_s16le", "pcm_s24le", "pcm_s32le",
+    "pcm_f32le", "vorbis", "wmav2", "copy", "",
+};
+
+// 禁止的 ffmpeg 过滤器名（可读写文件或执行命令的危险过滤器）
+inline std::vector<std::string> DANGEROUS_FILTERS = {
+    "movie", "amovie", "sendcmd", "zmq", "program",
+    "azmq", "coreimage", "testsrc", "life", "cellauto",
+    "opencl", "opengl", "libplacebo",
+};
+
+// 验证过滤器字符串是否安全
+inline bool isFilterSafe(const std::string& filter) {
+    std::string lower = filter;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+
+    // 禁止 shell 元字符
+    for (char c : filter) {
+        if (c == '|' || c == '`' || c == '$' || c == '\n' || c == '\r')
+            return false;
+    }
+
+    for (auto& df : DANGEROUS_FILTERS) {
+        size_t pos = 0;
+        while ((pos = lower.find(df, pos)) != std::string::npos) {
+            // 确认是独立的过滤器名：前面是行首或分隔符（含 ] 用于滤镜图标签）
+            bool prefix_ok = (pos == 0 || lower[pos - 1] == ',' || lower[pos - 1] == ';'
+                              || lower[pos - 1] == ' ' || lower[pos - 1] == ']');
+            // 后面是行尾、= 或分隔符
+            size_t end = pos + df.size();
+            bool suffix_ok = (end >= lower.size() || lower[end] == '=' || lower[end] == ','
+                              || lower[end] == ';' || lower[end] == ' ' || lower[end] == '[');
+            if (prefix_ok && suffix_ok) {
+                return false;
+            }
+            pos += df.size();
+        }
+    }
+    return true;
+}
+
+// 验证字符串值是否在白名单中
+inline bool isInWhitelist(const std::string& value, const std::vector<std::string>& whitelist) {
+    for (auto& w : whitelist) {
+        if (w == value) return true;
+    }
+    return false;
+}
 
 // 默认字幕样式
 struct SubtitleStyle {

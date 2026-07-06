@@ -3,6 +3,12 @@ import 'package:uuid/uuid.dart';
 const _uuid = Uuid();
 
 // ═══════════════════════════════════════════
+// 媒体类型标签
+// ═══════════════════════════════════════════
+
+enum MediaType { video, image, audio }
+
+// ═══════════════════════════════════════════
 // 流水线步骤
 // ═══════════════════════════════════════════
 
@@ -13,6 +19,10 @@ enum PipelineStepType {
   clip,
   frame,
   speed,
+  imageConvert,
+  audioConvert,
+  extractAudio,
+  imageCrop,
   output,
 }
 
@@ -34,6 +44,10 @@ class PipelineStep {
       case PipelineStepType.clip: return '片段截取';
       case PipelineStepType.frame: return '帧提取';
       case PipelineStepType.speed: return '变速';
+      case PipelineStepType.imageConvert: return '图片转换';
+      case PipelineStepType.audioConvert: return '音频转换';
+      case PipelineStepType.extractAudio: return '提取音频';
+      case PipelineStepType.imageCrop: return '图片裁剪';
       case PipelineStepType.output: return '输出';
     }
   }
@@ -46,6 +60,10 @@ class PipelineStep {
       case PipelineStepType.clip: return 'Clip';
       case PipelineStepType.frame: return 'Frame';
       case PipelineStepType.speed: return 'Speed';
+      case PipelineStepType.imageConvert: return 'Image Convert';
+      case PipelineStepType.audioConvert: return 'Audio Convert';
+      case PipelineStepType.extractAudio: return 'Extract Audio';
+      case PipelineStepType.imageCrop: return 'Image Crop';
       case PipelineStepType.output: return 'Output';
     }
   }
@@ -82,6 +100,10 @@ class PipelineNode {
       case PipelineStepType.clip: return '片段截取';
       case PipelineStepType.frame: return '帧提取';
       case PipelineStepType.speed: return '变速';
+      case PipelineStepType.imageConvert: return '图片转换';
+      case PipelineStepType.audioConvert: return '音频转换';
+      case PipelineStepType.extractAudio: return '提取音频';
+      case PipelineStepType.imageCrop: return '图片裁剪';
       case PipelineStepType.output: return '输出';
     }
   }
@@ -94,12 +116,57 @@ class PipelineNode {
       case PipelineStepType.clip: return 'Clip';
       case PipelineStepType.frame: return 'Frame';
       case PipelineStepType.speed: return 'Speed';
+      case PipelineStepType.imageConvert: return 'Image Convert';
+      case PipelineStepType.audioConvert: return 'Audio Convert';
+      case PipelineStepType.extractAudio: return 'Extract Audio';
+      case PipelineStepType.imageCrop: return 'Image Crop';
       case PipelineStepType.output: return 'Output';
     }
   }
 
   bool get hasInput => type != PipelineStepType.start;
   bool get hasOutput => type != PipelineStepType.output;
+
+  Set<MediaType> get inputTypes => switch (type) {
+    PipelineStepType.start => {},
+    PipelineStepType.avProcess => {MediaType.video},
+    PipelineStepType.subtitle => {MediaType.video},
+    PipelineStepType.clip => {MediaType.video},
+    PipelineStepType.frame => {MediaType.video},
+    PipelineStepType.speed => {MediaType.video},
+    PipelineStepType.imageConvert => {MediaType.image},
+    PipelineStepType.audioConvert => {MediaType.audio},
+    PipelineStepType.extractAudio => {MediaType.video},
+    PipelineStepType.imageCrop => {MediaType.image},
+    PipelineStepType.output => {MediaType.video, MediaType.image, MediaType.audio},
+  };
+
+  MediaType? get outputType => switch (type) {
+    PipelineStepType.start => switch (params['file_media_type'] as String? ?? 'video') {
+      'audio' => MediaType.audio, 'image' => MediaType.image, _ => MediaType.video,
+    },
+    PipelineStepType.avProcess => MediaType.video,
+    PipelineStepType.subtitle => MediaType.video,
+    PipelineStepType.clip => MediaType.video,
+    PipelineStepType.frame => MediaType.image,
+    PipelineStepType.speed => MediaType.video,
+    PipelineStepType.imageConvert => MediaType.image,
+    PipelineStepType.audioConvert => MediaType.audio,
+    PipelineStepType.extractAudio => MediaType.audio,
+    PipelineStepType.imageCrop => MediaType.image,
+    PipelineStepType.output => null,
+  };
+
+  String get mediaTag {
+    if (type == PipelineStepType.start) return 'In';
+    if (type == PipelineStepType.output) return 'O';
+    final inp = inputTypes;
+    final out = outputType;
+    if (inp.isEmpty && out != null) return out.name[0].toUpperCase();
+    if (inp.isEmpty || out == null) return '';
+    final i = inp.length == 1 ? inp.first.name[0].toUpperCase() : '*';
+    return '$i→${out.name[0].toUpperCase()}';
+  }
 }
 
 class PipelineConnection {
@@ -207,15 +274,15 @@ class ProgressUpdate {
   });
 
   factory ProgressUpdate.fromJson(Map<String, dynamic> json) => ProgressUpdate(
-        taskId: json['task_id'] as String,
-        progress: (json['progress'] as num).toDouble(),
-        currentTime: json['current_time'] as String,
-        totalTime: json['total_time'] as String,
-        speed: json['speed'] as String,
-        fps: json['fps'] as String,
-        bitrate: json['bitrate'] as String,
-        frame: json['frame'] as int,
-        remaining: json['remaining'] as String,
+        taskId: json['task_id'] as String? ?? '',
+        progress: (json['progress'] as num?)?.toDouble() ?? 0,
+        currentTime: json['current_time'] as String? ?? '00:00:00',
+        totalTime: json['total_time'] as String? ?? '00:00:00',
+        speed: json['speed'] as String? ?? 'N/A',
+        fps: json['fps'] as String? ?? '0',
+        bitrate: json['bitrate'] as String? ?? '0 kb/s',
+        frame: (json['frame'] as num?)?.toInt() ?? 0,
+        remaining: json['remaining'] as String? ?? 'N/A',
       );
 }
 
@@ -250,6 +317,7 @@ class VideoFile {
   final PipelineGraph pipelineGraph;
   final PipelineMode pipelineMode;
   final bool parsed;
+  final MediaType fileMediaType;
 
   VideoFile({
     required this.id, this.filepath = '', this.filename = '',
@@ -261,6 +329,7 @@ class VideoFile {
     this.hasSubtitles = false, this.subtitleCount = 0, this.subtitles = const [],
     TranscodeConfig? config, PipelineGraph? pipelineGraph,
     this.pipelineMode = PipelineMode.merged, this.parsed = false,
+    this.fileMediaType = MediaType.video,
   }) : config = config ?? TranscodeConfig(),
        pipelineGraph = pipelineGraph ?? PipelineGraph();
 
@@ -272,7 +341,7 @@ class VideoFile {
     String? audioCodec, int? audioChannels, String? audioSampleRate,
     bool? hasSubtitles, int? subtitleCount, List<SubtitleStream>? subtitles,
     TranscodeConfig? config, PipelineGraph? pipelineGraph,
-    PipelineMode? pipelineMode, bool? parsed,
+    PipelineMode? pipelineMode, bool? parsed, MediaType? fileMediaType,
   }) => VideoFile(
         id: id, filepath: filepath ?? this.filepath,
         filename: filename ?? this.filename, format: format ?? this.format,
@@ -288,15 +357,31 @@ class VideoFile {
         subtitles: subtitles ?? this.subtitles, config: config ?? this.config,
         pipelineGraph: pipelineGraph ?? this.pipelineGraph,
         pipelineMode: pipelineMode ?? this.pipelineMode, parsed: parsed ?? this.parsed,
+        fileMediaType: fileMediaType ?? this.fileMediaType,
       );
+
+  static MediaType _detectMediaType(String filepath) {
+    final ext = filepath.split('.').last.toLowerCase();
+    const imageExts = {'png', 'jpg', 'jpeg', 'bmp', 'webp', 'tiff', 'tif'};
+    const audioExts = {'mp3', 'wav', 'flac', 'aac', 'm4a', 'ogg', 'opus', 'wma', 'ac3'};
+    if (imageExts.contains(ext)) return MediaType.image;
+    if (audioExts.contains(ext)) return MediaType.audio;
+    return MediaType.video;
+  }
 
   factory VideoFile.fromFilepath(String filepath, {String? id}) => VideoFile(
         id: id ?? _uuid.v4(), filepath: filepath,
         filename: filepath.split('\\').last.split('/').last,
+        fileMediaType: _detectMediaType(filepath),
       );
 
   factory VideoFile.fromProbeResult(String filepath, Map<String, dynamic> info, {String? id}) {
     id ??= _uuid.v4();
+    final mt = switch (info['media_type'] as String? ?? '') {
+      'audio' => MediaType.audio,
+      'image' => MediaType.image,
+      _ => _detectMediaType(filepath),
+    };
     return VideoFile(
       id: id, filepath: filepath,
       filename: info['filename'] as String? ?? '',
@@ -320,6 +405,7 @@ class VideoFile {
       subtitles: (info['subtitles'] as List<dynamic>?)
               ?.map((s) => SubtitleStream.fromJson(s as Map<String, dynamic>)).toList() ?? [],
       config: TranscodeConfig(), parsed: true,
+      fileMediaType: mt,
     );
   }
 }
@@ -366,6 +452,25 @@ class TranscodeConfig {
   String subtitleOutlineColor;  // hex: #000000
   String outputFormat, namingMode, namingValue;
   double? startTime, endTime;
+  // ── 扩展处理选项 ──
+  double? speed;                    // 变速倍率，null=不变速
+  bool extractAudioEnabled;         // 是否提取音频
+  String extractAudioCodec;         // 提取音频编码器
+  String extractAudioFormat;        // 提取音频格式
+  int? extractAudioBitrate;         // 提取音频码率
+  String frameExtractMode;          // 'none'/'single'/'range'/'all'
+  double? frameTime;                // 单帧时间
+  double? frameRangeStart;
+  double? frameRangeEnd;
+  double? frameFps;
+  String frameFormat;               // png/jpg...
+  String? imageOutputFormat;        // 图片转换输出格式
+  int imageQuality;                 // 图片质量
+  int? cropX, cropY, cropW, cropH;  // 图片裁剪
+  String? audioConvertCodec;        // 音频格式转换
+  String? audioConvertFormat;
+  int? audioConvertBitrate;
+  String? audioConvertSampleRate;
 
   TranscodeConfig({
     this.videoCodec = 'h264', this.gpu = 'CPU', this.preset = 'medium', this.crf,
@@ -379,6 +484,15 @@ class TranscodeConfig {
     this.outputFormat = 'keep', this.namingMode = 'keep',
     this.namingValue = '_processed',
     this.startTime, this.endTime,
+    this.speed,
+    this.extractAudioEnabled = false, this.extractAudioCodec = 'copy',
+    this.extractAudioFormat = 'm4a', this.extractAudioBitrate,
+    this.frameExtractMode = 'none', this.frameTime, this.frameRangeStart,
+    this.frameRangeEnd, this.frameFps, this.frameFormat = 'png',
+    this.imageOutputFormat, this.imageQuality = 95,
+    this.cropX, this.cropY, this.cropW, this.cropH,
+    this.audioConvertCodec, this.audioConvertFormat,
+    this.audioConvertBitrate, this.audioConvertSampleRate,
   });
 
   Map<String, dynamic> toBackendOptions() {
@@ -483,27 +597,46 @@ class AppConfig {
   int themeColor;
   double fontSize;
   int fontWeightIndex;
-  bool glassEffect;
   String backgroundImage;
   double backgroundOpacity;
   double cardOpacity;
   bool debugMode;
   bool saveLogs;
+  bool enableSystemNotification;
   String logSavePath;
   bool useNodeEditor;
+  Map<String, int> nodeUsageCount;
+  int maxConcurrentTasks;
+  Map<String, List<String>> keyBindings;
 
   static const fontWeightValues = [300, 400, 500, 600, 700];
   static const fontWeightLabels = ['Light', 'Regular', 'Medium', 'SemiBold', 'Bold'];
   int get fontWeightValue => fontWeightValues[fontWeightIndex.clamp(0, 4)];
 
+  static const defaultKeyBindings = <String, List<String>>{
+    'canvas_select_all': ['Control', 'A'],
+    'canvas_delete_selected': ['Delete'],
+    'project_select_all': ['Control', 'A'],
+    'queue_add_all': ['Control', 'Shift', 'A'],
+    'queue_start_all': ['Control', 'Shift', 'S'],
+    'project_clear_all': ['Control', 'Shift', 'Delete'],
+    'queue_stop_all': ['Control', 'Shift', 'X'],
+    'canvas_pan_button': ['right'],
+    'canvas_select_button': ['left'],
+  };
+
   AppConfig({
     this.language = 'zh', this.ffmpegPath = '', this.ffprobePath = '',
     this.defaultOutputDir = '', this.intermediateDir = '', this.darkMode = true, this.themeColor = 0xFF5E6AD2,
     this.fontFamily = 'Microsoft YaHei', this.fontSize = 17.0, this.fontWeightIndex = 1,
-    this.glassEffect = false, this.backgroundImage = '', this.backgroundOpacity = 0.8, this.cardOpacity = 0.7,
-    this.debugMode = false, this.saveLogs = false, this.logSavePath = '',
+    this.backgroundImage = '', this.backgroundOpacity = 0.8, this.cardOpacity = 0.7,
+    this.debugMode = false, this.saveLogs = false, this.enableSystemNotification = false, this.logSavePath = '',
     this.useNodeEditor = true,
-  });
+    this.maxConcurrentTasks = 1,
+    Map<String, int>? nodeUsageCount,
+    Map<String, List<String>>? keyBindings,
+  }) : nodeUsageCount = nodeUsageCount ?? {},
+       keyBindings = keyBindings ?? Map.from(defaultKeyBindings);
 
   factory AppConfig.fromJson(Map<String, dynamic> json) => AppConfig(
         language: json['language'] as String? ?? 'zh',
@@ -514,28 +647,35 @@ class AppConfig {
         darkMode: json['dark_mode'] as bool? ?? true,
         themeColor: json['theme_color'] as int? ?? 0xFF5E6AD2,
         fontFamily: json['font_family'] as String? ?? 'Microsoft YaHei',
-        fontSize: (json['font_size'] as num?)?.toDouble() ?? 14.0,
+        fontSize: (json['font_size'] as num?)?.toDouble() ?? 17.0,
         fontWeightIndex: json['font_weight'] as int? ?? 1,
-        glassEffect: json['glass_effect'] as bool? ?? false,
         backgroundImage: json['background_image'] as String? ?? '',
         backgroundOpacity: (json['background_opacity'] as num?)?.toDouble() ?? 0.8,
         cardOpacity: (json['card_opacity'] as num?)?.toDouble() ?? 0.7,
         debugMode: json['debug_mode'] as bool? ?? false,
         saveLogs: json['save_logs'] as bool? ?? false,
+        enableSystemNotification: json['enable_system_notification'] as bool? ?? false,
         logSavePath: json['log_save_path'] as String? ?? '',
         useNodeEditor: json['use_node_editor'] as bool? ?? true,
+        maxConcurrentTasks: json['max_concurrent_tasks'] as int? ?? 1,
+        nodeUsageCount: (json['node_usage_count'] as Map<String, dynamic>?)?.map((k, v) => MapEntry(k, (v as num).toInt())) ?? {},
+        keyBindings: (json['key_bindings'] as Map<String, dynamic>?)?.map((k, v) =>
+            MapEntry(k, (v as List<dynamic>).map((e) => e as String).toList())) ?? Map.from(defaultKeyBindings),
       );
 
   Map<String, dynamic> toJson() => {
         'language': language, 'ffmpeg_path': ffmpegPath, 'ffprobe_path': ffprobePath,
         'default_output_dir': defaultOutputDir, 'intermediate_dir': intermediateDir, 'dark_mode': darkMode,
         'theme_color': themeColor, 'font_family': fontFamily, 'font_size': fontSize,
-        'font_weight': fontWeightIndex, 'glass_effect': glassEffect,
+        'font_weight': fontWeightIndex,
         'background_image': backgroundImage, 'background_opacity': backgroundOpacity,
         'card_opacity': cardOpacity,
         'debug_mode': debugMode,
-        'save_logs': saveLogs, 'log_save_path': logSavePath,
+        'save_logs': saveLogs, 'enable_system_notification': enableSystemNotification, 'log_save_path': logSavePath,
         'use_node_editor': useNodeEditor,
+        'max_concurrent_tasks': maxConcurrentTasks,
+        'node_usage_count': nodeUsageCount,
+        'key_bindings': keyBindings,
       };
 }
 

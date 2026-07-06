@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
+import 'glass_panel.dart';
 
 class Sidebar extends StatelessWidget {
   final int selectedIndex;
@@ -26,11 +27,21 @@ class Sidebar extends StatelessWidget {
       if (debug) (Icons.terminal, lang == 'zh' ? '日志' : 'Logs'),
     ];
 
+    // 当 debug 模式关闭时，如果当前选中的是 Logs 页面，自动切回设置页面
+    if (selectedIndex >= items.length && items.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        onSelected(items.length - 1);
+      });
+    }
+
     return SizedBox(
-      width: 200,
-      child: Material(
-        color: scheme.surfaceContainerLow,
-        child: DefaultTextStyle(
+      width: 190,
+      child: GlassPanel(
+        radius: 20,
+        blur: 18,
+        child: Material(
+          color: Colors.transparent,
+          child: DefaultTextStyle(
           style: TextStyle(color: clr, fontFamily: theme.textTheme.bodyMedium?.fontFamily),
           child: Column(children: [
             Padding(
@@ -43,14 +54,14 @@ class Sidebar extends StatelessWidget {
                 Text('FFmpeg++', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: scheme.primary)),
               ]),
             ),
-            const Divider(),
+            Divider(color: scheme.outlineVariant.withAlpha(80), height: 1),
             const SizedBox(height: 8),
             ...List.generate(items.length, (i) {
               final sel = i == selectedIndex;
               return Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 child: Material(
-                  color: sel ? scheme.secondaryContainer : Colors.transparent,
+                  color: sel ? scheme.secondaryContainer.withAlpha(200) : Colors.transparent,
                   borderRadius: BorderRadius.circular(10),
                   child: InkWell(
                     borderRadius: BorderRadius.circular(10),
@@ -73,11 +84,10 @@ class Sidebar extends StatelessWidget {
             const Spacer(),
             Padding(padding: const EdgeInsets.all(16), child: Container(
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), color: scheme.surfaceContainerHighest),
+              decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), color: scheme.surfaceContainerHighest.withAlpha(140)),
               child: Row(children: [
                 Builder(builder: (ctx) {
                   final running = ctx.watch<AppState>().pythonProcess.isRunning;
-                  debugPrint('[Sidebar] isRunning=$running');
                   return Container(width: 8, height: 8, decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: running ? scheme.primary : scheme.error));
@@ -89,6 +99,7 @@ class Sidebar extends StatelessWidget {
               ]),
             )),
           ]),
+          ),
         ),
       ),
     );

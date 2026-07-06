@@ -37,6 +37,7 @@ std::string popInput(bool& shutdown) {
         return !g_inputQueue.empty() || g_inputWake;
     });
     if (g_inputWake && g_inputQueue.empty()) {
+        g_inputWake = false;  // 重置，防止 DLL 重新初始化后忙等
         shutdown = true;
         return "";
     }

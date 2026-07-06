@@ -5,6 +5,8 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
+import '../widgets/toast.dart';
+import '../widgets/glass_panel.dart';
 
 class CommandPage extends StatefulWidget {
   const CommandPage({super.key});
@@ -21,8 +23,7 @@ class _CommandPageState extends State<CommandPage> {
   void _execute() {
     final cmd = _ctrl.text.trim();
     if (cmd.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请输入 FFmpeg 命令'), backgroundColor: Colors.orange));
+      showToast(context, '请输入 FFmpeg 命令', type: ToastType.warning);
       return;
     }
 
@@ -42,22 +43,19 @@ class _CommandPageState extends State<CommandPage> {
     }
 
     if (inputPath == null || outputPath == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('无法解析输入/输出文件路径，命令需包含 -i input output'), backgroundColor: Colors.red));
+      showToast(context, '无法解析输入/输出文件路径，命令需包含 -i input output', type: ToastType.error);
       return;
     }
 
     if (!File(inputPath).existsSync()) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('输入文件不存在: $inputPath'), backgroundColor: Colors.red));
+      showToast(context, '输入文件不存在: $inputPath', type: ToastType.error);
       return;
     }
 
     final state = context.read<AppState>();
     state.addCustomTask(inputPath: inputPath, outputPath: outputPath, command: cmd,
         filename: inputPath.split(RegExp(r'[\\/]')).last);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已添加到处理队列: ${inputPath.split(RegExp(r'[\\/]')).last}'), backgroundColor: Colors.green));
+    showToast(context, '已添加到处理队列: ${inputPath.split(RegExp(r'[\\/]')).last}', type: ToastType.success);
     _ctrl.clear();
   }
 
@@ -72,23 +70,22 @@ class _CommandPageState extends State<CommandPage> {
     final cfg = context.watch<AppState>().config;
     final s = AppStrings.of(cfg.language);
     final zh = s.isZh;
-    final glass = cfg.glassEffect;
 
     return Scaffold(
       backgroundColor: Colors.transparent,
-      body: Padding(
+      body: Column(children: [
+        GlassTopBar(
+          title: Row(children: [
+            Icon(Icons.terminal_outlined, size: 20, color: scheme.primary),
+            const SizedBox(width: 8),
+            Text(s.navCommand),
+          ]),
+        ),
+        Expanded(child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          // 标题栏
-          Row(children: [
-            Icon(Icons.terminal_outlined, size: 22, color: scheme.primary),
-            const SizedBox(width: 8),
-            Text(s.navCommand, style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: scheme.onSurface)),
-          ]),
-          const SizedBox(height: 16),
-
           // 命令输入区
-          _wrapCard(glass, scheme, Padding(
+          _wrapCard(scheme, Padding(
             padding: const EdgeInsets.all(16),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(children: [
@@ -146,7 +143,7 @@ class _CommandPageState extends State<CommandPage> {
           // 下方两列
           Expanded(child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
             // 左列：快捷模板
-            Expanded(child: _wrapCard(glass, scheme, Padding(
+            Expanded(child: _wrapCard(scheme, Padding(
               padding: const EdgeInsets.all(14),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Row(children: [
@@ -172,7 +169,7 @@ class _CommandPageState extends State<CommandPage> {
             const SizedBox(width: 12),
 
             // 右列：参数参考
-            Expanded(child: _wrapCard(glass, scheme, Padding(
+            Expanded(child: _wrapCard(scheme, Padding(
               padding: const EdgeInsets.all(14),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Row(children: [
@@ -218,34 +215,25 @@ class _CommandPageState extends State<CommandPage> {
             ))),
           ])),
         ]),
-      ),
+      )),
+      ]),
     );
   }
 
-  Widget _wrapCard(bool glass, ColorScheme scheme, Widget child) {
-    if (glass) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
-          child: Container(
-            decoration: BoxDecoration(
-              color: scheme.surface.withAlpha(160),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
-            ),
-            child: child,
+  Widget _wrapCard(ColorScheme scheme, Widget child) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+        child: Container(
+          decoration: BoxDecoration(
+            color: scheme.surface.withAlpha(160),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
           ),
+          child: child,
         ),
-      );
-    }
-    return Container(
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
       ),
-      child: child,
     );
   }
 

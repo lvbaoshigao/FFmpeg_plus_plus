@@ -12,6 +12,8 @@ class AppState extends ChangeNotifier {
   late final BackendClient backend = BackendClient(pythonProcess);
   final ConfigService configService = ConfigService();
 
+  void Function(String filename, TaskStatus status)? onTaskFinished;
+
   bool _envChecked = false, _envOk = false;
   String _ffmpegVersion = '', _initError = '';
   bool get envChecked => _envChecked;
@@ -21,15 +23,15 @@ class AppState extends ChangeNotifier {
 
   final List<VideoFile> _videos = [];
   List<VideoFile> get videos => List.unmodifiable(_videos);
-  bool _probingVideos = false;
-  bool get probingVideos => _probingVideos;
+  int _probeCount = 0;
+  bool get probingVideos => _probeCount > 0;
   final Map<String, String> _probeErrors = {};
   Map<String, String> get probeErrors => Map.unmodifiable(_probeErrors);
 
   final List<TaskInfo> _tasks = [];
   List<TaskInfo> get tasks => List.unmodifiable(_tasks);
-  bool _processing = false;
-  bool get processing => _processing;
+  final Set<String> _runningTaskIds = {};
+  bool get processing => _runningTaskIds.isNotEmpty;
   String? _currentTaskId;
 
   // ── Log entries ──
@@ -179,7 +181,7 @@ class AppState extends ChangeNotifier {
   void selectNav(int i) { _selectedNav = i; notifyListeners(); }
 
   Future<void> addVideos(List<String> filepaths) async {
-    _probingVideos = true; notifyListeners();
+    _probeCount++; notifyListeners();
     addLog('添加 ${filepaths.length} 个文件', category: 'info');
 
     // 先全部加入列表（立即显示占位卡片），再逐个探测
@@ -195,7 +197,7 @@ class AppState extends ChangeNotifier {
       await _probeOne(vf);
     }
 
-    _probingVideos = false; notifyListeners();
+    _probeCount--; notifyListeners();
   }
 
   Future<void> _probeOne(VideoFile vf) async {
@@ -217,6 +219,7 @@ class AppState extends ChangeNotifier {
   }
 
   void removeVideo(String id) { _videos.removeWhere((v) => v.id == id); notifyListeners(); }
+  void clearAllVideos() { _videos.clear(); notifyListeners(); }
   void updateVideoConfig(String id, TranscodeConfig c) { final i = _videos.indexWhere((v) => v.id == id); if (i >= 0) { _videos[i] = _videos[i].copyWith(config: c); notifyListeners(); } }
 
   void updateVideoPipeline(String id, PipelineGraph graph) {
@@ -258,8 +261,17 @@ class AppState extends ChangeNotifier {
     for (var i = 0; i < plans.length; i++) {
       final plan = plans[i];
       final outputPath = GraphExecutor.resolveOutputPath(plan, video, config);
-      final calls = GraphExecutor.buildBackendCalls(plan, video.filepath, outputPath);
-      if (calls.isEmpty) continue;
+      var calls = GraphExecutor.buildBackendCalls(plan, video.filepath, outputPath);
+      // 如果节点图没有处理步骤（只有源文件→输出），创建一个默认的转码任务
+      if (calls.isEmpty) {
+        calls = [BackendCall(
+          action: '_file_copy',
+          params: {
+            'input': video.filepath,
+            'output': outputPath,
+          },
+        )];
+      }
       final label = plans.length > 1 ? '${video.filename} [任务${i + 1}]' : video.filename;
       _tasks.add(TaskInfo(
         id: 'task_${_tasks.length}_${DateTime.now().millisecondsSinceEpoch}',
@@ -294,36 +306,50 @@ class AppState extends ChangeNotifier {
   }
 
   void processSingleTask(String tid) {
-    if (_processing) return;
+    final limit = config.maxConcurrentTasks == 0 ? 999 : config.maxConcurrentTasks;
+    if (_runningTaskIds.length >= limit) return;
     final i = _tasks.indexWhere((t) => t.id == tid);
     if (i < 0 || _tasks[i].status != TaskStatus.pending) return;
     final t = _tasks.removeAt(i); _tasks.insert(0, t);
     notifyListeners(); processNextTask();
   }
 
-  void processAllTasks() { if (!_processing) processNextTask(); }
+  void processAllTasks() { processNextTask(); }
 
   Future<void> processNextTask() async {
-    if (_processing) return;
-    final pi = _tasks.indexWhere((t) => t.status == TaskStatus.pending);
-    if (pi < 0) return;
-    _processing = true; final task = _tasks[pi]; _currentTaskId = task.id;
-    _tasks[pi] = task.copyWith(status: TaskStatus.processing); notifyListeners();
-    addLog('开始处理: ${task.filename}', category: 'info');
-    addLog('输入: ${task.inputPath}', category: 'info');
-    addLog('输出: ${task.outputPath}', category: 'info');
-
-    if (task.pipelineCalls != null && task.pipelineCalls!.isNotEmpty) {
-      await _processPipelineTask(pi);
-    } else {
-      await _processLegacyTask(pi, task);
+    final limit = config.maxConcurrentTasks == 0 ? 999 : config.maxConcurrentTasks;
+    while (_runningTaskIds.length < limit) {
+      final pi = _tasks.indexWhere((t) => t.status == TaskStatus.pending);
+      if (pi < 0) break;
+      final task = _tasks[pi];
+      _runningTaskIds.add(task.id);
+      _currentTaskId = task.id;
+      _tasks[pi] = task.copyWith(status: TaskStatus.processing);
+      notifyListeners();
+      addLog('开始处理: ${task.filename}', category: 'info');
+      addLog('输入: ${task.inputPath}', category: 'info');
+      addLog('输出: ${task.outputPath}', category: 'info');
+      _runTask(task).then((_) {
+        _runningTaskIds.remove(task.id);
+        if (_currentTaskId == task.id) _currentTaskId = null;
+        if (_tasks.any((t) => t.status == TaskStatus.pending)) processNextTask();
+      });
     }
-
-    _processing = false; _currentTaskId = null;
-    if (_tasks.any((t) => t.status == TaskStatus.pending)) processNextTask();
   }
 
-  Future<void> _processLegacyTask(int pi, TaskInfo task) async {
+  Future<void> _runTask(TaskInfo task) async {
+    final pi = _tasks.indexWhere((t) => t.id == task.id);
+    if (pi < 0) return;
+    if (task.pipelineCalls != null && task.pipelineCalls!.isNotEmpty) {
+      await _processPipelineTask(task.id);
+    } else if (task.command != null && task.command!.isNotEmpty) {
+      await _processCustomCommand(task.id, task);
+    } else {
+      await _processLegacyTask(task.id, task);
+    }
+  }
+
+  Future<void> _processLegacyTask(String taskId, TaskInfo task) async {
     final c = task.config;
     addLog('编码器: ${c.videoCodec}, GPU: ${c.gpu}, 预设: ${c.preset}', category: 'info');
     if (c.crf != null) addLog('  CRF: ${c.crf}', category: 'info');
@@ -336,8 +362,8 @@ class AppState extends ChangeNotifier {
 
     StreamSubscription<ProgressUpdate>? sub;
     sub = backend.progressStream.listen((u) {
-      if (u.taskId == _currentTaskId) {
-        final i = _tasks.indexWhere((t) => t.id == _currentTaskId);
+      if (u.taskId == taskId) {
+        final i = _tasks.indexWhere((t) => t.id == taskId);
         if (i >= 0) {
           _tasks[i] = _tasks[i].copyWith(status: TaskStatus.processing, progress: u.progress, elapsed: u.currentTime, remaining: u.remaining, speed: u.speed, fps: u.fps, bitrate: u.bitrate, frame: u.frame);
           notifyListeners();
@@ -365,7 +391,7 @@ class AppState extends ChangeNotifier {
     }
     await sub.cancel();
 
-    final fi = _tasks.indexWhere((t) => t.id == _currentTaskId);
+    final fi = _tasks.indexWhere((t) => t.id == taskId);
     if (fi >= 0) {
       if (resp['success'] == true) {
         final d = resp['data'] as Map<String, dynamic>?;
@@ -375,16 +401,83 @@ class AppState extends ChangeNotifier {
         if (sz != null) addLog('  输出大小: ${(sz / 1024 / 1024).toStringAsFixed(1)}MB', category: 'info');
         final cmd = (d?['command'] as List?)?.cast<String>();
         if (cmd != null) addLog('  命令: ${cmd.join(' ')}', category: 'ffmpeg');
+        onTaskFinished?.call(task.filename, TaskStatus.completed);
       } else {
         _tasks[fi] = _tasks[fi].copyWith(status: TaskStatus.failed, error: resp['error'] as String?, logLines: (resp['data']?['log_lines'] as List?)?.cast<String>() ?? [], command: (resp['data']?['command'] as List?)?.cast<String>());
         addLog('任务失败: ${task.filename} - ${resp['error']}', category: 'error');
+        onTaskFinished?.call(task.filename, TaskStatus.failed);
       }
       notifyListeners();
     }
   }
 
-  Future<void> _processPipelineTask(int pi) async {
-    final task = _tasks[pi];
+  /// 处理用户自定义 FFmpeg 命令任务
+  Future<void> _processCustomCommand(String taskId, TaskInfo task) async {
+    addLog('自定义命令: ${task.command!.join(' ')}', category: 'info');
+
+    StreamSubscription<ProgressUpdate>? sub;
+    sub = backend.progressStream.listen((u) {
+      if (u.taskId == taskId) {
+        final i = _tasks.indexWhere((t) => t.id == taskId);
+        if (i >= 0) {
+          _tasks[i] = _tasks[i].copyWith(status: TaskStatus.processing, progress: u.progress, elapsed: u.currentTime, remaining: u.remaining, speed: u.speed, fps: u.fps, bitrate: u.bitrate, frame: u.frame);
+          notifyListeners();
+        }
+      }
+    });
+
+    // 自定义命令通过 transcode 接口发送，将命令拆分为 input/output/options
+    // 解析命令提取 input 和 output 路径
+    final cmdParts = task.command!;
+    String inputPath = task.inputPath;
+    String outputPath = task.outputPath;
+    final options = <String, dynamic>{};
+
+    // 解析 -i 参数获取输入路径
+    for (var i = 0; i < cmdParts.length; i++) {
+      if (cmdParts[i] == '-i' && i + 1 < cmdParts.length) {
+        inputPath = cmdParts[i + 1];
+      }
+    }
+    // 最后一个非 - 开头的参数作为输出路径
+    for (var i = cmdParts.length - 1; i >= 0; i--) {
+      if (!cmdParts[i].startsWith('-')) {
+        outputPath = cmdParts[i];
+        break;
+      }
+    }
+
+    // 使用 transcode 接口，但传入自定义命令选项
+    final Map<String, dynamic> resp;
+    resp = await backend.transcode(task.id, input: inputPath, output: outputPath, options: {
+      'video_codec': 'copy',
+      'audio_codec': 'copy',
+      'overwrite': true,
+      '_custom_command': cmdParts.join(' '),
+    });
+
+    await sub?.cancel();
+
+    final fi = _tasks.indexWhere((t) => t.id == taskId);
+    if (fi >= 0) {
+      if (resp['success'] == true) {
+        final d = resp['data'] as Map<String, dynamic>?;
+        _tasks[fi] = _tasks[fi].copyWith(status: TaskStatus.completed, progress: 100, outputSize: d?['output_size'] as int?, duration: (d?['duration'] as num?)?.toDouble(), command: (d?['command'] as List?)?.cast<String>());
+        addLog('任务完成: ${task.filename} (${d?['duration']}s)', category: 'info');
+        onTaskFinished?.call(task.filename, TaskStatus.completed);
+      } else {
+        _tasks[fi] = _tasks[fi].copyWith(status: TaskStatus.failed, error: resp['error'] as String?, logLines: (resp['data']?['log_lines'] as List?)?.cast<String>() ?? [], command: (resp['data']?['command'] as List?)?.cast<String>());
+        addLog('任务失败: ${task.filename} - ${resp['error']}', category: 'error');
+        onTaskFinished?.call(task.filename, TaskStatus.failed);
+      }
+      notifyListeners();
+    }
+  }
+
+  Future<void> _processPipelineTask(String taskId) async {
+    final ti = _tasks.indexWhere((t) => t.id == taskId);
+    if (ti < 0) return;
+    final task = _tasks[ti];
     final calls = task.pipelineCalls!;
     final realCalls = calls.where((c) => c.action != '_cleanup').toList();
     final cleanupCalls = calls.where((c) => c.action == '_cleanup').toList();
@@ -395,7 +488,7 @@ class AppState extends ChangeNotifier {
       final call = realCalls[ci];
       final stepProgress = ci / realCalls.length;
 
-      final fi = _tasks.indexWhere((t) => t.id == _currentTaskId);
+      final fi = _tasks.indexWhere((t) => t.id == taskId);
       if (fi >= 0) {
         _tasks[fi] = _tasks[fi].copyWith(currentCallIndex: ci, progress: stepProgress * 100);
         notifyListeners();
@@ -405,8 +498,8 @@ class AppState extends ChangeNotifier {
 
       StreamSubscription<ProgressUpdate>? sub;
       sub = backend.progressStream.listen((u) {
-        if (u.taskId == _currentTaskId) {
-          final i = _tasks.indexWhere((t) => t.id == _currentTaskId);
+        if (u.taskId == taskId) {
+          final i = _tasks.indexWhere((t) => t.id == taskId);
           if (i >= 0) {
             final overallProgress = (stepProgress + u.progress / 100 / realCalls.length) * 100;
             _tasks[i] = _tasks[i].copyWith(
@@ -443,13 +536,22 @@ class AppState extends ChangeNotifier {
         case 'extract_frames_all':
           resp = await _runFrameExtraction(p);
           break;
+        case 'image_convert':
+          resp = await _runImageConvert(p);
+          break;
+        case 'image_crop':
+          resp = await _runImageCrop(p);
+          break;
+        case '_file_copy':
+          resp = await _runFileCopy(p);
+          break;
         default:
           resp = {'success': false, 'error': '未知动作: ${call.action}'};
       }
       await sub.cancel();
 
       if (resp['success'] != true) {
-        final fi2 = _tasks.indexWhere((t) => t.id == _currentTaskId);
+        final fi2 = _tasks.indexWhere((t) => t.id == taskId);
         if (fi2 >= 0) {
           _tasks[fi2] = _tasks[fi2].copyWith(
             status: TaskStatus.failed,
@@ -458,6 +560,7 @@ class AppState extends ChangeNotifier {
             command: (resp['data']?['command'] as List?)?.cast<String>(),
           );
           addLog('步骤 ${ci + 1} 失败: ${resp['error']}', category: 'error');
+          onTaskFinished?.call(task.filename, TaskStatus.failed);
           notifyListeners();
         }
         _cleanupTempFiles(cleanupCalls);
@@ -466,12 +569,13 @@ class AppState extends ChangeNotifier {
       addLog('步骤 ${ci + 1} 完成', category: 'info');
     }
 
-    final fi3 = _tasks.indexWhere((t) => t.id == _currentTaskId);
+    final fi3 = _tasks.indexWhere((t) => t.id == taskId);
     if (fi3 >= 0) {
       final outFile = File(task.outputPath);
       final outSize = outFile.existsSync() ? outFile.lengthSync() : null;
       _tasks[fi3] = _tasks[fi3].copyWith(status: TaskStatus.completed, progress: 100, outputSize: outSize);
       addLog('任务完成: ${task.filename}', category: 'info');
+      onTaskFinished?.call(task.filename, TaskStatus.completed);
       notifyListeners();
     }
 
@@ -490,14 +594,14 @@ class AppState extends ChangeNotifier {
       final dir = Directory(outDir);
       if (!dir.existsSync()) dir.createSync(recursive: true);
 
-      final args = <String>['ffmpeg', '-y'];
+      final args = <String>['-y'];
       if (startTime != null) args.addAll(['-ss', '$startTime']);
       args.addAll(['-i', input]);
       if (endTime != null) args.addAll(['-to', '${endTime - (startTime ?? 0)}']);
       args.addAll(['-vf', 'fps=$fps', '$outDir/frame_%06d.$fmt']);
 
-      addLog('帧提取: ${args.join(' ')}', category: 'info');
-      final result = await Process.run(args[0], args.sublist(1));
+      addLog('帧提取: $_ffmpegBin ${args.join(' ')}', category: 'info');
+      final result = await Process.run(_ffmpegBin, args);
       if (result.exitCode == 0) {
         final count = dir.listSync().where((f) => f.path.endsWith('.$fmt')).length;
         addLog('帧提取完成: $count 帧 → $outDir', category: 'info');
@@ -507,6 +611,93 @@ class AppState extends ChangeNotifier {
       }
     } catch (e) {
       return {'success': false, 'error': '帧提取异常: $e'};
+    }
+  }
+
+  String get _ffmpegBin {
+    final p = config.ffmpegPath;
+    return (p.isNotEmpty && File(p).existsSync()) ? p : 'ffmpeg';
+  }
+
+  Future<Map<String, dynamic>> _runImageConvert(Map<String, dynamic> p) async {
+    final input = p['input'] as String;
+    final output = p['output'] as String;
+    final quality = (p['quality'] as num?)?.toInt() ?? 95;
+    try {
+      final outDir = File(output).parent;
+      if (!outDir.existsSync()) outDir.createSync(recursive: true);
+      final args = <String>['-y', '-i', input];
+      if (output.endsWith('.ico')) {
+        args.addAll(['-vf', 'scale=256:256:force_original_aspect_ratio=decrease']);
+      } else if (output.endsWith('.jpg') || output.endsWith('.jpeg') || output.endsWith('.webp')) {
+        args.addAll(['-q:v', '${(100 - quality).clamp(0, 31) * 31 ~/ 100 + 1}']);
+      }
+      args.add(output);
+      addLog('图片转换: $_ffmpegBin ${args.join(' ')}', category: 'info');
+      final result = await Process.run(_ffmpegBin, args);
+      if (result.exitCode == 0 && File(output).existsSync()) {
+        addLog('图片转换完成: $output', category: 'info');
+        return {'success': true, 'data': {'output_path': output}};
+      } else {
+        final stderr = (result.stderr as String).trim();
+        final lastLines = stderr.split('\n').where((l) => l.trim().isNotEmpty).toList();
+        final errMsg = lastLines.length > 3 ? lastLines.sublist(lastLines.length - 3).join('; ') : stderr;
+        addLog('图片转换失败: $errMsg', category: 'error');
+        return {'success': false, 'error': '图片转换失败: $errMsg'};
+      }
+    } catch (e) {
+      addLog('图片转换异常: $e', category: 'error');
+      return {'success': false, 'error': '图片转换异常: $e'};
+    }
+  }
+
+  Future<Map<String, dynamic>> _runImageCrop(Map<String, dynamic> p) async {
+    final input = p['input'] as String;
+    final output = p['output'] as String;
+    final cropW = (p['crop_w'] as num?)?.toInt() ?? 0;
+    final cropH = (p['crop_h'] as num?)?.toInt() ?? 0;
+    final cropX = (p['crop_x'] as num?)?.toInt() ?? 0;
+    final cropY = (p['crop_y'] as num?)?.toInt() ?? 0;
+
+    if (cropW <= 0 || cropH <= 0) {
+      return {'success': false, 'error': '裁剪尺寸无效 (${cropW}x$cropH)'};
+    }
+
+    try {
+      final outDir = File(output).parent;
+      if (!outDir.existsSync()) outDir.createSync(recursive: true);
+      final cropFilter = 'crop=$cropW:$cropH:$cropX:$cropY';
+      final args = <String>['-y', '-i', input, '-vf', cropFilter, output];
+      addLog('图片裁剪: $_ffmpegBin ${args.join(' ')}', category: 'info');
+      final result = await Process.run(_ffmpegBin, args);
+      if (result.exitCode == 0 && File(output).existsSync()) {
+        addLog('图片裁剪完成: $output', category: 'info');
+        return {'success': true, 'data': {'output_path': output}};
+      } else {
+        final stderr = (result.stderr as String).trim();
+        final lastLines = stderr.split('\n').where((l) => l.trim().isNotEmpty).toList();
+        final errMsg = lastLines.length > 3 ? lastLines.sublist(lastLines.length - 3).join('; ') : stderr;
+        addLog('图片裁剪失败: $errMsg', category: 'error');
+        return {'success': false, 'error': '图片裁剪失败: $errMsg'};
+      }
+    } catch (e) {
+      addLog('图片裁剪异常: $e', category: 'error');
+      return {'success': false, 'error': '图片裁剪异常: $e'};
+    }
+  }
+
+  Future<Map<String, dynamic>> _runFileCopy(Map<String, dynamic> p) async {
+    final input = p['input'] as String;
+    final output = p['output'] as String;
+    try {
+      final outDir = File(output).parent;
+      if (!outDir.existsSync()) outDir.createSync(recursive: true);
+      await File(input).copy(output);
+      addLog('直接复制: $input → $output', category: 'info');
+      return {'success': true, 'data': {'output_path': output}};
+    } catch (e) {
+      addLog('文件复制失败: $e', category: 'error');
+      return {'success': false, 'error': '文件复制失败: $e'};
     }
   }
 
@@ -522,12 +713,12 @@ class AppState extends ChangeNotifier {
   void cancelProcessing() {
     backend.cancel();
     for (int i = 0; i < _tasks.length; i++) { if (_tasks[i].status == TaskStatus.processing) _tasks[i] = _tasks[i].copyWith(status: TaskStatus.cancelled); }
-    _processing = false; _currentTaskId = null; notifyListeners();
+    _runningTaskIds.clear(); _currentTaskId = null; notifyListeners();
   }
 
   void clearCompletedTasks() { _tasks.removeWhere((t) => t.status == TaskStatus.completed || t.status == TaskStatus.failed || t.status == TaskStatus.cancelled); notifyListeners(); }
   void removeTask(String id) { _tasks.removeWhere((t) => t.id == id); notifyListeners(); }
-  void clearAllTasks() { if (!_processing) { _tasks.clear(); notifyListeners(); } }
+  void clearAllTasks() { if (!processing) { _tasks.clear(); notifyListeners(); } }
   void toggleTaskExpanded(String tid) { final i = _tasks.indexWhere((t) => t.id == tid); if (i >= 0) { _tasks[i] = _tasks[i].copyWith(expanded: !_tasks[i].expanded); notifyListeners(); } }
 
   Future<void> toggleDarkMode(bool v) async { await configService.update((c) => c..darkMode = v); notifyListeners(); }

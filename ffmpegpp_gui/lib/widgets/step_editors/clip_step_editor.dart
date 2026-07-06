@@ -65,7 +65,7 @@ class _ClipStepEditorState extends State<ClipStepEditor> {
   double _parseTime(String s) {
     try {
       final parts = s.split(':');
-      if (parts.length != 3) return 0;
+      if (parts.length != 3) return -1; // 返回 -1 表示解析失败，避免静默变为 0
       final h = int.parse(parts[0]);
       final m = int.parse(parts[1]);
       final secParts = parts[2].split('.');
@@ -73,7 +73,7 @@ class _ClipStepEditorState extends State<ClipStepEditor> {
       final ms = secParts.length > 1 ? int.parse(secParts[1].padRight(3, '0').substring(0, 3)) : 0;
       return h * 3600.0 + m * 60.0 + sec + ms / 1000.0;
     } catch (_) {
-      return 0;
+      return -1; // 返回 -1 表示解析失败
     }
   }
 
@@ -142,7 +142,9 @@ class _ClipStepEditorState extends State<ClipStepEditor> {
                     decoration: _inputDecoration(zh ? '开始时间' : 'Start Time'),
                     style: TextStyle(fontSize: 13, color: cs.onSurface, fontFamily: 'monospace'),
                     onChanged: (v) {
-                      final t = _parseTime(v).clamp(0.0, dur);
+                      final parsed = _parseTime(v);
+                      if (parsed < 0) return; // 解析失败时忽略，保留上次的值
+                      final t = parsed.clamp(0.0, dur);
                       p['start_time'] = t;
                       if (t > (p['end_time'] as double)) {
                         p['end_time'] = t;
@@ -161,7 +163,9 @@ class _ClipStepEditorState extends State<ClipStepEditor> {
                     decoration: _inputDecoration(zh ? '结束时间' : 'End Time'),
                     style: TextStyle(fontSize: 13, color: cs.onSurface, fontFamily: 'monospace'),
                     onChanged: (v) {
-                      final t = _parseTime(v).clamp(0.0, dur);
+                      final parsed = _parseTime(v);
+                      if (parsed < 0) return; // 解析失败时忽略，保留上次的值
+                      final t = parsed.clamp(0.0, dur);
                       p['end_time'] = t;
                       if (t < (p['start_time'] as double)) {
                         p['start_time'] = t;
@@ -169,6 +173,7 @@ class _ClipStepEditorState extends State<ClipStepEditor> {
                       }
                       setState(() {});
                       widget.onChanged();
+                      _debouncedPreview();
                     },
                   ),
                 ),

@@ -1,6 +1,7 @@
 #include "transcoder.h"
 #include "probe.h"
 #include "constants.h"
+#include "installer.h"
 #include <stdexcept>
 
 namespace ffmpegpp {
@@ -64,61 +65,69 @@ std::vector<std::string> buildEncodingParams(const json& options, const std::str
     std::string gpu = options.value("gpu", "CPU");
     std::string video_codec = options.value("video_codec", "h264");
     bool has_vf = options.contains("vf_filters") && options["vf_filters"].is_array() && !options["vf_filters"].empty();
-    if (has_vf && video_codec == "copy") {
-        video_codec = "h264";
-    }
-    std::string encoder = resolveEncoder(gpu, video_codec);
 
     std::vector<std::string> params;
 
-    // 视频编码器
-    params.push_back("-c:v");
-    params.push_back(encoder);
-
-    // 像素格式：优先使用用户指定的，否则自动根据源格式和编码器选择
-    if (options.contains("pix_fmt") && !options["pix_fmt"].is_null()) {
-        params.push_back("-pix_fmt");
-        params.push_back(options["pix_fmt"].get<std::string>());
-    } else if (!input_pix_fmt.empty() && encoder != "copy") {
-        std::string out_fmt = resolvePixFmt(encoder, video_codec, input_pix_fmt);
-        params.push_back("-pix_fmt");
-        params.push_back(out_fmt);
-    }
-
-    // 分辨率
-    if (options.contains("resolution") && !options["resolution"].is_null()) {
-        auto res = options["resolution"];
-        if (res.is_array() && res.size() == 2) {
-            params.push_back("-s");
-            params.push_back(std::to_string(res[0].get<int>()) + "x" + std::to_string(res[1].get<int>()));
+    // video_codec == "none" → 纯音频模式，禁用视频流
+    if (video_codec == "none") {
+        params.push_back("-vn");
+    } else {
+        if (has_vf && video_codec == "copy") {
+            video_codec = "h264";
         }
-    }
+        std::string encoder = resolveEncoder(gpu, video_codec);
 
-    // 码率 / CRF
-    if (encoder != "copy") {
-        if (options.contains("crf") && !options["crf"].is_null()) {
-            params.push_back("-crf");
-            params.push_back(std::to_string(options["crf"].get<int>()));
-        } else if (options.contains("video_bitrate") && !options["video_bitrate"].is_null()) {
-            params.push_back("-b:v");
-            params.push_back(std::to_string(options["video_bitrate"].get<int>()) + "k");
+        params.push_back("-c:v");
+        params.push_back(encoder);
+
+        if (options.contains("pix_fmt") && !options["pix_fmt"].is_null()) {
+            std::string pf = options["pix_fmt"].get<std::string>();
+            if (!isInWhitelist(pf, VALID_PIX_FMTS))
+                throw std::runtime_error("不支持的像素格式: " + pf);
+            params.push_back("-pix_fmt");
+            params.push_back(pf);
+        } else if (!input_pix_fmt.empty() && encoder != "copy") {
+            std::string out_fmt = resolvePixFmt(encoder, video_codec, input_pix_fmt);
+            params.push_back("-pix_fmt");
+            params.push_back(out_fmt);
         }
 
-        // 帧率
-        if (options.contains("framerate") && !options["framerate"].is_null()) {
-            params.push_back("-r");
-            params.push_back(std::to_string(options["framerate"].get<double>()));
+        if (options.contains("resolution") && !options["resolution"].is_null()) {
+            auto res = options["resolution"];
+            if (res.is_array() && res.size() == 2) {
+                params.push_back("-s");
+                params.push_back(std::to_string(res[0].get<int>()) + "x" + std::to_string(res[1].get<int>()));
+            }
         }
 
-        // CPU 编码预设
-        if (gpu == "CPU" && options.contains("preset")) {
-            params.push_back("-preset");
-            params.push_back(options["preset"].get<std::string>());
+        if (encoder != "copy") {
+            if (options.contains("crf") && !options["crf"].is_null()) {
+                params.push_back("-crf");
+                params.push_back(std::to_string(options["crf"].get<int>()));
+            } else if (options.contains("video_bitrate") && !options["video_bitrate"].is_null()) {
+                params.push_back("-b:v");
+                params.push_back(std::to_string(options["video_bitrate"].get<int>()) + "k");
+            }
+
+            if (options.contains("framerate") && !options["framerate"].is_null()) {
+                params.push_back("-r");
+                params.push_back(std::to_string(options["framerate"].get<double>()));
+            }
+
+            if (gpu == "CPU" && options.contains("preset")) {
+                std::string pr = options["preset"].get<std::string>();
+                if (!isInWhitelist(pr, VALID_PRESETS))
+                    throw std::runtime_error("不支持的编码预设: " + pr);
+                params.push_back("-preset");
+                params.push_back(pr);
+            }
         }
     }
 
     // 音频
     std::string audio_codec = options.value("audio_codec", "aac");
+    if (!isInWhitelist(audio_codec, VALID_AUDIO_CODECS))
+        throw std::runtime_error("不支持的音频编码器: " + audio_codec);
     bool has_af = options.contains("af_filters") && options["af_filters"].is_array() && !options["af_filters"].empty();
     if (has_af && (audio_codec == "copy" || audio_codec.empty())) {
         audio_codec = "aac";
@@ -126,9 +135,15 @@ std::vector<std::string> buildEncodingParams(const json& options, const std::str
     if (!audio_codec.empty()) {
         params.push_back("-c:a");
         params.push_back(audio_codec);
-        if (options.contains("audio_bitrate") && !options["audio_bitrate"].is_null()) {
-            params.push_back("-b:a");
-            params.push_back(std::to_string(options["audio_bitrate"].get<int>()) + "k");
+        if (audio_codec != "copy") {
+            if (options.contains("audio_bitrate") && !options["audio_bitrate"].is_null()) {
+                params.push_back("-b:a");
+                params.push_back(std::to_string(options["audio_bitrate"].get<int>()) + "k");
+            }
+            if (options.contains("sample_rate") && !options["sample_rate"].is_null()) {
+                params.push_back("-ar");
+                params.push_back(std::to_string(options["sample_rate"].get<int>()));
+            }
         }
         if (options.contains("audio_channels") && !options["audio_channels"].is_null()) {
             params.push_back("-ac");
@@ -149,18 +164,26 @@ std::vector<std::string> buildTranscodeCommand(
 
     std::string gpu = options.value("gpu", "CPU");
     std::string video_codec = options.value("video_codec", "h264");
-    std::string encoder = resolveEncoder(gpu, video_codec);
+    bool audio_only = (video_codec == "none");
 
-    // 探测源文件像素格式
+    // 探测源文件像素格式（纯音频模式跳过）
     std::string input_pix_fmt;
-    try {
-        auto probe = probeVideo(input_path);
-        if (probe.success) {
-            input_pix_fmt = probe.info.value("pix_fmt", "");
-        }
-    } catch (...) {}
+    if (!audio_only) {
+        try {
+            auto probe = probeVideo(input_path);
+            if (probe.success) {
+                input_pix_fmt = probe.info.value("pix_fmt", "");
+            }
+        } catch (...) {}
+    }
 
-    std::vector<std::string> cmd = {"ffmpeg"};
+    std::vector<std::string> cmd = {getFFmpegPath()};
+
+    // ── 输入/输出路径安全检查 ──
+    if (!isPathSafe(input_path))
+        throw std::runtime_error("输入路径包含不安全字符");
+    if (!isPathSafe(output_path))
+        throw std::runtime_error("输出路径包含不安全字符");
 
     // 片段截取：-ss 放在 -i 之前（input seeking，更快）
     if (options.contains("start_time") && !options["start_time"].is_null()) {
@@ -168,10 +191,13 @@ std::vector<std::string> buildTranscodeCommand(
         cmd.push_back(std::to_string(options["start_time"].get<double>()));
     }
 
-    // 硬件加速解码
-    if (HWACCEL_PARAMS.count(gpu) && encoder != "copy") {
-        for (auto& p : HWACCEL_PARAMS.at(gpu)) {
-            cmd.push_back(p);
+    // 硬件加速解码（纯音频模式跳过）
+    if (!audio_only && HWACCEL_PARAMS.count(gpu)) {
+        std::string encoder = resolveEncoder(gpu, video_codec);
+        if (encoder != "copy") {
+            for (auto& p : HWACCEL_PARAMS.at(gpu)) {
+                cmd.push_back(p);
+            }
         }
     }
 
@@ -188,12 +214,15 @@ std::vector<std::string> buildTranscodeCommand(
     auto enc_params = buildEncodingParams(options, input_pix_fmt);
     cmd.insert(cmd.end(), enc_params.begin(), enc_params.end());
 
-    // 视频滤镜（如变速 setpts）
-    if (options.contains("vf_filters") && options["vf_filters"].is_array() && !options["vf_filters"].empty()) {
+    // 视频滤镜（如变速 setpts）— 纯音频模式跳过
+    if (!audio_only && options.contains("vf_filters") && options["vf_filters"].is_array() && !options["vf_filters"].empty()) {
         std::string vf;
         for (auto& f : options["vf_filters"]) {
+            std::string fs = f.get<std::string>();
+            if (!isFilterSafe(fs))
+                throw std::runtime_error("视频滤镜包含不安全内容: " + fs);
             if (!vf.empty()) vf += ",";
-            vf += f.get<std::string>();
+            vf += fs;
         }
         cmd.push_back("-vf");
         cmd.push_back(vf);
@@ -203,8 +232,11 @@ std::vector<std::string> buildTranscodeCommand(
     if (options.contains("af_filters") && options["af_filters"].is_array() && !options["af_filters"].empty()) {
         std::string af;
         for (auto& f : options["af_filters"]) {
+            std::string fs = f.get<std::string>();
+            if (!isFilterSafe(fs))
+                throw std::runtime_error("音频滤镜包含不安全内容: " + fs);
             if (!af.empty()) af += ",";
-            af += f.get<std::string>();
+            af += fs;
         }
         cmd.push_back("-af");
         cmd.push_back(af);

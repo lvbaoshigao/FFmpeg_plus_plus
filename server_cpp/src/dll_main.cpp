@@ -165,8 +165,14 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
     case DLL_THREAD_DETACH:
         break;
     case DLL_PROCESS_DETACH:
+        // 不在 DllMain 中 join 线程（持有 loader lock 会导致死锁）
+        // 仅发信号让 worker 退出，线程随进程终止自然销毁
         if (g_running.load()) {
-            ffmpegpp_shutdown();
+            g_shutdownFlag.store(true);
+            g_cancelFlag.store(true);
+            wakeInput();
+            g_workerThread.detach();
+            g_running.store(false);
         }
         break;
     }

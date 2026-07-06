@@ -5,6 +5,7 @@ import '../providers/app_state.dart';
 import '../services/system_monitor.dart';
 import '../theme/app_strings.dart';
 import '../widgets/task_card.dart';
+import '../widgets/glass_panel.dart';
 
 class QueuePage extends StatefulWidget {
   const QueuePage({super.key});
@@ -35,9 +36,11 @@ class _QueuePageState extends State<QueuePage> {
       builder: (context, state, _) {
         final s = AppStrings.of(state.config.language);
         return Scaffold(
-          appBar: AppBar(
-            title: Text(s.navQueue),
-            actions: [
+          backgroundColor: Colors.transparent,
+          body: Column(children: [
+            GlassTopBar(
+              title: Text(s.navQueue),
+              actions: [
               if (state.processing)
                 OutlinedButton.icon(
                     icon: const Icon(Icons.stop, size: 16), label: Text(s.cancelAll),
@@ -56,10 +59,9 @@ class _QueuePageState extends State<QueuePage> {
                       icon: const Icon(Icons.delete_sweep, size: 16), label: Text(s.clearAll),
                       onPressed: () => state.clearAllTasks()),
               ],
-              const SizedBox(width: 12),
             ],
           ),
-          body: Column(children: [
+          Expanded(child: Column(children: [
             // ── 系统监控条 ──
             _monitorBar(scheme, state),
             // ── 任务列表 ──
@@ -76,6 +78,7 @@ class _QueuePageState extends State<QueuePage> {
                     itemCount: state.tasks.length,
                     itemBuilder: (_, i) => TaskCard(task: state.tasks[i]),
                   )),
+          ])),
           ]),
         );
       },

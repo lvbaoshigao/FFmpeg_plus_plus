@@ -31,15 +31,47 @@ static bool needsQuoting(const std::string& s) {
     return false;
 }
 
+// Windows 命令行参数转义（遵循 MSVC CRT 的 argv 解析规则）
+// 规则：反斜杠仅在紧接双引号时才需要转义（连续 N 个 \ 后跟 " → 2N 个 \ + \"）
+static std::string escapeArgument(const std::string& arg) {
+    if (arg.empty()) return "\"\"";
+    if (!needsQuoting(arg)) return arg;
+
+    std::string result = "\"";
+    for (size_t i = 0; i < arg.size(); ++i) {
+        if (arg[i] == '\\') {
+            size_t numBackslashes = 0;
+            while (i < arg.size() && arg[i] == '\\') {
+                ++numBackslashes;
+                ++i;
+            }
+            if (i == arg.size()) {
+                // 参数末尾的反斜杠：在闭合引号前必须加倍
+                result.append(numBackslashes * 2, '\\');
+            } else if (arg[i] == '"') {
+                // 反斜杠后跟引号：反斜杠加倍 + 转义引号
+                result.append(numBackslashes * 2, '\\');
+                result += "\\\"";
+            } else {
+                // 反斜杠后跟普通字符：保持原样
+                result.append(numBackslashes, '\\');
+                result += arg[i];
+            }
+        } else if (arg[i] == '"') {
+            result += "\\\"";
+        } else {
+            result += arg[i];
+        }
+    }
+    result += '"';
+    return result;
+}
+
 std::string Subprocess::vectorToCommandLine(const std::vector<std::string>& cmd) {
     std::ostringstream oss;
     for (size_t i = 0; i < cmd.size(); ++i) {
         if (i > 0) oss << " ";
-        if (needsQuoting(cmd[i])) {
-            oss << "\"" << cmd[i] << "\"";
-        } else {
-            oss << cmd[i];
-        }
+        oss << escapeArgument(cmd[i]);
     }
     return oss.str();
 }
@@ -53,8 +85,11 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
 
     SECURITY_ATTRIBUTES sa = {sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
     HANDLE hStdoutRead, hStdoutWrite, hStderrRead, hStderrWrite;
-    CreatePipe(&hStdoutRead, &hStdoutWrite, &sa, 0);
-    CreatePipe(&hStderrRead, &hStderrWrite, &sa, 0);
+    if (!CreatePipe(&hStdoutRead, &hStdoutWrite, &sa, 0) ||
+        !CreatePipe(&hStderrRead, &hStderrWrite, &sa, 0)) {
+        result.exit_code = -1;
+        return result;
+    }
     SetHandleInformation(hStdoutRead, HANDLE_FLAG_INHERIT, 0);
     SetHandleInformation(hStderrRead, HANDLE_FLAG_INHERIT, 0);
 
@@ -153,8 +188,11 @@ ProcessResult Subprocess::runWithProgress(
 
     SECURITY_ATTRIBUTES sa = {sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
     HANDLE hStdoutRead, hStdoutWrite, hStderrRead, hStderrWrite;
-    CreatePipe(&hStdoutRead, &hStdoutWrite, &sa, 0);
-    CreatePipe(&hStderrRead, &hStderrWrite, &sa, 0);
+    if (!CreatePipe(&hStdoutRead, &hStdoutWrite, &sa, 0) ||
+        !CreatePipe(&hStderrRead, &hStderrWrite, &sa, 0)) {
+        result.exit_code = -1;
+        return result;
+    }
     SetHandleInformation(hStdoutRead, HANDLE_FLAG_INHERIT, 0);
     SetHandleInformation(hStderrRead, HANDLE_FLAG_INHERIT, 0);
 
@@ -200,7 +238,11 @@ ProcessResult Subprocess::runWithProgress(
                 }
                 if (!line.empty() && line.back() == '\r') line.pop_back();
                 if (!line.empty()) {
-                    on_stderr_line(line);
+                    try {
+                        on_stderr_line(line);
+                    } catch (...) {
+                        // 回调异常不应导致线程崩溃
+                    }
                 }
             } else {
                 std::lock_guard<std::mutex> lock(stderr_mutex);

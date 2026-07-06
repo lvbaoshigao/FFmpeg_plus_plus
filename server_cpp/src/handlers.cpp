@@ -7,6 +7,7 @@
 #include "installer.h"
 #include "audit.h"
 #include "ffmpeg_features.h"
+#include "constants.h"
 
 #include <windows.h>
 #include <iostream>
@@ -35,8 +36,9 @@ void slog_init() {
         snprintf(dirPath, MAX_PATH, "%s\\FFmpeg++", appdata);
         CreateDirectoryA(dirPath, nullptr);
     } else {
-        GetTempPathA(MAX_PATH, logPath);
-        strcat(logPath, "FFmpeg++_server_debug.log");
+        char tempDir[MAX_PATH];
+        GetTempPathA(MAX_PATH, tempDir);
+        snprintf(logPath, MAX_PATH, "%sFFmpeg++_server_debug.log", tempDir);
     }
     g_logFile = fopen(logPath, "w");
 }
@@ -82,11 +84,21 @@ double ProgressParser::remainingSeconds() const {
 
 json ProgressParser::stats() const {
     double rem = remainingSeconds();
+    std::string speed_str;
+    if (std::isfinite(speed) && speed >= 0) {
+        speed_str = std::to_string(speed);
+        auto dot = speed_str.find('.');
+        if (dot != std::string::npos && dot + 3 <= speed_str.size())
+            speed_str = speed_str.substr(0, dot + 3);
+        speed_str += "x";
+    } else {
+        speed_str = "N/A";
+    }
     return {
         {"progress", std::round(progress() * 10.0) / 10.0},
         {"current_time", fmtTime(current_time)},
         {"total_time", fmtTime(total_duration)},
-        {"speed", std::to_string(speed).substr(0, std::to_string(speed).find('.') + 3) + "x"},
+        {"speed", speed_str},
         {"fps", std::to_string((int)fps)},
         {"bitrate", std::to_string((int)bitrate) + " kb/s"},
         {"frame", frame},
@@ -138,6 +150,10 @@ void handleCheckEnv(const json& req) {
 void handleProbe(const json& req) {
     json params = (req.contains("params") && req["params"].is_object()) ? req["params"] : json::object();
     std::string filepath = params.value("filepath", "");
+    if (!isPathSafe(filepath)) {
+        JsonWriter::reply(req["id"], false, nullptr, "路径包含不安全字符");
+        return;
+    }
     try {
         auto result = probeVideo(filepath);
         if (result.success) {
@@ -287,10 +303,14 @@ void handleTranscode(const json& req, std::atomic<bool>& cancel_flag) {
         std::string gpu = options.value("gpu", "CPU");
         std::string video_codec = options.value("video_codec", "h264");
         bool has10bitPixFmt = false;
+        // 只检查 -pix_fmt 后面的值，避免文件路径误匹配
+        bool next_is_pix_fmt = false;
         for (const auto& arg : cmd) {
-            if (arg.find("10le") != std::string::npos || arg.find("p010") != std::string::npos) {
-                has10bitPixFmt = true;
-                break;
+            if (arg == "-pix_fmt") { next_is_pix_fmt = true; continue; }
+            if (next_is_pix_fmt) {
+                if (arg.find("10le") != std::string::npos || arg.find("p010") != std::string::npos)
+                    has10bitPixFmt = true;
+                next_is_pix_fmt = false;
             }
         }
         if (!has10bitPixFmt) {
@@ -340,10 +360,13 @@ void handleSubtitle(const json& req, std::atomic<bool>& cancel_flag) {
         std::string gpu = vid_opts.is_object() ? vid_opts.value("gpu", "CPU") : "CPU";
         std::string video_codec = vid_opts.is_object() ? vid_opts.value("video_codec", "h264") : "h264";
         bool has10bitPixFmt = false;
+        bool next_is_pix_fmt = false;
         for (const auto& arg : cmd) {
-            if (arg.find("10le") != std::string::npos || arg.find("p010") != std::string::npos) {
-                has10bitPixFmt = true;
-                break;
+            if (arg == "-pix_fmt") { next_is_pix_fmt = true; continue; }
+            if (next_is_pix_fmt) {
+                if (arg.find("10le") != std::string::npos || arg.find("p010") != std::string::npos)
+                    has10bitPixFmt = true;
+                next_is_pix_fmt = false;
             }
         }
         if (!has10bitPixFmt) {
@@ -371,8 +394,13 @@ void handleExtractFrame(const json& req) {
     std::string output = params.value("output", "");
     double time = params.value("time", 0.0);
 
+    if (!isPathSafe(input) || !isPathSafe(output)) {
+        JsonWriter::reply(req["id"], false, nullptr, "路径包含不安全字符");
+        return;
+    }
+
     std::vector<std::string> cmd = {
-        "ffmpeg", "-ss", std::to_string(time),
+        getFFmpegPath(), "-ss", std::to_string(time),
         "-i", input, "-vframes", "1", "-q:v", "2", "-y", output
     };
 

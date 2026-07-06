@@ -1,18 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'native_bridge.dart';
 
 
 class PythonProcessManager {
-  // EXE 模式
-  Process? _process;
-
   // DLL 模式
   NativeBridge? _bridge;
   Timer? _pollTimer;
-  bool _isDllMode = false;
 
   final _responseController = StreamController<Map<String, dynamic>>.broadcast();
   final _errorController = StreamController<String>.broadcast();
@@ -24,7 +19,7 @@ class PythonProcessManager {
 
   Stream<Map<String, dynamic>> get responses => _responseController.stream;
   Stream<String> get errors => _errorController.stream;
-  bool get isRunning => _isDllMode ? _bridge != null : _process != null;
+  bool get isRunning => _bridge != null;
 
   Future<Map<String, dynamic>> waitForReady({Duration timeout = const Duration(seconds: 30)}) async {
     if (_cachedReady != null) return _cachedReady!;
@@ -35,14 +30,8 @@ class PythonProcessManager {
   }
 
   Future<void> start(String serverPath) async {
-    _isDllMode = serverPath.toLowerCase().endsWith('.dll');
     _readyCompleter = Completer<Map<String, dynamic>>();
-
-    if (_isDllMode) {
-      await _startDll(serverPath);
-    } else {
-      await _startExe(serverPath);
-    }
+    await _startDll(serverPath);
   }
 
   Future<void> _startDll(String dllPath) async {
@@ -97,72 +86,9 @@ class PythonProcessManager {
     }
   }
 
-  Future<void> _startExe(String serverPath) async {
-    if (_process != null) return;
-
-    final isExe = serverPath.toLowerCase().endsWith('.exe');
-    late final String executable;
-    late final List<String> args;
-
-    if (isExe) {
-      executable = serverPath;
-      args = [];
-    } else {
-      executable = await _findPython();
-      args = ['-u', serverPath];
-    }
-
-    debugPrint('[PyProc] starting: $executable ${args.join(" ")}');
-    _process = await Process.start(executable, args, mode: ProcessStartMode.normal);
-    debugPrint('[PyProc] started, pid=${_process!.pid}');
-
-    final logDir = Directory('${Platform.environment['APPDATA'] ?? Directory.systemTemp.path}/FFmpeg++');
-    if (!logDir.existsSync()) logDir.createSync(recursive: true);
-    final logFile = File('${logDir.path}/flutter_stdout.log');
-    try { logFile.writeAsStringSync(''); } catch (_) {}
-    int lineCount = 0;
-    final logSink = logFile.openWrite(mode: FileMode.append);
-
-    _process!.stdout
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())
-        .listen((line) {
-      lineCount++;
-      final ts = DateTime.now().toIso8601String().substring(11, 23);
-      final preview = line.length > 300 ? line.substring(0, 300) : line;
-      logSink.writeln('[$ts] #$lineCount: $preview');
-      _handleLine(line);
-    }, onError: (e) {
-      logSink.writeln('[ERROR] $e');
-      _errorController.add('stdout error: $e');
-    }, onDone: () {
-      logSink.writeln('[DONE] stdout closed after $lineCount lines');
-      logSink.close();
-    });
-    _process!.stderr
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())
-        .listen((line) {
-      debugPrint('[PyProc] stderr: $line');
-      _errorController.add(line);
-    });
-
-    _process!.exitCode.then((code) {
-      debugPrint('[PyProc] EXITED with code=$code');
-      _errorController.add('server process exited with code $code');
-      _process = null;
-    });
-  }
-
   void _sendRequest(Map<String, dynamic> req) {
-    if (_isDllMode) {
-      if (_bridge == null) return;
-      _bridge!.request(jsonEncode(req));
-    } else {
-      if (_process == null) return;
-      _process!.stdin.writeln(jsonEncode(req));
-      _process!.stdin.flush();
-    }
+    if (_bridge == null) return;
+    _bridge!.request(jsonEncode(req));
   }
 
   Future<Map<String, dynamic>> request(String action, [Map<String, dynamic>? params]) async {
@@ -223,43 +149,24 @@ class PythonProcessManager {
   }
 
   Future<void> shutdown() async {
-    if (_isDllMode) {
-      _pollTimer?.cancel();
-      _pollTimer = null;
-      if (_bridge != null) {
-        try {
-          _bridge!.shutdown();
-        } catch (_) {}
-        _bridge = null;
-      }
-    } else {
-      if (_process == null) return;
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    if (_bridge != null) {
       try {
-        final Map<String, dynamic> req = {'id': 'shutdown_${++_reqCounter}', 'action': 'shutdown'};
-        _process!.stdin.writeln(jsonEncode(req));
-        await _process!.stdin.flush();
-        await Future.delayed(const Duration(milliseconds: 500));
-        _process?.kill();
+        _bridge!.shutdown();
       } catch (_) {}
-      _process = null;
+      _bridge = null;
     }
   }
 
   void dispose() {
-    shutdown();
-    _responseController.close();
-    _errorController.close();
-  }
-
-  Future<String> _findPython() async {
-    try {
-      final result = await Process.run('python', ['--version']);
-      if (result.exitCode == 0) return 'python';
-    } catch (_) {}
-    try {
-      final result = await Process.run('python3', ['--version']);
-      if (result.exitCode == 0) return 'python3';
-    } catch (_) {}
-    return 'python';
+    final responseClosed = _responseController.isClosed;
+    final errorClosed = _errorController.isClosed;
+    shutdown().whenComplete(() {
+      if (!responseClosed) _responseController.close();
+      if (!errorClosed) _errorController.close();
+    });
+    if (!responseClosed) _responseController.close();
+    if (!errorClosed) _errorController.close();
   }
 }

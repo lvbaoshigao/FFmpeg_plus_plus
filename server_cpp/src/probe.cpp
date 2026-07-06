@@ -1,5 +1,6 @@
 #include "probe.h"
 #include "subprocess.h"
+#include "installer.h"
 #include <cmath>
 #include <sstream>
 #include <algorithm>
@@ -55,26 +56,16 @@ std::string formatDuration(double seconds) {
 
 ProbeResult probeFile(const std::string& filepath) {
     ProbeResult result;
-    // 增大 probesize 和 analyzeduration，避免外部存储设备探测失败
     std::vector<std::string> cmd = {
-        "ffprobe", "-v", "quiet", "-print_format", "json",
+        getFFprobePath(), "-v", "quiet", "-print_format", "json",
         "-probesize", "50000000", "-analyzeduration", "100000000",
         "-show_format", "-show_streams", filepath
     };
     auto pr = Subprocess::run(cmd, 120);
     if (pr.exit_code != 0) {
-        // 尝试用引号包裹路径再试一次（处理特殊字符）
-        std::vector<std::string> cmd2 = {
-            "ffprobe", "-v", "quiet", "-print_format", "json",
-            "-probesize", "50000000", "-analyzeduration", "100000000",
-            "-show_format", "-show_streams", "\"" + filepath + "\""
-        };
-        pr = Subprocess::run(cmd2, 120);
-        if (pr.exit_code != 0) {
-            result.error = "ffprobe 执行失败 (" + std::to_string(pr.exit_code) + "): " +
-                           (pr.stderr_output.empty() ? "无法读取文件，请检查路径或文件权限" : pr.stderr_output.substr(0, 200));
-            return result;
-        }
+        result.error = "ffprobe 执行失败 (" + std::to_string(pr.exit_code) + "): " +
+                       (pr.stderr_output.empty() ? "无法读取文件，请检查路径或文件权限" : pr.stderr_output.substr(0, 200));
+        return result;
     }
     try {
         result.info = json::parse(pr.stdout_output);
@@ -118,8 +109,8 @@ ProbeResult probeVideo(const std::string& filepath) {
             }
         }
 
-        if (video.is_null()) {
-            result.error = "未检测到视频流";
+        if (video.is_null() && audio.is_null()) {
+            result.error = "未检测到视频或音频流";
             return result;
         }
 
@@ -127,9 +118,19 @@ ProbeResult probeVideo(const std::string& filepath) {
             (int64_t)std::stoll(format.value("size", "0"));
         double format_duration = std::stod(format.value("duration", "0.0"));
 
+        // 检测文件媒体类型：video / audio / image
+        std::string media_type = "video";
+        if (video.is_null()) {
+            media_type = "audio";
+        } else if (format_duration <= 0.1 || video.value("nb_frames", "0") == "1") {
+            media_type = "image";
+        }
+
+        auto sep_pos = filepath.find_last_of("/\\");
         result.info = {
-            {"filename", filepath.substr(filepath.find_last_of("/\\") + 1)},
+            {"filename", (sep_pos != std::string::npos) ? filepath.substr(sep_pos + 1) : filepath},
             {"filepath", filepath},
+            {"media_type", media_type},
             {"format", format.value("format_name", "N/A")},
             {"format_long_name", format.value("format_long_name", "N/A")},
             {"size", format_size},
@@ -138,15 +139,15 @@ ProbeResult probeVideo(const std::string& filepath) {
             {"duration_str", formatDuration(format_duration)},
             {"bit_rate", std::stoi(format.value("bit_rate", "0"))},
             {"bit_rate_kbps", std::round(std::stoi(format.value("bit_rate", "0")) / 1000.0 * 100.0) / 100.0},
-            {"codec", video.value("codec_name", "N/A")},
-            {"codec_long_name", video.value("codec_long_name", "N/A")},
-            {"profile", video.value("profile", "N/A")},
-            {"width", video.value("width", 0)},
-            {"height", video.value("height", 0)},
-            {"resolution", std::to_string(video.value("width", 0)) + "x" + std::to_string(video.value("height", 0))},
-            {"pix_fmt", video.value("pix_fmt", "N/A")},
-            {"fps", parseFps(video)},
-            {"is_hdr", detectHdr(video)},
+            {"codec", video.is_null() ? "N/A" : video.value("codec_name", "N/A")},
+            {"codec_long_name", video.is_null() ? "N/A" : video.value("codec_long_name", "N/A")},
+            {"profile", video.is_null() ? "N/A" : video.value("profile", "N/A")},
+            {"width", video.is_null() ? 0 : video.value("width", 0)},
+            {"height", video.is_null() ? 0 : video.value("height", 0)},
+            {"resolution", video.is_null() ? "N/A" : std::to_string(video.value("width", 0)) + "x" + std::to_string(video.value("height", 0))},
+            {"pix_fmt", video.is_null() ? "N/A" : video.value("pix_fmt", "N/A")},
+            {"fps", video.is_null() ? 0.0 : parseFps(video)},
+            {"is_hdr", video.is_null() ? false : detectHdr(video)},
             {"audio_codec", audio.is_null() ? "N/A" : audio.value("codec_name", "N/A")},
             {"audio_channels", audio.is_null() ? 0 : audio.value("channels", 0)},
             {"audio_sample_rate", audio.is_null() ? "N/A" : audio.value("sample_rate", "N/A")},
@@ -174,8 +175,9 @@ ProbeResult probeSubtitle(const std::string& filepath) {
 
         auto stream = streams[0];
         auto tags = stream.value("tags", json::object());
+        auto sep_pos = filepath.find_last_of("/\\");
         result.info = {
-            {"filename", filepath.substr(filepath.find_last_of("/\\") + 1)},
+            {"filename", (sep_pos != std::string::npos) ? filepath.substr(sep_pos + 1) : filepath},
             {"filepath", filepath},
             {"format", format.value("format_name", "N/A")},
             {"codec", stream.value("codec_name", "N/A")},

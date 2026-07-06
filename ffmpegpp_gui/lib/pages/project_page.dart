@@ -3,25 +3,39 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:desktop_drop/desktop_drop.dart';
-import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../services/config_export.dart';
 import '../theme/app_strings.dart';
 import '../widgets/video_card.dart';
+import '../widgets/glass_panel.dart';
+import '../widgets/toast.dart';
 
 class ProjectPage extends StatefulWidget {
   const ProjectPage({super.key});
   @override
-  State<ProjectPage> createState() => _ProjectPageState();
+  State<ProjectPage> createState() => ProjectPageState();
 }
 
-class _ProjectPageState extends State<ProjectPage> {
-  static const _exts = ['mp4', 'avi', 'mkv', 'mov', 'flv', 'wmv', 'webm', 'm4v', 'mpg', 'mpeg', '3gp', 'ts', 'm2ts'];
+class ProjectPageState extends State<ProjectPage> {
+  static const _videoExts = ['mp4', 'avi', 'mkv', 'mov', 'flv', 'wmv', 'webm', 'm4v', 'mpg', 'mpeg', '3gp', 'ts', 'm2ts'];
+  static const _audioExts = ['mp3', 'wav', 'flac', 'aac', 'm4a', 'ogg', 'opus', 'wma', 'ac3'];
+  static const _imageExts = ['png', 'jpg', 'jpeg', 'bmp', 'webp', 'tiff', 'tif'];
+  static final _exts = [..._videoExts, ..._audioExts, ..._imageExts];
 
   String _searchQuery = '';
   bool _searchVisible = false;
   final Set<String> _selectedIds = {};
   bool _dragging = false;
+
+  void selectAll(List videos) {
+    setState(() {
+      if (_selectedIds.length == videos.length) {
+        _selectedIds.clear();
+      } else {
+        _selectedIds.addAll(videos.map((v) => v.id));
+      }
+    });
+  }
 
   void _onDrop(DropDoneDetails details) {
     setState(() => _dragging = false);
@@ -53,8 +67,10 @@ class _ProjectPageState extends State<ProjectPage> {
             : state.videos.where((v) => v.filename.toLowerCase().contains(_searchQuery.toLowerCase())).toList();
 
         return Scaffold(
-          appBar: AppBar(
-            title: _searchVisible
+          backgroundColor: Colors.transparent,
+          body: Column(children: [
+            GlassTopBar(
+              title: _searchVisible
                 ? TextField(
                     autofocus: true,
                     style: TextStyle(fontSize: 14, color: scheme.onSurface),
@@ -113,15 +129,17 @@ class _ProjectPageState extends State<ProjectPage> {
                 label: Text(s.addVideo),
                 onPressed: () => _pick(state),
               ),
-              const SizedBox(width: 16),
             ],
           ),
-          body: DropTarget(
-            onDragDone: _onDrop,
-            onDragEntered: (_) => setState(() => _dragging = true),
-            onDragExited: (_) => setState(() => _dragging = false),
-            child: _buildBody(context, state, videos, s, clr, scheme),
+          Expanded(
+            child: DropTarget(
+              onDragDone: _onDrop,
+              onDragEntered: (_) => setState(() => _dragging = true),
+              onDragExited: (_) => setState(() => _dragging = false),
+              child: _buildBody(context, state, videos, s, clr, scheme),
+            ),
           ),
+          ]),
         );
       },
     );
@@ -189,10 +207,7 @@ class _ProjectPageState extends State<ProjectPage> {
 
     if (fppx == null) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(zh ? '无法解析配置文件（格式错误）' : 'Cannot parse config file (invalid format)'),
-          backgroundColor: Colors.red,
-        ));
+        showToast(context, zh ? '无法解析配置文件（格式错误）' : 'Cannot parse config file (invalid format)', type: ToastType.error);
       }
       return;
     }
@@ -299,10 +314,7 @@ class _ProjectPageState extends State<ProjectPage> {
                   }
                 }
                 Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                  content: Text(zh ? '已应用到 ${selectedVideos.length} 个视频' : 'Applied to ${selectedVideos.length} videos'),
-                  backgroundColor: Colors.green,
-                ));
+                showToast(context, zh ? '已应用到 ${selectedVideos.length} 个视频' : 'Applied to ${selectedVideos.length} videos', type: ToastType.success);
               },
               child: Text(zh ? '应用' : 'Apply'),
             ),

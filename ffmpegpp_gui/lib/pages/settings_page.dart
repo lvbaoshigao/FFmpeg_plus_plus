@@ -9,8 +9,11 @@ import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import '../widgets/masonry_grid.dart';
 import '../widgets/install_dialog.dart';
+import 'keybinding_page.dart';
 import '../widgets/font_picker.dart';
 import '../services/ffmpeg_installer.dart';
+import '../widgets/toast.dart';
+import '../widgets/glass_panel.dart';
 
 /// 获取用户数据目录（%APPDATA%/FFmpeg++/），避免 Program Files 权限问题
 String _userDataDir() {
@@ -52,8 +55,10 @@ class SettingsPage extends StatelessWidget {
         final clr = scheme.onSurface;
 
         return Scaffold(
-          appBar: AppBar(title: Text(s.settingsTitle)),
-          body: SingleChildScrollView(
+          backgroundColor: Colors.transparent,
+          body: Column(children: [
+            GlassTopBar(title: Text(s.settingsTitle)),
+            Expanded(child: SingleChildScrollView(
             padding: const EdgeInsets.all(16),
             child: MasonryGrid(
               columns: 2,
@@ -66,11 +71,6 @@ class SettingsPage extends StatelessWidget {
                       title: Text(s.darkMode, style: TextStyle(color: clr)),
                       value: state.darkMode,
                       onChanged: (v) => state.toggleDarkMode(v)),
-                  SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-                      title: Text(s.qGlass, style: TextStyle(color: clr)),
-                      subtitle: Text(s.qGlassHint, style: TextStyle(fontSize: 11, color: scheme.outline)),
-                      value: cfg.glassEffect,
-                      onChanged: (v) => state.updateConfig((c) => c..glassEffect = v)),
                   ListTile(dense: true, contentPadding: EdgeInsets.zero,
                         title: Text(s.bgTitle, style: TextStyle(color: clr, fontSize: 13)),
                         subtitle: Text(cfg.backgroundImage.isEmpty ? s.bgNone : cfg.backgroundImage.split(RegExp(r'[\\/]')).last,
@@ -100,8 +100,7 @@ class SettingsPage extends StatelessWidget {
                             value: cfg.backgroundOpacity, min: 0.0, max: 1.0, divisions: 100,
                             onChanged: (v) => state.updateConfig((c) => c..backgroundOpacity = v))),
                       ]),
-                  if (cfg.glassEffect)
-                    Row(children: [
+                  Row(children: [
                       Text('${s.cardOpacity}: ${(cfg.cardOpacity * 100).round()}%',
                           style: TextStyle(color: clr, fontSize: 11)),
                       Expanded(child: Slider(
@@ -201,6 +200,47 @@ class SettingsPage extends StatelessWidget {
                   ),
                 ]),
 
+                // ── Shortcuts ──
+                _glass(context, s.isZh ? '快捷键' : 'Shortcuts', [
+                  ListTile(
+                    dense: true, contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.keyboard, size: 20, color: scheme.primary),
+                    title: Text(s.isZh ? '快捷键配置' : 'Keyboard Shortcuts', style: TextStyle(color: clr, fontSize: 13)),
+                    subtitle: Text(s.isZh ? '配置画布和基本操作快捷键' : 'Configure canvas and basic shortcuts', style: TextStyle(fontSize: 11, color: scheme.outline)),
+                    trailing: Icon(Icons.chevron_right, size: 18, color: scheme.outline),
+                    onTap: () => showKeybindingDialog(context, isZh: s.isZh),
+                  ),
+                ]),
+
+                // ── Tasks ──
+                _glass(context, s.isZh ? '任务' : 'Tasks', [
+                  Text(s.isZh ? '同时启用任务数' : 'Concurrent Tasks', style: TextStyle(color: clr, fontSize: 12)),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<int>(
+                    initialValue: cfg.maxConcurrentTasks,
+                    isDense: true, isExpanded: true,
+                    style: TextStyle(fontSize: 12, color: clr),
+                    dropdownColor: scheme.surface,
+                    decoration: InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
+                    items: [
+                      ...List.generate(8, (i) => DropdownMenuItem(value: i + 1, child: Text('${i + 1}'))),
+                      DropdownMenuItem(value: 0, child: Text(s.isZh ? '不限制' : 'Unlimited')),
+                    ],
+                    onChanged: (v) { if (v != null) state.updateConfig((c) => c..maxConcurrentTasks = v); },
+                  ),
+                  const SizedBox(height: 4),
+                  Text(s.isZh ? '控制队列中同时处理的任务数量' : 'Controls how many tasks run in parallel',
+                    style: TextStyle(fontSize: 10, color: scheme.outline)),
+                  const SizedBox(height: 8),
+                  SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+                      title: Text(s.isZh ? '任务完成系统通知' : 'Task completion notification', style: TextStyle(color: clr, fontSize: 13)),
+                      subtitle: Text(s.isZh ? '每个任务完成时发送 Windows 系统通知' : 'Send Windows notification when each task finishes',
+                          style: TextStyle(fontSize: 11, color: scheme.outline)),
+                      value: cfg.enableSystemNotification,
+                      onChanged: (v) => state.updateConfig((c) => c..enableSystemNotification = v)),
+                ]),
+
                 // ── Debug ──
                 _glass(context, s.dDebug, [
                   SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
@@ -240,12 +280,12 @@ class SettingsPage extends StatelessWidget {
                             errorBuilder: (_, __, ___) => Icon(Icons.play_circle_fill, size: 48, color: scheme.primary))),
                     const SizedBox(height: 8),
                     Text('FFmpeg++', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: scheme.primary)),
-                    Text('v3.2.0', style: TextStyle(fontSize: 12, color: scheme.outline)),
+                    Text('v4.0.0', style: TextStyle(fontSize: 12, color: scheme.outline)),
                     const SizedBox(height: 12),
                   ])),
                   const SizedBox(height: 4),
-                  _infoRow(s.aboutVersion, 'v3.2.0', scheme),
-                  _infoRow(s.aboutBuildDate, '2026-06-27', scheme),
+                  _infoRow(s.aboutVersion, 'v4.0.0', scheme),
+                  _infoRow(s.aboutBuildDate, '2026-07-06', scheme),
                   _infoRow(s.aboutBlog, 'blog-clstone.netlify.app', scheme),
                   _infoRow(s.aboutGithub, 'github.com/pity-Fox/FFmpeg_plus_plus', scheme),
                   _infoRow(s.aboutSponsor, '', scheme, trailing: TextButton.icon(
@@ -260,7 +300,8 @@ class SettingsPage extends StatelessWidget {
                 ]),
               ],
             ),
-          ),
+          )),
+          ]),
         );
       },
     );
@@ -270,15 +311,14 @@ class SettingsPage extends StatelessWidget {
   static Widget _glass(BuildContext ctx, String title, List<Widget> children) {
     final scheme = Theme.of(ctx).colorScheme;
     final cfg = ctx.read<AppState>().config;
-    final glass = cfg.glassEffect;
     final cardAlpha = (cfg.cardOpacity * 255).round().clamp(0, 255);
     final inner = Card(
-      elevation: glass ? 4 : 0,
-      shadowColor: glass ? scheme.shadow : null,
-      color: glass ? scheme.surface.withAlpha(cardAlpha) : null,
+      elevation: 4,
+      shadowColor: scheme.shadow,
+      color: scheme.surface.withAlpha(cardAlpha),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: glass ? BorderSide(color: scheme.outlineVariant.withAlpha(60), width: 1) : BorderSide.none,
+        side: BorderSide(color: scheme.outlineVariant.withAlpha(60), width: 1),
       ),
       child: Padding(padding: const EdgeInsets.all(12), child: Column(
           crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
@@ -286,7 +326,6 @@ class SettingsPage extends StatelessWidget {
         const SizedBox(height: 8), ...children,
       ])),
     );
-    if (!glass) return inner;
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: BackdropFilter(filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6), child: inner),
@@ -341,17 +380,13 @@ class SettingsPage extends StatelessWidget {
         await fontLoader.load();
         state.updateConfig((c) => c..fontFamily = fontName);
         if (ctx.mounted) {
-          ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-              content: Text(isZh ? '字体 "$fontName" 已加载并应用' : 'Font "$fontName" loaded and applied'),
-              duration: const Duration(seconds: 2)));
+          showToast(ctx, isZh ? '字体 "$fontName" 已加载并应用' : 'Font "$fontName" loaded and applied', type: ToastType.success);
         }
       }
     } catch (e) {
       state.updateConfig((c) => c..fontFamily = fontName);
       if (ctx.mounted) {
-        ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-            content: Text(isZh ? '热加载失败: $e' : 'Load failed: $e'),
-            duration: const Duration(seconds: 3)));
+        showToast(ctx, isZh ? '热加载失败: $e' : 'Load failed: $e', type: ToastType.error);
       }
     }
   }
@@ -392,15 +427,11 @@ class SettingsPage extends StatelessWidget {
       // 重置配置中的背景
       state.updateConfig((c) => c..backgroundImage = '');
       if (ctx.mounted) {
-        ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-            content: Text(s.isZh ? '缓存已清除' : 'Cache cleared'),
-            duration: const Duration(seconds: 2)));
+        showToast(ctx, s.isZh ? '缓存已清除' : 'Cache cleared', type: ToastType.success);
       }
     } catch (e) {
       if (ctx.mounted) {
-        ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-            content: Text(s.isZh ? '清除失败: $e' : 'Clear failed: $e'),
-            duration: const Duration(seconds: 3)));
+        showToast(ctx, s.isZh ? '清除失败: $e' : 'Clear failed: $e', type: ToastType.error);
       }
     }
   }
@@ -556,20 +587,18 @@ class _FfmpegCardState extends State<_FfmpegCard> {
         await _addToPath(dir);
         widget.state.addLog('FFmpeg configured: $_version', category: 'ffmpeg');
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('FFmpeg found at: $dir\n已添加到用户环境变量 PATH'), duration: const Duration(seconds: 3)));
+          showToast(context, 'FFmpeg found at: $dir\n已添加到用户环境变量 PATH', type: ToastType.success);
         }
       } else {
         setState(() => _checking = false);
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('所选文件不是有效的 ffmpeg.exe'), backgroundColor: Colors.red));
+          showToast(context, '所选文件不是有效的 ffmpeg.exe', type: ToastType.error);
         }
       }
     } catch (e) {
       setState(() => _checking = false);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('检测失败: $e'), backgroundColor: Colors.red));
+        showToast(context, '检测失败: $e', type: ToastType.error);
       }
     }
   }
@@ -625,9 +654,7 @@ class _FfmpegCardState extends State<_FfmpegCard> {
     setState(() { _found = false; _version = ''; _path = ''; });
     widget.state.addLog('已删除程序目录下的 FFmpeg', category: 'info');
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(isZh ? 'FFmpeg 已删除' : 'FFmpeg deleted')),
-      );
+      showToast(context, isZh ? 'FFmpeg 已删除' : 'FFmpeg deleted', type: ToastType.info);
     }
   }
 
@@ -637,13 +664,12 @@ class _FfmpegCardState extends State<_FfmpegCard> {
     final cfg = widget.state.config;
     final s = AppStrings.of(cfg.language);
     final isZh = cfg.language == 'zh';
-    final glass = cfg.glassEffect;
     final cardAlpha = (cfg.cardOpacity * 255).round().clamp(0, 255);
 
     Widget card;
     if (!_found && !_checking) {
       // Initial: just detect button
-      card = _card(scheme, glass, cardAlpha, cfg, s.ffmpegSettings, [
+      card = _card(scheme, cardAlpha, cfg, s.ffmpegSettings, [
         Center(child: Column(children: [
           Icon(Icons.warning_amber, size: 32, color: Colors.orange),
           const SizedBox(height: 8),
@@ -680,7 +706,7 @@ class _FfmpegCardState extends State<_FfmpegCard> {
         ]),
       ]);
     } else if (_checking) {
-      card = _card(scheme, glass, cardAlpha, cfg, s.ffmpegSettings, [
+      card = _card(scheme, cardAlpha, cfg, s.ffmpegSettings, [
         const SizedBox(height: 12),
         const Center(child: CircularProgressIndicator()),
         const SizedBox(height: 8),
@@ -690,7 +716,7 @@ class _FfmpegCardState extends State<_FfmpegCard> {
       // Found: show version + optional delete for bundled ffmpeg
       final isBundled = FfmpegInstaller.isInstalled &&
           _path.isNotEmpty && _path.startsWith(Directory(Platform.resolvedExecutable).parent.path);
-      card = _card(scheme, glass, cardAlpha, cfg, s.ffmpegSettings, [
+      card = _card(scheme, cardAlpha, cfg, s.ffmpegSettings, [
         Row(children: [
           const Icon(Icons.check_circle, size: 16, color: Colors.green),
           const SizedBox(width: 8),
@@ -730,14 +756,14 @@ class _FfmpegCardState extends State<_FfmpegCard> {
     return card;
   }
 
-  Widget _card(ColorScheme scheme, bool glass, int cardAlpha, AppConfig cfg, String title, List<Widget> children) {
+  Widget _card(ColorScheme scheme, int cardAlpha, AppConfig cfg, String title, List<Widget> children) {
     final inner = Card(
-      elevation: glass ? 4 : 0,
-      shadowColor: glass ? scheme.shadow : null,
-      color: glass ? scheme.surface.withAlpha(cardAlpha) : null,
+      elevation: 4,
+      shadowColor: scheme.shadow,
+      color: scheme.surface.withAlpha(cardAlpha),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: glass ? BorderSide(color: scheme.outlineVariant.withAlpha(60), width: 1) : BorderSide.none,
+        side: BorderSide(color: scheme.outlineVariant.withAlpha(60), width: 1),
       ),
       child: Padding(padding: const EdgeInsets.all(12), child: Column(
           crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
@@ -745,7 +771,6 @@ class _FfmpegCardState extends State<_FfmpegCard> {
         const SizedBox(height: 8), ...children,
       ])),
     );
-    if (!glass) return inner;
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: BackdropFilter(filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6), child: inner),

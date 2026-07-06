@@ -4,6 +4,8 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
+import '../widgets/toast.dart';
+import '../widgets/glass_panel.dart';
 
 class LogPage extends StatefulWidget {
   const LogPage({super.key});
@@ -31,7 +33,6 @@ class _LogPageState extends State<LogPage> {
     final scheme = Theme.of(context).colorScheme;
     final cfg = context.watch<AppState>().config;
     final entries = context.watch<AppState>().logEntries;
-    final glass = cfg.glassEffect;
     final isZh = cfg.language == 'zh';
     final filtered = _filter == 'all' ? entries : entries.where((e) => e.category == _filter).toList();
 
@@ -43,48 +44,44 @@ class _LogPageState extends State<LogPage> {
         Expanded(child: filtered.isEmpty
             ? Center(child: Text(isZh ? '暂无日志' : 'No logs yet',
                 style: TextStyle(color: scheme.outline, fontSize: 13)))
-            : _buildList(filtered, scheme, glass, cfg, isZh)),
+            : _buildList(filtered, scheme, cfg, isZh)),
       ]),
     );
   }
 
   Widget _toolbar(ColorScheme scheme, AppConfig cfg, List<LogEntry> entries, List<LogEntry> filtered, bool isZh) {
     final hasSelection = _selectedIndices.isNotEmpty;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-      child: Row(children: [
-        Text(isZh ? '日志' : 'Logs', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: scheme.onSurface)),
+    return GlassTopBar(
+      title: Row(children: [
+        Text(isZh ? '日志' : 'Logs', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
         const SizedBox(width: 12),
         Text('${filtered.length} ${isZh ? '条' : 'entries'}', style: TextStyle(fontSize: 11, color: scheme.outline)),
         if (hasSelection) ...[
           const SizedBox(width: 8),
           Text('${isZh ? '已选' : 'Selected'} ${_selectedIndices.length}', style: TextStyle(fontSize: 11, color: scheme.primary)),
         ],
-        const Spacer(),
+      ]),
+      actions: [
         if (hasSelection) IconButton(
           icon: const Icon(Icons.copy, size: 18), tooltip: isZh ? '复制选中' : 'Copy selected',
           onPressed: () {
             final selected = _selectedIndices.where((i) => i < filtered.length).map((i) => _fmt(filtered[i])).join('\n');
             Clipboard.setData(ClipboardData(text: selected));
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                content: Text(isZh ? '已复制 ${_selectedIndices.length} 条' : 'Copied ${_selectedIndices.length} entries'),
-                duration: const Duration(seconds: 2)));
+            showToast(context, isZh ? '已复制 ${_selectedIndices.length} 条' : 'Copied ${_selectedIndices.length} entries');
           },
         ),
         IconButton(
           icon: const Icon(Icons.copy_all, size: 18), tooltip: isZh ? '复制全部' : 'Copy all',
           onPressed: () {
             Clipboard.setData(ClipboardData(text: filtered.map(_fmt).join('\n')));
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                content: Text(isZh ? '已复制全部 ${filtered.length} 条' : 'Copied all ${filtered.length} entries'),
-                duration: const Duration(seconds: 2)));
+            showToast(context, isZh ? '已复制全部 ${filtered.length} 条' : 'Copied all ${filtered.length} entries');
           },
         ),
         IconButton(
           icon: const Icon(Icons.delete_outline, size: 18), tooltip: isZh ? '清空' : 'Clear',
           onPressed: () { setState(() => _selectedIndices.clear()); context.read<AppState>().clearLogs(); },
         ),
-      ]),
+      ],
     );
   }
 
@@ -107,7 +104,7 @@ class _LogPageState extends State<LogPage> {
     );
   }
 
-  Widget _buildList(List<LogEntry> filtered, ColorScheme scheme, bool glass, AppConfig cfg, bool isZh) {
+  Widget _buildList(List<LogEntry> filtered, ColorScheme scheme, AppConfig cfg, bool isZh) {
     return ListView.builder(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       itemCount: filtered.length,
@@ -127,9 +124,7 @@ class _LogPageState extends State<LogPage> {
           }),
           onLongPress: () {
             Clipboard.setData(ClipboardData(text: _fmt(entry)));
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                content: Text(isZh ? '已复制' : 'Copied'),
-                duration: const Duration(seconds: 1)));
+            showToast(context, isZh ? '已复制' : 'Copied');
           },
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -155,22 +150,20 @@ class _LogPageState extends State<LogPage> {
           ),
         );
 
-        if (glass) {
-          row = ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: scheme.surface.withAlpha(60),
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(color: scheme.outlineVariant.withAlpha(30), width: 0.5),
-                ),
-                child: row,
+        row = ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+            child: Container(
+              decoration: BoxDecoration(
+                color: scheme.surface.withAlpha(60),
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: scheme.outlineVariant.withAlpha(30), width: 0.5),
               ),
+              child: row,
             ),
-          );
-        }
+          ),
+        );
 
         return Padding(padding: const EdgeInsets.only(bottom: 2), child: row);
       },

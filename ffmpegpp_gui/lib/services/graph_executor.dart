@@ -78,25 +78,39 @@ class GraphExecutor {
 
     if (errors.isNotEmpty) return errors;
 
+    // 媒体类型兼容校验
+    for (final conn in graph.connections) {
+      final fi = graph.nodes.indexWhere((n) => n.id == conn.fromNodeId);
+      final ti = graph.nodes.indexWhere((n) => n.id == conn.toNodeId);
+      if (fi < 0 || ti < 0) continue;
+      final from = graph.nodes[fi];
+      final to = graph.nodes[ti];
+      final outType = from.outputType;
+      final inTypes = to.inputTypes;
+      if (outType != null && inTypes.isNotEmpty && !inTypes.contains(outType)) {
+        errors.add('"${from.label}" 输出 ${outType.name}，无法连接到 "${to.label}"（需要 ${inTypes.map((t) => t.name).join("/")}）');
+      }
+    }
+
+    if (errors.isNotEmpty) return errors;
+
     for (final start in startNodes) {
       final plan = _buildPlan(graph, start);
       if (plan == null) {
         errors.add('源文件节点未连接到输出节点');
         continue;
       }
-      bool afterFrame = false;
       double? clipCeiling;
       for (var si = 0; si < plan.steps.length; si++) {
         final step = plan.steps[si];
         final types = step.nodes.map((n) => n.type).toSet();
         final hasMergeable = types.contains(PipelineStepType.avProcess) || types.contains(PipelineStepType.subtitle) || types.contains(PipelineStepType.speed);
-        final hasSequential = types.contains(PipelineStepType.clip) || types.contains(PipelineStepType.frame);
+        final hasSequential = types.contains(PipelineStepType.clip) || types.contains(PipelineStepType.frame)
+            || types.contains(PipelineStepType.imageConvert) || types.contains(PipelineStepType.audioConvert)
+            || types.contains(PipelineStepType.extractAudio) || types.contains(PipelineStepType.imageCrop);
         if (hasMergeable && hasSequential) {
           final names = step.nodes.map((n) => n.label).join(', ');
-          errors.add('同层级节点冲突: $names (音视频处理/字幕 不能与 片段截取/帧提取 在同一层级)');
-        }
-        if (types.contains(PipelineStepType.clip) && types.contains(PipelineStepType.frame)) {
-          errors.add('同层级节点冲突: 片段截取 和 帧提取 不能在同一层级');
+          errors.add('同层级节点冲突: $names (合并节点不能与独立节点在同一层级)');
         }
         if (types.contains(PipelineStepType.clip) && types.length > 1) {
           errors.add('片段截取 不能与其他操作并行');
@@ -104,13 +118,17 @@ class GraphExecutor {
         if (types.contains(PipelineStepType.frame) && types.length > 1) {
           errors.add('帧提取 不能与其他操作并行');
         }
-
-        if (afterFrame && types.any((t) => t != PipelineStepType.output)) {
-          errors.add('帧提取后不能连接视频处理节点（帧提取输出为图片）');
+        if (types.contains(PipelineStepType.imageConvert) && types.length > 1) {
+          errors.add('图片转换 不能与其他操作并行');
         }
-
-        if (types.contains(PipelineStepType.frame)) {
-          afterFrame = true;
+        if (types.contains(PipelineStepType.imageCrop) && types.length > 1) {
+          errors.add('图片裁剪 不能与其他操作并行');
+        }
+        if (types.contains(PipelineStepType.audioConvert) && types.length > 1) {
+          errors.add('音频转换 不能与其他操作并行');
+        }
+        if (types.contains(PipelineStepType.extractAudio) && types.length > 1) {
+          errors.add('提取音频 不能与其他操作并行');
         }
 
         if (types.contains(PipelineStepType.clip)) {
@@ -189,7 +207,16 @@ class GraphExecutor {
         steps.add(ExecutionStep('merged', processing));
       } else {
         for (final n in processing) {
-          steps.add(ExecutionStep(n.type == PipelineStepType.clip ? 'clip' : n.type == PipelineStepType.frame ? 'frame' : 'single', [n]));
+          final action = switch (n.type) {
+            PipelineStepType.clip => 'clip',
+            PipelineStepType.frame => 'frame',
+            PipelineStepType.imageConvert => 'image_convert',
+            PipelineStepType.audioConvert => 'audio_convert',
+            PipelineStepType.extractAudio => 'extract_audio',
+            PipelineStepType.imageCrop => 'image_crop',
+            _ => 'single',
+          };
+          steps.add(ExecutionStep(action, [n]));
         }
       }
     }
@@ -345,6 +372,103 @@ class GraphExecutor {
             ));
           }
           break;
+
+        case 'image_convert':
+          final node = step.nodes.first;
+          final outFmt = node.params['output_format'] as String? ?? 'png';
+          final quality = (node.params['quality'] as num?)?.toInt() ?? 95;
+          final outPath = isLast
+              ? outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.$outFmt')
+              : _tempPath(inputPath, i).replaceAll(RegExp(r'\.mp4$'), '.$outFmt');
+          if (!isLast) tempFiles.add(outPath);
+          calls.add(BackendCall(
+            action: 'image_convert',
+            params: {'input': currentInput, 'output': outPath, 'quality': quality},
+          ));
+          currentInput = outPath;
+          continue;
+
+        case 'image_crop':
+          final node = step.nodes.first;
+          final cp = node.params;
+          final cropX = (cp['crop_x'] as num?)?.toInt() ?? 0;
+          final cropY = (cp['crop_y'] as num?)?.toInt() ?? 0;
+          final cropW = (cp['crop_w'] as num?)?.toInt() ?? 0;
+          final cropH = (cp['crop_h'] as num?)?.toInt() ?? 0;
+          final ext = currentInput.split('.').last;
+          final outPath = isLast
+              ? outputPath
+              : _tempPath(inputPath, i).replaceAll(RegExp(r'\.mp4$'), '.$ext');
+          if (!isLast) tempFiles.add(outPath);
+          calls.add(BackendCall(
+            action: 'image_crop',
+            params: {
+              'input': currentInput,
+              'output': outPath,
+              'crop_x': cropX,
+              'crop_y': cropY,
+              'crop_w': cropW,
+              'crop_h': cropH,
+            },
+          ));
+          currentInput = outPath;
+          continue;
+
+        case 'extract_audio':
+          final node = step.nodes.first;
+          final p = node.params;
+          final rawCodec = p['audio_codec'] as String? ?? 'copy';
+          final rawFmt = p['output_format'] as String? ?? 'm4a';
+          final (codec, outFmt) = _resolveAudioCodecFormat(rawCodec, rawFmt);
+          final bitrate = (p['audio_bitrate'] as num?)?.toInt() ?? 128;
+          final outPath = isLast
+              ? outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.$outFmt')
+              : _tempPath(inputPath, i).replaceAll(RegExp(r'\.mp4$'), '.$outFmt');
+          if (!isLast) tempFiles.add(outPath);
+          final opts = <String, dynamic>{
+            'video_codec': 'none',
+            'audio_codec': codec,
+            'overwrite': true,
+          };
+          if (codec != 'copy' && codec != 'flac' && codec != 'pcm_s16le') {
+            opts['audio_bitrate'] = bitrate;
+          }
+          calls.add(BackendCall(
+            action: 'transcode',
+            params: {'input': currentInput, 'output': outPath, 'options': opts},
+          ));
+          currentInput = outPath;
+          continue;
+
+        case 'audio_convert':
+          final node = step.nodes.first;
+          final p = node.params;
+          final rawCodec = p['audio_codec'] as String? ?? 'aac';
+          final rawFmt = p['output_format'] as String? ?? 'm4a';
+          final (codec, outFmt) = _resolveAudioCodecFormat(rawCodec, rawFmt);
+          final sr = p['sample_rate'] as String? ?? 'keep';
+          final outPath = isLast
+              ? outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.$outFmt')
+              : _tempPath(inputPath, i).replaceAll(RegExp(r'\.mp4$'), '.$outFmt');
+          if (!isLast) tempFiles.add(outPath);
+          final opts = <String, dynamic>{
+            'video_codec': 'none',
+            'audio_codec': codec,
+            'overwrite': true,
+          };
+          if (codec != 'flac' && codec != 'pcm_s16le') {
+            final bitrateVal = p['audio_bitrate'];
+            if (bitrateVal != null) {
+              opts['audio_bitrate'] = (bitrateVal as num).toInt();
+            }
+          }
+          if (sr != 'keep') opts['sample_rate'] = int.tryParse(sr);
+          calls.add(BackendCall(
+            action: 'transcode',
+            params: {'input': currentInput, 'output': outPath, 'options': opts},
+          ));
+          currentInput = outPath;
+          continue;
       }
       currentInput = currentOutput;
     }
@@ -364,7 +488,24 @@ class GraphExecutor {
     final namingValue = p['naming_value'] as String? ?? '_processed';
     final outputDir = p['output_dir'] as String?;
 
-    final ext = format == 'keep' ? video.filepath.split('.').last : format;
+    // Determine extension: check if last processing step overrides the format
+    String ext;
+    if (format != 'keep') {
+      ext = format;
+    } else if (plan.steps.isNotEmpty) {
+      final lastStep = plan.steps.last;
+      final lastNode = lastStep.nodes.last;
+      if (lastStep.action == 'extract_audio' || lastStep.action == 'audio_convert') {
+        ext = lastNode.params['output_format'] as String? ?? 'm4a';
+      } else if (lastStep.action == 'image_convert') {
+        ext = lastNode.params['output_format'] as String? ?? 'png';
+      } else {
+        ext = video.filepath.split('.').last;
+      }
+    } else {
+      ext = video.filepath.split('.').last;
+    }
+
     final base = video.filename.replaceAll(RegExp(r'\.[^.]+$'), '');
     final fn = namingMode == 'keep' ? '$base.$ext'
         : namingMode == 'suffix' ? '$base$namingValue.$ext'
@@ -431,6 +572,18 @@ class GraphExecutor {
               final sp = _effectiveSpeed(n.params);
               descs.add('变速(${sp}x)');
               break;
+            case PipelineStepType.imageConvert:
+              descs.add('图片转换(→${n.params['output_format'] ?? 'png'})');
+              break;
+            case PipelineStepType.imageCrop:
+              descs.add('图片裁剪(${n.params['crop_w'] ?? '?'}x${n.params['crop_h'] ?? '?'})');
+              break;
+            case PipelineStepType.audioConvert:
+              descs.add('音频转换(${n.params['audio_codec'] ?? 'aac'}→${n.params['output_format'] ?? 'm4a'})');
+              break;
+            case PipelineStepType.extractAudio:
+              descs.add('提取音频(${n.params['audio_codec'] ?? 'copy'}→${n.params['output_format'] ?? 'm4a'})');
+              break;
             default: break;
           }
         }
@@ -449,6 +602,31 @@ class GraphExecutor {
   }
 
   // ── 参数转译 ──
+
+  static const _codecForFormat = {
+    'mp3': 'libmp3lame', 'ogg': 'libvorbis', 'flac': 'flac',
+    'wav': 'pcm_s16le', 'aac': 'aac', 'm4a': 'aac', 'opus': 'libopus',
+  };
+  static const _copyCompatFormats = {
+    'aac': {'m4a', 'aac', 'mp4', 'mkv', 'mov'},
+    'mp3': {'mp3'},
+    'flac': {'flac'},
+    'opus': {'ogg', 'mkv', 'webm'},
+    'vorbis': {'ogg', 'mkv', 'webm'},
+    'pcm_s16le': {'wav'},
+  };
+
+  static (String codec, String format) _resolveAudioCodecFormat(String codec, String format) {
+    if (codec != 'copy') return (codec, format);
+    // copy 模式：检查格式兼容性，不兼容时自动选编码器
+    final compatFormats = _copyCompatFormats.entries
+        .where((e) => e.value.contains(format))
+        .map((e) => e.key).toSet();
+    if (compatFormats.isNotEmpty) return ('copy', format);
+    // 格式不兼容 copy，自动选对应编码器
+    final resolved = _codecForFormat[format] ?? 'aac';
+    return (resolved, format);
+  }
 
   static Map<String, dynamic> _avOptions(PipelineNode node) {
     final p = node.params;
@@ -531,6 +709,8 @@ class GraphExecutor {
   static String _tempPath(String inputPath, int step) {
     final dir = Directory.systemTemp.path;
     final base = inputPath.split('\\').last.split('/').last.replaceAll(RegExp(r'\.[^.]+$'), '');
-    return '$dir${Platform.pathSeparator}ffmpegpp_${base}_step$step.mp4';
+    // 使用完整路径的哈希避免不同目录下同名文件冲突
+    final pathHash = inputPath.hashCode.toRadixString(16).substring(0, 8);
+    return '$dir${Platform.pathSeparator}ffmpegpp_${pathHash}_${base}_step$step.mp4';
   }
 }

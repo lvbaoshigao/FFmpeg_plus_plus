@@ -1,18 +1,17 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 
 class AppTheme {
-  static ThemeData dark({int seedColor = 0xFF5E6AD2, String fontFamily = '', double fontSize = 14.0, int fontWeight = 400, bool glass = false}) {
+  static ThemeData dark({int seedColor = 0xFF5E6AD2, String fontFamily = '', double fontSize = 14.0, int fontWeight = 400}) {
     final scheme = ColorScheme.fromSeed(seedColor: Color(seedColor), brightness: Brightness.dark);
-    return _build(scheme, fontFamily, fontSize, fontWeight, glass);
+    return _build(scheme, fontFamily, fontSize, fontWeight);
   }
 
-  static ThemeData light({int seedColor = 0xFF5E6AD2, String fontFamily = '', double fontSize = 14.0, int fontWeight = 400, bool glass = false}) {
+  static ThemeData light({int seedColor = 0xFF5E6AD2, String fontFamily = '', double fontSize = 14.0, int fontWeight = 400}) {
     final scheme = ColorScheme.fromSeed(seedColor: Color(seedColor), brightness: Brightness.light);
-    return _build(scheme, fontFamily, fontSize, fontWeight, glass);
+    return _build(scheme, fontFamily, fontSize, fontWeight);
   }
 
-  static ThemeData _build(ColorScheme scheme, String fontFamily, double fontSize, int fontWeight, bool glass) {
+  static ThemeData _build(ColorScheme scheme, String fontFamily, double fontSize, int fontWeight) {
     final scale = fontSize / 14.0;
     final w = _fw(fontWeight);
     final base = ThemeData.fallback().textTheme;
@@ -36,15 +35,15 @@ class AppTheme {
       scaffoldBackgroundColor: scheme.surface,
       cardTheme: CardThemeData(
         elevation: 0,
-        color: glass ? scheme.surface.withAlpha(180) : null,
+        color: scheme.surface.withAlpha(180),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
-          side: BorderSide(color: scheme.outlineVariant.withAlpha(glass ? 40 : 60)),
+          side: BorderSide(color: scheme.outlineVariant.withAlpha(40)),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
-        filled: glass,
-        fillColor: glass ? scheme.surface.withAlpha(120) : null,
+        filled: true,
+        fillColor: scheme.surface.withAlpha(120),
         border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
             borderSide: BorderSide(color: scheme.outline, width: 1.5)),
