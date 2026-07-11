@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:desktop_drop/desktop_drop.dart';
 import '../providers/app_state.dart';
+import '../models/models.dart';
 import '../services/config_export.dart';
 import '../theme/app_strings.dart';
 import '../widgets/video_card.dart';
@@ -255,6 +256,29 @@ class ProjectPageState extends State<ProjectPage> {
                   ]),
                 ),
 
+              // 高版本警告
+              if (fppx.warnings.isNotEmpty)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(color: Colors.orange.withAlpha(30), borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.orange.withAlpha(60))),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Row(children: [
+                      const Icon(Icons.warning_amber, size: 16, color: Colors.orange),
+                      const SizedBox(width: 6),
+                      Text(zh ? '版本警告' : 'Version Warning',
+                          style: const TextStyle(fontSize: 13, color: Colors.orange, fontWeight: FontWeight.w700)),
+                    ]),
+                    const SizedBox(height: 6),
+                    ...fppx.warnings.map((w) => Padding(
+                      padding: const EdgeInsets.only(bottom: 3),
+                      child: Text('• $w', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+                    )),
+                  ]),
+                ),
+
               // 信息
               _infoRow(scheme, zh ? '配置版本' : 'Config Version', fppx.configVersionStr),
               _infoRow(scheme, zh ? '兼容软件' : 'Compatible', fppx.softwareRangeStr),
@@ -264,6 +288,7 @@ class ProjectPageState extends State<ProjectPage> {
               if (fppx.graph != null)
                 _infoRow(scheme, zh ? '内容' : 'Content',
                     '${fppx.graph!.nodes.length} ${zh ? '节点' : 'nodes'}, ${fppx.graph!.connections.length} ${zh ? '连线' : 'links'}'),
+              _infoRow(scheme, zh ? '适用类型' : 'Media Type', fppx.detectedMediaLabel(zh)),
 
               // 介绍
               if (fppx.description.isNotEmpty) ...[
@@ -283,10 +308,23 @@ class ProjectPageState extends State<ProjectPage> {
 
               // 选择视频
               const SizedBox(height: 16),
-              Text(zh ? '应用到哪些视频？' : 'Apply to which videos?',
+              Text(zh ? '应用到哪些文件？' : 'Apply to which files?',
                   style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+              if (fppx.detectedMediaTypes.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4, bottom: 4),
+                  child: Text(
+                    zh ? '仅显示与配置兼容的${fppx.detectedMediaLabel(zh)}文件' : 'Showing only compatible ${fppx.detectedMediaLabel(zh)} files',
+                    style: TextStyle(fontSize: 11, color: scheme.outline),
+                  ),
+                ),
               const SizedBox(height: 8),
-              ...state.videos.where((v) => v.parsed).map((v) => CheckboxListTile(
+              ...state.videos.where((v) {
+                if (!v.parsed) return false;
+                final configTypes = fppx.detectedMediaTypes;
+                if (configTypes.isEmpty) return true;
+                return configTypes.contains(v.fileMediaType);
+              }).map((v) => CheckboxListTile(
                 dense: true,
                 contentPadding: EdgeInsets.zero,
                 title: Text(v.filename, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
@@ -296,10 +334,15 @@ class ProjectPageState extends State<ProjectPage> {
                   if (checked == true) { selectedVideos.add(v.id); } else { selectedVideos.remove(v.id); }
                 }),
               )),
-              if (state.videos.where((v) => v.parsed).isEmpty)
+              if (state.videos.where((v) {
+                if (!v.parsed) return false;
+                final configTypes = fppx.detectedMediaTypes;
+                if (configTypes.isEmpty) return true;
+                return configTypes.contains(v.fileMediaType);
+              }).isEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Text(zh ? '没有可用的视频' : 'No videos available',
+                  child: Text(zh ? '没有兼容的文件' : 'No compatible files',
                       style: TextStyle(fontSize: 12, color: scheme.outline)),
                 ),
             ],
@@ -310,7 +353,14 @@ class ProjectPageState extends State<ProjectPage> {
               onPressed: (selectedVideos.isEmpty || !fppx.isCompatible) ? null : () {
                 for (final vid in selectedVideos) {
                   if (fppx.graph != null) {
-                    state.updateVideoPipeline(vid, fppx.graph!.copy());
+                    final graphCopy = fppx.graph!.copy();
+                    final video = state.videos.firstWhere((v) => v.id == vid);
+                    for (final n in graphCopy.nodes) {
+                      if (n.type == PipelineStepType.start) {
+                        n.params['file_media_type'] = video.fileMediaType.name;
+                      }
+                    }
+                    state.updateVideoPipeline(vid, graphCopy);
                   }
                 }
                 Navigator.pop(ctx);

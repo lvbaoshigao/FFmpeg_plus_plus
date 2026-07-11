@@ -1,3 +1,0 @@
-// manifest.rc - Embed asInvoker manifest into server.exe
-#include <winuser.h>
-1 RT_MANIFEST "server.exe.manifest"

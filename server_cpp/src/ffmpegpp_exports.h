@@ -1,9 +1,13 @@
 #pragma once
 
-#ifdef FFMPEGPP_BUILDING_DLL
-  #define FFMPEGPP_API __declspec(dllexport)
+#ifdef _WIN32
+  #ifdef FFMPEGPP_BUILDING_DLL
+    #define FFMPEGPP_API __declspec(dllexport)
+  #else
+    #define FFMPEGPP_API __declspec(dllimport)
+  #endif
 #else
-  #define FFMPEGPP_API __declspec(dllimport)
+  #define FFMPEGPP_API __attribute__((visibility("default")))
 #endif
 
 extern "C" {

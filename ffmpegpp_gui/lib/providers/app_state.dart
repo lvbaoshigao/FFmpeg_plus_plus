@@ -1,14 +1,15 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import '../models/models.dart';
-import '../services/python_process.dart';
+import '../services/native_process.dart';
 import '../services/backend_client.dart';
 import '../services/config_service.dart';
 import '../services/graph_executor.dart';
 
 class AppState extends ChangeNotifier {
-  final PythonProcessManager pythonProcess = PythonProcessManager();
+  final NativeProcessManager pythonProcess = NativeProcessManager();
   late final BackendClient backend = BackendClient(pythonProcess);
   final ConfigService configService = ConfigService();
 
@@ -111,8 +112,10 @@ class AppState extends ChangeNotifier {
 
   void _autoDetectLocalFfmpeg() {
     final exeDir = Directory(Platform.resolvedExecutable).parent.path;
-    final localFfmpeg = File('$exeDir${Platform.pathSeparator}ffmpeg.exe');
-    final localFfprobe = File('$exeDir${Platform.pathSeparator}ffprobe.exe');
+    final ffmpegName = Platform.isWindows ? 'ffmpeg.exe' : 'ffmpeg';
+    final ffprobeName = Platform.isWindows ? 'ffprobe.exe' : 'ffprobe';
+    final localFfmpeg = File('$exeDir${Platform.pathSeparator}$ffmpegName');
+    final localFfprobe = File('$exeDir${Platform.pathSeparator}$ffprobeName');
     bool changed = false;
     if (localFfmpeg.existsSync()) {
       final cfgPath = config.ffmpegPath;
@@ -482,11 +485,52 @@ class AppState extends ChangeNotifier {
     final realCalls = calls.where((c) => c.action != '_cleanup').toList();
     final cleanupCalls = calls.where((c) => c.action == '_cleanup').toList();
 
-    addLog('节点图任务: ${realCalls.length} 步', category: 'info');
+    // Expand loop calls: duplicate entire consecutive groups with matching loopCount
+    final expandedCalls = <BackendCall>[];
+    var ci2 = 0;
+    while (ci2 < realCalls.length) {
+      final call = realCalls[ci2];
+      if (call.loopCount > 1) {
+        // Collect all consecutive calls with the same loopCount
+        final group = <BackendCall>[call];
+        var j = ci2 + 1;
+        while (j < realCalls.length && realCalls[j].loopCount == call.loopCount) {
+          group.add(realCalls[j]);
+          j++;
+        }
+        // Duplicate the entire group N times, rewriting input/output paths
+        for (var li = 0; li < call.loopCount; li++) {
+          final pathMap = <String, String>{}; // old path -> new loop path
+          for (final gc in group) {
+            final p = gc.params;
+            final loopParams = Map<String, dynamic>.from(p);
+            // Rewrite output path
+            final output = p['output'] as String? ?? '';
+            if (output.isNotEmpty) {
+              final newOutput = _loopPath(output, li + 1);
+              pathMap[output] = newOutput;
+              loopParams['output'] = newOutput;
+            }
+            // Rewrite input path if it was a previous step's output in this group
+            final input = p['input'] as String? ?? '';
+            if (input.isNotEmpty && pathMap.containsKey(input)) {
+              loopParams['input'] = pathMap[input]!;
+            }
+            expandedCalls.add(BackendCall(action: gc.action, params: loopParams));
+          }
+        }
+        ci2 = j;
+      } else {
+        expandedCalls.add(call);
+        ci2++;
+      }
+    }
 
-    for (var ci = 0; ci < realCalls.length; ci++) {
-      final call = realCalls[ci];
-      final stepProgress = ci / realCalls.length;
+    addLog('节点图任务: ${expandedCalls.length} 步', category: 'info');
+
+    for (var ci = 0; ci < expandedCalls.length; ci++) {
+      final call = expandedCalls[ci];
+      final stepProgress = ci / expandedCalls.length;
 
       final fi = _tasks.indexWhere((t) => t.id == taskId);
       if (fi >= 0) {
@@ -494,14 +538,14 @@ class AppState extends ChangeNotifier {
         notifyListeners();
       }
 
-      addLog('步骤 ${ci + 1}/${realCalls.length}: ${call.action}', category: 'info');
+      addLog('步骤 ${ci + 1}/${expandedCalls.length}: ${call.action}', category: 'info');
 
       StreamSubscription<ProgressUpdate>? sub;
       sub = backend.progressStream.listen((u) {
         if (u.taskId == taskId) {
           final i = _tasks.indexWhere((t) => t.id == taskId);
           if (i >= 0) {
-            final overallProgress = (stepProgress + u.progress / 100 / realCalls.length) * 100;
+            final overallProgress = (stepProgress + u.progress / 100 / expandedCalls.length) * 100;
             _tasks[i] = _tasks[i].copyWith(
               status: TaskStatus.processing,
               progress: overallProgress.clamp(0, 100),
@@ -541,6 +585,27 @@ class AppState extends ChangeNotifier {
           break;
         case 'image_crop':
           resp = await _runImageCrop(p);
+          break;
+        case 'image_rotate':
+          resp = await _runImageRotate(p);
+          break;
+        case 'image_scale':
+          resp = await _runImageScale(p);
+          break;
+        case 'image_brightness':
+          resp = await _runImageBrightness(p);
+          break;
+        case 'image_noise':
+          resp = await _runImageNoise(p);
+          break;
+        case 'image_sharpen':
+          resp = await _runImageSharpen(p);
+          break;
+        case 'image_denoise':
+          resp = await _runImageDenoise(p);
+          break;
+        case 'image_channel_extract':
+          resp = await _runImageChannelExtract(p);
           break;
         case '_file_copy':
           resp = await _runFileCopy(p);
@@ -686,6 +751,287 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  Future<Map<String, dynamic>> _runImageRotate(Map<String, dynamic> p) async {
+    final input = p['input'] as String;
+    final output = p['output'] as String;
+    final mode = p['rotate_mode'] as String? ?? 'fixed';
+    var angle = (p['angle'] as num?)?.toDouble() ?? 0;
+    final randomMin = (p['random_min'] as num?)?.toDouble() ?? 0;
+    final randomMax = (p['random_max'] as num?)?.toDouble() ?? 360;
+
+    if (mode == 'random') {
+      angle = randomMin + Random().nextDouble() * (randomMax - randomMin);
+      addLog('图片旋转: 随机角度 ${angle.toStringAsFixed(1)}°', category: 'info');
+    }
+
+    try {
+      final outDir = File(output).parent;
+      if (!outDir.existsSync()) outDir.createSync(recursive: true);
+      String vf;
+      if (angle == 90) {
+        vf = 'transpose=1';
+      } else if (angle == 180) {
+        vf = 'transpose=1,transpose=1';
+      } else if (angle == 270) {
+        vf = 'transpose=2';
+      } else {
+        final radians = angle * pi / 180;
+        vf = 'rotate=$radians:ow=rotw($radians):oh=roth($radians):c=black@0';
+      }
+      final args = <String>['-y', '-i', input, '-vf', vf, output];
+      addLog('图片旋转: $_ffmpegBin ${args.join(' ')}', category: 'info');
+      final result = await Process.run(_ffmpegBin, args);
+      if (result.exitCode == 0 && File(output).existsSync()) {
+        addLog('图片旋转完成: $output', category: 'info');
+        return {'success': true, 'data': {'output_path': output}};
+      } else {
+        final stderr = (result.stderr as String).trim();
+        final lastLines = stderr.split('\n').where((l) => l.trim().isNotEmpty).toList();
+        final errMsg = lastLines.length > 3 ? lastLines.sublist(lastLines.length - 3).join('; ') : stderr;
+        addLog('图片旋转失败: $errMsg', category: 'error');
+        return {'success': false, 'error': '图片旋转失败: $errMsg'};
+      }
+    } catch (e) {
+      addLog('图片旋转异常: $e', category: 'error');
+      return {'success': false, 'error': '图片旋转异常: $e'};
+    }
+  }
+
+  Future<Map<String, dynamic>> _runImageScale(Map<String, dynamic> p) async {
+    final input = p['input'] as String;
+    final output = p['output'] as String;
+    final mode = p['scale_mode'] as String? ?? 'fixed';
+    var factor = (p['scale_factor'] as num?)?.toDouble() ?? 1.0;
+    final randomMin = (p['random_min'] as num?)?.toDouble() ?? 0.5;
+    final randomMax = (p['random_max'] as num?)?.toDouble() ?? 2.0;
+
+    if (mode == 'random') {
+      factor = randomMin + Random().nextDouble() * (randomMax - randomMin);
+      addLog('图片缩放: 随机系数 ${factor.toStringAsFixed(2)}', category: 'info');
+    }
+
+    try {
+      final outDir = File(output).parent;
+      if (!outDir.existsSync()) outDir.createSync(recursive: true);
+      final vf = 'scale=trunc(iw*$factor/2)*2:trunc(ih*$factor/2)*2';
+      final args = <String>['-y', '-i', input, '-vf', vf, output];
+      addLog('图片缩放: $_ffmpegBin ${args.join(' ')}', category: 'info');
+      final result = await Process.run(_ffmpegBin, args);
+      if (result.exitCode == 0 && File(output).existsSync()) {
+        addLog('图片缩放完成: $output', category: 'info');
+        return {'success': true, 'data': {'output_path': output}};
+      } else {
+        final stderr = (result.stderr as String).trim();
+        final lastLines = stderr.split('\n').where((l) => l.trim().isNotEmpty).toList();
+        final errMsg = lastLines.length > 3 ? lastLines.sublist(lastLines.length - 3).join('; ') : stderr;
+        addLog('图片缩放失败: $errMsg', category: 'error');
+        return {'success': false, 'error': '图片缩放失败: $errMsg'};
+      }
+    } catch (e) {
+      addLog('图片缩放异常: $e', category: 'error');
+      return {'success': false, 'error': '图片缩放异常: $e'};
+    }
+  }
+
+  Future<Map<String, dynamic>> _runImageBrightness(Map<String, dynamic> p) async {
+    final input = p['input'] as String;
+    final output = p['output'] as String;
+    final mode = p['brightness_mode'] as String? ?? 'fixed';
+    var brightness = (p['brightness'] as num?)?.toDouble() ?? 0.0;
+    final rangeMin = (p['range_min'] as num?)?.toDouble() ?? -0.5;
+    final rangeMax = (p['range_max'] as num?)?.toDouble() ?? 0.5;
+
+    if (mode == 'range') {
+      brightness = rangeMin + Random().nextDouble() * (rangeMax - rangeMin);
+      addLog('图片亮度: 随机值 ${brightness.toStringAsFixed(2)}', category: 'info');
+    }
+
+    try {
+      final outDir = File(output).parent;
+      if (!outDir.existsSync()) outDir.createSync(recursive: true);
+      final vf = 'eq=brightness=$brightness';
+      final args = <String>['-y', '-i', input, '-vf', vf, output];
+      addLog('图片亮度: $_ffmpegBin ${args.join(' ')}', category: 'info');
+      final result = await Process.run(_ffmpegBin, args);
+      if (result.exitCode == 0 && File(output).existsSync()) {
+        addLog('图片亮度调整完成: $output', category: 'info');
+        return {'success': true, 'data': {'output_path': output}};
+      } else {
+        final stderr = (result.stderr as String).trim();
+        final lastLines = stderr.split('\n').where((l) => l.trim().isNotEmpty).toList();
+        final errMsg = lastLines.length > 3 ? lastLines.sublist(lastLines.length - 3).join('; ') : stderr;
+        addLog('图片亮度调整失败: $errMsg', category: 'error');
+        return {'success': false, 'error': '图片亮度调整失败: $errMsg'};
+      }
+    } catch (e) {
+      addLog('图片亮度调整异常: $e', category: 'error');
+      return {'success': false, 'error': '图片亮度调整异常: $e'};
+    }
+  }
+
+  Future<Map<String, dynamic>> _runImageNoise(Map<String, dynamic> p) async {
+    final input = p['input'] as String;
+    final output = p['output'] as String;
+    final mode = p['noise_mode'] as String? ?? 'fixed';
+    var strength = (p['noise_strength'] as num?)?.toInt() ?? 50;
+    final noiseType = p['noise_type'] as String? ?? 't';
+    final randomMin = (p['random_min'] as num?)?.toInt() ?? 10;
+    final randomMax = (p['random_max'] as num?)?.toInt() ?? 100;
+
+    if (mode == 'random') {
+      strength = randomMin + Random().nextInt(randomMax - randomMin + 1);
+      addLog('图片噪声: 随机强度 $strength', category: 'info');
+    }
+
+    try {
+      final outDir = File(output).parent;
+      if (!outDir.existsSync()) outDir.createSync(recursive: true);
+      final vf = 'noise=alls=$strength:allf=$noiseType';
+      final args = <String>['-y', '-i', input, '-vf', vf, output];
+      addLog('图片噪声: $_ffmpegBin ${args.join(' ')}', category: 'info');
+      final result = await Process.run(_ffmpegBin, args);
+      if (result.exitCode == 0 && File(output).existsSync()) {
+        addLog('图片噪声添加完成: $output', category: 'info');
+        return {'success': true, 'data': {'output_path': output}};
+      } else {
+        final stderr = (result.stderr as String).trim();
+        final lastLines = stderr.split('\n').where((l) => l.trim().isNotEmpty).toList();
+        final errMsg = lastLines.length > 3 ? lastLines.sublist(lastLines.length - 3).join('; ') : stderr;
+        addLog('图片噪声添加失败: $errMsg', category: 'error');
+        return {'success': false, 'error': '图片噪声添加失败: $errMsg'};
+      }
+    } catch (e) {
+      addLog('图片噪声添加异常: $e', category: 'error');
+      return {'success': false, 'error': '图片噪声添加异常: $e'};
+    }
+  }
+
+  Future<Map<String, dynamic>> _runImageSharpen(Map<String, dynamic> p) async {
+    final input = p['input'] as String;
+    final output = p['output'] as String;
+    final mode = p['sharpen_mode'] as String? ?? 'fixed';
+    var strength = (p['sharpen_strength'] as num?)?.toDouble() ?? 1.0;
+    final randomMin = (p['random_min'] as num?)?.toDouble() ?? 0.5;
+    final randomMax = (p['random_max'] as num?)?.toDouble() ?? 3.0;
+
+    if (mode == 'random') {
+      strength = randomMin + Random().nextDouble() * (randomMax - randomMin);
+      addLog('图片锐化: 随机强度 ${strength.toStringAsFixed(2)}', category: 'info');
+    }
+
+    try {
+      final outDir = File(output).parent;
+      if (!outDir.existsSync()) outDir.createSync(recursive: true);
+      final vf = 'unsharp=5:5:$strength:5:5:0';
+      final args = <String>['-y', '-i', input, '-vf', vf, output];
+      addLog('图片锐化: $_ffmpegBin ${args.join(' ')}', category: 'info');
+      final result = await Process.run(_ffmpegBin, args);
+      if (result.exitCode == 0 && File(output).existsSync()) {
+        addLog('图片锐化完成: $output', category: 'info');
+        return {'success': true, 'data': {'output_path': output}};
+      } else {
+        final stderr = (result.stderr as String).trim();
+        final lastLines = stderr.split('\n').where((l) => l.trim().isNotEmpty).toList();
+        final errMsg = lastLines.length > 3 ? lastLines.sublist(lastLines.length - 3).join('; ') : stderr;
+        addLog('图片锐化失败: $errMsg', category: 'error');
+        return {'success': false, 'error': '图片锐化失败: $errMsg'};
+      }
+    } catch (e) {
+      addLog('图片锐化异常: $e', category: 'error');
+      return {'success': false, 'error': '图片锐化异常: $e'};
+    }
+  }
+
+  Future<Map<String, dynamic>> _runImageDenoise(Map<String, dynamic> p) async {
+    final input = p['input'] as String;
+    final output = p['output'] as String;
+    final method = p['denoise_method'] as String? ?? 'hqdn3d';
+    final mode = p['denoise_mode'] as String? ?? 'fixed';
+    var strength = (p['denoise_strength'] as num?)?.toDouble() ?? 4.0;
+    final randomMin = (p['random_min'] as num?)?.toDouble() ?? 1.0;
+    final randomMax = (p['random_max'] as num?)?.toDouble() ?? 10.0;
+
+    if (mode == 'random') {
+      strength = randomMin + Random().nextDouble() * (randomMax - randomMin);
+      addLog('图片降噪: 随机强度 ${strength.toStringAsFixed(2)}', category: 'info');
+    }
+
+    try {
+      final outDir = File(output).parent;
+      if (!outDir.existsSync()) outDir.createSync(recursive: true);
+      String vf;
+      if (method == 'hqdn3d') {
+        vf = 'hqdn3d=$strength:$strength';
+      } else {
+        vf = 'nlmeans=s=$strength';
+      }
+      final args = <String>['-y', '-i', input, '-vf', vf, output];
+      addLog('图片降噪: $_ffmpegBin ${args.join(' ')}', category: 'info');
+      final result = await Process.run(_ffmpegBin, args);
+      if (result.exitCode == 0 && File(output).existsSync()) {
+        addLog('图片降噪完成: $output', category: 'info');
+        return {'success': true, 'data': {'output_path': output}};
+      } else {
+        final stderr = (result.stderr as String).trim();
+        final lastLines = stderr.split('\n').where((l) => l.trim().isNotEmpty).toList();
+        final errMsg = lastLines.length > 3 ? lastLines.sublist(lastLines.length - 3).join('; ') : stderr;
+        addLog('图片降噪失败: $errMsg', category: 'error');
+        return {'success': false, 'error': '图片降噪失败: $errMsg'};
+      }
+    } catch (e) {
+      addLog('图片降噪异常: $e', category: 'error');
+      return {'success': false, 'error': '图片降噪异常: $e'};
+    }
+  }
+
+  Future<Map<String, dynamic>> _runImageChannelExtract(Map<String, dynamic> p) async {
+    final input = p['input'] as String;
+    final output = p['output'] as String;
+    final channel = p['channel'] as String? ?? 'r';
+    final method = p['extract_method'] as String? ?? 'isolate';
+
+    try {
+      final outDir = File(output).parent;
+      if (!outDir.existsSync()) outDir.createSync(recursive: true);
+      String vf;
+      if (method == 'isolate') {
+        vf = 'extractplanes=$channel';
+      } else {
+        // colorize method
+        switch (channel) {
+          case 'r':
+            vf = 'colorchannelmixer=rr=1:rg=0:rb=0:gr=0:gg=0:gb=0:br=0:bg=0:bb=0';
+            break;
+          case 'g':
+            vf = 'colorchannelmixer=rr=0:rg=0:rb=0:gr=0:gg=1:gb=0:br=0:bg=0:bb=0';
+            break;
+          case 'b':
+            vf = 'colorchannelmixer=rr=0:rg=0:rb=0:gr=0:gg=0:gb=0:br=0:bg=0:bb=1';
+            break;
+          default:
+            vf = 'colorchannelmixer=rr=1:rg=0:rb=0:gr=0:gg=0:gb=0:br=0:bg=0:bb=0';
+        }
+      }
+      final args = <String>['-y', '-i', input, '-vf', vf, output];
+      addLog('通道提取: $_ffmpegBin ${args.join(' ')}', category: 'info');
+      final result = await Process.run(_ffmpegBin, args);
+      if (result.exitCode == 0 && File(output).existsSync()) {
+        addLog('通道提取完成: $output', category: 'info');
+        return {'success': true, 'data': {'output_path': output}};
+      } else {
+        final stderr = (result.stderr as String).trim();
+        final lastLines = stderr.split('\n').where((l) => l.trim().isNotEmpty).toList();
+        final errMsg = lastLines.length > 3 ? lastLines.sublist(lastLines.length - 3).join('; ') : stderr;
+        addLog('通道提取失败: $errMsg', category: 'error');
+        return {'success': false, 'error': '通道提取失败: $errMsg'};
+      }
+    } catch (e) {
+      addLog('通道提取异常: $e', category: 'error');
+      return {'success': false, 'error': '通道提取异常: $e'};
+    }
+  }
+
+
   Future<Map<String, dynamic>> _runFileCopy(Map<String, dynamic> p) async {
     final input = p['input'] as String;
     final output = p['output'] as String;
@@ -699,6 +1045,12 @@ class AppState extends ChangeNotifier {
       addLog('文件复制失败: $e', category: 'error');
       return {'success': false, 'error': '文件复制失败: $e'};
     }
+  }
+
+  static String _loopPath(String path, int iteration) {
+    final lastDot = path.lastIndexOf('.');
+    if (lastDot < 0) return '${path}_loop_$iteration';
+    return '${path.substring(0, lastDot)}_loop_$iteration${path.substring(lastDot)}';
   }
 
   void _cleanupTempFiles(List<BackendCall> cleanupCalls) {

@@ -103,10 +103,10 @@ class _CommandPageState extends State<CommandPage> {
                 ),
                 child: TextField(
                   controller: _ctrl, maxLines: 5, minLines: 3,
-                  style: TextStyle(fontFamily: 'Consolas', fontSize: 13, color: scheme.onSurface, height: 1.5),
+                  style: TextStyle(fontFamily: Platform.isWindows ? 'Consolas' : 'monospace', fontSize: 13, color: scheme.onSurface, height: 1.5),
                   decoration: InputDecoration(
                     hintText: 'ffmpeg -i input.mp4 -c:v libx264 -b:v 2000k output.mp4',
-                    hintStyle: TextStyle(color: scheme.outline.withAlpha(100), fontFamily: 'Consolas', fontSize: 13),
+                    hintStyle: TextStyle(color: scheme.outline.withAlpha(100), fontFamily: Platform.isWindows ? 'Consolas' : 'monospace', fontSize: 13),
                     border: InputBorder.none,
                     contentPadding: const EdgeInsets.all(14),
                   ),
@@ -254,7 +254,7 @@ class _CommandPageState extends State<CommandPage> {
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(title, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: scheme.onSurface)),
                 const SizedBox(height: 2),
-                Text(cmd, style: TextStyle(fontSize: 10, fontFamily: 'Consolas', color: scheme.outline), maxLines: 1, overflow: TextOverflow.ellipsis),
+                Text(cmd, style: TextStyle(fontSize: 10, fontFamily: Platform.isWindows ? 'Consolas' : 'monospace', color: scheme.outline), maxLines: 1, overflow: TextOverflow.ellipsis),
               ])),
               Icon(Icons.arrow_forward_ios, size: 10, color: scheme.outline.withAlpha(100)),
             ]),
@@ -281,7 +281,7 @@ class _CommandPageState extends State<CommandPage> {
           padding: const EdgeInsets.only(bottom: 3, left: 4),
           child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
             SizedBox(width: 140, child: Text(item.$1,
-                style: TextStyle(fontSize: 11, fontFamily: 'Consolas', color: scheme.primary, fontWeight: FontWeight.w500))),
+                style: TextStyle(fontSize: 11, fontFamily: Platform.isWindows ? 'Consolas' : 'monospace', color: scheme.primary, fontWeight: FontWeight.w500))),
             Expanded(child: Text(item.$2,
                 style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant))),
           ]),

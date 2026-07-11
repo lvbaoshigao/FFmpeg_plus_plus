@@ -15,9 +15,15 @@ import '../services/ffmpeg_installer.dart';
 import '../widgets/toast.dart';
 import '../widgets/glass_panel.dart';
 
-/// 获取用户数据目录（%APPDATA%/FFmpeg++/），避免 Program Files 权限问题
+/// 获取用户数据目录，避免 Program Files 权限问题
 String _userDataDir() {
-  return '${Platform.environment['APPDATA'] ?? Directory.systemTemp.path}/FFmpeg++';
+  if (Platform.isWindows) {
+    return '${Platform.environment['APPDATA'] ?? Directory.systemTemp.path}/FFmpeg++';
+  } else {
+    final base = Platform.environment['XDG_DATA_HOME'] ??
+        '${Platform.environment['HOME'] ?? '/tmp'}/.local/share';
+    return '$base/FFmpeg++';
+  }
 }
 
 /// 复制文件到用户数据目录下的子文件夹，返回新路径（失败返回 null）
@@ -217,7 +223,7 @@ class SettingsPage extends StatelessWidget {
                   Text(s.isZh ? '同时启用任务数' : 'Concurrent Tasks', style: TextStyle(color: clr, fontSize: 12)),
                   const SizedBox(height: 8),
                   DropdownButtonFormField<int>(
-                    initialValue: cfg.maxConcurrentTasks,
+                    value: cfg.maxConcurrentTasks,
                     isDense: true, isExpanded: true,
                     style: TextStyle(fontSize: 12, color: clr),
                     dropdownColor: scheme.surface,
@@ -280,12 +286,12 @@ class SettingsPage extends StatelessWidget {
                             errorBuilder: (_, __, ___) => Icon(Icons.play_circle_fill, size: 48, color: scheme.primary))),
                     const SizedBox(height: 8),
                     Text('FFmpeg++', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: scheme.primary)),
-                    Text('v4.0.0', style: TextStyle(fontSize: 12, color: scheme.outline)),
+                    Text('v4.5.0', style: TextStyle(fontSize: 12, color: scheme.outline)),
                     const SizedBox(height: 12),
                   ])),
                   const SizedBox(height: 4),
-                  _infoRow(s.aboutVersion, 'v4.0.0', scheme),
-                  _infoRow(s.aboutBuildDate, '2026-07-06', scheme),
+                  _infoRow(s.aboutVersion, 'v4.5.0', scheme),
+                  _infoRow(s.aboutBuildDate, '2026-07-11 21:00', scheme),
                   _infoRow(s.aboutBlog, 'blog-clstone.netlify.app', scheme),
                   _infoRow(s.aboutGithub, 'github.com/pity-Fox/FFmpeg_plus_plus', scheme),
                   _infoRow(s.aboutSponsor, '', scheme, trailing: TextButton.icon(
@@ -512,7 +518,15 @@ class SettingsPage extends StatelessWidget {
   }
 
   static Widget _link(String label, String url) => SizedBox(height: 22, child: OutlinedButton(
-      onPressed: () => Process.run('cmd', ['/c', 'start', url]),
+      onPressed: () {
+        if (Platform.isWindows) {
+          Process.run('cmd', ['/c', 'start', url]);
+        } else if (Platform.isMacOS) {
+          Process.run('open', [url]);
+        } else {
+          Process.run('xdg-open', [url]);
+        }
+      },
       style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 6), minimumSize: Size.zero, visualDensity: VisualDensity.compact),
       child: Text(label, style: const TextStyle(fontSize: 9))));
 }
@@ -571,7 +585,9 @@ class _FfmpegCardState extends State<_FfmpegCard> {
 
   Future<void> _browseFfmpeg() async {
     final r = await FilePicker.platform.pickFiles(
-      type: FileType.custom, allowedExtensions: ['exe'], dialogTitle: context.read<AppState>().config.language == 'zh' ? '选择 ffmpeg.exe' : 'Select ffmpeg.exe',
+      type: Platform.isWindows ? FileType.custom : FileType.any,
+      allowedExtensions: Platform.isWindows ? ['exe'] : null,
+      dialogTitle: context.read<AppState>().config.language == 'zh' ? '选择 ffmpeg' : 'Select ffmpeg',
     );
     if (r == null || r.files.isEmpty || r.files.first.path == null) return;
     final exePath = r.files.first.path;
@@ -582,17 +598,18 @@ class _FfmpegCardState extends State<_FfmpegCard> {
       if (result.exitCode == 0 && result.stdout.toString().contains('ffmpeg version')) {
         final versionLine = result.stdout.toString().split('\n').first;
         final dir = exePath.replaceAll(RegExp(r'[\\/][^\\/]+$'), '');
+        final ffprobeName = Platform.isWindows ? 'ffprobe.exe' : 'ffprobe';
         setState(() { _found = true; _version = versionLine; _path = exePath; _checking = false; });
-        widget.state.updateConfig((c) => c..ffmpegPath = exePath..ffprobePath = '$dir\\ffprobe.exe');
-        await _addToPath(dir);
+        widget.state.updateConfig((c) => c..ffmpegPath = exePath..ffprobePath = '$dir${Platform.pathSeparator}$ffprobeName');
+        if (Platform.isWindows) await _addToPath(dir);
         widget.state.addLog('FFmpeg configured: $_version', category: 'ffmpeg');
         if (mounted) {
-          showToast(context, 'FFmpeg found at: $dir\n已添加到用户环境变量 PATH', type: ToastType.success);
+          showToast(context, 'FFmpeg found at: $dir', type: ToastType.success);
         }
       } else {
         setState(() => _checking = false);
         if (mounted) {
-          showToast(context, '所选文件不是有效的 ffmpeg.exe', type: ToastType.error);
+          showToast(context, '所选文件不是有效的 ffmpeg', type: ToastType.error);
         }
       }
     } catch (e) {
@@ -604,6 +621,7 @@ class _FfmpegCardState extends State<_FfmpegCard> {
   }
 
   Future<void> _addToPath(String dir) async {
+    if (!Platform.isWindows) return;
     try {
       final regResult = await Process.run('cmd', ['/c', 'echo %PATH%']);
       if (regResult.stdout.toString().contains(dir)) return;
@@ -778,7 +796,15 @@ class _FfmpegCardState extends State<_FfmpegCard> {
   }
 
   static Widget _link(String label, String url) => SizedBox(height: 22, child: OutlinedButton(
-      onPressed: () => Process.run('cmd', ['/c', 'start', url]),
+      onPressed: () {
+        if (Platform.isWindows) {
+          Process.run('cmd', ['/c', 'start', url]);
+        } else if (Platform.isMacOS) {
+          Process.run('open', [url]);
+        } else {
+          Process.run('xdg-open', [url]);
+        }
+      },
       style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 6), minimumSize: Size.zero, visualDensity: VisualDensity.compact),
       child: Text(label, style: const TextStyle(fontSize: 9))));
 }

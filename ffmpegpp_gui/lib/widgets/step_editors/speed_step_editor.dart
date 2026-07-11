@@ -184,7 +184,7 @@ class _SpeedStepEditorState extends State<SpeedStepEditor> {
   Widget _customPresetChip(ColorScheme cs, double preset, double current) {
     final selected = (current - preset).abs() < 0.1;
     return ChoiceChip(
-      label: Text('${preset.toStringAsFixed(0)}x', style: TextStyle(fontSize: 12,
+      label: Text('${preset % 1 == 0 ? preset.toStringAsFixed(0) : preset.toStringAsFixed(1)}x', style: TextStyle(fontSize: 12,
           fontWeight: selected ? FontWeight.w600 : FontWeight.w400)),
       selected: selected,
       onSelected: (_) {

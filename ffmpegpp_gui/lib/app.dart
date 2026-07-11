@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -53,11 +54,17 @@ class AppShell extends StatefulWidget {
 }
 class _AppShellState extends State<AppShell> with WindowListener {
   final _projectPageKey = GlobalKey<ProjectPageState>();
+  bool _isMaximized = false;
 
   @override
   void initState() {
     super.initState();
     windowManager.addListener(this);
+    if (!Platform.isWindows) {
+      windowManager.isMaximized().then((v) {
+        if (mounted) setState(() => _isMaximized = v);
+      });
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final state = context.read<AppState>();
       state.onTaskFinished = _onTaskFinished;
@@ -83,19 +90,25 @@ class _AppShellState extends State<AppShell> with WindowListener {
     final body = status == TaskStatus.completed
         ? (isZh ? '$filename 已完成' : '$filename completed')
         : (isZh ? '$filename 处理失败' : '$filename failed');
-    final icon = status == TaskStatus.completed ? 'Info' : 'Warning';
-    final ps = "Add-Type -AssemblyName System.Windows.Forms;"
-        "Add-Type -AssemblyName System.Drawing;"
-        "\$n=New-Object System.Windows.Forms.NotifyIcon;"
-        "\$n.Icon=[System.Drawing.SystemIcons]::Information;"
-        "\$n.BalloonTipIcon=[System.Windows.Forms.ToolTipIcon]::$icon;"
-        "\$n.BalloonTipTitle='$title';"
-        "\$n.BalloonTipText='$body';"
-        "\$n.Visible=\$true;"
-        "\$n.ShowBalloonTip(3000);"
-        "Start-Sleep -Milliseconds 3500;"
-        "\$n.Dispose()";
-    Process.run('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps]);
+
+    if (Platform.isWindows) {
+      final icon = status == TaskStatus.completed ? 'Info' : 'Warning';
+      final ps = "Add-Type -AssemblyName System.Windows.Forms;"
+          "Add-Type -AssemblyName System.Drawing;"
+          "\$n=New-Object System.Windows.Forms.NotifyIcon;"
+          "\$n.Icon=[System.Drawing.SystemIcons]::Information;"
+          "\$n.BalloonTipIcon=[System.Windows.Forms.ToolTipIcon]::$icon;"
+          "\$n.BalloonTipTitle='$title';"
+          "\$n.BalloonTipText='$body';"
+          "\$n.Visible=\$true;"
+          "\$n.ShowBalloonTip(3000);"
+          "Start-Sleep -Milliseconds 3500;"
+          "\$n.Dispose()";
+      Process.run('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps]);
+    } else {
+      final urgency = status == TaskStatus.completed ? 'normal' : 'critical';
+      Process.run('notify-send', ['-u', urgency, title, body]);
+    }
   }
 
   @override
@@ -106,6 +119,11 @@ class _AppShellState extends State<AppShell> with WindowListener {
     await state.shutdown();
     await windowManager.destroy();
   }
+
+  @override
+  void onWindowMaximize() { if (mounted) setState(() => _isMaximized = true); }
+  @override
+  void onWindowUnmaximize() { if (mounted) setState(() => _isMaximized = false); }
 
   static String? _modifierLabel(LogicalKeyboardKey k) {
     if (k == LogicalKeyboardKey.controlLeft || k == LogicalKeyboardKey.controlRight) return 'Control';
@@ -198,7 +216,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final body = Focus(
+    final content = Focus(
       autofocus: true,
       onKeyEvent: _handleGlobalKey,
       child: Row(children: [
@@ -210,6 +228,16 @@ class _AppShellState extends State<AppShell> with WindowListener {
         Expanded(child: _page(context.watch<AppState>().selectedNav)),
       ]),
     );
+
+    final body = Platform.isWindows
+        ? content
+        : Stack(children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 36),
+              child: content,
+            ),
+            Positioned(left: 0, right: 0, top: 0, child: _buildCsdTitleBar(scheme)),
+          ]);
 
     // 壁纸：独立 Consumer，只监听 backgroundImage 变化
     return Consumer<AppState>(
@@ -242,10 +270,104 @@ class _AppShellState extends State<AppShell> with WindowListener {
   }
   static void clearBgCache() => _bgCache.clear();
 
+  Widget _buildCsdTitleBar(ColorScheme scheme) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        child: Container(
+          height: 36,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                scheme.surface.withAlpha(isDark ? 160 : 180),
+                scheme.surface.withAlpha(isDark ? 120 : 140),
+              ],
+            ),
+            border: Border(bottom: BorderSide(
+              color: scheme.outlineVariant.withAlpha(isDark ? 60 : 80),
+              width: 0.5,
+            )),
+          ),
+          child: Stack(children: [
+            DragToMoveArea(child: GestureDetector(
+              onDoubleTap: () async {
+                if (await windowManager.isMaximized()) {
+                  windowManager.unmaximize();
+                } else {
+                  windowManager.maximize();
+                }
+              },
+              child: Container(color: Colors.transparent),
+            )),
+            Positioned(right: 0, top: 0, bottom: 0, child: Row(mainAxisSize: MainAxisSize.min, children: [
+              _csdButton(Icons.remove, scheme.onSurfaceVariant, null, () => windowManager.minimize()),
+              _csdButton(
+                _isMaximized ? Icons.filter_none : Icons.crop_square,
+                scheme.onSurfaceVariant, null,
+                () async {
+                  if (await windowManager.isMaximized()) {
+                    windowManager.unmaximize();
+                  } else {
+                    windowManager.maximize();
+                  }
+                },
+              ),
+              _csdButton(Icons.close, scheme.onSurface, Colors.red, () => windowManager.close()),
+            ])),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _csdButton(IconData icon, Color color, Color? hoverBg, VoidCallback onTap) {
+    return _CsdWindowButton(icon: icon, color: color, hoverBg: hoverBg, onTap: onTap);
+  }
+
   Widget _page(int i) => switch (i) {
     0 => ProjectPage(key: _projectPageKey), 1 => const QueuePage(),
     2 => const CommandPage(), 3 => const ConfigLibraryPage(),
     4 => const SettingsPage(), 5 => const LogPage(),
     _ => const ProjectPage(),
   };
+}
+
+class _CsdWindowButton extends StatefulWidget {
+  final IconData icon;
+  final Color color;
+  final Color? hoverBg;
+  final VoidCallback onTap;
+  const _CsdWindowButton({required this.icon, required this.color, this.hoverBg, required this.onTap});
+  @override
+  State<_CsdWindowButton> createState() => _CsdWindowButtonState();
+}
+
+class _CsdWindowButtonState extends State<_CsdWindowButton> {
+  bool _hovering = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovering = true),
+      onExit: (_) => setState(() => _hovering = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: Container(
+          width: 46,
+          height: 36,
+          color: _hovering
+              ? (widget.hoverBg ?? widget.color.withAlpha(30))
+              : Colors.transparent,
+          child: Icon(
+            widget.icon,
+            size: 18,
+            color: _hovering && widget.hoverBg != null ? Colors.white : widget.color,
+          ),
+        ),
+      ),
+    );
+  }
 }

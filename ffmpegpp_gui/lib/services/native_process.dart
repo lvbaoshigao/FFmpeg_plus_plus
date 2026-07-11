@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'native_bridge.dart';
 
 
-class PythonProcessManager {
+class NativeProcessManager {
   // DLL 模式
   NativeBridge? _bridge;
   Timer? _pollTimer;

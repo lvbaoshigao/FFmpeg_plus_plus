@@ -10,7 +10,14 @@ import 'app.dart';
 
 /// 日志目录（用户可写，避免 Program Files 权限问题）— 缓存避免重复创建
 final String _logDir = () {
-  final dir = '${Platform.environment['APPDATA'] ?? Directory.systemTemp.path}/FFmpeg++';
+  final String base;
+  if (Platform.isWindows) {
+    base = Platform.environment['APPDATA'] ?? Directory.systemTemp.path;
+  } else {
+    base = Platform.environment['XDG_DATA_HOME'] ??
+        '${Platform.environment['HOME'] ?? '/tmp'}/.local/share';
+  }
+  final dir = '$base/FFmpeg++';
   Directory(dir).createSync(recursive: true);
   return dir;
 }();
@@ -83,6 +90,9 @@ void main() async {
 
 Future<void> _initWindow() async {
   await windowManager.ensureInitialized();
+  if (!Platform.isWindows) {
+    await windowManager.setTitleBarStyle(TitleBarStyle.hidden);
+  }
   await Future.wait([
     windowManager.setMinimumSize(const Size(1100, 700)),
     windowManager.setSize(const Size(1280, 820)),
@@ -97,27 +107,32 @@ String _findServer() {
 
   // 仅搜索 exe 目录和上一级目录（防止 DLL 劫持）
   const maxSearchDepth = 2;
+  final libName = Platform.isWindows ? 'ffmpegpp.dll' : 'libffmpegpp.so';
 
-  // 搜索 ffmpegpp.dll（DLL 模式）
   var dir = exeDir;
   for (var i = 0; i < maxSearchDepth; i++) {
-    final candidate = File('${dir.path}${Platform.pathSeparator}ffmpegpp.dll');
+    final candidate = File('${dir.path}${Platform.pathSeparator}$libName');
     if (candidate.existsSync()) {
-      _startupLog('5b-FOUND DLL: ${candidate.absolute.path}');
+      _startupLog('5b-FOUND LIB: ${candidate.absolute.path}');
       return candidate.absolute.path;
     }
     dir = dir.parent;
   }
 
   _startupLog('5b-NOT FOUND');
-  return '${exeDir.path}${Platform.pathSeparator}ffmpegpp.dll';
+  return '${exeDir.path}${Platform.pathSeparator}$libName';
 }
 
 /// 杀掉残留的旧进程 — fire-and-forget
 void _killOldProcesses() {
-  const names = ['._cache_ffmpegpp_gui.exe', 'HD_ffmpegpp_gui.exe'];
-  for (final name in names) {
-    Process.run('taskkill', ['/F', '/IM', name], runInShell: true).ignore();
+  if (Platform.isWindows) {
+    const names = ['._cache_ffmpegpp_gui.exe', 'HD_ffmpegpp_gui.exe'];
+    for (final name in names) {
+      Process.run('taskkill', ['/F', '/IM', name], runInShell: true).ignore();
+    }
+  } else {
+    final myPid = pid.toString();
+    Process.run('bash', ['-c', 'pgrep -f ffmpegpp_gui | grep -v $myPid | xargs -r kill -9']).ignore();
   }
 }
 

@@ -137,9 +137,54 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     if (r == null || r.files.isEmpty || r.files.first.path == null) return;
     final bytes = await File(r.files.first.path!).readAsBytes();
     final fppx = FppxExporter.import(bytes);
-    if (fppx == null || !fppx.isNodeEditor || fppx.graph == null) {
+    if (fppx == null || !fppx.isNodeEditor) {
       if (mounted) showToast(context, zh ? '仅支持导入节点编辑器配置' : 'Only node editor configs supported', type: ToastType.warning);
       return;
+    }
+    if (fppx.errors.isNotEmpty) {
+      if (mounted) {
+        showDialog(context: context, builder: (ctx) {
+          final scheme = Theme.of(context).colorScheme;
+          return AlertDialog(
+            title: Row(children: [
+              Icon(Icons.error_outline, size: 20, color: scheme.error),
+              const SizedBox(width: 8),
+              Text(zh ? '导入失败' : 'Import Failed', style: TextStyle(color: scheme.onSurface)),
+            ]),
+            content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              for (final e in fppx.errors) Padding(padding: const EdgeInsets.only(bottom: 4),
+                child: Text('• $e', style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant))),
+            ]),
+            actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: Text(zh ? '知道了' : 'OK'))],
+          );
+        });
+      }
+      return;
+    }
+    if (fppx.graph == null) {
+      if (mounted) showToast(context, zh ? '配置解析失败' : 'Config parse failed', type: ToastType.warning);
+      return;
+    }
+    if (fppx.warnings.isNotEmpty && mounted) {
+      final scheme = Theme.of(context).colorScheme;
+      final proceed = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
+        title: Row(children: [
+          Icon(Icons.warning_amber, size: 20, color: Colors.orange),
+          const SizedBox(width: 8),
+          Text(zh ? '版本警告' : 'Version Warning', style: TextStyle(color: scheme.onSurface)),
+        ]),
+        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          for (final w in fppx.warnings) Padding(padding: const EdgeInsets.only(bottom: 4),
+            child: Text('• $w', style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant))),
+          const SizedBox(height: 8),
+          Text(zh ? '是否继续导入？' : 'Continue importing?', style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(zh ? '取消' : 'Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(zh ? '继续' : 'Continue')),
+        ],
+      ));
+      if (proceed != true) return;
     }
     final baseName = r.files.first.name.replaceAll(RegExp(r'\.[^.]+$'), '');
     final entry = _ConfigEntry(

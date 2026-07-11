@@ -5,7 +5,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # 避免 Windows.h 的 min/max 宏冲突
-add_definitions(-DNOMINMAX)
+if(WIN32)
+    add_definitions(-DNOMINMAX)
+endif()
 
 # 共享源文件列表（两个目标共用）
 set(SHARED_SOURCES
@@ -23,8 +25,9 @@ set(SHARED_SOURCES
 )
 
 # ═══════════════════════════════════════════════
-# EXE 目标（调试/向后兼容）
+# EXE 目标（调试/向后兼容，仅当 main.cpp 存在时构建）
 # ═══════════════════════════════════════════════
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
 add_executable(server
     src/main.cpp
     ${SHARED_SOURCES}
@@ -35,8 +38,12 @@ target_include_directories(server PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-target_link_libraries(server PRIVATE kernel32 user32)
-set_target_properties(server PROPERTIES WIN32_EXECUTABLE FALSE)
+if(WIN32)
+    target_link_libraries(server PRIVATE kernel32 user32)
+    set_target_properties(server PROPERTIES WIN32_EXECUTABLE FALSE)
+else()
+    target_link_libraries(server PRIVATE pthread)
+endif()
 
 if(MSVC)
     target_compile_options(server PRIVATE /O2 /W3 /utf-8 /MP12)
@@ -75,9 +82,10 @@ if(MSVC)
         message(WARNING "mt.exe not found - server.exe will require admin privileges!")
     endif()
 endif()
+endif() # EXISTS main.cpp
 
 # ═══════════════════════════════════════════════
-# DLL 目标（主要部署方式）
+# 共享库目标（主要部署方式）
 # ═══════════════════════════════════════════════
 add_library(ffmpegpp SHARED
     src/dll_main.cpp
@@ -92,10 +100,16 @@ target_include_directories(ffmpegpp PRIVATE
 target_compile_definitions(ffmpegpp PRIVATE
     FFMPEGPP_DLL_MODE
     FFMPEGPP_BUILDING_DLL
-    NOMINMAX
 )
 
-target_link_libraries(ffmpegpp PRIVATE kernel32 user32)
+if(WIN32)
+    target_compile_definitions(ffmpegpp PRIVATE NOMINMAX)
+    target_link_libraries(ffmpegpp PRIVATE kernel32 user32)
+else()
+    target_link_libraries(ffmpegpp PRIVATE pthread)
+    target_compile_options(ffmpegpp PRIVATE -fvisibility=hidden)
+    set_target_properties(ffmpegpp PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
 
 if(MSVC)
     target_compile_options(ffmpegpp PRIVATE /O2 /W3 /utf-8 /MP12)
@@ -103,7 +117,13 @@ else()
     target_compile_options(ffmpegpp PRIVATE -O2 -Wall)
 endif()
 
-set_target_properties(ffmpegpp PROPERTIES
-    OUTPUT_NAME "ffmpegpp"
-    PREFIX ""
-)
+if(WIN32)
+    set_target_properties(ffmpegpp PROPERTIES
+        OUTPUT_NAME "ffmpegpp"
+        PREFIX ""
+    )
+else()
+    set_target_properties(ffmpegpp PROPERTIES
+        OUTPUT_NAME "ffmpegpp"
+    )
+endif()

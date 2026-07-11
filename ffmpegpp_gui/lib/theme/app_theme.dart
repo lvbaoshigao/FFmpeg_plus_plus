@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 
 class AppTheme {
@@ -25,12 +26,20 @@ class AppTheme {
       labelLarge: s(base.labelLarge, 14), labelMedium: s(base.labelMedium, 12), labelSmall: s(base.labelSmall, 11),
     );
 
-    final appliedTt = fontFamily.isNotEmpty && !fontFamily.contains('\\') && !fontFamily.contains('/') ? tt.apply(fontFamily: fontFamily) : tt;
+    final fallback = Platform.isWindows
+        ? const ['Microsoft YaHei', 'SimHei', 'SimSun', 'KaiTi', 'sans-serif']
+        : Platform.isMacOS
+            ? const ['PingFang SC', 'Hiragino Sans GB', 'SF Pro Text', 'Menlo', 'sans-serif']
+            : const ['Noto Sans CJK SC', 'WenQuanYi Micro Hei', 'DejaVu Sans', 'sans-serif'];
+
+    final appliedTt = fontFamily.isNotEmpty && !fontFamily.contains('\\') && !fontFamily.contains('/')
+        ? tt.apply(fontFamily: fontFamily, fontFamilyFallback: fallback)
+        : tt.apply(fontFamilyFallback: fallback);
 
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
-      fontFamilyFallback: const ['Microsoft YaHei', 'SimHei', 'SimSun', 'KaiTi', 'sans-serif'],
+      fontFamilyFallback: fallback,
       textTheme: appliedTt,
       scaffoldBackgroundColor: scheme.surface,
       cardTheme: CardThemeData(

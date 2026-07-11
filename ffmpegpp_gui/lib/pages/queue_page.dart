@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/models.dart';
@@ -132,7 +133,7 @@ class _MonitorWidgetState extends State<_MonitorWidget> {
     return Row(mainAxisSize: MainAxisSize.min, children: [
       Icon(icon, size: 14, color: color),
       const SizedBox(width: 4),
-      Text('$label: $value', style: TextStyle(fontSize: 11, color: scheme.onSurface, fontFamily: 'Consolas')),
+      Text('$label: $value', style: TextStyle(fontSize: 11, color: scheme.onSurface, fontFamily: Platform.isWindows ? 'Consolas' : 'monospace')),
       const SizedBox(width: 6),
       SizedBox(width: 40, height: 4, child: LinearProgressIndicator(
         value: progress.clamp(0, 1), backgroundColor: scheme.surfaceContainerHighest,

@@ -148,7 +148,7 @@ class _OutputStepEditorState extends State<OutputStepEditor> {
       List<String>? itemLabels, required ColorScheme cs, required ValueChanged<String> onChanged}) {
     final safe = items.contains(value) ? value : items.first;
     return DropdownButtonFormField<String>(
-      initialValue: safe, isExpanded: true, decoration: _dec(label),
+      value: safe, isExpanded: true, decoration: _dec(label),
       dropdownColor: cs.surface, style: TextStyle(fontSize: 13, color: cs.onSurface),
       items: List.generate(items.length, (i) => DropdownMenuItem(
         value: items[i], child: Text(itemLabels != null ? itemLabels[i] : items[i], style: TextStyle(fontSize: 13, color: cs.onSurface)),

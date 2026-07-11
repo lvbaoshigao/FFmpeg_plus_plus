@@ -35,6 +35,20 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
     if (_logs.length > 100) _logs.removeAt(0);
   }
 
+  Future<void> _startPackageManager() async {
+    setState(() { _step = 'pkgmgr'; _status = '准备安装...'; _progress = 0; _error = null; });
+    try {
+      await FfmpegInstaller.installViaPackageManager(
+        onStatus: (s) { _log(s); if (mounted) setState(() => _status = s); },
+        onProgress: (p) { if (mounted) setState(() => _progress = p); },
+      );
+      if (mounted) setState(() => _step = 'done');
+    } catch (e) {
+      _log('错误: $e');
+      if (mounted) setState(() { _step = 'error'; _error = '$e'; });
+    }
+  }
+
   Future<void> _startWinget() async {
     setState(() { _step = 'winget'; _status = '准备 winget...'; _progress = 0; _error = null; _slowWarning = false; });
     try {
@@ -55,7 +69,13 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
   }
 
   Future<void> _openBrowser(String url) async {
-    await Process.run('cmd', ['/c', 'start', url], runInShell: true);
+    if (Platform.isWindows) {
+      await Process.run('cmd', ['/c', 'start', url], runInShell: true);
+    } else if (Platform.isMacOS) {
+      await Process.run('open', [url]);
+    } else {
+      await Process.run('xdg-open', [url]);
+    }
   }
 
   Future<void> _pickFile(bool isFFmpeg) async {
@@ -116,13 +136,13 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
   IconData get _titleIcon => switch (_step) { 'done' => Icons.check_circle, 'error' => Icons.error, _ => Icons.download };
   Color _titleColor(ColorScheme s) => switch (_step) { 'done' => Colors.green, 'error' => s.error, _ => s.primary };
   String get _title => switch (_step) {
-    'choose' => '安装 FFmpeg', 'winget' => '正在安装...', 'lanzou' => '蓝奏云下载',
+    'choose' => '安装 FFmpeg', 'winget' || 'pkgmgr' => '正在安装...', 'lanzou' => '蓝奏云下载',
     'importing' => '正在导入...', 'done' => '安装完成', 'error' => '安装失败', _ => '',
   };
 
   Widget _buildContent(ColorScheme scheme) => switch (_step) {
     'choose' => _buildChoose(scheme),
-    'winget' || 'importing' => _buildProgress(scheme),
+    'winget' || 'importing' || 'pkgmgr' => _buildProgress(scheme),
     'lanzou' => _buildLanzouGuide(scheme),
     'done' => _buildDone(scheme),
     'error' => _buildError(scheme),
@@ -134,11 +154,19 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
       Text('未检测到 FFmpeg，需要安装后才能处理视频。\n请选择安装方式：',
           style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
       const SizedBox(height: 16),
-      _methodCard(scheme, Icons.terminal, 'Winget 自动安装',
-          '通过 Windows 包管理器自动下载安装\n自动配置环境变量，全局可用', '全自动', _startWinget),
-      const SizedBox(height: 8),
-      _methodCard(scheme, Icons.cloud_download, '蓝奏云手动下载',
-          '从国内蓝奏云网盘下载（速度快，无需梯子）\n需手动下载两个文件后导入', '国内推荐', _startLanzou),
+      if (Platform.isLinux) ...[
+        _methodCard(scheme, Icons.terminal, '系统包管理器安装',
+            '通过 apt/dnf/pacman 自动安装\n需要输入管理员密码', '全自动', _startPackageManager),
+      ] else if (Platform.isMacOS) ...[
+        _methodCard(scheme, Icons.terminal, 'Homebrew 安装',
+            '通过 brew install ffmpeg 自动安装\n需要已安装 Homebrew', '全自动', _startPackageManager),
+      ] else ...[
+        _methodCard(scheme, Icons.terminal, 'Winget 自动安装',
+            '通过 Windows 包管理器自动下载安装\n自动配置环境变量，全局可用', '全自动', _startWinget),
+        const SizedBox(height: 8),
+        _methodCard(scheme, Icons.cloud_download, '蓝奏云手动下载',
+            '从国内蓝奏云网盘下载（速度快，无需梯子）\n需手动下载两个文件后导入', '国内推荐', _startLanzou),
+      ],
     ]);
   }
 
@@ -281,7 +309,7 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
         Text(desc, style: TextStyle(fontSize: 11, color: scheme.outline)),
         if (done)
           Padding(padding: const EdgeInsets.only(top: 4),
-            child: Text(selectedPath!, style: TextStyle(fontSize: 9, color: scheme.outline, fontFamily: 'Consolas'),
+            child: Text(selectedPath!, style: TextStyle(fontSize: 9, color: scheme.outline, fontFamily: Platform.isWindows ? 'Consolas' : 'monospace'),
                 maxLines: 1, overflow: TextOverflow.ellipsis)),
         const SizedBox(height: 8),
         Row(children: [
@@ -329,7 +357,7 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
         decoration: BoxDecoration(color: scheme.surfaceContainerHighest.withAlpha(60), borderRadius: BorderRadius.circular(8)),
         child: ListView.builder(reverse: true, itemCount: _logs.length,
           itemBuilder: (_, i) => Text(_logs[_logs.length - 1 - i],
-              style: TextStyle(fontSize: 10, fontFamily: 'Consolas', color: scheme.outline)))),
+              style: TextStyle(fontSize: 10, fontFamily: Platform.isWindows ? 'Consolas' : 'monospace', color: scheme.outline)))),
     ]);
   }
 
@@ -357,7 +385,7 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
       Icon(exists ? Icons.check : Icons.close, size: 14, color: exists ? Colors.green : scheme.error),
       const SizedBox(width: 6),
       Text('$label: ', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-      Expanded(child: Text(path, style: TextStyle(fontSize: 10, fontFamily: 'Consolas', color: scheme.outline),
+      Expanded(child: Text(path, style: TextStyle(fontSize: 10, fontFamily: Platform.isWindows ? 'Consolas' : 'monospace', color: scheme.outline),
           overflow: TextOverflow.ellipsis)),
     ]);
   }
@@ -375,7 +403,7 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
 
   List<Widget> _buildActions(ColorScheme scheme) => switch (_step) {
     'choose' => [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消'))],
-    'winget' || 'importing' => [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消'))],
+    'winget' || 'importing' || 'pkgmgr' => [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消'))],
     'lanzou' => [
       TextButton(onPressed: () => setState(() => _step = 'choose'), child: const Text('返回')),
       TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),

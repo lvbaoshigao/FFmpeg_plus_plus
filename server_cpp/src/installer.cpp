@@ -1,6 +1,13 @@
 #include "installer.h"
 #include "subprocess.h"
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <climits>
+#include <unistd.h>
+#include <cstdlib>
+#include <cstring>
+#endif
 #include <filesystem>
 #include <sstream>
 
@@ -10,6 +17,7 @@ namespace fs = std::filesystem;
 
 namespace {
 std::string findExecutable(const std::string& name) {
+#ifdef _WIN32
     // 1. 检查 PATH
     char buf[MAX_PATH];
     DWORD len = SearchPathA(nullptr, name.c_str(), ".exe", MAX_PATH, buf, nullptr);
@@ -30,6 +38,34 @@ std::string findExecutable(const std::string& name) {
         if (fs::exists(c)) return c;
     }
     return "";
+#else
+    // 1. 在 PATH 中搜索
+    const char* pathEnv = getenv("PATH");
+    if (pathEnv) {
+        std::string pathStr(pathEnv);
+        std::istringstream iss(pathStr);
+        std::string dir;
+        while (std::getline(iss, dir, ':')) {
+            std::string candidate = dir + "/" + name;
+            if (access(candidate.c_str(), X_OK) == 0) return candidate;
+        }
+    }
+
+    // 2. 常见安装目录
+    std::vector<std::string> candidates = {
+        "/usr/bin/" + name,
+        "/usr/local/bin/" + name,
+        "/snap/bin/" + name,
+    };
+    const char* home = getenv("HOME");
+    if (home) {
+        candidates.push_back(std::string(home) + "/.local/bin/" + name);
+    }
+    for (auto& c : candidates) {
+        if (access(c.c_str(), X_OK) == 0) return c;
+    }
+    return "";
+#endif
 }
 
 ToolCheck checkTool(const std::string& name) {
@@ -116,6 +152,7 @@ json ensureFFmpeg() {
 }
 
 json getInstallGuide() {
+#ifdef _WIN32
     return {
         {"platform", "windows"},
         {"download_url", "https://ffmpeg.org/download.html#build-windows"},
@@ -128,6 +165,19 @@ json getInstallGuide() {
             "6. 打开新的 cmd 窗口，输入 ffmpeg -version 验证",
         }},
     };
+#else
+    return {
+        {"platform", "linux"},
+        {"download_url", "https://ffmpeg.org/download.html#build-linux"},
+        {"steps", {
+            "1. Debian/Ubuntu: sudo apt install ffmpeg",
+            "2. Fedora: sudo dnf install ffmpeg",
+            "3. Arch Linux: sudo pacman -S ffmpeg",
+            "4. 或从 https://ffmpeg.org/download.html 下载静态编译版",
+            "5. 打开终端，输入 ffmpeg -version 验证",
+        }},
+    };
+#endif
 }
 
 std::string formatCheckReport(const json& cr) {

@@ -30,7 +30,6 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
     'libaom-av1': 'AV1 (libaom)',
     'libsvtav1': 'AV1 (SVT-AV1)',
     'libx264rgb': 'H.264 RGB',
-    'copy': '复制流 (不重编码)',
     'h264_nvenc': 'H.264 (NVENC)',
     'hevc_nvenc': 'H.265 (NVENC)',
     'av1_nvenc': 'AV1 (NVENC)',
@@ -42,21 +41,22 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
     'av1_qsv': 'AV1 (QSV)',
     'vp9_qsv': 'VP9 (QSV)',
   };
-  static const _presets = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'];
-  static const _resolutions = ['original', '2160p', '1080p', '720p', '480p', '360p', 'custom'];
-  static const _fpsOptions = ['keep', '24', '25', '30', '48', '50', '60', '120', 'custom'];
-  static const _audioCodecs = ['aac', 'libmp3lame', 'libopus', 'libvorbis', 'flac', 'pcm_s16le', 'ac3', 'eac3', 'copy'];
-  static const _audioCodecLabels = {
+  static String _copyLabel(bool zh) => zh ? '复制流 (不重编码)' : 'Copy Stream';
+  static Map<String, String> _audioCodecLabelsFor(bool zh) => {
     'aac': 'AAC',
     'libmp3lame': 'MP3 (LAME)',
     'libopus': 'Opus',
     'libvorbis': 'Vorbis',
-    'flac': 'FLAC (无损)',
+    'flac': zh ? 'FLAC (无损)' : 'FLAC (Lossless)',
     'pcm_s16le': 'PCM 16-bit',
-    'ac3': 'AC3 (杜比)',
-    'eac3': 'E-AC3 (杜比+)',
-    'copy': '复制流',
+    'ac3': zh ? 'AC3 (杜比)' : 'AC3 (Dolby)',
+    'eac3': zh ? 'E-AC3 (杜比+)' : 'E-AC3 (Dolby+)',
+    'copy': zh ? '复制流' : 'Copy Stream',
   };
+  static const _presets = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'];
+  static const _resolutions = ['original', '2160p', '1080p', '720p', '480p', '360p', 'custom'];
+  static const _fpsOptions = ['keep', '24', '25', '30', '48', '50', '60', '120', 'custom'];
+  static const _audioCodecs = ['aac', 'libmp3lame', 'libopus', 'libvorbis', 'flac', 'pcm_s16le', 'ac3', 'eac3', 'copy'];
   static const _audioBitrates = [64, 96, 128, 160, 192, 256, 320, 512];
   static const _channels = ['keep', '1', '2', '6', '8'];
   static const _pixFmts = ['auto', 'yuv420p', 'yuv422p', 'yuv444p', 'yuv420p10le', 'yuv422p10le', 'nv12', 'p010le', 'rgb24'];
@@ -123,7 +123,7 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
       List<String>? itemLabels, required ColorScheme cs, required ValueChanged<String> onChanged}) {
     final safe = items.contains(value) ? value : items.first;
     return DropdownButtonFormField<String>(
-      initialValue: safe, isExpanded: true, decoration: _dec(label),
+      value: safe, isExpanded: true, decoration: _dec(label),
       dropdownColor: cs.surface, style: TextStyle(fontSize: 13, color: cs.onSurface),
       items: List.generate(items.length, (i) => DropdownMenuItem(
         value: items[i], child: Text(itemLabels != null ? itemLabels[i] : items[i], style: TextStyle(fontSize: 13, color: cs.onSurface)),
@@ -139,10 +139,10 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
     final safe = _allCodecs.contains(current) ? current : _allCodecs.first;
 
     return DropdownButtonFormField<String>(
-      initialValue: safe, isExpanded: true, decoration: _dec(zh ? '编码器' : 'Codec'),
+      value: safe, isExpanded: true, decoration: _dec(zh ? '编码器' : 'Codec'),
       dropdownColor: cs.surface, style: TextStyle(fontSize: 13, color: cs.onSurface),
       items: _allCodecs.map((codec) {
-        final label = _codecLabels[codec] ?? codec;
+        final label = codec == 'copy' ? _copyLabel(zh) : (_codecLabels[codec] ?? codec);
         final isAccel = accel.contains(codec);
         final isCpu = (_gpuCodecs['CPU'] ?? []).contains(codec);
         final isCopy = codec == 'copy';
@@ -232,7 +232,7 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
         ],
         _dropdown(label: zh ? '像素格式' : 'Pixel Format', value: p['pix_fmt'] as String? ?? 'auto',
           items: _pixFmts,
-          itemLabels: ['自动', 'YUV 4:2:0 8bit', 'YUV 4:2:2 8bit', 'YUV 4:4:4 8bit', 'YUV 4:2:0 10bit', 'YUV 4:2:2 10bit', 'NV12', 'P010LE (10bit)', 'RGB 24bit'],
+          itemLabels: [zh ? '自动' : 'Auto', 'YUV 4:2:0 8bit', 'YUV 4:2:2 8bit', 'YUV 4:4:4 8bit', 'YUV 4:2:0 10bit', 'YUV 4:2:2 10bit', 'NV12', 'P010LE (10bit)', 'RGB 24bit'],
           cs: cs, onChanged: (v) => _update('pix_fmt', v)),
         const SizedBox(height: 12),
         _dropdown(label: zh ? '分辨率' : 'Resolution', value: p['resolution'] as String, items: _resolutions,
@@ -261,7 +261,7 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
         Text(zh ? '音频' : 'Audio', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.primary)),
         const SizedBox(height: 10),
         _dropdown(label: zh ? '音频编码' : 'Audio Codec', value: p['audio_codec'] as String? ?? 'aac', items: _audioCodecs,
-          itemLabels: _audioCodecs.map((c) => _audioCodecLabels[c] ?? c).toList(),
+          itemLabels: _audioCodecs.map((c) => _audioCodecLabelsFor(zh)[c] ?? c).toList(),
           cs: cs, onChanged: (v) => _update('audio_codec', v)),
         const SizedBox(height: 12),
         _dropdown(label: zh ? '音频码率 (kbps)' : 'Audio Bitrate (kbps)',

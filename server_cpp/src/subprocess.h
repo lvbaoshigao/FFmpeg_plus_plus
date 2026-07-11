@@ -4,8 +4,10 @@
 #include <functional>
 #include <atomic>
 #include <thread>
-#include <windows.h>
 #include <algorithm>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace ffmpegpp {
 

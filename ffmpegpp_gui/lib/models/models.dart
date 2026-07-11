@@ -1,12 +1,17 @@
+import 'dart:io' show Platform;
 import 'package:uuid/uuid.dart';
 
 const _uuid = Uuid();
+
+final String _defaultFontFamily = Platform.isWindows ? 'Microsoft YaHei' : 'Noto Sans CJK SC';
 
 // ═══════════════════════════════════════════
 // 媒体类型标签
 // ═══════════════════════════════════════════
 
 enum MediaType { video, image, audio }
+
+const kImageExts = {'png', 'jpg', 'jpeg', 'bmp', 'webp', 'tiff', 'tif'};
 
 // ═══════════════════════════════════════════
 // 流水线步骤
@@ -23,6 +28,13 @@ enum PipelineStepType {
   audioConvert,
   extractAudio,
   imageCrop,
+  imageRotate,
+  imageScale,
+  imageBrightness,
+  imageNoise,
+  imageSharpen,
+  imageDenoise,
+  imageChannelExtract,
   output,
 }
 
@@ -48,6 +60,13 @@ class PipelineStep {
       case PipelineStepType.audioConvert: return '音频转换';
       case PipelineStepType.extractAudio: return '提取音频';
       case PipelineStepType.imageCrop: return '图片裁剪';
+      case PipelineStepType.imageRotate: return '图片旋转';
+      case PipelineStepType.imageScale: return '图片缩放';
+      case PipelineStepType.imageBrightness: return '亮度调节';
+      case PipelineStepType.imageNoise: return '添加噪点';
+      case PipelineStepType.imageSharpen: return '图片锐化';
+      case PipelineStepType.imageDenoise: return '图片降噪';
+      case PipelineStepType.imageChannelExtract: return '通道提取';
       case PipelineStepType.output: return '输出';
     }
   }
@@ -64,6 +83,13 @@ class PipelineStep {
       case PipelineStepType.audioConvert: return 'Audio Convert';
       case PipelineStepType.extractAudio: return 'Extract Audio';
       case PipelineStepType.imageCrop: return 'Image Crop';
+      case PipelineStepType.imageRotate: return 'Image Rotate';
+      case PipelineStepType.imageScale: return 'Image Scale';
+      case PipelineStepType.imageBrightness: return 'Brightness';
+      case PipelineStepType.imageNoise: return 'Add Noise';
+      case PipelineStepType.imageSharpen: return 'Sharpen';
+      case PipelineStepType.imageDenoise: return 'Denoise';
+      case PipelineStepType.imageChannelExtract: return 'Channel Extract';
       case PipelineStepType.output: return 'Output';
     }
   }
@@ -104,6 +130,13 @@ class PipelineNode {
       case PipelineStepType.audioConvert: return '音频转换';
       case PipelineStepType.extractAudio: return '提取音频';
       case PipelineStepType.imageCrop: return '图片裁剪';
+      case PipelineStepType.imageRotate: return '图片旋转';
+      case PipelineStepType.imageScale: return '图片缩放';
+      case PipelineStepType.imageBrightness: return '亮度调节';
+      case PipelineStepType.imageNoise: return '添加噪点';
+      case PipelineStepType.imageSharpen: return '图片锐化';
+      case PipelineStepType.imageDenoise: return '图片降噪';
+      case PipelineStepType.imageChannelExtract: return '通道提取';
       case PipelineStepType.output: return '输出';
     }
   }
@@ -120,6 +153,13 @@ class PipelineNode {
       case PipelineStepType.audioConvert: return 'Audio Convert';
       case PipelineStepType.extractAudio: return 'Extract Audio';
       case PipelineStepType.imageCrop: return 'Image Crop';
+      case PipelineStepType.imageRotate: return 'Image Rotate';
+      case PipelineStepType.imageScale: return 'Image Scale';
+      case PipelineStepType.imageBrightness: return 'Brightness';
+      case PipelineStepType.imageNoise: return 'Add Noise';
+      case PipelineStepType.imageSharpen: return 'Sharpen';
+      case PipelineStepType.imageDenoise: return 'Denoise';
+      case PipelineStepType.imageChannelExtract: return 'Channel Extract';
       case PipelineStepType.output: return 'Output';
     }
   }
@@ -138,6 +178,13 @@ class PipelineNode {
     PipelineStepType.audioConvert => {MediaType.audio},
     PipelineStepType.extractAudio => {MediaType.video},
     PipelineStepType.imageCrop => {MediaType.image},
+    PipelineStepType.imageRotate => {MediaType.image},
+    PipelineStepType.imageScale => {MediaType.image},
+    PipelineStepType.imageBrightness => {MediaType.image},
+    PipelineStepType.imageNoise => {MediaType.image},
+    PipelineStepType.imageSharpen => {MediaType.image},
+    PipelineStepType.imageDenoise => {MediaType.image},
+    PipelineStepType.imageChannelExtract => {MediaType.image},
     PipelineStepType.output => {MediaType.video, MediaType.image, MediaType.audio},
   };
 
@@ -154,6 +201,13 @@ class PipelineNode {
     PipelineStepType.audioConvert => MediaType.audio,
     PipelineStepType.extractAudio => MediaType.audio,
     PipelineStepType.imageCrop => MediaType.image,
+    PipelineStepType.imageRotate => MediaType.image,
+    PipelineStepType.imageScale => MediaType.image,
+    PipelineStepType.imageBrightness => MediaType.image,
+    PipelineStepType.imageNoise => MediaType.image,
+    PipelineStepType.imageSharpen => MediaType.image,
+    PipelineStepType.imageDenoise => MediaType.image,
+    PipelineStepType.imageChannelExtract => MediaType.image,
     PipelineStepType.output => null,
   };
 
@@ -187,13 +241,73 @@ class PipelineConnection {
   );
 }
 
+// ═══════════════════════════════════════════
+// 逻辑块
+// ═══════════════════════════════════════════
+
+enum LogicBlockType { loop, selectiveLoop }
+
+class LogicBlock {
+  final String id;
+  LogicBlockType type;
+  String name;
+  List<String> childNodeIds;
+  Map<String, dynamic> params;
+  double x, y, width, height;
+
+  LogicBlock({
+    required this.id, required this.type, this.name = '',
+    List<String>? childNodeIds, Map<String, dynamic>? params,
+    this.x = 0, this.y = 0, this.width = 200, this.height = 100,
+  }) : childNodeIds = childNodeIds ?? [],
+       params = params ?? {};
+
+  LogicBlock copy() => LogicBlock(
+    id: _uuid.v4(), type: type, name: name,
+    childNodeIds: List.of(childNodeIds),
+    params: Map.of(params),
+    x: x, y: y, width: width, height: height,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'id': id, 'type': type.name, 'name': name,
+    'childNodeIds': childNodeIds,
+    'params': params,
+    'x': x, 'y': y, 'width': width, 'height': height,
+  };
+
+  factory LogicBlock.fromJson(Map<String, dynamic> json) => LogicBlock(
+    id: json['id'] as String? ?? _uuid.v4(),
+    type: LogicBlockType.values.firstWhere(
+      (t) => t.name == json['type'], orElse: () => LogicBlockType.loop),
+    name: json['name'] as String? ?? '',
+    childNodeIds: (json['childNodeIds'] as List?)?.cast<String>() ?? [],
+    params: (json['params'] as Map<String, dynamic>?) ?? {},
+    x: (json['x'] as num?)?.toDouble() ?? 0,
+    y: (json['y'] as num?)?.toDouble() ?? 0,
+    width: (json['width'] as num?)?.toDouble() ?? 200,
+    height: (json['height'] as num?)?.toDouble() ?? 100,
+  );
+
+  String label(bool isZh) {
+    final typeName = switch (type) {
+      LogicBlockType.loop => isZh ? '循环' : 'Loop',
+      LogicBlockType.selectiveLoop => isZh ? '选择性循环' : 'Sel.Loop',
+    };
+    final nameStr = name.isNotEmpty ? ' · $name' : '';
+    return '$typeName x${params['count'] ?? 1}$nameStr';
+  }
+}
+
 class PipelineGraph {
   final List<PipelineNode> nodes;
   final List<PipelineConnection> connections;
+  final List<LogicBlock> logicBlocks;
 
-  PipelineGraph({List<PipelineNode>? nodes, List<PipelineConnection>? connections})
+  PipelineGraph({List<PipelineNode>? nodes, List<PipelineConnection>? connections, List<LogicBlock>? logicBlocks})
       : nodes = nodes ?? [],
-        connections = connections ?? [];
+        connections = connections ?? [],
+        logicBlocks = logicBlocks ?? [];
 
   PipelineGraph copy() {
     final idMap = <String, String>{};
@@ -207,17 +321,24 @@ class PipelineGraph {
       fromNodeId: idMap[c.fromNodeId] ?? c.fromNodeId,
       toNodeId: idMap[c.toNodeId] ?? c.toNodeId,
     )).toList();
-    return PipelineGraph(nodes: newNodes, connections: newConns);
+    final newBlocks = logicBlocks.map((b) {
+      final nb = b.copy();
+      nb.childNodeIds = b.childNodeIds.map((cid) => idMap[cid] ?? cid).toList();
+      return nb;
+    }).toList();
+    return PipelineGraph(nodes: newNodes, connections: newConns, logicBlocks: newBlocks);
   }
 
   Map<String, dynamic> toJson() => {
     'nodes': nodes.map((n) => n.toJson()).toList(),
     'connections': connections.map((c) => c.toJson()).toList(),
+    if (logicBlocks.isNotEmpty) 'logicBlocks': logicBlocks.map((b) => b.toJson()).toList(),
   };
 
   factory PipelineGraph.fromJson(Map<String, dynamic> json) => PipelineGraph(
     nodes: (json['nodes'] as List?)?.map((n) => PipelineNode.fromJson(n as Map<String, dynamic>)).toList(),
     connections: (json['connections'] as List?)?.map((c) => PipelineConnection.fromJson(c as Map<String, dynamic>)).toList(),
+    logicBlocks: (json['logicBlocks'] as List?)?.map((b) => LogicBlock.fromJson(b as Map<String, dynamic>)).toList(),
   );
 }
 
@@ -362,9 +483,8 @@ class VideoFile {
 
   static MediaType _detectMediaType(String filepath) {
     final ext = filepath.split('.').last.toLowerCase();
-    const imageExts = {'png', 'jpg', 'jpeg', 'bmp', 'webp', 'tiff', 'tif'};
     const audioExts = {'mp3', 'wav', 'flac', 'aac', 'm4a', 'ogg', 'opus', 'wma', 'ac3'};
-    if (imageExts.contains(ext)) return MediaType.image;
+    if (kImageExts.contains(ext)) return MediaType.image;
     if (audioExts.contains(ext)) return MediaType.audio;
     return MediaType.video;
   }
@@ -524,7 +644,9 @@ enum TaskStatus { pending, processing, completed, failed, cancelled }
 class BackendCall {
   final String action;
   final Map<String, dynamic> params;
-  BackendCall({required this.action, required this.params});
+  int loopCount;
+  String? loopMode;
+  BackendCall({required this.action, required this.params, this.loopCount = 1, this.loopMode});
 }
 
 class TaskInfo {
@@ -628,14 +750,15 @@ class AppConfig {
   AppConfig({
     this.language = 'zh', this.ffmpegPath = '', this.ffprobePath = '',
     this.defaultOutputDir = '', this.intermediateDir = '', this.darkMode = true, this.themeColor = 0xFF5E6AD2,
-    this.fontFamily = 'Microsoft YaHei', this.fontSize = 17.0, this.fontWeightIndex = 1,
+    String? fontFamily, this.fontSize = 17.0, this.fontWeightIndex = 1,
     this.backgroundImage = '', this.backgroundOpacity = 0.8, this.cardOpacity = 0.7,
     this.debugMode = false, this.saveLogs = false, this.enableSystemNotification = false, this.logSavePath = '',
     this.useNodeEditor = true,
     this.maxConcurrentTasks = 1,
     Map<String, int>? nodeUsageCount,
     Map<String, List<String>>? keyBindings,
-  }) : nodeUsageCount = nodeUsageCount ?? {},
+  }) : fontFamily = fontFamily ?? _defaultFontFamily,
+       nodeUsageCount = nodeUsageCount ?? {},
        keyBindings = keyBindings ?? Map.from(defaultKeyBindings);
 
   factory AppConfig.fromJson(Map<String, dynamic> json) => AppConfig(
@@ -646,7 +769,7 @@ class AppConfig {
         intermediateDir: json['intermediate_dir'] as String? ?? '',
         darkMode: json['dark_mode'] as bool? ?? true,
         themeColor: json['theme_color'] as int? ?? 0xFF5E6AD2,
-        fontFamily: json['font_family'] as String? ?? 'Microsoft YaHei',
+        fontFamily: json['font_family'] as String? ?? _defaultFontFamily,
         fontSize: (json['font_size'] as num?)?.toDouble() ?? 17.0,
         fontWeightIndex: json['font_weight'] as int? ?? 1,
         backgroundImage: json['background_image'] as String? ?? '',

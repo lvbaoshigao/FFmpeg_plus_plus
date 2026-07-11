@@ -1,11 +1,11 @@
 import 'dart:async';
 import '../models/models.dart';
-import 'python_process.dart';
+import 'native_process.dart';
 
 /// 高层 API 客户端
 /// 封装 JSON 协议，提供类型安全的调用接口
 class BackendClient {
-  final PythonProcessManager _process;
+  final NativeProcessManager _process;
   final _progressController = StreamController<ProgressUpdate>.broadcast();
   final _auditController = StreamController<List<String>>.broadcast();
 

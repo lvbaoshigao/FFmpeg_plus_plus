@@ -1,0 +1,283 @@
+name: Build & Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  FLUTTER_VERSION: '3.44.6'
+
+jobs:
+  # ══════════════════════════════════════════
+  # Windows x86_64
+  # ══════════════════════════════════════════
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build C++ backend (ffmpegpp.dll)
+        run: |
+          cd server_cpp
+          mkdir build_win
+          cd build_win
+          cmake .. -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release
+          nmake
+        shell: cmd
+
+      - name: Build Flutter GUI
+        run: |
+          cd ffmpegpp_gui
+          flutter pub get
+          flutter build windows --release
+
+      - name: Copy backend DLL to bundle
+        run: |
+          copy server_cpp\build_win\ffmpegpp.dll ffmpegpp_gui\build\windows\x64\runner\Release\ffmpegpp.dll
+        shell: cmd
+
+      - name: Build Inno Setup installer
+        run: |
+          choco install innosetup -y
+          $env:PATH += ";C:\Program Files (x86)\Inno Setup 6"
+          # ISS expects build files at ../build relative to make/
+          # Copy release bundle to build/ for ISS
+          New-Item -ItemType Directory -Force -Path build
+          Copy-Item -Recurse ffmpegpp_gui\build\windows\x64\runner\Release\* build\
+          Copy-Item server_cpp\build_win\ffmpegpp.dll build\
+          # Run Inno Setup
+          iscc make\setup.iss
+        shell: pwsh
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: dist/FFmpeg++_v*_setup.exe
+
+  # ══════════════════════════════════════════
+  # Linux x86_64
+  # ══════════════════════════════════════════
+  build-linux-x64:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ libgtk-3-dev pkg-config ninja-build libstdc++-14-dev
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+
+      - name: Build C++ backend (libffmpegpp.so)
+        run: |
+          cd server_cpp
+          mkdir -p build_linux
+          cd build_linux
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          make -j$(nproc)
+
+      - name: Build Flutter GUI
+        run: |
+          cd ffmpegpp_gui
+          flutter pub get
+          flutter build linux --release
+
+      - name: Assemble bundle
+        run: |
+          mkdir -p output
+          cp -r ffmpegpp_gui/build/linux/x64/release/bundle/* output/
+          cp server_cpp/build_linux/libffmpegpp.so output/
+
+      - name: Build .deb package
+        run: |
+          mkdir -p deb/DEBIAN
+          mkdir -p deb/opt/ffmpegpp
+          mkdir -p deb/usr/bin
+          mkdir -p deb/usr/share/applications
+          mkdir -p deb/usr/share/icons/hicolor/256x256/apps
+
+          # Control file
+          cat > deb/DEBIAN/control << 'EOF'
+          Package: ffmpegpp
+          Version: 4.5.0
+          Architecture: amd64
+          Maintainer: pity-Fox <noreply@github.com>
+          Description: FFmpeg++ - Advanced video/image/audio processing tool
+           A desktop application for video, image, and audio processing
+           with a node-based pipeline editor and batch processing support.
+          Depends: libgtk-3-0t64 | libgtk-3-0, ffmpeg
+          Section: video
+          Priority: optional
+          Installed-Size: 25000
+          EOF
+          # Remove leading spaces from heredoc
+          sed -i 's/^          //' deb/DEBIAN/control
+
+          # Desktop entry
+          cat > deb/usr/share/applications/ffmpegpp.desktop << 'EOF'
+          [Desktop Entry]
+          Name=FFmpeg++
+          Comment=Advanced video/image/audio processing tool
+          Exec=/opt/ffmpegpp/ffmpegpp_gui
+          Icon=ffmpegpp
+          Terminal=false
+          Type=Application
+          Categories=AudioVideo;Video;Graphics;
+          EOF
+          sed -i 's/^          //' deb/usr/share/applications/ffmpegpp.desktop
+
+          # Launcher script
+          echo '#!/bin/bash' > deb/usr/bin/ffmpegpp
+          echo 'exec /opt/ffmpegpp/ffmpegpp_gui "$@"' >> deb/usr/bin/ffmpegpp
+          chmod 755 deb/usr/bin/ffmpegpp
+
+          # Copy files
+          cp -r output/* deb/opt/ffmpegpp/
+          cp make/FFmpeg++.png deb/usr/share/icons/hicolor/256x256/apps/ffmpegpp.png
+          chmod -R 755 deb/opt/ffmpegpp/
+
+          # Build deb
+          dpkg-deb --root-owner-group --build deb ffmpegpp_4.5.0_amd64.deb
+
+      - name: Upload Linux x64 deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64-deb
+          path: ffmpegpp_4.5.0_amd64.deb
+
+  # ══════════════════════════════════════════
+  # Linux ARM64
+  # ══════════════════════════════════════════
+  build-linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ libgtk-3-dev pkg-config ninja-build libstdc++-14-dev
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+
+      - name: Build C++ backend (libffmpegpp.so)
+        run: |
+          cd server_cpp
+          mkdir -p build_linux
+          cd build_linux
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          make -j$(nproc)
+
+      - name: Build Flutter GUI
+        run: |
+          cd ffmpegpp_gui
+          flutter pub get
+          flutter build linux --release
+
+      - name: Assemble bundle
+        run: |
+          mkdir -p output
+          cp -r ffmpegpp_gui/build/linux/arm64/release/bundle/* output/
+          cp server_cpp/build_linux/libffmpegpp.so output/
+
+      - name: Build .deb package
+        run: |
+          mkdir -p deb/DEBIAN
+          mkdir -p deb/opt/ffmpegpp
+          mkdir -p deb/usr/bin
+          mkdir -p deb/usr/share/applications
+          mkdir -p deb/usr/share/icons/hicolor/256x256/apps
+
+          cat > deb/DEBIAN/control << 'EOF'
+          Package: ffmpegpp
+          Version: 4.5.0
+          Architecture: arm64
+          Maintainer: pity-Fox <noreply@github.com>
+          Description: FFmpeg++ - Advanced video/image/audio processing tool
+           A desktop application for video, image, and audio processing
+           with a node-based pipeline editor and batch processing support.
+          Depends: libgtk-3-0t64 | libgtk-3-0, ffmpeg
+          Section: video
+          Priority: optional
+          Installed-Size: 25000
+          EOF
+          sed -i 's/^          //' deb/DEBIAN/control
+
+          cat > deb/usr/share/applications/ffmpegpp.desktop << 'EOF'
+          [Desktop Entry]
+          Name=FFmpeg++
+          Comment=Advanced video/image/audio processing tool
+          Exec=/opt/ffmpegpp/ffmpegpp_gui
+          Icon=ffmpegpp
+          Terminal=false
+          Type=Application
+          Categories=AudioVideo;Video;Graphics;
+          EOF
+          sed -i 's/^          //' deb/usr/share/applications/ffmpegpp.desktop
+
+          echo '#!/bin/bash' > deb/usr/bin/ffmpegpp
+          echo 'exec /opt/ffmpegpp/ffmpegpp_gui "$@"' >> deb/usr/bin/ffmpegpp
+          chmod 755 deb/usr/bin/ffmpegpp
+
+          cp -r output/* deb/opt/ffmpegpp/
+          cp make/FFmpeg++.png deb/usr/share/icons/hicolor/256x256/apps/ffmpegpp.png
+          chmod -R 755 deb/opt/ffmpegpp/
+
+          dpkg-deb --root-owner-group --build deb ffmpegpp_4.5.0_arm64.deb
+
+      - name: Upload Linux ARM64 deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-arm64-deb
+          path: ffmpegpp_4.5.0_arm64.deb
+
+  # ══════════════════════════════════════════
+  # Create Release Draft
+  # ══════════════════════════════════════════
+  release:
+    needs: [build-windows, build-linux-x64, build-linux-arm64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: List artifacts
+        run: find artifacts/ -type f
+
+      - name: Create Release Draft
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          name: "FFmpeg++ v4.5.0"
+          tag_name: ${{ github.ref_name || 'v4.5.0' }}
+          files: |
+            artifacts/windows-installer/*.exe
+            artifacts/linux-x64-deb/*.deb
+            artifacts/linux-arm64-deb/*.deb
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

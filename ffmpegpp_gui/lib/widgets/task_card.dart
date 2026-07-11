@@ -56,11 +56,27 @@ class TaskCard extends StatelessWidget {
                 if (task.status == TaskStatus.completed) ...[
                   IconButton(
                     icon: const Icon(Icons.folder_open, size: 18), tooltip: s.language == 'zh' ? '打开文件夹' : 'Open Folder',
-                    onPressed: () => Process.run('explorer', ['/select,', task.outputPath]),
+                    onPressed: () {
+                      if (Platform.isWindows) {
+                        Process.run('explorer', ['/select,', task.outputPath]);
+                      } else if (Platform.isMacOS) {
+                        Process.run('open', ['-R', task.outputPath]);
+                      } else {
+                        Process.run('xdg-open', [File(task.outputPath).parent.path]);
+                      }
+                    },
                     padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 28, minHeight: 28)),
                   IconButton(
                     icon: const Icon(Icons.play_circle_outline, size: 18), tooltip: s.language == 'zh' ? '打开文件' : 'Open File',
-                    onPressed: () => Process.run('cmd', ['/c', 'start', '', task.outputPath]),
+                    onPressed: () {
+                      if (Platform.isWindows) {
+                        Process.run('cmd', ['/c', 'start', '', task.outputPath]);
+                      } else if (Platform.isMacOS) {
+                        Process.run('open', [task.outputPath]);
+                      } else {
+                        Process.run('xdg-open', [task.outputPath]);
+                      }
+                    },
                     padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 28, minHeight: 28)),
                 ],
                 if (task.status == TaskStatus.cancelled || task.status == TaskStatus.failed)
@@ -178,7 +194,12 @@ class _ThumbWidgetState extends State<_ThumbWidget> {
     final f = File('${Directory.systemTemp.path}/ffmpegpp_thumb_${widget.filepath.hashCode}_q.jpg');
     if (await f.exists()) { if (mounted) setState(() => _path = f.path); return; }
     try {
-      final r = await Process.run('ffmpeg', ['-y', '-ss', '2', '-i', widget.filepath, '-vframes', '1', '-q:v', '5', '-s', '80x45', f.path]);
+      final ext = widget.filepath.split('.').last.toLowerCase();
+      final isImage = kImageExts.contains(ext);
+      final args = <String>['-y'];
+      if (!isImage) args.addAll(['-ss', '2']);
+      args.addAll(['-i', widget.filepath, '-vframes', '1', '-q:v', '5', '-s', '80x45', f.path]);
+      final r = await Process.run('ffmpeg', args);
       if (r.exitCode == 0 && await f.exists()) { if (mounted) setState(() => _path = f.path); }
     } catch (_) {}
   }

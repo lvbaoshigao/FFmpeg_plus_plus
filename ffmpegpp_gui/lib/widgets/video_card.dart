@@ -96,7 +96,12 @@ class _ThumbWidgetState extends State<_ThumbWidget> {
     final f = File('${Directory.systemTemp.path}/ffmpegpp_thumb_${widget.filepath.hashCode}.jpg');
     if (await f.exists()) { if (mounted) setState(() => _thumbPath = f.path); return; }
     try {
-      final r = await Process.run('ffmpeg', ['-y', '-ss', '5', '-i', widget.filepath, '-vframes', '1', '-q:v', '3', '-s', '176x108', f.path]);
+      final ext = widget.filepath.split('.').last.toLowerCase();
+      final isImage = kImageExts.contains(ext);
+      final args = <String>['-y'];
+      if (!isImage) args.addAll(['-ss', '5']);
+      args.addAll(['-i', widget.filepath, '-vframes', '1', '-q:v', '3', '-s', '176x108', f.path]);
+      final r = await Process.run('ffmpeg', args);
       if (r.exitCode == 0 && await f.exists()) { if (mounted) setState(() => _thumbPath = f.path); }
     } catch (_) {}
   }

@@ -5,9 +5,26 @@
 #include <algorithm>
 #include <thread>
 #include <mutex>
+
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <cerrno>
+#endif
 
 namespace ffmpegpp {
+
+#ifdef _WIN32
+
+// ═══════════════════════════════════════════════
+// Windows 实现
+// ═══════════════════════════════════════════════
 
 // UTF-8 → UTF-16 宽字符串转换
 static std::wstring utf8ToWide(const std::string& s) {
@@ -310,5 +327,277 @@ ProcessResult Subprocess::runWithProgress(
     CloseHandle(pi.hThread);
     return result;
 }
+
+#else
+
+// ═══════════════════════════════════════════════
+// Linux / POSIX 实现
+// ═══════════════════════════════════════════════
+
+std::string Subprocess::vectorToCommandLine(const std::vector<std::string>& cmd) {
+    std::ostringstream oss;
+    for (size_t i = 0; i < cmd.size(); ++i) {
+        if (i > 0) oss << " ";
+        oss << cmd[i];
+    }
+    return oss.str();
+}
+
+static void closeFd(int fd) {
+    if (fd >= 0) close(fd);
+}
+
+ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_sec) {
+    ProcessResult result;
+    if (cmd.empty()) { result.exit_code = -1; return result; }
+
+    int stdout_pipe[2], stderr_pipe[2];
+    if (pipe(stdout_pipe) != 0 || pipe(stderr_pipe) != 0) {
+        result.exit_code = -1;
+        return result;
+    }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        closeFd(stdout_pipe[0]); closeFd(stdout_pipe[1]);
+        closeFd(stderr_pipe[0]); closeFd(stderr_pipe[1]);
+        result.exit_code = -1;
+        return result;
+    }
+
+    if (pid == 0) {
+        // 子进程
+        close(stdout_pipe[0]);
+        close(stderr_pipe[0]);
+        dup2(stdout_pipe[1], STDOUT_FILENO);
+        dup2(stderr_pipe[1], STDERR_FILENO);
+        close(stdout_pipe[1]);
+        close(stderr_pipe[1]);
+
+        int devnull = open("/dev/null", O_RDONLY);
+        if (devnull >= 0) {
+            dup2(devnull, STDIN_FILENO);
+            close(devnull);
+        }
+
+        std::vector<char*> argv;
+        for (const auto& s : cmd) argv.push_back(const_cast<char*>(s.c_str()));
+        argv.push_back(nullptr);
+        execvp(argv[0], argv.data());
+        _exit(127);
+    }
+
+    // 父进程
+    close(stdout_pipe[1]);
+    close(stderr_pipe[1]);
+
+    // 设置非阻塞
+    fcntl(stdout_pipe[0], F_SETFL, fcntl(stdout_pipe[0], F_GETFL) | O_NONBLOCK);
+    fcntl(stderr_pipe[0], F_SETFL, fcntl(stderr_pipe[0], F_GETFL) | O_NONBLOCK);
+
+    std::string stdout_data, stderr_data;
+    char buf[4096];
+
+    auto start = std::chrono::steady_clock::now();
+    bool child_exited = false;
+
+    while (!child_exited) {
+        struct pollfd fds[2];
+        fds[0] = {stdout_pipe[0], POLLIN, 0};
+        fds[1] = {stderr_pipe[0], POLLIN, 0};
+        poll(fds, 2, 10);
+
+        if (fds[0].revents & POLLIN) {
+            ssize_t n;
+            while ((n = read(stdout_pipe[0], buf, sizeof(buf) - 1)) > 0) {
+                buf[n] = 0; stdout_data += buf;
+            }
+        }
+        if (fds[1].revents & POLLIN) {
+            ssize_t n;
+            while ((n = read(stderr_pipe[0], buf, sizeof(buf) - 1)) > 0) {
+                buf[n] = 0; stderr_data += buf;
+            }
+        }
+
+        int status;
+        pid_t w = waitpid(pid, &status, WNOHANG);
+        if (w > 0) {
+            if (WIFEXITED(status)) result.exit_code = WEXITSTATUS(status);
+            else if (WIFSIGNALED(status)) result.exit_code = -1;
+            child_exited = true;
+            break;
+        }
+
+        if (timeout_sec > 0) {
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now() - start).count();
+            if (elapsed >= timeout_sec) {
+                kill(pid, SIGKILL);
+                waitpid(pid, nullptr, 0);
+                result.timed_out = true;
+                result.exit_code = -1;
+                child_exited = true;
+                break;
+            }
+        }
+    }
+
+    // 读取剩余数据
+    ssize_t n;
+    while ((n = read(stdout_pipe[0], buf, sizeof(buf) - 1)) > 0) {
+        buf[n] = 0; stdout_data += buf;
+    }
+    while ((n = read(stderr_pipe[0], buf, sizeof(buf) - 1)) > 0) {
+        buf[n] = 0; stderr_data += buf;
+    }
+
+    result.stdout_output = stdout_data;
+    result.stderr_output = stderr_data;
+
+    closeFd(stdout_pipe[0]);
+    closeFd(stderr_pipe[0]);
+
+    return result;
+}
+
+ProcessResult Subprocess::runWithProgress(
+    const std::vector<std::string>& cmd,
+    std::function<void(const std::string&)> on_stderr_line,
+    std::atomic<bool>& cancel_flag,
+    int timeout_sec) {
+
+    ProcessResult result;
+    if (cmd.empty()) { result.exit_code = -1; return result; }
+
+    int stdout_pipe[2], stderr_pipe[2];
+    if (pipe(stdout_pipe) != 0 || pipe(stderr_pipe) != 0) {
+        result.exit_code = -1;
+        return result;
+    }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        closeFd(stdout_pipe[0]); closeFd(stdout_pipe[1]);
+        closeFd(stderr_pipe[0]); closeFd(stderr_pipe[1]);
+        result.exit_code = -1;
+        return result;
+    }
+
+    if (pid == 0) {
+        // 子进程
+        close(stdout_pipe[0]);
+        close(stderr_pipe[0]);
+        dup2(stdout_pipe[1], STDOUT_FILENO);
+        dup2(stderr_pipe[1], STDERR_FILENO);
+        close(stdout_pipe[1]);
+        close(stderr_pipe[1]);
+
+        int devnull = open("/dev/null", O_RDONLY);
+        if (devnull >= 0) {
+            dup2(devnull, STDIN_FILENO);
+            close(devnull);
+        }
+
+        std::vector<char*> argv;
+        for (const auto& s : cmd) argv.push_back(const_cast<char*>(s.c_str()));
+        argv.push_back(nullptr);
+        execvp(argv[0], argv.data());
+        _exit(127);
+    }
+
+    // 父进程
+    close(stdout_pipe[1]);
+    close(stderr_pipe[1]);
+
+    // stderr 读取线程
+    std::mutex stderr_mutex;
+    std::string stderr_line_buf;
+    int stderr_fd = stderr_pipe[0];
+    std::thread stderr_thread([stderr_fd, &on_stderr_line, &stderr_mutex, &stderr_line_buf]() {
+        char ch;
+        ssize_t n;
+        while ((n = read(stderr_fd, &ch, 1)) > 0) {
+            if (ch == '\r' || ch == '\n') {
+                std::string line;
+                {
+                    std::lock_guard<std::mutex> lock(stderr_mutex);
+                    line = stderr_line_buf;
+                    stderr_line_buf.clear();
+                }
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                if (!line.empty()) {
+                    try { on_stderr_line(line); } catch (...) {}
+                }
+            } else {
+                std::lock_guard<std::mutex> lock(stderr_mutex);
+                stderr_line_buf += ch;
+            }
+        }
+    });
+
+    // stdout 读取线程
+    std::string stdout_data;
+    int stdout_fd = stdout_pipe[0];
+    std::thread stdout_thread([stdout_fd, &stdout_data]() {
+        char buf[4096];
+        ssize_t n;
+        while ((n = read(stdout_fd, buf, sizeof(buf) - 1)) > 0) {
+            buf[n] = 0;
+            stdout_data += buf;
+        }
+    });
+
+    // 主线程：等待进程退出或取消
+    auto start = std::chrono::steady_clock::now();
+    while (true) {
+        if (cancel_flag.load()) {
+            kill(pid, SIGKILL);
+            waitpid(pid, nullptr, 0);
+            result.exit_code = -1;
+            break;
+        }
+
+        int status;
+        pid_t w = waitpid(pid, &status, WNOHANG);
+        if (w > 0) {
+            if (WIFEXITED(status)) result.exit_code = WEXITSTATUS(status);
+            else if (WIFSIGNALED(status)) result.exit_code = -1;
+            break;
+        }
+
+        if (timeout_sec > 0) {
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now() - start).count();
+            if (elapsed >= timeout_sec) {
+                kill(pid, SIGKILL);
+                waitpid(pid, nullptr, 0);
+                result.timed_out = true;
+                result.exit_code = -1;
+                break;
+            }
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    // 关闭管道，让读取线程结束
+    closeFd(stderr_pipe[0]);
+    closeFd(stdout_pipe[0]);
+    if (stderr_thread.joinable()) stderr_thread.join();
+    if (stdout_thread.joinable()) stdout_thread.join();
+
+    result.stdout_output = stdout_data;
+    {
+        std::lock_guard<std::mutex> lock(stderr_mutex);
+        if (!stderr_line_buf.empty()) {
+            on_stderr_line(stderr_line_buf);
+        }
+    }
+
+    return result;
+}
+
+#endif // _WIN32
 
 } // namespace ffmpegpp

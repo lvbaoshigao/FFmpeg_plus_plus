@@ -34,7 +34,6 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
     'h264_amf', 'hevc_amf', 'av1_amf',
     'h264_qsv', 'hevc_qsv', 'av1_qsv',
   };
-  bool get _isHwCodec => _hwCodecs.contains(_cfg.videoCodec);
   static const _codecGroups = {
     'libx264': 'H.264', 'h264_nvenc': 'H.264', 'h264_amf': 'H.264', 'h264_qsv': 'H.264',
     'libx265': 'H.265/HEVC', 'hevc_nvenc': 'H.265', 'hevc_amf': 'H.265', 'hevc_qsv': 'H.265',
@@ -497,7 +496,7 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
                   (v) => setState(() => _cfg.subtitleIndex = int.tryParse(v) ?? 0)),
               if (subs.length > 1) ...[
                 _dd(sc, s.isZh ? '轨道2' : 'Track 2',
-                    _cfg.subtitleIndex2 != null ? '$_cfg.subtitleIndex2' : 'none',
+                    _cfg.subtitleIndex2 != null ? '${_cfg.subtitleIndex2}' : 'none',
                     ['none', ...subs.map((t) => '${t.index}')],
                     [s.isZh ? '无' : 'None', ...subs.map((t) => '#${t.index} [${t.codec}] ${t.language}${t.title.isNotEmpty ? " - ${t.title}" : ""}')],
                     (v) => setState(() => _cfg.subtitleIndex2 = v == 'none' ? null : int.tryParse(v))),

@@ -5,10 +5,10 @@ import '../models/models.dart';
 
 const _magic = [0x46, 0x50, 0x50, 0x58]; // "FPPX"
 const _configMajor = 1;
-const _configMinor = 0;
+const _configMinor = 1;
 const _minSoftwareMajor = 3;
-const _compatMajorCount = 1;
-const _currentSoftwareMajor = 3;
+const _compatMajorCount = 2;
+const _currentSoftwareMajor = 4;
 
 const modeNodeEditor = 0x01;
 const modeLegacy = 0x02;
@@ -21,22 +21,47 @@ class FppxFile {
   final PipelineGraph? graph;
   final Map<String, dynamic>? legacyConfig;
   final List<String> errors;
+  final List<String> warnings;
 
   FppxFile({
     required this.configMajor, required this.configMinor,
     required this.minSoftwareMajor, required this.compatMajorCount,
     required this.mode, required this.description,
-    this.graph, this.legacyConfig, this.errors = const [],
+    this.graph, this.legacyConfig, this.errors = const [], this.warnings = const [],
   });
 
   String get configVersionStr => 'v$configMajor.$configMinor';
   String get softwareRangeStr => 'v$minSoftwareMajor.x ~ v${minSoftwareMajor + compatMajorCount}.x';
   bool get isNodeEditor => mode == modeNodeEditor;
 
+  bool get isNewerConfig => configMajor > _configMajor || (configMajor == _configMajor && configMinor > _configMinor);
+
   bool get isCompatible {
     return _currentSoftwareMajor >= minSoftwareMajor &&
         _currentSoftwareMajor <= minSoftwareMajor + compatMajorCount &&
         errors.isEmpty;
+  }
+
+  Set<MediaType> get detectedMediaTypes {
+    if (graph == null) return {};
+    final types = <MediaType>{};
+    for (final node in graph!.nodes) {
+      if (node.type == PipelineStepType.start) continue;
+      if (node.type == PipelineStepType.output) continue;
+      final inp = node.inputTypes;
+      types.addAll(inp);
+    }
+    return types;
+  }
+
+  String detectedMediaLabel(bool isZh) {
+    final types = detectedMediaTypes;
+    if (types.isEmpty) return isZh ? '通用' : 'Generic';
+    return types.map((t) => switch (t) {
+      MediaType.video => isZh ? '视频' : 'Video',
+      MediaType.image => isZh ? '图片' : 'Image',
+      MediaType.audio => isZh ? '音频' : 'Audio',
+    }).join(' / ');
   }
 }
 
@@ -118,11 +143,17 @@ class FppxExporter {
       PipelineGraph? graph;
       Map<String, dynamic>? legacyConfig;
       final errors = <String>[];
+      final warnings = <String>[];
 
       final versionOk = _currentSoftwareMajor >= minSw &&
           _currentSoftwareMajor <= minSw + compatCount;
       if (!versionOk) {
         errors.add('软件版本不兼容: 配置要求 v$minSw.x~v${minSw + compatCount}.x，当前 v$_currentSoftwareMajor.0');
+      }
+
+      final isHigherConfig = configMajor > _configMajor || (configMajor == _configMajor && configMinor > _configMinor);
+      if (isHigherConfig) {
+        warnings.add('此配置由更高版本创建 (v$configMajor.$configMinor)，当前支持 v$_configMajor.$_configMinor，部分功能可能不兼容');
       }
 
       if (mode == modeNodeEditor) {
@@ -135,7 +166,11 @@ class FppxExporter {
           }
         }
         if (errors.isEmpty) {
-          graph = PipelineGraph.fromJson(json);
+          try {
+            graph = PipelineGraph.fromJson(json);
+          } catch (e) {
+            errors.add('配置解析失败: $e');
+          }
         }
       } else {
         legacyConfig = json;
@@ -146,7 +181,7 @@ class FppxExporter {
         minSoftwareMajor: minSw, compatMajorCount: compatCount,
         mode: mode, description: description,
         graph: graph, legacyConfig: legacyConfig,
-        errors: errors,
+        errors: errors, warnings: warnings,
       );
     } catch (_) {
       return null;

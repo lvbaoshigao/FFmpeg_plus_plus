@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
+import 'package:window_manager/window_manager.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../services/graph_executor.dart';
@@ -23,6 +24,14 @@ import '../widgets/step_editors/image_convert_step_editor.dart';
 import '../widgets/step_editors/audio_convert_step_editor.dart';
 import '../widgets/step_editors/extract_audio_step_editor.dart';
 import '../widgets/step_editors/image_crop_step_editor.dart';
+import '../widgets/step_editors/image_rotate_step_editor.dart';
+import '../widgets/step_editors/image_scale_step_editor.dart';
+import '../widgets/step_editors/image_brightness_step_editor.dart';
+import '../widgets/step_editors/image_noise_step_editor.dart';
+import '../widgets/step_editors/image_sharpen_step_editor.dart';
+import '../widgets/step_editors/image_denoise_step_editor.dart';
+import '../widgets/step_editors/image_channel_extract_step_editor.dart';
+import '../widgets/step_editors/logic_block_editor.dart';
 import '../widgets/toast.dart';
 
 const _uuid = Uuid();
@@ -41,7 +50,7 @@ class PipelineEditorPage extends StatefulWidget {
   State<PipelineEditorPage> createState() => _PipelineEditorPageState();
 }
 
-class _PipelineEditorPageState extends State<PipelineEditorPage> {
+class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowListener {
   final List<PipelineNode> _nodes = [];
   final List<PipelineConnection> _connections = [];
   Set<String> _selectedNodeIds = {};
@@ -66,22 +75,40 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
   bool _editorExpanded = true;
 
   final TransformationController _transformCtrl = TransformationController();
+  final GlobalKey _canvasKey = GlobalKey();
+  double _currentScale = 1.0;
+  int _sourceAnchorIndex = 0;
+  bool _isMaximized = false;
+  PipelineStepType? _previewedToolboxType;
+  LogicBlockType? _previewedLogicType;
+  final List<LogicBlock> _logicBlocks = [];
+  bool _isLogicBoxSelecting = false;
+  LogicBlockType? _pendingLogicType;
+  String? _selectedLogicBlockId;
 
   @override
   void initState() {
     super.initState();
+    if (!Platform.isWindows) {
+      windowManager.addListener(this);
+      windowManager.isMaximized().then((v) {
+        if (mounted) setState(() => _isMaximized = v);
+      });
+    }
     final g = widget.video.pipelineGraph;
+    final isConfigMode = widget.video.filepath.isEmpty;
     if (g.nodes.isNotEmpty) {
       final copied = g.copy();
       _nodes.addAll(copied.nodes);
       _connections.addAll(copied.connections);
+      _logicBlocks.addAll(copied.logicBlocks);
     } else {
       final cx = _canvasSize / 2;
       final cy = _canvasSize / 2;
       final startNode = PipelineNode(
         id: _uuid.v4(), type: PipelineStepType.start,
         x: cx - 100, y: cy,
-        params: {'file_media_type': widget.video.fileMediaType.name},
+        params: isConfigMode ? {} : {'file_media_type': widget.video.fileMediaType.name},
       );
       final outputNode = PipelineNode(
         id: _uuid.v4(), type: PipelineStepType.output,
@@ -92,12 +119,15 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
         id: _uuid.v4(), fromNodeId: startNode.id, toNodeId: outputNode.id,
       ));
     }
-    for (final n in _nodes) {
-      if (n.type == PipelineStepType.start) {
-        n.params['file_media_type'] = widget.video.fileMediaType.name;
+    if (!isConfigMode) {
+      for (final n in _nodes) {
+        if (n.type == PipelineStepType.start) {
+          n.params['file_media_type'] = widget.video.fileMediaType.name;
+        }
       }
     }
     _genThumb();
+    _transformCtrl.addListener(_onScaleChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _transformCtrl.value = Matrix4.identity()..translate(-_canvasSize / 2 + 300, -_canvasSize / 2 + 200);
     });
@@ -105,16 +135,35 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
 
   @override
   void dispose() {
+    if (!Platform.isWindows) windowManager.removeListener(this);
+    _transformCtrl.removeListener(_onScaleChanged);
     _transformCtrl.dispose();
     super.dispose();
   }
+
+  void _onScaleChanged() {
+    final s = _transformCtrl.value.getMaxScaleOnAxis();
+    if ((s - _currentScale).abs() > 0.01) {
+      setState(() => _currentScale = s);
+    }
+  }
+
+  @override
+  void onWindowMaximize() { if (mounted) setState(() => _isMaximized = true); }
+  @override
+  void onWindowUnmaximize() { if (mounted) setState(() => _isMaximized = false); }
 
   Future<void> _genThumb() async {
     final fp = widget.video.filepath;
     final f = File('${Directory.systemTemp.path}/ffmpegpp_thumb_${fp.hashCode}.jpg');
     if (await f.exists()) { if (mounted) setState(() => _thumbPath = f.path); return; }
     try {
-      final r = await Process.run('ffmpeg', ['-y', '-ss', '5', '-i', fp, '-vframes', '1', '-q:v', '3', '-s', '176x108', f.path]);
+      final ext = fp.split('.').last.toLowerCase();
+      final isImage = kImageExts.contains(ext);
+      final args = <String>['-y'];
+      if (!isImage) args.addAll(['-ss', '5']);
+      args.addAll(['-i', fp, '-vframes', '1', '-q:v', '3', '-s', '176x108', f.path]);
+      final r = await Process.run('ffmpeg', args);
       if (r.exitCode == 0 && await f.exists()) { if (mounted) setState(() => _thumbPath = f.path); }
     } catch (_) {}
   }
@@ -137,6 +186,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
       case PipelineStepType.audioConvert: return Icons.audiotrack;
       case PipelineStepType.extractAudio: return Icons.music_note;
       case PipelineStepType.imageCrop: return Icons.crop;
+      case PipelineStepType.imageRotate: return Icons.rotate_right;
+      case PipelineStepType.imageScale: return Icons.photo_size_select_large;
+      case PipelineStepType.imageBrightness: return Icons.brightness_6;
+      case PipelineStepType.imageNoise: return Icons.grain;
+      case PipelineStepType.imageSharpen: return Icons.deblur;
+      case PipelineStepType.imageDenoise: return Icons.blur_on;
+      case PipelineStepType.imageChannelExtract: return Icons.color_lens_outlined;
       case PipelineStepType.output: return Icons.save_alt_outlined;
     }
   }
@@ -156,7 +212,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
       id: _uuid.v4(), type: type,
       x: canvasPos.dx, y: canvasPos.dy,
     );
-    if (type == PipelineStepType.start) {
+    if (type == PipelineStepType.start && widget.video.filepath.isNotEmpty) {
       node.params['file_media_type'] = widget.video.fileMediaType.name;
     }
     setState(() => _nodes.add(node));
@@ -202,19 +258,69 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
     });
   }
 
+  String _mediaTypeName(MediaType t, bool zh) => switch (t) {
+    MediaType.video => zh ? '视频' : 'video',
+    MediaType.image => zh ? '图片' : 'image',
+    MediaType.audio => zh ? '音频' : 'audio',
+  };
+
   void _addConnection(String fromId, String toId) {
     if (fromId == toId) return;
     final fromIdx = _nodes.indexWhere((n) => n.id == fromId);
     final toIdx = _nodes.indexWhere((n) => n.id == toId);
-    if (fromIdx < 0 || toIdx < 0) return; // 节点不存在，静默返回
+    if (fromIdx < 0 || toIdx < 0) return;
     final fromNode = _nodes[fromIdx];
     final toNode = _nodes[toIdx];
     if (!fromNode.hasOutput || !toNode.hasInput) return;
     if (_connections.any((c) => c.fromNodeId == fromId && c.toNodeId == toId)) return;
+    final zh = context.read<AppState>().config.language == 'zh';
+
+    // Source node connecting to a processing node: auto-detect and lock media type
+    if (fromNode.type == PipelineStepType.start && toNode.inputTypes.isNotEmpty) {
+      final currentMediaType = fromNode.params['file_media_type'] as String?;
+      final neededTypes = toNode.inputTypes;
+
+      if (currentMediaType != null && currentMediaType.isNotEmpty) {
+        final currentType = MediaType.values.firstWhere((t) => t.name == currentMediaType, orElse: () => MediaType.video);
+        if (!neededTypes.contains(currentType)) {
+          // Source already locked to a different type
+          final existingConns = _connections.where((c) => c.fromNodeId == fromId).toList();
+          if (existingConns.isNotEmpty) {
+            showToast(context, zh
+                ? '源文件已连接${_mediaTypeName(currentType, zh)}类型节点，不能同时连接${_mediaTypeName(neededTypes.first, zh)}类型节点'
+                : 'Source is connected to ${currentType.name} nodes, cannot also connect to ${neededTypes.first.name} nodes',
+                type: ToastType.error);
+            return;
+          }
+        }
+      } else {
+        // Config mode: auto-set source media type from first connection
+        fromNode.params['file_media_type'] = neededTypes.first.name;
+      }
+    }
+
+    // Check existing connections from same source node to prevent mixed types
+    if (fromNode.type == PipelineStepType.start) {
+      final existingConns = _connections.where((c) => c.fromNodeId == fromId).toList();
+      for (final ec in existingConns) {
+        final existingTarget = _nodes.firstWhere((n) => n.id == ec.toNodeId, orElse: () => PipelineNode(id: '', type: PipelineStepType.output));
+        if (existingTarget.inputTypes.isNotEmpty && toNode.inputTypes.isNotEmpty) {
+          final existingNeeds = existingTarget.inputTypes;
+          final newNeeds = toNode.inputTypes;
+          if (existingNeeds.intersection(newNeeds).isEmpty && existingTarget.type != PipelineStepType.output && toNode.type != PipelineStepType.output) {
+            showToast(context, zh
+                ? '源文件不能同时连接不同媒体类型的处理节点'
+                : 'Source cannot connect to different media type nodes',
+                type: ToastType.error);
+            return;
+          }
+        }
+      }
+    }
+
     final outType = fromNode.outputType;
     final inTypes = toNode.inputTypes;
     if (outType != null && inTypes.isNotEmpty && !inTypes.contains(outType)) {
-      final zh = context.read<AppState>().config.language == 'zh';
       showToast(context, zh
             ? '类型不兼容：${fromNode.label} 输出 ${outType.name}，${toNode.label} 需要 ${inTypes.map((t) => t.name).join("/")}'
             : 'Incompatible: ${fromNode.labelEn} outputs ${outType.name}, ${toNode.labelEn} needs ${inTypes.map((t) => t.name).join("/")}',
@@ -227,9 +333,23 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
   }
 
   void _deleteConnection(String connId) {
+    final conn = _connections.firstWhere((c) => c.id == connId, orElse: () => PipelineConnection(id: '', fromNodeId: '', toNodeId: ''));
     setState(() {
       _connections.removeWhere((c) => c.id == connId);
     });
+    if (widget.video.filepath.isEmpty && conn.fromNodeId.isNotEmpty) {
+      final fromNode = _nodes.where((n) => n.id == conn.fromNodeId).firstOrNull;
+      if (fromNode != null && fromNode.type == PipelineStepType.start) {
+        final remaining = _connections.where((c) => c.fromNodeId == conn.fromNodeId).toList();
+        final hasProcessingConn = remaining.any((c) {
+          final target = _nodes.where((n) => n.id == c.toNodeId).firstOrNull;
+          return target != null && target.type != PipelineStepType.output;
+        });
+        if (!hasProcessingConn) {
+          fromNode.params.remove('file_media_type');
+        }
+      }
+    }
   }
 
   PipelineConnection? _hitTestConnection(Offset pos) {
@@ -281,7 +401,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
   }
 
   void _save() {
-    final graph = PipelineGraph(nodes: _nodes, connections: _connections);
+    final graph = PipelineGraph(nodes: _nodes, connections: _connections, logicBlocks: _logicBlocks);
     final errors = GraphExecutor.validateGraph(graph);
     if (errors.isNotEmpty) {
       final scheme = Theme.of(context).colorScheme;
@@ -320,7 +440,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
   }
 
   Future<void> _exportConfig(AppStrings s) async {
-    final graph = PipelineGraph(nodes: _nodes, connections: _connections);
+    final graph = PipelineGraph(nodes: _nodes, connections: _connections, logicBlocks: _logicBlocks);
     final errors = GraphExecutor.validateGraph(graph);
     if (errors.isNotEmpty) {
       final scheme = Theme.of(context).colorScheme;
@@ -390,7 +510,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
             controller: descCtrl, maxLines: 4,
             decoration: InputDecoration(
               labelText: zh ? '配置介绍（可选）' : 'Description (optional)',
+              labelStyle: TextStyle(color: scheme.onSurfaceVariant),
               hintText: zh ? '描述这个配置的用途...' : 'Describe what this config does...',
+              hintStyle: TextStyle(color: scheme.outline),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
               alignLabelWithHint: true,
             ),
@@ -455,19 +577,238 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
   Offset _outPort(PipelineNode n) => Offset(n.x + _portZoneW + _nodeW + _portZoneW / 2, n.y + _nodeH / 2);
   Offset _inPort(PipelineNode n) => Offset(n.x + _portZoneW / 2, n.y + _nodeH / 2);
 
+  // ── 缩放/整理/定位 ──
+
+  void _zoomTo(double newScale) {
+    final rb = _canvasKey.currentContext?.findRenderObject() as RenderBox?;
+    if (rb == null) return;
+    final viewCenter = rb.size.center(Offset.zero);
+    final canvasCenter = _screenToCanvas(viewCenter);
+    final clamped = newScale.clamp(0.3, 2.0);
+    _transformCtrl.value = Matrix4.identity()
+      ..translate(viewCenter.dx, viewCenter.dy)
+      ..scale(clamped)
+      ..translate(-canvasCenter.dx, -canvasCenter.dy);
+  }
+
+  void _zoomToFit() {
+    if (_nodes.isEmpty) return;
+    final rb = _canvasKey.currentContext?.findRenderObject() as RenderBox?;
+    if (rb == null) return;
+    final viewSize = rb.size;
+    double minX = double.infinity, minY = double.infinity;
+    double maxX = double.negativeInfinity, maxY = double.negativeInfinity;
+    for (final n in _nodes) {
+      if (n.x < minX) minX = n.x;
+      if (n.y < minY) minY = n.y;
+      if (n.x + _totalNodeW > maxX) maxX = n.x + _totalNodeW;
+      if (n.y + _nodeH > maxY) maxY = n.y + _nodeH;
+    }
+    final contentW = maxX - minX + 80;
+    final contentH = maxY - minY + 80;
+    final scale = math.min(viewSize.width / contentW, viewSize.height / contentH).clamp(0.3, 2.0);
+    final cx = (minX + maxX) / 2;
+    final cy = (minY + maxY) / 2;
+    _transformCtrl.value = Matrix4.identity()
+      ..translate(viewSize.width / 2, viewSize.height / 2)
+      ..scale(scale)
+      ..translate(-cx, -cy);
+  }
+
+  void _autoLayout() {
+    if (_nodes.isEmpty) return;
+    final adj = <String, List<String>>{};
+    final inDeg = <String, int>{};
+    for (final n in _nodes) {
+      adj[n.id] = [];
+      inDeg[n.id] = 0;
+    }
+    for (final c in _connections) {
+      adj[c.fromNodeId]?.add(c.toNodeId);
+      inDeg[c.toNodeId] = (inDeg[c.toNodeId] ?? 0) + 1;
+    }
+    // BFS topo layers
+    final layers = <List<String>>[];
+    var queue = [for (final n in _nodes) if (inDeg[n.id] == 0) n.id];
+    final visited = <String>{};
+    while (queue.isNotEmpty) {
+      layers.add(queue);
+      visited.addAll(queue);
+      final next = <String>[];
+      for (final id in queue) {
+        for (final to in adj[id]!) {
+          inDeg[to] = (inDeg[to] ?? 1) - 1;
+          if (inDeg[to] == 0 && !visited.contains(to)) next.add(to);
+        }
+      }
+      queue = next;
+    }
+    // Append any unvisited nodes (cycles/disconnected)
+    final remaining = _nodes.where((n) => !visited.contains(n.id)).map((n) => n.id).toList();
+    if (remaining.isNotEmpty) layers.add(remaining);
+
+    const gapX = 300.0;
+    const gapY = 100.0;
+    final startX = _canvasSize / 2 - (layers.length * gapX) / 2;
+    setState(() {
+      for (var col = 0; col < layers.length; col++) {
+        final layer = layers[col];
+        final startY = _canvasSize / 2 - (layer.length * (_nodeH + gapY)) / 2;
+        for (var row = 0; row < layer.length; row++) {
+          final node = _nodes.firstWhere((n) => n.id == layer[row]);
+          node.x = startX + col * gapX;
+          node.y = startY + row * (_nodeH + gapY);
+        }
+      }
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _zoomToFit());
+  }
+
+  void _goToSource(AppStrings s) {
+    final startNodes = _nodes.where((n) => n.type == PipelineStepType.start).toList();
+    if (startNodes.isEmpty) {
+      showToast(context, s.isZh ? '没有源文件节点' : 'No source nodes', type: ToastType.info);
+      return;
+    }
+    final target = startNodes[_sourceAnchorIndex % startNodes.length];
+    _sourceAnchorIndex++;
+    final rb = _canvasKey.currentContext?.findRenderObject() as RenderBox?;
+    if (rb == null) return;
+    final viewCenter = rb.size.center(Offset.zero);
+    final nodeCenterX = target.x + _totalNodeW / 2;
+    final nodeCenterY = target.y + _nodeH / 2;
+    _transformCtrl.value = Matrix4.identity()
+      ..translate(viewCenter.dx, viewCenter.dy)
+      ..scale(_currentScale)
+      ..translate(-nodeCenterX, -nodeCenterY);
+    setState(() {
+      _selectedNodeIds = {target.id};
+      _lastSelectedId = target.id;
+    });
+  }
+
   // ── 右键菜单 ──
 
-  static const _allNodeTypes = [
-    PipelineStepType.start,
+  void _startLogicBoxSelect(LogicBlockType type, AppStrings s) {
+    setState(() {
+      _isLogicBoxSelecting = true;
+      _pendingLogicType = type;
+      _selectedNodeIds.clear();
+      _lastSelectedId = null;
+    });
+    showToast(context, s.isZh ? '请在画布中框选要包含的元素' : 'Box-select elements on canvas to include', type: ToastType.info);
+  }
+
+  void _finishLogicBoxSelect(AppStrings s) {
+    final validIds = _selectedNodeIds.where((id) {
+      final n = _nodes.firstWhere((n) => n.id == id, orElse: () => PipelineNode(id: '', type: PipelineStepType.start));
+      return n.id.isNotEmpty && n.type != PipelineStepType.start && n.type != PipelineStepType.output;
+    }).toList();
+
+    if (validIds.isEmpty) {
+      setState(() { _isLogicBoxSelecting = false; _pendingLogicType = null; });
+      showToast(context, s.isZh ? '未选中有效的处理元素' : 'No valid processing elements selected', type: ToastType.warning);
+      return;
+    }
+
+    // Check if any selected node is already in a logic block
+    for (final block in _logicBlocks) {
+      if (validIds.any((id) => block.childNodeIds.contains(id))) {
+        setState(() { _isLogicBoxSelecting = false; _pendingLogicType = null; });
+        showToast(context, s.isZh ? '选中的元素已在其他逻辑块中' : 'Selected elements are already in another logic block', type: ToastType.warning);
+        return;
+      }
+    }
+
+    // Calculate bounding box of selected nodes
+    double minX = double.infinity, minY = double.infinity;
+    double maxX = double.negativeInfinity, maxY = double.negativeInfinity;
+    for (final id in validIds) {
+      final n = _nodes.firstWhere((n) => n.id == id);
+      minX = math.min(minX, n.x);
+      minY = math.min(minY, n.y);
+      maxX = math.max(maxX, n.x + _totalNodeW);
+      maxY = math.max(maxY, n.y + _nodeH);
+    }
+    final padding = 20.0;
+
+    _showLoopCountDialog(s).then((count) {
+      if (count != null && count > 0) {
+        setState(() {
+          _logicBlocks.add(LogicBlock(
+            id: _uuid.v4(),
+            type: _pendingLogicType!,
+            childNodeIds: validIds,
+            params: {'count': count},
+            x: minX - padding,
+            y: minY - padding - 20,
+            width: maxX - minX + padding * 2,
+            height: maxY - minY + padding * 2 + 20,
+          ));
+          _isLogicBoxSelecting = false;
+          _pendingLogicType = null;
+          _selectedNodeIds.clear();
+        });
+      } else {
+        setState(() { _isLogicBoxSelecting = false; _pendingLogicType = null; });
+      }
+    });
+  }
+
+  Future<int?> _showLoopCountDialog(AppStrings s) {
+    int count = 10;
+    final scheme = Theme.of(context).colorScheme;
+    return showDialog<int>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(s.isZh ? '设置循环次数' : 'Set Loop Count', style: TextStyle(fontSize: 16, color: scheme.onSurface)),
+        content: TextFormField(
+          initialValue: '10',
+          autofocus: true,
+          style: TextStyle(color: scheme.onSurface, fontSize: 14),
+          decoration: InputDecoration(
+            labelText: s.isZh ? '循环次数' : 'Loop Count',
+            labelStyle: TextStyle(color: scheme.onSurfaceVariant),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+          keyboardType: TextInputType.number,
+          onChanged: (v) { count = int.tryParse(v) ?? 10; },
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(s.isZh ? '取消' : 'Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, count), child: Text(s.isZh ? '确定' : 'OK')),
+        ],
+      ),
+    );
+  }
+
+  static const _videoTypes = [
     PipelineStepType.avProcess,
     PipelineStepType.subtitle,
     PipelineStepType.clip,
     PipelineStepType.frame,
     PipelineStepType.speed,
-    PipelineStepType.imageConvert,
+  ];
+  static const _audioTypes = [
     PipelineStepType.audioConvert,
     PipelineStepType.extractAudio,
+  ];
+  static const _imageTypes = [
+    PipelineStepType.imageConvert,
     PipelineStepType.imageCrop,
+    PipelineStepType.imageRotate,
+    PipelineStepType.imageScale,
+    PipelineStepType.imageBrightness,
+    PipelineStepType.imageNoise,
+    PipelineStepType.imageSharpen,
+    PipelineStepType.imageDenoise,
+    PipelineStepType.imageChannelExtract,
+  ];
+  static const _allNodeTypes = [
+    PipelineStepType.start,
+    ..._videoTypes,
+    ..._audioTypes,
+    ..._imageTypes,
     PipelineStepType.output,
   ];
 
@@ -637,6 +978,20 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
           key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh,
           sourceImagePath: _resolveSourceImagePath(node),
         );
+      case PipelineStepType.imageRotate:
+        return ImageRotateStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+      case PipelineStepType.imageScale:
+        return ImageScaleStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+      case PipelineStepType.imageBrightness:
+        return ImageBrightnessStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+      case PipelineStepType.imageNoise:
+        return ImageNoiseStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+      case PipelineStepType.imageSharpen:
+        return ImageSharpenStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+      case PipelineStepType.imageDenoise:
+        return ImageDenoiseStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+      case PipelineStepType.imageChannelExtract:
+        return ImageChannelExtractStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
     }
   }
 
@@ -657,7 +1012,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
       },
       child: _withWallpaper(context, Scaffold(
         backgroundColor: Colors.transparent,
-        appBar: AppBar(
+        appBar: Platform.isWindows ? AppBar(
           leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () async {
             final nav = Navigator.of(context);
             if (await _onWillPop()) nav.pop();
@@ -685,19 +1040,86 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
               ),
             ),
           ],
-        ),
-        body: Column(children: [
-          Expanded(child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
-            child: Row(children: [
-              Expanded(flex: 3, child: _buildCanvas(scheme, s)),
-              const SizedBox(width: 8),
-              Expanded(flex: 2, child: _buildRightPanel(scheme, s)),
-            ]),
-          )),
-          _buildBottomBar(scheme, s),
-        ]),
+        ) : null,
+        body: _buildBody(scheme, s),
       )),
+    );
+  }
+
+  // ── Body with CSD title bar ──
+
+  Widget _buildBody(ColorScheme scheme, AppStrings s) {
+    final content = Padding(
+      padding: EdgeInsets.only(top: Platform.isWindows ? 0 : 36),
+      child: Column(children: [
+        Expanded(child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+          child: Row(children: [
+            Expanded(flex: 3, child: _buildCanvas(scheme, s)),
+            const SizedBox(width: 8),
+            Expanded(flex: 2, child: _buildRightPanel(scheme, s)),
+          ]),
+        )),
+        _buildBottomBar(scheme, s),
+      ]),
+    );
+    if (Platform.isWindows) return content;
+    return Stack(children: [
+      content,
+      Positioned(left: 0, right: 0, top: 0, child: _buildEditorCsdTitleBar(scheme)),
+    ]);
+  }
+
+  Widget _buildEditorCsdTitleBar(ColorScheme scheme) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        child: Container(
+          height: 36,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                scheme.surface.withAlpha(isDark ? 160 : 180),
+                scheme.surface.withAlpha(isDark ? 120 : 140),
+              ],
+            ),
+            border: Border(bottom: BorderSide(
+              color: scheme.outlineVariant.withAlpha(isDark ? 60 : 80),
+              width: 0.5,
+            )),
+          ),
+          child: Stack(children: [
+            DragToMoveArea(child: GestureDetector(
+              onDoubleTap: () async {
+                if (await windowManager.isMaximized()) {
+                  windowManager.unmaximize();
+                } else {
+                  windowManager.maximize();
+                }
+              },
+              child: Container(color: Colors.transparent),
+            )),
+            Positioned(right: 0, top: 0, bottom: 0, child: Row(mainAxisSize: MainAxisSize.min, children: [
+              _EditorCsdBtn(icon: Icons.remove, color: scheme.onSurfaceVariant, onTap: () => windowManager.minimize()),
+              _EditorCsdBtn(
+                icon: _isMaximized ? Icons.filter_none : Icons.crop_square,
+                color: scheme.onSurfaceVariant,
+                onTap: () async {
+                  if (await windowManager.isMaximized()) {
+                    windowManager.unmaximize();
+                  } else {
+                    windowManager.maximize();
+                  }
+                },
+              ),
+              _EditorCsdBtn(icon: Icons.close, color: scheme.onSurface, hoverBg: Colors.red, onTap: () => windowManager.close()),
+            ])),
+          ]),
+        ),
+      ),
     );
   }
 
@@ -846,6 +1268,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
             _boxSelectRect = null;
             _isBoxSelecting = false;
           });
+          if (_isLogicBoxSelecting && _selectedNodeIds.isNotEmpty) {
+            _finishLogicBoxSelect(s);
+          }
         }
       },
       child: InteractiveViewer(
@@ -890,6 +1315,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
               Positioned(
                 left: node.x, top: node.y,
                 child: _buildNodeWidget(node, scheme, s),
+              ),
+            // 逻辑块虚线框
+            for (final block in _logicBlocks)
+              Positioned(
+                left: block.x, top: block.y,
+                child: _buildLogicBlockOverlay(block, scheme, s),
               ),
             // Box-select overlay
             if (_boxSelectRect != null)
@@ -950,17 +1381,68 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
       Padding(
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
         child: Row(children: [
+          if (!Platform.isWindows) ...[
+            InkWell(
+              borderRadius: BorderRadius.circular(6),
+              onTap: () async {
+                final nav = Navigator.of(context);
+                if (await _onWillPop()) nav.pop();
+              },
+              child: Padding(
+                padding: const EdgeInsets.all(4),
+                child: Icon(Icons.arrow_back, size: 18, color: scheme.onSurface),
+              ),
+            ),
+            const SizedBox(width: 6),
+          ],
           Icon(Icons.account_tree_outlined, size: 16, color: scheme.primary),
           const SizedBox(width: 6),
           Text(s.isZh ? '节点编辑器' : 'Node Editor',
               style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface)),
           const Spacer(),
-          Text(s.isZh ? '右键添加节点' : 'Right-click to add',
-              style: TextStyle(fontSize: 10, color: scheme.outline)),
+          if (!Platform.isWindows) ...[
+            IconButton(
+              icon: Icon(Icons.file_upload_outlined, size: 18, color: scheme.onSurface),
+              tooltip: s.isZh ? '导出配置' : 'Export Config',
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              padding: EdgeInsets.zero,
+              onPressed: _nodes.isEmpty ? null : () => _exportConfig(s),
+            ),
+            const SizedBox(width: 4),
+            FilledButton.icon(
+              onPressed: _save,
+              icon: const Icon(Icons.check, size: 16),
+              label: Text(s.save, style: const TextStyle(fontSize: 12)),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ] else
+            Text(s.isZh ? '右键添加节点' : 'Right-click to add',
+                style: TextStyle(fontSize: 10, color: scheme.outline)),
         ]),
       ),
       const Divider(height: 1, indent: 12, endIndent: 12),
+      if (_isLogicBoxSelecting)
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          color: Colors.red.withAlpha(30),
+          child: Row(children: [
+            Icon(Icons.info_outline, size: 14, color: Colors.red),
+            const SizedBox(width: 8),
+            Text(s.isZh ? '请在画布中框选要包含的元素，然后松开鼠标' : 'Box-select elements on canvas, then release',
+                style: TextStyle(fontSize: 12, color: Colors.red, fontWeight: FontWeight.w500)),
+            const Spacer(),
+            TextButton(
+              onPressed: () => setState(() { _isLogicBoxSelecting = false; _pendingLogicType = null; }),
+              child: Text(s.isZh ? '取消' : 'Cancel', style: const TextStyle(fontSize: 12)),
+            ),
+          ]),
+        ),
       Expanded(child: ClipRRect(
+        key: _canvasKey,
         borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(12), bottomRight: Radius.circular(12)),
         child: DragTarget<PipelineStepType>(
           onAcceptWithDetails: (details) {
@@ -971,11 +1453,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
           },
           builder: (ctx, candidateData, rejectedData) => Stack(children: [
             focusedCanvas,
+            // Floating zoom/layout/anchor controls
+            Positioned(
+              right: 10, bottom: 10,
+              child: _buildCanvasControls(scheme, s),
+            ),
             if (context.read<AppState>().config.debugMode)
               Positioned(
-                left: 8, bottom: 8, right: 8,
+                left: 8, bottom: 8, right: 80,
                 child: IgnorePointer(child: Text(
-                  GraphExecutor.describeGraph(PipelineGraph(nodes: _nodes, connections: _connections)),
+                  GraphExecutor.describeGraph(PipelineGraph(nodes: _nodes, connections: _connections, logicBlocks: _logicBlocks)),
                   style: TextStyle(fontSize: 10, color: scheme.onSurface.withAlpha(128), height: 1.4),
                 )),
               ),
@@ -1063,6 +1550,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
           behavior: HitTestBehavior.opaque,
           onTap: () {
             setState(() {
+              _previewedToolboxType = null;
+              _previewedLogicType = null;
+              _selectedLogicBlockId = null;
               if (_isCtrlPressed()) {
                 // Ctrl+click: toggle in/out of selection
                 if (_selectedNodeIds.contains(node.id)) {
@@ -1114,22 +1604,33 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
               boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(30), blurRadius: 6, offset: const Offset(0, 2))],
             ),
             padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                Icon(_stepIcon(node.type), size: 17, color: selected ? scheme.primary : scheme.onSurface),
-                const SizedBox(width: 5),
-                Expanded(child: Text(
-                  s.isZh ? node.label : node.labelEn,
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: scheme.onSurface),
-                  overflow: TextOverflow.ellipsis,
-                )),
-              ]),
-              if (node.mediaTag.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(left: 22, top: 2),
-                  child: Text(node.mediaTag, style: TextStyle(fontSize: 10, color: scheme.outline, fontWeight: FontWeight.w600)),
-                ),
-            ]),
+            child: _currentScale >= 0.6
+                ? Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Row(children: [
+                      Icon(_stepIcon(node.type), size: 17, color: selected ? scheme.primary : scheme.onSurface),
+                      const SizedBox(width: 5),
+                      Expanded(child: Text(
+                        s.isZh ? node.label : node.labelEn,
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: scheme.onSurface),
+                        overflow: TextOverflow.ellipsis,
+                      )),
+                    ]),
+                    if (node.mediaTag.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 22, top: 2),
+                        child: Text(node.mediaTag, style: TextStyle(fontSize: 10, color: scheme.outline, fontWeight: FontWeight.w600)),
+                      ),
+                  ])
+                : Center(child: Text(
+                    s.isZh ? node.label : node.labelEn,
+                    style: TextStyle(
+                      fontSize: _currentScale < 0.4 ? (13 / _currentScale * 0.5).clamp(13.0, 40.0) : (13 / _currentScale * 0.7).clamp(13.0, 28.0),
+                      fontWeight: FontWeight.w600,
+                      color: scheme.onSurface,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                  )),
           ),
         ),
       );
@@ -1156,9 +1657,113 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
 
   // ── 右侧面板 ──
 
+  Widget _buildLogicBlockOverlay(LogicBlock block, ColorScheme scheme, AppStrings s) {
+    final selected = _selectedLogicBlockId == block.id;
+    return SizedBox(
+      width: block.width,
+      height: block.height,
+      child: Stack(clipBehavior: Clip.none, children: [
+        // Dashed border — pass hits through
+        Positioned.fill(
+          child: IgnorePointer(
+            child: CustomPaint(
+              painter: _LogicBlockPainter(
+                color: selected ? Colors.red : Colors.red.withAlpha(120),
+                strokeWidth: selected ? 2.0 : 1.0,
+              ),
+            ),
+          ),
+        ),
+        // Label at top-left — clickable
+        Positioned(
+          left: 8, top: 4,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {
+              setState(() {
+                _selectedLogicBlockId = block.id;
+                _selectedNodeIds.clear();
+                _lastSelectedId = null;
+                _previewedToolboxType = null;
+              });
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.red.withAlpha(selected ? 50 : 30),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(block.type == LogicBlockType.loop ? Icons.repeat : Icons.shuffle, size: 12, color: Colors.red),
+                const SizedBox(width: 4),
+                Text(block.label(s.isZh), style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: Colors.red)),
+              ]),
+            ),
+          ),
+        ),
+        // Edit + Delete icons at top-right — clickable
+        Positioned(
+          right: 8, top: 4,
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            _logicIconBtn(Icons.edit_outlined, () {
+              setState(() {
+                _selectedLogicBlockId = block.id;
+                _selectedNodeIds.clear();
+                _lastSelectedId = null;
+                _previewedToolboxType = null;
+              });
+            }),
+            const SizedBox(width: 2),
+            _logicIconBtn(Icons.close, () {
+              setState(() {
+                _logicBlocks.removeWhere((b) => b.id == block.id);
+                if (_selectedLogicBlockId == block.id) _selectedLogicBlockId = null;
+              });
+            }),
+          ]),
+        ),
+        // Ports — visual only
+        Positioned(left: -6, top: block.height / 2 - 6, child: IgnorePointer(child: _logicPort(scheme))),
+        Positioned(right: -6, top: block.height / 2 - 6, child: IgnorePointer(child: _logicPort(scheme))),
+      ]),
+    );
+  }
+
+  Widget _logicIconBtn(IconData icon, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 20, height: 20,
+        decoration: BoxDecoration(
+          color: Colors.red.withAlpha(30),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Icon(icon, size: 12, color: Colors.red),
+      ),
+    );
+  }
+
+  Widget _logicPort(ColorScheme scheme) {
+    return Container(
+      width: 12, height: 12,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: Colors.red.withAlpha(180),
+        border: Border.all(color: scheme.surface, width: 2),
+      ),
+    );
+  }
+
 
   Widget _buildRightPanel(ColorScheme scheme, AppStrings s) {
     final node = _selectedNode;
+    final previewType = _previewedToolboxType;
+    final showPreview = node == null && previewType != null;
+
+    // Determine what to show in properties
+    final logicBlock = _selectedLogicBlockId != null
+        ? _logicBlocks.where((b) => b.id == _selectedLogicBlockId).firstOrNull
+        : null;
 
     Widget inner = Column(children: [
       // ── 元素工具栏 ──
@@ -1170,38 +1775,112 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
         onToggle: () => setState(() => _toolboxExpanded = !_toolboxExpanded),
         trailing: Text('${_allNodeTypes.length}', style: TextStyle(fontSize: 10, color: scheme.outline)),
       ),
-      if (_toolboxExpanded)
-        Padding(
+      AnimatedCrossFade(
+        firstChild: const SizedBox(width: double.infinity),
+        secondChild: Padding(
           padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-          child: Wrap(spacing: 4, runSpacing: 4, children: [
-            for (final t in _allNodeTypes)
-              _buildToolboxItem(t, scheme, s),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            // Start + Output
+            Wrap(spacing: 4, runSpacing: 4, children: [
+              _buildToolboxItem(PipelineStepType.start, scheme, s),
+              _buildToolboxItem(PipelineStepType.output, scheme, s),
+            ]),
+            const SizedBox(height: 8),
+            // Video
+            _categoryLabel(scheme, Icons.videocam_outlined, s.isZh ? '视频' : 'Video'),
+            const SizedBox(height: 4),
+            Wrap(spacing: 4, runSpacing: 4, children: [
+              for (final t in _videoTypes) _buildToolboxItem(t, scheme, s),
+            ]),
+            const SizedBox(height: 8),
+            // Audio
+            _categoryLabel(scheme, Icons.audiotrack_outlined, s.isZh ? '音频' : 'Audio'),
+            const SizedBox(height: 4),
+            Wrap(spacing: 4, runSpacing: 4, children: [
+              for (final t in _audioTypes) _buildToolboxItem(t, scheme, s),
+            ]),
+            const SizedBox(height: 8),
+            // Image
+            _categoryLabel(scheme, Icons.image_outlined, s.isZh ? '图片' : 'Image'),
+            const SizedBox(height: 4),
+            Wrap(spacing: 4, runSpacing: 4, children: [
+              for (final t in _imageTypes) _buildToolboxItem(t, scheme, s),
+            ]),
+            const SizedBox(height: 8),
+            // Logic
+            _categoryLabel(scheme, Icons.account_tree_outlined, s.isZh ? '逻辑' : 'Logic'),
+            const SizedBox(height: 4),
+            Wrap(spacing: 4, runSpacing: 4, children: [
+              _buildLogicToolboxItem(LogicBlockType.loop, scheme, s),
+              _buildLogicToolboxItem(LogicBlockType.selectiveLoop, scheme, s),
+            ]),
           ]),
         ),
+        crossFadeState: _toolboxExpanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+        duration: const Duration(milliseconds: 200),
+      ),
       Divider(height: 1, color: scheme.outlineVariant.withAlpha(40)),
 
       // ── 属性编辑器 ──
       _buildCollapsibleHeader(
         scheme: scheme,
-        icon: node != null ? _stepIcon(node.type) : Icons.tune_outlined,
-        title: node != null
-            ? (s.isZh ? node.label : node.labelEn)
-            : (s.isZh ? '属性' : 'Properties'),
+        icon: logicBlock != null
+            ? (logicBlock.type == LogicBlockType.loop ? Icons.repeat : Icons.shuffle)
+            : node != null ? _stepIcon(node.type) : (showPreview ? _stepIcon(previewType) : Icons.tune_outlined),
+        title: logicBlock != null
+            ? logicBlock.label(s.isZh)
+            : node != null
+                ? (s.isZh ? node.label : node.labelEn)
+                : showPreview
+                    ? (s.isZh ? PipelineNode(id: '', type: previewType).label : PipelineNode(id: '', type: previewType).labelEn)
+                    : (s.isZh ? '属性' : 'Properties'),
         expanded: _editorExpanded,
         onToggle: () => setState(() => _editorExpanded = !_editorExpanded),
       ),
       if (_editorExpanded)
-        Expanded(child: node != null
+        Expanded(child: logicBlock != null
+            ? SingleChildScrollView(
+                padding: const EdgeInsets.all(4),
+                child: LogicBlockEditor(
+                  key: ValueKey(logicBlock.id),
+                  block: logicBlock,
+                  childNodes: _nodes.where((n) => logicBlock.childNodeIds.contains(n.id)).toList(),
+                  onChanged: () => setState(() {}),
+                  isZh: s.isZh,
+                ),
+              )
+            : node != null
             ? SingleChildScrollView(
                 padding: const EdgeInsets.all(4),
                 child: _buildStepEditor(node, s.isZh),
               )
-            : Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.touch_app_outlined, size: 32, color: scheme.outline.withAlpha(80)),
-                const SizedBox(height: 8),
-                Text(s.isZh ? '选择节点开始编辑' : 'Select a node to edit',
-                    style: TextStyle(color: scheme.outline, fontSize: 12)),
-              ])),
+            : showPreview
+                ? SingleChildScrollView(
+                    padding: const EdgeInsets.all(4),
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        margin: const EdgeInsets.only(bottom: 8, left: 16, right: 16, top: 8),
+                        decoration: BoxDecoration(
+                          color: scheme.primaryContainer.withAlpha(60),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(children: [
+                          Icon(Icons.preview_outlined, size: 14, color: scheme.primary),
+                          const SizedBox(width: 6),
+                          Text(s.isZh ? '预览 · 双击添加到画布' : 'Preview · double-click to add',
+                              style: TextStyle(fontSize: 11, color: scheme.primary)),
+                        ]),
+                      ),
+                      _buildStepEditor(PipelineNode(id: '__preview__', type: previewType), s.isZh),
+                    ]),
+                  )
+                : Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.touch_app_outlined, size: 32, color: scheme.outline.withAlpha(80)),
+                    const SizedBox(height: 8),
+                    Text(s.isZh ? '选择节点开始编辑' : 'Select a node to edit',
+                        style: TextStyle(color: scheme.outline, fontSize: 12)),
+                  ])),
         )
       else
         const SizedBox.shrink(),
@@ -1223,7 +1902,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
           const SizedBox(width: 6),
           Expanded(child: Text(title, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.onSurface))),
           if (trailing != null) ...[trailing, const SizedBox(width: 6)],
-          Icon(expanded ? Icons.expand_less : Icons.expand_more, size: 16, color: scheme.outline),
+          AnimatedRotation(
+            turns: expanded ? 0.0 : 0.5,
+            duration: const Duration(milliseconds: 200),
+            child: Icon(Icons.expand_less, size: 16, color: scheme.outline),
+          ),
         ]),
       ),
     );
@@ -1249,19 +1932,77 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
       ),
       childWhenDragging: Opacity(opacity: 0.3, child: _toolboxChip(t, dummy, tag, scheme, s)),
       child: GestureDetector(
+        onTap: () {
+          setState(() {
+            _previewedLogicType = null;
+            if (_previewedToolboxType == t) {
+              _previewedToolboxType = null;
+            } else {
+              _previewedToolboxType = t;
+              _selectedNodeIds.clear();
+              _lastSelectedId = null;
+              _selectedLogicBlockId = null;
+            }
+          });
+        },
         onDoubleTap: () => _addNodeAtCenter(t),
-        child: _toolboxChip(t, dummy, tag, scheme, s),
+        child: _toolboxChip(t, dummy, tag, scheme, s, isSelected: _previewedToolboxType == t),
       ),
     );
   }
 
-  Widget _toolboxChip(PipelineStepType t, PipelineNode dummy, String tag, ColorScheme scheme, AppStrings s) {
-    return Container(
+  Widget _categoryLabel(ColorScheme scheme, IconData icon, String label) {
+    return Row(children: [
+      Icon(icon, size: 12, color: scheme.outline),
+      const SizedBox(width: 4),
+      Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: scheme.outline)),
+    ]);
+  }
+
+  Widget _buildLogicToolboxItem(LogicBlockType type, ColorScheme scheme, AppStrings s) {
+    final label = type == LogicBlockType.loop
+        ? (s.isZh ? '循环' : 'Loop')
+        : (s.isZh ? '选择性循环' : 'Selective Loop');
+    final icon = type == LogicBlockType.loop ? Icons.repeat : Icons.shuffle;
+    final isSelected = _previewedLogicType == type;
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _previewedLogicType = _previewedLogicType == type ? null : type;
+          _previewedToolboxType = null;
+          _selectedNodeIds.clear();
+          _lastSelectedId = null;
+          _selectedLogicBlockId = null;
+        });
+      },
+      onDoubleTap: () => _startLogicBoxSelect(type, s),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.red.withAlpha(60) : Colors.red.withAlpha(30),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: isSelected ? Colors.red : Colors.red.withAlpha(80), width: isSelected ? 2 : 1),
+          boxShadow: isSelected ? [BoxShadow(color: Colors.red.withAlpha(40), blurRadius: 6)] : null,
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 14, color: Colors.red),
+          const SizedBox(width: 4),
+          Text(label, style: TextStyle(fontSize: 12, color: scheme.onSurface)),
+        ]),
+      ),
+    );
+  }
+
+  Widget _toolboxChip(PipelineStepType t, PipelineNode dummy, String tag, ColorScheme scheme, AppStrings s, {bool isSelected = false}) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 150),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
-        color: _nodeColor(t, scheme).withAlpha(180),
+        color: isSelected ? scheme.primary.withAlpha(40) : _nodeColor(t, scheme).withAlpha(180),
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
+        border: Border.all(color: isSelected ? scheme.primary : scheme.outlineVariant.withAlpha(60), width: isSelected ? 2 : 1),
+        boxShadow: isSelected ? [BoxShadow(color: scheme.primary.withAlpha(40), blurRadius: 6)] : null,
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         Icon(_stepIcon(t), size: 14, color: scheme.onSurface),
@@ -1272,6 +2013,69 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> {
           Text(tag, style: TextStyle(fontSize: 9, color: scheme.outline, fontWeight: FontWeight.w600)),
         ],
       ]),
+    );
+  }
+
+  // ── 画布浮动控件 ──
+
+  Widget _buildCanvasControls(ColorScheme scheme, AppStrings s) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+      decoration: BoxDecoration(
+        color: scheme.surface.withAlpha(200),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
+        boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(20), blurRadius: 8, offset: const Offset(0, 2))],
+      ),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        _controlBtn(Icons.zoom_in, s.isZh ? '放大' : 'Zoom in', scheme, () => _zoomTo(_currentScale + 0.15)),
+        const SizedBox(height: 2),
+        SizedBox(
+          height: 100,
+          child: RotatedBox(
+            quarterTurns: 3,
+            child: SliderTheme(
+              data: SliderThemeData(
+                trackHeight: 3,
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+                activeTrackColor: scheme.primary,
+                inactiveTrackColor: scheme.outlineVariant.withAlpha(80),
+                thumbColor: scheme.primary,
+              ),
+              child: Slider(
+                value: _currentScale.clamp(0.3, 2.0),
+                min: 0.3,
+                max: 2.0,
+                onChanged: (v) => _zoomTo(v),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 2),
+        _controlBtn(Icons.zoom_out, s.isZh ? '缩小' : 'Zoom out', scheme, () => _zoomTo(_currentScale - 0.15)),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
+        ),
+        _controlBtn(Icons.auto_fix_high, s.isZh ? '整理' : 'Arrange', scheme, _autoLayout),
+        const SizedBox(height: 2),
+        _controlBtn(Icons.my_location, s.isZh ? '定位源' : 'Source', scheme, () => _goToSource(s)),
+      ]),
+    );
+  }
+
+  Widget _controlBtn(IconData icon, String tooltip, ColorScheme scheme, VoidCallback onTap) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(6),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(6),
+          child: Icon(icon, size: 18, color: scheme.onSurfaceVariant),
+        ),
+      ),
     );
   }
 
@@ -1392,6 +2196,42 @@ class _TempLinePainter extends CustomPainter {
 
 // ── 框选绘制 ──
 
+class _LogicBlockPainter extends CustomPainter {
+  final Color color;
+  final double strokeWidth;
+  _LogicBlockPainter({required this.color, this.strokeWidth = 1.0});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = strokeWidth
+      ..style = PaintingStyle.stroke;
+
+    final rect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(0, 0, size.width, size.height),
+      const Radius.circular(8),
+    );
+
+    final path = Path()..addRRect(rect);
+    const dashLen = 8.0;
+    const gapLen = 4.0;
+
+    for (final metric in path.computeMetrics()) {
+      double drawn = 0;
+      while (drawn < metric.length) {
+        final start = drawn;
+        final end = (drawn + dashLen).clamp(0, metric.length);
+        canvas.drawPath(metric.extractPath(start, end.toDouble()), paint);
+        drawn += dashLen + gapLen;
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_LogicBlockPainter old) => old.color != color || old.strokeWidth != strokeWidth;
+}
+
 class _BoxSelectPainter extends CustomPainter {
   final Rect rect;
   final Color color;
@@ -1439,4 +2279,41 @@ class _BoxSelectPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_BoxSelectPainter old) => old.rect != rect || old.color != color;
+}
+
+class _EditorCsdBtn extends StatefulWidget {
+  final IconData icon;
+  final Color color;
+  final Color? hoverBg;
+  final VoidCallback onTap;
+  const _EditorCsdBtn({required this.icon, required this.color, this.hoverBg, required this.onTap});
+  @override
+  State<_EditorCsdBtn> createState() => _EditorCsdBtnState();
+}
+
+class _EditorCsdBtnState extends State<_EditorCsdBtn> {
+  bool _hovering = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovering = true),
+      onExit: (_) => setState(() => _hovering = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: Container(
+          width: 46,
+          height: 36,
+          color: _hovering
+              ? (widget.hoverBg ?? widget.color.withAlpha(30))
+              : Colors.transparent,
+          child: Icon(
+            widget.icon,
+            size: 18,
+            color: _hovering && widget.hoverBg != null ? Colors.white : widget.color,
+          ),
+        ),
+      ),
+    );
+  }
 }

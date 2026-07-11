@@ -4,7 +4,10 @@ import '../models/models.dart';
 class ExecutionStep {
   final String action;
   final List<PipelineNode> nodes;
-  ExecutionStep(this.action, this.nodes);
+  int loopCount;
+  String? loopMode;
+  String? innerAction;
+  ExecutionStep(this.action, this.nodes, {this.loopCount = 1, this.loopMode, this.innerAction});
 }
 
 class ExecutionPlan {
@@ -94,6 +97,33 @@ class GraphExecutor {
 
     if (errors.isNotEmpty) return errors;
 
+    // Logic block validation
+    for (final block in graph.logicBlocks) {
+      for (final childId in block.childNodeIds) {
+        if (!graph.nodes.any((n) => n.id == childId)) {
+          errors.add('逻辑块引用了不存在的节点');
+        }
+      }
+      // Check node not in multiple blocks
+      for (final otherBlock in graph.logicBlocks) {
+        if (otherBlock.id == block.id) continue;
+        for (final childId in block.childNodeIds) {
+          if (otherBlock.childNodeIds.contains(childId)) {
+            errors.add('节点不能同时属于多个逻辑块');
+          }
+        }
+      }
+      // Check no start/output nodes inside blocks
+      for (final childId in block.childNodeIds) {
+        final node = graph.nodes.firstWhere((n) => n.id == childId, orElse: () => PipelineNode(id: '', type: PipelineStepType.start));
+        if (node.type == PipelineStepType.start || node.type == PipelineStepType.output) {
+          errors.add('逻辑块内不能包含源文件或输出节点');
+        }
+      }
+    }
+
+    if (errors.isNotEmpty) return errors;
+
     for (final start in startNodes) {
       final plan = _buildPlan(graph, start);
       if (plan == null) {
@@ -107,7 +137,11 @@ class GraphExecutor {
         final hasMergeable = types.contains(PipelineStepType.avProcess) || types.contains(PipelineStepType.subtitle) || types.contains(PipelineStepType.speed);
         final hasSequential = types.contains(PipelineStepType.clip) || types.contains(PipelineStepType.frame)
             || types.contains(PipelineStepType.imageConvert) || types.contains(PipelineStepType.audioConvert)
-            || types.contains(PipelineStepType.extractAudio) || types.contains(PipelineStepType.imageCrop);
+            || types.contains(PipelineStepType.extractAudio) || types.contains(PipelineStepType.imageCrop)
+            || types.contains(PipelineStepType.imageRotate) || types.contains(PipelineStepType.imageScale)
+            || types.contains(PipelineStepType.imageBrightness) || types.contains(PipelineStepType.imageNoise)
+            || types.contains(PipelineStepType.imageSharpen) || types.contains(PipelineStepType.imageDenoise)
+            || types.contains(PipelineStepType.imageChannelExtract);
         if (hasMergeable && hasSequential) {
           final names = step.nodes.map((n) => n.label).join(', ');
           errors.add('同层级节点冲突: $names (合并节点不能与独立节点在同一层级)');
@@ -129,6 +163,27 @@ class GraphExecutor {
         }
         if (types.contains(PipelineStepType.extractAudio) && types.length > 1) {
           errors.add('提取音频 不能与其他操作并行');
+        }
+        if (types.contains(PipelineStepType.imageRotate) && types.length > 1) {
+          errors.add('图片旋转 不能与其他操作并行');
+        }
+        if (types.contains(PipelineStepType.imageScale) && types.length > 1) {
+          errors.add('图片缩放 不能与其他操作并行');
+        }
+        if (types.contains(PipelineStepType.imageBrightness) && types.length > 1) {
+          errors.add('图片亮度 不能与其他操作并行');
+        }
+        if (types.contains(PipelineStepType.imageNoise) && types.length > 1) {
+          errors.add('图片噪声 不能与其他操作并行');
+        }
+        if (types.contains(PipelineStepType.imageSharpen) && types.length > 1) {
+          errors.add('图片锐化 不能与其他操作并行');
+        }
+        if (types.contains(PipelineStepType.imageDenoise) && types.length > 1) {
+          errors.add('图片降噪 不能与其他操作并行');
+        }
+        if (types.contains(PipelineStepType.imageChannelExtract) && types.length > 1) {
+          errors.add('通道提取 不能与其他操作并行');
         }
 
         if (types.contains(PipelineStepType.clip)) {
@@ -214,6 +269,13 @@ class GraphExecutor {
             PipelineStepType.audioConvert => 'audio_convert',
             PipelineStepType.extractAudio => 'extract_audio',
             PipelineStepType.imageCrop => 'image_crop',
+            PipelineStepType.imageRotate => 'image_rotate',
+            PipelineStepType.imageScale => 'image_scale',
+            PipelineStepType.imageBrightness => 'image_brightness',
+            PipelineStepType.imageNoise => 'image_noise',
+            PipelineStepType.imageSharpen => 'image_sharpen',
+            PipelineStepType.imageDenoise => 'image_denoise',
+            PipelineStepType.imageChannelExtract => 'image_channel_extract',
             _ => 'single',
           };
           steps.add(ExecutionStep(action, [n]));
@@ -222,6 +284,18 @@ class GraphExecutor {
     }
 
     if (outputNode == null) return null;
+
+    // Tag steps that belong to logic blocks with loop metadata
+    for (final step in steps) {
+      final firstNode = step.nodes.first;
+      final block = graph.logicBlocks.where((b) => b.childNodeIds.contains(firstNode.id)).firstOrNull;
+      if (block != null) {
+        step.loopCount = block.params['count'] as int? ?? 1;
+        step.loopMode = block.params['mode'] as String? ?? 'all';
+        step.innerAction = step.action;
+      }
+    }
+
     return ExecutionPlan(startNode: start, steps: steps, outputNode: outputNode);
   }
 
@@ -242,14 +316,18 @@ class GraphExecutor {
       ExecutionPlan plan, String inputPath, String outputPath) {
     final calls = <BackendCall>[];
     final tempFiles = <String>[];
+    final stepCallRanges = <(int, int, ExecutionStep)>[];
 
     var currentInput = inputPath;
 
     for (var i = 0; i < plan.steps.length; i++) {
       final step = plan.steps[i];
       final isLast = i == plan.steps.length - 1;
-      final currentOutput = isLast ? outputPath : _tempPath(inputPath, i);
+      final inputExt = currentInput.split('.').last;
+      final currentOutput = isLast ? outputPath : _tempPath(inputPath, i, inputExt);
       if (!isLast) tempFiles.add(currentOutput);
+
+      final callsBeforeStep = calls.length;
 
       switch (step.action) {
         case 'merged':
@@ -379,12 +457,13 @@ class GraphExecutor {
           final quality = (node.params['quality'] as num?)?.toInt() ?? 95;
           final outPath = isLast
               ? outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.$outFmt')
-              : _tempPath(inputPath, i).replaceAll(RegExp(r'\.mp4$'), '.$outFmt');
+              : _tempPath(inputPath, i, outFmt);
           if (!isLast) tempFiles.add(outPath);
           calls.add(BackendCall(
             action: 'image_convert',
             params: {'input': currentInput, 'output': outPath, 'quality': quality},
           ));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
           currentInput = outPath;
           continue;
 
@@ -398,7 +477,7 @@ class GraphExecutor {
           final ext = currentInput.split('.').last;
           final outPath = isLast
               ? outputPath
-              : _tempPath(inputPath, i).replaceAll(RegExp(r'\.mp4$'), '.$ext');
+              : _tempPath(inputPath, i, ext);
           if (!isLast) tempFiles.add(outPath);
           calls.add(BackendCall(
             action: 'image_crop',
@@ -411,6 +490,168 @@ class GraphExecutor {
               'crop_h': cropH,
             },
           ));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
+        case 'image_rotate':
+          final node = step.nodes.first;
+          final p = node.params;
+          final ext = currentInput.split('.').last;
+          final outPath = isLast
+              ? outputPath
+              : _tempPath(inputPath, i, ext);
+          if (!isLast) tempFiles.add(outPath);
+          calls.add(BackendCall(
+            action: 'image_rotate',
+            params: {
+              'input': currentInput,
+              'output': outPath,
+              if (p['angle'] != null) 'angle': p['angle'],
+              if (p['rotate_mode'] != null) 'rotate_mode': p['rotate_mode'],
+              if (p['random_min'] != null) 'random_min': p['random_min'],
+              if (p['random_max'] != null) 'random_max': p['random_max'],
+            },
+          ));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
+        case 'image_scale':
+          final node = step.nodes.first;
+          final p = node.params;
+          final ext = currentInput.split('.').last;
+          final outPath = isLast
+              ? outputPath
+              : _tempPath(inputPath, i, ext);
+          if (!isLast) tempFiles.add(outPath);
+          calls.add(BackendCall(
+            action: 'image_scale',
+            params: {
+              'input': currentInput,
+              'output': outPath,
+              if (p['scale_factor'] != null) 'scale_factor': p['scale_factor'],
+              if (p['scale_mode'] != null) 'scale_mode': p['scale_mode'],
+              if (p['random_min'] != null) 'random_min': p['random_min'],
+              if (p['random_max'] != null) 'random_max': p['random_max'],
+            },
+          ));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
+        case 'image_brightness':
+          final node = step.nodes.first;
+          final p = node.params;
+          final ext = currentInput.split('.').last;
+          final outPath = isLast
+              ? outputPath
+              : _tempPath(inputPath, i, ext);
+          if (!isLast) tempFiles.add(outPath);
+          calls.add(BackendCall(
+            action: 'image_brightness',
+            params: {
+              'input': currentInput,
+              'output': outPath,
+              if (p['brightness'] != null) 'brightness': p['brightness'],
+              if (p['brightness_mode'] != null) 'brightness_mode': p['brightness_mode'],
+              if (p['range_min'] != null) 'range_min': p['range_min'],
+              if (p['range_max'] != null) 'range_max': p['range_max'],
+            },
+          ));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
+        case 'image_noise':
+          final node = step.nodes.first;
+          final p = node.params;
+          final ext = currentInput.split('.').last;
+          final outPath = isLast
+              ? outputPath
+              : _tempPath(inputPath, i, ext);
+          if (!isLast) tempFiles.add(outPath);
+          calls.add(BackendCall(
+            action: 'image_noise',
+            params: {
+              'input': currentInput,
+              'output': outPath,
+              if (p['noise_strength'] != null) 'noise_strength': p['noise_strength'],
+              if (p['noise_type'] != null) 'noise_type': p['noise_type'],
+              if (p['noise_mode'] != null) 'noise_mode': p['noise_mode'],
+              if (p['random_min'] != null) 'random_min': p['random_min'],
+              if (p['random_max'] != null) 'random_max': p['random_max'],
+            },
+          ));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
+        case 'image_sharpen':
+          final node = step.nodes.first;
+          final p = node.params;
+          final ext = currentInput.split('.').last;
+          final outPath = isLast
+              ? outputPath
+              : _tempPath(inputPath, i, ext);
+          if (!isLast) tempFiles.add(outPath);
+          calls.add(BackendCall(
+            action: 'image_sharpen',
+            params: {
+              'input': currentInput,
+              'output': outPath,
+              if (p['sharpen_strength'] != null) 'sharpen_strength': p['sharpen_strength'],
+              if (p['sharpen_mode'] != null) 'sharpen_mode': p['sharpen_mode'],
+              if (p['random_min'] != null) 'random_min': p['random_min'],
+              if (p['random_max'] != null) 'random_max': p['random_max'],
+            },
+          ));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
+        case 'image_denoise':
+          final node = step.nodes.first;
+          final p = node.params;
+          final ext = currentInput.split('.').last;
+          final outPath = isLast
+              ? outputPath
+              : _tempPath(inputPath, i, ext);
+          if (!isLast) tempFiles.add(outPath);
+          calls.add(BackendCall(
+            action: 'image_denoise',
+            params: {
+              'input': currentInput,
+              'output': outPath,
+              if (p['denoise_method'] != null) 'denoise_method': p['denoise_method'],
+              if (p['denoise_strength'] != null) 'denoise_strength': p['denoise_strength'],
+              if (p['denoise_mode'] != null) 'denoise_mode': p['denoise_mode'],
+              if (p['random_min'] != null) 'random_min': p['random_min'],
+              if (p['random_max'] != null) 'random_max': p['random_max'],
+            },
+          ));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
+        case 'image_channel_extract':
+          final node = step.nodes.first;
+          final p = node.params;
+          final ext = currentInput.split('.').last;
+          final outPath = isLast
+              ? outputPath
+              : _tempPath(inputPath, i, ext);
+          if (!isLast) tempFiles.add(outPath);
+          calls.add(BackendCall(
+            action: 'image_channel_extract',
+            params: {
+              'input': currentInput,
+              'output': outPath,
+              if (p['channel'] != null) 'channel': p['channel'],
+              if (p['extract_method'] != null) 'extract_method': p['extract_method'],
+            },
+          ));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
           currentInput = outPath;
           continue;
 
@@ -423,7 +664,7 @@ class GraphExecutor {
           final bitrate = (p['audio_bitrate'] as num?)?.toInt() ?? 128;
           final outPath = isLast
               ? outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.$outFmt')
-              : _tempPath(inputPath, i).replaceAll(RegExp(r'\.mp4$'), '.$outFmt');
+              : _tempPath(inputPath, i, outFmt);
           if (!isLast) tempFiles.add(outPath);
           final opts = <String, dynamic>{
             'video_codec': 'none',
@@ -437,6 +678,7 @@ class GraphExecutor {
             action: 'transcode',
             params: {'input': currentInput, 'output': outPath, 'options': opts},
           ));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
           currentInput = outPath;
           continue;
 
@@ -449,7 +691,7 @@ class GraphExecutor {
           final sr = p['sample_rate'] as String? ?? 'keep';
           final outPath = isLast
               ? outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.$outFmt')
-              : _tempPath(inputPath, i).replaceAll(RegExp(r'\.mp4$'), '.$outFmt');
+              : _tempPath(inputPath, i, outFmt);
           if (!isLast) tempFiles.add(outPath);
           final opts = <String, dynamic>{
             'video_codec': 'none',
@@ -467,10 +709,25 @@ class GraphExecutor {
             action: 'transcode',
             params: {'input': currentInput, 'output': outPath, 'options': opts},
           ));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
           currentInput = outPath;
           continue;
       }
+
+      // Record the range of calls generated by this step
+      stepCallRanges.add((callsBeforeStep, calls.length, step));
+
       currentInput = currentOutput;
+    }
+
+    // Tag calls generated by steps with loop metadata
+    for (final (start, end, step) in stepCallRanges) {
+      if (step.loopCount > 1) {
+        for (var ci = start; ci < end; ci++) {
+          calls[ci].loopCount = step.loopCount;
+          calls[ci].loopMode = step.loopMode;
+        }
+      }
     }
 
     for (final tf in tempFiles) {
@@ -583,6 +840,27 @@ class GraphExecutor {
               break;
             case PipelineStepType.extractAudio:
               descs.add('提取音频(${n.params['audio_codec'] ?? 'copy'}→${n.params['output_format'] ?? 'm4a'})');
+              break;
+            case PipelineStepType.imageRotate:
+              descs.add('图片旋转(${n.params['angle'] ?? '0'}°)');
+              break;
+            case PipelineStepType.imageScale:
+              descs.add('图片缩放(${n.params['scale_factor'] ?? '1.0'}x)');
+              break;
+            case PipelineStepType.imageBrightness:
+              descs.add('图片亮度(${n.params['brightness'] ?? '0'})');
+              break;
+            case PipelineStepType.imageNoise:
+              descs.add('图片噪声(${n.params['noise_strength'] ?? '0'})');
+              break;
+            case PipelineStepType.imageSharpen:
+              descs.add('图片锐化(${n.params['sharpen_strength'] ?? '0'})');
+              break;
+            case PipelineStepType.imageDenoise:
+              descs.add('图片降噪(${n.params['denoise_method'] ?? 'default'})');
+              break;
+            case PipelineStepType.imageChannelExtract:
+              descs.add('通道提取(${n.params['channel'] ?? 'R'})');
               break;
             default: break;
           }
@@ -706,11 +984,10 @@ class GraphExecutor {
     };
   }
 
-  static String _tempPath(String inputPath, int step) {
+  static String _tempPath(String inputPath, int step, [String ext = 'mp4']) {
     final dir = Directory.systemTemp.path;
     final base = inputPath.split('\\').last.split('/').last.replaceAll(RegExp(r'\.[^.]+$'), '');
-    // 使用完整路径的哈希避免不同目录下同名文件冲突
     final pathHash = inputPath.hashCode.toRadixString(16).substring(0, 8);
-    return '$dir${Platform.pathSeparator}ffmpegpp_${pathHash}_${base}_step$step.mp4';
+    return '$dir${Platform.pathSeparator}ffmpegpp_${pathHash}_${base}_step$step.$ext';
   }
 }

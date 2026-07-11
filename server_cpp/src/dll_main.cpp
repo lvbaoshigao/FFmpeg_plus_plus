@@ -1,4 +1,6 @@
+#ifdef _WIN32
 #include <windows.h>
+#endif
 #include <string>
 #include <thread>
 #include <atomic>
@@ -14,7 +16,7 @@
 using json = nlohmann::json;
 using namespace ffmpegpp;
 
-static const char* SERVER_VERSION = "3.0.0";
+static const char* SERVER_VERSION = "4.5.0";
 
 static std::thread g_workerThread;
 static std::atomic<bool> g_running{false};
@@ -130,7 +132,7 @@ FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
 FFMPEGPP_API char* ffmpegpp_poll() {
     std::string line = popOutput();
     if (line.empty()) return nullptr;
-    return _strdup(line.c_str());
+    return strdup(line.c_str());
 }
 
 FFMPEGPP_API void ffmpegpp_free(char* ptr) {
@@ -156,6 +158,7 @@ FFMPEGPP_API void ffmpegpp_shutdown() {
 
 } // extern "C"
 
+#ifdef _WIN32
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {
     (void)hModule;
     (void)lpReserved;
@@ -178,3 +181,15 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
     }
     return TRUE;
 }
+#else
+__attribute__((destructor))
+static void onUnload() {
+    if (g_running.load()) {
+        g_shutdownFlag.store(true);
+        g_cancelFlag.store(true);
+        wakeInput();
+        g_workerThread.detach();
+        g_running.store(false);
+    }
+}
+#endif

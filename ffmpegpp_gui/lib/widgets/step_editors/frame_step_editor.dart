@@ -153,7 +153,7 @@ class _FrameStepEditorState extends State<FrameStepEditor> {
         const SizedBox(height: 12),
         Row(children: [
           SizedBox(width: 120, child: DropdownButtonFormField<String>(
-            initialValue: p['output_format'] as String? ?? 'png', isExpanded: true,
+            value: p['output_format'] as String? ?? 'png', isExpanded: true,
             decoration: _dec(zh ? '格式' : 'Format'),
             dropdownColor: cs.surface, style: TextStyle(fontSize: 13, color: cs.onSurface),
             items: _formats.map((f) => DropdownMenuItem(value: f, child: Text(f.toUpperCase(), style: TextStyle(fontSize: 13, color: cs.onSurface)))).toList(),

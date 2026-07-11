@@ -9,7 +9,13 @@
 #include "ffmpeg_features.h"
 #include "constants.h"
 
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <sys/stat.h>
+#include <climits>
+#include <unistd.h>
+#endif
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -28,6 +34,7 @@ namespace ffmpegpp {
 static FILE* g_logFile = nullptr;
 
 void slog_init() {
+#ifdef _WIN32
     char logPath[MAX_PATH];
     const char* appdata = getenv("APPDATA");
     if (appdata) {
@@ -41,6 +48,25 @@ void slog_init() {
         snprintf(logPath, MAX_PATH, "%sFFmpeg++_server_debug.log", tempDir);
     }
     g_logFile = fopen(logPath, "w");
+#else
+    char logPath[PATH_MAX];
+    const char* dataHome = getenv("XDG_DATA_HOME");
+    const char* home = getenv("HOME");
+    if (dataHome && dataHome[0]) {
+        snprintf(logPath, sizeof(logPath), "%s/FFmpeg++/server_debug.log", dataHome);
+        char dirPath[PATH_MAX];
+        snprintf(dirPath, sizeof(dirPath), "%s/FFmpeg++", dataHome);
+        mkdir(dirPath, 0755);
+    } else if (home && home[0]) {
+        char dirPath[PATH_MAX];
+        snprintf(dirPath, sizeof(dirPath), "%s/.local/share/FFmpeg++", home);
+        mkdir(dirPath, 0755);
+        snprintf(logPath, sizeof(logPath), "%s/server_debug.log", dirPath);
+    } else {
+        snprintf(logPath, sizeof(logPath), "/tmp/FFmpeg++_server_debug.log");
+    }
+    g_logFile = fopen(logPath, "w");
+#endif
 }
 
 void slog(const char* fmt, ...) {

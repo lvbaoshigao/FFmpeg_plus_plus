@@ -18,8 +18,13 @@ class FontPicker extends StatelessWidget {
     this.language = 'zh',
   });
 
-  // Windows 常见已安装字体（显示名, 字体族名）— 作为基础列表
-  static const _builtinFonts = [
+  static List<(String, String)> get _builtinFonts => Platform.isWindows
+      ? _windowsFonts
+      : Platform.isMacOS
+          ? _macFonts
+          : _linuxFonts;
+
+  static const _windowsFonts = <(String, String)>[
     ('微软雅黑', 'Microsoft YaHei'), ('黑体', 'SimHei'), ('宋体', 'SimSun'),
     ('楷体', 'KaiTi'), ('仿宋', 'FangSong'), ('微軟正黑體', 'Microsoft JhengHei'),
     ('新細明體', 'MingLiU'), ('新宋体', 'NSimSun'), ('標楷體', 'DFKai-SB'),
@@ -52,6 +57,40 @@ class FontPicker extends StatelessWidget {
     ('JetBrains Mono', 'JetBrains Mono'),
   ];
 
+  static const _linuxFonts = <(String, String)>[
+    ('Noto Sans CJK SC', 'Noto Sans CJK SC'), ('Noto Serif CJK SC', 'Noto Serif CJK SC'),
+    ('Noto Sans CJK TC', 'Noto Sans CJK TC'), ('Noto Serif CJK TC', 'Noto Serif CJK TC'),
+    ('思源黑体', 'Source Han Sans CN'), ('思源宋体', 'Source Han Serif CN'),
+    ('文泉驿微米黑', 'WenQuanYi Micro Hei'), ('文泉驿等宽微米黑', 'WenQuanYi Micro Hei Mono'),
+    ('文泉驿正黑', 'WenQuanYi Zen Hei'),
+    ('DejaVu Sans', 'DejaVu Sans'), ('DejaVu Serif', 'DejaVu Serif'), ('DejaVu Sans Mono', 'DejaVu Sans Mono'),
+    ('Liberation Sans', 'Liberation Sans'), ('Liberation Serif', 'Liberation Serif'), ('Liberation Mono', 'Liberation Mono'),
+    ('Noto Sans', 'Noto Sans'), ('Noto Serif', 'Noto Serif'), ('Noto Mono', 'Noto Mono'),
+    ('Ubuntu', 'Ubuntu'), ('Ubuntu Mono', 'Ubuntu Mono'),
+    ('Roboto', 'Roboto'), ('Open Sans', 'Open Sans'),
+    ('Lato', 'Lato'), ('Montserrat', 'Montserrat'),
+    ('Fira Code', 'Fira Code'), ('JetBrains Mono', 'JetBrains Mono'),
+    ('Droid Sans Fallback', 'Droid Sans Fallback'),
+    ('Arial', 'Arial'), ('Times New Roman', 'Times New Roman'), ('Courier New', 'Courier New'),
+  ];
+
+  static const _macFonts = <(String, String)>[
+    ('苹方-简', 'PingFang SC'), ('苹方-繁', 'PingFang TC'), ('苹方-港', 'PingFang HK'),
+    ('华文黑体', 'STHeiti'), ('华文楷体', 'STKaiti'), ('华文宋体', 'STSong'),
+    ('华文仿宋', 'STFangsong'), ('冬青黑体', 'Hiragino Sans GB'),
+    ('Noto Sans CJK SC', 'Noto Sans CJK SC'), ('Noto Serif CJK SC', 'Noto Serif CJK SC'),
+    ('思源黑体', 'Source Han Sans CN'), ('思源宋体', 'Source Han Serif CN'),
+    ('SF Pro', 'SF Pro'), ('SF Mono', 'SF Mono'),
+    ('Helvetica Neue', 'Helvetica Neue'), ('Helvetica', 'Helvetica'),
+    ('Arial', 'Arial'), ('Georgia', 'Georgia'),
+    ('Menlo', 'Menlo'), ('Monaco', 'Monaco'),
+    ('Avenir', 'Avenir'), ('Avenir Next', 'Avenir Next'),
+    ('Futura', 'Futura'), ('Gill Sans', 'Gill Sans'),
+    ('Times New Roman', 'Times New Roman'), ('Courier New', 'Courier New'),
+    ('Roboto', 'Roboto'), ('Open Sans', 'Open Sans'),
+    ('Fira Code', 'Fira Code'), ('JetBrains Mono', 'JetBrains Mono'),
+  ];
+
   static List<(String, String)>? _cachedFonts;
 
   static Future<List<(String, String)>> _getAllFonts() async {
@@ -60,35 +99,63 @@ class FontPicker extends StatelessWidget {
     final builtinFamilies = <String>{for (final (_, f) in _builtinFonts) f};
     final merged = <(String, String)>[..._builtinFonts];
 
-    try {
-      final result = await Process.run('reg', [
-        'query',
-        r'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts',
-      ]);
-      if (result.exitCode == 0) {
-        final lines = result.stdout.toString().split('\n');
-        for (final line in lines) {
-          final trimmed = line.trim();
-          if (trimmed.isEmpty || trimmed.startsWith('HKEY_')) continue;
-          // Format: "FontName (TrueType)    REG_SZ    filename.ttf"
-          final regMatch = RegExp(r'^(.+?)\s+REG_SZ\s+').firstMatch(trimmed);
-          if (regMatch == null) continue;
-          var displayName = regMatch.group(1)!.trim();
-          // Strip type suffixes
-          displayName = displayName
-              .replaceAll(RegExp(r'\s*\(TrueType\)', caseSensitive: false), '')
-              .replaceAll(RegExp(r'\s*\(OpenType\)', caseSensitive: false), '')
-              .replaceAll(RegExp(r'\s*\(TrueType Collection\)', caseSensitive: false), '')
-              .trim();
-          if (displayName.isEmpty) continue;
-          // Use display name as family name (registry doesn't give family names directly)
-          if (!builtinFamilies.contains(displayName)) {
-            builtinFamilies.add(displayName);
-            merged.add((displayName, displayName));
+    if (Platform.isWindows) {
+      try {
+        final result = await Process.run('reg', [
+          'query',
+          r'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts',
+        ]);
+        if (result.exitCode == 0) {
+          final lines = result.stdout.toString().split('\n');
+          for (final line in lines) {
+            final trimmed = line.trim();
+            if (trimmed.isEmpty || trimmed.startsWith('HKEY_')) continue;
+            final regMatch = RegExp(r'^(.+?)\s+REG_SZ\s+').firstMatch(trimmed);
+            if (regMatch == null) continue;
+            var displayName = regMatch.group(1)!.trim();
+            displayName = displayName
+                .replaceAll(RegExp(r'\s*\(TrueType\)', caseSensitive: false), '')
+                .replaceAll(RegExp(r'\s*\(OpenType\)', caseSensitive: false), '')
+                .replaceAll(RegExp(r'\s*\(TrueType Collection\)', caseSensitive: false), '')
+                .trim();
+            if (displayName.isEmpty) continue;
+            if (!builtinFamilies.contains(displayName)) {
+              builtinFamilies.add(displayName);
+              merged.add((displayName, displayName));
+            }
           }
         }
-      }
-    } catch (_) {}
+      } catch (_) {}
+    } else {
+      // Linux / macOS: 使用 fc-list 枚举字体
+      try {
+        final result = await Process.run('fc-list', [':lang=zh', 'family']);
+        if (result.exitCode == 0) {
+          for (final line in result.stdout.toString().split('\n')) {
+            final families = line.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty);
+            for (final family in families) {
+              if (!builtinFamilies.contains(family)) {
+                builtinFamilies.add(family);
+                merged.add((family, family));
+              }
+            }
+          }
+        }
+        // 也获取非中文字体
+        final result2 = await Process.run('fc-list', ['family']);
+        if (result2.exitCode == 0) {
+          for (final line in result2.stdout.toString().split('\n')) {
+            final families = line.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty);
+            for (final family in families) {
+              if (!builtinFamilies.contains(family)) {
+                builtinFamilies.add(family);
+                merged.add((family, family));
+              }
+            }
+          }
+        }
+      } catch (_) {}
+    }
 
     merged.sort((a, b) => a.$1.toLowerCase().compareTo(b.$1.toLowerCase()));
     _cachedFonts = merged;

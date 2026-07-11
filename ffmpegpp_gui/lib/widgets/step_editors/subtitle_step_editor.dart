@@ -69,7 +69,7 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> {
     final current = _hexToColor(p[key] as String? ?? '#FFFFFF');
     showDialog(
       context: context,
-      builder: (ctx) => _ColorPickerDialog(initialColor: current, onPicked: (color) {
+      builder: (ctx) => _ColorPickerDialog(initialColor: current, isZh: widget.isZh, onPicked: (color) {
         _update(key, _colorToHex(color));
       }),
     );
@@ -217,7 +217,7 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> {
       List<String>? itemLabels, required ColorScheme cs, required ValueChanged<String> onChanged}) {
     final safe = items.contains(value) ? value : items.first;
     return DropdownButtonFormField<String>(
-      initialValue: safe, isExpanded: true, decoration: _dec(label),
+      value: safe, isExpanded: true, decoration: _dec(label),
       dropdownColor: cs.surface, style: TextStyle(fontSize: 13, color: cs.onSurface),
       items: List.generate(items.length, (i) => DropdownMenuItem(
         value: items[i], child: Text(itemLabels != null ? itemLabels[i] : items[i], style: TextStyle(fontSize: 13, color: cs.onSurface)),
@@ -232,7 +232,8 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> {
 class _ColorPickerDialog extends StatefulWidget {
   final Color initialColor;
   final ValueChanged<Color> onPicked;
-  const _ColorPickerDialog({required this.initialColor, required this.onPicked});
+  final bool isZh;
+  const _ColorPickerDialog({required this.initialColor, required this.onPicked, this.isZh = true});
   @override
   State<_ColorPickerDialog> createState() => _ColorPickerDialogState();
 }
@@ -261,9 +262,10 @@ class _ColorPickerDialogState extends State<_ColorPickerDialog> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final zh = widget.isZh;
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: Text('选择颜色', style: TextStyle(fontSize: 16, color: cs.onSurface)),
+      title: Text(zh ? '选择颜色' : 'Pick Color', style: TextStyle(fontSize: 16, color: cs.onSurface)),
       content: SizedBox(
         width: 280,
         child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -278,12 +280,12 @@ class _ColorPickerDialogState extends State<_ColorPickerDialog> {
           )),
           const SizedBox(height: 12),
           Row(children: [
-            Text('饱和度', style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
+            Text(zh ? '饱和度' : 'Saturation', style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
             Expanded(child: Slider(value: _sat, min: 0, max: 1, activeColor: _color,
               onChanged: (v) => setState(() { _sat = v; _hexCtrl.text = _currentHex(); }))),
           ]),
           Row(children: [
-            Text('亮度', style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
+            Text(zh ? '亮度' : 'Brightness', style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
             Expanded(child: Slider(value: _val, min: 0, max: 1, activeColor: _color,
               onChanged: (v) => setState(() { _val = v; _hexCtrl.text = _currentHex(); }))),
           ]),
@@ -309,8 +311,8 @@ class _ColorPickerDialogState extends State<_ColorPickerDialog> {
         ]),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
-        FilledButton(onPressed: () { widget.onPicked(_color); Navigator.pop(context); }, child: const Text('确定')),
+        TextButton(onPressed: () => Navigator.pop(context), child: Text(zh ? '取消' : 'Cancel')),
+        FilledButton(onPressed: () { widget.onPicked(_color); Navigator.pop(context); }, child: Text(zh ? '确定' : 'OK')),
       ],
     );
   }
