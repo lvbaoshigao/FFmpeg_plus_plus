@@ -47,9 +47,10 @@ jobs:
         run: |
           choco install innosetup -y
           $env:PATH += ";C:\Program Files (x86)\Inno Setup 6"
-          # Download Chinese language file for Inno Setup
+          # Copy Chinese language files from repo
           $langDir = "C:\Program Files (x86)\Inno Setup 6\Languages"
-          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/Unofficial/ChineseSimplified.isl" -OutFile "$langDir\ChineseSimplified.isl"
+          Copy-Item "make\ChineseSimplified.isl" "$langDir\ChineseSimplified.isl" -Force
+          Copy-Item "make\ChineseTraditional.isl" "$langDir\ChineseTraditional.isl" -Force
           # Copy release bundle to build/ for ISS
           New-Item -ItemType Directory -Force -Path build
           Copy-Item -Recurse ffmpegpp_gui\build\windows\x64\runner\Release\* build\
