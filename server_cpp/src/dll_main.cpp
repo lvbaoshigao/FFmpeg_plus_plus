@@ -16,7 +16,7 @@
 using json = nlohmann::json;
 using namespace ffmpegpp;
 
-static const char* SERVER_VERSION = "4.5.0";
+static const char* SERVER_VERSION = "4.7.2";
 
 static std::thread g_workerThread;
 static std::atomic<bool> g_running{false};
@@ -44,13 +44,7 @@ static void workerLoop() {
         slog("dll worker: processing action=%s", action.c_str());
 
         try {
-            if (action == "check_env") {
-                handleCheckEnv(req);
-            } else if (action == "probe") {
-                handleProbe(req);
-            } else if (action == "query_ffmpeg_features") {
-                handleQueryFeatures(req);
-            } else if (action == "transcode") {
+            if (action == "transcode") {
                 g_cancelFlag.store(false);
                 handleTranscode(req, g_cancelFlag);
             } else if (action == "subtitle") {
@@ -58,6 +52,12 @@ static void workerLoop() {
                 handleSubtitle(req, g_cancelFlag);
             } else if (action == "extract_frame") {
                 handleExtractFrame(req);
+            } else if (action == "concat") {
+                g_cancelFlag.store(false);
+                handleConcat(req, g_cancelFlag);
+            } else if (action == "image_sequence") {
+                g_cancelFlag.store(false);
+                handleImageSequence(req, g_cancelFlag);
             } else {
                 JsonWriter::reply(req.value("id", ""), false, nullptr, "未知 action: " + action);
             }
@@ -119,6 +119,20 @@ FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
         }
         if (action == "ping") {
             JsonWriter::reply(req.value("id", ""), true, {{"pong", true}});
+            return 0;
+        }
+        if (action == "probe" || action == "check_env" || action == "query_ffmpeg_features") {
+            std::thread([req]() {
+                try {
+                    if (req.value("action", "") == "probe") handleProbe(req);
+                    else if (req.value("action", "") == "check_env") handleCheckEnv(req);
+                    else handleQueryFeatures(req);
+                } catch (const std::exception& e) {
+                    JsonWriter::reply(req.value("id", ""), false, nullptr, std::string("服务器异常: ") + e.what());
+                } catch (...) {
+                    JsonWriter::reply(req.value("id", ""), false, nullptr, "服务器未知异常");
+                }
+            }).detach();
             return 0;
         }
     } catch (...) {

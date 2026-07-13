@@ -22,7 +22,13 @@ import '../widgets/step_editors/frame_step_editor.dart';
 import '../widgets/step_editors/speed_step_editor.dart';
 import '../widgets/step_editors/image_convert_step_editor.dart';
 import '../widgets/step_editors/audio_convert_step_editor.dart';
-import '../widgets/step_editors/extract_audio_step_editor.dart';
+import '../widgets/step_editors/audio_quality_step_editor.dart';
+import '../widgets/step_editors/audio_speed_step_editor.dart';
+import '../widgets/step_editors/audio_volume_step_editor.dart';
+import '../widgets/step_editors/audio_compressor_step_editor.dart';
+import '../widgets/step_editors/audio_metadata_step_editor.dart';
+import '../widgets/step_editors/concat_media_step_editor.dart';
+import '../widgets/step_editors/image_to_video_step_editor.dart';
 import '../widgets/step_editors/image_crop_step_editor.dart';
 import '../widgets/step_editors/image_rotate_step_editor.dart';
 import '../widgets/step_editors/image_scale_step_editor.dart';
@@ -45,7 +51,9 @@ const _totalNodeW = _portZoneW + _nodeW + _portZoneW;
 class PipelineEditorPage extends StatefulWidget {
   final VideoFile video;
   final void Function(PipelineGraph graph) onSave;
-  const PipelineEditorPage({super.key, required this.video, required this.onSave});
+  final PipelineGraph? initialGraph;
+  final ({String name, int fileCount, Map<MediaType, int> typeCounts, List<String> fileIds})? containerInfo;
+  const PipelineEditorPage({super.key, required this.video, required this.onSave, this.initialGraph, this.containerInfo});
   @override
   State<PipelineEditorPage> createState() => _PipelineEditorPageState();
 }
@@ -71,8 +79,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   bool _isRightDragging = false;
 
   String? _thumbPath;
+  bool _isAudioNoCover = false;
   bool _toolboxExpanded = true;
   bool _editorExpanded = true;
+  double _toolboxFraction = 0.4;
 
   final TransformationController _transformCtrl = TransformationController();
   final GlobalKey _canvasKey = GlobalKey();
@@ -95,7 +105,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         if (mounted) setState(() => _isMaximized = v);
       });
     }
-    final g = widget.video.pipelineGraph;
+    final g = widget.initialGraph ?? widget.video.pipelineGraph;
     final isConfigMode = widget.video.filepath.isEmpty;
     if (g.nodes.isNotEmpty) {
       final copied = g.copy();
@@ -155,17 +165,31 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   Future<void> _genThumb() async {
     final fp = widget.video.filepath;
-    final f = File('${Directory.systemTemp.path}/ffmpegpp_thumb_${fp.hashCode}.jpg');
+    final suffix = widget.video.fileMediaType == MediaType.audio ? '_cover' : '';
+    final f = File('${Directory.systemTemp.path}/ffmpegpp_thumb_${fp.hashCode}$suffix.jpg');
     if (await f.exists()) { if (mounted) setState(() => _thumbPath = f.path); return; }
     try {
       final ext = fp.split('.').last.toLowerCase();
       final isImage = kImageExts.contains(ext);
+      final isAudio = widget.video.fileMediaType == MediaType.audio;
       final args = <String>['-y'];
-      if (!isImage) args.addAll(['-ss', '5']);
-      args.addAll(['-i', fp, '-vframes', '1', '-q:v', '3', '-s', '176x108', f.path]);
+      if (!isImage && !isAudio) args.addAll(['-ss', '5']);
+      if (isAudio) {
+        args.addAll(['-i', fp, '-an', '-vframes', '1', '-q:v', '3', f.path]);
+      } else {
+        args.addAll(['-i', fp, '-vframes', '1', '-q:v', '3', '-s', '176x108', f.path]);
+      }
       final r = await Process.run('ffmpeg', args);
-      if (r.exitCode == 0 && await f.exists()) { if (mounted) setState(() => _thumbPath = f.path); }
-    } catch (_) {}
+      if (r.exitCode == 0 && await f.exists()) {
+        if (mounted) setState(() { _thumbPath = f.path; _isAudioNoCover = false; });
+      } else if (isAudio && mounted) {
+        setState(() => _isAudioNoCover = true);
+      }
+    } catch (_) {
+      if (widget.video.fileMediaType == MediaType.audio && mounted) {
+        setState(() => _isAudioNoCover = true);
+      }
+    }
   }
 
   PipelineNode? get _selectedNode {
@@ -184,7 +208,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       case PipelineStepType.speed: return Icons.speed;
       case PipelineStepType.imageConvert: return Icons.image;
       case PipelineStepType.audioConvert: return Icons.audiotrack;
-      case PipelineStepType.extractAudio: return Icons.music_note;
+      case PipelineStepType.audioQuality: return Icons.equalizer;
+      case PipelineStepType.audioSpeed: return Icons.speed;
+      case PipelineStepType.audioVolume: return Icons.volume_up;
+      case PipelineStepType.audioCompressor: return Icons.compress;
+      case PipelineStepType.audioMetadata: return Icons.library_music;
+      case PipelineStepType.concatMedia: return Icons.merge_type;
+      case PipelineStepType.imageToVideo: return Icons.movie_creation;
       case PipelineStepType.imageCrop: return Icons.crop;
       case PipelineStepType.imageRotate: return Icons.rotate_right;
       case PipelineStepType.imageScale: return Icons.photo_size_select_large;
@@ -197,7 +227,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     }
   }
 
-  Color _nodeColor(PipelineStepType t, ColorScheme scheme) {
+  Color _nodeColor(PipelineStepType t, ColorScheme scheme, {int? customColor}) {
+    if (customColor != null) return Color(customColor).withAlpha(180);
     switch (t) {
       case PipelineStepType.start: return scheme.primaryContainer;
       case PipelineStepType.output: return scheme.tertiaryContainer;
@@ -274,6 +305,23 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     if (!fromNode.hasOutput || !toNode.hasInput) return;
     if (_connections.any((c) => c.fromNodeId == fromId && c.toNodeId == toId)) return;
     final zh = context.read<AppState>().config.language == 'zh';
+
+    // Container-aware connection check
+    if (fromNode.type == PipelineStepType.start && toNode.inputTypes.isNotEmpty && widget.containerInfo != null) {
+      final tc = widget.containerInfo!.typeCounts;
+      final neededTypes = toNode.inputTypes;
+      final matchCount = neededTypes.map((t) => tc[t] ?? 0).fold<int>(0, (a, b) => a + b);
+      if (matchCount == 0) {
+        showToast(context, zh
+            ? '容器内没有${neededTypes.map((t) => _mediaTypeName(t, zh)).join("/")}类型的文件'
+            : 'Container has no ${neededTypes.map((t) => t.name).join("/")} files',
+            type: ToastType.error);
+        return;
+      }
+      if (matchCount >= 2) {
+        toNode.params['container_file_select'] ??= 'all';
+      }
+    }
 
     // Source node connecting to a processing node: auto-detect and lock media type
     if (fromNode.type == PipelineStepType.start && toNode.inputTypes.isNotEmpty) {
@@ -791,7 +839,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   ];
   static const _audioTypes = [
     PipelineStepType.audioConvert,
-    PipelineStepType.extractAudio,
+    PipelineStepType.audioQuality,
+    PipelineStepType.audioSpeed,
+    PipelineStepType.audioVolume,
+    PipelineStepType.audioCompressor,
+    PipelineStepType.audioMetadata,
   ];
   static const _imageTypes = [
     PipelineStepType.imageConvert,
@@ -803,6 +855,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     PipelineStepType.imageSharpen,
     PipelineStepType.imageDenoise,
     PipelineStepType.imageChannelExtract,
+  ];
+  static const _containerTypes = [
+    PipelineStepType.concatMedia,
+    PipelineStepType.imageToVideo,
   ];
   static const _allNodeTypes = [
     PipelineStepType.start,
@@ -937,62 +993,253 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     return trace(node.id);
   }
 
+  String? _resolveUpstreamExtension(PipelineNode node) {
+    final visited = <String>{};
+    String? trace(String nodeId) {
+      if (visited.contains(nodeId)) return null;
+      visited.add(nodeId);
+      for (final conn in _connections.where((c) => c.toNodeId == nodeId)) {
+        final srcIdx = _nodes.indexWhere((n) => n.id == conn.fromNodeId);
+        if (srcIdx < 0) continue;
+        final src = _nodes[srcIdx];
+        if (src.type == PipelineStepType.audioConvert) {
+          return src.params['output_format'] as String? ?? 'm4a';
+        }
+        if (src.type == PipelineStepType.imageConvert) {
+          return src.params['output_format'] as String? ?? 'png';
+        }
+        final result = trace(src.id);
+        if (result != null) return result;
+      }
+      return null;
+    }
+    return trace(node.id);
+  }
+
   Widget _buildStepEditor(PipelineNode node, bool isZh) {
     void onChanged() => setState(() {});
     final v = widget.video;
+    Widget editor;
     switch (node.type) {
       case PipelineStepType.start:
+        if (widget.containerInfo != null) {
+          final cName = widget.containerInfo!.name;
+          final cCount = widget.containerInfo!.fileCount;
+          final cs = Theme.of(context).colorScheme;
+          return Column(mainAxisSize: MainAxisSize.min, children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+              child: Container(
+                width: double.infinity, height: 80,
+                decoration: BoxDecoration(color: cs.primaryContainer.withAlpha(60), borderRadius: BorderRadius.circular(8)),
+                child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Icon(Icons.folder_special, size: 32, color: cs.primary),
+                  const SizedBox(height: 4),
+                  Text(cName, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.onSurface)),
+                  Text('$cCount ${isZh ? "个文件" : "files"}', style: TextStyle(fontSize: 11, color: cs.outline)),
+                ]),
+              ),
+            ),
+          ]);
+        }
         return Column(mainAxisSize: MainAxisSize.min, children: [
           if (_thumbPath != null)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                child: Image.file(File(_thumbPath!), width: double.infinity, height: 140, fit: BoxFit.cover),
+                child: Image.file(File(_thumbPath!), width: double.infinity, height: 140,
+                    fit: widget.video.fileMediaType == MediaType.audio ? BoxFit.contain : BoxFit.cover),
+              ),
+            )
+          else if (_isAudioNoCover)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+              child: Container(
+                width: double.infinity, height: 100,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest.withAlpha(80),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(Icons.music_note, size: 48, color: Theme.of(context).colorScheme.primary),
               ),
             ),
           StartStepEditor(filename: v.filename, resolution: v.resolution, durationStr: v.durationStr,
               sizeMb: v.sizeMb, codec: v.codec, pixFmt: v.pixFmt, audioCodec: v.audioCodec, audioChannels: v.audioChannels, isZh: isZh),
         ]);
-      case PipelineStepType.avProcess:
-        return AvProcessStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
-      case PipelineStepType.subtitle:
-        return SubtitleStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh, embeddedSubtitles: v.subtitles);
       case PipelineStepType.output:
+        final resolvedExt = _resolveUpstreamExtension(node);
         return OutputStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh,
-            sourceFilename: v.filename, defaultOutputDir: context.read<AppState>().config.defaultOutputDir);
+            sourceFilename: resolvedExt != null ? v.filename.replaceAll(RegExp(r'\.[^.]+$'), '.$resolvedExt') : v.filename,
+            defaultOutputDir: context.read<AppState>().config.defaultOutputDir);
+      case PipelineStepType.avProcess:
+        editor = AvProcessStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+      case PipelineStepType.subtitle:
+        editor = SubtitleStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh, embeddedSubtitles: v.subtitles);
       case PipelineStepType.clip:
-        return ClipStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, videoPath: v.filepath, videoDuration: v.duration, isZh: isZh);
+        editor = ClipStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, videoPath: v.filepath, videoDuration: v.duration, isZh: isZh);
       case PipelineStepType.frame:
-        return FrameStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, videoPath: v.filepath, videoDuration: v.duration, isZh: isZh);
+        editor = FrameStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, videoPath: v.filepath, videoDuration: v.duration, isZh: isZh);
       case PipelineStepType.speed:
-        return SpeedStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = SpeedStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
       case PipelineStepType.imageConvert:
-        return ImageConvertStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = ImageConvertStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
       case PipelineStepType.audioConvert:
-        return AudioConvertStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
-      case PipelineStepType.extractAudio:
-        return ExtractAudioStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = AudioConvertStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+      case PipelineStepType.audioQuality:
+        editor = AudioQualityStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+      case PipelineStepType.audioSpeed:
+        editor = AudioSpeedStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+      case PipelineStepType.audioVolume:
+        editor = AudioVolumeStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+      case PipelineStepType.audioCompressor:
+        editor = AudioCompressorStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+      case PipelineStepType.audioMetadata:
+        editor = AudioMetadataStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+      case PipelineStepType.concatMedia:
+        editor = ConcatMediaStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh,
+            containerFileCount: widget.containerInfo?.fileCount ?? 0);
+      case PipelineStepType.imageToVideo:
+        editor = ImageToVideoStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh,
+            containerFileCount: widget.containerInfo?.fileCount ?? 0);
       case PipelineStepType.imageCrop:
-        return ImageCropStepEditor(
+        editor = ImageCropStepEditor(
           key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh,
           sourceImagePath: _resolveSourceImagePath(node),
         );
       case PipelineStepType.imageRotate:
-        return ImageRotateStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = ImageRotateStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
       case PipelineStepType.imageScale:
-        return ImageScaleStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = ImageScaleStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
       case PipelineStepType.imageBrightness:
-        return ImageBrightnessStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = ImageBrightnessStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
       case PipelineStepType.imageNoise:
-        return ImageNoiseStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = ImageNoiseStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
       case PipelineStepType.imageSharpen:
-        return ImageSharpenStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = ImageSharpenStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
       case PipelineStepType.imageDenoise:
-        return ImageDenoiseStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = ImageDenoiseStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
       case PipelineStepType.imageChannelExtract:
-        return ImageChannelExtractStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = ImageChannelExtractStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
     }
+
+    // Wrap with container file-selection header + node naming/coloring footer
+    final cs = Theme.of(context).colorScheme;
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      // Container file selection (only in container mode with >= 2 matching files)
+      if (widget.containerInfo != null && node.params.containsKey('container_file_select'))
+        _buildFileSelectHeader(node, isZh, cs, onChanged),
+      editor,
+      // Node naming & color (not for preview)
+      if (node.id != '__preview__')
+        _buildNodeCustomSection(node, isZh, cs, onChanged),
+    ]);
+  }
+
+  Widget _buildFileSelectHeader(PipelineNode node, bool isZh, ColorScheme cs, VoidCallback onChanged) {
+    final mode = node.params['container_file_select'] as String? ?? 'all';
+    final selectedIndices = node.params['container_selected_indices'] as String? ?? '';
+    final fileCount = widget.containerInfo!.fileCount;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: cs.primaryContainer.withAlpha(40),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: cs.primary.withAlpha(60)),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Icon(Icons.filter_list, size: 14, color: cs.primary),
+            const SizedBox(width: 6),
+            Text(isZh ? '文件选择 ($fileCount 个可用)' : 'File Selection ($fileCount available)',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cs.onSurface)),
+          ]),
+          const SizedBox(height: 8),
+          SegmentedButton<String>(
+            segments: [
+              ButtonSegment(value: 'all', label: Text(isZh ? '全部处理' : 'All', style: const TextStyle(fontSize: 11))),
+              ButtonSegment(value: 'select', label: Text(isZh ? '指定文件' : 'Select', style: const TextStyle(fontSize: 11))),
+            ],
+            selected: {mode},
+            onSelectionChanged: (s) { setState(() => node.params['container_file_select'] = s.first); onChanged(); },
+          ),
+          if (mode == 'select') ...[
+            const SizedBox(height: 8),
+            TextField(
+              controller: TextEditingController(text: selectedIndices),
+              decoration: InputDecoration(
+                hintText: isZh ? '输入编号，如: 1,3,5' : 'e.g. 1,3,5',
+                hintStyle: TextStyle(color: cs.outline, fontSize: 11),
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
+              ),
+              style: TextStyle(fontSize: 12, color: cs.onSurface),
+              onChanged: (v) { node.params['container_selected_indices'] = v; onChanged(); },
+            ),
+          ],
+        ]),
+      ),
+    );
+  }
+
+  Widget _buildNodeCustomSection(PipelineNode node, bool isZh, ColorScheme cs, VoidCallback onChanged) {
+    final nodeName = node.params['node_name'] as String? ?? '';
+    final nodeColorVal = node.params['node_color'] as int?;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerHighest.withAlpha(40),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(isZh ? '自定义' : 'Custom', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cs.outline)),
+          const SizedBox(height: 6),
+          TextField(
+            controller: TextEditingController(text: nodeName),
+            decoration: InputDecoration(
+              labelText: isZh ? '节点名称' : 'Node Name',
+              labelStyle: TextStyle(fontSize: 11, color: cs.outline),
+              hintText: isZh ? '可选，显示在节点右下角' : 'Optional, shown bottom-right',
+              hintStyle: TextStyle(fontSize: 10, color: cs.outline),
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
+            ),
+            style: TextStyle(fontSize: 12, color: cs.onSurface),
+            onChanged: (v) { setState(() => node.params['node_name'] = v); onChanged(); },
+          ),
+          const SizedBox(height: 8),
+          Row(children: [
+            Text(isZh ? '颜色: ' : 'Color: ', style: TextStyle(fontSize: 11, color: cs.outline)),
+            const SizedBox(width: 4),
+            for (final c in [null, 0xFFEF4444, 0xFF3B82F6, 0xFF10B981, 0xFFF59E0B, 0xFF8B5CF6])
+              Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: GestureDetector(
+                  onTap: () { setState(() { if (c == null) node.params.remove('node_color'); else node.params['node_color'] = c; }); onChanged(); },
+                  child: Container(
+                    width: 18, height: 18,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: c != null ? Color(c) : cs.surfaceContainerHighest,
+                      border: Border.all(
+                        color: nodeColorVal == c || (c == null && nodeColorVal == null) ? cs.onSurface : Colors.transparent,
+                        width: 2,
+                      ),
+                    ),
+                    child: c == null ? Icon(Icons.block, size: 10, color: cs.outline) : null,
+                  ),
+                ),
+              ),
+          ]),
+        ]),
+      ),
+    );
   }
 
   // ── Build ──
@@ -1595,7 +1842,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             width: _nodeW,
             height: _nodeH,
             decoration: BoxDecoration(
-              color: _nodeColor(node.type, scheme),
+              color: _nodeColor(node.type, scheme, customColor: node.params['node_color'] as int?),
               borderRadius: BorderRadius.circular(10),
               border: Border.all(
                 color: selected ? scheme.primary : scheme.outlineVariant.withAlpha(100),
@@ -1605,20 +1852,38 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             ),
             padding: const EdgeInsets.symmetric(horizontal: 8),
             child: _currentScale >= 0.6
-                ? Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Row(children: [
-                      Icon(_stepIcon(node.type), size: 17, color: selected ? scheme.primary : scheme.onSurface),
-                      const SizedBox(width: 5),
-                      Expanded(child: Text(
-                        s.isZh ? node.label : node.labelEn,
-                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: scheme.onSurface),
-                        overflow: TextOverflow.ellipsis,
-                      )),
+                ? Stack(children: [
+                    Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Row(children: [
+                        Icon(_stepIcon(node.type), size: 17, color: selected ? scheme.primary : scheme.onSurface),
+                        const SizedBox(width: 5),
+                        Expanded(child: Text(
+                          s.isZh ? node.label : node.labelEn,
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: scheme.onSurface),
+                          overflow: TextOverflow.ellipsis,
+                        )),
+                      ]),
+                      if (node.mediaTag.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 22, top: 2),
+                          child: Text(node.mediaTag, style: TextStyle(fontSize: 10, color: scheme.outline, fontWeight: FontWeight.w600)),
+                        ),
                     ]),
-                    if (node.mediaTag.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(left: 22, top: 2),
-                        child: Text(node.mediaTag, style: TextStyle(fontSize: 10, color: scheme.outline, fontWeight: FontWeight.w600)),
+                    if ((node.params['node_name'] as String? ?? '').isNotEmpty)
+                      Positioned(
+                        right: 0, bottom: 2,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: scheme.primary.withAlpha(30),
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                          child: Text(
+                            node.params['node_name'] as String,
+                            style: TextStyle(fontSize: 11, color: scheme.primary, fontWeight: FontWeight.w600),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                       ),
                   ])
                 : Center(child: Text(
@@ -1765,126 +2030,156 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         ? _logicBlocks.where((b) => b.id == _selectedLogicBlockId).firstOrNull
         : null;
 
-    Widget inner = Column(children: [
-      // ── 元素工具栏 ──
-      _buildCollapsibleHeader(
-        scheme: scheme,
-        icon: Icons.widgets_outlined,
-        title: s.isZh ? '元素' : 'Elements',
-        expanded: _toolboxExpanded,
-        onToggle: () => setState(() => _toolboxExpanded = !_toolboxExpanded),
-        trailing: Text('${_allNodeTypes.length}', style: TextStyle(fontSize: 10, color: scheme.outline)),
-      ),
-      AnimatedCrossFade(
-        firstChild: const SizedBox(width: double.infinity),
-        secondChild: Padding(
-          padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            // Start + Output
-            Wrap(spacing: 4, runSpacing: 4, children: [
-              _buildToolboxItem(PipelineStepType.start, scheme, s),
-              _buildToolboxItem(PipelineStepType.output, scheme, s),
-            ]),
-            const SizedBox(height: 8),
-            // Video
-            _categoryLabel(scheme, Icons.videocam_outlined, s.isZh ? '视频' : 'Video'),
-            const SizedBox(height: 4),
-            Wrap(spacing: 4, runSpacing: 4, children: [
-              for (final t in _videoTypes) _buildToolboxItem(t, scheme, s),
-            ]),
-            const SizedBox(height: 8),
-            // Audio
-            _categoryLabel(scheme, Icons.audiotrack_outlined, s.isZh ? '音频' : 'Audio'),
-            const SizedBox(height: 4),
-            Wrap(spacing: 4, runSpacing: 4, children: [
-              for (final t in _audioTypes) _buildToolboxItem(t, scheme, s),
-            ]),
-            const SizedBox(height: 8),
-            // Image
-            _categoryLabel(scheme, Icons.image_outlined, s.isZh ? '图片' : 'Image'),
-            const SizedBox(height: 4),
-            Wrap(spacing: 4, runSpacing: 4, children: [
-              for (final t in _imageTypes) _buildToolboxItem(t, scheme, s),
-            ]),
-            const SizedBox(height: 8),
-            // Logic
-            _categoryLabel(scheme, Icons.account_tree_outlined, s.isZh ? '逻辑' : 'Logic'),
-            const SizedBox(height: 4),
-            Wrap(spacing: 4, runSpacing: 4, children: [
-              _buildLogicToolboxItem(LogicBlockType.loop, scheme, s),
-              _buildLogicToolboxItem(LogicBlockType.selectiveLoop, scheme, s),
-            ]),
-          ]),
-        ),
-        crossFadeState: _toolboxExpanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
-        duration: const Duration(milliseconds: 200),
-      ),
-      Divider(height: 1, color: scheme.outlineVariant.withAlpha(40)),
+    Widget inner = LayoutBuilder(builder: (ctx, constraints) {
+      final totalH = constraints.maxHeight;
+      const dividerH = 6.0;
+      final usable = totalH - dividerH;
+      final toolboxH = usable * _toolboxFraction;
+      final editorH = usable * (1 - _toolboxFraction);
 
-      // ── 属性编辑器 ──
-      _buildCollapsibleHeader(
-        scheme: scheme,
-        icon: logicBlock != null
-            ? (logicBlock.type == LogicBlockType.loop ? Icons.repeat : Icons.shuffle)
-            : node != null ? _stepIcon(node.type) : (showPreview ? _stepIcon(previewType) : Icons.tune_outlined),
-        title: logicBlock != null
-            ? logicBlock.label(s.isZh)
-            : node != null
-                ? (s.isZh ? node.label : node.labelEn)
-                : showPreview
-                    ? (s.isZh ? PipelineNode(id: '', type: previewType).label : PipelineNode(id: '', type: previewType).labelEn)
-                    : (s.isZh ? '属性' : 'Properties'),
-        expanded: _editorExpanded,
-        onToggle: () => setState(() => _editorExpanded = !_editorExpanded),
-      ),
-      if (_editorExpanded)
-        Expanded(child: logicBlock != null
-            ? SingleChildScrollView(
-                padding: const EdgeInsets.all(4),
-                child: LogicBlockEditor(
-                  key: ValueKey(logicBlock.id),
-                  block: logicBlock,
-                  childNodes: _nodes.where((n) => logicBlock.childNodeIds.contains(n.id)).toList(),
-                  onChanged: () => setState(() {}),
-                  isZh: s.isZh,
+      return Column(children: [
+        // ── 元素工具栏 ──
+        SizedBox(height: toolboxH, child: Column(children: [
+          _buildCollapsibleHeader(
+            scheme: scheme,
+            icon: Icons.widgets_outlined,
+            title: s.isZh ? '元素' : 'Elements',
+            expanded: _toolboxExpanded,
+            onToggle: () => setState(() => _toolboxExpanded = !_toolboxExpanded),
+            trailing: Text('${_allNodeTypes.length}', style: TextStyle(fontSize: 10, color: scheme.outline)),
+          ),
+          if (_toolboxExpanded)
+            Expanded(child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Wrap(spacing: 4, runSpacing: 4, children: [
+                  _buildToolboxItem(PipelineStepType.start, scheme, s),
+                  _buildToolboxItem(PipelineStepType.output, scheme, s),
+                ]),
+                const SizedBox(height: 8),
+                _categoryLabel(scheme, Icons.videocam_outlined, s.isZh ? '视频' : 'Video'),
+                const SizedBox(height: 4),
+                Wrap(spacing: 4, runSpacing: 4, children: [
+                  for (final t in _videoTypes) _buildToolboxItem(t, scheme, s),
+                ]),
+                const SizedBox(height: 8),
+                _categoryLabel(scheme, Icons.audiotrack_outlined, s.isZh ? '音频' : 'Audio'),
+                const SizedBox(height: 4),
+                Wrap(spacing: 4, runSpacing: 4, children: [
+                  for (final t in _audioTypes) _buildToolboxItem(t, scheme, s),
+                ]),
+                const SizedBox(height: 8),
+                _categoryLabel(scheme, Icons.image_outlined, s.isZh ? '图片' : 'Image'),
+                const SizedBox(height: 4),
+                Wrap(spacing: 4, runSpacing: 4, children: [
+                  for (final t in _imageTypes) _buildToolboxItem(t, scheme, s),
+                ]),
+                const SizedBox(height: 8),
+                _categoryLabel(scheme, Icons.account_tree_outlined, s.isZh ? '逻辑' : 'Logic'),
+                const SizedBox(height: 4),
+                Wrap(spacing: 4, runSpacing: 4, children: [
+                  _buildLogicToolboxItem(LogicBlockType.loop, scheme, s),
+                  _buildLogicToolboxItem(LogicBlockType.selectiveLoop, scheme, s),
+                ]),
+                if (widget.containerInfo != null) ...[
+                  const SizedBox(height: 8),
+                  _categoryLabel(scheme, Icons.folder_special_outlined, s.isZh ? '容器' : 'Container'),
+                  const SizedBox(height: 4),
+                  Wrap(spacing: 4, runSpacing: 4, children: [
+                    for (final t in _containerTypes) _buildToolboxItem(t, scheme, s),
+                  ]),
+                ],
+              ]),
+            )),
+        ])),
+
+        // ── 可拖动分割线 ──
+        MouseRegion(
+          cursor: SystemMouseCursors.resizeRow,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onVerticalDragUpdate: (d) => setState(() {
+              _toolboxFraction = ((_toolboxFraction * usable + d.delta.dy) / usable).clamp(0.15, 0.85);
+            }),
+            child: Container(
+              height: dividerH,
+              color: Colors.transparent,
+              child: Center(child: Container(
+                width: 32, height: 3,
+                decoration: BoxDecoration(
+                  color: scheme.outlineVariant.withAlpha(80),
+                  borderRadius: BorderRadius.circular(2),
                 ),
-              )
-            : node != null
-            ? SingleChildScrollView(
-                padding: const EdgeInsets.all(4),
-                child: _buildStepEditor(node, s.isZh),
-              )
-            : showPreview
+              )),
+            ),
+          ),
+        ),
+
+        // ── 属性编辑器 ──
+        SizedBox(height: editorH, child: Column(children: [
+          _buildCollapsibleHeader(
+            scheme: scheme,
+            icon: logicBlock != null
+                ? (logicBlock.type == LogicBlockType.loop ? Icons.repeat : Icons.shuffle)
+                : node != null ? _stepIcon(node.type) : (showPreview ? _stepIcon(previewType) : Icons.tune_outlined),
+            title: logicBlock != null
+                ? logicBlock.label(s.isZh)
+                : node != null
+                    ? (s.isZh ? node.label : node.labelEn)
+                    : showPreview
+                        ? (s.isZh ? PipelineNode(id: '', type: previewType).label : PipelineNode(id: '', type: previewType).labelEn)
+                        : (s.isZh ? '属性' : 'Properties'),
+            expanded: _editorExpanded,
+            onToggle: () => setState(() => _editorExpanded = !_editorExpanded),
+          ),
+          if (_editorExpanded)
+            Expanded(child: logicBlock != null
                 ? SingleChildScrollView(
                     padding: const EdgeInsets.all(4),
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                        margin: const EdgeInsets.only(bottom: 8, left: 16, right: 16, top: 8),
-                        decoration: BoxDecoration(
-                          color: scheme.primaryContainer.withAlpha(60),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Row(children: [
-                          Icon(Icons.preview_outlined, size: 14, color: scheme.primary),
-                          const SizedBox(width: 6),
-                          Text(s.isZh ? '预览 · 双击添加到画布' : 'Preview · double-click to add',
-                              style: TextStyle(fontSize: 11, color: scheme.primary)),
-                        ]),
-                      ),
-                      _buildStepEditor(PipelineNode(id: '__preview__', type: previewType), s.isZh),
-                    ]),
+                    child: LogicBlockEditor(
+                      key: ValueKey(logicBlock.id),
+                      block: logicBlock,
+                      childNodes: _nodes.where((n) => logicBlock.childNodeIds.contains(n.id)).toList(),
+                      onChanged: () => setState(() {}),
+                      isZh: s.isZh,
+                    ),
                   )
-                : Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(Icons.touch_app_outlined, size: 32, color: scheme.outline.withAlpha(80)),
-                    const SizedBox(height: 8),
-                    Text(s.isZh ? '选择节点开始编辑' : 'Select a node to edit',
-                        style: TextStyle(color: scheme.outline, fontSize: 12)),
-                  ])),
-        )
-      else
-        const SizedBox.shrink(),
-    ]);
+                : node != null
+                ? SingleChildScrollView(
+                    padding: const EdgeInsets.all(4),
+                    child: _buildStepEditor(node, s.isZh),
+                  )
+                : showPreview
+                    ? SingleChildScrollView(
+                        padding: const EdgeInsets.all(4),
+                        child: Column(mainAxisSize: MainAxisSize.min, children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            margin: const EdgeInsets.only(bottom: 8, left: 16, right: 16, top: 8),
+                            decoration: BoxDecoration(
+                              color: scheme.primaryContainer.withAlpha(60),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(children: [
+                              Icon(Icons.preview_outlined, size: 14, color: scheme.primary),
+                              const SizedBox(width: 6),
+                              Text(s.isZh ? '预览 · 双击添加到画布' : 'Preview · double-click to add',
+                                  style: TextStyle(fontSize: 11, color: scheme.primary)),
+                            ]),
+                          ),
+                          _buildStepEditor(PipelineNode(id: '__preview__', type: previewType), s.isZh),
+                        ]),
+                      )
+                    : Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.touch_app_outlined, size: 32, color: scheme.outline.withAlpha(80)),
+                        const SizedBox(height: 8),
+                        Text(s.isZh ? '选择节点开始编辑' : 'Select a node to edit',
+                            style: TextStyle(color: scheme.outline, fontSize: 12)),
+                      ])),
+            ),
+        ])),
+      ]);
+    });
 
     return _glassWrap(inner, scheme);
   }
@@ -2091,7 +2386,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       child: Row(children: [
         Icon(Icons.info_outline, size: 14, color: scheme.outline),
         const SizedBox(width: 6),
-        Text('${v.resolution}  |  ${v.durationStr}  |  ${v.sizeMb.toStringAsFixed(1)} MB',
+        Text('${v.resolution}  |  ${v.durationStr}  |  ${formatFileSize(v.sizeMb)}',
             style: TextStyle(color: scheme.outline, fontSize: 12)),
         const Spacer(),
         Text(

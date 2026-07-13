@@ -12,16 +12,13 @@ namespace ffmpegpp {
 namespace {
 std::string escapeFilterPath(const std::string& filepath) {
     std::string p = filepath;
-    // 反斜杠 → 正斜杠
+#ifdef _WIN32
     std::replace(p.begin(), p.end(), '\\', '/');
-    // 转义 ffmpeg 滤镜路径中的所有特殊字符
+#endif
     std::string result;
     for (size_t i = 0; i < p.size(); ++i) {
         char c = p[i];
-        if (c == ':' && i == 1) {
-            // 盘符冒号（如 J:）→ \:
-            result += "\\:";
-        } else if (c == '\'' || c == '\\' || c == '[' || c == ']'
+        if (c == ':' || c == '\'' || c == '\\' || c == '[' || c == ']'
                    || c == ';' || c == ',' || c == '=' || c == '%') {
             result += '\\';
             result += c;

@@ -8,6 +8,8 @@ import 'providers/app_state.dart';
 import 'services/integrity.dart';
 import 'app.dart';
 
+final String _sep = Platform.pathSeparator;
+
 /// 日志目录（用户可写，避免 Program Files 权限问题）— 缓存避免重复创建
 final String _logDir = () {
   final String base;
@@ -15,9 +17,9 @@ final String _logDir = () {
     base = Platform.environment['APPDATA'] ?? Directory.systemTemp.path;
   } else {
     base = Platform.environment['XDG_DATA_HOME'] ??
-        '${Platform.environment['HOME'] ?? '/tmp'}/.local/share';
+        '${Platform.environment['HOME'] ?? '/tmp'}$_sep.local${_sep}share';
   }
-  final dir = '$base/FFmpeg++';
+  final dir = '$base${_sep}FFmpeg++';
   Directory(dir).createSync(recursive: true);
   return dir;
 }();
@@ -25,7 +27,7 @@ final String _logDir = () {
 /// 写启动日志到文件
 void _startupLog(String msg) {
   try {
-    final f = File('$_logDir/startup.log');
+    final f = File('$_logDir${_sep}startup.log');
     final ts = DateTime.now().toIso8601String().substring(11, 23);
     f.writeAsStringSync('[$ts] $msg\n', mode: FileMode.append);
   } catch (_) {}
@@ -34,7 +36,7 @@ void _startupLog(String msg) {
 void main() async {
   // 清空旧日志
   try {
-    File('$_logDir/startup.log').writeAsStringSync('');
+    File('$_logDir${_sep}startup.log').writeAsStringSync('');
   } catch (_) {}
 
   _startupLog('=== APP START ===');
@@ -75,8 +77,6 @@ void main() async {
 
   final appState = AppState();
   _startupLog('5-AppState created');
-  await appState.init(serverPath);
-  _startupLog('6-AppState.init OK');
 
   _startupLog('7-calling runApp');
   runApp(
@@ -86,6 +86,10 @@ void main() async {
     ),
   );
   _startupLog('8-runApp done');
+
+  // 后台初始化后端，UI 先显示加载画面
+  await appState.init(serverPath);
+  _startupLog('6-AppState.init OK');
 }
 
 Future<void> _initWindow() async {
@@ -139,11 +143,11 @@ void _killOldProcesses() {
 /// 从用户数据目录 fonts/ 加载所有 .ttf/.otf 字体（启动时调用）
 Future<void> _loadCustomFonts() async {
   try {
-    final fontsDir = Directory('$_logDir/fonts');
+    final fontsDir = Directory('$_logDir${_sep}fonts');
     if (!fontsDir.existsSync()) {
       // 兼容旧版：也检查 exe 同级 fonts/ 目录
       final exeDir = Directory(Platform.resolvedExecutable).parent;
-      final legacyDir = Directory('${exeDir.path}/fonts');
+      final legacyDir = Directory('${exeDir.path}${_sep}fonts');
       if (!legacyDir.existsSync()) return;
       await _loadFontsFromDir(legacyDir);
       return;
@@ -168,6 +172,6 @@ Future<void> _loadFontsFromDir(Directory dir) async {
 
 void _logCrash(String error, String stack) {
   try {
-    File('$_logDir/crash.log').writeAsStringSync('Error: $error\n\nStack:\n$stack');
+    File('$_logDir${_sep}crash.log').writeAsStringSync('Error: $error\n\nStack:\n$stack');
   } catch (_) {}
 }

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import 'package:uuid/uuid.dart';
 import '../models/models.dart';
 import '../services/native_process.dart';
 import '../services/backend_client.dart';
@@ -41,6 +42,9 @@ class AppState extends ChangeNotifier {
   List<LogEntry> get logEntries => List.unmodifiable(_logEntries);
   void addLog(String message, {String category = 'general'}) {
     _logEntries.add(LogEntry(timestamp: DateTime.now(), message: message, category: category));
+    if (config.saveLogs && config.logSavePath.isNotEmpty) {
+      _writeLogToFile(message, category);
+    }
     // Progress logs notify immediately for real-time UI updates
     if (category == 'progress') {
       notifyListeners();
@@ -56,6 +60,17 @@ class AppState extends ChangeNotifier {
     }
   }
   void clearLogs() { _logEntries.clear(); notifyListeners(); }
+
+  void _writeLogToFile(String message, String category) {
+    try {
+      final dir = Directory(config.logSavePath);
+      if (!dir.existsSync()) dir.createSync(recursive: true);
+      final date = DateTime.now();
+      final file = File('${dir.path}${Platform.pathSeparator}ffmpegpp_${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}.log');
+      final ts = date.toIso8601String().substring(11, 23);
+      file.writeAsStringSync('[$ts][$category] $message\n', mode: FileMode.append);
+    } catch (_) {}
+  }
 
   // ── FFmpeg features ──
   Map<String, List<String>> _ffmpegFeatures = {};
@@ -79,10 +94,14 @@ class AppState extends ChangeNotifier {
   int _selectedNav = 0;
   int get selectedNav => _selectedNav;
 
+  bool _initialized = false;
+  bool get initialized => _initialized;
+
   Future<void> init(String serverScript) async {
     debugPrint('[init] 1-configService.load');
     await configService.load();
     debugPrint('[init] 2-configService.load done');
+    notifyListeners(); // 让 UI 用上 config 里的主题
     try {
       debugPrint('[init] 3-calling pythonProcess.start($serverScript)');
       await pythonProcess.start(serverScript);
@@ -90,24 +109,27 @@ class AppState extends ChangeNotifier {
     } catch (e) {
       debugPrint('[init] 4-ERROR: $e');
       _initError = 'Python backend failed: $e';
-      _envChecked = true; _envOk = false; notifyListeners(); return;
+      _envChecked = true; _envOk = false; _initialized = true; notifyListeners(); return;
     }
     try {
       debugPrint('[init] 5-waiting for ready...');
       final ready = await pythonProcess.waitForReady(timeout: const Duration(seconds: 30));
       debugPrint('[init] 6-ready result: ${ready['type']}');
       if (ready['type'] != 'ready') {
-        _initError = 'Backend not ready'; _envChecked = true; _envOk = false; notifyListeners(); return;
+        _initError = 'Backend not ready'; _envChecked = true; _envOk = false; _initialized = true; notifyListeners(); return;
       }
     } catch (e) {
       debugPrint('[init] 6-ERROR: $e');
-      _initError = 'Backend start failed: $e'; _envChecked = true; _envOk = false; notifyListeners(); return;
+      _initError = 'Backend start failed: $e'; _envChecked = true; _envOk = false; _initialized = true; notifyListeners(); return;
     }
     _envChecked = false; _envOk = false;
     notifyListeners();
     debugPrint('[init] 7-setup log listeners');
     _setupLogListeners();
     _autoDetectLocalFfmpeg();
+    recheckEnv();
+    _initialized = true;
+    notifyListeners();
   }
 
   void _autoDetectLocalFfmpeg() {
@@ -196,11 +218,21 @@ class AppState extends ChangeNotifier {
     }
     notifyListeners();
 
-    for (final vf in entries) {
-      await _probeOne(vf);
-    }
+    await _probeAll(entries);
 
     _probeCount--; notifyListeners();
+  }
+
+  Future<void> _probeAll(List<VideoFile> entries) async {
+    final concurrency = config.probeThreads.clamp(1, 16);
+    int idx = 0;
+    await Future.wait(List.generate(concurrency.clamp(1, entries.length), (_) async {
+      while (true) {
+        final int ci = idx++;
+        if (ci >= entries.length) break;
+        await _probeOne(entries[ci]);
+      }
+    }));
   }
 
   Future<void> _probeOne(VideoFile vf) async {
@@ -233,6 +265,255 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  // ── 容器管理 ──
+
+  final List<FileContainer> _containers = [];
+  List<FileContainer> get containers => List.unmodifiable(_containers);
+
+  Set<String> get _containerFileIds {
+    final ids = <String>{};
+    for (final c in _containers) {
+      for (final item in c.items) ids.add(item.fileId);
+    }
+    return ids;
+  }
+
+  List<VideoFile> get standaloneVideos {
+    final cIds = _containerFileIds;
+    return _videos.where((v) => !cIds.contains(v.id)).toList();
+  }
+
+  Future<void> addContainer(String name, List<String> filepaths) async {
+    if (filepaths.isEmpty) return;
+    _probeCount++; notifyListeners();
+    final entries = <VideoFile>[];
+    for (final fp in filepaths) {
+      final vf = VideoFile.fromFilepath(fp);
+      _videos.add(vf);
+      entries.add(vf);
+    }
+    final items = List.generate(entries.length, (i) => ContainerItem(fileId: entries[i].id, index: i + 1));
+    _containers.add(FileContainer(id: const Uuid().v4(), name: name, items: items));
+    notifyListeners();
+    await _probeAll(entries);
+    _probeCount--; notifyListeners();
+    addLog('创建容器 "$name"，${entries.length} 个文件', category: 'info');
+  }
+
+  Future<void> addContainerFromFolder(String dirPath) async {
+    final dir = Directory(dirPath);
+    if (!dir.existsSync()) return;
+    final exts = {...kImageExts, 'mp4', 'mkv', 'mov', 'avi', 'webm', 'flv', 'wmv', 'ts', 'mpg', 'mpeg', 'm4v', '3gp', 'mp3', 'wav', 'flac', 'aac', 'm4a', 'ogg', 'opus', 'wma', 'ac3'};
+    final files = dir.listSync().whereType<File>().where((f) {
+      final ext = f.path.split('.').last.toLowerCase();
+      return exts.contains(ext);
+    }).map((f) => f.path).toList()..sort();
+    if (files.isEmpty) return;
+    final name = dirPath.split('/').last.split('\\').last;
+    await addContainer(name, files);
+  }
+
+  void removeContainer(String containerId) {
+    final idx = _containers.indexWhere((c) => c.id == containerId);
+    if (idx < 0) return;
+    final container = _containers[idx];
+    for (final item in container.items) {
+      _videos.removeWhere((v) => v.id == item.fileId);
+    }
+    _containers.removeAt(idx);
+    notifyListeners();
+  }
+
+  Future<void> addFilesToContainer(String containerId, List<String> filepaths) async {
+    final idx = _containers.indexWhere((c) => c.id == containerId);
+    if (idx < 0 || filepaths.isEmpty) return;
+    _probeCount++; notifyListeners();
+    final container = _containers[idx];
+    final baseIndex = container.items.isEmpty ? 1 : container.items.map((i) => i.index).reduce(max) + 1;
+    final entries = <VideoFile>[];
+    for (var i = 0; i < filepaths.length; i++) {
+      final vf = VideoFile.fromFilepath(filepaths[i]);
+      _videos.add(vf);
+      entries.add(vf);
+      container.items.add(ContainerItem(fileId: vf.id, index: baseIndex + i));
+    }
+    notifyListeners();
+    await _probeAll(entries);
+    _probeCount--; notifyListeners();
+  }
+
+  void removeFileFromContainer(String containerId, String fileId) {
+    final idx = _containers.indexWhere((c) => c.id == containerId);
+    if (idx < 0) return;
+    _containers[idx].items.removeWhere((i) => i.fileId == fileId);
+    _videos.removeWhere((v) => v.id == fileId);
+    notifyListeners();
+  }
+
+  void sortContainerBy(String containerId, ContainerSortMode mode) {
+    final idx = _containers.indexWhere((c) => c.id == containerId);
+    if (idx < 0) return;
+    final container = _containers[idx];
+    final items = container.items;
+    items.sort((a, b) {
+      final va = _videos.where((v) => v.id == a.fileId).firstOrNull;
+      final vb = _videos.where((v) => v.id == b.fileId).firstOrNull;
+      if (va == null || vb == null) return 0;
+      return switch (mode) {
+        ContainerSortMode.name => va.filename.toLowerCase().compareTo(vb.filename.toLowerCase()),
+        ContainerSortMode.size => va.sizeMb.compareTo(vb.sizeMb),
+        ContainerSortMode.duration => va.duration.compareTo(vb.duration),
+        ContainerSortMode.custom => a.index.compareTo(b.index),
+      };
+    });
+    for (var i = 0; i < items.length; i++) { items[i].index = i + 1; }
+    addLog('容器排序: ${mode.name}，${items.length} 个文件', category: 'info');
+    notifyListeners();
+  }
+
+  void updateContainerItemIndex(String containerId, String fileId, int newIndex) {
+    final idx = _containers.indexWhere((c) => c.id == containerId);
+    if (idx < 0) return;
+    final item = _containers[idx].items.where((i) => i.fileId == fileId).firstOrNull;
+    if (item != null) { item.index = newIndex; notifyListeners(); }
+  }
+
+  void updateContainerPipeline(String containerId, PipelineGraph graph) {
+    final idx = _containers.indexWhere((c) => c.id == containerId);
+    if (idx < 0) return;
+    _containers[idx].pipelineGraph = graph;
+    notifyListeners();
+  }
+
+  void renameContainer(String containerId, String newName) {
+    final idx = _containers.indexWhere((c) => c.id == containerId);
+    if (idx < 0) return;
+    _containers[idx].name = newName;
+    notifyListeners();
+  }
+
+  void reorderContainerItem(String containerId, int oldIdx, int newIdx) {
+    final idx = _containers.indexWhere((c) => c.id == containerId);
+    if (idx < 0) return;
+    final container = _containers[idx];
+    final sorted = container.sortedItems;
+    if (oldIdx < 0 || oldIdx >= sorted.length || newIdx < 0 || newIdx >= sorted.length) return;
+    final item = sorted.removeAt(oldIdx);
+    sorted.insert(newIdx, item);
+    container.items = sorted;
+    container.reindex();
+    notifyListeners();
+  }
+
+  void swapContainerItems(String containerId, int idxA, int idxB) {
+    final ci = _containers.indexWhere((c) => c.id == containerId);
+    if (ci < 0) return;
+    final container = _containers[ci];
+    final a = container.items.where((i) => i.index == idxA).firstOrNull;
+    final b = container.items.where((i) => i.index == idxB).firstOrNull;
+    if (a == null || b == null) return;
+    a.index = idxB;
+    b.index = idxA;
+    notifyListeners();
+  }
+
+  void addContainerTasks(String containerId, {int? targetIndex}) {
+    final idx = _containers.indexWhere((c) => c.id == containerId);
+    if (idx < 0) return;
+    final container = _containers[idx];
+    if (container.pipelineGraph.nodes.isEmpty) {
+      addLog('容器 "${container.name}" 没有配置节点图', category: 'error');
+      return;
+    }
+
+    // Check if graph contains merge nodes (concat/imageToVideo)
+    final graph = container.pipelineGraph;
+    final hasConcatNode = graph.nodes.any((n) => n.type == PipelineStepType.concatMedia);
+    final hasImgSeqNode = graph.nodes.any((n) => n.type == PipelineStepType.imageToVideo);
+
+    if (hasConcatNode || hasImgSeqNode) {
+      _addContainerMergeTask(container, hasConcatNode ? PipelineStepType.concatMedia : PipelineStepType.imageToVideo);
+      return;
+    }
+
+    // Standard: per-file processing
+    final items = targetIndex != null
+        ? container.items.where((i) => i.index == targetIndex).toList()
+        : container.sortedItems;
+    for (final item in items) {
+      final video = _videos.where((v) => v.id == item.fileId).firstOrNull;
+      if (video == null || !video.parsed) continue;
+      final graphCopy = container.pipelineGraph.copy();
+      final tempVideo = video.copyWith(pipelineGraph: graphCopy);
+      _addTasksFromGraph(tempVideo);
+    }
+  }
+
+  void _addContainerMergeTask(FileContainer container, PipelineStepType mergeType) {
+    final node = container.pipelineGraph.nodes.firstWhere((n) => n.type == mergeType);
+    final p = node.params;
+    final orderMode = p['order_mode'] as String? ?? 'index';
+
+    // Resolve file order
+    List<ContainerItem> orderedItems;
+    if (orderMode == 'manual') {
+      final manualOrder = p['manual_order'] as String? ?? '';
+      final indices = manualOrder.split(',').map((s) => int.tryParse(s.trim())).whereType<int>().toList();
+      orderedItems = indices.map((i) => container.items.where((item) => item.index == i).firstOrNull).whereType<ContainerItem>().toList();
+    } else {
+      orderedItems = container.sortedItems;
+    }
+
+    final files = orderedItems
+        .map((item) => _videos.where((v) => v.id == item.fileId).firstOrNull)
+        .whereType<VideoFile>()
+        .where((v) => v.parsed)
+        .map((v) => v.filepath)
+        .toList();
+
+    if (files.isEmpty) {
+      addLog('容器内没有已解析的文件', category: 'error');
+      return;
+    }
+
+    // Build output path
+    final outDir = config.defaultOutputDir.isNotEmpty
+        ? config.defaultOutputDir
+        : files.first.replaceAll(RegExp(r'[^\\/]+$'), '');
+    final dir = outDir.endsWith('/') || outDir.endsWith('\\') ? outDir : '$outDir${Platform.pathSeparator}';
+
+    List<BackendCall> calls;
+    String outputPath;
+
+    if (mergeType == PipelineStepType.concatMedia) {
+      final mode = p['mode'] as String? ?? 'copy';
+      final ext = files.first.split('.').last;
+      outputPath = '$dir${container.name}_merged.$ext';
+      calls = [BackendCall(action: 'concat', params: {'files': files, 'output': outputPath, 'mode': mode})];
+    } else {
+      final fps = (p['framerate'] as num?)?.toDouble() ?? 30.0;
+      final fmt = p['output_format'] as String? ?? 'mp4';
+      final codec = p['video_codec'] as String? ?? 'h264';
+      outputPath = '$dir${container.name}_sequence.$fmt';
+      calls = [BackendCall(action: 'image_sequence', params: {
+        'files': files, 'output': outputPath, 'framerate': fps,
+        'options': {'video_codec': codec, 'gpu': 'CPU'},
+      })];
+    }
+
+    _tasks.add(TaskInfo(
+      id: 'task_${_tasks.length}_${DateTime.now().millisecondsSinceEpoch}',
+      videoId: container.id,
+      filename: '${container.name} (${mergeType == PipelineStepType.concatMedia ? "合并" : "图片→视频"})',
+      inputPath: files.first,
+      outputPath: outputPath,
+      config: TranscodeConfig(),
+      pipelineCalls: calls,
+    ));
+    notifyListeners();
+    addLog('创建合并任务: ${container.name}, ${files.length} 个文件', category: 'info');
+  }
+
   void addTask(String videoId) {
     final idx = _videos.indexWhere((v) => v.id == videoId);
     if (idx < 0) return;
@@ -250,7 +531,7 @@ class AppState extends ChangeNotifier {
     String dir = config.defaultOutputDir.isNotEmpty ? config.defaultOutputDir : video.filepath.replaceAll(RegExp(r'[^\\/]+$'), '');
     if (!dir.endsWith('/') && !dir.endsWith('\\')) dir = '$dir${Platform.pathSeparator}';
     var out = '$dir$fn';
-    if (out == video.filepath) { final be = fn.replaceAll(RegExp(r'\.[^.]+$'), ''); final ee = fn.split('.').last; out = '${dir}${be}_processed.$ee'; }
+    if (out == video.filepath) { final be = fn.replaceAll(RegExp(r'\.[^.]+$'), ''); final ee = fn.split('.').last; out = '$dir${be}_processed.$ee'; }
     _tasks.add(TaskInfo(id: 'task_${_tasks.length}_${DateTime.now().millisecondsSinceEpoch}', videoId: videoId, filename: video.filename, inputPath: video.filepath, outputPath: out, config: cfg));
     notifyListeners();
   }
@@ -434,7 +715,6 @@ class AppState extends ChangeNotifier {
     final cmdParts = task.command!;
     String inputPath = task.inputPath;
     String outputPath = task.outputPath;
-    final options = <String, dynamic>{};
 
     // 解析 -i 参数获取输入路径
     for (var i = 0; i < cmdParts.length; i++) {
@@ -459,7 +739,7 @@ class AppState extends ChangeNotifier {
       '_custom_command': cmdParts.join(' '),
     });
 
-    await sub?.cancel();
+    await sub.cancel();
 
     final fi = _tasks.indexWhere((t) => t.id == taskId);
     if (fi >= 0) {
@@ -606,6 +886,23 @@ class AppState extends ChangeNotifier {
           break;
         case 'image_channel_extract':
           resp = await _runImageChannelExtract(p);
+          break;
+        case 'audio_metadata':
+          resp = await _runAudioMetadata(task.id, p);
+          break;
+        case 'concat':
+          resp = await backend.concat(task.id,
+              files: (p['files'] as List).cast<String>(),
+              output: p['output'] as String,
+              mode: p['mode'] as String? ?? 'copy',
+              options: p['options'] as Map<String, dynamic>?);
+          break;
+        case 'image_sequence':
+          resp = await backend.imageSequence(task.id,
+              files: (p['files'] as List).cast<String>(),
+              output: p['output'] as String,
+              framerate: (p['framerate'] as num?)?.toDouble() ?? 30.0,
+              options: p['options'] as Map<String, dynamic>?);
           break;
         case '_file_copy':
           resp = await _runFileCopy(p);
@@ -1045,6 +1342,36 @@ class AppState extends ChangeNotifier {
       addLog('文件复制失败: $e', category: 'error');
       return {'success': false, 'error': '文件复制失败: $e'};
     }
+  }
+
+  Future<Map<String, dynamic>> _runAudioMetadata(String taskId, Map<String, dynamic> p) async {
+    final input = p['input'] as String;
+    final output = p['output'] as String;
+    final coverPath = p['cover_path'] as String? ?? '';
+    final lyricsPath = p['lyrics_path'] as String? ?? '';
+    final removeCover = p['remove_cover'] as bool? ?? false;
+    final removeLyrics = p['remove_lyrics'] as bool? ?? false;
+
+    String? lyricsContent;
+    if (lyricsPath.isNotEmpty) {
+      try { lyricsContent = await File(lyricsPath).readAsString(); } catch (_) {}
+    }
+
+    final opts = <String, dynamic>{
+      'video_codec': 'none',
+      'audio_codec': 'copy',
+      'overwrite': true,
+    };
+
+    if (coverPath.isNotEmpty || lyricsContent != null || removeCover || removeLyrics) {
+      if (coverPath.isNotEmpty) opts['cover_input'] = coverPath;
+      if (lyricsContent != null) opts['metadata'] = {'lyrics': lyricsContent};
+      if (removeCover) opts['remove_cover'] = true;
+      if (removeLyrics) opts['remove_lyrics'] = true;
+      return await backend.transcode(taskId, input: input, output: output, options: opts);
+    }
+
+    return {'success': true, 'data': {'output_path': output}};
   }
 
   static String _loopPath(String path, int iteration) {

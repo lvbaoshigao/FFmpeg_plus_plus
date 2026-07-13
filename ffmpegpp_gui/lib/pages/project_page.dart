@@ -8,6 +8,7 @@ import '../models/models.dart';
 import '../services/config_export.dart';
 import '../theme/app_strings.dart';
 import '../widgets/video_card.dart';
+import '../widgets/container_card.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/toast.dart';
 
@@ -26,6 +27,7 @@ class ProjectPageState extends State<ProjectPage> {
   String _searchQuery = '';
   bool _searchVisible = false;
   final Set<String> _selectedIds = {};
+  final Set<String> _selectedContainerIds = {};
   bool _dragging = false;
 
   void selectAll(List videos) {
@@ -94,22 +96,25 @@ class ProjectPageState extends State<ProjectPage> {
                   if (!_searchVisible) _searchQuery = '';
                 }),
               ),
-              if (state.videos.isNotEmpty)
+              if (state.videos.isNotEmpty || state.containers.isNotEmpty)
                 IconButton(
                   icon: Icon(
-                    _selectedIds.length == state.videos.length ? Icons.deselect : Icons.select_all,
+                    _selectedIds.length == state.videos.length && _selectedContainerIds.length == state.containers.length
+                        ? Icons.deselect : Icons.select_all,
                     size: 20,
                   ),
-                  tooltip: _selectedIds.isEmpty ? s.selectAll : s.deselectAll,
+                  tooltip: _selectedIds.isEmpty && _selectedContainerIds.isEmpty ? s.selectAll : s.deselectAll,
                   onPressed: () => setState(() {
-                    if (_selectedIds.length == state.videos.length) {
+                    if (_selectedIds.length == state.videos.length && _selectedContainerIds.length == state.containers.length) {
                       _selectedIds.clear();
+                      _selectedContainerIds.clear();
                     } else {
                       _selectedIds.addAll(state.videos.map((v) => v.id));
+                      _selectedContainerIds.addAll(state.containers.map((c) => c.id));
                     }
                   }),
                 ),
-              if (_selectedIds.isNotEmpty)
+              if (_selectedIds.isNotEmpty || _selectedContainerIds.isNotEmpty)
                 IconButton(
                   icon: Icon(Icons.delete_outline, size: 20, color: scheme.error),
                   tooltip: s.deleteSelected,
@@ -117,7 +122,11 @@ class ProjectPageState extends State<ProjectPage> {
                     for (final id in _selectedIds) {
                       state.removeVideo(id);
                     }
+                    for (final id in _selectedContainerIds) {
+                      state.removeContainer(id);
+                    }
                     _selectedIds.clear();
+                    _selectedContainerIds.clear();
                   }),
                 ),
               IconButton(
@@ -125,6 +134,12 @@ class ProjectPageState extends State<ProjectPage> {
                 tooltip: s.isZh ? '导入配置' : 'Import Config',
                 onPressed: state.videos.isEmpty ? null : () => _importConfig(state, s),
               ),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.folder_special, size: 18),
+                label: Text(s.container),
+                onPressed: () => _showContainerMenu(context, state, s),
+              ),
+              const SizedBox(width: 4),
               FilledButton.icon(
                 icon: const Icon(Icons.add, size: 18),
                 label: Text(s.addVideo),
@@ -158,7 +173,7 @@ class ProjectPageState extends State<ProjectPage> {
       );
     }
 
-    if (state.videos.isEmpty) {
+    if (state.videos.isEmpty && state.containers.isEmpty) {
       return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
         Icon(Icons.video_library_outlined, size: 64, color: clr),
         const SizedBox(height: 16),
@@ -170,15 +185,36 @@ class ProjectPageState extends State<ProjectPage> {
       ]));
     }
 
-    if (videos.isEmpty && _searchQuery.isNotEmpty) {
+    final standalone = state.standaloneVideos;
+    final filteredStandalone = _searchQuery.isEmpty ? standalone
+        : standalone.where((v) => v.filename.toLowerCase().contains(_searchQuery.toLowerCase())).toList();
+    final containerCount = state.containers.length;
+    final totalCount = containerCount + filteredStandalone.length;
+
+    if (totalCount == 0 && _searchQuery.isNotEmpty) {
       return Center(child: Text(s.noMatch, style: TextStyle(fontSize: 14, color: clr)));
     }
 
     return ListView.builder(
       padding: const EdgeInsets.all(16),
-      itemCount: videos.length,
+      itemCount: totalCount,
       itemBuilder: (_, i) {
-        final video = videos[i];
+        if (i < containerCount) {
+          final c = state.containers[i];
+          final isSelected = _selectedContainerIds.contains(c.id);
+          return Row(children: [
+            Checkbox(
+              value: isSelected,
+              onChanged: (v) => setState(() {
+                if (v == true) { _selectedContainerIds.add(c.id); }
+                else { _selectedContainerIds.remove(c.id); }
+              }),
+              visualDensity: VisualDensity.compact,
+            ),
+            Expanded(child: ContainerCard(container: c)),
+          ]);
+        }
+        final video = filteredStandalone[i - containerCount];
         final isSelected = _selectedIds.contains(video.id);
         return Row(children: [
           Checkbox(
@@ -390,5 +426,39 @@ class ProjectPageState extends State<ProjectPage> {
       final paths = r.files.where((f) => f.path != null).map((f) => f.path!).toList();
       if (paths.isNotEmpty) state.addVideos(paths);
     }
+  }
+
+  void _showContainerMenu(BuildContext context, AppState state, AppStrings s) {
+    final scheme = Theme.of(context).colorScheme;
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        ListTile(
+          leading: Icon(Icons.folder_open, color: scheme.primary),
+          title: Text(s.containerFromFolder),
+          subtitle: Text(s.isZh ? '选择一个文件夹，其中的媒体文件将作为容器内容' : 'Select a folder, media files inside become container items',
+              style: const TextStyle(fontSize: 12)),
+          onTap: () async {
+            Navigator.pop(ctx);
+            final dir = await FilePicker.platform.getDirectoryPath();
+            if (dir != null) state.addContainerFromFolder(dir);
+          },
+        ),
+        ListTile(
+          leading: Icon(Icons.file_copy_outlined, color: scheme.primary),
+          title: Text(s.containerFromFiles),
+          subtitle: Text(s.isZh ? '手动选择多个文件放入新容器' : 'Manually select files for a new container',
+              style: const TextStyle(fontSize: 12)),
+          onTap: () async {
+            Navigator.pop(ctx);
+            final r = await FilePicker.platform.pickFiles(allowMultiple: true, type: FileType.custom, allowedExtensions: _exts);
+            if (r != null && r.files.isNotEmpty) {
+              final paths = r.files.where((f) => f.path != null).map((f) => f.path!).toList();
+              if (paths.isNotEmpty) state.addContainer(s.isZh ? '新容器' : 'New Container', paths);
+            }
+          },
+        ),
+      ])),
+    );
   }
 }

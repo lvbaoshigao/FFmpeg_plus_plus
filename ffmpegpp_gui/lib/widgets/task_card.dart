@@ -191,21 +191,33 @@ class _ThumbWidgetState extends State<_ThumbWidget> {
   @override
   void initState() { super.initState(); _gen(); }
   Future<void> _gen() async {
-    final f = File('${Directory.systemTemp.path}/ffmpegpp_thumb_${widget.filepath.hashCode}_q.jpg');
+    final ext = widget.filepath.split('.').last.toLowerCase();
+    const audioExts = {'mp3', 'wav', 'flac', 'aac', 'm4a', 'ogg', 'opus', 'wma', 'ac3'};
+    final isAudio = audioExts.contains(ext);
+    final isImage = kImageExts.contains(ext);
+    final suffix = isAudio ? '_cover' : '';
+    final f = File('${Directory.systemTemp.path}/ffmpegpp_thumb_${widget.filepath.hashCode}${suffix}_q.jpg');
     if (await f.exists()) { if (mounted) setState(() => _path = f.path); return; }
     try {
-      final ext = widget.filepath.split('.').last.toLowerCase();
-      final isImage = kImageExts.contains(ext);
       final args = <String>['-y'];
-      if (!isImage) args.addAll(['-ss', '2']);
-      args.addAll(['-i', widget.filepath, '-vframes', '1', '-q:v', '5', '-s', '80x45', f.path]);
+      if (!isImage && !isAudio) args.addAll(['-ss', '2']);
+      if (isAudio) {
+        args.addAll(['-i', widget.filepath, '-an', '-vframes', '1', '-q:v', '5', f.path]);
+      } else {
+        args.addAll(['-i', widget.filepath, '-vframes', '1', '-q:v', '5', '-s', '80x45', f.path]);
+      }
       final r = await Process.run('ffmpeg', args);
       if (r.exitCode == 0 && await f.exists()) { if (mounted) setState(() => _path = f.path); }
     } catch (_) {}
   }
   @override
   Widget build(BuildContext context) {
-    if (_path != null) return Image.file(File(_path!), width: 40, height: 25, fit: BoxFit.cover);
-    return const SizedBox(width: 40, height: 25);
+    if (_path != null) {
+      final ext = widget.filepath.split('.').last.toLowerCase();
+      const audioExts = {'mp3', 'wav', 'flac', 'aac', 'm4a', 'ogg', 'opus', 'wma', 'ac3'};
+      return Image.file(File(_path!), width: 40, height: 25,
+          fit: audioExts.contains(ext) ? BoxFit.contain : BoxFit.cover);
+    }
+    return Icon(Icons.music_note, color: Theme.of(context).colorScheme.outline, size: 16);
   }
 }

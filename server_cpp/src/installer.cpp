@@ -1,5 +1,6 @@
 #include "installer.h"
 #include "subprocess.h"
+#include <mutex>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -19,9 +20,10 @@ namespace {
 std::string findExecutable(const std::string& name) {
 #ifdef _WIN32
     // 1. 检查 PATH
-    char buf[MAX_PATH];
-    DWORD len = SearchPathA(nullptr, name.c_str(), ".exe", MAX_PATH, buf, nullptr);
-    if (len > 0 && len < MAX_PATH) return std::string(buf);
+    wchar_t wbuf[MAX_PATH];
+    std::wstring wname = Subprocess::utf8ToWide(name);
+    DWORD len = SearchPathW(nullptr, wname.c_str(), L".exe", MAX_PATH, wbuf, nullptr);
+    if (len > 0 && len < MAX_PATH) return Subprocess::wideToUtf8(std::wstring(wbuf, len));
 
     // 2. 常见安装目录
     std::vector<std::string> candidates = {
@@ -95,20 +97,22 @@ ToolCheck findFFprobe() { return checkTool("ffprobe"); }
 // 缓存已解析的完整路径，避免每次构建命令都重新搜索
 static std::string g_ffmpegPath;
 static std::string g_ffprobePath;
+static std::once_flag g_ffmpegOnce;
+static std::once_flag g_ffprobeOnce;
 
 const std::string& getFFmpegPath() {
-    if (g_ffmpegPath.empty()) {
+    std::call_once(g_ffmpegOnce, []() {
         g_ffmpegPath = findExecutable("ffmpeg");
         if (g_ffmpegPath.empty()) g_ffmpegPath = "ffmpeg";
-    }
+    });
     return g_ffmpegPath;
 }
 
 const std::string& getFFprobePath() {
-    if (g_ffprobePath.empty()) {
+    std::call_once(g_ffprobeOnce, []() {
         g_ffprobePath = findExecutable("ffprobe");
         if (g_ffprobePath.empty()) g_ffprobePath = "ffprobe";
-    }
+    });
     return g_ffprobePath;
 }
 

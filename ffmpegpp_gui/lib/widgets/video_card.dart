@@ -28,7 +28,7 @@ class VideoCard extends StatelessWidget {
           Container(
             width: 88, height: 54,
             decoration: BoxDecoration(color: video.parsed ? Colors.black : scheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(6)),
-            child: video.parsed ? _ThumbWidget(filepath: video.filepath) : Icon(Icons.movie_outlined, color: scheme.outline, size: 28),
+            child: video.parsed ? _ThumbWidget(filepath: video.filepath, isAudio: video.fileMediaType == MediaType.audio) : Icon(Icons.movie_outlined, color: scheme.outline, size: 28),
           ),
           const SizedBox(width: 12),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
@@ -37,7 +37,7 @@ class VideoCard extends StatelessWidget {
             if (probeError != null)
               Text(probeError, style: TextStyle(fontSize: 12, color: scheme.error))
             else if (video.parsed)
-              Text('${video.resolution}  •  ${video.durationStr}  •  ${video.sizeMb.toStringAsFixed(1)} MB  •  ${video.codec}',
+              Text('${video.resolution}  •  ${video.durationStr}  •  ${formatFileSize(video.sizeMb)}  •  ${video.codec}',
                   style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant))
             else
               Text(s.probing, style: TextStyle(fontSize: 12, color: scheme.outline)),
@@ -83,7 +83,8 @@ class VideoCard extends StatelessWidget {
 
 class _ThumbWidget extends StatefulWidget {
   final String filepath;
-  const _ThumbWidget({required this.filepath});
+  final bool isAudio;
+  const _ThumbWidget({required this.filepath, this.isAudio = false});
   @override
   State<_ThumbWidget> createState() => _ThumbWidgetState();
 }
@@ -93,14 +94,19 @@ class _ThumbWidgetState extends State<_ThumbWidget> {
   void initState() { super.initState(); _gen(); }
 
   Future<void> _gen() async {
-    final f = File('${Directory.systemTemp.path}/ffmpegpp_thumb_${widget.filepath.hashCode}.jpg');
+    final suffix = widget.isAudio ? '_cover' : '';
+    final f = File('${Directory.systemTemp.path}/ffmpegpp_thumb_${widget.filepath.hashCode}$suffix.jpg');
     if (await f.exists()) { if (mounted) setState(() => _thumbPath = f.path); return; }
     try {
       final ext = widget.filepath.split('.').last.toLowerCase();
       final isImage = kImageExts.contains(ext);
       final args = <String>['-y'];
-      if (!isImage) args.addAll(['-ss', '5']);
-      args.addAll(['-i', widget.filepath, '-vframes', '1', '-q:v', '3', '-s', '176x108', f.path]);
+      if (!isImage && !widget.isAudio) args.addAll(['-ss', '5']);
+      if (widget.isAudio) {
+        args.addAll(['-i', widget.filepath, '-an', '-vframes', '1', '-q:v', '3', f.path]);
+      } else {
+        args.addAll(['-i', widget.filepath, '-vframes', '1', '-q:v', '3', '-s', '176x108', f.path]);
+      }
       final r = await Process.run('ffmpeg', args);
       if (r.exitCode == 0 && await f.exists()) { if (mounted) setState(() => _thumbPath = f.path); }
     } catch (_) {}
@@ -108,7 +114,8 @@ class _ThumbWidgetState extends State<_ThumbWidget> {
 
   @override
   Widget build(BuildContext context) {
-    if (_thumbPath != null) return ClipRRect(borderRadius: BorderRadius.circular(6), child: Image.file(File(_thumbPath!), fit: BoxFit.cover, width: 88, height: 54));
-    return const SizedBox.shrink();
+    if (_thumbPath != null) return ClipRRect(borderRadius: BorderRadius.circular(6), child: Image.file(File(_thumbPath!),
+        fit: widget.isAudio ? BoxFit.contain : BoxFit.cover, width: 88, height: 54));
+    return Icon(Icons.music_note, color: Theme.of(context).colorScheme.outline, size: 24);
   }
 }

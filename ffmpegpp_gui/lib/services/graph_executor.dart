@@ -125,11 +125,16 @@ class GraphExecutor {
     if (errors.isNotEmpty) return errors;
 
     for (final start in startNodes) {
-      final plan = _buildPlan(graph, start);
-      if (plan == null) {
+      final plans = <ExecutionPlan>[];
+      for (final out in outputNodes) {
+        final p = _buildPlanForOutput(graph, start, out);
+        if (p != null) plans.add(p);
+      }
+      if (plans.isEmpty) {
         errors.add('源文件节点未连接到输出节点');
         continue;
       }
+      for (final plan in plans) {
       double? clipCeiling;
       for (var si = 0; si < plan.steps.length; si++) {
         final step = plan.steps[si];
@@ -137,11 +142,12 @@ class GraphExecutor {
         final hasMergeable = types.contains(PipelineStepType.avProcess) || types.contains(PipelineStepType.subtitle) || types.contains(PipelineStepType.speed);
         final hasSequential = types.contains(PipelineStepType.clip) || types.contains(PipelineStepType.frame)
             || types.contains(PipelineStepType.imageConvert) || types.contains(PipelineStepType.audioConvert)
-            || types.contains(PipelineStepType.extractAudio) || types.contains(PipelineStepType.imageCrop)
+            || types.contains(PipelineStepType.imageCrop)
             || types.contains(PipelineStepType.imageRotate) || types.contains(PipelineStepType.imageScale)
             || types.contains(PipelineStepType.imageBrightness) || types.contains(PipelineStepType.imageNoise)
             || types.contains(PipelineStepType.imageSharpen) || types.contains(PipelineStepType.imageDenoise)
-            || types.contains(PipelineStepType.imageChannelExtract);
+            || types.contains(PipelineStepType.imageChannelExtract) || types.contains(PipelineStepType.audioMetadata)
+            || types.contains(PipelineStepType.concatMedia) || types.contains(PipelineStepType.imageToVideo);
         if (hasMergeable && hasSequential) {
           final names = step.nodes.map((n) => n.label).join(', ');
           errors.add('同层级节点冲突: $names (合并节点不能与独立节点在同一层级)');
@@ -161,8 +167,14 @@ class GraphExecutor {
         if (types.contains(PipelineStepType.audioConvert) && types.length > 1) {
           errors.add('音频转换 不能与其他操作并行');
         }
-        if (types.contains(PipelineStepType.extractAudio) && types.length > 1) {
-          errors.add('提取音频 不能与其他操作并行');
+        if (types.contains(PipelineStepType.audioMetadata) && types.length > 1) {
+          errors.add('元信息编辑 不能与其他操作并行');
+        }
+        if (types.contains(PipelineStepType.concatMedia) && types.length > 1) {
+          errors.add('合并媒体 不能与其他操作并行');
+        }
+        if (types.contains(PipelineStepType.imageToVideo) && types.length > 1) {
+          errors.add('图片合成视频 不能与其他操作并行');
         }
         if (types.contains(PipelineStepType.imageRotate) && types.length > 1) {
           errors.add('图片旋转 不能与其他操作并行');
@@ -204,6 +216,7 @@ class GraphExecutor {
           }
         }
       }
+      }
     }
 
     return errors;
@@ -211,19 +224,34 @@ class GraphExecutor {
 
   // ── 构建执行计划 ──
 
-  static ExecutionPlan? _buildPlan(PipelineGraph graph, PipelineNode start) {
-    final reachable = <String>{};
-    void collectReachable(String id) {
-      if (reachable.contains(id)) return;
-      reachable.add(id);
+  static ExecutionPlan? _buildPlanForOutput(PipelineGraph graph, PipelineNode start, PipelineNode output) {
+    // Forward reachable from start
+    final forward = <String>{};
+    void walkForward(String id) {
+      if (forward.contains(id)) return;
+      forward.add(id);
       for (final c in graph.connections.where((c) => c.fromNodeId == id)) {
-        collectReachable(c.toNodeId);
+        walkForward(c.toNodeId);
       }
     }
-    collectReachable(start.id);
+    walkForward(start.id);
+    if (!forward.contains(output.id)) return null;
 
-    final subNodes = graph.nodes.where((n) => reachable.contains(n.id)).toList();
-    final subConns = graph.connections.where((c) => reachable.contains(c.fromNodeId) && reachable.contains(c.toNodeId)).toList();
+    // Backward reachable from output
+    final backward = <String>{};
+    void walkBackward(String id) {
+      if (backward.contains(id)) return;
+      backward.add(id);
+      for (final c in graph.connections.where((c) => c.toNodeId == id)) {
+        walkBackward(c.fromNodeId);
+      }
+    }
+    walkBackward(output.id);
+
+    // Only nodes on paths between start and this output
+    final pathIds = forward.intersection(backward);
+    final subNodes = graph.nodes.where((n) => pathIds.contains(n.id)).toList();
+    final subConns = graph.connections.where((c) => pathIds.contains(c.fromNodeId) && pathIds.contains(c.toNodeId)).toList();
 
     final inDegree = <String, int>{};
     for (final n in subNodes) { inDegree[n.id] = 0; }
@@ -247,16 +275,11 @@ class GraphExecutor {
       queue = nextQueue;
     }
 
-    PipelineNode? outputNode;
     final steps = <ExecutionStep>[];
     for (final level in levels) {
       final processing = level.where((n) =>
           n.type != PipelineStepType.start && n.type != PipelineStepType.output).toList();
-      if (processing.isEmpty) {
-        final out = level.where((n) => n.type == PipelineStepType.output);
-        if (out.isNotEmpty) outputNode = out.first;
-        continue;
-      }
+      if (processing.isEmpty) continue;
       final types = processing.map((n) => n.type).toSet();
       if (types.every((t) => t == PipelineStepType.avProcess || t == PipelineStepType.subtitle || t == PipelineStepType.speed)) {
         steps.add(ExecutionStep('merged', processing));
@@ -267,7 +290,13 @@ class GraphExecutor {
             PipelineStepType.frame => 'frame',
             PipelineStepType.imageConvert => 'image_convert',
             PipelineStepType.audioConvert => 'audio_convert',
-            PipelineStepType.extractAudio => 'extract_audio',
+            PipelineStepType.audioQuality => 'audio_quality',
+            PipelineStepType.audioSpeed => 'audio_speed',
+            PipelineStepType.audioVolume => 'audio_volume',
+            PipelineStepType.audioCompressor => 'audio_compressor',
+            PipelineStepType.audioMetadata => 'audio_metadata',
+            PipelineStepType.concatMedia => 'concat',
+            PipelineStepType.imageToVideo => 'image_sequence',
             PipelineStepType.imageCrop => 'image_crop',
             PipelineStepType.imageRotate => 'image_rotate',
             PipelineStepType.imageScale => 'image_scale',
@@ -283,8 +312,6 @@ class GraphExecutor {
       }
     }
 
-    if (outputNode == null) return null;
-
     // Tag steps that belong to logic blocks with loop metadata
     for (final step in steps) {
       final firstNode = step.nodes.first;
@@ -296,16 +323,19 @@ class GraphExecutor {
       }
     }
 
-    return ExecutionPlan(startNode: start, steps: steps, outputNode: outputNode);
+    return ExecutionPlan(startNode: start, steps: steps, outputNode: output);
   }
 
   // ── 解析所有执行计划 ──
 
   static List<ExecutionPlan> resolvePlans(PipelineGraph graph) {
     final plans = <ExecutionPlan>[];
+    final outputNodes = graph.nodes.where((n) => n.type == PipelineStepType.output).toList();
     for (final start in graph.nodes.where((n) => n.type == PipelineStepType.start)) {
-      final plan = _buildPlan(graph, start);
-      if (plan != null) plans.add(plan);
+      for (final output in outputNodes) {
+        final plan = _buildPlanForOutput(graph, start, output);
+        if (plan != null) plans.add(plan);
+      }
     }
     return plans;
   }
@@ -655,33 +685,6 @@ class GraphExecutor {
           currentInput = outPath;
           continue;
 
-        case 'extract_audio':
-          final node = step.nodes.first;
-          final p = node.params;
-          final rawCodec = p['audio_codec'] as String? ?? 'copy';
-          final rawFmt = p['output_format'] as String? ?? 'm4a';
-          final (codec, outFmt) = _resolveAudioCodecFormat(rawCodec, rawFmt);
-          final bitrate = (p['audio_bitrate'] as num?)?.toInt() ?? 128;
-          final outPath = isLast
-              ? outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.$outFmt')
-              : _tempPath(inputPath, i, outFmt);
-          if (!isLast) tempFiles.add(outPath);
-          final opts = <String, dynamic>{
-            'video_codec': 'none',
-            'audio_codec': codec,
-            'overwrite': true,
-          };
-          if (codec != 'copy' && codec != 'flac' && codec != 'pcm_s16le') {
-            opts['audio_bitrate'] = bitrate;
-          }
-          calls.add(BackendCall(
-            action: 'transcode',
-            params: {'input': currentInput, 'output': outPath, 'options': opts},
-          ));
-          stepCallRanges.add((callsBeforeStep, calls.length, step));
-          currentInput = outPath;
-          continue;
-
         case 'audio_convert':
           final node = step.nodes.first;
           final p = node.params;
@@ -712,6 +715,128 @@ class GraphExecutor {
           stepCallRanges.add((callsBeforeStep, calls.length, step));
           currentInput = outPath;
           continue;
+
+        case 'audio_quality':
+          final node = step.nodes.first;
+          final p = node.params;
+          final sr = p['sample_rate'] as String? ?? 'keep';
+          final ext = currentInput.split('.').last.toLowerCase();
+          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext);
+          if (!isLast) tempFiles.add(outPath);
+          final opts = <String, dynamic>{'video_codec': 'none', 'audio_codec': 'copy', 'overwrite': true};
+          final bitrateVal = p['audio_bitrate'];
+          if (bitrateVal != null) {
+            opts['audio_codec'] = _codecForFormat[ext] ?? 'aac';
+            opts['audio_bitrate'] = (bitrateVal as num).toInt();
+          }
+          if (sr != 'keep') { opts['audio_codec'] = _codecForFormat[ext] ?? 'aac'; opts['sample_rate'] = int.tryParse(sr); }
+          calls.add(BackendCall(action: 'transcode', params: {'input': currentInput, 'output': outPath, 'options': opts}));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
+        case 'audio_speed':
+          final node = step.nodes.first;
+          final tempo = (node.params['atempo'] as num?)?.toDouble() ?? 1.0;
+          final ext = currentInput.split('.').last.toLowerCase();
+          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext);
+          if (!isLast) tempFiles.add(outPath);
+          final filters = <String>[];
+          var remaining = tempo;
+          while (remaining > 2.0) { filters.add('atempo=2.0'); remaining /= 2.0; }
+          while (remaining < 0.5) { filters.add('atempo=0.5'); remaining /= 0.5; }
+          filters.add('atempo=$remaining');
+          calls.add(BackendCall(action: 'transcode', params: {
+            'input': currentInput, 'output': outPath,
+            'options': {'video_codec': 'none', 'audio_codec': _codecForFormat[ext] ?? 'aac', 'af_filters': [filters.join(',')], 'overwrite': true},
+          }));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
+        case 'audio_volume':
+          final node = step.nodes.first;
+          final db = (node.params['volume_db'] as num?)?.toDouble() ?? 0.0;
+          final ext = currentInput.split('.').last.toLowerCase();
+          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext);
+          if (!isLast) tempFiles.add(outPath);
+          calls.add(BackendCall(action: 'transcode', params: {
+            'input': currentInput, 'output': outPath,
+            'options': {'video_codec': 'none', 'audio_codec': _codecForFormat[ext] ?? 'aac', 'af_filters': ['volume=${db}dB'], 'overwrite': true},
+          }));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
+        case 'audio_compressor':
+          final node = step.nodes.first;
+          final p = node.params;
+          final threshold = (p['threshold'] as num?)?.toDouble() ?? -20.0;
+          final ratio = (p['ratio'] as num?)?.toDouble() ?? 3.0;
+          final attack = (p['attack'] as num?)?.toDouble() ?? 10.0;
+          final release = (p['release'] as num?)?.toDouble() ?? 100.0;
+          final makeup = (p['makeup'] as num?)?.toDouble() ?? 4.0;
+          final knee = (p['knee'] as num?)?.toDouble() ?? 2.8;
+          final ext = currentInput.split('.').last.toLowerCase();
+          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext);
+          if (!isLast) tempFiles.add(outPath);
+          final filter = 'acompressor=threshold=${threshold}dB:ratio=$ratio:attack=$attack:release=$release:makeup=$makeup:knee=$knee';
+          calls.add(BackendCall(action: 'transcode', params: {
+            'input': currentInput, 'output': outPath,
+            'options': {'video_codec': 'none', 'audio_codec': _codecForFormat[ext] ?? 'aac', 'af_filters': [filter], 'overwrite': true},
+          }));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
+        case 'audio_metadata':
+          final node = step.nodes.first;
+          final p = node.params;
+          final coverPath = p['cover_path'] as String? ?? '';
+          final lyricsPath = p['lyrics_path'] as String? ?? '';
+          final removeCover = p['remove_cover'] as bool? ?? false;
+          final removeLyrics = p['remove_lyrics'] as bool? ?? false;
+          final ext = currentInput.split('.').last.toLowerCase();
+          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext);
+          if (!isLast) tempFiles.add(outPath);
+          calls.add(BackendCall(action: 'audio_metadata', params: {
+            'input': currentInput,
+            'output': outPath,
+            if (coverPath.isNotEmpty) 'cover_path': coverPath,
+            if (lyricsPath.isNotEmpty) 'lyrics_path': lyricsPath,
+            'remove_cover': removeCover,
+            'remove_lyrics': removeLyrics,
+          }));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
+        case 'concat':
+          final node = step.nodes.first;
+          calls.add(BackendCall(
+            action: 'concat',
+            params: {
+              'input': currentInput, 'output': currentOutput,
+              'mode': node.params['mode'] as String? ?? 'copy',
+            },
+          ));
+          break;
+
+        case 'image_sequence':
+          final node = step.nodes.first;
+          final fmt = node.params['output_format'] as String? ?? 'mp4';
+          final outPath = isLast
+              ? outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.$fmt')
+              : _tempPath(inputPath, i, fmt);
+          calls.add(BackendCall(
+            action: 'image_sequence',
+            params: {
+              'input': currentInput, 'output': outPath,
+              'framerate': (node.params['framerate'] as num?)?.toDouble() ?? 30.0,
+              'video_codec': node.params['video_codec'] as String? ?? 'h264',
+            },
+          ));
+          break;
       }
 
       // Record the range of calls generated by this step
@@ -745,20 +870,23 @@ class GraphExecutor {
     final namingValue = p['naming_value'] as String? ?? '_processed';
     final outputDir = p['output_dir'] as String?;
 
-    // Determine extension: check if last processing step overrides the format
+    // Determine extension: check if any processing step overrides the format
     String ext;
     if (format != 'keep') {
       ext = format;
     } else if (plan.steps.isNotEmpty) {
-      final lastStep = plan.steps.last;
-      final lastNode = lastStep.nodes.last;
-      if (lastStep.action == 'extract_audio' || lastStep.action == 'audio_convert') {
-        ext = lastNode.params['output_format'] as String? ?? 'm4a';
-      } else if (lastStep.action == 'image_convert') {
-        ext = lastNode.params['output_format'] as String? ?? 'png';
-      } else {
-        ext = video.filepath.split('.').last;
+      // Walk steps to find format-changing nodes (only audioConvert and imageConvert)
+      String? overrideExt;
+      for (final step in plan.steps) {
+        if (step.action == 'audio_convert') {
+          final n = step.nodes.first;
+          overrideExt = n.params['output_format'] as String? ?? 'm4a';
+        } else if (step.action == 'image_convert') {
+          final n = step.nodes.first;
+          overrideExt = n.params['output_format'] as String? ?? 'png';
+        }
       }
+      ext = overrideExt ?? video.filepath.split('.').last;
     } else {
       ext = video.filepath.split('.').last;
     }
@@ -838,8 +966,31 @@ class GraphExecutor {
             case PipelineStepType.audioConvert:
               descs.add('音频转换(${n.params['audio_codec'] ?? 'aac'}→${n.params['output_format'] ?? 'm4a'})');
               break;
-            case PipelineStepType.extractAudio:
-              descs.add('提取音频(${n.params['audio_codec'] ?? 'copy'}→${n.params['output_format'] ?? 'm4a'})');
+            case PipelineStepType.audioQuality:
+              descs.add('音质调整(${n.params['audio_bitrate'] ?? 'keep'}kbps, ${n.params['sample_rate'] ?? 'keep'})');
+              break;
+            case PipelineStepType.audioSpeed:
+              descs.add('音频变速(${n.params['atempo'] ?? 1.0}x)');
+              break;
+            case PipelineStepType.audioVolume:
+              descs.add('音量调整(${n.params['volume_db'] ?? 0}dB)');
+              break;
+            case PipelineStepType.audioCompressor:
+              descs.add('动态压缩(threshold=${n.params['threshold'] ?? -20}dB, ratio=${n.params['ratio'] ?? 3})');
+              break;
+            case PipelineStepType.audioMetadata:
+              final parts = <String>[];
+              if ((n.params['cover_path'] as String? ?? '').isNotEmpty) parts.add('封面');
+              if ((n.params['lyrics_path'] as String? ?? '').isNotEmpty) parts.add('歌词');
+              if (n.params['remove_cover'] == true) parts.add('删封面');
+              if (n.params['remove_lyrics'] == true) parts.add('删歌词');
+              descs.add('元信息(${parts.isEmpty ? "无操作" : parts.join("+")})');
+              break;
+            case PipelineStepType.concatMedia:
+              descs.add('合并媒体(${n.params['mode'] ?? 'copy'})');
+              break;
+            case PipelineStepType.imageToVideo:
+              descs.add('图片→视频(${n.params['framerate'] ?? 30}fps)');
               break;
             case PipelineStepType.imageRotate:
               descs.add('图片旋转(${n.params['angle'] ?? '0'}°)');

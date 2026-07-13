@@ -68,9 +68,9 @@ std::vector<std::string> buildEncodingParams(const json& options, const std::str
 
     std::vector<std::string> params;
 
-    // video_codec == "none" → 纯音频模式，禁用视频流
+    // video_codec == "none" → 纯音频模式，禁用视频流但保留封面
     if (video_codec == "none") {
-        params.push_back("-vn");
+        // -vn 会删除封面，改用 filter 跳过视频编码但保留 attached_pic
     } else {
         if (has_vf && video_codec == "copy") {
             video_codec = "h264";
@@ -204,10 +204,68 @@ std::vector<std::string> buildTranscodeCommand(
     cmd.push_back("-i");
     cmd.push_back(input_path);
 
+    // 封面图片作为第二个输入
+    bool hasCoverInput = options.contains("cover_input") && options["cover_input"].is_string();
+    if (hasCoverInput) {
+        std::string cover = options["cover_input"].get<std::string>();
+        if (!isPathSafe(cover))
+            throw std::runtime_error("封面路径包含不安全字符");
+        cmd.push_back("-i");
+        cmd.push_back(cover);
+    }
+
     // 片段截取结束时间
     if (options.contains("end_time") && !options["end_time"].is_null()) {
         cmd.push_back("-to");
         cmd.push_back(std::to_string(options["end_time"].get<double>()));
+    }
+
+    // 纯音频模式：保留封面（attached_pic）和元数据
+    bool removeCover = options.value("remove_cover", false);
+    if (audio_only) {
+        std::string out_ext;
+        auto dot = output_path.rfind('.');
+        if (dot != std::string::npos) out_ext = output_path.substr(dot + 1);
+        for (auto& c : out_ext) c = std::tolower(c);
+
+        if (hasCoverInput) {
+            // 嵌入新封面：映射音频流 + 新封面
+            cmd.push_back("-map");
+            cmd.push_back("0:a");
+            cmd.push_back("-map");
+            cmd.push_back("1:v");
+            cmd.push_back("-c:v");
+            cmd.push_back("copy");
+            cmd.push_back("-disposition:v:0");
+            cmd.push_back("attached_pic");
+        } else if (removeCover || out_ext == "flac" || out_ext == "wav") {
+            cmd.push_back("-vn");
+        } else {
+            cmd.push_back("-map");
+            cmd.push_back("0");
+            cmd.push_back("-c:v");
+            cmd.push_back("copy");
+        }
+        cmd.push_back("-map_metadata");
+        cmd.push_back("0");
+
+        // 嵌入歌词元数据
+        if (options.contains("metadata") && options["metadata"].is_object()) {
+            auto meta = options["metadata"];
+            if (meta.contains("lyrics") && meta["lyrics"].is_string()) {
+                cmd.push_back("-metadata");
+                cmd.push_back("lyrics=" + meta["lyrics"].get<std::string>());
+            }
+        }
+        // 删除歌词
+        if (options.value("remove_lyrics", false)) {
+            cmd.push_back("-metadata");
+            cmd.push_back("lyrics=");
+            cmd.push_back("-metadata");
+            cmd.push_back("LYRICS=");
+            cmd.push_back("-metadata");
+            cmd.push_back("UNSYNCEDLYRICS=");
+        }
     }
 
     // 编码参数

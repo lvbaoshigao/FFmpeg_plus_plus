@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'package:archive/archive.dart';
-import 'package:crypto/crypto.dart';
 
 const _ffmpegLanzouUrl = 'https://wwbrq.lanzouv.com/iTF9n3sb937c';
 const _ffprobeLanzouUrl = 'https://wwbrq.lanzouv.com/itEOt3t5yogh';

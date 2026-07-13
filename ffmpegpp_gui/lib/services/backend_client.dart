@@ -103,6 +103,28 @@ class BackendClient {
     }
   }
 
+  /// 合并音频/视频
+  Future<Map<String, dynamic>> concat(String taskId, {
+    required List<String> files, required String output,
+    String mode = 'copy', Map<String, dynamic>? options,
+  }) async {
+    return await _process.requestWithId(taskId, 'concat', {
+      'files': files, 'output': output, 'mode': mode,
+      if (options != null) 'options': options,
+    });
+  }
+
+  /// 图片序列→视频
+  Future<Map<String, dynamic>> imageSequence(String taskId, {
+    required List<String> files, required String output,
+    required double framerate, Map<String, dynamic>? options,
+  }) async {
+    return await _process.requestWithId(taskId, 'image_sequence', {
+      'files': files, 'output': output, 'framerate': framerate,
+      if (options != null) 'options': options,
+    });
+  }
+
   void dispose() {
     _progressController.close();
     _auditController.close();

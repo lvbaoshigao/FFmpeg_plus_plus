@@ -37,8 +37,8 @@ class _ClipStepEditorState extends State<ClipStepEditor> {
     super.initState();
     p.putIfAbsent('start_time', () => 0.0);
     p.putIfAbsent('end_time', () => widget.videoDuration);
-    _startCtrl = TextEditingController(text: _formatTime(p['start_time'] as double));
-    _endCtrl = TextEditingController(text: _formatTime(p['end_time'] as double));
+    _startCtrl = TextEditingController(text: _formatTime((p['start_time'] as num?)?.toDouble() ?? 0.0));
+    _endCtrl = TextEditingController(text: _formatTime((p['end_time'] as num?)?.toDouble() ?? widget.videoDuration));
     _generatePreview();
   }
 
@@ -85,7 +85,7 @@ class _ClipStepEditorState extends State<ClipStepEditor> {
   Future<void> _generatePreview() async {
     final path = await FramePreview.generatePreview(
       widget.videoPath,
-      p['start_time'] as double,
+      p['start_time'] as double? ?? 0.0,
       width: 480,
     );
     if (mounted) {
@@ -106,8 +106,8 @@ class _ClipStepEditorState extends State<ClipStepEditor> {
     final cs = theme.colorScheme;
     final zh = widget.isZh;
     final dur = widget.videoDuration;
-    final start = (p['start_time'] as double).clamp(0.0, dur);
-    final end = (p['end_time'] as double).clamp(start, dur);
+    final start = ((p['start_time'] as num?)?.toDouble() ?? 0.0).clamp(0.0, dur);
+    final end = ((p['end_time'] as num?)?.toDouble() ?? dur).clamp(start, dur);
 
     return Padding(
       padding: const EdgeInsets.all(16),
@@ -146,7 +146,7 @@ class _ClipStepEditorState extends State<ClipStepEditor> {
                       if (parsed < 0) return; // 解析失败时忽略，保留上次的值
                       final t = parsed.clamp(0.0, dur);
                       p['start_time'] = t;
-                      if (t > (p['end_time'] as double)) {
+                      if (t > ((p['end_time'] as num?)?.toDouble() ?? dur)) {
                         p['end_time'] = t;
                         _endCtrl.text = _formatTime(t);
                       }
@@ -167,7 +167,7 @@ class _ClipStepEditorState extends State<ClipStepEditor> {
                       if (parsed < 0) return; // 解析失败时忽略，保留上次的值
                       final t = parsed.clamp(0.0, dur);
                       p['end_time'] = t;
-                      if (t < (p['start_time'] as double)) {
+                      if (t < ((p['start_time'] as num?)?.toDouble() ?? 0.0)) {
                         p['start_time'] = t;
                         _startCtrl.text = _formatTime(t);
                       }

@@ -69,8 +69,6 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
       subtitleOutlineColor: v.subtitleOutlineColor,
       outputFormat: v.outputFormat, namingMode: v.namingMode, namingValue: v.namingValue,
       speed: v.speed,
-      extractAudioEnabled: v.extractAudioEnabled, extractAudioCodec: v.extractAudioCodec,
-      extractAudioFormat: v.extractAudioFormat, extractAudioBitrate: v.extractAudioBitrate,
       frameExtractMode: v.frameExtractMode, frameTime: v.frameTime,
       frameRangeStart: v.frameRangeStart, frameRangeEnd: v.frameRangeEnd,
       frameFps: v.frameFps, frameFormat: v.frameFormat,
@@ -126,7 +124,7 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
             Icon(Icons.info_outline, size: 14, color: scheme.outline),
             const SizedBox(width: 6),
             Expanded(child: Text(
-              '${v.resolution}  |  ${v.durationStr}  |  ${v.sizeMb.toStringAsFixed(1)} MB  |  ${v.codec}',
+              '${v.resolution}  |  ${v.durationStr}  |  ${formatFileSize(v.sizeMb)}  |  ${v.codec}',
               style: TextStyle(fontSize: 11, color: scheme.outline, fontFamily: 'monospace'),
               overflow: TextOverflow.ellipsis,
             )),
@@ -353,37 +351,6 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
             [s.cfgChKeep, s.cfgChMono, s.cfgChStereo, s.cfgCh51],
             (v) => setState(() { _cfg.audioChannels = v == 'keep' ? null : int.tryParse(v); })),
 
-        // ── Extract Audio (only for video files) ──
-        if (widget.video.fileMediaType == MediaType.video)
-          ExpansionTile(
-            title: Text(s.isZh ? '提取音频' : 'Extract Audio', style: TextStyle(fontSize: 13, color: sc.onSurface)),
-            leading: Icon(Icons.music_note, size: 16, color: sc.primary),
-            tilePadding: const EdgeInsets.symmetric(horizontal: 4),
-            childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-            children: [
-              SwitchListTile(
-                title: Text(s.isZh ? '启用提取音频' : 'Enable Extract Audio', style: TextStyle(fontSize: 12, color: sc.onSurface)),
-                value: _cfg.extractAudioEnabled,
-                onChanged: (v) => setState(() => _cfg.extractAudioEnabled = v),
-                dense: true, contentPadding: EdgeInsets.zero,
-              ),
-              if (_cfg.extractAudioEnabled) ...[
-                _dd(sc, s.isZh ? '编码' : 'Codec', _cfg.extractAudioCodec,
-                    ['copy', 'aac', 'libmp3lame', 'libopus', 'flac', 'pcm_s16le'],
-                    ['Copy', 'AAC', 'MP3 (LAME)', 'Opus', 'FLAC', 'PCM 16-bit'],
-                    (v) => setState(() => _cfg.extractAudioCodec = v)),
-                _dd(sc, s.isZh ? '格式' : 'Format', _cfg.extractAudioFormat,
-                    ['m4a', 'mp3', 'ogg', 'flac', 'wav', 'aac'],
-                    ['M4A', 'MP3', 'OGG', 'FLAC', 'WAV', 'AAC'],
-                    (v) => setState(() => _cfg.extractAudioFormat = v)),
-                _dd(sc, s.isZh ? '比特率' : 'Bitrate',
-                    '${_cfg.extractAudioBitrate ?? 'keep'}',
-                    _audBitratePresets.map((p) => '${p ?? 'keep'}').toList(),
-                    _audBitrateLabels.toList(),
-                    (v) => setState(() => _cfg.extractAudioBitrate = v == 'keep' ? null : int.tryParse(v))),
-              ],
-            ],
-          ),
       ],
     );
   }

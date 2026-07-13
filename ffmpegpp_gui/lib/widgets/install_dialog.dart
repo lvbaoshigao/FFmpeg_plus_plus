@@ -309,7 +309,7 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
         Text(desc, style: TextStyle(fontSize: 11, color: scheme.outline)),
         if (done)
           Padding(padding: const EdgeInsets.only(top: 4),
-            child: Text(selectedPath!, style: TextStyle(fontSize: 9, color: scheme.outline, fontFamily: Platform.isWindows ? 'Consolas' : 'monospace'),
+            child: Text(selectedPath, style: TextStyle(fontSize: 9, color: scheme.outline, fontFamily: Platform.isWindows ? 'Consolas' : 'monospace'),
                 maxLines: 1, overflow: TextOverflow.ellipsis)),
         const SizedBox(height: 8),
         Row(children: [

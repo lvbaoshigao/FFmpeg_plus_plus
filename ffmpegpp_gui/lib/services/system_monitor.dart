@@ -51,51 +51,38 @@ class SystemMonitor {
 
   Future<void> _updateCpuRamWindows() async {
     try {
-      final result = await Process.run('wmic', ['cpu', 'get', 'loadpercentage', '/value'], runInShell: true);
-      for (final line in result.stdout.toString().split('\n')) {
-        if (line.contains('LoadPercentage=')) {
-          cpuPercent = double.tryParse(line.split('=').last.trim()) ?? 0;
-        }
-      }
+      final result = await Process.run('powershell', ['-NoProfile', '-Command',
+        'Get-CimInstance Win32_Processor | Select-Object -ExpandProperty LoadPercentage'], runInShell: true);
+      cpuPercent = double.tryParse(result.stdout.toString().trim()) ?? 0;
 
-      final ramResult = await Process.run('wmic', ['OS', 'get', 'FreePhysicalMemory,TotalVisibleMemorySize', '/value'], runInShell: true);
-      double freeKB = 0, totalKB = 0;
-      for (final line in ramResult.stdout.toString().split('\n')) {
-        if (line.contains('FreePhysicalMemory=')) {
-          freeKB = double.tryParse(line.split('=').last.trim()) ?? 0;
+      final ramResult = await Process.run('powershell', ['-NoProfile', '-Command',
+        r'$os = Get-CimInstance Win32_OperatingSystem; Write-Output "$($os.FreePhysicalMemory),$($os.TotalVisibleMemorySize)"'], runInShell: true);
+      final parts = ramResult.stdout.toString().trim().split(',');
+      if (parts.length == 2) {
+        final freeKB = double.tryParse(parts[0]) ?? 0;
+        final totalKB = double.tryParse(parts[1]) ?? 0;
+        if (totalKB > 0) {
+          ramTotalGb = totalKB / 1024 / 1024;
+          ramUsedGb = (totalKB - freeKB) / 1024 / 1024;
+          ramPercent = ramUsedGb / ramTotalGb * 100;
         }
-        if (line.contains('TotalVisibleMemorySize=')) {
-          totalKB = double.tryParse(line.split('=').last.trim()) ?? 0;
-        }
-      }
-      if (totalKB > 0) {
-        ramTotalGb = totalKB / 1024 / 1024;
-        ramUsedGb = (totalKB - freeKB) / 1024 / 1024;
-        ramPercent = ramUsedGb / ramTotalGb * 100;
       }
     } catch (_) {}
   }
 
   Future<void> _updateGpuWindows() async {
     try {
-      final result = await Process.run('wmic', ['path', 'win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine', 'where', 'name like \'%3D\'', 'get', 'utilizationpercentage', '/value'], runInShell: true);
-      double maxGpu = 0;
-      for (final line in result.stdout.toString().split('\n')) {
-        if (line.contains('UtilizationPercentage=')) {
-          final val = double.tryParse(line.split('=').last.trim()) ?? 0;
-          if (val > maxGpu) maxGpu = val;
-        }
-      }
-      gpuPercent = maxGpu;
+      final result = await Process.run('powershell', ['-NoProfile', '-Command',
+        r'(Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine | Where-Object { $_.Name -like "*3D*" } | Measure-Object -Property UtilizationPercentage -Maximum).Maximum'], runInShell: true);
+      gpuPercent = double.tryParse(result.stdout.toString().trim()) ?? 0;
 
       if (!_gpuNameCached) {
-        final nameResult = await Process.run('wmic', ['path', 'win32_VideoController', 'get', 'name', '/value'], runInShell: true);
-        for (final line in nameResult.stdout.toString().split('\n')) {
-          if (line.contains('Name=') && !line.contains('Name=Node')) {
-            gpuName = line.split('=').last.trim();
-            _gpuNameCached = true;
-            break;
-          }
+        final nameResult = await Process.run('powershell', ['-NoProfile', '-Command',
+          r'(Get-CimInstance Win32_VideoController).Name'], runInShell: true);
+        final name = nameResult.stdout.toString().trim();
+        if (name.isNotEmpty) {
+          gpuName = name.split('\n').first.trim();
+          _gpuNameCached = true;
         }
       }
     } catch (_) {}

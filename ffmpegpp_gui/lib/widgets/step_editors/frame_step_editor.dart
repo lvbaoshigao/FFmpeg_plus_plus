@@ -43,9 +43,9 @@ class _FrameStepEditorState extends State<FrameStepEditor> {
     p.putIfAbsent('range_start', () => 0.0);
     p.putIfAbsent('range_end', () => widget.videoDuration);
     p.putIfAbsent('fps_rate', () => 1.0);
-    _timeCtrl = TextEditingController(text: _fmt(p['time'] as double));
-    _startCtrl = TextEditingController(text: _fmt(p['range_start'] as double));
-    _endCtrl = TextEditingController(text: _fmt(p['range_end'] as double));
+    _timeCtrl = TextEditingController(text: _fmt((p['time'] as num?)?.toDouble() ?? 0.0));
+    _startCtrl = TextEditingController(text: _fmt((p['range_start'] as num?)?.toDouble() ?? 0.0));
+    _endCtrl = TextEditingController(text: _fmt((p['range_end'] as num?)?.toDouble() ?? widget.videoDuration));
     _fpsCtrl = TextEditingController(text: '${(p['fps_rate'] as num?)?.toDouble() ?? 1.0}');
     _generatePreview();
   }
@@ -82,7 +82,7 @@ class _FrameStepEditorState extends State<FrameStepEditor> {
 
   Future<void> _generatePreview() async {
     setState(() => _loading = true);
-    final t = p['extract_mode'] == 'single' ? p['time'] as double : p['range_start'] as double;
+    final t = p['extract_mode'] == 'single' ? (p['time'] as num?)?.toDouble() ?? 0.0 : (p['range_start'] as num?)?.toDouble() ?? 0.0;
     final path = await FramePreview.generatePreview(widget.videoPath, t, width: 640);
     if (mounted) setState(() { _previewPath = path; _loading = false; });
   }
@@ -171,7 +171,7 @@ class _FrameStepEditorState extends State<FrameStepEditor> {
   }
 
   List<Widget> _buildSingleMode(ColorScheme cs, bool zh, double dur) {
-    final time = (p['time'] as double).clamp(0.0, dur);
+    final time = ((p['time'] as num?)?.toDouble() ?? 0.0).clamp(0.0, dur);
     return [
       SliderTheme(
         data: SliderTheme.of(context).copyWith(trackHeight: 4, thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7)),
@@ -199,8 +199,8 @@ class _FrameStepEditorState extends State<FrameStepEditor> {
   }
 
   List<Widget> _buildRangeMode(ColorScheme cs, bool zh, double dur) {
-    final rs = (p['range_start'] as double).clamp(0.0, dur);
-    final re = (p['range_end'] as double).clamp(0.0, dur);
+    final rs = ((p['range_start'] as num?)?.toDouble() ?? 0.0).clamp(0.0, dur);
+    final re = ((p['range_end'] as num?)?.toDouble() ?? dur).clamp(0.0, dur);
     final fpsRate = (p['fps_rate'] as num?)?.toDouble() ?? 1.0;
     final frameCount = re > rs ? ((re - rs) * fpsRate).ceil() : 0;
     return [

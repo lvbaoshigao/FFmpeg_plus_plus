@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'package:crypto/crypto.dart';
 
+final _s = Platform.pathSeparator;
+
 /// 启动完整性校验：验证关键资源文件 MD5，不匹配则跳过（不闪退）
 class IntegrityCheck {
   static const _expectedMd5 = {
@@ -13,9 +15,9 @@ class IntegrityCheck {
     try {
       final exeDir = Directory(Platform.resolvedExecutable).parent;
       final candidates = [
-        '${exeDir.path}/data/flutter_assets/rele',
-        '${exeDir.path}/../data/flutter_assets/rele',
-        '${exeDir.path}/../../data/flutter_assets/rele',
+        '${exeDir.path}${_s}data${_s}flutter_assets${_s}rele',
+        '${exeDir.path}$_s..${_s}data${_s}flutter_assets${_s}rele',
+        '${exeDir.path}$_s..$_s..${_s}data${_s}flutter_assets${_s}rele',
       ];
       String? dir;
       for (final c in candidates) {
@@ -27,7 +29,7 @@ class IntegrityCheck {
       if (dir == null) return false;
 
       for (final entry in _expectedMd5.entries) {
-        final file = File('$dir/${entry.key}');
+        final file = File('$dir$_s${entry.key}');
         if (!await file.exists()) return false;
         final bytes = await file.readAsBytes();
         final actual = md5.convert(bytes).toString();

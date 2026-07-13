@@ -100,7 +100,7 @@ class AppStrings {
   String get swVersion => lang == 'zh' ? '版本' : 'Version';
   String get swBuild => lang == 'zh' ? '构建日期' : 'Build';
   String get swProtocol => lang == 'zh' ? '协议' : 'Protocol';
-  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v4.0.0  |  构建 2026-07-06  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v4.0.0  |  Build 2026-07-06  |  JSON v0.1.0';
+  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v4.7.2  |  构建 2026-07-13  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v4.7.2  |  Build 2026-07-13  |  JSON v0.1.0';
   String get languageInterface => lang == 'zh' ? '界面语言' : 'Interface Language';
   String get ffmpegFound => lang == 'zh' ? 'FFmpeg 已检测到' : 'FFmpeg detected';
   String get ffmpegNotFound => lang == 'zh' ? 'FFmpeg 未检测到' : 'FFmpeg not found';
@@ -182,6 +182,12 @@ class AppStrings {
   String get aboutZfbTitle => lang == 'zh' ? '支付宝收款码' : 'Alipay';
   String get aboutClose => lang == 'zh' ? '关闭' : 'Close';
   String get aboutZoomHint => lang == 'zh' ? '点击放大' : 'Tap to zoom';
+  String get checkUpdate => lang == 'zh' ? '检查更新' : 'Check for Updates';
+  String get checking => lang == 'zh' ? '检查中...' : 'Checking...';
+  String get updateAvailable => lang == 'zh' ? '发现新版本' : 'Update Available';
+  String get alreadyLatest => lang == 'zh' ? '已是最新版本' : 'Already up to date';
+  String get updateFailed => lang == 'zh' ? '检查更新失败' : 'Update check failed';
+  String get goDownload => lang == 'zh' ? '前往下载' : 'Go to Download';
 
   // ── 步骤编辑器 ──
   String get stepStart => lang == 'zh' ? '开始' : 'Start';
@@ -195,4 +201,20 @@ class AppStrings {
   String get pipelineParallel => lang == 'zh' ? '并行' : 'Parallel';
   String get pipelineAddStage => lang == 'zh' ? '添加阶段' : 'Add Stage';
   String get pipelineAddParallel => lang == 'zh' ? '添加并行步骤' : 'Add Parallel';
+
+  // ── 容器 ──
+  String get container => lang == 'zh' ? '容器' : 'Container';
+  String get containerNew => lang == 'zh' ? '新建容器' : 'New Container';
+  String get containerFromFolder => lang == 'zh' ? '从文件夹创建' : 'From Folder';
+  String get containerFromFiles => lang == 'zh' ? '选择文件创建' : 'From Files';
+  String get containerEnter => lang == 'zh' ? '进入' : 'Enter';
+  String get containerFiles => lang == 'zh' ? '个文件' : ' files';
+  String get containerSortName => lang == 'zh' ? '按名称' : 'By Name';
+  String get containerSortSize => lang == 'zh' ? '按大小' : 'By Size';
+  String get containerSortDuration => lang == 'zh' ? '按时长' : 'By Duration';
+  String get containerReindex => lang == 'zh' ? '重新编号' : 'Reindex';
+  String get containerAddFiles => lang == 'zh' ? '添加文件' : 'Add Files';
+  String get containerTargetIndex => lang == 'zh' ? '处理编号' : 'Target Index';
+  String get containerAll => lang == 'zh' ? '全部' : 'All';
+  String get containerQueueAll => lang == 'zh' ? '全部加入队列' : 'Queue All';
 }

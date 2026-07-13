@@ -114,7 +114,7 @@ jobs:
           # Control file
           cat > deb/DEBIAN/control << 'EOF'
           Package: ffmpegpp
-          Version: 4.5.0
+          Version: 4.7.2
           Architecture: amd64
           Maintainer: pity-Fox <noreply@github.com>
           Description: FFmpeg++ - Advanced video/image/audio processing tool
@@ -152,13 +152,13 @@ jobs:
           chmod -R 755 deb/opt/ffmpegpp/
 
           # Build deb
-          dpkg-deb --root-owner-group --build deb ffmpegpp_4.5.0_amd64.deb
+          dpkg-deb --root-owner-group --build deb ffmpegpp_4.7.2_amd64.deb
 
       - name: Upload Linux x64 deb
         uses: actions/upload-artifact@v4
         with:
           name: linux-x64-deb
-          path: ffmpegpp_4.5.0_amd64.deb
+          path: ffmpegpp_4.7.2_amd64.deb
 
   # ══════════════════════════════════════════
   # Linux ARM64
@@ -211,7 +211,7 @@ jobs:
 
           cat > deb/DEBIAN/control << 'EOF'
           Package: ffmpegpp
-          Version: 4.5.0
+          Version: 4.7.2
           Architecture: arm64
           Maintainer: pity-Fox <noreply@github.com>
           Description: FFmpeg++ - Advanced video/image/audio processing tool
@@ -244,13 +244,13 @@ jobs:
           cp "make/FFmpeg++.png" deb/usr/share/icons/hicolor/256x256/apps/ffmpegpp.png
           chmod -R 755 deb/opt/ffmpegpp/
 
-          dpkg-deb --root-owner-group --build deb ffmpegpp_4.5.0_arm64.deb
+          dpkg-deb --root-owner-group --build deb ffmpegpp_4.7.2_arm64.deb
 
       - name: Upload Linux ARM64 deb
         uses: actions/upload-artifact@v4
         with:
           name: linux-arm64-deb
-          path: ffmpegpp_4.5.0_arm64.deb
+          path: ffmpegpp_4.7.2_arm64.deb
 
   # ══════════════════════════════════════════
   # Create Release Draft
@@ -273,8 +273,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           draft: true
-          name: "FFmpeg++ v4.5.0"
-          tag_name: ${{ github.ref_name || 'v4.5.0' }}
+          name: "FFmpeg++ v4.7.2"
+          tag_name: ${{ github.ref_name || 'v4.7.2' }}
           files: |
             artifacts/windows-installer/*.exe
             artifacts/linux-x64-deb/*.deb

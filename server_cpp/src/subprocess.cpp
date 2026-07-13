@@ -27,13 +27,23 @@ namespace ffmpegpp {
 // ═══════════════════════════════════════════════
 
 // UTF-8 → UTF-16 宽字符串转换
-static std::wstring utf8ToWide(const std::string& s) {
+std::wstring Subprocess::utf8ToWide(const std::string& s) {
     if (s.empty()) return L"";
     int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), nullptr, 0);
     if (len <= 0) return L"";
     std::wstring ws(len, L'\0');
     MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), &ws[0], len);
     return ws;
+}
+
+// UTF-16 → UTF-8 转换
+std::string Subprocess::wideToUtf8(const std::wstring& ws) {
+    if (ws.empty()) return "";
+    int len = WideCharToMultiByte(CP_UTF8, 0, ws.c_str(), (int)ws.size(), nullptr, 0, nullptr, nullptr);
+    if (len <= 0) return "";
+    std::string s(len, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, ws.c_str(), (int)ws.size(), &s[0], len, nullptr, nullptr);
+    return s;
 }
 
 // 判断参数是否需要加引号（含空格、逗号、中文等特殊字符）

@@ -13,6 +13,14 @@ enum MediaType { video, image, audio }
 
 const kImageExts = {'png', 'jpg', 'jpeg', 'bmp', 'webp', 'tiff', 'tif'};
 
+String formatFileSize(double sizeMb) {
+  if (sizeMb >= 1000) return '${(sizeMb / 1024).toStringAsFixed(2)} GB';
+  if (sizeMb >= 0.1) return '${sizeMb.toStringAsFixed(1)} MB';
+  final kb = sizeMb * 1024;
+  if (kb >= 0.1) return '${kb.toStringAsFixed(1)} KB';
+  return '${(kb * 1024).toStringAsFixed(0)} B';
+}
+
 // ═══════════════════════════════════════════
 // 流水线步骤
 // ═══════════════════════════════════════════
@@ -26,7 +34,13 @@ enum PipelineStepType {
   speed,
   imageConvert,
   audioConvert,
-  extractAudio,
+  audioQuality,
+  audioSpeed,
+  audioVolume,
+  audioCompressor,
+  audioMetadata,
+  concatMedia,
+  imageToVideo,
   imageCrop,
   imageRotate,
   imageScale,
@@ -58,7 +72,13 @@ class PipelineStep {
       case PipelineStepType.speed: return '变速';
       case PipelineStepType.imageConvert: return '图片转换';
       case PipelineStepType.audioConvert: return '音频转换';
-      case PipelineStepType.extractAudio: return '提取音频';
+      case PipelineStepType.audioQuality: return '音质调整';
+      case PipelineStepType.audioSpeed: return '调整速度';
+      case PipelineStepType.audioVolume: return '调整音量';
+      case PipelineStepType.audioCompressor: return '压缩动态范围';
+      case PipelineStepType.audioMetadata: return '元信息编辑';
+      case PipelineStepType.concatMedia: return '合并媒体';
+      case PipelineStepType.imageToVideo: return '图片合成视频';
       case PipelineStepType.imageCrop: return '图片裁剪';
       case PipelineStepType.imageRotate: return '图片旋转';
       case PipelineStepType.imageScale: return '图片缩放';
@@ -81,7 +101,13 @@ class PipelineStep {
       case PipelineStepType.speed: return 'Speed';
       case PipelineStepType.imageConvert: return 'Image Convert';
       case PipelineStepType.audioConvert: return 'Audio Convert';
-      case PipelineStepType.extractAudio: return 'Extract Audio';
+      case PipelineStepType.audioQuality: return 'Audio Quality';
+      case PipelineStepType.audioSpeed: return 'Audio Speed';
+      case PipelineStepType.audioVolume: return 'Audio Volume';
+      case PipelineStepType.audioCompressor: return 'Dynamic Range';
+      case PipelineStepType.audioMetadata: return 'Metadata';
+      case PipelineStepType.concatMedia: return 'Concat Media';
+      case PipelineStepType.imageToVideo: return 'Image to Video';
       case PipelineStepType.imageCrop: return 'Image Crop';
       case PipelineStepType.imageRotate: return 'Image Rotate';
       case PipelineStepType.imageScale: return 'Image Scale';
@@ -128,7 +154,13 @@ class PipelineNode {
       case PipelineStepType.speed: return '变速';
       case PipelineStepType.imageConvert: return '图片转换';
       case PipelineStepType.audioConvert: return '音频转换';
-      case PipelineStepType.extractAudio: return '提取音频';
+      case PipelineStepType.audioQuality: return '音质调整';
+      case PipelineStepType.audioSpeed: return '调整速度';
+      case PipelineStepType.audioVolume: return '调整音量';
+      case PipelineStepType.audioCompressor: return '压缩动态范围';
+      case PipelineStepType.audioMetadata: return '元信息编辑';
+      case PipelineStepType.concatMedia: return '合并媒体';
+      case PipelineStepType.imageToVideo: return '图片合成视频';
       case PipelineStepType.imageCrop: return '图片裁剪';
       case PipelineStepType.imageRotate: return '图片旋转';
       case PipelineStepType.imageScale: return '图片缩放';
@@ -151,7 +183,13 @@ class PipelineNode {
       case PipelineStepType.speed: return 'Speed';
       case PipelineStepType.imageConvert: return 'Image Convert';
       case PipelineStepType.audioConvert: return 'Audio Convert';
-      case PipelineStepType.extractAudio: return 'Extract Audio';
+      case PipelineStepType.audioQuality: return 'Audio Quality';
+      case PipelineStepType.audioSpeed: return 'Audio Speed';
+      case PipelineStepType.audioVolume: return 'Audio Volume';
+      case PipelineStepType.audioCompressor: return 'Dynamic Range';
+      case PipelineStepType.audioMetadata: return 'Metadata';
+      case PipelineStepType.concatMedia: return 'Concat Media';
+      case PipelineStepType.imageToVideo: return 'Image to Video';
       case PipelineStepType.imageCrop: return 'Image Crop';
       case PipelineStepType.imageRotate: return 'Image Rotate';
       case PipelineStepType.imageScale: return 'Image Scale';
@@ -176,7 +214,13 @@ class PipelineNode {
     PipelineStepType.speed => {MediaType.video},
     PipelineStepType.imageConvert => {MediaType.image},
     PipelineStepType.audioConvert => {MediaType.audio},
-    PipelineStepType.extractAudio => {MediaType.video},
+    PipelineStepType.audioQuality => {MediaType.audio},
+    PipelineStepType.audioSpeed => {MediaType.audio},
+    PipelineStepType.audioVolume => {MediaType.audio},
+    PipelineStepType.audioCompressor => {MediaType.audio},
+    PipelineStepType.audioMetadata => {MediaType.audio},
+    PipelineStepType.concatMedia => {MediaType.video, MediaType.audio},
+    PipelineStepType.imageToVideo => {MediaType.image},
     PipelineStepType.imageCrop => {MediaType.image},
     PipelineStepType.imageRotate => {MediaType.image},
     PipelineStepType.imageScale => {MediaType.image},
@@ -199,7 +243,13 @@ class PipelineNode {
     PipelineStepType.speed => MediaType.video,
     PipelineStepType.imageConvert => MediaType.image,
     PipelineStepType.audioConvert => MediaType.audio,
-    PipelineStepType.extractAudio => MediaType.audio,
+    PipelineStepType.audioQuality => MediaType.audio,
+    PipelineStepType.audioSpeed => MediaType.audio,
+    PipelineStepType.audioVolume => MediaType.audio,
+    PipelineStepType.audioCompressor => MediaType.audio,
+    PipelineStepType.audioMetadata => MediaType.audio,
+    PipelineStepType.concatMedia => MediaType.video,
+    PipelineStepType.imageToVideo => MediaType.video,
     PipelineStepType.imageCrop => MediaType.image,
     PipelineStepType.imageRotate => MediaType.image,
     PipelineStepType.imageScale => MediaType.image,
@@ -574,10 +624,6 @@ class TranscodeConfig {
   double? startTime, endTime;
   // ── 扩展处理选项 ──
   double? speed;                    // 变速倍率，null=不变速
-  bool extractAudioEnabled;         // 是否提取音频
-  String extractAudioCodec;         // 提取音频编码器
-  String extractAudioFormat;        // 提取音频格式
-  int? extractAudioBitrate;         // 提取音频码率
   String frameExtractMode;          // 'none'/'single'/'range'/'all'
   double? frameTime;                // 单帧时间
   double? frameRangeStart;
@@ -605,8 +651,6 @@ class TranscodeConfig {
     this.namingValue = '_processed',
     this.startTime, this.endTime,
     this.speed,
-    this.extractAudioEnabled = false, this.extractAudioCodec = 'copy',
-    this.extractAudioFormat = 'm4a', this.extractAudioBitrate,
     this.frameExtractMode = 'none', this.frameTime, this.frameRangeStart,
     this.frameRangeEnd, this.frameFps, this.frameFormat = 'png',
     this.imageOutputFormat, this.imageQuality = 95,
@@ -729,7 +773,9 @@ class AppConfig {
   bool useNodeEditor;
   Map<String, int> nodeUsageCount;
   int maxConcurrentTasks;
+  int probeThreads;
   Map<String, List<String>> keyBindings;
+  bool autoCheckUpdate;
 
   static const fontWeightValues = [300, 400, 500, 600, 700];
   static const fontWeightLabels = ['Light', 'Regular', 'Medium', 'SemiBold', 'Bold'];
@@ -755,8 +801,10 @@ class AppConfig {
     this.debugMode = false, this.saveLogs = false, this.enableSystemNotification = false, this.logSavePath = '',
     this.useNodeEditor = true,
     this.maxConcurrentTasks = 1,
+    this.probeThreads = 1,
     Map<String, int>? nodeUsageCount,
     Map<String, List<String>>? keyBindings,
+    this.autoCheckUpdate = true,
   }) : fontFamily = fontFamily ?? _defaultFontFamily,
        nodeUsageCount = nodeUsageCount ?? {},
        keyBindings = keyBindings ?? Map.from(defaultKeyBindings);
@@ -781,9 +829,11 @@ class AppConfig {
         logSavePath: json['log_save_path'] as String? ?? '',
         useNodeEditor: json['use_node_editor'] as bool? ?? true,
         maxConcurrentTasks: json['max_concurrent_tasks'] as int? ?? 1,
+        probeThreads: json['probe_threads'] as int? ?? 1,
         nodeUsageCount: (json['node_usage_count'] as Map<String, dynamic>?)?.map((k, v) => MapEntry(k, (v as num).toInt())) ?? {},
         keyBindings: (json['key_bindings'] as Map<String, dynamic>?)?.map((k, v) =>
             MapEntry(k, (v as List<dynamic>).map((e) => e as String).toList())) ?? Map.from(defaultKeyBindings),
+        autoCheckUpdate: json['auto_check_update'] as bool? ?? true,
       );
 
   Map<String, dynamic> toJson() => {
@@ -797,8 +847,10 @@ class AppConfig {
         'save_logs': saveLogs, 'enable_system_notification': enableSystemNotification, 'log_save_path': logSavePath,
         'use_node_editor': useNodeEditor,
         'max_concurrent_tasks': maxConcurrentTasks,
+        'probe_threads': probeThreads,
         'node_usage_count': nodeUsageCount,
         'key_bindings': keyBindings,
+        'auto_check_update': autoCheckUpdate,
       };
 }
 
@@ -812,4 +864,65 @@ class LogEntry {
   final String category; // 'info', 'ffmpeg', 'progress', 'error', 'general'
 
   LogEntry({required this.timestamp, required this.message, this.category = 'general'});
+}
+
+// ═══════════════════════════════════════════
+// 容器 (Container)
+// ═══════════════════════════════════════════
+
+enum ContainerSortMode { name, size, duration, custom }
+
+class ContainerItem {
+  final String fileId;
+  int index;
+  ContainerItem({required this.fileId, required this.index});
+
+  Map<String, dynamic> toJson() => {'fileId': fileId, 'index': index};
+  factory ContainerItem.fromJson(Map<String, dynamic> json) =>
+      ContainerItem(fileId: json['fileId'] as String, index: json['index'] as int? ?? 0);
+}
+
+class FileContainer {
+  final String id;
+  String name;
+  List<ContainerItem> items;
+  PipelineGraph pipelineGraph;
+  bool expanded;
+
+  FileContainer({
+    required this.id,
+    required this.name,
+    List<ContainerItem>? items,
+    PipelineGraph? pipelineGraph,
+    this.expanded = false,
+  }) : items = items ?? [],
+       pipelineGraph = pipelineGraph ?? PipelineGraph();
+
+  int get fileCount => items.length;
+
+  List<ContainerItem> get sortedItems {
+    final sorted = List<ContainerItem>.from(items);
+    sorted.sort((a, b) => a.index.compareTo(b.index));
+    return sorted;
+  }
+
+  void reindex() {
+    items.sort((a, b) => a.index.compareTo(b.index));
+    for (var i = 0; i < items.length; i++) {
+      items[i].index = i + 1;
+    }
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id, 'name': name,
+    'items': items.map((i) => i.toJson()).toList(),
+    'pipelineGraph': pipelineGraph.toJson(),
+  };
+
+  factory FileContainer.fromJson(Map<String, dynamic> json) => FileContainer(
+    id: json['id'] as String,
+    name: json['name'] as String? ?? '',
+    items: (json['items'] as List?)?.map((i) => ContainerItem.fromJson(i)).toList(),
+    pipelineGraph: json['pipelineGraph'] != null ? PipelineGraph.fromJson(json['pipelineGraph']) : null,
+  );
 }

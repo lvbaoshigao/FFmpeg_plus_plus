@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../models/models.dart';
 
 class StartStepEditor extends StatelessWidget {
   final String filename;
@@ -40,7 +41,7 @@ class StartStepEditor extends StatelessWidget {
         _row(isZh ? '文件名' : 'Filename', filename, scheme),
         _row(isZh ? '分辨率' : 'Resolution', resolution, scheme),
         _row(isZh ? '时长' : 'Duration', durationStr, scheme),
-        _row(isZh ? '大小' : 'Size', '${sizeMb.toStringAsFixed(1)} MB', scheme),
+        _row(isZh ? '大小' : 'Size', formatFileSize(sizeMb), scheme),
         _row(isZh ? '视频编码' : 'Video Codec', codec, scheme),
         _row(isZh ? '像素格式' : 'Pixel Format', pixFmt, scheme),
         _row(isZh ? '音频编码' : 'Audio Codec', audioCodec, scheme),

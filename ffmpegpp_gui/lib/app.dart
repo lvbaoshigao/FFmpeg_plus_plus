@@ -8,6 +8,7 @@ import 'providers/app_state.dart';
 import 'models/models.dart';
 import 'theme/app_theme.dart';
 import 'theme/app_strings.dart';
+import 'services/update_service.dart' as updater;
 import 'pages/project_page.dart';
 import 'pages/queue_page.dart';
 import 'pages/command_page.dart';
@@ -32,7 +33,6 @@ class FfmpegppApp extends StatelessWidget {
           darkTheme: AppTheme.dark(seedColor: cfg.themeColor, fontFamily: cfg.fontFamily,
               fontSize: cfg.fontSize, fontWeight: cfg.fontWeightValue),
           themeMode: state.darkMode ? ThemeMode.dark : ThemeMode.light,
-          // 全局文字缩放：放在 builder 里覆盖 MaterialApp 内部的 MediaQuery
           builder: (context, child) {
             final scale = cfg.fontSize / 14.0;
             return MediaQuery(
@@ -40,9 +40,32 @@ class FfmpegppApp extends StatelessWidget {
               child: child!,
             );
           },
-          home: const AppShell(),
+          home: state.initialized ? const AppShell() : const _SplashScreen(),
         );
       },
+    );
+  }
+}
+
+class _SplashScreen extends StatelessWidget {
+  const _SplashScreen();
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      backgroundColor: scheme.surface,
+      body: Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.play_circle_fill, size: 64, color: scheme.primary),
+          const SizedBox(height: 16),
+          Text('FFmpeg++', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: scheme.primary)),
+          const SizedBox(height: 24),
+          SizedBox(width: 120, child: LinearProgressIndicator(
+            color: scheme.primary,
+            backgroundColor: scheme.surfaceContainerHighest,
+          )),
+        ]),
+      ),
     );
   }
 }
@@ -68,7 +91,43 @@ class _AppShellState extends State<AppShell> with WindowListener {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final state = context.read<AppState>();
       state.onTaskFinished = _onTaskFinished;
+      _checkPostUpdate();
+      _autoCheckUpdate();
     });
+  }
+
+  Future<void> _autoCheckUpdate() async {
+    final state = context.read<AppState>();
+    if (!state.config.autoCheckUpdate) return;
+    await Future.delayed(const Duration(seconds: 3));
+    if (!mounted) return;
+    final isZh = state.config.language == 'zh';
+    final result = await updater.checkForUpdate(preferLanzou: isZh);
+    if (!mounted || !result.hasUpdate) return;
+    final s = AppStrings.of(state.config.language);
+    SettingsPage.showUpdateDialogStatic(context, s, result);
+  }
+
+  Future<void> _checkPostUpdate() async {
+    final status = await updater.checkPostUpdateStatus();
+    if (!mounted || status == null) return;
+    if (status == 'updated') {
+      final s = AppStrings.of(context.read<AppState>().config.language);
+      final scheme = Theme.of(context).colorScheme;
+      showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          icon: Icon(Icons.check_circle, color: Colors.green, size: 32),
+          title: Text(s.isZh ? '更新完成' : 'Update Complete', style: TextStyle(color: scheme.onSurface)),
+          content: Text(
+            s.isZh ? 'FFmpeg++ 已更新到 v${updater.currentVersion}' : 'FFmpeg++ updated to v${updater.currentVersion}',
+            style: TextStyle(fontSize: 13, color: scheme.onSurface),
+          ),
+          actions: [FilledButton(onPressed: () => Navigator.pop(context), child: Text(s.isZh ? '好的' : 'OK'))],
+        ),
+      );
+    }
+    // 'downgraded' — silent, cache already updated
   }
 
   void _onTaskFinished(String filename, TaskStatus status) {

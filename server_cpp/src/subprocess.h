@@ -32,6 +32,11 @@ public:
         std::atomic<bool>& cancel_flag,
         int timeout_sec = 0);
 
+#ifdef _WIN32
+    static std::wstring utf8ToWide(const std::string& s);
+    static std::string wideToUtf8(const std::wstring& ws);
+#endif
+
 private:
     static std::string vectorToCommandLine(const std::vector<std::string>& cmd);
 };

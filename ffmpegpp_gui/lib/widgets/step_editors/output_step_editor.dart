@@ -28,7 +28,6 @@ class _OutputStepEditorState extends State<OutputStepEditor> {
 
   Map<String, dynamic> get p => widget.params;
 
-  static const _formats = ['keep', 'mp4', 'mkv', 'mov', 'avi', 'webm'];
   static const _namingModes = ['keep', 'suffix', 'custom'];
 
   @override
@@ -58,8 +57,7 @@ class _OutputStepEditorState extends State<OutputStepEditor> {
   String _previewFilename() {
     final src = widget.sourceFilename;
     final base = src.replaceAll(RegExp(r'\.[^.]+$'), '');
-    final srcExt = src.contains('.') ? src.split('.').last : '';
-    final ext = p['format'] == 'keep' ? srcExt : (p['format'] as String? ?? srcExt);
+    final ext = src.contains('.') ? src.split('.').last : '';
     switch (p['naming_mode'] as String? ?? 'keep') {
       case 'suffix': return '$base${p['naming_value'] ?? '_processed'}.$ext';
       case 'custom':
@@ -96,10 +94,6 @@ class _OutputStepEditorState extends State<OutputStepEditor> {
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        _buildDropdown(label: zh ? '输出格式' : 'Format', value: p['format'] as String, items: _formats,
-          itemLabels: zh ? const ['保持原格式', 'MP4', 'MKV', 'MOV', 'AVI', 'WEBM'] : const ['Keep Original', 'MP4', 'MKV', 'MOV', 'AVI', 'WEBM'],
-          cs: cs, onChanged: (v) { setState(() => p['format'] = v); widget.onChanged(); }),
-        const SizedBox(height: 12),
         _buildDropdown(label: zh ? '命名方式' : 'Naming', value: p['naming_mode'] as String, items: _namingModes,
           itemLabels: zh ? const ['保持原名', '添加后缀', '自定义名称'] : const ['Keep Original', 'Add Suffix', 'Custom Name'],
           cs: cs, onChanged: (v) {

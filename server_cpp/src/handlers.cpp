@@ -3,6 +3,8 @@
 #include "subprocess.h"
 #include "probe.h"
 #include "transcoder.h"
+#include <fstream>
+#include <filesystem>
 #include "subtitle.h"
 #include "installer.h"
 #include "audit.h"
@@ -16,16 +18,22 @@
 #include <climits>
 #include <unistd.h>
 #endif
-#include <iostream>
-#include <thread>
 #include <chrono>
 #include <regex>
 #include <algorithm>
-#include <sstream>
-#include <filesystem>
 #include <cstdarg>
 
 namespace ffmpegpp {
+
+namespace {
+std::filesystem::path u8path(const std::string& s) {
+#ifdef _WIN32
+    return std::filesystem::path(Subprocess::utf8ToWide(s));
+#else
+    return std::filesystem::path(s);
+#endif
+}
+}
 
 // ═══════════════════════════════════════════════
 // 日志
@@ -56,11 +64,11 @@ void slog_init() {
         snprintf(logPath, sizeof(logPath), "%s/FFmpeg++/server_debug.log", dataHome);
         char dirPath[PATH_MAX];
         snprintf(dirPath, sizeof(dirPath), "%s/FFmpeg++", dataHome);
-        mkdir(dirPath, 0755);
+        std::filesystem::create_directories(dirPath);
     } else if (home && home[0]) {
         char dirPath[PATH_MAX];
         snprintf(dirPath, sizeof(dirPath), "%s/.local/share/FFmpeg++", home);
-        mkdir(dirPath, 0755);
+        std::filesystem::create_directories(dirPath);
         snprintf(logPath, sizeof(logPath), "%s/server_debug.log", dirPath);
     } else {
         snprintf(logPath, sizeof(logPath), "/tmp/FFmpeg++_server_debug.log");
@@ -210,18 +218,25 @@ void runFFmpegProcess(const std::string& task_id,
     slog("runFFmpeg: cmd=%s", cmd_str.c_str());
 
     double total_duration = 0;
+    // Skip probe when using concat demuxer — input is a list file, not media
+    bool is_concat = false;
     for (size_t i = 0; i < cmd.size(); ++i) {
-        if (cmd[i] == "-i" && i + 1 < cmd.size()) {
-            try {
-                auto probe = probeVideo(cmd[i + 1]);
-                if (probe.success) {
-                    total_duration = probe.info.value("duration", 0.0);
-                    slog("runFFmpeg: duration=%.1fs", total_duration);
+        if (cmd[i] == "-f" && i + 1 < cmd.size() && cmd[i + 1] == "concat") { is_concat = true; break; }
+    }
+    if (!is_concat) {
+        for (size_t i = 0; i < cmd.size(); ++i) {
+            if (cmd[i] == "-i" && i + 1 < cmd.size()) {
+                try {
+                    auto probe = probeVideo(cmd[i + 1]);
+                    if (probe.success) {
+                        total_duration = probe.info.value("duration", 0.0);
+                        slog("runFFmpeg: duration=%.1fs", total_duration);
+                    }
+                } catch (const std::exception& e) {
+                    slog("runFFmpeg: probe error: %s", e.what());
                 }
-            } catch (const std::exception& e) {
-                slog("runFFmpeg: probe error: %s", e.what());
+                break;
             }
-            break;
         }
     }
 
@@ -275,7 +290,7 @@ void runFFmpegProcess(const std::string& task_id,
 
         int64_t out_size = 0;
         if (!output_path.empty()) {
-            try { out_size = std::filesystem::file_size(output_path); } catch (...) {}
+            try { out_size = std::filesystem::file_size(u8path(output_path)); } catch (...) {}
         }
         JsonWriter::reply(task_id, true, {
             {"output_path", output_path},
@@ -435,7 +450,7 @@ void handleExtractFrame(const json& req) {
     auto result = Subprocess::run(cmd, 30);
     if (result.exit_code == 0) {
         int64_t out_size = 0;
-        try { out_size = std::filesystem::file_size(output); } catch (...) {}
+        try { out_size = std::filesystem::file_size(u8path(output)); } catch (...) {}
         JsonWriter::reply(req["id"], true, {
             {"output_path", output},
             {"output_size", out_size},
@@ -444,6 +459,150 @@ void handleExtractFrame(const json& req) {
         std::string err = result.stderr_output.empty() ? "退出码 " + std::to_string(result.exit_code) : result.stderr_output.substr(0, 300);
         JsonWriter::reply(req["id"], false, nullptr, err);
     }
+}
+
+// ═══════════════════════════════════════════
+// handleConcat — 合并音频/视频
+// ═══════════════════════════════════════════
+
+void handleConcat(const json& req, std::atomic<bool>& cancel_flag) {
+    if (!req.contains("params") || !req["params"].contains("files")) {
+        JsonWriter::reply(req["id"], false, nullptr, "缺少 params.files 参数");
+        return;
+    }
+    json params = req["params"];
+    auto files = params["files"].get<std::vector<std::string>>();
+    std::string output = params["output"];
+    std::string mode = params.value("mode", "copy");
+
+    if (files.empty()) {
+        JsonWriter::reply(req["id"], false, nullptr, "文件列表为空");
+        return;
+    }
+
+    // Write temp concat list
+    auto tmpDir = std::filesystem::temp_directory_path();
+    std::string listPath = (tmpDir / ("ffmpegpp_concat_" + req["id"].get<std::string>() + ".txt")).string();
+    {
+        std::ofstream ofs(listPath, std::ios::binary);
+        if (!ofs.is_open()) {
+            JsonWriter::reply(req["id"], false, nullptr, "无法创建临时文件: " + listPath);
+            return;
+        }
+        for (auto& f : files) {
+            // Escape single quotes in path
+            std::string escaped = f;
+            size_t pos = 0;
+            while ((pos = escaped.find('\'', pos)) != std::string::npos) {
+                escaped.replace(pos, 1, "'\\''");
+                pos += 4;
+            }
+            ofs << "file '" << escaped << "'\n";
+        }
+    }
+
+    std::vector<std::string> cmd = {getFFmpegPath(), "-f", "concat", "-safe", "0", "-i", listPath};
+
+    if (mode == "copy") {
+        cmd.push_back("-c");
+        cmd.push_back("copy");
+    } else if (params.contains("options") && params["options"].is_object()) {
+        auto enc = buildEncodingParams(params["options"]);
+        cmd.insert(cmd.end(), enc.begin(), enc.end());
+    } else {
+        cmd.push_back("-c");
+        cmd.push_back("copy");
+    }
+
+    cmd.push_back("-y");
+    cmd.push_back(output);
+
+    slog("handleConcat: %zu files -> %s (mode=%s)", files.size(), output.c_str(), mode.c_str());
+    runFFmpegProcess(req["id"], cmd, cancel_flag, output);
+
+    // Cleanup temp file
+    std::filesystem::remove(listPath);
+}
+
+// ═══════════════════════════════════════════
+// handleImageSequence — 图片序列→视频
+// ═══════════════════════════════════════════
+
+void handleImageSequence(const json& req, std::atomic<bool>& cancel_flag) {
+    if (!req.contains("params") || !req["params"].contains("files")) {
+        JsonWriter::reply(req["id"], false, nullptr, "缺少 params.files 参数");
+        return;
+    }
+    json params = req["params"];
+    auto files = params["files"].get<std::vector<std::string>>();
+    std::string output = params["output"];
+    double framerate = params.value("framerate", 30.0);
+
+    if (files.empty()) {
+        JsonWriter::reply(req["id"], false, nullptr, "文件列表为空");
+        return;
+    }
+
+    // Write temp concat list with duration per frame
+    auto tmpDir = std::filesystem::temp_directory_path();
+    std::string listPath = (tmpDir / ("ffmpegpp_imgseq_" + req["id"].get<std::string>() + ".txt")).string();
+    {
+        std::ofstream ofs(listPath, std::ios::binary);
+        if (!ofs.is_open()) {
+            JsonWriter::reply(req["id"], false, nullptr, "无法创建临时文件: " + listPath);
+            return;
+        }
+        double dur = 1.0 / framerate;
+        char durStr[32];
+        snprintf(durStr, sizeof(durStr), "%.6f", dur);
+        for (size_t i = 0; i < files.size(); i++) {
+            std::string escaped = files[i];
+            size_t pos = 0;
+            while ((pos = escaped.find('\'', pos)) != std::string::npos) {
+                escaped.replace(pos, 1, "'\\''");
+                pos += 4;
+            }
+            ofs << "file '" << escaped << "'\n";
+            ofs << "duration " << durStr << "\n";
+        }
+        // Last frame needs to be repeated for duration to take effect
+        if (!files.empty()) {
+            std::string escaped = files.back();
+            size_t pos = 0;
+            while ((pos = escaped.find('\'', pos)) != std::string::npos) {
+                escaped.replace(pos, 1, "'\\''");
+                pos += 4;
+            }
+            ofs << "file '" << escaped << "'\n";
+        }
+    }
+
+    std::vector<std::string> cmd = {getFFmpegPath(), "-f", "concat", "-safe", "0", "-i", listPath};
+    cmd.push_back("-vsync");
+    cmd.push_back("vfr");
+    cmd.push_back("-vf");
+    cmd.push_back("scale=trunc(iw/2)*2:trunc(ih/2)*2");
+    cmd.push_back("-pix_fmt");
+    cmd.push_back("yuv420p");
+
+    if (params.contains("options") && params["options"].is_object()) {
+        auto enc = buildEncodingParams(params["options"]);
+        cmd.insert(cmd.end(), enc.begin(), enc.end());
+    } else {
+        cmd.push_back("-c:v");
+        cmd.push_back("libx264");
+        cmd.push_back("-crf");
+        cmd.push_back("18");
+    }
+
+    cmd.push_back("-y");
+    cmd.push_back(output);
+
+    slog("handleImageSequence: %zu images -> %s @%.1f fps", files.size(), output.c_str(), framerate);
+    runFFmpegProcess(req["id"], cmd, cancel_flag, output);
+
+    // Cleanup temp file
+    std::filesystem::remove(listPath);
 }
 
 } // namespace ffmpegpp
