@@ -48,6 +48,7 @@ class _ImageBrightnessStepEditorState extends State<ImageBrightnessStepEditor> {
         const SizedBox(height: 16),
 
         DropdownButtonFormField<String>(
+          borderRadius: BorderRadius.circular(12),
           value: mode,
           isExpanded: true,
           decoration: InputDecoration(

@@ -580,6 +580,7 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
       Padding(padding: const EdgeInsets.only(bottom: 10), child: Row(children: [
         SizedBox(width: 72, child: Text(l, style: TextStyle(fontSize: 12, color: sc.onSurface), overflow: TextOverflow.ellipsis)),
         Expanded(child: DropdownButtonFormField<String>(
+            borderRadius: BorderRadius.circular(12),
             value: vals.contains(v) ? v : vals.first, isDense: true, isExpanded: true,
             style: TextStyle(fontSize: 12, color: sc.onSurface), dropdownColor: sc.surface,
             menuMaxHeight: 300,

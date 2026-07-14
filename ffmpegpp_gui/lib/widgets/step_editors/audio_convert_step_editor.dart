@@ -56,6 +56,7 @@ class _AudioConvertStepEditorState extends State<AudioConvertStepEditor> {
         const SizedBox(height: 16),
 
         DropdownButtonFormField<String>(
+          borderRadius: BorderRadius.circular(12),
           value: _formats.contains(fmt) ? fmt : _formats.first,
           isExpanded: true,
           decoration: _dec(zh ? '输出格式' : 'Output Format'),
@@ -69,6 +70,7 @@ class _AudioConvertStepEditorState extends State<AudioConvertStepEditor> {
         const SizedBox(height: 12),
 
         DropdownButtonFormField<String>(
+          borderRadius: BorderRadius.circular(12),
           value: _codecs.contains(codec) ? codec : _codecs.first,
           isExpanded: true,
           decoration: _dec(zh ? '编码器' : 'Codec'),

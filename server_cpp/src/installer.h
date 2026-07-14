@@ -32,4 +32,7 @@ std::string formatCheckReport(const json& check_result);
 const std::string& getFFmpegPath();
 const std::string& getFFprobePath();
 
+// 从前端配置覆盖 ffmpeg/ffprobe 路径
+void setFFmpegPaths(const std::string& ffmpeg, const std::string& ffprobe);
+
 } // namespace ffmpegpp

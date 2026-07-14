@@ -56,6 +56,7 @@ class _ImageConvertStepEditorState extends State<ImageConvertStepEditor> {
         const SizedBox(height: 16),
 
         DropdownButtonFormField<String>(
+          borderRadius: BorderRadius.circular(12),
           value: _formats.contains(fmt) ? fmt : _formats.first,
           isExpanded: true,
           decoration: _dec(zh ? '输出格式' : 'Output Format'),

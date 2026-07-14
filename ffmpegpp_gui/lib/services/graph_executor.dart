@@ -1138,7 +1138,7 @@ class GraphExecutor {
   static String _tempPath(String inputPath, int step, [String ext = 'mp4']) {
     final dir = Directory.systemTemp.path;
     final base = inputPath.split('\\').last.split('/').last.replaceAll(RegExp(r'\.[^.]+$'), '');
-    final pathHash = inputPath.hashCode.toRadixString(16).substring(0, 8);
+    final pathHash = inputPath.hashCode.toRadixString(16).padLeft(8, '0').substring(0, 8);
     return '$dir${Platform.pathSeparator}ffmpegpp_${pathHash}_${base}_step$step.$ext';
   }
 }

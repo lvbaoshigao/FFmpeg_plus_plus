@@ -253,10 +253,57 @@ jobs:
           path: ffmpegpp_4.7.2_arm64.deb
 
   # ══════════════════════════════════════════
+  # macOS (Universal: x64 + ARM64)
+  # ══════════════════════════════════════════
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Build C++ backend (libffmpegpp.dylib)
+        run: |
+          cd server_cpp
+          mkdir -p build_macos
+          cd build_macos
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"
+          make -j$(sysctl -n hw.ncpu)
+
+      - name: Build Flutter GUI
+        run: |
+          cd ffmpegpp_gui
+          flutter pub get
+          flutter build macos --release
+
+      - name: Assemble .app bundle
+        run: |
+          APP="ffmpegpp_gui/build/macos/Build/Products/Release/ffmpegpp_gui.app"
+          cp server_cpp/build_macos/libffmpegpp.dylib "$APP/Contents/Frameworks/libffmpegpp.dylib"
+          # Fix rpath so the app can find the dylib
+          install_name_tool -add_rpath @executable_path/../Frameworks "$APP/Contents/MacOS/ffmpegpp_gui" 2>/dev/null || true
+
+      - name: Create DMG
+        run: |
+          mkdir -p dmg_staging
+          cp -R "ffmpegpp_gui/build/macos/Build/Products/Release/ffmpegpp_gui.app" dmg_staging/
+          ln -s /Applications dmg_staging/Applications
+          hdiutil create -volname "FFmpeg++" -srcfolder dmg_staging -ov -format UDZO "FFmpeg++_v4.7.2_macOS.dmg"
+
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: FFmpeg++_v4.7.2_macOS.dmg
+
+  # ══════════════════════════════════════════
   # Create Release Draft
   # ══════════════════════════════════════════
   release:
-    needs: [build-windows, build-linux-x64, build-linux-arm64]
+    needs: [build-windows, build-linux-x64, build-linux-arm64, build-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -279,5 +326,6 @@ jobs:
             artifacts/windows-installer/*.exe
             artifacts/linux-x64-deb/*.deb
             artifacts/linux-arm64-deb/*.deb
+            artifacts/macos-dmg/*.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

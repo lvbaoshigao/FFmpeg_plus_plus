@@ -217,6 +217,7 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> {
       List<String>? itemLabels, required ColorScheme cs, required ValueChanged<String> onChanged}) {
     final safe = items.contains(value) ? value : items.first;
     return DropdownButtonFormField<String>(
+      borderRadius: BorderRadius.circular(12),
       value: safe, isExpanded: true, decoration: _dec(label),
       dropdownColor: cs.surface, style: TextStyle(fontSize: 13, color: cs.onSurface),
       items: List.generate(items.length, (i) => DropdownMenuItem(

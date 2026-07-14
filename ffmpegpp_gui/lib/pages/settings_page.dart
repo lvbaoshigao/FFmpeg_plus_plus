@@ -1,8 +1,10 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FontLoader, ByteData;
 import 'package:file_picker/file_picker.dart';
+import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
@@ -22,6 +24,8 @@ final _s = Platform.pathSeparator;
 String _userDataDir() {
   if (Platform.isWindows) {
     return '${Platform.environment['APPDATA'] ?? Directory.systemTemp.path}${_s}FFmpeg++';
+  } else if (Platform.isMacOS) {
+    return '${Platform.environment['HOME'] ?? '/tmp'}/Library/Application Support/FFmpeg++';
   } else {
     final base = Platform.environment['XDG_DATA_HOME'] ??
         '${Platform.environment['HOME'] ?? '/tmp'}$_s.local${_s}share';
@@ -69,7 +73,7 @@ class SettingsPage extends StatelessWidget {
                 columns: 2,
                 spacing: 12,
                 runSpacing: 12,
-                children: List.generate(12, (i) => RepaintBoundary(child: _buildCard(context, state, i))),
+                children: List.generate(13, (i) => RepaintBoundary(child: _buildCard(context, state, i))),
               ),
             )),
           ]),
@@ -92,6 +96,7 @@ class SettingsPage extends StatelessWidget {
       case 9: return _buildDebug(ctx, state);
       case 10: return _buildCache(ctx, state);
       case 11: return _buildAbout(ctx, state);
+      case 12: return _buildMcpAi(ctx, state);
       default: return const SizedBox.shrink();
     }
   }
@@ -249,7 +254,7 @@ class SettingsPage extends StatelessWidget {
     return _glass(ctx, s.isZh ? '任务' : 'Tasks', [
       Text(s.isZh ? '同时启用任务数' : 'Concurrent Tasks', style: TextStyle(color: clr, fontSize: 12)),
       const SizedBox(height: 8),
-      DropdownButtonFormField<int>(value: cfg.maxConcurrentTasks, isDense: true, isExpanded: true,
+      DropdownButtonFormField<int>(borderRadius: BorderRadius.circular(12), value: cfg.maxConcurrentTasks, isDense: true, isExpanded: true,
           style: TextStyle(fontSize: 12, color: clr), dropdownColor: scheme.surface,
           decoration: InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
@@ -263,7 +268,7 @@ class SettingsPage extends StatelessWidget {
       const SizedBox(height: 12),
       Text(s.isZh ? '解析线程数' : 'Probe Threads', style: TextStyle(color: clr, fontSize: 12)),
       const SizedBox(height: 8),
-      DropdownButtonFormField<int>(value: cfg.probeThreads, isDense: true, isExpanded: true,
+      DropdownButtonFormField<int>(borderRadius: BorderRadius.circular(12), value: cfg.probeThreads, isDense: true, isExpanded: true,
           style: TextStyle(fontSize: 12, color: clr), dropdownColor: scheme.surface,
           decoration: InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
@@ -336,12 +341,12 @@ class SettingsPage extends StatelessWidget {
                 errorBuilder: (_, __, ___) => Icon(Icons.play_circle_fill, size: 48, color: scheme.primary))),
         const SizedBox(height: 8),
         Text('FFmpeg++', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: scheme.primary)),
-        Text('v4.7.2', style: TextStyle(fontSize: 12, color: scheme.outline)),
+        Text('v4.11.20', style: TextStyle(fontSize: 12, color: scheme.outline)),
         const SizedBox(height: 12),
       ])),
       const SizedBox(height: 4),
-      _infoRow(s.aboutVersion, 'v4.7.2', scheme),
-      _infoRow(s.aboutBuildDate, '2026-07-13', scheme),
+      _infoRow(s.aboutVersion, 'v4.11.20', scheme),
+      _infoRow(s.aboutBuildDate, '2026-07-14', scheme),
       _infoRow(s.aboutBlog, 'blog-clstone.netlify.app', scheme),
       _infoRow(s.aboutGithub, 'github.com/pity-Fox/FFmpeg_plus_plus', scheme),
       const SizedBox(height: 10),
@@ -358,6 +363,148 @@ class SettingsPage extends StatelessWidget {
         _link('GitHub', 'https://github.com/pity-Fox/FFmpeg_plus_plus'),
       ]),
     ]);
+  }
+
+  static Widget _buildMcpAi(BuildContext ctx, AppState state) {
+    final cfg = state.config;
+    final s = AppStrings.of(cfg.language);
+    final scheme = Theme.of(ctx).colorScheme;
+    final clr = scheme.onSurface;
+    return _glass(ctx, s.mcpTitle, [
+      SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+          title: Text(s.mcpEnable, style: TextStyle(color: clr)),
+          subtitle: cfg.mcpEnabled
+              ? Text(state.mcpRunning ? (s.isZh ? '运行中' : 'Running') : (s.isZh ? '已停止' : 'Stopped'),
+                  style: TextStyle(fontSize: 10, color: state.mcpRunning ? Colors.green : scheme.outline))
+              : null,
+          value: cfg.mcpEnabled,
+          onChanged: (v) => state.toggleMcpServer(v)),
+      if (cfg.mcpEnabled)
+        Row(children: [
+          Text('${s.mcpPort}: ', style: TextStyle(color: clr, fontSize: 12)),
+          SizedBox(width: 80, child: TextField(
+            controller: TextEditingController(text: cfg.mcpPort.toString()),
+            style: TextStyle(fontSize: 13, color: clr),
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 6)),
+            onChanged: (v) {
+              final port = int.tryParse(v);
+              if (port != null && port > 0 && port < 65536) {
+                state.updateConfig((c) => c..mcpPort = port);
+              }
+            },
+          )),
+          const SizedBox(width: 6),
+          SizedBox(height: 30, child: FilledButton.tonalIcon(
+            icon: const Icon(Icons.refresh, size: 14),
+            label: Text(s.isZh ? '应用' : 'Apply', style: const TextStyle(fontSize: 11)),
+            onPressed: state.mcpRunning ? () async {
+              await state.stopMcpServer();
+              await state.startMcpServer();
+            } : null,
+          )),
+        ]),
+      const SizedBox(height: 8),
+      SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+          title: Text(s.aiEnable, style: TextStyle(color: clr)),
+          value: cfg.aiEnabled,
+          onChanged: (v) => state.updateConfig((c) => c..aiEnabled = v)),
+      if (cfg.aiEnabled)
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(
+            icon: const Icon(Icons.tune, size: 16),
+            label: Text(s.aiMoreOptions, style: const TextStyle(fontSize: 12)),
+            onPressed: () => _showAiSettingsDialog(ctx, state, s),
+          ),
+        ),
+    ]);
+  }
+
+  static void _showAiSettingsDialog(BuildContext ctx, AppState state, AppStrings s) {
+    showDialog(context: ctx, builder: (dCtx) {
+      return StatefulBuilder(builder: (ctx2, setDState) {
+        final cfg = state.config;
+        final scheme = Theme.of(ctx2).colorScheme;
+        final clr = scheme.onSurface;
+        return AlertDialog(
+          title: Text(s.aiSettings, style: TextStyle(fontSize: 14, color: clr)),
+          content: SizedBox(width: 400, child: SingleChildScrollView(child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(s.aiProvider, style: TextStyle(color: clr, fontSize: 12)),
+              const SizedBox(height: 4),
+              SegmentedButton<String>(
+                segments: const [ButtonSegment(value: 'openai', label: Text('OpenAI')), ButtonSegment(value: 'anthropic', label: Text('Anthropic'))],
+                selected: {cfg.aiProvider},
+                onSelectionChanged: (v) {
+                  final provider = v.first;
+                  state.updateConfig((c) {
+                    c.aiProvider = provider;
+                    if (provider == 'anthropic' && c.aiApiUrl == 'https://api.openai.com/v1/chat/completions') {
+                      c.aiApiUrl = 'https://api.anthropic.com/v1/messages';
+                      c.aiModel = 'claude-sonnet-4-20250514';
+                    } else if (provider == 'openai' && c.aiApiUrl == 'https://api.anthropic.com/v1/messages') {
+                      c.aiApiUrl = 'https://api.openai.com/v1/chat/completions';
+                      c.aiModel = 'gpt-4o';
+                    }
+                    return c;
+                  });
+                  setDState(() {});
+                },
+                style: const ButtonStyle(visualDensity: VisualDensity.compact),
+              ),
+              const SizedBox(height: 6),
+              _McpTextField(value: cfg.aiApiKey, label: s.aiApiKey, scheme: scheme, obscure: true,
+                  onChange: (v) { state.updateConfig((c) => c..aiApiKey = v); setDState(() {}); }),
+              const SizedBox(height: 4),
+              _McpTextField(value: cfg.aiApiUrl, label: s.aiApiUrl, scheme: scheme,
+                  onChange: (v) { state.updateConfig((c) => c..aiApiUrl = v); setDState(() {}); }),
+              const SizedBox(height: 4),
+              _McpTextField(value: cfg.aiModel, label: s.aiModel, scheme: scheme,
+                  onChange: (v) { state.updateConfig((c) => c..aiModel = v); setDState(() {}); }),
+              const SizedBox(height: 8),
+              Row(children: [
+                Expanded(child: _iosButton(icon: Icons.wifi_tethering, label: s.aiPing,
+                    color: scheme.primary, bg: scheme.primaryContainer,
+                    onTap: () => _pingAi(ctx, state, s))),
+                const SizedBox(width: 8),
+                Expanded(child: _iosButton(icon: Icons.list, label: s.aiListModels,
+                    color: scheme.tertiary, bg: scheme.tertiaryContainer,
+                    onTap: () => _listAiModels(ctx, state, s))),
+              ]),
+              const SizedBox(height: 8),
+              SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+                  title: Text(s.aiReadAccess, style: TextStyle(color: clr, fontSize: 12)),
+                  subtitle: Text(s.aiReadAccessDesc, style: TextStyle(color: scheme.outline, fontSize: 10)),
+                  value: cfg.aiReadAccess,
+                  onChanged: (v) { state.updateConfig((c) => c..aiReadAccess = v); setDState(() {}); }),
+              SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+                  title: Text(s.aiWriteAccess, style: TextStyle(color: clr, fontSize: 12)),
+                  subtitle: Text(s.aiWriteAccessDesc, style: TextStyle(color: scheme.outline, fontSize: 10)),
+                  value: cfg.aiWriteAccess,
+                  onChanged: (v) { state.updateConfig((c) => c..aiWriteAccess = v); setDState(() {}); }),
+              SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+                  title: Text(s.aiAutoExecute, style: TextStyle(color: clr, fontSize: 12)),
+                  subtitle: Text(s.aiAutoExecuteDesc, style: TextStyle(color: scheme.outline, fontSize: 10)),
+                  value: cfg.aiAutoExecute,
+                  onChanged: (v) { state.updateConfig((c) => c..aiAutoExecute = v); setDState(() {}); }),
+              const SizedBox(height: 8),
+              Text(s.aiGraphModeLabel, style: TextStyle(color: clr, fontSize: 12)),
+              const SizedBox(height: 4),
+              SegmentedButton<String>(
+                segments: [ButtonSegment(value: 'redo', label: Text(s.aiGraphModeRedo)), ButtonSegment(value: 'modify', label: Text(s.aiGraphModeModify))],
+                selected: {cfg.aiGraphMode},
+                onSelectionChanged: (v) { state.updateConfig((c) => c..aiGraphMode = v.first); setDState(() {}); },
+                style: const ButtonStyle(visualDensity: VisualDensity.compact),
+              ),
+            ],
+          ))),
+          actions: [TextButton(onPressed: () => Navigator.pop(dCtx), child: const Text('OK'))],
+        );
+      });
+    });
   }
 
   // ═══════════════════════════════════════════
@@ -455,6 +602,121 @@ class SettingsPage extends StatelessWidget {
   // Actions
   // ═══════════════════════════════════════════
 
+  static String _httpReason(int code) => switch (code) {
+    400 => 'Bad Request',
+    401 => 'Unauthorized (check API Key)',
+    403 => 'Forbidden',
+    404 => 'Not Found (check API URL)',
+    429 => 'Too Many Requests',
+    500 => 'Server Error',
+    502 => 'Bad Gateway',
+    503 => 'Service Unavailable',
+    _ => 'Error',
+  };
+
+  static Future<void> _pingAi(BuildContext ctx, AppState state, AppStrings s) async {
+    final cfg = state.config;
+    if (cfg.aiApiKey.isEmpty) {
+      if (ctx.mounted) showToast(ctx, s.aiNotConfigured, type: ToastType.warning);
+      return;
+    }
+    final baseUrl = cfg.aiApiUrl.replaceAll(RegExp(r'/chat/completions$|/messages$'), '');
+    final modelsUrl = baseUrl.endsWith('/v1') ? '$baseUrl/models' : '$baseUrl/v1/models';
+    state.addLog('[AI] Ping $modelsUrl ...', category: 'info');
+    try {
+      final uri = Uri.parse(modelsUrl);
+      final headers = <String, String>{};
+      if (cfg.aiProvider == 'anthropic') {
+        headers['x-api-key'] = cfg.aiApiKey;
+        headers['anthropic-version'] = '2023-06-01';
+      } else {
+        headers['Authorization'] = 'Bearer ${cfg.aiApiKey}';
+      }
+      final sw = Stopwatch()..start();
+      final resp = await http.get(uri, headers: headers).timeout(const Duration(seconds: 10));
+      sw.stop();
+      final ms = sw.elapsedMilliseconds;
+      final ok = resp.statusCode >= 200 && resp.statusCode < 400;
+      state.addLog('[AI] Ping ${ok ? "OK" : "FAIL"}: ${resp.statusCode}, ${ms}ms', category: ok ? 'info' : 'error');
+      if (ctx.mounted) showToast(ctx, ok ? '${resp.statusCode} OK — ${ms}ms' : 'HTTP ${resp.statusCode} ${_httpReason(resp.statusCode)}', type: ok ? ToastType.success : ToastType.error);
+    } catch (e) {
+      state.addLog('[AI] Ping failed: $e', category: 'error');
+      if (ctx.mounted) showToast(ctx, 'Error: $e', type: ToastType.error);
+    }
+  }
+
+  static Future<void> _listAiModels(BuildContext ctx, AppState state, AppStrings s) async {
+    final cfg = state.config;
+    if (cfg.aiApiKey.isEmpty) {
+      if (ctx.mounted) showToast(ctx, s.aiNotConfigured, type: ToastType.warning);
+      return;
+    }
+    state.addLog('[AI] 获取模型列表...', category: 'info');
+    try {
+      Uri uri;
+      final headers = <String, String>{};
+      if (cfg.aiProvider == 'anthropic') {
+        // Anthropic doesn't have a list-models endpoint in the same way; use a known set
+        if (ctx.mounted) {
+          final models = ['claude-sonnet-4-20250514', 'claude-haiku-4-5-20251001', 'claude-opus-4-20250514'];
+          state.addLog('[AI] Anthropic 可用模型: ${models.join(', ')}', category: 'info');
+          _showModelPicker(ctx, state, models, s);
+        }
+        return;
+      }
+      // OpenAI-compatible: GET /v1/models
+      final baseUrl = cfg.aiApiUrl.replaceAll(RegExp(r'/chat/completions$'), '');
+      uri = Uri.parse('$baseUrl/models');
+      headers['Authorization'] = 'Bearer ${cfg.aiApiKey}';
+      final resp = await http.get(uri, headers: headers).timeout(const Duration(seconds: 10));
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        final models = (data['data'] as List?)?.map((m) => m['id'] as String).toList() ?? [];
+        models.sort();
+        state.addLog('[AI] 获取到 ${models.length} 个模型', category: 'info');
+        if (ctx.mounted) _showModelPicker(ctx, state, models, s);
+      } else {
+        state.addLog('[AI] 获取模型失败: ${resp.statusCode}', category: 'error');
+        if (ctx.mounted) showToast(ctx, 'HTTP ${resp.statusCode}', type: ToastType.error);
+      }
+    } catch (e) {
+      state.addLog('[AI] 获取模型失败: $e', category: 'error');
+      if (ctx.mounted) showToast(ctx, 'Error: $e', type: ToastType.error);
+    }
+  }
+
+  static void _showModelPicker(BuildContext ctx, AppState state, List<String> models, AppStrings s) {
+    if (models.isEmpty) {
+      showToast(ctx, s.isZh ? '未找到模型' : 'No models found', type: ToastType.warning);
+      return;
+    }
+    showDialog(context: ctx, builder: (dCtx) {
+      final scheme = Theme.of(dCtx).colorScheme;
+      return AlertDialog(
+        title: Text(s.aiListModels, style: TextStyle(color: scheme.onSurface, fontSize: 15)),
+        content: SizedBox(
+          width: 300, height: 400,
+          child: ListView.builder(
+            itemCount: models.length,
+            itemBuilder: (_, i) => ListTile(
+              dense: true,
+              title: Text(models[i], style: TextStyle(fontSize: 12, color: scheme.onSurface)),
+              selected: models[i] == state.config.aiModel,
+              selectedTileColor: scheme.primaryContainer.withAlpha(60),
+              onTap: () {
+                state.updateConfig((c) => c..aiModel = models[i]);
+                state.addLog('[AI] 已选择模型: ${models[i]}', category: 'info');
+                Navigator.pop(dCtx);
+                showToast(ctx, '${s.isZh ? "已选择" : "Selected"}: ${models[i]}', type: ToastType.success);
+              },
+            ),
+          ),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(dCtx), child: Text(s.close))],
+      );
+    });
+  }
+
   static Future<void> _pickFont(BuildContext ctx, AppState state) async {
     final r = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['ttf', 'otf']);
     if (r == null || r.files.isEmpty || r.files.first.path == null) return;
@@ -542,13 +804,26 @@ class SettingsPage extends StatelessWidget {
         content: SizedBox(width: 420, child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(s.isZh ? '新版本: v${result.remoteVersion}\n当前版本: v${updater.currentVersion}'
               : 'New: v${result.remoteVersion}\nCurrent: v${updater.currentVersion}', style: TextStyle(fontSize: 13, color: scheme.onSurface)),
-          if (isGithub && result.releaseNotes != null && result.releaseNotes!.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Text(s.isZh ? '更新日志:' : 'Release Notes:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.primary)),
-            const SizedBox(height: 4),
-            ConstrainedBox(constraints: const BoxConstraints(maxHeight: 200),
-                child: SingleChildScrollView(child: Text(result.releaseNotes!, style: TextStyle(fontSize: 11, color: scheme.onSurface)))),
+          if (result.password != null && result.password!.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Row(children: [
+              Icon(Icons.key, size: 14, color: scheme.primary),
+              const SizedBox(width: 4),
+              Text(s.isZh ? '提取密码: ' : 'Password: ', style: TextStyle(fontSize: 12, color: scheme.primary, fontWeight: FontWeight.w600)),
+              SelectableText(result.password!, style: TextStyle(fontSize: 13, color: scheme.onSurface, fontWeight: FontWeight.bold)),
+            ]),
           ],
+          const SizedBox(height: 12),
+          Text(s.isZh ? '更新日志:' : 'Release Notes:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.primary)),
+          const SizedBox(height: 4),
+          if (result.releaseNotes != null && result.releaseNotes!.isNotEmpty)
+            ConstrainedBox(constraints: const BoxConstraints(maxHeight: 200),
+                child: SingleChildScrollView(child: Text(result.releaseNotes!, style: TextStyle(fontSize: 11, color: scheme.onSurface))))
+          else
+            Text(result.releaseNotesError
+                ? (s.isZh ? '无法获取更新日志 (GitHub 连接失败)' : 'Failed to get release notes (GitHub connection failed)')
+                : (s.isZh ? '暂无更新日志' : 'No release notes available'),
+                style: TextStyle(fontSize: 11, color: scheme.outline, fontStyle: FontStyle.italic)),
         ])),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: Text(s.aboutClose)),
@@ -559,7 +834,9 @@ class SettingsPage extends StatelessWidget {
             FilledButton(onPressed: () {
               Navigator.pop(ctx);
               final url = result.downloadUrl ?? 'https://github.com/pity-Fox/FFmpeg_plus_plus/releases/latest';
-              if (Platform.isWindows) { Process.run('cmd', ['/c', 'start', url]); } else { Process.run('xdg-open', [url]); }
+              if (Platform.isWindows) { Process.run('cmd', ['/c', 'start', url]); }
+              else if (Platform.isMacOS) { Process.run('open', [url]); }
+              else { Process.run('xdg-open', [url]); }
             }, child: Text(s.goDownload)),
         ],
       ),
@@ -711,6 +988,7 @@ class _FfmpegCardState extends State<_FfmpegCard> {
         final ffprobeName = Platform.isWindows ? 'ffprobe.exe' : 'ffprobe';
         setState(() { _found = true; _version = versionLine; _path = exePath; _checking = false; });
         widget.state.updateConfig((c) => c..ffmpegPath = exePath..ffprobePath = '$dir${Platform.pathSeparator}$ffprobeName');
+        widget.state.backend.setPaths(ffmpeg: exePath, ffprobe: '$dir${Platform.pathSeparator}$ffprobeName');
         if (Platform.isWindows) await _addToPath(dir);
         widget.state.addLog('FFmpeg configured: $_version', category: 'ffmpeg');
         if (mounted) showToast(context, 'FFmpeg found at: $dir', type: ToastType.success);
@@ -960,6 +1238,48 @@ class _PathFieldState extends State<_PathField> {
     controller: _ctrl,
     style: TextStyle(fontSize: 13, color: widget.scheme.onSurface),
     decoration: InputDecoration(labelText: widget.label, isDense: false, labelStyle: TextStyle(fontSize: 11, color: widget.scheme.outline)),
+    onChanged: widget.onChange,
+  );
+}
+
+class _McpTextField extends StatefulWidget {
+  final String value;
+  final String label;
+  final ColorScheme scheme;
+  final bool obscure;
+  final ValueChanged<String> onChange;
+  const _McpTextField({required this.value, required this.label, required this.scheme, this.obscure = false, required this.onChange});
+  @override
+  State<_McpTextField> createState() => _McpTextFieldState();
+}
+
+class _McpTextFieldState extends State<_McpTextField> {
+  late final TextEditingController _ctrl = TextEditingController(text: widget.value);
+  bool _hidden = true;
+
+  @override
+  void didUpdateWidget(_McpTextField old) {
+    super.didUpdateWidget(old);
+    if (old.value != widget.value && _ctrl.text != widget.value) _ctrl.text = widget.value;
+  }
+
+  @override
+  void dispose() { _ctrl.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) => TextField(
+    controller: _ctrl,
+    obscureText: widget.obscure && _hidden,
+    style: TextStyle(fontSize: 13, color: widget.scheme.onSurface),
+    decoration: InputDecoration(
+      labelText: widget.label, isDense: true,
+      labelStyle: TextStyle(fontSize: 11, color: widget.scheme.outline),
+      suffixIcon: widget.obscure ? IconButton(
+        icon: Icon(_hidden ? Icons.visibility_off : Icons.visibility, size: 16, color: widget.scheme.outline),
+        onPressed: () => setState(() => _hidden = !_hidden),
+        padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+      ) : null,
+    ),
     onChanged: widget.onChange,
   );
 }

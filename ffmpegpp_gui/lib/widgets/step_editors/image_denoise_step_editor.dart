@@ -50,6 +50,7 @@ class _ImageDenoiseStepEditorState extends State<ImageDenoiseStepEditor> {
         const SizedBox(height: 16),
 
         DropdownButtonFormField<String>(
+          borderRadius: BorderRadius.circular(12),
           value: method,
           isExpanded: true,
           decoration: InputDecoration(
@@ -68,6 +69,7 @@ class _ImageDenoiseStepEditorState extends State<ImageDenoiseStepEditor> {
         const SizedBox(height: 16),
 
         DropdownButtonFormField<String>(
+          borderRadius: BorderRadius.circular(12),
           value: mode,
           isExpanded: true,
           decoration: InputDecoration(

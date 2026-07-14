@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
@@ -128,6 +129,7 @@ class AppState extends ChangeNotifier {
     _setupLogListeners();
     _autoDetectLocalFfmpeg();
     recheckEnv();
+    if (config.mcpEnabled) startMcpServer();
     _initialized = true;
     notifyListeners();
   }
@@ -1405,6 +1407,7 @@ class AppState extends ChangeNotifier {
 
   Future<Map<String, dynamic>> recheckEnv() async {
     addLog('检测 FFmpeg 环境...', category: 'info');
+    await backend.setPaths(ffmpeg: config.ffmpegPath, ffprobe: config.ffprobePath);
     final env = await backend.checkEnv();
     _envChecked = true; _envOk = env['success'] == true && (env['data']?['all_ok'] as bool? ?? false);
     _ffmpegVersion = env['data']?['ffmpeg_version'] as String? ?? '';
@@ -1418,7 +1421,219 @@ class AppState extends ChangeNotifier {
     notifyListeners(); return env;
   }
 
-  Future<void> shutdown() async { await pythonProcess.shutdown(); }
+  // ── MCP Server ──
+  HttpServer? _mcpServer;
+  bool get mcpRunning => _mcpServer != null;
+
+  PipelineGraph? _currentPipelineGraph;
+  void setCurrentPipeline(PipelineGraph g) { _currentPipelineGraph = g; }
+  VoidCallback? mcpOnClearAll, mcpOnUndo, mcpOnRedo, mcpOnSave;
+  void Function(String nodeId, Map<String, dynamic> params)? mcpOnModifyNode;
+
+  Future<void> startMcpServer() async {
+    if (_mcpServer != null) return;
+    try {
+      final port = config.mcpPort;
+      _mcpServer = await HttpServer.bind(InternetAddress.anyIPv4, port);
+      addLog('[MCP] 服务已启动，端口: $port', category: 'info');
+      _mcpServer!.listen((req) {
+        _handleMcpRequest(req);
+      }, onError: (e) {
+        addLog('[MCP] 连接错误: $e', category: 'error');
+      }, onDone: () {
+        addLog('[MCP] 服务已停止', category: 'info');
+        _mcpServer = null;
+        notifyListeners();
+      });
+      notifyListeners();
+    } catch (e) {
+      addLog('[MCP] 启动失败: $e', category: 'error');
+      _mcpServer = null;
+      notifyListeners();
+    }
+  }
+
+  Future<void> stopMcpServer() async {
+    if (_mcpServer == null) return;
+    await _mcpServer!.close();
+    _mcpServer = null;
+    addLog('[MCP] 服务已停止', category: 'info');
+    notifyListeners();
+  }
+
+  void _handleMcpRequest(HttpRequest req) async {
+    addLog('[MCP] ${req.method} ${req.uri.path}', category: 'info');
+    if (req.method != 'POST') {
+      req.response
+        ..statusCode = HttpStatus.methodNotAllowed
+        ..headers.contentType = ContentType.json
+        ..write('{"jsonrpc":"2.0","error":{"code":-32600,"message":"Only POST allowed"}}');
+      await req.response.close();
+      return;
+    }
+    try {
+      final body = await utf8.decoder.bind(req).join();
+      final json = jsonDecode(body) as Map<String, dynamic>;
+      final id = json['id'];
+      final method = json['method'] as String? ?? '';
+      final params = json['params'] as Map<String, dynamic>? ?? {};
+      req.response
+        ..statusCode = HttpStatus.ok
+        ..headers.contentType = ContentType.json;
+      switch (method) {
+        case 'initialize':
+          req.response.write(jsonEncode({
+            'jsonrpc': '2.0', 'id': id,
+            'result': {
+              'protocolVersion': '2024-11-05',
+              'capabilities': {'tools': {}, 'resources': {}},
+              'serverInfo': {'name': 'ffmpegpp', 'version': '4.11.20'},
+            },
+          }));
+        case 'tools/list':
+          req.response.write(jsonEncode({'jsonrpc': '2.0', 'id': id, 'result': {'tools': _mcpToolsList()}}));
+        case 'tools/call':
+          final toolName = params['name'] as String? ?? '';
+          final args = params['arguments'] as Map<String, dynamic>? ?? {};
+          final (result, isError) = _mcpCallTool(toolName, args);
+          req.response.write(jsonEncode({
+            'jsonrpc': '2.0', 'id': id,
+            'result': {'content': [{'type': 'text', 'text': result}], if (isError) 'isError': true},
+          }));
+        case 'resources/list':
+          req.response.write(jsonEncode({'jsonrpc': '2.0', 'id': id, 'result': {'resources': _mcpResourcesList()}}));
+        case 'resources/read':
+          final uri = params['uri'] as String? ?? '';
+          final result = _mcpReadResource(uri);
+          req.response.write(jsonEncode({
+            'jsonrpc': '2.0', 'id': id,
+            'result': {'contents': [{'uri': uri, 'mimeType': 'application/json', 'text': result}]},
+          }));
+        default:
+          req.response.write(jsonEncode({
+            'jsonrpc': '2.0', 'id': id,
+            'error': {'code': -32601, 'message': 'Method not found: $method'},
+          }));
+      }
+      await req.response.close();
+    } catch (e) {
+      addLog('[MCP] Error: $e', category: 'error');
+      req.response
+        ..statusCode = HttpStatus.badRequest
+        ..headers.contentType = ContentType.json
+        ..write('{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error"}}');
+      await req.response.close();
+    }
+  }
+
+  List<Map<String, dynamic>> _mcpToolsList() => [
+    {'name': 'clear_all', 'description': 'Clear all nodes from canvas', 'inputSchema': {'type': 'object', 'properties': {}}},
+    {'name': 'undo', 'description': 'Undo last action', 'inputSchema': {'type': 'object', 'properties': {}}},
+    {'name': 'redo', 'description': 'Redo last action', 'inputSchema': {'type': 'object', 'properties': {}}},
+    {'name': 'save', 'description': 'Save current pipeline', 'inputSchema': {'type': 'object', 'properties': {}}},
+    {'name': 'list_directory', 'description': 'List files in a directory (read-only)', 'inputSchema': {'type': 'object', 'properties': {'path': {'type': 'string', 'description': 'Directory path'}}, 'required': ['path']}},
+    {'name': 'read_file_info', 'description': 'Get file metadata (read-only)', 'inputSchema': {'type': 'object', 'properties': {'path': {'type': 'string', 'description': 'File path'}}, 'required': ['path']}},
+    {'name': 'modify_node_params', 'description': 'Modify node parameters', 'inputSchema': {'type': 'object', 'properties': {'nodeId': {'type': 'string'}, 'params': {'type': 'object'}}, 'required': ['nodeId', 'params']}},
+    {'name': 'error_check', 'description': 'Check pipeline for logical errors', 'inputSchema': {'type': 'object', 'properties': {}}},
+  ];
+
+  List<Map<String, dynamic>> _mcpResourcesList() => [
+    {'uri': 'pipeline://current', 'name': 'Current Pipeline', 'mimeType': 'application/json'},
+    {'uri': 'videos://loaded', 'name': 'Loaded Videos', 'mimeType': 'application/json'},
+  ];
+
+  (String, bool) _mcpCallTool(String name, Map<String, dynamic> args) {
+    switch (name) {
+      case 'clear_all':
+        if (mcpOnClearAll == null) return ('Error: No editor open — open a pipeline editor first', true);
+        mcpOnClearAll!();
+        return ('Canvas cleared', false);
+      case 'undo':
+        if (mcpOnUndo == null) return ('Error: No editor open — open a pipeline editor first', true);
+        mcpOnUndo!();
+        return ('Undo executed', false);
+      case 'redo':
+        if (mcpOnRedo == null) return ('Error: No editor open — open a pipeline editor first', true);
+        mcpOnRedo!();
+        return ('Redo executed', false);
+      case 'save':
+        if (mcpOnSave == null) return ('Error: No editor open — open a pipeline editor first', true);
+        mcpOnSave!();
+        return ('Save executed', false);
+      case 'list_directory':
+        final path = args['path'] as String? ?? '.';
+        try {
+          final entries = Directory(path).listSync().take(50).map((e) {
+            final s = e.statSync();
+            return {'name': e.path.split('/').last, 'type': s.type == FileSystemEntityType.directory ? 'directory' : 'file', 'size': s.size};
+          }).toList();
+          return (jsonEncode(entries), false);
+        } catch (e) { return ('Error: $e', true); }
+      case 'read_file_info':
+        final path = args['path'] as String? ?? '';
+        try {
+          final s = File(path).statSync();
+          return (jsonEncode({'path': path, 'size': s.size, 'modified': s.modified.toIso8601String(), 'type': path.split('.').last}), false);
+        } catch (e) { return ('Error: $e', true); }
+      case 'modify_node_params':
+        final nodeId = args['nodeId'] as String? ?? '';
+        final params = args['params'] as Map<String, dynamic>? ?? {};
+        if (mcpOnModifyNode == null) return ('Error: No editor open — open a pipeline editor first', true);
+        mcpOnModifyNode!(nodeId, params);
+        return ('Node $nodeId params updated', false);
+      case 'error_check':
+        if (_currentPipelineGraph == null) return ('Error: No pipeline loaded — open a pipeline editor first', true);
+        final g = _currentPipelineGraph!;
+        final errors = <String>[];
+        if (!g.nodes.any((n) => n.type == PipelineStepType.start)) errors.add('Missing start node');
+        if (!g.nodes.any((n) => n.type == PipelineStepType.output)) errors.add('Missing output node');
+        final connectedIds = <String>{};
+        for (final c in g.connections) { connectedIds.add(c.fromNodeId); connectedIds.add(c.toNodeId); }
+        for (final n in g.nodes) {
+          if (!connectedIds.contains(n.id) && g.nodes.length > 1) errors.add('Disconnected: ${n.type.name} (${n.id.substring(0, 8)})');
+        }
+        return (errors.isEmpty ? 'No errors found' : errors.join('; '), false);
+      default: return ('Unknown tool: $name', true);
+    }
+  }
+
+  String _mcpReadResource(String uri) {
+    switch (uri) {
+      case 'pipeline://current':
+        return jsonEncode(_currentPipelineGraph?.toJson() ?? {'nodes': [], 'connections': []});
+      case 'videos://loaded':
+        return jsonEncode(videos.map((v) => {'id': v.id, 'filename': v.filename, 'format': v.format, 'size_mb': v.sizeMb, 'duration': v.duration, 'codec': v.codec, 'resolution': v.resolution}).toList());
+      default: return '{"error": "Unknown resource: $uri"}';
+    }
+  }
+
+  Future<void> toggleMcpServer(bool enable) async {
+    await updateConfig((c) => c..mcpEnabled = enable);
+    if (enable) {
+      await startMcpServer();
+    } else {
+      await stopMcpServer();
+    }
+  }
+
+  // ── AI Logging ──
+  void logAiRequest(String userMessage) {
+    addLog('[AI] 用户: $userMessage', category: 'info');
+  }
+
+  void logAiResponse(String response, {bool error = false}) {
+    final preview = response.length > 200 ? '${response.substring(0, 200)}...' : response;
+    addLog('[AI] ${error ? '错误' : '回复'}: $preview', category: error ? 'error' : 'info');
+  }
+
+  void logAiGraphApplied(int nodeCount, int connectionCount) {
+    addLog('[AI] 已应用节点图: $nodeCount 个节点, $connectionCount 条连接', category: 'info');
+  }
+
+  Future<void> shutdown() async {
+    await stopMcpServer();
+    await pythonProcess.shutdown();
+  }
 
   @override
   void dispose() { backend.dispose(); pythonProcess.dispose(); super.dispose(); }

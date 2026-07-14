@@ -100,7 +100,7 @@ class AppStrings {
   String get swVersion => lang == 'zh' ? '版本' : 'Version';
   String get swBuild => lang == 'zh' ? '构建日期' : 'Build';
   String get swProtocol => lang == 'zh' ? '协议' : 'Protocol';
-  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v4.7.2  |  构建 2026-07-13  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v4.7.2  |  Build 2026-07-13  |  JSON v0.1.0';
+  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v4.11.20  |  构建 2026-07-14  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v4.11.20  |  Build 2026-07-14  |  JSON v0.1.0';
   String get languageInterface => lang == 'zh' ? '界面语言' : 'Interface Language';
   String get ffmpegFound => lang == 'zh' ? 'FFmpeg 已检测到' : 'FFmpeg detected';
   String get ffmpegNotFound => lang == 'zh' ? 'FFmpeg 未检测到' : 'FFmpeg not found';
@@ -217,4 +217,34 @@ class AppStrings {
   String get containerTargetIndex => lang == 'zh' ? '处理编号' : 'Target Index';
   String get containerAll => lang == 'zh' ? '全部' : 'All';
   String get containerQueueAll => lang == 'zh' ? '全部加入队列' : 'Queue All';
+
+  // ── MCP / AI ──
+  String get mcpTitle => lang == 'zh' ? 'MCP / AI' : 'MCP / AI';
+  String get mcpEnable => lang == 'zh' ? '启用 MCP 服务' : 'Enable MCP Server';
+  String get mcpPort => lang == 'zh' ? '端口' : 'Port';
+  String get aiApiKey => lang == 'zh' ? 'API Key' : 'API Key';
+  String get aiApiUrl => lang == 'zh' ? 'API 地址' : 'API URL';
+  String get aiModel => lang == 'zh' ? '模型' : 'Model';
+  String get aiProvider => lang == 'zh' ? 'API 格式' : 'API Format';
+  String get aiPing => lang == 'zh' ? '测试连接' : 'Ping';
+  String get aiListModels => lang == 'zh' ? '获取模型列表' : 'List Models';
+  String get aiChatTitle => lang == 'zh' ? 'AI 助手' : 'AI Assistant';
+  String get aiChatHint => lang == 'zh' ? '描述你想对媒体文件做的处理...' : 'Describe what processing you want...';
+  String get aiSend => lang == 'zh' ? '发送' : 'Send';
+  String get aiSettings => lang == 'zh' ? 'AI 设置' : 'AI Settings';
+  String get aiApplyGraph => lang == 'zh' ? '应用到画布' : 'Apply to Canvas';
+  String get aiNotConfigured => lang == 'zh' ? '请先在设置中配置 AI API Key' : 'Please configure AI API Key in Settings first';
+  String get aiEnable => lang == 'zh' ? '启用 AI 助手' : 'Enable AI Assistant';
+  String get aiMoreOptions => lang == 'zh' ? '更多选项' : 'More Options';
+  String get aiAutoApply => lang == 'zh' ? '自动应用管线' : 'Auto-apply pipeline';
+  String get aiAutoApplyDesc => lang == 'zh' ? '开启后 AI 生成的管线将直接应用到画布' : 'AI-generated pipelines apply to canvas automatically';
+  String get aiReadAccess => lang == 'zh' ? '读取权限' : 'Read Access';
+  String get aiReadAccessDesc => lang == 'zh' ? '允许 AI 读取文件信息和目录' : 'Allow AI to read files and directories';
+  String get aiWriteAccess => lang == 'zh' ? '写入权限' : 'Write Access';
+  String get aiWriteAccessDesc => lang == 'zh' ? '允许 AI 修改节点参数和自动应用管线' : 'Allow AI to modify node params and auto-apply pipelines';
+  String get aiAutoExecute => lang == 'zh' ? '自动执行工具' : 'Auto-execute Tools';
+  String get aiAutoExecuteDesc => lang == 'zh' ? '允许 AI 自动执行工具（提问、检查、撤销等）' : 'Allow AI to auto-execute tools (ask, check, undo, etc.)';
+  String get aiGraphModeLabel => lang == 'zh' ? '图生成模式' : 'Graph Mode';
+  String get aiGraphModeRedo => lang == 'zh' ? '替换' : 'Replace';
+  String get aiGraphModeModify => lang == 'zh' ? '修改' : 'Modify';
 }

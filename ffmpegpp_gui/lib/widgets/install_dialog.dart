@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import '../services/ffmpeg_installer.dart';
+import '../theme/app_theme.dart';
 
 const _ffmpegUrl = 'https://wwbrq.lanzouv.com/iTF9n3sb937c';
 const _ffprobeUrl = 'https://wwbrq.lanzouv.com/itEOt3t5yogh';
@@ -309,7 +310,7 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
         Text(desc, style: TextStyle(fontSize: 11, color: scheme.outline)),
         if (done)
           Padding(padding: const EdgeInsets.only(top: 4),
-            child: Text(selectedPath, style: TextStyle(fontSize: 9, color: scheme.outline, fontFamily: Platform.isWindows ? 'Consolas' : 'monospace'),
+            child: Text(selectedPath, style: TextStyle(fontSize: 9, color: scheme.outline, fontFamily: AppTheme.monoFont),
                 maxLines: 1, overflow: TextOverflow.ellipsis)),
         const SizedBox(height: 8),
         Row(children: [
@@ -357,7 +358,7 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
         decoration: BoxDecoration(color: scheme.surfaceContainerHighest.withAlpha(60), borderRadius: BorderRadius.circular(8)),
         child: ListView.builder(reverse: true, itemCount: _logs.length,
           itemBuilder: (_, i) => Text(_logs[_logs.length - 1 - i],
-              style: TextStyle(fontSize: 10, fontFamily: Platform.isWindows ? 'Consolas' : 'monospace', color: scheme.outline)))),
+              style: TextStyle(fontSize: 10, fontFamily: AppTheme.monoFont, color: scheme.outline)))),
     ]);
   }
 
@@ -385,7 +386,7 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
       Icon(exists ? Icons.check : Icons.close, size: 14, color: exists ? Colors.green : scheme.error),
       const SizedBox(width: 6),
       Text('$label: ', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-      Expanded(child: Text(path, style: TextStyle(fontSize: 10, fontFamily: Platform.isWindows ? 'Consolas' : 'monospace', color: scheme.outline),
+      Expanded(child: Text(path, style: TextStyle(fontSize: 10, fontFamily: AppTheme.monoFont, color: scheme.outline),
           overflow: TextOverflow.ellipsis)),
     ]);
   }

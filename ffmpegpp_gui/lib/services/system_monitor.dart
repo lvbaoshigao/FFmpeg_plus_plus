@@ -34,6 +34,8 @@ class SystemMonitor {
   Future<void> _updateCpuRam() async {
     if (Platform.isWindows) {
       await _updateCpuRamWindows();
+    } else if (Platform.isMacOS) {
+      await _updateCpuRamMacOS();
     } else {
       await _updateCpuRamLinux();
     }
@@ -42,6 +44,8 @@ class SystemMonitor {
   Future<void> _updateGpu() async {
     if (Platform.isWindows) {
       await _updateGpuWindows();
+    } else if (Platform.isMacOS) {
+      await _updateGpuMacOS();
     } else {
       await _updateGpuLinux();
     }
@@ -164,5 +168,43 @@ class SystemMonitor {
         }
       } catch (_) {}
     }
+  }
+
+  // ── macOS ──
+
+  Future<void> _updateCpuRamMacOS() async {
+    try {
+      final result = await Process.run('top', ['-l', '1', '-n', '0', '-s', '0']);
+      if (result.exitCode == 0) {
+        final output = result.stdout.toString();
+        // CPU usage: parse "CPU usage: X% user, Y% sys, Z% idle"
+        final cpuMatch = RegExp(r'(\d+\.?\d*)% idle').firstMatch(output);
+        if (cpuMatch != null) {
+          cpuPercent = (100.0 - (double.tryParse(cpuMatch.group(1)!) ?? 0)).clamp(0.0, 100.0).toDouble();
+        }
+        // Memory: parse "PhysMem: XXG used (YYM wired, ZZM compressor), AAG unused."
+        final memMatch = RegExp(r'PhysMem:\s+(\d+\.?\d*)\w?\s+used.*?(\d+\.?\d*)\w?\s+unused').firstMatch(output);
+        if (memMatch != null) {
+          ramUsedGb = double.tryParse(memMatch.group(1)!) ?? 0;
+          final unused = double.tryParse(memMatch.group(2)!) ?? 0;
+          ramTotalGb = ramUsedGb + unused;
+          if (ramTotalGb > 0) ramPercent = ramUsedGb / ramTotalGb * 100;
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _updateGpuMacOS() async {
+    if (_gpuNameCached) return;
+    try {
+      final result = await Process.run('system_profiler', ['SPDisplaysDataType']);
+      if (result.exitCode == 0) {
+        final match = RegExp(r'Chipset Model:\s*(.+)').firstMatch(result.stdout.toString());
+        if (match != null) {
+          gpuName = match.group(1)!.trim();
+          _gpuNameCached = true;
+        }
+      }
+    } catch (_) {}
   }
 }

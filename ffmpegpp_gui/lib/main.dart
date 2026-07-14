@@ -15,6 +15,8 @@ final String _logDir = () {
   final String base;
   if (Platform.isWindows) {
     base = Platform.environment['APPDATA'] ?? Directory.systemTemp.path;
+  } else if (Platform.isMacOS) {
+    base = '${Platform.environment['HOME'] ?? '/tmp'}/Library/Application Support';
   } else {
     base = Platform.environment['XDG_DATA_HOME'] ??
         '${Platform.environment['HOME'] ?? '/tmp'}$_sep.local${_sep}share';
@@ -111,7 +113,9 @@ String _findServer() {
 
   // 仅搜索 exe 目录和上一级目录（防止 DLL 劫持）
   const maxSearchDepth = 2;
-  final libName = Platform.isWindows ? 'ffmpegpp.dll' : 'libffmpegpp.so';
+  final libName = Platform.isWindows ? 'ffmpegpp.dll'
+      : Platform.isMacOS ? 'libffmpegpp.dylib'
+      : 'libffmpegpp.so';
 
   var dir = exeDir;
   for (var i = 0; i < maxSearchDepth; i++) {
@@ -119,6 +123,12 @@ String _findServer() {
     if (candidate.existsSync()) {
       _startupLog('5b-FOUND LIB: ${candidate.absolute.path}');
       return candidate.absolute.path;
+    }
+    // Also check lib/ subdirectory (Linux bundle structure)
+    final libSubdir = File('${dir.path}${Platform.pathSeparator}lib${Platform.pathSeparator}$libName');
+    if (libSubdir.existsSync()) {
+      _startupLog('5b-FOUND LIB: ${libSubdir.absolute.path}');
+      return libSubdir.absolute.path;
     }
     dir = dir.parent;
   }

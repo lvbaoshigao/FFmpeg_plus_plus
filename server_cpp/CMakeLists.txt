@@ -105,6 +105,14 @@ target_compile_definitions(ffmpegpp PRIVATE
 if(WIN32)
     target_compile_definitions(ffmpegpp PRIVATE NOMINMAX)
     target_link_libraries(ffmpegpp PRIVATE kernel32 user32)
+elseif(APPLE)
+    target_link_libraries(ffmpegpp PRIVATE pthread)
+    target_compile_options(ffmpegpp PRIVATE -fvisibility=hidden)
+    set_target_properties(ffmpegpp PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        MACOSX_RPATH ON
+        INSTALL_RPATH "@loader_path"
+    )
 else()
     target_link_libraries(ffmpegpp PRIVATE pthread)
     target_compile_options(ffmpegpp PRIVATE -fvisibility=hidden)

@@ -140,6 +140,7 @@ class _LogicBlockEditorState extends State<LogicBlockEditor> {
               style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.onSurface)),
           const SizedBox(height: 8),
           DropdownButtonFormField<String>(
+            borderRadius: BorderRadius.circular(12),
             value: p['mode'] as String? ?? 'random',
             isExpanded: true,
             decoration: InputDecoration(

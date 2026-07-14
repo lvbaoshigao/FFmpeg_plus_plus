@@ -2,12 +2,17 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 
-const _currentVersion = '4.7.2';
+const _currentVersion = '4.11.20';
 
 const _lanzouUrls = {
   'windows': 'https://wwbrq.lanzouv.com/b002w12goj',
   'linux': 'https://wwbrq.lanzouv.com/b002w12gpa',
   'linux_arm64': 'https://wwbrq.lanzouv.com/b002w12gqb',
+  'macos_arm64': 'https://wwbrq.lanzouv.com/b002w17vte',
+};
+
+const _lanzouPasswords = {
+  'macos_arm64': '26qb',
 };
 
 const _githubRepo = 'pity-Fox/FFmpeg_plus_plus';
@@ -17,6 +22,9 @@ final _s = Platform.pathSeparator;
 String _dataDir() {
   if (Platform.isWindows) {
     return '${Platform.environment['APPDATA'] ?? Directory.systemTemp.path}${_s}FFmpeg++';
+  }
+  if (Platform.isMacOS) {
+    return '${Platform.environment['HOME'] ?? '/tmp'}/Library/Application Support/FFmpeg++';
   }
   final base = Platform.environment['XDG_DATA_HOME'] ??
       '${Platform.environment['HOME'] ?? '/tmp'}$_s.local${_s}share';
@@ -29,9 +37,11 @@ class UpdateResult {
   final String? remoteVersion;
   final String? releaseNotes;
   final String? downloadUrl;
+  final String? password;
   final String? error;
+  final bool releaseNotesError;
   final UpdateSource source;
-  UpdateResult({this.remoteVersion, this.releaseNotes, this.downloadUrl, this.error, this.source = UpdateSource.github});
+  UpdateResult({this.remoteVersion, this.releaseNotes, this.downloadUrl, this.password, this.error, this.releaseNotesError = false, this.source = UpdateSource.github});
   bool get hasUpdate => remoteVersion != null && compareVersions(remoteVersion!, _currentVersion) > 0;
 }
 
@@ -51,14 +61,37 @@ int compareVersions(String a, String b) {
 String get currentVersion => _currentVersion;
 
 Future<UpdateResult> checkForUpdate({required bool preferLanzou}) async {
+  // Always try to get GitHub release notes
+  final ghFuture = _checkGithub();
+
   if (preferLanzou) {
     final lz = await _checkLanzou();
-    if (lz.error == null) return lz;
-    return await _checkGithub();
+    final gh = await ghFuture;
+    if (lz.error == null) {
+      return UpdateResult(
+        remoteVersion: lz.remoteVersion,
+        releaseNotes: gh.releaseNotes,
+        downloadUrl: lz.downloadUrl,
+        password: lz.password,
+        source: UpdateSource.lanzou,
+        releaseNotesError: gh.error != null,
+      );
+    }
+    return gh;
   } else {
-    final gh = await _checkGithub();
+    final gh = await ghFuture;
     if (gh.error == null) return gh;
-    return await _checkLanzou();
+    final lz = await _checkLanzou();
+    if (lz.error == null) {
+      return UpdateResult(
+        remoteVersion: lz.remoteVersion,
+        downloadUrl: lz.downloadUrl,
+        password: lz.password,
+        source: UpdateSource.lanzou,
+        releaseNotesError: true,
+      );
+    }
+    return gh;
   }
 }
 
@@ -69,11 +102,10 @@ Future<UpdateResult> _checkLanzou() async {
     final match = RegExp(r'<span id="filename">([^<]+)</span>').firstMatch(resp.body);
     if (match == null) return UpdateResult(error: 'parse_failed', source: UpdateSource.lanzou);
     final version = match.group(1)!.trim();
-    String lanzouLink = _lanzouUrls['windows']!;
-    if (Platform.isLinux) {
-      lanzouLink = _isArm64() ? _lanzouUrls['linux_arm64']! : _lanzouUrls['linux']!;
-    }
-    return UpdateResult(remoteVersion: version, downloadUrl: lanzouLink, source: UpdateSource.lanzou);
+    final key = _platformKey();
+    final lanzouLink = _lanzouUrls[key] ?? _lanzouUrls['windows']!;
+    final password = _lanzouPasswords[key];
+    return UpdateResult(remoteVersion: version, downloadUrl: lanzouLink, password: password, source: UpdateSource.lanzou);
   } catch (e) {
     return UpdateResult(error: e.toString(), source: UpdateSource.lanzou);
   }
@@ -112,8 +144,15 @@ Future<UpdateResult> _checkGithub() async {
   }
 }
 
+String _platformKey() {
+  if (Platform.isWindows) return 'windows';
+  if (Platform.isMacOS) return 'macos_arm64';
+  return _isArm64() ? 'linux_arm64' : 'linux';
+}
+
 String _assetSuffix() {
   if (Platform.isWindows) return '_setup.exe';
+  if (Platform.isMacOS) return '.dmg';
   if (_isArm64()) return '_arm64.deb';
   return '_amd64.deb';
 }
@@ -162,8 +201,11 @@ Future<void> installAndRestart(String filePath) async {
   await writeVersionCache(_currentVersion);
 
   if (Platform.isWindows) {
-    // Run the exe installer then exit
     await Process.start(filePath, [], mode: ProcessStartMode.detached);
+    await Future.delayed(const Duration(milliseconds: 500));
+    exit(0);
+  } else if (Platform.isMacOS) {
+    await Process.start('open', [filePath], mode: ProcessStartMode.detached);
     await Future.delayed(const Duration(milliseconds: 500));
     exit(0);
   } else {

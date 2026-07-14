@@ -1,10 +1,13 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import 'package:window_manager/window_manager.dart';
@@ -43,10 +46,14 @@ import '../widgets/toast.dart';
 const _uuid = Uuid();
 
 const _nodeW = 200.0;
+const _nodeWNarrow = 150.0;
 const _nodeH = 68.0;
 const _canvasSize = 6000.0;
 const _portZoneW = 18.0;
-const _totalNodeW = _portZoneW + _nodeW + _portZoneW;
+
+double _nodeWFor(PipelineStepType type) =>
+    (type == PipelineStepType.start || type == PipelineStepType.output) ? _nodeWNarrow : _nodeW;
+double _totalNodeWFor(PipelineStepType type) => _portZoneW + _nodeWFor(type) + _portZoneW;
 
 class PipelineEditorPage extends StatefulWidget {
   final VideoFile video;
@@ -86,6 +93,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   final TransformationController _transformCtrl = TransformationController();
   final GlobalKey _canvasKey = GlobalKey();
+  late final AppState _appState;
   double _currentScale = 1.0;
   int _sourceAnchorIndex = 0;
   bool _isMaximized = false;
@@ -95,6 +103,42 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   bool _isLogicBoxSelecting = false;
   LogicBlockType? _pendingLogicType;
   String? _selectedLogicBlockId;
+
+  // Undo/redo
+  final List<Map<String, dynamic>> _undoStack = [];
+  final List<Map<String, dynamic>> _redoStack = [];
+
+  Map<String, dynamic> _snapshot() => PipelineGraph(nodes: List.of(_nodes), connections: List.of(_connections), logicBlocks: List.of(_logicBlocks)).toJson();
+  void _pushUndo() {
+    _undoStack.add(_snapshot());
+    if (_undoStack.length > 50) _undoStack.removeAt(0);
+    _redoStack.clear();
+  }
+  void _undo() {
+    if (_undoStack.isEmpty) return;
+    _redoStack.add(_snapshot());
+    _restoreSnapshot(_undoStack.removeLast());
+  }
+  void _redo() {
+    if (_redoStack.isEmpty) return;
+    _undoStack.add(_snapshot());
+    _restoreSnapshot(_redoStack.removeLast());
+  }
+  void _restoreSnapshot(Map<String, dynamic> snap) {
+    final g = PipelineGraph.fromJson(snap);
+    setState(() {
+      _nodes.clear(); _nodes.addAll(g.nodes);
+      _connections.clear(); _connections.addAll(g.connections);
+      _logicBlocks.clear(); _logicBlocks.addAll(g.logicBlocks);
+      _selectedNodeIds.clear();
+    });
+  }
+
+  void _saveGraph() {
+    final graph = PipelineGraph(nodes: _nodes, connections: _connections, logicBlocks: _logicBlocks);
+    widget.onSave(graph);
+    context.read<AppState>().setCurrentPipeline(graph);
+  }
 
   @override
   void initState() {
@@ -141,6 +185,19 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _transformCtrl.value = Matrix4.identity()..translate(-_canvasSize / 2 + 300, -_canvasSize / 2 + 200);
     });
+    _appState = context.read<AppState>();
+    _appState.mcpOnClearAll = () { _pushUndo(); setState(() { _nodes.clear(); _connections.clear(); _logicBlocks.clear(); _selectedNodeIds.clear(); _saveGraph(); }); };
+    _appState.mcpOnUndo = _undo;
+    _appState.mcpOnRedo = _redo;
+    _appState.mcpOnSave = _saveGraph;
+    _appState.mcpOnModifyNode = (nodeId, params) {
+      _pushUndo();
+      setState(() {
+        final node = _nodes.firstWhere((n) => n.id == nodeId, orElse: () => _nodes.first);
+        params.forEach((k, v) { node.params[k] = v; });
+      });
+      _saveGraph();
+    };
   }
 
   @override
@@ -148,6 +205,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     if (!Platform.isWindows) windowManager.removeListener(this);
     _transformCtrl.removeListener(_onScaleChanged);
     _transformCtrl.dispose();
+    _appState.mcpOnClearAll = null;
+    _appState.mcpOnUndo = null;
+    _appState.mcpOnRedo = null;
+    _appState.mcpOnSave = null;
+    _appState.mcpOnModifyNode = null;
     super.dispose();
   }
 
@@ -239,6 +301,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   // ── 节点操作 ──
 
   void _addNodeAt(PipelineStepType type, Offset canvasPos) {
+    _pushUndo();
     final node = PipelineNode(
       id: _uuid.v4(), type: type,
       x: canvasPos.dx, y: canvasPos.dy,
@@ -266,6 +329,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   }
 
   void _deleteNode(String nodeId) {
+    _pushUndo();
     setState(() {
       _nodes.removeWhere((n) => n.id == nodeId);
       _connections.removeWhere((c) => c.fromNodeId == nodeId || c.toNodeId == nodeId);
@@ -278,6 +342,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   void _deleteSelectedNodes() {
     if (_selectedNodeIds.isEmpty) return;
+    _pushUndo();
     setState(() {
       final ids = Set<String>.from(_selectedNodeIds);
       for (final id in ids) {
@@ -297,6 +362,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   void _addConnection(String fromId, String toId) {
     if (fromId == toId) return;
+    _pushUndo();
     final fromIdx = _nodes.indexWhere((n) => n.id == fromId);
     final toIdx = _nodes.indexWhere((n) => n.id == toId);
     if (fromIdx < 0 || toIdx < 0) return;
@@ -381,6 +447,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   }
 
   void _deleteConnection(String connId) {
+    _pushUndo();
     final conn = _connections.firstWhere((c) => c.id == connId, orElse: () => PipelineConnection(id: '', fromNodeId: '', toNodeId: ''));
     setState(() {
       _connections.removeWhere((c) => c.id == connId);
@@ -408,7 +475,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       if (fi < 0 || ti < 0) continue;
       final from = _nodes[fi];
       final to = _nodes[ti];
-      final p1 = Offset(from.x + _portZoneW + _nodeW + _portZoneW / 2, from.y + _nodeH / 2);
+      final p1 = Offset(from.x + _portZoneW + _nodeWFor(from.type) + _portZoneW / 2, from.y + _nodeH / 2);
       final p2 = Offset(to.x + _portZoneW / 2, to.y + _nodeH / 2);
       if (_distToBezier(pos, p1, p2) < threshold) return conn;
     }
@@ -622,7 +689,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     return Offset(x, y);
   }
 
-  Offset _outPort(PipelineNode n) => Offset(n.x + _portZoneW + _nodeW + _portZoneW / 2, n.y + _nodeH / 2);
+  Offset _outPort(PipelineNode n) => Offset(n.x + _portZoneW + _nodeWFor(n.type) + _portZoneW / 2, n.y + _nodeH / 2);
   Offset _inPort(PipelineNode n) => Offset(n.x + _portZoneW / 2, n.y + _nodeH / 2);
 
   // ── 缩放/整理/定位 ──
@@ -649,7 +716,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     for (final n in _nodes) {
       if (n.x < minX) minX = n.x;
       if (n.y < minY) minY = n.y;
-      if (n.x + _totalNodeW > maxX) maxX = n.x + _totalNodeW;
+      if (n.x + _totalNodeWFor(n.type) > maxX) maxX = n.x + _totalNodeWFor(n.type);
       if (n.y + _nodeH > maxY) maxY = n.y + _nodeH;
     }
     final contentW = maxX - minX + 80;
@@ -665,6 +732,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   void _autoLayout() {
     if (_nodes.isEmpty) return;
+    _pushUndo();
     final adj = <String, List<String>>{};
     final inDeg = <String, int>{};
     for (final n in _nodes) {
@@ -723,7 +791,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     final rb = _canvasKey.currentContext?.findRenderObject() as RenderBox?;
     if (rb == null) return;
     final viewCenter = rb.size.center(Offset.zero);
-    final nodeCenterX = target.x + _totalNodeW / 2;
+    final nodeCenterX = target.x + _totalNodeWFor(target.type) / 2;
     final nodeCenterY = target.y + _nodeH / 2;
     _transformCtrl.value = Matrix4.identity()
       ..translate(viewCenter.dx, viewCenter.dy)
@@ -775,13 +843,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       final n = _nodes.firstWhere((n) => n.id == id);
       minX = math.min(minX, n.x);
       minY = math.min(minY, n.y);
-      maxX = math.max(maxX, n.x + _totalNodeW);
+      maxX = math.max(maxX, n.x + _totalNodeWFor(n.type));
       maxY = math.max(maxY, n.y + _nodeH);
     }
     final padding = 20.0;
 
     _showLoopCountDialog(s).then((count) {
       if (count != null && count > 0) {
+        _pushUndo();
         setState(() {
           _logicBlocks.add(LogicBlock(
             id: _uuid.v4(),
@@ -1349,6 +1418,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               },
               child: Container(color: Colors.transparent),
             )),
+            Positioned(left: 8, top: 0, bottom: 0, child: Row(mainAxisSize: MainAxisSize.min, children: [
+              _EditorCsdBtn(icon: Icons.arrow_back, color: scheme.onSurfaceVariant, onTap: () async {
+                final nav = Navigator.of(context);
+                if (await _onWillPop()) nav.pop();
+              }),
+            ])),
             Positioned(right: 0, top: 0, bottom: 0, child: Row(mainAxisSize: MainAxisSize.min, children: [
               _EditorCsdBtn(icon: Icons.remove, color: scheme.onSurfaceVariant, onTap: () => windowManager.minimize()),
               _EditorCsdBtn(
@@ -1494,7 +1569,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             final rect = _boxSelectRect!;
             setState(() {
               for (final n in _nodes) {
-                final nodeRect = Rect.fromLTWH(n.x, n.y, _totalNodeW, _nodeH);
+                final nodeRect = Rect.fromLTWH(n.x, n.y, _totalNodeWFor(n.type), _nodeH);
                 if (rect.overlaps(nodeRect)) {
                   _selectedNodeIds.add(n.id);
                   _lastSelectedId = n.id;
@@ -1619,6 +1694,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           }
         }
 
+        // Undo (Ctrl+Z)
+        if (_isCtrlPressed() && event.logicalKey == LogicalKeyboardKey.keyZ && !HardwareKeyboard.instance.logicalKeysPressed.contains(LogicalKeyboardKey.shiftLeft) && !HardwareKeyboard.instance.logicalKeysPressed.contains(LogicalKeyboardKey.shiftRight)) {
+          _undo();
+          return KeyEventResult.handled;
+        }
+        // Redo (Ctrl+Shift+Z)
+        if (_isCtrlPressed() && event.logicalKey == LogicalKeyboardKey.keyZ && (HardwareKeyboard.instance.logicalKeysPressed.contains(LogicalKeyboardKey.shiftLeft) || HardwareKeyboard.instance.logicalKeysPressed.contains(LogicalKeyboardKey.shiftRight))) {
+          _redo();
+          return KeyEventResult.handled;
+        }
+
         return KeyEventResult.ignored;
       },
       child: canvas,
@@ -1646,6 +1732,21 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           const SizedBox(width: 6),
           Text(s.isZh ? '节点编辑器' : 'Node Editor',
               style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+          const SizedBox(width: 8),
+          IconButton(
+            icon: Icon(Icons.undo, size: 16, color: _undoStack.isEmpty ? scheme.outlineVariant : scheme.onSurfaceVariant),
+            tooltip: s.isZh ? '撤销' : 'Undo',
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            padding: EdgeInsets.zero,
+            onPressed: _undoStack.isEmpty ? null : _undo,
+          ),
+          IconButton(
+            icon: Icon(Icons.redo, size: 16, color: _redoStack.isEmpty ? scheme.outlineVariant : scheme.onSurfaceVariant),
+            tooltip: s.isZh ? '重做' : 'Redo',
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            padding: EdgeInsets.zero,
+            onPressed: _redoStack.isEmpty ? null : _redo,
+          ),
           const Spacer(),
           if (!Platform.isWindows) ...[
             IconButton(
@@ -1700,11 +1801,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           },
           builder: (ctx, candidateData, rejectedData) => Stack(children: [
             focusedCanvas,
-            // Floating zoom/layout/anchor controls
-            Positioned(
-              right: 10, bottom: 10,
-              child: _buildCanvasControls(scheme, s),
-            ),
             if (context.read<AppState>().config.debugMode)
               Positioned(
                 left: 8, bottom: 8, right: 80,
@@ -1712,6 +1808,86 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                   GraphExecutor.describeGraph(PipelineGraph(nodes: _nodes, connections: _connections, logicBlocks: _logicBlocks)),
                   style: TextStyle(fontSize: 10, color: scheme.onSurface.withAlpha(128), height: 1.4),
                 )),
+              ),
+            Positioned(
+              right: 10, bottom: context.read<AppState>().config.aiEnabled ? 60 : 10,
+              child: _buildCanvasControls(scheme, s),
+            ),
+            if (context.read<AppState>().config.aiEnabled)
+              Positioned(
+                right: 10, bottom: 10,
+                child: _AiPanel(
+                  strings: s,
+                  existingNodes: _nodes,
+                  existingConnections: _connections,
+                  onApplyGraph: (nodes, connections) {
+                    _pushUndo();
+                    setState(() {
+                      _nodes.clear();
+                      _connections.clear();
+                      _nodes.addAll(nodes);
+                      _connections.addAll(connections);
+                    });
+                  },
+                  onMergeGraph: (aiNodes, aiConns) {
+                    _pushUndo();
+                    setState(() {
+                      final idRemap = <String, String>{};
+                      for (final n in aiNodes) {
+                        final existing = _nodes.indexWhere((e) => e.type == n.type && !idRemap.containsValue(e.id));
+                        if (existing >= 0) {
+                          _nodes[existing].params.addAll(n.params);
+                          idRemap[n.id] = _nodes[existing].id;
+                        } else {
+                          _nodes.add(n);
+                          idRemap[n.id] = n.id;
+                        }
+                      }
+                      final newConns = <PipelineConnection>[];
+                      for (final c in aiConns) {
+                        final fromId = idRemap[c.fromNodeId] ?? c.fromNodeId;
+                        final toId = idRemap[c.toNodeId] ?? c.toNodeId;
+                        if (!_connections.any((e) => e.fromNodeId == fromId && e.toNodeId == toId)) {
+                          newConns.add(PipelineConnection(id: _uuid.v4(), fromNodeId: fromId, toNodeId: toId));
+                        }
+                      }
+                      // Remove old connections superseded by new path
+                      final remappedConns = aiConns.map((c) => (
+                        from: idRemap[c.fromNodeId] ?? c.fromNodeId,
+                        to: idRemap[c.toNodeId] ?? c.toNodeId,
+                      )).toSet();
+                      final aiNodeIds = remappedConns.expand((c) => [c.from, c.to]).toSet();
+                      _connections.removeWhere((c) {
+                        if (!aiNodeIds.contains(c.fromNodeId) || !aiNodeIds.contains(c.toNodeId)) return false;
+                        if (remappedConns.any((r) => r.from == c.fromNodeId && r.to == c.toNodeId)) return false;
+                        // Old connection between two AI-touched nodes not in AI graph → remove
+                        return true;
+                      });
+                      _connections.addAll(newConns);
+                    });
+                  },
+                  onModifyNodeParams: (nodeId, params) {
+                    _pushUndo();
+                    setState(() {
+                      final node = _nodes.firstWhere((n) => n.id == nodeId, orElse: () => _nodes.first);
+                      params.forEach((k, v) { node.params[k] = v; });
+                    });
+                    _saveGraph();
+                  },
+                  onClearAll: () {
+                    _pushUndo();
+                    setState(() {
+                      _nodes.clear();
+                      _connections.clear();
+                      _logicBlocks.clear();
+                      _selectedNodeIds.clear();
+                      _saveGraph();
+                    });
+                  },
+                  onUndo: _undo,
+                  onRedo: _redo,
+                  onSave: _saveGraph,
+                ),
               ),
           ]),
         ),
@@ -1817,6 +1993,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               }
             });
           },
+          onPanStart: (_) => _pushUndo(),
           onPanUpdate: (d) {
             final scale = _transformCtrl.value.getMaxScaleOnAxis();
             final dx = d.delta.dx / scale;
@@ -1839,7 +2016,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           },
           onSecondaryTapUp: (d) => _showNodeMenu(d.globalPosition, node.id),
           child: Container(
-            width: _nodeW,
+            width: _nodeWFor(node.type),
             height: _nodeH,
             decoration: BoxDecoration(
               color: _nodeColor(node.type, scheme, customColor: node.params['node_color'] as int?),
@@ -1913,7 +2090,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   PipelineNode? _findNodeAtCanvasPos(Offset pos) {
     for (final n in _nodes) {
-      if (pos.dx >= n.x && pos.dx <= n.x + _totalNodeW && pos.dy >= n.y && pos.dy <= n.y + _nodeH) {
+      if (pos.dx >= n.x && pos.dx <= n.x + _totalNodeWFor(n.type) && pos.dy >= n.y && pos.dy <= n.y + _nodeH) {
         return n;
       }
     }
@@ -1980,8 +2157,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             }),
             const SizedBox(width: 2),
             _logicIconBtn(Icons.close, () {
+              _pushUndo();
               setState(() {
-                _logicBlocks.removeWhere((b) => b.id == block.id);
                 if (_selectedLogicBlockId == block.id) _selectedLogicBlockId = null;
               });
             }),
@@ -2440,7 +2617,7 @@ class _ConnectionPainter extends CustomPainter {
       final from = nodes[fromIdx];
       final to = nodes[toIdx];
 
-      final p1 = Offset(from.x + _portZoneW + _nodeW + _portZoneW / 2, from.y + _nodeH / 2);
+      final p1 = Offset(from.x + _portZoneW + _nodeWFor(from.type) + _portZoneW / 2, from.y + _nodeH / 2);
       final p2 = Offset(to.x + _portZoneW / 2, to.y + _nodeH / 2);
       final dx = (p2.dx - p1.dx).abs() * 0.5;
 
@@ -2608,6 +2785,691 @@ class _EditorCsdBtnState extends State<_EditorCsdBtn> {
             color: _hovering && widget.hoverBg != null ? Colors.white : widget.color,
           ),
         ),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════
+// AI Chat Dialog
+// ═══════════════════════════════════════════
+
+class _AiPanel extends StatefulWidget {
+  final AppStrings strings;
+  final List<PipelineNode> existingNodes;
+  final List<PipelineConnection> existingConnections;
+  final void Function(List<PipelineNode>, List<PipelineConnection>) onApplyGraph;
+  final void Function(List<PipelineNode>, List<PipelineConnection>) onMergeGraph;
+  final void Function(String nodeId, Map<String, String> params) onModifyNodeParams;
+  final VoidCallback onClearAll;
+  final VoidCallback onUndo;
+  final VoidCallback onRedo;
+  final VoidCallback onSave;
+  const _AiPanel({required this.strings, required this.existingNodes, required this.existingConnections, required this.onApplyGraph, required this.onMergeGraph, required this.onModifyNodeParams, required this.onClearAll, required this.onUndo, required this.onRedo, required this.onSave});
+  @override
+  State<_AiPanel> createState() => _AiPanelState();
+}
+
+class _AiPanelState extends State<_AiPanel> {
+  final _ctrl = TextEditingController();
+  final _scrollCtrl = ScrollController();
+  final List<({String role, String content, int? inputTokens, int? outputTokens, List<Map<String, dynamic>>? blocks})> _messages = [];
+  bool _loading = false;
+  bool _expanded = false;
+  List<PipelineNode>? _pendingNodes;
+  List<PipelineConnection>? _pendingConnections;
+  bool _pendingIsModify = false;
+
+  static const _uuid = Uuid();
+
+  static const _systemPrompt = '''You are an AI assistant for FFmpeg++ node editor.
+When the user describes media processing they want, respond with a JSON pipeline graph.
+
+Available node types (PipelineStepType):
+- start: Input source node (always first, no params needed)
+- avProcess: Video/audio encoding settings
+    video_codec: libx264|libx265|libvpx-vp9|libaom-av1|libsvtav1|copy
+    gpu: CPU|NVIDIA|AMD|Intel
+    preset: ultrafast|superfast|veryfast|faster|fast|medium|slow|slower|veryslow
+    rate_mode: keep|crf|bitrate (MUST set to "crf" or "bitrate" for crf/video_bitrate to take effect)
+    crf: 0-51 (only used when rate_mode="crf")
+    video_bitrate: integer kbps (only used when rate_mode="bitrate")
+    resolution: original|2160p|1080p|720p|480p|360p|custom
+    resolution_w, resolution_h: integers (only when resolution="custom")
+    fps: keep|24|25|30|48|50|60|120|custom
+    fps_value: number (only when fps="custom")
+    audio_codec: aac|libmp3lame|libopus|libvorbis|flac|pcm_s16le|ac3|eac3|copy
+    audio_bitrate: integer kbps
+    audio_channels: keep|1|2|6|8
+    pix_fmt: auto|yuv420p|yuv422p|yuv444p|yuv420p10le|yuv422p10le|nv12|p010le|rgb24
+- subtitle: Burn subtitles
+    source: external|embedded
+    subtitle_file: path (when source=external)
+    subtitle_index: integer (when source=embedded)
+    font_name, font_size, font_color, outline_width, outline_color
+- clip: Trim/cut video (start_time: seconds, end_time: seconds)
+- frame: Extract frames
+    extract_mode: single|range|all
+    time: seconds (when single)
+    range_start, range_end: seconds (when range)
+    fps_rate: number (frames per second for range/all)
+    output_format: png|jpg|bmp|webp
+- speed: Change playback speed (speed: 0.25-4.0, or custom_speed: true + custom_speed_value: number for >4x)
+- imageConvert: Convert image format (output_format: png|jpg|webp|bmp|tiff, quality: 0-100)
+- audioConvert: Convert audio format (audio_codec: aac|libmp3lame|libopus|libvorbis|flac, output_format: m4a|mp3|ogg|flac|wav)
+- audioQuality: Audio quality settings (bitrate_mode: keep|custom, audio_bitrate: integer, sample_rate: keep|22050|44100|48000|96000)
+- audioSpeed: Audio speed change (atempo: 0.5-2.0)
+- audioVolume: Audio volume adjust (volume_db: -30.0 to +30.0 dB)
+- audioCompressor: Audio compressor (threshold, ratio, attack, release, makeup, knee)
+- audioMetadata: Edit audio metadata (title, artist, album, cover_path, lyrics_path)
+- concatMedia: Concatenate media files (mode: copy|reencode, order_mode: index|name)
+- imageToVideo: Image sequence to video (framerate: number, output_format: mp4|avi|mkv, video_codec: h264|h265)
+- imageCrop: Crop image (crop_x, crop_y, crop_w, crop_h: integers)
+- imageRotate: Rotate image (angle: degrees)
+- imageScale: Scale image (scale_mode: factor, scale_factor: number)
+- imageBrightness: Adjust brightness (brightness: -1.0 to 1.0)
+- imageNoise: Add noise to image (noise_strength: integer, noise_type: u|g)
+- imageSharpen: Sharpen image (sharpen_strength: 0.0-5.0)
+- imageDenoise: Denoise image (denoise_method: nlmeans|hqdn3d, denoise_strength: number)
+- imageChannelExtract: Extract color channel (channel: r|g|b, extract_method: colorize|grayscale)
+- output: Output node (always last)
+    format: keep|mp4|mkv|avi|mov|webm|flv|ts|m4a|mp3|ogg|flac|wav|png|jpg|webp|bmp
+    naming_mode: keep|suffix|custom
+    naming_value: string (suffix or custom name)
+    output_dir: path
+
+Respond with a brief explanation, then a JSON block in this exact format:
+```json
+{
+  "nodes": [
+    {"id": "n1", "type": "start", "x": 2900, "y": 3000, "params": {}},
+    {"id": "n2", "type": "avProcess", "x": 3150, "y": 3000, "params": {"video_codec": "libx264", "rate_mode": "crf", "crf": 23}},
+    {"id": "n3", "type": "output", "x": 3400, "y": 3000, "params": {}}
+  ],
+  "connections": [
+    {"from": "n1", "to": "n2"},
+    {"from": "n2", "to": "n3"}
+  ]
+}
+```
+
+Rules:
+- Always start with a "start" node and end with an "output" node
+- Space nodes horizontally ~250px apart, starting around x=2900, y=3000
+- For parallel branches, offset y by ~120px
+- Use the simplest pipeline that achieves the goal
+- Only include relevant params, omit defaults
+
+You also have these tools you can invoke by including the exact marker in your response:
+- [TOOL_CALL:clear_all] — Clear all nodes, connections, and logic blocks from the canvas
+- [TOOL_CALL:undo] — Undo the last action on the canvas
+- [TOOL_CALL:redo] — Redo the last undone action
+- [TOOL_CALL:save] — Save the current pipeline (only if already saved before, no Save As)
+- [TOOL_CALL:error_check] — Check the current pipeline for logical errors (missing start/output, disconnected nodes, etc.)
+- [TOOL_CALL:ask_user|Your question here|option1,option2,option3] — Ask the user a question with clickable options
+- [TOOL_CALL:list_directory|/path/to/dir] — List files in a directory (read-only, max 50 entries)
+- [TOOL_CALL:read_file_info|/path/to/file] — Get file metadata: size, modified time, type (read-only)
+- [TOOL_CALL:modify_node|nodeId|paramKey=value,paramKey2=value2] — Modify params of an existing canvas node
+
+Graph generation modes:
+- Default (Replace): your JSON graph replaces the entire canvas
+- Include [MODE:modify] in your response to merge with existing canvas instead of replacing
+
+When the user asks to clear/reset the canvas, undo, redo, or save, include the appropriate marker.
+The current canvas state is provided below the conversation automatically.''';
+
+  void _handleToolCalls(String content) {
+    final cfg = context.read<AppState>().config;
+    final calls = RegExp(r'\[TOOL_CALL:([^\]]+)\]').allMatches(content);
+    for (final m in calls) {
+      final parts = m.group(1)!.split('|');
+      final tool = parts[0];
+      switch (tool) {
+        case 'clear_all': if (cfg.aiAutoExecute) widget.onClearAll();
+        case 'undo': if (cfg.aiAutoExecute) widget.onUndo();
+        case 'redo': if (cfg.aiAutoExecute) widget.onRedo();
+        case 'save': if (cfg.aiAutoExecute) widget.onSave();
+        case 'error_check': if (cfg.aiAutoExecute) _executeErrorCheck();
+        case 'ask_user':
+          if (cfg.aiAutoExecute && parts.length >= 3) _showAskUser(parts[1], parts[2].split(','));
+        case 'list_directory':
+          if (cfg.aiReadAccess && parts.length >= 2) _executeListDir(parts[1]);
+        case 'read_file_info':
+          if (cfg.aiReadAccess && parts.length >= 2) _executeReadFileInfo(parts[1]);
+        case 'modify_node':
+          if (cfg.aiWriteAccess && parts.length >= 3) {
+            final params = <String, String>{};
+            for (final p in parts[2].split(',')) {
+              final kv = p.split('=');
+              if (kv.length == 2) params[kv[0].trim()] = kv[1].trim();
+            }
+            widget.onModifyNodeParams(parts[1], params);
+          }
+      }
+    }
+  }
+
+  void _addToolResult(String toolName, String result) {
+    setState(() {
+      _messages.add((role: 'assistant', content: '[$toolName] $result',
+        inputTokens: null, outputTokens: null,
+        blocks: [{'type': 'tool_result', 'name': toolName, 'content': result}]));
+    });
+    _scrollToBottom();
+  }
+
+  void _executeErrorCheck() {
+    final nodes = widget.existingNodes;
+    final conns = widget.existingConnections;
+    final errors = <String>[];
+    if (!nodes.any((n) => n.type == PipelineStepType.start)) errors.add('Missing start node');
+    if (!nodes.any((n) => n.type == PipelineStepType.output)) errors.add('Missing output node');
+    final connectedIds = <String>{};
+    for (final c in conns) { connectedIds.add(c.fromNodeId); connectedIds.add(c.toNodeId); }
+    for (final n in nodes) {
+      if (!connectedIds.contains(n.id) && nodes.length > 1) {
+        errors.add('Disconnected: ${n.type.name} (${n.id.substring(0, 8)})');
+      }
+    }
+    _addToolResult('error_check', errors.isEmpty ? 'No errors found.' : errors.join('\n'));
+  }
+
+  void _executeListDir(String path) {
+    try {
+      final dir = Directory(path);
+      if (!dir.existsSync()) { _addToolResult('list_directory', 'Directory not found: $path'); return; }
+      final entries = dir.listSync().take(50).map((e) {
+        final stat = e.statSync();
+        final isDir = stat.type == FileSystemEntityType.directory;
+        return '${isDir ? "[DIR] " : ""}${e.path.split('/').last}  ${isDir ? "" : "${(stat.size / 1024).toStringAsFixed(1)}KB"}';
+      }).join('\n');
+      _addToolResult('list_directory', entries.isEmpty ? '(empty)' : entries);
+    } catch (e) { _addToolResult('list_directory', 'Error: $e'); }
+  }
+
+  void _executeReadFileInfo(String path) {
+    try {
+      final file = File(path);
+      if (!file.existsSync()) { _addToolResult('read_file_info', 'File not found: $path'); return; }
+      final stat = file.statSync();
+      _addToolResult('read_file_info', 'Path: $path\nSize: ${(stat.size / (1024 * 1024)).toStringAsFixed(2)} MB\nModified: ${stat.modified}\nType: ${path.split('.').last}');
+    } catch (e) { _addToolResult('read_file_info', 'Error: $e'); }
+  }
+
+  void _showAskUser(String question, List<String> options) {
+    setState(() {
+      _messages.add((role: 'assistant', content: '[ASK_USER]$question|${options.join(",")}',
+        inputTokens: null, outputTokens: null, blocks: null));
+    });
+    _scrollToBottom();
+  }
+
+  @override
+  void dispose() { _ctrl.dispose(); _scrollCtrl.dispose(); super.dispose(); }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollCtrl.hasClients) _scrollCtrl.animateTo(_scrollCtrl.position.maxScrollExtent, duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
+    });
+  }
+
+  /// Resolve the actual chat endpoint from a user-entered URL.
+  /// Accepts bare base URLs and appends the correct path per provider.
+  static String _resolveEndpoint(String url, bool isAnthropic) {
+    var u = url.trim();
+    while (u.endsWith('/')) {
+      u = u.substring(0, u.length - 1);
+    }
+    // Already a full endpoint — use as-is.
+    if (u.endsWith('/chat/completions') || u.endsWith('/messages')) return u;
+    if (isAnthropic) {
+      // Anthropic Messages API: POST <base>/v1/messages
+      return u.endsWith('/v1') ? '$u/messages' : '$u/v1/messages';
+    }
+    // OpenAI-compatible: POST <base>/chat/completions
+    // (works for OpenAI's .../v1 base and DeepSeek's bare base)
+    return '$u/chat/completions';
+  }
+
+  Future<void> _send() async {
+    final text = _ctrl.text.trim();
+    if (text.isEmpty || _loading) return;
+
+    final appState = context.read<AppState>();
+    final cfg = appState.config;
+    if (cfg.aiApiKey.isEmpty) {
+      showToast(context, widget.strings.aiNotConfigured, type: ToastType.warning);
+      return;
+    }
+    appState.logAiRequest(text);
+
+    setState(() {
+      _messages.add((role: 'user', content: text, inputTokens: null, outputTokens: null, blocks: null));
+      _ctrl.clear();
+      _loading = true;
+      _pendingNodes = null;
+      _pendingConnections = null;
+    });
+    _scrollToBottom();
+
+    try {
+      final isAnthropic = cfg.aiProvider == 'anthropic';
+      final uri = Uri.parse(_resolveEndpoint(cfg.aiApiUrl, isAnthropic));
+      final canvasJson = jsonEncode({
+        'nodes': widget.existingNodes.map((n) => n.toJson()).toList(),
+        'connections': widget.existingConnections.map((c) => c.toJson()).toList(),
+      });
+      final fullPrompt = '$_systemPrompt\n\nCurrent canvas state:\n$canvasJson';
+
+      final headers = <String, String>{'Content-Type': 'application/json'};
+      Map<String, dynamic> reqBody;
+
+      if (isAnthropic) {
+        headers['x-api-key'] = cfg.aiApiKey;
+        headers['anthropic-version'] = '2023-06-01';
+        final userMessages = _messages.map((m) => {'role': m.role, 'content': m.content}).toList();
+        reqBody = {
+          'model': cfg.aiModel,
+          'system': fullPrompt,
+          'messages': userMessages,
+          'temperature': 0.3,
+          'max_tokens': 2000,
+          'stream': true,
+        };
+      } else {
+        headers['Authorization'] = 'Bearer ${cfg.aiApiKey}';
+        final apiMessages = [
+          {'role': 'system', 'content': fullPrompt},
+          ..._messages.map((m) => {'role': m.role, 'content': m.content}),
+        ];
+        reqBody = {'model': cfg.aiModel, 'messages': apiMessages, 'temperature': 0.3, 'max_tokens': 2000, 'stream': true, 'stream_options': {'include_usage': true}};
+      }
+
+      final request = http.Request('POST', uri);
+      request.headers.addAll(headers);
+      request.body = jsonEncode(reqBody);
+      final client = http.Client();
+      final streamed = await client.send(request);
+
+      if (streamed.statusCode != 200) {
+        final respBody = await streamed.stream.bytesToString();
+        final errMsg = 'Error: ${streamed.statusCode} ${respBody.length > 200 ? respBody.substring(0, 200) : respBody}';
+        appState.logAiResponse(errMsg, error: true);
+        setState(() {
+          _messages.add((role: 'assistant', content: errMsg, inputTokens: null, outputTokens: null, blocks: null));
+          _loading = false;
+        });
+        _scrollToBottom();
+        client.close();
+        return;
+      }
+
+      // Add placeholder assistant message for streaming
+      setState(() {
+        _messages.add((role: 'assistant', content: '', inputTokens: null, outputTokens: null, blocks: null));
+      });
+      final msgIdx = _messages.length - 1;
+      final buf = StringBuffer();
+      int? inTok, outTok;
+      String lineBuf = '';
+
+      await for (final chunk in streamed.stream.transform(utf8.decoder)) {
+        lineBuf += chunk;
+        final lines = lineBuf.split('\n');
+        lineBuf = lines.removeLast(); // keep incomplete line
+
+        for (final line in lines) {
+          if (!line.startsWith('data: ')) continue;
+          final data = line.substring(6).trim();
+          if (data == '[DONE]') continue;
+          try {
+            final json = jsonDecode(data) as Map<String, dynamic>;
+            if (isAnthropic) {
+              final type = json['type'] as String? ?? '';
+              if (type == 'content_block_delta') {
+                final delta = json['delta'] as Map<String, dynamic>? ?? {};
+                if (delta['type'] == 'text_delta') buf.write(delta['text'] ?? '');
+              } else if (type == 'message_delta') {
+                final usage = json['usage'] as Map<String, dynamic>? ?? {};
+                outTok = usage['output_tokens'] as int?;
+              } else if (type == 'message_start') {
+                final msg = json['message'] as Map<String, dynamic>? ?? {};
+                final usage = msg['usage'] as Map<String, dynamic>? ?? {};
+                inTok = usage['input_tokens'] as int?;
+              }
+            } else {
+              // OpenAI-compatible
+              final choices = json['choices'] as List? ?? [];
+              if (choices.isNotEmpty) {
+                final delta = choices[0]['delta'] as Map<String, dynamic>? ?? {};
+                if (delta.containsKey('content') && delta['content'] != null) buf.write(delta['content']);
+              }
+              final usage = json['usage'] as Map<String, dynamic>?;
+              if (usage != null) {
+                inTok = usage['prompt_tokens'] as int? ?? inTok;
+                outTok = usage['completion_tokens'] as int? ?? outTok;
+              }
+            }
+            setState(() {
+              _messages[msgIdx] = (role: 'assistant', content: buf.toString(), inputTokens: inTok, outputTokens: outTok, blocks: null);
+            });
+            _scrollToBottom();
+          } catch (_) {}
+        }
+      }
+
+      client.close();
+      final content = buf.toString();
+      appState.logAiResponse(content);
+      setState(() {
+        _messages[msgIdx] = (role: 'assistant', content: content, inputTokens: inTok, outputTokens: outTok, blocks: null);
+        _loading = false;
+      });
+      _scrollToBottom();
+      _tryParseGraph(content);
+      _handleToolCalls(content);
+    } catch (e) {
+      appState.logAiResponse('$e', error: true);
+      setState(() {
+        _messages.add((role: 'assistant', content: 'Error: $e', inputTokens: null, outputTokens: null, blocks: null));
+        _loading = false;
+      });
+      _scrollToBottom();
+    }
+  }
+
+  void _tryParseGraph(String content) {
+    final jsonMatch = RegExp(r'```json\s*([\s\S]*?)```').firstMatch(content);
+    if (jsonMatch == null) return;
+    try {
+      final graph = jsonDecode(jsonMatch.group(1)!);
+      final nodesList = graph['nodes'] as List;
+      final connsList = graph['connections'] as List;
+      final idMap = <String, String>{};
+      final nodes = <PipelineNode>[];
+      final connections = <PipelineConnection>[];
+
+      for (final n in nodesList) {
+        final newId = _uuid.v4();
+        idMap[n['id'] as String] = newId;
+        final typeStr = n['type'] as String;
+        final type = PipelineStepType.values.firstWhere((t) => t.name == typeStr, orElse: () => PipelineStepType.avProcess);
+        final params = <String, dynamic>{};
+        if (n['params'] != null) params.addAll(Map<String, dynamic>.from(n['params']));
+        nodes.add(PipelineNode(id: newId, type: type, x: (n['x'] as num).toDouble(), y: (n['y'] as num).toDouble(), params: params));
+      }
+
+      for (final c in connsList) {
+        final fromId = idMap[c['from'] as String];
+        final toId = idMap[c['to'] as String];
+        if (fromId != null && toId != null) {
+          connections.add(PipelineConnection(id: _uuid.v4(), fromNodeId: fromId, toNodeId: toId));
+        }
+      }
+
+      if (nodes.isNotEmpty) {
+        final cfg = context.read<AppState>().config;
+        final isModify = content.contains('[MODE:modify]') || cfg.aiGraphMode == 'modify';
+        if (cfg.aiAutoExecute) {
+          context.read<AppState>().logAiGraphApplied(nodes.length, connections.length);
+          if (isModify) {
+            widget.onMergeGraph(nodes, connections);
+          } else {
+            widget.onApplyGraph(nodes, connections);
+          }
+        } else {
+          setState(() { _pendingNodes = nodes; _pendingConnections = connections; _pendingIsModify = isModify; });
+        }
+      }
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 160),
+      curve: Curves.easeOut,
+      alignment: Alignment.bottomRight,
+      child: _expanded ? _buildExpanded(scheme) : _buildCollapsed(scheme),
+    );
+  }
+
+  Widget _buildCollapsed(ColorScheme scheme) {
+    return Material(
+      color: scheme.primaryContainer,
+      borderRadius: BorderRadius.circular(14),
+      elevation: 4,
+      shadowColor: scheme.shadow.withAlpha(40),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => setState(() => _expanded = true),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.auto_awesome, size: 18, color: scheme.primary),
+            const SizedBox(width: 6),
+            Text('AI', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.primary)),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildExpanded(ColorScheme scheme) {
+    final s = widget.strings;
+    return Material(
+      color: scheme.surface,
+      borderRadius: BorderRadius.circular(16),
+      elevation: 8,
+      shadowColor: scheme.shadow.withAlpha(60),
+      child: Container(
+        width: 380, height: 480,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
+        ),
+        child: Column(children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 6, 6),
+            child: Row(children: [
+              Icon(Icons.auto_awesome, size: 18, color: scheme.primary),
+              const SizedBox(width: 8),
+              Text(s.aiChatTitle, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+              const Spacer(),
+              IconButton(
+                icon: const Icon(Icons.remove, size: 18),
+                tooltip: s.isZh ? '收起' : 'Collapse',
+                onPressed: () => setState(() => _expanded = false),
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                padding: EdgeInsets.zero,
+              ),
+            ]),
+          ),
+          const Divider(height: 1),
+          Expanded(child: _messages.isEmpty
+            ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.auto_awesome, size: 44, color: scheme.outline.withAlpha(80)),
+                const SizedBox(height: 12),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Text(s.aiChatHint, textAlign: TextAlign.center, style: TextStyle(color: scheme.outline, fontSize: 12)),
+                ),
+              ]))
+            : ListView.builder(
+                controller: _scrollCtrl,
+                padding: const EdgeInsets.all(12),
+                itemCount: _messages.length,
+                itemBuilder: (_, i) => _buildMessage(_messages[i], scheme),
+              ),
+          ),
+          if (_pendingNodes != null) Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(children: [
+              Expanded(child: FilledButton.icon(
+                onPressed: () {
+                  context.read<AppState>().logAiGraphApplied(_pendingNodes!.length, _pendingConnections!.length);
+                  if (_pendingIsModify) {
+                    widget.onMergeGraph(_pendingNodes!, _pendingConnections!);
+                  } else {
+                    widget.onApplyGraph(_pendingNodes!, _pendingConnections!);
+                  }
+                  setState(() { _pendingNodes = null; _pendingConnections = null; });
+                },
+                icon: const Icon(Icons.check, size: 16),
+                label: Text(s.isZh ? '批准' : 'Approve'),
+              )),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                onPressed: () => setState(() { _pendingNodes = null; _pendingConnections = null; }),
+                icon: const Icon(Icons.close, size: 16),
+                label: Text(s.isZh ? '拒绝' : 'Reject'),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 4),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+            child: Row(children: [
+              Expanded(child: TextField(
+                controller: _ctrl,
+                style: TextStyle(fontSize: 13, color: scheme.onSurface),
+                decoration: InputDecoration(
+                  hintText: s.aiChatHint,
+                  hintStyle: TextStyle(fontSize: 12, color: scheme.outline),
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                onSubmitted: (_) => _send(),
+                maxLines: 1,
+              )),
+              const SizedBox(width: 8),
+              _loading
+                ? const SizedBox(width: 36, height: 36, child: Padding(padding: EdgeInsets.all(8), child: CircularProgressIndicator(strokeWidth: 2)))
+                : IconButton(
+                    icon: Icon(Icons.send, size: 20, color: scheme.primary),
+                    onPressed: _send,
+                    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                  ),
+            ]),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _buildMessage(({String role, String content, int? inputTokens, int? outputTokens, List<Map<String, dynamic>>? blocks}) msg, ColorScheme scheme) {
+    final isUser = msg.role == 'user';
+    Widget bodyWidget;
+    if (!isUser && msg.content.startsWith('[ASK_USER]')) {
+      final raw = msg.content.substring(10);
+      final pipe = raw.indexOf('|');
+      final question = pipe >= 0 ? raw.substring(0, pipe) : raw;
+      final options = pipe >= 0 ? raw.substring(pipe + 1).split(',') : <String>[];
+      bodyWidget = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SelectableText(question, style: TextStyle(fontSize: 12, color: scheme.onSurface, height: 1.5)),
+          if (options.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Wrap(spacing: 6, runSpacing: 6, children: options.map((opt) =>
+              ActionChip(
+                label: Text(opt.trim(), style: const TextStyle(fontSize: 11)),
+                onPressed: () { _ctrl.text = opt.trim(); _send(); },
+              ),
+            ).toList()),
+          ],
+        ],
+      );
+    } else if (!isUser && msg.blocks != null && msg.blocks!.isNotEmpty) {
+      bodyWidget = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: msg.blocks!.map((b) => _buildBlock(b, scheme)).toList(),
+      );
+    } else {
+      bodyWidget = isUser
+        ? SelectableText(msg.content, style: TextStyle(fontSize: 12, color: scheme.onSurface, height: 1.5))
+        : MarkdownBody(
+            data: msg.content,
+            selectable: true,
+            styleSheet: MarkdownStyleSheet(
+              p: TextStyle(fontSize: 12, color: scheme.onSurface, height: 1.5),
+              code: TextStyle(fontSize: 11, color: scheme.primary, backgroundColor: scheme.surfaceContainerHighest),
+              codeblockDecoration: BoxDecoration(color: scheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(8)),
+              codeblockPadding: const EdgeInsets.all(8),
+              blockquoteDecoration: BoxDecoration(border: Border(left: BorderSide(color: scheme.outline, width: 3))),
+            ),
+          );
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+            children: [
+              if (!isUser) ...[
+                CircleAvatar(radius: 14, backgroundColor: scheme.primaryContainer, child: Icon(Icons.auto_awesome, size: 14, color: scheme.primary)),
+                const SizedBox(width: 8),
+              ],
+              Flexible(child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: isUser ? scheme.primaryContainer : scheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: bodyWidget,
+              )),
+              if (isUser) ...[
+                const SizedBox(width: 8),
+                CircleAvatar(radius: 14, backgroundColor: scheme.tertiaryContainer, child: Icon(Icons.person, size: 14, color: scheme.tertiary)),
+              ],
+            ],
+          ),
+          if (!isUser && msg.inputTokens != null && msg.content.trim().isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(left: 36, top: 2),
+              child: Text(
+                '${msg.inputTokens}+${msg.outputTokens}=${(msg.inputTokens ?? 0) + (msg.outputTokens ?? 0)} tokens',
+                style: TextStyle(fontSize: 9, color: scheme.outline),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBlock(Map<String, dynamic> block, ColorScheme scheme) {
+    final type = block['type'] as String? ?? 'text';
+    if (type == 'text') {
+      return SelectableText(block['text'] as String? ?? '', style: TextStyle(fontSize: 12, color: scheme.onSurface, height: 1.5));
+    }
+    final label = switch (type) {
+      'thinking' => 'Thinking',
+      'tool_use' => 'Tool: ${block['name'] ?? 'unknown'}',
+      'tool_result' => 'Tool Result',
+      _ => type,
+    };
+    final body = switch (type) {
+      'thinking' => block['thinking'] as String? ?? '',
+      'tool_use' => const JsonEncoder.withIndent('  ').convert(block['input'] ?? {}),
+      'tool_result' => block['content']?.toString() ?? '',
+      _ => block.toString(),
+    };
+    return Theme(
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        tilePadding: EdgeInsets.zero,
+        childrenPadding: const EdgeInsets.only(bottom: 4),
+        initiallyExpanded: false,
+        dense: true,
+        title: Text(label, style: TextStyle(fontSize: 11, color: scheme.outline, fontStyle: FontStyle.italic)),
+        children: [SelectableText(body, style: TextStyle(fontSize: 11, color: scheme.onSurface.withAlpha(180), height: 1.4))],
       ),
     );
   }

@@ -97,23 +97,34 @@ ToolCheck findFFprobe() { return checkTool("ffprobe"); }
 // 缓存已解析的完整路径，避免每次构建命令都重新搜索
 static std::string g_ffmpegPath;
 static std::string g_ffprobePath;
-static std::once_flag g_ffmpegOnce;
-static std::once_flag g_ffprobeOnce;
+static std::mutex g_pathMutex;
+static bool g_ffmpegResolved = false;
+static bool g_ffprobeResolved = false;
 
 const std::string& getFFmpegPath() {
-    std::call_once(g_ffmpegOnce, []() {
+    std::lock_guard<std::mutex> lock(g_pathMutex);
+    if (!g_ffmpegResolved) {
         g_ffmpegPath = findExecutable("ffmpeg");
         if (g_ffmpegPath.empty()) g_ffmpegPath = "ffmpeg";
-    });
+        g_ffmpegResolved = true;
+    }
     return g_ffmpegPath;
 }
 
 const std::string& getFFprobePath() {
-    std::call_once(g_ffprobeOnce, []() {
+    std::lock_guard<std::mutex> lock(g_pathMutex);
+    if (!g_ffprobeResolved) {
         g_ffprobePath = findExecutable("ffprobe");
         if (g_ffprobePath.empty()) g_ffprobePath = "ffprobe";
-    });
+        g_ffprobeResolved = true;
+    }
     return g_ffprobePath;
+}
+
+void setFFmpegPaths(const std::string& ffmpeg, const std::string& ffprobe) {
+    std::lock_guard<std::mutex> lock(g_pathMutex);
+    if (!ffmpeg.empty()) { g_ffmpegPath = ffmpeg; g_ffmpegResolved = true; }
+    if (!ffprobe.empty()) { g_ffprobePath = ffprobe; g_ffprobeResolved = true; }
 }
 
 json ensureFFmpeg() {

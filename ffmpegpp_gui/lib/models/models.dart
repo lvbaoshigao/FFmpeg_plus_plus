@@ -3,7 +3,9 @@ import 'package:uuid/uuid.dart';
 
 const _uuid = Uuid();
 
-final String _defaultFontFamily = Platform.isWindows ? 'Microsoft YaHei' : 'Noto Sans CJK SC';
+final String _defaultFontFamily = Platform.isWindows ? 'Microsoft YaHei'
+    : Platform.isMacOS ? 'PingFang SC'
+    : 'Noto Sans CJK SC';
 
 // ═══════════════════════════════════════════
 // 媒体类型标签
@@ -776,6 +778,17 @@ class AppConfig {
   int probeThreads;
   Map<String, List<String>> keyBindings;
   bool autoCheckUpdate;
+  bool mcpEnabled;
+  int mcpPort;
+  String aiProvider; // 'openai' or 'anthropic'
+  String aiApiKey;
+  String aiApiUrl;
+  String aiModel;
+  bool aiEnabled;
+  bool aiReadAccess;
+  bool aiWriteAccess;
+  bool aiAutoExecute;
+  String aiGraphMode;
 
   static const fontWeightValues = [300, 400, 500, 600, 700];
   static const fontWeightLabels = ['Light', 'Regular', 'Medium', 'SemiBold', 'Bold'];
@@ -805,6 +818,17 @@ class AppConfig {
     Map<String, int>? nodeUsageCount,
     Map<String, List<String>>? keyBindings,
     this.autoCheckUpdate = true,
+    this.mcpEnabled = false,
+    this.mcpPort = 3000,
+    this.aiProvider = 'openai',
+    this.aiApiKey = '',
+    this.aiApiUrl = 'https://api.openai.com/v1/chat/completions',
+    this.aiModel = 'gpt-4o',
+    this.aiEnabled = true,
+    this.aiReadAccess = false,
+    this.aiWriteAccess = false,
+    this.aiAutoExecute = false,
+    this.aiGraphMode = 'redo',
   }) : fontFamily = fontFamily ?? _defaultFontFamily,
        nodeUsageCount = nodeUsageCount ?? {},
        keyBindings = keyBindings ?? Map.from(defaultKeyBindings);
@@ -834,6 +858,17 @@ class AppConfig {
         keyBindings: (json['key_bindings'] as Map<String, dynamic>?)?.map((k, v) =>
             MapEntry(k, (v as List<dynamic>).map((e) => e as String).toList())) ?? Map.from(defaultKeyBindings),
         autoCheckUpdate: json['auto_check_update'] as bool? ?? true,
+        mcpEnabled: json['mcp_enabled'] as bool? ?? false,
+        mcpPort: json['mcp_port'] as int? ?? 3000,
+        aiProvider: json['ai_provider'] as String? ?? 'openai',
+        aiApiKey: json['ai_api_key'] as String? ?? '',
+        aiApiUrl: json['ai_api_url'] as String? ?? 'https://api.openai.com/v1/chat/completions',
+        aiModel: json['ai_model'] as String? ?? 'gpt-4o',
+        aiEnabled: json['ai_enabled'] as bool? ?? true,
+        aiReadAccess: json['ai_read_access'] as bool? ?? json['ai_auto_apply'] as bool? ?? false,
+        aiWriteAccess: json['ai_write_access'] as bool? ?? false,
+        aiAutoExecute: json['ai_auto_execute'] as bool? ?? json['ai_auto_apply'] as bool? ?? false,
+        aiGraphMode: json['ai_graph_mode'] as String? ?? 'redo',
       );
 
   Map<String, dynamic> toJson() => {
@@ -851,6 +886,17 @@ class AppConfig {
         'node_usage_count': nodeUsageCount,
         'key_bindings': keyBindings,
         'auto_check_update': autoCheckUpdate,
+        'mcp_enabled': mcpEnabled,
+        'mcp_port': mcpPort,
+        'ai_provider': aiProvider,
+        'ai_api_key': aiApiKey,
+        'ai_api_url': aiApiUrl,
+        'ai_model': aiModel,
+        'ai_enabled': aiEnabled,
+        'ai_read_access': aiReadAccess,
+        'ai_write_access': aiWriteAccess,
+        'ai_auto_execute': aiAutoExecute,
+        'ai_graph_mode': aiGraphMode,
       };
 }
 

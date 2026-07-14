@@ -34,9 +34,15 @@ class BackendClient {
     return resp;
   }
 
-  /// 探测视频文件信息（15s 超时，防止 HDD 卡死）
+  /// 设置 ffmpeg/ffprobe 路径（告知 C++ 后端使用前端配置的路径）
+  Future<void> setPaths({String ffmpeg = '', String ffprobe = ''}) async {
+    if (ffmpeg.isEmpty && ffprobe.isEmpty) return;
+    await _process.request('set_paths', {'ffmpeg': ffmpeg, 'ffprobe': ffprobe});
+  }
+
+  /// 探测视频文件信息（60s 超时）
   Future<Map<String, dynamic>> probe(String filepath) async {
-    final resp = await _process.requestWithTimeout('probe', 15, {'filepath': filepath});
+    final resp = await _process.requestWithTimeout('probe', 60, {'filepath': filepath});
     return resp;
   }
 

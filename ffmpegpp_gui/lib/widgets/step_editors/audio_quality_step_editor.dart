@@ -56,6 +56,7 @@ class _AudioQualityStepEditorState extends State<AudioQualityStepEditor> {
         const SizedBox(height: 16),
 
         DropdownButtonFormField<String>(
+          borderRadius: BorderRadius.circular(12),
           value: _bitratePresets.contains(bitrateMode) ? bitrateMode : 'keep',
           isExpanded: true,
           decoration: _dec(zh ? '码率' : 'Bitrate'),
@@ -85,6 +86,7 @@ class _AudioQualityStepEditorState extends State<AudioQualityStepEditor> {
         const SizedBox(height: 12),
 
         DropdownButtonFormField<String>(
+          borderRadius: BorderRadius.circular(12),
           value: _sampleRates.contains(sr) ? sr : _sampleRates.first,
           isExpanded: true,
           decoration: _dec(zh ? '采样率' : 'Sample Rate'),

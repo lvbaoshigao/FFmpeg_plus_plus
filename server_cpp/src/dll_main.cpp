@@ -11,6 +11,7 @@
 #include "nlohmann/json.hpp"
 #include "json_io.h"
 #include "handlers.h"
+#include "installer.h"
 #include "message_queues.h"
 
 using json = nlohmann::json;
@@ -119,6 +120,12 @@ FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
         }
         if (action == "ping") {
             JsonWriter::reply(req.value("id", ""), true, {{"pong", true}});
+            return 0;
+        }
+        if (action == "set_paths") {
+            auto params = req.value("params", json::object());
+            setFFmpegPaths(params.value("ffmpeg", ""), params.value("ffprobe", ""));
+            JsonWriter::reply(req.value("id", ""), true, {{"message", "paths updated"}});
             return 0;
         }
         if (action == "probe" || action == "check_env" || action == "query_ffmpeg_features") {

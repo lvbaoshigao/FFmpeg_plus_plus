@@ -102,8 +102,26 @@ std::vector<std::string> buildEncodingParams(const json& options, const std::str
 
         if (encoder != "copy") {
             if (options.contains("crf") && !options["crf"].is_null()) {
-                params.push_back("-crf");
-                params.push_back(std::to_string(options["crf"].get<int>()));
+                int crf_val = options["crf"].get<int>();
+                if (encoder.find("nvenc") != std::string::npos) {
+                    params.push_back("-cq");
+                    params.push_back(std::to_string(crf_val));
+                    params.push_back("-rc");
+                    params.push_back("vbr");
+                } else if (encoder.find("amf") != std::string::npos) {
+                    params.push_back("-qp_i");
+                    params.push_back(std::to_string(crf_val));
+                    params.push_back("-qp_p");
+                    params.push_back(std::to_string(crf_val));
+                    params.push_back("-rc");
+                    params.push_back("cqp");
+                } else if (encoder.find("qsv") != std::string::npos) {
+                    params.push_back("-global_quality");
+                    params.push_back(std::to_string(crf_val));
+                } else {
+                    params.push_back("-crf");
+                    params.push_back(std::to_string(crf_val));
+                }
             } else if (options.contains("video_bitrate") && !options["video_bitrate"].is_null()) {
                 params.push_back("-b:v");
                 params.push_back(std::to_string(options["video_bitrate"].get<int>()) + "k");
@@ -214,10 +232,20 @@ std::vector<std::string> buildTranscodeCommand(
         cmd.push_back(cover);
     }
 
-    // 片段截取结束时间
+    // 片段截取结束时间（-ss 在 -i 前时用 -t duration，避免时间戳重置问题）
     if (options.contains("end_time") && !options["end_time"].is_null()) {
-        cmd.push_back("-to");
-        cmd.push_back(std::to_string(options["end_time"].get<double>()));
+        double end_time = options["end_time"].get<double>();
+        if (options.contains("start_time") && !options["start_time"].is_null()) {
+            double start_time = options["start_time"].get<double>();
+            double duration = end_time - start_time;
+            if (duration > 0) {
+                cmd.push_back("-t");
+                cmd.push_back(std::to_string(duration));
+            }
+        } else {
+            cmd.push_back("-to");
+            cmd.push_back(std::to_string(end_time));
+        }
     }
 
     // 纯音频模式：保留封面（attached_pic）和元数据

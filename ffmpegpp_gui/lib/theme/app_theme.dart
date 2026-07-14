@@ -2,6 +2,8 @@ import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 
 class AppTheme {
+  static final String monoFont = Platform.isWindows ? 'Consolas' : 'monospace';
+
   static ThemeData dark({int seedColor = 0xFF5E6AD2, String fontFamily = '', double fontSize = 14.0, int fontWeight = 400}) {
     final scheme = ColorScheme.fromSeed(seedColor: Color(seedColor), brightness: Brightness.dark);
     return _build(scheme, fontFamily, fontSize, fontWeight);

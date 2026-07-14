@@ -50,6 +50,7 @@ class _ImageNoiseStepEditorState extends State<ImageNoiseStepEditor> {
         const SizedBox(height: 16),
 
         DropdownButtonFormField<String>(
+          borderRadius: BorderRadius.circular(12),
           value: noiseType,
           isExpanded: true,
           decoration: InputDecoration(
@@ -69,6 +70,7 @@ class _ImageNoiseStepEditorState extends State<ImageNoiseStepEditor> {
         const SizedBox(height: 16),
 
         DropdownButtonFormField<String>(
+          borderRadius: BorderRadius.circular(12),
           value: mode,
           isExpanded: true,
           decoration: InputDecoration(

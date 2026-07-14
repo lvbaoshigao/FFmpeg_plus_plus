@@ -58,6 +58,7 @@ class _ImageChannelExtractStepEditorState extends State<ImageChannelExtractStepE
         const SizedBox(height: 16),
 
         DropdownButtonFormField<String>(
+          borderRadius: BorderRadius.circular(12),
           value: method,
           isExpanded: true,
           decoration: InputDecoration(

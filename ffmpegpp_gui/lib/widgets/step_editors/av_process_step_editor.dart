@@ -123,6 +123,7 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
       List<String>? itemLabels, required ColorScheme cs, required ValueChanged<String> onChanged}) {
     final safe = items.contains(value) ? value : items.first;
     return DropdownButtonFormField<String>(
+      borderRadius: BorderRadius.circular(12),
       value: safe, isExpanded: true, decoration: _dec(label),
       dropdownColor: cs.surface, style: TextStyle(fontSize: 13, color: cs.onSurface),
       items: List.generate(items.length, (i) => DropdownMenuItem(
@@ -139,6 +140,7 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
     final safe = _allCodecs.contains(current) ? current : _allCodecs.first;
 
     return DropdownButtonFormField<String>(
+      borderRadius: BorderRadius.circular(12),
       value: safe, isExpanded: true, decoration: _dec(zh ? '编码器' : 'Codec'),
       dropdownColor: cs.surface, style: TextStyle(fontSize: 13, color: cs.onSurface),
       items: _allCodecs.map((codec) {

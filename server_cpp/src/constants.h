@@ -97,8 +97,12 @@ inline bool isPathSafe(const std::string& path) {
         if (c == '|' || c == '`' || c == '$' || c == '\n' || c == '\r' || c == '\0')
             return false;
     }
-    // 禁止路径穿越
-    if (path.find("..") != std::string::npos) return false;
+    // 禁止路径穿越（/../ 或 \..\ 或开头的 ../ ..\）
+    if (path.find("/../") != std::string::npos || path.find("\\..\\") != std::string::npos) return false;
+    if (path.find("/..\\") != std::string::npos || path.find("\\../") != std::string::npos) return false;
+    if (path.size() >= 3 && path.substr(0, 3) == "../") return false;
+    if (path.size() >= 3 && path.substr(0, 3) == "..\\") return false;
+    if (path == "..") return false;
     return true;
 }
 
@@ -131,7 +135,7 @@ inline std::vector<std::string> VALID_PIX_FMTS = {
 inline std::vector<std::string> VALID_AUDIO_CODECS = {
     "aac", "libmp3lame", "libopus", "flac", "libfdk_aac",
     "ac3", "eac3", "pcm_s16le", "pcm_s24le", "pcm_s32le",
-    "pcm_f32le", "vorbis", "wmav2", "copy", "",
+    "pcm_f32le", "vorbis", "libvorbis", "wmav2", "copy", "",
 };
 
 // 禁止的 ffmpeg 过滤器名（可读写文件或执行命令的危险过滤器）

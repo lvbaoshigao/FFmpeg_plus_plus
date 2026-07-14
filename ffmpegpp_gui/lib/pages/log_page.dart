@@ -1,8 +1,8 @@
-import 'dart:io' show Platform;
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import '../theme/app_theme.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../widgets/toast.dart';
@@ -143,9 +143,9 @@ class _LogPageState extends State<LogPage> {
                 decoration: BoxDecoration(color: catColor.withAlpha(30), borderRadius: BorderRadius.circular(3)),
                 child: Text(entry.category.toUpperCase(), style: TextStyle(fontSize: 8, fontWeight: FontWeight.w600, color: catColor)),
               ),
-              Text(_ts(entry.timestamp), style: TextStyle(fontSize: 10, fontFamily: Platform.isWindows ? 'Consolas' : 'monospace', color: scheme.outline)),
+              Text(_ts(entry.timestamp), style: TextStyle(fontSize: 10, fontFamily: AppTheme.monoFont, color: scheme.outline)),
               const SizedBox(width: 8),
-              Expanded(child: SelectableText(entry.message, style: TextStyle(fontSize: 11, fontFamily: Platform.isWindows ? 'Consolas' : 'monospace',
+              Expanded(child: SelectableText(entry.message, style: TextStyle(fontSize: 11, fontFamily: AppTheme.monoFont,
                   color: entry.category == 'error' ? scheme.error : scheme.onSurface))),
             ]),
           ),
