@@ -889,6 +889,12 @@ class AppState extends ChangeNotifier {
         case 'image_channel_extract':
           resp = await _runImageChannelExtract(p);
           break;
+        case 'video_crop':
+          resp = await _runVideoCrop(taskId, p);
+          break;
+        case 'extract_audio':
+          resp = await _runExtractAudio(taskId, p);
+          break;
         case 'audio_metadata':
           resp = await _runAudioMetadata(task.id, p);
           break;
@@ -1047,6 +1053,172 @@ class AppState extends ChangeNotifier {
     } catch (e) {
       addLog('图片裁剪异常: $e', category: 'error');
       return {'success': false, 'error': '图片裁剪异常: $e'};
+    }
+  }
+
+  Future<Map<String, dynamic>> _runVideoCrop(String taskId, Map<String, dynamic> p) async {
+    final input = p['input'] as String;
+    final output = p['output'] as String;
+    final cropW = (p['crop_w'] as num?)?.toInt() ?? 0;
+    final cropH = (p['crop_h'] as num?)?.toInt() ?? 0;
+    final cropX = (p['crop_x'] as num?)?.toInt() ?? 0;
+    final cropY = (p['crop_y'] as num?)?.toInt() ?? 0;
+
+    if (cropW <= 0 || cropH <= 0) {
+      return {'success': false, 'error': '裁剪尺寸无效 (${cropW}x$cropH)'};
+    }
+
+    try {
+      final totalDuration = await _probeDuration(input);
+      final outDir = File(output).parent;
+      if (!outDir.existsSync()) outDir.createSync(recursive: true);
+      final cropFilter = 'crop=$cropW:$cropH:$cropX:$cropY';
+      final args = <String>['-y', '-i', input, '-vf', cropFilter, '-c:a', 'copy', output];
+      addLog('视频裁剪: $_ffmpegBin ${args.join(' ')}', category: 'info');
+      return await _runFfmpegWithProgress(taskId, args, '视频裁剪', totalDuration: totalDuration);
+    } catch (e) {
+      addLog('视频裁剪异常: $e', category: 'error');
+      return {'success': false, 'error': '视频裁剪异常: $e'};
+    }
+  }
+
+  String get _ffprobeBin {
+    final p = config.ffprobePath;
+    return (p.isNotEmpty && File(p).existsSync()) ? p : 'ffprobe';
+  }
+
+  // source codec → compatible output formats for copy mode
+  static const _codecCompatFormats = <String, Set<String>>{
+    'aac': {'m4a', 'mp4', 'mkv', 'mov', 'mka'},
+    'mp3': {'mp3', 'mkv', 'mka'},
+    'flac': {'flac', 'mkv', 'mka', 'ogg'},
+    'vorbis': {'ogg', 'mkv', 'mka', 'webm'},
+    'opus': {'ogg', 'mkv', 'mka', 'webm'},
+    'pcm_s16le': {'wav', 'mkv', 'mka'},
+    'ac3': {'mkv', 'mka', 'mp4', 'mov'},
+    'eac3': {'mkv', 'mka', 'mp4', 'mov'},
+    'dts': {'mkv', 'mka'},
+    'truehd': {'mkv', 'mka'},
+  };
+  // source codec → best default output format for copy mode
+  static const _codecDefaultFormat = <String, String>{
+    'aac': 'm4a', 'mp3': 'mp3', 'flac': 'flac', 'vorbis': 'ogg',
+    'opus': 'ogg', 'pcm_s16le': 'wav', 'ac3': 'mka', 'eac3': 'mka',
+    'dts': 'mka', 'truehd': 'mka',
+  };
+  static const _formatDefaultCodec = <String, String>{
+    'mp3': 'libmp3lame', 'ogg': 'libvorbis', 'flac': 'flac',
+    'wav': 'pcm_s16le', 'm4a': 'aac', 'mka': 'copy',
+  };
+
+  Future<String?> _probeAudioCodec(String input) async {
+    try {
+      final result = await Process.run(_ffprobeBin, [
+        '-v', 'quiet', '-select_streams', 'a:0',
+        '-show_entries', 'stream=codec_name', '-of', 'csv=p=0', input,
+      ]);
+      if (result.exitCode == 0) {
+        final codec = (result.stdout as String).trim().split('\n').first.trim();
+        if (codec.isNotEmpty) return codec;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<double?> _probeDuration(String input) async {
+    try {
+      final result = await Process.run(_ffprobeBin, [
+        '-v', 'quiet', '-show_entries', 'format=duration', '-of', 'csv=p=0', input,
+      ]);
+      if (result.exitCode == 0) {
+        return double.tryParse((result.stdout as String).trim());
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  static final _ffmpegTimeRe = RegExp(r'time=(\d+):(\d+):(\d+)\.(\d+)');
+  static final _ffmpegSpeedRe = RegExp(r'speed=\s*([\d.]+)x');
+
+  Future<Map<String, dynamic>> _runFfmpegWithProgress(String taskId, List<String> args, String label, {double? totalDuration}) async {
+    try {
+      final process = await Process.start(_ffmpegBin, args);
+      final stderrBuf = StringBuffer();
+      process.stderr.transform(utf8.decoder).listen((chunk) {
+        stderrBuf.write(chunk);
+        final m = _ffmpegTimeRe.firstMatch(chunk);
+        if (m != null && totalDuration != null && totalDuration > 0) {
+          final t = int.parse(m.group(1)!) * 3600 + int.parse(m.group(2)!) * 60 + int.parse(m.group(3)!) + int.parse(m.group(4)!) / 100;
+          final pct = (t / totalDuration * 100).clamp(0, 99.9);
+          final sm = _ffmpegSpeedRe.firstMatch(chunk);
+          final speed = sm != null ? '${sm.group(1)}x' : '';
+          final i = _tasks.indexWhere((tk) => tk.id == taskId);
+          if (i >= 0) {
+            _tasks[i] = _tasks[i].copyWith(status: TaskStatus.processing, progress: pct.toDouble(), speed: speed);
+            notifyListeners();
+          }
+        }
+      });
+      process.stdout.drain<void>();
+      final exitCode = await process.exitCode;
+      final stderr = stderrBuf.toString().trim();
+      final output = args.last;
+      if (exitCode == 0 && File(output).existsSync()) {
+        addLog('$label完成: $output', category: 'info');
+        return {'success': true, 'data': {'output_path': output}};
+      } else {
+        final lastLines = stderr.split('\n').where((l) => l.trim().isNotEmpty).toList();
+        final errMsg = lastLines.length > 3 ? lastLines.sublist(lastLines.length - 3).join('; ') : stderr;
+        addLog('$label失败: $errMsg', category: 'error');
+        return {'success': false, 'error': '$label失败: $errMsg'};
+      }
+    } catch (e) {
+      addLog('$label异常: $e', category: 'error');
+      return {'success': false, 'error': '$label异常: $e'};
+    }
+  }
+
+  Future<Map<String, dynamic>> _runExtractAudio(String taskId, Map<String, dynamic> p) async {
+    final input = p['input'] as String;
+    var output = p['output'] as String;
+    var codec = p['audio_codec'] as String? ?? 'copy';
+    final startTime = p['start_time'] as num?;
+    final endTime = p['end_time'] as num?;
+
+    try {
+      final sourceCodec = await _probeAudioCodec(input);
+      final totalDuration = await _probeDuration(input);
+      addLog('源音频编码: ${sourceCodec ?? "未知"}', category: 'info');
+
+      final outExt = output.split('.').last.toLowerCase();
+
+      if (codec == 'copy' && sourceCodec != null) {
+        final compat = _codecCompatFormats[sourceCodec];
+        if (compat != null && compat.contains(outExt)) {
+          addLog('copy 模式: $sourceCodec → $outExt (兼容)', category: 'info');
+        } else {
+          final bestFmt = _codecDefaultFormat[sourceCodec] ?? 'mka';
+          addLog('copy 模式: $sourceCodec 不兼容 $outExt, 自动切换为 $bestFmt', category: 'warning');
+          output = output.replaceAll(RegExp(r'\.[^.]+$'), '.$bestFmt');
+        }
+      } else if (codec == 'copy') {
+        output = output.replaceAll(RegExp(r'\.[^.]+$'), '.mka');
+        addLog('copy 模式: 未知源编码, 使用 mka 容器', category: 'warning');
+      }
+
+      final outDir = File(output).parent;
+      if (!outDir.existsSync()) outDir.createSync(recursive: true);
+      final args = <String>['-y'];
+      if (startTime != null) args.addAll(['-ss', startTime.toString()]);
+      if (endTime != null) args.addAll(['-to', endTime.toString()]);
+      args.addAll(['-i', input, '-vn', '-sn', '-acodec', codec, output]);
+      addLog('提取音频: $_ffmpegBin ${args.join(' ')}', category: 'info');
+
+      final clipDuration = (startTime != null && endTime != null) ? (endTime - startTime).toDouble() : totalDuration;
+      return await _runFfmpegWithProgress(taskId, args, '提取音频', totalDuration: clipDuration);
+    } catch (e) {
+      addLog('提取音频异常: $e', category: 'error');
+      return {'success': false, 'error': '提取音频异常: $e'};
     }
   }
 
@@ -1487,7 +1659,7 @@ class AppState extends ChangeNotifier {
             'result': {
               'protocolVersion': '2024-11-05',
               'capabilities': {'tools': {}, 'resources': {}},
-              'serverInfo': {'name': 'ffmpegpp', 'version': '4.11.20'},
+              'serverInfo': {'name': 'ffmpegpp', 'version': '4.13.33'},
             },
           }));
         case 'tools/list':
@@ -1535,6 +1707,8 @@ class AppState extends ChangeNotifier {
     {'name': 'read_file_info', 'description': 'Get file metadata (read-only)', 'inputSchema': {'type': 'object', 'properties': {'path': {'type': 'string', 'description': 'File path'}}, 'required': ['path']}},
     {'name': 'modify_node_params', 'description': 'Modify node parameters', 'inputSchema': {'type': 'object', 'properties': {'nodeId': {'type': 'string'}, 'params': {'type': 'object'}}, 'required': ['nodeId', 'params']}},
     {'name': 'error_check', 'description': 'Check pipeline for logical errors', 'inputSchema': {'type': 'object', 'properties': {}}},
+    {'name': 'extract_audio', 'description': 'Extract audio from video. Params: extract_mode (full|clip), start_time (HH:MM:SS), end_time (HH:MM:SS), audio_codec (copy|aac|libmp3lame|libopus|libvorbis|flac|pcm_s16le), output_format (m4a|mp3|ogg|flac|wav)', 'inputSchema': {'type': 'object', 'properties': {'extract_mode': {'type': 'string', 'enum': ['full', 'clip']}, 'audio_codec': {'type': 'string'}, 'output_format': {'type': 'string'}, 'start_time': {'type': 'string'}, 'end_time': {'type': 'string'}}}},
+    {'name': 'video_crop', 'description': 'Crop video region. Params: crop_mode (keep|remove), crop_x, crop_y, crop_w, crop_h (integers in pixels)', 'inputSchema': {'type': 'object', 'properties': {'crop_mode': {'type': 'string', 'enum': ['keep', 'remove']}, 'crop_x': {'type': 'integer'}, 'crop_y': {'type': 'integer'}, 'crop_w': {'type': 'integer'}, 'crop_h': {'type': 'integer'}}}},
   ];
 
   List<Map<String, dynamic>> _mcpResourcesList() => [

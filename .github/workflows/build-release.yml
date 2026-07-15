@@ -73,7 +73,8 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake g++ libgtk-3-dev pkg-config ninja-build
+          sudo apt-get install -y cmake g++ libgtk-3-dev pkg-config ninja-build \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-good
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -98,7 +99,7 @@ jobs:
         run: |
           mkdir -p output
           cp -r ffmpegpp_gui/build/linux/x64/release/bundle/* output/
-          cp server_cpp/build_linux/libffmpegpp.so output/
+          cp server_cpp/build_linux/libffmpegpp.so output/lib/
 
       - name: Build .deb package
         run: |
@@ -111,7 +112,7 @@ jobs:
           # Control file
           cat > deb/DEBIAN/control << 'EOF'
           Package: ffmpegpp
-          Version: 4.11.20
+          Version: 4.13.33
           Architecture: amd64
           Maintainer: pity-Fox <noreply@github.com>
           Description: FFmpeg++ - Advanced video/image/audio processing tool
@@ -149,13 +150,13 @@ jobs:
           chmod -R 755 deb/opt/ffmpegpp/
 
           # Build deb
-          dpkg-deb --root-owner-group --build deb ffmpegpp_4.11.20_amd64.deb
+          dpkg-deb --root-owner-group --build deb ffmpegpp_4.13.33_amd64.deb
 
       - name: Upload Linux x64 deb
         uses: actions/upload-artifact@v4
         with:
           name: linux-x64-deb
-          path: ffmpegpp_4.11.20_amd64.deb
+          path: ffmpegpp_4.13.33_amd64.deb
 
   # ══════════════════════════════════════════
   # Linux ARM64
@@ -168,7 +169,8 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake g++ libgtk-3-dev pkg-config ninja-build clang curl git unzip xz-utils
+          sudo apt-get install -y cmake g++ libgtk-3-dev pkg-config ninja-build clang curl git unzip xz-utils \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-good
 
       - name: Setup Flutter (manual for ARM64)
         run: |
@@ -196,7 +198,7 @@ jobs:
         run: |
           mkdir -p output
           cp -r ffmpegpp_gui/build/linux/arm64/release/bundle/* output/
-          cp server_cpp/build_linux/libffmpegpp.so output/
+          cp server_cpp/build_linux/libffmpegpp.so output/lib/
 
       - name: Build .deb package
         run: |
@@ -208,7 +210,7 @@ jobs:
 
           cat > deb/DEBIAN/control << 'EOF'
           Package: ffmpegpp
-          Version: 4.11.20
+          Version: 4.13.33
           Architecture: arm64
           Maintainer: pity-Fox <noreply@github.com>
           Description: FFmpeg++ - Advanced video/image/audio processing tool
@@ -241,13 +243,13 @@ jobs:
           cp "make/FFmpeg++.png" deb/usr/share/icons/hicolor/256x256/apps/ffmpegpp.png
           chmod -R 755 deb/opt/ffmpegpp/
 
-          dpkg-deb --root-owner-group --build deb ffmpegpp_4.11.20_arm64.deb
+          dpkg-deb --root-owner-group --build deb ffmpegpp_4.13.33_arm64.deb
 
       - name: Upload Linux ARM64 deb
         uses: actions/upload-artifact@v4
         with:
           name: linux-arm64-deb
-          path: ffmpegpp_4.11.20_arm64.deb
+          path: ffmpegpp_4.13.33_arm64.deb
 
   # ══════════════════════════════════════════
   # macOS (Universal: x64 + ARM64)
@@ -288,13 +290,13 @@ jobs:
           mkdir -p dmg_staging
           cp -R "ffmpegpp_gui/build/macos/Build/Products/Release/ffmpegpp_gui.app" dmg_staging/
           ln -s /Applications dmg_staging/Applications
-          hdiutil create -volname "FFmpeg++" -srcfolder dmg_staging -ov -format UDZO "FFmpeg++_v4.11.20_macOS.dmg"
+          hdiutil create -volname "FFmpeg++" -srcfolder dmg_staging -ov -format UDZO "FFmpeg++_v4.13.33_macOS.dmg"
 
       - name: Upload macOS DMG
         uses: actions/upload-artifact@v4
         with:
           name: macos-dmg
-          path: FFmpeg++_v4.11.20_macOS.dmg
+          path: FFmpeg++_v4.13.33_macOS.dmg
 
   # ══════════════════════════════════════════
   # Create Release Draft
@@ -317,8 +319,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           draft: true
-          name: "FFmpeg++ v4.11.20-draft"
-          tag_name: v4.11.20-draft
+          name: "FFmpeg++ v4.13.33-draft"
+          tag_name: v4.13.33-draft
           files: |
             artifacts/windows-installer/*.exe
             artifacts/linux-x64-deb/*.deb

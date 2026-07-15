@@ -25,6 +25,7 @@ import '../widgets/step_editors/frame_step_editor.dart';
 import '../widgets/step_editors/speed_step_editor.dart';
 import '../widgets/step_editors/image_convert_step_editor.dart';
 import '../widgets/step_editors/audio_convert_step_editor.dart';
+import '../widgets/step_editors/extract_audio_step_editor.dart';
 import '../widgets/step_editors/audio_quality_step_editor.dart';
 import '../widgets/step_editors/audio_speed_step_editor.dart';
 import '../widgets/step_editors/audio_volume_step_editor.dart';
@@ -40,6 +41,7 @@ import '../widgets/step_editors/image_noise_step_editor.dart';
 import '../widgets/step_editors/image_sharpen_step_editor.dart';
 import '../widgets/step_editors/image_denoise_step_editor.dart';
 import '../widgets/step_editors/image_channel_extract_step_editor.dart';
+import '../widgets/step_editors/video_crop_step_editor.dart';
 import '../widgets/step_editors/logic_block_editor.dart';
 import '../widgets/toast.dart';
 
@@ -275,6 +277,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       case PipelineStepType.audioVolume: return Icons.volume_up;
       case PipelineStepType.audioCompressor: return Icons.compress;
       case PipelineStepType.audioMetadata: return Icons.library_music;
+      case PipelineStepType.extractAudio: return Icons.music_note;
       case PipelineStepType.concatMedia: return Icons.merge_type;
       case PipelineStepType.imageToVideo: return Icons.movie_creation;
       case PipelineStepType.imageCrop: return Icons.crop;
@@ -285,6 +288,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       case PipelineStepType.imageSharpen: return Icons.deblur;
       case PipelineStepType.imageDenoise: return Icons.blur_on;
       case PipelineStepType.imageChannelExtract: return Icons.color_lens_outlined;
+      case PipelineStepType.videoCrop: return Icons.crop_free;
       case PipelineStepType.output: return Icons.save_alt_outlined;
     }
   }
@@ -905,6 +909,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     PipelineStepType.clip,
     PipelineStepType.frame,
     PipelineStepType.speed,
+    PipelineStepType.extractAudio,
+    PipelineStepType.videoCrop,
   ];
   static const _audioTypes = [
     PipelineStepType.audioConvert,
@@ -1165,6 +1171,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         editor = AudioCompressorStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
       case PipelineStepType.audioMetadata:
         editor = AudioMetadataStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+      case PipelineStepType.extractAudio:
+        editor = ExtractAudioStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh,
+            videoPath: v.filepath, videoDuration: v.duration);
       case PipelineStepType.concatMedia:
         editor = ConcatMediaStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh,
             containerFileCount: widget.containerInfo?.fileCount ?? 0);
@@ -1190,6 +1199,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         editor = ImageDenoiseStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
       case PipelineStepType.imageChannelExtract:
         editor = ImageChannelExtractStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+      case PipelineStepType.videoCrop:
+        editor = VideoCropStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh,
+            videoPath: v.filepath, videoWidth: v.width, videoHeight: v.height, fps: v.fps);
     }
 
     // Wrap with container file-selection header + node naming/coloring footer
@@ -2862,9 +2874,11 @@ Available node types (PipelineStepType):
 - audioVolume: Audio volume adjust (volume_db: -30.0 to +30.0 dB)
 - audioCompressor: Audio compressor (threshold, ratio, attack, release, makeup, knee)
 - audioMetadata: Edit audio metadata (title, artist, album, cover_path, lyrics_path)
+- extractAudio: Extract audio from video (extract_mode: full|clip, start_time: HH:MM:SS, end_time: HH:MM:SS, audio_codec: copy|aac|libmp3lame|libopus|libvorbis|flac|pcm_s16le, output_format: m4a|mp3|ogg|flac|wav)
 - concatMedia: Concatenate media files (mode: copy|reencode, order_mode: index|name)
 - imageToVideo: Image sequence to video (framerate: number, output_format: mp4|avi|mkv, video_codec: h264|h265)
 - imageCrop: Crop image (crop_x, crop_y, crop_w, crop_h: integers)
+- videoCrop: Crop video region (crop_mode: keep|remove, crop_x, crop_y, crop_w, crop_h: integers)
 - imageRotate: Rotate image (angle: degrees)
 - imageScale: Scale image (scale_mode: factor, scale_factor: number)
 - imageBrightness: Adjust brightness (brightness: -1.0 to 1.0)

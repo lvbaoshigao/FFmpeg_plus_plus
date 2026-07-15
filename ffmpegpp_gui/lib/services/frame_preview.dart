@@ -54,4 +54,30 @@ class FramePreview {
       return null;
     }
   }
+
+  static Future<String?> generateFullFrame(
+    String videoPath,
+    double timeSeconds,
+  ) async {
+    final key =
+        'ffmpegpp_full_${videoPath.hashCode}_${(timeSeconds * 10).round()}';
+    final tmpPath = '${Directory.systemTemp.path}${Platform.pathSeparator}$key.jpg';
+
+    if (await File(tmpPath).exists()) return tmpPath;
+
+    final timeStr = _formatTime(timeSeconds);
+    try {
+      final result = await Process.run('ffmpeg', [
+        '-ss', timeStr,
+        '-i', videoPath,
+        '-vframes', '1',
+        '-q:v', '2',
+        tmpPath,
+      ]);
+      if (result.exitCode != 0) return null;
+      return await File(tmpPath).exists() ? tmpPath : null;
+    } catch (_) {
+      return null;
+    }
+  }
 }

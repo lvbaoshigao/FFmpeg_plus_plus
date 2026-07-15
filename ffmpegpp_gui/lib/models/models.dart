@@ -41,6 +41,7 @@ enum PipelineStepType {
   audioVolume,
   audioCompressor,
   audioMetadata,
+  extractAudio,
   concatMedia,
   imageToVideo,
   imageCrop,
@@ -51,6 +52,7 @@ enum PipelineStepType {
   imageSharpen,
   imageDenoise,
   imageChannelExtract,
+  videoCrop,
   output,
 }
 
@@ -79,6 +81,7 @@ class PipelineStep {
       case PipelineStepType.audioVolume: return '调整音量';
       case PipelineStepType.audioCompressor: return '压缩动态范围';
       case PipelineStepType.audioMetadata: return '元信息编辑';
+      case PipelineStepType.extractAudio: return '提取音频';
       case PipelineStepType.concatMedia: return '合并媒体';
       case PipelineStepType.imageToVideo: return '图片合成视频';
       case PipelineStepType.imageCrop: return '图片裁剪';
@@ -89,6 +92,7 @@ class PipelineStep {
       case PipelineStepType.imageSharpen: return '图片锐化';
       case PipelineStepType.imageDenoise: return '图片降噪';
       case PipelineStepType.imageChannelExtract: return '通道提取';
+      case PipelineStepType.videoCrop: return '视频裁剪';
       case PipelineStepType.output: return '输出';
     }
   }
@@ -108,6 +112,7 @@ class PipelineStep {
       case PipelineStepType.audioVolume: return 'Audio Volume';
       case PipelineStepType.audioCompressor: return 'Dynamic Range';
       case PipelineStepType.audioMetadata: return 'Metadata';
+      case PipelineStepType.extractAudio: return 'Extract Audio';
       case PipelineStepType.concatMedia: return 'Concat Media';
       case PipelineStepType.imageToVideo: return 'Image to Video';
       case PipelineStepType.imageCrop: return 'Image Crop';
@@ -118,6 +123,7 @@ class PipelineStep {
       case PipelineStepType.imageSharpen: return 'Sharpen';
       case PipelineStepType.imageDenoise: return 'Denoise';
       case PipelineStepType.imageChannelExtract: return 'Channel Extract';
+      case PipelineStepType.videoCrop: return 'Video Crop';
       case PipelineStepType.output: return 'Output';
     }
   }
@@ -161,6 +167,7 @@ class PipelineNode {
       case PipelineStepType.audioVolume: return '调整音量';
       case PipelineStepType.audioCompressor: return '压缩动态范围';
       case PipelineStepType.audioMetadata: return '元信息编辑';
+      case PipelineStepType.extractAudio: return '提取音频';
       case PipelineStepType.concatMedia: return '合并媒体';
       case PipelineStepType.imageToVideo: return '图片合成视频';
       case PipelineStepType.imageCrop: return '图片裁剪';
@@ -171,6 +178,7 @@ class PipelineNode {
       case PipelineStepType.imageSharpen: return '图片锐化';
       case PipelineStepType.imageDenoise: return '图片降噪';
       case PipelineStepType.imageChannelExtract: return '通道提取';
+      case PipelineStepType.videoCrop: return '视频裁剪';
       case PipelineStepType.output: return '输出';
     }
   }
@@ -190,6 +198,7 @@ class PipelineNode {
       case PipelineStepType.audioVolume: return 'Audio Volume';
       case PipelineStepType.audioCompressor: return 'Dynamic Range';
       case PipelineStepType.audioMetadata: return 'Metadata';
+      case PipelineStepType.extractAudio: return 'Extract Audio';
       case PipelineStepType.concatMedia: return 'Concat Media';
       case PipelineStepType.imageToVideo: return 'Image to Video';
       case PipelineStepType.imageCrop: return 'Image Crop';
@@ -200,6 +209,7 @@ class PipelineNode {
       case PipelineStepType.imageSharpen: return 'Sharpen';
       case PipelineStepType.imageDenoise: return 'Denoise';
       case PipelineStepType.imageChannelExtract: return 'Channel Extract';
+      case PipelineStepType.videoCrop: return 'Video Crop';
       case PipelineStepType.output: return 'Output';
     }
   }
@@ -221,6 +231,7 @@ class PipelineNode {
     PipelineStepType.audioVolume => {MediaType.audio},
     PipelineStepType.audioCompressor => {MediaType.audio},
     PipelineStepType.audioMetadata => {MediaType.audio},
+    PipelineStepType.extractAudio => {MediaType.video},
     PipelineStepType.concatMedia => {MediaType.video, MediaType.audio},
     PipelineStepType.imageToVideo => {MediaType.image},
     PipelineStepType.imageCrop => {MediaType.image},
@@ -231,6 +242,7 @@ class PipelineNode {
     PipelineStepType.imageSharpen => {MediaType.image},
     PipelineStepType.imageDenoise => {MediaType.image},
     PipelineStepType.imageChannelExtract => {MediaType.image},
+    PipelineStepType.videoCrop => {MediaType.video},
     PipelineStepType.output => {MediaType.video, MediaType.image, MediaType.audio},
   };
 
@@ -250,6 +262,7 @@ class PipelineNode {
     PipelineStepType.audioVolume => MediaType.audio,
     PipelineStepType.audioCompressor => MediaType.audio,
     PipelineStepType.audioMetadata => MediaType.audio,
+    PipelineStepType.extractAudio => MediaType.audio,
     PipelineStepType.concatMedia => MediaType.video,
     PipelineStepType.imageToVideo => MediaType.video,
     PipelineStepType.imageCrop => MediaType.image,
@@ -260,6 +273,7 @@ class PipelineNode {
     PipelineStepType.imageSharpen => MediaType.image,
     PipelineStepType.imageDenoise => MediaType.image,
     PipelineStepType.imageChannelExtract => MediaType.image,
+    PipelineStepType.videoCrop => MediaType.video,
     PipelineStepType.output => null,
   };
 
