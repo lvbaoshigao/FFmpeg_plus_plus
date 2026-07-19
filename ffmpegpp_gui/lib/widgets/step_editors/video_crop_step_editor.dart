@@ -162,11 +162,6 @@ class _VideoCropStepEditorState extends State<VideoCropStepEditor> {
     }
   }
 
-  InputDecoration _dec(String label) => InputDecoration(
-    labelText: label, isDense: true,
-    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-  );
 
   @override
   Widget build(BuildContext context) {
@@ -209,7 +204,7 @@ class _VideoCropStepEditorState extends State<VideoCropStepEditor> {
         Row(children: [
           Expanded(child: TextField(
             controller: _frameCtrl,
-            decoration: _dec(zh ? '帧号' : 'Frame #'),
+            decoration: InputDecoration(labelText: zh ? '帧号' : 'Frame #'),
             keyboardType: TextInputType.number,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             onChanged: (v) => p['frame_number'] = int.tryParse(v) ?? 0,

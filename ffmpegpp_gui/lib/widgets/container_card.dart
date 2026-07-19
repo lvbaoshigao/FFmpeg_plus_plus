@@ -5,6 +5,7 @@ import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import '../pages/container_detail_page.dart';
 import '../pages/pipeline_editor_page.dart';
+import '../app.dart';
 
 class ContainerCard extends StatelessWidget {
   final FileContainer container;
@@ -59,8 +60,8 @@ class ContainerCard extends StatelessWidget {
   }
 
   void _enter(BuildContext context, AppState state) {
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => ContainerDetailPage(containerId: container.id),
+    Navigator.of(context).push(smoothRoute(
+      ContainerDetailPage(containerId: container.id),
     ));
   }
 
@@ -73,8 +74,8 @@ class ContainerCard extends StatelessWidget {
     for (final f in files) {
       typeCounts[f.fileMediaType] = (typeCounts[f.fileMediaType] ?? 0) + 1;
     }
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => PipelineEditorPage(
+    Navigator.of(context).push(smoothRoute(
+      PipelineEditorPage(
         video: firstParsed,
         initialGraph: container.pipelineGraph,
         containerInfo: (name: container.name, fileCount: container.fileCount, typeCounts: typeCounts, fileIds: files.map((f) => f.id).toList()),

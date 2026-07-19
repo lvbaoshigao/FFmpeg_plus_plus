@@ -89,11 +89,6 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
     _hCtrl.text = '${(p['crop_h'] as num?)?.toInt() ?? 0}';
   }
 
-  InputDecoration _dec(String label) => InputDecoration(
-    labelText: label, isDense: true,
-    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-  );
 
   @override
   Widget build(BuildContext context) {
@@ -117,7 +112,7 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
         Row(children: [
           Expanded(child: TextField(
             controller: _xCtrl,
-            decoration: _dec('X'),
+            decoration: InputDecoration(labelText: 'X'),
             keyboardType: TextInputType.number,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             onChanged: (v) {
@@ -128,7 +123,7 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
           const SizedBox(width: 8),
           Expanded(child: TextField(
             controller: _yCtrl,
-            decoration: _dec('Y'),
+            decoration: InputDecoration(labelText: 'Y'),
             keyboardType: TextInputType.number,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             onChanged: (v) {
@@ -141,7 +136,7 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
         Row(children: [
           Expanded(child: TextField(
             controller: _wCtrl,
-            decoration: _dec(zh ? '宽度' : 'Width'),
+            decoration: InputDecoration(labelText: zh ? '宽度' : 'Width'),
             keyboardType: TextInputType.number,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             onChanged: (v) {
@@ -152,7 +147,7 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
           const SizedBox(width: 8),
           Expanded(child: TextField(
             controller: _hCtrl,
-            decoration: _dec(zh ? '高度' : 'Height'),
+            decoration: InputDecoration(labelText: zh ? '高度' : 'Height'),
             keyboardType: TextInputType.number,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             onChanged: (v) {

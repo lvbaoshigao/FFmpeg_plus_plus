@@ -1,16 +1,16 @@
 ; ============================================================
-; FFmpeg++ v4.7.2 Inno Setup Installer Script
-; Build: 2026-07-13
+; FFmpeg++ v4.13.47 Inno Setup Installer Script
+; Build: 2026-07-19
 ; ============================================================
 ; 使用方法:
 ;   1. 确保 build/ 文件夹已准备好 (flutter build + ffmpegpp.dll)
 ;   2. Inno Setup Compiler → File → Open → 选此文件 → Build → Compile
 ;   3. 或命令行: iscc setup.iss
-;   4. 输出: dist\FFmpeg++_v4.7.2_setup.exe
+;   4. 输出: dist\FFmpeg++_v4.13.47_setup.exe
 ; ============================================================
 
 #define MyAppName "FFmpeg++"
-#define MyAppVersion "4.7.2"
+#define MyAppVersion "4.13.47"
 #define MyAppPublisher "氯堡拾稿"
 #define MyAppURL "https://blog-clstone.netlify.app/"
 #define MyAppGitHub "https://github.com/pity-Fox/FFmpeg_plus_plus"

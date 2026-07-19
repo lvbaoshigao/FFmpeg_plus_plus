@@ -151,11 +151,6 @@ class _ExtractAudioStepEditorState extends State<ExtractAudioStepEditor> {
     if (mounted) setState(() => _isPlaying = false);
   }
 
-  InputDecoration _dec(String label) => InputDecoration(
-    labelText: label, isDense: true,
-    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-  );
 
   @override
   Widget build(BuildContext context) {
@@ -194,7 +189,7 @@ class _ExtractAudioStepEditorState extends State<ExtractAudioStepEditor> {
           Row(children: [
             Expanded(child: TextFormField(
               controller: _startCtrl,
-              decoration: _dec(zh ? '开始时间' : 'Start Time'),
+              decoration: InputDecoration(labelText: zh ? '开始时间' : 'Start Time'),
               style: TextStyle(fontSize: 13, color: cs.onSurface, fontFamily: 'monospace'),
               onChanged: (v) {
                 final parsed = _parseTime(v);
@@ -212,7 +207,7 @@ class _ExtractAudioStepEditorState extends State<ExtractAudioStepEditor> {
             const SizedBox(width: 12),
             Expanded(child: TextFormField(
               controller: _endCtrl,
-              decoration: _dec(zh ? '结束时间' : 'End Time'),
+              decoration: InputDecoration(labelText: zh ? '结束时间' : 'End Time'),
               style: TextStyle(fontSize: 13, color: cs.onSurface, fontFamily: 'monospace'),
               onChanged: (v) {
                 final parsed = _parseTime(v);
@@ -267,7 +262,7 @@ class _ExtractAudioStepEditorState extends State<ExtractAudioStepEditor> {
           borderRadius: BorderRadius.circular(12),
           value: _formats.contains(fmt) ? fmt : _formats.first,
           isExpanded: true,
-          decoration: _dec(zh ? '输出格式' : 'Output Format'),
+          decoration: InputDecoration(labelText: zh ? '输出格式' : 'Output Format'),
           dropdownColor: cs.surface,
           style: TextStyle(fontSize: 13, color: cs.onSurface),
           items: _formats.map((f) => DropdownMenuItem(
@@ -281,7 +276,7 @@ class _ExtractAudioStepEditorState extends State<ExtractAudioStepEditor> {
           borderRadius: BorderRadius.circular(12),
           value: _codecs.contains(codec) ? codec : _codecs.first,
           isExpanded: true,
-          decoration: _dec(zh ? '编码器' : 'Codec'),
+          decoration: InputDecoration(labelText: zh ? '编码器' : 'Codec'),
           dropdownColor: cs.surface,
           style: TextStyle(fontSize: 13, color: cs.onSurface),
           items: List.generate(_codecs.length, (i) => DropdownMenuItem(

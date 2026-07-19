@@ -35,11 +35,6 @@ class _AudioConvertStepEditorState extends State<AudioConvertStepEditor> {
     widget.onChanged();
   }
 
-  InputDecoration _dec(String label) => InputDecoration(
-    labelText: label, isDense: true,
-    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-  );
 
   @override
   Widget build(BuildContext context) {
@@ -59,7 +54,7 @@ class _AudioConvertStepEditorState extends State<AudioConvertStepEditor> {
           borderRadius: BorderRadius.circular(12),
           value: _formats.contains(fmt) ? fmt : _formats.first,
           isExpanded: true,
-          decoration: _dec(zh ? '输出格式' : 'Output Format'),
+          decoration: InputDecoration(labelText: zh ? '输出格式' : 'Output Format'),
           dropdownColor: cs.surface,
           style: TextStyle(fontSize: 13, color: cs.onSurface),
           items: _formats.map((f) => DropdownMenuItem(
@@ -73,7 +68,7 @@ class _AudioConvertStepEditorState extends State<AudioConvertStepEditor> {
           borderRadius: BorderRadius.circular(12),
           value: _codecs.contains(codec) ? codec : _codecs.first,
           isExpanded: true,
-          decoration: _dec(zh ? '编码器' : 'Codec'),
+          decoration: InputDecoration(labelText: zh ? '编码器' : 'Codec'),
           dropdownColor: cs.surface,
           style: TextStyle(fontSize: 13, color: cs.onSurface),
           items: List.generate(_codecs.length, (i) => DropdownMenuItem(

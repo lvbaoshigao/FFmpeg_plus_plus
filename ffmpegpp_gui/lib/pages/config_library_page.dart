@@ -10,6 +10,7 @@ import '../services/graph_executor.dart';
 import '../theme/app_strings.dart';
 import '../widgets/toast.dart';
 import '../widgets/glass_panel.dart';
+import '../app.dart';
 import 'pipeline_editor_page.dart';
 
 const _uuid = Uuid();
@@ -200,8 +201,8 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
 
   void _openEditor(_ConfigEntry entry) {
     final dummyVideo = VideoFile(id: 'config_${entry.id}', filename: entry.name);
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => PipelineEditorPage(
+    Navigator.of(context).push(smoothRoute(
+      PipelineEditorPage(
         video: dummyVideo.copyWith(pipelineGraph: entry.graph),
         onSave: (graph) {
           setState(() {

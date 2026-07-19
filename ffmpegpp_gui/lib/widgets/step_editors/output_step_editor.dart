@@ -48,16 +48,13 @@ class _OutputStepEditorState extends State<OutputStepEditor> {
     super.dispose();
   }
 
-  InputDecoration _dec(String label) => InputDecoration(
-        labelText: label, isDense: true,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      );
+  static const _formats = ['keep', 'mp4', 'mkv', 'mov', 'avi', 'webm'];
 
   String _previewFilename() {
     final src = widget.sourceFilename;
     final base = src.replaceAll(RegExp(r'\.[^.]+$'), '');
-    final ext = src.contains('.') ? src.split('.').last : '';
+    final srcExt = src.contains('.') ? src.split('.').last : '';
+    final ext = p['format'] == 'keep' ? srcExt : (p['format'] as String? ?? srcExt);
     switch (p['naming_mode'] as String? ?? 'keep') {
       case 'suffix': return '$base${p['naming_value'] ?? '_processed'}.$ext';
       case 'custom':
@@ -94,6 +91,10 @@ class _OutputStepEditorState extends State<OutputStepEditor> {
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _buildDropdown(label: zh ? '输出格式' : 'Format', value: p['format'] as String, items: _formats,
+          itemLabels: zh ? const ['保持原格式', 'MP4', 'MKV', 'MOV', 'AVI', 'WEBM'] : const ['Keep Original', 'MP4', 'MKV', 'MOV', 'AVI', 'WEBM'],
+          cs: cs, onChanged: (v) { setState(() => p['format'] = v); widget.onChanged(); }),
+        const SizedBox(height: 12),
         _buildDropdown(label: zh ? '命名方式' : 'Naming', value: p['naming_mode'] as String, items: _namingModes,
           itemLabels: zh ? const ['保持原名', '添加后缀', '自定义名称'] : const ['Keep Original', 'Add Suffix', 'Custom Name'],
           cs: cs, onChanged: (v) {
@@ -106,7 +107,7 @@ class _OutputStepEditorState extends State<OutputStepEditor> {
         if (p['naming_mode'] == 'suffix' || p['naming_mode'] == 'custom')
           Padding(padding: const EdgeInsets.only(bottom: 12), child: TextField(
             controller: _namingCtrl,
-            decoration: _dec(p['naming_mode'] == 'suffix' ? (zh ? '后缀' : 'Suffix') : (zh ? '文件名' : 'Filename')),
+            decoration: InputDecoration(labelText: p['naming_mode'] == 'suffix' ? (zh ? '后缀' : 'Suffix') : (zh ? '文件名' : 'Filename')),
             onChanged: (v) { p['naming_value'] = v; setState(() {}); widget.onChanged(); },
           )),
         const Divider(),
@@ -116,7 +117,7 @@ class _OutputStepEditorState extends State<OutputStepEditor> {
         Row(children: [
           Expanded(child: TextField(
             controller: _dirCtrl,
-            decoration: _dec(zh ? '输出目录 (空=跟随设置)' : 'Output dir (empty=follow settings)'),
+            decoration: InputDecoration(labelText: zh ? '输出目录 (空=跟随设置)' : 'Output dir (empty=follow settings)'),
             style: TextStyle(fontSize: 12, fontFamily: 'monospace', color: cs.onSurface),
             onChanged: (v) { p['output_dir'] = v; setState(() {}); widget.onChanged(); },
           )),
@@ -125,8 +126,7 @@ class _OutputStepEditorState extends State<OutputStepEditor> {
         ]),
         const SizedBox(height: 16),
         Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(12),
+          width: double.infinity, padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(color: cs.surfaceContainerHighest, borderRadius: BorderRadius.circular(8)),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(zh ? '输出预览' : 'Output Preview', style: TextStyle(fontSize: 11, color: cs.outline)),
@@ -143,7 +143,7 @@ class _OutputStepEditorState extends State<OutputStepEditor> {
     final safe = items.contains(value) ? value : items.first;
     return DropdownButtonFormField<String>(
       borderRadius: BorderRadius.circular(12),
-      value: safe, isExpanded: true, decoration: _dec(label),
+      value: safe, isExpanded: true, decoration: InputDecoration(labelText: label),
       dropdownColor: cs.surface, style: TextStyle(fontSize: 13, color: cs.onSurface),
       items: List.generate(items.length, (i) => DropdownMenuItem(
         value: items[i], child: Text(itemLabels != null ? itemLabels[i] : items[i], style: TextStyle(fontSize: 13, color: cs.onSurface)),
@@ -152,3 +152,4 @@ class _OutputStepEditorState extends State<OutputStepEditor> {
     );
   }
 }
+

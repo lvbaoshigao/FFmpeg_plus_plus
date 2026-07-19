@@ -386,12 +386,18 @@ class _AppShellState extends State<AppShell> with WindowListener {
     return _CsdWindowButton(icon: icon, color: color, hoverBg: hoverBg, onTap: onTap);
   }
 
-  Widget _page(int i) => switch (i) {
-    0 => ProjectPage(key: _projectPageKey), 1 => const QueuePage(),
-    2 => const CommandPage(), 3 => const ConfigLibraryPage(),
-    4 => const SettingsPage(), 5 => const LogPage(),
-    _ => const ProjectPage(),
-  };
+  Widget _page(int i) => AnimatedSwitcher(
+    duration: const Duration(milliseconds: 200),
+    switchInCurve: Curves.easeOut,
+    switchOutCurve: Curves.easeIn,
+    transitionBuilder: (child, anim) => FadeTransition(opacity: anim, child: child),
+    child: KeyedSubtree(key: ValueKey(i), child: switch (i) {
+      0 => ProjectPage(key: _projectPageKey), 1 => const QueuePage(),
+      2 => const CommandPage(), 3 => const ConfigLibraryPage(),
+      4 => const SettingsPage(), 5 => const LogPage(),
+      _ => const ProjectPage(),
+    }),
+  );
 }
 
 class _CsdWindowButton extends StatefulWidget {
@@ -430,3 +436,19 @@ class _CsdWindowButtonState extends State<_CsdWindowButton> {
     );
   }
 }
+
+Route<T> smoothRoute<T>(Widget page) => PageRouteBuilder<T>(
+  pageBuilder: (_, __, ___) => page,
+  transitionDuration: const Duration(milliseconds: 250),
+  reverseTransitionDuration: const Duration(milliseconds: 200),
+  transitionsBuilder: (_, anim, __, child) {
+    final curve = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
+    return FadeTransition(
+      opacity: curve,
+      child: SlideTransition(
+        position: Tween(begin: const Offset(0.03, 0), end: Offset.zero).animate(curve),
+        child: child,
+      ),
+    );
+  },
+);

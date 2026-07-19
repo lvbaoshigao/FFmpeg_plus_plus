@@ -40,11 +40,6 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> {
     widget.onChanged();
   }
 
-  InputDecoration _dec(String label) => InputDecoration(
-    labelText: label, isDense: true,
-    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-  );
 
   Color _hexToColor(String hex) {
     hex = hex.replaceAll('#', '');
@@ -218,7 +213,7 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> {
     final safe = items.contains(value) ? value : items.first;
     return DropdownButtonFormField<String>(
       borderRadius: BorderRadius.circular(12),
-      value: safe, isExpanded: true, decoration: _dec(label),
+      value: safe, isExpanded: true, decoration: InputDecoration(labelText: label),
       dropdownColor: cs.surface, style: TextStyle(fontSize: 13, color: cs.onSurface),
       items: List.generate(items.length, (i) => DropdownMenuItem(
         value: items[i], child: Text(itemLabels != null ? itemLabels[i] : items[i], style: TextStyle(fontSize: 13, color: cs.onSurface)),

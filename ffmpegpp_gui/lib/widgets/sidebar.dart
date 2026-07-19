@@ -60,22 +60,30 @@ class Sidebar extends StatelessWidget {
               final sel = i == selectedIndex;
               return Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                child: Material(
-                  color: sel ? scheme.secondaryContainer.withAlpha(200) : Colors.transparent,
-                  borderRadius: BorderRadius.circular(10),
-                  child: InkWell(
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  curve: Curves.easeOutCubic,
+                  decoration: BoxDecoration(
+                    color: sel ? scheme.secondaryContainer.withAlpha(200) : Colors.transparent,
                     borderRadius: BorderRadius.circular(10),
-                    onTap: () => onSelected(i),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                      child: Row(children: [
-                        Icon(items[i].$1, size: 20,
-                            color: sel ? scheme.onSecondaryContainer : clr),
-                        const SizedBox(width: 10),
-                        Text(items[i].$2, style: TextStyle(fontSize: 13,
-                            fontWeight: sel ? FontWeight.w600 : FontWeight.w400,
-                            color: sel ? scheme.onSecondaryContainer : clr)),
-                      ]),
+                  ),
+                  child: Material(
+                    color: Colors.transparent,
+                    borderRadius: BorderRadius.circular(10),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(10),
+                      onTap: () => onSelected(i),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        child: Row(children: [
+                          Icon(items[i].$1, size: 20,
+                              color: sel ? scheme.onSecondaryContainer : clr),
+                          const SizedBox(width: 10),
+                          Text(items[i].$2, style: TextStyle(fontSize: 13,
+                              fontWeight: sel ? FontWeight.w600 : FontWeight.w400,
+                              color: sel ? scheme.onSecondaryContainer : clr)),
+                        ]),
+                      ),
                     ),
                   ),
                 ),

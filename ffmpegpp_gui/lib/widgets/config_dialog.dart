@@ -680,8 +680,9 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
   Widget _colorRow(ColorScheme sc, String label, String hexValue, ValueChanged<String> cb) =>
       Padding(padding: const EdgeInsets.only(bottom: 10), child: Row(children: [
         SizedBox(width: 72, child: Text(label, style: TextStyle(fontSize: 12, color: sc.onSurface))),
-        Expanded(child: TextField(
-            controller: TextEditingController(text: hexValue),
+        Expanded(child: TextFormField(
+            key: ValueKey('color_$label'),
+            initialValue: hexValue,
             style: TextStyle(fontSize: 12, color: sc.onSurface),
             decoration: InputDecoration(isDense: true, hintText: '#FFFFFF',
                 contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),

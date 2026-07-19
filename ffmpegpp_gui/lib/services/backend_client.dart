@@ -42,7 +42,7 @@ class BackendClient {
 
   /// 探测视频文件信息（60s 超时）
   Future<Map<String, dynamic>> probe(String filepath) async {
-    final resp = await _process.requestWithTimeout('probe', 60, {'filepath': filepath});
+    final resp = await _process.requestWithTimeout('probe', 120, {'filepath': filepath});
     return resp;
   }
 

@@ -61,7 +61,7 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
   static const _channels = ['keep', '1', '2', '6', '8'];
   static const _pixFmts = ['auto', 'yuv420p', 'yuv422p', 'yuv444p', 'yuv420p10le', 'yuv422p10le', 'nv12', 'p010le', 'rgb24'];
 
-  late TextEditingController _bitrateCtrl, _resWCtrl, _resHCtrl, _fpsCtrl;
+  late TextEditingController _bitrateCtrl, _resWCtrl, _resHCtrl, _fpsCtrl, _audioBitrateCtrl;
 
   Map<String, dynamic> get p => widget.params;
 
@@ -85,11 +85,12 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
     _resWCtrl = TextEditingController(text: '${p['resolution_w'] ?? ''}');
     _resHCtrl = TextEditingController(text: '${p['resolution_h'] ?? ''}');
     _fpsCtrl = TextEditingController(text: '${p['fps_value'] ?? ''}');
+    _audioBitrateCtrl = TextEditingController(text: '${p['audio_bitrate'] ?? ''}');
   }
 
   @override
   void dispose() {
-    _bitrateCtrl.dispose(); _resWCtrl.dispose(); _resHCtrl.dispose(); _fpsCtrl.dispose();
+    _bitrateCtrl.dispose(); _resWCtrl.dispose(); _resHCtrl.dispose(); _fpsCtrl.dispose(); _audioBitrateCtrl.dispose();
     super.dispose();
   }
 
@@ -113,18 +114,13 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
 
   Set<String> get _gpuAccelerated => Set<String>.from(_gpuCodecs[p['gpu']] ?? []);
 
-  InputDecoration _dec(String label) => InputDecoration(
-    labelText: label, isDense: true,
-    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-  );
 
   Widget _dropdown({required String label, required String value, required List<String> items,
       List<String>? itemLabels, required ColorScheme cs, required ValueChanged<String> onChanged}) {
     final safe = items.contains(value) ? value : items.first;
     return DropdownButtonFormField<String>(
       borderRadius: BorderRadius.circular(12),
-      value: safe, isExpanded: true, decoration: _dec(label),
+      value: safe, isExpanded: true, decoration: InputDecoration(labelText: label),
       dropdownColor: cs.surface, style: TextStyle(fontSize: 13, color: cs.onSurface),
       items: List.generate(items.length, (i) => DropdownMenuItem(
         value: items[i], child: Text(itemLabels != null ? itemLabels[i] : items[i], style: TextStyle(fontSize: 13, color: cs.onSurface)),
@@ -141,7 +137,7 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
 
     return DropdownButtonFormField<String>(
       borderRadius: BorderRadius.circular(12),
-      value: safe, isExpanded: true, decoration: _dec(zh ? '编码器' : 'Codec'),
+      value: safe, isExpanded: true, decoration: InputDecoration(labelText: zh ? '编码器' : 'Codec'),
       dropdownColor: cs.surface, style: TextStyle(fontSize: 13, color: cs.onSurface),
       items: _allCodecs.map((codec) {
         final label = codec == 'copy' ? _copyLabel(zh) : (_codecLabels[codec] ?? codec);
@@ -215,7 +211,7 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
         const SizedBox(height: 12),
         if (p['rate_mode'] == 'bitrate')
           Padding(padding: const EdgeInsets.only(bottom: 12), child: TextField(
-            controller: _bitrateCtrl, keyboardType: TextInputType.number, decoration: _dec(zh ? '码率 (kbps)' : 'Bitrate (kbps)'),
+            controller: _bitrateCtrl, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: zh ? '码率 (kbps)' : 'Bitrate (kbps)'),
             onChanged: (v) { p['video_bitrate'] = int.tryParse(v); widget.onChanged(); },
           )),
         if (p['rate_mode'] == 'crf')
@@ -242,10 +238,10 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
           cs: cs, onChanged: (v) => _update('resolution', v)),
         if (p['resolution'] == 'custom')
           Padding(padding: const EdgeInsets.only(top: 12), child: Row(children: [
-            Expanded(child: TextField(controller: _resWCtrl, keyboardType: TextInputType.number, decoration: _dec('W'),
+            Expanded(child: TextField(controller: _resWCtrl, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: 'W'),
               onChanged: (v) { p['resolution_w'] = int.tryParse(v); widget.onChanged(); })),
             Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Text('x', style: TextStyle(color: cs.onSurface))),
-            Expanded(child: TextField(controller: _resHCtrl, keyboardType: TextInputType.number, decoration: _dec('H'),
+            Expanded(child: TextField(controller: _resHCtrl, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: 'H'),
               onChanged: (v) { p['resolution_h'] = int.tryParse(v); widget.onChanged(); })),
           ])),
         const SizedBox(height: 12),
@@ -254,7 +250,7 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
           cs: cs, onChanged: (v) => _update('fps', v)),
         if (p['fps'] == 'custom')
           Padding(padding: const EdgeInsets.only(top: 12), child: TextField(
-            controller: _fpsCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: _dec(zh ? '自定义帧率' : 'Custom FPS'),
+            controller: _fpsCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: InputDecoration(labelText: zh ? '自定义帧率' : 'Custom FPS'),
             onChanged: (v) { p['fps_value'] = double.tryParse(v); widget.onChanged(); })),
 
         const SizedBox(height: 8),
@@ -277,9 +273,9 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
           }),
         if (p['audio_bitrate'] != null && !_audioBitrates.contains(p['audio_bitrate']) && p['audio_bitrate'] != -1)
           Padding(padding: const EdgeInsets.only(top: 8), child: TextField(
-            controller: TextEditingController(text: '${p['audio_bitrate']}'),
+            controller: _audioBitrateCtrl,
             keyboardType: TextInputType.number,
-            decoration: _dec(zh ? '自定义码率 (kbps)' : 'Custom Bitrate (kbps)'),
+            decoration: InputDecoration(labelText: zh ? '自定义码率 (kbps)' : 'Custom Bitrate (kbps)'),
             onChanged: (v) { final n = int.tryParse(v); if (n != null) { p['audio_bitrate'] = n; widget.onChanged(); } },
           )),
         const SizedBox(height: 12),

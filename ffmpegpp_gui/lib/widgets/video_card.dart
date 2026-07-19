@@ -5,6 +5,7 @@ import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import '../pages/pipeline_editor_page.dart';
+import '../app.dart';
 import 'config_dialog.dart';
 
 class VideoCard extends StatelessWidget {
@@ -55,8 +56,8 @@ class VideoCard extends StatelessWidget {
 
   void _openConfig(BuildContext context, AppState state) {
     if (state.config.useNodeEditor) {
-      Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => PipelineEditorPage(
+      Navigator.of(context).push(smoothRoute(
+        PipelineEditorPage(
           video: video,
           onSave: (graph) {
             state.updateVideoConfig(video.id, video.config);

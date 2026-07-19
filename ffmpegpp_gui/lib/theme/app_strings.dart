@@ -100,7 +100,7 @@ class AppStrings {
   String get swVersion => lang == 'zh' ? '版本' : 'Version';
   String get swBuild => lang == 'zh' ? '构建日期' : 'Build';
   String get swProtocol => lang == 'zh' ? '协议' : 'Protocol';
-  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v4.13.33  |  构建 2026-07-15  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v4.13.33  |  Build 2026-07-15  |  JSON v0.1.0';
+  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v4.13.47  |  构建 2026-07-19  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v4.13.47  |  Build 2026-07-19  |  JSON v0.1.0';
   String get languageInterface => lang == 'zh' ? '界面语言' : 'Interface Language';
   String get ffmpegFound => lang == 'zh' ? 'FFmpeg 已检测到' : 'FFmpeg detected';
   String get ffmpegNotFound => lang == 'zh' ? 'FFmpeg 未检测到' : 'FFmpeg not found';
@@ -247,4 +247,9 @@ class AppStrings {
   String get aiGraphModeLabel => lang == 'zh' ? '图生成模式' : 'Graph Mode';
   String get aiGraphModeRedo => lang == 'zh' ? '替换' : 'Replace';
   String get aiGraphModeModify => lang == 'zh' ? '修改' : 'Modify';
+  String get aiCustomPrompt => lang == 'zh' ? '自定义系统提示词' : 'Custom System Prompt';
+  String get aiCustomPromptHint => lang == 'zh' ? '在此输入额外的指令，会添加到默认提示词之前...' : 'Enter extra instructions prepended to the default prompt...';
+  String get aiConnection => lang == 'zh' ? '连接' : 'Connection';
+  String get aiPermissions => lang == 'zh' ? '权限' : 'Permissions';
+  String get aiAdvanced => lang == 'zh' ? '高级' : 'Advanced';
 }

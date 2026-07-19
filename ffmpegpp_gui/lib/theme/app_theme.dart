@@ -18,7 +18,7 @@ class AppTheme {
     final scale = fontSize / 14.0;
     final w = _fw(fontWeight);
     final base = ThemeData.fallback().textTheme;
-    TextStyle s(TextStyle? b, double sz) => (b ?? const TextStyle()).copyWith(fontSize: (sz * scale), fontWeight: w);
+    TextStyle s(TextStyle? b, double sz) => (b ?? const TextStyle()).copyWith(fontSize: (sz * scale), fontWeight: w, color: scheme.onSurface);
 
     final tt = base.copyWith(
       displayLarge: s(base.displayLarge, 57), displayMedium: s(base.displayMedium, 45), displaySmall: s(base.displaySmall, 36),
@@ -54,18 +54,24 @@ class AppTheme {
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: scheme.surface.withAlpha(120),
+        fillColor: scheme.surfaceContainerHighest.withAlpha(80),
+        hintStyle: TextStyle(color: scheme.outline, fontSize: 13),
+        labelStyle: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13),
+        floatingLabelStyle: TextStyle(color: scheme.primary, fontWeight: FontWeight.w500),
         border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide(color: scheme.outline, width: 1.5)),
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: scheme.outlineVariant, width: 1)),
         enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide(color: scheme.outline.withAlpha(140), width: 1.5)),
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: scheme.outlineVariant.withAlpha(160), width: 1)),
         focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide(color: scheme.primary, width: 2)),
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: scheme.primary, width: 1.5)),
+        errorBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: scheme.error, width: 1)),
         contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        isDense: false,
+        isDense: true,
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(elevation: 0,
@@ -78,6 +84,12 @@ class AppTheme {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
       ),
       dividerTheme: const DividerThemeData(space: 1, thickness: 1),
+      dropdownMenuTheme: DropdownMenuThemeData(
+        menuStyle: MenuStyle(
+          shape: WidgetStatePropertyAll(RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+          surfaceTintColor: WidgetStatePropertyAll(scheme.surface),
+        ),
+      ),
     );
   }
 

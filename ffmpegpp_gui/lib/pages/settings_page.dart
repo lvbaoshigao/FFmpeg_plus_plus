@@ -321,11 +321,23 @@ class SettingsPage extends StatelessWidget {
     final s = AppStrings.of(state.config.language);
     final scheme = Theme.of(ctx).colorScheme;
     return _glass(ctx, s.isZh ? '缓存' : 'Cache', [
-      SizedBox(width: double.infinity, child: OutlinedButton.icon(
-        icon: Icon(Icons.delete_sweep, size: 18, color: scheme.error),
-        label: Text(s.isZh ? '清除缓存' : 'Clear Cache', style: TextStyle(fontSize: 12, color: scheme.onSurface)),
-        onPressed: () => _clearCache(ctx, state, scheme, s),
+      SizedBox(width: double.infinity, child: Material(
+        color: scheme.errorContainer.withAlpha(100),
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          onTap: () => _clearCache(ctx, state, scheme, s),
+          borderRadius: BorderRadius.circular(14),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(Icons.delete_sweep_rounded, size: 20, color: scheme.error),
+              const SizedBox(width: 8),
+              Text(s.isZh ? '清除缓存' : 'Clear Cache', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.error)),
+            ]),
+          ),
+        ),
       )),
+      const SizedBox(height: 6),
       Text(s.isZh ? '清除已导入的字体文件和背景图片' : 'Clear imported fonts and background images', style: TextStyle(fontSize: 10, color: scheme.outline)),
     ]);
   }
@@ -341,12 +353,12 @@ class SettingsPage extends StatelessWidget {
                 errorBuilder: (_, __, ___) => Icon(Icons.play_circle_fill, size: 48, color: scheme.primary))),
         const SizedBox(height: 8),
         Text('FFmpeg++', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: scheme.primary)),
-        Text('v4.13.33', style: TextStyle(fontSize: 12, color: scheme.outline)),
+        Text('v4.13.47', style: TextStyle(fontSize: 12, color: scheme.outline)),
         const SizedBox(height: 12),
       ])),
       const SizedBox(height: 4),
-      _infoRow(s.aboutVersion, 'v4.13.33', scheme),
-      _infoRow(s.aboutBuildDate, '2026-07-15', scheme),
+      _infoRow(s.aboutVersion, 'v4.13.47', scheme),
+      _infoRow(s.aboutBuildDate, '2026-07-19', scheme),
       _infoRow(s.aboutBlog, 'blog-clstone.netlify.app', scheme),
       _infoRow(s.aboutGithub, 'github.com/pity-Fox/FFmpeg_plus_plus', scheme),
       const SizedBox(height: 10),
@@ -374,20 +386,20 @@ class SettingsPage extends StatelessWidget {
       SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
           title: Text(s.mcpEnable, style: TextStyle(color: clr)),
           subtitle: cfg.mcpEnabled
-              ? Text(state.mcpRunning ? (s.isZh ? '运行中' : 'Running') : (s.isZh ? '已停止' : 'Stopped'),
-                  style: TextStyle(fontSize: 10, color: state.mcpRunning ? Colors.green : scheme.outline))
+              ? Text(
+                  state.mcpError != null
+                      ? state.mcpError!
+                      : state.mcpRunning ? (s.isZh ? '运行中' : 'Running') : (s.isZh ? '已停止' : 'Stopped'),
+                  style: TextStyle(fontSize: 10, color: state.mcpError != null ? scheme.error : state.mcpRunning ? Colors.green : scheme.outline))
               : null,
           value: cfg.mcpEnabled,
           onChanged: (v) => state.toggleMcpServer(v)),
       if (cfg.mcpEnabled)
         Row(children: [
           Text('${s.mcpPort}: ', style: TextStyle(color: clr, fontSize: 12)),
-          SizedBox(width: 80, child: TextField(
-            controller: TextEditingController(text: cfg.mcpPort.toString()),
-            style: TextStyle(fontSize: 13, color: clr),
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 6)),
-            onChanged: (v) {
+          SizedBox(width: 80, child: _McpTextField(
+            value: cfg.mcpPort.toString(), label: '', scheme: scheme,
+            onChange: (v) {
               final port = int.tryParse(v);
               if (port != null && port > 0 && port < 65536) {
                 state.updateConfig((c) => c..mcpPort = port);
@@ -398,10 +410,11 @@ class SettingsPage extends StatelessWidget {
           SizedBox(height: 30, child: FilledButton.tonalIcon(
             icon: const Icon(Icons.refresh, size: 14),
             label: Text(s.isZh ? '应用' : 'Apply', style: const TextStyle(fontSize: 11)),
-            onPressed: state.mcpRunning ? () async {
+            onPressed: () async {
+              state.mcpError = null;
               await state.stopMcpServer();
               await state.startMcpServer();
-            } : null,
+            },
           )),
         ]),
       const SizedBox(height: 8),
@@ -422,89 +435,158 @@ class SettingsPage extends StatelessWidget {
   }
 
   static void _showAiSettingsDialog(BuildContext ctx, AppState state, AppStrings s) {
-    showDialog(context: ctx, builder: (dCtx) {
-      return StatefulBuilder(builder: (ctx2, setDState) {
-        final cfg = state.config;
-        final scheme = Theme.of(ctx2).colorScheme;
-        final clr = scheme.onSurface;
-        return AlertDialog(
-          title: Text(s.aiSettings, style: TextStyle(fontSize: 14, color: clr)),
-          content: SizedBox(width: 400, child: SingleChildScrollView(child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(s.aiProvider, style: TextStyle(color: clr, fontSize: 12)),
-              const SizedBox(height: 4),
-              SegmentedButton<String>(
-                segments: const [ButtonSegment(value: 'openai', label: Text('OpenAI')), ButtonSegment(value: 'anthropic', label: Text('Anthropic'))],
-                selected: {cfg.aiProvider},
-                onSelectionChanged: (v) {
-                  final provider = v.first;
-                  state.updateConfig((c) {
-                    c.aiProvider = provider;
-                    if (provider == 'anthropic' && c.aiApiUrl == 'https://api.openai.com/v1/chat/completions') {
-                      c.aiApiUrl = 'https://api.anthropic.com/v1/messages';
-                      c.aiModel = 'claude-sonnet-4-20250514';
-                    } else if (provider == 'openai' && c.aiApiUrl == 'https://api.anthropic.com/v1/messages') {
-                      c.aiApiUrl = 'https://api.openai.com/v1/chat/completions';
-                      c.aiModel = 'gpt-4o';
-                    }
-                    return c;
-                  });
-                  setDState(() {});
-                },
-                style: const ButtonStyle(visualDensity: VisualDensity.compact),
+    final zh = s.isZh;
+    showModalBottomSheet(
+      context: ctx,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (bCtx) {
+        return StatefulBuilder(builder: (ctx2, setDState) {
+          final cfg = state.config;
+          final scheme = Theme.of(ctx2).colorScheme;
+          final clr = scheme.onSurface;
+          final cardColor = scheme.surface.withAlpha((cfg.cardOpacity * 255).round().clamp(0, 255));
+
+          Widget section(String title, IconData icon, List<Widget> children) => Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            decoration: BoxDecoration(
+              color: cardColor,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
+            ),
+            child: Padding(padding: const EdgeInsets.all(14), child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  Icon(icon, size: 16, color: scheme.primary),
+                  const SizedBox(width: 6),
+                  Text(title, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.primary)),
+                ]),
+                const SizedBox(height: 10),
+                ...children,
+              ],
+            )),
+          );
+
+          return DraggableScrollableSheet(
+            initialChildSize: 0.85,
+            minChildSize: 0.5,
+            maxChildSize: 0.95,
+            builder: (_, scrollCtrl) => Container(
+              decoration: BoxDecoration(
+                color: scheme.surface,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
               ),
-              const SizedBox(height: 6),
-              _McpTextField(value: cfg.aiApiKey, label: s.aiApiKey, scheme: scheme, obscure: true,
-                  onChange: (v) { state.updateConfig((c) => c..aiApiKey = v); setDState(() {}); }),
-              const SizedBox(height: 4),
-              _McpTextField(value: cfg.aiApiUrl, label: s.aiApiUrl, scheme: scheme,
-                  onChange: (v) { state.updateConfig((c) => c..aiApiUrl = v); setDState(() {}); }),
-              const SizedBox(height: 4),
-              _McpTextField(value: cfg.aiModel, label: s.aiModel, scheme: scheme,
-                  onChange: (v) { state.updateConfig((c) => c..aiModel = v); setDState(() {}); }),
-              const SizedBox(height: 8),
-              Row(children: [
-                Expanded(child: _iosButton(icon: Icons.wifi_tethering, label: s.aiPing,
-                    color: scheme.primary, bg: scheme.primaryContainer,
-                    onTap: () => _pingAi(ctx, state, s))),
-                const SizedBox(width: 8),
-                Expanded(child: _iosButton(icon: Icons.list, label: s.aiListModels,
-                    color: scheme.tertiary, bg: scheme.tertiaryContainer,
-                    onTap: () => _listAiModels(ctx, state, s))),
+              child: Column(children: [
+                const SizedBox(height: 8),
+                Container(width: 36, height: 4, decoration: BoxDecoration(color: scheme.outlineVariant, borderRadius: BorderRadius.circular(2))),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Row(children: [
+                    Text(s.aiSettings, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: clr)),
+                    const Spacer(),
+                    TextButton(onPressed: () => Navigator.pop(bCtx), child: Text(zh ? '完成' : 'Done')),
+                  ]),
+                ),
+                Expanded(child: ListView(
+                  controller: scrollCtrl,
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                  children: [
+                    // ── Connection ──
+                    section(s.aiConnection, Icons.cloud_outlined, [
+                      Text(s.aiProvider, style: TextStyle(color: clr, fontSize: 12)),
+                      const SizedBox(height: 6),
+                      SegmentedButton<String>(
+                        segments: const [ButtonSegment(value: 'openai', label: Text('OpenAI')), ButtonSegment(value: 'anthropic', label: Text('Anthropic'))],
+                        selected: {cfg.aiProvider},
+                        onSelectionChanged: (v) {
+                          final provider = v.first;
+                          state.updateConfig((c) {
+                            c.aiProvider = provider;
+                            if (provider == 'anthropic' && c.aiApiUrl == 'https://api.openai.com/v1/chat/completions') {
+                              c.aiApiUrl = 'https://api.anthropic.com/v1/messages';
+                              c.aiModel = 'claude-sonnet-4-20250514';
+                            } else if (provider == 'openai' && c.aiApiUrl == 'https://api.anthropic.com/v1/messages') {
+                              c.aiApiUrl = 'https://api.openai.com/v1/chat/completions';
+                              c.aiModel = 'gpt-4o';
+                            }
+                            return c;
+                          });
+                          setDState(() {});
+                        },
+                        style: const ButtonStyle(visualDensity: VisualDensity.compact),
+                      ),
+                      const SizedBox(height: 10),
+                      _McpTextField(value: cfg.aiApiKey, label: s.aiApiKey, scheme: scheme, obscure: true,
+                          onChange: (v) { state.updateConfig((c) => c..aiApiKey = v); setDState(() {}); }),
+                      const SizedBox(height: 8),
+                      _McpTextField(value: cfg.aiApiUrl, label: s.aiApiUrl, scheme: scheme,
+                          onChange: (v) { state.updateConfig((c) => c..aiApiUrl = v); setDState(() {}); }),
+                      const SizedBox(height: 8),
+                      _McpTextField(value: cfg.aiModel, label: s.aiModel, scheme: scheme,
+                          onChange: (v) { state.updateConfig((c) => c..aiModel = v); setDState(() {}); }),
+                      const SizedBox(height: 10),
+                      Row(children: [
+                        Expanded(child: _iosButton(icon: Icons.wifi_tethering, label: s.aiPing,
+                            color: scheme.primary, bg: scheme.primaryContainer,
+                            onTap: () => _pingAi(ctx, state, s))),
+                        const SizedBox(width: 8),
+                        Expanded(child: _iosButton(icon: Icons.list, label: s.aiListModels,
+                            color: scheme.tertiary, bg: scheme.tertiaryContainer,
+                            onTap: () => _listAiModels(ctx, state, s))),
+                      ]),
+                    ]),
+                    // ── Permissions ──
+                    section(s.aiPermissions, Icons.security_outlined, [
+                      SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+                          title: Text(s.aiReadAccess, style: TextStyle(color: clr, fontSize: 12)),
+                          subtitle: Text(s.aiReadAccessDesc, style: TextStyle(color: scheme.outline, fontSize: 10)),
+                          value: cfg.aiReadAccess,
+                          onChanged: (v) { state.updateConfig((c) => c..aiReadAccess = v); setDState(() {}); }),
+                      SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+                          title: Text(s.aiWriteAccess, style: TextStyle(color: clr, fontSize: 12)),
+                          subtitle: Text(s.aiWriteAccessDesc, style: TextStyle(color: scheme.outline, fontSize: 10)),
+                          value: cfg.aiWriteAccess,
+                          onChanged: (v) { state.updateConfig((c) => c..aiWriteAccess = v); setDState(() {}); }),
+                      SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+                          title: Text(s.aiAutoExecute, style: TextStyle(color: clr, fontSize: 12)),
+                          subtitle: Text(s.aiAutoExecuteDesc, style: TextStyle(color: scheme.outline, fontSize: 10)),
+                          value: cfg.aiAutoExecute,
+                          onChanged: (v) { state.updateConfig((c) => c..aiAutoExecute = v); setDState(() {}); }),
+                    ]),
+                    // ── Advanced ──
+                    section(s.aiAdvanced, Icons.tune_outlined, [
+                      Text(s.aiGraphModeLabel, style: TextStyle(color: clr, fontSize: 12)),
+                      const SizedBox(height: 6),
+                      SegmentedButton<String>(
+                        segments: [ButtonSegment(value: 'redo', label: Text(s.aiGraphModeRedo)), ButtonSegment(value: 'modify', label: Text(s.aiGraphModeModify))],
+                        selected: {cfg.aiGraphMode},
+                        onSelectionChanged: (v) { state.updateConfig((c) => c..aiGraphMode = v.first); setDState(() {}); },
+                        style: const ButtonStyle(visualDensity: VisualDensity.compact),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(s.aiCustomPrompt, style: TextStyle(color: clr, fontSize: 12)),
+                      const SizedBox(height: 6),
+                      TextField(
+                        controller: TextEditingController(text: cfg.aiSystemPrompt),
+                        maxLines: 5,
+                        minLines: 3,
+                        style: TextStyle(fontSize: 12, color: clr),
+                        decoration: InputDecoration(
+                          hintText: s.aiCustomPromptHint,
+                          alignLabelWithHint: true,
+                        ),
+                        onChanged: (v) => state.updateConfig((c) => c..aiSystemPrompt = v),
+                      ),
+                    ]),
+                  ],
+                )),
               ]),
-              const SizedBox(height: 8),
-              SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-                  title: Text(s.aiReadAccess, style: TextStyle(color: clr, fontSize: 12)),
-                  subtitle: Text(s.aiReadAccessDesc, style: TextStyle(color: scheme.outline, fontSize: 10)),
-                  value: cfg.aiReadAccess,
-                  onChanged: (v) { state.updateConfig((c) => c..aiReadAccess = v); setDState(() {}); }),
-              SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-                  title: Text(s.aiWriteAccess, style: TextStyle(color: clr, fontSize: 12)),
-                  subtitle: Text(s.aiWriteAccessDesc, style: TextStyle(color: scheme.outline, fontSize: 10)),
-                  value: cfg.aiWriteAccess,
-                  onChanged: (v) { state.updateConfig((c) => c..aiWriteAccess = v); setDState(() {}); }),
-              SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-                  title: Text(s.aiAutoExecute, style: TextStyle(color: clr, fontSize: 12)),
-                  subtitle: Text(s.aiAutoExecuteDesc, style: TextStyle(color: scheme.outline, fontSize: 10)),
-                  value: cfg.aiAutoExecute,
-                  onChanged: (v) { state.updateConfig((c) => c..aiAutoExecute = v); setDState(() {}); }),
-              const SizedBox(height: 8),
-              Text(s.aiGraphModeLabel, style: TextStyle(color: clr, fontSize: 12)),
-              const SizedBox(height: 4),
-              SegmentedButton<String>(
-                segments: [ButtonSegment(value: 'redo', label: Text(s.aiGraphModeRedo)), ButtonSegment(value: 'modify', label: Text(s.aiGraphModeModify))],
-                selected: {cfg.aiGraphMode},
-                onSelectionChanged: (v) { state.updateConfig((c) => c..aiGraphMode = v.first); setDState(() {}); },
-                style: const ButtonStyle(visualDensity: VisualDensity.compact),
-              ),
-            ],
-          ))),
-          actions: [TextButton(onPressed: () => Navigator.pop(dCtx), child: const Text('OK'))],
-        );
-      });
-    });
+            ),
+          );
+        });
+      },
+    );
   }
 
   // ═══════════════════════════════════════════
@@ -656,11 +738,23 @@ class SettingsPage extends StatelessWidget {
       Uri uri;
       final headers = <String, String>{};
       if (cfg.aiProvider == 'anthropic') {
-        // Anthropic doesn't have a list-models endpoint in the same way; use a known set
-        if (ctx.mounted) {
+        final baseUrl = cfg.aiApiUrl.replaceAll(RegExp(r'/messages$'), '');
+        final modelsUrl = baseUrl.endsWith('/v1') ? '$baseUrl/models' : '$baseUrl/v1/models';
+        uri = Uri.parse(modelsUrl);
+        headers['x-api-key'] = cfg.aiApiKey;
+        headers['anthropic-version'] = '2023-06-01';
+        final resp = await http.get(uri, headers: headers).timeout(const Duration(seconds: 10));
+        if (resp.statusCode == 200) {
+          final data = jsonDecode(resp.body);
+          final models = (data['data'] as List?)?.map((m) => m['id'] as String).toList() ?? [];
+          models.sort();
+          state.addLog('[AI] Anthropic 获取到 ${models.length} 个模型', category: 'info');
+          if (ctx.mounted) _showModelPicker(ctx, state, models, s);
+        } else {
+          // Fallback to known models if endpoint unavailable
           final models = ['claude-sonnet-4-20250514', 'claude-haiku-4-5-20251001', 'claude-opus-4-20250514'];
-          state.addLog('[AI] Anthropic 可用模型: ${models.join(', ')}', category: 'info');
-          _showModelPicker(ctx, state, models, s);
+          state.addLog('[AI] Anthropic models endpoint unavailable (${resp.statusCode}), using known models', category: 'info');
+          if (ctx.mounted) _showModelPicker(ctx, state, models, s);
         }
         return;
       }

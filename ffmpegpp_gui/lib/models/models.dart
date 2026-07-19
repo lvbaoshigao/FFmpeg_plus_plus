@@ -803,6 +803,7 @@ class AppConfig {
   bool aiWriteAccess;
   bool aiAutoExecute;
   String aiGraphMode;
+  String aiSystemPrompt;
 
   static const fontWeightValues = [300, 400, 500, 600, 700];
   static const fontWeightLabels = ['Light', 'Regular', 'Medium', 'SemiBold', 'Bold'];
@@ -843,6 +844,7 @@ class AppConfig {
     this.aiWriteAccess = false,
     this.aiAutoExecute = false,
     this.aiGraphMode = 'redo',
+    this.aiSystemPrompt = '',
   }) : fontFamily = fontFamily ?? _defaultFontFamily,
        nodeUsageCount = nodeUsageCount ?? {},
        keyBindings = keyBindings ?? Map.from(defaultKeyBindings);
@@ -883,6 +885,7 @@ class AppConfig {
         aiWriteAccess: json['ai_write_access'] as bool? ?? false,
         aiAutoExecute: json['ai_auto_execute'] as bool? ?? json['ai_auto_apply'] as bool? ?? false,
         aiGraphMode: json['ai_graph_mode'] as String? ?? 'redo',
+        aiSystemPrompt: json['ai_system_prompt'] as String? ?? '',
       );
 
   Map<String, dynamic> toJson() => {
@@ -911,6 +914,7 @@ class AppConfig {
         'ai_write_access': aiWriteAccess,
         'ai_auto_execute': aiAutoExecute,
         'ai_graph_mode': aiGraphMode,
+        'ai_system_prompt': aiSystemPrompt,
       };
 }
 

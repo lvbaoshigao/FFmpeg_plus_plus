@@ -34,11 +34,6 @@ class _ImageConvertStepEditorState extends State<ImageConvertStepEditor> {
     widget.onChanged();
   }
 
-  InputDecoration _dec(String label) => InputDecoration(
-    labelText: label, isDense: true,
-    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-  );
 
   @override
   Widget build(BuildContext context) {
@@ -59,7 +54,7 @@ class _ImageConvertStepEditorState extends State<ImageConvertStepEditor> {
           borderRadius: BorderRadius.circular(12),
           value: _formats.contains(fmt) ? fmt : _formats.first,
           isExpanded: true,
-          decoration: _dec(zh ? '输出格式' : 'Output Format'),
+          decoration: InputDecoration(labelText: zh ? '输出格式' : 'Output Format'),
           dropdownColor: cs.surface,
           style: TextStyle(fontSize: 13, color: cs.onSurface),
           items: List.generate(_formats.length, (i) => DropdownMenuItem(

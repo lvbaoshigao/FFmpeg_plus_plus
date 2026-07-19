@@ -94,11 +94,6 @@ class _FrameStepEditorState extends State<FrameStepEditor> {
     setState(() {}); widget.onChanged(); _debounced();
   }
 
-  InputDecoration _dec(String label) => InputDecoration(
-    labelText: label, isDense: true,
-    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-  );
 
   @override
   Widget build(BuildContext context) {
@@ -155,7 +150,7 @@ class _FrameStepEditorState extends State<FrameStepEditor> {
           SizedBox(width: 120, child: DropdownButtonFormField<String>(
             borderRadius: BorderRadius.circular(12),
             value: p['output_format'] as String? ?? 'png', isExpanded: true,
-            decoration: _dec(zh ? '格式' : 'Format'),
+            decoration: InputDecoration(labelText: zh ? '格式' : 'Format'),
             dropdownColor: cs.surface, style: TextStyle(fontSize: 13, color: cs.onSurface),
             items: _formats.map((f) => DropdownMenuItem(value: f, child: Text(f.toUpperCase(), style: TextStyle(fontSize: 13, color: cs.onSurface)))).toList(),
             onChanged: (v) { if (v != null) { setState(() => p['output_format'] = v); widget.onChanged(); } },
@@ -180,7 +175,7 @@ class _FrameStepEditorState extends State<FrameStepEditor> {
       ),
       Row(children: [
         Expanded(child: TextFormField(controller: _timeCtrl,
-          decoration: _dec(zh ? '提取时间' : 'Time').copyWith(prefixIcon: const Icon(Icons.access_time, size: 18)),
+          decoration: InputDecoration(labelText: zh ? '提取时间' : 'Time').copyWith(prefixIcon: const Icon(Icons.access_time, size: 18)),
           style: TextStyle(fontSize: 13, color: cs.onSurface, fontFamily: 'monospace'),
           onChanged: (v) => _updateTime(_parse(v)),
         )),
@@ -215,13 +210,13 @@ class _FrameStepEditorState extends State<FrameStepEditor> {
       ),
       Row(children: [
         Expanded(child: TextFormField(controller: _startCtrl,
-          decoration: _dec(zh ? '起始' : 'Start'),
+          decoration: InputDecoration(labelText: zh ? '起始' : 'Start'),
           style: TextStyle(fontSize: 13, color: cs.onSurface, fontFamily: 'monospace'),
           onChanged: (v) { p['range_start'] = _parse(v).clamp(0, dur); widget.onChanged(); _debounced(); },
         )),
         Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Text('→', style: TextStyle(color: cs.outline))),
         Expanded(child: TextFormField(controller: _endCtrl,
-          decoration: _dec(zh ? '结束' : 'End'),
+          decoration: InputDecoration(labelText: zh ? '结束' : 'End'),
           style: TextStyle(fontSize: 13, color: cs.onSurface, fontFamily: 'monospace'),
           onChanged: (v) { p['range_end'] = _parse(v).clamp(0, dur); widget.onChanged(); },
         )),
@@ -231,7 +226,7 @@ class _FrameStepEditorState extends State<FrameStepEditor> {
         Text(zh ? '提取帧率: ' : 'FPS: ', style: TextStyle(fontSize: 13, color: cs.onSurface)),
         SizedBox(width: 80, child: TextFormField(
           controller: _fpsCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: _dec('fps'), style: TextStyle(fontSize: 13, color: cs.onSurface),
+          decoration: InputDecoration(labelText: 'fps'), style: TextStyle(fontSize: 13, color: cs.onSurface),
           onChanged: (v) { p['fps_rate'] = double.tryParse(v) ?? 1.0; setState(() {}); widget.onChanged(); },
         )),
         const SizedBox(width: 12),
@@ -248,7 +243,7 @@ class _FrameStepEditorState extends State<FrameStepEditor> {
         Text(zh ? '提取帧率: ' : 'FPS: ', style: TextStyle(fontSize: 13, color: cs.onSurface)),
         SizedBox(width: 80, child: TextFormField(
           controller: _fpsCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: _dec('fps'), style: TextStyle(fontSize: 13, color: cs.onSurface),
+          decoration: InputDecoration(labelText: 'fps'), style: TextStyle(fontSize: 13, color: cs.onSurface),
           onChanged: (v) { p['fps_rate'] = double.tryParse(v) ?? 1.0; setState(() {}); widget.onChanged(); },
         )),
         const SizedBox(width: 12),

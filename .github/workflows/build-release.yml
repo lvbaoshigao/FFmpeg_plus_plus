@@ -112,7 +112,7 @@ jobs:
           # Control file
           cat > deb/DEBIAN/control << 'EOF'
           Package: ffmpegpp
-          Version: 4.13.33
+          Version: 4.13.47
           Architecture: amd64
           Maintainer: pity-Fox <noreply@github.com>
           Description: FFmpeg++ - Advanced video/image/audio processing tool
@@ -150,13 +150,13 @@ jobs:
           chmod -R 755 deb/opt/ffmpegpp/
 
           # Build deb
-          dpkg-deb --root-owner-group --build deb ffmpegpp_4.13.33_amd64.deb
+          dpkg-deb --root-owner-group --build deb ffmpegpp_4.13.47_amd64.deb
 
       - name: Upload Linux x64 deb
         uses: actions/upload-artifact@v4
         with:
           name: linux-x64-deb
-          path: ffmpegpp_4.13.33_amd64.deb
+          path: ffmpegpp_4.13.47_amd64.deb
 
   # ══════════════════════════════════════════
   # Linux ARM64
@@ -210,7 +210,7 @@ jobs:
 
           cat > deb/DEBIAN/control << 'EOF'
           Package: ffmpegpp
-          Version: 4.13.33
+          Version: 4.13.47
           Architecture: arm64
           Maintainer: pity-Fox <noreply@github.com>
           Description: FFmpeg++ - Advanced video/image/audio processing tool
@@ -243,13 +243,13 @@ jobs:
           cp "make/FFmpeg++.png" deb/usr/share/icons/hicolor/256x256/apps/ffmpegpp.png
           chmod -R 755 deb/opt/ffmpegpp/
 
-          dpkg-deb --root-owner-group --build deb ffmpegpp_4.13.33_arm64.deb
+          dpkg-deb --root-owner-group --build deb ffmpegpp_4.13.47_arm64.deb
 
       - name: Upload Linux ARM64 deb
         uses: actions/upload-artifact@v4
         with:
           name: linux-arm64-deb
-          path: ffmpegpp_4.13.33_arm64.deb
+          path: ffmpegpp_4.13.47_arm64.deb
 
   # ══════════════════════════════════════════
   # macOS (Universal: x64 + ARM64)
@@ -290,13 +290,13 @@ jobs:
           mkdir -p dmg_staging
           cp -R "ffmpegpp_gui/build/macos/Build/Products/Release/ffmpegpp_gui.app" dmg_staging/
           ln -s /Applications dmg_staging/Applications
-          hdiutil create -volname "FFmpeg++" -srcfolder dmg_staging -ov -format UDZO "FFmpeg++_v4.13.33_macOS.dmg"
+          hdiutil create -volname "FFmpeg++" -srcfolder dmg_staging -ov -format UDZO "FFmpeg++_v4.13.47_macOS.dmg"
 
       - name: Upload macOS DMG
         uses: actions/upload-artifact@v4
         with:
           name: macos-dmg
-          path: FFmpeg++_v4.13.33_macOS.dmg
+          path: FFmpeg++_v4.13.47_macOS.dmg
 
   # ══════════════════════════════════════════
   # Create Release Draft
@@ -319,8 +319,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           draft: true
-          name: "FFmpeg++ v4.13.33-draft"
-          tag_name: v4.13.33-draft
+          name: "FFmpeg++ v4.13.47-draft"
+          tag_name: v4.13.47-draft
           files: |
             artifacts/windows-installer/*.exe
             artifacts/linux-x64-deb/*.deb

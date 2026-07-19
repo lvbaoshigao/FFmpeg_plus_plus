@@ -111,13 +111,7 @@ class NativeProcessManager {
 
     _sendRequest(req);
 
-    return completer.future.timeout(
-      const Duration(seconds: 3600),
-      onTimeout: () {
-        _pendingCompleters.remove(id);
-        return {'id': id, 'success': false, 'error': '超时'};
-      },
-    );
+    return completer.future;
   }
 
   Future<Map<String, dynamic>> _doRequest(String action, Map<String, dynamic>? params, int timeoutSec) async {

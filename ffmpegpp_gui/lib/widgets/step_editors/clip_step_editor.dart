@@ -93,17 +93,9 @@ class _ClipStepEditorState extends State<ClipStepEditor> {
     }
   }
 
-  InputDecoration _inputDecoration(String label) => InputDecoration(
-        labelText: label,
-        isDense: true,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      );
-
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final cs = theme.colorScheme;
+    final cs = Theme.of(context).colorScheme;
     final zh = widget.isZh;
     final dur = widget.videoDuration;
     final start = ((p['start_time'] as num?)?.toDouble() ?? 0.0).clamp(0.0, dur);
@@ -112,96 +104,60 @@ class _ClipStepEditorState extends State<ClipStepEditor> {
     return Padding(
       padding: const EdgeInsets.all(16),
       child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Container(
-                width: 320,
-                height: 180,
-                color: Colors.black,
-                child: _previewPath != null && File(_previewPath!).existsSync()
-                    ? Image.file(
-                        File(_previewPath!),
-                        fit: BoxFit.contain,
-                        width: 320,
-                        height: 180,
-                      )
-                    : Center(
-                        child: Icon(Icons.image, size: 48, color: cs.outline),
-                      ),
-              ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              width: 320, height: 180, color: Colors.black,
+              child: _previewPath != null && File(_previewPath!).existsSync()
+                  ? Image.file(File(_previewPath!), fit: BoxFit.contain, width: 320, height: 180)
+                  : Center(child: Icon(Icons.image, size: 48, color: cs.outline)),
             ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: TextFormField(
-                    controller: _startCtrl,
-                    decoration: _inputDecoration(zh ? '开始时间' : 'Start Time'),
-                    style: TextStyle(fontSize: 13, color: cs.onSurface, fontFamily: 'monospace'),
-                    onChanged: (v) {
-                      final parsed = _parseTime(v);
-                      if (parsed < 0) return; // 解析失败时忽略，保留上次的值
-                      final t = parsed.clamp(0.0, dur);
-                      p['start_time'] = t;
-                      if (t > ((p['end_time'] as num?)?.toDouble() ?? dur)) {
-                        p['end_time'] = t;
-                        _endCtrl.text = _formatTime(t);
-                      }
-                      setState(() {});
-                      widget.onChanged();
-                      _debouncedPreview();
-                    },
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextFormField(
-                    controller: _endCtrl,
-                    decoration: _inputDecoration(zh ? '结束时间' : 'End Time'),
-                    style: TextStyle(fontSize: 13, color: cs.onSurface, fontFamily: 'monospace'),
-                    onChanged: (v) {
-                      final parsed = _parseTime(v);
-                      if (parsed < 0) return; // 解析失败时忽略，保留上次的值
-                      final t = parsed.clamp(0.0, dur);
-                      p['end_time'] = t;
-                      if (t < ((p['start_time'] as num?)?.toDouble() ?? 0.0)) {
-                        p['start_time'] = t;
-                        _startCtrl.text = _formatTime(t);
-                      }
-                      setState(() {});
-                      widget.onChanged();
-                      _debouncedPreview();
-                    },
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            RangeSlider(
-              values: RangeValues(start, end),
-              min: 0,
-              max: dur > 0 ? dur : 1,
-              labels: RangeLabels(_formatTime(start), _formatTime(end)),
+          ),
+          const SizedBox(height: 12),
+          Row(children: [
+            Expanded(child: TextFormField(
+              controller: _startCtrl,
+              decoration: InputDecoration(labelText: zh ? '开始时间' : 'Start Time'),
+              style: TextStyle(fontSize: 13, color: cs.onSurface, fontFamily: 'monospace'),
               onChanged: (v) {
-                p['start_time'] = v.start;
-                p['end_time'] = v.end;
-                _startCtrl.text = _formatTime(v.start);
-                _endCtrl.text = _formatTime(v.end);
-                setState(() {});
-                widget.onChanged();
-                _debouncedPreview();
+                final parsed = _parseTime(v);
+                if (parsed < 0) return;
+                final t = parsed.clamp(0.0, dur);
+                p['start_time'] = t;
+                if (t > ((p['end_time'] as num?)?.toDouble() ?? dur)) { p['end_time'] = t; _endCtrl.text = _formatTime(t); }
+                setState(() {}); widget.onChanged(); _debouncedPreview();
               },
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '${zh ? "时长" : "Duration"}: ${_formatTime(end - start)}',
-              style: TextStyle(fontSize: 13, color: cs.outline),
-            ),
-          ],
-        ),
+            )),
+            const SizedBox(width: 12),
+            Expanded(child: TextFormField(
+              controller: _endCtrl,
+              decoration: InputDecoration(labelText: zh ? '结束时间' : 'End Time'),
+              style: TextStyle(fontSize: 13, color: cs.onSurface, fontFamily: 'monospace'),
+              onChanged: (v) {
+                final parsed = _parseTime(v);
+                if (parsed < 0) return;
+                final t = parsed.clamp(0.0, dur);
+                p['end_time'] = t;
+                if (t < ((p['start_time'] as num?)?.toDouble() ?? 0.0)) { p['start_time'] = t; _startCtrl.text = _formatTime(t); }
+                setState(() {}); widget.onChanged(); _debouncedPreview();
+              },
+            )),
+          ]),
+          const SizedBox(height: 12),
+          RangeSlider(
+            values: RangeValues(start, end),
+            min: 0, max: dur > 0 ? dur : 1,
+            labels: RangeLabels(_formatTime(start), _formatTime(end)),
+            onChanged: (v) {
+              p['start_time'] = v.start; p['end_time'] = v.end;
+              _startCtrl.text = _formatTime(v.start); _endCtrl.text = _formatTime(v.end);
+              setState(() {}); widget.onChanged(); _debouncedPreview();
+            },
+          ),
+          const SizedBox(height: 8),
+          Text('${zh ? "时长" : "Duration"}: ${_formatTime(end - start)}', style: TextStyle(fontSize: 13, color: cs.outline)),
+        ]),
       ),
     );
   }

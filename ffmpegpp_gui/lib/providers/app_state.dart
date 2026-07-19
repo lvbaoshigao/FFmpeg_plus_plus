@@ -1596,17 +1596,25 @@ class AppState extends ChangeNotifier {
   // ── MCP Server ──
   HttpServer? _mcpServer;
   bool get mcpRunning => _mcpServer != null;
+  String? mcpError;
 
   PipelineGraph? _currentPipelineGraph;
   void setCurrentPipeline(PipelineGraph g) { _currentPipelineGraph = g; }
   VoidCallback? mcpOnClearAll, mcpOnUndo, mcpOnRedo, mcpOnSave;
   void Function(String nodeId, Map<String, dynamic> params)? mcpOnModifyNode;
+  String Function(String type, double x, double y)? mcpOnAddNode;
+  void Function(String nodeId)? mcpOnDeleteNode;
+  bool Function(String fromId, String toId)? mcpOnConnect;
+  bool Function(String connId)? mcpOnDisconnect;
+  List<Map<String, dynamic>> Function()? mcpOnListNodes;
+  List<Map<String, dynamic>> Function()? mcpOnListConnections;
 
-  Future<void> startMcpServer() async {
-    if (_mcpServer != null) return;
+  Future<bool> startMcpServer() async {
+    if (_mcpServer != null) return true;
     try {
       final port = config.mcpPort;
       _mcpServer = await HttpServer.bind(InternetAddress.anyIPv4, port);
+      mcpError = null;
       addLog('[MCP] 服务已启动，端口: $port', category: 'info');
       _mcpServer!.listen((req) {
         _handleMcpRequest(req);
@@ -1618,10 +1626,14 @@ class AppState extends ChangeNotifier {
         notifyListeners();
       });
       notifyListeners();
+      return true;
     } catch (e) {
-      addLog('[MCP] 启动失败: $e', category: 'error');
+      final msg = e is SocketException ? '端口 ${config.mcpPort} 被占用' : '$e';
+      mcpError = msg;
+      addLog('[MCP] 启动失败: $msg', category: 'error');
       _mcpServer = null;
       notifyListeners();
+      return false;
     }
   }
 
@@ -1659,7 +1671,7 @@ class AppState extends ChangeNotifier {
             'result': {
               'protocolVersion': '2024-11-05',
               'capabilities': {'tools': {}, 'resources': {}},
-              'serverInfo': {'name': 'ffmpegpp', 'version': '4.13.33'},
+              'serverInfo': {'name': 'ffmpegpp', 'version': '4.13.47'},
             },
           }));
         case 'tools/list':
@@ -1667,7 +1679,7 @@ class AppState extends ChangeNotifier {
         case 'tools/call':
           final toolName = params['name'] as String? ?? '';
           final args = params['arguments'] as Map<String, dynamic>? ?? {};
-          final (result, isError) = _mcpCallTool(toolName, args);
+          final (result, isError) = await _mcpCallTool(toolName, args);
           req.response.write(jsonEncode({
             'jsonrpc': '2.0', 'id': id,
             'result': {'content': [{'type': 'text', 'text': result}], if (isError) 'isError': true},
@@ -1709,14 +1721,25 @@ class AppState extends ChangeNotifier {
     {'name': 'error_check', 'description': 'Check pipeline for logical errors', 'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'extract_audio', 'description': 'Extract audio from video. Params: extract_mode (full|clip), start_time (HH:MM:SS), end_time (HH:MM:SS), audio_codec (copy|aac|libmp3lame|libopus|libvorbis|flac|pcm_s16le), output_format (m4a|mp3|ogg|flac|wav)', 'inputSchema': {'type': 'object', 'properties': {'extract_mode': {'type': 'string', 'enum': ['full', 'clip']}, 'audio_codec': {'type': 'string'}, 'output_format': {'type': 'string'}, 'start_time': {'type': 'string'}, 'end_time': {'type': 'string'}}}},
     {'name': 'video_crop', 'description': 'Crop video region. Params: crop_mode (keep|remove), crop_x, crop_y, crop_w, crop_h (integers in pixels)', 'inputSchema': {'type': 'object', 'properties': {'crop_mode': {'type': 'string', 'enum': ['keep', 'remove']}, 'crop_x': {'type': 'integer'}, 'crop_y': {'type': 'integer'}, 'crop_w': {'type': 'integer'}, 'crop_h': {'type': 'integer'}}}},
+    {'name': 'add_node', 'description': 'Add a processing node to the pipeline canvas. Returns new node ID.', 'inputSchema': {'type': 'object', 'properties': {'type': {'type': 'string', 'description': 'Node type', 'enum': PipelineStepType.values.map((t) => t.name).toList()}, 'x': {'type': 'number', 'description': 'X position (default 200)'}, 'y': {'type': 'number', 'description': 'Y position (default 200)'}}, 'required': ['type']}},
+    {'name': 'delete_node', 'description': 'Delete a node by ID (also removes its connections)', 'inputSchema': {'type': 'object', 'properties': {'nodeId': {'type': 'string'}}, 'required': ['nodeId']}},
+    {'name': 'connect_nodes', 'description': 'Connect two nodes (from output to input)', 'inputSchema': {'type': 'object', 'properties': {'fromNodeId': {'type': 'string'}, 'toNodeId': {'type': 'string'}}, 'required': ['fromNodeId', 'toNodeId']}},
+    {'name': 'disconnect_nodes', 'description': 'Remove a connection by ID', 'inputSchema': {'type': 'object', 'properties': {'connectionId': {'type': 'string'}}, 'required': ['connectionId']}},
+    {'name': 'list_nodes', 'description': 'List all nodes in the current pipeline with their IDs, types, params and positions', 'inputSchema': {'type': 'object', 'properties': {}}},
+    {'name': 'list_connections', 'description': 'List all connections in the current pipeline', 'inputSchema': {'type': 'object', 'properties': {}}},
+    {'name': 'get_node_types', 'description': 'List all available node types', 'inputSchema': {'type': 'object', 'properties': {}}},
+    {'name': 'probe_video', 'description': 'Probe a video file and return its metadata (codec, resolution, duration, etc.)', 'inputSchema': {'type': 'object', 'properties': {'filepath': {'type': 'string'}}, 'required': ['filepath']}},
+    {'name': 'list_tasks', 'description': 'List all tasks with their status, progress and details', 'inputSchema': {'type': 'object', 'properties': {}}},
+    {'name': 'cancel_tasks', 'description': 'Cancel all running tasks', 'inputSchema': {'type': 'object', 'properties': {}}},
   ];
 
   List<Map<String, dynamic>> _mcpResourcesList() => [
     {'uri': 'pipeline://current', 'name': 'Current Pipeline', 'mimeType': 'application/json'},
     {'uri': 'videos://loaded', 'name': 'Loaded Videos', 'mimeType': 'application/json'},
+    {'uri': 'tasks://all', 'name': 'Task Queue', 'mimeType': 'application/json'},
   ];
 
-  (String, bool) _mcpCallTool(String name, Map<String, dynamic> args) {
+  Future<(String, bool)> _mcpCallTool(String name, Map<String, dynamic> args) async {
     switch (name) {
       case 'clear_all':
         if (mcpOnClearAll == null) return ('Error: No editor open — open a pipeline editor first', true);
@@ -1767,6 +1790,61 @@ class AppState extends ChangeNotifier {
           if (!connectedIds.contains(n.id) && g.nodes.length > 1) errors.add('Disconnected: ${n.type.name} (${n.id.substring(0, 8)})');
         }
         return (errors.isEmpty ? 'No errors found' : errors.join('; '), false);
+      case 'add_node':
+        if (mcpOnAddNode == null) return ('Error: No editor open', true);
+        final typeName = args['type'] as String? ?? '';
+        final x = (args['x'] as num?)?.toDouble() ?? 200;
+        final y = (args['y'] as num?)?.toDouble() ?? 200;
+        try {
+          final nodeId = mcpOnAddNode!(typeName, x, y);
+          return ('Node added: $nodeId (type: $typeName)', false);
+        } catch (e) { return ('Error: $e', true); }
+      case 'delete_node':
+        if (mcpOnDeleteNode == null) return ('Error: No editor open', true);
+        final nodeId = args['nodeId'] as String? ?? '';
+        try { mcpOnDeleteNode!(nodeId); return ('Node $nodeId deleted', false); }
+        catch (e) { return ('Error: $e', true); }
+      case 'connect_nodes':
+        if (mcpOnConnect == null) return ('Error: No editor open', true);
+        final fromId = args['fromNodeId'] as String? ?? '';
+        final toId = args['toNodeId'] as String? ?? '';
+        final ok = mcpOnConnect!(fromId, toId);
+        return ok ? ('Connected $fromId → $toId', false) : ('Error: Connection failed (invalid nodes or already connected)', true);
+      case 'disconnect_nodes':
+        if (mcpOnDisconnect == null) return ('Error: No editor open', true);
+        final connId = args['connectionId'] as String? ?? '';
+        final ok = mcpOnDisconnect!(connId);
+        return ok ? ('Connection $connId removed', false) : ('Error: Connection not found', true);
+      case 'list_nodes':
+        if (mcpOnListNodes == null) return ('Error: No editor open', true);
+        return (jsonEncode(mcpOnListNodes!()), false);
+      case 'list_connections':
+        if (mcpOnListConnections == null) return ('Error: No editor open', true);
+        return (jsonEncode(mcpOnListConnections!()), false);
+      case 'get_node_types':
+        final types = PipelineStepType.values.map((t) => {'name': t.name, 'label': PipelineStep(id: '', type: t).labelEn}).toList();
+        return (jsonEncode(types), false);
+      case 'probe_video':
+        final path = args['filepath'] as String? ?? '';
+        if (path.isEmpty) return ('Error: filepath required', true);
+        try {
+          final resp = await backend.probe(path);
+          if (resp['success'] == true) {
+            return (jsonEncode(resp['data'] ?? resp), false);
+          }
+          return ('Error: ${resp['error'] ?? 'probe failed'}', true);
+        } catch (e) { return ('Error: $e', true); }
+      case 'list_tasks':
+        final taskList = tasks.map((t) => {
+          'id': t.id, 'filename': t.filename, 'status': t.status.name,
+          'progress': t.progress.toStringAsFixed(1),
+          'elapsed': t.elapsed, 'remaining': t.remaining,
+          'speed': t.speed, if (t.error != null) 'error': t.error,
+        }).toList();
+        return (jsonEncode(taskList), false);
+      case 'cancel_tasks':
+        cancelProcessing();
+        return ('All running tasks cancelled', false);
       default: return ('Unknown tool: $name', true);
     }
   }
@@ -1777,6 +1855,8 @@ class AppState extends ChangeNotifier {
         return jsonEncode(_currentPipelineGraph?.toJson() ?? {'nodes': [], 'connections': []});
       case 'videos://loaded':
         return jsonEncode(videos.map((v) => {'id': v.id, 'filename': v.filename, 'format': v.format, 'size_mb': v.sizeMb, 'duration': v.duration, 'codec': v.codec, 'resolution': v.resolution}).toList());
+      case 'tasks://all':
+        return jsonEncode(tasks.map((t) => {'id': t.id, 'filename': t.filename, 'status': t.status.name, 'progress': t.progress, 'elapsed': t.elapsed, 'remaining': t.remaining}).toList());
       default: return '{"error": "Unknown resource: $uri"}';
     }
   }
@@ -1786,6 +1866,7 @@ class AppState extends ChangeNotifier {
     if (enable) {
       await startMcpServer();
     } else {
+      mcpError = null;
       await stopMcpServer();
     }
   }

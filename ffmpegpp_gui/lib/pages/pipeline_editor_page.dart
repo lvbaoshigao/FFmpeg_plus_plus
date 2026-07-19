@@ -200,6 +200,38 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       });
       _saveGraph();
     };
+    _appState.mcpOnAddNode = (typeName, x, y) {
+      final type = PipelineStepType.values.firstWhere((t) => t.name == typeName, orElse: () => throw ArgumentError('Unknown type: $typeName'));
+      final node = PipelineNode(id: _uuid.v4(), type: type, x: x, y: y);
+      _pushUndo();
+      setState(() => _nodes.add(node));
+      _saveGraph();
+      return node.id;
+    };
+    _appState.mcpOnDeleteNode = (nodeId) {
+      if (!_nodes.any((n) => n.id == nodeId)) throw ArgumentError('Node not found: $nodeId');
+      _deleteNode(nodeId);
+      _saveGraph();
+    };
+    _appState.mcpOnConnect = (fromId, toId) {
+      if (fromId == toId) return false;
+      if (!_nodes.any((n) => n.id == fromId) || !_nodes.any((n) => n.id == toId)) return false;
+      if (_connections.any((c) => c.fromNodeId == fromId && c.toNodeId == toId)) return false;
+      _pushUndo();
+      setState(() => _connections.add(PipelineConnection(id: _uuid.v4(), fromNodeId: fromId, toNodeId: toId)));
+      _saveGraph();
+      return true;
+    };
+    _appState.mcpOnDisconnect = (connId) {
+      final idx = _connections.indexWhere((c) => c.id == connId);
+      if (idx < 0) return false;
+      _pushUndo();
+      setState(() => _connections.removeAt(idx));
+      _saveGraph();
+      return true;
+    };
+    _appState.mcpOnListNodes = () => _nodes.map((n) => n.toJson()).toList();
+    _appState.mcpOnListConnections = () => _connections.map((c) => c.toJson()).toList();
   }
 
   @override
@@ -212,6 +244,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     _appState.mcpOnRedo = null;
     _appState.mcpOnSave = null;
     _appState.mcpOnModifyNode = null;
+    _appState.mcpOnAddNode = null;
+    _appState.mcpOnDeleteNode = null;
+    _appState.mcpOnConnect = null;
+    _appState.mcpOnDisconnect = null;
+    _appState.mcpOnListNodes = null;
+    _appState.mcpOnListConnections = null;
     super.dispose();
   }
 
@@ -1248,8 +1286,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           ),
           if (mode == 'select') ...[
             const SizedBox(height: 8),
-            TextField(
-              controller: TextEditingController(text: selectedIndices),
+            TextFormField(
+              key: ValueKey('${node.id}_selected_indices'),
+              initialValue: selectedIndices,
               decoration: InputDecoration(
                 hintText: isZh ? '输入编号，如: 1,3,5' : 'e.g. 1,3,5',
                 hintStyle: TextStyle(color: cs.outline, fontSize: 11),
@@ -1280,8 +1319,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(isZh ? '自定义' : 'Custom', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cs.outline)),
           const SizedBox(height: 6),
-          TextField(
-            controller: TextEditingController(text: nodeName),
+          TextFormField(
+            key: ValueKey('${node.id}_node_name'),
+            initialValue: nodeName,
             decoration: InputDecoration(
               labelText: isZh ? '节点名称' : 'Node Name',
               labelStyle: TextStyle(fontSize: 11, color: cs.outline),
@@ -1502,6 +1542,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   }
 
   Widget _buildCanvas(ColorScheme scheme, AppStrings s) {
+    final aiEnabled = context.read<AppState>().config.aiEnabled;
 
     final canvas = Listener(
       onPointerDown: (e) {
@@ -1822,10 +1863,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                 )),
               ),
             Positioned(
-              right: 10, bottom: context.read<AppState>().config.aiEnabled ? 60 : 10,
+              right: 10, bottom: aiEnabled ? 60 : 10,
               child: _buildCanvasControls(scheme, s),
             ),
-            if (context.read<AppState>().config.aiEnabled)
+            if (aiEnabled)
               Positioned(
                 right: 10, bottom: 10,
                 child: _AiPanel(
@@ -1899,6 +1940,36 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                   onUndo: _undo,
                   onRedo: _redo,
                   onSave: _saveGraph,
+                  onAddNode: (type, x, y) {
+                    final stepType = PipelineStepType.values.firstWhere((t) => t.name == type, orElse: () => throw ArgumentError('Unknown type: $type'));
+                    final node = PipelineNode(id: _uuid.v4(), type: stepType, x: x, y: y);
+                    _pushUndo();
+                    setState(() => _nodes.add(node));
+                    _saveGraph();
+                    return node.id;
+                  },
+                  onDeleteNode: (nodeId) {
+                    _deleteNode(nodeId);
+                    _saveGraph();
+                  },
+                  onConnectNodes: (fromId, toId) {
+                    if (fromId == toId) return false;
+                    if (!_nodes.any((n) => n.id == fromId) || !_nodes.any((n) => n.id == toId)) return false;
+                    if (_connections.any((c) => c.fromNodeId == fromId && c.toNodeId == toId)) return false;
+                    _pushUndo();
+                    setState(() => _connections.add(PipelineConnection(id: _uuid.v4(), fromNodeId: fromId, toNodeId: toId)));
+                    _saveGraph();
+                    return true;
+                  },
+                  onDisconnectNodes: (connId) {
+                    final idx = _connections.indexWhere((c) => c.id == connId);
+                    if (idx < 0) return false;
+                    _pushUndo();
+                    setState(() => _connections.removeAt(idx));
+                    _saveGraph();
+                    return true;
+                  },
+                  onCancelTasks: () => context.read<AppState>().cancelProcessing(),
                 ),
               ),
           ]),
@@ -2817,7 +2888,12 @@ class _AiPanel extends StatefulWidget {
   final VoidCallback onUndo;
   final VoidCallback onRedo;
   final VoidCallback onSave;
-  const _AiPanel({required this.strings, required this.existingNodes, required this.existingConnections, required this.onApplyGraph, required this.onMergeGraph, required this.onModifyNodeParams, required this.onClearAll, required this.onUndo, required this.onRedo, required this.onSave});
+  final String Function(String type, double x, double y) onAddNode;
+  final void Function(String nodeId) onDeleteNode;
+  final bool Function(String fromId, String toId) onConnectNodes;
+  final bool Function(String connId) onDisconnectNodes;
+  final VoidCallback onCancelTasks;
+  const _AiPanel({required this.strings, required this.existingNodes, required this.existingConnections, required this.onApplyGraph, required this.onMergeGraph, required this.onModifyNodeParams, required this.onClearAll, required this.onUndo, required this.onRedo, required this.onSave, required this.onAddNode, required this.onDeleteNode, required this.onConnectNodes, required this.onDisconnectNodes, required this.onCancelTasks});
   @override
   State<_AiPanel> createState() => _AiPanelState();
 }
@@ -2834,102 +2910,44 @@ class _AiPanelState extends State<_AiPanel> {
 
   static const _uuid = Uuid();
 
-  static const _systemPrompt = '''You are an AI assistant for FFmpeg++ node editor.
-When the user describes media processing they want, respond with a JSON pipeline graph.
+  static const _systemPrompt = '''You are an AI assistant for FFmpeg++ node editor. When the user describes media processing, respond with a brief explanation then a JSON pipeline graph.
 
-Available node types (PipelineStepType):
-- start: Input source node (always first, no params needed)
-- avProcess: Video/audio encoding settings
-    video_codec: libx264|libx265|libvpx-vp9|libaom-av1|libsvtav1|copy
-    gpu: CPU|NVIDIA|AMD|Intel
-    preset: ultrafast|superfast|veryfast|faster|fast|medium|slow|slower|veryslow
-    rate_mode: keep|crf|bitrate (MUST set to "crf" or "bitrate" for crf/video_bitrate to take effect)
-    crf: 0-51 (only used when rate_mode="crf")
-    video_bitrate: integer kbps (only used when rate_mode="bitrate")
-    resolution: original|2160p|1080p|720p|480p|360p|custom
-    resolution_w, resolution_h: integers (only when resolution="custom")
-    fps: keep|24|25|30|48|50|60|120|custom
-    fps_value: number (only when fps="custom")
-    audio_codec: aac|libmp3lame|libopus|libvorbis|flac|pcm_s16le|ac3|eac3|copy
-    audio_bitrate: integer kbps
-    audio_channels: keep|1|2|6|8
-    pix_fmt: auto|yuv420p|yuv422p|yuv444p|yuv420p10le|yuv422p10le|nv12|p010le|rgb24
-- subtitle: Burn subtitles
-    source: external|embedded
-    subtitle_file: path (when source=external)
-    subtitle_index: integer (when source=embedded)
-    font_name, font_size, font_color, outline_width, outline_color
-- clip: Trim/cut video (start_time: seconds, end_time: seconds)
-- frame: Extract frames
-    extract_mode: single|range|all
-    time: seconds (when single)
-    range_start, range_end: seconds (when range)
-    fps_rate: number (frames per second for range/all)
-    output_format: png|jpg|bmp|webp
-- speed: Change playback speed (speed: 0.25-4.0, or custom_speed: true + custom_speed_value: number for >4x)
-- imageConvert: Convert image format (output_format: png|jpg|webp|bmp|tiff, quality: 0-100)
-- audioConvert: Convert audio format (audio_codec: aac|libmp3lame|libopus|libvorbis|flac, output_format: m4a|mp3|ogg|flac|wav)
-- audioQuality: Audio quality settings (bitrate_mode: keep|custom, audio_bitrate: integer, sample_rate: keep|22050|44100|48000|96000)
-- audioSpeed: Audio speed change (atempo: 0.5-2.0)
-- audioVolume: Audio volume adjust (volume_db: -30.0 to +30.0 dB)
-- audioCompressor: Audio compressor (threshold, ratio, attack, release, makeup, knee)
-- audioMetadata: Edit audio metadata (title, artist, album, cover_path, lyrics_path)
-- extractAudio: Extract audio from video (extract_mode: full|clip, start_time: HH:MM:SS, end_time: HH:MM:SS, audio_codec: copy|aac|libmp3lame|libopus|libvorbis|flac|pcm_s16le, output_format: m4a|mp3|ogg|flac|wav)
-- concatMedia: Concatenate media files (mode: copy|reencode, order_mode: index|name)
-- imageToVideo: Image sequence to video (framerate: number, output_format: mp4|avi|mkv, video_codec: h264|h265)
-- imageCrop: Crop image (crop_x, crop_y, crop_w, crop_h: integers)
-- videoCrop: Crop video region (crop_mode: keep|remove, crop_x, crop_y, crop_w, crop_h: integers)
-- imageRotate: Rotate image (angle: degrees)
-- imageScale: Scale image (scale_mode: factor, scale_factor: number)
-- imageBrightness: Adjust brightness (brightness: -1.0 to 1.0)
-- imageNoise: Add noise to image (noise_strength: integer, noise_type: u|g)
-- imageSharpen: Sharpen image (sharpen_strength: 0.0-5.0)
-- imageDenoise: Denoise image (denoise_method: nlmeans|hqdn3d, denoise_strength: number)
-- imageChannelExtract: Extract color channel (channel: r|g|b, extract_method: colorize|grayscale)
-- output: Output node (always last)
-    format: keep|mp4|mkv|avi|mov|webm|flv|ts|m4a|mp3|ogg|flac|wav|png|jpg|webp|bmp
-    naming_mode: keep|suffix|custom
-    naming_value: string (suffix or custom name)
-    output_dir: path
+## Node Types
 
-Respond with a brief explanation, then a JSON block in this exact format:
+**Control:** start (source, always first) | output (always last: format, naming_mode, naming_value, output_dir)
+
+**Video:** avProcess (video_codec, gpu, preset, rate_mode, crf, video_bitrate, resolution, fps, audio_codec, audio_bitrate, audio_channels, pix_fmt) | subtitle (source, subtitle_file, subtitle_index, font_name/size/color, outline_width/color) | clip (start_time, end_time in seconds) | speed (speed: 0.25-4.0) | videoCrop (crop_mode: keep|remove, crop_x/y/w/h)
+
+**Audio:** audioConvert (audio_codec, output_format) | audioQuality (bitrate_mode, audio_bitrate, sample_rate) | audioSpeed (atempo: 0.5-2.0) | audioVolume (volume_db: -30 to +30) | audioCompressor (threshold, ratio, attack, release, makeup, knee) | audioMetadata (title, artist, album, cover_path, lyrics_path) | extractAudio (extract_mode, start_time, end_time, audio_codec, output_format)
+
+**Image:** imageConvert (output_format, quality) | imageCrop (crop_x/y/w/h) | imageRotate (angle) | imageScale (scale_mode, scale_factor) | imageBrightness (brightness: -1 to 1) | imageNoise (noise_strength, noise_type) | imageSharpen (sharpen_strength: 0-5) | imageDenoise (denoise_method, denoise_strength) | imageChannelExtract (channel: r|g|b, extract_method)
+
+**Composite:** concatMedia (mode: copy|reencode, order_mode) | imageToVideo (framerate, output_format, video_codec) | frame (extract_mode: single|range|all, time, range_start/end, fps_rate, output_format)
+
+## JSON Format
 ```json
-{
-  "nodes": [
-    {"id": "n1", "type": "start", "x": 2900, "y": 3000, "params": {}},
-    {"id": "n2", "type": "avProcess", "x": 3150, "y": 3000, "params": {"video_codec": "libx264", "rate_mode": "crf", "crf": 23}},
-    {"id": "n3", "type": "output", "x": 3400, "y": 3000, "params": {}}
-  ],
-  "connections": [
-    {"from": "n1", "to": "n2"},
-    {"from": "n2", "to": "n3"}
-  ]
-}
+{"nodes":[{"id":"n1","type":"start","x":2900,"y":3000,"params":{}},{"id":"n2","type":"avProcess","x":3150,"y":3000,"params":{"video_codec":"libx264","rate_mode":"crf","crf":23}},{"id":"n3","type":"output","x":3400,"y":3000,"params":{}}],"connections":[{"from":"n1","to":"n2"},{"from":"n2","to":"n3"}]}
 ```
+Rules: always start→...→output; space nodes ~250px apart from x=2900,y=3000; parallel branches offset y by ~120px; simplest pipeline; omit default params.
 
-Rules:
-- Always start with a "start" node and end with an "output" node
-- Space nodes horizontally ~250px apart, starting around x=2900, y=3000
-- For parallel branches, offset y by ~120px
-- Use the simplest pipeline that achieves the goal
-- Only include relevant params, omit defaults
+## Tools (include exact marker in response)
+[TOOL_CALL:clear_all] [TOOL_CALL:undo] [TOOL_CALL:redo] [TOOL_CALL:save]
+[TOOL_CALL:error_check] — check pipeline for logical errors
+[TOOL_CALL:ask_user|question|opt1,opt2,opt3] — ask user with clickable options
+[TOOL_CALL:list_directory|path] — list files (read-only, max 50)
+[TOOL_CALL:read_file_info|path] — file metadata (read-only)
+[TOOL_CALL:probe_video|path] — probe media file metadata
+[TOOL_CALL:modify_node|nodeId|key=val,key2=val2] — modify node params
+[TOOL_CALL:add_node|type|x|y] — add node, returns ID
+[TOOL_CALL:delete_node|nodeId] — delete node + connections
+[TOOL_CALL:connect_nodes|fromId|toId] — connect two nodes
+[TOOL_CALL:disconnect_nodes|connId] — remove connection
+[TOOL_CALL:list_nodes] [TOOL_CALL:list_connections] [TOOL_CALL:get_node_types]
+[TOOL_CALL:list_tasks] — task queue status
+[TOOL_CALL:cancel_tasks] — cancel running tasks
 
-You also have these tools you can invoke by including the exact marker in your response:
-- [TOOL_CALL:clear_all] — Clear all nodes, connections, and logic blocks from the canvas
-- [TOOL_CALL:undo] — Undo the last action on the canvas
-- [TOOL_CALL:redo] — Redo the last undone action
-- [TOOL_CALL:save] — Save the current pipeline (only if already saved before, no Save As)
-- [TOOL_CALL:error_check] — Check the current pipeline for logical errors (missing start/output, disconnected nodes, etc.)
-- [TOOL_CALL:ask_user|Your question here|option1,option2,option3] — Ask the user a question with clickable options
-- [TOOL_CALL:list_directory|/path/to/dir] — List files in a directory (read-only, max 50 entries)
-- [TOOL_CALL:read_file_info|/path/to/file] — Get file metadata: size, modified time, type (read-only)
-- [TOOL_CALL:modify_node|nodeId|paramKey=value,paramKey2=value2] — Modify params of an existing canvas node
-
-Graph generation modes:
-- Default (Replace): your JSON graph replaces the entire canvas
-- Include [MODE:modify] in your response to merge with existing canvas instead of replacing
-
-When the user asks to clear/reset the canvas, undo, redo, or save, include the appropriate marker.
+## Modes
+Default: JSON graph replaces entire canvas. Include [MODE:modify] to merge with existing canvas instead.
 The current canvas state is provided below the conversation automatically.''';
 
   void _handleToolCalls(String content) {
@@ -2959,6 +2977,47 @@ The current canvas state is provided below the conversation automatically.''';
             }
             widget.onModifyNodeParams(parts[1], params);
           }
+        case 'add_node':
+          if (cfg.aiWriteAccess && parts.length >= 2) {
+            try {
+              final x = parts.length >= 3 ? double.tryParse(parts[2]) ?? 200 : 200.0;
+              final y = parts.length >= 4 ? double.tryParse(parts[3]) ?? 200 : 200.0;
+              final nodeId = widget.onAddNode(parts[1], x, y);
+              _addToolResult('add_node', 'Created node $nodeId (type: ${parts[1]})');
+            } catch (e) { _addToolResult('add_node', 'Error: $e'); }
+          }
+        case 'delete_node':
+          if (cfg.aiWriteAccess && parts.length >= 2) {
+            try { widget.onDeleteNode(parts[1]); _addToolResult('delete_node', 'Deleted node ${parts[1]}'); }
+            catch (e) { _addToolResult('delete_node', 'Error: $e'); }
+          }
+        case 'connect_nodes':
+          if (cfg.aiWriteAccess && parts.length >= 3) {
+            final ok = widget.onConnectNodes(parts[1], parts[2]);
+            _addToolResult('connect_nodes', ok ? 'Connected ${parts[1]} → ${parts[2]}' : 'Failed to connect');
+          }
+        case 'disconnect_nodes':
+          if (cfg.aiWriteAccess && parts.length >= 2) {
+            final ok = widget.onDisconnectNodes(parts[1]);
+            _addToolResult('disconnect_nodes', ok ? 'Disconnected ${parts[1]}' : 'Connection not found');
+          }
+        case 'list_nodes':
+          final nodesJson = widget.existingNodes.map((n) => n.toJson()).toList();
+          _addToolResult('list_nodes', jsonEncode(nodesJson));
+        case 'list_connections':
+          final connsJson = widget.existingConnections.map((c) => c.toJson()).toList();
+          _addToolResult('list_connections', jsonEncode(connsJson));
+        case 'get_node_types':
+          final types = PipelineStepType.values.map((t) => t.name).toList();
+          _addToolResult('get_node_types', types.join(', '));
+        case 'list_tasks':
+          final tasks = context.read<AppState>().tasks;
+          final taskList = tasks.map((t) => {'id': t.id, 'filename': t.filename, 'status': t.status.name, 'progress': '${t.progress.toStringAsFixed(1)}%'}).toList();
+          _addToolResult('list_tasks', jsonEncode(taskList));
+        case 'cancel_tasks':
+          if (cfg.aiAutoExecute) { widget.onCancelTasks(); _addToolResult('cancel_tasks', 'All tasks cancelled'); }
+        case 'probe_video':
+          if (cfg.aiReadAccess && parts.length >= 2) _executeProbeVideo(parts[1]);
       }
     }
   }
@@ -3008,6 +3067,17 @@ The current canvas state is provided below the conversation automatically.''';
       final stat = file.statSync();
       _addToolResult('read_file_info', 'Path: $path\nSize: ${(stat.size / (1024 * 1024)).toStringAsFixed(2)} MB\nModified: ${stat.modified}\nType: ${path.split('.').last}');
     } catch (e) { _addToolResult('read_file_info', 'Error: $e'); }
+  }
+
+  Future<void> _executeProbeVideo(String path) async {
+    try {
+      final resp = await context.read<AppState>().backend.probe(path);
+      if (resp['success'] == true) {
+        _addToolResult('probe_video', jsonEncode(resp['data'] ?? resp));
+      } else {
+        _addToolResult('probe_video', 'Error: ${resp['error'] ?? 'probe failed'}');
+      }
+    } catch (e) { _addToolResult('probe_video', 'Error: $e'); }
   }
 
   void _showAskUser(String question, List<String> options) {
@@ -3073,7 +3143,9 @@ The current canvas state is provided below the conversation automatically.''';
         'nodes': widget.existingNodes.map((n) => n.toJson()).toList(),
         'connections': widget.existingConnections.map((c) => c.toJson()).toList(),
       });
-      final fullPrompt = '$_systemPrompt\n\nCurrent canvas state:\n$canvasJson';
+      final customPrompt = cfg.aiSystemPrompt;
+      final basePrompt = customPrompt.isNotEmpty ? '$customPrompt\n\n$_systemPrompt' : _systemPrompt;
+      final fullPrompt = '$basePrompt\n\nCurrent canvas state:\n$canvasJson';
 
       final headers = <String, String>{'Content-Type': 'application/json'};
       Map<String, dynamic> reqBody;
@@ -3081,13 +3153,25 @@ The current canvas state is provided below the conversation automatically.''';
       if (isAnthropic) {
         headers['x-api-key'] = cfg.aiApiKey;
         headers['anthropic-version'] = '2023-06-01';
-        final userMessages = _messages.map((m) => {'role': m.role, 'content': m.content}).toList();
+        final userMessages = _messages
+            .where((m) => m.role == 'user' || m.role == 'assistant')
+            .map((m) => {'role': m.role, 'content': m.content})
+            .toList();
+        // Ensure alternating user/assistant for Anthropic API
+        final mergedMessages = <Map<String, dynamic>>[];
+        for (final msg in userMessages) {
+          if (mergedMessages.isNotEmpty && mergedMessages.last['role'] == msg['role']) {
+            mergedMessages.last['content'] = '${mergedMessages.last['content']}\n${msg['content']}';
+          } else {
+            mergedMessages.add(Map.of(msg));
+          }
+        }
         reqBody = {
           'model': cfg.aiModel,
           'system': fullPrompt,
-          'messages': userMessages,
+          'messages': mergedMessages,
           'temperature': 0.3,
-          'max_tokens': 2000,
+          'max_tokens': 4096,
           'stream': true,
         };
       } else {
@@ -3096,7 +3180,7 @@ The current canvas state is provided below the conversation automatically.''';
           {'role': 'system', 'content': fullPrompt},
           ..._messages.map((m) => {'role': m.role, 'content': m.content}),
         ];
-        reqBody = {'model': cfg.aiModel, 'messages': apiMessages, 'temperature': 0.3, 'max_tokens': 2000, 'stream': true, 'stream_options': {'include_usage': true}};
+        reqBody = {'model': cfg.aiModel, 'messages': apiMessages, 'temperature': 0.3, 'max_tokens': 4096, 'stream': true, 'stream_options': {'include_usage': true}};
       }
 
       final request = http.Request('POST', uri);

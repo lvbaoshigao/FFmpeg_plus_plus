@@ -36,11 +36,6 @@ class _AudioQualityStepEditorState extends State<AudioQualityStepEditor> {
 
   void _update(String key, dynamic value) { setState(() => p[key] = value); widget.onChanged(); }
 
-  InputDecoration _dec(String label) => InputDecoration(
-    labelText: label, isDense: true,
-    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-  );
 
   @override
   Widget build(BuildContext context) {
@@ -59,7 +54,7 @@ class _AudioQualityStepEditorState extends State<AudioQualityStepEditor> {
           borderRadius: BorderRadius.circular(12),
           value: _bitratePresets.contains(bitrateMode) ? bitrateMode : 'keep',
           isExpanded: true,
-          decoration: _dec(zh ? '码率' : 'Bitrate'),
+          decoration: InputDecoration(labelText: zh ? '码率' : 'Bitrate'),
           dropdownColor: cs.surface,
           style: TextStyle(fontSize: 13, color: cs.onSurface),
           items: List.generate(_bitratePresets.length, (i) => DropdownMenuItem(
@@ -77,7 +72,7 @@ class _AudioQualityStepEditorState extends State<AudioQualityStepEditor> {
           const SizedBox(height: 12),
           TextField(
             controller: _customBitrateCtrl,
-            decoration: _dec(zh ? '自定义码率 (kbps)' : 'Custom Bitrate (kbps)'),
+            decoration: InputDecoration(labelText: zh ? '自定义码率 (kbps)' : 'Custom Bitrate (kbps)'),
             keyboardType: TextInputType.number,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             onChanged: (v) { final bv = int.tryParse(v); if (bv != null && bv > 0) _update('audio_bitrate', bv); },
@@ -89,7 +84,7 @@ class _AudioQualityStepEditorState extends State<AudioQualityStepEditor> {
           borderRadius: BorderRadius.circular(12),
           value: _sampleRates.contains(sr) ? sr : _sampleRates.first,
           isExpanded: true,
-          decoration: _dec(zh ? '采样率' : 'Sample Rate'),
+          decoration: InputDecoration(labelText: zh ? '采样率' : 'Sample Rate'),
           dropdownColor: cs.surface,
           style: TextStyle(fontSize: 13, color: cs.onSurface),
           items: List.generate(_sampleRates.length, (i) => DropdownMenuItem(

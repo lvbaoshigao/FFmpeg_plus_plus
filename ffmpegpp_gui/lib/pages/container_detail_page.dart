@@ -8,6 +8,7 @@ import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import 'pipeline_editor_page.dart';
+import '../app.dart';
 
 class ContainerDetailPage extends StatefulWidget {
   final String containerId;
@@ -238,8 +239,8 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
     for (final f in files) {
       typeCounts[f.fileMediaType] = (typeCounts[f.fileMediaType] ?? 0) + 1;
     }
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => PipelineEditorPage(
+    Navigator.of(context).push(smoothRoute(
+      PipelineEditorPage(
         video: firstParsed,
         initialGraph: container.pipelineGraph,
         containerInfo: (name: container.name, fileCount: container.fileCount, typeCounts: typeCounts, fileIds: files.map((f) => f.id).toList()),
