@@ -1550,6 +1550,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   bool _isCtrlPressed() {
     final keys = HardwareKeyboard.instance.logicalKeysPressed;
+    if (Platform.isMacOS) {
+      // macOS 惯例用 Cmd（meta）而不是 Ctrl
+      return keys.contains(LogicalKeyboardKey.metaLeft) || keys.contains(LogicalKeyboardKey.metaRight);
+    }
     return keys.contains(LogicalKeyboardKey.controlLeft) || keys.contains(LogicalKeyboardKey.controlRight);
   }
 

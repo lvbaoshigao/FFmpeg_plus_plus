@@ -177,6 +177,11 @@ class FfmpegInstaller {
         }
         final content = file.content as List<int>;
         await File(destPath).writeAsBytes(content);
+        // POSIX 平台（macOS/Linux）：提取的二进制需要可执行权限，
+        // 否则运行 ffmpeg -version 会 Permission denied。
+        if (!Platform.isWindows) {
+          await Process.run('chmod', ['+x', destPath]);
+        }
         // 提取后验证：文件大小应大于 1MB（合理的 ffmpeg 二进制下限）
         final extractedSize = content.length;
         if (extractedSize < 1024 * 1024) {

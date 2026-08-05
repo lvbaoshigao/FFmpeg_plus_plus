@@ -126,8 +126,43 @@ class FontPicker extends StatelessWidget {
           }
         }
       } catch (_) {}
+    } else if (Platform.isMacOS) {
+      // macOS 没有 fc-list，用 system_profiler 枚举字体族
+      try {
+        final result = await Process.run('system_profiler', ['SPFontsDataType']);
+        if (result.exitCode == 0) {
+          final families = RegExp(r'Family:\s+(.+)')
+              .allMatches(result.stdout.toString())
+              .map((m) => m.group(1)!.trim())
+              .where((s) => s.isNotEmpty);
+          for (final family in families) {
+            if (!builtinFamilies.contains(family)) {
+              builtinFamilies.add(family);
+              merged.add((family, family));
+            }
+          }
+        }
+      } catch (_) {}
+      // 兜底：扫描系统字体目录
+      try {
+        for (final dirPath in ['/System/Library/Fonts', '/Library/Fonts']) {
+          final dir = Directory(dirPath);
+          if (!dir.existsSync()) continue;
+          await for (final f in dir.list(recursive: true)) {
+            if (f is! File) continue;
+            if (!f.path.endsWith('.ttf') && !f.path.endsWith('.otf') && !f.path.endsWith('.ttc')) continue;
+            final name = f.path.split('/').last
+                .replaceAll(RegExp(r'\.[^.]+$'), '')
+                .replaceAll(RegExp(r'\s+'), ' ');
+            if (name.isNotEmpty && !builtinFamilies.contains(name)) {
+              builtinFamilies.add(name);
+              merged.add((name, name));
+            }
+          }
+        }
+      } catch (_) {}
     } else {
-      // Linux / macOS: 使用 fc-list 枚举字体
+      // Linux: 使用 fc-list 枚举字体
       try {
         final result = await Process.run('fc-list', [':lang=zh', 'family']);
         if (result.exitCode == 0) {
