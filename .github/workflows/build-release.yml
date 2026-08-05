@@ -276,14 +276,13 @@ jobs:
         run: |
           cd ffmpegpp_gui
           flutter pub get
-          flutter build macos --release
+          flutter build macos --release --universal
 
       - name: Assemble .app bundle
         run: |
           APP="ffmpegpp_gui/build/macos/Build/Products/Release/ffmpegpp_gui.app"
-          cp server_cpp/build_macos/libffmpegpp.dylib "$APP/Contents/Frameworks/libffmpegpp.dylib"
-          # Fix rpath so the app can find the dylib
-          install_name_tool -add_rpath @executable_path/../Frameworks "$APP/Contents/MacOS/ffmpegpp_gui" 2>/dev/null || true
+          # 复制到 Contents/MacOS（app 启动时在可执行文件目录查找 libffmpegpp.dylib）
+          cp server_cpp/build_macos/libffmpegpp.dylib "$APP/Contents/MacOS/libffmpegpp.dylib"
 
       - name: Create DMG
         run: |
