@@ -276,7 +276,8 @@ jobs:
         run: |
           cd ffmpegpp_gui
           flutter pub get
-          flutter build macos --release --universal
+          # 从 Flutter 3.13 起 macos 默认即为 universal（x64+arm64）构建，--universal 参数已移除
+          flutter build macos --release
 
       - name: Assemble .app bundle
         run: |
