@@ -49,7 +49,7 @@ class _ImageBrightnessStepEditorState extends State<ImageBrightnessStepEditor> {
 
         DropdownButtonFormField<String>(
           borderRadius: BorderRadius.circular(12),
-          value: mode,
+          initialValue: mode,
           isExpanded: true,
           decoration: InputDecoration(
             labelText: zh ? '调节模式' : 'Mode', isDense: true,

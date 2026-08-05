@@ -185,7 +185,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     _genThumb();
     _transformCtrl.addListener(_onScaleChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _transformCtrl.value = Matrix4.identity()..translate(-_canvasSize / 2 + 300, -_canvasSize / 2 + 200);
+      _transformCtrl.value = Matrix4.identity()..translateByDouble(-_canvasSize / 2 + 300, -_canvasSize / 2 + 200, 0, 1);
     });
     _appState = context.read<AppState>();
     _appState.mcpOnClearAll = () { _pushUndo(); setState(() { _nodes.clear(); _connections.clear(); _logicBlocks.clear(); _selectedNodeIds.clear(); _saveGraph(); }); };
@@ -743,9 +743,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     final canvasCenter = _screenToCanvas(viewCenter);
     final clamped = newScale.clamp(0.3, 2.0);
     _transformCtrl.value = Matrix4.identity()
-      ..translate(viewCenter.dx, viewCenter.dy)
-      ..scale(clamped)
-      ..translate(-canvasCenter.dx, -canvasCenter.dy);
+      ..translateByDouble(viewCenter.dx, viewCenter.dy, 0, 1)
+      ..scaleByDouble(clamped, clamped, 1, 1)
+      ..translateByDouble(-canvasCenter.dx, -canvasCenter.dy, 0, 1);
   }
 
   void _zoomToFit() {
@@ -767,9 +767,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     final cx = (minX + maxX) / 2;
     final cy = (minY + maxY) / 2;
     _transformCtrl.value = Matrix4.identity()
-      ..translate(viewSize.width / 2, viewSize.height / 2)
-      ..scale(scale)
-      ..translate(-cx, -cy);
+      ..translateByDouble(viewSize.width / 2, viewSize.height / 2, 0, 1)
+      ..scaleByDouble(scale, scale, 1, 1)
+      ..translateByDouble(-cx, -cy, 0, 1);
   }
 
   void _autoLayout() {
@@ -836,9 +836,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     final nodeCenterX = target.x + _totalNodeWFor(target.type) / 2;
     final nodeCenterY = target.y + _nodeH / 2;
     _transformCtrl.value = Matrix4.identity()
-      ..translate(viewCenter.dx, viewCenter.dy)
-      ..scale(_currentScale)
-      ..translate(-nodeCenterX, -nodeCenterY);
+      ..translateByDouble(viewCenter.dx, viewCenter.dy, 0, 1)
+      ..scaleByDouble(_currentScale, _currentScale, 1, 1)
+      ..translateByDouble(-nodeCenterX, -nodeCenterY, 0, 1);
     setState(() {
       _selectedNodeIds = {target.id};
       _lastSelectedId = target.id;
@@ -989,8 +989,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     if (!top.contains(PipelineStepType.start)) top[4] = PipelineStepType.start;
     if (!top.contains(PipelineStepType.output)) {
       final idx = top.indexWhere((t) => t != PipelineStepType.start && (counts[t.name] ?? 0) == 0);
-      if (idx >= 0) top[idx] = PipelineStepType.output;
-      else top[3] = PipelineStepType.output;
+      if (idx >= 0) {
+        top[idx] = PipelineStepType.output;
+      } else {
+        top[3] = PipelineStepType.output;
+      }
     }
     return top;
   }
@@ -1001,7 +1004,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     final canvasPos = _screenToCanvas(screenPos);
     final top5 = _top5Types();
 
-    PopupMenuItem<PipelineStepType> _item(PipelineStepType t) {
+    PopupMenuItem<PipelineStepType> makeItem(PipelineStepType t) {
       final dummy = PipelineNode(id: '', type: t);
       return PopupMenuItem(
         value: t,
@@ -1026,7 +1029,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       position: RelativeRect.fromLTRB(screenPos.dx, screenPos.dy, screenPos.dx + 1, screenPos.dy + 1),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       items: [
-        ...top5.map(_item),
+        ...top5.map(makeItem),
         const PopupMenuDivider(),
         PopupMenuItem(
           value: null,
@@ -1036,7 +1039,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             tooltip: '',
             offset: const Offset(200, 0),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            itemBuilder: (_) => _allNodeTypes.map(_item).toList(),
+            itemBuilder: (_) => _allNodeTypes.map(makeItem).toList(),
             onSelected: (type) {
               Navigator.pop(context);
               _addNodeAt(type, canvasPos);
@@ -1342,7 +1345,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               Padding(
                 padding: const EdgeInsets.only(right: 4),
                 child: GestureDetector(
-                  onTap: () { setState(() { if (c == null) node.params.remove('node_color'); else node.params['node_color'] = c; }); onChanged(); },
+                  onTap: () {
+                    setState(() {
+                      if (c == null) {
+                        node.params.remove('node_color');
+                      } else {
+                        node.params['node_color'] = c;
+                      }
+                    });
+                    onChanged();
+                  },
                   child: Container(
                     width: 18, height: 18,
                     decoration: BoxDecoration(
@@ -1583,7 +1595,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           if (_isRightDragging) {
             final delta = e.position - _rightClickGlobal!;
             _rightClickGlobal = e.position;
-            _transformCtrl.value = _transformCtrl.value.clone()..translate(delta.dx, delta.dy);
+            _transformCtrl.value = _transformCtrl.value.clone()..translateByDouble(delta.dx, delta.dy, 0, 1);
           }
         }
         // Left-click box-select drag

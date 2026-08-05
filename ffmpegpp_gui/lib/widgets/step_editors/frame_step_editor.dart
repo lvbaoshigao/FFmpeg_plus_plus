@@ -149,7 +149,7 @@ class _FrameStepEditorState extends State<FrameStepEditor> {
         Row(children: [
           SizedBox(width: 120, child: DropdownButtonFormField<String>(
             borderRadius: BorderRadius.circular(12),
-            value: p['output_format'] as String? ?? 'png', isExpanded: true,
+            initialValue: p['output_format'] as String? ?? 'png', isExpanded: true,
             decoration: InputDecoration(labelText: zh ? '格式' : 'Format'),
             dropdownColor: cs.surface, style: TextStyle(fontSize: 13, color: cs.onSurface),
             items: _formats.map((f) => DropdownMenuItem(value: f, child: Text(f.toUpperCase(), style: TextStyle(fontSize: 13, color: cs.onSurface)))).toList(),

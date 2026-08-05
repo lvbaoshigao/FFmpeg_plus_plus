@@ -166,7 +166,7 @@ class _LogPageState extends State<LogPage> {
           ),
         );
 
-        return Padding(padding: const EdgeInsets.only(bottom: 2), child: row);
+        return Padding(padding: const EdgeInsets.only(bottom: 2), child: RepaintBoundary(child: row));
       },
     );
   }

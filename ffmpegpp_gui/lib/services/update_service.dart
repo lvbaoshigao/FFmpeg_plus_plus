@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 
-const _currentVersion = '4.13.47';
+const _currentVersion = '4.15.50';
 
 const _lanzouUrls = {
   'windows': 'https://wwbrq.lanzouv.com/b002w12goj',
@@ -169,27 +169,59 @@ bool _isArm64() {
 }
 
 Future<String> downloadUpdate(String url, {void Function(int received, int total)? onProgress}) async {
+  final uri = Uri.parse(url);
+  if (uri.scheme != 'http' && uri.scheme != 'https') {
+    throw Exception('拒绝下载：不支持的协议 ${uri.scheme}');
+  }
   final dir = Directory('${_dataDir()}${_s}update');
   if (!dir.existsSync()) dir.createSync(recursive: true);
-  final fileName = Uri.parse(url).pathSegments.last;
+
+  // pathSegments.last 可能是空串或 ".."（URL 以 / 结尾、或含相对段），
+  // 直接拼进路径会写到 update/ 之外，这里退回一个固定名字。
+  final rawName = uri.pathSegments.isEmpty ? '' : uri.pathSegments.last;
+  final fileName = (rawName.isEmpty || rawName == '.' || rawName == '..' ||
+          rawName.contains('/') || rawName.contains(r'\'))
+      ? 'update.download'
+      : rawName;
   final savePath = '${dir.path}$_s$fileName';
 
   final client = HttpClient();
+  final file = File(savePath);
+  IOSink? sink;
   try {
-    final request = await client.getUrl(Uri.parse(url));
+    final request = await client.getUrl(uri);
     request.followRedirects = true;
     request.maxRedirects = 10;
     final response = await request.close();
+
+    // 原先不看状态码：404/403 返回的 HTML 错误页会被当成安装包存下来，
+    // 然后 installAndRestart 直接执行它。
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      await response.drain<void>();
+      throw Exception('下载失败：HTTP ${response.statusCode}');
+    }
+
     final total = response.contentLength;
-    final file = File(savePath);
-    final sink = file.openWrite();
+    sink = file.openWrite();
     var received = 0;
     await for (final chunk in response) {
       sink.add(chunk);
       received += chunk.length;
       onProgress?.call(received, total);
     }
+    await sink.flush();
     await sink.close();
+    sink = null;
+
+    // contentLength 为 -1 表示服务端没给长度，此时无法校验完整性
+    if (total > 0 && received != total) {
+      throw Exception('下载不完整：$received / $total 字节');
+    }
+  } catch (_) {
+    // 失败时清掉半截文件，避免下次被误当成有效安装包执行
+    if (sink != null) { try { await sink.close(); } catch (_) {} }
+    if (file.existsSync()) { try { file.deleteSync(); } catch (_) {} }
+    rethrow;
   } finally {
     client.close();
   }

@@ -115,8 +115,10 @@ class _ThumbWidgetState extends State<_ThumbWidget> {
 
   @override
   Widget build(BuildContext context) {
-    if (_thumbPath != null) return ClipRRect(borderRadius: BorderRadius.circular(6), child: Image.file(File(_thumbPath!),
-        fit: widget.isAudio ? BoxFit.contain : BoxFit.cover, width: 88, height: 54));
+    if (_thumbPath != null) {
+      return ClipRRect(borderRadius: BorderRadius.circular(6), child: Image.file(File(_thumbPath!),
+          fit: widget.isAudio ? BoxFit.contain : BoxFit.cover, width: 88, height: 54));
+    }
     return Icon(Icons.music_note, color: Theme.of(context).colorScheme.outline, size: 24);
   }
 }

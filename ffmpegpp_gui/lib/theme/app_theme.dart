@@ -83,6 +83,15 @@ class AppTheme {
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
       ),
+      // 必须和 filledButtonTheme 保持同样的圆角/内边距：否则 OutlinedButton 会退回
+      // Material 3 默认值（胶囊形 + 更小的内边距），和旁边的 FilledButton 并排时
+      // 高度和圆角都对不上（例如「容器」与「添加文件」）。
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            side: BorderSide(color: scheme.outlineVariant.withAlpha(160)),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+      ),
       dividerTheme: const DividerThemeData(space: 1, thickness: 1),
       dropdownMenuTheme: DropdownMenuThemeData(
         menuStyle: MenuStyle(

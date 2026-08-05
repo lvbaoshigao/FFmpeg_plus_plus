@@ -17,7 +17,7 @@
 using json = nlohmann::json;
 using namespace ffmpegpp;
 
-static const char* SERVER_VERSION = "4.7.2";
+static const char* SERVER_VERSION = "4.15.50";
 
 static std::thread g_workerThread;
 static std::atomic<bool> g_running{false};

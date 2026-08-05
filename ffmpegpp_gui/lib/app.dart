@@ -290,13 +290,18 @@ class _AppShellState extends State<AppShell> with WindowListener {
 
     final body = Platform.isWindows
         ? content
-        : Stack(children: [
-            Padding(
-              padding: const EdgeInsets.only(top: 36),
-              child: content,
-            ),
-            Positioned(left: 0, right: 0, top: 0, child: _buildCsdTitleBar(scheme)),
-          ]);
+        // 无边框窗口会失去原生边框的拖拽缩放能力，用 DragToResizeArea 在四边
+        // 补上透明的 resize 热区（宽 6px），鼠标移到边缘即可拖动调整窗口大小。
+        : DragToResizeArea(
+            resizeEdgeSize: 6,
+            child: Stack(children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 36),
+                child: content,
+              ),
+              Positioned(left: 0, right: 0, top: 0, child: _buildCsdTitleBar(scheme)),
+            ]),
+          );
 
     // 壁纸：独立 Consumer，只监听 backgroundImage 变化
     return Consumer<AppState>(
@@ -308,7 +313,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
         final a = ((1.0 - state.config.backgroundOpacity) * 220).round().clamp(20, 240);
         return Stack(children: [
           Positioned.fill(child: Image.file(File(bg), fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) {
+              errorBuilder: (_, a, b) {
                 clearBgCache();
                 return const SizedBox.shrink();
               })),
@@ -438,10 +443,10 @@ class _CsdWindowButtonState extends State<_CsdWindowButton> {
 }
 
 Route<T> smoothRoute<T>(Widget page) => PageRouteBuilder<T>(
-  pageBuilder: (_, __, ___) => page,
+  pageBuilder: (_, a, b) => page,
   transitionDuration: const Duration(milliseconds: 250),
   reverseTransitionDuration: const Duration(milliseconds: 200),
-  transitionsBuilder: (_, anim, __, child) {
+  transitionsBuilder: (_, anim, c, child) {
     final curve = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
     return FadeTransition(
       opacity: curve,

@@ -120,7 +120,7 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
     final safe = items.contains(value) ? value : items.first;
     return DropdownButtonFormField<String>(
       borderRadius: BorderRadius.circular(12),
-      value: safe, isExpanded: true, decoration: InputDecoration(labelText: label),
+      initialValue: safe, isExpanded: true, decoration: InputDecoration(labelText: label),
       dropdownColor: cs.surface, style: TextStyle(fontSize: 13, color: cs.onSurface),
       items: List.generate(items.length, (i) => DropdownMenuItem(
         value: items[i], child: Text(itemLabels != null ? itemLabels[i] : items[i], style: TextStyle(fontSize: 13, color: cs.onSurface)),
@@ -137,7 +137,7 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
 
     return DropdownButtonFormField<String>(
       borderRadius: BorderRadius.circular(12),
-      value: safe, isExpanded: true, decoration: InputDecoration(labelText: zh ? '编码器' : 'Codec'),
+      initialValue: safe, isExpanded: true, decoration: InputDecoration(labelText: zh ? '编码器' : 'Codec'),
       dropdownColor: cs.surface, style: TextStyle(fontSize: 13, color: cs.onSurface),
       items: _allCodecs.map((codec) {
         final label = codec == 'copy' ? _copyLabel(zh) : (_codecLabels[codec] ?? codec);

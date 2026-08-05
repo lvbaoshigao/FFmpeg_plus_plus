@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import '../services/ffmpeg_installer.dart';
+import '../services/shell_open.dart';
 import '../theme/app_theme.dart';
 
 const _ffmpegUrl = 'https://wwbrq.lanzouv.com/iTF9n3sb937c';
@@ -69,15 +70,8 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
     setState(() { _step = 'lanzou'; _ffmpegZipPath = null; _ffprobeZipPath = null; });
   }
 
-  Future<void> _openBrowser(String url) async {
-    if (Platform.isWindows) {
-      await Process.run('cmd', ['/c', 'start', url], runInShell: true);
-    } else if (Platform.isMacOS) {
-      await Process.run('open', [url]);
-    } else {
-      await Process.run('xdg-open', [url]);
-    }
-  }
+  Future<void> _openBrowser(String url) => ShellOpen.url(url);
+
 
   Future<void> _pickFile(bool isFFmpeg) async {
     final r = await FilePicker.platform.pickFiles(

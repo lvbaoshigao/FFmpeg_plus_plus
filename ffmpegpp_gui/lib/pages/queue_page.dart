@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/models.dart';
@@ -100,15 +101,20 @@ class _MonitorWidget extends StatefulWidget {
 }
 
 class _MonitorWidgetState extends State<_MonitorWidget> {
+  Timer? _refreshTimer;
+
   @override
   void initState() {
     super.initState();
-    // 每 2 秒刷新 UI
-    Future.doWhile(() async {
-      await Future.delayed(const Duration(seconds: 2));
+    _refreshTimer = Timer.periodic(const Duration(seconds: 2), (_) {
       if (mounted) setState(() {});
-      return mounted;
     });
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
   }
 
   @override

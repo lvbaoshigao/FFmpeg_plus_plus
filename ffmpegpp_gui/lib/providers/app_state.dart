@@ -163,7 +163,7 @@ class AppState extends ChangeNotifier {
   }
 
   void _setupLogListeners() {
-    double _lastProgressLog = -1;
+    double lastProgressLog = -1;
     // stdout messages (typed: progress, audit, error, etc.)
     pythonProcess.responses.listen((obj) {
       final t = obj['type'] as String? ?? '';
@@ -171,11 +171,11 @@ class AppState extends ChangeNotifier {
         final p = (obj['progress'] as num?)?.toDouble() ?? 0;
         final speed = obj['speed'] as String? ?? '';
         // 只在进度变化 >=5% 或转码完成时记录，避免刷屏
-        if (p > 0 && (p - _lastProgressLog >= 5 || p >= 100)) {
-          _lastProgressLog = p;
+        if (p > 0 && (p - lastProgressLog >= 5 || p >= 100)) {
+          lastProgressLog = p;
           addLog('进度: ${p.toStringAsFixed(0)}% $speed', category: 'progress');
         }
-        if (p == 0) _lastProgressLog = 0;
+        if (p == 0) lastProgressLog = 0;
       } else if (t == 'audit') {
         final warnings = (obj['warnings'] as List?)?.join('; ') ?? '';
         addLog('审计: $warnings', category: 'error');
@@ -237,6 +237,23 @@ class AppState extends ChangeNotifier {
     }));
   }
 
+  int _probeNotifyCount = 0;
+  bool _probeNotifyPending = false;
+
+  void _scheduleProbeNotify() {
+    _probeNotifyCount++;
+    if (!_probeNotifyPending) {
+      _probeNotifyPending = true;
+      scheduleMicrotask(() {
+        _probeNotifyPending = false;
+        if (_probeNotifyCount > 0) {
+          notifyListeners();
+          _probeNotifyCount = 0;
+        }
+      });
+    }
+  }
+
   Future<void> _probeOne(VideoFile vf) async {
     addLog('探测: ${vf.filename}', category: 'info');
     try {
@@ -244,15 +261,15 @@ class AppState extends ChangeNotifier {
       if (resp['success'] == true) {
         final info = resp['data'] as Map<String, dynamic>;
         final idx = _videos.indexWhere((v) => v.id == vf.id);
-        if (idx >= 0) { _videos[idx] = VideoFile.fromProbeResult(vf.filepath, info, id: vf.id); _probeErrors.remove(vf.filepath); notifyListeners(); }
+        if (idx >= 0) { _videos[idx] = VideoFile.fromProbeResult(vf.filepath, info, id: vf.id); _probeErrors.remove(vf.filepath); _scheduleProbeNotify(); }
         addLog('探测成功: ${vf.filename}', category: 'ffmpeg');
         addLog('  编码: ${info['codec']} | 分辨率: ${info['resolution']} | 帧率: ${info['fps']}fps', category: 'ffmpeg');
         addLog('  时长: ${info['duration_str']} | 大小: ${(info['size_mb'] as num?)?.toStringAsFixed(1) ?? '?'}MB | 像素: ${info['pix_fmt']}', category: 'ffmpeg');
         addLog('  音频: ${info['audio_codec']} ${info['audio_channels']}ch ${info['audio_sample_rate']}Hz', category: 'ffmpeg');
         if (info['has_subtitles'] == true) addLog('  字幕: ${info['subtitle_count']} 轨道', category: 'ffmpeg');
         if (info['is_hdr'] == true) addLog('  HDR: 是', category: 'ffmpeg');
-      } else { _probeErrors[vf.filepath] = resp['error'] as String? ?? 'Unknown'; notifyListeners(); addLog('探测失败: ${resp['error']}', category: 'error'); }
-    } catch (e) { _probeErrors[vf.filepath] = 'Error: $e'; notifyListeners(); addLog('探测异常: $e', category: 'error'); }
+      } else { _probeErrors[vf.filepath] = resp['error'] as String? ?? 'Unknown'; _scheduleProbeNotify(); addLog('探测失败: ${resp['error']}', category: 'error'); }
+    } catch (e) { _probeErrors[vf.filepath] = 'Error: $e'; _scheduleProbeNotify(); addLog('探测异常: $e', category: 'error'); }
   }
 
   void removeVideo(String id) { _videos.removeWhere((v) => v.id == id); notifyListeners(); }
@@ -275,7 +292,9 @@ class AppState extends ChangeNotifier {
   Set<String> get _containerFileIds {
     final ids = <String>{};
     for (final c in _containers) {
-      for (final item in c.items) ids.add(item.fileId);
+      for (final item in c.items) {
+        ids.add(item.fileId);
+      }
     }
     return ids;
   }
@@ -1106,10 +1125,6 @@ class AppState extends ChangeNotifier {
     'opus': 'ogg', 'pcm_s16le': 'wav', 'ac3': 'mka', 'eac3': 'mka',
     'dts': 'mka', 'truehd': 'mka',
   };
-  static const _formatDefaultCodec = <String, String>{
-    'mp3': 'libmp3lame', 'ogg': 'libvorbis', 'flac': 'flac',
-    'wav': 'pcm_s16le', 'm4a': 'aac', 'mka': 'copy',
-  };
 
   Future<String?> _probeAudioCodec(String input) async {
     try {
@@ -1671,7 +1686,7 @@ class AppState extends ChangeNotifier {
             'result': {
               'protocolVersion': '2024-11-05',
               'capabilities': {'tools': {}, 'resources': {}},
-              'serverInfo': {'name': 'ffmpegpp', 'version': '4.13.47'},
+              'serverInfo': {'name': 'ffmpegpp', 'version': '4.15.50'},
             },
           }));
         case 'tools/list':
@@ -1886,10 +1901,12 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> shutdown() async {
+    // 配置写盘是防抖的，退出前必须强制落盘，否则最后一次修改会丢失
+    await configService.flush();
     await stopMcpServer();
     await pythonProcess.shutdown();
   }
 
   @override
-  void dispose() { backend.dispose(); pythonProcess.dispose(); super.dispose(); }
+  void dispose() { configService.dispose(); backend.dispose(); pythonProcess.dispose(); super.dispose(); }
 }
