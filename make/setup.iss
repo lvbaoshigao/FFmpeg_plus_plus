@@ -64,7 +64,7 @@ Source: "{#SourceRoot}\ffmpegpp.dll";                            DestDir: "{app}
 
 ; ── Flutter 运行时 ──
 Source: "{#SourceRoot}\flutter_windows.dll";                     DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceRoot}\dartjni.dll";                             DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceRoot}\dartjni.dll";                             DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 ; ── 插件 DLL ──
 Source: "{#SourceRoot}\desktop_drop_plugin.dll";                 DestDir: "{app}"; Flags: ignoreversion
