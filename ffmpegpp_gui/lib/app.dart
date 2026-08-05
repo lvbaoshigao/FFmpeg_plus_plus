@@ -164,6 +164,10 @@ class _AppShellState extends State<AppShell> with WindowListener {
           "Start-Sleep -Milliseconds 3500;"
           "\$n.Dispose()";
       Process.run('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps]);
+    } else if (Platform.isMacOS) {
+      // macOS 没有 notify-send，用 osascript 发系统通知
+      final script = "display notification \"$body\" with title \"$title\"";
+      Process.run('osascript', ['-e', script]);
     } else {
       final urgency = status == TaskStatus.completed ? 'normal' : 'critical';
       Process.run('notify-send', ['-u', urgency, title, body]);
