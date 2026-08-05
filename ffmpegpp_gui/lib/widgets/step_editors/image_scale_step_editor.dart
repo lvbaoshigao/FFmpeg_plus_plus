@@ -49,7 +49,7 @@ class _ImageScaleStepEditorState extends State<ImageScaleStepEditor> {
 
         DropdownButtonFormField<String>(
           borderRadius: BorderRadius.circular(12),
-          value: mode,
+          initialValue: mode,
           isExpanded: true,
           decoration: InputDecoration(
             labelText: zh ? '缩放模式' : 'Scale Mode', isDense: true,

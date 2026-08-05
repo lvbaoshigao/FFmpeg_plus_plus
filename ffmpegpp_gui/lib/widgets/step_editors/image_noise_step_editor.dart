@@ -51,7 +51,7 @@ class _ImageNoiseStepEditorState extends State<ImageNoiseStepEditor> {
 
         DropdownButtonFormField<String>(
           borderRadius: BorderRadius.circular(12),
-          value: noiseType,
+          initialValue: noiseType,
           isExpanded: true,
           decoration: InputDecoration(
             labelText: zh ? '噪点类型' : 'Noise Type', isDense: true,
@@ -71,7 +71,7 @@ class _ImageNoiseStepEditorState extends State<ImageNoiseStepEditor> {
 
         DropdownButtonFormField<String>(
           borderRadius: BorderRadius.circular(12),
-          value: mode,
+          initialValue: mode,
           isExpanded: true,
           decoration: InputDecoration(
             labelText: zh ? '强度模式' : 'Strength Mode', isDense: true,

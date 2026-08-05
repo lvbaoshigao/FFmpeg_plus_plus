@@ -99,8 +99,11 @@ class _OutputStepEditorState extends State<OutputStepEditor> {
           itemLabels: zh ? const ['保持原名', '添加后缀', '自定义名称'] : const ['Keep Original', 'Add Suffix', 'Custom Name'],
           cs: cs, onChanged: (v) {
             setState(() => p['naming_mode'] = v);
-            if (v == 'suffix') _namingCtrl.text = p['naming_value'] as String? ?? '_processed';
-            else if (v == 'custom') _namingCtrl.text = p['naming_value'] as String? ?? '';
+            if (v == 'suffix') {
+              _namingCtrl.text = p['naming_value'] as String? ?? '_processed';
+            } else if (v == 'custom') {
+              _namingCtrl.text = p['naming_value'] as String? ?? '';
+            }
             widget.onChanged();
           }),
         const SizedBox(height: 12),
@@ -143,7 +146,7 @@ class _OutputStepEditorState extends State<OutputStepEditor> {
     final safe = items.contains(value) ? value : items.first;
     return DropdownButtonFormField<String>(
       borderRadius: BorderRadius.circular(12),
-      value: safe, isExpanded: true, decoration: InputDecoration(labelText: label),
+      initialValue: safe, isExpanded: true, decoration: InputDecoration(labelText: label),
       dropdownColor: cs.surface, style: TextStyle(fontSize: 13, color: cs.onSurface),
       items: List.generate(items.length, (i) => DropdownMenuItem(
         value: items[i], child: Text(itemLabels != null ? itemLabels[i] : items[i], style: TextStyle(fontSize: 13, color: cs.onSurface)),

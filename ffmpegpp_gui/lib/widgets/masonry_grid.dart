@@ -8,13 +8,13 @@ class MasonryGrid extends MultiChildRenderObjectWidget {
   final double spacing;
   final double runSpacing;
 
-  MasonryGrid({
+  const MasonryGrid({
     super.key,
     this.columns = 2,
     this.spacing = 12,
     this.runSpacing = 12,
-    required List<Widget> children,
-  }) : super(children: children);
+    required super.children,
+  });
 
   @override
   RenderObject createRenderObject(BuildContext context) =>

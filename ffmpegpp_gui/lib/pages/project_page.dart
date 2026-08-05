@@ -134,15 +134,27 @@ class ProjectPageState extends State<ProjectPage> {
                 tooltip: s.isZh ? '导入配置' : 'Import Config',
                 onPressed: state.videos.isEmpty ? null : () => _importConfig(state, s),
               ),
+              // 图标按钮群和下面两个带文字的主操作之间留出呼吸空间
+              const SizedBox(width: 10),
+              // 两个按钮用同一固定宽度，"容器"(2字) 和 "添加文件"(4字) 视觉完全一致。
+              // 不用 minimumSize（那只是下限，长短标签宽度仍会差很多）；用固定宽保证一对。
               OutlinedButton.icon(
                 icon: const Icon(Icons.folder_special, size: 18),
-                label: Text(s.container),
+                label: Text(s.container, maxLines: 1, overflow: TextOverflow.ellipsis),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(150, 42),
+                  maximumSize: const Size(150, 42),
+                ),
                 onPressed: () => _showContainerMenu(context, state, s),
               ),
-              const SizedBox(width: 4),
+              const SizedBox(width: 10),
               FilledButton.icon(
                 icon: const Icon(Icons.add, size: 18),
-                label: Text(s.addVideo),
+                label: Text(s.addVideo, maxLines: 1, overflow: TextOverflow.ellipsis),
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(150, 42),
+                  maximumSize: const Size(150, 42),
+                ),
                 onPressed: () => _pick(state),
               ),
             ],

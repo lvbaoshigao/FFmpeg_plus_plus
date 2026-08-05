@@ -809,6 +809,9 @@ class AppConfig {
   static const fontWeightLabels = ['Light', 'Regular', 'Medium', 'SemiBold', 'Bold'];
   int get fontWeightValue => fontWeightValues[fontWeightIndex.clamp(0, 4)];
 
+  /// 平台默认字体，用于「清除缓存」后回退（导入的字体文件已被删除）
+  static String get defaultFontFamily => _defaultFontFamily;
+
   static const defaultKeyBindings = <String, List<String>>{
     'canvas_select_all': ['Control', 'A'],
     'canvas_delete_selected': ['Delete'],

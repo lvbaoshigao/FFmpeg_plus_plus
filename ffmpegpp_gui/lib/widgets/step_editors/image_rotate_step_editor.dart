@@ -49,7 +49,7 @@ class _ImageRotateStepEditorState extends State<ImageRotateStepEditor> {
 
         DropdownButtonFormField<String>(
           borderRadius: BorderRadius.circular(12),
-          value: mode,
+          initialValue: mode,
           isExpanded: true,
           decoration: InputDecoration(
             labelText: zh ? '旋转模式' : 'Rotate Mode', isDense: true,

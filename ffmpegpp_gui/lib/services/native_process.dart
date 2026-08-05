@@ -154,13 +154,10 @@ class NativeProcessManager {
   }
 
   void dispose() {
-    final responseClosed = _responseController.isClosed;
-    final errorClosed = _errorController.isClosed;
-    shutdown().whenComplete(() {
-      if (!responseClosed) _responseController.close();
-      if (!errorClosed) _errorController.close();
-    });
-    if (!responseClosed) _responseController.close();
-    if (!errorClosed) _errorController.close();
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    shutdown().ignore();
+    if (!_responseController.isClosed) _responseController.close();
+    if (!_errorController.isClosed) _errorController.close();
   }
 }

@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:archive/archive.dart';
+import 'shell_open.dart';
 
 const _ffmpegLanzouUrl = 'https://wwbrq.lanzouv.com/iTF9n3sb937c';
 const _ffprobeLanzouUrl = 'https://wwbrq.lanzouv.com/itEOt3t5yogh';
@@ -138,15 +139,7 @@ class FfmpegInstaller {
     onStatus('已打开浏览器，请手动下载两个压缩包后点击"导入"');
   }
 
-  static Future<void> _openUrl(String url) async {
-    if (Platform.isWindows) {
-      await Process.run('cmd', ['/c', 'start', '', url]);
-    } else if (Platform.isMacOS) {
-      await Process.run('open', [url]);
-    } else {
-      await Process.run('xdg-open', [url]);
-    }
-  }
+  static Future<void> _openUrl(String url) => ShellOpen.url(url);
 
   static Future<void> importFromZips({
     required String ffmpegZipPath,

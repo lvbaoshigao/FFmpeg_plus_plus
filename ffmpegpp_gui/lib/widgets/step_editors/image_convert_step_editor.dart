@@ -52,7 +52,7 @@ class _ImageConvertStepEditorState extends State<ImageConvertStepEditor> {
 
         DropdownButtonFormField<String>(
           borderRadius: BorderRadius.circular(12),
-          value: _formats.contains(fmt) ? fmt : _formats.first,
+          initialValue: _formats.contains(fmt) ? fmt : _formats.first,
           isExpanded: true,
           decoration: InputDecoration(labelText: zh ? '输出格式' : 'Output Format'),
           dropdownColor: cs.surface,

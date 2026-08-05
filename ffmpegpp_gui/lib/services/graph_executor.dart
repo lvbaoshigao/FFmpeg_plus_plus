@@ -1034,9 +1034,13 @@ class GraphExecutor {
               break;
             case PipelineStepType.frame:
               final fm = n.params['extract_mode'] as String? ?? 'single';
-              if (fm == 'single') descs.add('提取帧(${n.params['time'] ?? 0}s)');
-              else if (fm == 'range') descs.add('范围分帧(${n.params['range_start'] ?? 0}s-${n.params['range_end'] ?? '?'}s @${n.params['fps_rate'] ?? 1}fps)');
-              else descs.add('全部分帧(@${n.params['fps_rate'] ?? 1}fps)');
+              if (fm == 'single') {
+                descs.add('提取帧(${n.params['time'] ?? 0}s)');
+              } else if (fm == 'range') {
+                descs.add('范围分帧(${n.params['range_start'] ?? 0}s-${n.params['range_end'] ?? '?'}s @${n.params['fps_rate'] ?? 1}fps)');
+              } else {
+                descs.add('全部分帧(@${n.params['fps_rate'] ?? 1}fps)');
+              }
               break;
             case PipelineStepType.speed:
               final sp = _effectiveSpeed(n.params);
@@ -1128,14 +1132,6 @@ class GraphExecutor {
     'mp3': 'libmp3lame', 'ogg': 'libvorbis', 'flac': 'flac',
     'wav': 'pcm_s16le', 'aac': 'aac', 'm4a': 'aac', 'opus': 'libopus',
   };
-  static const _copyCompatFormats = {
-    'aac': {'m4a', 'aac', 'mp4', 'mkv', 'mov'},
-    'mp3': {'mp3'},
-    'flac': {'flac'},
-    'opus': {'ogg', 'mkv', 'webm'},
-    'vorbis': {'ogg', 'mkv', 'webm'},
-    'pcm_s16le': {'wav'},
-  };
 
   static (String codec, String format) _resolveAudioCodecFormat(String codec, String format) {
     if (codec != 'copy') return (codec, format);
@@ -1153,8 +1149,11 @@ class GraphExecutor {
       'overwrite': true,
     };
     final rateMode = p['rate_mode'] as String? ?? 'keep';
-    if (rateMode == 'crf' && p['crf'] != null) opts['crf'] = p['crf'];
-    else if (rateMode == 'bitrate' && p['video_bitrate'] != null) opts['video_bitrate'] = p['video_bitrate'];
+    if (rateMode == 'crf' && p['crf'] != null) {
+      opts['crf'] = p['crf'];
+    } else if (rateMode == 'bitrate' && p['video_bitrate'] != null) {
+      opts['video_bitrate'] = p['video_bitrate'];
+    }
 
     switch (p['resolution'] as String? ?? 'original') {
       case '2160p': opts['resolution'] = [3840, 2160]; break;
@@ -1166,8 +1165,11 @@ class GraphExecutor {
         break;
     }
     final fps = p['fps'] as String? ?? 'keep';
-    if (fps == 'custom' && p['fps_value'] != null) opts['framerate'] = (p['fps_value'] as num).toDouble();
-    else if (fps != 'keep') opts['framerate'] = double.tryParse(fps);
+    if (fps == 'custom' && p['fps_value'] != null) {
+      opts['framerate'] = (p['fps_value'] as num).toDouble();
+    } else if (fps != 'keep') {
+      opts['framerate'] = double.tryParse(fps);
+    }
     if (p['audio_bitrate'] != null) opts['audio_bitrate'] = p['audio_bitrate'];
     final ch = p['audio_channels'] as String? ?? 'keep';
     if (ch != 'keep') opts['audio_channels'] = int.tryParse(ch);

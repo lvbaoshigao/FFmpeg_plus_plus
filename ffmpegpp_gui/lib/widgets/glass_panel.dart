@@ -94,7 +94,7 @@ class GlassTopBar extends StatelessWidget {
         child: SizedBox(
           height: height,
           child: Row(children: [
-            const SizedBox(width: 16),
+            const SizedBox(width: 12),
             Expanded(
               child: DefaultTextStyle.merge(
                 style: TextStyle(
@@ -106,7 +106,7 @@ class GlassTopBar extends StatelessWidget {
               ),
             ),
             ...actions,
-            const SizedBox(width: 8),
+            const SizedBox(width: 4),
           ]),
         ),
       ),

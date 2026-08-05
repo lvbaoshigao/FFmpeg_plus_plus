@@ -60,10 +60,20 @@ void showToast(BuildContext context, String message, {ToastType type = ToastType
   overlay.insert(entry);
   controller.forward();
 
+  // 拆卸只能发生一次：定时器到点、以及 overlay 被提前销毁，两条路径都会走到这里。
+  // 原先没有这层保护——若在 2 秒内切页/退出，overlay 先没了，
+  // 定时器仍会在已 dispose 的 controller 上调 reverse()，抛异常。
+  var dismissed = false;
+  void dismiss() {
+    if (dismissed) return;
+    dismissed = true;
+    try { entry.remove(); } catch (_) {}
+    try { controller.dispose(); } catch (_) {}
+  }
+
   Timer(const Duration(seconds: 2), () {
-    controller.reverse().then((_) {
-      entry.remove();
-      controller.dispose();
-    });
+    if (dismissed) return;
+    if (!overlay.mounted) { dismiss(); return; }
+    controller.reverse().whenComplete(dismiss);
   });
 }

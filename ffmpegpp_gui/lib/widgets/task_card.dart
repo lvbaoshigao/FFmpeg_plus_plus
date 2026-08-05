@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
+import '../services/shell_open.dart';
 import '../theme/app_strings.dart';
 
 class TaskCard extends StatelessWidget {
@@ -56,27 +57,11 @@ class TaskCard extends StatelessWidget {
                 if (task.status == TaskStatus.completed) ...[
                   IconButton(
                     icon: const Icon(Icons.folder_open, size: 18), tooltip: s.language == 'zh' ? '打开文件夹' : 'Open Folder',
-                    onPressed: () {
-                      if (Platform.isWindows) {
-                        Process.run('explorer', ['/select,', task.outputPath]);
-                      } else if (Platform.isMacOS) {
-                        Process.run('open', ['-R', task.outputPath]);
-                      } else {
-                        Process.run('xdg-open', [File(task.outputPath).parent.path]);
-                      }
-                    },
+                    onPressed: () => ShellOpen.reveal(task.outputPath),
                     padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 28, minHeight: 28)),
                   IconButton(
                     icon: const Icon(Icons.play_circle_outline, size: 18), tooltip: s.language == 'zh' ? '打开文件' : 'Open File',
-                    onPressed: () {
-                      if (Platform.isWindows) {
-                        Process.run('cmd', ['/c', 'start', '', task.outputPath]);
-                      } else if (Platform.isMacOS) {
-                        Process.run('open', [task.outputPath]);
-                      } else {
-                        Process.run('xdg-open', [task.outputPath]);
-                      }
-                    },
+                    onPressed: () => ShellOpen.path(task.outputPath),
                     padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 28, minHeight: 28)),
                 ],
                 if (task.status == TaskStatus.cancelled || task.status == TaskStatus.failed)

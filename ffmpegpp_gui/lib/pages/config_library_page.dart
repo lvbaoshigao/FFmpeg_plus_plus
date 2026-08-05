@@ -105,20 +105,20 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
           onSubmitted: (_) {
             Navigator.pop(ctx);
             _createEntry(nameCtrl.text, zh);
-            nameCtrl.dispose();
           },
         )),
         actions: [
-          TextButton(onPressed: () { Navigator.pop(ctx); nameCtrl.dispose(); },
+          TextButton(onPressed: () => Navigator.pop(ctx),
               child: Text(zh ? '取消' : 'Cancel')),
           FilledButton(onPressed: () {
             Navigator.pop(ctx);
             _createEntry(nameCtrl.text, zh);
-            nameCtrl.dispose();
           }, child: Text(zh ? '创建' : 'Create')),
         ],
       ),
-    );
+      // 统一在对话框关闭后释放：点遮罩/按 Esc 关闭时不会走任何按钮回调，
+      // 原先那几处 dispose() 都不会执行，controller 就泄漏了。
+    ).whenComplete(nameCtrl.dispose);
   }
 
   void _createEntry(String rawName, bool zh) {
@@ -228,15 +228,15 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
           controller: ctrl, autofocus: true,
           decoration: InputDecoration(border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
           style: TextStyle(fontSize: 14, color: scheme.onSurface),
-          onSubmitted: (_) { Navigator.pop(ctx); _doRename(entry, ctrl.text, zh); ctrl.dispose(); },
+          onSubmitted: (_) { Navigator.pop(ctx); _doRename(entry, ctrl.text, zh); },
         ),
         actions: [
-          TextButton(onPressed: () { Navigator.pop(ctx); ctrl.dispose(); }, child: Text(zh ? '取消' : 'Cancel')),
-          FilledButton(onPressed: () { Navigator.pop(ctx); _doRename(entry, ctrl.text, zh); ctrl.dispose(); },
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(zh ? '取消' : 'Cancel')),
+          FilledButton(onPressed: () { Navigator.pop(ctx); _doRename(entry, ctrl.text, zh); },
               child: Text(zh ? '确认' : 'Confirm')),
         ],
       ),
-    );
+    ).whenComplete(ctrl.dispose);
   }
 
   void _doRename(_ConfigEntry entry, String rawName, bool zh) {

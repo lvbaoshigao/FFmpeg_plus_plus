@@ -105,7 +105,7 @@ class _ImageToVideoStepEditorState extends State<ImageToVideoStepEditor> {
         Row(children: [
           Expanded(child: DropdownButtonFormField<String>(
             borderRadius: BorderRadius.circular(12),
-            value: fmt, isExpanded: true,
+            initialValue: fmt, isExpanded: true,
             style: TextStyle(fontSize: 13, color: cs.onSurface),
             dropdownColor: cs.surface,
             decoration: InputDecoration(labelText: zh ? '格式' : 'Format', isDense: true,
@@ -118,7 +118,7 @@ class _ImageToVideoStepEditorState extends State<ImageToVideoStepEditor> {
           const SizedBox(width: 12),
           Expanded(child: DropdownButtonFormField<String>(
             borderRadius: BorderRadius.circular(12),
-            value: codec, isExpanded: true,
+            initialValue: codec, isExpanded: true,
             style: TextStyle(fontSize: 13, color: cs.onSurface),
             dropdownColor: cs.surface,
             decoration: InputDecoration(labelText: zh ? '编码器' : 'Codec', isDense: true,

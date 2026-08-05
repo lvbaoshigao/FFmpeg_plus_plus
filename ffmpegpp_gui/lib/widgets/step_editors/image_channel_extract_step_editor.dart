@@ -59,7 +59,7 @@ class _ImageChannelExtractStepEditorState extends State<ImageChannelExtractStepE
 
         DropdownButtonFormField<String>(
           borderRadius: BorderRadius.circular(12),
-          value: method,
+          initialValue: method,
           isExpanded: true,
           decoration: InputDecoration(
             labelText: zh ? '提取方式' : 'Extract Method', isDense: true,

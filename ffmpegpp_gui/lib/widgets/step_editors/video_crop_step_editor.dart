@@ -564,7 +564,7 @@ class _RegionOverlayPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final allRects = [...regions, if (currentDrag != null) currentDrag!];
+    final allRects = [...regions, ?currentDrag];
     final accentColor = isRemoveMode ? Colors.red : Colors.green;
 
     if (!isRemoveMode && allRects.isNotEmpty) {

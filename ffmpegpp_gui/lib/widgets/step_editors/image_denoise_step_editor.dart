@@ -51,7 +51,7 @@ class _ImageDenoiseStepEditorState extends State<ImageDenoiseStepEditor> {
 
         DropdownButtonFormField<String>(
           borderRadius: BorderRadius.circular(12),
-          value: method,
+          initialValue: method,
           isExpanded: true,
           decoration: InputDecoration(
             labelText: zh ? '降噪算法' : 'Method', isDense: true,
@@ -70,7 +70,7 @@ class _ImageDenoiseStepEditorState extends State<ImageDenoiseStepEditor> {
 
         DropdownButtonFormField<String>(
           borderRadius: BorderRadius.circular(12),
-          value: mode,
+          initialValue: mode,
           isExpanded: true,
           decoration: InputDecoration(
             labelText: zh ? '强度模式' : 'Strength Mode', isDense: true,

@@ -362,7 +362,14 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
     if (cmd.empty()) { result.exit_code = -1; return result; }
 
     int stdout_pipe[2], stderr_pipe[2];
-    if (pipe(stdout_pipe) != 0 || pipe(stderr_pipe) != 0) {
+    if (pipe(stdout_pipe) != 0) {
+        result.exit_code = -1;
+        return result;
+    }
+    // 不能和上面写成 `||` 短路：那样第一个 pipe 成功、第二个失败时，
+    // stdout_pipe 的两个 fd 就再也没人关了。
+    if (pipe(stderr_pipe) != 0) {
+        closeFd(stdout_pipe[0]); closeFd(stdout_pipe[1]);
         result.exit_code = -1;
         return result;
     }
@@ -481,7 +488,14 @@ ProcessResult Subprocess::runWithProgress(
     if (cmd.empty()) { result.exit_code = -1; return result; }
 
     int stdout_pipe[2], stderr_pipe[2];
-    if (pipe(stdout_pipe) != 0 || pipe(stderr_pipe) != 0) {
+    if (pipe(stdout_pipe) != 0) {
+        result.exit_code = -1;
+        return result;
+    }
+    // 不能和上面写成 `||` 短路：那样第一个 pipe 成功、第二个失败时，
+    // stdout_pipe 的两个 fd 就再也没人关了。
+    if (pipe(stderr_pipe) != 0) {
+        closeFd(stdout_pipe[0]); closeFd(stdout_pipe[1]);
         result.exit_code = -1;
         return result;
     }

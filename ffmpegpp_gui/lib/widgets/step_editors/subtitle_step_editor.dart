@@ -47,8 +47,12 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> {
     return Color(int.tryParse(hex, radix: 16) ?? 0xFFFFFFFF);
   }
 
-  String _colorToHex(Color c) =>
-      '#${c.red.toRadixString(16).padLeft(2, '0')}${c.green.toRadixString(16).padLeft(2, '0')}${c.blue.toRadixString(16).padLeft(2, '0')}'.toUpperCase();
+  String _colorToHex(Color c) {
+    final r = (c.r * 255.0).round().clamp(0, 255);
+    final g = (c.g * 255.0).round().clamp(0, 255);
+    final b = (c.b * 255.0).round().clamp(0, 255);
+    return '#${r.toRadixString(16).padLeft(2, '0')}${g.toRadixString(16).padLeft(2, '0')}${b.toRadixString(16).padLeft(2, '0')}'.toUpperCase();
+  }
 
   Future<void> _pickSubtitleFile() async {
     final result = await FilePicker.platform.pickFiles(
@@ -213,7 +217,7 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> {
     final safe = items.contains(value) ? value : items.first;
     return DropdownButtonFormField<String>(
       borderRadius: BorderRadius.circular(12),
-      value: safe, isExpanded: true, decoration: InputDecoration(labelText: label),
+      initialValue: safe, isExpanded: true, decoration: InputDecoration(labelText: label),
       dropdownColor: cs.surface, style: TextStyle(fontSize: 13, color: cs.onSurface),
       items: List.generate(items.length, (i) => DropdownMenuItem(
         value: items[i], child: Text(itemLabels != null ? itemLabels[i] : items[i], style: TextStyle(fontSize: 13, color: cs.onSurface)),
@@ -252,7 +256,10 @@ class _ColorPickerDialogState extends State<_ColorPickerDialog> {
   Color get _color => HSVColor.fromAHSV(1, _hue, _sat, _val).toColor();
   String _currentHex() {
     final c = _color;
-    return '#${c.red.toRadixString(16).padLeft(2, '0')}${c.green.toRadixString(16).padLeft(2, '0')}${c.blue.toRadixString(16).padLeft(2, '0')}'.toUpperCase();
+    final r = (c.r * 255.0).round().clamp(0, 255);
+    final g = (c.g * 255.0).round().clamp(0, 255);
+    final b = (c.b * 255.0).round().clamp(0, 255);
+    return '#${r.toRadixString(16).padLeft(2, '0')}${g.toRadixString(16).padLeft(2, '0')}${b.toRadixString(16).padLeft(2, '0')}'.toUpperCase();
   }
 
   @override

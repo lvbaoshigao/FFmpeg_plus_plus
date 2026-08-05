@@ -16,6 +16,8 @@ class AppStrings {
   String get navCommand => lang == 'zh' ? '命令' : 'Command';
   String get navSettings => lang == 'zh' ? '设置' : 'Settings';
   String get backendConnected => lang == 'zh' ? '后端已连接' : 'Backend connected';
+  String get navCollapse => lang == 'zh' ? '收起侧边栏' : 'Collapse sidebar';
+  String get navExpand => lang == 'zh' ? '展开侧边栏' : 'Expand sidebar';
 
   // ── 项目页 ──
   String get addVideo => lang == 'zh' ? '添加文件' : 'Add File';
@@ -100,7 +102,7 @@ class AppStrings {
   String get swVersion => lang == 'zh' ? '版本' : 'Version';
   String get swBuild => lang == 'zh' ? '构建日期' : 'Build';
   String get swProtocol => lang == 'zh' ? '协议' : 'Protocol';
-  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v4.13.47  |  构建 2026-07-19  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v4.13.47  |  Build 2026-07-19  |  JSON v0.1.0';
+  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v4.15.50  |  构建 2026-08-05  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v4.15.50  |  Build 2026-08-05  |  JSON v0.1.0';
   String get languageInterface => lang == 'zh' ? '界面语言' : 'Interface Language';
   String get ffmpegFound => lang == 'zh' ? 'FFmpeg 已检测到' : 'FFmpeg detected';
   String get ffmpegNotFound => lang == 'zh' ? 'FFmpeg 未检测到' : 'FFmpeg not found';
@@ -252,4 +254,27 @@ class AppStrings {
   String get aiConnection => lang == 'zh' ? '连接' : 'Connection';
   String get aiPermissions => lang == 'zh' ? '权限' : 'Permissions';
   String get aiAdvanced => lang == 'zh' ? '高级' : 'Advanced';
+
+  // ── 设置页分区与搜索 ──
+  String get setSearchHint => lang == 'zh' ? '搜索设置...' : 'Search settings...';
+  String get setNoMatch => lang == 'zh' ? '没有匹配的设置项' : 'No matching settings';
+  String get setNoMatchHint => lang == 'zh' ? '换个关键词试试' : 'Try a different keyword';
+  String get setClearSearch => lang == 'zh' ? '清除搜索' : 'Clear search';
+  String get setCollapse => lang == 'zh' ? '折叠' : 'Collapse';
+  String get setExpand => lang == 'zh' ? '展开' : 'Expand';
+  String get setCollapseAll => lang == 'zh' ? '全部折叠' : 'Collapse all';
+  String get setExpandAll => lang == 'zh' ? '全部展开' : 'Expand all';
+  String get secAppearance => lang == 'zh' ? '外观' : 'Appearance';
+  String get secProcessing => lang == 'zh' ? '处理' : 'Processing';
+  String get secEditor => lang == 'zh' ? '编辑器' : 'Editor';
+  String get secAi => lang == 'zh' ? 'AI 与 MCP' : 'AI & MCP';
+  String get secAdvanced => lang == 'zh' ? '高级' : 'Advanced';
+  String get secAbout => lang == 'zh' ? '关于' : 'About';
+  String get cardTheme => lang == 'zh' ? '主题' : 'Theme';
+  String get cardBackground => lang == 'zh' ? '背景' : 'Background';
+  String get cardEditorMode => lang == 'zh' ? '编辑模式' : 'Editor Mode';
+  String get cardShortcuts => lang == 'zh' ? '快捷键' : 'Shortcuts';
+  String get cardTasks => lang == 'zh' ? '任务' : 'Tasks';
+  String get cardUpdate => lang == 'zh' ? '更新' : 'Update';
+  String get cardCache => lang == 'zh' ? '缓存' : 'Cache';
 }
