@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
+import '../services/ffmpeg_installer.dart';
 import '../services/shell_open.dart';
 import '../theme/app_strings.dart';
 
@@ -37,7 +38,7 @@ class TaskCard extends StatelessWidget {
                 // 缩略图
                 ClipRRect(
                   borderRadius: BorderRadius.circular(4),
-                  child: _ThumbWidget(filepath: task.inputPath),
+                  child: _ThumbWidget(filepath: task.inputPath, ffmpeg: state.config.ffmpegPath),
                 ),
                 const SizedBox(width: 8),
                 Icon(_statusIcon, size: 20, color: _statusColor(scheme)),
@@ -167,7 +168,8 @@ class TaskCard extends StatelessWidget {
 // 缩略图（与 video_card 共用逻辑）
 class _ThumbWidget extends StatefulWidget {
   final String filepath;
-  const _ThumbWidget({required this.filepath});
+  final String? ffmpeg;
+  const _ThumbWidget({required this.filepath, this.ffmpeg});
   @override
   State<_ThumbWidget> createState() => _ThumbWidgetState();
 }
@@ -191,7 +193,7 @@ class _ThumbWidgetState extends State<_ThumbWidget> {
       } else {
         args.addAll(['-i', widget.filepath, '-vframes', '1', '-q:v', '5', '-s', '80x45', f.path]);
       }
-      final r = await Process.run('ffmpeg', args);
+      final r = await Process.run(FfmpegInstaller.resolveFfmpeg(configured: widget.ffmpeg), args);
       if (r.exitCode == 0 && await f.exists()) { if (mounted) setState(() => _path = f.path); }
     } catch (_) {}
   }

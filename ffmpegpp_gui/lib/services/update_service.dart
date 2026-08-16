@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 
-const _currentVersion = '4.15.50';
+const _currentVersion = '5.0.0-beta1';
 
 const _lanzouUrls = {
   'windows': 'https://wwbrq.lanzouv.com/b002w12goj',
@@ -12,6 +12,9 @@ const _lanzouUrls = {
 };
 
 const _lanzouPasswords = {
+  'windows': '88te',
+  'linux': '4zlx',
+  'linux_arm64': 'fnk0',
   'macos_arm64': '26qb',
 };
 
@@ -97,15 +100,16 @@ Future<UpdateResult> checkForUpdate({required bool preferLanzou}) async {
 
 Future<UpdateResult> _checkLanzou() async {
   try {
-    final url = _lanzouUrls['windows']!;
+    // 用当前平台的蓝奏云链接解析版本（原来固定请求 windows 页面，
+    // 其他平台的版本号会与实际下载的包不一致）
+    final key = _platformKey();
+    final url = _lanzouUrls[key] ?? _lanzouUrls['windows']!;
     final resp = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 10));
     final match = RegExp(r'<span id="filename">([^<]+)</span>').firstMatch(resp.body);
     if (match == null) return UpdateResult(error: 'parse_failed', source: UpdateSource.lanzou);
     final version = match.group(1)!.trim();
-    final key = _platformKey();
-    final lanzouLink = _lanzouUrls[key] ?? _lanzouUrls['windows']!;
     final password = _lanzouPasswords[key];
-    return UpdateResult(remoteVersion: version, downloadUrl: lanzouLink, password: password, source: UpdateSource.lanzou);
+    return UpdateResult(remoteVersion: version, downloadUrl: url, password: password, source: UpdateSource.lanzou);
   } catch (e) {
     return UpdateResult(error: e.toString(), source: UpdateSource.lanzou);
   }

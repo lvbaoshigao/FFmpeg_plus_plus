@@ -112,7 +112,7 @@ jobs:
           # Control file
           cat > deb/DEBIAN/control << 'EOF'
           Package: ffmpegpp
-          Version: 4.15.50
+          Version: 5.0.0-beta1
           Architecture: amd64
           Maintainer: pity-Fox <noreply@github.com>
           Description: FFmpeg++ - Advanced video/image/audio processing tool
@@ -123,8 +123,6 @@ jobs:
           Priority: optional
           Installed-Size: 25000
           EOF
-          # Remove leading spaces from heredoc
-          sed -i 's/^          //' deb/DEBIAN/control
 
           # Desktop entry
           cat > deb/usr/share/applications/ffmpegpp.desktop << 'EOF'
@@ -137,7 +135,6 @@ jobs:
           Type=Application
           Categories=AudioVideo;Video;Graphics;
           EOF
-          sed -i 's/^          //' deb/usr/share/applications/ffmpegpp.desktop
 
           # Launcher script
           echo '#!/bin/bash' > deb/usr/bin/ffmpegpp
@@ -150,13 +147,13 @@ jobs:
           chmod -R 755 deb/opt/ffmpegpp/
 
           # Build deb
-          dpkg-deb --root-owner-group --build deb ffmpegpp_4.15.50_amd64.deb
+          dpkg-deb --root-owner-group --build deb ffmpegpp_5.0.0-beta1_amd64.deb
 
       - name: Upload Linux x64 deb
         uses: actions/upload-artifact@v4
         with:
           name: linux-x64-deb
-          path: ffmpegpp_4.15.50_amd64.deb
+          path: ffmpegpp_5.0.0-beta1_amd64.deb
 
   # ══════════════════════════════════════════
   # Linux ARM64
@@ -210,7 +207,7 @@ jobs:
 
           cat > deb/DEBIAN/control << 'EOF'
           Package: ffmpegpp
-          Version: 4.15.50
+          Version: 5.0.0-beta1
           Architecture: arm64
           Maintainer: pity-Fox <noreply@github.com>
           Description: FFmpeg++ - Advanced video/image/audio processing tool
@@ -221,7 +218,6 @@ jobs:
           Priority: optional
           Installed-Size: 25000
           EOF
-          sed -i 's/^          //' deb/DEBIAN/control
 
           cat > deb/usr/share/applications/ffmpegpp.desktop << 'EOF'
           [Desktop Entry]
@@ -233,7 +229,6 @@ jobs:
           Type=Application
           Categories=AudioVideo;Video;Graphics;
           EOF
-          sed -i 's/^          //' deb/usr/share/applications/ffmpegpp.desktop
 
           echo '#!/bin/bash' > deb/usr/bin/ffmpegpp
           echo 'exec /opt/ffmpegpp/ffmpegpp_gui "$@"' >> deb/usr/bin/ffmpegpp
@@ -243,13 +238,13 @@ jobs:
           cp "make/FFmpeg++.png" deb/usr/share/icons/hicolor/256x256/apps/ffmpegpp.png
           chmod -R 755 deb/opt/ffmpegpp/
 
-          dpkg-deb --root-owner-group --build deb ffmpegpp_4.15.50_arm64.deb
+          dpkg-deb --root-owner-group --build deb ffmpegpp_5.0.0-beta1_arm64.deb
 
       - name: Upload Linux ARM64 deb
         uses: actions/upload-artifact@v4
         with:
           name: linux-arm64-deb
-          path: ffmpegpp_4.15.50_arm64.deb
+          path: ffmpegpp_5.0.0-beta1_arm64.deb
 
   # ══════════════════════════════════════════
   # macOS (Universal: x64 + ARM64)
@@ -276,7 +271,6 @@ jobs:
         run: |
           cd ffmpegpp_gui
           flutter pub get
-          # 从 Flutter 3.13 起 macos 默认即为 universal（x64+arm64）构建，--universal 参数已移除
           flutter build macos --release
 
       - name: Assemble .app bundle
@@ -290,16 +284,16 @@ jobs:
           mkdir -p dmg_staging
           cp -R "ffmpegpp_gui/build/macos/Build/Products/Release/ffmpegpp_gui.app" dmg_staging/
           ln -s /Applications dmg_staging/Applications
-          hdiutil create -volname "FFmpeg++" -srcfolder dmg_staging -ov -format UDZO "FFmpeg++_v4.15.50_macOS.dmg"
+          hdiutil create -volname "FFmpeg++" -srcfolder dmg_staging -ov -format UDZO "FFmpeg++_v5.0.0-beta1_macOS.dmg"
 
       - name: Upload macOS DMG
         uses: actions/upload-artifact@v4
         with:
           name: macos-dmg
-          path: FFmpeg++_v4.15.50_macOS.dmg
+          path: FFmpeg++_v5.0.0-beta1_macOS.dmg
 
   # ══════════════════════════════════════════
-  # Create Release Draft
+  # Create Release (v5.0.0-beta1)
   # ══════════════════════════════════════════
   release:
     needs: [build-windows, build-linux-x64, build-linux-arm64, build-macos]
@@ -315,12 +309,34 @@ jobs:
       - name: List artifacts
         run: find artifacts/ -type f
 
-      - name: Create Release Draft
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          draft: true
-          name: "FFmpeg++ v4.15.50-draft"
-          tag_name: v4.15.50-draft
+          tag_name: v5.0.0-beta1
+          name: "FFmpeg++ v5.0.0-beta1"
+          body: |
+            ## 🎬 FFmpeg++ v5.0.0-beta1
+
+            **专业视频 / 图片 / 音频处理桌面应用** — 基于 Flutter + C++17 + FFmpeg，100% AI 生成代码。
+
+            ### ✨ 主要功能
+            - 🧩 蓝图式节点编辑器（25+ 节点类型）
+            - 🎞 视频转码（H.264 / H.265 / AV1 / VP9 / SVT-AV1，GPU 加速）
+            - 🎵 音频处理（转码 / 变速 / 音量 / 动态压缩 / 元信息编辑）
+            - 📝 字幕烧录（SRT / ASS / SSA）
+            - 📷 帧提取 / ✂️ 片段截取 / 🖼 图片处理 / 🔗 合并媒体
+            - 🤖 内置 AI 助手
+            - 📱 Android 移动端适配（底部液态玻璃导航栏、Monet 动态取色、内置 FFmpeg）
+
+            ### 📦 安装包
+            - **Windows**: `FFmpeg++_v5.0.0-beta1_setup.exe`
+            - **Linux x64**: `ffmpegpp_5.0.0-beta1_amd64.deb`
+            - **Linux ARM64**: `ffmpegpp_5.0.0-beta1_arm64.deb`
+            - **macOS**: `FFmpeg++_v5.0.0-beta1_macOS.dmg`
+          draft: false
+          prerelease: true
+          fail_on_unmatched_files: false
+          generate_release_notes: true
           files: |
             artifacts/windows-installer/*.exe
             artifacts/linux-x64-deb/*.deb

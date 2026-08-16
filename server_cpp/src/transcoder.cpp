@@ -68,10 +68,8 @@ std::vector<std::string> buildEncodingParams(const json& options, const std::str
 
     std::vector<std::string> params;
 
-    // video_codec == "none" → 纯音频模式，禁用视频流但保留封面
-    if (video_codec == "none") {
-        // -vn 会删除封面，改用 filter 跳过视频编码但保留 attached_pic
-    } else {
+    // video_codec != "none" 才处理视频流（"none" = 纯音频模式）
+    if (video_codec != "none") {
         if (has_vf && video_codec == "copy") {
             video_codec = "h264";
         }
@@ -178,15 +176,15 @@ std::vector<std::string> buildEncodingParams(const json& options, const std::str
 std::vector<std::string> buildTranscodeCommand(
     const std::string& input_path,
     const std::string& output_path,
-    const json& options) {
+    const json& options,
+    std::string input_pix_fmt /* = "" */) {
 
     std::string gpu = options.value("gpu", "CPU");
     std::string video_codec = options.value("video_codec", "h264");
     bool audio_only = (video_codec == "none");
 
-    // 探测源文件像素格式（纯音频模式跳过）
-    std::string input_pix_fmt;
-    if (!audio_only) {
+    // 探测源文件像素格式（纯音频模式跳过）；调用方已探测时直接复用，避免重复启动 ffprobe
+    if (input_pix_fmt.empty() && !audio_only) {
         try {
             auto probe = probeVideo(input_path);
             if (probe.success) {
@@ -256,6 +254,14 @@ std::vector<std::string> buildTranscodeCommand(
         if (dot != std::string::npos) out_ext = output_path.substr(dot + 1);
         for (auto& c : out_ext) c = std::tolower(c);
 
+        // 输入媒体类型：决定无封面时能否直接 -map 0（音频输入可安全保留 attached_pic；
+        // 视频输入若 -map 0 会把视频流复制进 mp3/m4a，导致 muxer 报错或产生多余视频流）
+        std::string input_media_type = "video";
+        try {
+            auto pr = probeVideo(input_path);
+            if (pr.success) input_media_type = pr.info.value("media_type", "video");
+        } catch (...) {}
+
         if (hasCoverInput) {
             // 嵌入新封面：映射音频流 + 新封面
             cmd.push_back("-map");
@@ -268,11 +274,16 @@ std::vector<std::string> buildTranscodeCommand(
             cmd.push_back("attached_pic");
         } else if (removeCover || out_ext == "flac" || out_ext == "wav") {
             cmd.push_back("-vn");
-        } else {
+        } else if (input_media_type == "audio") {
+            // 音频输入：整段映射（含 attached_pic 封面）
             cmd.push_back("-map");
             cmd.push_back("0");
             cmd.push_back("-c:v");
             cmd.push_back("copy");
+        } else {
+            // 视频输入：只取音频流
+            cmd.push_back("-map");
+            cmd.push_back("0:a");
         }
         cmd.push_back("-map_metadata");
         cmd.push_back("0");

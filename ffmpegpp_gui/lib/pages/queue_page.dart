@@ -61,11 +61,12 @@ class _QueuePageState extends State<QueuePage> {
                       icon: const Icon(Icons.delete_sweep, size: 16), label: Text(s.clearAll),
                       onPressed: () => state.clearAllTasks()),
               ],
+              // 紧凑资源占用（顶栏右侧，小尺寸）
+              const SizedBox(width: 8),
+              _monitorBar(scheme, state),
             ],
           ),
           Expanded(child: Column(children: [
-            // ── 系统监控条 ──
-            _monitorBar(scheme, state),
             // ── 任务列表 ──
             Expanded(child: state.tasks.isEmpty
                 ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -121,29 +122,32 @@ class _MonitorWidgetState extends State<_MonitorWidget> {
   Widget build(BuildContext context) {
     final m = widget.monitor;
     final sc = widget.scheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      color: sc.surfaceContainerHighest.withAlpha(80),
-      child: Row(children: [
-        _chip(Icons.memory, 'CPU', '${m.cpuPercent.toStringAsFixed(0)}%', m.cpuPercent / 100, sc),
-        const SizedBox(width: 16),
-        _chip(Icons.storage, 'RAM', '${m.ramUsedGb.toStringAsFixed(1)}/${m.ramTotalGb.toStringAsFixed(1)} GB', m.ramPercent / 100, sc),
-        const SizedBox(width: 16),
-        if (m.gpuName.isNotEmpty) _chip(Icons.videocam, 'GPU', '${m.gpuPercent.toStringAsFixed(0)}%', m.gpuPercent / 100, sc),
-      ]),
-    );
+    // 紧凑小尺寸：仅图标 + 数值，适合放在顶栏右侧
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      _mini(Icons.memory, '${m.cpuPercent.toStringAsFixed(0)}%', m.cpuPercent / 100, sc),
+      const SizedBox(width: 8),
+      _mini(Icons.storage, '${m.ramUsedGb.toStringAsFixed(1)}G', m.ramPercent / 100, sc),
+      if (m.gpuName.isNotEmpty) ...[
+        const SizedBox(width: 8),
+        _mini(Icons.videocam, '${m.gpuPercent.toStringAsFixed(0)}%', m.gpuPercent / 100, sc),
+      ],
+    ]);
   }
 
-  Widget _chip(IconData icon, String label, String value, double progress, ColorScheme scheme) {
+  /// 迷你指标：彩色图标 + 等宽数值。
+  Widget _mini(IconData icon, String value, double progress, ColorScheme scheme) {
     final color = progress > 0.8 ? Colors.red : progress > 0.5 ? Colors.orange : scheme.primary;
-    return Row(mainAxisSize: MainAxisSize.min, children: [
-      Icon(icon, size: 14, color: color),
-      const SizedBox(width: 4),
-      Text('$label: $value', style: TextStyle(fontSize: 11, color: scheme.onSurface, fontFamily: AppTheme.monoFont)),
-      const SizedBox(width: 6),
-      SizedBox(width: 40, height: 4, child: LinearProgressIndicator(
-        value: progress.clamp(0, 1), backgroundColor: scheme.surfaceContainerHighest,
-        color: color, borderRadius: BorderRadius.circular(2))),
-    ]);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withAlpha(14),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 12, color: color),
+        const SizedBox(width: 3),
+        Text(value, style: TextStyle(fontSize: 10, color: scheme.onSurface, fontFamily: AppTheme.monoFont, fontWeight: FontWeight.w600)),
+      ]),
+    );
   }
 }

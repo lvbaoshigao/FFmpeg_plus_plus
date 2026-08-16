@@ -2,6 +2,9 @@
 
 namespace ffmpegpp {
 
+// 队列上限：消费端异常时防止内存无限膨胀（丢弃最旧消息）
+static constexpr size_t kMaxQueueSize = 100000;
+
 static std::queue<std::string> g_outputQueue;
 static std::mutex g_outputMutex;
 
@@ -12,13 +15,14 @@ static bool g_inputWake = false;
 
 void pushOutput(const std::string& line) {
     std::lock_guard<std::mutex> lock(g_outputMutex);
+    if (g_outputQueue.size() >= kMaxQueueSize) g_outputQueue.pop();
     g_outputQueue.push(line);
 }
 
 std::string popOutput() {
     std::lock_guard<std::mutex> lock(g_outputMutex);
     if (g_outputQueue.empty()) return "";
-    std::string front = g_outputQueue.front();
+    std::string front = std::move(g_outputQueue.front());
     g_outputQueue.pop();
     return front;
 }
@@ -26,6 +30,7 @@ std::string popOutput() {
 void pushInput(const std::string& line) {
     {
         std::lock_guard<std::mutex> lock(g_inputMutex);
+        if (g_inputQueue.size() >= kMaxQueueSize) g_inputQueue.pop();
         g_inputQueue.push(line);
     }
     g_inputCv.notify_one();

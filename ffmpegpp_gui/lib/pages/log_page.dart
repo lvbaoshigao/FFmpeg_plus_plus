@@ -7,6 +7,7 @@ import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../widgets/toast.dart';
 import '../widgets/glass_panel.dart';
+import '../platform/app_platform.dart';
 
 class LogPage extends StatefulWidget {
   const LogPage({super.key});
@@ -54,6 +55,16 @@ class _LogPageState extends State<LogPage> {
     final hasSelection = _selectedIndices.isNotEmpty;
     return GlassTopBar(
       title: Row(children: [
+        if (isMobilePlatform) ...[
+          IconButton(
+            icon: const Icon(Icons.arrow_back, size: 20),
+            tooltip: isZh ? '返回' : 'Back',
+            onPressed: () => Navigator.of(context).maybePop(),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+          ),
+          const SizedBox(width: 4),
+        ],
         Text(isZh ? '日志' : 'Logs', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
         const SizedBox(width: 12),
         Text('${filtered.length} ${isZh ? '条' : 'entries'}', style: TextStyle(fontSize: 11, color: scheme.outline)),

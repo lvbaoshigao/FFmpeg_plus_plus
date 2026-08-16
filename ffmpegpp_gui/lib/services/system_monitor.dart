@@ -42,6 +42,8 @@ class SystemMonitor {
   }
 
   Future<void> _updateGpu() async {
+    // Android 无 nvidia-smi/lspci，每次尝试都白启动一个失败进程；直接跳过
+    if (Platform.isAndroid) return;
     if (Platform.isWindows) {
       await _updateGpuWindows();
     } else if (Platform.isMacOS) {
@@ -55,16 +57,14 @@ class SystemMonitor {
 
   Future<void> _updateCpuRamWindows() async {
     try {
+      // 合并 CPU + 内存为一次 powershell 调用（原来每次 2 个进程，每 2 秒一次）
       final result = await Process.run('powershell', ['-NoProfile', '-Command',
-        'Get-CimInstance Win32_Processor | Select-Object -ExpandProperty LoadPercentage'], runInShell: true);
-      cpuPercent = double.tryParse(result.stdout.toString().trim()) ?? 0;
-
-      final ramResult = await Process.run('powershell', ['-NoProfile', '-Command',
-        r'$os = Get-CimInstance Win32_OperatingSystem; Write-Output "$($os.FreePhysicalMemory),$($os.TotalVisibleMemorySize)"'], runInShell: true);
-      final parts = ramResult.stdout.toString().trim().split(',');
-      if (parts.length == 2) {
-        final freeKB = double.tryParse(parts[0]) ?? 0;
-        final totalKB = double.tryParse(parts[1]) ?? 0;
+        r'$cpu = (Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Maximum).Maximum; $os = Get-CimInstance Win32_OperatingSystem; Write-Output "$cpu,$($os.FreePhysicalMemory),$($os.TotalVisibleMemorySize)"'], runInShell: true);
+      final parts = result.stdout.toString().trim().split(',');
+      if (parts.length >= 3) {
+        cpuPercent = double.tryParse(parts[0]) ?? 0;
+        final freeKB = double.tryParse(parts[1]) ?? 0;
+        final totalKB = double.tryParse(parts[2]) ?? 0;
         if (totalKB > 0) {
           ramTotalGb = totalKB / 1024 / 1024;
           ramUsedGb = (totalKB - freeKB) / 1024 / 1024;

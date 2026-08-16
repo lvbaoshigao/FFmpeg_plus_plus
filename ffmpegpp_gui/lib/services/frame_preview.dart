@@ -1,7 +1,27 @@
 import 'dart:io';
+import 'ffmpeg_installer.dart';
 
 class FramePreview {
   FramePreview._();
+
+  /// 清理同一视频的旧预览缓存（每视频保留最近 [keep] 个），
+  /// 避免快速拖动进度条时 /tmp 里堆积几十个永不删除的 jpg。
+  static void _cleanupOldPreviews(String videoPath, String prefix, {int keep = 3}) {
+    try {
+      final dir = Directory.systemTemp;
+      final dirPrefix = '${dir.path}${Platform.pathSeparator}$prefix';
+      final files = dir
+          .listSync()
+          .whereType<File>()
+          .where((f) => f.path.startsWith(dirPrefix) && f.path.endsWith('.jpg'))
+          .toList()
+        // 文件名含时间戳，字典序倒序 = 最新在前
+        ..sort((a, b) => b.path.compareTo(a.path));
+      for (final f in files.skip(keep)) {
+        try { f.deleteSync(); } catch (_) {}
+      }
+    } catch (_) {}
+  }
 
   static String _formatTime(double seconds) {
     final totalMs = (seconds * 1000).round();
@@ -33,7 +53,7 @@ class FramePreview {
     final timeStr = _formatTime(timeSeconds);
 
     try {
-      final result = await Process.run('ffmpeg', [
+      final result = await Process.run(FfmpegInstaller.resolveFfmpeg(), [
         '-ss', timeStr,
         '-i', videoPath,
         '-vframes', '1',
@@ -47,6 +67,7 @@ class FramePreview {
       }
 
       if (await File(tmpPath).exists()) {
+        _cleanupOldPreviews(videoPath, 'ffmpegpp_preview_${videoPath.hashCode}_');
         return tmpPath;
       }
       return null;
@@ -67,7 +88,7 @@ class FramePreview {
 
     final timeStr = _formatTime(timeSeconds);
     try {
-      final result = await Process.run('ffmpeg', [
+      final result = await Process.run(FfmpegInstaller.resolveFfmpeg(), [
         '-ss', timeStr,
         '-i', videoPath,
         '-vframes', '1',
@@ -75,7 +96,11 @@ class FramePreview {
         tmpPath,
       ]);
       if (result.exitCode != 0) return null;
-      return await File(tmpPath).exists() ? tmpPath : null;
+      if (await File(tmpPath).exists()) {
+        _cleanupOldPreviews(videoPath, 'ffmpegpp_full_${videoPath.hashCode}_');
+        return tmpPath;
+      }
+      return null;
     } catch (_) {
       return null;
     }

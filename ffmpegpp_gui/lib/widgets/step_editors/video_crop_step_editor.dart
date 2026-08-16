@@ -157,7 +157,7 @@ class _VideoCropStepEditorState extends State<VideoCropStepEditor> {
         isZh: widget.isZh,
       ),
     );
-    if (regions != null) {
+    if (regions != null && mounted) {
       setState(() => _saveRegions(regions));
     }
   }

@@ -8,6 +8,7 @@ import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import '../widgets/toast.dart';
 import '../widgets/glass_panel.dart';
+import '../platform/app_platform.dart';
 
 class CommandPage extends StatefulWidget {
   const CommandPage({super.key});
@@ -17,9 +18,72 @@ class CommandPage extends StatefulWidget {
 
 class _CommandPageState extends State<CommandPage> {
   final _ctrl = TextEditingController();
+  final _focus = FocusNode();
+
+  /// Tab 自动补全候选：常用参数 + 编码器名
+  static const _completions = [
+    '-i ', '-y ', '-c:v ', '-c:a ', '-b:v ', '-b:a ', '-crf ', '-preset ', '-s ', '-r ',
+    '-ss ', '-to ', '-t ', '-vn ', '-an ', '-vf ', '-ac ', '-ar ',
+    'libx264', 'libx265', 'h264_nvenc', 'hevc_nvenc', 'copy', 'aac', 'libmp3lame',
+    'ultrafast', 'veryfast', 'fast', 'medium', 'slow', 'veryslow',
+  ];
 
   @override
-  void dispose() { _ctrl.dispose(); super.dispose(); }
+  void dispose() { _ctrl.dispose(); _focus.dispose(); super.dispose(); }
+
+  /// Tab 自动补全：取光标前的当前词，匹配候选补全。
+  bool _handleTab(KeyEvent event) {
+    if (event is! KeyDownEvent || event.logicalKey != LogicalKeyboardKey.tab) return false;
+    final text = _ctrl.text;
+    final sel = _ctrl.selection;
+    if (!sel.isValid) return false;
+    final before = text.substring(0, sel.start);
+    final lastSpace = before.lastIndexOf(' ');
+    final currentWord = before.substring(lastSpace + 1);
+    if (currentWord.isEmpty) return false;
+    final match = _completions.where((c) => c.startsWith(currentWord)).toList();
+    if (match.isEmpty) return false;
+    final completion = match.first;
+    final newText = text.substring(0, lastSpace + 1) + completion + text.substring(sel.end);
+    setState(() {
+      _ctrl.value = TextEditingValue(
+        text: newText,
+        selection: TextSelection.collapsed(offset: lastSpace + 1 + completion.length),
+      );
+    });
+    return true;
+  }
+
+  /// 命令行分词：支持单/双引号包裹的空格（与后端 parser 一致）。
+  /// 原 cmd.split(' ') 会把 `-i "C:\my folder\a.mp4"` 拆坏。
+  static List<String> _splitCommand(String cmd) {
+    final tokens = <String>[];
+    final current = StringBuffer();
+    bool inQuote = false;
+    String quoteChar = '';
+    for (var i = 0; i < cmd.length; i++) {
+      final c = cmd[i];
+      if (inQuote) {
+        if (c == quoteChar) {
+          inQuote = false;
+        } else {
+          current.write(c);
+        }
+      } else if (c == '"' || c == '\'') {
+        inQuote = true;
+        quoteChar = c;
+      } else if (c == ' ' || c == '\t') {
+        if (current.isNotEmpty) {
+          tokens.add(current.toString());
+          current.clear();
+        }
+      } else {
+        current.write(c);
+      }
+    }
+    if (current.isNotEmpty) tokens.add(current.toString());
+    return tokens;
+  }
 
   void _execute() {
     final cmd = _ctrl.text.trim();
@@ -30,15 +94,15 @@ class _CommandPageState extends State<CommandPage> {
 
     String? inputPath;
     String? outputPath;
-    final parts = cmd.split(' ');
+    final parts = _splitCommand(cmd);
     for (int i = 0; i < parts.length; i++) {
       if (parts[i] == '-i' && i + 1 < parts.length) {
-        inputPath = parts[i + 1].replaceAll('"', '');
+        inputPath = parts[i + 1];
       }
     }
     for (int i = parts.length - 1; i >= 0; i--) {
       if (!parts[i].startsWith('-') && parts[i].isNotEmpty) {
-        outputPath = parts[i].replaceAll('"', '');
+        outputPath = parts[i];
         break;
       }
     }
@@ -77,6 +141,16 @@ class _CommandPageState extends State<CommandPage> {
       body: Column(children: [
         GlassTopBar(
           title: Row(children: [
+            if (isMobilePlatform) ...[
+              IconButton(
+                icon: const Icon(Icons.arrow_back, size: 20),
+                tooltip: s.close,
+                onPressed: () => Navigator.of(context).maybePop(),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+              ),
+              const SizedBox(width: 4),
+            ],
             Icon(Icons.terminal_outlined, size: 20, color: scheme.primary),
             const SizedBox(width: 8),
             Text(s.navCommand),
@@ -97,46 +171,63 @@ class _CommandPageState extends State<CommandPage> {
               ]),
               const SizedBox(height: 10),
               Container(
+                constraints: const BoxConstraints(maxWidth: 620),
                 decoration: BoxDecoration(
                   color: scheme.surfaceContainerHighest.withAlpha(120),
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
                 ),
-                child: TextField(
-                  controller: _ctrl, maxLines: 5, minLines: 3,
-                  style: TextStyle(fontFamily: AppTheme.monoFont, fontSize: 13, color: scheme.onSurface, height: 1.5),
-                  decoration: InputDecoration(
-                    hintText: 'ffmpeg -i input.mp4 -c:v libx264 -b:v 2000k output.mp4',
-                    hintStyle: TextStyle(color: scheme.outline.withAlpha(100), fontFamily: AppTheme.monoFont, fontSize: 13),
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.all(14),
+                child: Focus(
+                  focusNode: _focus,
+                  onKeyEvent: (node, event) => _handleTab(event) ? KeyEventResult.handled : KeyEventResult.ignored,
+                  child: TextField(
+                    controller: _ctrl,
+                    // 单行 + Enter 直接执行
+                    maxLines: 1,
+                    style: TextStyle(fontFamily: AppTheme.monoFont, fontSize: 13, color: scheme.onSurface, height: 1.5),
+                    onSubmitted: (_) => _execute(),
+                    decoration: InputDecoration(
+                      hintText: 'ffmpeg -i input.mp4 -c:v libx264 -b:v 2000k output.mp4',
+                      hintStyle: TextStyle(color: scheme.outline.withAlpha(100), fontFamily: AppTheme.monoFont, fontSize: 13),
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.fromLTRB(14, 10, 4, 10),
+                      // 输入框右侧：执行（主色圆钮）+ 清除，仅图标无文字
+                      suffixIcon: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (_ctrl.text.isNotEmpty)
+                            IconButton(
+                              icon: const Icon(Icons.close, size: 15),
+                              tooltip: zh ? '清除' : 'Clear',
+                              onPressed: () => _ctrl.clear(),
+                              visualDensity: VisualDensity.compact,
+                              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                              padding: EdgeInsets.zero,
+                            ),
+                          const SizedBox(width: 2),
+                          Tooltip(
+                            message: s.cmdExecute,
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(14),
+                              onTap: _execute,
+                              child: Container(
+                                width: 26, height: 26,
+                                decoration: BoxDecoration(
+                                  color: scheme.primary,
+                                  shape: BoxShape.circle,
+                                  boxShadow: [BoxShadow(color: scheme.primary.withAlpha(80), blurRadius: 6, offset: const Offset(0, 1))],
+                                ),
+                                child: const Icon(Icons.play_arrow, size: 16, color: Colors.white),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),
-              const SizedBox(height: 10),
-              Row(children: [
-                FilledButton.icon(
-                  onPressed: _execute,
-                  icon: const Icon(Icons.play_arrow, size: 18),
-                  label: Text(s.cmdExecute),
-                  style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                OutlinedButton.icon(
-                  onPressed: () { Clipboard.setData(ClipboardData(text: _ctrl.text)); },
-                  icon: const Icon(Icons.copy, size: 16),
-                  label: Text(zh ? '复制' : 'Copy', style: const TextStyle(fontSize: 13)),
-                ),
-                const SizedBox(width: 8),
-                OutlinedButton.icon(
-                  onPressed: () => _ctrl.clear(),
-                  icon: const Icon(Icons.clear, size: 16),
-                  label: Text(zh ? '清空' : 'Clear', style: const TextStyle(fontSize: 13)),
-                ),
-              ]),
             ]),
           )),
           const SizedBox(height: 12),

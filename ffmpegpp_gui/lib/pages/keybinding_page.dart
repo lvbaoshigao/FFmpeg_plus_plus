@@ -160,6 +160,20 @@ class _KeybindingDialogState extends State<_KeybindingDialog> {
                   keys: config.keyBindings['queue_stop_all'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
               const SizedBox(height: 16),
 
+              _sectionHeader(Icons.explore_outlined, isZh ? '导航' : 'Navigation', scheme),
+              const SizedBox(height: 4),
+              _shortcutTile(actionId: 'nav_projects', label: isZh ? '跳转项目页' : 'Go to Projects',
+                  keys: config.keyBindings['nav_projects'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
+              _shortcutTile(actionId: 'nav_queue', label: isZh ? '跳转队列页' : 'Go to Queue',
+                  keys: config.keyBindings['nav_queue'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
+              _shortcutTile(actionId: 'nav_command', label: isZh ? '跳转命令页' : 'Go to Command',
+                  keys: config.keyBindings['nav_command'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
+              _shortcutTile(actionId: 'nav_settings', label: isZh ? '跳转设置页' : 'Go to Settings',
+                  keys: config.keyBindings['nav_settings'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
+              _shortcutTile(actionId: 'project_search', label: isZh ? '搜索项目' : 'Search Projects',
+                  keys: config.keyBindings['project_search'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
+              const SizedBox(height: 16),
+
               _sectionHeader(Icons.gesture, isZh ? '画布' : 'Canvas', scheme),
               const SizedBox(height: 4),
 
@@ -249,16 +263,19 @@ class _KeybindingDialogState extends State<_KeybindingDialog> {
   }) {
     final hasConflict = conflicts.contains(actionId);
     return ListTile(
+      dense: true,
+      visualDensity: VisualDensity.compact,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
       title: Text(label, style: TextStyle(
         color: hasConflict ? scheme.error : clr,
-        fontSize: 13,
+        fontSize: 12,
         fontWeight: hasConflict ? FontWeight.w600 : null,
       )),
       subtitle: Text(
         hasConflict
             ? '${_formatBinding(keys)}  ${isZh ? "(冲突!)" : "(conflict!)"}'
             : _formatBinding(keys),
-        style: TextStyle(fontSize: 12, color: hasConflict ? scheme.error : scheme.outline),
+        style: TextStyle(fontSize: 11, color: hasConflict ? scheme.error : scheme.outline),
       ),
       trailing: Row(mainAxisSize: MainAxisSize.min, children: [
         if (keys.isNotEmpty)

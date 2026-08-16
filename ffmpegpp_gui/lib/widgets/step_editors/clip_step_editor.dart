@@ -150,8 +150,16 @@ class _ClipStepEditorState extends State<ClipStepEditor> {
             min: 0, max: dur > 0 ? dur : 1,
             labels: RangeLabels(_formatTime(start), _formatTime(end)),
             onChanged: (v) {
-              p['start_time'] = v.start; p['end_time'] = v.end;
-              _startCtrl.text = _formatTime(v.start); _endCtrl.text = _formatTime(v.end);
+              // 最小间隔 0.1s：start==end 时 ffmpeg 会生成空文件
+              var st = v.start;
+              var en = v.end;
+              if (en - st < 0.1) {
+                if (st > 0 && st + 0.1 <= (dur > 0 ? dur : double.infinity)) { en = st + 0.1; }
+                else if (en >= 0.1) { st = en - 0.1; }
+                else { en = st + 0.1; }
+              }
+              p['start_time'] = st; p['end_time'] = en;
+              _startCtrl.text = _formatTime(st); _endCtrl.text = _formatTime(en);
               setState(() {}); widget.onChanged(); _debouncedPreview();
             },
           ),

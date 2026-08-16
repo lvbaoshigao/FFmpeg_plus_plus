@@ -119,6 +119,15 @@ class _ConcatMediaStepEditorState extends State<ConcatMediaStepEditor> {
     if (max > 0 && parts.any((p) => p! < 1 || p > max)) {
       return widget.isZh ? '编号超出范围 (1-$max)' : 'Index out of range (1-$max)';
     }
+    // 重复编号会被后端静默去重，遗漏编号则文件被丢弃——给出明确提示
+    final seen = <int>{};
+    for (final p in parts) {
+      if (p == null) continue;
+      if (!seen.add(p)) return widget.isZh ? '编号重复: $p' : 'Duplicate index: $p';
+    }
+    if (max > 0 && parts.length != max) {
+      return widget.isZh ? '共 $max 个文件，只指定了 ${parts.length} 个' : '$max files total, only ${parts.length} specified';
+    }
     return null;
   }
 }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
@@ -6,6 +7,8 @@ import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 import 'providers/app_state.dart';
 import 'services/integrity.dart';
+import 'platform/app_platform.dart';
+import 'widgets/font_picker.dart';
 import 'app.dart';
 
 final String _sep = Platform.pathSeparator;
@@ -13,7 +16,10 @@ final String _sep = Platform.pathSeparator;
 /// 日志目录（用户可写，避免 Program Files 权限问题）— 缓存避免重复创建
 final String _logDir = () {
   final String base;
-  if (Platform.isWindows) {
+  if (Platform.isAndroid) {
+    // Android 无 HOME/APPDATA；systemTemp 即应用缓存目录（可写）
+    base = Directory.systemTemp.path;
+  } else if (Platform.isWindows) {
     base = Platform.environment['APPDATA'] ?? Directory.systemTemp.path;
   } else if (Platform.isMacOS) {
     base = '${Platform.environment['HOME'] ?? '/tmp'}/Library/Application Support';
@@ -43,11 +49,18 @@ void main() async {
 
   _startupLog('=== APP START ===');
 
-  // 杀残留进程 — fire-and-forget，不阻塞启动
-  _killOldProcesses();
+  // 杀残留进程 — fire-and-forget，不阻塞启动（移动端无此概念，跳过）
+  if (!isMobilePlatform) {
+    _killOldProcesses();
+  }
 
   WidgetsFlutterBinding.ensureInitialized();
   _startupLog('1-Binding OK');
+
+  // ── 内存优化：限制图片缓存上限，避免大量缩略图撑爆内存 ──
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 96 << 20; // 96MB
+  PaintingBinding.instance.imageCache.maximumSize = 600; // 最多 600 张
+  _startupLog('1a-ImageCache capped');
 
   // 完整性校验 — 后台执行，失败不退出
   IntegrityCheck.verify().then((ok) {
@@ -67,14 +80,18 @@ void main() async {
 
   _startupLog('2-ErrorHandlers OK');
 
-  // 并行执行：窗口初始化 + 字体加载（互相无依赖）
+  // 并行执行：窗口初始化 + 字体加载（互相无依赖）；移动端无窗口
   final serverPath = _findServer();
   _startupLog('3-server: $serverPath');
 
-  await Future.wait([
-    _initWindow(),
-    _loadCustomFonts(),
-  ]);
+  if (isMobilePlatform) {
+    await _loadCustomFonts();
+  } else {
+    await Future.wait([
+      _initWindow(),
+      _loadCustomFonts(),
+    ]);
+  }
   _startupLog('4-window+fonts OK');
 
   final appState = AppState();
@@ -89,9 +106,60 @@ void main() async {
   );
   _startupLog('8-runApp done');
 
+  // ── 启动预加载（后台并行，不阻塞初始化） ──
+  // 预热字体列表（FontPicker 首次打开会枚举系统字体，很慢；提前缓存）
+  // 与后端初始化并行，Splash 动画期间完成，进入主界面后字体选择器秒开。
+  if (!isMobilePlatform) {
+    unawaited(_preloadFonts());
+  }
+
   // 后台初始化后端，UI 先显示加载画面
   await appState.init(serverPath);
   _startupLog('6-AppState.init OK');
+
+  // 后端就绪后预热壁纸解码（进主界面不再卡首帧）——仅在配置了壁纸时
+  unawaited(_precacheWallpaper(appState));
+}
+
+/// 后台预热字体列表（仅一次，缓存在 FontPicker 静态字段中）。
+Future<void> _preloadFonts() async {
+  try {
+    await FontPicker.preloadFonts();
+    _startupLog('9-fonts preloaded');
+  } catch (e) {
+    _startupLog('9-fonts preload error: $e');
+  }
+}
+
+/// 预热壁纸到 ImageCache（按 app.dart 同款 cacheWidth 限制解码），
+/// 避免进入主界面瞬间解码大图卡顿。
+Future<void> _precacheWallpaper(AppState state) async {
+  try {
+    final bg = state.config.backgroundImage;
+    if (bg.isEmpty || !File(bg).existsSync()) return;
+    final views = WidgetsBinding.instance.platformDispatcher.views;
+    if (views.isEmpty) return;
+    final view = views.first;
+    final size = view.physicalSize / view.devicePixelRatio;
+    final w = (size.width * 1.25).ceil();
+    final h = (size.height * 1.25).ceil();
+    final provider = ResizeImage(FileImage(File(bg)), width: w, height: h);
+    // 触发解码并等待完成，使图片进入 ImageCache（后续同参数请求直接命中）
+    final stream = provider.resolve(ImageConfiguration.empty);
+    final done = Completer<void>();
+    late ImageStreamListener listener;
+    listener = ImageStreamListener((_, _) {
+      if (!done.isCompleted) done.complete();
+    }, onError: (_, _) {
+      if (!done.isCompleted) done.complete();
+    });
+    stream.addListener(listener);
+    await done.future.timeout(const Duration(seconds: 10), onTimeout: () {});
+    stream.removeListener(listener);
+    _startupLog('9b-wallpaper precached');
+  } catch (e) {
+    _startupLog('9b-wallpaper precache error: $e');
+  }
 }
 
 Future<void> _initWindow() async {
@@ -108,6 +176,11 @@ Future<void> _initWindow() async {
 }
 
 String _findServer() {
+  // Android：libffmpegpp.so 随 APK 打包在 native 库目录，直接用库名加载
+  // （DynamicLibrary.open('libffmpegpp.so') 会自动在 APK lib 目录中解析）。
+  if (Platform.isAndroid) {
+    return 'libffmpegpp.so';
+  }
   final exeDir = Directory(Platform.resolvedExecutable).parent;
   _startupLog('5a-exeDir: ${exeDir.path}');
 
@@ -146,12 +219,19 @@ void _killOldProcesses() {
     }
   } else {
     final myPid = pid.toString();
-    Process.run('bash', ['-c', 'pgrep -f ffmpegpp_gui | grep -v $myPid | xargs -r kill -9']).ignore();
+    // macOS 的 BSD xargs 不支持 -r（GNU 专属）；去掉后没有匹配项时 xargs 仍会
+    // 执行一次 kill，从而把 "kill" 本身当参数——这里改用 pgrep 直接输出 PID 再逐个 kill，
+    // 避免依赖平台差异。命令行不可拼接用户输入，仅常量，无注入风险。
+    // 注意：Dart 字符串里的 $ 需转义——$myPid 是想要的插值，
+    // 但 bash 的 $(...) 命令替换和 "$p" 里的 $ 必须写成 \$( 和 \$p。
+    Process.run('bash', ['-c', 'for p in \$(pgrep -f ffmpegpp_gui | grep -v $myPid); do kill -9 "\$p" 2>/dev/null; done']).ignore();
   }
 }
 
 /// 从用户数据目录 fonts/ 加载所有 .ttf/.otf 字体（启动时调用）
 Future<void> _loadCustomFonts() async {
+  // Android 使用系统字体，无自定义字体目录
+  if (isMobilePlatform) return;
   try {
     final fontsDir = Directory('$_logDir${_sep}fonts');
     if (!fontsDir.existsSync()) {

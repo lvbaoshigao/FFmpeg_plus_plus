@@ -28,8 +28,12 @@ std::vector<std::string> auditCommand(const std::vector<std::string>& cmd) {
     for (size_t i = 0; i < cmd.size(); ++i) {
         if (cmd[i] == "-i" && i + 1 < cmd.size()) input_files.push_back(cmd[i + 1]);
     }
+    // 输出文件 = 命令中最后一个非 '-' 开头的 token（ffmpeg 以输出路径结尾）。
+    // 注意：不能用 "find(\"ffmpeg\")" 排除可执行名——那会把路径里含 "ffmpeg" 字样的
+    // 输出文件误跳过；可执行名只会出现在命令最前面，从后往前找不受影响。
     for (int i = (int)cmd.size() - 1; i >= 0; --i) {
-        if (cmd[i][0] != '-' && cmd[i].find("ffmpeg") == std::string::npos) {
+        if (cmd[i].empty()) continue;
+        if (cmd[i][0] != '-') {
             output_file = cmd[i];
             break;
         }

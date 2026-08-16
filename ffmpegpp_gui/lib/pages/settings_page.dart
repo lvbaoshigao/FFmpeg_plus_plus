@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:ui' show ImageFilter;
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FontLoader, ByteData;
 import 'package:file_picker/file_picker.dart';
@@ -12,6 +12,9 @@ import '../theme/app_strings.dart';
 import '../widgets/masonry_grid.dart';
 import '../widgets/install_dialog.dart';
 import 'keybinding_page.dart';
+import 'command_page.dart';
+import 'log_page.dart';
+import '../platform/app_platform.dart';
 import '../widgets/font_picker.dart';
 import '../services/ffmpeg_installer.dart';
 import '../services/update_service.dart' as updater;
@@ -23,7 +26,10 @@ final _s = Platform.pathSeparator;
 
 /// 获取用户数据目录，避免 Program Files 权限问题
 String _userDataDir() {
-  if (Platform.isWindows) {
+  if (Platform.isAndroid) {
+    // Android：使用应用缓存目录（systemTemp），可写且无需权限
+    return '${Directory.systemTemp.path}${_s}FFmpeg++';
+  } else if (Platform.isWindows) {
     return '${Platform.environment['APPDATA'] ?? Directory.systemTemp.path}${_s}FFmpeg++';
   } else if (Platform.isMacOS) {
     return '${Platform.environment['HOME'] ?? '/tmp'}/Library/Application Support/FFmpeg++';
@@ -48,6 +54,64 @@ Future<String?> _copyToAppDir(String srcPath, String subDir) async {
     }
   } catch (_) {}
   return null;
+}
+
+/// 壁纸优化复制：识别屏幕分辨率，若原图大于屏幕分辨率则先解码缩放到
+/// 屏幕大小并重编码为 PNG 再保存 —— 减小体积、避免大图导致添加后卡死/
+/// 内存暴涨。返回保存路径（失败回退为普通复制）。
+///
+/// [maxW]/[maxH] 为目标物理像素分辨率，调用方在 async 前从 View 同步取得，
+/// 避免 BuildContext 跨 async gap。
+Future<String?> _copyBackgroundOptimized(String srcPath, int maxW, int maxH) async {
+  try {
+    final srcFile = File(srcPath);
+    if (!srcFile.existsSync()) return null;
+    final bytes = await srcFile.readAsBytes();
+
+    // 用 dart:ui 解码原图，获取实际尺寸
+    final codec = await ui.instantiateImageCodec(bytes);
+    final frame = await codec.getNextFrame();
+    final image = frame.image;
+    final srcW = image.width;
+    final srcH = image.height;
+    codec.dispose();
+
+    // 原图小于等于屏幕分辨率：无需缩放，直接走普通复制
+    if (srcW <= maxW && srcH <= maxH) {
+      image.dispose();
+      return _copyToAppDir(srcPath, 'background');
+    }
+
+    // 等比缩放到屏幕分辨率内（长边对齐）
+    final scale = (maxW / srcW) < (maxH / srcH) ? maxW / srcW : maxH / srcH;
+    final targetW = (srcW * scale).round().clamp(1, maxW);
+    final targetH = (srcH * scale).round().clamp(1, maxH);
+
+    // 缩放 + 编码（质量高、体积小的 PNG）
+    final recorder = ui.PictureRecorder();
+    final canvas = ui.Canvas(recorder);
+    canvas.scale(targetW / srcW, targetH / srcH);
+    canvas.drawImage(image, ui.Offset.zero, ui.Paint()..filterQuality = ui.FilterQuality.medium);
+    final picture = recorder.endRecording();
+    final resized = await picture.toImage(targetW, targetH);
+    picture.dispose();
+    image.dispose();
+
+    final byteData = await resized.toByteData(format: ui.ImageByteFormat.png);
+    resized.dispose();
+    if (byteData == null) return _copyToAppDir(srcPath, 'background');
+
+    // 保存为 .png（与原文件名区分，避免覆盖源图）
+    final targetDir = Directory('${_userDataDir()}$_s${'background'}');
+    if (!targetDir.existsSync()) targetDir.createSync(recursive: true);
+    final baseName = srcPath.split(RegExp(r'[\\/]')).last.replaceAll(RegExp(r'\.[^.]+$'), '');
+    final destPath = '${targetDir.path}$_s${baseName}_opt.png';
+    await File(destPath).writeAsBytes(byteData.buffer.asUint8List(), flush: true);
+    return destPath;
+  } catch (_) {
+    // 解码/缩放失败（如超大图内存不足）：回退普通复制
+    return _copyToAppDir(srcPath, 'background');
+  }
 }
 
 /// 用系统默认浏览器打开链接。见 [ShellOpen] 里关于 `cmd /c start` 注入的说明。
@@ -227,6 +291,27 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
       ],
     ),
+    // 移动端专用：命令与日志从底部导航移入设置（避免底部元素过多）
+    if (isMobilePlatform)
+      _SectionDef(
+        id: 'tools',
+        title: (s) => s.isZh ? '工具' : 'Tools',
+        icon: Icons.handyman_outlined,
+        cards: [
+          _CardDef(
+            id: 'command',
+            title: (s) => s.navCommand,
+            keywords: ['命令', 'ffmpeg', 'command', 'terminal', '终端', '执行', 'run', '模板', 'template'],
+            build: _buildMobileCommandEntry,
+          ),
+          _CardDef(
+            id: 'logs',
+            title: (s) => s.qLogs,
+            keywords: ['日志', 'log', 'logs', '输出', 'output', '进度', 'progress', '调试', 'debug'],
+            build: _buildMobileLogsEntry,
+          ),
+        ],
+      ),
     _SectionDef(
       id: 'ai',
       title: (s) => s.secAi,
@@ -308,6 +393,7 @@ class _SettingsPageState extends State<SettingsPage> {
           body: Column(children: [
             GlassTopBar(
               title: Text(s.settingsTitle),
+              center: _searchField(scheme, s),
               actions: [
                 if (visible.isNotEmpty && searching == false)
                   IconButton(
@@ -316,7 +402,6 @@ class _SettingsPageState extends State<SettingsPage> {
                     tooltip: allCollapsed ? s.setExpandAll : s.setCollapseAll,
                     onPressed: () => _setAllCollapsed(!allCollapsed),
                   ),
-                _searchField(scheme, s),
               ],
             ),
             Expanded(
@@ -344,24 +429,29 @@ class _SettingsPageState extends State<SettingsPage> {
                               ),
                               SliverToBoxAdapter(
                                 child: AnimatedSize(
-                                  duration: const Duration(milliseconds: 180),
+                                  duration: const Duration(milliseconds: 220),
                                   curve: Curves.easeOutCubic,
                                   alignment: Alignment.topCenter,
                                   child: (!searching && _collapsed.contains(sec.id))
                                       ? const SizedBox(width: double.infinity, height: 0)
-                                      : Padding(
-                                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
-                                          child: MasonryGrid(
-                                            columns: cols,
-                                            spacing: 12,
-                                            runSpacing: 12,
-                                            children: [
-                                              for (final c in cards)
-                                                RepaintBoundary(
-                                                  key: ValueKey(c.id),
-                                                  child: c.build(ctx, state),
-                                                ),
-                                            ],
+                                      : AnimatedOpacity(
+                                          duration: const Duration(milliseconds: 220),
+                                          curve: Curves.easeOut,
+                                          opacity: 1,
+                                          child: Padding(
+                                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 18),
+                                            child: MasonryGrid(
+                                              columns: cols,
+                                              spacing: 12,
+                                              runSpacing: 12,
+                                              children: [
+                                                for (final c in cards)
+                                                  RepaintBoundary(
+                                                    key: ValueKey(c.id),
+                                                    child: c.build(ctx, state),
+                                                  ),
+                                              ],
+                                            ),
                                           ),
                                         ),
                                 ),
@@ -472,10 +562,18 @@ class _SectionHeaderDelegate extends SliverPersistentHeaderDelegate {
     // 这里原来套了一层 BackdropFilter(sigma 12)。分区标题是 pinned 的，滚动时每一帧
     // 都要重新对整条宽度做一次高斯模糊，是本页滚动最贵的一笔开销。
     // 吸顶时把底色调到接近不透明即可保证文字可读，视觉差别几乎看不出来。
-    return ClipRect(
-      child: Material(
+    // 背景透明度用 AnimatedContainer 过渡，避免吸顶/折叠瞬间跳变造成割裂感。
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(14),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOut,
         color: scheme.surface.withAlpha(pinned ? 234 : 90),
-        child: InkWell(
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            // 悬停/点击涟漪用圆角矩形，避免整条长方形的高亮
+            customBorder: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             onTap: onToggle,
             child: _headerTooltip(
               // 搜索中不能折叠，此时不挂 tooltip（空字符串会弹空气泡）
@@ -485,16 +583,26 @@ class _SectionHeaderDelegate extends SliverPersistentHeaderDelegate {
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(14, 0, 18, 0),
                   child: Row(children: [
+                    // 折叠箭头：旋转 + 透明度统一由同一段动画驱动，
+                    // 与下方 AnimatedSize 的时长/曲线保持一致，消除割裂感。
                     AnimatedRotation(
                       turns: collapsed ? -0.25 : 0, // 展开朝下，折叠朝右
-                      duration: const Duration(milliseconds: 180),
+                      duration: const Duration(milliseconds: 220),
                       curve: Curves.easeOutCubic,
-                      child: Icon(Icons.expand_more,
-                          size: 18,
-                          color: onToggle == null ? scheme.outline.withAlpha(90) : scheme.primary),
+                      child: AnimatedOpacity(
+                        opacity: onToggle == null ? 0.35 : 1,
+                        duration: const Duration(milliseconds: 160),
+                        child: Icon(Icons.expand_more,
+                            size: 18,
+                            color: onToggle == null ? scheme.outline.withAlpha(90) : scheme.primary),
+                      ),
                     ),
                     const SizedBox(width: 4),
-                    Icon(icon, size: 15, color: scheme.primary),
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 160),
+                      transitionBuilder: (child, anim) => FadeTransition(opacity: anim, child: child),
+                      child: Icon(icon, key: ValueKey(icon), size: 15, color: scheme.primary),
+                    ),
                     const SizedBox(width: 7),
                     Text(
                       title.toUpperCase(),
@@ -508,15 +616,21 @@ class _SectionHeaderDelegate extends SliverPersistentHeaderDelegate {
                     // 折叠时提示里面还有几项，避免看起来像空分区
                     if (collapsed) ...[
                       const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
-                        decoration: BoxDecoration(
-                          color: scheme.primary.withAlpha(30),
-                          borderRadius: BorderRadius.circular(9),
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 160),
+                        transitionBuilder: (child, anim) =>
+                            ScaleTransition(scale: CurvedAnimation(parent: anim, curve: Curves.easeOutBack), child: child),
+                        child: Container(
+                          key: ValueKey('count_$count'),
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: scheme.primary.withAlpha(30),
+                            borderRadius: BorderRadius.circular(9),
+                          ),
+                          child: Text('$count',
+                              style: TextStyle(
+                                  fontSize: 10, fontWeight: FontWeight.w600, color: scheme.primary)),
                         ),
-                        child: Text('$count',
-                            style: TextStyle(
-                                fontSize: 10, fontWeight: FontWeight.w600, color: scheme.primary)),
                       ),
                     ],
                     const SizedBox(width: 10),
@@ -527,6 +641,7 @@ class _SectionHeaderDelegate extends SliverPersistentHeaderDelegate {
             ),
           ),
         ),
+      ),
     );
   }
 
@@ -556,6 +671,133 @@ Widget _headerTooltip(String? message, Widget child) => message == null
 /// 于是拖一次滑块 = 每秒 60 次整棵树重建（设置页有十几张卡片）。
 /// 这里把滑块位置和标签放在本地 state 里做到即时跟手，全局配置最多每 40ms 推一次，
 /// 松手时再补一次精确值——预览照样是实时的，重建次数少了三分之二。
+
+/// 玻璃卡片容器（设置页通用）—— 跟随全局玻璃效果（liquid/blur/none）与透明度。
+Widget _glass(BuildContext ctx, AppState state, String title, List<Widget> children) {
+  final scheme = Theme.of(ctx).colorScheme;
+  return GlassPanel(
+    radius: 20,
+    padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(title, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: scheme.primary)),
+      const SizedBox(height: 8),
+      ...children,
+    ]),
+  );
+}
+
+/// 路径字段（标签 + 输入框 + 浏览按钮）
+Widget _pf(BuildContext ctx, String label, String value, ValueChanged<String> onChange, VoidCallback onBrowse) {
+  final scheme = Theme.of(ctx).colorScheme;
+  final clr = scheme.onSurface;
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label, style: TextStyle(fontSize: 12, color: clr)),
+      const SizedBox(height: 4),
+      Row(children: [
+        Expanded(child: TextField(
+          controller: TextEditingController(text: value),
+          style: const TextStyle(fontSize: 12),
+          decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
+          onChanged: onChange,
+        )),
+        const SizedBox(width: 6),
+        OutlinedButton(
+          onPressed: onBrowse,
+          style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
+          child: const Icon(Icons.folder_open, size: 16),
+        ),
+      ]),
+    ]),
+  );
+}
+
+/// 链接按钮
+/// 小号链接（博客/GitHub 等），不再是占满全宽的大按钮。
+Widget _link(String label, String url) => TextButton.icon(
+  onPressed: () => openExternalUrl(url),
+  icon: const Icon(Icons.open_in_new, size: 12),
+  label: Text(label, style: const TextStyle(fontSize: 11)),
+  style: TextButton.styleFrom(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    minimumSize: const Size(0, 28),
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    foregroundColor: const Color(0xFF5E6AD2),
+  ),
+);
+
+/// 信息行（关于页）
+Widget _infoRow(String label, String value, ColorScheme scheme, {Widget? trailing}) => Padding(
+  padding: const EdgeInsets.only(bottom: 6),
+  child: Row(children: [
+    Expanded(child: Text(label, style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant))),
+    ?trailing,
+    Text(value, style: TextStyle(fontSize: 12, color: scheme.onSurface, fontWeight: FontWeight.w500)),
+  ]),
+);
+
+/// iOS 风格按钮
+Widget _iosButton({
+  required IconData icon, required String label,
+  required Color color, required Color bg, required VoidCallback onTap,
+}) => Material(
+  color: bg,
+  borderRadius: BorderRadius.circular(14),
+  child: InkWell(
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(14),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        Icon(icon, size: 18, color: color),
+        const SizedBox(width: 6),
+        Flexible(child: Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color),
+            overflow: TextOverflow.ellipsis)),
+      ]),
+    ),
+  ),
+);
+
+/// 主题色圆点
+Widget _dot(ColorScheme sc, bool sel, Color c, String tip, VoidCallback onTap) => Tooltip(
+  message: tip,
+  child: GestureDetector(
+    onTap: onTap,
+    child: AnimatedContainer(
+      duration: const Duration(milliseconds: 150),
+      width: 28, height: 28,
+      decoration: BoxDecoration(
+        color: c,
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: sel ? sc.primary : Colors.transparent,
+          width: 3,
+        ),
+      ),
+      child: sel ? const Icon(Icons.check, size: 14, color: Colors.white) : null,
+    ),
+  ),
+);
+
+/// 自定义取色按钮（彩虹渐变）
+Widget _rainbow(ColorScheme sc, VoidCallback onTap) => Tooltip(
+  message: 'Custom',
+  child: GestureDetector(
+    onTap: onTap,
+    child: Container(
+      width: 28, height: 28,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: const LinearGradient(colors: [Color(0xFFFF5F6D), Color(0xFFFFC371), Color(0xFF36D1DC), Color(0xFF5B86E5)]),
+        border: Border.all(color: sc.outlineVariant.withAlpha(80)),
+      ),
+      child: const Icon(Icons.add, size: 14, color: Colors.white),
+    ),
+  ),
+);
+
+
 class _SettingSlider extends StatefulWidget {
   final double value;
   final double min;
@@ -628,6 +870,17 @@ const _presets = [
   ('Rose', 0xFFEF4444), ('Cyan', 0xFF06B6D4), ('Violet', 0xFF8B5CF6),
 ];
 
+const _kDefaultAnthropicModel = 'claude-opus-5';
+
+/// 询问模式下可选"无需确认"的操作（显示名, 内部 key）。
+const _askSkipOptions = <(String, String)>[
+  ('保存', 'save'),
+  ('撤销/重做', 'undo_redo'),
+  ('错误检查', 'error_check'),
+  ('清空画布', 'clear_all'),
+  ('工具执行', 'tools'),
+];
+
 Widget _buildTheme(BuildContext ctx, AppState state) {
   final cfg = state.config;
   final s = AppStrings.of(cfg.language);
@@ -638,6 +891,16 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
         title: Text(s.darkMode, style: TextStyle(color: clr)),
         value: state.darkMode,
         onChanged: (v) => state.toggleDarkMode(v)),
+    // Android Monet 动态取色（跟随系统壁纸）
+    if (isMobilePlatform)
+      SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+          title: Text(s.isZh ? '动态取色（Monet）' : 'Dynamic color (Monet)',
+              style: TextStyle(color: clr, fontSize: 13)),
+          subtitle: Text(s.isZh ? '跟随系统壁纸生成主题色，参考 Android 16 Material You'
+              : 'Theme colors derived from your wallpaper (Android 16 Material You)',
+              style: TextStyle(fontSize: 11, color: scheme.outline)),
+          value: cfg.useDynamicColor,
+          onChanged: (v) => state.updateConfig((c) => c..useDynamicColor = v)),
     const SizedBox(height: 4),
     Text(s.accentColor, style: TextStyle(color: clr, fontSize: 12)),
     const SizedBox(height: 8),
@@ -646,6 +909,46 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
           () => state.updateConfig((c) => c..themeColor = p.$2))),
       _rainbow(scheme, () => _pickColor(ctx, state)),
     ]),
+  ]);
+}
+
+/// 移动端设置 → 工具 → 命令：进入命令页
+Widget _buildMobileCommandEntry(BuildContext ctx, AppState state) {
+  final scheme = Theme.of(ctx).colorScheme;
+  final s = AppStrings.of(state.config.language);
+  return _glass(ctx, state, s.navCommand, [
+    ListTile(
+      dense: true, contentPadding: EdgeInsets.zero,
+      leading: Icon(Icons.terminal_outlined, color: scheme.primary, size: 22),
+      title: Text(s.isZh ? '手动执行 FFmpeg 命令' : 'Run custom FFmpeg commands',
+          style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+      subtitle: Text(s.isZh ? '命令输入 + 快捷模板 + 参数参考'
+          : 'Manual input + quick templates + parameter reference',
+          style: TextStyle(fontSize: 11, color: scheme.outline)),
+      trailing: Icon(Icons.chevron_right, color: scheme.outline),
+      onTap: () => Navigator.of(ctx).push(
+          MaterialPageRoute(builder: (_) => SafeArea(child: const CommandPage()))),
+    ),
+  ]);
+}
+
+/// 移动端设置 → 工具 → 日志：进入日志页
+Widget _buildMobileLogsEntry(BuildContext ctx, AppState state) {
+  final scheme = Theme.of(ctx).colorScheme;
+  final s = AppStrings.of(state.config.language);
+  return _glass(ctx, state, s.qLogs, [
+    ListTile(
+      dense: true, contentPadding: EdgeInsets.zero,
+      leading: Icon(Icons.terminal, color: scheme.primary, size: 22),
+      title: Text(s.isZh ? '查看运行日志' : 'View runtime logs',
+          style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+      subtitle: Text(s.isZh ? '后端输出、FFmpeg 进度与错误信息'
+          : 'Backend output, FFmpeg progress and errors',
+          style: TextStyle(fontSize: 11, color: scheme.outline)),
+      trailing: Icon(Icons.chevron_right, color: scheme.outline),
+      onTap: () => Navigator.of(ctx).push(
+          MaterialPageRoute(builder: (_) => SafeArea(child: const LogPage()))),
+    ),
   ]);
 }
 
@@ -666,10 +969,17 @@ Widget _buildBackground(BuildContext ctx, AppState state) {
                 padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 24, minHeight: 24)),
           IconButton(icon: Icon(Icons.image, size: 18, color: scheme.primary),
               onPressed: () async {
+                // 先同步取屏幕物理分辨率（在第一个 await 之前，避免跨 async gap）
+                final view = View.of(ctx);
+                final dpr = view.devicePixelRatio;
+                final logical = view.physicalSize / dpr;
+                final maxW = (logical.width * dpr).ceil();
+                final maxH = (logical.height * dpr).ceil();
                 final r = await FilePicker.platform.pickFiles(
                     type: FileType.custom, allowedExtensions: ['jpg', 'jpeg', 'png', 'bmp', 'webp']);
                 if (r != null && r.files.isNotEmpty && r.files.first.path != null) {
-                  final copied = await _copyToAppDir(r.files.first.path!, 'background');
+                  // 大图自动压缩到屏幕分辨率，避免体积过大导致卡死
+                  final copied = await _copyBackgroundOptimized(r.files.first.path!, maxW, maxH);
                   state.updateConfig((c) => c..backgroundImage = copied ?? r.files.first.path!);
                 }
               }, padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 24, minHeight: 24)),
@@ -687,21 +997,56 @@ Widget _buildBackground(BuildContext ctx, AppState state) {
       labelStyle: TextStyle(color: clr, fontSize: 11),
       onCommit: (v) => state.updateConfig((c) => c..cardOpacity = v),
     ),
+    const SizedBox(height: 6),
+    // 玻璃效果选择
+    Text(s.glassEffectLabel, style: TextStyle(color: clr, fontSize: 12)),
+    const SizedBox(height: 6),
+    SegmentedButton<String>(
+      segments: [
+        ButtonSegment(value: 'liquid', icon: const Icon(Icons.water_drop_outlined, size: 14), label: Text(s.glassLiquid, style: const TextStyle(fontSize: 11))),
+        ButtonSegment(value: 'blur', icon: const Icon(Icons.blur_on_outlined, size: 14), label: Text(s.glassBlur, style: const TextStyle(fontSize: 11))),
+        ButtonSegment(value: 'none', icon: const Icon(Icons.crop_square_outlined, size: 14), label: Text(s.glassNone, style: const TextStyle(fontSize: 11))),
+      ],
+      selected: {cfg.glassEffect},
+      onSelectionChanged: (v) => state.updateConfig((c) => c..glassEffect = v.first),
+      style: const ButtonStyle(visualDensity: VisualDensity.compact),
+    ),
+    const SizedBox(height: 10),
+    // 遵循主题色：玻璃/卡片底色统一使用主题色
+    Row(children: [
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(s.glassFollowTheme, style: TextStyle(color: clr, fontSize: 12)),
+        const SizedBox(height: 2),
+        Text(s.glassFollowThemeHint, style: TextStyle(fontSize: 10, color: scheme.outline)),
+      ])),
+      Switch(
+        value: cfg.glassFollowTheme,
+        onChanged: (v) => state.updateConfig((c) => c..glassFollowTheme = v),
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+    ]),
   ]);
 }
 
 Widget _buildLanguage(BuildContext ctx, AppState state) {
   final cfg = state.config;
   final s = AppStrings.of(cfg.language);
-  final clr = Theme.of(ctx).colorScheme.onSurface;
+  final scheme = Theme.of(ctx).colorScheme;
+  final clr = scheme.onSurface;
   return _glass(ctx, state, s.language, [
     Text(s.languageInterface, style: TextStyle(color: clr, fontSize: 12)),
     const SizedBox(height: 6),
-    SegmentedButton<String>(
-      segments: const [ButtonSegment(value: 'zh', label: Text('中文')), ButtonSegment(value: 'en', label: Text('English'))],
-      selected: {cfg.language},
-      onSelectionChanged: (v) => state.updateConfig((c) => c..language = v.first),
-      style: const ButtonStyle(visualDensity: VisualDensity.compact),
+    DropdownMenu<String>(
+      initialSelection: cfg.language,
+      requestFocusOnTap: false,
+      textStyle: TextStyle(fontSize: 12, color: clr),
+      // 不覆盖 menuStyle/inputDecorationTheme：沿用全局主题（圆角 22 玻璃菜单 + 主题化圆角输入框）
+      dropdownMenuEntries: [
+        DropdownMenuEntry(value: 'zh', label: '中文 (简体)'),
+        DropdownMenuEntry(value: 'en', label: 'English'),
+      ],
+      onSelected: (v) { if (v != null) state.updateConfig((c) => c..language = v); },
+      leadingIcon: Icon(Icons.language, size: 15, color: scheme.primary),
     ),
   ]);
 }
@@ -722,12 +1067,21 @@ Widget _buildFont(BuildContext ctx, AppState state) {
       onCommit: (v) => state.updateConfig((c) => c..fontSize = v),
     ),
     Text(s.qWeight, style: TextStyle(color: clr, fontSize: 12)),
-    SegmentedButton<int>(
-      segments: List.generate(AppConfig.fontWeightLabels.length, (i) =>
-          ButtonSegment(value: i, label: Text(AppConfig.fontWeightLabels[i], style: const TextStyle(fontSize: 10)))),
-      selected: {cfg.fontWeightIndex},
-      onSelectionChanged: (v) => state.updateConfig((c) => c..fontWeightIndex = v.first),
-      style: const ButtonStyle(visualDensity: VisualDensity.compact),
+    const SizedBox(height: 6),
+    // 字重：中文下拉选择（避免英文标签换行且已汉化）
+    DropdownMenu<int>(
+      initialSelection: cfg.fontWeightIndex,
+      requestFocusOnTap: false,
+      textStyle: TextStyle(fontSize: 12, color: clr),
+      // 不覆盖 menuStyle/inputDecorationTheme：沿用全局主题（圆角 22 玻璃菜单 + 主题化圆角输入框）
+      dropdownMenuEntries: const [
+        DropdownMenuEntry(value: 0, label: '细体 (Light)'),
+        DropdownMenuEntry(value: 1, label: '常规 (Regular)'),
+        DropdownMenuEntry(value: 2, label: '中等 (Medium)'),
+        DropdownMenuEntry(value: 3, label: '半粗 (SemiBold)'),
+        DropdownMenuEntry(value: 4, label: '粗体 (Bold)'),
+      ],
+      onSelected: (v) { if (v != null) state.updateConfig((c) => c..fontWeightIndex = v); },
     ),
   ]);
 }
@@ -757,7 +1111,7 @@ Widget _buildEditorMode(BuildContext ctx, AppState state) {
   return _glass(ctx, state, s.cardEditorMode, [
     RadioGroup<bool>(
       groupValue: cfg.useNodeEditor,
-      onChanged: (v) => state.updateConfig((c) => c..useNodeEditor = true),
+      onChanged: (v) { if (v != null) state.updateConfig((c) => c..useNodeEditor = v); },
       child: Column(children: [
         RadioListTile<bool>(dense: true, contentPadding: EdgeInsets.zero,
             title: Text(s.isZh ? '节点编辑器 (新)' : 'Node Editor (New)', style: TextStyle(color: clr, fontSize: 13)),
@@ -830,6 +1184,23 @@ Widget _buildUpdate(BuildContext ctx, AppState state) {
   final s = AppStrings.of(cfg.language);
   final scheme = Theme.of(ctx).colorScheme;
   final clr = scheme.onSurface;
+  // 移动端：桌面版在线更新机制不适用（APK 分发）
+  if (isMobilePlatform) {
+    return _glass(ctx, state, s.cardUpdate, [
+      ListTile(dense: true, contentPadding: EdgeInsets.zero,
+        leading: Icon(Icons.smartphone, color: scheme.primary, size: 22),
+        title: Text(s.isZh ? 'Android 版本更新' : 'Android App Updates',
+            style: TextStyle(fontSize: 13, color: clr)),
+        subtitle: Text(s.isZh ? '移动端通过 APK 分发，请关注项目发布页获取新版本'
+            : 'Distributed via APK — check the project release page for new versions',
+            style: TextStyle(fontSize: 11, color: scheme.outline)),
+      ),
+      const SizedBox(height: 4),
+      Wrap(spacing: 4, runSpacing: 4, children: [
+        _link('GitHub', 'https://github.com/pity-Fox/FFmpeg_plus_plus/releases'),
+      ]),
+    ]);
+  }
   return _glass(ctx, state, s.cardUpdate, [
     SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
         title: Text(s.isZh ? '启动时自动检查更新' : 'Auto-check updates on startup', style: TextStyle(color: clr, fontSize: 13)),
@@ -912,7 +1283,10 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
           color: scheme.primary, bg: scheme.primaryContainer, onTap: () => _showSponsor(ctx, scheme, s))),
       const SizedBox(width: 8),
       Expanded(child: _iosButton(icon: Icons.system_update, label: s.checkUpdate,
-          color: scheme.onSecondaryContainer, bg: scheme.secondaryContainer, onTap: () => _checkForUpdate(ctx, s))),
+          color: scheme.onSecondaryContainer, bg: scheme.secondaryContainer,
+          onTap: isMobilePlatform
+              ? () => openExternalUrl('https://github.com/pity-Fox/FFmpeg_plus_plus/releases')
+              : () => _checkForUpdate(ctx, s))),
     ]),
     const SizedBox(height: 10),
     Wrap(spacing: 4, runSpacing: 4, children: [
@@ -962,6 +1336,12 @@ Widget _buildMcpAi(BuildContext ctx, AppState state) {
           },
         )),
       ]),
+    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+        title: Text(s.isZh ? '允许 MCP 写入' : 'Allow MCP Write', style: TextStyle(color: clr, fontSize: 12)),
+        subtitle: Text(s.isZh ? '关闭时 MCP 只能读取画布/文件，所有修改操作会被拒绝' : 'When off, MCP can only read the canvas/files; all write actions are rejected',
+            style: TextStyle(fontSize: 10, color: scheme.outline)),
+        value: cfg.mcpAllowWrite,
+        onChanged: (v) => state.updateConfig((c) => c..mcpAllowWrite = v)),
     const SizedBox(height: 8),
     SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
         title: Text(s.aiEnable, style: TextStyle(color: clr)),
@@ -985,12 +1365,32 @@ void _showAiSettingsDialog(BuildContext ctx, AppState state, AppStrings s) {
     context: ctx,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
+    // 限制最大宽度并居中：宽屏下 AI 设置面板不再拉满整屏
+    constraints: const BoxConstraints(maxWidth: 880),
     builder: (bCtx) {
+      // 持久状态（闭包捕获，StatefulBuilder 重建时保留）：
+      // 当前选中的配置 id + 正在编辑的草稿（null=尚未开始编辑）
+      String selProfileId = state.config.aiProfiles.isNotEmpty
+          ? (state.config.activeAiProfileId.isNotEmpty
+              ? state.config.activeAiProfileId
+              : state.config.aiProfiles.first.id)
+          : '';
+      AiProfile? draft;
+      bool showPreset = false;
       return StatefulBuilder(builder: (ctx2, setDState) {
         final cfg = state.config;
         final scheme = Theme.of(ctx2).colorScheme;
         final clr = scheme.onSurface;
         final cardColor = scheme.surface.withAlpha((cfg.cardOpacity * 255).round().clamp(0, 255));
+
+        // 当前编辑对象：优先草稿，其次从列表取
+        AiProfile? selected() {
+          if (draft != null) return draft;
+          for (final pr in cfg.aiProfiles) {
+            if (pr.id == selProfileId) return pr;
+          }
+          return null;
+        }
 
         Widget section(String title, IconData icon, List<Widget> children) => Container(
           margin: const EdgeInsets.only(bottom: 12),
@@ -1017,11 +1417,8 @@ void _showAiSettingsDialog(BuildContext ctx, AppState state, AppStrings s) {
           initialChildSize: 0.85,
           minChildSize: 0.5,
           maxChildSize: 0.95,
-          builder: (_, scrollCtrl) => Container(
-            decoration: BoxDecoration(
-              color: scheme.surface,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-            ),
+          builder: (_, scrollCtrl) => GlassPanel(
+            radius: 20,
             child: Column(children: [
               const SizedBox(height: 8),
               Container(width: 36, height: 4, decoration: BoxDecoration(color: scheme.outlineVariant, borderRadius: BorderRadius.circular(2))),
@@ -1037,50 +1434,96 @@ void _showAiSettingsDialog(BuildContext ctx, AppState state, AppStrings s) {
                 controller: scrollCtrl,
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
                 children: [
-                  // ── Connection ──
-                  section(s.aiConnection, Icons.cloud_outlined, [
-                    Text(s.aiProvider, style: TextStyle(color: clr, fontSize: 12)),
-                    const SizedBox(height: 6),
-                    SegmentedButton<String>(
-                      segments: const [ButtonSegment(value: 'openai', label: Text('OpenAI')), ButtonSegment(value: 'anthropic', label: Text('Anthropic'))],
-                      selected: {cfg.aiProvider},
-                      onSelectionChanged: (v) {
-                        final provider = v.first;
-                        state.updateConfig((c) {
-                          c.aiProvider = provider;
-                          if (provider == 'anthropic' && c.aiApiUrl == 'https://api.openai.com/v1/chat/completions') {
-                            c.aiApiUrl = 'https://api.anthropic.com/v1/messages';
-                            c.aiModel = _kDefaultAnthropicModel;
-                          } else if (provider == 'openai' && c.aiApiUrl == 'https://api.anthropic.com/v1/messages') {
-                            c.aiApiUrl = 'https://api.openai.com/v1/chat/completions';
-                            c.aiModel = 'gpt-4o';
-                          }
-                          return c;
-                        });
-                        setDState(() {});
-                      },
-                      style: const ButtonStyle(visualDensity: VisualDensity.compact),
+                  // ── AI 配置（左右分区：左列表 / 右详情） ──
+                  section(zh ? 'AI 配置' : 'AI Profiles', Icons.folder_shared_outlined, [
+                    SizedBox(
+                      height: 300,
+                      child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                        // ══ 左：配置列表 ══
+                        Container(
+                          width: 170,
+                          decoration: BoxDecoration(
+                            color: scheme.surfaceContainerHighest.withAlpha(50),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: scheme.outlineVariant.withAlpha(50)),
+                          ),
+                          child: Column(children: [
+                            Expanded(
+                              child: cfg.aiProfiles.isEmpty
+                                  ? Center(child: Text(zh ? '暂无配置' : 'No profiles',
+                                      style: TextStyle(fontSize: 11, color: scheme.outline)))
+                                  : ListView.builder(
+                                      padding: const EdgeInsets.symmetric(vertical: 4),
+                                      itemCount: cfg.aiProfiles.length,
+                                      itemBuilder: (_, i) {
+                                        final pr = cfg.aiProfiles[i];
+                                        final isSel = pr.id == selProfileId;
+                                        return InkWell(
+                                          onTap: () { selProfileId = pr.id; draft = null; showPreset = false; setDState(() {}); },
+                                          child: Container(
+                                            margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                                            decoration: BoxDecoration(
+                                              color: isSel ? scheme.primaryContainer.withAlpha(120) : Colors.transparent,
+                                              borderRadius: BorderRadius.circular(8),
+                                            ),
+                                            child: Row(children: [
+                                              Icon(
+                                                pr.enabled
+                                                    ? (isSel ? Icons.radio_button_checked : Icons.cloud_outlined)
+                                                    : Icons.cloud_off_outlined,
+                                                size: 13,
+                                                color: isSel ? scheme.primary : (pr.enabled ? scheme.outline : scheme.outline.withAlpha(60)),
+                                              ),
+                                              const SizedBox(width: 6),
+                                              Expanded(child: Text(pr.name, maxLines: 1, overflow: TextOverflow.ellipsis,
+                                                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
+                                                      color: isSel ? scheme.primary : (pr.enabled ? clr : scheme.outline)))),
+                                            ]),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                            ),
+                            Divider(height: 1, color: scheme.outlineVariant.withAlpha(40)),
+                            // 新建配置
+                            InkWell(
+                              onTap: () {
+                                final np = AiProfile(name: zh ? '新配置' : 'New Profile');
+                                // 只建本地草稿，点"保存"才落库。
+                                // 原实现立即 updateConfig 持久化，不保存就关闭对话框会留下幽灵配置。
+                                selProfileId = np.id; draft = np; showPreset = true;
+                                setDState(() {});
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(vertical: 8),
+                                child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                                  const Icon(Icons.add, size: 14, color: Color(0xFF5E6AD2)),
+                                  const SizedBox(width: 4),
+                                  Text(zh ? '新建配置' : 'New Profile',
+                                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF5E6AD2))),
+                                ]),
+                              ),
+                            ),
+                          ]),
+                        ),
+                        const SizedBox(width: 12),
+                        // ══ 右：配置详情 ══
+                        Expanded(
+                          child: selected() == null
+                              ? Center(child: Text(zh ? '选择或新建一个配置' : 'Select or create a profile',
+                                  style: TextStyle(fontSize: 11, color: scheme.outline)))
+                              : _buildProfileDetail(ctx, state, setDState, scheme, clr, s, zh, selected()!, selProfileId, draft, showPreset, () {
+                                  selProfileId = cfg.aiProfiles.isNotEmpty ? cfg.aiProfiles.first.id : '';
+                                  draft = null;
+                                  setDState(() {});
+                                }),
+                        ),
+                      ]),
                     ),
-                    const SizedBox(height: 10),
-                    _McpTextField(value: cfg.aiApiKey, label: s.aiApiKey, scheme: scheme, obscure: true,
-                        onChange: (v) => state.updateConfig((c) => c..aiApiKey = v)),
                     const SizedBox(height: 8),
-                    _McpTextField(value: cfg.aiApiUrl, label: s.aiApiUrl, scheme: scheme,
-                        onChange: (v) => state.updateConfig((c) => c..aiApiUrl = v)),
-                    const SizedBox(height: 8),
-                    _McpTextField(value: cfg.aiModel, label: s.aiModel, scheme: scheme,
-                        onChange: (v) => state.updateConfig((c) => c..aiModel = v)),
-                    const SizedBox(height: 10),
-                    Row(children: [
-                      Expanded(child: _iosButton(icon: Icons.wifi_tethering, label: s.aiPing,
-                          color: scheme.primary, bg: scheme.primaryContainer,
-                          onTap: () => _pingAi(ctx, state, s))),
-                      const SizedBox(width: 8),
-                      Expanded(child: _iosButton(icon: Icons.list, label: s.aiListModels,
-                          color: scheme.onSecondaryContainer, bg: scheme.secondaryContainer,
-                          onTap: () => _listAiModels(ctx, state, s, onPicked: () => setDState(() {})))),
-                    ]),
                   ]),
+
                   // ── Permissions ──
                   section(s.aiPermissions, Icons.security_outlined, [
                     SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
@@ -1098,6 +1541,11 @@ void _showAiSettingsDialog(BuildContext ctx, AppState state, AppStrings s) {
                         subtitle: Text(s.aiAutoExecuteDesc, style: TextStyle(color: scheme.outline, fontSize: 10)),
                         value: cfg.aiAutoExecute,
                         onChanged: (v) { state.updateConfig((c) => c..aiAutoExecute = v); setDState(() {}); }),
+                    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+                        title: Text(s.aiAllowAsk, style: TextStyle(color: clr, fontSize: 12)),
+                        subtitle: Text(s.aiAllowAskDesc, style: TextStyle(color: scheme.outline, fontSize: 10)),
+                        value: cfg.aiAllowAsk,
+                        onChanged: (v) { state.updateConfig((c) => c..aiAllowAsk = v); setDState(() {}); }),
                   ]),
                   // ── Advanced ──
                   section(s.aiAdvanced, Icons.tune_outlined, [
@@ -1109,6 +1557,67 @@ void _showAiSettingsDialog(BuildContext ctx, AppState state, AppStrings s) {
                       onSelectionChanged: (v) { state.updateConfig((c) => c..aiGraphMode = v.first); setDState(() {}); },
                       style: const ButtonStyle(visualDensity: VisualDensity.compact),
                     ),
+                    const SizedBox(height: 8),
+                    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+                        title: Text(s.aiShowThinking, style: TextStyle(color: clr, fontSize: 12)),
+                        subtitle: Text(s.aiShowThinkingDesc, style: TextStyle(color: scheme.outline, fontSize: 10)),
+                        value: cfg.aiShowThinking,
+                        onChanged: (v) { state.updateConfig((c) => c..aiShowThinking = v); setDState(() {}); }),
+                    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+                        title: Text(s.aiAutoTitleLabel, style: TextStyle(color: clr, fontSize: 12)),
+                        subtitle: Text(s.aiAutoTitleDesc, style: TextStyle(color: scheme.outline, fontSize: 10)),
+                        value: cfg.aiAutoTitle,
+                        onChanged: (v) { state.updateConfig((c) => c..aiAutoTitle = v); setDState(() {}); }),
+                    if (cfg.aiAutoTitle) ...[
+                      const SizedBox(height: 4),
+                      Text(s.aiTitlePromptLabel, style: TextStyle(color: clr, fontSize: 12)),
+                      const SizedBox(height: 6),
+                      _McpTextField(
+                        value: cfg.aiTitlePrompt,
+                        label: '',
+                        hint: s.isZh ? '标题生成提示词（可改写）' : 'Title prompt (editable)',
+                        scheme: scheme,
+                        minLines: 2,
+                        maxLines: 4,
+                        onChange: (v) => state.updateConfig((c) => c..aiTitlePrompt = v),
+                      ),
+                    ],
+                    const SizedBox(height: 4),
+                    // 会话模式：自动批准 / 询问
+                    Text(s.aiApproveModeLabel, style: TextStyle(color: clr, fontSize: 12)),
+                    const SizedBox(height: 6),
+                    SegmentedButton<String>(
+                      segments: [
+                        ButtonSegment(value: 'ask', label: Text(s.aiApproveModeAsk, style: const TextStyle(fontSize: 11))),
+                        ButtonSegment(value: 'auto', label: Text(s.aiApproveModeAuto, style: const TextStyle(fontSize: 11))),
+                      ],
+                      selected: {cfg.aiApproveMode},
+                      onSelectionChanged: (v) { state.updateConfig((c) => c..aiApproveMode = v.first); setDState(() {}); },
+                      style: const ButtonStyle(visualDensity: VisualDensity.compact),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(s.aiApproveModeDesc, style: TextStyle(color: scheme.outline, fontSize: 10)),
+                    const SizedBox(height: 12),
+                    // 询问模式下无需确认的操作
+                    Text(s.aiAskSkipLabel, style: TextStyle(color: clr, fontSize: 12)),
+                    const SizedBox(height: 6),
+                    Wrap(spacing: 6, runSpacing: 6, children: [
+                      for (final op in _askSkipOptions)
+                        FilterChip(
+                          label: Text(op.$1, style: const TextStyle(fontSize: 11)),
+                          selected: cfg.aiAskSkipTools.contains(op.$2),
+                          visualDensity: VisualDensity.compact,
+                          onSelected: (sel) {
+                            state.updateConfig((c) {
+                              final set = c.aiAskSkipTools.toSet();
+                              if (sel) { set.add(op.$2); } else { set.remove(op.$2); }
+                              c.aiAskSkipTools = set.toList();
+                              return c;
+                            });
+                            setDState(() {});
+                          },
+                        ),
+                    ]),
                     const SizedBox(height: 12),
                     Text(s.aiCustomPrompt, style: TextStyle(color: clr, fontSize: 12)),
                     const SizedBox(height: 6),
@@ -1134,107 +1643,236 @@ void _showAiSettingsDialog(BuildContext ctx, AppState state, AppStrings s) {
   );
 }
 
-// ═══════════════════════════════════════════
-// 通用小部件
-// ═══════════════════════════════════════════
-
-Widget _iosButton({
-  required IconData icon, required String label,
-  required Color color, required Color bg, required VoidCallback onTap,
-}) => Material(
-  color: bg,
-  borderRadius: BorderRadius.circular(14),
-  child: InkWell(
-    onTap: onTap,
-    borderRadius: BorderRadius.circular(14),
-    child: Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
-      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-        Icon(icon, size: 18, color: color),
-        const SizedBox(width: 6),
-        Flexible(child: Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color),
-            overflow: TextOverflow.ellipsis)),
-      ]),
-    ),
-  ),
-);
-
-Widget _glass(BuildContext ctx, AppState state, String title, List<Widget> children) {
-  final scheme = Theme.of(ctx).colorScheme;
-  final cfg = state.config;
-  final cardAlpha = (cfg.cardOpacity * 255).round().clamp(0, 255);
-  final inner = Card(
-    elevation: 4,
-    shadowColor: scheme.shadow,
-    color: scheme.surface.withAlpha(cardAlpha),
-    margin: EdgeInsets.zero,
-    shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(14),
-      side: BorderSide(color: scheme.outlineVariant.withAlpha(60), width: 1),
-    ),
-    child: Padding(padding: const EdgeInsets.all(14), child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-      Text(title, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.primary)),
-      const SizedBox(height: 8), ...children,
-    ])),
-  );
-
-  // 没有背景图时卡片后面只是一块纯色，模糊纯色的结果还是同一块纯色——
-  // 画面完全没变，却要为每张卡片多跑一遍 BackdropFilter（本页 14 张）。
-  // 所以只在真正有背景图可糊的时候才加这一层。
-  if (cfg.backgroundImage.isEmpty) {
-    return ClipRRect(borderRadius: BorderRadius.circular(14), child: inner);
+/// 弹出 AI 配置编辑表单（新建或编辑现有配置）。
+/// 对 AiProfile 应用供应商预设（一键填充端点/模型/上下文）。
+void _applyProfilePreset(AiProfile c, String preset) {
+  switch (preset) {
+    case 'openai':
+      c.provider = 'openai';
+      c.apiUrl = 'https://api.openai.com/v1/chat/completions';
+      c.model = 'gpt-4o';
+      c.contextWindow = 128000;
+    case 'anthropic':
+      c.provider = 'anthropic';
+      c.apiUrl = 'https://api.anthropic.com/v1/messages';
+      c.model = _kDefaultAnthropicModel;
+      c.contextWindow = 200000;
+    case 'deepseek':
+      c.provider = 'openai';
+      c.apiUrl = 'https://api.deepseek.com/v1/chat/completions';
+      c.model = 'deepseek-chat';
+      c.contextWindow = 64000;
+    case 'ollama':
+      c.provider = 'openai';
+      c.apiUrl = 'http://localhost:11434/v1/chat/completions';
+      c.model = 'llama3';
+      c.contextWindow = 8192;
   }
-  return ClipRRect(
-    borderRadius: BorderRadius.circular(14),
-    child: BackdropFilter(filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6), child: inner),
+}
+
+/// 右侧配置详情：编辑选中配置的全部字段（含供应商预设）。
+Widget _buildProfileDetail(
+  BuildContext ctx,
+  AppState state,
+  StateSetter setDState,
+  ColorScheme scheme,
+  Color clr,
+  AppStrings s,
+  bool zh,
+  AiProfile profile,
+  String selProfileId,
+  AiProfile? draft,
+  bool showPreset,
+  VoidCallback onDeleted,
+) {
+  // 用 Key 保持编辑中草稿的 controller 稳定
+  Widget field(String label, Widget child) => Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label, style: TextStyle(fontSize: 12, color: clr)),
+      const SizedBox(height: 4),
+      child,
+    ]),
+  );
+
+  return SingleChildScrollView(
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      // 供应商预设（新建/编辑都可一键填充）
+      if (showPreset || true) ...[
+        field(zh ? '供应商预设（一键填充）' : 'Provider Preset', DropdownButtonFormField<String>(
+          initialValue: profile.provider == 'anthropic' ? 'anthropic'
+              : profile.apiUrl.contains('deepseek') ? 'deepseek'
+              : profile.apiUrl.contains('localhost') || profile.apiUrl.contains('11434') ? 'ollama'
+              : 'openai',
+          isDense: true,
+          decoration: InputDecoration(
+            isDense: true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+          style: TextStyle(fontSize: 12, color: clr),
+          items: const [
+            DropdownMenuItem(value: 'openai', child: Text('OpenAI', style: TextStyle(fontSize: 12))),
+            DropdownMenuItem(value: 'anthropic', child: Text('Anthropic (Claude)', style: TextStyle(fontSize: 12))),
+            DropdownMenuItem(value: 'deepseek', child: Text('DeepSeek', style: TextStyle(fontSize: 12))),
+            DropdownMenuItem(value: 'ollama', child: Text('Ollama (本地)', style: TextStyle(fontSize: 12))),
+          ],
+          onChanged: (preset) {
+            if (preset == null) return;
+            _applyProfilePreset(profile, preset);
+            setDState(() {});
+          },
+        )),
+        const SizedBox(height: 8),
+      ],
+      // 配置名
+      field(zh ? '配置名' : 'Name', TextField(
+        controller: TextEditingController(text: profile.name),
+        style: const TextStyle(fontSize: 12),
+        decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
+        onChanged: (v) { profile.name = v; },
+      )),
+      // 协议
+      field(zh ? '请求方式 / 协议' : 'Protocol', SegmentedButton<String>(
+        segments: [
+          ButtonSegment(value: 'openai', label: Text(zh ? 'OpenAI 兼容' : 'OpenAI', style: const TextStyle(fontSize: 11))),
+          ButtonSegment(value: 'anthropic', label: Text('Anthropic', style: const TextStyle(fontSize: 11))),
+        ],
+        selected: {profile.provider},
+        onSelectionChanged: (v) { profile.provider = v.first; setDState(() {}); },
+        style: const ButtonStyle(visualDensity: VisualDensity.compact),
+      )),
+      const SizedBox(height: 10),
+      // API Key（可切换显示/隐藏）
+      field(s.aiApiKey, _McpTextField(
+        value: profile.apiKey,
+        label: '',
+        scheme: scheme,
+        obscure: true,
+        onChange: (v) { profile.apiKey = v; },
+      )),
+      // Base URL
+      field(s.aiApiUrl, TextField(
+        controller: TextEditingController(text: profile.apiUrl),
+        style: const TextStyle(fontSize: 12),
+        decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
+        onChanged: (v) { profile.apiUrl = v; },
+      )),
+      // 模型
+      field(s.aiModel, TextField(
+        controller: TextEditingController(text: profile.model),
+        style: const TextStyle(fontSize: 12),
+        decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
+        onChanged: (v) { profile.model = v; },
+      )),
+      // 上下文窗口
+      field(zh ? '上下文窗口 (token)' : 'Context Window (tokens)', TextField(
+        controller: TextEditingController(text: profile.contextWindow.toString()),
+        keyboardType: TextInputType.number,
+        style: const TextStyle(fontSize: 12),
+        decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
+        onChanged: (v) { final n = int.tryParse(v); if (n != null && n >= 1000) profile.contextWindow = n; },
+      )),
+      // 最大输出
+      field(zh ? '最大输出 token' : 'Max Output Tokens', TextField(
+        controller: TextEditingController(text: profile.maxTokens.toString()),
+        keyboardType: TextInputType.number,
+        style: const TextStyle(fontSize: 12),
+        decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
+        onChanged: (v) { final n = int.tryParse(v); if (n != null && n > 0) profile.maxTokens = n; },
+      )),
+      // 温度
+      field(zh ? '温度 (0-2)' : 'Temperature (0-2)', TextField(
+        controller: TextEditingController(text: profile.temperature.toStringAsFixed(1)),
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        style: const TextStyle(fontSize: 12),
+        decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
+        onChanged: (v) { final t = double.tryParse(v); if (t != null && t >= 0 && t <= 2) profile.temperature = t; },
+      )),
+      // 操作按钮
+      Row(children: [
+        Expanded(child: FilledButton.icon(
+          icon: const Icon(Icons.save_outlined, size: 16),
+          label: Text(zh ? '保存' : 'Save', style: const TextStyle(fontSize: 12)),
+          onPressed: () {
+            final name = profile.name.trim();
+            if (name.isEmpty) {
+              showToast(ctx, zh ? '配置名不能为空' : 'Name is required', type: ToastType.error);
+              return;
+            }
+            // 落库（编辑已有项或新项）
+            state.updateConfig((c) {
+              final i = c.aiProfiles.indexWhere((e) => e.id == profile.id);
+              if (i >= 0) {
+                c.aiProfiles[i] = profile;
+              } else {
+                c.aiProfiles.add(profile);
+              }
+              if (c.activeAiProfileId.isEmpty) c.activeAiProfileId = profile.id;
+              return c;
+            });
+            showToast(ctx, zh ? '配置已保存' : 'Profile saved', type: ToastType.success);
+          },
+        )),
+        const SizedBox(width: 8),
+        OutlinedButton.icon(
+          icon: Icon(
+            state.config.activeAiProfileId == profile.id ? Icons.radio_button_checked : Icons.radio_button_off,
+            size: 16,
+          ),
+          label: Text(zh ? '设为当前' : 'Use', style: const TextStyle(fontSize: 12)),
+          onPressed: () {
+            state.updateConfig((c) { c.activeAiProfileId = profile.id; return c; });
+            setDState(() {});
+          },
+        ),
+      ]),
+      const SizedBox(height: 8),
+      Row(children: [
+        Expanded(child: _iosButton(icon: Icons.wifi_tethering, label: s.aiPing,
+            color: scheme.primary, bg: scheme.primaryContainer,
+            onTap: () {
+              // 把当前配置临时同步到默认字段，供测试函数使用
+              state.updateConfig((c) {
+                c.aiApiKey = profile.apiKey;
+                c.aiApiUrl = profile.apiUrl;
+                c.aiProvider = profile.provider;
+                return c;
+              }).ignore();
+              _pingAi(ctx, state, s);
+            })),
+        const SizedBox(width: 8),
+        Expanded(child: _iosButton(icon: Icons.list, label: s.aiListModels,
+            color: scheme.onSecondaryContainer, bg: scheme.secondaryContainer,
+            onTap: () {
+              state.updateConfig((c) {
+                c.aiApiKey = profile.apiKey;
+                c.aiApiUrl = profile.apiUrl;
+                c.aiProvider = profile.provider;
+                return c;
+              }).ignore();
+              _listAiModels(ctx, state, s, onPicked: () => setDState(() {}));
+            })),
+      ]),
+      if (draft != null) ...[
+        const SizedBox(height: 8),
+        SizedBox(width: double.infinity, child: OutlinedButton.icon(
+          icon: const Icon(Icons.delete_outline, size: 16),
+          label: Text(zh ? '删除此配置' : 'Delete this profile', style: const TextStyle(fontSize: 12)),
+          style: OutlinedButton.styleFrom(foregroundColor: scheme.error),
+          onPressed: () {
+            state.updateConfig((c) {
+              c.aiProfiles.removeWhere((e) => e.id == profile.id);
+              if (c.activeAiProfileId == profile.id) c.activeAiProfileId = '';
+              return c;
+            });
+            onDeleted();
+          },
+        )),
+      ],
+    ]),
   );
 }
-
-Widget _pf(BuildContext ctx, String label, String value, ValueChanged<String> onChange, VoidCallback onBrowse) {
-  final scheme = Theme.of(ctx).colorScheme;
-  return Row(children: [
-    Expanded(child: _PathField(value: value, label: label, scheme: scheme, onChange: onChange)),
-    const SizedBox(width: 4),
-    IconButton(icon: Icon(Icons.folder_open, size: 20, color: scheme.primary), onPressed: onBrowse, padding: const EdgeInsets.all(8)),
-  ]);
-}
-
-Widget _dot(ColorScheme sc, bool sel, Color c, String tip, VoidCallback onTap) =>
-    GestureDetector(onTap: onTap, child: Tooltip(message: tip, child: Container(
-      width: 24, height: 24,
-      decoration: BoxDecoration(color: c, shape: BoxShape.circle,
-          border: Border.all(color: sel ? sc.onSurface : Colors.transparent, width: 2),
-          boxShadow: sel ? [BoxShadow(color: c.withAlpha(80), blurRadius: 4)] : null),
-      child: sel ? const Icon(Icons.check, size: 12, color: Colors.white) : null)));
-
-Widget _rainbow(ColorScheme sc, VoidCallback onTap) =>
-    GestureDetector(onTap: onTap, child: Container(
-      width: 24, height: 24,
-      decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: sc.outline, width: 1),
-          gradient: const SweepGradient(colors: [Colors.red, Colors.yellow, Colors.green, Colors.cyan, Colors.blue, Colors.purple, Colors.red])),
-      child: const Icon(Icons.add, size: 12, color: Colors.white)));
-
-Widget _infoRow(String label, String value, ColorScheme scheme, {Widget? trailing}) => Padding(
-  padding: const EdgeInsets.symmetric(vertical: 2),
-  child: Row(children: [
-    SizedBox(width: 70, child: Text(label, style: TextStyle(fontSize: 11, color: scheme.outline))),
-    if (trailing != null) Expanded(child: trailing)
-    else Expanded(child: Text(value, style: TextStyle(fontSize: 11, color: scheme.onSurface))),
-  ]),
-);
-
-Widget _link(String label, String url) => SizedBox(height: 22, child: OutlinedButton(
-    onPressed: () => openExternalUrl(url),
-    style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 6), minimumSize: Size.zero, visualDensity: VisualDensity.compact),
-    child: Text(label, style: const TextStyle(fontSize: 9))));
-
-// ═══════════════════════════════════════════
-// 动作
-// ═══════════════════════════════════════════
-
-/// 供应商切到 Anthropic 时填入的默认模型。
-const _kDefaultAnthropicModel = 'claude-opus-5';
 
 /// Anthropic 的 /v1/models 拿不到时的兜底列表。
 const _kKnownAnthropicModels = [
@@ -1387,8 +2025,8 @@ Future<void> _pickFont(BuildContext ctx, AppState state) async {
       if (ctx.mounted) showToast(ctx, isZh ? '字体 "$fontName" 已加载并应用' : 'Font "$fontName" loaded and applied', type: ToastType.success);
     }
   } catch (e) {
-    state.updateConfig((c) => c..fontFamily = fontName);
-    if (ctx.mounted) showToast(ctx, isZh ? '热加载失败: $e' : 'Load failed: $e', type: ToastType.error);
+    // 加载失败不设置 fontFamily（否则全局文本回退到坏字体）
+    if (ctx.mounted) showToast(ctx, isZh ? '字体加载失败: $e' : 'Font load failed: $e', type: ToastType.error);
   }
 }
 
@@ -1719,6 +2357,37 @@ class _FfmpegCardState extends State<_FfmpegCard> {
     final s = AppStrings.of(cfg.language);
     final isZh = cfg.language == 'zh';
 
+    // 移动端：FFmpeg 已内置在 APK 中（jniLibs），无需安装/选择/删除
+    if (isMobilePlatform) {
+      return _glass(context, widget.state, s.ffmpegSettings, [
+        Row(children: [
+          Icon(Icons.check_circle, size: 16, color: _found ? Colors.green : Colors.orange),
+          const SizedBox(width: 8),
+          Expanded(child: Text(
+              _found ? s.ffmpegFound : (isZh ? '内置 FFmpeg 加载中…' : 'Bundled FFmpeg loading…'),
+              style: TextStyle(fontSize: 13,
+                  color: _found ? Colors.green : Colors.orange,
+                  fontWeight: FontWeight.w600))),
+        ]),
+        if (_version.isNotEmpty)
+          Padding(padding: const EdgeInsets.only(top: 4, bottom: 6),
+              child: Text(_version, style: TextStyle(fontSize: 10, color: scheme.outline),
+                  maxLines: 2, overflow: TextOverflow.ellipsis)),
+        if (_path.isNotEmpty)
+          Padding(padding: const EdgeInsets.only(bottom: 6),
+              child: Text(_path, style: TextStyle(fontSize: 9, color: scheme.outline.withAlpha(150)),
+                  maxLines: 2, overflow: TextOverflow.ellipsis)),
+        Row(children: [
+          Expanded(child: OutlinedButton.icon(icon: const Icon(Icons.refresh, size: 14),
+              label: Text(s.recheck, style: const TextStyle(fontSize: 11)), onPressed: _detect)),
+        ]),
+        const SizedBox(height: 4),
+        Text(isZh ? '移动端已内置 FFmpeg 库，无需额外安装'
+            : 'FFmpeg is bundled with the app on mobile — no installation needed',
+            style: TextStyle(fontSize: 10, color: scheme.outline)),
+      ]);
+    }
+
     if (!_found && !_checking) {
       return _glass(context, widget.state, s.ffmpegSettings, [
         Center(child: Column(children: [
@@ -1818,9 +2487,33 @@ class _CPState extends State<_CP> {
     final labelStyle = TextStyle(fontSize: 10, color: scheme.onSurface);
     return AlertDialog(
       title: Text(widget.isZh ? '自定义颜色' : 'Custom Color', style: TextStyle(color: scheme.onSurface)),
-      content: SizedBox(width: 260, child: Column(mainAxisSize: MainAxisSize.min, children: [
+      content: SizedBox(width: 280, child: Column(mainAxisSize: MainAxisSize.min, children: [
         Container(height: 60, decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(8))),
         const SizedBox(height: 10),
+        // 常用色板：点击快速选色
+        Wrap(spacing: 6, runSpacing: 6, children: [
+          for (final preset in const [
+            0xFF5E6AD2, 0xFF3B82F6, 0xFF06B6D4, 0xFF10B981, 0xFF84CC16,
+            0xFFF59E0B, 0xFFF97316, 0xFFEF4444, 0xFFEC4899, 0xFF8B5CF6,
+            0xFF64748B, 0xFF000000, 0xFFFFFFFF, 0xFFF8FAFC,
+          ])
+            GestureDetector(
+              onTap: () {
+                final hsv = HSVColor.fromColor(Color(preset));
+                setState(() { _h = hsv.hue; _s = hsv.saturation; _v = hsv.value; });
+              },
+              child: Container(
+                width: 26, height: 26,
+                decoration: BoxDecoration(
+                  color: Color(preset),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: scheme.outlineVariant.withAlpha(120)),
+                ),
+                child: preset == c.toARGB32() ? const Icon(Icons.check, size: 12, color: Colors.white) : null,
+              ),
+            ),
+        ]),
+        const SizedBox(height: 12),
         _sl(widget.isZh ? '色相' : 'Hue', _h, 0, 360, labelStyle, (v) => setState(() => _h = v)),
         _sl(widget.isZh ? '饱和' : 'Sat', _s, 0, 1, labelStyle, (v) => setState(() => _s = v)),
         _sl(widget.isZh ? '明度' : 'Val', _v, 0, 1, labelStyle, (v) => setState(() => _v = v)),

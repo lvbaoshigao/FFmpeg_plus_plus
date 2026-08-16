@@ -27,6 +27,10 @@ class ConfigService {
       if (await file.exists()) {
         final json = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
         _config = AppConfig.fromJson(json);
+        // Android 首次安装默认开启 Monet 动态取色（桌面端不受影响）
+        if (!json.containsKey('use_dynamic_color') && Platform.isAndroid) {
+          _config.useDynamicColor = true;
+        }
       }
     } catch (_) {
       _config = AppConfig();

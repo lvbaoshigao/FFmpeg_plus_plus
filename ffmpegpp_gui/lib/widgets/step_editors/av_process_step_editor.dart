@@ -163,7 +163,16 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
               fontWeight: isAccel && gpu != 'CPU' ? FontWeight.w600 : FontWeight.w400)),
         );
       }).toList(),
-      onChanged: (v) { if (v != null) _update('video_codec', v); },
+      onChanged: (v) {
+        if (v != null) {
+          _update('video_codec', v);
+          // 切换编码器后按新上限夹取已存的 CRF（AV1/VP9 上限 63，H.26x 上限 51），
+          // 否则 Slider 断言崩溃且 ffmpeg 收到超界 CRF
+          final maxCrf = _crfMaxForCodec(v);
+          final cur = (p['crf'] as num?)?.toInt();
+          if (cur != null && cur > maxCrf) p['crf'] = maxCrf;
+        }
+      },
     );
   }
 
@@ -217,7 +226,7 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
         if (p['rate_mode'] == 'crf')
           Padding(padding: const EdgeInsets.only(bottom: 12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('CRF: ${p['crf'] ?? 23}', style: TextStyle(fontSize: 13, color: cs.onSurface)),
-            Slider(value: (p['crf'] as int? ?? 23).toDouble(), min: 0,
+            Slider(value: ((p['crf'] as int? ?? 23)).clamp(0, _crfMaxForCodec(p['video_codec'] as String? ?? 'libx264')).toDouble(), min: 0,
               max: _crfMaxForCodec(p['video_codec'] as String? ?? 'libx264').toDouble(),
               divisions: _crfMaxForCodec(p['video_codec'] as String? ?? 'libx264'),
               label: '${p['crf'] ?? 23}',
@@ -262,22 +271,40 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
           itemLabels: _audioCodecs.map((c) => _audioCodecLabelsFor(zh)[c] ?? c).toList(),
           cs: cs, onChanged: (v) => _update('audio_codec', v)),
         const SizedBox(height: 12),
-        _dropdown(label: zh ? '音频码率 (kbps)' : 'Audio Bitrate (kbps)',
-          value: '${p['audio_bitrate'] ?? ''}',
-          items: ['', 'keep', ..._audioBitrates.map((b) => '$b'), 'custom'],
-          itemLabels: [zh ? '不指定' : 'Default', zh ? '保持原样' : 'Keep Original', ..._audioBitrates.map((b) => '$b kbps'), zh ? '自定义' : 'Custom'],
-          cs: cs, onChanged: (v) {
-            if (v == 'keep') { _update('audio_bitrate', -1); }
-            else if (v == 'custom') { _update('audio_bitrate', p['audio_bitrate_custom'] ?? 128); }
-            else { _update('audio_bitrate', v.isEmpty ? null : int.tryParse(v)); }
-          }),
-        if (p['audio_bitrate'] != null && !_audioBitrates.contains(p['audio_bitrate']) && p['audio_bitrate'] != -1)
-          Padding(padding: const EdgeInsets.only(top: 8), child: TextField(
-            controller: _audioBitrateCtrl,
-            keyboardType: TextInputType.number,
-            decoration: InputDecoration(labelText: zh ? '自定义码率 (kbps)' : 'Custom Bitrate (kbps)'),
-            onChanged: (v) { final n = int.tryParse(v); if (n != null) { p['audio_bitrate'] = n; widget.onChanged(); } },
-          )),
+        // 音频码率：用 audio_bitrate_mode 记录选择（default/keep/preset/custom）。
+        // 原实现 custom 分支写 p['audio_bitrate_custom'] ?? 128，128 恰好在预设列表内，
+        // 导致自定义输入框永不出现；keep 分支写 -1 会被后端拼成 -b:a -1k。
+        Builder(builder: (_) {
+          final abMode = p['audio_bitrate_mode'] as String?;
+          final abValue = abMode == 'custom'
+              ? 'custom'
+              : (abMode == 'keep' ? 'keep' : '${p['audio_bitrate'] ?? ''}');
+          return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            _dropdown(label: zh ? '音频码率 (kbps)' : 'Audio Bitrate (kbps)',
+              value: abValue,
+              items: ['', 'keep', ..._audioBitrates.map((b) => '$b'), 'custom'],
+              itemLabels: [zh ? '不指定' : 'Default', zh ? '保持原样' : 'Keep Original', ..._audioBitrates.map((b) => '$b kbps'), zh ? '自定义' : 'Custom'],
+              cs: cs, onChanged: (v) {
+                if (v == 'keep') {
+                  _update('audio_bitrate_mode', 'keep');
+                  _update('audio_bitrate', null);
+                } else if (v == 'custom') {
+                  _update('audio_bitrate_mode', 'custom');
+                  _update('audio_bitrate', null);
+                } else {
+                  _update('audio_bitrate_mode', v.isEmpty ? 'default' : 'preset');
+                  _update('audio_bitrate', v.isEmpty ? null : int.tryParse(v));
+                }
+              }),
+            if (abValue == 'custom')
+              Padding(padding: const EdgeInsets.only(top: 8), child: TextField(
+                controller: _audioBitrateCtrl,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(labelText: zh ? '自定义码率 (kbps)' : 'Custom Bitrate (kbps)'),
+                onChanged: (v) { final n = int.tryParse(v); if (n != null && n > 0) { p['audio_bitrate'] = n; widget.onChanged(); } },
+              )),
+          ]);
+        }),
         const SizedBox(height: 12),
         _dropdown(label: zh ? '声道' : 'Channels', value: p['audio_channels'] as String? ?? 'keep', items: _channels,
           itemLabels: zh ? const ['保持', '单声道', '立体声', '5.1 环绕', '7.1 环绕'] : const ['Keep', 'Mono', 'Stereo', '5.1', '7.1'],

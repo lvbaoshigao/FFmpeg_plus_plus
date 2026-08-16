@@ -68,6 +68,12 @@ class AppStrings {
   String get bgNone => lang == 'zh' ? '无' : 'None';
   String get bgOpacity => lang == 'zh' ? '背景不透明度' : 'BG Opacity';
   String get cardOpacity => lang == 'zh' ? '卡片不透明度' : 'Card Opacity';
+  String get glassEffectLabel => lang == 'zh' ? '效果' : 'Effect';
+  String get glassFollowTheme => lang == 'zh' ? '遵循主题色' : 'Follow Theme Color';
+  String get glassFollowThemeHint => lang == 'zh' ? '选中后玻璃、卡片等元素统一使用主题色' : 'Tint glass & cards with the theme color';
+  String get glassLiquid => lang == 'zh' ? '液态玻璃' : 'Liquid';
+  String get glassBlur => lang == 'zh' ? '模糊' : 'Blur';
+  String get glassNone => lang == 'zh' ? '无效果' : 'None';
   // Resource monitor
   String get resCpu => 'CPU';
   String get resGpu => 'GPU';
@@ -102,7 +108,7 @@ class AppStrings {
   String get swVersion => lang == 'zh' ? '版本' : 'Version';
   String get swBuild => lang == 'zh' ? '构建日期' : 'Build';
   String get swProtocol => lang == 'zh' ? '协议' : 'Protocol';
-  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v4.15.50  |  构建 2026-08-05  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v4.15.50  |  Build 2026-08-05  |  JSON v0.1.0';
+  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v5.0.0-beta1  |  构建 2026-08-05  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v5.0.0-beta1  |  Build 2026-08-05  |  JSON v0.1.0';
   String get languageInterface => lang == 'zh' ? '界面语言' : 'Interface Language';
   String get ffmpegFound => lang == 'zh' ? 'FFmpeg 已检测到' : 'FFmpeg detected';
   String get ffmpegNotFound => lang == 'zh' ? 'FFmpeg 未检测到' : 'FFmpeg not found';
@@ -246,6 +252,13 @@ class AppStrings {
   String get aiWriteAccessDesc => lang == 'zh' ? '允许 AI 修改节点参数和自动应用管线' : 'Allow AI to modify node params and auto-apply pipelines';
   String get aiAutoExecute => lang == 'zh' ? '自动执行工具' : 'Auto-execute Tools';
   String get aiAutoExecuteDesc => lang == 'zh' ? '允许 AI 自动执行工具（提问、检查、撤销等）' : 'Allow AI to auto-execute tools (ask, check, undo, etc.)';
+  String get aiAllowAsk => lang == 'zh' ? '允许 AI 询问用户' : 'Allow AI to ask the user';
+  String get aiAllowAskDesc => lang == 'zh' ? '开启后 AI 可在需要时通过选项向用户提问' : 'When on, AI can ask the user with clickable options when needed';
+  String get aiShowThinking => lang == 'zh' ? '显示思考过程' : 'Show thinking';
+  String get aiShowThinkingDesc => lang == 'zh' ? '关闭后不展示模型的推理过程（如 DeepSeek-R1 / Claude thinking）' : "Hide the model's reasoning steps (e.g. DeepSeek-R1 / Claude thinking)";
+  String get aiAutoTitleLabel => lang == 'zh' ? '自动生成会话标题' : 'Auto-generate session title';
+  String get aiAutoTitleDesc => lang == 'zh' ? '对话后自动总结生成标题，显示在顶部 AI 按钮旁' : 'Auto-summarize the conversation into a title shown next to the AI button';
+  String get aiTitlePromptLabel => lang == 'zh' ? '标题生成提示词（可改写）' : 'Title Prompt (editable)';
   String get aiGraphModeLabel => lang == 'zh' ? '图生成模式' : 'Graph Mode';
   String get aiGraphModeRedo => lang == 'zh' ? '替换' : 'Replace';
   String get aiGraphModeModify => lang == 'zh' ? '修改' : 'Modify';
@@ -254,6 +267,15 @@ class AppStrings {
   String get aiConnection => lang == 'zh' ? '连接' : 'Connection';
   String get aiPermissions => lang == 'zh' ? '权限' : 'Permissions';
   String get aiAdvanced => lang == 'zh' ? '高级' : 'Advanced';
+  String get aiTemperatureLabel => lang == 'zh' ? '温度 (随机性)' : 'Temperature (randomness)';
+  String get aiMaxTokensLabel => lang == 'zh' ? '最大输出 Token' : 'Max Output Tokens';
+  String get aiContextWindowLabel => lang == 'zh' ? '上下文窗口 (Token)' : 'Context Window (tokens)';
+  String get aiApproveModeLabel => lang == 'zh' ? '会话模式' : 'Session Mode';
+  String get aiApproveModeAuto => lang == 'zh' ? '自动模式' : 'Auto';
+  String get aiApproveModeAsk => lang == 'zh' ? '询问模式' : 'Ask';
+  String get aiApproveModeDesc => lang == 'zh' ? '自动模式：AI 生成的图直接应用；询问模式：每次生成后由你确认' : 'Auto: apply AI graphs directly. Ask: confirm every generated graph before applying.';
+  String get aiAskSkipLabel => lang == 'zh' ? '询问模式下无需确认的操作' : 'Operations that skip confirmation in Ask mode';
+  String get aiProviderPresetLabel => lang == 'zh' ? '供应商预设' : 'Provider Preset';
 
   // ── 设置页分区与搜索 ──
   String get setSearchHint => lang == 'zh' ? '搜索设置...' : 'Search settings...';

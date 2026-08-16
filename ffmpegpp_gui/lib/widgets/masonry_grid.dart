@@ -18,10 +18,10 @@ class MasonryGrid extends MultiChildRenderObjectWidget {
 
   @override
   RenderObject createRenderObject(BuildContext context) =>
-      _RenderMasonryGrid(columns: columns, spacing: spacing, runSpacing: runSpacing);
+      MasonryGridRenderObject(columns: columns, spacing: spacing, runSpacing: runSpacing);
 
   @override
-  void updateRenderObject(BuildContext context, _RenderMasonryGrid renderObject) {
+  void updateRenderObject(BuildContext context, MasonryGridRenderObject renderObject) {
     renderObject
       ..columns = columns
       ..spacing = spacing
@@ -29,19 +29,19 @@ class MasonryGrid extends MultiChildRenderObjectWidget {
   }
 }
 
-class _RenderMasonryGrid extends RenderBox
-    with ContainerRenderObjectMixin<RenderBox, _MasonryParentData>,
-         RenderBoxContainerDefaultsMixin<RenderBox, _MasonryParentData> {
+class MasonryGridRenderObject extends RenderBox
+    with ContainerRenderObjectMixin<RenderBox, MasonryGridParentData>,
+         RenderBoxContainerDefaultsMixin<RenderBox, MasonryGridParentData> {
   int columns;
   double spacing;
   double runSpacing;
 
-  _RenderMasonryGrid({required this.columns, required this.spacing, required this.runSpacing});
+  MasonryGridRenderObject({required this.columns, required this.spacing, required this.runSpacing});
 
   @override
   void setupParentData(RenderBox child) {
-    if (child.parentData is! _MasonryParentData) {
-      child.parentData = _MasonryParentData();
+    if (child.parentData is! MasonryGridParentData) {
+      child.parentData = MasonryGridParentData();
     }
   }
 
@@ -55,7 +55,7 @@ class _RenderMasonryGrid extends RenderBox
     while (child != null) {
       child.layout(BoxConstraints.tightFor(width: colW), parentUsesSize: true);
       final idx = _shortestColumn(colH);
-      final parentData = child.parentData! as _MasonryParentData;
+      final parentData = child.parentData! as MasonryGridParentData;
       parentData.offset = Offset(idx * (colW + spacing), colH[idx]);
       colH[idx] += child.size.height + runSpacing;
       child = parentData.nextSibling;
@@ -82,4 +82,4 @@ class _RenderMasonryGrid extends RenderBox
       defaultPaint(context, offset);
 }
 
-class _MasonryParentData extends ContainerBoxParentData<RenderBox> {}
+class MasonryGridParentData extends ContainerBoxParentData<RenderBox> {}

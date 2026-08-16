@@ -114,8 +114,8 @@ ProbeResult probeVideo(const std::string& filepath) {
             return result;
         }
 
-        int64_t format_size = format.value("size", "0") == "0" ? 0 :
-            (int64_t)std::stoll(format.value("size", "0"));
+        std::string size_str = format.value("size", "0");
+        int64_t format_size = (size_str == "0") ? 0 : (int64_t)std::stoll(size_str);
         double format_duration = std::stod(format.value("duration", "0.0"));
 
         // 检测文件媒体类型：video / audio / image
@@ -127,6 +127,9 @@ ProbeResult probeVideo(const std::string& filepath) {
         }
 
         auto sep_pos = filepath.find_last_of("/\\");
+        std::string bit_rate_str = format.value("bit_rate", "0");
+        long long bit_rate = 0;
+        try { bit_rate = std::stoll(bit_rate_str); } catch (...) {}
         result.info = {
             {"filename", (sep_pos != std::string::npos) ? filepath.substr(sep_pos + 1) : filepath},
             {"filepath", filepath},
@@ -137,8 +140,8 @@ ProbeResult probeVideo(const std::string& filepath) {
             {"size_mb", std::round(format_size / (1024.0 * 1024.0) * 100.0) / 100.0},
             {"duration", format_duration},
             {"duration_str", formatDuration(format_duration)},
-            {"bit_rate", std::stoi(format.value("bit_rate", "0"))},
-            {"bit_rate_kbps", std::round(std::stoi(format.value("bit_rate", "0")) / 1000.0 * 100.0) / 100.0},
+            {"bit_rate", bit_rate},
+            {"bit_rate_kbps", std::round(bit_rate / 1000.0 * 100.0) / 100.0},
             {"codec", video.is_null() ? "N/A" : video.value("codec_name", "N/A")},
             {"codec_long_name", video.is_null() ? "N/A" : video.value("codec_long_name", "N/A")},
             {"profile", video.is_null() ? "N/A" : video.value("profile", "N/A")},

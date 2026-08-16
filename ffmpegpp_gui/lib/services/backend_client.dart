@@ -35,9 +35,14 @@ class BackendClient {
   }
 
   /// 设置 ffmpeg/ffprobe 路径（告知 C++ 后端使用前端配置的路径）
-  Future<void> setPaths({String ffmpeg = '', String ffprobe = ''}) async {
-    if (ffmpeg.isEmpty && ffprobe.isEmpty) return;
-    await _process.request('set_paths', {'ffmpeg': ffmpeg, 'ffprobe': ffprobe});
+  /// [tempDir] 非空时同时注入临时目录（Android 无 /tmp，使用应用缓存目录）
+  Future<void> setPaths({String ffmpeg = '', String ffprobe = '', String? tempDir}) async {
+    if (ffmpeg.isEmpty && ffprobe.isEmpty && (tempDir == null || tempDir.isEmpty)) return;
+    await _process.request('set_paths', {
+      'ffmpeg': ffmpeg,
+      'ffprobe': ffprobe,
+      if (tempDir != null && tempDir.isNotEmpty) 'temp_dir': tempDir,
+    });
   }
 
   /// 探测视频文件信息（60s 超时）
@@ -77,13 +82,27 @@ class BackendClient {
       'input': input,
       'output': output,
       'subtitle_options': subtitleOptions,
-      if (videoOptions != null) 'video_options': videoOptions,
+      'video_options': ?videoOptions,
     });
     return resp;
   }
 
-  /// 取消当前任务
-  void cancel() => _process.cancel();
+  /// 取消当前任务；[taskIds] 非空时同时取消队列中未开始的任务
+  void cancel([List<String>? taskIds]) => _process.cancel(taskIds);
+
+  /// 执行用户自定义 FFmpeg 命令（命令全文交给后端执行）
+  Future<Map<String, dynamic>> customCommand(String taskId, {
+    required String command,
+    required String input,
+    required String output,
+  }) async {
+    final resp = await _process.requestWithId(taskId, 'custom_command', {
+      'command': command,
+      'input': input,
+      'output': output,
+    });
+    return resp;
+  }
 
   /// 帧提取
   Future<Map<String, dynamic>> extractFrame(String taskId, {
@@ -116,7 +135,7 @@ class BackendClient {
   }) async {
     return await _process.requestWithId(taskId, 'concat', {
       'files': files, 'output': output, 'mode': mode,
-      if (options != null) 'options': options,
+      'options': ?options,
     });
   }
 
@@ -127,7 +146,7 @@ class BackendClient {
   }) async {
     return await _process.requestWithId(taskId, 'image_sequence', {
       'files': files, 'output': output, 'framerate': framerate,
-      if (options != null) 'options': options,
+      'options': ?options,
     });
   }
 

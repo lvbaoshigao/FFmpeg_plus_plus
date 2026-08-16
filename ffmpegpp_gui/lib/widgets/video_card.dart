@@ -5,6 +5,7 @@ import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import '../pages/pipeline_editor_page.dart';
+import '../services/ffmpeg_installer.dart';
 import '../app.dart';
 import 'config_dialog.dart';
 
@@ -29,7 +30,7 @@ class VideoCard extends StatelessWidget {
           Container(
             width: 88, height: 54,
             decoration: BoxDecoration(color: video.parsed ? Colors.black : scheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(6)),
-            child: video.parsed ? _ThumbWidget(filepath: video.filepath, isAudio: video.fileMediaType == MediaType.audio) : Icon(Icons.movie_outlined, color: scheme.outline, size: 28),
+            child: video.parsed ? _ThumbWidget(filepath: video.filepath, isAudio: video.fileMediaType == MediaType.audio, ffmpeg: state.config.ffmpegPath) : Icon(Icons.movie_outlined, color: scheme.outline, size: 28),
           ),
           const SizedBox(width: 12),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
@@ -85,7 +86,8 @@ class VideoCard extends StatelessWidget {
 class _ThumbWidget extends StatefulWidget {
   final String filepath;
   final bool isAudio;
-  const _ThumbWidget({required this.filepath, this.isAudio = false});
+  final String? ffmpeg;
+  const _ThumbWidget({required this.filepath, this.isAudio = false, this.ffmpeg});
   @override
   State<_ThumbWidget> createState() => _ThumbWidgetState();
 }
@@ -108,7 +110,7 @@ class _ThumbWidgetState extends State<_ThumbWidget> {
       } else {
         args.addAll(['-i', widget.filepath, '-vframes', '1', '-q:v', '3', '-s', '176x108', f.path]);
       }
-      final r = await Process.run('ffmpeg', args);
+      final r = await Process.run(FfmpegInstaller.resolveFfmpeg(configured: widget.ffmpeg), args);
       if (r.exitCode == 0 && await f.exists()) { if (mounted) setState(() => _thumbPath = f.path); }
     } catch (_) {}
   }

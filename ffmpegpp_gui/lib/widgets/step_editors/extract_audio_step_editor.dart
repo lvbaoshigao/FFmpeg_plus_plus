@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
+import '../../services/ffmpeg_installer.dart';
 
 class ExtractAudioStepEditor extends StatefulWidget {
   final Map<String, dynamic> params;
@@ -117,7 +118,7 @@ class _ExtractAudioStepEditorState extends State<ExtractAudioStepEditor> {
 
     try {
       if (!File(tmpPath).existsSync()) {
-        final result = await Process.run('ffmpeg', [
+        final result = await Process.run(FfmpegInstaller.resolveFfmpeg(), [
           '-y', '-ss', start.toString(), '-to', end.toString(),
           '-i', widget.videoPath,
           '-vn', '-acodec', 'copy',

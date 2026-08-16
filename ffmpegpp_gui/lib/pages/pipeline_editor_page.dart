@@ -14,7 +14,11 @@ import 'package:window_manager/window_manager.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../services/graph_executor.dart';
+import '../services/ffmpeg_installer.dart';
+import '../services/ai_chat_history.dart';
+import '../theme/app_theme.dart';
 import '../theme/app_strings.dart';
+import '../platform/app_platform.dart';
 import '../services/config_export.dart';
 import '../widgets/step_editors/start_step_editor.dart';
 import '../widgets/step_editors/av_process_step_editor.dart';
@@ -92,6 +96,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   bool _toolboxExpanded = true;
   bool _editorExpanded = true;
   double _toolboxFraction = 0.4;
+  // 画布 / 右面板 水平分割比例（默认画布占 60%）
+  double _canvasFraction = 0.6;
+  // AI 侧边面板是否展开（左侧 ">" 按钮）
+  bool _aiDrawerOpen = false;
+  // 当前 AI 会话标题（对话后自动总结生成）
+  String _aiSessionTitle = '';
 
   final TransformationController _transformCtrl = TransformationController();
   final GlobalKey _canvasKey = GlobalKey();
@@ -145,7 +155,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   @override
   void initState() {
     super.initState();
-    if (!Platform.isWindows) {
+    if (!Platform.isWindows && !isMobilePlatform) {
       windowManager.addListener(this);
       windowManager.isMaximized().then((v) {
         if (mounted) setState(() => _isMaximized = v);
@@ -193,12 +203,15 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     _appState.mcpOnRedo = _redo;
     _appState.mcpOnSave = _saveGraph;
     _appState.mcpOnModifyNode = (nodeId, params) {
+      // 节点不存在时返回 false，让 MCP 工具把失败信息回填给 AI（原来静默改写第一个节点）
+      final idx = _nodes.indexWhere((n) => n.id == nodeId);
+      if (idx < 0) return false;
       _pushUndo();
       setState(() {
-        final node = _nodes.firstWhere((n) => n.id == nodeId, orElse: () => _nodes.first);
-        params.forEach((k, v) { node.params[k] = v; });
+        params.forEach((k, v) { _nodes[idx].params[k] = v; });
       });
       _saveGraph();
+      return true;
     };
     _appState.mcpOnAddNode = (typeName, x, y) {
       final type = PipelineStepType.values.firstWhere((t) => t.name == typeName, orElse: () => throw ArgumentError('Unknown type: $typeName'));
@@ -236,7 +249,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   @override
   void dispose() {
-    if (!Platform.isWindows) windowManager.removeListener(this);
+    if (!Platform.isWindows && !isMobilePlatform) windowManager.removeListener(this);
     _transformCtrl.removeListener(_onScaleChanged);
     _transformCtrl.dispose();
     _appState.mcpOnClearAll = null;
@@ -281,7 +294,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       } else {
         args.addAll(['-i', fp, '-vframes', '1', '-q:v', '3', '-s', '176x108', f.path]);
       }
-      final r = await Process.run('ffmpeg', args);
+      final r = await Process.run(FfmpegInstaller.resolveFfmpeg(configured: _appState.config.ffmpegPath), args);
       if (r.exitCode == 0 && await f.exists()) {
         if (mounted) setState(() { _thumbPath = f.path; _isAudioNoCover = false; });
       } else if (isAudio && mounted) {
@@ -489,8 +502,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   }
 
   void _deleteConnection(String connId) {
+    // 连线不存在时不压入无变化的撤销快照
+    if (!_connections.any((c) => c.id == connId)) return;
     _pushUndo();
-    final conn = _connections.firstWhere((c) => c.id == connId, orElse: () => PipelineConnection(id: '', fromNodeId: '', toNodeId: ''));
+    final conn = _connections.firstWhere((c) => c.id == connId);
     setState(() {
       _connections.removeWhere((c) => c.id == connId);
     });
@@ -1402,6 +1417,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
           ),
           actions: [
+            if (context.read<AppState>().config.aiEnabled) ...[
+              _buildTopAiBar(scheme, s),
+              const SizedBox(width: 4),
+            ],
             IconButton(
               icon: const Icon(Icons.file_upload_outlined, size: 20),
               tooltip: s.isZh ? '导出配置' : 'Export Config',
@@ -1426,24 +1445,248 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     );
   }
 
+  /// 画布顶层的 AI 工具条：配置一键选择 + 自动/询问模式 + AI 抽屉开关。
+  /// 操作全局配置（AI 面板自动跟随），避免挤在 AI 面板头部。
+  Widget _buildTopAiBar(ColorScheme scheme, AppStrings s) {
+    final cfg = context.read<AppState>().config;
+    final profiles = cfg.aiProfiles.where((p) => p.enabled).toList();
+    final activeProfile = profiles.where((p) => p.id == cfg.activeAiProfileId).firstOrNull;
+    final showModel = activeProfile?.model ?? cfg.aiModel;
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      // AI 抽屉开关 + 会话标题（可点击，带展开/折叠动画）
+      Tooltip(
+        message: s.isZh ? (_aiDrawerOpen ? '收起 AI 面板' : '展开 AI 面板') : (_aiDrawerOpen ? 'Collapse AI panel' : 'Expand AI panel'),
+        child: InkWell(
+          onTap: () => setState(() => _aiDrawerOpen = !_aiDrawerOpen),
+          borderRadius: BorderRadius.circular(8),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            height: 32,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              color: _aiDrawerOpen ? scheme.primaryContainer.withAlpha(140) : scheme.surfaceContainerHighest.withAlpha(90),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 200),
+                child: Icon(
+                  _aiDrawerOpen ? Icons.chevron_right : Icons.smart_toy,
+                  key: ValueKey(_aiDrawerOpen ? 'open' : 'closed'),
+                  size: 16,
+                  color: _aiDrawerOpen ? scheme.primary : scheme.onSurfaceVariant,
+                ),
+              ),
+              // 会话标题（有则显示，AnimatedSize 展开/折叠）
+              AnimatedSize(
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOutCubic,
+                alignment: Alignment.centerLeft,
+                child: _aiSessionTitle.isEmpty
+                    ? const SizedBox(width: 0)
+                    : Padding(
+                        padding: const EdgeInsets.only(left: 6),
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 160),
+                          child: Text(
+                            _aiSessionTitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.primary),
+                          ),
+                        ),
+                      ),
+              ),
+            ]),
+          ),
+        ),
+      ),
+      const SizedBox(width: 6),
+      // 配置一键选择（写入全局 activeAiProfileId，AI 面板跟随）
+      Container(
+        height: 32,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest.withAlpha(90),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
+        ),
+        child: PopupMenuButton<String>(
+          tooltip: s.isZh ? 'AI 配置 / 模型' : 'AI Profile / Model',
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 140),
+          onSelected: (v) {
+            if (v == '__custom_model__') {
+              _promptTopCustomModel(scheme, s);
+            } else if (v.startsWith('model:')) {
+              context.read<AppState>().updateConfig((c) => c..aiModel = v.substring(6));
+            } else {
+              final id = v.startsWith('profile:') ? v.substring(8) : '';
+              context.read<AppState>().updateConfig((c) => c..activeAiProfileId = id);
+            }
+          },
+          itemBuilder: (_) => [
+            PopupMenuItem<String>(enabled: false,
+                child: Text(s.isZh ? '配置' : 'Profiles',
+                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: scheme.outline))),
+            for (final p in profiles)
+              PopupMenuItem(value: 'profile:${p.id}',
+                  child: Row(children: [
+                    Icon(cfg.activeAiProfileId == p.id ? Icons.radio_button_checked : Icons.radio_button_off,
+                        size: 13, color: cfg.activeAiProfileId == p.id ? scheme.primary : scheme.outline),
+                    const SizedBox(width: 6),
+                    Flexible(child: Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12))),
+                  ])),
+            if (profiles.isNotEmpty) const PopupMenuDivider(),
+            PopupMenuItem(value: 'profile:',
+                child: Text(s.isZh ? '默认配置' : 'Default', style: const TextStyle(fontSize: 12))),
+            const PopupMenuDivider(),
+            PopupMenuItem<String>(enabled: false,
+                child: Text(s.isZh ? '模型' : 'Model',
+                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: scheme.outline))),
+            PopupMenuItem(value: 'model:$showModel',
+                child: Row(children: [
+                  Icon(Icons.psychology_outlined, size: 13, color: scheme.primary),
+                  const SizedBox(width: 6),
+                  Flexible(child: Text(showModel, maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12))),
+                ])),
+            PopupMenuItem(value: '__custom_model__',
+                child: Text(s.isZh ? '自定义模型...' : 'Custom model...', style: const TextStyle(fontSize: 12))),
+          ],
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.tune, size: 13, color: scheme.primary),
+            const SizedBox(width: 4),
+            Flexible(child: Text(
+              '${activeProfile?.name ?? (s.isZh ? '默认' : 'Default')} · $showModel',
+              maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: scheme.onSurface))),
+            Icon(Icons.arrow_drop_down, size: 14, color: scheme.outline),
+          ]),
+        ),
+      ),
+      const SizedBox(width: 6),
+      // 自动 / 询问 模式切换（写入全局 aiApproveMode）
+      GestureDetector(
+        onTap: () => context.read<AppState>().updateConfig((c) {
+          c.aiApproveMode = (c.aiApproveMode == 'auto') ? 'ask' : 'auto';
+          return c;
+        }),
+        child: Container(
+          height: 32,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            color: cfg.aiApproveMode == 'auto' ? scheme.primaryContainer.withAlpha(140) : scheme.secondaryContainer.withAlpha(140),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(cfg.aiApproveMode == 'auto' ? Icons.bolt : Icons.help_outline, size: 13, color: scheme.primary),
+            const SizedBox(width: 4),
+            Text(cfg.aiApproveMode == 'auto' ? (s.isZh ? '自动' : 'Auto') : (s.isZh ? '询问' : 'Ask'),
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+          ]),
+        ),
+      ),
+    ]);
+  }
+
+  /// 顶层自定义模型弹窗（写全局 aiModel）。
+  Future<void> _promptTopCustomModel(ColorScheme scheme, AppStrings s) async {
+    final cfg = context.read<AppState>().config;
+    final ctrl = TextEditingController(text: cfg.aiModel);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dCtx) => AlertDialog(
+        title: Text(s.isZh ? '自定义模型' : 'Custom Model', style: const TextStyle(fontSize: 14)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          style: const TextStyle(fontSize: 13),
+          decoration: InputDecoration(isDense: true, border: OutlineInputBorder(),
+              hintText: s.isZh ? '输入模型名，如 deepseek-reasoner' : 'e.g. deepseek-reasoner'),
+          onSubmitted: (v) => Navigator.pop(dCtx, v.trim()),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dCtx), child: Text(s.isZh ? '取消' : 'Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(dCtx, ctrl.text.trim()), child: Text(s.isZh ? '确定' : 'OK')),
+        ],
+      ),
+    );
+    if (result != null && result.isNotEmpty && mounted) {
+      await context.read<AppState>().updateConfig((c) => c..aiModel = result);
+    }
+    ctrl.dispose();
+  }
+
   // ── Body with CSD title bar ──
 
   Widget _buildBody(ColorScheme scheme, AppStrings s) {
     final content = Padding(
-      padding: EdgeInsets.only(top: Platform.isWindows ? 0 : 36),
+      padding: EdgeInsets.only(top: Platform.isWindows
+          ? 0 : (isMobilePlatform ? MediaQuery.of(context).padding.top : 36)),
       child: Column(children: [
+        // 移动端：顶部返回栏（桌面由 CSD 标题栏提供返回按钮）
+        if (isMobilePlatform)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 2, 8, 0),
+            child: Row(children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back, size: 22),
+                tooltip: s.close,
+                onPressed: () async {
+                  final nav = Navigator.of(context);
+                  if (await _onWillPop()) nav.pop();
+                },
+                constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+              ),
+              Expanded(child: Text(s.isZh ? '节点编辑器' : 'Node Editor',
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface))),
+            ]),
+          ),
         Expanded(child: Padding(
           padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
-          child: Row(children: [
-            Expanded(flex: 3, child: _buildCanvas(scheme, s)),
-            const SizedBox(width: 8),
-            Expanded(flex: 2, child: _buildRightPanel(scheme, s)),
-          ]),
+          child: LayoutBuilder(builder: (ctx, cons) {
+            // 画布 / 右面板 之间可拖动的水平分隔条
+            const dividerW = 6.0;
+            final totalW = cons.maxWidth - dividerW;
+            final canvasW = totalW * _canvasFraction;
+            final rightW = totalW * (1 - _canvasFraction);
+            return Row(children: [
+              SizedBox(width: canvasW, child: _buildCanvas(scheme, s)),
+              // 可拖动分割线
+              MouseRegion(
+                cursor: SystemMouseCursors.resizeColumn,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onHorizontalDragUpdate: (d) => setState(() {
+                    _canvasFraction = ((_canvasFraction * totalW + d.delta.dx) / totalW).clamp(0.15, 0.85);
+                  }),
+                  child: Container(
+                    width: dividerW,
+                    color: Colors.transparent,
+                    child: Center(child: Container(
+                      width: 3, height: 36,
+                      decoration: BoxDecoration(
+                        color: scheme.outlineVariant.withAlpha(90),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    )),
+                  ),
+                ),
+              ),
+              SizedBox(width: rightW, child: _buildRightPanel(scheme, s)),
+            ]);
+          }),
         )),
         _buildBottomBar(scheme, s),
       ]),
     );
-    if (Platform.isWindows) return content;
+    if (Platform.isWindows || isMobilePlatform) return content;
     return Stack(children: [
       content,
       Positioned(left: 0, right: 0, top: 0, child: _buildEditorCsdTitleBar(scheme)),
@@ -1882,13 +2125,25 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               right: 10, bottom: aiEnabled ? 60 : 10,
               child: _buildCanvasControls(scheme, s),
             ),
+            // 左侧中间 ">" 按钮：展开/收起 AI 侧边面板
             if (aiEnabled)
               Positioned(
-                right: 10, bottom: 10,
-                child: _AiPanel(
-                  strings: s,
-                  existingNodes: _nodes,
-                  existingConnections: _connections,
+                left: 0, top: 0, bottom: 0,
+                child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  // AI 侧边抽屉（收起时宽度 0）
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOutCubic,
+                    width: _aiDrawerOpen ? 420 : 0,
+                    child: _aiDrawerOpen
+                        ? _AiPanel(
+                            key: const ValueKey('ai-drawer'),
+                            startExpanded: true,
+                            onCollapseRequested: () => setState(() => _aiDrawerOpen = false),
+                            onTitleGenerated: (t) => setState(() => _aiSessionTitle = t),
+                            strings: s,
+                            existingNodes: _nodes,
+                            existingConnections: _connections,
                   onApplyGraph: (nodes, connections) {
                     _pushUndo();
                     setState(() {
@@ -1985,8 +2240,31 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                     _saveGraph();
                     return true;
                   },
-                  onCancelTasks: () => context.read<AppState>().cancelProcessing(),
-                ),
+                    onCancelTasks: () => context.read<AppState>().cancelProcessing(),
+                          )
+                        : const SizedBox.shrink(),
+                  ),
+                  // 展开/收起切换按钮（左侧中间）
+                  Align(
+                    alignment: Alignment.center,
+                    child: GestureDetector(
+                      onTap: () => setState(() => _aiDrawerOpen = !_aiDrawerOpen),
+                      child: Container(
+                        width: 18, height: 52,
+                        decoration: BoxDecoration(
+                          color: scheme.surface.withAlpha(200),
+                          borderRadius: BorderRadius.circular(0),
+                          boxShadow: [BoxShadow(color: Colors.black.withAlpha(40), blurRadius: 6, offset: const Offset(1, 0))],
+                        ),
+                        child: Icon(
+                          _aiDrawerOpen ? Icons.chevron_left : Icons.chevron_right,
+                          size: 16,
+                          color: scheme.primary,
+                        ),
+                      ),
+                    ),
+                  ),
+                ]),
               ),
           ]),
         ),
@@ -2308,7 +2586,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
     Widget inner = LayoutBuilder(builder: (ctx, constraints) {
       final totalH = constraints.maxHeight;
-      const dividerH = 6.0;
+      const dividerH = 10.0;
       final usable = totalH - dividerH;
       final toolboxH = usable * _toolboxFraction;
       final editorH = usable * (1 - _toolboxFraction);
@@ -2369,7 +2647,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             )),
         ])),
 
-        // ── 可拖动分割线 ──
+        // ── 可拖动分割线（元素 / 属性之间调整大小） ──
         MouseRegion(
           cursor: SystemMouseCursors.resizeRow,
           child: GestureDetector(
@@ -2378,12 +2656,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               _toolboxFraction = ((_toolboxFraction * usable + d.delta.dy) / usable).clamp(0.15, 0.85);
             }),
             child: Container(
-              height: dividerH,
+              height: 10,
               color: Colors.transparent,
               child: Center(child: Container(
-                width: 32, height: 3,
+                width: 44, height: 4,
                 decoration: BoxDecoration(
-                  color: scheme.outlineVariant.withAlpha(80),
+                  color: scheme.primary.withAlpha(90),
                   borderRadius: BorderRadius.circular(2),
                 ),
               )),
@@ -2909,62 +3187,278 @@ class _AiPanel extends StatefulWidget {
   final bool Function(String fromId, String toId) onConnectNodes;
   final bool Function(String connId) onDisconnectNodes;
   final VoidCallback onCancelTasks;
-  const _AiPanel({required this.strings, required this.existingNodes, required this.existingConnections, required this.onApplyGraph, required this.onMergeGraph, required this.onModifyNodeParams, required this.onClearAll, required this.onUndo, required this.onRedo, required this.onSave, required this.onAddNode, required this.onDeleteNode, required this.onConnectNodes, required this.onDisconnectNodes, required this.onCancelTasks});
+  final bool startExpanded;
+  final VoidCallback? onCollapseRequested;
+  final ValueChanged<String>? onTitleGenerated;
+  const _AiPanel({super.key, required this.strings, required this.existingNodes, required this.existingConnections, required this.onApplyGraph, required this.onMergeGraph, required this.onModifyNodeParams, required this.onClearAll, required this.onUndo, required this.onRedo, required this.onSave, required this.onAddNode, required this.onDeleteNode, required this.onConnectNodes, required this.onDisconnectNodes, required this.onCancelTasks, this.startExpanded = false, this.onCollapseRequested, this.onTitleGenerated});
   @override
   State<_AiPanel> createState() => _AiPanelState();
 }
 
 class _AiPanelState extends State<_AiPanel> {
+  @override
+  void initState() {
+    super.initState();
+    _expanded = widget.startExpanded;
+  }
+
   final _ctrl = TextEditingController();
   final _scrollCtrl = ScrollController();
   final List<({String role, String content, int? inputTokens, int? outputTokens, List<Map<String, dynamic>>? blocks})> _messages = [];
   bool _loading = false;
   bool _expanded = false;
+  // 工具侧边栏：true=展开显示工具列表，false=折叠成窄条
+  bool _toolsOpen = false;
+  // 被禁用的工具（右键工具项 → 禁用）。禁用 = 从系统提示词移除 + 调用被拦截。
+  final Set<String> _disabledTools = {};
   List<PipelineNode>? _pendingNodes;
   List<PipelineConnection>? _pendingConnections;
   bool _pendingIsModify = false;
 
+  // ── 会话级供应商/模型覆盖（默认跟随全局配置，可在面板内切换，仅影响本会话） ──
+  String? _sessionProvider;
+  String? _sessionModel;
+  // 会话级模式：'auto' 自动批准图应用；'ask' 每次询问（可豁免白名单操作）。
+  // null = 跟随全局 aiApproveMode。
+  String? _sessionApproveMode;
+  // 会话级配置项 id（null = 跟随全局 activeAiProfileId / 默认字段）
+  String? _sessionProfileId;
+  // 是否已生成过会话标题（避免每轮都生成）
+  bool _titleGenerated = false;
+
+  // ── token / 速度统计 ──
+  int _totalInputTokens = 0;
+  int _totalOutputTokens = 0;
+  double? _lastGenSpeed; // 字符/秒
+  final _genStart = Stopwatch();
+
+
   static const _uuid = Uuid();
 
-  static const _systemPrompt = '''You are an AI assistant for FFmpeg++ node editor. When the user describes media processing, respond with a brief explanation then a JSON pipeline graph.
+  String get _effectiveProvider => _sessionProvider ?? context.read<AppState>().config.aiProvider;
+  String get _effectiveModel => _sessionModel ?? context.read<AppState>().config.aiModel;
+  String get _effectiveApproveMode => _sessionApproveMode ?? context.read<AppState>().config.aiApproveMode;
 
-## Node Types
+  /// 当前生效的配置项（会话级 > 全局 active > 默认字段）。
+  AiProfile? get _effectiveProfile {
+    final cfg = context.read<AppState>().config;
+    final id = _sessionProfileId ?? cfg.activeAiProfileId;
+    if (id.isEmpty) return null;
+    for (final p in cfg.aiProfiles) {
+      if (p.id == id && p.enabled) return p;
+    }
+    return null;
+  }
 
-**Control:** start (source, always first) | output (always last: format, naming_mode, naming_value, output_dir)
+  /// 询问模式下，某操作是否在"无需确认"白名单里。
+  bool _shouldSkipAsk(String key) => context.read<AppState>().config.aiAskSkipTools.contains(key);
 
-**Video:** avProcess (video_codec, gpu, preset, rate_mode, crf, video_bitrate, resolution, fps, audio_codec, audio_bitrate, audio_channels, pix_fmt) | subtitle (source, subtitle_file, subtitle_index, font_name/size/color, outline_width/color) | clip (start_time, end_time in seconds) | speed (speed: 0.25-4.0) | videoCrop (crop_mode: keep|remove, crop_x/y/w/h)
+  /// 可插入的工具模板（供工具侧边栏展示/一键插入）
+  static const List<({String name, String desc, String template, bool needsPath})> _toolTemplates = [
+    (name: 'clear_all', desc: '清空画布', template: '[TOOL_CALL:clear_all]', needsPath: false),
+    (name: 'undo', desc: '撤销', template: '[TOOL_CALL:undo]', needsPath: false),
+    (name: 'redo', desc: '重做', template: '[TOOL_CALL:redo]', needsPath: false),
+    (name: 'save', desc: '保存', template: '[TOOL_CALL:save]', needsPath: false),
+    (name: 'error_check', desc: '画布错误检查', template: '[TOOL_CALL:error_check]', needsPath: false),
+    (name: 'ask_user', desc: '向用户提问', template: '[TOOL_CALL:ask_user|问题|选项1,选项2]', needsPath: false),
+    (name: 'list_directory', desc: '列出目录文件（只读）', template: '[TOOL_CALL:list_directory|路径]', needsPath: true),
+    (name: 'read_file_info', desc: '读取文件信息（只读）', template: '[TOOL_CALL:read_file_info|路径]', needsPath: true),
+    (name: 'probe_video', desc: '探测媒体文件', template: '[TOOL_CALL:probe_video|路径]', needsPath: true),
+    (name: 'pick_file', desc: '让用户选择文件（如字幕、封面）', template: '[TOOL_CALL:pick_file|用途|扩展名1,扩展名2]', needsPath: true),
+    (name: 'modify_node', desc: '修改节点参数', template: '[TOOL_CALL:modify_node|节点ID|key=val]', needsPath: false),
+    (name: 'add_node', desc: '添加节点', template: '[TOOL_CALL:add_node|类型|x|y]', needsPath: false),
+    (name: 'delete_node', desc: '删除节点', template: '[TOOL_CALL:delete_node|节点ID]', needsPath: false),
+    (name: 'connect_nodes', desc: '连接节点', template: '[TOOL_CALL:connect_nodes|from|to]', needsPath: false),
+    (name: 'disconnect_nodes', desc: '断开连线', template: '[TOOL_CALL:disconnect_nodes|连线ID]', needsPath: false),
+    (name: 'list_nodes', desc: '列出画布节点', template: '[TOOL_CALL:list_nodes]', needsPath: false),
+    (name: 'list_connections', desc: '列出画布连线', template: '[TOOL_CALL:list_connections]', needsPath: false),
+    (name: 'get_node_types', desc: '列出节点类型', template: '[TOOL_CALL:get_node_types]', needsPath: false),
+    (name: 'list_tasks', desc: '查看任务队列', template: '[TOOL_CALL:list_tasks]', needsPath: false),
+    (name: 'cancel_tasks', desc: '取消所有任务', template: '[TOOL_CALL:cancel_tasks]', needsPath: false),
+  ];
+  /// 系统提示词固定头部。
+  static const _promptHead = '''You are FFmpeg++ Graph Assistant, an expert FFmpeg pipeline designer for a node-based video/audio/image editor. The user describes media-processing goals in their own language; ALWAYS reply in the SAME language the user used.
 
-**Audio:** audioConvert (audio_codec, output_format) | audioQuality (bitrate_mode, audio_bitrate, sample_rate) | audioSpeed (atempo: 0.5-2.0) | audioVolume (volume_db: -30 to +30) | audioCompressor (threshold, ratio, attack, release, makeup, knee) | audioMetadata (title, artist, album, cover_path, lyrics_path) | extractAudio (extract_mode, start_time, end_time, audio_codec, output_format)
+## Output protocol (strict)
+1. First write 1-3 short sentences explaining your plan (plain text, in the user's language).
+2. Then output EXACTLY ONE JSON pipeline graph inside a single ```json fenced block. Never emit the JSON outside the fence, never emit a second graph.
+3. You may also emit tool calls (see Tools) before/after the graph. Each tool call is a single line marker.
+4. Keep the graph minimal: only include nodes the user asked for; omit params that equal defaults.
 
-**Image:** imageConvert (output_format, quality) | imageCrop (crop_x/y/w/h) | imageRotate (angle) | imageScale (scale_mode, scale_factor) | imageBrightness (brightness: -1 to 1) | imageNoise (noise_strength, noise_type) | imageSharpen (sharpen_strength: 0-5) | imageDenoise (denoise_method, denoise_strength) | imageChannelExtract (channel: r|g|b, extract_method)
+## Media flow compatibility
+Nodes carry media types; a connection is only valid when output type matches input type:
+- start → (video|audio|image) → ... → output
+- Video producers/processors: avProcess, subtitle, clip, speed, videoCrop, frame (frame outputs image)
+- Audio: audioConvert, audioQuality, audioSpeed, audioVolume, audioCompressor, audioMetadata, extractAudio
+- Image: imageConvert, imageCrop, imageRotate, imageScale, imageBrightness, imageNoise, imageSharpen, imageDenoise, imageChannelExtract
+- Composite: concatMedia (same-type inputs), imageToVideo (images → video)
+Never connect a video node to an audio node or vice versa.
 
-**Composite:** concatMedia (mode: copy|reencode, order_mode) | imageToVideo (framerate, output_format, video_codec) | frame (extract_mode: single|range|all, time, range_start/end, fps_rate, output_format)
+## Node types & key params
+Control:
+- start (no params; always first, exactly one)
+- output (always last, exactly one): format, naming_mode (auto|manual), naming_value, output_dir
 
-## JSON Format
-```json
+Video:
+- avProcess: video_codec (libx264|libx265|libvpx-vp9|libaom-av1|h264_nvenc|hevc_nvenc|mpeg4), gpu (CPU or GPU name), preset (ultrafast..veryslow), rate_mode (crf|cbr|vbr), crf (0-51, lower=better quality; default 23), video_bitrate, resolution (e.g. "1920x1080"), fps, audio_codec, audio_bitrate, audio_channels, pix_fmt
+- subtitle: source (external|embedded), subtitle_file, subtitle_index, font_name, font_size, font_color, outline_width, outline_color
+- clip: start_time, end_time (seconds; include start_time when clipping a range)
+- speed: speed (0.25-4.0)
+- videoCrop: crop_mode (keep|remove), crop_x, crop_y, crop_w, crop_h
+
+Audio:
+- audioConvert: audio_codec (aac|libmp3lame|libopus|libvorbis|flac|pcm_s16le), output_format (m4a|mp3|ogg|flac|wav)
+- audioQuality: bitrate_mode, audio_bitrate, sample_rate
+- audioSpeed: atempo (0.5-2.0)
+- audioVolume: volume_db (-30 to +30)
+- audioCompressor: threshold, ratio, attack, release, makeup, knee
+- audioMetadata: title, artist, album, cover_path, lyrics_path
+- extractAudio: extract_mode (full|clip), start_time, end_time, audio_codec, output_format
+
+Image:
+- imageConvert: output_format (png|jpg|webp|bmp|ico), quality (1-100)
+- imageCrop: crop_x, crop_y, crop_w, crop_h
+- imageRotate: angle (90|180|270)
+- imageScale: scale_mode (percent|fixed|fit), scale_factor
+- imageBrightness: brightness (-1 to 1)
+- imageNoise: noise_strength, noise_type
+- imageSharpen: sharpen_strength (0-5)
+- imageDenoise: denoise_method, denoise_strength
+- imageChannelExtract: channel (r|g|b), extract_method
+
+Composite:
+- concatMedia: mode (copy|reencode), order_mode
+- imageToVideo: framerate, output_format, video_codec
+- frame: extract_mode (single|range|all), time, range_start, range_end, fps_rate, output_format
+
+## JSON schema
 {"nodes":[{"id":"n1","type":"start","x":2900,"y":3000,"params":{}},{"id":"n2","type":"avProcess","x":3150,"y":3000,"params":{"video_codec":"libx264","rate_mode":"crf","crf":23}},{"id":"n3","type":"output","x":3400,"y":3000,"params":{}}],"connections":[{"from":"n1","to":"n2"},{"from":"n2","to":"n3"}]}
-```
-Rules: always start→...→output; space nodes ~250px apart from x=2900,y=3000; parallel branches offset y by ~120px; simplest pipeline; omit default params.
+Node layout: first node at x=2900,y=3000; each following node +250px on x; parallel branches offset y by ~120px. ids must be unique ("n1","n2",...). Exactly one start and one output; every other node must have at least one incoming and one outgoing connection.
 
-## Tools (include exact marker in response)
-[TOOL_CALL:clear_all] [TOOL_CALL:undo] [TOOL_CALL:redo] [TOOL_CALL:save]
-[TOOL_CALL:error_check] — check pipeline for logical errors
-[TOOL_CALL:ask_user|question|opt1,opt2,opt3] — ask user with clickable options
-[TOOL_CALL:list_directory|path] — list files (read-only, max 50)
-[TOOL_CALL:read_file_info|path] — file metadata (read-only)
-[TOOL_CALL:probe_video|path] — probe media file metadata
-[TOOL_CALL:modify_node|nodeId|key=val,key2=val2] — modify node params
-[TOOL_CALL:add_node|type|x|y] — add node, returns ID
-[TOOL_CALL:delete_node|nodeId] — delete node + connections
-[TOOL_CALL:connect_nodes|fromId|toId] — connect two nodes
-[TOOL_CALL:disconnect_nodes|connId] — remove connection
-[TOOL_CALL:list_nodes] [TOOL_CALL:list_connections] [TOOL_CALL:get_node_types]
-[TOOL_CALL:list_tasks] — task queue status
-[TOOL_CALL:cancel_tasks] — cancel running tasks
+## Examples
+- "把这视频转成 h265 减小体积" → start → avProcess{video_codec:libx265, rate_mode:crf, crf:28} → output{format:mp4}
+- "提取视频里的音频为 mp3" → start → extractAudio{extract_mode:full, audio_codec:libmp3lame, output_format:mp3} → output{format:mp3}
+- "每2秒截一帧图" → start → frame{extract_mode:all, fps_rate:0.5, output_format:jpg} → output{format:jpg}
 
-## Modes
-Default: JSON graph replaces entire canvas. Include [MODE:modify] to merge with existing canvas instead.
-The current canvas state is provided below the conversation automatically.''';
+## Tools (emit exact markers inline; the system executes them and feeds results back)
+__TOOLS__
+
+Permissions: read-only tools (list_directory, read_file_info, probe_video) require "Read Access"; editing tools (modify_node, add_node, delete_node, connect_nodes, disconnect_nodes) require "Write Access"; action tools (clear_all, undo, redo, save, error_check, ask_user, cancel_tasks) require "Auto-execute Tools" — all toggles are in Settings → AI. list_nodes / list_connections / get_node_types / list_tasks always work. If a tool is blocked by permissions, the system silently skips it — mention that to the user instead of relying on it.
+
+## Modes & confirmation
+Default: the JSON graph REPLACES the entire canvas. To MERGE with the existing canvas instead, put the marker [MODE:modify] on its own line before the JSON. The current canvas state is appended below the conversation automatically — read it before editing so you don't destroy existing work.
+
+Session modes:
+- Auto mode: your JSON graph is applied immediately, and action tools run right away.
+- Ask mode: applying a graph and running destructive tools asks the user for confirmation. If the user denies, adapt your next answer (the denial is fed back as a tool result).
+Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas before proposing edits, and [TOOL_CALL:clear_all] to start fresh (it also asks in Ask mode).''';
+
+  /// 工具段每一行（按行过滤禁用工具）。
+  static const List<String> _toolPromptLines = [
+    '[TOOL_CALL:clear_all] [TOOL_CALL:undo] [TOOL_CALL:redo] [TOOL_CALL:save]',
+    '[TOOL_CALL:error_check] — validate current canvas',
+    '[TOOL_CALL:ask_user|question|opt1,opt2,opt3] — ask the user (needs Allow-AI-to-ask enabled in Settings)',
+    '[TOOL_CALL:list_directory|path] — list files (read-only)',
+    '[TOOL_CALL:read_file_info|path] — file metadata (read-only)',
+    '[TOOL_CALL:probe_video|path] — probe media metadata (read-only)',
+    '[TOOL_CALL:pick_file|purpose|ext1,ext2] — ask the user to pick a file (e.g. subtitle, cover); user must approve',
+    '[TOOL_CALL:modify_node|nodeId|key=val,key2=val2] — edit node params',
+    '[TOOL_CALL:add_node|type|x|y] — add a node, returns its ID',
+    '[TOOL_CALL:delete_node|nodeId] — delete a node + its connections',
+    '[TOOL_CALL:connect_nodes|fromId|toId] — connect two nodes',
+    '[TOOL_CALL:disconnect_nodes|connId] — remove a connection',
+    '[TOOL_CALL:list_nodes] [TOOL_CALL:list_connections] [TOOL_CALL:get_node_types]',
+    '[TOOL_CALL:list_tasks] — task queue status',
+    '[TOOL_CALL:cancel_tasks] — cancel running tasks',
+  ];
+
+  /// 每行对应的工具名。
+  static const Map<String, List<String>> _toolLineTools = {
+    '[TOOL_CALL:clear_all] [TOOL_CALL:undo] [TOOL_CALL:redo] [TOOL_CALL:save]': ['clear_all', 'undo', 'redo', 'save'],
+    '[TOOL_CALL:error_check] — validate current canvas': ['error_check'],
+    '[TOOL_CALL:ask_user|question|opt1,opt2,opt3] — ask the user (needs Allow-AI-to-ask enabled in Settings)': ['ask_user'],
+    '[TOOL_CALL:list_directory|path] — list files (read-only)': ['list_directory'],
+    '[TOOL_CALL:read_file_info|path] — file metadata (read-only)': ['read_file_info'],
+    '[TOOL_CALL:probe_video|path] — probe media metadata (read-only)': ['probe_video'],
+    '[TOOL_CALL:pick_file|purpose|ext1,ext2] — ask the user to pick a file (e.g. subtitle, cover); user must approve': ['pick_file'],
+    '[TOOL_CALL:modify_node|nodeId|key=val,key2=val2] — edit node params': ['modify_node'],
+    '[TOOL_CALL:add_node|type|x|y] — add a node, returns its ID': ['add_node'],
+    '[TOOL_CALL:delete_node|nodeId] — delete a node + its connections': ['delete_node'],
+    '[TOOL_CALL:connect_nodes|fromId|toId] — connect two nodes': ['connect_nodes'],
+    '[TOOL_CALL:disconnect_nodes|connId] — remove a connection': ['disconnect_nodes'],
+    '[TOOL_CALL:list_nodes] [TOOL_CALL:list_connections] [TOOL_CALL:get_node_types]': ['list_nodes', 'list_connections', 'get_node_types'],
+    '[TOOL_CALL:list_tasks] — task queue status': ['list_tasks'],
+    '[TOOL_CALL:cancel_tasks] — cancel running tasks': ['cancel_tasks'],
+  };
+
+  /// 动态系统提示词：过滤掉被禁用的工具行。
+  String get _systemPrompt {
+    final lines = <String>[];
+    for (final line in _toolPromptLines) {
+      final tools = _toolLineTools[line] ?? const <String>[];
+      final disabled = tools.any((t) => _disabledTools.contains(t));
+      if (!disabled) lines.add(line);
+    }
+    return _promptHead.replaceAll('__TOOLS__', lines.join('\n'));
+  }
+
+
+  /// 右键工具项：禁用 / 启用。禁用后该工具从系统提示词移除，且调用被拦截。
+  void _toggleToolEnabled(String tool, AppStrings s) {
+    setState(() {
+      if (_disabledTools.contains(tool)) {
+        _disabledTools.remove(tool);
+      } else {
+        _disabledTools.add(tool);
+      }
+    });
+    showToast(context, _disabledTools.contains(tool)
+        ? s.isZh ? '已禁用工具: $tool' : 'Tool disabled: $tool'
+        : s.isZh ? '已启用工具: $tool' : 'Tool enabled: $tool',
+        type: ToastType.info);
+  }
+
+  /// 询问模式下是否需要确认该工具。auto 模式或命中白名单则直接执行。
+  bool _shouldConfirmTool(String tool) {
+    if (_effectiveApproveMode == 'auto') return false;
+    // 只读工具从不询问
+    const readOnly = {'list_directory', 'read_file_info', 'probe_video', 'list_nodes', 'list_connections', 'get_node_types', 'list_tasks'};
+    if (readOnly.contains(tool)) return false;
+    // 白名单 key 映射
+    final key = switch (tool) {
+      'save' => 'save',
+      'undo' || 'redo' => 'undo_redo',
+      'error_check' => 'error_check',
+      'clear_all' => 'clear_all',
+      _ => 'tools',
+    };
+    return !_shouldSkipAsk(key);
+  }
+
+  /// 弹确认框；用户同意后执行 [action]，拒绝则记录结果。
+  Future<void> _confirmThen(String tool, String desc, VoidCallback action) async {
+    final s = widget.strings;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dCtx) => AlertDialog(
+        title: Text(s.isZh ? 'AI 请求执行操作' : 'AI requests to run an action',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+        content: Text(
+          s.isZh ? 'AI 想执行: $desc\n\n确定允许吗？' : 'AI wants to: $desc\n\nAllow it?',
+          style: const TextStyle(fontSize: 12),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dCtx, false), child: Text(s.isZh ? '拒绝' : 'Deny')),
+          FilledButton(onPressed: () => Navigator.pop(dCtx, true), child: Text(s.isZh ? '允许' : 'Allow')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      action();
+    } else {
+      _addToolResult('confirm', s.isZh ? '用户拒绝执行 $desc' : 'User denied: $desc');
+    }
+  }
 
   void _handleToolCalls(String content) {
     final cfg = context.read<AppState>().config;
@@ -2972,14 +3466,42 @@ The current canvas state is provided below the conversation automatically.''';
     for (final m in calls) {
       final parts = m.group(1)!.split('|');
       final tool = parts[0];
+      // 被禁用的工具：即使 AI 调用了也不执行（也不告诉 AI 结果）
+      if (_disabledTools.contains(tool)) {
+        _addToolResult('blocked', 'Tool $tool is disabled by user');
+        continue;
+      }
+      // 询问确认：破坏性工具在 ask 模式且不在白名单时需用户确认
+      final confirm = _shouldConfirmTool(tool);
+      void run(VoidCallback action) {
+        // action 工具（clear_all/undo/redo/save/error_check/ask_user/cancel_tasks）在
+        // auto 模式下需开启 "Auto-execute Tools" 权限（与系统提示词声明一致）；
+        // ask 模式仍走确认框。权限不足时跳过并回填结果，避免 AI 误以为已执行。
+        const actionTools = {'clear_all', 'undo', 'redo', 'save', 'error_check', 'ask_user', 'cancel_tasks'};
+        if (actionTools.contains(tool) && _effectiveApproveMode == 'auto' && !cfg.aiAutoExecute) {
+          _addToolResult(tool, 'Blocked: action tools require "Auto-execute Tools" permission');
+          return;
+        }
+        if (confirm) {
+          _confirmThen(tool, tool, action);
+        } else {
+          action();
+        }
+      }
       switch (tool) {
-        case 'clear_all': if (cfg.aiAutoExecute) widget.onClearAll();
-        case 'undo': if (cfg.aiAutoExecute) widget.onUndo();
-        case 'redo': if (cfg.aiAutoExecute) widget.onRedo();
-        case 'save': if (cfg.aiAutoExecute) widget.onSave();
-        case 'error_check': if (cfg.aiAutoExecute) _executeErrorCheck();
+        case 'clear_all':
+          run(() => widget.onClearAll());
+        case 'undo':
+          run(() => widget.onUndo());
+        case 'redo':
+          run(() => widget.onRedo());
+        case 'save':
+          run(() => widget.onSave());
+        case 'error_check':
+          run(() => _executeErrorCheck());
         case 'ask_user':
-          if (cfg.aiAutoExecute && parts.length >= 3) _showAskUser(parts[1], parts[2].split(','));
+          // 需在设置→AI→权限 开启"允许 AI 询问用户"才执行
+          if (cfg.aiAllowAsk && parts.length >= 3) run(() => _showAskUser(parts[1], parts[2].split(',')));
         case 'list_directory':
           if (cfg.aiReadAccess && parts.length >= 2) _executeListDir(parts[1]);
         case 'read_file_info':
@@ -2991,31 +3513,39 @@ The current canvas state is provided below the conversation automatically.''';
               final kv = p.split('=');
               if (kv.length == 2) params[kv[0].trim()] = kv[1].trim();
             }
-            widget.onModifyNodeParams(parts[1], params);
+            run(() => widget.onModifyNodeParams(parts[1], params));
           }
         case 'add_node':
           if (cfg.aiWriteAccess && parts.length >= 2) {
-            try {
-              final x = parts.length >= 3 ? double.tryParse(parts[2]) ?? 200 : 200.0;
-              final y = parts.length >= 4 ? double.tryParse(parts[3]) ?? 200 : 200.0;
-              final nodeId = widget.onAddNode(parts[1], x, y);
-              _addToolResult('add_node', 'Created node $nodeId (type: ${parts[1]})');
-            } catch (e) { _addToolResult('add_node', 'Error: $e'); }
+            run(() {
+              try {
+                final x = parts.length >= 3 ? double.tryParse(parts[2]) ?? 200 : 200.0;
+                final y = parts.length >= 4 ? double.tryParse(parts[3]) ?? 200 : 200.0;
+                final nodeId = widget.onAddNode(parts[1], x, y);
+                _addToolResult('add_node', 'Created node $nodeId (type: ${parts[1]})');
+              } catch (e) { _addToolResult('add_node', 'Error: $e'); }
+            });
           }
         case 'delete_node':
           if (cfg.aiWriteAccess && parts.length >= 2) {
-            try { widget.onDeleteNode(parts[1]); _addToolResult('delete_node', 'Deleted node ${parts[1]}'); }
-            catch (e) { _addToolResult('delete_node', 'Error: $e'); }
+            run(() {
+              try { widget.onDeleteNode(parts[1]); _addToolResult('delete_node', 'Deleted node ${parts[1]}'); }
+              catch (e) { _addToolResult('delete_node', 'Error: $e'); }
+            });
           }
         case 'connect_nodes':
           if (cfg.aiWriteAccess && parts.length >= 3) {
-            final ok = widget.onConnectNodes(parts[1], parts[2]);
-            _addToolResult('connect_nodes', ok ? 'Connected ${parts[1]} → ${parts[2]}' : 'Failed to connect');
+            run(() {
+              final ok = widget.onConnectNodes(parts[1], parts[2]);
+              _addToolResult('connect_nodes', ok ? 'Connected ${parts[1]} → ${parts[2]}' : 'Failed to connect');
+            });
           }
         case 'disconnect_nodes':
           if (cfg.aiWriteAccess && parts.length >= 2) {
-            final ok = widget.onDisconnectNodes(parts[1]);
-            _addToolResult('disconnect_nodes', ok ? 'Disconnected ${parts[1]}' : 'Connection not found');
+            run(() {
+              final ok = widget.onDisconnectNodes(parts[1]);
+              _addToolResult('disconnect_nodes', ok ? 'Disconnected ${parts[1]}' : 'Connection not found');
+            });
           }
         case 'list_nodes':
           final nodesJson = widget.existingNodes.map((n) => n.toJson()).toList();
@@ -3031,9 +3561,25 @@ The current canvas state is provided below the conversation automatically.''';
           final taskList = tasks.map((t) => {'id': t.id, 'filename': t.filename, 'status': t.status.name, 'progress': '${t.progress.toStringAsFixed(1)}%'}).toList();
           _addToolResult('list_tasks', jsonEncode(taskList));
         case 'cancel_tasks':
-          if (cfg.aiAutoExecute) { widget.onCancelTasks(); _addToolResult('cancel_tasks', 'All tasks cancelled'); }
+          run(() { widget.onCancelTasks(); _addToolResult('cancel_tasks', 'All tasks cancelled'); });
         case 'probe_video':
           if (cfg.aiReadAccess && parts.length >= 2) _executeProbeVideo(parts[1]);
+        case 'pick_file':
+          // 让用户选择文件（如字幕/封面），需用户同意；弹文件选择框并返回路径
+          run(() async {
+            final purpose = parts.length >= 2 ? parts[1] : '';
+            final exts = parts.length >= 3 ? parts[2].split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList() : null;
+            final r = await FilePicker.platform.pickFiles(
+              type: exts == null || exts.isEmpty ? FileType.any : FileType.custom,
+              allowedExtensions: exts,
+              dialogTitle: purpose.isEmpty ? (widget.strings.isZh ? '请选择一个文件' : 'Pick a file') : purpose,
+            );
+            if (r != null && r.files.isNotEmpty && r.files.first.path != null) {
+              _addToolResult('pick_file', 'User picked: ${r.files.first.path}');
+            } else {
+              _addToolResult('pick_file', 'User cancelled file selection');
+            }
+          });
       }
     }
   }
@@ -3057,7 +3603,7 @@ The current canvas state is provided below the conversation automatically.''';
     for (final c in conns) { connectedIds.add(c.fromNodeId); connectedIds.add(c.toNodeId); }
     for (final n in nodes) {
       if (!connectedIds.contains(n.id) && nodes.length > 1) {
-        errors.add('Disconnected: ${n.type.name} (${n.id.substring(0, 8)})');
+        errors.add('Disconnected: ${n.type.name} (${n.id.length > 8 ? n.id.substring(0, 8) : n.id})');
       }
     }
     _addToolResult('error_check', errors.isEmpty ? 'No errors found.' : errors.join('\n'));
@@ -3105,7 +3651,28 @@ The current canvas state is provided below the conversation automatically.''';
   }
 
   @override
-  void dispose() { _ctrl.dispose(); _scrollCtrl.dispose(); super.dispose(); }
+  void dispose() {
+    // 面板关闭时自动把当前会话存入历史，方便下次继续
+    final userMsgs = _messages.where((m) => m.role == 'user').toList();
+    if (userMsgs.isNotEmpty) {
+      final title = userMsgs.first.content.replaceAll(RegExp(r'\s+'), ' ').trim();
+      final t = title.length > 24 ? '${title.substring(0, 24)}…' : title;
+      AiChatHistory.saveSession(
+        title: t,
+        provider: _effectiveProvider,
+        model: _effectiveModel,
+        messages: _messages.map((m) => {
+          'role': m.role,
+          'content': m.content,
+          'inputTokens': m.inputTokens,
+          'outputTokens': m.outputTokens,
+        }).toList(),
+      );
+    }
+    _ctrl.dispose();
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
 
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -3137,9 +3704,22 @@ The current canvas state is provided below the conversation automatically.''';
 
     final appState = context.read<AppState>();
     final cfg = appState.config;
-    if (cfg.aiApiKey.isEmpty) {
+    // 优先使用当前选中的配置项（会话级 > 全局 active > 默认字段）
+    final profile = _effectiveProfile;
+    final effKey = profile?.apiKey.isNotEmpty == true ? profile!.apiKey : cfg.aiApiKey;
+    final effProvider = profile?.provider ?? _effectiveProvider;
+    final effModel = profile?.model ?? _effectiveModel;
+    final effUrl = profile?.apiUrl.isNotEmpty == true ? profile!.apiUrl : cfg.aiApiUrl;
+    final effMaxTokens = profile?.maxTokens ?? cfg.aiMaxTokens;
+    final effTemp = profile?.temperature ?? cfg.aiTemperature;
+    if (effKey.isEmpty) {
       showToast(context, widget.strings.aiNotConfigured, type: ToastType.warning);
       return;
+    }
+    // 历史上限：长会话（尤其工具调用密集）裁剪最旧消息，避免请求体积与内存无限增长
+    const maxHistory = 100;
+    if (_messages.length > maxHistory) {
+      _messages.removeRange(0, _messages.length - maxHistory);
     }
     appState.logAiRequest(text);
 
@@ -3151,10 +3731,13 @@ The current canvas state is provided below the conversation automatically.''';
       _pendingConnections = null;
     });
     _scrollToBottom();
+    _genStart..reset()..start();
+    // 在 async 前读取配置，避免 async gap 后使用 context
+    final showThinking = context.read<AppState>().config.aiShowThinking;
 
     try {
-      final isAnthropic = cfg.aiProvider == 'anthropic';
-      final uri = Uri.parse(_resolveEndpoint(cfg.aiApiUrl, isAnthropic));
+      final isAnthropic = effProvider == 'anthropic';
+      final uri = Uri.parse(_resolveEndpoint(effUrl, isAnthropic));
       final canvasJson = jsonEncode({
         'nodes': widget.existingNodes.map((n) => n.toJson()).toList(),
         'connections': widget.existingConnections.map((c) => c.toJson()).toList(),
@@ -3167,7 +3750,7 @@ The current canvas state is provided below the conversation automatically.''';
       Map<String, dynamic> reqBody;
 
       if (isAnthropic) {
-        headers['x-api-key'] = cfg.aiApiKey;
+        headers['x-api-key'] = effKey;
         headers['anthropic-version'] = '2023-06-01';
         final userMessages = _messages
             .where((m) => m.role == 'user' || m.role == 'assistant')
@@ -3183,20 +3766,20 @@ The current canvas state is provided below the conversation automatically.''';
           }
         }
         reqBody = {
-          'model': cfg.aiModel,
+          'model': effModel,
           'system': fullPrompt,
           'messages': mergedMessages,
-          'temperature': 0.3,
-          'max_tokens': 4096,
+          'temperature': effTemp,
+          'max_tokens': effMaxTokens,
           'stream': true,
         };
       } else {
-        headers['Authorization'] = 'Bearer ${cfg.aiApiKey}';
+        headers['Authorization'] = 'Bearer $effKey';
         final apiMessages = [
           {'role': 'system', 'content': fullPrompt},
           ..._messages.map((m) => {'role': m.role, 'content': m.content}),
         ];
-        reqBody = {'model': cfg.aiModel, 'messages': apiMessages, 'temperature': 0.3, 'max_tokens': 4096, 'stream': true, 'stream_options': {'include_usage': true}};
+        reqBody = {'model': effModel, 'messages': apiMessages, 'temperature': effTemp, 'max_tokens': effMaxTokens, 'stream': true, 'stream_options': {'include_usage': true}};
       }
 
       final request = http.Request('POST', uri);
@@ -3224,6 +3807,9 @@ The current canvas state is provided below the conversation automatically.''';
       });
       final msgIdx = _messages.length - 1;
       final buf = StringBuffer();
+      // 思考过程缓冲（DeepSeek-R1 / o1 的 reasoning_content，或 Claude 的 thinking）
+      final thinkBuf = StringBuffer();
+      final thinkWatch = Stopwatch();
       int? inTok, outTok;
       String lineBuf = '';
 
@@ -3240,9 +3826,20 @@ The current canvas state is provided below the conversation automatically.''';
             final json = jsonDecode(data) as Map<String, dynamic>;
             if (isAnthropic) {
               final type = json['type'] as String? ?? '';
-              if (type == 'content_block_delta') {
+              if (type == 'content_block_start') {
+                final cb = json['content_block'] as Map<String, dynamic>? ?? {};
+                if (showThinking && cb['type'] == 'thinking') {
+                  if (thinkBuf.isEmpty) thinkWatch.start();
+                  thinkBuf.write(cb['thinking'] ?? '');
+                }
+              } else if (type == 'content_block_delta') {
                 final delta = json['delta'] as Map<String, dynamic>? ?? {};
-                if (delta['type'] == 'text_delta') buf.write(delta['text'] ?? '');
+                if (delta['type'] == 'text_delta') {
+                  buf.write(delta['text'] ?? '');
+                } else if (showThinking && delta['type'] == 'thinking_delta') {
+                  if (thinkBuf.isEmpty) thinkWatch.start();
+                  thinkBuf.write(delta['thinking'] ?? '');
+                }
               } else if (type == 'message_delta') {
                 final usage = json['usage'] as Map<String, dynamic>? ?? {};
                 outTok = usage['output_tokens'] as int?;
@@ -3257,6 +3854,12 @@ The current canvas state is provided below the conversation automatically.''';
               if (choices.isNotEmpty) {
                 final delta = choices[0]['delta'] as Map<String, dynamic>? ?? {};
                 if (delta.containsKey('content') && delta['content'] != null) buf.write(delta['content']);
+                // 思考过程：DeepSeek-R1 用 reasoning_content，OpenAI o1 用 reasoning
+                final reasoning = delta['reasoning_content'] ?? delta['reasoning'];
+                if (showThinking && reasoning != null && reasoning.toString().isNotEmpty) {
+                  if (thinkBuf.isEmpty) thinkWatch.start();
+                  thinkBuf.write(reasoning);
+                }
               }
               final usage = json['usage'] as Map<String, dynamic>?;
               if (usage != null) {
@@ -3265,7 +3868,11 @@ The current canvas state is provided below the conversation automatically.''';
               }
             }
             setState(() {
-              _messages[msgIdx] = (role: 'assistant', content: buf.toString(), inputTokens: inTok, outputTokens: outTok, blocks: null);
+              _messages[msgIdx] = (role: 'assistant', content: buf.toString(), inputTokens: inTok, outputTokens: outTok,
+                  blocks: thinkBuf.isEmpty ? null : [
+                    {'type': 'thinking', 'thinking': thinkBuf.toString(), 'durationMs': thinkWatch.elapsedMilliseconds},
+                    if (buf.isNotEmpty) {'type': 'text', 'text': buf.toString()},
+                  ]);
             });
             _scrollToBottom();
           } catch (_) {}
@@ -3275,13 +3882,25 @@ The current canvas state is provided below the conversation automatically.''';
       client.close();
       final content = buf.toString();
       appState.logAiResponse(content);
+      _genStart.stop();
+      final elapsedMs = _genStart.elapsedMilliseconds;
+      final speed = elapsedMs > 0 ? (content.length * 1000 / elapsedMs) : null;
       setState(() {
-        _messages[msgIdx] = (role: 'assistant', content: content, inputTokens: inTok, outputTokens: outTok, blocks: null);
+        _messages[msgIdx] = (role: 'assistant', content: content, inputTokens: inTok, outputTokens: outTok,
+            blocks: thinkBuf.isEmpty ? null : [
+              {'type': 'thinking', 'thinking': thinkBuf.toString(), 'durationMs': thinkWatch.elapsedMilliseconds},
+              if (content.isNotEmpty) {'type': 'text', 'text': content},
+            ]);
         _loading = false;
+        _lastGenSpeed = speed;
+        if (inTok != null) _totalInputTokens += inTok;
+        if (outTok != null) _totalOutputTokens += outTok;
       });
       _scrollToBottom();
       _tryParseGraph(content);
       _handleToolCalls(content);
+      // 自动总结：首轮对话后生成会话标题
+      _maybeGenerateTitle();
     } catch (e) {
       appState.logAiResponse('$e', error: true);
       setState(() {
@@ -3289,6 +3908,58 @@ The current canvas state is provided below the conversation automatically.''';
         _loading = false;
       });
       _scrollToBottom();
+    }
+  }
+
+  /// 对话后自动生成会话标题（开启 aiAutoTitle 时，首轮对话触发一次）。
+  Future<void> _maybeGenerateTitle() async {
+    if (_titleGenerated) return;
+    final appState = context.read<AppState>();
+    final cfg = appState.config;
+    if (!cfg.aiAutoTitle || _messages.isEmpty) return;
+    final profile = _effectiveProfile;
+    final key = profile?.apiKey.isNotEmpty == true ? profile!.apiKey : cfg.aiApiKey;
+    if (key.isEmpty) return;
+    _titleGenerated = true;
+    try {
+      final isAnthropic = (profile?.provider ?? cfg.aiProvider) == 'anthropic';
+      final url = (profile?.apiUrl.isNotEmpty == true ? profile!.apiUrl : cfg.aiApiUrl);
+      final model = profile?.model ?? cfg.aiModel;
+      final uri = Uri.parse(_resolveEndpoint(url, isAnthropic));
+      // 取最近几轮对话内容用于总结
+      final recent = _messages.take(6).map((m) => '${m.role}: ${m.content.substring(0, m.content.length > 120 ? 120 : m.content.length)}').join('\n');
+      final prompt = cfg.aiTitlePrompt;
+      final body = isAnthropic
+          ? {'model': model, 'max_tokens': 32, 'system': prompt, 'messages': [{'role': 'user', 'content': 'Summarize this conversation:\n$recent'}]}
+          : {'model': model, 'max_tokens': 32, 'messages': [{'role': 'system', 'content': prompt}, {'role': 'user', 'content': 'Summarize this conversation:\n$recent'}]};
+      final req = http.Request('POST', uri);
+      if (isAnthropic) {
+        req.headers['x-api-key'] = key;
+        req.headers['anthropic-version'] = '2023-06-01';
+      } else {
+        req.headers['Authorization'] = 'Bearer $key';
+      }
+      req.headers['Content-Type'] = 'application/json';
+      req.body = jsonEncode(body);
+      final client = http.Client();
+      final resp = await client.send(req).timeout(const Duration(seconds: 15));
+      final respBody = await resp.stream.bytesToString();
+      client.close();
+      if (resp.statusCode != 200) return;
+      final json = jsonDecode(respBody) as Map<String, dynamic>;
+      String? title;
+      if (isAnthropic) {
+        final blocks = (json['content'] as List?) ?? [];
+        if (blocks.isNotEmpty) title = (blocks[0]['text'] as String?) ?? '';
+      } else {
+        final choices = (json['choices'] as List?) ?? [];
+        if (choices.isNotEmpty) title = ((choices[0]['message'] as Map<String, dynamic>?)?['content'] as String?) ?? '';
+      }
+      if (title != null && title.trim().isNotEmpty && mounted) {
+        widget.onTitleGenerated?.call(title.trim().replaceAll(RegExp(r'[\n"]+'), ''));
+      }
+    } catch (_) {
+      // 标题生成失败不影响主对话
     }
   }
 
@@ -3324,7 +3995,10 @@ The current canvas state is provided below the conversation automatically.''';
       if (nodes.isNotEmpty) {
         final cfg = context.read<AppState>().config;
         final isModify = content.contains('[MODE:modify]') || cfg.aiGraphMode == 'modify';
-        if (cfg.aiAutoExecute) {
+        // 会话模式：auto = 直接应用；ask = 生成后询问确认（图应用默认询问，
+        // 白名单只影响工具类操作）。
+        final autoApply = _effectiveApproveMode == 'auto' || cfg.aiAutoExecute;
+        if (autoApply) {
           context.read<AppState>().logAiGraphApplied(nodes.length, connections.length);
           if (isModify) {
             widget.onMergeGraph(nodes, connections);
@@ -3341,11 +4015,25 @@ The current canvas state is provided below the conversation automatically.''';
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return AnimatedSize(
-      duration: const Duration(milliseconds: 160),
-      curve: Curves.easeOut,
-      alignment: Alignment.bottomRight,
-      child: _expanded ? _buildExpanded(scheme) : _buildCollapsed(scheme),
+    // AnimatedSwitcher 让展开/收起两个状态都能平滑过渡。
+    // 关键点：两个 child 必须有不同 key，否则 Flutter 认为是同一个 widget
+    // 不触发切换动画，导致"展开后收不回"。
+    // ScaleTransition 的 begin 取 0.96（收起时新 child 是从小变大）。
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 220),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      transitionBuilder: (child, anim) => FadeTransition(
+        opacity: anim,
+        child: ScaleTransition(
+          scale: Tween(begin: 0.96, end: 1.0).animate(anim),
+          alignment: Alignment.bottomRight,
+          child: child,
+        ),
+      ),
+      child: _expanded
+          ? KeyedSubtree(key: const ValueKey('ai-expanded'), child: _buildExpanded(scheme))
+          : KeyedSubtree(key: const ValueKey('ai-collapsed'), child: _buildCollapsed(scheme)),
     );
   }
 
@@ -3361,7 +4049,7 @@ The current canvas state is provided below the conversation automatically.''';
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.auto_awesome, size: 18, color: scheme.primary),
+            Icon(Icons.smart_toy, size: 18, color: scheme.primary),
             const SizedBox(width: 6),
             Text('AI', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.primary)),
           ]),
@@ -3378,99 +4066,399 @@ The current canvas state is provided below the conversation automatically.''';
       elevation: 8,
       shadowColor: scheme.shadow.withAlpha(60),
       child: Container(
-        width: 380, height: 480,
+        width: double.infinity, height: double.infinity,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(0),
           border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
         ),
         child: Column(children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 6, 6),
+            padding: const EdgeInsets.fromLTRB(16, 8, 6, 4),
             child: Row(children: [
-              Icon(Icons.auto_awesome, size: 18, color: scheme.primary),
+              Icon(Icons.smart_toy, size: 18, color: scheme.primary),
               const SizedBox(width: 8),
-              Text(s.aiChatTitle, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: scheme.onSurface)),
               const Spacer(),
+              // 历史记录按钮
+              IconButton(
+                icon: const Icon(Icons.history, size: 18),
+                tooltip: s.isZh ? '历史记录' : 'History',
+                onPressed: () {
+                  // 用按钮自身位置作为菜单锚点，避免偏移
+                  final box = context.findRenderObject() as RenderBox?;
+                  final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
+                  if (box != null && overlay != null) {
+                    final pos = box.localToGlobal(Offset.zero, ancestor: overlay);
+                    _toggleHistoryAt(scheme, s, pos + const Offset(24, 8));
+                  }
+                },
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                padding: EdgeInsets.zero,
+              ),
+              // 工具侧边栏开关
+              Tooltip(
+                message: s.isZh ? (_toolsOpen ? '收起工具面板' : '展开工具面板') : (_toolsOpen ? 'Collapse tools' : 'Expand tools'),
+                child: IconButton(
+                  icon: AnimatedRotation(
+                    turns: _toolsOpen ? 0.5 : 0,
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOutCubic,
+                    child: const Icon(Icons.extension_outlined, size: 18),
+                  ),
+                  tooltip: s.isZh ? '工具' : 'Tools',
+                  onPressed: () => setState(() => _toolsOpen = !_toolsOpen),
+                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  padding: EdgeInsets.zero,
+                ),
+              ),
               IconButton(
                 icon: const Icon(Icons.remove, size: 18),
                 tooltip: s.isZh ? '收起' : 'Collapse',
-                onPressed: () => setState(() => _expanded = false),
+                onPressed: () {
+                  if (widget.onCollapseRequested != null) {
+                    widget.onCollapseRequested!();
+                  } else {
+                    setState(() => _expanded = false);
+                  }
+                },
                 constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                 padding: EdgeInsets.zero,
               ),
             ]),
           ),
-          const Divider(height: 1),
-          Expanded(child: _messages.isEmpty
-            ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.auto_awesome, size: 44, color: scheme.outline.withAlpha(80)),
-                const SizedBox(height: 12),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: Text(s.aiChatHint, textAlign: TextAlign.center, style: TextStyle(color: scheme.outline, fontSize: 12)),
+          // token 用量 / 生成速度统计条
+          if (_totalInputTokens > 0 || _totalOutputTokens > 0)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+              child: Row(children: [
+                Icon(Icons.data_usage, size: 11, color: scheme.outline),
+                const SizedBox(width: 4),
+                Text(
+                  s.isZh
+                      ? '输入 $_totalInputTokens / 输出 $_totalOutputTokens token'
+                      : 'In $_totalInputTokens / Out $_totalOutputTokens tokens',
+                  style: TextStyle(fontSize: 10, color: scheme.outline),
                 ),
-              ]))
-            : ListView.builder(
-                controller: _scrollCtrl,
-                padding: const EdgeInsets.all(12),
-                itemCount: _messages.length,
-                itemBuilder: (_, i) => _buildMessage(_messages[i], scheme),
-              ),
-          ),
-          if (_pendingNodes != null) Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(children: [
-              Expanded(child: FilledButton.icon(
-                onPressed: () {
-                  context.read<AppState>().logAiGraphApplied(_pendingNodes!.length, _pendingConnections!.length);
-                  if (_pendingIsModify) {
-                    widget.onMergeGraph(_pendingNodes!, _pendingConnections!);
-                  } else {
-                    widget.onApplyGraph(_pendingNodes!, _pendingConnections!);
-                  }
-                  setState(() { _pendingNodes = null; _pendingConnections = null; });
-                },
-                icon: const Icon(Icons.check, size: 16),
-                label: Text(s.isZh ? '批准' : 'Approve'),
-              )),
-              const SizedBox(width: 8),
-              OutlinedButton.icon(
-                onPressed: () => setState(() { _pendingNodes = null; _pendingConnections = null; }),
-                icon: const Icon(Icons.close, size: 16),
-                label: Text(s.isZh ? '拒绝' : 'Reject'),
-              ),
-            ]),
-          ),
-          const SizedBox(height: 4),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-            child: Row(children: [
-              Expanded(child: TextField(
-                controller: _ctrl,
-                style: TextStyle(fontSize: 13, color: scheme.onSurface),
-                decoration: InputDecoration(
-                  hintText: s.aiChatHint,
-                  hintStyle: TextStyle(fontSize: 12, color: scheme.outline),
-                  isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                ),
-                onSubmitted: (_) => _send(),
-                maxLines: 1,
-              )),
-              const SizedBox(width: 8),
-              _loading
-                ? const SizedBox(width: 36, height: 36, child: Padding(padding: EdgeInsets.all(8), child: CircularProgressIndicator(strokeWidth: 2)))
-                : IconButton(
-                    icon: Icon(Icons.send, size: 20, color: scheme.primary),
-                    onPressed: _send,
-                    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                if (_lastGenSpeed != null) ...[
+                  const SizedBox(width: 10),
+                  Icon(Icons.speed, size: 11, color: scheme.outline),
+                  const SizedBox(width: 4),
+                  Text(
+                    s.isZh
+                        ? '${_lastGenSpeed!.toStringAsFixed(0)} 字符/秒'
+                        : '${_lastGenSpeed!.toStringAsFixed(0)} chars/s',
+                    style: TextStyle(fontSize: 10, color: scheme.outline),
                   ),
+                ],
+              ]),
+            ),
+          const Divider(height: 1),
+          Expanded(
+            child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              // ── 可折叠工具侧边栏 ──
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOutCubic,
+                width: _toolsOpen ? 150 : 0,
+                decoration: BoxDecoration(
+                  border: Border(right: BorderSide(color: scheme.outlineVariant.withAlpha(60))),
+                ),
+                clipBehavior: Clip.hardEdge,
+                child: _toolsOpen ? _buildToolsSidebar(scheme, s) : const SizedBox.shrink(),
+              ),
+              // ── 聊天主区 ──
+              Expanded(
+                child: Column(children: [
+                  Expanded(
+                    child: _messages.isEmpty
+                        ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+                            Icon(Icons.smart_toy, size: 44, color: scheme.outline.withAlpha(80)),
+                            const SizedBox(height: 12),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 24),
+                              child: Text(s.aiChatHint, textAlign: TextAlign.center, style: TextStyle(color: scheme.outline, fontSize: 12)),
+                            ),
+                          ]))
+                        : ListView.builder(
+                            controller: _scrollCtrl,
+                            padding: const EdgeInsets.all(12),
+                            itemCount: _messages.length,
+                            itemBuilder: (_, i) => _buildMessage(_messages[i], scheme),
+                          ),
+                  ),
+                  if (_pendingNodes != null) Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Row(children: [
+                      Expanded(child: FilledButton.icon(
+                        onPressed: () {
+                          context.read<AppState>().logAiGraphApplied(_pendingNodes!.length, _pendingConnections!.length);
+                          if (_pendingIsModify) {
+                            widget.onMergeGraph(_pendingNodes!, _pendingConnections!);
+                          } else {
+                            widget.onApplyGraph(_pendingNodes!, _pendingConnections!);
+                          }
+                          setState(() { _pendingNodes = null; _pendingConnections = null; });
+                        },
+                        icon: const Icon(Icons.check, size: 16),
+                        label: Text(s.isZh ? '批准' : 'Approve'),
+                      )),
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        onPressed: () => setState(() { _pendingNodes = null; _pendingConnections = null; }),
+                        icon: const Icon(Icons.close, size: 16),
+                        label: Text(s.isZh ? '拒绝' : 'Reject'),
+                      ),
+                    ]),
+                  ),
+                  const SizedBox(height: 4),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+                    child: Row(children: [
+                      Expanded(child: TextField(
+                        controller: _ctrl,
+                        style: TextStyle(fontSize: 13, color: scheme.onSurface),
+                        decoration: InputDecoration(
+                          hintText: s.aiChatHint,
+                          hintStyle: TextStyle(fontSize: 12, color: scheme.outline),
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                        onSubmitted: (_) => _send(),
+                        maxLines: 1,
+                      )),
+                      const SizedBox(width: 8),
+                      _loading
+                        ? const SizedBox(width: 36, height: 36, child: Padding(padding: EdgeInsets.all(8), child: CircularProgressIndicator(strokeWidth: 2)))
+                        : IconButton(
+                            icon: Icon(Icons.send, size: 20, color: scheme.primary),
+                            onPressed: _send,
+                            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                          ),
+                    ]),
+                  ),
+                ]),
+              ),
             ]),
           ),
         ]),
       ),
     );
+  }
+
+  /// 历史记录：以弹出菜单形式展示（锚定历史按钮位置）。
+  Future<void> _toggleHistoryAt(ColorScheme scheme, AppStrings s, Offset anchor) async {
+    final list = await AiChatHistory.listSessions();
+    if (!mounted) return;
+    final box = context.findRenderObject() as RenderBox?;
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
+    if (box == null || overlay == null) return;
+    final ovSize = overlay.size;
+    final rect = RelativeRect.fromLTRB(
+      anchor.dx.clamp(0, ovSize.width - 20),
+      anchor.dy.clamp(0, ovSize.height - 20),
+      ovSize.width - anchor.dx.clamp(0, ovSize.width - 20),
+      ovSize.height - anchor.dy.clamp(0, ovSize.height - 20),
+    );
+    await showMenu<String>(
+      context: context,
+      position: rect,
+      // 紧凑间距
+      constraints: const BoxConstraints(minWidth: 220, maxWidth: 280),
+      items: [
+        if (list.isEmpty)
+          const PopupMenuItem<String>(enabled: false,
+              child: Padding(padding: EdgeInsets.symmetric(vertical: 2), child: Text('暂无历史记录', style: TextStyle(fontSize: 12))))
+        else
+          for (final e in list.take(12))
+            PopupMenuItem<String>(
+              value: '_load_${e['_file']}',
+              child: Padding(padding: const EdgeInsets.symmetric(vertical: 2), child: Row(children: [
+                const Icon(Icons.forum_outlined, size: 14),
+                const SizedBox(width: 8),
+                Flexible(child: Text(
+                  (e['title'] as String?) ?? (s.isZh ? '未命名会话' : 'Untitled'),
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12),
+                )),
+              ]),
+              ),
+            ),
+        if (list.isNotEmpty) const PopupMenuDivider(),
+        PopupMenuItem<String>(value: '_save',
+            child: Padding(padding: const EdgeInsets.symmetric(vertical: 2), child: Text(s.isZh ? '保存当前会话' : 'Save session', style: const TextStyle(fontSize: 12)))),
+        if (list.isNotEmpty)
+          PopupMenuItem<String>(value: '_clear',
+              child: Padding(padding: const EdgeInsets.symmetric(vertical: 2), child: Text(s.isZh ? '清空历史' : 'Clear history', style: const TextStyle(fontSize: 12)))),
+      ],
+    ).then((v) async {
+      if (v == null) return;
+      if (v == '_save') {
+        final saved = await _saveCurrentSession();
+        if (mounted && saved != null) {
+          showToast(context, s.isZh ? '已保存当前会话' : 'Session saved', type: ToastType.success);
+        }
+      } else if (v == '_clear') {
+        await AiChatHistory.clearAll();
+        if (mounted) showToast(context, s.isZh ? '历史已清空' : 'History cleared', type: ToastType.success);
+      } else if (v.startsWith('_load_')) {
+        final file = v.substring(6);
+        final sessions = await AiChatHistory.listSessions();
+        final entry = sessions.where((e) => e['_file'] == file).firstOrNull;
+        if (entry != null) _loadHistorySession(entry, s);
+      }
+    });
+  }
+
+  /// 加载一条历史会话到当前面板。
+  void _loadHistorySession(Map<String, dynamic> entry, AppStrings s) {
+    final msgs = (entry['messages'] as List?) ?? [];
+    setState(() {
+      _messages.clear();
+      _messages.addAll(msgs.map((m) {
+        final mm = m as Map<String, dynamic>;
+        return (
+          role: (mm['role'] as String?) ?? 'assistant',
+          content: (mm['content'] as String?) ?? '',
+          inputTokens: (mm['inputTokens'] as num?)?.toInt(),
+          outputTokens: (mm['outputTokens'] as num?)?.toInt(),
+          blocks: null,
+        );
+      }));
+      _sessionProvider = (entry['provider'] as String?) ?? _sessionProvider;
+      _sessionModel = (entry['model'] as String?) ?? _sessionModel;
+      // 恢复 token 统计
+      _totalInputTokens = 0;
+      _totalOutputTokens = 0;
+      for (final m in _messages) {
+        _totalInputTokens += m.inputTokens ?? 0;
+        _totalOutputTokens += m.outputTokens ?? 0;
+      }
+    });
+    _scrollToBottom();
+  }
+
+  /// 保存当前会话到历史。
+  Future<String?> _saveCurrentSession() async {
+    final userMsgs = _messages.where((m) => m.role == 'user').toList();
+    if (userMsgs.isEmpty) return null;
+    final title = userMsgs.first.content.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final t = title.length > 24 ? '${title.substring(0, 24)}…' : title;
+    return AiChatHistory.saveSession(
+      title: t,
+      provider: _effectiveProvider,
+      model: _effectiveModel,
+      messages: _messages.map((m) => {
+        'role': m.role,
+        'content': m.content,
+        'inputTokens': m.inputTokens,
+        'outputTokens': m.outputTokens,
+      }).toList(),
+    );
+  }
+
+  /// 工具侧边栏：列出全部工具，点击插入模板到输入框。
+  /// 插入模板本身不需要任何权限（权限只约束 AI 自动执行时是否放行），
+  /// 因此工具始终可点击；若对应权限未开启，仅显示一个小锁标记提示。
+  Widget _buildToolsSidebar(ColorScheme scheme, AppStrings s) {
+    final cfg = context.read<AppState>().config;
+    return Column(children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+        child: Row(children: [
+          Text(s.isZh ? '工具' : 'Tools',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: scheme.primary)),
+          const Spacer(),
+          Text('${_toolTemplates.length}',
+              style: TextStyle(fontSize: 9, color: scheme.outline)),
+        ]),
+      ),
+      Divider(height: 1, color: scheme.outlineVariant.withAlpha(40)),
+      Expanded(
+        child: ListView.builder(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          itemCount: _toolTemplates.length,
+          itemBuilder: (_, i) {
+            final t = _toolTemplates[i];
+            // 该工具是否属于只读/写操作（仅用于权限提示，不阻断插入）
+            final readOnly = t.name == 'list_directory' || t.name == 'read_file_info' || t.name == 'probe_video' || t.name == 'pick_file' ||
+                t.name == 'list_nodes' || t.name == 'list_connections' || t.name == 'get_node_types' || t.name == 'list_tasks';
+            final needsWrite = t.name == 'clear_all' || t.name == 'undo' || t.name == 'redo' || t.name == 'save' ||
+                t.name == 'modify_node' || t.name == 'add_node' || t.name == 'delete_node' ||
+                t.name == 'connect_nodes' || t.name == 'disconnect_nodes' || t.name == 'cancel_tasks' ||
+                t.name == 'error_check' || t.name == 'ask_user';
+            final permitted = readOnly ? cfg.aiReadAccess : (needsWrite ? cfg.aiWriteAccess : true);
+            final isDisabled = _disabledTools.contains(t.name);
+            return Tooltip(
+              message: (isDisabled
+                  ? (s.isZh ? '已禁用 - 右键可启用' : 'Disabled - right-click to enable')
+                  : '${t.desc}\n${t.template}')
+                  + (permitted ? '' : '\n⚠ ${s.isZh ? 'AI 自动执行需要开启相应权限' : 'AI auto-execution needs permission'} (设置→AI)'),
+              waitDuration: const Duration(milliseconds: 400),
+              child: InkWell(
+                // 右键：禁用 / 启用 该工具
+                onSecondaryTap: () => _toggleToolEnabled(t.name, s),
+                onTap: isDisabled
+                    ? null
+                    : () {
+                        // 点击插入模板到输入框并聚焦
+                        final cur = _ctrl.selection;
+                        final text = _ctrl.text;
+                        final start = cur.isValid ? cur.start : text.length;
+                        final next = text.substring(0, start) + t.template + text.substring(start);
+                        _ctrl.value = TextEditingValue(
+                          text: next,
+                          selection: TextSelection.collapsed(offset: start + t.template.length),
+                        );
+                      },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                  child: Row(children: [
+                    if (isDisabled)
+                      Icon(Icons.block, size: 13, color: scheme.error.withAlpha(180))
+                    else
+                      Icon(readOnly ? Icons.visibility_outlined : Icons.build_outlined, size: 13, color: scheme.primary),
+                    Icon(
+                      readOnly ? Icons.visibility_outlined : Icons.build_outlined,
+                      size: 13,
+                      color: scheme.primary,
+                    ),
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Text(
+                        t.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: isDisabled ? scheme.outline.withAlpha(90) : scheme.onSurface,
+                          fontWeight: FontWeight.w500,
+                          decoration: isDisabled ? TextDecoration.lineThrough : null,
+                        ),
+                      ),
+                    ),
+                    if (isDisabled)
+                      Icon(Icons.block, size: 10, color: scheme.error.withAlpha(160))
+                    else if (!permitted)
+                      Tooltip(
+                        message: s.isZh ? 'AI 自动执行需要权限 (设置→AI)' : 'Needs permission (Settings→AI)',
+                        child: Icon(Icons.lock_outline, size: 10, color: scheme.outline.withAlpha(70)),
+                      ),
+                  ]),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+      Padding(
+        padding: const EdgeInsets.all(8),
+        child: Text(
+          s.isZh ? '点击工具插入到输入框' : 'Tap a tool to insert',
+          style: TextStyle(fontSize: 9, color: scheme.outline),
+          textAlign: TextAlign.center,
+        ),
+      ),
+    ]);
   }
 
   Widget _buildMessage(({String role, String content, int? inputTokens, int? outputTokens, List<Map<String, dynamic>>? blocks}) msg, ColorScheme scheme) {
@@ -3506,17 +4494,7 @@ The current canvas state is provided below the conversation automatically.''';
     } else {
       bodyWidget = isUser
         ? SelectableText(msg.content, style: TextStyle(fontSize: 12, color: scheme.onSurface, height: 1.5))
-        : MarkdownBody(
-            data: msg.content,
-            selectable: true,
-            styleSheet: MarkdownStyleSheet(
-              p: TextStyle(fontSize: 12, color: scheme.onSurface, height: 1.5),
-              code: TextStyle(fontSize: 11, color: scheme.primary, backgroundColor: scheme.surfaceContainerHighest),
-              codeblockDecoration: BoxDecoration(color: scheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(8)),
-              codeblockPadding: const EdgeInsets.all(8),
-              blockquoteDecoration: BoxDecoration(border: Border(left: BorderSide(color: scheme.outline, width: 3))),
-            ),
-          );
+        : _buildAssistantContent(msg.content, scheme);
     }
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -3528,7 +4506,7 @@ The current canvas state is provided below the conversation automatically.''';
             mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
             children: [
               if (!isUser) ...[
-                CircleAvatar(radius: 14, backgroundColor: scheme.primaryContainer, child: Icon(Icons.auto_awesome, size: 14, color: scheme.primary)),
+                CircleAvatar(radius: 14, backgroundColor: scheme.primaryContainer, child: Icon(Icons.smart_toy, size: 14, color: scheme.primary)),
                 const SizedBox(width: 8),
               ],
               Flexible(child: Container(
@@ -3558,16 +4536,90 @@ The current canvas state is provided below the conversation automatically.''';
     );
   }
 
+  /// 渲染助手回复：把 [TOOL_CALL:...] 标记转成可视的工具调用块，其余为 Markdown。
+  Widget _buildAssistantContent(String content, ColorScheme scheme) {
+    final toolRe = RegExp(r'\[TOOL_CALL:([^\]]+)\]');
+    final matches = toolRe.allMatches(content).toList();
+    Widget markdownBody(String data) => MarkdownBody(
+          data: data,
+          selectable: true,
+          styleSheet: MarkdownStyleSheet(
+            p: TextStyle(fontSize: 12, color: scheme.onSurface, height: 1.5),
+            h1: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: scheme.primary, height: 1.3),
+            h2: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: scheme.primary, height: 1.3),
+            h3: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: scheme.onSurface, height: 1.3),
+            h4: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface, height: 1.3),
+            listBullet: TextStyle(fontSize: 12, color: scheme.primary),
+            blockquote: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant, fontStyle: FontStyle.italic, height: 1.5),
+            blockquoteDecoration: BoxDecoration(
+              color: scheme.primaryContainer.withAlpha(40),
+              border: Border(left: BorderSide(color: scheme.primary.withAlpha(180), width: 3)),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            blockquotePadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            code: TextStyle(fontSize: 11, color: scheme.primary, backgroundColor: scheme.surfaceContainerHighest, fontFamily: AppTheme.monoFont),
+            codeblockPadding: const EdgeInsets.all(10),
+            codeblockDecoration: BoxDecoration(
+              color: scheme.surfaceContainerHighest.withAlpha(80),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
+            ),
+            a: TextStyle(fontSize: 12, color: scheme.primary, decoration: TextDecoration.underline, decorationColor: scheme.primary.withAlpha(120)),
+            strong: TextStyle(fontSize: 12, color: scheme.onSurface, fontWeight: FontWeight.w700),
+            em: TextStyle(fontSize: 12, color: scheme.onSurface, fontStyle: FontStyle.italic),
+            tableHead: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: scheme.onSurface),
+            tableBody: TextStyle(fontSize: 11, color: scheme.onSurface),
+            tableBorder: TableBorder.all(color: scheme.outlineVariant.withAlpha(80)),
+            tableColumnWidth: const FlexColumnWidth(),
+            horizontalRuleDecoration: BoxDecoration(border: Border(top: BorderSide(color: scheme.outlineVariant.withAlpha(80)))),
+          ),
+        );
+    if (matches.isEmpty) return markdownBody(content);
+    // 有工具调用：拆成 [文本, 工具块, 文本, ...] 交替
+    final children = <Widget>[];
+    var last = 0;
+    for (final m in matches) {
+      if (m.start > last) {
+        final text = content.substring(last, m.start).trim();
+        if (text.isNotEmpty) {
+          children.add(Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: SelectableText(text, style: TextStyle(fontSize: 12, color: scheme.onSurface, height: 1.5)),
+          ));
+        }
+      }
+      final parts = m.group(1)!.split('|');
+      final tool = parts[0];
+      final argsText = parts.length > 1 ? parts.sublist(1).join(' | ') : '';
+      children.add(_buildBlock({'type': 'tool_use', 'name': tool, 'input': {'args': argsText}}, scheme));
+      last = m.end;
+    }
+    final tail = content.substring(last).trim();
+    if (tail.isNotEmpty) {
+      children.add(Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: SelectableText(tail, style: TextStyle(fontSize: 12, color: scheme.onSurface, height: 1.5)),
+      ));
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: children);
+  }
+
   Widget _buildBlock(Map<String, dynamic> block, ColorScheme scheme) {
     final type = block['type'] as String? ?? 'text';
     if (type == 'text') {
       return SelectableText(block['text'] as String? ?? '', style: TextStyle(fontSize: 12, color: scheme.onSurface, height: 1.5));
     }
     final label = switch (type) {
-      'thinking' => 'Thinking',
-      'tool_use' => 'Tool: ${block['name'] ?? 'unknown'}',
-      'tool_result' => 'Tool Result',
+      'thinking' => '思考',
+      'tool_use' => '调用工具: ${block['name'] ?? 'unknown'}',
+      'tool_result' => '工具结果',
       _ => type,
+    };
+    final icon = switch (type) {
+      'thinking' => Icons.psychology_outlined,
+      'tool_use' => Icons.handyman_outlined,
+      'tool_result' => Icons.receipt_long_outlined,
+      _ => Icons.info_outline,
     };
     final body = switch (type) {
       'thinking' => block['thinking'] as String? ?? '',
@@ -3575,15 +4627,60 @@ The current canvas state is provided below the conversation automatically.''';
       'tool_result' => block['content']?.toString() ?? '',
       _ => block.toString(),
     };
+    // 思考耗时（毫秒），由流式解析记录
+    final thinkMs = (block['durationMs'] as num?)?.toInt();
     return Theme(
       data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-      child: ExpansionTile(
-        tilePadding: EdgeInsets.zero,
-        childrenPadding: const EdgeInsets.only(bottom: 4),
-        initiallyExpanded: false,
-        dense: true,
-        title: Text(label, style: TextStyle(fontSize: 11, color: scheme.outline, fontStyle: FontStyle.italic)),
-        children: [SelectableText(body, style: TextStyle(fontSize: 11, color: scheme.onSurface.withAlpha(180), height: 1.4))],
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 4),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest.withAlpha(50),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 8),
+          childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+          // 思考默认折叠（紧凑）；工具结果默认展开
+          initiallyExpanded: type == 'tool_result',
+          dense: true,
+          title: Row(children: [
+            Icon(icon, size: 13, color: type == 'thinking' ? scheme.primary : scheme.outline),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(label,
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11, color: type == 'thinking' ? scheme.primary : scheme.outline, fontStyle: FontStyle.italic)),
+            ),
+            if (thinkMs != null) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHighest.withAlpha(120),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  thinkMs >= 1000 ? '${(thinkMs / 1000).toStringAsFixed(1)}s' : '${thinkMs}ms',
+                  style: TextStyle(fontSize: 9, color: scheme.outline),
+                ),
+              ),
+            ],
+          ]),
+          children: [
+            // 等宽字体 + 可滚动，长 JSON/日志不会被截断
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 160),
+              child: SingleChildScrollView(
+                child: SelectableText(body,
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: scheme.onSurface.withAlpha(190),
+                        height: 1.45,
+                        fontFamily: AppTheme.monoFont)),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

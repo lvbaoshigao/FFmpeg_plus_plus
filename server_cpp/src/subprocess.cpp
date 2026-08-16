@@ -154,13 +154,13 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
         PeekNamedPipe(hStdoutRead, nullptr, 0, nullptr, &avail, nullptr);
         if (avail > 0) {
             ReadFile(hStdoutRead, buf, std::min((DWORD)sizeof(buf)-1, avail), &n, nullptr);
-            buf[n] = 0; stdout_data += buf;
+            stdout_data.append(buf, n);
         }
         avail = 0;
         PeekNamedPipe(hStderrRead, nullptr, 0, nullptr, &avail, nullptr);
         if (avail > 0) {
             ReadFile(hStderrRead, buf, std::min((DWORD)sizeof(buf)-1, avail), &n, nullptr);
-            buf[n] = 0; stderr_data += buf;
+            stderr_data.append(buf, n);
         }
 
         DWORD exit_code;
@@ -184,10 +184,10 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
     }
 
     while (ReadFile(hStdoutRead, buf, sizeof(buf)-1, &n, nullptr) && n > 0) {
-        buf[n] = 0; stdout_data += buf;
+        stdout_data.append(buf, n);
     }
     while (ReadFile(hStderrRead, buf, sizeof(buf)-1, &n, nullptr) && n > 0) {
-        buf[n] = 0; stderr_data += buf;
+        stderr_data.append(buf, n);
     }
 
     result.stdout_output = stdout_data;
@@ -249,31 +249,40 @@ ProcessResult Subprocess::runWithProgress(
         return result;
     }
 
-    // stderr 读取线程：逐字节读取（避免 C 运行时缓冲），按 \r 和 \n 分割行
+    // stderr 读取线程：缓冲读取（避免逐字节系统调用 + 每字节加锁），按 \r 和 \n 分割行
     std::mutex stderr_mutex;
     std::string stderr_line_buf;
     std::thread stderr_thread([hStderrRead, &on_stderr_line, &stderr_mutex, &stderr_line_buf]() {
-        char ch;
+        char buf[4096];
         DWORD n;
-        while (ReadFile(hStderrRead, &ch, 1, &n, nullptr) && n > 0) {
-            if (ch == '\r' || ch == '\n') {
-                std::string line;
-                {
-                    std::lock_guard<std::mutex> lock(stderr_mutex);
-                    line = stderr_line_buf;
-                    stderr_line_buf.clear();
-                }
-                if (!line.empty() && line.back() == '\r') line.pop_back();
-                if (!line.empty()) {
-                    try {
-                        on_stderr_line(line);
-                    } catch (...) {
-                        // 回调异常不应导致线程崩溃
+        while (ReadFile(hStderrRead, buf, sizeof(buf), &n, nullptr) && n > 0) {
+            size_t seg_start = 0;
+            for (DWORD i = 0; i < n; ++i) {
+                if (buf[i] == '\r' || buf[i] == '\n') {
+                    // 行内片段一次加锁并入缓冲，避免逐字节加锁
+                    if (i > seg_start) {
+                        std::lock_guard<std::mutex> lock(stderr_mutex);
+                        stderr_line_buf.append(buf + seg_start, i - seg_start);
+                    }
+                    seg_start = i + 1;
+                    std::string line;
+                    {
+                        std::lock_guard<std::mutex> lock(stderr_mutex);
+                        line.swap(stderr_line_buf);  // 移动而非拷贝
+                    }
+                    if (!line.empty() && line.back() == '\r') line.pop_back();
+                    if (!line.empty()) {
+                        try {
+                            on_stderr_line(line);
+                        } catch (...) {
+                            // 回调异常不应导致线程崩溃
+                        }
                     }
                 }
-            } else {
+            }
+            if (n > seg_start) {
                 std::lock_guard<std::mutex> lock(stderr_mutex);
-                stderr_line_buf += ch;
+                stderr_line_buf.append(buf + seg_start, n - seg_start);
             }
         }
     });
@@ -283,9 +292,8 @@ ProcessResult Subprocess::runWithProgress(
     std::thread stdout_thread([hStdoutRead, &stdout_data]() {
         char buf[4096];
         DWORD n;
-        while (ReadFile(hStdoutRead, buf, sizeof(buf) - 1, &n, nullptr) && n > 0) {
-            buf[n] = 0;
-            stdout_data += buf;
+        while (ReadFile(hStdoutRead, buf, sizeof(buf), &n, nullptr) && n > 0) {
+            stdout_data.append(buf, n);  // append(buf,n) 免去多余 strlen 扫描
         }
     });
 
@@ -318,8 +326,12 @@ ProcessResult Subprocess::runWithProgress(
         Sleep(100);
     }
 
-    // 等待读取线程结束
-    WaitForSingleObject(pi.hProcess, 3000);
+    // 确保进程已退出后再关管道：若进程还没退出就 CloseHandle + join，
+    // 阻塞在 ReadFile 上的读取线程不会因句柄关闭而返回，join 会永久死锁。
+    if (WaitForSingleObject(pi.hProcess, 3000) != WAIT_OBJECT_0) {
+        TerminateProcess(pi.hProcess, 1);
+        WaitForSingleObject(pi.hProcess, 3000);
+    }
     CloseHandle(hStderrRead);
     CloseHandle(hStdoutRead);
     if (stderr_thread.joinable()) stderr_thread.join();
@@ -427,13 +439,13 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
         if (fds[0].revents & POLLIN) {
             ssize_t n;
             while ((n = read(stdout_pipe[0], buf, sizeof(buf) - 1)) > 0) {
-                buf[n] = 0; stdout_data += buf;
+                stdout_data.append(buf, n);
             }
         }
         if (fds[1].revents & POLLIN) {
             ssize_t n;
             while ((n = read(stderr_pipe[0], buf, sizeof(buf) - 1)) > 0) {
-                buf[n] = 0; stderr_data += buf;
+                stderr_data.append(buf, n);
             }
         }
 
@@ -463,10 +475,10 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
     // 读取剩余数据
     ssize_t n;
     while ((n = read(stdout_pipe[0], buf, sizeof(buf) - 1)) > 0) {
-        buf[n] = 0; stdout_data += buf;
+        stdout_data.append(buf, n);
     }
     while ((n = read(stderr_pipe[0], buf, sizeof(buf) - 1)) > 0) {
-        buf[n] = 0; stderr_data += buf;
+        stderr_data.append(buf, n);
     }
 
     result.stdout_output = stdout_data;
@@ -534,28 +546,36 @@ ProcessResult Subprocess::runWithProgress(
     close(stdout_pipe[1]);
     close(stderr_pipe[1]);
 
-    // stderr 读取线程
+    // stderr 读取线程：缓冲读取（避免逐字节系统调用 + 每字节加锁），按 \r 和 \n 分割行
     std::mutex stderr_mutex;
     std::string stderr_line_buf;
     int stderr_fd = stderr_pipe[0];
     std::thread stderr_thread([stderr_fd, &on_stderr_line, &stderr_mutex, &stderr_line_buf]() {
-        char ch;
+        char buf[4096];
         ssize_t n;
-        while ((n = read(stderr_fd, &ch, 1)) > 0) {
-            if (ch == '\r' || ch == '\n') {
-                std::string line;
-                {
-                    std::lock_guard<std::mutex> lock(stderr_mutex);
-                    line = stderr_line_buf;
-                    stderr_line_buf.clear();
+        while ((n = read(stderr_fd, buf, sizeof(buf))) > 0) {
+            size_t seg_start = 0;
+            for (ssize_t i = 0; i < n; ++i) {
+                if (buf[i] == '\r' || buf[i] == '\n') {
+                    if (i > (ssize_t)seg_start) {
+                        std::lock_guard<std::mutex> lock(stderr_mutex);
+                        stderr_line_buf.append(buf + seg_start, (size_t)i - seg_start);
+                    }
+                    seg_start = (size_t)i + 1;
+                    std::string line;
+                    {
+                        std::lock_guard<std::mutex> lock(stderr_mutex);
+                        line.swap(stderr_line_buf);  // 移动而非拷贝
+                    }
+                    if (!line.empty() && line.back() == '\r') line.pop_back();
+                    if (!line.empty()) {
+                        try { on_stderr_line(line); } catch (...) {}
+                    }
                 }
-                if (!line.empty() && line.back() == '\r') line.pop_back();
-                if (!line.empty()) {
-                    try { on_stderr_line(line); } catch (...) {}
-                }
-            } else {
+            }
+            if ((size_t)n > seg_start) {
                 std::lock_guard<std::mutex> lock(stderr_mutex);
-                stderr_line_buf += ch;
+                stderr_line_buf.append(buf + seg_start, (size_t)n - seg_start);
             }
         }
     });
@@ -567,8 +587,7 @@ ProcessResult Subprocess::runWithProgress(
         char buf[4096];
         ssize_t n;
         while ((n = read(stdout_fd, buf, sizeof(buf) - 1)) > 0) {
-            buf[n] = 0;
-            stdout_data += buf;
+            stdout_data.append(buf, n);
         }
     });
 

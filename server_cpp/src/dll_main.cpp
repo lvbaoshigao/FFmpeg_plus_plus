@@ -13,6 +13,8 @@
 #include "handlers.h"
 #include "installer.h"
 #include "message_queues.h"
+#include <set>
+#include <mutex>
 
 using json = nlohmann::json;
 using namespace ffmpegpp;
@@ -23,6 +25,10 @@ static std::thread g_workerThread;
 static std::atomic<bool> g_running{false};
 static std::atomic<bool> g_cancelFlag{false};
 static std::atomic<bool> g_shutdownFlag{false};
+
+// 已被前端取消、尚未被 worker 消费的任务 id 集合（批量取消用）
+static std::set<std::string> g_cancelledTaskIds;
+static std::mutex g_cancelMutex;
 
 static void workerLoop() {
     slog("dll worker: thread started");
@@ -45,6 +51,17 @@ static void workerLoop() {
         slog("dll worker: processing action=%s", action.c_str());
 
         try {
+            // 队列中已被取消的任务直接跳过（cancel 携带 task_ids 时），
+            // 避免「停止所有」后后端仍继续执行排队任务
+            {
+                std::lock_guard<std::mutex> lock(g_cancelMutex);
+                auto it = g_cancelledTaskIds.find(req.value("id", ""));
+                if (it != g_cancelledTaskIds.end()) {
+                    g_cancelledTaskIds.erase(it);
+                    JsonWriter::reply(req.value("id", ""), false, nullptr, "任务已取消");
+                    continue;
+                }
+            }
             if (action == "transcode") {
                 g_cancelFlag.store(false);
                 handleTranscode(req, g_cancelFlag);
@@ -59,6 +76,9 @@ static void workerLoop() {
             } else if (action == "image_sequence") {
                 g_cancelFlag.store(false);
                 handleImageSequence(req, g_cancelFlag);
+            } else if (action == "custom_command") {
+                g_cancelFlag.store(false);
+                handleCustomCommand(req, g_cancelFlag);
             } else {
                 JsonWriter::reply(req.value("id", ""), false, nullptr, "未知 action: " + action);
             }
@@ -108,6 +128,14 @@ FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
 
         if (action == "cancel") {
             g_cancelFlag.store(true);
+            // 支持批量取消：携带 task_ids 时，worker 处理这些任务前会跳过
+            auto params = req.value("params", json::object());
+            if (params.contains("task_ids") && params["task_ids"].is_array()) {
+                std::lock_guard<std::mutex> lock(g_cancelMutex);
+                for (auto& tid : params["task_ids"]) {
+                    if (tid.is_string()) g_cancelledTaskIds.insert(tid.get<std::string>());
+                }
+            }
             JsonWriter::reply(req.value("id", ""), true, {{"message", "取消信号已发送"}});
             return 0;
         }
@@ -125,6 +153,9 @@ FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
         if (action == "set_paths") {
             auto params = req.value("params", json::object());
             setFFmpegPaths(params.value("ffmpeg", ""), params.value("ffprobe", ""));
+            // Android 无 /tmp：前端注入应用缓存目录作为临时目录
+            auto tempDir = params.value("temp_dir", "");
+            if (!tempDir.empty()) setTempDir(tempDir);
             JsonWriter::reply(req.value("id", ""), true, {{"message", "paths updated"}});
             return 0;
         }
