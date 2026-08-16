@@ -11,6 +11,8 @@
 
 #define MyAppName "FFmpeg++"
 #define MyAppVersion "5.0.0-beta1"
+; 纯数字版本号（Windows 版本资源要求 x.x.x.x，不能包含 beta 等字符）
+#define MyAppVersionNumeric "5.0.0.0"
 #define MyAppPublisher "氯堡拾稿"
 #define MyAppURL "https://blog-clstone.netlify.app/"
 #define MyAppGitHub "https://github.com/pity-Fox/FFmpeg_plus_plus"
@@ -27,10 +29,10 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppGitHub}
 AppUpdatesURL={#MyAppGitHub}
-VersionInfoVersion={#MyAppVersion}.0
+VersionInfoVersion={#MyAppVersionNumeric}
 VersionInfoDescription={#MyAppName} Installer
 VersionInfoProductName={#MyAppName}
-VersionInfoProductVersion={#MyAppVersion}
+VersionInfoProductVersion={#MyAppVersionNumeric}
 DefaultDirName={autopf}\{#MyAppName}
 UninstallDisplayName={#MyAppName} {#MyAppVersion}
 UninstallDisplayIcon={app}\{#MyAppExeName}
