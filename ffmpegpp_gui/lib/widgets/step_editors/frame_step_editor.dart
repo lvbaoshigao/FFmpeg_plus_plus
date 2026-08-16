@@ -66,6 +66,11 @@ class _FrameStepEditorState extends State<FrameStepEditor> {
   }
 
   double _parse(String s) {
+    final t = s.trim();
+    // 纯数字（如 "5"）按秒解析；否则按 HH:MM:SS[.mmm] 解析
+    if (t.isNotEmpty && !t.contains(':') && double.tryParse(t) != null) {
+      return double.tryParse(t) ?? 0;
+    }
     try {
       final parts = s.split(':');
       if (parts.length != 3) return 0;
@@ -212,13 +217,28 @@ class _FrameStepEditorState extends State<FrameStepEditor> {
         Expanded(child: TextFormField(controller: _startCtrl,
           decoration: InputDecoration(labelText: zh ? '起始' : 'Start'),
           style: TextStyle(fontSize: 13, color: cs.onSurface, fontFamily: 'monospace'),
-          onChanged: (v) { p['range_start'] = _parse(v).clamp(0, dur); widget.onChanged(); _debounced(); },
+          onChanged: (v) {
+            var st = _parse(v).clamp(0, dur);
+            final en = (p['range_end'] as num?)?.toDouble() ?? 0;
+            // 起始 > 结束 时自动收拢，避免负时长
+            if (st > en && en > 0) st = en;
+            p['range_start'] = st;
+            setState(() {});
+            widget.onChanged(); _debounced();
+          },
         )),
         Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Text('→', style: TextStyle(color: cs.outline))),
         Expanded(child: TextFormField(controller: _endCtrl,
           decoration: InputDecoration(labelText: zh ? '结束' : 'End'),
           style: TextStyle(fontSize: 13, color: cs.onSurface, fontFamily: 'monospace'),
-          onChanged: (v) { p['range_end'] = _parse(v).clamp(0, dur); widget.onChanged(); },
+          onChanged: (v) {
+            var en = _parse(v).clamp(0, dur);
+            final st = (p['range_start'] as num?)?.toDouble() ?? 0;
+            if (en < st) en = st;
+            p['range_end'] = en;
+            setState(() {});
+            widget.onChanged();
+          },
         )),
       ]),
       const SizedBox(height: 12),

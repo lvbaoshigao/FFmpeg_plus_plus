@@ -58,9 +58,10 @@ class _OutputStepEditorState extends State<OutputStepEditor> {
     switch (p['naming_mode'] as String? ?? 'keep') {
       case 'suffix': return '$base${p['naming_value'] ?? '_processed'}.$ext';
       case 'custom':
-        final custom = p['naming_value'] as String? ?? '';
+        final custom = (p['naming_value'] as String? ?? '').trim();
         if (custom.contains('.')) return custom;
-        return '$custom.$ext';
+        // 空自定义名回退到原文件名（与执行端 resolveOutputPath 一致，避免 ".mp4" 隐藏文件）
+        return custom.isEmpty ? '$base.$ext' : '$custom.$ext';
       default: return '$base.$ext';
     }
   }
@@ -76,6 +77,7 @@ class _OutputStepEditorState extends State<OutputStepEditor> {
   Future<void> _browseDir() async {
     final result = await FilePicker.platform.getDirectoryPath();
     if (result != null) {
+      if (!mounted) return;
       _dirCtrl.text = result;
       p['output_dir'] = result;
       setState(() {});

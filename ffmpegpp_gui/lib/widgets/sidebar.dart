@@ -16,12 +16,23 @@ class Sidebar extends StatefulWidget {
 class _SidebarState extends State<Sidebar> {
   static const _expandedWidth = 190.0;
   static const _collapsedWidth = 72.0;
-  static const _anim = Duration(milliseconds: 200);
-  static const _curve = Curves.easeOutCubic;
+  static const _anim = Duration(milliseconds: 260);
+  static const _curve = Curves.easeInOutCubic;
 
   bool _collapsed = false;
+  // 遮罩拖动：拖动中的临时 top 偏移（null = 未拖动）
+  double? _maskDragTop;
 
   void _toggle() => setState(() => _collapsed = !_collapsed);
+
+  /// 遮罩拖动结束：吸附到最近的导航项并跳转。
+  void _endMaskDrag(int count, double dragTop) {
+    final idx = (dragTop / _itemH).round().clamp(0, count - 1);
+    setState(() => _maskDragTop = null);
+    if (idx != widget.selectedIndex) {
+      widget.onSelected(idx);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -66,7 +77,53 @@ class _SidebarState extends State<Sidebar> {
                 _header(scheme, s),
                 Divider(color: scheme.outlineVariant.withAlpha(80), height: 1),
                 const SizedBox(height: 8),
-                ...List.generate(items.length, (i) => _navItem(scheme, clr, items[i], i)),
+                // 导航项：底部滑动遮罩按像素精确定位（从选中项滑到新选中项）
+                Stack(children: [
+                  // 滑动遮罩：默认随选中项动画滑动；按住可拖动，松开吸附到最近项并跳转
+                  AnimatedPositioned(
+                    duration: _maskDragTop == null ? _anim : Duration.zero,
+                    curve: _curve,
+                    top: (_maskDragTop ?? (widget.selectedIndex.clamp(0, items.length - 1)).toDouble() * _itemH)
+                        .clamp(0.0, ((items.length - 1) * _itemH).toDouble()),
+                    left: 0,
+                    right: 0,
+                    height: _itemH,
+                    // 遮罩保留边距：与侧边栏左右边缘留 8px 缝隙（不贴合），
+                    // 同时比 150 内容区宽，图标/文字四周各留 ~12px 间距
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: scheme.secondaryContainer.withAlpha(200),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Column(children: [
+                    for (var i = 0; i < items.length; i++) _navItem(scheme, clr, items[i], i),
+                  ]),
+                  // 拖动层：覆盖整个导航区域，捕获垂直拖动（遮罩跟随鼠标）；
+                  // 点击仍由下方 nav item 的 InkWell 处理（手势竞技场自动区分 tap/drag）。
+                  Positioned.fill(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onVerticalDragStart: (d) => setState(() {
+                        _maskDragTop =
+                            (widget.selectedIndex.clamp(0, items.length - 1)).toDouble() * _itemH +
+                            d.localPosition.dy.clamp(0.0, _itemH);
+                      }),
+                      onVerticalDragUpdate: (d) => setState(() {
+                        _maskDragTop = (_maskDragTop ?? 0) + d.delta.dy;
+                      }),
+                      onVerticalDragEnd: (_) {
+                        final t = _maskDragTop;
+                        if (t != null) _endMaskDrag(items.length, t);
+                      },
+                      onVerticalDragCancel: () => setState(() => _maskDragTop = null),
+                    ),
+                  ),
+                ]),
                 const Spacer(),
                 _status(scheme, clr, s, lang),
               ]),
@@ -84,84 +141,102 @@ class _SidebarState extends State<Sidebar> {
       waitDuration: const Duration(milliseconds: 200),
       child: InkWell(
         onTap: _toggle,
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(_collapsed ? 8 : 16, 20, _collapsed ? 8 : 12, 16),
-          child: Row(
-            mainAxisAlignment: _collapsed ? MainAxisAlignment.center : MainAxisAlignment.start,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(6),
-                child: Image.asset('rele/icon.png', width: 28, height: 28, fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) =>
-                        Icon(Icons.play_circle_fill, color: scheme.primary, size: 28)),
-              ),
-              if (!_collapsed) ...[
-                const SizedBox(width: 10),
-                Flexible(
-                  child: Text('FFmpeg++',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          fontWeight: FontWeight.w700, fontSize: 16, color: scheme.primary)),
+        // LayoutBuilder 依据动画中的实际宽度决定是否显示文字：
+        // 宽度不足 90px 时只显示图标（收起过渡期不溢出，不再出现红底白字）
+        child: LayoutBuilder(builder: (ctx, cons) {
+          final showText = cons.maxWidth > 90;
+          return Padding(
+            padding: EdgeInsets.fromLTRB(showText ? 16 : 8, 20, showText ? 12 : 8, 16),
+            child: Row(
+              mainAxisAlignment: showText ? MainAxisAlignment.start : MainAxisAlignment.center,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: Image.asset('rele/icon.png', width: 28, height: 28, fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) =>
+                          Icon(Icons.play_circle_fill, color: scheme.primary, size: 28)),
                 ),
-                const SizedBox(width: 4),
-                Icon(Icons.chevron_left, size: 18, color: scheme.outline),
+                if (showText) ...[
+                  const SizedBox(width: 10),
+                  Flexible(
+                    child: Text('FFmpeg++',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontWeight: FontWeight.w700, fontSize: 16, color: scheme.primary)),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(Icons.chevron_left, size: 18, color: scheme.outline),
+                ],
               ],
-            ],
-          ),
-        ),
+            ),
+          );
+        }),
       ),
     );
   }
 
+  // 每个导航项的高度（图标 20 + 上下 padding 10*2 = 40），遮罩与之严格等高
+  static const double _itemH = 40;
+
   Widget _navItem(ColorScheme scheme, Color clr, (IconData, String) item, int i) {
     final sel = i == widget.selectedIndex;
-    final row = Padding(
-      padding: EdgeInsets.symmetric(horizontal: _collapsed ? 6 : 12, vertical: 10),
-      child: Row(
-        mainAxisAlignment: _collapsed ? MainAxisAlignment.center : MainAxisAlignment.start,
-        children: [
-          Icon(item.$1, size: 20, color: sel ? scheme.onSecondaryContainer : clr),
-          if (!_collapsed) ...[
-            const SizedBox(width: 10),
-            Flexible(
-              child: Text(item.$2,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: sel ? FontWeight.w600 : FontWeight.w400,
-                      color: sel ? scheme.onSecondaryContainer : clr)),
-            ),
-          ],
-        ],
-      ),
-    );
-
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: _collapsed ? 10 : 8, vertical: 2),
-      child: AnimatedContainer(
-        duration: _anim,
-        curve: _curve,
-        decoration: BoxDecoration(
-          color: sel ? scheme.secondaryContainer.withAlpha(200) : Colors.transparent,
+    // 选中态只由滑动遮罩表达；图标/文字瞬时变色（无多余动画，避免卡顿与尺寸不一致）
+    // 固定宽度内容（图标 + 固定间距 + 文字），所有项图标/文字首字对齐，
+    // 整个单元在导航项内水平居中，遮罩固定宽度与其一致。
+    // LayoutBuilder 依据动画实际宽度显示文字，避免过渡期固定宽内容溢出
+    return SizedBox(
+      height: _itemH,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
           borderRadius: BorderRadius.circular(10),
-        ),
-        child: Material(
-          color: Colors.transparent,
-          borderRadius: BorderRadius.circular(10),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(10),
-            onTap: () => widget.onSelected(i),
-            // 收起后没有文字，用 tooltip 补上名称
-            child: _collapsed
+          splashColor: Colors.transparent,
+          highlightColor: Colors.transparent,
+          hoverColor: Colors.transparent,
+          onTap: () => widget.onSelected(i),
+          child: LayoutBuilder(builder: (ctx, cons) {
+            final showText = cons.maxWidth > 90;
+            // 首字对齐优先：固定内容宽 150，图标固定在最左侧起点，
+            // 文字用 Expanded 强制撑满剩余（无论文字长短，图标/文字首字恒对齐）
+            final contentW = showText ? 150.0 : 48.0;
+            final row = Center(
+              child: SizedBox(
+                width: contentW.clamp(0.0, cons.maxWidth),
+                height: _itemH,
+                child: showText
+                    ? Row(
+                        mainAxisAlignment: MainAxisAlignment.start,
+                        children: [
+                          Icon(item.$1, size: 20, color: sel ? scheme.primary : clr),
+                          const SizedBox(width: 12),
+                          // Expanded 撑满：文字长短不影响图标起点
+                          Expanded(
+                            child: Text(item.$2,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: sel ? FontWeight.w600 : FontWeight.w400,
+                                    color: sel ? scheme.onSecondaryContainer : clr)),
+                          ),
+                        ],
+                      )
+                    // 收起态：仅图标，水平居中
+                    : Center(
+                        child: Icon(item.$1, size: 20, color: sel ? scheme.primary : clr),
+                      ),
+              ),
+            );
+            // 收起（无文字）时用 tooltip 补上名称
+            return !showText
                 ? Tooltip(
                     message: item.$2,
                     waitDuration: const Duration(milliseconds: 200),
                     child: row,
                   )
-                : row,
-          ),
+                : row;
+          }),
         ),
       ),
     );
@@ -176,35 +251,39 @@ class _SidebarState extends State<Sidebar> {
       decoration: BoxDecoration(shape: BoxShape.circle, color: running ? scheme.primary : scheme.error),
     );
 
-    return Padding(
-      padding: EdgeInsets.all(_collapsed ? 10 : 16),
-      child: _maybeTooltip(
-        // 展开时文字就在旁边，不需要 tooltip（空 message 会弹出一个空气泡）
-        _collapsed ? label : null,
-        Container(
-          padding: EdgeInsets.symmetric(horizontal: _collapsed ? 8 : 12, vertical: 12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(8),
-            color: scheme.surfaceContainerHighest.withAlpha(140),
-          ),
-          child: Row(
-            mainAxisAlignment: _collapsed ? MainAxisAlignment.center : MainAxisAlignment.start,
-            children: [
-              dot,
-              if (!_collapsed) ...[
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Text(label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 11, color: clr)),
-                ),
+    // LayoutBuilder 依据动画实际宽度决定是否显示文字，避免过渡期溢出
+    return LayoutBuilder(builder: (ctx, cons) {
+      final showText = cons.maxWidth > 90;
+      return Padding(
+        padding: EdgeInsets.all(showText ? 16 : 10),
+        child: _maybeTooltip(
+          // 展开时文字就在旁边，不需要 tooltip（空 message 会弹出一个空气泡）
+          !showText ? label : null,
+          Container(
+            padding: EdgeInsets.symmetric(horizontal: showText ? 12 : 8, vertical: 12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              color: scheme.surfaceContainerHighest.withAlpha(140),
+            ),
+            child: Row(
+              mainAxisAlignment: showText ? MainAxisAlignment.start : MainAxisAlignment.center,
+              children: [
+                dot,
+                if (showText) ...[
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 11, color: clr)),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
-      ),
-    );
+      );
+    });
   }
 
   /// message 为 null 时不套 Tooltip —— 空字符串会弹出一个空气泡。

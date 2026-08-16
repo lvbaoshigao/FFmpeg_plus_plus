@@ -114,7 +114,10 @@ elseif(APPLE)
         INSTALL_RPATH "@loader_path"
     )
 else()
-    target_link_libraries(ffmpegpp PRIVATE pthread)
+    # Android (bionic) 无 libpthread：pthread 并入 libc，无需（也无法）链接 -lpthread
+    if(NOT ANDROID)
+        target_link_libraries(ffmpegpp PRIVATE pthread)
+    endif()
     target_compile_options(ffmpegpp PRIVATE -fvisibility=hidden)
     set_target_properties(ffmpegpp PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endif()

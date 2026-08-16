@@ -60,6 +60,7 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> {
       allowedExtensions: ['srt', 'ass', 'ssa', 'sub', 'vtt'],
     );
     if (result != null && result.files.isNotEmpty && result.files.first.path != null) {
+      if (!mounted) return;
       _update('subtitle_file', result.files.first.path!);
     }
   }

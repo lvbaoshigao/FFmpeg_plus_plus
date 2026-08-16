@@ -136,10 +136,26 @@ class NativeProcessManager {
     );
   }
 
-  void cancel() {
+  /// [taskIds] 非空时同时让后端跳过队列中这些尚未开始的任务
+  void cancel([List<String>? taskIds]) {
     if (!isRunning) return;
     final Map<String, dynamic> req = {'id': 'cancel_${++_reqCounter}', 'action': 'cancel'};
+    if (taskIds != null && taskIds.isNotEmpty) {
+      req['params'] = {'task_ids': taskIds};
+    }
     _sendRequest(req);
+  }
+
+  /// 后端关闭/销毁时完成所有挂起请求，防止调用方 Future 永久挂起
+  /// （transcode 等长任务请求无超时，若后端崩溃且无人 complete，会一直悬着）。
+  void _failAllPending(String error) {
+    final pending = _pendingCompleters.values.toList();
+    _pendingCompleters.clear();
+    for (final c in pending) {
+      if (!c.isCompleted) {
+        c.complete({'success': false, 'error': error});
+      }
+    }
   }
 
   Future<void> shutdown() async {
@@ -151,11 +167,13 @@ class NativeProcessManager {
       } catch (_) {}
       _bridge = null;
     }
+    _failAllPending('后端已关闭');
   }
 
   void dispose() {
     _pollTimer?.cancel();
     _pollTimer = null;
+    _failAllPending('后端已销毁');
     shutdown().ignore();
     if (!_responseController.isClosed) _responseController.close();
     if (!_errorController.isClosed) _errorController.close();

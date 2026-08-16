@@ -41,6 +41,7 @@ void handleSubtitle(const json& req, std::atomic<bool>& cancel_flag);
 void handleExtractFrame(const json& req);
 void handleConcat(const json& req, std::atomic<bool>& cancel_flag);
 void handleImageSequence(const json& req, std::atomic<bool>& cancel_flag);
+void handleCustomCommand(const json& req, std::atomic<bool>& cancel_flag);
 
 void runFFmpegProcess(const std::string& task_id,
                       const std::vector<std::string>& cmd,

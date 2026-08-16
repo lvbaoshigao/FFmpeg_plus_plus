@@ -48,6 +48,8 @@ std::string findExecutable(const std::string& name) {
         std::istringstream iss(pathStr);
         std::string dir;
         while (std::getline(iss, dir, ':')) {
+            // PATH 空段表示当前目录；跳过，避免拼出 "/ffmpeg" 误查根目录
+            if (dir.empty()) continue;
             std::string candidate = dir + "/" + name;
             if (access(candidate.c_str(), X_OK) == 0) return candidate;
         }
@@ -125,6 +127,33 @@ void setFFmpegPaths(const std::string& ffmpeg, const std::string& ffprobe) {
     std::lock_guard<std::mutex> lock(g_pathMutex);
     if (!ffmpeg.empty()) { g_ffmpegPath = ffmpeg; g_ffmpegResolved = true; }
     if (!ffprobe.empty()) { g_ffprobePath = ffprobe; g_ffprobeResolved = true; }
+}
+
+// ── 临时目录（concat/图片序列列表文件） ──
+// Android 没有 /tmp；前端在启动时把应用缓存目录注入进来。
+static std::string g_tempDir;
+static std::mutex g_tempDirMutex;
+
+void setTempDir(const std::string& dir) {
+    std::lock_guard<std::mutex> lock(g_tempDirMutex);
+    g_tempDir = dir;
+}
+
+std::string getTempDir() {
+    std::lock_guard<std::mutex> lock(g_tempDirMutex);
+    if (!g_tempDir.empty()) return g_tempDir;
+    const char* t = getenv("TMPDIR");
+    if (t && *t) {
+        g_tempDir = t;
+        return g_tempDir;
+    }
+#ifdef __ANDROID__
+    // Android 兜底：系统可写临时目录
+    g_tempDir = "/data/local/tmp";
+#else
+    g_tempDir = std::filesystem::temp_directory_path().string();
+#endif
+    return g_tempDir;
 }
 
 json ensureFFmpeg() {

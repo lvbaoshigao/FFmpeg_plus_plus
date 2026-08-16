@@ -37,7 +37,11 @@ std::string hexToASS(const std::string& hex) {
         if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')))
             throw std::runtime_error("颜色值包含非法字符");
     }
-    // RGB → ASS BGR 格式 (&HBBGGRR&)
+    // 8 位 ARGB(#AARRGGBB) → ASS &HAABBGGRR&：高位 alpha，之后 B、G、R
+    if (h.size() >= 8) {
+        return "&H" + h.substr(0, 2) + h.substr(6, 2) + h.substr(4, 2) + h.substr(2, 2) + "&";
+    }
+    // 6 位 RGB → ASS BGR 格式 (&HBBGGRR&)
     if (h.size() >= 6) {
         return "&H" + h.substr(4, 2) + h.substr(2, 2) + h.substr(0, 2) + "&";
     }
@@ -106,7 +110,8 @@ std::vector<std::string> buildSubtitleCommand(
     const std::string& input_path,
     const std::string& output_path,
     const json& subtitle_options,
-    const json& video_options) {
+    const json& video_options,
+    std::string input_pix_fmt /* = "" */) {
 
     // ── 输入/输出路径安全检查 ──
     if (!isPathSafe(input_path))
@@ -157,14 +162,15 @@ std::vector<std::string> buildSubtitleCommand(
         vopts = {{"video_codec", "h264"}, {"gpu", "CPU"}, {"preset", "medium"}, {"video_bitrate", 2000}};
     }
 
-    // 探测源像素格式，自动选择输出格式（保留 10-bit）
-    std::string input_pix_fmt;
-    try {
-        auto probe = probeVideo(input_path);
-        if (probe.success) {
-            input_pix_fmt = probe.info.value("pix_fmt", "");
-        }
-    } catch (...) {}
+    // 探测源像素格式，自动选择输出格式（保留 10-bit）；调用方已探测时复用
+    if (input_pix_fmt.empty()) {
+        try {
+            auto probe = probeVideo(input_path);
+            if (probe.success) {
+                input_pix_fmt = probe.info.value("pix_fmt", "");
+            }
+        } catch (...) {}
+    }
 
     auto enc_params = buildEncodingParams(vopts, input_pix_fmt);
     cmd.insert(cmd.end(), enc_params.begin(), enc_params.end());

@@ -773,6 +773,84 @@ class TaskInfo {
 // 应用配置
 // ═══════════════════════════════════════════
 
+/// AI 供应商配置项：一组可复用的 API 配置（配置名/Key/BaseURL/请求方式/模型等）。
+/// 画布 AI 面板可一键切换；配置可在设置里新建、编辑、启用、删除。
+class AiProfile {
+  String id;          // 唯一标识（uuid）
+  String name;        // 配置名（显示用）
+  bool enabled;       // 是否启用（停用后不可在面板选择）
+  String provider;    // 'openai' | 'anthropic'（请求协议）
+  String apiKey;
+  String apiUrl;
+  String model;
+  int contextWindow;
+  int maxTokens;
+  double temperature;
+
+  AiProfile({
+    String? id,
+    this.name = 'New Profile',
+    this.enabled = true,
+    this.provider = 'openai',
+    this.apiKey = '',
+    this.apiUrl = 'https://api.openai.com/v1/chat/completions',
+    this.model = 'gpt-4o',
+    this.contextWindow = 128000,
+    this.maxTokens = 4096,
+    this.temperature = 0.3,
+  }) : id = id ?? _uuid.v4();
+
+  factory AiProfile.fromJson(Map<String, dynamic> json) => AiProfile(
+        id: json['id'] as String?,
+        name: json['name'] as String? ?? 'New Profile',
+        enabled: json['enabled'] as bool? ?? true,
+        provider: json['provider'] as String? ?? 'openai',
+        apiKey: json['api_key'] as String? ?? '',
+        apiUrl: json['api_url'] as String? ?? 'https://api.openai.com/v1/chat/completions',
+        model: json['model'] as String? ?? 'gpt-4o',
+        contextWindow: json['context_window'] as int? ?? 128000,
+        maxTokens: json['max_tokens'] as int? ?? 4096,
+        temperature: (json['temperature'] as num?)?.toDouble() ?? 0.3,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'enabled': enabled,
+        'provider': provider,
+        'api_key': apiKey,
+        'api_url': apiUrl,
+        'model': model,
+        'context_window': contextWindow,
+        'max_tokens': maxTokens,
+        'temperature': temperature,
+      };
+
+  AiProfile copyWith({
+    String? name,
+    bool? enabled,
+    String? provider,
+    String? apiKey,
+    String? apiUrl,
+    String? model,
+    int? contextWindow,
+    int? maxTokens,
+    double? temperature,
+  }) =>
+      AiProfile(
+        id: id,
+        name: name ?? this.name,
+        enabled: enabled ?? this.enabled,
+        provider: provider ?? this.provider,
+        apiKey: apiKey ?? this.apiKey,
+        apiUrl: apiUrl ?? this.apiUrl,
+        model: model ?? this.model,
+        contextWindow: contextWindow ?? this.contextWindow,
+        maxTokens: maxTokens ?? this.maxTokens,
+        temperature: temperature ?? this.temperature,
+      );
+}
+
 class AppConfig {
   String language, ffmpegPath, ffprobePath, defaultOutputDir, intermediateDir, fontFamily;
   bool darkMode;
@@ -782,6 +860,10 @@ class AppConfig {
   String backgroundImage;
   double backgroundOpacity;
   double cardOpacity;
+  // 玻璃效果：'liquid' 液态玻璃 / 'blur' 模糊 / 'none' 无效果
+  String glassEffect;
+  // 遵循主题色：true 时玻璃/卡片底色使用主题色而非 surface 灰
+  bool glassFollowTheme;
   bool debugMode;
   bool saveLogs;
   bool enableSystemNotification;
@@ -794,7 +876,8 @@ class AppConfig {
   bool autoCheckUpdate;
   bool mcpEnabled;
   int mcpPort;
-  String aiProvider; // 'openai' or 'anthropic'
+  bool mcpAllowWrite; // MCP 是否允许写操作（默认只读）
+  String aiProvider; // 'openai' or 'anthropic' or 'custom'
   String aiApiKey;
   String aiApiUrl;
   String aiModel;
@@ -802,8 +885,22 @@ class AppConfig {
   bool aiReadAccess;
   bool aiWriteAccess;
   bool aiAutoExecute;
+  bool aiAllowAsk; // 是否允许 AI 主动向用户提问（ask_user 工具）
+  bool aiShowThinking; // 是否显示模型思考过程
+  bool aiAutoTitle;    // 对话后自动总结生成会话标题
+  String aiTitlePrompt; // 标题生成的系统提示词（内置，可改写）
   String aiGraphMode;
   String aiSystemPrompt;
+  double aiTemperature;
+  int aiMaxTokens;
+  int aiContextWindow; // 模型上下文窗口（token）
+  String aiApproveMode; // 'auto' = 自动批准图应用; 'ask' = 每次询问
+  List<String> aiAskSkipTools; // 询问模式下无需确认的操作白名单（如 'clear_all','undo','save'）
+  String aiProviderPreset; // 供应商预设名：'openai','anthropic','deepseek','ollama','custom'
+  List<AiProfile> aiProfiles; // 可复用的 AI 配置项（配置管理）
+  String activeAiProfileId;   // 当前选中的配置 id（空 = 使用下方默认字段）
+  // Android Monet 动态取色（跟随系统壁纸；桌面端始终关闭）
+  bool useDynamicColor;
 
   static const fontWeightValues = [300, 400, 500, 600, 700];
   static const fontWeightLabels = ['Light', 'Regular', 'Medium', 'SemiBold', 'Bold'];
@@ -822,6 +919,11 @@ class AppConfig {
     'queue_stop_all': ['Control', 'Shift', 'X'],
     'canvas_pan_button': ['right'],
     'canvas_select_button': ['left'],
+    'nav_projects': ['Control', '1'],
+    'nav_queue': ['Control', '2'],
+    'nav_command': ['Control', '3'],
+    'nav_settings': ['Control', '4'],
+    'project_search': ['Control', 'F'],
   };
 
   AppConfig({
@@ -829,6 +931,8 @@ class AppConfig {
     this.defaultOutputDir = '', this.intermediateDir = '', this.darkMode = true, this.themeColor = 0xFF5E6AD2,
     String? fontFamily, this.fontSize = 17.0, this.fontWeightIndex = 1,
     this.backgroundImage = '', this.backgroundOpacity = 0.8, this.cardOpacity = 0.7,
+    this.glassEffect = 'liquid',
+    this.glassFollowTheme = false,
     this.debugMode = false, this.saveLogs = false, this.enableSystemNotification = false, this.logSavePath = '',
     this.useNodeEditor = true,
     this.maxConcurrentTasks = 1,
@@ -838,6 +942,7 @@ class AppConfig {
     this.autoCheckUpdate = true,
     this.mcpEnabled = false,
     this.mcpPort = 3000,
+    this.mcpAllowWrite = false,
     this.aiProvider = 'openai',
     this.aiApiKey = '',
     this.aiApiUrl = 'https://api.openai.com/v1/chat/completions',
@@ -846,11 +951,48 @@ class AppConfig {
     this.aiReadAccess = false,
     this.aiWriteAccess = false,
     this.aiAutoExecute = false,
+    this.aiAllowAsk = false,
+    this.aiShowThinking = true,
+    this.aiAutoTitle = true,
+    this.aiTitlePrompt = 'You are a title generator. Reply with ONLY a short title (max 20 chars) summarizing the conversation topic. No quotes, no punctuation.',
     this.aiGraphMode = 'redo',
     this.aiSystemPrompt = '',
+    this.aiTemperature = 0.3,
+    this.aiMaxTokens = 4096,
+    this.aiContextWindow = 128000,
+    this.aiApproveMode = 'ask',
+    this.aiAskSkipTools = const ['save', 'undo', 'redo', 'error_check'],
+    this.aiProviderPreset = 'openai',
+    List<AiProfile>? aiProfiles,
+    this.activeAiProfileId = '',
+    this.useDynamicColor = false,
   }) : fontFamily = fontFamily ?? _defaultFontFamily,
+       aiProfiles = aiProfiles ?? <AiProfile>[],
        nodeUsageCount = nodeUsageCount ?? {},
        keyBindings = keyBindings ?? Map.from(defaultKeyBindings);
+
+  static bool? _softBool(dynamic v) => v is bool ? v : null;
+
+  static Map<String, int> _safeIntMap(dynamic v) {
+    if (v is! Map) return {};
+    final out = <String, int>{};
+    for (final e in v.entries) {
+      if (e.value is num) out['${e.key}'] = (e.value as num).toInt();
+    }
+    return out;
+  }
+
+  static Map<String, List<String>>? _safeStringListMap(dynamic v) {
+    if (v is! Map) return null;
+    final out = <String, List<String>>{};
+    for (final e in v.entries) {
+      if (e.value is List) {
+        final list = (e.value as List).whereType<String>().toList();
+        out['${e.key}'] = list;
+      }
+    }
+    return out;
+  }
 
   factory AppConfig.fromJson(Map<String, dynamic> json) => AppConfig(
         language: json['language'] as String? ?? 'zh',
@@ -865,6 +1007,8 @@ class AppConfig {
         fontWeightIndex: json['font_weight'] as int? ?? 1,
         backgroundImage: json['background_image'] as String? ?? '',
         backgroundOpacity: (json['background_opacity'] as num?)?.toDouble() ?? 0.8,
+        glassEffect: json['glass_effect'] as String? ?? 'liquid',
+        glassFollowTheme: json['glass_follow_theme'] as bool? ?? false,
         cardOpacity: (json['card_opacity'] as num?)?.toDouble() ?? 0.7,
         debugMode: json['debug_mode'] as bool? ?? false,
         saveLogs: json['save_logs'] as bool? ?? false,
@@ -873,22 +1017,36 @@ class AppConfig {
         useNodeEditor: json['use_node_editor'] as bool? ?? true,
         maxConcurrentTasks: json['max_concurrent_tasks'] as int? ?? 1,
         probeThreads: json['probe_threads'] as int? ?? 1,
-        nodeUsageCount: (json['node_usage_count'] as Map<String, dynamic>?)?.map((k, v) => MapEntry(k, (v as num).toInt())) ?? {},
-        keyBindings: (json['key_bindings'] as Map<String, dynamic>?)?.map((k, v) =>
-            MapEntry(k, (v as List<dynamic>).map((e) => e as String).toList())) ?? Map.from(defaultKeyBindings),
+        nodeUsageCount: _safeIntMap(json['node_usage_count']),
+        keyBindings: _safeStringListMap(json['key_bindings']) ?? Map.from(defaultKeyBindings),
         autoCheckUpdate: json['auto_check_update'] as bool? ?? true,
         mcpEnabled: json['mcp_enabled'] as bool? ?? false,
         mcpPort: json['mcp_port'] as int? ?? 3000,
+        mcpAllowWrite: json['mcp_allow_write'] as bool? ?? false,
         aiProvider: json['ai_provider'] as String? ?? 'openai',
         aiApiKey: json['ai_api_key'] as String? ?? '',
         aiApiUrl: json['ai_api_url'] as String? ?? 'https://api.openai.com/v1/chat/completions',
         aiModel: json['ai_model'] as String? ?? 'gpt-4o',
         aiEnabled: json['ai_enabled'] as bool? ?? true,
-        aiReadAccess: json['ai_read_access'] as bool? ?? json['ai_auto_apply'] as bool? ?? false,
+        // 旧配置迁移：ai_read_access/ai_auto_apply 存在但类型不对时软回退，避免整份配置加载失败
+        aiReadAccess: _softBool(json['ai_read_access']) ?? _softBool(json['ai_auto_apply']) ?? false,
         aiWriteAccess: json['ai_write_access'] as bool? ?? false,
-        aiAutoExecute: json['ai_auto_execute'] as bool? ?? json['ai_auto_apply'] as bool? ?? false,
+        aiAutoExecute: _softBool(json['ai_auto_execute']) ?? _softBool(json['ai_auto_apply']) ?? false,
+        aiAllowAsk: json['ai_allow_ask'] as bool? ?? false,
+        aiShowThinking: json['ai_show_thinking'] as bool? ?? true,
+        aiAutoTitle: json['ai_auto_title'] as bool? ?? true,
+        aiTitlePrompt: json['ai_title_prompt'] as String? ?? 'You are a title generator. Reply with ONLY a short title (max 20 chars) summarizing the conversation topic. No quotes, no punctuation.',
         aiGraphMode: json['ai_graph_mode'] as String? ?? 'redo',
         aiSystemPrompt: json['ai_system_prompt'] as String? ?? '',
+        aiTemperature: (json['ai_temperature'] as num?)?.toDouble() ?? 0.3,
+        aiMaxTokens: json['ai_max_tokens'] as int? ?? 4096,
+        aiContextWindow: json['ai_context_window'] as int? ?? 128000,
+        aiApproveMode: json['ai_approve_mode'] as String? ?? 'ask',
+        aiAskSkipTools: (json['ai_ask_skip_tools'] as List<dynamic>?)?.cast<String>() ?? const ['save', 'undo', 'redo', 'error_check'],
+        aiProviderPreset: json['ai_provider_preset'] as String? ?? 'openai',
+        aiProfiles: (json['ai_profiles'] as List<dynamic>?)?.map((e) => AiProfile.fromJson(e as Map<String, dynamic>)).toList() ?? <AiProfile>[],
+        activeAiProfileId: json['active_ai_profile_id'] as String? ?? '',
+        useDynamicColor: json['use_dynamic_color'] as bool? ?? false,
       );
 
   Map<String, dynamic> toJson() => {
@@ -897,6 +1055,8 @@ class AppConfig {
         'theme_color': themeColor, 'font_family': fontFamily, 'font_size': fontSize,
         'font_weight': fontWeightIndex,
         'background_image': backgroundImage, 'background_opacity': backgroundOpacity,
+        'glass_effect': glassEffect,
+        'glass_follow_theme': glassFollowTheme,
         'card_opacity': cardOpacity,
         'debug_mode': debugMode,
         'save_logs': saveLogs, 'enable_system_notification': enableSystemNotification, 'log_save_path': logSavePath,
@@ -908,6 +1068,7 @@ class AppConfig {
         'auto_check_update': autoCheckUpdate,
         'mcp_enabled': mcpEnabled,
         'mcp_port': mcpPort,
+        'mcp_allow_write': mcpAllowWrite,
         'ai_provider': aiProvider,
         'ai_api_key': aiApiKey,
         'ai_api_url': aiApiUrl,
@@ -916,8 +1077,21 @@ class AppConfig {
         'ai_read_access': aiReadAccess,
         'ai_write_access': aiWriteAccess,
         'ai_auto_execute': aiAutoExecute,
+        'ai_allow_ask': aiAllowAsk,
+        'ai_show_thinking': aiShowThinking,
+        'ai_auto_title': aiAutoTitle,
+        'ai_title_prompt': aiTitlePrompt,
         'ai_graph_mode': aiGraphMode,
         'ai_system_prompt': aiSystemPrompt,
+        'ai_temperature': aiTemperature,
+        'ai_max_tokens': aiMaxTokens,
+        'ai_context_window': aiContextWindow,
+        'ai_approve_mode': aiApproveMode,
+        'ai_ask_skip_tools': aiAskSkipTools,
+        'ai_provider_preset': aiProviderPreset,
+        'ai_profiles': aiProfiles.map((e) => e.toJson()).toList(),
+        'active_ai_profile_id': activeAiProfileId,
+        'use_dynamic_color': useDynamicColor,
       };
 }
 

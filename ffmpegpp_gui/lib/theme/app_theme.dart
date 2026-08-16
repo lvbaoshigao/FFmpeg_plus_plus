@@ -4,21 +4,32 @@ import 'package:flutter/material.dart';
 class AppTheme {
   static final String monoFont = Platform.isWindows ? 'Consolas' : 'monospace';
 
-  static ThemeData dark({int seedColor = 0xFF5E6AD2, String fontFamily = '', double fontSize = 14.0, int fontWeight = 400}) {
-    final scheme = ColorScheme.fromSeed(seedColor: Color(seedColor), brightness: Brightness.dark);
+  /// seedColor 为用户自定义主题色；dynamicSeed 非空时（Android Monet
+  /// 动态取色）覆盖它作为种子色，使用与系统 Material You 一致的
+  /// tonalSpot 方案生成整套配色。
+  static ThemeData dark({int seedColor = 0xFF5E6AD2, String fontFamily = '', double fontSize = 14.0, int fontWeight = 400, int? dynamicSeed}) {
+    final scheme = ColorScheme.fromSeed(
+      seedColor: Color(dynamicSeed ?? seedColor),
+      brightness: Brightness.dark,
+    );
     return _build(scheme, fontFamily, fontSize, fontWeight);
   }
 
-  static ThemeData light({int seedColor = 0xFF5E6AD2, String fontFamily = '', double fontSize = 14.0, int fontWeight = 400}) {
-    final scheme = ColorScheme.fromSeed(seedColor: Color(seedColor), brightness: Brightness.light);
+  static ThemeData light({int seedColor = 0xFF5E6AD2, String fontFamily = '', double fontSize = 14.0, int fontWeight = 400, int? dynamicSeed}) {
+    final scheme = ColorScheme.fromSeed(
+      seedColor: Color(dynamicSeed ?? seedColor),
+      brightness: Brightness.light,
+    );
     return _build(scheme, fontFamily, fontSize, fontWeight);
   }
 
   static ThemeData _build(ColorScheme scheme, String fontFamily, double fontSize, int fontWeight) {
-    final scale = fontSize / 14.0;
+    final isDark = scheme.brightness == Brightness.dark;
+    // 字号缩放统一交给 app.dart 里的 MediaQuery.textScaler（TextScaler.linear(fontSize/14)），
+    // 这里不能再 `sz * scale`，否则字号会被乘两次（默认 17 号会渲染成约 20.6px）。
     final w = _fw(fontWeight);
     final base = ThemeData.fallback().textTheme;
-    TextStyle s(TextStyle? b, double sz) => (b ?? const TextStyle()).copyWith(fontSize: (sz * scale), fontWeight: w, color: scheme.onSurface);
+    TextStyle s(TextStyle? b, double sz) => (b ?? const TextStyle()).copyWith(fontSize: sz, fontWeight: w, color: scheme.onSurface);
 
     final tt = base.copyWith(
       displayLarge: s(base.displayLarge, 57), displayMedium: s(base.displayMedium, 45), displaySmall: s(base.displaySmall, 36),
@@ -93,11 +104,43 @@ class AppTheme {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
       ),
       dividerTheme: const DividerThemeData(space: 1, thickness: 1),
+      // DropdownMenu / 下拉菜单：大圆角 + 玻璃质感 + 阴影（避免深色下纯黑）
       dropdownMenuTheme: DropdownMenuThemeData(
-        menuStyle: MenuStyle(
-          shape: WidgetStatePropertyAll(RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-          surfaceTintColor: WidgetStatePropertyAll(scheme.surface),
+        // 触发框：与全局输入框一致的主题化圆角填充样式
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: scheme.surfaceContainerHighest.withAlpha(90),
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: scheme.outlineVariant, width: 1),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: scheme.outlineVariant.withAlpha(160), width: 1),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: scheme.primary, width: 1.5),
+          ),
         ),
+        menuStyle: MenuStyle(
+          shape: WidgetStatePropertyAll(RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(22),
+              side: BorderSide(color: scheme.outlineVariant.withAlpha(70)))),
+          surfaceTintColor: WidgetStatePropertyAll(scheme.surface),
+          elevation: WidgetStatePropertyAll(12),
+          padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(vertical: 8)),
+          backgroundColor: WidgetStatePropertyAll(scheme.surfaceContainerHighest.withAlpha(240)),
+          shadowColor: WidgetStatePropertyAll(Colors.black.withAlpha(isDark ? 80 : 30)),
+        ),
+      ),
+      // 所有弹出菜单（PopupMenuButton / 右键菜单等）统一圆角矩形
+      popupMenuTheme: PopupMenuThemeData(
+        color: scheme.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        elevation: 8,
       ),
     );
   }

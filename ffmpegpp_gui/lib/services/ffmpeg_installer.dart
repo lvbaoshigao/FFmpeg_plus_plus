@@ -16,6 +16,19 @@ class FfmpegInstaller {
 
   static bool get isInstalled => File(ffmpegPath).existsSync() && File(ffprobePath).existsSync();
 
+  /// 解析实际可用的 ffmpeg 可执行路径（供 UI 层的预览/缩略图等本地调用使用）。
+  /// 优先级：用户配置的 [configured] 路径 → 程序目录内置二进制 → PATH 上的 `ffmpeg`。
+  /// 之前各处硬编码 `'ffmpeg'`，导致通过「内置安装」装好 FFmpeg、但没装进 PATH 的用户，
+  /// 缩略图/预览/截取全部静默失败。
+  /// Android 上无 PATH 概念：AppState 初始化时把内置 ffmpeg 路径注入 [configuredFfmpeg]。
+  static String configuredFfmpeg = '';
+  static String resolveFfmpeg({String? configured}) {
+    final cfg = (configured ?? configuredFfmpeg).trim();
+    if (cfg.isNotEmpty && File(cfg).existsSync()) return cfg;
+    if (File(ffmpegPath).existsSync()) return ffmpegPath;
+    return 'ffmpeg';
+  }
+
   static Future<bool> checkSystemFfmpeg() async {
     try {
       final r = await Process.run('ffmpeg', ['-version']);

@@ -14,9 +14,11 @@ std::string resolveEncoder(const std::string& gpu, const std::string& codec_key)
 std::vector<std::string> buildEncodingParams(const json& options, const std::string& input_pix_fmt = "");
 
 // 构建完整转码命令
+// input_pix_fmt 非空时复用调用方已探测的源像素格式，避免重复启动 ffprobe
 std::vector<std::string> buildTranscodeCommand(
     const std::string& input_path,
     const std::string& output_path,
-    const json& options);
+    const json& options,
+    std::string input_pix_fmt = "");
 
 } // namespace ffmpegpp

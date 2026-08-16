@@ -11,6 +11,7 @@ import '../widgets/video_card.dart';
 import '../widgets/container_card.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/toast.dart';
+import '../platform/app_platform.dart';
 
 class ProjectPage extends StatefulWidget {
   const ProjectPage({super.key});
@@ -134,38 +135,53 @@ class ProjectPageState extends State<ProjectPage> {
                 tooltip: s.isZh ? '导入配置' : 'Import Config',
                 onPressed: state.videos.isEmpty ? null : () => _importConfig(state, s),
               ),
-              // 图标按钮群和下面两个带文字的主操作之间留出呼吸空间
-              const SizedBox(width: 10),
-              // 两个按钮用同一固定宽度，"容器"(2字) 和 "添加文件"(4字) 视觉完全一致。
-              // 不用 minimumSize（那只是下限，长短标签宽度仍会差很多）；用固定宽保证一对。
-              OutlinedButton.icon(
-                icon: const Icon(Icons.folder_special, size: 18),
-                label: Text(s.container, maxLines: 1, overflow: TextOverflow.ellipsis),
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size(150, 42),
-                  maximumSize: const Size(150, 42),
+              // 圆形图标按钮：容器（玻璃圆底）+ 添加文件（主色圆底），无文字
+              const SizedBox(width: 6),
+              Tooltip(
+                message: s.container,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(20),
+                  onTap: () => _showContainerMenu(context, state, s),
+                  child: Container(
+                    width: 40, height: 40,
+                    decoration: BoxDecoration(
+                      color: scheme.primaryContainer.withAlpha(180),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
+                    ),
+                    child: const Icon(Icons.folder_special, size: 20, color: Color(0xFF5E6AD2)),
+                  ),
                 ),
-                onPressed: () => _showContainerMenu(context, state, s),
               ),
               const SizedBox(width: 10),
-              FilledButton.icon(
-                icon: const Icon(Icons.add, size: 18),
-                label: Text(s.addVideo, maxLines: 1, overflow: TextOverflow.ellipsis),
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size(150, 42),
-                  maximumSize: const Size(150, 42),
+              Tooltip(
+                message: s.addVideo,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(20),
+                  onTap: () => _pick(state),
+                  child: Container(
+                    width: 40, height: 40,
+                    decoration: BoxDecoration(
+                      color: scheme.primary,
+                      shape: BoxShape.circle,
+                      boxShadow: [BoxShadow(color: scheme.primary.withAlpha(90), blurRadius: 8, offset: const Offset(0, 2))],
+                    ),
+                    child: const Icon(Icons.add, size: 22, color: Colors.white),
+                  ),
                 ),
-                onPressed: () => _pick(state),
               ),
             ],
           ),
           Expanded(
-            child: DropTarget(
-              onDragDone: _onDrop,
-              onDragEntered: (_) => setState(() => _dragging = true),
-              onDragExited: (_) => setState(() => _dragging = false),
-              child: _buildBody(context, state, videos, s, clr, scheme),
-            ),
+            // 移动端无桌面拖放能力，直接渲染内容
+            child: isMobilePlatform
+                ? _buildBody(context, state, videos, s, clr, scheme)
+                : DropTarget(
+                    onDragDone: _onDrop,
+                    onDragEntered: (_) => setState(() => _dragging = true),
+                    onDragExited: (_) => setState(() => _dragging = false),
+                    child: _buildBody(context, state, videos, s, clr, scheme),
+                  ),
           ),
           ]),
         );
@@ -192,8 +208,10 @@ class ProjectPageState extends State<ProjectPage> {
         Text(s.noVideos, style: TextStyle(fontSize: 16, color: clr)),
         const SizedBox(height: 8),
         Text(s.clickAdd, style: TextStyle(fontSize: 13, color: clr)),
-        const SizedBox(height: 8),
-        Text(s.dragDropHint, style: TextStyle(fontSize: 12, color: clr.withAlpha(150))),
+        if (!isMobilePlatform) ...[
+          const SizedBox(height: 8),
+          Text(s.dragDropHint, style: TextStyle(fontSize: 12, color: clr.withAlpha(150))),
+        ],
       ]));
     }
 

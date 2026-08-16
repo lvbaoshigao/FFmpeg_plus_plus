@@ -143,6 +143,8 @@ inline std::vector<std::string> DANGEROUS_FILTERS = {
     "movie", "amovie", "sendcmd", "zmq", "program",
     "azmq", "coreimage", "testsrc", "life", "cellauto",
     "opencl", "opengl", "libplacebo",
+    // drawtext 支持 textfile= 读取任意文件内容并绘制进画面（信息泄露）
+    "drawtext",
 };
 
 // 验证过滤器字符串是否安全

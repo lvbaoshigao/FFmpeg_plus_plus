@@ -5,7 +5,6 @@
 
 namespace ffmpegpp {
 
-namespace {
 std::vector<std::string> splitCommand(const std::string& cmd) {
     std::vector<std::string> tokens;
     std::string current;
@@ -30,6 +29,7 @@ std::vector<std::string> splitCommand(const std::string& cmd) {
     return tokens;
 }
 
+namespace {
 bool isParam(const std::string& token) {
     return !token.empty() && token[0] == '-';
 }

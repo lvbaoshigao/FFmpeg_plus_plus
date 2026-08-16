@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider 共享路径：用于打开本地文件/APK（Android 7+ 禁止 file:// URI） -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="cache" path="." />
+    <files-path name="files" path="." />
+    <external-path name="external" path="." />
+    <external-files-path name="external_files" path="." />
+</paths>

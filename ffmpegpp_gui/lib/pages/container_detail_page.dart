@@ -6,7 +6,9 @@ import 'package:file_picker/file_picker.dart';
 import 'package:window_manager/window_manager.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
+import '../services/ffmpeg_installer.dart';
 import '../theme/app_strings.dart';
+import '../platform/app_platform.dart';
 import 'pipeline_editor_page.dart';
 import '../app.dart';
 
@@ -25,14 +27,16 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
   @override
   void initState() {
     super.initState();
-    windowManager.addListener(this);
-    windowManager.isMaximized().then((v) { if (mounted) setState(() => _isMaximized = v); });
+    if (!isMobilePlatform) {
+      windowManager.addListener(this);
+      windowManager.isMaximized().then((v) { if (mounted) setState(() => _isMaximized = v); });
+    }
   }
 
   @override
   void dispose() {
     _indexCtrl.dispose();
-    windowManager.removeListener(this);
+    if (!isMobilePlatform) windowManager.removeListener(this);
     super.dispose();
   }
 
@@ -104,7 +108,8 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
     final content = Column(children: [
       // 工具栏
       Padding(
-        padding: EdgeInsets.fromLTRB(8, Platform.isWindows ? 4 : 40, 8, 2),
+        padding: EdgeInsets.fromLTRB(8, Platform.isWindows
+            ? 4 : (isMobilePlatform ? MediaQuery.of(context).padding.top + 4 : 40), 8, 2),
         child: Row(children: [
           IconButton(icon: const Icon(Icons.arrow_back, size: 20), onPressed: () => Navigator.pop(context)),
           const SizedBox(width: 4),
@@ -129,7 +134,7 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
       body: content,
     ));
 
-    if (!Platform.isWindows) {
+    if (!Platform.isWindows && !isMobilePlatform) {
       page = Stack(children: [
         page,
         Positioned(left: 0, right: 0, top: 0, child: _buildCsdTitleBar(scheme)),
@@ -171,7 +176,7 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
           const SizedBox(width: 8),
           // 缩略图
           ClipRRect(borderRadius: BorderRadius.circular(4),
-            child: _Thumb(filepath: video.filepath, isAudio: video.fileMediaType == MediaType.audio)),
+            child: _Thumb(filepath: video.filepath, isAudio: video.fileMediaType == MediaType.audio, ffmpeg: state.config.ffmpegPath)),
           const SizedBox(width: 8),
           // 文件信息
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
@@ -349,7 +354,8 @@ class _CsdBtnState extends State<_CsdBtn> {
 class _Thumb extends StatefulWidget {
   final String filepath;
   final bool isAudio;
-  const _Thumb({required this.filepath, this.isAudio = false});
+  final String? ffmpeg;
+  const _Thumb({required this.filepath, this.isAudio = false, this.ffmpeg});
   @override
   State<_Thumb> createState() => _ThumbState();
 }
@@ -373,7 +379,7 @@ class _ThumbState extends State<_Thumb> {
       } else {
         args.addAll(['-i', widget.filepath, '-vframes', '1', '-q:v', '5', '-s', '80x45', f.path]);
       }
-      final r = await Process.run('ffmpeg', args);
+      final r = await Process.run(FfmpegInstaller.resolveFfmpeg(configured: widget.ffmpeg), args);
       if (r.exitCode == 0 && await f.exists()) { if (mounted) setState(() => _path = f.path); }
     } catch (_) {}
   }

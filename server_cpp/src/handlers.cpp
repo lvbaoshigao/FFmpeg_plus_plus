@@ -10,6 +10,7 @@
 #include "audit.h"
 #include "ffmpeg_features.h"
 #include "constants.h"
+#include "parser.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -22,6 +23,8 @@
 #include <regex>
 #include <algorithm>
 #include <cstdarg>
+#include <map>
+#include <deque>
 
 namespace ffmpegpp {
 
@@ -150,11 +153,17 @@ std::string ProgressParser::fmtTime(double seconds) {
 }
 
 std::vector<std::string> ProgressParser::findRegex(const std::string& str, const std::string& pattern) {
+    // std::regex 构造（正则编译）开销大，而 feed 每行调用 5 次；
+    // 按 pattern 缓存编译后的 regex，避免每次重复编译。
+    static std::map<std::string, std::regex> cache;
     std::vector<std::string> matches;
     try {
-        std::regex re(pattern);
+        auto it = cache.find(pattern);
+        if (it == cache.end()) {
+            it = cache.emplace(pattern, std::regex(pattern)).first;
+        }
         std::smatch m;
-        if (std::regex_search(str, m, re)) {
+        if (std::regex_search(str, m, it->second)) {
             for (size_t i = 0; i < m.size(); ++i) {
                 matches.push_back(m[i].str());
             }
@@ -247,7 +256,8 @@ void runFFmpegProcess(const std::string& task_id,
     slog("runFFmpeg: starting ffmpeg process...");
 
     auto start = std::chrono::steady_clock::now();
-    std::vector<std::string> stderr_lines;
+    // 只保留最近 200 行 stderr（原实现无界累积，长转码会存几十万行只为取最后 100 行）
+    std::deque<std::string> stderr_lines;
     int progress_count = 0;
     bool has_real_progress = false;
     double last_sent_progress = -1.0;
@@ -256,6 +266,7 @@ void runFFmpegProcess(const std::string& task_id,
     auto result = Subprocess::runWithProgress(cmd,
         [&](const std::string& line) {
             stderr_lines.push_back(line);
+            if (stderr_lines.size() > 200) stderr_lines.pop_front();
             parser.feed(line);
             progress_count++;
             if (line.find("time=") != std::string::npos) has_real_progress = true;
@@ -333,7 +344,8 @@ void handleTranscode(const json& req, std::atomic<bool>& cancel_flag) {
 
     std::vector<std::string> cmd;
     try {
-        cmd = buildTranscodeCommand(input, output, options);
+        // 传入已探测的 input_pix_fmt，避免 buildTranscodeCommand 内部重复启动 ffprobe
+        cmd = buildTranscodeCommand(input, output, options, input_pix_fmt);
     } catch (const std::exception& e) {
         JsonWriter::reply(req["id"], false, nullptr, std::string("命令构建失败: ") + e.what());
         return;
@@ -390,7 +402,8 @@ void handleSubtitle(const json& req, std::atomic<bool>& cancel_flag) {
 
     std::vector<std::string> cmd;
     try {
-        cmd = buildSubtitleCommand(input, output, sub_opts, vid_opts);
+        // 传入已探测的 input_pix_fmt，避免 buildSubtitleCommand 内部重复启动 ffprobe
+        cmd = buildSubtitleCommand(input, output, sub_opts, vid_opts, input_pix_fmt);
     } catch (const std::exception& e) {
         JsonWriter::reply(req["id"], false, nullptr, std::string("命令构建失败: ") + e.what());
         return;
@@ -481,7 +494,7 @@ void handleConcat(const json& req, std::atomic<bool>& cancel_flag) {
     }
 
     // Write temp concat list
-    auto tmpDir = std::filesystem::temp_directory_path();
+    auto tmpDir = std::filesystem::path(ffmpegpp::getTempDir());
     std::string listPath = (tmpDir / ("ffmpegpp_concat_" + req["id"].get<std::string>() + ".txt")).string();
     {
         std::ofstream ofs(listPath, std::ios::binary);
@@ -544,7 +557,7 @@ void handleImageSequence(const json& req, std::atomic<bool>& cancel_flag) {
     }
 
     // Write temp concat list with duration per frame
-    auto tmpDir = std::filesystem::temp_directory_path();
+    auto tmpDir = std::filesystem::path(ffmpegpp::getTempDir());
     std::string listPath = (tmpDir / ("ffmpegpp_imgseq_" + req["id"].get<std::string>() + ".txt")).string();
     {
         std::ofstream ofs(listPath, std::ios::binary);
@@ -603,6 +616,36 @@ void handleImageSequence(const json& req, std::atomic<bool>& cancel_flag) {
 
     // Cleanup temp file
     std::filesystem::remove(listPath);
+}
+
+// ═══════════════════════════════════════════
+// handleCustomCommand — 用户自定义 ffmpeg 命令
+// ═══════════════════════════════════════════
+
+void handleCustomCommand(const json& req, std::atomic<bool>& cancel_flag) {
+    json params = (req.contains("params") && req["params"].is_object()) ? req["params"] : json::object();
+    std::string command = params.value("command", "");
+    std::string output_path = params.value("output", "");
+
+    if (command.empty()) {
+        JsonWriter::reply(req["id"], false, nullptr, "命令为空");
+        return;
+    }
+
+    auto tokens = splitCommand(command);
+    if (tokens.empty()) {
+        JsonWriter::reply(req["id"], false, nullptr, "命令解析失败");
+        return;
+    }
+
+    // 确保以 ffmpeg 可执行文件开头（用户可能输入裸 "ffmpeg" 或完整路径，
+    // 也可能直接以参数开头，统一补上解析出的路径）
+    if (tokens[0].find("ffmpeg") == std::string::npos) {
+        tokens.insert(tokens.begin(), getFFmpegPath());
+    }
+
+    slog("handleCustomCommand: %s", command.c_str());
+    runFFmpegProcess(req["id"], tokens, cancel_flag, output_path);
 }
 
 } // namespace ffmpegpp

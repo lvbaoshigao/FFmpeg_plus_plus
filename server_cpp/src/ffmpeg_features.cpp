@@ -3,6 +3,7 @@
 #include "installer.h"
 #include <sstream>
 #include <algorithm>
+#include <mutex>
 
 namespace ffmpegpp {
 
@@ -154,6 +155,16 @@ std::vector<std::string> parseHwAccels(const std::string& output) {
 } // namespace
 
 json queryFFmpegFeatures() {
+    // 结果缓存：6 个子进程查询开销大，且同一 ffmpeg 版本下结果不变。
+    // setFFmpegPaths 更换了二进制后，调用方重启进程即可（或后续按版本号失效）。
+    static std::mutex cacheMutex;
+    static json cached;
+    static bool cachedReady = false;
+    {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        if (cachedReady) return cached;
+    }
+
     json result;
 
     // 使用 -encoders / -decoders（比 -codecs 更清晰）
@@ -193,6 +204,11 @@ json queryFFmpegFeatures() {
         result["hwaccels"] = parseHwAccels(hw_pr.stdout_output);
     }
 
+    {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        cached = result;
+        cachedReady = true;
+    }
     return result;
 }
 

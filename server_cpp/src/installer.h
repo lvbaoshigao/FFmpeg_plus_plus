@@ -35,4 +35,9 @@ const std::string& getFFprobePath();
 // 从前端配置覆盖 ffmpeg/ffprobe 路径
 void setFFmpegPaths(const std::string& ffmpeg, const std::string& ffprobe);
 
+// 临时目录：桌面端取系统临时目录；Android 无 /tmp，由前端注入
+// 应用缓存目录（getTempDir 兜底 TMPDIR）。
+void setTempDir(const std::string& dir);
+std::string getTempDir();
+
 } // namespace ffmpegpp

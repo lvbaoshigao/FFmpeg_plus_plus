@@ -154,6 +154,14 @@ class GraphExecutor {
           final names = step.nodes.map((n) => n.label).join(', ');
           errors.add('同层级节点冲突: $names (合并节点不能与独立节点在同一层级)');
         }
+        // 同层多个可合并节点（avProcess/subtitle/speed）会被 merged 步骤坍缩，
+        // 执行时只取第一个、其余分支静默丢弃——并行分支当前执行模型不支持，明确报错
+        for (final t in [PipelineStepType.avProcess, PipelineStepType.subtitle, PipelineStepType.speed]) {
+          final sameType = step.nodes.where((n) => n.type == t).toList();
+          if (sameType.length > 1) {
+            errors.add('同层级存在 ${sameType.length} 个${t.name}节点，并行分支暂不支持，请串行连接');
+          }
+        }
         if (types.contains(PipelineStepType.clip) && types.length > 1) {
           errors.add('片段截取 不能与其他操作并行');
         }
@@ -895,11 +903,15 @@ class GraphExecutor {
 
         case 'concat':
           final node = step.nodes.first;
+          final concatMode = node.params['mode'] as String? ?? 'copy';
           calls.add(BackendCall(
             action: 'concat',
             params: {
               'input': currentInput, 'output': currentOutput,
-              'mode': node.params['mode'] as String? ?? 'copy',
+              'mode': concatMode,
+              // reencode 模式不带 options 时后端会静默退回 -c copy，这里补默认编码参数
+              if (concatMode != 'copy')
+                'options': {'video_codec': 'h264', 'audio_codec': 'aac', 'overwrite': true},
             },
           ));
           break;
@@ -915,7 +927,11 @@ class GraphExecutor {
             params: {
               'input': currentInput, 'output': outPath,
               'framerate': (node.params['framerate'] as num?)?.toDouble() ?? 30.0,
-              'video_codec': node.params['video_codec'] as String? ?? 'h264',
+              // 后端从 params.options 读取编码参数（video_codec 放顶层会被忽略）
+              'options': {
+                'video_codec': node.params['video_codec'] as String? ?? 'h264',
+                'gpu': 'CPU',
+              },
             },
           ));
           break;
@@ -977,9 +993,10 @@ class GraphExecutor {
     }
 
     final base = video.filename.replaceAll(RegExp(r'\.[^.]+$'), '');
+    // custom 命名为空时回退到原文件名，避免生成 ".mp4" 这类隐藏文件
     final fn = namingMode == 'keep' ? '$base.$ext'
         : namingMode == 'suffix' ? '$base$namingValue.$ext'
-        : '$namingValue.$ext';
+        : (namingValue.trim().isEmpty ? '$base.$ext' : '$namingValue.$ext');
 
     var dir = (outputDir != null && outputDir.isNotEmpty) ? outputDir
         : config.defaultOutputDir.isNotEmpty ? config.defaultOutputDir
@@ -1226,8 +1243,19 @@ class GraphExecutor {
   static String _tempPath(String inputPath, int step, [String ext = 'mp4']) {
     final dir = Directory.systemTemp.path;
     final base = inputPath.split('\\').last.split('/').last.replaceAll(RegExp(r'\.[^.]+$'), '');
-    final pathHash = inputPath.hashCode.toRadixString(16).padLeft(8, '0').substring(0, 8);
+    // String.hashCode 跨运行不稳定且可碰撞；改用稳定的 FNV-1a 摘要
+    final pathHash = _stableHash(inputPath);
     return '$dir${Platform.pathSeparator}ffmpegpp_${pathHash}_${base}_step$step.$ext';
+  }
+
+  /// FNV-1a 32 位哈希（稳定：同一路径每次运行结果一致）。
+  static String _stableHash(String s) {
+    var h = 0x811c9dc5;
+    for (final c in s.codeUnits) {
+      h ^= c;
+      h = (h * 0x01000193) & 0xFFFFFFFF;
+    }
+    return h.toRadixString(16).padLeft(8, '0');
   }
 
   static double? _parseTimeStr(String s) {

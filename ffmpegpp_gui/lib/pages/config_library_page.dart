@@ -361,11 +361,23 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
             tooltip: zh ? '导入 .fppx' : 'Import .fppx',
             onPressed: _importFppx,
           ),
-          const SizedBox(width: 4),
-          FilledButton.icon(
-            icon: const Icon(Icons.add, size: 18),
-            label: Text(zh ? '新建' : 'New'),
-            onPressed: _newConfig,
+          const SizedBox(width: 6),
+          // 圆形加号按钮：液态玻璃质感，与项目页"+"一致
+          Tooltip(
+            message: zh ? '新建配置' : 'New Config',
+            child: InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: _newConfig,
+              child: Container(
+                width: 40, height: 40,
+                decoration: BoxDecoration(
+                  color: scheme.primary,
+                  shape: BoxShape.circle,
+                  boxShadow: [BoxShadow(color: scheme.primary.withAlpha(90), blurRadius: 8, offset: const Offset(0, 2))],
+                ),
+                child: const Icon(Icons.add, size: 22, color: Colors.white),
+              ),
+            ),
           ),
         ],
       ),

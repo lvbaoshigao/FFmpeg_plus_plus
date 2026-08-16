@@ -75,7 +75,7 @@ class _AudioQualityStepEditorState extends State<AudioQualityStepEditor> {
             decoration: InputDecoration(labelText: zh ? '自定义码率 (kbps)' : 'Custom Bitrate (kbps)'),
             keyboardType: TextInputType.number,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-            onChanged: (v) { final bv = int.tryParse(v); if (bv != null && bv > 0) _update('audio_bitrate', bv); },
+            onChanged: (v) { final bv = int.tryParse(v); if (v.isEmpty) { _update('audio_bitrate', null); } else if (bv != null && bv > 0) { _update('audio_bitrate', bv); } },
           ),
         ],
         const SizedBox(height: 12),

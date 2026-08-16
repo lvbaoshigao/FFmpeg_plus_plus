@@ -31,6 +31,7 @@ class _AudioMetadataStepEditorState extends State<AudioMetadataStepEditor> {
       allowedExtensions: ['jpg', 'jpeg', 'png', 'bmp', 'webp'],
     );
     if (result != null && result.files.single.path != null) {
+      if (!mounted) return;
       _update('cover_path', result.files.single.path!);
       _update('remove_cover', false);
     }
@@ -42,6 +43,7 @@ class _AudioMetadataStepEditorState extends State<AudioMetadataStepEditor> {
       allowedExtensions: ['lrc', 'txt', 'srt'],
     );
     if (result != null && result.files.single.path != null) {
+      if (!mounted) return;
       _update('lyrics_path', result.files.single.path!);
       _update('remove_lyrics', false);
     }

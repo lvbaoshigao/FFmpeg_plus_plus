@@ -57,7 +57,8 @@ void JsonWriter::start() {
             if (hOut != INVALID_HANDLE_VALUE && hOut != nullptr) {
                 DWORD written;
                 WriteFile(hOut, line.c_str(), (DWORD)line.size(), &written, nullptr);
-                FlushFileBuffers(hOut);
+                // 注意：不要 FlushFileBuffers —— 对管道/控制台是无操作（或拖慢性能），
+                // 数据量小时系统自会刷出，FlushFileBuffers 只对磁盘文件有意义。
             }
         }
     });
@@ -83,7 +84,7 @@ void JsonWriter::start() {
                 p += written;
                 remaining -= written;
             }
-            fsync(STDOUT_FILENO);
+            // 注意：不要 fsync —— 对管道返回 EINVAL 且无意义，纯属浪费系统调用。
         }
     });
 #endif
@@ -129,37 +130,35 @@ void JsonWriter::audit(const std::string& task_id, const std::vector<std::string
 #ifndef FFMPEGPP_DLL_MODE
 
 // EXE 模式才需要 stdin 读取
+// 块缓冲读取：避免逐字节 read 系统调用；readLine 仅由单线程主循环调用
 bool JsonReader::readLine(json& out) {
-    static std::string buffer;
-    char ch;
+    static std::string buffer;          // 当前行累积
+    static std::string readBuf(8192, '\0');
+    static size_t readPos = 0, readLen = 0;
 #ifdef _WIN32
-    HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
+    static HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
     if (hIn == INVALID_HANDLE_VALUE || hIn == nullptr) return false;
+#endif
 
     while (true) {
-        DWORD read;
-        if (!ReadFile(hIn, &ch, 1, &read, nullptr) || read == 0) {
-            return false;
-        }
-        if (ch == '\n') {
-            std::string line = buffer;
-            buffer.clear();
-            if (line.empty()) continue;
-            if (!line.empty() && line.back() == '\r') line.pop_back();
-            try {
-                out = json::parse(line);
-                return true;
-            } catch (...) {
-                continue;
+        // 缓冲耗尽时再读一块
+        if (readPos >= readLen) {
+#ifdef _WIN32
+            DWORD n;
+            if (!ReadFile(hIn, &readBuf[0], (DWORD)readBuf.size(), &n, nullptr) || n == 0) {
+                return false;
             }
-        }
-        buffer += ch;
-    }
+            readLen = n; readPos = 0;
 #else
-    while (true) {
-        ssize_t n = read(STDIN_FILENO, &ch, 1);
-        if (n <= 0) return false;
-        if (ch == '\n') {
+            ssize_t n = read(STDIN_FILENO, &readBuf[0], readBuf.size());
+            if (n <= 0) return false;
+            readLen = (size_t)n; readPos = 0;
+#endif
+        }
+        size_t nl = readBuf.find('\n', readPos);
+        if (nl != std::string::npos && nl < readLen) {
+            buffer.append(readBuf, readPos, nl - readPos);
+            readPos = nl + 1;
             std::string line = buffer;
             buffer.clear();
             if (line.empty()) continue;
@@ -170,10 +169,11 @@ bool JsonReader::readLine(json& out) {
             } catch (...) {
                 continue;
             }
+        } else {
+            buffer.append(readBuf, readPos, readLen - readPos);
+            readPos = readLen;
         }
-        buffer += ch;
     }
-#endif
 }
 
 #endif // !FFMPEGPP_DLL_MODE

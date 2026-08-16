@@ -26,6 +26,8 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
   late TextEditingController _xCtrl, _yCtrl, _wCtrl, _hCtrl;
 
   Size? _imageSize;
+  // 图片是否存在（_loadImageSize 异步探测，避免 build 中同步 File.existsSync）
+  bool _imageExists = false;
 
   Offset? _dragStart;
   Rect? _cropRect;
@@ -54,16 +56,31 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
     super.dispose();
   }
 
+  @override
+  void didUpdateWidget(covariant ImageCropStepEditor oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 上游换图后旧尺寸/预览会与新图错位，需重新加载
+    if (oldWidget.sourceImagePath != widget.sourceImagePath) {
+      _imageSize = null;
+      _imageExists = false;
+      _loadImageSize();
+    }
+  }
+
   Future<void> _loadImageSize() async {
     final path = widget.sourceImagePath;
     if (path == null || path.isEmpty) return;
     final file = File(path);
-    if (!await file.exists()) return;
+    if (!await file.exists()) {
+      if (mounted) setState(() => _imageExists = false);
+      return;
+    }
     try {
       final bytes = await file.readAsBytes();
       final decoded = await decodeImageFromList(bytes);
       if (mounted) {
         setState(() {
+          _imageExists = true;
           _imageSize = Size(decoded.width.toDouble(), decoded.height.toDouble());
           if ((p['crop_w'] as num?)?.toInt() == 0 && _imageSize != null) {
             p['crop_w'] = _imageSize!.width.toInt();
@@ -117,7 +134,7 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             onChanged: (v) {
               final val = int.tryParse(v) ?? 0;
-              _updateParam('crop_x', val);
+              _updateParam('crop_x', _imageSize == null ? val : val.clamp(0, math.max(0, _imageSize!.width.toInt() - 1)));
             },
           )),
           const SizedBox(width: 8),
@@ -128,7 +145,7 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             onChanged: (v) {
               final val = int.tryParse(v) ?? 0;
-              _updateParam('crop_y', val);
+              _updateParam('crop_y', _imageSize == null ? val : val.clamp(0, math.max(0, _imageSize!.height.toInt() - 1)));
             },
           )),
         ]),
@@ -141,7 +158,7 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             onChanged: (v) {
               final val = int.tryParse(v) ?? 0;
-              _updateParam('crop_w', val);
+              _updateParam('crop_w', _imageSize == null ? val : val.clamp(0, _imageSize!.width.toInt()));
             },
           )),
           const SizedBox(width: 8),
@@ -152,7 +169,7 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             onChanged: (v) {
               final val = int.tryParse(v) ?? 0;
-              _updateParam('crop_h', val);
+              _updateParam('crop_h', _imageSize == null ? val : val.clamp(0, _imageSize!.height.toInt()));
             },
           )),
         ]),
@@ -188,7 +205,8 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
 
   Widget _buildPreviewArea(ColorScheme cs, bool zh) {
     final path = widget.sourceImagePath;
-    final hasImage = path != null && path.isNotEmpty && File(path).existsSync();
+    // 用异步探测的 _imageExists 代替 build 中同步 File.existsSync
+    final hasImage = path != null && path.isNotEmpty && _imageExists;
 
     if (!hasImage) {
       return Container(
@@ -291,8 +309,9 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
             final dy = d.delta.dy;
             var newX = cropX + dx / effectiveScale;
             var newY = cropY + dy / effectiveScale;
-            newX = newX.clamp(0, imgW - cropW);
-            newY = newY.clamp(0, imgH - cropH);
+            // 裁剪框大于图片时 imgW-cropW 为负，clamp 下界>上界会抛 ArgumentError
+            newX = newX.clamp(0, math.max(0.0, imgW - cropW));
+            newY = newY.clamp(0, math.max(0.0, imgH - cropH));
             p['crop_x'] = newX.round();
             p['crop_y'] = newY.round();
             _syncControllers();
@@ -342,10 +361,11 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
     var w = (_cropRect!.width / scale).round();
     var h = (_cropRect!.height / scale).round();
 
-    x = x.clamp(0, imgW.toInt());
-    y = y.clamp(0, imgH.toInt());
-    w = w.clamp(1, (imgW - x).toInt());
-    h = h.clamp(1, (imgH - y).toInt());
+    // x/y 至多到 imgW-1/imgH-1，保证 w/h 的 clamp 上界 >= 1 不抛 ArgumentError
+    x = x.clamp(0, math.max(0, imgW.toInt() - 1));
+    y = y.clamp(0, math.max(0, imgH.toInt() - 1));
+    w = w.clamp(1, math.max(1, imgW.toInt() - x));
+    h = h.clamp(1, math.max(1, imgH.toInt() - y));
 
     p['crop_x'] = x;
     p['crop_y'] = y;
