@@ -1,13 +1,18 @@
 name: Build & Release
 
+# 构建流程拆分为「编译」与「打包」两个阶段（job 级别拆分）：
+#   compile-*  只做编译，把原始产物打包成 tar.gz 上传为 artifact
+#   package-*  只做打包（Inno Setup / deb / DMG），失败时可用
+#              GitHub Actions 的 "Re-run failed jobs" 只重跑该打包 job，
+#              编译产物直接从 artifact 复用，无需重新编译。
 on:
   workflow_dispatch:
 
 jobs:
   # ══════════════════════════════════════════
-  # Windows x86_64
+  # 编译阶段 — Windows x86_64
   # ══════════════════════════════════════════
-  build-windows:
+  compile-windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,32 +45,21 @@ jobs:
           copy server_cpp\build_win\ffmpegpp.dll ffmpegpp_gui\build\windows\x64\runner\Release\ffmpegpp.dll
         shell: cmd
 
-      - name: Build Inno Setup installer
+      - name: Pack bundle
         run: |
-          choco install innosetup -y
-          $env:PATH += ";C:\Program Files (x86)\Inno Setup 6"
-          # Copy Chinese language files from repo
-          $langDir = "C:\Program Files (x86)\Inno Setup 6\Languages"
-          Copy-Item "make\ChineseSimplified.isl" "$langDir\ChineseSimplified.isl" -Force
-          Copy-Item "make\ChineseTraditional.isl" "$langDir\ChineseTraditional.isl" -Force
-          # Copy release bundle to build/ for ISS
-          New-Item -ItemType Directory -Force -Path build
-          Copy-Item -Recurse ffmpegpp_gui\build\windows\x64\runner\Release\* build\
-          Copy-Item server_cpp\build_win\ffmpegpp.dll build\
-          # Run Inno Setup
-          iscc make\setup.iss
+          tar -czf "$env:GITHUB_WORKSPACE/windows-bundle.tar.gz" -C "ffmpegpp_gui/build/windows/x64/runner/Release" .
         shell: pwsh
 
-      - name: Upload Windows installer
+      - name: Upload Windows bundle
         uses: actions/upload-artifact@v4
         with:
-          name: windows-installer
-          path: dist/FFmpeg++_v*_setup.exe
+          name: windows-bundle
+          path: windows-bundle.tar.gz
 
   # ══════════════════════════════════════════
-  # Linux x86_64
+  # 编译阶段 — Linux x86_64
   # ══════════════════════════════════════════
-  build-linux-x64:
+  compile-linux-x64:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -100,6 +94,159 @@ jobs:
           mkdir -p output
           cp -r ffmpegpp_gui/build/linux/x64/release/bundle/* output/
           cp server_cpp/build_linux/libffmpegpp.so output/lib/
+
+      - name: Pack bundle
+        run: tar -czf linux-x64-bundle.tar.gz -C output .
+
+      - name: Upload Linux x64 bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64-bundle
+          path: linux-x64-bundle.tar.gz
+
+  # ══════════════════════════════════════════
+  # 编译阶段 — Linux ARM64
+  # ══════════════════════════════════════════
+  compile-linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ libgtk-3-dev pkg-config ninja-build clang curl git unzip xz-utils \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-good
+
+      - name: Setup Flutter (manual for ARM64)
+        run: |
+          git clone https://github.com/flutter/flutter.git -b stable --depth 1 "$HOME/flutter"
+          echo "$HOME/flutter/bin" >> $GITHUB_PATH
+          export PATH="$HOME/flutter/bin:$PATH"
+          flutter precache --linux
+          flutter doctor -v
+
+      - name: Build C++ backend (libffmpegpp.so)
+        run: |
+          cd server_cpp
+          mkdir -p build_linux
+          cd build_linux
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          make -j$(nproc)
+
+      - name: Build Flutter GUI
+        run: |
+          cd ffmpegpp_gui
+          flutter pub get
+          flutter build linux --release
+
+      - name: Assemble bundle
+        run: |
+          mkdir -p output
+          cp -r ffmpegpp_gui/build/linux/arm64/release/bundle/* output/
+          cp server_cpp/build_linux/libffmpegpp.so output/lib/
+
+      - name: Pack bundle
+        run: tar -czf linux-arm64-bundle.tar.gz -C output .
+
+      - name: Upload Linux ARM64 bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-arm64-bundle
+          path: linux-arm64-bundle.tar.gz
+
+  # ══════════════════════════════════════════
+  # 编译阶段 — macOS (Universal: x64 + ARM64)
+  # ══════════════════════════════════════════
+  compile-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Build C++ backend (libffmpegpp.dylib)
+        run: |
+          cd server_cpp
+          mkdir -p build_macos
+          cd build_macos
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"
+          make -j$(sysctl -n hw.ncpu)
+
+      - name: Build Flutter GUI
+        run: |
+          cd ffmpegpp_gui
+          flutter pub get
+          flutter build macos --release
+
+      - name: Assemble .app bundle
+        run: |
+          APP="ffmpegpp_gui/build/macos/Build/Products/Release/ffmpegpp_gui.app"
+          # 复制到 Contents/MacOS（app 启动时在可执行文件目录查找 libffmpegpp.dylib）
+          cp server_cpp/build_macos/libffmpegpp.dylib "$APP/Contents/MacOS/libffmpegpp.dylib"
+
+      - name: Pack bundle
+        run: tar -czf macos-app.tar.gz -C ffmpegpp_gui/build/macos/Build/Products/Release .
+
+      - name: Upload macOS app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-app
+          path: macos-app.tar.gz
+
+  # ══════════════════════════════════════════
+  # 打包阶段 — Windows 安装包（Inno Setup）
+  # ══════════════════════════════════════════
+  package-windows:
+    needs: compile-windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Windows bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-bundle
+          path: bundle
+
+      - name: Build Inno Setup installer
+        run: |
+          choco install innosetup -y
+          $env:PATH += ";C:\Program Files (x86)\Inno Setup 6"
+          # Copy Chinese language files from repo
+          $langDir = "C:\Program Files (x86)\Inno Setup 6\Languages"
+          Copy-Item "make\ChineseSimplified.isl" "$langDir\ChineseSimplified.isl" -Force
+          Copy-Item "make\ChineseTraditional.isl" "$langDir\ChineseTraditional.isl" -Force
+          # 解压编译产物到 build/ 供 setup.iss 使用
+          New-Item -ItemType Directory -Force -Path build
+          tar -xzf bundle/windows-bundle.tar.gz -C build
+          # Run Inno Setup
+          iscc make\setup.iss
+        shell: pwsh
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: dist/FFmpeg++_v*_setup.exe
+
+  # ══════════════════════════════════════════
+  # 打包阶段 — Linux x86_64 (.deb)
+  # ══════════════════════════════════════════
+  package-linux-x64:
+    needs: compile-linux-x64
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Linux x64 bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-x64-bundle
+          path: bundle
 
       - name: Build .deb package
         run: |
@@ -141,8 +288,8 @@ jobs:
           echo 'exec /opt/ffmpegpp/ffmpegpp_gui "$@"' >> deb/usr/bin/ffmpegpp
           chmod 755 deb/usr/bin/ffmpegpp
 
-          # Copy files
-          cp -r output/* deb/opt/ffmpegpp/
+          # 解压编译产物
+          tar -xzf bundle/linux-x64-bundle.tar.gz -C deb/opt/ffmpegpp
           cp "make/FFmpeg++.png" deb/usr/share/icons/hicolor/256x256/apps/ffmpegpp.png
           chmod -R 755 deb/opt/ffmpegpp/
 
@@ -156,46 +303,19 @@ jobs:
           path: ffmpegpp_5.0.0-beta1_amd64.deb
 
   # ══════════════════════════════════════════
-  # Linux ARM64
+  # 打包阶段 — Linux ARM64 (.deb)
   # ══════════════════════════════════════════
-  build-linux-arm64:
+  package-linux-arm64:
+    needs: compile-linux-arm64
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake g++ libgtk-3-dev pkg-config ninja-build clang curl git unzip xz-utils \
-            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-good
-
-      - name: Setup Flutter (manual for ARM64)
-        run: |
-          git clone https://github.com/flutter/flutter.git -b stable --depth 1 "$HOME/flutter"
-          echo "$HOME/flutter/bin" >> $GITHUB_PATH
-          export PATH="$HOME/flutter/bin:$PATH"
-          flutter precache --linux
-          flutter doctor -v
-
-      - name: Build C++ backend (libffmpegpp.so)
-        run: |
-          cd server_cpp
-          mkdir -p build_linux
-          cd build_linux
-          cmake .. -DCMAKE_BUILD_TYPE=Release
-          make -j$(nproc)
-
-      - name: Build Flutter GUI
-        run: |
-          cd ffmpegpp_gui
-          flutter pub get
-          flutter build linux --release
-
-      - name: Assemble bundle
-        run: |
-          mkdir -p output
-          cp -r ffmpegpp_gui/build/linux/arm64/release/bundle/* output/
-          cp server_cpp/build_linux/libffmpegpp.so output/lib/
+      - name: Download Linux ARM64 bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-arm64-bundle
+          path: bundle
 
       - name: Build .deb package
         run: |
@@ -234,7 +354,7 @@ jobs:
           echo 'exec /opt/ffmpegpp/ffmpegpp_gui "$@"' >> deb/usr/bin/ffmpegpp
           chmod 755 deb/usr/bin/ffmpegpp
 
-          cp -r output/* deb/opt/ffmpegpp/
+          tar -xzf bundle/linux-arm64-bundle.tar.gz -C deb/opt/ffmpegpp
           cp "make/FFmpeg++.png" deb/usr/share/icons/hicolor/256x256/apps/ffmpegpp.png
           chmod -R 755 deb/opt/ffmpegpp/
 
@@ -247,42 +367,24 @@ jobs:
           path: ffmpegpp_5.0.0-beta1_arm64.deb
 
   # ══════════════════════════════════════════
-  # macOS (Universal: x64 + ARM64)
+  # 打包阶段 — macOS (.dmg)
   # ══════════════════════════════════════════
-  build-macos:
+  package-macos:
+    needs: compile-macos
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+      - name: Download macOS app bundle
+        uses: actions/download-artifact@v4
         with:
-          channel: stable
-
-      - name: Build C++ backend (libffmpegpp.dylib)
-        run: |
-          cd server_cpp
-          mkdir -p build_macos
-          cd build_macos
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"
-          make -j$(sysctl -n hw.ncpu)
-
-      - name: Build Flutter GUI
-        run: |
-          cd ffmpegpp_gui
-          flutter pub get
-          flutter build macos --release
-
-      - name: Assemble .app bundle
-        run: |
-          APP="ffmpegpp_gui/build/macos/Build/Products/Release/ffmpegpp_gui.app"
-          # 复制到 Contents/MacOS（app 启动时在可执行文件目录查找 libffmpegpp.dylib）
-          cp server_cpp/build_macos/libffmpegpp.dylib "$APP/Contents/MacOS/libffmpegpp.dylib"
+          name: macos-app
+          path: bundle
 
       - name: Create DMG
         run: |
           mkdir -p dmg_staging
-          cp -R "ffmpegpp_gui/build/macos/Build/Products/Release/ffmpegpp_gui.app" dmg_staging/
+          tar -xzf bundle/macos-app.tar.gz -C dmg_staging
           ln -s /Applications dmg_staging/Applications
           hdiutil create -volname "FFmpeg++" -srcfolder dmg_staging -ov -format UDZO "FFmpeg++_v5.0.0-beta1_macOS.dmg"
 
@@ -293,18 +395,19 @@ jobs:
           path: FFmpeg++_v5.0.0-beta1_macOS.dmg
 
   # ══════════════════════════════════════════
-  # Create Release (v5.0.0-beta1)
+  # 发布阶段 — 创建 Release (v5.0.0-beta1)
   # ══════════════════════════════════════════
   release:
-    needs: [build-windows, build-linux-x64, build-linux-arm64, build-macos]
+    needs: [package-windows, package-linux-x64, package-linux-arm64, package-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Download all artifacts
+      - name: Download installer artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts/
+          pattern: "{windows-installer,linux-*-deb,macos-dmg}"
 
       - name: List artifacts
         run: find artifacts/ -type f
