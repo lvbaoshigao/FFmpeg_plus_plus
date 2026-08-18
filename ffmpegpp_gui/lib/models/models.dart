@@ -129,19 +129,75 @@ class PipelineStep {
   }
 }
 
+// ═══════════════════════════════════════════
+// 逻辑门（控制流）节点类型
+// 数据流与控制流分离：逻辑门只产生/消费控制信号(0/1)，
+// 通过"使能端/状态端"控制处理节点的执行，不参与媒体数据流。
+// ═══════════════════════════════════════════
+
+enum LogicGateType {
+  and,    // 与门：所有输入为 1 时输出 1
+  or,     // 或门：任一输入为 1 时输出 1
+  not,    // 非门：单输入取反
+  nand,   // 与非门：与门的非
+  nor,    // 或非门：或门的非
+  const1, // 恒 1：恒定输出 1（无输入）
+  const0; // 恒 0：恒定输出 0（无输入）
+
+  /// 该逻辑门的常规输入数（恒1/恒0 为 0，非门为 1，其余为 2）
+  int get inputCount => switch (this) {
+    LogicGateType.not => 1,
+    LogicGateType.const1 || LogicGateType.const0 => 0,
+    _ => 2,
+  };
+
+  bool get isConstant => this == LogicGateType.const1 || this == LogicGateType.const0;
+
+  /// ANSI/IEEE 标准符号文本（无输入端的恒1/恒0 直接用数字）
+  String symbol(bool isZh) => switch (this) {
+    LogicGateType.and => isZh ? '与' : 'AND',
+    LogicGateType.or => isZh ? '或' : 'OR',
+    LogicGateType.not => isZh ? '非' : 'NOT',
+    LogicGateType.nand => isZh ? '与非' : 'NAND',
+    LogicGateType.nor => isZh ? '或非' : 'NOR',
+    LogicGateType.const1 => '1',
+    LogicGateType.const0 => '0',
+  };
+}
+
 class PipelineNode {
   final String id;
   PipelineStepType type;
   Map<String, dynamic> params;
   double x, y;
+  /// 逻辑门类型名（null 表示普通媒体处理节点）。逻辑门是控制流节点，
+  /// 只通过控制连线连接"使能端/状态端"，不参与媒体数据流。
+  String? gateType;
 
-  PipelineNode({required this.id, required this.type, Map<String, dynamic>? params, this.x = 0, this.y = 0})
-      : params = params ?? {};
+  PipelineNode({
+    required this.id, required this.type, Map<String, dynamic>? params,
+    this.x = 0, this.y = 0, this.gateType,
+  }) : params = params ?? {};
 
-  PipelineNode copy() => PipelineNode(id: _uuid.v4(), type: type, params: Map.of(params), x: x, y: y);
+  PipelineNode copy() => PipelineNode(
+    id: _uuid.v4(), type: type, params: Map.of(params),
+    x: x, y: y, gateType: gateType,
+  );
+
+  /// 是否为逻辑门节点（控制流节点）
+  bool get isGate => gateType != null;
+
+  LogicGateType? get gate =>
+      gateType == null ? null : LogicGateType.values.asNameMap()[gateType];
+
+  /// 逻辑门是否可输入（恒1/恒0 无输入）
+  bool get hasGateInput => isGate && !gate!.isConstant;
+  /// 逻辑门是否可输出（所有逻辑门都有输出）
+  bool get hasGateOutput => isGate;
 
   Map<String, dynamic> toJson() => {
     'id': id, 'type': type.name, 'params': params, 'x': x, 'y': y,
+    if (gateType != null) 'gate': gateType,
   };
 
   factory PipelineNode.fromJson(Map<String, dynamic> json) => PipelineNode(
@@ -150,6 +206,7 @@ class PipelineNode {
     params: (json['params'] as Map<String, dynamic>?) ?? {},
     x: (json['x'] as num?)?.toDouble() ?? 0,
     y: (json['y'] as num?)?.toDouble() ?? 0,
+    gateType: (json['gate'] as String?) ?? (json['gateType'] as String?),
   );
 
   String get label {
@@ -293,17 +350,20 @@ class PipelineConnection {
   final String id;
   final String fromNodeId;
   final String toNodeId;
+  /// 连线类型：'data' 数据流（媒体载荷） / 'control' 控制流（使能/状态/逻辑信号）
+  String kind;
 
-  PipelineConnection({required this.id, required this.fromNodeId, required this.toNodeId});
+  PipelineConnection({required this.id, required this.fromNodeId, required this.toNodeId, this.kind = 'data'});
 
-  PipelineConnection copy() => PipelineConnection(id: _uuid.v4(), fromNodeId: fromNodeId, toNodeId: toNodeId);
+  PipelineConnection copy() => PipelineConnection(id: _uuid.v4(), fromNodeId: fromNodeId, toNodeId: toNodeId, kind: kind);
 
-  Map<String, dynamic> toJson() => {'id': id, 'from': fromNodeId, 'to': toNodeId};
+  Map<String, dynamic> toJson() => {'id': id, 'from': fromNodeId, 'to': toNodeId, if (kind != 'data') 'kind': kind};
 
   factory PipelineConnection.fromJson(Map<String, dynamic> json) => PipelineConnection(
     id: json['id'] as String? ?? _uuid.v4(),
     fromNodeId: json['from'] as String,
     toNodeId: json['to'] as String,
+    kind: (json['kind'] as String?) ?? 'data',
   );
 }
 
@@ -380,12 +440,13 @@ class PipelineGraph {
     final newNodes = nodes.map((n) {
       final newId = _uuid.v4();
       idMap[n.id] = newId;
-      return PipelineNode(id: newId, type: n.type, params: Map.of(n.params), x: n.x, y: n.y);
+      return PipelineNode(id: newId, type: n.type, params: Map.of(n.params), x: n.x, y: n.y, gateType: n.gateType);
     }).toList();
     final newConns = connections.map((c) => PipelineConnection(
       id: _uuid.v4(),
       fromNodeId: idMap[c.fromNodeId] ?? c.fromNodeId,
       toNodeId: idMap[c.toNodeId] ?? c.toNodeId,
+      kind: c.kind,
     )).toList();
     final newBlocks = logicBlocks.map((b) {
       final nb = b.copy();
@@ -855,15 +916,22 @@ class AppConfig {
   String language, ffmpegPath, ffprobePath, defaultOutputDir, intermediateDir, fontFamily;
   bool darkMode;
   int themeColor;
+  /// 渐变主题终点色（ARGB int）。为空＝纯色主题；非空＝主题色在
+  /// themeColor → themeColor2 之间渐变（作用于跟随主题色的玻璃/卡片）。
+  int themeColor2;
   double fontSize;
   int fontWeightIndex;
   String backgroundImage;
   double backgroundOpacity;
   double cardOpacity;
+  // 画布背景：'global' 跟随全局玻璃效果 / 'gray' 灰色 / 'black' 黑色 / 'white' 白色
+  String canvasBg;
   // 玻璃效果：'liquid' 液态玻璃 / 'blur' 模糊 / 'none' 无效果
   String glassEffect;
   // 遵循主题色：true 时玻璃/卡片底色使用主题色而非 surface 灰
   bool glassFollowTheme;
+  /// 逻辑门符号标准：'ansi' ANSI/IEEE 标准 / 'iec' IEC 标准
+  String gateStd;
   bool debugMode;
   bool saveLogs;
   bool enableSystemNotification;
@@ -928,11 +996,13 @@ class AppConfig {
 
   AppConfig({
     this.language = 'zh', this.ffmpegPath = '', this.ffprobePath = '',
-    this.defaultOutputDir = '', this.intermediateDir = '', this.darkMode = true, this.themeColor = 0xFF5E6AD2,
+    this.defaultOutputDir = '', this.intermediateDir = '', this.darkMode = true, this.themeColor = 0xFF5E6AD2, this.themeColor2 = -1,
     String? fontFamily, this.fontSize = 17.0, this.fontWeightIndex = 1,
     this.backgroundImage = '', this.backgroundOpacity = 0.8, this.cardOpacity = 0.7,
+    this.canvasBg = 'global',
     this.glassEffect = 'liquid',
     this.glassFollowTheme = false,
+    this.gateStd = 'ansi',
     this.debugMode = false, this.saveLogs = false, this.enableSystemNotification = false, this.logSavePath = '',
     this.useNodeEditor = true,
     this.maxConcurrentTasks = 1,
@@ -1002,6 +1072,7 @@ class AppConfig {
         intermediateDir: json['intermediate_dir'] as String? ?? '',
         darkMode: json['dark_mode'] as bool? ?? true,
         themeColor: json['theme_color'] as int? ?? 0xFF5E6AD2,
+        themeColor2: (json['theme_color2'] as int?) ?? -1,
         fontFamily: json['font_family'] as String? ?? _defaultFontFamily,
         fontSize: (json['font_size'] as num?)?.toDouble() ?? 17.0,
         fontWeightIndex: json['font_weight'] as int? ?? 1,
@@ -1009,7 +1080,9 @@ class AppConfig {
         backgroundOpacity: (json['background_opacity'] as num?)?.toDouble() ?? 0.8,
         glassEffect: json['glass_effect'] as String? ?? 'liquid',
         glassFollowTheme: json['glass_follow_theme'] as bool? ?? false,
+        gateStd: json['gate_std'] as String? ?? 'ansi',
         cardOpacity: (json['card_opacity'] as num?)?.toDouble() ?? 0.7,
+        canvasBg: json['canvas_bg'] as String? ?? 'global',
         debugMode: json['debug_mode'] as bool? ?? false,
         saveLogs: json['save_logs'] as bool? ?? false,
         enableSystemNotification: json['enable_system_notification'] as bool? ?? false,
@@ -1052,12 +1125,13 @@ class AppConfig {
   Map<String, dynamic> toJson() => {
         'language': language, 'ffmpeg_path': ffmpegPath, 'ffprobe_path': ffprobePath,
         'default_output_dir': defaultOutputDir, 'intermediate_dir': intermediateDir, 'dark_mode': darkMode,
-        'theme_color': themeColor, 'font_family': fontFamily, 'font_size': fontSize,
+        'theme_color': themeColor, 'theme_color2': themeColor2, 'font_family': fontFamily, 'font_size': fontSize,
         'font_weight': fontWeightIndex,
         'background_image': backgroundImage, 'background_opacity': backgroundOpacity,
         'glass_effect': glassEffect,
-        'glass_follow_theme': glassFollowTheme,
+        'glass_follow_theme': glassFollowTheme, 'gate_std': gateStd,
         'card_opacity': cardOpacity,
+        'canvas_bg': canvasBg,
         'debug_mode': debugMode,
         'save_logs': saveLogs, 'enable_system_notification': enableSystemNotification, 'log_save_path': logSavePath,
         'use_node_editor': useNodeEditor,

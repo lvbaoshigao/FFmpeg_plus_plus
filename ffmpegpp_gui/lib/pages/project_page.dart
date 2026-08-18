@@ -460,35 +460,97 @@ class ProjectPageState extends State<ProjectPage> {
 
   void _showContainerMenu(BuildContext context, AppState state, AppStrings s) {
     final scheme = Theme.of(context).colorScheme;
+    final zh = s.isZh;
+    // 创建/重命名容器共用：弹出命名框
+    Future<void> promptCreate(String defaultName, {bool empty = false}) async {
+      final ctrl = TextEditingController(text: defaultName);
+      final name = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text(zh ? '容器名称' : 'Container Name', style: TextStyle(color: scheme.onSurface)),
+          content: TextField(
+            controller: ctrl,
+            autofocus: true,
+            decoration: const InputDecoration(hintText: ''),
+            onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: Text(s.cancel)),
+            FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text.trim()), child: Text(zh ? '创建' : 'Create')),
+          ],
+        ),
+      );
+      if (name == null || name.isEmpty) return;
+      if (empty) {
+        state.addEmptyContainer(name);
+      } else {
+        final r = await FilePicker.platform.pickFiles(allowMultiple: true, type: FileType.custom, allowedExtensions: _exts);
+        if (r != null && r.files.isNotEmpty) {
+          final paths = r.files.where((f) => f.path != null).map((f) => f.path!).toList();
+          if (paths.isNotEmpty) state.addContainer(name, paths);
+        }
+      }
+    }
+
+    // 液态玻璃菜单
     showModalBottomSheet(
       context: context,
-      builder: (ctx) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
-        ListTile(
-          leading: Icon(Icons.folder_open, color: scheme.primary),
-          title: Text(s.containerFromFolder),
-          subtitle: Text(s.isZh ? '选择一个文件夹，其中的媒体文件将作为容器内容' : 'Select a folder, media files inside become container items',
-              style: const TextStyle(fontSize: 12)),
-          onTap: () async {
-            Navigator.pop(ctx);
-            final dir = await FilePicker.platform.getDirectoryPath();
-            if (dir != null) state.addContainerFromFolder(dir);
-          },
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          child: GlassPanel(
+            radius: 22,
+            blur: 16,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const SizedBox(height: 8),
+            Container(width: 36, height: 4, decoration: BoxDecoration(color: scheme.outlineVariant, borderRadius: BorderRadius.circular(2))),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+              child: Row(children: [
+                Icon(Icons.create_new_folder_outlined, size: 18, color: scheme.primary),
+                const SizedBox(width: 8),
+                Text(zh ? '新建容器' : 'New Container',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+              ]),
+            ),
+            ListTile(
+              leading: Icon(Icons.create_new_folder_outlined, color: scheme.primary),
+              title: Text(zh ? '创建空容器' : 'Empty Container'),
+              subtitle: Text(zh ? '先创建容器，稍后再添加文件（存于程序临时目录）' : 'Create an empty container, add files later',
+                  style: const TextStyle(fontSize: 12)),
+              onTap: () {
+                Navigator.pop(ctx);
+                promptCreate(zh ? '新容器' : 'New Container', empty: true);
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.folder_open, color: scheme.primary),
+              title: Text(s.containerFromFolder),
+              subtitle: Text(zh ? '选择一个文件夹，其中的媒体文件将作为容器内容' : 'Select a folder, media files inside become container items',
+                  style: const TextStyle(fontSize: 12)),
+              onTap: () async {
+                Navigator.pop(ctx);
+                final dir = await FilePicker.platform.getDirectoryPath();
+                if (dir != null) state.addContainerFromFolder(dir);
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.file_copy_outlined, color: scheme.primary),
+              title: Text(s.containerFromFiles),
+              subtitle: Text(zh ? '手动选择多个文件放入新容器' : 'Manually select files for a new container',
+                  style: const TextStyle(fontSize: 12)),
+              onTap: () {
+                Navigator.pop(ctx);
+                promptCreate(zh ? '新容器' : 'New Container');
+              },
+            ),
+            const SizedBox(height: 6),
+          ]),
+          ),
         ),
-        ListTile(
-          leading: Icon(Icons.file_copy_outlined, color: scheme.primary),
-          title: Text(s.containerFromFiles),
-          subtitle: Text(s.isZh ? '手动选择多个文件放入新容器' : 'Manually select files for a new container',
-              style: const TextStyle(fontSize: 12)),
-          onTap: () async {
-            Navigator.pop(ctx);
-            final r = await FilePicker.platform.pickFiles(allowMultiple: true, type: FileType.custom, allowedExtensions: _exts);
-            if (r != null && r.files.isNotEmpty) {
-              final paths = r.files.where((f) => f.path != null).map((f) => f.path!).toList();
-              if (paths.isNotEmpty) state.addContainer(s.isZh ? '新容器' : 'New Container', paths);
-            }
-          },
-        ),
-      ])),
+      ),
     );
   }
 }

@@ -68,6 +68,7 @@ class AppStrings {
   String get bgNone => lang == 'zh' ? '无' : 'None';
   String get bgOpacity => lang == 'zh' ? '背景不透明度' : 'BG Opacity';
   String get cardOpacity => lang == 'zh' ? '卡片不透明度' : 'Card Opacity';
+  String get canvasBgLabel => lang == 'zh' ? '画布背景' : 'Canvas Background';
   String get glassEffectLabel => lang == 'zh' ? '效果' : 'Effect';
   String get glassFollowTheme => lang == 'zh' ? '遵循主题色' : 'Follow Theme Color';
   String get glassFollowThemeHint => lang == 'zh' ? '选中后玻璃、卡片等元素统一使用主题色' : 'Tint glass & cards with the theme color';
@@ -108,7 +109,7 @@ class AppStrings {
   String get swVersion => lang == 'zh' ? '版本' : 'Version';
   String get swBuild => lang == 'zh' ? '构建日期' : 'Build';
   String get swProtocol => lang == 'zh' ? '协议' : 'Protocol';
-  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v5.0.0-beta1  |  构建 2026-08-05  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v5.0.0-beta1  |  Build 2026-08-05  |  JSON v0.1.0';
+  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v5.0.0-beta2  |  构建 2026-08-05  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v5.0.0-beta2  |  Build 2026-08-05  |  JSON v0.1.0';
   String get languageInterface => lang == 'zh' ? '界面语言' : 'Interface Language';
   String get ffmpegFound => lang == 'zh' ? 'FFmpeg 已检测到' : 'FFmpeg detected';
   String get ffmpegNotFound => lang == 'zh' ? 'FFmpeg 未检测到' : 'FFmpeg not found';
@@ -299,4 +300,19 @@ class AppStrings {
   String get cardTasks => lang == 'zh' ? '任务' : 'Tasks';
   String get cardUpdate => lang == 'zh' ? '更新' : 'Update';
   String get cardCache => lang == 'zh' ? '缓存' : 'Cache';
+
+  // ── 节点编辑器 · 逻辑门 & 控制流 ──
+  String get logicGates => lang == 'zh' ? '逻辑门' : 'Logic Gates';
+  String get logicGateAnd => lang == 'zh' ? '与门' : 'AND Gate';
+  String get logicGateOr => lang == 'zh' ? '或门' : 'OR Gate';
+  String get logicGateNot => lang == 'zh' ? '非门' : 'NOT Gate';
+  String get logicGateNand => lang == 'zh' ? '与非门' : 'NAND Gate';
+  String get logicGateNor => lang == 'zh' ? '或非门' : 'NOR Gate';
+  String get logicConst1 => lang == 'zh' ? '恒1' : 'Const 1';
+  String get logicConst0 => lang == 'zh' ? '恒0' : 'Const 0';
+  String get controlFlow => lang == 'zh' ? '控制流' : 'Control Flow';
+  String get enablePort => lang == 'zh' ? '使能端' : 'Enable';
+  String get statusPort => lang == 'zh' ? '状态端' : 'Status';
+  String get importConfig => lang == 'zh' ? '加载配置' : 'Load Config';
+  String get importConfigDesc => lang == 'zh' ? '从 .fppx 文件加载节点配置' : 'Load node config from .fppx file';
 }

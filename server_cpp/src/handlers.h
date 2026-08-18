@@ -11,6 +11,7 @@ using json = nlohmann::json;
 // 文件日志
 void slog_init();
 void slog(const char* fmt, ...);
+void slog_cleanup();
 
 // 进度解析器
 class ProgressParser {

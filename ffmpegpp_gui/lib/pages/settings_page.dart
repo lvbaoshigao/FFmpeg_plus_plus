@@ -780,22 +780,7 @@ Widget _dot(ColorScheme sc, bool sel, Color c, String tip, VoidCallback onTap) =
   ),
 );
 
-/// 自定义取色按钮（彩虹渐变）
-Widget _rainbow(ColorScheme sc, VoidCallback onTap) => Tooltip(
-  message: 'Custom',
-  child: GestureDetector(
-    onTap: onTap,
-    child: Container(
-      width: 28, height: 28,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: const LinearGradient(colors: [Color(0xFFFF5F6D), Color(0xFFFFC371), Color(0xFF36D1DC), Color(0xFF5B86E5)]),
-        border: Border.all(color: sc.outlineVariant.withAlpha(80)),
-      ),
-      child: const Icon(Icons.add, size: 14, color: Colors.white),
-    ),
-  ),
-);
+/// 自定义取色入口按钮（内联于 _buildTheme，见其 Wrap 实现）
 
 
 class _SettingSlider extends StatefulWidget {
@@ -905,10 +890,40 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
     Text(s.accentColor, style: TextStyle(color: clr, fontSize: 12)),
     const SizedBox(height: 8),
     Wrap(spacing: 8, runSpacing: 8, children: [
-      ..._presets.map((p) => _dot(scheme, cfg.themeColor == p.$2, Color(p.$2), p.$1,
-          () => state.updateConfig((c) => c..themeColor = p.$2))),
-      _rainbow(scheme, () => _pickColor(ctx, state)),
+      ..._presets.map((p) => _dot(scheme, cfg.themeColor == p.$2 && cfg.themeColor2 < 0, Color(p.$2), p.$1,
+          () => state.updateConfig((c) => c..themeColor = p.$2..themeColor2 = -1))),
+      // 自定义取色：若已设渐变色则显示渐变圆点，点击进入渐变/纯色设置
+      GestureDetector(
+        onTap: () => _pickColor(ctx, state),
+        child: Tooltip(
+          message: cfg.themeColor2 >= 0 ? (state.config.language == 'zh' ? '当前渐变色' : 'Current gradient') : (state.config.language == 'zh' ? '自定义（支持渐变）' : 'Custom (gradient)'),
+          child: Container(
+            width: 28, height: 28,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: cfg.themeColor2 >= 0
+                  ? LinearGradient(colors: [Color(cfg.themeColor), Color(cfg.themeColor2)], begin: Alignment.topLeft, end: Alignment.bottomRight)
+                  : const LinearGradient(colors: [Color(0xFFFF5F6D), Color(0xFFFFC371), Color(0xFF36D1DC), Color(0xFF5B86E5)]),
+              border: Border.all(color: cfg.themeColor2 >= 0 ? scheme.primary : scheme.outlineVariant.withAlpha(80), width: cfg.themeColor2 >= 0 ? 2 : 1),
+            ),
+            child: const Icon(Icons.add, size: 14, color: Colors.white),
+          ),
+        ),
+      ),
     ]),
+    const SizedBox(height: 10),
+    // 逻辑门符号标准：ANSI/IEEE 或 IEC
+    Text(s.isZh ? '逻辑门符号标准' : 'Logic Gate Standard', style: TextStyle(fontSize: 12, color: clr)),
+    const SizedBox(height: 6),
+    SegmentedButton<String>(
+      segments: const [
+        ButtonSegment(value: 'ansi', label: Text('ANSI/IEEE', style: TextStyle(fontSize: 11))),
+        ButtonSegment(value: 'iec', label: Text('IEC', style: TextStyle(fontSize: 11))),
+      ],
+      selected: {cfg.gateStd},
+      onSelectionChanged: (v) => state.updateConfig((c) => c..gateStd = v.first),
+      style: const ButtonStyle(visualDensity: VisualDensity.compact),
+    ),
   ]);
 }
 
@@ -992,7 +1007,7 @@ Widget _buildBackground(BuildContext ctx, AppState state) {
         onCommit: (v) => state.updateConfig((c) => c..backgroundOpacity = v),
       ),
     _SettingSlider(
-      value: cfg.cardOpacity, min: 0.1, max: 1.0, divisions: 90,
+      value: cfg.cardOpacity, min: 0.0, max: 1.0, divisions: 100,
       label: (v) => '${s.cardOpacity}: ${(v * 100).round()}%',
       labelStyle: TextStyle(color: clr, fontSize: 11),
       onCommit: (v) => state.updateConfig((c) => c..cardOpacity = v),
@@ -1025,6 +1040,21 @@ Widget _buildBackground(BuildContext ctx, AppState state) {
         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
     ]),
+    const SizedBox(height: 10),
+    // 画布背景：跟随全局 / 灰色 / 黑色 / 白色
+    Text(s.canvasBgLabel, style: TextStyle(color: clr, fontSize: 12)),
+    const SizedBox(height: 6),
+    SegmentedButton<String>(
+      segments: [
+        ButtonSegment(value: 'global', label: Text(s.isZh ? '跟随全局' : 'Follow', style: const TextStyle(fontSize: 11))),
+        ButtonSegment(value: 'gray', icon: const Icon(Icons.grid_4x4, size: 12), label: Text(s.isZh ? '灰色' : 'Gray', style: const TextStyle(fontSize: 11))),
+        ButtonSegment(value: 'black', label: Text(s.isZh ? '黑色' : 'Black', style: const TextStyle(fontSize: 11))),
+        ButtonSegment(value: 'white', label: Text(s.isZh ? '白色' : 'White', style: const TextStyle(fontSize: 11))),
+      ],
+      selected: {cfg.canvasBg},
+      onSelectionChanged: (v) => state.updateConfig((c) => c..canvasBg = v.first),
+      style: const ButtonStyle(visualDensity: VisualDensity.compact),
+    ),
   ]);
 }
 
@@ -1698,7 +1728,7 @@ Widget _buildProfileDetail(
   return SingleChildScrollView(
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       // 供应商预设（新建/编辑都可一键填充）
-      if (showPreset || true) ...[
+      if (showPreset) ...[
         field(zh ? '供应商预设（一键填充）' : 'Provider Preset', DropdownButtonFormField<String>(
           initialValue: profile.provider == 'anthropic' ? 'anthropic'
               : profile.apiUrl.contains('deepseek') ? 'deepseek'
@@ -2175,8 +2205,19 @@ Future<void> _downloadAndInstall(BuildContext ctx, AppStrings s, String url) asy
 
 Future<void> _pickColor(BuildContext ctx, AppState state) async {
   final isZh = state.config.language == 'zh';
-  final picked = await showDialog<Color>(context: ctx, builder: (_) => _CP(initial: Color(state.config.themeColor), isZh: isZh));
-  if (picked != null) state.updateConfig((c) => c..themeColor = picked.toARGB32());
+  // 固定为小尺寸弹窗（不占满屏幕）
+  final res = await showDialog<_GradResult>(context: ctx, builder: (_) => Center(
+        child: SizedBox(
+          width: 320,
+          child: _CP(
+            initial: Color(state.config.themeColor),
+            initial2: state.config.themeColor2 >= 0 ? Color(state.config.themeColor2) : null,
+            isZh: isZh,
+          ),
+        ),
+      ));
+  if (res == null) return;
+  state.updateConfig((c) => c..themeColor = res.c1..themeColor2 = res.c2 ?? -1);
 }
 
 void _showSponsor(BuildContext ctx, ColorScheme scheme, AppStrings s) {
@@ -2462,73 +2503,210 @@ class _FfmpegCardState extends State<_FfmpegCard> {
 // 取色器
 // ═══════════════════════════════════════════
 
+/// 渐变主题色选择结果：c1=起色，c2 为 null 表示纯色主题
+class _GradResult {
+  final int c1;
+  final int? c2;
+  _GradResult(this.c1, this.c2);
+}
+
+/// 主题渐变色预设（起色, 止色, 名称）
+const _gradPresets = <(int, int, String)>[
+  (0xFF5E6AD2, 0xFF8B5CF6, '紫罗兰'),
+  (0xFF3B82F6, 0xFF06B6D4, '海洋'),
+  (0xFF10B981, 0xFF84CC16, '翡翠'),
+  (0xFFF59E0B, 0xFFEF4444, '熔岩'),
+  (0xFFEC4899, 0xFFF97316, '日落'),
+  (0xFF8B5CF6, 0xFFEC4899, '霓虹'),
+  (0xFF64748B, 0xFF0EA5E9, '钢蓝'),
+  (0xFF111827, 0xFF5E6AD2, '夜幕'),
+];
+
 class _CP extends StatefulWidget {
   final Color initial;
+  final Color? initial2;
   final bool isZh;
-  const _CP({required this.initial, required this.isZh});
+  const _CP({required this.initial, required this.isZh, this.initial2});
   @override
   State<_CP> createState() => _CPState();
 }
 
 class _CPState extends State<_CP> {
-  late double _h, _s, _v;
+  late double _h1, _s1, _v1;
+  late double _h2, _s2, _v2;
+  // null = 纯色主题；非 null = 渐变主题
+  bool _gradEnabled;
+
+  _CPState() : _gradEnabled = false;
+
   @override
   void initState() {
     super.initState();
-    final h = HSVColor.fromColor(widget.initial);
-    _h = h.hue; _s = h.saturation; _v = h.value;
+    final h1 = HSVColor.fromColor(widget.initial);
+    _h1 = h1.hue; _s1 = h1.saturation; _v1 = h1.value;
+    if (widget.initial2 != null) {
+      _gradEnabled = true;
+      final h2 = HSVColor.fromColor(widget.initial2!);
+      _h2 = h2.hue; _s2 = h2.saturation; _v2 = h2.value;
+    } else {
+      _gradEnabled = false;
+      final h2 = HSVColor.fromColor(widget.initial);
+      _h2 = h2.hue + 20; _s2 = h2.saturation; _v2 = h2.value;
+    }
   }
 
-  Color get c => HSVColor.fromAHSV(1, _h, _s, _v).toColor();
+  Color get c1 => HSVColor.fromAHSV(1, _h1, _s1, _v1).toColor();
+  Color get c2 => HSVColor.fromAHSV(1, _h2, _s2, _v2).toColor();
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final labelStyle = TextStyle(fontSize: 10, color: scheme.onSurface);
-    return AlertDialog(
-      title: Text(widget.isZh ? '自定义颜色' : 'Custom Color', style: TextStyle(color: scheme.onSurface)),
-      content: SizedBox(width: 280, child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Container(height: 60, decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(8))),
-        const SizedBox(height: 10),
-        // 常用色板：点击快速选色
-        Wrap(spacing: 6, runSpacing: 6, children: [
-          for (final preset in const [
-            0xFF5E6AD2, 0xFF3B82F6, 0xFF06B6D4, 0xFF10B981, 0xFF84CC16,
-            0xFFF59E0B, 0xFFF97316, 0xFFEF4444, 0xFFEC4899, 0xFF8B5CF6,
-            0xFF64748B, 0xFF000000, 0xFFFFFFFF, 0xFFF8FAFC,
-          ])
-            GestureDetector(
-              onTap: () {
-                final hsv = HSVColor.fromColor(Color(preset));
-                setState(() { _h = hsv.hue; _s = hsv.saturation; _v = hsv.value; });
-              },
-              child: Container(
-                width: 26, height: 26,
-                decoration: BoxDecoration(
-                  color: Color(preset),
-                  shape: BoxShape.circle,
-                  border: Border.all(color: scheme.outlineVariant.withAlpha(120)),
-                ),
-                child: preset == c.toARGB32() ? const Icon(Icons.check, size: 12, color: Colors.white) : null,
+    final labelStyle = TextStyle(fontSize: 11, color: scheme.onSurfaceVariant);
+    const sectionHint = TextStyle(fontSize: 10, color: Color(0xFF9AA0A6));
+    // 液态玻璃：跟随全局玻璃配置（液态/模糊/无效果），主题着色跟随 glassFollowTheme
+    return GlassPanel(
+      radius: 18,
+      blur: 14,
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 10),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 560),
+        child: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Row(children: [
+              Icon(Icons.palette_outlined, size: 18, color: scheme.primary),
+              const SizedBox(width: 8),
+              Text(widget.isZh ? '主题颜色' : 'Theme Color',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+              const Spacer(),
+              GestureDetector(
+                onTap: () => Navigator.pop(context),
+                child: Icon(Icons.close, size: 18, color: scheme.outline),
               ),
+            ]),
+            const SizedBox(height: 12),
+            // 预览：纯色或渐变
+            Container(height: 44, width: double.infinity, alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: _gradEnabled ? null : c1,
+                gradient: _gradEnabled
+                    ? LinearGradient(colors: [c1, c2], begin: Alignment.topLeft, end: Alignment.bottomRight)
+                    : null,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
+              ),
+              child: Text(_gradEnabled ? (widget.isZh ? '渐变' : 'Gradient') : (widget.isZh ? '纯色' : 'Solid'),
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white)),
             ),
-        ]),
-        const SizedBox(height: 12),
-        _sl(widget.isZh ? '色相' : 'Hue', _h, 0, 360, labelStyle, (v) => setState(() => _h = v)),
-        _sl(widget.isZh ? '饱和' : 'Sat', _s, 0, 1, labelStyle, (v) => setState(() => _s = v)),
-        _sl(widget.isZh ? '明度' : 'Val', _v, 0, 1, labelStyle, (v) => setState(() => _v = v)),
-        Text('#${c.toARGB32().toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}',
-            style: TextStyle(fontFamily: 'monospace', fontSize: 11, color: scheme.onSurface)),
-      ])),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: Text(widget.isZh ? '取消' : 'Cancel')),
-        FilledButton(onPressed: () => Navigator.pop(context, c), child: Text(widget.isZh ? '选择' : 'Select')),
-      ],
+            const SizedBox(height: 12),
+            // 是否使用渐变色（通俗开关）
+            Row(children: [
+              Icon(Icons.auto_awesome, size: 16, color: scheme.primary),
+              const SizedBox(width: 8),
+              Expanded(child: Text(widget.isZh ? '使用渐变色' : 'Use gradient',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface))),
+              Switch(
+                value: _gradEnabled,
+                onChanged: (v) => setState(() => _gradEnabled = v),
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ]),
+            const SizedBox(height: 12),
+            // 常用色板（单色 / 渐变通用）
+            Text(widget.isZh ? '常用颜色' : 'Common colors', style: labelStyle),
+            const SizedBox(height: 8),
+            if (_gradEnabled)
+              Wrap(spacing: 8, runSpacing: 8, children: _gradPresets.map((g) {
+                final selected = g.$1 == c1.toARGB32() && g.$2 == c2.toARGB32();
+                return GestureDetector(
+                  onTap: () {
+                    final h1 = HSVColor.fromColor(Color(g.$1));
+                    final h2 = HSVColor.fromColor(Color(g.$2));
+                    setState(() { _h1 = h1.hue; _s1 = h1.saturation; _v1 = h1.value; _h2 = h2.hue; _s2 = h2.saturation; _v2 = h2.value; _gradEnabled = true; });
+                  },
+                  child: Container(
+                    width: 36, height: 36,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(colors: [Color(g.$1), Color(g.$2)], begin: Alignment.topLeft, end: Alignment.bottomRight),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: selected ? scheme.primary : scheme.outlineVariant.withAlpha(90), width: selected ? 3 : 1),
+                    ),
+                  ),
+                );
+              }).toList())
+            else
+              Wrap(spacing: 6, runSpacing: 6, children: [
+                for (final preset in const [
+                  0xFF5E6AD2, 0xFF3B82F6, 0xFF06B6D4, 0xFF10B981, 0xFF84CC16,
+                  0xFFF59E0B, 0xFFF97316, 0xFFEF4444, 0xFFEC4899, 0xFF8B5CF6,
+                  0xFF64748B, 0xFF000000, 0xFFFFFFFF, 0xFFF8FAFC,
+                ])
+                  GestureDetector(
+                    onTap: () {
+                      final hsv = HSVColor.fromColor(Color(preset));
+                      setState(() { _h1 = hsv.hue; _s1 = hsv.saturation; _v1 = hsv.value; });
+                    },
+                    child: Container(
+                      width: 28, height: 28,
+                      decoration: BoxDecoration(
+                        color: Color(preset),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: scheme.outlineVariant.withAlpha(120)),
+                      ),
+                      child: preset == c1.toARGB32() ? const Icon(Icons.check, size: 13, color: Colors.white) : null,
+                    ),
+                  ),
+              ]),
+            const SizedBox(height: 12),
+            // 自定义微调
+            Text(widget.isZh ? '自定义微调' : 'Fine-tune', style: labelStyle),
+            Text(widget.isZh ? '用色相 / 饱和度 / 明度精确调整颜色' : 'Adjust hue / saturation / value precisely',
+                style: sectionHint),
+            const SizedBox(height: 4),
+            _colorRow(c1, [
+              _sl('H', _h1, 0, 360, (v) => setState(() => _h1 = v)),
+              _sl('S', _s1, 0, 1, (v) => setState(() => _s1 = v)),
+              _sl('V', _v1, 0, 1, (v) => setState(() => _v1 = v)),
+            ]),
+            if (_gradEnabled) ...[
+              const SizedBox(height: 6),
+              Text(widget.isZh ? '第二种颜色（渐变终点）' : 'Second color (end of gradient)', style: labelStyle),
+              const SizedBox(height: 4),
+              _colorRow(c2, [
+                _sl('H', _h2, 0, 360, (v) => setState(() => _h2 = v)),
+                _sl('S', _s2, 0, 1, (v) => setState(() => _s2 = v)),
+                _sl('V', _v2, 0, 1, (v) => setState(() => _v2 = v)),
+              ]),
+            ],
+            const SizedBox(height: 10),
+            Row(children: [
+              Expanded(child: Text('#${_hex(c1)}${_gradEnabled ? ' → #${_hex(c2)}' : ''}',
+                  style: TextStyle(fontFamily: 'monospace', fontSize: 11, color: scheme.onSurfaceVariant))),
+              TextButton(onPressed: () => Navigator.pop(context), child: Text(widget.isZh ? '取消' : 'Cancel')),
+              FilledButton(
+                onPressed: () => Navigator.pop(context,
+                    _GradResult(c1.toARGB32(), _gradEnabled ? c2.toARGB32() : null)),
+                child: Text(widget.isZh ? '选择' : 'Select'),
+              ),
+            ]),
+          ]),
+        ),
+      ),
     );
   }
 
-  Widget _sl(String l, double v, double min, double max, TextStyle labelStyle, ValueChanged<double> cb) => Row(children: [
-    SizedBox(width: 30, child: Text(l, style: labelStyle)),
+  String _hex(Color c) => c.toARGB32().toRadixString(16).padLeft(8, '0').substring(2).toUpperCase();
+
+  Widget _colorRow(Color swatch, List<Widget> sliders) {
+    return Row(children: [
+      Container(width: 22, height: 22, decoration: BoxDecoration(
+        color: swatch, shape: BoxShape.circle, border: Border.all(color: Color(0x33000000)))), 
+      const SizedBox(width: 8),
+      Expanded(child: Column(children: sliders)),
+    ]);
+  }
+
+  Widget _sl(String l, double v, double min, double max, ValueChanged<double> cb) => Row(children: [
+    SizedBox(width: 12, child: Text(l, style: TextStyle(fontSize: 10))),
     Expanded(child: Slider(value: v, min: min, max: max, onChanged: cb)),
   ]);
 }

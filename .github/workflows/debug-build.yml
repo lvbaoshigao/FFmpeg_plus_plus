@@ -1,0 +1,487 @@
+name: Debug Build (Manual)
+
+# 手动触发的调试构建：不发布 Release，只生成可下载产物（artifact）。
+# 适合在发布前快速验证某个目标平台 / 某个版本能否编译通过，或给测试人员分发调试包。
+#
+# 用法：Actions → 「Debug Build (Manual)」→ Run workflow
+#   target   —— 要编译的平台（Windows / Linux x64 / Linux ARM64 / macOS / Android）
+#   version  —— 版本标签（用于产物命名，仅作标记；实际版本取自检出的 ref/仓库代码）
+#   ref      —— 要检出的 git 分支或 tag（默认 main）
+#
+# 每个平台用 `if` 判断 inputs.target，仅运行被选中的那个 job；
+# 产物一律上传为 artifact（artifact 保留期内可下载），不触碰 Release。
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: '要编译的平台'
+        required: true
+        type: choice
+        options:
+          - windows
+          - linux-x64
+          - linux-arm64
+          - macos
+          - android
+      version:
+        description: '版本标签（仅用于产物命名，如 5.0.0-beta1）'
+        required: false
+        default: '5.0.0-beta1'
+        type: string
+      ref:
+        description: '要检出的 git 分支或 tag（默认 main）'
+        required: true
+        default: 'main'
+        type: string
+
+env:
+  VER: ${{ inputs.version }}
+
+jobs:
+  # ══════════════════════════════════════════
+  # Windows x86_64
+  # ══════════════════════════════════════════
+  debug-windows:
+    if: inputs.target == 'windows'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+          pub-cache: true
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Cache C++ backend build
+        uses: actions/cache@v4
+        with:
+          path: server_cpp/build_win
+          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v1-${{ hashFiles('server_cpp/CMakeLists.txt', 'server_cpp/src/**', 'server_cpp/include/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cpp-v1-
+
+      - name: Build C++ backend (ffmpegpp.dll)
+        run: |
+          cd server_cpp
+          if not exist build_win mkdir build_win
+          cd build_win
+          cmake .. -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release
+          nmake
+        shell: cmd
+
+      - name: Build Flutter GUI
+        run: |
+          cd ffmpegpp_gui
+          flutter pub get
+          flutter build windows --release
+
+      - name: Copy backend DLL to bundle
+        run: |
+          copy server_cpp\build_win\ffmpegpp.dll ffmpegpp_gui\build\windows\x64\runner\Release\ffmpegpp.dll
+        shell: cmd
+
+      - name: Pack portable bundle
+        run: |
+          tar -czf "FFmpeg++_v$env:VER_windows-x64_portable.tar.gz" -C "ffmpegpp_gui/build/windows/x64/runner/Release" .
+        shell: pwsh
+        env:
+          VER: ${{ inputs.version }}
+
+      - name: Build Inno Setup installer
+        run: |
+          choco install innosetup -y
+          $env:PATH += ";C:\Program Files (x86)\Inno Setup 6"
+          $langDir = "C:\Program Files (x86)\Inno Setup 6\Languages"
+          Copy-Item "make\ChineseSimplified.isl" "$langDir\ChineseSimplified.isl" -Force
+          Copy-Item "make\ChineseTraditional.isl" "$langDir\ChineseTraditional.isl" -Force
+          New-Item -ItemType Directory -Force -Path build
+          tar -xzf "FFmpeg++_v$env:VER_windows-x64_portable.tar.gz" -C build
+          iscc make\setup.iss
+        shell: pwsh
+        env:
+          VER: ${{ inputs.version }}
+
+      - name: Upload Windows debug artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: |
+            FFmpeg++_v*_windows-x64_portable.tar.gz
+            dist/FFmpeg++_v*_setup.exe
+          if-no-files-found: error
+
+  # ══════════════════════════════════════════
+  # Linux x86_64
+  # ══════════════════════════════════════════
+  debug-linux-x64:
+    if: inputs.target == 'linux-x64'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ libgtk-3-dev pkg-config ninja-build \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-good
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+          pub-cache: true
+
+      - name: Cache C++ backend build
+        uses: actions/cache@v4
+        with:
+          path: server_cpp/build_linux
+          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v1-${{ hashFiles('server_cpp/CMakeLists.txt', 'server_cpp/src/**', 'server_cpp/include/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cpp-v1-
+
+      - name: Build C++ backend (libffmpegpp.so)
+        run: |
+          cd server_cpp
+          mkdir -p build_linux
+          cd build_linux
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          make -j$(nproc)
+
+      - name: Build Flutter GUI
+        run: |
+          cd ffmpegpp_gui
+          flutter pub get
+          flutter build linux --release
+
+      - name: Assemble portable bundle
+        run: |
+          mkdir -p output
+          cp -r ffmpegpp_gui/build/linux/x64/release/bundle/* output/
+          cp server_cpp/build_linux/libffmpegpp.so output/lib/
+          tar -czf "FFmpeg++_v${VER}_linux-x64_portable.tar.gz" -C output .
+        env:
+          VER: ${{ inputs.version }}
+
+      - name: Build .deb package
+        run: |
+          mkdir -p deb/DEBIAN deb/opt/ffmpegpp deb/usr/bin deb/usr/share/applications deb/usr/share/icons/hicolor/256x256/apps
+          cat > deb/DEBIAN/control << 'EOF'
+          Package: ffmpegpp
+          Version: 5.0.0-beta1
+          Architecture: amd64
+          Maintainer: pity-Fox <noreply@github.com>
+          Description: FFmpeg++ - Advanced video/image/audio processing tool
+           A desktop application for video, image, and audio processing
+           with a node-based pipeline editor and batch processing support.
+          Depends: libgtk-3-0t64 | libgtk-3-0, ffmpeg
+          Section: video
+          Priority: optional
+          Installed-Size: 25000
+          EOF
+          cat > deb/usr/share/applications/ffmpegpp.desktop << 'EOF'
+          [Desktop Entry]
+          Name=FFmpeg++
+          Comment=Advanced video/image/audio processing tool
+          Exec=/opt/ffmpegpp/ffmpegpp_gui
+          Icon=ffmpegpp
+          Terminal=false
+          Type=Application
+          Categories=AudioVideo;Video;Graphics;
+          EOF
+          echo '#!/bin/bash' > deb/usr/bin/ffmpegpp
+          echo 'exec /opt/ffmpegpp/ffmpegpp_gui "$@"' >> deb/usr/bin/ffmpegpp
+          chmod 755 deb/usr/bin/ffmpegpp
+          tar -xzf "FFmpeg++_v${VER}_linux-x64_portable.tar.gz" -C deb/opt/ffmpegpp
+          cp "make/FFmpeg++.png" deb/usr/share/icons/hicolor/256x256/apps/ffmpegpp.png
+          chmod -R 755 deb/opt/ffmpegpp/
+          dpkg-deb --root-owner-group --build deb "ffmpegpp_${VER}_amd64.deb"
+        env:
+          VER: ${{ inputs.version }}
+
+      - name: Upload Linux x64 debug artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: |
+            FFmpeg++_v*_linux-x64_portable.tar.gz
+            ffmpegpp_*_amd64.deb
+          if-no-files-found: error
+
+  # ══════════════════════════════════════════
+  # Linux ARM64
+  # ══════════════════════════════════════════
+  debug-linux-arm64:
+    if: inputs.target == 'linux-arm64'
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ libgtk-3-dev pkg-config ninja-build clang curl git unzip xz-utils \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-good
+
+      - name: Setup Flutter (manual for ARM64)
+        run: |
+          git clone https://github.com/flutter/flutter.git -b stable --depth 1 "$HOME/flutter"
+          echo "$HOME/flutter/bin" >> $GITHUB_PATH
+          export PATH="$HOME/flutter/bin:$PATH"
+          flutter precache --linux
+          flutter doctor -v
+
+      - name: Cache pub dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-${{ runner.arch }}-pub-${{ hashFiles('ffmpegpp_gui/pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-pub-
+
+      - name: Cache C++ backend build
+        uses: actions/cache@v4
+        with:
+          path: server_cpp/build_linux
+          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v1-${{ hashFiles('server_cpp/CMakeLists.txt', 'server_cpp/src/**', 'server_cpp/include/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cpp-v1-
+
+      - name: Build C++ backend (libffmpegpp.so)
+        run: |
+          cd server_cpp
+          mkdir -p build_linux
+          cd build_linux
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          make -j$(nproc)
+
+      - name: Build Flutter GUI
+        run: |
+          cd ffmpegpp_gui
+          flutter pub get
+          flutter build linux --release
+
+      - name: Assemble portable bundle
+        run: |
+          mkdir -p output
+          cp -r ffmpegpp_gui/build/linux/arm64/release/bundle/* output/
+          cp server_cpp/build_linux/libffmpegpp.so output/lib/
+          tar -czf "FFmpeg++_v${VER}_linux-arm64_portable.tar.gz" -C output .
+        env:
+          VER: ${{ inputs.version }}
+
+      - name: Build .deb package
+        run: |
+          mkdir -p deb/DEBIAN deb/opt/ffmpegpp deb/usr/bin deb/usr/share/applications deb/usr/share/icons/hicolor/256x256/apps
+          cat > deb/DEBIAN/control << 'EOF'
+          Package: ffmpegpp
+          Version: 5.0.0-beta1
+          Architecture: arm64
+          Maintainer: pity-Fox <noreply@github.com>
+          Description: FFmpeg++ - Advanced video/image/audio processing tool
+           A desktop application for video, image, and audio processing
+           with a node-based pipeline editor and batch processing support.
+          Depends: libgtk-3-0t64 | libgtk-3-0, ffmpeg
+          Section: video
+          Priority: optional
+          Installed-Size: 25000
+          EOF
+          cat > deb/usr/share/applications/ffmpegpp.desktop << 'EOF'
+          [Desktop Entry]
+          Name=FFmpeg++
+          Comment=Advanced video/image/audio processing tool
+          Exec=/opt/ffmpegpp/ffmpegpp_gui
+          Icon=ffmpegpp
+          Terminal=false
+          Type=Application
+          Categories=AudioVideo;Video;Graphics;
+          EOF
+          echo '#!/bin/bash' > deb/usr/bin/ffmpegpp
+          echo 'exec /opt/ffmpegpp/ffmpegpp_gui "$@"' >> deb/usr/bin/ffmpegpp
+          chmod 755 deb/usr/bin/ffmpegpp
+          tar -xzf "FFmpeg++_v${VER}_linux-arm64_portable.tar.gz" -C deb/opt/ffmpegpp
+          cp "make/FFmpeg++.png" deb/usr/share/icons/hicolor/256x256/apps/ffmpegpp.png
+          chmod -R 755 deb/opt/ffmpegpp/
+          dpkg-deb --root-owner-group --build deb "ffmpegpp_${VER}_arm64.deb"
+        env:
+          VER: ${{ inputs.version }}
+
+      - name: Upload Linux ARM64 debug artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-arm64
+          path: |
+            FFmpeg++_v*_linux-arm64_portable.tar.gz
+            ffmpegpp_*_arm64.deb
+          if-no-files-found: error
+
+  # ══════════════════════════════════════════
+  # macOS
+  # ══════════════════════════════════════════
+  debug-macos:
+    if: inputs.target == 'macos'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+          pub-cache: true
+
+      - name: Cache C++ backend build
+        uses: actions/cache@v4
+        with:
+          path: server_cpp/build_macos
+          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v1-${{ hashFiles('server_cpp/CMakeLists.txt', 'server_cpp/src/**', 'server_cpp/include/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cpp-v1-
+
+      - name: Build C++ backend (libffmpegpp.dylib)
+        run: |
+          cd server_cpp
+          mkdir -p build_macos
+          cd build_macos
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"
+          make -j$(sysctl -n hw.ncpu)
+
+      - name: Build Flutter GUI
+        run: |
+          cd ffmpegpp_gui
+          flutter pub get
+          flutter build macos --release
+
+      - name: Assemble .app bundle
+        run: |
+          APP="ffmpegpp_gui/build/macos/Build/Products/Release/ffmpegpp_gui.app"
+          cp server_cpp/build_macos/libffmpegpp.dylib "$APP/Contents/MacOS/libffmpegpp.dylib"
+
+      - name: Pack portable app bundle
+        run: |
+          tar -czf "FFmpeg++_v${VER}_macOS_portable.tar.gz" -C ffmpegpp_gui/build/macos/Build/Products/Release .
+        env:
+          VER: ${{ inputs.version }}
+
+      - name: Create DMG
+        run: |
+          mkdir -p dmg_staging
+          tar -xzf "FFmpeg++_v${VER}_macOS_portable.tar.gz" -C dmg_staging
+          ln -s /Applications dmg_staging/Applications
+          hdiutil create -volname "FFmpeg++" -srcfolder dmg_staging -ov -format UDZO "FFmpeg++_v${VER}_macOS.dmg"
+        env:
+          VER: ${{ inputs.version }}
+
+      - name: Upload macOS debug artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            FFmpeg++_v*_macOS_portable.tar.gz
+            FFmpeg++_v*_macOS.dmg
+          if-no-files-found: error
+
+  # ══════════════════════════════════════════
+  # Android (arm64-v8a APK)
+  # 复用仓库内的交叉编译脚本，通过环境变量把工具链指向 GitHub runner
+  # 预装的 Android SDK / NDK，产物 = APK。
+  # ══════════════════════════════════════════
+  debug-android:
+    if: inputs.target == 'android'
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: debug-android-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+          pub-cache: true
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK & NDK
+        run: |
+          set -euo pipefail
+          export ANDROID_HOME="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          # NDK r26d：交叉编译 ffmpeg / libffmpegpp.so
+          sudo $SDKM --install "ndk;26.1.10909125" >/dev/null
+          echo "NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> $GITHUB_ENV
+          # NDK 28.2：app/build.gradle.kts 声明的 ndkVersion（Gradle 打包需要）
+          sudo $SDKM --install "ndk;28.2.13676358" >/dev/null
+
+      - name: Ensure Android licenses accepted
+        run: |
+          sudo $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses >/dev/null || true
+
+      - name: Cache FFmpeg cross-build & pub cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-${{ runner.arch }}-android-pub-${{ hashFiles('ffmpegpp_gui/pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-android-pub-
+
+      # build_ffmpeg.sh 会 source env.sh，而 env.sh 只对「未设置」的环境变量
+      # 给默认值，因此这里显式 export 的变量会胜出，把工具链指向 runner 路径。
+      - name: Build Android FFmpeg + libffmpegpp
+        run: |
+          bash build/android/build_ffmpeg.sh
+        env:
+          FFMPEGPP_CACHE: ${{ runner.temp }}/android-build
+          JAVA_HOME: ${{ env.JAVA_HOME }}
+          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
+          ANDROID_USER_HOME: ${{ runner.temp }}/.android
+          GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home
+          PUB_CACHE: ${{ env.PUB_CACHE }}
+          NDK_HOME: ${{ env.NDK_HOME }}
+
+      - name: Build APK
+        run: |
+          bash build/android/build_apk.sh
+        env:
+          FFMPEGPP_CACHE: ${{ runner.temp }}/android-build
+          JAVA_HOME: ${{ env.JAVA_HOME }}
+          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
+          ANDROID_USER_HOME: ${{ runner.temp }}/.android
+          GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home
+          PUB_CACHE: ${{ env.PUB_CACHE }}
+          NDK_HOME: ${{ env.NDK_HOME }}
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-arm64
+          path: |
+            ffmpegpp_gui/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error

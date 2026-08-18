@@ -206,6 +206,7 @@ FFMPEGPP_API void ffmpegpp_shutdown() {
     JsonWriter::stop();
     g_running.store(false);
     slog("dll shutdown: done");
+    slog_cleanup();
 }
 
 } // extern "C"
