@@ -21,14 +21,24 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          cache: true
+          pub-cache: true
 
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Cache C++ backend build
+        uses: actions/cache@v4
+        with:
+          path: server_cpp/build_win
+          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v1-${{ hashFiles('server_cpp/CMakeLists.txt', 'server_cpp/src/**', 'server_cpp/include/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cpp-v1-
+
       - name: Build C++ backend (ffmpegpp.dll)
         run: |
           cd server_cpp
-          mkdir build_win
+          if not exist build_win mkdir build_win
           cd build_win
           cmake .. -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release
           nmake
@@ -74,6 +84,16 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          cache: true
+          pub-cache: true
+
+      - name: Cache C++ backend build
+        uses: actions/cache@v4
+        with:
+          path: server_cpp/build_linux
+          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v1-${{ hashFiles('server_cpp/CMakeLists.txt', 'server_cpp/src/**', 'server_cpp/include/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cpp-v1-
 
       - name: Build C++ backend (libffmpegpp.so)
         run: |
@@ -126,6 +146,22 @@ jobs:
           flutter precache --linux
           flutter doctor -v
 
+      - name: Cache pub dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-${{ runner.arch }}-pub-${{ hashFiles('ffmpegpp_gui/pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-pub-
+
+      - name: Cache C++ backend build
+        uses: actions/cache@v4
+        with:
+          path: server_cpp/build_linux
+          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v1-${{ hashFiles('server_cpp/CMakeLists.txt', 'server_cpp/src/**', 'server_cpp/include/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cpp-v1-
+
       - name: Build C++ backend (libffmpegpp.so)
         run: |
           cd server_cpp
@@ -167,6 +203,16 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          cache: true
+          pub-cache: true
+
+      - name: Cache C++ backend build
+        uses: actions/cache@v4
+        with:
+          path: server_cpp/build_macos
+          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v1-${{ hashFiles('server_cpp/CMakeLists.txt', 'server_cpp/src/**', 'server_cpp/include/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cpp-v1-
 
       - name: Build C++ backend (libffmpegpp.dylib)
         run: |
@@ -259,7 +305,7 @@ jobs:
           # Control file
           cat > deb/DEBIAN/control << 'EOF'
           Package: ffmpegpp
-          Version: 5.0.0-beta1
+          Version: 5.0.0-beta2
           Architecture: amd64
           Maintainer: pity-Fox <noreply@github.com>
           Description: FFmpeg++ - Advanced video/image/audio processing tool
@@ -294,13 +340,13 @@ jobs:
           chmod -R 755 deb/opt/ffmpegpp/
 
           # Build deb
-          dpkg-deb --root-owner-group --build deb ffmpegpp_5.0.0-beta1_amd64.deb
+          dpkg-deb --root-owner-group --build deb ffmpegpp_5.0.0-beta2_amd64.deb
 
       - name: Upload Linux x64 deb
         uses: actions/upload-artifact@v4
         with:
           name: linux-x64-deb
-          path: ffmpegpp_5.0.0-beta1_amd64.deb
+          path: ffmpegpp_5.0.0-beta2_amd64.deb
 
   # ══════════════════════════════════════════
   # 打包阶段 — Linux ARM64 (.deb)
@@ -327,7 +373,7 @@ jobs:
 
           cat > deb/DEBIAN/control << 'EOF'
           Package: ffmpegpp
-          Version: 5.0.0-beta1
+          Version: 5.0.0-beta2
           Architecture: arm64
           Maintainer: pity-Fox <noreply@github.com>
           Description: FFmpeg++ - Advanced video/image/audio processing tool
@@ -358,13 +404,13 @@ jobs:
           cp "make/FFmpeg++.png" deb/usr/share/icons/hicolor/256x256/apps/ffmpegpp.png
           chmod -R 755 deb/opt/ffmpegpp/
 
-          dpkg-deb --root-owner-group --build deb ffmpegpp_5.0.0-beta1_arm64.deb
+          dpkg-deb --root-owner-group --build deb ffmpegpp_5.0.0-beta2_arm64.deb
 
       - name: Upload Linux ARM64 deb
         uses: actions/upload-artifact@v4
         with:
           name: linux-arm64-deb
-          path: ffmpegpp_5.0.0-beta1_arm64.deb
+          path: ffmpegpp_5.0.0-beta2_arm64.deb
 
   # ══════════════════════════════════════════
   # 打包阶段 — macOS (.dmg)
@@ -386,16 +432,16 @@ jobs:
           mkdir -p dmg_staging
           tar -xzf bundle/macos-app.tar.gz -C dmg_staging
           ln -s /Applications dmg_staging/Applications
-          hdiutil create -volname "FFmpeg++" -srcfolder dmg_staging -ov -format UDZO "FFmpeg++_v5.0.0-beta1_macOS.dmg"
+          hdiutil create -volname "FFmpeg++" -srcfolder dmg_staging -ov -format UDZO "FFmpeg++_v5.0.0-beta2_macOS.dmg"
 
       - name: Upload macOS DMG
         uses: actions/upload-artifact@v4
         with:
           name: macos-dmg
-          path: FFmpeg++_v5.0.0-beta1_macOS.dmg
+          path: FFmpeg++_v5.0.0-beta2_macOS.dmg
 
   # ══════════════════════════════════════════
-  # 发布阶段 — 创建 Release (v5.0.0-beta1)
+  # 发布阶段 — 创建 Release (v5.0.0-beta2)
   # ══════════════════════════════════════════
   release:
     needs: [package-windows, package-linux-x64, package-linux-arm64, package-macos]
@@ -415,10 +461,10 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v5.0.0-beta1
-          name: "FFmpeg++ v5.0.0-beta1"
+          tag_name: v5.0.0-beta2
+          name: "FFmpeg++ v5.0.0-beta2"
           body: |
-            ## 🎬 FFmpeg++ v5.0.0-beta1
+            ## 🎬 FFmpeg++ v5.0.0-beta2
 
             **专业视频 / 图片 / 音频处理桌面应用** — 基于 Flutter + C++17 + FFmpeg，100% AI 生成代码。
 
@@ -432,10 +478,10 @@ jobs:
             - 📱 Android 移动端适配（底部液态玻璃导航栏、Monet 动态取色、内置 FFmpeg）
 
             ### 📦 安装包
-            - **Windows**: `FFmpeg++_v5.0.0-beta1_setup.exe`
-            - **Linux x64**: `ffmpegpp_5.0.0-beta1_amd64.deb`
-            - **Linux ARM64**: `ffmpegpp_5.0.0-beta1_arm64.deb`
-            - **macOS**: `FFmpeg++_v5.0.0-beta1_macOS.dmg`
+            - **Windows**: `FFmpeg++_v5.0.0-beta2_setup.exe`
+            - **Linux x64**: `ffmpegpp_5.0.0-beta2_amd64.deb`
+            - **Linux ARM64**: `ffmpegpp_5.0.0-beta2_arm64.deb`
+            - **macOS**: `FFmpeg++_v5.0.0-beta2_macOS.dmg`
           draft: false
           prerelease: true
           fail_on_unmatched_files: false

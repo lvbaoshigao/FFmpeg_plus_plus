@@ -28,23 +28,40 @@ class GraphExecutor {
       return errors;
     }
 
-    final startNodes = graph.nodes.where((n) => n.type == PipelineStepType.start).toList();
-    final outputNodes = graph.nodes.where((n) => n.type == PipelineStepType.output).toList();
+    final startNodes = graph.nodes.where((n) => n.type == PipelineStepType.start && !n.isGate).toList();
+    final outputNodes = graph.nodes.where((n) => n.type == PipelineStepType.output && !n.isGate).toList();
+    final gateNodes = graph.nodes.where((n) => n.isGate).toList();
+    final dataConns = graph.connections.where((c) => c.kind == 'data').toList();
+    final controlConns = graph.connections.where((c) => c.kind == 'control').toList();
 
     if (startNodes.isEmpty) errors.add('缺少源文件节点');
     if (outputNodes.isEmpty) errors.add('缺少输出节点');
 
+    // 数据连线：非起始节点需要有数据输入连线（逻辑门不参与数据流）
     for (final node in graph.nodes) {
+      if (node.isGate) continue; // 逻辑门不参与数据流验证
       if (node.type == PipelineStepType.start) continue;
-      if (!graph.connections.any((c) => c.toNodeId == node.id)) {
+      if (!dataConns.any((c) => c.toNodeId == node.id)) {
         errors.add('"${node.label}" 没有输入连线');
       }
     }
 
     for (final node in graph.nodes) {
+      if (node.isGate) continue; // 逻辑门不参与数据流验证
       if (node.type == PipelineStepType.output) continue;
-      if (!graph.connections.any((c) => c.fromNodeId == node.id)) {
+      if (!dataConns.any((c) => c.fromNodeId == node.id)) {
         errors.add('"${node.label}" 没有输出连线');
+      }
+    }
+
+    // 逻辑门验证：恒定门(恒1/恒0)无输入，非门1输入，其余2输入
+    for (final gate in gateNodes) {
+      final g = gate.gate;
+      if (g == null) continue;
+      final inputCount = controlConns.where((c) => c.toNodeId == gate.id).length;
+      final expected = g.inputCount;
+      if (expected > 0 && inputCount > expected) {
+        errors.add('逻辑门 "${gate.label}" 最多支持 $expected 个输入，当前有 $inputCount 个');
       }
     }
 
@@ -56,8 +73,28 @@ class GraphExecutor {
       final ti = graph.nodes.indexWhere((n) => n.id == conn.toNodeId);
       if (fi < 0) { errors.add('连线引用了不存在的源节点'); continue; }
       if (ti < 0) { errors.add('连线引用了不存在的目标节点'); continue; }
-      if (!graph.nodes[fi].hasOutput) errors.add('"${graph.nodes[fi].label}" 不能作为连线起点');
-      if (!graph.nodes[ti].hasInput) errors.add('"${graph.nodes[ti].label}" 不能作为连线终点');
+      // 数据连线：检查数据端口能力
+      if (conn.kind == 'data') {
+        if (!graph.nodes[fi].hasOutput) errors.add('"${graph.nodes[fi].label}" 不能作为数据连线起点');
+        if (!graph.nodes[ti].hasInput) errors.add('"${graph.nodes[ti].label}" 不能作为数据连线终点');
+      } else {
+        // 控制连线：状态输出 / 逻辑门输出 → 使能输入 / 逻辑门输入
+        final src = graph.nodes[fi];
+        final dst = graph.nodes[ti];
+        final fromOk = src.isGate ? src.hasGateOutput : src.type != PipelineStepType.start;
+        if (!fromOk) errors.add('"${src.label}" 不能作为控制连线起点');
+        if (dst.isGate) {
+          if (!dst.hasGateInput) errors.add('"${dst.label}" 不接收控制输入');
+        } else {
+          // 非逻辑节点的红色使能端：只能由逻辑门输出接入
+          if (!src.isGate) {
+            errors.add('"${dst.label}" 的使能端只接受逻辑门输出，不能直接连接 "${src.label}"');
+          }
+          if (dst.type == PipelineStepType.start) {
+            errors.add('"${dst.label}" 没有使能输入端');
+          }
+        }
+      }
     }
 
     final visited = <String>{};
@@ -249,12 +286,16 @@ class GraphExecutor {
   // ── 构建执行计划 ──
 
   static ExecutionPlan? _buildPlanForOutput(PipelineGraph graph, PipelineNode start, PipelineNode output) {
+    // 只沿数据连线（kind=='data'）遍历；逻辑门（isGate）不进入数据流路径
+    final dataConns = graph.connections.where((c) => c.kind == 'data').toList();
     // Forward reachable from start
     final forward = <String>{};
     void walkForward(String id) {
       if (forward.contains(id)) return;
       forward.add(id);
-      for (final c in graph.connections.where((c) => c.fromNodeId == id)) {
+      for (final c in dataConns.where((c) => c.fromNodeId == id)) {
+        final target = graph.nodes.where((n) => n.id == c.toNodeId).firstOrNull;
+        if (target == null || target.isGate) continue;
         walkForward(c.toNodeId);
       }
     }
@@ -266,7 +307,9 @@ class GraphExecutor {
     void walkBackward(String id) {
       if (backward.contains(id)) return;
       backward.add(id);
-      for (final c in graph.connections.where((c) => c.toNodeId == id)) {
+      for (final c in dataConns.where((c) => c.toNodeId == id)) {
+        final source = graph.nodes.where((n) => n.id == c.fromNodeId).firstOrNull;
+        if (source == null || source.isGate) continue;
         walkBackward(c.fromNodeId);
       }
     }
@@ -274,8 +317,8 @@ class GraphExecutor {
 
     // Only nodes on paths between start and this output
     final pathIds = forward.intersection(backward);
-    final subNodes = graph.nodes.where((n) => pathIds.contains(n.id)).toList();
-    final subConns = graph.connections.where((c) => pathIds.contains(c.fromNodeId) && pathIds.contains(c.toNodeId)).toList();
+    final subNodes = graph.nodes.where((n) => pathIds.contains(n.id) && !n.isGate).toList();
+    final subConns = dataConns.where((c) => pathIds.contains(c.fromNodeId) && pathIds.contains(c.toNodeId)).toList();
 
     final inDegree = <String, int>{};
     for (final n in subNodes) { inDegree[n.id] = 0; }
@@ -356,8 +399,10 @@ class GraphExecutor {
 
   static List<ExecutionPlan> resolvePlans(PipelineGraph graph) {
     final plans = <ExecutionPlan>[];
-    final outputNodes = graph.nodes.where((n) => n.type == PipelineStepType.output).toList();
-    for (final start in graph.nodes.where((n) => n.type == PipelineStepType.start)) {
+    // 逻辑门是控制流节点，不参与媒体数据流，不计入独立任务
+    final dataNodes = graph.nodes.where((n) => !n.isGate).toList();
+    final outputNodes = dataNodes.where((n) => n.type == PipelineStepType.output).toList();
+    for (final start in dataNodes.where((n) => n.type == PipelineStepType.start)) {
       for (final output in outputNodes) {
         final plan = _buildPlanForOutput(graph, start, output);
         if (plan != null) plans.add(plan);
@@ -743,7 +788,8 @@ class GraphExecutor {
           final p = node.params;
           final rawCodec = p['audio_codec'] as String? ?? 'aac';
           final rawFmt = p['output_format'] as String? ?? 'm4a';
-          final (codec, outFmt) = _resolveAudioCodecFormat(rawCodec, rawFmt);
+          final codec = rawCodec;
+          final outFmt = rawFmt;
           final sr = p['sample_rate'] as String? ?? 'keep';
           final outPath = isLast
               ? outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.$outFmt')
@@ -775,7 +821,8 @@ class GraphExecutor {
           final rawCodec = p['audio_codec'] as String? ?? 'copy';
           final rawFmt = p['output_format'] as String? ?? 'm4a';
           final mode = p['extract_mode'] as String? ?? 'full';
-          final (codec, outFmt) = _resolveAudioCodecFormat(rawCodec, rawFmt);
+          final codec = rawCodec;
+          final outFmt = rawFmt;
           final outPath = isLast
               ? outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.$outFmt')
               : _tempPath(inputPath, i, outFmt);
@@ -1150,11 +1197,6 @@ class GraphExecutor {
     'wav': 'pcm_s16le', 'aac': 'aac', 'm4a': 'aac', 'opus': 'libopus',
   };
 
-  static (String codec, String format) _resolveAudioCodecFormat(String codec, String format) {
-    if (codec != 'copy') return (codec, format);
-    // copy mode: backend probes source codec and resolves container
-    return ('copy', format);
-  }
 
   static Map<String, dynamic> _avOptions(PipelineNode node) {
     final p = node.params;

@@ -90,6 +90,13 @@ void slog(const char* fmt, ...) {
     va_end(args);
 }
 
+void slog_cleanup() {
+    if (g_logFile) {
+        fclose(g_logFile);
+        g_logFile = nullptr;
+    }
+}
+
 // ═══════════════════════════════════════════════
 // ProgressParser
 // ═══════════════════════════════════════════════

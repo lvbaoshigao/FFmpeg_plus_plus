@@ -23,7 +23,7 @@ android {
         minSdk = 26
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
-        versionName = "5.0.0-beta1-android"
+        versionName = "5.0.0-beta2-android"
         ndk {
             // Flutter 插件在 apply 时会 clear() 并填入全部 ABI（armeabi-v7a/
             // arm64-v8a/x86_64），+= 会被其覆盖。这里必须 clear 后只保留 arm64：

@@ -264,7 +264,7 @@ class AppState extends ChangeNotifier {
       }
       // Simplify progress lines
       final timeMatch = _stderrTimeRe.firstMatch(line);
-      final speedMatch = _stderrSpeedRe.firstMatch(line);
+      final speedMatch = _speedRe.firstMatch(line);
       if (timeMatch != null && speedMatch != null) {
         addLog('转码 ${timeMatch.group(1)} ${speedMatch.group(1)}x', category: 'progress');
         return;
@@ -391,6 +391,13 @@ class AppState extends ChangeNotifier {
     await _probeAll(entries);
     _probeCount--; notifyListeners();
     addLog('创建容器 "$name"，${entries.length} 个文件', category: 'info');
+  }
+
+  /// 创建空容器（不含任何文件，用户可稍后手动添加）
+  void addEmptyContainer(String name) {
+    _containers.add(FileContainer(id: const Uuid().v4(), name: name));
+    notifyListeners();
+    addLog('创建空容器 "$name"', category: 'info');
   }
 
   Future<void> addContainerFromFolder(String dirPath) async {
@@ -1298,10 +1305,9 @@ class AppState extends ChangeNotifier {
   }
 
   static final _ffmpegTimeRe = RegExp(r'time=(\d+):(\d+):(\d+)\.(\d+)');
-  static final _ffmpegSpeedRe = RegExp(r'speed=\s*([\d.]+)x');
+  static final _speedRe = RegExp(r'speed=\s*([\d.]+)x');
   // 旧后端 stderr 进度行正则（static final，避免每行重新编译）
   static final _stderrTimeRe = RegExp(r'time=(\d{2}:\d{2}:\d{2})');
-  static final _stderrSpeedRe = RegExp(r'speed=\s*([\d.]+)x');
 
   /// 当前正在运行的本地 ffmpeg 进程集合（供 cancelProcessing 终止）。
   /// 用 Set 而非单字段：maxConcurrentTasks>1 时多个本地任务并发，单字段会被覆盖。
@@ -1315,7 +1321,7 @@ class AppState extends ChangeNotifier {
     if (m != null && totalDuration != null && totalDuration > 0) {
       final t = int.parse(m.group(1)!) * 3600 + int.parse(m.group(2)!) * 60 + int.parse(m.group(3)!) + int.parse(m.group(4)!) / 100;
       final pct = (t / totalDuration * 100).clamp(0, 99.9);
-      final sm = _ffmpegSpeedRe.firstMatch(line);
+      final sm = _speedRe.firstMatch(line);
       final speed = sm != null ? '${sm.group(1)}x' : '';
       final i = _tasks.indexWhere((tk) => tk.id == taskId);
       if (i >= 0) {
@@ -1891,7 +1897,7 @@ class AppState extends ChangeNotifier {
             'result': {
               'protocolVersion': '2024-11-05',
               'capabilities': {'tools': {}, 'resources': {}},
-              'serverInfo': {'name': 'ffmpegpp', 'version': '5.0.0-beta1'},
+              'serverInfo': {'name': 'ffmpegpp', 'version': '5.0.0-beta2'},
             },
           }));
           break;

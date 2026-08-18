@@ -46,7 +46,7 @@ std::string popInput(bool& shutdown) {
         shutdown = true;
         return "";
     }
-    std::string front = g_inputQueue.front();
+    std::string front = std::move(g_inputQueue.front());
     g_inputQueue.pop();
     return front;
 }

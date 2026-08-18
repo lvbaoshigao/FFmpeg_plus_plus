@@ -47,6 +47,7 @@ import '../widgets/step_editors/image_denoise_step_editor.dart';
 import '../widgets/step_editors/image_channel_extract_step_editor.dart';
 import '../widgets/step_editors/video_crop_step_editor.dart';
 import '../widgets/step_editors/logic_block_editor.dart';
+import '../widgets/glass_panel.dart';
 import '../widgets/toast.dart';
 
 const _uuid = Uuid();
@@ -60,6 +61,16 @@ const _portZoneW = 18.0;
 double _nodeWFor(PipelineStepType type) =>
     (type == PipelineStepType.start || type == PipelineStepType.output) ? _nodeWNarrow : _nodeW;
 double _totalNodeWFor(PipelineStepType type) => _portZoneW + _nodeWFor(type) + _portZoneW;
+
+/// 逻辑门固定尺寸（比常规节点小）
+const _gateW = 100.0;
+const _gateH = 50.0;
+
+/// 单个节点的总宽度（含端口），逻辑门使用固定小尺寸
+double _totalNodeWidth(PipelineNode n) => n.isGate ? _gateW + _portZoneW * 2 : _totalNodeWFor(n.type);
+
+/// 单个节点的总高度，逻辑门使用固定小尺寸
+double _nodeHeight(PipelineNode n) => n.isGate ? _gateH : _nodeH;
 
 class PipelineEditorPage extends StatefulWidget {
   final VideoFile video;
@@ -78,7 +89,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   String? _lastSelectedId;
 
   String? _dragFromNodeId;
-  bool _dragIsOutput = true;
+  /// 拖拽的起点端口类型：'dataIn'/'dataOut' 数据端口，
+  /// 'enableIn' 使能输入端(顶部)，'statusOut' 状态输出端(底部)，
+  /// 'gateIn'/'gateOut' 逻辑门输入/输出端口。
+  String _dragPort = 'dataOut';
   Offset? _dragLineEnd;
 
   // Box-select state
@@ -115,6 +129,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   bool _isLogicBoxSelecting = false;
   LogicBlockType? _pendingLogicType;
   String? _selectedLogicBlockId;
+
+  // 探测模式：悬停端口显示信号值提示
+  bool _probeMode = false;
+  String? _probeTooltip;
+  Offset? _probeTooltipPos;
+  // 隐藏逻辑：隐藏控制连线/逻辑门/红色逻辑端口
+  bool _hideLogic = false;
 
   // Undo/redo
   final List<Map<String, dynamic>> _undoStack = [];
@@ -368,6 +389,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     _trackUsage(type);
   }
 
+  void _addGateAt(LogicGateType gate, Offset canvasPos) {
+    _pushUndo();
+    final node = PipelineNode(
+      id: _uuid.v4(),
+      type: PipelineStepType.start, // 使用 start 作为占位类型，gateType 标识逻辑门
+      x: canvasPos.dx, y: canvasPos.dy,
+      gateType: gate.name,
+    );
+    setState(() => _nodes.add(node));
+  }
+
   void _addNodeAtCenter(PipelineStepType type) {
     final rb = context.findRenderObject() as RenderBox;
     final center = rb.size.center(Offset.zero);
@@ -415,7 +447,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     MediaType.audio => zh ? '音频' : 'audio',
   };
 
-  void _addConnection(String fromId, String toId) {
+  void _addConnection(String fromId, String toId, [String kind = 'data']) {
     if (fromId == toId) return;
     _pushUndo();
     final fromIdx = _nodes.indexWhere((n) => n.id == fromId);
@@ -423,9 +455,60 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     if (fromIdx < 0 || toIdx < 0) return;
     final fromNode = _nodes[fromIdx];
     final toNode = _nodes[toIdx];
-    if (!fromNode.hasOutput || !toNode.hasInput) return;
     if (_connections.any((c) => c.fromNodeId == fromId && c.toNodeId == toId)) return;
     final zh = context.read<AppState>().config.language == 'zh';
+
+    if (kind == 'control') {
+      // 控制连线验证：逻辑门 ↔ 逻辑门 / 逻辑门 → 使能端 / 状态端 → 使能端
+      // 非逻辑节点不能直接接收逻辑门连线（只能连到使能端口，由端口拖拽保证）
+
+      // 源端：必须有控制输出能力（逻辑门输出 / 非起始节点的状态输出）
+      final fromOk = fromNode.isGate ? fromNode.hasGateOutput : (fromNode.type != PipelineStepType.start);
+      if (!fromOk) {
+        showToast(context, zh ? '该节点没有控制输出端口' : 'Node has no control output', type: ToastType.error);
+        return;
+      }
+
+      // 目标端：逻辑门需要检查输入数上限；非逻辑节点只允许连到使能端（非起始节点）
+      if (toNode.isGate) {
+        final gate = toNode.gate;
+        if (gate == null || !toNode.hasGateInput) {
+          showToast(context, zh ? '该逻辑门不支持输入' : 'Gate does not accept input', type: ToastType.error);
+          return;
+        }
+        // 检查已有的控制连线数是否达到上限
+        final existingInputs = _connections.where((c) => c.toNodeId == toNode.id && c.kind == 'control').length;
+        if (existingInputs >= gate.inputCount) {
+          showToast(context, zh
+              ? '${gate.symbol(true)} 最多 ${gate.inputCount} 个输入，已满'
+              : '${gate.symbol(false)} allows max ${gate.inputCount} input(s)',
+              type: ToastType.error);
+          return;
+        }
+      } else {
+        // 非逻辑节点的红色逻辑输入端：只允许从逻辑门输出接入
+        if (!fromNode.isGate) {
+          showToast(context, zh
+              ? '红色逻辑端口只能连接逻辑门的输出，普通节点不能直接接入'
+              : 'Red logic port accepts logic gate outputs only',
+              type: ToastType.error);
+          return;
+        }
+        // 源节点没有使能输入端
+        if (toNode.type == PipelineStepType.start) {
+          showToast(context, zh ? '源节点没有使能输入端' : 'Source node has no enable input', type: ToastType.error);
+          return;
+        }
+      }
+
+      setState(() {
+        _connections.add(PipelineConnection(id: _uuid.v4(), fromNodeId: fromId, toNodeId: toId, kind: 'control'));
+      });
+      return;
+    }
+
+    // 数据连线验证
+    if (!fromNode.hasOutput || !toNode.hasInput) return;
 
     // Container-aware connection check
     if (fromNode.type == PipelineStepType.start && toNode.inputTypes.isNotEmpty && widget.containerInfo != null) {
@@ -497,7 +580,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       return;
     }
     setState(() {
-      _connections.add(PipelineConnection(id: _uuid.v4(), fromNodeId: fromId, toNodeId: toId));
+      _connections.add(PipelineConnection(id: _uuid.v4(), fromNodeId: fromId, toNodeId: toId, kind: kind));
     });
   }
 
@@ -719,6 +802,71 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     }
   }
 
+  /// 从 .fppx 文件加载节点配置到画布（覆盖当前画布）
+  Future<void> _importConfig(AppStrings s) async {
+    final zh = s.isZh;
+    final scheme = Theme.of(context).colorScheme;
+    final result = await FilePicker.platform.pickFiles(
+      dialogTitle: zh ? '选择配置文件' : 'Select Config File',
+      type: FileType.custom,
+      allowedExtensions: ['fppx'],
+    );
+    if (result == null || result.files.isEmpty || result.files.first.path == null) return;
+    final path = result.files.first.path!;
+
+    try {
+      final bytes = await File(path).readAsBytes();
+      if (!mounted) return;
+      final fppx = FppxExporter.import(bytes);
+      if (fppx == null) {
+        showToast(context, zh ? '无法解析该文件' : 'Cannot parse this file', type: ToastType.error);
+        return;
+      }
+      if (fppx.errors.isNotEmpty) {
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: Text(zh ? '配置加载失败' : 'Load Failed', style: TextStyle(color: scheme.onSurface)),
+            content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              ...fppx.errors.map((e) => Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text('• $e', style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
+              )),
+            ]),
+            actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: Text(s.isZh ? '知道了' : 'OK'))],
+          ),
+        );
+        return;
+      }
+      final graph = fppx.graph;
+      if (graph == null) {
+        showToast(context, zh ? '该文件不是节点配置' : 'Not a node config', type: ToastType.error);
+        return;
+      }
+      if (fppx.warnings.isNotEmpty) {
+        showToast(context, fppx.warnings.join('\n'), type: ToastType.warning);
+      }
+      // 覆盖当前画布
+      _pushUndo();
+      setState(() {
+        _nodes.clear();
+        _nodes.addAll(graph.nodes);
+        _connections.clear();
+        _connections.addAll(graph.connections);
+        _logicBlocks.clear();
+        _logicBlocks.addAll(graph.logicBlocks);
+        _selectedNodeIds.clear();
+        _lastSelectedId = null;
+      });
+      if (mounted) {
+        showToast(context, zh ? '已加载 ${_nodes.length} 个节点' : 'Loaded ${_nodes.length} nodes', type: ToastType.success);
+      }
+    } catch (e) {
+      if (mounted) showToast(context, zh ? '加载失败: $e' : 'Load failed: $e', type: ToastType.error);
+    }
+  }
+
   Future<bool> _onWillPop() async {
     if (_nodes.isEmpty) return true;
     final scheme = Theme.of(context).colorScheme;
@@ -746,9 +894,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     return Offset(x, y);
   }
 
-  Offset _outPort(PipelineNode n) => Offset(n.x + _portZoneW + _nodeWFor(n.type) + _portZoneW / 2, n.y + _nodeH / 2);
-  Offset _inPort(PipelineNode n) => Offset(n.x + _portZoneW / 2, n.y + _nodeH / 2);
-
   // ── 缩放/整理/定位 ──
 
   void _zoomTo(double newScale) {
@@ -773,8 +918,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     for (final n in _nodes) {
       if (n.x < minX) minX = n.x;
       if (n.y < minY) minY = n.y;
-      if (n.x + _totalNodeWFor(n.type) > maxX) maxX = n.x + _totalNodeWFor(n.type);
-      if (n.y + _nodeH > maxY) maxY = n.y + _nodeH;
+      if (n.x + _totalNodeWidth(n) > maxX) maxX = n.x + _totalNodeWidth(n);
+      if (n.y + _nodeHeight(n) > maxY) maxY = n.y + _nodeHeight(n);
     }
     final contentW = maxX - minX + 80;
     final contentH = maxY - minY + 80;
@@ -900,8 +1045,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       final n = _nodes.firstWhere((n) => n.id == id);
       minX = math.min(minX, n.x);
       minY = math.min(minY, n.y);
-      maxX = math.max(maxX, n.x + _totalNodeWFor(n.type));
-      maxY = math.max(maxY, n.y + _nodeH);
+      maxX = math.max(maxX, n.x + _totalNodeWidth(n));
+      maxY = math.max(maxY, n.y + _nodeHeight(n));
     }
     final padding = 20.0;
 
@@ -1802,6 +1947,22 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   Widget _buildCanvas(ColorScheme scheme, AppStrings s) {
     final aiEnabled = context.read<AppState>().config.aiEnabled;
+    // 画布背景：跟随全局(global)时透明显示页面全局背景/壁纸/玻璃；
+    // 否则用指定实色填充画布
+    final canvasBg = context.read<AppState>().config.canvasBg;
+    final canvasFill = switch (canvasBg) {
+      'gray' => const Color(0xFF2B2B2B),
+      'black' => const Color(0xFF0A0A0A), // 接近纯黑但不刺眼
+      'white' => const Color(0xFFF0F0F0), // 比纯白暗一点
+      _ => null, // global：透明
+    };
+    // 网格线颜色随背景自适应
+    final gridColor = switch (canvasBg) {
+      'black' => const Color(0xFF555555).withAlpha(180), // 黑底白偏灰
+      'white' => const Color(0xFFBBBBBB).withAlpha(160), // 白底灰线
+      'gray' => scheme.outlineVariant.withAlpha(60),
+      _ => scheme.outlineVariant.withAlpha(25), // global
+    };
 
     final canvas = Listener(
       onPointerDown: (e) {
@@ -1852,6 +2013,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             _boxSelectRect = Rect.fromPoints(_boxSelectStart!, canvasPos);
           });
         }
+        // 探测模式：按下移动时也更新
+        if (_probeMode) _updateProbe(e.localPosition);
+      },
+      // 悬停探测：无按键时鼠标移动触发
+      onPointerHover: (e) {
+        if (_probeMode) _updateProbe(e.localPosition);
       },
       onPointerUp: (e) {
         // Right-click release
@@ -1881,7 +2048,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             final rect = _boxSelectRect!;
             setState(() {
               for (final n in _nodes) {
-                final nodeRect = Rect.fromLTWH(n.x, n.y, _totalNodeWFor(n.type), _nodeH);
+                final nodeRect = Rect.fromLTWH(n.x, n.y, _totalNodeWidth(n), _nodeHeight(n));
                 if (rect.overlaps(nodeRect)) {
                   _selectedNodeIds.add(n.id);
                   _lastSelectedId = n.id;
@@ -1919,14 +2086,20 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           height: _canvasSize,
           child: Stack(clipBehavior: Clip.none, children: [
             // 网格背景
-            Positioned.fill(child: CustomPaint(painter: _GridPainter(color: scheme.outlineVariant.withAlpha(25)))),
+            Positioned.fill(child: CustomPaint(painter: _GridPainter(
+              color: gridColor,
+              fill: canvasFill,
+            ))),
             // 连线
             CustomPaint(
               size: Size(_canvasSize, _canvasSize),
               painter: _ConnectionPainter(
                 nodes: _nodes,
-                connections: _connections,
+                connections: _hideLogic
+                    ? _connections.where((c) => c.kind != 'control').toList()
+                    : _connections,
                 color: scheme.primary.withAlpha(140),
+                controlColor: scheme.tertiary.withAlpha(180),
                 selectedNodeIds: _selectedNodeIds,
               ),
             ),
@@ -1935,21 +2108,20 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               CustomPaint(
                 size: Size(_canvasSize, _canvasSize),
                 painter: _TempLinePainter(
-                  from: _dragIsOutput
-                      ? _outPort(_nodes.firstWhere((n) => n.id == _dragFromNodeId))
-                      : _dragLineEnd!,
-                  to: _dragIsOutput
-                      ? _dragLineEnd!
-                      : _inPort(_nodes.firstWhere((n) => n.id == _dragFromNodeId)),
-                  color: scheme.primary.withAlpha(100),
+                  from: _dragLineStart(),
+                  to: _dragLineEnd!,
+                  color: _dragPort.contains('gate') || _dragPort.contains('status') || _dragPort.contains('enable')
+                      ? scheme.tertiary.withAlpha(120)
+                      : scheme.primary.withAlpha(100),
                 ),
               ),
             // 节点
             for (final node in _nodes)
-              Positioned(
-                left: node.x, top: node.y,
-                child: _buildNodeWidget(node, scheme, s),
-              ),
+              if (!(_hideLogic && node.isGate))
+                Positioned(
+                  left: node.x, top: node.y,
+                  child: _buildNodeWidget(node, scheme, s),
+                ),
             // 逻辑块虚线框
             for (final block in _logicBlocks)
               Positioned(
@@ -2059,8 +2231,46 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             padding: EdgeInsets.zero,
             onPressed: _redoStack.isEmpty ? null : _redo,
           ),
+          const SizedBox(width: 6),
+          // 探测模式按钮：悬停端口显示信号提示
+          Tooltip(
+            message: s.isZh ? '探测模式：悬停端口显示信号' : 'Probe: hover ports to inspect signals',
+            waitDuration: const Duration(milliseconds: 300),
+            child: IconButton(
+              icon: Icon(Icons.search, size: 16, color: _probeMode ? scheme.primary : scheme.onSurfaceVariant),
+              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+              padding: EdgeInsets.zero,
+              style: IconButton.styleFrom(
+                backgroundColor: _probeMode ? scheme.primary.withAlpha(40) : null,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+              ),
+              onPressed: () => setState(() => _probeMode = !_probeMode),
+            ),
+          ),
+          // 隐藏逻辑线按钮：隐藏/显示控制连线+逻辑门+红色逻辑端口
+          Tooltip(
+            message: s.isZh ? '隐藏逻辑线（控制连线、逻辑门、逻辑端口）' : 'Hide logic (control wires, gates, logic ports)',
+            waitDuration: const Duration(milliseconds: 300),
+            child: IconButton(
+              icon: Icon(Icons.route, size: 16, color: _hideLogic ? scheme.error : scheme.onSurfaceVariant),
+              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+              padding: EdgeInsets.zero,
+              style: IconButton.styleFrom(
+                backgroundColor: _hideLogic ? scheme.error.withAlpha(40) : null,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+              ),
+              onPressed: () => setState(() => _hideLogic = !_hideLogic),
+            ),
+          ),
           const Spacer(),
           if (!Platform.isWindows) ...[
+            IconButton(
+              icon: Icon(Icons.file_download_outlined, size: 18, color: scheme.onSurface),
+              tooltip: s.importConfig,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              padding: EdgeInsets.zero,
+              onPressed: () => _importConfig(s),
+            ),
             IconButton(
               icon: Icon(Icons.file_upload_outlined, size: 18, color: scheme.onSurface),
               tooltip: s.isZh ? '导出配置' : 'Export Config',
@@ -2104,12 +2314,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       Expanded(child: ClipRRect(
         key: _canvasKey,
         borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(12), bottomRight: Radius.circular(12)),
-        child: DragTarget<PipelineStepType>(
+        child: DragTarget<Object>(
           onAcceptWithDetails: (details) {
             final rb = context.findRenderObject() as RenderBox;
             final local = rb.globalToLocal(details.offset);
             final canvasPos = _screenToCanvas(local);
-            _addNodeAt(details.data, canvasPos);
+            final data = details.data;
+            if (data is PipelineStepType) {
+              _addNodeAt(data, canvasPos);
+            } else if (data is LogicGateType) {
+              _addGateAt(data, canvasPos);
+            }
           },
           builder: (ctx, candidateData, rejectedData) => Stack(children: [
             focusedCanvas,
@@ -2269,6 +2484,25 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           ]),
         ),
       )),
+      if (_probeMode && _probeTooltip != null && _probeTooltipPos != null)
+        Positioned(
+          left: _probeTooltipPos!.dx + 10,
+          top: _probeTooltipPos!.dy - 12,
+          child: IgnorePointer(child: Material(
+            color: Colors.transparent,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: scheme.inverseSurface.withAlpha(230),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                _probeTooltip!,
+                style: TextStyle(fontSize: 11, color: scheme.onInverseSurface),
+              ),
+            ),
+          )),
+        ),
     ]);
 
     return _glassWrap(inner, scheme);
@@ -2281,10 +2515,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     return _screenToCanvas(rb.globalToLocal(global));
   }
 
-  void _onPortDragStart(String nodeId, bool isOutput) {
+  void _onPortDragStart(String nodeId, String portKind) {
     setState(() {
       _dragFromNodeId = nodeId;
-      _dragIsOutput = isOutput;
+      _dragPort = portKind;
     });
   }
 
@@ -2292,14 +2526,212 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     setState(() => _dragLineEnd = _canvasFromGlobal(globalPos));
   }
 
-  void _onPortDragEnd() {
-    if (_dragFromNodeId != null && _dragLineEnd != null) {
+  /// 探测模式：根据鼠标位置判断悬停在哪个端口上，并给出信号提示
+  void _updateProbe(Offset localPos) {
+    if (!mounted) return;
+    try {
+      _updateProbeInner(localPos);
+    } catch (_) {
+      // 探测异常不影响渲染，避免灰屏
+      if (mounted && (_probeTooltip != null || _probeTooltipPos != null)) {
+        setState(() { _probeTooltip = null; _probeTooltipPos = null; });
+      }
+    }
+  }
+
+  void _updateProbeInner(Offset localPos) {
+    final canvasPos = _screenToCanvas(localPos);
+    final zh = context.read<AppState>().config.language == 'zh';
+    const hitR = 14.0;
+
+    for (final n in _nodes.reversed) {
+      if (n.isGate) {
+        final g = n.gate;
+        if (g == null) continue;
+        // 逻辑门输出端口（右侧端口区中心）
+        final go = Offset(n.x + _portZoneW + _gateW + _portZoneW / 2, n.y + _gateH / 2);
+        if ((canvasPos - go).distance <= hitR) {
+          final outVal = _gateOutputValue(n);
+          setState(() {
+            _probeTooltip = zh ? '输出: ${g.symbol(true)} = $outVal' : 'Output: ${g.symbol(false)} = $outVal';
+            _probeTooltipPos = go;
+          });
+          return;
+        }
+        // 逻辑门输入端口（spaceEvenly 布局，恒1/恒0 无输入）
+        final inputCount = g.inputCount;
+        for (var i = 0; i < inputCount; i++) {
+          final portY = n.y + _gateH * (i + 1) / (inputCount + 1);
+          final gi = Offset(n.x + _portZoneW / 2, portY);
+          if ((canvasPos - gi).distance <= hitR) {
+            final v = _gateInputValue(n, i);
+            setState(() {
+              _probeTooltip = zh ? '输入$i: $v' : 'Input$i: $v';
+              _probeTooltipPos = gi;
+            });
+            return;
+          }
+        }
+      } else {
+        // 普通节点：端口列垂直居中于 _nodeH，上下两个 16px 圆点
+        final colTop = n.y + (_nodeH - 38) / 2;
+        const dotR = 8.0;
+        const gap = 6.0;
+        final dot1Y = colTop + dotR;
+        final dot2Y = colTop + 16 + gap + dotR;
+        final rx = n.x + 16 + _nodeWFor(n.type) + 8;
+        final lx = n.x + 8;
+        // 右侧：数据输出(上) / 状态输出(下)
+        final dataOut = Offset(rx, dot1Y);
+        if ((canvasPos - dataOut).distance <= hitR && n.hasOutput) {
+          setState(() {
+            _probeTooltip = zh ? '数据输出: ${n.outputType?.name ?? '?'}' : 'Data out: ${n.outputType?.name ?? '?'}';
+            _probeTooltipPos = dataOut;
+          });
+          return;
+        }
+        final statusOut = Offset(rx, dot2Y);
+        if ((canvasPos - statusOut).distance <= hitR && n.type != PipelineStepType.start) {
+          setState(() {
+            _probeTooltip = zh ? '状态输出: 1 (成功)' : 'Status out: 1 (success)';
+            _probeTooltipPos = statusOut;
+          });
+          return;
+        }
+        // 左侧：数据输入(上) / 使能输入(下)
+        final dataIn = Offset(lx, dot1Y);
+        if ((canvasPos - dataIn).distance <= hitR && n.hasInput) {
+          setState(() {
+            _probeTooltip = zh ? '数据输入: ${n.inputTypes.isNotEmpty ? n.inputTypes.first.name : '?'}' : 'Data in: ${n.inputTypes.isNotEmpty ? n.inputTypes.first.name : '?'}';
+            _probeTooltipPos = dataIn;
+          });
+          return;
+        }
+        final enableIn = Offset(lx, dot2Y);
+        if ((canvasPos - enableIn).distance <= hitR && n.type != PipelineStepType.start) {
+          setState(() {
+            _probeTooltip = zh ? '使能输入: 1 (悬空默认)' : 'Enable in: 1 (default)';
+            _probeTooltipPos = enableIn;
+          });
+          return;
+        }
+      }
+    }
+    // 没有悬停在端口上
+    if (_probeTooltip != null || _probeTooltipPos != null) {
+      setState(() { _probeTooltip = null; _probeTooltipPos = null; });
+    }
+  }
+
+  /// 计算逻辑门输入信号值（带防环）
+  String _gateInputValue(PipelineNode n, int index) {
+    final conns = _connections.where((c) => c.toNodeId == n.id && c.kind == 'control').toList();
+    if (index < conns.length) {
+      final src = _nodes.where((s) => s.id == conns[index].fromNodeId).firstOrNull;
+      if (src != null && src.isGate) {
+        return _gateOutputValue(src, <String>{n.id});
+      }
+      return '1';
+    }
+    return '?';
+  }
+
+  /// 计算逻辑门输出信号值（根据输入与门类型），visited 防止环路导致栈溢出
+  String _gateOutputValue(PipelineNode n, [Set<String>? visited]) {
+    final v = visited ?? <String>{};
+    if (v.contains(n.id)) return '?'; // 检测到环路，返回未知
+    v.add(n.id);
+    try {
+      final g = n.gate;
+      if (g == null) return '?';
+      if (g.isConstant) {
+        return g == LogicGateType.const1 ? '1' : '0';
+      }
+      final inputs = _connections.where((c) => c.toNodeId == n.id && c.kind == 'control').toList();
+      final values = inputs.map((c) {
+        final src = _nodes.where((s) => s.id == c.fromNodeId).firstOrNull;
+        if (src != null && src.isGate) {
+          return int.tryParse(_gateOutputValue(src, v)) ?? 0;
+        }
+        // 状态输出源视为 1
+        return 1;
+      }).toList();
+      if (values.isEmpty) return '?';
+      final all1 = values.every((x) => x == 1);
+      final any1 = values.any((x) => x == 1);
+      switch (g) {
+        case LogicGateType.and: return all1 ? '1' : '0';
+        case LogicGateType.or: return any1 ? '1' : '0';
+        case LogicGateType.nand: return all1 ? '0' : '1';
+        case LogicGateType.nor: return any1 ? '0' : '1';
+        case LogicGateType.not: return values.first == 1 ? '0' : '1';
+        default: return '?';
+      }
+    } finally {
+      v.remove(n.id);
+    }
+  }
+
+  /// 计算拖拽连线的起点端口坐标
+  /// 端口布局：左侧上方=数据输入，左侧下方=使能输入（红），
+  /// 右侧上方=数据输出，右侧下方=状态输出（红）
+  Offset _dragLineStart() {
+    if (_dragFromNodeId == null) return Offset.zero;
+    final node = _nodes.firstWhere((n) => n.id == _dragFromNodeId, orElse: () => PipelineNode(id: '', type: PipelineStepType.start));
+
+    // 逻辑门节点
+    if (node.isGate) {
+      final g = node.gate;
+      final inputCount = g?.inputCount ?? 0;
+      if (_dragPort == 'gateOut') {
+        return Offset(node.x + _portZoneW + _gateW + _portZoneW / 2, node.y + _gateH / 2);
+      }
+      // gateIn：第一个输入圆圈位置（spaceEvenly）
+      if (inputCount > 0) {
+        return Offset(node.x + _portZoneW / 2, node.y + _gateH / (inputCount + 1));
+      }
+      return Offset(node.x + 2, node.y + _gateH / 2);
+    }
+
+    // 普通节点：端口列垂直居中于 _nodeH，上下两个 16px 圆点
+    final colTop = node.y + (_nodeH - 38) / 2;
+    const dotR = 8.0;
+    const gap = 6.0;
+    final dot1Y = colTop + dotR;              // 上方圆点（数据）
+    final dot2Y = colTop + 16 + gap + dotR;   // 下方圆点（控制）
+    switch (_dragPort) {
+      case 'dataOut':
+        return Offset(node.x + 16 + _nodeWFor(node.type) + 8, dot1Y);
+      case 'dataIn':
+        return Offset(node.x + 8, dot1Y);
+      case 'statusOut':
+        return Offset(node.x + 16 + _nodeWFor(node.type) + 8, dot2Y);
+      case 'enableIn':
+        return Offset(node.x + 8, dot2Y);
+      default:
+        return Offset(node.x, node.y);
+    }
+  }
+
+  void _onPortDragEnd() {    if (_dragFromNodeId != null && _dragLineEnd != null) {
       final target = _findNodeAtCanvasPos(_dragLineEnd!);
       if (target != null && target.id != _dragFromNodeId) {
-        if (_dragIsOutput) {
-          _addConnection(_dragFromNodeId!, target.id);
-        } else {
-          _addConnection(target.id, _dragFromNodeId!);
+        // 根据端口类型决定连接方向和类型
+        switch (_dragPort) {
+          case 'dataOut':
+            _addConnection(_dragFromNodeId!, target.id, 'data');
+          case 'dataIn':
+            _addConnection(target.id, _dragFromNodeId!, 'data');
+          case 'statusOut':
+            // 状态输出 → 使能输入 / 逻辑门输入
+            _addConnection(_dragFromNodeId!, target.id, 'control');
+          case 'enableIn':
+            // 使能输入 ← 来自状态输出或逻辑门输出
+            _addConnection(target.id, _dragFromNodeId!, 'control');
+          case 'gateOut':
+            _addConnection(_dragFromNodeId!, target.id, 'control');
+          case 'gateIn':
+            _addConnection(target.id, _dragFromNodeId!, 'control');
         }
       }
     }
@@ -2311,35 +2743,81 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   Widget _buildNodeWidget(PipelineNode node, ColorScheme scheme, AppStrings s) {
     final selected = _selectedNodeIds.contains(node.id);
+    if (node.isGate && node.gate != null) {
+      return _buildGateWidget(node, node.gate!, selected, scheme, s);
+    }
 
-    Widget portZone(bool isOutput) {
-      final hasPort = isOutput ? node.hasOutput : node.hasInput;
-      return Listener(
-        onPointerDown: (_) {},
-        behavior: HitTestBehavior.opaque,
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onPanStart: hasPort ? (_) => _onPortDragStart(node.id, isOutput) : null,
-          onPanUpdate: hasPort ? (d) => _onPortDragUpdate(d.globalPosition) : null,
-          onPanEnd: hasPort ? (_) => _onPortDragEnd() : null,
-          child: SizedBox(
-            width: _portZoneW,
-            height: _nodeH,
-            child: Center(child: Container(
-              width: 12, height: 12,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: hasPort
-                    ? (isOutput ? scheme.primary : scheme.secondary)
-                    : Colors.transparent,
-                border: hasPort
-                    ? Border.all(color: scheme.surface, width: 2)
-                    : null,
-              ),
-            )),
+    // 端口构建器：isOutput=true 右侧，false 左侧；isControl=true 红色控制端口
+    Widget portCircle(bool isOutput, bool isControl) {
+      // 隐藏逻辑模式下不显示红色控制端口
+      if (_hideLogic && isControl) return const SizedBox(width: 16, height: 16);
+      final hasPort = isControl
+          ? (isOutput
+              ? node.type != PipelineStepType.start // 状态输出：非起始节点
+              : node.type != PipelineStepType.start) // 使能输入：非起始节点
+          : (isOutput ? node.hasOutput : node.hasInput);
+      final portKind = isControl
+          ? (isOutput ? 'statusOut' : 'enableIn')
+          : (isOutput ? 'dataOut' : 'dataIn');
+      final portColor = isControl
+          ? const Color(0xFFD32F2F) // 红色控制端口
+          : (isOutput ? scheme.primary : scheme.secondary);
+      return GestureDetector(
+        onPanStart: hasPort ? (_) => _onPortDragStart(node.id, portKind) : null,
+        onPanUpdate: hasPort ? (d) => _onPortDragUpdate(d.globalPosition) : null,
+        onPanEnd: hasPort ? (_) => _onPortDragEnd() : null,
+        child: MouseRegion(
+          cursor: hasPort ? SystemMouseCursors.click : SystemMouseCursors.basic,
+          child: Container(
+            width: 16, height: 16,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: hasPort ? portColor : Colors.transparent,
+              border: hasPort ? Border.all(color: scheme.surface, width: 2) : null,
+              boxShadow: hasPort && isControl ? [BoxShadow(color: portColor.withAlpha(60), blurRadius: 4)] : null,
+            ),
           ),
         ),
       );
+    }
+
+    // 左侧端口列（上方=数据输入，下方=使能输入）
+    Widget leftPorts = Column(
+      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        portCircle(false, false), // 数据输入
+        const SizedBox(height: 6),
+        portCircle(false, true),  // 使能输入（红）
+      ],
+    );
+
+    // 右侧端口列（上方=数据输出，下方=状态输出）
+    Widget rightPorts = Column(
+      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        portCircle(true, false),  // 数据输出
+        const SizedBox(height: 6),
+        portCircle(true, true),   // 状态输出（红）
+      ],
+    );
+
+    // 源节点特殊处理：左侧无端口（无数据输入、无使能输入）
+    if (node.type == PipelineStepType.start) {
+      leftPorts = Column(mainAxisSize: MainAxisSize.min, children: [
+        portCircle(false, false), // 数据输入（隐藏）
+        const SizedBox(height: 6),
+        portCircle(false, true),  // 使能输入（隐藏）
+      ]);
+    }
+    // 输出节点特殊处理：右侧无端口（无数据输出），但有状态输出
+    if (node.type == PipelineStepType.output) {
+      rightPorts = Column(mainAxisSize: MainAxisSize.min, mainAxisAlignment: MainAxisAlignment.center, children: [
+        portCircle(true, false),  // 数据输出（隐藏）
+        const SizedBox(height: 6),
+        portCircle(true, true),   // 状态输出（红）
+      ]);
     }
 
     Widget centerZone() {
@@ -2354,7 +2832,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               _previewedLogicType = null;
               _selectedLogicBlockId = null;
               if (_isCtrlPressed()) {
-                // Ctrl+click: toggle in/out of selection
                 if (_selectedNodeIds.contains(node.id)) {
                   _selectedNodeIds.remove(node.id);
                   _lastSelectedId = _selectedNodeIds.isEmpty ? null : _selectedNodeIds.last;
@@ -2363,7 +2840,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                   _lastSelectedId = node.id;
                 }
               } else {
-                // Single click: select only this node
                 _selectedNodeIds.clear();
                 _selectedNodeIds.add(node.id);
                 _lastSelectedId = node.id;
@@ -2377,18 +2853,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             final dy = d.delta.dy / scale;
             setState(() {
               if (_selectedNodeIds.contains(node.id)) {
-                // Move all selected nodes together
                 for (final n in _nodes) {
-                  if (_selectedNodeIds.contains(n.id)) {
-                    n.x += dx;
-                    n.y += dy;
-                  }
+                  if (_selectedNodeIds.contains(n.id)) { n.x += dx; n.y += dy; }
                 }
-              } else {
-                // Dragging an unselected node: move only it
-                node.x += dx;
-                node.y += dy;
-              }
+              } else { node.x += dx; node.y += dy; }
             });
           },
           onSecondaryTapUp: (d) => _showNodeMenu(d.globalPosition, node.id),
@@ -2444,11 +2912,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                     s.isZh ? node.label : node.labelEn,
                     style: TextStyle(
                       fontSize: _currentScale < 0.4 ? (13 / _currentScale * 0.5).clamp(13.0, 40.0) : (13 / _currentScale * 0.7).clamp(13.0, 28.0),
-                      fontWeight: FontWeight.w600,
-                      color: scheme.onSurface,
+                      fontWeight: FontWeight.w600, color: scheme.onSurface,
                     ),
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
+                    overflow: TextOverflow.ellipsis, textAlign: TextAlign.center,
                   )),
           ),
         ),
@@ -2457,17 +2923,164 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: [
-        portZone(false),
-        centerZone(),
-        portZone(true),
-      ],
+      children: [leftPorts, centerZone(), rightPorts],
+    );
+  }
+
+  /// 构建逻辑门节点 widget（比常规节点小，ANSI 符号绘制）
+  Widget _buildGateWidget(PipelineNode node, LogicGateType gate, bool selected, ColorScheme scheme, AppStrings s) {
+    final inputCount = gate.inputCount;
+    // 符号标准：ANSI/IEEE（特色形状）或 IEC（矩形框）
+    final iec = context.read<AppState>().config.gateStd == 'iec';
+
+    return Listener(
+      onPointerDown: (_) {},
+      behavior: HitTestBehavior.opaque,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          setState(() {
+            _previewedToolboxType = null;
+            _previewedLogicType = null;
+            _selectedLogicBlockId = null;
+            if (_isCtrlPressed()) {
+              if (_selectedNodeIds.contains(node.id)) {
+                _selectedNodeIds.remove(node.id);
+                _lastSelectedId = _selectedNodeIds.isEmpty ? null : _selectedNodeIds.last;
+              } else {
+                _selectedNodeIds.add(node.id);
+                _lastSelectedId = node.id;
+              }
+            } else {
+              _selectedNodeIds.clear();
+              _selectedNodeIds.add(node.id);
+              _lastSelectedId = node.id;
+            }
+          });
+        },
+        onPanStart: (_) => _pushUndo(),
+        onPanUpdate: (d) {
+          final scale = _transformCtrl.value.getMaxScaleOnAxis();
+          final dx = d.delta.dx / scale;
+          final dy = d.delta.dy / scale;
+          setState(() {
+            if (_selectedNodeIds.contains(node.id)) {
+              for (final n in _nodes) {
+                if (_selectedNodeIds.contains(n.id)) {
+                  n.x += dx;
+                  n.y += dy;
+                }
+              }
+            } else {
+              node.x += dx;
+              node.y += dy;
+            }
+          });
+        },
+        onSecondaryTapUp: (d) => _showNodeMenu(d.globalPosition, node.id),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 左侧输入端口（AND/OR/NAND/NOR=2个，NOT=1个，const=0个）
+            if (inputCount > 0)
+              SizedBox(
+                width: _portZoneW,
+                height: _gateH,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: List.generate(inputCount, (i) {
+                    return GestureDetector(
+                      onPanStart: (_) => _onPortDragStart(node.id, 'gateIn'),
+                      onPanUpdate: (d) => _onPortDragUpdate(d.globalPosition),
+                      onPanEnd: (_) => _onPortDragEnd(),
+                      child: Container(
+                        width: 14, height: 14,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: const Color(0xFFD32F2F), // 红色逻辑端口
+                          border: Border.all(color: scheme.surface, width: 1.5),
+                        ),
+                      ),
+                    );
+                  }),
+                ),
+              )
+            else
+              SizedBox(width: inputCount == 0 ? 4 : _portZoneW, height: _gateH),
+            // 中心：ANSI 符号
+            GestureDetector(
+              onPanStart: (_) => _pushUndo(),
+              onPanUpdate: (d) {
+                final scale = _transformCtrl.value.getMaxScaleOnAxis();
+                final dx = d.delta.dx / scale;
+                final dy = d.delta.dy / scale;
+                setState(() {
+                  if (_selectedNodeIds.contains(node.id)) {
+                    for (final n in _nodes) {
+                      if (_selectedNodeIds.contains(n.id)) {
+                        n.x += dx;
+                        n.y += dy;
+                      }
+                    }
+                  } else {
+                    node.x += dx;
+                    node.y += dy;
+                  }
+                });
+              },
+              child: Container(
+                width: inputCount == 0 ? _gateW - 8 : _gateW,
+                height: _gateH,
+                decoration: BoxDecoration(
+                  color: scheme.tertiaryContainer.withAlpha(selected ? 220 : 160),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: selected ? scheme.tertiary : scheme.tertiary.withAlpha(80),
+                    width: selected ? 2 : 1,
+                  ),
+                ),
+                child: Center(
+                  child: CustomPaint(
+                    size: Size(inputCount == 0 ? _gateW - 8 : _gateW, _gateH),
+                    painter: _GateSymbolPainter(
+                      gate: gate,
+                      iec: iec,
+                      color: scheme.onTertiaryContainer,
+                      isZh: s.isZh,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            // 右侧输出端口
+            SizedBox(
+              width: _portZoneW,
+              height: _gateH,
+              child: Center(
+                child: GestureDetector(
+                  onPanStart: (_) => _onPortDragStart(node.id, 'gateOut'),
+                  onPanUpdate: (d) => _onPortDragUpdate(d.globalPosition),
+                  onPanEnd: (_) => _onPortDragEnd(),
+                  child: Container(
+                    width: 16, height: 16,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: const Color(0xFFD32F2F), // 红色逻辑端口
+                      border: Border.all(color: scheme.surface, width: 1.5),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
   PipelineNode? _findNodeAtCanvasPos(Offset pos) {
-    for (final n in _nodes) {
-      if (pos.dx >= n.x && pos.dx <= n.x + _totalNodeWFor(n.type) && pos.dy >= n.y && pos.dy <= n.y + _nodeH) {
+    for (final n in _nodes.reversed) {
+      if (pos.dx >= n.x && pos.dx <= n.x + _totalNodeWidth(n) && pos.dy >= n.y && pos.dy <= n.y + _nodeHeight(n)) {
         return n;
       }
     }
@@ -2635,6 +3248,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                   _buildLogicToolboxItem(LogicBlockType.loop, scheme, s),
                   _buildLogicToolboxItem(LogicBlockType.selectiveLoop, scheme, s),
                 ]),
+                // 逻辑门分组
+                const SizedBox(height: 4),
+                Wrap(spacing: 3, runSpacing: 3, children: [
+                  for (final g in LogicGateType.values) _buildGateToolboxItem(g, scheme, s),
+                ]),
                 if (widget.containerInfo != null) ...[
                   const SizedBox(height: 8),
                   _categoryLabel(scheme, Icons.folder_special_outlined, s.isZh ? '容器' : 'Container'),
@@ -2764,7 +3382,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   Widget _buildToolboxItem(PipelineStepType t, ColorScheme scheme, AppStrings s) {
     final dummy = PipelineNode(id: '', type: t);
     final tag = dummy.mediaTag;
-    return Draggable<PipelineStepType>(
+    return Draggable<Object>(
       data: t,
       feedback: Material(
         elevation: 6,
@@ -2839,6 +3457,47 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           const SizedBox(width: 4),
           Text(label, style: TextStyle(fontSize: 12, color: scheme.onSurface)),
         ]),
+      ),
+    );
+  }
+
+  /// 构建逻辑门工具箱项（可拖拽到画布）
+  Widget _buildGateToolboxItem(LogicGateType gate, ColorScheme scheme, AppStrings s) {
+    final sym = gate.symbol(s.isZh);
+    return Draggable<Object>(
+      data: gate,
+      feedback: Material(
+        elevation: 6,
+        borderRadius: BorderRadius.circular(6),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: scheme.tertiaryContainer.withAlpha(180),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: scheme.tertiary.withAlpha(120)),
+          ),
+          child: Text(sym, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: scheme.onTertiaryContainer, decoration: TextDecoration.none)),
+        ),
+      ),
+      childWhenDragging: Opacity(opacity: 0.3, child: _gateChip(gate, scheme, s)),
+      child: _gateChip(gate, scheme, s),
+    );
+  }
+
+  Widget _gateChip(LogicGateType gate, ColorScheme scheme, AppStrings s) {
+    final sym = gate.symbol(s.isZh);
+    final name = gate.name.toUpperCase();
+    return Tooltip(
+      message: name,
+      waitDuration: const Duration(milliseconds: 500),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        decoration: BoxDecoration(
+          color: scheme.tertiaryContainer.withAlpha(gate.isConstant ? 120 : 80),
+          borderRadius: BorderRadius.circular(5),
+          border: Border.all(color: scheme.tertiary.withAlpha(60)),
+        ),
+        child: Text(sym, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: scheme.onTertiaryContainer)),
       ),
     );
   }
@@ -2954,12 +3613,135 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
 // ── 网格背景 ──
 
-class _GridPainter extends CustomPainter {
+/// 逻辑门符号画笔：ANSI/IEEE（特色形状）或 IEC（矩形框）。
+/// 支持与门/或门/非门/与非门/或非门/恒1/恒0，并带取反圈。
+class _GateSymbolPainter extends CustomPainter {
+  final LogicGateType gate;
+  final bool iec;
   final Color color;
-  _GridPainter({required this.color});
+  final bool isZh;
+  _GateSymbolPainter({required this.gate, required this.iec, required this.color, required this.isZh});
 
   @override
   void paint(Canvas canvas, Size size) {
+    final w = size.width, h = size.height;
+    final hw = w / 2, hh = h / 2;
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.6
+      ..strokeCap = StrokeCap.round;
+    final fillP = Paint()..color = color..style = PaintingStyle.fill;
+    final constOne = gate == LogicGateType.const1;
+    final constZero = gate == LogicGateType.const0;
+    final negated = gate == LogicGateType.nand || gate == LogicGateType.nor || gate == LogicGateType.not;
+
+    // 恒1/恒0：直接画大号数字
+    if (constOne || constZero) {
+      final tp = TextPainter(
+        text: TextSpan(text: constOne ? '1' : '0', style: TextStyle(color: color, fontSize: 20, fontWeight: FontWeight.w700)),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, Offset(hw - tp.width / 2, hh - tp.height / 2));
+      return;
+    }
+
+    final lab = _label;
+    const pad = 6.0;
+    if (!iec) {
+      // ── ANSI/IEEE：特色形状 ──
+      final boxTop = pad;
+      final boxBot = h - pad;
+      final backX = pad + 2;
+      if (gate == LogicGateType.and || gate == LogicGateType.nand) {
+        // 与门：直线背 + 前凸弧（D 形）
+        final frontX = w - pad;
+        final path = Path()
+          ..moveTo(backX, boxTop)
+          ..lineTo(frontX - 6, boxTop)
+          ..arcToPoint(Offset(frontX - 6, boxBot),
+              radius: Radius.circular((boxBot - boxTop) / 2), clockwise: false)
+          ..lineTo(backX, boxBot)
+          ..close();
+        canvas.drawPath(path, paint);
+        _labelText(canvas, lab, Offset(frontX - 4, hh));
+      } else if (gate == LogicGateType.or || gate == LogicGateType.nor) {
+        // 或门：两侧内凹弧 + 前方尖形
+        final path = Path()
+          ..moveTo(backX, boxTop)
+          ..quadraticBezierTo(w * 0.55, boxTop, w * 0.62, hh)
+          ..quadraticBezierTo(w * 0.55, boxBot, backX, boxBot)
+          ..quadraticBezierTo(w * 0.5, boxBot, w * 0.42, hh)
+          ..quadraticBezierTo(w * 0.5, boxTop, backX, boxTop)
+          ..close();
+        canvas.drawPath(path, paint);
+        _labelText(canvas, lab, Offset(w * 0.62, hh));
+      } else if (gate == LogicGateType.not) {
+        // 非门：三角形（缓冲器三角）+ 取反圈
+        final tipX = w - pad - 4;
+        final path = Path()
+          ..moveTo(backX, boxTop)
+          ..lineTo(backX, boxBot)
+          ..lineTo(tipX, hh)
+          ..close();
+        canvas.drawPath(path, paint);
+      }
+    } else {
+      // ── IEC：矩形框 ──
+      canvas.drawRect(Rect.fromLTRB(pad, pad, w - pad, h - pad), paint);
+      _labelText(canvas, lab, Offset(hw, hh));
+    }
+
+    // 取反圈（NAND/NOR/NOT）：画在输出尖/右侧边缘
+    if (negated && !constOne && !constZero) {
+      double cx;
+      if (iec) {
+        cx = w - pad - 5;
+      } else if (gate == LogicGateType.not) {
+        cx = w - pad - 4;
+      } else if (gate == LogicGateType.and || gate == LogicGateType.nand) {
+        cx = w - pad;
+      } else {
+        cx = w - pad - 2;
+      }
+      canvas.drawCircle(Offset(cx, hh), 3, fillP);
+    }
+  }
+
+  String get _label {
+    switch (gate) {
+      case LogicGateType.and: return '&';
+      case LogicGateType.or: return isZh ? '≥1' : '≥1';
+      case LogicGateType.not: return '1';
+      case LogicGateType.nand: return '&';
+      case LogicGateType.nor: return '≥1';
+      default: return '';
+    }
+  }
+
+  void _labelText(Canvas canvas, String t, Offset center) {
+    final tp = TextPainter(
+      text: TextSpan(text: t, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w700)),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, Offset(center.dx - tp.width / 2, center.dy - tp.height / 2));
+  }
+
+  @override
+  bool shouldRepaint(_GateSymbolPainter old) =>
+      old.gate != gate || old.iec != iec || old.color != color;
+}
+
+class _GridPainter extends CustomPainter {
+  final Color color;
+  final Color? fill;
+  _GridPainter({required this.color, this.fill});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (fill != null) {
+      canvas.drawRect(Offset.zero & size, Paint()..color = fill!);
+    }
     final paint = Paint()..color = color..strokeWidth = 0.5;
     const step = 40.0;
     for (var x = 0.0; x < size.width; x += step) {
@@ -2971,7 +3753,7 @@ class _GridPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_GridPainter old) => old.color != color;
+  bool shouldRepaint(_GridPainter old) => old.color != color || old.fill != fill;
 }
 
 // ── 连线绘制 ──
@@ -2980,9 +3762,11 @@ class _ConnectionPainter extends CustomPainter {
   final List<PipelineNode> nodes;
   final List<PipelineConnection> connections;
   final Color color;
+  final Color controlColor;
   final Set<String> selectedNodeIds;
 
-  _ConnectionPainter({required this.nodes, required this.connections, required this.color, required this.selectedNodeIds});
+  _ConnectionPainter({required this.nodes, required this.connections, required this.color,
+    required this.selectedNodeIds, this.controlColor = const Color(0xFFFF8F00)});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -2993,28 +3777,151 @@ class _ConnectionPainter extends CustomPainter {
 
       final from = nodes[fromIdx];
       final to = nodes[toIdx];
+      final isControl = conn.kind == 'control';
+      // 到逻辑门目标时，计算该连线是第几个输入（用于对准圆圈）
+      final inputIdx = (isControl && to.isGate)
+          ? connections.where((c) => c.toNodeId == conn.toNodeId && c.kind == 'control').toList().indexOf(conn)
+          : 0;
+      if (inputIdx < 0) continue;
 
-      final p1 = Offset(from.x + _portZoneW + _nodeWFor(from.type) + _portZoneW / 2, from.y + _nodeH / 2);
-      final p2 = Offset(to.x + _portZoneW / 2, to.y + _nodeH / 2);
-      final dx = (p2.dx - p1.dx).abs() * 0.5;
+      final p1 = _portPos(from, isOutput: true, isControl: isControl);
+      final p2 = _portPos(to, isOutput: false, isControl: isControl, gateInputIndex: inputIdx);
 
       final highlighted = selectedNodeIds.contains(conn.fromNodeId) || selectedNodeIds.contains(conn.toNodeId);
+      final connColor = isControl
+          ? (highlighted ? controlColor : controlColor.withAlpha(120))
+          : (highlighted ? color : color.withAlpha(80));
       final paint = Paint()
-        ..color = highlighted ? color : color.withAlpha(80)
+        ..color = connColor
         ..strokeWidth = highlighted ? 2.5 : 1.5
         ..style = PaintingStyle.stroke;
 
-      final path = Path()
-        ..moveTo(p1.dx, p1.dy)
-        ..cubicTo(p1.dx + dx, p1.dy, p2.dx - dx, p2.dy, p2.dx, p2.dy);
-      canvas.drawPath(path, paint);
+      // PCB 式布线：正交（曼哈顿）折线，转角圆角
+      final path = _orthogonalPath(p1, p2, radius: 6);
+
+      // 控制连线用虚线绘制
+      if (isControl) {
+        paint.strokeWidth = highlighted ? 2.0 : 1.2;
+        _drawDashedPathOnPath(canvas, path, paint);
+      } else {
+        canvas.drawPath(path, paint);
+      }
 
       // 箭头
-      final arrowPaint = Paint()..color = paint.color..style = PaintingStyle.fill;
+      final arrowPaint = Paint()..color = connColor..style = PaintingStyle.fill;
       final dir = (p2 - Offset(p2.dx - 10, p2.dy)).direction;
       final a1 = Offset(p2.dx - 8 * math.cos(dir - 0.4), p2.dy - 8 * math.sin(dir - 0.4));
       final a2 = Offset(p2.dx - 8 * math.cos(dir + 0.4), p2.dy - 8 * math.sin(dir + 0.4));
       canvas.drawPath(Path()..moveTo(p2.dx, p2.dy)..lineTo(a1.dx, a1.dy)..lineTo(a2.dx, a2.dy)..close(), arrowPaint);
+    }
+  }
+
+  /// 根据节点类型和连线类型计算端口坐标
+  /// 端口布局（与 widget 一致）：
+  ///   普通节点左右两侧各有 16px 端口列（上下两个 16px 圆点，间距 6px），
+  ///   节点中心区域高 _nodeH，端口列垂直居中。
+  ///   左侧上方=数据输入，左侧下方=使能输入（红）
+  ///   右侧上方=数据输出，右侧下方=状态输出（红）
+  ///   逻辑门：左侧端口区宽 _portZoneW（恒1/恒0 为 4px 占位），多个输入
+  ///   用 spaceEvenly 排布；右侧输出端口区宽 _portZoneW。
+  Offset _portPos(PipelineNode n, {required bool isOutput, required bool isControl, int gateInputIndex = 0}) {
+    // 逻辑门节点
+    if (n.isGate) {
+      final g = n.gate;
+      final inputCount = g?.inputCount ?? 0;
+      if (isOutput) {
+        // 输出：右侧端口区（恒门左侧占位不同，但右侧端口区相同）
+        return Offset(n.x + _portZoneW + _gateW + _portZoneW / 2, n.y + _gateH / 2);
+      }
+      // 输入：左侧端口区，spaceEvenly 布局的第 gateInputIndex 个圆圈
+      if (inputCount == 0) {
+        // 恒1/恒0 无输入
+        return Offset(n.x + 4 / 2, n.y + _gateH / 2);
+      }
+      final idx = gateInputIndex.clamp(0, inputCount - 1);
+      final cy = n.y + _gateH * (idx + 1) / (inputCount + 1);
+      return Offset(n.x + _portZoneW / 2, cy);
+    }
+
+    // 普通节点：左/右侧端口列（16px 圆点，两列上下排布，垂直居中）
+    // 端口列总高 = 16 + 6 + 16 = 38，垂直居中于 _nodeH=68 → top 偏移 15
+    final colTop = n.y + (_nodeH - 38) / 2;
+    const dotR = 8.0; // 16px 圆点半径
+    const gap = 6.0;
+    final dot1Y = colTop + dotR;
+    final dot2Y = colTop + 16 + gap + dotR;
+
+    if (isControl) {
+      if (isOutput) {
+        // 状态输出：右侧下方
+        return Offset(n.x + 16 + _nodeWFor(n.type) + 8, dot2Y);
+      } else {
+        // 使能输入：左侧下方
+        return Offset(n.x + 8, dot2Y);
+      }
+    }
+    if (isOutput) {
+      // 数据输出：右侧上方
+      return Offset(n.x + 16 + _nodeWFor(n.type) + 8, dot1Y);
+    } else {
+      // 数据输入：左侧上方
+      return Offset(n.x + 8, dot1Y);
+    }
+  }
+
+  /// PCB 式正交布线：从 p1 到 p2 的曼哈顿折线（先水平后垂直，转角圆角）。
+  Path _orthogonalPath(Offset p1, Offset p2, {double radius = 6}) {
+    const lead = 20.0; // 起点水平延伸 / 终点水平引入
+    final dx = p2.dx - p1.dx;
+    // 中间竖向折线的 x 位置：偏向目标一段距离
+    final midX = p2.dx - (dx >= 0 ? lead : -lead);
+    final r = radius.clamp(1.0, lead);
+    final path = Path()..moveTo(p1.dx, p1.dy);
+
+    // 1) 水平：p1 → midX（在 p1.y）
+    final h1 = midX - p1.dx;
+    if (h1.abs() > r * 2) {
+      path.lineTo(p1.dx + (h1 > 0 ? h1 - r : h1 + r), p1.dy);
+      // 圆角往竖向过渡
+      if (h1 > 0) {
+        path.quadraticBezierTo(midX, p1.dy, midX, p1.dy + r);
+      } else {
+        path.quadraticBezierTo(midX, p1.dy, midX, p1.dy - r);
+      }
+    } else {
+      path.lineTo(midX, p1.dy);
+    }
+
+    // 2) 垂直：midX → p2.y
+    final v = p2.dy - p1.dy;
+    if (v.abs() > r * 2) {
+      path.lineTo(midX, p2.dy - (v > 0 ? r : -r));
+      // 圆角往水平过渡到 p2
+      if (v > 0) {
+        path.quadraticBezierTo(midX, p2.dy, midX + (dx >= 0 ? r : -r), p2.dy);
+      } else {
+        path.quadraticBezierTo(midX, p2.dy, midX + (dx >= 0 ? r : -r), p2.dy);
+      }
+    } else {
+      path.lineTo(midX, p2.dy);
+    }
+
+    // 3) 水平：midX → p2.dx（p2.y）
+    path.lineTo(p2.dx, p2.dy);
+    return path;
+  }
+
+  /// 在给定路径上绘制虚线
+  void _drawDashedPathOnPath(Canvas canvas, Path path, Paint paint) {
+    const dashLen = 6.0;
+    const gapLen = 3.0;
+    for (final metric in path.computeMetrics()) {
+      double drawn = 0;
+      while (drawn < metric.length) {
+        final end = (drawn + dashLen).clamp(0.0, metric.length);
+        canvas.drawPath(metric.extractPath(drawn, end), paint);
+        drawn += dashLen + gapLen;
+      }
     }
   }
 
@@ -3031,11 +3938,16 @@ class _TempLinePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final dx = (to.dx - from.dx).abs() * 0.5;
     final paint = Paint()..color = color..strokeWidth = 2..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round;
+    // PCB 正交折线拖拽预览
+    const lead = 20.0;
+    final dx = to.dx - from.dx;
+    final midX = to.dx - (dx >= 0 ? lead : -lead);
     final path = Path()..moveTo(from.dx, from.dy)
-      ..cubicTo(from.dx + dx, from.dy, to.dx - dx, to.dy, to.dx, to.dy);
+      ..lineTo(midX, from.dy)
+      ..lineTo(midX, to.dy)
+      ..lineTo(to.dx, to.dy);
     canvas.drawPath(path, paint);
   }
 
@@ -4038,11 +4950,9 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
   }
 
   Widget _buildCollapsed(ColorScheme scheme) {
-    return Material(
-      color: scheme.primaryContainer,
-      borderRadius: BorderRadius.circular(14),
-      elevation: 4,
-      shadowColor: scheme.shadow.withAlpha(40),
+    return GlassPanel(
+      radius: 14,
+      blur: 12,
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
         onTap: () => setState(() => _expanded = true),
@@ -4060,16 +4970,15 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
 
   Widget _buildExpanded(ColorScheme scheme) {
     final s = widget.strings;
-    return Material(
-      color: scheme.surface,
-      borderRadius: BorderRadius.circular(16),
-      elevation: 8,
-      shadowColor: scheme.shadow.withAlpha(60),
+    // 玻璃面板：跟随全局玻璃配置（液态玻璃/模糊/无效果），主题着色跟随 glassFollowTheme
+    return GlassPanel(
+      radius: 16,
+      blur: 14,
       child: Container(
         width: double.infinity, height: double.infinity,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(0),
-          border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
+          border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
         ),
         child: Column(children: [
           Padding(
