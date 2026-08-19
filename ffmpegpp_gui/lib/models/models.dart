@@ -142,12 +142,13 @@ enum LogicGateType {
   nand,   // 与非门：与门的非
   nor,    // 或非门：或门的非
   const1, // 恒 1：恒定输出 1（无输入）
-  const0; // 恒 0：恒定输出 0（无输入）
+  const0, // 恒 0：恒定输出 0（无输入）
+  timeTrigger; // 时间触发器：系统时间匹配时输出 1，否则 0（无输入，需配置时间/日期）
 
-  /// 该逻辑门的常规输入数（恒1/恒0 为 0，非门为 1，其余为 2）
+  /// 该逻辑门的常规输入数（恒1/恒0/时间触发器 为 0，非门为 1，其余为 2）
   int get inputCount => switch (this) {
     LogicGateType.not => 1,
-    LogicGateType.const1 || LogicGateType.const0 => 0,
+    LogicGateType.const1 || LogicGateType.const0 || LogicGateType.timeTrigger => 0,
     _ => 2,
   };
 
@@ -162,6 +163,7 @@ enum LogicGateType {
     LogicGateType.nor => isZh ? '或非' : 'NOR',
     LogicGateType.const1 => '1',
     LogicGateType.const0 => '0',
+    LogicGateType.timeTrigger => isZh ? '时间' : 'Time',
   };
 }
 

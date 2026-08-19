@@ -1,11 +1,10 @@
-# 🎬 FFmpeg++ v5.0.0-beta1
+# 🎬 FFmpeg++
 
 <div align="center">
 
 **专业视频 / 图片 / 音频处理桌面应用 — 100% AI 生成代码**
 
-[![Version](https://img.shields.io/badge/version-v5.0.0--beta1-orange)](https://github.com/pity-Fox/FFmpeg_plus_plus/releases)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Android-blue?logo=flutter)](https://flutter.dev)
+[![Platform](https://img.shields.io/badge/platform-Windows%20|%20Linux%20|%20macOS-blue?logo=flutter)](https://flutter.dev)
 [![Flutter](https://img.shields.io/badge/Flutter-3.44+-02569B?logo=flutter)](https://flutter.dev)
 [![C++](https://img.shields.io/badge/C++-17-00599C?logo=cplusplus)](https://isocpp.org)
 [![FFmpeg](https://img.shields.io/badge/FFmpeg-8.0-007808?logo=ffmpeg)](https://ffmpeg.org)
@@ -20,11 +19,11 @@
 <table>
   <tr>
     <td align="center"><b>🎬 主界面</b></td>
-    <td align="center"><b>✨ 功能演示</b></td>
+    <td align="center"><b>📋 使用演示</b></td>
   </tr>
   <tr>
-    <td><img src="rel/1.png" width="100%" alt="FFmpeg++ 主界面"></td>
-    <td><img src="rel/2.png" width="100%" alt="FFmpeg++ 功能演示"></td>
+    <td><img src="rel/view.png" width="100%" alt="FFmpeg++ 主界面"></td>
+    <td><img src="rel/view1.png" width="100%" alt="FFmpeg++ 使用演示"></td>
   </tr>
 </table>
 
@@ -36,9 +35,9 @@
 
 ### 📖 概述
 
-FFmpeg++ **v5.0.0-beta1** 是一款基于 **Flutter**（Material Design 3 前端）+ **C++17**（共享库后端，通过 FFI 加载）的跨平台视频 / 图片 / 音频处理工具。核心功能为蓝图式**节点编辑器**，支持构建复杂的多步骤处理流程。
+FFmpeg++ 是一款基于 **Flutter**（Material Design 3 前端）+ **C++17**（共享库后端，通过 FFI 加载）的跨平台桌面视频/图片/音频处理工具。核心功能为蓝图式**节点编辑器**，支持构建复杂的多步骤处理流程。
 
-本版本支持 **Windows**、**Linux**（x64 / ARM64）、**macOS**（Universal）桌面平台，并新增 **Android 移动端**适配：底部液态玻璃导航栏、Monet 动态取色、内置 FFmpeg（无需用户安装任何依赖）。
+支持 **Windows**、**Linux**（x64 / ARM64）、**macOS**（Universal）三大平台。
 
 ### 🏗 架构
 
@@ -71,7 +70,6 @@ FFmpeg++ **v5.0.0-beta1** 是一款基于 **Flutter**（Material Design 3 前端
 | 🔗 **合并媒体** | 多文件顺序合并，图片序列合成视频 |
 | 🧠 **命令** | 手动输入 ffmpeg 命令 + 快捷模板 + 参数参考 |
 | 🤖 **AI 助手** | 内置 AI 聊天面板，自然语言描述需求自动配置节点 |
-| 📱 **Android 移动端** | 底部液态玻璃导航栏、Monet 动态取色、内置 FFmpeg，桌面 / 移动同一代码库 |
 | ⚙️ **设置** | 暗/亮主题、字体、主题色、背景图片、编辑模式切换 |
 
 ### 🧩 节点编辑器
@@ -92,13 +90,12 @@ FFmpeg++ **v5.0.0-beta1** 是一款基于 **Flutter**（Material Design 3 前端
 
 | 平台 | 下载 |
 |------|------|
-| **Windows** | [Releases](https://github.com/pity-Fox/FFmpeg_plus_plus/releases) → `FFmpeg++_v5.0.0-beta1_setup.exe` |
-| **Linux x64** | [Releases](https://github.com/pity-Fox/FFmpeg_plus_plus/releases) → `ffmpegpp_5.0.0-beta1_amd64.deb` |
-| **Linux ARM64** | [Releases](https://github.com/pity-Fox/FFmpeg_plus_plus/releases) → `ffmpegpp_5.0.0-beta1_arm64.deb` |
-| **macOS** | [Releases](https://github.com/pity-Fox/FFmpeg_plus_plus/releases) → `FFmpeg++_v5.0.0-beta1_macOS.dmg` |
+| **Windows** | [Releases](https://github.com/pity-Fox/FFmpeg_plus_plus/releases) → `FFmpeg++_v*_setup.exe` |
+| **Linux x64** | [Releases](https://github.com/pity-Fox/FFmpeg_plus_plus/releases) → `ffmpegpp_*_amd64.deb` |
+| **Linux ARM64** | [Releases](https://github.com/pity-Fox/FFmpeg_plus_plus/releases) → `ffmpegpp_*_arm64.deb` |
+| **macOS** | [Releases](https://github.com/pity-Fox/FFmpeg_plus_plus/releases) → `FFmpeg++_v*_macOS.dmg` |
 
-> 桌面端需安装 [FFmpeg](https://ffmpeg.org/download.html) 并加入 PATH 环境变量；
-> Android 端内置 FFmpeg，无需安装（APK 需本地构建，见下方开发说明）。
+> 确保已安装 [FFmpeg](https://ffmpeg.org/download.html) 并加入 PATH 环境变量。
 
 ### 🔧 开发
 
@@ -141,22 +138,25 @@ flutter run -d linux   # 或 -d windows / -d macos
 - **触屏适配**：项目页禁用桌面拖放、节点编辑器顶部返回栏、状态栏/手势
   区安全边距等。
 
-构建 APK（需 Android SDK + NDK r26d + JDK 17+；统一构建脚本在 `build/`，
-缓存 / 工具链默认位于 sdb2，可用环境变量覆盖）：
+构建 APK（需 Android SDK + NDK r26d + JDK 17+）：
 
 ```bash
-# 1. 交叉编译内置 FFmpeg + C++ 后端（产物在缓存根 android-build/dist/）
+# 一键构建全部（桌面端 + Android APK）
+build/build_all.sh all
+
+# 只构建 Android APK（自动修补 file_picker compileSdk、自动重试防 OOM）
+build/build_all.sh android
+
+# 分步：先交叉编译内置 ffmpeg/ffprobe + C++ 后端（产物在缓存根 dist/）
 build/android/build_ffmpeg.sh
-
-# 2. 把产物放进 jniLibs
-mkdir -p ffmpegpp_gui/android/app/src/main/jniLibs/arm64-v8a
-cp android-build/dist/libffmpegpp.so android-build/dist/libffmpeg.so \
-   android-build/dist/libffprobe.so ffmpegpp_gui/android/app/src/main/jniLibs/arm64-v8a/
-
-# 3. 构建 APK（自动打 file_picker 补丁，含 OOM 重试）
+# 再构建 APK
 build/android/build_apk.sh
-# 产物: ffmpegpp_gui/build/app/outputs/flutter-apk/app-release.apk
+
+# 产物: ffmpegpp_gui/build/app/outputs/flutter-apk/app-release.apk (arm64-v8a)
 ```
+
+> 构建脚本集中在 `build/`（详见 `build/README.md`）：代码在仓库、缓存/工具链在
+> sdb2，路径均可通过 `FFMPEGPP_CACHE`/`FFMPEGPP_ROOT` 等环境变量覆盖。
 
 > 说明：桌面端更新机制/安装器不适用于移动端，设置页已做对应隐藏与提示；
 > GPU 硬编码器（NVIDIA/AMD/Intel）在 Android 上不可用，自动回退 CPU 编码。
@@ -171,16 +171,16 @@ build/android/build_apk.sh
 | 视频引擎 | FFmpeg 8.0 / ffprobe |
 | 音频预览 | just_audio (GStreamer on Linux) |
 | 安装包 | Inno Setup (Windows) / dpkg-deb (Linux) / hdiutil (macOS) |
-| CI/CD | GitHub Actions — Windows / Linux x64 / Linux ARM64 / macOS，自动发布 Release |
+| CI/CD | GitHub Actions — Windows / Linux x64 / Linux ARM64 / macOS |
 | 代码生成 | 100% AI 生成（Claude）|
 
 ### ⭐ Star 历史
 
-<a href="https://www.star-history.com/#pity-Fox/FFmpeg_plus_plus&Date">
+<a href="https://star-history.com/#pity-Fox/FFmpeg_plus_plus&Date">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=pity-Fox/FFmpeg_plus_plus&type=date&theme=dark&legend=top-left" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=pity-Fox/FFmpeg_plus_plus&type=date&legend=top-left" />
-    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=pity-Fox/FFmpeg_plus_plus&type=date&legend=top-left" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=pity-Fox/FFmpeg_plus_plus&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=pity-Fox/FFmpeg_plus_plus&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=pity-Fox/FFmpeg_plus_plus&type=Date" />
   </picture>
 </a>
 
@@ -197,19 +197,19 @@ MIT License — 详见 [LICENSE](LICENSE)
 <table>
   <tr>
     <td align="center"><b>🎬 Main</b></td>
-    <td align="center"><b>✨ Demo</b></td>
+    <td align="center"><b>📋 Demo</b></td>
   </tr>
   <tr>
-    <td><img src="rel/1.png" width="100%" alt="FFmpeg++ Main"></td>
-    <td><img src="rel/2.png" width="100%" alt="FFmpeg++ Demo"></td>
+    <td><img src="rel/view.png" width="100%" alt="FFmpeg++ Main"></td>
+    <td><img src="rel/view1.png" width="100%" alt="FFmpeg++ Demo"></td>
   </tr>
 </table>
 
 ### 📖 Overview
 
-FFmpeg++ **v5.0.0-beta1** is a cross-platform tool for video, image, and audio processing. Built with **Flutter** (Material Design 3 frontend) and **C++17** (shared library backend via FFI), featuring a blueprint-style **node editor** with 25+ node types for complex processing workflows.
+FFmpeg++ is a cross-platform desktop tool for video, image, and audio processing. Built with **Flutter** (Material Design 3 frontend) and **C++17** (shared library backend via FFI), featuring a blueprint-style **node editor** with 25+ node types for complex processing workflows.
 
-This release supports **Windows**, **Linux** (x64 / ARM64), and **macOS** (Universal) desktop platforms, plus brand-new **Android** support: liquid-glass bottom navigation, Monet dynamic theming, and a bundled FFmpeg — nothing for the user to install.
+Supports **Windows**, **Linux** (x64 / ARM64), and **macOS** (Universal).
 
 ### 🏗 Architecture
 
@@ -242,7 +242,6 @@ This release supports **Windows**, **Linux** (x64 / ARM64), and **macOS** (Unive
 | 🔗 **Concat** | Multi-file sequential merge, image sequence to video |
 | 🧠 **Command** | Manual ffmpeg command input with templates & parameter reference |
 | 🤖 **AI Assistant** | Built-in AI chat panel, describe what you want in natural language |
-| 📱 **Android** | Liquid-glass bottom nav, Monet dynamic theming, bundled FFmpeg — one codebase for desktop & mobile |
 | ⚙️ **Settings** | Dark/Light theme, fonts, accent colors, background image, editor mode toggle |
 
 ### 🧩 Node Editor
@@ -263,13 +262,12 @@ The node editor is the core of FFmpeg++. See **[NODE_EDITOR.md](NODE_EDITOR.md)*
 
 | Platform | Download |
 |----------|----------|
-| **Windows** | [Releases](https://github.com/pity-Fox/FFmpeg_plus_plus/releases) → `FFmpeg++_v5.0.0-beta1_setup.exe` |
-| **Linux x64** | [Releases](https://github.com/pity-Fox/FFmpeg_plus_plus/releases) → `ffmpegpp_5.0.0-beta1_amd64.deb` |
-| **Linux ARM64** | [Releases](https://github.com/pity-Fox/FFmpeg_plus_plus/releases) → `ffmpegpp_5.0.0-beta1_arm64.deb` |
-| **macOS** | [Releases](https://github.com/pity-Fox/FFmpeg_plus_plus/releases) → `FFmpeg++_v5.0.0-beta1_macOS.dmg` |
+| **Windows** | [Releases](https://github.com/pity-Fox/FFmpeg_plus_plus/releases) → `FFmpeg++_v*_setup.exe` |
+| **Linux x64** | [Releases](https://github.com/pity-Fox/FFmpeg_plus_plus/releases) → `ffmpegpp_*_amd64.deb` |
+| **Linux ARM64** | [Releases](https://github.com/pity-Fox/FFmpeg_plus_plus/releases) → `ffmpegpp_*_arm64.deb` |
+| **macOS** | [Releases](https://github.com/pity-Fox/FFmpeg_plus_plus/releases) → `FFmpeg++_v*_macOS.dmg` |
 
-> Desktop requires [FFmpeg](https://ffmpeg.org/download.html) in your PATH;
-> the Android build bundles FFmpeg, so nothing needs to be installed.
+> Make sure [FFmpeg](https://ffmpeg.org/download.html) is installed and in your PATH.
 
 ### 🔧 Development
 
@@ -297,43 +295,6 @@ flutter pub get
 flutter run -d linux   # or -d windows / -d macos
 ```
 
-#### 🤖 Android
-
-Mobile adaptation only affects the Android platform; desktop behavior is unchanged:
-
-- **Liquid-glass bottom nav**: the PC sidebar moves to the bottom on mobile,
-  with a draggable capsule mask (drag horizontally → snap to the nearest item).
-- **Commands / Logs moved into Settings**: the bottom bar keeps only
-  Projects / Queue / Config Library / Settings.
-- **Monet dynamic theming**: Android 8.1+ generates Material You colors from
-  the system wallpaper (toggle in Settings → Appearance).
-- **Bundled FFmpeg**: ffmpeg / ffprobe ship as arm64 static executables inside
-  the APK (jniLibs); the C++ backend spawns them as subprocesses.
-- **Touch adaptation**: no desktop drag & drop on the projects page, a back
-  bar on the node editor, safe-area insets for status/navigation bars.
-
-Build the APK (requires Android SDK + NDK r26d + JDK 17+; unified build
-scripts live in `build/`, cache / toolchain default to sdb2 and can be
-overridden via environment variables):
-
-```bash
-# 1. Cross-compile bundled FFmpeg + C++ backend (output in <cache>/android-build/dist/)
-build/android/build_ffmpeg.sh
-
-# 2. Copy artifacts into jniLibs
-mkdir -p ffmpegpp_gui/android/app/src/main/jniLibs/arm64-v8a
-cp android-build/dist/libffmpegpp.so android-build/dist/libffmpeg.so \
-   android-build/dist/libffprobe.so ffmpegpp_gui/android/app/src/main/jniLibs/arm64-v8a/
-
-# 3. Build the APK (auto-patches file_picker, retries on OOM)
-build/android/build_apk.sh
-# Output: ffmpegpp_gui/build/app/outputs/flutter-apk/app-release.apk
-```
-
-> Note: the desktop update mechanism / installer does not apply to mobile;
-> GPU hardware encoders (NVIDIA/AMD/Intel) are unavailable on Android and
-> automatically fall back to CPU encoding.
-
 ### 🛠 Tech Stack
 
 | Layer | Technology |
@@ -344,16 +305,16 @@ build/android/build_apk.sh
 | Video Engine | FFmpeg 8.0 / ffprobe |
 | Audio Preview | just_audio (GStreamer on Linux) |
 | Installer | Inno Setup (Windows) / dpkg-deb (Linux) / hdiutil (macOS) |
-| CI/CD | GitHub Actions — Windows / Linux x64 / Linux ARM64 / macOS, auto-published releases |
+| CI/CD | GitHub Actions — Windows / Linux x64 / Linux ARM64 / macOS |
 | Code Generation | 100% AI-generated via Claude |
 
 ### ⭐ Star History
 
-<a href="https://www.star-history.com/#pity-Fox/FFmpeg_plus_plus&Date">
+<a href="https://star-history.com/#pity-Fox/FFmpeg_plus_plus&Date">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=pity-Fox/FFmpeg_plus_plus&type=date&theme=dark&legend=top-left" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=pity-Fox/FFmpeg_plus_plus&type=date&legend=top-left" />
-    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=pity-Fox/FFmpeg_plus_plus&type=date&legend=top-left" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=pity-Fox/FFmpeg_plus_plus&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=pity-Fox/FFmpeg_plus_plus&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=pity-Fox/FFmpeg_plus_plus&type=Date" />
   </picture>
 </a>
 
