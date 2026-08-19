@@ -14,6 +14,9 @@ import '../services/android_platform.dart';
 import '../platform/app_platform.dart';
 
 class AppState extends ChangeNotifier {
+  /// 共享随机数生成器：避免随机参数生成时每处 new Random()，
+  /// 否则同一毫秒内多次实例化会因时间种子相同而退化为固定偏移的伪随机序列。
+  static final Random _rng = Random();
   final NativeProcessManager pythonProcess = NativeProcessManager();
   late final BackendClient backend = BackendClient(pythonProcess);
   final ConfigService configService = ConfigService();
@@ -455,9 +458,11 @@ class AppState extends ChangeNotifier {
     if (idx < 0) return;
     final container = _containers[idx];
     final items = container.items;
+    // 排序比较器内按 fileId 查 _videos，先建一次 Map 索引，避免 O(n²) 线性扫描
+    final byId = <String, VideoFile>{for (final v in _videos) v.id: v};
     items.sort((a, b) {
-      final va = _videos.where((v) => v.id == a.fileId).firstOrNull;
-      final vb = _videos.where((v) => v.id == b.fileId).firstOrNull;
+      final va = byId[a.fileId];
+      final vb = byId[b.fileId];
       if (va == null || vb == null) return 0;
       return switch (mode) {
         ContainerSortMode.name => va.filename.toLowerCase().compareTo(vb.filename.toLowerCase()),
@@ -1431,7 +1436,7 @@ class AppState extends ChangeNotifier {
     final randomMax = (p['random_max'] as num?)?.toDouble() ?? 360;
 
     if (mode == 'random') {
-      angle = randomMin + Random().nextDouble() * (randomMax - randomMin);
+      angle = randomMin + _rng.nextDouble() * (randomMax - randomMin);
       addLog('图片旋转: 随机角度 ${angle.toStringAsFixed(1)}°', category: 'info');
     }
 
@@ -1477,7 +1482,7 @@ class AppState extends ChangeNotifier {
     final randomMax = (p['random_max'] as num?)?.toDouble() ?? 2.0;
 
     if (mode == 'random') {
-      factor = randomMin + Random().nextDouble() * (randomMax - randomMin);
+      factor = randomMin + _rng.nextDouble() * (randomMax - randomMin);
       addLog('图片缩放: 随机系数 ${factor.toStringAsFixed(2)}', category: 'info');
     }
 
@@ -1513,7 +1518,7 @@ class AppState extends ChangeNotifier {
     final rangeMax = (p['range_max'] as num?)?.toDouble() ?? 0.5;
 
     if (mode == 'range') {
-      brightness = rangeMin + Random().nextDouble() * (rangeMax - rangeMin);
+      brightness = rangeMin + _rng.nextDouble() * (rangeMax - rangeMin);
       addLog('图片亮度: 随机值 ${brightness.toStringAsFixed(2)}', category: 'info');
     }
 
@@ -1553,7 +1558,7 @@ class AppState extends ChangeNotifier {
       // randomMax < randomMin 时 nextInt 抛异常，先夹取保证范围合法
       final lo = randomMin < randomMax ? randomMin : randomMax;
       final hi = randomMax > randomMin ? randomMax : randomMin;
-      strength = lo + Random().nextInt(hi - lo + 1);
+      strength = lo + _rng.nextInt(hi - lo + 1);
       addLog('图片噪声: 随机强度 $strength', category: 'info');
     }
 
@@ -1589,7 +1594,7 @@ class AppState extends ChangeNotifier {
     final randomMax = (p['random_max'] as num?)?.toDouble() ?? 3.0;
 
     if (mode == 'random') {
-      strength = randomMin + Random().nextDouble() * (randomMax - randomMin);
+      strength = randomMin + _rng.nextDouble() * (randomMax - randomMin);
       addLog('图片锐化: 随机强度 ${strength.toStringAsFixed(2)}', category: 'info');
     }
 
@@ -1626,7 +1631,7 @@ class AppState extends ChangeNotifier {
     final randomMax = (p['random_max'] as num?)?.toDouble() ?? 10.0;
 
     if (mode == 'random') {
-      strength = randomMin + Random().nextDouble() * (randomMax - randomMin);
+      strength = randomMin + _rng.nextDouble() * (randomMax - randomMin);
       addLog('图片降噪: 随机强度 ${strength.toStringAsFixed(2)}', category: 'info');
     }
 
@@ -1960,6 +1965,9 @@ class AppState extends ChangeNotifier {
     {'name': 'probe_video', 'description': 'Probe a video file and return its metadata (codec, resolution, duration, etc.)', 'inputSchema': {'type': 'object', 'properties': {'filepath': {'type': 'string'}}, 'required': ['filepath']}},
     {'name': 'list_tasks', 'description': 'List all tasks with their status, progress and details', 'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'cancel_tasks', 'description': 'Cancel all running tasks', 'inputSchema': {'type': 'object', 'properties': {}}},
+    {'name': 'list_containers', 'description': 'List all media containers with id, name, file count and pipeline node count (read-only)', 'inputSchema': {'type': 'object', 'properties': {}}},
+    {'name': 'get_container_pipeline', 'description': 'Get the pipeline graph JSON of a container (read-only)', 'inputSchema': {'type': 'object', 'properties': {'containerId': {'type': 'string', 'description': 'Container id from list_containers'}}, 'required': ['containerId']}},
+    {'name': 'list_standalone_videos', 'description': 'List videos that are not inside any container (read-only)', 'inputSchema': {'type': 'object', 'properties': {}}},
   ];
 
   List<Map<String, dynamic>> _mcpResourcesList() => [
@@ -2088,6 +2096,26 @@ class AppState extends ChangeNotifier {
       case 'cancel_tasks':
         cancelProcessing();
         return ('All running tasks cancelled', false);
+      case 'list_containers':
+        return (jsonEncode(_containers.map((c) => {
+          'id': c.id,
+          'name': c.name,
+          'fileCount': c.fileCount,
+          'nodeCount': c.pipelineGraph.nodes.length,
+          'connectionCount': c.pipelineGraph.connections.length,
+          'files': c.sortedItems.map((i) => i.fileId).toList(),
+        }).toList()), false);
+      case 'get_container_pipeline':
+        final cid = args['containerId'] as String? ?? '';
+        final ci = _containers.indexWhere((c) => c.id == cid);
+        if (ci < 0) return ('Error: container not found: $cid', true);
+        return (jsonEncode(_containers[ci].pipelineGraph.toJson()), false);
+      case 'list_standalone_videos':
+        return (jsonEncode(standaloneVideos.map((v) => {
+          'id': v.id, 'filename': v.filename, 'format': v.format,
+          'size_mb': v.sizeMb, 'duration': v.duration, 'codec': v.codec,
+          'resolution': v.resolution,
+        }).toList()), false);
       default: return ('Unknown tool: $name', true);
     }
   }

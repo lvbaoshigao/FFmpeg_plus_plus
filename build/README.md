@@ -30,7 +30,7 @@ build/build_all.sh desktop
 
 # Android 分步：先交叉编译 ffmpeg/后端（只需一次，产物在缓存根/dist/）
 build/android/build_ffmpeg.sh
-# 再构建 APK
+# 再构建 APK（自动补齐 jniLibs、自动打 file_picker 补丁、OOM 自动重试）
 build/android/build_apk.sh
 ```
 

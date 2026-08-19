@@ -25,6 +25,8 @@
 #include <cstdarg>
 #include <map>
 #include <deque>
+#include <utility>
+#include <system_error>
 
 namespace ffmpegpp {
 
@@ -36,6 +38,51 @@ std::filesystem::path u8path(const std::string& s) {
     return std::filesystem::path(s);
 #endif
 }
+
+// 源文件是 10-bit 时，检查构建出的命令是否实际输出 10-bit（-pix_fmt 值为 10le/p010）。
+// 若被降级为 8-bit，则向 warnings 追加相应提示。transcode 与 subtitle 共用，避免重复实现。
+void collect10BitWarnings(std::vector<std::string>& warnings,
+                          const std::vector<std::string>& cmd,
+                          const std::string& input_pix_fmt,
+                          const std::string& gpu,
+                          const std::string& video_codec) {
+    if (input_pix_fmt.find("10") == std::string::npos) return;
+    bool has10bitPixFmt = false;
+    // 只检查 -pix_fmt 后面的值，避免文件路径/其他参数误匹配
+    bool next_is_pix_fmt = false;
+    for (const auto& arg : cmd) {
+        if (arg == "-pix_fmt") { next_is_pix_fmt = true; continue; }
+        if (next_is_pix_fmt) {
+            if (arg.find("10le") != std::string::npos || arg.find("p010") != std::string::npos)
+                has10bitPixFmt = true;
+            next_is_pix_fmt = false;
+        }
+    }
+    if (!has10bitPixFmt) {
+        if (video_codec == "h264") {
+            warnings.push_back("H.264 不支持 10-bit，画质已降级为 8-bit。如需保留 10-bit，请选择 H.265 编码");
+        } else {
+            warnings.push_back("源文件是 10-bit (" + input_pix_fmt + ")，但 " + gpu + " " + video_codec + " 编码器不支持 10-bit 输出，画质将降级为 8-bit");
+        }
+    }
+}
+
+// RAII 临时文件守卫：作用域结束时（含异常/提前 return 路径）自动删除文件，
+// 避免 concat / 图片序列生成的列表文件在异常退出时残留。
+class TempFileGuard {
+public:
+    explicit TempFileGuard(std::string path) : path_(std::move(path)) {}
+    ~TempFileGuard() {
+        if (!path_.empty()) {
+            std::error_code ec;
+            std::filesystem::remove(path_, ec); // 忽略删除失败
+        }
+    }
+    TempFileGuard(const TempFileGuard&) = delete;
+    TempFileGuard& operator=(const TempFileGuard&) = delete;
+private:
+    std::string path_;
+};
 }
 
 // ═══════════════════════════════════════════════
@@ -359,27 +406,10 @@ void handleTranscode(const json& req, std::atomic<bool>& cancel_flag) {
     }
 
     std::vector<std::string> warnings;
-    if (input_pix_fmt.find("10") != std::string::npos) {
+    {
         std::string gpu = options.value("gpu", "CPU");
         std::string video_codec = options.value("video_codec", "h264");
-        bool has10bitPixFmt = false;
-        // 只检查 -pix_fmt 后面的值，避免文件路径误匹配
-        bool next_is_pix_fmt = false;
-        for (const auto& arg : cmd) {
-            if (arg == "-pix_fmt") { next_is_pix_fmt = true; continue; }
-            if (next_is_pix_fmt) {
-                if (arg.find("10le") != std::string::npos || arg.find("p010") != std::string::npos)
-                    has10bitPixFmt = true;
-                next_is_pix_fmt = false;
-            }
-        }
-        if (!has10bitPixFmt) {
-            if (video_codec == "h264") {
-                warnings.push_back("H.264 不支持 10-bit，画质已降级为 8-bit。如需保留 10-bit，请选择 H.265 编码");
-            } else {
-                warnings.push_back("源文件是 10-bit (" + input_pix_fmt + ")，但 " + gpu + " " + video_codec + " 编码器不支持 10-bit 输出，画质将降级为 8-bit");
-            }
-        }
+        collect10BitWarnings(warnings, cmd, input_pix_fmt, gpu, video_codec);
     }
 
     auto cmd_warnings = auditCommand(cmd);
@@ -417,26 +447,10 @@ void handleSubtitle(const json& req, std::atomic<bool>& cancel_flag) {
     }
 
     std::vector<std::string> warnings;
-    if (input_pix_fmt.find("10") != std::string::npos) {
+    {
         std::string gpu = vid_opts.is_object() ? vid_opts.value("gpu", "CPU") : "CPU";
         std::string video_codec = vid_opts.is_object() ? vid_opts.value("video_codec", "h264") : "h264";
-        bool has10bitPixFmt = false;
-        bool next_is_pix_fmt = false;
-        for (const auto& arg : cmd) {
-            if (arg == "-pix_fmt") { next_is_pix_fmt = true; continue; }
-            if (next_is_pix_fmt) {
-                if (arg.find("10le") != std::string::npos || arg.find("p010") != std::string::npos)
-                    has10bitPixFmt = true;
-                next_is_pix_fmt = false;
-            }
-        }
-        if (!has10bitPixFmt) {
-            if (video_codec == "h264") {
-                warnings.push_back("H.264 不支持 10-bit，画质已降级为 8-bit。如需保留 10-bit，请选择 H.265 编码");
-            } else {
-                warnings.push_back("源文件是 10-bit (" + input_pix_fmt + ")，但 " + gpu + " " + video_codec + " 编码器不支持 10-bit 输出，画质将降级为 8-bit");
-            }
-        }
+        collect10BitWarnings(warnings, cmd, input_pix_fmt, gpu, video_codec);
     }
 
     auto cmd_warnings = auditCommand(cmd);
@@ -503,6 +517,7 @@ void handleConcat(const json& req, std::atomic<bool>& cancel_flag) {
     // Write temp concat list
     auto tmpDir = std::filesystem::path(ffmpegpp::getTempDir());
     std::string listPath = (tmpDir / ("ffmpegpp_concat_" + req["id"].get<std::string>() + ".txt")).string();
+    TempFileGuard listCleanup(listPath); // 作用域结束自动清理，异常/提前 return 也不残留
     {
         std::ofstream ofs(listPath, std::ios::binary);
         if (!ofs.is_open()) {
@@ -539,9 +554,6 @@ void handleConcat(const json& req, std::atomic<bool>& cancel_flag) {
 
     slog("handleConcat: %zu files -> %s (mode=%s)", files.size(), output.c_str(), mode.c_str());
     runFFmpegProcess(req["id"], cmd, cancel_flag, output);
-
-    // Cleanup temp file
-    std::filesystem::remove(listPath);
 }
 
 // ═══════════════════════════════════════════
@@ -566,6 +578,7 @@ void handleImageSequence(const json& req, std::atomic<bool>& cancel_flag) {
     // Write temp concat list with duration per frame
     auto tmpDir = std::filesystem::path(ffmpegpp::getTempDir());
     std::string listPath = (tmpDir / ("ffmpegpp_imgseq_" + req["id"].get<std::string>() + ".txt")).string();
+    TempFileGuard listCleanup(listPath); // 作用域结束自动清理，异常/提前 return 也不残留
     {
         std::ofstream ofs(listPath, std::ios::binary);
         if (!ofs.is_open()) {
@@ -620,9 +633,6 @@ void handleImageSequence(const json& req, std::atomic<bool>& cancel_flag) {
 
     slog("handleImageSequence: %zu images -> %s @%.1f fps", files.size(), output.c_str(), framerate);
     runFFmpegProcess(req["id"], cmd, cancel_flag, output);
-
-    // Cleanup temp file
-    std::filesystem::remove(listPath);
 }
 
 // ═══════════════════════════════════════════
