@@ -18,7 +18,7 @@ const _lanzouPasswords = {
   'macos_arm64': '26qb',
 };
 
-const _githubRepo = 'pity-Fox/FFmpeg_plus_plus';
+const _githubRepo = 'lvbaoshigao/FFmpeg_plus_plus';
 
 final _s = Platform.pathSeparator;
 

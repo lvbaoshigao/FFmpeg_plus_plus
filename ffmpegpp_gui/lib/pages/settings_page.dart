@@ -1227,7 +1227,7 @@ Widget _buildUpdate(BuildContext ctx, AppState state) {
       ),
       const SizedBox(height: 4),
       Wrap(spacing: 4, runSpacing: 4, children: [
-        _link('GitHub', 'https://github.com/pity-Fox/FFmpeg_plus_plus/releases'),
+        _link('GitHub', 'https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases'),
       ]),
     ]);
   }
@@ -1306,7 +1306,7 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
     _infoRow(s.aboutVersion, 'v${updater.currentVersion}', scheme),
     _infoRow(s.aboutBuildDate, '2026-08-05', scheme),
     _infoRow(s.aboutBlog, 'blog-clstone.netlify.app', scheme),
-    _infoRow(s.aboutGithub, 'github.com/pity-Fox/FFmpeg_plus_plus', scheme),
+    _infoRow(s.aboutGithub, 'github.com/lvbaoshigao/FFmpeg_plus_plus', scheme),
     const SizedBox(height: 10),
     Row(children: [
       Expanded(child: _iosButton(icon: Icons.volunteer_activism, label: s.aboutSponsorBtn,
@@ -1315,13 +1315,13 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
       Expanded(child: _iosButton(icon: Icons.system_update, label: s.checkUpdate,
           color: scheme.onSecondaryContainer, bg: scheme.secondaryContainer,
           onTap: isMobilePlatform
-              ? () => openExternalUrl('https://github.com/pity-Fox/FFmpeg_plus_plus/releases')
+              ? () => openExternalUrl('https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases')
               : () => _checkForUpdate(ctx, s))),
     ]),
     const SizedBox(height: 10),
     Wrap(spacing: 4, runSpacing: 4, children: [
       _link(s.aboutBlogLink, 'https://blog-clstone.netlify.app/'),
-      _link('GitHub', 'https://github.com/pity-Fox/FFmpeg_plus_plus'),
+      _link('GitHub', 'https://github.com/lvbaoshigao/FFmpeg_plus_plus'),
     ]),
   ]);
 }
@@ -2158,7 +2158,7 @@ void _showUpdateDialog(BuildContext ctx, AppStrings s, updater.UpdateResult resu
         else
           FilledButton(onPressed: () {
             Navigator.pop(dCtx);
-            openExternalUrl(result.downloadUrl ?? 'https://github.com/pity-Fox/FFmpeg_plus_plus/releases/latest');
+            openExternalUrl(result.downloadUrl ?? 'https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases/latest');
           }, child: Text(s.goDownload)),
       ],
     ),
