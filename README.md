@@ -90,10 +90,10 @@ FFmpeg++ 是一款基于 **Flutter**（Material Design 3 前端）+ **C++17**（
 
 | 平台 | 下载 |
 |------|------|
-| **Windows** | [Releases](https://github.com/pity-Fox/FFmpeg_plus_plus/releases) → `FFmpeg++_v*_setup.exe` |
-| **Linux x64** | [Releases](https://github.com/pity-Fox/FFmpeg_plus_plus/releases) → `ffmpegpp_*_amd64.deb` |
-| **Linux ARM64** | [Releases](https://github.com/pity-Fox/FFmpeg_plus_plus/releases) → `ffmpegpp_*_arm64.deb` |
-| **macOS** | [Releases](https://github.com/pity-Fox/FFmpeg_plus_plus/releases) → `FFmpeg++_v*_macOS.dmg` |
+| **Windows** | [Releases](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases) → `FFmpeg++_v*_setup.exe` |
+| **Linux x64** | [Releases](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases) → `ffmpegpp_*_amd64.deb` |
+| **Linux ARM64** | [Releases](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases) → `ffmpegpp_*_arm64.deb` |
+| **macOS** | [Releases](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases) → `FFmpeg++_v*_macOS.dmg` |
 
 > 确保已安装 [FFmpeg](https://ffmpeg.org/download.html) 并加入 PATH 环境变量。
 
@@ -176,11 +176,11 @@ build/android/build_apk.sh
 
 ### ⭐ Star 历史
 
-<a href="https://star-history.com/#pity-Fox/FFmpeg_plus_plus&Date">
+<a href="https://star-history.com/#lvbaoshigao/FFmpeg_plus_plus&Date">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=pity-Fox/FFmpeg_plus_plus&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=pity-Fox/FFmpeg_plus_plus&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=pity-Fox/FFmpeg_plus_plus&type=Date" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=lvbaoshigao/FFmpeg_plus_plus&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=lvbaoshigao/FFmpeg_plus_plus&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=lvbaoshigao/FFmpeg_plus_plus&type=Date" />
   </picture>
 </a>
 
@@ -262,10 +262,10 @@ The node editor is the core of FFmpeg++. See **[NODE_EDITOR.md](NODE_EDITOR.md)*
 
 | Platform | Download |
 |----------|----------|
-| **Windows** | [Releases](https://github.com/pity-Fox/FFmpeg_plus_plus/releases) → `FFmpeg++_v*_setup.exe` |
-| **Linux x64** | [Releases](https://github.com/pity-Fox/FFmpeg_plus_plus/releases) → `ffmpegpp_*_amd64.deb` |
-| **Linux ARM64** | [Releases](https://github.com/pity-Fox/FFmpeg_plus_plus/releases) → `ffmpegpp_*_arm64.deb` |
-| **macOS** | [Releases](https://github.com/pity-Fox/FFmpeg_plus_plus/releases) → `FFmpeg++_v*_macOS.dmg` |
+| **Windows** | [Releases](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases) → `FFmpeg++_v*_setup.exe` |
+| **Linux x64** | [Releases](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases) → `ffmpegpp_*_amd64.deb` |
+| **Linux ARM64** | [Releases](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases) → `ffmpegpp_*_arm64.deb` |
+| **macOS** | [Releases](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases) → `FFmpeg++_v*_macOS.dmg` |
 
 > Make sure [FFmpeg](https://ffmpeg.org/download.html) is installed and in your PATH.
 
@@ -310,11 +310,11 @@ flutter run -d linux   # or -d windows / -d macos
 
 ### ⭐ Star History
 
-<a href="https://star-history.com/#pity-Fox/FFmpeg_plus_plus&Date">
+<a href="https://star-history.com/#lvbaoshigao/FFmpeg_plus_plus&Date">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=pity-Fox/FFmpeg_plus_plus&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=pity-Fox/FFmpeg_plus_plus&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=pity-Fox/FFmpeg_plus_plus&type=Date" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=lvbaoshigao/FFmpeg_plus_plus&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=lvbaoshigao/FFmpeg_plus_plus&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=lvbaoshigao/FFmpeg_plus_plus&type=Date" />
   </picture>
 </a>
 

@@ -15,7 +15,7 @@
 #define MyAppVersionNumeric "5.0.0.0"
 #define MyAppPublisher "氯堡拾稿"
 #define MyAppURL "https://blog-clstone.netlify.app/"
-#define MyAppGitHub "https://github.com/pity-Fox/FFmpeg_plus_plus"
+#define MyAppGitHub "https://github.com/lvbaoshigao/FFmpeg_plus_plus"
 #define MyAppExeName "ffmpegpp_gui.exe"
 
 ; 源文件根目录 — 相对于本 .iss 文件所在目录 (make/)

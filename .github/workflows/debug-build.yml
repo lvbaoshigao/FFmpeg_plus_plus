@@ -180,7 +180,7 @@ jobs:
           Package: ffmpegpp
           Version: 5.0.0-beta1
           Architecture: amd64
-          Maintainer: pity-Fox <noreply@github.com>
+          Maintainer: lvbaoshigao <noreply@github.com>
           Description: FFmpeg++ - Advanced video/image/audio processing tool
            A desktop application for video, image, and audio processing
            with a node-based pipeline editor and batch processing support.
@@ -289,7 +289,7 @@ jobs:
           Package: ffmpegpp
           Version: 5.0.0-beta1
           Architecture: arm64
-          Maintainer: pity-Fox <noreply@github.com>
+          Maintainer: lvbaoshigao <noreply@github.com>
           Description: FFmpeg++ - Advanced video/image/audio processing tool
            A desktop application for video, image, and audio processing
            with a node-based pipeline editor and batch processing support.
