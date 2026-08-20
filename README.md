@@ -150,7 +150,7 @@ flutter pub get
 flutter run -d linux   # 或 -d windows / -d macos
 ```
 
-#### 🤖 Android 移动端
+#### 🤖 Android 移动端(目前正在逐步推进适配工作，敬请期待)
 
 移动端适配只影响 Android 平台，桌面端行为不变：
 
