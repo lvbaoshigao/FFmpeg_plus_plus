@@ -11,7 +11,8 @@ import 'config_dialog.dart';
 
 class VideoCard extends StatelessWidget {
   final VideoFile video;
-  const VideoCard({super.key, required this.video});
+  final VoidCallback? onEdit;
+  const VideoCard({super.key, required this.video, this.onEdit});
 
   @override
   Widget build(BuildContext context) {
@@ -47,7 +48,7 @@ class VideoCard extends StatelessWidget {
               Text(s.probing, style: TextStyle(fontSize: 12, color: scheme.outline)),
           ])),
           IconButton(icon: Icon(Icons.edit_outlined, size: 20, color: clr), tooltip: s.edit,
-              onPressed: video.parsed ? () => _openConfig(context, state) : null),
+              onPressed: video.parsed ? (onEdit ?? () => _openConfig(context, state)) : null),
           IconButton(icon: Icon(Icons.play_arrow, size: 20, color: video.parsed ? scheme.primary : scheme.outline),
               tooltip: s.addToQueue, onPressed: video.parsed ? () => state.addTask(video.id) : null),
           IconButton(icon: Icon(Icons.close, size: 18, color: clr), tooltip: s.remove,
