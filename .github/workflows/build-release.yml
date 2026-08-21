@@ -234,6 +234,16 @@ jobs:
           # 复制到 Contents/MacOS（app 启动时在可执行文件目录查找 libffmpegpp.dylib）
           cp server_cpp/build_macos/libffmpegpp.dylib "$APP/Contents/MacOS/libffmpegpp.dylib"
 
+      - name: Strip debug symbols (reduce DMG size)
+        run: |
+          APP="ffmpegpp_gui/build/macos/Build/Products/Release/ffmpegpp_gui.app"
+          # 剥离 C++ 后端的调试符号
+          strip -S "$APP/Contents/MacOS/libffmpegpp.dylib" 2>/dev/null || true
+          # 剥离 Flutter 框架内的调试符号
+          find "$APP/Contents/Frameworks" -name "*.dylib" -exec strip -S {} \; 2>/dev/null || true
+          # 剥离可执行文件自身的调试符号
+          strip -S "$APP/Contents/MacOS/ffmpegpp_gui" 2>/dev/null || true
+
       - name: Pack bundle
         run: tar -czf macos-app.tar.gz -C ffmpegpp_gui/build/macos/Build/Products/Release .
 
