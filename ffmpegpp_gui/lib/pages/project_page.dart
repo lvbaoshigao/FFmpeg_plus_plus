@@ -264,7 +264,7 @@ class ProjectPageState extends State<ProjectPage> {
             child: state.config.editMode == 1
                 ? GestureDetector(
                     onTap: () => _showQuickConfigDialog(context, state, video, s),
-                    child: VideoCard(video: video),
+                    child: VideoCard(video: video, onEdit: () => _showQuickConfigDialog(context, state, video, s)),
                   )
                 : VideoCard(video: video),
           ),
