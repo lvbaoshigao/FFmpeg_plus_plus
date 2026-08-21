@@ -61,8 +61,13 @@ fetch() {
   local out="$1"; shift
   local urls=("$@")
   for attempt in 1 2 3 4; do
-    [ -f "$out" ] && rm -f "$out"   # 上一轮残缺文件（可能正是坏响应）先清掉
     for url in "${urls[@]}"; do
+      # 已有且校验通过的压缩包直接复用（配合 actions/cache 缓存 src/）
+      if [ -f "$out" ] && is_valid_archive "$out"; then
+        log "cached $out"
+        return 0
+      fi
+      rm -f "$out"   # 残缺/无效文件先清掉，避免坏响应被误判为缓存
       log "downloading $out (attempt $attempt): $url"
       if curl -fSL --retry 3 --retry-delay 3 -o "$out" "$url" && is_valid_archive "$out"; then
         log "ok: $out ($(wc -c < "$out") bytes)"
