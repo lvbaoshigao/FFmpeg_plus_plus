@@ -80,7 +80,8 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
     );
     if (r == null || r.files.isEmpty || r.files.first.path == null) return;
     final path = r.files.first.path!;
-    final size = File(path).lengthSync();
+    final size = await File(path).length(); // 异步，避免阻塞 UI
+    if (!mounted) return;
     if (size < 1000000) {
       setState(() => _status = '文件太小 (${(size / 1024).toStringAsFixed(0)}KB)，请确认是否下载完整');
       return;

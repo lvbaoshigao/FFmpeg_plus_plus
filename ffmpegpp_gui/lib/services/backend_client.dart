@@ -8,9 +8,10 @@ class BackendClient {
   final NativeProcessManager _process;
   final _progressController = StreamController<ProgressUpdate>.broadcast();
   final _auditController = StreamController<List<String>>.broadcast();
+  StreamSubscription<Map<String, dynamic>>? _sub;
 
   BackendClient(this._process) {
-    _process.responses.listen((obj) {
+    _sub = _process.responses.listen((obj) {
       final t = obj['type'] as String?;
       if (t == 'progress') {
         try {
@@ -151,6 +152,7 @@ class BackendClient {
   }
 
   void dispose() {
+    _sub?.cancel();
     _progressController.close();
     _auditController.close();
   }

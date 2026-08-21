@@ -5,13 +5,17 @@ import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 
-/// 移动端底部液态玻璃导航栏。
+/// 移动端悬浮玻璃底部导航栏 —— 减少复杂光效，保留通透感。
 ///
-/// - 液态玻璃：BackdropFilter 背景模糊 + 半透明渐变 + 边缘高光/反光/底影
-///   （复用与 PC 侧边栏一致的光影语言）。
+/// 与原版区别：
+/// - 单层 BackdropFilter 模糊（sigma 20，原 30）
+/// - 纯色半透明背景（原双色渐变），通透感由低透明度实现
+/// - 去除 SweepGradient 边缘折射高光与底部内阴影（CustomPainter）
+/// - 单层柔阴影（原双层）
+/// - 选中遮罩使用单色 tonal 色（surfaceContainerHighest + primary 着色），
+///   去除内层 BackdropFilter 与渐变色，减少视觉噪点
 /// - 遮罩移动：选中项由一个可拖动的胶囊遮罩表达 —— 水平拖动遮罩（或整条
-///   导航栏），松手后吸附到最近的导航项并跳转。逻辑与 PC 侧边栏
-///   （sidebar.dart 的 _maskDragTop）完全一致，只是方向改为水平。
+///   导航栏），松手后吸附到最近的导航项并跳转。
 class MobileBottomNav extends StatefulWidget {
   /// 当前选中的「全局页索引」（见 AppShell._page：0 项目 / 1 队列 /
   /// 3 配置库 / 4 设置）。命令(2) 与 日志(5) 已移入设置，不在底部栏。
@@ -31,7 +35,9 @@ class MobileBottomNav extends StatefulWidget {
 class _MobileBottomNavState extends State<MobileBottomNav> {
   static const _anim = Duration(milliseconds: 260);
   static const _curve = Curves.easeInOutCubic;
-  static const _barHeight = 60.0;
+  static const _barHeight = 62.0;
+  static const _radius = 30.0;
+  static const _maskRadius = 20.0;
 
   /// 遮罩拖动中的临时 left 偏移（null = 未拖动）
   double? _maskDragLeft;
@@ -43,53 +49,51 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
     final lang = context.watch<AppState>().config.language;
     final s = AppStrings.of(lang);
 
-    final items = <({int page, IconData icon, String label})>[
-      (page: 0, icon: Icons.movie_outlined, label: s.navProjects),
-      (page: 1, icon: Icons.list_alt_outlined, label: s.navQueue),
-      (page: 3, icon: Icons.folder_copy_outlined, label: lang == 'zh' ? '配置库' : 'Configs'),
-      (page: 4, icon: Icons.settings_outlined, label: s.navSettings),
+    final items = <({int page, IconData icon, IconData iconFilled, String label})>[
+      (page: 0, icon: Icons.movie_outlined, iconFilled: Icons.movie, label: s.navProjects),
+      (page: 1, icon: Icons.list_alt_outlined, iconFilled: Icons.list_alt, label: s.navQueue),
+      (page: 3, icon: Icons.folder_copy_outlined, iconFilled: Icons.folder_copy, label: lang == 'zh' ? '配置库' : 'Configs'),
+      (page: 4, icon: Icons.settings_outlined, iconFilled: Icons.settings, label: s.navSettings),
     ];
 
     final localSel = items.indexWhere((it) => it.page == widget.selectedIndex);
-    final sel = localSel < 0 ? 0 : localSel;
+    // 当前页不在导航项内（如命令页/日志页）时不再回退高亮第 0 项，避免误导
+    final sel = localSel < 0 ? -1 : localSel;
 
-    return Container(
-      decoration: BoxDecoration(
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withAlpha(isDark ? 70 : 32),
-            blurRadius: 22,
-            offset: const Offset(0, -2),
+    // 遮罩色：surfaceContainerHighest 叠加 primary 着色，单色（无渐变、无内模糊）
+    final maskColor = Color.lerp(scheme.secondaryContainer, scheme.primary, 0.25)!.withValues(alpha: 0.85);
+
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 6, 14, 10),
+        child: Container(
+          height: _barHeight,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(_radius),
+            // 单层柔阴影，去除了双层阴影中的贴身小阴影
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withAlpha(isDark ? 60 : 20),
+                blurRadius: 20,
+                offset: const Offset(0, 6),
+              ),
+            ],
           ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
-        child: BackdropFilter(
-          filter: ui.ImageFilter.blur(sigmaX: 22, sigmaY: 22),
-          child: Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  scheme.surface.withAlpha(isDark ? 178 : 200),
-                  scheme.surface.withAlpha(isDark ? 132 : 150),
-                ],
-              ),
-              border: Border(
-                top: BorderSide(
-                  color: scheme.outlineVariant.withAlpha(isDark ? 70 : 100),
-                  width: 0.7,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(_radius - 2),
+            child: BackdropFilter(
+              // 降低模糊强度：sigma 20（原 30），减少性能开销与辉光畸变
+              filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+              child: Container(
+                decoration: BoxDecoration(
+                  // 纯色半透明背景（原双色渐变），通透感由低 alpha 维持
+                  color: scheme.surface.withAlpha(isDark ? 120 : 100),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: isDark ? 0.12 : 0.24),
+                    width: 0.6,
+                  ),
                 ),
-              ),
-            ),
-            child: CustomPaint(
-              painter: _BottomGlassPainter(
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
-              ),
-              child: SafeArea(
-                top: false,
                 child: SizedBox(
                   height: _barHeight,
                   child: LayoutBuilder(builder: (context, cons) {
@@ -97,7 +101,8 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
                     final itemW = w / items.length;
 
                     // 测量最长标签的实际宽度，让遮罩与元素（图标+文字）长度一致
-                    final labelStyle = const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600);
+                    final labelStyle = const TextStyle(
+                        fontSize: 10.5, fontWeight: FontWeight.w600);
                     double maxLabelW = 0;
                     for (final it in items) {
                       final tp = TextPainter(
@@ -112,19 +117,21 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
                         (math.max(22.0, maxLabelW) + 12).clamp(0.0, itemW - 4);
                     final centerOff = (itemW - elementW) / 2;
                     final maskLeft = (_maskDragLeft ?? sel * itemW + centerOff)
-                        .clamp(centerOff, (items.length - 1) * itemW + centerOff);
+                        .clamp(centerOff,
+                            (items.length - 1) * itemW + centerOff);
 
                     return GestureDetector(
                       behavior: HitTestBehavior.opaque,
-                      // 遮罩移动：整条导航栏可水平拖动（比 PC 更容易触达），
-                      // 逻辑与 PC 侧边栏一致 —— 拖动 → 松手吸附最近项 → 跳转。
+                      // 遮罩移动：整条导航栏可水平拖动
                       onHorizontalDragStart: (_) {
-                        setState(() => _maskDragLeft = sel * itemW + centerOff);
+                        setState(
+                            () => _maskDragLeft = sel * itemW + centerOff);
                       },
                       onHorizontalDragUpdate: (d) {
                         setState(() {
                           _maskDragLeft =
-                              (_maskDragLeft ?? sel * itemW + centerOff) + d.delta.dx;
+                              (_maskDragLeft ?? sel * itemW + centerOff) +
+                                  d.delta.dx;
                         });
                       },
                       onHorizontalDragEnd: (_) {
@@ -141,22 +148,26 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
                       onHorizontalDragCancel: () =>
                           setState(() => _maskDragLeft = null),
                       child: Stack(children: [
-                        // 滑动遮罩：默认随选中项动画滑动；拖动时跟手
+                        // 滑动遮罩：单色 tonal 胶囊，无内模糊、无渐变
                         AnimatedPositioned(
-                          duration: _maskDragLeft == null ? _anim : Duration.zero,
+                          duration: _maskDragLeft == null
+                              ? _anim
+                              : Duration.zero,
                           curve: _curve,
                           left: maskLeft,
-                          top: 6,
-                          bottom: 6,
+                          top: 8,
+                          bottom: 8,
                           width: elementW,
                           child: Container(
                             decoration: BoxDecoration(
-                              color: scheme.secondaryContainer.withAlpha(230),
-                              borderRadius: BorderRadius.circular(16),
+                              color: maskColor,
+                              borderRadius:
+                                  BorderRadius.circular(_maskRadius),
                               boxShadow: [
                                 BoxShadow(
-                                  color: scheme.primary.withAlpha(isDark ? 70 : 40),
-                                  blurRadius: 10,
+                                  color: scheme.primary
+                                      .withAlpha(isDark ? 60 : 35),
+                                  blurRadius: 8,
                                   offset: const Offset(0, 3),
                                 ),
                               ],
@@ -186,7 +197,12 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
     );
   }
 
-  Widget _item(ColorScheme scheme, ({int page, IconData icon, String label}) item, bool selected, VoidCallback onTap) {
+  Widget _item(
+    ColorScheme scheme,
+    ({int page, IconData icon, IconData iconFilled, String label}) item,
+    bool selected,
+    VoidCallback onTap,
+  ) {
     final clr = selected ? scheme.primary : scheme.onSurfaceVariant;
     return InkWell(
       onTap: onTap,
@@ -194,7 +210,27 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(item.icon, size: 22, color: clr),
+          // 选中项：实心图标 + 轻微放大；未选中：描边图标 + 缩小
+          AnimatedScale(
+            scale: selected ? 1.06 : 0.88,
+            duration: _anim,
+            curve: _curve,
+            child: AnimatedSwitcher(
+              duration: _anim,
+              switchInCurve: Curves.easeOutBack,
+              switchOutCurve: Curves.easeIn,
+              transitionBuilder: (child, anim) => ScaleTransition(
+                scale: anim,
+                child: FadeTransition(opacity: anim, child: child),
+              ),
+              child: Icon(
+                selected ? item.iconFilled : item.icon,
+                key: ValueKey(selected),
+                size: 22,
+                color: clr,
+              ),
+            ),
+          ),
           const SizedBox(height: 3),
           Text(
             item.label,
@@ -210,97 +246,4 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
       ),
     );
   }
-}
-
-/// 底部导航栏的液态玻璃光影：边缘高光 + 左上内高光 + 对角反光 + 底部内阴影。
-class _BottomGlassPainter extends CustomPainter {
-  final BorderRadius borderRadius;
-  _BottomGlassPainter({required this.borderRadius});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (size.isEmpty || size.shortestSide < 12) return;
-    final rrect = RRect.fromRectAndCorners(
-      Offset.zero & size,
-      topLeft: borderRadius.topLeft,
-      topRight: borderRadius.topRight,
-      bottomLeft: borderRadius.bottomLeft,
-      bottomRight: borderRadius.bottomRight,
-    );
-    canvas.save();
-    canvas.clipRRect(rrect);
-
-    // 1) 边缘折射高光环
-    final rim = Paint()
-      ..shader = SweepGradient(
-        startAngle: 0,
-        endAngle: 3.14159 * 2,
-        colors: [
-          Colors.white.withValues(alpha: 0.28),
-          Colors.white.withValues(alpha: 0.06),
-          Colors.black.withValues(alpha: 0.07),
-          Colors.white.withValues(alpha: 0.13),
-          Colors.white.withValues(alpha: 0.28),
-        ],
-        stops: const [0.0, 0.25, 0.5, 0.75, 1.0],
-      ).createShader(rrect.outerRect);
-    canvas.drawRRect(
-      rrect.deflate(0.5),
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.8
-        ..shader = rim.shader,
-    );
-
-    // 2) 左上内高光
-    canvas.drawRRect(
-      rrect.deflate(2.5),
-      Paint()
-        ..shader = RadialGradient(
-          center: Alignment.topLeft,
-          radius: 1.2,
-          colors: [
-            Colors.white.withValues(alpha: 0.10),
-            Colors.white.withValues(alpha: 0.0),
-          ],
-        ).createShader(Rect.fromLTWH(0, 0, size.width * 0.7, size.height * 0.6)),
-    );
-
-    // 3) 对角反射光泽
-    canvas.drawRRect(
-      rrect.deflate(1.5),
-      Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Colors.white.withValues(alpha: 0.04),
-            Colors.white.withValues(alpha: 0.0),
-            Colors.white.withValues(alpha: 0.0),
-            Colors.white.withValues(alpha: 0.025),
-          ],
-          stops: const [0.0, 0.35, 0.75, 1.0],
-        ).createShader(rrect.outerRect),
-    );
-
-    // 4) 底部内阴影（厚度感）
-    canvas.drawRRect(
-      rrect.deflate(0.8),
-      Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Colors.black.withValues(alpha: 0.0),
-            Colors.black.withValues(alpha: 0.06),
-          ],
-        ).createShader(rrect.outerRect),
-    );
-
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(_BottomGlassPainter old) =>
-      old.borderRadius != borderRadius;
 }

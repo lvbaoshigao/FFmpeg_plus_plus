@@ -32,11 +32,34 @@ class MasonryGrid extends MultiChildRenderObjectWidget {
 class MasonryGridRenderObject extends RenderBox
     with ContainerRenderObjectMixin<RenderBox, MasonryGridParentData>,
          RenderBoxContainerDefaultsMixin<RenderBox, MasonryGridParentData> {
-  int columns;
-  double spacing;
-  double runSpacing;
+  int _columns;
+  double _spacing;
+  double _runSpacing;
 
-  MasonryGridRenderObject({required this.columns, required this.spacing, required this.runSpacing});
+  int get columns => _columns;
+  double get spacing => _spacing;
+  double get runSpacing => _runSpacing;
+
+  set columns(int value) {
+    if (_columns == value) return;
+    _columns = value;
+    markNeedsLayout();
+  }
+
+  set spacing(double value) {
+    if (_spacing == value) return;
+    _spacing = value;
+    markNeedsLayout();
+  }
+
+  set runSpacing(double value) {
+    if (_runSpacing == value) return;
+    _runSpacing = value;
+    markNeedsLayout();
+  }
+
+  MasonryGridRenderObject({required int columns, required double spacing, required double runSpacing})
+      : _columns = columns, _spacing = spacing, _runSpacing = runSpacing;
 
   @override
   void setupParentData(RenderBox child) {
@@ -61,7 +84,7 @@ class MasonryGridRenderObject extends RenderBox
       child = parentData.nextSibling;
     }
 
-    final maxH = colH.reduce((a, b) => a > b ? a : b) - runSpacing;
+    final maxH = colH.isEmpty ? 0.0 : colH.reduce((a, b) => a > b ? a : b) - runSpacing;
     size = Size(w, maxH.clamp(0, double.infinity));
   }
 

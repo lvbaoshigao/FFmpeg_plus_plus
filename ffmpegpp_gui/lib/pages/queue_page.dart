@@ -79,7 +79,7 @@ class _QueuePageState extends State<QueuePage> {
                 : ListView.builder(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                     itemCount: state.tasks.length,
-                    itemBuilder: (_, i) => TaskCard(task: state.tasks[i]),
+                    itemBuilder: (_, i) => TaskCard(key: ValueKey(state.tasks[i].id), task: state.tasks[i]),
                   )),
           ])),
           ]),

@@ -141,6 +141,8 @@ enum LogicGateType {
   not,    // 非门：单输入取反
   nand,   // 与非门：与门的非
   nor,    // 或非门：或门的非
+  xor,    // 异或门：输入不同时输出 1
+  xnor,   // 同或门：输入相同时输出 1
   const1, // 恒 1：恒定输出 1（无输入）
   const0, // 恒 0：恒定输出 0（无输入）
   timeTrigger; // 时间触发器：系统时间匹配时输出 1，否则 0（无输入，需配置时间/日期）
@@ -161,6 +163,8 @@ enum LogicGateType {
     LogicGateType.not => isZh ? '非' : 'NOT',
     LogicGateType.nand => isZh ? '与非' : 'NAND',
     LogicGateType.nor => isZh ? '或非' : 'NOR',
+    LogicGateType.xor => isZh ? '异或' : 'XOR',
+    LogicGateType.xnor => isZh ? '同或' : 'XNOR',
     LogicGateType.const1 => '1',
     LogicGateType.const0 => '0',
     LogicGateType.timeTrigger => isZh ? '时间' : 'Time',
@@ -193,7 +197,7 @@ class PipelineNode {
       gateType == null ? null : LogicGateType.values.asNameMap()[gateType];
 
   /// 逻辑门是否可输入（恒1/恒0 无输入）
-  bool get hasGateInput => isGate && !gate!.isConstant;
+  bool get hasGateInput => isGate && gate != null && !gate!.isConstant;
   /// 逻辑门是否可输出（所有逻辑门都有输出）
   bool get hasGateOutput => isGate;
 
@@ -802,7 +806,7 @@ class TaskInfo {
     TaskStatus? status, double? progress, String? elapsed, String? remaining,
     String? speed, String? fps, String? bitrate, int? frame, String? error,
     List<String>? logLines, bool? expanded, int? outputSize, double? duration, List<String>? command,
-    int? currentCallIndex,
+    List<BackendCall>? pipelineCalls, int? currentCallIndex,
   }) => TaskInfo(
         id: id, videoId: videoId, filename: filename, inputPath: inputPath, outputPath: outputPath,
         status: status ?? this.status, progress: progress ?? this.progress,
@@ -812,7 +816,7 @@ class TaskInfo {
         logLines: logLines ?? this.logLines, config: config,
         expanded: expanded ?? this.expanded, outputSize: outputSize ?? this.outputSize,
         duration: duration ?? this.duration, command: command ?? this.command,
-        pipelineCalls: pipelineCalls, currentCallIndex: currentCallIndex ?? this.currentCallIndex,
+        pipelineCalls: pipelineCalls ?? this.pipelineCalls, currentCallIndex: currentCallIndex ?? this.currentCallIndex,
       );
 
   String get statusLabel {
@@ -939,13 +943,18 @@ class AppConfig {
   bool enableSystemNotification;
   String logSavePath;
   bool useNodeEditor;
+  /// 移动端节点编辑器默认横屏（竖屏 = false，横屏 = true）
+  bool useNodeEditorLandscape;
   Map<String, int> nodeUsageCount;
   int maxConcurrentTasks;
   int probeThreads;
   Map<String, List<String>> keyBindings;
+  bool autosaveEnabled;        // 节点编辑器自动保存草稿开关（默认开）
+  int autosaveIntervalSec;     // 自动保存间隔（秒，默认 30）
   bool autoCheckUpdate;
   bool mcpEnabled;
   int mcpPort;
+  String mcpHost;          // MCP 绑定地址（默认 127.0.0.1）
   bool mcpAllowWrite; // MCP 是否允许写操作（默认只读）
   String aiProvider; // 'openai' or 'anthropic' or 'custom'
   String aiApiKey;
@@ -982,6 +991,10 @@ class AppConfig {
   static const defaultKeyBindings = <String, List<String>>{
     'canvas_select_all': ['Control', 'A'],
     'canvas_delete_selected': ['Delete'],
+    'canvas_undo': ['Control', 'Z'],
+    'canvas_redo': ['Control', 'Shift', 'Z'],
+    'canvas_probe_mode': [],
+    'canvas_hide_logic': [],
     'project_select_all': ['Control', 'A'],
     'queue_add_all': ['Control', 'Shift', 'A'],
     'queue_start_all': ['Control', 'Shift', 'S'],
@@ -1007,6 +1020,9 @@ class AppConfig {
     this.gateStd = 'ansi',
     this.debugMode = false, this.saveLogs = false, this.enableSystemNotification = false, this.logSavePath = '',
     this.useNodeEditor = true,
+    this.useNodeEditorLandscape = false,
+    this.autosaveEnabled = true,
+    this.autosaveIntervalSec = 30,
     this.maxConcurrentTasks = 1,
     this.probeThreads = 1,
     Map<String, int>? nodeUsageCount,
@@ -1014,6 +1030,7 @@ class AppConfig {
     this.autoCheckUpdate = true,
     this.mcpEnabled = false,
     this.mcpPort = 3000,
+    this.mcpHost = '127.0.0.1',
     this.mcpAllowWrite = false,
     this.aiProvider = 'openai',
     this.aiApiKey = '',
@@ -1090,6 +1107,9 @@ class AppConfig {
         enableSystemNotification: json['enable_system_notification'] as bool? ?? false,
         logSavePath: json['log_save_path'] as String? ?? '',
         useNodeEditor: json['use_node_editor'] as bool? ?? true,
+        useNodeEditorLandscape: json['use_node_editor_landscape'] as bool? ?? false,
+        autosaveEnabled: json['autosave_enabled'] as bool? ?? true,
+        autosaveIntervalSec: json['autosave_interval_sec'] as int? ?? 30,
         maxConcurrentTasks: json['max_concurrent_tasks'] as int? ?? 1,
         probeThreads: json['probe_threads'] as int? ?? 1,
         nodeUsageCount: _safeIntMap(json['node_usage_count']),
@@ -1097,6 +1117,7 @@ class AppConfig {
         autoCheckUpdate: json['auto_check_update'] as bool? ?? true,
         mcpEnabled: json['mcp_enabled'] as bool? ?? false,
         mcpPort: json['mcp_port'] as int? ?? 3000,
+        mcpHost: json['mcp_host'] as String? ?? '127.0.0.1',
         mcpAllowWrite: json['mcp_allow_write'] as bool? ?? false,
         aiProvider: json['ai_provider'] as String? ?? 'openai',
         aiApiKey: json['ai_api_key'] as String? ?? '',
@@ -1137,6 +1158,9 @@ class AppConfig {
         'debug_mode': debugMode,
         'save_logs': saveLogs, 'enable_system_notification': enableSystemNotification, 'log_save_path': logSavePath,
         'use_node_editor': useNodeEditor,
+        'use_node_editor_landscape': useNodeEditorLandscape,
+        'autosave_enabled': autosaveEnabled,
+        'autosave_interval_sec': autosaveIntervalSec,
         'max_concurrent_tasks': maxConcurrentTasks,
         'probe_threads': probeThreads,
         'node_usage_count': nodeUsageCount,

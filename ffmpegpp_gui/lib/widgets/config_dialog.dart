@@ -76,6 +76,8 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
       cropX: v.cropX, cropY: v.cropY, cropW: v.cropW, cropH: v.cropH,
       audioConvertCodec: v.audioConvertCodec, audioConvertFormat: v.audioConvertFormat,
       audioConvertBitrate: v.audioConvertBitrate, audioConvertSampleRate: v.audioConvertSampleRate,
+      startTime: v.startTime, endTime: v.endTime,
+      subtitleIndex2: v.subtitleIndex2,
     );
     _fpsValue = v.framerate;
     if (v.resolutionW == null && v.resolutionH == null) {
@@ -391,7 +393,7 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
             language: lang,
             onSelected: (v) {
               setState(() => _cfg.subtitleFontName = v);
-              Navigator.pop(context);
+              // FontPicker 自身会弹出对话框，此处不再弹，避免二次 pop 关闭整个 ConfigDialog
             },
           )),
         );
@@ -715,7 +717,9 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
 
   Future<void> _pickSub() async {
     final r = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['srt', 'ass', 'ssa', 'sub', 'vtt']);
-    if (r != null && r.files.isNotEmpty && r.files.first.path != null) setState(() => _cfg.subtitleFile = r.files.first.path!);
+    if (r != null && r.files.isNotEmpty && r.files.first.path != null) {
+      if (mounted) setState(() => _cfg.subtitleFile = r.files.first.path!);
+    }
   }
 }
 
@@ -775,7 +779,8 @@ class _MarqueeTitleState extends State<_MarqueeTitle> with SingleTickerProviderS
 
       if (needsScroll && !_scrolling) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _startScroll(tp.size.width);
+          // 先 setState 触发重建，滚动控制器创建后 marquee 分支才会被渲染
+          if (mounted) setState(() => _startScroll(tp.size.width));
         });
       }
 

@@ -163,7 +163,7 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
                     decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(vertical: 6), border: OutlineInputBorder()),
                     onSubmitted: (v) {
                       final newIdx = int.tryParse(v);
-                      if (newIdx != null && newIdx > 0) state.updateContainerItemIndex(container.id, item.fileId, newIdx);
+                      if (newIdx != null && newIdx > 0 && newIdx <= container.items.length) state.updateContainerItemIndex(container.id, item.fileId, newIdx);
                       setState(() => _editingIndex = null);
                     },
                   ))

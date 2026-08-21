@@ -425,7 +425,7 @@ class GraphExecutor {
       final step = plan.steps[i];
       final isLast = i == plan.steps.length - 1;
       final inputExt = currentInput.split('.').last;
-      final currentOutput = isLast ? outputPath : _tempPath(inputPath, i, inputExt);
+      var currentOutput = isLast ? outputPath : _tempPath(inputPath, i, inputExt);
       if (!isLast) tempFiles.add(currentOutput);
 
       final callsBeforeStep = calls.length;
@@ -497,10 +497,15 @@ class GraphExecutor {
 
           if (mode == 'single') {
             final time = (p['time'] as num?)?.toDouble() ?? 0;
+            final outPath = isLast
+                ? currentOutput
+                : _tempPath(inputPath, i, fmt);
+            if (!isLast) tempFiles.add(outPath);
             calls.add(BackendCall(
               action: 'extract_frame',
-              params: {'input': currentInput, 'output': '${baseName}_frame.$fmt', 'time': time},
+              params: {'input': currentInput, 'output': outPath, 'time': time},
             ));
+            currentOutput = outPath;  // 链到实际输出文件
           } else if (mode == 'range') {
             final rs = (p['range_start'] as num?)?.toDouble() ?? 0;
             final re = (p['range_end'] as num?)?.toDouble() ?? 0;
@@ -879,7 +884,8 @@ class GraphExecutor {
           final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext);
           if (!isLast) tempFiles.add(outPath);
           final filters = <String>[];
-          var remaining = tempo;
+          // atempo 有效区间 [0.5, 2.0]；非法值（<=0 / NaN）直接回退 1.0，避免除零死循环
+          var remaining = (tempo.isFinite && tempo > 0) ? tempo : 1.0;
           while (remaining > 2.0) { filters.add('atempo=2.0'); remaining /= 2.0; }
           while (remaining < 0.5) { filters.add('atempo=0.5'); remaining /= 0.5; }
           filters.add('atempo=$remaining');
@@ -969,6 +975,8 @@ class GraphExecutor {
           final outPath = isLast
               ? outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.$fmt')
               : _tempPath(inputPath, i, fmt);
+          if (!isLast) tempFiles.add(outPath);
+          currentOutput = outPath;  // 链到实际输出文件
           calls.add(BackendCall(
             action: 'image_sequence',
             params: {
@@ -1253,7 +1261,8 @@ class GraphExecutor {
     final vf = 'setpts=$ptsFactor*PTS';
 
     final afParts = <String>[];
-    var remaining = speed;
+    // atempo 有效区间 [0.5, 2.0]；非法值（<=0 / NaN）直接回退 1.0，避免除零死循环
+    var remaining = (speed.isFinite && speed > 0) ? speed : 1.0;
     while (remaining > 2.0) {
       afParts.add('atempo=2.0');
       remaining /= 2.0;

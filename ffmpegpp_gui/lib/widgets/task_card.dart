@@ -149,7 +149,8 @@ class TaskCard extends StatelessWidget {
 
   Widget _chip(IconData icon, String text, ColorScheme scheme) => Row(mainAxisSize: MainAxisSize.min, children: [
     Icon(icon, size: 12, color: scheme.outline), const SizedBox(width: 3),
-    Text(text, style: TextStyle(fontSize: 10, color: scheme.outline)),
+    Text(text, maxLines: 1, overflow: TextOverflow.ellipsis,
+        style: TextStyle(fontSize: 10, color: scheme.outline)),
   ]);
 
   IconData get _statusIcon => switch (task.status) {

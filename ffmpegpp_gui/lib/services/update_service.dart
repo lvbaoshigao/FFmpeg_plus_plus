@@ -51,8 +51,8 @@ class UpdateResult {
 enum UpdateSource { lanzou, github }
 
 int compareVersions(String a, String b) {
-  final pa = a.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-  final pb = b.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+  final pa = a.replaceFirst(RegExp(r'^v'), '').split(RegExp(r'[-.]')).take(3).map((e) => int.tryParse(e) ?? 0).toList();
+  final pb = b.replaceFirst(RegExp(r'^v'), '').split(RegExp(r'[-.]')).take(3).map((e) => int.tryParse(e) ?? 0).toList();
   for (var i = 0; i < 3; i++) {
     final va = i < pa.length ? pa[i] : 0;
     final vb = i < pb.length ? pb[i] : 0;
@@ -107,7 +107,8 @@ Future<UpdateResult> _checkLanzou() async {
     final resp = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 10));
     final match = RegExp(r'<span id="filename">([^<]+)</span>').firstMatch(resp.body);
     if (match == null) return UpdateResult(error: 'parse_failed', source: UpdateSource.lanzou);
-    final version = match.group(1)!.trim();
+    final raw = match.group(1)!.trim();
+    final version = RegExp(r'(\d+(\.\d+){1,3})').firstMatch(raw)?.group(1) ?? raw;
     final password = _lanzouPasswords[key];
     return UpdateResult(remoteVersion: version, downloadUrl: url, password: password, source: UpdateSource.lanzou);
   } catch (e) {
