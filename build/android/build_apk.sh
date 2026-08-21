@@ -43,7 +43,11 @@ fi
 # ── 2. file_picker compileSdk 补丁（幂等） ──
 # file_picker 8.x 固定 compileSdk 34，而其依赖 flutter_plugin_android_lifecycle
 # 2.0.35 要求 ≥36；在 pub 缓存里打补丁，避免 AAR 元数据检查失败。
-"$SCRIPT_DIR/patch_pubcache.sh"
+# 先确保 pub 缓存包含 file_picker（自愈，不依赖 workflow 时序）
+if command -v flutter &>/dev/null; then
+  (cd "$FFMPEGPP_ROOT/ffmpegpp_gui" && flutter pub get) || true
+fi
+bash "$SCRIPT_DIR/patch_pubcache.sh"
 
 # ── 3. Gradle 构建（含 OOM 重试） ──
 cd "$FFMPEGPP_ROOT/ffmpegpp_gui/android"
