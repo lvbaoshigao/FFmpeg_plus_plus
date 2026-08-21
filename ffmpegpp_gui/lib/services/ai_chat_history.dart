@@ -98,7 +98,10 @@ class AiChatHistory {
   /// 删除一条历史会话。
   static Future<void> deleteSession(String filePath) async {
     try {
+      // 路径遍历防护：仅允许删除历史目录内的文件
+      final base = Directory(await _historyDir());
       final f = File(filePath);
+      if (!f.path.startsWith(base.path)) return;
       if (await f.exists()) await f.delete();
     } catch (_) {}
   }

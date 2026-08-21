@@ -12,6 +12,8 @@ import '../widgets/container_card.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/toast.dart';
 import '../platform/app_platform.dart';
+import '../services/quick_config_storage.dart';
+import 'quick_config_page.dart';
 
 class ProjectPage extends StatefulWidget {
   const ProjectPage({super.key});
@@ -136,23 +138,25 @@ class ProjectPageState extends State<ProjectPage> {
                 onPressed: state.videos.isEmpty ? null : () => _importConfig(state, s),
               ),
               // 圆形图标按钮：新建容器（主题色描边玻璃圆底）+ 添加文件（主色圆底），无文字
-              const SizedBox(width: 6),
-              Tooltip(
-                message: s.container,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(20),
-                  onTap: () => _showContainerMenu(context, state, s),
-                  child: Container(
-                    width: 40, height: 40,
-                    decoration: BoxDecoration(
-                      color: scheme.primaryContainer.withAlpha(160),
-                      shape: BoxShape.circle,
-                      border: Border.all(color: scheme.primary.withAlpha(90), width: 1.2),
+              if (state.config.editMode != 1) ...[
+                const SizedBox(width: 6),
+                Tooltip(
+                  message: s.container,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(20),
+                    onTap: () => _showContainerMenu(context, state, s),
+                    child: Container(
+                      width: 40, height: 40,
+                      decoration: BoxDecoration(
+                        color: scheme.primaryContainer.withAlpha(160),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: scheme.primary.withAlpha(90), width: 1.2),
+                      ),
+                      child: Icon(Icons.create_new_folder_outlined, size: 18, color: scheme.primary),
                     ),
-                    child: Icon(Icons.create_new_folder_outlined, size: 18, color: scheme.primary),
                   ),
                 ),
-              ),
+              ],
               const SizedBox(width: 10),
               Tooltip(
                 message: s.addVideo,
@@ -256,7 +260,14 @@ class ProjectPageState extends State<ProjectPage> {
             }),
             visualDensity: VisualDensity.compact,
           ),
-          Expanded(child: VideoCard(video: video)),
+          Expanded(
+            child: state.config.editMode == 1
+                ? GestureDetector(
+                    onTap: () => _showQuickConfigDialog(context, state, video, s),
+                    child: VideoCard(video: video),
+                  )
+                : VideoCard(video: video),
+          ),
         ]);
       },
     );
@@ -465,6 +476,47 @@ class ProjectPageState extends State<ProjectPage> {
     }
   }
 
+  /// 快速模式：选择文件后弹出快速配置选择对话框
+  Future<void> _showQuickConfigDialog(BuildContext context, AppState state, VideoFile video, AppStrings s) async {
+    final zh = s.isZh;
+    final fileType = _fileTypeForMediaType(video.fileMediaType);
+    final configs = await QuickConfigStorage.loadAll(fileType);
+    if (!context.mounted) return;
+    final selected = await showDialog<QuickConfig>(
+      context: context,
+      builder: (ctx) => _QuickConfigPicker(
+        configs: configs,
+        fileType: fileType,
+        scheme: Theme.of(context).colorScheme,
+        isZh: zh,
+      ),
+    );
+    if (selected == null || !context.mounted) return;
+    final result = await Navigator.push<QuickConfig>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => QuickConfigPage(
+          config: selected,
+          onSave: (updated) async {
+            await QuickConfigStorage.save(updated);
+          },
+        ),
+      ),
+    );
+    if (result != null && context.mounted) {
+      showToast(context, zh ? '配置已保存' : 'Config saved', type: ToastType.success);
+    }
+  }
+
+  QuickFileType _fileTypeForMediaType(MediaType? mt) {
+    if (mt == null) return QuickFileType.video;
+    switch (mt) {
+      case MediaType.image: return QuickFileType.image;
+      case MediaType.audio: return QuickFileType.audio;
+      default: return QuickFileType.video;
+    }
+  }
+
   void _showContainerMenu(BuildContext context, AppState state, AppStrings s) {
     final scheme = Theme.of(context).colorScheme;
     final zh = s.isZh;
@@ -557,6 +609,95 @@ class ProjectPageState extends State<ProjectPage> {
           ]),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// 快速模式配置选择器对话框
+class _QuickConfigPicker extends StatelessWidget {
+  final List<QuickConfig> configs;
+  final QuickFileType fileType;
+  final ColorScheme scheme;
+  final bool isZh;
+
+  const _QuickConfigPicker({
+    required this.configs,
+    required this.fileType,
+    required this.scheme,
+    required this.isZh,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Row(children: [
+        Icon(Icons.tune, size: 20, color: scheme.primary),
+        const SizedBox(width: 8),
+        Text(isZh ? '选择快速配置' : 'Select Quick Config',
+            style: TextStyle(color: scheme.onSurface, fontSize: 16)),
+      ]),
+      content: SizedBox(
+        width: 400,
+        child: configs.isEmpty
+            ? Padding(
+                padding: const EdgeInsets.symmetric(vertical: 24),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.inbox_outlined, size: 48, color: scheme.outlineVariant),
+                  const SizedBox(height: 12),
+                  Text(isZh ? '暂无匹配的快速配置' : 'No matching quick configs',
+                      style: TextStyle(fontSize: 14, color: scheme.outline)),
+                  const SizedBox(height: 4),
+                  Text(isZh ? '请先在设置中创建快速配置' : 'Create one in Settings first',
+                      style: TextStyle(fontSize: 12, color: scheme.outline.withAlpha(150))),
+                ]),
+              )
+            : ListView.separated(
+                shrinkWrap: true,
+                itemCount: configs.length,
+                separatorBuilder: (_, _) => const Divider(height: 1),
+                itemBuilder: (_, i) {
+                  final cfg = configs[i];
+                  return ListTile(
+                    leading: _fileTypeIcon(cfg.fileType),
+                    title: Text(cfg.name.isNotEmpty ? cfg.name : '(unnamed)',
+                        style: TextStyle(fontSize: 14, color: scheme.onSurface, fontWeight: FontWeight.w500)),
+                    subtitle: cfg.description.isNotEmpty
+                        ? Text(cfg.description, maxLines: 1, overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 11, color: scheme.outline))
+                        : Text(
+                            isZh ? '${cfg.items.where((i) => i.enabled).length} 项已启用' : '${cfg.items.where((i) => i.enabled).length} items enabled',
+                            style: TextStyle(fontSize: 11, color: scheme.outline.withAlpha(150))),
+                    trailing: Icon(Icons.chevron_right, size: 18, color: scheme.outline),
+                    onTap: () => Navigator.pop(context, cfg),
+                  );
+                },
+              ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(isZh ? '取消' : 'Cancel'),
+        ),
+      ],
+    );
+  }
+
+  Widget _fileTypeIcon(QuickFileType ft) {
+    return Container(
+      width: 32, height: 32,
+      decoration: BoxDecoration(
+        color: scheme.primaryContainer.withAlpha(120),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Icon(
+        switch (ft) {
+          QuickFileType.video => Icons.videocam_outlined,
+          QuickFileType.image => Icons.image_outlined,
+          QuickFileType.audio => Icons.audiotrack_outlined,
+        },
+        size: 16, color: scheme.primary,
       ),
     );
   }

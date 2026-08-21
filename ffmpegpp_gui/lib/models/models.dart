@@ -1,6 +1,8 @@
 import 'dart:io' show Platform;
 import 'package:uuid/uuid.dart';
 
+export 'quick_config.dart';
+
 const _uuid = Uuid();
 
 final String _defaultFontFamily = Platform.isWindows ? 'Microsoft YaHei'
@@ -943,6 +945,7 @@ class AppConfig {
   bool enableSystemNotification;
   String logSavePath;
   bool useNodeEditor;
+  int editMode = 0; // 0=node editor, 1=quick mode, 2=traditional
   /// 移动端节点编辑器默认横屏（竖屏 = false，横屏 = true）
   bool useNodeEditorLandscape;
   Map<String, int> nodeUsageCount;
@@ -1020,6 +1023,7 @@ class AppConfig {
     this.gateStd = 'ansi',
     this.debugMode = false, this.saveLogs = false, this.enableSystemNotification = false, this.logSavePath = '',
     this.useNodeEditor = true,
+    this.editMode = 0,
     this.useNodeEditorLandscape = false,
     this.autosaveEnabled = true,
     this.autosaveIntervalSec = 30,
@@ -1107,6 +1111,7 @@ class AppConfig {
         enableSystemNotification: json['enable_system_notification'] as bool? ?? false,
         logSavePath: json['log_save_path'] as String? ?? '',
         useNodeEditor: json['use_node_editor'] as bool? ?? true,
+        editMode: json['edit_mode'] as int? ?? (json['use_node_editor'] as bool? ?? true ? 0 : 2),
         useNodeEditorLandscape: json['use_node_editor_landscape'] as bool? ?? false,
         autosaveEnabled: json['autosave_enabled'] as bool? ?? true,
         autosaveIntervalSec: json['autosave_interval_sec'] as int? ?? 30,
@@ -1158,6 +1163,7 @@ class AppConfig {
         'debug_mode': debugMode,
         'save_logs': saveLogs, 'enable_system_notification': enableSystemNotification, 'log_save_path': logSavePath,
         'use_node_editor': useNodeEditor,
+        'edit_mode': editMode,
         'use_node_editor_landscape': useNodeEditorLandscape,
         'autosave_enabled': autosaveEnabled,
         'autosave_interval_sec': autosaveIntervalSec,

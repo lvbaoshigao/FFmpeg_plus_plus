@@ -1723,12 +1723,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             ),
             Padding(
               padding: const EdgeInsets.only(right: 12),
-              child: FilledButton.icon(
+              // 保存按钮：仅软盘图标，不显示文字
+              child: IconButton.filled(
                 onPressed: _save,
-                icon: const Icon(Icons.save, size: 18),
-                label: Text(s.save),
-                style: FilledButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                icon: const Icon(Icons.save_outlined, size: 18),
+                tooltip: s.save,
+                style: IconButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                 ),
               ),
@@ -2507,14 +2508,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               onPressed: _nodes.isEmpty ? null : () => _exportConfig(s),
             ),
             const SizedBox(width: 4),
-            FilledButton.icon(
+            // 保存按钮：仅软盘图标，不显示文字
+            IconButton(
+              icon: Icon(Icons.save_outlined, size: 18, color: scheme.onSurface),
+              tooltip: s.save,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              padding: EdgeInsets.zero,
               onPressed: _save,
-              icon: const Icon(Icons.save, size: 16),
-              label: Text(s.save, style: const TextStyle(fontSize: 12)),
-              style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
             ),
           ] else
             Text(s.isZh ? '右键添加节点' : 'Right-click to add',

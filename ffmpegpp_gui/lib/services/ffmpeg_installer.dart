@@ -61,11 +61,20 @@ class FfmpegInstaller {
     onStatus('正在通过 $cmd 安装 FFmpeg...');
     onProgress(0.1);
 
-    final Process process;
+    late Process process;
     if (Platform.isMacOS) {
       process = await Process.start(cmd, args);
     } else {
-      process = await Process.start('pkexec', [cmd, ...args]);
+      // pkexec 并非所有发行版都预装（Ubuntu 23.10+/Debian 12+），失败时回退到 sudo
+      try {
+        process = await Process.start('pkexec', [cmd, ...args]);
+      } catch (_) {
+        try {
+          process = await Process.start('sudo', [cmd, ...args]);
+        } catch (_) {
+          throw Exception('需要 root 权限安装 FFmpeg，但未找到 pkexec 或 sudo。手动安装: sudo $cmd ${args.join(' ')}');
+        }
+      }
     }
 
     process.stdout.transform(const SystemEncoding().decoder).listen((line) {
@@ -183,6 +192,10 @@ class FfmpegInstaller {
     final bytes = await File(zipPath).readAsBytes();
     final archive = ZipDecoder().decodeBytes(bytes);
     for (final file in archive) {
+      // 解压炸弹防护：拒绝超大的解压条目（ffmpeg 二进制合理上限 512MB）
+      if (file.isFile && file.size > 512 * 1024 * 1024) {
+        throw Exception('ZIP 条目过大 (${file.name}): ${(file.size / 1024 / 1024).toStringAsFixed(0)}MB');
+      }
       if (file.isFile && file.name.toLowerCase().endsWith(targetName.toLowerCase())) {
         // 安全检查：拒绝包含路径穿越的 ZIP 条目
         if (file.name.contains('..')) {
