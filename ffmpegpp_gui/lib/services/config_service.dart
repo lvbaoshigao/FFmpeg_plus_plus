@@ -93,7 +93,11 @@ class ConfigService {
       final file = File('$dir$_s$_libraryFilename');
       if (await file.exists()) {
         final list = jsonDecode(await file.readAsString()) as List<dynamic>;
-        return list.cast<Map<String, dynamic>>();
+        // 逐个验证条目类型（cast 是懒加载的，坏条目会在首次使用时抛 TypeCastError）
+        for (final e in list) {
+          if (e is! Map<String, dynamic>) return [];
+        }
+        return List<Map<String, dynamic>>.from(list);
       }
     } catch (_) {}
     return [];

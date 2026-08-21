@@ -112,29 +112,26 @@ class GateSymbolPainter extends CustomPainter {
         canvas.drawPath(path, paint);
         _labelText(canvas, lab, Offset((backX + tipX) * 0.5, hh));
       } else if (gate == LogicGateType.xor || gate == LogicGateType.xnor) {
-        // 异或/同或门：D 形 + 输入侧附加曲线
-        final arcR = span / 2;
-        final arcCx = frontX - arcR;
-        // 主 D 形
+        // 异或/同或门：IEEE 91 规定为 OR 盾形 + 输入侧附加弧线（双输入弧），
+        // 而非 AND 的 D 形。主体复用或门几何，另画一条输入侧曲线。
+        final tipX = frontX - 4;
+        final ctrlX = backX + (tipX - backX) * 0.55;
+        final ctrlY = boxTop - 2;
+        final leftCtrlX = backX - 6;
         final path = Path()
-          ..moveTo(backX, boxTop)
-          ..lineTo(arcCx, boxTop)
-          ..arcTo(
-            Rect.fromCircle(center: Offset(arcCx, hh), radius: arcR),
-            -math.pi / 2,
-            math.pi,
-            false,
-          )
-          ..lineTo(backX, boxBot)
+          ..moveTo(backX + 4, boxTop)
+          ..quadraticBezierTo(ctrlX, ctrlY, tipX, hh)           // 上沿 → 尖端（凸向上）
+          ..quadraticBezierTo(ctrlX, boxBot + 2, backX + 4, boxBot) // 尖端 → 下沿（凸向下）
+          ..quadraticBezierTo(leftCtrlX, hh, backX + 4, boxTop) // 左侧内凹（凸向左）
           ..close();
         canvas.drawPath(path, paint);
-        // 输入侧附加曲线（异或门标志性双弧线）
+        // 输入侧附加曲线（异或门标志性双弧线，位于主体左侧之外）
         final curveX = backX - 8;
         final extraPath = Path()
           ..moveTo(curveX, boxTop + 2)
           ..quadraticBezierTo(backX - 4, hh, curveX, boxBot - 2);
         canvas.drawPath(extraPath, paint);
-        _labelText(canvas, lab, Offset(backX + (arcCx - backX) * 0.5, hh));
+        _labelText(canvas, lab, Offset((backX + tipX) * 0.5, hh));
       } else if (gate == LogicGateType.not) {
         // 非门：三角形（缓冲器符号），尖端在右
         final tipX = frontX - 2;
@@ -160,10 +157,10 @@ class GateSymbolPainter extends CustomPainter {
         cx = frontX + bubbleR;       // 矩形右缘外
       } else if (gate == LogicGateType.not) {
         cx = frontX - 2 + bubbleR;   // 三角形尖端右 + 圈半径
-      } else if (gate == LogicGateType.and || gate == LogicGateType.nand || gate == LogicGateType.xor || gate == LogicGateType.xnor) {
+      } else if (gate == LogicGateType.and || gate == LogicGateType.nand) {
         cx = frontX + bubbleR;       // D 形右缘外
       } else {
-        cx = frontX - 4 + bubbleR;   // OR 尖端右 + 圈半径
+        cx = frontX - 4 + bubbleR;   // OR/XOR 尖端右 + 圈半径
       }
       if (cx + bubbleR <= w) {
         canvas.drawCircle(Offset(cx, hh), bubbleR, fillP);

@@ -8,6 +8,7 @@ import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../services/config_export.dart';
 import '../services/graph_executor.dart';
+import '../services/quick_config_storage.dart';
 import '../theme/app_strings.dart';
 import '../widgets/toast.dart';
 import '../widgets/glass_panel.dart';
@@ -56,6 +57,7 @@ class ConfigLibraryPage extends StatefulWidget {
 
 class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
   final List<_ConfigEntry> _configs = [];
+  final List<QuickConfig> _quickConfigs = [];
   bool _loaded = false;
 
   @override
@@ -66,13 +68,21 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
 
   Future<void> _loadLibrary() async {
     final state = context.read<AppState>();
-    final list = await state.configService.loadLibrary();
+    final results = await Future.wait([
+      state.configService.loadLibrary(),
+      QuickConfigStorage.loadAll(null),
+    ]);
     if (!mounted) return;
+    final list = results[0] as List<dynamic>;
+    final quick = results[1] as List<QuickConfig>;
     setState(() {
       _configs.clear();
       for (final json in list) {
-        try { _configs.add(_ConfigEntry.fromJson(json)); } catch (_) {}
+        try { _configs.add(_ConfigEntry.fromJson(json as Map<String, dynamic>)); } catch (_) {}
       }
+      _quickConfigs
+        ..clear()
+        ..addAll(quick);
       _loaded = true;
     });
   }
@@ -359,6 +369,200 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     );
   }
 
+  // ── 快捷配置 (Quick Config) ──
+
+  void _newQuickConfig() {
+    final scheme = Theme.of(context).colorScheme;
+    final zh = AppStrings.of(context.read<AppState>().config.language).isZh;
+    final nameCtrl = TextEditingController(text: zh ? '新快捷配置' : 'Quick Config');
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        var selected = QuickFileType.video;
+        return StatefulBuilder(builder: (ctx, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(children: [
+            Icon(Icons.bolt_outlined, size: 20, color: scheme.primary),
+            const SizedBox(width: 8),
+            Text(zh ? '新建快捷配置' : 'New Quick Config', style: TextStyle(color: scheme.onSurface)),
+          ]),
+          content: SizedBox(width: 360, child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(
+              controller: nameCtrl, autofocus: true,
+              decoration: InputDecoration(
+                labelText: zh ? '配置名称' : 'Config Name',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              style: TextStyle(fontSize: 14, color: scheme.onSurface),
+              onSubmitted: (_) {
+                Navigator.pop(ctx);
+                _createQuickConfig(nameCtrl.text, selected, zh);
+              },
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<QuickFileType>(
+              initialValue: selected,
+              decoration: InputDecoration(
+                labelText: zh ? '文件类型' : 'File Type',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              items: [
+                for (final t in QuickFileType.values)
+                  DropdownMenuItem(value: t, child: Text(t.label(zh))),
+              ],
+              onChanged: (v) {
+                if (v != null) setDialogState(() => selected = v);
+              },
+            ),
+          ])),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: Text(zh ? '取消' : 'Cancel')),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _createQuickConfig(nameCtrl.text, selected, zh);
+              },
+              child: Text(zh ? '创建' : 'Create'),
+            ),
+          ],
+        ));
+      },
+    ).whenComplete(nameCtrl.dispose);
+  }
+
+  Future<void> _createQuickConfig(String rawName, QuickFileType type, bool zh) async {
+    final name = rawName.trim().isEmpty
+        ? (zh ? '未命名快捷配置' : 'Quick Config')
+        : rawName.trim();
+    final now = DateTime.now();
+    final cfg = QuickConfig(
+      id: _uuid.v4(),
+      fileType: type,
+      name: name,
+      description: '',
+      createdAt: now,
+      updatedAt: now,
+      items: quickDefaultsFor(type),
+    );
+    await QuickConfigStorage.save(cfg);
+    if (!mounted) return;
+    setState(() => _quickConfigs.insert(0, cfg));
+    showToast(context, zh ? '已创建快捷配置' : 'Quick config created', type: ToastType.success);
+  }
+
+  void _openQuickEditor(QuickConfig cfg) {
+    // TODO: navigate to quick config editor
+  }
+
+  Future<void> _deleteQuickConfig(QuickConfig cfg) async {
+    final zh = AppStrings.of(context.read<AppState>().config.language).isZh;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(zh ? '确认删除' : 'Confirm Delete'),
+        content: Text(
+          zh ? '确定要删除「${cfg.name}」吗？' : 'Delete "${cfg.name}"?',
+          style: TextStyle(fontSize: 13, color: Theme.of(ctx).colorScheme.onSurfaceVariant),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(zh ? '取消' : 'Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(zh ? '删除' : 'Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await QuickConfigStorage.delete(cfg.id);
+    if (!mounted) return;
+    setState(() => _quickConfigs.removeWhere((c) => c.id == cfg.id));
+    showToast(context, zh ? '已删除快捷配置' : 'Quick config deleted', type: ToastType.success);
+  }
+
+  Widget _buildEmptyState(ColorScheme scheme, bool zh) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 48, bottom: 16),
+      child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.folder_open_outlined, size: 48, color: scheme.outline.withAlpha(80)),
+        const SizedBox(height: 12),
+        Text(zh ? '还没有配置' : 'No configs yet', style: TextStyle(color: scheme.outline, fontSize: 14)),
+        const SizedBox(height: 6),
+        Text(zh ? '点击「新建」创建节点编辑器配置模板' : 'Click "New" to create a node editor config',
+            style: TextStyle(color: scheme.outline.withAlpha(120), fontSize: 12)),
+        const SizedBox(height: 16),
+        OutlinedButton.icon(
+          icon: const Icon(Icons.file_download_outlined, size: 16),
+          label: Text(zh ? '或导入 .fppx 文件' : 'Or import .fppx file'),
+          onPressed: _importFppx,
+        ),
+      ])),
+    );
+  }
+
+  Widget _buildQuickSectionHeader(ColorScheme scheme, bool zh) {
+    return Row(children: [
+      Icon(Icons.bolt, size: 16, color: scheme.primary),
+      const SizedBox(width: 6),
+      Text(zh ? '快捷配置' : 'Quick Configs',
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+      const Spacer(),
+      Text('${_quickConfigs.length}', style: TextStyle(fontSize: 12, color: scheme.outline)),
+    ]);
+  }
+
+  Widget _buildQuickConfigCard(QuickConfig cfg, ColorScheme scheme, bool zh) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(children: [
+          Container(
+            width: 42, height: 42,
+            decoration: BoxDecoration(
+              color: scheme.primaryContainer,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(_quickTypeIcon(cfg.fileType), size: 20, color: scheme.onPrimaryContainer),
+          ),
+          const SizedBox(width: 14),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(cfg.name,
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: scheme.onSurface)),
+            const SizedBox(height: 3),
+            Row(children: [
+              Icon(_quickTypeIcon(cfg.fileType), size: 11, color: scheme.outline.withAlpha(100)),
+              const SizedBox(width: 3),
+              Text(cfg.fileType.label(zh), style: TextStyle(fontSize: 11, color: scheme.outline)),
+              const SizedBox(width: 8),
+              Text('${cfg.items.length} ${zh ? '项' : 'items'}',
+                  style: TextStyle(fontSize: 11, color: scheme.outline)),
+            ]),
+          ])),
+          IconButton(
+            icon: Icon(Icons.edit_outlined, size: 18, color: scheme.outline),
+            tooltip: zh ? '编辑' : 'Edit',
+            onPressed: () => _openQuickEditor(cfg),
+          ),
+          IconButton(
+            icon: Icon(Icons.delete_outline, size: 18, color: scheme.outline),
+            tooltip: zh ? '删除' : 'Delete',
+            onPressed: () => _deleteQuickConfig(cfg),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  IconData _quickTypeIcon(QuickFileType type) => switch (type) {
+        QuickFileType.video => Icons.videocam_outlined,
+        QuickFileType.image => Icons.image_outlined,
+        QuickFileType.audio => Icons.audiotrack_outlined,
+      };
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -374,6 +578,11 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
             icon: const Icon(Icons.file_download_outlined, size: 20),
             tooltip: zh ? '导入 .fppx' : 'Import .fppx',
             onPressed: _importFppx,
+          ),
+          IconButton(
+            icon: const Icon(Icons.bolt_outlined, size: 20),
+            tooltip: zh ? '新建快捷配置' : 'New Quick Config',
+            onPressed: _newQuickConfig,
           ),
           const SizedBox(width: 6),
           // 圆形加号按钮：液态玻璃质感，与项目页"+"一致
@@ -397,27 +606,31 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       ),
       Expanded(
         child: !_loaded
-          ? const Center(child: CircularProgressIndicator())
-          : _configs.isEmpty
-              ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(Icons.folder_open_outlined, size: 48, color: scheme.outline.withAlpha(80)),
-                  const SizedBox(height: 12),
-                  Text(zh ? '还没有配置' : 'No configs yet', style: TextStyle(color: scheme.outline, fontSize: 14)),
-                  const SizedBox(height: 6),
-                  Text(zh ? '点击「新建」创建节点编辑器配置模板' : 'Click "New" to create a node editor config',
-                      style: TextStyle(color: scheme.outline.withAlpha(120), fontSize: 12)),
-                  const SizedBox(height: 16),
-                  OutlinedButton.icon(
-                    icon: const Icon(Icons.file_download_outlined, size: 16),
-                    label: Text(zh ? '或导入 .fppx 文件' : 'Or import .fppx file'),
-                    onPressed: _importFppx,
-                  ),
-                ]))
-              : ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: _configs.length,
-                  itemBuilder: (_, i) => _buildCard(_configs[i], i, scheme, zh),
-                ),
+            ? const Center(child: CircularProgressIndicator())
+            : ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  if (_configs.isEmpty)
+                    _buildEmptyState(scheme, zh)
+                  else
+                    for (var i = 0; i < _configs.length; i++) _buildCard(_configs[i], i, scheme, zh),
+                  const SizedBox(height: 24),
+                  _buildQuickSectionHeader(scheme, zh),
+                  const SizedBox(height: 4),
+                  if (_quickConfigs.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      child: Center(
+                        child: Text(
+                          zh ? '还没有快捷配置，点击顶栏「⚡」新建' : 'No quick configs yet. Click the bolt icon to create one',
+                          style: TextStyle(fontSize: 12, color: scheme.outline.withAlpha(120)),
+                        ),
+                      ),
+                    )
+                  else
+                    for (final q in _quickConfigs) _buildQuickConfigCard(q, scheme, zh),
+                ],
+              ),
       ),
       ]),
     );

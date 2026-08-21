@@ -811,7 +811,7 @@ class GraphExecutor {
               opts['audio_bitrate'] = (bitrateVal as num).toInt();
             }
           }
-          if (sr != 'keep') opts['sample_rate'] = int.tryParse(sr);
+          if (sr != 'keep') { final v = int.tryParse(sr); if (v != null) opts['sample_rate'] = v; }
           calls.add(BackendCall(
             action: 'transcode',
             params: {'input': currentInput, 'output': outPath, 'options': opts},
@@ -871,7 +871,7 @@ class GraphExecutor {
             opts['audio_codec'] = _codecForFormat[ext] ?? 'aac';
             opts['audio_bitrate'] = (bitrateVal as num).toInt();
           }
-          if (sr != 'keep') { opts['audio_codec'] = _codecForFormat[ext] ?? 'aac'; opts['sample_rate'] = int.tryParse(sr); }
+          if (sr != 'keep') { opts['audio_codec'] = _codecForFormat[ext] ?? 'aac'; final v = int.tryParse(sr); if (v != null) opts['sample_rate'] = v; }
           calls.add(BackendCall(action: 'transcode', params: {'input': currentInput, 'output': outPath, 'options': opts}));
           stepCallRanges.add((callsBeforeStep, calls.length, step));
           currentInput = outPath;
@@ -1235,11 +1235,11 @@ class GraphExecutor {
     if (fps == 'custom' && p['fps_value'] != null) {
       opts['framerate'] = (p['fps_value'] as num).toDouble();
     } else if (fps != 'keep') {
-      opts['framerate'] = double.tryParse(fps);
+      final fv = double.tryParse(fps); if (fv != null) opts['framerate'] = fv;
     }
     if (p['audio_bitrate'] != null) opts['audio_bitrate'] = p['audio_bitrate'];
     final ch = p['audio_channels'] as String? ?? 'keep';
-    if (ch != 'keep') opts['audio_channels'] = int.tryParse(ch);
+    if (ch != 'keep') { final cv = int.tryParse(ch); if (cv != null) opts['audio_channels'] = cv; }
     return opts;
   }
 

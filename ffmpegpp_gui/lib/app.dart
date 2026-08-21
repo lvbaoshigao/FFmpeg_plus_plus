@@ -143,88 +143,26 @@ class _SplashScreen extends StatefulWidget {
   State<_SplashScreen> createState() => _SplashScreenState();
 }
 
-class _SplashScreenState extends State<_SplashScreen>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _spin = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 2200),
-  )..repeat();
-
-  @override
-  void dispose() {
-    _spin.dispose();
-    super.dispose();
-  }
-
+class _SplashScreenState extends State<_SplashScreen> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
       backgroundColor: scheme.surface,
       body: Center(
+        // 初始化界面：仅保留软件图标 + 软件名字 + 加载进度条
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          // 旋转光环 + 品牌图标
-          SizedBox(
-            width: 148,
-            height: 148,
-            child: AnimatedBuilder(
-              animation: _spin,
-              builder: (context, _) {
-                final t = _spin.value;
-                return Stack(alignment: Alignment.center, children: [
-                  // 外圈光晕：旋转的锥形渐变环
-                  Transform.rotate(
-                    angle: t * 2 * 3.14159,
-                    child: Container(
-                      width: 148,
-                      height: 148,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: SweepGradient(
-                          startAngle: 0,
-                          endAngle: 3.14159 * 2,
-                          colors: [
-                            scheme.primary.withValues(alpha: 0.0),
-                            scheme.primary.withValues(alpha: 0.55),
-                            scheme.primary.withValues(alpha: 0.0),
-                            scheme.primary.withValues(alpha: 0.0),
-                          ],
-                          stops: const [0.0, 0.18, 0.35, 1.0],
-                        ),
-                      ),
-                    ),
-                  ),
-                  // 内圈虚线环（反向旋转，制造层次）
-                  Transform.rotate(
-                    angle: -t * 3.14159,
-                    child: Container(
-                      width: 112,
-                      height: 112,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: scheme.primary.withValues(alpha: 0.28),
-                          width: 2,
-                        ),
-                      ),
-                    ),
-                  ),
-                  // 品牌图标
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(18),
-                    child: Container(
-                      width: 72,
-                      height: 72,
-                      color: scheme.surfaceContainerHighest,
-                      child: Image.asset('rele/icon.png', width: 72, height: 72,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, _, _) => Icon(Icons.play_circle_fill,
-                              size: 60, color: scheme.primary)),
-                    ),
-                  ),
-                ]);
-              },
+          // 品牌图标
+          ClipRRect(
+            borderRadius: BorderRadius.circular(18),
+            child: Container(
+              width: 72,
+              height: 72,
+              color: scheme.surfaceContainerHighest,
+              child: Image.asset('rele/icon.png', width: 72, height: 72,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => Icon(Icons.play_circle_fill,
+                      size: 60, color: scheme.primary)),
             ),
           ),
           const SizedBox(height: 20),
@@ -234,9 +172,6 @@ class _SplashScreenState extends State<_SplashScreen>
                   fontWeight: FontWeight.w700,
                   color: scheme.primary,
                   letterSpacing: 0.5)),
-          const SizedBox(height: 6),
-          Text(isDark ? '正在初始化 FFmpeg 引擎…' : 'Initializing FFmpeg engine…',
-              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
           const SizedBox(height: 26),
           // 进度条：不确定进度（真实进度由初始化状态驱动）
           SizedBox(

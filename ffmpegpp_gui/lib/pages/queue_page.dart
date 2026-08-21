@@ -63,7 +63,10 @@ class _QueuePageState extends State<QueuePage> {
               ],
               // 紧凑资源占用（顶栏右侧，小尺寸）
               const SizedBox(width: 8),
-              _monitorBar(scheme, state),
+              Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: _monitorBar(scheme, state),
+              ),
             ],
           ),
           Expanded(child: Column(children: [

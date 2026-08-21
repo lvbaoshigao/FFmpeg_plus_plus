@@ -5,7 +5,7 @@ import '../models/models.dart';
 
 const _magic = [0x46, 0x50, 0x50, 0x58]; // "FPPX"
 const _configMajor = 1;
-const _configMinor = 1;
+const _configMinor = 2; // fppx 文件头配置版本：1.1 → 1.2（+1 个版本）
 const _minSoftwareMajor = 3;
 const _compatMajorCount = 2;
 const _currentSoftwareMajor = 4;

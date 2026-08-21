@@ -1308,18 +1308,25 @@ Widget _buildEditorMode(BuildContext ctx, AppState state) {
   final scheme = Theme.of(ctx).colorScheme;
   final clr = scheme.onSurface;
   return _glass(ctx, state, s.cardEditorMode, [
-    RadioGroup<bool>(
-      groupValue: cfg.useNodeEditor,
-      onChanged: (v) { if (v != null) state.updateConfig((c) => c..useNodeEditor = v); },
+    RadioGroup<int>(
+      groupValue: cfg.editMode,  // 0=node editor, 1=quick mode, 2=traditional
+      onChanged: (v) { if (v != null) state.updateConfig((c) => c..editMode = v); },
       child: Column(children: [
-        RadioListTile<bool>(dense: true, contentPadding: EdgeInsets.zero,
-            title: Text(s.isZh ? '节点编辑器 (新)' : 'Node Editor (New)', style: TextStyle(color: clr, fontSize: 13)),
+        // node editor (value: 0, title: '节点编辑器')
+        RadioListTile<int>(dense: true, contentPadding: EdgeInsets.zero,
+            title: Text(s.isZh ? '节点编辑器' : 'Node Editor', style: TextStyle(color: clr, fontSize: 13)),
             subtitle: Text(s.isZh ? '蓝图式节点画布，可处理复杂的多步骤逻辑' : 'Blueprint-style canvas for complex multi-step logic', style: TextStyle(fontSize: 11, color: scheme.outline)),
-            value: true),
-        RadioListTile<bool>(dense: true, contentPadding: EdgeInsets.zero,
+            value: 0),
+        // quick mode (value: 1)
+        RadioListTile<int>(dense: true, contentPadding: EdgeInsets.zero,
+            title: Text(s.isZh ? '快速模式' : 'Quick Mode', style: TextStyle(color: clr, fontSize: 13)),
+            subtitle: Text(s.isZh ? '选择文件后快速配置处理参数，适配不同文件类型（视频/图片/音频）' : 'Quickly configure processing after selecting a file, supports different file types (video/image/audio)', style: TextStyle(fontSize: 11, color: scheme.outline)),
+            value: 1),
+        // traditional mode (value: 2)
+        RadioListTile<int>(dense: true, contentPadding: EdgeInsets.zero,
             title: Text(s.isZh ? '传统模式（即将弃用）' : 'Classic Mode (Deprecated)', style: TextStyle(color: clr, fontSize: 13)),
-            subtitle: Text(s.isZh ? '傻瓜式操作，适合简单的视频处理任务。此功能将在不久后弃用，建议使用节点编辑器' : 'Simple step-by-step for basic tasks. Will be deprecated soon, use Node Editor instead', style: TextStyle(fontSize: 11, color: scheme.outline)),
-            value: false),
+            subtitle: Text(s.isZh ? '傻瓜式操作，适合简单的视频处理任务。此功能将在不久后弃用，建议使用节点编辑器（即将弃用）' : 'Simple step-by-step for basic tasks. Will be deprecated soon, use Node Editor instead (Deprecated)', style: TextStyle(fontSize: 11, color: scheme.outline)),
+            value: 2),
       ]),
     ),
   ]);

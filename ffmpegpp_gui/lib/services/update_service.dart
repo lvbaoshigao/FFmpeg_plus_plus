@@ -163,15 +163,19 @@ String _assetSuffix() {
 }
 
 bool _isArm64() {
-  if (Platform.isWindows) return false;
+  // 缓存结果，避免每次检查更新时阻塞 UI 线程
+  if (_arm64Cache != null) return _arm64Cache!;
+  if (Platform.isWindows) { _arm64Cache = false; return false; }
   try {
     final result = Process.runSync('uname', ['-m']);
     final arch = result.stdout.toString().trim();
-    return arch == 'aarch64' || arch == 'arm64';
+    _arm64Cache = arch == 'aarch64' || arch == 'arm64';
   } catch (_) {
-    return false;
+    _arm64Cache = false;
   }
+  return _arm64Cache!;
 }
+bool? _arm64Cache;
 
 Future<String> downloadUpdate(String url, {void Function(int received, int total)? onProgress}) async {
   final uri = Uri.parse(url);
