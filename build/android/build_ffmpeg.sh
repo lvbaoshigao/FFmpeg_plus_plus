@@ -53,28 +53,50 @@ CC=$BUILD/binwrap/aarch64-linux-android-gcc
 CXX=$BUILD/binwrap/aarch64-linux-android-g++
 CFLAGS_COMMON="--sysroot=$SYSROOT -O2 -fPIC"
 
-fetch() { # fetch <url> <outfile> —— 失败时清理残缺文件，避免下次误判为已缓存
+# fetch <outfile> <url...> —— 下载源码包，校验 magic bytes 判定"真实压缩包"，
+# 失败时清理残缺文件并依次尝试备用源。仅靠 curl -f 不够：
+# 服务器有时会返回 HTTP 200 + HTML 错误页（前几 KB 是小 HTML），
+# 此时 tar/bzip2 会直接报 "not a bzip2 file"。因此在解包前验证文件头。
+fetch() {
+  local out="$1"; shift
+  local urls=("$@")
   for attempt in 1 2 3 4; do
-    if [ ! -f "$2" ]; then
-      log "downloading $2 (attempt $attempt)"
-      if curl -fSL --retry 3 --retry-delay 3 -o "$2" "$1"; then
+    [ -f "$out" ] && rm -f "$out"   # 上一轮残缺文件（可能正是坏响应）先清掉
+    for url in "${urls[@]}"; do
+      log "downloading $out (attempt $attempt): $url"
+      if curl -fSL --retry 3 --retry-delay 3 -o "$out" "$url" && is_valid_archive "$out"; then
+        log "ok: $out ($(wc -c < "$out") bytes)"
         return 0
       fi
-      rm -f "$2"
-      log "download failed, retrying..."
+      rm -f "$out"
+      log "download failed, trying next source..."
       sleep 3
-    else
-      log "cached $2"
-      return 0
-    fi
+    done
   done
-  echo "DOWNLOAD FAILED: $1" >&2
+  echo "DOWNLOAD FAILED: $out" >&2
   exit 1
+}
+
+# is_valid_archive <file> —— 按文件头判断是否为 gzip/bzip2/xz/tar 压缩包，
+# 防止把服务器返回的 HTML 错误页当作源码包解压。
+is_valid_archive() {
+  local f="$1" magic
+  [ -f "$f" ] || return 1
+  magic="$(head -c 6 "$f" | od -An -tx1 | tr -d ' \n')"
+  case "$magic" in
+    1f8b*)    return 0 ;;  # gzip
+    425a*)    return 0 ;;  # bzip2  (BZh)
+    fd377a*)  return 0 ;;  # xz
+    75657461*) return 0 ;; # tar (ustar)
+    *)        return 1 ;;
+  esac
 }
 
 # ── 1. x264 ──
 if [ ! -f $PREFIX/lib/libx264.a ]; then
-  fetch "https://code.videolan.org/videolan/x264/-/archive/master/x264-master.tar.bz2" x264.tar.bz2
+  fetch x264.tar.bz2 \
+    "https://code.videolan.org/videolan/x264/-/archive/master/x264-master.tar.bz2" \
+    "https://github.com/mirror/x264/archive/refs/heads/master.tar.gz"
   rm -rf x264 && mkdir x264 && tar xf x264.tar.bz2 -C x264 --strip-components=1
   cd x264
   log "building x264"
@@ -92,7 +114,7 @@ fi
 
 # ── 2. x265 ──
 if [ ! -f $PREFIX/lib/libx265.a ]; then
-  fetch "https://bitbucket.org/multicoreware/x265_git/downloads/x265_3.6.tar.gz" x265.tar.gz
+  fetch x265.tar.gz "https://bitbucket.org/multicoreware/x265_git/downloads/x265_3.6.tar.gz"
   rm -rf x265 && mkdir x265 && tar xf x265.tar.gz -C x265 --strip-components=1
   log "building x265"
   cmake -S x265/source -B x265/build -G "Unix Makefiles" \
@@ -111,7 +133,7 @@ fi
 
 # ── 3. lame ──
 if [ ! -f $PREFIX/lib/libmp3lame.a ]; then
-  fetch "https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz" lame.tar.gz
+  fetch lame.tar.gz "https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz"
   rm -rf lame && mkdir lame && tar xf lame.tar.gz -C lame --strip-components=1
   cd lame
   log "building lame"
@@ -129,7 +151,7 @@ fi
 
 # ── 4. opus ──
 if [ ! -f $PREFIX/lib/libopus.a ]; then
-  fetch "https://github.com/xiph/opus/releases/download/v1.5.2/opus-1.5.2.tar.gz" opus.tar.gz
+  fetch opus.tar.gz "https://github.com/xiph/opus/releases/download/v1.5.2/opus-1.5.2.tar.gz"
   rm -rf opus && mkdir opus && tar xf opus.tar.gz -C opus --strip-components=1
   cd opus
   log "building opus"
@@ -146,7 +168,7 @@ fi
 
 # ── 5. ffmpeg ──
 if [ ! -f $PREFIX/bin/ffmpeg ]; then
-  fetch "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n8.0.tar.gz" ffmpeg.tar.gz
+  fetch ffmpeg.tar.gz "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n8.0.tar.gz"
   rm -rf ffmpeg && mkdir ffmpeg && tar xf ffmpeg.tar.gz -C ffmpeg --strip-components=1
   cd ffmpeg
   log "configuring ffmpeg"
