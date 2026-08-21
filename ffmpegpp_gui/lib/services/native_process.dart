@@ -76,7 +76,10 @@ class NativeProcessManager {
           }
         }
         _responseController.add(obj);
-      } else if (obj.containsKey('id')) {
+      }
+      // 响应可能同时带 'id' 与 'type'：只要有 String id 就完成挂起的请求，
+      // 两条分支非互斥，避免带 id 的响应永远不被消费导致 Future 挂起。
+      if (obj['id'] is String) {
         final id = obj['id'] as String;
         final completer = _pendingCompleters.remove(id);
         if (completer != null) completer.complete(obj);
@@ -111,7 +114,13 @@ class NativeProcessManager {
 
     _sendRequest(req);
 
-    return completer.future;
+    return completer.future.timeout(
+      const Duration(minutes: 10),
+      onTimeout: () {
+        _pendingCompleters.remove(id);
+        return {'id': id, 'success': false, 'error': '请求超时 (600s)'};
+      },
+    );
   }
 
   Future<Map<String, dynamic>> _doRequest(String action, Map<String, dynamic>? params, int timeoutSec) async {

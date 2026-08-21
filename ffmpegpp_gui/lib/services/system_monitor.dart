@@ -12,6 +12,7 @@ class SystemMonitor {
 
   Timer? _timer;
   bool _gpuNameCached = false;
+  bool _busy = false;  // 防止 2s 周期内前一轮未完成时重叠执行
 
   // Linux CPU 上一次采样值
   int _prevCpuTotal = 0;
@@ -28,7 +29,13 @@ class SystemMonitor {
   }
 
   Future<void> _tick() async {
-    await Future.wait([_updateCpuRam(), _updateGpu()]);
+    if (_busy) return;
+    _busy = true;
+    try {
+      await Future.wait([_updateCpuRam(), _updateGpu()]);
+    } finally {
+      _busy = false;
+    }
   }
 
   Future<void> _updateCpuRam() async {

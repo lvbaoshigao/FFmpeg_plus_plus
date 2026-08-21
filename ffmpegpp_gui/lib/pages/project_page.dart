@@ -135,7 +135,7 @@ class ProjectPageState extends State<ProjectPage> {
                 tooltip: s.isZh ? '导入配置' : 'Import Config',
                 onPressed: state.videos.isEmpty ? null : () => _importConfig(state, s),
               ),
-              // 圆形图标按钮：容器（玻璃圆底）+ 添加文件（主色圆底），无文字
+              // 圆形图标按钮：新建容器（主题色描边玻璃圆底）+ 添加文件（主色圆底），无文字
               const SizedBox(width: 6),
               Tooltip(
                 message: s.container,
@@ -145,11 +145,11 @@ class ProjectPageState extends State<ProjectPage> {
                   child: Container(
                     width: 40, height: 40,
                     decoration: BoxDecoration(
-                      color: scheme.primaryContainer.withAlpha(180),
+                      color: scheme.primaryContainer.withAlpha(160),
                       shape: BoxShape.circle,
-                      border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
+                      border: Border.all(color: scheme.primary.withAlpha(90), width: 1.2),
                     ),
-                    child: const Icon(Icons.folder_special, size: 20, color: Color(0xFF5E6AD2)),
+                    child: Icon(Icons.create_new_folder_outlined, size: 18, color: scheme.primary),
                   ),
                 ),
               ),
@@ -164,9 +164,10 @@ class ProjectPageState extends State<ProjectPage> {
                     decoration: BoxDecoration(
                       color: scheme.primary,
                       shape: BoxShape.circle,
+                      border: Border.all(color: scheme.primary.withAlpha(90), width: 1.2),
                       boxShadow: [BoxShadow(color: scheme.primary.withAlpha(90), blurRadius: 8, offset: const Offset(0, 2))],
                     ),
-                    child: const Icon(Icons.add, size: 22, color: Colors.white),
+                    child: Icon(Icons.add, size: 24, color: scheme.onPrimary),
                   ),
                 ),
               ),
@@ -263,11 +264,17 @@ class ProjectPageState extends State<ProjectPage> {
 
   Future<void> _importConfig(AppState state, AppStrings s) async {
     final zh = s.isZh;
+    // Android 上 fppx 无 MIME 映射，FileType.custom 会失效。
     final r = await FilePicker.platform.pickFiles(
-      type: FileType.custom, allowedExtensions: ['fppx'],
+      type: FileType.any,
       dialogTitle: zh ? '选择配置文件' : 'Select Config File',
     );
     if (r == null || r.files.isEmpty || r.files.first.path == null) return;
+    final name = r.files.first.name;
+    if (!name.endsWith('.fppx')) {
+      if (mounted) showToast(context, zh ? '请选择 .fppx 文件' : 'Please select a .fppx file', type: ToastType.warning);
+      return;
+    }
 
     final bytes = await File(r.files.first.path!).readAsBytes();
     final fppx = FppxExporter.import(bytes);
@@ -480,7 +487,7 @@ class ProjectPageState extends State<ProjectPage> {
             FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text.trim()), child: Text(zh ? '创建' : 'Create')),
           ],
         ),
-      );
+      ).whenComplete(() => ctrl.dispose());
       if (name == null || name.isEmpty) return;
       if (empty) {
         state.addEmptyContainer(name);

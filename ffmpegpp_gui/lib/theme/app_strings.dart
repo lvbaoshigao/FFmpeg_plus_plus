@@ -297,6 +297,7 @@ class AppStrings {
   String get cardBackground => lang == 'zh' ? '背景' : 'Background';
   String get cardEditorMode => lang == 'zh' ? '编辑模式' : 'Editor Mode';
   String get cardShortcuts => lang == 'zh' ? '快捷键' : 'Shortcuts';
+  String get cardAutosave => lang == 'zh' ? '自动保存' : 'Autosave';
   String get cardTasks => lang == 'zh' ? '任务' : 'Tasks';
   String get cardUpdate => lang == 'zh' ? '更新' : 'Update';
   String get cardCache => lang == 'zh' ? '缓存' : 'Cache';

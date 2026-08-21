@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FontLoader, ByteData;
@@ -21,6 +22,7 @@ import '../services/update_service.dart' as updater;
 import '../services/shell_open.dart';
 import '../widgets/toast.dart';
 import '../widgets/glass_panel.dart';
+import '../widgets/mobile_top_bar.dart';
 
 final _s = Platform.pathSeparator;
 
@@ -289,6 +291,13 @@ class _SettingsPageState extends State<SettingsPage> {
               'keyboard', 'hotkey', 'key'],
           build: _buildShortcuts,
         ),
+        _CardDef(
+          id: 'autosave',
+          title: (s) => s.cardAutosave,
+          keywords: ['自动保存', '草稿', '恢复', 'autosave', 'draft', 'autosave',
+              'auto', 'save', '恢复'],
+          build: _buildAutosave,
+        ),
       ],
     ),
     // 移动端专用：命令与日志从底部导航移入设置（避免底部元素过多）
@@ -377,6 +386,58 @@ class _SettingsPageState extends State<SettingsPage> {
       builder: (context, state, _) {
         final s = AppStrings.of(state.config.language);
         final scheme = Theme.of(context).colorScheme;
+
+        if (isMobilePlatform) {
+          // ═══════════════════════════════════════
+          // 移动端独立设置界面
+          // ═══════════════════════════════════════
+          final query = _query.trim().toLowerCase();
+          final searching = query.isNotEmpty;
+          final visible = <(_SectionDef, List<_CardDef>)>[];
+          for (final sec in _sections) {
+            final hits = sec.cards.where((c) => c.matches(query)).toList();
+            if (hits.isNotEmpty) visible.add((sec, hits));
+          }
+
+          return Scaffold(
+            backgroundColor: Colors.transparent,
+            body: Column(children: [
+              MobileTopBar(
+                title: Text(s.settingsTitle),
+                actions: [
+                  // 搜索图标按钮
+                  IconButton(
+                    icon: Icon(searching ? Icons.close : Icons.search, size: 22),
+                    tooltip: searching ? s.setClearSearch : s.setSearchHint,
+                    onPressed: () {
+                      if (searching) {
+                        _clearSearch();
+                      } else {
+                        _showMobileSearch(context, s, scheme);
+                      }
+                    },
+                    constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+                  ),
+                ],
+              ),
+              Expanded(child: visible.isEmpty && searching
+                ? _emptyState(scheme, s)
+                : ListView(
+                    padding: const EdgeInsets.fromLTRB(0, 4, 0, 24),
+                    children: [
+                      for (final (sec, cards) in visible)
+                        _buildMobileSection(sec, cards, context, state, scheme, s),
+                      const SizedBox(height: 16),
+                    ],
+                  ),
+              ),
+            ]),
+          );
+        }
+
+        // ═══════════════════════════════════════
+        // 桌面端原有设置界面
+        // ═══════════════════════════════════════
         final query = _query.trim().toLowerCase();
         final searching = query.isNotEmpty;
 
@@ -439,11 +500,11 @@ class _SettingsPageState extends State<SettingsPage> {
                                           curve: Curves.easeOut,
                                           opacity: 1,
                                           child: Padding(
-                                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 18),
+                                            padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
                                             child: MasonryGrid(
                                               columns: cols,
-                                              spacing: 12,
-                                              runSpacing: 12,
+                                              spacing: 8,
+                                              runSpacing: 8,
                                               children: [
                                                 for (final c in cards)
                                                   RepaintBoundary(
@@ -468,10 +529,83 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  // ── 移动端专用 ──
+
+  /// 移动端搜索弹窗
+  void _showMobileSearch(BuildContext context, AppStrings s, ColorScheme scheme) {
+    final ctrl = TextEditingController(text: _query);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        contentPadding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: TextField(
+            controller: ctrl,
+            autofocus: true,
+            style: TextStyle(fontSize: 14, color: scheme.onSurface),
+            decoration: InputDecoration(
+              hintText: s.setSearchHint,
+              hintStyle: TextStyle(color: scheme.outline, fontSize: 14),
+              prefixIcon: Icon(Icons.search, size: 18, color: scheme.outline),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            ),
+            onSubmitted: (v) {
+              setState(() => _query = v.trim().toLowerCase());
+              Navigator.pop(ctx);
+            },
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(s.cancel)),
+          FilledButton(
+            onPressed: () {
+              setState(() => _query = ctrl.text.trim().toLowerCase());
+              Navigator.pop(ctx);
+            },
+            child: Text(s.isZh ? '搜索' : 'Search'),
+          ),
+        ],
+      ),
+    ).then((_) => ctrl.dispose());
+  }
+
+  /// 移动端设置分区：Android 16 原生设置风格 —— 小号字重标题，
+  /// 无图标、无着色，仅灰色文字（onSurfaceVariant），下方为卡片项。
+  Widget _buildMobileSection(
+    _SectionDef sec,
+    List<_CardDef> cards,
+    BuildContext context,
+    AppState state,
+    ColorScheme scheme,
+    AppStrings s,
+  ) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      // 分区标题（Android 16 风格：不带图标，小字号 + 中字重）
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 20, 16, 6),
+        child: Text(sec.title(s), style: TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w500,
+          color: scheme.onSurfaceVariant,
+          letterSpacing: 0.3,
+        )),
+      ),
+      // 卡片项（_build* 方法内已用 _glass 包裹，移动端为 surfaceContainerLow 卡片）
+      for (final c in cards)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: c.build(context, state),
+        ),
+    ]);
+  }
+
   Widget _searchField(ColorScheme scheme, AppStrings s) => Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8),
-        child: SizedBox(
-          width: 260,
+        child: LayoutBuilder(builder: (ctx, cons) => SizedBox(
+          width: math.min(260.0, cons.maxWidth * 0.62),
           height: 38,
           child: TextField(
             controller: _searchCtrl,
@@ -511,6 +645,7 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
             ),
           ),
+        ),
         ),
       );
 
@@ -604,13 +739,18 @@ class _SectionHeaderDelegate extends SliverPersistentHeaderDelegate {
                       child: Icon(icon, key: ValueKey(icon), size: 15, color: scheme.primary),
                     ),
                     const SizedBox(width: 7),
-                    Text(
-                      title.toUpperCase(),
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.9,
-                        color: scheme.primary,
+                    Flexible(
+                      child: Text(
+                        title.toUpperCase(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        softWrap: false,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.9,
+                          color: scheme.primary,
+                        ),
                       ),
                     ),
                     // 折叠时提示里面还有几项，避免看起来像空分区
@@ -672,9 +812,36 @@ Widget _headerTooltip(String? message, Widget child) => message == null
 /// 这里把滑块位置和标签放在本地 state 里做到即时跟手，全局配置最多每 40ms 推一次，
 /// 松手时再补一次精确值——预览照样是实时的，重建次数少了三分之二。
 
-/// 玻璃卡片容器（设置页通用）—— 跟随全局玻璃效果（liquid/blur/none）与透明度。
+/// 设置卡片容器。
+/// 移动端：Android 16 原生设置风格 —— 低对比度主题色卡片（surfaceContainerLow），
+/// 无玻璃光效，仅简洁的圆角 + 细边框 + 弱阴影，清晰易读。
+/// 桌面端：保持原有玻璃效果（liquid/blur/none）与透明度。
 Widget _glass(BuildContext ctx, AppState state, String title, List<Widget> children) {
   final scheme = Theme.of(ctx).colorScheme;
+  if (isMobilePlatform) {
+    // Android 16 原生设置卡片：surfaceContainerLow 底色，16 圆角，细边框，弱阴影
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: scheme.outlineVariant.withAlpha(50), width: 0.6),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withAlpha(10),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(title, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+        const SizedBox(height: 10),
+        ...children,
+      ]),
+    );
+  }
   return GlassPanel(
     radius: 20,
     padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
@@ -696,12 +863,7 @@ Widget _pf(BuildContext ctx, String label, String value, ValueChanged<String> on
       Text(label, style: TextStyle(fontSize: 12, color: clr)),
       const SizedBox(height: 4),
       Row(children: [
-        Expanded(child: TextField(
-          controller: TextEditingController(text: value),
-          style: const TextStyle(fontSize: 12),
-          decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
-          onChanged: onChange,
-        )),
+        Expanded(child: _PathField(value: value, label: '', scheme: scheme, onChange: onChange)),
         const SizedBox(width: 6),
         OutlinedButton(
           onPressed: onBrowse,
@@ -733,7 +895,11 @@ Widget _infoRow(String label, String value, ColorScheme scheme, {Widget? trailin
   child: Row(children: [
     Expanded(child: Text(label, style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant))),
     ?trailing,
-    Text(value, style: TextStyle(fontSize: 12, color: scheme.onSurface, fontWeight: FontWeight.w500)),
+    Flexible(
+      child: Tooltip(message: value, child: Text(value, maxLines: 1, overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 12, color: scheme.onSurface, fontWeight: FontWeight.w500)),
+      ),
+    ),
   ]),
 );
 
@@ -831,7 +997,7 @@ class _SettingSliderState extends State<_SettingSlider> {
 
   @override
   Widget build(BuildContext context) => Row(children: [
-        Text(widget.label(_current), style: widget.labelStyle),
+        Text(widget.label(_current), maxLines: 1, overflow: TextOverflow.ellipsis, style: widget.labelStyle),
         Expanded(
           child: Slider(
             value: _current.clamp(widget.min, widget.max),
@@ -916,6 +1082,7 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
     Text(s.isZh ? '逻辑门符号标准' : 'Logic Gate Standard', style: TextStyle(fontSize: 12, color: clr)),
     const SizedBox(height: 6),
     SegmentedButton<String>(
+      showSelectedIcon: false,
       segments: const [
         ButtonSegment(value: 'ansi', label: Text('ANSI/IEEE', style: TextStyle(fontSize: 11))),
         ButtonSegment(value: 'iec', label: Text('IEC', style: TextStyle(fontSize: 11))),
@@ -1017,6 +1184,7 @@ Widget _buildBackground(BuildContext ctx, AppState state) {
     Text(s.glassEffectLabel, style: TextStyle(color: clr, fontSize: 12)),
     const SizedBox(height: 6),
     SegmentedButton<String>(
+      showSelectedIcon: false,
       segments: [
         ButtonSegment(value: 'liquid', icon: const Icon(Icons.water_drop_outlined, size: 14), label: Text(s.glassLiquid, style: const TextStyle(fontSize: 11))),
         ButtonSegment(value: 'blur', icon: const Icon(Icons.blur_on_outlined, size: 14), label: Text(s.glassBlur, style: const TextStyle(fontSize: 11))),
@@ -1045,6 +1213,7 @@ Widget _buildBackground(BuildContext ctx, AppState state) {
     Text(s.canvasBgLabel, style: TextStyle(color: clr, fontSize: 12)),
     const SizedBox(height: 6),
     SegmentedButton<String>(
+      showSelectedIcon: false,
       segments: [
         ButtonSegment(value: 'global', label: Text(s.isZh ? '跟随全局' : 'Follow', style: const TextStyle(fontSize: 11))),
         ButtonSegment(value: 'gray', icon: const Icon(Icons.grid_4x4, size: 12), label: Text(s.isZh ? '灰色' : 'Gray', style: const TextStyle(fontSize: 11))),
@@ -1148,11 +1317,51 @@ Widget _buildEditorMode(BuildContext ctx, AppState state) {
             subtitle: Text(s.isZh ? '蓝图式节点画布，可处理复杂的多步骤逻辑' : 'Blueprint-style canvas for complex multi-step logic', style: TextStyle(fontSize: 11, color: scheme.outline)),
             value: true),
         RadioListTile<bool>(dense: true, contentPadding: EdgeInsets.zero,
-            title: Text(s.isZh ? '传统模式' : 'Classic Mode', style: TextStyle(color: clr, fontSize: 13)),
-            subtitle: Text(s.isZh ? '傻瓜式操作，适合简单的视频处理任务' : 'Simple step-by-step, ideal for basic tasks', style: TextStyle(fontSize: 11, color: scheme.outline)),
+            title: Text(s.isZh ? '传统模式（即将弃用）' : 'Classic Mode (Deprecated)', style: TextStyle(color: clr, fontSize: 13)),
+            subtitle: Text(s.isZh ? '傻瓜式操作，适合简单的视频处理任务。此功能将在不久后弃用，建议使用节点编辑器' : 'Simple step-by-step for basic tasks. Will be deprecated soon, use Node Editor instead', style: TextStyle(fontSize: 11, color: scheme.outline)),
             value: false),
       ]),
     ),
+  ]);
+}
+
+Widget _buildAutosave(BuildContext ctx, AppState state) {
+  final cfg = state.config;
+  final s = AppStrings.of(cfg.language);
+  final scheme = Theme.of(ctx).colorScheme;
+  final clr = scheme.onSurface;
+  return _glass(ctx, state, s.cardAutosave, [
+    if (isMobilePlatform) ...[
+      SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+          title: Text(s.isZh ? '节点编辑器横屏' : 'Landscape node editor', style: TextStyle(color: clr, fontSize: 13)),
+          subtitle: Text(s.isZh ? '进入节点编辑器时默认横屏显示，画布更宽（移动端）' : 'Open the node editor in landscape by default for a wider canvas (mobile)',
+              style: TextStyle(fontSize: 11, color: scheme.outline)),
+          value: cfg.useNodeEditorLandscape,
+          onChanged: (v) => state.updateConfig((c) => c..useNodeEditorLandscape = v)),
+      const Divider(height: 4, color: Colors.transparent),
+    ],
+    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+        title: Text(s.isZh ? '启用节点编辑器自动保存' : 'Enable editor autosave', style: TextStyle(color: clr, fontSize: 13)),
+        subtitle: Text(s.isZh ? '编辑节点画布时定期保存草稿，异常退出后可恢复' : 'Periodically save drafts while editing; restore after abnormal exit',
+            style: TextStyle(fontSize: 11, color: scheme.outline)),
+        value: cfg.autosaveEnabled,
+        onChanged: (v) => state.updateConfig((c) => c..autosaveEnabled = v)),
+    const SizedBox(height: 6),
+    Text(s.isZh ? '保存间隔' : 'Save Interval', style: TextStyle(color: clr, fontSize: 12)),
+    const SizedBox(height: 8),
+    DropdownButtonFormField<int>(borderRadius: BorderRadius.circular(12), initialValue: cfg.autosaveIntervalSec, isDense: true, isExpanded: true,
+        style: TextStyle(fontSize: 12, color: clr), dropdownColor: scheme.surface,
+        decoration: InputDecoration(isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
+        items: [
+          for (final sec in [10, 30, 60, 120, 300])
+            DropdownMenuItem(value: sec, child: Text(sec < 60
+                ? (s.isZh ? '$sec 秒' : '$sec s')
+                : (s.isZh ? '${sec ~/ 60} 分钟' : '${sec ~/ 60} min'))),
+        ],
+        onChanged: (v) { if (v != null) state.updateConfig((c) => c..autosaveIntervalSec = v); }),
+    const SizedBox(height: 4),
+    Text(s.isZh ? '停止操作后多久自动保存一次' : 'How long after edits stop before autosaving', style: TextStyle(fontSize: 10, color: scheme.outline)),
   ]);
 }
 
@@ -1582,6 +1791,7 @@ void _showAiSettingsDialog(BuildContext ctx, AppState state, AppStrings s) {
                     Text(s.aiGraphModeLabel, style: TextStyle(color: clr, fontSize: 12)),
                     const SizedBox(height: 6),
                     SegmentedButton<String>(
+                      showSelectedIcon: false,
                       segments: [ButtonSegment(value: 'redo', label: Text(s.aiGraphModeRedo)), ButtonSegment(value: 'modify', label: Text(s.aiGraphModeModify))],
                       selected: {cfg.aiGraphMode},
                       onSelectionChanged: (v) { state.updateConfig((c) => c..aiGraphMode = v.first); setDState(() {}); },
@@ -1617,6 +1827,7 @@ void _showAiSettingsDialog(BuildContext ctx, AppState state, AppStrings s) {
                     Text(s.aiApproveModeLabel, style: TextStyle(color: clr, fontSize: 12)),
                     const SizedBox(height: 6),
                     SegmentedButton<String>(
+                      showSelectedIcon: false,
                       segments: [
                         ButtonSegment(value: 'ask', label: Text(s.aiApproveModeAsk, style: const TextStyle(fontSize: 11))),
                         ButtonSegment(value: 'auto', label: Text(s.aiApproveModeAuto, style: const TextStyle(fontSize: 11))),
@@ -1756,14 +1967,13 @@ Widget _buildProfileDetail(
         const SizedBox(height: 8),
       ],
       // 配置名
-      field(zh ? '配置名' : 'Name', TextField(
-        controller: TextEditingController(text: profile.name),
-        style: const TextStyle(fontSize: 12),
-        decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
-        onChanged: (v) { profile.name = v; },
+      field(zh ? '配置名' : 'Name', _ProfileTextField(
+        value: profile.name,
+        onChange: (v) { profile.name = v; },
       )),
       // 协议
       field(zh ? '请求方式 / 协议' : 'Protocol', SegmentedButton<String>(
+        showSelectedIcon: false,
         segments: [
           ButtonSegment(value: 'openai', label: Text(zh ? 'OpenAI 兼容' : 'OpenAI', style: const TextStyle(fontSize: 11))),
           ButtonSegment(value: 'anthropic', label: Text('Anthropic', style: const TextStyle(fontSize: 11))),
@@ -1782,42 +1992,32 @@ Widget _buildProfileDetail(
         onChange: (v) { profile.apiKey = v; },
       )),
       // Base URL
-      field(s.aiApiUrl, TextField(
-        controller: TextEditingController(text: profile.apiUrl),
-        style: const TextStyle(fontSize: 12),
-        decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
-        onChanged: (v) { profile.apiUrl = v; },
+      field(s.aiApiUrl, _ProfileTextField(
+        value: profile.apiUrl,
+        onChange: (v) { profile.apiUrl = v; },
       )),
       // 模型
-      field(s.aiModel, TextField(
-        controller: TextEditingController(text: profile.model),
-        style: const TextStyle(fontSize: 12),
-        decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
-        onChanged: (v) { profile.model = v; },
+      field(s.aiModel, _ProfileTextField(
+        value: profile.model,
+        onChange: (v) { profile.model = v; },
       )),
       // 上下文窗口
-      field(zh ? '上下文窗口 (token)' : 'Context Window (tokens)', TextField(
-        controller: TextEditingController(text: profile.contextWindow.toString()),
+      field(zh ? '上下文窗口 (token)' : 'Context Window (tokens)', _ProfileTextField(
+        value: profile.contextWindow.toString(),
         keyboardType: TextInputType.number,
-        style: const TextStyle(fontSize: 12),
-        decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
-        onChanged: (v) { final n = int.tryParse(v); if (n != null && n >= 1000) profile.contextWindow = n; },
+        onChange: (v) { final n = int.tryParse(v); if (n != null && n >= 1000) profile.contextWindow = n; },
       )),
       // 最大输出
-      field(zh ? '最大输出 token' : 'Max Output Tokens', TextField(
-        controller: TextEditingController(text: profile.maxTokens.toString()),
+      field(zh ? '最大输出 token' : 'Max Output Tokens', _ProfileTextField(
+        value: profile.maxTokens.toString(),
         keyboardType: TextInputType.number,
-        style: const TextStyle(fontSize: 12),
-        decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
-        onChanged: (v) { final n = int.tryParse(v); if (n != null && n > 0) profile.maxTokens = n; },
+        onChange: (v) { final n = int.tryParse(v); if (n != null && n > 0) profile.maxTokens = n; },
       )),
       // 温度
-      field(zh ? '温度 (0-2)' : 'Temperature (0-2)', TextField(
-        controller: TextEditingController(text: profile.temperature.toStringAsFixed(1)),
+      field(zh ? '温度 (0-2)' : 'Temperature (0-2)', _ProfileTextField(
+        value: profile.temperature.toStringAsFixed(1),
         keyboardType: const TextInputType.numberWithOptions(decimal: true),
-        style: const TextStyle(fontSize: 12),
-        decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
-        onChanged: (v) { final t = double.tryParse(v); if (t != null && t >= 0 && t <= 2) profile.temperature = t; },
+        onChange: (v) { final t = double.tryParse(v); if (t != null && t >= 0 && t <= 2) profile.temperature = t; },
       )),
       // 操作按钮
       Row(children: [
@@ -2346,6 +2546,7 @@ class _FfmpegCardState extends State<_FfmpegCard> {
 
   Future<void> _addToPath(String dir) async {
     if (!Platform.isWindows) return;
+    final isZh = widget.state.config.language == 'zh';
     try {
       final regResult = await Process.run('cmd', ['/c', 'echo %PATH%']);
       if (regResult.stdout.toString().contains(dir)) return;
@@ -2361,8 +2562,20 @@ class _FfmpegCardState extends State<_FfmpegCard> {
       }
       existingPath = existingPath.trim();
       if (existingPath.contains(dir)) return;
-      await Process.run('setx', ['Path', existingPath.isEmpty ? dir : '$existingPath;$dir']);
-    } catch (_) {}
+      // 只有 reg 查询成功且现有 PATH 非空时才追加；否则跳过，避免覆盖用户 PATH
+      if (regResult2.exitCode != 0 || existingPath.isEmpty) {
+        if (mounted) showToast(context, isZh ? '读取 PATH 失败，已跳过添加到系统 PATH' : 'Failed to read PATH, skipped adding', type: ToastType.error);
+        return;
+      }
+      final newPath = '$existingPath;$dir';
+      if (newPath.length > 1024) {
+        if (mounted) showToast(context, isZh ? 'PATH 过长（超过 1024 字符），已跳过' : 'PATH too long (>1024 chars), skipped', type: ToastType.warning);
+        return;
+      }
+      await Process.run('setx', ['Path', newPath]);
+    } catch (e) {
+      if (mounted) showToast(context, isZh ? '添加到系统 PATH 失败: $e' : 'Failed to add to PATH: $e', type: ToastType.error);
+    }
   }
 
   Future<void> _confirmDelete(bool isZh) async {
@@ -2738,8 +2951,13 @@ class _PathFieldState extends State<_PathField> {
   @override
   Widget build(BuildContext context) => TextField(
     controller: _ctrl,
-    style: TextStyle(fontSize: 13, color: widget.scheme.onSurface),
-    decoration: InputDecoration(labelText: widget.label, isDense: false, labelStyle: TextStyle(fontSize: 11, color: widget.scheme.outline)),
+    style: const TextStyle(fontSize: 12),
+    decoration: InputDecoration(
+      labelText: widget.label.isEmpty ? null : widget.label,
+      isDense: true,
+      border: const OutlineInputBorder(),
+      labelStyle: TextStyle(fontSize: 11, color: widget.scheme.outline),
+    ),
     onChanged: widget.onChange,
   );
 }
@@ -2805,4 +3023,35 @@ class _McpTextFieldState extends State<_McpTextField> {
       onChanged: widget.onChange,
     );
   }
+}
+
+class _ProfileTextField extends StatefulWidget {
+  final String value;
+  final TextInputType? keyboardType;
+  final ValueChanged<String> onChange;
+  const _ProfileTextField({required this.value, this.keyboardType, required this.onChange});
+  @override
+  State<_ProfileTextField> createState() => _ProfileTextFieldState();
+}
+
+class _ProfileTextFieldState extends State<_ProfileTextField> {
+  late final TextEditingController _ctrl = TextEditingController(text: widget.value);
+
+  @override
+  void didUpdateWidget(_ProfileTextField old) {
+    super.didUpdateWidget(old);
+    if (old.value != widget.value && _ctrl.text != widget.value) _ctrl.text = widget.value;
+  }
+
+  @override
+  void dispose() { _ctrl.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) => TextField(
+    controller: _ctrl,
+    keyboardType: widget.keyboardType,
+    style: const TextStyle(fontSize: 12),
+    decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
+    onChanged: widget.onChange,
+  );
 }

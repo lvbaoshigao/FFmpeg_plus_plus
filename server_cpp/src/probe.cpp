@@ -63,8 +63,17 @@ ProbeResult probeFile(const std::string& filepath) {
     };
     auto pr = Subprocess::run(cmd, 120);
     if (pr.exit_code != 0) {
-        result.error = "ffprobe 执行失败 (" + std::to_string(pr.exit_code) + "): " +
-                       (pr.stderr_output.empty() ? "无法读取文件，请检查路径或文件权限" : pr.stderr_output.substr(0, 200));
+        // exit_code 127 = execvp 失败（命令未找到，如 ffprobe 路径未配置）
+        // exit_code 其他 = ffprobe 运行失败
+        std::string detail;
+        if (pr.exit_code == 127) {
+            detail = "ffprobe 未找到或无法执行，请检查内置工具路径是否正确配置";
+        } else if (pr.stderr_output.empty()) {
+            detail = "无法读取文件，请检查路径或文件权限";
+        } else {
+            detail = pr.stderr_output.substr(0, 200);
+        }
+        result.error = "ffprobe 执行失败 (" + std::to_string(pr.exit_code) + "): " + detail;
         return result;
     }
     try {

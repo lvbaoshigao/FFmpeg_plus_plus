@@ -43,6 +43,7 @@ class ContainerCard extends StatelessWidget {
             Text(container.name, style: TextStyle(fontWeight: FontWeight.w600, color: clr), maxLines: 1, overflow: TextOverflow.ellipsis),
             const SizedBox(height: 2),
             Text('${container.fileCount} ${s.containerFiles}  •  ${formatFileSize(totalSize)}  •  $parsedCount/${container.fileCount} ${s.isZh ? "已解析" : "parsed"}',
+                maxLines: 1, overflow: TextOverflow.ellipsis,
                 style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
           ])),
           IconButton(icon: Icon(Icons.login, size: 20, color: scheme.primary), tooltip: s.containerEnter,

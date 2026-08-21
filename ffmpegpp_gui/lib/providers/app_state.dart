@@ -55,6 +55,9 @@ class AppState extends ChangeNotifier {
   String? _logDirReadyFor;
   List<LogEntry> get logEntries => List.unmodifiable(_logEntries);
   void addLog(String message, {String category = 'general'}) {
+    // 调试模式关闭时，仅保留 error 和 progress 类日志（不主动记录非关键日志）
+    if (!config.debugMode && category != 'error' && category != 'progress') return;
+
     _logEntries.add(LogEntry(timestamp: DateTime.now(), message: message, category: category));
     if (_logEntries.length > _maxLogEntries) {
       _logEntries.removeRange(0, _logEntries.length - _maxLogEntries);
@@ -178,11 +181,13 @@ class AppState extends ChangeNotifier {
       addLog('未找到内置 ffmpeg/ffprobe', category: 'error');
       return;
     }
-    if (config.ffmpegPath.isEmpty || !File(config.ffmpegPath).existsSync()) {
-      config.ffmpegPath = ffmpeg;
-    }
-    if (config.ffprobePath.isEmpty || !File(config.ffprobePath).existsSync()) {
-      config.ffprobePath = ffprobe;
+    final needFfmpeg = config.ffmpegPath.isEmpty || !File(config.ffmpegPath).existsSync();
+    final needFfprobe = config.ffprobePath.isEmpty || !File(config.ffprobePath).existsSync();
+    if (needFfmpeg || needFfprobe) {
+      // 走 ConfigService.update 持久化，避免直接改字段导致重启后丢失
+      await configService.update((c) => c
+        ..ffmpegPath = (needFfmpeg ? ffmpeg : c.ffmpegPath)
+        ..ffprobePath = (needFfprobe ? ffprobe : c.ffprobePath));
     }
     // Android 无 /tmp：把应用缓存目录注入 C++ 后端作为临时目录
     await backend.setPaths(
@@ -232,6 +237,10 @@ class AppState extends ChangeNotifier {
       }
     }
     if (changed) {
+      // 持久化自动检测结果（ffmpeg/ffprobe 路径）
+      configService.update((c) => c
+        ..ffmpegPath = (config.ffmpegPath.isNotEmpty ? config.ffmpegPath : c.ffmpegPath)
+        ..ffprobePath = (config.ffprobePath.isNotEmpty ? config.ffprobePath : c.ffprobePath));
       recheckEnv();
     }
   }
@@ -285,18 +294,38 @@ class AppState extends ChangeNotifier {
     _probeCount++; notifyListeners();
     addLog('添加 ${filepaths.length} 个文件', category: 'info');
 
-    // 先全部加入列表（立即显示占位卡片），再逐个探测
+    // Android：file_picker 返回的缓存路径一般可读，但部分设备/ROM 上可能
+    // 因 SAF 复制失败或权限问题导致路径不可读。验证路径可读性，不可读则
+    // 尝试复制到应用缓存目录（确保 ffprobe 子进程能访问）。
     final entries = <VideoFile>[];
     for (final fp in filepaths) {
-      final vf = VideoFile.fromFilepath(fp);
+      String path = fp;
+      if (isAndroidPlatform) {
+        try {
+          await File(path).stat();
+        } catch (_) {
+          addLog('路径不可读，尝试复制到缓存: $path', category: 'warning');
+          try {
+            final dest = File('${Directory.systemTemp.path}/ffmpegpp_import_${path.hashCode}_${DateTime.now().millisecondsSinceEpoch}');
+            await dest.writeAsBytes(await File(path).readAsBytes());
+            path = dest.path;
+            addLog('已复制到缓存: $path', category: 'info');
+          } catch (e2) {
+            addLog('复制到缓存失败: $e2', category: 'error');
+          }
+        }
+      }
+      final vf = VideoFile.fromFilepath(path);
       _videos.add(vf);
       entries.add(vf);
     }
     notifyListeners();
 
-    await _probeAll(entries);
-
-    _probeCount--; notifyListeners();
+    try {
+      await _probeAll(entries);
+    } finally {
+      _probeCount--; notifyListeners();
+    }
   }
 
   Future<void> _probeAll(List<VideoFile> entries) async {
@@ -1324,7 +1353,8 @@ class AppState extends ChangeNotifier {
     if (line.isEmpty) return;
     final m = _ffmpegTimeRe.firstMatch(line);
     if (m != null && totalDuration != null && totalDuration > 0) {
-      final t = int.parse(m.group(1)!) * 3600 + int.parse(m.group(2)!) * 60 + int.parse(m.group(3)!) + int.parse(m.group(4)!) / 100;
+      final frac = m.group(4)!;
+      final t = int.parse(m.group(1)!) * 3600 + int.parse(m.group(2)!) * 60 + int.parse(m.group(3)!) + int.parse(frac) / pow(10, frac.length);
       final pct = (t / totalDuration * 100).clamp(0, 99.9);
       final sm = _speedRe.firstMatch(line);
       final speed = sm != null ? '${sm.group(1)}x' : '';
@@ -1411,15 +1441,24 @@ class AppState extends ChangeNotifier {
       final args = <String>['-y'];
       if (startTime != null) args.addAll(['-ss', startTime.toString()]);
       if (endTime != null) {
-        // -ss 在 -i 前时 ffmpeg 的 -to 相对 seek 点：需传时长而非绝对结束时间，
-        // 与 _runFrameExtraction 的行为保持一致。
-        final toVal = (startTime != null) ? (endTime - startTime) : endTime;
+        // -ss 和 -to 都在 -i 前时，两者均作用于输入文件时间轴（绝对时间），
+        // -to 不是相对 seek 点，因此直接传绝对 endTime。
+        // 若需 -to 相对 seek，必须把 -to 移到 -i 之后。
+        final toVal = endTime;
         args.addAll(['-to', toVal.toString()]);
       }
       args.addAll(['-i', input, '-vn', '-sn', '-acodec', codec, output]);
+      // 同时修正对应的 clipDuration 计算
       addLog('提取音频: $_ffmpegBin ${args.join(' ')}', category: 'info');
 
-      final clipDuration = (startTime != null && endTime != null) ? (endTime - startTime).toDouble() : totalDuration;
+      // 当 startTime 和 endTime 都在 -i 前时，clipDuration 是 endTime - startTime
+      // 当只有 startTime 时，clipDuration = totalDuration - startTime
+      // 当只有 endTime 时，clipDuration = endTime
+      final clipDuration = (startTime != null && endTime != null)
+          ? (endTime - startTime).toDouble()
+          : (startTime != null && totalDuration != null)
+              ? (totalDuration - startTime).toDouble()
+              : (endTime?.toDouble() ?? totalDuration ?? 0.0);
       return await _runFfmpegWithProgress(taskId, args, '提取音频', totalDuration: clipDuration);
     } catch (e) {
       addLog('提取音频异常: $e', category: 'error');
@@ -1832,6 +1871,7 @@ class AppState extends ChangeNotifier {
   VoidCallback? mcpOnClearAll, mcpOnUndo, mcpOnRedo, mcpOnSave;
   bool Function(String nodeId, Map<String, dynamic> params)? mcpOnModifyNode;
   String Function(String type, double x, double y)? mcpOnAddNode;
+  String Function(String gateType, double x, double y)? mcpOnAddGate;
   void Function(String nodeId)? mcpOnDeleteNode;
   bool Function(String fromId, String toId)? mcpOnConnect;
   bool Function(String connId)? mcpOnDisconnect;
@@ -1842,9 +1882,10 @@ class AppState extends ChangeNotifier {
     if (_mcpServer != null) return true;
     try {
       final port = config.mcpPort;
-      // 仅监听回环地址：MCP 暴露了 list_directory/read_file_info 等未经认证的工具，
-      // 绑定 0.0.0.0 会让局域网内任意主机都能枚举/读取本机文件并驱动编辑器。
-      _mcpServer = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
+      // 监听地址：默认仅回环（本机安全），用户可在设置中改为 0.0.0.0 暴露到局域网
+      final host = config.mcpHost.isEmpty ? '127.0.0.1' : config.mcpHost;
+      final addr = host == '0.0.0.0' ? InternetAddress.anyIPv4 : InternetAddress(host);
+      _mcpServer = await HttpServer.bind(addr, port);
       mcpError = null;
       addLog('[MCP] 服务已启动 (仅本机)，端口: $port', category: 'info');
       _mcpServer!.listen((req) {
@@ -1968,6 +2009,13 @@ class AppState extends ChangeNotifier {
     {'name': 'list_containers', 'description': 'List all media containers with id, name, file count and pipeline node count (read-only)', 'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'get_container_pipeline', 'description': 'Get the pipeline graph JSON of a container (read-only)', 'inputSchema': {'type': 'object', 'properties': {'containerId': {'type': 'string', 'description': 'Container id from list_containers'}}, 'required': ['containerId']}},
     {'name': 'list_standalone_videos', 'description': 'List videos that are not inside any container (read-only)', 'inputSchema': {'type': 'object', 'properties': {}}},
+    {'name': 'add_gate', 'description': 'Add a logic gate node (and/or/not/nand/nor/const1/const0/time_trigger) to the canvas. Returns new node ID.', 'inputSchema': {'type': 'object', 'properties': {'type': {'type': 'string', 'description': 'Gate type: and, or, not, nand, nor, const1, const0, time_trigger'}, 'x': {'type': 'number', 'description': 'X position (default 200)'}, 'y': {'type': 'number', 'description': 'Y position (default 200)'}}, 'required': ['type']}},
+    {'name': 'set_gate_params', 'description': 'Set logic gate parameters (e.g. tt_date/tt_start/tt_end for time_trigger)', 'inputSchema': {'type': 'object', 'properties': {'nodeId': {'type': 'string'}, 'params': {'type': 'object'}}, 'required': ['nodeId', 'params']}},
+    {'name': 'get_gate_types', 'description': 'List all available logic gate types (read-only)', 'inputSchema': {'type': 'object', 'properties': {}}},
+    {'name': 'get_graph_stats', 'description': 'Get canvas statistics: node count, gate count, connection count (read-only)', 'inputSchema': {'type': 'object', 'properties': {}}},
+    {'name': 'read_logs', 'description': 'Read recent application logs (read-only)', 'inputSchema': {'type': 'object', 'properties': {}}},
+    {'name': 'get_task_info', 'description': 'Get detailed info of a specific task by ID', 'inputSchema': {'type': 'object', 'properties': {'taskId': {'type': 'string', 'description': 'Task ID from list_tasks'}}, 'required': ['taskId']}},
+    {'name': 'rename_node', 'description': 'Set a custom name for a node on the canvas', 'inputSchema': {'type': 'object', 'properties': {'nodeId': {'type': 'string'}, 'name': {'type': 'string', 'description': 'New custom name'}}, 'required': ['nodeId', 'name']}},
   ];
 
   List<Map<String, dynamic>> _mcpResourcesList() => [
@@ -1978,7 +2026,7 @@ class AppState extends ChangeNotifier {
 
   Future<(String, bool)> _mcpCallTool(String name, Map<String, dynamic> args) async {
     // 写操作需在设置里开启 MCP 写入权限（默认只读，防止未经授权的修改）
-    const writeTools = {'clear_all', 'undo', 'redo', 'save', 'modify_node_params', 'add_node', 'delete_node', 'connect_nodes', 'disconnect_nodes', 'cancel_tasks'};
+    const writeTools = {'clear_all', 'undo', 'redo', 'save', 'modify_node_params', 'add_node', 'delete_node', 'connect_nodes', 'disconnect_nodes', 'cancel_tasks', 'add_gate', 'set_gate_params', 'rename_node'};
     if (writeTools.contains(name) && !config.mcpAllowWrite) {
       return ('Error: MCP write access is disabled — enable "Allow write" in Settings → AI', true);
     }
@@ -2116,6 +2164,61 @@ class AppState extends ChangeNotifier {
           'size_mb': v.sizeMb, 'duration': v.duration, 'codec': v.codec,
           'resolution': v.resolution,
         }).toList()), false);
+      case 'add_gate':
+        if (mcpOnAddGate == null) return ('Error: No editor open', true);
+        final gateType = args['type'] as String? ?? '';
+        final gx = (args['x'] as num?)?.toDouble() ?? 200;
+        final gy = (args['y'] as num?)?.toDouble() ?? 200;
+        try {
+          final nodeId = mcpOnAddGate!(gateType, gx, gy);
+          return ('Gate added: $nodeId (type: $gateType)', false);
+        } catch (e) { return ('Error: $e', true); }
+      case 'set_gate_params':
+        if (mcpOnModifyNode == null) return ('Error: No editor open', true);
+        final nodeId = args['nodeId'] as String? ?? '';
+        final params = args['params'] as Map<String, dynamic>? ?? {};
+        if (mcpOnModifyNode!(nodeId, params)) {
+          return ('Gate $nodeId params updated', false);
+        }
+        return ('Error: node $nodeId not found', true);
+      case 'get_gate_types':
+        final types = LogicGateType.values.map((t) => t.name).toList();
+        return (jsonEncode(types), false);
+      case 'get_graph_stats':
+        if (_currentPipelineGraph == null) return (jsonEncode({'nodes': 0, 'gates': 0, 'connections': 0}), false);
+        final g = _currentPipelineGraph!;
+        return (jsonEncode({
+          'nodes': g.nodes.length,
+          'gates': g.nodes.where((n) => n.isGate).length,
+          'connections': g.connections.length,
+          'start': g.nodes.where((n) => n.type == PipelineStepType.start).length,
+          'output': g.nodes.where((n) => n.type == PipelineStepType.output).length,
+        }), false);
+      case 'read_logs':
+        final recent = _logEntries.length > 30 ? _logEntries.sublist(_logEntries.length - 30) : _logEntries;
+        return (jsonEncode(recent.map((l) => {
+          'time': '${l.timestamp.hour.toString().padLeft(2, '0')}:${l.timestamp.minute.toString().padLeft(2, '0')}',
+          'message': l.message,
+          'category': l.category,
+        }).toList()), false);
+      case 'get_task_info':
+        final taskId = args['taskId'] as String? ?? '';
+        final task = _tasks.where((t) => t.id == taskId).firstOrNull;
+        if (task == null) return ('Error: Task not found: $taskId', true);
+        return (jsonEncode({
+          'id': task.id, 'filename': task.filename, 'status': task.status.name,
+          'progress': task.progress.toStringAsFixed(1),
+          'inputPath': task.inputPath, 'outputPath': task.outputPath,
+          if (task.error != null) 'error': task.error,
+        }), false);
+      case 'rename_node':
+        if (mcpOnModifyNode == null) return ('Error: No editor open', true);
+        final nid = args['nodeId'] as String? ?? '';
+        final name = args['name'] as String? ?? '';
+        if (mcpOnModifyNode!(nid, {'node_name': name})) {
+          return ('Node $nid renamed to "$name"', false);
+        }
+        return ('Error: node $nid not found', true);
       default: return ('Unknown tool: $name', true);
     }
   }

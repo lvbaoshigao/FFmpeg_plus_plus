@@ -37,9 +37,11 @@ class VideoCard extends StatelessWidget {
             Text(video.filename, style: TextStyle(fontWeight: FontWeight.w600, color: clr), maxLines: 1, overflow: TextOverflow.ellipsis),
             const SizedBox(height: 2),
             if (probeError != null)
-              Text(probeError, style: TextStyle(fontSize: 12, color: scheme.error))
+              Text(probeError, maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, color: scheme.error))
             else if (video.parsed)
               Text('${video.resolution}  •  ${video.durationStr}  •  ${formatFileSize(video.sizeMb)}  •  ${video.codec}',
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant))
             else
               Text(s.probing, style: TextStyle(fontSize: 12, color: scheme.outline)),

@@ -1,29 +1,18 @@
+# 🎬 FFmpeg++
+
 <div align="center">
 
-<h1>🎬 FFmpeg++</h1>
+**专业视频 / 图片 / 音频处理桌面应用 — 100% AI 生成代码**
 
-<p><strong>专业视频 / 图片 / 音频处理桌面应用 — 100% AI 生成代码</strong></p>
+[![Platform](https://img.shields.io/badge/platform-Windows%20|%20Linux%20|%20macOS-blue?logo=flutter)](https://flutter.dev)
+[![Flutter](https://img.shields.io/badge/Flutter-3.44+-02569B?logo=flutter)](https://flutter.dev)
+[![C++](https://img.shields.io/badge/C++-17-00599C?logo=cplusplus)](https://isocpp.org)
+[![FFmpeg](https://img.shields.io/badge/FFmpeg-8.0-007808?logo=ffmpeg)](https://ffmpeg.org)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-<p>
-  <a href="https://flutter.dev"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-blue?style=for-the-badge&logo=flutter" alt="Platform"></a>
-  <a href="https://flutter.dev"><img src="https://img.shields.io/badge/Flutter-3.44+-02569B?style=for-the-badge&logo=flutter" alt="Flutter"></a>
-  <a href="https://isocpp.org"><img src="https://img.shields.io/badge/C++-17-00599C?style=for-the-badge&logo=cplusplus" alt="C++"></a>
-  <a href="https://ffmpeg.org"><img src="https://img.shields.io/badge/FFmpeg-8.0-007808?style=for-the-badge&logo=ffmpeg" alt="FFmpeg"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" alt="License"></a>
-</p>
+[中文](#chinese) | [English](#english)
 
-<p>
-  <a href="#chinese">🇨🇳 中文</a> ·
-  <a href="#english">🇬🇧 English</a>
-</p>
-
-<blockquote>
-<p>🤖 <strong>本项目代码 100% 由 AI 生成</strong></p>
-</blockquote>
-
-</div>
-
----
+> 🤖 **本项目 100% 由 AI 生成**
 
 ## 📸 软件预览
 
@@ -38,12 +27,7 @@
   </tr>
 </table>
 
----
-
-## 🗂 目录
-
-- [🇨🇳 中文](#chinese)
-- [🇬🇧 English](#english)
+</div>
 
 ---
 
@@ -57,27 +41,17 @@ FFmpeg++ 是一款基于 **Flutter**（Material Design 3 前端）+ **C++17**（
 
 ### 🏗 架构
 
-```mermaid
-flowchart LR
-    A["Flutter Desktop GUI<br/>(Material Design 3)"] -->|"Dart FFI"| B["C++17 Backend<br/>(dll / so / dylib)"]
-    B -->|"subprocess"| C["FFmpeg / FFprobe"]
-    B -.->|"FFI Poll"| A
 ```
-
-### ✨ 核心亮点
-
-<table>
-  <tr>
-    <td align="center" width="33%">🧩<br><b>蓝图式节点编辑器</b><br>25+ 节点，无限 DAG 画布</td>
-    <td align="center" width="33%">⚡<br><b>GPU 硬件加速</b><br>NVIDIA / AMD / Intel</td>
-    <td align="center" width="33%">🤖<br><b>AI 助手</b><br>自然语言生成处理节点</td>
-  </tr>
-  <tr>
-    <td align="center" width="33%">🎞️<br><b>17+ 编码器</b><br>H.264 / H.265 / AV1 / VP9</td>
-    <td align="center" width="33%">📝<br><b>字幕烧录</b><br>SRT / ASS / SSA + 字体预览</td>
-    <td align="center" width="33%">🖥️<br><b>跨平台</b><br>Windows / Linux / macOS</td>
-  </tr>
-</table>
+┌──────────────────────────────────┐
+│   Flutter 桌面 GUI (Dart)        │  ← Material Design 3
+│   Dart FFI ↔ libffmpegpp         │
+├──────────────────────────────────┤
+│   C++17 后端 (dll/so/dylib)      │  ← 共享库模式（FFI 轮询）
+│   subprocess → ffmpeg / ffprobe  │
+├──────────────────────────────────┤
+│   FFmpeg / FFprobe               │  ← 外部依赖（用户自行安装）
+└──────────────────────────────────┘
+```
 
 ### ✨ 功能
 
@@ -116,17 +90,16 @@ flowchart LR
 
 | 平台 | 下载 |
 |------|------|
-| 🪟 **Windows** | [![Download Setup](https://img.shields.io/badge/Setup.exe-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases) |
-| 🐧 **Linux x64** | [![Download DEB](https://img.shields.io/badge/amd64.deb-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases) |
-| 🐧 **Linux ARM64** | [![Download DEB](https://img.shields.io/badge/arm64.deb-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases) |
-| 🍎 **macOS** | [![Download DMG](https://img.shields.io/badge/macOS.dmg-000000?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases) |
+| **Windows** | [Releases](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases) → `FFmpeg++_v*_setup.exe` |
+| **Linux x64** | [Releases](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases) → `ffmpegpp_*_amd64.deb` |
+| **Linux ARM64** | [Releases](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases) → `ffmpegpp_*_arm64.deb` |
+| **macOS** | [Releases](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases) → `FFmpeg++_v*_macOS.dmg` |
 
 > 确保已安装 [FFmpeg](https://ffmpeg.org/download.html) 并加入 PATH 环境变量。
 
 ### 🔧 开发
 
 #### 环境要求
-
 - [Flutter SDK](https://flutter.dev) 3.44+
 - [CMake](https://cmake.org) 3.20+
 - [FFmpeg](https://ffmpeg.org) 在 PATH 中
@@ -150,7 +123,7 @@ flutter pub get
 flutter run -d linux   # 或 -d windows / -d macos
 ```
 
-#### 🤖 Android 移动端(目前正在逐步推进适配工作，敬请期待)
+#### 🤖 Android 移动端
 
 移动端适配只影响 Android 平台，桌面端行为不变：
 
@@ -219,7 +192,7 @@ MIT License — 详见 [LICENSE](LICENSE)
 
 ## English <a id="english"></a>
 
-### 📸 Software Preview
+## 📸 Software Preview
 
 <table>
   <tr>
@@ -240,27 +213,17 @@ Supports **Windows**, **Linux** (x64 / ARM64), and **macOS** (Universal).
 
 ### 🏗 Architecture
 
-```mermaid
-flowchart LR
-    A["Flutter Desktop GUI<br/>(Material Design 3)"] -->|"Dart FFI"| B["C++17 Backend<br/>(dll / so / dylib)"]
-    B -->|"subprocess"| C["FFmpeg / FFprobe"]
-    B -.->|"FFI Poll"| A
 ```
-
-### ✨ Key Highlights
-
-<table>
-  <tr>
-    <td align="center" width="33%">🧩<br><b>Blueprint Node Editor</b><br>25+ nodes, infinite DAG canvas</td>
-    <td align="center" width="33%">⚡<br><b>GPU Acceleration</b><br>NVIDIA / AMD / Intel</td>
-    <td align="center" width="33%">🤖<br><b>AI Assistant</b><br>Natural language to nodes</td>
-  </tr>
-  <tr>
-    <td align="center" width="33%">🎞️<br><b>17+ Codecs</b><br>H.264 / H.265 / AV1 / VP9</td>
-    <td align="center" width="33%">📝<br><b>Subtitle Burn-in</b><br>SRT / ASS / SSA + font preview</td>
-    <td align="center" width="33%">🖥️<br><b>Cross-platform</b><br>Windows / Linux / macOS</td>
-  </tr>
-</table>
+┌──────────────────────────────────┐
+│   Flutter Desktop GUI (Dart)     │  ← Material Design 3
+│   Dart FFI ↔ libffmpegpp         │
+├──────────────────────────────────┤
+│   C++17 Backend (dll/so/dylib)   │  ← Shared lib (FFI poll)
+│   subprocess → ffmpeg / ffprobe  │
+├──────────────────────────────────┤
+│   FFmpeg / FFprobe               │  ← External dependency
+└──────────────────────────────────┘
+```
 
 ### ✨ Features
 
@@ -299,17 +262,16 @@ The node editor is the core of FFmpeg++. See **[NODE_EDITOR.md](NODE_EDITOR.md)*
 
 | Platform | Download |
 |----------|----------|
-| 🪟 **Windows** | [![Download Setup](https://img.shields.io/badge/Setup.exe-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases) |
-| 🐧 **Linux x64** | [![Download DEB](https://img.shields.io/badge/amd64.deb-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases) |
-| 🐧 **Linux ARM64** | [![Download DEB](https://img.shields.io/badge/arm64.deb-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases) |
-| 🍎 **macOS** | [![Download DMG](https://img.shields.io/badge/macOS.dmg-000000?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases) |
+| **Windows** | [Releases](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases) → `FFmpeg++_v*_setup.exe` |
+| **Linux x64** | [Releases](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases) → `ffmpegpp_*_amd64.deb` |
+| **Linux ARM64** | [Releases](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases) → `ffmpegpp_*_arm64.deb` |
+| **macOS** | [Releases](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases) → `FFmpeg++_v*_macOS.dmg` |
 
 > Make sure [FFmpeg](https://ffmpeg.org/download.html) is installed and in your PATH.
 
 ### 🔧 Development
 
 #### Prerequisites
-
 - [Flutter SDK](https://flutter.dev) 3.44+
 - [CMake](https://cmake.org) 3.20+
 - [FFmpeg](https://ffmpeg.org) in PATH
@@ -359,5 +321,5 @@ flutter run -d linux   # or -d windows / -d macos
 ---
 
 <div align="center">
-  <sub>🤖 The code 100% AI-Generated — Built with Flutter , C++</sub>
+  <sub>🤖 100% AI-Generated — Built with Flutter + C++ + FFmpeg + Claude</sub>
 </div>

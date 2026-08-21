@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 import 'providers/app_state.dart';
@@ -51,6 +52,7 @@ class _FfmpegppAppState extends State<FfmpegppApp> {
     // 和两份 ThemeData。
     return Selector<AppState, _ThemeKey>(
       selector: (_, s) => _ThemeKey(
+        lang: s.config.language,
         themeColor: s.config.themeColor,
         fontFamily: s.config.fontFamily,
         fontSize: s.config.fontSize,
@@ -64,8 +66,16 @@ class _FfmpegppAppState extends State<FfmpegppApp> {
         // Monet 生效时用壁纸种子色覆盖用户主题色（tonalSpot 方案）
         final dynamicSeed = k.useDynamicColor ? (k.monetSeed ?? k.themeColor) : null;
         return MaterialApp(
-          key: ValueKey('app_${k.fontFamily}_${k.fontWeight}_$dynamicSeed'),
+          key: const ValueKey('app'),
           title: 'FFmpeg++', debugShowCheckedModeBanner: false,
+          // 本地化支持：让 showDatePicker/showTimePicker 等系统组件跟随语言
+          locale: Locale(k.lang == 'zh' ? 'zh' : 'en'),
+          supportedLocales: const [Locale('zh'), Locale('en')],
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
           theme: AppTheme.light(seedColor: k.themeColor, fontFamily: k.fontFamily,
               fontSize: k.fontSize, fontWeight: k.fontWeight, dynamicSeed: dynamicSeed),
           darkTheme: AppTheme.dark(seedColor: k.themeColor, fontFamily: k.fontFamily,
@@ -87,6 +97,7 @@ class _FfmpegppAppState extends State<FfmpegppApp> {
 
 /// MaterialApp 重建所需的最小配置快照（相等比较避免无谓重建）。
 class _ThemeKey {
+  final String lang;
   final int themeColor;
   final String fontFamily;
   final double fontSize;
@@ -96,6 +107,7 @@ class _ThemeKey {
   final bool useDynamicColor;
   final int? monetSeed;
   const _ThemeKey({
+    required this.lang,
     required this.themeColor,
     required this.fontFamily,
     required this.fontSize,
@@ -109,6 +121,7 @@ class _ThemeKey {
   @override
   bool operator ==(Object other) =>
       other is _ThemeKey &&
+      other.lang == lang &&
       other.themeColor == themeColor &&
       other.fontFamily == fontFamily &&
       other.fontSize == fontSize &&
@@ -119,7 +132,7 @@ class _ThemeKey {
       other.monetSeed == monetSeed;
 
   @override
-  int get hashCode => Object.hash(themeColor, fontFamily, fontSize, fontWeight, darkMode, initialized, useDynamicColor, monetSeed);
+  int get hashCode => Object.hash(lang, themeColor, fontFamily, fontSize, fontWeight, darkMode, initialized, useDynamicColor, monetSeed);
 }
 
 /// 启动加载画面：旋转光晕 + 品牌图标 + 进度提示。
@@ -282,14 +295,23 @@ class _AppShellState extends State<AppShell> with WindowListener {
     await Future.delayed(const Duration(seconds: 3));
     if (!mounted) return;
     final isZh = state.config.language == 'zh';
-    final result = await updater.checkForUpdate(preferLanzou: isZh);
-    if (!mounted || !result.hasUpdate) return;
-    final s = AppStrings.of(state.config.language);
-    SettingsPage.showUpdateDialogStatic(context, s, result);
+    try {
+      final result = await updater.checkForUpdate(preferLanzou: isZh);
+      if (!mounted || !result.hasUpdate) return;
+      final s = AppStrings.of(state.config.language);
+      SettingsPage.showUpdateDialogStatic(context, s, result);
+    } catch (_) {
+      return;
+    }
   }
 
   Future<void> _checkPostUpdate() async {
-    final status = await updater.checkPostUpdateStatus();
+    final String? status;
+    try {
+      status = await updater.checkPostUpdateStatus();
+    } catch (_) {
+      return;
+    }
     if (!mounted || status == null) return;
     if (status == 'updated') {
       final s = AppStrings.of(context.read<AppState>().config.language);

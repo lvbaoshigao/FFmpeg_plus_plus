@@ -105,7 +105,7 @@ class _LogPageState extends State<LogPage> {
         return Padding(padding: const EdgeInsets.only(right: 6), child: FilterChip(
           label: Text(_filterLabel(f, isZh), style: TextStyle(fontSize: 11, color: sel ? scheme.onPrimaryContainer : scheme.onSurface)),
           selected: sel,
-          onSelected: (v) => setState(() => _filter = f),
+          onSelected: (v) => setState(() { _filter = f; _selectedIndices.clear(); }),
           selectedColor: scheme.primaryContainer,
           backgroundColor: scheme.surfaceContainerHighest,
           padding: const EdgeInsets.symmetric(horizontal: 4),

@@ -51,6 +51,7 @@ import '../widgets/step_editors/video_crop_step_editor.dart';
 import '../widgets/step_editors/logic_block_editor.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/toast.dart';
+import '../widgets/gate_symbol_painter.dart';
 
 const _uuid = Uuid();
 
@@ -114,6 +115,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   double _toolboxFraction = 0.4;
   // 画布 / 右面板 水平分割比例（默认画布占 60%）
   double _canvasFraction = 0.6;
+  // 移动端横竖屏切换（默认竖屏）
+  bool _isLandscape = false;
+  // 竖屏模式下右面板展开/收起
+  double _editorExpandedH = 200;
   // AI 侧边面板是否展开（左侧 ">" 按钮）
   bool _aiDrawerOpen = false;
   // 当前 AI 会话标题（对话后自动总结生成）
@@ -121,8 +126,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   // ── 自动保存草稿 ──
   // 稳定 key：容器模式用「容器名 + 文件id 列表」，单文件模式用 video id。
-  late final String _autosaveKey;
+  String _autosaveKey = ''; // 空 = 未启用自动保存（config 模式）
   Timer? _autosaveTimer; // 防抖定时器，避免每次拖动都落盘
+  bool _autosaveIndicator = false; // 显示"已自动保存"提示
 
   final TransformationController _transformCtrl = TransformationController();
   final GlobalKey _canvasKey = GlobalKey();
@@ -184,10 +190,29 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   void _scheduleAutosave(PipelineGraph graph) {
     _autosaveTimer?.cancel();
+    if (_autosaveKey.isEmpty) return; // config 模式不自动保存
+    final cfg = context.read<AppState>().config;
+    if (!cfg.autosaveEnabled) return; // 用户在设置中禁用了自动保存
     _autosaveTimer = Timer(const Duration(milliseconds: 1200), () {
-      final g = graph.copy().toJson();
+      final g = graph.toJson();
       PipelineAutosave.save(_autosaveKey, g);
+      if (!mounted) return;
+      // 调试模式：记录自动保存事件
+      if (context.read<AppState>().config.debugMode) {
+        context.read<AppState>().addLog('[自动保存] 草稿已保存, key: $_autosaveKey', category: 'info');
+      }
+      setState(() => _autosaveIndicator = true);
+      Future.delayed(const Duration(milliseconds: 1500), () {
+        if (mounted) setState(() => _autosaveIndicator = false);
+      });
     });
+  }
+
+  /// 标记草稿变更（自动保存草稿而不触发父组件的持久化保存）。
+  /// 用于参数编辑、节点拖拽等"非结构变更"操作。
+  void _markDirty() {
+    final graph = PipelineGraph(nodes: _nodes, connections: _connections, logicBlocks: _logicBlocks);
+    _scheduleAutosave(graph);
   }
 
   /// 计算稳定的草稿 key，并在打开编辑器时检测上一份未保存的草稿：
@@ -272,6 +297,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       _transformCtrl.value = Matrix4.identity()..translateByDouble(-_canvasSize / 2 + 300, -_canvasSize / 2 + 200, 0, 1);
     });
     _appState = context.read<AppState>();
+    // 初始化横竖屏偏好
+    if (isMobilePlatform) {
+      _isLandscape = _appState.config.useNodeEditorLandscape;
+      if (_isLandscape) {
+        SystemChrome.setPreferredOrientations([
+          DeviceOrientation.landscapeLeft,
+          DeviceOrientation.landscapeRight,
+        ]);
+      }
+    }
     _appState.mcpOnClearAll = () { _pushUndo(); setState(() { _nodes.clear(); _connections.clear(); _logicBlocks.clear(); _selectedNodeIds.clear(); _saveGraph(); }); };
     _appState.mcpOnUndo = _undo;
     _appState.mcpOnRedo = _redo;
@@ -290,6 +325,18 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     _appState.mcpOnAddNode = (typeName, x, y) {
       final type = PipelineStepType.values.firstWhere((t) => t.name == typeName, orElse: () => throw ArgumentError('Unknown type: $typeName'));
       final node = PipelineNode(id: _uuid.v4(), type: type, x: x, y: y);
+      _pushUndo();
+      setState(() => _nodes.add(node));
+      _saveGraph();
+      return node.id;
+    };
+    _appState.mcpOnAddGate = (gateName, x, y) {
+      LogicGateType? gate;
+      for (final t in LogicGateType.values) {
+        if (t.name == gateName) { gate = t; break; }
+      }
+      if (gate == null) throw ArgumentError('Unknown gate type: $gateName');
+      final node = PipelineNode(id: _uuid.v4(), type: PipelineStepType.start, gateType: gate.name, x: x, y: y);
       _pushUndo();
       setState(() => _nodes.add(node));
       _saveGraph();
@@ -321,9 +368,36 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     _appState.mcpOnListConnections = () => _connections.map((c) => c.toJson()).toList();
   }
 
-  @override
+  /// 移动端横竖屏切换：切换时调用系统 Orientation API，离开页面时恢复竖屏。
+  void _toggleOrientation() {
+    final newVal = !_isLandscape;
+    setState(() {
+      _isLandscape = newVal;
+    });
+    // 持久化到配置
+    _appState.updateConfig((c) => c..useNodeEditorLandscape = newVal);
+    if (newVal) {
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+    } else {
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
+      ]);
+    }
+  }
+
   void dispose() {
     if (!Platform.isWindows && !isMobilePlatform) windowManager.removeListener(this);
+    // 离开页面时恢复竖屏
+    if (isMobilePlatform) {
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
+      ]);
+    }
     _transformCtrl.removeListener(_onScaleChanged);
     _transformCtrl.dispose();
     // 干净退出：取消未触发的自动保存定时器并清除草稿（崩溃/被杀时此方法可能不执行，
@@ -338,6 +412,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     _appState.mcpOnSave = null;
     _appState.mcpOnModifyNode = null;
     _appState.mcpOnAddNode = null;
+    _appState.mcpOnAddGate = null;
     _appState.mcpOnDeleteNode = null;
     _appState.mcpOnConnect = null;
     _appState.mcpOnDisconnect = null;
@@ -446,6 +521,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     }
     setState(() => _nodes.add(node));
     _trackUsage(type);
+    if (context.read<AppState>().config.debugMode) {
+      context.read<AppState>().addLog('[节点] 添加 ${type.name} @ (${canvasPos.dx.toStringAsFixed(0)}, ${canvasPos.dy.toStringAsFixed(0)}) id=${node.id.substring(0, 8)}', category: 'info');
+    }
   }
 
   void _addGateAt(LogicGateType gate, Offset canvasPos) {
@@ -457,6 +535,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       gateType: gate.name,
     );
     setState(() => _nodes.add(node));
+    if (context.read<AppState>().config.debugMode) {
+      context.read<AppState>().addLog('[逻辑门] 添加 ${gate.name} @ (${canvasPos.dx.toStringAsFixed(0)}, ${canvasPos.dy.toStringAsFixed(0)}) id=${node.id.substring(0, 8)}', category: 'info');
+    }
   }
 
   void _addNodeAtCenter(PipelineStepType type) {
@@ -1352,12 +1433,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   }
 
   Widget _buildStepEditor(PipelineNode node, bool isZh) {
-    void onChanged() => setState(() {});
+    // 任何参数编辑变化都会触发自动保存草稿（不持久化到父组件）
+    void onChanged() { setState(() {}); _markDirty(); }
     final v = widget.video;
 
-    // 时间触发器逻辑门：在右面板编辑日期/时间参数
-    if (node.isGate && node.gate == LogicGateType.timeTrigger) {
-      return _buildTimeTriggerEditor(node, isZh);
+    // 逻辑门节点：显示门信息编辑器（符号、说明、输入输出）
+    if (node.isGate && node.gate != null) {
+      if (node.gate == LogicGateType.timeTrigger) {
+        return _buildTimeTriggerEditor(node, isZh);
+      }
+      return _buildGateInfoEditor(node, isZh);
     }
 
     Widget editor;
@@ -1640,7 +1725,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               padding: const EdgeInsets.only(right: 12),
               child: FilledButton.icon(
                 onPressed: _save,
-                icon: const Icon(Icons.check, size: 18),
+                icon: const Icon(Icons.save, size: 18),
                 label: Text(s.save),
                 style: FilledButton.styleFrom(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -1856,12 +1941,69 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               Expanded(child: Text(s.isZh ? '节点编辑器' : 'Node Editor',
                   maxLines: 1, overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface))),
+              // 横竖屏切换（移动端专属）
+              IconButton(
+                icon: Icon(_isLandscape ? Icons.phone_android_outlined : Icons.screen_rotation_alt_outlined, size: 22),
+                tooltip: _isLandscape ? (s.isZh ? '切换到竖屏' : 'Switch to portrait') : (s.isZh ? '切换到横屏' : 'Switch to landscape'),
+                onPressed: _toggleOrientation,
+                constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+              ),
             ]),
           ),
         Expanded(child: Padding(
           padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
           child: LayoutBuilder(builder: (ctx, cons) {
-            // 画布 / 右面板 之间可拖动的水平分隔条
+            // 移动端竖屏模式：画布全宽，右面板纵向堆叠在下方
+            final isPortrait = isMobilePlatform && !_isLandscape;
+            if (isPortrait) {
+              return Column(children: [
+                // 画布（占大部分空间）
+                Expanded(child: _buildCanvas(scheme, s)),
+                // 可折叠右面板（拖拽手柄展开/收起）
+                GestureDetector(
+                  onVerticalDragUpdate: (d) {
+                    final newH = (_editorExpandedH - d.delta.dy).clamp(60.0, cons.maxHeight * 0.45);
+                    if (newH != _editorExpandedH) {
+                      setState(() => _editorExpandedH = newH);
+                    }
+                  },
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 250),
+                    curve: Curves.easeOutCubic,
+                    height: _editorExpanded ? _editorExpandedH : 40,
+                    decoration: BoxDecoration(
+                      color: scheme.surfaceContainerLow.withAlpha(210),
+                      borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                      border: Border(top: BorderSide(color: scheme.outlineVariant.withAlpha(60))),
+                    ),
+                    child: Column(children: [
+                      // 拖拽手柄 + 收起/展开
+                      GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => setState(() => _editorExpanded = !_editorExpanded),
+                        child: Container(
+                          height: 32,
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: Row(children: [
+                            Container(width: 28, height: 3,
+                              decoration: BoxDecoration(color: scheme.outlineVariant, borderRadius: BorderRadius.circular(2))),
+                            const SizedBox(width: 8),
+                            Text(s.isZh ? '节点编辑' : 'Node Editor',
+                                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+                            const Spacer(),
+                            Icon(_editorExpanded ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_up,
+                                size: 18, color: scheme.onSurfaceVariant),
+                          ]),
+                        ),
+                      ),
+                      if (_editorExpanded)
+                        Expanded(child: _buildRightPanel(scheme, s)),
+                    ]),
+                  ),
+                ),
+              ]);
+            }
+            // 横屏/桌面模式：原有的水平并排布局
             const dividerW = 6.0;
             final totalW = cons.maxWidth - dividerW;
             final canvasW = totalW * _canvasFraction;
@@ -2367,7 +2509,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             const SizedBox(width: 4),
             FilledButton.icon(
               onPressed: _save,
-              icon: const Icon(Icons.check, size: 16),
+              icon: const Icon(Icons.save, size: 16),
               label: Text(s.save, style: const TextStyle(fontSize: 12)),
               style: FilledButton.styleFrom(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -2494,6 +2636,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                   onModifyNodeParams: (nodeId, params) {
                     _pushUndo();
                     setState(() {
+                      if (_nodes.isEmpty) return;
                       final node = _nodes.firstWhere((n) => n.id == nodeId, orElse: () => _nodes.first);
                       params.forEach((k, v) { node.params[k] = v; });
                     });
@@ -2756,6 +2899,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         case LogicGateType.nand: return all1 ? '0' : '1';
         case LogicGateType.nor: return any1 ? '0' : '1';
         case LogicGateType.not: return values.first == 1 ? '0' : '1';
+        case LogicGateType.xor: return values.where((x) => x == 1).length % 2 == 1 ? '1' : '0';
+        case LogicGateType.xnor: return values.where((x) => x == 1).length % 2 == 1 ? '0' : '1';
         case LogicGateType.timeTrigger: return _timeTriggerValue(n);
         default: return '?';
       }
@@ -2795,6 +2940,213 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   /// 时间触发器配置对话框：日期选择器 + 时间选择器
 
+  /// 逻辑门信息编辑器（非时间触发器的普通门）：显示 ANSI 符号、功能说明、
+  /// 真值表与端口说明。参数不可编辑，仅展示信息。
+  Widget _buildGateInfoEditor(PipelineNode node, bool isZh) {
+    final scheme = Theme.of(context).colorScheme;
+    final gate = node.gate!;
+    final iec = context.read<AppState>().config.gateStd == 'iec';
+    final zh = isZh;
+
+    final (String name, String desc, List<List<String>> truthTable) = switch (gate) {
+      LogicGateType.and => (
+        zh ? '与门 (AND)' : 'AND Gate',
+        zh ? '所有输入为 1 时输出 1，否则输出 0' : 'Outputs 1 only when ALL inputs are 1',
+        [
+          [zh ? '输入' : 'IN', zh ? '输出' : 'OUT'],
+          ['0 · 0', '0'],
+          ['0 · 1', '0'],
+          ['1 · 0', '0'],
+          ['1 · 1', '1'],
+        ],
+      ),
+      LogicGateType.or => (
+        zh ? '或门 (OR)' : 'OR Gate',
+        zh ? '任一输入为 1 时输出 1，否则输出 0' : 'Outputs 1 when ANY input is 1',
+        [
+          [zh ? '输入' : 'IN', zh ? '输出' : 'OUT'],
+          ['0 · 0', '0'],
+          ['0 · 1', '1'],
+          ['1 · 0', '1'],
+          ['1 · 1', '1'],
+        ],
+      ),
+      LogicGateType.not => (
+        zh ? '非门 (NOT)' : 'NOT Gate',
+        zh ? '输入取反：输入 1 输出 0，输入 0 输出 1' : 'Inverts the input signal',
+        [
+          [zh ? '输入' : 'IN', zh ? '输出' : 'OUT'],
+          ['0', '1'],
+          ['1', '0'],
+        ],
+      ),
+      LogicGateType.nand => (
+        zh ? '与非门 (NAND)' : 'NAND Gate',
+        zh ? '与门的取反：所有输入为 1 时输出 0，否则输出 1' : 'AND then inverted: outputs 0 only when ALL inputs are 1',
+        [
+          [zh ? '输入' : 'IN', zh ? '输出' : 'OUT'],
+          ['0 · 0', '1'],
+          ['0 · 1', '1'],
+          ['1 · 0', '1'],
+          ['1 · 1', '0'],
+        ],
+      ),
+      LogicGateType.nor => (
+        zh ? '或非门 (NOR)' : 'NOR Gate',
+        zh ? '或门的取反：任一输入为 1 时输出 0，否则输出 1' : 'OR then inverted: outputs 0 when ANY input is 1',
+        [
+          [zh ? '输入' : 'IN', zh ? '输出' : 'OUT'],
+          ['0 · 0', '1'],
+          ['0 · 1', '0'],
+          ['1 · 0', '0'],
+          ['1 · 1', '0'],
+        ],
+      ),
+      LogicGateType.xor => (
+        zh ? '异或门 (XOR)' : 'XOR Gate',
+        zh ? '输入不同时输出 1，相同时输出 0' : 'Outputs 1 when inputs differ, 0 when they match',
+        [
+          [zh ? '输入' : 'IN', zh ? '输出' : 'OUT'],
+          ['0 · 0', '0'],
+          ['0 · 1', '1'],
+          ['1 · 0', '1'],
+          ['1 · 1', '0'],
+        ],
+      ),
+      LogicGateType.xnor => (
+        zh ? '同或门 (XNOR)' : 'XNOR Gate',
+        zh ? '输入相同时输出 1，不同时输出 0' : 'Outputs 1 when inputs match, 0 when they differ',
+        [
+          [zh ? '输入' : 'IN', zh ? '输出' : 'OUT'],
+          ['0 · 0', '1'],
+          ['0 · 1', '0'],
+          ['1 · 0', '0'],
+          ['1 · 1', '1'],
+        ],
+      ),
+      LogicGateType.const1 => (
+        zh ? '恒 1 (HIGH)' : 'Constant 1 (HIGH)',
+        zh ? '恒定输出 1，无需输入，常用于强制启用下游' : 'Always outputs 1, no inputs needed',
+        [
+          [zh ? '输出' : 'OUT'],
+          ['1'],
+        ],
+      ),
+      LogicGateType.const0 => (
+        zh ? '恒 0 (LOW)' : 'Constant 0 (LOW)',
+        zh ? '恒定输出 0，无需输入，常用于禁用下游' : 'Always outputs 0, no inputs needed',
+        [
+          [zh ? '输出' : 'OUT'],
+          ['0'],
+        ],
+      ),
+      LogicGateType.timeTrigger => (
+        zh ? '时间触发器' : 'Time Trigger',
+        '',
+        const [],
+      ),
+    };
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // 标题 + 符号
+        Row(children: [
+          Container(
+            width: 44, height: 44,
+            decoration: BoxDecoration(
+              color: scheme.tertiaryContainer.withAlpha(160),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: scheme.tertiary.withAlpha(100)),
+            ),
+            child: CustomPaint(
+              size: const Size(44, 44),
+              painter: GateSymbolPainter(
+                gate: gate, iec: iec,
+                color: scheme.onTertiaryContainer,
+                isZh: zh,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(name, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+            const SizedBox(height: 2),
+            Text(desc, style: TextStyle(fontSize: 11, color: scheme.outline, height: 1.4)),
+          ])),
+        ]),
+        const SizedBox(height: 14),
+        const Divider(height: 1),
+        const SizedBox(height: 12),
+
+        // 端口信息
+        _infoRow(scheme, Icons.login, zh ? '输入端口' : 'Inputs',
+            gate.isConstant
+                ? (zh ? '无（恒值输出）' : 'None (constant output)')
+                : '${gate.inputCount} × ${zh ? '红色逻辑端口' : 'red logic port'}'),
+        const SizedBox(height: 8),
+        _infoRow(scheme, Icons.logout, zh ? '输出端口' : 'Output',
+            zh ? '1 × 右侧红色逻辑端口' : '1 × red logic port on the right'),
+
+        // 真值表
+        if (truthTable.length > 1) ...[
+          const SizedBox(height: 14),
+          const Divider(height: 1),
+          const SizedBox(height: 10),
+          Text(zh ? '真值表' : 'Truth Table',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+          const SizedBox(height: 8),
+          Center(child: _truthTable(scheme, truthTable)),
+        ],
+      ]),
+    );
+  }
+
+  Widget _infoRow(ColorScheme scheme, IconData icon, String label, String value) {
+    return Row(children: [
+      Icon(icon, size: 14, color: scheme.primary),
+      const SizedBox(width: 6),
+      Text(label, style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+      const Spacer(),
+      Flexible(child: Text(value, textAlign: TextAlign.right,
+          style: TextStyle(fontSize: 12, color: scheme.onSurface))),
+    ]);
+  }
+
+  Widget _truthTable(ColorScheme scheme, List<List<String>> rows) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withAlpha(60),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Table(
+        columnWidths: const {0: FlexColumnWidth(), 1: FlexColumnWidth()},
+        defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+        border: TableBorder.all(color: scheme.outlineVariant.withAlpha(80), width: 0.8),
+        children: [
+          for (var i = 0; i < rows.length; i++)
+            TableRow(
+              decoration: BoxDecoration(
+                color: i == 0 ? scheme.primaryContainer.withAlpha(120) : null,
+              ),
+              children: rows[i].map((cell) => Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                child: Text(cell, textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: i == 0 ? scheme.onPrimaryContainer : scheme.onSurface,
+                      fontWeight: i == 0 ? FontWeight.w700 : FontWeight.w400,
+                      fontFamily: AppTheme.monoFont,
+                    )),
+              )).toList(),
+            ),
+        ],
+      ),
+    );
+  }
+
   DateTime? _parseDate(String s) {
     final parts = s.split('-');
     if (parts.length != 3) return null;
@@ -2803,6 +3155,24 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     final d = int.tryParse(parts[2]);
     if (y == null || m == null || d == null) return null;
     return DateTime(y, m, d);
+  }
+
+  /// 逻辑门节点的属性面板标题
+  String _gatePropertyTitle(PipelineNode node, AppStrings s) {
+    final gate = node.gate;
+    if (gate == null) return s.isZh ? '逻辑门' : 'Logic Gate';
+    return switch (gate) {
+      LogicGateType.and => s.isZh ? '与门 (AND)' : 'AND Gate',
+      LogicGateType.or => s.isZh ? '或门 (OR)' : 'OR Gate',
+      LogicGateType.not => s.isZh ? '非门 (NOT)' : 'NOT Gate',
+      LogicGateType.nand => s.isZh ? '与非门 (NAND)' : 'NAND Gate',
+      LogicGateType.nor => s.isZh ? '或非门 (NOR)' : 'NOR Gate',
+      LogicGateType.xor => s.isZh ? '异或门 (XOR)' : 'XOR Gate',
+      LogicGateType.xnor => s.isZh ? '同或门 (XNOR)' : 'XNOR Gate',
+      LogicGateType.const1 => s.isZh ? '恒 1' : 'Constant 1',
+      LogicGateType.const0 => s.isZh ? '恒 0' : 'Constant 0',
+      LogicGateType.timeTrigger => s.isZh ? '时间触发器' : 'Time Trigger',
+    };
   }
 
   /// 时间触发器右面板编辑器（日期/时间选择，实时修改节点参数）
@@ -2835,87 +3205,186 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       builder: (ctx, setDlg) => SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          // 日期
-          Row(children: [
-            Icon(Icons.calendar_today_outlined, size: 16, color: scheme.primary),
-            const SizedBox(width: 8),
-            Text(isZh ? '日期' : 'Date', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-            const Spacer(),
-            TextButton(
-              onPressed: () async {
-                final picked = await showDatePicker(
-                  context: ctx,
-                  initialDate: _parseDate(dateStr) ?? now,
-                  firstDate: DateTime(now.year - 1),
-                  lastDate: DateTime(now.year + 2),
-                );
-                if (picked != null) {
-                  setDlg(() => dateStr = '${picked.year.toString().padLeft(4, '0')}-'
-                      '${picked.month.toString().padLeft(2, '0')}-'
-                      '${picked.day.toString().padLeft(2, '0')}');
-                  doSave();
-                }
-              },
-              child: Text(dateStr.isEmpty ? (isZh ? '每天' : 'Every day') : dateStr,
-                  style: TextStyle(fontSize: 12, color: dateStr.isEmpty ? scheme.outline : scheme.primary)),
+          // 日期卡片
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: scheme.primaryContainer.withAlpha(50),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: scheme.primary.withAlpha(60)),
             ),
-            if (dateStr.isNotEmpty)
-              IconButton(
-                icon: const Icon(Icons.close, size: 16),
-                visualDensity: VisualDensity.compact,
-                onPressed: () { setDlg(() => dateStr = ''); doSave(); },
-                tooltip: isZh ? '清除日期' : 'Clear',
-              ),
-          ]),
-          const Divider(height: 20),
-          // 起始时间
-          Row(children: [
-            Icon(Icons.play_arrow, size: 16, color: scheme.primary),
-            const SizedBox(width: 8),
-            Text(isZh ? '起始时间' : 'Start', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-            const Spacer(),
-            TextButton.icon(
-              onPressed: () async {
-                final t = await showTimePicker(context: ctx, initialTime: startTime);
-                if (t != null) { setDlg(() => startTime = t); doSave(); }
-              },
-              icon: const Icon(Icons.schedule, size: 15),
-              label: Text('${startTime.hour.toString().padLeft(2, '0')}:${startTime.minute.toString().padLeft(2, '0')}',
-                  style: const TextStyle(fontSize: 13)),
+            child: Row(children: [
+              Icon(Icons.calendar_today_outlined, size: 18, color: scheme.primary),
+              const SizedBox(width: 10),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(isZh ? '日期' : 'Date', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+                const SizedBox(height: 2),
+                GestureDetector(
+                  onTap: () async {
+                    final picked = await showDatePicker(
+                      context: ctx,
+                      initialDate: _parseDate(dateStr) ?? now,
+                      firstDate: DateTime(now.year - 1),
+                      lastDate: DateTime(now.year + 2),
+                    );
+                    if (picked != null) {
+                      setDlg(() => dateStr = '${picked.year.toString().padLeft(4, '0')}-'
+                          '${picked.month.toString().padLeft(2, '0')}-'
+                          '${picked.day.toString().padLeft(2, '0')}');
+                      doSave();
+                    }
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: scheme.surface.withAlpha(160),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      dateStr.isEmpty ? (isZh ? '每天（不限日期）' : 'Every day (no date)') : dateStr,
+                      style: TextStyle(fontSize: 12, color: dateStr.isEmpty ? scheme.outline : scheme.primary),
+                    ),
+                  ),
+                ),
+              ])),
+              if (dateStr.isNotEmpty)
+                IconButton(
+                  icon: const Icon(Icons.close, size: 16),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () { setDlg(() => dateStr = ''); doSave(); },
+                  tooltip: isZh ? '清除日期' : 'Clear',
+                ),
+            ]),
+          ),
+          const SizedBox(height: 10),
+
+          // 起始时间卡片
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: scheme.secondaryContainer.withAlpha(50),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: scheme.secondary.withAlpha(60)),
             ),
-          ]),
-          // 结束时间
-          Row(children: [
-            Icon(Icons.stop, size: 16, color: scheme.primary),
-            const SizedBox(width: 8),
-            Text(isZh ? '结束时间' : 'End', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-            const Spacer(),
-            if (endTime == null)
-              TextButton(
-                onPressed: () { setDlg(() => endTime = TimeOfDay(hour: startTime.hour, minute: (startTime.minute + 1) % 60)); doSave(); },
-                child: Text(isZh ? '精确时刻' : 'Exact', style: const TextStyle(fontSize: 12)),
-              )
-            else ...[
-              TextButton.icon(
-                onPressed: () async {
-                  final t = await showTimePicker(context: ctx, initialTime: endTime!);
-                  if (t != null) { setDlg(() => endTime = t); doSave(); }
-                },
-                icon: const Icon(Icons.schedule, size: 15),
-                label: Text('${endTime!.hour.toString().padLeft(2, '0')}:${endTime!.minute.toString().padLeft(2, '0')}',
-                    style: const TextStyle(fontSize: 13)),
-              ),
-              IconButton(
-                icon: const Icon(Icons.close, size: 16),
-                visualDensity: VisualDensity.compact,
-                onPressed: () { setDlg(() => endTime = null); doSave(); },
-                tooltip: isZh ? '精确时刻' : 'Exact',
-              ),
-            ],
-          ]),
-          const SizedBox(height: 8),
-          Text(isZh ? '当系统时间命中条件输出 1，否则输出 0' : 'Outputs 1 when system time matches, 0 otherwise',
-              style: TextStyle(fontSize: 10, color: scheme.outline)),
+            child: Row(children: [
+              Icon(Icons.play_arrow, size: 18, color: scheme.secondary),
+              const SizedBox(width: 10),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(isZh ? '起始时间' : 'Start Time', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+                const SizedBox(height: 2),
+                GestureDetector(
+                  onTap: () async {
+                    final t = await showTimePicker(context: ctx, initialTime: startTime, initialEntryMode: TimePickerEntryMode.input);
+                    if (t != null) { setDlg(() => startTime = t); doSave(); }
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: scheme.surface.withAlpha(160),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      const Icon(Icons.schedule, size: 14),
+                      const SizedBox(width: 4),
+                      Text('${startTime.hour.toString().padLeft(2, '0')}:${startTime.minute.toString().padLeft(2, '0')}',
+                          style: const TextStyle(fontSize: 13)),
+                    ]),
+                  ),
+                ),
+              ])),
+            ]),
+          ),
+          const SizedBox(height: 10),
+
+          // 结束时间卡片
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: endTime != null ? scheme.tertiaryContainer.withAlpha(50) : scheme.surfaceContainerHighest.withAlpha(30),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: endTime != null ? scheme.tertiary.withAlpha(60) : scheme.outlineVariant.withAlpha(60)),
+            ),
+            child: Row(children: [
+              Icon(Icons.stop, size: 18, color: endTime != null ? scheme.tertiary : scheme.outline),
+              const SizedBox(width: 10),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(isZh ? '结束时间' : 'End Time', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+                const SizedBox(height: 2),
+                if (endTime == null)
+                  GestureDetector(
+                    onTap: () { setDlg(() => endTime = TimeOfDay(hour: startTime.hour, minute: (startTime.minute + 1) % 60)); doSave(); },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: scheme.surface.withAlpha(160),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(isZh ? '精确时刻（无结束时间）' : 'Exact moment (no end)',
+                          style: TextStyle(fontSize: 11, color: scheme.outline)),
+                    ),
+                  )
+                else
+                  Row(children: [
+                    GestureDetector(
+                      onTap: () async {
+                        final t = await showTimePicker(context: ctx, initialTime: endTime!, initialEntryMode: TimePickerEntryMode.input);
+                        if (t != null) { setDlg(() => endTime = t); doSave(); }
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: scheme.surface.withAlpha(160),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          const Icon(Icons.schedule, size: 14),
+                          const SizedBox(width: 4),
+                          Text('${endTime!.hour.toString().padLeft(2, '0')}:${endTime!.minute.toString().padLeft(2, '0')}',
+                              style: const TextStyle(fontSize: 13)),
+                        ]),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    GestureDetector(
+                      onTap: () { setDlg(() => endTime = null); doSave(); },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: scheme.error.withAlpha(30),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Icon(Icons.close, size: 14, color: scheme.error),
+                      ),
+                    ),
+                  ]),
+              ])),
+            ]),
+          ),
+          const SizedBox(height: 12),
+
+          // 说明
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHighest.withAlpha(60),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Icon(Icons.info_outline, size: 14, color: scheme.primary),
+              const SizedBox(width: 8),
+              Expanded(child: Text(
+                isZh ? '当系统时间匹配日期和起始时间范围时，输出 1（控制信号高电平），否则输出 0。'
+                    '无结束时间时，仅在起始时精确时刻输出 1。'
+                  : 'Outputs 1 (control signal HIGH) when system time matches the date and time range. '
+                    'Without end time, outputs 1 at the exact start time.',
+                style: TextStyle(fontSize: 11, color: scheme.outline, height: 1.4),
+              )),
+            ]),
+          ),
         ]),
       ),
     );
@@ -3108,6 +3577,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               } else { node.x += dx; node.y += dy; }
             });
           },
+          onPanEnd: (_) => _markDirty(),
           onSecondaryTapUp: (d) => _showNodeMenu(d.globalPosition, node.id),
           child: Container(
             width: _nodeWFor(node.type),
@@ -3226,6 +3696,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             }
           });
         },
+        onPanEnd: (_) => _markDirty(),
         onSecondaryTapUp: (d) => _showNodeMenu(d.globalPosition, node.id),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -3277,6 +3748,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                   }
                 });
               },
+              onPanEnd: (_) => _markDirty(),
               child: Container(
                 width: _gateW,
                 height: _gateH,
@@ -3292,7 +3764,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                     ? Column(mainAxisAlignment: MainAxisAlignment.center, children: [
                         CustomPaint(
                           size: Size(_gateW, _gateH - 14),
-                          painter: _GateSymbolPainter(
+                          painter: GateSymbolPainter(
                             gate: gate, iec: iec,
                             color: scheme.onTertiaryContainer, isZh: s.isZh,
                           ),
@@ -3303,7 +3775,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                     : Center(
                         child: CustomPaint(
                           size: Size(_gateW, _gateH),
-                          painter: _GateSymbolPainter(
+                          painter: GateSymbolPainter(
                             gate: gate, iec: iec,
                             color: scheme.onTertiaryContainer, isZh: s.isZh,
                           ),
@@ -3556,7 +4028,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             title: logicBlock != null
                 ? logicBlock.label(s.isZh)
                 : node != null
-                    ? (s.isZh ? node.label : node.labelEn)
+                    ? (node.isGate && node.gate != null
+                        ? _gatePropertyTitle(node, s)
+                        : (s.isZh ? node.label : node.labelEn))
                     : showPreview
                         ? (s.isZh ? PipelineNode(id: '', type: previewType).label : PipelineNode(id: '', type: previewType).labelEn)
                         : (s.isZh ? '属性' : 'Properties'),
@@ -3571,7 +4045,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                       key: ValueKey(logicBlock.id),
                       block: logicBlock,
                       childNodes: _nodes.where((n) => logicBlock.childNodeIds.contains(n.id)).toList(),
-                      onChanged: () => setState(() {}),
+                      onChanged: () { setState(() {}); _markDirty(); },
                       isZh: s.isZh,
                     ),
                   )
@@ -3860,10 +4334,18 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         const SizedBox(width: 6),
         Text('${v.resolution}  |  ${v.durationStr}  |  ${formatFileSize(v.sizeMb)}',
             style: TextStyle(color: scheme.outline, fontSize: 12)),
+        if (_autosaveIndicator) ...[
+          const SizedBox(width: 12),
+          Icon(Icons.cloud_done_outlined, size: 14, color: Colors.green.shade400),
+          const SizedBox(width: 4),
+          Text(s.isZh ? '已自动保存' : 'Auto-saved',
+              style: TextStyle(fontSize: 10, color: Colors.green.shade400)),
+        ],
         const Spacer(),
         Text(
           s.isZh ? '${_nodes.length} 节点  |  $srcCount 源  |  $outCount 输出  |  ${_connections.length} 连线'
               : '${_nodes.length} nodes  |  $srcCount src  |  $outCount out  |  ${_connections.length} links',
+          maxLines: 1, overflow: TextOverflow.ellipsis,
           style: TextStyle(color: scheme.outline, fontSize: 11)),
       ]),
     );
@@ -3871,149 +4353,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 }
 
 // ── 网格背景 ──
-
-/// 逻辑门符号画笔：ANSI/IEEE（特色形状）或 IEC（矩形框）。
-/// 支持与门/或门/非门/与非门/或非门/恒1/恒0，并带取反圈。
-class _GateSymbolPainter extends CustomPainter {
-  final LogicGateType gate;
-  final bool iec;
-  final Color color;
-  final bool isZh;
-  _GateSymbolPainter({required this.gate, required this.iec, required this.color, required this.isZh});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final w = size.width, h = size.height;
-    final hw = w / 2, hh = h / 2;
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-    final fillP = Paint()..color = color..style = PaintingStyle.fill;
-    final constOne = gate == LogicGateType.const1;
-    final constZero = gate == LogicGateType.const0;
-    final negated = gate == LogicGateType.nand || gate == LogicGateType.nor || gate == LogicGateType.not;
-
-    // 恒1/恒0：直接画大号数字
-    if (constOne || constZero) {
-      final tp = TextPainter(
-        text: TextSpan(text: constOne ? '1' : '0', style: TextStyle(color: color, fontSize: 22, fontWeight: FontWeight.w700)),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      tp.paint(canvas, Offset(hw - tp.width / 2, hh - tp.height / 2));
-      return;
-    }
-
-    // 时间触发器：画时钟图标
-    if (gate == LogicGateType.timeTrigger) {
-      final r = math.min(w, h) / 2 - 4;
-      final c = Offset(hw, hh);
-      canvas.drawCircle(c, r, paint);
-      for (var i = 0; i < 12; i++) {
-        final a = i * math.pi / 6;
-        final inner = r * (i % 3 == 0 ? 0.72 : 0.82);
-        final outer = r * 0.92;
-        canvas.drawLine(
-          Offset(c.dx + inner * math.sin(a), c.dy - inner * math.cos(a)),
-          Offset(c.dx + outer * math.sin(a), c.dy - outer * math.cos(a)),
-          paint,
-        );
-      }
-      canvas.drawLine(c, Offset(c.dx + r * 0.45 * math.sin(10 * math.pi / 6), c.dy - r * 0.45 * math.cos(10 * math.pi / 6)), paint);
-      canvas.drawLine(c, Offset(c.dx + r * 0.62 * math.sin(2 * math.pi / 6), c.dy - r * 0.62 * math.cos(2 * math.pi / 6)), paint);
-      return;
-    }
-
-    final lab = _label;
-    const pad = 6.0;
-    final boxTop = pad;
-    final boxBot = h - pad;
-    final backX = pad + 2;    // 左侧直线背
-    final frontX = w - pad;   // 右侧边界
-
-    if (!iec) {
-      // ═══════════ ANSI/IEEE：特色形状 ═══════════
-      if (gate == LogicGateType.and || gate == LogicGateType.nand) {
-        // 与门：左侧直线背 + 右侧半圆弧（D 形，弧向右侧凸出）
-        final arcR = (boxBot - boxTop) / 2; // 半圆半径 = 高度一半
-        final arcCenterX = frontX - arcR;    // 圆心在右侧，弧的右缘到 frontX
-        final path = Path()
-          ..moveTo(backX, boxTop)
-          ..lineTo(arcCenterX, boxTop)
-          ..arcToPoint(Offset(arcCenterX, boxBot), radius: Radius.circular(arcR), clockwise: true)
-          ..lineTo(backX, boxBot)
-          ..close();
-        canvas.drawPath(path, paint);
-        _labelText(canvas, lab, Offset(frontX - arcR - 6, hh));
-      } else if (gate == LogicGateType.or || gate == LogicGateType.nor) {
-        // 或门：左侧内凹弧 + 右侧尖形前端
-        final path = Path()
-          ..moveTo(backX + 4, boxTop)
-          ..quadraticBezierTo(w * 0.48, boxTop, w * 0.58, hh)       // 上沿 → 尖端
-          ..quadraticBezierTo(w * 0.48, boxBot, backX + 4, boxBot)   // 尖端 → 下沿
-          ..quadraticBezierTo(backX - 2, hh, backX + 4, boxTop)      // 左侧内凹弧
-          ..close();
-        canvas.drawPath(path, paint);
-        _labelText(canvas, lab, Offset(w * 0.42, hh));
-      } else if (gate == LogicGateType.not) {
-        // 非门：三角形（缓冲器）+ 取反圈
-        final tipX = frontX - 4;
-        final path = Path()
-          ..moveTo(backX + 4, boxTop)
-          ..lineTo(backX + 4, boxBot)
-          ..lineTo(tipX, hh)
-          ..close();
-        canvas.drawPath(path, paint);
-        _labelText(canvas, '1', Offset(backX + 14, hh));
-      }
-    } else {
-      // ═══════════ IEC：矩形框 + 符号 ═══════════
-      canvas.drawRect(Rect.fromLTRB(pad, pad, frontX, boxBot), paint);
-      _labelText(canvas, lab, Offset(hw, hh));
-    }
-
-    // 取反圈（NAND/NOR/NOT）：画在输出侧
-    if (negated && !constOne && !constZero) {
-      double cx;
-      if (iec) {
-        cx = frontX - 5;
-      } else if (gate == LogicGateType.not) {
-        cx = frontX - 4;
-      } else if (gate == LogicGateType.and || gate == LogicGateType.nand) {
-        cx = frontX;
-      } else {
-        // OR/NOR
-        cx = w * 0.58 + 4;
-      }
-      canvas.drawCircle(Offset(cx, hh), 4, fillP);
-    }
-  }
-
-  String get _label {
-    switch (gate) {
-      case LogicGateType.and: return '&';
-      case LogicGateType.or: return isZh ? '≥1' : '≥1';
-      case LogicGateType.not: return '1';
-      case LogicGateType.nand: return '&';
-      case LogicGateType.nor: return '≥1';
-      default: return '';
-    }
-  }
-
-  void _labelText(Canvas canvas, String t, Offset center) {
-    final tp = TextPainter(
-      text: TextSpan(text: t, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w700)),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    tp.paint(canvas, Offset(center.dx - tp.width / 2, center.dy - tp.height / 2));
-  }
-
-  @override
-  bool shouldRepaint(_GateSymbolPainter old) =>
-      old.gate != gate || old.iec != iec || old.color != color;
-}
 
 class _GridPainter extends CustomPainter {
   final Color color;
@@ -4176,43 +4515,57 @@ class _ConnectionPainter extends CustomPainter {
   }
 
   /// PCB 式正交布线：从 p1 到 p2 的曼哈顿折线（先水平后垂直，转角圆角）。
+  /// 修正：仅当相邻段足够长时才加圆角，避免产生微小凸起。
   Path _orthogonalPath(Offset p1, Offset p2, {double radius = 6}) {
-    const lead = 20.0; // 起点水平延伸 / 终点水平引入
+    const lead = 20.0;
     final dx = p2.dx - p1.dx;
-    // 中间竖向折线的 x 位置：偏向目标一段距离
     final midX = p2.dx - (dx >= 0 ? lead : -lead);
     final r = radius.clamp(1.0, lead);
     final path = Path()..moveTo(p1.dx, p1.dy);
 
-    // 1) 水平：p1 → midX（在 p1.y）
-    final h1 = midX - p1.dx;
-    if (h1.abs() > r * 2) {
-      path.lineTo(p1.dx + (h1 > 0 ? h1 - r : h1 + r), p1.dy);
-      // 圆角往竖向过渡
-      if (h1 > 0) {
-        path.quadraticBezierTo(midX, p1.dy, midX, p1.dy + r);
+    // 三段折线坐标：p1 → (midX, p1.y) → (midX, p2.y) → p2
+    final hLen = (midX - p1.dx).abs(); // 水平段长度
+    final vLen = (p2.dy - p1.dy).abs(); // 垂直段长度
+
+    // 转角 1（p1 → h 转角 → v 转角）：p1 → (midX, p1.y) 的圆角处理
+    if (hLen > r * 2) {
+      // 有足够空间做圆角
+      path.lineTo(midX - (dx >= 0 ? r : -r), p1.dy);
+      if (vLen > r * 2) {
+        // 两段都够长：完整圆角
+        if (dx >= 0) {
+          path.quadraticBezierTo(midX, p1.dy, midX, p1.dy + (p2.dy >= p1.dy ? r : -r));
+        } else {
+          path.quadraticBezierTo(midX, p1.dy, midX, p1.dy + (p2.dy >= p1.dy ? r : -r));
+        }
       } else {
-        path.quadraticBezierTo(midX, p1.dy, midX, p1.dy - r);
+        // 垂直段太短：不做圆角（直接方角）
+        path.lineTo(midX, p1.dy);
       }
     } else {
+      // 水平段太短：不做圆角
       path.lineTo(midX, p1.dy);
     }
 
-    // 2) 垂直：midX → p2.y
-    final v = p2.dy - p1.dy;
-    if (v.abs() > r * 2) {
-      path.lineTo(midX, p2.dy - (v > 0 ? r : -r));
-      // 圆角往水平过渡到 p2
-      if (v > 0) {
+    // 垂直段
+    if (vLen > r * 2) {
+      // 垂直段够长：先画到离目标 r 处，再加圆角过渡到水平
+      final vUp = p2.dy >= p1.dy;
+      path.lineTo(midX, p2.dy - (vUp ? r : -r));
+      // 转角 2：（v 转角 → h 转角 → p2）的圆角
+      if (hLen > r * 2) {
+        // 水平段也够长：完整圆角
         path.quadraticBezierTo(midX, p2.dy, midX + (dx >= 0 ? r : -r), p2.dy);
       } else {
-        path.quadraticBezierTo(midX, p2.dy, midX + (dx >= 0 ? r : -r), p2.dy);
+        // 水平段太短：不做圆角
+        path.lineTo(midX, p2.dy);
       }
     } else {
+      // 垂直段太短：不做圆角，直接画到目标 y
       path.lineTo(midX, p2.dy);
     }
 
-    // 3) 水平：midX → p2.dx（p2.y）
+    // 最后水平到终点
     path.lineTo(p2.dx, p2.dy);
     return path;
   }
@@ -4520,6 +4873,12 @@ class _AiPanelState extends State<_AiPanel> {
     (name: 'get_node_types', desc: '列出节点类型', template: '[TOOL_CALL:get_node_types]', needsPath: false),
     (name: 'list_tasks', desc: '查看任务队列', template: '[TOOL_CALL:list_tasks]', needsPath: false),
     (name: 'cancel_tasks', desc: '取消所有任务', template: '[TOOL_CALL:cancel_tasks]', needsPath: false),
+    (name: 'get_graph_stats', desc: '画布统计信息', template: '[TOOL_CALL:get_graph_stats]', needsPath: false),
+    (name: 'list_containers', desc: '列出所有容器', template: '[TOOL_CALL:list_containers]', needsPath: false),
+    (name: 'list_videos', desc: '列出已加载的视频文件', template: '[TOOL_CALL:list_videos]', needsPath: false),
+    (name: 'read_logs', desc: '读取最近日志', template: '[TOOL_CALL:read_logs]', needsPath: false),
+    (name: 'get_task_info', desc: '查看任务详情', template: '[TOOL_CALL:get_task_info|任务ID]', needsPath: false),
+    (name: 'rename_node', desc: '重命名节点', template: '[TOOL_CALL:rename_node|节点ID|新名称]', needsPath: false),
   ];
   /// 系统提示词固定头部。
   static const _promptHead = '''You are FFmpeg++ Graph Assistant, an expert FFmpeg pipeline designer for a node-based video/audio/image editor. The user describes media-processing goals in their own language; ALWAYS reply in the SAME language the user used.
@@ -4613,8 +4972,16 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     '[TOOL_CALL:connect_nodes|fromId|toId] — connect two nodes',
     '[TOOL_CALL:disconnect_nodes|connId] — remove a connection',
     '[TOOL_CALL:list_nodes] [TOOL_CALL:list_connections] [TOOL_CALL:get_node_types]',
+    '[TOOL_CALL:add_gate|type|x|y] — add logic gate (and/or/not/nand/nor/const1/const0/time_trigger)',
+    '[TOOL_CALL:set_gate_params|nodeId|key=val,key2=val2] — modify gate params (e.g. tt_date/tt_start/tt_end)',
+    '[TOOL_CALL:get_gate_types] — list logic gate types',
     '[TOOL_CALL:list_tasks] — task queue status',
     '[TOOL_CALL:cancel_tasks] — cancel running tasks',
+    '[TOOL_CALL:get_task_info|taskId] — task detail',
+    '[TOOL_CALL:get_graph_stats] — canvas statistics',
+    '[TOOL_CALL:list_videos] [TOOL_CALL:list_containers] — loaded media/containers (read-only)',
+    '[TOOL_CALL:read_logs] — recent app logs',
+    '[TOOL_CALL:rename_node|nodeId|name] — rename a node (write)',
   ];
 
   /// 每行对应的工具名。
@@ -4632,8 +4999,16 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     '[TOOL_CALL:connect_nodes|fromId|toId] — connect two nodes': ['connect_nodes'],
     '[TOOL_CALL:disconnect_nodes|connId] — remove a connection': ['disconnect_nodes'],
     '[TOOL_CALL:list_nodes] [TOOL_CALL:list_connections] [TOOL_CALL:get_node_types]': ['list_nodes', 'list_connections', 'get_node_types'],
+    '[TOOL_CALL:add_gate|type|x|y] — add logic gate (and/or/not/nand/nor/const1/const0/time_trigger)': ['add_gate'],
+    '[TOOL_CALL:set_gate_params|nodeId|key=val,key2=val2] — modify gate params (e.g. tt_date/tt_start/tt_end)': ['set_gate_params'],
+    '[TOOL_CALL:get_gate_types] — list logic gate types': ['get_gate_types'],
     '[TOOL_CALL:list_tasks] — task queue status': ['list_tasks'],
     '[TOOL_CALL:cancel_tasks] — cancel running tasks': ['cancel_tasks'],
+    '[TOOL_CALL:get_task_info|taskId] — task detail': ['get_task_info'],
+    '[TOOL_CALL:get_graph_stats] — canvas statistics': ['get_graph_stats'],
+    '[TOOL_CALL:list_videos] [TOOL_CALL:list_containers] — loaded media/containers (read-only)': ['list_videos', 'list_containers'],
+    '[TOOL_CALL:read_logs] — recent app logs': ['read_logs'],
+    '[TOOL_CALL:rename_node|nodeId|name] — rename a node (write)': ['rename_node'],
   };
 
   /// 动态系统提示词：过滤掉被禁用的工具行。
@@ -4667,7 +5042,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
   bool _shouldConfirmTool(String tool) {
     if (_effectiveApproveMode == 'auto') return false;
     // 只读工具从不询问
-    const readOnly = {'list_directory', 'read_file_info', 'probe_video', 'list_nodes', 'list_connections', 'get_node_types', 'list_tasks'};
+    const readOnly = {'list_directory', 'read_file_info', 'probe_video', 'list_nodes', 'list_connections', 'get_node_types', 'list_tasks', 'get_gate_types', 'get_graph_stats', 'list_videos', 'list_containers', 'read_logs', 'get_task_info'};
     if (readOnly.contains(tool)) return false;
     // 白名单 key 映射
     final key = switch (tool) {
@@ -4711,6 +5086,11 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     for (final m in calls) {
       final parts = m.group(1)!.split('|');
       final tool = parts[0];
+      // 调试模式：记录 AI 工具调用
+      if (cfg.debugMode) {
+        final argPreview = parts.length > 1 ? parts.sublist(1).join('|').replaceAll(RegExp(r'\s+'), ' ') : '';
+        context.read<AppState>().addLog('[AI工具] $tool${argPreview.isNotEmpty ? ' args: $argPreview' : ''}', category: 'info');
+      }
       // 被禁用的工具：即使 AI 调用了也不执行（也不告诉 AI 结果）
       if (_disabledTools.contains(tool)) {
         _addToolResult('blocked', 'Tool $tool is disabled by user');
@@ -4825,6 +5205,81 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
               _addToolResult('pick_file', 'User cancelled file selection');
             }
           });
+        case 'add_gate':
+          if (cfg.aiWriteAccess && parts.length >= 2) {
+            run(() {
+              try {
+                final gateType = _parseGateType(parts[1]);
+                if (gateType == null) {
+                  _addToolResult('add_gate', 'Error: unknown gate type "${parts[1]}". Valid: and, or, not, nand, nor, const1, const0, time_trigger');
+                  return;
+                }
+                final x = parts.length >= 3 ? double.tryParse(parts[2]) ?? 200 : 200.0;
+                final y = parts.length >= 4 ? double.tryParse(parts[3]) ?? 200 : 200.0;
+                final nodeId = widget.onAddGate(gateType.name, x, y);
+                _addToolResult('add_gate', 'Created gate $nodeId (type: ${parts[1]})');
+              } catch (e) { _addToolResult('add_gate', 'Error: $e'); }
+            });
+          }
+        case 'set_gate_params':
+          if (cfg.aiWriteAccess && parts.length >= 3) {
+            final params = <String, String>{};
+            for (final p in parts[2].split(',')) {
+              final kv = p.split('=');
+              if (kv.length == 2) params[kv[0].trim()] = kv[1].trim();
+            }
+            run(() {
+              widget.onModifyNodeParams(parts[1], params);
+              _addToolResult('set_gate_params', 'Gate ${parts[1]} params updated');
+            });
+          }
+        case 'get_gate_types':
+          final gateTypes = LogicGateType.values.map((t) => t.name).toList();
+          _addToolResult('get_gate_types', gateTypes.join(', '));
+        case 'get_graph_stats':
+          final nodes = widget.existingNodes;
+          final conns = widget.existingConnections;
+          final srcCount = nodes.where((n) => n.type == PipelineStepType.start).length;
+          final outCount = nodes.where((n) => n.type == PipelineStepType.output).length;
+          final gateCount = nodes.where((n) => n.isGate).length;
+          _addToolResult('get_graph_stats', 'nodes: ${nodes.length}, gates: $gateCount, connections: ${conns.length}, start: $srcCount, output: $outCount');
+        case 'list_containers':
+          final containers = context.read<AppState>().containers;
+          final containerList = containers.map((c) => {'id': c.id, 'name': c.name, 'fileCount': c.fileCount}).toList();
+          _addToolResult('list_containers', jsonEncode(containerList));
+        case 'list_videos':
+          final videos = context.read<AppState>().videos;
+          final videoList = videos.map((v) => {'id': v.id, 'filename': v.filename, 'sizeMb': v.sizeMb, 'parsed': v.parsed}).toList();
+          _addToolResult('list_videos', jsonEncode(videoList));
+        case 'read_logs':
+          final logs = context.read<AppState>().logEntries;
+          final recent = logs.length > 30 ? logs.sublist(logs.length - 30) : logs;
+          final logText = recent.map((l) => '[${l.timestamp.hour.toString().padLeft(2, '0')}:${l.timestamp.minute.toString().padLeft(2, '0')}] ${l.message}').join('\n');
+          _addToolResult('read_logs', logText.isEmpty ? '(no logs)' : logText);
+        case 'get_task_info':
+          if (parts.length >= 2) {
+            final taskId = parts[1];
+            final tasks = context.read<AppState>().tasks;
+            final task = tasks.where((t) => t.id == taskId).firstOrNull;
+            if (task != null) {
+              _addToolResult('get_task_info', jsonEncode({
+                'id': task.id, 'filename': task.filename, 'status': task.status.name,
+                'progress': '${task.progress.toStringAsFixed(1)}%',
+                'inputPath': task.inputPath, 'outputPath': task.outputPath,
+              }));
+            } else {
+              _addToolResult('get_task_info', 'Task not found: $taskId');
+            }
+          }
+        case 'rename_node':
+          if (cfg.aiWriteAccess && parts.length >= 3) {
+            final nodeId = parts[1];
+            final name = parts[2];
+            run(() {
+              widget.onModifyNodeParams(nodeId, {'node_name': name});
+              _addToolResult('rename_node', 'Node $nodeId renamed to "$name"');
+            });
+          }
       }
     }
   }
@@ -4893,6 +5348,28 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         inputTokens: null, outputTokens: null, blocks: null));
     });
     _scrollToBottom();
+  }
+
+  /// 解析字符串为 LogicGateType（兼容 name 和别名）。
+  LogicGateType? _parseGateType(String s) {
+    // 直接匹配 name
+    for (final t in LogicGateType.values) {
+      if (t.name == s) return t;
+    }
+    // 别名
+    switch (s) {
+      case 'and': return LogicGateType.and;
+      case 'or': return LogicGateType.or;
+      case 'not': return LogicGateType.not;
+      case 'nand': return LogicGateType.nand;
+      case 'nor': return LogicGateType.nor;
+      case 'xor': case 'exclusive_or': return LogicGateType.xor;
+      case 'xnor': case 'exclusive_nor': return LogicGateType.xnor;
+      case 'const1': case 'const_1': case 'constant_1': case 'high': return LogicGateType.const1;
+      case 'const0': case 'const_0': case 'constant_0': case 'low': return LogicGateType.const0;
+      case 'time_trigger': case 'timer': return LogicGateType.timeTrigger;
+    }
+    return null;
   }
 
   @override
@@ -5047,6 +5524,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       }
 
       // Add placeholder assistant message for streaming
+      if (!mounted) { client.close(); return; }
       setState(() {
         _messages.add((role: 'assistant', content: '', inputTokens: null, outputTokens: null, blocks: null));
       });
@@ -5112,7 +5590,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                 outTok = usage['completion_tokens'] as int? ?? outTok;
               }
             }
-            setState(() {
+            if (mounted) setState(() {
               _messages[msgIdx] = (role: 'assistant', content: buf.toString(), inputTokens: inTok, outputTokens: outTok,
                   blocks: thinkBuf.isEmpty ? null : [
                     {'type': 'thinking', 'thinking': thinkBuf.toString(), 'durationMs': thinkWatch.elapsedMilliseconds},
@@ -5130,6 +5608,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       _genStart.stop();
       final elapsedMs = _genStart.elapsedMilliseconds;
       final speed = elapsedMs > 0 ? (content.length * 1000 / elapsedMs) : null;
+      if (!mounted) return;
       setState(() {
         _messages[msgIdx] = (role: 'assistant', content: content, inputTokens: inTok, outputTokens: outTok,
             blocks: thinkBuf.isEmpty ? null : [
@@ -5148,6 +5627,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       _maybeGenerateTitle();
     } catch (e) {
       appState.logAiResponse('$e', error: true);
+      if (!mounted) return;
       setState(() {
         _messages.add((role: 'assistant', content: 'Error: $e', inputTokens: null, outputTokens: null, blocks: null));
         _loading = false;

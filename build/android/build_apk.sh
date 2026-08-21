@@ -47,9 +47,13 @@ fi
 
 # ── 3. Gradle 构建（含 OOM 重试） ──
 cd "$FFMPEGPP_ROOT/ffmpegpp_gui/android"
+# 只编 arm64-v8a：Flutter Gradle 插件读取 project 属性 target-platform
+# （默认 android-arm,android-arm64,android-x64）。限制后 jni 等插件的
+# CMake 也不会为 4 个 ABI 重复编译，省一半磁盘和编译时间。
+ARGS=(-Ptarget-platform=android-arm64)
 for i in 1 2 3 4 5 6 7 8 9 10; do
   echo "======== ATTEMPT $i ========"
-  if ./gradlew :app:assembleRelease --no-daemon "$@"; then
+  if ./gradlew :app:assembleRelease --no-daemon "${ARGS[@]}" "$@"; then
     echo "BUILD SUCCESS on attempt $i"
     echo "APK: $FFMPEGPP_ROOT/ffmpegpp_gui/build/app/outputs/flutter-apk/app-release.apk"
     exit 0

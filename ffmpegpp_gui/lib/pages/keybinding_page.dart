@@ -21,6 +21,10 @@ const _basicActionIds = [
 const _canvasActionIds = [
   'canvas_select_all',
   'canvas_delete_selected',
+  'canvas_undo',
+  'canvas_redo',
+  'canvas_probe_mode',
+  'canvas_hide_logic',
 ];
 
 String _normalizeBinding(List<String> keys) {
@@ -229,6 +233,14 @@ class _KeybindingDialogState extends State<_KeybindingDialog> {
                   keys: config.keyBindings['canvas_select_all'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
               _shortcutTile(actionId: 'canvas_delete_selected', label: isZh ? '删除选中元素' : 'Delete Selected Elements',
                   keys: config.keyBindings['canvas_delete_selected'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
+              _shortcutTile(actionId: 'canvas_undo', label: isZh ? '撤销（默认 Ctrl+Z）' : 'Undo (Ctrl+Z)',
+                  keys: config.keyBindings['canvas_undo'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
+              _shortcutTile(actionId: 'canvas_redo', label: isZh ? '重做（默认 Ctrl+Shift+Z）' : 'Redo (Ctrl+Shift+Z)',
+                  keys: config.keyBindings['canvas_redo'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
+              _shortcutTile(actionId: 'canvas_probe_mode', label: isZh ? '探测模式（未配置）' : 'Probe Mode (unset)',
+                  keys: config.keyBindings['canvas_probe_mode'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
+              _shortcutTile(actionId: 'canvas_hide_logic', label: isZh ? '隐藏逻辑部分（未配置）' : 'Hide Logic (unset)',
+                  keys: config.keyBindings['canvas_hide_logic'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
             ],
           ),
         ),
@@ -313,6 +325,10 @@ const _actionLabelsZh = {
   'queue_stop_all': '停止所有任务',
   'canvas_select_all': '选中所有元素',
   'canvas_delete_selected': '删除选中元素',
+  'canvas_undo': '撤销',
+  'canvas_redo': '重做',
+  'canvas_probe_mode': '探测模式',
+  'canvas_hide_logic': '隐藏逻辑部分',
 };
 const _actionLabelsEn = {
   'project_select_all': 'Select All Videos',
@@ -322,6 +338,10 @@ const _actionLabelsEn = {
   'queue_stop_all': 'Stop All Tasks',
   'canvas_select_all': 'Select All Elements',
   'canvas_delete_selected': 'Delete Selected Elements',
+  'canvas_undo': 'Undo',
+  'canvas_redo': 'Redo',
+  'canvas_probe_mode': 'Probe Mode',
+  'canvas_hide_logic': 'Hide Logic',
 };
 
 class _KeyCaptureDialog extends StatefulWidget {

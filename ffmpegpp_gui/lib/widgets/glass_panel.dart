@@ -1,11 +1,12 @@
-import 'dart:typed_data';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
+import '../platform/app_platform.dart';
+import 'mobile_top_bar.dart';
 
 /// 玻璃面板 —— 支持三种效果（由设置→外观→玻璃效果控制）：
-/// - liquid：液态玻璃（3D 凸起果冻：高通透 + 背景模糊折射放大 + 果冻立体光影）
+/// - liquid：液态玻璃（高通透 + 背景模糊 + 顶部高光细边 + 体感渐变，简洁）
 /// - blur：仅高斯模糊背景（半透明，简洁）
 /// - none：无效果（纯色半透明卡片）
 class GlassPanel extends StatelessWidget {
@@ -109,11 +110,11 @@ class GlassPanel extends StatelessWidget {
       );
     }
 
-    // 液态玻璃（默认）：3D 凸起果冻样式
+    // 液态玻璃（默认）：简洁通透样式
     //  - 高通透：玻璃底色 alpha 低，背景清晰透出
-    //  - 背景模糊 + 1.06 倍折射放大（透镜感）
-    //  - 果冻光影：顶部/左上受光高亮、底部/右下背光暗影、左上镜面光斑、
-    //    果冻壁内阴影、悬浮投影 —— 全部静态，一次 paint 完成
+    //  - 背景模糊（不再做 1.06 放大折射，避免文字/图案畸变）
+    //  - 光影简化：仅保留边缘高光描边 + 上亮下暗体感渐变（去除镜面光斑、
+    //    果冻壁内阴影等冗余光效）
     final liqTop = ((tintAlpha ?? (isDark ? 96 : 118)) * op).round();
     final liqBot = ((tintAlpha != null
         ? (tintAlpha! - 60).clamp(8, 255)
@@ -149,64 +150,40 @@ class GlassPanel extends StatelessWidget {
       decoration: BoxDecoration(
         borderRadius: br,
         color: fullyTransparent ? Colors.transparent : null,
-        // 凸起果冻的体感渐变：上部亮、下部暗（模拟球面受光）或主题渐变
+        // 体感渐变：上部略亮、下部略暗（保留通透厚度感）或主题渐变
         gradient: bodyGradient,
-        // 果冻外沿：细的亮描边（遵循主题色时用主题色）；
-        // 全透明时描边也跟随透明，仅保留折射效果导致的边缘视觉
+        // 外沿细描边（遵循主题色时用主题色）；全透明时描边也跟随透明
         border: Border.all(
           color: fullyTransparent
               ? Colors.transparent
               : (follow
-                  ? scheme.primary.withValues(alpha: isDark ? 0.35 : 0.55)
-                  : Colors.white.withValues(alpha: isDark ? 0.16 : 0.34)),
+                  ? scheme.primary.withValues(alpha: isDark ? 0.30 : 0.45)
+                  : Colors.white.withValues(alpha: isDark ? 0.14 : 0.28)),
           width: 1,
         ),
       ),
       child: child,
     );
-    // 折射放大倍数（1.06：玻璃内图案比玻璃外胀大，边缘被圆角裁切出透镜感）
-    const zoom = 1.06;
     return RepaintBoundary(
       child: DecoratedBox(
         decoration: BoxDecoration(
           borderRadius: br,
           boxShadow: [
-            // 悬浮投影：果冻"突出"于背景之上
+            // 单层悬浮投影（去除双层小阴影与左上柔光，减少光效噪点）
             BoxShadow(
-              color: Colors.black.withAlpha(isDark ? 88 : 42),
-              blurRadius: 22,
-              offset: const Offset(0, 8),
-            ),
-            BoxShadow(
-              color: Colors.black.withAlpha(isDark ? 36 : 16),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-            // 左上柔光：果冻受光面的环境光
-            BoxShadow(
-              color: Colors.white.withAlpha(isDark ? 14 : 34),
-              blurRadius: 14,
-              offset: const Offset(-3, -3),
+              color: Colors.black.withAlpha(isDark ? 60 : 26),
+              blurRadius: 18,
+              offset: const Offset(0, 6),
             ),
           ],
         ),
         child: ClipRRect(
           borderRadius: br,
           child: BackdropFilter(
-            filter: ImageFilter.compose(
-              outer: ImageFilter.matrix(
-                Float64List.fromList([
-                  zoom, 0, 0, 0, //
-                  0, zoom, 0, 0, //
-                  0, 0, 1, 0, //
-                  0, 0, 0, 1,
-                ]),
-              ),
-              inner: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-            ),
+            filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
             child: _LiquidGlassBody(
               borderRadius: br,
-              opacity: op, // 光影强度随透明度缩放：全透明时仅剩边缘折射
+              opacity: op, // 光影强度随透明度缩放：全透明时仅剩背景模糊
               child: glassBody,
             ),
           ),
@@ -216,11 +193,9 @@ class GlassPanel extends StatelessWidget {
   }
 }
 
-/// 液态玻璃层：模糊由外层 BackdropFilter 提供；此处只叠加**静态**光影来模拟
-/// 3D 凸起果冻：
-///  - 顶部/左上受光高亮边 + 底部/右下背光暗边（立体边缘）
-///  - 左上镜面光斑（果冻表面反光）
-///  - 上亮下暗的体感渐变 + 果冻壁内阴影（厚度）
+/// 液态玻璃层：模糊由外层 BackdropFilter 提供；此处只叠加**静态**简易光影：
+///  - 顶部受光的细高光边（无 SweepGradient 环绕，避免光线断层）
+///  - 上亮下暗的体感渐变（厚度感）
 /// 没有任何动画/漂浮物，一次 paint 完成，性能开销只在尺寸变化时发生。
 ///
 /// 注意：不要在这里用 Stack + Positioned.fill —— 顶栏在 Column 中布局时
@@ -240,7 +215,7 @@ class _LiquidGlassBody extends StatelessWidget {
   }
 }
 
-/// 3D 凸起果冻光影画笔。
+/// 简洁玻璃光影画笔。
 class _LiquidGlassPainter extends CustomPainter {
   final BorderRadius borderRadius;
   final double opacity;
@@ -250,8 +225,6 @@ class _LiquidGlassPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty) return;
     if (size.shortestSide < 12) return;
-    // 透明度为 0：完全透明，仅保留背景折射（由外层 BackdropFilter 的矩阵放大
-    // 提供边缘扭曲），不再叠加任何光影
     if (opacity <= 0.001) return;
     final o = opacity.clamp(0.0, 1.0);
     final rrect = RRect.fromRectAndCorners(
@@ -264,47 +237,26 @@ class _LiquidGlassPainter extends CustomPainter {
     canvas.save();
     canvas.clipRRect(rrect);
 
-    // 1) 果冻立体边缘：SweepGradient 从顶部开始 —— 顶部/左上受光高亮，
-    //    底部/右下背光暗影，形成"凸起"的立体描边
+    // 1) 顶部细高光边（仅顶部一条，简洁不抢眼）
     final edge = Paint()
-      ..shader = SweepGradient(
-        startAngle: -1.5708, // 从顶部 (-π/2) 开始
-        endAngle: 3.14159 * 2 - 1.5708,
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
         colors: [
-          Colors.white.withValues(alpha: 0.52 * o), // 顶部高光
-          Colors.white.withValues(alpha: 0.30 * o), // 右上
-          Colors.black.withValues(alpha: 0.12 * o), // 底部阴影
-          Colors.black.withValues(alpha: 0.05 * o), // 左下
-          Colors.white.withValues(alpha: 0.52 * o), // 回到顶部
+          Colors.white.withValues(alpha: 0.34 * o),
+          Colors.white.withValues(alpha: 0.0),
         ],
-        stops: const [0.0, 0.22, 0.5, 0.78, 1.0],
+        stops: const [0.0, 0.5],
       ).createShader(rrect.outerRect);
-    final rimW = size.shortestSide > 120 ? 2.4 : 1.8;
     canvas.drawRRect(
       rrect.deflate(0.5),
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = rimW
+        ..strokeWidth = 1.4
         ..shader = edge.shader,
     );
 
-    // 2) 左上镜面光斑（果冻表面反光，椭圆形高光）
-    canvas.drawRRect(
-      rrect.deflate(3),
-      Paint()
-        ..shader = RadialGradient(
-          center: const Alignment(-0.55, -0.65),
-          radius: 1.0,
-          colors: [
-            Colors.white.withValues(alpha: 0.22 * o),
-            Colors.white.withValues(alpha: 0.06 * o),
-            Colors.white.withValues(alpha: 0.0),
-          ],
-          stops: const [0.0, 0.45, 1.0],
-        ).createShader(Rect.fromLTWH(0, 0, size.width, size.height)),
-    );
-
-    // 3) 体感渐变：顶部受光偏亮、底部背光偏暗（果冻球面感）
+    // 2) 体感渐变：顶部略亮、底部略暗（厚度感）
     canvas.drawRRect(
       rrect.deflate(1.2),
       Paint()
@@ -312,27 +264,11 @@ class _LiquidGlassPainter extends CustomPainter {
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            Colors.white.withValues(alpha: 0.10 * o),
+            Colors.white.withValues(alpha: 0.08 * o),
             Colors.white.withValues(alpha: 0.0),
-            Colors.black.withValues(alpha: 0.09 * o),
+            Colors.black.withValues(alpha: 0.06 * o),
           ],
           stops: const [0.0, 0.55, 1.0],
-        ).createShader(rrect.outerRect),
-    );
-
-    // 4) 果冻壁内阴影：底部 + 右侧一圈内暗边（果冻厚度/凝胶感）
-    canvas.drawRRect(
-      rrect.deflate(0.8),
-      Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Colors.black.withValues(alpha: 0.0),
-            Colors.black.withValues(alpha: 0.0),
-            Colors.black.withValues(alpha: 0.10 * o),
-          ],
-          stops: const [0.0, 0.72, 1.0],
         ).createShader(rrect.outerRect),
     );
 
@@ -362,6 +298,17 @@ class GlassTopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (isMobilePlatform) {
+      // 移动端：通用模糊顶栏，无独立圆角矩形框
+      // 居中内容（如搜索框）在移动端用 MobileTopBar 的 center 参数暂不支持，
+      // 但 settings_page 在移动端会走独立 UI，不再需要 center。
+      return MobileTopBar(
+        title: title,
+        actions: actions,
+        height: height,
+      );
+    }
+    // 桌面端：原有的浮动玻璃圆角框
     final scheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),

@@ -20,6 +20,7 @@
 #include <unistd.h>
 #endif
 #include <chrono>
+#include <cmath>
 #include <regex>
 #include <algorithm>
 #include <cstdarg>
@@ -149,9 +150,12 @@ void slog_cleanup() {
 // ═══════════════════════════════════════════════
 
 void ProgressParser::feed(const std::string& line) {
-    auto m = findRegex(line, R"(time=(\d{2}):(\d{2}):(\d{2}\.\d{2}))");
+    // 兼容 ffmpeg 4.x 的 2 位小数与新版（6 位微秒）进度输出，
+    // 小数位数不固定，按实际位数换算（不能用固定 /100）
+    auto m = findRegex(line, R"(time=(\d{2}):(\d{2}):(\d{2})\.(\d+))");
     if (!m.empty()) {
-        current_time = std::stoi(m[1]) * 3600 + std::stoi(m[2]) * 60 + std::stod(m[3]);
+        current_time = std::stoi(m[1]) * 3600 + std::stoi(m[2]) * 60 + std::stod(m[3])
+                     + std::stod(m[4]) / std::pow(10.0, (int)m[4].size());
     }
     m = findRegex(line, R"(speed=\s*([\d.]+)x)");
     if (!m.empty()) speed = std::stod(m[1]);

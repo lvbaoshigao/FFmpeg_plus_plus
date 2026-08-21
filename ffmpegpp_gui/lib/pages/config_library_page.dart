@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
@@ -131,12 +132,25 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
 
   Future<void> _importFppx() async {
     final zh = AppStrings.of(context.read<AppState>().config.language).isZh;
+    // Android 上 fppx 无 MIME 映射，FileType.custom 会失效（文件选择器不显示任何文件）。
+    // 改用 FileType.any 并在 Dart 侧校验扩展名。
     final r = await FilePicker.platform.pickFiles(
-      type: FileType.custom, allowedExtensions: ['fppx'],
+      type: FileType.any,
       dialogTitle: zh ? '导入配置' : 'Import Config',
     );
     if (r == null || r.files.isEmpty || r.files.first.path == null) return;
-    final bytes = await File(r.files.first.path!).readAsBytes();
+    final name = r.files.first.name;
+    if (!name.endsWith('.fppx')) {
+      if (mounted) showToast(context, zh ? '请选择 .fppx 文件' : 'Please select a .fppx file', type: ToastType.warning);
+      return;
+    }
+    final Uint8List bytes;
+    try {
+      bytes = await File(r.files.first.path!).readAsBytes();
+    } catch (e) {
+      if (mounted) showToast(context, zh ? '读取文件失败: $e' : 'Failed to read file: $e', type: ToastType.error);
+      return;
+    }
     final fppx = FppxExporter.import(bytes);
     if (fppx == null || !fppx.isNodeEditor) {
       if (mounted) showToast(context, zh ? '仅支持导入节点编辑器配置' : 'Only node editor configs supported', type: ToastType.warning);
@@ -194,7 +208,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       graph: fppx.graph!,
       description: fppx.description,
     );
-    setState(() => _configs.add(entry));
+    if (mounted) setState(() => _configs.add(entry));
     _saveLibrary();
     if (mounted) showToast(context, zh ? '已导入: $baseName' : 'Imported: $baseName', type: ToastType.success);
   }
