@@ -372,6 +372,13 @@ jobs:
           APP="ffmpegpp_gui/build/macos/Build/Products/Release/ffmpegpp_gui.app"
           cp server_cpp/build_macos/libffmpegpp.dylib "$APP/Contents/MacOS/libffmpegpp.dylib"
 
+      - name: Strip debug symbols (reduce DMG size)
+        run: |
+          APP="ffmpegpp_gui/build/macos/Build/Products/Release/ffmpegpp_gui.app"
+          strip -S "$APP/Contents/MacOS/libffmpegpp.dylib" 2>/dev/null || true
+          find "$APP/Contents/Frameworks" -name "*.dylib" -exec strip -S {} \; 2>/dev/null || true
+          strip -S "$APP/Contents/MacOS/ffmpegpp_gui" 2>/dev/null || true
+
       - name: Pack portable app bundle
         run: |
           tar -czf "FFmpeg++_v${VER}_macOS_portable.tar.gz" -C ffmpegpp_gui/build/macos/Build/Products/Release .
@@ -437,6 +444,10 @@ jobs:
           echo "NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> $GITHUB_ENV
           # NDK 28.2：app/build.gradle.kts 声明的 ndkVersion（Gradle 打包需要）
           sudo $SDKM --install "ndk;28.2.13676358" >/dev/null
+          # sdkmanager 以 root 安装 NDK，目录属主是 root；
+          # 后续 build_ffmpeg.sh 要以 runner 用户身份 make install 进
+          # $SYSROOT/usr/local（NDK sysroot 内），必须把属主改为 runner。
+          sudo chown -R runner:docker "$ANDROID_HOME/ndk"
 
       - name: Ensure Android licenses accepted
         run: |
