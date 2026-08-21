@@ -453,13 +453,32 @@ jobs:
         run: |
           sudo $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses >/dev/null || true
 
-      - name: Cache FFmpeg cross-build & pub cache
+      - name: Cache pub dependencies
         uses: actions/cache@v4
         with:
           path: ~/.pub-cache
           key: ${{ runner.os }}-${{ runner.arch }}-android-pub-${{ hashFiles('ffmpegpp_gui/pubspec.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-android-pub-
+
+      - name: Cache FFmpeg cross-compile artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/android-build
+            ${{ env.ANDROID_SDK_ROOT }}/ndk/26.1.10909125/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/local
+          key: ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v1-${{ hashFiles('build/android/build_ffmpeg.sh', 'build/android/env.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v1-
+          save-always: true
+
+      - name: Cache Gradle home
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/gradle-home
+          key: ${{ runner.os }}-${{ runner.arch }}-gradle-v1-${{ hashFiles('ffmpegpp_gui/android/build.gradle.kts', 'ffmpegpp_gui/android/app/build.gradle.kts', 'ffmpegpp_gui/android/settings.gradle.kts', 'ffmpegpp_gui/android/gradle.properties', 'ffmpegpp_gui/pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-gradle-v1-
 
       # build_ffmpeg.sh 会 source env.sh，而 env.sh 只对「未设置」的环境变量
       # 给默认值，因此这里显式 export 的变量会胜出，把工具链指向 runner 路径。
