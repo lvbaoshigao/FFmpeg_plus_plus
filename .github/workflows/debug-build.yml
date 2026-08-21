@@ -495,6 +495,18 @@ jobs:
           PUB_CACHE: ${{ env.PUB_CACHE }}
           NDK_HOME: ${{ env.NDK_HOME }}
 
+      - name: Flutter pub get & generate local.properties
+        run: |
+          cd ffmpegpp_gui
+          flutter pub get
+          # settings.gradle.kts 必须读取 local.properties 获取 sdk.dir / flutter.sdk
+          flutter_root=$(cd "$(dirname "$(readlink -f "$(which flutter)")")/.." && pwd)
+          echo "sdk.dir=${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}" > android/local.properties
+          echo "flutter.sdk=${flutter_root}" >> android/local.properties
+          echo "Generated android/local.properties: sdk.dir=$(sed -n '1s/.*=//p' android/local.properties) flutter.sdk=${flutter_root}"
+        env:
+          PUB_CACHE: ${{ env.PUB_CACHE }}
+
       - name: Build APK
         run: |
           bash build/android/build_apk.sh
