@@ -476,6 +476,13 @@ jobs:
           PUB_CACHE: ${{ env.PUB_CACHE }}
           NDK_HOME: ${{ env.NDK_HOME }}
 
+      - name: Flutter pub get
+        run: |
+          cd ffmpegpp_gui
+          flutter pub get
+        env:
+          PUB_CACHE: ${{ env.PUB_CACHE }}
+
       - name: Build APK
         run: |
           bash build/android/build_apk.sh

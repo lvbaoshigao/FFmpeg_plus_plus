@@ -1,8 +1,7 @@
-gradle-wrapper.jar
+# Gradle wrapper 已提交到版本库，防止 CI 检出后因缺失 gradlew 而构建失败。
+# See https://docs.gradle.org/current/userguide/gradle_wrapper.html#sec:adding_wrapper
 /.gradle
 /captures/
-/gradlew
-/gradlew.bat
 /local.properties
 GeneratedPluginRegistrant.java
 .cxx/
