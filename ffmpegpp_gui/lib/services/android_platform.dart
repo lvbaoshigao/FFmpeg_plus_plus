@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 import '../platform/app_platform.dart';
 
 /// Android 原生能力桥接（通过 MainActivity 中的 MethodChannel 实现）：

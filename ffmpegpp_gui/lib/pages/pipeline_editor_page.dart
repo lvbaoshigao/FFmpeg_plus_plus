@@ -2473,7 +2473,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               padding: EdgeInsets.zero,
               onPressed: _save,
             ),
-          ] else ...[
+          ],
+          if (!isMobilePlatform) ...[
           Icon(Icons.account_tree_outlined, size: 16, color: scheme.primary),
           const SizedBox(width: 6),
           Text(s.isZh ? '节点编辑器' : 'Node Editor',
