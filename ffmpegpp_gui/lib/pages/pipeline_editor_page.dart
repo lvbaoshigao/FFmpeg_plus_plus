@@ -389,8 +389,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     }
   }
 
+  @override
   void dispose() {
-    if (!Platform.isWindows && !isMobilePlatform) windowManager.removeListener(this);
     // 离开页面时恢复竖屏
     if (isMobilePlatform) {
       SystemChrome.setPreferredOrientations([
@@ -5617,13 +5617,15 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                 outTok = usage['completion_tokens'] as int? ?? outTok;
               }
             }
-            if (mounted) setState(() {
-              _messages[msgIdx] = (role: 'assistant', content: buf.toString(), inputTokens: inTok, outputTokens: outTok,
-                  blocks: thinkBuf.isEmpty ? null : [
-                    {'type': 'thinking', 'thinking': thinkBuf.toString(), 'durationMs': thinkWatch.elapsedMilliseconds},
+            if (mounted) {
+              setState(() {
+                _messages[msgIdx] = (role: 'assistant', content: buf.toString(), inputTokens: inTok, outputTokens: outTok,
+                    blocks: thinkBuf.isEmpty ? null : [
+                      {'type': 'thinking', 'thinking': thinkBuf.toString(), 'durationMs': thinkWatch.elapsedMilliseconds},
                     if (buf.isNotEmpty) {'type': 'text', 'text': buf.toString()},
                   ]);
             });
+            }
             _scrollToBottom();
           } catch (_) {}
         }
