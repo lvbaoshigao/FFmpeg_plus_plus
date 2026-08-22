@@ -783,6 +783,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       context: context,
       position: RelativeRect.fromLTRB(screenPos.dx, screenPos.dy, screenPos.dx + 1, screenPos.dy + 1),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      constraints: isMobilePlatform
+          ? const BoxConstraints(minWidth: 120, maxWidth: 160)
+          : const BoxConstraints(minWidth: 160, maxWidth: 240),
       items: [
         PopupMenuItem(value: 'delete', child: Row(children: [
           Icon(Icons.link_off, size: 16, color: Theme.of(context).colorScheme.error),
@@ -1328,6 +1331,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       context: context,
       position: RelativeRect.fromLTRB(screenPos.dx, screenPos.dy, screenPos.dx + 1, screenPos.dy + 1),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      constraints: isMobilePlatform
+          ? const BoxConstraints(minWidth: 120, maxWidth: 160)
+          : const BoxConstraints(minWidth: 160, maxWidth: 240),
       items: [
         ...top5.map(makeItem),
         const PopupMenuDivider(),
@@ -1364,6 +1370,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       context: context,
       position: RelativeRect.fromLTRB(screenPos.dx, screenPos.dy, screenPos.dx + 1, screenPos.dy + 1),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      constraints: isMobilePlatform
+          ? const BoxConstraints(minWidth: 120, maxWidth: 160)
+          : const BoxConstraints(minWidth: 160, maxWidth: 240),
       items: [
         PopupMenuItem(value: 'delete', child: Row(children: [
           Icon(Icons.delete_outline, size: 16, color: Theme.of(context).colorScheme.error),
@@ -1925,32 +1934,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       padding: EdgeInsets.only(top: Platform.isWindows
           ? 0 : (isMobilePlatform ? MediaQuery.of(context).padding.top : 36)),
       child: Column(children: [
-        // 移动端：顶部返回栏（桌面由 CSD 标题栏提供返回按钮）
-        if (isMobilePlatform)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(4, 2, 8, 0),
-            child: Row(children: [
-              IconButton(
-                icon: const Icon(Icons.arrow_back, size: 22),
-                tooltip: s.close,
-                onPressed: () async {
-                  final nav = Navigator.of(context);
-                  if (await _onWillPop()) nav.pop();
-                },
-                constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-              ),
-              Expanded(child: Text(s.isZh ? '节点编辑器' : 'Node Editor',
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface))),
-              // 横竖屏切换（移动端专属）
-              IconButton(
-                icon: Icon(_isLandscape ? Icons.phone_android_outlined : Icons.screen_rotation_alt_outlined, size: 22),
-                tooltip: _isLandscape ? (s.isZh ? '切换到竖屏' : 'Switch to portrait') : (s.isZh ? '切换到横屏' : 'Switch to landscape'),
-                onPressed: _toggleOrientation,
-                constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-              ),
-            ]),
-          ),
+        // 移动端：顶部栏已移除（舍弃最顶层菜单栏），系统返回手势/实体 back 键
+        // 由 PopScope 拦截处理；横竖屏切换与返回按钮已移至画布浮动控件。
         Expanded(child: Padding(
           padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
           child: LayoutBuilder(builder: (ctx, cons) {
@@ -2369,7 +2354,22 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     );
 
     // Wrap canvas area with Focus for Ctrl+A
-    final focusedCanvas = Focus(
+    final focusedCanvas = GestureDetector(
+      // 移动端：长按画布空白处 = 右键画布菜单
+      onLongPressStart: isMobilePlatform
+          ? (d) {
+              final canvasPos = _screenToCanvas(d.localPosition);
+              final hitNode = _findNodeAtCanvasPos(canvasPos);
+              if (hitNode != null) return; // 由节点自身的 onLongPressStart 处理
+              final hitConn = _hitTestConnection(canvasPos);
+              if (hitConn != null) {
+                _showConnectionMenu(d.globalPosition, hitConn);
+              } else {
+                _showCanvasMenu(d.globalPosition);
+              }
+            }
+          : null,
+      child: Focus(
       autofocus: true,
       onKeyEvent: (node, event) {
         if (event is! KeyDownEvent) return KeyEventResult.ignored;
@@ -2421,11 +2421,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         return KeyEventResult.ignored;
       },
       child: canvas,
+      ),
     );
 
     final inner = Column(children: [
       Padding(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+        padding: isMobilePlatform
+          ? const EdgeInsets.fromLTRB(10, 8, 10, 4)
+          : const EdgeInsets.fromLTRB(14, 12, 14, 8),
         child: Row(children: [
           if (!Platform.isWindows) ...[
             InkWell(
@@ -3579,6 +3582,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           },
           onPanEnd: (_) => _markDirty(),
           onSecondaryTapUp: (d) => _showNodeMenu(d.globalPosition, node.id),
+          onLongPressStart: isMobilePlatform
+              ? (d) => _showNodeMenu(d.globalPosition, node.id)
+              : null,
           child: Container(
             width: _nodeWFor(node.type),
             height: _nodeH,
@@ -3698,6 +3704,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         },
         onPanEnd: (_) => _markDirty(),
         onSecondaryTapUp: (d) => _showNodeMenu(d.globalPosition, node.id),
+          onLongPressStart: isMobilePlatform
+              ? (d) => _showNodeMenu(d.globalPosition, node.id)
+              : null,
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -4269,6 +4278,24 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(20), blurRadius: 8, offset: const Offset(0, 2))],
       ),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
+        // 移动端：返回按钮（舍弃顶部栏后以浮动按钮替代）
+        if (isMobilePlatform) ...[
+          _controlBtn(Icons.arrow_back, s.isZh ? '返回' : 'Back', scheme, () async {
+            final nav = Navigator.of(context);
+            if (await _onWillPop()) nav.pop();
+          }),
+          const SizedBox(height: 2),
+          // 横竖屏切换（移动端专属）
+          _controlBtn(
+            _isLandscape ? Icons.phone_android_outlined : Icons.screen_rotation_alt_outlined,
+            _isLandscape ? (s.isZh ? '切换到竖屏' : 'Switch to portrait') : (s.isZh ? '切换到横屏' : 'Switch to landscape'),
+            scheme, _toggleOrientation,
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
+          ),
+        ],
         _controlBtn(Icons.zoom_in, s.isZh ? '放大' : 'Zoom in', scheme, () => _zoomTo(_currentScale + 0.15)),
         const SizedBox(height: 2),
         SizedBox(
