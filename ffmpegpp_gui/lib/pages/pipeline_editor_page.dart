@@ -2430,7 +2430,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           ? const EdgeInsets.fromLTRB(6, 6, 6, 2)
           : const EdgeInsets.fromLTRB(14, 12, 14, 8),
         child: Row(children: [
-          if (!Platform.isWindows) ...[
+          if (!Platform.isWindows && !isMobilePlatform) ...[
             InkWell(
               borderRadius: BorderRadius.circular(6),
               onTap: () async {
@@ -2444,6 +2444,36 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             ),
             const SizedBox(width: 6),
           ],
+          if (isMobilePlatform) ...[
+            IconButton(
+              icon: Icon(Icons.undo, size: 14, color: _undoStack.isEmpty ? scheme.outlineVariant : scheme.onSurfaceVariant),
+              tooltip: s.isZh ? '撤销' : 'Undo',
+              constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+              padding: EdgeInsets.zero,
+              onPressed: _undoStack.isEmpty ? null : _undo,
+            ),
+            IconButton(
+              icon: Icon(Icons.redo, size: 14, color: _redoStack.isEmpty ? scheme.outlineVariant : scheme.onSurfaceVariant),
+              tooltip: s.isZh ? '重做' : 'Redo',
+              constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+              padding: EdgeInsets.zero,
+              onPressed: _redoStack.isEmpty ? null : _redo,
+            ),
+            const SizedBox(width: 2),
+            IconButton(
+              icon: Icon(Icons.search, size: 14, color: _probeMode ? scheme.primary : scheme.onSurfaceVariant),
+              constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+              padding: EdgeInsets.zero,
+              onPressed: () => setState(() => _probeMode = !_probeMode),
+            ),
+            const Spacer(),
+            IconButton(
+              icon: Icon(Icons.save_outlined, size: 14, color: scheme.onSurface),
+              constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+              padding: EdgeInsets.zero,
+              onPressed: _save,
+            ),
+          ] else ...[
           Icon(Icons.account_tree_outlined, size: 16, color: scheme.primary),
           const SizedBox(width: 6),
           Text(s.isZh ? '节点编辑器' : 'Node Editor',
