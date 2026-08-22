@@ -40,14 +40,16 @@ class AndroidPlatformBridge {
     return _ensureExecutableCopy('$dir/libffprobe.so', 'ffprobe');
   }
 
-  /// 把 native 库目录中的可执行二进制复制到应用私有缓存目录（可执行挂载），
+  /// 把 native 库目录中的可执行二进制复制到应用文档目录（保证可执行），
   /// 避免 Android 10+ noexec 导致的 exec 失败。用元数据文件判断是否需要重新复制
   /// （APK 升级后 nativeLibraryDir 路径会变，路径不一致即重新复制）。
   static Future<String?> _ensureExecutableCopy(String src, String name) async {
     try {
       final srcFile = File(src);
       if (!await srcFile.exists()) return null;
-      final binDir = Directory('${Directory.systemTemp.path}${Platform.pathSeparator}ffmpegpp_bin');
+      // 使用应用文档目录（非 systemTemp），避免部分 ROM 的 cache 目录挂载为 noexec
+      final docsDir = await getApplicationDocumentsDirectory();
+      final binDir = Directory('${docsDir.path}${Platform.pathSeparator}ffmpegpp_bin');
       await binDir.create(recursive: true);
       final dest = File('${binDir.path}${Platform.pathSeparator}$name');
       final meta = File('${binDir.path}${Platform.pathSeparator}$name.meta');

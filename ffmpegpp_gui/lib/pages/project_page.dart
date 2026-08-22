@@ -475,10 +475,20 @@ class ProjectPageState extends State<ProjectPage> {
     if (r != null && r.files.isNotEmpty) {
       final paths = <String>[];
       for (final f in r.files) {
-        if (f.path != null) {
+        final isContentUri = f.path != null && f.path!.startsWith('content://');
+        if (isContentUri && f.bytes != null) {
+          // Android 11+: content:// URI 无法被 File/ffprobe 读取，用字节写入缓存
+          try {
+            final dest = File('${Directory.systemTemp.path}/ffmpegpp_import_${f.name}_${DateTime.now().millisecondsSinceEpoch}');
+            await dest.writeAsBytes(f.bytes!);
+            paths.add(dest.path);
+          } catch (e) {
+            // 如果字节写入也失败，仍尝试原始路径作为兜底
+            if (f.path != null) paths.add(f.path!);
+          }
+        } else if (f.path != null) {
           paths.add(f.path!);
         } else if (f.bytes != null) {
-          // Android 11+: content:// URI 无 file path，保存字节到缓存
           try {
             final dest = File('${Directory.systemTemp.path}/ffmpegpp_import_${f.name}_${DateTime.now().millisecondsSinceEpoch}');
             await dest.writeAsBytes(f.bytes!);
