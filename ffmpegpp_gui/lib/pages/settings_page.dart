@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FontLoader, ByteData;
@@ -147,7 +148,7 @@ Future<String?> _saveBackgroundBytes(Uint8List bytes, String fileName, int maxW,
     // 原图小于等于屏幕分辨率：直接保存原始字节
     if (srcW <= maxW && srcH <= maxH) {
       image.dispose();
-      return _saveRawBackground(bytes, fileName);
+      return await _saveRawBackground(bytes, fileName);
     }
 
     // 等比缩放到屏幕分辨率内（长边对齐）
@@ -165,10 +166,10 @@ Future<String?> _saveBackgroundBytes(Uint8List bytes, String fileName, int maxW,
 
     final byteData = await resized.toByteData(format: ui.ImageByteFormat.png);
     resized.dispose();
-    if (byteData == null) return _saveRawBackground(bytes, fileName);
-    return _saveRawBackground(byteData.buffer.asUint8List(), '${fileName}_opt');
+    if (byteData == null) return await _saveRawBackground(bytes, fileName);
+    return await _saveRawBackground(byteData.buffer.asUint8List(), '${fileName}_opt');
   } catch (_) {
-    return _saveRawBackground(bytes, fileName);
+    return await _saveRawBackground(bytes, fileName);
   }
 }
 
