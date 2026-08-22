@@ -87,11 +87,19 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
               filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
               child: Container(
                 decoration: BoxDecoration(
-                  // 纯色半透明背景（原双色渐变），通透感由低 alpha 维持
-                  color: scheme.surface.withAlpha(isDark ? 120 : 100),
+                  // 液态玻璃：上亮下暗体感渐变（通透明亮，高度贴近 GlassPanel.liquid 观感）
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      scheme.surface.withAlpha((isDark ? 150 : 130)),
+                      scheme.surface.withAlpha((isDark ? 110 : 90)),
+                    ],
+                    stops: const [0.0, 1.0],
+                  ),
                   border: Border.all(
-                    color: Colors.white.withValues(alpha: isDark ? 0.12 : 0.24),
-                    width: 0.6,
+                    color: Colors.white.withValues(alpha: isDark ? 0.14 : 0.30),
+                    width: 0.8,
                   ),
                 ),
                 child: SizedBox(
@@ -148,6 +156,25 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
                       onHorizontalDragCancel: () =>
                           setState(() => _maskDragLeft = null),
                       child: Stack(children: [
+                        // 顶部细高光边（液态玻璃标志性特征）
+                        Positioned(
+                          left: 0, right: 0, top: 0,
+                          child: Container(
+                            height: 1.2,
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.centerLeft,
+                                end: Alignment.centerRight,
+                                colors: [
+                                  Colors.white.withValues(alpha: 0.0),
+                                  Colors.white.withValues(alpha: isDark ? 0.30 : 0.55),
+                                  Colors.white.withValues(alpha: 0.0),
+                                ],
+                                stops: const [0.0, 0.5, 1.0],
+                              ),
+                            ),
+                          ),
+                        ),
                         // 滑动遮罩：单色 tonal 胶囊，无内模糊、无渐变
                         AnimatedPositioned(
                           duration: _maskDragLeft == null

@@ -284,13 +284,15 @@ class _SettingsPageState extends State<SettingsPage> {
               'editor', 'node', 'canvas', 'blueprint', 'classic', 'mode', '模式'],
           build: _buildEditorMode,
         ),
-        _CardDef(
-          id: 'shortcuts',
-          title: (s) => s.cardShortcuts,
-          keywords: ['快捷键', '键位', '按键', '热键', 'shortcut', 'keybinding',
-              'keyboard', 'hotkey', 'key'],
-          build: _buildShortcuts,
-        ),
+        // 移动端无物理键盘，快捷键编辑无意义 —— 隐藏该设置项
+        if (!isMobilePlatform)
+          _CardDef(
+            id: 'shortcuts',
+            title: (s) => s.cardShortcuts,
+            keywords: ['快捷键', '键位', '按键', '热键', 'shortcut', 'keybinding',
+                'keyboard', 'hotkey', 'key'],
+            build: _buildShortcuts,
+          ),
         _CardDef(
           id: 'autosave',
           title: (s) => s.cardAutosave,
@@ -423,7 +425,7 @@ class _SettingsPageState extends State<SettingsPage> {
               Expanded(child: visible.isEmpty && searching
                 ? _emptyState(scheme, s)
                 : ListView(
-                    padding: const EdgeInsets.fromLTRB(0, 4, 0, 24),
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
                     children: [
                       for (final (sec, cards) in visible)
                         _buildMobileSection(sec, cards, context, state, scheme, s),
@@ -585,7 +587,7 @@ class _SettingsPageState extends State<SettingsPage> {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       // 分区标题（Android 16 风格：不带图标，小字号 + 中字重）
       Padding(
-        padding: const EdgeInsets.fromLTRB(16, 20, 16, 6),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 6),
         child: Text(sec.title(s), style: TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.w500,
@@ -819,9 +821,27 @@ Widget _headerTooltip(String? message, Widget child) => message == null
 Widget _glass(BuildContext ctx, AppState state, String title, List<Widget> children) {
   final scheme = Theme.of(ctx).colorScheme;
   if (isMobilePlatform) {
-    // Android 16 原生设置卡片：surfaceContainerLow 底色，16 圆角，细边框，弱阴影
-    return Container(
-      width: double.infinity,
+    final effect = state.config.glassEffect;
+    if (effect == 'liquid' || effect == 'blur') {
+      // 移动端也应用 GlassPanel 液态/模糊效果，与桌面端视觉一致
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+        child: GlassPanel(
+          radius: 20,
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+            const SizedBox(height: 10),
+            ...children,
+          ]),
+        ),
+      );
+    }
+    // none 模式：Android 16 原生设置卡片风格
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+      child: Container(
+        width: double.infinity,
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
       decoration: BoxDecoration(
         color: scheme.surfaceContainerLow,
