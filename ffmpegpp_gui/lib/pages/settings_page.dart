@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -6,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FontLoader, ByteData;
 import 'package:file_picker/file_picker.dart';
 import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
@@ -26,11 +28,26 @@ import '../widgets/mobile_top_bar.dart';
 
 final _s = Platform.pathSeparator;
 
+/// 应用文档目录（Android 持久化，避免 systemTemp 被系统清空）
+String _androidAppDir() => _cachedAppDir;
+static String _cachedAppDir = '${Directory.systemTemp.path}${_s}FFmpeg++';
+static bool _appDirInit = false;
+
+/// 初始化 Android 应用文档目录（在 SettingsPage 首次构建时调用）
+Future<void> _ensureAndroidAppDir() async {
+  if (_appDirInit) return;
+  _appDirInit = true;
+  try {
+    final dir = await getApplicationDocumentsDirectory();
+    _cachedAppDir = '${dir.path}${_s}FFmpeg++';
+  } catch (_) {}
+}
+
 /// 获取用户数据目录，避免 Program Files 权限问题
 String _userDataDir() {
   if (Platform.isAndroid) {
-    // Android：使用应用缓存目录（systemTemp），可写且无需权限
-    return '${Directory.systemTemp.path}${_s}FFmpeg++';
+    // Android：使用 path_provider 的应用文档目录（持久化，不会被系统清空）
+    return _androidAppDir();
   } else if (Platform.isWindows) {
     return '${Platform.environment['APPDATA'] ?? Directory.systemTemp.path}${_s}FFmpeg++';
   } else if (Platform.isMacOS) {
@@ -116,6 +133,72 @@ Future<String?> _copyBackgroundOptimized(String srcPath, int maxW, int maxH) asy
   }
 }
 
+/// 从内存字节保存背景图（Android 11+ content:// URI 场景：picker 返回 bytes 而非路径）。
+/// 解码后用 [maxW]/[maxH] 限制最大尺寸，重编码为 PNG 存入应用文档目录。
+Future<String?> _saveBackgroundBytes(Uint8List bytes, String fileName, int maxW, int maxH) async {
+  try {
+    final codec = await ui.instantiateImageCodec(bytes);
+    final frame = await codec.getNextFrame();
+    final image = frame.image;
+    final srcW = image.width;
+    final srcH = image.height;
+    codec.dispose();
+
+    // 原图小于等于屏幕分辨率：直接保存原始字节
+    if (srcW <= maxW && srcH <= maxH) {
+      image.dispose();
+      return _saveRawBackground(bytes, fileName);
+    }
+
+    // 等比缩放到屏幕分辨率内（长边对齐）
+    final scale = (maxW / srcW) < (maxH / srcH) ? maxW / srcW : maxH / srcH;
+    final targetW = (srcW * scale).round().clamp(1, maxW);
+    final targetH = (srcH * scale).round().clamp(1, maxH);
+    final recorder = ui.PictureRecorder();
+    final canvas = ui.Canvas(recorder);
+    canvas.scale(targetW / srcW, targetH / srcH);
+    canvas.drawImage(image, ui.Offset.zero, ui.Paint()..filterQuality = ui.FilterQuality.medium);
+    final picture = recorder.endRecording();
+    final resized = await picture.toImage(targetW, targetH);
+    picture.dispose();
+    image.dispose();
+
+    final byteData = await resized.toByteData(format: ui.ImageByteFormat.png);
+    resized.dispose();
+    if (byteData == null) return _saveRawBackground(bytes, fileName);
+    return _saveRawBackground(byteData.buffer.asUint8List(), '${fileName}_opt');
+  } catch (_) {
+    return _saveRawBackground(bytes, fileName);
+  }
+}
+
+/// 把背景字节直接写入应用文档目录 background/ 下，返回绝对路径（失败返回 null）
+Future<String?> _saveRawBackground(Uint8List bytes, String name) async {
+  try {
+    final targetDir = Directory('${_userDataDir()}$_s${'background'}');
+    if (!targetDir.existsSync()) targetDir.createSync(recursive: true);
+    final safeName = name.replaceAll(RegExp(r'[^\w.\-]'), '_');
+    final destPath = '${targetDir.path}$_s$safeName';
+    if (!File(destPath).existsSync() || !_sameBytes(destPath, bytes)) {
+      await File(destPath).writeAsBytes(bytes, flush: true);
+    }
+    return destPath;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// 快速判断目标文件内容是否与字节一致（避免重复写盘）
+bool _sameBytes(String path, Uint8List bytes) {
+  try {
+    final f = File(path);
+    if (!f.existsSync()) return false;
+    return f.lengthSync() == bytes.length;
+  } catch (_) {
+    return false;
+  }
+}
+
 /// 用系统默认浏览器打开链接。见 [ShellOpen] 里关于 `cmd /c start` 注入的说明。
 Future<void> openExternalUrl(String url) => ShellOpen.url(url);
 
@@ -181,6 +264,12 @@ class _SettingsPageState extends State<SettingsPage> {
 
   /// 被折叠起来的分区 id。默认全部展开。
   final Set<String> _collapsed = <String>{};
+
+  @override
+  void initState() {
+    super.initState();
+    if (isAndroidPlatform) _ensureAndroidAppDir();
+  }
 
   @override
   void dispose() {
@@ -1179,11 +1268,25 @@ Widget _buildBackground(BuildContext ctx, AppState state) {
                 final maxW = (logical.width * dpr).ceil();
                 final maxH = (logical.height * dpr).ceil();
                 final r = await FilePicker.platform.pickFiles(
-                    type: FileType.custom, allowedExtensions: ['jpg', 'jpeg', 'png', 'bmp', 'webp']);
-                if (r != null && r.files.isNotEmpty && r.files.first.path != null) {
-                  // 大图自动压缩到屏幕分辨率，避免体积过大导致卡死
-                  final copied = await _copyBackgroundOptimized(r.files.first.path!, maxW, maxH);
-                  state.updateConfig((c) => c..backgroundImage = copied ?? r.files.first.path!);
+                    type: FileType.custom, allowedExtensions: ['jpg', 'jpeg', 'png', 'bmp', 'webp'],
+                    // 仅 Android 需要内存字节（content:// URI 无法用 File 读取）
+                    withData: isAndroidPlatform);
+                if (r != null && r.files.isNotEmpty) {
+                  final file = r.files.first;
+                  final path = file.path;
+                  // Android 11+: content:// URI 无法用 File 读写，优先用内存字节；
+                  // 其余平台用磁盘路径（节省内存）。
+                  final useBytes = (path == null || path.startsWith('content://')) && file.bytes != null;
+                  if (useBytes) {
+                    final saved = await _saveBackgroundBytes(file.bytes!, file.name, maxW, maxH);
+                    if (saved != null) {
+                      state.updateConfig((c) => c..backgroundImage = saved);
+                    }
+                  } else if (path != null) {
+                    // 大图自动压缩到屏幕分辨率，避免体积过大导致卡死
+                    final copied = await _copyBackgroundOptimized(path, maxW, maxH);
+                    state.updateConfig((c) => c..backgroundImage = copied ?? path);
+                  }
                 }
               }, padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 24, minHeight: 24)),
         ])),
