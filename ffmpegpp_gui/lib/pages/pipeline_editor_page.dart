@@ -2550,9 +2550,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               padding: EdgeInsets.zero,
               onPressed: _save,
             ),
-          ] else
+          ],
+          if (Platform.isWindows)
             Text(s.isZh ? '右键添加节点' : 'Right-click to add',
                 style: TextStyle(fontSize: 10, color: scheme.outline)),
+          ],
         ]),
       ),
       const Divider(height: 1, indent: 12, endIndent: 12),
