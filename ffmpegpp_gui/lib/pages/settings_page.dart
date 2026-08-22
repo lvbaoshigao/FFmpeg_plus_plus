@@ -31,8 +31,8 @@ final _s = Platform.pathSeparator;
 
 /// 应用文档目录（Android 持久化，避免 systemTemp 被系统清空）
 String _androidAppDir() => _cachedAppDir;
-static String _cachedAppDir = '${Directory.systemTemp.path}${_s}FFmpeg++';
-static bool _appDirInit = false;
+String _cachedAppDir = '${Directory.systemTemp.path}${_s}FFmpeg++';
+bool _appDirInit = false;
 
 /// 初始化 Android 应用文档目录（在 SettingsPage 首次构建时调用）
 Future<void> _ensureAndroidAppDir() async {
