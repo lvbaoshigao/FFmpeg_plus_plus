@@ -58,8 +58,7 @@ class MasonryGridRenderObject extends RenderBox
     markNeedsLayout();
   }
 
-  MasonryGridRenderObject({required int columns, required double spacing, required double runSpacing})
-      : _columns = columns, _spacing = spacing, _runSpacing = runSpacing;
+  MasonryGridRenderObject({required this._columns, required this._spacing, required this._runSpacing});
 
   @override
   void setupParentData(RenderBox child) {
