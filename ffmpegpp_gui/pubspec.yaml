@@ -25,6 +25,7 @@ dependencies:
   archive: ^4.0.9
   flutter_markdown: ^0.7.7+1
   just_audio: ^0.9.40
+  dynamic_glass_glmv: ^0.2.4
 
 dependency_overrides:
   vector_math: ^2.4.0
