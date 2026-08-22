@@ -469,9 +469,23 @@ class ProjectPageState extends State<ProjectPage> {
   }
 
   Future<void> _pick(AppState state) async {
-    final r = await FilePicker.platform.pickFiles(allowMultiple: true, type: FileType.custom, allowedExtensions: _exts);
+    final r = await FilePicker.platform.pickFiles(
+      allowMultiple: true, type: FileType.custom, allowedExtensions: _exts,
+      withData: isMobilePlatform);
     if (r != null && r.files.isNotEmpty) {
-      final paths = r.files.where((f) => f.path != null).map((f) => f.path!).toList();
+      final paths = <String>[];
+      for (final f in r.files) {
+        if (f.path != null) {
+          paths.add(f.path!);
+        } else if (f.bytes != null) {
+          // Android 11+: content:// URI 无 file path，保存字节到缓存
+          try {
+            final dest = File('${Directory.systemTemp.path}/ffmpegpp_import_${f.name}_${DateTime.now().millisecondsSinceEpoch}');
+            await dest.writeAsBytes(f.bytes!);
+            paths.add(dest.path);
+          } catch (_) {}
+        }
+      }
       if (paths.isNotEmpty) state.addVideos(paths);
     }
   }

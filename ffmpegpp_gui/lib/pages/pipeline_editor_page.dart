@@ -2427,7 +2427,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     final inner = Column(children: [
       Padding(
         padding: isMobilePlatform
-          ? const EdgeInsets.fromLTRB(10, 8, 10, 4)
+          ? const EdgeInsets.fromLTRB(6, 6, 6, 2)
           : const EdgeInsets.fromLTRB(14, 12, 14, 8),
         child: Row(children: [
           if (!Platform.isWindows) ...[

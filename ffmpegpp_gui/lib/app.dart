@@ -459,14 +459,10 @@ class _AppShellState extends State<AppShell> with WindowListener {
 
     final Widget body;
     if (mobile) {
-      // 移动端布局：内容区 + 底部液态玻璃导航栏；顶部避开状态栏
+      // 移动端布局：内容区 + 底部液态玻璃导航栏
+      // MobileTopBar 内部已处理状态栏 padding，这里不再重复添加
       body = Column(children: [
-        Expanded(
-          child: Padding(
-            padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top),
-            child: page,
-          ),
-        ),
+        Expanded(child: page),
         MobileBottomNav(
           selectedIndex: nav,
           onSelected: (i) => context.read<AppState>().selectNav(i),

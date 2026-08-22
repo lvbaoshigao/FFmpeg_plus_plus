@@ -515,7 +515,7 @@ class _SettingsPageState extends State<SettingsPage> {
               Expanded(child: visible.isEmpty && searching
                 ? _emptyState(scheme, s)
                 : ListView(
-                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
+                    padding: const EdgeInsets.fromLTRB(6, 4, 6, 24),
                     children: [
                       for (final (sec, cards) in visible)
                         _buildMobileSection(sec, cards, context, state, scheme, s),
@@ -677,7 +677,7 @@ class _SettingsPageState extends State<SettingsPage> {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       // 分区标题（Android 16 风格：不带图标，小字号 + 中字重）
       Padding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 6),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
         child: Text(sec.title(s), style: TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.w500,
@@ -688,7 +688,7 @@ class _SettingsPageState extends State<SettingsPage> {
       // 卡片项（_build* 方法内已用 _glass 包裹，移动端为 surfaceContainerLow 卡片）
       for (final c in cards)
         Padding(
-          padding: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.only(bottom: 4),
           child: c.build(context, state),
         ),
     ]);
@@ -913,11 +913,10 @@ Widget _glass(BuildContext ctx, AppState state, String title, List<Widget> child
   if (isMobilePlatform) {
     final effect = state.config.glassEffect;
     if (effect == 'liquid' || effect == 'blur') {
-      // 移动端也应用 GlassPanel 液态/模糊效果，与桌面端视觉一致
       return Padding(
-        padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+        padding: const EdgeInsets.fromLTRB(6, 0, 6, 0),
         child: GlassPanel(
-          radius: 20,
+          radius: 16,
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(title, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface)),
@@ -929,13 +928,13 @@ Widget _glass(BuildContext ctx, AppState state, String title, List<Widget> child
     }
     // none 模式：Android 16 原生设置卡片风格
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+      padding: const EdgeInsets.fromLTRB(6, 0, 6, 0),
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
         decoration: BoxDecoration(
           color: scheme.surfaceContainerLow,
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(color: scheme.outlineVariant.withAlpha(50), width: 0.6),
           boxShadow: [
             BoxShadow(
@@ -1132,6 +1131,108 @@ const _presets = [
   ('Rose', 0xFFEF4444), ('Cyan', 0xFF06B6D4), ('Violet', 0xFF8B5CF6),
 ];
 
+/// 预设颜色名（中英文）
+String _presetName(int color, bool isZh) {
+  for (final p in _presets) {
+    if (p.$2 == color) return p.$1;
+  }
+  return isZh ? '自定义' : 'Custom';
+}
+
+/// 移动端主题设置对话框
+Future<void> _showThemeDialog(BuildContext ctx, AppState state, AppStrings s, ColorScheme scheme) async {
+  final cfg = state.config;
+  await showDialog(
+    context: ctx,
+    builder: (dCtx) {
+      return StatefulBuilder(
+        builder: (dCtx, setDialogState) {
+          return AlertDialog(
+            title: Text(s.cardTheme, style: const TextStyle(fontSize: 16)),
+            contentPadding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+            content: SingleChildScrollView(
+              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                SwitchListTile(
+                  dense: true, contentPadding: EdgeInsets.zero,
+                  title: Text(s.darkMode, style: const TextStyle(fontSize: 13)),
+                  value: cfg.darkMode,
+                  onChanged: (v) { state.toggleDarkMode(v); setDialogState(() {}); },
+                ),
+                if (isMobilePlatform)
+                  SwitchListTile(
+                    dense: true, contentPadding: EdgeInsets.zero,
+                    title: Text(s.isZh ? '动态取色（Monet）' : 'Dynamic color (Monet)', style: const TextStyle(fontSize: 13)),
+                    value: cfg.useDynamicColor,
+                    onChanged: (v) { state.updateConfig((c) => c..useDynamicColor = v); setDialogState(() {}); },
+                  ),
+                const SizedBox(height: 8),
+                Text(s.accentColor, style: TextStyle(fontSize: 12, color: scheme.onSurface)),
+                const SizedBox(height: 8),
+                Wrap(spacing: 8, runSpacing: 8, children: [
+                  ..._presets.map((p) => _dot(scheme, cfg.themeColor == p.$2 && cfg.themeColor2 < 0, Color(p.$2), p.$1,
+                      () { state.updateConfig((c) => c..themeColor = p.$2..themeColor2 = -1); setDialogState(() {}); })),
+                  GestureDetector(
+                    onTap: () => _pickColor(dCtx, state),
+                    child: Tooltip(
+                      message: cfg.themeColor2 >= 0 ? (state.config.language == 'zh' ? '当前渐变色' : 'Current gradient') : (state.config.language == 'zh' ? '自定义' : 'Custom'),
+                      child: Container(
+                        width: 28, height: 28,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: cfg.themeColor2 >= 0
+                              ? LinearGradient(colors: [Color(cfg.themeColor), Color(cfg.themeColor2)])
+                              : const LinearGradient(colors: [Color(0xFFFF5F6D), Color(0xFFFFC371), Color(0xFF36D1DC), Color(0xFF5B86E5)]),
+                          border: Border.all(color: cfg.themeColor2 >= 0 ? scheme.primary : scheme.outlineVariant.withAlpha(80), width: cfg.themeColor2 >= 0 ? 2 : 1),
+                        ),
+                        child: const Icon(Icons.add, size: 14, color: Colors.white),
+                      ),
+                    ),
+                  ),
+                ]),
+                const SizedBox(height: 12),
+                Text(s.isZh ? '逻辑门符号标准' : 'Logic Gate Standard', style: TextStyle(fontSize: 12, color: scheme.onSurface)),
+                const SizedBox(height: 6),
+                SegmentedButton<String>(
+                  showSelectedIcon: false,
+                  segments: const [
+                    ButtonSegment(value: 'ansi', label: Text('ANSI/IEEE', style: TextStyle(fontSize: 11))),
+                    ButtonSegment(value: 'iec', label: Text('IEC', style: TextStyle(fontSize: 11))),
+                  ],
+                  selected: {cfg.gateStd},
+                  onSelectionChanged: (v) { state.updateConfig((c) => c..gateStd = v.first); setDialogState(() {}); },
+                ),
+                const SizedBox(height: 12),
+                Text(s.isZh ? '玻璃效果' : 'Glass Effect', style: TextStyle(fontSize: 12, color: scheme.onSurface)),
+                const SizedBox(height: 6),
+                SegmentedButton<String>(
+                  showSelectedIcon: false,
+                  segments: [
+                    ButtonSegment(value: 'liquid', label: Text(s.isZh ? '液态' : 'Liquid', style: const TextStyle(fontSize: 11))),
+                    ButtonSegment(value: 'blur', label: Text(s.isZh ? '模糊' : 'Blur', style: const TextStyle(fontSize: 11))),
+                    ButtonSegment(value: 'none', label: Text(s.isZh ? '无' : 'None', style: const TextStyle(fontSize: 11))),
+                  ],
+                  selected: {cfg.glassEffect},
+                  onSelectionChanged: (v) { state.updateConfig((c) => c..glassEffect = v.first); setDialogState(() {}); },
+                ),
+                const SizedBox(height: 12),
+                SwitchListTile(
+                  dense: true, contentPadding: EdgeInsets.zero,
+                  title: Text(s.isZh ? '主题色跟随玻璃' : 'Tint glass with theme', style: const TextStyle(fontSize: 13)),
+                  value: cfg.glassFollowTheme,
+                  onChanged: (v) { state.updateConfig((c) => c..glassFollowTheme = v); setDialogState(() {}); },
+                ),
+              ]),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(dCtx), child: Text(s.isZh ? '完成' : 'Done')),
+            ],
+          );
+        },
+      );
+    },
+  );
+}
+
 const _kDefaultAnthropicModel = 'claude-opus-5';
 
 /// 询问模式下可选"无需确认"的操作（显示名, 内部 key）。
@@ -1148,6 +1249,23 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
   final s = AppStrings.of(cfg.language);
   final scheme = Theme.of(ctx).colorScheme;
   final clr = scheme.onSurface;
+
+  if (isMobilePlatform) {
+    // 移动端：简洁入口，点击弹出对话框设置
+    return _glass(ctx, state, s.cardTheme, [
+      ListTile(
+        dense: true, contentPadding: EdgeInsets.zero,
+        leading: const Icon(Icons.color_lens_outlined, size: 20),
+        title: Text(s.cardTheme, style: TextStyle(fontSize: 13, color: clr)),
+        subtitle: Text(
+          '${cfg.darkMode ? (s.isZh ? '深色' : 'Dark') : (s.isZh ? '浅色' : 'Light')} · ${_presetName(cfg.themeColor, s.isZh)}',
+          style: TextStyle(fontSize: 11, color: scheme.outline)),
+        trailing: const Icon(Icons.chevron_right, size: 18, color: null),
+        onTap: () => _showThemeDialog(ctx, state, s, scheme),
+      ),
+    ]);
+  }
+
   return _glass(ctx, state, s.cardTheme, [
     SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
         title: Text(s.darkMode, style: TextStyle(color: clr)),
