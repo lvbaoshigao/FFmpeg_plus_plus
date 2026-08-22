@@ -214,17 +214,29 @@ cp -f $PREFIX/bin/ffprobe $BUILD/dist/libffprobe.so
 log "ffmpeg/ffprobe staged: $(ls -la $BUILD/dist)"
 
 # ── 7. libffmpegpp.so (C++ 后端) ──
-log "building libffmpegpp.so"
-rm -rf $BUILD/server_cpp_build && mkdir -p $BUILD/server_cpp_build
-cmake -S "$FFMPEGPP_ROOT/server_cpp" \
-    -B $BUILD/server_cpp_build \
-    -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
-    -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-${API} \
-    -DCMAKE_BUILD_TYPE=Release \
-    > $BUILD/server_cpp_cmake.log 2>&1 || { tail -30 $BUILD/server_cpp_cmake.log; exit 1; }
-cmake --build $BUILD/server_cpp_build -j$JOBS > $BUILD/server_cpp_make.log 2>&1 \
-    || { tail -30 $BUILD/server_cpp_make.log; exit 1; }
-cp -f $BUILD/server_cpp_build/libffmpegpp.so $BUILD/dist/libffmpegpp.so
-log "libffmpegpp.so staged"
+# 用源码 hash 标记判断是否需要重建：即使 restore-keys 恢复了旧缓存，
+# 只要 server_cpp 源码变了（hash 不匹配）就会强制重新编译，避免产物过时。
+SRC_HASH=$(find "$FFMPEGPP_ROOT/server_cpp/src" "$FFMPEGPP_ROOT/server_cpp/include" \
+    "$FFMPEGPP_ROOT/server_cpp/CMakeLists.txt" -type f 2>/dev/null | sort | xargs md5sum 2>/dev/null | md5sum | cut -d' ' -f1)
+[ -z "$SRC_HASH" ] && SRC_HASH="nosrc"
+CACHED_HASH=""
+[ -f $BUILD/dist/libffmpegpp.so.hash ] && CACHED_HASH=$(cat $BUILD/dist/libffmpegpp.so.hash)
+if [ -f $BUILD/dist/libffmpegpp.so ] && [ "$CACHED_HASH" = "$SRC_HASH" ]; then
+  log "libffmpegpp.so cached (src hash match)"
+else
+  log "building libffmpegpp.so (src hash: $SRC_HASH)"
+  rm -rf $BUILD/server_cpp_build && mkdir -p $BUILD/server_cpp_build
+  cmake -S "$FFMPEGPP_ROOT/server_cpp" \
+      -B $BUILD/server_cpp_build \
+      -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
+      -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-${API} \
+      -DCMAKE_BUILD_TYPE=Release \
+      > $BUILD/server_cpp_cmake.log 2>&1 || { tail -30 $BUILD/server_cpp_cmake.log; exit 1; }
+  cmake --build $BUILD/server_cpp_build -j$JOBS > $BUILD/server_cpp_make.log 2>&1 \
+      || { tail -30 $BUILD/server_cpp_make.log; exit 1; }
+  cp -f $BUILD/server_cpp_build/libffmpegpp.so $BUILD/dist/libffmpegpp.so
+  echo "$SRC_HASH" > $BUILD/dist/libffmpegpp.so.hash
+  log "libffmpegpp.so staged"
+fi
 ls -la $BUILD/dist
 log "ALL DONE"
