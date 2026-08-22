@@ -81,7 +81,7 @@ Future<String?> _copyBackgroundOptimized(String srcPath, int maxW, int maxH) asy
     // 原图小于等于屏幕分辨率：无需缩放，直接走普通复制
     if (srcW <= maxW && srcH <= maxH) {
       image.dispose();
-      return _copyToAppDir(srcPath, 'background');
+      return await _copyToAppDir(srcPath, 'background');
     }
 
     // 等比缩放到屏幕分辨率内（长边对齐）
@@ -101,7 +101,7 @@ Future<String?> _copyBackgroundOptimized(String srcPath, int maxW, int maxH) asy
 
     final byteData = await resized.toByteData(format: ui.ImageByteFormat.png);
     resized.dispose();
-    if (byteData == null) return _copyToAppDir(srcPath, 'background');
+    if (byteData == null) return await _copyToAppDir(srcPath, 'background');
 
     // 保存为 .png（与原文件名区分，避免覆盖源图）
     final targetDir = Directory('${_userDataDir()}$_s${'background'}');
@@ -112,7 +112,7 @@ Future<String?> _copyBackgroundOptimized(String srcPath, int maxW, int maxH) asy
     return destPath;
   } catch (_) {
     // 解码/缩放失败（如超大图内存不足）：回退普通复制
-    return _copyToAppDir(srcPath, 'background');
+    return await _copyToAppDir(srcPath, 'background');
   }
 }
 
