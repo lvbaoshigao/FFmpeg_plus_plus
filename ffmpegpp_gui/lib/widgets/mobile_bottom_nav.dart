@@ -64,8 +64,8 @@ class MobileBottomNav extends StatelessWidget {
       style: GlassPillNavBarStyle(
         height: 62,
         borderRadius: 28,
-        horizontalPadding: 14,
-        bottomPadding: 10,
+        horizontalPadding: 0,
+        bottomPadding: 6,
         blurSigma: 20,
         backgroundColor: scheme.surface.withValues(alpha: isDark ? 0.55 : 0.45),
         borderColor: Colors.white.withValues(alpha: isDark ? 0.18 : 0.35),
