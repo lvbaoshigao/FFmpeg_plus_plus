@@ -28,6 +28,7 @@ dependencies:
   dynamic_glass_glmv: ^0.2.4
   glass_liquid_navbar: ^0.2.0
   settings_ui_plus: ^0.2.8
+  oc_liquid_glass: ^0.3.0
 
 dependency_overrides:
   vector_math: ^2.4.0

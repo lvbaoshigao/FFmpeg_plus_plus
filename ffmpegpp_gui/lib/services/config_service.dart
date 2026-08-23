@@ -93,11 +93,13 @@ class ConfigService {
       final file = File('$dir$_s$_libraryFilename');
       if (await file.exists()) {
         final list = jsonDecode(await file.readAsString()) as List<dynamic>;
-        // 逐个验证条目类型（cast 是懒加载的，坏条目会在首次使用时抛 TypeCastError）
+        // 逐个验证条目类型（cast 是懒加载的，坏条目会在首次使用时抛 TypeCastError）；
+        // 坏条目只跳过，不能因为一条损坏就把整个配置库丢光。
+        final entries = <Map<String, dynamic>>[];
         for (final e in list) {
-          if (e is! Map<String, dynamic>) return [];
+          if (e is Map<String, dynamic>) entries.add(e);
         }
-        return List<Map<String, dynamic>>.from(list);
+        return entries;
       }
     } catch (_) {}
     return [];

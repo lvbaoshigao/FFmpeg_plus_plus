@@ -771,9 +771,13 @@ class _MarqueeTitleState extends State<_MarqueeTitle> with SingleTickerProviderS
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (_, constraints) {
+      // 用全局 textScaler 参与测量：否则大字号下文字实际更宽/更高，
+      // 既可能误判无需滚动，又会让固定高度裁掉文字（无法完整展示）。
+      final scaler = MediaQuery.textScalerOf(context);
       final tp = TextPainter(
         text: TextSpan(text: widget.text, style: widget.style),
         maxLines: 1, textDirection: TextDirection.ltr,
+        textScaler: scaler,
       )..layout();
       final needsScroll = tp.size.width > constraints.maxWidth + 10;
 
@@ -784,8 +788,9 @@ class _MarqueeTitleState extends State<_MarqueeTitle> with SingleTickerProviderS
         });
       }
 
+      final baseFontSize = widget.style?.fontSize ?? 16;
       return SizedBox(
-        height: (widget.style?.fontSize ?? 16) * 1.5,
+        height: scaler.scale(baseFontSize) * 1.5,
         child: needsScroll && _scrollCtrl != null
             ? SingleChildScrollView(
                 scrollDirection: Axis.horizontal,

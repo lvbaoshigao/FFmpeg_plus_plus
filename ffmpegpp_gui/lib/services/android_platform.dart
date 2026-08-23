@@ -75,6 +75,43 @@ class AndroidPlatformBridge {
     }
   }
 
+  /// 把导入的媒体文件复制到应用文档目录（持久、app 私有、可执行/可读），
+  /// 保留原扩展名，保证 ffprobe/fork 子进程能稳定读取。
+  ///
+  /// 背景：file_picker 在 Android 上会把 SAF 选中的 content:// 缓存到
+  /// cacheDir/file_picker/...，该目录可被系统在存储压力下清空，部分 ROM 下
+  /// 还可能出现子进程无法访问缓存目录的情况，导致 ffprobe 报「无法读取文件，
+  /// 请检查路径或文件权限」。复制到应用文档目录彻底规避这一类权限问题。
+  /// 复制失败时原样返回 [src]，让后续探测给出具体错误，而不静默丢弃文件。
+  static Future<String> ensureReadableImport(String src) async {
+    try {
+      final srcFile = File(src);
+      if (!await srcFile.exists()) return src;
+
+      final docsDir = await getApplicationDocumentsDirectory();
+      final importDir = Directory(
+          '${docsDir.path}${Platform.pathSeparator}ffmpegpp_imports');
+      await importDir.create(recursive: true);
+
+      final name = src.split(RegExp(r'[\\/]')).last;
+      final dot = name.lastIndexOf('.');
+      final ext = (dot > 0 && dot < name.length - 1)
+          ? name.substring(dot)
+          : '';
+      final stem =
+          name.substring(0, dot > 0 ? dot : name.length);
+      final safeStem = stem.replaceAll(RegExp(r'[^A-Za-z0-9\u4e00-\u9fa5]'), '_');
+      final dest = File('${importDir.path}${Platform.pathSeparator}'
+          '${safeStem}_${DateTime.now().millisecondsSinceEpoch}$ext');
+
+      // 用 copy 而非 readAsBytes+writeAsBytes：大文件走流式拷贝，不占内存
+      await srcFile.copy(dest.path);
+      return dest.path;
+    } catch (_) {
+      return src;
+    }
+  }
+
   /// 系统壁纸主色（ARGB int），Android 8.1+ (API 27+) 可用。
   /// 非 Android / 低版本 / 调用失败返回 null（回退到用户主题色）。
   static Future<int?> wallpaperPrimaryColor() async {

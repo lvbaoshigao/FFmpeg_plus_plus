@@ -294,26 +294,19 @@ class AppState extends ChangeNotifier {
     _probeCount++; notifyListeners();
     addLog('添加 ${filepaths.length} 个文件', category: 'info');
 
-    // Android：file_picker 返回的缓存路径一般可读，但部分设备/ROM 上可能
-    // 因 SAF 复制失败或权限问题导致路径不可读。验证路径可读性，不可读则
-    // 尝试复制到应用缓存目录（确保 ffprobe 子进程能访问）。
+    // Android：file_picker 返回的是 cacheDir/file_picker/... 下的缓存路径，
+    // 该目录可能被系统清空、部分 ROM 下 fork 出的 ffprobe 子进程也无法访问，
+    // 从而报「无法读取文件，请检查路径或文件权限」。这里把每个导入文件复制到
+    // 应用文档目录（持久 + app 私有 + 保留扩展名），保证 ffprobe/后续转码稳定读取。
     final entries = <VideoFile>[];
     for (final fp in filepaths) {
       String path = fp;
       if (isAndroidPlatform) {
-        try {
-          await File(path).stat();
-        } catch (_) {
-          addLog('路径不可读，尝试复制到缓存: $path', category: 'warning');
-          try {
-            final dest = File('${Directory.systemTemp.path}/ffmpegpp_import_${path.hashCode}_${DateTime.now().millisecondsSinceEpoch}');
-            await dest.writeAsBytes(await File(path).readAsBytes());
-            path = dest.path;
-            addLog('已复制到缓存: $path', category: 'info');
-          } catch (e2) {
-            addLog('复制到缓存失败: $e2', category: 'error');
-          }
+        final copied = await AndroidPlatformBridge.ensureReadableImport(fp);
+        if (copied != fp) {
+          addLog('已复制到应用私有目录: $copied', category: 'info');
         }
+        path = copied;
       }
       final vf = VideoFile.fromFilepath(path);
       _videos.add(vf);
@@ -365,7 +358,14 @@ class AppState extends ChangeNotifier {
       if (resp['success'] == true) {
         final info = resp['data'] as Map<String, dynamic>;
         final idx = _videos.indexWhere((v) => v.id == vf.id);
-        if (idx >= 0) { _videos[idx] = VideoFile.fromProbeResult(vf.filepath, info, id: vf.id); _probeErrors.remove(vf.filepath); _scheduleProbeNotify(); }
+        if (idx >= 0) {
+          // 探测较慢时用户可能已改过该视频的配置/管线：合并时保留，避免被探测结果静默覆盖
+          final prev = _videos[idx];
+          _videos[idx] = VideoFile.fromProbeResult(vf.filepath, info, id: vf.id)
+              .copyWith(config: prev.config, pipelineGraph: prev.pipelineGraph, pipelineMode: prev.pipelineMode);
+          _probeErrors.remove(vf.filepath);
+          _scheduleProbeNotify();
+        }
         addLog('探测成功: ${vf.filename}', category: 'ffmpeg');
         addLog('  编码: ${info['codec']} | 分辨率: ${info['resolution']} | 帧率: ${info['fps']}fps', category: 'ffmpeg');
         addLog('  时长: ${info['duration_str']} | 大小: ${(info['size_mb'] as num?)?.toStringAsFixed(1) ?? '?'}MB | 像素: ${info['pix_fmt']}', category: 'ffmpeg');
@@ -1204,8 +1204,15 @@ class AppState extends ChangeNotifier {
       final args = <String>['-y', '-i', input];
       if (output.endsWith('.ico')) {
         args.addAll(['-vf', 'scale=256:256:force_original_aspect_ratio=decrease']);
-      } else if (output.endsWith('.jpg') || output.endsWith('.jpeg') || output.endsWith('.webp')) {
-        args.addAll(['-q:v', '${(100 - quality).clamp(0, 31) * 31 ~/ 100 + 1}']);
+      } else if (output.endsWith('.jpg') || output.endsWith('.jpeg')) {
+        // JPEG(mjpeg)：-q:v 2–31，值越小质量越好；quality 0(最差)→100(最佳) 线性映射，
+        // 避免原写法把 quality≤69 全部压到 10（质量滑杆中低档几乎失效）。
+        final qscale = (31 - quality.clamp(0, 100) * 29 / 100).round().clamp(2, 31);
+        args.addAll(['-q:v', '$qscale']);
+      } else if (output.endsWith('.webp')) {
+        // WebP(libwebp) 的 quality 是 0–100 且「越大越好」，与 mjpeg 的 -q:v 尺度相反；
+        // 原代码把 webp 混进 jpg 用 -q:v，导致 webp 质量被压到极低。这里用 -quality 直接映射。
+        args.addAll(['-quality', '${quality.clamp(0, 100)}']);
       }
       args.add(output);
       addLog('图片转换: $_ffmpegBin ${args.join(' ')}', category: 'info');
@@ -2059,7 +2066,7 @@ class AppState extends ChangeNotifier {
             if (t != FileSystemEntityType.directory) {
               try { size = await File(e.path).length(); } catch (_) {}
             }
-            entries.add({'name': e.path.split('/').last, 'type': t == FileSystemEntityType.directory ? 'directory' : 'file', 'size': size});
+            entries.add({'name': e.uri.pathSegments.last, 'type': t == FileSystemEntityType.directory ? 'directory' : 'file', 'size': size});
           }
           return (jsonEncode(entries), false);
         } catch (e) { return ('Error: $e', true); }

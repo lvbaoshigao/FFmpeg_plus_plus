@@ -32,6 +32,35 @@ class ProjectPageState extends State<ProjectPage> {
   final Set<String> _selectedIds = {};
   final Set<String> _selectedContainerIds = {};
   bool _dragging = false;
+  /// 移动端多选模式：长按单个项目进入，选中项高亮（左侧不再常驻复选框）。
+  bool _selectionMode = false;
+
+  void _enterSelectionMode() {
+    if (_selectionMode) return;
+    setState(() => _selectionMode = true);
+  }
+
+  void _exitSelectionMode() {
+    setState(() {
+      _selectionMode = false;
+      _selectedIds.clear();
+      _selectedContainerIds.clear();
+    });
+  }
+
+  void _deleteSelected(AppState state) {
+    setState(() {
+      for (final id in _selectedIds) {
+        state.removeVideo(id);
+      }
+      for (final id in _selectedContainerIds) {
+        state.removeContainer(id);
+      }
+      _selectedIds.clear();
+      _selectedContainerIds.clear();
+      _selectionMode = false;
+    });
+  }
 
   void selectAll(List videos) {
     setState(() {
@@ -76,21 +105,39 @@ class ProjectPageState extends State<ProjectPage> {
           backgroundColor: Colors.transparent,
           body: Column(children: [
             GlassTopBar(
-              title: _searchVisible
-                ? TextField(
-                    autofocus: true,
-                    style: TextStyle(fontSize: 14, color: scheme.onSurface),
-                    decoration: InputDecoration(
-                      hintText: s.searchVideos,
-                      hintStyle: TextStyle(color: scheme.outline, fontSize: 14),
-                      border: InputBorder.none,
-                      prefixIcon: Icon(Icons.search, size: 18, color: scheme.outline),
-                      prefixIconConstraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                    ),
-                    onChanged: (v) => setState(() => _searchQuery = v),
+              title: (isMobilePlatform && _selectionMode)
+                ? Text(
+                    '${s.isZh ? '已选' : 'Selected'} ${_selectedIds.length + _selectedContainerIds.length} ${s.isZh ? '项' : 'items'}',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface),
                   )
-                : Text(s.navProjects),
-            actions: [
+                : _searchVisible
+                    ? TextField(
+                        autofocus: true,
+                        style: TextStyle(fontSize: 14, color: scheme.onSurface),
+                        decoration: InputDecoration(
+                          hintText: s.searchVideos,
+                          hintStyle: TextStyle(color: scheme.outline, fontSize: 14),
+                          border: InputBorder.none,
+                          prefixIcon: Icon(Icons.search, size: 18, color: scheme.outline),
+                          prefixIconConstraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                        onChanged: (v) => setState(() => _searchQuery = v),
+                      )
+                    : Text(s.navProjects),
+            actions: (isMobilePlatform && _selectionMode)
+                ? [
+                    IconButton(
+                      icon: Icon(Icons.delete_outline, size: 20, color: scheme.error),
+                      tooltip: s.deleteSelected,
+                      onPressed: () => _deleteSelected(state),
+                    ),
+                    TextButton(
+                      onPressed: _exitSelectionMode,
+                      child: Text(s.isZh ? '取消' : 'Cancel',
+                          style: TextStyle(fontSize: 14, color: scheme.primary, fontWeight: FontWeight.w600)),
+                    ),
+                  ]
+                : [
               IconButton(
                 icon: Icon(_searchVisible ? Icons.close : Icons.search, size: 20),
                 tooltip: _searchVisible ? s.close : s.search,
@@ -108,7 +155,12 @@ class ProjectPageState extends State<ProjectPage> {
                   ),
                   tooltip: _selectedIds.isEmpty && _selectedContainerIds.isEmpty ? s.selectAll : s.deselectAll,
                   onPressed: () => setState(() {
-                    if (_selectedIds.length == state.videos.length && _selectedContainerIds.length == state.containers.length) {
+                    if (isMobilePlatform) {
+                      // 移动端：点击「全选」进入多选模式并全选（不显示常驻复选框）
+                      _selectionMode = true;
+                      _selectedIds.addAll(state.videos.map((v) => v.id));
+                      _selectedContainerIds.addAll(state.containers.map((c) => c.id));
+                    } else if (_selectedIds.length == state.videos.length && _selectedContainerIds.length == state.containers.length) {
                       _selectedIds.clear();
                       _selectedContainerIds.clear();
                     } else {
@@ -117,20 +169,11 @@ class ProjectPageState extends State<ProjectPage> {
                     }
                   }),
                 ),
-              if (_selectedIds.isNotEmpty || _selectedContainerIds.isNotEmpty)
+              if (!isMobilePlatform && (_selectedIds.isNotEmpty || _selectedContainerIds.isNotEmpty))
                 IconButton(
                   icon: Icon(Icons.delete_outline, size: 20, color: scheme.error),
                   tooltip: s.deleteSelected,
-                  onPressed: () => setState(() {
-                    for (final id in _selectedIds) {
-                      state.removeVideo(id);
-                    }
-                    for (final id in _selectedContainerIds) {
-                      state.removeContainer(id);
-                    }
-                    _selectedIds.clear();
-                    _selectedContainerIds.clear();
-                  }),
+                  onPressed: () => _deleteSelected(state),
                 ),
               IconButton(
                 icon: const Icon(Icons.file_download_outlined, size: 20),
@@ -237,39 +280,108 @@ class ProjectPageState extends State<ProjectPage> {
         if (i < containerCount) {
           final c = state.containers[i];
           final isSelected = _selectedContainerIds.contains(c.id);
+          if (!isMobilePlatform) {
+            return Row(children: [
+              Checkbox(
+                value: isSelected,
+                onChanged: (v) => setState(() {
+                  if (v == true) { _selectedContainerIds.add(c.id); }
+                  else { _selectedContainerIds.remove(c.id); }
+                }),
+                visualDensity: VisualDensity.compact,
+              ),
+              Expanded(child: ContainerCard(container: c)),
+            ]);
+          }
+          return _mobileSelectableItem(
+            isSelected: isSelected,
+            scheme: scheme,
+            onLongPress: () {
+              _enterSelectionMode();
+              setState(() => _selectedContainerIds.add(c.id));
+            },
+            onTap: () {
+              if (_selectionMode) {
+                setState(() {
+                  if (!_selectedContainerIds.remove(c.id)) _selectedContainerIds.add(c.id);
+                });
+              }
+            },
+            child: ContainerCard(container: c),
+          );
+        }
+        final video = filteredStandalone[i - containerCount];
+        final isSelected = _selectedIds.contains(video.id);
+        if (!isMobilePlatform) {
           return Row(children: [
             Checkbox(
               value: isSelected,
               onChanged: (v) => setState(() {
-                if (v == true) { _selectedContainerIds.add(c.id); }
-                else { _selectedContainerIds.remove(c.id); }
+                if (v == true) { _selectedIds.add(video.id); }
+                else { _selectedIds.remove(video.id); }
               }),
               visualDensity: VisualDensity.compact,
             ),
-            Expanded(child: ContainerCard(container: c)),
+            Expanded(
+              child: state.config.editMode == 1
+                  ? GestureDetector(
+                      onTap: () => _showQuickConfigDialog(context, state, video, s),
+                      child: VideoCard(video: video, onEdit: () => _showQuickConfigDialog(context, state, video, s)),
+                    )
+                  : VideoCard(video: video),
+            ),
           ]);
         }
-        final video = filteredStandalone[i - containerCount];
-        final isSelected = _selectedIds.contains(video.id);
-        return Row(children: [
-          Checkbox(
-            value: isSelected,
-            onChanged: (v) => setState(() {
-              if (v == true) { _selectedIds.add(video.id); }
-              else { _selectedIds.remove(video.id); }
-            }),
-            visualDensity: VisualDensity.compact,
-          ),
-          Expanded(
-            child: state.config.editMode == 1
-                ? GestureDetector(
-                    onTap: () => _showQuickConfigDialog(context, state, video, s),
-                    child: VideoCard(video: video, onEdit: () => _showQuickConfigDialog(context, state, video, s)),
-                  )
-                : VideoCard(video: video),
-          ),
-        ]);
+        return _mobileSelectableItem(
+          isSelected: isSelected,
+          scheme: scheme,
+          onLongPress: () {
+            _enterSelectionMode();
+            setState(() => _selectedIds.add(video.id));
+          },
+          onTap: () {
+            if (_selectionMode) {
+              setState(() {
+                if (!_selectedIds.remove(video.id)) _selectedIds.add(video.id);
+              });
+            } else if (state.config.editMode == 1) {
+              _showQuickConfigDialog(context, state, video, s);
+            }
+          },
+          child: state.config.editMode == 1
+              ? VideoCard(video: video, onEdit: () => _showQuickConfigDialog(context, state, video, s))
+              : VideoCard(video: video),
+        );
       },
+    );
+  }
+
+  /// 移动端可多选条目：长按进入多选模式，选中项高亮（不显示常驻复选框）。
+  Widget _mobileSelectableItem({
+    required bool isSelected,
+    required ColorScheme scheme,
+    required Widget child,
+    required VoidCallback onLongPress,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onLongPress: onLongPress,
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOut,
+        padding: const EdgeInsets.all(2),
+        decoration: BoxDecoration(
+          color: isSelected ? scheme.primaryContainer.withAlpha(80) : Colors.transparent,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: isSelected ? scheme.primary : Colors.transparent,
+            width: 2,
+          ),
+        ),
+        child: child,
+      ),
     );
   }
 
@@ -475,11 +587,14 @@ class ProjectPageState extends State<ProjectPage> {
     if (r != null && r.files.isNotEmpty) {
       final paths = <String>[];
       for (final f in r.files) {
+        // 保留扩展名，后续 addVideos 复制到应用私有目录时可正确识别媒体类型
+        final ext = f.name.contains('.') ? f.name.substring(f.name.lastIndexOf('.')) : '';
+        final stem = f.name.contains('.') ? f.name.substring(0, f.name.lastIndexOf('.')) : f.name;
         final isContentUri = f.path != null && f.path!.startsWith('content://');
         if (isContentUri && f.bytes != null) {
           // Android 11+: content:// URI 无法被 File/ffprobe 读取，用字节写入缓存
           try {
-            final dest = File('${Directory.systemTemp.path}/ffmpegpp_import_${f.name}_${DateTime.now().millisecondsSinceEpoch}');
+            final dest = File('${Directory.systemTemp.path}/ffmpegpp_import_${stem}_${DateTime.now().millisecondsSinceEpoch}$ext');
             await dest.writeAsBytes(f.bytes!);
             paths.add(dest.path);
           } catch (e) {
@@ -490,7 +605,7 @@ class ProjectPageState extends State<ProjectPage> {
           paths.add(f.path!);
         } else if (f.bytes != null) {
           try {
-            final dest = File('${Directory.systemTemp.path}/ffmpegpp_import_${f.name}_${DateTime.now().millisecondsSinceEpoch}');
+            final dest = File('${Directory.systemTemp.path}/ffmpegpp_import_${stem}_${DateTime.now().millisecondsSinceEpoch}$ext');
             await dest.writeAsBytes(f.bytes!);
             paths.add(dest.path);
           } catch (_) {}

@@ -75,6 +75,9 @@ class AppStrings {
   String get glassLiquid => lang == 'zh' ? '液态玻璃' : 'Liquid';
   String get glassBlur => lang == 'zh' ? '模糊' : 'Blur';
   String get glassNone => lang == 'zh' ? '无效果' : 'None';
+  // 预测式返回（Android 14+）
+  String get predictiveBack => lang == 'zh' ? '预测式返回' : 'Predictive back';
+  String get predictiveBackHint => lang == 'zh' ? '侧滑返回时预览上一页（Android 14+，Android 16 原生手势）' : 'Preview the previous screen when swiping back (Android 14+ gesture)';
   // Resource monitor
   String get resCpu => 'CPU';
   String get resGpu => 'GPU';

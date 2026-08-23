@@ -983,6 +983,8 @@ class AppConfig {
   String activeAiProfileId;   // 当前选中的配置 id（空 = 使用下方默认字段）
   // Android Monet 动态取色（跟随系统壁纸；桌面端始终关闭）
   bool useDynamicColor;
+  // Android 预测式返回手势（Android 14+；仅安卓端生效，桌面/iOS 忽略）
+  bool predictiveBack;
 
   static const fontWeightValues = [300, 400, 500, 600, 700];
   static const fontWeightLabels = ['Light', 'Regular', 'Medium', 'SemiBold', 'Bold'];
@@ -1059,6 +1061,7 @@ class AppConfig {
     List<AiProfile>? aiProfiles,
     this.activeAiProfileId = '',
     this.useDynamicColor = false,
+    this.predictiveBack = true,
   }) : fontFamily = fontFamily ?? _defaultFontFamily,
        aiProfiles = aiProfiles ?? <AiProfile>[],
        nodeUsageCount = nodeUsageCount ?? {},
@@ -1148,6 +1151,7 @@ class AppConfig {
         aiProfiles: (json['ai_profiles'] as List<dynamic>?)?.map((e) => AiProfile.fromJson(e as Map<String, dynamic>)).toList() ?? <AiProfile>[],
         activeAiProfileId: json['active_ai_profile_id'] as String? ?? '',
         useDynamicColor: json['use_dynamic_color'] as bool? ?? false,
+        predictiveBack: json['predictive_back'] as bool? ?? true,
       );
 
   Map<String, dynamic> toJson() => {
@@ -1198,6 +1202,7 @@ class AppConfig {
         'ai_profiles': aiProfiles.map((e) => e.toJson()).toList(),
         'active_ai_profile_id': activeAiProfileId,
         'use_dynamic_color': useDynamicColor,
+        'predictive_back': predictiveBack,
       };
 }
 

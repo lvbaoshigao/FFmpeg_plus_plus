@@ -51,14 +51,44 @@ class UpdateResult {
 enum UpdateSource { lanzou, github }
 
 int compareVersions(String a, String b) {
-  final pa = a.replaceFirst(RegExp(r'^v'), '').split(RegExp(r'[-.]')).take(3).map((e) => int.tryParse(e) ?? 0).toList();
-  final pb = b.replaceFirst(RegExp(r'^v'), '').split(RegExp(r'[-.]')).take(3).map((e) => int.tryParse(e) ?? 0).toList();
-  for (var i = 0; i < 3; i++) {
-    final va = i < pa.length ? pa[i] : 0;
-    final vb = i < pb.length ? pb[i] : 0;
+  final (na, pa) = _parseVersionParts(a.replaceFirst(RegExp(r'^v'), ''));
+  final (nb, pb) = _parseVersionParts(b.replaceFirst(RegExp(r'^v'), ''));
+  var i = 0;
+  while (i < na.length || i < nb.length) {
+    final va = i < na.length ? na[i] : 0;
+    final vb = i < nb.length ? nb[i] : 0;
     if (va != vb) return va.compareTo(vb);
+    i++;
+  }
+  // 主版本号相同：正式版 > 预发布版；预发布之间逐段比较（beta < beta2 < rc）
+  if (pa.isEmpty && pb.isEmpty) return 0;
+  if (pa.isEmpty) return 1;
+  if (pb.isEmpty) return -1;
+  final segA = pa.split(RegExp(r'(?<=\d)(?=\D)|(?<=\D)(?=\d)'));
+  final segB = pb.split(RegExp(r'(?<=\d)(?=\D)|(?<=\D)(?=\d)'));
+  var j = 0;
+  while (j < segA.length || j < segB.length) {
+    if (j >= segA.length) return -1; // 更短的预发布更旧（beta < beta2）
+    if (j >= segB.length) return 1;
+    final xa = int.tryParse(segA[j]);
+    final xb = int.tryParse(segB[j]);
+    if (xa != null && xb != null) {
+      if (xa != xb) return xa.compareTo(xb);
+    } else {
+      final c = segA[j].compareTo(segB[j]);
+      if (c != 0) return c;
+    }
+    j++;
   }
   return 0;
+}
+
+(List<int>, String) _parseVersionParts(String s) {
+  final dash = s.indexOf('-');
+  final core = dash >= 0 ? s.substring(0, dash) : s;
+  final pre = dash >= 0 ? s.substring(dash + 1) : '';
+  final nums = core.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+  return (nums, pre);
 }
 
 String get currentVersion => _currentVersion;
