@@ -9,12 +9,14 @@ import '../providers/app_state.dart';
 /// 顶栏整体已提供背景模糊，按钮单独套玻璃会产生双重光效噪点。
 class MobileTopBar extends StatelessWidget {
   final Widget title;
+  final Widget? leading;
   final List<Widget> actions;
   final double height;
 
   const MobileTopBar({
     super.key,
     required this.title,
+    this.leading,
     this.actions = const [],
     this.height = 56,
   });
@@ -51,7 +53,11 @@ class MobileTopBar extends StatelessWidget {
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4),
               child: Row(children: [
-                const SizedBox(width: 8),
+                if (leading != null) ...[
+                  leading!,
+                  const SizedBox(width: 4),
+                ] else
+                  const SizedBox(width: 8),
                 Expanded(
                   child: DefaultTextStyle.merge(
                     style: TextStyle(

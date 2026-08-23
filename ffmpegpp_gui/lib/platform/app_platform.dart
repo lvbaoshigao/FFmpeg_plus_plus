@@ -11,3 +11,7 @@ bool get isMobilePlatform => !kIsWeb && (Platform.isAndroid || Platform.isIOS);
 
 /// 是否为 Android。
 bool get isAndroidPlatform => !kIsWeb && Platform.isAndroid;
+
+/// 移动端悬浮底部导航栏整体占据的底部高度（胶囊高 + 上下留白 + 安全区）。
+/// 各 Tab 页主滚动区用它作为底部 padding，避免内容被悬浮导航遮挡。
+const double kMobileNavClearance = 96.0;

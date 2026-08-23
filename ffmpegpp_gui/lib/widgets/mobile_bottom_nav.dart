@@ -82,21 +82,61 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
             borderRadius: BorderRadius.circular(radius),
             border: Border.all(color: borderColor, width: 0.7),
           ),
-          child: Row(
-            children: [
-              for (var i = 0; i < items.length; i++)
-                _NavItem(
-                  icon: items[i].$1,
-                  activeIcon: items[i].$2,
-                  label: items[i].$3,
-                  selected: i == itemIdx,
-                  selectedColor: selectedColor,
-                  unselectedColor: unselectedColor,
-                  indicatorColor: indicator,
-                  onTap: () => widget.onSelected(itemToPage[i] ?? 0),
+          clipBehavior: Clip.antiAlias,
+          child: LayoutBuilder(builder: (ctx, cons) {
+            final itemW = cons.maxWidth / items.length;
+            return Stack(children: [
+              // 滑动遮罩胶囊：切换菜单时在条目间平滑滑动；
+              // 玻璃质感（顶部白高光 + 底部主题色 + 白色描边），盖住图标与文字整块。
+              AnimatedPositioned(
+                duration: const Duration(milliseconds: 260),
+                curve: Curves.easeOutCubic,
+                left: itemW * itemIdx + 3,
+                top: 2,
+                bottom: 2,
+                width: itemW - 6,
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(radius - 8),
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.white.withValues(alpha: isDark ? 0.16 : 0.42),
+                        indicator,
+                      ],
+                      stops: const [0.0, 0.6],
+                    ),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: isDark ? 0.22 : 0.50),
+                      width: 0.8,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: isDark ? 0.24 : 0.08),
+                        blurRadius: 5,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
                 ),
-            ],
-          ),
+              ),
+              Row(
+                children: [
+                  for (var i = 0; i < items.length; i++)
+                    _NavItem(
+                      icon: items[i].$1,
+                      activeIcon: items[i].$2,
+                      label: items[i].$3,
+                      selected: i == itemIdx,
+                      selectedColor: selectedColor,
+                      unselectedColor: unselectedColor,
+                      onTap: () => widget.onSelected(itemToPage[i] ?? 0),
+                    ),
+                ],
+              ),
+            ]);
+          }),
         );
 
     // none：纯色药丸（无玻璃光效）
@@ -154,7 +194,6 @@ class _NavItem extends StatelessWidget {
   final bool selected;
   final Color selectedColor;
   final Color unselectedColor;
-  final Color indicatorColor;
   final VoidCallback onTap;
 
   const _NavItem({
@@ -164,7 +203,6 @@ class _NavItem extends StatelessWidget {
     required this.selected,
     required this.selectedColor,
     required this.unselectedColor,
-    required this.indicatorColor,
     required this.onTap,
   });
 
@@ -184,30 +222,29 @@ class _NavItem extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // 选中项：胶囊药丸指示器
-              AnimatedContainer(
+              TweenAnimationBuilder<Color?>(
+                tween: ColorTween(end: color),
                 duration: const Duration(milliseconds: 220),
-                curve: Curves.easeOutCubic,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                decoration: BoxDecoration(
-                  color: selected ? indicatorColor : Colors.transparent,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Icon(
+                builder: (ctx, c, child) => Icon(
                   selected ? activeIcon : icon,
-                  size: 23,
-                  color: color,
+                  size: 27,
+                  color: c,
                 ),
               ),
-              const SizedBox(height: 2),
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                  color: color,
+              const SizedBox(height: 1),
+              TweenAnimationBuilder<Color?>(
+                tween: ColorTween(end: color),
+                duration: const Duration(milliseconds: 220),
+                builder: (ctx, c, child) => Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                    color: c,
+                    height: 1.1,
+                  ),
                 ),
               ),
             ],

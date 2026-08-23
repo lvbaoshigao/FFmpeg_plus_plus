@@ -27,7 +27,7 @@ android {
         ndk {
             // Flutter 插件在 apply 时会 clear() 并填入全部 ABI（armeabi-v7a/
             // arm64-v8a/x86_64），+= 会被其覆盖。这里必须 clear 后只保留 arm64：
-            // 内置的 libffmpeg.so/libffprobe.so 是 arm64 静态可执行文件，
+            // 后端 libffmpegpp.so 与内置的 ffmpeg/ffprobe 均为 arm64，
             // 其它 ABI 装了也无法使用，且会白白增加 APK 体积。
             abiFilters.clear()
             abiFilters.add("arm64-v8a")
@@ -42,9 +42,8 @@ android {
         }
     }
 
-    // 关键：以 legacy 方式解压 native 库（libffmpeg.so / libffprobe.so 是
-    // 静态可执行文件，需要被解压到 nativeLibraryDir 并保留可执行权限，
-    // 供 C++ 后端以子进程方式调用）。
+    // libffmpegpp.so 是 C++ 后端动态库，需保证可被 dlopen；
+    // ffmpeg/ffprobe 已改为 assets 打包（见 MainActivity.prepareBundledTool）。
     packaging {
         jniLibs {
             useLegacyPackaging = true

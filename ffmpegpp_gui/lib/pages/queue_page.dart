@@ -8,6 +8,7 @@ import '../services/system_monitor.dart';
 import '../theme/app_strings.dart';
 import '../widgets/task_card.dart';
 import '../widgets/glass_panel.dart';
+import '../platform/app_platform.dart';
 
 class QueuePage extends StatefulWidget {
   const QueuePage({super.key});
@@ -80,7 +81,7 @@ class _QueuePageState extends State<QueuePage> {
                     Text(s.emptyQueueHint, style: TextStyle(fontSize: 13, color: scheme.outline)),
                   ]))
                 : ListView.builder(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    padding: EdgeInsets.fromLTRB(16, 8, 16, isMobilePlatform ? kMobileNavClearance : 8),
                     itemCount: state.tasks.length,
                     itemBuilder: (_, i) => TaskCard(key: ValueKey(state.tasks[i].id), task: state.tasks[i]),
                   )),

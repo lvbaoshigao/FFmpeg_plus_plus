@@ -274,7 +274,7 @@ class ProjectPageState extends State<ProjectPage> {
     }
 
     return ListView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.fromLTRB(16, 16, 16, isMobilePlatform ? kMobileNavClearance : 16),
       itemCount: totalCount,
       itemBuilder: (_, i) {
         if (i < containerCount) {
@@ -631,18 +631,17 @@ class ProjectPageState extends State<ProjectPage> {
       ),
     );
     if (selected == null || !context.mounted) return;
-    final result = await Navigator.push<QuickConfig>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => QuickConfigPage(
-          config: selected,
-          onSave: (updated) async {
-            await QuickConfigStorage.save(updated);
-          },
-        ),
+    final saved = await showDialog<QuickConfig>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => QuickConfigPage(
+        config: selected,
+        onSave: (updated) async {
+          await QuickConfigStorage.save(updated);
+        },
       ),
     );
-    if (result != null && context.mounted) {
+    if (saved != null && context.mounted) {
       showToast(context, zh ? '配置已保存' : 'Config saved', type: ToastType.success);
     }
   }
