@@ -170,6 +170,7 @@ json ensureFFmpeg() {
             ff_version = (nl != std::string::npos) ? pr.stdout_output.substr(0, nl) : pr.stdout_output;
             if (!ff_version.empty() && ff_version.back() == '\r') ff_version.pop_back();
         } else {
+            ff_found = false;  // 真正 exec 失败（如 SELinux/PIE 拒绝），found 必须置假
             ff_error = "执行 -version 失败";
         }
     } else {
@@ -182,6 +183,7 @@ json ensureFFmpeg() {
             fp_version = (nl != std::string::npos) ? pr.stdout_output.substr(0, nl) : pr.stdout_output;
             if (!fp_version.empty() && fp_version.back() == '\r') fp_version.pop_back();
         } else {
+            fp_found = false;  // 真正 exec 失败（如 SELinux/PIE 拒绝），found 必须置假
             fp_error = "执行 -version 失败";
         }
     } else {

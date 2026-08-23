@@ -230,12 +230,13 @@ class _AppShellState extends State<AppShell> with WindowListener {
   /// 底部导航可见的页面索引，横向滑动按此顺序循环切换。
   static const List<int> _kMobileNavOrder = [0, 1, 3, 4];
 
-  /// 触发滑动切 Tab 的最小横向甩动速度（逻辑像素/秒），低于此忽略以免误触。
-  static const double _kSwipeVelocityThreshold = 500.0;
+  /// 移动端 Tab 翻页控制器：PageView 跟随手指（半程滑动即显示「各半张页面」）。
+  late final PageController _mobilePageController;
 
   @override
   void initState() {
     super.initState();
+    _mobilePageController = PageController(initialPage: 0);
     // 移动端没有窗口管理器，跳过窗口相关初始化
     if (!isMobilePlatform) {
       windowManager.addListener(this);
@@ -354,6 +355,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
 
   @override
   void dispose() {
+    _mobilePageController.dispose();
     if (!isMobilePlatform) windowManager.removeListener(this);
     super.dispose();
   }
@@ -474,44 +476,32 @@ class _AppShellState extends State<AppShell> with WindowListener {
     final nav = context.select<AppState, int>((s) => s.selectedNav);
     final mobile = isMobilePlatform;
 
-    // 桌面端：左侧边栏 + 页面；移动端：仅页面（导航在底部栏）
-    final Widget page = mobile
-        ? _pageStack(nav)
-        : Focus(
-            autofocus: true,
-            onKeyEvent: _handleGlobalKey,
-            child: Row(children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 12, 0, 12),
-                child: Sidebar(selectedIndex: nav,
-                    onSelected: (i) => context.read<AppState>().selectNav(i)),
-              ),
-              Expanded(child: _pageStack(nav)),
-            ]),
-          );
+    // 桌面端：左侧边栏 + 页面；移动端页面在下方用 _mobilePageView（PageView）。
+    final Widget page = Focus(
+      autofocus: true,
+      onKeyEvent: _handleGlobalKey,
+      child: Row(children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 0, 12),
+          child: Sidebar(selectedIndex: nav,
+              onSelected: (i) => context.read<AppState>().selectNav(i)),
+        ),
+        Expanded(child: _pageStack(nav)),
+      ]),
+    );
 
     final Widget body;
     if (mobile) {
-      // 移动端布局：内容区全屏铺满，底部液态玻璃导航栏悬浮叠加在上方
-      // （页面内容向下延伸到屏幕底部，滑动区不再被限制在导航栏上方——
-      //   各 Tab 页滚动区已用 kMobileNavClearance 预留底部空间避免被遮挡）。
+      // 移动端布局：内容区全屏铺满，底部液态玻璃导航栏悬浮叠加在上方。
+      // 页面区改用 PageView：[0,1,3,4] 四个 Tab 滑动全程跟随手指（拖到一半即
+      // 「各展示一半」），松手由 PageView 决定回弹或翻页；底部导航点击时同步。
       body = Stack(children: [
-        // 用一层轻量横向甩动检测包住页面内容：向左滑=下一个 Tab、
-        // 向右滑=上一个 Tab（顺序 [0,1,3,4] 循环）。只在松手时按 velocity
-        // 阈值触发，不拦截 start/update，因此页面内的点按、纵向滚动、以及
-        // 滑杆等横向控件的手势都不受影响。
-        Positioned.fill(
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onHorizontalDragEnd: (d) => _onMobileSwipe(d.primaryVelocity ?? 0),
-            child: page,
-          ),
-        ),
+        Positioned.fill(child: _mobilePageView()),
         Positioned(
           left: 0, right: 0, bottom: 0,
           child: MobileBottomNav(
             selectedIndex: nav,
-            onSelected: (i) => context.read<AppState>().selectNav(i),
+            onSelected: _selectMobileNav,
           ),
         ),
       ]);
@@ -628,17 +618,32 @@ class _AppShellState extends State<AppShell> with WindowListener {
     return _CsdWindowButton(icon: icon, color: color, hoverBg: hoverBg, onTap: onTap);
   }
 
-  /// 移动端横向甩动结束回调：向左滑（velocity<0）= 下一个 Tab，
-  /// 向右滑（velocity>0）= 上一个 Tab，按 _kMobileNavOrder 循环。
-  /// 仅当速度超过阈值才切换，避免普通点按/滚动误触。
-  void _onMobileSwipe(double primaryVelocity) {
-    if (primaryVelocity.abs() < _kSwipeVelocityThreshold) return;
-    final current = context.read<AppState>().selectedNav;
-    final idx = _kMobileNavOrder.indexOf(current);
-    if (idx < 0) return;
-    final step = primaryVelocity < 0 ? 1 : -1;
-    final next = (idx + step + _kMobileNavOrder.length) % _kMobileNavOrder.length;
-    context.read<AppState>().selectNav(_kMobileNavOrder[next]);
+  /// 底部导航点击：切换选中页，并让 PageView 同步到对应位置（无动画跳转）。
+  void _selectMobileNav(int i) {
+    context.read<AppState>().selectNav(i);
+    final idx = _kMobileNavOrder.indexOf(i);
+    if (idx >= 0 &&
+        _mobilePageController.hasClients &&
+        (_mobilePageController.page?.round() ?? idx) != idx) {
+      _mobilePageController.jumpToPage(idx);
+    }
+  }
+
+  /// 移动端四个 Tab 的 PageView：滑动全程跟随手指；onPageChanged 回写选中态。
+  Widget _mobilePageView() {
+    return PageView(
+      controller: _mobilePageController,
+      onPageChanged: (idx) {
+        if (idx < 0 || idx >= _kMobileNavOrder.length) return;
+        final target = _kMobileNavOrder[idx];
+        if (context.read<AppState>().selectedNav != target) {
+          context.read<AppState>().selectNav(target);
+        }
+      },
+      children: [
+        for (final i in _kMobileNavOrder) _KeepAlive(child: _page(i)),
+      ],
+    );
   }
 
   /// 页面懒加载缓存：首次访问才构建，切换时保留状态（IndexedStack），
@@ -674,8 +679,12 @@ class _AppShellState extends State<AppShell> with WindowListener {
   void _prewarmPages() {
     if (_warming) return;
     _warming = true;
+    // 移动端只预热底部导航的 4 个 Tab，Skip CommandPage/LogPage 省内存。
+    final targets = isMobilePlatform
+        ? _kMobileNavOrder
+        : List<int>.generate(6, (i) => i);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      for (var i = 0; i < 6; i++) {
+      for (final i in targets) {
         if (!mounted) return;
         // 每帧只构建一页，避免单帧长任务
         await Future<void>.delayed(const Duration(milliseconds: 160));
@@ -721,6 +730,25 @@ class _CsdWindowButtonState extends State<_CsdWindowButton> {
         ),
       ),
     );
+  }
+}
+
+/// 让 PageView 子页在滑出视口后保持状态（AutomaticKeepAlive）。
+/// 否则左右滑动返回时页面会被重建，丢失滚动位置/输入状态。
+class _KeepAlive extends StatefulWidget {
+  final Widget child;
+  const _KeepAlive({required this.child});
+  @override
+  State<_KeepAlive> createState() => _KeepAliveState();
+}
+
+class _KeepAliveState extends State<_KeepAlive> with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+  @override
+  Widget build(BuildContext context) {
+    super.build(context); // 注册 keep-alive
+    return widget.child;
   }
 }
 

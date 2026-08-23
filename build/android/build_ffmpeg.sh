@@ -197,7 +197,7 @@ if [ ! -f $PREFIX/bin/ffmpeg ]; then
       --enable-gpl --enable-libx264 --enable-libx265 \
       --enable-libmp3lame --enable-libopus \
       --extra-cflags="-I$PREFIX/include $CFLAGS_COMMON" \
-      --extra-ldflags="-static -L$PREFIX/lib -lm" \
+      --extra-ldflags="-static-pie -L$PREFIX/lib -lm" \
       --extra-libs="-lc++ -l:libunwind.a -ldl -lm" \
       > $BUILD/ffmpeg_config.log 2>&1 || { tail -40 $BUILD/ffmpeg_config.log; exit 1; }
   log "building ffmpeg"
@@ -208,9 +208,10 @@ else
   log "ffmpeg cached"
 fi
 
-# ── 6. 拷贝 ffmpeg/ffprobe 为 dist 产物（build_apk.sh 会转存到 assets/ffmpeg、
-#    assets/ffprobe，不再走 jniLibs —— Android 安装器对 .so 做 ELF 校验，
-#    ET_EXEC 静态二进制可能不被解压，导致子进程 exec 报 127）──
+# ── 6. 拷贝 ffmpeg/ffprobe 为 dist 产物。
+#    静态 PIE（ET_DYN，-static-pie）二进制会被 Android 安装器解压到
+#    nativeLibraryDir（可执行上下文），再由 build_apk.sh 转存到 jniLibs、
+#    Dart 侧直接 exec nativeLibraryDir/libffmpeg.so 与 libffprobe.so。──
 cp -f $PREFIX/bin/ffmpeg  $BUILD/dist/libffmpeg.so
 cp -f $PREFIX/bin/ffprobe $BUILD/dist/libffprobe.so
 log "ffmpeg/ffprobe staged: $(ls -la $BUILD/dist)"

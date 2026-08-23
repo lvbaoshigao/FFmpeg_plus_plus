@@ -27,8 +27,11 @@ class MobileBottomNav extends StatefulWidget {
 }
 
 class _MobileBottomNavState extends State<MobileBottomNav> {
-  /// 长按拖动中遮罩的水平位置（相对 bar 内容区，null = 未在拖动）。
+  /// 长按拖动中遮罩中心的水平位置（相对 bar 内容区，null = 未在拖动）。
   double? _dragX;
+  /// 长按开始瞬间「手指」相对「遮罩中心」的水平偏移：按住遮罩边缘拖动时
+  /// 保持抓取点不跳变，松手后按遮罩中心判页。
+  double _dragGrabOffset = 0;
 
   @override
   void initState() {
@@ -94,8 +97,14 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
           final dragging = _dragX != null;
           return GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onLongPressStart: (d) => setState(() => _dragX = d.localPosition.dx),
-            onLongPressMoveUpdate: (d) => setState(() => _dragX = d.localPosition.dx),
+            onLongPressStart: (d) => setState(() {
+              final curCenter = itemW * itemIdx + itemW / 2;
+              _dragGrabOffset = d.localPosition.dx - curCenter;
+              _dragX = curCenter;
+            }),
+            onLongPressMoveUpdate: (d) => setState(() {
+              _dragX = (d.localPosition.dx - _dragGrabOffset).clamp(0.0, cons.maxWidth);
+            }),
             onLongPressEnd: (_) {
               final dx = _dragX;
               setState(() => _dragX = null);
@@ -120,7 +129,7 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
                 bottom: 2,
                 width: itemW - 6,
                 child: AnimatedScale(
-                  scale: dragging ? 1.06 : 1.0,
+                  scale: dragging ? 1.08 : 1.0,
                   duration: const Duration(milliseconds: 160),
                   curve: Curves.easeOut,
                   child: _mask(scheme, isDark, effect),

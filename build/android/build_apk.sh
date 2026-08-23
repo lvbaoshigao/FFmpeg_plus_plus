@@ -14,17 +14,17 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/env.sh"
 
-# ── 1. 补齐 jniLibs + assets（幂等） ──
-# libffmpegpp.so 是 C++ 后端动态库，放 jniLibs；
-# ffmpeg/ffprobe 是静态可执行文件，放 assets（Android 安装器对 .so 做 ELF
-# 校验，ET_EXEC 静态二进制可能不被解压到 nativeLibraryDir，导致 exec 报 127）。
+# ── 1. 补齐 jniLibs（幂等） ──
+# libffmpegpp.so 是 C++ 后端动态库；libffmpeg.so / libffprobe.so 是静态 PIE
+# 可执行文件（ET_DYN，-static-pie）。三者都放 jniLibs/arm64-v8a：
+# Android 安装器会解压到 nativeLibraryDir（可执行上下文），Dart 侧直接 exec
+# nativeLibraryDir/libffmpeg.so 与 libffprobe.so，避免复制到 code_cache 后
+# SELinux 拒绝 exec（Permission denied / 127）。
 JNI_DIR="$FFMPEGPP_ROOT/ffmpegpp_gui/android/app/src/main/jniLibs/arm64-v8a"
-ASSET_DIR="$FFMPEGPP_ROOT/ffmpegpp_gui/android/app/src/main/assets"
-mkdir -p "$JNI_DIR" "$ASSET_DIR"
+mkdir -p "$JNI_DIR"
 
-# 动态库补齐
 MISSING_JNI=""
-for lib in libffmpegpp.so; do
+for lib in libffmpegpp.so libffmpeg.so libffprobe.so; do
   [ -f "$JNI_DIR/$lib" ] || MISSING_JNI="$MISSING_JNI $lib"
 done
 if [ -n "$MISSING_JNI" ]; then
@@ -37,30 +37,14 @@ if [ -n "$MISSING_JNI" ]; then
   done
 fi
 
-# assets 补齐（dist/libffmpeg.so → assets/ffmpeg；dist/libffprobe.so → assets/ffprobe）
-if [ ! -f "$ASSET_DIR/ffmpeg" ] && [ -f "$FFMPEGPP_CACHE/dist/libffmpeg.so" ]; then
-  cp -f "$FFMPEGPP_CACHE/dist/libffmpeg.so" "$ASSET_DIR/ffmpeg"
-  echo "  已补齐 assets/ffmpeg"
-fi
-if [ ! -f "$ASSET_DIR/ffprobe" ] && [ -f "$FFMPEGPP_CACHE/dist/libffprobe.so" ]; then
-  cp -f "$FFMPEGPP_CACHE/dist/libffprobe.so" "$ASSET_DIR/ffprobe"
-  echo "  已补齐 assets/ffprobe"
-fi
-
 # 终检
-for lib in libffmpegpp.so; do
+for lib in libffmpegpp.so libffmpeg.so libffprobe.so; do
   if [ ! -f "$JNI_DIR/$lib" ]; then
     echo "ERROR: 缺少 $lib —— 请先运行 build/android/build_ffmpeg.sh 生成产物" >&2
     exit 1
   fi
 done
-for a in ffmpeg ffprobe; do
-  if [ ! -f "$ASSET_DIR/$a" ]; then
-    echo "ERROR: 缺少 assets/$a —— 请先运行 build/android/build_ffmpeg.sh 生成产物" >&2
-    exit 1
-  fi
-done
-echo "jniLibs + assets 已就绪"
+echo "jniLibs 已就绪"
 
 # ── 2. file_picker compileSdk 补丁（幂等） ──
 # file_picker 8.x 固定 compileSdk 34，而其依赖 flutter_plugin_android_lifecycle
