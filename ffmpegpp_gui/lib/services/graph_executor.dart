@@ -517,6 +517,7 @@ class GraphExecutor {
                 'start_time': rs, 'end_time': re, 'fps': fps, 'format': fmt,
               },
             ));
+            currentOutput = '${baseName}_frames';  // 输出为目录，链到目录而非未创建的文件路径
           } else {
             final fps = (p['fps_rate'] as num?)?.toDouble() ?? 1.0;
             calls.add(BackendCall(
@@ -526,6 +527,7 @@ class GraphExecutor {
                 'fps': fps, 'format': fmt,
               },
             ));
+            currentOutput = '${baseName}_frames';  // 输出为目录，链到目录而非未创建的文件路径
           }
           break;
 

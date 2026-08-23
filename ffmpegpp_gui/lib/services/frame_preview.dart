@@ -68,7 +68,7 @@ class FramePreview {
       }
 
       if (await File(tmpPath).exists()) {
-        await _cleanupOldPreviews(videoPath, 'ffmpegpp_preview_${videoPath.hashCode}_');
+        await _cleanupOldPreviews(videoPath, 'ffmpegpp_preview_${stableKey}_${width}_');
         return tmpPath;
       }
       return null;
@@ -99,7 +99,7 @@ class FramePreview {
       ]);
       if (result.exitCode != 0) return null;
       if (await File(tmpPath).exists()) {
-        _cleanupOldPreviews(videoPath, 'ffmpegpp_full_${videoPath.hashCode}_');
+        _cleanupOldPreviews(videoPath, 'ffmpegpp_full_${stableKey}_');
         return tmpPath;
       }
       return null;

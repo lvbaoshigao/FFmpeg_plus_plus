@@ -102,16 +102,16 @@ Future<String?> _copyBackgroundOptimized(String srcPath, int maxW, int maxH) asy
       return await _copyToAppDir(srcPath, 'background');
     }
 
-    // 等比缩放到屏幕分辨率内（长边对齐）
-    final scale = (maxW / srcW) < (maxH / srcH) ? maxW / srcW : maxH / srcH;
-    final targetW = (srcW * scale).round().clamp(1, maxW);
-    final targetH = (srcH * scale).round().clamp(1, maxH);
+    // 等比缩放到屏幕分辨率内（长边对齐），scale 单一化确保两个方向缩放一致、绝不拉伸
+    final scale = math.min(maxW / srcW, maxH / srcH);
+    final targetW = math.max(1, (srcW * scale).round());
+    final targetH = math.max(1, (srcH * scale).round());
 
-    // 缩放 + 编码（质量高、体积小的 PNG）
+    // 缩放 + 编码（高质量重采样避免下采样变糊；PNG 无损）
     final recorder = ui.PictureRecorder();
     final canvas = ui.Canvas(recorder);
-    canvas.scale(targetW / srcW, targetH / srcH);
-    canvas.drawImage(image, ui.Offset.zero, ui.Paint()..filterQuality = ui.FilterQuality.medium);
+    canvas.scale(scale, scale);
+    canvas.drawImage(image, ui.Offset.zero, ui.Paint()..filterQuality = ui.FilterQuality.high);
     final picture = recorder.endRecording();
     final resized = await picture.toImage(targetW, targetH);
     picture.dispose();
@@ -151,14 +151,14 @@ Future<String?> _saveBackgroundBytes(Uint8List bytes, String fileName, int maxW,
       return await _saveRawBackground(bytes, fileName);
     }
 
-    // 等比缩放到屏幕分辨率内（长边对齐）
-    final scale = (maxW / srcW) < (maxH / srcH) ? maxW / srcW : maxH / srcH;
-    final targetW = (srcW * scale).round().clamp(1, maxW);
-    final targetH = (srcH * scale).round().clamp(1, maxH);
+    // 等比缩放到屏幕分辨率内（长边对齐），scale 单一化确保两个方向缩放一致、绝不拉伸
+    final scale = math.min(maxW / srcW, maxH / srcH);
+    final targetW = math.max(1, (srcW * scale).round());
+    final targetH = math.max(1, (srcH * scale).round());
     final recorder = ui.PictureRecorder();
     final canvas = ui.Canvas(recorder);
-    canvas.scale(targetW / srcW, targetH / srcH);
-    canvas.drawImage(image, ui.Offset.zero, ui.Paint()..filterQuality = ui.FilterQuality.medium);
+    canvas.scale(scale, scale);
+    canvas.drawImage(image, ui.Offset.zero, ui.Paint()..filterQuality = ui.FilterQuality.high);
     final picture = recorder.endRecording();
     final resized = await picture.toImage(targetW, targetH);
     picture.dispose();
@@ -262,6 +262,8 @@ class _SettingsPageState extends State<SettingsPage> {
   final TextEditingController _searchCtrl = TextEditingController();
   final FocusNode _searchFocus = FocusNode();
   String _query = '';
+  /// 移动端搜索是否展开（内联展开在顶栏下方，而非弹出对话框）。
+  bool _searchExpanded = false;
 
   /// 被折叠起来的分区 id。默认全部展开。
   final Set<String> _collapsed = <String>{};
@@ -338,13 +340,15 @@ class _SettingsPageState extends State<SettingsPage> {
       title: (s) => s.secProcessing,
       icon: Icons.movie_filter_outlined,
       cards: [
-        _CardDef(
-          id: 'ffmpeg',
-          title: (s) => s.ffmpegSettings,
-          keywords: ['ffmpeg', 'ffprobe', '编码', 'codec', '安装', 'install',
-              '检测', 'detect', '路径', 'path', '下载', 'download'],
-          build: (ctx, state) => _FfmpegCard(state: state),
-        ),
+        // 移动端 ffmpeg/ffprobe 已内置在 APK（jniLibs），无需展示安装/路径设置
+        if (!isMobilePlatform)
+          _CardDef(
+            id: 'ffmpeg',
+            title: (s) => s.ffmpegSettings,
+            keywords: ['ffmpeg', 'ffprobe', '编码', 'codec', '安装', 'install',
+                '检测', 'detect', '路径', 'path', '下载', 'download'],
+            build: (ctx, state) => _FfmpegCard(state: state),
+          ),
         _CardDef(
           id: 'output',
           title: (s) => s.output,
@@ -433,6 +437,15 @@ class _SettingsPageState extends State<SettingsPage> {
       title: (s) => s.secAdvanced,
       icon: Icons.tune_outlined,
       cards: [
+        // 预测式返回手势（仅 Android 端）
+        if (isAndroidPlatform)
+          _CardDef(
+            id: 'predictiveBack',
+            title: (s) => s.predictiveBack,
+            keywords: ['返回', '手势', '预测', '侧滑', 'back', 'gesture',
+                'predictive', 'swipe', '返回动画', '系统', 'system'],
+            build: _buildPredictiveBack,
+          ),
         _CardDef(
           id: 'update',
           title: (s) => s.cardUpdate,
@@ -497,20 +510,36 @@ class _SettingsPageState extends State<SettingsPage> {
               MobileTopBar(
                 title: Text(s.settingsTitle),
                 actions: [
-                  // 搜索图标按钮
+                  // 搜索图标按钮：点击后在顶栏下方「内联展开」搜索框（不弹窗）
                   IconButton(
-                    icon: Icon(searching ? Icons.close : Icons.search, size: 22),
-                    tooltip: searching ? s.setClearSearch : s.setSearchHint,
+                    icon: Icon(_searchExpanded ? Icons.close : Icons.search, size: 22),
+                    tooltip: _searchExpanded ? s.setClearSearch : s.setSearchHint,
                     onPressed: () {
-                      if (searching) {
-                        _clearSearch();
-                      } else {
-                        _showMobileSearch(context, s, scheme);
-                      }
+                      setState(() {
+                        _searchExpanded = !_searchExpanded;
+                        if (_searchExpanded) {
+                          // 展开后立即聚焦，方便直接输入
+                          WidgetsBinding.instance.addPostFrameCallback((_) => _searchFocus.requestFocus());
+                        } else {
+                          _clearSearch();
+                        }
+                      });
                     },
                     constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
                   ),
                 ],
+              ),
+              // 内联展开的搜索框（属于顶部菜单栏区域，不是新界面）
+              AnimatedSize(
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOutCubic,
+                alignment: Alignment.topCenter,
+                child: (_searchExpanded || searching)
+                    ? Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                        child: _mobileSearchField(scheme, s),
+                      )
+                    : const SizedBox(width: double.infinity, height: 0),
               ),
               Expanded(child: visible.isEmpty && searching
                 ? _emptyState(scheme, s)
@@ -623,46 +652,53 @@ class _SettingsPageState extends State<SettingsPage> {
 
   // ── 移动端专用 ──
 
-  /// 移动端搜索弹窗
-  void _showMobileSearch(BuildContext context, AppStrings s, ColorScheme scheme) {
-    final ctrl = TextEditingController(text: _query);
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        contentPadding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: TextField(
-            controller: ctrl,
-            autofocus: true,
-            style: TextStyle(fontSize: 14, color: scheme.onSurface),
-            decoration: InputDecoration(
-              hintText: s.setSearchHint,
-              hintStyle: TextStyle(color: scheme.outline, fontSize: 14),
-              prefixIcon: Icon(Icons.search, size: 18, color: scheme.outline),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            ),
-            onSubmitted: (v) {
-              setState(() => _query = v.trim().toLowerCase());
-              Navigator.pop(ctx);
-            },
+  /// 移动端内联搜索框（展开在顶栏下方的菜单栏区域，非弹出界面）。
+  Widget _mobileSearchField(ColorScheme scheme, AppStrings s) => TextField(
+        controller: _searchCtrl,
+        focusNode: _searchFocus,
+        autofocus: false,
+        style: TextStyle(fontSize: 14, color: scheme.onSurface),
+        textAlignVertical: TextAlignVertical.center,
+        onChanged: (v) => setState(() => _query = v),
+        onSubmitted: (v) => setState(() {
+          _query = v;
+          _searchExpanded = false;
+        }),
+        decoration: InputDecoration(
+          hintText: s.setSearchHint,
+          hintStyle: TextStyle(fontSize: 14, color: scheme.outline),
+          isDense: true,
+          filled: true,
+          fillColor: scheme.surfaceContainerHighest.withAlpha(90),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          prefixIcon: Icon(Icons.search, size: 18, color: scheme.outline),
+          prefixIconConstraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+          suffixIcon: _query.isEmpty
+              ? null
+              : IconButton(
+                  icon: Icon(Icons.close, size: 16, color: scheme.outline),
+                  tooltip: s.setClearSearch,
+                  onPressed: () {
+                    _clearSearch();
+                    _searchFocus.requestFocus();
+                  },
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(22),
+            borderSide: BorderSide(color: scheme.outlineVariant.withAlpha(70)),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(22),
+            borderSide: BorderSide(color: scheme.outlineVariant.withAlpha(70)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(22),
+            borderSide: BorderSide(color: scheme.primary.withAlpha(160), width: 1.4),
           ),
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(s.cancel)),
-          FilledButton(
-            onPressed: () {
-              setState(() => _query = ctrl.text.trim().toLowerCase());
-              Navigator.pop(ctx);
-            },
-            child: Text(s.isZh ? '搜索' : 'Search'),
-          ),
-        ],
-      ),
-    ).then((_) => ctrl.dispose());
-  }
+      );
 
   /// 移动端设置分区：Android 16 原生设置风格 —— 小号字重标题，
   /// 无图标、无着色，仅灰色文字（onSurfaceVariant），下方为卡片项。
@@ -1106,8 +1142,12 @@ class _SettingSliderState extends State<_SettingSlider> {
   }
 
   @override
-  Widget build(BuildContext context) => Row(children: [
-        Text(widget.label(_current), maxLines: 1, overflow: TextOverflow.ellipsis, style: widget.labelStyle),
+  Widget build(BuildContext context) => Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+        // 大字号下标签不再被右侧 Slider 挤没：允许换行到两行并在必要时收缩
+        Flexible(
+          child: Text(widget.label(_current), maxLines: 2, overflow: TextOverflow.ellipsis, style: widget.labelStyle),
+        ),
+        const SizedBox(width: 8),
         Expanded(
           child: Slider(
             value: _current.clamp(widget.min, widget.max),
@@ -1363,6 +1403,26 @@ Widget _buildMobileLogsEntry(BuildContext ctx, AppState state) {
   ]);
 }
 
+/// 预测式返回手势开关（Android，仅安卓端展示）。
+Widget _buildPredictiveBack(BuildContext ctx, AppState state) {
+  final cfg = state.config;
+  final s = AppStrings.of(cfg.language);
+  final scheme = Theme.of(ctx).colorScheme;
+  final clr = scheme.onSurface;
+  return _glass(ctx, state, s.predictiveBack, [
+    SwitchListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: Text(s.isZh ? '启用预测式返回手势' : 'Enable predictive back gesture',
+          style: TextStyle(color: clr, fontSize: 13)),
+      subtitle: Text(s.predictiveBackHint,
+          style: TextStyle(fontSize: 11, color: scheme.outline)),
+      value: cfg.predictiveBack,
+      onChanged: (v) => state.updateConfig((c) => c..predictiveBack = v),
+    ),
+  ]);
+}
+
 Widget _buildBackground(BuildContext ctx, AppState state) {
   final cfg = state.config;
   final s = AppStrings.of(cfg.language);
@@ -1475,6 +1535,33 @@ Widget _buildLanguage(BuildContext ctx, AppState state) {
   final s = AppStrings.of(cfg.language);
   final scheme = Theme.of(ctx).colorScheme;
   final clr = scheme.onSurface;
+
+  if (isMobilePlatform) {
+    // 移动端：全宽单选（与其它设置项等长），避免下拉菜单宽度过短。
+    return _glass(ctx, state, s.language, [
+      RadioGroup<String>(
+        groupValue: cfg.language,
+        onChanged: (v) {
+          if (v != null) state.updateConfig((c) => c..language = v);
+        },
+        child: Column(children: [
+          RadioListTile<String>(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            title: Text('中文 (简体)', style: TextStyle(fontSize: 13, color: clr)),
+            value: 'zh',
+          ),
+          RadioListTile<String>(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            title: Text('English', style: TextStyle(fontSize: 13, color: clr)),
+            value: 'en',
+          ),
+        ]),
+      ),
+    ]);
+  }
+
   return _glass(ctx, state, s.language, [
     Text(s.languageInterface, style: TextStyle(color: clr, fontSize: 12)),
     const SizedBox(height: 6),
@@ -1496,7 +1583,66 @@ Widget _buildLanguage(BuildContext ctx, AppState state) {
 Widget _buildFont(BuildContext ctx, AppState state) {
   final cfg = state.config;
   final s = AppStrings.of(cfg.language);
-  final clr = Theme.of(ctx).colorScheme.onSurface;
+  final scheme = Theme.of(ctx).colorScheme;
+  final clr = scheme.onSurface;
+
+  if (isMobilePlatform) {
+    // 移动端：只保留「系统字体」与「导入字体」两个选项，不再展示字体列表。
+    return _glass(ctx, state, s.font, [
+      ListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        leading: Icon(Icons.text_fields, size: 20, color: scheme.onSurfaceVariant),
+        title: Text(s.isZh ? '系统字体（默认）' : 'System font (default)',
+            style: TextStyle(fontSize: 13, color: clr)),
+        trailing: cfg.fontFamily.isEmpty
+            ? Icon(Icons.check_circle, size: 19, color: scheme.primary)
+            : const SizedBox(width: 19),
+        onTap: () => state.updateConfig((c) => c..fontFamily = ''),
+      ),
+      ListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        leading: Icon(Icons.upload_file_outlined, size: 20, color: scheme.onSurfaceVariant),
+        title: Text(s.isZh ? '导入字体' : 'Import font',
+            style: TextStyle(fontSize: 13, color: clr)),
+        subtitle: cfg.fontFamily.isEmpty
+            ? null
+            : Text(cfg.fontFamily,
+                style: TextStyle(fontSize: 11, color: scheme.outline),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis),
+        trailing: cfg.fontFamily.isNotEmpty
+            ? Icon(Icons.check_circle, size: 19, color: scheme.primary)
+            : Icon(Icons.chevron_right, size: 19, color: scheme.outline),
+        onTap: () => _pickFont(ctx, state),
+      ),
+      const Divider(height: 12, color: Colors.transparent),
+      _SettingSlider(
+        value: cfg.fontSize, min: 10, max: 21, divisions: 11,
+        label: (v) => '${s.fontSize}: ${v.round()}',
+        labelStyle: TextStyle(color: clr, fontSize: 12),
+        onCommit: (v) => state.updateConfig((c) => c..fontSize = v),
+      ),
+      Text(s.qWeight, style: TextStyle(color: clr, fontSize: 12)),
+      const SizedBox(height: 6),
+      // 字重：中文下拉选择（避免英文标签换行且已汉化）
+      DropdownMenu<int>(
+        initialSelection: cfg.fontWeightIndex,
+        requestFocusOnTap: false,
+        textStyle: TextStyle(fontSize: 12, color: clr),
+        dropdownMenuEntries: const [
+          DropdownMenuEntry(value: 0, label: '细体 (Light)'),
+          DropdownMenuEntry(value: 1, label: '常规 (Regular)'),
+          DropdownMenuEntry(value: 2, label: '中等 (Medium)'),
+          DropdownMenuEntry(value: 3, label: '半粗 (SemiBold)'),
+          DropdownMenuEntry(value: 4, label: '粗体 (Bold)'),
+        ],
+        onSelected: (v) { if (v != null) state.updateConfig((c) => c..fontWeightIndex = v); },
+      ),
+    ]);
+  }
+
   return _glass(ctx, state, s.font, [
     FontPicker(currentFont: cfg.fontFamily, language: cfg.language, showImport: true,
         onImport: () => _pickFont(ctx, state),

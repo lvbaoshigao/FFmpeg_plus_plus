@@ -22,6 +22,27 @@ import 'widgets/mobile_bottom_nav.dart';
 import 'platform/app_platform.dart';
 import 'services/android_platform.dart';
 
+/// 构建壁纸解码用的 ImageProvider。
+///
+/// 关键修复：`Image` 若同时给定 `cacheWidth`/`cacheHeight`（`ResizeImage` 默认
+/// `ResizeImagePolicy.exact`），会解码成「恰好 width×height」的矩形，不保持源图
+/// 宽高比（等价 BoxFit.fill），导致壁纸被异常拉伸。这里改用 `ResizeImagePolicy.fit`
+/// 按「屏幕物理分辨率」等比缩放解码：
+/// - 大图等比降采样到物理分辨率 → 高 DPI 下 1:1 显示，不再模糊；
+/// - 小图不放大（allowUpscaling 默认 false），不浪费内存、不产生伪清晰；
+/// - 等比缩放，绝不拉伸变形。
+ImageProvider<Object> wallpaperImageProvider(
+  String path, double logicalWidth, double logicalHeight, double devicePixelRatio) {
+  final int maxW = (logicalWidth * devicePixelRatio).round().clamp(1, 16384).toInt();
+  final int maxH = (logicalHeight * devicePixelRatio).round().clamp(1, 16384).toInt();
+  return ResizeImage(
+    FileImage(File(path)),
+    width: maxW,
+    height: maxH,
+    policy: ResizeImagePolicy.fit,
+  );
+}
+
 class FfmpegppApp extends StatefulWidget {
   const FfmpegppApp({super.key});
   @override
@@ -60,6 +81,7 @@ class _FfmpegppAppState extends State<FfmpegppApp> {
         darkMode: s.darkMode,
         initialized: s.initialized,
         useDynamicColor: isAndroidPlatform && s.config.useDynamicColor,
+        predictiveBack: isAndroidPlatform && s.config.predictiveBack,
         monetSeed: _monetSeed,
       ),
       builder: (context, k, _) {
@@ -77,9 +99,11 @@ class _FfmpegppAppState extends State<FfmpegppApp> {
             GlobalCupertinoLocalizations.delegate,
           ],
           theme: AppTheme.light(seedColor: k.themeColor, fontFamily: k.fontFamily,
-              fontSize: k.fontSize, fontWeight: k.fontWeight, dynamicSeed: dynamicSeed),
+              fontSize: k.fontSize, fontWeight: k.fontWeight, dynamicSeed: dynamicSeed,
+              predictiveBack: k.predictiveBack),
           darkTheme: AppTheme.dark(seedColor: k.themeColor, fontFamily: k.fontFamily,
-              fontSize: k.fontSize, fontWeight: k.fontWeight, dynamicSeed: dynamicSeed),
+              fontSize: k.fontSize, fontWeight: k.fontWeight, dynamicSeed: dynamicSeed,
+              predictiveBack: k.predictiveBack),
           themeMode: k.darkMode ? ThemeMode.dark : ThemeMode.light,
           builder: (context, child) {
             final scale = k.fontSize / 14.0;
@@ -105,6 +129,7 @@ class _ThemeKey {
   final bool darkMode;
   final bool initialized;
   final bool useDynamicColor;
+  final bool predictiveBack;
   final int? monetSeed;
   const _ThemeKey({
     required this.lang,
@@ -115,6 +140,7 @@ class _ThemeKey {
     required this.darkMode,
     required this.initialized,
     required this.useDynamicColor,
+    required this.predictiveBack,
     required this.monetSeed,
   });
 
@@ -129,10 +155,11 @@ class _ThemeKey {
       other.darkMode == darkMode &&
       other.initialized == initialized &&
       other.useDynamicColor == useDynamicColor &&
+      other.predictiveBack == predictiveBack &&
       other.monetSeed == monetSeed;
 
   @override
-  int get hashCode => Object.hash(lang, themeColor, fontFamily, fontSize, fontWeight, darkMode, initialized, useDynamicColor, monetSeed);
+  int get hashCode => Object.hash(lang, themeColor, fontFamily, fontSize, fontWeight, darkMode, initialized, useDynamicColor, predictiveBack, monetSeed);
 }
 
 /// 启动加载画面：旋转光晕 + 品牌图标 + 进度提示。
@@ -495,13 +522,14 @@ class _AppShellState extends State<AppShell> with WindowListener {
         if (!hasBg) return Scaffold(body: body);
         // 有壁纸时：壁纸铺底 + 半透明遮罩 + 透明 Scaffold（让子页面也能看到壁纸）
         final a = ((1.0 - bgTuple.$2) * 220).round().clamp(20, 240);
-        // 内存优化：按窗口逻辑尺寸解码壁纸（而不是原图全尺寸），
-        // 2560×1914 的壁纸解码后可节省 70%+ 内存。
-        final w = MediaQuery.sizeOf(context).width.ceil();
-        final h = MediaQuery.sizeOf(context).height.ceil();
+        // 内存优化 + 防拉伸防模糊：按「屏幕物理分辨率」等比缩放解码壁纸
+        // （而不是按逻辑尺寸 cacheWidth/cacheHeight 强扯成矩形去解码）。
+        final size = MediaQuery.sizeOf(context);
+        final dpr = MediaQuery.devicePixelRatioOf(context);
         return Stack(children: [
-          Positioned.fill(child: Image.file(File(bg), fit: BoxFit.cover,
-              cacheWidth: (w * 1.25).ceil(), cacheHeight: (h * 1.25).ceil(),
+          Positioned.fill(child: Image(
+              image: wallpaperImageProvider(bg, size.width, size.height, dpr),
+              fit: BoxFit.cover,
               errorBuilder: (_, a, b) {
                 clearBgCache();
                 return const SizedBox.shrink();

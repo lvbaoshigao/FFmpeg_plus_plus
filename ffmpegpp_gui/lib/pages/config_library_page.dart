@@ -14,6 +14,7 @@ import '../widgets/toast.dart';
 import '../widgets/glass_panel.dart';
 import '../app.dart';
 import 'pipeline_editor_page.dart';
+import 'quick_config_page.dart';
 
 const _uuid = Uuid();
 
@@ -452,7 +453,24 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
   }
 
   void _openQuickEditor(QuickConfig cfg) {
-    // TODO: navigate to quick config editor
+    Navigator.of(context).push(smoothRoute(
+      QuickConfigPage(
+        config: cfg,
+        onSave: (updated) async {
+          updated.updatedAt = DateTime.now();
+          await QuickConfigStorage.save(updated);
+          if (!mounted) return;
+          setState(() {
+            final i = _quickConfigs.indexWhere((c) => c.id == updated.id);
+            if (i >= 0) {
+              _quickConfigs[i] = updated;
+            } else {
+              _quickConfigs.insert(0, updated);
+            }
+          });
+        },
+      ),
+    ));
   }
 
   Future<void> _deleteQuickConfig(QuickConfig cfg) async {

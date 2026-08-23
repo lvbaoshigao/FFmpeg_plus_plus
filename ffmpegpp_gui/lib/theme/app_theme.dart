@@ -1,5 +1,6 @@
 import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 
 class AppTheme {
   static final String monoFont = Platform.isWindows ? 'Consolas' : 'monospace';
@@ -7,23 +8,23 @@ class AppTheme {
   /// seedColor 为用户自定义主题色；dynamicSeed 非空时（Android Monet
   /// 动态取色）覆盖它作为种子色，使用与系统 Material You 一致的
   /// tonalSpot 方案生成整套配色。
-  static ThemeData dark({int seedColor = 0xFF5E6AD2, String fontFamily = '', double fontSize = 14.0, int fontWeight = 400, int? dynamicSeed}) {
+  static ThemeData dark({int seedColor = 0xFF5E6AD2, String fontFamily = '', double fontSize = 14.0, int fontWeight = 400, int? dynamicSeed, bool predictiveBack = true}) {
     final scheme = ColorScheme.fromSeed(
       seedColor: Color(dynamicSeed ?? seedColor),
       brightness: Brightness.dark,
     );
-    return _build(scheme, fontFamily, fontSize, fontWeight);
+    return _build(scheme, fontFamily, fontSize, fontWeight, predictiveBack: predictiveBack);
   }
 
-  static ThemeData light({int seedColor = 0xFF5E6AD2, String fontFamily = '', double fontSize = 14.0, int fontWeight = 400, int? dynamicSeed}) {
+  static ThemeData light({int seedColor = 0xFF5E6AD2, String fontFamily = '', double fontSize = 14.0, int fontWeight = 400, int? dynamicSeed, bool predictiveBack = true}) {
     final scheme = ColorScheme.fromSeed(
       seedColor: Color(dynamicSeed ?? seedColor),
       brightness: Brightness.light,
     );
-    return _build(scheme, fontFamily, fontSize, fontWeight);
+    return _build(scheme, fontFamily, fontSize, fontWeight, predictiveBack: predictiveBack);
   }
 
-  static ThemeData _build(ColorScheme scheme, String fontFamily, double fontSize, int fontWeight) {
+  static ThemeData _build(ColorScheme scheme, String fontFamily, double fontSize, int fontWeight, {bool predictiveBack = true}) {
     final isDark = scheme.brightness == Brightness.dark;
     // 字号缩放统一交给 app.dart 里的 MediaQuery.textScaler（TextScaler.linear(fontSize/14)），
     // 这里不能再 `sz * scale`，否则字号会被乘两次（默认 17 号会渲染成约 20.6px）。
@@ -52,6 +53,19 @@ class AppTheme {
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
+      // 预测式返回手势（Android 14+）：开启时 Android 使用 PredictiveBack 转场，
+      // 关闭时回退到 Zoom 转场。iOS/macOS 沿用 Cupertino，桌面沿用 Zoom。
+      pageTransitionsTheme: PageTransitionsTheme(
+        builders: <TargetPlatform, PageTransitionsBuilder>{
+          TargetPlatform.android: predictiveBack
+              ? const PredictiveBackPageTransitionsBuilder()
+              : const ZoomPageTransitionsBuilder(),
+          TargetPlatform.iOS: const CupertinoPageTransitionsBuilder(),
+          TargetPlatform.macOS: const CupertinoPageTransitionsBuilder(),
+          TargetPlatform.windows: const ZoomPageTransitionsBuilder(),
+          TargetPlatform.linux: const ZoomPageTransitionsBuilder(),
+        },
+      ),
       fontFamilyFallback: fallback,
       textTheme: appliedTt,
       scaffoldBackgroundColor: scheme.surface,

@@ -141,9 +141,7 @@ Future<void> _precacheWallpaper(AppState state) async {
     if (views.isEmpty) return;
     final view = views.first;
     final size = view.physicalSize / view.devicePixelRatio;
-    final w = (size.width * 1.25).ceil();
-    final h = (size.height * 1.25).ceil();
-    final provider = ResizeImage(FileImage(File(bg)), width: w, height: h);
+    final provider = wallpaperImageProvider(bg, size.width, size.height, view.devicePixelRatio);
     // 触发解码并等待完成，使图片进入 ImageCache（后续同参数请求直接命中）
     final stream = provider.resolve(ImageConfiguration.empty);
     final done = Completer<void>();
@@ -224,7 +222,9 @@ void _killOldProcesses() {
     // 避免依赖平台差异。命令行不可拼接用户输入，仅常量，无注入风险。
     // 注意：Dart 字符串里的 $ 需转义——$myPid 是想要的插值，
     // 但 bash 的 $(...) 命令替换和 "$p" 里的 $ 必须写成 \$( 和 \$p。
-    Process.run('bash', ['-c', 'for p in \$(pgrep -f ffmpegpp_gui | grep -v $myPid); do kill -9 "\$p" 2>/dev/null; done']).ignore();
+    // grep -v $$：执行该命令的 bash -c 自身 cmdline 也包含 "ffmpegpp_gui"，
+    // 必须一并排除，否则清理旧进程时会把正在运行的这条命令一起 kill 掉。
+    Process.run('bash', ['-c', 'for p in \$(pgrep -f ffmpegpp_gui | grep -v $myPid | grep -v \$\$); do kill -9 "\$p" 2>/dev/null; done']).ignore();
   }
 }
 
