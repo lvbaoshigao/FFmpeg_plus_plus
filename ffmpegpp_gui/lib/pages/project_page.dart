@@ -10,6 +10,7 @@ import '../theme/app_strings.dart';
 import '../widgets/video_card.dart';
 import '../widgets/container_card.dart';
 import '../widgets/glass_panel.dart';
+import '../widgets/mobile_glass_pill.dart';
 import '../widgets/toast.dart';
 import '../platform/app_platform.dart';
 import '../services/quick_config_storage.dart';
@@ -45,6 +46,26 @@ class ProjectPageState extends State<ProjectPage> {
       _selectionMode = false;
       _selectedIds.clear();
       _selectedContainerIds.clear();
+    });
+  }
+
+  /// 多选模式下若已无任何选中项，自动退出多选界面。
+  void _refreshSelectionMode() {
+    if (_selectionMode && _selectedIds.isEmpty && _selectedContainerIds.isEmpty) {
+      _selectionMode = false;
+    }
+  }
+
+  /// 反选：每个视频/容器的「选中↔未选中」互换。
+  void _invertSelection(AppState state) {
+    setState(() {
+      for (final v in state.videos) {
+        if (!_selectedIds.remove(v.id)) _selectedIds.add(v.id);
+      }
+      for (final c in state.containers) {
+        if (!_selectedContainerIds.remove(c.id)) _selectedContainerIds.add(c.id);
+      }
+      _refreshSelectionMode();
     });
   }
 
@@ -104,7 +125,10 @@ class ProjectPageState extends State<ProjectPage> {
         return Scaffold(
           backgroundColor: Colors.transparent,
           body: Column(children: [
-            GlassTopBar(
+            if (isMobilePlatform)
+              _buildMobileTopBar(context, state, s, scheme, clr)
+            else
+              GlassTopBar(
               title: (isMobilePlatform && _selectionMode)
                 ? Text(
                     '${s.isZh ? '已选' : 'Selected'} ${_selectedIds.length + _selectedContainerIds.length} ${s.isZh ? '项' : 'items'}',
@@ -237,6 +261,174 @@ class ProjectPageState extends State<ProjectPage> {
     );
   }
 
+  /// 移动端顶栏：液态玻璃药丸（不再全宽模糊）——左标题药丸 + 右动作长药丸；
+  /// 搜索时标题药丸变成搜索药丸（变长），右侧动作药丸缩放隐藏。
+  Widget _buildMobileTopBar(
+      BuildContext context, AppState state, AppStrings s, ColorScheme scheme, Color clr) {
+    final safeTop = MediaQuery.of(context).padding.top;
+    final searching = _searchVisible;
+    final inSelection = _selectionMode;
+    final selectedCount = _selectedIds.length + _selectedContainerIds.length;
+
+    final Widget titleChild = inSelection
+        ? Row(mainAxisSize: MainAxisSize.min, children: [
+            Text(
+              '${s.isZh ? '已选' : 'Selected'} $selectedCount ${s.isZh ? '项' : 'items'}',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface),
+            ),
+            const SizedBox(width: 6),
+            InkWell(
+              onTap: _exitSelectionMode,
+              borderRadius: BorderRadius.circular(12),
+              child: Padding(
+                padding: const EdgeInsets.all(2),
+                child: Icon(Icons.close, size: 17, color: scheme.onSurfaceVariant),
+              ),
+            ),
+          ])
+        : Text(s.navProjects,
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface));
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(12, safeTop + 6, 12, 6),
+      child: Row(children: [
+        // 左侧：标题药丸 ↔ 搜索药丸（搜索时展开成整条）
+        Expanded(
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 240),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            transitionBuilder: (child, anim) => FadeTransition(
+              opacity: anim,
+              child: ScaleTransition(
+                scale: Tween<double>(begin: 0.92, end: 1.0).animate(anim),
+                child: child,
+              ),
+            ),
+            child: searching
+                ? MobileGlassPill(
+                    key: const ValueKey('search'),
+                    radius: 22,
+                    padding: EdgeInsets.zero,
+                    child: SizedBox(
+                      height: 42,
+                      child: Row(children: [
+                        const SizedBox(width: 14),
+                        Icon(Icons.search, size: 18, color: scheme.outline),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextField(
+                            autofocus: true,
+                            style: TextStyle(fontSize: 14, color: scheme.onSurface),
+                            decoration: InputDecoration(
+                              hintText: s.searchVideos,
+                              hintStyle: TextStyle(color: scheme.outline, fontSize: 14),
+                              border: InputBorder.none,
+                              isDense: true,
+                            ),
+                            onChanged: (v) => setState(() => _searchQuery = v),
+                          ),
+                        ),
+                        IconButton(
+                          icon: Icon(Icons.close, size: 18, color: scheme.onSurfaceVariant),
+                          onPressed: () => setState(() {
+                            _searchVisible = false;
+                            _searchQuery = '';
+                          }),
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                          padding: EdgeInsets.zero,
+                        ),
+                        const SizedBox(width: 4),
+                      ]),
+                    ),
+                  )
+                : MobileGlassPill(
+                    key: const ValueKey('title'),
+                    radius: 22,
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    child: titleChild,
+                  ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        // 右侧：动作长药丸（搜索时缩放+淡出隐藏）
+        AnimatedScale(
+          scale: searching ? 0.6 : 1.0,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          child: AnimatedOpacity(
+            opacity: searching ? 0.0 : 1.0,
+            duration: const Duration(milliseconds: 220),
+            child: MobileGlassPill(
+              radius: 22,
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: _buildMobileActions(context, state, s, scheme, inSelection),
+              ),
+            ),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  /// 移动端顶栏右侧动作（长药丸内）：多选=全选/反选/删除；普通=搜索/导入/容器/添加。
+  List<Widget> _buildMobileActions(BuildContext context, AppState state, AppStrings s,
+      ColorScheme scheme, bool inSelection) {
+    if (inSelection) {
+      return [
+        _pillAction(scheme, Icons.select_all, s.selectAll, scheme.onSurface, () => setState(() {
+          _selectedIds.addAll(state.videos.map((v) => v.id));
+          _selectedContainerIds.addAll(state.containers.map((c) => c.id));
+        })),
+        _pillAction(scheme, Icons.flip, s.isZh ? '反选' : 'Invert', scheme.onSurface,
+            () => _invertSelection(state)),
+        _pillAction(scheme, Icons.delete_outline, s.deleteSelected, scheme.error,
+            () => _deleteSelected(state)),
+      ];
+    }
+    return [
+      _pillAction(scheme, Icons.search, s.search, scheme.onSurface, () => setState(() {
+        _searchVisible = !_searchVisible;
+        if (!_searchVisible) _searchQuery = '';
+      })),
+      _pillAction(scheme, Icons.file_download_outlined, s.isZh ? '导入配置' : 'Import Config',
+          scheme.onSurface, state.videos.isEmpty ? null : () => _importConfig(state, s)),
+      if (state.config.editMode != 1)
+        _pillAction(scheme, Icons.create_new_folder_outlined, s.container, scheme.onSurface,
+            () => _showContainerMenu(context, state, s)),
+      _pillAction(scheme, Icons.add, s.addVideo, scheme.onPrimary, () => _pick(state),
+          bg: scheme.primary),
+    ];
+  }
+
+  /// 药丸内紧凑圆形图标按钮（缩小按钮间距）。
+  Widget _pillAction(ColorScheme scheme, IconData icon, String tooltip, Color color,
+      VoidCallback? onTap, {Color? bg}) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+          child: Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: bg,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, size: 19, color: color),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildBody(BuildContext context, AppState state, List videos, AppStrings s, Color clr, ColorScheme scheme) {
     if (_dragging) {
       return Container(
@@ -304,6 +496,7 @@ class ProjectPageState extends State<ProjectPage> {
               if (_selectionMode) {
                 setState(() {
                   if (!_selectedContainerIds.remove(c.id)) _selectedContainerIds.add(c.id);
+                  _refreshSelectionMode();
                 });
               }
             },
@@ -343,6 +536,7 @@ class ProjectPageState extends State<ProjectPage> {
             if (_selectionMode) {
               setState(() {
                 if (!_selectedIds.remove(video.id)) _selectedIds.add(video.id);
+                _refreshSelectionMode();
               });
             } else if (state.config.editMode == 1) {
               _showQuickConfigDialog(context, state, video, s);

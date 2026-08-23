@@ -25,7 +25,9 @@ import '../services/update_service.dart' as updater;
 import '../services/shell_open.dart';
 import '../widgets/toast.dart';
 import '../widgets/glass_panel.dart';
+import '../widgets/mobile_glass_pill.dart';
 import '../widgets/mobile_top_bar.dart';
+import '../app.dart' show wallpaperImageProvider;
 
 final _s = Platform.pathSeparator;
 
@@ -202,6 +204,30 @@ bool _sameBytes(String path, Uint8List bytes) {
 
 /// 用系统默认浏览器打开链接。见 [ShellOpen] 里关于 `cmd /c start` 注入的说明。
 Future<void> openExternalUrl(String url) => ShellOpen.url(url);
+
+/// 二级设置页也铺设壁纸背景（与主界面一致），避免返回手势/过渡时露出黑底或主题色底。
+/// 无壁纸时直接返回 child（透明 Scaffold 自行透出上层背景）。
+Widget _withWallpaper(BuildContext ctx, AppState state, Widget child) {
+  final bg = state.config.backgroundImage;
+  if (bg.isEmpty || !File(bg).existsSync()) return child;
+  final scheme = Theme.of(ctx).colorScheme;
+  final op = state.config.backgroundOpacity.clamp(0.0, 1.0);
+  final a = ((1.0 - op) * 220).round().clamp(20, 240);
+  final size = MediaQuery.sizeOf(ctx);
+  final dpr = MediaQuery.devicePixelRatioOf(ctx);
+  return Stack(children: [
+    Positioned.fill(child: Image(
+      image: wallpaperImageProvider(bg, size.width, size.height, dpr),
+      fit: BoxFit.cover,
+      errorBuilder: (_, a, b) => const SizedBox.shrink(),
+    )),
+    Positioned.fill(child: Container(color: scheme.surface.withAlpha(a))),
+    Theme(
+      data: Theme.of(ctx).copyWith(scaffoldBackgroundColor: Colors.transparent),
+      child: child,
+    ),
+  ]);
+}
 
 // ═══════════════════════════════════════════
 // 设置项元数据 —— 分区 / 卡片 / 搜索关键字
@@ -507,40 +533,7 @@ class _SettingsPageState extends State<SettingsPage> {
           return Scaffold(
             backgroundColor: Colors.transparent,
             body: Column(children: [
-              MobileTopBar(
-                title: Text(s.settingsTitle),
-                actions: [
-                  // 搜索图标按钮：点击后在顶栏下方「内联展开」搜索框（不弹窗）
-                  IconButton(
-                    icon: Icon(_searchExpanded ? Icons.close : Icons.search, size: 22),
-                    tooltip: _searchExpanded ? s.setClearSearch : s.setSearchHint,
-                    onPressed: () {
-                      setState(() {
-                        _searchExpanded = !_searchExpanded;
-                        if (_searchExpanded) {
-                          // 展开后立即聚焦，方便直接输入
-                          WidgetsBinding.instance.addPostFrameCallback((_) => _searchFocus.requestFocus());
-                        } else {
-                          _clearSearch();
-                        }
-                      });
-                    },
-                    constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-                  ),
-                ],
-              ),
-              // 内联展开的搜索框（属于顶部菜单栏区域，不是新界面）
-              AnimatedSize(
-                duration: const Duration(milliseconds: 220),
-                curve: Curves.easeOutCubic,
-                alignment: Alignment.topCenter,
-                child: (_searchExpanded || searching)
-                    ? Padding(
-                        padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-                        child: _mobileSearchField(scheme, s),
-                      )
-                    : const SizedBox(width: double.infinity, height: 0),
-              ),
+              _buildMobileTopBar(s, scheme),
               Expanded(child: visible.isEmpty && searching
                 ? _emptyState(scheme, s)
                 : ListView(
@@ -652,53 +645,106 @@ class _SettingsPageState extends State<SettingsPage> {
 
   // ── 移动端专用 ──
 
-  /// 移动端内联搜索框（展开在顶栏下方的菜单栏区域，非弹出界面）。
-  Widget _mobileSearchField(ColorScheme scheme, AppStrings s) => TextField(
-        controller: _searchCtrl,
-        focusNode: _searchFocus,
-        autofocus: false,
-        style: TextStyle(fontSize: 14, color: scheme.onSurface),
-        textAlignVertical: TextAlignVertical.center,
-        onChanged: (v) => setState(() => _query = v),
-        onSubmitted: (v) => setState(() {
-          _query = v;
-          _searchExpanded = false;
-        }),
-        decoration: InputDecoration(
-          hintText: s.setSearchHint,
-          hintStyle: TextStyle(fontSize: 14, color: scheme.outline),
-          isDense: true,
-          filled: true,
-          fillColor: scheme.surfaceContainerHighest.withAlpha(90),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          prefixIcon: Icon(Icons.search, size: 18, color: scheme.outline),
-          prefixIconConstraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-          suffixIcon: _query.isEmpty
-              ? null
-              : IconButton(
-                  icon: Icon(Icons.close, size: 16, color: scheme.outline),
-                  tooltip: s.setClearSearch,
-                  onPressed: () {
-                    _clearSearch();
-                    _searchFocus.requestFocus();
-                  },
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                ),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(22),
-            borderSide: BorderSide(color: scheme.outlineVariant.withAlpha(70)),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(22),
-            borderSide: BorderSide(color: scheme.outlineVariant.withAlpha(70)),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(22),
-            borderSide: BorderSide(color: scheme.primary.withAlpha(160), width: 1.4),
+  /// 移动端顶栏：液态玻璃药丸（不再全宽模糊）——左标题药丸 + 右搜索药丸；
+  /// 点击搜索后标题药丸变长成搜索药丸，右侧搜索按钮缩放隐藏。
+  Widget _buildMobileTopBar(AppStrings s, ColorScheme scheme) {
+    final safeTop = MediaQuery.of(context).padding.top;
+    final searching = _searchExpanded;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(12, safeTop + 6, 12, 6),
+      child: Row(children: [
+        Expanded(
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 240),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            transitionBuilder: (child, anim) => FadeTransition(
+              opacity: anim,
+              child: ScaleTransition(
+                scale: Tween<double>(begin: 0.92, end: 1.0).animate(anim),
+                child: child,
+              ),
+            ),
+            child: searching
+                ? MobileGlassPill(
+                    key: const ValueKey('search'),
+                    radius: 22,
+                    padding: EdgeInsets.zero,
+                    child: SizedBox(
+                      height: 42,
+                      child: Row(children: [
+                        const SizedBox(width: 14),
+                        Icon(Icons.search, size: 18, color: scheme.outline),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextField(
+                            autofocus: true,
+                            controller: _searchCtrl,
+                            focusNode: _searchFocus,
+                            style: TextStyle(fontSize: 14, color: scheme.onSurface),
+                            decoration: InputDecoration(
+                              hintText: s.setSearchHint,
+                              hintStyle: TextStyle(fontSize: 14, color: scheme.outline),
+                              border: InputBorder.none,
+                              isDense: true,
+                            ),
+                            onChanged: (v) => setState(() => _query = v),
+                          ),
+                        ),
+                        IconButton(
+                          icon: Icon(Icons.close, size: 18, color: scheme.onSurfaceVariant),
+                          tooltip: s.setClearSearch,
+                          onPressed: () {
+                            setState(() {
+                              _searchExpanded = false;
+                              _searchCtrl.clear();
+                              _query = '';
+                            });
+                            _searchFocus.unfocus();
+                          },
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                        ),
+                        const SizedBox(width: 4),
+                      ]),
+                    ),
+                  )
+                : MobileGlassPill(
+                    key: const ValueKey('title'),
+                    radius: 22,
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    child: Text(s.settingsTitle,
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+                  ),
           ),
         ),
-      );
+        const SizedBox(width: 8),
+        AnimatedScale(
+          scale: searching ? 0.6 : 1.0,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          child: AnimatedOpacity(
+            opacity: searching ? 0.0 : 1.0,
+            duration: const Duration(milliseconds: 220),
+            child: MobileGlassPill(
+              radius: 22,
+              padding: EdgeInsets.zero,
+              child: IconButton(
+                icon: Icon(Icons.search, size: 20, color: scheme.onSurface),
+                tooltip: s.setSearchHint,
+                onPressed: () {
+                  setState(() => _searchExpanded = true);
+                  WidgetsBinding.instance.addPostFrameCallback((_) => _searchFocus.requestFocus());
+                },
+                constraints: const BoxConstraints(minWidth: 42, minHeight: 42),
+                padding: EdgeInsets.zero,
+              ),
+            ),
+          ),
+        ),
+      ]),
+    );
+  }
 
   /// 移动端设置分区：Android 16 原生设置风格 —— 小号字重标题，
   /// 无图标、无着色，仅灰色文字（onSurfaceVariant），下方为卡片项。
@@ -737,14 +783,10 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
       Padding(
         padding: const EdgeInsets.fromLTRB(8, 0, 8, 7),
-        child: Container(
-          width: double.infinity,
-          decoration: BoxDecoration(
-            color: scheme.surfaceContainerLow,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: scheme.outlineVariant.withAlpha(46), width: 0.6),
-          ),
-          clipBehavior: Clip.antiAlias,
+        // 设置项卡片：遵循玻璃效果配置（liquid/blur/none）与卡片不透明度。
+        child: GlassPanel(
+          radius: 18,
+          padding: EdgeInsets.zero,
           child: Column(children: rows),
         ),
       ),
@@ -824,7 +866,10 @@ class _SettingsPageState extends State<SettingsPage> {
     final scheme = Theme.of(context).colorScheme;
     Navigator.of(context).push(MaterialPageRoute(
       builder: (ctx) => Consumer<AppState>(
-        builder: (ctx2, state, _) => Scaffold(
+        builder: (ctx2, state, _) => _withWallpaper(
+          ctx2,
+          state,
+          Scaffold(
           backgroundColor: Colors.transparent,
           body: Column(children: [
             MobileTopBar(
@@ -844,6 +889,7 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
             ),
           ]),
+          ),
         ),
       ),
     ));
@@ -1290,108 +1336,6 @@ const _presets = [
   ('Rose', 0xFFEF4444), ('Cyan', 0xFF06B6D4), ('Violet', 0xFF8B5CF6),
 ];
 
-/// 预设颜色名（中英文）
-String _presetName(int color, bool isZh) {
-  for (final p in _presets) {
-    if (p.$2 == color) return p.$1;
-  }
-  return isZh ? '自定义' : 'Custom';
-}
-
-/// 移动端主题设置对话框
-Future<void> _showThemeDialog(BuildContext ctx, AppState state, AppStrings s, ColorScheme scheme) async {
-  final cfg = state.config;
-  await showDialog(
-    context: ctx,
-    builder: (dCtx) {
-      return StatefulBuilder(
-        builder: (dCtx, setDialogState) {
-          return AlertDialog(
-            title: Text(s.cardTheme, style: const TextStyle(fontSize: 16)),
-            contentPadding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-            content: SingleChildScrollView(
-              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                SwitchListTile(
-                  dense: true, contentPadding: EdgeInsets.zero,
-                  title: Text(s.darkMode, style: const TextStyle(fontSize: 13)),
-                  value: cfg.darkMode,
-                  onChanged: (v) { state.toggleDarkMode(v); setDialogState(() {}); },
-                ),
-                if (isMobilePlatform)
-                  SwitchListTile(
-                    dense: true, contentPadding: EdgeInsets.zero,
-                    title: Text(s.isZh ? '动态取色（Monet）' : 'Dynamic color (Monet)', style: const TextStyle(fontSize: 13)),
-                    value: cfg.useDynamicColor,
-                    onChanged: (v) { state.updateConfig((c) => c..useDynamicColor = v); setDialogState(() {}); },
-                  ),
-                const SizedBox(height: 8),
-                Text(s.accentColor, style: TextStyle(fontSize: 12, color: scheme.onSurface)),
-                const SizedBox(height: 8),
-                Wrap(spacing: 8, runSpacing: 8, children: [
-                  ..._presets.map((p) => _dot(scheme, cfg.themeColor == p.$2 && cfg.themeColor2 < 0, Color(p.$2), p.$1,
-                      () { state.updateConfig((c) => c..themeColor = p.$2..themeColor2 = -1); setDialogState(() {}); })),
-                  GestureDetector(
-                    onTap: () => _pickColor(dCtx, state),
-                    child: Tooltip(
-                      message: cfg.themeColor2 >= 0 ? (state.config.language == 'zh' ? '当前渐变色' : 'Current gradient') : (state.config.language == 'zh' ? '自定义' : 'Custom'),
-                      child: Container(
-                        width: 28, height: 28,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: cfg.themeColor2 >= 0
-                              ? LinearGradient(colors: [Color(cfg.themeColor), Color(cfg.themeColor2)])
-                              : const LinearGradient(colors: [Color(0xFFFF5F6D), Color(0xFFFFC371), Color(0xFF36D1DC), Color(0xFF5B86E5)]),
-                          border: Border.all(color: cfg.themeColor2 >= 0 ? scheme.primary : scheme.outlineVariant.withAlpha(80), width: cfg.themeColor2 >= 0 ? 2 : 1),
-                        ),
-                        child: const Icon(Icons.add, size: 14, color: Colors.white),
-                      ),
-                    ),
-                  ),
-                ]),
-                const SizedBox(height: 12),
-                Text(s.isZh ? '逻辑门符号标准' : 'Logic Gate Standard', style: TextStyle(fontSize: 12, color: scheme.onSurface)),
-                const SizedBox(height: 6),
-                SegmentedButton<String>(
-                  showSelectedIcon: false,
-                  segments: const [
-                    ButtonSegment(value: 'ansi', label: Text('ANSI/IEEE', style: TextStyle(fontSize: 11))),
-                    ButtonSegment(value: 'iec', label: Text('IEC', style: TextStyle(fontSize: 11))),
-                  ],
-                  selected: {cfg.gateStd},
-                  onSelectionChanged: (v) { state.updateConfig((c) => c..gateStd = v.first); setDialogState(() {}); },
-                ),
-                const SizedBox(height: 12),
-                Text(s.isZh ? '玻璃效果' : 'Glass Effect', style: TextStyle(fontSize: 12, color: scheme.onSurface)),
-                const SizedBox(height: 6),
-                SegmentedButton<String>(
-                  showSelectedIcon: false,
-                  segments: [
-                    ButtonSegment(value: 'liquid', label: Text(s.isZh ? '液态' : 'Liquid', style: const TextStyle(fontSize: 11))),
-                    ButtonSegment(value: 'blur', label: Text(s.isZh ? '模糊' : 'Blur', style: const TextStyle(fontSize: 11))),
-                    ButtonSegment(value: 'none', label: Text(s.isZh ? '无' : 'None', style: const TextStyle(fontSize: 11))),
-                  ],
-                  selected: {cfg.glassEffect},
-                  onSelectionChanged: (v) { state.updateConfig((c) => c..glassEffect = v.first); setDialogState(() {}); },
-                ),
-                const SizedBox(height: 12),
-                SwitchListTile(
-                  dense: true, contentPadding: EdgeInsets.zero,
-                  title: Text(s.isZh ? '主题色跟随玻璃' : 'Tint glass with theme', style: const TextStyle(fontSize: 13)),
-                  value: cfg.glassFollowTheme,
-                  onChanged: (v) { state.updateConfig((c) => c..glassFollowTheme = v); setDialogState(() {}); },
-                ),
-              ]),
-            ),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(dCtx), child: Text(s.isZh ? '完成' : 'Done')),
-            ],
-          );
-        },
-      );
-    },
-  );
-}
-
 const _kDefaultAnthropicModel = 'claude-opus-5';
 
 /// 询问模式下可选"无需确认"的操作（显示名, 内部 key）。
@@ -1409,22 +1353,7 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
   final scheme = Theme.of(ctx).colorScheme;
   final clr = scheme.onSurface;
 
-  if (isMobilePlatform) {
-    // 移动端：简洁入口，点击弹出对话框设置
-    return _glass(ctx, state, s.cardTheme, [
-      ListTile(
-        dense: true, contentPadding: EdgeInsets.zero,
-        leading: const Icon(Icons.color_lens_outlined, size: 20),
-        title: Text(s.cardTheme, style: TextStyle(fontSize: 13, color: clr)),
-        subtitle: Text(
-          '${cfg.darkMode ? (s.isZh ? '深色' : 'Dark') : (s.isZh ? '浅色' : 'Light')} · ${_presetName(cfg.themeColor, s.isZh)}',
-          style: TextStyle(fontSize: 11, color: scheme.outline)),
-        trailing: const Icon(Icons.chevron_right, size: 18, color: null),
-        onTap: () => _showThemeDialog(ctx, state, s, scheme),
-      ),
-    ]);
-  }
-
+  // 移动端与桌面端一致：直接内联展示主题设置项（不再经过一级入口再弹窗）。
   return _glass(ctx, state, s.cardTheme, [
     SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
         title: Text(s.darkMode, style: TextStyle(color: clr)),
@@ -2015,6 +1944,46 @@ Widget _buildCache(BuildContext ctx, AppState state) {
 Widget _buildAbout(BuildContext ctx, AppState state) {
   final s = AppStrings.of(state.config.language);
   final scheme = Theme.of(ctx).colorScheme;
+  if (isMobilePlatform) {
+    // 移动端：无盒子的纯列表，每一项像设置项，链接点击打开网页。
+    return _glass(ctx, state, s.aboutTitle, [
+      ListTile(
+        dense: true, contentPadding: EdgeInsets.zero,
+        leading: Icon(Icons.info_outline, size: 20, color: scheme.primary),
+        title: Text(s.aboutVersion, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+        trailing: Text('v${updater.currentVersion}',
+            style: TextStyle(fontSize: 13, color: scheme.outline, fontWeight: FontWeight.w500)),
+      ),
+      ListTile(
+        dense: true, contentPadding: EdgeInsets.zero,
+        leading: Icon(Icons.system_update, size: 20, color: scheme.primary),
+        title: Text(s.checkUpdate, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+        trailing: const Icon(Icons.chevron_right, size: 18),
+        onTap: () => openExternalUrl('https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases'),
+      ),
+      ListTile(
+        dense: true, contentPadding: EdgeInsets.zero,
+        leading: Icon(Icons.code, size: 20, color: scheme.primary),
+        title: Text(s.aboutGithub, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+        trailing: const Icon(Icons.open_in_new, size: 16),
+        onTap: () => openExternalUrl('https://github.com/lvbaoshigao/FFmpeg_plus_plus'),
+      ),
+      ListTile(
+        dense: true, contentPadding: EdgeInsets.zero,
+        leading: Icon(Icons.article_outlined, size: 20, color: scheme.primary),
+        title: Text(s.aboutBlog, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+        trailing: const Icon(Icons.open_in_new, size: 16),
+        onTap: () => openExternalUrl('https://blog-clstone.netlify.app/'),
+      ),
+      ListTile(
+        dense: true, contentPadding: EdgeInsets.zero,
+        leading: Icon(Icons.volunteer_activism, size: 20, color: scheme.primary),
+        title: Text(s.aboutSponsor, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+        trailing: const Icon(Icons.chevron_right, size: 18),
+        onTap: () => _showSponsor(ctx, scheme, s),
+      ),
+    ]);
+  }
   return _glass(ctx, state, s.aboutTitle, [
     Center(child: Column(children: [
       const SizedBox(height: 4),
@@ -2920,17 +2889,22 @@ Future<void> _downloadAndInstall(BuildContext ctx, AppStrings s, String url) asy
 
 Future<void> _pickColor(BuildContext ctx, AppState state) async {
   final isZh = state.config.language == 'zh';
-  // 固定为小尺寸弹窗（不占满屏幕）
-  final res = await showDialog<_GradResult>(context: ctx, builder: (_) => Center(
-        child: SizedBox(
-          width: 320,
-          child: _CP(
-            initial: Color(state.config.themeColor),
-            initial2: state.config.themeColor2 >= 0 ? Color(state.config.themeColor2) : null,
-            isZh: isZh,
-          ),
-        ),
-      ));
+  final cp = _CP(
+    initial: Color(state.config.themeColor),
+    initial2: state.config.themeColor2 >= 0 ? Color(state.config.themeColor2) : null,
+    isZh: isZh,
+  );
+  // 移动端：底部弹层（全宽、自滚动），避免固定 320px 弹窗在窄屏上挤压出下划线/裁切伪影
+  final res = isMobilePlatform
+      ? await showModalBottomSheet<_GradResult>(
+          context: ctx,
+          isScrollControlled: true,
+          backgroundColor: Colors.transparent,
+          builder: (_) => SafeArea(top: false, child: cp),
+        )
+      : await showDialog<_GradResult>(context: ctx, builder: (_) => Center(
+          child: SizedBox(width: 320, child: cp),
+        ));
   if (res == null) return;
   state.updateConfig((c) => c..themeColor = res.c1..themeColor2 = res.c2 ?? -1);
 }

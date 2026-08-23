@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
@@ -6,9 +7,10 @@ import '../theme/app_strings.dart';
 
 /// 移动端液态玻璃底部导航栏 —— 基于 oc_liquid_glass 的 OCLiquidGlass。
 ///
-/// - 整体是一颗悬浮「药丸」（胶囊）玻璃，通过 GPU fragment shader 实现
-///   iOS 26 风格的折射/高光/光带液态玻璃；
-/// - 选中项使用胶囊「药丸」指示器（图标/文字高亮 + 主题色圆角背景）；
+/// - 整体是一颗悬浮「药丸」（胶囊）玻璃；liquid 用 GPU shader 液态玻璃，
+///   blur 用扁平高斯模糊（BackdropFilter），none 为纯色药丸；
+/// - 选中项使用胶囊「药丸」指示器；长按指示器可左右拖动，遮罩跟随手指，
+///   松手切换到对应页面，按住时遮罩有放大特效；
 /// - 遵循设置中的玻璃效果配置（liquid/blur/none）。
 class MobileBottomNav extends StatefulWidget {
   final int selectedIndex;
@@ -25,6 +27,9 @@ class MobileBottomNav extends StatefulWidget {
 }
 
 class _MobileBottomNavState extends State<MobileBottomNav> {
+  /// 长按拖动中遮罩的水平位置（相对 bar 内容区，null = 未在拖动）。
+  double? _dragX;
+
   @override
   void initState() {
     super.initState();
@@ -37,8 +42,8 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final lang = context.watch<AppState>().config.language;
     final cfg = context.watch<AppState>().config;
+    final lang = cfg.language;
     final s = AppStrings.of(lang);
 
     final items = <(IconData, IconData, String)>[
@@ -56,69 +61,69 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
     final effect = cfg.glassEffect;
     final op = cfg.cardOpacity.clamp(0.0, 1.0);
     final baseAlpha = (op * 255).round().clamp(0, 255);
-
-    final barHeight = 60.0;
-    final bottomSafe = MediaQuery.of(context).padding.bottom;
-    final radius = barHeight / 2; // 完全胶囊形药丸
-
-    // 玻璃主体的着色与描边（同时作为 shader 加载失败/关闭效果时的兜底背景）
     final follow = cfg.glassFollowTheme;
     final baseColor = follow ? scheme.primary : scheme.surface;
     final tint = baseColor.withAlpha(baseAlpha);
-    final borderColor = Colors.white.withValues(alpha: isDark ? 0.16 : 0.32);
 
-    // 胶囊指示器：选中项图标背后的主题色药丸
-    final selectedColor = scheme.primary;
-    final indicator = effect == 'none'
-        ? scheme.primary.withAlpha(70)
-        : scheme.primary.withValues(alpha: isDark ? 0.28 : 0.20);
+    final barHeight = 60.0;
+    final bottomSafe = MediaQuery.of(context).padding.bottom;
+    final radius = barHeight / 2;
+
+    // 选中项颜色：blur 时遮罩是实心主题色，选中项用 onPrimary 反白；其余用主题色。
+    final selectedColor = effect == 'blur' ? scheme.onPrimary : scheme.primary;
     final unselectedColor = scheme.onSurfaceVariant;
 
-    Widget buildBar() => Container(
-          height: barHeight,
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-          decoration: BoxDecoration(
-            color: tint,
-            borderRadius: BorderRadius.circular(radius),
-            border: Border.all(color: borderColor, width: 0.7),
+    Widget buildBarIn() {
+      return Container(
+        height: barHeight,
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        decoration: BoxDecoration(
+          color: tint,
+          borderRadius: BorderRadius.circular(radius),
+          border: Border.all(
+            color: effect == 'blur'
+                ? scheme.outlineVariant.withAlpha(70)
+                : Colors.white.withValues(alpha: isDark ? 0.16 : 0.32),
+            width: effect == 'blur' ? 0.5 : 0.7,
           ),
-          clipBehavior: Clip.antiAlias,
-          child: LayoutBuilder(builder: (ctx, cons) {
-            final itemW = cons.maxWidth / items.length;
-            return Stack(children: [
-              // 滑动遮罩胶囊：切换菜单时在条目间平滑滑动；
-              // 玻璃质感（顶部白高光 + 底部主题色 + 白色描边），盖住图标与文字整块。
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: LayoutBuilder(builder: (ctx, cons) {
+          final itemW = cons.maxWidth / items.length;
+          final maxLeft = cons.maxWidth - itemW;
+          final dragging = _dragX != null;
+          return GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onLongPressStart: (d) => setState(() => _dragX = d.localPosition.dx),
+            onLongPressMoveUpdate: (d) => setState(() => _dragX = d.localPosition.dx),
+            onLongPressEnd: (_) {
+              final dx = _dragX;
+              setState(() => _dragX = null);
+              if (dx != null) {
+                final target = (dx / itemW).floor().clamp(0, items.length - 1);
+                widget.onSelected(itemToPage[target] ?? 0);
+              }
+            },
+            onLongPressCancel: () => setState(() => _dragX = null),
+            child: Stack(children: [
+              // 滑动遮罩胶囊：切换菜单时在条目间平滑滑动；长按拖动时跟随手指。
               AnimatedPositioned(
-                duration: const Duration(milliseconds: 260),
+                duration: dragging
+                    ? Duration.zero
+                    : const Duration(milliseconds: 260),
                 curve: Curves.easeOutCubic,
-                left: itemW * itemIdx + 3,
+                left: (dragging
+                        ? (_dragX! - itemW / 2).clamp(0.0, maxLeft)
+                        : (itemW * itemIdx)) +
+                    3,
                 top: 2,
                 bottom: 2,
                 width: itemW - 6,
-                child: Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(radius - 8),
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.white.withValues(alpha: isDark ? 0.16 : 0.42),
-                        indicator,
-                      ],
-                      stops: const [0.0, 0.6],
-                    ),
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: isDark ? 0.22 : 0.50),
-                      width: 0.8,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: isDark ? 0.24 : 0.08),
-                        blurRadius: 5,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
+                child: AnimatedScale(
+                  scale: dragging ? 1.06 : 1.0,
+                  duration: const Duration(milliseconds: 160),
+                  curve: Curves.easeOut,
+                  child: _mask(scheme, isDark, effect),
                 ),
               ),
               Row(
@@ -135,39 +140,44 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
                     ),
                 ],
               ),
-            ]);
-          }),
-        );
+            ]),
+          );
+        }),
+      );
+    }
 
     // none：纯色药丸（无玻璃光效）
     if (effect == 'none') {
       return Padding(
         padding: EdgeInsets.fromLTRB(14, 2, 14, bottomSafe + 8),
-        child: buildBar(),
+        child: buildBarIn(),
       );
     }
 
-    // liquid / blur：oc_liquid_glass 液态玻璃（GPU fragment shader）
-    final settings = effect == 'blur'
-        ? OCLiquidGlassSettings(
-            refractStrength: -0.01,
-            blurRadiusPx: 10,
-            specStrength: 6,
-            specWidth: 6,
-            lightbandStrength: 0.25,
-            lightbandColor: Colors.white,
-          )
-        : OCLiquidGlassSettings(
-            refractStrength: -0.06,
-            blurRadiusPx: 1.5,
-            specStrength: isDark ? 18.0 : 26.0,
-            specWidth: 10,
-            lightbandStrength: 0.9,
-            lightbandColor: Colors.white,
-          );
+    // blur：扁平高斯模糊（无 3D 液态光效），遮罩为实心主题色
+    if (effect == 'blur') {
+      return Padding(
+        padding: EdgeInsets.fromLTRB(14, 2, 14, bottomSafe + 8),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(radius),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+            child: buildBarIn(),
+          ),
+        ),
+      );
+    }
 
-    // oc_liquid_glass 需要将形状放在 group 内部；shader 加载失败时自动回退到
-    // 内部 Container（即 buildBar），不会出现空白。
+    // liquid：oc_liquid_glass 液态玻璃（GPU fragment shader）
+    final settings = OCLiquidGlassSettings(
+      refractStrength: -0.06,
+      blurRadiusPx: 1.5,
+      specStrength: isDark ? 18.0 : 26.0,
+      specWidth: 10,
+      lightbandStrength: 0.9,
+      lightbandColor: Colors.white,
+    );
+
     return OCLiquidGlassGroup(
       settings: settings,
       child: Padding(
@@ -180,8 +190,56 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
             blurRadius: 22,
             offset: const Offset(0, 6),
           ),
-          child: buildBar(),
+          child: buildBarIn(),
         ),
+      ),
+    );
+  }
+
+  /// 遮罩胶囊外观：blur=实心主题色；liquid=白→主题色渐变；none=半透明主题色。
+  Widget _mask(ColorScheme scheme, bool isDark, String effect) {
+    if (effect == 'blur') {
+      return Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(22),
+          color: scheme.primary,
+          border: Border.all(color: Colors.white.withValues(alpha: 0.28), width: 0.8),
+          boxShadow: [
+            BoxShadow(
+              color: scheme.primary.withAlpha(70),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+      );
+    }
+    final indicator = effect == 'none'
+        ? scheme.primary.withAlpha(70)
+        : scheme.primary.withValues(alpha: isDark ? 0.28 : 0.20);
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.white.withValues(alpha: isDark ? 0.16 : 0.42),
+            indicator,
+          ],
+          stops: const [0.0, 0.6],
+        ),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: isDark ? 0.22 : 0.50),
+          width: 0.8,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.24 : 0.08),
+            blurRadius: 5,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
     );
   }
@@ -240,7 +298,7 @@ class _NavItem extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 10.5,
+                    fontSize: 9.0,
                     fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
                     color: c,
                     height: 1.1,

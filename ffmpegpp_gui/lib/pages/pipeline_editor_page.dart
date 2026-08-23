@@ -2609,6 +2609,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                 left: 8, bottom: 8, right: 80,
                 child: IgnorePointer(child: Text(
                   GraphExecutor.describeGraph(PipelineGraph(nodes: _nodes, connections: _connections, logicBlocks: _logicBlocks)),
+                  // 移动端：调试(探测)状态描述不换行，单行省略；桌面端保持原样。
+                  maxLines: isMobilePlatform ? 1 : null,
+                  overflow: isMobilePlatform ? TextOverflow.ellipsis : null,
                   style: TextStyle(fontSize: 10, color: scheme.onSurface.withAlpha(128), height: 1.4),
                 )),
               ),
@@ -4185,12 +4188,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         elevation: 6,
         borderRadius: BorderRadius.circular(8),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          // 移动端：拖拽芯片整体缩小到约 1/2。
+          padding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 5 : 10, vertical: isMobilePlatform ? 3 : 6),
           decoration: BoxDecoration(color: _nodeColor(t, scheme), borderRadius: BorderRadius.circular(8)),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(_stepIcon(t), size: 14, color: scheme.onSurface),
-            const SizedBox(width: 4),
-            Text(s.isZh ? dummy.label : dummy.labelEn, style: TextStyle(fontSize: 11, color: scheme.onSurface, decoration: TextDecoration.none)),
+            Icon(_stepIcon(t), size: isMobilePlatform ? 8 : 14, color: scheme.onSurface),
+            SizedBox(width: isMobilePlatform ? 2 : 4),
+            Text(s.isZh ? dummy.label : dummy.labelEn, style: TextStyle(fontSize: isMobilePlatform ? 6 : 11, color: scheme.onSurface, decoration: TextDecoration.none)),
           ]),
         ),
       ),
@@ -4242,7 +4246,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       onDoubleTap: () => _startLogicBoxSelect(type, s),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        padding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 5 : 10, vertical: isMobilePlatform ? 2 : 5),
         decoration: BoxDecoration(
           color: isSelected ? Colors.red.withAlpha(60) : Colors.red.withAlpha(30),
           borderRadius: BorderRadius.circular(6),
@@ -4250,9 +4254,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           boxShadow: isSelected ? [BoxShadow(color: Colors.red.withAlpha(40), blurRadius: 6)] : null,
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, size: 14, color: Colors.red),
-          const SizedBox(width: 4),
-          Text(label, style: TextStyle(fontSize: 12, color: scheme.onSurface)),
+          Icon(icon, size: isMobilePlatform ? 8 : 14, color: Colors.red),
+          SizedBox(width: isMobilePlatform ? 2 : 4),
+          Text(label, style: TextStyle(fontSize: isMobilePlatform ? 6 : 12, color: scheme.onSurface)),
         ]),
       ),
     );
@@ -4267,13 +4271,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         elevation: 6,
         borderRadius: BorderRadius.circular(6),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          padding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 4 : 8, vertical: isMobilePlatform ? 2 : 4),
           decoration: BoxDecoration(
             color: scheme.tertiaryContainer.withAlpha(180),
             borderRadius: BorderRadius.circular(6),
             border: Border.all(color: scheme.tertiary.withAlpha(120)),
           ),
-          child: Text(sym, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: scheme.onTertiaryContainer, decoration: TextDecoration.none)),
+          child: Text(sym, style: TextStyle(fontSize: isMobilePlatform ? 6 : 11, fontWeight: FontWeight.w700, color: scheme.onTertiaryContainer, decoration: TextDecoration.none)),
         ),
       ),
       childWhenDragging: Opacity(opacity: 0.3, child: _gateChip(gate, scheme, s)),
@@ -4288,13 +4292,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       message: name,
       waitDuration: const Duration(milliseconds: 500),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        padding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 3 : 7, vertical: isMobilePlatform ? 2 : 3),
         decoration: BoxDecoration(
           color: scheme.tertiaryContainer.withAlpha(gate.isConstant ? 120 : 80),
           borderRadius: BorderRadius.circular(5),
           border: Border.all(color: scheme.tertiary.withAlpha(60)),
         ),
-        child: Text(sym, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: scheme.onTertiaryContainer)),
+        child: Text(sym, style: TextStyle(fontSize: isMobilePlatform ? 5 : 10, fontWeight: FontWeight.w700, color: scheme.onTertiaryContainer)),
       ),
     );
   }
@@ -4302,7 +4306,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   Widget _toolboxChip(PipelineStepType t, PipelineNode dummy, String tag, ColorScheme scheme, AppStrings s, {bool isSelected = false}) {
     return AnimatedContainer(
       duration: const Duration(milliseconds: 150),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      padding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 5 : 10, vertical: isMobilePlatform ? 2 : 5),
       decoration: BoxDecoration(
         color: isSelected ? scheme.primary.withAlpha(40) : _nodeColor(t, scheme).withAlpha(180),
         borderRadius: BorderRadius.circular(6),
@@ -4310,12 +4314,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         boxShadow: isSelected ? [BoxShadow(color: scheme.primary.withAlpha(40), blurRadius: 6)] : null,
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(_stepIcon(t), size: 14, color: scheme.onSurface),
-        const SizedBox(width: 4),
-        Text(s.isZh ? dummy.label : dummy.labelEn, style: TextStyle(fontSize: 12, color: scheme.onSurface)),
+        Icon(_stepIcon(t), size: isMobilePlatform ? 8 : 14, color: scheme.onSurface),
+        SizedBox(width: isMobilePlatform ? 2 : 4),
+        Text(s.isZh ? dummy.label : dummy.labelEn, style: TextStyle(fontSize: isMobilePlatform ? 6 : 12, color: scheme.onSurface)),
         if (tag.isNotEmpty) ...[
-          const SizedBox(width: 4),
-          Text(tag, style: TextStyle(fontSize: 9, color: scheme.outline, fontWeight: FontWeight.w600)),
+          SizedBox(width: isMobilePlatform ? 2 : 4),
+          Text(tag, style: TextStyle(fontSize: isMobilePlatform ? 5 : 9, color: scheme.outline, fontWeight: FontWeight.w600)),
         ],
       ]),
     );
@@ -4546,7 +4550,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       child: ConstrainedBox(
         // 移动端屏幕矮/横屏时，整列工具可能溢出被裁掉（"右侧小工具显示不全"），
         // 用大量高约束 + 可滚动包裹，保证所有按钮始终可达。
-        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * (isMobilePlatform ? 0.62 : 0.86)),
+        // 移动端横屏可用高度更小，进一步下调系数，避免右侧工具列被裁掉。
+        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * (isMobilePlatform ? (_isLandscape ? 0.48 : 0.62) : 0.86)),
         child: SingleChildScrollView(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
         // 移动端：返回按钮（舍弃顶部栏后以浮动按钮替代）
@@ -4576,7 +4581,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         _controlBtn(Icons.zoom_in, s.isZh ? '放大' : 'Zoom in', scheme, () => _zoomTo(_currentScale + 0.15)),
         const SizedBox(height: 2),
         SizedBox(
-          height: 100,
+          // 横屏时把缩放滑杆压短，避免占用过多纵向空间。
+          height: (isMobilePlatform && _isLandscape) ? 60 : 100,
           child: RotatedBox(
             quarterTurns: 3,
             child: SliderTheme(
@@ -4613,14 +4619,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   }
 
   Widget _controlBtn(IconData icon, String tooltip, ColorScheme scheme, VoidCallback onTap, {Color? color}) {
+    // 移动端横屏：缩小按钮 padding 与图标，降低整列高度，防止溢出。
+    final compact = isMobilePlatform && _isLandscape;
     return Tooltip(
       message: tooltip,
       child: InkWell(
         borderRadius: BorderRadius.circular(6),
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.all(6),
-          child: Icon(icon, size: 18, color: color ?? scheme.onSurfaceVariant),
+          padding: EdgeInsets.all(compact ? 3 : 6),
+          child: Icon(icon, size: compact ? 14 : 18, color: color ?? scheme.onSurfaceVariant),
         ),
       ),
     );
@@ -4650,7 +4658,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           Text(s.isZh ? '已自动保存' : 'Auto-saved',
               style: TextStyle(fontSize: 10, color: Colors.green.shade400)),
         ],
-        const Spacer(),
+        // 移动端：把左侧文件信息条(Flexible)压窄到约原来 1/2，通过增大 Spacer 占比实现；桌面端保持不变。
+        Spacer(flex: isMobilePlatform ? 3 : 1),
         Text(
           s.isZh ? '${_nodes.length} 节点  |  $srcCount 源  |  $outCount 输出  |  ${_connections.length} 连线'
               : '${_nodes.length} nodes  |  $srcCount src  |  $outCount out  |  ${_connections.length} links',

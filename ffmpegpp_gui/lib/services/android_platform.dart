@@ -10,7 +10,7 @@ import '../platform/app_platform.dart';
 ///
 /// ⚠️ ffmpeg/ffprobe 是静态可执行二进制，不能走 jniLibs：Android 安装器
 /// 会把 .so 当共享库做 ELF 校验，ET_EXEC 静态二进制可能不被解压，导致
-/// 子进程 exec 报 127。因此改成 assets 打包，由原生侧流式复制到应用文档
+/// 子进程 exec 报 127。因此改成 assets 打包，由原生侧流式复制到 code_cache
 /// 目录并 setExecutable，返回副本路径供 C++ 后端与 UI 本地子进程调用。
 class AndroidPlatformBridge {
   static const MethodChannel _channel = MethodChannel('ffmpegpp/android');
@@ -20,6 +20,18 @@ class AndroidPlatformBridge {
     if (!isAndroidPlatform) return null;
     try {
       return await _channel.invokeMethod<String>('nativeLibraryDir');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// code_cache 目录（SELinux 上下文 app_exec_data_file，允许 exec 可执行文件）。
+  /// 应用文档目录（app_flutter/）是 app_data_file 上下文，exec 会被内核拒绝
+  /// （Permission denied），所以可执行工具必须放到这里。非 Android 返回 null。
+  static Future<String?> codeCacheDir() async {
+    if (!isAndroidPlatform) return null;
+    try {
+      return await _channel.invokeMethod<String>('codeCacheDir');
     } catch (_) {
       return null;
     }
@@ -39,12 +51,15 @@ class AndroidPlatformBridge {
   }
 
   /// 从 APK assets 复制内置工具到可执行目录并设置可执行位。
-  /// 每次都重设可执行位，杜绝「首启复制/加可执行失败后缓存了不可执行副本」
-  /// 的顽固 127（command not found / permission denied）。
+  /// 固定放到 code_cache（app_exec_data_file 上下文）——文档目录 app_flutter
+  /// 是 app_data_file 上下文，exec 会被内核/SELinux 拒绝（Permission denied）。
+  /// 每次都重设可执行位，且副本缺失/为空时重新复制（code_cache 可被系统清理），
+  /// 杜绝「首启复制/加可执行失败后缓存了不可执行副本」的顽固 127。
   static Future<String?> _prepareFromAsset(String assetName, String name) async {
     try {
-      final docsDir = await getApplicationDocumentsDirectory();
-      final binDir = Directory('${docsDir.path}${Platform.pathSeparator}ffmpegpp_bin');
+      final cacheDir = await codeCacheDir();
+      if (cacheDir == null || cacheDir.isEmpty) return null;
+      final binDir = Directory('$cacheDir${Platform.pathSeparator}ffmpegpp_bin');
       await binDir.create(recursive: true);
       final dest = File('${binDir.path}${Platform.pathSeparator}$name');
       final ok = await _prepareBundledTool(assetName, dest.path);
