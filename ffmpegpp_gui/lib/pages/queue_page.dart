@@ -8,6 +8,7 @@ import '../services/system_monitor.dart';
 import '../theme/app_strings.dart';
 import '../widgets/task_card.dart';
 import '../widgets/glass_panel.dart';
+import '../widgets/mobile_glass_pill.dart';
 import '../platform/app_platform.dart';
 
 class QueuePage extends StatefulWidget {
@@ -41,35 +42,12 @@ class _QueuePageState extends State<QueuePage> {
         return Scaffold(
           backgroundColor: Colors.transparent,
           body: Column(children: [
-            GlassTopBar(
-              title: Text(s.navQueue),
-              actions: [
-              if (state.processing)
-                OutlinedButton.icon(
-                    icon: const Icon(Icons.stop, size: 16), label: Text(s.cancelAll),
-                    onPressed: () => state.cancelProcessing())
-              else ...[
-                if (state.tasks.any((t) => t.status == TaskStatus.pending))
-                  FilledButton.icon(
-                      icon: const Icon(Icons.play_arrow, size: 18), label: Text(s.startProcessing),
-                      onPressed: () => state.processAllTasks()),
-                if (state.tasks.any((t) => t.status == TaskStatus.completed || t.status == TaskStatus.failed || t.status == TaskStatus.cancelled))
-                  TextButton.icon(
-                      icon: const Icon(Icons.cleaning_services_outlined, size: 16), label: Text(s.clearCompleted),
-                      onPressed: () => state.clearCompletedTasks()),
-                if (state.tasks.isNotEmpty)
-                  TextButton.icon(
-                      icon: const Icon(Icons.delete_sweep, size: 16), label: Text(s.clearAll),
-                      onPressed: () => state.clearAllTasks()),
-              ],
-              // 紧凑资源占用（顶栏右侧，小尺寸）
-              const SizedBox(width: 8),
-              Padding(
-                padding: const EdgeInsets.only(right: 12),
-                child: _monitorBar(scheme, state),
-              ),
-            ],
-          ),
+            isMobilePlatform
+                ? _buildMobileTopBar(scheme, state, s)
+                : GlassTopBar(
+                    title: Text(s.navQueue),
+                    actions: _buildActions(scheme, state, s),
+                  ),
           Expanded(child: Column(children: [
             // ── 任务列表 ──
             Expanded(child: state.tasks.isEmpty
@@ -94,6 +72,66 @@ class _QueuePageState extends State<QueuePage> {
 
   Widget _monitorBar(ColorScheme scheme, AppState state) {
     return _MonitorWidget(monitor: _monitor, scheme: scheme);
+  }
+
+  /// 顶栏操作按钮 + 资源占用（桌面端与移动端共用同一份逻辑）。
+  List<Widget> _buildActions(ColorScheme scheme, AppState state, AppStrings s) {
+    return [
+      if (state.processing)
+        OutlinedButton.icon(
+            icon: const Icon(Icons.stop, size: 16), label: Text(s.cancelAll),
+            onPressed: () => state.cancelProcessing())
+      else ...[
+        if (state.tasks.any((t) => t.status == TaskStatus.pending))
+          FilledButton.icon(
+              icon: const Icon(Icons.play_arrow, size: 18), label: Text(s.startProcessing),
+              onPressed: () => state.processAllTasks()),
+        if (state.tasks.any((t) => t.status == TaskStatus.completed || t.status == TaskStatus.failed || t.status == TaskStatus.cancelled))
+          TextButton.icon(
+              icon: const Icon(Icons.cleaning_services_outlined, size: 16), label: Text(s.clearCompleted),
+              onPressed: () => state.clearCompletedTasks()),
+        if (state.tasks.isNotEmpty)
+          TextButton.icon(
+              icon: const Icon(Icons.delete_sweep, size: 16), label: Text(s.clearAll),
+              onPressed: () => state.clearAllTasks()),
+      ],
+      // 紧凑资源占用（顶栏右侧，小尺寸）
+      const SizedBox(width: 8),
+      Padding(
+        padding: const EdgeInsets.only(right: 12),
+        child: _monitorBar(scheme, state),
+      ),
+    ];
+  }
+
+  /// 移动端顶栏：左侧标题药丸 + 右侧操作药丸（液态玻璃），与项目/设置页一致；
+  /// 右侧操作横向滚动，窄屏溢出时不会换行/报错。
+  Widget _buildMobileTopBar(ColorScheme scheme, AppState state, AppStrings s) {
+    final safeTop = MediaQuery.of(context).padding.top;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(12, safeTop + 6, 12, 6),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+        // 左：标题药丸
+        MobileGlassPill(
+          radius: 22,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          child: Text(s.navQueue,
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+        ),
+        const SizedBox(width: 8),
+        // 右：操作药丸（横向滚动防溢出）
+        Expanded(
+          child: MobileGlassPill(
+            radius: 22,
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(children: _buildActions(scheme, state, s)),
+            ),
+          ),
+        ),
+      ]),
+    );
   }
 }
 
