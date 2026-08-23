@@ -227,6 +227,12 @@ class _AppShellState extends State<AppShell> with WindowListener {
   final _projectPageKey = GlobalKey<ProjectPageState>();
   bool _isMaximized = false;
 
+  /// 底部导航可见的页面索引，横向滑动按此顺序循环切换。
+  static const List<int> _kMobileNavOrder = [0, 1, 3, 4];
+
+  /// 触发滑动切 Tab 的最小横向甩动速度（逻辑像素/秒），低于此忽略以免误触。
+  static const double _kSwipeVelocityThreshold = 500.0;
+
   @override
   void initState() {
     super.initState();
@@ -490,7 +496,17 @@ class _AppShellState extends State<AppShell> with WindowListener {
       // （页面内容向下延伸到屏幕底部，滑动区不再被限制在导航栏上方——
       //   各 Tab 页滚动区已用 kMobileNavClearance 预留底部空间避免被遮挡）。
       body = Stack(children: [
-        Positioned.fill(child: page),
+        // 用一层轻量横向甩动检测包住页面内容：向左滑=下一个 Tab、
+        // 向右滑=上一个 Tab（顺序 [0,1,3,4] 循环）。只在松手时按 velocity
+        // 阈值触发，不拦截 start/update，因此页面内的点按、纵向滚动、以及
+        // 滑杆等横向控件的手势都不受影响。
+        Positioned.fill(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onHorizontalDragEnd: (d) => _onMobileSwipe(d.primaryVelocity ?? 0),
+            child: page,
+          ),
+        ),
         Positioned(
           left: 0, right: 0, bottom: 0,
           child: MobileBottomNav(
@@ -610,6 +626,19 @@ class _AppShellState extends State<AppShell> with WindowListener {
 
   Widget _csdButton(IconData icon, Color color, Color? hoverBg, VoidCallback onTap) {
     return _CsdWindowButton(icon: icon, color: color, hoverBg: hoverBg, onTap: onTap);
+  }
+
+  /// 移动端横向甩动结束回调：向左滑（velocity<0）= 下一个 Tab，
+  /// 向右滑（velocity>0）= 上一个 Tab，按 _kMobileNavOrder 循环。
+  /// 仅当速度超过阈值才切换，避免普通点按/滚动误触。
+  void _onMobileSwipe(double primaryVelocity) {
+    if (primaryVelocity.abs() < _kSwipeVelocityThreshold) return;
+    final current = context.read<AppState>().selectedNav;
+    final idx = _kMobileNavOrder.indexOf(current);
+    if (idx < 0) return;
+    final step = primaryVelocity < 0 ? 1 : -1;
+    final next = (idx + step + _kMobileNavOrder.length) % _kMobileNavOrder.length;
+    context.read<AppState>().selectNav(_kMobileNavOrder[next]);
   }
 
   /// 页面懒加载缓存：首次访问才构建，切换时保留状态（IndexedStack），

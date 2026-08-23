@@ -26,6 +26,8 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "nativeLibraryDir" -> result.success(applicationInfo.nativeLibraryDir)
+                    // code_cache 目录（SELinux 上下文 app_exec_data_file，允许 exec）
+                    "codeCacheDir" -> result.success(codeCacheDir.absolutePath)
                     "prepareBundledTool" -> {
                         val assetName = call.argument<String>("assetName") ?: ""
                         val destPath = call.argument<String>("destPath") ?: ""
