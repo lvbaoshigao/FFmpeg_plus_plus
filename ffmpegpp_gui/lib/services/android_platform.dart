@@ -5,13 +5,12 @@ import '../platform/app_platform.dart';
 
 /// Android 原生能力桥接（通过 MainActivity 中的 MethodChannel 实现）：
 /// - nativeLibraryDir：APK 内置 native 库目录（libffmpegpp.so 后端动态库所在）
-/// - prepareBundledTool：从 assets 复制 ffmpeg/ffprobe 并 setExecutable
 /// - wallpaperColors：系统壁纸颜色（Monet 动态取色的种子色）
 ///
-/// ⚠️ ffmpeg/ffprobe 是静态可执行二进制，不能走 jniLibs：Android 安装器
-/// 会把 .so 当共享库做 ELF 校验，ET_EXEC 静态二进制可能不被解压，导致
-/// 子进程 exec 报 127。因此改成 assets 打包，由原生侧流式复制到 code_cache
-/// 目录并 setExecutable，返回副本路径供 C++ 后端与 UI 本地子进程调用。
+/// ffmpeg/ffprobe 以「静态 PIE（ET_DYN，-static-pie）」打包为 jniLibs 里的
+/// libffmpeg.so / libffprobe.so。Android 安装器会把它们解压到 nativeLibraryDir
+/// （可执行上下文），因此无需复制到私有目录即可直接 exec——复制到 app_flutter/
+/// code_cache 会被 SELinux 拒绝 exec（Permission denied / exit 127）。
 class AndroidPlatformBridge {
   static const MethodChannel _channel = MethodChannel('ffmpegpp/android');
 
@@ -25,9 +24,7 @@ class AndroidPlatformBridge {
     }
   }
 
-  /// code_cache 目录（SELinux 上下文 app_exec_data_file，允许 exec 可执行文件）。
-  /// 应用文档目录（app_flutter/）是 app_data_file 上下文，exec 会被内核拒绝
-  /// （Permission denied），所以可执行工具必须放到这里。非 Android 返回 null。
+  /// code_cache 目录（保留兼容；本版本 ffmpeg/ffprobe 不再复制到此处）。
   static Future<String?> codeCacheDir() async {
     if (!isAndroidPlatform) return null;
     try {
@@ -37,46 +34,21 @@ class AndroidPlatformBridge {
     }
   }
 
-  /// 内置 ffmpeg 可执行文件路径。ffmpeg 以「assets/ffmpeg」随 APK 打包
-  /// （静态可执行文件不能走 jniLibs：Android 安装器对 .so 做 ELF 校验，
-  /// ET_EXEC 静态二进制可能不被解压到 nativeLibraryDir，导致 exit 127）。
-  /// 由原生侧从 assets 流式复制到应用文档目录并 setExecutable。失败返回 null。
-  static Future<String?> bundledFfmpegPath() async {
-    return _prepareFromAsset('ffmpeg', 'ffmpeg');
-  }
+  /// 内置 ffmpeg 可执行文件路径：nativeLibraryDir/libffmpeg.so（静态 PIE 二进制）。
+  /// 安装器已解压并赋予可执行上下文，直接返回路径即可 exec。缺失返回 null。
+  static Future<String?> bundledFfmpegPath() => _bundledLibPath('libffmpeg.so');
 
-  /// 内置 ffprobe 可执行文件路径（assets/ffprobe）。
-  static Future<String?> bundledFfprobePath() async {
-    return _prepareFromAsset('ffprobe', 'ffprobe');
-  }
+  /// 内置 ffprobe 可执行文件路径：nativeLibraryDir/libffprobe.so。
+  static Future<String?> bundledFfprobePath() => _bundledLibPath('libffprobe.so');
 
-  /// 从 APK assets 复制内置工具到可执行目录并设置可执行位。
-  /// 固定放到 code_cache（app_exec_data_file 上下文）——文档目录 app_flutter
-  /// 是 app_data_file 上下文，exec 会被内核/SELinux 拒绝（Permission denied）。
-  /// 每次都重设可执行位，且副本缺失/为空时重新复制（code_cache 可被系统清理），
-  /// 杜绝「首启复制/加可执行失败后缓存了不可执行副本」的顽固 127。
-  static Future<String?> _prepareFromAsset(String assetName, String name) async {
-    try {
-      final cacheDir = await codeCacheDir();
-      if (cacheDir == null || cacheDir.isEmpty) return null;
-      final binDir = Directory('$cacheDir${Platform.pathSeparator}ffmpegpp_bin');
-      await binDir.create(recursive: true);
-      final dest = File('${binDir.path}${Platform.pathSeparator}$name');
-      final ok = await _prepareBundledTool(assetName, dest.path);
-      return ok == true ? dest.path : null;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// 原生从 assets 复制内置工具并设置可执行位（Android 专用）。
-  static Future<bool?> _prepareBundledTool(String assetName, String destPath) async {
+  /// 解析 jniLibs 里的内置 PIE 二进制路径（复用 nativeLibraryDir）。
+  static Future<String?> _bundledLibPath(String libName) async {
     if (!isAndroidPlatform) return null;
     try {
-      return await _channel.invokeMethod<bool>('prepareBundledTool', {
-        'assetName': assetName,
-        'destPath': destPath,
-      });
+      final dir = await nativeLibraryDir();
+      if (dir == null || dir.isEmpty) return null;
+      final p = '$dir${Platform.pathSeparator}$libName';
+      return await File(p).exists() ? p : null;
     } catch (_) {
       return null;
     }

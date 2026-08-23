@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../platform/app_platform.dart';
 import 'mobile_top_bar.dart';
+import 'mobile_glass_pill.dart';
 
 /// 玻璃面板 —— 支持三种效果（由设置→外观→玻璃效果控制）：
 /// - liquid：液态玻璃（高通透 + 背景模糊 + 顶部高光细边 + 体感渐变，简洁）
@@ -49,6 +50,39 @@ class GlassPanel extends StatelessWidget {
             colors: [Color(cfg.themeColor), Color(cfg.themeColor2)],
           )
         : null;
+
+    // ── 移动端：真实液态玻璃改用 oc_liquid_glass shader（与底部导航/药丸一致），
+    //    下方桌面端分支保持不变。「设置项以毛玻璃展示」开启时，改用更易读的扁平
+    //    高斯模糊；blur/none 也统一复用 MobileGlassPill 的对应效果。──
+    if (isMobilePlatform) {
+      if (cfg.settingsFrostedGlass && effect == 'liquid') {
+        return RepaintBoundary(
+          child: ClipRRect(
+            borderRadius: br,
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+              child: Container(
+                padding: padding,
+                decoration: BoxDecoration(
+                  borderRadius: br,
+                  color: baseColor.withAlpha(((isDark ? 165 : 185) * op).round()),
+                  border: Border.all(
+                    color: borderColor.withAlpha(isDark ? 90 : 120),
+                    width: 1,
+                  ),
+                ),
+                child: child,
+              ),
+            ),
+          ),
+        );
+      }
+      return MobileGlassPill(
+        radius: radius,
+        padding: padding ?? const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        child: child,
+      );
+    }
 
     if (effect == 'none') {
       // 无效果：纯色卡片 + 圆角 + 细边框（透明度跟随）；主题渐变时用渐变底色

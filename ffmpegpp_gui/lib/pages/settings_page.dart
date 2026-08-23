@@ -650,14 +650,110 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget _buildMobileTopBar(AppStrings s, ColorScheme scheme) {
     final safeTop = MediaQuery.of(context).padding.top;
     final searching = _searchExpanded;
+    final Widget searchField = SizedBox(
+      height: 42,
+      child: Row(children: [
+        const SizedBox(width: 14),
+        Icon(Icons.search, size: 18, color: scheme.outline),
+        const SizedBox(width: 8),
+        Expanded(
+          child: TextField(
+            autofocus: true,
+            controller: _searchCtrl,
+            focusNode: _searchFocus,
+            style: TextStyle(fontSize: 14, color: scheme.onSurface),
+            decoration: InputDecoration(
+              hintText: s.setSearchHint,
+              hintStyle: TextStyle(fontSize: 14, color: scheme.outline),
+              border: InputBorder.none,
+              isDense: true,
+            ),
+            onChanged: (v) => setState(() => _query = v),
+          ),
+        ),
+        IconButton(
+          icon: Icon(Icons.close, size: 18, color: scheme.onSurfaceVariant),
+          tooltip: s.setClearSearch,
+          onPressed: () {
+            setState(() {
+              _searchExpanded = false;
+              _searchCtrl.clear();
+              _query = '';
+            });
+            _searchFocus.unfocus();
+          },
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+        ),
+        const SizedBox(width: 4),
+      ]),
+    );
+    Widget buildGone() => const SizedBox(key: ValueKey('title-gone'), width: 0, height: 40);
+    Widget buildTitle() => MobileGlassPill(
+        key: const ValueKey('title'),
+        radius: 22,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        child: Text(s.settingsTitle,
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)));
+    Widget buildSearchButton() => MobileGlassPill(
+        radius: 22,
+        padding: EdgeInsets.zero,
+        child: IconButton(
+          icon: Icon(Icons.search, size: 20, color: scheme.onSurface),
+          tooltip: s.setSearchHint,
+          onPressed: () {
+            setState(() => _searchExpanded = true);
+            WidgetsBinding.instance.addPostFrameCallback((_) => _searchFocus.requestFocus());
+          },
+          constraints: const BoxConstraints(minWidth: 42, minHeight: 42),
+          padding: EdgeInsets.zero,
+        ));
+    Widget buildSearchBox() => MobileGlassPill(
+        key: const ValueKey('searchbox'),
+        radius: 22,
+        padding: EdgeInsets.zero,
+        child: searchField);
+
     return Padding(
       padding: EdgeInsets.fromLTRB(12, safeTop + 6, 12, 6),
       child: Row(children: [
+        // 左：标题药丸 —— 搜索时整体缩放+淡出并塌陷（不再与搜索框叠影）
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 240),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          layoutBuilder: (currentChild, previousChildren) => Stack(
+            alignment: Alignment.centerLeft,
+            clipBehavior: Clip.none,
+            children: [
+              ...previousChildren,
+              ?currentChild,
+            ],
+          ),
+          transitionBuilder: (child, anim) => FadeTransition(
+            opacity: anim,
+            child: ScaleTransition(
+              scale: Tween<double>(begin: 0.7, end: 1.0).animate(anim),
+              child: child,
+            ),
+          ),
+          child: searching ? buildGone() : buildTitle(),
+        ),
+        const SizedBox(width: 8),
+        // 右：普通态 = 靠右的搜索按钮药丸；搜索态 = 由右向左展开成完整搜索框
         Expanded(
           child: AnimatedSwitcher(
             duration: const Duration(milliseconds: 240),
             switchInCurve: Curves.easeOutCubic,
             switchOutCurve: Curves.easeInCubic,
+            layoutBuilder: (currentChild, previousChildren) => Stack(
+              alignment: Alignment.centerRight,
+              clipBehavior: Clip.none,
+              children: [
+                ...previousChildren,
+                ?currentChild,
+              ],
+            ),
             transitionBuilder: (child, anim) => FadeTransition(
               opacity: anim,
               child: ScaleTransition(
@@ -666,80 +762,12 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
             ),
             child: searching
-                ? MobileGlassPill(
-                    key: const ValueKey('search'),
-                    radius: 22,
-                    padding: EdgeInsets.zero,
-                    child: SizedBox(
-                      height: 42,
-                      child: Row(children: [
-                        const SizedBox(width: 14),
-                        Icon(Icons.search, size: 18, color: scheme.outline),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: TextField(
-                            autofocus: true,
-                            controller: _searchCtrl,
-                            focusNode: _searchFocus,
-                            style: TextStyle(fontSize: 14, color: scheme.onSurface),
-                            decoration: InputDecoration(
-                              hintText: s.setSearchHint,
-                              hintStyle: TextStyle(fontSize: 14, color: scheme.outline),
-                              border: InputBorder.none,
-                              isDense: true,
-                            ),
-                            onChanged: (v) => setState(() => _query = v),
-                          ),
-                        ),
-                        IconButton(
-                          icon: Icon(Icons.close, size: 18, color: scheme.onSurfaceVariant),
-                          tooltip: s.setClearSearch,
-                          onPressed: () {
-                            setState(() {
-                              _searchExpanded = false;
-                              _searchCtrl.clear();
-                              _query = '';
-                            });
-                            _searchFocus.unfocus();
-                          },
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                        ),
-                        const SizedBox(width: 4),
-                      ]),
-                    ),
-                  )
-                : MobileGlassPill(
-                    key: const ValueKey('title'),
-                    radius: 22,
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                    child: Text(s.settingsTitle,
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+                ? buildSearchBox()
+                : Align(
+                    key: const ValueKey('searchbtn'),
+                    alignment: Alignment.centerRight,
+                    child: buildSearchButton(),
                   ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        AnimatedScale(
-          scale: searching ? 0.6 : 1.0,
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOutCubic,
-          child: AnimatedOpacity(
-            opacity: searching ? 0.0 : 1.0,
-            duration: const Duration(milliseconds: 220),
-            child: MobileGlassPill(
-              radius: 22,
-              padding: EdgeInsets.zero,
-              child: IconButton(
-                icon: Icon(Icons.search, size: 20, color: scheme.onSurface),
-                tooltip: s.setSearchHint,
-                onPressed: () {
-                  setState(() => _searchExpanded = true);
-                  WidgetsBinding.instance.addPostFrameCallback((_) => _searchFocus.requestFocus());
-                },
-                constraints: const BoxConstraints(minWidth: 42, minHeight: 42),
-                padding: EdgeInsets.zero,
-              ),
-            ),
           ),
         ),
       ]),
@@ -1545,6 +1573,22 @@ Widget _buildBackground(BuildContext ctx, AppState state) {
       onSelectionChanged: (v) => state.updateConfig((c) => c..glassEffect = v.first),
       style: const ButtonStyle(visualDensity: VisualDensity.compact),
     ),
+    // 仅「液态玻璃」生效时显示：设置项改用更易读的毛玻璃背景
+    if (cfg.glassEffect == 'liquid') ...[
+      const SizedBox(height: 8),
+      Row(children: [
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(s.settingsFrostedGlass, style: TextStyle(color: clr, fontSize: 12)),
+          const SizedBox(height: 2),
+          Text(s.settingsFrostedGlassHint, style: TextStyle(fontSize: 10, color: scheme.outline)),
+        ])),
+        Switch(
+          value: cfg.settingsFrostedGlass,
+          onChanged: (v) => state.updateConfig((c) => c..settingsFrostedGlass = v),
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+      ]),
+    ],
     const SizedBox(height: 10),
     // 遵循主题色：玻璃/卡片底色统一使用主题色
     Row(children: [

@@ -58,8 +58,14 @@ void main() async {
   _startupLog('1-Binding OK');
 
   // ── 内存优化：限制图片缓存上限，避免大量缩略图撑爆内存 ──
-  PaintingBinding.instance.imageCache.maximumSizeBytes = 96 << 20; // 96MB
-  PaintingBinding.instance.imageCache.maximumSize = 600; // 最多 600 张
+  // 移动端内存更紧张：改为 32MB / 200 张；桌面端保持 96MB / 600 张。
+  if (isMobilePlatform) {
+    PaintingBinding.instance.imageCache.maximumSizeBytes = 32 << 20; // 32MB
+    PaintingBinding.instance.imageCache.maximumSize = 200; // 最多 200 张
+  } else {
+    PaintingBinding.instance.imageCache.maximumSizeBytes = 96 << 20; // 96MB
+    PaintingBinding.instance.imageCache.maximumSize = 600; // 最多 600 张
+  }
   _startupLog('1a-ImageCache capped');
 
   // 完整性校验 — 后台执行，失败不退出

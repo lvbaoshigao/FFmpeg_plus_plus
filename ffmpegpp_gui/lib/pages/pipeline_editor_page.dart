@@ -117,8 +117,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   double _canvasFraction = 0.6;
   // 移动端横竖屏切换（默认竖屏）
   bool _isLandscape = false;
-  // 竖屏模式下右面板展开/收起
-  double _editorExpandedH = 200;
   // AI 侧边面板是否展开（左侧 ">" 按钮）
   bool _aiDrawerOpen = false;
   // 当前 AI 会话标题（对话后自动总结生成）
@@ -1939,53 +1937,15 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         Expanded(child: Padding(
           padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
           child: LayoutBuilder(builder: (ctx, cons) {
-            // 移动端竖屏模式：画布全宽，右面板纵向堆叠在下方
-            final isPortrait = isMobilePlatform && !_isLandscape;
-            if (isPortrait) {
-              return Column(children: [
-                // 画布（占大部分空间）
+            // 移动端（横竖屏通用）：画布 + 贴右边界的窄竖直 sidebar，
+            // 元素工具箱与属性面板收纳为右侧边栏，宽度约屏幕 1/2。
+            if (isMobilePlatform) {
+              final sidebarW = cons.maxWidth * 0.5;
+              return Row(children: [
                 Expanded(child: _buildCanvas(scheme, s)),
-                // 可折叠右面板（拖拽手柄展开/收起）
-                GestureDetector(
-                  onVerticalDragUpdate: (d) {
-                    final newH = (_editorExpandedH - d.delta.dy).clamp(60.0, cons.maxHeight * 0.45);
-                    if (newH != _editorExpandedH) {
-                      setState(() => _editorExpandedH = newH);
-                    }
-                  },
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 250),
-                    curve: Curves.easeOutCubic,
-                    height: _editorExpanded ? _editorExpandedH : 40,
-                    decoration: BoxDecoration(
-                      color: scheme.surfaceContainerLow.withAlpha(210),
-                      borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                      border: Border(top: BorderSide(color: scheme.outlineVariant.withAlpha(60))),
-                    ),
-                    child: Column(children: [
-                      // 拖拽手柄 + 收起/展开
-                      GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () => setState(() => _editorExpanded = !_editorExpanded),
-                        child: Container(
-                          height: 32,
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          child: Row(children: [
-                            Container(width: 28, height: 3,
-                              decoration: BoxDecoration(color: scheme.outlineVariant, borderRadius: BorderRadius.circular(2))),
-                            const SizedBox(width: 8),
-                            Text(s.isZh ? '节点编辑' : 'Node Editor',
-                                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
-                            const Spacer(),
-                            Icon(_editorExpanded ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_up,
-                                size: 18, color: scheme.onSurfaceVariant),
-                          ]),
-                        ),
-                      ),
-                      if (_editorExpanded)
-                        Expanded(child: _buildRightPanel(scheme, s)),
-                    ]),
-                  ),
+                SizedBox(
+                  width: sidebarW,
+                  child: _buildRightPanel(scheme, s),
                 ),
               ]);
             }
@@ -2425,11 +2385,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     );
 
     final inner = Column(children: [
-      Padding(
-        padding: isMobilePlatform
-          ? const EdgeInsets.fromLTRB(6, 6, 6, 2)
-          : const EdgeInsets.fromLTRB(14, 12, 14, 8),
-        child: Row(children: [
+      Row(children: [
+        SizedBox(
+          width: isMobilePlatform ? MediaQuery.of(context).size.width * 0.5 : double.infinity,
+          child: Padding(
+            padding: isMobilePlatform
+              ? const EdgeInsets.fromLTRB(6, 6, 6, 2)
+              : const EdgeInsets.fromLTRB(14, 12, 14, 8),
+            child: Row(children: [
           if (!Platform.isWindows && !isMobilePlatform) ...[
             InkWell(
               borderRadius: BorderRadius.circular(6),
@@ -2460,30 +2423,73 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               onPressed: _redoStack.isEmpty ? null : _redo,
             ),
             IconButton(
-              icon: Icon(Icons.search, size: 14, color: _probeMode ? scheme.primary : scheme.onSurfaceVariant),
-              tooltip: s.isZh ? '探测模式' : 'Probe',
-              constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
-              padding: EdgeInsets.zero,
-              onPressed: () => setState(() => _probeMode = !_probeMode),
-            ),
-            // 隐藏逻辑线：移动端也保留（控制连线/逻辑门/红色逻辑端口）
-            IconButton(
-              icon: Icon(Icons.route, size: 14, color: _hideLogic ? scheme.error : scheme.onSurfaceVariant),
-              tooltip: s.isZh ? '隐藏逻辑线（控制连线、逻辑门、逻辑端口）' : 'Hide logic (control wires, gates, logic ports)',
-              constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
-              padding: EdgeInsets.zero,
-              style: IconButton.styleFrom(
-                backgroundColor: _hideLogic ? scheme.error.withAlpha(40) : null,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-              ),
-              onPressed: () => setState(() => _hideLogic = !_hideLogic),
-            ),
-            const Spacer(),
-            IconButton(
               icon: Icon(Icons.save_outlined, size: 14, color: scheme.onSurface),
+              tooltip: s.save,
               constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
               padding: EdgeInsets.zero,
               onPressed: _save,
+            ),
+            const Spacer(),
+            // 溢出菜单：把 PC 工具栏全部功能（导出/导入配置、探测模式、隐藏逻辑线）
+            // 收进同一入口，保证移动端 1/2 宽菜单栏下功能不缺失。
+            PopupMenuButton<String>(
+              tooltip: s.isZh ? '更多' : 'More',
+              icon: Icon(Icons.more_vert, size: 14, color: scheme.onSurface),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+              onSelected: (v) {
+                switch (v) {
+                  case 'export':
+                    if (_nodes.isNotEmpty) _exportConfig(s);
+                    break;
+                  case 'import':
+                    _importConfig(s);
+                    break;
+                  case 'probe':
+                    setState(() => _probeMode = !_probeMode);
+                    break;
+                  case 'hide':
+                    setState(() => _hideLogic = !_hideLogic);
+                    break;
+                }
+              },
+              itemBuilder: (_) => [
+                PopupMenuItem<String>(
+                  value: 'export',
+                  enabled: _nodes.isNotEmpty,
+                  child: Row(children: [
+                    Icon(Icons.file_upload_outlined, size: 16, color: scheme.onSurfaceVariant),
+                    const SizedBox(width: 6),
+                    Text(s.isZh ? '导出配置' : 'Export Config'),
+                  ]),
+                ),
+                PopupMenuItem<String>(
+                  value: 'import',
+                  child: Row(children: [
+                    Icon(Icons.file_download_outlined, size: 16, color: scheme.onSurfaceVariant),
+                    const SizedBox(width: 6),
+                    Text(s.importConfig),
+                  ]),
+                ),
+                PopupMenuItem<String>(
+                  value: 'probe',
+                  child: Row(children: [
+                    Icon(Icons.search, size: 16, color: _probeMode ? scheme.primary : scheme.onSurfaceVariant),
+                    const SizedBox(width: 6),
+                    Text(s.isZh ? '探测模式' : 'Probe'),
+                    if (_probeMode) ...[const Spacer(), Icon(Icons.check, size: 14, color: scheme.primary)],
+                  ]),
+                ),
+                PopupMenuItem<String>(
+                  value: 'hide',
+                  child: Row(children: [
+                    Icon(Icons.route, size: 16, color: _hideLogic ? scheme.error : scheme.onSurfaceVariant),
+                    const SizedBox(width: 6),
+                    Text(s.isZh ? '隐藏逻辑线' : 'Hide logic'),
+                    if (_hideLogic) ...[const Spacer(), Icon(Icons.check, size: 14, color: scheme.error)],
+                  ]),
+                ),
+              ],
             ),
           ],
           if (!isMobilePlatform) ...[
@@ -2568,7 +2574,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                 style: TextStyle(fontSize: 10, color: scheme.outline)),
           ],
         ]),
-      ),
+          ),
+        ),
+      ]),
       const Divider(height: 1, indent: 12, endIndent: 12),
       if (_isLogicBoxSelecting)
         Container(
@@ -4188,13 +4196,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         elevation: 6,
         borderRadius: BorderRadius.circular(8),
         child: Container(
-          // 移动端：拖拽芯片整体缩小到约 1/2。
-          padding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 5 : 10, vertical: isMobilePlatform ? 3 : 6),
+          // 移动端：芯片保持比例（方正胶囊，不压扁），字号/内边距仍可读。
+          padding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 8 : 10, vertical: isMobilePlatform ? 6 : 6),
           decoration: BoxDecoration(color: _nodeColor(t, scheme), borderRadius: BorderRadius.circular(8)),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(_stepIcon(t), size: isMobilePlatform ? 8 : 14, color: scheme.onSurface),
-            SizedBox(width: isMobilePlatform ? 2 : 4),
-            Text(s.isZh ? dummy.label : dummy.labelEn, style: TextStyle(fontSize: isMobilePlatform ? 6 : 11, color: scheme.onSurface, decoration: TextDecoration.none)),
+            Icon(_stepIcon(t), size: isMobilePlatform ? 12 : 14, color: scheme.onSurface),
+            SizedBox(width: isMobilePlatform ? 3 : 4),
+            Text(s.isZh ? dummy.label : dummy.labelEn, style: TextStyle(fontSize: isMobilePlatform ? 9 : 11, color: scheme.onSurface, decoration: TextDecoration.none)),
           ]),
         ),
       ),
@@ -4246,7 +4254,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       onDoubleTap: () => _startLogicBoxSelect(type, s),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
-        padding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 5 : 10, vertical: isMobilePlatform ? 2 : 5),
+        padding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 8 : 10, vertical: isMobilePlatform ? 5 : 5),
         decoration: BoxDecoration(
           color: isSelected ? Colors.red.withAlpha(60) : Colors.red.withAlpha(30),
           borderRadius: BorderRadius.circular(6),
@@ -4254,9 +4262,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           boxShadow: isSelected ? [BoxShadow(color: Colors.red.withAlpha(40), blurRadius: 6)] : null,
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, size: isMobilePlatform ? 8 : 14, color: Colors.red),
-          SizedBox(width: isMobilePlatform ? 2 : 4),
-          Text(label, style: TextStyle(fontSize: isMobilePlatform ? 6 : 12, color: scheme.onSurface)),
+          Icon(icon, size: isMobilePlatform ? 12 : 14, color: Colors.red),
+          SizedBox(width: isMobilePlatform ? 3 : 4),
+          Text(label, style: TextStyle(fontSize: isMobilePlatform ? 9 : 12, color: scheme.onSurface)),
         ]),
       ),
     );
@@ -4271,13 +4279,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         elevation: 6,
         borderRadius: BorderRadius.circular(6),
         child: Container(
-          padding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 4 : 8, vertical: isMobilePlatform ? 2 : 4),
+          padding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 7 : 8, vertical: isMobilePlatform ? 4 : 4),
           decoration: BoxDecoration(
             color: scheme.tertiaryContainer.withAlpha(180),
             borderRadius: BorderRadius.circular(6),
             border: Border.all(color: scheme.tertiary.withAlpha(120)),
           ),
-          child: Text(sym, style: TextStyle(fontSize: isMobilePlatform ? 6 : 11, fontWeight: FontWeight.w700, color: scheme.onTertiaryContainer, decoration: TextDecoration.none)),
+          child: Text(sym, style: TextStyle(fontSize: isMobilePlatform ? 10 : 11, fontWeight: FontWeight.w700, color: scheme.onTertiaryContainer, decoration: TextDecoration.none)),
         ),
       ),
       childWhenDragging: Opacity(opacity: 0.3, child: _gateChip(gate, scheme, s)),
@@ -4292,13 +4300,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       message: name,
       waitDuration: const Duration(milliseconds: 500),
       child: Container(
-        padding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 3 : 7, vertical: isMobilePlatform ? 2 : 3),
+        padding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 6 : 7, vertical: isMobilePlatform ? 3 : 3),
         decoration: BoxDecoration(
           color: scheme.tertiaryContainer.withAlpha(gate.isConstant ? 120 : 80),
           borderRadius: BorderRadius.circular(5),
           border: Border.all(color: scheme.tertiary.withAlpha(60)),
         ),
-        child: Text(sym, style: TextStyle(fontSize: isMobilePlatform ? 5 : 10, fontWeight: FontWeight.w700, color: scheme.onTertiaryContainer)),
+        child: Text(sym, style: TextStyle(fontSize: isMobilePlatform ? 9 : 10, fontWeight: FontWeight.w700, color: scheme.onTertiaryContainer)),
       ),
     );
   }
@@ -4306,7 +4314,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   Widget _toolboxChip(PipelineStepType t, PipelineNode dummy, String tag, ColorScheme scheme, AppStrings s, {bool isSelected = false}) {
     return AnimatedContainer(
       duration: const Duration(milliseconds: 150),
-      padding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 5 : 10, vertical: isMobilePlatform ? 2 : 5),
+      padding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 8 : 10, vertical: isMobilePlatform ? 5 : 5),
       decoration: BoxDecoration(
         color: isSelected ? scheme.primary.withAlpha(40) : _nodeColor(t, scheme).withAlpha(180),
         borderRadius: BorderRadius.circular(6),
@@ -4314,9 +4322,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         boxShadow: isSelected ? [BoxShadow(color: scheme.primary.withAlpha(40), blurRadius: 6)] : null,
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(_stepIcon(t), size: isMobilePlatform ? 8 : 14, color: scheme.onSurface),
-        SizedBox(width: isMobilePlatform ? 2 : 4),
-        Text(s.isZh ? dummy.label : dummy.labelEn, style: TextStyle(fontSize: isMobilePlatform ? 6 : 12, color: scheme.onSurface)),
+        Icon(_stepIcon(t), size: isMobilePlatform ? 12 : 14, color: scheme.onSurface),
+        SizedBox(width: isMobilePlatform ? 3 : 4),
+        Text(s.isZh ? dummy.label : dummy.labelEn, style: TextStyle(fontSize: isMobilePlatform ? 9 : 12, color: scheme.onSurface)),
         if (tag.isNotEmpty) ...[
           SizedBox(width: isMobilePlatform ? 2 : 4),
           Text(tag, style: TextStyle(fontSize: isMobilePlatform ? 5 : 9, color: scheme.outline, fontWeight: FontWeight.w600)),
@@ -4640,32 +4648,54 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     final v = widget.video;
     final srcCount = _nodes.where((n) => n.type == PipelineStepType.start).length;
     final outCount = _nodes.where((n) => n.type == PipelineStepType.output).length;
+    final countsText = s.isZh
+        ? '${_nodes.length} 节点  |  $srcCount 源  |  $outCount 输出  |  ${_connections.length} 连线'
+        : '${_nodes.length} nodes  |  $srcCount src  |  $outCount out  |  ${_connections.length} links';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(border: Border(top: BorderSide(color: scheme.outlineVariant.withAlpha(50)))),
-      child: Row(children: [
-        Icon(Icons.info_outline, size: 14, color: scheme.outline),
-        const SizedBox(width: 6),
-        Flexible(
-          child: Text('${v.resolution}  |  ${v.durationStr}  |  ${formatFileSize(v.sizeMb)}',
-              maxLines: 1, overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: scheme.outline, fontSize: 12)),
-        ),
-        if (_autosaveIndicator) ...[
-          const SizedBox(width: 12),
-          Icon(Icons.cloud_done_outlined, size: 14, color: Colors.green.shade400),
-          const SizedBox(width: 4),
-          Text(s.isZh ? '已自动保存' : 'Auto-saved',
-              style: TextStyle(fontSize: 10, color: Colors.green.shade400)),
-        ],
-        // 移动端：把左侧文件信息条(Flexible)压窄到约原来 1/2，通过增大 Spacer 占比实现；桌面端保持不变。
-        Spacer(flex: isMobilePlatform ? 3 : 1),
-        Text(
-          s.isZh ? '${_nodes.length} 节点  |  $srcCount 源  |  $outCount 输出  |  ${_connections.length} 连线'
-              : '${_nodes.length} nodes  |  $srcCount src  |  $outCount out  |  ${_connections.length} links',
-          maxLines: 1, overflow: TextOverflow.ellipsis,
-          style: TextStyle(color: scheme.outline, fontSize: 11)),
-      ]),
+      // 移动端：左半文件信息条 + 右半最右为节点/源/输出/连线数据（底部信息条约 1/2 + 数据右置）。
+      child: isMobilePlatform
+          ? Row(children: [
+              Expanded(child: Row(children: [
+                Icon(Icons.info_outline, size: 13, color: scheme.outline),
+                const SizedBox(width: 5),
+                Expanded(
+                  child: Text('${v.resolution}  |  ${v.durationStr}  |  ${formatFileSize(v.sizeMb)}',
+                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: scheme.outline, fontSize: 11)),
+                ),
+                if (_autosaveIndicator) ...[
+                  const SizedBox(width: 8),
+                  Icon(Icons.cloud_done_outlined, size: 13, color: Colors.green.shade400),
+                ],
+              ])),
+              Flexible(
+                child: Text(countsText,
+                    textAlign: TextAlign.right,
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: scheme.outline, fontSize: 11)),
+              ),
+            ])
+          : Row(children: [
+              Icon(Icons.info_outline, size: 14, color: scheme.outline),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text('${v.resolution}  |  ${v.durationStr}  |  ${formatFileSize(v.sizeMb)}',
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: scheme.outline, fontSize: 12)),
+              ),
+              if (_autosaveIndicator) ...[
+                const SizedBox(width: 12),
+                Icon(Icons.cloud_done_outlined, size: 14, color: Colors.green.shade400),
+                const SizedBox(width: 4),
+                Text(s.isZh ? '已自动保存' : 'Auto-saved',
+                    style: TextStyle(fontSize: 10, color: Colors.green.shade400)),
+              ],
+              const Spacer(),
+              Text(countsText, maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: scheme.outline, fontSize: 11)),
+            ]),
     );
   }
 }
