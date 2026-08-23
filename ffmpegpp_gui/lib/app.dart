@@ -486,13 +486,17 @@ class _AppShellState extends State<AppShell> with WindowListener {
 
     final Widget body;
     if (mobile) {
-      // 移动端布局：内容区 + 底部液态玻璃导航栏
-      // MobileTopBar 内部已处理状态栏 padding，这里不再重复添加
-      body = Column(children: [
-        Expanded(child: page),
-        MobileBottomNav(
-          selectedIndex: nav,
-          onSelected: (i) => context.read<AppState>().selectNav(i),
+      // 移动端布局：内容区全屏铺满，底部液态玻璃导航栏悬浮叠加在上方
+      // （页面内容向下延伸到屏幕底部，滑动区不再被限制在导航栏上方——
+      //   各 Tab 页滚动区已用 kMobileNavClearance 预留底部空间避免被遮挡）。
+      body = Stack(children: [
+        Positioned.fill(child: page),
+        Positioned(
+          left: 0, right: 0, bottom: 0,
+          child: MobileBottomNav(
+            selectedIndex: nav,
+            onSelected: (i) => context.read<AppState>().selectNav(i),
+          ),
         ),
       ]);
     } else {

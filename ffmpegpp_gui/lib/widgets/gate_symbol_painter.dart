@@ -6,65 +6,48 @@ import '../models/models.dart' show LogicGateType;
 ///
 /// 支持与门/或门/非门/与非门/或非门/异或门/同或门/恒1/恒0/时间触发器，并带取反圈。
 /// 符号几何遵循 ANSI/IEEE 与 IEC 标准：
-///   - ANSI AND/NAND ：D 形（左侧直线 + 右侧半圆）
+///   - ANSI AND/NAND ：D 形（左侧平直输入边 + 右侧半圆凸出输出边）
 ///   - ANSI OR/NOR  ：盾形（左侧内凹弧 + 上下凸弧汇于右侧尖端）
-///   - ANSI XOR/XNOR：盾形 + 输入侧附加弧线（异或门双弧线）
-///   - ANSI NOT     ：三角形（缓冲器符号）+ 输出圈
+///   - ANSI XOR/XNOR：盾形 + 输入侧额外弧线（双输入弧标志）
+///   - ANSI NOT     ：三角形（缓冲器符号）+ 输出取反圈
 ///   - IEC          ：矩形框 + 内部符号，取反门输出侧加圈
 ///
-/// 尺寸约定：传入的 size 为门符号区宽高（画布上为 64×64）。取反门右侧为取反圈
-/// 预留空间，保证取反圈完整落在画布内。
+/// 所有几何均按画布尺寸等比例缩放，并严格限制在画布内部（不再越界被裁切），
+/// 取反圈在输出侧预留空间，保证完整显示。
 class GateSymbolPainter extends CustomPainter {
   final LogicGateType gate;
   final bool iec;
   final Color color;
   final bool isZh;
-  GateSymbolPainter({required this.gate, required this.iec, required this.color, required this.isZh});
+  GateSymbolPainter({
+    required this.gate,
+    required this.iec,
+    required this.color,
+    required this.isZh,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
+    if (size.isEmpty || size.shortestSide < 8) return;
     final w = size.width, h = size.height;
     final hw = w / 2, hh = h / 2;
-    final paint = Paint()
+    final stroke = Paint()
       ..color = color
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.2
+      ..strokeWidth = math.max(1.4, math.min(w, h) * 0.032)
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
-    final constOne = gate == LogicGateType.const1;
-    final constZero = gate == LogicGateType.const0;
 
-    // 恒 1 / 恒 0：直接画大号数字
-    if (constOne || constZero) {
-      final tp = TextPainter(
-        text: TextSpan(
-          text: constOne ? '1' : '0',
-          style: TextStyle(color: color, fontSize: 26, fontWeight: FontWeight.w700),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      tp.paint(canvas, Offset(hw - tp.width / 2, hh - tp.height / 2));
+    // 恒 1 / 恒 0：大号数字
+    if (gate == LogicGateType.const1 || gate == LogicGateType.const0) {
+      _label(canvas, gate == LogicGateType.const1 ? '1' : '0',
+          Offset(hw, hh), math.min(w, h) * 0.42);
       return;
     }
 
-    // 时间触发器：画时钟图标
+    // 时间触发器：时钟图标
     if (gate == LogicGateType.timeTrigger) {
-      final r = math.min(w, h) / 2 - 5;
-      final c = Offset(hw, hh);
-      canvas.drawCircle(c, r, paint);
-      for (var i = 0; i < 12; i++) {
-        final a = i * math.pi / 6;
-        final inner = r * (i % 3 == 0 ? 0.7 : 0.8);
-        final outer = r * 0.92;
-        canvas.drawLine(
-          Offset(c.dx + inner * math.sin(a), c.dy - inner * math.cos(a)),
-          Offset(c.dx + outer * math.sin(a), c.dy - outer * math.cos(a)),
-          paint,
-        );
-      }
-      // 时针（指向 12 点）与分针（指向 3 点）
-      canvas.drawLine(c, Offset(c.dx, c.dy - r * 0.42), paint);
-      canvas.drawLine(c, Offset(c.dx + r * 0.56, c.dy), paint);
+      _drawClock(canvas, stroke, hw, hh, math.min(w, h));
       return;
     }
 
@@ -73,90 +56,128 @@ class GateSymbolPainter extends CustomPainter {
         gate == LogicGateType.not ||
         gate == LogicGateType.xnor;
 
-    // ── 几何参数 ──
-    const pad = 8.0;
-    const bubbleR = 5.0;
-    final top = pad;
-    final bottom = h - pad;
+    // ── 比例化几何参数（全部落在画布内） ──
+    final padX = w * 0.16;
+    final top = h * 0.18;
+    final bottom = h * 0.82;
     final cy = hh;
-    final half = (bottom - top) / 2; // 半高
-    final left = pad;
+    final left = padX;
+    // 取反圈半径，比例化
+    final bubbleR = math.min(w, h) * 0.078;
     // 取反门右侧为取反圈预留空间
-    final rightLimit = w - pad - (negated ? bubbleR * 2 + 2 : 0);
+    final rightLimit = w - padX - (negated ? bubbleR * 2 + 2 : 0);
 
     if (!iec) {
-      // ═══════════ ANSI/IEEE：特色形状 ═══════════
       if (gate == LogicGateType.and || gate == LogicGateType.nand) {
-        // 与门：D 形 —— 左侧平直输入边 + 右侧半圆（半圆圆心在左缘，右缘凸出）
-        final path = Path()
-          ..moveTo(left, top)
-          ..addArc(
-            Rect.fromCircle(center: Offset(left, cy), radius: half),
-            -math.pi / 2, // 12 点钟方向
-            math.pi,      // 顺时针 180°，得到右半圆
-          )
-          ..close(); // 连接底→顶，形成左侧平直边
-        canvas.drawPath(path, paint);
-        _labelText(canvas, _label, Offset(left + half * 0.55, cy));
+        _drawAnd(canvas, stroke, left, top, bottom, cy);
       } else if (gate == LogicGateType.xor || gate == LogicGateType.xnor) {
-        // 异或/同或：盾形主体 + 输入侧第二条弧线（双输入弧标志）
-        final bodyLeft = left + 4;
-        _drawShield(canvas, paint, bodyLeft, top, bottom, rightLimit, cy);
-        final extraPath = Path()
-          ..moveTo(left + 2, top + 2)
-          ..quadraticBezierTo(left - 2, cy, left + 2, bottom - 2);
-        canvas.drawPath(extraPath, paint);
-        _labelText(canvas, _label, Offset((bodyLeft + rightLimit) / 2, cy));
+        // 异或/同或：主体盾形右移，输入侧再画第二条内凹弧
+        final bodyLeft = left + w * 0.10;
+        _drawShield(canvas, stroke, bodyLeft, top, bottom, rightLimit, cy);
+        // 第二条输入弧（紧贴并略左于主体左缘）
+        final arc = Path()
+          ..moveTo(left + w * 0.02, top + h * 0.02)
+          ..quadraticBezierTo(left - w * 0.09, cy, left + w * 0.02, bottom - h * 0.02);
+        canvas.drawPath(arc, stroke);
       } else if (gate == LogicGateType.or || gate == LogicGateType.nor) {
-        // 或门：盾形 —— 左侧内凹弧 + 上下凸弧汇于右侧尖端
-        _drawShield(canvas, paint, left, top, bottom, rightLimit, cy);
-        _labelText(canvas, _label, Offset((left + rightLimit) / 2, cy));
+        _drawShield(canvas, stroke, left, top, bottom, rightLimit, cy);
       } else if (gate == LogicGateType.not) {
-        // 非门：三角形（缓冲器符号），尖端在右
         final path = Path()
           ..moveTo(left, top)
           ..lineTo(left, bottom)
           ..lineTo(rightLimit, cy)
           ..close();
-        canvas.drawPath(path, paint);
-        _labelText(canvas, _label, Offset(left + (rightLimit - left) * 0.35, cy));
+        canvas.drawPath(path, stroke);
       }
     } else {
-      // ═══════════ IEC：矩形框 + 符号 ═══════════
-      canvas.drawRect(Rect.fromLTRB(left, top, rightLimit, bottom), paint);
-      _labelText(canvas, _label, Offset((left + rightLimit) / 2, cy));
+      // IEC：矩形框 + 内部符号
+      canvas.drawRect(Rect.fromLTRB(left, top, rightLimit, bottom), stroke);
     }
 
-    // 取反圈（NAND/NOR/NOT/XNOR）：画在输出侧，紧贴形状右缘
+    // 内部符号文本（&、≥1、1、=1、=）—— 仅 IEC 矩形框标准需要标注。
+    // ANSI/IEEE 用特色形状本身表达语义（D 形=与、盾形=或、三角=非、盾形+弧=异或），
+    // 中间不再写 & / 1 之类数据，符合 ANSI unique-shape 规范。
+    if (iec) {
+      final labelX = _labelCenterX(gate, left, rightLimit, bottom - top, w);
+      _label(canvas, _symbol, Offset(labelX, cy), math.min(w, h) * 0.20);
+    }
+
+    // 取反圈（NAND/NOR/NOT/XNOR）：输出侧，紧贴形状右缘
     if (negated) {
-      double bodyRight;
-      if (!iec && (gate == LogicGateType.and || gate == LogicGateType.nand)) {
-        bodyRight = left + half; // D 形右缘
-      } else {
-        bodyRight = rightLimit; // 三角形尖端 / OR·XOR 尖端 / IEC 矩形右缘
-      }
-      final cx = bodyRight + bubbleR + 1;
-      if (cx + bubbleR <= w - 2) {
-        canvas.drawCircle(Offset(cx, cy), bubbleR, paint);
+      final cx = rightLimit + bubbleR + 1;
+      if (cx + bubbleR <= w - 1) {
+        canvas.drawCircle(Offset(cx, cy), bubbleR, stroke);
       }
     }
   }
 
-  /// 画盾形（OR/NOR/XOR/XNOR 主体）：左侧内凹弧 + 上下凸弧汇于右侧尖端。
-  void _drawShield(Canvas canvas, Paint paint, double left, double top,
+  double _labelCenterX(LogicGateType g, double left, double right, double half, double w) {
+    if (!iec) {
+      switch (g) {
+        case LogicGateType.and:
+        case LogicGateType.nand:
+          return left + half * 0.5; // D 形左侧平直区
+        case LogicGateType.not:
+          return left + (right - left) * 0.36; // 三角形偏左
+        case LogicGateType.xor:
+        case LogicGateType.xnor:
+          return left + w * 0.10 + (right - (left + w * 0.10)) * 0.45;
+        default:
+          return left + (right - left) * 0.45;
+      }
+    }
+    return left + (right - left) / 2;
+  }
+
+  /// AND/NAND：D 形 —— 左侧平直输入边 + 右侧半圆输出边。
+  void _drawAnd(Canvas canvas, Paint p, double left, double top, double bottom, double cy) {
+    final half = (bottom - top) / 2;
+    final path = Path()
+      ..moveTo(left, top)
+      ..addArc(
+        Rect.fromCircle(center: Offset(left, cy), radius: half),
+        -math.pi / 2, // 12 点钟方向
+        math.pi, // 顺时针 180°，得到右半圆
+      )
+      ..close();
+    canvas.drawPath(path, p);
+  }
+
+  /// 盾形（OR/NOR/XOR/XNOR 主体）：左侧内凹弧 + 上下凸弧汇于右侧尖端。
+  /// 上下凸弧外鼓量控制在 padY 内，保证不越界被裁切。
+  void _drawShield(Canvas canvas, Paint p, double left, double top,
       double bottom, double right, double cy) {
     final half = (bottom - top) / 2;
     final midX = (left + right) / 2;
     final path = Path()
       ..moveTo(left, top)
-      ..quadraticBezierTo(left + half * 0.5, cy, left, bottom)          // 左凹弧（向右凹）
-      ..quadraticBezierTo(midX, bottom + half * 0.55, right, cy)        // 下凸弧 → 尖端
-      ..quadraticBezierTo(midX, top - half * 0.55, left, top)           // 上凸弧 → 回起点
+      ..quadraticBezierTo(left + half * 0.6, cy, left, bottom) // 左凹弧
+      ..quadraticBezierTo(midX, bottom + half * 0.30, right, cy) // 下凸弧
+      ..quadraticBezierTo(midX, top - half * 0.30, left, top) // 上凸弧
       ..close();
-    canvas.drawPath(path, paint);
+    canvas.drawPath(path, p);
   }
 
-  String get _label {
+  /// 时钟图标（时间触发器）。
+  void _drawClock(Canvas canvas, Paint p, double cx, double cy, double minSide) {
+    final r = minSide / 2 - 4;
+    canvas.drawCircle(Offset(cx, cy), r, p);
+    for (var i = 0; i < 12; i++) {
+      final a = i * math.pi / 6;
+      final inner = r * (i % 3 == 0 ? 0.70 : 0.80);
+      final outer = r * 0.92;
+      canvas.drawLine(
+        Offset(cx + inner * math.sin(a), cy - inner * math.cos(a)),
+        Offset(cx + outer * math.sin(a), cy - outer * math.cos(a)),
+        p,
+      );
+    }
+    // 时针（指向 12 点）与分针（指向 3 点）
+    canvas.drawLine(Offset(cx, cy), Offset(cx, cy - r * 0.42), p);
+    canvas.drawLine(Offset(cx, cy), Offset(cx + r * 0.56, cy), p);
+  }
+
+  String get _symbol {
     switch (gate) {
       case LogicGateType.and: return '&';
       case LogicGateType.or: return '≥1';
@@ -169,11 +190,13 @@ class GateSymbolPainter extends CustomPainter {
     }
   }
 
-  void _labelText(Canvas canvas, String t, Offset center) {
+  /// 居中绘制文本。
+  void _label(Canvas canvas, String t, Offset center, double fontSize) {
+    if (t.isEmpty) return;
     final tp = TextPainter(
       text: TextSpan(
         text: t,
-        style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.w700),
+        style: TextStyle(color: color, fontSize: fontSize, fontWeight: FontWeight.w700),
       ),
       textDirection: TextDirection.ltr,
     )..layout();

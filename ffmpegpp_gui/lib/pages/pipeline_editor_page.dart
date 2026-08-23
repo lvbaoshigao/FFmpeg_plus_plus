@@ -2459,12 +2459,24 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               padding: EdgeInsets.zero,
               onPressed: _redoStack.isEmpty ? null : _redo,
             ),
-            const SizedBox(width: 2),
             IconButton(
               icon: Icon(Icons.search, size: 14, color: _probeMode ? scheme.primary : scheme.onSurfaceVariant),
+              tooltip: s.isZh ? '探测模式' : 'Probe',
               constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
               padding: EdgeInsets.zero,
               onPressed: () => setState(() => _probeMode = !_probeMode),
+            ),
+            // 隐藏逻辑线：移动端也保留（控制连线/逻辑门/红色逻辑端口）
+            IconButton(
+              icon: Icon(Icons.route, size: 14, color: _hideLogic ? scheme.error : scheme.onSurfaceVariant),
+              tooltip: s.isZh ? '隐藏逻辑线（控制连线、逻辑门、逻辑端口）' : 'Hide logic (control wires, gates, logic ports)',
+              constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+              padding: EdgeInsets.zero,
+              style: IconButton.styleFrom(
+                backgroundColor: _hideLogic ? scheme.error.withAlpha(40) : null,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+              ),
+              onPressed: () => setState(() => _hideLogic = !_hideLogic),
             ),
             const Spacer(),
             IconButton(
@@ -2604,8 +2616,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               right: 10, bottom: aiEnabled ? 60 : 10,
               child: _buildCanvasControls(scheme, s),
             ),
-            // 左侧中间 ">" 按钮：展开/收起 AI 侧边面板
-            if (aiEnabled)
+            // 左侧中间 ">" 按钮：展开/收起 AI 侧边面板（仅桌面端内嵌抽屉；
+            // 移动端改为浮动按钮触发的底部弹层，见 _openAiSheet）
+            if (aiEnabled && !isMobilePlatform)
               Positioned(
                 left: 0, top: 0, bottom: 0,
                 child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -3805,14 +3818,23 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                 child: gate == LogicGateType.timeTrigger
                     ? Column(mainAxisAlignment: MainAxisAlignment.center, children: [
                         CustomPaint(
-                          size: Size(_gateW, _gateH - 14),
+                          size: Size(_gateW, _gateH - 18),
                           painter: GateSymbolPainter(
                             gate: gate, iec: iec,
                             color: scheme.onTertiaryContainer, isZh: s.isZh,
                           ),
                         ),
-                        Text(s.isZh ? '时间触发' : 'Time Trigger',
-                            style: TextStyle(fontSize: 9, color: scheme.onTertiaryContainer, fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 1),
+                        // FittedBox.scaleDown：字号被全局放大后仍能等比缩回，避免文字被 64px 容器裁切
+                        Flexible(
+                          fit: FlexFit.loose,
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(s.isZh ? '时间触发' : 'Time Trigger',
+                                maxLines: 1,
+                                style: TextStyle(fontSize: 10, color: scheme.onTertiaryContainer, fontWeight: FontWeight.w600)),
+                          ),
+                        ),
                       ])
                     : Center(
                         child: CustomPaint(
@@ -4299,6 +4321,217 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     );
   }
 
+  // ── AI 面板构建（移动端底部弹层复用同一套回调接线） ──
+
+  Widget _buildAiPanel(
+    AppStrings s, {
+    Key? key,
+    bool startExpanded = false,
+    VoidCallback? onCollapseRequested,
+    ValueChanged<String>? onTitleGenerated,
+  }) {
+    return _AiPanel(
+      key: key,
+      startExpanded: startExpanded,
+      onCollapseRequested: onCollapseRequested,
+      onTitleGenerated: onTitleGenerated,
+      strings: s,
+      existingNodes: _nodes,
+      existingConnections: _connections,
+      onApplyGraph: (nodes, connections) {
+        _pushUndo();
+        setState(() {
+          _nodes.clear();
+          _connections.clear();
+          _nodes.addAll(nodes);
+          _connections.addAll(connections);
+        });
+      },
+      onMergeGraph: (aiNodes, aiConns) {
+        _pushUndo();
+        setState(() {
+          final idRemap = <String, String>{};
+          for (final n in aiNodes) {
+            final existing = _nodes.indexWhere((e) => e.type == n.type && !idRemap.containsValue(e.id));
+            if (existing >= 0) {
+              _nodes[existing].params.addAll(n.params);
+              idRemap[n.id] = _nodes[existing].id;
+            } else {
+              _nodes.add(n);
+              idRemap[n.id] = n.id;
+            }
+          }
+          final newConns = <PipelineConnection>[];
+          for (final c in aiConns) {
+            final fromId = idRemap[c.fromNodeId] ?? c.fromNodeId;
+            final toId = idRemap[c.toNodeId] ?? c.toNodeId;
+            if (!_connections.any((e) => e.fromNodeId == fromId && e.toNodeId == toId)) {
+              newConns.add(PipelineConnection(id: _uuid.v4(), fromNodeId: fromId, toNodeId: toId));
+            }
+          }
+          final remappedConns = aiConns.map((c) => (
+            from: idRemap[c.fromNodeId] ?? c.fromNodeId,
+            to: idRemap[c.toNodeId] ?? c.toNodeId,
+          )).toSet();
+          final aiNodeIds = remappedConns.expand((c) => [c.from, c.to]).toSet();
+          _connections.removeWhere((c) {
+            if (!aiNodeIds.contains(c.fromNodeId) || !aiNodeIds.contains(c.toNodeId)) return false;
+            if (remappedConns.any((r) => r.from == c.fromNodeId && r.to == c.toNodeId)) return false;
+            return true;
+          });
+          _connections.addAll(newConns);
+        });
+      },
+      onModifyNodeParams: (nodeId, params) {
+        _pushUndo();
+        setState(() {
+          if (_nodes.isEmpty) return;
+          final node = _nodes.firstWhere((n) => n.id == nodeId, orElse: () => _nodes.first);
+          params.forEach((k, v) { node.params[k] = v; });
+        });
+        _saveGraph();
+      },
+      onClearAll: () {
+        _pushUndo();
+        setState(() {
+          _nodes.clear();
+          _connections.clear();
+          _logicBlocks.clear();
+          _selectedNodeIds.clear();
+          _saveGraph();
+        });
+      },
+      onUndo: _undo,
+      onRedo: _redo,
+      onSave: _saveGraph,
+      onAddNode: (type, x, y) {
+        final stepType = PipelineStepType.values.firstWhere((t) => t.name == type, orElse: () => throw ArgumentError('Unknown type: $type'));
+        final node = PipelineNode(id: _uuid.v4(), type: stepType, x: x, y: y);
+        _pushUndo();
+        setState(() => _nodes.add(node));
+        _saveGraph();
+        return node.id;
+      },
+      onAddGate: (gateName, x, y) {
+        final gate = LogicGateType.values.asNameMap()[gateName];
+        if (gate == null) throw ArgumentError('Unknown gate type: $gateName');
+        final node = PipelineNode(
+          id: _uuid.v4(),
+          type: PipelineStepType.start,
+          x: x, y: y,
+          gateType: gate.name,
+        );
+        _pushUndo();
+        setState(() => _nodes.add(node));
+        _saveGraph();
+        return node.id;
+      },
+      onSetGateParams: (nodeId, params) {
+        final idx = _nodes.indexWhere((n) => n.id == nodeId);
+        if (idx < 0) return false;
+        _pushUndo();
+        setState(() {
+          params.forEach((k, v) { _nodes[idx].params[k] = v; });
+        });
+        _saveGraph();
+        return true;
+      },
+      onDeleteNode: (nodeId) {
+        _deleteNode(nodeId);
+        _saveGraph();
+      },
+      onConnectNodes: (fromId, toId) {
+        if (fromId == toId) return false;
+        if (!_nodes.any((n) => n.id == fromId) || !_nodes.any((n) => n.id == toId)) return false;
+        if (_connections.any((c) => c.fromNodeId == fromId && c.toNodeId == toId)) return false;
+        _pushUndo();
+        setState(() => _connections.add(PipelineConnection(id: _uuid.v4(), fromNodeId: fromId, toNodeId: toId)));
+        _saveGraph();
+        return true;
+      },
+      onDisconnectNodes: (connId) {
+        final idx = _connections.indexWhere((c) => c.id == connId);
+        if (idx < 0) return false;
+        _pushUndo();
+        setState(() => _connections.removeAt(idx));
+        _saveGraph();
+        return true;
+      },
+      onCancelTasks: () => context.read<AppState>().cancelProcessing(),
+    );
+  }
+
+  /// 移动端：以底部弹层打开 AI 助手（按钮触发），顶部保留画布可见视口 + 状态预览。
+  void _openAiSheet(AppStrings s) {
+    final scheme = Theme.of(context).colorScheme;
+    final graphDesc = GraphExecutor.describeGraph(PipelineGraph(
+        nodes: List.of(_nodes), connections: List.of(_connections), logicBlocks: List.of(_logicBlocks)));
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.24),
+      builder: (ctx) => Padding(
+        // 顶部留白：弹层不盖满屏幕，上方可见（半透明遮罩后的）画布 → 实时预览节点编辑器
+        padding: EdgeInsets.only(top: MediaQuery.of(ctx).padding.top + 18),
+        child: Container(
+          height: MediaQuery.of(ctx).size.height * 0.86,
+          decoration: BoxDecoration(
+            color: scheme.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
+            border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(color: scheme.outlineVariant.withAlpha(120), borderRadius: BorderRadius.circular(2)),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
+              child: Row(children: [
+                Icon(Icons.smart_toy, size: 18, color: scheme.primary),
+                const SizedBox(width: 8),
+                Expanded(child: Text(s.aiChatTitle, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface))),
+                IconButton(
+                  icon: const Icon(Icons.close, size: 20),
+                  color: scheme.onSurfaceVariant,
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                ),
+              ]),
+            ),
+            // 画布状态预览条：直接可视化当前节点/连线/逻辑块（“预览节点编辑器状态”）
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHighest.withAlpha(70),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(
+                    '${s.isZh ? '画布预览' : 'Canvas preview'}: ${_nodes.length} ${s.isZh ? '节点' : 'nodes'} · ${_connections.length} ${s.isZh ? '连线' : 'links'} · ${_logicBlocks.length} ${s.isZh ? '逻辑块' : 'logic blocks'}',
+                    style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: scheme.primary),
+                  ),
+                  if (graphDesc.isNotEmpty) ...[
+                    const SizedBox(height: 3),
+                    Text(graphDesc, maxLines: 2, overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 10.5, color: scheme.outline, fontFamily: 'monospace')),
+                  ],
+                ]),
+              ),
+            ),
+            Expanded(child: _buildAiPanel(s, key: const ValueKey('ai-sheet'), startExpanded: true)),
+          ]),
+        ),
+      ),
+    );
+  }
+
   // ── 画布浮动控件 ──
 
   Widget _buildCanvasControls(ColorScheme scheme, AppStrings s) {
@@ -4310,7 +4543,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
         boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(20), blurRadius: 8, offset: const Offset(0, 2))],
       ),
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
+      child: ConstrainedBox(
+        // 移动端屏幕矮/横屏时，整列工具可能溢出被裁掉（"右侧小工具显示不全"），
+        // 用大量高约束 + 可滚动包裹，保证所有按钮始终可达。
+        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * (isMobilePlatform ? 0.62 : 0.86)),
+        child: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
         // 移动端：返回按钮（舍弃顶部栏后以浮动按钮替代）
         if (isMobilePlatform) ...[
           _controlBtn(Icons.arrow_back, s.isZh ? '返回' : 'Back', scheme, () async {
@@ -4318,6 +4556,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             if (await _onWillPop()) nav.pop();
           }),
           const SizedBox(height: 2),
+          // AI 助手（按钮触发底部弹层，可预览节点编辑器状态）
+          if (context.read<AppState>().config.aiEnabled) ...[
+            _controlBtn(Icons.smart_toy, s.isZh ? 'AI 助手' : 'AI Assistant', scheme,
+                () => _openAiSheet(s), color: scheme.primary),
+            const SizedBox(height: 2),
+          ],
           // 横竖屏切换（移动端专属）
           _controlBtn(
             _isLandscape ? Icons.phone_android_outlined : Icons.screen_rotation_alt_outlined,
@@ -4362,11 +4606,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         _controlBtn(Icons.auto_fix_high, s.isZh ? '整理' : 'Arrange', scheme, _autoLayout),
         const SizedBox(height: 2),
         _controlBtn(Icons.my_location, s.isZh ? '定位源' : 'Source', scheme, () => _goToSource(s)),
-      ]),
+          ]),
+        ),
+      ),
     );
   }
 
-  Widget _controlBtn(IconData icon, String tooltip, ColorScheme scheme, VoidCallback onTap) {
+  Widget _controlBtn(IconData icon, String tooltip, ColorScheme scheme, VoidCallback onTap, {Color? color}) {
     return Tooltip(
       message: tooltip,
       child: InkWell(
@@ -4374,7 +4620,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.all(6),
-          child: Icon(icon, size: 18, color: scheme.onSurfaceVariant),
+          child: Icon(icon, size: 18, color: color ?? scheme.onSurfaceVariant),
         ),
       ),
     );
@@ -4392,8 +4638,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       child: Row(children: [
         Icon(Icons.info_outline, size: 14, color: scheme.outline),
         const SizedBox(width: 6),
-        Text('${v.resolution}  |  ${v.durationStr}  |  ${formatFileSize(v.sizeMb)}',
-            style: TextStyle(color: scheme.outline, fontSize: 12)),
+        Flexible(
+          child: Text('${v.resolution}  |  ${v.durationStr}  |  ${formatFileSize(v.sizeMb)}',
+              maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: scheme.outline, fontSize: 12)),
+        ),
         if (_autosaveIndicator) ...[
           const SizedBox(width: 12),
           Icon(Icons.cloud_done_outlined, size: 14, color: Colors.green.shade400),

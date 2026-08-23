@@ -177,28 +177,43 @@ class AppState extends ChangeNotifier {
   Future<void> _setupAndroidBundledTools() async {
     final ffmpeg = await AndroidPlatformBridge.bundledFfmpegPath();
     final ffprobe = await AndroidPlatformBridge.bundledFfprobePath();
+    debugPrint('[ffprobe] bundled ffmpeg=$ffmpeg ffprobe=$ffprobe');
     if (ffmpeg == null || ffprobe == null) {
       addLog('未找到内置 ffmpeg/ffprobe', category: 'error');
+      debugPrint('[ffprobe] 未找到内置 ffmpeg/ffprobe（复制失败或原生通道不可用）');
       return;
     }
-    final needFfmpeg = config.ffmpegPath.isEmpty || !File(config.ffmpegPath).existsSync();
-    final needFfprobe = config.ffprobePath.isEmpty || !File(config.ffprobePath).existsSync();
-    if (needFfmpeg || needFfprobe) {
-      // 走 ConfigService.update 持久化，避免直接改字段导致重启后丢失
-      await configService.update((c) => c
-        ..ffmpegPath = (needFfmpeg ? ffmpeg : c.ffmpegPath)
-        ..ffprobePath = (needFfprobe ? ffprobe : c.ffprobePath));
+
+    // 自检可执行性：直接跑 -version，确认复制出的静态二进制可用。
+    // 这里有明确的 exit code，便于通过 logcat 定位 127（命令未找到）之类的失败。
+    try {
+      final v = await Process.run(ffprobe, ['-version']);
+      final firstLine = (v.stdout is String && (v.stdout as String).isNotEmpty)
+          ? (v.stdout as String).split('\n').first
+          : '<empty>';
+      debugPrint('[ffprobe] -version exit=${v.exitCode} out=$firstLine');
+      addLog('内置 FFprobe 自检 exit=${v.exitCode}',
+          category: v.exitCode == 0 ? 'info' : 'error');
+    } catch (e) {
+      debugPrint('[ffprobe] -version error: $e');
+      addLog('内置 FFprobe 自检异常: $e', category: 'error');
     }
-    // Android 无 /tmp：把应用缓存目录注入 C++ 后端作为临时目录
+
+    // Android 内置工具路径是权威值：无条件写入配置（覆盖可能残留的旧/失效路径）。
+    await configService.update((c) => c
+      ..ffmpegPath = ffmpeg
+      ..ffprobePath = ffprobe);
+
+    // 直接传刚解析出的本地路径，绝不依赖可能未更新的 config 字段。
     await backend.setPaths(
-      ffmpeg: config.ffmpegPath,
-      ffprobe: config.ffprobePath,
+      ffmpeg: ffmpeg,
+      ffprobe: ffprobe,
       tempDir: isAndroidPlatform ? Directory.systemTemp.path : null,
     );
     // 供 UI 层本地调用（缩略图/帧预览）解析内置 ffmpeg
-    FfmpegInstaller.configuredFfmpeg = config.ffmpegPath;
-    addLog('已加载内置 FFmpeg: ${config.ffmpegPath}', category: 'info');
-    addLog('已加载内置 FFprobe: ${config.ffprobePath}', category: 'info');
+    FfmpegInstaller.configuredFfmpeg = ffmpeg;
+    addLog('已加载内置 FFmpeg: $ffmpeg', category: 'info');
+    addLog('已加载内置 FFprobe: $ffprobe', category: 'info');
   }
 
   void _autoDetectLocalFfmpeg() {

@@ -544,7 +544,7 @@ class _SettingsPageState extends State<SettingsPage> {
               Expanded(child: visible.isEmpty && searching
                 ? _emptyState(scheme, s)
                 : ListView(
-                    padding: const EdgeInsets.fromLTRB(6, 4, 6, 24),
+                    padding: const EdgeInsets.fromLTRB(6, 4, 6, kMobileNavClearance),
                     children: [
                       for (final (sec, cards) in visible)
                         _buildMobileSection(sec, cards, context, state, scheme, s),
@@ -702,6 +702,8 @@ class _SettingsPageState extends State<SettingsPage> {
 
   /// 移动端设置分区：Android 16 原生设置风格 —— 小号字重标题，
   /// 无图标、无着色，仅灰色文字（onSurfaceVariant），下方为卡片项。
+  /// Android 16 风格移动端分区：一级菜单只展示「标题在左、开关/箭头在右」的
+  /// 设置行，统一放在一张圆角卡片内，条目间用细分隔线；具体设置项进入二级菜单。
   Widget _buildMobileSection(
     _SectionDef sec,
     List<_CardDef> cards,
@@ -710,24 +712,141 @@ class _SettingsPageState extends State<SettingsPage> {
     ColorScheme scheme,
     AppStrings s,
   ) {
+    final rows = <Widget>[];
+    for (var i = 0; i < cards.length; i++) {
+      rows.add(_buildMobileRow(cards[i], context, state, scheme, s));
+      if (i < cards.length - 1) {
+        rows.add(Divider(
+          height: 0.5,
+          thickness: 0.5,
+          indent: 16,
+          endIndent: 16,
+          color: scheme.outlineVariant.withAlpha(60),
+        ));
+      }
+    }
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      // 分区标题（Android 16 风格：不带图标，小字号 + 中字重）
       Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+        padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
         child: Text(sec.title(s), style: TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.w500,
-          color: scheme.onSurfaceVariant,
+          fontSize: 12.5,
+          fontWeight: FontWeight.w600,
+          color: scheme.primary,
           letterSpacing: 0.3,
         )),
       ),
-      // 卡片项（_build* 方法内已用 _glass 包裹，移动端为 surfaceContainerLow 卡片）
-      for (final c in cards)
-        Padding(
-          padding: const EdgeInsets.only(bottom: 4),
-          child: c.build(context, state),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(8, 0, 8, 7),
+        child: Container(
+          width: double.infinity,
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerLow,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: scheme.outlineVariant.withAlpha(46), width: 0.6),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(children: rows),
         ),
+      ),
     ]);
+  }
+
+  /// 一条设置行：左标题，右侧开关 / 分段切换 / 箭头（进入二级菜单）。
+  Widget _buildMobileRow(
+    _CardDef c, BuildContext context, AppState state, ColorScheme scheme, AppStrings s) {
+    final title = c.title(s);
+
+    // 纯开关：直接在一级菜单右侧放 Switch
+    if (c.id == 'predictiveBack') {
+      final cfg = state.config;
+      return SwitchListTile(
+        value: cfg.predictiveBack,
+        onChanged: (v) => state.updateConfig((cc) => cc..predictiveBack = v),
+        title: Text(title, style: TextStyle(fontSize: 14, color: scheme.onSurface)),
+        subtitle: Text(s.predictiveBackHint,
+            style: TextStyle(fontSize: 11, color: scheme.outline)),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+      );
+    }
+
+    // 语言：一级菜单右侧放紧凑的中/EN 分段切换
+    if (c.id == 'language') {
+      return _mobileLanguageRow(state, scheme);
+    }
+
+    // 命令 / 日志：直接进入对应页面（它们的「内容」本身就是入口，不套二级页）
+    return ListTile(
+      title: Text(title, style: TextStyle(fontSize: 14, color: scheme.onSurface)),
+      trailing: Icon(Icons.chevron_right, size: 20, color: scheme.outline),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+      onTap: () {
+        if (c.id == 'command') {
+          Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => const SafeArea(child: CommandPage())));
+        } else if (c.id == 'logs') {
+          Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => const SafeArea(child: LogPage())));
+        } else {
+          _pushMobileSubPage(context, title, c.build);
+        }
+      },
+    );
+  }
+
+  /// 语言行：左边「语言」标题，右边中文 / EN 紧凑分段切换。
+  Widget _mobileLanguageRow(AppState state, ColorScheme scheme) {
+    final cfg = state.config;
+    return ListTile(
+      title: Text(AppStrings.of(cfg.language).language,
+          style: TextStyle(fontSize: 14, color: scheme.onSurface)),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+      trailing: SegmentedButton<String>(
+        segments: const [
+          ButtonSegment(value: 'zh', label: Text('中文', style: TextStyle(fontSize: 12))),
+          ButtonSegment(value: 'en', label: Text('EN', style: TextStyle(fontSize: 12))),
+        ],
+        selected: {cfg.language},
+        onSelectionChanged: (sel) {
+          if (sel.isNotEmpty) state.updateConfig((c) => c..language = sel.first);
+        },
+        showSelectedIcon: false,
+        style: ButtonStyle(
+          visualDensity: VisualDensity.compact,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+      ),
+    );
+  }
+
+  /// 二级设置页：全屏（覆盖底部导航栏），顶部返回栏 + 可滚动内容。
+  void _pushMobileSubPage(
+    BuildContext context, String title, Widget Function(BuildContext, AppState) contentBuilder) {
+    final scheme = Theme.of(context).colorScheme;
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (ctx) => Consumer<AppState>(
+        builder: (ctx2, state, _) => Scaffold(
+          backgroundColor: Colors.transparent,
+          body: Column(children: [
+            MobileTopBar(
+              title: Text(title),
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back, size: 22),
+                color: scheme.onSurface,
+                tooltip: 'back',
+                onPressed: () => Navigator.of(ctx2).maybePop(),
+                constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+              ),
+            ),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(0, 12, 0, 48),
+                children: [contentBuilder(ctx2, state)],
+              ),
+            ),
+          ]),
+        ),
+      ),
+    ));
   }
 
   Widget _searchField(ColorScheme scheme, AppStrings s) => Padding(

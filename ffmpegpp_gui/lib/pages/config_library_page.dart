@@ -12,6 +12,7 @@ import '../services/quick_config_storage.dart';
 import '../theme/app_strings.dart';
 import '../widgets/toast.dart';
 import '../widgets/glass_panel.dart';
+import '../platform/app_platform.dart';
 import '../app.dart';
 import 'pipeline_editor_page.dart';
 import 'quick_config_page.dart';
@@ -453,8 +454,10 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
   }
 
   void _openQuickEditor(QuickConfig cfg) {
-    Navigator.of(context).push(smoothRoute(
-      QuickConfigPage(
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => QuickConfigPage(
         config: cfg,
         onSave: (updated) async {
           updated.updatedAt = DateTime.now();
@@ -470,7 +473,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
           });
         },
       ),
-    ));
+    );
   }
 
   Future<void> _deleteQuickConfig(QuickConfig cfg) async {
@@ -626,7 +629,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         child: !_loaded
             ? const Center(child: CircularProgressIndicator())
             : ListView(
-                padding: const EdgeInsets.all(16),
+                padding: EdgeInsets.fromLTRB(16, 16, 16, isMobilePlatform ? kMobileNavClearance : 16),
                 children: [
                   if (_configs.isEmpty)
                     _buildEmptyState(scheme, zh)

@@ -208,7 +208,9 @@ else
   log "ffmpeg cached"
 fi
 
-# ── 6. 拷贝 ffmpeg/ffprobe 为 libffmpeg.so / libffprobe.so（随 APK jniLibs 打包）──
+# ── 6. 拷贝 ffmpeg/ffprobe 为 dist 产物（build_apk.sh 会转存到 assets/ffmpeg、
+#    assets/ffprobe，不再走 jniLibs —— Android 安装器对 .so 做 ELF 校验，
+#    ET_EXEC 静态二进制可能不被解压，导致子进程 exec 报 127）──
 cp -f $PREFIX/bin/ffmpeg  $BUILD/dist/libffmpeg.so
 cp -f $PREFIX/bin/ffprobe $BUILD/dist/libffprobe.so
 log "ffmpeg/ffprobe staged: $(ls -la $BUILD/dist)"

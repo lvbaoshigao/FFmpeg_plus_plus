@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.app.WallpaperManager
 import android.os.Build
+import android.util.Log
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
@@ -16,7 +17,8 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         // 与 Dart 侧 services/android_platform.dart、services/shell_open.dart 对应：
-        //  - nativeLibraryDir：APK 内置 native 库目录（libffmpegpp.so / libffmpeg.so / libffprobe.so）
+        //  - nativeLibraryDir：APK 内置 native 库目录（libffmpegpp.so 后端动态库）
+        //  - prepareBundledTool：从 assets 复制 ffmpeg/ffprobe 并 setExecutable
         //  - wallpaperColors：系统壁纸主色（Monet 动态取色种子）
         //  - openUrl：用系统浏览器/默认应用打开 http(s) 链接
         //  - openFile：用默认应用打开本地文件（FileProvider 生成 content:// URI）
@@ -24,6 +26,15 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "nativeLibraryDir" -> result.success(applicationInfo.nativeLibraryDir)
+                    "prepareBundledTool" -> {
+                        val assetName = call.argument<String>("assetName") ?: ""
+                        val destPath = call.argument<String>("destPath") ?: ""
+                        if (assetName.isEmpty() || destPath.isEmpty()) {
+                            result.error("bad_args", "assetName/destPath required", null)
+                        } else {
+                            result.success(prepareBundledTool(assetName, destPath))
+                        }
+                    }
                     "wallpaperColors" -> result.success(wallpaperColors())
                     "openUrl" -> {
                         val url = call.argument<String>("url") ?: ""
@@ -49,6 +60,32 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    /**
+     * 把 APK 内置的可执行文件（assets/ffmpeg、assets/ffprobe）流式复制到目标
+     * 路径并设置可执行权限。
+     *
+     * 不用 jniLibs 装静态二进制：Android 安装器会对 .so 做 ELF 校验，ET_EXEC
+     * 静态可执行文件可能不被解压到 nativeLibraryDir，导致子进程 exec 报 127。
+     * assets 不被当作原生库校验，复制出来即可用。返回是否成功。
+     */
+    private fun prepareBundledTool(assetName: String, destPath: String): Boolean {
+        return try {
+            val dest = File(destPath)
+            dest.parentFile?.mkdirs()
+            if (!dest.exists() || dest.length() == 0L) {
+                assets.open(assetName).use { input ->
+                    dest.outputStream().use { output -> input.copyTo(output) }
+                }
+            }
+            val ok = dest.setExecutable(true, true) && dest.setReadable(true, false)
+            Log.e("FFmpegpp", "prepareBundledTool asset=$assetName dest=$destPath exists=${dest.exists()} len=${dest.length()} executable=$ok")
+            ok
+        } catch (e: Exception) {
+            Log.e("FFmpegpp", "prepareBundledTool error: $assetName", e)
+            false
+        }
     }
 
     /** 用默认应用打开本地文件（目录交给系统文件管理器）。 */

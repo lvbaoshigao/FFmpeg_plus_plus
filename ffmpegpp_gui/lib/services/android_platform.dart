@@ -4,14 +4,14 @@ import 'package:path_provider/path_provider.dart';
 import '../platform/app_platform.dart';
 
 /// Android 原生能力桥接（通过 MainActivity 中的 MethodChannel 实现）：
-/// - nativeLibraryDir：APK 内置 native 库目录（libffmpegpp.so / libffmpeg.so / libffprobe.so 所在）
+/// - nativeLibraryDir：APK 内置 native 库目录（libffmpegpp.so 后端动态库所在）
+/// - prepareBundledTool：从 assets 复制 ffmpeg/ffprobe 并 setExecutable
 /// - wallpaperColors：系统壁纸颜色（Monet 动态取色的种子色）
 ///
-/// ⚠️ 可执行文件问题：Android 10+ 把 APK 解压出的 native 库目录挂载为 noexec，
-/// 直接从 `nativeLibraryDir/libffmpeg.so` exec 会得到 EACCES。
-/// 因此 [bundledFfmpegPath] / [bundledFfprobePath] 会把二进制复制到应用私有
-/// 缓存目录（可执行）并 chmod +x，返回副本路径——C++ 后端与 UI 本地调用
-/// 都以子进程方式执行该副本。
+/// ⚠️ ffmpeg/ffprobe 是静态可执行二进制，不能走 jniLibs：Android 安装器
+/// 会把 .so 当共享库做 ELF 校验，ET_EXEC 静态二进制可能不被解压，导致
+/// 子进程 exec 报 127。因此改成 assets 打包，由原生侧流式复制到应用文档
+/// 目录并 setExecutable，返回副本路径供 C++ 后端与 UI 本地子进程调用。
 class AndroidPlatformBridge {
   static const MethodChannel _channel = MethodChannel('ffmpegpp/android');
 
@@ -25,51 +25,43 @@ class AndroidPlatformBridge {
     }
   }
 
-  /// 内置 ffmpeg 可执行文件路径（jniLibs 中命名为 libffmpeg.so），
-  /// 已复制到可执行目录并 chmod +x。失败返回 null。
+  /// 内置 ffmpeg 可执行文件路径。ffmpeg 以「assets/ffmpeg」随 APK 打包
+  /// （静态可执行文件不能走 jniLibs：Android 安装器对 .so 做 ELF 校验，
+  /// ET_EXEC 静态二进制可能不被解压到 nativeLibraryDir，导致 exit 127）。
+  /// 由原生侧从 assets 流式复制到应用文档目录并 setExecutable。失败返回 null。
   static Future<String?> bundledFfmpegPath() async {
-    final dir = await nativeLibraryDir();
-    if (dir == null) return null;
-    return _ensureExecutableCopy('$dir/libffmpeg.so', 'ffmpeg');
+    return _prepareFromAsset('ffmpeg', 'ffmpeg');
   }
 
-  /// 内置 ffprobe 可执行文件路径（jniLibs 中命名为 libffprobe.so），
-  /// 已复制到可执行目录并 chmod +x。失败返回 null。
+  /// 内置 ffprobe 可执行文件路径（assets/ffprobe）。
   static Future<String?> bundledFfprobePath() async {
-    final dir = await nativeLibraryDir();
-    if (dir == null) return null;
-    return _ensureExecutableCopy('$dir/libffprobe.so', 'ffprobe');
+    return _prepareFromAsset('ffprobe', 'ffprobe');
   }
 
-  /// 把 native 库目录中的可执行二进制复制到应用文档目录（保证可执行），
-  /// 避免 Android 10+ noexec 导致的 exec 失败。用元数据文件判断是否需要重新复制
-  /// （APK 升级后 nativeLibraryDir 路径会变，路径不一致即重新复制）。
-  static Future<String?> _ensureExecutableCopy(String src, String name) async {
+  /// 从 APK assets 复制内置工具到可执行目录并设置可执行位。
+  /// 每次都重设可执行位，杜绝「首启复制/加可执行失败后缓存了不可执行副本」
+  /// 的顽固 127（command not found / permission denied）。
+  static Future<String?> _prepareFromAsset(String assetName, String name) async {
     try {
-      final srcFile = File(src);
-      if (!await srcFile.exists()) return null;
-      // 使用应用文档目录（非 systemTemp），避免部分 ROM 的 cache 目录挂载为 noexec
       final docsDir = await getApplicationDocumentsDirectory();
       final binDir = Directory('${docsDir.path}${Platform.pathSeparator}ffmpegpp_bin');
       await binDir.create(recursive: true);
       final dest = File('${binDir.path}${Platform.pathSeparator}$name');
-      final meta = File('${binDir.path}${Platform.pathSeparator}$name.meta');
+      final ok = await _prepareBundledTool(assetName, dest.path);
+      return ok == true ? dest.path : null;
+    } catch (_) {
+      return null;
+    }
+  }
 
-      // 元数据记录源路径与大小：一致则复用副本，避免每次启动重新复制几十 MB
-      try {
-        if (await dest.exists() && await meta.exists()) {
-          final metaText = (await meta.readAsString()).trim();
-          final srcLen = await srcFile.length();
-          if (metaText == '$src|$srcLen') return dest.path;
-        }
-      } catch (_) {}
-
-      await dest.writeAsBytes(await srcFile.readAsBytes());
-      if (!Platform.isWindows) {
-        await Process.run('chmod', ['+x', dest.path]);
-      }
-      await meta.writeAsString('$src|${await srcFile.length()}');
-      return dest.path;
+  /// 原生从 assets 复制内置工具并设置可执行位（Android 专用）。
+  static Future<bool?> _prepareBundledTool(String assetName, String destPath) async {
+    if (!isAndroidPlatform) return null;
+    try {
+      return await _channel.invokeMethod<bool>('prepareBundledTool', {
+        'assetName': assetName,
+        'destPath': destPath,
+      });
     } catch (_) {
       return null;
     }
