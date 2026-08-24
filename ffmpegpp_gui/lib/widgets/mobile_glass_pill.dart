@@ -75,10 +75,10 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
   // 导致 GPU shader uniform 重新初始化 → 视觉上"液态玻璃来回跳跃"。
   // 改用 Selector 精细订阅 + 稳定 key 后，shader 内部状态得以保留。
   static const _liquidSettings = OCLiquidGlassSettings(
-    refractStrength: -0.05,
-    blurRadiusPx: 1.6,
-    specStrength: 8.0,
-    specWidth: 4,
+    refractStrength: -0.03,
+    blurRadiusPx: 1.0,
+    specStrength: 0.0,
+    specWidth: 1,
     lightbandStrength: 0.0,
     lightbandColor: Colors.white,
   );

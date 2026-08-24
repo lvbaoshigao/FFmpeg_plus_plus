@@ -2488,6 +2488,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     );
 
     final inner = Column(children: [
+      // 移动端顶部工具栏/分隔线移除：改由浮动菜单栏承载（见 _buildBody 的
+      // _buildMobileTopBar），避免新旧两套工具栏在画布顶部互相重叠。
+      if (!isMobilePlatform) ...[
       Row(children: [
         SizedBox(
           width: isMobilePlatform ? MediaQuery.of(context).size.width * 0.5 : double.infinity,
@@ -2681,6 +2684,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         ),
       ]),
       const Divider(height: 1, indent: 12, endIndent: 12),
+      ],
       if (_isLogicBoxSelecting)
         Container(
           width: double.infinity,
@@ -4834,6 +4838,20 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           if (await _onWillPop()) nav.pop();
         }, scheme, size: 18, pad: 4),
         const SizedBox(width: 2),
+        // 撤销/重做：原画布顶部工具栏在移动端移除后，迁移到顶部浮动菜单栏。
+        IconButton(
+          icon: Icon(Icons.undo, size: 17, color: _undoStack.isEmpty ? scheme.outlineVariant : scheme.onSurfaceVariant),
+          constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+          padding: EdgeInsets.zero,
+          onPressed: _undoStack.isEmpty ? null : _undo,
+        ),
+        IconButton(
+          icon: Icon(Icons.redo, size: 17, color: _redoStack.isEmpty ? scheme.outlineVariant : scheme.onSurfaceVariant),
+          constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+          padding: EdgeInsets.zero,
+          onPressed: _redoStack.isEmpty ? null : _redo,
+        ),
+        const SizedBox(width: 2),
         _mobileBarBtn(
           _mobileToolboxOpen ? Icons.close : Icons.add,
           () => setState(() => _mobileToolboxOpen = !_mobileToolboxOpen),
@@ -4852,15 +4870,53 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             padding: EdgeInsets.zero,
             icon: Icon(Icons.more_vert, size: 18, color: scheme.onSurfaceVariant),
             onSelected: (v) {
-              if (v == 'export') _exportConfig(s);
-              if (v == 'orientation') _toggleOrientation();
+              switch (v) {
+                case 'export':
+                  if (_nodes.isNotEmpty) _exportConfig(s);
+                  break;
+                case 'import':
+                  _importConfig(s);
+                  break;
+                case 'probe':
+                  setState(() => _probeMode = !_probeMode);
+                  break;
+                case 'hide':
+                  setState(() => _hideLogic = !_hideLogic);
+                  break;
+                case 'orientation':
+                  _toggleOrientation();
+                  break;
+              }
             },
             itemBuilder: (_) => [
-              PopupMenuItem(value: 'export', child: Text(s.isZh ? '导出配置' : 'Export config', style: const TextStyle(fontSize: 12))),
-              PopupMenuItem(value: 'orientation',
-                  child: Text(
-                      _isLandscape ? (s.isZh ? '切换到竖屏' : 'Switch to portrait') : (s.isZh ? '切换到横屏' : 'Switch to landscape'),
-                      style: const TextStyle(fontSize: 12))),
+              PopupMenuItem(value: 'export', enabled: _nodes.isNotEmpty, child: Row(children: [
+                Icon(Icons.file_upload_outlined, size: 16, color: scheme.onSurfaceVariant),
+                const SizedBox(width: 6),
+                Text(s.isZh ? '导出配置' : 'Export Config', style: const TextStyle(fontSize: 13)),
+              ])),
+              PopupMenuItem(value: 'import', child: Row(children: [
+                Icon(Icons.file_download_outlined, size: 16, color: scheme.onSurfaceVariant),
+                const SizedBox(width: 6),
+                Text(s.importConfig, style: const TextStyle(fontSize: 13)),
+              ])),
+              PopupMenuItem(value: 'probe', child: Row(children: [
+                Icon(Icons.search, size: 16, color: _probeMode ? scheme.primary : scheme.onSurfaceVariant),
+                const SizedBox(width: 6),
+                Text(s.isZh ? '探测模式' : 'Probe', style: const TextStyle(fontSize: 13)),
+                if (_probeMode) ...[const Spacer(), Icon(Icons.check, size: 14, color: scheme.primary)],
+              ])),
+              PopupMenuItem(value: 'hide', child: Row(children: [
+                Icon(Icons.route, size: 16, color: _hideLogic ? scheme.error : scheme.onSurfaceVariant),
+                const SizedBox(width: 6),
+                Text(s.isZh ? '隐藏逻辑线' : 'Hide logic', style: const TextStyle(fontSize: 13)),
+                if (_hideLogic) ...[const Spacer(), Icon(Icons.check, size: 14, color: scheme.error)],
+              ])),
+              PopupMenuItem(value: 'orientation', child: Row(children: [
+                Icon(Icons.screen_rotation, size: 16, color: scheme.onSurfaceVariant),
+                const SizedBox(width: 6),
+                Text(_isLandscape ? (s.isZh ? '切换到竖屏' : 'Switch to portrait') : (s.isZh ? '切换到横屏' : 'Switch to landscape'),
+                    style: const TextStyle(fontSize: 13)),
+              ])),
             ],
           ),
         ),

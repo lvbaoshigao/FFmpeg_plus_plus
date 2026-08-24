@@ -66,11 +66,11 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
   /// 这样所有 build 都使用同一份 const 实例，避免每次新建 settings 触发
   /// shader uniform 重置（移动端表现为液态玻璃"来回跳跃"闪烁）。
   static const _navLiquidSettings = OCLiquidGlassSettings(
-    refractStrength: -0.04,
-    blurRadiusPx: 1.2,
-    specStrength: 8.0,
-    specWidth: 6,
-    lightbandStrength: 0.25,
+    refractStrength: -0.03,
+    blurRadiusPx: 1.0,
+    specStrength: 0.0,
+    specWidth: 1,
+    lightbandStrength: 0.0,
     lightbandColor: Colors.white,
   );
 
