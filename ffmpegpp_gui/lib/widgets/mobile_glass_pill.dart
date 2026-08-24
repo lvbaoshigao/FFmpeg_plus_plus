@@ -164,8 +164,9 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
     // 移除外层 RepaintBoundary 后，shader 能真正采样到画布/页面背景；
     // tint 太透会让药丸几乎看不见。把上限提高到 200/220 让玻璃质感更接近底部导航栏（255 全不透明），
     // 又不会因为过满变回主题色块。
-    final maxAlpha = isDark ? 200 : 220;
-    final baseAlpha = (op * maxAlpha).round().clamp(0, 255);
+    // 完全对齐底部导航栏（mobile_bottom_nav.dart）的 tint 计算：
+    // 使用 * 255 上限（无截断），让玻璃质感与底部栏一致。
+    final baseAlpha = (op * 255).round().clamp(0, 255);
     final follow = key.follow;
     final baseColor = follow ? scheme.primary : scheme.surface;
     final tint = baseColor.withAlpha(baseAlpha);
@@ -219,16 +220,18 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
       pill = OCLiquidGlassGroup(
         key: glassKey,
         settings: _liquidSettings,
-        child: OCLiquidGlass(
-          key: glassKey,
-          borderRadius: widget.radius,
-          color: tint,
-          shadow: BoxShadow(
-            color: Colors.black.withAlpha(isDark ? 60 : 22),
-            blurRadius: 16,
-            offset: const Offset(0, 5),
+        child: RepaintBoundary(
+          child: OCLiquidGlass(
+            key: glassKey,
+            borderRadius: widget.radius,
+            color: tint,
+            shadow: BoxShadow(
+              color: Colors.black.withAlpha(isDark ? 60 : 22),
+              blurRadius: 16,
+              offset: const Offset(0, 5),
+            ),
+            child: inner,
           ),
-          child: inner,
         ),
       );
     }
