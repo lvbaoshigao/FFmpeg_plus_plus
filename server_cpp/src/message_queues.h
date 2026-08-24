@@ -15,4 +15,7 @@ void pushInput(const std::string& line);
 std::string popInput(bool& shutdown); // 阻塞等待，shutdown 信号时返回 ""
 void wakeInput(); // 唤醒阻塞中的 popInput
 
+// 清除 wake 标志：DLL 重新初始化时避免 worker 因历史 wake 立即退出
+void resetInputWake();
+
 } // namespace ffmpegpp

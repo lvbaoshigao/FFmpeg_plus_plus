@@ -6,6 +6,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:http/http.dart' as http;
@@ -54,6 +55,16 @@ import '../widgets/toast.dart';
 import '../widgets/gate_symbol_painter.dart';
 
 const _uuid = Uuid();
+
+// 缩略图缓存键：FNV-1a 稳定摘要（String.hashCode 跨运行不稳定且 32 位易碰撞）
+String _stableThumbHash(String s) {
+  var h = 0x811c9dc5;
+  for (final c in s.codeUnits) {
+    h ^= c;
+    h = (h * 0x01000193) & 0xFFFFFFFF;
+  }
+  return h.toRadixString(16).padLeft(8, '0');
+}
 
 const _nodeW = 200.0;
 const _nodeWNarrow = 150.0;
@@ -152,7 +163,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   final List<Map<String, dynamic>> _undoStack = [];
   final List<Map<String, dynamic>> _redoStack = [];
 
-  Map<String, dynamic> _snapshot() => PipelineGraph(nodes: List.of(_nodes), connections: List.of(_connections), logicBlocks: List.of(_logicBlocks)).toJson();
+  // jsonEncode/jsonDecode 做深拷贝，避免节点 params 是活引用导致 undo 快照被后续参数编辑回溯改写
+  Map<String, dynamic> _snapshot() => jsonDecode(jsonEncode(PipelineGraph(nodes: List.of(_nodes), connections: List.of(_connections), logicBlocks: List.of(_logicBlocks)).toJson())) as Map<String, dynamic>;
   void _pushUndo() {
     _undoStack.add(_snapshot());
     if (_undoStack.length > 50) _undoStack.removeAt(0);
@@ -175,6 +187,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       _connections.clear(); _connections.addAll(g.connections);
       _logicBlocks.clear(); _logicBlocks.addAll(g.logicBlocks);
       _selectedNodeIds.clear();
+      _lastSelectedId = null;
+      _selectedLogicBlockId = null;
     });
   }
 
@@ -211,6 +225,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   void _markDirty() {
     final graph = PipelineGraph(nodes: _nodes, connections: _connections, logicBlocks: _logicBlocks);
     _scheduleAutosave(graph);
+  }
+
+  /// 仅「显式保存」或「确认放弃」时清除草稿；普通退出（窗口关闭/崩溃）保留草稿供恢复。
+  void _clearDraft() {
+    _autosaveTimer?.cancel();
+    if (_autosaveKey.isNotEmpty) {
+      PipelineAutosave.clear(_autosaveKey);
+    }
   }
 
   /// 计算稳定的草稿 key，并在打开编辑器时检测上一份未保存的草稿：
@@ -283,7 +305,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     }
     if (!isConfigMode) {
       for (final n in _nodes) {
-        if (n.type == PipelineStepType.start) {
+        if (n.type == PipelineStepType.start && !n.isGate) {
           n.params['file_media_type'] = widget.video.fileMediaType.name;
         }
       }
@@ -398,12 +420,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     }
     _transformCtrl.removeListener(_onScaleChanged);
     _transformCtrl.dispose();
-    // 干净退出：取消未触发的自动保存定时器并清除草稿（崩溃/被杀时此方法可能不执行，
-    // 草稿会保留供下次打开恢复）。
-    _autosaveTimer?.cancel();
-    if (_autosaveKey.isNotEmpty) {
-      PipelineAutosave.clear(_autosaveKey);
+    // 移除 windowManager 监听，避免 window manager 持有本 State 的强引用导致泄漏
+    if (!Platform.isWindows && !isMobilePlatform) {
+      windowManager.removeListener(this);
     }
+    // 只取消定时器，不在此清除草稿：草稿改为在「显式保存／确认放弃」时清除。
+    // 经窗口关闭按钮、崩溃等未确认路径退出时草稿保留，下次打开可恢复。
+    _autosaveTimer?.cancel();
     _appState.mcpOnClearAll = null;
     _appState.mcpOnUndo = null;
     _appState.mcpOnRedo = null;
@@ -434,7 +457,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   Future<void> _genThumb() async {
     final fp = widget.video.filepath;
     final suffix = widget.video.fileMediaType == MediaType.audio ? '_cover' : '';
-    final f = File('${Directory.systemTemp.path}/ffmpegpp_thumb_${fp.hashCode}$suffix.jpg');
+    final f = File('${Directory.systemTemp.path}/ffmpegpp_thumb_${_stableThumbHash(fp)}$suffix.jpg');
     if (await f.exists()) { if (mounted) setState(() => _thumbPath = f.path); return; }
     try {
       final ext = fp.split('.').last.toLowerCase();
@@ -518,6 +541,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       node.params['file_media_type'] = widget.video.fileMediaType.name;
     }
     setState(() => _nodes.add(node));
+    _saveGraph();
     _trackUsage(type);
     if (context.read<AppState>().config.debugMode) {
       context.read<AppState>().addLog('[节点] 添加 ${type.name} @ (${canvasPos.dx.toStringAsFixed(0)}, ${canvasPos.dy.toStringAsFixed(0)}) id=${node.id.substring(0, 8)}', category: 'info');
@@ -533,6 +557,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       gateType: gate.name,
     );
     setState(() => _nodes.add(node));
+    _saveGraph();
     if (context.read<AppState>().config.debugMode) {
       context.read<AppState>().addLog('[逻辑门] 添加 ${gate.name} @ (${canvasPos.dx.toStringAsFixed(0)}, ${canvasPos.dy.toStringAsFixed(0)}) id=${node.id.substring(0, 8)}', category: 'info');
     }
@@ -563,6 +588,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         _lastSelectedId = _selectedNodeIds.isEmpty ? null : _selectedNodeIds.last;
       }
     });
+    _saveGraph();
   }
 
   void _deleteSelectedNodes() {
@@ -577,6 +603,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       _selectedNodeIds.clear();
       _lastSelectedId = null;
     });
+    _saveGraph();
   }
 
   String _mediaTypeName(MediaType t, bool zh) => switch (t) {
@@ -587,7 +614,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   void _addConnection(String fromId, String toId, [String kind = 'data']) {
     if (fromId == toId) return;
-    _pushUndo();
     final fromIdx = _nodes.indexWhere((n) => n.id == fromId);
     final toIdx = _nodes.indexWhere((n) => n.id == toId);
     if (fromIdx < 0 || toIdx < 0) return;
@@ -624,24 +650,19 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           return;
         }
       } else {
-        // 非逻辑节点的红色逻辑输入端：只允许从逻辑门输出接入
-        if (!fromNode.isGate) {
-          showToast(context, zh
-              ? '红色逻辑端口只能连接逻辑门的输出，普通节点不能直接接入'
-              : 'Red logic port accepts logic gate outputs only',
-              type: ToastType.error);
-          return;
-        }
-        // 源节点没有使能输入端
+        // 非逻辑节点的红色逻辑输入端（使能端）：接受逻辑门输出或上游节点的状态输出（状态端 → 使能端）。
+        // 语义与顶部注释一致：红色端口只传播 1/0，普通节点的状态输出可级联控制下游节点。
         if (toNode.type == PipelineStepType.start) {
           showToast(context, zh ? '源节点没有使能输入端' : 'Source node has no enable input', type: ToastType.error);
           return;
         }
       }
 
+      _pushUndo();
       setState(() {
         _connections.add(PipelineConnection(id: _uuid.v4(), fromNodeId: fromId, toNodeId: toId, kind: 'control'));
       });
+      _saveGraph();
       return;
     }
 
@@ -717,9 +738,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           type: ToastType.error);
       return;
     }
+    _pushUndo();
     setState(() {
       _connections.add(PipelineConnection(id: _uuid.v4(), fromNodeId: fromId, toNodeId: toId, kind: kind));
     });
+    _saveGraph();
   }
 
   void _deleteConnection(String connId) {
@@ -732,7 +755,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     });
     if (widget.video.filepath.isEmpty && conn.fromNodeId.isNotEmpty) {
       final fromNode = _nodes.where((n) => n.id == conn.fromNodeId).firstOrNull;
-      if (fromNode != null && fromNode.type == PipelineStepType.start) {
+      if (fromNode != null && fromNode.type == PipelineStepType.start && !fromNode.isGate) {
         final remaining = _connections.where((c) => c.fromNodeId == conn.fromNodeId).toList();
         final hasProcessingConn = remaining.any((c) {
           final target = _nodes.where((n) => n.id == c.toNodeId).firstOrNull;
@@ -743,6 +766,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         }
       }
     }
+    _saveGraph();
   }
 
   PipelineConnection? _hitTestConnection(Offset pos) {
@@ -753,17 +777,58 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       if (fi < 0 || ti < 0) continue;
       final from = _nodes[fi];
       final to = _nodes[ti];
-      final p1 = Offset(from.x + _portZoneW + _nodeWFor(from.type) + _portZoneW / 2, from.y + _nodeH / 2);
-      final p2 = Offset(to.x + _portZoneW / 2, to.y + _nodeH / 2);
-      if (_distToBezier(pos, p1, p2) < threshold) return conn;
+      final isControl = conn.kind == 'control';
+      // 与 _ConnectionPainter 一致：控制连线到逻辑门目标时，按顺序计算第几个输入
+      final inputIdx = (isControl && to.isGate)
+          ? _connections.where((c) => c.toNodeId == conn.toNodeId && c.kind == 'control').toList().indexOf(conn)
+          : 0;
+      if (inputIdx < 0) continue;
+      final p1 = _hitPortPos(from, isOutput: true, isControl: isControl);
+      final p2 = _hitPortPos(to, isOutput: false, isControl: isControl, gateInputIndex: inputIdx);
+      final dist = _distToWire(pos, p1, p2, orthogonal: isControl);
+      if (dist < threshold) return conn;
     }
     return null;
   }
 
-  double _distToBezier(Offset pt, Offset p1, Offset p2) {
-    final dx = (p2.dx - p1.dx).abs() * 0.5;
-    final c1 = Offset(p1.dx + dx, p1.dy);
-    final c2 = Offset(p2.dx - dx, p2.dy);
+  /// 端口坐标（与 _ConnectionPainter._portPos 保持一致；改动端口布局时需同步两处）。
+  Offset _hitPortPos(PipelineNode n, {required bool isOutput, required bool isControl, int gateInputIndex = 0}) {
+    if (n.isGate) {
+      final g = n.gate;
+      final inputCount = g?.inputCount ?? 0;
+      if (isOutput) return Offset(n.x + _portZoneW + _gateW + _portZoneW / 2, n.y + _gateH / 2);
+      if (inputCount == 0) return Offset(n.x + _portZoneW / 2, n.y + _gateH / 2);
+      final idx = gateInputIndex.clamp(0, inputCount - 1);
+      return Offset(n.x + _portZoneW / 2, n.y + _gateH * (idx + 1) / (inputCount + 1));
+    }
+    final colTop = n.y + (_nodeH - 38) / 2;
+    final dot1Y = colTop + 8;
+    final dot2Y = colTop + 30;
+    if (isControl) {
+      return isOutput ? Offset(n.x + 16 + _nodeWFor(n.type) + 8, dot2Y) : Offset(n.x + 8, dot2Y);
+    }
+    return isOutput ? Offset(n.x + 16 + _nodeWFor(n.type) + 8, dot1Y) : Offset(n.x + 8, dot1Y);
+  }
+
+  /// 点到连线的距离：数据连线为贝塞尔曲线，控制连线为正交折线（与 _ConnectionPainter 一致）。
+  double _distToWire(Offset pt, Offset p1, Offset p2, {required bool orthogonal}) {
+    if (orthogonal) {
+      const lead = 20.0;
+      final dx = p2.dx - p1.dx;
+      final midX = p2.dx - (dx >= 0 ? lead : -lead);
+      var minDist = _distToSeg(pt, p1, Offset(midX, p1.dy));
+      final d2 = _distToSeg(pt, Offset(midX, p1.dy), Offset(midX, p2.dy));
+      if (d2 < minDist) minDist = d2;
+      final d3 = _distToSeg(pt, Offset(midX, p2.dy), p2);
+      if (d3 < minDist) minDist = d3;
+      return minDist;
+    }
+    // 数据贝塞尔：弹性系数 0.4 与 _ConnectionPainter._bezierPath 一致
+    final dx = p2.dx - p1.dx;
+    final ctrlOffset = dx.abs() * 0.4;
+    final sign = dx >= 0 ? 1.0 : -1.0;
+    final c1 = Offset(p1.dx + ctrlOffset * sign, p1.dy);
+    final c2 = Offset(p2.dx - ctrlOffset * sign, p2.dy);
     var minDist = double.infinity;
     for (var t = 0.0; t <= 1.0; t += 0.05) {
       final u = 1 - t;
@@ -773,6 +838,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       if (d < minDist) minDist = d;
     }
     return minDist;
+  }
+
+  double _distToSeg(Offset pt, Offset a, Offset b) {
+    final ab = b - a;
+    final len2 = ab.dx * ab.dx + ab.dy * ab.dy;
+    if (len2 == 0) return (pt - a).distance;
+    final t = (((pt.dx - a.dx) * ab.dx + (pt.dy - a.dy) * ab.dy) / len2).clamp(0.0, 1.0).toDouble();
+    return (pt - (a + ab * t)).distance;
   }
 
   void _showConnectionMenu(Offset screenPos, PipelineConnection conn) {
@@ -832,6 +905,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       return;
     }
     widget.onSave(graph);
+    _clearDraft();
     Navigator.pop(context);
   }
 
@@ -1025,6 +1099,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         ],
       ),
     );
+    if (result == true) _clearDraft();
     return result ?? false;
   }
 
@@ -1120,11 +1195,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         }
       }
     });
+    _saveGraph();
     WidgetsBinding.instance.addPostFrameCallback((_) => _zoomToFit());
   }
 
   void _goToSource(AppStrings s) {
-    final startNodes = _nodes.where((n) => n.type == PipelineStepType.start).toList();
+    final startNodes = _nodes.where((n) => n.type == PipelineStepType.start && !n.isGate).toList();
     if (startNodes.isEmpty) {
       showToast(context, s.isZh ? '没有源文件节点' : 'No source nodes', type: ToastType.info);
       return;
@@ -3119,14 +3195,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               borderRadius: BorderRadius.circular(8),
               border: Border.all(color: scheme.tertiary.withAlpha(100)),
             ),
-            child: CustomPaint(
-              size: const Size(44, 44),
-              painter: GateSymbolPainter(
-                gate: gate, iec: iec,
-                color: scheme.onTertiaryContainer,
-                isZh: zh,
-              ),
-            ),
+            child: _gateIcon(gate, iec, scheme, width: 44, height: 44),
           ),
           const SizedBox(width: 10),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -3709,6 +3778,38 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     );
   }
 
+  /// 逻辑门图标：ANSI/IEEE 使用 tabler-icons 的 outline 矢量图（MIT 许可，出处见「关于 → 引用」），
+  /// IEC 及恒1/恒0/时间触发器沿用程序化绘制。
+  Widget _gateIcon(LogicGateType gate, bool iec, ColorScheme scheme, {required double width, required double height}) {
+    if (!iec) {
+      final name = switch (gate) {
+        LogicGateType.and => 'and',
+        LogicGateType.or => 'or',
+        LogicGateType.not => 'not',
+        LogicGateType.nand => 'nand',
+        LogicGateType.nor => 'nor',
+        LogicGateType.xor => 'xor',
+        LogicGateType.xnor => 'xnor',
+        _ => null,
+      };
+      if (name != null) {
+        return SvgPicture.asset(
+          'rele/logic_gates/$name.svg',
+          width: width,
+          height: height,
+          colorFilter: ColorFilter.mode(scheme.onTertiaryContainer, BlendMode.srcIn),
+        );
+      }
+    }
+    return CustomPaint(
+      size: Size(width, height),
+      painter: GateSymbolPainter(
+        gate: gate, iec: iec,
+        color: scheme.onTertiaryContainer,
+      ),
+    );
+  }
+
   /// 构建逻辑门节点 widget（比常规节点小，ANSI 符号绘制）
   Widget _buildGateWidget(PipelineNode node, LogicGateType gate, bool selected, ColorScheme scheme, AppStrings s) {
     final inputCount = gate.inputCount;
@@ -3828,13 +3929,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                 ),
                 child: gate == LogicGateType.timeTrigger
                     ? Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                        CustomPaint(
-                          size: Size(_gateW, _gateH - 18),
-                          painter: GateSymbolPainter(
-                            gate: gate, iec: iec,
-                            color: scheme.onTertiaryContainer, isZh: s.isZh,
-                          ),
-                        ),
+                        _gateIcon(gate, iec, scheme, width: _gateW, height: _gateH - 18),
                         const SizedBox(height: 1),
                         // FittedBox.scaleDown：字号被全局放大后仍能等比缩回，避免文字被 64px 容器裁切
                         Flexible(
@@ -3848,13 +3943,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                         ),
                       ])
                     : Center(
-                        child: CustomPaint(
-                          size: Size(_gateW, _gateH),
-                          painter: GateSymbolPainter(
-                            gate: gate, iec: iec,
-                            color: scheme.onTertiaryContainer, isZh: s.isZh,
-                          ),
-                        ),
+                        child: _gateIcon(gate, iec, scheme, width: _gateW, height: _gateH),
                       ),
               ),
             ),
@@ -4646,7 +4735,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   Widget _buildBottomBar(ColorScheme scheme, AppStrings s) {
     final v = widget.video;
-    final srcCount = _nodes.where((n) => n.type == PipelineStepType.start).length;
+    final srcCount = _nodes.where((n) => n.type == PipelineStepType.start && !n.isGate).length;
     final outCount = _nodes.where((n) => n.type == PipelineStepType.output).length;
     final countsText = s.isZh
         ? '${_nodes.length} 节点  |  $srcCount 源  |  $outCount 输出  |  ${_connections.length} 连线'
@@ -5587,7 +5676,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         case 'get_graph_stats':
           final nodes = widget.existingNodes;
           final conns = widget.existingConnections;
-          final srcCount = nodes.where((n) => n.type == PipelineStepType.start).length;
+          final srcCount = nodes.where((n) => n.type == PipelineStepType.start && !n.isGate).length;
           final outCount = nodes.where((n) => n.type == PipelineStepType.output).length;
           final gateCount = nodes.where((n) => n.isGate).length;
           _addToolResult('get_graph_stats', 'nodes: ${nodes.length}, gates: $gateCount, connections: ${conns.length}, start: $srcCount, output: $outCount');
@@ -5645,7 +5734,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     final nodes = widget.existingNodes;
     final conns = widget.existingConnections;
     final errors = <String>[];
-    if (!nodes.any((n) => n.type == PipelineStepType.start)) errors.add('Missing start node');
+    if (!nodes.any((n) => n.type == PipelineStepType.start && !n.isGate)) errors.add('Missing start node');
     if (!nodes.any((n) => n.type == PipelineStepType.output)) errors.add('Missing output node');
     final connectedIds = <String>{};
     for (final c in conns) { connectedIds.add(c.fromNodeId); connectedIds.add(c.toNodeId); }
@@ -5745,8 +5834,11 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
   }
 
   void _scrollToBottom() {
+    // 面板可能在流式响应中途被关闭（_scrollCtrl 已 dispose），避免触碰已销毁的控制器
+    if (!mounted) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollCtrl.hasClients) _scrollCtrl.animateTo(_scrollCtrl.position.maxScrollExtent, duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
+      if (!mounted || !_scrollCtrl.hasClients) return;
+      _scrollCtrl.animateTo(_scrollCtrl.position.maxScrollExtent, duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
     });
   }
 
@@ -5805,6 +5897,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     // 在 async 前读取配置，避免 async gap 后使用 context
     final showThinking = context.read<AppState>().config.aiShowThinking;
 
+    http.Client? sendClient;
     try {
       final isAnthropic = effProvider == 'anthropic';
       final uri = Uri.parse(_resolveEndpoint(effUrl, isAnthropic));
@@ -5856,23 +5949,25 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       request.headers.addAll(headers);
       request.body = jsonEncode(reqBody);
       final client = http.Client();
+      sendClient = client;
       final streamed = await client.send(request);
 
       if (streamed.statusCode != 200) {
         final respBody = await streamed.stream.bytesToString();
         final errMsg = 'Error: ${streamed.statusCode} ${respBody.length > 200 ? respBody.substring(0, 200) : respBody}';
         appState.logAiResponse(errMsg, error: true);
-        setState(() {
-          _messages.add((role: 'assistant', content: errMsg, inputTokens: null, outputTokens: null, blocks: null));
-          _loading = false;
-        });
+        if (mounted) {
+          setState(() {
+            _messages.add((role: 'assistant', content: errMsg, inputTokens: null, outputTokens: null, blocks: null));
+            _loading = false;
+          });
+        }
         _scrollToBottom();
-        client.close();
-        return;
+        return;  // sendClient 由外层 finally 统一关闭
       }
 
       // Add placeholder assistant message for streaming
-      if (!mounted) { client.close(); return; }
+      if (!mounted) return;  // sendClient 由外层 finally 统一关闭
       setState(() {
         _messages.add((role: 'assistant', content: '', inputTokens: null, outputTokens: null, blocks: null));
       });
@@ -5885,6 +5980,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       String lineBuf = '';
 
       await for (final chunk in streamed.stream.transform(utf8.decoder)) {
+        if (!mounted) break;  // 面板已关闭则停止消费，连接交由外层 finally 关闭
         lineBuf += chunk;
         final lines = lineBuf.split('\n');
         lineBuf = lines.removeLast(); // keep incomplete line
@@ -5952,7 +6048,6 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         }
       }
 
-      client.close();
       final content = buf.toString();
       appState.logAiResponse(content);
       _genStart.stop();
@@ -5983,6 +6078,8 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         _loading = false;
       });
       _scrollToBottom();
+    } finally {
+      sendClient?.close();  // 无论成功/异常/面板关闭，都释放 HTTP 连接
     }
   }
 
@@ -6017,21 +6114,24 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       req.headers['Content-Type'] = 'application/json';
       req.body = jsonEncode(body);
       final client = http.Client();
-      final resp = await client.send(req).timeout(const Duration(seconds: 15));
-      final respBody = await resp.stream.bytesToString();
-      client.close();
-      if (resp.statusCode != 200) return;
-      final json = jsonDecode(respBody) as Map<String, dynamic>;
-      String? title;
-      if (isAnthropic) {
-        final blocks = (json['content'] as List?) ?? [];
-        if (blocks.isNotEmpty) title = (blocks[0]['text'] as String?) ?? '';
-      } else {
-        final choices = (json['choices'] as List?) ?? [];
-        if (choices.isNotEmpty) title = ((choices[0]['message'] as Map<String, dynamic>?)?['content'] as String?) ?? '';
-      }
-      if (title != null && title.trim().isNotEmpty && mounted) {
-        widget.onTitleGenerated?.call(title.trim().replaceAll(RegExp(r'[\n"]+'), ''));
+      try {
+        final resp = await client.send(req).timeout(const Duration(seconds: 15));
+        final respBody = await resp.stream.bytesToString();
+        if (resp.statusCode != 200) return;
+        final json = jsonDecode(respBody) as Map<String, dynamic>;
+        String? title;
+        if (isAnthropic) {
+          final blocks = (json['content'] as List?) ?? [];
+          if (blocks.isNotEmpty) title = (blocks[0]['text'] as String?) ?? '';
+        } else {
+          final choices = (json['choices'] as List?) ?? [];
+          if (choices.isNotEmpty) title = ((choices[0]['message'] as Map<String, dynamic>?)?['content'] as String?) ?? '';
+        }
+        if (title != null && title.trim().isNotEmpty && mounted) {
+          widget.onTitleGenerated?.call(title.trim().replaceAll(RegExp(r'[\n"]+'), ''));
+        }
+      } finally {
+        client.close();
       }
     } catch (_) {
       // 标题生成失败不影响主对话

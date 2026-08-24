@@ -15,6 +15,8 @@
 #include "message_queues.h"
 #include <set>
 #include <mutex>
+#include <vector>
+#include <functional>
 
 using json = nlohmann::json;
 using namespace ffmpegpp;
@@ -29,6 +31,30 @@ static std::atomic<bool> g_shutdownFlag{false};
 // 已被前端取消、尚未被 worker 消费的任务 id 集合（批量取消用）
 static std::set<std::string> g_cancelledTaskIds;
 static std::mutex g_cancelMutex;
+
+// 一次性 init 保护：并发 init 会对 joinable 的 g_workerThread 重新赋值导致 std::terminate
+static std::mutex g_initMutex;
+
+// probe / check_env / query_ffmpeg_features 跑在辅助线程上；追踪并统一 join，
+// 避免库卸载（dlclose / DLL_PROCESS_DETACH）时这些线程仍在库代码内执行而崩溃。
+static std::mutex g_auxThreadsMutex;
+static std::vector<std::thread> g_auxThreads;
+
+static void spawnAuxThread(std::function<void()> fn) {
+    std::lock_guard<std::mutex> lock(g_auxThreadsMutex);
+    g_auxThreads.emplace_back(std::move(fn));
+}
+
+static void joinAuxThreads() {
+    std::vector<std::thread> threads;
+    {
+        std::lock_guard<std::mutex> lock(g_auxThreadsMutex);
+        threads.swap(g_auxThreads);
+    }
+    for (auto& t : threads) {
+        if (t.joinable()) t.join();
+    }
+}
 
 static void workerLoop() {
     slog("dll worker: thread started");
@@ -97,6 +123,7 @@ static void workerLoop() {
 extern "C" {
 
 FFMPEGPP_API int ffmpegpp_init() {
+    std::lock_guard<std::mutex> lock(g_initMutex);
     if (g_running.load()) return 0;
 
     slog_init();
@@ -108,6 +135,7 @@ FFMPEGPP_API int ffmpegpp_init() {
 
     g_shutdownFlag.store(false);
     g_cancelFlag.store(false);
+    resetInputWake();  // 清掉历史 wake 标志，避免重初始化后 worker 立即退出
     g_running.store(true);
     g_workerThread = std::thread(workerLoop);
 
@@ -160,7 +188,7 @@ FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
             return 0;
         }
         if (action == "probe" || action == "check_env" || action == "query_ffmpeg_features") {
-            std::thread([req]() {
+            spawnAuxThread([req]() {
                 try {
                     if (req.value("action", "") == "probe") handleProbe(req);
                     else if (req.value("action", "") == "check_env") handleCheckEnv(req);
@@ -170,7 +198,7 @@ FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
                 } catch (...) {
                     JsonWriter::reply(req.value("id", ""), false, nullptr, "服务器未知异常");
                 }
-            }).detach();
+            });
             return 0;
         }
     } catch (...) {
@@ -198,6 +226,9 @@ FFMPEGPP_API void ffmpegpp_shutdown() {
     g_shutdownFlag.store(true);
     g_cancelFlag.store(true);
     wakeInput();
+
+    // 先等 probe/check_env/query_features 辅助线程退出，再停止输出与线程
+    joinAuxThreads();
 
     if (g_workerThread.joinable()) {
         g_workerThread.join();
@@ -241,7 +272,8 @@ static void onUnload() {
         g_shutdownFlag.store(true);
         g_cancelFlag.store(true);
         wakeInput();
-        g_workerThread.detach();
+        joinAuxThreads();
+        if (g_workerThread.joinable()) g_workerThread.join();
         g_running.store(false);
     }
 }

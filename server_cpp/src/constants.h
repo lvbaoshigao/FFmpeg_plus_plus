@@ -3,6 +3,7 @@
 #include <vector>
 #include <map>
 #include <algorithm>
+#include <cctype>
 
 namespace ffmpegpp {
 
@@ -145,12 +146,18 @@ inline std::vector<std::string> DANGEROUS_FILTERS = {
     "opencl", "opengl", "libplacebo",
     // drawtext 支持 textfile= 读取任意文件内容并绘制进画面（信息泄露）
     "drawtext",
+    // 字幕/字体滤镜直接读取本地文件内容并烧进画面（信息泄露）
+    "subtitles", "ass", "ssa",
+    // readfile 读取任意文件内容注入滤镜元数据
+    "readfile",
 };
 
 // 验证过滤器字符串是否安全
 inline bool isFilterSafe(const std::string& filter) {
     std::string lower = filter;
-    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    // 用 unsigned char 转型，避免 UTF-8 高位字节（有符号负值）传给 tolower 触发 UB
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
     // 禁止 shell 元字符
     for (char c : filter) {

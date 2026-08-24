@@ -28,6 +28,7 @@
 #include <deque>
 #include <utility>
 #include <system_error>
+#include <mutex>
 
 namespace ffmpegpp {
 
@@ -91,8 +92,10 @@ private:
 // ═══════════════════════════════════════════════
 
 static FILE* g_logFile = nullptr;
+static std::mutex g_logMutex;  // slog 被 worker / FFI / detached 线程并发调用，需串行化 FILE* 访问
 
 void slog_init() {
+    std::lock_guard<std::mutex> lock(g_logMutex);
 #ifdef _WIN32
     char logPath[MAX_PATH];
     const char* appdata = getenv("APPDATA");
@@ -102,8 +105,11 @@ void slog_init() {
         snprintf(dirPath, MAX_PATH, "%s\\FFmpeg++", appdata);
         CreateDirectoryA(dirPath, nullptr);
     } else {
-        char tempDir[MAX_PATH];
-        GetTempPathA(MAX_PATH, tempDir);
+        char tempDir[MAX_PATH] = {0};
+        // GetTempPathA 失败时 tempDir 未定义；校验返回值并按需回退，避免写出错误日志路径
+        if (GetTempPathA(MAX_PATH, tempDir) == 0) {
+            snprintf(tempDir, MAX_PATH, "%s", ".");
+        }
         snprintf(logPath, MAX_PATH, "%sFFmpeg++_server_debug.log", tempDir);
     }
     g_logFile = fopen(logPath, "w");
@@ -129,6 +135,7 @@ void slog_init() {
 }
 
 void slog(const char* fmt, ...) {
+    std::lock_guard<std::mutex> lock(g_logMutex);
     if (!g_logFile) return;
     va_list args;
     va_start(args, fmt);
@@ -139,6 +146,7 @@ void slog(const char* fmt, ...) {
 }
 
 void slog_cleanup() {
+    std::lock_guard<std::mutex> lock(g_logMutex);
     if (g_logFile) {
         fclose(g_logFile);
         g_logFile = nullptr;
@@ -202,7 +210,9 @@ json ProgressParser::stats() const {
 }
 
 std::string ProgressParser::fmtTime(double seconds) {
-    if (seconds < 0) seconds = 0;
+    // 异常/超长时长（ffprobe 或进度解析产生）先钳位，避免 (int) 强转越界为 UB
+    if (!std::isfinite(seconds) || seconds < 0) seconds = 0;
+    if (seconds > 359999.0) seconds = 359999.0;
     int total = (int)seconds;
     int h = total / 3600, m = (total % 3600) / 60, s = total % 60;
     char buf[16];
@@ -517,6 +527,22 @@ void handleConcat(const json& req, std::atomic<bool>& cancel_flag) {
         JsonWriter::reply(req["id"], false, nullptr, "文件列表为空");
         return;
     }
+    // 列表文件按行解析：换行/回车会注入额外行（任意文件包含），单引号无转义机制，
+    // 均须拒绝；输出路径同样走 isPathSafe。
+    if (!isPathSafe(output)) {
+        JsonWriter::reply(req["id"], false, nullptr, "输出路径包含不安全字符");
+        return;
+    }
+    for (auto& f : files) {
+        if (!isPathSafe(f)) {
+            JsonWriter::reply(req["id"], false, nullptr, "文件路径包含不安全字符");
+            return;
+        }
+        if (f.find('\'') != std::string::npos) {
+            JsonWriter::reply(req["id"], false, nullptr, "文件路径包含单引号，无法用于 concat 列表");
+            return;
+        }
+    }
 
     // Write temp concat list
     auto tmpDir = std::filesystem::path(ffmpegpp::getTempDir());
@@ -529,14 +555,7 @@ void handleConcat(const json& req, std::atomic<bool>& cancel_flag) {
             return;
         }
         for (auto& f : files) {
-            // Escape single quotes in path
-            std::string escaped = f;
-            size_t pos = 0;
-            while ((pos = escaped.find('\'', pos)) != std::string::npos) {
-                escaped.replace(pos, 1, "'\\''");
-                pos += 4;
-            }
-            ofs << "file '" << escaped << "'\n";
+            ofs << "file '" << f << "'\n";  // f 已保证无 '、无换行
         }
     }
 
@@ -578,6 +597,25 @@ void handleImageSequence(const json& req, std::atomic<bool>& cancel_flag) {
         JsonWriter::reply(req["id"], false, nullptr, "文件列表为空");
         return;
     }
+    // framerate 必须为正有限数，否则 1.0/0 → inf/nan 写入 duration，命令失效
+    if (!std::isfinite(framerate) || framerate <= 0) {
+        JsonWriter::reply(req["id"], false, nullptr, "framerate 必须为正数");
+        return;
+    }
+    if (!isPathSafe(output)) {
+        JsonWriter::reply(req["id"], false, nullptr, "输出路径包含不安全字符");
+        return;
+    }
+    for (auto& f : files) {
+        if (!isPathSafe(f)) {
+            JsonWriter::reply(req["id"], false, nullptr, "文件路径包含不安全字符");
+            return;
+        }
+        if (f.find('\'') != std::string::npos) {
+            JsonWriter::reply(req["id"], false, nullptr, "文件路径包含单引号，无法用于 concat 列表");
+            return;
+        }
+    }
 
     // Write temp concat list with duration per frame
     auto tmpDir = std::filesystem::path(ffmpegpp::getTempDir());
@@ -593,24 +631,12 @@ void handleImageSequence(const json& req, std::atomic<bool>& cancel_flag) {
         char durStr[32];
         snprintf(durStr, sizeof(durStr), "%.6f", dur);
         for (size_t i = 0; i < files.size(); i++) {
-            std::string escaped = files[i];
-            size_t pos = 0;
-            while ((pos = escaped.find('\'', pos)) != std::string::npos) {
-                escaped.replace(pos, 1, "'\\''");
-                pos += 4;
-            }
-            ofs << "file '" << escaped << "'\n";
+            ofs << "file '" << files[i] << "'\n";
             ofs << "duration " << durStr << "\n";
         }
         // Last frame needs to be repeated for duration to take effect
         if (!files.empty()) {
-            std::string escaped = files.back();
-            size_t pos = 0;
-            while ((pos = escaped.find('\'', pos)) != std::string::npos) {
-                escaped.replace(pos, 1, "'\\''");
-                pos += 4;
-            }
-            ofs << "file '" << escaped << "'\n";
+            ofs << "file '" << files.back() << "'\n";
         }
     }
 

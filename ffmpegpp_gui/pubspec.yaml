@@ -29,6 +29,7 @@ dependencies:
   glass_liquid_navbar: ^0.2.0
   settings_ui_plus: ^0.2.8
   oc_liquid_glass: ^0.3.0
+  flutter_svg: ^2.3.0
 
 dependency_overrides:
   vector_math: ^2.4.0
@@ -44,3 +45,4 @@ flutter:
     - rele/icon.png
     - rele/wx.png
     - rele/zfb.jpg
+    - rele/logic_gates/

@@ -59,4 +59,9 @@ void wakeInput() {
     g_inputCv.notify_all();
 }
 
+void resetInputWake() {
+    std::lock_guard<std::mutex> lock(g_inputMutex);
+    g_inputWake = false;
+}
+
 } // namespace ffmpegpp
