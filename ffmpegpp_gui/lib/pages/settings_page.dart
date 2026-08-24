@@ -693,6 +693,7 @@ class _SettingsPageState extends State<SettingsPage> {
         key: const ValueKey('title'),
         radius: 22,
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        pressable: true,
         child: Text(s.settingsTitle,
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)));
     Widget buildSearchButton() => MobileGlassPill(
@@ -1989,21 +1990,32 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
   final s = AppStrings.of(state.config.language);
   final scheme = Theme.of(ctx).colorScheme;
   if (isMobilePlatform) {
-    // 移动端：无盒子的纯列表，每一项像设置项，链接点击打开网页。
+    // 移动端：顶部图标 + 软件名 + 版本 + 检查更新按钮，下方为版本信息/链接/赞助。
     return _glass(ctx, state, s.aboutTitle, [
+      Center(child: Column(children: [
+        const SizedBox(height: 4),
+        ClipRRect(borderRadius: BorderRadius.circular(16),
+            child: Image.asset('rele/icon.png', width: 72, height: 72, fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => Icon(Icons.play_circle_fill, size: 72, color: scheme.primary))),
+        const SizedBox(height: 10),
+        Text('FFmpeg++', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: scheme.primary)),
+        const SizedBox(height: 2),
+        Text('v${updater.currentVersion}', style: TextStyle(fontSize: 13, color: scheme.outline)),
+        const SizedBox(height: 14),
+        SizedBox(width: double.infinity,
+            child: _iosButton(icon: Icons.system_update, label: s.checkUpdate,
+                color: scheme.onSecondaryContainer, bg: scheme.secondaryContainer,
+                onTap: () => _checkForUpdate(ctx, s))),
+      ])),
+      const SizedBox(height: 14),
+      const Divider(height: 1),
+      const SizedBox(height: 10),
       ListTile(
         dense: true, contentPadding: EdgeInsets.zero,
         leading: Icon(Icons.info_outline, size: 20, color: scheme.primary),
         title: Text(s.aboutVersion, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
         trailing: Text('v${updater.currentVersion}',
             style: TextStyle(fontSize: 13, color: scheme.outline, fontWeight: FontWeight.w500)),
-      ),
-      ListTile(
-        dense: true, contentPadding: EdgeInsets.zero,
-        leading: Icon(Icons.system_update, size: 20, color: scheme.primary),
-        title: Text(s.checkUpdate, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
-        trailing: const Icon(Icons.chevron_right, size: 18),
-        onTap: () => openExternalUrl('https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases'),
       ),
       ListTile(
         dense: true, contentPadding: EdgeInsets.zero,

@@ -327,6 +327,7 @@ class ProjectPageState extends State<ProjectPage> {
         key: const ValueKey('title'),
         radius: 22,
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        pressable: true,
         child: titleChild);
     Widget buildActions() => MobileGlassPill(
         radius: 22,

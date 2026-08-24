@@ -115,6 +115,7 @@ class _QueuePageState extends State<QueuePage> {
         MobileGlassPill(
           radius: 22,
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          pressable: true,
           child: Text(s.navQueue,
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
         ),
