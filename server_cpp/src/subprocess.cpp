@@ -453,7 +453,10 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
         pid_t w = waitpid(pid, &status, WNOHANG);
         if (w > 0) {
             if (WIFEXITED(status)) result.exit_code = WEXITSTATUS(status);
-            else if (WIFSIGNALED(status)) result.exit_code = -1;
+            // 子进程被信号终止：用负的信号编号传递，调用方可分辨
+            //   exit_code == -11 -> SIGSEGV、-6 -> SIGABRT、-9 -> SIGKILL 等
+            // 之前统一写成 -1，会把 SIGSEGV 等关键信息隐藏掉，前端就只能笼统报"执行失败-1"。
+            else if (WIFSIGNALED(status)) result.exit_code = -WTERMSIG(status);
             child_exited = true;
             break;
         }
@@ -605,7 +608,8 @@ ProcessResult Subprocess::runWithProgress(
         pid_t w = waitpid(pid, &status, WNOHANG);
         if (w > 0) {
             if (WIFEXITED(status)) result.exit_code = WEXITSTATUS(status);
-            else if (WIFSIGNALED(status)) result.exit_code = -1;
+            // 与 Subprocess::run 保持一致：用负信号编号传递信号终止语义。
+            else if (WIFSIGNALED(status)) result.exit_code = -WTERMSIG(status);
             break;
         }
 

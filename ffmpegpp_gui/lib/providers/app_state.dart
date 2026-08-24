@@ -183,6 +183,11 @@ class AppState extends ChangeNotifier {
 
   /// Android：ffmpeg/ffprobe 直接内置在 APK 中（jniLibs），
   /// 首次启动把它们的路径写入配置并告知 C++ 后端。
+  ///
+  /// 关键修复：之前无条件写入路径，即使 -version 自检失败（exit=-11 SIGSEGV 等）
+  /// 也会把无效路径写进 config + setPaths，导致后续每个文件探测都报
+  /// 「ffprobe 执行失败 (-1): 无法读取文件」（Subprocess 把 SIGSEGV 错误地映射为 -1，
+  /// 见 server_cpp/src/subprocess.cpp）。现在只有自检 exit_code == 0 才落盘路径。
   Future<void> _setupAndroidBundledTools() async {
     final ffmpeg = await AndroidPlatformBridge.bundledFfmpegPath();
     final ffprobe = await AndroidPlatformBridge.bundledFfprobePath();
@@ -195,17 +200,36 @@ class AppState extends ChangeNotifier {
 
     // 自检可执行性：直接跑 -version，确认 nativeLibraryDir 中的静态二进制可用。
     // 这里有明确的 exit code，便于通过 logcat 定位 127（命令未找到）或 -11（SIGSEGV）之类的失败。
+    bool ffprobeOk = false;
     try {
       final v = await Process.run(ffprobe, ['-version']);
       final firstLine = (v.stdout is String && (v.stdout as String).isNotEmpty)
           ? (v.stdout as String).split('\n').first
           : '<empty>';
       debugPrint('[ffprobe] -version exit=${v.exitCode} out=$firstLine');
-      addLog('内置 FFprobe 自检 exit=${v.exitCode}',
-          category: v.exitCode == 0 ? 'info' : 'error');
+      if (v.exitCode == 0) {
+        ffprobeOk = true;
+        addLog('内置 FFprobe 自检通过: $firstLine', category: 'info');
+      } else {
+        // exit_code 是负数（信号终止）时给出可读的信号名提示，
+        // 避免上层只看到「ffprobe 执行失败 (-1)」「无法读取文件」这种误导。
+        final sig = v.exitCode < 0
+            ? ' (信号 -${-v.exitCode}，常见 -11=SIGSEGV 即二进制与系统不兼容)'
+            : '';
+        addLog('内置 FFprobe 自检失败 exit=${v.exitCode}$sig，'
+            '将不会把无效路径写入配置/后端，请确认 APK 内置二进制与当前 Android 系统匹配',
+            category: 'error');
+      }
     } catch (e) {
       debugPrint('[ffprobe] -version error: $e');
       addLog('内置 FFprobe 自检异常: $e', category: 'error');
+    }
+
+    // 只有自检成功才写入路径与注入后端；避免后续每个文件探测都因 ffprobe 崩溃
+    // 而「无法读取文件」失败，把用户误导到路径/权限方向排查。
+    if (!ffprobeOk) {
+      addLog('跳过内置 FFmpeg/FFprobe 路径写入与后端注入（自检未通过）', category: 'error');
+      return;
     }
 
     // Android 内置工具路径是权威值：无条件写入配置（覆盖可能残留的旧/失效路径）。
@@ -318,20 +342,9 @@ class AppState extends ChangeNotifier {
     _probeCount++; notifyListeners();
     addLog('添加 ${filepaths.length} 个文件', category: 'info');
 
-    // Android：file_picker 返回的是 cacheDir/file_picker/... 下的缓存路径，
-    // 该目录可能被系统清空、部分 ROM 下 fork 出的 ffprobe 子进程也无法访问，
-    // 从而报「无法读取文件，请检查路径或文件权限」。这里把每个导入文件复制到
-    // 应用文档目录（持久 + app 私有 + 保留扩展名），保证 ffprobe/后续转码稳定读取。
     final entries = <VideoFile>[];
     for (final fp in filepaths) {
-      String path = fp;
-      if (isAndroidPlatform) {
-        final copied = await AndroidPlatformBridge.ensureReadableImport(fp);
-        if (copied != fp) {
-          addLog('已复制到应用私有目录: $copied', category: 'info');
-        }
-        path = copied;
-      }
+      final path = await _ensureReadableForProbe(fp);
       final vf = VideoFile.fromFilepath(path);
       _videos.add(vf);
       entries.add(vf);
@@ -343,6 +356,21 @@ class AppState extends ChangeNotifier {
     } finally {
       _probeCount--; notifyListeners();
     }
+  }
+
+  /// 把 [fp] 转换为 ffprobe/后续转码可稳定读取的路径。
+  /// Android：file_picker 返回的是 cacheDir/file_picker/... 下的缓存路径，
+  /// 该目录可能被系统清空、部分 ROM 下 fork 出的 ffprobe 子进程也无法访问，
+  /// 从而报「无法读取文件，请检查路径或文件权限」。这里把每个导入文件复制到
+  /// 应用文档目录（持久 + app 私有 + 保留扩展名），保证 ffprobe/后续转码稳定读取。
+  /// 其它平台：原样返回。复制失败时原样返回，确保探测阶段能给出具体错误。
+  Future<String> _ensureReadableForProbe(String fp) async {
+    if (!isAndroidPlatform) return fp;
+    final copied = await AndroidPlatformBridge.ensureReadableImport(fp);
+    if (copied != fp) {
+      addLog('已复制到应用私有目录: $copied', category: 'info');
+    }
+    return copied;
   }
 
   Future<void> _probeAll(List<VideoFile> entries) async {
@@ -437,7 +465,9 @@ class AppState extends ChangeNotifier {
     _probeCount++; notifyListeners();
     final entries = <VideoFile>[];
     for (final fp in filepaths) {
-      final vf = VideoFile.fromFilepath(fp);
+      // 容器路径同样需要保证 ffprobe 可读取（Android 上 SAF 缓存路径在子进程不可见）。
+      final path = await _ensureReadableForProbe(fp);
+      final vf = VideoFile.fromFilepath(path);
       _videos.add(vf);
       entries.add(vf);
     }
@@ -488,7 +518,10 @@ class AppState extends ChangeNotifier {
     final baseIndex = container.items.isEmpty ? 1 : container.items.map((i) => i.index).reduce(max) + 1;
     final entries = <VideoFile>[];
     for (var i = 0; i < filepaths.length; i++) {
-      final vf = VideoFile.fromFilepath(filepaths[i]);
+      // 容器追加文件同样需要把 SAF 缓存路径复制到应用私有目录，
+      // 否则后续 ffprobe 会以"无法读取文件"失败。
+      final path = await _ensureReadableForProbe(filepaths[i]);
+      final vf = VideoFile.fromFilepath(path);
       _videos.add(vf);
       entries.add(vf);
       container.items.add(ContainerItem(fileId: vf.id, index: baseIndex + i));
