@@ -665,88 +665,78 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 移动端顶栏：液态玻璃药丸——左标题药丸 + 右搜索药丸；
   /// 点击搜索后使用 AnimatedContainer 平滑展开，无卡顿。
   Widget _buildMobileTopBar(AppStrings s, ColorScheme scheme) {
-    final safeTop = MediaQuery.of(context).padding.top;
     final searching = _searchExpanded;
 
+    // 顶栏改成 Stack：常规层（左标题药丸 + 右搜索按钮药丸）搜索时整体淡出+缩放
+    // （仍占位），让搜索药丸能真正水平居中；搜索药丸单独叠一层，常态 44px
+    // 折叠、搜索时 AnimatedSize「变长」到 200px 并水平居中。宽度固定 200，
+    // 不再用 Expanded 把输入框撑满整行。
     return Padding(
-      padding: EdgeInsets.fromLTRB(isMobilePlatform ? 8 : 12, safeTop + 6, isMobilePlatform ? 8 : 12, 6),
-      child: Row(children: [
-        // 左：标题药丸（搜索时淡出）
+      padding: const EdgeInsets.fromLTRB(8, 0, 8, 0),
+      child: Stack(alignment: Alignment.center, children: [
+        // 常规状态：左标题药丸 + 右搜索按钮药丸
         AnimatedOpacity(
           opacity: searching ? 0.0 : 1.0,
           duration: const Duration(milliseconds: 220),
           child: AnimatedScale(
-            scale: searching ? 0.85 : 1.0,
+            scale: searching ? 0.9 : 1.0,
             duration: const Duration(milliseconds: 220),
             curve: Curves.easeOutCubic,
             child: IgnorePointer(
               ignoring: searching,
-              child: MobileGlassPill(
-                radius: 22,
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                pressable: true,
-                child: Text(s.settingsTitle,
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+              child: Padding(
+                padding: const EdgeInsets.only(top: 6, bottom: 6),
+                child: Row(children: [
+                  MobileGlassPill(
+                    radius: 22,
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    pressable: true,
+                    child: Text(s.settingsTitle,
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+                  ),
+                  const Spacer(),
+                  MobileGlassPill(
+                    radius: 22,
+                    padding: EdgeInsets.zero,
+                    child: SizedBox(
+                      width: 44,
+                      height: 44,
+                      child: IconButton(
+                        icon: Icon(Icons.search, size: 20, color: scheme.onSurface),
+                        tooltip: s.setSearchHint,
+                        onPressed: () {
+                          setState(() => _searchExpanded = true);
+                          WidgetsBinding.instance.addPostFrameCallback((_) => _searchFocus.requestFocus());
+                        },
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+                      ),
+                    ),
+                  ),
+                ]),
               ),
             ),
           ),
         ),
-        const SizedBox(width: 8),
-        // 右：搜索按钮/搜索框（贴合内容宽度，按要求四步过渡：
-        //   1) 搜索图标"缩放到消失"
-        //   2) 药丸整体向中移动（AnimatedAlign alignment: right→center）
-        //   3) 药丸变长（AnimatedSize 撑开到目标宽度）
-        //   4) 液态玻璃药丸内部从"搜索按钮"交叉淡入到"搜索输入框"（同药丸不变）
-        //
-        // 用 Expanded 给一个「搜索区可以占据的最大空间」，内部用药丸居中 + 受控
-        // 宽度（min(screenWidth-32, 380)），避免搜索框占据整行跟其他药丸同宽。
-        Expanded(
-          child: AnimatedSize(
-            duration: const Duration(milliseconds: 320),
-            curve: Curves.easeOutCubic,
-            alignment: Alignment.centerRight,
-            child: AnimatedAlign(
-              duration: const Duration(milliseconds: 320),
-              curve: Curves.easeOutCubic,
-              alignment: searching ? Alignment.center : Alignment.centerRight,
-              child: ConstrainedBox(
-                constraints: searching
-                    ? BoxConstraints(
-                        maxWidth: MediaQuery.of(context).size.width - 32,
-                        minWidth: 220,
+        // 搜索状态：同一搜索药丸从 44px「变长」到 200px（AnimatedSize）并水平居中
+        AnimatedOpacity(
+          opacity: searching ? 1.0 : 0.0,
+          duration: const Duration(milliseconds: 220),
+          child: IgnorePointer(
+            ignoring: !searching,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 6, bottom: 6),
+              child: AnimatedSize(
+                duration: const Duration(milliseconds: 320),
+                curve: Curves.easeOutCubic,
+                alignment: Alignment.center,
+                child: searching
+                    ? MobileGlassPill(
+                        radius: 22,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                        child: _buildSearchField(s, scheme),
                       )
-                    : const BoxConstraints(),
-                child: MobileGlassPill(
-                  radius: 22,
-                  padding: searching
-                      ? const EdgeInsets.symmetric(horizontal: 12, vertical: 6)
-                      : EdgeInsets.zero,
-                  child: searching
-                      ? _buildSearchField(s, scheme)
-                      : AnimatedOpacity(
-                          opacity: searching ? 0.0 : 1.0,
-                          duration: const Duration(milliseconds: 180),
-                          child: AnimatedScale(
-                            scale: searching ? 0.0 : 1.0,
-                            duration: const Duration(milliseconds: 180),
-                            curve: Curves.easeInCubic,
-                            child: SizedBox(
-                              width: 44,
-                              height: 44,
-                              child: IconButton(
-                                icon: Icon(Icons.search, size: 20, color: scheme.onSurface),
-                                tooltip: s.setSearchHint,
-                                onPressed: () {
-                                  setState(() => _searchExpanded = true);
-                                  WidgetsBinding.instance.addPostFrameCallback((_) => _searchFocus.requestFocus());
-                                },
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-                              ),
-                            ),
-                          ),
-                        ),
-                ),
+                    : const SizedBox(width: 44, height: 44),
               ),
             ),
           ),
@@ -760,6 +750,7 @@ class _SettingsPageState extends State<SettingsPage> {
   /// border（focused / enabled / disabled / hovered），只保留液态玻璃药丸作为容器。
   Widget _buildSearchField(AppStrings s, ColorScheme scheme) {
     return SizedBox(
+      width: 200,
       height: 44,
       child: Row(children: [
         AnimatedSwitcher(
