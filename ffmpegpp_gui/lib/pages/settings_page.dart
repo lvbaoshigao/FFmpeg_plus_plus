@@ -18,6 +18,7 @@ import '../widgets/install_dialog.dart';
 import 'keybinding_page.dart';
 import 'command_page.dart';
 import 'log_page.dart';
+import 'credits_page.dart';
 import '../platform/app_platform.dart';
 import '../widgets/font_picker.dart';
 import '../services/ffmpeg_installer.dart';
@@ -1983,6 +1984,10 @@ Widget _buildCache(BuildContext ctx, AppState state) {
   ]);
 }
 
+void _openCredits(BuildContext ctx) {
+  Navigator.of(ctx).push(MaterialPageRoute(builder: (_) => SafeArea(child: const CreditsPage())));
+}
+
 Widget _buildAbout(BuildContext ctx, AppState state) {
   final s = AppStrings.of(state.config.language);
   final scheme = Theme.of(ctx).colorScheme;
@@ -2035,6 +2040,13 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
         trailing: const Icon(Icons.chevron_right, size: 18),
         onTap: () => _showSponsor(ctx, scheme, s),
       ),
+      ListTile(
+        dense: true, contentPadding: EdgeInsets.zero,
+        leading: Icon(Icons.favorite_outline, size: 20, color: scheme.primary),
+        title: Text(s.aboutReferences, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+        trailing: const Icon(Icons.chevron_right, size: 18),
+        onTap: () => _openCredits(ctx),
+      ),
     ]);
   }
   return _glass(ctx, state, s.aboutTitle, [
@@ -2064,6 +2076,11 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
               ? () => openExternalUrl('https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases')
               : () => _checkForUpdate(ctx, s))),
     ]),
+    const SizedBox(height: 8),
+    SizedBox(width: double.infinity, child: _iosButton(
+        icon: Icons.favorite_outline, label: s.aboutReferences,
+        color: scheme.onSurface, bg: scheme.surfaceContainerHighest.withAlpha(100),
+        onTap: () => _openCredits(ctx))),
     const SizedBox(height: 10),
     Wrap(spacing: 4, runSpacing: 4, children: [
       _link(s.aboutBlogLink, 'https://blog-clstone.netlify.app/'),
@@ -2112,6 +2129,14 @@ Widget _buildMcpAi(BuildContext ctx, AppState state) {
           },
         )),
       ]),
+    if (cfg.mcpEnabled && state.mcpRunning && state.mcpToken != null)
+      Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: SelectableText(
+          '${s.isZh ? '局域网访问令牌' : 'LAN access token'}: ${state.mcpToken}',
+          style: TextStyle(fontSize: 11, color: scheme.primary, fontWeight: FontWeight.w600),
+        ),
+      ),
     SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
         title: Text(s.isZh ? '允许 MCP 写入' : 'Allow MCP Write', style: TextStyle(color: clr, fontSize: 12)),
         subtitle: Text(s.isZh ? '关闭时 MCP 只能读取画布/文件，所有修改操作会被拒绝' : 'When off, MCP can only read the canvas/files; all write actions are rejected',

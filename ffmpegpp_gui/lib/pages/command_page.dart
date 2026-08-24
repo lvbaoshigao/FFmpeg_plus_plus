@@ -101,11 +101,23 @@ class _CommandPageState extends State<CommandPage> {
         inputPath = parts[i + 1];
       }
     }
+    // 输出是最后一个「非标志、且不是紧邻取值标志的值」的参数。
+    // 例如 `-c copy` 里的 copy 是编解码取值而非输出路径。
+    const valueFlags = {
+      '-i', '-c', '-c:v', '-c:a', '-c:s', '-codec', '-codec:v', '-codec:a', '-codec:s',
+      '-vcodec', '-acodec', '-scodec', '-t', '-to', '-ss', '-fs', '-frames:v', '-frames:a',
+      '-vframes', '-aframes', '-b', '-b:v', '-b:a', '-crf', '-r', '-s', '-vf', '-af',
+      '-filter', '-filter:v', '-filter:a', '-f', '-format', '-map', '-map:v', '-map:a',
+      '-preset', '-tune', '-profile', '-profile:v', '-level', '-pix_fmt', '-ar', '-ac',
+      '-ab', '-g', '-q', '-q:v', '-q:a', '-bufsize', '-maxrate', '-minrate', '-movflags',
+      '-tag:v', '-metadata', '-aspect', '-threads', '-cpu-used', '-deadline',
+    };
     for (int i = parts.length - 1; i >= 0; i--) {
-      if (!parts[i].startsWith('-') && parts[i].isNotEmpty) {
-        outputPath = parts[i];
-        break;
-      }
+      final tok = parts[i];
+      if (tok.isEmpty || tok.startsWith('-')) continue;
+      if (i > 0 && valueFlags.contains(parts[i - 1])) continue; // 该 token 是某个标志的取值
+      outputPath = tok;
+      break;
     }
 
     if (inputPath == null || outputPath == null) {

@@ -1,5 +1,6 @@
 import 'dart:io' show Platform;
 import 'package:uuid/uuid.dart';
+import '../services/secure_key_store.dart';
 
 export 'quick_config.dart';
 
@@ -280,7 +281,7 @@ class PipelineNode {
   }
 
   bool get hasInput => type != PipelineStepType.start;
-  bool get hasOutput => type != PipelineStepType.output;
+  bool get hasOutput => !isGate && type != PipelineStepType.output;
 
   Set<MediaType> get inputTypes => switch (type) {
     PipelineStepType.start => {},
@@ -675,7 +676,7 @@ class SubtitleStream {
   SubtitleStream({required this.index, this.codec = '', this.language = '', this.title = '', this.forced = false, this.isDefault = false});
 
   factory SubtitleStream.fromJson(Map<String, dynamic> json) => SubtitleStream(
-        index: json['index'] as int, codec: json['codec'] as String? ?? '',
+        index: (json['index'] as num?)?.toInt() ?? 0, codec: json['codec'] as String? ?? '',
         language: json['language'] as String? ?? '', title: json['title'] as String? ?? '',
         forced: json['forced'] as bool? ?? false, isDefault: json['default'] as bool? ?? false,
       );
@@ -874,7 +875,7 @@ class AiProfile {
         name: json['name'] as String? ?? 'New Profile',
         enabled: json['enabled'] as bool? ?? true,
         provider: json['provider'] as String? ?? 'openai',
-        apiKey: json['api_key'] as String? ?? '',
+        apiKey: SecureKeyStore.decrypt(json['api_key'] as String? ?? ''),
         apiUrl: json['api_url'] as String? ?? 'https://api.openai.com/v1/chat/completions',
         model: json['model'] as String? ?? 'gpt-4o',
         contextWindow: json['context_window'] as int? ?? 128000,
@@ -887,7 +888,7 @@ class AiProfile {
         'name': name,
         'enabled': enabled,
         'provider': provider,
-        'api_key': apiKey,
+        'api_key': SecureKeyStore.encrypt(apiKey),
         'api_url': apiUrl,
         'model': model,
         'context_window': contextWindow,
@@ -1132,7 +1133,7 @@ class AppConfig {
         mcpHost: json['mcp_host'] as String? ?? '127.0.0.1',
         mcpAllowWrite: json['mcp_allow_write'] as bool? ?? false,
         aiProvider: json['ai_provider'] as String? ?? 'openai',
-        aiApiKey: json['ai_api_key'] as String? ?? '',
+        aiApiKey: SecureKeyStore.decrypt(json['ai_api_key'] as String? ?? ''),
         aiApiUrl: json['ai_api_url'] as String? ?? 'https://api.openai.com/v1/chat/completions',
         aiModel: json['ai_model'] as String? ?? 'gpt-4o',
         aiEnabled: json['ai_enabled'] as bool? ?? true,
@@ -1183,9 +1184,10 @@ class AppConfig {
         'auto_check_update': autoCheckUpdate,
         'mcp_enabled': mcpEnabled,
         'mcp_port': mcpPort,
+        'mcp_host': mcpHost,
         'mcp_allow_write': mcpAllowWrite,
         'ai_provider': aiProvider,
-        'ai_api_key': aiApiKey,
+        'ai_api_key': SecureKeyStore.encrypt(aiApiKey),
         'ai_api_url': aiApiUrl,
         'ai_model': aiModel,
         'ai_enabled': aiEnabled,

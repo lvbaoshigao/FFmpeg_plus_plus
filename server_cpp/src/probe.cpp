@@ -4,6 +4,7 @@
 #include <cmath>
 #include <sstream>
 #include <algorithm>
+#include <cctype>
 
 namespace ffmpegpp {
 
@@ -31,8 +32,10 @@ double parseFps(const json& stream) {
 bool detectHdr(const json& stream) {
     std::string ct = stream.value("color_transfer", "");
     std::string cs = stream.value("color_space", "");
-    std::transform(ct.begin(), ct.end(), ct.begin(), ::tolower);
-    std::transform(cs.begin(), cs.end(), cs.begin(), ::tolower);
+    std::transform(ct.begin(), ct.end(), ct.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    std::transform(cs.begin(), cs.end(), cs.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     std::vector<std::string> indicators = {"smpte2084", "arib-std-b67", "bt2020"};
     for (const auto& ind : indicators) {
         if (ct.find(ind) != std::string::npos || cs.find(ind) != std::string::npos)
@@ -42,8 +45,10 @@ bool detectHdr(const json& stream) {
 }
 
 std::string formatDuration(double seconds) {
-    if (seconds <= 0) return "00:00:00";
-    int total = (int)seconds;
+    if (!std::isfinite(seconds) || seconds <= 0) return "00:00:00";
+    // 防止异常时长（inf/nan/极大值）越界强转 int -> UB / 负值时间戳
+    const double clamped = std::min(seconds, 359999.0);
+    int total = (int)clamped;
     int h = total / 3600;
     int m = (total % 3600) / 60;
     int s = total % 60;

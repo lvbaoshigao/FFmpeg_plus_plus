@@ -18,12 +18,10 @@ class GateSymbolPainter extends CustomPainter {
   final LogicGateType gate;
   final bool iec;
   final Color color;
-  final bool isZh;
   GateSymbolPainter({
     required this.gate,
     required this.iec,
     required this.color,
-    required this.isZh,
   });
 
   @override

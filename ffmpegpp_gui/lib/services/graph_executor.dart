@@ -7,7 +7,8 @@ class ExecutionStep {
   int loopCount;
   String? loopMode;
   String? innerAction;
-  ExecutionStep(this.action, this.nodes, {this.loopCount = 1, this.loopMode, this.innerAction});
+  List<String> selection;
+  ExecutionStep(this.action, this.nodes, {this.loopCount = 1, this.loopMode, this.innerAction, this.selection = const []});
 }
 
 class ExecutionPlan {
@@ -389,6 +390,9 @@ class GraphExecutor {
         step.loopCount = block.params['count'] as int? ?? 1;
         step.loopMode = block.params['mode'] as String? ?? 'all';
         step.innerAction = step.action;
+        step.selection = (block.params['selections'] as List?)
+            ?.map((m) => m is Map ? m['nodeId'] as String? : null)
+            .whereType<String>().toList() ?? const [];
       }
     }
 
@@ -418,14 +422,23 @@ class GraphExecutor {
     final calls = <BackendCall>[];
     final tempFiles = <String>[];
     final stepCallRanges = <(int, int, ExecutionStep)>[];
+    // 以输出节点 id + 最终输出路径作盐，区分同源多输出计划的中间文件，避免并发时互相覆盖
+    // （即便两个输出节点命名相同，id 也保证盐唯一）
+    final tmpSalt = _stableHash('${plan.outputNode?.id ?? ''}\u0000$outputPath');
 
     var currentInput = inputPath;
 
     for (var i = 0; i < plan.steps.length; i++) {
       final step = plan.steps[i];
       final isLast = i == plan.steps.length - 1;
+      // selectiveLoop 'manual'：只执行手动勾选的子节点；跳过时保持输入/输出链不变。
+      // 末步（接入最终输出）始终执行，避免最终产物链路断裂。（'random' 暂按全量执行）
+      if (!isLast && step.loopMode == 'manual' && step.selection.isNotEmpty) {
+        final run = step.nodes.any((n) => step.selection.contains(n.id));
+        if (!run) continue;
+      }
       final inputExt = currentInput.split('.').last;
-      var currentOutput = isLast ? outputPath : _tempPath(inputPath, i, inputExt);
+      var currentOutput = isLast ? outputPath : _tempPath(inputPath, i, inputExt, tmpSalt);
       if (!isLast) tempFiles.add(currentOutput);
 
       final callsBeforeStep = calls.length;
@@ -493,13 +506,16 @@ class GraphExecutor {
           final p = node.params;
           final fmt = p['output_format'] as String? ?? 'png';
           final mode = p['extract_mode'] as String? ?? 'single';
-          final baseName = outputPath.replaceAll(RegExp(r'\.[^.]+$'), '');
+          final baseName = isLast
+              ? outputPath.replaceAll(RegExp(r'\.[^.]+$'), '')
+              : '${outputPath.replaceAll(RegExp(r'\.[^.]+$'), '')}_step$i';
+          final framesDir = '${baseName}_frames';
 
           if (mode == 'single') {
             final time = (p['time'] as num?)?.toDouble() ?? 0;
             final outPath = isLast
-                ? currentOutput
-                : _tempPath(inputPath, i, fmt);
+                ? outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.$fmt')
+                : _tempPath(inputPath, i, fmt, tmpSalt);
             if (!isLast) tempFiles.add(outPath);
             calls.add(BackendCall(
               action: 'extract_frame',
@@ -508,26 +524,29 @@ class GraphExecutor {
             currentOutput = outPath;  // 链到实际输出文件
           } else if (mode == 'range') {
             final rs = (p['range_start'] as num?)?.toDouble() ?? 0;
-            final re = (p['range_end'] as num?)?.toDouble() ?? 0;
+            final re = (p['range_end'] as num?)?.toDouble();
             final fps = (p['fps_rate'] as num?)?.toDouble() ?? 1.0;
             calls.add(BackendCall(
               action: 'extract_frames_range',
               params: {
-                'input': currentInput, 'output_dir': '${baseName}_frames',
-                'start_time': rs, 'end_time': re, 'fps': fps, 'format': fmt,
+                'input': currentInput, 'output_dir': framesDir,
+                'start_time': rs, 'fps': fps, 'format': fmt,
+                'end_time': ?re,
               },
             ));
-            currentOutput = '${baseName}_frames';  // 输出为目录，链到目录而非未创建的文件路径
+            currentOutput = framesDir;  // 输出为目录，链到目录而非未创建的文件路径
+            if (!isLast) tempFiles.add(framesDir);
           } else {
             final fps = (p['fps_rate'] as num?)?.toDouble() ?? 1.0;
             calls.add(BackendCall(
               action: 'extract_frames_all',
               params: {
-                'input': currentInput, 'output_dir': '${baseName}_frames',
+                'input': currentInput, 'output_dir': framesDir,
                 'fps': fps, 'format': fmt,
               },
             ));
-            currentOutput = '${baseName}_frames';  // 输出为目录，链到目录而非未创建的文件路径
+            currentOutput = framesDir;  // 输出为目录，链到目录而非未创建的文件路径
+            if (!isLast) tempFiles.add(framesDir);
           }
           break;
 
@@ -565,7 +584,7 @@ class GraphExecutor {
           final quality = (node.params['quality'] as num?)?.toInt() ?? 95;
           final outPath = isLast
               ? outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.$outFmt')
-              : _tempPath(inputPath, i, outFmt);
+              : _tempPath(inputPath, i, outFmt, tmpSalt);
           if (!isLast) tempFiles.add(outPath);
           calls.add(BackendCall(
             action: 'image_convert',
@@ -585,7 +604,7 @@ class GraphExecutor {
           final ext = currentInput.split('.').last;
           final outPath = isLast
               ? outputPath
-              : _tempPath(inputPath, i, ext);
+              : _tempPath(inputPath, i, ext, tmpSalt);
           if (!isLast) tempFiles.add(outPath);
           calls.add(BackendCall(
             action: 'image_crop',
@@ -612,7 +631,7 @@ class GraphExecutor {
           final ext = currentInput.split('.').last;
           final outPath = isLast
               ? outputPath
-              : _tempPath(inputPath, i, ext);
+              : _tempPath(inputPath, i, ext, tmpSalt);
           if (!isLast) tempFiles.add(outPath);
           calls.add(BackendCall(
             action: 'video_crop',
@@ -635,7 +654,7 @@ class GraphExecutor {
           final ext = currentInput.split('.').last;
           final outPath = isLast
               ? outputPath
-              : _tempPath(inputPath, i, ext);
+              : _tempPath(inputPath, i, ext, tmpSalt);
           if (!isLast) tempFiles.add(outPath);
           calls.add(BackendCall(
             action: 'image_rotate',
@@ -658,7 +677,7 @@ class GraphExecutor {
           final ext = currentInput.split('.').last;
           final outPath = isLast
               ? outputPath
-              : _tempPath(inputPath, i, ext);
+              : _tempPath(inputPath, i, ext, tmpSalt);
           if (!isLast) tempFiles.add(outPath);
           calls.add(BackendCall(
             action: 'image_scale',
@@ -681,7 +700,7 @@ class GraphExecutor {
           final ext = currentInput.split('.').last;
           final outPath = isLast
               ? outputPath
-              : _tempPath(inputPath, i, ext);
+              : _tempPath(inputPath, i, ext, tmpSalt);
           if (!isLast) tempFiles.add(outPath);
           calls.add(BackendCall(
             action: 'image_brightness',
@@ -704,7 +723,7 @@ class GraphExecutor {
           final ext = currentInput.split('.').last;
           final outPath = isLast
               ? outputPath
-              : _tempPath(inputPath, i, ext);
+              : _tempPath(inputPath, i, ext, tmpSalt);
           if (!isLast) tempFiles.add(outPath);
           calls.add(BackendCall(
             action: 'image_noise',
@@ -728,7 +747,7 @@ class GraphExecutor {
           final ext = currentInput.split('.').last;
           final outPath = isLast
               ? outputPath
-              : _tempPath(inputPath, i, ext);
+              : _tempPath(inputPath, i, ext, tmpSalt);
           if (!isLast) tempFiles.add(outPath);
           calls.add(BackendCall(
             action: 'image_sharpen',
@@ -751,7 +770,7 @@ class GraphExecutor {
           final ext = currentInput.split('.').last;
           final outPath = isLast
               ? outputPath
-              : _tempPath(inputPath, i, ext);
+              : _tempPath(inputPath, i, ext, tmpSalt);
           if (!isLast) tempFiles.add(outPath);
           calls.add(BackendCall(
             action: 'image_denoise',
@@ -775,7 +794,7 @@ class GraphExecutor {
           final ext = currentInput.split('.').last;
           final outPath = isLast
               ? outputPath
-              : _tempPath(inputPath, i, ext);
+              : _tempPath(inputPath, i, ext, tmpSalt);
           if (!isLast) tempFiles.add(outPath);
           calls.add(BackendCall(
             action: 'image_channel_extract',
@@ -800,7 +819,7 @@ class GraphExecutor {
           final sr = p['sample_rate'] as String? ?? 'keep';
           final outPath = isLast
               ? outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.$outFmt')
-              : _tempPath(inputPath, i, outFmt);
+              : _tempPath(inputPath, i, outFmt, tmpSalt);
           if (!isLast) tempFiles.add(outPath);
           final opts = <String, dynamic>{
             'video_codec': 'none',
@@ -832,7 +851,7 @@ class GraphExecutor {
           final outFmt = rawFmt;
           final outPath = isLast
               ? outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.$outFmt')
-              : _tempPath(inputPath, i, outFmt);
+              : _tempPath(inputPath, i, outFmt, tmpSalt);
           if (!isLast) tempFiles.add(outPath);
           final eaParams = <String, dynamic>{
             'input': currentInput,
@@ -865,7 +884,7 @@ class GraphExecutor {
           final p = node.params;
           final sr = p['sample_rate'] as String? ?? 'keep';
           final ext = currentInput.split('.').last.toLowerCase();
-          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext);
+          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext, tmpSalt);
           if (!isLast) tempFiles.add(outPath);
           final opts = <String, dynamic>{'video_codec': 'none', 'audio_codec': 'copy', 'overwrite': true};
           final bitrateVal = p['audio_bitrate'];
@@ -883,7 +902,7 @@ class GraphExecutor {
           final node = step.nodes.first;
           final tempo = (node.params['atempo'] as num?)?.toDouble() ?? 1.0;
           final ext = currentInput.split('.').last.toLowerCase();
-          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext);
+          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext, tmpSalt);
           if (!isLast) tempFiles.add(outPath);
           final filters = <String>[];
           // atempo 有效区间 [0.5, 2.0]；非法值（<=0 / NaN）直接回退 1.0，避免除零死循环
@@ -903,7 +922,7 @@ class GraphExecutor {
           final node = step.nodes.first;
           final db = (node.params['volume_db'] as num?)?.toDouble() ?? 0.0;
           final ext = currentInput.split('.').last.toLowerCase();
-          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext);
+          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext, tmpSalt);
           if (!isLast) tempFiles.add(outPath);
           calls.add(BackendCall(action: 'transcode', params: {
             'input': currentInput, 'output': outPath,
@@ -923,7 +942,7 @@ class GraphExecutor {
           final makeup = (p['makeup'] as num?)?.toDouble() ?? 4.0;
           final knee = (p['knee'] as num?)?.toDouble() ?? 2.8;
           final ext = currentInput.split('.').last.toLowerCase();
-          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext);
+          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext, tmpSalt);
           if (!isLast) tempFiles.add(outPath);
           final filter = 'acompressor=threshold=${threshold}dB:ratio=$ratio:attack=$attack:release=$release:makeup=$makeup:knee=$knee';
           calls.add(BackendCall(action: 'transcode', params: {
@@ -942,7 +961,7 @@ class GraphExecutor {
           final removeCover = p['remove_cover'] as bool? ?? false;
           final removeLyrics = p['remove_lyrics'] as bool? ?? false;
           final ext = currentInput.split('.').last.toLowerCase();
-          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext);
+          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext, tmpSalt);
           if (!isLast) tempFiles.add(outPath);
           calls.add(BackendCall(action: 'audio_metadata', params: {
             'input': currentInput,
@@ -976,7 +995,7 @@ class GraphExecutor {
           final fmt = node.params['output_format'] as String? ?? 'mp4';
           final outPath = isLast
               ? outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.$fmt')
-              : _tempPath(inputPath, i, fmt);
+              : _tempPath(inputPath, i, fmt, tmpSalt);
           if (!isLast) tempFiles.add(outPath);
           currentOutput = outPath;  // 链到实际输出文件
           calls.add(BackendCall(
@@ -1044,9 +1063,9 @@ class GraphExecutor {
           overrideExt = n.params['output_format'] as String? ?? 'png';
         }
       }
-      ext = overrideExt ?? video.filepath.split('.').last;
+      ext = overrideExt ?? video.filename.split('.').last;
     } else {
-      ext = video.filepath.split('.').last;
+      ext = video.filename.split('.').last;
     }
 
     final base = video.filename.replaceAll(RegExp(r'\.[^.]+$'), '');
@@ -1259,12 +1278,14 @@ class GraphExecutor {
   }
 
   static (String, String) _speedFilters(double speed) {
-    final ptsFactor = (1.0 / speed).toStringAsFixed(6);
+    // 非法倍速（0 / NaN / Infinity）统一回退 1.0，视频 setpts 与音频 atempo 使用同一份有效值
+    final safeSpeed = (speed.isFinite && speed > 0) ? speed : 1.0;
+    final ptsFactor = (1.0 / safeSpeed).toStringAsFixed(6);
     final vf = 'setpts=$ptsFactor*PTS';
 
     final afParts = <String>[];
-    // atempo 有效区间 [0.5, 2.0]；非法值（<=0 / NaN）直接回退 1.0，避免除零死循环
-    var remaining = (speed.isFinite && speed > 0) ? speed : 1.0;
+    // atempo 有效区间 [0.5, 2.0]
+    var remaining = safeSpeed;
     while (remaining > 2.0) {
       afParts.add('atempo=2.0');
       remaining /= 2.0;
@@ -1293,11 +1314,13 @@ class GraphExecutor {
     };
   }
 
-  static String _tempPath(String inputPath, int step, [String ext = 'mp4']) {
+  static String _tempPath(String inputPath, int step, [String ext = 'mp4', String salt = '']) {
     final dir = Directory.systemTemp.path;
     final base = inputPath.split('\\').last.split('/').last.replaceAll(RegExp(r'\.[^.]+$'), '');
-    // String.hashCode 跨运行不稳定且可碰撞；改用稳定的 FNV-1a 摘要
-    final pathHash = _stableHash(inputPath);
+    // String.hashCode 跨运行不稳定且可碰撞；改用稳定的 FNV-1a 摘要。
+    // 引入 salt（本计划最终输出路径）区分：同一源文件拆成多个输出计划并发执行时，
+    // 各自的中间产物不会互相覆盖。
+    final pathHash = _stableHash(salt.isEmpty ? inputPath : '$inputPath\u0000$salt');
     return '$dir${Platform.pathSeparator}ffmpegpp_${pathHash}_${base}_step$step.$ext';
   }
 

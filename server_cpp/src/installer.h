@@ -6,31 +6,17 @@ namespace ffmpegpp {
 
 using json = nlohmann::json;
 
-struct ToolCheck {
-    bool found = false;
-    std::string path;
-    std::string version;
-    std::string error;
-};
-
-// 查找 ffmpeg
-ToolCheck findFFmpeg();
-
-// 查找 ffprobe
-ToolCheck findFFprobe();
-
 // 检测环境
 json ensureFFmpeg();
 
 // 安装引导
 json getInstallGuide();
 
-// 格式化检测报告
-std::string formatCheckReport(const json& check_result);
-
-// 获取已解析的 ffmpeg/ffprobe 完整路径（优先使用，避免 PATH 劫持）
-const std::string& getFFmpegPath();
-const std::string& getFFprobePath();
+// 获取已解析的 ffmpeg/ffprobe 完整路径（优先使用，避免 PATH 劫持）。
+// 按值返回：路径是共享可变状态，返回引用会在锁释放后与 setFFmpegPaths
+// 的重新赋值产生数据竞争/悬空引用。
+std::string getFFmpegPath();
+std::string getFFprobePath();
 
 // 从前端配置覆盖 ffmpeg/ffprobe 路径
 void setFFmpegPaths(const std::string& ffmpeg, const std::string& ffprobe);

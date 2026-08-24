@@ -52,7 +52,7 @@ class TaskCard extends StatelessWidget {
                 if (task.status == TaskStatus.processing)
                   TextButton.icon(icon: const Icon(Icons.stop, size: 14),
                       label: Text(s.cancel, style: const TextStyle(fontSize: 11)),
-                      onPressed: () => state.cancelProcessing(),
+                      onPressed: () => state.cancelTask(task.id),
                       style: TextButton.styleFrom(foregroundColor: scheme.error,
                           padding: const EdgeInsets.symmetric(horizontal: 6))),
                 if (task.status == TaskStatus.completed) ...[
@@ -166,6 +166,16 @@ class TaskCard extends StatelessWidget {
   };
 }
 
+// 缩略图缓存键：FNV-1a 稳定摘要（String.hashCode 跨运行不稳定且 32 位易碰撞）
+String _stableThumbHash(String s) {
+  var h = 0x811c9dc5;
+  for (final c in s.codeUnits) {
+    h ^= c;
+    h = (h * 0x01000193) & 0xFFFFFFFF;
+  }
+  return h.toRadixString(16).padLeft(8, '0');
+}
+
 // 缩略图（与 video_card 共用逻辑）
 class _ThumbWidget extends StatefulWidget {
   final String filepath;
@@ -184,7 +194,7 @@ class _ThumbWidgetState extends State<_ThumbWidget> {
     final isAudio = audioExts.contains(ext);
     final isImage = kImageExts.contains(ext);
     final suffix = isAudio ? '_cover' : '';
-    final f = File('${Directory.systemTemp.path}/ffmpegpp_thumb_${widget.filepath.hashCode}${suffix}_q.jpg');
+    final f = File('${Directory.systemTemp.path}/ffmpegpp_thumb_${_stableThumbHash(widget.filepath)}${suffix}_q.jpg');
     if (await f.exists()) { if (mounted) setState(() => _path = f.path); return; }
     try {
       final args = <String>['-y'];

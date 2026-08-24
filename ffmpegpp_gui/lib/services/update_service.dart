@@ -133,7 +133,9 @@ Future<UpdateResult> _checkLanzou() async {
     // 用当前平台的蓝奏云链接解析版本（原来固定请求 windows 页面，
     // 其他平台的版本号会与实际下载的包不一致）
     final key = _platformKey();
-    final url = _lanzouUrls[key] ?? _lanzouUrls['windows']!;
+    final url = _lanzouUrls[key];
+    // 该平台（如 Intel Mac）尚未提供更新包时给出明确提示，而不是回退到 windows 包
+    if (url == null) return UpdateResult(error: '该平台暂未提供更新包', source: UpdateSource.lanzou);
     final resp = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 10));
     final match = RegExp(r'<span id="filename">([^<]+)</span>').firstMatch(resp.body);
     if (match == null) return UpdateResult(error: 'parse_failed', source: UpdateSource.lanzou);
@@ -181,7 +183,7 @@ Future<UpdateResult> _checkGithub() async {
 
 String _platformKey() {
   if (Platform.isWindows) return 'windows';
-  if (Platform.isMacOS) return 'macos_arm64';
+  if (Platform.isMacOS) return _isArm64() ? 'macos_arm64' : 'macos_x64';
   return _isArm64() ? 'linux_arm64' : 'linux';
 }
 

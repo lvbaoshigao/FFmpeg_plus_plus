@@ -72,29 +72,7 @@ std::string findExecutable(const std::string& name) {
 #endif
 }
 
-ToolCheck checkTool(const std::string& name) {
-    ToolCheck result;
-    result.path = findExecutable(name);
-    if (result.path.empty()) {
-        result.error = name + " 未在 PATH 或常见安装目录中找到";
-        return result;
-    }
-    auto pr = Subprocess::run({result.path, "-version"}, 10);
-    if (pr.exit_code == 0 && !pr.stdout_output.empty()) {
-        auto nl = pr.stdout_output.find('\n');
-        result.version = (nl != std::string::npos) ? pr.stdout_output.substr(0, nl) : pr.stdout_output;
-        // 去掉 \r
-        if (!result.version.empty() && result.version.back() == '\r') result.version.pop_back();
-        result.found = true;
-    } else {
-        result.error = "在 " + result.path + " 找到 " + name + "，但执行 -version 失败";
-    }
-    return result;
-}
 } // namespace
-
-ToolCheck findFFmpeg() { return checkTool("ffmpeg"); }
-ToolCheck findFFprobe() { return checkTool("ffprobe"); }
 
 // 缓存已解析的完整路径，避免每次构建命令都重新搜索
 static std::string g_ffmpegPath;
@@ -103,24 +81,24 @@ static std::mutex g_pathMutex;
 static bool g_ffmpegResolved = false;
 static bool g_ffprobeResolved = false;
 
-const std::string& getFFmpegPath() {
+std::string getFFmpegPath() {
     std::lock_guard<std::mutex> lock(g_pathMutex);
     if (!g_ffmpegResolved) {
         g_ffmpegPath = findExecutable("ffmpeg");
         if (g_ffmpegPath.empty()) g_ffmpegPath = "ffmpeg";
         g_ffmpegResolved = true;
     }
-    return g_ffmpegPath;
+    return g_ffmpegPath;  // 按值返回，拷贝在锁内完成
 }
 
-const std::string& getFFprobePath() {
+std::string getFFprobePath() {
     std::lock_guard<std::mutex> lock(g_pathMutex);
     if (!g_ffprobeResolved) {
         g_ffprobePath = findExecutable("ffprobe");
         if (g_ffprobePath.empty()) g_ffprobePath = "ffprobe";
         g_ffprobeResolved = true;
     }
-    return g_ffprobePath;
+    return g_ffprobePath;  // 按值返回，拷贝在锁内完成
 }
 
 void setFFmpegPaths(const std::string& ffmpeg, const std::string& ffprobe) {
@@ -224,35 +202,6 @@ json getInstallGuide() {
         }},
     };
 #endif
-}
-
-std::string formatCheckReport(const json& cr) {
-    std::ostringstream oss;
-    oss << "==================================================\n";
-    oss << "FFmpeg Environment Check Report\n";
-    oss << "==================================================\n";
-
-    auto ff = cr["ffmpeg"];
-    if (ff["found"].get<bool>()) {
-        oss << "[OK] ffmpeg  : " << ff["path"].get<std::string>() << "\n";
-        oss << "             " << ff["version"].get<std::string>() << "\n";
-    } else {
-        oss << "[MISS] ffmpeg  : not found — " << ff["error"].get<std::string>() << "\n";
-    }
-
-    auto fp = cr["ffprobe"];
-    if (fp["found"].get<bool>()) {
-        oss << "[OK] ffprobe : " << fp["path"].get<std::string>() << "\n";
-        oss << "             " << fp["version"].get<std::string>() << "\n";
-    } else {
-        oss << "[MISS] ffprobe : not found — " << fp["error"].get<std::string>() << "\n";
-    }
-
-    if (!cr["all_ok"].get<bool>()) {
-        auto guide = getInstallGuide();
-        oss << "\nDownload: " << guide["download_url"].get<std::string>() << "\n";
-    }
-    return oss.str();
 }
 
 } // namespace ffmpegpp

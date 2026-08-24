@@ -114,13 +114,9 @@ class NativeProcessManager {
 
     _sendRequest(req);
 
-    return completer.future.timeout(
-      const Duration(minutes: 10),
-      onTimeout: () {
-        _pendingCompleters.remove(id);
-        return {'id': id, 'success': false, 'error': '请求超时 (600s)'};
-      },
-    );
+    // 长任务（transcode/subtitle/自定义命令/抽帧/合并/图片序列）不设超时：
+    // 后端关闭或崩溃时由 _failAllPending 统一 complete，避免长时间编码被 600s 硬超时误判失败。
+    return completer.future;
   }
 
   Future<Map<String, dynamic>> _doRequest(String action, Map<String, dynamic>? params, int timeoutSec) async {
