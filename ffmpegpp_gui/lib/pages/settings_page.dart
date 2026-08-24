@@ -541,19 +541,21 @@ class _SettingsPageState extends State<SettingsPage> {
             backgroundColor: Colors.transparent,
             body: Stack(children: [
               // 全屏可滚动的设置列表（顶部留出药丸空间）
-              // RepaintBoundary 防止边界滚动时 BackdropFilter 失效导致模糊消失
+              // 不再包 RepaintBoundary：之前的 RepaintBoundary 把 ListView 内容缓存成独立层，
+              // 导致 OCLiquidGlassGroup 的 _onScroll→markNeedsPaint 在该缓存层下被吞掉，
+              // shader 的场景坐标永远停在旧位置 → 玻璃在滚动后消失。
+              // 各玻璃卡片内部已有 OCLiquidGlassGroup→RepaintBoundary→OCLiquidGlass 的
+              // 独立层，隔绝了无关重绘，不再需要外层 RepaintBoundary。
               if (visible.isEmpty && searching)
                 _emptyState(scheme, s)
               else
-                RepaintBoundary(
-                  child: ListView(
-                    padding: EdgeInsets.fromLTRB(6, MediaQuery.of(context).padding.top + 60, 6, kMobileNavClearance),
-                    children: [
-                      for (final (sec, cards) in visible)
-                        _buildMobileSection(sec, cards, context, state, scheme, s),
-                      const SizedBox(height: 16),
-                    ],
-                  ),
+                ListView(
+                  padding: EdgeInsets.fromLTRB(6, MediaQuery.of(context).padding.top + 60, 6, kMobileNavClearance),
+                  children: [
+                    for (final (sec, cards) in visible)
+                      _buildMobileSection(sec, cards, context, state, scheme, s),
+                    const SizedBox(height: 16),
+                  ],
                 ),
               // 顶部药丸浮层（不影响滚动）
               Positioned(
@@ -2328,10 +2330,10 @@ void _showAiSettingsDialog(BuildContext ctx, AppState state, AppStrings s) {
                               child: Container(
                                 padding: const EdgeInsets.symmetric(vertical: 8),
                                 child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                                  const Icon(Icons.add, size: 14, color: Color(0xFF5E6AD2)),
+                                  Icon(Icons.add, size: 14, color: scheme.primary),
                                   const SizedBox(width: 4),
                                   Text(zh ? '新建配置' : 'New Profile',
-                                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF5E6AD2))),
+                                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: scheme.primary)),
                                 ]),
                               ),
                             ),

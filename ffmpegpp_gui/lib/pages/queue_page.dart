@@ -54,12 +54,10 @@ class _QueuePageState extends State<QueuePage> {
                             const SizedBox(height: 8),
                             Text(s.emptyQueueHint, style: TextStyle(fontSize: 13, color: scheme.outline)),
                           ]))
-                        : RepaintBoundary(
-                            child: ListView.builder(
-                              padding: EdgeInsets.fromLTRB(8, 8, 8, kMobileNavClearance),
-                              itemCount: state.tasks.length,
-                              itemBuilder: (_, i) => TaskCard(key: ValueKey(state.tasks[i].id), task: state.tasks[i]),
-                            ),
+                        : ListView.builder(
+                            padding: EdgeInsets.fromLTRB(8, 8, 8, kMobileNavClearance),
+                            itemCount: state.tasks.length,
+                            itemBuilder: (_, i) => TaskCard(key: ValueKey(state.tasks[i].id), task: state.tasks[i]),
                           ),
                   )
                 : Column(children: [
