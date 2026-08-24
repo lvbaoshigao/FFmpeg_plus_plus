@@ -55,7 +55,7 @@ class _LogPageState extends State<LogPage> {
               Positioned.fill(child: Image(
                 image: wallpaperImageProvider(bg, MediaQuery.sizeOf(context).width, MediaQuery.sizeOf(context).height, MediaQuery.devicePixelRatioOf(context)),
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                errorBuilder: (_, _, _) => const SizedBox.shrink(),
               )),
             Positioned.fill(child: Container(
               color: scheme.surface.withAlpha(((1.0 - bgTuple.$2) * 220).round().clamp(20, 240)),
