@@ -56,6 +56,10 @@ class GlassPanel extends StatelessWidget {
     //    高斯模糊；blur/none 也统一复用 MobileGlassPill 的对应效果。──
     if (isMobilePlatform) {
       if (cfg.settingsFrostedGlass && effect == 'liquid') {
+        // 压低 alpha：快速滚动时 BackdropFilter 偶尔失效，alpha 过高会露出
+        // 大面积纯色主题底色（「诡异的玻璃 + 主题色块」）。与 mobile_glass_pill
+        // 一致的 120/105 上限，让纯色层在失效时仅表现为轻微 tint，不会被察觉。
+        final frostedAlpha = ((isDark ? 105 : 120) * op).round().clamp(0, 255);
         return RepaintBoundary(
           child: ClipRRect(
             borderRadius: br,
@@ -65,10 +69,10 @@ class GlassPanel extends StatelessWidget {
                 padding: padding,
                 decoration: BoxDecoration(
                   borderRadius: br,
-                  color: baseColor.withAlpha(((isDark ? 165 : 185) * op).round()),
+                  color: baseColor.withAlpha(frostedAlpha),
                   border: Border.all(
-                    color: borderColor.withAlpha(isDark ? 90 : 120),
-                    width: 1,
+                    color: borderColor.withAlpha(isDark ? 60 : 80),
+                    width: 0.6,
                   ),
                 ),
                 child: child,

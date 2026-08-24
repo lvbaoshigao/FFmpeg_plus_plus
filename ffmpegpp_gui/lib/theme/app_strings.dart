@@ -92,6 +92,15 @@ class AppStrings {
   String get cmdPlaceholderDesc => lang == 'zh' ? '{input}→输入文件  {output}→输出文件' : '{input}→input file  {output}→output file';
   String get cmdExecute => lang == 'zh' ? '执行' : 'Execute';
   String get cmdHint => lang == 'zh' ? '命令执行功能将在后续版本实现' : 'Command execution coming in next version';
+  String get cmdInput => lang == 'zh' ? '命令输入' : 'Command Input';
+  String get cmdOutput => lang == 'zh' ? '命令输出' : 'Command Output';
+  String get cmdClear => lang == 'zh' ? '清空' : 'Clear';
+  String get cmdClearOutput => lang == 'zh' ? '清空输出' : 'Clear Output';
+  String get cmdNoOutput => lang == 'zh' ? '暂无输出' : 'No output yet';
+  String get cmdInputHint => lang == 'zh' ? '输入 FFmpeg 命令...' : 'Enter FFmpeg command...';
+  String get cmdError => lang == 'zh' ? '错误' : 'Error';
+  String get cmdStderr => lang == 'zh' ? '标准错误' : 'Stderr';
+  String get cmdStdout => lang == 'zh' ? '标准输出' : 'Stdout';
 
   // ── 设置页 ──
   String get settingsTitle => lang == 'zh' ? '设置' : 'Settings';

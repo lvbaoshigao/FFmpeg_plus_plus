@@ -665,26 +665,30 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     ];
   }
 
-  /// 移动端顶栏：左侧标题药丸 + 右侧操作药丸（液态玻璃）。
+  /// 移动端顶栏：左右药丸等宽布局（与项目页一致）。
   Widget _buildMobileTopBar(ColorScheme scheme, bool zh) {
     final safeTop = MediaQuery.of(context).padding.top;
     return Padding(
       padding: EdgeInsets.fromLTRB(12, safeTop + 6, 12, 6),
       child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-        // 左：标题药丸（无内部可点元素，带按压缩放反馈）
-        MobileGlassPill(
-          radius: 22,
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-          pressable: true,
-          child: Text(zh ? '配置库' : 'Config Library',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-        ),
-        const SizedBox(width: 8),
-        // 右：操作药丸
+        // 左：标题药丸（占 40% 宽度）
         Expanded(
+          flex: 4,
           child: MobileGlassPill(
             radius: 22,
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+            pressable: true,
+            child: Text(zh ? '配置库' : 'Config Library',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+          ),
+        ),
+        const SizedBox(width: 8),
+        // 右：操作药丸（占 60% 宽度）
+        Expanded(
+          flex: 6,
+          child: MobileGlassPill(
+            radius: 22,
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
             child: Row(children: _buildTopActions(scheme, zh)),
           ),
         ),
