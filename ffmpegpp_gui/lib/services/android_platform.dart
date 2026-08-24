@@ -52,6 +52,59 @@ class AndroidPlatformBridge {
     }
   }
 
+  /// 把 nativeLibraryDir 中的可执行工具（如 libffprobe.so / libffmpeg.so）
+  /// 复制到应用私有二进制目录（filesDir/ffmpegpp_bin/）并 chmod 0755。
+  ///
+  /// 背景：MIUI / EMUI / ColorOS 等国产 ROM 会对 jniLibs 解压目录
+  /// （nativeLibraryDir，SELinux 标签 apk_data_file）上的静态 PIE ELF 做
+  /// 额外限制：直接 fork+exec 会触发 SIGSEGV(-11)。把二进制复制到
+  /// filesDir（标签 app_data_file）的私有子目录后，可以在该目录下正常
+  /// fork+exec 而不被拦截。这是 FFmpeg-Android / ffmpeg-kit 等主流方案
+  /// 在 ROM 兼容上通用的兜底手段。
+  ///
+  /// 复制失败（如 IO 错误）返回 null；调用方应继续使用 nativeLibraryDir
+  /// 原路径尝试，并在日志中告知用户实际生效的是哪条路径。
+  static Future<String?> ensureExecutableInAppDir(String nativePath, {String? targetName}) async {
+    if (!isAndroidPlatform || nativePath.isEmpty) return null;
+    try {
+      final src = File(nativePath);
+      if (!await src.exists()) return null;
+
+      final filesDir = await getApplicationSupportDirectory();
+      final binDir = Directory('${filesDir.path}${Platform.pathSeparator}ffmpegpp_bin');
+      if (!await binDir.exists()) await binDir.create(recursive: true);
+
+      final name = targetName ??
+          nativePath.split(RegExp(r'[\\/]')).last;
+      final dest = File('${binDir.path}${Platform.pathSeparator}$name');
+
+      // 已存在且大小一致：跳过复制（加快冷启动）。
+      if (await dest.exists()) {
+        final srcLen = await src.length();
+        final dstLen = await dest.length();
+        if (srcLen == dstLen && srcLen > 0) {
+          await _chmodExecutable(dest.path);
+          return dest.path;
+        }
+      }
+
+      await src.copy(dest.path);
+      await _chmodExecutable(dest.path);
+      return dest.path;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 在 Android 上将文件设为可执行。dart:io 的 `Process.run` 走 Runtime.exec，
+  /// 默认遵循文件权限位；所以这里依赖 libc 的 chmod 系统调用。
+  /// 若因 SELinux / 沙箱导致 chmod 失败，不影响后续调用 execvp 会用 ENOENT 报错。
+  static Future<void> _chmodExecutable(String path) async {
+    try {
+      await Process.run('chmod', ['755', path]);
+    } catch (_) {}
+  }
+
   /// 把导入的媒体文件复制到应用文档目录（持久、app 私有、可执行/可读），
   /// 保留原扩展名，保证 ffprobe/fork 子进程能稳定读取。
   ///
