@@ -124,6 +124,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   bool _toolboxExpanded = true;
   bool _editorExpanded = true;
   bool _mobileToolboxOpen = false;
+  /// 移动端顶部菜单栏默认收起（为画布腾出更多空间）；通过右下角浮动按钮展开。
+  bool _mobileTopBarVisible = false;
   double _toolboxFraction = 0.4;
   // 画布 / 右面板 水平分割比例（默认画布占 60%）
   double _canvasFraction = 0.6;
@@ -771,7 +773,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   }
 
   PipelineConnection? _hitTestConnection(Offset pos) {
-    const threshold = 8.0;
+    // 移动端手指热区 ~24-32px；桌面端保持 8px 的精确判定。
+    final threshold = isMobilePlatform ? 28.0 : 8.0;
     for (final conn in _connections) {
       final fi = _nodes.indexWhere((n) => n.id == conn.fromNodeId);
       final ti = _nodes.indexWhere((n) => n.id == conn.toNodeId);
@@ -2020,10 +2023,25 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               // 移动端全画布布局：顶部/底部浮动菜单栏，工具箱/属性为弹出层
               return Stack(children: [
                 _buildCanvas(scheme, s),
-                // 顶部浮动菜单栏（返回、添加节点、保存、AI、横竖屏）- 居中窄条
+                // 顶部浮动菜单栏（默认收起 → 上滑出屏 + 透明；右下角"≡"按钮展开）
                 Positioned(
-                  top: 8, left: 0, right: 0,
-                  child: Center(child: _buildMobileTopBar(scheme, s)),
+                  top: 0, left: 0, right: 0,
+                  child: AnimatedSlide(
+                    duration: const Duration(milliseconds: 240),
+                    curve: Curves.easeOutCubic,
+                    offset: _mobileTopBarVisible ? Offset.zero : const Offset(0, -1.4),
+                    child: AnimatedOpacity(
+                      duration: const Duration(milliseconds: 180),
+                      opacity: _mobileTopBarVisible ? 1.0 : 0.0,
+                      child: IgnorePointer(
+                        ignoring: !_mobileTopBarVisible,
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Center(child: _buildMobileTopBar(scheme, s)),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
                 // 底部浮动菜单栏 - 分两组：左侧缩放，右侧工具
                 Positioned(
@@ -4706,37 +4724,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             child: Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
           ),
         ],
-        _controlBtn(Icons.zoom_in, s.isZh ? '放大' : 'Zoom in', scheme, () => _zoomTo(_currentScale + 0.15)),
-        const SizedBox(height: 2),
-        SizedBox(
-          // 横屏时把缩放滑杆压短，避免占用过多纵向空间。
-          height: (isMobilePlatform && _isLandscape) ? 60 : 100,
-          child: RotatedBox(
-            quarterTurns: 3,
-            child: SliderTheme(
-              data: SliderThemeData(
-                trackHeight: 3,
-                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
-                activeTrackColor: scheme.primary,
-                inactiveTrackColor: scheme.outlineVariant.withAlpha(80),
-                thumbColor: scheme.primary,
-              ),
-              child: Slider(
-                value: _currentScale.clamp(0.3, 2.0),
-                min: 0.3,
-                max: 2.0,
-                onChanged: (v) => _zoomTo(v),
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 2),
-        _controlBtn(Icons.zoom_out, s.isZh ? '缩小' : 'Zoom out', scheme, () => _zoomTo(_currentScale - 0.15)),
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
-        ),
+        // 放大缩小改在画布左下角浮动按钮；移动端右侧工具列不再重复（避免误触）。
         _controlBtn(Icons.auto_fix_high, s.isZh ? '整理' : 'Arrange', scheme, _autoLayout),
         const SizedBox(height: 2),
         _controlBtn(Icons.my_location, s.isZh ? '定位源' : 'Source', scheme, () => _goToSource(s)),
@@ -4957,6 +4945,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(30), blurRadius: 6, offset: const Offset(0, 2))],
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
+        _mobileBarBtn(
+          _mobileTopBarVisible ? Icons.expand_less : Icons.menu,
+          () => setState(() => _mobileTopBarVisible = !_mobileTopBarVisible),
+          scheme, size: 18, pad: 4,
+          color: _mobileTopBarVisible ? scheme.primary : scheme.onSurfaceVariant,
+        ),
+        const SizedBox(width: 2),
         _mobileBarBtn(Icons.auto_fix_high, _autoLayout, scheme, size: 16, pad: 4),
         const SizedBox(width: 2),
         _mobileBarBtn(Icons.my_location, () => _goToSource(s), scheme, size: 16, pad: 4),
@@ -4968,6 +4963,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   Widget _buildMobileFileInfo(ColorScheme scheme, AppStrings s) {
     final v = widget.video;
+    final nodesLabel = s.isZh ? '节点' : 'nodes';
     return Container(
       height: 24,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -4976,7 +4972,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         borderRadius: BorderRadius.circular(12),
       ),
       child: Text(
-        '${v.resolution} | ${v.durationStr} | ${formatFileSize(v.sizeMb)} | ${_nodes.length}节点',
+        '${v.resolution} | ${v.durationStr} | ${formatFileSize(v.sizeMb)} | ${_nodes.length} $nodesLabel',
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(fontSize: 9, color: scheme.outline),

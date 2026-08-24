@@ -136,6 +136,46 @@ class _QueuePageState extends State<QueuePage> {
   /// 移动端顶栏：左侧标题药丸自适应宽度（内容贴合，不撑满），
   /// 右侧操作药丸也按内容自适应（贴合 CPU/内存占用条 + 按钮），
   /// 两者之间留固定 8px 间隙，不再用 Expanded 强制撑满剩余宽度。
+  /// 移动端顶栏操作（紧凑图标按钮，无文字）：和处理队列相关的按钮全部用图标，
+  /// 避免带文字的按钮在顶栏药丸里太长（任务全部完成时尤其突兀）。
+  List<Widget> _buildMobileActions(ColorScheme scheme, AppState state, AppStrings s) {
+    Widget iconBtn(IconData icon, String tooltip, VoidCallback? onTap, {Color? color}) {
+      return Tooltip(
+        message: tooltip,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(18),
+          splashColor: Colors.transparent,
+          highlightColor: Colors.transparent,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+            child: Container(
+              width: 34,
+              height: 34,
+              decoration: const BoxDecoration(shape: BoxShape.circle),
+              child: Icon(icon, size: 19, color: color ?? scheme.onSurface),
+            ),
+          ),
+        ),
+      );
+    }
+    return [
+      if (state.processing)
+        iconBtn(Icons.stop, s.cancelAll, () => state.cancelProcessing()),
+      if (!state.processing && state.tasks.any((t) => t.status == TaskStatus.pending))
+        iconBtn(Icons.play_arrow, s.startProcessing, () => state.processAllTasks()),
+      if (state.tasks.any((t) => t.status == TaskStatus.completed || t.status == TaskStatus.failed || t.status == TaskStatus.cancelled))
+        iconBtn(Icons.cleaning_services_outlined, s.clearCompleted, () => state.clearCompletedTasks()),
+      if (state.tasks.isNotEmpty)
+        iconBtn(Icons.delete_sweep, s.clearAll, () => state.clearAllTasks()),
+      const SizedBox(width: 8),
+      Padding(
+        padding: const EdgeInsets.only(right: 6),
+        child: _monitorBar(scheme, state),
+      ),
+    ];
+  }
+
   Widget _buildMobileTopBar(ColorScheme scheme, AppState state, AppStrings s) {
     final safeTop = MediaQuery.of(context).padding.top;
     return Padding(
@@ -159,7 +199,7 @@ class _QueuePageState extends State<QueuePage> {
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
-                child: Row(children: _buildActions(scheme, state, s)),
+                child: Row(children: _buildMobileActions(scheme, state, s)),
               ),
             ),
           ),

@@ -35,7 +35,7 @@ class VideoCard extends StatelessWidget {
           ),
           const SizedBox(width: 12),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-            Text(video.filename, style: TextStyle(fontWeight: FontWeight.w600, color: clr), maxLines: 1, overflow: TextOverflow.ellipsis),
+            Text(video.filename, style: TextStyle(fontWeight: FontWeight.w600, color: clr), maxLines: 2, overflow: TextOverflow.ellipsis),
             const SizedBox(height: 2),
             if (probeError != null)
               Text(probeError, maxLines: 1, overflow: TextOverflow.ellipsis,
