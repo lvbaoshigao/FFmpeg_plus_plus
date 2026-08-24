@@ -123,6 +123,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   bool _isAudioNoCover = false;
   bool _toolboxExpanded = true;
   bool _editorExpanded = true;
+  bool _mobileToolboxOpen = false;
   double _toolboxFraction = 0.4;
   // 画布 / 右面板 水平分割比例（默认画布占 60%）
   double _canvasFraction = 0.6;
@@ -2016,13 +2017,39 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             // 移动端（横竖屏通用）：画布 + 贴右边界的窄竖直 sidebar，
             // 元素工具箱与属性面板收纳为右侧边栏，宽度约屏幕 1/2。
             if (isMobilePlatform) {
-              final sidebarW = cons.maxWidth * 0.5;
-              return Row(children: [
-                Expanded(child: _buildCanvas(scheme, s)),
-                SizedBox(
-                  width: sidebarW,
-                  child: _buildRightPanel(scheme, s),
+              // 移动端全画布布局：顶部/底部浮动菜单栏，工具箱/属性为弹出层
+              return Stack(children: [
+                _buildCanvas(scheme, s),
+                // 顶部浮动菜单栏（返回、添加节点、保存、AI、横竖屏）- 居中窄条
+                Positioned(
+                  top: 8, left: 0, right: 0,
+                  child: Center(child: _buildMobileTopBar(scheme, s)),
                 ),
+                // 底部浮动菜单栏 - 分两组：左侧缩放，右侧工具
+                Positioned(
+                  bottom: 8, left: 8,
+                  child: _buildMobileBottomLeftBar(scheme, s),
+                ),
+                Positioned(
+                  bottom: 8, right: 8,
+                  child: _buildMobileBottomRightBar(scheme, s),
+                ),
+                // 底部中央文件信息条
+                Positioned(
+                  bottom: 8, left: 0, right: 0,
+                  child: Center(child: _buildMobileFileInfo(scheme, s)),
+                ),
+                // 工具箱弹出层（点击顶部"+"按钮展开）
+                if (_mobileToolboxOpen)
+                  Positioned.fill(
+                    child: _buildMobileToolboxSheet(scheme, s),
+                  ),
+                // 属性编辑底部弹层（选中节点时自动弹出）
+                if (_selectedNode != null || _selectedLogicBlockId != null)
+                  Positioned(
+                    left: 0, right: 0, bottom: 0,
+                    child: _buildMobilePropertiesSheet(scheme, s),
+                  ),
               ]);
             }
             // 横屏/桌面模式：原有的水平并排布局
@@ -2057,7 +2084,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             ]);
           }),
         )),
-        _buildBottomBar(scheme, s),
+        if (!isMobilePlatform) _buildBottomBar(scheme, s),
       ]),
     );
     if (Platform.isWindows || isMobilePlatform) return content;
@@ -4785,6 +4812,289 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               Text(countsText, maxLines: 1, overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: scheme.outline, fontSize: 11)),
             ]),
+    );
+  }
+
+  // ── 移动端专用：顶部浮动菜单栏 ──
+
+  Widget _buildMobileTopBar(ColorScheme scheme, AppStrings s) {
+    final cfg = context.read<AppState>().config;
+    return Container(
+      height: 34,
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      decoration: BoxDecoration(
+        color: scheme.surface.withAlpha(220),
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
+        boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(30), blurRadius: 6, offset: const Offset(0, 2))],
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        _mobileBarBtn(Icons.arrow_back, () async {
+          final nav = Navigator.of(context);
+          if (await _onWillPop()) nav.pop();
+        }, scheme, size: 18, pad: 4),
+        const SizedBox(width: 2),
+        _mobileBarBtn(
+          _mobileToolboxOpen ? Icons.close : Icons.add,
+          () => setState(() => _mobileToolboxOpen = !_mobileToolboxOpen),
+          scheme, color: scheme.primary, size: 20, pad: 4,
+        ),
+        if (cfg.aiEnabled) ...[
+          const SizedBox(width: 2),
+          _mobileBarBtn(Icons.smart_toy, () => _openAiSheet(s), scheme, color: scheme.primary, size: 18, pad: 4),
+        ],
+        const SizedBox(width: 2),
+        _mobileBarBtn(Icons.save_outlined, _save, scheme, size: 18, pad: 4),
+        const SizedBox(width: 2),
+        SizedBox(
+          width: 28, height: 28,
+          child: PopupMenuButton<String>(
+            padding: EdgeInsets.zero,
+            icon: Icon(Icons.more_vert, size: 18, color: scheme.onSurfaceVariant),
+            onSelected: (v) {
+              if (v == 'export') _exportConfig(s);
+              if (v == 'orientation') _toggleOrientation();
+            },
+            itemBuilder: (_) => [
+              PopupMenuItem(value: 'export', child: Text(s.isZh ? '导出配置' : 'Export config', style: const TextStyle(fontSize: 12))),
+              PopupMenuItem(value: 'orientation',
+                  child: Text(
+                      _isLandscape ? (s.isZh ? '切换到竖屏' : 'Switch to portrait') : (s.isZh ? '切换到横屏' : 'Switch to landscape'),
+                      style: const TextStyle(fontSize: 12))),
+            ],
+          ),
+        ),
+      ]),
+    );
+  }
+
+  // ── 移动端专用：底部左侧缩放条 ──
+
+  Widget _buildMobileBottomLeftBar(ColorScheme scheme, AppStrings s) {
+    return Container(
+      height: 32,
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      decoration: BoxDecoration(
+        color: scheme.surface.withAlpha(220),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
+        boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(30), blurRadius: 6, offset: const Offset(0, 2))],
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        _mobileBarBtn(Icons.zoom_out, () => _zoomTo(_currentScale - 0.15), scheme, size: 16, pad: 4),
+        const SizedBox(width: 2),
+        _mobileBarBtn(Icons.zoom_in, () => _zoomTo(_currentScale + 0.15), scheme, size: 16, pad: 4),
+      ]),
+    );
+  }
+
+  // ── 移动端专用：底部右侧工具条 ──
+
+  Widget _buildMobileBottomRightBar(ColorScheme scheme, AppStrings s) {
+    return Container(
+      height: 32,
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      decoration: BoxDecoration(
+        color: scheme.surface.withAlpha(220),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
+        boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(30), blurRadius: 6, offset: const Offset(0, 2))],
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        _mobileBarBtn(Icons.auto_fix_high, _autoLayout, scheme, size: 16, pad: 4),
+        const SizedBox(width: 2),
+        _mobileBarBtn(Icons.my_location, () => _goToSource(s), scheme, size: 16, pad: 4),
+      ]),
+    );
+  }
+
+  // ── 移动端专用：底部中央文件信息 ──
+
+  Widget _buildMobileFileInfo(ColorScheme scheme, AppStrings s) {
+    final v = widget.video;
+    return Container(
+      height: 24,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: scheme.surface.withAlpha(180),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        '${v.resolution} | ${v.durationStr} | ${formatFileSize(v.sizeMb)} | ${_nodes.length}节点',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(fontSize: 9, color: scheme.outline),
+      ),
+    );
+  }
+
+  Widget _mobileBarBtn(IconData icon, VoidCallback onTap, ColorScheme scheme, {Color? color, double size = 20, double pad = 6}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Padding(
+        padding: EdgeInsets.all(pad),
+        child: Icon(icon, size: size, color: color ?? scheme.onSurfaceVariant),
+      ),
+    );
+  }
+
+  // ── 移动端专用：工具箱弹出层 ──
+
+  Widget _buildMobileToolboxSheet(ColorScheme scheme, AppStrings s) {
+    return GestureDetector(
+      onTap: () => setState(() => _mobileToolboxOpen = false),
+      child: Container(
+        color: Colors.black.withAlpha(120),
+        child: GestureDetector(
+          onTap: () {},
+          child: Center(
+            child: Container(
+              width: 320,
+              constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.7),
+              margin: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: scheme.surface.withAlpha(240),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: scheme.outlineVariant.withAlpha(120)),
+                boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(60), blurRadius: 16, offset: const Offset(0, 4))],
+              ),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Row(children: [
+                  Icon(Icons.widgets_outlined, size: 16, color: scheme.primary),
+                  const SizedBox(width: 6),
+                  Text(s.isZh ? '添加节点' : 'Add Node',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+                  const Spacer(),
+                  IconButton(
+                    icon: Icon(Icons.close, size: 18, color: scheme.outline),
+                    onPressed: () => setState(() => _mobileToolboxOpen = false),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                  ),
+                ]),
+                const SizedBox(height: 8),
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Wrap(spacing: 6, runSpacing: 6, children: [
+                        _buildToolboxItem(PipelineStepType.start, scheme, s),
+                        _buildToolboxItem(PipelineStepType.output, scheme, s),
+                      ]),
+                      const SizedBox(height: 10),
+                      _categoryLabel(scheme, Icons.videocam_outlined, s.isZh ? '视频' : 'Video'),
+                      const SizedBox(height: 6),
+                      Wrap(spacing: 6, runSpacing: 6, children: [
+                        for (final t in _videoTypes) _buildToolboxItem(t, scheme, s),
+                      ]),
+                      const SizedBox(height: 10),
+                      _categoryLabel(scheme, Icons.audiotrack_outlined, s.isZh ? '音频' : 'Audio'),
+                      const SizedBox(height: 6),
+                      Wrap(spacing: 6, runSpacing: 6, children: [
+                        for (final t in _audioTypes) _buildToolboxItem(t, scheme, s),
+                      ]),
+                      const SizedBox(height: 10),
+                      _categoryLabel(scheme, Icons.image_outlined, s.isZh ? '图片' : 'Image'),
+                      const SizedBox(height: 6),
+                      Wrap(spacing: 6, runSpacing: 6, children: [
+                        for (final t in _imageTypes) _buildToolboxItem(t, scheme, s),
+                      ]),
+                      const SizedBox(height: 10),
+                      _categoryLabel(scheme, Icons.account_tree_outlined, s.isZh ? '逻辑' : 'Logic'),
+                      const SizedBox(height: 6),
+                      Wrap(spacing: 6, runSpacing: 6, children: [
+                        _buildLogicToolboxItem(LogicBlockType.loop, scheme, s),
+                        _buildLogicToolboxItem(LogicBlockType.selectiveLoop, scheme, s),
+                      ]),
+                      const SizedBox(height: 6),
+                      Wrap(spacing: 4, runSpacing: 4, children: [
+                        for (final g in LogicGateType.values) _buildGateToolboxItem(g, scheme, s),
+                      ]),
+                      if (widget.containerInfo != null) ...[
+                        const SizedBox(height: 10),
+                        _categoryLabel(scheme, Icons.folder_special_outlined, s.isZh ? '容器' : 'Container'),
+                        const SizedBox(height: 6),
+                        Wrap(spacing: 6, runSpacing: 6, children: [
+                          for (final t in _containerTypes) _buildToolboxItem(t, scheme, s),
+                        ]),
+                      ],
+                    ]),
+                  ),
+                ),
+              ]),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── 移动端专用：属性编辑底部弹层 ──
+
+  Widget _buildMobilePropertiesSheet(ColorScheme scheme, AppStrings s) {
+    final node = _selectedNode;
+    final logicBlock = _selectedLogicBlockId != null
+        ? _logicBlocks.where((b) => b.id == _selectedLogicBlockId).firstOrNull
+        : null;
+    if (node == null && logicBlock == null) return const SizedBox.shrink();
+
+    final title = logicBlock != null
+        ? logicBlock.label(s.isZh)
+        : node!.isGate && node.gate != null
+            ? _gatePropertyTitle(node, s)
+            : (s.isZh ? node.label : node.labelEn);
+
+    return Container(
+      constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.6),
+      margin: const EdgeInsets.all(8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: scheme.surface.withAlpha(240),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: scheme.outlineVariant.withAlpha(120)),
+        boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(60), blurRadius: 16, offset: const Offset(0, -2))],
+      ),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Row(children: [
+          Icon(
+            logicBlock != null
+                ? (logicBlock.type == LogicBlockType.loop ? Icons.repeat : Icons.shuffle)
+                : _stepIcon(node!.type),
+            size: 16,
+            color: scheme.primary,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(title, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+          ),
+          IconButton(
+            icon: Icon(Icons.close, size: 18, color: scheme.outline),
+            onPressed: () => setState(() {
+              _selectedNodeIds.clear();
+              _lastSelectedId = null;
+              _selectedLogicBlockId = null;
+            }),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+          ),
+        ]),
+        const SizedBox(height: 8),
+        Flexible(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(4),
+            child: logicBlock != null
+                ? LogicBlockEditor(
+                    key: ValueKey(logicBlock.id),
+                    block: logicBlock,
+                    childNodes: _nodes.where((n) => logicBlock.childNodeIds.contains(n.id)).toList(),
+                    onChanged: () { setState(() {}); _markDirty(); },
+                    isZh: s.isZh,
+                  )
+                : _buildStepEditor(node!, s.isZh),
+          ),
+        ),
+      ]),
     );
   }
 }

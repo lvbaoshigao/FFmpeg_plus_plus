@@ -646,13 +646,83 @@ class _SettingsPageState extends State<SettingsPage> {
 
   // ── 移动端专用 ──
 
-  /// 移动端顶栏：液态玻璃药丸（不再全宽模糊）——左标题药丸 + 右搜索药丸；
-  /// 点击搜索后标题药丸变长成搜索药丸，右侧搜索按钮缩放隐藏。
+  /// 移动端顶栏：液态玻璃药丸——左标题药丸 + 右搜索药丸；
+  /// 点击搜索后使用 AnimatedContainer 平滑展开，无卡顿。
   Widget _buildMobileTopBar(AppStrings s, ColorScheme scheme) {
     final safeTop = MediaQuery.of(context).padding.top;
     final searching = _searchExpanded;
-    final Widget searchField = SizedBox(
-      height: 42,
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(12, safeTop + 6, 12, 6),
+      child: Row(children: [
+        // 左：标题药丸（搜索时淡出）
+        AnimatedOpacity(
+          opacity: searching ? 0.0 : 1.0,
+          duration: const Duration(milliseconds: 200),
+          child: AnimatedScale(
+            scale: searching ? 0.8 : 1.0,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOutCubic,
+            child: IgnorePointer(
+              ignoring: searching,
+              child: MobileGlassPill(
+                radius: 22,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                pressable: true,
+                child: Text(s.settingsTitle,
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        // 右：搜索按钮/搜索框（平滑展开）
+        Expanded(
+          child: AnimatedSize(
+            duration: const Duration(milliseconds: 280),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.centerRight,
+            child: searching
+                ? _buildSearchField(s, scheme)
+                : Align(
+                    alignment: Alignment.centerRight,
+                    child: MobileGlassPill(
+                      radius: 22,
+                      padding: EdgeInsets.zero,
+                      child: SizedBox(
+                        width: 44,
+                        height: 44,
+                        child: IconButton(
+                          icon: Icon(Icons.search, size: 20, color: scheme.onSurface),
+                          tooltip: s.setSearchHint,
+                          onPressed: () {
+                            setState(() => _searchExpanded = true);
+                            WidgetsBinding.instance.addPostFrameCallback((_) => _searchFocus.requestFocus());
+                          },
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+                        ),
+                      ),
+                    ),
+                  ),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  /// 搜索输入框（无边框药丸样式，内部使用 TextField）
+  Widget _buildSearchField(AppStrings s, ColorScheme scheme) {
+    return Container(
+      height: 44,
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withAlpha(140),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(
+          color: scheme.outline.withAlpha(60),
+          width: 0.5,
+        ),
+      ),
       child: Row(children: [
         const SizedBox(width: 14),
         Icon(Icons.search, size: 18, color: scheme.outline),
@@ -687,95 +757,6 @@ class _SettingsPageState extends State<SettingsPage> {
           constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
         ),
         const SizedBox(width: 4),
-      ]),
-    );
-    Widget buildGone() => const SizedBox(key: ValueKey('title-gone'), width: 0, height: 40);
-    Widget buildTitle() => MobileGlassPill(
-        key: const ValueKey('title'),
-        radius: 22,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        pressable: true,
-        child: Text(s.settingsTitle,
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)));
-    Widget buildSearchButton() => MobileGlassPill(
-        radius: 22,
-        padding: EdgeInsets.zero,
-        child: SizedBox(
-          width: 44,
-          height: 44,
-          child: IconButton(
-            icon: Icon(Icons.search, size: 20, color: scheme.onSurface),
-            tooltip: s.setSearchHint,
-            onPressed: () {
-              setState(() => _searchExpanded = true);
-              WidgetsBinding.instance.addPostFrameCallback((_) => _searchFocus.requestFocus());
-            },
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-          ),
-        ));
-    Widget buildSearchBox() => MobileGlassPill(
-        key: const ValueKey('searchbox'),
-        radius: 22,
-        padding: EdgeInsets.zero,
-        child: searchField);
-
-    return Padding(
-      padding: EdgeInsets.fromLTRB(12, safeTop + 6, 12, 6),
-      child: Row(children: [
-        // 左：标题药丸 —— 搜索时整体缩放+淡出并塌陷（不再与搜索框叠影）
-        AnimatedSwitcher(
-          duration: const Duration(milliseconds: 240),
-          switchInCurve: Curves.easeOutCubic,
-          switchOutCurve: Curves.easeInCubic,
-          layoutBuilder: (currentChild, previousChildren) => Stack(
-            alignment: Alignment.centerLeft,
-            clipBehavior: Clip.none,
-            children: [
-              ...previousChildren,
-              ?currentChild,
-            ],
-          ),
-          transitionBuilder: (child, anim) => FadeTransition(
-            opacity: anim,
-            child: ScaleTransition(
-              scale: Tween<double>(begin: 0.7, end: 1.0).animate(anim),
-              child: child,
-            ),
-          ),
-          child: searching ? buildGone() : buildTitle(),
-        ),
-        const SizedBox(width: 8),
-        // 右：普通态 = 靠右的搜索按钮药丸；搜索态 = 由右向左展开成完整搜索框
-        Expanded(
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 240),
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInCubic,
-            layoutBuilder: (currentChild, previousChildren) => Stack(
-              alignment: Alignment.centerRight,
-              clipBehavior: Clip.none,
-              children: [
-                ...previousChildren,
-                ?currentChild,
-              ],
-            ),
-            transitionBuilder: (child, anim) => FadeTransition(
-              opacity: anim,
-              child: ScaleTransition(
-                scale: Tween<double>(begin: 0.92, end: 1.0).animate(anim),
-                child: child,
-              ),
-            ),
-            child: searching
-                ? buildSearchBox()
-                : Align(
-                    key: const ValueKey('searchbtn'),
-                    alignment: Alignment.centerRight,
-                    child: buildSearchButton(),
-                  ),
-          ),
-        ),
       ]),
     );
   }

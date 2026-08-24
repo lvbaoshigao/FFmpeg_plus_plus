@@ -104,27 +104,30 @@ class _QueuePageState extends State<QueuePage> {
     ];
   }
 
-  /// 移动端顶栏：左侧标题药丸 + 右侧操作药丸（液态玻璃），与项目/设置页一致；
-  /// 右侧操作横向滚动，窄屏溢出时不会换行/报错。
+  /// 移动端顶栏：左右药丸等宽布局（与项目页一致）。
   Widget _buildMobileTopBar(ColorScheme scheme, AppState state, AppStrings s) {
     final safeTop = MediaQuery.of(context).padding.top;
     return Padding(
       padding: EdgeInsets.fromLTRB(12, safeTop + 6, 12, 6),
       child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-        // 左：标题药丸
-        MobileGlassPill(
-          radius: 22,
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-          pressable: true,
-          child: Text(s.navQueue,
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-        ),
-        const SizedBox(width: 8),
-        // 右：操作药丸（横向滚动防溢出）
+        // 左：标题药丸（占 40% 宽度）
         Expanded(
+          flex: 4,
           child: MobileGlassPill(
             radius: 22,
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+            pressable: true,
+            child: Text(s.navQueue,
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+          ),
+        ),
+        const SizedBox(width: 8),
+        // 右：操作药丸（占 60% 宽度，横向滚动防溢出）
+        Expanded(
+          flex: 6,
+          child: MobileGlassPill(
+            radius: 22,
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(children: _buildActions(scheme, state, s)),

@@ -7,7 +7,7 @@ import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../widgets/toast.dart';
 import '../widgets/glass_panel.dart';
-import '../widgets/mobile_top_bar.dart';
+import '../widgets/mobile_glass_pill.dart';
 import '../platform/app_platform.dart';
 
 class LogPage extends StatefulWidget {
@@ -54,7 +54,7 @@ class _LogPageState extends State<LogPage> {
 
   Widget _toolbar(ColorScheme scheme, AppConfig cfg, List<LogEntry> entries, List<LogEntry> filtered, bool isZh) {
     final hasSelection = _selectedIndices.isNotEmpty;
-    final titleRow = Row(children: [
+    final titleRow = Row(mainAxisSize: MainAxisSize.min, children: [
       Text(isZh ? '日志' : 'Logs', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
       const SizedBox(width: 12),
       Text('${filtered.length} ${isZh ? '条' : 'entries'}', style: TextStyle(fontSize: 11, color: scheme.outline)),
@@ -86,10 +86,48 @@ class _LogPageState extends State<LogPage> {
     ];
 
     if (isMobilePlatform) {
-      return MobileSubPageTopBar(
-        title: titleRow,
-        actions: actionWidgets,
-        onBack: () => Navigator.of(context).maybePop(),
+      final safeTop = MediaQuery.of(context).padding.top;
+      return Padding(
+        padding: EdgeInsets.fromLTRB(12, safeTop + 6, 12, 6),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+          // 左：返回按钮 + 标题药丸（占 40% 宽度）
+          Expanded(
+            flex: 4,
+            child: Row(children: [
+              MobileGlassPill(
+                radius: 22,
+                padding: EdgeInsets.zero,
+                child: SizedBox(
+                  width: 44, height: 44,
+                  child: IconButton(
+                    icon: Icon(Icons.arrow_back, size: 22, color: scheme.onSurface),
+                    onPressed: () => Navigator.of(context).maybePop(),
+                    padding: EdgeInsets.zero,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: MobileGlassPill(
+                  radius: 22,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
+                  pressable: true,
+                  child: titleRow,
+                ),
+              ),
+            ]),
+          ),
+          const SizedBox(width: 8),
+          // 右：操作药丸（占 60% 宽度）
+          Expanded(
+            flex: 6,
+            child: MobileGlassPill(
+              radius: 22,
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+              child: Row(children: actionWidgets),
+            ),
+          ),
+        ]),
       );
     }
     return GlassTopBar(title: titleRow, actions: actionWidgets);
@@ -115,10 +153,15 @@ class _LogPageState extends State<LogPage> {
   }
 
   Widget _buildList(List<LogEntry> filtered, ColorScheme scheme, AppConfig cfg, bool isZh) {
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      itemCount: filtered.length,
-      itemBuilder: (_, i) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12),
+      child: GlassPanel(
+        radius: 16,
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+        child: ListView.builder(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          itemCount: filtered.length,
+          itemBuilder: (_, i) {
         final entry = filtered[i];
         final selected = _selectedIndices.contains(i);
         final catColor = _catColor(entry.category, scheme);
@@ -177,6 +220,8 @@ class _LogPageState extends State<LogPage> {
 
         return Padding(padding: const EdgeInsets.only(bottom: 2), child: RepaintBoundary(child: row));
       },
+        ),
+      ),
     );
   }
 
