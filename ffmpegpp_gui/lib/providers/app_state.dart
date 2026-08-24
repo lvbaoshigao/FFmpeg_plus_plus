@@ -189,12 +189,12 @@ class AppState extends ChangeNotifier {
     debugPrint('[ffprobe] bundled ffmpeg=$ffmpeg ffprobe=$ffprobe');
     if (ffmpeg == null || ffprobe == null) {
       addLog('未找到内置 ffmpeg/ffprobe', category: 'error');
-      debugPrint('[ffprobe] 未找到内置 ffmpeg/ffprobe（复制失败或原生通道不可用）');
+      debugPrint('[ffprobe] 未找到内置 ffmpeg/ffprobe（jniLibs 解压失败或原生通道不可用）');
       return;
     }
 
-    // 自检可执行性：直接跑 -version，确认复制出的静态二进制可用。
-    // 这里有明确的 exit code，便于通过 logcat 定位 127（命令未找到）之类的失败。
+    // 自检可执行性：直接跑 -version，确认 nativeLibraryDir 中的静态二进制可用。
+    // 这里有明确的 exit code，便于通过 logcat 定位 127（命令未找到）或 -11（SIGSEGV）之类的失败。
     try {
       final v = await Process.run(ffprobe, ['-version']);
       final firstLine = (v.stdout is String && (v.stdout as String).isNotEmpty)

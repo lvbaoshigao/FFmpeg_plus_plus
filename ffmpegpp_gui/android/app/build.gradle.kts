@@ -42,21 +42,15 @@ android {
         }
     }
 
-    // libffmpegpp.so 是 C++ 后端动态库，需保证可被 dlopen；
-    // ffmpeg/ffprobe 已改为 assets 打包（见 MainActivity.prepareBundledTool）。
+    // libffmpegpp.so 是 C++ 后端动态库（dlopen 加载）；
+    // libffmpeg.so / libffprobe.so 是静态-PIE 可执行文件（Process.run 调用）。
+    // 三者均为 arm64 预编译产物，放入 jniLibs 由 PackageManager 解压到
+    // nativeLibraryDir（SELinux 标签 apk_data_file，允许 app exec）。
+    // useLegacyPackaging = true 确保 .so 不被压缩存储，安装时直接解压。
     packaging {
         jniLibs {
             useLegacyPackaging = true
         }
-    }
-
-    // 【关键修复】ffmpeg/ffprobe 无扩展名，AAPT2 默认会 Deflate 压缩。
-    // 压缩后的 asset 需要通过 ZipInflaterInputStream 解压，增加内存开销（峰值 ~40MB），
-    // 且无法使用 AssetFileDescriptor 获取文件描述符。
-    // 设为 noCompress 后，assets.open() 返回原始 FileInputStream，
-    // 可用 assets.openFd(name).length 获取预期大小进行完整性校验。
-    androidResources {
-        noCompress += listOf("ffmpeg", "ffprobe")
     }
 }
 
