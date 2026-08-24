@@ -660,7 +660,7 @@ class AppState extends ChangeNotifier {
     }
 
     _tasks.add(TaskInfo(
-      id: 'task_${_tasks.length}_${DateTime.now().millisecondsSinceEpoch}',
+      id: 'task_${const Uuid().v4()}',
       videoId: container.id,
       filename: '${container.name} (${mergeType == PipelineStepType.concatMedia ? "合并" : "图片→视频"})',
       inputPath: files.first,
@@ -690,7 +690,7 @@ class AppState extends ChangeNotifier {
     if (!dir.endsWith('/') && !dir.endsWith('\\')) dir = '$dir${Platform.pathSeparator}';
     var out = '$dir$fn';
     if (out == video.filepath) { final be = fn.replaceAll(RegExp(r'\.[^.]+$'), ''); final ee = fn.split('.').last; out = '$dir${be}_processed.$ee'; }
-    _tasks.add(TaskInfo(id: 'task_${_tasks.length}_${DateTime.now().millisecondsSinceEpoch}', videoId: videoId, filename: video.filename, inputPath: video.filepath, outputPath: out, config: cfg));
+    _tasks.add(TaskInfo(id: 'task_${const Uuid().v4()}', videoId: videoId, filename: video.filename, inputPath: video.filepath, outputPath: out, config: cfg));
     notifyListeners();
   }
 
@@ -723,7 +723,7 @@ class AppState extends ChangeNotifier {
       }
       final label = plans.length > 1 ? '${video.filename} [任务${i + 1}]' : video.filename;
       _tasks.add(TaskInfo(
-        id: 'task_${_tasks.length}_${DateTime.now().millisecondsSinceEpoch}',
+        id: 'task_${const Uuid().v4()}',
         videoId: video.id,
         filename: label,
         inputPath: video.filepath,
@@ -743,7 +743,7 @@ class AppState extends ChangeNotifier {
     required String filename,
   }) {
     _tasks.add(TaskInfo(
-      id: 'task_${_tasks.length}_${DateTime.now().millisecondsSinceEpoch}',
+      id: 'task_${const Uuid().v4()}',
       videoId: '',
       filename: filename,
       inputPath: inputPath,

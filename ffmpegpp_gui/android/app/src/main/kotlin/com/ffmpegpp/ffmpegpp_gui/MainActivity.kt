@@ -43,11 +43,16 @@ class MainActivity : FlutterActivity() {
                         if (url.isEmpty()) {
                             result.error("empty_url", "url is empty", null)
                         } else {
-                            try {
-                                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                                result.success(true)
-                            } catch (e: Exception) {
-                                result.error("open_failed", e.message, null)
+                            // 安全校验：仅允许 http/https scheme，防止 file:// 或 content:// 访问本地文件
+                            if (!url.startsWith("http://") && !url.startsWith("https://")) {
+                                result.error("invalid_scheme", "only http/https URLs are allowed", null)
+                            } else {
+                                try {
+                                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                    result.success(true)
+                                } catch (e: Exception) {
+                                    result.error("open_failed", e.message, null)
+                                }
                             }
                         }
                     }

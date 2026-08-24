@@ -537,45 +537,55 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
   }
 
   Widget _buildQuickConfigCard(QuickConfig cfg, ColorScheme scheme, bool zh) {
+    final content = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      child: Row(children: [
+        Container(
+          width: 42, height: 42,
+          decoration: BoxDecoration(
+            color: scheme.primaryContainer,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(_quickTypeIcon(cfg.fileType), size: 20, color: scheme.onPrimaryContainer),
+        ),
+        const SizedBox(width: 14),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(cfg.name,
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: scheme.onSurface)),
+          const SizedBox(height: 3),
+          Row(children: [
+            Icon(_quickTypeIcon(cfg.fileType), size: 11, color: scheme.outline.withAlpha(100)),
+            const SizedBox(width: 3),
+            Text(cfg.fileType.label(zh), style: TextStyle(fontSize: 11, color: scheme.outline)),
+            const SizedBox(width: 8),
+            Text('${cfg.items.length} ${zh ? '项' : 'items'}',
+                style: TextStyle(fontSize: 11, color: scheme.outline)),
+          ]),
+        ])),
+        IconButton(
+          icon: Icon(Icons.edit_outlined, size: 18, color: scheme.outline),
+          tooltip: zh ? '编辑' : 'Edit',
+          onPressed: () => _openQuickEditor(cfg),
+        ),
+        IconButton(
+          icon: Icon(Icons.delete_outline, size: 18, color: scheme.outline),
+          tooltip: zh ? '删除' : 'Delete',
+          onPressed: () => _deleteQuickConfig(cfg),
+        ),
+      ]),
+    );
+
+    if (isMobilePlatform) {
+      return MobileGlassPill(
+        margin: const EdgeInsets.only(bottom: 8),
+        radius: 16,
+        child: content,
+      );
+    }
+
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        child: Row(children: [
-          Container(
-            width: 42, height: 42,
-            decoration: BoxDecoration(
-              color: scheme.primaryContainer,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(_quickTypeIcon(cfg.fileType), size: 20, color: scheme.onPrimaryContainer),
-          ),
-          const SizedBox(width: 14),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(cfg.name,
-                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: scheme.onSurface)),
-            const SizedBox(height: 3),
-            Row(children: [
-              Icon(_quickTypeIcon(cfg.fileType), size: 11, color: scheme.outline.withAlpha(100)),
-              const SizedBox(width: 3),
-              Text(cfg.fileType.label(zh), style: TextStyle(fontSize: 11, color: scheme.outline)),
-              const SizedBox(width: 8),
-              Text('${cfg.items.length} ${zh ? '项' : 'items'}',
-                  style: TextStyle(fontSize: 11, color: scheme.outline)),
-            ]),
-          ])),
-          IconButton(
-            icon: Icon(Icons.edit_outlined, size: 18, color: scheme.outline),
-            tooltip: zh ? '编辑' : 'Edit',
-            onPressed: () => _openQuickEditor(cfg),
-          ),
-          IconButton(
-            icon: Icon(Icons.delete_outline, size: 18, color: scheme.outline),
-            tooltip: zh ? '删除' : 'Delete',
-            onPressed: () => _deleteQuickConfig(cfg),
-          ),
-        ]),
-      ),
+      child: content,
     );
   }
 
@@ -592,41 +602,84 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
 
     return Scaffold(
       backgroundColor: Colors.transparent,
-      body: Column(children: [
+      body: Stack(children: [
+        // 全屏可滚动的内容（移动端顶部留出药丸空间）
         isMobilePlatform
-            ? _buildMobileTopBar(scheme, zh)
-            : GlassTopBar(
-                title: Text(zh ? '配置库' : 'Config Library'),
-                actions: _buildTopActions(scheme, zh),
-              ),
-      Expanded(
-        child: !_loaded
-            ? const Center(child: CircularProgressIndicator())
-            : ListView(
-                padding: EdgeInsets.fromLTRB(16, 16, 16, isMobilePlatform ? kMobileNavClearance : 16),
-                children: [
-                  if (_configs.isEmpty)
-                    _buildEmptyState(scheme, zh)
-                  else
-                    for (var i = 0; i < _configs.length; i++) _buildCard(_configs[i], i, scheme, zh),
-                  const SizedBox(height: 24),
-                  _buildQuickSectionHeader(scheme, zh),
-                  const SizedBox(height: 4),
-                  if (_quickConfigs.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      child: Center(
-                        child: Text(
-                          zh ? '还没有快捷配置，点击顶栏「⚡」新建' : 'No quick configs yet. Click the bolt icon to create one',
-                          style: TextStyle(fontSize: 12, color: scheme.outline.withAlpha(120)),
+            ? Padding(
+                padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top + 60),
+                child: !_loaded
+                    ? const Center(child: CircularProgressIndicator())
+                    : RepaintBoundary(
+                        child: ListView(
+                          padding: EdgeInsets.fromLTRB(16, 16, 16, kMobileNavClearance),
+                          children: [
+                            if (_configs.isEmpty)
+                              _buildEmptyState(scheme, zh)
+                            else
+                              for (var i = 0; i < _configs.length; i++) _buildCard(_configs[i], i, scheme, zh),
+                            const SizedBox(height: 24),
+                            _buildQuickSectionHeader(scheme, zh),
+                            const SizedBox(height: 4),
+                            if (_quickConfigs.isEmpty)
+                              Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                child: Center(
+                                  child: Text(
+                                    zh ? '还没有快捷配置，点击顶栏「⚡」新建' : 'No quick configs yet. Click the bolt icon to create one',
+                                    style: TextStyle(fontSize: 12, color: scheme.outline.withAlpha(120)),
+                                  ),
+                                ),
+                              )
+                            else
+                              for (final q in _quickConfigs) _buildQuickConfigCard(q, scheme, zh),
+                          ],
                         ),
                       ),
-                    )
-                  else
-                    for (final q in _quickConfigs) _buildQuickConfigCard(q, scheme, zh),
-                ],
-              ),
-      ),
+              )
+            : Column(children: [
+                GlassTopBar(
+                  title: Text(zh ? '配置库' : 'Config Library'),
+                  actions: _buildTopActions(scheme, zh),
+                ),
+                Expanded(
+                  child: !_loaded
+                      ? const Center(child: CircularProgressIndicator())
+                      : RepaintBoundary(
+                          child: ListView(
+                            padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+                            children: [
+                              if (_configs.isEmpty)
+                                _buildEmptyState(scheme, zh)
+                              else
+                                for (var i = 0; i < _configs.length; i++) _buildCard(_configs[i], i, scheme, zh),
+                              const SizedBox(height: 24),
+                              _buildQuickSectionHeader(scheme, zh),
+                              const SizedBox(height: 4),
+                              if (_quickConfigs.isEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 16),
+                                  child: Center(
+                                    child: Text(
+                                      zh ? '还没有快捷配置，点击顶栏「⚡」新建' : 'No quick configs yet. Click the bolt icon to create one',
+                                      style: TextStyle(fontSize: 12, color: scheme.outline.withAlpha(120)),
+                                    ),
+                                  ),
+                                )
+                              else
+                                for (final q in _quickConfigs) _buildQuickConfigCard(q, scheme, zh),
+                            ],
+                          ),
+                        ),
+                ),
+              ]),
+        // 移动端顶栏浮层（不影响滚动）
+        if (isMobilePlatform)
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: _buildMobileTopBar(scheme, zh),
+          ),
       ]),
     );
   }
@@ -710,87 +763,99 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     final nodeCount = entry.graph.nodes.length;
     final connCount = entry.graph.connections.length;
 
+    final content = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      child: Row(children: [
+        Container(
+          width: 42, height: 42,
+          decoration: BoxDecoration(
+            color: scheme.primaryContainer,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(Icons.account_tree, size: 20, color: scheme.onPrimaryContainer),
+        ),
+        const SizedBox(width: 14),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(entry.name, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: scheme.onSurface)),
+          const SizedBox(height: 3),
+          Row(children: [
+            Icon(Icons.circle, size: 6, color: scheme.outline.withAlpha(100)),
+            const SizedBox(width: 4),
+            Text('$nodeCount ${zh ? '节点' : 'nodes'}', style: TextStyle(fontSize: 11, color: scheme.outline)),
+            const SizedBox(width: 8),
+            Icon(Icons.circle, size: 6, color: scheme.outline.withAlpha(100)),
+            const SizedBox(width: 4),
+            Text('$connCount ${zh ? '连线' : 'links'}', style: TextStyle(fontSize: 11, color: scheme.outline)),
+            const SizedBox(width: 8),
+            Icon(Icons.access_time, size: 11, color: scheme.outline.withAlpha(100)),
+            const SizedBox(width: 3),
+            Text(_formatTime(entry.updatedAt, zh), style: TextStyle(fontSize: 11, color: scheme.outline)),
+          ]),
+          if (entry.description.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(entry.description, maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 11, color: scheme.outline.withAlpha(150))),
+          ],
+        ])),
+        PopupMenuButton<String>(
+          icon: Icon(Icons.more_vert, size: 18, color: scheme.outline),
+          itemBuilder: (_) => [
+            PopupMenuItem(value: 'edit', child: Row(children: [
+              Icon(Icons.edit_outlined, size: 16, color: scheme.onSurface),
+              const SizedBox(width: 8),
+              Text(zh ? '编辑' : 'Edit'),
+            ])),
+            PopupMenuItem(value: 'rename', child: Row(children: [
+              Icon(Icons.drive_file_rename_outline, size: 16, color: scheme.onSurface),
+              const SizedBox(width: 8),
+              Text(zh ? '重命名' : 'Rename'),
+            ])),
+            PopupMenuItem(value: 'duplicate', child: Row(children: [
+              Icon(Icons.copy_outlined, size: 16, color: scheme.onSurface),
+              const SizedBox(width: 8),
+              Text(zh ? '复制' : 'Duplicate'),
+            ])),
+            PopupMenuItem(value: 'export', child: Row(children: [
+              Icon(Icons.file_upload_outlined, size: 16, color: scheme.onSurface),
+              const SizedBox(width: 8),
+              Text(zh ? '导出' : 'Export'),
+            ])),
+            const PopupMenuDivider(),
+            PopupMenuItem(value: 'delete', child: Row(children: [
+              Icon(Icons.delete_outline, size: 16, color: scheme.error),
+              const SizedBox(width: 8),
+              Text(zh ? '删除' : 'Delete', style: TextStyle(color: scheme.error)),
+            ])),
+          ],
+          onSelected: (action) {
+            switch (action) {
+              case 'edit': _openEditor(entry);
+              case 'rename': _renameEntry(entry);
+              case 'duplicate': _duplicateEntry(entry);
+              case 'export': _exportEntry(entry);
+              case 'delete': _deleteEntry(index);
+            }
+          },
+        ),
+      ]),
+    );
+
+    if (isMobilePlatform) {
+      return MobileGlassPill(
+        margin: const EdgeInsets.only(bottom: 8),
+        radius: 16,
+        pressable: true,
+        onTap: () => _openEditor(entry),
+        child: content,
+      );
+    }
+
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () => _openEditor(entry),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          child: Row(children: [
-            Container(
-              width: 42, height: 42,
-              decoration: BoxDecoration(
-                color: scheme.primaryContainer,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(Icons.account_tree, size: 20, color: scheme.onPrimaryContainer),
-            ),
-            const SizedBox(width: 14),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(entry.name, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: scheme.onSurface)),
-              const SizedBox(height: 3),
-              Row(children: [
-                Icon(Icons.circle, size: 6, color: scheme.outline.withAlpha(100)),
-                const SizedBox(width: 4),
-                Text('$nodeCount ${zh ? '节点' : 'nodes'}', style: TextStyle(fontSize: 11, color: scheme.outline)),
-                const SizedBox(width: 8),
-                Icon(Icons.circle, size: 6, color: scheme.outline.withAlpha(100)),
-                const SizedBox(width: 4),
-                Text('$connCount ${zh ? '连线' : 'links'}', style: TextStyle(fontSize: 11, color: scheme.outline)),
-                const SizedBox(width: 8),
-                Icon(Icons.access_time, size: 11, color: scheme.outline.withAlpha(100)),
-                const SizedBox(width: 3),
-                Text(_formatTime(entry.updatedAt, zh), style: TextStyle(fontSize: 11, color: scheme.outline)),
-              ]),
-              if (entry.description.isNotEmpty) ...[
-                const SizedBox(height: 2),
-                Text(entry.description, maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 11, color: scheme.outline.withAlpha(150))),
-              ],
-            ])),
-            PopupMenuButton<String>(
-              icon: Icon(Icons.more_vert, size: 18, color: scheme.outline),
-              itemBuilder: (_) => [
-                PopupMenuItem(value: 'edit', child: Row(children: [
-                  Icon(Icons.edit_outlined, size: 16, color: scheme.onSurface),
-                  const SizedBox(width: 8),
-                  Text(zh ? '编辑' : 'Edit'),
-                ])),
-                PopupMenuItem(value: 'rename', child: Row(children: [
-                  Icon(Icons.drive_file_rename_outline, size: 16, color: scheme.onSurface),
-                  const SizedBox(width: 8),
-                  Text(zh ? '重命名' : 'Rename'),
-                ])),
-                PopupMenuItem(value: 'duplicate', child: Row(children: [
-                  Icon(Icons.copy_outlined, size: 16, color: scheme.onSurface),
-                  const SizedBox(width: 8),
-                  Text(zh ? '复制' : 'Duplicate'),
-                ])),
-                PopupMenuItem(value: 'export', child: Row(children: [
-                  Icon(Icons.file_upload_outlined, size: 16, color: scheme.onSurface),
-                  const SizedBox(width: 8),
-                  Text(zh ? '导出' : 'Export'),
-                ])),
-                const PopupMenuDivider(),
-                PopupMenuItem(value: 'delete', child: Row(children: [
-                  Icon(Icons.delete_outline, size: 16, color: scheme.error),
-                  const SizedBox(width: 8),
-                  Text(zh ? '删除' : 'Delete', style: TextStyle(color: scheme.error)),
-                ])),
-              ],
-              onSelected: (action) {
-                switch (action) {
-                  case 'edit': _openEditor(entry);
-                  case 'rename': _renameEntry(entry);
-                  case 'duplicate': _duplicateEntry(entry);
-                  case 'export': _exportEntry(entry);
-                  case 'delete': _deleteEntry(index);
-                }
-              },
-            ),
-          ]),
-        ),
+        child: content,
       ),
     );
   }

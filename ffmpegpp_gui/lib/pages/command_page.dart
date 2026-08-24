@@ -145,6 +145,7 @@ class _CommandPageState extends State<CommandPage> {
 
 
   /// 移动端执行：通过 Process.run 直接执行命令，结果显示在输出区。
+  /// 安全限制：仅允许 ffmpeg/ffprobe 开头的命令，防止任意命令执行。
   Future<void> _executeMobile() async {
     final cmd = _ctrl.text.trim();
     if (cmd.isEmpty) {
@@ -164,6 +165,13 @@ class _CommandPageState extends State<CommandPage> {
         return;
       }
       final exe = parts[0];
+      // 安全校验：仅允许 ffmpeg/ffprobe 开头的命令（basename 匹配）
+      final exeBase = exe.split(RegExp(r'[/\\]')).last.toLowerCase();
+      if (exeBase != 'ffmpeg' && exeBase != 'ffmpeg.exe' && 
+          exeBase != 'ffprobe' && exeBase != 'ffprobe.exe') {
+        _appendOutput('Security: only ffmpeg/ffprobe commands are allowed', isError: true);
+        return;
+      }
       final args = parts.sublist(1);
 
       final result = await Process.run(exe, args);

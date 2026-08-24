@@ -19,14 +19,18 @@ class MobileGlassPill extends StatefulWidget {
   final Widget child;
   final double radius;
   final EdgeInsetsGeometry padding;
+  final EdgeInsetsGeometry? margin;
   final bool pressable;
+  final VoidCallback? onTap;
 
   const MobileGlassPill({
     super.key,
     required this.child,
     this.radius = 18,
     this.padding = const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+    this.margin,
     this.pressable = false,
+    this.onTap,
   });
 
   @override
@@ -111,20 +115,32 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
       );
     }
 
-    if (!widget.pressable) return pill;
-
-    // 无内部可点元素时：按下放大、按住保持、松手回弹。
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTapDown: (_) => _set(true),
-      onTapUp: (_) => _set(false),
-      onTapCancel: () => _set(false),
-      child: AnimatedScale(
-        scale: _pressed ? 1.05 : 1.0,
-        duration: const Duration(milliseconds: 110),
-        curve: Curves.easeOut,
-        child: pill,
-      ),
-    );
+    Widget result = pill;
+    
+    if (widget.pressable || widget.onTap != null) {
+      // 按下放大、按住保持、松手回弹。
+      result = GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (_) => _set(true),
+        onTapUp: (_) {
+          _set(false);
+          widget.onTap?.call();
+        },
+        onTapCancel: () => _set(false),
+        child: AnimatedScale(
+          scale: _pressed ? 1.05 : 1.0,
+          duration: const Duration(milliseconds: 110),
+          curve: Curves.easeOut,
+          child: pill,
+        ),
+      );
+    }
+    
+    // 应用 margin
+    if (widget.margin != null) {
+      result = Padding(padding: widget.margin!, child: result);
+    }
+    
+    return result;
   }
 }

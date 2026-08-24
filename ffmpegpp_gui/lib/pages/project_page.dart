@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
@@ -124,137 +125,125 @@ class ProjectPageState extends State<ProjectPage> {
 
         return Scaffold(
           backgroundColor: Colors.transparent,
-          body: Column(children: [
+          body: Stack(children: [
+            // 全屏可滚动的内容（移动端顶部留出药丸空间）
             if (isMobilePlatform)
-              _buildMobileTopBar(context, state, s, scheme, clr)
+              Padding(
+                padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top + 60),
+                child: _buildBody(context, state, videos, s, clr, scheme),
+              )
             else
-              GlassTopBar(
-              title: (isMobilePlatform && _selectionMode)
-                ? Text(
-                    '${s.isZh ? '已选' : 'Selected'} ${_selectedIds.length + _selectedContainerIds.length} ${s.isZh ? '项' : 'items'}',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface),
-                  )
-                : _searchVisible
-                    ? TextField(
-                        autofocus: true,
-                        style: TextStyle(fontSize: 14, color: scheme.onSurface),
-                        decoration: InputDecoration(
-                          hintText: s.searchVideos,
-                          hintStyle: TextStyle(color: scheme.outline, fontSize: 14),
-                          border: InputBorder.none,
-                          prefixIcon: Icon(Icons.search, size: 18, color: scheme.outline),
-                          prefixIconConstraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                        ),
-                        onChanged: (v) => setState(() => _searchQuery = v),
-                      )
-                    : Text(s.navProjects),
-            actions: (isMobilePlatform && _selectionMode)
-                ? [
+              Column(children: [
+                GlassTopBar(
+                  title: _searchVisible
+                      ? TextField(
+                          autofocus: true,
+                          style: TextStyle(fontSize: 14, color: scheme.onSurface),
+                          decoration: InputDecoration(
+                            hintText: s.searchVideos,
+                            hintStyle: TextStyle(color: scheme.outline, fontSize: 14),
+                            border: InputBorder.none,
+                            prefixIcon: Icon(Icons.search, size: 18, color: scheme.outline),
+                            prefixIconConstraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                          ),
+                          onChanged: (v) => setState(() => _searchQuery = v),
+                        )
+                      : Text(s.navProjects),
+                  actions: [
                     IconButton(
-                      icon: Icon(Icons.delete_outline, size: 20, color: scheme.error),
-                      tooltip: s.deleteSelected,
-                      onPressed: () => _deleteSelected(state),
+                      icon: Icon(_searchVisible ? Icons.close : Icons.search, size: 20),
+                      tooltip: _searchVisible ? s.close : s.search,
+                      onPressed: () => setState(() {
+                        _searchVisible = !_searchVisible;
+                        if (!_searchVisible) _searchQuery = '';
+                      }),
                     ),
-                    TextButton(
-                      onPressed: _exitSelectionMode,
-                      child: Text(s.isZh ? '取消' : 'Cancel',
-                          style: TextStyle(fontSize: 14, color: scheme.primary, fontWeight: FontWeight.w600)),
-                    ),
-                  ]
-                : [
-              IconButton(
-                icon: Icon(_searchVisible ? Icons.close : Icons.search, size: 20),
-                tooltip: _searchVisible ? s.close : s.search,
-                onPressed: () => setState(() {
-                  _searchVisible = !_searchVisible;
-                  if (!_searchVisible) _searchQuery = '';
-                }),
-              ),
-              if (state.videos.isNotEmpty || state.containers.isNotEmpty)
-                IconButton(
-                  icon: Icon(
-                    _selectedIds.length == state.videos.length && _selectedContainerIds.length == state.containers.length
-                        ? Icons.deselect : Icons.select_all,
-                    size: 20,
-                  ),
-                  tooltip: _selectedIds.isEmpty && _selectedContainerIds.isEmpty ? s.selectAll : s.deselectAll,
-                  onPressed: () => setState(() {
-                    if (isMobilePlatform) {
-                      // 移动端：点击「全选」进入多选模式并全选（不显示常驻复选框）
-                      _selectionMode = true;
-                      _selectedIds.addAll(state.videos.map((v) => v.id));
-                      _selectedContainerIds.addAll(state.containers.map((c) => c.id));
-                    } else if (_selectedIds.length == state.videos.length && _selectedContainerIds.length == state.containers.length) {
-                      _selectedIds.clear();
-                      _selectedContainerIds.clear();
-                    } else {
-                      _selectedIds.addAll(state.videos.map((v) => v.id));
-                      _selectedContainerIds.addAll(state.containers.map((c) => c.id));
-                    }
-                  }),
-                ),
-              if (!isMobilePlatform && (_selectedIds.isNotEmpty || _selectedContainerIds.isNotEmpty))
-                IconButton(
-                  icon: Icon(Icons.delete_outline, size: 20, color: scheme.error),
-                  tooltip: s.deleteSelected,
-                  onPressed: () => _deleteSelected(state),
-                ),
-              IconButton(
-                icon: const Icon(Icons.file_download_outlined, size: 20),
-                tooltip: s.isZh ? '导入配置' : 'Import Config',
-                onPressed: state.videos.isEmpty ? null : () => _importConfig(state, s),
-              ),
-              // 圆形图标按钮：新建容器（主题色描边玻璃圆底）+ 添加文件（主色圆底），无文字
-              if (state.config.editMode != 1) ...[
-                const SizedBox(width: 6),
-                Tooltip(
-                  message: s.container,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(20),
-                    onTap: () => _showContainerMenu(context, state, s),
-                    child: Container(
-                      width: 40, height: 40,
-                      decoration: BoxDecoration(
-                        color: scheme.primaryContainer.withAlpha(160),
-                        shape: BoxShape.circle,
-                        border: Border.all(color: scheme.primary.withAlpha(90), width: 1.2),
+                    if (state.videos.isNotEmpty || state.containers.isNotEmpty)
+                      IconButton(
+                        icon: Icon(
+                          _selectedIds.length == state.videos.length && _selectedContainerIds.length == state.containers.length
+                              ? Icons.deselect : Icons.select_all,
+                          size: 20,
+                        ),
+                        tooltip: _selectedIds.isEmpty && _selectedContainerIds.isEmpty ? s.selectAll : s.deselectAll,
+                        onPressed: () => setState(() {
+                          if (_selectedIds.length == state.videos.length && _selectedContainerIds.length == state.containers.length) {
+                            _selectedIds.clear();
+                            _selectedContainerIds.clear();
+                          } else {
+                            _selectedIds.addAll(state.videos.map((v) => v.id));
+                            _selectedContainerIds.addAll(state.containers.map((c) => c.id));
+                          }
+                        }),
                       ),
-                      child: Icon(Icons.create_new_folder_outlined, size: 18, color: scheme.primary),
+                    if (_selectedIds.isNotEmpty || _selectedContainerIds.isNotEmpty)
+                      IconButton(
+                        icon: Icon(Icons.delete_outline, size: 20, color: scheme.error),
+                        tooltip: s.deleteSelected,
+                        onPressed: () => _deleteSelected(state),
+                      ),
+                    IconButton(
+                      icon: const Icon(Icons.file_download_outlined, size: 20),
+                      tooltip: s.isZh ? '导入配置' : 'Import Config',
+                      onPressed: state.videos.isEmpty ? null : () => _importConfig(state, s),
                     ),
-                  ),
-                ),
-              ],
-              const SizedBox(width: 10),
-              Tooltip(
-                message: s.addVideo,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(20),
-                  onTap: () => _pick(state),
-                  child: Container(
-                    width: 40, height: 40,
-                    decoration: BoxDecoration(
-                      color: scheme.primary,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: scheme.primary.withAlpha(90), width: 1.2),
-                      boxShadow: [BoxShadow(color: scheme.primary.withAlpha(90), blurRadius: 8, offset: const Offset(0, 2))],
+                    // 圆形图标按钮：新建容器（主题色描边玻璃圆底）+ 添加文件（主色圆底），无文字
+                    if (state.config.editMode != 1) ...[
+                      const SizedBox(width: 6),
+                      Tooltip(
+                        message: s.container,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(20),
+                          onTap: () => _showContainerMenu(context, state, s),
+                          child: Container(
+                            width: 40, height: 40,
+                            decoration: BoxDecoration(
+                              color: scheme.primaryContainer.withAlpha(160),
+                              shape: BoxShape.circle,
+                              border: Border.all(color: scheme.primary.withAlpha(90), width: 1.2),
+                            ),
+                            child: Icon(Icons.create_new_folder_outlined, size: 18, color: scheme.primary),
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(width: 10),
+                    Tooltip(
+                      message: s.addVideo,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(20),
+                        onTap: () => _pick(state),
+                        child: Container(
+                          width: 40, height: 40,
+                          decoration: BoxDecoration(
+                            color: scheme.primary,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: scheme.primary.withAlpha(90), width: 1.2),
+                            boxShadow: [BoxShadow(color: scheme.primary.withAlpha(90), blurRadius: 8, offset: const Offset(0, 2))],
+                          ),
+                          child: Icon(Icons.add, size: 24, color: scheme.onPrimary),
+                        ),
+                      ),
                     ),
-                    child: Icon(Icons.add, size: 24, color: scheme.onPrimary),
-                  ),
+                  ],
                 ),
-              ),
-            ],
-          ),
-          Expanded(
-            // 移动端无桌面拖放能力，直接渲染内容
-            child: isMobilePlatform
-                ? _buildBody(context, state, videos, s, clr, scheme)
-                : DropTarget(
+                Expanded(
+                  child: DropTarget(
                     onDragDone: _onDrop,
                     onDragEntered: (_) => setState(() => _dragging = true),
                     onDragExited: (_) => setState(() => _dragging = false),
                     child: _buildBody(context, state, videos, s, clr, scheme),
                   ),
-          ),
+                ),
+              ]),
+            // 移动端顶栏浮层（不影响滚动）
+            if (isMobilePlatform)
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: _buildMobileTopBar(context, state, s, scheme, clr),
+              ),
           ]),
         );
       },
@@ -472,8 +461,9 @@ class ProjectPageState extends State<ProjectPage> {
       return Center(child: Text(s.noMatch, style: TextStyle(fontSize: 14, color: clr)));
     }
 
-    return ListView.builder(
-      padding: EdgeInsets.fromLTRB(16, 16, 16, isMobilePlatform ? kMobileNavClearance : 16),
+    return RepaintBoundary(
+      child: ListView.builder(
+        padding: EdgeInsets.fromLTRB(16, 16, 16, isMobilePlatform ? kMobileNavClearance : 16),
       itemCount: totalCount,
       itemBuilder: (_, i) {
         if (i < containerCount) {
@@ -554,6 +544,7 @@ class ProjectPageState extends State<ProjectPage> {
               : VideoCard(video: video),
         );
       },
+    ),
     );
   }
 
@@ -600,7 +591,13 @@ class ProjectPageState extends State<ProjectPage> {
       return;
     }
 
-    final bytes = await File(r.files.first.path!).readAsBytes();
+    final bytes = await File(r.files.first.path!).readAsBytes().catchError((e) {
+      if (mounted) {
+        showToast(context, zh ? '无法读取配置文件: $e' : 'Cannot read config file: $e', type: ToastType.error);
+      }
+      return Uint8List(0);
+    });
+    if (bytes.isEmpty) return;
     final fppx = FppxExporter.import(bytes);
 
     if (fppx == null) {
