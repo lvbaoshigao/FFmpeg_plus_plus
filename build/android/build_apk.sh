@@ -6,9 +6,9 @@
 #   build/android/build_apk.sh              # 构建 release APK
 #   环境变量：FFMPEGPP_CACHE / FFMPEGPP_ROOT 可覆盖默认缓存/仓库路径
 #
-# 依赖：jniLibs 里的 libffmpegpp.so（C++ 后端）+ assets 里的 ffmpeg/ffprobe
+# 依赖：jniLibs 里的 libffmpegpp.so、libffmpeg.so、libffprobe.so
 # （由 build/android/build_ffmpeg.sh 生成，产物在 $FFMPEGPP_CACHE/dist/）。
-# 若仓库 jniLibs/assets 缺失，本脚本会尝试从缓存 dist/ 自动补齐。
+# 若 jniLibs 缺失，本脚本会尝试从缓存 dist/ 自动补齐。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
