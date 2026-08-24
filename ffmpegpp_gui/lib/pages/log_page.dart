@@ -7,6 +7,7 @@ import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../widgets/toast.dart';
 import '../widgets/glass_panel.dart';
+import '../widgets/mobile_top_bar.dart';
 import '../platform/app_platform.dart';
 
 class LogPage extends StatefulWidget {
@@ -53,48 +54,45 @@ class _LogPageState extends State<LogPage> {
 
   Widget _toolbar(ColorScheme scheme, AppConfig cfg, List<LogEntry> entries, List<LogEntry> filtered, bool isZh) {
     final hasSelection = _selectedIndices.isNotEmpty;
-    return GlassTopBar(
-      title: Row(children: [
-        if (isMobilePlatform) ...[
-          IconButton(
-            icon: const Icon(Icons.arrow_back, size: 20),
-            tooltip: isZh ? '返回' : 'Back',
-            onPressed: () => Navigator.of(context).maybePop(),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-          ),
-          const SizedBox(width: 4),
-        ],
-        Text(isZh ? '日志' : 'Logs', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-        const SizedBox(width: 12),
-        Text('${filtered.length} ${isZh ? '条' : 'entries'}', style: TextStyle(fontSize: 11, color: scheme.outline)),
-        if (hasSelection) ...[
-          const SizedBox(width: 8),
-          Text('${isZh ? '已选' : 'Selected'} ${_selectedIndices.length}', style: TextStyle(fontSize: 11, color: scheme.primary)),
-        ],
-      ]),
-      actions: [
-        if (hasSelection) IconButton(
-          icon: const Icon(Icons.copy, size: 18), tooltip: isZh ? '复制选中' : 'Copy selected',
-          onPressed: () {
-            final selected = _selectedIndices.where((i) => i < filtered.length).map((i) => _fmt(filtered[i])).join('\n');
-            Clipboard.setData(ClipboardData(text: selected));
-            showToast(context, isZh ? '已复制 ${_selectedIndices.length} 条' : 'Copied ${_selectedIndices.length} entries');
-          },
-        ),
-        IconButton(
-          icon: const Icon(Icons.copy_all, size: 18), tooltip: isZh ? '复制全部' : 'Copy all',
-          onPressed: () {
-            Clipboard.setData(ClipboardData(text: filtered.map(_fmt).join('\n')));
-            showToast(context, isZh ? '已复制全部 ${filtered.length} 条' : 'Copied all ${filtered.length} entries');
-          },
-        ),
-        IconButton(
-          icon: const Icon(Icons.delete_outline, size: 18), tooltip: isZh ? '清空' : 'Clear',
-          onPressed: () { setState(() => _selectedIndices.clear()); context.read<AppState>().clearLogs(); },
-        ),
+    final titleRow = Row(children: [
+      Text(isZh ? '日志' : 'Logs', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+      const SizedBox(width: 12),
+      Text('${filtered.length} ${isZh ? '条' : 'entries'}', style: TextStyle(fontSize: 11, color: scheme.outline)),
+      if (hasSelection) ...[
+        const SizedBox(width: 8),
+        Text('${isZh ? '已选' : 'Selected'} ${_selectedIndices.length}', style: TextStyle(fontSize: 11, color: scheme.primary)),
       ],
-    );
+    ]);
+    final actionWidgets = <Widget>[
+      if (hasSelection) IconButton(
+        icon: const Icon(Icons.copy, size: 18), tooltip: isZh ? '复制选中' : 'Copy selected',
+        onPressed: () {
+          final selected = _selectedIndices.where((i) => i < filtered.length).map((i) => _fmt(filtered[i])).join('\n');
+          Clipboard.setData(ClipboardData(text: selected));
+          showToast(context, isZh ? '已复制 ${_selectedIndices.length} 条' : 'Copied ${_selectedIndices.length} entries');
+        },
+      ),
+      IconButton(
+        icon: const Icon(Icons.copy_all, size: 18), tooltip: isZh ? '复制全部' : 'Copy all',
+        onPressed: () {
+          Clipboard.setData(ClipboardData(text: filtered.map(_fmt).join('\n')));
+          showToast(context, isZh ? '已复制全部 ${filtered.length} 条' : 'Copied all ${filtered.length} entries');
+        },
+      ),
+      IconButton(
+        icon: const Icon(Icons.delete_outline, size: 18), tooltip: isZh ? '清空' : 'Clear',
+        onPressed: () { setState(() => _selectedIndices.clear()); context.read<AppState>().clearLogs(); },
+      ),
+    ];
+
+    if (isMobilePlatform) {
+      return MobileSubPageTopBar(
+        title: titleRow,
+        actions: actionWidgets,
+        onBack: () => Navigator.of(context).maybePop(),
+      );
+    }
+    return GlassTopBar(title: titleRow, actions: actionWidgets);
   }
 
   Widget _filterBar(ColorScheme scheme, bool isZh) {

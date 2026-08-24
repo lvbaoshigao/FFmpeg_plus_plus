@@ -2,6 +2,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
+import 'mobile_glass_pill.dart';
 
 /// 移动端通用顶栏 —— 简洁全宽背景模糊 + 标题 + 操作按钮。
 ///
@@ -76,6 +77,69 @@ class MobileTopBar extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// 移动端「二级页面」顶栏：左上角圆形玻璃返回按钮 + 右上角标题药丸（+ 可选操作药丸）。
+/// 用于设置二级菜单、命令、日志等 push 出来的子页面。
+class MobileSubPageTopBar extends StatelessWidget {
+  final Widget title;
+  final List<Widget> actions;
+  final VoidCallback? onBack;
+
+  const MobileSubPageTopBar({
+    super.key,
+    required this.title,
+    this.actions = const [],
+    this.onBack,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final safeTop = MediaQuery.of(context).padding.top;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(12, safeTop + 6, 12, 6),
+      child: Row(children: [
+        // 左：圆形玻璃返回按钮（44×44、radius 22 = 正圆）
+        MobileGlassPill(
+          radius: 22,
+          padding: EdgeInsets.zero,
+          child: SizedBox(
+            width: 44,
+            height: 44,
+            child: IconButton(
+              icon: Icon(Icons.arrow_back, size: 22, color: scheme.onSurface),
+              tooltip: 'back',
+              onPressed: onBack ?? () => Navigator.of(context).maybePop(),
+              padding: EdgeInsets.zero,
+            ),
+          ),
+        ),
+        const Spacer(),
+        if (actions.isNotEmpty) ...[
+          MobileGlassPill(
+            radius: 22,
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+            child: Row(children: actions),
+          ),
+          const SizedBox(width: 8),
+        ],
+        // 右：标题药丸
+        MobileGlassPill(
+          radius: 22,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          child: DefaultTextStyle.merge(
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: scheme.onSurface,
+            ),
+            child: title,
+          ),
+        ),
+      ]),
     );
   }
 }
