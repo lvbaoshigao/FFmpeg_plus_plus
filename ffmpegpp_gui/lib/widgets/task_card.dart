@@ -7,6 +7,7 @@ import '../services/ffmpeg_installer.dart';
 import '../services/shell_open.dart';
 import '../theme/app_strings.dart';
 
+/// 任务卡片：双进度条 + 可展开的节点微型画布
 class TaskCard extends StatelessWidget {
   final TaskInfo task;
   const TaskCard({super.key, required this.task});
@@ -75,10 +76,25 @@ class TaskCard extends StatelessWidget {
                 Icon(task.expanded ? Icons.expand_less : Icons.expand_more, size: 20, color: scheme.outline),
               ]),
               const SizedBox(height: 8),
-              if (task.status == TaskStatus.processing || task.status == TaskStatus.completed)
-                ClipRRect(borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(value: task.progress / 100, minHeight: 4,
-                        backgroundColor: scheme.surfaceContainerHighest)),
+              // 双进度条
+              if (task.status == TaskStatus.processing || task.status == TaskStatus.completed) ...[
+                // 上层：整体进度（分段）
+                _SegmentedProgressBar(
+                  segments: task.pipelineCalls?.length ?? 1,
+                  callProgresses: task.callProgresses,
+                  currentCallIndex: task.currentCallIndex,
+                  height: 6,
+                ),
+                const SizedBox(height: 4),
+                // 下层：当前步骤进度
+                LinearProgressIndicator(
+                  value: task.callProgresses.isNotEmpty && task.currentCallIndex < task.callProgresses.length
+                      ? task.callProgresses[task.currentCallIndex]
+                      : null,
+                  minHeight: 3,
+                  backgroundColor: scheme.surfaceContainerHighest,
+                ),
+              ],
               const SizedBox(height: 4),
               Row(children: [
                 _chip(Icons.timer_outlined, '${s.remaining}: ${task.remaining}', scheme),
@@ -100,52 +116,89 @@ class TaskCard extends StatelessWidget {
   }
 
   Widget _expanded(BuildContext ctx, AppStrings s, Color clr, ColorScheme scheme) => Padding(
-    padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Divider(),
-      _row(s.qInput, task.inputPath, scheme.outline, clr),
-      _row(s.qOutput, task.outputPath, scheme.outline, clr),
-      _row('FPS', task.fps, scheme.outline, clr),
-      _row(s.language == 'zh' ? '码率' : 'Bitrate', task.bitrate, scheme.outline, clr),
-      _row(s.language == 'zh' ? '大小' : 'Size', task.outputSizeStr, scheme.outline, clr),
-      if (task.command != null) ...[
-        const SizedBox(height: 8),
-        Text('${s.qCmd}:', style: TextStyle(fontSize: 11, color: scheme.outline)),
-        Container(
-          width: double.infinity, padding: const EdgeInsets.all(8), margin: const EdgeInsets.only(top: 4),
-          decoration: BoxDecoration(color: scheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(6)),
-          child: SelectableText((task.command ?? []).join(' '),
-              style: TextStyle(fontFamily: 'monospace', fontSize: 10, color: clr)),
+      const Divider(height: 24),
+      
+      // 节点流水线区域
+      if (task.pipelineCalls != null && task.pipelineCalls!.isNotEmpty) ...[
+        _SectionTitle(
+          icon: Icons.account_tree,
+          title: s.language == 'zh' ? '处理流水线' : 'Processing Pipeline',
+          scheme: scheme,
         ),
-      ],
-      if (task.logLines.isNotEmpty) ...[
         const SizedBox(height: 8),
-        Text('${s.qLogs}:', style: TextStyle(fontSize: 11, color: scheme.outline)),
         Container(
-          width: double.infinity, constraints: const BoxConstraints(maxHeight: 160),
-          padding: const EdgeInsets.all(8), margin: const EdgeInsets.only(top: 4),
-          decoration: BoxDecoration(color: scheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(6)),
-          child: SingleChildScrollView(
-            child: SelectableText(task.logLines.join('\n'),
-                style: TextStyle(fontFamily: 'monospace', fontSize: 10, color: clr)),
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest.withAlpha(60),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _NodeMiniCanvas(
+                calls: task.pipelineCalls!,
+                callProgresses: task.callProgresses,
+                currentCallIndex: task.currentCallIndex,
+                status: task.status,
+              ),
+              const SizedBox(height: 8),
+              _PipelineLegend(scheme: scheme, isZh: s.language == 'zh'),
+            ],
           ),
         ),
+        const SizedBox(height: 16),
       ],
-      if (task.error != null)
-        Padding(padding: const EdgeInsets.only(top: 8),
-            child: SelectableText('${s.qError}: ${task.error}',
-                style: TextStyle(color: scheme.error, fontSize: 11))),
+      
+      // 文件信息区域
+      _SectionTitle(
+        icon: Icons.folder,
+        title: s.language == 'zh' ? '文件信息' : 'File Info',
+        scheme: scheme,
+      ),
+      const SizedBox(height: 8),
+      _FileInfoCard(
+        input: task.inputPath,
+        output: task.outputPath,
+        scheme: scheme,
+        isZh: s.language == 'zh',
+      ),
+      const SizedBox(height: 16),
+      
+      // 技术参数区域
+      _SectionTitle(
+        icon: Icons.speed,
+        title: s.language == 'zh' ? '技术参数' : 'Technical Stats',
+        scheme: scheme,
+      ),
+      const SizedBox(height: 8),
+      _StatsGrid(
+        stats: [
+          ('FPS', task.fps, Icons.videocam),
+          (s.language == 'zh' ? '码率' : 'Bitrate', task.bitrate, Icons.trending_up),
+          (s.language == 'zh' ? '大小' : 'Size', task.outputSizeStr, Icons.storage),
+        ],
+        scheme: scheme,
+      ),
+      
+      // 高级信息区域（可折叠）
+      if (task.command != null || task.logLines.isNotEmpty || task.error != null) ...[
+        const SizedBox(height: 16),
+        _AdvancedInfoSection(
+          command: task.command,
+          logLines: task.logLines,
+          error: task.error,
+          scheme: scheme,
+          isZh: s.language == 'zh',
+        ),
+      ],
     ]),
   );
 
-  Widget _row(String l, String v, Color outline, Color clr) => Padding(
-    padding: const EdgeInsets.only(top: 2),
-    child: Row(children: [
-      SizedBox(width: 50, child: Text(l, style: TextStyle(fontSize: 11, color: outline))),
-      Expanded(child: Text(v, style: TextStyle(fontSize: 11, color: clr),
-          maxLines: 1, overflow: TextOverflow.ellipsis)),
-    ]),
-  );
+
 
   Widget _chip(IconData icon, String text, ColorScheme scheme) => Row(mainAxisSize: MainAxisSize.min, children: [
     Icon(icon, size: 12, color: scheme.outline), const SizedBox(width: 3),
@@ -164,6 +217,567 @@ class TaskCard extends StatelessWidget {
     TaskStatus.completed => Colors.green, TaskStatus.failed => sc.error,
     TaskStatus.cancelled => Colors.orange,
   };
+}
+
+/// 章节标题
+class _SectionTitle extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final ColorScheme scheme;
+  
+  const _SectionTitle({
+    required this.icon,
+    required this.title,
+    required this.scheme,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: scheme.primary),
+        const SizedBox(width: 6),
+        Text(
+          title,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: scheme.onSurface,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 流水线颜色图例
+class _PipelineLegend extends StatelessWidget {
+  final ColorScheme scheme;
+  final bool isZh;
+  
+  const _PipelineLegend({
+    required this.scheme,
+    required this.isZh,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 12,
+      runSpacing: 4,
+      children: [
+        _LegendItem(
+          color: Colors.grey.shade400,
+          label: isZh ? '未开始' : 'Pending',
+        ),
+        _LegendItem(
+          color: Colors.amber,
+          label: isZh ? '进行中' : 'Processing',
+        ),
+        _LegendItem(
+          color: Colors.green,
+          label: isZh ? '已完成' : 'Completed',
+        ),
+      ],
+    );
+  }
+}
+
+class _LegendItem extends StatelessWidget {
+  final Color color;
+  final String label;
+  
+  const _LegendItem({
+    required this.color,
+    required this.label,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 12,
+          height: 12,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: color.withAlpha(40),
+            border: Border.all(color: color, width: 1.5),
+          ),
+        ),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: TextStyle(fontSize: 10, color: color),
+        ),
+      ],
+    );
+  }
+}
+
+/// 文件信息卡片
+class _FileInfoCard extends StatelessWidget {
+  final String input;
+  final String output;
+  final ColorScheme scheme;
+  final bool isZh;
+  
+  const _FileInfoCard({
+    required this.input,
+    required this.output,
+    required this.scheme,
+    required this.isZh,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withAlpha(40),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.input, size: 14, color: scheme.outline),
+              const SizedBox(width: 6),
+              Text(
+                isZh ? '输入' : 'Input',
+                style: TextStyle(fontSize: 10, color: scheme.outline, fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          SelectableText(
+            input,
+            style: TextStyle(fontSize: 11, color: scheme.onSurface),
+            maxLines: 2,
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Icon(Icons.output, size: 14, color: scheme.outline),
+              const SizedBox(width: 6),
+              Text(
+                isZh ? '输出' : 'Output',
+                style: TextStyle(fontSize: 10, color: scheme.outline, fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          SelectableText(
+            output,
+            style: TextStyle(fontSize: 11, color: scheme.onSurface),
+            maxLines: 2,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 技术参数网格
+class _StatsGrid extends StatelessWidget {
+  final List<(String, String, IconData)> stats;
+  final ColorScheme scheme;
+  
+  const _StatsGrid({
+    required this.stats,
+    required this.scheme,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isMobile = MediaQuery.of(context).size.width < 600;
+    final crossAxisCount = isMobile ? 1 : 3;
+    
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: stats.map((stat) {
+            final (label, value, icon) = stat;
+            return SizedBox(
+              width: constraints.maxWidth / crossAxisCount - (crossAxisCount > 1 ? 8 : 0),
+              child: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHighest.withAlpha(40),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Row(
+                  children: [
+                    Icon(icon, size: 16, color: scheme.primary),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            label,
+                            style: TextStyle(fontSize: 10, color: scheme.outline),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            value.isEmpty ? '-' : value,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: scheme.onSurface,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }).toList(),
+        );
+      },
+    );
+  }
+}
+
+/// 高级信息区域（可折叠）
+class _AdvancedInfoSection extends StatefulWidget {
+  final List<String>? command;
+  final List<String> logLines;
+  final String? error;
+  final ColorScheme scheme;
+  final bool isZh;
+  
+  const _AdvancedInfoSection({
+    this.command,
+    required this.logLines,
+    this.error,
+    required this.scheme,
+    required this.isZh,
+  });
+
+  @override
+  State<_AdvancedInfoSection> createState() => _AdvancedInfoSectionState();
+}
+
+class _AdvancedInfoSectionState extends State<_AdvancedInfoSection> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: widget.scheme.surfaceContainerHighest.withAlpha(30),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        children: [
+          InkWell(
+            onTap: () => setState(() => _expanded = !_expanded),
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  Icon(Icons.code, size: 14, color: widget.scheme.outline),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      widget.isZh ? '高级信息' : 'Advanced Info',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: widget.scheme.onSurface,
+                      ),
+                    ),
+                  ),
+                  Icon(
+                    _expanded ? Icons.expand_less : Icons.expand_more,
+                    size: 18,
+                    color: widget.scheme.outline,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          AnimatedCrossFade(
+            firstChild: const SizedBox(width: double.infinity),
+            secondChild: _buildContent(),
+            crossFadeState: _expanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+            duration: const Duration(milliseconds: 200),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildContent() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (widget.error != null) ...[
+            _InfoBlock(
+              icon: Icons.error_outline,
+              title: widget.isZh ? '错误' : 'Error',
+              content: widget.error!,
+              scheme: widget.scheme,
+              isError: true,
+            ),
+            const SizedBox(height: 8),
+          ],
+          if (widget.command != null) ...[
+            _InfoBlock(
+              icon: Icons.terminal,
+              title: widget.isZh ? '命令' : 'Command',
+              content: widget.command!.join(' '),
+              scheme: widget.scheme,
+              isMonospace: true,
+            ),
+            const SizedBox(height: 8),
+          ],
+          if (widget.logLines.isNotEmpty) ...[
+            _InfoBlock(
+              icon: Icons.article_outlined,
+              title: widget.isZh ? '日志' : 'Logs',
+              content: widget.logLines.join('\n'),
+              scheme: widget.scheme,
+              isMonospace: true,
+              maxHeight: 160,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoBlock extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String content;
+  final ColorScheme scheme;
+  final bool isError;
+  final bool isMonospace;
+  final double? maxHeight;
+  
+  const _InfoBlock({
+    required this.icon,
+    required this.title,
+    required this.content,
+    required this.scheme,
+    this.isError = false,
+    this.isMonospace = false,
+    this.maxHeight,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(icon, size: 12, color: isError ? scheme.error : scheme.outline),
+            const SizedBox(width: 4),
+            Text(
+              title,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: isError ? scheme.error : scheme.outline,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Container(
+          width: double.infinity,
+          constraints: maxHeight != null ? BoxConstraints(maxHeight: maxHeight!) : null,
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: isError 
+                ? scheme.errorContainer.withAlpha(40) 
+                : scheme.surfaceContainerHighest.withAlpha(60),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: SingleChildScrollView(
+            child: SelectableText(
+              content,
+              style: TextStyle(
+                fontFamily: isMonospace ? 'monospace' : null,
+                fontSize: 10,
+                color: isError ? scheme.error : scheme.onSurface,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 分段进度条：上层整体进度，每段代表一个节点
+class _SegmentedProgressBar extends StatelessWidget {
+  final int segments;
+  final List<double> callProgresses;
+  final int currentCallIndex;
+  final double height;
+
+  const _SegmentedProgressBar({
+    required this.segments,
+    required this.callProgresses,
+    required this.currentCallIndex,
+    required this.height,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Row(children: [
+      for (int i = 0; i < segments; i++) ...[
+        Expanded(
+          child: Container(
+            height: height,
+            margin: EdgeInsets.only(right: i < segments - 1 ? 2 : 0),
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(2),
+            ),
+            child: FractionallySizedBox(
+              alignment: Alignment.centerLeft,
+              widthFactor: i < callProgresses.length ? callProgresses[i].clamp(0.0, 1.0) : 0.0,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: i == currentCallIndex && callProgresses[i] < 1.0
+                      ? Colors.amber
+                      : callProgresses[i] >= 1.0
+                          ? Colors.green
+                          : scheme.primary,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    ]);
+  }
+}
+
+/// 节点微型画布：横向滚动展示节点圆圈
+class _NodeMiniCanvas extends StatelessWidget {
+  final List<BackendCall> calls;
+  final List<double> callProgresses;
+  final int currentCallIndex;
+  final TaskStatus status;
+
+  const _NodeMiniCanvas({
+    required this.calls,
+    required this.callProgresses,
+    required this.currentCallIndex,
+    required this.status,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final isMobile = MediaQuery.of(context).size.width < 600;
+    final circleSize = isMobile ? 32.0 : 40.0;
+    final spacing = isMobile ? 8.0 : 12.0;
+
+    return Container(
+      height: circleSize + 20,
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withAlpha(80),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Row(
+          children: [
+            for (int i = 0; i < calls.length; i++) ...[
+              _NodeCircle(
+                call: calls[i],
+                progress: i < callProgresses.length ? callProgresses[i] : 0.0,
+                isCurrent: i == currentCallIndex,
+                status: status,
+                size: circleSize,
+              ),
+              if (i < calls.length - 1) SizedBox(width: spacing),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 节点圆圈：显示节点状态和进度
+class _NodeCircle extends StatelessWidget {
+  final BackendCall call;
+  final double progress;
+  final bool isCurrent;
+  final TaskStatus status;
+  final double size;
+
+  const _NodeCircle({
+    required this.call,
+    required this.progress,
+    required this.isCurrent,
+    required this.status,
+    required this.size,
+  });
+
+  Color _getStatusColor(ColorScheme scheme) {
+    if (status == TaskStatus.completed) return Colors.green;
+    if (progress >= 1.0) return Colors.green;
+    if (isCurrent && progress > 0.0 && progress < 1.0) return Colors.amber;
+    if (status == TaskStatus.processing && isCurrent) return Colors.amber;
+    return Colors.grey.shade400;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = _getStatusColor(scheme);
+    final label = call.action.replaceAll('_', ' ').toUpperCase();
+
+    return Tooltip(
+      message: '$label\n进度: ${(progress * 100).toStringAsFixed(0)}%',
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: color.withAlpha(40),
+          border: Border.all(color: color, width: 2),
+        ),
+        child: Center(
+          child: Text(
+            label.substring(0, label.length.clamp(0, 3)),
+            style: TextStyle(
+              fontSize: size * 0.3,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 // 缩略图缓存键：FNV-1a 稳定摘要（String.hashCode 跨运行不稳定且 32 位易碰撞）

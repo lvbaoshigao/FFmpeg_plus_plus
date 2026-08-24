@@ -794,6 +794,7 @@ class TaskInfo {
   final List<String>? command;
   final List<BackendCall>? pipelineCalls;
   final int currentCallIndex;
+  final List<double> callProgresses;
 
   TaskInfo({
     required this.id, required this.videoId, required this.filename,
@@ -802,14 +803,14 @@ class TaskInfo {
     this.elapsed = '', this.remaining = '', this.speed = '', this.fps = '', this.bitrate = '',
     this.frame = 0, this.error, this.logLines = const [],
     required this.config, this.expanded = false, this.outputSize, this.duration, this.command,
-    this.pipelineCalls, this.currentCallIndex = 0,
+    this.pipelineCalls, this.currentCallIndex = 0, this.callProgresses = const [],
   });
 
   TaskInfo copyWith({
     TaskStatus? status, double? progress, String? elapsed, String? remaining,
     String? speed, String? fps, String? bitrate, int? frame, String? error,
     List<String>? logLines, bool? expanded, int? outputSize, double? duration, List<String>? command,
-    List<BackendCall>? pipelineCalls, int? currentCallIndex,
+    List<BackendCall>? pipelineCalls, int? currentCallIndex, List<double>? callProgresses,
   }) => TaskInfo(
         id: id, videoId: videoId, filename: filename, inputPath: inputPath, outputPath: outputPath,
         status: status ?? this.status, progress: progress ?? this.progress,
@@ -820,6 +821,7 @@ class TaskInfo {
         expanded: expanded ?? this.expanded, outputSize: outputSize ?? this.outputSize,
         duration: duration ?? this.duration, command: command ?? this.command,
         pipelineCalls: pipelineCalls ?? this.pipelineCalls, currentCallIndex: currentCallIndex ?? this.currentCallIndex,
+        callProgresses: callProgresses ?? this.callProgresses,
       );
 
   String get statusLabel {
