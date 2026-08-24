@@ -8,10 +8,10 @@ import '../platform/app_platform.dart';
 ///   （libffmpegpp.so 后端动态库 + libffmpeg.so / libffprobe.so 可执行文件）
 /// - wallpaperColors：系统壁纸颜色（Monet 动态取色的种子色）
 ///
-/// ffmpeg/ffprobe 以「静态 PIE（ET_DYN，-static-pie）」打包在 jniLibs 里，
-/// 安装时由 PackageManager 解压到 nativeLibraryDir（SELinux 标签 apk_data_file，
-/// 允许 app exec）。这是 Android 10+（targetSdk ≥ 29）上唯一允许非特权应用
-/// 执行二进制文件的目录（codeCacheDir / filesDir 均被 SELinux W^X 策略阻止）。
+/// ffmpeg/ffprobe 以「动态 PIE（ET_DYN，带 PT_INTERP → /system/bin/linker64）」
+/// 打包在 jniLibs 里，安装时由 PackageManager 解压到 nativeLibraryDir（SELinux
+/// 标签 apk_data_file，允许 app exec）。这是 Android 10+（targetSdk ≥ 29）上
+/// 唯一允许非特权应用执行二进制文件的目录。
 class AndroidPlatformBridge {
   static const MethodChannel _channel = MethodChannel('ffmpegpp/android');
 
@@ -55,15 +55,12 @@ class AndroidPlatformBridge {
   /// 把 nativeLibraryDir 中的可执行工具（如 libffprobe.so / libffmpeg.so）
   /// 复制到应用私有二进制目录（filesDir/ffmpegpp_bin/）并 chmod 0755。
   ///
-  /// 背景：MIUI / EMUI / ColorOS 等国产 ROM 会对 jniLibs 解压目录
-  /// （nativeLibraryDir，SELinux 标签 apk_data_file）上的静态 PIE ELF 做
-  /// 额外限制：直接 fork+exec 会触发 SIGSEGV(-11)。把二进制复制到
-  /// filesDir（标签 app_data_file）的私有子目录后，可以在该目录下正常
-  /// fork+exec 而不被拦截。这是 FFmpeg-Android / ffmpeg-kit 等主流方案
-  /// 在 ROM 兼容上通用的兜底手段。
-  ///
-  /// 复制失败（如 IO 错误）返回 null；调用方应继续使用 nativeLibraryDir
-  /// 原路径尝试，并在日志中告知用户实际生效的是哪条路径。
+  /// 背景：早前 ffmpeg/ffprobe 用 -static-pie 编成无 PT_INTERP 的静态 PIE，
+  /// fork+exec 会在内核层直接 SIGSEGV(-11)（Android 7+ 要求可执行文件必须带
+  /// PT_INTERP → /system/bin/linker64）。现已在 build_ffmpeg.sh 去掉 -static-pie、
+  /// 改为动态 PIE，nativeLibraryDir 原路径即可 exec；本复制仅作为个别 ROM
+  /// 意外拦截时的兜底。复制失败（如 IO 错误）返回 null；调用方应继续使用
+  /// nativeLibraryDir 原路径并记录实际生效路径。
   static Future<String?> ensureExecutableInAppDir(String nativePath, {String? targetName}) async {
     if (!isAndroidPlatform || nativePath.isEmpty) return null;
     try {
