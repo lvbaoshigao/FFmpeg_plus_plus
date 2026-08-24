@@ -177,10 +177,15 @@ fi
 # 动态 PIE）后旧静态产物被原样 stage、打包、安装，app 内 exec 直接 SIGSEGV(-11)。
 _ffmpeg_dist_ok() {
   [ -f $BUILD/dist/libffmpeg.so ] && [ -f $BUILD/dist/libffprobe.so ] || return 1
-  $TOOLCHAIN/bin/llvm-readelf -lW $BUILD/dist/libffprobe.so 2>/dev/null \
-      | grep -q 'Requesting program interpreter' || return 1
-  $TOOLCHAIN/bin/llvm-readelf -lW $BUILD/dist/libffmpeg.so 2>/dev/null \
-      | grep -q 'Requesting program interpreter' || return 1
+  for _b in $BUILD/dist/libffmpeg.so $BUILD/dist/libffprobe.so; do
+    $TOOLCHAIN/bin/llvm-readelf -lW "$_b" 2>/dev/null \
+        | grep -q 'Requesting program interpreter: /system/bin/linker64' || return 1
+    # libc++_shared.so 是 NDK 私有库，设备不存在；configure 在检测到 C++ 依赖
+    # 时会自动追加 -lc++，会拉入 NEEDED libc++_shared.so。缓存命中命中到旧
+    # 产物时这里返回 1，强制走 then 分支重新构建。
+    $TOOLCHAIN/bin/llvm-readelf -d "$_b" 2>/dev/null \
+        | grep -q 'libc++_shared\.so' && return 1
+  done
   return 0
 }
 if [ ! -f $PREFIX/bin/ffmpeg ] || ! _ffmpeg_dist_ok; then
@@ -208,7 +213,7 @@ if [ ! -f $PREFIX/bin/ffmpeg ] || ! _ffmpeg_dist_ok; then
       --enable-gpl --enable-libx264 --enable-libx265 \
       --enable-libmp3lame --enable-libopus \
       --extra-cflags="-I$PREFIX/include $CFLAGS_COMMON" \
-      --extra-ldflags="-L$PREFIX/lib -lm -Wl,--dynamic-linker=/system/bin/linker64" \
+      --extra-ldflags="-L$PREFIX/lib -lm -Wl,--dynamic-linker=/system/bin/linker64 -Wl,--exclude-libs=ALL" \
       --extra-libs="-l:libc++.a -l:libunwind.a -ldl -lm" \
       > $BUILD/ffmpeg_config.log 2>&1 || { tail -40 $BUILD/ffmpeg_config.log; exit 1; }
   log "building ffmpeg"
@@ -236,9 +241,17 @@ for _b in $BUILD/dist/libffmpeg.so $BUILD/dist/libffprobe.so; do
     exit 1
   fi
   # 只允许依赖系统公共库（libc/libm/libdl）；libc++_shared.so 是 NDK 私有库，
-  # 设备上不存在 —— 若 configure 自动附加了 -lc++，在这里硬失败而不是装进 APK。
+  # 设备上不存在 —— 若 configure 自动附加了 -lc++（C 驱动检测到 libx265 C++
+  # 依赖时会追加），在这里硬失败而不是装进 APK。
+  #   extra-libs 已经用 -l:libc++.a -l:libunwind.a 显式链静态归档，
+  #   --extra-ldflags 加 -Wl,--exclude-libs=ALL 防止外部 libc++.so 溜进 NEEDED；
+  #   如果还是依赖 libc++_shared，说明你的 configure 检测逻辑有差异，请
+  #   把 build_ffmpeg.sh 的 extra-libs 改为 ${NDK}/.../libc++_static.a 全路径。
   if $TOOLCHAIN/bin/llvm-readelf -d "$_b" | grep -q 'libc++_shared\.so'; then
-    echo "ERROR: $_b 依赖 libc++_shared.so（系统不存在），需改用 -static-libstdc++" >&2
+    echo "ERROR: $_b 依赖 libc++_shared.so（系统不存在）" >&2
+    echo "       1) 清掉 CI 缓存（dist 里的旧二进制）；" >&2
+    echo "       2) 确认 NDK 的 sysroot 里有 sysroot/usr/lib/<triple>/<API>/libc++.a；" >&2
+    echo "       3) 必要时改 --extra-libs 为绝对路径的 libc++_static.a。" >&2
     exit 1
   fi
 done
