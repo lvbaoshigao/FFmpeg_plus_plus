@@ -1,0 +1,7 @@
+# Flutter 工具状态缓存（误提交过，禁止再入库）
+.config/
+
+# 通用临时/缓存文件
+*.log
+*.tmp
+.DS_Store
