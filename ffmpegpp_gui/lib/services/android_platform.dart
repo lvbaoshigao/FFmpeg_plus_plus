@@ -104,4 +104,17 @@ class AndroidPlatformBridge {
       return null;
     }
   }
+
+  /// 申请必要的媒体读取权限：存储（读取视频/音频/图片）。
+  /// Android 13+ 用 READ_MEDIA_* 分区权限，旧版本用 READ_EXTERNAL_STORAGE。
+  /// 返回仍未授予的权限列表（空 = 已全部授予）；非 Android 返回空列表。
+  static Future<List<String>> requestMediaPermissions() async {
+    if (!isAndroidPlatform) return const [];
+    try {
+      final res = await _channel.invokeMethod<List<dynamic>>('requestMediaPermissions');
+      return res?.map((e) => e.toString()).toList() ?? const [];
+    } catch (_) {
+      return const [];
+    }
+  }
 }

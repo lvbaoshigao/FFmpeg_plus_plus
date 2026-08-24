@@ -59,6 +59,8 @@ class MainActivity : FlutterActivity() {
                             openFile(path, result)
                         }
                     }
+                    // 申请必要媒体权限（读取视频/音频/图片，旧系统 READ_EXTERNAL_STORAGE）
+                    "requestMediaPermissions" -> result.success(requestMediaPermissions())
                     else -> result.notImplemented()
                 }
             }
@@ -123,6 +125,38 @@ class MainActivity : FlutterActivity() {
             result.success(true)
         } catch (e: Exception) {
             result.error("open_failed", e.message, null)
+        }
+    }
+
+    /**
+     * 申请必要媒体权限：Android 13+（TIRAMISU）用分区媒体权限
+     * READ_MEDIA_VIDEO/AUDIO/IMAGES，Android 6~12 用 READ_EXTERNAL_STORAGE，
+     * 更旧系统安装时即授予、无需运行时申请。返回仍未授予的权限列表（空 = 已全部授予）。
+     */
+    private fun requestMediaPermissions(): List<String> {
+        return try {
+            val perms: Array<String> = when {
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> arrayOf(
+                    android.Manifest.permission.READ_MEDIA_VIDEO,
+                    android.Manifest.permission.READ_MEDIA_AUDIO,
+                    android.Manifest.permission.READ_MEDIA_IMAGES,
+                )
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.M -> arrayOf(
+                    android.Manifest.permission.READ_EXTERNAL_STORAGE,
+                )
+                else -> emptyArray()
+            }
+            val missing = perms.filter {
+                checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED
+            }
+            if (missing.isNotEmpty()) {
+                requestPermissions(missing.toTypedArray(), 1001)
+                Log.e("FFmpegpp", "requestMediaPermissions requested: $missing")
+            }
+            missing
+        } catch (e: Exception) {
+            Log.e("FFmpegpp", "requestMediaPermissions error", e)
+            emptyList()
         }
     }
 

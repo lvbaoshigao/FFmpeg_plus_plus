@@ -12,6 +12,7 @@ import '../services/quick_config_storage.dart';
 import '../theme/app_strings.dart';
 import '../widgets/toast.dart';
 import '../widgets/glass_panel.dart';
+import '../widgets/mobile_glass_pill.dart';
 import '../platform/app_platform.dart';
 import '../app.dart';
 import 'pipeline_editor_page.dart';
@@ -592,39 +593,12 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: Column(children: [
-        GlassTopBar(
-          title: Text(zh ? '配置库' : 'Config Library'),
-          actions: [
-          IconButton(
-            icon: const Icon(Icons.file_download_outlined, size: 20),
-            tooltip: zh ? '导入 .fppx' : 'Import .fppx',
-            onPressed: _importFppx,
-          ),
-          IconButton(
-            icon: const Icon(Icons.bolt_outlined, size: 20),
-            tooltip: zh ? '新建快捷配置' : 'New Quick Config',
-            onPressed: _newQuickConfig,
-          ),
-          const SizedBox(width: 6),
-          // 圆形加号按钮：液态玻璃质感，与项目页"+"一致
-          Tooltip(
-            message: zh ? '新建配置' : 'New Config',
-            child: InkWell(
-              borderRadius: BorderRadius.circular(20),
-              onTap: _newConfig,
-              child: Container(
-                width: 40, height: 40,
-                decoration: BoxDecoration(
-                  color: scheme.primary,
-                  shape: BoxShape.circle,
-                  boxShadow: [BoxShadow(color: scheme.primary.withAlpha(90), blurRadius: 8, offset: const Offset(0, 2))],
-                ),
-                child: const Icon(Icons.add, size: 22, color: Colors.white),
+        isMobilePlatform
+            ? _buildMobileTopBar(scheme, zh)
+            : GlassTopBar(
+                title: Text(zh ? '配置库' : 'Config Library'),
+                actions: _buildTopActions(scheme, zh),
               ),
-            ),
-          ),
-        ],
-      ),
       Expanded(
         child: !_loaded
             ? const Center(child: CircularProgressIndicator())
@@ -653,6 +627,67 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                 ],
               ),
       ),
+      ]),
+    );
+  }
+
+  /// 顶栏操作按钮（桌面端与移动端共用）。
+  List<Widget> _buildTopActions(ColorScheme scheme, bool zh) {
+    return [
+      IconButton(
+        icon: const Icon(Icons.file_download_outlined, size: 20),
+        tooltip: zh ? '导入 .fppx' : 'Import .fppx',
+        onPressed: _importFppx,
+      ),
+      IconButton(
+        icon: const Icon(Icons.bolt_outlined, size: 20),
+        tooltip: zh ? '新建快捷配置' : 'New Quick Config',
+        onPressed: _newQuickConfig,
+      ),
+      const SizedBox(width: 6),
+      // 圆形加号按钮：液态玻璃质感，与项目页"+"一致
+      Tooltip(
+        message: zh ? '新建配置' : 'New Config',
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: _newConfig,
+          child: Container(
+            width: 40, height: 40,
+            decoration: BoxDecoration(
+              color: scheme.primary,
+              shape: BoxShape.circle,
+              boxShadow: [BoxShadow(color: scheme.primary.withAlpha(90), blurRadius: 8, offset: const Offset(0, 2))],
+            ),
+            child: const Icon(Icons.add, size: 22, color: Colors.white),
+          ),
+        ),
+      ),
+    ];
+  }
+
+  /// 移动端顶栏：左侧标题药丸 + 右侧操作药丸（液态玻璃）。
+  Widget _buildMobileTopBar(ColorScheme scheme, bool zh) {
+    final safeTop = MediaQuery.of(context).padding.top;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(12, safeTop + 6, 12, 6),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+        // 左：标题药丸（无内部可点元素，带按压缩放反馈）
+        MobileGlassPill(
+          radius: 22,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          pressable: true,
+          child: Text(zh ? '配置库' : 'Config Library',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+        ),
+        const SizedBox(width: 8),
+        // 右：操作药丸
+        Expanded(
+          child: MobileGlassPill(
+            radius: 22,
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+            child: Row(children: _buildTopActions(scheme, zh)),
+          ),
+        ),
       ]),
     );
   }

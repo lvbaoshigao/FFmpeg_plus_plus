@@ -12,17 +12,34 @@ import '../providers/app_state.dart';
 /// - none：纯色药丸
 ///
 /// 供顶栏标题药丸、顶栏操作长药丸、搜索框药丸等复用。
-class MobileGlassPill extends StatelessWidget {
+///
+/// [pressable] 为 true 时（用于「内部无可点击元素」的药丸，如左上角标题药丸），
+/// 手指按下放大、按住保持、松手回弹，提供触觉反馈。
+class MobileGlassPill extends StatefulWidget {
   final Widget child;
   final double radius;
   final EdgeInsetsGeometry padding;
+  final bool pressable;
 
   const MobileGlassPill({
     super.key,
     required this.child,
     this.radius = 18,
     this.padding = const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+    this.pressable = false,
   });
+
+  @override
+  State<MobileGlassPill> createState() => _MobileGlassPillState();
+}
+
+class _MobileGlassPillState extends State<MobileGlassPill> {
+  bool _pressed = false;
+
+  void _set(bool v) {
+    if (_pressed == v) return;
+    setState(() => _pressed = v);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -37,10 +54,10 @@ class MobileGlassPill extends StatelessWidget {
     final tint = baseColor.withAlpha(baseAlpha);
 
     final inner = Container(
-      padding: padding,
+      padding: widget.padding,
       decoration: BoxDecoration(
         color: tint,
-        borderRadius: BorderRadius.circular(radius),
+        borderRadius: BorderRadius.circular(widget.radius),
         border: Border.all(
           color: effect == 'blur'
               ? scheme.outlineVariant.withAlpha(80)
@@ -48,40 +65,60 @@ class MobileGlassPill extends StatelessWidget {
           width: effect == 'blur' ? 0.5 : 0.7,
         ),
       ),
-      child: child,
+      child: widget.child,
     );
 
-    if (effect == 'none') return inner;
-
-    if (effect == 'blur') {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(radius),
+    Widget pill;
+    if (effect == 'none') {
+      pill = inner;
+    } else if (effect == 'blur') {
+      pill = ClipRRect(
+        borderRadius: BorderRadius.circular(widget.radius),
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
           child: inner,
         ),
       );
+    } else {
+      // liquid：液态玻璃 shader
+      // 关闭高光带（lightband）与压低镜面高光：高光带按固定像素偏移绘制，
+      // 在较「高」的内容（如设置项卡片）上会变成一条横向“分界线”，
+      // 视觉上把内容截成两段 —— 这里去掉它，仅保留折射 + 柔和高光。
+      pill = OCLiquidGlassGroup(
+        settings: OCLiquidGlassSettings(
+          refractStrength: -0.05,
+          blurRadiusPx: 1.6,
+          specStrength: isDark ? 6.0 : 8.0,
+          specWidth: 4,
+          lightbandStrength: 0.0,
+          lightbandColor: Colors.white,
+        ),
+        child: OCLiquidGlass(
+          borderRadius: widget.radius,
+          color: tint,
+          shadow: BoxShadow(
+            color: Colors.black.withAlpha(isDark ? 60 : 22),
+            blurRadius: 16,
+            offset: const Offset(0, 5),
+          ),
+          child: inner,
+        ),
+      );
     }
 
-    // liquid：液态玻璃 shader
-    return OCLiquidGlassGroup(
-      settings: OCLiquidGlassSettings(
-        refractStrength: -0.05,
-        blurRadiusPx: 1.2,
-        specStrength: isDark ? 14.0 : 20.0,
-        specWidth: 8,
-        lightbandStrength: 0.7,
-        lightbandColor: Colors.white,
-      ),
-      child: OCLiquidGlass(
-        borderRadius: radius,
-        color: tint,
-        shadow: BoxShadow(
-          color: Colors.black.withAlpha(isDark ? 60 : 22),
-          blurRadius: 16,
-          offset: const Offset(0, 5),
-        ),
-        child: inner,
+    if (!widget.pressable) return pill;
+
+    // 无内部可点元素时：按下放大、按住保持、松手回弹。
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => _set(true),
+      onTapUp: (_) => _set(false),
+      onTapCancel: () => _set(false),
+      child: AnimatedScale(
+        scale: _pressed ? 1.05 : 1.0,
+        duration: const Duration(milliseconds: 110),
+        curve: Curves.easeOut,
+        child: pill,
       ),
     );
   }

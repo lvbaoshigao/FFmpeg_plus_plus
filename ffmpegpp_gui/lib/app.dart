@@ -57,6 +57,14 @@ class _FfmpegppAppState extends State<FfmpegppApp> {
   void initState() {
     super.initState();
     _loadMonetSeed();
+    // 启动时申请必要媒体权限（读取视频/音频/图片），首帧后再请求，
+    // 确保 Activity 已 resumed，权限对话框能正常弹出。
+    WidgetsBinding.instance.addPostFrameCallback((_) => _requestMediaPermissions());
+  }
+
+  Future<void> _requestMediaPermissions() async {
+    if (!isAndroidPlatform) return;
+    await AndroidPlatformBridge.requestMediaPermissions();
   }
 
   Future<void> _loadMonetSeed() async {
