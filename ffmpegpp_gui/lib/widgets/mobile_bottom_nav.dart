@@ -93,7 +93,6 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
         clipBehavior: Clip.antiAlias,
         child: LayoutBuilder(builder: (ctx, cons) {
           final itemW = cons.maxWidth / items.length;
-          final maxLeft = cons.maxWidth - itemW;
           final dragging = _dragX != null;
           return GestureDetector(
             behavior: HitTestBehavior.opaque,
@@ -103,13 +102,16 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
               _dragX = curCenter;
             }),
             onLongPressMoveUpdate: (d) => setState(() {
-              _dragX = (d.localPosition.dx - _dragGrabOffset).clamp(0.0, cons.maxWidth);
+              _dragX = (d.localPosition.dx - _dragGrabOffset)
+                  .clamp(itemW / 2, cons.maxWidth - itemW / 2);
             }),
             onLongPressEnd: (_) {
               final dx = _dragX;
               setState(() => _dragX = null);
               if (dx != null) {
-                final target = (dx / itemW).floor().clamp(0, items.length - 1);
+                final target = ((dx - itemW / 2) / itemW)
+                    .floor()
+                    .clamp(0, items.length - 1);
                 widget.onSelected(itemToPage[target] ?? 0);
               }
             },
@@ -122,15 +124,15 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
                     : const Duration(milliseconds: 260),
                 curve: Curves.easeOutCubic,
                 left: (dragging
-                        ? (_dragX! - itemW / 2).clamp(0.0, maxLeft)
+                        ? (_dragX! - itemW / 2)
                         : (itemW * itemIdx)) +
                     3,
                 top: 2,
                 bottom: 2,
                 width: itemW - 6,
                 child: AnimatedScale(
-                  scale: dragging ? 1.08 : 1.0,
-                  duration: const Duration(milliseconds: 160),
+                  scale: dragging ? 1.12 : 1.0,
+                  duration: const Duration(milliseconds: 180),
                   curve: Curves.easeOut,
                   child: _mask(scheme, isDark, effect),
                 ),
@@ -167,11 +169,13 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
     if (effect == 'blur') {
       return Padding(
         padding: EdgeInsets.fromLTRB(14, 2, 14, bottomSafe + 8),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(radius),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-            child: buildBarIn(),
+        child: RepaintBoundary(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(radius),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+              child: buildBarIn(),
+            ),
           ),
         ),
       );

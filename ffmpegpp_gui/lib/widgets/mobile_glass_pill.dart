@@ -75,11 +75,13 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
     if (effect == 'none') {
       pill = inner;
     } else if (effect == 'blur') {
-      pill = ClipRRect(
-        borderRadius: BorderRadius.circular(widget.radius),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-          child: inner,
+      pill = RepaintBoundary(
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(widget.radius),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+            child: inner,
+          ),
         ),
       );
     } else {
