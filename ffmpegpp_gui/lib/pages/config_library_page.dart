@@ -62,6 +62,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
   final List<_ConfigEntry> _configs = [];
   final List<QuickConfig> _quickConfigs = [];
   bool _loaded = false;
+  int _tabIndex = 0; // 0=节点编辑器配置, 1=快捷配置
 
   @override
   void initState() {
@@ -525,15 +526,19 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     );
   }
 
-  Widget _buildQuickSectionHeader(ColorScheme scheme, bool zh) {
-    return Row(children: [
-      Icon(Icons.bolt, size: 16, color: scheme.primary),
-      const SizedBox(width: 6),
-      Text(zh ? '快捷配置' : 'Quick Configs',
-          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-      const Spacer(),
-      Text('${_quickConfigs.length}', style: TextStyle(fontSize: 12, color: scheme.outline)),
-    ]);
+  Widget _buildQuickEmptyState(ColorScheme scheme, bool zh) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 48, bottom: 16),
+      child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.bolt_outlined, size: 48, color: scheme.outline.withAlpha(80)),
+        const SizedBox(height: 12),
+        Text(zh ? '还没有快捷配置' : 'No quick configs yet',
+            style: TextStyle(color: scheme.outline, fontSize: 14)),
+        const SizedBox(height: 6),
+        Text(zh ? '点击顶栏「⚡」新建快捷配置' : 'Click the bolt icon to create one',
+            style: TextStyle(color: scheme.outline.withAlpha(120), fontSize: 12)),
+      ])),
+    );
   }
 
   Widget _buildQuickConfigCard(QuickConfig cfg, ColorScheme scheme, bool zh) {
@@ -603,71 +608,38 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: Stack(children: [
-        // 全屏可滚动的内容（移动端顶部留出药丸空间）
+        // 标签页内容：顶部标签切换「节点编辑器 / 快捷配置」，
+        // 不再用上下两块区域堆叠（原方案）—— 二者用标签区分。
         isMobilePlatform
             ? Padding(
                 padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top + 60),
                 child: !_loaded
                     ? const Center(child: CircularProgressIndicator())
-                    : RepaintBoundary(
-                        child: ListView(
-                          padding: EdgeInsets.fromLTRB(8, 8, 8, kMobileNavClearance),
-                          children: [
-                            if (_configs.isEmpty)
-                              _buildEmptyState(scheme, zh)
-                            else
-                              for (var i = 0; i < _configs.length; i++) _buildCard(_configs[i], i, scheme, zh),
-                            const SizedBox(height: 24),
-                            _buildQuickSectionHeader(scheme, zh),
-                            const SizedBox(height: 4),
-                            if (_quickConfigs.isEmpty)
-                              Padding(
-                                padding: const EdgeInsets.symmetric(vertical: 16),
-                                child: Center(
-                                  child: Text(
-                                    zh ? '还没有快捷配置，点击顶栏「⚡」新建' : 'No quick configs yet. Click the bolt icon to create one',
-                                    style: TextStyle(fontSize: 12, color: scheme.outline.withAlpha(120)),
-                                  ),
-                                ),
-                              )
-                            else
-                              for (final q in _quickConfigs) _buildQuickConfigCard(q, scheme, zh),
-                          ],
+                    : Column(children: [
+                        _buildTabSelector(scheme, zh),
+                        Expanded(
+                          child: RepaintBoundary(
+                            child: ListView(
+                              padding: EdgeInsets.fromLTRB(8, 8, 8, kMobileNavClearance),
+                              children: _buildTabContent(scheme, zh),
+                            ),
+                          ),
                         ),
-                      ),
+                      ]),
               )
             : Column(children: [
                 GlassTopBar(
                   title: Text(zh ? '配置库' : 'Config Library'),
                   actions: _buildTopActions(scheme, zh),
                 ),
+                _buildTabSelector(scheme, zh),
                 Expanded(
                   child: !_loaded
                       ? const Center(child: CircularProgressIndicator())
                       : RepaintBoundary(
                           child: ListView(
-                            padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-                            children: [
-                              if (_configs.isEmpty)
-                                _buildEmptyState(scheme, zh)
-                              else
-                                for (var i = 0; i < _configs.length; i++) _buildCard(_configs[i], i, scheme, zh),
-                              const SizedBox(height: 24),
-                              _buildQuickSectionHeader(scheme, zh),
-                              const SizedBox(height: 4),
-                              if (_quickConfigs.isEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(vertical: 16),
-                                  child: Center(
-                                    child: Text(
-                                      zh ? '还没有快捷配置，点击顶栏「⚡」新建' : 'No quick configs yet. Click the bolt icon to create one',
-                                      style: TextStyle(fontSize: 12, color: scheme.outline.withAlpha(120)),
-                                    ),
-                                  ),
-                                )
-                              else
-                                for (final q in _quickConfigs) _buildQuickConfigCard(q, scheme, zh),
-                            ],
+                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                            children: _buildTabContent(scheme, zh),
                           ),
                         ),
                 ),
@@ -682,6 +654,72 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
           ),
       ]),
     );
+  }
+
+  /// 标签切换器：节点编辑器 / 快捷配置，各自带数量角标。
+  Widget _buildTabSelector(ColorScheme scheme, bool zh) {
+    final tabs = [
+      (Icons.account_tree, zh ? '节点编辑器' : 'Node Editor', _configs.length),
+      (Icons.bolt, zh ? '快捷配置' : 'Quick Config', _quickConfigs.length),
+    ];
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withAlpha(60),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: scheme.outlineVariant.withAlpha(70)),
+      ),
+      child: Row(children: [
+        for (var i = 0; i < tabs.length; i ++)
+          Expanded(
+            child: GestureDetector(
+              onTap: () => setState(() => _tabIndex = i),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOutCubic,
+                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+                decoration: BoxDecoration(
+                  color: _tabIndex == i ? scheme.primary : Colors.transparent,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Icon(tabs[i].$1, size: 15,
+                      color: _tabIndex == i ? scheme.onPrimary : scheme.outline),
+                  const SizedBox(width: 6),
+                  Flexible(child: Text(tabs[i].$2,
+                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w600,
+                        color: _tabIndex == i ? scheme.onPrimary : scheme.outline))),
+                  const SizedBox(width: 5),
+                  Text('${tabs[i].$3}', style: TextStyle(
+                      fontSize: 11, fontWeight: FontWeight.w600,
+                      color: _tabIndex == i ? scheme.onPrimary.withAlpha(200) : scheme.outline.withAlpha(140))),
+                ]),
+              ),
+            ),
+          ),
+      ]),
+    );
+  }
+
+  /// 当前标签页的内容列表（节点编辑器配置 or 快捷配置）。
+  List<Widget> _buildTabContent(ColorScheme scheme, bool zh) {
+    if (_tabIndex == 1) {
+      return [
+        if (_quickConfigs.isEmpty)
+          _buildQuickEmptyState(scheme, zh)
+        else
+          for (final q in _quickConfigs) _buildQuickConfigCard(q, scheme, zh),
+      ];
+    }
+    return [
+      if (_configs.isEmpty)
+        _buildEmptyState(scheme, zh)
+      else
+        for (var i = 0; i < _configs.length; i++) _buildCard(_configs[i], i, scheme, zh),
+    ];
   }
 
   /// 顶栏操作按钮（桌面端与移动端共用）。
