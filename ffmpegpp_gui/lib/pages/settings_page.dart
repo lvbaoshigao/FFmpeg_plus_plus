@@ -695,11 +695,11 @@ class _SettingsPageState extends State<SettingsPage> {
         // 右：搜索按钮/搜索框（贴合内容宽度，按要求四步过渡：
         //   1) 搜索图标"缩放到消失"
         //   2) 药丸整体向中移动（AnimatedAlign alignment: right→center）
-        //   3) 药丸变长（AnimatedSize 撑开）
+        //   3) 药丸变长（AnimatedSize 撑开到目标宽度）
         //   4) 液态玻璃药丸内部从"搜索按钮"交叉淡入到"搜索输入框"（同药丸不变）
         //
-        // 用 Expanded 给 AnimatedSize 一个完整的横向约束，否则在 Row 里
-        // 它会按 MainAxisSize.min 取自己的固有宽度，导致搜索框无法撑开。
+        // 用 Expanded 给一个「搜索区可以占据的最大空间」，内部用药丸居中 + 受控
+        // 宽度（min(screenWidth-32, 380)），避免搜索框占据整行跟其他药丸同宽。
         Expanded(
           child: AnimatedSize(
             duration: const Duration(milliseconds: 320),
@@ -709,36 +709,44 @@ class _SettingsPageState extends State<SettingsPage> {
               duration: const Duration(milliseconds: 320),
               curve: Curves.easeOutCubic,
               alignment: searching ? Alignment.center : Alignment.centerRight,
-              child: MobileGlassPill(
-                radius: 22,
-                padding: searching
-                    ? const EdgeInsets.symmetric(horizontal: 12, vertical: 6)
-                    : EdgeInsets.zero,
-                child: searching
-                    ? _buildSearchField(s, scheme)
-                    : AnimatedOpacity(
-                        opacity: searching ? 0.0 : 1.0,
-                        duration: const Duration(milliseconds: 180),
-                        child: AnimatedScale(
-                          scale: searching ? 0.0 : 1.0,
+              child: ConstrainedBox(
+                constraints: searching
+                    ? BoxConstraints(
+                        maxWidth: MediaQuery.of(context).size.width - 32,
+                        minWidth: 220,
+                      )
+                    : const BoxConstraints(),
+                child: MobileGlassPill(
+                  radius: 22,
+                  padding: searching
+                      ? const EdgeInsets.symmetric(horizontal: 12, vertical: 6)
+                      : EdgeInsets.zero,
+                  child: searching
+                      ? _buildSearchField(s, scheme)
+                      : AnimatedOpacity(
+                          opacity: searching ? 0.0 : 1.0,
                           duration: const Duration(milliseconds: 180),
-                          curve: Curves.easeInCubic,
-                          child: SizedBox(
-                            width: 44,
-                            height: 44,
-                            child: IconButton(
-                              icon: Icon(Icons.search, size: 20, color: scheme.onSurface),
-                              tooltip: s.setSearchHint,
-                              onPressed: () {
-                                setState(() => _searchExpanded = true);
-                                WidgetsBinding.instance.addPostFrameCallback((_) => _searchFocus.requestFocus());
-                              },
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+                          child: AnimatedScale(
+                            scale: searching ? 0.0 : 1.0,
+                            duration: const Duration(milliseconds: 180),
+                            curve: Curves.easeInCubic,
+                            child: SizedBox(
+                              width: 44,
+                              height: 44,
+                              child: IconButton(
+                                icon: Icon(Icons.search, size: 20, color: scheme.onSurface),
+                                tooltip: s.setSearchHint,
+                                onPressed: () {
+                                  setState(() => _searchExpanded = true);
+                                  WidgetsBinding.instance.addPostFrameCallback((_) => _searchFocus.requestFocus());
+                                },
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+                              ),
                             ),
                           ),
                         ),
-                      ),
+                ),
               ),
             ),
           ),
@@ -748,6 +756,8 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   /// 搜索输入框：嵌在 MobileGlassPill 内部，不再使用 Material outline 边框。
+  /// Material3 TextField 在 focus 时会按 theme primary 画下划线；显式清空所有
+  /// border（focused / enabled / disabled / hovered），只保留液态玻璃药丸作为容器。
   Widget _buildSearchField(AppStrings s, ColorScheme scheme) {
     return SizedBox(
       height: 44,
@@ -769,10 +779,19 @@ class _SettingsPageState extends State<SettingsPage> {
             controller: _searchCtrl,
             focusNode: _searchFocus,
             style: TextStyle(fontSize: 14, color: scheme.onSurface),
+            cursorColor: scheme.onSurfaceVariant,
             decoration: InputDecoration(
               hintText: s.setSearchHint,
               hintStyle: TextStyle(fontSize: 14, color: scheme.onSurfaceVariant),
+              // 彻底清掉所有状态下的主题色边框：液态玻璃药丸本身就是容器，
+              // 不再让 Material3 给一个 primary 色的下划线 / 轮廓。
               border: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              disabledBorder: InputBorder.none,
+              hoveredBorder: InputBorder.none,
+              errorBorder: InputBorder.none,
+              focusedErrorBorder: InputBorder.none,
               isCollapsed: true,
               contentPadding: const EdgeInsets.symmetric(vertical: 13),
             ),

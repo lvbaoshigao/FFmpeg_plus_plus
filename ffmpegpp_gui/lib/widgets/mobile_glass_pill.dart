@@ -37,6 +37,56 @@ class MobileGlassPill extends StatefulWidget {
   State<MobileGlassPill> createState() => _MobileGlassPillState();
 }
 
+/// 药丸内紧凑圆形图标按钮（与项目页"+/导入/容器"等按钮一致的风格）。
+///
+/// 为什么不用 IconButton：Material IconButton 会按主题色渲染 splash/focus/hover，
+/// 在液态玻璃药丸里会显示一片主题色块（特别是搜索→关闭切换瞬间的涟漪 + 蓝色边框）。
+/// 这里手写一个透明 InkWell 的紧凑按钮：
+/// - 默认无背景；[bg] 传入后变成实心主题色圆形（用于"+"加号 CTA）
+/// - splash/highlight 都透明，避免蓝色涟漪
+/// - 圆角半径 18、内边距 2、直径 34 —— 与 project_page _pillAction 完全一致
+class MobileGlassPillAction extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  final Color? color;
+  final Color? bg;
+  final VoidCallback? onTap;
+
+  const MobileGlassPillAction({
+    super.key,
+    required this.icon,
+    required this.tooltip,
+    required this.color,
+    required this.onTap,
+    this.bg,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+          child: Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: bg,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, size: 19, color: color),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// 玻璃渲染相关的"配置指纹"。只有它变化时玻璃节点才该重建。
 @immutable
 class _PillGlassKey {
@@ -117,10 +167,15 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
     final baseColor = follow ? scheme.primary : scheme.surface;
     final tint = baseColor.withAlpha(baseAlpha);
 
+    // 关键修复：liquid 模式下 OCLiquidGlass 自身已经接收 color=tint 作为
+    // 玻璃的 tint（GPU shader 内部叠加）；如果 inner Container 再额外叠一层
+    // color=tint，相当于「主题色 + 主题色」双重染色，
+    // 切换页面瞬间会出现「一大片主题色块」闪烁。
+    // liquid 模式 inner 用透明，只保留边框；blur/none 模式保留 tint。
     final inner = Container(
       padding: widget.padding,
       decoration: BoxDecoration(
-        color: tint,
+        color: effect == 'liquid' ? Colors.transparent : tint,
         borderRadius: BorderRadius.circular(widget.radius),
         border: Border.all(
           color: effect == 'blur'
@@ -176,7 +231,14 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
     }
 
     Widget result = pill;
-    
+
+    // 用 RepaintBoundary 隔开 GPU 渲染层：
+    // - liquid 模式的 OCLiquidGlassGroup 是 offscreen layer，跨页面切换时
+    //   容易把 shader 产物残留到上一帧的 BackdropFilter 输出上；
+    // - blur 模式的 BackdropFilter 同样依赖前置 layer；
+    // RepaintBoundary 强制让每次重建时新开一个独立 layer，避免残留/主题色块闪烁。
+    result = RepaintBoundary(child: result);
+
     if (widget.pressable || widget.onTap != null) {
       // 按下放大、按住保持、松手回弹。
       result = GestureDetector(
@@ -191,16 +253,19 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
           scale: _pressed ? 1.05 : 1.0,
           duration: const Duration(milliseconds: 110),
           curve: Curves.easeOut,
-          child: pill,
+          // 关键修复：原来这里用 pill（没有 RepaintBoundary 隔离层），让 GPU
+          // offscreen pass 在 Pressable + LiquidGlass 组合下泄漏到上层。
+          // 改为 result，让外层的 RepaintBoundary 仍然生效。
+          child: result,
         ),
       );
     }
-    
+
     // 应用 margin
     if (widget.margin != null) {
       result = Padding(padding: widget.margin!, child: result);
     }
-    
+
     return result;
   }
 }

@@ -307,11 +307,11 @@ class ProjectPageState extends State<ProjectPage> {
         // 右：动作药丸/搜索框（贴合内容宽度，按要求四步过渡：
         //   1) 其它图标依次"缩放到消失"（每个 _pillAction 用 AnimatedOpacity+AnimatedScale 包）
         //   2) 药丸整体向中移动（AnimatedAlign alignment: right→center）
-        //   3) 药丸变长（AnimatedSize 撑开）
+        //   3) 药丸变长（AnimatedSize 撑开到目标宽度）
         //   4) 液态玻璃药丸内部从"动作按钮"交叉淡入到"搜索输入框"（同药丸不变）
         //
-        // 用 Expanded 给 AnimatedSize 一个完整的横向约束，否则在 Row 里
-        // 它会按 MainAxisSize.min 取自己的固有宽度，导致搜索框无法撑开。
+        // 用 Expanded 给一个「搜索区可以占据的最大空间」，内部用药丸居中 + 受控
+        // 宽度（min(screenWidth-32, 380)），避免搜索框占据整行跟其他药丸同宽。
         Expanded(
           child: AnimatedSize(
             duration: const Duration(milliseconds: 320),
@@ -321,31 +321,39 @@ class ProjectPageState extends State<ProjectPage> {
               duration: const Duration(milliseconds: 320),
               curve: Curves.easeOutCubic,
               alignment: searching ? Alignment.center : Alignment.centerRight,
-              child: MobileGlassPill(
-                radius: 22,
-                padding: searching
-                    ? const EdgeInsets.symmetric(horizontal: 12, vertical: 6)
-                    : const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
-                child: searching
-                    ? _buildSearchField(s, scheme)
-                    : Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          for (final w in actionWidgets)
-                            // 让每个动作按钮"缩放到消失"：搜索时透明度 0 + 缩放 0，
-                          // 让关闭/隐藏过程更"软"。
-                            AnimatedOpacity(
-                              opacity: searching ? 0.0 : 1.0,
-                              duration: const Duration(milliseconds: 180),
-                              child: AnimatedScale(
-                                scale: searching ? 0.0 : 1.0,
+              child: ConstrainedBox(
+                constraints: searching
+                    ? BoxConstraints(
+                        maxWidth: MediaQuery.of(context).size.width - 32,
+                        minWidth: 220,
+                      )
+                    : const BoxConstraints(),
+                child: MobileGlassPill(
+                  radius: 22,
+                  padding: searching
+                      ? const EdgeInsets.symmetric(horizontal: 12, vertical: 6)
+                      : const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+                  child: searching
+                      ? _buildSearchField(s, scheme)
+                      : Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            for (final w in actionWidgets)
+                              // 让每个动作按钮"缩放到消失"：搜索时透明度 0 + 缩放 0，
+                            // 让关闭/隐藏过程更"软"。
+                              AnimatedOpacity(
+                                opacity: searching ? 0.0 : 1.0,
                                 duration: const Duration(milliseconds: 180),
-                                curve: Curves.easeInCubic,
-                                child: w,
+                                child: AnimatedScale(
+                                  scale: searching ? 0.0 : 1.0,
+                                  duration: const Duration(milliseconds: 180),
+                                  curve: Curves.easeInCubic,
+                                  child: w,
+                                ),
                               ),
-                            ),
-                        ],
-                      ),
+                          ],
+                        ),
+                ),
               ),
             ),
           ),
@@ -376,10 +384,19 @@ class ProjectPageState extends State<ProjectPage> {
           child: TextField(
             autofocus: true,
             style: TextStyle(fontSize: 14, color: scheme.onSurface),
+            cursorColor: scheme.onSurfaceVariant,
             decoration: InputDecoration(
               hintText: s.searchVideos,
               hintStyle: TextStyle(color: scheme.onSurfaceVariant, fontSize: 14),
+              // 显式清掉所有状态下的主题色边框：液态玻璃药丸本身就是容器，
+              // 不再让 Material3 给一个 primary 色的下划线 / 轮廓。
               border: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              disabledBorder: InputBorder.none,
+              hoveredBorder: InputBorder.none,
+              errorBorder: InputBorder.none,
+              focusedErrorBorder: InputBorder.none,
               isCollapsed: true,
               contentPadding: const EdgeInsets.symmetric(vertical: 13),
             ),

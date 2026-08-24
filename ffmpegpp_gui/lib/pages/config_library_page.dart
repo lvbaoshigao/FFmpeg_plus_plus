@@ -685,35 +685,30 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
   }
 
   /// 顶栏操作按钮（桌面端与移动端共用）。
+  /// 全部用 MobileGlassPillAction（透明 InkWell 紧凑圆形按钮）替代 Material IconButton，
+  /// 避免主题色 splash/focus 出现在液态玻璃药丸内；同时与项目页"+/导入/容器"
+  /// 按钮完全一致的尺寸与风格。
   List<Widget> _buildTopActions(ColorScheme scheme, bool zh) {
     return [
-      IconButton(
-        icon: const Icon(Icons.file_download_outlined, size: 20),
+      MobileGlassPillAction(
+        icon: Icons.file_download_outlined,
         tooltip: zh ? '导入 .fppx' : 'Import .fppx',
-        onPressed: _importFppx,
+        color: scheme.onSurface,
+        onTap: _importFppx,
       ),
-      IconButton(
-        icon: const Icon(Icons.bolt_outlined, size: 20),
+      MobileGlassPillAction(
+        icon: Icons.bolt_outlined,
         tooltip: zh ? '新建快捷配置' : 'New Quick Config',
-        onPressed: _newQuickConfig,
+        color: scheme.onSurface,
+        onTap: _newQuickConfig,
       ),
-      const SizedBox(width: 6),
-      // 圆形加号按钮：液态玻璃质感，与项目页"+"一致
-      Tooltip(
-        message: zh ? '新建配置' : 'New Config',
-        child: InkWell(
-          borderRadius: BorderRadius.circular(20),
-          onTap: _newConfig,
-          child: Container(
-            width: 40, height: 40,
-            decoration: BoxDecoration(
-              color: scheme.primary,
-              shape: BoxShape.circle,
-              boxShadow: [BoxShadow(color: scheme.primary.withAlpha(90), blurRadius: 8, offset: const Offset(0, 2))],
-            ),
-            child: const Icon(Icons.add, size: 22, color: Colors.white),
-          ),
-        ),
+      // 主题色实心圆"+"按钮（CTA），与项目页"+"完全一致
+      MobileGlassPillAction(
+        icon: Icons.add,
+        tooltip: zh ? '新建配置' : 'New Config',
+        color: scheme.onPrimary,
+        bg: scheme.primary,
+        onTap: _newConfig,
       ),
     ];
   }
@@ -735,12 +730,13 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         ),
         const SizedBox(width: 8),
         // 右：操作药丸（贴合内容，不再用 Expanded 强制填满剩余空间）。
+        // padding 垂直方向 3（与 project_page 同尺寸），避免操作按钮被「压扁」。
         Flexible(
           child: Align(
             alignment: Alignment.centerRight,
             child: MobileGlassPill(
               radius: 22,
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
               child: Row(children: _buildTopActions(scheme, zh)),
             ),
           ),
