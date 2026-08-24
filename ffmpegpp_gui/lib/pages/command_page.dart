@@ -8,6 +8,7 @@ import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import '../widgets/toast.dart';
 import '../widgets/glass_panel.dart';
+import '../widgets/mobile_top_bar.dart';
 import '../platform/app_platform.dart';
 
 class CommandPage extends StatefulWidget {
@@ -139,23 +140,22 @@ class _CommandPageState extends State<CommandPage> {
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: Column(children: [
-        GlassTopBar(
-          title: Row(children: [
-            if (isMobilePlatform) ...[
-              IconButton(
-                icon: const Icon(Icons.arrow_back, size: 20),
-                tooltip: s.close,
-                onPressed: () => Navigator.of(context).maybePop(),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+        isMobilePlatform
+            ? MobileSubPageTopBar(
+                title: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.terminal_outlined, size: 20, color: scheme.primary),
+                  const SizedBox(width: 8),
+                  Text(s.navCommand),
+                ]),
+                onBack: () => Navigator.of(context).maybePop(),
+              )
+            : GlassTopBar(
+                title: Row(children: [
+                  Icon(Icons.terminal_outlined, size: 20, color: scheme.primary),
+                  const SizedBox(width: 8),
+                  Text(s.navCommand),
+                ]),
               ),
-              const SizedBox(width: 4),
-            ],
-            Icon(Icons.terminal_outlined, size: 20, color: scheme.primary),
-            const SizedBox(width: 8),
-            Text(s.navCommand),
-          ]),
-        ),
         Expanded(child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

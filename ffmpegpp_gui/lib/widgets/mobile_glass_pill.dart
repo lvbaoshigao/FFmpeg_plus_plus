@@ -48,7 +48,10 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
     final cfg = context.watch<AppState>().config;
     final effect = cfg.glassEffect;
     final op = cfg.cardOpacity.clamp(0.0, 1.0);
-    final baseAlpha = (op * 255).round().clamp(0, 255);
+    // 上限压低（约 41%~47% 不透明度）：避免浅色模式下 surface 底色叠满成
+    // 一整片「发白」，让背景透出、保留玻璃通透感。
+    final maxAlpha = isDark ? 105 : 120;
+    final baseAlpha = (op * maxAlpha).round().clamp(0, 255);
     final follow = cfg.glassFollowTheme;
     final baseColor = follow ? scheme.primary : scheme.surface;
     final tint = baseColor.withAlpha(baseAlpha);
@@ -61,7 +64,7 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
         border: Border.all(
           color: effect == 'blur'
               ? scheme.outlineVariant.withAlpha(80)
-              : Colors.white.withValues(alpha: isDark ? 0.16 : 0.32),
+              : Colors.white.withValues(alpha: isDark ? 0.12 : 0.18),
           width: effect == 'blur' ? 0.5 : 0.7,
         ),
       ),

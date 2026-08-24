@@ -699,15 +699,19 @@ class _SettingsPageState extends State<SettingsPage> {
     Widget buildSearchButton() => MobileGlassPill(
         radius: 22,
         padding: EdgeInsets.zero,
-        child: IconButton(
-          icon: Icon(Icons.search, size: 20, color: scheme.onSurface),
-          tooltip: s.setSearchHint,
-          onPressed: () {
-            setState(() => _searchExpanded = true);
-            WidgetsBinding.instance.addPostFrameCallback((_) => _searchFocus.requestFocus());
-          },
-          constraints: const BoxConstraints(minWidth: 42, minHeight: 42),
-          padding: EdgeInsets.zero,
+        child: SizedBox(
+          width: 44,
+          height: 44,
+          child: IconButton(
+            icon: Icon(Icons.search, size: 20, color: scheme.onSurface),
+            tooltip: s.setSearchHint,
+            onPressed: () {
+              setState(() => _searchExpanded = true);
+              WidgetsBinding.instance.addPostFrameCallback((_) => _searchFocus.requestFocus());
+            },
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+          ),
         ));
     Widget buildSearchBox() => MobileGlassPill(
         key: const ValueKey('searchbox'),
@@ -892,7 +896,6 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 二级设置页：全屏（覆盖底部导航栏），顶部返回栏 + 可滚动内容。
   void _pushMobileSubPage(
     BuildContext context, String title, Widget Function(BuildContext, AppState) contentBuilder) {
-    final scheme = Theme.of(context).colorScheme;
     Navigator.of(context).push(MaterialPageRoute(
       builder: (ctx) => Consumer<AppState>(
         builder: (ctx2, state, _) => _withWallpaper(
@@ -901,15 +904,9 @@ class _SettingsPageState extends State<SettingsPage> {
           Scaffold(
           backgroundColor: Colors.transparent,
           body: Column(children: [
-            MobileTopBar(
+            MobileSubPageTopBar(
               title: Text(title),
-              leading: IconButton(
-                icon: const Icon(Icons.arrow_back, size: 22),
-                color: scheme.onSurface,
-                tooltip: 'back',
-                onPressed: () => Navigator.of(ctx2).maybePop(),
-                constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-              ),
+              onBack: () => Navigator.of(ctx2).maybePop(),
             ),
             Expanded(
               child: ListView(
