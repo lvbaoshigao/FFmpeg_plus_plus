@@ -56,7 +56,7 @@ class _QueuePageState extends State<QueuePage> {
                           ]))
                         : RepaintBoundary(
                             child: ListView.builder(
-                              padding: EdgeInsets.fromLTRB(16, 8, 16, kMobileNavClearance),
+                              padding: EdgeInsets.fromLTRB(8, 8, 8, kMobileNavClearance),
                               itemCount: state.tasks.length,
                               itemBuilder: (_, i) => TaskCard(key: ValueKey(state.tasks[i].id), task: state.tasks[i]),
                             ),
@@ -133,27 +133,24 @@ class _QueuePageState extends State<QueuePage> {
     ];
   }
 
-  /// 移动端顶栏：左右药丸等宽布局（与项目页一致）。
+  /// 移动端顶栏：左侧标题药丸自适应宽度（内容贴合，不撑满），
+  /// 右侧操作药丸占剩余空间（与项目页布局一致）。
   Widget _buildMobileTopBar(ColorScheme scheme, AppState state, AppStrings s) {
     final safeTop = MediaQuery.of(context).padding.top;
     return Padding(
-      padding: EdgeInsets.fromLTRB(12, safeTop + 6, 12, 6),
+      padding: EdgeInsets.fromLTRB(8, safeTop + 6, 8, 6),
       child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-        // 左：标题药丸（占 40% 宽度）
-        Expanded(
-          flex: 4,
-          child: MobileGlassPill(
-            radius: 22,
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-            pressable: true,
-            child: Text(s.navQueue,
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-          ),
+        // 左：标题药丸（自适应内容宽度，标题与药丸贴合）
+        MobileGlassPill(
+          radius: 22,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+          pressable: true,
+          child: Text(s.navQueue,
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
         ),
         const SizedBox(width: 8),
-        // 右：操作药丸（占 60% 宽度，横向滚动防溢出）
+        // 右：操作药丸（占剩余空间，横向滚动防溢出）
         Expanded(
-          flex: 6,
           child: MobileGlassPill(
             radius: 22,
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
@@ -198,13 +195,14 @@ class _MonitorWidgetState extends State<_MonitorWidget> {
     final m = widget.monitor;
     final sc = widget.scheme;
     // 紧凑小尺寸：仅图标 + 数值，适合放在顶栏右侧
+    // -1 表示读取失败（Android SELinux 拦截 /proc），显示 "--" 避免误导为 0%
     return Row(mainAxisSize: MainAxisSize.min, children: [
-      _mini(Icons.memory, '${m.cpuPercent.toStringAsFixed(0)}%', m.cpuPercent / 100, sc),
+      _mini(Icons.memory, m.cpuPercent < 0 ? '--' : '${m.cpuPercent.toStringAsFixed(0)}%', m.cpuPercent < 0 ? 0 : m.cpuPercent / 100, sc),
       const SizedBox(width: 8),
-      _mini(Icons.storage, '${m.ramUsedGb.toStringAsFixed(1)}G', m.ramPercent / 100, sc),
+      _mini(Icons.storage, m.ramUsedGb < 0 ? '--' : '${m.ramUsedGb.toStringAsFixed(1)}G', m.ramPercent < 0 ? 0 : m.ramPercent / 100, sc),
       if (m.gpuName.isNotEmpty) ...[
         const SizedBox(width: 8),
-        _mini(Icons.videocam, '${m.gpuPercent.toStringAsFixed(0)}%', m.gpuPercent / 100, sc),
+        _mini(Icons.videocam, m.gpuPercent < 0 ? '--' : '${m.gpuPercent.toStringAsFixed(0)}%', m.gpuPercent < 0 ? 0 : m.gpuPercent / 100, sc),
       ],
     ]);
   }

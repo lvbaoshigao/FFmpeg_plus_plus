@@ -20,6 +20,10 @@ class SystemMonitor {
 
   void start() {
     _tick();
+    // 首次采样只建立了 baseline（prev 值），CPU 百分比从第二次采样才有意义。
+    // 立即再采一次，让 UI 首次渲染就能看到真实数值。
+    Future.delayed(const Duration(milliseconds: 120), () => _tick());
+    Future.delayed(const Duration(milliseconds: 400), () => _tick());
     _timer = Timer.periodic(const Duration(seconds: 2), (_) => _tick());
   }
 
@@ -134,9 +138,20 @@ class SystemMonitor {
       if (totalKB > 0) {
         ramTotalGb = totalKB / 1024 / 1024;
         ramUsedGb = (totalKB - availKB) / 1024 / 1024;
+        if (ramUsedGb < 0) ramUsedGb = 0;
         ramPercent = ramUsedGb / ramTotalGb * 100;
+      } else {
+        // /proc/meminfo 读取失败（部分 ROM/SELinux 限制）：标记不可用
+        ramTotalGb = -1;
+        ramUsedGb = -1;
       }
-    } catch (_) {}
+    } catch (_) {
+      // 读取失败（Android 上 /proc 可能被 SELinux 拦截）：
+      // 标记 -1，UI 显示 "--" 而非误导性的 0%。
+      cpuPercent = -1;
+      ramTotalGb = -1;
+      ramUsedGb = -1;
+    }
   }
 
   Future<void> _updateGpuLinux() async {
