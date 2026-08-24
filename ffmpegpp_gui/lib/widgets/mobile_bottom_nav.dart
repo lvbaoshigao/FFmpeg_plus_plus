@@ -26,11 +26,53 @@ class MobileBottomNav extends StatefulWidget {
   State<MobileBottomNav> createState() => _MobileBottomNavState();
 }
 
+/// 移动端底部导航的"玻璃配置指纹"。仅当这个值变化时才允许重建
+/// OCLiquidGlassGroup/OCLiquidGlass 节点，避免无关 notify 引起的 shader 重置。
+@immutable
+class _NavGlassKey {
+  final String effect;
+  final double op;
+  final bool follow;
+  final int primary;
+  final int second;
+  const _NavGlassKey({
+    required this.effect,
+    required this.op,
+    required this.follow,
+    required this.primary,
+    required this.second,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      other is _NavGlassKey &&
+      other.effect == effect &&
+      other.op == op &&
+      other.follow == follow &&
+      other.primary == primary &&
+      other.second == second;
+
+  @override
+  int get hashCode => Object.hash(effect, op, follow, primary, second);
+}
+
 class _MobileBottomNavState extends State<MobileBottomNav> {
   /// 拖动中遮罩中心的水平位置（相对 bar 内容区，null = 未在拖动）。
   double? _dragX;
   /// 拖动开始时手指相对遮罩中心的偏移：抓取点不跳变。
   double _dragGrabOffset = 0;
+
+  /// 底部导航 OCLiquidGlass 静态 settings：dark/light 差异化由 tint/shadow 承担，
+  /// 这样所有 build 都使用同一份 const 实例，避免每次新建 settings 触发
+  /// shader uniform 重置（移动端表现为液态玻璃"来回跳跃"闪烁）。
+  static const _navLiquidSettings = OCLiquidGlassSettings(
+    refractStrength: -0.04,
+    blurRadiusPx: 1.2,
+    specStrength: 8.0,
+    specWidth: 6,
+    lightbandStrength: 0.25,
+    lightbandColor: Colors.white,
+  );
 
   @override
   void initState() {
@@ -44,8 +86,20 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final cfg = context.watch<AppState>().config;
-    final lang = cfg.language;
+    // 仅订阅玻璃渲染 + 主题色相关字段，避免日志/进度/任务状态等无关 notify
+    // 把整个底部导航（含 OCLiquidGlassGroup + OCLiquidGlass）反复销毁重建，
+    // 导致 GPU shader uniform 重置、液态玻璃视觉上"来回跳跃"闪烁。
+    final glassKey = context.select<AppState, _NavGlassKey>((s) {
+      final c = s.config;
+      return _NavGlassKey(
+        effect: c.glassEffect,
+        op: c.cardOpacity,
+        follow: c.glassFollowTheme,
+        primary: c.themeColor,
+        second: c.themeColor2,
+      );
+    });
+    final lang = context.select<AppState, String>((s) => s.config.language);
     final s = AppStrings.of(lang);
 
     final items = <(IconData, IconData, String)>[
@@ -60,10 +114,10 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
     const itemToPage = {0: 0, 1: 1, 2: 3, 3: 4};
     final itemIdx = pageToItem[widget.selectedIndex] ?? 0;
 
-    final effect = cfg.glassEffect;
-    final op = cfg.cardOpacity.clamp(0.0, 1.0);
+    final effect = glassKey.effect;
+    final op = glassKey.op.clamp(0.0, 1.0);
     final baseAlpha = (op * 255).round().clamp(0, 255);
-    final follow = cfg.glassFollowTheme;
+    final follow = glassKey.follow;
     final baseColor = follow ? scheme.primary : scheme.surface;
     final tint = baseColor.withAlpha(baseAlpha);
 
@@ -114,32 +168,50 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
               }
               widget.onSelected(itemToPage[nearest] ?? 0);
             },
-            // ── 按下拖动（无需长按）：遮罩跟随手指 ──
+            // ── 长按（按住）：遮罩放大反馈 + 开始抓取，后续移动跟随手指 ──
+            onLongPressStart: (d) => setState(() {
+              // 按在哪个药丸上，遮罩就从哪个药丸中心开始抓取
+              final dx = d.localPosition.dx;
+              int nearest = 0;
+              var bestDist = double.infinity;
+              for (var i = 0; i < items.length; i++) {
+                final dist = (dx - _itemCenter(i, itemW, pillGap)).abs();
+                if (dist < bestDist) {
+                  bestDist = dist;
+                  nearest = i;
+                }
+              }
+              final grabCenter = _itemCenter(nearest, itemW, pillGap);
+              _dragGrabOffset = d.localPosition.dx - grabCenter;
+              _dragX = grabCenter;
+            }),
+            onLongPressMoveUpdate: (d) => setState(() {
+              _dragX = (d.localPosition.dx - _dragGrabOffset)
+                  .clamp(itemW / 2, cons.maxWidth - itemW / 2);
+            }),
+            onLongPressEnd: (_) => _endDrag(itemW, items.length, pillGap, itemToPage),
+            onLongPressCancel: () => setState(() => _dragX = null),
+            // ── 快速水平滑动（<500ms）：同样走拖动跟随 ──
             onHorizontalDragStart: (d) => setState(() {
-              final curCenter = _itemCenter(itemIdx, itemW, pillGap);
-              _dragGrabOffset = d.localPosition.dx - curCenter;
-              _dragX = curCenter;
+              final dx = d.localPosition.dx;
+              int nearest = 0;
+              var bestDist = double.infinity;
+              for (var i = 0; i < items.length; i++) {
+                final dist = (dx - _itemCenter(i, itemW, pillGap)).abs();
+                if (dist < bestDist) {
+                  bestDist = dist;
+                  nearest = i;
+                }
+              }
+              final grabCenter = _itemCenter(nearest, itemW, pillGap);
+              _dragGrabOffset = d.localPosition.dx - grabCenter;
+              _dragX = grabCenter;
             }),
             onHorizontalDragUpdate: (d) => setState(() {
               _dragX = (d.localPosition.dx - _dragGrabOffset)
                   .clamp(itemW / 2, cons.maxWidth - itemW / 2);
             }),
-            onHorizontalDragEnd: (_) {
-              final dx = _dragX;
-              setState(() => _dragX = null);
-              if (dx != null) {
-                // 根据遮罩中心落在哪个药丸区间来判定目标页
-                int target = 0;
-                for (var i = 0; i < items.length; i++) {
-                  final center = _itemCenter(i, itemW, pillGap);
-                  if ((dx - center).abs() < itemW / 2) {
-                    target = i;
-                    break;
-                  }
-                }
-                widget.onSelected(itemToPage[target] ?? 0);
-              }
-            },
+            onHorizontalDragEnd: (_) => _endDrag(itemW, items.length, pillGap, itemToPage),
             onHorizontalDragCancel: () => setState(() => _dragX = null),
             child: SizedBox(
               width: cons.maxWidth,
@@ -158,8 +230,9 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
                 bottom: 2,
                 width: itemW,
                 child: AnimatedScale(
-                  scale: dragging ? 1.12 : 1.0,
-                  duration: const Duration(milliseconds: 180),
+                  // 长按/拖动时放大，明确标识「已抓取/被选中」
+                  scale: dragging ? 1.25 : 1.0,
+                  duration: const Duration(milliseconds: 150),
                   curve: Curves.easeOut,
                   child: RepaintBoundary(child: _mask(scheme, isDark, effect)),
                 ),
@@ -218,21 +291,22 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
     // liquid：oc_liquid_glass 液态玻璃（GPU fragment shader）
     // 调低调光参数避免「光污染」：specStrength 大幅降低，lightband 接近关闭，
     // 并整体包 RepaintBoundary 隔离 shader 绘制，避免与上方内容互相触发重绘（闪屏）。
-    final settings = OCLiquidGlassSettings(
-      refractStrength: -0.04,
-      blurRadiusPx: 1.2,
-      specStrength: isDark ? 6.0 : 8.0,
-      specWidth: 6,
-      lightbandStrength: 0.25,
-      lightbandColor: Colors.white,
-    );
-
+    //
+    // 关键修复：
+    // 1) 使用 const _navLiquidSettings（dark 差异化交给 tint/shadow），
+    //    避免每次 build 都新建 OCLiquidGlassSettings 触发 shader uniform 重置；
+    // 2) 给 OCLiquidGlassGroup/OCLiquidGlass 加 ValueKey(_NavGlassKey)，仅当玻璃
+    //    配置变化时才真的销毁/重建液态玻璃节点；无关 notify（进度/日志/任务）
+    //    会让 key 不变，Element 复用，shader 内部状态稳定。
+    final navGlassKey = ValueKey<_NavGlassKey>(glassKey);
     return OCLiquidGlassGroup(
-      settings: settings,
+      key: navGlassKey,
+      settings: _navLiquidSettings,
       child: Padding(
         padding: EdgeInsets.fromLTRB(14, 2, 14, bottomSafe + 8),
         child: RepaintBoundary(
           child: OCLiquidGlass(
+            key: navGlassKey,
             borderRadius: radius,
             color: tint,
             shadow: BoxShadow(
@@ -245,6 +319,23 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
         ),
       ),
     );
+  }
+
+  /// 松手：根据遮罩中心落在哪个药丸区间判定目标页，并复位拖动状态。
+  void _endDrag(double itemW, int itemCount, double gap, Map<int, int> pageMap) {
+    final dx = _dragX;
+    setState(() => _dragX = null);
+    if (dx != null) {
+      int target = 0;
+      for (var i = 0; i < itemCount; i++) {
+        final center = _itemCenter(i, itemW, gap);
+        if ((dx - center).abs() < itemW / 2) {
+          target = i;
+          break;
+        }
+      }
+      widget.onSelected(pageMap[target] ?? 0);
+    }
   }
 
   /// 第 i 个药丸的左边缘位置（考虑间距）。
