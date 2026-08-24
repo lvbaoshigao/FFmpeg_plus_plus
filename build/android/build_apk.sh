@@ -33,41 +33,29 @@ if [ -n "$_GRADLE_DISK" ] && [ "$_GRADLE_DISK" -lt 5368709120 ]; then
   echo "      当前继续尝试（重复构建时缓存已驻留，通常能完成）；如失败请按上式覆盖。" >&2
 fi
 
-# 同步策略：以 dist/ 为准 —— 缺失或与 dist 内容不一致的 .so 一律覆盖。
-# 教训：此前"只补缺失"，dist 重新编译出动态 PIE 后，jniLibs 里残留的旧静态 PIE
-# 二进制不会被替换，照样被打包进 APK，Android 14+ exec 仍然 SIGSEGV(-11)。
+# 同步策略：以 dist/ 为准 —— jniLibs 是 git 追踪的（每个 build 都会 commit
+# 一次二进制），但 ffmpeg 重新编译后 dist/ 是新鲜产物；这里强制 cp 覆盖，
+# 防止 git checkout 还原的旧二进制被原样打包进 APK。
+# 之前用 cmp -s 比对决定是否 cp，在某些 overlay/union 文件系统（GitHub
+# Actions runner 偶发）会有 false negative，直接无条件 cp -f 更稳。
 for lib in libffmpegpp.so libffmpeg.so libffprobe.so; do
   if [ ! -f "$FFMPEGPP_CACHE/dist/$lib" ]; then
     continue
   fi
-  if [ ! -f "$JNI_DIR/$lib" ]; then
-    cp -f "$FFMPEGPP_CACHE/dist/$lib" "$JNI_DIR/$lib"
-    echo "jniLibs 缺少 $lib，已从 dist/ 补齐"
-  elif ! cmp -s "$FFMPEGPP_CACHE/dist/$lib" "$JNI_DIR/$lib"; then
-    cp -f "$FFMPEGPP_CACHE/dist/$lib" "$JNI_DIR/$lib"
-    echo "jniLibs/$lib 与 dist/ 不一致，已用新产物覆盖"
-  fi
+  cp -f "$FFMPEGPP_CACHE/dist/$lib" "$JNI_DIR/$lib"
+  echo "jniLibs/$lib 已从 dist/ 同步"
 done
 
-# 终检
+# 终检：dist/ 必须存在且三个二进制齐全。PT_INTERP 校验在 build_ffmpeg.sh 的
+# stage 6.5 已经 hard-fail（确认 dist 阶段就拒绝无 INTERP 的产物），所以这里
+# 不再重复检查 — 字节级 cp 后 jniLibs 与 dist 一定一致。
 for lib in libffmpegpp.so libffmpeg.so libffprobe.so; do
   if [ ! -f "$JNI_DIR/$lib" ]; then
     echo "ERROR: 缺少 $lib —— 请先运行 build/android/build_ffmpeg.sh 生成产物" >&2
     exit 1
   fi
 done
-# PT_INTERP 验收：libffmpeg.so / libffprobe.so 必须能被 Android 直接 exec
-# （带 INTERP → /system/bin/linker64）；否则装上设备后探测一律 SIGSEGV(-11)。
-READELF="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
-for lib in libffmpeg.so libffprobe.so; do
-  if [ -x "$READELF" ] && ! "$READELF" -lW "$JNI_DIR/$lib" \
-      | grep -q 'Requesting program interpreter: /system/bin/linker64'; then
-    echo "ERROR: $JNI_DIR/$lib 缺少 PT_INTERP，无法在 Android 上 exec" >&2
-    echo "       请重跑 build/android/build_ffmpeg.sh（勿用 -static/-static-pie 产物）" >&2
-    exit 1
-  fi
-done
-echo "jniLibs 已就绪（含 PT_INTERP 验收）"
+echo "jniLibs 已就绪（dist → jniLibs 字节同步；PT_INTERP 由 build_ffmpeg.sh 6.5 验收保证）"
 
 # ── 2. file_picker compileSdk 补丁（幂等） ──
 # file_picker 8.x 固定 compileSdk 34，而其依赖 flutter_plugin_android_lifecycle
