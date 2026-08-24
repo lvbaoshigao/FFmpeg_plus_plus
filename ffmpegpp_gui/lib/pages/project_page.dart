@@ -279,7 +279,7 @@ class ProjectPageState extends State<ProjectPage> {
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface));
 
     return Padding(
-      padding: EdgeInsets.fromLTRB(12, safeTop + 6, 12, 6),
+      padding: EdgeInsets.fromLTRB(isMobilePlatform ? 8 : 12, safeTop + 6, isMobilePlatform ? 8 : 12, 6),
       child: Row(children: [
         // 左：标题药丸（搜索时淡出）
         AnimatedOpacity(
@@ -463,7 +463,7 @@ class ProjectPageState extends State<ProjectPage> {
 
     return RepaintBoundary(
       child: ListView.builder(
-        padding: EdgeInsets.fromLTRB(16, 16, 16, isMobilePlatform ? kMobileNavClearance : 16),
+        padding: EdgeInsets.fromLTRB(isMobilePlatform ? 8 : 16, 16, isMobilePlatform ? 8 : 16, isMobilePlatform ? kMobileNavClearance : 16),
       itemCount: totalCount,
       itemBuilder: (_, i) {
         if (i < containerCount) {

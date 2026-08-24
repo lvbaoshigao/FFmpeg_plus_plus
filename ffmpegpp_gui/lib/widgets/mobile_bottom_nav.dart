@@ -9,8 +9,8 @@ import '../theme/app_strings.dart';
 ///
 /// - 整体是一颗悬浮「药丸」（胶囊）玻璃；liquid 用 GPU shader 液态玻璃，
 ///   blur 用扁平高斯模糊（BackdropFilter），none 为纯色药丸；
-/// - 选中项使用胶囊「药丸」指示器；长按指示器可左右拖动，遮罩跟随手指，
-///   松手切换到对应页面，按住时遮罩有放大特效；
+/// - 选中项使用胶囊「药丸」指示器；按下拖动（无需长按）遮罩即跟随手指，
+///   松手吸附到最近药丸并切换页面；点按直接切换（带滑动动画）；
 /// - 遵循设置中的玻璃效果配置（liquid/blur/none）。
 class MobileBottomNav extends StatefulWidget {
   final int selectedIndex;
@@ -27,10 +27,9 @@ class MobileBottomNav extends StatefulWidget {
 }
 
 class _MobileBottomNavState extends State<MobileBottomNav> {
-  /// 长按拖动中遮罩中心的水平位置（相对 bar 内容区，null = 未在拖动）。
+  /// 拖动中遮罩中心的水平位置（相对 bar 内容区，null = 未在拖动）。
   double? _dragX;
-  /// 长按开始瞬间「手指」相对「遮罩中心」的水平偏移：按住遮罩边缘拖动时
-  /// 保持抓取点不跳变，松手后按遮罩中心判页。
+  /// 拖动开始时手指相对遮罩中心的偏移：抓取点不跳变。
   double _dragGrabOffset = 0;
 
   @override
@@ -101,16 +100,31 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
           final dragging = _dragX != null;
           return GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onLongPressStart: (d) => setState(() {
+            // ── 点按：直接切换到手指位置最近的药丸（遮罩 + PageView 滑动动画） ──
+            onTapUp: (d) {
+              final dx = d.localPosition.dx;
+              int nearest = 0;
+              var bestDist = double.infinity;
+              for (var i = 0; i < items.length; i++) {
+                final dist = (dx - _itemCenter(i, itemW, pillGap)).abs();
+                if (dist < bestDist) {
+                  bestDist = dist;
+                  nearest = i;
+                }
+              }
+              widget.onSelected(itemToPage[nearest] ?? 0);
+            },
+            // ── 按下拖动（无需长按）：遮罩跟随手指 ──
+            onHorizontalDragStart: (d) => setState(() {
               final curCenter = _itemCenter(itemIdx, itemW, pillGap);
               _dragGrabOffset = d.localPosition.dx - curCenter;
               _dragX = curCenter;
             }),
-            onLongPressMoveUpdate: (d) => setState(() {
+            onHorizontalDragUpdate: (d) => setState(() {
               _dragX = (d.localPosition.dx - _dragGrabOffset)
                   .clamp(itemW / 2, cons.maxWidth - itemW / 2);
             }),
-            onLongPressEnd: (_) {
+            onHorizontalDragEnd: (_) {
               final dx = _dragX;
               setState(() => _dragX = null);
               if (dx != null) {
@@ -126,12 +140,12 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
                 widget.onSelected(itemToPage[target] ?? 0);
               }
             },
-            onLongPressCancel: () => setState(() => _dragX = null),
+            onHorizontalDragCancel: () => setState(() => _dragX = null),
             child: SizedBox(
               width: cons.maxWidth,
               height: cons.maxHeight,
               child: Stack(children: [
-              // 滑动遮罩胶囊：切换菜单时在条目间平滑滑动；长按拖动时跟随手指。
+              // 滑动遮罩胶囊：切换菜单时在条目间平滑滑动；拖动时跟随手指。
               AnimatedPositioned(
                 duration: dragging
                     ? Duration.zero
@@ -147,7 +161,7 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
                   scale: dragging ? 1.12 : 1.0,
                   duration: const Duration(milliseconds: 180),
                   curve: Curves.easeOut,
-                  child: _mask(scheme, isDark, effect),
+                  child: RepaintBoundary(child: _mask(scheme, isDark, effect)),
                 ),
               ),
               // 药丸行：每个药丸之间有间距，crossAxisAlignment.stretch 让药丸填满高度
@@ -165,7 +179,6 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
                         selected: i == itemIdx,
                         selectedColor: selectedColor,
                         unselectedColor: unselectedColor,
-                        onTap: () => widget.onSelected(itemToPage[i] ?? 0),
                       ),
                     ),
                   ],
@@ -203,12 +216,14 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
     }
 
     // liquid：oc_liquid_glass 液态玻璃（GPU fragment shader）
+    // 调低调光参数避免「光污染」：specStrength 大幅降低，lightband 接近关闭，
+    // 并整体包 RepaintBoundary 隔离 shader 绘制，避免与上方内容互相触发重绘（闪屏）。
     final settings = OCLiquidGlassSettings(
-      refractStrength: -0.06,
-      blurRadiusPx: 1.5,
-      specStrength: isDark ? 18.0 : 26.0,
-      specWidth: 10,
-      lightbandStrength: 0.9,
+      refractStrength: -0.04,
+      blurRadiusPx: 1.2,
+      specStrength: isDark ? 6.0 : 8.0,
+      specWidth: 6,
+      lightbandStrength: 0.25,
       lightbandColor: Colors.white,
     );
 
@@ -216,15 +231,17 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
       settings: settings,
       child: Padding(
         padding: EdgeInsets.fromLTRB(14, 2, 14, bottomSafe + 8),
-        child: OCLiquidGlass(
-          borderRadius: radius,
-          color: tint,
-          shadow: BoxShadow(
-            color: Colors.black.withAlpha(isDark ? 70 : 26),
-            blurRadius: 22,
-            offset: const Offset(0, 6),
+        child: RepaintBoundary(
+          child: OCLiquidGlass(
+            borderRadius: radius,
+            color: tint,
+            shadow: BoxShadow(
+              color: Colors.black.withAlpha(isDark ? 70 : 26),
+              blurRadius: 22,
+              offset: const Offset(0, 6),
+            ),
+            child: buildBarIn(),
           ),
-          child: buildBarIn(),
         ),
       ),
     );
@@ -292,7 +309,6 @@ class _NavItem extends StatelessWidget {
   final bool selected;
   final Color selectedColor;
   final Color unselectedColor;
-  final VoidCallback onTap;
 
   const _NavItem({
     required this.icon,
@@ -301,52 +317,45 @@ class _NavItem extends StatelessWidget {
     required this.selected,
     required this.selectedColor,
     required this.unselectedColor,
-    required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final color = selected ? selectedColor : unselectedColor;
-    // 使用 GestureDetector 而非 InkWell：InkWell 内部的 TapGestureRecognizer
-    // 会与父级 GestureDetector 的 LongPressGestureRecognizer 竞争，
-    // 导致长按拖动遮罩不生效。GestureDetector 只注册 onTap，不干扰长按。
+    // 纯展示：点按/拖动统一由父级 GestureDetector 处理，避免手势竞争。
     return Semantics(
       selected: selected,
       button: true,
       label: label,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            TweenAnimationBuilder<Color?>(
-              tween: ColorTween(end: color),
-              duration: const Duration(milliseconds: 220),
-              builder: (ctx, c, child) => Icon(
-                selected ? activeIcon : icon,
-                size: 27,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          TweenAnimationBuilder<Color?>(
+            tween: ColorTween(end: color),
+            duration: const Duration(milliseconds: 220),
+            builder: (ctx, c, child) => Icon(
+              selected ? activeIcon : icon,
+              size: 27,
+              color: c,
+            ),
+          ),
+          const SizedBox(height: 1),
+          TweenAnimationBuilder<Color?>(
+            tween: ColorTween(end: color),
+            duration: const Duration(milliseconds: 220),
+            builder: (ctx, c, child) => Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 9.0,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
                 color: c,
+                height: 1.1,
               ),
             ),
-            const SizedBox(height: 1),
-            TweenAnimationBuilder<Color?>(
-              tween: ColorTween(end: color),
-              duration: const Duration(milliseconds: 220),
-              builder: (ctx, c, child) => Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 9.0,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                  color: c,
-                  height: 1.1,
-                ),
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

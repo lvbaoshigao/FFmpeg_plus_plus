@@ -669,7 +669,7 @@ class _SettingsPageState extends State<SettingsPage> {
     final searching = _searchExpanded;
 
     return Padding(
-      padding: EdgeInsets.fromLTRB(12, safeTop + 6, 12, 6),
+      padding: EdgeInsets.fromLTRB(isMobilePlatform ? 8 : 12, safeTop + 6, isMobilePlatform ? 8 : 12, 6),
       child: Row(children: [
         // 左：标题药丸（搜索时淡出）
         AnimatedOpacity(

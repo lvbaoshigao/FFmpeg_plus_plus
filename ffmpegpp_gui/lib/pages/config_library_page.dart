@@ -611,7 +611,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                     ? const Center(child: CircularProgressIndicator())
                     : RepaintBoundary(
                         child: ListView(
-                          padding: EdgeInsets.fromLTRB(16, 16, 16, kMobileNavClearance),
+                          padding: EdgeInsets.fromLTRB(8, 8, 8, kMobileNavClearance),
                           children: [
                             if (_configs.isEmpty)
                               _buildEmptyState(scheme, zh)
@@ -718,27 +718,23 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     ];
   }
 
-  /// 移动端顶栏：左右药丸等宽布局（与项目页一致）。
+  /// 移动端顶栏：标题药丸自适应宽度（贴合内容），右侧操作药丸占剩余空间。
   Widget _buildMobileTopBar(ColorScheme scheme, bool zh) {
     final safeTop = MediaQuery.of(context).padding.top;
     return Padding(
-      padding: EdgeInsets.fromLTRB(12, safeTop + 6, 12, 6),
+      padding: EdgeInsets.fromLTRB(8, safeTop + 6, 8, 6),
       child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-        // 左：标题药丸（占 40% 宽度）
-        Expanded(
-          flex: 4,
-          child: MobileGlassPill(
-            radius: 22,
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-            pressable: true,
-            child: Text(zh ? '配置库' : 'Config Library',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-          ),
+        // 左：标题药丸（自适应内容宽度，标题与药丸贴合）
+        MobileGlassPill(
+          radius: 22,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+          pressable: true,
+          child: Text(zh ? '配置库' : 'Config Library',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
         ),
         const SizedBox(width: 8),
-        // 右：操作药丸（占 60% 宽度）
+        // 右：操作药丸（占剩余空间）
         Expanded(
-          flex: 6,
           child: MobileGlassPill(
             radius: 22,
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),

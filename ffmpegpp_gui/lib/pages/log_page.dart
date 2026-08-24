@@ -88,12 +88,11 @@ class _LogPageState extends State<LogPage> {
     if (isMobilePlatform) {
       final safeTop = MediaQuery.of(context).padding.top;
       return Padding(
-        padding: EdgeInsets.fromLTRB(12, safeTop + 6, 12, 6),
+        padding: EdgeInsets.fromLTRB(8, safeTop + 6, 8, 6),
         child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-          // 左：返回按钮 + 标题药丸（占 40% 宽度）
-          Expanded(
-            flex: 4,
-            child: Row(children: [
+          // 左：返回按钮 + 标题药丸（自适应宽度，标题贴合药丸）
+          Flexible(
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
               MobileGlassPill(
                 radius: 22,
                 padding: EdgeInsets.zero,
@@ -107,7 +106,7 @@ class _LogPageState extends State<LogPage> {
                 ),
               ),
               const SizedBox(width: 8),
-              Expanded(
+              Flexible(
                 child: MobileGlassPill(
                   radius: 22,
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
@@ -118,9 +117,8 @@ class _LogPageState extends State<LogPage> {
             ]),
           ),
           const SizedBox(width: 8),
-          // 右：操作药丸（占 60% 宽度）
+          // 右：操作药丸（占剩余空间）
           Expanded(
-            flex: 6,
             child: MobileGlassPill(
               radius: 22,
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
