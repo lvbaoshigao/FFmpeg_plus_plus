@@ -66,11 +66,14 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
   /// 这样所有 build 都使用同一份 const 实例，避免每次新建 settings 触发
   /// shader uniform 重置（移动端表现为液态玻璃"来回跳跃"闪烁）。
   static const _navLiquidSettings = OCLiquidGlassSettings(
-    refractStrength: -0.03,
+    // 3D 液态玻璃：u_size 修复后这些参数才真正生效。
+    // refractStrength（负 = 凹透镜）给水滴折射；spec 给镜面高光；lightband 给光带。
+    // 数值取中等：可见 3D，但不复现早期的「光污染/横线」。
+    refractStrength: -0.10,
     blurRadiusPx: 1.0,
-    specStrength: 0.0,
-    specWidth: 1,
-    lightbandStrength: 0.0,
+    specStrength: 3.0,
+    specWidth: 10,
+    lightbandStrength: 0.35,
     lightbandColor: Colors.white,
   );
 

@@ -125,11 +125,14 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
   // 导致 GPU shader uniform 重新初始化 → 视觉上"液态玻璃来回跳跃"。
   // 改用 Selector 精细订阅 + 稳定 key 后，shader 内部状态得以保留。
   static const _liquidSettings = OCLiquidGlassSettings(
-    refractStrength: -0.03,
+    // 3D 液态玻璃：u_size 修复后这些参数才真正生效。
+    // refractStrength（负 = 凹透镜）给水滴折射；spec 给镜面高光；lightband 给光带。
+    // 数值取中等：可见 3D，但不复现早期的「光污染/横线」。
+    refractStrength: -0.10,
     blurRadiusPx: 1.0,
-    specStrength: 0.0,
-    specWidth: 1,
-    lightbandStrength: 0.0,
+    specStrength: 3.0,
+    specWidth: 10,
+    lightbandStrength: 0.35,
     lightbandColor: Colors.white,
   );
 
