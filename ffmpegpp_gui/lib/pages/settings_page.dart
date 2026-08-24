@@ -665,6 +665,7 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 移动端顶栏：液态玻璃药丸——左标题药丸 + 右搜索药丸；
   /// 点击搜索后使用 AnimatedContainer 平滑展开，无卡顿。
   Widget _buildMobileTopBar(AppStrings s, ColorScheme scheme) {
+    final safeTop = MediaQuery.of(context).padding.top;
     final searching = _searchExpanded;
 
     // 顶栏改成 Stack：常规层（左标题药丸 + 右搜索按钮药丸）搜索时整体淡出+缩放
@@ -672,7 +673,7 @@ class _SettingsPageState extends State<SettingsPage> {
     // 折叠、搜索时 AnimatedSize「变长」到 200px 并水平居中。宽度固定 200，
     // 不再用 Expanded 把输入框撑满整行。
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 0, 8, 0),
+      padding: EdgeInsets.fromLTRB(8, safeTop + 6, 8, 6),
       child: Stack(alignment: Alignment.center, children: [
         // 常规状态：左标题药丸 + 右搜索按钮药丸
         AnimatedOpacity(
@@ -685,7 +686,7 @@ class _SettingsPageState extends State<SettingsPage> {
             child: IgnorePointer(
               ignoring: searching,
               child: Padding(
-                padding: const EdgeInsets.only(top: 6, bottom: 6),
+                padding: const EdgeInsets.only(top: 0, bottom: 6),
                 child: Row(children: [
                   MobileGlassPill(
                     radius: 22,

@@ -161,7 +161,10 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
     final op = key.op.clamp(0.0, 1.0);
     // 上限压低（约 41%~47% 不透明度）：避免浅色模式下 surface 底色叠满成
     // 一整片「发白」，让背景透出、保留玻璃通透感。
-    final maxAlpha = isDark ? 105 : 120;
+    // 移除外层 RepaintBoundary 后，shader 能真正采样到画布/页面背景；
+    // tint 太透会让药丸几乎看不见。把上限提高到 200/220 让玻璃质感更接近底部导航栏（255 全不透明），
+    // 又不会因为过满变回主题色块。
+    final maxAlpha = isDark ? 200 : 220;
     final baseAlpha = (op * maxAlpha).round().clamp(0, 255);
     final follow = key.follow;
     final baseColor = follow ? scheme.primary : scheme.surface;

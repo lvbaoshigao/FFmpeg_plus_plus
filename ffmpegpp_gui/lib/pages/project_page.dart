@@ -254,6 +254,7 @@ class ProjectPageState extends State<ProjectPage> {
   /// 搜索时标题药丸变成搜索药丸（变长），右侧动作药丸缩放隐藏。
   Widget _buildMobileTopBar(
       BuildContext context, AppState state, AppStrings s, ColorScheme scheme, Color clr) {
+    final safeTop = MediaQuery.of(context).padding.top;
     final searching = _searchVisible;
     final inSelection = _selectionMode;
     final selectedCount = _selectedIds.length + _selectedContainerIds.length;
@@ -286,7 +287,7 @@ class ProjectPageState extends State<ProjectPage> {
     // - 搜索药丸单独叠一层，常态 44px 折叠、搜索时 AnimatedSize「变长」到 200px
     //   并水平居中；宽度固定 200，不再用 Expanded 把输入框撑满整行。
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 0, 8, 0),
+      padding: EdgeInsets.fromLTRB(8, safeTop + 6, 8, 6),
       child: Stack(alignment: Alignment.center, children: [
         // 常规状态：左标题药丸 + 右动作药丸
         AnimatedOpacity(
@@ -299,7 +300,7 @@ class ProjectPageState extends State<ProjectPage> {
             child: IgnorePointer(
               ignoring: searching,
               child: Padding(
-                padding: const EdgeInsets.only(top: 6, bottom: 6),
+                padding: const EdgeInsets.only(top: 0, bottom: 6),
                 child: Row(children: [
                   MobileGlassPill(
                     radius: 22,
@@ -433,6 +434,7 @@ class ProjectPageState extends State<ProjectPage> {
   }
 
   /// 药丸内紧凑圆形图标按钮（缩小按钮间距）。
+  /// 移动端进一步把按钮间水平 padding 压到 1，让多个按钮排在药丸里更紧凑。
   Widget _pillAction(ColorScheme scheme, IconData icon, String tooltip, Color color,
       VoidCallback? onTap, {Color? bg}) {
     return Tooltip(
@@ -443,7 +445,10 @@ class ProjectPageState extends State<ProjectPage> {
         splashColor: Colors.transparent,
         highlightColor: Colors.transparent,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+          padding: EdgeInsets.symmetric(
+            horizontal: isMobilePlatform ? 1 : 2,
+            vertical: 2,
+          ),
           child: Container(
             width: 34,
             height: 34,
