@@ -659,11 +659,16 @@ class _SegmentedProgressBar extends StatelessWidget {
               widthFactor: i < callProgresses.length ? callProgresses[i].clamp(0.0, 1.0) : 0.0,
               child: Container(
                 decoration: BoxDecoration(
-                  color: i == currentCallIndex && callProgresses[i] < 1.0
-                      ? Colors.amber
-                      : callProgresses[i] >= 1.0
-                          ? Colors.green
-                          : scheme.primary,
+                  // 关键修复：callProgresses 长度可能 < segments（task 刚创建或 pipelineCalls 还没展开），
+                  // 直接 callProgresses[i] 会抛 RangeError 把整张 TaskCard 渲染挂掉 → 灰屏。
+                  // 越界时按 0.0 处理（pending 灰段）。
+                  color: i < callProgresses.length
+                      ? (i == currentCallIndex && callProgresses[i] < 1.0
+                          ? Colors.amber
+                          : callProgresses[i] >= 1.0
+                              ? Colors.green
+                              : scheme.primary)
+                      : scheme.primary,
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
