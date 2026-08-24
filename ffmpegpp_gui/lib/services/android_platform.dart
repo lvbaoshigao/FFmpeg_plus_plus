@@ -5,12 +5,14 @@ import '../platform/app_platform.dart';
 
 /// Android 原生能力桥接（通过 MainActivity 中的 MethodChannel 实现）：
 /// - nativeLibraryDir：APK 内置 native 库目录（libffmpegpp.so 后端动态库所在）
+/// - codeCacheDir：code_cache 目录（SELinux 上下文 app_exec_data_file，允许 exec）
+/// - prepareBundledTool：从 assets 复制 ffmpeg/ffprobe 到 codeCacheDir 并设置可执行权限
 /// - wallpaperColors：系统壁纸颜色（Monet 动态取色的种子色）
 ///
-/// ffmpeg/ffprobe 以「静态 PIE（ET_DYN，-static-pie）」打包为 jniLibs 里的
-/// libffmpeg.so / libffprobe.so。Android 安装器会把它们解压到 nativeLibraryDir
-/// （可执行上下文），因此无需复制到私有目录即可直接 exec——复制到 app_flutter/
-/// code_cache 会被 SELinux 拒绝 exec（Permission denied / exit 127）。
+/// ffmpeg/ffprobe 以「静态 PIE（ET_DYN，-static-pie）」打包在 assets 里。
+/// 首次启动时通过 prepareBundledTool 复制到 codeCacheDir（SELinux 允许 exec），
+/// 赋予可执行权限后即可直接 exec。这避免了 jniLibs 解压到 nativeLibraryDir
+/// 可能遇到的 SIGSEGV 问题（静态 PIE 在部分设备/Android 版本上的兼容性）。
 class AndroidPlatformBridge {
   static const MethodChannel _channel = MethodChannel('ffmpegpp/android');
 
@@ -24,7 +26,7 @@ class AndroidPlatformBridge {
     }
   }
 
-  /// code_cache 目录（保留兼容；本版本 ffmpeg/ffprobe 不再复制到此处）。
+  /// code_cache 目录（SELinux 上下文 app_exec_data_file，允许 exec）。
   static Future<String?> codeCacheDir() async {
     if (!isAndroidPlatform) return null;
     try {
@@ -34,21 +36,33 @@ class AndroidPlatformBridge {
     }
   }
 
-  /// 内置 ffmpeg 可执行文件路径：nativeLibraryDir/libffmpeg.so（静态 PIE 二进制）。
-  /// 安装器已解压并赋予可执行上下文，直接返回路径即可 exec。缺失返回 null。
-  static Future<String?> bundledFfmpegPath() => _bundledLibPath('libffmpeg.so');
+  /// 内置 ffmpeg 可执行文件路径：从 assets 复制到 codeCacheDir/ffmpeg。
+  /// 首次调用时执行复制并设置可执行权限，后续调用直接返回路径。失败返回 null。
+  static Future<String?> bundledFfmpegPath() => _prepareBundledTool('ffmpeg');
 
-  /// 内置 ffprobe 可执行文件路径：nativeLibraryDir/libffprobe.so。
-  static Future<String?> bundledFfprobePath() => _bundledLibPath('libffprobe.so');
+  /// 内置 ffprobe 可执行文件路径：从 assets 复制到 codeCacheDir/ffprobe。
+  /// 首次调用时执行复制并设置可执行权限，后续调用直接返回路径。失败返回 null。
+  static Future<String?> bundledFfprobePath() => _prepareBundledTool('ffprobe');
 
-  /// 解析 jniLibs 里的内置 PIE 二进制路径（复用 nativeLibraryDir）。
-  static Future<String?> _bundledLibPath(String libName) async {
+  /// 从 assets 复制二进制到 codeCacheDir 并设置可执行权限。
+  /// 返回最终的可执行路径，失败返回 null。
+  static Future<String?> _prepareBundledTool(String assetName) async {
     if (!isAndroidPlatform) return null;
     try {
-      final dir = await nativeLibraryDir();
-      if (dir == null || dir.isEmpty) return null;
-      final p = '$dir${Platform.pathSeparator}$libName';
-      return await File(p).exists() ? p : null;
+      final cacheDir = await codeCacheDir();
+      if (cacheDir == null || cacheDir.isEmpty) return null;
+      final destPath = '$cacheDir${Platform.pathSeparator}$assetName';
+      
+      // 调用原生方法：从 assets 复制到 destPath 并设置可执行权限
+      final ok = await _channel.invokeMethod<bool>('prepareBundledTool', {
+        'assetName': assetName,
+        'destPath': destPath,
+      });
+      
+      if (ok == true && await File(destPath).exists()) {
+        return destPath;
+      }
+      return null;
     } catch (_) {
       return null;
     }
