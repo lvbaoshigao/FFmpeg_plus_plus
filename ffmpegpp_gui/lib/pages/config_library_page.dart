@@ -718,7 +718,8 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     ];
   }
 
-  /// 移动端顶栏：标题药丸自适应宽度（贴合内容），右侧操作药丸占剩余空间。
+  /// 移动端顶栏：标题药丸自适应宽度（贴合内容），右侧操作药丸也按内容自适应
+  ///（贴合图标按钮宽度，不再用 Expanded 强制填满剩余空间）。
   Widget _buildMobileTopBar(ColorScheme scheme, bool zh) {
     final safeTop = MediaQuery.of(context).padding.top;
     return Padding(
@@ -733,12 +734,15 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
         ),
         const SizedBox(width: 8),
-        // 右：操作药丸（占剩余空间）
-        Expanded(
-          child: MobileGlassPill(
-            radius: 22,
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-            child: Row(children: _buildTopActions(scheme, zh)),
+        // 右：操作药丸（贴合内容，不再用 Expanded 强制填满剩余空间）。
+        Flexible(
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: MobileGlassPill(
+              radius: 22,
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+              child: Row(children: _buildTopActions(scheme, zh)),
+            ),
           ),
         ),
       ]),

@@ -674,10 +674,10 @@ class _SettingsPageState extends State<SettingsPage> {
         // 左：标题药丸（搜索时淡出）
         AnimatedOpacity(
           opacity: searching ? 0.0 : 1.0,
-          duration: const Duration(milliseconds: 200),
+          duration: const Duration(milliseconds: 220),
           child: AnimatedScale(
-            scale: searching ? 0.8 : 1.0,
-            duration: const Duration(milliseconds: 200),
+            scale: searching ? 0.85 : 1.0,
+            duration: const Duration(milliseconds: 220),
             curve: Curves.easeOutCubic,
             child: IgnorePointer(
               ignoring: searching,
@@ -692,72 +692,94 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ),
         const SizedBox(width: 8),
-        // 右：搜索按钮/搜索框（平滑展开）
+        // 右：搜索按钮/搜索框（贴合内容宽度，按要求四步过渡：
+        //   1) 搜索图标"缩放到消失"
+        //   2) 药丸整体向中移动（AnimatedAlign alignment: right→center）
+        //   3) 药丸变长（AnimatedSize 撑开）
+        //   4) 液态玻璃药丸内部从"搜索按钮"交叉淡入到"搜索输入框"（同药丸不变）
+        //
+        // 用 Expanded 给 AnimatedSize 一个完整的横向约束，否则在 Row 里
+        // 它会按 MainAxisSize.min 取自己的固有宽度，导致搜索框无法撑开。
         Expanded(
           child: AnimatedSize(
-            duration: const Duration(milliseconds: 280),
+            duration: const Duration(milliseconds: 320),
             curve: Curves.easeOutCubic,
             alignment: Alignment.centerRight,
-            child: searching
-                ? _buildSearchField(s, scheme)
-                : Align(
-                    alignment: Alignment.centerRight,
-                    child: MobileGlassPill(
-                      radius: 22,
-                      padding: EdgeInsets.zero,
-                      child: SizedBox(
-                        width: 44,
-                        height: 44,
-                        child: IconButton(
-                          icon: Icon(Icons.search, size: 20, color: scheme.onSurface),
-                          tooltip: s.setSearchHint,
-                          onPressed: () {
-                            setState(() => _searchExpanded = true);
-                            WidgetsBinding.instance.addPostFrameCallback((_) => _searchFocus.requestFocus());
-                          },
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+            child: AnimatedAlign(
+              duration: const Duration(milliseconds: 320),
+              curve: Curves.easeOutCubic,
+              alignment: searching ? Alignment.center : Alignment.centerRight,
+              child: MobileGlassPill(
+                radius: 22,
+                padding: searching
+                    ? const EdgeInsets.symmetric(horizontal: 12, vertical: 6)
+                    : EdgeInsets.zero,
+                child: searching
+                    ? _buildSearchField(s, scheme)
+                    : AnimatedOpacity(
+                        opacity: searching ? 0.0 : 1.0,
+                        duration: const Duration(milliseconds: 180),
+                        child: AnimatedScale(
+                          scale: searching ? 0.0 : 1.0,
+                          duration: const Duration(milliseconds: 180),
+                          curve: Curves.easeInCubic,
+                          child: SizedBox(
+                            width: 44,
+                            height: 44,
+                            child: IconButton(
+                              icon: Icon(Icons.search, size: 20, color: scheme.onSurface),
+                              tooltip: s.setSearchHint,
+                              onPressed: () {
+                                setState(() => _searchExpanded = true);
+                                WidgetsBinding.instance.addPostFrameCallback((_) => _searchFocus.requestFocus());
+                              },
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                  ),
+              ),
+            ),
           ),
         ),
       ]),
     );
   }
 
-  /// 搜索输入框（无边框药丸样式，内部使用 TextField）
+  /// 搜索输入框：嵌在 MobileGlassPill 内部，不再使用 Material outline 边框。
   Widget _buildSearchField(AppStrings s, ColorScheme scheme) {
-    return Container(
+    return SizedBox(
       height: 44,
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withAlpha(140),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(
-          color: scheme.outline.withAlpha(60),
-          width: 0.5,
-        ),
-      ),
       child: Row(children: [
-        const SizedBox(width: 14),
-        Icon(Icons.search, size: 18, color: scheme.outline),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 180),
+          transitionBuilder: (child, anim) =>
+              FadeTransition(opacity: anim, child: child),
+          child: Icon(
+            Icons.search,
+            key: const ValueKey('settings-search-icon'),
+            size: 18,
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
         const SizedBox(width: 8),
         Expanded(
           child: TextField(
-            autofocus: true,
             controller: _searchCtrl,
             focusNode: _searchFocus,
             style: TextStyle(fontSize: 14, color: scheme.onSurface),
             decoration: InputDecoration(
               hintText: s.setSearchHint,
-              hintStyle: TextStyle(fontSize: 14, color: scheme.outline),
+              hintStyle: TextStyle(fontSize: 14, color: scheme.onSurfaceVariant),
               border: InputBorder.none,
-              isDense: true,
+              isCollapsed: true,
+              contentPadding: const EdgeInsets.symmetric(vertical: 13),
             ),
             onChanged: (v) => setState(() => _query = v),
           ),
         ),
+        // 关闭按钮
         IconButton(
           icon: Icon(Icons.close, size: 18, color: scheme.onSurfaceVariant),
           tooltip: s.setClearSearch,

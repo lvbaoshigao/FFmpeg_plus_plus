@@ -134,7 +134,8 @@ class _QueuePageState extends State<QueuePage> {
   }
 
   /// 移动端顶栏：左侧标题药丸自适应宽度（内容贴合，不撑满），
-  /// 右侧操作药丸占剩余空间（与项目页布局一致）。
+  /// 右侧操作药丸也按内容自适应（贴合 CPU/内存占用条 + 按钮），
+  /// 两者之间留固定 8px 间隙，不再用 Expanded 强制撑满剩余宽度。
   Widget _buildMobileTopBar(ColorScheme scheme, AppState state, AppStrings s) {
     final safeTop = MediaQuery.of(context).padding.top;
     return Padding(
@@ -149,14 +150,17 @@ class _QueuePageState extends State<QueuePage> {
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
         ),
         const SizedBox(width: 8),
-        // 右：操作药丸（占剩余空间，横向滚动防溢出）
-        Expanded(
-          child: MobileGlassPill(
-            radius: 22,
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(children: _buildActions(scheme, state, s)),
+        // 右：操作药丸（贴合内容：横向滚动防溢出，不再用 Expanded 强制填满剩余空间）。
+        Flexible(
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: MobileGlassPill(
+              radius: 22,
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(children: _buildActions(scheme, state, s)),
+              ),
             ),
           ),
         ),

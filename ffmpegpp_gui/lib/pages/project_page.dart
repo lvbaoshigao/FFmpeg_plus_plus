@@ -278,16 +278,19 @@ class ProjectPageState extends State<ProjectPage> {
         : Text(s.navProjects,
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface));
 
+    // 只构建一次动作按钮列表，避免在 for-loop 里反复调用 _buildMobileActions()。
+    final actionWidgets = _buildMobileActions(context, state, s, scheme, inSelection);
+
     return Padding(
       padding: EdgeInsets.fromLTRB(isMobilePlatform ? 8 : 12, safeTop + 6, isMobilePlatform ? 8 : 12, 6),
       child: Row(children: [
         // 左：标题药丸（搜索时淡出）
         AnimatedOpacity(
           opacity: searching ? 0.0 : 1.0,
-          duration: const Duration(milliseconds: 200),
+          duration: const Duration(milliseconds: 220),
           child: AnimatedScale(
-            scale: searching ? 0.8 : 1.0,
-            duration: const Duration(milliseconds: 200),
+            scale: searching ? 0.85 : 1.0,
+            duration: const Duration(milliseconds: 220),
             curve: Curves.easeOutCubic,
             child: IgnorePointer(
               ignoring: searching,
@@ -301,46 +304,73 @@ class ProjectPageState extends State<ProjectPage> {
           ),
         ),
         const SizedBox(width: 8),
-        // 右：动作药丸/搜索框（平滑展开）
+        // 右：动作药丸/搜索框（贴合内容宽度，按要求四步过渡：
+        //   1) 其它图标依次"缩放到消失"（每个 _pillAction 用 AnimatedOpacity+AnimatedScale 包）
+        //   2) 药丸整体向中移动（AnimatedAlign alignment: right→center）
+        //   3) 药丸变长（AnimatedSize 撑开）
+        //   4) 液态玻璃药丸内部从"动作按钮"交叉淡入到"搜索输入框"（同药丸不变）
+        //
+        // 用 Expanded 给 AnimatedSize 一个完整的横向约束，否则在 Row 里
+        // 它会按 MainAxisSize.min 取自己的固有宽度，导致搜索框无法撑开。
         Expanded(
           child: AnimatedSize(
-            duration: const Duration(milliseconds: 280),
+            duration: const Duration(milliseconds: 320),
             curve: Curves.easeOutCubic,
             alignment: Alignment.centerRight,
-            child: searching
-                ? _buildSearchField(s, scheme)
-                : Align(
-                    alignment: Alignment.centerRight,
-                    child: MobileGlassPill(
-                      radius: 22,
-                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
-                      child: Row(
+            child: AnimatedAlign(
+              duration: const Duration(milliseconds: 320),
+              curve: Curves.easeOutCubic,
+              alignment: searching ? Alignment.center : Alignment.centerRight,
+              child: MobileGlassPill(
+                radius: 22,
+                padding: searching
+                    ? const EdgeInsets.symmetric(horizontal: 12, vertical: 6)
+                    : const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+                child: searching
+                    ? _buildSearchField(s, scheme)
+                    : Row(
                         mainAxisSize: MainAxisSize.min,
-                        children: _buildMobileActions(context, state, s, scheme, inSelection),
+                        children: [
+                          for (final w in actionWidgets)
+                            // 让每个动作按钮"缩放到消失"：搜索时透明度 0 + 缩放 0，
+                          // 让关闭/隐藏过程更"软"。
+                            AnimatedOpacity(
+                              opacity: searching ? 0.0 : 1.0,
+                              duration: const Duration(milliseconds: 180),
+                              child: AnimatedScale(
+                                scale: searching ? 0.0 : 1.0,
+                                duration: const Duration(milliseconds: 180),
+                                curve: Curves.easeInCubic,
+                                child: w,
+                              ),
+                            ),
+                        ],
                       ),
-                    ),
-                  ),
+              ),
+            ),
           ),
         ),
       ]),
     );
   }
 
-  /// 搜索输入框（无边框药丸样式，内部使用 TextField）
+  /// 搜索输入框：嵌在 MobileGlassPill 内部，不再使用 Material outline 边框。
+  /// 通过 AnimatedSwitcher 让图标们"缩放到消失"，TextField 平滑出现。
   Widget _buildSearchField(AppStrings s, ColorScheme scheme) {
-    return Container(
+    return SizedBox(
       height: 44,
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withAlpha(140),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(
-          color: scheme.outline.withAlpha(60),
-          width: 0.5,
-        ),
-      ),
       child: Row(children: [
-        const SizedBox(width: 14),
-        Icon(Icons.search, size: 18, color: scheme.outline),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 180),
+          transitionBuilder: (child, anim) =>
+              FadeTransition(opacity: anim, child: child),
+          child: Icon(
+            Icons.search,
+            key: const ValueKey('search-icon'),
+            size: 18,
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
         const SizedBox(width: 8),
         Expanded(
           child: TextField(
@@ -348,23 +378,26 @@ class ProjectPageState extends State<ProjectPage> {
             style: TextStyle(fontSize: 14, color: scheme.onSurface),
             decoration: InputDecoration(
               hintText: s.searchVideos,
-              hintStyle: TextStyle(color: scheme.outline, fontSize: 14),
+              hintStyle: TextStyle(color: scheme.onSurfaceVariant, fontSize: 14),
               border: InputBorder.none,
-              isDense: true,
+              isCollapsed: true,
+              contentPadding: const EdgeInsets.symmetric(vertical: 13),
             ),
             onChanged: (v) => setState(() => _searchQuery = v),
           ),
         ),
-        IconButton(
-          icon: Icon(Icons.close, size: 18, color: scheme.onSurfaceVariant),
-          onPressed: () => setState(() {
+        // 关闭按钮：与动作药丸里的图标保持一致的圆形可点形态
+        _pillAction(
+          scheme,
+          Icons.close,
+          s.cancel,
+          scheme.onSurfaceVariant,
+          () => setState(() {
             _searchVisible = false;
             _searchQuery = '';
           }),
-          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-          padding: EdgeInsets.zero,
         ),
-        const SizedBox(width: 4),
+
       ]),
     );
   }

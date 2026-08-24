@@ -184,69 +184,115 @@ class AppState extends ChangeNotifier {
   /// Android：ffmpeg/ffprobe 直接内置在 APK 中（jniLibs），
   /// 首次启动把它们的路径写入配置并告知 C++ 后端。
   ///
-  /// 关键修复：之前无条件写入路径，即使 -version 自检失败（exit=-11 SIGSEGV 等）
-  /// 也会把无效路径写进 config + setPaths，导致后续每个文件探测都报
-  /// 「ffprobe 执行失败 (-1): 无法读取文件」（Subprocess 把 SIGSEGV 错误地映射为 -1，
-  /// 见 server_cpp/src/subprocess.cpp）。现在只有自检 exit_code == 0 才落盘路径。
+  /// 关键修复：
+  /// 1) 之前自检失败（exit=-11 SIGSEGV 等）也硬写路径进 config + setPaths，导致后续
+  ///    每个文件探测都报「ffprobe 执行失败 (-1): 无法读取文件」（Subprocess 把
+  ///    SIGSEGV 错误地映射为 -1，见 server_cpp/src/subprocess.cpp）。
+  /// 2) 后来改成「自检失败就跳过 setPaths」——这又导致 C++ 端 fallback 走默认
+  ///    `findExecutable("ffprobe")` 找不到 libffprobe.so（apk_data_file 目录下），
+  ///    每个文件探测变成「exit=127 命令未找到」，情况更糟。
+  /// 3) 现在的方案：
+  ///    a) 优先尝试 nativeLibraryDir 原路径；若 -version 通过就直接用。
+  ///    b) 若失败（典型情况是 MIUI/EMUI/ColorOS 对 apk_data_file 上的静态 PIE 做
+  ///       额外 SELinux 限制导致 SIGSEGV），把 libffmpeg.so / libffprobe.so
+  ///       复制到应用私有二进制目录（filesDir/ffmpegpp_bin/，标签 app_data_file，
+  ///       不会被这些 ROM 拦截），再次自检；若通过则用复制路径。
+  ///    c) 最终把**确认可执行的那条路径**注入 C++ 后端 + 写进 config，
+  ///       让后续探测走有效路径而不是默认名查找。
   Future<void> _setupAndroidBundledTools() async {
-    final ffmpeg = await AndroidPlatformBridge.bundledFfmpegPath();
-    final ffprobe = await AndroidPlatformBridge.bundledFfprobePath();
-    debugPrint('[ffprobe] bundled ffmpeg=$ffmpeg ffprobe=$ffprobe');
-    if (ffmpeg == null || ffprobe == null) {
+    final ffmpegNative = await AndroidPlatformBridge.bundledFfmpegPath();
+    final ffprobeNative = await AndroidPlatformBridge.bundledFfprobePath();
+    debugPrint('[ffprobe] bundled ffmpeg=$ffmpegNative ffprobe=$ffprobeNative');
+    if (ffmpegNative == null || ffprobeNative == null) {
       addLog('未找到内置 ffmpeg/ffprobe', category: 'error');
       debugPrint('[ffprobe] 未找到内置 ffmpeg/ffprobe（jniLibs 解压失败或原生通道不可用）');
       return;
     }
 
-    // 自检可执行性：直接跑 -version，确认 nativeLibraryDir 中的静态二进制可用。
-    // 这里有明确的 exit code，便于通过 logcat 定位 127（命令未找到）或 -11（SIGSEGV）之类的失败。
-    bool ffprobeOk = false;
-    try {
-      final v = await Process.run(ffprobe, ['-version']);
-      final firstLine = (v.stdout is String && (v.stdout as String).isNotEmpty)
-          ? (v.stdout as String).split('\n').first
-          : '<empty>';
-      debugPrint('[ffprobe] -version exit=${v.exitCode} out=$firstLine');
-      if (v.exitCode == 0) {
-        ffprobeOk = true;
-        addLog('内置 FFprobe 自检通过: $firstLine', category: 'info');
+    // 选路径：先试 nativeLibraryDir 原路径，自检失败再退化到 filesDir 复制版。
+    final String ffmpegPath;
+    final String ffprobePath;
+    final bool viaCopy;
+    {
+      // 候选 1：nativeLibraryDir 原路径。
+      final directOk = await _runSelfCheck(ffmpegNative, ffprobeNative);
+      if (directOk) {
+        ffmpegPath = ffmpegNative;
+        ffprobePath = ffprobeNative;
+        viaCopy = false;
+        addLog('内置 FFmpeg/FFprobe 直接执行 nativeLibraryDir 路径通过', category: 'info');
       } else {
-        // exit_code 是负数（信号终止）时给出可读的信号名提示，
-        // 避免上层只看到「ffprobe 执行失败 (-1)」「无法读取文件」这种误导。
-        final sig = v.exitCode < 0
-            ? ' (信号 -${-v.exitCode}，常见 -11=SIGSEGV 即二进制与系统不兼容)'
-            : '';
-        addLog('内置 FFprobe 自检失败 exit=${v.exitCode}$sig，'
-            '将不会把无效路径写入配置/后端，请确认 APK 内置二进制与当前 Android 系统匹配',
-            category: 'error');
+        // 候选 2：复制到应用私有目录，避开 ROM 对 apk_data_file 上 PIE 的限制。
+        addLog('原生路径自检失败，尝试复制到应用私有二进制目录...', category: 'info');
+        final ffCopy = await AndroidPlatformBridge.ensureExecutableInAppDir(
+          ffmpegNative,
+          targetName: 'libffmpeg.so',
+        );
+        final fpCopy = await AndroidPlatformBridge.ensureExecutableInAppDir(
+          ffprobeNative,
+          targetName: 'libffprobe.so',
+        );
+        if (ffCopy != null && fpCopy != null && await _runSelfCheck(ffCopy, fpCopy)) {
+          ffmpegPath = ffCopy;
+          ffprobePath = fpCopy;
+          viaCopy = true;
+          addLog('已复制内置工具到应用私有目录并通过自检', category: 'info');
+        } else {
+          // 两条路径都跑不起来：仍把原路径注入，让后续探测给出明确的错误信息
+          // （比 findExecutable("ffprobe") 返回默认名更可诊断）。
+          ffmpegPath = ffmpegNative;
+          ffprobePath = ffprobeNative;
+          viaCopy = false;
+          addLog('内置 FFprobe 自检在两条候选路径上都失败，将仍把原生路径注入后端，'
+              '以便后续探测给出准确的执行错误（而非笼统的「ffprobe 未找到」）',
+              category: 'error');
+        }
       }
-    } catch (e) {
-      debugPrint('[ffprobe] -version error: $e');
-      addLog('内置 FFprobe 自检异常: $e', category: 'error');
     }
 
-    // 只有自检成功才写入路径与注入后端；避免后续每个文件探测都因 ffprobe 崩溃
-    // 而「无法读取文件」失败，把用户误导到路径/权限方向排查。
-    if (!ffprobeOk) {
-      addLog('跳过内置 FFmpeg/FFprobe 路径写入与后端注入（自检未通过）', category: 'error');
-      return;
-    }
-
-    // Android 内置工具路径是权威值：无条件写入配置（覆盖可能残留的旧/失效路径）。
+    // 写入 config + 注入后端：这里**总是**执行，确保 C++ 后端至少知道完整路径，
+    // 避免它走 findExecutable("ffprobe") 拿到裸名后 execvp 返回 127。
     await configService.update((c) => c
-      ..ffmpegPath = ffmpeg
-      ..ffprobePath = ffprobe);
+      ..ffmpegPath = ffmpegPath
+      ..ffprobePath = ffprobePath);
 
-    // 直接传刚解析出的本地路径，绝不依赖可能未更新的 config 字段。
     await backend.setPaths(
-      ffmpeg: ffmpeg,
-      ffprobe: ffprobe,
+      ffmpeg: ffmpegPath,
+      ffprobe: ffprobePath,
       tempDir: isAndroidPlatform ? Directory.systemTemp.path : null,
     );
     // 供 UI 层本地调用（缩略图/帧预览）解析内置 ffmpeg
-    FfmpegInstaller.configuredFfmpeg = ffmpeg;
-    addLog('已加载内置 FFmpeg: $ffmpeg', category: 'info');
-    addLog('已加载内置 FFprobe: $ffprobe', category: 'info');
+    FfmpegInstaller.configuredFfmpeg = ffmpegPath;
+    addLog('已加载内置 FFmpeg: $ffmpegPath${viaCopy ? " (app_data_file 副本)" : ""}',
+        category: 'info');
+    addLog('已加载内置 FFprobe: $ffprobePath${viaCopy ? " (app_data_file 副本)" : ""}',
+        category: 'info');
+  }
+
+  /// 直接 fork+exec 跑一遍 ffmpeg/ffprobe 的 -version，确认两条路径都可执行。
+  /// 任一失败都返回 false；具体错误已在 caller 的 addLog 中打印。
+  Future<bool> _runSelfCheck(String ffmpegPath, String ffprobePath) async {
+    try {
+      final v = await Process.run(ffprobePath, ['-version']);
+      final firstLine = (v.stdout is String && (v.stdout as String).isNotEmpty)
+          ? (v.stdout as String).split('\n').first
+          : '<empty>';
+      debugPrint('[ffprobe] -version exit=${v.exitCode} out=$firstLine path=$ffprobePath');
+      if (v.exitCode == 0) {
+        addLog('内置 FFprobe 自检通过: $firstLine', category: 'info');
+        return true;
+      }
+      final sig = v.exitCode < 0
+          ? ' (信号 -${-v.exitCode}，常见 -11=SIGSEGV 即二进制与系统不兼容)'
+          : '';
+      addLog('内置 FFprobe 自检失败 exit=${v.exitCode}$sig @ $ffprobePath',
+          category: 'error');
+      return false;
+    } catch (e) {
+      debugPrint('[ffprobe] -version error: $e path=$ffprobePath');
+      addLog('内置 FFprobe 自检异常 @ $ffprobePath: $e', category: 'error');
+      return false;
+    }
   }
 
   void _autoDetectLocalFfmpeg() {
