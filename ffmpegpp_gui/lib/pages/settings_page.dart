@@ -197,7 +197,13 @@ bool _sameBytes(String path, Uint8List bytes) {
   try {
     final f = File(path);
     if (!f.existsSync()) return false;
-    return f.lengthSync() == bytes.length;
+    // 先比较长度（快速路径），再比较内容（避免同长度不同文件被误判）
+    if (f.lengthSync() != bytes.length) return false;
+    final existing = f.readAsBytesSync();
+    for (int i = 0; i < bytes.length; i++) {
+      if (existing[i] != bytes[i]) return false;
+    }
+    return true;
   } catch (_) {
     return false;
   }
@@ -533,18 +539,28 @@ class _SettingsPageState extends State<SettingsPage> {
 
           return Scaffold(
             backgroundColor: Colors.transparent,
-            body: Column(children: [
-              _buildMobileTopBar(s, scheme),
-              Expanded(child: visible.isEmpty && searching
-                ? _emptyState(scheme, s)
-                : ListView(
-                    padding: const EdgeInsets.fromLTRB(6, 4, 6, kMobileNavClearance),
+            body: Stack(children: [
+              // 全屏可滚动的设置列表（顶部留出药丸空间）
+              // RepaintBoundary 防止边界滚动时 BackdropFilter 失效导致模糊消失
+              if (visible.isEmpty && searching)
+                _emptyState(scheme, s)
+              else
+                RepaintBoundary(
+                  child: ListView(
+                    padding: EdgeInsets.fromLTRB(6, MediaQuery.of(context).padding.top + 60, 6, kMobileNavClearance),
                     children: [
                       for (final (sec, cards) in visible)
                         _buildMobileSection(sec, cards, context, state, scheme, s),
                       const SizedBox(height: 16),
                     ],
                   ),
+                ),
+              // 顶部药丸浮层（不影响滚动）
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: _buildMobileTopBar(s, scheme),
               ),
             ]),
           );
@@ -1344,7 +1360,7 @@ const _presets = [
   ('Rose', 0xFFEF4444), ('Cyan', 0xFF06B6D4), ('Violet', 0xFF8B5CF6),
 ];
 
-const _kDefaultAnthropicModel = 'claude-opus-5';
+const _kDefaultAnthropicModel = 'claude-3-5-sonnet-20241022';
 
 /// 询问模式下可选"无需确认"的操作（显示名, 内部 key）。
 const _askSkipOptions = <(String, String)>[

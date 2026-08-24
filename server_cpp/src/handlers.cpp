@@ -223,9 +223,12 @@ std::string ProgressParser::fmtTime(double seconds) {
 std::vector<std::string> ProgressParser::findRegex(const std::string& str, const std::string& pattern) {
     // std::regex 构造（正则编译）开销大，而 feed 每行调用 5 次；
     // 按 pattern 缓存编译后的 regex，避免每次重复编译。
+    // 加锁保护：多线程并发调用（worker + probe/check_env/features）时避免数据竞争。
+    static std::mutex cacheMutex;
     static std::map<std::string, std::regex> cache;
     std::vector<std::string> matches;
     try {
+        std::lock_guard<std::mutex> lock(cacheMutex);
         auto it = cache.find(pattern);
         if (it == cache.end()) {
             it = cache.emplace(pattern, std::regex(pattern)).first;
@@ -687,7 +690,11 @@ void handleCustomCommand(const json& req, std::atomic<bool>& cancel_flag) {
 
     // 确保以 ffmpeg 可执行文件开头（用户可能输入裸 "ffmpeg" 或完整路径，
     // 也可能直接以参数开头，统一补上解析出的路径）
-    if (tokens[0].find("ffmpeg") == std::string::npos) {
+    // 精确 basename 匹配：避免 "my-ffmpeg-wrapper" 等非 ffmpeg 程序被误判
+    const std::string& first = tokens[0];
+    size_t lastSlash = first.find_last_of("/\\");
+    std::string basename = (lastSlash != std::string::npos) ? first.substr(lastSlash + 1) : first;
+    if (basename != "ffmpeg" && basename != "ffmpeg.exe") {
         tokens.insert(tokens.begin(), getFFmpegPath());
     }
 

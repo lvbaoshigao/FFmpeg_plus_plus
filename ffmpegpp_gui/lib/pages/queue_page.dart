@@ -41,29 +41,58 @@ class _QueuePageState extends State<QueuePage> {
         final s = AppStrings.of(state.config.language);
         return Scaffold(
           backgroundColor: Colors.transparent,
-          body: Column(children: [
+          body: Stack(children: [
+            // 全屏可滚动的内容（移动端顶部留出药丸空间）
             isMobilePlatform
-                ? _buildMobileTopBar(scheme, state, s)
-                : GlassTopBar(
-                    title: Text(s.navQueue),
-                    actions: _buildActions(scheme, state, s),
-                  ),
-          Expanded(child: Column(children: [
-            // ── 任务列表 ──
-            Expanded(child: state.tasks.isEmpty
-                ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(Icons.inbox_outlined, size: 64, color: scheme.outline),
-                    const SizedBox(height: 16),
-                    Text(s.emptyQueue, style: TextStyle(fontSize: 16, color: scheme.outline)),
-                    const SizedBox(height: 8),
-                    Text(s.emptyQueueHint, style: TextStyle(fontSize: 13, color: scheme.outline)),
-                  ]))
-                : ListView.builder(
-                    padding: EdgeInsets.fromLTRB(16, 8, 16, isMobilePlatform ? kMobileNavClearance : 8),
-                    itemCount: state.tasks.length,
-                    itemBuilder: (_, i) => TaskCard(key: ValueKey(state.tasks[i].id), task: state.tasks[i]),
-                  )),
-          ])),
+                ? Padding(
+                    padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top + 60),
+                    child: state.tasks.isEmpty
+                        ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+                            Icon(Icons.inbox_outlined, size: 64, color: scheme.outline),
+                            const SizedBox(height: 16),
+                            Text(s.emptyQueue, style: TextStyle(fontSize: 16, color: scheme.outline)),
+                            const SizedBox(height: 8),
+                            Text(s.emptyQueueHint, style: TextStyle(fontSize: 13, color: scheme.outline)),
+                          ]))
+                        : RepaintBoundary(
+                            child: ListView.builder(
+                              padding: EdgeInsets.fromLTRB(16, 8, 16, kMobileNavClearance),
+                              itemCount: state.tasks.length,
+                              itemBuilder: (_, i) => TaskCard(key: ValueKey(state.tasks[i].id), task: state.tasks[i]),
+                            ),
+                          ),
+                  )
+                : Column(children: [
+                    GlassTopBar(
+                      title: Text(s.navQueue),
+                      actions: _buildActions(scheme, state, s),
+                    ),
+                    Expanded(
+                      child: state.tasks.isEmpty
+                          ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+                              Icon(Icons.inbox_outlined, size: 64, color: scheme.outline),
+                              const SizedBox(height: 16),
+                              Text(s.emptyQueue, style: TextStyle(fontSize: 16, color: scheme.outline)),
+                              const SizedBox(height: 8),
+                              Text(s.emptyQueueHint, style: TextStyle(fontSize: 13, color: scheme.outline)),
+                            ]))
+                          : RepaintBoundary(
+                              child: ListView.builder(
+                                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                                itemCount: state.tasks.length,
+                                itemBuilder: (_, i) => TaskCard(key: ValueKey(state.tasks[i].id), task: state.tasks[i]),
+                              ),
+                            ),
+                    ),
+                  ]),
+            // 移动端顶栏浮层（不影响滚动）
+            if (isMobilePlatform)
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: _buildMobileTopBar(scheme, state, s),
+              ),
           ]),
         );
       },
