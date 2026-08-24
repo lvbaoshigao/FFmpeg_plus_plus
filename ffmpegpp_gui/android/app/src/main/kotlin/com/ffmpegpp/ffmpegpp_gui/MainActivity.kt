@@ -75,6 +75,13 @@ class MainActivity : FlutterActivity() {
      * 把 APK 内置的可执行文件（assets/ffmpeg、assets/ffprobe）流式复制到目标
      * 路径并设置可执行权限。
      *
+     * 【完整性校验】使用 assets.openFd(assetName).length 获取预期文件大小，
+     * 与目标文件对比。如果大小不匹配（可能是上次复制中途被杀导致截断），
+     * 删除并重新复制。复制后再次验证大小，确保文件完整。
+     *
+     * 【前提】build.gradle.kts 必须配置 noCompress += listOf("ffmpeg", "ffprobe")，
+     * 否则 assets.openFd() 会抛异常（压缩后的 asset 无法直接获取长度）。
+     *
      * 不用 jniLibs 装静态二进制：Android 安装器会对 .so 做 ELF 校验，ET_EXEC
      * 静态可执行文件可能不被解压到 nativeLibraryDir，导致子进程 exec 报 127。
      * assets 不被当作原生库校验，复制出来即可用。返回是否成功。
@@ -83,16 +90,40 @@ class MainActivity : FlutterActivity() {
         return try {
             val dest = File(destPath)
             dest.parentFile?.mkdirs()
-            if (!dest.exists() || dest.length() == 0L) {
+            
+            // 获取预期文件大小（noCompress 配置后，asset 未压缩，可用 openFd 获取长度）
+            val expectedSize = assets.openFd(assetName).length
+            Log.d("FFmpegpp", "prepareBundledTool expected size for " + assetName + ": " + expectedSize + " bytes")
+            
+            // 检查目标文件是否存在且大小正确
+            if (!dest.exists() || dest.length() != expectedSize) {
+                if (dest.exists()) {
+                    Log.w("FFmpegpp", "prepareBundledTool size mismatch: existing=" + dest.length() + " expected=" + expectedSize + ", deleting and re-copying")
+                    dest.delete()
+                }
+                
+                // 流式复制
                 assets.open(assetName).use { input ->
                     dest.outputStream().use { output -> input.copyTo(output) }
                 }
+                
+                // 验证复制后的大小
+                if (dest.length() != expectedSize) {
+                    Log.e("FFmpegpp", "prepareBundledTool copy verification failed: copied=" + dest.length() + " expected=" + expectedSize)
+                    dest.delete()
+                    return false
+                }
+                
+                Log.d("FFmpegpp", "prepareBundledTool copied " + assetName + " successfully: " + dest.length() + " bytes")
+            } else {
+                Log.d("FFmpegpp", "prepareBundledTool " + assetName + " already exists with correct size, skipping copy")
             }
+            
             val ok = dest.setExecutable(true, true) && dest.setReadable(true, false)
-            Log.e("FFmpegpp", "prepareBundledTool asset=$assetName dest=$destPath exists=${dest.exists()} len=${dest.length()} executable=$ok")
+            Log.d("FFmpegpp", "prepareBundledTool asset=" + assetName + " dest=" + destPath + " exists=" + dest.exists() + " len=" + dest.length() + " executable=" + ok)
             ok
         } catch (e: Exception) {
-            Log.e("FFmpegpp", "prepareBundledTool error: $assetName", e)
+            Log.e("FFmpegpp", "prepareBundledTool error: " + assetName, e)
             false
         }
     }
