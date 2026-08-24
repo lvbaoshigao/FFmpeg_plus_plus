@@ -618,11 +618,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                     : Column(children: [
                         _buildTabSelector(scheme, zh),
                         Expanded(
-                          child: RepaintBoundary(
-                            child: ListView(
-                              padding: EdgeInsets.fromLTRB(8, 8, 8, kMobileNavClearance),
-                              children: _buildTabContent(scheme, zh),
-                            ),
+                          child: ListView(
+                            padding: EdgeInsets.fromLTRB(8, 8, 8, kMobileNavClearance),
+                            children: _buildTabContent(scheme, zh),
                           ),
                         ),
                       ]),
@@ -636,12 +634,10 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                 Expanded(
                   child: !_loaded
                       ? const Center(child: CircularProgressIndicator())
-                      : RepaintBoundary(
-                          child: ListView(
+                      : ListView(
                             padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                             children: _buildTabContent(scheme, zh),
                           ),
-                        ),
                 ),
               ]),
         // 移动端顶栏浮层（不影响滚动）

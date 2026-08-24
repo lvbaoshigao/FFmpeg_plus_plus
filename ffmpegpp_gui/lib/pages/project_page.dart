@@ -505,13 +505,12 @@ class ProjectPageState extends State<ProjectPage> {
       return Center(child: Text(s.noMatch, style: TextStyle(fontSize: 14, color: clr)));
     }
 
-    return RepaintBoundary(
-      child: Column(children: [
-        ?probingBanner,
-        Expanded(child: ListView.builder(
-          padding: EdgeInsets.fromLTRB(isMobilePlatform ? 8 : 16, probingBanner != null ? 4 : 16, isMobilePlatform ? 8 : 16, isMobilePlatform ? kMobileNavClearance : 16),
+    return Column(children: [
+      if (probingBanner != null) probingBanner,
+      Expanded(child: ListView.builder(
+        padding: EdgeInsets.fromLTRB(isMobilePlatform ? 8 : 16, probingBanner != null ? 4 : 16, isMobilePlatform ? 8 : 16, isMobilePlatform ? kMobileNavClearance : 16),
         itemCount: totalCount,
-      itemBuilder: (_, i) {
+        itemBuilder: (_, i) {
         if (i < containerCount) {
           final c = state.containers[i];
           final isSelected = _selectedContainerIds.contains(c.id);
@@ -590,10 +589,8 @@ class ProjectPageState extends State<ProjectPage> {
               : VideoCard(video: video),
         );
       },
-    ),
-    ),
-    ]),
-    );
+    )),
+    ]);
   }
 
   /// 移动端可多选条目：长按进入多选模式，选中项高亮（不显示常驻复选框）。
