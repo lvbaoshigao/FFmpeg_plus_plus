@@ -31,6 +31,8 @@ class AppStrings {
   String get dragDropHint => lang == 'zh' ? '或拖拽文件到此处' : 'or drag & drop files here';
   String get noMatch => lang == 'zh' ? '未找到匹配的文件' : 'No matching files';
   String get searchVideos => lang == 'zh' ? '搜索文件...' : 'Search files...';
+  String get probingVideo => lang == 'zh' ? '正在探测文件信息…' : 'Probing file…';
+  String get probingHint => lang == 'zh' ? '大文件首调需要数秒到数十秒，请勿关闭' : 'Large files may take seconds to tens of seconds on first probe — please don\'t close';
   String get search => lang == 'zh' ? '搜索' : 'Search';
   String get close => lang == 'zh' ? '关闭' : 'Close';
   String get selectAll => lang == 'zh' ? '全选' : 'Select all';

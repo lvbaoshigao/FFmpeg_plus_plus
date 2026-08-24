@@ -16,7 +16,15 @@ struct ProcessResult {
     std::string stdout_output;
     std::string stderr_output;
     bool timed_out = false;
+    bool output_truncated = false;  // 累积输出超过 max_output_bytes 时置 true
 };
+
+// 子进程 stdout/stderr 累积上限。超过此值认为子进程失控（典型情况：
+// ffprobe 对 1GB+ 视频走 -show_streams 输出 10MB+ JSON），立刻 kill 并
+// 让 probe.cpp 把 result.output_truncated 翻译成友好错误。
+// 16MB 足够任何合理场景（正常 probe 仅 2-5KB），同时防止
+// Android 1GB 进程堆被吃光触发 OOM。
+constexpr size_t kMaxOutputBytes = 16 * 1024 * 1024;
 
 class Subprocess {
 public:

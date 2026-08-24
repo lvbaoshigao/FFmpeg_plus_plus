@@ -68,12 +68,36 @@ std::string formatDuration(double seconds) {
 
 ProbeResult probeFile(const std::string& filepath) {
     ProbeResult result;
+    // 导入探测只需基本流信息，不需完整 deep analysis。
+    // 限制：
+    //   -probesize 5MB（旧值 50MB）：mobile 上 ffprobe 解码 50MB codec headers
+    //     慢且吃内存；导入阶段只需识别 codec，不需完整帧头解析。
+    //   -analyzeduration 10s（旧值 100s）：用户导入时基本 5-10s 即可识别流类型
+    //     与 codec，长视频继续 deep analyze 也没必要。
+    //   -show_entries 限制输出：避免 ffprobe 把所有 side data / chapter list /
+    //     全 stream tags 都打印出来。对 1GB 视频这个 JSON 可能 10MB+。
+    //     限制后输出控制在 2-5KB，Dart 端 jsonDecode 也快很多。
     std::vector<std::string> cmd = {
         getFFprobePath(), "-v", "quiet", "-print_format", "json",
-        "-probesize", "50000000", "-analyzeduration", "100000000",
-        "-show_format", "-show_streams", filepath
+        "-probesize", "5000000", "-analyzeduration", "10000000",
+        "-show_entries",
+        "format=format_name,format_long_name,size,duration,bit_rate:"
+        "stream=index,codec_type,codec_name,codec_long_name,profile,"
+        "width,height,pix_fmt,nb_frames,avg_frame_rate,r_frame_rate,"
+        "color_space,color_transfer,color_primaries,sample_aspect_ratio,"
+        "channels,channel_layout,sample_rate",
+        "-show_entries", "stream_disposition=forced,default",
+        "-show_format", filepath
     };
-    auto pr = Subprocess::run(cmd, 120);
+    auto pr = Subprocess::run(cmd, 240);
+    if (pr.output_truncated) {
+        // 子进程输出超过 kMaxOutputBytes（16MB）被 Subprocess 强制 kill；
+        // 典型情况：用户用过大 probesize/analyzeduration 或让 ffprobe 完整
+        // -show_streams（未经 -show_entries 过滤）。直接给清晰错误。
+        result.error = std::string("ffprobe 输出过大（>16MB），可能是损坏/超长/"
+                                "非标视频，建议用 ffmpeg 重新转一次或联系开发者");
+        return result;
+    }
     if (pr.exit_code != 0) {
         // exit_code 解释：
         //  - 127  = execvp 失败（命令未找到，如 ffprobe 路径未配置）

@@ -149,18 +149,37 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
     DWORD n;
 
     auto start = std::chrono::steady_clock::now();
+    bool truncated = false;
     while (true) {
         DWORD avail = 0;
         PeekNamedPipe(hStdoutRead, nullptr, 0, nullptr, &avail, nullptr);
         if (avail > 0) {
             ReadFile(hStdoutRead, buf, std::min((DWORD)sizeof(buf)-1, avail), &n, nullptr);
-            stdout_data.append(buf, n);
+            if (stdout_data.size() + n > kMaxOutputBytes) {
+                stdout_data.append(buf, std::min<size_t>(n, kMaxOutputBytes - stdout_data.size()));
+            } else {
+                stdout_data.append(buf, n);
+            }
+            if (stdout_data.size() >= kMaxOutputBytes) {
+                truncated = true;
+                TerminateProcess(pi.hProcess, 1);
+                break;
+            }
         }
         avail = 0;
         PeekNamedPipe(hStderrRead, nullptr, 0, nullptr, &avail, nullptr);
         if (avail > 0) {
             ReadFile(hStderrRead, buf, std::min((DWORD)sizeof(buf)-1, avail), &n, nullptr);
-            stderr_data.append(buf, n);
+            if (stderr_data.size() + n > kMaxOutputBytes) {
+                stderr_data.append(buf, std::min<size_t>(n, kMaxOutputBytes - stderr_data.size()));
+            } else {
+                stderr_data.append(buf, n);
+            }
+            if (stderr_data.size() >= kMaxOutputBytes) {
+                truncated = true;
+                TerminateProcess(pi.hProcess, 1);
+                break;
+            }
         }
 
         DWORD exit_code;
@@ -192,6 +211,7 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
 
     result.stdout_output = stdout_data;
     result.stderr_output = stderr_data;
+    result.output_truncated = truncated;
 
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
@@ -429,6 +449,7 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
 
     auto start = std::chrono::steady_clock::now();
     bool child_exited = false;
+    bool truncated = false;
 
     while (!child_exited) {
         struct pollfd fds[2];
@@ -439,15 +460,38 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
         if (fds[0].revents & POLLIN) {
             ssize_t n;
             while ((n = read(stdout_pipe[0], buf, sizeof(buf) - 1)) > 0) {
-                stdout_data.append(buf, n);
+                if (stdout_data.size() + (size_t)n > kMaxOutputBytes) {
+                    stdout_data.append(buf, std::min<size_t>((size_t)n, kMaxOutputBytes - stdout_data.size()));
+                } else {
+                    stdout_data.append(buf, n);
+                }
+                if (stdout_data.size() >= kMaxOutputBytes) {
+                    truncated = true;
+                    kill(pid, SIGKILL);
+                    waitpid(pid, nullptr, 0);
+                    child_exited = true;
+                    break;
+                }
             }
         }
         if (fds[1].revents & POLLIN) {
             ssize_t n;
             while ((n = read(stderr_pipe[0], buf, sizeof(buf) - 1)) > 0) {
-                stderr_data.append(buf, n);
+                if (stderr_data.size() + (size_t)n > kMaxOutputBytes) {
+                    stderr_data.append(buf, std::min<size_t>((size_t)n, kMaxOutputBytes - stderr_data.size()));
+                } else {
+                    stderr_data.append(buf, n);
+                }
+                if (stderr_data.size() >= kMaxOutputBytes) {
+                    truncated = true;
+                    kill(pid, SIGKILL);
+                    waitpid(pid, nullptr, 0);
+                    child_exited = true;
+                    break;
+                }
             }
         }
+        if (child_exited) break;
 
         int status;
         pid_t w = waitpid(pid, &status, WNOHANG);
@@ -486,6 +530,7 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
 
     result.stdout_output = stdout_data;
     result.stderr_output = stderr_data;
+    result.output_truncated = truncated;
 
     closeFd(stdout_pipe[0]);
     closeFd(stderr_pipe[0]);
