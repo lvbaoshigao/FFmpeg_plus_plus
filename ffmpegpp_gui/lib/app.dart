@@ -626,14 +626,18 @@ class _AppShellState extends State<AppShell> with WindowListener {
     return _CsdWindowButton(icon: icon, color: color, hoverBg: hoverBg, onTap: onTap);
   }
 
-  /// 底部导航点击：切换选中页，并让 PageView 同步到对应位置（无动画跳转）。
+  /// 底部导航点击：切换选中页，并让 PageView 滑动到对应位置（带滑动动画）。
   void _selectMobileNav(int i) {
     context.read<AppState>().selectNav(i);
     final idx = _kMobileNavOrder.indexOf(i);
     if (idx >= 0 &&
         _mobilePageController.hasClients &&
         (_mobilePageController.page?.round() ?? idx) != idx) {
-      _mobilePageController.jumpToPage(idx);
+      _mobilePageController.animateToPage(
+        idx,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOutCubic,
+      );
     }
   }
 

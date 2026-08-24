@@ -76,10 +76,13 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
     final selectedColor = effect == 'blur' ? scheme.onPrimary : scheme.primary;
     final unselectedColor = scheme.onSurfaceVariant;
 
+    // 药丸间距：每个药丸之间留 4px 间隔
+    const pillGap = 4.0;
+
     Widget buildBarIn() {
       return Container(
         height: barHeight,
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
         decoration: BoxDecoration(
           color: tint,
           borderRadius: BorderRadius.circular(radius),
@@ -92,12 +95,14 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
         ),
         clipBehavior: Clip.antiAlias,
         child: LayoutBuilder(builder: (ctx, cons) {
-          final itemW = cons.maxWidth / items.length;
+          // 计算每个药丸的宽度（减去间距）
+          final totalGap = pillGap * (items.length - 1);
+          final itemW = (cons.maxWidth - totalGap) / items.length;
           final dragging = _dragX != null;
           return GestureDetector(
             behavior: HitTestBehavior.opaque,
             onLongPressStart: (d) => setState(() {
-              final curCenter = itemW * itemIdx + itemW / 2;
+              final curCenter = _itemCenter(itemIdx, itemW, pillGap);
               _dragGrabOffset = d.localPosition.dx - curCenter;
               _dragX = curCenter;
             }),
@@ -109,27 +114,35 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
               final dx = _dragX;
               setState(() => _dragX = null);
               if (dx != null) {
-                final target = ((dx - itemW / 2) / itemW)
-                    .floor()
-                    .clamp(0, items.length - 1);
+                // 根据遮罩中心落在哪个药丸区间来判定目标页
+                int target = 0;
+                for (var i = 0; i < items.length; i++) {
+                  final center = _itemCenter(i, itemW, pillGap);
+                  if ((dx - center).abs() < itemW / 2) {
+                    target = i;
+                    break;
+                  }
+                }
                 widget.onSelected(itemToPage[target] ?? 0);
               }
             },
             onLongPressCancel: () => setState(() => _dragX = null),
-            child: Stack(children: [
+            child: SizedBox(
+              width: cons.maxWidth,
+              height: cons.maxHeight,
+              child: Stack(children: [
               // 滑动遮罩胶囊：切换菜单时在条目间平滑滑动；长按拖动时跟随手指。
               AnimatedPositioned(
                 duration: dragging
                     ? Duration.zero
                     : const Duration(milliseconds: 260),
                 curve: Curves.easeOutCubic,
-                left: (dragging
-                        ? (_dragX! - itemW / 2)
-                        : (itemW * itemIdx)) +
-                    3,
+                left: dragging
+                    ? (_dragX! - itemW / 2)
+                    : _itemLeft(itemIdx, itemW, pillGap),
                 top: 2,
                 bottom: 2,
-                width: itemW - 6,
+                width: itemW,
                 child: AnimatedScale(
                   scale: dragging ? 1.12 : 1.0,
                   duration: const Duration(milliseconds: 180),
@@ -137,21 +150,29 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
                   child: _mask(scheme, isDark, effect),
                 ),
               ),
+              // 药丸行：每个药丸之间有间距，crossAxisAlignment.stretch 让药丸填满高度
               Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  for (var i = 0; i < items.length; i++)
-                    _NavItem(
-                      icon: items[i].$1,
-                      activeIcon: items[i].$2,
-                      label: items[i].$3,
-                      selected: i == itemIdx,
-                      selectedColor: selectedColor,
-                      unselectedColor: unselectedColor,
-                      onTap: () => widget.onSelected(itemToPage[i] ?? 0),
+                  for (var i = 0; i < items.length; i++) ...[
+                    if (i > 0) SizedBox(width: pillGap),
+                    SizedBox(
+                      width: itemW,
+                      child: _NavItem(
+                        icon: items[i].$1,
+                        activeIcon: items[i].$2,
+                        label: items[i].$3,
+                        selected: i == itemIdx,
+                        selectedColor: selectedColor,
+                        unselectedColor: unselectedColor,
+                        onTap: () => widget.onSelected(itemToPage[i] ?? 0),
+                      ),
                     ),
+                  ],
                 ],
               ),
             ]),
+            ),
           );
         }),
       );
@@ -208,6 +229,12 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
       ),
     );
   }
+
+  /// 第 i 个药丸的左边缘位置（考虑间距）。
+  double _itemLeft(int i, double itemW, double gap) => i * (itemW + gap);
+
+  /// 第 i 个药丸的中心位置（考虑间距）。
+  double _itemCenter(int i, double itemW, double gap) => i * (itemW + gap) + itemW / 2;
 
   /// 遮罩胶囊外观：blur=实心主题色；liquid=白→主题色渐变；none=半透明主题色。
   Widget _mask(ColorScheme scheme, bool isDark, String effect) {
@@ -280,46 +307,45 @@ class _NavItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = selected ? selectedColor : unselectedColor;
-    return Expanded(
-      child: Semantics(
-        selected: selected,
-        button: true,
-        label: label,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(24),
-          splashColor: Colors.transparent,
-          highlightColor: Colors.transparent,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              TweenAnimationBuilder<Color?>(
-                tween: ColorTween(end: color),
-                duration: const Duration(milliseconds: 220),
-                builder: (ctx, c, child) => Icon(
-                  selected ? activeIcon : icon,
-                  size: 27,
+    // 使用 GestureDetector 而非 InkWell：InkWell 内部的 TapGestureRecognizer
+    // 会与父级 GestureDetector 的 LongPressGestureRecognizer 竞争，
+    // 导致长按拖动遮罩不生效。GestureDetector 只注册 onTap，不干扰长按。
+    return Semantics(
+      selected: selected,
+      button: true,
+      label: label,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            TweenAnimationBuilder<Color?>(
+              tween: ColorTween(end: color),
+              duration: const Duration(milliseconds: 220),
+              builder: (ctx, c, child) => Icon(
+                selected ? activeIcon : icon,
+                size: 27,
+                color: c,
+              ),
+            ),
+            const SizedBox(height: 1),
+            TweenAnimationBuilder<Color?>(
+              tween: ColorTween(end: color),
+              duration: const Duration(milliseconds: 220),
+              builder: (ctx, c, child) => Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 9.0,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
                   color: c,
+                  height: 1.1,
                 ),
               ),
-              const SizedBox(height: 1),
-              TweenAnimationBuilder<Color?>(
-                tween: ColorTween(end: color),
-                duration: const Duration(milliseconds: 220),
-                builder: (ctx, c, child) => Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 9.0,
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                    color: c,
-                    height: 1.1,
-                  ),
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
