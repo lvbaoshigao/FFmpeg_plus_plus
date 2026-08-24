@@ -16,7 +16,7 @@ SYSROOT=$TOOLCHAIN/sysroot
 PREFIX=$SYSROOT/usr/local          # 装在 sysroot 内，pkg-config/链接路径天然正确
 API=26
 ARCH=aarch64
-JOBS=2
+JOBS="${JOBS:-2}"
 
 mkdir -p $BUILD/src $BUILD/binwrap $BUILD/dist
 cd $BUILD/src
@@ -172,7 +172,18 @@ else
 fi
 
 # ── 5. ffmpeg ──
-if [ ! -f $PREFIX/bin/ffmpeg ]; then
+# 缓存守卫：sysroot 安装产物缺失，或已 stage 的 dist 二进制缺失/无效（缺 PT_INTERP）
+# 都强制重建。教训：此前守卫只看 $PREFIX/bin/ffmpeg，ldflags 变更（-static-pie →
+# 动态 PIE）后旧静态产物被原样 stage、打包、安装，app 内 exec 直接 SIGSEGV(-11)。
+_ffmpeg_dist_ok() {
+  [ -f $BUILD/dist/libffmpeg.so ] && [ -f $BUILD/dist/libffprobe.so ] || return 1
+  $TOOLCHAIN/bin/llvm-readelf -lW $BUILD/dist/libffprobe.so 2>/dev/null \
+      | grep -q 'Requesting program interpreter' || return 1
+  $TOOLCHAIN/bin/llvm-readelf -lW $BUILD/dist/libffmpeg.so 2>/dev/null \
+      | grep -q 'Requesting program interpreter' || return 1
+  return 0
+}
+if [ ! -f $PREFIX/bin/ffmpeg ] || ! _ffmpeg_dist_ok; then
   fetch ffmpeg.tar.gz "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n8.0.tar.gz"
   rm -rf ffmpeg && mkdir ffmpeg && tar xf ffmpeg.tar.gz -C ffmpeg --strip-components=1
   cd ffmpeg
@@ -197,8 +208,8 @@ if [ ! -f $PREFIX/bin/ffmpeg ]; then
       --enable-gpl --enable-libx264 --enable-libx265 \
       --enable-libmp3lame --enable-libopus \
       --extra-cflags="-I$PREFIX/include $CFLAGS_COMMON" \
-      --extra-ldflags="-L$PREFIX/lib -lm" \
-      --extra-libs="-lc++ -ldl -lm" \
+      --extra-ldflags="-L$PREFIX/lib -lm -Wl,--dynamic-linker=/system/bin/linker64" \
+      --extra-libs="-l:libc++.a -l:libunwind.a -ldl -lm" \
       > $BUILD/ffmpeg_config.log 2>&1 || { tail -40 $BUILD/ffmpeg_config.log; exit 1; }
   log "building ffmpeg"
   make -j$JOBS > $BUILD/ffmpeg_make.log 2>&1 || { tail -40 $BUILD/ffmpeg_make.log; exit 1; }
@@ -214,7 +225,24 @@ fi
 #    jniLibs，Dart 侧直接 exec nativeLibraryDir/libffmpeg.so 与 libffprobe.so。──
 cp -f $PREFIX/bin/ffmpeg  $BUILD/dist/libffmpeg.so
 cp -f $PREFIX/bin/ffprobe $BUILD/dist/libffprobe.so
-log "ffmpeg/ffprobe staged: $(ls -la $BUILD/dist)"
+
+# ── 6.5 验收：stage 产物必须带 PT_INTERP（→ /system/bin/linker64）。
+#     Android 只允许 exec 带 INTERP 的 ELF；缺 INTERP 的静态 PIE 一启动就
+#     SIGSEGV(-11)。这里硬失败，杜绝坏产物流入 jniLibs / APK。──
+for _b in $BUILD/dist/libffmpeg.so $BUILD/dist/libffprobe.so; do
+  if ! $TOOLCHAIN/bin/llvm-readelf -lW "$_b" | grep -q 'Requesting program interpreter: /system/bin/linker64'; then
+    echo "ERROR: $_b 缺少 PT_INTERP(/system/bin/linker64)，Android 上无法 exec" >&2
+    echo "       请检查 configure 的 --extra-ldflags 是否保留了动态链接（勿加 -static/-static-pie）" >&2
+    exit 1
+  fi
+  # 只允许依赖系统公共库（libc/libm/libdl）；libc++_shared.so 是 NDK 私有库，
+  # 设备上不存在 —— 若 configure 自动附加了 -lc++，在这里硬失败而不是装进 APK。
+  if $TOOLCHAIN/bin/llvm-readelf -d "$_b" | grep -q 'libc++_shared\.so'; then
+    echo "ERROR: $_b 依赖 libc++_shared.so（系统不存在），需改用 -static-libstdc++" >&2
+    exit 1
+  fi
+done
+log "ffmpeg/ffprobe staged (PT_INTERP ok): $(ls -la $BUILD/dist)"
 
 # ── 7. libffmpegpp.so (C++ 后端) ──
 # 用源码 hash 标记判断是否需要重建：即使 restore-keys 恢复了旧缓存，
