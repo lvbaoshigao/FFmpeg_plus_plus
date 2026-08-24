@@ -193,10 +193,10 @@ class AppState extends ChangeNotifier {
   ///    每个文件探测变成「exit=127 命令未找到」，情况更糟。
   /// 3) 现在的方案：
   ///    a) 优先尝试 nativeLibraryDir 原路径；若 -version 通过就直接用。
-  ///    b) 若失败（典型情况是 MIUI/EMUI/ColorOS 对 apk_data_file 上的静态 PIE 做
-  ///       额外 SELinux 限制导致 SIGSEGV），把 libffmpeg.so / libffprobe.so
-  ///       复制到应用私有二进制目录（filesDir/ffmpegpp_bin/，标签 app_data_file，
-  ///       不会被这些 ROM 拦截），再次自检；若通过则用复制路径。
+  ///    b) 若失败（早前是 -static-pie 产物无 PT_INTERP 导致 exec 直接 SIGSEGV，
+  ///       现已在 build_ffmpeg.sh 改为动态 PIE），把 libffmpeg.so / libffprobe.so
+  ///       复制到应用私有二进制目录（filesDir/ffmpegpp_bin/）作为兜底，再次
+  ///       自检；若通过则用复制路径。
   ///    c) 最终把**确认可执行的那条路径**注入 C++ 后端 + 写进 config，
   ///       让后续探测走有效路径而不是默认名查找。
   Future<void> _setupAndroidBundledTools() async {
@@ -222,7 +222,7 @@ class AppState extends ChangeNotifier {
         viaCopy = false;
         addLog('内置 FFmpeg/FFprobe 直接执行 nativeLibraryDir 路径通过', category: 'info');
       } else {
-        // 候选 2：复制到应用私有目录，避开 ROM 对 apk_data_file 上 PIE 的限制。
+        // 候选 2：复制到应用私有目录，作为个别 ROM 意外拦截时的兜底。
         addLog('原生路径自检失败，尝试复制到应用私有二进制目录...', category: 'info');
         final ffCopy = await AndroidPlatformBridge.ensureExecutableInAppDir(
           ffmpegNative,
@@ -243,8 +243,16 @@ class AppState extends ChangeNotifier {
           ffmpegPath = ffmpegNative;
           ffprobePath = ffprobeNative;
           viaCopy = false;
-          addLog('内置 FFprobe 自检在两条候选路径上都失败，将仍把原生路径注入后端，'
-              '以便后续探测给出准确的执行错误（而非笼统的「ffprobe 未找到」）',
+          addLog('内置 FFprobe 自检在两条候选路径上都失败，'
+              '原路径与 filesDir 副本都会被注入后端用于诊断。',
+              category: 'error');
+          // 无 PT_INTERP 段的 static-pie 二进制在 Android 14+/SDK 34+ 上 fork+exec
+          // 会直接 SIGSEGV（exit=-11）。已在 build_ffmpeg.sh 去掉 -static-pie、改为
+          // 动态 PIE（带 PT_INTERP → /system/bin/linker64）；此处报错说明用的仍是旧
+          // 缓存产物，需要清理 FFMPEGPP_CACHE 里的 dist/ 后重新交叉编译。
+          addLog('libffprobe.so 缺少 PT_INTERP 段导致 exec 直接 SIGSEGV。'
+              '请清理 FFMPEGPP_CACHE 旧缓存并重跑 build/android/build_ffmpeg.sh，'
+              '新版已改为动态 PIE（带 PT_INTERP）。',
               category: 'error');
         }
       }

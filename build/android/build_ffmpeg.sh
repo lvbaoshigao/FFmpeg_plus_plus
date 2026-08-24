@@ -197,8 +197,8 @@ if [ ! -f $PREFIX/bin/ffmpeg ]; then
       --enable-gpl --enable-libx264 --enable-libx265 \
       --enable-libmp3lame --enable-libopus \
       --extra-cflags="-I$PREFIX/include $CFLAGS_COMMON" \
-      --extra-ldflags="-static-pie -L$PREFIX/lib -lm" \
-      --extra-libs="-lc++ -l:libunwind.a -ldl -lm" \
+      --extra-ldflags="-L$PREFIX/lib -lm" \
+      --extra-libs="-lc++ -ldl -lm" \
       > $BUILD/ffmpeg_config.log 2>&1 || { tail -40 $BUILD/ffmpeg_config.log; exit 1; }
   log "building ffmpeg"
   make -j$JOBS > $BUILD/ffmpeg_make.log 2>&1 || { tail -40 $BUILD/ffmpeg_make.log; exit 1; }
@@ -209,9 +209,9 @@ else
 fi
 
 # ── 6. 拷贝 ffmpeg/ffprobe 为 dist 产物。
-#    静态 PIE（ET_DYN，-static-pie）二进制会被 Android 安装器解压到
-#    nativeLibraryDir（可执行上下文），再由 build_apk.sh 转存到 jniLibs、
-#    Dart 侧直接 exec nativeLibraryDir/libffmpeg.so 与 libffprobe.so。──
+#    动态 PIE（ET_DYN，带 PT_INTERP → /system/bin/linker64）二进制会被 Android
+#    安装器解压到 nativeLibraryDir（可执行上下文），再由 build_apk.sh 转存到
+#    jniLibs，Dart 侧直接 exec nativeLibraryDir/libffmpeg.so 与 libffprobe.so。──
 cp -f $PREFIX/bin/ffmpeg  $BUILD/dist/libffmpeg.so
 cp -f $PREFIX/bin/ffprobe $BUILD/dist/libffprobe.so
 log "ffmpeg/ffprobe staged: $(ls -la $BUILD/dist)"

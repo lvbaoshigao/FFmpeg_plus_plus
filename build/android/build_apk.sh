@@ -15,11 +15,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/env.sh"
 
 # ── 1. 补齐 jniLibs（幂等） ──
-# libffmpegpp.so 是 C++ 后端动态库；libffmpeg.so / libffprobe.so 是静态 PIE
-# 可执行文件（ET_DYN，-static-pie）。三者都放 jniLibs/arm64-v8a：
-# Android 安装器会解压到 nativeLibraryDir（可执行上下文），Dart 侧直接 exec
-# nativeLibraryDir/libffmpeg.so 与 libffprobe.so，避免复制到 code_cache 后
-# SELinux 拒绝 exec（Permission denied / 127）。
+# libffmpegpp.so 是 C++ 后端动态库；libffmpeg.so / libffprobe.so 是动态 PIE
+# 可执行文件（ET_DYN，带 PT_INTERP → /system/bin/linker64）。三者都放
+# jniLibs/arm64-v8a：Android 安装器会解压到 nativeLibraryDir（可执行上下文），
+# Dart 侧直接 exec nativeLibraryDir/libffmpeg.so 与 libffprobe.so。
 JNI_DIR="$FFMPEGPP_ROOT/ffmpegpp_gui/android/app/src/main/jniLibs/arm64-v8a"
 mkdir -p "$JNI_DIR"
 
