@@ -133,11 +133,16 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
     const pillGap = 4.0;
 
     Widget buildBarIn() {
+      // 关键修复：liquid 模式下 OCLiquidGlass 自身已经接收 color=tint 作为
+      // 玻璃的 tint（GPU shader 内部叠加）；如果 buildBarIn 的外层 Container
+      // 再叠一层 color=tint，相当于「主题色 + 主题色」双重染色，
+      // 切换页面瞬间会出现「一大片主题色块」闪烁。
+      // liquid 模式 inner 用透明，只保留边框；blur/none 模式保留 tint。
       return Container(
         height: barHeight,
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
         decoration: BoxDecoration(
-          color: tint,
+          color: effect == 'liquid' ? Colors.transparent : tint,
           borderRadius: BorderRadius.circular(radius),
           border: Border.all(
             color: effect == 'blur'

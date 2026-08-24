@@ -9,6 +9,7 @@ import '../widgets/toast.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_glass_pill.dart';
 import '../platform/app_platform.dart';
+import '../app.dart' show wallpaperImageProvider;
 
 class LogPage extends StatefulWidget {
   const LogPage({super.key});
@@ -41,14 +42,35 @@ class _LogPageState extends State<LogPage> {
 
     return Scaffold(
       backgroundColor: Colors.transparent,
-      body: Column(children: [
-        _toolbar(scheme, cfg, entries, filtered, isZh),
-        _filterBar(scheme, isZh),
-        Expanded(child: filtered.isEmpty
-            ? Center(child: Text(isZh ? '暂无日志' : 'No logs yet',
-                style: TextStyle(color: scheme.outline, fontSize: 13)))
-            : _buildList(filtered, scheme, cfg, isZh)),
-      ]),
+      // 日志页是通过 Navigator.push 推到根 Navigator 的新路由，
+      // 不在 _buildRootStack 的壁纸 Stack 里。需要自己再贴一份壁纸。
+      // 这里用 Selector 只监听壁纸路径/透明度，避免每条日志 tick 都重建。
+      body: Selector<AppState, (String, double)>(
+        selector: (_, s) => (s.config.backgroundImage, s.config.backgroundOpacity),
+        builder: (context, bgTuple, _) {
+          final bg = bgTuple.$1;
+          final hasBg = bg.isNotEmpty;
+          return Stack(children: [
+            if (hasBg)
+              Positioned.fill(child: Image(
+                image: wallpaperImageProvider(bg, MediaQuery.sizeOf(context).width, MediaQuery.sizeOf(context).height, MediaQuery.devicePixelRatioOf(context)),
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+              )),
+            Positioned.fill(child: Container(
+              color: scheme.surface.withAlpha(((1.0 - bgTuple.$2) * 220).round().clamp(20, 240)),
+            )),
+            Column(children: [
+              _toolbar(scheme, cfg, entries, filtered, isZh),
+              _filterBar(scheme, isZh),
+              Expanded(child: filtered.isEmpty
+                  ? Center(child: Text(isZh ? '暂无日志' : 'No logs yet',
+                      style: TextStyle(color: scheme.outline, fontSize: 13)))
+                  : _buildList(filtered, scheme, cfg, isZh)),
+            ]),
+          ]);
+        },
+      ),
     );
   }
 
