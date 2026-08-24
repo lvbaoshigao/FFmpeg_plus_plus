@@ -464,6 +464,12 @@ class ProjectPageState extends State<ProjectPage> {
   }
 
   Widget _buildBody(BuildContext context, AppState state, List videos, AppStrings s, Color clr, ColorScheme scheme) {
+    // 探测进度提示：导入大文件时 ffprobe 可能要数十秒，
+    // 顶部贴一个明显的"探测中"提示，避免用户以为卡死而关掉 app 触发 ANR。
+    final probingBanner = state.probingVideos && !_dragging
+        ? _ProbingBanner(text: s.probingVideo, hint: s.probingHint, scheme: scheme)
+        : null;
+
     if (_dragging) {
       return Container(
         color: scheme.primary.withAlpha(30),
@@ -500,9 +506,11 @@ class ProjectPageState extends State<ProjectPage> {
     }
 
     return RepaintBoundary(
-      child: ListView.builder(
-        padding: EdgeInsets.fromLTRB(isMobilePlatform ? 8 : 16, 16, isMobilePlatform ? 8 : 16, isMobilePlatform ? kMobileNavClearance : 16),
-      itemCount: totalCount,
+      child: Column(children: [
+        ?probingBanner,
+        Expanded(child: ListView.builder(
+          padding: EdgeInsets.fromLTRB(isMobilePlatform ? 8 : 16, probingBanner != null ? 4 : 16, isMobilePlatform ? 8 : 16, isMobilePlatform ? kMobileNavClearance : 16),
+        itemCount: totalCount,
       itemBuilder: (_, i) {
         if (i < containerCount) {
           final c = state.containers[i];
@@ -583,6 +591,8 @@ class ProjectPageState extends State<ProjectPage> {
         );
       },
     ),
+    ),
+    ]),
     );
   }
 
@@ -984,6 +994,71 @@ class ProjectPageState extends State<ProjectPage> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// 导入探测中的顶部提示横幅。
+/// 大文件（>100MB）的 ffprobe 首调可达数十秒，UI 一直没反馈时用户可能以为
+/// 卡死而关 app 触发 ANR；这里给一个持续旋转的图标 + 文字，让用户知道还在跑。
+/// 设计上不阻断用户交互（仍可滚动列表、取消多选），仅作状态可见性。
+class _ProbingBanner extends StatefulWidget {
+  final String text;
+  final String hint;
+  final ColorScheme scheme;
+  const _ProbingBanner({required this.text, required this.hint, required this.scheme});
+
+  @override
+  State<_ProbingBanner> createState() => _ProbingBannerState();
+}
+
+class _ProbingBannerState extends State<_ProbingBanner>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: widget.scheme.primaryContainer.withAlpha(160),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: widget.scheme.primary.withAlpha(80), width: 1),
+      ),
+      child: Row(children: [
+        RotationTransition(
+          turns: _ctrl,
+          child: Icon(Icons.sync, size: 18, color: widget.scheme.primary),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(widget.text,
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: widget.scheme.onPrimaryContainer)),
+              Text(widget.hint,
+                  style: TextStyle(
+                      fontSize: 11,
+                      color: widget.scheme.onPrimaryContainer.withAlpha(160))),
+            ],
+          ),
+        ),
+      ]),
     );
   }
 }

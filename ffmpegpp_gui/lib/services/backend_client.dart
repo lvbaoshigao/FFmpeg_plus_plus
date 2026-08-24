@@ -46,9 +46,13 @@ class BackendClient {
     });
   }
 
-  /// 探测视频文件信息（60s 超时）
+  /// 探测视频文件信息（240s 超时）。
+  /// 大文件（>100MB）在 mobile 上 ffprobe 需要更长——probesize/analyzeduration
+  /// 限制已收紧（5MB / 10s），但首调 + 解码仍可能数秒到数十秒。120s 早期值对
+  /// 1GB 视频偶发超时报"未知错误"，闪退常见原因是 ANR dialog 被关；240s 留足
+  /// 余量，并由 probe.cpp 的 16MB 输出硬限避免失控。
   Future<Map<String, dynamic>> probe(String filepath) async {
-    final resp = await _process.requestWithTimeout('probe', 120, {'filepath': filepath});
+    final resp = await _process.requestWithTimeout('probe', 240, {'filepath': filepath});
     return resp;
   }
 
