@@ -37,26 +37,83 @@ class MobileGlassPill extends StatefulWidget {
   State<MobileGlassPill> createState() => _MobileGlassPillState();
 }
 
+/// 玻璃渲染相关的"配置指纹"。只有它变化时玻璃节点才该重建。
+@immutable
+class _PillGlassKey {
+  final String effect;
+  final double op;
+  final bool follow;
+  final int primary;
+  final int second;
+  const _PillGlassKey({
+    required this.effect,
+    required this.op,
+    required this.follow,
+    required this.primary,
+    required this.second,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      other is _PillGlassKey &&
+      other.effect == effect &&
+      other.op == op &&
+      other.follow == follow &&
+      other.primary == primary &&
+      other.second == second;
+
+  @override
+  int get hashCode => Object.hash(effect, op, follow, primary, second);
+}
+
 class _MobileGlassPillState extends State<MobileGlassPill> {
   bool _pressed = false;
+
+  // 仅当这些字段变化时才重建 OCLiquidGlass 节点；
+  // 关键修复：原代码用 context.watch<AppState>() 订阅整个 AppState，
+  // 进度/日志/任务等高频 notify 会反复重建 OCLiquidGlassGroup + OCLiquidGlass，
+  // 导致 GPU shader uniform 重新初始化 → 视觉上"液态玻璃来回跳跃"。
+  // 改用 Selector 精细订阅 + 稳定 key 后，shader 内部状态得以保留。
+  static const _liquidSettings = OCLiquidGlassSettings(
+    refractStrength: -0.05,
+    blurRadiusPx: 1.6,
+    specStrength: 8.0,
+    specWidth: 4,
+    lightbandStrength: 0.0,
+    lightbandColor: Colors.white,
+  );
 
   void _set(bool v) {
     if (_pressed == v) return;
     setState(() => _pressed = v);
   }
 
+  /// 把玻璃渲染所需的所有字段打包成一个值。
+  /// 只有这些字段变化时 Selector 才会重新构建 builder，避免 OCLiquidGlass
+  /// 被无关的 notifyListeners()（日志/进度/任务状态等）反复销毁重建。
+  static _PillGlassKey _keyOf(AppState s) {
+    final cfg = s.config;
+    return _PillGlassKey(
+      effect: cfg.glassEffect,
+      op: cfg.cardOpacity,
+      follow: cfg.glassFollowTheme,
+      primary: cfg.themeColor,
+      second: cfg.themeColor2,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final cfg = context.watch<AppState>().config;
-    final effect = cfg.glassEffect;
-    final op = cfg.cardOpacity.clamp(0.0, 1.0);
+    final key = context.select<AppState, _PillGlassKey>(_keyOf);
+    final effect = key.effect;
+    final op = key.op.clamp(0.0, 1.0);
     // 上限压低（约 41%~47% 不透明度）：避免浅色模式下 surface 底色叠满成
     // 一整片「发白」，让背景透出、保留玻璃通透感。
     final maxAlpha = isDark ? 105 : 120;
     final baseAlpha = (op * maxAlpha).round().clamp(0, 255);
-    final follow = cfg.glassFollowTheme;
+    final follow = key.follow;
     final baseColor = follow ? scheme.primary : scheme.surface;
     final tint = baseColor.withAlpha(baseAlpha);
 
@@ -91,18 +148,21 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
     } else {
       // liquid：液态玻璃 shader
       // 关闭高光带（lightband）与压低镜面高光：高光带按固定像素偏移绘制，
-      // 在较「高」的内容（如设置项卡片）上会变成一条横向“分界线”，
+      // 在较「高」的内容（如设置项卡片）上会变成一条横向"分界线"，
       // 视觉上把内容截成两段 —— 这里去掉它，仅保留折射 + 柔和高光。
+      //
+      // 关键修复：
+      // 1) 使用静态 const _liquidSettings（dark 差异化交给 tint + shadow），
+      //    避免每次 build 都新建 OCLiquidGlassSettings 触发 shader uniform 重置；
+      // 2) 给 OCLiquidGlassGroup/OCLiquidGlass 加 ValueKey(key)，仅当玻璃配置
+      //    变化时才真的销毁/重建液态玻璃节点；普通 AppState notify（进度、
+      //    日志、任务状态等）会让 key 不变，Element 复用，shader 内部状态稳定。
+      final glassKey = ValueKey<_PillGlassKey>(key);
       pill = OCLiquidGlassGroup(
-        settings: OCLiquidGlassSettings(
-          refractStrength: -0.05,
-          blurRadiusPx: 1.6,
-          specStrength: isDark ? 6.0 : 8.0,
-          specWidth: 4,
-          lightbandStrength: 0.0,
-          lightbandColor: Colors.white,
-        ),
+        key: glassKey,
+        settings: _liquidSettings,
         child: OCLiquidGlass(
+          key: glassKey,
           borderRadius: widget.radius,
           color: tint,
           shadow: BoxShadow(

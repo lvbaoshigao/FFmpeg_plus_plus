@@ -5,6 +5,13 @@
 #include <sstream>
 #include <algorithm>
 #include <cctype>
+// 用 SIGSEGV 等常量名映射信号终止原因（不同平台 signal.h 头不同，
+// 这里 _WIN32 路径上 probe.cpp 不会触发信号分支，但仍要兼容。）
+#ifdef _WIN32
+#include <signal.h>
+#else
+#include <signal.h>
+#endif
 
 namespace ffmpegpp {
 
@@ -68,11 +75,38 @@ ProbeResult probeFile(const std::string& filepath) {
     };
     auto pr = Subprocess::run(cmd, 120);
     if (pr.exit_code != 0) {
-        // exit_code 127 = execvp 失败（命令未找到，如 ffprobe 路径未配置）
-        // exit_code 其他 = ffprobe 运行失败
+        // exit_code 解释：
+        //  - 127  = execvp 失败（命令未找到，如 ffprobe 路径未配置）
+        //  - 负值 = 子进程被信号 N 终止（Subprocess 已用 -N 传递，N 即信号编号）
+        //           -11=SIGSEGV（段错误，常因 Android 上 jniLibs 二进制不兼容）
+        //           -6 =SIGABRT、-9=SIGKILL、-8=SIGFPE 等
+        //  - 其他 = ffprobe 自身返回了非 0 退出码（解码错误、格式不支持等）
         std::string detail;
         if (pr.exit_code == 127) {
             detail = "ffprobe 未找到或无法执行，请检查内置工具路径是否正确配置";
+        } else if (pr.exit_code < 0) {
+            // 信号终止：明确提示信号名，便于排查"ffprobe 自身崩溃"这种问题
+            int sig = -pr.exit_code;
+            const char* sig_name = "UNKNOWN";
+            switch (sig) {
+                case SIGSEGV: sig_name = "SIGSEGV"; break;
+                case SIGABRT: sig_name = "SIGABRT"; break;
+                case SIGBUS:  sig_name = "SIGBUS";  break;
+                case SIGFPE:  sig_name = "SIGFPE";  break;
+                case SIGILL:  sig_name = "SIGILL";  break;
+                case SIGKILL: sig_name = "SIGKILL"; break;
+                case SIGTERM: sig_name = "SIGTERM"; break;
+#ifdef SIGSYS
+                case SIGSYS:  sig_name = "SIGSYS";  break;
+#endif
+                default: break;
+            }
+            // Android 11+ 上常见：ffprobe 二进制与 nativeLibraryDir 不兼容，
+            // 一启动就段错误；务必告知用户去找开发者修，而不是去检查路径/权限。
+            detail = std::string("ffprobe 被信号终止 (") + sig_name +
+                     ")，通常是 ffprobe 二进制与当前 Android 系统不兼容（常见于 "
+                     "nativeLibraryDir 上的静态 PIE 可执行文件无法加载），"
+                     "而不是文件路径或权限问题";
         } else if (pr.stderr_output.empty()) {
             detail = "无法读取文件，请检查路径或文件权限";
         } else {
