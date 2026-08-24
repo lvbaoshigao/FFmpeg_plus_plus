@@ -413,18 +413,24 @@ class AppState extends ChangeNotifier {
   }
 
   /// 把 [fp] 转换为 ffprobe/后续转码可稳定读取的路径。
-  /// Android：file_picker 返回的是 cacheDir/file_picker/... 下的缓存路径，
-  /// 该目录可能被系统清空、部分 ROM 下 fork 出的 ffprobe 子进程也无法访问，
-  /// 从而报「无法读取文件，请检查路径或文件权限」。这里把每个导入文件复制到
-  /// 应用文档目录（持久 + app 私有 + 保留扩展名），保证 ffprobe/后续转码稳定读取。
-  /// 其它平台：原样返回。复制失败时原样返回，确保探测阶段能给出具体错误。
+  ///
+  /// 设计：直接原样返回 fp，**不做任何复制**。理由：
+  /// - 桌面 / Linux / Windows：fp 已经是绝对路径（file_picker 拷到系统 tmpdir），
+  ///   fork+exec 子进程天然能读。
+  /// - Android：file_picker 8.x 用 withReadStream 后 fp 是 app 私有 cacheDir
+  ///   （`/data/data/<pkg>/cache/file_picker/...`）下的**绝对路径**，对该路径
+  ///   app 有完整读权限，fork+exec 出的 ffprobe 子进程通过普通 open()
+  ///   即可读取，不需要 SAF ContentResolver。
+  ///
+  /// 与旧实现的对比：旧版会立刻把 fp 复制到 app docsDir。后果：
+  ///   1) 大文件（>100MB）复制耗时数秒，UI 卡住；
+  ///   2) docsDir 体积无谓翻倍；
+  ///   3) 用户每次导入都永久占一份磁盘，且删除项目时还得记得清 docsDir。
+  ///
+  /// 如果个别 ROM / Android 版本上 file_picker 缓存路径确实不可读，
+  /// _probeOne 会在日志里给出原始错误码和路径；不再做静默兜底复制。
   Future<String> _ensureReadableForProbe(String fp) async {
-    if (!isAndroidPlatform) return fp;
-    final copied = await AndroidPlatformBridge.ensureReadableImport(fp);
-    if (copied != fp) {
-      addLog('已复制到应用私有目录: $copied', category: 'info');
-    }
-    return copied;
+    return fp;
   }
 
   Future<void> _probeAll(List<VideoFile> entries) async {
