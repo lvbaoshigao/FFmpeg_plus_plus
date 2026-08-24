@@ -789,7 +789,6 @@ class _SettingsPageState extends State<SettingsPage> {
               focusedBorder: InputBorder.none,
               enabledBorder: InputBorder.none,
               disabledBorder: InputBorder.none,
-              hoveredBorder: InputBorder.none,
               errorBorder: InputBorder.none,
               focusedErrorBorder: InputBorder.none,
               isCollapsed: true,
