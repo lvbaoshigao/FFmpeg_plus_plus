@@ -827,33 +827,74 @@ class ProjectPageState extends State<ProjectPage> {
   }
 
   Future<void> _pick(AppState state) async {
+    // Android/iOS：用 withReadStream 走流式拷贝——file_picker 把 SAF/UIDocumentPicker
+    // 的文件分块（典型 64KB/chunk）通过 Stream<List<int>> 喂给 IOSink，
+    // IOSink.addStream 自带 back-pressure（sink 缓冲满时暂停 source）。
+    // 整个过程**不会**把整个文件读进 Dart 堆，避免 >100MB 文件直接 OOM 闪退。
+    //
+    // Desktop：withReadStream 在 macOS 不支持，Linux/Windows 仍可用；本分支
+    // 退回到 withData（桌面 4GB+ heap 不会 OOM）。
+    final useStream = isMobilePlatform;
     final r = await FilePicker.platform.pickFiles(
-      allowMultiple: true, type: FileType.custom, allowedExtensions: _exts,
-      withData: isMobilePlatform);
+      allowMultiple: true,
+      type: FileType.custom,
+      allowedExtensions: _exts,
+      withReadStream: useStream,
+      withData: !useStream,
+    );
     if (r != null && r.files.isNotEmpty) {
       final paths = <String>[];
       for (final f in r.files) {
-        // 保留扩展名，后续 addVideos 复制到应用私有目录时可正确识别媒体类型
         final ext = f.name.contains('.') ? f.name.substring(f.name.lastIndexOf('.')) : '';
         final stem = f.name.contains('.') ? f.name.substring(0, f.name.lastIndexOf('.')) : f.name;
         final isContentUri = f.path != null && f.path!.startsWith('content://');
-        if (isContentUri && f.bytes != null) {
-          // Android 11+: content:// URI 无法被 File/ffprobe 读取，用字节写入缓存
+
+        // Android/iOS 走流式拷贝（避免 f.bytes! 一次性把整文件读进堆）。
+        // Linux/Windows 桌面：优先用流式，没有 readStream 再回退 f.path 或 f.bytes。
+        if (useStream && f.readStream != null && isContentUri) {
           try {
-            final dest = File('${Directory.systemTemp.path}/ffmpegpp_import_${stem}_${DateTime.now().millisecondsSinceEpoch}$ext');
-            await dest.writeAsBytes(f.bytes!);
-            paths.add(dest.path);
+            final destPath = '${Directory.systemTemp.path}/ffmpegpp_import_${stem}_${DateTime.now().millisecondsSinceEpoch}$ext';
+            final dest = File(destPath);
+            // IOSink.addStream 把 readStream 的每个 chunk 直接写到 file descriptor，
+            // 不在 Dart 堆累积；即便 1GB 文件也只占 ~64KB 中间缓冲。
+            final sink = dest.openWrite();
+            try {
+              await sink.addStream(f.readStream!);
+            } finally {
+              await sink.close();
+            }
+            paths.add(destPath);
           } catch (e) {
-            // 如果字节写入也失败，仍尝试原始路径作为兜底
+            // 流式失败回退到原始 path（content:// URI 在 fork 出的 ffprobe
+            // 子进程里读不到，所以这个回退也只是兜底；详见 AndroidPlatformBridge
+            // 的 ensureReadableImport 兜底逻辑）
             if (f.path != null) paths.add(f.path!);
           }
-        } else if (f.path != null) {
+        } else if (f.path != null && !isContentUri) {
+          // 桌面/非 content URI：直接用路径（FilePicker 已写入临时目录）
           paths.add(f.path!);
-        } else if (f.bytes != null) {
+        } else if (f.readStream != null) {
+          // 兜底：有 readStream 但不是 content URI（罕见），也走流式
           try {
-            final dest = File('${Directory.systemTemp.path}/ffmpegpp_import_${stem}_${DateTime.now().millisecondsSinceEpoch}$ext');
-            await dest.writeAsBytes(f.bytes!);
-            paths.add(dest.path);
+            final destPath = '${Directory.systemTemp.path}/ffmpegpp_import_${stem}_${DateTime.now().millisecondsSinceEpoch}$ext';
+            final sink = File(destPath).openWrite();
+            try {
+              await sink.addStream(f.readStream!);
+            } finally {
+              await sink.close();
+            }
+            paths.add(destPath);
+          } catch (_) {
+            if (f.bytes != null) {
+              try {
+                await File('${Directory.systemTemp.path}/ffmpegpp_import_${stem}_${DateTime.now().millisecondsSinceEpoch}$ext').writeAsBytes(f.bytes!);
+              } catch (_) {}
+            }
+          }
+        } else if (f.bytes != null) {
+          // 最后兜底：桌面 + withData 路径，小文件可接受
+          try {
+            await File('${Directory.systemTemp.path}/ffmpegpp_import_${stem}_${DateTime.now().millisecondsSinceEpoch}$ext').writeAsBytes(f.bytes!);
           } catch (_) {}
         }
       }
