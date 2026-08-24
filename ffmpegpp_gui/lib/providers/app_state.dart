@@ -1043,6 +1043,14 @@ class AppState extends ChangeNotifier {
 
     addLog('节点图任务: ${expandedCalls.length} 步', category: 'info');
 
+    // 初始化每步进度追踪
+    final callProgresses = List<double>.filled(expandedCalls.length, 0.0);
+    final fi0 = _tasks.indexWhere((t) => t.id == taskId);
+    if (fi0 >= 0) {
+      _tasks[fi0] = _tasks[fi0].copyWith(callProgresses: callProgresses);
+      notifyListeners();
+    }
+
     // 记录上一步"实际"产物路径：extract_audio 等可能运行时改扩展名，下游 input 需要跟随
     String? pendingActualOutput;
     for (var ci = 0; ci < expandedCalls.length; ci++) {
@@ -1075,9 +1083,15 @@ class AppState extends ChangeNotifier {
           // 已取消/已完成/已失败的任务不再被进度消息改回 processing
           if (i >= 0 && _tasks[i].status == TaskStatus.processing) {
             final overallProgress = (stepProgress + u.progress / 100 / expandedCalls.length) * 100;
+            // 更新当前步骤的进度
+            final newCallProgresses = List<double>.from(_tasks[i].callProgresses);
+            if (ci < newCallProgresses.length) {
+              newCallProgresses[ci] = u.progress / 100;
+            }
             _tasks[i] = _tasks[i].copyWith(
               status: TaskStatus.processing,
               progress: overallProgress.clamp(0, 100),
+              callProgresses: newCallProgresses,
               elapsed: u.currentTime, remaining: u.remaining,
               speed: u.speed, fps: u.fps, bitrate: u.bitrate, frame: u.frame,
             );
@@ -1138,10 +1152,10 @@ class AppState extends ChangeNotifier {
           resp = await _runImageChannelExtract(p);
           break;
         case 'video_crop':
-          resp = await _runVideoCrop(taskId, p);
+          resp = await _runVideoCrop(taskId, p, callIndex: ci);
           break;
         case 'extract_audio':
-          resp = await _runExtractAudio(taskId, p);
+          resp = await _runExtractAudio(taskId, p, callIndex: ci);
           break;
         case 'audio_metadata':
           resp = await _runAudioMetadata(task.id, p);
@@ -1194,6 +1208,16 @@ class AppState extends ChangeNotifier {
         }
         _cleanupTempFiles(cleanupCalls);
         return;
+      }
+      // 标记当前步骤为完成
+      final fiDone = _tasks.indexWhere((t) => t.id == taskId);
+      if (fiDone >= 0) {
+        final newCallProgresses = List<double>.from(_tasks[fiDone].callProgresses);
+        if (ci < newCallProgresses.length) {
+          newCallProgresses[ci] = 1.0;
+        }
+        _tasks[fiDone] = _tasks[fiDone].copyWith(callProgresses: newCallProgresses);
+        notifyListeners();
       }
       addLog('步骤 ${ci + 1} 完成', category: 'info');
       final actualOut = resp['_actual_output'];
@@ -1334,7 +1358,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<Map<String, dynamic>> _runVideoCrop(String taskId, Map<String, dynamic> p) async {
+  Future<Map<String, dynamic>> _runVideoCrop(String taskId, Map<String, dynamic> p, {int? callIndex}) async {
     final input = p['input'] as String;
     final output = p['output'] as String;
     final cropW = (p['crop_w'] as num?)?.toInt() ?? 0;
@@ -1353,7 +1377,7 @@ class AppState extends ChangeNotifier {
       final cropFilter = 'crop=$cropW:$cropH:$cropX:$cropY';
       final args = <String>['-y', '-i', input, '-vf', cropFilter, '-c:a', 'copy', output];
       addLog('视频裁剪: $_ffmpegBin ${args.join(' ')}', category: 'info');
-      return await _runFfmpegWithProgress(taskId, args, '视频裁剪', totalDuration: totalDuration);
+      return await _runFfmpegWithProgress(taskId, args, '视频裁剪', totalDuration: totalDuration, callIndex: callIndex);
     } catch (e) {
       addLog('视频裁剪异常: $e', category: 'error');
       return {'success': false, 'error': '视频裁剪异常: $e'};
@@ -1422,7 +1446,7 @@ class AppState extends ChangeNotifier {
 
   /// 按"完整行"解析进度：原实现直接对网络分块 firstMatch，
   /// `time=` 跨 chunk 边界时进度会漏更新。
-  void _parseFfmpegProgressLine(String taskId, String line, double? totalDuration) {
+  void _parseFfmpegProgressLine(String taskId, String line, double? totalDuration, int? callIndex) {
     if (line.isEmpty) return;
     final m = _ffmpegTimeRe.firstMatch(line);
     if (m != null && totalDuration != null && totalDuration > 0) {
@@ -1433,13 +1457,18 @@ class AppState extends ChangeNotifier {
       final speed = sm != null ? '${sm.group(1)}x' : '';
       final i = _tasks.indexWhere((tk) => tk.id == taskId);
       if (i >= 0) {
-        _tasks[i] = _tasks[i].copyWith(status: TaskStatus.processing, progress: pct.toDouble(), speed: speed);
+        List<double> newCallProgresses = _tasks[i].callProgresses;
+        if (callIndex != null && callIndex < _tasks[i].callProgresses.length) {
+          newCallProgresses = List<double>.from(_tasks[i].callProgresses);
+          newCallProgresses[callIndex] = pct / 100;
+        }
+        _tasks[i] = _tasks[i].copyWith(status: TaskStatus.processing, progress: pct.toDouble(), speed: speed, callProgresses: newCallProgresses);
         notifyListeners();
       }
     }
   }
 
-  Future<Map<String, dynamic>> _runFfmpegWithProgress(String taskId, List<String> args, String label, {double? totalDuration}) async {
+  Future<Map<String, dynamic>> _runFfmpegWithProgress(String taskId, List<String> args, String label, {double? totalDuration, int? callIndex}) async {
     Process? process;
     try {
       process = await Process.start(_ffmpegBin, args);
@@ -1454,7 +1483,7 @@ class AppState extends ChangeNotifier {
         int start = 0;
         int nl;
         while ((nl = text.indexOf('\n', start)) >= 0) {
-          _parseFfmpegProgressLine(taskId, text.substring(start, nl), totalDuration);
+          _parseFfmpegProgressLine(taskId, text.substring(start, nl), totalDuration, callIndex);
           start = nl + 1;
         }
         // 保留未完成的行（可能跨 chunk）
@@ -1487,7 +1516,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<Map<String, dynamic>> _runExtractAudio(String taskId, Map<String, dynamic> p) async {
+  Future<Map<String, dynamic>> _runExtractAudio(String taskId, Map<String, dynamic> p, {int? callIndex}) async {
     final input = p['input'] as String;
     var output = p['output'] as String;
     var codec = p['audio_codec'] as String? ?? 'copy';
@@ -1538,7 +1567,7 @@ class AppState extends ChangeNotifier {
           : (startTime != null && totalDuration != null)
               ? (totalDuration - startTime).toDouble()
               : (endTime?.toDouble() ?? totalDuration ?? 0.0);
-      final result = await _runFfmpegWithProgress(taskId, args, '提取音频', totalDuration: clipDuration);
+      final result = await _runFfmpegWithProgress(taskId, args, '提取音频', totalDuration: clipDuration, callIndex: callIndex);
       // 供调度循环把运行时改写的扩展名传播给下游步骤的 input
       if (result['success'] == true) result['_actual_output'] = output;
       return result;
