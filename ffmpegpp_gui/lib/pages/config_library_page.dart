@@ -736,8 +736,11 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
             alignment: Alignment.centerRight,
             child: MobileGlassPill(
               radius: 22,
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-              child: Row(children: _buildTopActions(scheme, zh)),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(children: _buildTopActions(scheme, zh)),
+              ),
             ),
           ),
         ),

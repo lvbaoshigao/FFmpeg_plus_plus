@@ -232,13 +232,6 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
 
     Widget result = pill;
 
-    // 用 RepaintBoundary 隔开 GPU 渲染层：
-    // - liquid 模式的 OCLiquidGlassGroup 是 offscreen layer，跨页面切换时
-    //   容易把 shader 产物残留到上一帧的 BackdropFilter 输出上；
-    // - blur 模式的 BackdropFilter 同样依赖前置 layer；
-    // RepaintBoundary 强制让每次重建时新开一个独立 layer，避免残留/主题色块闪烁。
-    result = RepaintBoundary(child: result);
-
     if (widget.pressable || widget.onTap != null) {
       // 按下放大、按住保持、松手回弹。
       result = GestureDetector(
@@ -253,9 +246,6 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
           scale: _pressed ? 1.05 : 1.0,
           duration: const Duration(milliseconds: 110),
           curve: Curves.easeOut,
-          // 关键修复：原来这里用 pill（没有 RepaintBoundary 隔离层），让 GPU
-          // offscreen pass 在 Pressable + LiquidGlass 组合下泄漏到上层。
-          // 改为 result，让外层的 RepaintBoundary 仍然生效。
           child: result,
         ),
       );
