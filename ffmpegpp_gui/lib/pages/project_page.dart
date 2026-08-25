@@ -506,7 +506,7 @@ class ProjectPageState extends State<ProjectPage> {
     }
 
     return Column(children: [
-      if (probingBanner != null) probingBanner,
+      ?probingBanner,
       Expanded(child: ListView.builder(
         padding: EdgeInsets.fromLTRB(isMobilePlatform ? 8 : 16, probingBanner != null ? 4 : 16, isMobilePlatform ? 8 : 16, isMobilePlatform ? kMobileNavClearance : 16),
         itemCount: totalCount,
