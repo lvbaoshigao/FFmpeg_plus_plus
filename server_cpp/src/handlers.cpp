@@ -517,13 +517,36 @@ void handleExtractFrame(const json& req) {
 // ═══════════════════════════════════════════
 
 void handleConcat(const json& req, std::atomic<bool>& cancel_flag) {
-    if (!req.contains("params") || !req["params"].contains("files")) {
-        JsonWriter::reply(req["id"], false, nullptr, "缺少 params.files 参数");
+    if (!req.contains("params") || !req["params"].is_object()) {
+        JsonWriter::reply(req["id"], false, nullptr, "缺少或无效 params 参数");
         return;
     }
     json params = req["params"];
-    auto files = params["files"].get<std::vector<std::string>>();
-    std::string output = params["output"];
+    if (!params.contains("files") || !params["files"].is_array()) {
+        JsonWriter::reply(req["id"], false, nullptr, "缺少 params.files 参数");
+        return;
+    }
+    
+    // 类型安全：确保所有元素都是字符串
+    std::vector<std::string> files;
+    try {
+        for (const auto& item : params["files"]) {
+            if (!item.is_string()) {
+                JsonWriter::reply(req["id"], false, nullptr, "params.files 中包含非字符串元素");
+                return;
+            }
+            files.push_back(item.get<std::string>());
+        }
+    } catch (const std::exception& e) {
+        JsonWriter::reply(req["id"], false, nullptr, std::string("解析 files 参数失败: ") + e.what());
+        return;
+    }
+    
+    if (params.contains("output") && !params["output"].is_string()) {
+        JsonWriter::reply(req["id"], false, nullptr, "params.output 必须是字符串");
+        return;
+    }
+    std::string output = params.value("output", "");
     std::string mode = params.value("mode", "copy");
 
     if (files.empty()) {
@@ -543,6 +566,11 @@ void handleConcat(const json& req, std::atomic<bool>& cancel_flag) {
         }
         if (f.find('\'') != std::string::npos) {
             JsonWriter::reply(req["id"], false, nullptr, "文件路径包含单引号，无法用于 concat 列表");
+            return;
+        }
+        // 额外检查换行符（isPathSafe 已检查，但这里再次确认防止数据注入）
+        if (f.find('\n') != std::string::npos || f.find('\r') != std::string::npos) {
+            JsonWriter::reply(req["id"], false, nullptr, "文件路径包含换行符，无法用于 concat 列表");
             return;
         }
     }
@@ -587,13 +615,42 @@ void handleConcat(const json& req, std::atomic<bool>& cancel_flag) {
 // ═══════════════════════════════════════════
 
 void handleImageSequence(const json& req, std::atomic<bool>& cancel_flag) {
-    if (!req.contains("params") || !req["params"].contains("files")) {
-        JsonWriter::reply(req["id"], false, nullptr, "缺少 params.files 参数");
+    if (!req.contains("params") || !req["params"].is_object()) {
+        JsonWriter::reply(req["id"], false, nullptr, "缺少或无效 params 参数");
         return;
     }
     json params = req["params"];
-    auto files = params["files"].get<std::vector<std::string>>();
-    std::string output = params["output"];
+    if (!params.contains("files") || !params["files"].is_array()) {
+        JsonWriter::reply(req["id"], false, nullptr, "缺少 params.files 参数");
+        return;
+    }
+    
+    // 类型安全：确保所有元素都是字符串
+    std::vector<std::string> files;
+    try {
+        for (const auto& item : params["files"]) {
+            if (!item.is_string()) {
+                JsonWriter::reply(req["id"], false, nullptr, "params.files 中包含非字符串元素");
+                return;
+            }
+            files.push_back(item.get<std::string>());
+        }
+    } catch (const std::exception& e) {
+        JsonWriter::reply(req["id"], false, nullptr, std::string("解析 files 参数失败: ") + e.what());
+        return;
+    }
+    
+    if (params.contains("output") && !params["output"].is_string()) {
+        JsonWriter::reply(req["id"], false, nullptr, "params.output 必须是字符串");
+        return;
+    }
+    std::string output = params.value("output", "");
+    
+    // framerate 类型检查
+    if (params.contains("framerate") && !params["framerate"].is_number()) {
+        JsonWriter::reply(req["id"], false, nullptr, "framerate 必须是数字");
+        return;
+    }
     double framerate = params.value("framerate", 30.0);
 
     if (files.empty()) {
@@ -616,6 +673,11 @@ void handleImageSequence(const json& req, std::atomic<bool>& cancel_flag) {
         }
         if (f.find('\'') != std::string::npos) {
             JsonWriter::reply(req["id"], false, nullptr, "文件路径包含单引号，无法用于 concat 列表");
+            return;
+        }
+        // 额外检查换行符
+        if (f.find('\n') != std::string::npos || f.find('\r') != std::string::npos) {
+            JsonWriter::reply(req["id"], false, nullptr, "文件路径包含换行符");
             return;
         }
     }

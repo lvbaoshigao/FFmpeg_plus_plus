@@ -1,5 +1,9 @@
 #include "audit.h"
+#include "constants.h"
 #include <algorithm>
+#ifdef __cpp_lib_filesystem
+#include <filesystem>
+#endif
 
 namespace ffmpegpp {
 
@@ -26,7 +30,13 @@ std::vector<std::string> auditCommand(const std::vector<std::string>& cmd) {
     std::vector<std::string> input_files;
     std::string output_file;
     for (size_t i = 0; i < cmd.size(); ++i) {
-        if (cmd[i] == "-i" && i + 1 < cmd.size()) input_files.push_back(cmd[i + 1]);
+        if (cmd[i] == "-i" && i + 1 < cmd.size()) {
+            std::string input = cmd[i + 1];
+            // 跳过空路径和明显无效的路径
+            if (!input.empty() && input[0] != '-') {
+                input_files.push_back(input);
+            }
+        }
     }
     // 输出文件 = 命令中最后一个非 '-' 开头的 token（ffmpeg 以输出路径结尾）。
     // 注意：不能用 "find(\"ffmpeg\")" 排除可执行名——那会把路径里含 "ffmpeg" 字样的
@@ -38,12 +48,37 @@ std::vector<std::string> auditCommand(const std::vector<std::string>& cmd) {
             break;
         }
     }
-    if (!output_file.empty()) {
+    
+    // 只有当输入和输出都非空时才进行比较
+    if (!output_file.empty() && !input_files.empty()) {
+        // 基本检查：先做字符串比较（快速排除）
         for (auto& f : input_files) {
             if (f == output_file) {
                 warnings.push_back("ERROR: Output file is the same as input file. This would overwrite the source.");
+                break;
             }
         }
+        
+        // 深度检查：尝试规范化路径后比较（处理符号链接和相对路径）
+        // 注意：规范化可能失败（如路径不存在），此时跳过深度检查
+#ifdef __cpp_lib_filesystem
+        try {
+            std::filesystem::path outPath = std::filesystem::canonical(output_file);
+            for (auto& f : input_files) {
+                try {
+                    std::filesystem::path inPath = std::filesystem::canonical(f);
+                    if (outPath == inPath) {
+                        warnings.push_back("ERROR: Output file resolves to the same path as input file (after symlink resolution). This would overwrite the source.");
+                        break;
+                    }
+                } catch (...) {
+                    // 输入路径无法规范化，跳过
+                }
+            }
+        } catch (...) {
+            // 输出路径无法规范化，跳过深度检查
+        }
+#endif
     }
 
     if (has_nvenc && has_hwaccel_fmt) {

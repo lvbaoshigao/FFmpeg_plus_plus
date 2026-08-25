@@ -216,16 +216,20 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
       // 关键修复：
       // 1) 使用静态 const _liquidSettings（dark 差异化交给 tint + shadow），
       //    避免每次 build 都新建 OCLiquidGlassSettings 触发 shader uniform 重置；
-      // 2) 给 OCLiquidGlassGroup/OCLiquidGlass 加 ValueKey(key)，仅当玻璃配置
+      // 2) 给 OCLiquidGlassGroup 加 ValueKey(key)，仅当玻璃配置
       //    变化时才真的销毁/重建液态玻璃节点；普通 AppState notify（进度、
-      //    日志、任务状态等）会让 key 不变，Element 复用，shader 内部状态稳定。
+      //    日志、任务状态等）会让 key 不变，Element 复用，shader 内部状态稳定；
+      // 3) OCLiquidGlass 使用独立 key（避免与父级 OCLiquidGlassGroup 重复）；
+      // 4) RepaintBoundary 放在 OCLiquidGlassGroup 内部、OCLiquidGlass 外部，
+      //    让 shader 能正确采样画布背景，同时隔离内部重绘。
       final glassKey = ValueKey<_PillGlassKey>(key);
-      pill = OCLiquidGlassGroup(
-        key: glassKey,
-        settings: _liquidSettings,
-        child: RepaintBoundary(
+      final innerKey = ValueKey<String>('${key.hashCode}_inner');
+      pill = RepaintBoundary(
+        child: OCLiquidGlassGroup(
+          key: glassKey,
+          settings: _liquidSettings,
           child: OCLiquidGlass(
-            key: glassKey,
+            key: innerKey,
             borderRadius: widget.radius,
             color: tint,
             shadow: BoxShadow(

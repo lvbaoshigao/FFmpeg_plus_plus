@@ -392,10 +392,9 @@ packages:
   oc_liquid_glass:
     dependency: "direct main"
     description:
-      name: oc_liquid_glass
-      sha256: "59b718a7dd24a0fb80dbead428c20a85221ef1e7d0a4aad9f89d3e158fc9dfe7"
-      url: "https://pub.dev"
-    source: hosted
+      path: "third_party/oc_liquid_glass"
+      relative: true
+    source: path
     version: "0.3.0"
   package_config:
     dependency: transitive

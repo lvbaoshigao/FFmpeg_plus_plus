@@ -673,11 +673,16 @@ ProcessResult Subprocess::runWithProgress(
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
-    // 关闭管道，让读取线程结束
-    closeFd(stderr_pipe[0]);
-    closeFd(stdout_pipe[0]);
+    // 子进程已被 waitpid 回收（上面所有 break 路径均已 kill+waitpid 或 waitpid 成功），
+    // 写端随子进程退出而关闭，读取线程的 read() 会返回 0 自然退出。
+    // 因此先 join，等线程退出后再关闭读端 fd，避免「线程仍阻塞在读端、
+    // 另一线程关闭同一 fd」导致的 fd 复用竞态。
     if (stderr_thread.joinable()) stderr_thread.join();
     if (stdout_thread.joinable()) stdout_thread.join();
+    
+    // 线程已退出，安全关闭读端
+    closeFd(stderr_pipe[0]);
+    closeFd(stdout_pipe[0]);
 
     result.stdout_output = stdout_data;
     {
