@@ -136,8 +136,10 @@ FFMPEGPP_API int ffmpegpp_init() {
     g_shutdownFlag.store(false);
     g_cancelFlag.store(false);
     resetInputWake();  // 清掉历史 wake 标志，避免重初始化后 worker 立即退出
-    g_running.store(true);
+    
+    // 先创建线程，再设置运行标志（避免 workerLoop 在线程对象完全赋值前就开始运行）
     g_workerThread = std::thread(workerLoop);
+    g_running.store(true);
 
     slog("dll init: worker thread started");
     return 0;
@@ -188,20 +190,39 @@ FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
             return 0;
         }
         if (action == "probe" || action == "check_env" || action == "query_ffmpeg_features") {
-            spawnAuxThread([req]() {
-                try {
-                    if (req.value("action", "") == "probe") handleProbe(req);
-                    else if (req.value("action", "") == "check_env") handleCheckEnv(req);
-                    else handleQueryFeatures(req);
-                } catch (const std::exception& e) {
-                    JsonWriter::reply(req.value("id", ""), false, nullptr, std::string("服务器异常: ") + e.what());
-                } catch (...) {
-                    JsonWriter::reply(req.value("id", ""), false, nullptr, "服务器未知异常");
-                }
-            });
+            // 捕获 lambda 内的异常，避免线程内未捕获导致程序终止
+            try {
+                spawnAuxThread([req]() {
+                    try {
+                        if (req.value("action", "") == "probe") handleProbe(req);
+                        else if (req.value("action", "") == "check_env") handleCheckEnv(req);
+                        else handleQueryFeatures(req);
+                    } catch (const std::exception& e) {
+                        slog("aux thread exception: %s", e.what());
+                        JsonWriter::reply(req.value("id", ""), false, nullptr, std::string("服务器异常: ") + e.what());
+                    } catch (...) {
+                        slog("aux thread: unknown exception");
+                        JsonWriter::reply(req.value("id", ""), false, nullptr, "服务器未知异常");
+                    }
+                });
+            } catch (const std::exception& e) {
+                slog("spawnAuxThread failed: %s", e.what());
+                JsonWriter::reply(req.value("id", ""), false, nullptr, std::string("线程创建失败: ") + e.what());
+                return -1;
+            }
             return 0;
         }
+    } catch (const json::parse_error& e) {
+        slog("dll request: JSON parse error: %s", e.what());
+        JsonWriter::reply("unknown", false, nullptr, std::string("JSON 解析错误: ") + e.what());
+        return -1;
+    } catch (const std::exception& e) {
+        slog("dll request: exception: %s", e.what());
+        JsonWriter::reply("unknown", false, nullptr, std::string("请求处理异常: ") + e.what());
+        return -1;
     } catch (...) {
+        slog("dll request: unknown exception");
+        JsonWriter::reply("unknown", false, nullptr, "未知异常");
         return -1;
     }
 
@@ -212,7 +233,13 @@ FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
 FFMPEGPP_API char* ffmpegpp_poll() {
     std::string line = popOutput();
     if (line.empty()) return nullptr;
-    return strdup(line.c_str());
+    // strdup 分配的新内存由调用方负责释放（通过 ffmpegpp_free）
+    char* result = strdup(line.c_str());
+    if (!result) {
+        // 内存分配失败时记录错误（避免静默失败）
+        slog("ffmpegpp_poll: strdup failed, line length=%zu", line.size());
+    }
+    return result;
 }
 
 FFMPEGPP_API void ffmpegpp_free(char* ptr) {

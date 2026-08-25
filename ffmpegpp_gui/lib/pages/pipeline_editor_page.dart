@@ -4676,6 +4676,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               ),
             ),
             Expanded(child: _buildAiPanel(s, key: const ValueKey('ai-sheet'), startExpanded: true)),
+            // Android 手势导航：isScrollControlled 的底部弹层不会自动避让系统
+            // 导航条，这里显式预留底部安全区，避免输入框被手势条遮挡。
+            SizedBox(height: MediaQuery.of(ctx).padding.bottom),
           ]),
         ),
       ),
@@ -4964,8 +4967,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   Widget _buildMobileFileInfo(ColorScheme scheme, AppStrings s) {
     final v = widget.video;
     final nodesLabel = s.isZh ? '节点' : 'nodes';
+    // 两侧悬浮条（左下缩放 + 右下工具）各约占 70px，中央信息条扣除这些宽度，
+    // 避免窄屏下长文本撑满整行，与两侧按钮重叠（“底部信息条和缩放/工具按钮叠在一起”）。
+    final reserved = 150.0;
+    final maxW = math.max(96.0, MediaQuery.of(context).size.width - reserved);
     return Container(
       height: 24,
+      constraints: BoxConstraints(maxWidth: maxW),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         color: scheme.surface.withAlpha(180),
@@ -5625,6 +5633,23 @@ class _AiPanelState extends State<_AiPanel> {
   int _totalOutputTokens = 0;
   double? _lastGenSpeed; // 字符/秒
   final _genStart = Stopwatch();
+
+  // ── Markdown 样式缓存 ──
+  // 关键：流式回复每收到一个 token 都会 setState 重建整棵消息列表。若每次
+  // 都新建一份 MarkdownStyleSheet，flutter_markdown 会判为样式变化而对
+  // *所有*消息重解析，造成滚动/输入期间卡顿与闪烁。这里按主题关键色做缓存，
+  // 主题不变时复用同一实例。
+  MarkdownStyleSheet? _mdStyle;
+  ({
+    Brightness brightness,
+    Color primary,
+    Color onSurface,
+    Color onSurfaceVariant,
+    Color primaryContainer,
+    Color surfaceContainerHighest,
+    Color outline,
+    Color outlineVariant,
+  })? _mdStyleKey;
 
 
   static const _uuid = Uuid();
@@ -6704,19 +6729,17 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                 child: Column(children: [
                   Expanded(
                     child: _messages.isEmpty
-                        ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-                            Icon(Icons.smart_toy, size: 44, color: scheme.outline.withAlpha(80)),
-                            const SizedBox(height: 12),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 24),
-                              child: Text(s.aiChatHint, textAlign: TextAlign.center, style: TextStyle(color: scheme.outline, fontSize: 12)),
-                            ),
-                          ]))
+                        ? _buildEmptyState(scheme, s)
                         : ListView.builder(
                             controller: _scrollCtrl,
                             padding: const EdgeInsets.all(12),
                             itemCount: _messages.length,
-                            itemBuilder: (_, i) => _buildMessage(_messages[i], scheme),
+                            itemBuilder: (_, i) => RepaintBoundary(
+                              // 稳定 key + 独立重绘层：流式更新只重绘当前这一条，
+                              // 其余历史消息（含 Markdown）被隔离，不再整屏重绘抖动。
+                              key: ValueKey('ai-msg-$i'),
+                              child: _buildMessage(_messages[i], scheme),
+                            ),
                           ),
                   ),
                   if (_pendingNodes != null) Padding(
@@ -6761,18 +6784,62 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                         maxLines: 1,
                       )),
                       const SizedBox(width: 8),
-                      _loading
-                        ? const SizedBox(width: 36, height: 36, child: Padding(padding: EdgeInsets.all(8), child: CircularProgressIndicator(strokeWidth: 2)))
-                        : IconButton(
-                            icon: Icon(Icons.send, size: 20, color: scheme.primary),
-                            onPressed: _send,
-                            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                          ),
+                      SizedBox(
+                        width: 40, height: 40,
+                        child: _loading
+                            ? FilledButton(
+                                onPressed: null,
+                                style: FilledButton.styleFrom(
+                                    padding: EdgeInsets.zero, shape: const CircleBorder()),
+                                child: const SizedBox(width: 18, height: 18,
+                                    child: CircularProgressIndicator(strokeWidth: 2)),
+                              )
+                            : FilledButton(
+                                onPressed: _send,
+                                style: FilledButton.styleFrom(
+                                    padding: EdgeInsets.zero, shape: const CircleBorder()),
+                                child: const Icon(Icons.send, size: 18),
+                              ),
+                      ),
                     ]),
                   ),
                 ]),
               ),
             ]),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  /// 空对话时的引导：说明文字 + 几个可一键发送的示例提示（点击直接发起请求）。
+  Widget _buildEmptyState(ColorScheme scheme, AppStrings s) {
+    final hints = <String>[
+      s.isZh ? '把这个视频转成 H.265 减小体积' : 'Transcode this video to H.265 to shrink it',
+      s.isZh ? '提取视频里的音频为 MP3' : 'Extract the audio as MP3',
+      s.isZh ? '每 2 秒截取一帧图片' : 'Extract a frame every 2 seconds',
+    ];
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.smart_toy, size: 44, color: scheme.outline.withAlpha(80)),
+          const SizedBox(height: 12),
+          Text(s.aiChatHint, textAlign: TextAlign.center,
+              style: TextStyle(color: scheme.outline, fontSize: 12)),
+          const SizedBox(height: 16),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 8, runSpacing: 8,
+            children: [
+              for (final h in hints)
+                ActionChip(
+                  avatar: Icon(Icons.bolt, size: 14, color: scheme.primary),
+                  label: Text(h, style: const TextStyle(fontSize: 11)),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () { _ctrl.text = h; _send(); },
+                ),
+            ],
           ),
         ]),
       ),
@@ -6947,14 +7014,14 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
                   child: Row(children: [
-                    if (isDisabled)
-                      Icon(Icons.block, size: 13, color: scheme.error.withAlpha(180))
-                    else
-                      Icon(readOnly ? Icons.visibility_outlined : Icons.build_outlined, size: 13, color: scheme.primary),
+                    // 每个工具只显示一个状态图标：禁用→block，只读→visibility，可写→build。
+                    // （原先这里 if/else 一次又无条件再画一个，导致图标重复叠在一起。）
                     Icon(
-                      readOnly ? Icons.visibility_outlined : Icons.build_outlined,
+                      isDisabled
+                          ? Icons.block
+                          : (readOnly ? Icons.visibility_outlined : Icons.build_outlined),
                       size: 13,
-                      color: scheme.primary,
+                      color: isDisabled ? scheme.error.withAlpha(180) : scheme.primary,
                     ),
                     const SizedBox(width: 7),
                     Expanded(
@@ -7070,43 +7137,63 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     );
   }
 
+  /// 按主题关键色缓存的 Markdown 样式（主题不变即复用同一实例）。
+  MarkdownStyleSheet _markdownStyle(ColorScheme scheme) {
+    final key = (
+      brightness: scheme.brightness,
+      primary: scheme.primary,
+      onSurface: scheme.onSurface,
+      onSurfaceVariant: scheme.onSurfaceVariant,
+      primaryContainer: scheme.primaryContainer,
+      surfaceContainerHighest: scheme.surfaceContainerHighest,
+      outline: scheme.outline,
+      outlineVariant: scheme.outlineVariant,
+    );
+    if (_mdStyleKey != key) {
+      _mdStyleKey = key;
+      _mdStyle = MarkdownStyleSheet(
+        p: TextStyle(fontSize: 12, color: scheme.onSurface, height: 1.5),
+        h1: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: scheme.primary, height: 1.3),
+        h2: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: scheme.primary, height: 1.3),
+        h3: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: scheme.onSurface, height: 1.3),
+        h4: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface, height: 1.3),
+        listBullet: TextStyle(fontSize: 12, color: scheme.primary),
+        blockquote: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant, fontStyle: FontStyle.italic, height: 1.5),
+        blockquoteDecoration: BoxDecoration(
+          color: scheme.primaryContainer.withAlpha(40),
+          border: Border(left: BorderSide(color: scheme.primary.withAlpha(180), width: 3)),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        blockquotePadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        code: TextStyle(fontSize: 11, color: scheme.primary, backgroundColor: scheme.surfaceContainerHighest, fontFamily: AppTheme.monoFont),
+        codeblockPadding: const EdgeInsets.all(10),
+        codeblockDecoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest.withAlpha(80),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
+        ),
+        a: TextStyle(fontSize: 12, color: scheme.primary, decoration: TextDecoration.underline, decorationColor: scheme.primary.withAlpha(120)),
+        strong: TextStyle(fontSize: 12, color: scheme.onSurface, fontWeight: FontWeight.w700),
+        em: TextStyle(fontSize: 12, color: scheme.onSurface, fontStyle: FontStyle.italic),
+        tableHead: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: scheme.onSurface),
+        tableBody: TextStyle(fontSize: 11, color: scheme.onSurface),
+        tableBorder: TableBorder.all(color: scheme.outlineVariant.withAlpha(80)),
+        tableColumnWidth: const FlexColumnWidth(),
+        horizontalRuleDecoration: BoxDecoration(border: Border(top: BorderSide(color: scheme.outlineVariant.withAlpha(80)))),
+      );
+    }
+    return _mdStyle!;
+  }
+
   /// 渲染助手回复：把 [TOOL_CALL:...] 标记转成可视的工具调用块，其余为 Markdown。
   Widget _buildAssistantContent(String content, ColorScheme scheme) {
     final toolRe = RegExp(r'\[TOOL_CALL:([^\]]+)\]');
     final matches = toolRe.allMatches(content).toList();
+    final mdStyle = _markdownStyle(scheme);
     Widget markdownBody(String data) => MarkdownBody(
           data: data,
           selectable: true,
-          styleSheet: MarkdownStyleSheet(
-            p: TextStyle(fontSize: 12, color: scheme.onSurface, height: 1.5),
-            h1: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: scheme.primary, height: 1.3),
-            h2: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: scheme.primary, height: 1.3),
-            h3: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: scheme.onSurface, height: 1.3),
-            h4: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface, height: 1.3),
-            listBullet: TextStyle(fontSize: 12, color: scheme.primary),
-            blockquote: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant, fontStyle: FontStyle.italic, height: 1.5),
-            blockquoteDecoration: BoxDecoration(
-              color: scheme.primaryContainer.withAlpha(40),
-              border: Border(left: BorderSide(color: scheme.primary.withAlpha(180), width: 3)),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            blockquotePadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            code: TextStyle(fontSize: 11, color: scheme.primary, backgroundColor: scheme.surfaceContainerHighest, fontFamily: AppTheme.monoFont),
-            codeblockPadding: const EdgeInsets.all(10),
-            codeblockDecoration: BoxDecoration(
-              color: scheme.surfaceContainerHighest.withAlpha(80),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
-            ),
-            a: TextStyle(fontSize: 12, color: scheme.primary, decoration: TextDecoration.underline, decorationColor: scheme.primary.withAlpha(120)),
-            strong: TextStyle(fontSize: 12, color: scheme.onSurface, fontWeight: FontWeight.w700),
-            em: TextStyle(fontSize: 12, color: scheme.onSurface, fontStyle: FontStyle.italic),
-            tableHead: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: scheme.onSurface),
-            tableBody: TextStyle(fontSize: 11, color: scheme.onSurface),
-            tableBorder: TableBorder.all(color: scheme.outlineVariant.withAlpha(80)),
-            tableColumnWidth: const FlexColumnWidth(),
-            horizontalRuleDecoration: BoxDecoration(border: Border(top: BorderSide(color: scheme.outlineVariant.withAlpha(80)))),
-          ),
+          styleSheet: mdStyle,
         );
     if (matches.isEmpty) return markdownBody(content);
     // 有工具调用：拆成 [文本, 工具块, 文本, ...] 交替

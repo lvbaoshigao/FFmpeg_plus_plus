@@ -59,7 +59,19 @@ std::string buildSubtitleFilter(const std::string& input_path, const json& opts)
         if (!isPathSafe(sub_file)) throw std::runtime_error("字幕路径包含不安全字符");
         filter << "subtitles='" << escapeFilterPath(sub_file) << "'";
     } else if (source == "embedded") {
-        int sub_index = opts.value("subtitle_index", 0);
+        // 类型安全检查
+        if (!opts.contains("subtitle_index")) {
+            throw std::runtime_error("内嵌字幕模式需要提供 subtitle_index");
+        }
+        int sub_index;
+        try {
+            sub_index = opts["subtitle_index"].get<int>();
+        } catch (...) {
+            throw std::runtime_error("subtitle_index 必须是整数");
+        }
+        if (sub_index < 0) {
+            throw std::runtime_error("subtitle_index 必须为非负整数");
+        }
         filter << "subtitles='" << escapeFilterPath(input_path) << "':si=" << sub_index;
     } else {
         throw std::runtime_error("未知字幕来源: " + source);
@@ -68,9 +80,17 @@ std::string buildSubtitleFilter(const std::string& input_path, const json& opts)
     // 样式
     if (opts.contains("style") && !opts["style"].is_null()) {
         auto& style = opts["style"];
+        if (!style.is_object()) {
+            throw std::runtime_error("style 必须是对象");
+        }
         std::vector<std::string> parts;
         if (style.contains("font_name") && !style["font_name"].is_null()) {
-            std::string fn = style["font_name"].get<std::string>();
+            std::string fn;
+            try {
+                fn = style["font_name"].get<std::string>();
+            } catch (...) {
+                throw std::runtime_error("font_name 必须是字符串");
+            }
             // 字体名仅允许字母、数字、空格、连字符、下划线和中文
             bool fn_safe = true;
             for (char c : fn) {
@@ -84,14 +104,48 @@ std::string buildSubtitleFilter(const std::string& input_path, const json& opts)
             if (!fn_safe) throw std::runtime_error("字体名包含不安全字符");
             parts.push_back("FontName=" + fn);
         }
-        if (style.contains("font_size") && !style["font_size"].is_null())
-            parts.push_back("FontSize=" + std::to_string(style["font_size"].get<int>()));
-        if (style.contains("font_color") && !style["font_color"].is_null())
-            parts.push_back("PrimaryColour=" + hexToASS(style["font_color"].get<std::string>()));
-        if (style.contains("outline_width") && !style["outline_width"].is_null())
-            parts.push_back("Outline=" + std::to_string(style["outline_width"].get<int>()));
-        if (style.contains("outline_color") && !style["outline_color"].is_null())
-            parts.push_back("OutlineColour=" + hexToASS(style["outline_color"].get<std::string>()));
+        if (style.contains("font_size") && !style["font_size"].is_null()) {
+            int font_size;
+            try {
+                font_size = style["font_size"].get<int>();
+            } catch (...) {
+                throw std::runtime_error("font_size 必须是整数");
+            }
+            if (font_size <= 0 || font_size > 1000) {
+                throw std::runtime_error("font_size 必须在 1-1000 之间");
+            }
+            parts.push_back("FontSize=" + std::to_string(font_size));
+        }
+        if (style.contains("font_color") && !style["font_color"].is_null()) {
+            std::string font_color;
+            try {
+                font_color = style["font_color"].get<std::string>();
+            } catch (...) {
+                throw std::runtime_error("font_color 必须是字符串");
+            }
+            parts.push_back("PrimaryColour=" + hexToASS(font_color));
+        }
+        if (style.contains("outline_width") && !style["outline_width"].is_null()) {
+            int outline_width;
+            try {
+                outline_width = style["outline_width"].get<int>();
+            } catch (...) {
+                throw std::runtime_error("outline_width 必须是整数");
+            }
+            if (outline_width < 0 || outline_width > 20) {
+                throw std::runtime_error("outline_width 必须在 0-20 之间");
+            }
+            parts.push_back("Outline=" + std::to_string(outline_width));
+        }
+        if (style.contains("outline_color") && !style["outline_color"].is_null()) {
+            std::string outline_color;
+            try {
+                outline_color = style["outline_color"].get<std::string>();
+            } catch (...) {
+                throw std::runtime_error("outline_color 必须是字符串");
+            }
+            parts.push_back("OutlineColour=" + hexToASS(outline_color));
+        }
 
         if (!parts.empty()) {
             filter << ":force_style='";
@@ -128,6 +182,9 @@ std::vector<std::string> buildSubtitleCommand(
         video_options["vf_filters"].is_array() && !video_options["vf_filters"].empty()) {
         std::string prefix;
         for (auto& f : video_options["vf_filters"]) {
+            if (!f.is_string()) {
+                throw std::runtime_error("vf_filters 中的元素必须是字符串");
+            }
             std::string fs = f.get<std::string>();
             if (!isFilterSafe(fs))
                 throw std::runtime_error("视频滤镜包含不安全内容: " + fs);
@@ -144,6 +201,9 @@ std::vector<std::string> buildSubtitleCommand(
         video_options["af_filters"].is_array() && !video_options["af_filters"].empty()) {
         std::string af;
         for (auto& f : video_options["af_filters"]) {
+            if (!f.is_string()) {
+                throw std::runtime_error("af_filters 中的元素必须是字符串");
+            }
             std::string fs = f.get<std::string>();
             if (!isFilterSafe(fs))
                 throw std::runtime_error("音频滤镜包含不安全内容: " + fs);

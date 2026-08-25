@@ -303,18 +303,22 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
     // 关键修复：
     // 1) 使用 const _navLiquidSettings（dark 差异化交给 tint/shadow），
     //    避免每次 build 都新建 OCLiquidGlassSettings 触发 shader uniform 重置；
-    // 2) 给 OCLiquidGlassGroup/OCLiquidGlass 加 ValueKey(_NavGlassKey)，仅当玻璃
+    // 2) 给 OCLiquidGlassGroup 加 ValueKey(_NavGlassKey)，仅当玻璃
     //    配置变化时才真的销毁/重建液态玻璃节点；无关 notify（进度/日志/任务）
-    //    会让 key 不变，Element 复用，shader 内部状态稳定。
+    //    会让 key 不变，Element 复用，shader 内部状态稳定；
+    // 3) OCLiquidGlass 使用独立 key（避免与父级 OCLiquidGlassGroup 重复）；
+    // 4) RepaintBoundary 放在 OCLiquidGlassGroup 外部，隔离底部导航的重绘
+    //    触发，同时让 shader 能正确采样页面背景。
     final navGlassKey = ValueKey<_NavGlassKey>(glassKey);
-    return OCLiquidGlassGroup(
-      key: navGlassKey,
-      settings: _navLiquidSettings,
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(14, 2, 14, bottomSafe + 8),
-        child: RepaintBoundary(
+    final navInnerKey = ValueKey<String>('${glassKey.hashCode}_nav_inner');
+    return RepaintBoundary(
+      child: OCLiquidGlassGroup(
+        key: navGlassKey,
+        settings: _navLiquidSettings,
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(14, 2, 14, bottomSafe + 8),
           child: OCLiquidGlass(
-            key: navGlassKey,
+            key: navInnerKey,
             borderRadius: radius,
             color: tint,
             shadow: BoxShadow(
