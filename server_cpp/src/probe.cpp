@@ -115,10 +115,14 @@ ProbeResult probeFile(const std::string& filepath) {
             switch (sig) {
                 case SIGSEGV: sig_name = "SIGSEGV"; break;
                 case SIGABRT: sig_name = "SIGABRT"; break;
+#ifdef SIGBUS
                 case SIGBUS:  sig_name = "SIGBUS";  break;
+#endif
                 case SIGFPE:  sig_name = "SIGFPE";  break;
                 case SIGILL:  sig_name = "SIGILL";  break;
+#ifdef SIGKILL
                 case SIGKILL: sig_name = "SIGKILL"; break;
+#endif
                 case SIGTERM: sig_name = "SIGTERM"; break;
 #ifdef SIGSYS
                 case SIGSYS:  sig_name = "SIGSYS";  break;
