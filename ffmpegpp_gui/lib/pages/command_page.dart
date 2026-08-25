@@ -9,7 +9,9 @@ import '../theme/app_strings.dart';
 import '../widgets/toast.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_top_bar.dart';
+import '../widgets/mobile_glass_pill.dart';
 import '../platform/app_platform.dart';
+import '../app.dart' show wallpaperImageProvider;
 
 class CommandPage extends StatefulWidget {
   const CommandPage({super.key});
@@ -234,36 +236,56 @@ class _CommandPageState extends State<CommandPage> {
   Widget _buildMobile(BuildContext context, ColorScheme scheme, AppStrings s, bool zh) {
     return Scaffold(
       backgroundColor: Colors.transparent,
-      body: Column(children: [
-        MobileSubPageTopBar(
-          title: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.terminal_outlined, size: 20, color: scheme.primary),
-            const SizedBox(width: 8),
-            Text(s.navCommand),
-          ]),
-          actions: [
-            IconButton(
-              icon: Icon(Icons.delete_outline, size: 20, color: scheme.onSurface),
-              tooltip: s.cmdClearOutput,
-              onPressed: _clearOutput,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-            ),
-          ],
-          onBack: () => Navigator.of(context).maybePop(),
-        ),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: Column(children: [
-              _buildMobileInputArea(scheme, s, zh),
-              const SizedBox(height: 10),
-              Expanded(child: _buildMobileOutputArea(scheme, s, zh)),
+      // 与日志页一致：命令页经 Navigator.push 单独路由，不在根壁纸 Stack 内，
+      // 需要自己再贴一份壁纸 + 遮罩，否则透明 Scaffold 会没有背景（一片空白/黑）。
+      body: Selector<AppState, (String, double)>(
+        selector: (_, st) => (st.config.backgroundImage, st.config.backgroundOpacity),
+        builder: (context, bgTuple, _) {
+          final bg = bgTuple.$1;
+          final hasBg = bg.isNotEmpty;
+          return Stack(children: [
+            if (hasBg)
+              Positioned.fill(child: Image(
+                image: wallpaperImageProvider(bg, MediaQuery.sizeOf(context).width, MediaQuery.sizeOf(context).height, MediaQuery.devicePixelRatioOf(context)),
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => const SizedBox.shrink(),
+              )),
+            Positioned.fill(child: Container(
+              color: scheme.surface.withAlpha(((1.0 - bgTuple.$2) * 220).round().clamp(20, 240)),
+            )),
+            Column(children: [
+              MobileSubPageTopBar(
+                title: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.terminal_outlined, size: 20, color: scheme.primary),
+                  const SizedBox(width: 8),
+                  Text(s.navCommand),
+                ]),
+                actions: [
+                  // 与主界面动作药丸一致的 34×34 紧凑圆形按钮（替换原 36×36 的 Material IconButton）
+                  MobileGlassPillAction(
+                    icon: Icons.delete_outline,
+                    tooltip: s.cmdClearOutput,
+                    color: scheme.error,
+                    onTap: _clearOutput,
+                  ),
+                ],
+                onBack: () => Navigator.of(context).maybePop(),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  child: Column(children: [
+                    _buildMobileInputArea(scheme, s, zh),
+                    const SizedBox(height: 10),
+                    Expanded(child: _buildMobileOutputArea(scheme, s, zh)),
+                  ]),
+                ),
+              ),
+              SizedBox(height: kMobileNavClearance),
             ]),
-          ),
-        ),
-        SizedBox(height: kMobileNavClearance),
-      ]),
+          ]);
+        },
+      ),
     );
   }
 

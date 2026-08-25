@@ -125,7 +125,8 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
     final op = glassKey.op.clamp(0.0, 1.0);
     final baseAlpha = (op * 255).round().clamp(0, 255);
     final follow = glassKey.follow;
-    final baseColor = follow ? scheme.primary : scheme.surface;
+    // 「透明」(none) 效果退回主题色显示
+    final baseColor = (follow || effect == 'none') ? scheme.primary : scheme.surface;
     final tint = baseColor.withAlpha(baseAlpha);
 
     final barHeight = 60.0;

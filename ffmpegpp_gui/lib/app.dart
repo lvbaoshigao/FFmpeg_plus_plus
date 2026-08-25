@@ -65,6 +65,59 @@ class _AppScrollBehavior extends MaterialScrollBehavior {
   }
 }
 
+/// PageView 翻页门限：必须滑动一定距离（或明确甩动）才翻页，避免轻划误触。
+class _SwipeGatePagePhysics extends PageScrollPhysics {
+  const _SwipeGatePagePhysics({
+    super.parent,
+    required this.originPage,
+    this.gateFraction = 0.30,
+  });
+
+  final double originPage;
+  final double gateFraction;
+
+  @override
+  _SwipeGatePagePhysics applyTo(ScrollPhysics? ancestor) =>
+      _SwipeGatePagePhysics(
+        parent: buildParent(ancestor),
+        originPage: originPage,
+        gateFraction: gateFraction,
+      );
+
+  @override
+  Simulation? createBallisticSimulation(
+      ScrollMetrics position, double velocity) {
+    if ((velocity <= 0.0 && position.pixels <= position.minScrollExtent) ||
+        (velocity >= 0.0 && position.pixels >= position.maxScrollExtent)) {
+      return super.createBallisticSimulation(position, velocity);
+    }
+    final tolerance = toleranceFor(position);
+    final page = position.pixels / position.viewportDimension;
+    final dragged = page - originPage;
+    // 需要约 2.5 倍默认甩动速度才触发「甩动翻页」，避免轻划误翻
+    final tol = tolerance.velocity * 2.5;
+    double targetPage;
+    if (velocity.abs() > tol) {
+      // 明确甩动：按方向翻一页
+      targetPage = (velocity < 0 ? originPage - 1 : originPage + 1).roundToDouble();
+    } else if (dragged.abs() >= gateFraction) {
+      // 拖拽距离超过门限 → 翻页
+      targetPage = (dragged > 0 ? originPage + 1 : originPage - 1).roundToDouble();
+    } else {
+      // 不足门限 → 回弹到当前页
+      targetPage = originPage;
+    }
+    final maxPage = (position.maxScrollExtent / position.viewportDimension).clamp(0.0, 1e9);
+    targetPage = targetPage.clamp(0.0, maxPage);
+    final target = targetPage * position.viewportDimension;
+    if (target == position.pixels) return null;
+    return ScrollSpringSimulation(
+      spring, position.pixels, target, velocity,
+      tolerance: tolerance,
+    );
+  }
+}
+
 class _FfmpegppAppState extends State<FfmpegppApp> {
   /// Android Monet 动态取色的种子色（从系统壁纸读取；null = 不可用）
   int? _monetSeed;
@@ -106,6 +159,7 @@ class _FfmpegppAppState extends State<FfmpegppApp> {
         initialized: s.initialized,
         useDynamicColor: isAndroidPlatform && s.config.useDynamicColor,
         predictiveBack: isAndroidPlatform && s.config.predictiveBack,
+        glassEffect: s.config.glassEffect,
         monetSeed: _monetSeed,
       ),
       builder: (context, k, _) {
@@ -124,10 +178,10 @@ class _FfmpegppAppState extends State<FfmpegppApp> {
           ],
           theme: AppTheme.light(seedColor: k.themeColor, fontFamily: k.fontFamily,
               fontSize: k.fontSize, fontWeight: k.fontWeight, dynamicSeed: dynamicSeed,
-              predictiveBack: k.predictiveBack),
+              predictiveBack: k.predictiveBack, glassEffect: k.glassEffect),
           darkTheme: AppTheme.dark(seedColor: k.themeColor, fontFamily: k.fontFamily,
               fontSize: k.fontSize, fontWeight: k.fontWeight, dynamicSeed: dynamicSeed,
-              predictiveBack: k.predictiveBack),
+              predictiveBack: k.predictiveBack, glassEffect: k.glassEffect),
           themeMode: k.darkMode ? ThemeMode.dark : ThemeMode.light,
           // 禁用 Android 12+ 的「拉伸过滚动」效果：它在 Impeller 下用
           // ImageFiltered(shader) 把整页内容截进离屏纹理再做形变——液态玻璃
@@ -160,6 +214,7 @@ class _ThemeKey {
   final bool initialized;
   final bool useDynamicColor;
   final bool predictiveBack;
+  final String glassEffect;
   final int? monetSeed;
   const _ThemeKey({
     required this.lang,
@@ -171,6 +226,7 @@ class _ThemeKey {
     required this.initialized,
     required this.useDynamicColor,
     required this.predictiveBack,
+    required this.glassEffect,
     required this.monetSeed,
   });
 
@@ -186,10 +242,11 @@ class _ThemeKey {
       other.initialized == initialized &&
       other.useDynamicColor == useDynamicColor &&
       other.predictiveBack == predictiveBack &&
+      other.glassEffect == glassEffect &&
       other.monetSeed == monetSeed;
 
   @override
-  int get hashCode => Object.hash(lang, themeColor, fontFamily, fontSize, fontWeight, darkMode, initialized, useDynamicColor, predictiveBack, monetSeed);
+  int get hashCode => Object.hash(lang, themeColor, fontFamily, fontSize, fontWeight, darkMode, initialized, useDynamicColor, predictiveBack, glassEffect, monetSeed);
 }
 
 /// 启动加载画面：旋转光晕 + 品牌图标 + 进度提示。
@@ -567,6 +624,8 @@ class _AppShellState extends State<AppShell> with WindowListener {
         final size = MediaQuery.sizeOf(context);
         final dpr = MediaQuery.devicePixelRatioOf(context);
         return Stack(children: [
+          // 不透明主题底色铺底：避免子页面返回过渡首帧露出系统窗口黑底
+          Positioned.fill(child: Container(color: scheme.surface)),
           Positioned.fill(child: Image(
               image: wallpaperImageProvider(bg, size.width, size.height, dpr),
               fit: BoxFit.cover,
@@ -665,8 +724,11 @@ class _AppShellState extends State<AppShell> with WindowListener {
 
   /// 移动端四个 Tab 的 PageView：滑动全程跟随手指；onPageChanged 回写选中态。
   Widget _mobilePageView() {
+    final nav = context.read<AppState>().selectedNav;
+    final idx = _kMobileNavOrder.indexOf(nav);
     return PageView(
       controller: _mobilePageController,
+      physics: _SwipeGatePagePhysics(originPage: idx.toDouble(), gateFraction: 0.28),
       onPageChanged: (idx) {
         if (idx < 0 || idx >= _kMobileNavOrder.length) return;
         final target = _kMobileNavOrder[idx];

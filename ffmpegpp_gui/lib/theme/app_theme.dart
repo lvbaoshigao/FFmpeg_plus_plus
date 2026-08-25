@@ -8,23 +8,23 @@ class AppTheme {
   /// seedColor 为用户自定义主题色；dynamicSeed 非空时（Android Monet
   /// 动态取色）覆盖它作为种子色，使用与系统 Material You 一致的
   /// tonalSpot 方案生成整套配色。
-  static ThemeData dark({int seedColor = 0xFF5E6AD2, String fontFamily = '', double fontSize = 14.0, int fontWeight = 400, int? dynamicSeed, bool predictiveBack = true}) {
+  static ThemeData dark({int seedColor = 0xFF5E6AD2, String fontFamily = '', double fontSize = 14.0, int fontWeight = 400, int? dynamicSeed, bool predictiveBack = true, String glassEffect = 'liquid'}) {
     final scheme = ColorScheme.fromSeed(
       seedColor: Color(dynamicSeed ?? seedColor),
       brightness: Brightness.dark,
     );
-    return _build(scheme, fontFamily, fontSize, fontWeight, predictiveBack: predictiveBack);
+    return _build(scheme, fontFamily, fontSize, fontWeight, predictiveBack: predictiveBack, glassEffect: glassEffect);
   }
 
-  static ThemeData light({int seedColor = 0xFF5E6AD2, String fontFamily = '', double fontSize = 14.0, int fontWeight = 400, int? dynamicSeed, bool predictiveBack = true}) {
+  static ThemeData light({int seedColor = 0xFF5E6AD2, String fontFamily = '', double fontSize = 14.0, int fontWeight = 400, int? dynamicSeed, bool predictiveBack = true, String glassEffect = 'liquid'}) {
     final scheme = ColorScheme.fromSeed(
       seedColor: Color(dynamicSeed ?? seedColor),
       brightness: Brightness.light,
     );
-    return _build(scheme, fontFamily, fontSize, fontWeight, predictiveBack: predictiveBack);
+    return _build(scheme, fontFamily, fontSize, fontWeight, predictiveBack: predictiveBack, glassEffect: glassEffect);
   }
 
-  static ThemeData _build(ColorScheme scheme, String fontFamily, double fontSize, int fontWeight, {bool predictiveBack = true}) {
+  static ThemeData _build(ColorScheme scheme, String fontFamily, double fontSize, int fontWeight, {bool predictiveBack = true, String glassEffect = 'liquid'}) {
     final isDark = scheme.brightness == Brightness.dark;
     // 字号缩放统一交给 app.dart 里的 MediaQuery.textScaler（TextScaler.linear(fontSize/14)），
     // 这里不能再 `sz * scale`，否则字号会被乘两次（默认 17 号会渲染成约 20.6px）。
@@ -155,6 +155,25 @@ class AppTheme {
         color: scheme.surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         elevation: 8,
+      ),
+      // 所有对话框统一风格：
+      // - 液态玻璃 / 模糊：半透明磨砂背景（透出后面玻璃层）+ 细边框 + 无 M3 tint；
+      // - none（透明）：恢复高不透明实心背景，避免文字透底难读。
+      dialogTheme: DialogThemeData(
+        backgroundColor: glassEffect == 'none'
+            ? scheme.surfaceContainerHigh
+            : scheme.surfaceContainerHigh.withAlpha(isDark ? 0xE4 : 0xDC),
+        surfaceTintColor: Colors.transparent,
+        elevation: 6,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(22),
+          side: BorderSide(
+            color: glassEffect == 'none'
+                ? Colors.transparent
+                : scheme.outlineVariant.withAlpha(isDark ? 70 : 90),
+            width: 0.6,
+          ),
+        ),
       ),
     );
   }

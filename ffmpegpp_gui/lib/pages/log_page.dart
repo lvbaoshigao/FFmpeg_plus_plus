@@ -109,43 +109,58 @@ class _LogPageState extends State<LogPage> {
 
     if (isMobilePlatform) {
       final safeTop = MediaQuery.of(context).padding.top;
+      // 与主界面（项目/设置页顶栏）完全一致的药丸规格：
+      // 标题药丸 padding 14/8、动作药丸 padding 4/3、内部用 34×34 紧凑圆形按钮
+      // （MobileGlassPillAction），替换掉原来大小不一的 Material IconButton。
+      final mobileActions = <Widget>[
+        if (hasSelection)
+          MobileGlassPillAction(
+            icon: Icons.copy, tooltip: isZh ? '复制选中' : 'Copy selected',
+            color: scheme.onSurface, onTap: () {
+              final selected = _selectedIndices.where((i) => i < filtered.length).map((i) => _fmt(filtered[i])).join('\n');
+              Clipboard.setData(ClipboardData(text: selected));
+              showToast(context, isZh ? '已复制 ${_selectedIndices.length} 条' : 'Copied ${_selectedIndices.length} entries');
+            },
+          ),
+        MobileGlassPillAction(
+          icon: Icons.copy_all, tooltip: isZh ? '复制全部' : 'Copy all',
+          color: scheme.onSurface, onTap: () {
+            Clipboard.setData(ClipboardData(text: filtered.map(_fmt).join('\n')));
+            showToast(context, isZh ? '已复制全部 ${filtered.length} 条' : 'Copied all ${filtered.length} entries');
+          },
+        ),
+        MobileGlassPillAction(
+          icon: Icons.delete_outline, tooltip: isZh ? '清空' : 'Clear',
+          color: scheme.error, onTap: () { setState(() => _selectedIndices.clear()); context.read<AppState>().clearLogs(); },
+        ),
+      ];
       return Padding(
         padding: EdgeInsets.fromLTRB(8, safeTop + 6, 8, 6),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-          // 左：返回按钮 + 标题药丸（自适应宽度，标题贴合药丸）
-          Flexible(
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              MobileGlassPill(
-                radius: 22,
+        child: Row(children: [
+          MobileGlassPill(
+            radius: 22, padding: EdgeInsets.zero,
+            child: SizedBox(
+              width: 44, height: 44,
+              child: IconButton(
+                icon: Icon(Icons.arrow_back, size: 22, color: scheme.onSurface),
+                onPressed: () => Navigator.of(context).maybePop(),
                 padding: EdgeInsets.zero,
-                child: SizedBox(
-                  width: 44, height: 44,
-                  child: IconButton(
-                    icon: Icon(Icons.arrow_back, size: 22, color: scheme.onSurface),
-                    onPressed: () => Navigator.of(context).maybePop(),
-                    padding: EdgeInsets.zero,
-                  ),
-                ),
+                constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
               ),
-              const SizedBox(width: 8),
-              Flexible(
-                child: MobileGlassPill(
-                  radius: 22,
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
-                  pressable: true,
-                  child: titleRow,
-                ),
-              ),
-            ]),
+            ),
           ),
           const SizedBox(width: 8),
-          // 右：操作药丸（占剩余空间）
-          Expanded(
-            child: MobileGlassPill(
-              radius: 22,
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-              child: Row(children: actionWidgets),
-            ),
+          MobileGlassPill(
+            radius: 22,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            pressable: true,
+            child: titleRow,
+          ),
+          const Spacer(),
+          MobileGlassPill(
+            radius: 22,
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+            child: Row(mainAxisSize: MainAxisSize.min, children: mobileActions),
           ),
         ]),
       );

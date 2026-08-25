@@ -2,13 +2,14 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 
-const _currentVersion = '5.0.0-beta2';
+const _currentVersion = '5.0.0';
 
 const _lanzouUrls = {
   'windows': 'https://wwbrq.lanzouv.com/b002w12goj',
   'linux': 'https://wwbrq.lanzouv.com/b002w12gpa',
   'linux_arm64': 'https://wwbrq.lanzouv.com/b002w12gqb',
   'macos_arm64': 'https://wwbrq.lanzouv.com/b002w17vte',
+  'android': 'https://wwbrq.lanzouv.com/b002w51tof',
 };
 
 const _lanzouPasswords = {
@@ -16,6 +17,7 @@ const _lanzouPasswords = {
   'linux': '4zlx',
   'linux_arm64': 'fnk0',
   'macos_arm64': '26qb',
+  'android': 'davc',
 };
 
 const _githubRepo = 'lvbaoshigao/FFmpeg_plus_plus';
@@ -140,7 +142,10 @@ Future<UpdateResult> _checkLanzou() async {
     final match = RegExp(r'<span id="filename">([^<]+)</span>').firstMatch(resp.body);
     if (match == null) return UpdateResult(error: 'parse_failed', source: UpdateSource.lanzou);
     final raw = match.group(1)!.trim();
-    final version = RegExp(r'(\d+(\.\d+){1,3})').firstMatch(raw)?.group(1) ?? raw;
+    // 保留 beta/rc 等预发布后缀：若文件名含 "5.0.0-beta1"，只截到 "5.0.0"
+    // 会把测试版误判为正式版（导致 “beta-1 5.0.0” 比 “5.0.0” 新的错误判断）。
+    final version = RegExp(r'(\d+(?:\.\d+){1,3}(?:-[a-zA-Z]+\d*)?)')
+        .firstMatch(raw)?.group(1) ?? raw;
     final password = _lanzouPasswords[key];
     return UpdateResult(remoteVersion: version, downloadUrl: url, password: password, source: UpdateSource.lanzou);
   } catch (e) {
@@ -182,12 +187,14 @@ Future<UpdateResult> _checkGithub() async {
 }
 
 String _platformKey() {
+  if (Platform.isAndroid) return 'android';
   if (Platform.isWindows) return 'windows';
   if (Platform.isMacOS) return _isArm64() ? 'macos_arm64' : 'macos_x64';
   return _isArm64() ? 'linux_arm64' : 'linux';
 }
 
 String _assetSuffix() {
+  if (Platform.isAndroid) return '.apk';
   if (Platform.isWindows) return '_setup.exe';
   if (Platform.isMacOS) return '.dmg';
   if (_isArm64()) return '_arm64.deb';
