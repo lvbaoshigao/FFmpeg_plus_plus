@@ -76,7 +76,7 @@ class AppStrings {
   String get glassFollowThemeHint => lang == 'zh' ? '选中后玻璃、卡片等元素统一使用主题色' : 'Tint glass & cards with the theme color';
   String get glassLiquid => lang == 'zh' ? '液态玻璃' : 'Liquid';
   String get glassBlur => lang == 'zh' ? '模糊' : 'Blur';
-  String get glassNone => lang == 'zh' ? '无效果' : 'None';
+  String get glassNone => lang == 'zh' ? '透明' : 'Transparent';
   String get settingsFrostedGlass => lang == 'zh' ? '设置项以毛玻璃展示' : 'Frosted settings items';
   String get settingsFrostedGlassHint => lang == 'zh' ? '开启后设置列表项使用更易读的毛玻璃背景' : 'Use readable frosted-glass backgrounds for settings items';
   // 预测式返回（Android 14+）
@@ -125,7 +125,7 @@ class AppStrings {
   String get swVersion => lang == 'zh' ? '版本' : 'Version';
   String get swBuild => lang == 'zh' ? '构建日期' : 'Build';
   String get swProtocol => lang == 'zh' ? '协议' : 'Protocol';
-  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v5.0.0-beta2  |  构建 2026-08-05  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v5.0.0-beta2  |  Build 2026-08-05  |  JSON v0.1.0';
+  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v5.0.0  |  构建 2026-08-25  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v5.0.0  |  Build 2026-08-25  |  JSON v0.1.0';
   String get languageInterface => lang == 'zh' ? '界面语言' : 'Interface Language';
   String get ffmpegFound => lang == 'zh' ? 'FFmpeg 已检测到' : 'FFmpeg detected';
   String get ffmpegNotFound => lang == 'zh' ? 'FFmpeg 未检测到' : 'FFmpeg not found';
@@ -306,6 +306,7 @@ class AppStrings {
   String get setExpand => lang == 'zh' ? '展开' : 'Expand';
   String get setCollapseAll => lang == 'zh' ? '全部折叠' : 'Collapse all';
   String get setExpandAll => lang == 'zh' ? '全部展开' : 'Expand all';
+  String get secGeneral => lang == 'zh' ? '通用' : 'General';
   String get secAppearance => lang == 'zh' ? '外观' : 'Appearance';
   String get secProcessing => lang == 'zh' ? '处理' : 'Processing';
   String get secEditor => lang == 'zh' ? '编辑器' : 'Editor';

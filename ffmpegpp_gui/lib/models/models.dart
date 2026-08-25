@@ -943,6 +943,9 @@ class AppConfig {
   bool glassFollowTheme;
   /// 设置项以毛玻璃展示（仅「液态玻璃」生效时可开启，提升列表可读性）
   bool settingsFrostedGlass;
+  /// 设置项不使用卡片玻璃效果：设置卡片跳过液态玻璃渲染，退回主题色样式
+  ///（与 settingsFrostedGlass 互斥）
+  bool noCardGlass;
   /// 逻辑门符号标准：'ansi' ANSI/IEEE 标准 / 'iec' IEC 标准
   String gateStd;
   bool debugMode;
@@ -1028,6 +1031,7 @@ class AppConfig {
     this.glassEffect = 'liquid',
     this.glassFollowTheme = false,
     this.settingsFrostedGlass = false,
+    this.noCardGlass = false,
     this.gateStd = 'ansi',
     this.debugMode = false, this.saveLogs = false, this.enableSystemNotification = false, this.logSavePath = '',
     this.useNodeEditor = true,
@@ -1113,6 +1117,7 @@ class AppConfig {
         glassEffect: json['glass_effect'] as String? ?? 'liquid',
         glassFollowTheme: json['glass_follow_theme'] as bool? ?? false,
         settingsFrostedGlass: json['settings_frosted_glass'] as bool? ?? false,
+        noCardGlass: json['no_card_glass'] as bool? ?? false,
         gateStd: json['gate_std'] as String? ?? 'ansi',
         cardOpacity: (json['card_opacity'] as num?)?.toDouble() ?? 0.7,
         canvasBg: json['canvas_bg'] as String? ?? 'global',
@@ -1169,7 +1174,7 @@ class AppConfig {
         'background_image': backgroundImage, 'background_opacity': backgroundOpacity,
         'glass_effect': glassEffect,
         'glass_follow_theme': glassFollowTheme,
-        'settings_frosted_glass': settingsFrostedGlass, 'gate_std': gateStd,
+        'settings_frosted_glass': settingsFrostedGlass, 'no_card_glass': noCardGlass, 'gate_std': gateStd,
         'card_opacity': cardOpacity,
         'canvas_bg': canvasBg,
         'debug_mode': debugMode,

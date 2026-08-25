@@ -38,10 +38,11 @@ class GlassPanel extends StatelessWidget {
     final op = cfg.cardOpacity.clamp(0.0, 1.0);
     final br = BorderRadius.circular(radius);
     // 遵循主题色：底色/渐变用主题色替代 surface 灰，所有元素统一主题色观感
+    // 「透明」(none) 效果同样退回主题色显示
     final follow = cfg.glassFollowTheme;
-    final baseColor = follow ? scheme.primary : scheme.surface;
-    final baseAlt = follow ? scheme.tertiary : scheme.surface;
-    final borderColor = follow ? scheme.primary.withAlpha(isDark ? 110 : 150) : scheme.outlineVariant;
+    final baseColor = (follow || effect == 'none') ? scheme.primary : scheme.surface;
+    final baseAlt = (follow || effect == 'none') ? scheme.tertiary : scheme.surface;
+    final borderColor = (follow || effect == 'none') ? scheme.primary.withAlpha(isDark ? 110 : 150) : scheme.outlineVariant;
     // 主题渐变色：设置了 themeColor2（>=0）时，主题色在 themeColor→themeColor2 之间渐变
     final grad = (cfg.themeColor2 >= 0)
         ? LinearGradient(
@@ -55,6 +56,37 @@ class GlassPanel extends StatelessWidget {
     //    下方桌面端分支保持不变。「设置项以毛玻璃展示」开启时，改用更易读的扁平
     //    高斯模糊；blur/none 也统一复用 MobileGlassPill 的对应效果。──
     if (isMobilePlatform) {
+      // 「不使用卡片玻璃效果」：跳过液态玻璃/毛玻璃渲染，退回主题色实心卡片
+      if (cfg.noCardGlass) {
+        final solidAlpha = ((isDark ? 235 : 245) * op).round().clamp(0, 255);
+        return RepaintBoundary(
+          child: Container(
+            padding: padding,
+            decoration: BoxDecoration(
+              color: grad == null
+                  ? baseColor.withAlpha(solidAlpha)
+                  : null,
+              gradient: grad != null
+                  ? LinearGradient(
+                      begin: grad.begin,
+                      end: grad.end,
+                      colors: grad.colors.map((c) => c.withAlpha(solidAlpha)).toList(),
+                    )
+                  : null,
+              borderRadius: br,
+              border: Border.all(color: borderColor.withAlpha(80), width: 1),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withAlpha(isDark ? 40 : 16),
+                  blurRadius: 14,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: child,
+          ),
+        );
+      }
       if (cfg.settingsFrostedGlass && effect == 'liquid') {
         // 压低 alpha：快速滚动时 BackdropFilter 偶尔失效，alpha 过高会露出
         // 大面积纯色主题底色（「诡异的玻璃 + 主题色块」）。与 mobile_glass_pill
@@ -85,6 +117,36 @@ class GlassPanel extends StatelessWidget {
         radius: radius,
         padding: padding ?? const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         child: child,
+      );
+    }
+
+    // 桌面端「不使用卡片玻璃效果」：实心主题色卡片
+    if (cfg.noCardGlass) {
+      final solidAlpha = ((isDark ? 235 : 245) * op).round().clamp(0, 255);
+      return RepaintBoundary(
+        child: Container(
+          padding: padding,
+          decoration: BoxDecoration(
+            color: grad == null ? baseColor.withAlpha(solidAlpha) : null,
+            gradient: grad != null
+                ? LinearGradient(
+                    begin: grad.begin,
+                    end: grad.end,
+                    colors: grad.colors.map((c) => c.withAlpha(solidAlpha)).toList(),
+                  )
+                : null,
+            borderRadius: br,
+            border: Border.all(color: borderColor.withAlpha(80), width: 1),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withAlpha(isDark ? 40 : 16),
+                blurRadius: 14,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: child,
+        ),
       );
     }
 

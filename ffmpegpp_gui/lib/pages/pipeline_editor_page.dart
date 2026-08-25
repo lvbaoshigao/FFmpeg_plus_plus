@@ -124,8 +124,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   bool _toolboxExpanded = true;
   bool _editorExpanded = true;
   bool _mobileToolboxOpen = false;
-  /// 移动端顶部菜单栏默认收起（为画布腾出更多空间）；通过右下角浮动按钮展开。
-  bool _mobileTopBarVisible = false;
+  /// 移动端顶部工具栏恒显（右下折叠按钮已移除，工具迁移到顶部栏）。
+  final bool _mobileTopBarVisible = true;
   double _toolboxFraction = 0.4;
   // 画布 / 右面板 水平分割比例（默认画布占 60%）
   double _canvasFraction = 0.6;
@@ -328,6 +328,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           DeviceOrientation.landscapeLeft,
           DeviceOrientation.landscapeRight,
         ]);
+        // 横屏默认进入：隐藏系统状态栏，画布铺满
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
       }
     }
     _appState.mcpOnClearAll = () { _pushUndo(); setState(() { _nodes.clear(); _connections.clear(); _logicBlocks.clear(); _selectedNodeIds.clear(); _saveGraph(); }); };
@@ -404,22 +406,27 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         DeviceOrientation.landscapeLeft,
         DeviceOrientation.landscapeRight,
       ]);
+      // 横屏：隐藏系统状态栏/导航栏，画布铺满整个屏幕
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     } else {
       SystemChrome.setPreferredOrientations([
         DeviceOrientation.portraitUp,
         DeviceOrientation.portraitDown,
       ]);
+      // 竖屏：恢复系统栏
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     }
   }
 
   @override
   void dispose() {
-    // 离开页面时恢复竖屏
+    // 离开页面时恢复竖屏 + 恢复系统栏
     if (isMobilePlatform) {
       SystemChrome.setPreferredOrientations([
         DeviceOrientation.portraitUp,
         DeviceOrientation.portraitDown,
       ]);
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     }
     _transformCtrl.removeListener(_onScaleChanged);
     _transformCtrl.dispose();
@@ -2008,9 +2015,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   // ── Body with CSD title bar ──
 
   Widget _buildBody(ColorScheme scheme, AppStrings s) {
+    // 横屏沉浸式（状态栏已隐藏）时不再预留顶部安全区，画布铺满整个屏幕
+    final topPad = Platform.isWindows
+        ? 0.0
+        : (isMobilePlatform
+            ? (_isLandscape ? 0.0 : MediaQuery.of(context).padding.top)
+            : 36.0);
     final content = Padding(
-      padding: EdgeInsets.only(top: Platform.isWindows
-          ? 0 : (isMobilePlatform ? MediaQuery.of(context).padding.top : 36)),
+      padding: EdgeInsets.only(top: topPad),
       child: Column(children: [
         // 移动端：顶部栏已移除（舍弃最顶层菜单栏），系统返回手势/实体 back 键
         // 由 PopScope 拦截处理；横竖屏切换与返回按钮已移至画布浮动控件。
@@ -2043,14 +2055,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                     ),
                   ),
                 ),
-                // 底部浮动菜单栏 - 分两组：左侧缩放，右侧工具
+                // 底部浮动菜单栏 - 左侧缩放（右下角工具条已移除，工具迁移到顶部栏）
                 Positioned(
                   bottom: 8, left: 8,
                   child: _buildMobileBottomLeftBar(scheme, s),
-                ),
-                Positioned(
-                  bottom: 8, right: 8,
-                  child: _buildMobileBottomRightBar(scheme, s),
                 ),
                 // 底部中央文件信息条
                 Positioned(
@@ -2748,10 +2756,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                   style: TextStyle(fontSize: 10, color: scheme.onSurface.withAlpha(128), height: 1.4),
                 )),
               ),
-            Positioned(
-              right: 10, bottom: aiEnabled ? 60 : 10,
-              child: _buildCanvasControls(scheme, s),
-            ),
+            // 移动端：右侧浮动工具列已删除（返回 / AI / 横竖屏 / 整理 / 定位源
+            // 等功能均已迁移到顶部浮动菜单栏与底部工具条，此处不再重复渲染，
+            // 避免与底部/顶部控件重叠。桌面端仍保留右侧浮动控件。
+            if (!isMobilePlatform)
+              Positioned(
+                right: 10, bottom: aiEnabled ? 60 : 10,
+                child: _buildCanvasControls(scheme, s),
+              ),
             // 左侧中间 ">" 按钮：展开/收起 AI 侧边面板（仅桌面端内嵌抽屉；
             // 移动端改为浮动按钮触发的底部弹层，见 _openAiSheet）
             if (aiEnabled && !isMobilePlatform)
@@ -4611,18 +4623,80 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     );
   }
 
-  /// 移动端：以底部弹层打开 AI 助手（按钮触发），顶部保留画布可见视口 + 状态预览。
+  /// 移动端：打开 AI 助手。竖屏用底部弹层；横屏用从左往右滑入的侧边栏（不满屏）。
   void _openAiSheet(AppStrings s) {
     final scheme = Theme.of(context).colorScheme;
-    final graphDesc = GraphExecutor.describeGraph(PipelineGraph(
-        nodes: List.of(_nodes), connections: List.of(_connections), logicBlocks: List.of(_logicBlocks)));
+    final panelContent =
+        _buildAiPanel(s, key: const ValueKey('ai-sheet'), startExpanded: true);
+
+    Widget header(BuildContext ctx) => Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
+          child: Row(children: [
+            Icon(Icons.smart_toy, size: 18, color: scheme.primary),
+            const SizedBox(width: 8),
+            Expanded(child: Text(s.aiChatTitle,
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface))),
+            IconButton(
+              icon: const Icon(Icons.close, size: 20),
+              color: scheme.onSurfaceVariant,
+              onPressed: () => Navigator.of(ctx).pop(),
+              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+            ),
+          ]),
+        );
+
+    if (_isLandscape) {
+      // 横屏：左侧滑入面板，不占满整个屏幕
+      showGeneralDialog<void>(
+        context: context,
+        barrierDismissible: true,
+        barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
+        barrierColor: Colors.black.withValues(alpha: 0.24),
+        transitionDuration: const Duration(milliseconds: 240),
+        pageBuilder: (ctx, anim, anim2) {
+          final w = MediaQuery.of(ctx).size.width;
+          final panelW = (w * 0.55).clamp(280.0, 460.0);
+          return Align(
+            alignment: Alignment.centerLeft,
+            child: Material(
+              color: Colors.transparent,
+              child: Padding(
+                // 横屏软键盘弹出时整体上移，避免输入框被键盘遮挡
+                padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
+                child: Container(
+                  width: panelW,
+                  height: double.infinity,
+                  decoration: BoxDecoration(
+                    color: scheme.surface,
+                    borderRadius: const BorderRadius.horizontal(right: Radius.circular(20)),
+                    border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: Column(children: [
+                    header(ctx),
+                    Expanded(child: panelContent),
+                  ]),
+                ),
+              ),
+            ),
+          );
+        },
+        transitionBuilder: (ctx, anim, anim2, child) {
+          final offset = Tween<Offset>(begin: const Offset(-1, 0), end: Offset.zero)
+              .animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic));
+          return SlideTransition(position: offset, child: child);
+        },
+      );
+      return;
+    }
+
+    // 竖屏：底部弹层（顶部留白，可见半透明遮罩后的画布）
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       barrierColor: Colors.black.withValues(alpha: 0.24),
       builder: (ctx) => Padding(
-        // 顶部留白：弹层不盖满屏幕，上方可见（半透明遮罩后的）画布 → 实时预览节点编辑器
         padding: EdgeInsets.only(top: MediaQuery.of(ctx).padding.top + 18),
         child: Container(
           height: MediaQuery.of(ctx).size.height * 0.86,
@@ -4638,44 +4712,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               width: 40, height: 4,
               decoration: BoxDecoration(color: scheme.outlineVariant.withAlpha(120), borderRadius: BorderRadius.circular(2)),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
-              child: Row(children: [
-                Icon(Icons.smart_toy, size: 18, color: scheme.primary),
-                const SizedBox(width: 8),
-                Expanded(child: Text(s.aiChatTitle, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface))),
-                IconButton(
-                  icon: const Icon(Icons.close, size: 20),
-                  color: scheme.onSurfaceVariant,
-                  onPressed: () => Navigator.of(ctx).pop(),
-                  constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-                ),
-              ]),
-            ),
-            // 画布状态预览条：直接可视化当前节点/连线/逻辑块（“预览节点编辑器状态”）
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
-                decoration: BoxDecoration(
-                  color: scheme.surfaceContainerHighest.withAlpha(70),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(
-                    '${s.isZh ? '画布预览' : 'Canvas preview'}: ${_nodes.length} ${s.isZh ? '节点' : 'nodes'} · ${_connections.length} ${s.isZh ? '连线' : 'links'} · ${_logicBlocks.length} ${s.isZh ? '逻辑块' : 'logic blocks'}',
-                    style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: scheme.primary),
-                  ),
-                  if (graphDesc.isNotEmpty) ...[
-                    const SizedBox(height: 3),
-                    Text(graphDesc, maxLines: 2, overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: 10.5, color: scheme.outline, fontFamily: 'monospace')),
-                  ],
-                ]),
-              ),
-            ),
-            Expanded(child: _buildAiPanel(s, key: const ValueKey('ai-sheet'), startExpanded: true)),
+            header(ctx),
+            Expanded(child: panelContent),
             // Android 手势导航：isScrollControlled 的底部弹层不会自动避让系统
             // 导航条，这里显式预留底部安全区，避免输入框被手势条遮挡。
             SizedBox(height: MediaQuery.of(ctx).padding.bottom),
@@ -4843,6 +4881,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           onPressed: _redoStack.isEmpty ? null : _redo,
         ),
         const SizedBox(width: 2),
+        // 自右下角工具条迁移：自动整理 + 定位源
+        _mobileBarBtn(Icons.auto_fix_high, _autoLayout, scheme, size: 18, pad: 4),
+        const SizedBox(width: 2),
+        _mobileBarBtn(Icons.my_location, () => _goToSource(s), scheme, size: 18, pad: 4),
+        const SizedBox(width: 2),
         _mobileBarBtn(
           _mobileToolboxOpen ? Icons.close : Icons.add,
           () => setState(() => _mobileToolboxOpen = !_mobileToolboxOpen),
@@ -4935,41 +4978,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     );
   }
 
-  // ── 移动端专用：底部右侧工具条 ──
-
-  Widget _buildMobileBottomRightBar(ColorScheme scheme, AppStrings s) {
-    return Container(
-      height: 32,
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-      decoration: BoxDecoration(
-        color: scheme.surface.withAlpha(220),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
-        boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(30), blurRadius: 6, offset: const Offset(0, 2))],
-      ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        _mobileBarBtn(
-          _mobileTopBarVisible ? Icons.expand_less : Icons.menu,
-          () => setState(() => _mobileTopBarVisible = !_mobileTopBarVisible),
-          scheme, size: 18, pad: 4,
-          color: _mobileTopBarVisible ? scheme.primary : scheme.onSurfaceVariant,
-        ),
-        const SizedBox(width: 2),
-        _mobileBarBtn(Icons.auto_fix_high, _autoLayout, scheme, size: 16, pad: 4),
-        const SizedBox(width: 2),
-        _mobileBarBtn(Icons.my_location, () => _goToSource(s), scheme, size: 16, pad: 4),
-      ]),
-    );
-  }
-
   // ── 移动端专用：底部中央文件信息 ──
 
   Widget _buildMobileFileInfo(ColorScheme scheme, AppStrings s) {
     final v = widget.video;
     final nodesLabel = s.isZh ? '节点' : 'nodes';
-    // 两侧悬浮条（左下缩放 + 右下工具）各约占 70px，中央信息条扣除这些宽度，
-    // 避免窄屏下长文本撑满整行，与两侧按钮重叠（“底部信息条和缩放/工具按钮叠在一起”）。
-    final reserved = 150.0;
+    // 左下缩放悬浮条约占 80px，中央信息条扣除这部分宽度，
+    // 避免窄屏下长文本撑满整行，与缩放按钮重叠。
+    final reserved = 90.0;
     final maxW = math.max(96.0, MediaQuery.of(context).size.width - reserved);
     return Container(
       height: 24,

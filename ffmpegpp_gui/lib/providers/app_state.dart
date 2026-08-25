@@ -488,8 +488,35 @@ class AppState extends ChangeNotifier {
     } catch (e) { _probeErrors[vf.filepath] = 'Error: $e'; _scheduleProbeNotify(); addLog('探测异常: $e', category: 'error'); }
   }
 
-  void removeVideo(String id) { _videos.removeWhere((v) => v.id == id); notifyListeners(); }
-  void clearAllVideos() { _videos.clear(); notifyListeners(); }
+  void removeVideo(String id) {
+    VideoFile? removed;
+    _videos.removeWhere((v) { if (v.id == id) { removed = v; return true; } return false; });
+    if (removed != null) _cleanupTempImportFile(removed!.filepath);
+    notifyListeners();
+  }
+
+  void clearAllVideos() {
+    final paths = _videos.map((v) => v.filepath).toList();
+    _videos.clear();
+    for (final p in paths) { _cleanupTempImportFile(p); }
+    notifyListeners();
+  }
+
+  /// 删除属于应用临时导入的缓存副本，避免「只记录路径」仍让应用体积增长：
+  /// file_picker 在 Android 上会把 SAF 的 content:// 拷贝到 cacheDir/file_picker/，
+  /// 本应用流式导入也会落盘 ffmpegpp_import_* 临时文件。移除项目文件时一并
+  /// 清理这些副本（仅当没有其它条目仍引用同一路径时才删除）。
+  void _cleanupTempImportFile(String filepath) {
+    if (filepath.isEmpty) return;
+    final normalized = filepath.replaceAll('\\', '/');
+    final isCacheCopy = normalized.contains('file_picker') || normalized.contains('ffmpegpp_import');
+    if (!isCacheCopy) return;
+    if (_videos.any((v) => v.filepath == filepath)) return; // 仍有引用，不删
+    try {
+      final f = File(filepath);
+      if (f.existsSync()) f.deleteSync();
+    } catch (_) {}
+  }
   void updateVideoConfig(String id, TranscodeConfig c) { final i = _videos.indexWhere((v) => v.id == id); if (i >= 0) { _videos[i] = _videos[i].copyWith(config: c); notifyListeners(); } }
 
   void updateVideoPipeline(String id, PipelineGraph graph) {
@@ -563,10 +590,15 @@ class AppState extends ChangeNotifier {
     final idx = _containers.indexWhere((c) => c.id == containerId);
     if (idx < 0) return;
     final container = _containers[idx];
+    final removedPaths = <String>[];
     for (final item in container.items) {
-      _videos.removeWhere((v) => v.id == item.fileId);
+      _videos.removeWhere((v) {
+        if (v.id == item.fileId) { removedPaths.add(v.filepath); return true; }
+        return false;
+      });
     }
     _containers.removeAt(idx);
+    for (final p in removedPaths) { _cleanupTempImportFile(p); }
     notifyListeners();
   }
 
@@ -595,7 +627,9 @@ class AppState extends ChangeNotifier {
     final idx = _containers.indexWhere((c) => c.id == containerId);
     if (idx < 0) return;
     _containers[idx].items.removeWhere((i) => i.fileId == fileId);
-    _videos.removeWhere((v) => v.id == fileId);
+    String? removedPath;
+    _videos.removeWhere((v) { if (v.id == fileId) { removedPath = v.filepath; return true; } return false; });
+    if (removedPath != null) _cleanupTempImportFile(removedPath!);
     notifyListeners();
   }
 
@@ -2230,7 +2264,7 @@ class AppState extends ChangeNotifier {
             'result': {
               'protocolVersion': '2024-11-05',
               'capabilities': {'tools': {}, 'resources': {}},
-              'serverInfo': {'name': 'ffmpegpp', 'version': '5.0.0-beta2'},
+              'serverInfo': {'name': 'ffmpegpp', 'version': '5.0.0'},
             },
           }));
           break;

@@ -254,6 +254,33 @@ jobs:
           path: macos-app.tar.gz
 
   # ══════════════════════════════════════════
+  # 编译阶段 — Android (APK, arm64-v8a)
+  # ══════════════════════════════════════════
+  compile-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+          pub-cache: true
+
+      - name: Build Flutter APK
+        run: |
+          cd ffmpegpp_gui
+          flutter pub get
+          flutter build apk --release
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: ffmpegpp_gui/build/app/outputs/flutter-apk/app-release.apk
+
+  # ══════════════════════════════════════════
   # 打包阶段 — Windows 安装包（Inno Setup）
   # ══════════════════════════════════════════
   package-windows:
@@ -315,7 +342,7 @@ jobs:
           # Control file
           cat > deb/DEBIAN/control << 'EOF'
           Package: ffmpegpp
-          Version: 5.0.0-beta2
+          Version: 5.0.0
           Architecture: amd64
           Maintainer: lvbaoshigao <noreply@github.com>
           Description: FFmpeg++ - Advanced video/image/audio processing tool
@@ -350,13 +377,13 @@ jobs:
           chmod -R 755 deb/opt/ffmpegpp/
 
           # Build deb
-          dpkg-deb --root-owner-group --build deb ffmpegpp_5.0.0-beta2_amd64.deb
+          dpkg-deb --root-owner-group --build deb ffmpegpp_5.0.0_amd64.deb
 
       - name: Upload Linux x64 deb
         uses: actions/upload-artifact@v4
         with:
           name: linux-x64-deb
-          path: ffmpegpp_5.0.0-beta2_amd64.deb
+          path: ffmpegpp_5.0.0_amd64.deb
 
   # ══════════════════════════════════════════
   # 打包阶段 — Linux ARM64 (.deb)
@@ -383,7 +410,7 @@ jobs:
 
           cat > deb/DEBIAN/control << 'EOF'
           Package: ffmpegpp
-          Version: 5.0.0-beta2
+          Version: 5.0.0
           Architecture: arm64
           Maintainer: lvbaoshigao <noreply@github.com>
           Description: FFmpeg++ - Advanced video/image/audio processing tool
@@ -414,13 +441,13 @@ jobs:
           cp "make/FFmpeg++.png" deb/usr/share/icons/hicolor/256x256/apps/ffmpegpp.png
           chmod -R 755 deb/opt/ffmpegpp/
 
-          dpkg-deb --root-owner-group --build deb ffmpegpp_5.0.0-beta2_arm64.deb
+          dpkg-deb --root-owner-group --build deb ffmpegpp_5.0.0_arm64.deb
 
       - name: Upload Linux ARM64 deb
         uses: actions/upload-artifact@v4
         with:
           name: linux-arm64-deb
-          path: ffmpegpp_5.0.0-beta2_arm64.deb
+          path: ffmpegpp_5.0.0_arm64.deb
 
   # ══════════════════════════════════════════
   # 打包阶段 — macOS (.dmg)
@@ -442,19 +469,19 @@ jobs:
           mkdir -p dmg_staging
           tar -xzf bundle/macos-app.tar.gz -C dmg_staging
           ln -s /Applications dmg_staging/Applications
-          hdiutil create -volname "FFmpeg++" -srcfolder dmg_staging -ov -format UDZO "FFmpeg++_v5.0.0-beta2_macOS.dmg"
+          hdiutil create -volname "FFmpeg++" -srcfolder dmg_staging -ov -format UDZO "FFmpeg++_v5.0.0_macOS.dmg"
 
       - name: Upload macOS DMG
         uses: actions/upload-artifact@v4
         with:
           name: macos-dmg
-          path: FFmpeg++_v5.0.0-beta2_macOS.dmg
+          path: FFmpeg++_v5.0.0_macOS.dmg
 
   # ══════════════════════════════════════════
-  # 发布阶段 — 创建 Release (v5.0.0-beta2)
+  # 发布阶段 — 创建 Release (v5.0.0)
   # ══════════════════════════════════════════
   release:
-    needs: [package-windows, package-linux-x64, package-linux-arm64, package-macos]
+    needs: [package-windows, package-linux-x64, package-linux-arm64, package-macos, compile-android]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -463,7 +490,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts/
-          pattern: "{windows-installer,linux-*-deb,macos-dmg}"
+          pattern: "{windows-installer,linux-*-deb,macos-dmg,android-apk}"
 
       - name: List artifacts
         run: find artifacts/ -type f
@@ -471,10 +498,10 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v5.0.0-beta2
-          name: "FFmpeg++ v5.0.0-beta2"
+          tag_name: v5.0.0
+          name: "FFmpeg++ v5.0.0"
           body: |
-            ## 🎬 FFmpeg++ v5.0.0-beta2
+            ## 🎬 FFmpeg++ v5.0.0
 
             **专业视频 / 图片 / 音频处理桌面应用** — 基于 Flutter + C++17 + FFmpeg，100% AI 生成代码。
 
@@ -488,12 +515,13 @@ jobs:
             - 📱 Android 移动端适配（底部液态玻璃导航栏、Monet 动态取色、内置 FFmpeg）
 
             ### 📦 安装包
-            - **Windows**: `FFmpeg++_v5.0.0-beta2_setup.exe`
-            - **Linux x64**: `ffmpegpp_5.0.0-beta2_amd64.deb`
-            - **Linux ARM64**: `ffmpegpp_5.0.0-beta2_arm64.deb`
-            - **macOS**: `FFmpeg++_v5.0.0-beta2_macOS.dmg`
-          draft: false
-          prerelease: true
+            - **Windows**: `FFmpeg++_v5.0.0_setup.exe`
+            - **Linux x64**: `ffmpegpp_5.0.0_amd64.deb`
+            - **Linux ARM64**: `ffmpegpp_5.0.0_arm64.deb`
+            - **macOS**: `FFmpeg++_v5.0.0_macOS.dmg`
+            - **Android**: `app-release.apk`（arm64-v8a）
+          draft: true
+          prerelease: false
           fail_on_unmatched_files: false
           generate_release_notes: true
           files: |
@@ -501,5 +529,6 @@ jobs:
             artifacts/linux-x64-deb/*.deb
             artifacts/linux-arm64-deb/*.deb
             artifacts/macos-dmg/*.dmg
+            artifacts/android-apk/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
