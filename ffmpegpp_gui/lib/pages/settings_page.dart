@@ -1664,6 +1664,7 @@ Widget _buildBackground(BuildContext ctx, AppState state) {
     ),
     const SizedBox(height: 6),
     // 玻璃效果选择：选择框放到文字右侧（而非下方），与「跟随主题色」等开关保持同一排布。
+    // 「透明」= 无玻璃，所有卡片/药丸退回主题色显示。
     Row(children: [
       Text(s.glassEffectLabel, style: TextStyle(color: clr, fontSize: 12)),
       const SizedBox(width: 12),
