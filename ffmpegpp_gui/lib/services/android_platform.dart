@@ -165,4 +165,29 @@ class AndroidPlatformBridge {
       return const [];
     }
   }
+
+  /// 系统资源占用（CPU / 内存 / GPU），由原生侧采集：
+  /// 内存走 ActivityManager（所有 ROM 可靠）；CPU 走 /proc/stat 差值；
+  /// GPU 占用走 sysfs 探测、GPU 名称走临时 EGL 上下文。
+  /// 数值型字段不可用时为 -1（UI 显示 "--"）；非 Android / 调用失败返回 null。
+  static Future<Map<String, dynamic>?> systemStats() async {
+    if (!isAndroidPlatform) return null;
+    try {
+      final map = await _channel.invokeMethod<Map<dynamic, dynamic>>('systemStats');
+      if (map == null) return null;
+      double d(String k) {
+        final v = map[k];
+        return v is num ? v.toDouble() : -1.0;
+      }
+      return {
+        'cpuPercent': d('cpuPercent'),
+        'ramUsedGb': d('ramUsedGb'),
+        'ramTotalGb': d('ramTotalGb'),
+        'gpuPercent': d('gpuPercent'),
+        'gpuName': map['gpuName']?.toString() ?? '',
+      };
+    } catch (_) {
+      return null;
+    }
+  }
 }

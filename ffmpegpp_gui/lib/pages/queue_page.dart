@@ -242,7 +242,9 @@ class _MonitorWidgetState extends State<_MonitorWidget> {
       _mini(Icons.memory, m.cpuPercent < 0 ? '--' : '${m.cpuPercent.toStringAsFixed(0)}%', m.cpuPercent < 0 ? 0 : m.cpuPercent / 100, sc),
       const SizedBox(width: 8),
       _mini(Icons.storage, m.ramUsedGb < 0 ? '--' : '${m.ramUsedGb.toStringAsFixed(1)}G', m.ramPercent < 0 ? 0 : m.ramPercent / 100, sc),
-      if (m.gpuName.isNotEmpty) ...[
+      // GPU：拿到型号或占用率任一项即显示（Android 上 GPU 名走 EGL 查询，
+      // 占用率依赖 sysfs，部分机型只能显示 "--"）。
+      if (m.gpuName.isNotEmpty || m.gpuPercent >= 0) ...[
         const SizedBox(width: 8),
         _mini(Icons.videocam, m.gpuPercent < 0 ? '--' : '${m.gpuPercent.toStringAsFixed(0)}%', m.gpuPercent < 0 ? 0 : m.gpuPercent / 100, sc),
       ],

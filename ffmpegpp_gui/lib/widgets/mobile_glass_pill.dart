@@ -128,9 +128,13 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
     // 3D 液态玻璃：u_size 修复后这些参数才真正生效。
     // refractStrength（负 = 凹透镜）给水滴折射；spec 给镜面高光；lightband 给光带。
     // 数值取中等：可见 3D，但不复现早期的「光污染/横线」。
+    // specStrength 3.0→0.5、specPower 100→48：shader 的 L1/L2 两盏对向灯会在
+    // 圆角的左上/右下角各打出一个镜面光点，原参数峰值 +2.5 直接过曝成明显白点；
+    // 降低强度并放宽高光锐度后变成柔和的角部光泽，不再抢眼。
     refractStrength: -0.10,
     blurRadiusPx: 1.0,
-    specStrength: 3.0,
+    specStrength: 0.5,
+    specPower: 48,
     specWidth: 10,
     lightbandStrength: 0.35,
     lightbandColor: Colors.white,

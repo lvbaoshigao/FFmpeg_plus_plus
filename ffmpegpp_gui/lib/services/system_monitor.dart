@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'android_platform.dart';
+
 /// 实时系统监控：CPU / 内存 / GPU 使用率
 class SystemMonitor {
   double cpuPercent = 0;
@@ -36,10 +38,36 @@ class SystemMonitor {
     if (_busy) return;
     _busy = true;
     try {
-      await Future.wait([_updateCpuRam(), _updateGpu()]);
+      if (Platform.isAndroid) {
+        await _updateAndroid();
+      } else {
+        await Future.wait([_updateCpuRam(), _updateGpu()]);
+      }
     } finally {
       _busy = false;
     }
+  }
+
+  /// Android：通过原生 MethodChannel 一次取回 CPU / 内存 / GPU（含 GPU 名称）。
+  /// - 内存走 ActivityManager，所有 ROM 都可靠（dart:io 读 /proc/meminfo 在
+  ///   部分 ROM 上会被 SELinux 拦截）；
+  /// - CPU 走原生侧 /proc/stat 差值，GPU 走 sysfs 探测 + EGL 读型号；
+  /// - 通道不可用（如热重载后旧进程）时回退到 /proc 读取，能读到什么算什么。
+  Future<void> _updateAndroid() async {
+    final stats = await AndroidPlatformBridge.systemStats();
+    if (stats == null) {
+      await _updateCpuRamLinux();
+      return;
+    }
+    cpuPercent = stats['cpuPercent'] as double;
+    ramUsedGb = stats['ramUsedGb'] as double;
+    ramTotalGb = stats['ramTotalGb'] as double;
+    ramPercent = (ramTotalGb > 0 && ramUsedGb >= 0)
+        ? (ramUsedGb / ramTotalGb * 100).clamp(0, 100)
+        : -1;
+    gpuPercent = stats['gpuPercent'] as double;
+    final name = stats['gpuName'] as String;
+    if (name.isNotEmpty) gpuName = name;
   }
 
   Future<void> _updateCpuRam() async {
@@ -106,6 +134,13 @@ class SystemMonitor {
   // ── Linux ──
 
   Future<void> _updateCpuRamLinux() async {
+    // CPU 与内存独立容错：部分 Android ROM 用 SELinux 拦截 /proc/stat，
+    // 不能让 CPU 读取失败把本可正常读取的 /proc/meminfo 也拖成 -1。
+    await _readCpuLinux();
+    await _readRamLinux();
+  }
+
+  Future<void> _readCpuLinux() async {
     try {
       // CPU: 解析 /proc/stat
       final statContent = await File('/proc/stat').readAsString();
@@ -124,7 +159,15 @@ class SystemMonitor {
           _prevCpuIdle = idle;
         }
       }
+    } catch (_) {
+      // 读取失败（Android 上 /proc/stat 可能被 SELinux 拦截）：
+      // 标记 -1，UI 显示 "--" 而非误导性的 0%。
+      cpuPercent = -1;
+    }
+  }
 
+  Future<void> _readRamLinux() async {
+    try {
       // 内存: 解析 /proc/meminfo
       final memContent = await File('/proc/meminfo').readAsString();
       double totalKB = 0, availKB = 0;
@@ -146,9 +189,6 @@ class SystemMonitor {
         ramUsedGb = -1;
       }
     } catch (_) {
-      // 读取失败（Android 上 /proc 可能被 SELinux 拦截）：
-      // 标记 -1，UI 显示 "--" 而非误导性的 0%。
-      cpuPercent = -1;
       ramTotalGb = -1;
       ramUsedGb = -1;
     }

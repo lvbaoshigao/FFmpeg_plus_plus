@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 
 // LiquidGlass Shader Example - Creates realistic glass droplet effects
 //
@@ -412,14 +413,56 @@ class _RenderLiquidGlassGroup extends RenderProxyBox {
     _externalRepaint?.removeListener(markNeedsPaint);
   }
 
+  // ── 全局变换监视 ──
+  //
+  // 背景：本渲染对象在 paint() 时把玻璃形状的场景坐标（getTransformTo(null)）
+  // 烘焙进 shader uniform。但「祖先 TransformLayer 变化」（PageView 横向翻页、
+  // 过场动画、预测式返回手势等）只会改合成层的变换，不会触发本对象 repaint，
+  // 于是 shader 仍按旧坐标计算 SDF 遮罩 → 玻璃光影层与内容层错位（分层），
+  // 偏移稍大时当前像素全部落在旧遮罩外 → 玻璃整块「消失」。
+  //
+  // 现有缓解（路由动画监听 + 最近 Scrollable 监听）覆盖不了所有路径：
+  // PageView 翻页对「最近 Scrollable 是页面内 ListView」的玻璃卡片不可见，
+  // 各种非滚动的变换动画也都没有通知。
+  //
+  // 修复：每帧帧后回调比较自身全局变换，变化即 markNeedsPaint。
+  // postFrame 回调只在「有帧产出」时执行且不会自行调度新帧，
+  // 应用空闲时零开销；动画期间天然每帧运行，且 paint 用的是当前帧的
+  // 最新变换，玻璃与内容始终同步（最多首帧一拍延迟，不可感知）。
+  Matrix4? _lastGlobalTransform;
+  bool _transformWatchScheduled = false;
+
+  void _scheduleTransformWatch() {
+    if (_transformWatchScheduled) return;
+    _transformWatchScheduled = true;
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      _transformWatchScheduled = false;
+      if (!attached) return; // 链式重挂随 detach 自动停止
+      try {
+        final t = getTransformTo(null);
+        final last = _lastGlobalTransform;
+        if (last == null || !MatrixUtils.matrixEquals(last, t)) {
+          _lastGlobalTransform = t;
+          markNeedsPaint();
+        }
+      } catch (_) {
+        // 树处于瞬态（如刚被移出）时忽略本帧
+      }
+      _scheduleTransformWatch();
+    });
+  }
+
   @override
   void attach(PipelineOwner owner) {
     super.attach(owner);
+    _lastGlobalTransform = null;
+    _scheduleTransformWatch();
     markNeedsPaint();
   }
 
   @override
   void detach() {
+    _lastGlobalTransform = null;
     detachRepaintSources();
     super.detach();
   }
