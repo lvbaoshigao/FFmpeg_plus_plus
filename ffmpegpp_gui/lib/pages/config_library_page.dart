@@ -754,10 +754,10 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     return Padding(
       padding: EdgeInsets.fromLTRB(8, safeTop + 6, 8, 6),
       child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-        // 左：标题药丸（自适应内容宽度，标题与药丸贴合）
+        // 左：标题药丸（自适应内容宽度，标题与药丸贴合；尺寸与项目页「项目」药丸完全一致）
         MobileGlassPill(
           radius: 22,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           pressable: true,
           child: Text(zh ? '配置库' : 'Config Library',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
