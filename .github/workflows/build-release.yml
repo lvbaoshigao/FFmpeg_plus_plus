@@ -268,10 +268,22 @@ jobs:
           cache: true
           pub-cache: true
 
-      - name: Build Flutter APK
+      - name: Setup Flutter dependencies
         run: |
           cd ffmpegpp_gui
           flutter pub get
+
+      # 修补 pub 缓存里 file_picker 的 compileSdk（34 → 36）。
+      # 原因：file_picker 8.x 固定 compileSdk 34，而其依赖
+      # flutter_plugin_android_lifecycle ≥2.0.35 要求 ≥36，否则 Gradle
+      # 的 :file_picker:checkReleaseAarMetadata 失败。与本地 build_apk.sh
+      # 的流程一致，保证 CI 与本地行为相同。
+      - name: Patch file_picker compileSdk (pub cache)
+        run: bash build/android/patch_pubcache.sh
+
+      - name: Build Flutter APK
+        run: |
+          cd ffmpegpp_gui
           flutter build apk --release
 
       - name: Upload Android APK
