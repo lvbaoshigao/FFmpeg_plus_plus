@@ -175,7 +175,8 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
     // 使用 * 255 上限（无截断），让玻璃质感与底部栏一致。
     final baseAlpha = (op * 255).round().clamp(0, 255);
     final follow = key.follow;
-    final baseColor = follow ? scheme.primary : scheme.surface;
+    // 「透明」(none) 效果退回主题色显示
+    final baseColor = (follow || effect == 'none') ? scheme.primary : scheme.surface;
     final tint = baseColor.withAlpha(baseAlpha);
 
     // 关键修复：liquid 模式下 OCLiquidGlass 自身已经接收 color=tint 作为

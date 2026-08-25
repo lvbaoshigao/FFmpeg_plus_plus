@@ -213,16 +213,21 @@ bool _sameBytes(String path, Uint8List bytes) {
 Future<void> openExternalUrl(String url) => ShellOpen.url(url);
 
 /// 二级设置页也铺设壁纸背景（与主界面一致），避免返回手势/过渡时露出黑底或主题色底。
-/// 无壁纸时直接返回 child（透明 Scaffold 自行透出上层背景）。
+/// 无壁纸时也铺一层不透明主题底色，避免返回过渡首帧露出系统窗口黑底。
 Widget _withWallpaper(BuildContext ctx, AppState state, Widget child) {
-  final bg = state.config.backgroundImage;
-  if (bg.isEmpty || !File(bg).existsSync()) return child;
   final scheme = Theme.of(ctx).colorScheme;
+  final bg = state.config.backgroundImage;
+  final base = Positioned.fill(child: Container(color: scheme.surface));
+  if (bg.isEmpty || !File(bg).existsSync()) {
+    // 无壁纸：仍铺主题底色，子 Scaffold 透明透出底色（而非黑底）
+    return Stack(children: [base, child]);
+  }
   final op = state.config.backgroundOpacity.clamp(0.0, 1.0);
   final a = ((1.0 - op) * 220).round().clamp(20, 240);
   final size = MediaQuery.sizeOf(ctx);
   final dpr = MediaQuery.devicePixelRatioOf(ctx);
   return Stack(children: [
+    base,
     Positioned.fill(child: Image(
       image: wallpaperImageProvider(bg, size.width, size.height, dpr),
       fit: BoxFit.cover,
@@ -823,10 +828,14 @@ class _SettingsPageState extends State<SettingsPage> {
     ColorScheme scheme,
     AppStrings s,
   ) {
+    // AI/MCP 卡片直接内联展开（不进入二级菜单）
+    final inlineCards = cards.where((c) => c.id == 'ai').toList();
+    final rowCards = cards.where((c) => c.id != 'ai').toList();
+
     final rows = <Widget>[];
-    for (var i = 0; i < cards.length; i++) {
-      rows.add(_buildMobileRow(cards[i], context, state, scheme, s));
-      if (i < cards.length - 1) {
+    for (var i = 0; i < rowCards.length; i++) {
+      rows.add(_buildMobileRow(rowCards[i], context, state, scheme, s));
+      if (i < rowCards.length - 1) {
         rows.add(Divider(
           height: 0.5,
           thickness: 0.5,
@@ -837,24 +846,32 @@ class _SettingsPageState extends State<SettingsPage> {
       }
     }
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
-        child: Text(sec.title(s), style: TextStyle(
-          fontSize: 12.5,
-          fontWeight: FontWeight.w600,
-          color: scheme.primary,
-          letterSpacing: 0.3,
-        )),
-      ),
-      Padding(
-        padding: const EdgeInsets.fromLTRB(8, 0, 8, 7),
-        // 设置项卡片：遵循玻璃效果配置（liquid/blur/none）与卡片不透明度。
-        child: GlassPanel(
-          radius: 18,
-          padding: EdgeInsets.zero,
-          child: Column(children: rows),
+      if (rowCards.isNotEmpty) ...[
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
+          child: Text(sec.title(s), style: TextStyle(
+            fontSize: 12.5,
+            fontWeight: FontWeight.w600,
+            color: scheme.primary,
+            letterSpacing: 0.3,
+          )),
         ),
-      ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 0, 8, 7),
+          // 设置项卡片：遵循玻璃效果配置（liquid/blur/none）与卡片不透明度。
+          child: GlassPanel(
+            radius: 18,
+            padding: EdgeInsets.zero,
+            child: Column(children: rows),
+          ),
+        ),
+      ],
+      // 内联卡片（AI/MCP）：在一级菜单直接渲染完整设置内容
+      for (final c in inlineCards)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 7),
+          child: c.build(context, state),
+        ),
     ]);
   }
 
@@ -893,6 +910,9 @@ class _SettingsPageState extends State<SettingsPage> {
         } else if (c.id == 'logs') {
           Navigator.of(context).push(MaterialPageRoute(
               builder: (_) => const SafeArea(child: LogPage())));
+        } else if (c.id == 'cache') {
+          // 缓存：直接弹出确认框，不进入二级页
+          _clearCache(context, state, scheme, s);
         } else {
           _pushMobileSubPage(context, title, c.build);
         }
@@ -1185,16 +1205,18 @@ Widget _glass(BuildContext ctx, AppState state, String title, List<Widget> child
         ),
       );
     }
-    // none 模式：Android 16 原生设置卡片风格
+    // none（透明）模式：退回主题色实心卡片（无玻璃光效）
+    final op = state.config.cardOpacity.clamp(0.0, 1.0);
+    final isDark = Theme.of(ctx).brightness == Brightness.dark;
     return Padding(
       padding: const EdgeInsets.fromLTRB(6, 0, 6, 0),
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
         decoration: BoxDecoration(
-          color: scheme.surfaceContainerLow,
+          color: scheme.primary.withAlpha(((isDark ? 46 : 30) * op + (isDark ? 20 : 14)).round().clamp(0, 255)),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: scheme.outlineVariant.withAlpha(50), width: 0.6),
+          border: Border.all(color: scheme.primary.withAlpha(60), width: 0.6),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withAlpha(10),
@@ -1342,24 +1364,16 @@ class _SettingSlider extends StatefulWidget {
 }
 
 class _SettingSliderState extends State<_SettingSlider> {
-  static const _minInterval = Duration(milliseconds: 40);
-
   double? _dragValue;
-  DateTime _lastPush = DateTime.fromMillisecondsSinceEpoch(0);
 
   double get _current => _dragValue ?? widget.value;
 
   void _onChanged(double v) {
     setState(() => _dragValue = v);
-    final now = DateTime.now();
-    if (now.difference(_lastPush) >= _minInterval) {
-      _lastPush = now;
-      widget.onCommit(v);
-    }
+    // 仅本地更新不触发父级重建，确保滑动全程流畅无中断
   }
 
   void _onChangeEnd(double v) {
-    // 最终值必须无条件写一次，否则节流可能把最后一次移动吞掉
     widget.onCommit(v);
     setState(() => _dragValue = null);
   }
@@ -1466,6 +1480,38 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
       onSelectionChanged: (v) => state.updateConfig((c) => c..gateStd = v.first),
       style: const ButtonStyle(visualDensity: VisualDensity.compact),
     ),
+    const SizedBox(height: 10),
+    // 设置项以毛玻璃展示（仅液态玻璃时生效；与「不使用卡片玻璃效果」互斥）
+    if (cfg.glassEffect == 'liquid' && !cfg.noCardGlass)
+      Row(children: [
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(s.settingsFrostedGlass, style: TextStyle(color: clr, fontSize: 12)),
+          const SizedBox(height: 2),
+          Text(s.settingsFrostedGlassHint, style: TextStyle(fontSize: 10, color: scheme.outline)),
+        ])),
+        Switch(
+          value: cfg.settingsFrostedGlass,
+          onChanged: (v) => state.updateConfig((c) => c..settingsFrostedGlass = v),
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+      ]),
+    if (cfg.glassEffect == 'liquid' && !cfg.noCardGlass)
+      const SizedBox(height: 10),
+    // 设置项不使用卡片玻璃效果（退回主题色；与毛玻璃互斥）
+    Row(children: [
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(s.isZh ? '设置项不使用卡片玻璃效果' : 'No glass effect on cards', style: TextStyle(color: clr, fontSize: 12)),
+        const SizedBox(height: 2),
+        Text(s.isZh ? '设置卡片不使用液态玻璃渲染，退回主题色样式（与毛玻璃互斥）' : 'Settings cards skip liquid glass and use a solid theme color (mutually exclusive with frosted glass)', style: TextStyle(fontSize: 10, color: scheme.outline)),
+      ])),
+      Switch(
+        value: cfg.noCardGlass,
+        onChanged: (v) => state.updateConfig((c) => c
+          ..noCardGlass = v
+          ..settingsFrostedGlass = v ? false : c.settingsFrostedGlass),
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+    ]),
   ]);
 }
 
@@ -1589,36 +1635,20 @@ Widget _buildBackground(BuildContext ctx, AppState state) {
       onCommit: (v) => state.updateConfig((c) => c..cardOpacity = v),
     ),
     const SizedBox(height: 6),
-    // 玻璃效果选择
+    // 玻璃效果选择（下拉菜单；「透明」= 无玻璃，所有卡片/药丸退回主题色显示）
     Text(s.glassEffectLabel, style: TextStyle(color: clr, fontSize: 12)),
     const SizedBox(height: 6),
-    SegmentedButton<String>(
-      showSelectedIcon: false,
-      segments: [
-        ButtonSegment(value: 'liquid', icon: const Icon(Icons.water_drop_outlined, size: 14), label: Text(s.glassLiquid, style: const TextStyle(fontSize: 11))),
-        ButtonSegment(value: 'blur', icon: const Icon(Icons.blur_on_outlined, size: 14), label: Text(s.glassBlur, style: const TextStyle(fontSize: 11))),
-        ButtonSegment(value: 'none', icon: const Icon(Icons.crop_square_outlined, size: 14), label: Text(s.glassNone, style: const TextStyle(fontSize: 11))),
+    DropdownMenu<String>(
+      initialSelection: cfg.glassEffect,
+      requestFocusOnTap: false,
+      textStyle: TextStyle(fontSize: 12, color: clr),
+      dropdownMenuEntries: [
+        DropdownMenuEntry(value: 'liquid', label: s.glassLiquid, leadingIcon: const Icon(Icons.water_drop_outlined, size: 14)),
+        DropdownMenuEntry(value: 'blur', label: s.glassBlur, leadingIcon: const Icon(Icons.blur_on_outlined, size: 14)),
+        DropdownMenuEntry(value: 'none', label: s.glassNone, leadingIcon: const Icon(Icons.crop_square_outlined, size: 14)),
       ],
-      selected: {cfg.glassEffect},
-      onSelectionChanged: (v) => state.updateConfig((c) => c..glassEffect = v.first),
-      style: const ButtonStyle(visualDensity: VisualDensity.compact),
+      onSelected: (v) { if (v != null) state.updateConfig((c) => c..glassEffect = v); },
     ),
-    // 仅「液态玻璃」生效时显示：设置项改用更易读的毛玻璃背景
-    if (cfg.glassEffect == 'liquid') ...[
-      const SizedBox(height: 8),
-      Row(children: [
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(s.settingsFrostedGlass, style: TextStyle(color: clr, fontSize: 12)),
-          const SizedBox(height: 2),
-          Text(s.settingsFrostedGlassHint, style: TextStyle(fontSize: 10, color: scheme.outline)),
-        ])),
-        Switch(
-          value: cfg.settingsFrostedGlass,
-          onChanged: (v) => state.updateConfig((c) => c..settingsFrostedGlass = v),
-          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        ),
-      ]),
-    ],
     const SizedBox(height: 10),
     // 遵循主题色：玻璃/卡片底色统一使用主题色
     Row(children: [

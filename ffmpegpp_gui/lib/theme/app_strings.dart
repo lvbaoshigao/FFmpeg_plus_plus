@@ -76,7 +76,7 @@ class AppStrings {
   String get glassFollowThemeHint => lang == 'zh' ? '选中后玻璃、卡片等元素统一使用主题色' : 'Tint glass & cards with the theme color';
   String get glassLiquid => lang == 'zh' ? '液态玻璃' : 'Liquid';
   String get glassBlur => lang == 'zh' ? '模糊' : 'Blur';
-  String get glassNone => lang == 'zh' ? '无效果' : 'None';
+  String get glassNone => lang == 'zh' ? '透明' : 'Transparent';
   String get settingsFrostedGlass => lang == 'zh' ? '设置项以毛玻璃展示' : 'Frosted settings items';
   String get settingsFrostedGlassHint => lang == 'zh' ? '开启后设置列表项使用更易读的毛玻璃背景' : 'Use readable frosted-glass backgrounds for settings items';
   // 预测式返回（Android 14+）
