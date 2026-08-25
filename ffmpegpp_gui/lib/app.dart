@@ -49,6 +49,22 @@ class FfmpegppApp extends StatefulWidget {
   State<FfmpegppApp> createState() => _FfmpegppAppState();
 }
 
+/// 全局滚动行为：去掉拉伸过滚动指示器（保留各平台默认滚动物理与拖拽设备配置）。
+///
+/// 为什么禁用：Android 12+ 的 StretchingOverscrollIndicator 在 Impeller 上通过
+/// `ImageFiltered(ImageFilter.shader(...))` 实现——先把滚动内容整棵截进离屏纹理，
+/// 再对纹理做拉伸形变。液态玻璃 / 毛玻璃（BackdropFilter）在被截获的纹理中
+/// 采样不到真实背景，且内容被拉伸而场景坐标不变，导致玻璃错位、消失。
+class _AppScrollBehavior extends MaterialScrollBehavior {
+  const _AppScrollBehavior();
+
+  @override
+  Widget buildOverscrollIndicator(
+      BuildContext context, Widget child, ScrollableDetails details) {
+    return child;
+  }
+}
+
 class _FfmpegppAppState extends State<FfmpegppApp> {
   /// Android Monet 动态取色的种子色（从系统壁纸读取；null = 不可用）
   int? _monetSeed;
@@ -113,6 +129,12 @@ class _FfmpegppAppState extends State<FfmpegppApp> {
               fontSize: k.fontSize, fontWeight: k.fontWeight, dynamicSeed: dynamicSeed,
               predictiveBack: k.predictiveBack),
           themeMode: k.darkMode ? ThemeMode.dark : ThemeMode.light,
+          // 禁用 Android 12+ 的「拉伸过滚动」效果：它在 Impeller 下用
+          // ImageFiltered(shader) 把整页内容截进离屏纹理再做形变——液态玻璃
+          // （BackdropFilter shader）在被截获的纹理里采样不到真实背景，且几何
+          // 被整体拉伸而 render 树坐标不变 → 过滚动时玻璃分层/整块消失。
+          // 桌面端本来就没有过滚动指示器，此覆盖对桌面行为无影响。
+          scrollBehavior: const _AppScrollBehavior(),
           builder: (context, child) {
             final scale = k.fontSize / 14.0;
             return MediaQuery(
