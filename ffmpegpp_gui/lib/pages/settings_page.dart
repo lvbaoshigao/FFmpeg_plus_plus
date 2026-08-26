@@ -248,6 +248,8 @@ Widget _withWallpaper(BuildContext ctx, AppState state, Widget child) {
 class _CardDef {
   final String id;
   final String Function(AppStrings) title;
+  /// 移动端一级菜单行首图标（MIUI 风格圆角图标块）。
+  final IconData icon;
 
   /// 额外的搜索关键字（中英文都写，全小写）。卡片标题会自动并入搜索范围。
   final List<String> keywords;
@@ -256,6 +258,7 @@ class _CardDef {
   const _CardDef({
     required this.id,
     required this.title,
+    required this.icon,
     required this.keywords,
     required this.build,
   });
@@ -347,6 +350,7 @@ class _SettingsPageState extends State<SettingsPage> {
         _CardDef(
           id: 'language',
           title: (s) => s.language,
+          icon: Icons.translate,
           keywords: ['语言', '界面', '中文', 'language', 'english', 'chinese',
               'interface', 'locale', 'i18n'],
           build: _buildLanguage,
@@ -361,6 +365,7 @@ class _SettingsPageState extends State<SettingsPage> {
         _CardDef(
           id: 'theme',
           title: (s) => s.cardTheme,
+          icon: Icons.brightness_6_outlined,
           keywords: ['深色', '暗色', '浅色', 'dark', 'light', 'mode', '模式',
               '主题色', '强调色', '颜色', 'accent', 'color', 'theme'],
           build: _buildTheme,
@@ -368,6 +373,7 @@ class _SettingsPageState extends State<SettingsPage> {
         _CardDef(
           id: 'background',
           title: (s) => s.cardBackground,
+          icon: Icons.wallpaper_outlined,
           keywords: ['背景', '壁纸', '图片', 'background', 'wallpaper', 'image',
               '不透明度', '透明', 'opacity', '卡片', 'card', 'blur', '毛玻璃'],
           build: _buildBackground,
@@ -375,6 +381,7 @@ class _SettingsPageState extends State<SettingsPage> {
         _CardDef(
           id: 'font',
           title: (s) => s.font,
+          icon: Icons.text_fields,
           keywords: ['字体', '字号', '字重', 'font', 'size', 'weight',
               'typeface', '导入', 'import', '大小'],
           build: _buildFont,
@@ -391,6 +398,7 @@ class _SettingsPageState extends State<SettingsPage> {
           _CardDef(
             id: 'ffmpeg',
             title: (s) => s.ffmpegSettings,
+            icon: Icons.memory_outlined,
             keywords: ['ffmpeg', 'ffprobe', '编码', 'codec', '安装', 'install',
                 '检测', 'detect', '路径', 'path', '下载', 'download'],
             build: (ctx, state) => _FfmpegCard(state: state),
@@ -398,6 +406,7 @@ class _SettingsPageState extends State<SettingsPage> {
         _CardDef(
           id: 'output',
           title: (s) => s.output,
+          icon: Icons.folder_outlined,
           keywords: ['输出', '目录', '文件夹', 'output', 'directory', 'folder',
               '中间', 'intermediate', '临时', 'temp', 'path', '路径'],
           build: _buildOutput,
@@ -405,6 +414,7 @@ class _SettingsPageState extends State<SettingsPage> {
         _CardDef(
           id: 'tasks',
           title: (s) => s.cardTasks,
+          icon: Icons.playlist_play,
           keywords: ['任务', '并发', '同时', '线程', 'task', 'concurrent',
               'parallel', 'thread', '解析', 'probe', '通知', 'notification',
               '队列', 'queue'],
@@ -420,6 +430,7 @@ class _SettingsPageState extends State<SettingsPage> {
         _CardDef(
           id: 'editorMode',
           title: (s) => s.cardEditorMode,
+          icon: Icons.account_tree_outlined,
           keywords: ['编辑', '编辑器', '节点', '画布', '蓝图', '传统',
               'editor', 'node', 'canvas', 'blueprint', 'classic', 'mode', '模式'],
           build: _buildEditorMode,
@@ -429,6 +440,7 @@ class _SettingsPageState extends State<SettingsPage> {
           _CardDef(
             id: 'shortcuts',
             title: (s) => s.cardShortcuts,
+            icon: Icons.keyboard_outlined,
             keywords: ['快捷键', '键位', '按键', '热键', 'shortcut', 'keybinding',
                 'keyboard', 'hotkey', 'key'],
             build: _buildShortcuts,
@@ -436,6 +448,7 @@ class _SettingsPageState extends State<SettingsPage> {
         _CardDef(
           id: 'autosave',
           title: (s) => s.cardAutosave,
+          icon: Icons.save_outlined,
           keywords: ['自动保存', '草稿', '恢复', 'autosave', 'draft', 'autosave',
               'auto', 'save', '恢复'],
           build: _buildAutosave,
@@ -452,12 +465,14 @@ class _SettingsPageState extends State<SettingsPage> {
           _CardDef(
             id: 'command',
             title: (s) => s.navCommand,
+            icon: Icons.terminal,
             keywords: ['命令', 'ffmpeg', 'command', 'terminal', '终端', '执行', 'run', '模板', 'template'],
             build: _buildMobileCommandEntry,
           ),
           _CardDef(
             id: 'logs',
             title: (s) => s.qLogs,
+            icon: Icons.receipt_long_outlined,
             keywords: ['日志', 'log', 'logs', '输出', 'output', '进度', 'progress', '调试', 'debug'],
             build: _buildMobileLogsEntry,
           ),
@@ -471,6 +486,7 @@ class _SettingsPageState extends State<SettingsPage> {
         _CardDef(
           id: 'ai',
           title: (s) => s.mcpTitle,
+          icon: Icons.auto_awesome_outlined,
           keywords: ['ai', 'mcp', '模型', 'model', 'api', 'key', 'token',
               'openai', 'anthropic', 'claude', 'gpt', '提示词', 'prompt',
               '权限', 'permission', '助手', 'assistant', '端口', 'port', '服务'],
@@ -488,6 +504,7 @@ class _SettingsPageState extends State<SettingsPage> {
           _CardDef(
             id: 'predictiveBack',
             title: (s) => s.predictiveBack,
+            icon: Icons.swipe_left_alt_outlined,
             keywords: ['返回', '手势', '预测', '侧滑', 'back', 'gesture',
                 'predictive', 'swipe', '返回动画', '系统', 'system'],
             build: _buildPredictiveBack,
@@ -495,6 +512,7 @@ class _SettingsPageState extends State<SettingsPage> {
         _CardDef(
           id: 'debug',
           title: (s) => s.dDebug,
+          icon: Icons.bug_report_outlined,
           keywords: ['调试', '日志', '诊断', 'debug', 'log', 'logs',
               'verbose', 'diagnostic', '保存', 'save'],
           build: _buildDebug,
@@ -502,6 +520,7 @@ class _SettingsPageState extends State<SettingsPage> {
         _CardDef(
           id: 'cache',
           title: (s) => s.cardCache,
+          icon: Icons.cleaning_services_outlined,
           keywords: ['缓存', '清除', '清理', '删除', 'cache', 'clear',
               'clean', 'cleanup', 'purge', 'reset'],
           build: _buildCache,
@@ -517,6 +536,7 @@ class _SettingsPageState extends State<SettingsPage> {
         _CardDef(
           id: 'update',
           title: (s) => s.cardUpdate,
+          icon: Icons.system_update_alt,
           keywords: ['更新', '升级', '版本', 'update', 'upgrade', 'version',
               '自动', 'auto', 'check', '检查'],
           build: _buildUpdate,
@@ -524,6 +544,7 @@ class _SettingsPageState extends State<SettingsPage> {
         _CardDef(
           id: 'about',
           title: (s) => s.aboutTitle,
+          icon: Icons.info_outline,
           keywords: ['关于', '版本', '赞助', '捐赠', '许可', 'about', 'version',
               'sponsor', 'donate', 'license', 'github', 'blog', '作者', 'author'],
           build: _buildAbout,
@@ -895,6 +916,7 @@ class _SettingsPageState extends State<SettingsPage> {
       return SwitchListTile(
         value: cfg.predictiveBack,
         onChanged: (v) => state.updateConfig((cc) => cc..predictiveBack = v),
+        secondary: _miIcon(scheme, c.icon),
         title: Text(title, style: TextStyle(fontSize: 14, color: scheme.onSurface)),
         subtitle: Text(s.predictiveBackHint,
             style: TextStyle(fontSize: 11, color: scheme.outline)),
@@ -904,11 +926,12 @@ class _SettingsPageState extends State<SettingsPage> {
 
     // 语言：一级菜单右侧放紧凑的中/EN 分段切换
     if (c.id == 'language') {
-      return _mobileLanguageRow(state, scheme);
+      return _mobileLanguageRow(state, scheme, c.icon);
     }
 
     // 命令 / 日志：直接进入对应页面（它们的「内容」本身就是入口，不套二级页）
     return ListTile(
+      leading: _miIcon(scheme, c.icon),
       title: Text(title, style: TextStyle(fontSize: 14, color: scheme.onSurface)),
       trailing: Icon(Icons.chevron_right, size: 20, color: scheme.outline),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
@@ -930,9 +953,10 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   /// 语言行：左边「语言」标题，右边中文 / EN 紧凑分段切换。
-  Widget _mobileLanguageRow(AppState state, ColorScheme scheme) {
+  Widget _mobileLanguageRow(AppState state, ColorScheme scheme, IconData icon) {
     final cfg = state.config;
     return ListTile(
+      leading: _miIcon(scheme, icon),
       title: Text(AppStrings.of(cfg.language).language,
           style: TextStyle(fontSize: 14, color: scheme.onSurface)),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
@@ -1196,6 +1220,17 @@ Widget _headerTooltip(String? message, Widget child) => message == null
 /// 移动端：Android 16 原生设置风格 —— 低对比度主题色卡片（surfaceContainerLow），
 /// 无玻璃光效，仅简洁的圆角 + 细边框 + 弱阴影，清晰易读。
 /// 桌面端：保持原有玻璃效果（liquid/blur/none）与透明度。
+/// MIUI 风格行首图标块：圆角方底 + 主题色图标，用于移动端一级菜单设置行。
+Widget _miIcon(ColorScheme scheme, IconData icon) => Container(
+  width: 34,
+  height: 34,
+  decoration: BoxDecoration(
+    color: scheme.primary.withAlpha(0x28),
+    borderRadius: BorderRadius.circular(10),
+  ),
+  child: Icon(icon, size: 19, color: scheme.primary),
+);
+
 Widget _glass(BuildContext ctx, AppState state, String title, List<Widget> children) {
   final scheme = Theme.of(ctx).colorScheme;
   final isDark = Theme.of(ctx).brightness == Brightness.dark;
