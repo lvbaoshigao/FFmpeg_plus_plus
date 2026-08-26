@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../platform/app_platform.dart';
 
 class AvProcessStepEditor extends StatefulWidget {
   final Map<String, dynamic> params;
@@ -70,6 +71,14 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
     super.initState();
     p.putIfAbsent('video_codec', () => 'libx264');
     p.putIfAbsent('gpu', () => 'CPU');
+    // 移动端内置的 ffmpeg 以独立进程执行（无 JVM），MediaCodec 硬编不可用，
+    // NVENC/AMF/QSV 都是桌面 GPU 厂商的方案；强制回退 CPU，避免误导。
+    if (isMobilePlatform && p['gpu'] != 'CPU') {
+      p['gpu'] = 'CPU';
+      if (!(_gpuCodecs['CPU'] ?? []).contains(p['video_codec'])) {
+        p['video_codec'] = 'libx264';
+      }
+    }
     p.putIfAbsent('rate_mode', () => 'keep');
     p.putIfAbsent('preset', () => 'medium');
     p.putIfAbsent('resolution', () => 'original');
@@ -186,11 +195,26 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(zh ? '视频' : 'Video', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.primary)),
         const SizedBox(height: 10),
-        _dropdown(label: 'GPU', value: p['gpu'] as String, items: const ['CPU', 'NVIDIA', 'AMD', 'Intel'], cs: cs,
+        // 移动端：GPU 加速列表是桌面平台方案（NVENC=英伟达/AMF=AMD/QSV=英特尔），
+        // 手机 SoC 的硬编走 MediaCodec，需要 JVM 环境，而本应用以独立进程执行
+        // ffmpeg（无 JVM）不可用——移动端只保留 CPU，并给出说明而不是列出
+        // 选了也无效的桌面 GPU 类型。
+        _dropdown(label: 'GPU', value: isMobilePlatform ? 'CPU' : p['gpu'] as String,
+          items: isMobilePlatform ? const ['CPU'] : const ['CPU', 'NVIDIA', 'AMD', 'Intel'], cs: cs,
           onChanged: (v) {
             p['gpu'] = v;
             setState(() {}); widget.onChanged();
           }),
+        if (isMobilePlatform)
+          Padding(padding: const EdgeInsets.only(top: 4), child: Row(children: [
+            Icon(Icons.info_outline, size: 13, color: cs.outline),
+            const SizedBox(width: 4),
+            Expanded(child: Text(
+              zh ? '移动端暂不支持 GPU 硬件加速（手机硬编依赖 MediaCodec/JVM），当前使用 CPU 编码'
+                 : 'GPU acceleration is unavailable on mobile (requires MediaCodec/JVM); using CPU encoding',
+              style: TextStyle(fontSize: 11, color: cs.outline),
+            )),
+          ])),
         const SizedBox(height: 12),
         _codecDropdown(cs, zh),
         if (p['gpu'] != 'CPU' && !_gpuAccelerated.contains(p['video_codec']) && p['video_codec'] != 'copy')

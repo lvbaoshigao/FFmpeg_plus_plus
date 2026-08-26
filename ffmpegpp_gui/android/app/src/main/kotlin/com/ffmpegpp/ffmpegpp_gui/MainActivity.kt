@@ -57,6 +57,15 @@ class MainActivity : FlutterActivity() {
                             openFile(path, result)
                         }
                     }
+                    // 在文件管理器中定位到指定文件/目录（打开其父目录并尽量跳到该目录）
+                    "revealFile" -> {
+                        val path = call.argument<String>("path") ?: ""
+                        if (path.isEmpty()) {
+                            result.error("empty_path", "path is empty", null)
+                        } else {
+                            revealFile(path, result)
+                        }
+                    }
                     // 申请必要媒体权限（读取视频/音频/图片，旧系统 READ_EXTERNAL_STORAGE）
                     "requestMediaPermissions" -> result.success(requestMediaPermissions())
                     // 系统资源占用：CPU / 内存 / GPU（顶栏资源监视器）
@@ -75,7 +84,12 @@ class MainActivity : FlutterActivity() {
                 return
             }
             if (f.isDirectory) {
-                // 目录：用系统文件管理器打开（DocumentsUI）
+                // 目录：尽量让系统文件管理器（DocumentsUI）直接打开到该目录，
+                // 而不是只进「文件」APP 首页。
+                if (openDocumentsUiAt(f)) {
+                    result.success(true)
+                    return
+                }
                 val dirIntent = Intent(Intent.ACTION_VIEW).apply {
                     data = Uri.parse("content://com.android.externalstorage.documents/root/primary")
                 }
@@ -99,6 +113,91 @@ class MainActivity : FlutterActivity() {
             result.success(true)
         } catch (e: Exception) {
             result.error("open_failed", e.message, null)
+        }
+    }
+
+    /**
+     * 在文件管理器中定位到 [path]：文件定位到其父目录，目录直接打开。
+     * 旧实现一律打开「文件」APP 首页（DocumentsUI root），不会跳到目标位置。
+     * 现在的策略（按优先级）：
+     * 1. 目标在共享存储（/storage/emulated/0、SD 卡）→ 构造 DocumentsUI 的
+     *    目录 document URI，直接打开到该目录（等同于桌面端的"在文件夹中显示"）；
+     * 2. 目标在应用私有目录（DocumentsUI 无权浏览）→ 直接打开文件本身，
+     *    视频会跳进系统播放器，用户立刻看到处理结果；
+     * 3. 都失败 → 退回「文件」APP 首页。
+     */
+    private fun revealFile(path: String, result: MethodChannel.Result) {
+        try {
+            val f = File(path)
+            val dir = if (f.isDirectory) f else f.parentFile
+            // 1) 共享存储目录：打开到具体文件夹
+            if (dir != null && openDocumentsUiAt(dir)) {
+                result.success(true)
+                return
+            }
+            // 2) 应用私有目录（或目录定位失败）：直接打开文件本身
+            if (f.exists() && f.isFile) {
+                try {
+                    val uri = FileProvider.getUriForFile(this, packageName + ".fileprovider", f)
+                    val mime = MimeTypeMap.getSingleton()
+                        .getMimeTypeFromExtension(f.extension.lowercase())
+                        ?: "application/octet-stream"
+                    startActivity(Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, mime)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    })
+                    result.success(true)
+                    return
+                } catch (_: Exception) {}
+            }
+            // 3) 兜底：文件管理器首页
+            startActivity(Intent(Intent.ACTION_VIEW).apply {
+                data = Uri.parse("content://com.android.externalstorage.documents/root/primary")
+            })
+            result.success(true)
+        } catch (e: Exception) {
+            result.error("open_failed", e.message, null)
+        }
+    }
+
+    /**
+     * 让系统文件管理器（DocumentsUI）直接打开到 [dir] 目录。
+     * 通过 ExternalStorageProvider 的 document URI 实现：
+     * content://com.android.externalstorage.documents/document/<volume>:<相对路径>
+     * 仅支持共享存储；应用私有目录（/data/data/...）返回 false。
+     */
+    private fun openDocumentsUiAt(dir: File): Boolean {
+        return try {
+            val abs = dir.absoluteFile
+            val docId: String? = run {
+                // 内置共享存储：/storage/emulated/0/<rel> → primary:<rel>
+                val extRoot = android.os.Environment.getExternalStorageDirectory().absoluteFile
+                val rel = try { abs.relativeTo(extRoot).path } catch (_: Exception) { null }
+                if (rel != null && !rel.startsWith("..")) {
+                    return@run if (rel.isEmpty() || rel == ".") "primary:" else "primary:$rel"
+                }
+                // 外置卡：/storage/<uuid>/<rel> → <uuid>:<rel>
+                val p = abs.path
+                if (p.startsWith("/storage/")) {
+                    val rest = p.removePrefix("/storage/")
+                    val uuid = rest.substringBefore('/')
+                    if (uuid.isNotEmpty() && uuid != "emulated" && uuid != "self") {
+                        val sub = rest.substringAfter('/', "")
+                        return@run if (sub.isEmpty()) "$uuid:" else "$uuid:$sub"
+                    }
+                }
+                null
+            }
+            if (docId == null) return false
+            val uri = android.provider.DocumentsContract.buildDocumentUri(
+                "com.android.externalstorage.documents", docId)
+            startActivity(Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "vnd.android.document/directory")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            })
+            true
+        } catch (_: Exception) {
+            false
         }
     }
 
@@ -165,6 +264,10 @@ class MainActivity : FlutterActivity() {
 
     private var prevCpuTotal: Long = -1
     private var prevCpuIdle: Long = -1
+    // 应用级 CPU 兜底采样（/proc/stat 被 SELinux 拦截的 ROM 上使用）
+    private var prevAppJiffies: Long = -1
+    private var prevAppSampleNanos: Long = -1L
+    private var cpuSysBlocked = false
     private var cachedGpuName: String? = null
     private var gpuPercentPath: String? = null
 
@@ -179,23 +282,94 @@ class MainActivity : FlutterActivity() {
         )
     }
 
-    /** CPU 总占用 %。/proc/stat 是开机累计值，需与上次采样求差；首次/失败返回 -1。 */
+    /**
+     * CPU 占用 %。优先读 /proc/stat 得全系统占用（两次采样差值）；
+     * 部分 ROM（MIUI 等）用 SELinux 拦截应用读 /proc/stat —— 文件能打开但读到
+     * 空行/抛异常，这时退回「应用级」统计（本应用 UID 下全部进程，含 ffmpeg
+     * 子进程），保证队列页始终有真实数值而不是恒为 "--"。
+     * 首次采样只建立基线，返回 -1（UI 显示 --）。
+     */
     private fun readCpuPercent(): Double {
+        if (!cpuSysBlocked) {
+            val sys = readSystemCpuPercent()
+            if (sys != null) return sys
+            cpuSysBlocked = true
+            Log.i("FFmpegpp", "/proc/stat 不可读，CPU 占用切换为应用级统计")
+        }
+        return readAppCpuPercent()
+    }
+
+    /** 系统总 CPU%：/proc/stat 差值；不可读返回 null，首次采样返回 -1。 */
+    private fun readSystemCpuPercent(): Double? {
         return try {
             val line = File("/proc/stat").useLines { lines ->
                 lines.firstOrNull { it.startsWith("cpu ") }
-            } ?: return -1.0
+            } ?: return null
             val p = line.split(Regex("\\s+")).drop(1)
                 .map { it.toLongOrNull() ?: 0L }
-            if (p.size < 4) return -1.0
+            if (p.size < 4 || p.all { it == 0L }) return null
             val idle = p[3] + (if (p.size > 4) p[4] else 0L) // idle + iowait
             val total = p.sum()
+            if (prevCpuTotal < 0L) {
+                // 首次采样只建立基线（旧实现这里会返回开机以来的平均值，不准确）
+                prevCpuTotal = total
+                prevCpuIdle = idle
+                return -1.0
+            }
             val dt = total - prevCpuTotal
             val di = idle - prevCpuIdle
             prevCpuTotal = total
             prevCpuIdle = idle
-            if (dt <= 0 || di < 0) return -1.0 // 首次采样只建立基线
+            if (dt <= 0 || di < 0 || di > dt) return -1.0
             ((dt - di).toDouble() / dt.toDouble() * 100.0).coerceIn(0.0, 100.0)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * 应用级 CPU%（兜底）：汇总与本应用同 UID 的所有进程 /proc/<pid>/stat 的
+     * utime+stime 增量（fork+exec 出的 ffmpeg 子进程同 UID，转码负载会被计入），
+     * 按「经过时间 × 核数」归一化为占满全部核心的百分比。
+     * 同 UID 进程的 /proc/<pid>/stat 始终可读，不受 hidepid/SELinux 影响。
+     */
+    private fun readAppCpuPercent(): Double {
+        return try {
+            val myUid = android.os.Process.myUid()
+            val hz = try {
+                android.system.Os.sysconf(android.system.OsConstants._SC_CLK_TCK)
+            } catch (_: Exception) { 100L }
+            val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
+            var jiffies = 0L
+            File("/proc").listFiles()?.forEach { procDir ->
+                if (procDir.name.toIntOrNull() == null) return@forEach
+                try {
+                    val st = android.system.Os.stat(procDir.absolutePath)
+                    if (st.st_uid != myUid) return@forEach
+                    val stat = File(procDir, "stat").readTextSafe() ?: return@forEach
+                    // comm 可能含空格/括号：取最后一个 ')' 之后开始计数。
+                    // 其后第 1 个字段是 state(第3列)，因此 utime(14)=fields[11]、
+                    // stime(15)=fields[12]。
+                    val fields = stat.substringAfterLast(')', "").trim()
+                        .split(Regex("\\s+"))
+                    val utime = fields.getOrNull(11)?.toLongOrNull() ?: 0L
+                    val stime = fields.getOrNull(12)?.toLongOrNull() ?: 0L
+                    jiffies += utime + stime
+                } catch (_: Exception) {}
+            }
+            val now = System.nanoTime()
+            if (prevAppJiffies < 0L) {
+                prevAppJiffies = jiffies
+                prevAppSampleNanos = now
+                return -1.0
+            }
+            val dj = jiffies - prevAppJiffies
+            val dtSec = (now - prevAppSampleNanos) / 1e9
+            prevAppJiffies = jiffies
+            prevAppSampleNanos = now
+            if (dj < 0 || dtSec <= 0.0) return -1.0
+            (dj.toDouble() / hz.toDouble() / dtSec / cores.toDouble() * 100.0)
+                .coerceIn(0.0, 100.0)
         } catch (e: Exception) {
             -1.0
         }

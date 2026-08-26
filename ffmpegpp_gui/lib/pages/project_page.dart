@@ -304,14 +304,16 @@ class ProjectPageState extends State<ProjectPage> {
                 child: Row(children: [
                   MobileGlassPill(
                     radius: 22,
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    height: 44,
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
                     pressable: true,
                     child: titleChild,
                   ),
                   const Spacer(),
                   MobileGlassPill(
                     radius: 22,
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+                    height: 44,
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
                     child: Row(mainAxisSize: MainAxisSize.min, children: actionWidgets),
                   ),
                 ]),

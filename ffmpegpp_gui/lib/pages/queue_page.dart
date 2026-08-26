@@ -179,22 +179,24 @@ class _QueuePageState extends State<QueuePage> {
     return Padding(
       padding: EdgeInsets.fromLTRB(8, safeTop + 6, 8, 6),
       child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-        // 左：标题药丸（自适应内容宽度，标题与药丸贴合；尺寸与项目页「项目」药丸完全一致）
+        // 左：标题药丸（高度 44，与项目页「项目」药丸完全一致）
         MobileGlassPill(
           radius: 22,
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          height: 44,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
           pressable: true,
           child: Text(s.navQueue,
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
         ),
         const SizedBox(width: 8),
-        // 右：操作药丸（贴合内容：横向滚动防溢出，不再用 Expanded 强制填满剩余空间）。
+        // 右：操作药丸（高度 44；贴合内容：横向滚动防溢出，不再用 Expanded 强制填满剩余空间）。
         Flexible(
           child: Align(
             alignment: Alignment.centerRight,
             child: MobileGlassPill(
               radius: 22,
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+              height: 44,
+              padding: const EdgeInsets.symmetric(horizontal: 6),
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: Row(children: _buildMobileActions(scheme, state, s)),

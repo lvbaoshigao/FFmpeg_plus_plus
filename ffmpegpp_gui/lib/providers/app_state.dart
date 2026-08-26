@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import '../models/models.dart';
 import '../services/native_process.dart';
@@ -39,6 +40,10 @@ class AppState extends ChangeNotifier {
 
   final List<TaskInfo> _tasks = [];
   List<TaskInfo> get tasks => List.unmodifiable(_tasks);
+  // ── 处理队列结果持久化 ──
+  // 结构性变化（增删/进入处理/终态）后防抖落盘；进度心跳不落盘。
+  Timer? _taskPersistTimer;
+  static const int _maxPersistedTasks = 200;
   final Set<String> _runningTaskIds = {};
   bool get processing => _runningTaskIds.isNotEmpty;
   String? _currentTaskId;
@@ -145,7 +150,10 @@ class AppState extends ChangeNotifier {
     debugPrint('[init] 1-configService.load');
     await configService.load();
     debugPrint('[init] 2-configService.load done');
-    notifyListeners(); // 让 UI 用上 config 里的主题
+    // 恢复上次退出时的处理队列结果（含孤儿导入缓存清理）；
+    // 不依赖后端，后端启动失败也要能看到历史记录。
+    await _loadPersistedTasks();
+    notifyListeners(); // 让 UI 用上 config 里的主题 + 恢复的任务队列
     try {
       debugPrint('[init] 3-calling pythonProcess.start($serverScript)');
       await pythonProcess.start(serverScript);
@@ -392,6 +400,138 @@ class AppState extends ChangeNotifier {
 
   void selectNav(int i) { _selectedNav = i; notifyListeners(); }
 
+  // ══════════════════════════════════════════════════════════════
+  // 处理队列结果持久化（PC/Mac/移动 全平台）
+  // ══════════════════════════════════════════════════════════════
+
+  /// 任务列表发生结构性变化后调用：防抖合并连续变化，500ms 后落盘。
+  void _scheduleTaskPersist() {
+    _taskPersistTimer?.cancel();
+    _taskPersistTimer = Timer(const Duration(milliseconds: 500), _persistTasksNow);
+  }
+
+  /// 立即把当前任务队列写入磁盘（退出前 / 防抖触发）。
+  Future<void> _persistTasksNow() async {
+    _taskPersistTimer?.cancel();
+    _taskPersistTimer = null;
+    try {
+      // 超出上限时优先丢弃最早的终态任务，保留 pending 与最新结果
+      List<TaskInfo> list = _tasks;
+      if (_tasks.length > _maxPersistedTasks) {
+        final terminal = _tasks.where((t) =>
+            t.status == TaskStatus.completed ||
+            t.status == TaskStatus.failed ||
+            t.status == TaskStatus.cancelled).toList();
+        final active = _tasks.where((t) =>
+            t.status == TaskStatus.pending ||
+            t.status == TaskStatus.processing).toList();
+        final terminalBudget = (_maxPersistedTasks - active.length)
+            .clamp(0, terminal.length);
+        final keptTerminal = terminal.sublist(terminal.length - terminalBudget);
+        final keepIds = {
+          ...active.map((t) => t.id),
+          ...keptTerminal.map((t) => t.id),
+        };
+        list = _tasks.where((t) => keepIds.contains(t.id)).toList();
+      }
+      await configService.saveTaskHistory(list.map((t) => t.toJson()).toList());
+    } catch (_) {}
+  }
+
+  /// 启动时恢复上次退出时的队列（含完成/失败结果）。
+  /// - 上次退出时仍在处理中的任务：进程已不存在，标记为「已取消」并注明原因；
+  /// - pending 任务保持可重新开始（桌面端输入路径仍在；Android 端流式导入的
+  ///   缓存副本会被孤儿清理保留——仍被本任务引用）；
+  /// - 恢复后顺带清理不再被任何视频/任务引用的导入缓存（见
+  ///   [_cleanupOrphanImportCaches]）。
+  Future<void> _loadPersistedTasks() async {
+    try {
+      final list = await configService.loadTaskHistory();
+      final zh = config.language == 'zh';
+      var restored = 0;
+      for (final e in list) {
+        try {
+          var t = TaskInfo.fromJson(e);
+          if (t.id.isEmpty) continue;
+          if (_tasks.any((x) => x.id == t.id)) continue;
+          if (t.status == TaskStatus.processing) {
+            t = t.copyWith(
+              status: TaskStatus.cancelled,
+              error: t.error ?? (zh ? '应用退出，处理中断' : 'Interrupted: app exited'),
+            );
+          }
+          _tasks.add(t);
+          restored++;
+        } catch (_) {}
+      }
+      if (restored > 0) {
+        addLog(zh ? '已恢复 $restored 条历史任务记录' : 'Restored $restored task record(s)',
+            category: 'info');
+      }
+    } catch (_) {}
+    // 无论有没有恢复记录，都清一次孤儿导入缓存：
+    // 上次退出时用户可能已清空列表，这些副本不会再被引用。
+    await _cleanupOrphanImportCaches();
+  }
+
+  /// 清理不再被任何视频/任务引用的应用临时导入副本。
+  ///
+  /// 背景（Android 体积膨胀 bug）：SAF 导入的媒体会被复制到应用缓存
+  /// （file_picker 缓存 / 流式导入 ffmpegpp_import_*），用户移除项目或
+  /// 直接退出后这些副本就成了孤儿，应用体积只增不减。这里在启动时
+  /// （恢复持久化任务之后）把无引用的副本删掉。
+  ///
+  /// 安全边界：只删应用自己创建的缓存目录内容（systemTemp / file_picker /
+  /// docsDir/ffmpegpp_imports），绝不动用户原文件目录；且仍被视频列表或
+  /// 任务（输入/输出）引用的文件一律保留。
+  Future<void> _cleanupOrphanImportCaches() async {
+    if (!isMobilePlatform) return;
+    try {
+      final referenced = <String>{
+        for (final v in _videos) v.filepath,
+        for (final t in _tasks) ...[t.inputPath, t.outputPath],
+      };
+      final now = DateTime.now();
+
+      Future<void> purge(String dirPath, bool Function(String name) match,
+          {Duration? olderThan}) async {
+        try {
+          final dir = Directory(dirPath);
+          if (!await dir.exists()) return;
+          await for (final ent in dir.list(recursive: true, followLinks: false)) {
+            if (ent is! File) continue;
+            final name = ent.path.split(RegExp(r'[\\/]')).last;
+            if (!match(name)) continue;
+            if (referenced.contains(ent.path)) continue;
+            if (olderThan != null) {
+              try {
+                if (now.difference(await ent.lastModified()) < olderThan) continue;
+              } catch (_) {}
+            }
+            try {
+              await ent.delete();
+            } catch (_) {}
+          }
+        } catch (_) {}
+      }
+
+      final cacheDir = Directory.systemTemp.path;
+      // 本应用流式导入产生的副本（含默认输出到输入目录的产物）
+      await purge(cacheDir, (n) => n.startsWith('ffmpegpp_import_'));
+      // file_picker 的 SAF 缓存目录
+      await purge('$cacheDir${Platform.pathSeparator}file_picker', (n) => true);
+      // 任务卡片缩略图（可重建，只清 3 天前的，避免频繁重新生成）
+      await purge(cacheDir, (n) => n.startsWith('ffmpegpp_thumb_'),
+          olderThan: const Duration(days: 3));
+      // 旧版 ensureReadableImport 的兜底复制目录
+      try {
+        final docsDir = await getApplicationDocumentsDirectory();
+        await purge('${docsDir.path}${Platform.pathSeparator}ffmpegpp_imports',
+            (n) => true);
+      } catch (_) {}
+    } catch (_) {}
+  }
+
   Future<void> addVideos(List<String> filepaths) async {
     _probeCount++; notifyListeners();
     addLog('添加 ${filepaths.length} 个文件', category: 'info');
@@ -512,6 +652,8 @@ class AppState extends ChangeNotifier {
     final isCacheCopy = normalized.contains('file_picker') || normalized.contains('ffmpegpp_import');
     if (!isCacheCopy) return;
     if (_videos.any((v) => v.filepath == filepath)) return; // 仍有引用，不删
+    // 队列/历史里的任务仍引用该副本（重新开始/查看输出），不删
+    if (_tasks.any((t) => t.inputPath == filepath || t.outputPath == filepath)) return;
     try {
       final f = File(filepath);
       if (f.existsSync()) f.deleteSync();
@@ -860,6 +1002,7 @@ class AppState extends ChangeNotifier {
       ));
     }
     notifyListeners();
+    _scheduleTaskPersist();
   }
 
   /// 从命令页面添加自定义 FFmpeg 命令任务
@@ -880,6 +1023,7 @@ class AppState extends ChangeNotifier {
       command: _splitCommandQuoted(command),
     ));
     notifyListeners();
+    _scheduleTaskPersist();
   }
 
   /// 命令行分词：支持单/双引号包裹的空格（与后端 parser::splitCommand 一致）。
@@ -946,6 +1090,7 @@ class AppState extends ChangeNotifier {
       _currentTaskId = task.id;
       _tasks[pi] = task.copyWith(status: TaskStatus.processing);
       notifyListeners();
+      _scheduleTaskPersist();
       addLog('开始处理: ${task.filename}', category: 'info');
       addLog('输入: ${task.inputPath}', category: 'info');
       addLog('输出: ${task.outputPath}', category: 'info');
@@ -965,6 +1110,7 @@ class AppState extends ChangeNotifier {
         if (fi >= 0 && !_cancelRequested && _tasks[fi].status == TaskStatus.processing) {
           _tasks[fi] = _tasks[fi].copyWith(status: TaskStatus.failed, error: '处理异常: $e');
           notifyListeners();
+          _scheduleTaskPersist();
         }
         if (!_cancelRequested && _tasks.any((t) => t.status == TaskStatus.pending)) {
           processNextTask();
@@ -1050,6 +1196,7 @@ class AppState extends ChangeNotifier {
         onTaskFinished?.call(task.filename, TaskStatus.failed);
       }
       notifyListeners();
+      _scheduleTaskPersist();
     }
   }
 
@@ -1099,6 +1246,7 @@ class AppState extends ChangeNotifier {
         onTaskFinished?.call(task.filename, TaskStatus.failed);
       }
       notifyListeners();
+      _scheduleTaskPersist();
     }
   }
 
@@ -1332,6 +1480,7 @@ class AppState extends ChangeNotifier {
           addLog('步骤 ${ci + 1} 失败: ${resp['error']}', category: 'error');
           onTaskFinished?.call(task.filename, TaskStatus.failed);
           notifyListeners();
+          _scheduleTaskPersist();
         }
         _cleanupTempFiles(cleanupCalls);
         return;
@@ -1369,6 +1518,7 @@ class AppState extends ChangeNotifier {
       addLog('任务完成: ${task.filename}', category: 'info');
       onTaskFinished?.call(task.filename, TaskStatus.completed);
       notifyListeners();
+      _scheduleTaskPersist();
     }
 
     _cleanupTempFiles(cleanupCalls);
@@ -1399,7 +1549,7 @@ class AppState extends ChangeNotifier {
         addLog('帧提取完成: $count 帧 → $outDir', category: 'info');
         return {'success': true, 'data': {'output_path': outDir, 'frame_count': count}};
       } else {
-        return {'success': false, 'error': '帧提取失败: ${(result.stderr as String).split('\n').last}'};
+        return _ffmpegFailResult('帧提取', (result.stderr as String).trim(), args);
       }
     } catch (e) {
       return {'success': false, 'error': '帧提取异常: $e'};
@@ -1409,6 +1559,30 @@ class AppState extends ChangeNotifier {
   String get _ffmpegBin {
     final p = config.ffmpegPath;
     return (p.isNotEmpty && File(p).existsSync()) ? p : 'ffmpeg';
+  }
+
+  /// 本地 ffmpeg 失败结果：error 只保留最后几行（卡片横幅摘要），
+  /// 完整 stderr（截尾 120 行）与执行命令放进 data.log_lines/data.command，
+  /// 否则队列卡片展开后「详细错误/日志」为空，无法排查（如缺 libwebp 编码器）。
+  Map<String, dynamic> _ffmpegFailResult(String label, String stderr, List<String> args) {
+    final lines = stderr.split('\n').where((l) => l.trim().isNotEmpty).toList();
+    var errMsg = lines.length > 3 ? lines.sublist(lines.length - 3).join('; ') : stderr;
+    // 编码器缺失（如旧构建缺 libwebp）给出可操作的提示
+    if (errMsg.contains('Encoder not found')) {
+      final zh = config.language == 'zh';
+      errMsg += zh
+          ? '；当前内置 FFmpeg 缺少该格式的编码器，请更新应用或改用 PNG/JPEG'
+          : '; the bundled FFmpeg lacks this encoder — update the app or use PNG/JPEG';
+    }
+    addLog('$label失败: $errMsg', category: 'error');
+    return {
+      'success': false,
+      'error': '$label失败: $errMsg',
+      'data': {
+        'log_lines': lines.length > 120 ? lines.sublist(lines.length - 120) : lines,
+        'command': [_ffmpegBin, ...args],
+      },
+    };
   }
 
   Future<Map<String, dynamic>> _runImageConvert(Map<String, dynamic> p) async {
@@ -1438,11 +1612,8 @@ class AppState extends ChangeNotifier {
         addLog('图片转换完成: $output', category: 'info');
         return {'success': true, 'data': {'output_path': output}};
       } else {
-        final stderr = (result.stderr as String).trim();
-        final lastLines = stderr.split('\n').where((l) => l.trim().isNotEmpty).toList();
-        final errMsg = lastLines.length > 3 ? lastLines.sublist(lastLines.length - 3).join('; ') : stderr;
-        addLog('图片转换失败: $errMsg', category: 'error');
-        return {'success': false, 'error': '图片转换失败: $errMsg'};
+        // 完整 stderr + 命令一并返回，队列卡片「详细错误」可查看
+        return _ffmpegFailResult('图片转换', (result.stderr as String).trim(), args);
       }
     } catch (e) {
       addLog('图片转换异常: $e', category: 'error');
@@ -1473,11 +1644,8 @@ class AppState extends ChangeNotifier {
         addLog('图片裁剪完成: $output', category: 'info');
         return {'success': true, 'data': {'output_path': output}};
       } else {
-        final stderr = (result.stderr as String).trim();
-        final lastLines = stderr.split('\n').where((l) => l.trim().isNotEmpty).toList();
-        final errMsg = lastLines.length > 3 ? lastLines.sublist(lastLines.length - 3).join('; ') : stderr;
-        addLog('图片裁剪失败: $errMsg', category: 'error');
-        return {'success': false, 'error': '图片裁剪失败: $errMsg'};
+        // 完整 stderr + 命令一并返回，队列卡片「详细错误」可查看
+        return _ffmpegFailResult('图片裁剪', (result.stderr as String).trim(), args);
       }
     } catch (e) {
       addLog('图片裁剪异常: $e', category: 'error');
@@ -1625,10 +1793,8 @@ class AppState extends ChangeNotifier {
         addLog('$label完成: $output', category: 'info');
         return {'success': true, 'data': {'output_path': output}};
       } else {
-        final lastLines = stderr.split('\n').where((l) => l.trim().isNotEmpty).toList();
-        final errMsg = lastLines.length > 3 ? lastLines.sublist(lastLines.length - 3).join('; ') : stderr;
-        addLog('$label失败: $errMsg', category: 'error');
-        return {'success': false, 'error': '$label失败: $errMsg'};
+        // 完整 stderr + 命令一并返回，队列卡片「详细错误」可查看
+        return _ffmpegFailResult(label, stderr, args);
       }
     } catch (e) {
       addLog('$label异常: $e', category: 'error');
@@ -1738,11 +1904,8 @@ class AppState extends ChangeNotifier {
         addLog('图片旋转完成: $output', category: 'info');
         return {'success': true, 'data': {'output_path': output}};
       } else {
-        final stderr = (result.stderr as String).trim();
-        final lastLines = stderr.split('\n').where((l) => l.trim().isNotEmpty).toList();
-        final errMsg = lastLines.length > 3 ? lastLines.sublist(lastLines.length - 3).join('; ') : stderr;
-        addLog('图片旋转失败: $errMsg', category: 'error');
-        return {'success': false, 'error': '图片旋转失败: $errMsg'};
+        // 完整 stderr + 命令一并返回，队列卡片「详细错误」可查看
+        return _ffmpegFailResult('图片旋转', (result.stderr as String).trim(), args);
       }
     } catch (e) {
       addLog('图片旋转异常: $e', category: 'error');
@@ -1774,11 +1937,8 @@ class AppState extends ChangeNotifier {
         addLog('图片缩放完成: $output', category: 'info');
         return {'success': true, 'data': {'output_path': output}};
       } else {
-        final stderr = (result.stderr as String).trim();
-        final lastLines = stderr.split('\n').where((l) => l.trim().isNotEmpty).toList();
-        final errMsg = lastLines.length > 3 ? lastLines.sublist(lastLines.length - 3).join('; ') : stderr;
-        addLog('图片缩放失败: $errMsg', category: 'error');
-        return {'success': false, 'error': '图片缩放失败: $errMsg'};
+        // 完整 stderr + 命令一并返回，队列卡片「详细错误」可查看
+        return _ffmpegFailResult('图片缩放', (result.stderr as String).trim(), args);
       }
     } catch (e) {
       addLog('图片缩放异常: $e', category: 'error');
@@ -1810,11 +1970,8 @@ class AppState extends ChangeNotifier {
         addLog('图片亮度调整完成: $output', category: 'info');
         return {'success': true, 'data': {'output_path': output}};
       } else {
-        final stderr = (result.stderr as String).trim();
-        final lastLines = stderr.split('\n').where((l) => l.trim().isNotEmpty).toList();
-        final errMsg = lastLines.length > 3 ? lastLines.sublist(lastLines.length - 3).join('; ') : stderr;
-        addLog('图片亮度调整失败: $errMsg', category: 'error');
-        return {'success': false, 'error': '图片亮度调整失败: $errMsg'};
+        // 完整 stderr + 命令一并返回，队列卡片「详细错误」可查看
+        return _ffmpegFailResult('图片亮度调整', (result.stderr as String).trim(), args);
       }
     } catch (e) {
       addLog('图片亮度调整异常: $e', category: 'error');
@@ -1850,11 +2007,8 @@ class AppState extends ChangeNotifier {
         addLog('图片噪声添加完成: $output', category: 'info');
         return {'success': true, 'data': {'output_path': output}};
       } else {
-        final stderr = (result.stderr as String).trim();
-        final lastLines = stderr.split('\n').where((l) => l.trim().isNotEmpty).toList();
-        final errMsg = lastLines.length > 3 ? lastLines.sublist(lastLines.length - 3).join('; ') : stderr;
-        addLog('图片噪声添加失败: $errMsg', category: 'error');
-        return {'success': false, 'error': '图片噪声添加失败: $errMsg'};
+        // 完整 stderr + 命令一并返回，队列卡片「详细错误」可查看
+        return _ffmpegFailResult('图片噪声添加', (result.stderr as String).trim(), args);
       }
     } catch (e) {
       addLog('图片噪声添加异常: $e', category: 'error');
@@ -1886,11 +2040,8 @@ class AppState extends ChangeNotifier {
         addLog('图片锐化完成: $output', category: 'info');
         return {'success': true, 'data': {'output_path': output}};
       } else {
-        final stderr = (result.stderr as String).trim();
-        final lastLines = stderr.split('\n').where((l) => l.trim().isNotEmpty).toList();
-        final errMsg = lastLines.length > 3 ? lastLines.sublist(lastLines.length - 3).join('; ') : stderr;
-        addLog('图片锐化失败: $errMsg', category: 'error');
-        return {'success': false, 'error': '图片锐化失败: $errMsg'};
+        // 完整 stderr + 命令一并返回，队列卡片「详细错误」可查看
+        return _ffmpegFailResult('图片锐化', (result.stderr as String).trim(), args);
       }
     } catch (e) {
       addLog('图片锐化异常: $e', category: 'error');
@@ -1928,11 +2079,8 @@ class AppState extends ChangeNotifier {
         addLog('图片降噪完成: $output', category: 'info');
         return {'success': true, 'data': {'output_path': output}};
       } else {
-        final stderr = (result.stderr as String).trim();
-        final lastLines = stderr.split('\n').where((l) => l.trim().isNotEmpty).toList();
-        final errMsg = lastLines.length > 3 ? lastLines.sublist(lastLines.length - 3).join('; ') : stderr;
-        addLog('图片降噪失败: $errMsg', category: 'error');
-        return {'success': false, 'error': '图片降噪失败: $errMsg'};
+        // 完整 stderr + 命令一并返回，队列卡片「详细错误」可查看
+        return _ffmpegFailResult('图片降噪', (result.stderr as String).trim(), args);
       }
     } catch (e) {
       addLog('图片降噪异常: $e', category: 'error');
@@ -1975,11 +2123,8 @@ class AppState extends ChangeNotifier {
         addLog('通道提取完成: $output', category: 'info');
         return {'success': true, 'data': {'output_path': output}};
       } else {
-        final stderr = (result.stderr as String).trim();
-        final lastLines = stderr.split('\n').where((l) => l.trim().isNotEmpty).toList();
-        final errMsg = lastLines.length > 3 ? lastLines.sublist(lastLines.length - 3).join('; ') : stderr;
-        addLog('通道提取失败: $errMsg', category: 'error');
-        return {'success': false, 'error': '通道提取失败: $errMsg'};
+        // 完整 stderr + 命令一并返回，队列卡片「详细错误」可查看
+        return _ffmpegFailResult('通道提取', (result.stderr as String).trim(), args);
       }
     } catch (e) {
       addLog('通道提取异常: $e', category: 'error');
@@ -2088,6 +2233,7 @@ class AppState extends ChangeNotifier {
       }
     }
     _runningTaskIds.clear(); _currentTaskId = null; notifyListeners();
+    _scheduleTaskPersist();
   }
 
   /// 只取消单个任务：其余 pending/processing 任务继续，不影响全局取消标记。
@@ -2112,14 +2258,45 @@ class AppState extends ChangeNotifier {
     if (_currentTaskId == taskId) _currentTaskId = null;
     _tasks[i] = _tasks[i].copyWith(status: TaskStatus.cancelled);
     notifyListeners();
+    _scheduleTaskPersist();
     if (!_cancelRequested && _tasks.any((t) => t.status == TaskStatus.pending)) {
       processNextTask();
     }
   }
 
-  void clearCompletedTasks() { _tasks.removeWhere((t) => t.status == TaskStatus.completed || t.status == TaskStatus.failed || t.status == TaskStatus.cancelled); notifyListeners(); }
-  void removeTask(String id) { _tasks.removeWhere((t) => t.id == id); notifyListeners(); }
-  void clearAllTasks() { if (!processing) { _tasks.clear(); notifyListeners(); } }
+  void clearCompletedTasks() {
+    // 记录被清除任务的输入路径：若是应用导入缓存副本且不再被引用，一并删除，
+    // 避免「列表清了但缓存还在」导致应用体积只增不减。
+    final removedInputs = _tasks
+        .where((t) => t.status == TaskStatus.completed || t.status == TaskStatus.failed || t.status == TaskStatus.cancelled)
+        .map((t) => t.inputPath)
+        .toList();
+    _tasks.removeWhere((t) => t.status == TaskStatus.completed || t.status == TaskStatus.failed || t.status == TaskStatus.cancelled);
+    for (final p in removedInputs) { _cleanupTempImportFile(p); }
+    notifyListeners();
+    _scheduleTaskPersist();
+  }
+
+  void removeTask(String id) {
+    String? removedInput;
+    _tasks.removeWhere((t) {
+      if (t.id == id) { removedInput = t.inputPath; return true; }
+      return false;
+    });
+    if (removedInput != null) _cleanupTempImportFile(removedInput!);
+    notifyListeners();
+    _scheduleTaskPersist();
+  }
+
+  void clearAllTasks() {
+    if (!processing) {
+      final removedInputs = _tasks.map((t) => t.inputPath).toList();
+      _tasks.clear();
+      for (final p in removedInputs) { _cleanupTempImportFile(p); }
+      notifyListeners();
+      _scheduleTaskPersist();
+    }
+  }
   void toggleTaskExpanded(String tid) { final i = _tasks.indexWhere((t) => t.id == tid); if (i >= 0) { _tasks[i] = _tasks[i].copyWith(expanded: !_tasks[i].expanded); notifyListeners(); } }
 
   Future<void> toggleDarkMode(bool v) async { await configService.update((c) => c..darkMode = v); notifyListeners(); }
@@ -2583,10 +2760,12 @@ class AppState extends ChangeNotifier {
   Future<void> shutdown() async {
     // 配置写盘是防抖的，退出前必须强制落盘，否则最后一次修改会丢失
     await configService.flush();
+    // 队列结果历史同样落盘（防抖未触发时强制写一次）
+    await _persistTasksNow();
     await stopMcpServer();
     await pythonProcess.shutdown();
   }
 
   @override
-  void dispose() { configService.dispose(); backend.dispose(); pythonProcess.dispose(); super.dispose(); }
+  void dispose() { _taskPersistTimer?.cancel(); configService.dispose(); backend.dispose(); pythonProcess.dispose(); super.dispose(); }
 }

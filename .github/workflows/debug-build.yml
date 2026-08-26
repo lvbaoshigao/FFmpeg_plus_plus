@@ -375,13 +375,25 @@ jobs:
       - name: Strip debug symbols (reduce DMG size)
         run: |
           APP="ffmpegpp_gui/build/macos/Build/Products/Release/ffmpegpp_gui.app"
+          # dSYM 不进安装包（Release 默认 dwarf-with-dsym）
+          rm -rf ffmpegpp_gui/build/macos/Build/Products/Release/*.dSYM
+          # strip 覆盖无扩展名的 framework 主二进制（FlutterMacOS/App 两大件），
+          # *.dylib 的 find 匹配不到它们
           strip -S "$APP/Contents/MacOS/libffmpegpp.dylib" 2>/dev/null || true
+          for f in "$APP"/Contents/Frameworks/*.framework; do
+            name="$(basename "$f" .framework)"
+            strip -S "$f/$name" 2>/dev/null || true
+          done
           find "$APP/Contents/Frameworks" -name "*.dylib" -exec strip -S {} \; 2>/dev/null || true
           strip -S "$APP/Contents/MacOS/ffmpegpp_gui" 2>/dev/null || true
+          echo "==== macOS .app 体积构成 ===="
+          du -sh "$APP"
+          du -h "$APP"/Contents/Frameworks/* 2>/dev/null | sort -rh | head -15
 
       - name: Pack portable app bundle
         run: |
-          tar -czf "FFmpeg++_v${VER}_macOS_portable.tar.gz" -C ffmpegpp_gui/build/macos/Build/Products/Release .
+          # 只打包 .app 本体，不带 Release/ 目录里的 dSYM 等中间产物
+          tar -czf "FFmpeg++_v${VER}_macOS_portable.tar.gz" -C ffmpegpp_gui/build/macos/Build/Products/Release ffmpegpp_gui.app
         env:
           VER: ${{ inputs.version }}
 

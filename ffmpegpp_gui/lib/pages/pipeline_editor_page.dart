@@ -541,7 +541,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   // ── 节点操作 ──
 
-  void _addNodeAt(PipelineStepType type, Offset canvasPos) {
+  String _addNodeAt(PipelineStepType type, Offset canvasPos) {
     _pushUndo();
     final node = PipelineNode(
       id: _uuid.v4(), type: type,
@@ -556,9 +556,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     if (context.read<AppState>().config.debugMode) {
       context.read<AppState>().addLog('[节点] 添加 ${type.name} @ (${canvasPos.dx.toStringAsFixed(0)}, ${canvasPos.dy.toStringAsFixed(0)}) id=${node.id.substring(0, 8)}', category: 'info');
     }
+    return node.id;
   }
 
-  void _addGateAt(LogicGateType gate, Offset canvasPos) {
+  String _addGateAt(LogicGateType gate, Offset canvasPos) {
     _pushUndo();
     final node = PipelineNode(
       id: _uuid.v4(),
@@ -571,6 +572,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     if (context.read<AppState>().config.debugMode) {
       context.read<AppState>().addLog('[逻辑门] 添加 ${gate.name} @ (${canvasPos.dx.toStringAsFixed(0)}, ${canvasPos.dy.toStringAsFixed(0)}) id=${node.id.substring(0, 8)}', category: 'info');
     }
+    return node.id;
   }
 
   void _addNodeAtCenter(PipelineStepType type) {
@@ -578,6 +580,40 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     final center = rb.size.center(Offset.zero);
     final canvasPos = _screenToCanvas(center);
     _addNodeAt(type, canvasPos);
+  }
+
+  // ── 移动端「点按即添加」 ──
+  // 移动端工具箱是全屏弹出层，盖在画布上方：Draggable 的拖拽落点永远命中不到
+  // 画布下方的 DragTarget（被弹层拦截），所以拖拽添加在手机上天然无效；
+  // 同时弹出层是竖向滚动列表，竖向拖拽手势会被 ScrollView 抢走。
+  // 因此移动端改为：点击工具项 → 添加到画布可视中心 → 收起工具箱 → 选中新节点
+  // （选中后右侧属性卡片自动弹出，可立即编辑）。
+  void _mobileAddNode(PipelineStepType type) {
+    final rb = context.findRenderObject() as RenderBox;
+    final id = _addNodeAt(type, _screenToCanvas(rb.size.center(Offset.zero)));
+    setState(() {
+      _mobileToolboxOpen = false;
+      _previewedToolboxType = null;
+      _previewedLogicType = null;
+      _selectedNodeIds
+        ..clear()
+        ..add(id);
+      _lastSelectedId = id;
+    });
+  }
+
+  void _mobileAddGate(LogicGateType gate) {
+    final rb = context.findRenderObject() as RenderBox;
+    final id = _addGateAt(gate, _screenToCanvas(rb.size.center(Offset.zero)));
+    setState(() {
+      _mobileToolboxOpen = false;
+      _previewedToolboxType = null;
+      _previewedLogicType = null;
+      _selectedNodeIds
+        ..clear()
+        ..add(id);
+      _lastSelectedId = id;
+    });
   }
 
   void _trackUsage(PipelineStepType type) {
@@ -2065,15 +2101,45 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                   bottom: 8, left: 0, right: 0,
                   child: Center(child: _buildMobileFileInfo(scheme, s)),
                 ),
+                // 逻辑块框选提示条（用具箱点按「循环」后出现，引导用户手指框选）
+                if (_isLogicBoxSelecting)
+                  Positioned(
+                    top: 52, left: 8, right: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withAlpha(40),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.red.withAlpha(90)),
+                      ),
+                      child: Row(children: [
+                        Icon(Icons.info_outline, size: 15, color: Colors.red),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text(
+                          s.isZh ? '请在画布上拖拽框选要包含的元素，松手完成' : 'Drag a box on the canvas to select elements, then release',
+                          style: TextStyle(fontSize: 12, color: Colors.red, fontWeight: FontWeight.w500),
+                        )),
+                        TextButton(
+                          onPressed: () => setState(() { _isLogicBoxSelecting = false; _pendingLogicType = null; }),
+                          child: Text(s.isZh ? '取消' : 'Cancel', style: const TextStyle(fontSize: 12)),
+                        ),
+                      ]),
+                    ),
+                  ),
                 // 工具箱弹出层（点击顶部"+"按钮展开）
                 if (_mobileToolboxOpen)
                   Positioned.fill(
                     child: _buildMobileToolboxSheet(scheme, s),
                   ),
-                // 属性编辑底部弹层（选中节点时自动弹出）
+                // 属性编辑卡片：改为停靠在右侧，避免整屏宽底部长条的"横屏样式"，
+                // 元素(下拉/滑杆/文本框)过宽观感差。右侧卡片留出左半屏给画布交互。
                 if (_selectedNode != null || _selectedLogicBlockId != null)
                   Positioned(
-                    left: 0, right: 0, bottom: 0,
+                    top: _isLandscape ? 44 : 56,
+                    bottom: 12,
+                    right: 8,
+                    width: math.min(_isLandscape ? 340.0 : 330.0,
+                        MediaQuery.of(context).size.width * (_isLandscape ? 0.42 : 0.78)),
                     child: _buildMobilePropertiesSheet(scheme, s),
                   ),
               ]);
@@ -2253,8 +2319,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           _rightClickStart = e.position;
           _rightClickGlobal = e.position;
           _isRightDragging = false;
-        } else if (e.kind == PointerDeviceKind.mouse && e.buttons == kPrimaryMouseButton) {
+        } else if ((e.kind == PointerDeviceKind.mouse && e.buttons == kPrimaryMouseButton) ||
+            (_isLogicBoxSelecting && e.kind == PointerDeviceKind.touch)) {
           // Left-click on empty canvas: start box-select or deselect
+          // 移动端：逻辑块框选模式下触摸空白处也可框选（onPointerDown 原来只认
+          // 鼠标左键，导致手机上进入框选模式后根本无法画框）。
           final canvasPos = _screenToCanvas(e.localPosition);
           final hitNode = _findNodeAtCanvasPos(canvasPos);
           if (hitNode == null) {
@@ -4340,6 +4409,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   Widget _buildToolboxItem(PipelineStepType t, ColorScheme scheme, AppStrings s) {
     final dummy = PipelineNode(id: '', type: t);
     final tag = dummy.mediaTag;
+    // 移动端：工具箱是全屏弹层盖在画布上，拖拽落点被弹层拦截、竖向拖拽又被
+    // 列表滚动抢走 —— 拖拽在手机上不可用。改为「点按即添加到画布中心」。
+    if (isMobilePlatform) {
+      return GestureDetector(
+        onTap: () => _mobileAddNode(t),
+        child: _toolboxChip(t, dummy, tag, scheme, s),
+      );
+    }
     return Draggable<Object>(
       data: t,
       feedback: Material(
@@ -4391,6 +4468,32 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         : (s.isZh ? '选择性循环' : 'Selective Loop');
     final icon = type == LogicBlockType.loop ? Icons.repeat : Icons.shuffle;
     final isSelected = _previewedLogicType == type;
+    // 移动端：逻辑块必须先框选画布上的元素才能创建。旧实现要求「双击」工具项
+    // 才进入框选模式，且工具箱弹层仍然盖在画布上方 —— 双击无效、拖动更不可能，
+    // 逻辑块在移动端完全加不上。改为：点按即收起弹层并直接进入框选模式，
+    // 画布上方会出现红色提示条引导手指框选。
+    if (isMobilePlatform) {
+      return GestureDetector(
+        onTap: () {
+          setState(() => _mobileToolboxOpen = false);
+          _startLogicBoxSelect(type, s);
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+          decoration: BoxDecoration(
+            color: Colors.red.withAlpha(30),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: Colors.red.withAlpha(80)),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(icon, size: 12, color: Colors.red),
+            SizedBox(width: 3),
+            Text(label, style: TextStyle(fontSize: 9, color: scheme.onSurface)),
+          ]),
+        ),
+      );
+    }
     return GestureDetector(
       onTap: () {
         setState(() {
@@ -4420,9 +4523,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     );
   }
 
-  /// 构建逻辑门工具箱项（可拖拽到画布）
+  /// 构建逻辑门工具箱项（桌面端可拖拽到画布；移动端点按即添加）
   Widget _buildGateToolboxItem(LogicGateType gate, ColorScheme scheme, AppStrings s) {
     final sym = gate.symbol(s.isZh);
+    if (isMobilePlatform) {
+      // 与 _buildToolboxItem 同理：弹层遮挡画布，拖拽不可用 → 点按即添加。
+      return GestureDetector(
+        onTap: () => _mobileAddGate(gate),
+        child: _gateChip(gate, scheme, s),
+      );
+    }
     return Draggable<Object>(
       data: gate,
       feedback: Material(
@@ -4769,6 +4879,37 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         _controlBtn(Icons.auto_fix_high, s.isZh ? '整理' : 'Arrange', scheme, _autoLayout),
         const SizedBox(height: 2),
         _controlBtn(Icons.my_location, s.isZh ? '定位源' : 'Source', scheme, () => _goToSource(s)),
+        // 桌面端右侧工具栏补齐（与移动端顶部菜单栏能力对齐）：
+        // 原来只有「整理 + 定位源」，缺少移动端已有的缩放、撤销/重做、探测、隐藏逻辑线。
+        if (!isMobilePlatform) ...[
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
+          ),
+          _controlBtn(Icons.zoom_out, s.isZh ? '缩小' : 'Zoom out', scheme, () => _zoomTo(_currentScale - 0.15)),
+          const SizedBox(height: 2),
+          _controlBtn(Icons.zoom_in, s.isZh ? '放大' : 'Zoom in', scheme, () => _zoomTo(_currentScale + 0.15)),
+          const SizedBox(height: 2),
+          _controlBtn(Icons.fit_screen_outlined, s.isZh ? '适应画布' : 'Fit', scheme, _zoomToFit),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
+          ),
+          _controlBtn(Icons.undo, s.isZh ? '撤销' : 'Undo', scheme, _undoStack.isEmpty ? () {} : _undo,
+              color: _undoStack.isEmpty ? scheme.outlineVariant : null),
+          const SizedBox(height: 2),
+          _controlBtn(Icons.redo, s.isZh ? '重做' : 'Redo', scheme, _redoStack.isEmpty ? () {} : _redo,
+              color: _redoStack.isEmpty ? scheme.outlineVariant : null),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
+          ),
+          _controlBtn(Icons.search, s.isZh ? '探测模式' : 'Probe', scheme, () => setState(() => _probeMode = !_probeMode),
+              color: _probeMode ? scheme.primary : null),
+          const SizedBox(height: 2),
+          _controlBtn(Icons.route, s.isZh ? '隐藏逻辑线' : 'Hide logic', scheme, () => setState(() => _hideLogic = !_hideLogic),
+              color: _hideLogic ? scheme.error : null),
+        ],
           ]),
         ),
       ),
@@ -4852,7 +4993,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   Widget _buildMobileTopBar(ColorScheme scheme, AppStrings s) {
     final cfg = context.read<AppState>().config;
-    return Container(
+    // 顶部菜单栏药丸大小可在设置中调节（editorToolbarScale）
+    final scale = cfg.editorToolbarScale.clamp(0.7, 1.6);
+    return Transform.scale(
+      scale: scale,
+      alignment: Alignment.topCenter,
+      child: Container(
       height: 34,
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
       decoration: BoxDecoration(
@@ -4955,26 +5101,37 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           ),
         ),
       ]),
+      ),
     );
   }
 
   // ── 移动端专用：底部左侧缩放条 ──
 
   Widget _buildMobileBottomLeftBar(ColorScheme scheme, AppStrings s) {
-    return Container(
-      height: 32,
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-      decoration: BoxDecoration(
-        color: scheme.surface.withAlpha(220),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
-        boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(30), blurRadius: 6, offset: const Offset(0, 2))],
+    // 放大镜药丸大小可在设置中调节（editorZoomScale），且基础尺寸放大：
+    // 原 16px 图标 + 4px 内边距在手机上过小，难以点按。
+    final scale = context.read<AppState>().config.editorZoomScale.clamp(0.7, 1.6);
+    return Transform.scale(
+      scale: scale,
+      alignment: Alignment.bottomLeft,
+      child: Container(
+        height: 40,
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
+        decoration: BoxDecoration(
+          color: scheme.surface.withAlpha(220),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
+          boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(30), blurRadius: 6, offset: const Offset(0, 2))],
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          _mobileBarBtn(Icons.zoom_out, () => _zoomTo(_currentScale - 0.15), scheme, size: 20, pad: 7, tooltip: s.isZh ? '缩小' : 'Zoom out'),
+          const SizedBox(width: 2),
+          _mobileBarBtn(Icons.zoom_in, () => _zoomTo(_currentScale + 0.15), scheme, size: 20, pad: 7, tooltip: s.isZh ? '放大' : 'Zoom in'),
+          const SizedBox(width: 2),
+          // 一键适应画布（补齐与桌面端一致的缩放能力）
+          _mobileBarBtn(Icons.fit_screen_outlined, _zoomToFit, scheme, size: 20, pad: 7, tooltip: s.isZh ? '适应画布' : 'Fit to canvas'),
+        ]),
       ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        _mobileBarBtn(Icons.zoom_out, () => _zoomTo(_currentScale - 0.15), scheme, size: 16, pad: 4),
-        const SizedBox(width: 2),
-        _mobileBarBtn(Icons.zoom_in, () => _zoomTo(_currentScale + 0.15), scheme, size: 16, pad: 4),
-      ]),
     );
   }
 
@@ -4983,9 +5140,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   Widget _buildMobileFileInfo(ColorScheme scheme, AppStrings s) {
     final v = widget.video;
     final nodesLabel = s.isZh ? '节点' : 'nodes';
-    // 左下缩放悬浮条约占 80px，中央信息条扣除这部分宽度，
-    // 避免窄屏下长文本撑满整行，与缩放按钮重叠。
-    final reserved = 90.0;
+    // 左下缩放悬浮条放大后约 116px 宽（3 个 20px 图标按钮），
+    // 中央信息条扣除这部分宽度 + 缩放系数，避免窄屏重叠。
+    final zoomScale = context.read<AppState>().config.editorZoomScale.clamp(0.7, 1.6);
+    final reserved = 130.0 * zoomScale + 16;
     final maxW = math.max(96.0, MediaQuery.of(context).size.width - reserved);
     return Container(
       height: 24,
@@ -5004,15 +5162,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     );
   }
 
-  Widget _mobileBarBtn(IconData icon, VoidCallback onTap, ColorScheme scheme, {Color? color, double size = 20, double pad = 6}) {
-    return InkWell(
+  Widget _mobileBarBtn(IconData icon, VoidCallback onTap, ColorScheme scheme, {Color? color, double size = 20, double pad = 6, String? tooltip}) {
+    final btn = InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(6),
+      borderRadius: BorderRadius.circular(8),
       child: Padding(
         padding: EdgeInsets.all(pad),
         child: Icon(icon, size: size, color: color ?? scheme.onSurfaceVariant),
       ),
     );
+    if (tooltip == null) return btn;
+    return Tooltip(message: tooltip, child: btn);
   }
 
   // ── 移动端专用：工具箱弹出层 ──
@@ -5050,6 +5210,18 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                     constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                   ),
                 ]),
+                // 移动端操作说明：点击=添加到画布中心；逻辑块需要先在画布框选元素
+                Padding(
+                  padding: const EdgeInsets.only(top: 2, bottom: 6),
+                  child: Row(children: [
+                    Icon(Icons.touch_app_outlined, size: 11, color: scheme.outline),
+                    const SizedBox(width: 4),
+                    Expanded(child: Text(
+                      s.isZh ? '点击节点即添加到画布中心；循环/选择循环需在画布框选元素' : 'Tap a node to add it at canvas center; loops require box-selecting elements',
+                      style: TextStyle(fontSize: 9.5, color: scheme.outline),
+                    )),
+                  ]),
+                ),
                 const SizedBox(height: 8),
                 Flexible(
                   child: SingleChildScrollView(
@@ -5121,17 +5293,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             ? _gatePropertyTitle(node, s)
             : (s.isZh ? node.label : node.labelEn);
 
+    // 右侧停靠卡片：填满 Positioned 给出的高度（top..bottom），
+    // 内容单列滚动，不再像底部弹层那样横向垫开成横屏样式。
     return Container(
-      constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.6),
-      margin: const EdgeInsets.all(8),
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: scheme.surface.withAlpha(240),
-        borderRadius: BorderRadius.circular(12),
+        color: scheme.surface.withAlpha(244),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: scheme.outlineVariant.withAlpha(120)),
-        boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(60), blurRadius: 16, offset: const Offset(0, -2))],
+        boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(70), blurRadius: 18, offset: const Offset(-2, 2))],
       ),
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
+      child: Column(mainAxisSize: MainAxisSize.max, crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           Icon(
             logicBlock != null
@@ -5142,7 +5314,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           ),
           const SizedBox(width: 6),
           Expanded(
-            child: Text(title, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+            child: Text(title, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface),
+                maxLines: 1, overflow: TextOverflow.ellipsis),
           ),
           IconButton(
             icon: Icon(Icons.close, size: 18, color: scheme.outline),
@@ -5155,8 +5328,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
           ),
         ]),
+        const SizedBox(height: 4),
+        Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
         const SizedBox(height: 8),
-        Flexible(
+        Expanded(
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(4),
             child: logicBlock != null
@@ -6636,12 +6811,12 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
 
   Widget _buildExpanded(ColorScheme scheme) {
     final s = widget.strings;
-    // 玻璃面板：跟随全局玻璃配置（液态玻璃/模糊/无效果），主题着色跟随 glassFollowTheme
-    return GlassPanel(
-      radius: 16,
-      blur: 14,
-      child: Container(
-        width: double.infinity, height: double.infinity,
+    // 玻璃面板：跟随全局玻璃配置（液态玻璃/模糊/无效果），主题着色跟随 glassFollowTheme。
+    // 移动端 AI 是占 86% 屏幕的底部弹层，弹层本身已是纯色 surface；再叠液态玻璃
+    // shader 意味着整屏每帧重采样（含切换动画 + 工具侧栏覆盖层），移动端 GPU 过载
+    // 严重。移动端直接返回纯色容器，桌面端才保留玻璃。
+    final body = Container(
+      width: double.infinity, height: double.infinity,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(0),
           border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
@@ -6728,104 +6903,125 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
             ),
           const Divider(height: 1),
           Expanded(
-            child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              // ── 可折叠工具侧边栏 ──
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeOutCubic,
-                width: _toolsOpen ? 150 : 0,
-                decoration: BoxDecoration(
-                  border: Border(right: BorderSide(color: scheme.outlineVariant.withAlpha(60))),
-                ),
-                clipBehavior: Clip.hardEdge,
-                child: _toolsOpen ? _buildToolsSidebar(scheme, s) : const SizedBox.shrink(),
-              ),
-              // ── 聊天主区 ──
-              Expanded(
-                child: Column(children: [
-                  Expanded(
-                    child: _messages.isEmpty
-                        ? _buildEmptyState(scheme, s)
-                        : ListView.builder(
-                            controller: _scrollCtrl,
-                            padding: const EdgeInsets.all(12),
-                            itemCount: _messages.length,
-                            itemBuilder: (_, i) => RepaintBoundary(
-                              // 稳定 key + 独立重绘层：流式更新只重绘当前这一条，
-                              // 其余历史消息（含 Markdown）被隔离，不再整屏重绘抖动。
-                              key: ValueKey('ai-msg-$i'),
-                              child: _buildMessage(_messages[i], scheme),
-                            ),
-                          ),
-                  ),
-                  if (_pendingNodes != null) Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: Row(children: [
-                      Expanded(child: FilledButton.icon(
-                        onPressed: () {
-                          context.read<AppState>().logAiGraphApplied(_pendingNodes!.length, _pendingConnections!.length);
-                          if (_pendingIsModify) {
-                            widget.onMergeGraph(_pendingNodes!, _pendingConnections!);
-                          } else {
-                            widget.onApplyGraph(_pendingNodes!, _pendingConnections!);
-                          }
-                          setState(() { _pendingNodes = null; _pendingConnections = null; });
-                        },
-                        icon: const Icon(Icons.check, size: 16),
-                        label: Text(s.isZh ? '批准' : 'Approve'),
-                      )),
-                      const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        onPressed: () => setState(() { _pendingNodes = null; _pendingConnections = null; }),
-                        icon: const Icon(Icons.close, size: 16),
-                        label: Text(s.isZh ? '拒绝' : 'Reject'),
-                      ),
-                    ]),
-                  ),
-                  const SizedBox(height: 4),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-                    child: Row(children: [
-                      Expanded(child: TextField(
-                        controller: _ctrl,
-                        style: TextStyle(fontSize: 13, color: scheme.onSurface),
-                        decoration: InputDecoration(
-                          hintText: s.aiChatHint,
-                          hintStyle: TextStyle(fontSize: 12, color: scheme.outline),
-                          isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+            // 移动端：工具侧边栏以覆盖层叠在聊天区右侧（窄屏再也不会被 150px
+            // 内联侧栏挤压成一条线）；桌面端保持内联侧栏。工具侧栏展开时盖住
+            // 聊天区右缘，用户照常可以折叠。
+            child: isMobilePlatform
+                ? Stack(children: [
+                    Positioned.fill(child: _buildChatBody(scheme, s)),
+                    if (_toolsOpen)
+                      Positioned(
+                        top: 0, right: 0, bottom: 0, width: 150,
+                        child: ColoredBox(
+                          color: scheme.surface,
+                          child: _buildToolsSidebar(scheme, s),
                         ),
-                        onSubmitted: (_) => _send(),
-                        maxLines: 1,
-                      )),
-                      const SizedBox(width: 8),
-                      SizedBox(
-                        width: 40, height: 40,
-                        child: _loading
-                            ? FilledButton(
-                                onPressed: null,
-                                style: FilledButton.styleFrom(
-                                    padding: EdgeInsets.zero, shape: const CircleBorder()),
-                                child: const SizedBox(width: 18, height: 18,
-                                    child: CircularProgressIndicator(strokeWidth: 2)),
-                              )
-                            : FilledButton(
-                                onPressed: _send,
-                                style: FilledButton.styleFrom(
-                                    padding: EdgeInsets.zero, shape: const CircleBorder()),
-                                child: const Icon(Icons.send, size: 18),
-                              ),
                       ),
-                    ]),
-                  ),
-                ]),
+                  ])
+                : Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                    // ── 可折叠工具侧边栏 ──
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      curve: Curves.easeOutCubic,
+                      width: _toolsOpen ? 150 : 0,
+                      decoration: BoxDecoration(
+                        border: Border(right: BorderSide(color: scheme.outlineVariant.withAlpha(60))),
+                      ),
+                      clipBehavior: Clip.hardEdge,
+                      child: _toolsOpen ? _buildToolsSidebar(scheme, s) : const SizedBox.shrink(),
+                    ),
+                    // ── 聊天主区 ──
+                    Expanded(child: _buildChatBody(scheme, s)),
+                  ]),
+          ),
+        ]),
+      );
+    if (isMobilePlatform) return body;
+    return GlassPanel(radius: 16, blur: 14, child: body);
+  }
+
+  /// AI 面板聊天区（消息列表 + 待批准图 + 输入框）。
+  /// 独立成方法，便于桌面端「内联工具侧栏 + 聊天区」与移动端
+  /// 「聊天区 + 覆盖层工具侧栏」两种布局复用同一段内容。
+  Widget _buildChatBody(ColorScheme scheme, AppStrings s) {
+    return Column(children: [
+      Expanded(
+        child: _messages.isEmpty
+            ? _buildEmptyState(scheme, s)
+            : ListView.builder(
+                controller: _scrollCtrl,
+                padding: const EdgeInsets.all(12),
+                itemCount: _messages.length,
+                itemBuilder: (_, i) => RepaintBoundary(
+                  // 稳定 key + 独立重绘层：流式更新只重绘当前这一条，
+                  // 其余历史消息（含 Markdown）被隔离，不再整屏重绘抖动。
+                  key: ValueKey('ai-msg-$i'),
+                  child: _buildMessage(_messages[i], scheme),
+                ),
               ),
-            ]),
+      ),
+      if (_pendingNodes != null) Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Row(children: [
+          Expanded(child: FilledButton.icon(
+            onPressed: () {
+              context.read<AppState>().logAiGraphApplied(_pendingNodes!.length, _pendingConnections!.length);
+              if (_pendingIsModify) {
+                widget.onMergeGraph(_pendingNodes!, _pendingConnections!);
+              } else {
+                widget.onApplyGraph(_pendingNodes!, _pendingConnections!);
+              }
+              setState(() { _pendingNodes = null; _pendingConnections = null; });
+            },
+            icon: const Icon(Icons.check, size: 16),
+            label: Text(s.isZh ? '批准' : 'Approve'),
+          )),
+          const SizedBox(width: 8),
+          OutlinedButton.icon(
+            onPressed: () => setState(() { _pendingNodes = null; _pendingConnections = null; }),
+            icon: const Icon(Icons.close, size: 16),
+            label: Text(s.isZh ? '拒绝' : 'Reject'),
           ),
         ]),
       ),
-    );
+      const SizedBox(height: 4),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+        child: Row(children: [
+          Expanded(child: TextField(
+            controller: _ctrl,
+            style: TextStyle(fontSize: 13, color: scheme.onSurface),
+            decoration: InputDecoration(
+              hintText: s.aiChatHint,
+              hintStyle: TextStyle(fontSize: 12, color: scheme.outline),
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            onSubmitted: (_) => _send(),
+            maxLines: 1,
+          )),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 40, height: 40,
+            child: _loading
+                ? FilledButton(
+                    onPressed: null,
+                    style: FilledButton.styleFrom(
+                        padding: EdgeInsets.zero, shape: const CircleBorder()),
+                    child: const SizedBox(width: 18, height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2)),
+                  )
+                : FilledButton(
+                    onPressed: _send,
+                    style: FilledButton.styleFrom(
+                        padding: EdgeInsets.zero, shape: const CircleBorder()),
+                    child: const Icon(Icons.send, size: 18),
+                  ),
+          ),
+        ]),
+      ),
+    ]);
   }
 
   /// 空对话时的引导：说明文字 + 几个可一键发送的示例提示（点击直接发起请求）。

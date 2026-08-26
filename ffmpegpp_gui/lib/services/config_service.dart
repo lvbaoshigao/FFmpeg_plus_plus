@@ -9,6 +9,7 @@ final _s = Platform.pathSeparator;
 class ConfigService {
   static const _filename = 'settings.json';
   static const _libraryFilename = 'config_library.json';
+  static const _taskHistoryFilename = 'task_history.json';
 
   /// 连续修改（拖动滑块、输入框逐字输入）时的落盘防抖间隔。
   static const _saveDebounce = Duration(milliseconds: 400);
@@ -110,6 +111,35 @@ class ConfigService {
       final dir = await _configDir();
       final file = File('$dir$_s$_libraryFilename');
       await file.writeAsString(const JsonEncoder.withIndent('  ').convert(entries));
+    } catch (_) {}
+  }
+
+  // --- 处理队列结果持久化 ---
+  // 队列（含已完成/失败/等待中的任务结果）落盘到 task_history.json，
+  // 下次启动恢复展示；仅结构性变化（增删/状态终态）时写入，进度心跳不落盘。
+
+  Future<List<Map<String, dynamic>>> loadTaskHistory() async {
+    try {
+      final dir = await _configDir();
+      final file = File('$dir$_s$_taskHistoryFilename');
+      if (await file.exists()) {
+        final list = jsonDecode(await file.readAsString()) as List<dynamic>;
+        final entries = <Map<String, dynamic>>[];
+        for (final e in list) {
+          if (e is Map<String, dynamic>) entries.add(e);
+        }
+        return entries;
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  Future<void> saveTaskHistory(List<Map<String, dynamic>> entries) async {
+    try {
+      final dir = await _configDir();
+      final file = File('$dir$_s$_taskHistoryFilename');
+      // 紧凑 JSON（无缩进）：任务历史可能包含日志行，体积小一点是一点
+      await file.writeAsString(jsonEncode(entries));
     } catch (_) {}
   }
 
