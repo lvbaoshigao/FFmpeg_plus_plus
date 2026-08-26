@@ -178,10 +178,12 @@ fi
 # 不像 x264/x265 有裸库兜底探测。因此仅装 libwebp.a 不够，还必须保证
 # $PREFIX/lib/pkgconfig/libwebp.pc 存在并可见（PKG_CONFIG_LIBDIR 指向该目录），
 # 否则 configure 报 "libwebp >= 0.2.0 not found using pkg-config"。
-# 缓存守卫：检查 .a、.pc 存在性，且 .pc 不得仍是 CMake 原版（带
-# Requires.private，交叉编译下会让 pkg-config 失败）。任一不满足都强制重建，
-# 使旧缓存（只有 .a、或 .pc 是坏版本）也能自愈。
-if [ ! -f $PREFIX/lib/libwebp.a ] || [ ! -f $PREFIX/lib/pkgconfig/libwebp.pc ] || grep -q "Requires.private" "$PREFIX/lib/pkgconfig/libwebp.pc" 2>/dev/null; then
+# 缓存守卫：检查 .a、.pc 存在性，且 .pc 必须是"依赖已并入 Libs"的正确版本——
+# 既不能是 CMake 原版（带 Requires.private），也不能是旧的只含 -lwebp 的版本
+# （缺 -lsharpyuv 会在 ffmpeg 链接测试时失败）。任一不满足都强制重建自愈。
+if [ ! -f $PREFIX/lib/libwebp.a ] || [ ! -f $PREFIX/lib/pkgconfig/libwebp.pc ] \
+   || grep -q "Requires.private" "$PREFIX/lib/pkgconfig/libwebp.pc" 2>/dev/null \
+   || ! grep -q "^Libs:.*-lsharpyuv" "$PREFIX/lib/pkgconfig/libwebp.pc" 2>/dev/null; then
   fetch libwebp.tar.gz "https://github.com/webmproject/libwebp/archive/refs/tags/v1.4.0.tar.gz"
   rm -rf libwebp && mkdir libwebp && tar xf libwebp.tar.gz -C libwebp --strip-components=1
   log "building libwebp"
@@ -198,12 +200,14 @@ if [ ! -f $PREFIX/lib/libwebp.a ] || [ ! -f $PREFIX/lib/pkgconfig/libwebp.pc ] |
   cmake --build libwebp/build -j$JOBS >> $BUILD/libwebp.log 2>&1
   cmake --install libwebp/build >> $BUILD/libwebp.log 2>&1
 
-  # 无条件覆盖 libwebp.pc：CMake 生成的版本带 `Requires.private: libsharpyuv`，
-  # 即便 libsharpyuv.pc 也装了，交叉编译 + sysroot 重定位下 pkg-config 解析这
-  # 条 Requires 链仍可能失败 → ffmpeg configure 报
-  # "libwebp >= 0.2.0 not found using pkg-config"（require_pkg_config 强制走
-  # pkg-config，无裸库兜底）。这里重写成无 Requires 依赖的版本，靠
-  # Libs.private 显式带上 -lsharpyuv，兼顾静态链接需要 sharpyuv 符号。
+  # 无条件覆盖 libwebp.pc。根因：ffmpeg require_pkg_config 强制走 pkg-config，
+  # 且其 pkg_config_flags 默认为空（--enable-static 不会自动追加 --static），
+  # 所以 check_func_headers 链接测试时 pkg-config --libs 只读 `Libs:`（忽略
+  # Libs.private）。libwebp 的 WebPGetEncoderVersion 所在 webp_enc.o 会经
+  # picture.o 间接引用 sharpyuv 库符号（SharpYuvConvert 等），若 -lsharpyuv 只在
+  # Libs.private，链接时缺 sharpyuv → undefined reference → 检测失败，被笼统报成
+  # "libwebp >= 0.2.0 not found using pkg-config"。故把 -lsharpyuv -lm 直接放进
+  # Libs（无论 --static 与否都输出），并去掉 Requires.private 依赖。
   mkdir -p $PREFIX/lib/pkgconfig
   cat > $PREFIX/lib/pkgconfig/libwebp.pc <<EOF
 prefix=$PREFIX
@@ -215,8 +219,7 @@ Name: libwebp
 Description: Library for the WebP graphics format
 Version: 1.4.0
 Cflags: -I\${includedir}
-Libs: -L\${libdir} -lwebp
-Libs.private: -lsharpyuv -lm
+Libs: -L\${libdir} -lwebp -lsharpyuv -lm
 EOF
   # 同步补一份 libsharpyuv.pc 简版（无依赖），防止旧缓存里残留的
   # libwebp.pc 若仍被读取仍引用 sharpyuv 时因缺 .pc 而失败。
@@ -233,7 +236,23 @@ Cflags: -I\${includedir}
 Libs: -L\${libdir} -lsharpyuv
 Libs.private: -lm
 EOF
-  log "libwebp.pc / libsharpyuv.pc written (no Requires)"
+  # libwebp_anim_encoder 对 libwebpmux 用 check_pkg_config（webp/mux.h +
+  # WebPAnimEncoderOptionsInit）。mux 代码同样会经 picture/convert 路径间接引用
+  # sharpyuv 与 math 符号；cmake 版 libwebpmux.pc 把依赖放 Requires/Libs.private，
+  # 在非 --static 链接测试时同样缺符号导致 anim 编码器被静默禁用。重写之。
+  cat > $PREFIX/lib/pkgconfig/libwebpmux.pc <<EOF
+prefix=$PREFIX
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: libwebpmux
+Description: Library for animated WebP muxing
+Version: 1.4.0
+Cflags: -I\${includedir}
+Libs: -L\${libdir} -lwebpmux -lwebp -lsharpyuv -lm
+EOF
+  log "libwebp.pc / libsharpyuv.pc / libwebpmux.pc written (deps in Libs)"
 else
   log "libwebp cached"
 fi
