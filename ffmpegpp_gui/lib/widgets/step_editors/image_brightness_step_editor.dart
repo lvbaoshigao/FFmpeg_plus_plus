@@ -45,7 +45,7 @@ class _ImageBrightnessStepEditorState extends State<ImageBrightnessStepEditor> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(zh ? '亮度调节' : 'Brightness Adjustment',
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         DropdownButtonFormField<String>(
           borderRadius: BorderRadius.circular(12),
@@ -64,7 +64,7 @@ class _ImageBrightnessStepEditorState extends State<ImageBrightnessStepEditor> {
           ],
           onChanged: (v) { if (v != null) _update('brightness_mode', v); },
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         if (mode == 'value') ...[
           Row(children: [
@@ -107,7 +107,7 @@ class _ImageBrightnessStepEditorState extends State<ImageBrightnessStepEditor> {
               style: TextStyle(fontSize: 11, color: cs.outline)),
         ],
 
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(

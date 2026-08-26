@@ -2131,15 +2131,15 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                   Positioned.fill(
                     child: _buildMobileToolboxSheet(scheme, s),
                   ),
-                // 属性编辑卡片：改为停靠在右侧，避免整屏宽底部长条的"横屏样式"，
-                // 元素(下拉/滑杆/文本框)过宽观感差。右侧卡片留出左半屏给画布交互。
+                // 属性编辑卡片：停靠右侧的窄卡片，避免整屏宽底部长条的"横屏样式"。
+                // 宽度再收窄一档（330→300 / 0.78→0.72），菜单栏不至于过宽。
                 if (_selectedNode != null || _selectedLogicBlockId != null)
                   Positioned(
                     top: _isLandscape ? 44 : 56,
                     bottom: 12,
                     right: 8,
-                    width: math.min(_isLandscape ? 340.0 : 330.0,
-                        MediaQuery.of(context).size.width * (_isLandscape ? 0.42 : 0.78)),
+                    width: math.min(_isLandscape ? 300.0 : 296.0,
+                        MediaQuery.of(context).size.width * (_isLandscape ? 0.40 : 0.72)),
                     child: _buildMobilePropertiesSheet(scheme, s),
                   ),
               ]);
@@ -4601,12 +4601,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     bool startExpanded = false,
     VoidCallback? onCollapseRequested,
     ValueChanged<String>? onTitleGenerated,
+    bool hideHeader = false,
   }) {
     return _AiPanel(
       key: key,
       startExpanded: startExpanded,
       onCollapseRequested: onCollapseRequested,
       onTitleGenerated: onTitleGenerated,
+      hideHeader: hideHeader,
       strings: s,
       existingNodes: _nodes,
       existingConnections: _connections,
@@ -4736,23 +4738,68 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   /// 移动端：打开 AI 助手。竖屏用底部弹层；横屏用从左往右滑入的侧边栏（不满屏）。
   void _openAiSheet(AppStrings s) {
     final scheme = Theme.of(context).colorScheme;
-    final panelContent =
-        _buildAiPanel(s, key: const ValueKey('ai-sheet'), startExpanded: true);
+    // 用 GlobalKey 让弹层头部直接驱动面板（历史/工具），
+    // 从而隐藏面板内部头部 —— 修复移动端「两层菜单栏」的冗余排版。
+    final aiKey = GlobalKey<_AiPanelState>();
+    final panelContent = _buildAiPanel(
+      s,
+      key: aiKey,
+      startExpanded: true,
+      hideHeader: true,
+    );
 
-    Widget header(BuildContext ctx) => Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
-          child: Row(children: [
-            Icon(Icons.smart_toy, size: 18, color: scheme.primary),
-            const SizedBox(width: 8),
-            Expanded(child: Text(s.aiChatTitle,
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface))),
-            IconButton(
-              icon: const Icon(Icons.close, size: 20),
-              color: scheme.onSurfaceVariant,
-              onPressed: () => Navigator.of(ctx).pop(),
-              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-            ),
-          ]),
+    // 单层统一头部：图标 + 标题 + 历史 + 工具 + 关闭。
+    Widget header(BuildContext ctx) => StatefulBuilder(
+          builder: (ctx, setH) => Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 4, 4),
+            child: Row(children: [
+              Icon(Icons.smart_toy, size: 18, color: scheme.primary),
+              const SizedBox(width: 8),
+              Expanded(child: Text(s.aiChatTitle,
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface))),
+              // 历史记录
+              Builder(builder: (btnCtx) => IconButton(
+                icon: const Icon(Icons.history, size: 18),
+                color: scheme.onSurfaceVariant,
+                tooltip: s.isZh ? '历史记录' : 'History',
+                onPressed: () {
+                  final box = btnCtx.findRenderObject() as RenderBox?;
+                  final overlay = Overlay.of(btnCtx).context.findRenderObject() as RenderBox?;
+                  if (box != null && overlay != null) {
+                    final pos = box.localToGlobal(Offset.zero, ancestor: overlay);
+                    aiKey.currentState?.openHistoryAt(pos + const Offset(24, 8));
+                  }
+                },
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                padding: EdgeInsets.zero,
+              )),
+              // 工具面板开关
+              IconButton(
+                icon: AnimatedRotation(
+                  turns: (aiKey.currentState?.toolsOpen ?? false) ? 0.5 : 0,
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeOutCubic,
+                  child: const Icon(Icons.extension_outlined, size: 18),
+                ),
+                color: scheme.onSurfaceVariant,
+                tooltip: s.isZh ? '工具' : 'Tools',
+                onPressed: () {
+                  aiKey.currentState?.toggleTools();
+                  setH(() {});
+                },
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                padding: EdgeInsets.zero,
+              ),
+              // 关闭
+              IconButton(
+                icon: const Icon(Icons.close, size: 20),
+                color: scheme.onSurfaceVariant,
+                onPressed: () => Navigator.of(ctx).pop(),
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                padding: EdgeInsets.zero,
+              ),
+            ]),
+          ),
         );
 
     if (_isLandscape) {
@@ -4765,7 +4812,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         transitionDuration: const Duration(milliseconds: 240),
         pageBuilder: (ctx, anim, anim2) {
           final w = MediaQuery.of(ctx).size.width;
-          final panelW = (w * 0.55).clamp(280.0, 460.0);
+          // 横屏侧栏收窄：0.55→0.5、上限 460→420，避免遮挡过多画布
+          final panelW = (w * 0.5).clamp(280.0, 420.0);
           return Align(
             alignment: Alignment.centerLeft,
             child: Material(
@@ -5293,10 +5341,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             ? _gatePropertyTitle(node, s)
             : (s.isZh ? node.label : node.labelEn);
 
-    // 右侧停靠卡片：填满 Positioned 给出的高度（top..bottom），
-    // 内容单列滚动，不再像底部弹层那样横向垫开成横屏样式。
+    // 右侧停靠窄卡片：填满 Positioned 给出的高度（top..bottom），内容单列滚动。
+    // chrome 全面收紧：内边距 12/10→8/6，头部图标/文字/按钮缩小一档，
+    // 分隔线上下间隙压缩 —— 修复「菜单栏过大、选项间隔太散」的观感。
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
         color: scheme.surface.withAlpha(244),
         borderRadius: BorderRadius.circular(14),
@@ -5309,31 +5358,32 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             logicBlock != null
                 ? (logicBlock.type == LogicBlockType.loop ? Icons.repeat : Icons.shuffle)
                 : _stepIcon(node!.type),
-            size: 16,
+            size: 15,
             color: scheme.primary,
           ),
-          const SizedBox(width: 6),
+          const SizedBox(width: 4),
           Expanded(
-            child: Text(title, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface),
+            child: Text(title, style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: scheme.onSurface),
                 maxLines: 1, overflow: TextOverflow.ellipsis),
           ),
           IconButton(
-            icon: Icon(Icons.close, size: 18, color: scheme.outline),
+            icon: Icon(Icons.close, size: 16, color: scheme.outline),
             onPressed: () => setState(() {
               _selectedNodeIds.clear();
               _lastSelectedId = null;
               _selectedLogicBlockId = null;
             }),
             padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+            visualDensity: VisualDensity.compact,
           ),
         ]),
-        const SizedBox(height: 4),
+        const SizedBox(height: 2),
         Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
         Expanded(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(4),
+            padding: const EdgeInsets.all(2),
             child: logicBlock != null
                 ? LogicBlockEditor(
                     key: ValueKey(logicBlock.id),
@@ -5784,7 +5834,10 @@ class _AiPanel extends StatefulWidget {
   final bool startExpanded;
   final VoidCallback? onCollapseRequested;
   final ValueChanged<String>? onTitleGenerated;
-  const _AiPanel({super.key, required this.strings, required this.existingNodes, required this.existingConnections, required this.onApplyGraph, required this.onMergeGraph, required this.onModifyNodeParams, required this.onClearAll, required this.onUndo, required this.onRedo, required this.onSave, required this.onAddNode, required this.onAddGate, required this.onSetGateParams, required this.onDeleteNode, required this.onConnectNodes, required this.onDisconnectNodes, required this.onCancelTasks, this.startExpanded = false, this.onCollapseRequested, this.onTitleGenerated});  @override
+  /// 移动端底部弹层已自带「标题 + 关闭」头部；此时隐藏面板内部的头部行，
+  /// 避免出现上下两层菜单。
+  final bool hideHeader;
+  const _AiPanel({super.key, required this.strings, required this.existingNodes, required this.existingConnections, required this.onApplyGraph, required this.onMergeGraph, required this.onModifyNodeParams, required this.onClearAll, required this.onUndo, required this.onRedo, required this.onSave, required this.onAddNode, required this.onAddGate, required this.onSetGateParams, required this.onDeleteNode, required this.onConnectNodes, required this.onDisconnectNodes, required this.onCancelTasks, this.startExpanded = false, this.onCollapseRequested, this.onTitleGenerated, this.hideHeader = false});  @override
   State<_AiPanel> createState() => _AiPanelState();
 }
 
@@ -5802,6 +5855,12 @@ class _AiPanelState extends State<_AiPanel> {
   bool _expanded = false;
   // 工具侧边栏：true=展开显示工具列表，false=折叠成窄条
   bool _toolsOpen = false;
+
+  /// 供外部（移动端底部弹层的头部）切换工具侧栏 / 读取状态 / 打开历史菜单
+  void toggleTools() => setState(() => _toolsOpen = !_toolsOpen);
+  bool get toolsOpen => _toolsOpen;
+  Future<void> openHistoryAt(Offset anchor) =>
+      _toggleHistoryAt(Theme.of(context).colorScheme, widget.strings, anchor);
   // 被禁用的工具（右键工具项 → 禁用）。禁用 = 从系统提示词移除 + 调用被拦截。
   final Set<String> _disabledTools = {};
   List<PipelineNode>? _pendingNodes;
@@ -6822,6 +6881,9 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
           border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
         ),
         child: Column(children: [
+          // 移动端底部弹层自带头部（标题+历史+工具+关闭），这里跳过内部头部，
+          // 避免出现上下两层菜单栏。
+          if (!widget.hideHeader)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 6, 4),
             child: Row(children: [

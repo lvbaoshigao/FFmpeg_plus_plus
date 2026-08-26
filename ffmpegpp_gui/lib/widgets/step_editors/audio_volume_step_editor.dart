@@ -30,7 +30,7 @@ class _AudioVolumeStepEditorState extends State<AudioVolumeStepEditor> {
       padding: const EdgeInsets.all(16),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(zh ? '调整音量' : 'Audio Volume', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
         Row(children: [
           Text(zh ? '音量: ${db >= 0 ? "+$db" : "$db"} dB' : 'Volume: ${db >= 0 ? "+$db" : "$db"} dB',
               style: TextStyle(fontSize: 12, color: cs.onSurface)),
@@ -52,7 +52,7 @@ class _AudioVolumeStepEditorState extends State<AudioVolumeStepEditor> {
           Text('0 dB', style: TextStyle(fontSize: 10, color: cs.outline)),
           Text('+30 dB', style: TextStyle(fontSize: 10, color: cs.outline)),
         ]),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         Wrap(spacing: 6, runSpacing: 6, children: [
           for (final preset in [-10.0, -5.0, -3.0, 0.0, 3.0, 5.0, 10.0])
             ChoiceChip(
@@ -62,7 +62,7 @@ class _AudioVolumeStepEditorState extends State<AudioVolumeStepEditor> {
               visualDensity: VisualDensity.compact,
             ),
         ]),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(color: cs.surfaceContainerHighest.withAlpha(60), borderRadius: BorderRadius.circular(8)),

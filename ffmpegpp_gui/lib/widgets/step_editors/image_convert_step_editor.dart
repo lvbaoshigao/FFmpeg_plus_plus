@@ -48,7 +48,7 @@ class _ImageConvertStepEditorState extends State<ImageConvertStepEditor> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(zh ? '图片格式转换' : 'Image Format Conversion',
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         DropdownButtonFormField<String>(
           borderRadius: BorderRadius.circular(12),
@@ -63,7 +63,7 @@ class _ImageConvertStepEditorState extends State<ImageConvertStepEditor> {
           )),
           onChanged: (v) { if (v != null) _update('output_format', v); },
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         if (showQuality) ...[
           Row(children: [
@@ -75,7 +75,7 @@ class _ImageConvertStepEditorState extends State<ImageConvertStepEditor> {
               onChanged: (v) => _update('quality', v.round()),
             )),
           ]),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
         ],
 
         Container(

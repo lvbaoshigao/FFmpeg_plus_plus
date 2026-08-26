@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FontLoader, ByteData;
 import 'package:provider/provider.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:window_manager/window_manager.dart';
 import 'providers/app_state.dart';
 import 'services/integrity.dart';
@@ -236,9 +237,17 @@ void _killOldProcesses() {
 
 /// 从用户数据目录 fonts/ 加载所有 .ttf/.otf 字体（启动时调用）
 Future<void> _loadCustomFonts() async {
-  // Android 使用系统字体，无自定义字体目录
-  if (isMobilePlatform) return;
   try {
+    if (isMobilePlatform) {
+      // 移动端：字体由设置页 _copyToAppDir 复制到「应用文档目录/FFmpeg++/fonts」，
+      // 必须与那里保持一致 —— 之前这里直接 return（不加载）且 _logDir 指向的是
+      // systemTemp 缓存目录（会被系统清理），导致安卓重启后字体永远回退系统字体。
+      final doc = await getApplicationDocumentsDirectory();
+      final fontsDir = Directory('${doc.path}${_sep}FFmpeg++${_sep}fonts');
+      if (!fontsDir.existsSync()) return;
+      await _loadFontsFromDir(fontsDir);
+      return;
+    }
     final fontsDir = Directory('$_logDir${_sep}fonts');
     if (!fontsDir.existsSync()) {
       // 兼容旧版：也检查 exe 同级 fonts/ 目录

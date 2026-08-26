@@ -47,7 +47,7 @@ class _ImageNoiseStepEditorState extends State<ImageNoiseStepEditor> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(zh ? '添加噪点' : 'Add Noise',
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         DropdownButtonFormField<String>(
           borderRadius: BorderRadius.circular(12),
@@ -67,7 +67,7 @@ class _ImageNoiseStepEditorState extends State<ImageNoiseStepEditor> {
           ],
           onChanged: (v) { if (v != null) _update('noise_type', v); },
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         DropdownButtonFormField<String>(
           borderRadius: BorderRadius.circular(12),
@@ -86,7 +86,7 @@ class _ImageNoiseStepEditorState extends State<ImageNoiseStepEditor> {
           ],
           onChanged: (v) { if (v != null) _update('noise_mode', v); },
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         if (mode == 'value') ...[
           Row(children: [
@@ -124,7 +124,7 @@ class _ImageNoiseStepEditorState extends State<ImageNoiseStepEditor> {
           ]),
         ],
 
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(

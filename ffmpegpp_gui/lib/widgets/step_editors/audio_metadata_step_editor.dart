@@ -63,7 +63,7 @@ class _AudioMetadataStepEditorState extends State<AudioMetadataStepEditor> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(zh ? '元信息编辑' : 'Metadata Editor',
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         // ── 封面 ──
         Text(zh ? '封面图片' : 'Cover Art', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cs.onSurface)),
@@ -100,9 +100,9 @@ class _AudioMetadataStepEditorState extends State<AudioMetadataStepEditor> {
           Text(zh ? '删除现有封面' : 'Remove existing cover', style: TextStyle(fontSize: 12, color: cs.onSurface)),
         ]),
 
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
         Divider(color: cs.outlineVariant.withAlpha(60)),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
 
         // ── 歌词 ──
         Text(zh ? '歌词文件' : 'Lyrics File', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cs.onSurface)),
@@ -139,7 +139,7 @@ class _AudioMetadataStepEditorState extends State<AudioMetadataStepEditor> {
           Text(zh ? '删除现有歌词' : 'Remove existing lyrics', style: TextStyle(fontSize: 12, color: cs.onSurface)),
         ]),
 
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(color: cs.surfaceContainerHighest.withAlpha(60), borderRadius: BorderRadius.circular(8)),

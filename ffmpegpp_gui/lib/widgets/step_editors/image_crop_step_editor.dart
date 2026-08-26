@@ -117,10 +117,10 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(zh ? '图片裁剪' : 'Image Crop',
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
 
         _buildPreviewArea(cs, zh),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         Text(zh ? '裁剪区域' : 'Crop Region',
             style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.primary)),
@@ -173,7 +173,7 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
             },
           )),
         ]),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
 
         if (_imageSize != null)
           Text(
@@ -182,7 +182,7 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
             style: TextStyle(fontSize: 11, color: cs.outline),
           ),
 
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(

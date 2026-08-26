@@ -114,7 +114,7 @@ class _ClipStepEditorState extends State<ClipStepEditor> {
                   : Center(child: Icon(Icons.image, size: 48, color: cs.outline)),
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           Row(children: [
             Expanded(child: TextFormField(
               controller: _startCtrl,
@@ -144,7 +144,7 @@ class _ClipStepEditorState extends State<ClipStepEditor> {
               },
             )),
           ]),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           RangeSlider(
             values: RangeValues(start, end),
             min: 0, max: dur > 0 ? dur : 1,

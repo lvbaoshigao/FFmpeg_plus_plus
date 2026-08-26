@@ -40,7 +40,7 @@ class _ConcatMediaStepEditorState extends State<ConcatMediaStepEditor> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(zh ? '合并媒体' : 'Concat Media',
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         // 模式
         Text(zh ? '合并模式' : 'Mode', style: TextStyle(fontSize: 12, color: cs.onSurface)),
@@ -57,7 +57,7 @@ class _ConcatMediaStepEditorState extends State<ConcatMediaStepEditor> {
         Text(zh ? '流复制速度快但要求所有文件格式一致' : 'Stream copy is fast but requires same format',
             style: TextStyle(fontSize: 10, color: cs.outline)),
 
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         // 顺序
         Text(zh ? '合并顺序' : 'Order', style: TextStyle(fontSize: 12, color: cs.onSurface)),
@@ -72,7 +72,7 @@ class _ConcatMediaStepEditorState extends State<ConcatMediaStepEditor> {
         ),
 
         if (orderMode == 'manual') ...[
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           TextField(
             controller: _orderCtrl,
             decoration: InputDecoration(
@@ -92,7 +92,7 @@ class _ConcatMediaStepEditorState extends State<ConcatMediaStepEditor> {
           }),
         ],
 
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(color: cs.surfaceContainerHighest.withAlpha(60), borderRadius: BorderRadius.circular(8)),

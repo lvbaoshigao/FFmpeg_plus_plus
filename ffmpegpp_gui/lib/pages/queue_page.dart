@@ -189,7 +189,8 @@ class _QueuePageState extends State<QueuePage> {
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
         ),
         const SizedBox(width: 8),
-        // 右：操作药丸（高度 44；贴合内容：横向滚动防溢出，不再用 Expanded 强制填满剩余空间）。
+        // 右：操作药丸（高度 44；宽度完全跟随内部元素总长度——
+        // SingleChildScrollView 会把药丸撑满剩余宽度，故改回 mainAxisSize.min 的 Row）。
         Flexible(
           child: Align(
             alignment: Alignment.centerRight,
@@ -197,9 +198,9 @@ class _QueuePageState extends State<QueuePage> {
               radius: 22,
               height: 44,
               padding: const EdgeInsets.symmetric(horizontal: 6),
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(children: _buildMobileActions(scheme, state, s)),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: _buildMobileActions(scheme, state, s),
               ),
             ),
           ),

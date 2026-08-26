@@ -47,7 +47,7 @@ class _ImageDenoiseStepEditorState extends State<ImageDenoiseStepEditor> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(zh ? '图片降噪' : 'Image Denoise',
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         DropdownButtonFormField<String>(
           borderRadius: BorderRadius.circular(12),
@@ -66,7 +66,7 @@ class _ImageDenoiseStepEditorState extends State<ImageDenoiseStepEditor> {
           ],
           onChanged: (v) { if (v != null) _update('denoise_method', v); },
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         DropdownButtonFormField<String>(
           borderRadius: BorderRadius.circular(12),
@@ -85,7 +85,7 @@ class _ImageDenoiseStepEditorState extends State<ImageDenoiseStepEditor> {
           ],
           onChanged: (v) { if (v != null) _update('denoise_mode', v); },
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         if (mode == 'value') ...[
           Row(children: [
@@ -123,7 +123,7 @@ class _ImageDenoiseStepEditorState extends State<ImageDenoiseStepEditor> {
           ]),
         ],
 
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(

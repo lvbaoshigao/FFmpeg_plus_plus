@@ -996,6 +996,8 @@ class AppConfig {
   String canvasBg;
   // 玻璃效果：'liquid' 液态玻璃 / 'blur' 模糊 / 'none' 无效果
   String glassEffect;
+  // 设置页卡片样式：'glass' 液态玻璃 / 'blur' 模糊 / 'flat' 纯色大圆角卡片（MIUI 图样式）
+  String cardStyle;
   // 遵循主题色：true 时玻璃/卡片底色使用主题色而非 surface 灰
   bool glassFollowTheme;
   /// 设置项以毛玻璃展示（仅「液态玻璃」生效时可开启，提升列表可读性）
@@ -1090,6 +1092,7 @@ class AppConfig {
     this.backgroundImage = '', this.backgroundOpacity = 0.8, this.cardOpacity = 0.7,
     this.canvasBg = 'global',
     this.glassEffect = 'liquid',
+    this.cardStyle = 'glass',
     this.glassFollowTheme = false,
     this.settingsFrostedGlass = false,
     this.noCardGlass = false,
@@ -1178,6 +1181,7 @@ class AppConfig {
         backgroundImage: json['background_image'] as String? ?? '',
         backgroundOpacity: (json['background_opacity'] as num?)?.toDouble() ?? 0.8,
         glassEffect: json['glass_effect'] as String? ?? 'liquid',
+        cardStyle: json['card_style'] as String? ?? 'glass',
         glassFollowTheme: json['glass_follow_theme'] as bool? ?? false,
         settingsFrostedGlass: json['settings_frosted_glass'] as bool? ?? false,
         noCardGlass: json['no_card_glass'] as bool? ?? false,
@@ -1238,6 +1242,7 @@ class AppConfig {
         'font_weight': fontWeightIndex,
         'background_image': backgroundImage, 'background_opacity': backgroundOpacity,
         'glass_effect': glassEffect,
+        'card_style': cardStyle,
         'glass_follow_theme': glassFollowTheme,
         'settings_frosted_glass': settingsFrostedGlass, 'no_card_glass': noCardGlass, 'gate_std': gateStd,
         'card_opacity': cardOpacity,

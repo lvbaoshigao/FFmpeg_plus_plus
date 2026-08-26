@@ -30,7 +30,7 @@ class _AudioSpeedStepEditorState extends State<AudioSpeedStepEditor> {
       padding: const EdgeInsets.all(16),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(zh ? '调整速度' : 'Audio Speed', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
         Row(children: [
           Text(zh ? '速度: ${tempo.toStringAsFixed(2)}x' : 'Speed: ${tempo.toStringAsFixed(2)}x',
               style: TextStyle(fontSize: 12, color: cs.onSurface)),
@@ -56,7 +56,7 @@ class _AudioSpeedStepEditorState extends State<AudioSpeedStepEditor> {
               visualDensity: VisualDensity.compact,
             ),
         ]),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(color: cs.surfaceContainerHighest.withAlpha(60), borderRadius: BorderRadius.circular(8)),

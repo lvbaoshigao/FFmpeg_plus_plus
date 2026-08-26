@@ -44,7 +44,7 @@ class _ImageToVideoStepEditorState extends State<ImageToVideoStepEditor> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(zh ? '图片合成视频' : 'Image to Video',
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         // 帧率
         Row(children: [
@@ -70,7 +70,7 @@ class _ImageToVideoStepEditorState extends State<ImageToVideoStepEditor> {
             ),
         ]),
 
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         // 顺序
         Text(zh ? '图片顺序' : 'Order', style: TextStyle(fontSize: 12, color: cs.onSurface)),
@@ -85,7 +85,7 @@ class _ImageToVideoStepEditorState extends State<ImageToVideoStepEditor> {
         ),
 
         if (orderMode == 'manual') ...[
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           TextField(
             controller: _orderCtrl,
             decoration: InputDecoration(
@@ -99,7 +99,7 @@ class _ImageToVideoStepEditorState extends State<ImageToVideoStepEditor> {
           ),
         ],
 
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         // 输出格式 + 编码器
         Row(children: [
@@ -130,7 +130,7 @@ class _ImageToVideoStepEditorState extends State<ImageToVideoStepEditor> {
           )),
         ]),
 
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(color: cs.surfaceContainerHighest.withAlpha(60), borderRadius: BorderRadius.circular(8)),

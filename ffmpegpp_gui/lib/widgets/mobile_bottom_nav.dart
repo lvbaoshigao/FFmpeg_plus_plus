@@ -61,6 +61,9 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
   double? _dragX;
   /// 拖动开始时手指相对遮罩中心的偏移：抓取点不跳变。
   double _dragGrabOffset = 0;
+  /// 长按手势是否已接管拖动（接管后 horizontalDrag 的 cancel 不得复位遮罩，
+  /// 否则遮罩会先跳回旧选中项、再被长按移动拉回，出现可见的双吸附抖动）。
+  bool _longPressActive = false;
 
   /// 底部导航 OCLiquidGlass 静态 settings：dark/light 差异化由 tint/shadow 承担，
   /// 这样所有 build 都使用同一份 const 实例，避免每次新建 settings 触发
@@ -186,6 +189,7 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
             },
             // ── 长按（按住）：遮罩放大反馈 + 开始抓取，后续移动跟随手指 ──
             onLongPressStart: (d) => setState(() {
+              _longPressActive = true;
               // 按在哪个药丸上，遮罩就从哪个药丸中心开始抓取
               final dx = d.localPosition.dx;
               int nearest = 0;
@@ -205,8 +209,14 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
               _dragX = (d.localPosition.dx - _dragGrabOffset)
                   .clamp(itemW / 2, cons.maxWidth - itemW / 2);
             }),
-            onLongPressEnd: (_) => _endDrag(itemW, items.length, pillGap, itemToPage),
-            onLongPressCancel: () => setState(() => _dragX = null),
+            onLongPressEnd: (_) {
+              _longPressActive = false;
+              _endDrag(itemW, items.length, pillGap, itemToPage);
+            },
+            onLongPressCancel: () {
+              _longPressActive = false;
+              setState(() => _dragX = null);
+            },
             // ── 快速水平滑动（<500ms）：同样走拖动跟随 ──
             onHorizontalDragStart: (d) => setState(() {
               final dx = d.localPosition.dx;
@@ -228,7 +238,11 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
                   .clamp(itemW / 2, cons.maxWidth - itemW / 2);
             }),
             onHorizontalDragEnd: (_) => _endDrag(itemW, items.length, pillGap, itemToPage),
-            onHorizontalDragCancel: () => setState(() => _dragX = null),
+            onHorizontalDragCancel: () {
+              // 长按已接管时由长按流程收尾，这里不要复位遮罩（否则先跳回旧项）。
+              if (_longPressActive) return;
+              setState(() => _dragX = null);
+            },
             child: SizedBox(
               width: cons.maxWidth,
               height: cons.maxHeight,
@@ -341,21 +355,31 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
     );
   }
 
-  /// 松手：根据遮罩中心落在哪个药丸区间判定目标页，并复位拖动状态。
+  /// 松手：吸附到「离遮罩中心最近」的药丸并切换页面。
+  ///
+  /// 修复双吸附抖动：旧实现先 `setState(_dragX = null)`（遮罩开始朝旧选中项
+  /// 回放），再 onSelected 切页（遮罩二次朝新项移动），肉眼看到两段吸附；
+  /// 且旧判定 `(dx-center).abs() < itemW/2` 在药丸 4px 缝隙处存在死区，
+  /// 死区内全部不命中 → target 默认为 0（误跳回首页）。
+  /// 现在：先切页（父组件同帧更新 selectedIndex），再复位拖动态；
+  /// 目标用最近中心选取，无缝隙死区。
   void _endDrag(double itemW, int itemCount, double gap, Map<int, int> pageMap) {
     final dx = _dragX;
-    setState(() => _dragX = null);
     if (dx != null) {
       int target = 0;
+      var bestDist = double.infinity;
       for (var i = 0; i < itemCount; i++) {
-        final center = _itemCenter(i, itemW, gap);
-        if ((dx - center).abs() < itemW / 2) {
+        final dist = (dx - _itemCenter(i, itemW, gap)).abs();
+        if (dist < bestDist) {
+          bestDist = dist;
           target = i;
-          break;
         }
       }
+      // 先通知父组件切换选中页：本帧内 widget.selectedIndex 即更新为新值，
+      // 随后的 _dragX=null 复位让遮罩直接从松手点一次动画到新药丸。
       widget.onSelected(pageMap[target] ?? 0);
     }
+    setState(() => _dragX = null);
   }
 
   /// 第 i 个药丸的左边缘位置（考虑间距）。

@@ -32,12 +32,12 @@ class StartStepEditor extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Icon(Icons.play_circle_outline, size: 36, color: scheme.primary),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         Text(
           isZh ? '源文件信息' : 'Source File Info',
           style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: scheme.onSurface),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
         _row(isZh ? '文件名' : 'Filename', filename, scheme),
         _row(isZh ? '分辨率' : 'Resolution', resolution, scheme),
         _row(isZh ? '时长' : 'Duration', durationStr, scheme),
@@ -46,7 +46,7 @@ class StartStepEditor extends StatelessWidget {
         _row(isZh ? '像素格式' : 'Pixel Format', pixFmt, scheme),
         _row(isZh ? '音频编码' : 'Audio Codec', audioCodec, scheme),
         _row(isZh ? '音频声道' : 'Audio Channels', '$audioChannels', scheme),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
         Container(
           width: double.infinity,
           padding: const EdgeInsets.all(10),
