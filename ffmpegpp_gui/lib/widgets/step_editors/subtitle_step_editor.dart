@@ -93,7 +93,7 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> {
               if (v == 'embedded' && subs.isNotEmpty) p['subtitle_index'] = 0;
               setState(() {}); widget.onChanged();
             }),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
 
           if (p['source'] == 'external') ...[
             Row(children: [
@@ -104,7 +104,7 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> {
               const SizedBox(width: 8),
               FilledButton.tonalIcon(onPressed: _pickSubtitleFile, icon: const Icon(Icons.folder_open, size: 18), label: Text(zh ? '选择' : 'Browse')),
             ]),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
           ],
 
           if (p['source'] == 'embedded') ...[
@@ -118,13 +118,13 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> {
                   if (s is Map) return '#${s['index'] ?? i} [${s['codec'] ?? ''}] ${s['language'] ?? ''}';
                   return '#$i';
                 }), cs: cs, onChanged: (v) => _update('subtitle_index', int.tryParse(v) ?? 0)),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
           ],
 
           const Divider(),
           const SizedBox(height: 8),
           Text(zh ? '字幕样式' : 'Subtitle Style', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
 
           // 字体选择
           FontPicker(
@@ -158,7 +158,7 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> {
               textAlign: TextAlign.center,
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
 
           // 字号
           Row(children: [
@@ -168,7 +168,7 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> {
               onChanged: (v) => _update('font_size', v.round()),
             )),
           ]),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
 
           // 描边宽度
           Row(children: [
@@ -178,11 +178,11 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> {
               onChanged: (v) => _update('outline_width', v.round()),
             )),
           ]),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
 
           // 字体颜色
           _colorRow(zh ? '字体颜色' : 'Font Color', 'font_color', cs),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
 
           // 描边颜色
           _colorRow(zh ? '描边颜色' : 'Outline Color', 'outline_color', cs),
@@ -282,7 +282,7 @@ class _ColorPickerDialogState extends State<_ColorPickerDialog> {
               onChanged: (v) => setState(() { _hue = v; _hexCtrl.text = _currentHex(); }),
             ),
           )),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           Row(children: [
             Text(zh ? '饱和度' : 'Saturation', style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
             Expanded(child: Slider(value: _sat, min: 0, max: 1, activeColor: _color,

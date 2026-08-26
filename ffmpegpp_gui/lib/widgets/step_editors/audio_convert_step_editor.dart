@@ -48,7 +48,7 @@ class _AudioConvertStepEditorState extends State<AudioConvertStepEditor> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(zh ? '音频格式转换' : 'Audio Format Conversion',
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         DropdownButtonFormField<String>(
           borderRadius: BorderRadius.circular(12),
@@ -62,7 +62,7 @@ class _AudioConvertStepEditorState extends State<AudioConvertStepEditor> {
           )).toList(),
           onChanged: (v) { if (v != null) _update('output_format', v); },
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
 
         DropdownButtonFormField<String>(
           borderRadius: BorderRadius.circular(12),
@@ -77,7 +77,7 @@ class _AudioConvertStepEditorState extends State<AudioConvertStepEditor> {
           )),
           onChanged: (v) { if (v != null) _update('audio_codec', v); },
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         Container(
           padding: const EdgeInsets.all(10),

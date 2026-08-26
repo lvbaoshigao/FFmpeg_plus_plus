@@ -45,7 +45,7 @@ class _ImageSharpenStepEditorState extends State<ImageSharpenStepEditor> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(zh ? '图片锐化' : 'Image Sharpen',
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         DropdownButtonFormField<String>(
           borderRadius: BorderRadius.circular(12),
@@ -64,7 +64,7 @@ class _ImageSharpenStepEditorState extends State<ImageSharpenStepEditor> {
           ],
           onChanged: (v) { if (v != null) _update('sharpen_mode', v); },
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         if (mode == 'value') ...[
           Row(children: [
@@ -102,7 +102,7 @@ class _ImageSharpenStepEditorState extends State<ImageSharpenStepEditor> {
           ]),
         ],
 
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(

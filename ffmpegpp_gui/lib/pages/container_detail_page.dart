@@ -9,6 +9,8 @@ import '../providers/app_state.dart';
 import '../services/ffmpeg_installer.dart';
 import '../theme/app_strings.dart';
 import '../platform/app_platform.dart';
+import '../widgets/mobile_top_bar.dart';
+import '../widgets/mobile_glass_pill.dart';
 import 'pipeline_editor_page.dart';
 import '../app.dart';
 
@@ -106,10 +108,59 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
     ];
 
     final content = Column(children: [
-      // 工具栏
+      // 移动端：二级页面玻璃药丸顶栏（返回圆钮 + 操作药丸 + 标题药丸），
+      // 与其它子页面（命令/日志/设置二级页）保持一致；
+      // 桌面端保留原平铺工具栏。
+      if (isMobilePlatform)
+        MobileSubPageTopBar(
+          title: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.folder_special, size: 15, color: scheme.primary),
+            const SizedBox(width: 4),
+            // 标题药丸按内容取宽，长容器名约束在屏宽 1/3 内省略
+            ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.34),
+              child: Text(container.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
+            Text(' (${container.fileCount})',
+                style: TextStyle(fontSize: 11, color: scheme.outline, fontWeight: FontWeight.normal)),
+          ]),
+          actions: [
+            MobileGlassPillAction(
+              icon: Icons.edit_note,
+              tooltip: s.isZh ? '编辑节点图' : 'Edit Pipeline',
+              color: hasParsed ? scheme.onSurface : scheme.outlineVariant,
+              onTap: hasParsed ? () => _editPipeline(state, container) : null,
+            ),
+            MobileGlassPillAction(
+              icon: Icons.drive_file_rename_outline,
+              tooltip: s.isZh ? '重命名' : 'Rename',
+              color: scheme.onSurface,
+              onTap: () => _rename(state, container, s),
+            ),
+            MobileGlassPillAction(
+              icon: Icons.add,
+              tooltip: s.containerAddFiles,
+              color: scheme.onPrimary,
+              bg: scheme.primary,
+              onTap: () => _addFiles(state),
+            ),
+            PopupMenuButton<ContainerSortMode>(
+              icon: Icon(Icons.sort, size: 19, color: scheme.onSurface),
+              tooltip: s.isZh ? '排序' : 'Sort',
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+              onSelected: (mode) => state.sortContainerBy(container.id, mode),
+              itemBuilder: (_) => [
+                PopupMenuItem(value: ContainerSortMode.name, child: Text(s.containerSortName)),
+                PopupMenuItem(value: ContainerSortMode.size, child: Text(s.containerSortSize)),
+                PopupMenuItem(value: ContainerSortMode.duration, child: Text(s.containerSortDuration)),
+              ],
+            ),
+          ],
+        )
+      else
       Padding(
-        padding: EdgeInsets.fromLTRB(8, Platform.isWindows
-            ? 4 : (isMobilePlatform ? MediaQuery.of(context).padding.top + 4 : 40), 8, 2),
+        padding: EdgeInsets.fromLTRB(8, Platform.isWindows ? 4 : 40, 8, 2),
         child: Row(children: [
           IconButton(icon: const Icon(Icons.arrow_back, size: 20), onPressed: () => Navigator.pop(context)),
           const SizedBox(width: 4),

@@ -179,7 +179,7 @@ class _VideoCropStepEditorState extends State<VideoCropStepEditor> {
       child: SingleChildScrollView(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(zh ? '视频裁剪' : 'Video Crop',
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         SegmentedButton<String>(
           segments: [
@@ -196,7 +196,7 @@ class _VideoCropStepEditorState extends State<VideoCropStepEditor> {
           },
           style: ButtonStyle(visualDensity: VisualDensity.compact),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         Text(zh ? '提取帧' : 'Extract Frame',
             style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.primary)),
@@ -234,14 +234,14 @@ class _VideoCropStepEditorState extends State<VideoCropStepEditor> {
             child: Center(child: Text(zh ? '请先提取帧' : 'Extract a frame first',
                 style: TextStyle(fontSize: 11, color: cs.outline))),
           ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         SizedBox(width: double.infinity, child: ElevatedButton.icon(
           onPressed: _fullFramePath != null ? _openSelectionTool : null,
           icon: const Icon(Icons.crop_free, size: 18),
           label: Text(zh ? '打开选择工具' : 'Open Selection Tool', style: const TextStyle(fontSize: 13)),
         )),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
 
         Container(
           padding: const EdgeInsets.all(10),
@@ -262,7 +262,7 @@ class _VideoCropStepEditorState extends State<VideoCropStepEditor> {
             ),
           ]),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
 
         Container(
           padding: const EdgeInsets.all(10),

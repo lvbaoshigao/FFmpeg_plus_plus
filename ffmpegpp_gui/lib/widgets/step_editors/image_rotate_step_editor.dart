@@ -45,7 +45,7 @@ class _ImageRotateStepEditorState extends State<ImageRotateStepEditor> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(zh ? '图片旋转' : 'Image Rotate',
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         DropdownButtonFormField<String>(
           borderRadius: BorderRadius.circular(12),
@@ -65,7 +65,7 @@ class _ImageRotateStepEditorState extends State<ImageRotateStepEditor> {
           ],
           onChanged: (v) { if (v != null) _update('rotate_mode', v); },
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         if (mode == 'preset') ...[
           Wrap(spacing: 8, runSpacing: 8, children: [
@@ -112,7 +112,7 @@ class _ImageRotateStepEditorState extends State<ImageRotateStepEditor> {
           ]),
         ],
 
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(

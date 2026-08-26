@@ -42,7 +42,7 @@ class _AudioCompressorStepEditorState extends State<AudioCompressorStepEditor> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(zh ? '压缩动态范围' : 'Dynamic Range Compressor',
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         _paramSlider(cs, zh ? '阈值 (threshold)' : 'Threshold', '$threshold dB',
             threshold, -60.0, 0.0, 120, (v) => _update('threshold', double.parse(v.toStringAsFixed(1)))),

@@ -45,7 +45,7 @@ class _ImageScaleStepEditorState extends State<ImageScaleStepEditor> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(zh ? '图片缩放' : 'Image Scale',
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         DropdownButtonFormField<String>(
           borderRadius: BorderRadius.circular(12),
@@ -64,7 +64,7 @@ class _ImageScaleStepEditorState extends State<ImageScaleStepEditor> {
           ],
           onChanged: (v) { if (v != null) _update('scale_mode', v); },
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         if (mode == 'factor') ...[
           Wrap(spacing: 8, runSpacing: 8, children: [
@@ -75,7 +75,7 @@ class _ImageScaleStepEditorState extends State<ImageScaleStepEditor> {
                 onSelected: (_) => _update('scale_factor', f),
               ),
           ]),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           Row(children: [
             Text('${zh ? "倍数" : "Factor"}: ${factor.toStringAsFixed(2)}x',
                 style: TextStyle(fontSize: 13, color: cs.onSurface)),
@@ -111,7 +111,7 @@ class _ImageScaleStepEditorState extends State<ImageScaleStepEditor> {
           ]),
         ],
 
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(

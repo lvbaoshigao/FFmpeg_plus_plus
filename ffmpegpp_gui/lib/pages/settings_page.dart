@@ -1198,58 +1198,66 @@ Widget _headerTooltip(String? message, Widget child) => message == null
 /// 桌面端：保持原有玻璃效果（liquid/blur/none）与透明度。
 Widget _glass(BuildContext ctx, AppState state, String title, List<Widget> children) {
   final scheme = Theme.of(ctx).colorScheme;
-  if (isMobilePlatform) {
-    final effect = state.config.glassEffect;
-    if (effect == 'liquid' || effect == 'blur') {
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(6, 0, 6, 0),
-        child: GlassPanel(
-          radius: 16,
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(title, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-            const SizedBox(height: 10),
-            ...children,
-          ]),
+  final isDark = Theme.of(ctx).brightness == Brightness.dark;
+  // 设置页卡片样式：glass 液态玻璃 / blur 模糊 / flat 纯色大圆角卡片（MIUI 风格）。
+  // 三种都统一成大圆角(20) + 收紧的标题/内容间距，模仿 MIUI 分组卡片：标题灰、组内逐行排布。
+  final style = state.config.cardStyle;
+  final radius = 20.0;
+  const pad = EdgeInsets.fromLTRB(16, 12, 16, 12);
+
+  final titleRow = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    Text(title, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.onSurfaceVariant)),
+    const SizedBox(height: 8),
+    ...children,
+  ]);
+
+  Widget cardContent() {
+    if (style == 'flat') {
+      // MIUI 图样式：纯色大圆角卡片（surface 容器色 + 细边 + 浅投影）
+      final alpha = ((isDark ? 235 : 250) * state.config.cardOpacity.clamp(0.0, 1.0)).round().clamp(0, 255);
+      return Container(
+        width: double.infinity,
+        padding: pad,
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHigh.withAlpha(alpha),
+          borderRadius: BorderRadius.circular(radius),
+          border: Border.all(color: scheme.outlineVariant.withAlpha(isDark ? 45 : 70), width: 0.6),
+          boxShadow: [BoxShadow(color: Colors.black.withAlpha(isDark ? 30 : 12), blurRadius: 12, offset: const Offset(0, 3))],
+        ),
+        child: titleRow,
+      );
+    }
+    if (style == 'blur') {
+      // 模糊：扁平高斯模糊卡片（更易读，不依赖液态玻璃 shader）
+      final alpha = ((isDark ? 110 : 130) * state.config.cardOpacity.clamp(0.0, 1.0)).round().clamp(0, 255);
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(radius),
+        child: BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+          child: Container(
+            width: double.infinity,
+            padding: pad,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(radius),
+              color: scheme.surface.withAlpha(alpha),
+              border: Border.all(color: scheme.outlineVariant.withAlpha(isDark ? 60 : 80), width: 0.6),
+            ),
+            child: titleRow,
+          ),
         ),
       );
     }
-    // none（透明）模式：退回主题色实心卡片（无玻璃光效）
-    final op = state.config.cardOpacity.clamp(0.0, 1.0);
-    final isDark = Theme.of(ctx).brightness == Brightness.dark;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(6, 0, 6, 0),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-        decoration: BoxDecoration(
-          color: scheme.primary.withAlpha(((isDark ? 46 : 30) * op + (isDark ? 20 : 14)).round().clamp(0, 255)),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: scheme.primary.withAlpha(60), width: 0.6),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withAlpha(10),
-              blurRadius: 6,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(title, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-          const SizedBox(height: 10),
-          ...children,
-        ]),
-      ),
+    // glass：液态玻璃（GlassPanel 内部遵循全局 glassEffect）
+    return GlassPanel(
+      radius: radius,
+      padding: pad,
+      child: titleRow,
     );
   }
-  return GlassPanel(
-    radius: 20,
-    padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(title, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: scheme.primary)),
-      const SizedBox(height: 8),
-      ...children,
-    ]),
+
+  return Padding(
+    padding: const EdgeInsets.fromLTRB(10, 0, 10, 0),
+    child: cardContent(),
   );
 }
 
@@ -1677,6 +1685,22 @@ Widget _buildBackground(BuildContext ctx, AppState state) {
           DropdownMenuEntry(value: 'none', label: s.glassNone, leadingIcon: const Icon(Icons.crop_square_outlined, size: 14)),
         ],
         onSelected: (v) { if (v != null) state.updateConfig((c) => c..glassEffect = v); },
+      )),
+    ]),
+    const SizedBox(height: 10),
+    // 设置页卡片样式：纯色卡片(MIUI 风)/模糊/玻璃 三选一
+    Row(children: [
+      Expanded(child: Text(s.cardStyleLabel, style: TextStyle(color: clr, fontSize: 12))),
+      SizedBox(width: 150, child: DropdownMenu<String>(
+        initialSelection: cfg.cardStyle,
+        requestFocusOnTap: false,
+        textStyle: TextStyle(fontSize: 12, color: clr),
+        dropdownMenuEntries: [
+          DropdownMenuEntry(value: 'glass', label: s.cardStyleGlass, leadingIcon: const Icon(Icons.water_drop_outlined, size: 14)),
+          DropdownMenuEntry(value: 'blur', label: s.cardStyleBlur, leadingIcon: const Icon(Icons.blur_on_outlined, size: 14)),
+          DropdownMenuEntry(value: 'flat', label: s.cardStyleFlat, leadingIcon: const Icon(Icons.widgets_outlined, size: 14)),
+        ],
+        onSelected: (v) { if (v != null) state.updateConfig((c) => c..cardStyle = v); },
       )),
     ]),
     const SizedBox(height: 10),
@@ -2959,25 +2983,53 @@ void _showModelPicker(BuildContext ctx, AppState state, List<String> models, App
 }
 
 Future<void> _pickFont(BuildContext ctx, AppState state) async {
-  final r = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['ttf', 'otf']);
-  if (r == null || r.files.isEmpty || r.files.first.path == null) return;
-  final path = r.files.first.path;
-  if (path == null) return;
-  final fileName = path.split(RegExp(r'[\\/]')).last;
-  final fontName = fileName.replaceAll(RegExp(r'\.[^.]+$'), '');
   final isZh = state.config.language == 'zh';
-  final copiedPath = await _copyToAppDir(path, 'fonts');
-  final fontFilePath = copiedPath ?? path;
+  // Android：SAF/content:// URI 常常拿不到真实磁盘路径（path 为 null），
+  // 必须同时取内存字节兜底 —— 之前只认 path，HyperOS/MIUI 上会出现
+  // 「选了字体却毫无反应」的静默失败。
+  final r = await FilePicker.platform.pickFiles(
+      type: FileType.custom, allowedExtensions: ['ttf', 'otf'],
+      withData: isAndroidPlatform);
+  if (r == null || r.files.isEmpty) return;
+  final picked = r.files.first;
+  final fileName = picked.name;
+  if (!fileName.toLowerCase().endsWith('.ttf') && !fileName.toLowerCase().endsWith('.otf')) {
+    if (ctx.mounted) showToast(ctx, isZh ? '请选择 .ttf 或 .otf 字体文件' : 'Please pick a .ttf/.otf font file', type: ToastType.error);
+    return;
+  }
+  final fontName = fileName.replaceAll(RegExp(r'\.[^.]+$'), '');
   try {
-    final fontLoader = FontLoader(fontName);
-    final fontFile = File(fontFilePath);
-    if (await fontFile.exists()) {
-      final bytes = await fontFile.readAsBytes();
-      fontLoader.addFont(Future.value(ByteData.view(bytes.buffer)));
-      await fontLoader.load();
-      state.updateConfig((c) => c..fontFamily = fontName);
-      if (ctx.mounted) showToast(ctx, isZh ? '字体 "$fontName" 已加载并应用' : 'Font "$fontName" loaded and applied', type: ToastType.success);
+    // 1) 取得字体字节：优先磁盘路径，content:// 时用内存字节
+    Uint8List? bytes;
+    String? srcPath = picked.path;
+    if (srcPath != null && !srcPath.startsWith('content://') && await File(srcPath).exists()) {
+      bytes = await File(srcPath).readAsBytes();
+    } else if (picked.bytes != null) {
+      bytes = picked.bytes;
+      srcPath = null; // 字节来源，下面改用落盘后的路径
     }
+    if (bytes == null) {
+      if (ctx.mounted) showToast(ctx, isZh ? '无法读取字体文件' : 'Cannot read font file', type: ToastType.error);
+      return;
+    }
+    // 2) 先落盘到应用数据目录 fonts/（重启后由 main.dart 重新加载）
+    String? fontFilePath;
+    if (srcPath != null) {
+      fontFilePath = await _copyToAppDir(srcPath, 'fonts');
+    }
+    if (fontFilePath == null) {
+      // 字节来源或复制失败：手动写入
+      final dir = Directory('${_userDataDir()}$_s' 'fonts');
+      if (!dir.existsSync()) dir.createSync(recursive: true);
+      fontFilePath = '${dir.path}$_s$fileName';
+      await File(fontFilePath).writeAsBytes(bytes, flush: true);
+    }
+    // 3) 注册进引擎并应用（FontLoader 注册的族名 = 文件名去扩展名）
+    final fontLoader = FontLoader(fontName);
+    fontLoader.addFont(Future.value(ByteData.sublistView(bytes)));
+    await fontLoader.load();
+    state.updateConfig((c) => c..fontFamily = fontName);
+    if (ctx.mounted) showToast(ctx, isZh ? '字体 "$fontName" 已加载并应用' : 'Font "$fontName" loaded and applied', type: ToastType.success);
   } catch (e) {
     // 加载失败不设置 fontFamily（否则全局文本回退到坏字体）
     if (ctx.mounted) showToast(ctx, isZh ? '字体加载失败: $e' : 'Font load failed: $e', type: ToastType.error);

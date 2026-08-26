@@ -170,7 +170,7 @@ class _ExtractAudioStepEditorState extends State<ExtractAudioStepEditor> {
       child: SingleChildScrollView(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(zh ? '从视频提取音频' : 'Extract Audio from Video',
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         SegmentedButton<String>(
           segments: [
@@ -184,7 +184,7 @@ class _ExtractAudioStepEditorState extends State<ExtractAudioStepEditor> {
           },
           style: ButtonStyle(visualDensity: VisualDensity.compact),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
 
         if (mode == 'clip') ...[
           Row(children: [
@@ -224,7 +224,7 @@ class _ExtractAudioStepEditorState extends State<ExtractAudioStepEditor> {
               },
             )),
           ]),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
 
           RangeSlider(
             values: RangeValues(start, end),
@@ -256,7 +256,7 @@ class _ExtractAudioStepEditorState extends State<ExtractAudioStepEditor> {
                 onPressed: _isPlaying ? _stopPreview : _playPreview,
               ),
           ]),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
         ],
 
         DropdownButtonFormField<String>(
@@ -271,7 +271,7 @@ class _ExtractAudioStepEditorState extends State<ExtractAudioStepEditor> {
           )).toList(),
           onChanged: (v) { if (v != null) _update('output_format', v); },
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
 
         DropdownButtonFormField<String>(
           borderRadius: BorderRadius.circular(12),
@@ -286,7 +286,7 @@ class _ExtractAudioStepEditorState extends State<ExtractAudioStepEditor> {
           )),
           onChanged: (v) { if (v != null) _update('audio_codec', v); },
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         Container(
           padding: const EdgeInsets.all(10),

@@ -126,7 +126,7 @@ class _FrameStepEditorState extends State<FrameStepEditor> {
           },
           style: const ButtonStyle(visualDensity: VisualDensity.compact),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
 
         // 预览
         Center(child: ClipRRect(
@@ -144,13 +144,13 @@ class _FrameStepEditorState extends State<FrameStepEditor> {
             ]),
           ),
         )),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
 
         if (mode == 'single') ..._buildSingleMode(cs, zh, dur),
         if (mode == 'range') ..._buildRangeMode(cs, zh, dur),
         if (mode == 'all') ..._buildAllMode(cs, zh, dur),
 
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         Row(children: [
           SizedBox(width: 120, child: DropdownButtonFormField<String>(
             borderRadius: BorderRadius.circular(12),
@@ -241,7 +241,7 @@ class _FrameStepEditorState extends State<FrameStepEditor> {
           },
         )),
       ]),
-      const SizedBox(height: 12),
+      const SizedBox(height: 8),
       Row(children: [
         Text(zh ? '提取帧率: ' : 'FPS: ', style: TextStyle(fontSize: 13, color: cs.onSurface)),
         SizedBox(width: 80, child: TextFormField(

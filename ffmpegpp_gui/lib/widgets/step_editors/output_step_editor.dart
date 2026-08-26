@@ -96,7 +96,7 @@ class _OutputStepEditorState extends State<OutputStepEditor> {
         _buildDropdown(label: zh ? '输出格式' : 'Format', value: p['format'] as String, items: _formats,
           itemLabels: zh ? const ['保持原格式', 'MP4', 'MKV', 'MOV', 'AVI', 'WEBM'] : const ['Keep Original', 'MP4', 'MKV', 'MOV', 'AVI', 'WEBM'],
           cs: cs, onChanged: (v) { setState(() => p['format'] = v); widget.onChanged(); }),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         _buildDropdown(label: zh ? '命名方式' : 'Naming', value: p['naming_mode'] as String, items: _namingModes,
           itemLabels: zh ? const ['保持原名', '添加后缀', '自定义名称'] : const ['Keep Original', 'Add Suffix', 'Custom Name'],
           cs: cs, onChanged: (v) {
@@ -108,7 +108,7 @@ class _OutputStepEditorState extends State<OutputStepEditor> {
             }
             widget.onChanged();
           }),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         if (p['naming_mode'] == 'suffix' || p['naming_mode'] == 'custom')
           Padding(padding: const EdgeInsets.only(bottom: 12), child: TextField(
             controller: _namingCtrl,
@@ -129,7 +129,7 @@ class _OutputStepEditorState extends State<OutputStepEditor> {
           const SizedBox(width: 8),
           IconButton(onPressed: _browseDir, icon: Icon(Icons.folder_open, size: 20, color: cs.primary)),
         ]),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
         Container(
           width: double.infinity, padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(color: cs.surfaceContainerHighest, borderRadius: BorderRadius.circular(8)),

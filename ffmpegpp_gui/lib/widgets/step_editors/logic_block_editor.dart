@@ -62,7 +62,7 @@ class _LogicBlockEditorState extends State<LogicBlockEditor> {
               : (zh ? '每次循环可选择执行哪些操作' : 'Choose which operations to run each iteration'),
           style: TextStyle(fontSize: 11, color: cs.outline),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         // 命名
         TextFormField(
@@ -78,7 +78,7 @@ class _LogicBlockEditorState extends State<LogicBlockEditor> {
             widget.onChanged();
           },
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         // 循环次数
         Row(children: [
@@ -109,7 +109,7 @@ class _LogicBlockEditorState extends State<LogicBlockEditor> {
             ),
           )),
         ]),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         // 框内节点列表
         Text(zh ? '框内元素' : 'Contained Elements',
@@ -135,7 +135,7 @@ class _LogicBlockEditorState extends State<LogicBlockEditor> {
 
         // 选择性循环特有
         if (widget.block.type == LogicBlockType.selectiveLoop) ...[
-          const SizedBox(height: 16),
+          const SizedBox(height: 8),
           Text(zh ? '执行模式' : 'Execution Mode',
               style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.onSurface)),
           const SizedBox(height: 8),
@@ -163,7 +163,7 @@ class _LogicBlockEditorState extends State<LogicBlockEditor> {
                 style: TextStyle(fontSize: 11, color: cs.outline)),
           ],
           if ((p['mode'] as String? ?? 'random') == 'manual') ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             Text(zh ? '选择每次循环执行的操作' : 'Select operations for each iteration',
                 style: TextStyle(fontSize: 12, color: cs.onSurface)),
             const SizedBox(height: 8),
@@ -179,7 +179,7 @@ class _LogicBlockEditorState extends State<LogicBlockEditor> {
           ],
         ],
 
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(

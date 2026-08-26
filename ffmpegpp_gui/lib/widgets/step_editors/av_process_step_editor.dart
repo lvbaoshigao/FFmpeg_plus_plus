@@ -215,7 +215,7 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
               style: TextStyle(fontSize: 11, color: cs.outline),
             )),
           ])),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         _codecDropdown(cs, zh),
         if (p['gpu'] != 'CPU' && !_gpuAccelerated.contains(p['video_codec']) && p['video_codec'] != 'copy')
           Padding(padding: const EdgeInsets.only(top: 4), child: Container(
@@ -230,7 +230,7 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
               )),
             ]),
           )),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         _dropdown(label: zh ? '码率模式' : 'Rate Mode', value: p['rate_mode'] as String,
           items: const ['bitrate', 'crf', 'keep'],
           itemLabels: zh ? const ['码率', 'CRF', '保持'] : const ['Bitrate', 'CRF', 'Keep'], cs: cs,
@@ -241,7 +241,7 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
             else { p.remove('video_bitrate'); p.remove('crf'); }
             setState(() {}); widget.onChanged();
           }),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         if (p['rate_mode'] == 'bitrate')
           Padding(padding: const EdgeInsets.only(bottom: 12), child: TextField(
             controller: _bitrateCtrl, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: zh ? '码率 (kbps)' : 'Bitrate (kbps)'),
@@ -259,13 +259,13 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
         if (p['gpu'] == 'CPU') ...[
           _dropdown(label: 'Preset', value: p['preset'] as String? ?? 'medium', items: _presets, cs: cs,
             onChanged: (v) => _update('preset', v)),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
         ],
         _dropdown(label: zh ? '像素格式' : 'Pixel Format', value: p['pix_fmt'] as String? ?? 'auto',
           items: _pixFmts,
           itemLabels: [zh ? '自动' : 'Auto', 'YUV 4:2:0 8bit', 'YUV 4:2:2 8bit', 'YUV 4:4:4 8bit', 'YUV 4:2:0 10bit', 'YUV 4:2:2 10bit', 'NV12', 'P010LE (10bit)', 'RGB 24bit'],
           cs: cs, onChanged: (v) => _update('pix_fmt', v)),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         _dropdown(label: zh ? '分辨率' : 'Resolution', value: p['resolution'] as String, items: _resolutions,
           itemLabels: zh ? const ['原始', '4K (2160p)', '1080p', '720p', '480p', '360p', '自定义'] : const ['Original', '4K (2160p)', '1080p', '720p', '480p', '360p', 'Custom'],
           cs: cs, onChanged: (v) => _update('resolution', v)),
@@ -277,7 +277,7 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
             Expanded(child: TextField(controller: _resHCtrl, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: 'H'),
               onChanged: (v) { p['resolution_h'] = int.tryParse(v); widget.onChanged(); })),
           ])),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         _dropdown(label: zh ? '帧率' : 'FPS', value: p['fps'] as String, items: _fpsOptions,
           itemLabels: zh ? const ['保持', '24', '25', '30', '48', '50', '60', '120', '自定义'] : const ['Keep', '24', '25', '30', '48', '50', '60', '120', 'Custom'],
           cs: cs, onChanged: (v) => _update('fps', v)),
@@ -294,7 +294,7 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
         _dropdown(label: zh ? '音频编码' : 'Audio Codec', value: p['audio_codec'] as String? ?? 'aac', items: _audioCodecs,
           itemLabels: _audioCodecs.map((c) => _audioCodecLabelsFor(zh)[c] ?? c).toList(),
           cs: cs, onChanged: (v) => _update('audio_codec', v)),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         // 音频码率：用 audio_bitrate_mode 记录选择（default/keep/preset/custom）。
         // 原实现 custom 分支写 p['audio_bitrate_custom'] ?? 128，128 恰好在预设列表内，
         // 导致自定义输入框永不出现；keep 分支写 -1 会被后端拼成 -b:a -1k。
@@ -329,7 +329,7 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
               )),
           ]);
         }),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
         _dropdown(label: zh ? '声道' : 'Channels', value: p['audio_channels'] as String? ?? 'keep', items: _channels,
           itemLabels: zh ? const ['保持', '单声道', '立体声', '5.1 环绕', '7.1 环绕'] : const ['Keep', 'Mono', 'Stereo', '5.1', '7.1'],
           cs: cs, onChanged: (v) => _update('audio_channels', v)),

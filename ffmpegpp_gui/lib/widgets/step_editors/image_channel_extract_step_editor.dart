@@ -43,7 +43,7 @@ class _ImageChannelExtractStepEditorState extends State<ImageChannelExtractStepE
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(zh ? '通道提取' : 'Channel Extract',
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         Text(zh ? '选择通道' : 'Select Channel',
             style: TextStyle(fontSize: 13, color: cs.onSurface)),
@@ -55,7 +55,7 @@ class _ImageChannelExtractStepEditorState extends State<ImageChannelExtractStepE
           const SizedBox(width: 8),
           _channelChip('b', 'B', Colors.blue, channel, cs),
         ]),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         DropdownButtonFormField<String>(
           borderRadius: BorderRadius.circular(12),
@@ -75,7 +75,7 @@ class _ImageChannelExtractStepEditorState extends State<ImageChannelExtractStepE
           onChanged: (v) { if (v != null) _update('extract_method', v); },
         ),
 
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(

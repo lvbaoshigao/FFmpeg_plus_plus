@@ -57,7 +57,7 @@ class _SpeedStepEditorState extends State<SpeedStepEditor> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(zh ? '播放速度' : 'Playback Speed',
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         // Speed display
         Center(child: Text(
@@ -71,7 +71,7 @@ class _SpeedStepEditorState extends State<SpeedStepEditor> {
               : (zh ? '慢放' : 'Slow'),
           style: TextStyle(fontSize: 12, color: cs.outline),
         )),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         // Custom speed toggle
         Row(children: [
@@ -89,7 +89,7 @@ class _SpeedStepEditorState extends State<SpeedStepEditor> {
             },
           ),
         ]),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
 
         if (isCustom) ...[
           // Custom input
@@ -118,7 +118,7 @@ class _SpeedStepEditorState extends State<SpeedStepEditor> {
           const SizedBox(height: 8),
           Text(zh ? '支持任意正数，例如 0.01x、100x、1000x' : 'Supports any positive number, e.g. 0.01x, 100x, 1000x',
               style: TextStyle(fontSize: 11, color: cs.outline)),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
 
           // Quick presets for custom mode
           Wrap(spacing: 6, runSpacing: 6, children: [
@@ -139,7 +139,7 @@ class _SpeedStepEditorState extends State<SpeedStepEditor> {
             )),
             Text('4.0x', style: TextStyle(fontSize: 10, color: cs.outline)),
           ]),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
 
           // Preset buttons
           Wrap(spacing: 6, runSpacing: 6, children: [
@@ -147,7 +147,7 @@ class _SpeedStepEditorState extends State<SpeedStepEditor> {
               _presetChip(cs, preset, speed),
           ]),
         ],
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         // Info
         Container(

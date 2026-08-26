@@ -48,7 +48,7 @@ class _AudioQualityStepEditorState extends State<AudioQualityStepEditor> {
       padding: const EdgeInsets.all(16),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(zh ? '音质调整' : 'Audio Quality', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
 
         DropdownButtonFormField<String>(
           borderRadius: BorderRadius.circular(12),
@@ -69,7 +69,7 @@ class _AudioQualityStepEditorState extends State<AudioQualityStepEditor> {
           },
         ),
         if (bitrateMode == 'custom') ...[
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           TextField(
             controller: _customBitrateCtrl,
             decoration: InputDecoration(labelText: zh ? '自定义码率 (kbps)' : 'Custom Bitrate (kbps)'),
@@ -78,7 +78,7 @@ class _AudioQualityStepEditorState extends State<AudioQualityStepEditor> {
             onChanged: (v) { final bv = int.tryParse(v); if (v.isEmpty) { _update('audio_bitrate', null); } else if (bv != null && bv > 0) { _update('audio_bitrate', bv); } },
           ),
         ],
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
 
         DropdownButtonFormField<String>(
           borderRadius: BorderRadius.circular(12),
