@@ -291,6 +291,10 @@ if [ ! -f $PREFIX/bin/ffmpeg ] || ! _ffmpeg_dist_ok; then
         grep -n -E "libwebp|webp/encode|WebPGetEncoder|check_func_headers|test_pkg_config|test_ld" $BUILD/ffmpeg_config.log | tail -40; \
         echo "--- config.log 末 60 行 ---"; \
         tail -60 $BUILD/ffmpeg_config.log; \
+        echo "--- 真正的 ffbuild/config.log 中 libwebp / pkg-config 相关 ---"; \
+        grep -n -E "libwebp|webp/encode|WebPGetEncoder|test_pkg_config|check_func_headers|test_ld|Package|not found|cannot find|error:" $BUILD/src/ffmpeg/ffbuild/config.log 2>&1 | tail -60; \
+        echo "--- ffbuild/config.log 末 40 行 ---"; \
+        tail -40 $BUILD/src/ffmpeg/ffbuild/config.log 2>&1; \
         echo "--- pkg-config 环境 ---"; \
         echo "PKG_CONFIG='$PKG_CONFIG'"; \
         echo "PKG_CONFIG_LIBDIR='$PKG_CONFIG_LIBDIR'"; \
