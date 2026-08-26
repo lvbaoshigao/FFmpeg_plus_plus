@@ -8,7 +8,7 @@ const _configMajor = 1;
 const _configMinor = 2; // fppx 文件头配置版本：1.1 → 1.2（+1 个版本）
 const _minSoftwareMajor = 3;
 const _compatMajorCount = 2;
-const _currentSoftwareMajor = 4;
+const _currentSoftwareMajor = 5;
 
 const modeNodeEditor = 0x01;
 const modeLegacy = 0x02;
