@@ -174,7 +174,12 @@ fi
 # ── 4.5 libwebp ──
 # 图片转换为 webp 需要 libwebp 编码器；缺失时 ffmpeg 报
 # "Error selecting an encoder / Encoder not found"。
-if [ ! -f $PREFIX/lib/libwebp.a ]; then
+# 关键：ffmpeg configure 对 libwebp 用 require_pkg_config（强制走 pkg-config），
+# 不像 x264/x265 有裸库兜底探测。因此仅装 libwebp.a 不够，还必须保证
+# $PREFIX/lib/pkgconfig/libwebp.pc 存在并可见（PKG_CONFIG_LIBDIR 指向该目录），
+# 否则 configure 报 "libwebp >= 0.2.0 not found using pkg-config"。
+# 缓存守卫须同时检查 .a 与 .pc：旧缓存可能只装了 .a 而漏了 .pc。
+if [ ! -f $PREFIX/lib/libwebp.a ] || [ ! -f $PREFIX/lib/pkgconfig/libwebp.pc ]; then
   fetch libwebp.tar.gz "https://github.com/webmproject/libwebp/archive/refs/tags/v1.4.0.tar.gz"
   rm -rf libwebp && mkdir libwebp && tar xf libwebp.tar.gz -C libwebp --strip-components=1
   log "building libwebp"
@@ -190,6 +195,26 @@ if [ ! -f $PREFIX/lib/libwebp.a ]; then
       > $BUILD/libwebp.log 2>&1
   cmake --build libwebp/build -j$JOBS >> $BUILD/libwebp.log 2>&1
   cmake --install libwebp/build >> $BUILD/libwebp.log 2>&1
+
+  # libwebp 的 CMake 安装不一定生成/安装 pkg-config 文件；这里兜底，
+  # 确保 PKG_CONFIG_LIBDIR 能找到 libwebp.pc（version 检查只需 ≥0.2.0）。
+  if [ ! -f $PREFIX/lib/pkgconfig/libwebp.pc ]; then
+    mkdir -p $PREFIX/lib/pkgconfig
+    cat > $PREFIX/lib/pkgconfig/libwebp.pc <<EOF
+prefix=$PREFIX
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: libwebp
+Description: Library for the WebP graphics format
+Version: 1.4.0
+Cflags: -I\${includedir}
+Libs: -L\${libdir} -lwebp
+Libs.private: -lm
+EOF
+    log "libwebp.pc generated (fallback)"
+  fi
   log "libwebp done"
 else
   log "libwebp cached"
