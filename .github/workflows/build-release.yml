@@ -237,15 +237,28 @@ jobs:
       - name: Strip debug symbols (reduce DMG size)
         run: |
           APP="ffmpegpp_gui/build/macos/Build/Products/Release/ffmpegpp_gui.app"
-          # 剥离 C++ 后端的调试符号
+          # 1) dSYM 绝不能进安装包：Release 配置（dwarf-with-dsym）会在
+          #    Products/Release 生成 *.app.dSYM（通用架构下达数十 MB）。
+          rm -rf ffmpegpp_gui/build/macos/Build/Products/Release/*.dSYM
+          # 2) strip 必须覆盖「无扩展名」的 framework 主二进制——旧脚本只找
+          #    *.dylib，匹配不到包体最大的 FlutterMacOS.framework/FlutterMacOS
+          #    和 App.framework/App（AOT 快照）。strip -S 只去调试符号，
+          #    保留动态符号表，不影响 dlopen/链接。
           strip -S "$APP/Contents/MacOS/libffmpegpp.dylib" 2>/dev/null || true
-          # 剥离 Flutter 框架内的调试符号
+          for f in "$APP"/Contents/Frameworks/*.framework; do
+            name="$(basename "$f" .framework)"
+            strip -S "$f/$name" 2>/dev/null || true
+          done
           find "$APP/Contents/Frameworks" -name "*.dylib" -exec strip -S {} \; 2>/dev/null || true
-          # 剥离可执行文件自身的调试符号
           strip -S "$APP/Contents/MacOS/ffmpegpp_gui" 2>/dev/null || true
+          # 3) 体积构成打印到 CI 日志：以后包体异常可直接从日志定位大头。
+          echo "==== macOS .app 体积构成 ===="
+          du -sh "$APP"
+          du -h "$APP"/Contents/Frameworks/* 2>/dev/null | sort -rh | head -15
 
       - name: Pack bundle
-        run: tar -czf macos-app.tar.gz -C ffmpegpp_gui/build/macos/Build/Products/Release .
+        # 只打包 .app 本体（旧写法打包整个 Release/ 目录，会把 dSYM 一并带入）
+        run: tar -czf macos-app.tar.gz -C ffmpegpp_gui/build/macos/Build/Products/Release ffmpegpp_gui.app
 
       - name: Upload macOS app bundle
         uses: actions/upload-artifact@v4

@@ -653,50 +653,70 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
   }
 
   /// 标签切换器：节点编辑器 / 快捷配置，各自带数量角标。
+  /// 液态玻璃/模糊药丸外壳（跟随全局玻璃配置）+ 选中项滑动指示器动画。
   Widget _buildTabSelector(ColorScheme scheme, bool zh) {
     final tabs = [
       (Icons.account_tree, zh ? '节点编辑器' : 'Node Editor', _configs.length),
       (Icons.bolt, zh ? '快捷配置' : 'Quick Config', _quickConfigs.length),
     ];
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 12, 16, 6),
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withAlpha(60),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: scheme.outlineVariant.withAlpha(70)),
-      ),
-      child: Row(children: [
-        for (var i = 0; i < tabs.length; i ++)
-          Expanded(
-            child: GestureDetector(
-              onTap: () => setState(() => _tabIndex = i),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOutCubic,
-                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
-                decoration: BoxDecoration(
-                  color: _tabIndex == i ? scheme.primary : Colors.transparent,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  Icon(tabs[i].$1, size: 15,
-                      color: _tabIndex == i ? scheme.onPrimary : scheme.outline),
-                  const SizedBox(width: 6),
-                  Flexible(child: Text(tabs[i].$2,
-                      maxLines: 1, overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w600,
-                        color: _tabIndex == i ? scheme.onPrimary : scheme.outline))),
-                  const SizedBox(width: 5),
-                  Text('${tabs[i].$3}', style: TextStyle(
-                      fontSize: 11, fontWeight: FontWeight.w600,
-                      color: _tabIndex == i ? scheme.onPrimary.withAlpha(200) : scheme.outline.withAlpha(140))),
-                ]),
-              ),
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    // 内容：滑动高亮指示器 + 两个等宽标签
+    final tabsRow = LayoutBuilder(builder: (_, cons) {
+      final w = cons.maxWidth;
+      return Stack(children: [
+        // 滑动指示器：随 _tabIndex 在左右半区之间平滑移动
+        AnimatedPositioned(
+          duration: const Duration(milliseconds: 240),
+          curve: Curves.easeOutCubic,
+          top: 0, bottom: 0,
+          left: _tabIndex == 0 ? 0 : w / 2,
+          width: w / 2,
+          child: Container(
+            decoration: BoxDecoration(
+              color: scheme.primary.withAlpha(isDark ? 80 : 60),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: scheme.primary.withAlpha(110)),
             ),
           ),
-      ]),
+        ),
+        Row(children: [
+          for (var i = 0; i < tabs.length; i ++)
+            Expanded(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => setState(() => _tabIndex = i),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+                  child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    Icon(tabs[i].$1, size: 15,
+                        color: _tabIndex == i ? scheme.primary : scheme.outline),
+                    const SizedBox(width: 6),
+                    Flexible(child: Text(tabs[i].$2,
+                        maxLines: 1, overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w600,
+                          color: _tabIndex == i ? scheme.primary : scheme.outline))),
+                    const SizedBox(width: 5),
+                    Text('${tabs[i].$3}', style: TextStyle(
+                        fontSize: 11, fontWeight: FontWeight.w600,
+                        color: _tabIndex == i ? scheme.primary.withAlpha(200) : scheme.outline.withAlpha(140))),
+                  ]),
+                ),
+              ),
+            ),
+        ]),
+      ]);
+    });
+
+    // 玻璃药丸外壳：复用移动端玻璃药丸（自动跟随液态玻璃/模糊/无效果配置）
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+      child: MobileGlassPill(
+        radius: 24,
+        padding: const EdgeInsets.all(4),
+        child: tabsRow,
+      ),
     );
   }
 
@@ -754,23 +774,24 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     return Padding(
       padding: EdgeInsets.fromLTRB(8, safeTop + 6, 8, 6),
       child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-        // 左：标题药丸（自适应内容宽度，标题与药丸贴合；尺寸与项目页「项目」药丸完全一致）
+        // 左：标题药丸（高度 44，与项目页「项目」药丸完全一致）
         MobileGlassPill(
           radius: 22,
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          height: 44,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
           pressable: true,
           child: Text(zh ? '配置库' : 'Config Library',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
         ),
         const SizedBox(width: 8),
-        // 右：操作药丸（贴合内容，不再用 Expanded 强制填满剩余空间）。
-        // padding 垂直方向 3（与 project_page 同尺寸），避免操作按钮被「压扁」。
+        // 右：操作药丸（高度 44，贴合内容，不再用 Expanded 强制填满剩余空间）。
         Flexible(
           child: Align(
             alignment: Alignment.centerRight,
             child: MobileGlassPill(
               radius: 22,
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+              height: 44,
+              padding: const EdgeInsets.symmetric(horizontal: 6),
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: Row(children: _buildTopActions(scheme, zh)),

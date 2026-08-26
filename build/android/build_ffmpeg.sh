@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 为 Android (arm64-v8a) 交叉编译：
-#   1) x264 / x265 / lame / opus 静态库
+#   1) x264 / x265 / lame / opus / libwebp 静态库
 #   2) ffmpeg + ffprobe 静态可执行文件
 #   3) libffmpegpp.so (C++ 后端)
 # 所有中间产物与缓存放在缓存根目录（默认 sdb2 的 android-build）。
@@ -171,6 +171,30 @@ else
   log "opus cached"
 fi
 
+# ── 4.5 libwebp ──
+# 图片转换为 webp 需要 libwebp 编码器；缺失时 ffmpeg 报
+# "Error selecting an encoder / Encoder not found"。
+if [ ! -f $PREFIX/lib/libwebp.a ]; then
+  fetch libwebp.tar.gz "https://github.com/webmproject/libwebp/archive/refs/tags/v1.4.0.tar.gz"
+  rm -rf libwebp && mkdir libwebp && tar xf libwebp.tar.gz -C libwebp --strip-components=1
+  log "building libwebp"
+  cmake -S libwebp -B libwebp/build -G "Unix Makefiles" \
+      -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
+      -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-${API} \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=$PREFIX -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+      -DBUILD_SHARED_LIBS=OFF \
+      -DWEBP_BUILD_ANIM_UTILS=OFF -DWEBP_BUILD_CWEBP=OFF -DWEBP_BUILD_DWEBP=OFF \
+      -DWEBP_BUILD_GIF2WEBP=OFF -DWEBP_BUILD_IMG2WEBP=OFF -DWEBP_BUILD_VWEBP=OFF \
+      -DWEBP_BUILD_WEBPINFO=OFF -DWEBP_BUILD_WEBPMUX=OFF -DWEBP_BUILD_EXTRAS=OFF \
+      > $BUILD/libwebp.log 2>&1
+  cmake --build libwebp/build -j$JOBS >> $BUILD/libwebp.log 2>&1
+  cmake --install libwebp/build >> $BUILD/libwebp.log 2>&1
+  log "libwebp done"
+else
+  log "libwebp cached"
+fi
+
 # ── 5. ffmpeg ──
 # 缓存守卫：sysroot 安装产物缺失，或已 stage 的 dist 二进制缺失/无效（缺 PT_INTERP）
 # 都强制重建。教训：此前守卫只看 $PREFIX/bin/ffmpeg，ldflags 变更（-static-pie →
@@ -185,6 +209,9 @@ _ffmpeg_dist_ok() {
     # 产物时这里返回 1，强制走 then 分支重新构建。
     $TOOLCHAIN/bin/llvm-readelf -d "$_b" 2>/dev/null \
         | grep -q 'libc++_shared\.so' && return 1
+    # 新增外部依赖（libwebp）后，旧的缓存产物不含该编码器，必须强制重建。
+    # ffmpeg 二进制内嵌 encoder 名 "libwebp"，用 strings 探测即可判定。
+    $TOOLCHAIN/bin/llvm-strings "$_b" 2>/dev/null | grep -q 'libwebp' || return 1
   done
   return 0
 }
@@ -211,7 +238,7 @@ if [ ! -f $PREFIX/bin/ffmpeg ] || ! _ffmpeg_dist_ok; then
       --disable-doc --disable-debug --disable-network --disable-ffplay \
       --enable-ffmpeg --enable-ffprobe --enable-small \
       --enable-gpl --enable-libx264 --enable-libx265 \
-      --enable-libmp3lame --enable-libopus \
+      --enable-libmp3lame --enable-libopus --enable-libwebp \
       --extra-cflags="-I$PREFIX/include $CFLAGS_COMMON" \
       --extra-ldflags="-L$PREFIX/lib -lm -Wl,--dynamic-linker=/system/bin/linker64 -Wl,--exclude-libs=ALL" \
       --extra-libs="-l:libc++.a -l:libunwind.a -ldl -lm" \

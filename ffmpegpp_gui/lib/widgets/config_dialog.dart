@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
+import '../platform/app_platform.dart';
 import 'font_picker.dart';
 
 class ConfigDialog extends StatefulWidget {
@@ -54,11 +55,14 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
     super.initState();
     _tab = TabController(length: 5, vsync: this);
     final v = widget.video.config;
-    final defCodecs = _gpuCodecSuffix[v.gpu] ?? _gpuCodecSuffix['CPU']!;
+    // 移动端无 GPU 硬编（NVENC/AMF/QSV 是桌面方案）：把从桌面端配置带过来的
+    // GPU 选择回退为 CPU，编码器随之回退到 CPU 可用列表。
+    final effectiveGpu = isMobilePlatform ? 'CPU' : v.gpu;
+    final defCodecs = _gpuCodecSuffix[effectiveGpu] ?? _gpuCodecSuffix['CPU']!;
     final initCodec = defCodecs.contains(v.videoCodec) ? v.videoCodec : defCodecs.first;
 
     _cfg = TranscodeConfig(
-      videoCodec: initCodec, gpu: v.gpu, preset: v.preset, crf: v.crf,
+      videoCodec: initCodec, gpu: effectiveGpu, preset: v.preset, crf: v.crf,
       videoBitrate: v.videoBitrate, framerate: v.framerate,
       resolutionW: v.resolutionW, resolutionH: v.resolutionH,
       audioCodec: v.audioCodec, audioBitrate: v.audioBitrate, audioChannels: v.audioChannels,
@@ -230,12 +234,25 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
         _section(Icons.video_settings, s.isZh ? '编码设置' : 'Encoding', sc),
         _dd(sc, s.cfgCodec, _cfg.videoCodec, codecs, labels,
             (v) => setState(() => _cfg.videoCodec = v)),
-        _dd(sc, s.cfgGpu, _cfg.gpu, ['CPU', 'NVIDIA', 'AMD', 'Intel'],
-            ['CPU', 'NVIDIA', 'AMD', 'Intel'], (v) => setState(() {
-          _cfg.gpu = v;
-          final codecs = _compatibleCodecs();
-          _cfg.videoCodec = codecs.first;
-        })),
+        // 移动端：NVENC/AMF/QSV 均为桌面 GPU 方案；手机硬编依赖 MediaCodec(JVM)，
+        // 内置 ffmpeg 以独立进程执行无法使用——只保留 CPU 并给出提示。
+        if (isMobilePlatform) ...[
+          _dd(sc, s.cfgGpu, 'CPU', const ['CPU'], const ['CPU'], (_) {}),
+          Padding(
+            padding: const EdgeInsets.only(left: 4, bottom: 8),
+            child: Text(
+              s.isZh ? '移动端暂不支持 GPU 硬件加速，使用 CPU 编码'
+                     : 'GPU acceleration is unavailable on mobile; CPU encoding is used',
+              style: TextStyle(fontSize: 11, color: sc.outline),
+            ),
+          ),
+        ] else
+          _dd(sc, s.cfgGpu, _cfg.gpu, ['CPU', 'NVIDIA', 'AMD', 'Intel'],
+              ['CPU', 'NVIDIA', 'AMD', 'Intel'], (v) => setState(() {
+            _cfg.gpu = v;
+            final codecs = _compatibleCodecs();
+            _cfg.videoCodec = codecs.first;
+          })),
         _dd(sc, s.cfgRate,
             _cfg.crf != null ? 'crf' : (_cfg.videoBitrate != null ? 'bitrate' : 'keep'),
             ['bitrate', 'crf', 'keep'],

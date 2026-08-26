@@ -22,6 +22,9 @@ class MobileGlassPill extends StatefulWidget {
   final EdgeInsetsGeometry? margin;
   final bool pressable;
   final VoidCallback? onTap;
+  /// 固定药丸总高度（内容垂直居中）。顶栏里左右药丸高度不同（标题药丸因
+  /// 字体行高约 38px、操作药丸约 44~50px）会造成视觉不一致；传 44 统一。
+  final double? height;
 
   const MobileGlassPill({
     super.key,
@@ -31,6 +34,7 @@ class MobileGlassPill extends StatefulWidget {
     this.margin,
     this.pressable = false,
     this.onTap,
+    this.height,
   });
 
   @override
@@ -131,12 +135,21 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
     // specStrength 3.0→0.5、specPower 100→48：shader 的 L1/L2 两盏对向灯会在
     // 圆角的左上/右下角各打出一个镜面光点，原参数峰值 +2.5 直接过曝成明显白点；
     // 降低强度并放宽高光锐度后变成柔和的角部光泽，不再抢眼。
+    //
+    // blurRadiusPx 1.0→0：shader 的 radialBlur 每像素要采 1+4×12=49 次纹理，
+    // 页面每个玻璃卡片都是独立 BackdropFilter 层，路由转场（如设置二级菜单
+    // 返回）时所有层每帧全量重采样 → 移动端 GPU 过载掉帧。1px 模糊肉眼不可辨，
+    // 置 0 后单采样直通，转场恢复流畅。
+    //
+    // lightbandStrength 0.35→0：光带按固定像素偏移绘制，在较「高」的内容
+    // （设置项卡片等）上是一条横向亮带，把玻璃内容视觉截成两段，即「上下分层
+    // 有分界」的来源之一；彻底关掉（下方注释原本就声明去掉它，数值却遗留了）。
     refractStrength: -0.10,
-    blurRadiusPx: 1.0,
+    blurRadiusPx: 0.0,
     specStrength: 0.5,
     specPower: 48,
     specWidth: 10,
-    lightbandStrength: 0.35,
+    lightbandStrength: 0.0,
     lightbandColor: Colors.white,
   );
 
@@ -196,7 +209,16 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
           width: effect == 'blur' ? 0.5 : 0.7,
         ),
       ),
-      child: widget.child,
+      // 固定总高度：把内容区压到 height - padding.vertical 并垂直居中，
+      // 统一顶栏左右药丸的高度（否则标题药丸 ~38px、操作药丸 ~50px 参差不齐）。
+      child: widget.height == null
+          ? widget.child
+          : SizedBox(
+              height: (widget.height! -
+                      widget.padding.resolve(Directionality.of(context)).vertical)
+                  .clamp(0.0, double.infinity),
+              child: Center(child: widget.child),
+            ),
     );
 
     Widget pill;

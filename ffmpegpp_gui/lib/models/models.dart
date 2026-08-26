@@ -777,6 +777,20 @@ class BackendCall {
   int loopCount;
   String? loopMode;
   BackendCall({required this.action, required this.params, this.loopCount = 1, this.loopMode});
+
+  Map<String, dynamic> toJson() => {
+    'action': action,
+    'params': params,
+    if (loopCount != 1) 'loop_count': loopCount,
+    if (loopMode != null) 'loop_mode': loopMode,
+  };
+
+  factory BackendCall.fromJson(Map<String, dynamic> json) => BackendCall(
+    action: json['action'] as String? ?? '',
+    params: (json['params'] as Map?)?.cast<String, dynamic>() ?? {},
+    loopCount: (json['loop_count'] as num?)?.toInt() ?? 1,
+    loopMode: json['loop_mode'] as String?,
+  );
 }
 
 class TaskInfo {
@@ -833,6 +847,49 @@ class TaskInfo {
       case TaskStatus.cancelled: return 'Cancelled';
     }
   }
+
+  /// 序列化用于「处理队列结果持久化」：下次启动时恢复展示。
+  /// 易变的实时字段（elapsed/speed 等进度心跳）不持久化；
+  /// logLines 只保留最后 50 条，避免历史文件无限膨胀。
+  Map<String, dynamic> toJson() => {
+    'id': id, 'video_id': videoId, 'filename': filename,
+    'input_path': inputPath, 'output_path': outputPath,
+    'status': status.index, 'progress': progress,
+    if (error != null) 'error': error,
+    if (logLines.isNotEmpty)
+      'log_lines': logLines.length > 50 ? logLines.sublist(logLines.length - 50) : logLines,
+    if (outputSize != null) 'output_size': outputSize,
+    if (duration != null) 'duration': duration,
+    if (command != null) 'command': command,
+    if (pipelineCalls != null)
+      'pipeline_calls': pipelineCalls!.map((c) => c.toJson()).toList(),
+    'call_progresses': callProgresses,
+    'current_call_index': currentCallIndex,
+  };
+
+  factory TaskInfo.fromJson(Map<String, dynamic> json) => TaskInfo(
+    id: json['id'] as String? ?? '',
+    videoId: json['video_id'] as String? ?? '',
+    filename: json['filename'] as String? ?? '',
+    inputPath: json['input_path'] as String? ?? '',
+    outputPath: json['output_path'] as String? ?? '',
+    status: TaskStatus.values[
+        ((json['status'] as num?)?.toInt() ?? 0).clamp(0, TaskStatus.values.length - 1)],
+    progress: (json['progress'] as num?)?.toDouble() ?? 0,
+    error: json['error'] as String?,
+    logLines: (json['log_lines'] as List?)?.map((e) => e.toString()).toList() ?? const [],
+    config: TranscodeConfig(),
+    outputSize: (json['output_size'] as num?)?.toInt(),
+    duration: (json['duration'] as num?)?.toDouble(),
+    command: (json['command'] as List?)?.map((e) => e.toString()).toList(),
+    pipelineCalls: (json['pipeline_calls'] as List?)
+        ?.whereType<Map>()
+        .map((e) => BackendCall.fromJson(e.cast<String, dynamic>()))
+        .toList(),
+    currentCallIndex: (json['current_call_index'] as num?)?.toInt() ?? 0,
+    callProgresses: (json['call_progresses'] as List?)
+        ?.map((e) => (e as num).toDouble()).toList() ?? const [],
+  );
 
   String get outputSizeStr {
     if (outputSize == null) return '-';
@@ -956,6 +1013,10 @@ class AppConfig {
   int editMode = 0; // 0=node editor, 1=quick mode, 2=traditional
   /// 移动端节点编辑器默认横屏（竖屏 = false，横屏 = true）
   bool useNodeEditorLandscape;
+  /// 移动端画布编辑器：顶部菜单栏(药丸)缩放系数（0.7~1.6，默认 1.0）
+  double editorToolbarScale;
+  /// 移动端画布编辑器：左下放大镜(缩放药丸)缩放系数（0.7~1.6，默认 1.0）
+  double editorZoomScale;
   Map<String, int> nodeUsageCount;
   int maxConcurrentTasks;
   int probeThreads;
@@ -1037,6 +1098,8 @@ class AppConfig {
     this.useNodeEditor = true,
     this.editMode = 0,
     this.useNodeEditorLandscape = false,
+    this.editorToolbarScale = 1.0,
+    this.editorZoomScale = 1.0,
     this.autosaveEnabled = true,
     this.autosaveIntervalSec = 30,
     this.maxConcurrentTasks = 1,
@@ -1128,6 +1191,8 @@ class AppConfig {
         useNodeEditor: json['use_node_editor'] as bool? ?? true,
         editMode: json['edit_mode'] as int? ?? (json['use_node_editor'] as bool? ?? true ? 0 : 2),
         useNodeEditorLandscape: json['use_node_editor_landscape'] as bool? ?? false,
+        editorToolbarScale: (json['editor_toolbar_scale'] as num?)?.toDouble() ?? 1.0,
+        editorZoomScale: (json['editor_zoom_scale'] as num?)?.toDouble() ?? 1.0,
         autosaveEnabled: json['autosave_enabled'] as bool? ?? true,
         autosaveIntervalSec: json['autosave_interval_sec'] as int? ?? 30,
         maxConcurrentTasks: json['max_concurrent_tasks'] as int? ?? 1,
@@ -1182,6 +1247,8 @@ class AppConfig {
         'use_node_editor': useNodeEditor,
         'edit_mode': editMode,
         'use_node_editor_landscape': useNodeEditorLandscape,
+        'editor_toolbar_scale': editorToolbarScale,
+        'editor_zoom_scale': editorZoomScale,
         'autosave_enabled': autosaveEnabled,
         'autosave_interval_sec': autosaveIntervalSec,
         'max_concurrent_tasks': maxConcurrentTasks,

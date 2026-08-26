@@ -1,6 +1,9 @@
 # Flutter 工具状态缓存（误提交过，禁止再入库）
 .config/
 
+# 本地 Flutter SDK 源码副本（约 1.7GB），勿提交入库
+.flutter-sdk/
+
 # 通用临时/缓存文件
 *.log
 *.tmp

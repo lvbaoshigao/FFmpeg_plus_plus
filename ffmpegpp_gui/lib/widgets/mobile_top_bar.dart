@@ -121,15 +121,17 @@ class MobileSubPageTopBar extends StatelessWidget {
         if (actions.isNotEmpty) ...[
           MobileGlassPill(
             radius: 22,
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+            height: 44,
+            padding: const EdgeInsets.symmetric(horizontal: 4),
             child: Row(children: actions),
           ),
           const SizedBox(width: 8),
         ],
-        // 右：标题药丸
+        // 右：标题药丸（高度 44，与左侧圆形返回按钮、操作药丸对齐）
         MobileGlassPill(
           radius: 22,
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          height: 44,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
           child: DefaultTextStyle.merge(
             style: TextStyle(
               fontSize: 16,

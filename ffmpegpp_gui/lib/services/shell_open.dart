@@ -37,8 +37,15 @@ class ShellOpen {
       } else if (Platform.isMacOS) {
         await Process.start('open', ['-R', p]);
       } else if (Platform.isAndroid) {
-        // Android 无"在文件管理器中定位"的通用 API，打开所在目录
-        await _openFile(File(p).parent.path);
+        // Android：原生侧优先让系统文件管理器打开到目标所在的具体目录；
+        // 目标在应用私有目录（DocumentsUI 无权浏览）时回退为直接打开文件本身，
+        // 保证「点击后能跳到处理好的视频」而不是只进「文件」APP 首页。
+        try {
+          await _androidChannel.invokeMethod('revealFile', {'path': p});
+        } catch (_) {
+          // 原生方法不存在（旧原生壳热重载）等：退回打开所在目录
+          await _openFile(File(p).parent.path);
+        }
       } else {
         await Process.start('xdg-open', [File(p).parent.path]);
       }

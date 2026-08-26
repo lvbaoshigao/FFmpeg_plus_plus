@@ -196,7 +196,21 @@ void main(){
   vec2 grad = unionGradient(uvCenter,cnt,k);
   grad = normalize(grad+1e-6);
 
-  vec2 off = grad * pow(smoothstep(-px(uDistortFalloffPx),0.0,dU),
+  /* 薄形状（药丸/窄条）中线处的折射方向翻转修复。
+     SDF 梯度在中线两侧方向相反（上半部分向上折射、下半部分向下折射），
+     若折射衰减距离 uDistortFalloffPx 超过形状内切半径，中线处两个方向的
+     采样偏移直接相撞，形成一条明显的「上下分层」界线。
+     这里把有效衰减距离钳制到最小形状半宽/半高以内：折射强度在到达中线前
+     平滑衰减到 0，分界随之消失。高卡片（半高 > falloff）不受影响。 */
+  float minHalf = 1e5;
+  for(int i=0;i<MAX_RECTS;++i){
+    if(i>=cnt) break;
+    vec2 hsz = (getRect(i).zw*0.5)/R.y;
+    minHalf = min(minHalf, min(hsz.x, hsz.y));
+  }
+  float falloff = min(px(uDistortFalloffPx), minHalf*0.92);
+
+  vec2 off = grad * pow(smoothstep(-falloff,0.0,dU),
                         uDistortExponent) * uRefractStrength * mask;
 
   vec4 glassBase = radialBlur(uv0 + off*REFRACTION_SAMPLE_SCALE, uRadialBlurPx);

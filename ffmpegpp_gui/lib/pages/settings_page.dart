@@ -1666,21 +1666,18 @@ Widget _buildBackground(BuildContext ctx, AppState state) {
     // 玻璃效果选择：选择框放到文字右侧（而非下方），与「跟随主题色」等开关保持同一排布。
     // 「透明」= 无玻璃，所有卡片/药丸退回主题色显示。
     Row(children: [
-      Text(s.glassEffectLabel, style: TextStyle(color: clr, fontSize: 12)),
-      const SizedBox(width: 12),
-      Expanded(
-        child: DropdownMenu<String>(
-          initialSelection: cfg.glassEffect,
-          requestFocusOnTap: false,
-          textStyle: TextStyle(fontSize: 12, color: clr),
-          dropdownMenuEntries: [
-            DropdownMenuEntry(value: 'liquid', label: s.glassLiquid, leadingIcon: const Icon(Icons.water_drop_outlined, size: 14)),
-            DropdownMenuEntry(value: 'blur', label: s.glassBlur, leadingIcon: const Icon(Icons.blur_on_outlined, size: 14)),
-            DropdownMenuEntry(value: 'none', label: s.glassNone, leadingIcon: const Icon(Icons.crop_square_outlined, size: 14)),
-          ],
-          onSelected: (v) { if (v != null) state.updateConfig((c) => c..glassEffect = v); },
-        ),
-      ),
+      Expanded(child: Text(s.glassEffectLabel, style: TextStyle(color: clr, fontSize: 12))),
+      SizedBox(width: 150, child: DropdownMenu<String>(
+        initialSelection: cfg.glassEffect,
+        requestFocusOnTap: false,
+        textStyle: TextStyle(fontSize: 12, color: clr),
+        dropdownMenuEntries: [
+          DropdownMenuEntry(value: 'liquid', label: s.glassLiquid, leadingIcon: const Icon(Icons.water_drop_outlined, size: 14)),
+          DropdownMenuEntry(value: 'blur', label: s.glassBlur, leadingIcon: const Icon(Icons.blur_on_outlined, size: 14)),
+          DropdownMenuEntry(value: 'none', label: s.glassNone, leadingIcon: const Icon(Icons.crop_square_outlined, size: 14)),
+        ],
+        onSelected: (v) { if (v != null) state.updateConfig((c) => c..glassEffect = v); },
+      )),
     ]),
     const SizedBox(height: 10),
     // 遵循主题色：玻璃/卡片底色统一使用主题色
@@ -1748,20 +1745,22 @@ Widget _buildLanguage(BuildContext ctx, AppState state) {
   }
 
   return _glass(ctx, state, s.language, [
-    Text(s.languageInterface, style: TextStyle(color: clr, fontSize: 12)),
-    const SizedBox(height: 6),
-    DropdownMenu<String>(
-      initialSelection: cfg.language,
-      requestFocusOnTap: false,
-      textStyle: TextStyle(fontSize: 12, color: clr),
-      // 不覆盖 menuStyle/inputDecorationTheme：沿用全局主题（圆角 22 玻璃菜单 + 主题化圆角输入框）
-      dropdownMenuEntries: [
-        DropdownMenuEntry(value: 'zh', label: '中文 (简体)'),
-        DropdownMenuEntry(value: 'en', label: 'English'),
-      ],
-      onSelected: (v) { if (v != null) state.updateConfig((c) => c..language = v); },
-      leadingIcon: Icon(Icons.language, size: 15, color: scheme.primary),
-    ),
+    // 左右布局：标签在左、下拉在右（固定宽度，不再整行拉满）
+    Row(children: [
+      Expanded(child: Text(s.languageInterface, style: TextStyle(color: clr, fontSize: 12))),
+      SizedBox(width: 150, child: DropdownMenu<String>(
+        initialSelection: cfg.language,
+        requestFocusOnTap: false,
+        textStyle: TextStyle(fontSize: 12, color: clr),
+        // 不覆盖 menuStyle/inputDecorationTheme：沿用全局主题（圆角 22 玻璃菜单 + 主题化圆角输入框）
+        dropdownMenuEntries: [
+          DropdownMenuEntry(value: 'zh', label: '中文 (简体)'),
+          DropdownMenuEntry(value: 'en', label: 'English'),
+        ],
+        onSelected: (v) { if (v != null) state.updateConfig((c) => c..language = v); },
+        leadingIcon: Icon(Icons.language, size: 15, color: scheme.primary),
+      )),
+    ]),
   ]);
 }
 
@@ -1809,22 +1808,23 @@ Widget _buildFont(BuildContext ctx, AppState state) {
         labelStyle: TextStyle(color: clr, fontSize: 12),
         onCommit: (v) => state.updateConfig((c) => c..fontSize = v),
       ),
-      Text(s.qWeight, style: TextStyle(color: clr, fontSize: 12)),
-      const SizedBox(height: 6),
-      // 字重：中文下拉选择（避免英文标签换行且已汉化）
-      DropdownMenu<int>(
-        initialSelection: cfg.fontWeightIndex,
-        requestFocusOnTap: false,
-        textStyle: TextStyle(fontSize: 12, color: clr),
-        dropdownMenuEntries: const [
-          DropdownMenuEntry(value: 0, label: '细体 (Light)'),
-          DropdownMenuEntry(value: 1, label: '常规 (Regular)'),
-          DropdownMenuEntry(value: 2, label: '中等 (Medium)'),
-          DropdownMenuEntry(value: 3, label: '半粗 (SemiBold)'),
-          DropdownMenuEntry(value: 4, label: '粗体 (Bold)'),
-        ],
-        onSelected: (v) { if (v != null) state.updateConfig((c) => c..fontWeightIndex = v); },
-      ),
+      // 字重：左右布局（标签左、下拉右，固定宽度）
+      Row(children: [
+        Expanded(child: Text(s.qWeight, style: TextStyle(color: clr, fontSize: 12))),
+        SizedBox(width: 150, child: DropdownMenu<int>(
+          initialSelection: cfg.fontWeightIndex,
+          requestFocusOnTap: false,
+          textStyle: TextStyle(fontSize: 12, color: clr),
+          dropdownMenuEntries: const [
+            DropdownMenuEntry(value: 0, label: '细体 (Light)'),
+            DropdownMenuEntry(value: 1, label: '常规 (Regular)'),
+            DropdownMenuEntry(value: 2, label: '中等 (Medium)'),
+            DropdownMenuEntry(value: 3, label: '半粗 (SemiBold)'),
+            DropdownMenuEntry(value: 4, label: '粗体 (Bold)'),
+          ],
+          onSelected: (v) { if (v != null) state.updateConfig((c) => c..fontWeightIndex = v); },
+        )),
+      ]),
     ]);
   }
 
@@ -1839,23 +1839,24 @@ Widget _buildFont(BuildContext ctx, AppState state) {
       labelStyle: TextStyle(color: clr, fontSize: 12),
       onCommit: (v) => state.updateConfig((c) => c..fontSize = v),
     ),
-    Text(s.qWeight, style: TextStyle(color: clr, fontSize: 12)),
-    const SizedBox(height: 6),
-    // 字重：中文下拉选择（避免英文标签换行且已汉化）
-    DropdownMenu<int>(
-      initialSelection: cfg.fontWeightIndex,
-      requestFocusOnTap: false,
-      textStyle: TextStyle(fontSize: 12, color: clr),
-      // 不覆盖 menuStyle/inputDecorationTheme：沿用全局主题（圆角 22 玻璃菜单 + 主题化圆角输入框）
-      dropdownMenuEntries: const [
-        DropdownMenuEntry(value: 0, label: '细体 (Light)'),
-        DropdownMenuEntry(value: 1, label: '常规 (Regular)'),
-        DropdownMenuEntry(value: 2, label: '中等 (Medium)'),
-        DropdownMenuEntry(value: 3, label: '半粗 (SemiBold)'),
-        DropdownMenuEntry(value: 4, label: '粗体 (Bold)'),
-      ],
-      onSelected: (v) { if (v != null) state.updateConfig((c) => c..fontWeightIndex = v); },
-    ),
+    // 字重：左右布局（标签左、下拉右，固定宽度）
+    Row(children: [
+      Expanded(child: Text(s.qWeight, style: TextStyle(color: clr, fontSize: 12))),
+      SizedBox(width: 150, child: DropdownMenu<int>(
+        initialSelection: cfg.fontWeightIndex,
+        requestFocusOnTap: false,
+        textStyle: TextStyle(fontSize: 12, color: clr),
+        // 不覆盖 menuStyle/inputDecorationTheme：沿用全局主题（圆角 22 玻璃菜单 + 主题化圆角输入框）
+        dropdownMenuEntries: const [
+          DropdownMenuEntry(value: 0, label: '细体 (Light)'),
+          DropdownMenuEntry(value: 1, label: '常规 (Regular)'),
+          DropdownMenuEntry(value: 2, label: '中等 (Medium)'),
+          DropdownMenuEntry(value: 3, label: '半粗 (SemiBold)'),
+          DropdownMenuEntry(value: 4, label: '粗体 (Bold)'),
+        ],
+        onSelected: (v) { if (v != null) state.updateConfig((c) => c..fontWeightIndex = v); },
+      )),
+    ]),
   ]);
 }
 
@@ -1920,6 +1921,31 @@ Widget _buildAutosave(BuildContext ctx, AppState state) {
           value: cfg.useNodeEditorLandscape,
           onChanged: (v) => state.updateConfig((c) => c..useNodeEditorLandscape = v)),
       const Divider(height: 4, color: Colors.transparent),
+      // 画布编辑器 UI 尺寸调节（移动端点按目标偏小/偏大时的补偿）
+      Text(s.isZh ? '顶部菜单栏大小' : 'Top toolbar size', style: TextStyle(color: clr, fontSize: 12)),
+      Row(children: [
+        Expanded(child: Slider(
+          value: cfg.editorToolbarScale.clamp(0.7, 1.6),
+          min: 0.7, max: 1.6, divisions: 9,
+          label: '${(cfg.editorToolbarScale * 100).round()}%',
+          onChanged: (v) => state.updateConfig((c) => c..editorToolbarScale = v),
+        )),
+        SizedBox(width: 42, child: Text('${(cfg.editorToolbarScale * 100).round()}%',
+            textAlign: TextAlign.right, style: TextStyle(fontSize: 11, color: scheme.outline))),
+      ]),
+      const SizedBox(height: 2),
+      Text(s.isZh ? '放大镜（缩放药丸）大小' : 'Zoom pill size', style: TextStyle(color: clr, fontSize: 12)),
+      Row(children: [
+        Expanded(child: Slider(
+          value: cfg.editorZoomScale.clamp(0.7, 1.6),
+          min: 0.7, max: 1.6, divisions: 9,
+          label: '${(cfg.editorZoomScale * 100).round()}%',
+          onChanged: (v) => state.updateConfig((c) => c..editorZoomScale = v),
+        )),
+        SizedBox(width: 42, child: Text('${(cfg.editorZoomScale * 100).round()}%',
+            textAlign: TextAlign.right, style: TextStyle(fontSize: 11, color: scheme.outline))),
+      ]),
+      const Divider(height: 8, color: Colors.transparent),
     ],
     SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
         title: Text(s.isZh ? '启用节点编辑器自动保存' : 'Enable editor autosave', style: TextStyle(color: clr, fontSize: 13)),
@@ -1928,19 +1954,21 @@ Widget _buildAutosave(BuildContext ctx, AppState state) {
         value: cfg.autosaveEnabled,
         onChanged: (v) => state.updateConfig((c) => c..autosaveEnabled = v)),
     const SizedBox(height: 6),
-    Text(s.isZh ? '保存间隔' : 'Save Interval', style: TextStyle(color: clr, fontSize: 12)),
-    const SizedBox(height: 8),
-    DropdownButtonFormField<int>(borderRadius: BorderRadius.circular(12), initialValue: cfg.autosaveIntervalSec, isDense: true, isExpanded: true,
-        style: TextStyle(fontSize: 12, color: clr), dropdownColor: scheme.surface,
-        decoration: InputDecoration(isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
-        items: [
-          for (final sec in [10, 30, 60, 120, 300])
-            DropdownMenuItem(value: sec, child: Text(sec < 60
-                ? (s.isZh ? '$sec 秒' : '$sec s')
-                : (s.isZh ? '${sec ~/ 60} 分钟' : '${sec ~/ 60} min'))),
-        ],
-        onChanged: (v) { if (v != null) state.updateConfig((c) => c..autosaveIntervalSec = v); }),
+    // 左右布局：标签左、下拉右（固定宽度，不再整行拉满）
+    Row(children: [
+      Expanded(child: Text(s.isZh ? '保存间隔' : 'Save Interval', style: TextStyle(color: clr, fontSize: 12))),
+      SizedBox(width: 130, child: DropdownButtonFormField<int>(borderRadius: BorderRadius.circular(12), initialValue: cfg.autosaveIntervalSec, isDense: true, isExpanded: true,
+          style: TextStyle(fontSize: 12, color: clr), dropdownColor: scheme.surface,
+          decoration: InputDecoration(isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
+          items: [
+            for (final sec in [10, 30, 60, 120, 300])
+              DropdownMenuItem(value: sec, child: Text(sec < 60
+                  ? (s.isZh ? '$sec 秒' : '$sec s')
+                  : (s.isZh ? '${sec ~/ 60} 分钟' : '${sec ~/ 60} min'))),
+          ],
+          onChanged: (v) { if (v != null) state.updateConfig((c) => c..autosaveIntervalSec = v); })),
+    ]),
     const SizedBox(height: 4),
     Text(s.isZh ? '停止操作后多久自动保存一次' : 'How long after edits stop before autosaving', style: TextStyle(fontSize: 10, color: scheme.outline)),
   ]);
@@ -1966,28 +1994,31 @@ Widget _buildTasks(BuildContext ctx, AppState state) {
   final scheme = Theme.of(ctx).colorScheme;
   final clr = scheme.onSurface;
   return _glass(ctx, state, s.cardTasks, [
-    Text(s.isZh ? '同时启用任务数' : 'Concurrent Tasks', style: TextStyle(color: clr, fontSize: 12)),
-    const SizedBox(height: 8),
-    DropdownButtonFormField<int>(borderRadius: BorderRadius.circular(12), initialValue: cfg.maxConcurrentTasks, isDense: true, isExpanded: true,
-        style: TextStyle(fontSize: 12, color: clr), dropdownColor: scheme.surface,
-        decoration: InputDecoration(isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
-        items: [
-          ...List.generate(8, (i) => DropdownMenuItem(value: i + 1, child: Text('${i + 1}'))),
-          DropdownMenuItem(value: 0, child: Text(s.isZh ? '不限制' : 'Unlimited')),
-        ],
-        onChanged: (v) { if (v != null) state.updateConfig((c) => c..maxConcurrentTasks = v); }),
+    // 左右布局：标签左、下拉右（固定宽度，不再整行拉满）
+    Row(children: [
+      Expanded(child: Text(s.isZh ? '同时启用任务数' : 'Concurrent Tasks', style: TextStyle(color: clr, fontSize: 12))),
+      SizedBox(width: 130, child: DropdownButtonFormField<int>(borderRadius: BorderRadius.circular(12), initialValue: cfg.maxConcurrentTasks, isDense: true, isExpanded: true,
+          style: TextStyle(fontSize: 12, color: clr), dropdownColor: scheme.surface,
+          decoration: InputDecoration(isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
+          items: [
+            ...List.generate(8, (i) => DropdownMenuItem(value: i + 1, child: Text('${i + 1}'))),
+            DropdownMenuItem(value: 0, child: Text(s.isZh ? '不限制' : 'Unlimited')),
+          ],
+          onChanged: (v) { if (v != null) state.updateConfig((c) => c..maxConcurrentTasks = v); })),
+    ]),
     const SizedBox(height: 4),
     Text(s.isZh ? '控制队列中同时处理的任务数量' : 'Controls how many tasks run in parallel', style: TextStyle(fontSize: 10, color: scheme.outline)),
     const SizedBox(height: 12),
-    Text(s.isZh ? '解析线程数' : 'Probe Threads', style: TextStyle(color: clr, fontSize: 12)),
-    const SizedBox(height: 8),
-    DropdownButtonFormField<int>(borderRadius: BorderRadius.circular(12), initialValue: cfg.probeThreads, isDense: true, isExpanded: true,
-        style: TextStyle(fontSize: 12, color: clr), dropdownColor: scheme.surface,
-        decoration: InputDecoration(isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
-        items: List.generate(8, (i) => DropdownMenuItem(value: i + 1, child: Text('${i + 1}'))),
-        onChanged: (v) { if (v != null) state.updateConfig((c) => c..probeThreads = v); }),
+    Row(children: [
+      Expanded(child: Text(s.isZh ? '解析线程数' : 'Probe Threads', style: TextStyle(color: clr, fontSize: 12))),
+      SizedBox(width: 130, child: DropdownButtonFormField<int>(borderRadius: BorderRadius.circular(12), initialValue: cfg.probeThreads, isDense: true, isExpanded: true,
+          style: TextStyle(fontSize: 12, color: clr), dropdownColor: scheme.surface,
+          decoration: InputDecoration(isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
+          items: List.generate(8, (i) => DropdownMenuItem(value: i + 1, child: Text('${i + 1}'))),
+          onChanged: (v) { if (v != null) state.updateConfig((c) => c..probeThreads = v); })),
+    ]),
     const SizedBox(height: 4),
     Text(s.isZh ? '添加文件时同时解析的线程数，增大可加快批量导入速度' : 'Number of concurrent probe threads when importing files', style: TextStyle(fontSize: 10, color: scheme.outline)),
     const SizedBox(height: 8),
@@ -2257,24 +2288,39 @@ Widget _buildMcpAi(BuildContext ctx, AppState state) {
 }
 
 void _showAiSettingsDialog(BuildContext ctx, AppState state, AppStrings s) {
-  final zh = s.isZh;
+  if (isMobilePlatform) {
+    // 移动端：AI「更多选项」改为二级页面（全屏 + 返回按钮），而非 PC 式底部弹窗
+    Navigator.of(ctx).push(MaterialPageRoute<void>(
+      builder: (bCtx) => Scaffold(
+        body: SafeArea(child: _aiSettingsContent(bCtx, state, s, asSheet: false)),
+      ),
+    ));
+    return;
+  }
   showModalBottomSheet(
     context: ctx,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
     // 限制最大宽度并居中：宽屏下 AI 设置面板不再拉满整屏
     constraints: const BoxConstraints(maxWidth: 880),
-    builder: (bCtx) {
-      // 持久状态（闭包捕获，StatefulBuilder 重建时保留）：
-      // 当前选中的配置 id + 正在编辑的草稿（null=尚未开始编辑）
-      String selProfileId = state.config.aiProfiles.isNotEmpty
-          ? (state.config.activeAiProfileId.isNotEmpty
-              ? state.config.activeAiProfileId
-              : state.config.aiProfiles.first.id)
-          : '';
-      AiProfile? draft;
-      bool showPreset = false;
-      return StatefulBuilder(builder: (ctx2, setDState) {
+    builder: (bCtx) => _aiSettingsContent(bCtx, state, s, asSheet: true),
+  );
+}
+
+/// AI 设置内容主体。asSheet=true 以底部弹层呈现（桌面），asSheet=false 以全屏
+/// 二级页面呈现（移动端，带返回按钮）。两种形态复用同一段配置表单。
+Widget _aiSettingsContent(BuildContext bCtx, AppState state, AppStrings s, {required bool asSheet}) {
+  final zh = s.isZh;
+  // 持久状态（闭包捕获，StatefulBuilder 重建时保留）：
+  // 当前选中的配置 id + 正在编辑的草稿（null=尚未开始编辑）
+  String selProfileId = state.config.aiProfiles.isNotEmpty
+      ? (state.config.activeAiProfileId.isNotEmpty
+          ? state.config.activeAiProfileId
+          : state.config.aiProfiles.first.id)
+      : '';
+  AiProfile? draft;
+  bool showPreset = false;
+  return StatefulBuilder(builder: (ctx2, setDState) {
         final cfg = state.config;
         final scheme = Theme.of(ctx2).colorScheme;
         final clr = scheme.onSurface;
@@ -2310,27 +2356,30 @@ void _showAiSettingsDialog(BuildContext ctx, AppState state, AppStrings s) {
           )),
         );
 
-        return DraggableScrollableSheet(
-          initialChildSize: 0.85,
-          minChildSize: 0.5,
-          maxChildSize: 0.95,
-          builder: (_, scrollCtrl) => GlassPanel(
-            radius: 20,
-            child: Column(children: [
-              const SizedBox(height: 8),
-              Container(width: 36, height: 4, decoration: BoxDecoration(color: scheme.outlineVariant, borderRadius: BorderRadius.circular(2))),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                child: Row(children: [
-                  Text(s.aiSettings, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: clr)),
-                  const Spacer(),
-                  TextButton(onPressed: () => Navigator.pop(bCtx), child: Text(zh ? '完成' : 'Done')),
-                ]),
+        // 标题行：移动端二级页面带返回按钮；桌面弹层只有标题 + 完成
+        Widget headerRow({required bool withBack}) => Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(children: [
+            if (withBack) ...[
+              IconButton(
+                icon: Icon(Icons.arrow_back_ios_new, size: 16, color: clr),
+                onPressed: () => Navigator.pop(bCtx),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               ),
-              Expanded(child: ListView(
-                controller: scrollCtrl,
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                children: [
+              const SizedBox(width: 4),
+            ],
+            Text(s.aiSettings, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: clr)),
+            const Spacer(),
+            TextButton(onPressed: () => Navigator.pop(bCtx), child: Text(zh ? '完成' : 'Done')),
+          ]),
+        );
+
+        // 内容列表（AI 配置 / 权限 / 行为 / 提示词等分区），两种形态共用
+        Widget listBody(ScrollController? ctrl) => ListView(
+          controller: ctrl,
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+          children: [
                   // ── AI 配置（左右分区：左列表 / 右详情） ──
                   section(zh ? 'AI 配置' : 'AI Profiles', Icons.folder_shared_outlined, [
                     SizedBox(
@@ -2410,7 +2459,7 @@ void _showAiSettingsDialog(BuildContext ctx, AppState state, AppStrings s) {
                           child: selected() == null
                               ? Center(child: Text(zh ? '选择或新建一个配置' : 'Select or create a profile',
                                   style: TextStyle(fontSize: 11, color: scheme.outline)))
-                              : _buildProfileDetail(ctx, state, setDState, scheme, clr, s, zh, selected()!, selProfileId, draft, showPreset, () {
+                              : _buildProfileDetail(ctx2, state, setDState, scheme, clr, s, zh, selected()!, selProfileId, draft, showPreset, () {
                                   selProfileId = cfg.aiProfiles.isNotEmpty ? cfg.aiProfiles.first.id : '';
                                   draft = null;
                                   setDState(() {});
@@ -2533,13 +2582,30 @@ void _showAiSettingsDialog(BuildContext ctx, AppState state, AppStrings s) {
                     ),
                   ]),
                 ],
-              )),
-            ]),
-          ),
         );
+
+        if (asSheet) {
+          return DraggableScrollableSheet(
+            initialChildSize: 0.85,
+            minChildSize: 0.5,
+            maxChildSize: 0.95,
+            builder: (_, scrollCtrl) => GlassPanel(
+              radius: 20,
+              child: Column(children: [
+                const SizedBox(height: 8),
+                Container(width: 36, height: 4, decoration: BoxDecoration(color: scheme.outlineVariant, borderRadius: BorderRadius.circular(2))),
+                headerRow(withBack: false),
+                Expanded(child: listBody(scrollCtrl)),
+              ]),
+            ),
+          );
+        }
+        // 移动端二级页面：标题行（带返回）+ 内容列表
+        return Column(children: [
+          headerRow(withBack: true),
+          Expanded(child: listBody(null)),
+        ]);
       });
-    },
-  );
 }
 
 /// 弹出 AI 配置编辑表单（新建或编辑现有配置）。

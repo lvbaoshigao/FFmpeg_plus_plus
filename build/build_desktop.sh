@@ -99,8 +99,20 @@ echo "已拷贝: $LIB → $DEST/"
 
 # [macOS] 额外剥离调试符号（与 CI compile-macos 对齐，进一步减小包体）
 if [ "$TARGET" = macos ]; then
+  # dSYM 不进交付产物（Release 配置 dwarf-with-dsym 会在 Products/Release 生成）
+  rm -rf "$ROOT/ffmpegpp_gui/build/macos/Build/Products/Release/"*.dSYM 2>/dev/null || true
   strip -S "$DEST/$(basename "$LIB")" 2>/dev/null || true
+  # 关键：无扩展名的 framework 主二进制（FlutterMacOS/App 是全包最大的两个文件）
+  # *.dylib 的 find 匹配不到它们，必须按框架名逐一剥离
+  for f in "$APP"/Contents/Frameworks/*.framework; do
+    name="$(basename "$f" .framework)"
+    strip -S "$f/$name" 2>/dev/null || true
+  done
   find "$APP/Contents/Frameworks" -name '*.dylib' -exec strip -S {} \; 2>/dev/null || true
+  strip -S "$APP/Contents/MacOS/ffmpegpp_gui" 2>/dev/null || true
+  echo "==== macOS .app 体积构成 ===="
+  du -sh "$APP"
+  du -h "$APP"/Contents/Frameworks/* 2>/dev/null | sort -rh | head -15
 fi
 
 echo "✅ 桌面端构建完成: $TARGET"

@@ -7,6 +7,42 @@ import '../services/ffmpeg_installer.dart';
 import '../services/shell_open.dart';
 import '../theme/app_strings.dart';
 
+/// 后端流水线步骤 action → 本地化名称。
+/// 详细进度（节点圆圈、tooltip）不再直接展示英文 action 名。
+String taskActionLabel(String action, bool zh) => switch (action) {
+  'transcode' => zh ? '转码' : 'Transcode',
+  'subtitle' => zh ? '字幕烧录' : 'Subtitle',
+  'extract_frame' => zh ? '抽帧' : 'Snapshot',
+  'extract_frames_range' => zh ? '区间抽帧' : 'Extract Frames',
+  'extract_frames_all' => zh ? '全部抽帧' : 'Extract All Frames',
+  'image_convert' => zh ? '图片转换' : 'Image Convert',
+  'image_crop' => zh ? '图片裁剪' : 'Image Crop',
+  'image_rotate' => zh ? '图片旋转' : 'Image Rotate',
+  'image_scale' => zh ? '图片缩放' : 'Image Scale',
+  'image_brightness' => zh ? '亮度调节' : 'Brightness',
+  'image_noise' => zh ? '添加噪点' : 'Add Noise',
+  'image_sharpen' => zh ? '图片锐化' : 'Sharpen',
+  'image_denoise' => zh ? '图片降噪' : 'Denoise',
+  'image_channel_extract' => zh ? '通道提取' : 'Channel Extract',
+  'video_crop' => zh ? '视频裁剪' : 'Video Crop',
+  'extract_audio' => zh ? '提取音频' : 'Extract Audio',
+  'audio_metadata' => zh ? '元信息编辑' : 'Audio Metadata',
+  'concat' => zh ? '合并媒体' : 'Concat',
+  'image_sequence' => zh ? '图片合成视频' : 'Image to Video',
+  '_file_copy' => zh ? '文件复制' : 'File Copy',
+  '_cleanup' => zh ? '清理临时文件' : 'Cleanup',
+  _ => zh ? '处理' : 'Process',
+};
+
+/// 迷你节点圆圈里的短标签：中文取前 2 字，英文取 action 前 3 字母大写。
+String taskActionAbbr(String action, bool zh) {
+  if (zh) {
+    final label = taskActionLabel(action, true);
+    return label.substring(0, label.length >= 2 ? 2 : label.length);
+  }
+  return action.replaceAll('_', ' ').toUpperCase().substring(0, action.length >= 3 ? 3 : action.length);
+}
+
 /// 任务卡片：双进度条 + 可展开的节点微型画布
 class TaskCard extends StatelessWidget {
   final TaskInfo task;
@@ -102,6 +138,30 @@ class TaskCard extends StatelessWidget {
                 const Spacer(),
                 Text('${task.progress.toStringAsFixed(0)}%', style: TextStyle(fontSize: 12, color: clr)),
               ]),
+              // 失败任务：折叠态也直接显示错误摘要，点开卡片可查看完整日志
+              if (task.status == TaskStatus.failed && task.error != null) ...[
+                const SizedBox(height: 6),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: scheme.errorContainer.withAlpha(70),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Icon(Icons.error_outline, size: 14, color: scheme.error),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        task.error!,
+                        style: TextStyle(fontSize: 11, color: scheme.error),
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ]),
+                ),
+              ],
             ]),
           ),
         ),
@@ -119,7 +179,33 @@ class TaskCard extends StatelessWidget {
     padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       const Divider(height: 24),
-      
+
+      // 失败任务：完整错误信息直接置顶展示（不再只埋在「高级信息」折叠区里），
+      // 并自动展开含日志的高级信息区，点开卡片即可排查。
+      if (task.status == TaskStatus.failed && task.error != null) ...[
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: scheme.errorContainer.withAlpha(60),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: scheme.error.withAlpha(80)),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Icon(Icons.error_outline, size: 16, color: scheme.error),
+              const SizedBox(width: 6),
+              Text(s.language == 'zh' ? '错误信息' : 'Error Details',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.error)),
+            ]),
+            const SizedBox(height: 8),
+            SelectableText(task.error!,
+                style: TextStyle(fontSize: 12, color: scheme.onErrorContainer, height: 1.4)),
+          ]),
+        ),
+        const SizedBox(height: 16),
+      ],
+
       // 节点流水线区域
       if (task.pipelineCalls != null && task.pipelineCalls!.isNotEmpty) ...[
         _SectionTitle(
@@ -144,6 +230,7 @@ class TaskCard extends StatelessWidget {
                 callProgresses: task.callProgresses,
                 currentCallIndex: task.currentCallIndex,
                 status: task.status,
+                zh: s.language == 'zh',
               ),
               const SizedBox(height: 8),
               _PipelineLegend(scheme: scheme, isZh: s.language == 'zh'),
@@ -469,7 +556,9 @@ class _AdvancedInfoSection extends StatefulWidget {
 }
 
 class _AdvancedInfoSectionState extends State<_AdvancedInfoSection> {
-  bool _expanded = false;
+  // 失败任务自动展开：用户点开卡片就能直接看到完整 ffmpeg 日志，
+  // 不必再手动展开第二级「高级信息」。
+  late bool _expanded = widget.error != null;
 
   @override
   Widget build(BuildContext context) {
@@ -525,16 +614,6 @@ class _AdvancedInfoSectionState extends State<_AdvancedInfoSection> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (widget.error != null) ...[
-            _InfoBlock(
-              icon: Icons.error_outline,
-              title: widget.isZh ? '错误' : 'Error',
-              content: widget.error!,
-              scheme: widget.scheme,
-              isError: true,
-            ),
-            const SizedBox(height: 8),
-          ],
           if (widget.command != null) ...[
             _InfoBlock(
               icon: Icons.terminal,
@@ -553,6 +632,16 @@ class _AdvancedInfoSectionState extends State<_AdvancedInfoSection> {
               scheme: widget.scheme,
               isMonospace: true,
               maxHeight: 160,
+            ),
+          ],
+          // 错误摘要已在卡片展开区顶部展示，这里仅在无日志/命令时兜底显示
+          if (widget.error != null && widget.command == null && widget.logLines.isEmpty) ...[
+            _InfoBlock(
+              icon: Icons.error_outline,
+              title: widget.isZh ? '错误' : 'Error',
+              content: widget.error!,
+              scheme: widget.scheme,
+              isError: true,
             ),
           ],
         ],
@@ -686,12 +775,14 @@ class _NodeMiniCanvas extends StatelessWidget {
   final List<double> callProgresses;
   final int currentCallIndex;
   final TaskStatus status;
+  final bool zh;
 
   const _NodeMiniCanvas({
     required this.calls,
     required this.callProgresses,
     required this.currentCallIndex,
     required this.status,
+    this.zh = true,
   });
 
   @override
@@ -720,6 +811,7 @@ class _NodeMiniCanvas extends StatelessWidget {
                 isCurrent: i == currentCallIndex,
                 status: status,
                 size: circleSize,
+                zh: zh,
               ),
               if (i < calls.length - 1) SizedBox(width: spacing),
             ],
@@ -737,6 +829,7 @@ class _NodeCircle extends StatelessWidget {
   final bool isCurrent;
   final TaskStatus status;
   final double size;
+  final bool zh;
 
   const _NodeCircle({
     required this.call,
@@ -744,6 +837,7 @@ class _NodeCircle extends StatelessWidget {
     required this.isCurrent,
     required this.status,
     required this.size,
+    this.zh = true,
   });
 
   Color _getStatusColor(ColorScheme scheme) {
@@ -758,10 +852,12 @@ class _NodeCircle extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final color = _getStatusColor(scheme);
-    final label = call.action.replaceAll('_', ' ').toUpperCase();
+    // 节点名本地化：不再把后端英文 action 名（TRANSCODE 等）直接展示给用户
+    final label = taskActionLabel(call.action, zh);
+    final abbr = taskActionAbbr(call.action, zh);
 
     return Tooltip(
-      message: '$label\n进度: ${(progress * 100).toStringAsFixed(0)}%',
+      message: '$label\n${zh ? '进度' : 'Progress'}: ${(progress * 100).toStringAsFixed(0)}%',
       child: Container(
         width: size,
         height: size,
@@ -772,7 +868,7 @@ class _NodeCircle extends StatelessWidget {
         ),
         child: Center(
           child: Text(
-            label.substring(0, label.length.clamp(0, 3)),
+            abbr,
             style: TextStyle(
               fontSize: size * 0.3,
               fontWeight: FontWeight.bold,

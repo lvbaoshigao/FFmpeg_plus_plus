@@ -72,12 +72,15 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
     // specStrength 3.0→0.5、specPower 100→48：shader 的 L1/L2 两盏对向灯会在
     // 圆角的左上/右下角各打出一个镜面光点，原参数峰值 +2.5 直接过曝成明显白点；
     // 降低强度并放宽高光锐度后变成柔和的角部光泽，不再抢眼。
+    // blurRadiusPx/lightbandStrength 与 mobile_glass_pill 同步归零：
+    // 1px 径向模糊每像素 49 次纹理采样，进度刷新时导航栏每帧重采样浪费 GPU；
+    // 光带在药丸中线上形成横向分界线（上下分层），彻底关闭。
     refractStrength: -0.10,
-    blurRadiusPx: 1.0,
+    blurRadiusPx: 0.0,
     specStrength: 0.5,
     specPower: 48,
     specWidth: 10,
-    lightbandStrength: 0.35,
+    lightbandStrength: 0.0,
     lightbandColor: Colors.white,
   );
 
