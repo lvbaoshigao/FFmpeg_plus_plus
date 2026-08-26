@@ -285,7 +285,27 @@ if [ ! -f $PREFIX/bin/ffmpeg ] || ! _ffmpeg_dist_ok; then
       --extra-cflags="-I$PREFIX/include $CFLAGS_COMMON" \
       --extra-ldflags="-L$PREFIX/lib -lm -Wl,--dynamic-linker=/system/bin/linker64 -Wl,--exclude-libs=ALL" \
       --extra-libs="-l:libc++.a -l:libunwind.a -ldl -lm" \
-      > $BUILD/ffmpeg_config.log 2>&1 || { tail -40 $BUILD/ffmpeg_config.log; exit 1; }
+      > $BUILD/ffmpeg_config.log 2>&1 || { \
+        echo "===== ffmpeg configure 失败诊断 ====="; \
+        echo "--- config.log 中 libwebp / webp/encode / check_func_headers 相关 ---"; \
+        grep -n -E "libwebp|webp/encode|WebPGetEncoder|check_func_headers|test_pkg_config|test_ld" $BUILD/ffmpeg_config.log | tail -40; \
+        echo "--- config.log 末 60 行 ---"; \
+        tail -60 $BUILD/ffmpeg_config.log; \
+        echo "--- pkg-config 环境 ---"; \
+        echo "PKG_CONFIG='$PKG_CONFIG'"; \
+        echo "PKG_CONFIG_LIBDIR='$PKG_CONFIG_LIBDIR'"; \
+        echo "PKG_CONFIG_SYSROOT_DIR='$PKG_CONFIG_SYSROOT_DIR'"; \
+        echo "--- \$PREFIX/lib 实际内容 ---"; \
+        ls -la $PREFIX/lib/ 2>&1 | head -40; \
+        echo "--- \$PREFIX/include/webp 实际内容 ---"; \
+        ls -la $PREFIX/include/webp/ 2>&1 | head -20; \
+        echo "--- 全盘查找 libwebp/sharpyuv 产物（防装到意外位置）---"; \
+        find $PREFIX -maxdepth 5 \( -name 'libwebp*' -o -name 'libsharpyuv*' -o -name 'encode.h' \) 2>/dev/null | head -40; \
+        echo "--- 手动 pkg-config 检查 ---"; \
+        $PKG_CONFIG --exists --print-errors "libwebp >= 0.2.0" 2>&1 && echo "[pkg-config exists] OK" || echo "[pkg-config exists] FAIL"; \
+        echo "cflags: $($PKG_CONFIG --cflags --static libwebp 2>&1)"; \
+        echo "libs:   $($PKG_CONFIG --libs --static libwebp 2>&1)"; \
+        exit 1; }
   log "building ffmpeg"
   make -j$JOBS > $BUILD/ffmpeg_make.log 2>&1 || { tail -40 $BUILD/ffmpeg_make.log; exit 1; }
   make install >> $BUILD/ffmpeg_make.log 2>&1
