@@ -389,18 +389,73 @@ static void closeFd(int fd) {
     if (fd >= 0) close(fd);
 }
 
+// 创建一对「exec 后自动关闭」的管道。
+//
+// 关键修复（移动端「导入多个文件只有第一个能解析完成」）：此前用裸 pipe()
+// 创建的读写两端都没有 FD_CLOEXEC，而本应用的 DLL 运行在 Flutter 应用进程内，
+// 同一进程还会通过 dart:io 并发派生其它子进程（如列表卡片缩略图 ffmpeg）。
+// 这些无关子进程会 fork 继承探测管道的写端，导致：
+//   1) 探测子进程退出后父进程的排空 read() 因写端仍被外部持有而永远等不到
+//      EOF —— 而 Subprocess::run 的 240s 超时只覆盖主等待循环，不覆盖这里，
+//      于是后续所有 probe 请求全部挂死；
+//   2) 表现为第一个文件正常出信息，其余一直卡在「解析中」。
+// O_CLOEXEC 使这些 fd 在 exec 时自动关闭：自己的 stdout 经 dup2 复制到
+// 1/2 不受影响（dup2 出的新 fd 无该标志），而无关兄弟进程再也无法继承。
+static int createCloexecPipe(int fds[2]) {
+#ifdef __linux__
+    if (pipe2(fds, O_CLOEXEC) == 0) return 0;
+#endif
+    // pipe2 不可用（老内核/libc）时的等价回退
+    if (pipe(fds) != 0) return -1;
+    fcntl(fds[0], F_SETFD, FD_CLOEXEC);
+    fcntl(fds[1], F_SETFD, FD_CLOEXEC);
+    return 0;
+}
+
+// 进程退出后的剩余输出排空：带总时长上限。
+// 正常情况下（配合 O_CLOEXEC）读端立即 EOF，一次循环即返回；
+// 上限只是防御性兜底，避免任何遗留写端把调用线程永久卡死。
+static constexpr int kPostExitDrainMs = 15000;
+
+static void drainFdBounded(int fd, std::string& out, bool& truncated,
+                           std::chrono::steady_clock::time_point deadline) {
+    char buf[4096];
+    while (true) {
+        ssize_t n = read(fd, buf, sizeof(buf) - 1);
+        if (n > 0) {
+            if (out.size() + (size_t)n > kMaxOutputBytes) {
+                out.append(buf, std::min<size_t>((size_t)n, kMaxOutputBytes - out.size()));
+                truncated = true;
+                continue;
+            }
+            out.append(buf, n);
+            continue;
+        }
+        if (n == 0) return;                    // 真 EOF：全部读完
+        if (errno == EINTR) continue;
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            // 非阻塞 fd 暂无数据：短暂等待后重试，超过上限即放弃
+            if (std::chrono::steady_clock::now() >= deadline) return;
+            struct pollfd pfd = {fd, POLLIN | POLLHUP | POLLERR, 0};
+            poll(&pfd, 1, 50);
+            continue;
+        }
+        return;                                 // EINTR 以外/真实错误：放弃
+    }
+}
+
 ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_sec) {
     ProcessResult result;
     if (cmd.empty()) { result.exit_code = -1; return result; }
 
     int stdout_pipe[2], stderr_pipe[2];
-    if (pipe(stdout_pipe) != 0) {
+    if (createCloexecPipe(stdout_pipe) != 0) {
         result.exit_code = -1;
         return result;
     }
     // 不能和上面写成 `||` 短路：那样第一个 pipe 成功、第二个失败时，
     // stdout_pipe 的两个 fd 就再也没人关了。
-    if (pipe(stderr_pipe) != 0) {
+    if (createCloexecPipe(stderr_pipe) != 0) {
         closeFd(stdout_pipe[0]); closeFd(stdout_pipe[1]);
         result.exit_code = -1;
         return result;
@@ -519,14 +574,10 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
         }
     }
 
-    // 读取剩余数据
-    ssize_t n;
-    while ((n = read(stdout_pipe[0], buf, sizeof(buf) - 1)) > 0) {
-        stdout_data.append(buf, n);
-    }
-    while ((n = read(stderr_pipe[0], buf, sizeof(buf) - 1)) > 0) {
-        stderr_data.append(buf, n);
-    }
+    // 读取剩余数据（带上限：见 drainFdBounded 注释，防止遗留写端导致永久阻塞）
+    const auto drainDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kPostExitDrainMs);
+    drainFdBounded(stdout_pipe[0], stdout_data, truncated, drainDeadline);
+    drainFdBounded(stderr_pipe[0], stderr_data, truncated, drainDeadline);
 
     result.stdout_output = stdout_data;
     result.stderr_output = stderr_data;
@@ -548,13 +599,16 @@ ProcessResult Subprocess::runWithProgress(
     if (cmd.empty()) { result.exit_code = -1; return result; }
 
     int stdout_pipe[2], stderr_pipe[2];
-    if (pipe(stdout_pipe) != 0) {
+    // O_CLOEXEC：修复与 Subprocess::run 相同的 fd 泄漏问题 ——
+    // ffmpeg 长转码期间并发的无关子进程（缩略图/探测）若继承这些管道写端，
+    // 读取线程同样会在进程退出后永远等不到 EOF。
+    if (createCloexecPipe(stdout_pipe) != 0) {
         result.exit_code = -1;
         return result;
     }
     // 不能和上面写成 `||` 短路：那样第一个 pipe 成功、第二个失败时，
     // stdout_pipe 的两个 fd 就再也没人关了。
-    if (pipe(stderr_pipe) != 0) {
+    if (createCloexecPipe(stderr_pipe) != 0) {
         closeFd(stdout_pipe[0]); closeFd(stdout_pipe[1]);
         result.exit_code = -1;
         return result;

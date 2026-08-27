@@ -133,10 +133,64 @@ class AndroidPlatformBridge {
 
       // 用 copy 而非 readAsBytes+writeAsBytes：大文件走流式拷贝，不占内存
       await srcFile.copy(dest.path);
+      // 滚动清理历史导入副本，防止 ffmpegpp_imports 随使用无限膨胀
+      // （表现为"应用本体缓存"持续增大）。
+      await _pruneImportCache(importDir);
       return dest.path;
     } catch (_) {
       return src;
     }
+  }
+
+  /// 导入副本目录滚动清理：保留最近 [keepCount] 个文件、总大小不超过
+  /// [maxTotalBytes]（默认 1GB）。超限时按「修改时间从旧到新」删除；
+  /// 全程吞掉 IO 异常 —— 清理失败绝不影响本次导入本身。
+  static Future<void> _pruneImportCache(
+    Directory dir, {
+    int keepCount = 30,
+    int maxTotalBytes = 1024 * 1024 * 1024,
+  }) async {
+    try {
+      if (!await dir.exists()) return;
+      final files = <File>[];
+      await for (final e in dir.list()) {
+        if (e is File) files.add(e);
+      }
+      if (files.isEmpty) return;
+
+      // 按修改时间旧 → 新排序（尽量少依赖时钟精度导致的同毫秒抖动）
+      final mods = <File, DateTime>{};
+      final lens = <File, int>{};
+      var total = 0;
+      for (final f in files) {
+        try {
+          mods[f] = await f.lastModified();
+          lens[f] = await f.length();
+          total += lens[f] ?? 0;
+        } catch (_) {}
+      }
+      files.sort((a, b) => (mods[a] ?? mods[b]!).compareTo(mods[b] ?? mods[a]!));
+
+      final toDelete = <File>{};
+      var overflow = files.length - keepCount; // 数量超限部分全部标记
+      for (final f in files) {
+        if (overflow > 0) {
+          toDelete.add(f);
+          total -= lens[f] ?? 0;
+          overflow--;
+          continue;
+        }
+        if (total <= maxTotalBytes) break;
+        toDelete.add(f); // 总量超限：继续删最旧的
+        total -= lens[f] ?? 0;
+      }
+
+      for (final f in toDelete) {
+        try {
+          await f.delete();
+        } catch (_) {}
+      }
+    } catch (_) {}
   }
 
   /// 系统壁纸主色（ARGB int），Android 8.1+ (API 27+) 可用。

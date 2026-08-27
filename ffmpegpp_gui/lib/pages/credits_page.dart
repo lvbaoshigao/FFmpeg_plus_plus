@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
@@ -11,6 +12,29 @@ import '../services/shell_open.dart';
 class CreditsPage extends StatelessWidget {
   const CreditsPage({super.key});
 
+  /// 与其它二级页（容器详情等）一致：有壁纸铺壁纸，无壁纸至少铺一层不透明
+  /// 主题底色。修复点：此前本页 Scaffold 透明且外层没有铺任何背景，
+  /// 在移动端（页面直接 push 出新路由、底下不是壁纸 Stack）会露出系统
+  /// 窗口黑底 → 整页黑屏、文字不可见。
+  Widget _withWallpaper(BuildContext context, Widget child) {
+    final cfg = context.watch<AppState>().config;
+    final bg = cfg.backgroundImage;
+    final scheme = Theme.of(context).colorScheme;
+    final base = Positioned.fill(child: Container(color: scheme.surface));
+    if (bg.isEmpty || !File(bg).existsSync()) {
+      return Stack(children: [base, child]);
+    }
+    final a = ((1.0 - cfg.backgroundOpacity) * 220).round().clamp(20, 240);
+    return Stack(children: [
+      base,
+      Positioned.fill(child: Image.file(File(bg), fit: BoxFit.cover)),
+      Positioned.fill(child: Container(color: scheme.surface.withAlpha(a))),
+      Theme(data: Theme.of(context).copyWith(
+        scaffoldBackgroundColor: Colors.transparent,
+      ), child: child),
+    ]);
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -22,7 +46,7 @@ class CreditsPage extends StatelessWidget {
       Text(s.aboutReferencesTitle),
     ]);
 
-    return Scaffold(
+    return _withWallpaper(context, Scaffold(
       backgroundColor: Colors.transparent,
       body: Column(children: [
         isMobilePlatform
@@ -55,7 +79,7 @@ class CreditsPage extends StatelessWidget {
           ),
         ),
       ]),
-    );
+    ));
   }
 
   Widget _projectCard(ColorScheme scheme, AppStrings s,

@@ -589,6 +589,9 @@ class _AppShellState extends State<AppShell> with WindowListener {
           child: MobileBottomNav(
             selectedIndex: nav,
             onSelected: _selectMobileNav,
+            // 让遮罩连续跟随 PageView 实时位置，避免滑动切换时
+            // 遮罩在中途项「停留一拍再跳走」的动画跳跃。
+            pageController: _mobilePageController,
           ),
         ),
       ]);

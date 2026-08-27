@@ -266,8 +266,16 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
     final isZh = AppStrings.of(context.watch<AppState>().config.language).isZh;
     final media = MediaQuery.of(context);
     final narrow = media.size.width < 760;
-    final winW = narrow ? media.size.width - 16 : math.min(960.0, media.size.width * 0.92);
-    final winH = narrow ? media.size.height - 24 : math.min(700.0, media.size.height * 0.86);
+    // 移动端适配（修复：布局拥挤/偏移）：
+    // - 宽度按屏宽减去小边距，不再 16px 起铺（刘海/圆角屏贴边怪异）；
+    // - 高度避开状态栏与手势条（viewPadding），内容套 SafeArea；
+    // - 键盘弹出时（viewInsets.bottom>0）压缩窗口高度，避免输入框被遮。
+    final phoneLayout = media.size.width < 600;
+    final winW = narrow ? media.size.width - (phoneLayout ? 8 : 16) : math.min(960.0, media.size.width * 0.92);
+    final keyboardInset = media.viewInsets.bottom > 0 ? media.viewInsets.bottom : 0.0;
+    final winH = narrow
+        ? media.size.height - 24 - keyboardInset.clamp(0, media.size.height * 0.5)
+        : math.min(700.0, media.size.height * 0.86);
 
     return PopScope(
       canPop: false,
@@ -286,22 +294,30 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
           child: GlassPanel(
             radius: 22,
             padding: EdgeInsets.zero,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _buildHeader(scheme, isZh),
-                Divider(height: 1, color: scheme.outlineVariant.withAlpha(70)),
-                Expanded(
-                  child: LayoutBuilder(
-                    builder: (_, constraints) {
-                      if (constraints.maxWidth < 720) {
-                        return _buildVerticalLayout(scheme, isZh);
-                      }
-                      return _buildHorizontalLayout(scheme, isZh);
-                    },
+            child: SafeArea(
+              top: false,
+              bottom: false,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    // 手机上让出状态栏，避免标题被挖孔/刘海压住。
+                    padding: EdgeInsets.only(top: media.padding.top),
+                    child: _buildHeader(scheme, isZh),
                   ),
-                ),
-              ],
+                  Divider(height: 1, color: scheme.outlineVariant.withAlpha(70)),
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (_, constraints) {
+                        if (constraints.maxWidth < 720) {
+                          return _buildVerticalLayout(scheme, isZh, constraints);
+                        }
+                        return _buildHorizontalLayout(scheme, isZh);
+                      },
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -364,9 +380,11 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
             label: Text(isZh ? '保存' : 'Save'),
             onPressed: _dirty ? _save : null,
             style: FilledButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              minimumSize: Size.zero,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              padding: EdgeInsets.symmetric(horizontal: 14, vertical: isMobileContext ? 0 : 0),
+              // 修复：原先 minimumSize.zero + shrinkWrap 把按钮压成一条扁条，
+              // 移动端不足 44dp 触控规范。这里给足触控高度并保持可读字号。
+              minimumSize: Size(0, isMobileContext ? 44 : 36),
+              tapTargetSize: MaterialTapTargetSize.padded,
               textStyle: const TextStyle(fontSize: 13),
             ),
           ),
@@ -378,13 +396,16 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
               final nav = Navigator.of(context);
               if (await _onWillPop() && nav.mounted) nav.pop();
             },
-            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+            constraints: BoxConstraints(minWidth: isMobileContext ? 44 : 36, minHeight: isMobileContext ? 44 : 36),
             padding: EdgeInsets.zero,
           ),
         ],
       ),
     );
   }
+
+  /// 是否处于移动端（窄屏）上下文：决定按钮触控尺寸与布局密度。
+  bool get isMobileContext => MediaQuery.sizeOf(context).width < 600;
 
   Widget _buildHorizontalLayout(ColorScheme scheme, bool isZh) {
     return Row(
@@ -397,10 +418,13 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
     );
   }
 
-  Widget _buildVerticalLayout(ColorScheme scheme, bool isZh) {
+  Widget _buildVerticalLayout(ColorScheme scheme, bool isZh, BoxConstraints constraints) {
+    // 修复：原先固定 200px 的左侧列表在手机竖屏上被压得极扁、排版拥挤；
+    // 现按可用高度的 42% 动态分配（限制在 170~300px），窄屏两栏比例协调。
+    final leftH = (constraints.maxHeight * 0.42).clamp(170.0, 300.0);
     return Column(
       children: [
-        SizedBox(height: 200, child: _buildLeftPanel(scheme, isZh)),
+        SizedBox(height: leftH, child: _buildLeftPanel(scheme, isZh)),
         Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
         Expanded(child: _buildRightPanel(scheme, isZh)),
       ],

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/models.dart';
@@ -245,12 +246,16 @@ class _MonitorWidgetState extends State<_MonitorWidget> {
       _mini(Icons.memory, m.cpuPercent < 0 ? '--' : '${m.cpuPercent.toStringAsFixed(0)}%', m.cpuPercent < 0 ? 0 : m.cpuPercent / 100, sc),
       const SizedBox(width: 8),
       _mini(Icons.storage, m.ramUsedGb < 0 ? '--' : '${m.ramUsedGb.toStringAsFixed(1)}G', m.ramPercent < 0 ? 0 : m.ramPercent / 100, sc),
-      // GPU：拿到型号或占用率任一项即显示（Android 上 GPU 名走 EGL 查询，
-      // 占用率依赖 sysfs，部分机型只能显示 "--"）。
-      if (m.gpuName.isNotEmpty || m.gpuPercent >= 0) ...[
-        const SizedBox(width: 8),
-        _mini(Icons.videocam, m.gpuPercent < 0 ? '--' : '${m.gpuPercent.toStringAsFixed(0)}%', m.gpuPercent < 0 ? 0 : m.gpuPercent / 100, sc),
-      ],
+      // GPU：始终显示（修复：Android 上部分机型拿不到占用率时整块不渲染，
+      // 用户以为队列界面缺少 GPU 信息；现在统一显示，读不到时为 "--"，
+      // 长按可看探测到的 GPU 型号）。
+      const SizedBox(width: 8),
+      Tooltip(
+        message: m.gpuName.isEmpty
+            ? (Platform.isAndroid ? 'GPU 占用率不可用' : 'GPU')
+            : '${m.gpuName} ${m.gpuPercent < 0 ? '' : '· ${m.gpuPercent.toStringAsFixed(0)}%'}',
+        child: _mini(Icons.videocam, m.gpuPercent < 0 ? '--' : '${m.gpuPercent.toStringAsFixed(0)}%', m.gpuPercent < 0 ? 0 : m.gpuPercent / 100, sc),
+      ),
     ]);
   }
 

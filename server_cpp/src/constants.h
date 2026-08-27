@@ -13,6 +13,9 @@ inline std::map<std::string, std::map<std::string, std::string>> GPU_ENCODERS = 
     {"NVIDIA", {{"h264", "h264_nvenc"}, {"h265", "hevc_nvenc"}, {"av1", "av1_nvenc"}}},
     {"AMD", {{"h264", "h264_amf"}, {"h265", "hevc_amf"}, {"av1", "av1_amf"}}},
     {"Intel", {{"h264", "h264_qsv"}, {"h265", "hevc_qsv"}, {"av1", "av1_qsv"}}},
+    // Android：内置 ffmpeg 以 --enable-mediacodec 构建，硬编走 NDK MediaCodec
+    //（无需 JVM/Surface，buffer 模式输出标准 AnnexB → 由 ffmpeg 封装为 mp4）。
+    {"Android", {{"h264", "h264_mediacodec"}, {"h265", "hevc_mediacodec"}}},
 };
 
 // 硬件加速参数

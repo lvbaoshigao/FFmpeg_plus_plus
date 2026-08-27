@@ -43,6 +43,16 @@ String taskActionAbbr(String action, bool zh) {
   return action.replaceAll('_', ' ').toUpperCase().substring(0, action.length >= 3 ? 3 : action.length);
 }
 
+/// 后端占位值（N/A / unknown / 空）的本地化展示：空值直接不显示；
+/// "N/A" 类占位在中文界面显示为「—」，避免英文残留在队列详情里。
+String _dashIfNa(String v, bool isZh) {
+  final t = v.trim();
+  if (t.isEmpty || t.toLowerCase() == 'n/a' || t.toLowerCase() == 'na' || t == '-' || t.toLowerCase() == 'unknown') {
+    return isZh ? '—' : 'N/A';
+  }
+  return t;
+}
+
 /// 任务卡片：双进度条 + 可展开的节点微型画布
 class TaskCard extends StatelessWidget {
   final TaskInfo task;
@@ -133,8 +143,11 @@ class TaskCard extends StatelessWidget {
               ],
               const SizedBox(height: 4),
               Row(children: [
-                _chip(Icons.timer_outlined, '${s.remaining}: ${task.remaining}', scheme),
-                const SizedBox(width: 12), _chip(Icons.speed, task.speed, scheme),
+                // 占位值（N/A / 空）统一本地化：中文下显示「—」，避免
+                // "Remaining: N/A" 这类混合英文出现在队列详情里。
+                _chip(Icons.timer_outlined, '${s.remaining}: ${_dashIfNa(task.remaining, s.isZh)}', scheme),
+                const SizedBox(width: 12),
+                if (task.speed.isNotEmpty) _chip(Icons.speed, _dashIfNa(task.speed, s.isZh), scheme),
                 const Spacer(),
                 Text('${task.progress.toStringAsFixed(0)}%', style: TextStyle(fontSize: 12, color: clr)),
               ]),
@@ -264,8 +277,8 @@ class TaskCard extends StatelessWidget {
       const SizedBox(height: 8),
       _StatsGrid(
         stats: [
-          ('FPS', task.fps, Icons.videocam),
-          (s.language == 'zh' ? '码率' : 'Bitrate', task.bitrate, Icons.trending_up),
+          ('FPS', _dashIfNa(task.fps, s.language == 'zh'), Icons.videocam),
+          (s.language == 'zh' ? '码率' : 'Bitrate', _dashIfNa(task.bitrate, s.language == 'zh'), Icons.trending_up),
           (s.language == 'zh' ? '大小' : 'Size', task.outputSizeStr, Icons.storage),
         ],
         scheme: scheme,
