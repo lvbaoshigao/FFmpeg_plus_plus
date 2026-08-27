@@ -137,7 +137,10 @@ else
 fi
 
 # ── 3. lame ──
-if [ ! -f $PREFIX/lib/libmp3lame.a ]; then
+# 缓存守卫与 libwebp 同款自愈模式：静态库、头文件、pc 三者任一缺失即重建。
+# ffmpeg n8.0 对 libmp3lame 的探测是 <lame/lame.h> + -lmp3lame；
+# 而 lame 默认只装 include/lame/lame.h，且不保证安装 .pc —— 这里统一兜底。
+if [ ! -f $PREFIX/lib/libmp3lame.a ] || [ ! -e $PREFIX/include/lame/lame.h ]; then
   fetch lame.tar.gz "https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz"
   rm -rf lame && mkdir lame && tar xf lame.tar.gz -C lame --strip-components=1
   cd lame
@@ -153,6 +156,23 @@ if [ ! -f $PREFIX/lib/libmp3lame.a ]; then
 else
   log "lame cached"
 fi
+
+# 无条件确保 libmp3lame.pc 存在且指向当前 PREFIX（旧缓存迁移 NDK 时
+# prefix 变化会导致旧 .pc 指向失效路径，pkg 探测随之失败）。
+mkdir -p $PREFIX/lib/pkgconfig
+cat > $PREFIX/lib/pkgconfig/libmp3lame.pc <<EOF
+prefix=$PREFIX
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: libmp3lame
+Description: MP3 encoding library
+Version: 3.100
+Cflags: -I\${includedir}
+Libs: -L\${libdir} -lmp3lame
+Libs.private: -lm
+EOF
 
 # ── 4. opus ──
 if [ ! -f $PREFIX/lib/libopus.a ]; then
@@ -325,6 +345,53 @@ if [ ! -f $PREFIX/bin/ffmpeg ] || ! _ffmpeg_dist_ok; then
       --extra-cflags="-I$PREFIX/include $CFLAGS_COMMON" \
       --extra-ldflags="-L$PREFIX/lib -lm -Wl,--dynamic-linker=/system/bin/linker64 -Wl,--exclude-libs=ALL" \
       --extra-libs="-l:libc++.a -l:libunwind.a -ldl -lm" \
+  # ── 缓存产物预检：binwrap 报 "cached" 不代表库真的躺在 PREFIX 里 ──
+  # 直接把 lame.pc 的 Version/Cflags/Libs 打到控制台，configure 一旦报
+  # "libmp3lame >= 3.98.3 not found"，无需翻 config.log 就能对出根因
+  # （pc 缺失 / include 布局不对 / 静态库没装）。
+  if [ -e "$PREFIX/lib/pkgconfig/libmp3lame.pc" ]; then
+    log "lame.pc: $(grep -E '^(Version|Cflags|Libs)' "$PREFIX/lib/pkgconfig/libmp3lame.pc" | tr '\n' '|')"
+  else
+    log "PRECHECK MISS: no libmp3lame.pc under $PKG_CONFIG_LIBDIR"
+    log "pkgconfig dir content: $(ls "$PREFIX/lib/pkgconfig" 2>/dev/null | tr '\n' ' ')"
+  fi
+  [ -e "$PREFIX/lib/libmp3lame.a" ] && log "precheck: libmp3lame.a OK" || log "PRECHECK MISS: libmp3lame.a"
+  [ -e "$PREFIX/include/libmp3lame/lame.h" ] && log "precheck: include/libmp3lame/lame.h OK" \
+      || log "include dirs: $(ls "$PREFIX/include" 2>/dev/null | tr '\n' ' ')"
+
+  # ── Android 硬件编解码（MediaCodec，修复：移动端处理视频无 GPU 加速）──
+  # --enable-mediacodec 启用 NDK MediaCodec 包装层：自带解码器
+  #   h264/vp8/vp9/av1_mediacodec 与编码器 h264/h265_mediacodec，buffer
+  #   模式无需 JVM —— 与子进程执行方式兼容。
+  # --enable-jni 提供 MediaCodec 所需 JNI 工具函数；configure 自动链接
+  #   -lmediandk/-landroid。旧 APK 的内置 ffmpeg 无这些编码器时，后端
+  #   resolveEncoder 明确报「不支持的编码器」，重跑本脚本再打 APK 即可。
+  #
+  # 注意：参数全部放进数组再展开执行。此前的错误写法把注释行插在反斜杠
+  # 续行体内 —— bash 遇到续行后接的空白+# 注释会在该物理行的真实换行符处
+  # 截断整条命令，--extra-cflags/--extra-ldflags 全部丢失，lame/webp 探测
+  # 失败；数组写法从根上消除这类续行/注释交互问题，且诊断时可精确回放 argv。
+  CONFIGURE_ARGS=(
+      --target-os=android --arch=aarch64 --cpu=armv8-a
+      --enable-cross-compile --cross-prefix=aarch64-linux-android-
+      --host-cc=/usr/bin/gcc
+      --pkg-config=/usr/bin/pkg-config
+      --cc=$CC --cxx=$CXX --sysroot=$SYSROOT
+      --ar=$TOOLCHAIN/bin/llvm-ar --nm=$TOOLCHAIN/bin/llvm-nm
+      --ranlib=$TOOLCHAIN/bin/llvm-ranlib --strip=$TOOLCHAIN/bin/llvm-strip
+      --prefix=$PREFIX
+      --enable-static --disable-shared --enable-pic
+      --disable-doc --disable-debug --disable-network --disable-ffplay
+      --enable-ffmpeg --enable-ffprobe --enable-small
+      --enable-gpl --enable-libx264 --enable-libx265
+      --enable-libmp3lame --enable-libopus --enable-libwebp
+      --enable-mediacodec --enable-jni
+      "--extra-cflags=-I$PREFIX/include $CFLAGS_COMMON"
+      "--extra-ldflags=-L$PREFIX/lib -lm -Wl,--dynamic-linker=/system/bin/linker64 -Wl,--exclude-libs=ALL"
+      "--extra-libs=-l:libc++.a -l:libunwind.a -ldl -lm"
+  )
+  log "configure argv (${#CONFIGURE_ARGS[@]} args): ${CONFIGURE_ARGS[*]}"
+  ./configure "${CONFIGURE_ARGS[@]}" \
       > $BUILD/ffmpeg_config.log 2>&1 || { \
         echo "===== ffmpeg configure 失败诊断 ====="; \
         echo "--- config.log 中 libwebp / webp/encode / check_func_headers 相关 ---"; \
