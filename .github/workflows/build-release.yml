@@ -523,7 +523,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v5.2.0
+          tag_name: 5.2.0
           name: "FFmpeg++ v5.2.0"
           body: |
             ## 🎬 FFmpeg++ v5.2.0
