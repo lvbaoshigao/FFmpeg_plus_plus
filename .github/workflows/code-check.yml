@@ -6,12 +6,12 @@ name: Code Check
 # 作用：在 debug-build 之前快速发现编译错误、类型错误、lint 违规，
 # 避免等待完整构建后才发现问题。
 
-##on:
-##  push:
-##    branches: [main, develop]
-##  pull_request:
-##    branches: [main]
-##  workflow_dispatch:
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
   analyze:
