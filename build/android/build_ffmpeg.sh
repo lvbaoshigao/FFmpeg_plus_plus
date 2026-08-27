@@ -287,6 +287,18 @@ if [ ! -f $PREFIX/bin/ffmpeg ] || ! _ffmpeg_dist_ok; then
   export PKG_CONFIG=/usr/bin/pkg-config
   export PKG_CONFIG_LIBDIR=$PREFIX/lib/pkgconfig
   export PKG_CONFIG_SYSROOT_DIR=$SYSROOT
+  # ── Android 硬件编解码（MediaCodec，修复：移动端处理视频无 GPU 加速）──
+  # 注意：以下说明必须放在 ./configure 命令之前。bash 续行体中间不允许出现
+  # 注释行 —— `--enable-libwebp \` 后接注释会在该物理行的真实换行符处把
+  # 整条命令截断，导致 --extra-cflags/--extra-ldflags 全部丢失，lame/webp
+  # 的头文件与库探测随之失败（CI 报 "libmp3lame >= 3.98.3 not found"）。
+  # --enable-mediacodec 启用 NDK MediaCodec 包装层：自带
+  #   解码器 h264/vp8/vp9/av1_mediacodec 与编码器 h264/h265_mediacodec，
+  #   buffer 模式（非 Surface），无需 JVM —— 与子进程执行方式兼容。
+  # --enable-jni 提供 MediaCodec 所需的 JNI 工具函数；configure 检测
+  #   到 mediacodec 后会自动链接 -lmediandk/-landroid。旧 APK 的内置
+  #   ffmpeg 无这些编码器时，后端 resolveEncoder 明确报
+  #   「不支持的编码器」，重新运行本脚本再打 APK 即可。
   ./configure \
       --target-os=android --arch=aarch64 --cpu=armv8-a \
       --enable-cross-compile --cross-prefix=aarch64-linux-android- \
