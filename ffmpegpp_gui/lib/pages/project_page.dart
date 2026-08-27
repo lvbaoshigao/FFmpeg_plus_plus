@@ -15,7 +15,17 @@ import '../widgets/mobile_glass_pill.dart';
 import '../widgets/toast.dart';
 import '../platform/app_platform.dart';
 import '../services/quick_config_storage.dart';
+import '../services/quick_config_pipeline.dart';
+import '../app.dart' show smoothRoute;
 import 'quick_config_page.dart';
+import 'pipeline_editor_page.dart';
+
+/// 快速配置选择器「现场编辑」的哨兵返回值（区别于 QuickConfig 预设与 null 取消）。
+class _QuickPickLiveEdit {
+  const _QuickPickLiveEdit();
+}
+
+const _quickPickLiveEdit = _QuickPickLiveEdit();
 
 class ProjectPage extends StatefulWidget {
   const ProjectPage({super.key});
@@ -425,8 +435,15 @@ class ProjectPageState extends State<ProjectPage> {
         _searchVisible = !_searchVisible;
         if (!_searchVisible) _searchQuery = '';
       })),
+      // 导入配置：修复“点击无任何响应”——原先视频列表为空时 onTap 直接传 null，
+      // 按钮可点但毫无反馈。空列表时给出明确的操作引导提示。
       _pillAction(scheme, Icons.file_download_outlined, s.isZh ? '导入配置' : 'Import Config',
-          scheme.onSurface, state.videos.isEmpty ? null : () => _importConfig(state, s)),
+          scheme.onSurface,
+          state.videos.isEmpty
+              ? () => showToast(context,
+                  s.isZh ? '请先用「+」添加文件，再导入配置并应用' : 'Add files with "+" first, then import a config to apply',
+                  type: ToastType.info)
+              : () => _importConfig(state, s)),
       if (state.config.editMode != 1)
         _pillAction(scheme, Icons.create_new_folder_outlined, s.container, scheme.onSurface,
             () => _showContainerMenu(context, state, s)),
@@ -901,13 +918,15 @@ class ProjectPageState extends State<ProjectPage> {
     }
   }
 
-  /// 快速模式：选择文件后弹出快速配置选择对话框
+  /// 快速模式：选择文件后弹出快速配置选择对话框。
+  /// - 选预设 → 参数编辑 → 保存并把启用项翻译成节点图应用到该文件；
+  /// - 「现场编辑」→ 直接打开节点编辑器（PipelineEditorPage）。
   Future<void> _showQuickConfigDialog(BuildContext context, AppState state, VideoFile video, AppStrings s) async {
     final zh = s.isZh;
     final fileType = _fileTypeForMediaType(video.fileMediaType);
     final configs = await QuickConfigStorage.loadAll(fileType);
     if (!context.mounted) return;
-    final selected = await showDialog<QuickConfig>(
+    final selected = await showDialog<Object>(
       context: context,
       builder: (ctx) => _QuickConfigPicker(
         configs: configs,
@@ -916,20 +935,47 @@ class ProjectPageState extends State<ProjectPage> {
         isZh: zh,
       ),
     );
-    if (selected == null || !context.mounted) return;
-    final saved = await showDialog<QuickConfig>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => QuickConfigPage(
-        config: selected,
-        onSave: (updated) async {
-          await QuickConfigStorage.save(updated);
-        },
-      ),
-    );
-    if (saved != null && context.mounted) {
-      showToast(context, zh ? '配置已保存' : 'Config saved', type: ToastType.success);
+    if (!context.mounted) return;
+    if (selected is QuickConfig) {
+      final saved = await showDialog<QuickConfig>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => QuickConfigPage(
+          config: selected,
+          onSave: (updated) async {
+            await QuickConfigStorage.save(updated);
+          },
+        ),
+      );
+      if (saved == null || !context.mounted) return;
+      // 关键修复：此前预设保存后与视频毫无关联，任务入队时 pipelineGraph
+      // 为空 → 图片输出与输入完全相同。这里把启用项翻译成节点图再应用。
+      final result = buildGraphFromQuickConfig(saved, isZh: zh);
+      if (result.isEmpty) {
+        showToast(context,
+          zh ? '该预设没有可应用的处理项。${result.skippedNotes.join(' ')}' : 'No applicable items. ${result.skippedNotes.join(' ')}',
+          type: ToastType.warning);
+        return;
+      }
+      state.updateVideoPipeline(video.id, result.graph);
+      final note = result.skippedNotes.isEmpty ? '' : (zh ? '；${result.skippedNotes.join('；')}' : '; ${result.skippedNotes.join('; ')}');
+      showToast(context,
+        zh ? '已应用 ${result.appliedKeys.length} 项设置，加入队列后生效$note'
+           : 'Applied ${result.appliedKeys.length} settings, effective when queued$note',
+        type: ToastType.success);
+    } else if (identical(selected, _quickPickLiveEdit)) {
+      _openLiveEditor(context, state, video, s);
     }
+  }
+
+  /// 现场编辑：打开节点编辑器自由编排处理流程。
+  void _openLiveEditor(BuildContext context, AppState state, VideoFile video, AppStrings s) {
+    Navigator.of(context).push(smoothRoute(PipelineEditorPage(
+      video: video,
+      onSave: (graph) {
+        state.updateVideoPipeline(video.id, graph);
+      },
+    )));
   }
 
   QuickFileType _fileTypeForMediaType(MediaType? mt) {
@@ -1165,6 +1211,14 @@ class _QuickConfigPicker extends StatelessWidget {
               ),
       ),
       actions: [
+        // 快速模式「现场编辑」：不选预设直接进入节点编辑器（Bug 修复：
+        // 之前快速模式只能选预设，无法对该文件做自由编辑）。
+        TextButton.icon(
+          onPressed: () => Navigator.pop(context, _quickPickLiveEdit),
+          icon: Icon(Icons.tune, size: 16, color: scheme.primary),
+          label: Text(isZh ? '现场编辑' : 'Live Edit',
+              style: TextStyle(color: scheme.primary)),
+        ),
         TextButton(
           onPressed: () => Navigator.pop(context),
           child: Text(isZh ? '取消' : 'Cancel'),

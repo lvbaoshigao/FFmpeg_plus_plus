@@ -301,6 +301,15 @@ if [ ! -f $PREFIX/bin/ffmpeg ] || ! _ffmpeg_dist_ok; then
       --enable-ffmpeg --enable-ffprobe --enable-small \
       --enable-gpl --enable-libx264 --enable-libx265 \
       --enable-libmp3lame --enable-libopus --enable-libwebp \
+      # ── Android 硬件编解码（MediaCodec，修复：移动端处理视频无 GPU 加速）──
+      # --enable-mediacodec 启用 NDK MediaCodec 包装层：自带
+      #   解码器 h264/vp8/vp9/av1_mediacodec 与编码器 h264/h265_mediacodec，
+      #   buffer 模式（非 Surface），无需 JVM —— 与子进程执行方式兼容。
+      # --enable-jni 提供 MediaCodec 所需的 JNI 工具函数；configure 检测
+      #   到 mediacodec 后会自动链接 -lmediandk/-landroid。旧 APK 的内置
+      #   ffmpeg 无这些编码器时，后端 resolveEncoder 明确报
+      #   「不支持的编码器」，重新运行本脚本再打 APK 即可。
+      --enable-mediacodec --enable-jni \
       --extra-cflags="-I$PREFIX/include $CFLAGS_COMMON" \
       --extra-ldflags="-L$PREFIX/lib -lm -Wl,--dynamic-linker=/system/bin/linker64 -Wl,--exclude-libs=ALL" \
       --extra-libs="-l:libc++.a -l:libunwind.a -ldl -lm" \

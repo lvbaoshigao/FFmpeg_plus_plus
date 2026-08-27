@@ -1626,17 +1626,36 @@ class AppState extends ChangeNotifier {
     final output = p['output'] as String;
     final cropW = (p['crop_w'] as num?)?.toInt() ?? 0;
     final cropH = (p['crop_h'] as num?)?.toInt() ?? 0;
-    final cropX = (p['crop_x'] as num?)?.toInt() ?? 0;
-    final cropY = (p['crop_y'] as num?)?.toInt() ?? 0;
+    var cropX = (p['crop_x'] as num?)?.toInt() ?? 0;
+    var cropY = (p['crop_y'] as num?)?.toInt() ?? 0;
 
     if (cropW <= 0 || cropH <= 0) {
       return {'success': false, 'error': '裁剪尺寸无效 (${cropW}x$cropH)'};
     }
 
+    // 按源尺寸钳制裁剪矩形：越界的 crop 参数会让 ffmpeg 直接报错
+    // （"Invalid too big or non positive size"），此前表现为任务失败或
+    // 用户误以为"输出与输入相同"。这里探测源宽高后做统一钳制。
+    final src = await _probeImageSize(input);
+    int useW = cropW, useH = cropH;
+    if (src != null) {
+      final (sw, sh) = src;
+      if (cropX < 0) cropX = 0;
+      if (cropY < 0) cropY = 0;
+      if (cropX >= sw || cropY >= sh) {
+        return {'success': false, 'error': '裁剪起点 ($cropX,$cropY) 超出图片范围 ${sw}x$sh'};
+      }
+      useW = cropW.clamp(1, sw - cropX);
+      useH = cropH.clamp(1, sh - cropY);
+      if (useW != cropW || useH != cropH) {
+        addLog('裁剪尺寸按源图片调整为 ${useW}x$useH (源 ${sw}x$sh)', category: 'info');
+      }
+    }
+
     try {
       final outDir = File(output).parent;
       if (!outDir.existsSync()) outDir.createSync(recursive: true);
-      final cropFilter = 'crop=$cropW:$cropH:$cropX:$cropY';
+      final cropFilter = 'crop=$useW:$useH:$cropX:$cropY';
       final args = <String>['-y', '-i', input, '-vf', cropFilter, output];
       addLog('图片裁剪: $_ffmpegBin ${args.join(' ')}', category: 'info');
       final result = await Process.run(_ffmpegBin, args);
@@ -1725,6 +1744,30 @@ class AppState extends ChangeNotifier {
       ]);
       if (result.exitCode == 0) {
         return double.tryParse((result.stdout as String).trim());
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// 探测图片/视频首条视频流的宽高（像素）。失败返回 null。
+  /// 用于裁剪参数按源尺寸钳制、绝对尺寸缩放换算缩放系数。
+  Future<(int, int)?> _probeImageSize(String input) async {
+    try {
+      final result = await Process.run(_ffprobeBin, [
+        '-v', 'quiet',
+        '-select_streams', 'v:0',
+        '-show_entries', 'stream=width,height',
+        '-of', 'csv=s=x:p=0',
+        input,
+      ]);
+      if (result.exitCode == 0) {
+        final out = (result.stdout as String).trim();
+        final parts = out.split(RegExp(r'[xX,]'));
+        if (parts.length >= 2) {
+          final w = int.tryParse(parts[0].trim());
+          final h = int.tryParse(parts[1].trim());
+          if (w != null && h != null && w > 0 && h > 0) return (w, h);
+        }
       }
     } catch (_) {}
     return null;
@@ -1929,7 +1972,30 @@ class AppState extends ChangeNotifier {
     try {
       final outDir = File(output).parent;
       if (!outDir.existsSync()) outDir.createSync(recursive: true);
-      final vf = 'scale=trunc(iw*$factor/2)*2:trunc(ih*$factor/2)*2';
+      String vf;
+      if (mode == 'absolute') {
+        // 绝对尺寸模式（快捷配置「缩放」）：探测源尺寸换算缩放系数，
+        // 目标短边优先、等比缩放，保持纵横比不变形。
+        final src = await _probeImageSize(input);
+        if (src == null) {
+          return {'success': false, 'error': '无法读取源图片尺寸，缩放失败'};
+        }
+        final (sw, sh) = src;
+        final targetW = (p['target_w'] as num?)?.toInt() ?? 0;
+        final targetH = (p['target_h'] as num?)?.toInt() ?? 0;
+        double fW = targetW > 0 ? targetW / sw : 0;
+        double fH = targetH > 0 ? targetH / sh : 0;
+        factor = switch ((fW > 0, fH > 0)) {
+          (true, true) => (fW < fH ? fW : fH), // 两边都给了 → 取小值（contain）
+          (true, false) => fW,
+          (false, true) => fH,
+          _ => 1.0,
+        };
+        addLog('图片缩放(绝对): ${sw}x$sh → 目标 ${targetW}x$targetH, 系数 ${factor.toStringAsFixed(3)}', category: 'info');
+        vf = 'scale=trunc(iw*$factor/2)*2:trunc(ih*$factor/2)*2';
+      } else {
+        vf = 'scale=trunc(iw*$factor/2)*2:trunc(ih*$factor/2)*2';
+      }
       final args = <String>['-y', '-i', input, '-vf', vf, output];
       addLog('图片缩放: $_ffmpegBin ${args.join(' ')}', category: 'info');
       final result = await Process.run(_ffmpegBin, args);
@@ -2441,7 +2507,7 @@ class AppState extends ChangeNotifier {
             'result': {
               'protocolVersion': '2024-11-05',
               'capabilities': {'tools': {}, 'resources': {}},
-              'serverInfo': {'name': 'ffmpegpp', 'version': '5.1.0'},
+              'serverInfo': {'name': 'ffmpegpp', 'version': '5.2.0'},
             },
           }));
           break;

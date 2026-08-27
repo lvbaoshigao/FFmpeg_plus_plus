@@ -888,12 +888,10 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(8, 0, 8, 7),
-          // 设置项卡片：遵循玻璃效果配置（liquid/blur/none）与卡片不透明度。
-          child: GlassPanel(
-            radius: 18,
-            padding: EdgeInsets.zero,
-            child: Column(children: rows),
-          ),
+          // 设置项卡片：与内联 AI/MCP 卡共用 _cardShell，统一遵循
+          // 卡片样式（玻璃/模糊/纯色）配置 —— 纯色时行分组卡同样呈现
+          // 主题容器色而非受透明度影响的玻璃；模糊/玻璃模式三卡观感一致。
+          child: _cardShell(context, state, Column(children: rows)),
         ),
       ],
       // 内联卡片（AI/MCP）：在一级菜单直接渲染完整设置内容
@@ -1231,68 +1229,84 @@ Widget _miIcon(ColorScheme scheme, IconData icon) => Container(
   child: Icon(icon, size: 19, color: scheme.primary),
 );
 
-Widget _glass(BuildContext ctx, AppState state, String title, List<Widget> children) {
+/// 设置页分组卡片外壳 —— 移动端所有分组卡（普通设置行 / 内联 AI·MCP 卡）
+/// 都从这里渲染，保证「玻璃/模糊/纯色」三种卡片样式的观感完全一致。
+///
+/// 样式来源：cfg.cardStyle
+/// - 'flat'  纯色大圆角卡片（MIUI 风格，surface 容器色，不受玻璃效果影响；
+///   且对不透明度做了下限钳制，避免低不透明度时“纯色”变透明、丢主题色）
+/// - 'blur'  扁平高斯模糊卡片（BackdropFilter）
+/// - 'glass' 液态玻璃（GlassPanel，内部遵循全局 glassEffect：liquid shader /
+///   blur BackdropFilter / none 实心；noCardGlass 时同样退实心）
+Widget _cardShell(
+  BuildContext ctx,
+  AppState state,
+  Widget child, {
+  double radius = 18,
+}) {
   final scheme = Theme.of(ctx).colorScheme;
   final isDark = Theme.of(ctx).brightness == Brightness.dark;
-  // 设置页卡片样式：glass 液态玻璃 / blur 模糊 / flat 纯色大圆角卡片（MIUI 风格）。
-  // 三种都统一成大圆角(20) + 收紧的标题/内容间距，模仿 MIUI 分组卡片：标题灰、组内逐行排布。
   final style = state.config.cardStyle;
-  final radius = 20.0;
-  const pad = EdgeInsets.fromLTRB(16, 12, 16, 12);
+  final op = state.config.cardOpacity.clamp(0.0, 1.0);
 
-  final titleRow = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-    Text(title, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.onSurfaceVariant)),
-    const SizedBox(height: 8),
-    ...children,
-  ]);
-
-  Widget cardContent() {
-    if (style == 'flat') {
-      // MIUI 图样式：纯色大圆角卡片（surface 容器色 + 细边 + 浅投影）
-      final alpha = ((isDark ? 235 : 250) * state.config.cardOpacity.clamp(0.0, 1.0)).round().clamp(0, 255);
-      return Container(
+  if (style == 'flat') {
+    // 纯色卡片必须「看起来是纯色」：alpha 跟随不透明度但保底 ~88%，
+    // 否则用户把卡片不透明度调低后会误以为纯色模式失效（变成透明）。
+    final alpha = ((isDark ? 235 : 250) * op.clamp(0.88, 1.0)).round().clamp(0, 255);
+    return RepaintBoundary(
+      child: Container(
         width: double.infinity,
-        padding: pad,
         decoration: BoxDecoration(
           color: scheme.surfaceContainerHigh.withAlpha(alpha),
           borderRadius: BorderRadius.circular(radius),
           border: Border.all(color: scheme.outlineVariant.withAlpha(isDark ? 45 : 70), width: 0.6),
           boxShadow: [BoxShadow(color: Colors.black.withAlpha(isDark ? 30 : 12), blurRadius: 12, offset: const Offset(0, 3))],
         ),
-        child: titleRow,
-      );
-    }
-    if (style == 'blur') {
-      // 模糊：扁平高斯模糊卡片（更易读，不依赖液态玻璃 shader）
-      final alpha = ((isDark ? 110 : 130) * state.config.cardOpacity.clamp(0.0, 1.0)).round().clamp(0, 255);
-      return ClipRRect(
+        child: child,
+      ),
+    );
+  }
+  if (style == 'blur') {
+    final alpha = ((isDark ? 110 : 130) * op).round().clamp(0, 255);
+    return RepaintBoundary(
+      child: ClipRRect(
         borderRadius: BorderRadius.circular(radius),
         child: BackdropFilter(
           filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
           child: Container(
             width: double.infinity,
-            padding: pad,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(radius),
               color: scheme.surface.withAlpha(alpha),
               border: Border.all(color: scheme.outlineVariant.withAlpha(isDark ? 60 : 80), width: 0.6),
             ),
-            child: titleRow,
+            child: child,
           ),
         ),
-      );
-    }
-    // glass：液态玻璃（GlassPanel 内部遵循全局 glassEffect）
-    return GlassPanel(
-      radius: radius,
-      padding: pad,
-      child: titleRow,
+      ),
     );
   }
+  // glass：液态玻璃（GlassPanel 内部遵循全局 glassEffect 与 noCardGlass）
+  return GlassPanel(radius: radius, padding: EdgeInsets.zero, child: child);
+}
+
+Widget _glass(BuildContext ctx, AppState state, String title, List<Widget> children) {
+  const radius = 20.0;
+  const pad = EdgeInsets.fromLTRB(16, 12, 16, 12);
+  final onSurfaceVariant = Theme.of(ctx).colorScheme.onSurfaceVariant;
+
+  final titleRow = Padding(
+    padding: pad,
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(title, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: onSurfaceVariant)),
+      const SizedBox(height: 8),
+      ...children,
+    ]),
+  );
 
   return Padding(
     padding: const EdgeInsets.fromLTRB(10, 0, 10, 0),
-    child: cardContent(),
+    child: _cardShell(ctx, state, titleRow, radius: radius),
   );
 }
 
@@ -2188,7 +2202,7 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
         const SizedBox(height: 2),
         Text('v${updater.currentVersion}', style: TextStyle(fontSize: 13, color: scheme.outline)),
         const SizedBox(height: 2),
-        Text('${s.aboutBuildDate} 2026-08-26', style: TextStyle(fontSize: 11, color: scheme.outline)),
+        Text('${s.aboutBuildDate} 2026-08-27', style: TextStyle(fontSize: 11, color: scheme.outline)),
         const SizedBox(height: 14),
         SizedBox(width: double.infinity,
             child: _iosButton(icon: Icons.system_update, label: s.checkUpdate,
@@ -2248,7 +2262,7 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
     ])),
     const SizedBox(height: 4),
     _infoRow(s.aboutVersion, 'v${updater.currentVersion}', scheme),
-    _infoRow(s.aboutBuildDate, '2026-08-26', scheme),
+    _infoRow(s.aboutBuildDate, '2026-08-27', scheme),
     _infoRow(s.aboutBlog, 'blog-clstone.netlify.app', scheme),
     _infoRow(s.aboutGithub, 'github.com/lvbaoshigao/FFmpeg_plus_plus', scheme),
     const SizedBox(height: 10),

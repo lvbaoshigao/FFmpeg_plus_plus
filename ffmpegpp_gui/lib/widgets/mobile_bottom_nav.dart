@@ -15,11 +15,17 @@ import '../theme/app_strings.dart';
 class MobileBottomNav extends StatefulWidget {
   final int selectedIndex;
   final ValueChanged<int> onSelected;
+  /// 可选：主界面 PageView 的控制器。传入后遮罩在「页面滑动中」会连续跟随
+  /// PageView 的实时位置（0.0~3.0 的小数页），而不是等 onPageChanged 按整页
+  /// 跳变 —— 修复从第 1 页快速滑到第 4 页时遮罩在第 3 项短暂停留再跳走的
+  /// 「动画跳跃」问题。仅遮罩子树订阅该 Listenable，每帧重建成本极小。
+  final PageController? pageController;
 
   const MobileBottomNav({
     super.key,
     required this.selectedIndex,
     required this.onSelected,
+    this.pageController,
   });
 
   @override
@@ -170,7 +176,6 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
           // 计算每个药丸的宽度（减去间距）
           final totalGap = pillGap * (items.length - 1);
           final itemW = (cons.maxWidth - totalGap) / items.length;
-          final dragging = _dragX != null;
           return GestureDetector(
             behavior: HitTestBehavior.opaque,
             // ── 点按：直接切换到手指位置最近的药丸（遮罩 + PageView 滑动动画） ──
@@ -247,25 +252,12 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
               width: cons.maxWidth,
               height: cons.maxHeight,
               child: Stack(children: [
-              // 滑动遮罩胶囊：切换菜单时在条目间平滑滑动；拖动时跟随手指。
-              AnimatedPositioned(
-                duration: dragging
-                    ? Duration.zero
-                    : const Duration(milliseconds: 260),
-                curve: Curves.easeOutCubic,
-                left: dragging
-                    ? (_dragX! - itemW / 2)
-                    : _itemLeft(itemIdx, itemW, pillGap),
-                top: 2,
-                bottom: 2,
-                width: itemW,
-                child: AnimatedScale(
-                  // 长按/拖动时放大，明确标识「已抓取/被选中」
-                  scale: dragging ? 1.25 : 1.0,
-                  duration: const Duration(milliseconds: 150),
-                  curve: Curves.easeOut,
-                  child: RepaintBoundary(child: _mask(scheme, isDark, effect)),
-                ),
+              // 滑动遮罩胶囊：切换菜单时在条目间平滑滑动；拖动时跟随手指；
+              // 页面滑动（PageView）中连续跟随页面位置（见 pageController），
+              // 不再「途经项停留后跳变」。
+              _buildMaskPositioned(
+                itemIdx, itemW, pillGap, items.length,
+                scheme: scheme, isDark: isDark, effect: effect,
               ),
               // 药丸行：每个药丸之间有间距，crossAxisAlignment.stretch 让药丸填满高度
               Row(
@@ -433,6 +425,71 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
           ),
         ],
       ),
+    );
+  }
+
+  /// 构建遮罩胶囊的定位子树。
+  ///
+  /// 三种状态：
+  /// 1. 药丸拖动（_dragX != null）：Duration.zero 精确跟随手指；
+  /// 2. PageView 滑动中（pageController.page 为非整页小数）：遮罩以
+  ///    Duration.zero 连续跟随页面实时位置 —— 修复快速滑动跨页时，
+  ///    遮罩先在中途项停留一拍再跳到目标项的「跳跃」观感；
+  /// 3. 静止：AnimatedPositioned 以 260ms easeOutCubic 吸附到选中项。
+  /// 仅此子树订阅 pageController，页面滑动期间每帧只重建这个小 Positioned。
+  Widget _buildMaskPositioned(
+    int itemIdx,
+    double itemW,
+    double pillGap,
+    int itemCount, {
+    required ColorScheme scheme,
+    required bool isDark,
+    required String effect,
+  }) {
+    final dragging = _dragX != null;
+    final mask = AnimatedScale(
+      // 长按/拖动时放大，明确标识「已抓取/被选中」
+      scale: dragging ? 1.25 : 1.0,
+      duration: const Duration(milliseconds: 150),
+      curve: Curves.easeOut,
+      child: RepaintBoundary(child: _mask(scheme, isDark, effect)),
+    );
+
+    Widget buildStatic() => AnimatedPositioned(
+          duration: dragging ? Duration.zero : const Duration(milliseconds: 260),
+          curve: Curves.easeOutCubic,
+          left: dragging ? (_dragX! - itemW / 2) : _itemLeft(itemIdx, itemW, pillGap),
+          top: 2,
+          bottom: 2,
+          width: itemW,
+          child: mask,
+        );
+
+    final pc = widget.pageController;
+    if (pc == null || dragging) return buildStatic();
+
+    return AnimatedBuilder(
+      animation: pc,
+      builder: (ctx, _) {
+        double? frac;
+        if (pc.hasClients) {
+          final p = pc.page ?? itemIdx.toDouble();
+          if ((p - itemIdx).abs() > 0.005 &&
+              p >= -0.001 &&
+              p <= itemCount - 1 + 0.001) {
+            frac = p.clamp(0.0, itemCount - 1).toDouble();
+          }
+        }
+        if (frac == null) return buildStatic();
+        // 页面滑动中：连续位置。药丸中心间距 = itemW + pillGap。
+        return Positioned(
+          left: frac * (itemW + pillGap),
+          top: 2,
+          bottom: 2,
+          width: itemW,
+          child: mask,
+        );
+      },
     );
   }
 }

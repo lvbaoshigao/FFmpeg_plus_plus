@@ -211,13 +211,19 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
       ),
       // 固定总高度：把内容区压到 height - padding.vertical 并垂直居中，
       // 统一顶栏左右药丸的高度（否则标题药丸 ~38px、操作药丸 ~50px 参差不齐）。
+      //
+      // 关键修复（配置库/队列右上角操作药丸被拉得过长）：Center（Align）在
+      // 收到「有限宽度」约束时会撑满最大宽度——队列页、配置库页顶栏右侧的
+      // 操作药丸都包在 Flexible → Align 里，Flexible 给出的 loose-finite 宽度
+      // 让 Center 一路膨胀到整行剩余宽度，玻璃底板于是远长于内部图标。
+      // widthFactor: 1.0 让宽度始终收缩为子元素宽度，只保留垂直居中。
       child: widget.height == null
           ? widget.child
           : SizedBox(
               height: (widget.height! -
                       widget.padding.resolve(Directionality.of(context)).vertical)
                   .clamp(0.0, double.infinity),
-              child: Center(child: widget.child),
+              child: Center(widthFactor: 1.0, child: widget.child),
             ),
     );
 

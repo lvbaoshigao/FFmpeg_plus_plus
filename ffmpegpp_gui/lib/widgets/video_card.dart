@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -113,8 +114,21 @@ class _ThumbWidgetState extends State<_ThumbWidget> {
       } else {
         args.addAll(['-i', widget.filepath, '-vframes', '1', '-q:v', '3', '-s', '176x108', f.path]);
       }
-      final r = await Process.run(FfmpegInstaller.resolveFfmpeg(configured: widget.ffmpeg), args);
-      if (r.exitCode == 0 && await f.exists()) { if (mounted) setState(() => _thumbPath = f.path); }
+      // 超时兜底（修复：批量导入后缩略图 ffmpeg 偶发悬挂——损坏文件/超长
+      // seek 会卡住进程，除了自身永不返回外还会拖住同应用进程内其它子进程
+      // 的管道读取，表现为后续导入项一直「解析中」）。用 Process.start +
+      // 定时 kill 而不是 Process.run().timeout()：后者只是放弃等待，
+      // 悬挂的 ffmpeg 进程会继续活着持有管道资源。
+      final proc = await Process.start(FfmpegInstaller.resolveFfmpeg(configured: widget.ffmpeg), args);
+      final killTimer = Timer(const Duration(seconds: 30), () => proc.kill());
+      try {
+        // 排空 stdout/stderr：ffmpeg 的日志输出超过管道缓冲区时会阻塞在写端
+        await Future.wait([proc.stdout.drain<void>(), proc.stderr.drain<void>()]);
+        final exitCode = await proc.exitCode;
+        if (exitCode == 0 && await f.exists()) { if (mounted) setState(() => _thumbPath = f.path); }
+      } finally {
+        killTimer.cancel();
+      }
     } catch (_) {}
   }
 

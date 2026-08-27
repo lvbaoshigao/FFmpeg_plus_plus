@@ -23,6 +23,9 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
     'NVIDIA': ['h264_nvenc', 'hevc_nvenc', 'av1_nvenc'],
     'AMD': ['h264_amf', 'hevc_amf', 'av1_amf'],
     'Intel': ['h264_qsv', 'hevc_qsv', 'av1_qsv', 'vp9_qsv'],
+    // Android 硬编：内置 ffmpeg 已通过 --enable-mediacodec 启用
+    // h264_mediacodec / hevc_mediacodec 编码器（NDK MediaCodec，无需 JVM）。
+    'Android': ['h264_mediacodec', 'hevc_mediacodec'],
   };
   static const _codecLabels = {
     'libx264': 'H.264 (x264)',
@@ -41,6 +44,8 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
     'hevc_qsv': 'H.265 (QSV)',
     'av1_qsv': 'AV1 (QSV)',
     'vp9_qsv': 'VP9 (QSV)',
+    'h264_mediacodec': 'H.264 (MediaCodec)',
+    'hevc_mediacodec': 'H.265 (MediaCodec)',
   };
   static String _copyLabel(bool zh) => zh ? '复制流 (不重编码)' : 'Copy Stream';
   static Map<String, String> _audioCodecLabelsFor(bool zh) => {
@@ -71,9 +76,8 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
     super.initState();
     p.putIfAbsent('video_codec', () => 'libx264');
     p.putIfAbsent('gpu', () => 'CPU');
-    // 移动端内置的 ffmpeg 以独立进程执行（无 JVM），MediaCodec 硬编不可用，
-    // NVENC/AMF/QSV 都是桌面 GPU 厂商的方案；强制回退 CPU，避免误导。
-    if (isMobilePlatform && p['gpu'] != 'CPU') {
+    // iOS 无 MediaCodec/NVENC 等硬编，回退 CPU；Android 保留 MediaCodec 选项。
+    if (isMobilePlatform && !isAndroidPlatform && p['gpu'] != 'CPU') {
       p['gpu'] = 'CPU';
       if (!(_gpuCodecs['CPU'] ?? []).contains(p['video_codec'])) {
         p['video_codec'] = 'libx264';
@@ -118,6 +122,8 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
     'h264_nvenc', 'hevc_nvenc', 'av1_nvenc',
     'h264_amf', 'hevc_amf', 'av1_amf',
     'h264_qsv', 'hevc_qsv', 'av1_qsv', 'vp9_qsv',
+    // Android 硬编（MediaCodec）
+    'h264_mediacodec', 'hevc_mediacodec',
     'copy',
   ];
 
@@ -195,23 +201,33 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(zh ? '视频' : 'Video', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.primary)),
         const SizedBox(height: 10),
-        // 移动端：GPU 加速列表是桌面平台方案（NVENC=英伟达/AMF=AMD/QSV=英特尔），
-        // 手机 SoC 的硬编走 MediaCodec，需要 JVM 环境，而本应用以独立进程执行
-        // ffmpeg（无 JVM）不可用——移动端只保留 CPU，并给出说明而不是列出
-        // 选了也无效的桌面 GPU 类型。
-        _dropdown(label: 'GPU', value: isMobilePlatform ? 'CPU' : p['gpu'] as String,
-          items: isMobilePlatform ? const ['CPU'] : const ['CPU', 'NVIDIA', 'AMD', 'Intel'], cs: cs,
+        // GPU 厂商选择：Android 保留 MediaCodec 硬编选项（内置 ffmpeg 已启用
+        // --enable-mediacodec 编码器）；iOS 无硬编方案，仅保留 CPU。
+        _dropdown(label: 'GPU', value: isMobilePlatform && !isAndroidPlatform ? 'CPU' : p['gpu'] as String,
+          items: isMobilePlatform ? (isAndroidPlatform ? const ['CPU', 'Android'] : const ['CPU']) : const ['CPU', 'NVIDIA', 'AMD', 'Intel'], cs: cs,
           onChanged: (v) {
             p['gpu'] = v;
+            // 切换厂商后，若当前编码器不属于新厂商且不可用则回到安全默认值
+            if (!(_gpuCodecs[v] ?? []).contains(p['video_codec'])) {
+              final newSet = _gpuCodecs[v] ?? const <String>[];
+              // 选 Android（MediaCodec）时其编码器集合与桌面厂商完全不相交，
+              // 直接切到该集合第一个硬编编码器；其余厂商维持原行为
+              // （CPU 软编保留，由下方提示条说明"将使用 CPU 处理"）。
+              if (v == 'Android' && newSet.isNotEmpty) {
+                p['video_codec'] = newSet.first;
+              } else if (!(_gpuCodecs['CPU'] ?? []).contains(p['video_codec']) && newSet.isNotEmpty) {
+                p['video_codec'] = newSet.first;
+              }
+            }
             setState(() {}); widget.onChanged();
           }),
-        if (isMobilePlatform)
+        if (isMobilePlatform && !isAndroidPlatform)
           Padding(padding: const EdgeInsets.only(top: 4), child: Row(children: [
             Icon(Icons.info_outline, size: 13, color: cs.outline),
             const SizedBox(width: 4),
             Expanded(child: Text(
-              zh ? '移动端暂不支持 GPU 硬件加速（手机硬编依赖 MediaCodec/JVM），当前使用 CPU 编码'
-                 : 'GPU acceleration is unavailable on mobile (requires MediaCodec/JVM); using CPU encoding',
+              zh ? '移动端暂不支持 GPU 硬件加速（iOS 无 MediaCodec/NVENC），当前使用 CPU 编码'
+                 : 'GPU acceleration is unavailable on mobile; using CPU encoding',
               style: TextStyle(fontSize: 11, color: cs.outline),
             )),
           ])),

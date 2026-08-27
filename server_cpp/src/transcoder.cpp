@@ -12,6 +12,13 @@ namespace ffmpegpp {
 static std::string resolvePixFmt(const std::string& encoder, const std::string& codec_key, const std::string& input_pix_fmt) {
     bool is10bit = (input_pix_fmt.find("10") != std::string::npos);
 
+    // Android MediaCodec 硬编：接受 nv12（8-bit）/ p010le（10-bit）输入。
+    // 注意必须放在通用 "264" 判断之前，否则 h264_mediacodec 会被当成
+    // 普通 x264 走 yuv420p 分支，导致编码器不支持的像素格式报错。
+    if (encoder.find("mediacodec") != std::string::npos) {
+        return is10bit ? "p010le" : "nv12";
+    }
+
     // H.264 不支持 10-bit，强制降级
     if (codec_key == "h264" || encoder.find("264") != std::string::npos) {
         return "yuv420p";
@@ -49,8 +56,8 @@ std::string resolveEncoder(const std::string& gpu, const std::string& codec_key)
 
     // 直接使用原始编码器名
     static std::vector<std::string> valid = {
-        "libx264", "h264_amf", "h264_nvenc", "h264_qsv",
-        "libx265", "hevc_amf", "hevc_nvenc", "hevc_qsv",
+        "libx264", "h264_amf", "h264_nvenc", "h264_qsv", "h264_mediacodec",
+        "libx265", "hevc_amf", "hevc_nvenc", "hevc_qsv", "hevc_mediacodec",
         "libaom-av1", "av1_amf", "av1_nvenc", "av1_qsv",
         "libvpx-vp9", "mpeg4", "prores_ks", "ffv1",
         "aac", "libmp3lame", "libopus", "flac", "libfdk_aac",
