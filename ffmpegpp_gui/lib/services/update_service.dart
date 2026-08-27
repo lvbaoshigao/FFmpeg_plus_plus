@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 
-const _currentVersion = '5.2.0';
+const _currentVersion = '5.1.0';
 
 const _lanzouUrls = {
   'windows': 'https://wwbrq.lanzouv.com/b002w12goj',
@@ -142,8 +142,8 @@ Future<UpdateResult> _checkLanzou() async {
     final match = RegExp(r'<span id="filename">([^<]+)</span>').firstMatch(resp.body);
     if (match == null) return UpdateResult(error: 'parse_failed', source: UpdateSource.lanzou);
     final raw = match.group(1)!.trim();
-    // 保留 beta/rc 等预发布后缀：若文件名含 "5.2.0"，只截到 "5.2.0"
-    // 会把测试版误判为正式版（导致 “beta-1 5.2.0” 比 “5.2.0” 新的错误判断）。
+    // 保留 beta/rc 等预发布后缀：若文件名含 "5.1.0-beta1"，只截到 "5.1.0"
+    // 会把测试版误判为正式版（导致 “beta-1 5.1.0” 比 “5.1.0” 新的错误判断）。
     final version = RegExp(r'(\d+(?:\.\d+){1,3}(?:-[a-zA-Z]+\d*)?)')
         .firstMatch(raw)?.group(1) ?? raw;
     final password = _lanzouPasswords[key];

@@ -130,7 +130,7 @@ class AppStrings {
   String get swVersion => lang == 'zh' ? '版本' : 'Version';
   String get swBuild => lang == 'zh' ? '构建日期' : 'Build';
   String get swProtocol => lang == 'zh' ? '协议' : 'Protocol';
-  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v5.2.0  |  构建 2026-08-27  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v5.2.0  |  Build 2026-08-27  |  JSON v0.1.0';
+  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v5.1.0  |  构建 2026-08-26  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v5.1.0  |  Build 2026-08-26  |  JSON v0.1.0';
   String get languageInterface => lang == 'zh' ? '界面语言' : 'Interface Language';
   String get ffmpegFound => lang == 'zh' ? 'FFmpeg 已检测到' : 'FFmpeg detected';
   String get ffmpegNotFound => lang == 'zh' ? 'FFmpeg 未检测到' : 'FFmpeg not found';
@@ -207,7 +207,7 @@ class AppStrings {
   String get aboutSponsor => lang == 'zh' ? '赞助支持' : 'Sponsor';
   String get aboutSponsorBtn => lang == 'zh' ? '查看收款码' : 'View QR Codes';
   String get aboutBlogLink => lang == 'zh' ? '博客' : 'Blog';
-  String get aboutThanks => lang == 'zh' ? '非常非常感谢您的支持！' : 'Thank you for your support very very much!!!!';
+  String get aboutThanks => lang == 'zh' ? '感谢您的支持！' : 'Thank you for your support!';
   String get aboutWxTitle => lang == 'zh' ? '微信收款码' : 'WeChat Pay';
   String get aboutZfbTitle => lang == 'zh' ? '支付宝收款码' : 'Alipay';
   String get aboutClose => lang == 'zh' ? '关闭' : 'Close';

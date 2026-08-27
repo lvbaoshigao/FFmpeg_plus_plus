@@ -25,9 +25,9 @@ on:
           - macos
           - android
       version:
-        description: '版本标签（仅用于产物命名，如 5.2.0）'
+        description: '版本标签（仅用于产物命名，如 5.1.0-beta1）'
         required: false
-        default: '5.2.0'
+        default: '5.1.0-beta1'
         type: string
       ref:
         description: '要检出的 git 分支或 tag（默认 main）'
@@ -178,7 +178,7 @@ jobs:
           mkdir -p deb/DEBIAN deb/opt/ffmpegpp deb/usr/bin deb/usr/share/applications deb/usr/share/icons/hicolor/256x256/apps
           cat > deb/DEBIAN/control << 'EOF'
           Package: ffmpegpp
-          Version: 5.2.0
+          Version: 5.1.0-beta1
           Architecture: amd64
           Maintainer: lvbaoshigao <noreply@github.com>
           Description: FFmpeg++ - Advanced video/image/audio processing tool
@@ -287,7 +287,7 @@ jobs:
           mkdir -p deb/DEBIAN deb/opt/ffmpegpp deb/usr/bin deb/usr/share/applications deb/usr/share/icons/hicolor/256x256/apps
           cat > deb/DEBIAN/control << 'EOF'
           Package: ffmpegpp
-          Version: 5.2.0
+          Version: 5.1.0-beta1
           Architecture: arm64
           Maintainer: lvbaoshigao <noreply@github.com>
           Description: FFmpeg++ - Advanced video/image/audio processing tool
