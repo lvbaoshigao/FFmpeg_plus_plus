@@ -834,9 +834,15 @@ class _AppShellState extends State<AppShell> with WindowListener {
   /// 之后首次点击进入不再卡顿（构建成本已摊到空闲帧）。
   /// 桌面端只预热「项目 + 处理队列」两个主入口页；其余页面首次点击时
   /// 再构建（配合常驻上限，避免所有页面的玻璃面板纹理同时常驻）。
+  ///
+  /// 「关闭预加载」（cfg.noPreload）开启时跳过预热：启动只绘制当前页面，
+  /// 其余页面等用户手动切换到时才构建（首次切换现场构建，可能短暂
+  /// 增加 CPU 占用——换来更快的启动与更低的常驻内存）。
   void _prewarmPages() {
     if (_warming) return;
     _warming = true;
+    // 关闭预加载：除当前页外不构建任何页面
+    if (context.read<AppState>().config.noPreload) return;
     final targets = isMobilePlatform
         ? _kMobileNavOrder
         : const [0, 1];
@@ -846,6 +852,8 @@ class _AppShellState extends State<AppShell> with WindowListener {
         // 每帧只构建一页，避免单帧长任务
         await Future<void>.delayed(const Duration(milliseconds: 160));
         if (!mounted) return;
+        // 预热途中用户开启了「关闭预加载」则中止剩余预热
+        if (context.read<AppState>().config.noPreload) return;
         setState(() { _page(i); });
       }
     });
