@@ -310,8 +310,8 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 移动端搜索是否展开（内联展开在顶栏下方，而非弹出对话框）。
   bool _searchExpanded = false;
 
-  /// 被折叠起来的分区 id。默认全部展开。
-  final Set<String> _collapsed = <String>{};
+  /// 桌面端左侧主菜单当前选中的分区 id。
+  String _selectedSection = 'general';
 
   @override
   void initState() {
@@ -331,17 +331,14 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() => _query = '');
   }
 
-  void _toggleSection(String id) {
-    setState(() {
-      if (!_collapsed.remove(id)) _collapsed.add(id);
-    });
-  }
-
-  void _setAllCollapsed(bool collapsed) {
-    setState(() {
-      _collapsed.clear();
-      if (collapsed) _collapsed.addAll(_sections.map((s) => s.id));
-    });
+  /// 选择左侧主菜单的分区：顺手清空搜索，右侧完整展示该分区。
+  void _selectSection(String id) {
+    if (_query.isNotEmpty) {
+      _searchCtrl.clear();
+      _query = '';
+    }
+    if (_selectedSection == id) return;
+    setState(() => _selectedSection = id);
   }
 
   static final List<_SectionDef> _sections = [
@@ -641,18 +638,23 @@ class _SettingsPageState extends State<SettingsPage> {
         }
 
         // ═══════════════════════════════════════
-        // 桌面端原有设置界面
+        // 桌面端设置界面：左侧主菜单（分区导航）+ 右侧子选项面板
         // ═══════════════════════════════════════
         final query = _query.trim().toLowerCase();
         final searching = query.isNotEmpty;
 
-        // 只保留有命中卡片的分区
-        final visible = <(_SectionDef, List<_CardDef>)>[];
+        // 搜索时跨分区收集命中卡片（右侧分组展示）；未搜索时只看选中分区
+        final hitsBySection = <(_SectionDef, List<_CardDef>)>[];
         for (final sec in _sections) {
           final hits = sec.cards.where((c) => c.matches(query)).toList();
-          if (hits.isNotEmpty) visible.add((sec, hits));
+          if (hits.isNotEmpty) hitsBySection.add((sec, hits));
         }
-        final allCollapsed = _collapsed.length >= _sections.length;
+        // 选中分区兜底（分区增删后不悬空）
+        if (_sections.indexWhere((sec) => sec.id == _selectedSection) < 0) {
+          _selectedSection = _sections.first.id;
+        }
+        final selectedSec =
+            _sections.firstWhere((sec) => sec.id == _selectedSection);
 
         return Scaffold(
           backgroundColor: Colors.transparent,
@@ -660,78 +662,239 @@ class _SettingsPageState extends State<SettingsPage> {
             GlassTopBar(
               title: Text(s.settingsTitle),
               center: _searchField(scheme, s),
-              actions: [
-                if (visible.isNotEmpty && searching == false)
-                  IconButton(
-                    icon: Icon(allCollapsed ? Icons.unfold_more : Icons.unfold_less,
-                        size: 19, color: scheme.outline),
-                    tooltip: allCollapsed ? s.setExpandAll : s.setCollapseAll,
-                    onPressed: () => _setAllCollapsed(!allCollapsed),
-                  ),
-              ],
             ),
             Expanded(
-              child: visible.isEmpty
-                  ? _emptyState(scheme, s)
-                  : LayoutBuilder(builder: (ctx, cons) {
-                      // 窄窗口单列，宽窗口最多三列
-                      final cols = cons.maxWidth < 640 ? 1 : (cons.maxWidth < 1100 ? 2 : 3);
-                      return CustomScrollView(
-                        slivers: [
-                          for (final (sec, cards) in visible)
-                            SliverMainAxisGroup(slivers: [
-                              SliverPersistentHeader(
-                                pinned: true,
-                                delegate: _SectionHeaderDelegate(
-                                  title: sec.title(s),
-                                  icon: sec.icon,
-                                  scheme: scheme,
-                                  // 搜索时强制展开，否则命中的卡片会被折叠状态藏起来
-                                  collapsed: !searching && _collapsed.contains(sec.id),
-                                  count: cards.length,
-                                  toggleTooltip: _collapsed.contains(sec.id) ? s.setExpand : s.setCollapse,
-                                  onToggle: searching ? null : () => _toggleSection(sec.id),
-                                ),
-                              ),
-                              SliverToBoxAdapter(
-                                child: AnimatedSize(
-                                  duration: const Duration(milliseconds: 220),
-                                  curve: Curves.easeOutCubic,
-                                  alignment: Alignment.topCenter,
-                                  child: (!searching && _collapsed.contains(sec.id))
-                                      ? const SizedBox(width: double.infinity, height: 0)
-                                      : AnimatedOpacity(
-                                          duration: const Duration(milliseconds: 220),
-                                          curve: Curves.easeOut,
-                                          opacity: 1,
-                                          child: Padding(
-                                            padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
-                                            child: MasonryGrid(
-                                              columns: cols,
-                                              spacing: 8,
-                                              runSpacing: 8,
-                                              children: [
-                                                for (final c in cards)
-                                                  RepaintBoundary(
-                                                    key: ValueKey(c.id),
-                                                    child: c.build(ctx, state),
-                                                  ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
-                                ),
-                              ),
-                            ]),
-                          const SliverToBoxAdapter(child: SizedBox(height: 24)),
-                        ],
-                      );
-                    }),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                // 左：主菜单（分区导航，搜索时显示命中数徽标）
+                _buildSectionNav(hitsBySection, searching, scheme),
+                // 右：子选项面板（搜索时为跨分区命中结果）
+                Expanded(
+                  child: searching
+                      ? (hitsBySection.isEmpty
+                          ? _emptyState(scheme, s)
+                          : _buildSearchResults(hitsBySection, context, state, scheme))
+                      : _buildSectionPane(selectedSec, context, state, scheme),
+                ),
+              ]),
             ),
           ]),
         );
       },
     );
+  }
+
+  // ── 桌面端专用：左侧主菜单 + 右侧子选项面板 ──
+
+  /// 左侧主菜单：分区导航列表。
+  /// 搜索时每项右侧显示该分区的命中数量徽标；点击即退出搜索并切换分区。
+  Widget _buildSectionNav(
+    List<(_SectionDef, List<_CardDef>)> hitsBySection,
+    bool searching,
+    ColorScheme scheme,
+  ) {
+    final hitCounts = <String, int>{
+      for (final (sec, cards) in hitsBySection) sec.id: cards.length,
+    };
+    return SizedBox(
+      width: 190,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(10, 12, 6, 16),
+        children: [
+          for (final sec in _sections)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: _navItem(sec, searching, hitCounts[sec.id] ?? 0, scheme),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// 主菜单条目：图标 + 分区名，选中态为主题色药丸（颜色/字重随选中过渡）。
+  Widget _navItem(
+    _SectionDef sec,
+    bool searching,
+    int hitCount,
+    ColorScheme scheme,
+  ) {
+    final selected = sec.id == _selectedSection;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => _selectSection(sec.id),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: selected ? scheme.primary.withAlpha(34) : Colors.transparent,
+          border: Border.all(
+              color: selected ? scheme.primary.withAlpha(90) : Colors.transparent),
+        ),
+        child: Row(children: [
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 180),
+            transitionBuilder: (child, anim) =>
+                FadeTransition(opacity: anim, child: child),
+            child: Icon(
+              sec.icon,
+              key: ValueKey('${sec.id}_$selected'),
+              size: 16,
+              color: selected ? scheme.primary : scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              sec.title(AppStrings.of(context.read<AppState>().config.language)),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                color: selected ? scheme.primary : scheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          // 搜索时：该分区命中的设置项数量徽标
+          if (searching)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+              decoration: BoxDecoration(
+                color: scheme.primary.withAlpha(28),
+                borderRadius: BorderRadius.circular(9),
+              ),
+              child: Text('$hitCount',
+                  style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: scheme.primary)),
+            ),
+        ]),
+      ),
+    );
+  }
+
+  /// 右侧面板：当前分区的全部设置卡片。
+  /// 切换分区时淡入 + 轻微位移动画；列数随窗口宽度自适应。
+  Widget _buildSectionPane(
+    _SectionDef sec,
+    BuildContext ctx,
+    AppState state,
+    ColorScheme scheme,
+  ) {
+    return LayoutBuilder(builder: (ctx, cons) {
+      // 窄窗口单列，宽窗口最多三列
+      final cols = cons.maxWidth < 640 ? 1 : (cons.maxWidth < 1100 ? 2 : 3);
+      return AnimatedSwitcher(
+        duration: const Duration(milliseconds: 200),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeIn,
+        transitionBuilder: (child, anim) => FadeTransition(
+          opacity: anim,
+          child: SlideTransition(
+            position: Tween(begin: const Offset(0.02, 0), end: Offset.zero)
+                .animate(anim),
+            child: child,
+          ),
+        ),
+        child: SingleChildScrollView(
+          key: ValueKey('pane_${sec.id}'),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
+          child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+            // 分区标题行（左侧菜单已高亮当前分区，这里提供上下文）
+            Padding(
+              padding: const EdgeInsets.only(left: 4, bottom: 10),
+              child: Row(children: [
+                Icon(sec.icon, size: 16, color: scheme.primary),
+                const SizedBox(width: 7),
+                Text(
+                    sec.title(
+                        AppStrings.of(ctx.read<AppState>().config.language)),
+                    style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: scheme.onSurface)),
+                const SizedBox(width: 12),
+                Expanded(
+                    child: Divider(
+                        color: scheme.outlineVariant.withAlpha(70), height: 1)),
+              ]),
+            ),
+            MasonryGrid(
+              columns: cols,
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final c in sec.cards)
+                  RepaintBoundary(
+                    key: ValueKey(c.id),
+                    child: c.build(ctx, state),
+                  ),
+              ],
+            ),
+          ]),
+        ),
+      );
+    });
+  }
+
+  /// 搜索结果面板：跨分区列出所有命中的设置卡片，按分区分组。
+  Widget _buildSearchResults(
+    List<(_SectionDef, List<_CardDef>)> hitsBySection,
+    BuildContext ctx,
+    AppState state,
+    ColorScheme scheme,
+  ) {
+    return LayoutBuilder(builder: (ctx, cons) {
+      final cols = cons.maxWidth < 640 ? 1 : (cons.maxWidth < 1100 ? 2 : 3);
+      return SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
+        child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+          for (final (sec, cards) in hitsBySection) ...[
+            Padding(
+              padding: const EdgeInsets.only(left: 4, bottom: 8),
+              child: Row(children: [
+                Icon(sec.icon, size: 14, color: scheme.primary),
+                const SizedBox(width: 7),
+                Text(
+                    sec.title(
+                        AppStrings.of(ctx.read<AppState>().config.language)),
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.9,
+                        color: scheme.primary)),
+                const SizedBox(width: 8),
+                Text('${cards.length}',
+                    style: TextStyle(fontSize: 10, color: scheme.outline)),
+                const SizedBox(width: 12),
+                Expanded(
+                    child: Divider(
+                        color: scheme.outlineVariant.withAlpha(70), height: 1)),
+              ]),
+            ),
+            MasonryGrid(
+              columns: cols,
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final c in cards)
+                  RepaintBoundary(
+                    key: ValueKey(c.id),
+                    child: c.build(ctx, state),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+          ],
+        ]),
+      );
+    });
   }
 
   // ── 移动端专用 ──
@@ -1094,144 +1257,6 @@ class _SettingsPageState extends State<SettingsPage> {
       );
 }
 
-/// 分区标题，滚动时吸顶；点击整行可折叠/展开该分区。
-class _SectionHeaderDelegate extends SliverPersistentHeaderDelegate {
-  final String title;
-  final IconData icon;
-  final ColorScheme scheme;
-  final bool collapsed;
-  final int count;
-  final String toggleTooltip;
-  final VoidCallback? onToggle;
-
-  const _SectionHeaderDelegate({
-    required this.title,
-    required this.icon,
-    required this.scheme,
-    required this.collapsed,
-    required this.count,
-    required this.toggleTooltip,
-    required this.onToggle,
-  });
-
-  @override
-  double get minExtent => 42;
-  @override
-  double get maxExtent => 42;
-
-  @override
-  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
-    final pinned = shrinkOffset > 0 || overlapsContent;
-    // 这里原来套了一层 BackdropFilter(sigma 12)。分区标题是 pinned 的，滚动时每一帧
-    // 都要重新对整条宽度做一次高斯模糊，是本页滚动最贵的一笔开销。
-    // 吸顶时把底色调到接近不透明即可保证文字可读，视觉差别几乎看不出来。
-    // 背景透明度用 AnimatedContainer 过渡，避免吸顶/折叠瞬间跳变造成割裂感。
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(14),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 160),
-        curve: Curves.easeOut,
-        color: scheme.surface.withAlpha(pinned ? 234 : 90),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            // 悬停/点击涟漪用圆角矩形，避免整条长方形的高亮
-            customBorder: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-            onTap: onToggle,
-            child: _headerTooltip(
-              // 搜索中不能折叠，此时不挂 tooltip（空字符串会弹空气泡）
-              onToggle == null ? null : toggleTooltip,
-              SizedBox(
-                height: 42,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 0, 18, 0),
-                  child: Row(children: [
-                    // 折叠箭头：旋转 + 透明度统一由同一段动画驱动，
-                    // 与下方 AnimatedSize 的时长/曲线保持一致，消除割裂感。
-                    AnimatedRotation(
-                      turns: collapsed ? -0.25 : 0, // 展开朝下，折叠朝右
-                      duration: const Duration(milliseconds: 220),
-                      curve: Curves.easeOutCubic,
-                      child: AnimatedOpacity(
-                        opacity: onToggle == null ? 0.35 : 1,
-                        duration: const Duration(milliseconds: 160),
-                        child: Icon(Icons.expand_more,
-                            size: 18,
-                            color: onToggle == null ? scheme.outline.withAlpha(90) : scheme.primary),
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 160),
-                      transitionBuilder: (child, anim) => FadeTransition(opacity: anim, child: child),
-                      child: Icon(icon, key: ValueKey(icon), size: 15, color: scheme.primary),
-                    ),
-                    const SizedBox(width: 7),
-                    Flexible(
-                      child: Text(
-                        title.toUpperCase(),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        softWrap: false,
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.9,
-                          color: scheme.primary,
-                        ),
-                      ),
-                    ),
-                    // 折叠时提示里面还有几项，避免看起来像空分区
-                    if (collapsed) ...[
-                      const SizedBox(width: 8),
-                      AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 160),
-                        transitionBuilder: (child, anim) =>
-                            ScaleTransition(scale: CurvedAnimation(parent: anim, curve: Curves.easeOutBack), child: child),
-                        child: Container(
-                          key: ValueKey('count_$count'),
-                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
-                          decoration: BoxDecoration(
-                            color: scheme.primary.withAlpha(30),
-                            borderRadius: BorderRadius.circular(9),
-                          ),
-                          child: Text('$count',
-                              style: TextStyle(
-                                  fontSize: 10, fontWeight: FontWeight.w600, color: scheme.primary)),
-                        ),
-                      ),
-                    ],
-                    const SizedBox(width: 10),
-                    Expanded(child: Divider(color: scheme.outlineVariant.withAlpha(70), height: 1)),
-                  ]),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  @override
-  bool shouldRebuild(_SectionHeaderDelegate old) =>
-      old.title != title ||
-      old.icon != icon ||
-      old.scheme != scheme ||
-      old.collapsed != collapsed ||
-      old.count != count ||
-      old.toggleTooltip != toggleTooltip ||
-      (old.onToggle == null) != (onToggle == null);
-}
-
-/// message 为 null 时不套 Tooltip —— 空字符串会弹出一个空气泡。
-Widget _headerTooltip(String? message, Widget child) => message == null
-    ? child
-    : Tooltip(
-        message: message,
-        waitDuration: const Duration(milliseconds: 600),
-        child: child,
-      );
 
 /// 带标签的滑块，拖动时对写入全局配置做节流。
 ///

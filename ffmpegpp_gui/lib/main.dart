@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FontLoader, ByteData;
+import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:window_manager/window_manager.dart';
@@ -107,6 +108,10 @@ void main() async {
   _startupLog('5-AppState created');
 
   _startupLog('7-calling runApp');
+  // 预加载液态玻璃 shader：Impeller 平台（移动端 / macOS / 开启
+  // --enable-impeller 的 Windows）上首块玻璃不用等异步加载，避免闪烁。
+  // Skia 平台（Windows 默认）加载即被 shaderGlassSupported 短路，无开销。
+  unawaited(OCLiquidGlassGroup.precacheShader().catchError((_) {}));
   runApp(
     ChangeNotifierProvider.value(
       value: appState,
