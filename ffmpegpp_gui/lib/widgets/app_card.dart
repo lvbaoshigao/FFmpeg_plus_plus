@@ -2,8 +2,8 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
-import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
+import 'liquid_glass_fallback.dart';
 
 /// 统一「表面样式」常量（卡片 / 移动端底部菜单栏 / 移动端顶部药丸共用）：
 /// - [theme]  跟随主题色（纯色，不透明卡片；设置了主题渐变时显示渐变）
@@ -183,8 +183,10 @@ class _AppCardState extends State<AppCard> {
           ),
         ),
       );
-    } else if (style == SurfaceStyle.liquid && isMobilePlatform) {
-      // 移动端液态玻璃：oc_liquid_glass GPU shader（与底部导航/药丸一致）。
+    } else if (style == SurfaceStyle.liquid && shaderGlassSupported) {
+      // 液态玻璃：oc_liquid_glass GPU shader（与底部导航/药丸一致）。
+      // Impeller 不可用时（Windows 默认 Skia，部分安卓低端机也回退 Skia）
+      // 落入下方统一回退，避免 shader backdrop 被整体跳过、玻璃整块消失。
       // OCLiquidGlass 自身接收 color=tint；inner 只保留边框，避免双重染色。
       final tint = scheme.surface.withAlpha((op * 255).round().clamp(0, 255));
       final glassKey = ValueKey<_CardGlassKey>(key);
@@ -218,54 +220,50 @@ class _AppCardState extends State<AppCard> {
         ),
       );
     } else {
-      // 桌面端液态玻璃：背景模糊 + 上亮下暗体感渐变（GlassPanel liquid 的
-      // 自包含简化版，不再依赖全局 glassEffect）。
+      // 液态玻璃回退（无 Impeller）：高斯模糊 + 液态玻璃倒角高光（与
+      // GlassPanel liquid 回退一致，不再依赖全局 glassEffect）。
       final alphaTop = ((isDark ? 96.0 : 118.0) * op).round();
       final alphaBot = ((isDark ? 46.0 : 62.0) * op).round();
       core = RepaintBoundary(
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            borderRadius: br,
-            boxShadow: [
-              BoxShadow(color: Colors.black.withAlpha(isDark ? 60 : 26), blurRadius: 18, offset: const Offset(0, 6)),
-            ],
+        child: LiquidGlassBackdrop(
+          borderRadius: br,
+          sigma: 12,
+          opacity: op,
+          shadow: BoxShadow(
+            color: Colors.black.withAlpha(isDark ? 60 : 26),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
           ),
-          child: ClipRRect(
-            borderRadius: br,
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-              child: Container(
-                padding: widget.padding,
-                decoration: BoxDecoration(
-                  borderRadius: br,
-                  color: op <= 0.001 ? Colors.transparent : null,
-                  gradient: op > 0.001
-                      ? LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: themeGrad != null
-                              ? [
-                                  Color.lerp(themeGrad.first, Colors.black, 0)!.withAlpha(alphaTop),
-                                  Color.lerp(themeGrad.last, Colors.black, 0.15)!.withAlpha(alphaBot),
-                                ]
-                              : [
-                                  scheme.surface.withAlpha(alphaTop),
-                                  scheme.surface.withAlpha((alphaTop + alphaBot) ~/ 2),
-                                  scheme.surface.withAlpha(alphaBot),
-                                ],
-                          stops: themeGrad == null ? const [0.0, 0.55, 1.0] : null,
-                        )
-                      : null,
-                  border: Border.all(
-                    color: op <= 0.001
-                        ? Colors.transparent
-                        : Colors.white.withValues(alpha: isDark ? 0.14 : 0.28),
-                    width: 1,
-                  ),
-                ),
-                child: inner,
+          child: Container(
+            padding: widget.padding,
+            decoration: BoxDecoration(
+              borderRadius: br,
+              color: op <= 0.001 ? Colors.transparent : null,
+              gradient: op > 0.001
+                  ? LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: themeGrad != null
+                          ? [
+                              Color.lerp(themeGrad.first, Colors.black, 0)!.withAlpha(alphaTop),
+                              Color.lerp(themeGrad.last, Colors.black, 0.15)!.withAlpha(alphaBot),
+                            ]
+                          : [
+                              scheme.surface.withAlpha(alphaTop),
+                              scheme.surface.withAlpha((alphaTop + alphaBot) ~/ 2),
+                              scheme.surface.withAlpha(alphaBot),
+                            ],
+                      stops: themeGrad == null ? const [0.0, 0.55, 1.0] : null,
+                    )
+                  : null,
+              border: Border.all(
+                color: op <= 0.001
+                    ? Colors.transparent
+                    : Colors.white.withValues(alpha: isDark ? 0.14 : 0.28),
+                width: 1,
               ),
             ),
+            child: inner,
           ),
         ),
       );

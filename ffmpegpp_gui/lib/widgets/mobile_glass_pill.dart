@@ -4,6 +4,7 @@ import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import 'app_card.dart' show SurfaceStyle;
+import 'liquid_glass_fallback.dart';
 
 /// 移动端「药丸」容器 —— 顶部菜单栏样式（AppConfig.pillStyle）由它接管。
 ///
@@ -238,8 +239,8 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
           ),
         ),
       );
-    } else {
-      // liquid：液态玻璃 shader
+    } else if (shaderGlassSupported) {
+      // liquid：液态玻璃 shader（Impeller 可用时）
       // 关闭高光带（lightband）与压低镜面高光：高光带按固定像素偏移绘制，
       // 在较「高」的内容（如设置项卡片）上会变成一条横向"分界线"，
       // 视觉上把内容截成两段 —— 这里去掉它，仅保留折射 + 柔和高光。
@@ -270,6 +271,23 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
             ),
             child: inner,
           ),
+        ),
+      );
+    } else {
+      // liquid 但无 Impeller（Windows 桌面端默认 Skia）：shader backdrop 会被
+      // _RenderLiquidGlassGroup 整体跳过 → 玻璃完全不可见（此前配置库页签药丸
+      // 就是这样「没渲染」的）。回退为高斯模糊 + 液态玻璃倒角高光，保证可见。
+      pill = RepaintBoundary(
+        child: LiquidGlassBackdrop(
+          borderRadius: BorderRadius.circular(widget.radius),
+          sigma: 16,
+          opacity: op,
+          shadow: BoxShadow(
+            color: Colors.black.withAlpha(isDark ? 60 : 22),
+            blurRadius: 16,
+            offset: const Offset(0, 5),
+          ),
+          child: inner,
         ),
       );
     }

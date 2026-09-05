@@ -1,13 +1,17 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../platform/app_platform.dart';
+import 'liquid_glass_fallback.dart';
 import 'mobile_top_bar.dart';
 import 'mobile_glass_pill.dart';
 
 /// 玻璃面板 —— 支持三种效果（由设置→外观→玻璃效果控制）：
-/// - liquid：液态玻璃（高通透 + 背景模糊 + 顶部高光细边 + 体感渐变，简洁）
+/// - liquid：液态玻璃（Impeller 平台走 oc_liquid_glass GPU shader 真折射；
+///   Windows 默认 Skia 退回「高斯模糊 + 液态玻璃倒角高光」回退，见
+///   liquid_glass_fallback.dart 的 shaderGlassSupported 说明）
 /// - blur：仅高斯模糊背景（半透明，简洁）
 /// - none：无效果（纯色半透明卡片）
 class GlassPanel extends StatelessWidget {
@@ -275,120 +279,60 @@ class GlassPanel extends StatelessWidget {
       ),
       child: child,
     );
-    return RepaintBoundary(
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: br,
-          boxShadow: [
-            // 单层悬浮投影（去除双层小阴影与左上柔光，减少光效噪点）
-            BoxShadow(
+
+    // 真液态玻璃（Impeller）：GPU shader 折射 + 镜面高光，与移动端药丸一致。
+    // Windows 桌面端默认 Skia（tools 对 desktop 传 enable-impeller=false），
+    // ImageFilter.shader 不可用 → 自动落入下方 LiquidGlassBackdrop 回退。
+    // shader 路径里 tint 由 OCLiquidGlass.color 提供（GPU 内部叠加），
+    // 内层只保留描边，避免「主题色 + 主题色」双重染色。
+    if (shaderGlassSupported) {
+      return RepaintBoundary(
+        child: OCLiquidGlassGroup(
+          settings: kLiquidGlassSettings,
+          child: OCLiquidGlass(
+            borderRadius: radius,
+            color: baseColor.withAlpha(liqTop),
+            shadow: BoxShadow(
               color: Colors.black.withAlpha(isDark ? 60 : 26),
               blurRadius: 18,
               offset: const Offset(0, 6),
             ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: br,
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
-            child: _LiquidGlassBody(
-              borderRadius: br,
-              opacity: op, // 光影强度随透明度缩放：全透明时仅剩背景模糊
-              child: glassBody,
+            child: Container(
+              padding: padding,
+              decoration: BoxDecoration(
+                borderRadius: br,
+                border: Border.all(
+                  color: fullyTransparent
+                      ? Colors.transparent
+                      : (follow
+                          ? scheme.primary.withValues(alpha: isDark ? 0.30 : 0.45)
+                          : Colors.white.withValues(alpha: isDark ? 0.14 : 0.28)),
+                  width: 1,
+                ),
+              ),
+              child: child,
             ),
           ),
         ),
+      );
+    }
+
+    // Skia 回退（Windows 默认）：高斯模糊 + 液态玻璃倒角高光画笔。
+    // 光影强度随透明度缩放：全透明时仅剩背景模糊。
+    return RepaintBoundary(
+      child: LiquidGlassBackdrop(
+        borderRadius: br,
+        sigma: sigma,
+        opacity: op,
+        shadow: BoxShadow(
+          color: Colors.black.withAlpha(isDark ? 60 : 26),
+          blurRadius: 18,
+          offset: const Offset(0, 6),
+        ),
+        child: glassBody,
       ),
     );
   }
-}
-
-/// 液态玻璃层：模糊由外层 BackdropFilter 提供；此处只叠加**静态**简易光影：
-///  - 顶部受光的细高光边（无 SweepGradient 环绕，避免光线断层）
-///  - 上亮下暗的体感渐变（厚度感）
-/// 没有任何动画/漂浮物，一次 paint 完成，性能开销只在尺寸变化时发生。
-///
-/// 注意：不要在这里用 Stack + Positioned.fill —— 顶栏在 Column 中布局时
-/// 会收到无界高度约束（h<=Infinity），Stack 会断言失败导致整页不渲染。
-class _LiquidGlassBody extends StatelessWidget {
-  final BorderRadius borderRadius;
-  final double opacity;
-  final Widget child;
-  const _LiquidGlassBody({required this.borderRadius, this.opacity = 1.0, required this.child});
-
-  @override
-  Widget build(BuildContext context) {
-    return CustomPaint(
-      painter: _LiquidGlassPainter(borderRadius: borderRadius, opacity: opacity),
-      child: child,
-    );
-  }
-}
-
-/// 简洁玻璃光影画笔。
-class _LiquidGlassPainter extends CustomPainter {
-  final BorderRadius borderRadius;
-  final double opacity;
-  _LiquidGlassPainter({required this.borderRadius, this.opacity = 1.0});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (size.isEmpty) return;
-    if (size.shortestSide < 12) return;
-    if (opacity <= 0.001) return;
-    final o = opacity.clamp(0.0, 1.0);
-    final rrect = RRect.fromRectAndCorners(
-      Offset.zero & size,
-      topLeft: borderRadius.topLeft,
-      topRight: borderRadius.topRight,
-      bottomLeft: borderRadius.bottomLeft,
-      bottomRight: borderRadius.bottomRight,
-    );
-    canvas.save();
-    canvas.clipRRect(rrect);
-
-    // 1) 顶部细高光边（仅顶部一条，简洁不抢眼）
-    final edge = Paint()
-      ..shader = LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [
-          Colors.white.withValues(alpha: 0.34 * o),
-          Colors.white.withValues(alpha: 0.0),
-        ],
-        stops: const [0.0, 0.5],
-      ).createShader(rrect.outerRect);
-    canvas.drawRRect(
-      rrect.deflate(0.5),
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.4
-        ..shader = edge.shader,
-    );
-
-    // 2) 体感渐变：顶部略亮、底部略暗（厚度感）
-    canvas.drawRRect(
-      rrect.deflate(1.2),
-      Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Colors.white.withValues(alpha: 0.08 * o),
-            Colors.white.withValues(alpha: 0.0),
-            Colors.black.withValues(alpha: 0.06 * o),
-          ],
-          stops: const [0.0, 0.55, 1.0],
-        ).createShader(rrect.outerRect),
-    );
-
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(_LiquidGlassPainter old) =>
-      old.borderRadius != borderRadius || old.opacity != opacity;
 }
 
 /// 浮动液态玻璃顶栏 —— 每个页面顶部的标题+操作按钮容器

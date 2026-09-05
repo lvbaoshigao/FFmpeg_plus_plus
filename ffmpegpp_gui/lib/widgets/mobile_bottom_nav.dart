@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import 'app_card.dart' show SurfaceStyle;
+import 'liquid_glass_fallback.dart';
 
 /// 移动端底部导航栏 —— 样式由「底部菜单栏样式」（AppConfig.navStyle）接管。
 ///
@@ -316,7 +317,28 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
       );
     }
 
-    // liquid：oc_liquid_glass 液态玻璃（GPU fragment shader）
+    // liquid：oc_liquid_glass 液态玻璃（GPU fragment shader）。
+    // 无 Impeller（Windows 默认 Skia）时回退为高斯模糊 + 倒角高光，
+    // 避免 shader backdrop 被整体跳过、底部导航玻璃整块消失。
+    if (!shaderGlassSupported) {
+      return Padding(
+        padding: EdgeInsets.fromLTRB(14, 2, 14, bottomSafe + 8),
+        child: RepaintBoundary(
+          child: LiquidGlassBackdrop(
+            borderRadius: BorderRadius.circular(radius),
+            sigma: 16,
+            opacity: op,
+            shadow: BoxShadow(
+              color: Colors.black.withAlpha(isDark ? 70 : 26),
+              blurRadius: 22,
+              offset: const Offset(0, 6),
+            ),
+            child: buildBarIn(),
+          ),
+        ),
+      );
+    }
+
     // 调低调光参数避免「光污染」：specStrength 大幅降低，lightband 接近关闭，
     // 并整体包 RepaintBoundary 隔离 shader 绘制，避免与上方内容互相触发重绘（闪屏）。
     //
