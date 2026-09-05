@@ -1947,7 +1947,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         child: PopupMenuButton<String>(
           tooltip: s.isZh ? 'AI 配置 / 模型' : 'AI Profile / Model',
           padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 140),
+          // constraints 作用于弹出的菜单而非按钮本身：给按钮最小宽度，
+          // 同时必须带 maxWidth，否则会覆盖默认 280 上限导致菜单过宽
+          constraints: const BoxConstraints(minWidth: 140, maxWidth: 280),
           onSelected: (v) {
             if (v == '__custom_model__') {
               _promptTopCustomModel(scheme, s);
@@ -2654,7 +2656,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               tooltip: s.isZh ? '更多' : 'More',
               icon: Icon(Icons.more_vert, size: 14, color: scheme.onSurface),
               padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+              // 同上：约束菜单宽度上限，避免按最长条目无限撑宽
+              constraints: const BoxConstraints(minWidth: 24, minHeight: 24, maxWidth: 280),
               onSelected: (v) {
                 switch (v) {
                   case 'export':

@@ -57,23 +57,15 @@ for lib in libffmpegpp.so libffmpeg.so libffprobe.so; do
 done
 
 # 二次防护：jniLibs 的 ffmpeg 必须带 MediaCodec 硬编。dist 同步后立刻抽检，
-# 若 strings 里没有 h264_mediacodec，说明 dist/ 是旧缓存（或 git 还原的
+# 若二进制里没有 h264_mediacodec，说明 dist/ 是旧缓存（或 git 还原的
 # 旧二进制被同步进来了），硬失败而不是把无声退化的 APK 打出去。
-if command -v strings >/dev/null 2>&1; then
-  _STRINGS=strings
-elif command -v llvm-strings >/dev/null 2>&1; then
-  _STRINGS=llvm-strings
-elif [ -n "${NDK_HOME:-}" ] && [ -x "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strings" ]; then
-  _STRINGS="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strings"
-else
-  _STRINGS=""
-fi
-if [ -n "$_STRINGS" ]; then
-  if ! "$_STRINGS" "$JNI_DIR/libffmpeg.so" 2>/dev/null | grep -q 'h264_mediacodec'; then
-    echo "ERROR: jniLibs/libffmpeg.so 缺少 h264_mediacodec（移动端 GPU 编码会无声回退 CPU）" >&2
-    echo "       请先运行 build/android/build_ffmpeg.sh 重建 dist 产物，再重试。" >&2
-    exit 1
-  fi
+# 用 `grep -aq` 直接搜二进制：本脚本开了 `set -o pipefail`，不要用
+# `strings | grep -q`（grep -q 提前退出会让上游收到 SIGPIPE，匹配成功
+# 也被判失败）。
+if ! grep -aq 'h264_mediacodec' "$JNI_DIR/libffmpeg.so"; then
+  echo "ERROR: jniLibs/libffmpeg.so 缺少 h264_mediacodec（移动端 GPU 编码会无声回退 CPU）" >&2
+  echo "       请先运行 build/android/build_ffmpeg.sh 重建 dist 产物，再重试。" >&2
+  exit 1
 fi
 echo "jniLibs 已就绪（dist → jniLibs 字节同步；PT_INTERP + mediacodec 验收通过）"
 
