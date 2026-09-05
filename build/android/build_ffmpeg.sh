@@ -291,8 +291,12 @@ _ffmpeg_dist_ok() {
     # 产物时这里返回 1，强制走 then 分支重新构建。
     $TOOLCHAIN/bin/llvm-readelf -d "$_b" 2>/dev/null \
         | grep -q 'libc++_shared\.so' && return 1
-    # 新增外部依赖（libwebp）后，旧的缓存产物不含该编码器，必须强制重建。
-    # ffmpeg 二进制内嵌 encoder 名 "libwebp"，用 strings 探测即可判定。
+    # 新增 MediaCodec 硬编守卫：旧缓存虽然可能含 libwebp，但没有
+    # h264_mediacodec；必须判无效并强制重跑 configure/make。
+    if [[ "$_b" == *libffmpeg.so ]]; then
+      $TOOLCHAIN/bin/llvm-strings "$_b" 2>/dev/null | grep -q 'h264_mediacodec' || return 1
+    fi
+    # ffmpeg/ffprobe 二进制内嵌 encoder 名 "libwebp"，用 strings 探测即可判定。
     $TOOLCHAIN/bin/llvm-strings "$_b" 2>/dev/null | grep -q 'libwebp' || return 1
   done
   return 0
@@ -418,6 +422,18 @@ for _b in $BUILD/dist/libffmpeg.so $BUILD/dist/libffprobe.so; do
     exit 1
   fi
 done
+# 硬校验：ffmpeg 产物必须真的编译进了 MediaCodec 硬编编码器。
+# 教训：缓存命中 / configure 静默失败都可能产出「看起来正常但没有
+# h264_mediacodec」的 ffmpeg，一旦打包进 APK，移动端 GPU 编码会无声
+# 回退到 CPU（用户在手机上看到 CPU 占满、速度极慢）。strings 探测
+# 编码器名是最直接的判定方式，缺失即硬失败，拒绝流入 APK。
+if ! $TOOLCHAIN/bin/llvm-strings "$BUILD/dist/libffmpeg.so" 2>/dev/null | grep -q 'h264_mediacodec'; then
+  echo "ERROR: libffmpeg.so 未包含 h264_mediacodec 编码器" >&2
+  echo "       configure 的 --enable-mediacodec --enable-jni 未生效，请检查" >&2
+  echo "       NDK 版本（需 r26+，提供 libmediandk）与 ffmpeg_config.log 中" >&2
+  echo "       mediacodec 检测结果。必要时清掉 FFMPEGPP_CACHE 强制重建。" >&2
+  exit 1
+fi
 log "ffmpeg/ffprobe staged (PT_INTERP ok): $(ls -la $BUILD/dist)"
 
 # ── 7. libffmpegpp.so (C++ 后端) ──

@@ -148,13 +148,21 @@ class AppTheme {
           padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(vertical: 8)),
           backgroundColor: WidgetStatePropertyAll(scheme.surfaceContainerHighest.withAlpha(240)),
           shadowColor: WidgetStatePropertyAll(Colors.black.withAlpha(isDark ? 80 : 30)),
+          // 展开面板宽高上限：DropdownMenu 未显式给 width 时会按最长条目
+          // （含 leadingIcon）撑开，桌面端表现为「菜单栏过大 / 宽度极大」。
+          // 这里兜底约束，个别下拉再用自身 width/menuHeight 精确控制。
+          maximumSize: const WidgetStatePropertyAll(Size(320, 320)),
         ),
       ),
-      // 所有弹出菜单（PopupMenuButton / 右键菜单等）统一圆角矩形
+      // 所有弹出菜单（PopupMenuButton / 右键菜单等）统一圆角矩形。
+      // constraints：修复「PC 端菜单选项宽度极大」——PopupMenu 默认按最长
+      // 条目内容撑开，节点类型菜单里的长标签 + 媒体标签会把菜单拉到很宽。
+      // 这里给全局上下限，个别菜单仍可用自己的 constraints 覆盖。
       popupMenuTheme: PopupMenuThemeData(
         color: scheme.surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         elevation: 8,
+        constraints: const BoxConstraints(minWidth: 160, maxWidth: 280),
       ),
       // 所有对话框统一风格：
       // - 液态玻璃 / 模糊：半透明磨砂背景（透出后面玻璃层）+ 细边框 + 无 M3 tint；

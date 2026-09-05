@@ -2494,11 +2494,15 @@ class AppState extends ChangeNotifier {
       } else {
         addLog('[MCP] 服务已启动 (监听 $host:$port)，访问令牌: $_mcpToken — 请勿泄露', category: 'warning');
       }
-      _mcpServer!.listen((req) {
+      final server = _mcpServer!;
+      server.listen((req) {
         _handleMcpRequest(req);
       }, onError: (e) {
         addLog('[MCP] 连接错误: $e', category: 'error');
       }, onDone: () {
+        // 只有「当前仍是这个实例」才清空：stopMcpServer 已提前置空并可能
+        // 紧接着 start 了新实例，此处若无条件置空会把新服务误标为已停止。
+        if (!identical(_mcpServer, server)) return;
         addLog('[MCP] 服务已停止', category: 'info');
         _mcpServer = null;
         notifyListeners();
@@ -2516,9 +2520,14 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> stopMcpServer() async {
-    if (_mcpServer == null) return;
-    await _mcpServer!.close();
+    final server = _mcpServer;
+    if (server == null) return;
+    // 先清引用：close() 会触发 onDone（内部也会置空并 notify），
+    // 这里提前置空避免「停止中又被 startMcpServer 认为仍在运行」。
     _mcpServer = null;
+    // force: true —— 普通 close() 会等所有活跃连接自然结束；MCP 客户端常保持
+    // 长连接，退出应用时会卡在这里（此前表现为关闭窗口后进程残留）。
+    await server.close(force: true);
     addLog('[MCP] 服务已停止', category: 'info');
     notifyListeners();
   }
@@ -2567,6 +2576,16 @@ class AppState extends ChangeNotifier {
       final id = json['id'];
       final method = json['method'] as String? ?? '';
       final params = json['params'] as Map<String, dynamic>? ?? {};
+
+      // JSON-RPC 通知（没有 id，如 notifications/initialized、
+      // notifications/cancelled）按规范「绝不能」返回响应体：MCP 客户端收到
+      // 带 id:null 的响应会当成协议错误报警。这里直接 202 空响应。
+      if (!json.containsKey('id') || id == null) {
+        req.response.statusCode = HttpStatus.accepted;
+        await req.response.close();
+        return;
+      }
+
       req.response
         ..statusCode = HttpStatus.ok
         ..headers.contentType = ContentType.json;
@@ -2581,7 +2600,14 @@ class AppState extends ChangeNotifier {
             },
           }));
           break;
+        // MCP 规范要求的心跳：客户端定期 ping 判定连接存活，
+        // 缺失时部分客户端会认为服务器已失联并断开。返回空结果即表示存活。
+        case 'ping':
+          req.response.write(jsonEncode({'jsonrpc': '2.0', 'id': id, 'result': {}}));
+          break;
         case 'tools/list':
+          // nextCursor 省略 = 无更多分页（工具数量固定且很小，无需真实分页，
+          // 但保留字段语义以兼容会检查分页的客户端）。
           req.response.write(jsonEncode({'jsonrpc': '2.0', 'id': id, 'result': {'tools': _mcpToolsList()}}));
           break;
         case 'tools/call':
@@ -2621,7 +2647,21 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  List<Map<String, dynamic>> _mcpToolsList() => [
+  /// 工具清单。出口统一给每个 inputSchema 补 `additionalProperties: false`，
+  /// 让客户端（及其后的 LLM）在传入未定义字段时能立刻收到 schema 校验错误，
+  /// 而不是被服务端静默忽略后困惑于「参数没生效」。
+  List<Map<String, dynamic>> _mcpToolsList() {
+    final tools = _mcpToolsRaw();
+    for (final t in tools) {
+      final schema = t['inputSchema'];
+      if (schema is Map<String, dynamic>) {
+        schema.putIfAbsent('additionalProperties', () => false);
+      }
+    }
+    return tools;
+  }
+
+  List<Map<String, dynamic>> _mcpToolsRaw() => [
     {'name': 'clear_all', 'description': 'Clear all nodes from canvas', 'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'undo', 'description': 'Undo last action', 'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'redo', 'description': 'Redo last action', 'inputSchema': {'type': 'object', 'properties': {}}},

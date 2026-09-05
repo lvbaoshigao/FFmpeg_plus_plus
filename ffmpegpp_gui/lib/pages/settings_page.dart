@@ -366,17 +366,41 @@ class _SettingsPageState extends State<SettingsPage> {
       title: (s) => s.secAppearance,
       icon: Icons.palette_outlined,
       cards: [
+        // 「外观」原为单张巨型「主题」卡（模式+主题色+背景+样式+画布 全塞一起），
+        // 现按关注点拆成 4 张分层卡片，各自独立可搜索、移动端不再长滑。
         _CardDef(
           id: 'theme',
           title: (s) => s.cardTheme,
           icon: Icons.brightness_6_outlined,
           keywords: ['深色', '暗色', '浅色', 'dark', 'light', 'mode', '模式',
               '主题色', '强调色', '颜色', 'accent', 'color', 'theme',
-              '背景', '壁纸', 'background', 'wallpaper', '不透明度', 'opacity',
-              '样式', 'style', '卡片', 'card', '液态玻璃', 'liquid',
-              '底部', 'bottom', 'nav', '药丸', 'pill',
-              '节点编辑器', '画布', 'canvas', '逻辑门', 'gate', 'ansi', 'iec'],
+              '动态取色', 'monet', 'dynamic', '渐变', 'gradient'],
           build: _buildTheme,
+        ),
+        _CardDef(
+          id: 'background',
+          title: (s) => s.isZh ? '背景' : 'Background',
+          icon: Icons.wallpaper_outlined,
+          keywords: ['背景', '壁纸', 'background', 'wallpaper', '图片', 'image',
+              '不透明度', 'opacity', '透明', 'alpha'],
+          build: _buildBackgroundCard,
+        ),
+        _CardDef(
+          id: 'surfaceStyle',
+          title: (s) => s.styleLabel,
+          icon: Icons.style_outlined,
+          keywords: ['样式', 'style', '卡片', 'card', '液态玻璃', 'liquid',
+              '玻璃', 'glass', '模糊', 'blur', '灰色', 'gray',
+              '底部', 'bottom', 'nav', '导航', '药丸', 'pill', '表面', 'surface'],
+          build: _buildSurfaceStyleCard,
+        ),
+        _CardDef(
+          id: 'nodeEditorStyle',
+          title: (s) => s.nodeEditorStyleLabel,
+          icon: Icons.account_tree_outlined,
+          keywords: ['节点编辑器', '画布', 'canvas', '背景', 'grid',
+              '逻辑门', 'gate', 'ansi', 'iec', 'ieee', '符号', 'symbol'],
+          build: _buildNodeEditorStyleCard,
         ),
         _CardDef(
           id: 'font',
@@ -1459,6 +1483,11 @@ const _askSkipOptions = <(String, String)>[
 /// 主题卡：模式 / 主题色 / 背景 / 样式（卡片样式、底部菜单栏样式、
 /// 顶部药丸样式、节点编辑器）。桌面端内联在「外观」分区，移动端作为
 /// 一级菜单「主题」行的二级菜单内容。
+/// 「外观 → 主题」卡片：亮/暗模式 + 主题色（预设/自定义渐变/Android 动态取色）。
+///
+/// 拆分说明：此前「主题」一张卡把 模式 + 主题色 + 背景 + 表面样式 + 画布样式 +
+/// 逻辑门标准 全塞在一起（单卡 130+ 行控件，移动端要滑很久才找到一项）。现按
+/// 关注点拆为 主题 / 背景 / 表面样式 / 节点编辑器 四张卡，各自可被搜索命中。
 Widget _buildTheme(BuildContext ctx, AppState state) {
   final cfg = state.config;
   final s = AppStrings.of(cfg.language);
@@ -1468,14 +1497,14 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
   final dynamicOn = isMobilePlatform && cfg.useDynamicColor;
 
   return _glass(ctx, state, s.cardTheme, [
-    // ── 1. 模式（亮/暗色切换） ──
+    // ── 模式（亮/暗色切换） ──
     SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
         title: Text(s.themeMode, style: TextStyle(color: clr)),
         subtitle: Text(state.darkMode ? s.darkMode : (s.isZh ? '浅色模式' : 'Light Mode'),
             style: TextStyle(fontSize: 11, color: scheme.outline)),
         value: state.darkMode,
         onChanged: (v) => state.toggleDarkMode(v)),
-    // ── 2. 主题色（预设 / 自定义 / 动态取色） ──
+    // ── 主题色（预设 / 自定义 / 动态取色） ──
     Row(children: [
       Expanded(child: Text(s.accentColor, style: TextStyle(color: clr, fontSize: 12))),
       if (dynamicOn) ...[
@@ -1524,17 +1553,23 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
           ]),
         ),
       ),
-    const SizedBox(height: 10),
-    // ── 3. 背景（查看当前背景名 / 更换；展开二级菜单设不透明度） ──
-    const _ThemeBackgroundSection(),
-    const SizedBox(height: 6),
-    // ── 4. 样式 ──
-    Row(children: [
-      Icon(Icons.style_outlined, size: 14, color: scheme.primary),
-      const SizedBox(width: 6),
-      Text(s.styleLabel, style: TextStyle(color: clr, fontSize: 12, fontWeight: FontWeight.w600)),
-    ]),
-    const SizedBox(height: 8),
+  ]);
+}
+
+/// 「外观 → 背景」卡片：壁纸选择 + 不透明度（原 _ThemeBackgroundSection）。
+Widget _buildBackgroundCard(BuildContext ctx, AppState state) {
+  final s = AppStrings.of(state.config.language);
+  return _glass(ctx, state, s.isZh ? '背景' : 'Background', const [
+    _ThemeBackgroundSection(),
+  ]);
+}
+
+/// 「外观 → 表面样式」卡片：卡片 / 移动端底部菜单栏 / 移动端顶部药丸的
+/// 表面样式（四值：跟随主题 / 液态玻璃 / 模糊 / 灰色）。
+Widget _buildSurfaceStyleCard(BuildContext ctx, AppState state) {
+  final cfg = state.config;
+  final s = AppStrings.of(cfg.language);
+  return _glass(ctx, state, s.styleLabel, [
     // 布局统一：左 = 图标 + 文字（含作用范围说明），右 = 下拉菜单（展开动画）
     _styleRow(ctx,
         icon: Icons.view_carousel_outlined,
@@ -1554,21 +1589,26 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
           value: cfg.pillStyle,
           onSelected: (v) => state.updateConfig((c) => c..pillStyle = v)),
     ],
-    const SizedBox(height: 10),
-    // 节点编辑器（画布背景 + 逻辑门符号标准）
-    Row(children: [
-      Icon(Icons.account_tree_outlined, size: 14, color: scheme.primary),
-      const SizedBox(width: 6),
-      Text(s.nodeEditorStyleLabel, style: TextStyle(color: clr, fontSize: 12, fontWeight: FontWeight.w600)),
-    ]),
-    const SizedBox(height: 8),
+  ]);
+}
+
+/// 「外观 → 节点编辑器」卡片：画布背景 + 逻辑门符号标准。
+Widget _buildNodeEditorStyleCard(BuildContext ctx, AppState state) {
+  final cfg = state.config;
+  final s = AppStrings.of(cfg.language);
+  final scheme = Theme.of(ctx).colorScheme;
+  final clr = scheme.onSurface;
+
+  return _glass(ctx, state, s.nodeEditorStyleLabel, [
     // 画布背景：下拉菜单样式（跟随全局 / 灰色 / 黑色 / 白色）
     Row(children: [
       Expanded(child: Text(s.canvasBgLabel, style: TextStyle(color: clr, fontSize: 12))),
-      SizedBox(width: 170, child: DropdownMenu<String>(
+      _menuBox(child: DropdownMenu<String>(
         initialSelection: cfg.canvasBg,
         requestFocusOnTap: false,
+        width: _kMenuWidth,
         textStyle: TextStyle(fontSize: 12, color: clr),
+        menuHeight: _kMenuMaxHeight,
         dropdownMenuEntries: [
           DropdownMenuEntry(value: 'global', label: s.canvasFollowGlobal, leadingIcon: const Icon(Icons.public_outlined, size: 14)),
           DropdownMenuEntry(value: 'gray', label: s.canvasGray, leadingIcon: const Icon(Icons.grid_4x4, size: 14)),
@@ -1579,7 +1619,7 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
       )),
     ]),
     const SizedBox(height: 10),
-    // 逻辑门符号标准：ANSI/IEEE 或 IEC（沿用原实现）
+    // 逻辑门符号标准：ANSI/IEEE 或 IEC
     Text(s.gateStdLabel, style: TextStyle(color: clr, fontSize: 12)),
     const SizedBox(height: 6),
     SegmentedButton<String>(
@@ -1595,9 +1635,29 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
   ]);
 }
 
+/// 设置页下拉菜单的统一宽度与展开面板高度上限。
+///
+/// 修复「PC 端菜单选项宽度极大」：此前 _styleRow 用固定 SizedBox(width:170)
+/// 包 DropdownMenu 而不给 DropdownMenu 自身 width，M3 的 DropdownMenu 在
+/// 桌面端会按最长条目内容撑开展开面板（叠加 leadingIcon 后可宽达数百像素），
+/// 溢出到卡片之外。这里显式约束两处：输入框宽度（width）与展开面板高度
+/// （menuHeight），并用 _menuBox 限制外层最大宽度。
+const double _kMenuWidth = 168;
+const double _kMenuMaxHeight = 260;
+
+/// 下拉菜单外层容器：限定最大宽度，避免在宽窗口下被 Row 拉伸。
+Widget _menuBox({required Widget child}) => ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: _kMenuWidth + 8),
+      child: child,
+    );
+
 /// 表面样式设置行：左 = 图标 + 文字（可选作用范围说明），右 = 四值下拉菜单。
 /// 下拉用 DropdownMenu（内置展开/收起动画）；key 绑定当前值，配置被外部
 /// 改动（如低配自动降级）后重建时菜单显示最新值。
+///
+/// 宽度修复：必须给 DropdownMenu 自身 `width`，否则桌面端展开面板会按
+/// 「最长条目 + leadingIcon」内容宽度撑开，出现「菜单选项宽度极大」并溢出卡片。
+/// 同时用 menuHeight 限制展开高度，避免右侧菜单栏过高。
 Widget _styleRow(
   BuildContext ctx, {
   required IconData icon,
@@ -1623,14 +1683,14 @@ Widget _styleRow(
         ],
       ])),
       const SizedBox(width: 8),
-      SizedBox(
-        width: 170,
+      _menuBox(
         child: DropdownMenu<String>(
           key: ValueKey('styleRow_${label}_$value'),
           initialSelection: value,
           requestFocusOnTap: false,
+          width: _kMenuWidth,
           textStyle: TextStyle(fontSize: 12, color: clr),
-          menuHeight: 200,
+          menuHeight: _kMenuMaxHeight,
           dropdownMenuEntries: [
             DropdownMenuEntry(value: 'theme', label: s.surfaceStyleTheme, leadingIcon: const Icon(Icons.format_color_fill, size: 14)),
             DropdownMenuEntry(value: 'liquid', label: s.surfaceStyleLiquid, leadingIcon: const Icon(Icons.water_drop_outlined, size: 14)),
@@ -2593,15 +2653,30 @@ Widget _aiSettingsContent(BuildContext bCtx, AppState state, AppStrings s, {requ
                   ]),
                   // ── Advanced ──
                   section(s.aiAdvanced, Icons.tune_outlined, [
-                    Text(s.aiGraphModeLabel, style: TextStyle(color: clr, fontSize: 12)),
-                    const SizedBox(height: 6),
-                    SegmentedButton<String>(
-                      showSelectedIcon: false,
-                      segments: [ButtonSegment(value: 'redo', label: Text(s.aiGraphModeRedo)), ButtonSegment(value: 'modify', label: Text(s.aiGraphModeModify))],
-                      selected: {cfg.aiGraphMode},
-                      onSelectionChanged: (v) { state.updateConfig((c) => c..aiGraphMode = v.first); setDState(() {}); },
-                      style: const ButtonStyle(visualDensity: VisualDensity.compact),
-                    ),
+                    // 图生成模式：下拉菜单（原分段按钮在窄栏里两个长标签会挤压换行）
+                    Row(children: [
+                      Expanded(child: Text(s.aiGraphModeLabel,
+                          style: TextStyle(color: clr, fontSize: 12))),
+                      _menuBox(child: DropdownMenu<String>(
+                        key: ValueKey('aiGraphMode_${cfg.aiGraphMode}'),
+                        initialSelection: cfg.aiGraphMode,
+                        requestFocusOnTap: false,
+                        width: _kMenuWidth,
+                        menuHeight: _kMenuMaxHeight,
+                        textStyle: TextStyle(fontSize: 12, color: clr),
+                        dropdownMenuEntries: [
+                          DropdownMenuEntry(value: 'redo', label: s.aiGraphModeRedo,
+                              leadingIcon: const Icon(Icons.refresh, size: 14)),
+                          DropdownMenuEntry(value: 'modify', label: s.aiGraphModeModify,
+                              leadingIcon: const Icon(Icons.edit_outlined, size: 14)),
+                        ],
+                        onSelected: (v) {
+                          if (v == null) return;
+                          state.updateConfig((c) => c..aiGraphMode = v);
+                          setDState(() {});
+                        },
+                      )),
+                    ]),
                     const SizedBox(height: 8),
                     SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
                         title: Text(s.aiShowThinking, style: TextStyle(color: clr, fontSize: 12)),
@@ -2984,8 +3059,14 @@ Future<void> pingAi(BuildContext ctx, AppState state, AppStrings s) async {
 
 /// 拉取模型列表并弹出选择器；[onPicked] 收到用户选中的模型名
 /// （写入哪个 model 字段由调用方决定）。公开供移动端提供商详情页复用。
+/// 拉取供应商模型列表。
+///
+/// [onPicked] 用户在选择器里点选某个模型时回调。
+/// [onListed] 拉取成功后回调完整列表 —— 供「提供商设置 → 模型」页把结果
+/// 落进 AiProfile.models（带能力标记），而不只是选一个当前模型。
 Future<void> listAiModels(BuildContext ctx, AppState state, AppStrings s,
-    {required ValueChanged<String> onPicked}) async {
+    {required ValueChanged<String> onPicked,
+    ValueChanged<List<String>>? onListed}) async {
   final cfg = state.config;
   if (cfg.aiApiKey.isEmpty) {
     if (ctx.mounted) showToast(ctx, s.aiNotConfigured, type: ToastType.warning);
@@ -3005,10 +3086,13 @@ Future<void> listAiModels(BuildContext ctx, AppState state, AppStrings s,
         final models = (data['data'] as List?)?.map((m) => m['id'] as String).toList() ?? [];
         models.sort();
         state.addLog('[AI] Anthropic 获取到 ${models.length} 个模型', category: 'info');
+        onListed?.call(models);
         if (ctx.mounted) _showModelPicker(ctx, state, models, s, onPicked);
       } else {
         state.addLog('[AI] Anthropic models endpoint unavailable (${resp.statusCode}), using known models', category: 'info');
-        if (ctx.mounted) _showModelPicker(ctx, state, List.of(_kKnownAnthropicModels), s, onPicked);
+        final known = List.of(_kKnownAnthropicModels);
+        onListed?.call(known);
+        if (ctx.mounted) _showModelPicker(ctx, state, known, s, onPicked);
       }
       return;
     }
@@ -3021,6 +3105,7 @@ Future<void> listAiModels(BuildContext ctx, AppState state, AppStrings s,
       final models = (data['data'] as List?)?.map((m) => m['id'] as String).toList() ?? [];
       models.sort();
       state.addLog('[AI] 获取到 ${models.length} 个模型', category: 'info');
+      onListed?.call(models);
       if (ctx.mounted) _showModelPicker(ctx, state, models, s, onPicked);
     } else {
       state.addLog('[AI] 获取模型失败: ${resp.statusCode}', category: 'error');
@@ -3030,6 +3115,79 @@ Future<void> listAiModels(BuildContext ctx, AppState state, AppStrings s,
     state.addLog('[AI] 获取模型失败: $e', category: 'error');
     if (ctx.mounted) showToast(ctx, 'Error: $e', type: ToastType.error);
   }
+}
+
+/// 查询账户余额。
+///
+/// 各供应商余额端点没有统一标准，这里按「OpenAI 兼容」常见约定依次尝试：
+/// 1. `/dashboard/billing/subscription` + `/dashboard/billing/credit_grants`
+///    （OpenAI 早期与多数国内中转站沿用）
+/// 2. `/user/info`（部分 one-api / new-api 面板）
+///
+/// 返回可读余额字符串；全部端点不可用时返回 null（由调用方提示「不支持」），
+/// 而不是抛错——避免把「供应商没这个接口」当成配置错误误导用户。
+Future<String?> fetchAiBalance(AiProfile profile) async {
+  final keys = profile.effectiveKeys;
+  if (keys.isEmpty) return null;
+  final key = keys.first;
+  // 从完整请求地址里剥出 API 根（去掉 /chat/completions、/messages、/responses）
+  var base = profile.apiUrl
+      .replaceAll(RegExp(r'/chat/completions/?$'), '')
+      .replaceAll(RegExp(r'/messages/?$'), '')
+      .replaceAll(RegExp(r'/responses/?$'), '');
+  if (base.endsWith('/')) base = base.substring(0, base.length - 1);
+
+  final headers = {'Authorization': 'Bearer $key'};
+  const timeout = Duration(seconds: 10);
+
+  // 1) credit_grants（余额 + 已用）
+  try {
+    final resp = await http
+        .get(Uri.parse('$base/dashboard/billing/credit_grants'), headers: headers)
+        .timeout(timeout);
+    if (resp.statusCode == 200) {
+      final data = jsonDecode(resp.body) as Map<String, dynamic>;
+      final total = (data['total_granted'] as num?)?.toDouble();
+      final used = (data['total_used'] as num?)?.toDouble();
+      final available = (data['total_available'] as num?)?.toDouble();
+      if (available != null || total != null) {
+        final parts = <String>[];
+        if (available != null) parts.add('可用 \$${available.toStringAsFixed(2)}');
+        if (used != null) parts.add('已用 \$${used.toStringAsFixed(2)}');
+        if (total != null) parts.add('总额 \$${total.toStringAsFixed(2)}');
+        return parts.join(' · ');
+      }
+    }
+  } catch (_) {
+    // 端点不存在/网络问题 → 继续尝试下一个
+  }
+
+  // 2) one-api / new-api 面板的 /user/info（quota 单位为 500000 = $1）
+  try {
+    final resp = await http
+        .get(Uri.parse('$base/user/info'), headers: headers)
+        .timeout(timeout);
+    if (resp.statusCode == 200) {
+      final data = jsonDecode(resp.body) as Map<String, dynamic>;
+      final d = data['data'];
+      if (d is Map) {
+        final quota = (d['quota'] as num?)?.toDouble();
+        final usedQuota = (d['used_quota'] as num?)?.toDouble();
+        if (quota != null) {
+          const unit = 500000.0; // one-api 约定：500000 quota = $1
+          final parts = <String>['可用 \$${(quota / unit).toStringAsFixed(2)}'];
+          if (usedQuota != null) {
+            parts.add('已用 \$${(usedQuota / unit).toStringAsFixed(2)}');
+          }
+          return parts.join(' · ');
+        }
+      }
+    }
+  } catch (_) {
+    // 同上
+  }
+
+  return null;
 }
 
 void _showModelPicker(BuildContext ctx, AppState state, List<String> models, AppStrings s, ValueChanged<String> onPicked) {

@@ -55,7 +55,27 @@ for lib in libffmpegpp.so libffmpeg.so libffprobe.so; do
     exit 1
   fi
 done
-echo "jniLibs 已就绪（dist → jniLibs 字节同步；PT_INTERP 由 build_ffmpeg.sh 6.5 验收保证）"
+
+# 二次防护：jniLibs 的 ffmpeg 必须带 MediaCodec 硬编。dist 同步后立刻抽检，
+# 若 strings 里没有 h264_mediacodec，说明 dist/ 是旧缓存（或 git 还原的
+# 旧二进制被同步进来了），硬失败而不是把无声退化的 APK 打出去。
+if command -v strings >/dev/null 2>&1; then
+  _STRINGS=strings
+elif command -v llvm-strings >/dev/null 2>&1; then
+  _STRINGS=llvm-strings
+elif [ -n "${NDK_HOME:-}" ] && [ -x "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strings" ]; then
+  _STRINGS="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strings"
+else
+  _STRINGS=""
+fi
+if [ -n "$_STRINGS" ]; then
+  if ! "$_STRINGS" "$JNI_DIR/libffmpeg.so" 2>/dev/null | grep -q 'h264_mediacodec'; then
+    echo "ERROR: jniLibs/libffmpeg.so 缺少 h264_mediacodec（移动端 GPU 编码会无声回退 CPU）" >&2
+    echo "       请先运行 build/android/build_ffmpeg.sh 重建 dist 产物，再重试。" >&2
+    exit 1
+  fi
+fi
+echo "jniLibs 已就绪（dist → jniLibs 字节同步；PT_INTERP + mediacodec 验收通过）"
 
 # ── 2. file_picker compileSdk 补丁（幂等） ──
 # file_picker 8.x 固定 compileSdk 34，而其依赖 flutter_plugin_android_lifecycle
