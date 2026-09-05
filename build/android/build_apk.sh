@@ -80,6 +80,9 @@ bash "$SCRIPT_DIR/patch_pubcache.sh"
 
 # ── 3. Gradle 构建（含 OOM 重试） ──
 cd "$FFMPEGPP_ROOT/ffmpegpp_gui/android"
+# gradlew 的可执行位在 Windows 上检出/提交时容易丢失（git status 里表现为
+# 纯 mode 变更）。这里自愈 chmod，保证任何环境下 ./gradlew 都能直接执行。
+chmod +x gradlew 2>/dev/null || true
 # 只编 arm64-v8a：Flutter Gradle 插件读取 project 属性 target-platform
 # （默认 android-arm,android-arm64,android-x64）。限制后 jni 等插件的
 # CMake 也不会为 4 个 ABI 重复编译，省一半磁盘和编译时间。
