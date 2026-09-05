@@ -134,12 +134,10 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
 
     final style = glassKey.style;
     final op = glassKey.op.clamp(0.0, 1.0);
-    // 纯色样式（theme/gray）必须「看起来是纯色」：alpha 保底 ~88%，
-    // 避免低不透明度时变成透明丢色。
+    // 纯色样式（theme/gray）强制完全不透明（255）——纯色语义即实心，
+    // 不再跟随 cardOpacity（此前 ~88% 保底仍透底，被反馈为「仍有透明度」）。
     final solid = style == SurfaceStyle.theme || style == SurfaceStyle.gray;
-    final baseAlpha = solid
-        ? ((isDark ? 238.0 : 248.0) * op.clamp(0.88, 1.0)).round().clamp(0, 255)
-        : (op * 255).round().clamp(0, 255);
+    final baseAlpha = solid ? 255 : (op * 255).round().clamp(0, 255);
     final baseColor = style == SurfaceStyle.theme
         ? scheme.primary
         : style == SurfaceStyle.gray

@@ -75,10 +75,11 @@ class MobileTopBar extends StatelessWidget {
           ),
         );
 
-    // theme/gray：纯色顶栏（无背景模糊），alpha 保底避免低不透明度时变透明
+    // theme/gray：纯色顶栏（无背景模糊）。纯色语义即实心：完全不透明，
+    // 不跟随 cardOpacity（此前 ~92% 保底仍透底）
     if (style == SurfaceStyle.theme || style == SurfaceStyle.gray) {
       final base = style == SurfaceStyle.theme ? scheme.primary : scheme.surfaceContainerHigh;
-      final alpha = ((isDark ? 238.0 : 248.0) * op.clamp(0.92, 1.0)).round().clamp(0, 255);
+      const int alpha = 255;
       return barBody(base.withAlpha(alpha));
     }
 

@@ -32,6 +32,11 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
   Offset? _dragStart;
   Rect? _cropRect;
   String? _activeHandle;
+  // 拖拽开始时的「快照」：移动/手柄改尺寸一律相对快照按绝对位移计算，
+  // 避免 d.delta（相对上一事件）+ 闭包旧值 在触摸多事件同帧时丢位移。
+  double _dragStartCropX = 0;
+  double _dragStartCropY = 0;
+  Rect? _dragStartDisplayRect;
 
   @override
   void initState() {
@@ -273,6 +278,9 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
     );
 
     return GestureDetector(
+      // opaque：图片未解码完成（或边缘区域）时手势区也可靠命中，
+      // 触摸不会穿透到外层 SingleChildScrollView（否则外层滚动、裁剪框像拖不动）
+      behavior: HitTestBehavior.opaque,
       onPanStart: (d) {
         final local = d.localPosition;
         const handleSize = 12.0;
@@ -285,7 +293,14 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
         else if (r.contains(local)) { _activeHandle = 'move'; }
         else { _activeHandle = 'new'; }
 
+        // 记录拖拽起始快照：后续所有位移都相对快照按「绝对位移」计算。
+        // 旧实现用 d.delta（相对上一事件的增量）+ 闭包里的 cropX（上次 build 值）：
+        // 安卓触摸一帧内常有多个 move 事件，闭包来不及更新，增量不断套在旧值上
+        // 再取整 → 大部分位移被丢掉，裁剪框跟着手指「拖不动/卡顿」。
         _dragStart = local;
+        _dragStartCropX = cropX;
+        _dragStartCropY = cropY;
+        _dragStartDisplayRect = r;
         if (_activeHandle == 'new') {
           setState(() {
             _cropRect = Rect.fromLTWH(local.dx, local.dy, 0, 0);
@@ -305,10 +320,9 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
             _cropRect = Rect.fromPoints(_dragStart!, clampedLocal);
             _applyCropRect(effectiveScale, imgW, imgH);
           } else if (_activeHandle == 'move') {
-            final dx = d.delta.dx;
-            final dy = d.delta.dy;
-            var newX = cropX + dx / effectiveScale;
-            var newY = cropY + dy / effectiveScale;
+            // 自拖拽起点起的绝对位移（不用 d.delta），跨帧闭包旧值不影响结果
+            var newX = _dragStartCropX + (local.dx - _dragStart!.dx) / effectiveScale;
+            var newY = _dragStartCropY + (local.dy - _dragStart!.dy) / effectiveScale;
             // 裁剪框大于图片时 imgW-cropW 为负，clamp 下界>上界会抛 ArgumentError
             newX = newX.clamp(0, math.max(0.0, imgW - cropW));
             newY = newY.clamp(0, math.max(0.0, imgH - cropH));
@@ -317,10 +331,12 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
             _syncControllers();
             widget.onChanged();
           } else {
-            var left = displayCropRect.left;
-            var top = displayCropRect.top;
-            var right = displayCropRect.right;
-            var bottom = displayCropRect.bottom;
+            // 手柄改尺寸：以拖拽起始时的显示矩形为基准（被拖边取当前绝对位置）
+            final r0 = _dragStartDisplayRect!;
+            var left = r0.left;
+            var top = r0.top;
+            var right = r0.right;
+            var bottom = r0.bottom;
 
             if (_activeHandle!.contains('l')) left = clampedLocal.dx;
             if (_activeHandle!.contains('r')) right = clampedLocal.dx;
@@ -338,6 +354,13 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
       onPanEnd: (_) {
         _dragStart = null;
         _activeHandle = null;
+        _dragStartDisplayRect = null;
+      },
+      onPanCancel: () {
+        // 手势被系统/其他组件抢占取消时清理状态，避免污染下一次拖拽
+        _dragStart = null;
+        _activeHandle = null;
+        _dragStartDisplayRect = null;
       },
       child: SizedBox(
         width: effectiveW,
