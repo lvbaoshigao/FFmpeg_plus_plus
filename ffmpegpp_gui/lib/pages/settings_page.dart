@@ -984,7 +984,9 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             Expanded(
               child: ListView(
-                padding: const EdgeInsets.fromLTRB(0, 12, 0, 48),
+                // 左右间距与设置主界面卡片对齐（主界面 = ListView 6px + 分区 8px = 14px）。
+                // 此前为 0：MCP/AI 等二级页卡片通顶通底，比主界面卡片明显更宽。
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 48),
                 children: [contentBuilder(ctx2, state)],
               ),
             ),
@@ -1533,22 +1535,24 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
       Text(s.styleLabel, style: TextStyle(color: clr, fontSize: 12, fontWeight: FontWeight.w600)),
     ]),
     const SizedBox(height: 8),
-    Text(s.cardStyleLabel, style: TextStyle(color: clr, fontSize: 12)),
-    Text(s.cardStyleScope, style: TextStyle(fontSize: 10, color: scheme.outline)),
-    const SizedBox(height: 6),
-    _surfaceStyleMenu(ctx, cfg.cardStyle, s, clr,
-        (v) => state.updateConfig((c) => c..cardStyle = v)),
+    // 布局统一：左 = 图标 + 文字（含作用范围说明），右 = 下拉菜单（展开动画）
+    _styleRow(ctx,
+        icon: Icons.view_carousel_outlined,
+        label: s.cardStyleLabel,
+        scope: s.cardStyleScope,
+        value: cfg.cardStyle,
+        onSelected: (v) => state.updateConfig((c) => c..cardStyle = v)),
     if (isMobilePlatform) ...[
-      const SizedBox(height: 10),
-      Text(s.navStyleLabel, style: TextStyle(color: clr, fontSize: 12)),
-      const SizedBox(height: 6),
-      _surfaceStyleMenu(ctx, cfg.navStyle, s, clr,
-          (v) => state.updateConfig((c) => c..navStyle = v)),
-      const SizedBox(height: 10),
-      Text(s.pillStyleLabel, style: TextStyle(color: clr, fontSize: 12)),
-      const SizedBox(height: 6),
-      _surfaceStyleMenu(ctx, cfg.pillStyle, s, clr,
-          (v) => state.updateConfig((c) => c..pillStyle = v)),
+      _styleRow(ctx,
+          icon: Icons.menu,
+          label: s.navStyleLabel,
+          value: cfg.navStyle,
+          onSelected: (v) => state.updateConfig((c) => c..navStyle = v)),
+      _styleRow(ctx,
+          icon: Icons.crop_landscape_outlined,
+          label: s.pillStyleLabel,
+          value: cfg.pillStyle,
+          onSelected: (v) => state.updateConfig((c) => c..pillStyle = v)),
     ],
     const SizedBox(height: 10),
     // 节点编辑器（画布背景 + 逻辑门符号标准）
@@ -1591,21 +1595,52 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
   ]);
 }
 
-/// 表面样式（卡片/底部菜单栏/顶部药丸）四选一：
-/// 跟随主题色(纯色) / 液态玻璃 / 模糊 / 灰色。全宽下拉菜单，移动端更易点。
-Widget _surfaceStyleMenu(BuildContext ctx, String value, AppStrings s, Color clr, ValueChanged<String> onSelected) {
-  return DropdownMenu<String>(
-    initialSelection: value,
-    requestFocusOnTap: false,
-    width: double.infinity,
-    textStyle: TextStyle(fontSize: 12, color: clr),
-    dropdownMenuEntries: [
-      DropdownMenuEntry(value: 'theme', label: s.surfaceStyleTheme, leadingIcon: const Icon(Icons.format_color_fill, size: 14)),
-      DropdownMenuEntry(value: 'liquid', label: s.surfaceStyleLiquid, leadingIcon: const Icon(Icons.water_drop_outlined, size: 14)),
-      DropdownMenuEntry(value: 'blur', label: s.glassBlur, leadingIcon: const Icon(Icons.blur_on_outlined, size: 14)),
-      DropdownMenuEntry(value: 'gray', label: s.surfaceStyleGray, leadingIcon: const Icon(Icons.grid_4x4, size: 14)),
-    ],
-    onSelected: (v) { if (v != null) onSelected(v); },
+/// 表面样式设置行：左 = 图标 + 文字（可选作用范围说明），右 = 四值下拉菜单。
+/// 下拉用 DropdownMenu（内置展开/收起动画）；key 绑定当前值，配置被外部
+/// 改动（如低配自动降级）后重建时菜单显示最新值。
+Widget _styleRow(
+  BuildContext ctx, {
+  required IconData icon,
+  required String label,
+  String? scope,
+  required String value,
+  required ValueChanged<String> onSelected,
+}) {
+  final scheme = Theme.of(ctx).colorScheme;
+  final clr = scheme.onSurface;
+  final s = AppStrings.of(ctx.read<AppState>().config.language);
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: Row(children: [
+      Icon(icon, size: 15, color: scheme.primary),
+      const SizedBox(width: 8),
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label, style: TextStyle(color: clr, fontSize: 12)),
+        if (scope != null) ...[
+          const SizedBox(height: 2),
+          Text(scope, style: TextStyle(fontSize: 10, color: scheme.outline),
+              maxLines: 2, overflow: TextOverflow.ellipsis),
+        ],
+      ])),
+      const SizedBox(width: 8),
+      SizedBox(
+        width: 170,
+        child: DropdownMenu<String>(
+          key: ValueKey('styleRow_${label}_$value'),
+          initialSelection: value,
+          requestFocusOnTap: false,
+          textStyle: TextStyle(fontSize: 12, color: clr),
+          menuHeight: 200,
+          dropdownMenuEntries: [
+            DropdownMenuEntry(value: 'theme', label: s.surfaceStyleTheme, leadingIcon: const Icon(Icons.format_color_fill, size: 14)),
+            DropdownMenuEntry(value: 'liquid', label: s.surfaceStyleLiquid, leadingIcon: const Icon(Icons.water_drop_outlined, size: 14)),
+            DropdownMenuEntry(value: 'blur', label: s.glassBlur, leadingIcon: const Icon(Icons.blur_on_outlined, size: 14)),
+            DropdownMenuEntry(value: 'gray', label: s.surfaceStyleGray, leadingIcon: const Icon(Icons.grid_4x4, size: 14)),
+          ],
+          onSelected: (v) { if (v != null) onSelected(v); },
+        ),
+      ),
+    ]),
   );
 }
 
@@ -2183,7 +2218,9 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
   final s = AppStrings.of(state.config.language);
   final scheme = Theme.of(ctx).colorScheme;
   if (isMobilePlatform) {
-    // 移动端：顶部图标 + 软件名 + 版本 + 检查更新按钮，下方为版本信息/链接/赞助。
+    // 移动端：顶部图标 + 软件名 + 版本，下方为版本信息/链接/赞助。
+    // 更新入口不在这里放单独按钮 + 二级弹窗（桌面在线更新机制对 APK 不适用），
+    // 更新说明统一在「设置-更新」卡片（APK 发布页链接）实现。
     return _glass(ctx, state, s.aboutTitle, [
       Center(child: Column(children: [
         const SizedBox(height: 4),
@@ -2196,11 +2233,6 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
         Text('v${updater.currentVersion}', style: TextStyle(fontSize: 13, color: scheme.outline)),
         const SizedBox(height: 2),
         Text('${s.aboutBuildDate} 2026-08-27', style: TextStyle(fontSize: 11, color: scheme.outline)),
-        const SizedBox(height: 14),
-        SizedBox(width: double.infinity,
-            child: _iosButton(icon: Icons.system_update, label: s.checkUpdate,
-                color: scheme.onSecondaryContainer, bg: scheme.secondaryContainer,
-                onTap: () => _checkForUpdate(ctx, s))),
       ])),
       const SizedBox(height: 14),
       const Divider(height: 1),

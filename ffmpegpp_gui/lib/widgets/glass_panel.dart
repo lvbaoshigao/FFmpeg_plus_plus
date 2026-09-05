@@ -59,8 +59,9 @@ class GlassPanel extends StatelessWidget {
     //    高斯模糊；blur/none 也统一复用 MobileGlassPill 的对应效果。──
     if (isMobilePlatform) {
       // 「不使用卡片玻璃效果」：跳过液态玻璃/毛玻璃渲染，退回主题色实心卡片
+      // （纯色语义即实心：完全不透明，不跟随 cardOpacity）
       if (cfg.noCardGlass) {
-        final solidAlpha = ((isDark ? 235 : 245) * op).round().clamp(0, 255);
+        const solidAlpha = 255;
         return RepaintBoundary(
           child: Container(
             padding: padding,
@@ -122,9 +123,10 @@ class GlassPanel extends StatelessWidget {
       );
     }
 
-    // 桌面端「不使用卡片玻璃效果」：实心主题色卡片
+    // 桌面端「不使用卡片玻璃效果」：实心主题色卡片（纯色语义即实心：
+    // 完全不透明，不跟随 cardOpacity）
     if (cfg.noCardGlass) {
-      final solidAlpha = ((isDark ? 235 : 245) * op).round().clamp(0, 255);
+      const solidAlpha = 255;
       return RepaintBoundary(
         child: Container(
           padding: padding,
@@ -153,17 +155,19 @@ class GlassPanel extends StatelessWidget {
     }
 
     if (effect == 'none') {
-      // 无效果：纯色卡片 + 圆角 + 细边框（透明度跟随）；主题渐变时用渐变底色
+      // 无效果：纯色卡片 + 圆角 + 细边框；纯色语义即实心（完全不透明，
+      // 不跟随 cardOpacity）；主题渐变时用渐变底色
+      const noneAlpha = 255;
       return RepaintBoundary(
         child: Container(
           padding: padding,
           decoration: BoxDecoration(
-            color: grad == null ? baseColor.withAlpha(((isDark ? 235 : 245) * op).round()) : null,
+            color: grad == null ? baseColor.withAlpha(noneAlpha) : null,
             gradient: grad != null
                 ? LinearGradient(
                     begin: grad.begin,
                     end: grad.end,
-                    colors: grad.colors.map((c) => c.withAlpha(((isDark ? 235 : 245) * op).round())).toList(),
+                    colors: grad.colors.map((c) => c.withAlpha(noneAlpha)).toList(),
                   )
                 : null,
             borderRadius: br,

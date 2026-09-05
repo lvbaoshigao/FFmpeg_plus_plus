@@ -179,12 +179,10 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
     final style = key.style;
     final op = key.op.clamp(0.0, 1.0);
     // 玻璃样式（liquid/blur）的 tint 与底部导航栏对齐：* 255 无截断，
-    // 让玻璃质感与底部栏一致；纯色样式（theme/gray）alpha 保底 ~88%，
-    // 避免低不透明度时「纯色」变透明丢色。
+    // 让玻璃质感与底部栏一致；纯色样式（theme/gray）强制完全不透明（255）
+    // ——纯色语义即实心，不再跟随 cardOpacity（此前 ~88% 保底仍透底）。
     final solid = style == SurfaceStyle.theme || style == SurfaceStyle.gray;
-    final baseAlpha = solid
-        ? ((isDark ? 238.0 : 248.0) * op.clamp(0.88, 1.0)).round().clamp(0, 255)
-        : (op * 255).round().clamp(0, 255);
+    final baseAlpha = solid ? 255 : (op * 255).round().clamp(0, 255);
     final baseColor = style == SurfaceStyle.theme
         ? scheme.primary
         : style == SurfaceStyle.gray

@@ -131,10 +131,10 @@ class _AppCardState extends State<AppCard> {
 
     Widget core;
     if (style == SurfaceStyle.theme || style == SurfaceStyle.gray) {
-      // 纯色卡片：必须「看起来是纯色」——alpha 跟随不透明度但保底 ~88%，
-      // 否则用户把卡片不透明度调低后会误以为纯色模式失效（变成透明）。
+      // 纯色卡片：强制完全不透明（255）。此前 alpha 跟随 cardOpacity（保底 ~88%），
+      // 用户反馈「纯色模式下卡片仍然有透明度」——纯色语义就是实心，不再透底。
       final base = style == SurfaceStyle.theme ? scheme.primary : scheme.surfaceContainerHigh;
-      final alpha = ((isDark ? 238.0 : 248.0) * op.clamp(0.88, 1.0)).round().clamp(0, 255);
+      const int alpha = 255;
       core = RepaintBoundary(
         child: Container(
           padding: widget.padding,
