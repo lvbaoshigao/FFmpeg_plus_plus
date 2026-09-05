@@ -21,6 +21,7 @@ import '../services/ai_chat_history.dart';
 import '../services/pipeline_autosave.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_strings.dart';
+import '../app.dart' show wallpaperImageProvider;
 import '../platform/app_platform.dart';
 import '../services/config_export.dart';
 import '../widgets/step_editors/start_step_editor.dart';
@@ -2179,7 +2180,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         if (!isMobilePlatform) _buildBottomBar(scheme, s),
       ]),
     );
-    if (Platform.isWindows || isMobilePlatform) return content;
+    // 仅 Linux 使用自绘标题栏（CSD）；Windows/macOS 用系统默认标题栏，
+    // 避免「双标题栏 + 重复窗口按钮」
+    if (Platform.isWindows || Platform.isMacOS || isMobilePlatform) return content;
     return Stack(children: [
       content,
       Positioned(left: 0, right: 0, top: 0, child: _buildEditorCsdTitleBar(scheme)),
@@ -2253,8 +2256,18 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     if (bg.isEmpty || !File(bg).existsSync()) return child;
     final scheme = Theme.of(context).colorScheme;
     final a = ((1.0 - cfg.backgroundOpacity) * 220).round().clamp(20, 240);
+    // 壁纸统一走 wallpaperImageProvider（按物理分辨率等比降采样解码），
+    // 直接 Image.file 会按原图尺寸解码（4K 壁纸 ~33MB）且与主界面解码
+    // 的 provider 不同 key，缓存无法复用
     return Stack(children: [
-      Positioned.fill(child: Image.file(File(bg), fit: BoxFit.cover)),
+      Positioned.fill(child: Image(
+        image: wallpaperImageProvider(
+            bg,
+            MediaQuery.sizeOf(context).width,
+            MediaQuery.sizeOf(context).height,
+            MediaQuery.devicePixelRatioOf(context)),
+        fit: BoxFit.cover,
+      )),
       Positioned.fill(child: Container(color: scheme.surface.withAlpha(a))),
       Theme(data: Theme.of(context).copyWith(
         scaffoldBackgroundColor: Colors.transparent,

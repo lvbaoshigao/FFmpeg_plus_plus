@@ -65,7 +65,9 @@ class _SidebarState extends State<Sidebar> {
       width: _collapsed ? _collapsedWidth : _expandedWidth,
       child: GlassPanel(
         radius: 20,
-        blur: 18,
+        // 侧边栏是全窗口最高的玻璃面板，模糊半径对内存影响最大；
+        // 12 与 18 的视觉差异很小，但离屏纹理面积明显更小
+        blur: 12,
         child: Material(
           color: Colors.transparent,
           child: DefaultTextStyle(

@@ -56,11 +56,62 @@ class AppState extends ChangeNotifier {
   // 每个任务正在运行的本地 ffmpeg 进程（供 cancelTask 只终止该任务名下的进程）
   final Map<String, List<Process>> _localProcessesByTask = {};
 
+  // ── 任务列表版本号 ──
+  // _tasks 是原地更新（元素级 copyWith 替换），List 引用永远不变，
+  // Provider 的 Selector 无法据此感知变化。队列页/任务卡片订阅这个单调
+  // 递增的版本号触发刷新（配合下方进度节流，通知频率已被压到 ~3Hz）。
+  int _tasksVersion = 0;
+  int get tasksVersion => _tasksVersion;
+
+  /// 任务列表内容变化后调用：版本号 +1 并通知 UI。
+  void _tasksNotify() {
+    _tasksVersion++;
+    notifyListeners();
+  }
+
+  // ── 进度心跳节流 ──
+  // ffmpeg 的进度输出每秒数次，多任务并发时更高频。此前每条进度消息都直接
+  // 改 _tasks 并 notifyListeners() → 整棵订阅树（队列页、侧边栏、MaterialApp
+  // 的 Selector 等）每 100~250ms 全量评估/重建，长转码下 CPU 与 GC 压力显著。
+  // 现在按任务合并最新一条，每 300ms 批量落一次：
+  //  - 进度条视觉上无差别（人眼分辨不出 300ms 间隔）；
+  //  - 通知频率上限 ~3.3Hz，且只在确有变化时通知。
+  final Map<String, bool Function()> _pendingProgress = {};
+  Timer? _progressFlushTimer;
+  static const Duration _progressFlushInterval = Duration(milliseconds: 300);
+
+  /// 登记一个任务的进度应用闭包（闭包内须自行检查任务仍存在且仍在 processing）。
+  void _queueProgress(String taskId, bool Function() apply) {
+    _pendingProgress[taskId] = apply;
+    _progressFlushTimer?.cancel();
+    _progressFlushTimer =
+        Timer(_progressFlushInterval, _flushProgress);
+  }
+
+  void _flushProgress() {
+    _progressFlushTimer = null;
+    final pending = Map<String, bool Function()>.from(_pendingProgress);
+    _pendingProgress.clear();
+    if (pending.isEmpty) return;
+    var changed = false;
+    for (final entry in pending.entries) {
+      try {
+        changed = entry.value() || changed;
+      } catch (_) {}
+    }
+    if (changed) {
+      _tasksVersion++;
+      notifyListeners();
+    }
+  }
+
   // ── Log entries ──
   final List<LogEntry> _logEntries = [];
   // 日志内存上限：长任务期间 stderr 逐行入队会无界增长，超出后丢弃最旧
   static const int _maxLogEntries = 2000;
   bool _logNotifyPending = false;
+  // 进度类日志的合批通知定时器（见 addLog 注释）
+  Timer? _progressLogNotifyTimer;
   // 日志目录探测缓存（避免每条日志同步 existsSync/createSync）
   String? _logDirReadyFor;
   List<LogEntry> get logEntries => List.unmodifiable(_logEntries);
@@ -75,9 +126,17 @@ class AppState extends ChangeNotifier {
     if (config.saveLogs && config.logSavePath.isNotEmpty) {
       _writeLogToFile(message, category);
     }
-    // Progress logs notify immediately for real-time UI updates
+    // Progress logs need near-real-time UI updates, but ffmpeg 进度行每秒
+    // 数次（本地任务 stderr 每行都进这里）。逐条 notify 会让整棵订阅树
+    // （项目页/设置页的 Consumer）以 4~10Hz 全量重建。改为 400ms 合批：
+    // 日志页观感上仍是实时的，重建频率降到 2.5Hz 封顶。
     if (category == 'progress') {
-      notifyListeners();
+      _progressLogNotifyTimer?.cancel();
+      _progressLogNotifyTimer =
+          Timer(const Duration(milliseconds: 400), () {
+        _progressLogNotifyTimer = null;
+        notifyListeners();
+      });
       return;
     }
     // Other logs batch via microtask to prevent UI blocking
@@ -937,7 +996,7 @@ class AppState extends ChangeNotifier {
       config: TranscodeConfig(),
       pipelineCalls: calls,
     ));
-    notifyListeners();
+    _tasksNotify();
     addLog('创建合并任务: ${container.name}, ${files.length} 个文件', category: 'info');
   }
 
@@ -960,7 +1019,7 @@ class AppState extends ChangeNotifier {
     var out = '$dir$fn';
     if (out == video.filepath) { final be = fn.replaceAll(RegExp(r'\.[^.]+$'), ''); final ee = fn.split('.').last; out = '$dir${be}_processed.$ee'; }
     _tasks.add(TaskInfo(id: 'task_${const Uuid().v4()}', videoId: videoId, filename: video.filename, inputPath: video.filepath, outputPath: out, config: cfg));
-    notifyListeners();
+    _tasksNotify();
   }
 
   void _addTasksFromGraph(VideoFile video) {
@@ -1001,7 +1060,7 @@ class AppState extends ChangeNotifier {
         pipelineCalls: calls,
       ));
     }
-    notifyListeners();
+    _tasksNotify();
     _scheduleTaskPersist();
   }
 
@@ -1022,7 +1081,7 @@ class AppState extends ChangeNotifier {
       // 引号感知分词（原 command.split(' ') 会把 `-i "my file.mp4"` 拆坏）
       command: _splitCommandQuoted(command),
     ));
-    notifyListeners();
+    _tasksNotify();
     _scheduleTaskPersist();
   }
 
@@ -1072,7 +1131,7 @@ class AppState extends ChangeNotifier {
     _cancelRequested = false;
     _cancelledTaskIds.remove(tid);
     final t = _tasks.removeAt(i); _tasks.insert(0, t);
-    notifyListeners(); processNextTask();
+    _tasksNotify(); processNextTask();
   }
 
   void processAllTasks() { _cancelRequested = false; processNextTask(); }
@@ -1089,7 +1148,7 @@ class AppState extends ChangeNotifier {
       _runningTaskIds.add(task.id);
       _currentTaskId = task.id;
       _tasks[pi] = task.copyWith(status: TaskStatus.processing);
-      notifyListeners();
+      _tasksNotify();
       _scheduleTaskPersist();
       addLog('开始处理: ${task.filename}', category: 'info');
       addLog('输入: ${task.inputPath}', category: 'info');
@@ -1109,7 +1168,7 @@ class AppState extends ChangeNotifier {
         // 已取消的任务保持 cancelled，不被异常覆盖为 failed
         if (fi >= 0 && !_cancelRequested && _tasks[fi].status == TaskStatus.processing) {
           _tasks[fi] = _tasks[fi].copyWith(status: TaskStatus.failed, error: '处理异常: $e');
-          notifyListeners();
+          _tasksNotify();
           _scheduleTaskPersist();
         }
         if (!_cancelRequested && _tasks.any((t) => t.status == TaskStatus.pending)) {
@@ -1143,14 +1202,17 @@ class AppState extends ChangeNotifier {
     if (c.startTime != null || c.endTime != null) addLog('  截取: ${c.startTime ?? 0}s - ${c.endTime ?? '末尾'}', category: 'info');
 
     StreamSubscription<ProgressUpdate>? sub;
+    // 进度消息先登记、按 300ms 批量冲刷（见类头「进度心跳节流」注释），
+    // 不再每条消息都 notifyListeners() → 整棵订阅树全量重建。
     sub = backend.progressStream.listen((u) {
       if (u.taskId == taskId) {
-        final i = _tasks.indexWhere((t) => t.id == taskId);
-        // 已取消/已完成/已失败的任务不再被进度消息改回 processing
-        if (i >= 0 && _tasks[i].status == TaskStatus.processing) {
+        _queueProgress(taskId, () {
+          final i = _tasks.indexWhere((t) => t.id == taskId);
+          // 已取消/已完成/已失败的任务不再被进度消息改回 processing
+          if (i < 0 || _tasks[i].status != TaskStatus.processing) return false;
           _tasks[i] = _tasks[i].copyWith(status: TaskStatus.processing, progress: u.progress, elapsed: u.currentTime, remaining: u.remaining, speed: u.speed, fps: u.fps, bitrate: u.bitrate, frame: u.frame);
-          notifyListeners();
-        }
+          return true;
+        });
       }
     });
 
@@ -1195,7 +1257,7 @@ class AppState extends ChangeNotifier {
         addLog('任务失败: ${task.filename} - ${resp['error']}', category: 'error');
         onTaskFinished?.call(task.filename, TaskStatus.failed);
       }
-      notifyListeners();
+      _tasksNotify();
       _scheduleTaskPersist();
     }
   }
@@ -1205,14 +1267,17 @@ class AppState extends ChangeNotifier {
     addLog('自定义命令: ${task.command!.join(' ')}', category: 'info');
 
     StreamSubscription<ProgressUpdate>? sub;
+    // 进度消息先登记、按 300ms 批量冲刷（见类头「进度心跳节流」注释），
+    // 不再每条消息都 notifyListeners() → 整棵订阅树全量重建。
     sub = backend.progressStream.listen((u) {
       if (u.taskId == taskId) {
-        final i = _tasks.indexWhere((t) => t.id == taskId);
-        // 已取消/已完成/已失败的任务不再被进度消息改回 processing
-        if (i >= 0 && _tasks[i].status == TaskStatus.processing) {
+        _queueProgress(taskId, () {
+          final i = _tasks.indexWhere((t) => t.id == taskId);
+          // 已取消/已完成/已失败的任务不再被进度消息改回 processing
+          if (i < 0 || _tasks[i].status != TaskStatus.processing) return false;
           _tasks[i] = _tasks[i].copyWith(status: TaskStatus.processing, progress: u.progress, elapsed: u.currentTime, remaining: u.remaining, speed: u.speed, fps: u.fps, bitrate: u.bitrate, frame: u.frame);
-          notifyListeners();
-        }
+          return true;
+        });
       }
     });
 
@@ -1245,7 +1310,7 @@ class AppState extends ChangeNotifier {
         addLog('任务失败: ${task.filename} - ${resp['error']}', category: 'error');
         onTaskFinished?.call(task.filename, TaskStatus.failed);
       }
-      notifyListeners();
+      _tasksNotify();
       _scheduleTaskPersist();
     }
   }
@@ -1323,7 +1388,7 @@ class AppState extends ChangeNotifier {
     final fi0 = _tasks.indexWhere((t) => t.id == taskId);
     if (fi0 >= 0) {
       _tasks[fi0] = _tasks[fi0].copyWith(callProgresses: callProgresses);
-      notifyListeners();
+      _tasksNotify();
     }
 
     // 记录上一步"实际"产物路径：extract_audio 等可能运行时改扩展名，下游 input 需要跟随
@@ -1346,17 +1411,19 @@ class AppState extends ChangeNotifier {
       final fi = _tasks.indexWhere((t) => t.id == taskId);
       if (fi >= 0) {
         _tasks[fi] = _tasks[fi].copyWith(currentCallIndex: ci, progress: stepProgress * 100);
-        notifyListeners();
+        _tasksNotify();
       }
 
       addLog('步骤 ${ci + 1}/${expandedCalls.length}: ${call.action}', category: 'info');
 
       StreamSubscription<ProgressUpdate>? sub;
+      // 进度消息先登记、按 300ms 批量冲刷（见类头「进度心跳节流」注释）
       sub = backend.progressStream.listen((u) {
         if (u.taskId == taskId) {
-          final i = _tasks.indexWhere((t) => t.id == taskId);
-          // 已取消/已完成/已失败的任务不再被进度消息改回 processing
-          if (i >= 0 && _tasks[i].status == TaskStatus.processing) {
+          _queueProgress(taskId, () {
+            final i = _tasks.indexWhere((t) => t.id == taskId);
+            // 已取消/已完成/已失败的任务不再被进度消息改回 processing
+            if (i < 0 || _tasks[i].status != TaskStatus.processing) return false;
             final overallProgress = (stepProgress + u.progress / 100 / expandedCalls.length) * 100;
             // 更新当前步骤的进度
             final newCallProgresses = List<double>.from(_tasks[i].callProgresses);
@@ -1370,8 +1437,8 @@ class AppState extends ChangeNotifier {
               elapsed: u.currentTime, remaining: u.remaining,
               speed: u.speed, fps: u.fps, bitrate: u.bitrate, frame: u.frame,
             );
-            notifyListeners();
-          }
+            return true;
+          });
         }
       });
 
@@ -1479,7 +1546,7 @@ class AppState extends ChangeNotifier {
           );
           addLog('步骤 ${ci + 1} 失败: ${resp['error']}', category: 'error');
           onTaskFinished?.call(task.filename, TaskStatus.failed);
-          notifyListeners();
+          _tasksNotify();
           _scheduleTaskPersist();
         }
         _cleanupTempFiles(cleanupCalls);
@@ -1517,7 +1584,7 @@ class AppState extends ChangeNotifier {
       _tasks[fi3] = _tasks[fi3].copyWith(status: TaskStatus.completed, progress: 100, outputSize: outSize);
       addLog('任务完成: ${task.filename}', category: 'info');
       onTaskFinished?.call(task.filename, TaskStatus.completed);
-      notifyListeners();
+      _tasksNotify();
       _scheduleTaskPersist();
     }
 
@@ -1793,16 +1860,19 @@ class AppState extends ChangeNotifier {
       final pct = (t / totalDuration * 100).clamp(0, 99.9);
       final sm = _speedRe.firstMatch(line);
       final speed = sm != null ? '${sm.group(1)}x' : '';
-      final i = _tasks.indexWhere((tk) => tk.id == taskId);
-      if (i >= 0) {
+      // 本地 ffmpeg 的 stderr 进度行同样高频，走 300ms 批量节流
+      // （见类头「进度心跳节流」注释），避免每行都整树重建。
+      _queueProgress(taskId, () {
+        final i = _tasks.indexWhere((tk) => tk.id == taskId);
+        if (i < 0 || _tasks[i].status != TaskStatus.processing) return false;
         List<double> newCallProgresses = _tasks[i].callProgresses;
         if (callIndex != null && callIndex < _tasks[i].callProgresses.length) {
           newCallProgresses = List<double>.from(_tasks[i].callProgresses);
           newCallProgresses[callIndex] = pct / 100;
         }
         _tasks[i] = _tasks[i].copyWith(status: TaskStatus.processing, progress: pct.toDouble(), speed: speed, callProgresses: newCallProgresses);
-        notifyListeners();
-      }
+        return true;
+      });
     }
   }
 
@@ -2298,7 +2368,7 @@ class AppState extends ChangeNotifier {
         _tasks[i] = _tasks[i].copyWith(status: TaskStatus.cancelled);
       }
     }
-    _runningTaskIds.clear(); _currentTaskId = null; notifyListeners();
+    _runningTaskIds.clear(); _currentTaskId = null; _tasksNotify();
     _scheduleTaskPersist();
   }
 
@@ -2323,7 +2393,7 @@ class AppState extends ChangeNotifier {
     _runningTaskIds.remove(taskId);
     if (_currentTaskId == taskId) _currentTaskId = null;
     _tasks[i] = _tasks[i].copyWith(status: TaskStatus.cancelled);
-    notifyListeners();
+    _tasksNotify();
     _scheduleTaskPersist();
     if (!_cancelRequested && _tasks.any((t) => t.status == TaskStatus.pending)) {
       processNextTask();
@@ -2339,7 +2409,7 @@ class AppState extends ChangeNotifier {
         .toList();
     _tasks.removeWhere((t) => t.status == TaskStatus.completed || t.status == TaskStatus.failed || t.status == TaskStatus.cancelled);
     for (final p in removedInputs) { _cleanupTempImportFile(p); }
-    notifyListeners();
+    _tasksNotify();
     _scheduleTaskPersist();
   }
 
@@ -2350,7 +2420,7 @@ class AppState extends ChangeNotifier {
       return false;
     });
     if (removedInput != null) _cleanupTempImportFile(removedInput!);
-    notifyListeners();
+    _tasksNotify();
     _scheduleTaskPersist();
   }
 
@@ -2359,11 +2429,11 @@ class AppState extends ChangeNotifier {
       final removedInputs = _tasks.map((t) => t.inputPath).toList();
       _tasks.clear();
       for (final p in removedInputs) { _cleanupTempImportFile(p); }
-      notifyListeners();
+      _tasksNotify();
       _scheduleTaskPersist();
     }
   }
-  void toggleTaskExpanded(String tid) { final i = _tasks.indexWhere((t) => t.id == tid); if (i >= 0) { _tasks[i] = _tasks[i].copyWith(expanded: !_tasks[i].expanded); notifyListeners(); } }
+  void toggleTaskExpanded(String tid) { final i = _tasks.indexWhere((t) => t.id == tid); if (i >= 0) { _tasks[i] = _tasks[i].copyWith(expanded: !_tasks[i].expanded); _tasksNotify(); } }
 
   Future<void> toggleDarkMode(bool v) async { await configService.update((c) => c..darkMode = v); notifyListeners(); }
   Future<void> updateConfig(AppConfig Function(AppConfig) f) async { await configService.update(f); notifyListeners(); }
@@ -2833,5 +2903,13 @@ class AppState extends ChangeNotifier {
   }
 
   @override
-  void dispose() { _taskPersistTimer?.cancel(); configService.dispose(); backend.dispose(); pythonProcess.dispose(); super.dispose(); }
+  void dispose() {
+    _taskPersistTimer?.cancel();
+    _progressFlushTimer?.cancel();
+    _progressLogNotifyTimer?.cancel();
+    configService.dispose();
+    backend.dispose();
+    pythonProcess.dispose();
+    super.dispose();
+  }
 }

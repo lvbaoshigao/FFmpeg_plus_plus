@@ -146,6 +146,15 @@ bool Win32Window::Create(const std::wstring& title,
 
   UpdateTheme(window);
 
+  // 防御性修复：确保窗口始终保留原生标题栏（caption）。
+  // 此前用户报告 Windows 构建中标题栏消失——某些窗口样式被运行时改动
+  // （插件/Dart 侧调用）后，caption 会永久丢失且 UI 无法恢复。这里在窗口
+  // 创建完成后强制补齐标题栏所需的全部样式位，作为最后一道保障。
+  LONG_PTR style = GetWindowLongPtrW(window, GWL_STYLE);
+  style |= WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX |
+           WS_MAXIMIZEBOX;
+  SetWindowLongPtrW(window, GWL_STYLE, style);
+
   return OnCreate();
 }
 

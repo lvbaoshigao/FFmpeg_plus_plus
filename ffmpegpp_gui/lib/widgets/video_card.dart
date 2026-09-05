@@ -8,6 +8,7 @@ import '../theme/app_strings.dart';
 import '../pages/pipeline_editor_page.dart';
 import '../services/ffmpeg_installer.dart';
 import '../app.dart';
+import 'app_card.dart';
 import 'config_dialog.dart';
 
 class VideoCard extends StatelessWidget {
@@ -20,19 +21,24 @@ class VideoCard extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final clr = scheme.onSurface;
-    final state = context.watch<AppState>();
-    final s = AppStrings.of(state.config.language);
-    final probeError = state.probeErrors[video.filepath];
+    // 细粒度订阅：不 watch 整个 AppState（进度心跳/日志 notify 会让每张
+    // 视频卡高频重建），只 select 语言/ffmpeg路径/本卡的探测错误。
+    final s = AppStrings.of(context.select<AppState, String>((s) => s.config.language));
+    final ffmpeg = context.select<AppState, String>((s) => s.config.ffmpegPath);
+    final probeError = context.select<AppState, String?>((s) => s.probeErrors[video.filepath]);
 
-    return Card(
+    // 卡片样式由「主题→样式→卡片样式」（AppConfig.cardStyle）接管
+    final cardStyle = context.select<AppState, String>((s) => s.config.cardStyle);
+    return AppCard(
+      style: cardStyle,
+      radius: 12,
       margin: const EdgeInsets.only(bottom: 8),
-      child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: Row(children: [
+      padding: const EdgeInsets.all(10),
+      child: Row(children: [
           Container(
             width: 88, height: 54,
             decoration: BoxDecoration(color: video.parsed ? Colors.black : scheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(6)),
-            child: video.parsed ? _ThumbWidget(filepath: video.filepath, isAudio: video.fileMediaType == MediaType.audio, ffmpeg: state.config.ffmpegPath) : Icon(Icons.movie_outlined, color: scheme.outline, size: 28),
+            child: video.parsed ? _ThumbWidget(filepath: video.filepath, isAudio: video.fileMediaType == MediaType.audio, ffmpeg: ffmpeg) : Icon(Icons.movie_outlined, color: scheme.outline, size: 28),
           ),
           const SizedBox(width: 12),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
@@ -49,13 +55,12 @@ class VideoCard extends StatelessWidget {
               Text(s.probing, style: TextStyle(fontSize: 12, color: scheme.outline)),
           ])),
           IconButton(icon: Icon(Icons.edit_outlined, size: 20, color: clr), tooltip: s.edit,
-              onPressed: video.parsed ? (onEdit ?? () => _openConfig(context, state)) : null),
+              onPressed: video.parsed ? (onEdit ?? () => _openConfig(context, context.read<AppState>())) : null),
           IconButton(icon: Icon(Icons.play_arrow, size: 20, color: video.parsed ? scheme.primary : scheme.outline),
-              tooltip: s.addToQueue, onPressed: video.parsed ? () => state.addTask(video.id) : null),
+              tooltip: s.addToQueue, onPressed: video.parsed ? () => context.read<AppState>().addTask(video.id) : null),
           IconButton(icon: Icon(Icons.close, size: 18, color: clr), tooltip: s.remove,
-              onPressed: () => state.removeVideo(video.id)),
+              onPressed: () => context.read<AppState>().removeVideo(video.id)),
         ]),
-      ),
     );
   }
 

@@ -1,7 +1,11 @@
 import 'dart:async';
+import 'dart:ffi';
 import 'dart:io';
 
+import 'package:ffi/ffi.dart';
+
 import 'android_platform.dart';
+import 'gpu_info.dart';
 
 /// 实时系统监控：CPU / 内存 / GPU 使用率
 class SystemMonitor {
@@ -93,42 +97,104 @@ class SystemMonitor {
   }
 
   // ── Windows ──
+  //
+  // 内存/CPU 优化：此前每 2 秒启动 2 个 powershell.exe（CPU/内存 + GPU 各一，
+  // 其中 GPU 的 CIM 查询单次要 1~3 秒）。每次 PowerShell 启动都是几十 MB 的
+  // 子进程 + 秒级 CPU 占用，长期运行下是内存与电量的隐形大户。
+  // 现在 CPU/内存直接走 kernel32 FFI（GetSystemTimes / GlobalMemoryStatusEx，
+  // 微秒级、零子进程）；GPU 型号只在首次用一次 CIM 查询并缓存，占用率优先
+  // 用 nvidia-smi（几十毫秒），拿不到时显示 "--"，不再每 2 秒空转一个慢查询。
+
+  // CPU 时间基线（FILETIME 100ns 刻，自 1601 年起）
+  int _wPrevIdle = 0;
+  int _wPrevTotal = 0;
+
+  // FFI 绑定（late final 惰性初始化：仅 Windows 路径首次访问时才加载
+  // kernel32，其它平台构造 SystemMonitor 不会触发加载失败）
+  late final DynamicLibrary _kernel32 = DynamicLibrary.open('kernel32.dll');
+  late final int Function(Pointer<Int32>, Pointer<Int32>, Pointer<Int32>) _getSystemTimes =
+      _kernel32.lookupFunction<
+          Int32 Function(Pointer<Int32>, Pointer<Int32>, Pointer<Int32>),
+          int Function(Pointer<Int32>, Pointer<Int32>, Pointer<Int32>)>(
+          'GetSystemTimes');
+  late final int Function(Pointer<_MemoryStatusEx>) _globalMemoryStatusEx =
+      _kernel32.lookupFunction<
+          Int32 Function(Pointer<_MemoryStatusEx>),
+          int Function(Pointer<_MemoryStatusEx>)>(
+          'GlobalMemoryStatusEx');
+
+  /// FILETIME（2×DWORD）→ 100ns 刻度 64 位整数
+  int _fileTime64(Pointer<Int32> p) =>
+      (p[1].toUnsigned(32) << 32) | p[0].toUnsigned(32);
 
   Future<void> _updateCpuRamWindows() async {
     try {
-      // 合并 CPU + 内存为一次 powershell 调用（原来每次 2 个进程，每 2 秒一次）
-      final result = await Process.run('powershell', ['-NoProfile', '-Command',
-        r'$cpu = (Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Maximum).Maximum; $os = Get-CimInstance Win32_OperatingSystem; Write-Output "$cpu,$($os.FreePhysicalMemory),$($os.TotalVisibleMemorySize)"'], runInShell: true);
-      final parts = result.stdout.toString().trim().split(',');
-      if (parts.length >= 3) {
-        cpuPercent = double.tryParse(parts[0]) ?? 0;
-        final freeKB = double.tryParse(parts[1]) ?? 0;
-        final totalKB = double.tryParse(parts[2]) ?? 0;
-        if (totalKB > 0) {
-          ramTotalGb = totalKB / 1024 / 1024;
-          ramUsedGb = (totalKB - freeKB) / 1024 / 1024;
-          ramPercent = ramUsedGb / ramTotalGb * 100;
+      final idle = calloc<Int32>(2);
+      final kernel = calloc<Int32>(2);
+      final user = calloc<Int32>(2);
+      try {
+        if (_getSystemTimes(idle, kernel, user) == 0) return;
+        final idleT = _fileTime64(idle);
+        final totalT = _fileTime64(kernel) + _fileTime64(user);
+        final dTotal = totalT - _wPrevTotal;
+        final dIdle = idleT - _wPrevIdle;
+        _wPrevIdle = idleT;
+        _wPrevTotal = totalT;
+        if (dTotal > 0 && _wPrevTotal > 0) {
+          cpuPercent = (100.0 * (1 - dIdle / dTotal)).clamp(0.0, 100.0);
         }
+      } finally {
+        calloc.free(idle);
+        calloc.free(kernel);
+        calloc.free(user);
+      }
+
+      final ms = calloc<_MemoryStatusEx>();
+      try {
+        ms.ref.dwLength = sizeOf<_MemoryStatusEx>();
+        if (_globalMemoryStatusEx(ms) != 0) {
+          ramTotalGb = ms.ref.ullTotalPhys / 1073741824;
+          ramUsedGb = (ms.ref.ullTotalPhys - ms.ref.ullAvailPhys) / 1073741824;
+          ramPercent = ms.ref.dwMemoryLoad.toDouble();
+        }
+      } finally {
+        calloc.free(ms);
       }
     } catch (_) {}
   }
 
-  Future<void> _updateGpuWindows() async {
-    try {
-      final result = await Process.run('powershell', ['-NoProfile', '-Command',
-        r'(Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine | Where-Object { $_.Name -like "*3D*" } | Measure-Object -Property UtilizationPercentage -Maximum).Maximum'], runInShell: true);
-      gpuPercent = double.tryParse(result.stdout.toString().trim()) ?? 0;
+  bool _gpuQueryUnavailable = false;
 
-      if (!_gpuNameCached) {
-        final nameResult = await Process.run('powershell', ['-NoProfile', '-Command',
-          r'(Get-CimInstance Win32_VideoController).Name'], runInShell: true);
-        final name = nameResult.stdout.toString().trim();
-        if (name.isNotEmpty) {
-          gpuName = name.split('\n').first.trim();
-          _gpuNameCached = true;
-        }
+  Future<void> _updateGpuWindows() async {
+    // GPU 型号：仅首次查询一次（GpuInfo 内部：nvidia-smi 优先，失败走一次
+    // CIM；结果全局缓存，启动时的低配检测与这里共用同一次探测）
+    if (!_gpuNameCached) {
+      final name = await GpuInfo.detectName();
+      if (name != null && name.isNotEmpty) {
+        gpuName = name;
+        _gpuNameCached = true;
       }
-    } catch (_) {}
+    }
+    if (_gpuQueryUnavailable) {
+      gpuPercent = -1; // UI 显示 "--"（非 NVIDIA 显卡或无 nvidia-smi）
+      return;
+    }
+    try {
+      final result = await Process.run('nvidia-smi',
+          ['--query-gpu=utilization.gpu', '--format=csv,noheader,nounits']);
+      if (result.exitCode == 0) {
+        gpuPercent =
+            double.tryParse(result.stdout.toString().trim().split('\n').first) ??
+                -1;
+      } else {
+        // nvidia-smi 不存在/不可用：不再反复尝试，占用率显示 "--"
+        _gpuQueryUnavailable = true;
+        gpuPercent = -1;
+      }
+    } catch (_) {
+      _gpuQueryUnavailable = true;
+      gpuPercent = -1;
+    }
   }
 
   // ── Linux ──
@@ -269,4 +335,24 @@ class SystemMonitor {
       }
     } catch (_) {}
   }
+}
+
+/// Win32 MEMORYSTATUSEX 结构（kernel32!GlobalMemoryStatusEx）
+final class _MemoryStatusEx extends Struct {
+  @Int32()
+  external int dwLength;
+  @Uint16()
+  external int dwMemoryLoad;
+  @Uint64()
+  external int ullTotalPhys;
+  @Uint64()
+  external int ullAvailPhys;
+  @Uint64()
+  external int ullTotalPageFile;
+  @Uint64()
+  external int ullAvailPageFile;
+  @Uint64()
+  external int ullTotalVirtual;
+  @Uint64()
+  external int ullAvailVirtual;
 }

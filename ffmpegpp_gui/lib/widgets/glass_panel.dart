@@ -13,6 +13,8 @@ import 'mobile_glass_pill.dart';
 class GlassPanel extends StatelessWidget {
   final Widget child;
   final double radius;
+  /// 模糊半径（σ）。默认 12：Windows 上 σ16/18 的模糊会额外占用大半径
+  /// 的离屏纹理，12 在视觉上几乎无差别但内存明显更低（见 build 内 clamp）。
   final double blur;
   final EdgeInsetsGeometry? padding;
   /// 顶部渐变的不透明度 (0-255)。为空时使用主题默认值。
@@ -22,7 +24,7 @@ class GlassPanel extends StatelessWidget {
     super.key,
     required this.child,
     this.radius = 18,
-    this.blur = 16,
+    this.blur = 12,
     this.padding,
     this.tintAlpha,
   });
@@ -179,13 +181,18 @@ class GlassPanel extends StatelessWidget {
       );
     }
 
+    // 内存优化：Windows（D3D12）上高斯模糊的中间纹理按「面板尺寸 +
+    // 约 3σ 各边 padding」分配，σ 从 16/18 降到 12 时视觉几乎无差别，
+    // 但每块玻璃面板的离屏内存明显下降（配合页面常驻上限一起生效）。
+    final double sigma = isWindowsPlatform ? blur.clamp(0.0, 12.0) : blur;
+
     if (effect == 'blur') {
       // 仅高斯模糊背景：半透明 + 模糊，无渐变、无阴影、无折射 —— 最简洁
       return RepaintBoundary(
         child: ClipRRect(
           borderRadius: br,
           child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+            filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
             child: Container(
               padding: padding,
               decoration: BoxDecoration(
@@ -280,7 +287,7 @@ class GlassPanel extends StatelessWidget {
         child: ClipRRect(
           borderRadius: br,
           child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+            filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
             child: _LiquidGlassBody(
               borderRadius: br,
               opacity: op, // 光影强度随透明度缩放：全透明时仅剩背景模糊

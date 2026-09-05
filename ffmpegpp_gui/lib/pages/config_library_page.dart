@@ -13,6 +13,7 @@ import '../theme/app_strings.dart';
 import '../widgets/toast.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_glass_pill.dart';
+import '../widgets/app_card.dart';
 import '../platform/app_platform.dart';
 import '../app.dart';
 import 'pipeline_editor_page.dart';
@@ -580,15 +581,11 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       ]),
     );
 
-    if (isMobilePlatform) {
-      return MobileGlassPill(
-        margin: const EdgeInsets.only(bottom: 8),
-        radius: 16,
-        child: content,
-      );
-    }
-
-    return Card(
+    // 卡片样式由「主题→样式→卡片样式」（AppConfig.cardStyle）接管
+    final cardStyle = context.select<AppState, String>((s) => s.config.cardStyle);
+    return AppCard(
+      style: cardStyle,
+      radius: 16,
       margin: const EdgeInsets.only(bottom: 8),
       child: content,
     );
@@ -895,23 +892,14 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       ]),
     );
 
-    if (isMobilePlatform) {
-      return MobileGlassPill(
-        margin: const EdgeInsets.only(bottom: 8),
-        radius: 16,
-        pressable: true,
-        onTap: () => _openEditor(entry),
-        child: content,
-      );
-    }
-
-    return Card(
+    // 卡片样式由「主题→样式→卡片样式」（AppConfig.cardStyle）接管
+    final cardStyle = context.select<AppState, String>((s) => s.config.cardStyle);
+    return AppCard(
+      style: cardStyle,
+      radius: 16,
       margin: const EdgeInsets.only(bottom: 8),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () => _openEditor(entry),
-        child: content,
-      ),
+      onTap: () => _openEditor(entry),
+      child: content,
     );
   }
 }

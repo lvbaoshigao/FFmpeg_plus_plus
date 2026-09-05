@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
+import '../app.dart' show wallpaperImageProvider;
 import '../platform/app_platform.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_top_bar.dart';
@@ -27,7 +28,15 @@ class CreditsPage extends StatelessWidget {
     final a = ((1.0 - cfg.backgroundOpacity) * 220).round().clamp(20, 240);
     return Stack(children: [
       base,
-      Positioned.fill(child: Image.file(File(bg), fit: BoxFit.cover)),
+      // 统一走 wallpaperImageProvider 按物理分辨率降采样解码
+      Positioned.fill(child: Image(
+        image: wallpaperImageProvider(
+            bg,
+            MediaQuery.sizeOf(context).width,
+            MediaQuery.sizeOf(context).height,
+            MediaQuery.devicePixelRatioOf(context)),
+        fit: BoxFit.cover,
+      )),
       Positioned.fill(child: Container(color: scheme.surface.withAlpha(a))),
       Theme(data: Theme.of(context).copyWith(
         scaffoldBackgroundColor: Colors.transparent,

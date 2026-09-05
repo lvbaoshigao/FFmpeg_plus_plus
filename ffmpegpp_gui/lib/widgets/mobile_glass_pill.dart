@@ -3,13 +3,15 @@ import 'package:flutter/material.dart';
 import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
+import 'app_card.dart' show SurfaceStyle;
 
-/// 移动端「液态玻璃药丸」容器 —— 与底部导航栏一致的玻璃质感。
+/// 移动端「药丸」容器 —— 顶部菜单栏样式（AppConfig.pillStyle）由它接管。
 ///
-/// 依据设置中的玻璃效果渲染：
+/// 四种样式：
 /// - liquid：oc_liquid_glass 液态玻璃（GPU fragment shader）
 /// - blur：扁平高斯模糊（BackdropFilter）
-/// - none：纯色药丸
+/// - theme：跟随主题色（纯色药丸）
+/// - gray：灰色（纯色药丸）
 ///
 /// 供顶栏标题药丸、顶栏操作长药丸、搜索框药丸等复用。
 ///
@@ -91,18 +93,17 @@ class MobileGlassPillAction extends StatelessWidget {
   }
 }
 
-/// 玻璃渲染相关的"配置指纹"。只有它变化时玻璃节点才该重建。
+/// 药丸样式渲染相关的"配置指纹"。只有它变化时玻璃节点才该重建。
 @immutable
 class _PillGlassKey {
-  final String effect;
+  /// 顶部药丸样式（pillStyle 四值：theme/liquid/blur/gray）
+  final String style;
   final double op;
-  final bool follow;
   final int primary;
   final int second;
   const _PillGlassKey({
-    required this.effect,
+    required this.style,
     required this.op,
-    required this.follow,
     required this.primary,
     required this.second,
   });
@@ -110,14 +111,13 @@ class _PillGlassKey {
   @override
   bool operator ==(Object other) =>
       other is _PillGlassKey &&
-      other.effect == effect &&
+      other.style == style &&
       other.op == op &&
-      other.follow == follow &&
       other.primary == primary &&
       other.second == second;
 
   @override
-  int get hashCode => Object.hash(effect, op, follow, primary, second);
+  int get hashCode => Object.hash(style, op, primary, second);
 }
 
 class _MobileGlassPillState extends State<MobileGlassPill> {
@@ -164,9 +164,8 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
   static _PillGlassKey _keyOf(AppState s) {
     final cfg = s.config;
     return _PillGlassKey(
-      effect: cfg.glassEffect,
+      style: cfg.pillStyle,
       op: cfg.cardOpacity,
-      follow: cfg.glassFollowTheme,
       primary: cfg.themeColor,
       second: cfg.themeColor2,
     );
@@ -177,36 +176,37 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final key = context.select<AppState, _PillGlassKey>(_keyOf);
-    final effect = key.effect;
+    final style = key.style;
     final op = key.op.clamp(0.0, 1.0);
-    // 上限压低（约 41%~47% 不透明度）：避免浅色模式下 surface 底色叠满成
-    // 一整片「发白」，让背景透出、保留玻璃通透感。
-    // 移除外层 RepaintBoundary 后，shader 能真正采样到画布/页面背景；
-    // tint 太透会让药丸几乎看不见。把上限提高到 200/220 让玻璃质感更接近底部导航栏（255 全不透明），
-    // 又不会因为过满变回主题色块。
-    // 完全对齐底部导航栏（mobile_bottom_nav.dart）的 tint 计算：
-    // 使用 * 255 上限（无截断），让玻璃质感与底部栏一致。
-    final baseAlpha = (op * 255).round().clamp(0, 255);
-    final follow = key.follow;
-    // 「透明」(none) 效果退回主题色显示
-    final baseColor = (follow || effect == 'none') ? scheme.primary : scheme.surface;
+    // 玻璃样式（liquid/blur）的 tint 与底部导航栏对齐：* 255 无截断，
+    // 让玻璃质感与底部栏一致；纯色样式（theme/gray）alpha 保底 ~88%，
+    // 避免低不透明度时「纯色」变透明丢色。
+    final solid = style == SurfaceStyle.theme || style == SurfaceStyle.gray;
+    final baseAlpha = solid
+        ? ((isDark ? 238.0 : 248.0) * op.clamp(0.88, 1.0)).round().clamp(0, 255)
+        : (op * 255).round().clamp(0, 255);
+    final baseColor = style == SurfaceStyle.theme
+        ? scheme.primary
+        : style == SurfaceStyle.gray
+            ? scheme.surfaceContainerHigh
+            : scheme.surface;
     final tint = baseColor.withAlpha(baseAlpha);
 
     // 关键修复：liquid 模式下 OCLiquidGlass 自身已经接收 color=tint 作为
     // 玻璃的 tint（GPU shader 内部叠加）；如果 inner Container 再额外叠一层
     // color=tint，相当于「主题色 + 主题色」双重染色，
     // 切换页面瞬间会出现「一大片主题色块」闪烁。
-    // liquid 模式 inner 用透明，只保留边框；blur/none 模式保留 tint。
+    // liquid 模式 inner 用透明，只保留边框；blur/theme/gray 模式保留 tint。
     final inner = Container(
       padding: widget.padding,
       decoration: BoxDecoration(
-        color: effect == 'liquid' ? Colors.transparent : tint,
+        color: style == SurfaceStyle.liquid ? Colors.transparent : tint,
         borderRadius: BorderRadius.circular(widget.radius),
         border: Border.all(
-          color: effect == 'blur'
+          color: style == SurfaceStyle.blur
               ? scheme.outlineVariant.withAlpha(80)
               : Colors.white.withValues(alpha: isDark ? 0.12 : 0.18),
-          width: effect == 'blur' ? 0.5 : 0.7,
+          width: style == SurfaceStyle.blur ? 0.5 : 0.7,
         ),
       ),
       // 固定总高度：把内容区压到 height - padding.vertical 并垂直居中，
@@ -228,9 +228,9 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
     );
 
     Widget pill;
-    if (effect == 'none') {
+    if (solid) {
       pill = inner;
-    } else if (effect == 'blur') {
+    } else if (style == SurfaceStyle.blur) {
       pill = RepaintBoundary(
         child: ClipRRect(
           borderRadius: BorderRadius.circular(widget.radius),

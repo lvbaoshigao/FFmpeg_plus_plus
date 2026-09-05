@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:window_manager/window_manager.dart';
 import 'providers/app_state.dart';
+import 'services/gpu_info.dart';
 import 'services/integrity.dart';
 import 'platform/app_platform.dart';
 import 'widgets/font_picker.dart';
@@ -59,13 +60,15 @@ void main() async {
   _startupLog('1-Binding OK');
 
   // ── 内存优化：限制图片缓存上限，避免大量缩略图撑爆内存 ──
-  // 移动端内存更紧张：改为 32MB / 200 张；桌面端保持 96MB / 600 张。
+  // 移动端内存更紧张：32MB / 200 张。
+  // 桌面端缩略图均为 80×45 小图、壁纸最多一张物理分辨率大图，64MB 足够
+  // （此前 96MB 为保守值，实测占用不到一半）。
   if (isMobilePlatform) {
     PaintingBinding.instance.imageCache.maximumSizeBytes = 32 << 20; // 32MB
     PaintingBinding.instance.imageCache.maximumSize = 200; // 最多 200 张
   } else {
-    PaintingBinding.instance.imageCache.maximumSizeBytes = 96 << 20; // 96MB
-    PaintingBinding.instance.imageCache.maximumSize = 600; // 最多 600 张
+    PaintingBinding.instance.imageCache.maximumSizeBytes = 64 << 20; // 64MB
+    PaintingBinding.instance.imageCache.maximumSize = 400; // 最多 400 张
   }
   _startupLog('1a-ImageCache capped');
 
@@ -126,6 +129,48 @@ void main() async {
 
   // 后端就绪后预热壁纸解码（进主界面不再卡首帧）——仅在配置了壁纸时
   unawaited(_precacheWallpaper(appState));
+
+  // 低配/软件渲染显卡自动降级玻璃效果（后台探测，不阻塞启动）
+  unawaited(_autoTuneGlass(appState));
+}
+
+/// 低配/软件渲染显卡自动降级玻璃效果。
+///
+/// BackdropFilter 高斯模糊依赖 GPU 光栅化。在软件渲染环境（llvmpipe /
+/// Microsoft Basic Render Driver / 远程桌面基础适配器）上，每块玻璃面板都是
+/// CPU 光栅化，低端设备会明显卡顿。探测到这类环境时，把所有会触发模糊的
+/// 表面样式一次性切到纯色，写入配置并记录日志；用户可在设置里手动重新开启。
+/// 真实 GPU 环境不受影响。
+///
+/// 各字段的「无模糊」取值（兼容新旧两套样式体系共存期）：
+///  - glassEffect（GlassPanel 系非卡片表面）：'liquid'/'blur' → 'none'
+///  - cardStyle（卡片）：→ 'flat'（旧消费者=纯色；加载时自动迁移为 'gray'，
+///    新 AppCard 也按纯色渲染）
+///  - navStyle/pillStyle（移动端菜单栏/药丸，新四值体系）：→ 'gray'
+Future<void> _autoTuneGlass(AppState state) async {
+  try {
+    final name = await GpuInfo.detectName();
+    if (!GpuInfo.isSoftwareRendered(name)) return;
+    final c = state.config;
+    final needsGlass = c.glassEffect == 'liquid' || c.glassEffect == 'blur';
+    final needsCard = c.cardStyle != 'flat';
+    final needsNav = c.navStyle == 'liquid' || c.navStyle == 'blur';
+    final needsPill = c.pillStyle == 'liquid' || c.pillStyle == 'blur';
+    if (!needsGlass && !needsCard && !needsNav && !needsPill) return;
+    state.addLog(
+        '检测到软件/基础渲染显卡（$name），已自动关闭玻璃模糊效果（改为纯色）以保证流畅，可在「设置」中重新开启',
+        category: 'info');
+    await state.updateConfig((c) {
+      if (c.glassEffect == 'liquid' || c.glassEffect == 'blur') c.glassEffect = 'none';
+      c.cardStyle = 'flat';
+      if (c.navStyle == 'liquid' || c.navStyle == 'blur') c.navStyle = 'gray';
+      if (c.pillStyle == 'liquid' || c.pillStyle == 'blur') c.pillStyle = 'gray';
+      return c;
+    });
+    _startupLog('autoTuneGlass: disabled glass for software GPU: $name');
+  } catch (e) {
+    _startupLog('autoTuneGlass error: $e');
+  }
 }
 
 /// 后台预热字体列表（仅一次，缓存在 FontPicker 静态字段中）。
@@ -169,7 +214,13 @@ Future<void> _precacheWallpaper(AppState state) async {
 
 Future<void> _initWindow() async {
   await windowManager.ensureInitialized();
-  if (!Platform.isWindows) {
+  if (Platform.isWindows || Platform.isMacOS) {
+    // Windows / macOS：使用系统默认标题栏（含系统窗口按钮与拖拽/缩放）。
+    // Windows 上显式设置是幂等的：即使插件内部残留 hidden 状态也能恢复标题栏。
+    // macOS 此前走 hidden + Flutter 自绘标题栏，实测有丢失风险，统一改用系统默认。
+    await windowManager.setTitleBarStyle(TitleBarStyle.normal);
+  } else {
+    // Linux：自定义标题栏（Flutter 自绘 CSD，见 app.dart _buildCsdTitleBar）
     await windowManager.setTitleBarStyle(TitleBarStyle.hidden);
   }
   await Future.wait([
