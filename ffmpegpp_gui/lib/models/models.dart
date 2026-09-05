@@ -995,9 +995,15 @@ class AppConfig {
   // 画布背景：'global' 跟随全局玻璃效果 / 'gray' 灰色 / 'black' 黑色 / 'white' 白色
   String canvasBg;
   // 玻璃效果：'liquid' 液态玻璃 / 'blur' 模糊 / 'none' 无效果
+  // （遗留字段：仅供 GlassPanel 系「非卡片」表面——桌面顶栏/侧边栏/弹窗菜单等——使用）
   String glassEffect;
-  // 设置页卡片样式：'glass' 液态玻璃 / 'blur' 模糊 / 'flat' 纯色大圆角卡片（MIUI 图样式）
+  // 卡片样式（接管 设置/项目/处理队列/配置库 的卡片）：
+  // 'theme' 跟随主题色(纯色) / 'liquid' 液态玻璃 / 'blur' 模糊 / 'gray' 灰色(纯色)
   String cardStyle;
+  // 移动端底部菜单栏样式：与 cardStyle 同四值
+  String navStyle;
+  // 移动端顶部药丸样式：与 cardStyle 同四值
+  String pillStyle;
   // 遵循主题色：true 时玻璃/卡片底色使用主题色而非 surface 灰
   bool glassFollowTheme;
   /// 设置项以毛玻璃展示（仅「液态玻璃」生效时可开启，提升列表可读性）
@@ -1092,7 +1098,9 @@ class AppConfig {
     this.backgroundImage = '', this.backgroundOpacity = 0.8, this.cardOpacity = 0.7,
     this.canvasBg = 'global',
     this.glassEffect = 'liquid',
-    this.cardStyle = 'glass',
+    this.cardStyle = 'liquid',
+    this.navStyle = 'liquid',
+    this.pillStyle = 'liquid',
     this.glassFollowTheme = false,
     this.settingsFrostedGlass = false,
     this.noCardGlass = false,
@@ -1145,6 +1153,16 @@ class AppConfig {
 
   static bool? _softBool(dynamic v) => v is bool ? v : null;
 
+  /// 表面样式（卡片/底部菜单栏/顶部药丸）兼容迁移：
+  /// 旧版 cardStyle 的 'glass' → 'liquid'、'flat' → 'gray'；新四值直接通过；
+  /// 缺失/未知值回退 'liquid'（与旧默认 'glass' 观感一致）。
+  static String _migrateSurfaceStyle(String? v) => switch (v) {
+        'theme' || 'liquid' || 'blur' || 'gray' => v!,
+        'glass' => 'liquid',
+        'flat' => 'gray',
+        _ => 'liquid',
+      };
+
   static Map<String, int> _safeIntMap(dynamic v) {
     if (v is! Map) return {};
     final out = <String, int>{};
@@ -1181,7 +1199,9 @@ class AppConfig {
         backgroundImage: json['background_image'] as String? ?? '',
         backgroundOpacity: (json['background_opacity'] as num?)?.toDouble() ?? 0.8,
         glassEffect: json['glass_effect'] as String? ?? 'liquid',
-        cardStyle: json['card_style'] as String? ?? 'glass',
+        cardStyle: _migrateSurfaceStyle(json['card_style'] as String?),
+        navStyle: _migrateSurfaceStyle(json['nav_style'] as String?),
+        pillStyle: _migrateSurfaceStyle(json['pill_style'] as String?),
         glassFollowTheme: json['glass_follow_theme'] as bool? ?? false,
         settingsFrostedGlass: json['settings_frosted_glass'] as bool? ?? false,
         noCardGlass: json['no_card_glass'] as bool? ?? false,
@@ -1242,7 +1262,7 @@ class AppConfig {
         'font_weight': fontWeightIndex,
         'background_image': backgroundImage, 'background_opacity': backgroundOpacity,
         'glass_effect': glassEffect,
-        'card_style': cardStyle,
+        'card_style': cardStyle, 'nav_style': navStyle, 'pill_style': pillStyle,
         'glass_follow_theme': glassFollowTheme,
         'settings_frosted_glass': settingsFrostedGlass, 'no_card_glass': noCardGlass, 'gate_std': gateStd,
         'card_opacity': cardOpacity,

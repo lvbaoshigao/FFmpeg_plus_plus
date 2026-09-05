@@ -185,7 +185,9 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
       body: content,
     ));
 
-    if (!Platform.isWindows && !isMobilePlatform) {
+    // 仅 Linux 使用自绘标题栏（CSD）；macOS/Windows 用系统默认标题栏，
+    // 若再叠一层自绘会出现「双标题栏 + 重复窗口按钮」
+    if (isLinuxPlatform) {
       page = Stack(children: [
         page,
         Positioned(left: 0, right: 0, top: 0, child: _buildCsdTitleBar(scheme)),
@@ -312,7 +314,16 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
     final scheme = Theme.of(context).colorScheme;
     final a = ((1.0 - cfg.backgroundOpacity) * 220).round().clamp(20, 240);
     return Stack(children: [
-      Positioned.fill(child: Image.file(File(bg), fit: BoxFit.cover)),
+      // 统一走 wallpaperImageProvider 按物理分辨率降采样解码，避免 4K
+      // 壁纸全尺寸解码 + 与主界面缓存 key 不一致
+      Positioned.fill(child: Image(
+        image: wallpaperImageProvider(
+            bg,
+            MediaQuery.sizeOf(context).width,
+            MediaQuery.sizeOf(context).height,
+            MediaQuery.devicePixelRatioOf(context)),
+        fit: BoxFit.cover,
+      )),
       Positioned.fill(child: Container(color: scheme.surface.withAlpha(a))),
       Theme(data: Theme.of(context).copyWith(
         scaffoldBackgroundColor: Colors.transparent,

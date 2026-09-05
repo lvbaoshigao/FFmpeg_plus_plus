@@ -2,9 +2,14 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
+import 'app_card.dart' show SurfaceStyle;
 import 'mobile_glass_pill.dart';
 
 /// 移动端通用顶栏 —— 简洁全宽背景模糊 + 标题 + 操作按钮。
+///
+/// 样式由「顶部药丸样式」（AppConfig.pillStyle）接管：
+/// - liquid / blur：全宽背景模糊 + 半透明 surface 底色
+/// - theme / gray：纯色顶栏（跟随主题色 / 灰色），不做背景模糊
 ///
 /// 去除了按钮的液态玻璃包装（原 wrapButton 在 liquid 模式下套 GlassPanel），
 /// 顶栏整体已提供背景模糊，按钮单独套玻璃会产生双重光效噪点。
@@ -28,20 +33,13 @@ class MobileTopBar extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final cfg = context.watch<AppState>().config;
     final op = cfg.cardOpacity.clamp(0.0, 1.0);
-    final follow = cfg.glassFollowTheme;
-    final baseColor = follow ? scheme.primary : scheme.surface;
+    final style = cfg.pillStyle;
 
-    // 背景透明度（略降低以更通透）
-    final bgAlpha = ((isDark ? 155 : 175) * op).round().clamp(0, 255);
-
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-        child: Container(
-          // 状态栏高度在容器内，内容区高度固定为 height
+    // 顶栏内容（状态栏高度在容器内，内容区高度固定为 height）
+    Widget barBody(Color bg) => Container(
           padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top),
           decoration: BoxDecoration(
-            color: baseColor.withAlpha(bgAlpha),
+            color: bg,
             border: Border(
               bottom: BorderSide(
                 color: scheme.outlineVariant.withAlpha(30),
@@ -75,7 +73,21 @@ class MobileTopBar extends StatelessWidget {
               ]),
             ),
           ),
-        ),
+        );
+
+    // theme/gray：纯色顶栏（无背景模糊），alpha 保底避免低不透明度时变透明
+    if (style == SurfaceStyle.theme || style == SurfaceStyle.gray) {
+      final base = style == SurfaceStyle.theme ? scheme.primary : scheme.surfaceContainerHigh;
+      final alpha = ((isDark ? 238.0 : 248.0) * op.clamp(0.92, 1.0)).round().clamp(0, 255);
+      return barBody(base.withAlpha(alpha));
+    }
+
+    // liquid/blur：背景模糊 + 半透明 surface 底色（略降低以更通透）
+    final bgAlpha = ((isDark ? 155 : 175) * op).round().clamp(0, 255);
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: barBody(scheme.surface.withAlpha(bgAlpha)),
       ),
     );
   }

@@ -4,14 +4,16 @@ import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
+import 'app_card.dart' show SurfaceStyle;
 
-/// 移动端液态玻璃底部导航栏 —— 基于 oc_liquid_glass 的 OCLiquidGlass。
+/// 移动端底部导航栏 —— 样式由「底部菜单栏样式」（AppConfig.navStyle）接管。
 ///
-/// - 整体是一颗悬浮「药丸」（胶囊）玻璃；liquid 用 GPU shader 液态玻璃，
-///   blur 用扁平高斯模糊（BackdropFilter），none 为纯色药丸；
+/// - 整体是一颗悬浮「药丸」（胶囊）；四种样式：
+///   liquid 液态玻璃（oc_liquid_glass GPU shader）、blur 扁平高斯模糊
+///   （BackdropFilter）、theme 跟随主题色（纯色）、gray 灰色（纯色）；
 /// - 选中项使用胶囊「药丸」指示器；按下拖动（无需长按）遮罩即跟随手指，
 ///   松手吸附到最近药丸并切换页面；点按直接切换（带滑动动画）；
-/// - 遵循设置中的玻璃效果配置（liquid/blur/none）。
+/// - 遵循设置→主题→样式→底部菜单栏样式（navStyle 四值）。
 class MobileBottomNav extends StatefulWidget {
   final int selectedIndex;
   final ValueChanged<int> onSelected;
@@ -32,19 +34,18 @@ class MobileBottomNav extends StatefulWidget {
   State<MobileBottomNav> createState() => _MobileBottomNavState();
 }
 
-/// 移动端底部导航的"玻璃配置指纹"。仅当这个值变化时才允许重建
+/// 移动端底部导航的"样式配置指纹"。仅当这个值变化时才允许重建
 /// OCLiquidGlassGroup/OCLiquidGlass 节点，避免无关 notify 引起的 shader 重置。
 @immutable
 class _NavGlassKey {
-  final String effect;
+  /// 底部菜单栏样式（navStyle 四值：theme/liquid/blur/gray）
+  final String style;
   final double op;
-  final bool follow;
   final int primary;
   final int second;
   const _NavGlassKey({
-    required this.effect,
+    required this.style,
     required this.op,
-    required this.follow,
     required this.primary,
     required this.second,
   });
@@ -52,14 +53,13 @@ class _NavGlassKey {
   @override
   bool operator ==(Object other) =>
       other is _NavGlassKey &&
-      other.effect == effect &&
+      other.style == style &&
       other.op == op &&
-      other.follow == follow &&
       other.primary == primary &&
       other.second == second;
 
   @override
-  int get hashCode => Object.hash(effect, op, follow, primary, second);
+  int get hashCode => Object.hash(style, op, primary, second);
 }
 
 class _MobileBottomNavState extends State<MobileBottomNav> {
@@ -111,9 +111,8 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
     final glassKey = context.select<AppState, _NavGlassKey>((s) {
       final c = s.config;
       return _NavGlassKey(
-        effect: c.glassEffect,
+        style: c.navStyle,
         op: c.cardOpacity,
-        follow: c.glassFollowTheme,
         primary: c.themeColor,
         second: c.themeColor2,
       );
@@ -133,20 +132,29 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
     const itemToPage = {0: 0, 1: 1, 2: 3, 3: 4};
     final itemIdx = pageToItem[widget.selectedIndex] ?? 0;
 
-    final effect = glassKey.effect;
+    final style = glassKey.style;
     final op = glassKey.op.clamp(0.0, 1.0);
-    final baseAlpha = (op * 255).round().clamp(0, 255);
-    final follow = glassKey.follow;
-    // 「透明」(none) 效果退回主题色显示
-    final baseColor = (follow || effect == 'none') ? scheme.primary : scheme.surface;
+    // 纯色样式（theme/gray）必须「看起来是纯色」：alpha 保底 ~88%，
+    // 避免低不透明度时变成透明丢色。
+    final solid = style == SurfaceStyle.theme || style == SurfaceStyle.gray;
+    final baseAlpha = solid
+        ? ((isDark ? 238.0 : 248.0) * op.clamp(0.88, 1.0)).round().clamp(0, 255)
+        : (op * 255).round().clamp(0, 255);
+    final baseColor = style == SurfaceStyle.theme
+        ? scheme.primary
+        : style == SurfaceStyle.gray
+            ? scheme.surfaceContainerHigh
+            : scheme.surface;
     final tint = baseColor.withAlpha(baseAlpha);
 
     final barHeight = 60.0;
     final bottomSafe = MediaQuery.of(context).padding.bottom;
     final radius = barHeight / 2;
 
-    // 选中项颜色：blur 时遮罩是实心主题色，选中项用 onPrimary 反白；其余用主题色。
-    final selectedColor = effect == 'blur' ? scheme.onPrimary : scheme.primary;
+    // 选中项颜色：blur/theme 时遮罩是实色块，选中项用 onPrimary 反白；其余用主题色。
+    final selectedColor = style == SurfaceStyle.blur || style == SurfaceStyle.theme
+        ? scheme.onPrimary
+        : scheme.primary;
     final unselectedColor = scheme.onSurfaceVariant;
 
     // 药丸间距：每个药丸之间留 4px 间隔
@@ -157,18 +165,18 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
       // 玻璃的 tint（GPU shader 内部叠加）；如果 buildBarIn 的外层 Container
       // 再叠一层 color=tint，相当于「主题色 + 主题色」双重染色，
       // 切换页面瞬间会出现「一大片主题色块」闪烁。
-      // liquid 模式 inner 用透明，只保留边框；blur/none 模式保留 tint。
+      // liquid 模式 inner 用透明，只保留边框；blur/theme/gray 模式保留 tint。
       return Container(
         height: barHeight,
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
         decoration: BoxDecoration(
-          color: effect == 'liquid' ? Colors.transparent : tint,
+          color: style == SurfaceStyle.liquid ? Colors.transparent : tint,
           borderRadius: BorderRadius.circular(radius),
           border: Border.all(
-            color: effect == 'blur'
+            color: style == SurfaceStyle.blur
                 ? scheme.outlineVariant.withAlpha(70)
                 : Colors.white.withValues(alpha: isDark ? 0.16 : 0.32),
-            width: effect == 'blur' ? 0.5 : 0.7,
+            width: style == SurfaceStyle.blur ? 0.5 : 0.7,
           ),
         ),
         clipBehavior: Clip.antiAlias,
@@ -257,7 +265,7 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
               // 不再「途经项停留后跳变」。
               _buildMaskPositioned(
                 itemIdx, itemW, pillGap, items.length,
-                scheme: scheme, isDark: isDark, effect: effect,
+                scheme: scheme, isDark: isDark, style: style,
               ),
               // 药丸行：每个药丸之间有间距，crossAxisAlignment.stretch 让药丸填满高度
               Row(
@@ -286,8 +294,8 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
       );
     }
 
-    // none：纯色药丸（无玻璃光效）
-    if (effect == 'none') {
+    // theme/gray：纯色药丸（无玻璃光效）
+    if (solid) {
       return Padding(
         padding: EdgeInsets.fromLTRB(14, 2, 14, bottomSafe + 8),
         child: buildBarIn(),
@@ -295,7 +303,7 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
     }
 
     // blur：扁平高斯模糊（无 3D 液态光效），遮罩为实心主题色
-    if (effect == 'blur') {
+    if (style == SurfaceStyle.blur) {
       return Padding(
         padding: EdgeInsets.fromLTRB(14, 2, 14, bottomSafe + 8),
         child: RepaintBoundary(
@@ -380,9 +388,10 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
   /// 第 i 个药丸的中心位置（考虑间距）。
   double _itemCenter(int i, double itemW, double gap) => i * (itemW + gap) + itemW / 2;
 
-  /// 遮罩胶囊外观：blur=实心主题色；liquid=白→主题色渐变；none=半透明主题色。
-  Widget _mask(ColorScheme scheme, bool isDark, String effect) {
-    if (effect == 'blur') {
+  /// 遮罩胶囊外观：blur=实心主题色；theme=白色高亮（底栏本身即主题色）；
+  /// liquid/gray=白→主题色渐变。
+  Widget _mask(ColorScheme scheme, bool isDark, String style) {
+    if (style == SurfaceStyle.blur) {
       return Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(22),
@@ -398,9 +407,26 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
         ),
       );
     }
-    final indicator = effect == 'none'
-        ? scheme.primary.withAlpha(70)
-        : scheme.primary.withValues(alpha: isDark ? 0.28 : 0.20);
+    if (style == SurfaceStyle.theme) {
+      return Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(22),
+          color: Colors.white.withAlpha(isDark ? 64 : 84),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: isDark ? 0.35 : 0.55),
+            width: 0.8,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: isDark ? 0.18 : 0.06),
+              blurRadius: 5,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+      );
+    }
+    final indicator = scheme.primary.withValues(alpha: isDark ? 0.28 : 0.20);
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(22),
@@ -444,7 +470,7 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
     int itemCount, {
     required ColorScheme scheme,
     required bool isDark,
-    required String effect,
+    required String style,
   }) {
     final dragging = _dragX != null;
     final mask = AnimatedScale(
@@ -452,7 +478,7 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
       scale: dragging ? 1.25 : 1.0,
       duration: const Duration(milliseconds: 150),
       curve: Curves.easeOut,
-      child: RepaintBoundary(child: _mask(scheme, isDark, effect)),
+      child: RepaintBoundary(child: _mask(scheme, isDark, style)),
     );
 
     Widget buildStatic() => AnimatedPositioned(

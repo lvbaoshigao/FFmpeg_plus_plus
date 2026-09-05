@@ -53,13 +53,30 @@ class AppStrings {
   String get cancelled => lang == 'zh' ? '已取消' : 'Cancelled';
   String get remaining => lang == 'zh' ? '剩余' : 'Remaining';
   String get cancel => lang == 'zh' ? '取消' : 'Cancel';
-  // Queue detail labels
+  // ── 队列任务卡片 / 展开详情 ──
   String get qInput => lang == 'zh' ? '输入' : 'Input';
   String get qOutput => lang == 'zh' ? '输出' : 'Output';
   String get qCmd => 'FFmpeg';
   String get qLogs => lang == 'zh' ? '日志' : 'Logs';
   String get qError => lang == 'zh' ? '错误' : 'Error';
   String get qWeight => lang == 'zh' ? '字重' : 'Weight';
+  String get qOpenFolder => lang == 'zh' ? '打开文件夹' : 'Open Folder';
+  String get qOpenFile => lang == 'zh' ? '打开文件' : 'Open File';
+  String get qErrorDetails => lang == 'zh' ? '错误信息' : 'Error Details';
+  String get qPipeline => lang == 'zh' ? '处理流水线' : 'Processing Pipeline';
+  String get qFileInfo => lang == 'zh' ? '文件信息' : 'File Info';
+  String get qTechStats => lang == 'zh' ? '技术参数' : 'Technical Stats';
+  String get qAdvanced => lang == 'zh' ? '高级信息' : 'Advanced Info';
+  String get qCommand => lang == 'zh' ? '命令' : 'Command';
+  String get qLegendPending => lang == 'zh' ? '未开始' : 'Pending';
+  String get qLegendProcessing => lang == 'zh' ? '进行中' : 'Processing';
+  String get qLegendCompleted => lang == 'zh' ? '已完成' : 'Completed';
+  String get qProgress => lang == 'zh' ? '进度' : 'Progress';
+  String get qFps => 'FPS';
+  String get qBitrate => lang == 'zh' ? '码率' : 'Bitrate';
+  String get qSize => lang == 'zh' ? '大小' : 'Size';
+  /// 数值占位符：中文界面用「—」，避免详情里残留英文 / N/A
+  String get qNone => lang == 'zh' ? '—' : 'N/A';
   // Debug
   String get dDebug => lang == 'zh' ? '调试' : 'Debug';
   String get dDebugMode => lang == 'zh' ? '调试模式' : 'Debug mode';
@@ -71,19 +88,29 @@ class AppStrings {
   String get bgOpacity => lang == 'zh' ? '背景不透明度' : 'BG Opacity';
   String get cardOpacity => lang == 'zh' ? '卡片不透明度' : 'Card Opacity';
   String get canvasBgLabel => lang == 'zh' ? '画布背景' : 'Canvas Background';
-  String get glassEffectLabel => lang == 'zh' ? '效果' : 'Effect';
-  String get glassFollowTheme => lang == 'zh' ? '遵循主题色' : 'Follow Theme Color';
-  String get glassFollowThemeHint => lang == 'zh' ? '选中后玻璃、卡片等元素统一使用主题色' : 'Tint glass & cards with the theme color';
-  String get glassLiquid => lang == 'zh' ? '液态玻璃' : 'Liquid';
   String get glassBlur => lang == 'zh' ? '模糊' : 'Blur';
-  String get glassNone => lang == 'zh' ? '透明' : 'Transparent';
+  // ── 主题设置（模式 / 主题色 / 背景 / 样式） ──
+  String get themeMode => lang == 'zh' ? '模式' : 'Mode';
+  String get themeDynamicColor => lang == 'zh' ? '动态取色（Monet）' : 'Dynamic color (Monet)';
+  String get themeDynamicColorHint => lang == 'zh' ? '跟随系统壁纸生成主题色（Material You）' : 'Theme colors derived from your wallpaper (Material You)';
+  String get themeDynamicOn => lang == 'zh' ? '动态取色已开启，自定义主题色不生效' : 'Dynamic color active — custom colors are ignored';
+  String get bgCurrentName => lang == 'zh' ? '当前背景' : 'Current background';
+  String get bgChange => lang == 'zh' ? '更换' : 'Change';
+  String get styleLabel => lang == 'zh' ? '样式' : 'Style';
+  String get cardStyleScope => lang == 'zh' ? '作用于 设置 / 项目 / 处理队列 / 配置库 的卡片' : 'Applies to cards in Settings, Projects, Queue and Config Library';
+  String get surfaceStyleTheme => lang == 'zh' ? '跟随主题色（纯色）' : 'Follow theme (solid)';
+  String get surfaceStyleLiquid => lang == 'zh' ? '液态玻璃' : 'Liquid glass';
+  String get surfaceStyleGray => lang == 'zh' ? '灰色' : 'Gray';
+  String get navStyleLabel => lang == 'zh' ? '底部菜单栏样式' : 'Bottom nav style';
+  String get pillStyleLabel => lang == 'zh' ? '顶部药丸样式' : 'Top pill style';
+  String get nodeEditorStyleLabel => lang == 'zh' ? '节点编辑器' : 'Node editor';
+  String get gateStdLabel => lang == 'zh' ? '逻辑门符号标准' : 'Gate symbol standard';
+  String get canvasFollowGlobal => lang == 'zh' ? '跟随全局' : 'Follow global';
+  String get canvasGray => lang == 'zh' ? '灰色' : 'Gray';
+  String get canvasBlack => lang == 'zh' ? '黑色' : 'Black';
+  String get canvasWhite => lang == 'zh' ? '白色' : 'White';
   // 设置页卡片样式（MIUI/KernelSU 风格 + 玻璃三选一）
   String get cardStyleLabel => lang == 'zh' ? '卡片样式' : 'Card Style';
-  String get cardStyleGlass => lang == 'zh' ? '玻璃' : 'Glass';
-  String get cardStyleBlur => lang == 'zh' ? '模糊' : 'Blur';
-  String get cardStyleFlat => lang == 'zh' ? '纯色卡片' : 'Flat';
-  String get settingsFrostedGlass => lang == 'zh' ? '设置项以毛玻璃展示' : 'Frosted settings items';
-  String get settingsFrostedGlassHint => lang == 'zh' ? '开启后设置列表项使用更易读的毛玻璃背景' : 'Use readable frosted-glass backgrounds for settings items';
   // 预测式返回（Android 14+）
   String get predictiveBack => lang == 'zh' ? '预测式返回' : 'Predictive back';
   String get predictiveBackHint => lang == 'zh' ? '侧滑返回时预览上一页（Android 14+，Android 16 原生手势）' : 'Preview the previous screen when swiping back (Android 14+ gesture)';
@@ -301,6 +328,24 @@ class AppStrings {
   String get aiApproveModeDesc => lang == 'zh' ? '自动模式：AI 生成的图直接应用；询问模式：每次生成后由你确认' : 'Auto: apply AI graphs directly. Ask: confirm every generated graph before applying.';
   String get aiAskSkipLabel => lang == 'zh' ? '询问模式下无需确认的操作' : 'Operations that skip confirmation in Ask mode';
   String get aiProviderPresetLabel => lang == 'zh' ? '供应商预设' : 'Provider Preset';
+  // ── 移动端 AI 提供商 ──
+  String get aiProviderItem => lang == 'zh' ? '提供商' : 'Provider';
+  String get aiProviders => lang == 'zh' ? '提供商' : 'Providers';
+  String get aiNewProvider => lang == 'zh' ? '新建提供商' : 'New Provider';
+  String get aiProviderCurrent => lang == 'zh' ? '当前' : 'Current';
+  String get aiProviderDetail => lang == 'zh' ? '提供商详情' : 'Provider Details';
+  String get aiProviderUse => lang == 'zh' ? '设为当前' : 'Set as current';
+  String get aiProviderSaved => lang == 'zh' ? '提供商已保存' : 'Provider saved';
+  String get aiProviderNeedName => lang == 'zh' ? '配置名不能为空' : 'Name is required';
+  String get aiProviderDeleted => lang == 'zh' ? '提供商已删除' : 'Provider deleted';
+  String get aiDeleteProviderConfirm => lang == 'zh' ? '确定删除此提供商？' : 'Delete this provider?';
+  String get aiProtocol => lang == 'zh' ? '请求协议' : 'Protocol';
+  String get aiPreset => lang == 'zh' ? '提供商预设（一键填充）' : 'Provider Preset (auto-fill)';
+  String get aiContextWindow => lang == 'zh' ? '上下文窗口 (token)' : 'Context Window (tokens)';
+  String get aiMaxTokens => lang == 'zh' ? '最大输出 token' : 'Max Output Tokens';
+  String get aiTemperature => lang == 'zh' ? '温度 (0-2)' : 'Temperature (0-2)';
+  String get aiNoProviders => lang == 'zh' ? '暂无提供商，点击「新建提供商」添加' : 'No providers yet — tap "New Provider" to add one';
+  String get aiName => lang == 'zh' ? '配置名' : 'Name';
 
   // ── 设置页分区与搜索 ──
   String get setSearchHint => lang == 'zh' ? '搜索设置...' : 'Search settings...';
@@ -319,7 +364,6 @@ class AppStrings {
   String get secAdvanced => lang == 'zh' ? '高级' : 'Advanced';
   String get secAbout => lang == 'zh' ? '关于' : 'About';
   String get cardTheme => lang == 'zh' ? '主题' : 'Theme';
-  String get cardBackground => lang == 'zh' ? '背景' : 'Background';
   String get cardEditorMode => lang == 'zh' ? '编辑模式' : 'Editor Mode';
   String get cardShortcuts => lang == 'zh' ? '快捷键' : 'Shortcuts';
   String get cardAutosave => lang == 'zh' ? '自动保存' : 'Autosave';

@@ -833,11 +833,15 @@ class ProjectPageState extends State<ProjectPage> {
   }
 
   Widget _infoRow(ColorScheme scheme, String label, String value) {
+    // 标签列随字号缩放（固定 90px 在大字号下会裁切标签/挤掉取值），
+    // 取值用 Expanded + 省略号兜底，长路径不再撑破 Row
+    final scale = MediaQuery.textScalerOf(context).scale(1.0);
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Row(children: [
-        SizedBox(width: 90, child: Text(label, style: TextStyle(fontSize: 12, color: scheme.outline))),
-        Text(value, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: scheme.onSurface)),
+        SizedBox(width: (90 * scale).clamp(90.0, 130.0), child: Text(label, style: TextStyle(fontSize: 12, color: scheme.outline), overflow: TextOverflow.ellipsis)),
+        const SizedBox(width: 8),
+        Expanded(child: Text(value, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: scheme.onSurface), maxLines: 1, overflow: TextOverflow.ellipsis)),
       ]),
     );
   }

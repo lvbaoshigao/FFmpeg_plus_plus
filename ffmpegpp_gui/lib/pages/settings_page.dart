@@ -28,6 +28,8 @@ import '../widgets/toast.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_glass_pill.dart';
 import '../widgets/mobile_top_bar.dart';
+import '../widgets/app_card.dart';
+import 'ai_settings_mobile.dart';
 import '../app.dart' show wallpaperImageProvider;
 
 final _s = Platform.pathSeparator;
@@ -214,7 +216,9 @@ Future<void> openExternalUrl(String url) => ShellOpen.url(url);
 
 /// 二级设置页也铺设壁纸背景（与主界面一致），避免返回手势/过渡时露出黑底或主题色底。
 /// 无壁纸时也铺一层不透明主题底色，避免返回过渡首帧露出系统窗口黑底。
-Widget _withWallpaper(BuildContext ctx, AppState state, Widget child) {
+/// 设置类二级页面统一背景：主题底色 + 壁纸（背景不透明度控制遮罩）。
+/// 公开供移动端 AI 设置等二级页面复用。
+Widget withWallpaperBg(BuildContext ctx, AppState state, Widget child) {
   final scheme = Theme.of(ctx).colorScheme;
   final bg = state.config.backgroundImage;
   final base = Positioned.fill(child: Container(color: scheme.surface));
@@ -367,16 +371,12 @@ class _SettingsPageState extends State<SettingsPage> {
           title: (s) => s.cardTheme,
           icon: Icons.brightness_6_outlined,
           keywords: ['深色', '暗色', '浅色', 'dark', 'light', 'mode', '模式',
-              '主题色', '强调色', '颜色', 'accent', 'color', 'theme'],
+              '主题色', '强调色', '颜色', 'accent', 'color', 'theme',
+              '背景', '壁纸', 'background', 'wallpaper', '不透明度', 'opacity',
+              '样式', 'style', '卡片', 'card', '液态玻璃', 'liquid',
+              '底部', 'bottom', 'nav', '药丸', 'pill',
+              '节点编辑器', '画布', 'canvas', '逻辑门', 'gate', 'ansi', 'iec'],
           build: _buildTheme,
-        ),
-        _CardDef(
-          id: 'background',
-          title: (s) => s.cardBackground,
-          icon: Icons.wallpaper_outlined,
-          keywords: ['背景', '壁纸', '图片', 'background', 'wallpaper', 'image',
-              '不透明度', '透明', 'opacity', '卡片', 'card', 'blur', '毛玻璃'],
-          build: _buildBackground,
         ),
         _CardDef(
           id: 'font',
@@ -489,8 +489,12 @@ class _SettingsPageState extends State<SettingsPage> {
           icon: Icons.auto_awesome_outlined,
           keywords: ['ai', 'mcp', '模型', 'model', 'api', 'key', 'token',
               'openai', 'anthropic', 'claude', 'gpt', '提示词', 'prompt',
-              '权限', 'permission', '助手', 'assistant', '端口', 'port', '服务'],
-          build: _buildMcpAi,
+              '权限', 'permission', '助手', 'assistant', '端口', 'port', '服务',
+              '提供商', 'provider', 'deepseek', 'ollama'],
+          // 移动端：提供商列表式设置（二级菜单）；桌面端：原有卡片 + 底部弹窗
+          build: (ctx, state) => isMobilePlatform
+              ? mobileAiSettingsContent(ctx, state)
+              : _buildMcpAi(ctx, state),
         ),
       ],
     ),
@@ -858,14 +862,10 @@ class _SettingsPageState extends State<SettingsPage> {
     ColorScheme scheme,
     AppStrings s,
   ) {
-    // AI/MCP 卡片直接内联展开（不进入二级菜单）
-    final inlineCards = cards.where((c) => c.id == 'ai').toList();
-    final rowCards = cards.where((c) => c.id != 'ai').toList();
-
     final rows = <Widget>[];
-    for (var i = 0; i < rowCards.length; i++) {
-      rows.add(_buildMobileRow(rowCards[i], context, state, scheme, s));
-      if (i < rowCards.length - 1) {
+    for (var i = 0; i < cards.length; i++) {
+      rows.add(_buildMobileRow(cards[i], context, state, scheme, s));
+      if (i < cards.length - 1) {
         rows.add(Divider(
           height: 0.5,
           thickness: 0.5,
@@ -875,31 +875,22 @@ class _SettingsPageState extends State<SettingsPage> {
         ));
       }
     }
+    if (cards.isEmpty) return const SizedBox.shrink();
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      if (rowCards.isNotEmpty) ...[
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
-          child: Text(sec.title(s), style: TextStyle(
-            fontSize: 12.5,
-            fontWeight: FontWeight.w600,
-            color: scheme.primary,
-            letterSpacing: 0.3,
-          )),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(8, 0, 8, 7),
-          // 设置项卡片：与内联 AI/MCP 卡共用 _cardShell，统一遵循
-          // 卡片样式（玻璃/模糊/纯色）配置 —— 纯色时行分组卡同样呈现
-          // 主题容器色而非受透明度影响的玻璃；模糊/玻璃模式三卡观感一致。
-          child: _cardShell(context, state, Column(children: rows)),
-        ),
-      ],
-      // 内联卡片（AI/MCP）：在一级菜单直接渲染完整设置内容
-      for (final c in inlineCards)
-        Padding(
-          padding: const EdgeInsets.only(bottom: 7),
-          child: c.build(context, state),
-        ),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
+        child: Text(sec.title(s), style: TextStyle(
+          fontSize: 12.5,
+          fontWeight: FontWeight.w600,
+          color: scheme.primary,
+          letterSpacing: 0.3,
+        )),
+      ),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(8, 0, 8, 7),
+        // 设置项卡片：统一走 _cardShell → AppCard，遵循「主题→样式→卡片样式」。
+        child: _cardShell(context, state, Column(children: rows)),
+      ),
     ]);
   }
 
@@ -981,7 +972,7 @@ class _SettingsPageState extends State<SettingsPage> {
     BuildContext context, String title, Widget Function(BuildContext, AppState) contentBuilder) {
     Navigator.of(context).push(MaterialPageRoute(
       builder: (ctx) => Consumer<AppState>(
-        builder: (ctx2, state, _) => _withWallpaper(
+        builder: (ctx2, state, _) => withWallpaperBg(
           ctx2,
           state,
           Scaffold(
@@ -1229,65 +1220,24 @@ Widget _miIcon(ColorScheme scheme, IconData icon) => Container(
   child: Icon(icon, size: 19, color: scheme.primary),
 );
 
-/// 设置页分组卡片外壳 —— 移动端所有分组卡（普通设置行 / 内联 AI·MCP 卡）
-/// 都从这里渲染，保证「玻璃/模糊/纯色」三种卡片样式的观感完全一致。
-///
-/// 样式来源：cfg.cardStyle
-/// - 'flat'  纯色大圆角卡片（MIUI 风格，surface 容器色，不受玻璃效果影响；
-///   且对不透明度做了下限钳制，避免低不透明度时“纯色”变透明、丢主题色）
-/// - 'blur'  扁平高斯模糊卡片（BackdropFilter）
-/// - 'glass' 液态玻璃（GlassPanel，内部遵循全局 glassEffect：liquid shader /
-///   blur BackdropFilter / none 实心；noCardGlass 时同样退实心）
+/// 设置页分组卡片外壳 —— 所有分组卡（设置行 / AI·MCP 卡 / 各设置卡）
+/// 统一委托给 AppCard，由「主题→样式→卡片样式」（cfg.cardStyle 四值）接管：
+/// 跟随主题色(纯色) / 液态玻璃 / 模糊 / 灰色。
 Widget _cardShell(
   BuildContext ctx,
   AppState state,
   Widget child, {
   double radius = 18,
 }) {
-  final scheme = Theme.of(ctx).colorScheme;
-  final isDark = Theme.of(ctx).brightness == Brightness.dark;
   final style = state.config.cardStyle;
-  final op = state.config.cardOpacity.clamp(0.0, 1.0);
-
-  if (style == 'flat') {
-    // 纯色卡片必须「看起来是纯色」：alpha 跟随不透明度但保底 ~88%，
-    // 否则用户把卡片不透明度调低后会误以为纯色模式失效（变成透明）。
-    final alpha = ((isDark ? 235 : 250) * op.clamp(0.88, 1.0)).round().clamp(0, 255);
-    return RepaintBoundary(
-      child: Container(
-        width: double.infinity,
-        decoration: BoxDecoration(
-          color: scheme.surfaceContainerHigh.withAlpha(alpha),
-          borderRadius: BorderRadius.circular(radius),
-          border: Border.all(color: scheme.outlineVariant.withAlpha(isDark ? 45 : 70), width: 0.6),
-          boxShadow: [BoxShadow(color: Colors.black.withAlpha(isDark ? 30 : 12), blurRadius: 12, offset: const Offset(0, 3))],
-        ),
-        child: child,
-      ),
-    );
-  }
-  if (style == 'blur') {
-    final alpha = ((isDark ? 110 : 130) * op).round().clamp(0, 255);
-    return RepaintBoundary(
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(radius),
-        child: BackdropFilter(
-          filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-          child: Container(
-            width: double.infinity,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(radius),
-              color: scheme.surface.withAlpha(alpha),
-              border: Border.all(color: scheme.outlineVariant.withAlpha(isDark ? 60 : 80), width: 0.6),
-            ),
-            child: child,
-          ),
-        ),
-      ),
-    );
-  }
-  // glass：液态玻璃（GlassPanel 内部遵循全局 glassEffect 与 noCardGlass）
-  return GlassPanel(radius: radius, padding: EdgeInsets.zero, child: child);
+  return AppCard(
+    style: style,
+    radius: radius,
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: double.infinity),
+      child: child,
+    ),
+  );
 }
 
 Widget _glass(BuildContext ctx, AppState state, String title, List<Widget> children) {
@@ -1504,32 +1454,51 @@ const _askSkipOptions = <(String, String)>[
   ('工具执行', 'tools'),
 ];
 
+/// 主题卡：模式 / 主题色 / 背景 / 样式（卡片样式、底部菜单栏样式、
+/// 顶部药丸样式、节点编辑器）。桌面端内联在「外观」分区，移动端作为
+/// 一级菜单「主题」行的二级菜单内容。
 Widget _buildTheme(BuildContext ctx, AppState state) {
   final cfg = state.config;
   final s = AppStrings.of(cfg.language);
   final scheme = Theme.of(ctx).colorScheme;
   final clr = scheme.onSurface;
+  // 动态取色开启时，自定义主题色（预设/取色器）不生效
+  final dynamicOn = isMobilePlatform && cfg.useDynamicColor;
 
-  // 移动端与桌面端一致：直接内联展示主题设置项（不再经过一级入口再弹窗）。
   return _glass(ctx, state, s.cardTheme, [
+    // ── 1. 模式（亮/暗色切换） ──
     SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-        title: Text(s.darkMode, style: TextStyle(color: clr)),
+        title: Text(s.themeMode, style: TextStyle(color: clr)),
+        subtitle: Text(state.darkMode ? s.darkMode : (s.isZh ? '浅色模式' : 'Light Mode'),
+            style: TextStyle(fontSize: 11, color: scheme.outline)),
         value: state.darkMode,
         onChanged: (v) => state.toggleDarkMode(v)),
-    // Android Monet 动态取色（跟随系统壁纸）
+    // ── 2. 主题色（预设 / 自定义 / 动态取色） ──
+    Row(children: [
+      Expanded(child: Text(s.accentColor, style: TextStyle(color: clr, fontSize: 12))),
+      if (dynamicOn) ...[
+        Icon(Icons.auto_awesome, size: 12, color: scheme.primary),
+        const SizedBox(width: 4),
+        Flexible(child: Text(s.themeDynamicOn,
+            maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 10, color: scheme.primary))),
+      ],
+    ]),
+    // Android Monet 动态取色（跟随系统壁纸）；开启后自定义主题色不生效
     if (isMobilePlatform)
       SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-          title: Text(s.isZh ? '动态取色（Monet）' : 'Dynamic color (Monet)',
-              style: TextStyle(color: clr, fontSize: 13)),
-          subtitle: Text(s.isZh ? '跟随系统壁纸生成主题色，参考 Android 16 Material You'
-              : 'Theme colors derived from your wallpaper (Android 16 Material You)',
-              style: TextStyle(fontSize: 11, color: scheme.outline)),
+          title: Text(s.themeDynamicColor, style: TextStyle(color: clr, fontSize: 12)),
+          subtitle: Text(s.themeDynamicColorHint,
+              style: TextStyle(fontSize: 10, color: scheme.outline)),
           value: cfg.useDynamicColor,
           onChanged: (v) => state.updateConfig((c) => c..useDynamicColor = v)),
-    const SizedBox(height: 4),
-    Text(s.accentColor, style: TextStyle(color: clr, fontSize: 12)),
     const SizedBox(height: 8),
-    Wrap(spacing: 8, runSpacing: 8, children: [
+    // 预设色 + 自定义取色：动态取色开启时置灰禁用
+    Opacity(
+      opacity: dynamicOn ? 0.35 : 1.0,
+      child: IgnorePointer(
+        ignoring: dynamicOn,
+        child: Wrap(spacing: 8, runSpacing: 8, children: [
       ..._presets.map((p) => _dot(scheme, cfg.themeColor == p.$2 && cfg.themeColor2 < 0, Color(p.$2), p.$1,
           () => state.updateConfig((c) => c..themeColor = p.$2..themeColor2 = -1))),
       // 自定义取色：若已设渐变色则显示渐变圆点，点击进入渐变/纯色设置
@@ -1550,10 +1519,64 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
           ),
         ),
       ),
+          ]),
+        ),
+      ),
+    const SizedBox(height: 10),
+    // ── 3. 背景（查看当前背景名 / 更换；展开二级菜单设不透明度） ──
+    const _ThemeBackgroundSection(),
+    const SizedBox(height: 6),
+    // ── 4. 样式 ──
+    Row(children: [
+      Icon(Icons.style_outlined, size: 14, color: scheme.primary),
+      const SizedBox(width: 6),
+      Text(s.styleLabel, style: TextStyle(color: clr, fontSize: 12, fontWeight: FontWeight.w600)),
+    ]),
+    const SizedBox(height: 8),
+    Text(s.cardStyleLabel, style: TextStyle(color: clr, fontSize: 12)),
+    Text(s.cardStyleScope, style: TextStyle(fontSize: 10, color: scheme.outline)),
+    const SizedBox(height: 6),
+    _surfaceStyleMenu(ctx, cfg.cardStyle, s, clr,
+        (v) => state.updateConfig((c) => c..cardStyle = v)),
+    if (isMobilePlatform) ...[
+      const SizedBox(height: 10),
+      Text(s.navStyleLabel, style: TextStyle(color: clr, fontSize: 12)),
+      const SizedBox(height: 6),
+      _surfaceStyleMenu(ctx, cfg.navStyle, s, clr,
+          (v) => state.updateConfig((c) => c..navStyle = v)),
+      const SizedBox(height: 10),
+      Text(s.pillStyleLabel, style: TextStyle(color: clr, fontSize: 12)),
+      const SizedBox(height: 6),
+      _surfaceStyleMenu(ctx, cfg.pillStyle, s, clr,
+          (v) => state.updateConfig((c) => c..pillStyle = v)),
+    ],
+    const SizedBox(height: 10),
+    // 节点编辑器（画布背景 + 逻辑门符号标准）
+    Row(children: [
+      Icon(Icons.account_tree_outlined, size: 14, color: scheme.primary),
+      const SizedBox(width: 6),
+      Text(s.nodeEditorStyleLabel, style: TextStyle(color: clr, fontSize: 12, fontWeight: FontWeight.w600)),
+    ]),
+    const SizedBox(height: 8),
+    // 画布背景：下拉菜单样式（跟随全局 / 灰色 / 黑色 / 白色）
+    Row(children: [
+      Expanded(child: Text(s.canvasBgLabel, style: TextStyle(color: clr, fontSize: 12))),
+      SizedBox(width: 170, child: DropdownMenu<String>(
+        initialSelection: cfg.canvasBg,
+        requestFocusOnTap: false,
+        textStyle: TextStyle(fontSize: 12, color: clr),
+        dropdownMenuEntries: [
+          DropdownMenuEntry(value: 'global', label: s.canvasFollowGlobal, leadingIcon: const Icon(Icons.public_outlined, size: 14)),
+          DropdownMenuEntry(value: 'gray', label: s.canvasGray, leadingIcon: const Icon(Icons.grid_4x4, size: 14)),
+          DropdownMenuEntry(value: 'black', label: s.canvasBlack, leadingIcon: const Icon(Icons.dark_mode_outlined, size: 14)),
+          DropdownMenuEntry(value: 'white', label: s.canvasWhite, leadingIcon: const Icon(Icons.light_mode_outlined, size: 14)),
+        ],
+        onSelected: (v) { if (v != null) state.updateConfig((c) => c..canvasBg = v); },
+      )),
     ]),
     const SizedBox(height: 10),
-    // 逻辑门符号标准：ANSI/IEEE 或 IEC
-    Text(s.isZh ? '逻辑门符号标准' : 'Logic Gate Standard', style: TextStyle(fontSize: 12, color: clr)),
+    // 逻辑门符号标准：ANSI/IEEE 或 IEC（沿用原实现）
+    Text(s.gateStdLabel, style: TextStyle(color: clr, fontSize: 12)),
     const SizedBox(height: 6),
     SegmentedButton<String>(
       showSelectedIcon: false,
@@ -1565,39 +1588,134 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
       onSelectionChanged: (v) => state.updateConfig((c) => c..gateStd = v.first),
       style: const ButtonStyle(visualDensity: VisualDensity.compact),
     ),
-    const SizedBox(height: 10),
-    // 设置项以毛玻璃展示（仅液态玻璃时生效；与「不使用卡片玻璃效果」互斥）
-    if (cfg.glassEffect == 'liquid' && !cfg.noCardGlass)
-      Row(children: [
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(s.settingsFrostedGlass, style: TextStyle(color: clr, fontSize: 12)),
-          const SizedBox(height: 2),
-          Text(s.settingsFrostedGlassHint, style: TextStyle(fontSize: 10, color: scheme.outline)),
-        ])),
-        Switch(
-          value: cfg.settingsFrostedGlass,
-          onChanged: (v) => state.updateConfig((c) => c..settingsFrostedGlass = v),
-          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        ),
-      ]),
-    if (cfg.glassEffect == 'liquid' && !cfg.noCardGlass)
-      const SizedBox(height: 10),
-    // 设置项不使用卡片玻璃效果（退回主题色；与毛玻璃互斥）
-    Row(children: [
-      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(s.isZh ? '设置项不使用卡片玻璃效果' : 'No glass effect on cards', style: TextStyle(color: clr, fontSize: 12)),
-        const SizedBox(height: 2),
-        Text(s.isZh ? '设置卡片不使用液态玻璃渲染，退回主题色样式（与毛玻璃互斥）' : 'Settings cards skip liquid glass and use a solid theme color (mutually exclusive with frosted glass)', style: TextStyle(fontSize: 10, color: scheme.outline)),
-      ])),
-      Switch(
-        value: cfg.noCardGlass,
-        onChanged: (v) => state.updateConfig((c) => c
-          ..noCardGlass = v
-          ..settingsFrostedGlass = v ? false : c.settingsFrostedGlass),
-        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      ),
-    ]),
   ]);
+}
+
+/// 表面样式（卡片/底部菜单栏/顶部药丸）四选一：
+/// 跟随主题色(纯色) / 液态玻璃 / 模糊 / 灰色。全宽下拉菜单，移动端更易点。
+Widget _surfaceStyleMenu(BuildContext ctx, String value, AppStrings s, Color clr, ValueChanged<String> onSelected) {
+  return DropdownMenu<String>(
+    initialSelection: value,
+    requestFocusOnTap: false,
+    width: double.infinity,
+    textStyle: TextStyle(fontSize: 12, color: clr),
+    dropdownMenuEntries: [
+      DropdownMenuEntry(value: 'theme', label: s.surfaceStyleTheme, leadingIcon: const Icon(Icons.format_color_fill, size: 14)),
+      DropdownMenuEntry(value: 'liquid', label: s.surfaceStyleLiquid, leadingIcon: const Icon(Icons.water_drop_outlined, size: 14)),
+      DropdownMenuEntry(value: 'blur', label: s.glassBlur, leadingIcon: const Icon(Icons.blur_on_outlined, size: 14)),
+      DropdownMenuEntry(value: 'gray', label: s.surfaceStyleGray, leadingIcon: const Icon(Icons.grid_4x4, size: 14)),
+    ],
+    onSelected: (v) { if (v != null) onSelected(v); },
+  );
+}
+
+/// 选择并应用新背景图：先同步取屏幕物理分辨率（大图自动缩放），
+/// Android 11+ content:// URI 用内存字节落盘。
+Future<void> _pickBackground(BuildContext ctx, AppState state) async {
+  final view = View.of(ctx);
+  final dpr = view.devicePixelRatio;
+  final logical = view.physicalSize / dpr;
+  final maxW = (logical.width * dpr).ceil();
+  final maxH = (logical.height * dpr).ceil();
+  final r = await FilePicker.platform.pickFiles(
+      type: FileType.custom, allowedExtensions: ['jpg', 'jpeg', 'png', 'bmp', 'webp'],
+      // 仅 Android 需要内存字节（content:// URI 无法用 File 读取）
+      withData: isAndroidPlatform);
+  if (r == null || r.files.isEmpty) return;
+  final file = r.files.first;
+  final path = file.path;
+  final useBytes = (path == null || path.startsWith('content://')) && file.bytes != null;
+  if (useBytes) {
+    final saved = await _saveBackgroundBytes(file.bytes!, file.name, maxW, maxH);
+    if (saved != null) {
+      state.updateConfig((c) => c..backgroundImage = saved);
+    }
+  } else if (path != null) {
+    // 大图自动压缩到屏幕分辨率，避免体积过大导致卡死
+    final copied = await _copyBackgroundOptimized(path, maxW, maxH);
+    state.updateConfig((c) => c..backgroundImage = copied ?? path);
+  }
+}
+
+/// 主题→背景：显示当前背景名 + 更换 + 清除；展开的二级菜单里
+/// 可设置背景不透明度与卡片不透明度。
+class _ThemeBackgroundSection extends StatefulWidget {
+  const _ThemeBackgroundSection();
+  @override
+  State<_ThemeBackgroundSection> createState() => _ThemeBackgroundSectionState();
+}
+
+class _ThemeBackgroundSectionState extends State<_ThemeBackgroundSection> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<AppState>();
+    final cfg = state.config;
+    final s = AppStrings.of(cfg.language);
+    final scheme = Theme.of(context).colorScheme;
+    final clr = scheme.onSurface;
+    final name = cfg.backgroundImage.isEmpty
+        ? ''
+        : cfg.backgroundImage.split(RegExp(r'[\\/]')).last;
+
+    return Column(children: [
+      ListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        leading: Icon(Icons.wallpaper_outlined, size: 20, color: scheme.primary),
+        title: Text(s.bgTitle, style: TextStyle(color: clr, fontSize: 13)),
+        subtitle: Text(cfg.backgroundImage.isEmpty ? s.bgNone : name,
+            maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 11, color: scheme.outline)),
+        onTap: () => _pickBackground(context, state),
+        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+          if (cfg.backgroundImage.isNotEmpty)
+            IconButton(icon: Icon(Icons.close, size: 16, color: scheme.error),
+                tooltip: s.remove,
+                onPressed: () => state.updateConfig((c) => c..backgroundImage = ''),
+                padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 24, minHeight: 24)),
+          IconButton(
+            icon: AnimatedRotation(
+              turns: _expanded ? 0.5 : 0,
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOutCubic,
+              child: Icon(Icons.expand_more, size: 18, color: scheme.outline),
+            ),
+            tooltip: _expanded ? s.setCollapse : s.setExpand,
+            onPressed: () => setState(() => _expanded = !_expanded),
+            padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+          ),
+        ]),
+      ),
+      // 二级菜单：背景不透明度 / 卡片不透明度
+      AnimatedSize(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOutCubic,
+        alignment: Alignment.topCenter,
+        child: _expanded
+            ? Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+                child: Column(children: [
+                  _SettingSlider(
+                    value: cfg.backgroundOpacity, min: 0.0, max: 1.0, divisions: 100,
+                    label: (v) => '${s.bgOpacity}: ${(v * 100).round()}%',
+                    labelStyle: TextStyle(color: clr, fontSize: 11),
+                    onCommit: (v) => state.updateConfig((c) => c..backgroundOpacity = v),
+                  ),
+                  const SizedBox(height: 2),
+                  _SettingSlider(
+                    value: cfg.cardOpacity, min: 0.0, max: 1.0, divisions: 100,
+                    label: (v) => '${s.cardOpacity}: ${(v * 100).round()}%',
+                    labelStyle: TextStyle(color: clr, fontSize: 11),
+                    onCommit: (v) => state.updateConfig((c) => c..cardOpacity = v),
+                  ),
+                ]),
+              )
+            : const SizedBox(width: double.infinity, height: 0),
+      ),
+    ]);
+  }
 }
 
 /// 移动端设置 → 工具 → 命令：进入命令页
@@ -1656,131 +1774,6 @@ Widget _buildPredictiveBack(BuildContext ctx, AppState state) {
           style: TextStyle(fontSize: 11, color: scheme.outline)),
       value: cfg.predictiveBack,
       onChanged: (v) => state.updateConfig((c) => c..predictiveBack = v),
-    ),
-  ]);
-}
-
-Widget _buildBackground(BuildContext ctx, AppState state) {
-  final cfg = state.config;
-  final s = AppStrings.of(cfg.language);
-  final scheme = Theme.of(ctx).colorScheme;
-  final clr = scheme.onSurface;
-  return _glass(ctx, state, s.cardBackground, [
-    ListTile(dense: true, contentPadding: EdgeInsets.zero,
-        title: Text(s.bgTitle, style: TextStyle(color: clr, fontSize: 13)),
-        subtitle: Text(cfg.backgroundImage.isEmpty ? s.bgNone : cfg.backgroundImage.split(RegExp(r'[\\/]')).last,
-            style: TextStyle(fontSize: 11, color: scheme.outline)),
-        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-          if (cfg.backgroundImage.isNotEmpty)
-            IconButton(icon: Icon(Icons.close, size: 16, color: scheme.error),
-                onPressed: () => state.updateConfig((c) => c..backgroundImage = ''),
-                padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 24, minHeight: 24)),
-          IconButton(icon: Icon(Icons.image, size: 18, color: scheme.primary),
-              onPressed: () async {
-                // 先同步取屏幕物理分辨率（在第一个 await 之前，避免跨 async gap）
-                final view = View.of(ctx);
-                final dpr = view.devicePixelRatio;
-                final logical = view.physicalSize / dpr;
-                final maxW = (logical.width * dpr).ceil();
-                final maxH = (logical.height * dpr).ceil();
-                final r = await FilePicker.platform.pickFiles(
-                    type: FileType.custom, allowedExtensions: ['jpg', 'jpeg', 'png', 'bmp', 'webp'],
-                    // 仅 Android 需要内存字节（content:// URI 无法用 File 读取）
-                    withData: isAndroidPlatform);
-                if (r != null && r.files.isNotEmpty) {
-                  final file = r.files.first;
-                  final path = file.path;
-                  // Android 11+: content:// URI 无法用 File 读写，优先用内存字节；
-                  // 其余平台用磁盘路径（节省内存）。
-                  final useBytes = (path == null || path.startsWith('content://')) && file.bytes != null;
-                  if (useBytes) {
-                    final saved = await _saveBackgroundBytes(file.bytes!, file.name, maxW, maxH);
-                    if (saved != null) {
-                      state.updateConfig((c) => c..backgroundImage = saved);
-                    }
-                  } else if (path != null) {
-                    // 大图自动压缩到屏幕分辨率，避免体积过大导致卡死
-                    final copied = await _copyBackgroundOptimized(path, maxW, maxH);
-                    state.updateConfig((c) => c..backgroundImage = copied ?? path);
-                  }
-                }
-              }, padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 24, minHeight: 24)),
-        ])),
-    if (cfg.backgroundImage.isNotEmpty)
-      _SettingSlider(
-        value: cfg.backgroundOpacity, min: 0.0, max: 1.0, divisions: 100,
-        label: (v) => '${s.bgOpacity}: ${(v * 100).round()}%',
-        labelStyle: TextStyle(color: clr, fontSize: 11),
-        onCommit: (v) => state.updateConfig((c) => c..backgroundOpacity = v),
-      ),
-    _SettingSlider(
-      value: cfg.cardOpacity, min: 0.0, max: 1.0, divisions: 100,
-      label: (v) => '${s.cardOpacity}: ${(v * 100).round()}%',
-      labelStyle: TextStyle(color: clr, fontSize: 11),
-      onCommit: (v) => state.updateConfig((c) => c..cardOpacity = v),
-    ),
-    const SizedBox(height: 6),
-    // 玻璃效果选择：选择框放到文字右侧（而非下方），与「跟随主题色」等开关保持同一排布。
-    // 「透明」= 无玻璃，所有卡片/药丸退回主题色显示。
-    Row(children: [
-      Expanded(child: Text(s.glassEffectLabel, style: TextStyle(color: clr, fontSize: 12))),
-      SizedBox(width: 150, child: DropdownMenu<String>(
-        initialSelection: cfg.glassEffect,
-        requestFocusOnTap: false,
-        textStyle: TextStyle(fontSize: 12, color: clr),
-        dropdownMenuEntries: [
-          DropdownMenuEntry(value: 'liquid', label: s.glassLiquid, leadingIcon: const Icon(Icons.water_drop_outlined, size: 14)),
-          DropdownMenuEntry(value: 'blur', label: s.glassBlur, leadingIcon: const Icon(Icons.blur_on_outlined, size: 14)),
-          DropdownMenuEntry(value: 'none', label: s.glassNone, leadingIcon: const Icon(Icons.crop_square_outlined, size: 14)),
-        ],
-        onSelected: (v) { if (v != null) state.updateConfig((c) => c..glassEffect = v); },
-      )),
-    ]),
-    const SizedBox(height: 10),
-    // 设置页卡片样式：纯色卡片(MIUI 风)/模糊/玻璃 三选一
-    Row(children: [
-      Expanded(child: Text(s.cardStyleLabel, style: TextStyle(color: clr, fontSize: 12))),
-      SizedBox(width: 150, child: DropdownMenu<String>(
-        initialSelection: cfg.cardStyle,
-        requestFocusOnTap: false,
-        textStyle: TextStyle(fontSize: 12, color: clr),
-        dropdownMenuEntries: [
-          DropdownMenuEntry(value: 'glass', label: s.cardStyleGlass, leadingIcon: const Icon(Icons.water_drop_outlined, size: 14)),
-          DropdownMenuEntry(value: 'blur', label: s.cardStyleBlur, leadingIcon: const Icon(Icons.blur_on_outlined, size: 14)),
-          DropdownMenuEntry(value: 'flat', label: s.cardStyleFlat, leadingIcon: const Icon(Icons.widgets_outlined, size: 14)),
-        ],
-        onSelected: (v) { if (v != null) state.updateConfig((c) => c..cardStyle = v); },
-      )),
-    ]),
-    const SizedBox(height: 10),
-    // 遵循主题色：玻璃/卡片底色统一使用主题色
-    Row(children: [
-      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(s.glassFollowTheme, style: TextStyle(color: clr, fontSize: 12)),
-        const SizedBox(height: 2),
-        Text(s.glassFollowThemeHint, style: TextStyle(fontSize: 10, color: scheme.outline)),
-      ])),
-      Switch(
-        value: cfg.glassFollowTheme,
-        onChanged: (v) => state.updateConfig((c) => c..glassFollowTheme = v),
-        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      ),
-    ]),
-    const SizedBox(height: 10),
-    // 画布背景：跟随全局 / 灰色 / 黑色 / 白色
-    Text(s.canvasBgLabel, style: TextStyle(color: clr, fontSize: 12)),
-    const SizedBox(height: 6),
-    SegmentedButton<String>(
-      showSelectedIcon: false,
-      segments: [
-        ButtonSegment(value: 'global', label: Text(s.isZh ? '跟随全局' : 'Follow', style: const TextStyle(fontSize: 11))),
-        ButtonSegment(value: 'gray', icon: const Icon(Icons.grid_4x4, size: 12), label: Text(s.isZh ? '灰色' : 'Gray', style: const TextStyle(fontSize: 11))),
-        ButtonSegment(value: 'black', label: Text(s.isZh ? '黑色' : 'Black', style: const TextStyle(fontSize: 11))),
-        ButtonSegment(value: 'white', label: Text(s.isZh ? '白色' : 'White', style: const TextStyle(fontSize: 11))),
-      ],
-      selected: {cfg.canvasBg},
-      onSelectionChanged: (v) => state.updateConfig((c) => c..canvasBg = v.first),
-      style: const ButtonStyle(visualDensity: VisualDensity.compact),
     ),
   ]);
 }
@@ -2681,9 +2674,9 @@ Widget _aiSettingsContent(BuildContext bCtx, AppState state, AppStrings s, {requ
       });
 }
 
-/// 弹出 AI 配置编辑表单（新建或编辑现有配置）。
 /// 对 AiProfile 应用供应商预设（一键填充端点/模型/上下文）。
-void _applyProfilePreset(AiProfile c, String preset) {
+/// 公开供移动端提供商详情页复用。
+void applyProfilePreset(AiProfile c, String preset) {
   switch (preset) {
     case 'openai':
       c.provider = 'openai';
@@ -2757,7 +2750,7 @@ Widget _buildProfileDetail(
           ],
           onChanged: (preset) {
             if (preset == null) return;
-            _applyProfilePreset(profile, preset);
+            applyProfilePreset(profile, preset);
             setDState(() {});
           },
         )),
@@ -2866,7 +2859,7 @@ Widget _buildProfileDetail(
                 c.aiProvider = profile.provider;
                 return c;
               }).ignore();
-              _pingAi(ctx, state, s);
+              pingAi(ctx, state, s);
             })),
         const SizedBox(width: 8),
         Expanded(child: _iosButton(icon: Icons.list, label: s.aiListModels,
@@ -2878,7 +2871,11 @@ Widget _buildProfileDetail(
                 c.aiProvider = profile.provider;
                 return c;
               }).ignore();
-              _listAiModels(ctx, state, s, onPicked: () => setDState(() {}));
+              // 选中的模型写回当前正在编辑的 profile（而非全局默认字段）
+              listAiModels(ctx, state, s, onPicked: (m) {
+                profile.model = m;
+                setDState(() {});
+              });
             })),
       ]),
       if (draft != null) ...[
@@ -2920,7 +2917,9 @@ String _httpReason(int code) => switch (code) {
   _ => 'Error',
 };
 
-Future<void> _pingAi(BuildContext ctx, AppState state, AppStrings s) async {
+/// 测试当前 AI 配置连通性（读取 config 默认字段 aiApiKey/aiApiUrl/aiProvider）。
+/// 公开供移动端提供商详情页复用（调用前先同步所选提供商字段到默认字段）。
+Future<void> pingAi(BuildContext ctx, AppState state, AppStrings s) async {
   final cfg = state.config;
   if (cfg.aiApiKey.isEmpty) {
     if (ctx.mounted) showToast(ctx, s.aiNotConfigured, type: ToastType.warning);
@@ -2951,7 +2950,10 @@ Future<void> _pingAi(BuildContext ctx, AppState state, AppStrings s) async {
   }
 }
 
-Future<void> _listAiModels(BuildContext ctx, AppState state, AppStrings s, {VoidCallback? onPicked}) async {
+/// 拉取模型列表并弹出选择器；[onPicked] 收到用户选中的模型名
+/// （写入哪个 model 字段由调用方决定）。公开供移动端提供商详情页复用。
+Future<void> listAiModels(BuildContext ctx, AppState state, AppStrings s,
+    {required ValueChanged<String> onPicked}) async {
   final cfg = state.config;
   if (cfg.aiApiKey.isEmpty) {
     if (ctx.mounted) showToast(ctx, s.aiNotConfigured, type: ToastType.warning);
@@ -2998,7 +3000,7 @@ Future<void> _listAiModels(BuildContext ctx, AppState state, AppStrings s, {Void
   }
 }
 
-void _showModelPicker(BuildContext ctx, AppState state, List<String> models, AppStrings s, VoidCallback? onPicked) {
+void _showModelPicker(BuildContext ctx, AppState state, List<String> models, AppStrings s, ValueChanged<String> onPicked) {
   if (models.isEmpty) {
     showToast(ctx, s.isZh ? '未找到模型' : 'No models found', type: ToastType.warning);
     return;
@@ -3017,10 +3019,9 @@ void _showModelPicker(BuildContext ctx, AppState state, List<String> models, App
             selected: models[i] == state.config.aiModel,
             selectedTileColor: scheme.primaryContainer.withAlpha(60),
             onTap: () {
-              state.updateConfig((c) => c..aiModel = models[i]);
               state.addLog('[AI] 已选择模型: ${models[i]}', category: 'info');
               Navigator.pop(dCtx);
-              onPicked?.call();
+              onPicked(models[i]);
               showToast(ctx, '${s.isZh ? "已选择" : "Selected"}: ${models[i]}', type: ToastType.success);
             },
           ),

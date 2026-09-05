@@ -102,12 +102,26 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
   @override
   void dispose() { _tab.dispose(); super.dispose(); }
 
+  /// 全局 UI 缩放系数（设置里的字号/14，见 app.dart TextScaler.linear）。
+  /// 对话框内的标签列/取值框原来是固定 72/32px——字号调大 1.5x 后
+  /// 「视频编码」这类四字标签（18px×4=72px）恰好撑爆 72px 被裁切，
+  /// 就是「字号过大致文字显示不全」的主要来源。现在按缩放系数同步加宽。
+  double get _uiScale => MediaQuery.textScalerOf(context).scale(1.0);
+
+  /// 标签列宽度：基准 72px 随字号缩放，上限 108px（再大走省略号）
+  double _labelW() => (72 * _uiScale).clamp(72.0, 108.0);
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final s = AppStrings.of(context.read<AppState>().config.language);
     final v = widget.video;
+
+    // 对话框尺寸随字号缩放并对视口兜底，大字号下不被窗口裁掉
+    final vp = MediaQuery.sizeOf(context);
+    final contentW = (600 * _uiScale).clamp(360.0, vp.width - 32);
+    final contentH = 460.0.clamp(320.0, vp.height - 200);
 
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -118,7 +132,7 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
         text: '${s.editTitle} — ${v.filename}',
         style: theme.textTheme.titleMedium?.copyWith(color: scheme.onSurface, fontWeight: FontWeight.w600),
       ),
-      content: SizedBox(width: 600, height: 460, child: Column(mainAxisSize: MainAxisSize.min, children: [
+      content: SizedBox(width: contentW, height: contentH, child: Column(mainAxisSize: MainAxisSize.min, children: [
         // 文件信息条
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -314,7 +328,7 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
             ),
             if (_cfg.speed != null) ...[
               Row(children: [
-                SizedBox(width: 72, child: Text(s.isZh ? '速度' : 'Speed', style: TextStyle(fontSize: 12, color: sc.onSurface))),
+                SizedBox(width: _labelW(), child: Text(s.isZh ? '速度' : 'Speed', style: TextStyle(fontSize: 12, color: sc.onSurface))),
                 Expanded(child: Slider(
                   value: _cfg.speed!.clamp(0.25, 4.0),
                   min: 0.25, max: 4.0, divisions: 15,
@@ -322,7 +336,8 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
                   onChanged: (v) => setState(() => _cfg.speed = double.parse(v.toStringAsFixed(2))),
                 )),
                 Container(
-                  width: 48, alignment: Alignment.center,
+                  // 取值框随字号缩放（「1.25x」在 1.5x 字号下 ~49px，固定 48 会裁切）
+                  width: (48 * _uiScale).clamp(48.0, 64.0), alignment: Alignment.center,
                   padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                   decoration: BoxDecoration(color: sc.surfaceContainerHighest.withAlpha(80), borderRadius: BorderRadius.circular(4)),
                   child: Text('${_cfg.speed!.toStringAsFixed(2)}x', style: TextStyle(fontSize: 11, color: sc.onSurface, fontWeight: FontWeight.w500)),
@@ -597,7 +612,7 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
   // ═══ Helpers ═══
   Widget _dd(ColorScheme sc, String l, String v, List<String> vals, List<String> labels, ValueChanged<String> cb) =>
       Padding(padding: const EdgeInsets.only(bottom: 10), child: Row(children: [
-        SizedBox(width: 72, child: Text(l, style: TextStyle(fontSize: 12, color: sc.onSurface), overflow: TextOverflow.ellipsis)),
+        SizedBox(width: _labelW(), child: Text(l, style: TextStyle(fontSize: 12, color: sc.onSurface), overflow: TextOverflow.ellipsis)),
         Expanded(child: DropdownButtonFormField<String>(
             borderRadius: BorderRadius.circular(12),
             initialValue: vals.contains(v) ? v : vals.first, isDense: true, isExpanded: true,
@@ -614,11 +629,12 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
 
   Widget _sl(ColorScheme sc, String l, int v, int min, int max, ValueChanged<int> cb) =>
       Padding(padding: const EdgeInsets.only(bottom: 10), child: Row(children: [
-        SizedBox(width: 72, child: Text(l, style: TextStyle(fontSize: 12, color: sc.onSurface))),
+        SizedBox(width: _labelW(), child: Text(l, style: TextStyle(fontSize: 12, color: sc.onSurface), overflow: TextOverflow.ellipsis)),
         Expanded(child: Slider(value: v.toDouble(), min: min.toDouble(), max: max.toDouble(),
             divisions: max - min, label: '$v', onChanged: (x) => cb(x.round()))),
         Container(
-          width: 32,
+          // 取值框随字号缩放（「1920」这类 4 位数在 1.5x 下 ~37px+padding，固定 32 必裁切）
+          width: (34 * _uiScale).clamp(34.0, 52.0),
           alignment: Alignment.center,
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
           decoration: BoxDecoration(color: sc.surfaceContainerHighest.withAlpha(80), borderRadius: BorderRadius.circular(4)),
@@ -628,8 +644,8 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
 
   Widget _num(ColorScheme sc, String l, int v, ValueChanged<int> cb) =>
       Padding(padding: const EdgeInsets.only(bottom: 10), child: Row(children: [
-        SizedBox(width: 72, child: Text(l, style: TextStyle(fontSize: 12, color: sc.onSurface))),
-        SizedBox(width: 100, child: TextFormField(
+        SizedBox(width: _labelW(), child: Text(l, style: TextStyle(fontSize: 12, color: sc.onSurface), overflow: TextOverflow.ellipsis)),
+        SizedBox(width: (100 * _uiScale).clamp(100.0, 130.0), child: TextFormField(
             initialValue: '$v', style: TextStyle(fontSize: 12, color: sc.onSurface),
             keyboardType: TextInputType.number,
             decoration: InputDecoration(isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -651,7 +667,7 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
 
   Widget _tf(ColorScheme sc, String l, String v, ValueChanged<String> cb) =>
       Padding(padding: const EdgeInsets.only(bottom: 10), child: Row(children: [
-        SizedBox(width: 72, child: Text(l, style: TextStyle(fontSize: 12, color: sc.onSurface))),
+        SizedBox(width: _labelW(), child: Text(l, style: TextStyle(fontSize: 12, color: sc.onSurface), overflow: TextOverflow.ellipsis)),
         Expanded(child: TextFormField(initialValue: v,
             style: TextStyle(fontSize: 12, color: sc.onSurface),
             decoration: InputDecoration(isDense: true,
@@ -664,8 +680,8 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
 
   Widget _numDouble(ColorScheme sc, String l, double? v, ValueChanged<double?> cb) =>
       Padding(padding: const EdgeInsets.only(bottom: 10), child: Row(children: [
-        SizedBox(width: 72, child: Text(l, style: TextStyle(fontSize: 12, color: sc.onSurface))),
-        SizedBox(width: 120, child: TextFormField(
+        SizedBox(width: _labelW(), child: Text(l, style: TextStyle(fontSize: 12, color: sc.onSurface), overflow: TextOverflow.ellipsis)),
+        SizedBox(width: (120 * _uiScale).clamp(120.0, 150.0), child: TextFormField(
             initialValue: v != null ? v.toString() : '',
             style: TextStyle(fontSize: 12, color: sc.onSurface),
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -698,7 +714,7 @@ class _ConfigDialogState extends State<ConfigDialog> with SingleTickerProviderSt
 
   Widget _colorRow(ColorScheme sc, String label, String hexValue, ValueChanged<String> cb) =>
       Padding(padding: const EdgeInsets.only(bottom: 10), child: Row(children: [
-        SizedBox(width: 72, child: Text(label, style: TextStyle(fontSize: 12, color: sc.onSurface))),
+        SizedBox(width: _labelW(), child: Text(label, style: TextStyle(fontSize: 12, color: sc.onSurface), overflow: TextOverflow.ellipsis)),
         Expanded(child: TextFormField(
             key: ValueKey('color_$label'),
             initialValue: hexValue,

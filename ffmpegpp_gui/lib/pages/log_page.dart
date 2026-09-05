@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -30,6 +29,17 @@ class _LogPageState extends State<LogPage> {
     'progress' => isZh ? '进度' : 'Progress',
     'error'    => isZh ? '错误' : 'Error',
     _          => f,
+  };
+
+  /// 日志类别徽标的本地化展示（原先直接 toUpperCase 显示英文，
+  /// 中文界面下残留 INFO/PROGRESS/AUDIT 等）。
+  String _catLabel(String cat, bool isZh) => switch (cat) {
+    'info'     => isZh ? '信息' : 'Info',
+    'progress' => isZh ? '进度' : 'Progress',
+    'error'    => isZh ? '错误' : 'Error',
+    'ffmpeg'   => 'FFmpeg',
+    'audit'    => isZh ? '审计' : 'Audit',
+    _          => isZh ? '一般' : 'General',
   };
 
   @override
@@ -228,7 +238,7 @@ class _LogPageState extends State<LogPage> {
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
                 margin: const EdgeInsets.only(right: 6),
                 decoration: BoxDecoration(color: catColor.withAlpha(30), borderRadius: BorderRadius.circular(3)),
-                child: Text(entry.category.toUpperCase(), style: TextStyle(fontSize: 8, fontWeight: FontWeight.w600, color: catColor)),
+                child: Text(_catLabel(entry.category, isZh), style: TextStyle(fontSize: 8, fontWeight: FontWeight.w600, color: catColor)),
               ),
               Text(_ts(entry.timestamp), style: TextStyle(fontSize: 10, fontFamily: AppTheme.monoFont, color: scheme.outline)),
               const SizedBox(width: 8),
@@ -238,22 +248,20 @@ class _LogPageState extends State<LogPage> {
           ),
         );
 
-        row = ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-            child: Container(
-              decoration: BoxDecoration(
-                color: scheme.surface.withAlpha(60),
-                borderRadius: BorderRadius.circular(4),
-                border: Border.all(color: scheme.outlineVariant.withAlpha(30), width: 0.5),
-              ),
-              child: row,
-            ),
+        // 内存优化：原来每一行日志都套一个 BackdropFilter(σ8) + RepaintBoundary。
+        // 列表已整体位于 GlassPanel 之上（背景已被模糊过一次），行级模糊视觉
+        // 贡献极小，却要按「可见行数 × 行尺寸」多分配大量离屏纹理——日志页
+        // 可见行数多时是隐藏内存大户。行外观由半透明底色 + 细边框承担即可。
+        row = Container(
+          decoration: BoxDecoration(
+            color: scheme.surface.withAlpha(60),
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: scheme.outlineVariant.withAlpha(30), width: 0.5),
           ),
+          child: row,
         );
 
-        return Padding(padding: const EdgeInsets.only(bottom: 2), child: RepaintBoundary(child: row));
+        return Padding(padding: const EdgeInsets.only(bottom: 2), child: row);
       },
         ),
       ),

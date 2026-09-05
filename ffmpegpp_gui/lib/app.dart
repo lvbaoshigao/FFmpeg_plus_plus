@@ -596,10 +596,12 @@ class _AppShellState extends State<AppShell> with WindowListener {
         ),
       ]);
     } else {
-      body = Platform.isWindows
+      body = (Platform.isWindows || Platform.isMacOS)
+          // Windows / macOS 使用系统默认标题栏，内容直接铺满（无自绘 CSD）
           ? page
-          // 无边框窗口会失去原生边框的拖拽缩放能力，用 DragToResizeArea 在四边
-          // 补上透明的 resize 热区（宽 6px），鼠标移到边缘即可拖动调整窗口大小。
+          // Linux：自定义标题栏。无边框窗口会失去原生边框的拖拽缩放能力，
+          // 用 DragToResizeArea 在四边补上透明的 resize 热区（宽 6px），
+          // 鼠标移到边缘即可拖动调整窗口大小。
           : DragToResizeArea(
               resizeEdgeSize: 6,
               child: Stack(children: [
@@ -748,8 +750,22 @@ class _AppShellState extends State<AppShell> with WindowListener {
   /// 页面懒加载缓存：首次访问才构建，切换时保留状态（IndexedStack），
   /// 避免 AnimatedSwitcher 每次切换重建整页导致的卡顿。
   final List<Widget?> _pageCache = List.filled(6, null);
+  /// 页面访问顺序（LRU，最久未访问在前），常驻数超限时按此逐出。
+  final List<int> _pageLru = [];
+  bool _evictScheduled = false;
+
+  /// 常驻页面数上限。
+  /// 每页的玻璃面板（BackdropFilter）持有与面板等大的离屏纹理（含模糊
+  /// 半径 padding），6 页同时常驻时玻璃/模糊效果的 GPU 内存成倍增长
+  /// （用户实测开启玻璃后进程内存 500MB+）。超过上限时逐出最久未访问
+  /// 的页面，其纹理随 State dispose 一起释放。
+  static const int _kMaxAlivePages = 4;
 
   Widget _page(int i) {
+    // 刷新 LRU 位置：当前页每次 build 都经过这里，最近访问的页永远靠后，
+    // 不会被误逐出
+    _pageLru.remove(i);
+    _pageLru.add(i);
     final cached = _pageCache[i];
     if (cached != null) return KeyedSubtree(key: ValueKey(i), child: cached);
     // 首次访问：构建页面并缓存
@@ -760,7 +776,47 @@ class _AppShellState extends State<AppShell> with WindowListener {
       _ => const ProjectPage(),
     };
     _pageCache[i] = page;
+    // 构建发生在 build 期间，逐出需要 setState——推迟到帧后执行
+    if (!_evictScheduled) {
+      _evictScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _evictScheduled = false;
+        if (mounted) {
+          _evictStalePages(context.read<AppState>().selectedNav);
+        }
+      });
+    }
     return KeyedSubtree(key: ValueKey(i), child: page);
+  }
+
+  /// 常驻页数超过 _kMaxAlivePages 时，从最久未访问的页面开始逐出
+  /// （保留当前页与其相邻页——相邻页切换最频繁，逐出它们会立刻重建卡顿）。
+  void _evictStalePages(int current) {
+    // 移动端 PageView 会为四个 Tab 直接调用 _page(i)，逐出后会立刻重建，
+    // 反而造成抖动；移动端保持原行为（四个 Tab 全部常驻）。
+    if (isMobilePlatform) return;
+    int alive() {
+      var n = 0;
+      for (final w in _pageCache) {
+        if (w != null) n++;
+      }
+      return n;
+    }
+
+    var evicted = false;
+    while (alive() > _kMaxAlivePages) {
+      int? victim;
+      for (final idx in _pageLru) {
+        if (idx == current || (idx - current).abs() <= 1) continue;
+        victim = idx;
+        break;
+      }
+      if (victim == null) return; // 只剩当前/相邻页，不再逐出
+      _pageCache[victim] = null;
+      _pageLru.remove(victim);
+      evicted = true;
+    }
+    if (evicted && mounted) setState(() {});
   }
 
   /// 所有页面同时存在于 IndexedStack（已访问的缓存、未访问的占位），
@@ -773,15 +829,16 @@ class _AppShellState extends State<AppShell> with WindowListener {
     ],
   );
 
-  /// 后台分帧预热其余页面到缓存（主界面显示后逐帧构建），
+  /// 后台分帧预热高频页面到缓存（主界面显示后逐帧构建），
   /// 之后首次点击进入不再卡顿（构建成本已摊到空闲帧）。
+  /// 桌面端只预热「项目 + 处理队列」两个主入口页；其余页面首次点击时
+  /// 再构建（配合常驻上限，避免所有页面的玻璃面板纹理同时常驻）。
   void _prewarmPages() {
     if (_warming) return;
     _warming = true;
-    // 移动端只预热底部导航的 4 个 Tab，Skip CommandPage/LogPage 省内存。
     final targets = isMobilePlatform
         ? _kMobileNavOrder
-        : List<int>.generate(6, (i) => i);
+        : const [0, 1];
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       for (final i in targets) {
         if (!mounted) return;

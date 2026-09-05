@@ -12,6 +12,22 @@ import '../widgets/glass_panel.dart';
 import '../widgets/mobile_glass_pill.dart';
 import '../platform/app_platform.dart';
 
+/// 队列页刷新依赖：任务列表版本号（已含节流）+ 界面语言。
+/// 不再用 Consumer 订阅整个 AppState——日志/探测/配置等无关 notify
+/// 不再触发队列页重建。
+class _QueueKey {
+  final int tasksVersion;
+  final String language;
+  const _QueueKey(this.tasksVersion, this.language);
+  @override
+  bool operator ==(Object other) =>
+      other is _QueueKey &&
+      other.tasksVersion == tasksVersion &&
+      other.language == language;
+  @override
+  int get hashCode => Object.hash(tasksVersion, language);
+}
+
 class QueuePage extends StatefulWidget {
   const QueuePage({super.key});
   @override
@@ -33,12 +49,20 @@ class _QueuePageState extends State<QueuePage> {
     super.dispose();
   }
 
+  /// 任务卡片的 widget 实例缓存（按列表下标）。
+  /// TaskInfo 是 immutable（copyWith 生成新实例），任务实例未变时直接复用
+  /// 旧的 widget 实例——Element.updateChild 对 identical 的 widget 跳过
+  /// 重建，进度心跳只重建真正变化了的卡片，而不是整列。
+  final List<TaskCard> _taskCardWidgets = [];
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    return Consumer<AppState>(
-      builder: (context, state, _) {
+    return Selector<AppState, _QueueKey>(
+      selector: (_, s) => _QueueKey(s.tasksVersion, s.config.language),
+      builder: (context, _, _) {
+        final state = context.read<AppState>();
         final s = AppStrings.of(state.config.language);
         return Scaffold(
           backgroundColor: Colors.transparent,
@@ -58,7 +82,7 @@ class _QueuePageState extends State<QueuePage> {
                         : ListView.builder(
                             padding: EdgeInsets.fromLTRB(8, 8, 8, kMobileNavClearance),
                             itemCount: state.tasks.length,
-                            itemBuilder: (_, i) => TaskCard(key: ValueKey(state.tasks[i].id), task: state.tasks[i]),
+                            itemBuilder: (_, i) => _taskCardFor(state, i),
                           ),
                   )
                 : Column(children: [
@@ -79,7 +103,7 @@ class _QueuePageState extends State<QueuePage> {
                               child: ListView.builder(
                                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
                                 itemCount: state.tasks.length,
-                                itemBuilder: (_, i) => TaskCard(key: ValueKey(state.tasks[i].id), task: state.tasks[i]),
+                                itemBuilder: (_, i) => _taskCardFor(state, i),
                               ),
                             ),
                     ),
@@ -96,6 +120,26 @@ class _QueuePageState extends State<QueuePage> {
         );
       },
     );
+  }
+
+  /// 取第 i 个任务的卡片 widget：任务实例未变时复用缓存的 widget 实例
+  /// （框架对 identical 的 widget 跳过重建），进度心跳下只有真正变化的
+  /// 卡片会重建，而不是整列 20~50 张卡片每 300ms 全量重建。
+  TaskCard _taskCardFor(AppState state, int i) {
+    final tasks = state.tasks;
+    if (_taskCardWidgets.length > tasks.length) {
+      _taskCardWidgets.length = tasks.length;
+    }
+    final task = tasks[i];
+    if (i < _taskCardWidgets.length && identical(_taskCardWidgets[i].task, task)) {
+      return _taskCardWidgets[i];
+    }
+    final card = TaskCard(key: ValueKey(task.id), task: task);
+    if (i >= _taskCardWidgets.length) {
+      _taskCardWidgets.length = i + 1;
+    }
+    _taskCardWidgets[i] = card;
+    return card;
   }
 
   Widget _monitorBar(ColorScheme scheme, AppState state) {

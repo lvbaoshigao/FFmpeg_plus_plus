@@ -6,6 +6,7 @@ import '../providers/app_state.dart';
 import '../services/ffmpeg_installer.dart';
 import '../services/shell_open.dart';
 import '../theme/app_strings.dart';
+import 'app_card.dart';
 
 /// 后端流水线步骤 action → 本地化名称。
 /// 详细进度（节点圆圈、tooltip）不再直接展示英文 action 名。
@@ -62,8 +63,13 @@ class TaskCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final state = context.watch<AppState>();
-    final s = AppStrings.of(state.config.language);
+    // 不订阅整个 AppState（context.watch）：进度心跳/日志/探测等 notify 会
+    // 让每张卡片高频重建。这里只 select 真正影响渲染的两个稳定值（语言、
+    // ffmpeg 路径）；任务数据由父级以不可变 TaskInfo 实例传入，任务变化时
+    // 父级会传入新实例触发重建。事件回调内用 read（不产生订阅）。
+    final language = context.select<AppState, String>((s) => s.config.language);
+    final ffmpeg = context.select<AppState, String>((s) => s.config.ffmpegPath);
+    final s = AppStrings.of(language);
     final clr = scheme.onSurface;
 
     String statusLabel() => switch (task.status) {
@@ -72,12 +78,16 @@ class TaskCard extends StatelessWidget {
       TaskStatus.cancelled => s.cancelled,
     };
 
-    return Card(
+    // 卡片样式由「主题→样式→卡片样式」（AppConfig.cardStyle）接管
+    final cardStyle = context.select<AppState, String>((s) => s.config.cardStyle);
+    return AppCard(
+      style: cardStyle,
+      radius: 12,
       margin: const EdgeInsets.only(bottom: 8),
       child: Column(children: [
         InkWell(
           borderRadius: BorderRadius.circular(12),
-          onTap: () => state.toggleTaskExpanded(task.id),
+          onTap: () => context.read<AppState>().toggleTaskExpanded(task.id),
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: Column(children: [
@@ -85,7 +95,7 @@ class TaskCard extends StatelessWidget {
                 // 缩略图
                 ClipRRect(
                   borderRadius: BorderRadius.circular(4),
-                  child: _ThumbWidget(filepath: task.inputPath, ffmpeg: state.config.ffmpegPath),
+                  child: _ThumbWidget(filepath: task.inputPath, ffmpeg: ffmpeg),
                 ),
                 const SizedBox(width: 8),
                 Icon(_statusIcon, size: 20, color: _statusColor(scheme)),
@@ -95,27 +105,27 @@ class TaskCard extends StatelessWidget {
                     maxLines: 1, overflow: TextOverflow.ellipsis)),
                 if (task.status == TaskStatus.pending)
                   IconButton(icon: Icon(Icons.play_circle_filled, color: scheme.primary, size: 22),
-                      tooltip: s.startProcessing, onPressed: () => state.processSingleTask(task.id)),
+                      tooltip: s.startProcessing, onPressed: () => context.read<AppState>().processSingleTask(task.id)),
                 if (task.status == TaskStatus.processing)
                   TextButton.icon(icon: const Icon(Icons.stop, size: 14),
                       label: Text(s.cancel, style: const TextStyle(fontSize: 11)),
-                      onPressed: () => state.cancelTask(task.id),
+                      onPressed: () => context.read<AppState>().cancelTask(task.id),
                       style: TextButton.styleFrom(foregroundColor: scheme.error,
                           padding: const EdgeInsets.symmetric(horizontal: 6))),
                 if (task.status == TaskStatus.completed) ...[
                   IconButton(
-                    icon: const Icon(Icons.folder_open, size: 18), tooltip: s.language == 'zh' ? '打开文件夹' : 'Open Folder',
+                    icon: const Icon(Icons.folder_open, size: 18), tooltip: s.qOpenFolder,
                     onPressed: () => ShellOpen.reveal(task.outputPath),
                     padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 28, minHeight: 28)),
                   IconButton(
-                    icon: const Icon(Icons.play_circle_outline, size: 18), tooltip: s.language == 'zh' ? '打开文件' : 'Open File',
+                    icon: const Icon(Icons.play_circle_outline, size: 18), tooltip: s.qOpenFile,
                     onPressed: () => ShellOpen.path(task.outputPath),
                     padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 28, minHeight: 28)),
                 ],
                 if (task.status == TaskStatus.cancelled || task.status == TaskStatus.failed)
                   IconButton(
                     icon: Icon(Icons.delete_outline, size: 18, color: scheme.error), tooltip: s.cancel,
-                    onPressed: () => state.removeTask(task.id),
+                    onPressed: () => context.read<AppState>().removeTask(task.id),
                     padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 28, minHeight: 28)),
                 Text(statusLabel(), style: TextStyle(fontSize: 11, color: _statusColor(scheme))),
                 const SizedBox(width: 8),
@@ -208,7 +218,7 @@ class TaskCard extends StatelessWidget {
             Row(children: [
               Icon(Icons.error_outline, size: 16, color: scheme.error),
               const SizedBox(width: 6),
-              Text(s.language == 'zh' ? '错误信息' : 'Error Details',
+              Text(s.qErrorDetails,
                   style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.error)),
             ]),
             const SizedBox(height: 8),
@@ -223,7 +233,7 @@ class TaskCard extends StatelessWidget {
       if (task.pipelineCalls != null && task.pipelineCalls!.isNotEmpty) ...[
         _SectionTitle(
           icon: Icons.account_tree,
-          title: s.language == 'zh' ? '处理流水线' : 'Processing Pipeline',
+          title: s.qPipeline,
           scheme: scheme,
         ),
         const SizedBox(height: 8),
@@ -246,7 +256,7 @@ class TaskCard extends StatelessWidget {
                 zh: s.language == 'zh',
               ),
               const SizedBox(height: 8),
-              _PipelineLegend(scheme: scheme, isZh: s.language == 'zh'),
+              _PipelineLegend(scheme: scheme, s: s),
             ],
           ),
         ),
@@ -256,7 +266,7 @@ class TaskCard extends StatelessWidget {
       // 文件信息区域
       _SectionTitle(
         icon: Icons.folder,
-        title: s.language == 'zh' ? '文件信息' : 'File Info',
+        title: s.qFileInfo,
         scheme: scheme,
       ),
       const SizedBox(height: 8),
@@ -264,22 +274,22 @@ class TaskCard extends StatelessWidget {
         input: task.inputPath,
         output: task.outputPath,
         scheme: scheme,
-        isZh: s.language == 'zh',
+        s: s,
       ),
       const SizedBox(height: 16),
       
       // 技术参数区域
       _SectionTitle(
         icon: Icons.speed,
-        title: s.language == 'zh' ? '技术参数' : 'Technical Stats',
+        title: s.qTechStats,
         scheme: scheme,
       ),
       const SizedBox(height: 8),
       _StatsGrid(
         stats: [
-          ('FPS', _dashIfNa(task.fps, s.language == 'zh'), Icons.videocam),
-          (s.language == 'zh' ? '码率' : 'Bitrate', _dashIfNa(task.bitrate, s.language == 'zh'), Icons.trending_up),
-          (s.language == 'zh' ? '大小' : 'Size', task.outputSizeStr, Icons.storage),
+          (s.qFps, _dashIfNa(task.fps, s.isZh), Icons.videocam),
+          (s.qBitrate, _dashIfNa(task.bitrate, s.isZh), Icons.trending_up),
+          (s.qSize, task.outputSize == null ? s.qNone : task.outputSizeStr, Icons.storage),
         ],
         scheme: scheme,
       ),
@@ -292,7 +302,7 @@ class TaskCard extends StatelessWidget {
           logLines: task.logLines,
           error: task.error,
           scheme: scheme,
-          isZh: s.language == 'zh',
+          s: s,
         ),
       ],
     ]),
@@ -353,11 +363,11 @@ class _SectionTitle extends StatelessWidget {
 /// 流水线颜色图例
 class _PipelineLegend extends StatelessWidget {
   final ColorScheme scheme;
-  final bool isZh;
-  
+  final AppStrings s;
+
   const _PipelineLegend({
     required this.scheme,
-    required this.isZh,
+    required this.s,
   });
 
   @override
@@ -368,15 +378,15 @@ class _PipelineLegend extends StatelessWidget {
       children: [
         _LegendItem(
           color: Colors.grey.shade400,
-          label: isZh ? '未开始' : 'Pending',
+          label: s.qLegendPending,
         ),
         _LegendItem(
           color: Colors.amber,
-          label: isZh ? '进行中' : 'Processing',
+          label: s.qLegendProcessing,
         ),
         _LegendItem(
           color: Colors.green,
-          label: isZh ? '已完成' : 'Completed',
+          label: s.qLegendCompleted,
         ),
       ],
     );
@@ -421,13 +431,13 @@ class _FileInfoCard extends StatelessWidget {
   final String input;
   final String output;
   final ColorScheme scheme;
-  final bool isZh;
-  
+  final AppStrings s;
+
   const _FileInfoCard({
     required this.input,
     required this.output,
     required this.scheme,
-    required this.isZh,
+    required this.s,
   });
 
   @override
@@ -447,7 +457,7 @@ class _FileInfoCard extends StatelessWidget {
               Icon(Icons.input, size: 14, color: scheme.outline),
               const SizedBox(width: 6),
               Text(
-                isZh ? '输入' : 'Input',
+                s.qInput,
                 style: TextStyle(fontSize: 10, color: scheme.outline, fontWeight: FontWeight.w600),
               ),
             ],
@@ -464,7 +474,7 @@ class _FileInfoCard extends StatelessWidget {
               Icon(Icons.output, size: 14, color: scheme.outline),
               const SizedBox(width: 6),
               Text(
-                isZh ? '输出' : 'Output',
+                s.qOutput,
                 style: TextStyle(fontSize: 10, color: scheme.outline, fontWeight: FontWeight.w600),
               ),
             ],
@@ -554,14 +564,14 @@ class _AdvancedInfoSection extends StatefulWidget {
   final List<String> logLines;
   final String? error;
   final ColorScheme scheme;
-  final bool isZh;
-  
+  final AppStrings s;
+
   const _AdvancedInfoSection({
     this.command,
     required this.logLines,
     this.error,
     required this.scheme,
-    required this.isZh,
+    required this.s,
   });
 
   @override
@@ -593,7 +603,7 @@ class _AdvancedInfoSectionState extends State<_AdvancedInfoSection> {
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      widget.isZh ? '高级信息' : 'Advanced Info',
+                      widget.s.qAdvanced,
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
@@ -630,7 +640,7 @@ class _AdvancedInfoSectionState extends State<_AdvancedInfoSection> {
           if (widget.command != null) ...[
             _InfoBlock(
               icon: Icons.terminal,
-              title: widget.isZh ? '命令' : 'Command',
+              title: widget.s.qCommand,
               content: widget.command!.join(' '),
               scheme: widget.scheme,
               isMonospace: true,
@@ -640,7 +650,7 @@ class _AdvancedInfoSectionState extends State<_AdvancedInfoSection> {
           if (widget.logLines.isNotEmpty) ...[
             _InfoBlock(
               icon: Icons.article_outlined,
-              title: widget.isZh ? '日志' : 'Logs',
+              title: widget.s.qLogs,
               content: widget.logLines.join('\n'),
               scheme: widget.scheme,
               isMonospace: true,
@@ -651,7 +661,7 @@ class _AdvancedInfoSectionState extends State<_AdvancedInfoSection> {
           if (widget.error != null && widget.command == null && widget.logLines.isEmpty) ...[
             _InfoBlock(
               icon: Icons.error_outline,
-              title: widget.isZh ? '错误' : 'Error',
+              title: widget.s.qError,
               content: widget.error!,
               scheme: widget.scheme,
               isError: true,
@@ -870,7 +880,7 @@ class _NodeCircle extends StatelessWidget {
     final abbr = taskActionAbbr(call.action, zh);
 
     return Tooltip(
-      message: '$label\n${zh ? '进度' : 'Progress'}: ${(progress * 100).toStringAsFixed(0)}%',
+      message: '$label\n${(zh ? AppStrings.zh : AppStrings.en).qProgress}: ${(progress * 100).toStringAsFixed(0)}%',
       child: Container(
         width: size,
         height: size,
