@@ -148,7 +148,10 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
               icon: Icon(Icons.sort, size: 19, color: scheme.onSurface),
               tooltip: s.isZh ? '排序' : 'Sort',
               padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+              // constraints 作用于「弹出的菜单」而非按钮本身：这里放宽按钮
+              // 最小尺寸的同时必须带 maxWidth，否则菜单宽度上限会被覆盖成
+              // 无上限，按最长条目撑开（PC 端菜单过宽的根源之一）。
+              constraints: const BoxConstraints(minWidth: 34, minHeight: 34, maxWidth: 280),
               onSelected: (mode) => state.sortContainerBy(container.id, mode),
               itemBuilder: (_) => [
                 PopupMenuItem(value: ContainerSortMode.name, child: Text(s.containerSortName)),

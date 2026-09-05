@@ -293,11 +293,17 @@ _ffmpeg_dist_ok() {
         | grep -q 'libc++_shared\.so' && return 1
     # 新增 MediaCodec 硬编守卫：旧缓存虽然可能含 libwebp，但没有
     # h264_mediacodec；必须判无效并强制重跑 configure/make。
+    #
+    # 注意：字符串探测必须用 `grep -aq` 直接搜二进制，绝不能用
+    # `llvm-strings | grep -q`！脚本开了 `set -o pipefail`，而 grep -q
+    # 匹配到第一处就退出 → 上游 llvm-strings 收到 SIGPIPE → 管道整体
+    # 返回 141 —— 即使字符串存在也判否。这个坑曾让缓存守卫永远判无效
+    # （ffmpeg 每次都重建）、让最终验收误报「编码器缺失」。
     if [[ "$_b" == *libffmpeg.so ]]; then
-      $TOOLCHAIN/bin/llvm-strings "$_b" 2>/dev/null | grep -q 'h264_mediacodec' || return 1
+      grep -aq 'h264_mediacodec' "$_b" || return 1
     fi
-    # ffmpeg/ffprobe 二进制内嵌 encoder 名 "libwebp"，用 strings 探测即可判定。
-    $TOOLCHAIN/bin/llvm-strings "$_b" 2>/dev/null | grep -q 'libwebp' || return 1
+    # ffmpeg/ffprobe 二进制内嵌 encoder 名 "libwebp"，直接搜二进制判定。
+    grep -aq 'libwebp' "$_b" || return 1
   done
   return 0
 }
@@ -383,6 +389,28 @@ if [ ! -f $PREFIX/bin/ffmpeg ] || ! _ffmpeg_dist_ok; then
         echo "cflags: $($PKG_CONFIG --cflags --static libwebp 2>&1)"; \
         echo "libs:   $($PKG_CONFIG --libs --static libwebp 2>&1)"; \
         exit 1; }
+  # ── 配置结果硬校验（fail fast，避免白跑几分钟 make）──
+  # mediacodec 是显式请求的外部库：依赖（android/mediandk/pthreads）不满足时
+  # configure 会 die，能走到这里说明依赖通过。但仍直接核对 config.h，把
+  # 「编码器没编进去」的失败拦在 make 之前。
+  _FFMPEG_CONFIG_H=$BUILD/src/ffmpeg/config.h
+  _dump_mediacodec_diag() {
+    echo "--- config.h 中 mediacodec 相关标志 ---" >&2
+    grep -E 'CONFIG_(MEDIACODEC|H264_MEDIACODEC|HEVC_MEDIACODEC|JNI)' "$_FFMPEG_CONFIG_H" 2>/dev/null || echo "(无匹配行)" >&2
+    echo "--- ffbuild/config.log 中 mediacodec/jni/mediandk 检测记录（末 40 行）---" >&2
+    grep -iE 'mediacodec|mediandk|jni' "$BUILD/src/ffmpeg/ffbuild/config.log" 2>/dev/null | tail -40 || echo "(无匹配行)" >&2
+  }
+  if ! grep -q 'define CONFIG_MEDIACODEC 1' "$_FFMPEG_CONFIG_H" 2>/dev/null; then
+    echo "ERROR: configure 完成，但 CONFIG_MEDIACODEC 未启用（mediacodec 依赖检测失败）" >&2
+    _dump_mediacodec_diag
+    exit 1
+  fi
+  if ! grep -q 'define CONFIG_H264_MEDIACODEC_ENCODER 1' "$_FFMPEG_CONFIG_H" 2>/dev/null; then
+    echo "ERROR: CONFIG_H264_MEDIACODEC_ENCODER 未启用（h264_mediacodec 编码器不会编入）" >&2
+    _dump_mediacodec_diag
+    exit 1
+  fi
+  log "config.h 校验通过：mediacodec + h264/hevc_mediacodec encoder 已启用"
   log "building ffmpeg"
   make -j$JOBS > $BUILD/ffmpeg_make.log 2>&1 || { tail -40 $BUILD/ffmpeg_make.log; exit 1; }
   make install >> $BUILD/ffmpeg_make.log 2>&1
@@ -425,13 +453,17 @@ done
 # 硬校验：ffmpeg 产物必须真的编译进了 MediaCodec 硬编编码器。
 # 教训：缓存命中 / configure 静默失败都可能产出「看起来正常但没有
 # h264_mediacodec」的 ffmpeg，一旦打包进 APK，移动端 GPU 编码会无声
-# 回退到 CPU（用户在手机上看到 CPU 占满、速度极慢）。strings 探测
-# 编码器名是最直接的判定方式，缺失即硬失败，拒绝流入 APK。
-if ! $TOOLCHAIN/bin/llvm-strings "$BUILD/dist/libffmpeg.so" 2>/dev/null | grep -q 'h264_mediacodec'; then
+# 回退到 CPU（用户在手机上看到 CPU 占满、速度极慢）。
+# 必须用 `grep -aq` 直接搜二进制：`llvm-strings | grep -q` 在 pipefail
+# 下会因 SIGPIPE 把「匹配成功」误判为失败（教训详见 _ffmpeg_dist_ok）。
+if ! grep -aq 'h264_mediacodec' "$BUILD/dist/libffmpeg.so"; then
   echo "ERROR: libffmpeg.so 未包含 h264_mediacodec 编码器" >&2
-  echo "       configure 的 --enable-mediacodec --enable-jni 未生效，请检查" >&2
-  echo "       NDK 版本（需 r26+，提供 libmediandk）与 ffmpeg_config.log 中" >&2
-  echo "       mediacodec 检测结果。必要时清掉 FFMPEGPP_CACHE 强制重建。" >&2
+  echo "--- config.h 中 mediacodec 相关标志 ---" >&2
+  grep -E 'CONFIG_(MEDIACODEC|H264_MEDIACODEC|HEVC_MEDIACODEC|JNI)' "$BUILD/src/ffmpeg/config.h" 2>/dev/null || echo "(无匹配行)" >&2
+  echo "--- ffbuild/config.log 中 mediacodec/jni/mediandk 检测记录（末 40 行）---" >&2
+  grep -iE 'mediacodec|mediandk|jni' "$BUILD/src/ffmpeg/ffbuild/config.log" 2>/dev/null | tail -40 || echo "(无匹配行)" >&2
+  echo "       若以上显示 mediacodec 已启用但二进制仍缺编码器，请清掉" >&2
+  echo "       FFMPEGPP_CACHE 强制完整重建，并核对 make 日志 ffmpeg_make.log。" >&2
   exit 1
 fi
 log "ffmpeg/ffprobe staged (PT_INTERP ok): $(ls -la $BUILD/dist)"
