@@ -902,6 +902,46 @@ class TaskInfo {
 // 应用配置
 // ═══════════════════════════════════════════
 
+/// 单个模型的能力标记（用于提供商设置页的「模型」列表展示与筛选）。
+///
+/// 与常见 API 聚合面板的语义对齐：
+/// - [chat]      对话补全（/chat/completions）
+/// - [vision]    支持图片输入（多模态 T+I → T）
+/// - [tools]     支持函数调用 / 工具使用
+/// - [embedding] 向量嵌入模型
+/// - [reasoning] 推理型模型（thinking / reasoning_effort）
+class AiModelCapability {
+  static const String chat = 'chat';
+  static const String vision = 'vision';
+  static const String tools = 'tools';
+  static const String embedding = 'embedding';
+  static const String reasoning = 'reasoning';
+
+  static const List<String> all = [chat, vision, tools, embedding, reasoning];
+}
+
+/// 提供商下的一个模型条目：模型 id + 能力标记。
+class AiModelEntry {
+  String id;
+  List<String> capabilities;
+
+  AiModelEntry({required this.id, List<String>? capabilities})
+      : capabilities = capabilities ?? [AiModelCapability.chat];
+
+  factory AiModelEntry.fromJson(Map<String, dynamic> json) => AiModelEntry(
+        id: json['id'] as String? ?? '',
+        capabilities: (json['capabilities'] as List?)
+                ?.whereType<String>()
+                .where(AiModelCapability.all.contains)
+                .toList() ??
+            [AiModelCapability.chat],
+      );
+
+  Map<String, dynamic> toJson() => {'id': id, 'capabilities': capabilities};
+
+  AiModelEntry copy() => AiModelEntry(id: id, capabilities: [...capabilities]);
+}
+
 /// AI 供应商配置项：一组可复用的 API 配置（配置名/Key/BaseURL/请求方式/模型等）。
 /// 画布 AI 面板可一键切换；配置可在设置里新建、编辑、启用、删除。
 class AiProfile {
@@ -916,6 +956,33 @@ class AiProfile {
   int maxTokens;
   double temperature;
 
+  // ── 扩展字段（v5.3+；旧配置读取时全部有安全默认值，向后兼容） ──
+
+  /// 分组名（用于在提供商列表里归类，如「白嫖」「生产」）。空 = 未分组。
+  String group;
+
+  /// 多 Key 模式：开启后按 [apiKeys] 轮换发起请求，规避单 Key 限流。
+  bool multiKeyEnabled;
+
+  /// 多 Key 列表（multiKeyEnabled 为 true 时生效；单 Key 模式仍用 apiKey）。
+  List<String> apiKeys;
+
+  /// 使用 OpenAI Responses API（/responses）而非 /chat/completions。
+  bool useResponsesApi;
+
+  /// 请求路径。与 apiUrl（Base URL）分离，便于同一 Base 切换不同端点。
+  /// 例：Base = https://api.moonshot.cn/v1，路径 = /chat/completions。
+  String apiPath;
+
+  /// HTTP(S) 代理地址（空 = 直连）。例：http://127.0.0.1:7890
+  String proxyUrl;
+
+  /// 自定义请求头（会合并进请求，同名覆盖内置头）。
+  Map<String, String> customHeaders;
+
+  /// 该提供商下的模型清单（含能力标记）。空 = 仅使用 [model] 单一模型。
+  List<AiModelEntry> models;
+
   AiProfile({
     String? id,
     this.name = 'New Profile',
@@ -927,7 +994,18 @@ class AiProfile {
     this.contextWindow = 128000,
     this.maxTokens = 4096,
     this.temperature = 0.3,
-  }) : id = id ?? _uuid.v4();
+    this.group = '',
+    this.multiKeyEnabled = false,
+    List<String>? apiKeys,
+    this.useResponsesApi = false,
+    this.apiPath = '',
+    this.proxyUrl = '',
+    Map<String, String>? customHeaders,
+    List<AiModelEntry>? models,
+  })  : id = id ?? _uuid.v4(),
+        apiKeys = apiKeys ?? <String>[],
+        customHeaders = customHeaders ?? <String, String>{},
+        models = models ?? <AiModelEntry>[];
 
   factory AiProfile.fromJson(Map<String, dynamic> json) => AiProfile(
         id: json['id'] as String?,
@@ -940,6 +1018,28 @@ class AiProfile {
         contextWindow: json['context_window'] as int? ?? 128000,
         maxTokens: json['max_tokens'] as int? ?? 4096,
         temperature: (json['temperature'] as num?)?.toDouble() ?? 0.3,
+        group: json['group'] as String? ?? '',
+        multiKeyEnabled: json['multi_key_enabled'] as bool? ?? false,
+        // 多 Key 与主 Key 同样加密存储
+        apiKeys: (json['api_keys'] as List?)
+                ?.whereType<String>()
+                .map(SecureKeyStore.decrypt)
+                .where((k) => k.isNotEmpty)
+                .toList() ??
+            <String>[],
+        useResponsesApi: json['use_responses_api'] as bool? ?? false,
+        apiPath: json['api_path'] as String? ?? '',
+        proxyUrl: json['proxy_url'] as String? ?? '',
+        customHeaders: (json['custom_headers'] as Map?)?.map(
+              (k, v) => MapEntry('$k', '$v'),
+            ) ??
+            <String, String>{},
+        models: (json['models'] as List?)
+                ?.whereType<Map>()
+                .map((m) => AiModelEntry.fromJson(m.cast<String, dynamic>()))
+                .where((m) => m.id.isNotEmpty)
+                .toList() ??
+            <AiModelEntry>[],
       );
 
   Map<String, dynamic> toJson() => {
@@ -953,7 +1053,35 @@ class AiProfile {
         'context_window': contextWindow,
         'max_tokens': maxTokens,
         'temperature': temperature,
+        'group': group,
+        'multi_key_enabled': multiKeyEnabled,
+        'api_keys': apiKeys.map(SecureKeyStore.encrypt).toList(),
+        'use_responses_api': useResponsesApi,
+        'api_path': apiPath,
+        'proxy_url': proxyUrl,
+        'custom_headers': customHeaders,
+        'models': models.map((m) => m.toJson()).toList(),
       };
+
+  /// 生效的请求 URL：apiPath 非空时由 Base URL + 路径拼接，否则用 apiUrl 原值。
+  /// 兼容旧配置（apiUrl 里已含完整路径、apiPath 为空）。
+  String get effectiveUrl {
+    if (apiPath.trim().isEmpty) return apiUrl;
+    final base = apiUrl.endsWith('/')
+        ? apiUrl.substring(0, apiUrl.length - 1)
+        : apiUrl;
+    final path = apiPath.startsWith('/') ? apiPath : '/$apiPath';
+    return '$base$path';
+  }
+
+  /// 当前应使用的 Key 列表（多 Key 模式返回全部非空 Key，否则单 Key）。
+  List<String> get effectiveKeys {
+    if (multiKeyEnabled) {
+      final keys = apiKeys.where((k) => k.trim().isNotEmpty).toList();
+      if (keys.isNotEmpty) return keys;
+    }
+    return apiKey.trim().isEmpty ? const [] : [apiKey];
+  }
 
   AiProfile copyWith({
     String? name,
@@ -965,6 +1093,14 @@ class AiProfile {
     int? contextWindow,
     int? maxTokens,
     double? temperature,
+    String? group,
+    bool? multiKeyEnabled,
+    List<String>? apiKeys,
+    bool? useResponsesApi,
+    String? apiPath,
+    String? proxyUrl,
+    Map<String, String>? customHeaders,
+    List<AiModelEntry>? models,
   }) =>
       AiProfile(
         id: id,
@@ -977,6 +1113,14 @@ class AiProfile {
         contextWindow: contextWindow ?? this.contextWindow,
         maxTokens: maxTokens ?? this.maxTokens,
         temperature: temperature ?? this.temperature,
+        group: group ?? this.group,
+        multiKeyEnabled: multiKeyEnabled ?? this.multiKeyEnabled,
+        apiKeys: apiKeys ?? [...this.apiKeys],
+        useResponsesApi: useResponsesApi ?? this.useResponsesApi,
+        apiPath: apiPath ?? this.apiPath,
+        proxyUrl: proxyUrl ?? this.proxyUrl,
+        customHeaders: customHeaders ?? {...this.customHeaders},
+        models: models ?? this.models.map((m) => m.copy()).toList(),
       );
 }
 

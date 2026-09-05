@@ -60,15 +60,16 @@ void main() async {
   _startupLog('1-Binding OK');
 
   // ── 内存优化：限制图片缓存上限，避免大量缩略图撑爆内存 ──
-  // 移动端内存更紧张：32MB / 200 张。
-  // 桌面端缩略图均为 80×45 小图、壁纸最多一张物理分辨率大图，64MB 足够
-  // （此前 96MB 为保守值，实测占用不到一半）。
+  // 移动端内存更紧张：24MB / 150 张（原 32MB/200，缩略图 80×45 足够）；
+  // 桌面端缩略图均为 80×45 小图、壁纸最多一张物理分辨率大图，48MB 足够
+  // （原 64MB，实测占用不到一半）。启动 300-400MB 峰值的一大部分是
+  // ImageCache 预留 + 壁纸解码，这里把上限压低。
   if (isMobilePlatform) {
-    PaintingBinding.instance.imageCache.maximumSizeBytes = 32 << 20; // 32MB
-    PaintingBinding.instance.imageCache.maximumSize = 200; // 最多 200 张
+    PaintingBinding.instance.imageCache.maximumSizeBytes = 24 << 20; // 24MB
+    PaintingBinding.instance.imageCache.maximumSize = 150; // 最多 150 张
   } else {
-    PaintingBinding.instance.imageCache.maximumSizeBytes = 64 << 20; // 64MB
-    PaintingBinding.instance.imageCache.maximumSize = 400; // 最多 400 张
+    PaintingBinding.instance.imageCache.maximumSizeBytes = 48 << 20; // 48MB
+    PaintingBinding.instance.imageCache.maximumSize = 300; // 最多 300 张
   }
   _startupLog('1a-ImageCache capped');
 
@@ -90,19 +91,17 @@ void main() async {
 
   _startupLog('2-ErrorHandlers OK');
 
-  // 并行执行：窗口初始化 + 字体加载（互相无依赖）；移动端无窗口
+  // 并行执行：窗口初始化（仅桌面）+ 字体加载（互相无依赖）。
+  // 注意：自定义字体枚举改为首帧后（见 _loadCustomFonts 调用处），
+  // 避免启动瞬间把用户 fonts/ 目录里所有 .ttf/.otf 全量读进内存——
+  // 这是启动 300-400MB 峰值的主要来源之一。首帧后按需加载不阻塞首屏。
   final serverPath = _findServer();
   _startupLog('3-server: $serverPath');
 
-  if (isMobilePlatform) {
-    await _loadCustomFonts();
-  } else {
-    await Future.wait([
-      _initWindow(),
-      _loadCustomFonts(),
-    ]);
+  if (!isMobilePlatform) {
+    await _initWindow();
   }
-  _startupLog('4-window+fonts OK');
+  _startupLog('4-window OK');
 
   final appState = AppState();
   _startupLog('5-AppState created');
@@ -116,14 +115,19 @@ void main() async {
   );
   _startupLog('8-runApp done');
 
-  // ── 启动预加载（后台并行，不阻塞初始化） ──
-  // 预热字体列表（FontPicker 首次打开会枚举系统字体，很慢；提前缓存）
-  // 与后端初始化并行，Splash 动画期间完成，进入主界面后字体选择器秒开。
-  if (!isMobilePlatform) {
+  // ── 启动预加载（首帧之后后台并行，不阻塞初始化，压低启动内存峰值） ──
+  // 字体加载 + 字体列表预热都推迟到首帧后：启动瞬间只做窗口 + 后端初始化，
+  // 避免「读 fonts/ 目录全部字节 + 壁纸按物理分辨率解码 + 后端 dlopen + 字
+  // 体枚举」叠加导致 300-400MB 峰值。首帧后摊到空闲期完成。
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(_loadCustomFonts());
     unawaited(_preloadFonts());
-  }
+  });
 
-  // 后台初始化后端，UI 先显示加载画面
+  // 后台初始化后端，UI 先显示加载画面。等待首帧完成后才启动：
+  // 首帧期间只保留 Flutter 引擎 + Splash，避免配置读取、后端 dlopen、
+  // 自定义字体读取同时发生，降低启动峰值内存并让窗口及时显示。
+  await WidgetsBinding.instance.endOfFrame;
   await appState.init(serverPath);
   _startupLog('6-AppState.init OK');
 
@@ -219,6 +223,15 @@ Future<void> _initWindow() async {
     // Windows 上显式设置是幂等的：即使插件内部残留 hidden 状态也能恢复标题栏。
     // macOS 此前走 hidden + Flutter 自绘标题栏，实测有丢失风险，统一改用系统默认。
     await windowManager.setTitleBarStyle(TitleBarStyle.normal);
+    // 运行期防御：标题栏样式设置后立即二次确认一次（时序竞争下首次
+    // DwmExtendFrameIntoClientArea/SetWindowPos 可能发生在窗口尚未就绪时）。
+    // 真双保险在原生侧 win32_window.cpp 的 EnsureCaptionPresent（WM_ACTIVATE/
+    // WM_STYLECHANGED 时强制补回 WS_CAPTION），这里只是尽早把插件状态拉齐。
+    unawaited(Future.delayed(const Duration(milliseconds: 400), () async {
+      try {
+        await windowManager.setTitleBarStyle(TitleBarStyle.normal);
+      } catch (_) {}
+    }));
   } else {
     // Linux：自定义标题栏（Flutter 自绘 CSD，见 app.dart _buildCsdTitleBar）
     await windowManager.setTitleBarStyle(TitleBarStyle.hidden);

@@ -158,6 +158,25 @@ bool Win32Window::Create(const std::wstring& title,
   return OnCreate();
 }
 
+// 运行期防御：标题栏在窗口创建后仍可能被运行时改动抹掉
+//（window_manager 的 setTitleBarStyle/DWM 帧边距调整、主题切换、
+// DPI 变更等路径都会触发非客户区重算）。这里在「样式变化」与「窗口
+// 激活/重绘」两个时机检测 WS_CAPTION 是否被清掉，若是则补齐并强制
+// 框架重绘 —— 保证任何情况下系统标题栏（最小化/最大化/关闭）都不消失。
+void Win32Window::EnsureCaptionPresent() {
+  HWND hwnd = window_handle_;
+  if (!hwnd) return;
+  const LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+  const LONG_PTR kCaptionBits =
+      WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
+  if ((style & WS_CAPTION) == 0 || (style & WS_SYSMENU) == 0) {
+    SetWindowLongPtrW(hwnd, GWL_STYLE, style | kCaptionBits);
+    SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
+                     SWP_FRAMECHANGED);
+  }
+}
+
 bool Win32Window::Show() {
   return ShowWindow(window_handle_, SW_SHOWNORMAL);
 }
@@ -217,9 +236,15 @@ Win32Window::MessageHandler(HWND hwnd,
     }
 
     case WM_ACTIVATE:
+      EnsureCaptionPresent();
       if (child_content_ != nullptr) {
         SetFocus(child_content_);
       }
+      return 0;
+
+    case WM_STYLECHANGED:
+      // 外部（插件/系统主题）改动窗口样式后，立刻把标题栏补回来。
+      if (wparam == GWL_STYLE) EnsureCaptionPresent();
       return 0;
 
     case WM_DWMCOLORIZATIONCOLORCHANGED:

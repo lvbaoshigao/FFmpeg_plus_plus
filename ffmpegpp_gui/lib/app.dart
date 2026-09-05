@@ -760,7 +760,6 @@ class _AppShellState extends State<AppShell> with WindowListener {
   /// （用户实测开启玻璃后进程内存 500MB+）。超过上限时逐出最久未访问
   /// 的页面，其纹理随 State dispose 一起释放。
   static const int _kMaxAlivePages = 4;
-
   Widget _page(int i) {
     // 刷新 LRU 位置：当前页每次 build 都经过这里，最近访问的页永远靠后，
     // 不会被误逐出
@@ -794,6 +793,8 @@ class _AppShellState extends State<AppShell> with WindowListener {
   void _evictStalePages(int current) {
     // 移动端 PageView 会为四个 Tab 直接调用 _page(i)，逐出后会立刻重建，
     // 反而造成抖动；移动端保持原行为（四个 Tab 全部常驻）。
+    // （内存压测：移动端玻璃纹理的真正大头是非当前页的 BackdropFilter，
+    //  已通过 AppCard 的可见性懒渲染处理，见 app_card.dart。）
     if (isMobilePlatform) return;
     int alive() {
       var n = 0;

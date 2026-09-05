@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:uuid/uuid.dart';
 import '../models/models.dart';
 
@@ -73,8 +75,15 @@ QuickPipelineResult buildGraphFromQuickConfig(QuickConfig cfg, {required bool is
   switch (cfg.fileType) {
     // ═══════════════════ 视频 ═══════════════════
     case QuickFileType.video:
+      // 默认编码：Android 优先 MediaCodec 硬编（GPU），桌面走 CPU 软编。
+      // 此前硬编码 libx264/CPU，导致移动端快速模式永远软编——即使设备
+      // 有 MediaCodec 可用。若当前 APK 的 ffmpeg 未编译硬编，后端 resolveEncoder
+      // 会明确报「不支持的编码器」，由界面提示用户（而非无声回退）。
+      final useMediaCodec = Platform.isAndroid;
       final avParams = <String, dynamic>{
-        'video_codec': 'libx264', 'gpu': 'CPU', 'preset': 'medium',
+        'video_codec': useMediaCodec ? 'h264_mediacodec' : 'libx264',
+        'gpu': useMediaCodec ? 'Android' : 'CPU',
+        'preset': 'medium',
         'audio_codec': 'aac',
       };
       final vf = <String>[];
@@ -83,12 +92,22 @@ QuickPipelineResult buildGraphFromQuickConfig(QuickConfig cfg, {required bool is
       final compress = _find(cfg.items, 'compress');
       if (compress != null) {
         final rawCodec = compress.params['codec'] as String? ?? 'h264';
-        final mapped = switch (rawCodec) {
-          'h264' => 'libx264', 'hevc' || 'h265' => 'libx265',
-          'av1' => 'libaom-av1', 'vp9' => 'libvpx-vp9',
-          _ => rawCodec,
-        };
-        avParams['video_codec'] = mapped;
+        if (useMediaCodec) {
+          // Android 硬编：把用户选的编码格式映射到 MediaCodec 等价编码器。
+          // h264/hevc 有对应硬编；av1/vp9 MediaCodec 编码支持稀少，回退 h264 硬编
+          // 而不是悄悄落到 CPU 软编。
+          avParams['video_codec'] = switch (rawCodec) {
+            'hevc' || 'h265' || 'libx265' => 'hevc_mediacodec',
+            _ => 'h264_mediacodec',
+          };
+        } else {
+          final mapped = switch (rawCodec) {
+            'h264' => 'libx264', 'hevc' || 'h265' => 'libx265',
+            'av1' => 'libaom-av1', 'vp9' => 'libvpx-vp9',
+            _ => rawCodec,
+          };
+          avParams['video_codec'] = mapped;
+        }
         final preset = compress.params['preset'] as String?;
         if (preset != null && preset.isNotEmpty) avParams['preset'] = preset;
         hasAv = true;

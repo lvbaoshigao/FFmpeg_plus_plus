@@ -24,6 +24,7 @@ import '../theme/app_strings.dart';
 import '../app.dart' show wallpaperImageProvider;
 import '../platform/app_platform.dart';
 import '../services/config_export.dart';
+import '../widgets/animated_popup.dart';
 import '../widgets/step_editors/start_step_editor.dart';
 import '../widgets/step_editors/av_process_step_editor.dart';
 import '../widgets/step_editors/subtitle_step_editor.dart';
@@ -1429,55 +1430,58 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     final canvasPos = _screenToCanvas(screenPos);
     final top5 = _top5Types();
 
-    PopupMenuItem<PipelineStepType> makeItem(PipelineStepType t) {
+    // 条目内容：色块图标 + 名称 + 媒体标签。名称用 Flexible+ellipsis，
+    // 配合菜单宽度约束避免长标签把菜单撑得极宽（PC 端曾出现该问题）。
+    Widget rowFor(PipelineStepType t) {
       final dummy = PipelineNode(id: '', type: t);
-      return PopupMenuItem(
-        value: t,
-        child: Row(children: [
-          Container(
-            width: 22, height: 22,
-            decoration: BoxDecoration(color: _nodeColor(t, scheme), borderRadius: BorderRadius.circular(5)),
-            child: Icon(_stepIcon(t), size: 13, color: scheme.onSurface),
-          ),
-          const SizedBox(width: 8),
-          Text(s.isZh ? dummy.label : dummy.labelEn, style: const TextStyle(fontSize: 13)),
-          if (dummy.mediaTag.isNotEmpty) ...[
-            const SizedBox(width: 6),
-            Text(dummy.mediaTag, style: TextStyle(fontSize: 9, color: scheme.outline)),
-          ],
-        ]),
-      );
+      return Row(children: [
+        Container(
+          width: 22, height: 22,
+          decoration: BoxDecoration(color: _nodeColor(t, scheme), borderRadius: BorderRadius.circular(5)),
+          child: Icon(_stepIcon(t), size: 13, color: scheme.onSurface),
+        ),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(s.isZh ? dummy.label : dummy.labelEn,
+              maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 13)),
+        ),
+        if (dummy.mediaTag.isNotEmpty) ...[
+          const SizedBox(width: 6),
+          Text(dummy.mediaTag, style: TextStyle(fontSize: 9, color: scheme.outline)),
+        ],
+      ]);
     }
 
-    showMenu<PipelineStepType>(
+    AnimatedMenuEntry<PipelineStepType> makeItem(PipelineStepType t) =>
+        AnimatedMenuEntry<PipelineStepType>(value: t, child: rowFor(t));
+
+    // 两级菜单都走 showAnimatedMenu：带淡入+缩放动画，宽度受约束。
+    // 「全部元素...」不再用内嵌 PopupMenuButton（此前 offset: Offset(200,0)
+    // 在桌面端会把二级菜单甩到很远且宽度不受控），改为关闭一级菜单后在
+    // 同一位置弹出完整列表。
+    showAnimatedMenu<PipelineStepType>(
       context: context,
-      position: RelativeRect.fromLTRB(screenPos.dx, screenPos.dy, screenPos.dx + 1, screenPos.dy + 1),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      constraints: isMobilePlatform
-          ? const BoxConstraints(minWidth: 120, maxWidth: 160)
-          : const BoxConstraints(minWidth: 160, maxWidth: 240),
+      position: screenPos,
       items: [
         ...top5.map(makeItem),
-        const PopupMenuDivider(),
-        PopupMenuItem(
-          value: null,
-          enabled: false,
-          height: 0,
-          child: PopupMenuButton<PipelineStepType>(
-            tooltip: '',
-            offset: const Offset(200, 0),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            itemBuilder: (_) => _allNodeTypes.map(makeItem).toList(),
-            onSelected: (type) {
-              Navigator.pop(context);
-              _addNodeAt(type, canvasPos);
-            },
-            child: Row(children: [
-              Icon(Icons.more_horiz, size: 16, color: scheme.outline),
-              const SizedBox(width: 8),
-              Text(s.isZh ? '全部元素...' : 'All elements...', style: TextStyle(fontSize: 13, color: scheme.outline)),
-            ]),
-          ),
+        const AnimatedMenuEntry<PipelineStepType>.divider(),
+        AnimatedMenuEntry<PipelineStepType>(
+          onTap: () async {
+            Navigator.pop(context);
+            final all = await showAnimatedMenu<PipelineStepType>(
+              context: context,
+              position: screenPos,
+              items: _allNodeTypes.map(makeItem).toList(),
+            );
+            if (all != null) _addNodeAt(all, canvasPos);
+          },
+          child: Row(children: [
+            Icon(Icons.more_horiz, size: 16, color: scheme.outline),
+            const SizedBox(width: 8),
+            Text(s.isZh ? '全部元素...' : 'All elements...',
+                style: TextStyle(fontSize: 13, color: scheme.outline)),
+          ]),
         ),
       ],
     ).then((type) {
@@ -1488,25 +1492,25 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   void _showNodeMenu(Offset screenPos, String nodeId) {
     final s = AppStrings.of(context.read<AppState>().config.language);
     final multiSelected = _selectedNodeIds.length > 1 && _selectedNodeIds.contains(nodeId);
-    showMenu<String>(
+    showAnimatedMenu<String>(
       context: context,
-      position: RelativeRect.fromLTRB(screenPos.dx, screenPos.dy, screenPos.dx + 1, screenPos.dy + 1),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      constraints: isMobilePlatform
-          ? const BoxConstraints(minWidth: 120, maxWidth: 160)
-          : const BoxConstraints(minWidth: 160, maxWidth: 240),
+      position: screenPos,
       items: [
-        PopupMenuItem(value: 'delete', child: Row(children: [
+        AnimatedMenuEntry<String>(value: 'delete', child: Row(children: [
           Icon(Icons.delete_outline, size: 16, color: Theme.of(context).colorScheme.error),
           const SizedBox(width: 6),
           Text(s.isZh ? '删除节点' : 'Delete Node', style: const TextStyle(fontSize: 13)),
         ])),
         if (multiSelected)
-          PopupMenuItem(value: 'delete_selected', child: Row(children: [
+          AnimatedMenuEntry<String>(value: 'delete_selected', child: Row(children: [
             Icon(Icons.delete_sweep_outlined, size: 16, color: Theme.of(context).colorScheme.error),
             const SizedBox(width: 6),
-            Text(s.isZh ? '删除选中 (${_selectedNodeIds.length}个)' : 'Delete Selected (${_selectedNodeIds.length})',
-                style: const TextStyle(fontSize: 13)),
+            Flexible(
+              child: Text(
+                  s.isZh ? '删除选中 (${_selectedNodeIds.length}个)' : 'Delete Selected (${_selectedNodeIds.length})',
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13)),
+            ),
           ])),
       ],
     ).then((action) {

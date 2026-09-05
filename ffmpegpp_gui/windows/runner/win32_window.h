@@ -42,6 +42,11 @@ class Win32Window {
   // Release OS resources associated with window.
   void Destroy();
 
+  // 运行期防御：若窗口样式里的标题栏位（WS_CAPTION/WS_SYSMENU）被运行时
+  // 抹掉则补齐并触发非客户区重绘，确保系统标题栏（最小化/最大化/关闭）
+  // 始终存在。在 WM_ACTIVATE / WM_STYLECHANGED 时机调用。
+  void EnsureCaptionPresent();
+
   // Inserts |content| into the window tree.
   void SetChildContent(HWND content);
 

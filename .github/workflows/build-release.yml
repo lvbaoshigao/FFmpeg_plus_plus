@@ -270,7 +270,7 @@ jobs:
   # 编译阶段 — Android (APK, arm64-v8a)
   # ══════════════════════════════════════════
   compile-android:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -281,29 +281,77 @@ jobs:
           cache: true
           pub-cache: true
 
-      - name: Setup Flutter dependencies
-        run: |
-          cd ffmpegpp_gui
-          flutter pub get
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
-      # 修补 pub 缓存里 file_picker 的 compileSdk（34 → 36）。
-      # 原因：file_picker 8.x 固定 compileSdk 34，而其依赖
-      # flutter_plugin_android_lifecycle ≥2.0.35 要求 ≥36，否则 Gradle
-      # 的 :file_picker:checkReleaseAarMetadata 失败。与本地 build_apk.sh
-      # 的流程一致，保证 CI 与本地行为相同。
-      - name: Patch file_picker compileSdk (pub cache)
-        run: bash build/android/patch_pubcache.sh
-
-      - name: Build Flutter APK
+      # 交叉编译 ffmpeg/libffmpegpp.so 需要 NDK r26d；
+      # 同时安装 app/build.gradle.kts 声明的 NDK 28.2 供 Gradle 打包使用。
+      - name: Setup Android SDK & NDK
         run: |
-          cd ffmpegpp_gui
-          flutter build apk --release
+          set -euo pipefail
+          export ANDROID_HOME="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          sudo $SDKM --install "ndk;26.1.10909125" >/dev/null
+          echo "NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> $GITHUB_ENV
+          sudo $SDKM --install "ndk;28.2.13676358" >/dev/null
+          # sdkmanager 以 root 安装 NDK，build_ffmpeg.sh 要以 runner 用户
+          # make install 进 $SYSROOT/usr/local，必须把属主改回 runner。
+          sudo chown -R runner:docker "$ANDROID_HOME/ndk"
+
+      - name: Ensure Android licenses accepted
+        run: |
+          sudo $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses >/dev/null || true
+
+      # 缓存交叉编译产物：key 含脚本+源码 hash，源码或脚本变更会强制重建。
+      - name: Cache FFmpeg cross-compile artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/android-build
+            ${{ env.ANDROID_SDK_ROOT }}/ndk/26.1.10909125/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/local
+          key: ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v2-${{ hashFiles('build/android/build_ffmpeg.sh', 'build/android/env.sh', 'server_cpp/CMakeLists.txt', 'server_cpp/src/**', 'server_cpp/include/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v2-
+          save-always: true
+
+      # 交叉编译 ffmpeg/ffprobe（--enable-mediacodec，含硬编）+ libffmpegpp.so。
+      # 关键：release APK 必须走这一步重建二进制 —— 此前直接打包 git 里追踪的
+      # 旧 jniLibs，导致移动端 GPU 编码实际回退 CPU。build_ffmpeg.sh 的验收
+      # 守卫会硬校验产物内确实编译进了 mediacodec 编码器，杜绝再次无声退化。
+      - name: Build Android FFmpeg + libffmpegpp
+        run: bash build/android/build_ffmpeg.sh
+        env:
+          FFMPEGPP_CACHE: ${{ runner.temp }}/android-build
+          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
+          ANDROID_USER_HOME: ${{ runner.temp }}/.android
+          NDK_HOME: ${{ env.NDK_HOME }}
+
+      # 以新鲜 dist/ 产物为准同步到 jniLibs（覆盖 git 追踪的旧二进制），
+      # 然后按与本地一致的流程打 APK。
+      - name: Build APK (build_apk.sh)
+        run: bash build/android/build_apk.sh
+        env:
+          FFMPEGPP_CACHE: ${{ runner.temp }}/android-build
+          JAVA_HOME: ${{ env.JAVA_HOME }}
+          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
+          ANDROID_USER_HOME: ${{ runner.temp }}/.android
+          GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home
+          PUB_CACHE: ${{ env.PUB_CACHE }}
+          NDK_HOME: ${{ env.NDK_HOME }}
 
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
           name: android-apk
           path: ffmpegpp_gui/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
 
   # ══════════════════════════════════════════
   # 打包阶段 — Windows 安装包（Inno Setup）

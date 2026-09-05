@@ -479,7 +479,7 @@ jobs:
           path: |
             ${{ runner.temp }}/android-build
             ${{ env.ANDROID_SDK_ROOT }}/ndk/26.1.10909125/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/local
-          key: ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v1-${{ hashFiles('build/android/build_ffmpeg.sh', 'build/android/env.sh', 'server_cpp/CMakeLists.txt', 'server_cpp/src/**', 'server_cpp/include/**') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v2-${{ hashFiles('build/android/build_ffmpeg.sh', 'build/android/env.sh', 'server_cpp/CMakeLists.txt', 'server_cpp/src/**', 'server_cpp/include/**') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v1-
           save-always: true
