@@ -1206,6 +1206,10 @@ class AppConfig {
   bool useDynamicColor;
   // Android 预测式返回手势（Android 14+；仅安卓端生效，桌面/iOS 忽略）
   bool predictiveBack;
+  // 关闭预加载：启动时仅构建/绘制当前页面（如项目页），其余页面
+  // （处理队列、设置等）切换到时才构建。代价是首次切换页面有构建耗时
+  // （可能瞬间增加 CPU 占用），收益是启动更快、启动内存更低。
+  bool noPreload;
 
   static const fontWeightValues = [300, 400, 500, 600, 700];
   static const fontWeightLabels = ['Light', 'Regular', 'Medium', 'SemiBold', 'Bold'];
@@ -1290,6 +1294,7 @@ class AppConfig {
     this.activeAiProfileId = '',
     this.useDynamicColor = false,
     this.predictiveBack = true,
+    this.noPreload = false,
   }) : fontFamily = fontFamily ?? _defaultFontFamily,
        aiProfiles = aiProfiles ?? <AiProfile>[],
        nodeUsageCount = nodeUsageCount ?? {},
@@ -1397,6 +1402,7 @@ class AppConfig {
         activeAiProfileId: json['active_ai_profile_id'] as String? ?? '',
         useDynamicColor: json['use_dynamic_color'] as bool? ?? false,
         predictiveBack: json['predictive_back'] as bool? ?? true,
+        noPreload: json['no_preload'] as bool? ?? false,
       );
 
   Map<String, dynamic> toJson() => {
@@ -1453,6 +1459,7 @@ class AppConfig {
         'active_ai_profile_id': activeAiProfileId,
         'use_dynamic_color': useDynamicColor,
         'predictive_back': predictiveBack,
+        'no_preload': noPreload,
       };
 }
 

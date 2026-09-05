@@ -121,8 +121,16 @@ class _AppCardState extends State<AppCard> {
     final op = key.op.clamp(0.0, 1.0);
     final radius = widget.radius;
     final br = BorderRadius.circular(radius);
-    // 主题渐变：themeColor2 >= 0 时纯色表面改用 起色→止色 渐变
-    final grad = key.second >= 0 ? <Color>[Color(key.primary), Color(key.second)] : null;
+    // 主题渐变（起色→止色）只属于「跟随主题色」卡片：
+    // - theme 卡：纯色变渐变；
+    // - 桌面端 liquid 玻璃：用 themeGrad 给体感渐变染色（下方分支）。
+    // 关键修复：此前渐变与样式无关——渐变主题（themeColor2 >= 0）下选
+    // 「灰色」，卡片被渲染成 alpha 255 的主题渐变色，亮度极高、非常刺眼，
+    // 且与「灰色 = 纯灰容器色」的语义冲突。灰色卡现在永远纯灰。
+    final themeGrad = key.second >= 0
+        ? <Color>[Color(key.primary), Color(key.second)]
+        : null;
+    final grad = style == SurfaceStyle.theme ? themeGrad : null;
     // 卡片内放一层透明 Material 作为 ink 宿主：纯色/模糊表面有背景色，
     // 内部 ListTile/SwitchListTile 的水波纹与选中底色必须画在「卡片之上」
     // 才会可见（否则画在页面 Material 上被卡片背景遮住，并触发
@@ -235,17 +243,17 @@ class _AppCardState extends State<AppCard> {
                       ? LinearGradient(
                           begin: Alignment.topCenter,
                           end: Alignment.bottomCenter,
-                          colors: grad != null
+                          colors: themeGrad != null
                               ? [
-                                  Color.lerp(grad.first, Colors.black, 0)!.withAlpha(alphaTop),
-                                  Color.lerp(grad.last, Colors.black, 0.15)!.withAlpha(alphaBot),
+                                  Color.lerp(themeGrad.first, Colors.black, 0)!.withAlpha(alphaTop),
+                                  Color.lerp(themeGrad.last, Colors.black, 0.15)!.withAlpha(alphaBot),
                                 ]
                               : [
                                   scheme.surface.withAlpha(alphaTop),
                                   scheme.surface.withAlpha((alphaTop + alphaBot) ~/ 2),
                                   scheme.surface.withAlpha(alphaBot),
                                 ],
-                          stops: grad == null ? const [0.0, 0.55, 1.0] : null,
+                          stops: themeGrad == null ? const [0.0, 0.55, 1.0] : null,
                         )
                       : null,
                   border: Border.all(

@@ -538,6 +538,15 @@ class _SettingsPageState extends State<SettingsPage> {
             build: _buildPredictiveBack,
           ),
         _CardDef(
+          id: 'preload',
+          title: (s) => s.isZh ? '预加载' : 'Preload',
+          icon: Icons.shutter_speed_outlined,
+          keywords: ['预加载', '预载', 'preload', '启动', 'startup', 'launch',
+              '性能', 'performance', 'CPU', '内存', 'memory', '绘制', '渲染',
+              'render', '加载', 'load'],
+          build: _buildPreload,
+        ),
+        _CardDef(
           id: 'debug',
           title: (s) => s.dDebug,
           icon: Icons.bug_report_outlined,
@@ -2224,6 +2233,29 @@ Widget _buildUpdate(BuildContext ctx, AppState state) {
         icon: Icons.system_update, label: s.checkUpdate,
         color: scheme.onSecondaryContainer, bg: scheme.secondaryContainer,
         onTap: () => _checkForUpdate(ctx, s))),
+  ]);
+}
+
+/// 「高级 → 预加载」卡片：关闭预加载开关。
+///
+/// 开启后启动时仅构建/绘制当前页面（如项目页），处理队列、设置等其余页面
+/// 等用户手动切换到时才构建——启动更快、启动内存更低，代价是首次切换
+/// 页面时现场构建（可能短暂增加 CPU 占用）。
+Widget _buildPreload(BuildContext ctx, AppState state) {
+  final cfg = state.config;
+  final s = AppStrings.of(cfg.language);
+  final scheme = Theme.of(ctx).colorScheme;
+  return _glass(ctx, state, s.isZh ? '预加载' : 'Preload', [
+    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+        title: Text(s.isZh ? '关闭预加载' : 'Disable Preload',
+            style: TextStyle(color: scheme.onSurface, fontSize: 13)),
+        subtitle: Text(
+            s.isZh
+                ? '启动时仅绘制当前页面（如项目页），其他页面切换到时才绘制。\n注意：打开可能会增加 CPU 占用。'
+                : 'Only draw the current page at startup; other pages render on first visit.\nNote: this may increase CPU usage when switching pages.',
+            style: TextStyle(fontSize: 10, color: scheme.outline)),
+        value: cfg.noPreload,
+        onChanged: (v) => state.updateConfig((c) => c..noPreload = v)),
   ]);
 }
 
