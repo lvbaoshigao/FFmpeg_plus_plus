@@ -166,20 +166,19 @@ class _AppCardState extends State<AppCard> {
       );
     } else if (style == SurfaceStyle.blur) {
       final alpha = ((isDark ? 110.0 : 130.0) * op).round().clamp(0, 255);
-      core = RepaintBoundary(
-        child: ClipRRect(
-          borderRadius: br,
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-            child: Container(
+      // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
+      core = ClipRRect(
+        borderRadius: br,
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+          child: Container(
               padding: widget.padding,
               decoration: BoxDecoration(
                 borderRadius: br,
                 color: scheme.surface.withAlpha(alpha),
                 border: Border.all(color: scheme.outlineVariant.withAlpha(isDark ? 60 : 80), width: 0.6),
               ),
-              child: inner,
-            ),
+            child: inner,
           ),
         ),
       );
@@ -224,47 +223,46 @@ class _AppCardState extends State<AppCard> {
       // GlassPanel liquid 回退一致，不再依赖全局 glassEffect）。
       final alphaTop = ((isDark ? 96.0 : 118.0) * op).round();
       final alphaBot = ((isDark ? 46.0 : 62.0) * op).round();
-      core = RepaintBoundary(
-        child: LiquidGlassBackdrop(
-          borderRadius: br,
-          sigma: 12,
-          opacity: op,
-          shadow: BoxShadow(
-            color: Colors.black.withAlpha(isDark ? 60 : 26),
-            blurRadius: 18,
-            offset: const Offset(0, 6),
-          ),
-          child: Container(
-            padding: widget.padding,
-            decoration: BoxDecoration(
-              borderRadius: br,
-              color: op <= 0.001 ? Colors.transparent : null,
-              gradient: op > 0.001
-                  ? LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: themeGrad != null
-                          ? [
-                              Color.lerp(themeGrad.first, Colors.black, 0)!.withAlpha(alphaTop),
-                              Color.lerp(themeGrad.last, Colors.black, 0.15)!.withAlpha(alphaBot),
-                            ]
-                          : [
-                              scheme.surface.withAlpha(alphaTop),
-                              scheme.surface.withAlpha((alphaTop + alphaBot) ~/ 2),
-                              scheme.surface.withAlpha(alphaBot),
-                            ],
-                      stops: themeGrad == null ? const [0.0, 0.55, 1.0] : null,
-                    )
-                  : null,
-              border: Border.all(
-                color: op <= 0.001
-                    ? Colors.transparent
-                    : Colors.white.withValues(alpha: isDark ? 0.14 : 0.28),
-                width: 1,
-              ),
+      // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
+      core = LiquidGlassBackdrop(
+        borderRadius: br,
+        sigma: 12,
+        opacity: op,
+        shadow: BoxShadow(
+          color: Colors.black.withAlpha(isDark ? 60 : 26),
+          blurRadius: 18,
+          offset: const Offset(0, 6),
+        ),
+        child: Container(
+          padding: widget.padding,
+          decoration: BoxDecoration(
+            borderRadius: br,
+            color: op <= 0.001 ? Colors.transparent : null,
+            gradient: op > 0.001
+                ? LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: themeGrad != null
+                        ? [
+                            Color.lerp(themeGrad.first, Colors.black, 0)!.withAlpha(alphaTop),
+                            Color.lerp(themeGrad.last, Colors.black, 0.15)!.withAlpha(alphaBot),
+                          ]
+                        : [
+                            scheme.surface.withAlpha(alphaTop),
+                            scheme.surface.withAlpha((alphaTop + alphaBot) ~/ 2),
+                            scheme.surface.withAlpha(alphaBot),
+                          ],
+                    stops: themeGrad == null ? const [0.0, 0.55, 1.0] : null,
+                  )
+                : null,
+            border: Border.all(
+              color: op <= 0.001
+                  ? Colors.transparent
+                  : Colors.white.withValues(alpha: isDark ? 0.14 : 0.28),
+              width: 1,
             ),
-            child: inner,
           ),
+          child: inner,
         ),
       );
     }
