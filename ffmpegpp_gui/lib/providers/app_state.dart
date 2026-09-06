@@ -2606,7 +2606,7 @@ class AppState extends ChangeNotifier {
             'result': {
               'protocolVersion': '2024-11-05',
               'capabilities': {'tools': {}, 'resources': {}},
-              'serverInfo': {'name': 'ffmpegpp', 'version': '5.2.0'},
+              'serverInfo': {'name': 'ffmpegpp', 'version': '5.3.6'},
             },
           }));
           break;
