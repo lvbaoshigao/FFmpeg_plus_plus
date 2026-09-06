@@ -124,7 +124,7 @@ jobs:
           VER: ${{ inputs.version }}
 
       - name: Upload Windows debug artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: windows-x64
           path: |
@@ -224,7 +224,7 @@ jobs:
           VER: ${{ inputs.version }}
 
       - name: Upload Linux x64 debug artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: linux-x64
           path: |
@@ -333,7 +333,7 @@ jobs:
           VER: ${{ inputs.version }}
 
       - name: Upload Linux ARM64 debug artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: linux-arm64
           path: |
@@ -421,7 +421,7 @@ jobs:
           VER: ${{ inputs.version }}
 
       - name: Upload macOS debug artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: macos
           path: |
@@ -487,8 +487,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-android-pub-
 
-      - name: Cache FFmpeg cross-compile artifacts
-        uses: actions/cache@v5
+      # 缓存交叉编译产物：key 含脚本+源码 hash，源码或脚本变更会强制重建。
+      # cache 的 save-always 输入已被 GitHub 弃用（行为也不符合预期），
+      # 改为官方推荐的 restore/save 分离写法：ffmpeg 编译成功后立即保存，
+      # 即使后续 APK 打包失败，下次重跑也不必从零编译 ffmpeg。
+      - name: Restore FFmpeg cross-compile cache
+        uses: actions/cache/restore@v5
         with:
           path: |
             ${{ runner.temp }}/android-build
@@ -496,7 +500,6 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v2-${{ hashFiles('build/android/build_ffmpeg.sh', 'build/android/env.sh', 'server_cpp/CMakeLists.txt', 'server_cpp/src/**', 'server_cpp/include/**') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v1-
-          save-always: true
 
       - name: Cache Gradle home
         uses: actions/cache@v5
@@ -520,6 +523,15 @@ jobs:
           GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home
           PUB_CACHE: ${{ env.PUB_CACHE }}
           NDK_HOME: ${{ env.NDK_HOME }}
+
+      # ffmpeg 编译成功即保存缓存（默认 if: success()），后续步骤失败不丢缓存
+      - name: Save FFmpeg cross-compile cache
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ${{ runner.temp }}/android-build
+            ${{ env.ANDROID_SDK_ROOT }}/ndk/26.1.10909125/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/local
+          key: ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v2-${{ hashFiles('build/android/build_ffmpeg.sh', 'build/android/env.sh', 'server_cpp/CMakeLists.txt', 'server_cpp/src/**', 'server_cpp/include/**') }}
 
       - name: Flutter pub get & generate local.properties
         run: |
@@ -547,7 +559,7 @@ jobs:
           NDK_HOME: ${{ env.NDK_HOME }}
 
       - name: Upload Android APK
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: android-arm64
           path: |

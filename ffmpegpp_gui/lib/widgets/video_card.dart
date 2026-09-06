@@ -102,7 +102,9 @@ class _ThumbWidgetState extends State<_ThumbWidget> {
   Widget build(BuildContext context) {
     if (_thumbPath != null) {
       return ClipRRect(borderRadius: BorderRadius.circular(6), child: Image.file(File(_thumbPath!),
-          fit: widget.isAudio ? BoxFit.contain : BoxFit.cover, width: 88, height: 54));
+          fit: widget.isAudio ? BoxFit.contain : BoxFit.cover, width: 88, height: 54,
+          // 缩略图源是整帧视频（1080p 解码 ~8MB/张），按显示尺寸 3x 封顶解码
+          cacheWidth: 264));
     }
     return Icon(Icons.music_note, color: Theme.of(context).colorScheme.outline, size: 24);
   }

@@ -107,7 +107,7 @@ class _ClipStepEditorState extends State<ClipStepEditor> with StepEditorState<Cl
             child: Container(
               width: 320, height: 180, color: Colors.black,
               child: _previewPath != null && File(_previewPath!).existsSync()
-                  ? Image.file(File(_previewPath!), fit: BoxFit.contain, width: 320, height: 180)
+                  ? Image.file(File(_previewPath!), fit: BoxFit.contain, width: 320, height: 180, cacheWidth: 960)
                   : Center(child: Icon(Icons.image, size: 48, color: cs.outline)),
             ),
           ),

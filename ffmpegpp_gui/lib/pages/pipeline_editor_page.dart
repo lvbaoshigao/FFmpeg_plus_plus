@@ -61,13 +61,16 @@ const _uuid = Uuid();
 const _nodeW = 200.0;
 const _nodeWNarrow = 150.0;
 const _nodeH = 68.0;
-/// 无限画布：网格背景铺满整个可视区（随缩放/平移重绘，可越出世界框），
-/// 世界框（承载节点的 SizedBox）只决定可命中测试范围，随内容自动扩张。
-/// 节点坐标仍是画布坐标（不随世界框移动），原点固定。
-const _spawnCenter = Offset(3000, 3000); // 新节点默认落点（原 6000x6000 画布中心）
-const _initialWorldExtent = Size(4000, 3200); // 初始世界框（未加载节点时）
-const _worldMargin = 800.0; // 世界框在内容包围盒外保留的可命中余量
+/// 真无限画布：世界框是固定超大平面（不再随内容包围盒扩张/平移），
+/// 节点在任何坐标都不会引起画面跳变；网格铺满可视区随缩放/平移重绘。
+/// InteractiveViewer 本身 boundaryMargin=∞ 可无限平移；
+/// 唯一软限制：节点坐标超出平面范围（距画布原点 ±10 万像素）后不再可命中——
+/// 正常使用不可能触及。
+const _spawnCenter = Offset(3000, 3000); // 新节点默认落点（= 固定世界框中心）
+const _worldExtent = Size(200000, 200000); // 固定世界平面（±10 万像素）
 const _portZoneW = 18.0;
+/// 无限画布网格步长（画布坐标，px）
+const _gridStep = 40.0;
 
 double _nodeWFor(PipelineStepType type) =>
     (type == PipelineStepType.start || type == PipelineStepType.output) ? _nodeWNarrow : _nodeW;
@@ -155,9 +158,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   LogicBlockType? _pendingLogicType;
   String? _selectedLogicBlockId;
 
-  /// 世界框（承载节点的可命中区域），每次 build 由 [_computeWorldRect]
-  /// 依据当前节点/逻辑块重算；节点坐标不受其影响（画布坐标原点固定）。
-  Rect _world = Rect.fromCenter(center: _spawnCenter, width: _initialWorldExtent.width, height: _initialWorldExtent.height);
+  /// 世界框（承载节点的可命中平面）—— 固定超大尺寸、永不重算：
+  /// 节点拖到任何位置都不会再触发世界框扩张/平移（此前随内容包围盒
+  /// 重算会导致整幅画面跳变）。节点坐标不受其影响（画布坐标原点固定）。
+  final Rect _world = Rect.fromCenter(center: _spawnCenter, width: _worldExtent.width, height: _worldExtent.height);
 
   // 探测模式：悬停端口显示信号值提示
   bool _probeMode = false;
@@ -1262,31 +1266,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     return Offset(x + _world.left, y + _world.top);
   }
 
-  /// 计算当前世界框：初始范围 ∪ 全部节点/逻辑块包围盒，四周各留 [_worldMargin]
-  /// 余量（保证拖到边缘的节点仍可命中/继续拖动）。
-  Rect _computeWorldRect() {
-    var r = Rect.fromCenter(center: _spawnCenter, width: _initialWorldExtent.width, height: _initialWorldExtent.height);
-    for (final n in _nodes) {
-      r = r.expandToInclude(Rect.fromLTWH(n.x, n.y, _totalNodeWidth(n), _nodeHeight(n)));
-    }
-    for (final b in _logicBlocks) {
-      r = r.expandToInclude(Rect.fromLTWH(b.x, b.y, b.width, b.height));
-    }
-    return r.inflate(_worldMargin);
-  }
-
-  /// 当前可视区对应的画布坐标矩形（供网格等只绘制可视部分的绘制器使用）。
-  /// 首帧布局未完成时返回 null。
-  Rect? _visibleCanvasRect() {
-    final rb = _canvasKey.currentContext?.findRenderObject() as RenderBox?;
-    if (rb == null || !rb.hasSize) return null;
-    final inv = Matrix4.inverted(_transformCtrl.value);
-    final tl = MatrixUtils.transformPoint(inv, Offset.zero);
-    final br = MatrixUtils.transformPoint(inv, rb.size.bottomRight(Offset.zero));
-    // 逆变换是世界框本地坐标，转成画布坐标
-    return Rect.fromPoints(tl, br).translate(_world.left, _world.top);
-  }
-
   // ── 缩放/整理/定位 ──
 
   void _zoomTo(double newScale) {
@@ -1738,6 +1717,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
                 child: Image.file(File(_thumbPath!), width: double.infinity, height: 140,
+                    // 缩略图按显示高度 3x 封顶解码（1080p 源 ~8MB/张）
+                    cacheWidth: 720,
                     fit: widget.video.fileMediaType == MediaType.audio ? BoxFit.contain : BoxFit.cover),
               ),
             )
@@ -2444,18 +2425,19 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     return keys.contains(LogicalKeyboardKey.controlLeft) || keys.contains(LogicalKeyboardKey.controlRight);
   }
 
-  Widget _buildCanvas(ColorScheme scheme, AppStrings s) {
-    final aiEnabled = context.read<AppState>().config.aiEnabled;
-    // 世界框随内容重算（拖动节点出界时同步扩张，保证仍可命中）
-    _world = _computeWorldRect();
-    // 画布背景：跟随全局(global)时透明显示页面全局背景/壁纸/玻璃；
-    // 否则用指定实色填充画布
-    final canvasBg = context.read<AppState>().config.canvasBg;
+  // ── 无限画布背景：屏幕空间底层 ──
+  // 网格/底色不放进 InteractiveViewer 的变换子树（放进子树则背景随世界框
+  // 尺寸受限，「画布无限但背景有边界」），而是作为 IV 下层的屏幕空间
+  // CustomPaint，用同一个变换矩阵对齐网格线 —— 背景永远铺满可视区，
+  // 与世界框大小彻底无关。
+
+  /// 网格步长见顶层常量 [_gridStep]
+  Widget _buildGridUnderlay(ColorScheme scheme, String canvasBg) {
     final canvasFill = switch (canvasBg) {
       'gray' => const Color(0xFF2B2B2B),
       'black' => const Color(0xFF0A0A0A), // 接近纯黑但不刺眼
       'white' => const Color(0xFFF0F0F0), // 比纯白暗一点
-      _ => null, // global：透明
+      _ => null, // global：透明（透出页面壁纸/玻璃背景）
     };
     // 网格线颜色随背景自适应
     final gridColor = switch (canvasBg) {
@@ -2464,8 +2446,28 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       'gray' => scheme.outlineVariant.withAlpha(60),
       _ => scheme.outlineVariant.withAlpha(25), // global
     };
+    return CustomPaint(
+      painter: _GridPainter(
+        color: gridColor,
+        fill: canvasFill,
+        transform: _transformCtrl.value,
+        repaintListenable: _transformCtrl,
+      ),
+    );
+  }
 
-    final canvas = Listener(
+  Widget _buildCanvas(ColorScheme scheme, AppStrings s) {
+    final aiEnabled = context.read<AppState>().config.aiEnabled;
+    // 世界框为固定超大平面（真无限画布）：节点拖动/新增永不触发世界框
+    // 重算，画面不再因内容出界而整体跳变；可命中范围见 _worldExtent 注释。
+    // 背景（网格/底色）在其下层的屏幕空间绘制，见 _buildGridUnderlay。
+    final canvasBg = context.read<AppState>().config.canvasBg;
+
+    final canvas = Stack(children: [
+      // 无限网格背景（屏幕空间，永远铺满可视区，见 _buildGridUnderlay）
+      Positioned.fill(child: _buildGridUnderlay(scheme, canvasBg)),
+      Positioned.fill(
+        child: Listener(
       onPointerDown: (e) {
         if (e.kind == PointerDeviceKind.mouse && e.buttons == kSecondaryMouseButton) {
           // Right-click: record start for drag-to-pan vs menu detection
@@ -2589,14 +2591,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           width: _world.width,
           height: _world.height,
           child: Stack(clipBehavior: Clip.none, children: [
-            // 网格背景（只绘制可视区，可越出世界框 → 视觉上无限）
-            Positioned.fill(child: CustomPaint(painter: _GridPainter(
-              color: gridColor,
-              fill: canvasFill,
-              visible: _visibleCanvasRect(),
-              world: _world,
-              repaintListenable: _transformCtrl,
-            ))),
             // 连线
             CustomPaint(
               size: Size(_world.width, _world.height),
@@ -2670,6 +2664,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           ]),
         ),
       ),
+      ),
+      ),
+      ],
     );
 
     // Wrap canvas area with Focus for Ctrl+A
@@ -5564,39 +5561,47 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
 // ── 网格背景 ──
 
+/// 无限画布背景（屏幕空间底层）：底色铺满整个可视区，网格线在画布坐标系
+/// 内按 [_gridStep] 对齐后经同一变换矩阵绘制到视口 —— 背景永远铺满可视区，
+/// 与世界框尺寸彻底无关，平移/缩放到任何位置都不会出现背景边界。
 class _GridPainter extends CustomPainter {
   final Color color;
   final Color? fill;
-  /// 可视区（画布坐标）：只绘制该范围内的填充与网格线；
-  /// 可越出世界框 → 视觉上无限画布。null 时退回绘制世界框范围。
-  final Rect? visible;
-  final Rect world;
-  _GridPainter({required this.color, this.fill, this.visible, required this.world, Listenable? repaintListenable})
+  /// InteractiveViewer 的当前变换（视口坐标 ↔ 画布坐标）
+  final Matrix4 transform;
+  _GridPainter({required this.color, this.fill, required this.transform, Listenable? repaintListenable})
       : super(repaint: repaintListenable);
 
   @override
   void paint(Canvas canvas, Size size) {
-    // 世界框本地坐标 → 画布坐标
-    canvas.translate(-world.left, -world.top);
-    final area = visible ?? Rect.fromLTWH(world.left, world.top, world.width, world.height);
+    // 底色：屏幕坐标直接铺满视口（global 模式 fill 为 null，透出页面背景）
     if (fill != null) {
-      canvas.drawRect(area, Paint()..color = fill!);
+      canvas.drawRect(Offset.zero & size, Paint()..color = fill!);
     }
+    // 可视区对应的画布坐标范围（只画视口内的网格线，成本与视口成正比）
+    final inv = Matrix4.inverted(transform);
+    final tl = MatrixUtils.transformPoint(inv, Offset.zero);
+    final br = MatrixUtils.transformPoint(inv, Offset(size.width, size.height));
+    final area = Rect.fromPoints(tl, br);
     final paint = Paint()..color = color..strokeWidth = 0.5;
-    const step = 40.0;
-    final startX = (area.left / step).floor() * step;
-    final startY = (area.top / step).floor() * step;
-    for (var x = startX; x <= area.right; x += step) {
+    final startX = (area.left / _gridStep).floor() * _gridStep;
+    final startY = (area.top / _gridStep).floor() * _gridStep;
+    // 切到画布坐标系画线（与节点/连线同一变换，天然对齐）；变换后绘制
+    // 仍落在视口范围内（IV 会把内容裁剪到自身区域）
+    canvas.save();
+    canvas.transform(transform.storage);
+    for (var x = startX; x <= area.right; x += _gridStep) {
       canvas.drawLine(Offset(x, area.top), Offset(x, area.bottom), paint);
     }
-    for (var y = startY; y <= area.bottom; y += step) {
+    for (var y = startY; y <= area.bottom; y += _gridStep) {
       canvas.drawLine(Offset(area.left, y), Offset(area.right, y), paint);
     }
+    canvas.restore();
   }
 
+  // 变换变化由 repaintListenable（_transformCtrl）驱动；此处只比对颜色配置
   @override
-  bool shouldRepaint(_GridPainter old) =>
-      old.color != color || old.fill != fill || old.visible != visible || old.world != world;
+  bool shouldRepaint(_GridPainter old) => old.color != color || old.fill != fill;
 }
 
 // ── 连线绘制 ──
@@ -6035,6 +6040,8 @@ class _AiPanelState extends State<_AiPanel> {
   bool _expanded = false;
   // 工具侧边栏：true=展开显示工具列表，false=折叠成窄条
   bool _toolsOpen = false;
+  // 多 Key 轮换计数（会话内递增，按 Key 池长度取模）
+  int _aiKeyRotation = 0;
 
   /// 供外部（移动端底部弹层的头部）切换工具侧栏 / 读取状态 / 打开历史菜单
   void toggleTools() => setState(() => _toolsOpen = !_toolsOpen);
@@ -6685,12 +6692,33 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     final cfg = appState.config;
     // 优先使用当前选中的配置项（会话级 > 全局 active > 默认字段）
     final profile = _effectiveProfile;
-    final effKey = profile?.apiKey.isNotEmpty == true ? profile!.apiKey : cfg.aiApiKey;
     final effProvider = profile?.provider ?? _effectiveProvider;
     final effModel = profile?.model ?? _effectiveModel;
     final effUrl = profile?.apiUrl.isNotEmpty == true ? profile!.apiUrl : cfg.aiApiUrl;
-    final effMaxTokens = profile?.maxTokens ?? cfg.aiMaxTokens;
-    final effTemp = profile?.temperature ?? cfg.aiTemperature;
+    // Key 解析：多 Key 模式按 apiKeys 轮换（单 Key 作首位一并参与），
+    // 均为空时回退全局默认 Key。
+    String effKey;
+    final keyPool = <String>[
+      if (profile?.apiKey.isNotEmpty == true) profile!.apiKey,
+      ...?profile?.apiKeys.where((k) => k.isNotEmpty),
+    ];
+    if (keyPool.isEmpty) {
+      effKey = cfg.aiApiKey;
+    } else if (keyPool.length == 1) {
+      effKey = keyPool.first;
+    } else {
+      effKey = keyPool[_aiKeyRotation++ % keyPool.length];
+    }
+    // 生成参数：当前模型的单独设置（模型页）优先，未设置的项继承提供商默认
+    AiModelEntry? modelEntry;
+    for (final m in profile?.models ?? const <AiModelEntry>[]) {
+      if (m.id == effModel) {
+        modelEntry = m;
+        break;
+      }
+    }
+    final effMaxTokens = modelEntry?.maxTokens ?? profile?.maxTokens ?? cfg.aiMaxTokens;
+    final effTemp = modelEntry?.temperature ?? profile?.temperature ?? cfg.aiTemperature;
     if (effKey.isEmpty) {
       showToast(context, widget.strings.aiNotConfigured, type: ToastType.warning);
       return;

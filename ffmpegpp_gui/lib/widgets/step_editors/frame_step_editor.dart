@@ -130,7 +130,7 @@ class _FrameStepEditorState extends State<FrameStepEditor> with StepEditorState<
             color: Colors.black,
             child: Stack(alignment: Alignment.center, children: [
               if (_previewPath != null && File(_previewPath!).existsSync())
-                Image.file(File(_previewPath!), fit: BoxFit.contain, width: 480, height: 270, gaplessPlayback: true),
+                Image.file(File(_previewPath!), fit: BoxFit.contain, width: 480, height: 270, cacheWidth: 1440, gaplessPlayback: true),
               if (_previewPath == null && !_loading)
                 Icon(Icons.photo_camera_outlined, size: 48, color: cs.outline.withAlpha(100)),
               if (_loading)

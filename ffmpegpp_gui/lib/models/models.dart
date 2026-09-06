@@ -906,13 +906,23 @@ class AiModelCapability {
   static const List<String> all = [chat, vision, tools, embedding, reasoning];
 }
 
-/// 提供商下的一个模型条目：模型 id + 能力标记。
+/// 提供商下的一个模型条目：模型 id + 能力标记 + 每模型生成参数。
 class AiModelEntry {
   String id;
   List<String> capabilities;
 
-  AiModelEntry({required this.id, List<String>? capabilities})
-      : capabilities = capabilities ?? [AiModelCapability.chat];
+  /// 每模型生成参数（null = 继承提供商级别的默认值）。
+  int? contextWindow;
+  int? maxTokens;
+  double? temperature;
+
+  AiModelEntry({
+    required this.id,
+    List<String>? capabilities,
+    this.contextWindow,
+    this.maxTokens,
+    this.temperature,
+  }) : capabilities = capabilities ?? [AiModelCapability.chat];
 
   factory AiModelEntry.fromJson(Map<String, dynamic> json) => AiModelEntry(
         id: json['id'] as String? ?? '',
@@ -921,11 +931,26 @@ class AiModelEntry {
                 .where(AiModelCapability.all.contains)
                 .toList() ??
             [AiModelCapability.chat],
+        contextWindow: (json['context_window'] as num?)?.toInt(),
+        maxTokens: (json['max_tokens'] as num?)?.toInt(),
+        temperature: (json['temperature'] as num?)?.toDouble(),
       );
 
-  Map<String, dynamic> toJson() => {'id': id, 'capabilities': capabilities};
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'capabilities': capabilities,
+        if (contextWindow != null) 'context_window': contextWindow,
+        if (maxTokens != null) 'max_tokens': maxTokens,
+        if (temperature != null) 'temperature': temperature,
+      };
 
-  AiModelEntry copy() => AiModelEntry(id: id, capabilities: [...capabilities]);
+  AiModelEntry copy() => AiModelEntry(
+        id: id,
+        capabilities: [...capabilities],
+        contextWindow: contextWindow,
+        maxTokens: maxTokens,
+        temperature: temperature,
+      );
 }
 
 /// AI 供应商配置项：一组可复用的 API 配置（配置名/Key/BaseURL/请求方式/模型等）。
