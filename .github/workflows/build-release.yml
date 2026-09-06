@@ -440,7 +440,7 @@ jobs:
           # Control file
           cat > deb/DEBIAN/control << 'EOF'
           Package: ffmpegpp
-          Version: 5.2.0
+          Version: 5.3.6
           Architecture: amd64
           Maintainer: lvbaoshigao <noreply@github.com>
           Description: FFmpeg++ - Advanced video/image/audio processing tool
@@ -475,13 +475,13 @@ jobs:
           chmod -R 755 deb/opt/ffmpegpp/
 
           # Build deb
-          dpkg-deb --root-owner-group --build deb ffmpegpp_5.2.0_amd64.deb
+          dpkg-deb --root-owner-group --build deb ffmpegpp_5.3.6_amd64.deb
 
       - name: Upload Linux x64 deb
         uses: actions/upload-artifact@v6
         with:
           name: linux-x64-deb
-          path: ffmpegpp_5.2.0_amd64.deb
+          path: ffmpegpp_5.3.6_amd64.deb
 
   # ══════════════════════════════════════════
   # 打包阶段 — Linux ARM64 (.deb)
@@ -508,7 +508,7 @@ jobs:
 
           cat > deb/DEBIAN/control << 'EOF'
           Package: ffmpegpp
-          Version: 5.2.0
+          Version: 5.3.6
           Architecture: arm64
           Maintainer: lvbaoshigao <noreply@github.com>
           Description: FFmpeg++ - Advanced video/image/audio processing tool
@@ -539,13 +539,13 @@ jobs:
           cp "make/FFmpeg++.png" deb/usr/share/icons/hicolor/256x256/apps/ffmpegpp.png
           chmod -R 755 deb/opt/ffmpegpp/
 
-          dpkg-deb --root-owner-group --build deb ffmpegpp_5.2.0_arm64.deb
+          dpkg-deb --root-owner-group --build deb ffmpegpp_5.3.6_arm64.deb
 
       - name: Upload Linux ARM64 deb
         uses: actions/upload-artifact@v6
         with:
           name: linux-arm64-deb
-          path: ffmpegpp_5.2.0_arm64.deb
+          path: ffmpegpp_5.3.6_arm64.deb
 
   # ══════════════════════════════════════════
   # 打包阶段 — macOS (.dmg)
@@ -567,16 +567,16 @@ jobs:
           mkdir -p dmg_staging
           tar -xzf bundle/macos-app.tar.gz -C dmg_staging
           ln -s /Applications dmg_staging/Applications
-          hdiutil create -volname "FFmpeg++" -srcfolder dmg_staging -ov -format UDZO "FFmpeg++_v5.2.0_macOS.dmg"
+          hdiutil create -volname "FFmpeg++" -srcfolder dmg_staging -ov -format UDZO "FFmpeg++_v5.3.6_macOS.dmg"
 
       - name: Upload macOS DMG
         uses: actions/upload-artifact@v6
         with:
           name: macos-dmg
-          path: FFmpeg++_v5.2.0_macOS.dmg
+          path: FFmpeg++_v5.3.6_macOS.dmg
 
   # ══════════════════════════════════════════
-  # 发布阶段 — 创建 Release (v5.2.0)
+  # 发布阶段 — 创建 Release (v5.3.6)
   # ══════════════════════════════════════════
   release:
     needs: [package-windows, package-linux-x64, package-linux-arm64, package-macos, compile-android]
@@ -596,10 +596,10 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: 5.2.0
-          name: "FFmpeg++ v5.2.0"
+          tag_name: 5.3.6
+          name: "FFmpeg++ v5.3.6"
           body: |
-            ## 🎬 FFmpeg++ v5.2.0
+            ## 🎬 FFmpeg++ v5.3.6
 
             **专业视频 / 图片 / 音频处理桌面应用** — 基于 Flutter + C++17 + FFmpeg，100% AI 生成代码。
 
@@ -613,10 +613,10 @@ jobs:
             - 📱 Android 移动端适配（底部液态玻璃导航栏、Monet 动态取色、内置 FFmpeg）
 
             ### 📦 安装包
-            - **Windows**: `FFmpeg++_v5.2.0_setup.exe`
-            - **Linux x64**: `ffmpegpp_5.2.0_amd64.deb`
-            - **Linux ARM64**: `ffmpegpp_5.2.0_arm64.deb`
-            - **macOS**: `FFmpeg++_v5.2.0_macOS.dmg`
+            - **Windows**: `FFmpeg++_v5.3.6_setup.exe`
+            - **Linux x64**: `ffmpegpp_5.3.6_amd64.deb`
+            - **Linux ARM64**: `ffmpegpp_5.3.6_arm64.deb`
+            - **macOS**: `FFmpeg++_v5.3.6_macOS.dmg`
             - **Android**: `app-release.apk`（arm64-v8a）
           draft: true
           prerelease: false
