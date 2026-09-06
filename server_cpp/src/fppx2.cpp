@@ -735,7 +735,9 @@ Fppx2Result fppx2Export(const json& params) {
     if (!verify.success || verify.mode != mode) {
         std::string first = verify.errors.empty() ? "未知原因" : verify.errors.front();
         r.errors.push_back("写入后自校验失败，已删除不完整文件: " + first);
-        std::filesystem::remove(utf8ToPath(path), std::error_code{});
+        // error_code& 参数必须传左值（NDK libc++ 不接受临时值；MSVC 扩展允许）
+        std::error_code rmEc;
+        std::filesystem::remove(utf8ToPath(path), rmEc);
         return r;
     }
 
