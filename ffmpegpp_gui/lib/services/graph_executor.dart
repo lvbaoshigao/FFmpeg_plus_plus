@@ -1256,6 +1256,8 @@ class GraphExecutor {
       case '1080p': opts['resolution'] = [1920, 1080]; break;
       case '720p': opts['resolution'] = [1280, 720]; break;
       case '480p': opts['resolution'] = [854, 480]; break;
+      // 此前缺 360p：UI 提供该选项但执行时静默保持原分辨率
+      case '360p': opts['resolution'] = [640, 360]; break;
       case 'custom':
         if (p['resolution_w'] != null && p['resolution_h'] != null) opts['resolution'] = [p['resolution_w'], p['resolution_h']];
         break;
@@ -1269,6 +1271,11 @@ class GraphExecutor {
     if (p['audio_bitrate'] != null) opts['audio_bitrate'] = p['audio_bitrate'];
     final ch = p['audio_channels'] as String? ?? 'keep';
     if (ch != 'keep') { final cv = int.tryParse(ch); if (cv != null) opts['audio_channels'] = cv; }
+    // 像素格式：此前未转发，选了永远不生效。'auto'（默认）不透传，
+    // 交给后端按编码器/输入位深自动解析（ffmpeg 无 "auto" 像素格式，
+    // 且后端白名单不含该值）；其余值透传（后端有 VALID_PIX_FMTS 白名单）
+    final pf = p['pix_fmt'] as String? ?? 'auto';
+    if (pf != 'auto' && pf.isNotEmpty) opts['pix_fmt'] = pf;
     return opts;
   }
 

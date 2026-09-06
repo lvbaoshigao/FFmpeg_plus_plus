@@ -229,13 +229,12 @@ class NavGlassShell extends StatelessWidget {
     if (look.style == SurfaceStyle.blur) {
       return Padding(
         padding: EdgeInsets.fromLTRB(14, 2, 14, bottomSafe + 8),
-        child: RepaintBoundary(
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(radius),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-              child: child,
-            ),
+        // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(radius),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+            child: child,
           ),
         ),
       );
@@ -247,18 +246,17 @@ class NavGlassShell extends StatelessWidget {
     if (!shaderGlassSupported) {
       return Padding(
         padding: EdgeInsets.fromLTRB(14, 2, 14, bottomSafe + 8),
-        child: RepaintBoundary(
-          child: LiquidGlassBackdrop(
-            borderRadius: BorderRadius.circular(radius),
-            sigma: 16,
-            opacity: op,
-            shadow: BoxShadow(
-              color: Colors.black.withAlpha(isDark ? 70 : 26),
-              blurRadius: 22,
-              offset: const Offset(0, 6),
-            ),
-            child: child,
+        // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
+        child: LiquidGlassBackdrop(
+          borderRadius: BorderRadius.circular(radius),
+          sigma: 16,
+          opacity: op,
+          shadow: BoxShadow(
+            color: Colors.black.withAlpha(isDark ? 70 : 26),
+            blurRadius: 22,
+            offset: const Offset(0, 6),
           ),
+          child: child,
         ),
       );
     }

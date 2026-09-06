@@ -230,13 +230,12 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
     if (solid) {
       pill = inner;
     } else if (style == SurfaceStyle.blur) {
-      pill = RepaintBoundary(
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(widget.radius),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-            child: inner,
-          ),
+      // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
+      pill = ClipRRect(
+        borderRadius: BorderRadius.circular(widget.radius),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+          child: inner,
         ),
       );
     } else if (shaderGlassSupported) {
@@ -277,18 +276,17 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
       // liquid 但无 Impeller（Windows 桌面端默认 Skia）：shader backdrop 会被
       // _RenderLiquidGlassGroup 整体跳过 → 玻璃完全不可见（此前配置库页签药丸
       // 就是这样「没渲染」的）。回退为高斯模糊 + 液态玻璃倒角高光，保证可见。
-      pill = RepaintBoundary(
-        child: LiquidGlassBackdrop(
-          borderRadius: BorderRadius.circular(widget.radius),
-          sigma: 16,
-          opacity: op,
-          shadow: BoxShadow(
-            color: Colors.black.withAlpha(isDark ? 60 : 22),
-            blurRadius: 16,
-            offset: const Offset(0, 5),
-          ),
-          child: inner,
+      // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
+      pill = LiquidGlassBackdrop(
+        borderRadius: BorderRadius.circular(widget.radius),
+        sigma: 16,
+        opacity: op,
+        shadow: BoxShadow(
+          color: Colors.black.withAlpha(isDark ? 60 : 22),
+          blurRadius: 16,
+          offset: const Offset(0, 5),
         ),
+        child: inner,
       );
     }
 

@@ -88,6 +88,11 @@ class TaskCard extends StatelessWidget {
         InkWell(
           borderRadius: BorderRadius.circular(12),
           onTap: () => context.read<AppState>().toggleTaskExpanded(task.id),
+          // 长按删除：终态任务（已完成/失败/已取消）可从列表移除记录，
+          // 弹确认框防误触。处理中的任务不允许删除。
+          onLongPress: _isTerminal
+              ? () => _confirmRemove(context)
+              : null,
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: Column(children: [
@@ -195,6 +200,42 @@ class TaskCard extends StatelessWidget {
           duration: const Duration(milliseconds: 250),
         ),
       ]),
+    );
+  }
+
+  /// 任务是否已到终态（可长按移除记录）。
+  bool get _isTerminal =>
+      task.status == TaskStatus.completed ||
+      task.status == TaskStatus.failed ||
+      task.status == TaskStatus.cancelled;
+
+  /// 长按删除确认：只移除列表记录，不删除输出文件。
+  void _confirmRemove(BuildContext context) {
+    final s = AppStrings.of(
+        context.select<AppState, String>((st) => st.config.language));
+    final scheme = Theme.of(context).colorScheme;
+    showDialog<void>(
+      context: context,
+      builder: (dCtx) => AlertDialog(
+        title: Text(s.isZh ? '移除任务记录' : 'Remove Task Record',
+            style: TextStyle(color: scheme.onSurface, fontSize: 15)),
+        content: Text(
+            s.isZh ? '从队列中移除「${task.filename}」？（不会删除输出文件）'
+                : 'Remove "${task.filename}" from the queue? (Output file is kept)',
+            style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dCtx), child: Text(s.cancel)),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: scheme.error),
+            onPressed: () {
+              Navigator.pop(dCtx);
+              context.read<AppState>().removeTask(task.id);
+            },
+            child: Text(s.isZh ? '移除' : 'Remove'),
+          ),
+        ],
+      ),
     );
   }
 

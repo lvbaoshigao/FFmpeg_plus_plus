@@ -217,30 +217,30 @@ class GlassPanel extends StatelessWidget {
 
     if (effect == 'blur') {
       // 仅高斯模糊背景：半透明 + 模糊，无渐变、无阴影、无折射 —— 最简洁
-      return RepaintBoundary(
-        child: ClipRRect(
-          borderRadius: br,
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
-            child: Container(
-              padding: padding,
-              decoration: BoxDecoration(
-                borderRadius: br,
-                color: grad == null ? baseColor.withAlpha(((isDark ? 165 : 185) * op).round()) : null,
-                gradient: grad != null
-                    ? LinearGradient(
-                        begin: grad.begin,
-                        end: grad.end,
-                        colors: grad.colors.map((c) => c.withAlpha(((isDark ? 165 : 185) * op).round())).toList(),
-                      )
-                    : null,
-                border: Border.all(
-                  color: borderColor.withAlpha(isDark ? 90 : 120),
-                  width: 1,
-                ),
+      // （同 liquid 回退：BackdropFilter 外层不包 RepaintBoundary，避免
+      //   Skia 光栅缓存导致玻璃内容与背后背景脱节）
+      return ClipRRect(
+        borderRadius: br,
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+          child: Container(
+            padding: padding,
+            decoration: BoxDecoration(
+              borderRadius: br,
+              color: grad == null ? baseColor.withAlpha(((isDark ? 165 : 185) * op).round()) : null,
+              gradient: grad != null
+                  ? LinearGradient(
+                      begin: grad.begin,
+                      end: grad.end,
+                      colors: grad.colors.map((c) => c.withAlpha(((isDark ? 165 : 185) * op).round())).toList(),
+                    )
+                  : null,
+              border: Border.all(
+                color: borderColor.withAlpha(isDark ? 90 : 120),
+                width: 1,
               ),
-              child: child,
             ),
+            child: child,
           ),
         ),
       );
@@ -340,18 +340,19 @@ class GlassPanel extends StatelessWidget {
 
     // Skia 回退（Windows 默认）：高斯模糊 + 液态玻璃倒角高光画笔。
     // 光影强度随透明度缩放：全透明时仅剩背景模糊。
-    return RepaintBoundary(
-      child: LiquidGlassBackdrop(
-        borderRadius: br,
-        sigma: sigma,
-        opacity: op,
-        shadow: BoxShadow(
-          color: Colors.black.withAlpha(isDark ? 60 : 26),
-          blurRadius: 18,
-          offset: const Offset(0, 6),
-        ),
-        child: glassBody,
+    // 注意：不要在外面包 RepaintBoundary——它让含 BackdropFilter 的图层
+    // 成为光栅缓存候选，Skia 下玻璃背后内容变化时滤波结果不更新，
+    // 玻璃里出现旧文字残影且与当前背景错位（见 LiquidGlassBackdrop 注释）。
+    return LiquidGlassBackdrop(
+      borderRadius: br,
+      sigma: sigma,
+      opacity: op,
+      shadow: BoxShadow(
+        color: Colors.black.withAlpha(isDark ? 60 : 26),
+        blurRadius: 18,
+        offset: const Offset(0, 6),
       ),
+      child: glassBody,
     );
   }
 }

@@ -2265,11 +2265,15 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
         leading: Icon(Icons.system_update_alt, size: 20, color: scheme.primary),
         title: Text(s.cardUpdate, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
         subtitle: Text(
-            s.isZh ? '移动端通过 APK 分发，前往发布页获取新版本'
-                   : 'Distributed via APK — get new versions from the release page',
+            s.isZh ? '点按在线检查新版本；长按直达发布页'
+                   : 'Tap to check online; long-press to open the release page',
             style: TextStyle(fontSize: 11, color: scheme.outline)),
-        trailing: const Icon(Icons.open_in_new, size: 16),
-        onTap: () => openExternalUrl('https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases'),
+        trailing: const Icon(Icons.chevron_right, size: 16),
+        // 移动端也走在线检查：发现新版本弹窗展示（APK 分发，下载动作
+        // 自动降级为浏览器打开发布页/下载链接，见 _showUpdateDialog）
+        onTap: () => _checkForUpdate(ctx, s),
+        onLongPress: () => openExternalUrl(
+            'https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases'),
       ),
       ListTile(
         dense: true, contentPadding: EdgeInsets.zero,
@@ -3296,13 +3300,20 @@ Future<void> _checkForUpdate(BuildContext ctx, AppStrings s) async {
 
 void _showUpdateDialog(BuildContext ctx, AppStrings s, updater.UpdateResult result) {
   final scheme = Theme.of(ctx).colorScheme;
-  final isGithub = result.source == updater.UpdateSource.github;
+  // 移动端为 APK 分发：桌面那套「下载 exe + 替换重启」不适用，
+  // 一律走「前往下载」（浏览器打开发布页/下载链接）。
+  final allowAutoUpdate = !isMobilePlatform &&
+      result.source == updater.UpdateSource.github &&
+      result.downloadUrl != null;
   showDialog(
     context: ctx,
     builder: (dCtx) => AlertDialog(
       icon: Icon(Icons.system_update, color: scheme.primary, size: 32),
       title: Text(s.updateAvailable, style: TextStyle(color: scheme.onSurface)),
-      content: SizedBox(width: 420, child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+      content: SizedBox(
+          // 窄屏（手机）下固定 420 宽会溢出：移动端撑满对话框宽度
+          width: isMobilePlatform ? double.maxFinite : 420,
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(s.isZh ? '新版本: v${result.remoteVersion}\n当前版本: v${updater.currentVersion}'
             : 'New: v${result.remoteVersion}\nCurrent: v${updater.currentVersion}', style: TextStyle(fontSize: 13, color: scheme.onSurface)),
         if (result.password != null && result.password!.isNotEmpty) ...[
@@ -3328,7 +3339,7 @@ void _showUpdateDialog(BuildContext ctx, AppStrings s, updater.UpdateResult resu
       ])),
       actions: [
         TextButton(onPressed: () => Navigator.pop(dCtx), child: Text(s.aboutClose)),
-        if (isGithub && result.downloadUrl != null)
+        if (allowAutoUpdate)
           FilledButton(onPressed: () { Navigator.pop(dCtx); _downloadAndInstall(ctx, s, result.downloadUrl!); },
               child: Text(s.isZh ? '自动更新' : 'Auto Update'))
         else

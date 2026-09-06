@@ -139,13 +139,21 @@ class LiquidGlassBackdrop extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 图层算法注意（Skia/Windows 实测相关）：
+    // 1. 这里绝不能再包 RepaintBoundary。BackdropFilter 的输入（背后场景）
+    //    在 Skia 下会被光栅缓存——若外层有 RepaintBoundary，玻璃自身内容
+    //    不变时引擎直接复用上一次的滤波快照，背后的文字滚动后玻璃里仍是
+    //    旧文字残影、且与当前位置的背景对不上。Flutter 官方 BackdropFilter
+    //    用法（CupertinoNavBar 等）外层都不加 RepaintBoundary。
+    // 2. 光影画笔用 painter（内容之下）而非 foregroundPainter（内容之上）：
+    //    大半径镜面光斑叠在文字上会形成「玻璃里有东西」的脏观感。
     Widget glass = ClipRRect(
       borderRadius: borderRadius,
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
         child: CustomPaint(
-          foregroundPainter:
-              LiquidGlassPainter(borderRadius: borderRadius, opacity: opacity),
+          painter: LiquidGlassPainter(
+              borderRadius: borderRadius, opacity: opacity),
           child: child,
         ),
       ),
