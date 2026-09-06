@@ -223,8 +223,7 @@ class _CommandPageState extends State<CommandPage> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final cfg = context.watch<AppState>().config;
-    final s = AppStrings.of(cfg.language);
+    final s = AppStrings.of(context.select<AppState, String>((st) => st.config.language));
     final zh = s.isZh;
 
     if (isMobilePlatform) {

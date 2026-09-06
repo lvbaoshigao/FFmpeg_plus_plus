@@ -3,8 +3,6 @@
 #include <vector>
 #include <functional>
 #include <atomic>
-#include <thread>
-#include <algorithm>
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -15,7 +13,6 @@ struct ProcessResult {
     int exit_code = -1;
     std::string stdout_output;
     std::string stderr_output;
-    bool timed_out = false;
     bool output_truncated = false;  // 累积输出超过 max_output_bytes 时置 true
 };
 
@@ -43,10 +40,10 @@ public:
 #ifdef _WIN32
     static std::wstring utf8ToWide(const std::string& s);
     static std::string wideToUtf8(const std::wstring& ws);
-#endif
 
 private:
     static std::string vectorToCommandLine(const std::vector<std::string>& cmd);
+#endif
 };
 
 } // namespace ffmpegpp

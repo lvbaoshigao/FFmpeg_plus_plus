@@ -28,9 +28,10 @@ import '../widgets/toast.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_glass_pill.dart';
 import '../widgets/mobile_top_bar.dart';
+import '../widgets/option_menu_bar.dart';
 import '../widgets/app_card.dart';
+import '../widgets/wallpaper_background.dart';
 import 'ai_settings_mobile.dart';
-import '../app.dart' show wallpaperImageProvider;
 
 final _s = Platform.pathSeparator;
 
@@ -214,36 +215,8 @@ bool _sameBytes(String path, Uint8List bytes) {
 /// 用系统默认浏览器打开链接。见 [ShellOpen] 里关于 `cmd /c start` 注入的说明。
 Future<void> openExternalUrl(String url) => ShellOpen.url(url);
 
-/// 二级设置页也铺设壁纸背景（与主界面一致），避免返回手势/过渡时露出黑底或主题色底。
-/// 无壁纸时也铺一层不透明主题底色，避免返回过渡首帧露出系统窗口黑底。
-/// 设置类二级页面统一背景：主题底色 + 壁纸（背景不透明度控制遮罩）。
-/// 公开供移动端 AI 设置等二级页面复用。
-Widget withWallpaperBg(BuildContext ctx, AppState state, Widget child) {
-  final scheme = Theme.of(ctx).colorScheme;
-  final bg = state.config.backgroundImage;
-  final base = Positioned.fill(child: Container(color: scheme.surface));
-  if (bg.isEmpty || !File(bg).existsSync()) {
-    // 无壁纸：仍铺主题底色，子 Scaffold 透明透出底色（而非黑底）
-    return Stack(children: [base, child]);
-  }
-  final op = state.config.backgroundOpacity.clamp(0.0, 1.0);
-  final a = ((1.0 - op) * 220).round().clamp(20, 240);
-  final size = MediaQuery.sizeOf(ctx);
-  final dpr = MediaQuery.devicePixelRatioOf(ctx);
-  return Stack(children: [
-    base,
-    Positioned.fill(child: Image(
-      image: wallpaperImageProvider(bg, size.width, size.height, dpr),
-      fit: BoxFit.cover,
-      errorBuilder: (_, a, b) => const SizedBox.shrink(),
-    )),
-    Positioned.fill(child: Container(color: scheme.surface.withAlpha(a))),
-    Theme(
-      data: Theme.of(ctx).copyWith(scaffoldBackgroundColor: Colors.transparent),
-      child: child,
-    ),
-  ]);
-}
+// 二级设置页壁纸背景已统一抽到 widgets/wallpaper_background.dart 的
+// withWallpaper()，公开供移动端 AI 设置等二级页面复用。
 
 // ═══════════════════════════════════════════
 // 设置项元数据 —— 分区 / 卡片 / 搜索关键字
@@ -388,7 +361,8 @@ class _SettingsPageState extends State<SettingsPage> {
           icon: Icons.style_outlined,
           keywords: ['样式', 'style', '卡片', 'card', '液态玻璃', 'liquid',
               '玻璃', 'glass', '模糊', 'blur', '灰色', 'gray',
-              '底部', 'bottom', 'nav', '导航', '药丸', 'pill', '表面', 'surface'],
+              '底部', 'bottom', 'nav', '导航', '药丸', 'pill', '表面', 'surface',
+              '菜单', 'menu', '侧边栏', 'sidebar', '顶栏', 'topbar', '顶部菜单'],
           build: _buildSurfaceStyleCard,
         ),
         _CardDef(
@@ -452,7 +426,7 @@ class _SettingsPageState extends State<SettingsPage> {
           id: 'editorMode',
           title: (s) => s.cardEditorMode,
           icon: Icons.account_tree_outlined,
-          keywords: ['编辑', '编辑器', '节点', '画布', '蓝图', '传统',
+          keywords: ['编辑', '编辑器', '节点', '画布', '蓝图',
               'editor', 'node', 'canvas', 'blueprint', 'classic', 'mode', '模式'],
           build: _buildEditorMode,
         ),
@@ -566,21 +540,15 @@ class _SettingsPageState extends State<SettingsPage> {
       title: (s) => s.secAbout,
       icon: Icons.info_outline,
       cards: [
-        // 「检查更新」更贴近「关于」，从「高级」移入此处。
-        _CardDef(
-          id: 'update',
-          title: (s) => s.cardUpdate,
-          icon: Icons.system_update_alt,
-          keywords: ['更新', '升级', '版本', 'update', 'upgrade', 'version',
-              '自动', 'auto', 'check', '检查'],
-          build: _buildUpdate,
-        ),
+        // 「检查更新」不再是独立卡片：入口嵌入到「关于」卡片内
+        // （桌面=按钮+自动检查开关；移动=发布页链接），搜索关键字一并并入。
         _CardDef(
           id: 'about',
           title: (s) => s.aboutTitle,
           icon: Icons.info_outline,
           keywords: ['关于', '版本', '赞助', '捐赠', '许可', 'about', 'version',
-              'sponsor', 'donate', 'license', 'github', 'blog', '作者', 'author'],
+              'sponsor', 'donate', 'license', 'github', 'blog', '作者', 'author',
+              '更新', '升级', 'update', 'upgrade', '检查', 'check', '自动'],
           build: _buildAbout,
         ),
       ],
@@ -1122,11 +1090,15 @@ class _SettingsPageState extends State<SettingsPage> {
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       onTap: () {
         if (c.id == 'command') {
+          // 移动端单独推入时无主界面壁纸壳，需自带壁纸背景
+          // （与 AI 提供商/高级设置等二级页一致，否则露出系统黑底）
           Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => const SafeArea(child: CommandPage())));
+              builder: (_) => withWallpaper(
+                  context, const SafeArea(child: CommandPage()))));
         } else if (c.id == 'logs') {
           Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => const SafeArea(child: LogPage())));
+              builder: (_) => withWallpaper(
+                  context, const SafeArea(child: LogPage()))));
         } else if (c.id == 'cache') {
           // 缓存：直接弹出确认框，不进入二级页
           _clearCache(context, state, scheme, s);
@@ -1145,19 +1117,17 @@ class _SettingsPageState extends State<SettingsPage> {
       title: Text(AppStrings.of(cfg.language).language,
           style: TextStyle(fontSize: 14, color: scheme.onSurface)),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
-      trailing: SegmentedButton<String>(
-        segments: const [
-          ButtonSegment(value: 'zh', label: Text('中文', style: TextStyle(fontSize: 12))),
-          ButtonSegment(value: 'en', label: Text('EN', style: TextStyle(fontSize: 12))),
-        ],
-        selected: {cfg.language},
-        onSelectionChanged: (sel) {
-          if (sel.isNotEmpty) state.updateConfig((c) => c..language = sel.first);
-        },
-        showSelectedIcon: false,
-        style: ButtonStyle(
-          visualDensity: VisualDensity.compact,
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      // 统一「菜单栏选项」控件：行内分段药丸（选中主题色药丸 + 图标淡入动画）
+      trailing: SizedBox(
+        width: 128,
+        child: OptionMenuBar<String>(
+          expandable: false,
+          value: cfg.language,
+          items: const [
+            OptionItem('zh', '中文'),
+            OptionItem('en', 'EN'),
+          ],
+          onChanged: (v) => state.updateConfig((c) => c..language = v),
         ),
       ),
     );
@@ -1168,9 +1138,8 @@ class _SettingsPageState extends State<SettingsPage> {
     BuildContext context, String title, Widget Function(BuildContext, AppState) contentBuilder) {
     Navigator.of(context).push(MaterialPageRoute(
       builder: (ctx) => Consumer<AppState>(
-        builder: (ctx2, state, _) => withWallpaperBg(
+        builder: (ctx2, state, _) => withWallpaper(
           ctx2,
-          state,
           Scaffold(
           backgroundColor: Colors.transparent,
           body: Column(children: [
@@ -1611,6 +1580,16 @@ Widget _buildSurfaceStyleCard(BuildContext ctx, AppState state) {
         scope: s.cardStyleScope,
         value: cfg.cardStyle,
         onSelected: (v) => state.updateConfig((c) => c..cardStyle = v)),
+    // 桌面端：左侧菜单栏 + 各页顶部菜单栏的表面样式（原来固定液态玻璃）
+    if (!isMobilePlatform)
+      _styleRow(ctx,
+          icon: Icons.view_sidebar_outlined,
+          label: s.isZh ? '菜单样式' : 'Menu Style',
+          scope: s.isZh
+              ? '作用于 左侧菜单栏 和 各页顶部菜单栏（仅桌面端）'
+              : 'Applies to the sidebar and page top bars (desktop only)',
+          value: cfg.menuStyle,
+          onSelected: (v) => state.updateConfig((c) => c..menuStyle = v)),
     if (isMobilePlatform) ...[
       _styleRow(ctx,
           icon: Icons.menu,
@@ -1637,61 +1616,42 @@ Widget _buildNodeEditorStyleCard(BuildContext ctx, AppState state) {
     // 画布背景：下拉菜单样式（跟随全局 / 灰色 / 黑色 / 白色）
     Row(children: [
       Expanded(child: Text(s.canvasBgLabel, style: TextStyle(color: clr, fontSize: 12))),
-      _menuBox(child: DropdownMenu<String>(
-        initialSelection: cfg.canvasBg,
-        requestFocusOnTap: false,
-        width: _kMenuWidth,
-        textStyle: TextStyle(fontSize: 12, color: clr),
-        menuHeight: _kMenuMaxHeight,
-        dropdownMenuEntries: [
-          DropdownMenuEntry(value: 'global', label: s.canvasFollowGlobal, leadingIcon: const Icon(Icons.public_outlined, size: 14)),
-          DropdownMenuEntry(value: 'gray', label: s.canvasGray, leadingIcon: const Icon(Icons.grid_4x4, size: 14)),
-          DropdownMenuEntry(value: 'black', label: s.canvasBlack, leadingIcon: const Icon(Icons.dark_mode_outlined, size: 14)),
-          DropdownMenuEntry(value: 'white', label: s.canvasWhite, leadingIcon: const Icon(Icons.light_mode_outlined, size: 14)),
+      SizedBox(width: _kMenuWidth, child: OptionMenuBar<String>(
+        expandable: true,
+        value: cfg.canvasBg,
+        items: [
+          OptionItem('global', s.canvasFollowGlobal, icon: Icons.public_outlined),
+          OptionItem('gray', s.canvasGray, icon: Icons.grid_4x4),
+          OptionItem('black', s.canvasBlack, icon: Icons.dark_mode_outlined),
+          OptionItem('white', s.canvasWhite, icon: Icons.light_mode_outlined),
         ],
-        onSelected: (v) { if (v != null) state.updateConfig((c) => c..canvasBg = v); },
+        onChanged: (v) => state.updateConfig((c) => c..canvasBg = v),
       )),
     ]),
     const SizedBox(height: 10),
     // 逻辑门符号标准：ANSI/IEEE 或 IEC
     Text(s.gateStdLabel, style: TextStyle(color: clr, fontSize: 12)),
     const SizedBox(height: 6),
-    SegmentedButton<String>(
-      showSelectedIcon: false,
-      segments: const [
-        ButtonSegment(value: 'ansi', label: Text('ANSI/IEEE', style: TextStyle(fontSize: 11))),
-        ButtonSegment(value: 'iec', label: Text('IEC', style: TextStyle(fontSize: 11))),
+    OptionMenuBar<String>(
+      expandable: false,
+      value: cfg.gateStd,
+      items: const [
+        OptionItem('ansi', 'ANSI/IEEE'),
+        OptionItem('iec', 'IEC'),
       ],
-      selected: {cfg.gateStd},
-      onSelectionChanged: (v) => state.updateConfig((c) => c..gateStd = v.first),
-      style: const ButtonStyle(visualDensity: VisualDensity.compact),
+      onChanged: (v) => state.updateConfig((c) => c..gateStd = v),
     ),
   ]);
 }
 
-/// 设置页下拉菜单的统一宽度与展开面板高度上限。
-///
-/// 修复「PC 端菜单选项宽度极大」：此前 _styleRow 用固定 SizedBox(width:170)
-/// 包 DropdownMenu 而不给 DropdownMenu 自身 width，M3 的 DropdownMenu 在
-/// 桌面端会按最长条目内容撑开展开面板（叠加 leadingIcon 后可宽达数百像素），
-/// 溢出到卡片之外。这里显式约束两处：输入框宽度（width）与展开面板高度
-/// （menuHeight），并用 _menuBox 限制外层最大宽度。
+/// 设置页「菜单栏选项」控件的统一触发宽度与选项列表历史上限。
+/// （选项控件统一为 widgets/option_menu_bar.dart 的 OptionMenuBar：
+///   任务卡下拉的触发按钮样式 + 主菜单条目的药丸选中动画。）
 const double _kMenuWidth = 168;
-const double _kMenuMaxHeight = 260;
 
-/// 下拉菜单外层容器：限定最大宽度，避免在宽窗口下被 Row 拉伸。
-Widget _menuBox({required Widget child}) => ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: _kMenuWidth + 8),
-      child: child,
-    );
-
-/// 表面样式设置行：左 = 图标 + 文字（可选作用范围说明），右 = 四值下拉菜单。
-/// 下拉用 DropdownMenu（内置展开/收起动画）；key 绑定当前值，配置被外部
-/// 改动（如低配自动降级）后重建时菜单显示最新值。
-///
-/// 宽度修复：必须给 DropdownMenu 自身 `width`，否则桌面端展开面板会按
-/// 「最长条目 + leadingIcon」内容宽度撑开，出现「菜单选项宽度极大」并溢出卡片。
-/// 同时用 menuHeight 限制展开高度，避免右侧菜单栏过高。
+/// 表面样式设置行：左 = 图标 + 文字（可选作用范围说明），右 = 四值
+/// 「菜单栏选项」控件（按钮 + 展开选项列表，key 绑定当前值，配置被外部
+/// 改动如低配自动降级后重建时菜单显示最新值）。
 Widget _styleRow(
   BuildContext ctx, {
   required IconData icon,
@@ -1717,21 +1677,19 @@ Widget _styleRow(
         ],
       ])),
       const SizedBox(width: 8),
-      _menuBox(
-        child: DropdownMenu<String>(
+      SizedBox(
+        width: _kMenuWidth,
+        child: OptionMenuBar<String>(
           key: ValueKey('styleRow_${label}_$value'),
-          initialSelection: value,
-          requestFocusOnTap: false,
-          width: _kMenuWidth,
-          textStyle: TextStyle(fontSize: 12, color: clr),
-          menuHeight: _kMenuMaxHeight,
-          dropdownMenuEntries: [
-            DropdownMenuEntry(value: 'theme', label: s.surfaceStyleTheme, leadingIcon: const Icon(Icons.format_color_fill, size: 14)),
-            DropdownMenuEntry(value: 'liquid', label: s.surfaceStyleLiquid, leadingIcon: const Icon(Icons.water_drop_outlined, size: 14)),
-            DropdownMenuEntry(value: 'blur', label: s.glassBlur, leadingIcon: const Icon(Icons.blur_on_outlined, size: 14)),
-            DropdownMenuEntry(value: 'gray', label: s.surfaceStyleGray, leadingIcon: const Icon(Icons.grid_4x4, size: 14)),
+          expandable: true,
+          value: value,
+          items: [
+            OptionItem('theme', s.surfaceStyleTheme, icon: Icons.format_color_fill),
+            OptionItem('liquid', s.surfaceStyleLiquid, icon: Icons.water_drop_outlined),
+            OptionItem('blur', s.glassBlur, icon: Icons.blur_on_outlined),
+            OptionItem('gray', s.surfaceStyleGray, icon: Icons.grid_4x4),
           ],
-          onSelected: (v) { if (v != null) onSelected(v); },
+          onChanged: onSelected,
         ),
       ),
     ]),
@@ -1861,8 +1819,9 @@ Widget _buildMobileCommandEntry(BuildContext ctx, AppState state) {
           : 'Manual input + quick templates + parameter reference',
           style: TextStyle(fontSize: 11, color: scheme.outline)),
       trailing: Icon(Icons.chevron_right, color: scheme.outline),
-      onTap: () => Navigator.of(ctx).push(
-          MaterialPageRoute(builder: (_) => SafeArea(child: const CommandPage()))),
+      onTap: () => Navigator.of(ctx).push(MaterialPageRoute(
+          builder: (_) =>
+              withWallpaper(ctx, SafeArea(child: const CommandPage())))),
     ),
   ]);
 }
@@ -1881,8 +1840,9 @@ Widget _buildMobileLogsEntry(BuildContext ctx, AppState state) {
           : 'Backend output, FFmpeg progress and errors',
           style: TextStyle(fontSize: 11, color: scheme.outline)),
       trailing: Icon(Icons.chevron_right, color: scheme.outline),
-      onTap: () => Navigator.of(ctx).push(
-          MaterialPageRoute(builder: (_) => SafeArea(child: const LogPage()))),
+      onTap: () => Navigator.of(ctx).push(MaterialPageRoute(
+          builder: (_) =>
+              withWallpaper(ctx, SafeArea(child: const LogPage())))),
     ),
   ]);
 }
@@ -1916,25 +1876,14 @@ Widget _buildLanguage(BuildContext ctx, AppState state) {
   if (isMobilePlatform) {
     // 移动端：全宽单选（与其它设置项等长），避免下拉菜单宽度过短。
     return _glass(ctx, state, s.language, [
-      RadioGroup<String>(
-        groupValue: cfg.language,
-        onChanged: (v) {
-          if (v != null) state.updateConfig((c) => c..language = v);
-        },
-        child: Column(children: [
-          RadioListTile<String>(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            title: Text('中文 (简体)', style: TextStyle(fontSize: 13, color: clr)),
-            value: 'zh',
-          ),
-          RadioListTile<String>(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            title: Text('English', style: TextStyle(fontSize: 13, color: clr)),
-            value: 'en',
-          ),
-        ]),
+      // 统一「菜单栏选项」控件：按钮 + 展开选项列表
+      OptionMenuBar<String>(
+        value: cfg.language,
+        items: const [
+          OptionItem('zh', '中文 (简体)', icon: Icons.language),
+          OptionItem('en', 'English', icon: Icons.language),
+        ],
+        onChanged: (v) => state.updateConfig((c) => c..language = v),
       ),
     ]);
   }
@@ -1943,17 +1892,15 @@ Widget _buildLanguage(BuildContext ctx, AppState state) {
     // 左右布局：标签在左、下拉在右（固定宽度，不再整行拉满）
     Row(children: [
       Expanded(child: Text(s.languageInterface, style: TextStyle(color: clr, fontSize: 12))),
-      SizedBox(width: 150, child: DropdownMenu<String>(
-        initialSelection: cfg.language,
-        requestFocusOnTap: false,
-        textStyle: TextStyle(fontSize: 12, color: clr),
-        // 不覆盖 menuStyle/inputDecorationTheme：沿用全局主题（圆角 22 玻璃菜单 + 主题化圆角输入框）
-        dropdownMenuEntries: [
-          DropdownMenuEntry(value: 'zh', label: '中文 (简体)'),
-          DropdownMenuEntry(value: 'en', label: 'English'),
+      SizedBox(width: 150, child: OptionMenuBar<String>(
+        expandable: true,
+        value: cfg.language,
+        leadingIcon: Icons.language,
+        items: const [
+          OptionItem('zh', '中文 (简体)'),
+          OptionItem('en', 'English'),
         ],
-        onSelected: (v) { if (v != null) state.updateConfig((c) => c..language = v); },
-        leadingIcon: Icon(Icons.language, size: 15, color: scheme.primary),
+        onChanged: (v) => state.updateConfig((c) => c..language = v),
       )),
     ]),
   ]);
@@ -2006,18 +1953,17 @@ Widget _buildFont(BuildContext ctx, AppState state) {
       // 字重：左右布局（标签左、下拉右，固定宽度）
       Row(children: [
         Expanded(child: Text(s.qWeight, style: TextStyle(color: clr, fontSize: 12))),
-        SizedBox(width: 150, child: DropdownMenu<int>(
-          initialSelection: cfg.fontWeightIndex,
-          requestFocusOnTap: false,
-          textStyle: TextStyle(fontSize: 12, color: clr),
-          dropdownMenuEntries: const [
-            DropdownMenuEntry(value: 0, label: '细体 (Light)'),
-            DropdownMenuEntry(value: 1, label: '常规 (Regular)'),
-            DropdownMenuEntry(value: 2, label: '中等 (Medium)'),
-            DropdownMenuEntry(value: 3, label: '半粗 (SemiBold)'),
-            DropdownMenuEntry(value: 4, label: '粗体 (Bold)'),
+        SizedBox(width: 150, child: OptionMenuBar<int>(
+          expandable: true,
+          value: cfg.fontWeightIndex,
+          items: const [
+            OptionItem(0, '细体 (Light)'),
+            OptionItem(1, '常规 (Regular)'),
+            OptionItem(2, '中等 (Medium)'),
+            OptionItem(3, '半粗 (SemiBold)'),
+            OptionItem(4, '粗体 (Bold)'),
           ],
-          onSelected: (v) { if (v != null) state.updateConfig((c) => c..fontWeightIndex = v); },
+          onChanged: (v) => state.updateConfig((c) => c..fontWeightIndex = v),
         )),
       ]),
     ]);
@@ -2037,19 +1983,17 @@ Widget _buildFont(BuildContext ctx, AppState state) {
     // 字重：左右布局（标签左、下拉右，固定宽度）
     Row(children: [
       Expanded(child: Text(s.qWeight, style: TextStyle(color: clr, fontSize: 12))),
-      SizedBox(width: 150, child: DropdownMenu<int>(
-        initialSelection: cfg.fontWeightIndex,
-        requestFocusOnTap: false,
-        textStyle: TextStyle(fontSize: 12, color: clr),
-        // 不覆盖 menuStyle/inputDecorationTheme：沿用全局主题（圆角 22 玻璃菜单 + 主题化圆角输入框）
-        dropdownMenuEntries: const [
-          DropdownMenuEntry(value: 0, label: '细体 (Light)'),
-          DropdownMenuEntry(value: 1, label: '常规 (Regular)'),
-          DropdownMenuEntry(value: 2, label: '中等 (Medium)'),
-          DropdownMenuEntry(value: 3, label: '半粗 (SemiBold)'),
-          DropdownMenuEntry(value: 4, label: '粗体 (Bold)'),
+      SizedBox(width: 150, child: OptionMenuBar<int>(
+        expandable: true,
+        value: cfg.fontWeightIndex,
+        items: const [
+          OptionItem(0, '细体 (Light)'),
+          OptionItem(1, '常规 (Regular)'),
+          OptionItem(2, '中等 (Medium)'),
+          OptionItem(3, '半粗 (SemiBold)'),
+          OptionItem(4, '粗体 (Bold)'),
         ],
-        onSelected: (v) { if (v != null) state.updateConfig((c) => c..fontWeightIndex = v); },
+        onChanged: (v) => state.updateConfig((c) => c..fontWeightIndex = v),
       )),
     ]),
   ]);
@@ -2075,29 +2019,21 @@ Widget _buildOutput(BuildContext ctx, AppState state) {
 Widget _buildEditorMode(BuildContext ctx, AppState state) {
   final cfg = state.config;
   final s = AppStrings.of(cfg.language);
-  final scheme = Theme.of(ctx).colorScheme;
-  final clr = scheme.onSurface;
   return _glass(ctx, state, s.cardEditorMode, [
-    RadioGroup<int>(
-      groupValue: cfg.editMode,  // 0=node editor, 1=quick mode, 2=traditional
-      onChanged: (v) { if (v != null) state.updateConfig((c) => c..editMode = v); },
-      child: Column(children: [
-        // node editor (value: 0, title: '节点编辑器')
-        RadioListTile<int>(dense: true, contentPadding: EdgeInsets.zero,
-            title: Text(s.isZh ? '节点编辑器' : 'Node Editor', style: TextStyle(color: clr, fontSize: 13)),
-            subtitle: Text(s.isZh ? '蓝图式节点画布，可处理复杂的多步骤逻辑' : 'Blueprint-style canvas for complex multi-step logic', style: TextStyle(fontSize: 11, color: scheme.outline)),
-            value: 0),
-        // quick mode (value: 1)
-        RadioListTile<int>(dense: true, contentPadding: EdgeInsets.zero,
-            title: Text(s.isZh ? '快速模式' : 'Quick Mode', style: TextStyle(color: clr, fontSize: 13)),
-            subtitle: Text(s.isZh ? '选择文件后快速配置处理参数，适配不同文件类型（视频/图片/音频）' : 'Quickly configure processing after selecting a file, supports different file types (video/image/audio)', style: TextStyle(fontSize: 11, color: scheme.outline)),
-            value: 1),
-        // traditional mode (value: 2)
-        RadioListTile<int>(dense: true, contentPadding: EdgeInsets.zero,
-            title: Text(s.isZh ? '传统模式（即将弃用）' : 'Classic Mode (Deprecated)', style: TextStyle(color: clr, fontSize: 13)),
-            subtitle: Text(s.isZh ? '傻瓜式操作，适合简单的视频处理任务。此功能将在不久后弃用，建议使用节点编辑器（即将弃用）' : 'Simple step-by-step for basic tasks. Will be deprecated soon, use Node Editor instead (Deprecated)', style: TextStyle(fontSize: 11, color: scheme.outline)),
-            value: 2),
-      ]),
+    // 编辑方式（传统表单模式已彻底移除）：统一「菜单栏选项」控件
+    OptionMenuBar<int>(
+      value: cfg.editMode,
+      items: [
+        OptionItem(0, s.isZh ? '节点编辑器' : 'Node Editor',
+            icon: Icons.account_tree_outlined,
+            subtitle: s.isZh ? '蓝图式节点画布，可处理复杂的多步骤逻辑'
+                             : 'Blueprint-style canvas for complex multi-step logic'),
+        OptionItem(1, s.isZh ? '快速模式' : 'Quick Mode',
+            icon: Icons.bolt_outlined,
+            subtitle: s.isZh ? '选择文件后快速配置处理参数，适配视频/图片/音频'
+                             : 'Quickly configure processing per file type (video/image/audio)'),
+      ],
+      onChanged: (v) => state.updateConfig((c) => c..editMode = v),
     ),
   ]);
 }
@@ -2225,42 +2161,6 @@ Widget _buildTasks(BuildContext ctx, AppState state) {
   ]);
 }
 
-Widget _buildUpdate(BuildContext ctx, AppState state) {
-  final cfg = state.config;
-  final s = AppStrings.of(cfg.language);
-  final scheme = Theme.of(ctx).colorScheme;
-  final clr = scheme.onSurface;
-  // 移动端：桌面版在线更新机制不适用（APK 分发）
-  if (isMobilePlatform) {
-    return _glass(ctx, state, s.cardUpdate, [
-      ListTile(dense: true, contentPadding: EdgeInsets.zero,
-        leading: Icon(Icons.smartphone, color: scheme.primary, size: 22),
-        title: Text(s.isZh ? 'Android 版本更新' : 'Android App Updates',
-            style: TextStyle(fontSize: 13, color: clr)),
-        subtitle: Text(s.isZh ? '移动端通过 APK 分发，请关注项目发布页获取新版本'
-            : 'Distributed via APK — check the project release page for new versions',
-            style: TextStyle(fontSize: 11, color: scheme.outline)),
-      ),
-      const SizedBox(height: 4),
-      Wrap(spacing: 4, runSpacing: 4, children: [
-        _link('GitHub', 'https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases'),
-      ]),
-    ]);
-  }
-  return _glass(ctx, state, s.cardUpdate, [
-    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-        title: Text(s.isZh ? '启动时自动检查更新' : 'Auto-check updates on startup', style: TextStyle(color: clr, fontSize: 13)),
-        subtitle: Text(s.isZh ? '静默检查，仅在有新版本时通知' : 'Silent check, notifies only when new version available', style: TextStyle(fontSize: 11, color: scheme.outline)),
-        value: cfg.autoCheckUpdate,
-        onChanged: (v) => state.updateConfig((c) => c..autoCheckUpdate = v)),
-    const SizedBox(height: 6),
-    SizedBox(width: double.infinity, child: _iosButton(
-        icon: Icons.system_update, label: s.checkUpdate,
-        color: scheme.onSecondaryContainer, bg: scheme.secondaryContainer,
-        onTap: () => _checkForUpdate(ctx, s))),
-  ]);
-}
-
 /// 「高级 → 预加载」卡片：关闭预加载开关。
 ///
 /// 开启后启动时仅构建/绘制当前页面（如项目页），处理队列、设置等其余页面
@@ -2335,9 +2235,8 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
   final s = AppStrings.of(state.config.language);
   final scheme = Theme.of(ctx).colorScheme;
   if (isMobilePlatform) {
-    // 移动端：顶部图标 + 软件名 + 版本，下方为版本信息/链接/赞助。
-    // 更新入口不在这里放单独按钮 + 二级弹窗（桌面在线更新机制对 APK 不适用），
-    // 更新说明统一在「设置-更新」卡片（APK 发布页链接）实现。
+    // 移动端：顶部图标 + 软件名 + 版本，下方为版本信息/更新/链接/赞助。
+    // 更新入口嵌在这里（APK 分发，在线更新机制不适用 → 跳发布页）。
     return _glass(ctx, state, s.aboutTitle, [
       Center(child: Column(children: [
         const SizedBox(height: 4),
@@ -2360,6 +2259,17 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
         title: Text(s.aboutVersion, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
         trailing: Text('v${updater.currentVersion}',
             style: TextStyle(fontSize: 13, color: scheme.outline, fontWeight: FontWeight.w500)),
+      ),
+      ListTile(
+        dense: true, contentPadding: EdgeInsets.zero,
+        leading: Icon(Icons.system_update_alt, size: 20, color: scheme.primary),
+        title: Text(s.cardUpdate, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+        subtitle: Text(
+            s.isZh ? '移动端通过 APK 分发，前往发布页获取新版本'
+                   : 'Distributed via APK — get new versions from the release page',
+            style: TextStyle(fontSize: 11, color: scheme.outline)),
+        trailing: const Icon(Icons.open_in_new, size: 16),
+        onTap: () => openExternalUrl('https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases'),
       ),
       ListTile(
         dense: true, contentPadding: EdgeInsets.zero,
@@ -2408,15 +2318,23 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
     _infoRow(s.aboutBlog, 'blog-clstone.netlify.app', scheme),
     _infoRow(s.aboutGithub, 'github.com/lvbaoshigao/FFmpeg_plus_plus', scheme),
     const SizedBox(height: 10),
+    // 「检查更新」入口（原独立「更新」卡片已并入这里）：自动检查开关 + 手动检查按钮
+    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+        title: Text(s.isZh ? '启动时自动检查更新' : 'Auto-check updates on startup',
+            style: TextStyle(color: scheme.onSurface, fontSize: 13)),
+        subtitle: Text(s.isZh ? '静默检查，仅在有新版本时通知'
+                : 'Silent check, notifies only when new version available',
+            style: TextStyle(fontSize: 11, color: scheme.outline)),
+        value: state.config.autoCheckUpdate,
+        onChanged: (v) => state.updateConfig((c) => c..autoCheckUpdate = v)),
+    const SizedBox(height: 4),
     Row(children: [
       Expanded(child: _iosButton(icon: Icons.volunteer_activism, label: s.aboutSponsorBtn,
           color: scheme.primary, bg: scheme.primaryContainer, onTap: () => _showSponsor(ctx, scheme, s))),
       const SizedBox(width: 8),
       Expanded(child: _iosButton(icon: Icons.system_update, label: s.checkUpdate,
           color: scheme.onSecondaryContainer, bg: scheme.secondaryContainer,
-          onTap: isMobilePlatform
-              ? () => openExternalUrl('https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases')
-              : () => _checkForUpdate(ctx, s))),
+          onTap: () => _checkForUpdate(ctx, s))),
     ]),
     const SizedBox(height: 8),
     SizedBox(width: double.infinity, child: _iosButton(
@@ -2714,21 +2632,15 @@ Widget _aiSettingsContent(BuildContext bCtx, AppState state, AppStrings s, {requ
                     Row(children: [
                       Expanded(child: Text(s.aiGraphModeLabel,
                           style: TextStyle(color: clr, fontSize: 12))),
-                      _menuBox(child: DropdownMenu<String>(
+                      SizedBox(width: _kMenuWidth, child: OptionMenuBar<String>(
                         key: ValueKey('aiGraphMode_${cfg.aiGraphMode}'),
-                        initialSelection: cfg.aiGraphMode,
-                        requestFocusOnTap: false,
-                        width: _kMenuWidth,
-                        menuHeight: _kMenuMaxHeight,
-                        textStyle: TextStyle(fontSize: 12, color: clr),
-                        dropdownMenuEntries: [
-                          DropdownMenuEntry(value: 'redo', label: s.aiGraphModeRedo,
-                              leadingIcon: const Icon(Icons.refresh, size: 14)),
-                          DropdownMenuEntry(value: 'modify', label: s.aiGraphModeModify,
-                              leadingIcon: const Icon(Icons.edit_outlined, size: 14)),
+                        expandable: true,
+                        value: cfg.aiGraphMode,
+                        items: [
+                          OptionItem('redo', s.aiGraphModeRedo, icon: Icons.refresh),
+                          OptionItem('modify', s.aiGraphModeModify, icon: Icons.edit_outlined),
                         ],
-                        onSelected: (v) {
-                          if (v == null) return;
+                        onChanged: (v) {
                           state.updateConfig((c) => c..aiGraphMode = v);
                           setDState(() {});
                         },
@@ -2763,15 +2675,14 @@ Widget _aiSettingsContent(BuildContext bCtx, AppState state, AppStrings s, {requ
                     // 会话模式：自动批准 / 询问
                     Text(s.aiApproveModeLabel, style: TextStyle(color: clr, fontSize: 12)),
                     const SizedBox(height: 6),
-                    SegmentedButton<String>(
-                      showSelectedIcon: false,
-                      segments: [
-                        ButtonSegment(value: 'ask', label: Text(s.aiApproveModeAsk, style: const TextStyle(fontSize: 11))),
-                        ButtonSegment(value: 'auto', label: Text(s.aiApproveModeAuto, style: const TextStyle(fontSize: 11))),
+                    OptionMenuBar<String>(
+                      expandable: false,
+                      value: cfg.aiApproveMode,
+                      items: [
+                        OptionItem('ask', s.aiApproveModeAsk),
+                        OptionItem('auto', s.aiApproveModeAuto),
                       ],
-                      selected: {cfg.aiApproveMode},
-                      onSelectionChanged: (v) { state.updateConfig((c) => c..aiApproveMode = v.first); setDState(() {}); },
-                      style: const ButtonStyle(visualDensity: VisualDensity.compact),
+                      onChanged: (v) { state.updateConfig((c) => c..aiApproveMode = v); setDState(() {}); },
                     ),
                     const SizedBox(height: 6),
                     Text(s.aiApproveModeDesc, style: TextStyle(color: scheme.outline, fontSize: 10)),
@@ -2894,26 +2805,19 @@ Widget _buildProfileDetail(
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       // 供应商预设（新建/编辑都可一键填充）
       if (showPreset) ...[
-        field(zh ? '供应商预设（一键填充）' : 'Provider Preset', DropdownButtonFormField<String>(
-          initialValue: profile.provider == 'anthropic' ? 'anthropic'
+        field(zh ? '供应商预设（一键填充）' : 'Provider Preset', OptionMenuBar<String>(
+          expandable: true,
+          value: profile.provider == 'anthropic' ? 'anthropic'
               : profile.apiUrl.contains('deepseek') ? 'deepseek'
               : profile.apiUrl.contains('localhost') || profile.apiUrl.contains('11434') ? 'ollama'
               : 'openai',
-          isDense: true,
-          decoration: InputDecoration(
-            isDense: true,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-          ),
-          style: TextStyle(fontSize: 12, color: clr),
           items: const [
-            DropdownMenuItem(value: 'openai', child: Text('OpenAI', style: TextStyle(fontSize: 12))),
-            DropdownMenuItem(value: 'anthropic', child: Text('Anthropic (Claude)', style: TextStyle(fontSize: 12))),
-            DropdownMenuItem(value: 'deepseek', child: Text('DeepSeek', style: TextStyle(fontSize: 12))),
-            DropdownMenuItem(value: 'ollama', child: Text('Ollama (本地)', style: TextStyle(fontSize: 12))),
+            OptionItem('openai', 'OpenAI'),
+            OptionItem('anthropic', 'Anthropic (Claude)'),
+            OptionItem('deepseek', 'DeepSeek'),
+            OptionItem('ollama', 'Ollama (本地)'),
           ],
           onChanged: (preset) {
-            if (preset == null) return;
             applyProfilePreset(profile, preset);
             setDState(() {});
           },
@@ -2926,15 +2830,14 @@ Widget _buildProfileDetail(
         onChange: (v) { profile.name = v; },
       )),
       // 协议
-      field(zh ? '请求方式 / 协议' : 'Protocol', SegmentedButton<String>(
-        showSelectedIcon: false,
-        segments: [
-          ButtonSegment(value: 'openai', label: Text(zh ? 'OpenAI 兼容' : 'OpenAI', style: const TextStyle(fontSize: 11))),
-          ButtonSegment(value: 'anthropic', label: Text('Anthropic', style: const TextStyle(fontSize: 11))),
+      field(zh ? '请求方式 / 协议' : 'Protocol', OptionMenuBar<String>(
+        expandable: false,
+        value: profile.provider,
+        items: [
+          OptionItem('openai', zh ? 'OpenAI 兼容' : 'OpenAI'),
+          OptionItem('anthropic', 'Anthropic'),
         ],
-        selected: {profile.provider},
-        onSelectionChanged: (v) { profile.provider = v.first; setDState(() {}); },
-        style: const ButtonStyle(visualDensity: VisualDensity.compact),
+        onChanged: (v) { profile.provider = v; setDState(() {}); },
       )),
       const SizedBox(height: 10),
       // API Key（可切换显示/隐藏）

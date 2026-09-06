@@ -146,7 +146,7 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
 
     std::string stdout_data, stderr_data;
     char buf[4096];
-    DWORD n;
+    DWORD n = 0;
 
     auto start = std::chrono::steady_clock::now();
     bool truncated = false;
@@ -154,7 +154,11 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
         DWORD avail = 0;
         PeekNamedPipe(hStdoutRead, nullptr, 0, nullptr, &avail, nullptr);
         if (avail > 0) {
-            ReadFile(hStdoutRead, buf, std::min((DWORD)sizeof(buf)-1, avail), &n, nullptr);
+            if (!ReadFile(hStdoutRead, buf, std::min((DWORD)sizeof(buf)-1, avail), &n, nullptr)) {
+                // 管道读取失败（句柄异常/进程已终止且管道损坏）：终止读取，
+                // 避免用未定义的 n 继续累积输出
+                break;
+            }
             if (stdout_data.size() + n > kMaxOutputBytes) {
                 stdout_data.append(buf, std::min<size_t>(n, kMaxOutputBytes - stdout_data.size()));
             } else {
@@ -169,7 +173,9 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
         avail = 0;
         PeekNamedPipe(hStderrRead, nullptr, 0, nullptr, &avail, nullptr);
         if (avail > 0) {
-            ReadFile(hStderrRead, buf, std::min((DWORD)sizeof(buf)-1, avail), &n, nullptr);
+            if (!ReadFile(hStderrRead, buf, std::min((DWORD)sizeof(buf)-1, avail), &n, nullptr)) {
+                break;
+            }
             if (stderr_data.size() + n > kMaxOutputBytes) {
                 stderr_data.append(buf, std::min<size_t>(n, kMaxOutputBytes - stderr_data.size()));
             } else {
@@ -182,8 +188,13 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
             }
         }
 
-        DWORD exit_code;
-        GetExitCodeProcess(pi.hProcess, &exit_code);
+        DWORD exit_code = 0;
+        if (!GetExitCodeProcess(pi.hProcess, &exit_code)) {
+            // 查询退出码失败（句柄异常等）：保守按失败退出，避免用
+            // 未初始化的 exit_code 误判进程已退出/仍在运行
+            result.exit_code = -1;
+            break;
+        }
         if (exit_code != STILL_ACTIVE) {
             result.exit_code = (int)exit_code;
             break;
@@ -194,7 +205,6 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
                 std::chrono::steady_clock::now() - start).count();
             if (elapsed >= timeout_sec) {
                 TerminateProcess(pi.hProcess, 1);
-                result.timed_out = true;
                 result.exit_code = -1;
                 break;
             }
@@ -274,7 +284,7 @@ ProcessResult Subprocess::runWithProgress(
     std::string stderr_line_buf;
     std::thread stderr_thread([hStderrRead, &on_stderr_line, &stderr_mutex, &stderr_line_buf]() {
         char buf[4096];
-        DWORD n;
+        DWORD n = 0;
         while (ReadFile(hStderrRead, buf, sizeof(buf), &n, nullptr) && n > 0) {
             size_t seg_start = 0;
             for (DWORD i = 0; i < n; ++i) {
@@ -311,7 +321,7 @@ ProcessResult Subprocess::runWithProgress(
     std::string stdout_data;
     std::thread stdout_thread([hStdoutRead, &stdout_data]() {
         char buf[4096];
-        DWORD n;
+        DWORD n = 0;
         while (ReadFile(hStdoutRead, buf, sizeof(buf), &n, nullptr) && n > 0) {
             stdout_data.append(buf, n);  // append(buf,n) 免去多余 strlen 扫描
         }
@@ -337,7 +347,6 @@ ProcessResult Subprocess::runWithProgress(
                 std::chrono::steady_clock::now() - start).count();
             if (elapsed >= timeout_sec) {
                 TerminateProcess(pi.hProcess, 1);
-                result.timed_out = true;
                 result.exit_code = -1;
                 break;
             }
@@ -375,15 +384,6 @@ ProcessResult Subprocess::runWithProgress(
 // ═══════════════════════════════════════════════
 // Linux / POSIX 实现
 // ═══════════════════════════════════════════════
-
-std::string Subprocess::vectorToCommandLine(const std::vector<std::string>& cmd) {
-    std::ostringstream oss;
-    for (size_t i = 0; i < cmd.size(); ++i) {
-        if (i > 0) oss << " ";
-        oss << cmd[i];
-    }
-    return oss.str();
-}
 
 static void closeFd(int fd) {
     if (fd >= 0) close(fd);
@@ -566,7 +566,6 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
             if (elapsed >= timeout_sec) {
                 kill(pid, SIGKILL);
                 waitpid(pid, nullptr, 0);
-                result.timed_out = true;
                 result.exit_code = -1;
                 child_exited = true;
                 break;
@@ -718,7 +717,6 @@ ProcessResult Subprocess::runWithProgress(
             if (elapsed >= timeout_sec) {
                 kill(pid, SIGKILL);
                 waitpid(pid, nullptr, 0);
-                result.timed_out = true;
                 result.exit_code = -1;
                 break;
             }

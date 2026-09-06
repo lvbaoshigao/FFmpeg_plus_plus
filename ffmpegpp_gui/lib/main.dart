@@ -156,6 +156,7 @@ void main() async {
 ///  - cardStyle（卡片）：→ 'flat'（旧消费者=纯色；加载时自动迁移为 'gray'，
 ///    新 AppCard 也按纯色渲染）
 ///  - navStyle/pillStyle（移动端菜单栏/药丸，新四值体系）：→ 'gray'
+///  - menuStyle（桌面端左侧菜单栏/顶部菜单栏，新四值体系）：→ 'gray'
 Future<void> _autoTuneGlass(AppState state) async {
   try {
     final name = await GpuInfo.detectName();
@@ -165,7 +166,8 @@ Future<void> _autoTuneGlass(AppState state) async {
     final needsCard = c.cardStyle != 'flat';
     final needsNav = c.navStyle == 'liquid' || c.navStyle == 'blur';
     final needsPill = c.pillStyle == 'liquid' || c.pillStyle == 'blur';
-    if (!needsGlass && !needsCard && !needsNav && !needsPill) return;
+    final needsMenu = c.menuStyle == 'liquid' || c.menuStyle == 'blur';
+    if (!needsGlass && !needsCard && !needsNav && !needsPill && !needsMenu) return;
     state.addLog(
         '检测到软件/基础渲染显卡（$name），已自动关闭玻璃模糊效果（改为纯色）以保证流畅，可在「设置」中重新开启',
         category: 'info');
@@ -174,6 +176,7 @@ Future<void> _autoTuneGlass(AppState state) async {
       c.cardStyle = 'flat';
       if (c.navStyle == 'liquid' || c.navStyle == 'blur') c.navStyle = 'gray';
       if (c.pillStyle == 'liquid' || c.pillStyle == 'blur') c.pillStyle = 'gray';
+      if (c.menuStyle == 'liquid' || c.menuStyle == 'blur') c.menuStyle = 'gray';
       return c;
     });
     _startupLog('autoTuneGlass: disabled glass for software GPU: $name');

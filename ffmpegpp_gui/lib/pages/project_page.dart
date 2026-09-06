@@ -1,12 +1,11 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:desktop_drop/desktop_drop.dart';
 import '../providers/app_state.dart';
 import '../models/models.dart';
-import '../services/config_export.dart';
+import '../services/fppx2_service.dart';
 import '../theme/app_strings.dart';
 import '../widgets/video_card.dart';
 import '../widgets/container_card.dart';
@@ -35,7 +34,7 @@ class ProjectPage extends StatefulWidget {
 
 class ProjectPageState extends State<ProjectPage> {
   static const _videoExts = ['mp4', 'avi', 'mkv', 'mov', 'flv', 'wmv', 'webm', 'm4v', 'mpg', 'mpeg', '3gp', 'ts', 'm2ts'];
-  static const _audioExts = ['mp3', 'wav', 'flac', 'aac', 'm4a', 'ogg', 'opus', 'wma', 'ac3'];
+  static final _audioExts = kAudioExts.toList();
   static const _imageExts = ['png', 'jpg', 'jpeg', 'bmp', 'webp', 'tiff', 'tif'];
   static final _exts = [..._videoExts, ..._audioExts, ..._imageExts];
 
@@ -654,22 +653,53 @@ class ProjectPageState extends State<ProjectPage> {
       if (mounted) showToast(context, zh ? '请选择 .fppx 文件' : 'Please select a .fppx file', type: ToastType.warning);
       return;
     }
+    final path = r.files.first.path!;
 
-    final bytes = await File(r.files.first.path!).readAsBytes().catchError((e) {
-      if (mounted) {
-        showToast(context, zh ? '无法读取配置文件: $e' : 'Cannot read config file: $e', type: ToastType.error);
+    // 新旧格式均由 C++ 端解析/校验（第 5 字节 0xFF = 新版）；未知节点需用户确认强制导入
+    final svc = FppxService(state.backend);
+    var imported = await svc.importFile(path);
+    if (!mounted) return;
+    if (imported.needsForceConfirm) {
+      final ids = imported.unknownTypeIds.join(', ');
+      final scheme = Theme.of(context).colorScheme;
+      final goOn = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(children: [
+            Icon(Icons.help_outline, size: 20, color: Colors.orange),
+            const SizedBox(width: 8),
+            Text(zh ? '发现未知节点' : 'Unknown Node Type', style: TextStyle(color: scheme.onSurface)),
+          ]),
+          content: Text(
+            zh
+                ? '程序找不到ID为$ids节点的具体含义，可能是因为版本太旧，你可以尝试强制导入，但这可能会发生意料之外的事情'
+                : 'The program cannot resolve node ID $ids (possibly created by a newer version). You can force-import, but unexpected behavior may occur.',
+            style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(s.cancel)),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(zh ? '强制导入' : 'Force Import')),
+          ],
+        ),
+      );
+      if (!mounted) return;
+      if (goOn == true) {
+        imported = await svc.importFile(path, force: true);
+        if (!mounted) return;
       }
-      return Uint8List(0);
-    });
-    if (bytes.isEmpty) return;
-    final fppx = FppxExporter.import(bytes);
+    }
 
-    if (fppx == null) {
+    if (!imported.success) {
       if (mounted) {
-        showToast(context, zh ? '无法解析配置文件（格式错误）' : 'Cannot parse config file (invalid format)', type: ToastType.error);
+        final detail = imported.errors.isNotEmpty
+            ? imported.errors.join('\n')
+            : (imported.error ?? '');
+        showToast(context, zh ? '配置加载失败: $detail' : 'Load failed: $detail', type: ToastType.error);
       }
       return;
     }
+    final fppx = _FppxView.fromImport(imported);
 
     if (!mounted) return;
     final scheme = Theme.of(context).colorScheme;
@@ -742,11 +772,23 @@ class ProjectPageState extends State<ProjectPage> {
               _infoRow(scheme, zh ? '兼容软件' : 'Compatible', fppx.softwareRangeStr),
               _infoRow(scheme, zh ? '模式' : 'Mode', fppx.isNodeEditor
                   ? (zh ? '节点编辑器' : 'Node Editor')
-                  : (zh ? '传统模式' : 'Legacy')),
+                  : (fppx.isQuick ? (zh ? '快速模式' : 'Quick Mode') : (zh ? '传统模式' : 'Legacy'))),
               if (fppx.graph != null)
                 _infoRow(scheme, zh ? '内容' : 'Content',
-                    '${fppx.graph!.nodes.length} ${zh ? '节点' : 'nodes'}, ${fppx.graph!.connections.length} ${zh ? '连线' : 'links'}'),
+                    '${fppx.graph!.nodes.length} ${zh ? '节点' : 'nodes'}, ${fppx.graph!.connections.length} ${zh ? '连线' : 'links'}')
+              else if (fppx.isQuick)
+                _infoRow(scheme, zh ? '内容' : 'Content',
+                    '${fppx.quickItems.length} ${zh ? '项参数' : 'param items'}'),
               _infoRow(scheme, zh ? '适用类型' : 'Media Type', fppx.detectedMediaLabel(zh)),
+              // 旧版（legacy 模式）配置没有节点图，无法应用到视频
+              if (fppx.showLegacyNote) ...[
+                const SizedBox(height: 8),
+                Text(
+                  zh ? '旧版配置暂不支持直接应用到视频，仅可查看信息。'
+                     : 'Legacy configs cannot be applied to videos directly.',
+                  style: TextStyle(fontSize: 12, color: scheme.outline),
+                ),
+              ],
 
               // 介绍
               if (fppx.description.isNotEmpty) ...[
@@ -808,17 +850,33 @@ class ProjectPageState extends State<ProjectPage> {
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx), child: Text(s.cancel)),
             FilledButton(
-              onPressed: (selectedVideos.isEmpty || !fppx.isCompatible) ? null : () {
+              // 无图且非快速模式的配置（旧版 legacy）无法应用到视频 → 禁用应用按钮
+              onPressed: (selectedVideos.isEmpty || !fppx.isCompatible || (fppx.graph == null && !fppx.isQuick)) ? null : () {
                 for (final vid in selectedVideos) {
+                  final video = state.videos.firstWhere((v) => v.id == vid);
                   if (fppx.graph != null) {
                     final graphCopy = fppx.graph!.copy();
-                    final video = state.videos.firstWhere((v) => v.id == vid);
                     for (final n in graphCopy.nodes) {
                       if (n.type == PipelineStepType.start) {
                         n.params['file_media_type'] = video.fileMediaType.name;
                       }
                     }
                     state.updateVideoPipeline(vid, graphCopy);
+                  } else if (fppx.isQuick) {
+                    // 快速模式：命令参数 → 生成节点图 → 应用
+                    final qc = QuickConfig(
+                      id: 'fppx_quick_import',
+                      fileType: _inferQuickFileType(fppx.quickItems),
+                      name: '',
+                      items: [for (final item in fppx.quickItems)
+                        QuickConfigItem(
+                          key: item['key'] as String? ?? '',
+                          params: (item['params'] as Map<String, dynamic>?) ?? {},
+                          enabled: item['enabled'] != false,
+                        )],
+                    );
+                    final result = buildGraphFromQuickConfig(qc, isZh: zh);
+                    state.updateVideoPipeline(vid, result.graph);
                   }
                 }
                 Navigator.pop(ctx);
@@ -1248,4 +1306,81 @@ class _QuickConfigPicker extends StatelessWidget {
       ),
     );
   }
+}
+
+/// C++ 导入结果 → 应用配置对话框所需的视图适配（保留原对话框结构，最小改动）
+class _FppxView {
+  final List<String> errors;
+  final List<String> warnings;
+  final String configVersionStr;
+  final String softwareRangeStr;
+  final String description;
+  final bool isNodeEditor;
+  final bool isQuick;
+  final bool isCompatible;
+  final PipelineGraph? graph;
+  final List<Map<String, dynamic>> quickItems;
+  final Set<MediaType> detectedMediaTypes;
+
+  const _FppxView({
+    required this.errors,
+    required this.warnings,
+    required this.configVersionStr,
+    required this.softwareRangeStr,
+    required this.description,
+    required this.isNodeEditor,
+    required this.isQuick,
+    required this.isCompatible,
+    required this.graph,
+    required this.quickItems,
+    required this.detectedMediaTypes,
+  });
+
+  factory _FppxView.fromImport(FppxImportResult r) {
+    final graph = r.graph;
+    final types = <MediaType>{};
+    if (graph != null) {
+      for (final n in graph.nodes) {
+        if (n.type == PipelineStepType.start || n.type == PipelineStepType.output) continue;
+        types.addAll(n.inputTypes);
+      }
+    }
+    final isV2 = r.isNewFormat;
+    return _FppxView(
+      errors: r.errors,
+      warnings: r.warnings,
+      configVersionStr: isV2 ? 'v2 (新版)' : 'v1.2 (旧版)',
+      softwareRangeStr: isV2 ? '不依赖版本号（模块化自描述）' : 'v3.x ~ v5.x',
+      description: r.description,
+      isNodeEditor: r.mode == FppxService.modeNodeEditor && graph != null,
+      isQuick: r.mode == FppxService.modeQuick,
+      // C++ 端校验通过（errors 为空）即可应用；旧版软件版本区间检查也在其中
+      isCompatible: r.success && r.errors.isEmpty,
+      graph: graph,
+      quickItems: r.quickItems,
+      detectedMediaTypes: types,
+    );
+  }
+
+  /// 旧版 legacy 模式（非节点、非快速）只可查看信息
+  bool get showLegacyNote => !isNodeEditor && !isQuick;
+
+  String detectedMediaLabel(bool isZh) {
+    if (detectedMediaTypes.isEmpty) return isZh ? '通用' : 'Generic';
+    return detectedMediaTypes.map((t) => switch (t) {
+      MediaType.video => isZh ? '视频' : 'Video',
+      MediaType.image => isZh ? '图片' : 'Image',
+      MediaType.audio => isZh ? '音频' : 'Audio',
+    }).join(' / ');
+  }
+}
+
+/// 根据快速参数 key 推断媒体类型（0x02 文件不存文件类型）
+QuickFileType _inferQuickFileType(List<Map<String, dynamic>> items) {
+  final keys = items.map((e) => e['key'] as String? ?? '').toSet();
+  if (keys.contains('resize')) return QuickFileType.image;
+  if (keys.intersection({'channels', 'normalize', 'sample_rate'}).isNotEmpty) {
+    return QuickFileType.audio;
+  }
+  return QuickFileType.video;
 }

@@ -38,11 +38,13 @@ class _SidebarState extends State<Sidebar> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final lang = context.watch<AppState>().config.language;
+    final lang = context.select<AppState, String>((s) => s.config.language);
     final s = AppStrings.of(lang);
+    // 菜单样式（跟随主题 / 液态玻璃 / 模糊 / 灰色）——设置→外观→菜单样式
+    final menuStyle = context.select<AppState, String>((st) => st.config.menuStyle);
     final clr = scheme.onSurfaceVariant;
 
-    final debug = context.watch<AppState>().config.debugMode;
+    final debug = context.select<AppState, bool>((s) => s.config.debugMode);
     final items = <(IconData, String)>[
       (Icons.movie_outlined, s.navProjects),
       (Icons.list_alt_outlined, s.navQueue),
@@ -65,6 +67,7 @@ class _SidebarState extends State<Sidebar> {
       width: _collapsed ? _collapsedWidth : _expandedWidth,
       child: GlassPanel(
         radius: 20,
+        style: menuStyle,
         // 侧边栏是全窗口最高的玻璃面板，模糊半径对内存影响最大；
         // 12 与 18 的视觉差异很小，但离屏纹理面积明显更小
         blur: 12,
@@ -245,7 +248,7 @@ class _SidebarState extends State<Sidebar> {
   }
 
   Widget _status(ColorScheme scheme, Color clr, AppStrings s, String lang) {
-    final running = context.watch<AppState>().pythonProcess.isRunning;
+    final running = context.select<AppState, bool>((s) => s.pythonProcess.isRunning);
     final label = running ? s.backendConnected : (lang == 'zh' ? '后端已断开' : 'Backend disconnected');
     final dot = Container(
       width: 8,

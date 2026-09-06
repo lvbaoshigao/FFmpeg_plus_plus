@@ -18,6 +18,15 @@ enum MediaType { video, image, audio }
 
 const kImageExts = {'png', 'jpg', 'jpeg', 'bmp', 'webp', 'tiff', 'tif'};
 
+const kAudioExts = {'mp3', 'wav', 'flac', 'aac', 'm4a', 'ogg', 'opus', 'wma', 'ac3'};
+
+MediaType detectMediaType(String filepath) {
+  final ext = filepath.split('.').last.toLowerCase();
+  if (kImageExts.contains(ext)) return MediaType.image;
+  if (kAudioExts.contains(ext)) return MediaType.audio;
+  return MediaType.video;
+}
+
 String formatFileSize(double sizeMb) {
   if (sizeMb >= 1000) return '${(sizeMb / 1024).toStringAsFixed(2)} GB';
   if (sizeMb >= 0.1) return '${sizeMb.toStringAsFixed(1)} MB';
@@ -57,6 +66,9 @@ enum PipelineStepType {
   imageChannelExtract,
   videoCrop,
   output,
+  /// 新版 .fppx 强制导入的未知类型节点：真实类型 ID 存 [PipelineNode.unknownTypeId]，
+  /// 仅可编辑/保存/原样导出，不参与转码执行。
+  unknown,
 }
 
 class PipelineStep {
@@ -97,6 +109,7 @@ class PipelineStep {
       case PipelineStepType.imageChannelExtract: return '通道提取';
       case PipelineStepType.videoCrop: return '视频裁剪';
       case PipelineStepType.output: return '输出';
+      case PipelineStepType.unknown: return '未知节点';
     }
   }
 
@@ -128,6 +141,7 @@ class PipelineStep {
       case PipelineStepType.imageChannelExtract: return 'Channel Extract';
       case PipelineStepType.videoCrop: return 'Video Crop';
       case PipelineStepType.output: return 'Output';
+      case PipelineStepType.unknown: return 'Unknown';
     }
   }
 }
@@ -182,15 +196,18 @@ class PipelineNode {
   /// 逻辑门类型名（null 表示普通媒体处理节点）。逻辑门是控制流节点，
   /// 只通过控制连线连接"使能端/状态端"，不参与媒体数据流。
   String? gateType;
+  /// 新版 .fppx 强制导入时保留的原始 16B 节点类型 ID（十进制）。
+  /// 仅 [PipelineStepType.unknown] 节点携带；原样导出以保住往返。
+  int? unknownTypeId;
 
   PipelineNode({
     required this.id, required this.type, Map<String, dynamic>? params,
-    this.x = 0, this.y = 0, this.gateType,
+    this.x = 0, this.y = 0, this.gateType, this.unknownTypeId,
   }) : params = params ?? {};
 
   PipelineNode copy() => PipelineNode(
     id: _uuid.v4(), type: type, params: Map.of(params),
-    x: x, y: y, gateType: gateType,
+    x: x, y: y, gateType: gateType, unknownTypeId: unknownTypeId,
   );
 
   /// 是否为逻辑门节点（控制流节点）
@@ -207,15 +224,17 @@ class PipelineNode {
   Map<String, dynamic> toJson() => {
     'id': id, 'type': type.name, 'params': params, 'x': x, 'y': y,
     if (gateType != null) 'gate': gateType,
+    if (unknownTypeId != null) 'type_id': unknownTypeId,
   };
 
   factory PipelineNode.fromJson(Map<String, dynamic> json) => PipelineNode(
     id: json['id'] as String? ?? _uuid.v4(),
-    type: PipelineStepType.values.firstWhere((t) => t.name == json['type'], orElse: () => PipelineStepType.start),
+    type: PipelineStepType.values.firstWhere((t) => t.name == json['type'], orElse: () => PipelineStepType.unknown),
     params: (json['params'] as Map<String, dynamic>?) ?? {},
     x: (json['x'] as num?)?.toDouble() ?? 0,
     y: (json['y'] as num?)?.toDouble() ?? 0,
     gateType: (json['gate'] as String?) ?? (json['gateType'] as String?),
+    unknownTypeId: (json['type_id'] as num?)?.toInt(),
   );
 
   String get label {
@@ -246,6 +265,8 @@ class PipelineNode {
       case PipelineStepType.imageChannelExtract: return '通道提取';
       case PipelineStepType.videoCrop: return '视频裁剪';
       case PipelineStepType.output: return '输出';
+      case PipelineStepType.unknown:
+        return '未知节点${unknownTypeId == null ? '' : ' $unknownTypeId'}';
     }
   }
 
@@ -277,6 +298,7 @@ class PipelineNode {
       case PipelineStepType.imageChannelExtract: return 'Channel Extract';
       case PipelineStepType.videoCrop: return 'Video Crop';
       case PipelineStepType.output: return 'Output';
+      case PipelineStepType.unknown: return 'Unknown';
     }
   }
 
@@ -310,6 +332,7 @@ class PipelineNode {
     PipelineStepType.imageChannelExtract => {MediaType.image},
     PipelineStepType.videoCrop => {MediaType.video},
     PipelineStepType.output => {MediaType.video, MediaType.image, MediaType.audio},
+    PipelineStepType.unknown => {},
   };
 
   MediaType? get outputType => switch (type) {
@@ -341,6 +364,7 @@ class PipelineNode {
     PipelineStepType.imageChannelExtract => MediaType.image,
     PipelineStepType.videoCrop => MediaType.video,
     PipelineStepType.output => null,
+    PipelineStepType.unknown => null,
   };
 
   String get mediaTag {
@@ -370,8 +394,8 @@ class PipelineConnection {
 
   factory PipelineConnection.fromJson(Map<String, dynamic> json) => PipelineConnection(
     id: json['id'] as String? ?? _uuid.v4(),
-    fromNodeId: json['from'] as String,
-    toNodeId: json['to'] as String,
+    fromNodeId: json['from'] as String? ?? '',
+    toNodeId: json['to'] as String? ?? '',
     kind: (json['kind'] as String?) ?? 'data',
   );
 }
@@ -480,38 +504,6 @@ class PipelineGraph {
 
 enum PipelineMode { merged, sequential }
 
-// ═══════════════════════════════════════════
-// JSON 协议消息
-// ═══════════════════════════════════════════
-
-class JsonRequest {
-  final String id;
-  final String action;
-  final Map<String, dynamic>? params;
-  JsonRequest({required this.id, required this.action, this.params});
-
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        'action': action,
-        if (params != null) 'params': params,
-      };
-}
-
-class JsonResponse {
-  final String id;
-  final bool success;
-  final Map<String, dynamic>? data;
-  final String? error;
-  JsonResponse({required this.id, required this.success, this.data, this.error});
-
-  factory JsonResponse.fromJson(Map<String, dynamic> json) => JsonResponse(
-        id: json['id'] as String,
-        success: json['success'] as bool,
-        data: json['data'] as Map<String, dynamic>?,
-        error: json['error'] as String?,
-      );
-}
-
 class ProgressUpdate {
   final String taskId;
   final double progress;
@@ -617,13 +609,7 @@ class VideoFile {
         fileMediaType: fileMediaType ?? this.fileMediaType,
       );
 
-  static MediaType _detectMediaType(String filepath) {
-    final ext = filepath.split('.').last.toLowerCase();
-    const audioExts = {'mp3', 'wav', 'flac', 'aac', 'm4a', 'ogg', 'opus', 'wma', 'ac3'};
-    if (kImageExts.contains(ext)) return MediaType.image;
-    if (audioExts.contains(ext)) return MediaType.audio;
-    return MediaType.video;
-  }
+  static MediaType _detectMediaType(String filepath) => detectMediaType(filepath);
 
   factory VideoFile.fromFilepath(String filepath, {String? id}) => VideoFile(
         id: id ?? _uuid.v4(), filepath: filepath,
@@ -1148,6 +1134,9 @@ class AppConfig {
   String navStyle;
   // 移动端顶部药丸样式：与 cardStyle 同四值
   String pillStyle;
+  // 桌面端菜单样式（左侧菜单栏 + 各页顶部菜单栏）：与 cardStyle 同四值。
+  // 仅桌面端生效；移动端没有侧边栏/玻璃顶栏。
+  String menuStyle;
   // 遵循主题色：true 时玻璃/卡片底色使用主题色而非 surface 灰
   bool glassFollowTheme;
   /// 设置项以毛玻璃展示（仅「液态玻璃」生效时可开启，提升列表可读性）
@@ -1161,8 +1150,9 @@ class AppConfig {
   bool saveLogs;
   bool enableSystemNotification;
   String logSavePath;
-  bool useNodeEditor;
-  int editMode = 0; // 0=node editor, 1=quick mode, 2=traditional
+  /// 默认编辑方式：0 = 节点编辑器，1 = 快速模式。
+  /// （传统表单模式已彻底移除；旧配置中的 2 在 fromJson 迁移为 0）
+  int editMode = 0;
   /// 移动端节点编辑器默认横屏（竖屏 = false，横屏 = true）
   bool useNodeEditorLandscape;
   /// 移动端画布编辑器：顶部菜单栏(药丸)缩放系数（0.7~1.6，默认 1.0）
@@ -1249,12 +1239,12 @@ class AppConfig {
     this.cardStyle = 'liquid',
     this.navStyle = 'liquid',
     this.pillStyle = 'liquid',
+    this.menuStyle = 'liquid',
     this.glassFollowTheme = false,
     this.settingsFrostedGlass = false,
     this.noCardGlass = false,
     this.gateStd = 'ansi',
     this.debugMode = false, this.saveLogs = false, this.enableSystemNotification = false, this.logSavePath = '',
-    this.useNodeEditor = true,
     this.editMode = 0,
     this.useNodeEditorLandscape = false,
     this.editorToolbarScale = 1.0,
@@ -1351,6 +1341,7 @@ class AppConfig {
         cardStyle: _migrateSurfaceStyle(json['card_style'] as String?),
         navStyle: _migrateSurfaceStyle(json['nav_style'] as String?),
         pillStyle: _migrateSurfaceStyle(json['pill_style'] as String?),
+        menuStyle: _migrateSurfaceStyle(json['menu_style'] as String? ?? 'liquid'),
         glassFollowTheme: json['glass_follow_theme'] as bool? ?? false,
         settingsFrostedGlass: json['settings_frosted_glass'] as bool? ?? false,
         noCardGlass: json['no_card_glass'] as bool? ?? false,
@@ -1361,8 +1352,8 @@ class AppConfig {
         saveLogs: json['save_logs'] as bool? ?? false,
         enableSystemNotification: json['enable_system_notification'] as bool? ?? false,
         logSavePath: json['log_save_path'] as String? ?? '',
-        useNodeEditor: json['use_node_editor'] as bool? ?? true,
-        editMode: json['edit_mode'] as int? ?? (json['use_node_editor'] as bool? ?? true ? 0 : 2),
+        // 传统模式（旧值 2）已移除：自动迁移为节点编辑器
+        editMode: (json['edit_mode'] as int?) == 2 ? 0 : (json['edit_mode'] as int? ?? 0),
         useNodeEditorLandscape: json['use_node_editor_landscape'] as bool? ?? false,
         editorToolbarScale: (json['editor_toolbar_scale'] as num?)?.toDouble() ?? 1.0,
         editorZoomScale: (json['editor_zoom_scale'] as num?)?.toDouble() ?? 1.0,
@@ -1413,13 +1404,13 @@ class AppConfig {
         'background_image': backgroundImage, 'background_opacity': backgroundOpacity,
         'glass_effect': glassEffect,
         'card_style': cardStyle, 'nav_style': navStyle, 'pill_style': pillStyle,
+        'menu_style': menuStyle,
         'glass_follow_theme': glassFollowTheme,
         'settings_frosted_glass': settingsFrostedGlass, 'no_card_glass': noCardGlass, 'gate_std': gateStd,
         'card_opacity': cardOpacity,
         'canvas_bg': canvasBg,
         'debug_mode': debugMode,
         'save_logs': saveLogs, 'enable_system_notification': enableSystemNotification, 'log_save_path': logSavePath,
-        'use_node_editor': useNodeEditor,
         'edit_mode': editMode,
         'use_node_editor_landscape': useNodeEditorLandscape,
         'editor_toolbar_scale': editorToolbarScale,

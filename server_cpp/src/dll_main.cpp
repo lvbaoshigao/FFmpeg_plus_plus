@@ -189,14 +189,23 @@ FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
             JsonWriter::reply(req.value("id", ""), true, {{"message", "paths updated"}});
             return 0;
         }
-        if (action == "probe" || action == "check_env" || action == "query_ffmpeg_features") {
+        if (action == "probe" || action == "check_env" || action == "query_ffmpeg_features" ||
+            action == "fppx_import" ||
+            action == "fppx2_import" || action == "fppx2_export" ||
+            action == "fppx_legacy_import" || action == "fppx_legacy_export") {
             // 捕获 lambda 内的异常，避免线程内未捕获导致程序终止
             try {
                 spawnAuxThread([req]() {
                     try {
-                        if (req.value("action", "") == "probe") handleProbe(req);
-                        else if (req.value("action", "") == "check_env") handleCheckEnv(req);
-                        else handleQueryFeatures(req);
+                        const std::string act = req.value("action", "");
+                        if (act == "probe") handleProbe(req);
+                        else if (act == "check_env") handleCheckEnv(req);
+                        else if (act == "query_ffmpeg_features") handleQueryFeatures(req);
+                        else if (act == "fppx_import") handleFppxImport(req);
+                        else if (act == "fppx2_import") handleFppx2Import(req);
+                        else if (act == "fppx2_export") handleFppx2Export(req);
+                        else if (act == "fppx_legacy_import") handleFppxLegacyImport(req);
+                        else handleFppxLegacyExport(req);
                     } catch (const std::exception& e) {
                         slog("aux thread exception: %s", e.what());
                         JsonWriter::reply(req.value("id", ""), false, nullptr, std::string("服务器异常: ") + e.what());

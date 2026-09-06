@@ -11,6 +11,7 @@
 #include "ffmpeg_features.h"
 #include "constants.h"
 #include "parser.h"
+#include "fppx2.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -39,6 +40,11 @@ std::filesystem::path u8path(const std::string& s) {
 #else
     return std::filesystem::path(s);
 #endif
+}
+
+// 提取请求参数对象：缺失或非 object 时回退为空对象
+json getParams(const json& req) {
+    return (req.contains("params") && req["params"].is_object()) ? req["params"] : json::object();
 }
 
 // 源文件是 10-bit 时，检查构建出的命令是否实际输出 10-bit（-pix_fmt 值为 10le/p010）。
@@ -262,7 +268,7 @@ void handleCheckEnv(const json& req) {
 }
 
 void handleProbe(const json& req) {
-    json params = (req.contains("params") && req["params"].is_object()) ? req["params"] : json::object();
+    json params = getParams(req);
     std::string filepath = params.value("filepath", "");
     if (!isPathSafe(filepath)) {
         JsonWriter::reply(req["id"], false, nullptr, "路径包含不安全字符");
@@ -400,7 +406,7 @@ void runFFmpegProcess(const std::string& task_id,
 }
 
 void handleTranscode(const json& req, std::atomic<bool>& cancel_flag) {
-    json params = (req.contains("params") && req["params"].is_object()) ? req["params"] : json::object();
+    json params = getParams(req);
     std::string input = params.value("input", "");
     std::string output = params.value("output", "");
     json options = params.value("options", json::object());
@@ -440,7 +446,7 @@ void handleTranscode(const json& req, std::atomic<bool>& cancel_flag) {
 }
 
 void handleSubtitle(const json& req, std::atomic<bool>& cancel_flag) {
-    json params = (req.contains("params") && req["params"].is_object()) ? req["params"] : json::object();
+    json params = getParams(req);
     std::string input = params.value("input", "");
     std::string output = params.value("output", "");
     json sub_opts = params.value("subtitle_options", json::object());
@@ -481,7 +487,7 @@ void handleSubtitle(const json& req, std::atomic<bool>& cancel_flag) {
 }
 
 void handleExtractFrame(const json& req) {
-    json params = (req.contains("params") && req["params"].is_object()) ? req["params"] : json::object();
+    json params = getParams(req);
     std::string input = params.value("input", "");
     std::string output = params.value("output", "");
     double time = params.value("time", 0.0);
@@ -735,7 +741,7 @@ void handleImageSequence(const json& req, std::atomic<bool>& cancel_flag) {
 // ═══════════════════════════════════════════
 
 void handleCustomCommand(const json& req, std::atomic<bool>& cancel_flag) {
-    json params = (req.contains("params") && req["params"].is_object()) ? req["params"] : json::object();
+    json params = getParams(req);
     std::string command = params.value("command", "");
     std::string output_path = params.value("output", "");
 
@@ -762,6 +768,65 @@ void handleCustomCommand(const json& req, std::atomic<bool>& cancel_flag) {
 
     slog("handleCustomCommand: %s", command.c_str());
     runFFmpegProcess(req["id"], tokens, cancel_flag, output_path);
+}
+
+// ── FPPX 配置文件（无论成败都把 errors/warnings 结构化带回，GUI 据此弹窗）──
+
+void handleFppxImport(const json& req) {
+    json params = getParams(req);
+    std::string path = params.value("path", "");
+    bool force = params.value("force", false);
+    if (path.empty()) {
+        JsonWriter::reply(req.value("id", ""), false, nullptr, "缺少文件路径 path");
+        return;
+    }
+    Fppx2Result res = fppxAutoImport(path, force);
+    std::string first = res.errors.empty() ? "" : res.errors.front();
+    JsonWriter::reply(req.value("id", ""), res.success, res.toJson(),
+                      first.empty() ? std::string("") : first);
+}
+
+void handleFppx2Import(const json& req) {
+    json params = getParams(req);
+    std::string path = params.value("path", "");
+    bool force = params.value("force", false);
+    if (path.empty()) {
+        JsonWriter::reply(req.value("id", ""), false, nullptr, "缺少文件路径 path");
+        return;
+    }
+    Fppx2Result res = fppx2Import(path, force);
+    std::string first = res.errors.empty() ? "" : res.errors.front();
+    JsonWriter::reply(req.value("id", ""), res.success, res.toJson(),
+                      first.empty() ? std::string("") : first);
+}
+
+void handleFppx2Export(const json& req) {
+    json params = getParams(req);
+    Fppx2Result res = fppx2Export(params);
+    std::string first = res.errors.empty() ? "" : res.errors.front();
+    JsonWriter::reply(req.value("id", ""), res.success, res.toJson(),
+                      first.empty() ? std::string("") : first);
+}
+
+void handleFppxLegacyImport(const json& req) {
+    json params = getParams(req);
+    std::string path = params.value("path", "");
+    if (path.empty()) {
+        JsonWriter::reply(req.value("id", ""), false, nullptr, "缺少文件路径 path");
+        return;
+    }
+    Fppx2Result res = fppxLegacyImport(path);
+    std::string first = res.errors.empty() ? "" : res.errors.front();
+    JsonWriter::reply(req.value("id", ""), res.success, res.toJson(),
+                      first.empty() ? std::string("") : first);
+}
+
+void handleFppxLegacyExport(const json& req) {
+    json params = getParams(req);
+    Fppx2Result res = fppxLegacyExport(params);
+    std::string first = res.errors.empty() ? "" : res.errors.front();
+    JsonWriter::reply(req.value("id", ""), res.success, res.toJson(),
+                      first.empty() ? std::string("") : first);
 }
 
 } // namespace ffmpegpp

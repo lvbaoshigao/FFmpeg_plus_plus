@@ -1,32 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'editor_kit.dart';
 
-class SpeedStepEditor extends StatefulWidget {
-  final Map<String, dynamic> params;
-  final VoidCallback onChanged;
-  final bool isZh;
-
-  const SpeedStepEditor({
-    super.key,
-    required this.params,
-    required this.onChanged,
-    this.isZh = true,
-  });
+class SpeedStepEditor extends ParamsStepEditor {
+  const SpeedStepEditor({super.key, required super.params, required super.onChanged, super.isZh = true});
 
   @override
   State<SpeedStepEditor> createState() => _SpeedStepEditorState();
 }
 
-class _SpeedStepEditorState extends State<SpeedStepEditor> {
-  Map<String, dynamic> get p => widget.params;
+class _SpeedStepEditorState extends State<SpeedStepEditor> with StepEditorState<SpeedStepEditor> {
   late TextEditingController _customCtrl;
 
   @override
   void initState() {
     super.initState();
-    p.putIfAbsent('speed', () => 1.0);
-    p.putIfAbsent('custom_speed', () => false);
-    p.putIfAbsent('custom_speed_value', () => 10.0);
+    initDefaults(const {'speed': 1.0, 'custom_speed': false, 'custom_speed_value': 10.0});
     _customCtrl = TextEditingController(
       text: (p['custom_speed_value'] as num?)?.toStringAsFixed(1) ?? '10.0',
     );
@@ -38,27 +27,19 @@ class _SpeedStepEditorState extends State<SpeedStepEditor> {
     super.dispose();
   }
 
-  void _update(String key, dynamic value) {
-    setState(() => p[key] = value);
-    widget.onChanged();
-  }
-
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final zh = widget.isZh;
     final isCustom = p['custom_speed'] as bool? ?? false;
     final speed = isCustom
         ? (p['custom_speed_value'] as num?)?.toDouble() ?? 10.0
         : (p['speed'] as num?)?.toDouble() ?? 1.0;
 
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(zh ? '播放速度' : 'Playback Speed',
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        const SizedBox(height: 8),
-
+    return StepEditorScaffold(
+      title: zh ? '播放速度' : 'Playback Speed',
+      infoText: zh ? '变速处理需要重新编码，不支持流复制。\n视频使用 setpts 滤镜，音频使用 atempo 滤镜。\n高倍速会导致文件体积增大。'
+                   : 'Speed change requires re-encoding.\nVideo uses setpts filter, audio uses atempo filter.\nHigh speed increases file size.',
+      children: [
         // Speed display
         Center(child: Text(
           speed == speed.roundToDouble() ? '${speed.toStringAsFixed(1)}x' : '${speed.toStringAsFixed(2)}x',
@@ -82,7 +63,7 @@ class _SpeedStepEditorState extends State<SpeedStepEditor> {
           Switch(
             value: isCustom,
             onChanged: (v) {
-              _update('custom_speed', v);
+              update('custom_speed', v);
               if (v) {
                 _customCtrl.text = (p['custom_speed_value'] as num?)?.toStringAsFixed(1) ?? '10.0';
               }
@@ -110,7 +91,7 @@ class _SpeedStepEditorState extends State<SpeedStepEditor> {
               onChanged: (v) {
                 final parsed = double.tryParse(v);
                 if (parsed != null && parsed > 0) {
-                  _update('custom_speed_value', parsed);
+                  update('custom_speed_value', parsed);
                 }
               },
             )),
@@ -135,7 +116,7 @@ class _SpeedStepEditorState extends State<SpeedStepEditor> {
               max: 4.0,
               divisions: 75,
               label: '${speed.toStringAsFixed(2)}x',
-              onChanged: (v) => _update('speed', double.parse(v.toStringAsFixed(2))),
+              onChanged: (v) => update('speed', double.parse(v.toStringAsFixed(2))),
             )),
             Text('4.0x', style: TextStyle(fontSize: 10, color: cs.outline)),
           ]),
@@ -147,26 +128,7 @@ class _SpeedStepEditorState extends State<SpeedStepEditor> {
               _presetChip(cs, preset, speed),
           ]),
         ],
-        const SizedBox(height: 8),
-
-        // Info
-        Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: cs.surfaceContainerHighest.withAlpha(60),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Icon(Icons.info_outline, size: 14, color: cs.outline),
-            const SizedBox(width: 8),
-            Expanded(child: Text(
-              zh ? '变速处理需要重新编码，不支持流复制。\n视频使用 setpts 滤镜，音频使用 atempo 滤镜。\n高倍速会导致文件体积增大。'
-                 : 'Speed change requires re-encoding.\nVideo uses setpts filter, audio uses atempo filter.\nHigh speed increases file size.',
-              style: TextStyle(fontSize: 11, color: cs.outline, height: 1.4),
-            )),
-          ]),
-        ),
-      ]),
+      ],
     );
   }
 
@@ -176,7 +138,7 @@ class _SpeedStepEditorState extends State<SpeedStepEditor> {
       label: Text('${preset}x', style: TextStyle(fontSize: 12,
           fontWeight: selected ? FontWeight.w600 : FontWeight.w400)),
       selected: selected,
-      onSelected: (_) => _update('speed', preset),
+      onSelected: (_) => update('speed', preset),
       visualDensity: VisualDensity.compact,
     );
   }
@@ -188,7 +150,7 @@ class _SpeedStepEditorState extends State<SpeedStepEditor> {
           fontWeight: selected ? FontWeight.w600 : FontWeight.w400)),
       selected: selected,
       onSelected: (_) {
-        _update('custom_speed_value', preset);
+        update('custom_speed_value', preset);
         _customCtrl.text = preset.toStringAsFixed(1);
       },
       visualDensity: VisualDensity.compact,

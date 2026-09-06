@@ -3,38 +3,35 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import '../../services/frame_preview.dart';
+import 'editor_kit.dart';
 
-class ClipStepEditor extends StatefulWidget {
-  final Map<String, dynamic> params;
-  final VoidCallback onChanged;
+class ClipStepEditor extends ParamsStepEditor {
   final String videoPath;
   final double videoDuration;
-  final bool isZh;
 
   const ClipStepEditor({
     super.key,
-    required this.params,
-    required this.onChanged,
+    required super.params,
+    required super.onChanged,
     required this.videoPath,
     required this.videoDuration,
-    this.isZh = true,
+    super.isZh = true,
   });
 
   @override
   State<ClipStepEditor> createState() => _ClipStepEditorState();
 }
 
-class _ClipStepEditorState extends State<ClipStepEditor> {
+class _ClipStepEditorState extends State<ClipStepEditor> with StepEditorState<ClipStepEditor> {
   late TextEditingController _startCtrl;
   late TextEditingController _endCtrl;
   String? _previewPath;
   Timer? _debounceTimer;
 
-  Map<String, dynamic> get p => widget.params;
-
   @override
   void initState() {
     super.initState();
+    // end_time 默认值依赖 videoDuration，保持原 putIfAbsent 写法
     p.putIfAbsent('start_time', () => 0.0);
     p.putIfAbsent('end_time', () => widget.videoDuration);
     _startCtrl = TextEditingController(text: _formatTime((p['start_time'] as num?)?.toDouble() ?? 0.0));

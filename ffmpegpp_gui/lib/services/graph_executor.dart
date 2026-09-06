@@ -35,6 +35,14 @@ class GraphExecutor {
     final dataConns = graph.connections.where((c) => c.kind == 'data').toList();
     final controlConns = graph.connections.where((c) => c.kind == 'control').toList();
 
+    // 未知节点（新版 .fppx 强制导入的占位类型）无法翻译成 ffmpeg 步骤，
+    // 阻止执行但允许编辑/保存/原样导出
+    final unknownNodes = graph.nodes.where((n) => n.type == PipelineStepType.unknown).toList();
+    for (final node in unknownNodes) {
+      errors.add('程序找不到ID为${node.unknownTypeId ?? '?'}节点的具体含义，无法执行转码'
+          '（可以保存或导出该配置，但不能用于任务）');
+    }
+
     if (startNodes.isEmpty) errors.add('缺少源文件节点');
     if (outputNodes.isEmpty) errors.add('缺少输出节点');
 

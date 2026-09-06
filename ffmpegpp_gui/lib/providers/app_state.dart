@@ -24,12 +24,10 @@ class AppState extends ChangeNotifier {
 
   void Function(String filename, TaskStatus status)? onTaskFinished;
 
-  bool _envChecked = false, _envOk = false;
-  String _ffmpegVersion = '', _initError = '';
-  bool get envChecked => _envChecked;
+  bool _envOk = false;
+  String _ffmpegVersion = '';
   bool get envOk => _envOk;
   String get ffmpegVersion => _ffmpegVersion;
-  String get initError => _initError;
 
   final List<VideoFile> _videos = [];
   List<VideoFile> get videos => List.unmodifiable(_videos);
@@ -179,7 +177,6 @@ class AppState extends ChangeNotifier {
   // ── FFmpeg features ──
   Map<String, List<String>> _ffmpegFeatures = {};
   Map<String, List<String>> get ffmpegFeatures => _ffmpegFeatures;
-  bool get featuresDetected => _ffmpegFeatures.isNotEmpty;
   Future<void> queryFeatures() async {
     addLog('正在查询 FFmpeg 支持的功能...', category: 'info');
     final resp = await backend.queryFeatures();
@@ -219,21 +216,20 @@ class AppState extends ChangeNotifier {
       debugPrint('[init] 4-pythonProcess.start done, isRunning=${pythonProcess.isRunning}');
     } catch (e) {
       debugPrint('[init] 4-ERROR: $e');
-      _initError = 'Python backend failed: $e';
-      _envChecked = true; _envOk = false; _initialized = true; notifyListeners(); return;
+      _envOk = false; _initialized = true; notifyListeners(); return;
     }
     try {
       debugPrint('[init] 5-waiting for ready...');
       final ready = await pythonProcess.waitForReady(timeout: const Duration(seconds: 30));
       debugPrint('[init] 6-ready result: ${ready['type']}');
       if (ready['type'] != 'ready') {
-        _initError = 'Backend not ready'; _envChecked = true; _envOk = false; _initialized = true; notifyListeners(); return;
+        _envOk = false; _initialized = true; notifyListeners(); return;
       }
     } catch (e) {
       debugPrint('[init] 6-ERROR: $e');
-      _initError = 'Backend start failed: $e'; _envChecked = true; _envOk = false; _initialized = true; notifyListeners(); return;
+      _envOk = false; _initialized = true; notifyListeners(); return;
     }
-    _envChecked = false; _envOk = false;
+    _envOk = false;
     notifyListeners();
     debugPrint('[init] 7-setup log listeners');
     _setupLogListeners();
@@ -777,7 +773,7 @@ class AppState extends ChangeNotifier {
   Future<void> addContainerFromFolder(String dirPath) async {
     final dir = Directory(dirPath);
     if (!dir.existsSync()) return;
-    final exts = {...kImageExts, 'mp4', 'mkv', 'mov', 'avi', 'webm', 'flv', 'wmv', 'ts', 'mpg', 'mpeg', 'm4v', '3gp', 'mp3', 'wav', 'flac', 'aac', 'm4a', 'ogg', 'opus', 'wma', 'ac3'};
+    final exts = {...kImageExts, 'mp4', 'mkv', 'mov', 'avi', 'webm', 'flv', 'wmv', 'ts', 'mpg', 'mpeg', 'm4v', '3gp', ...kAudioExts};
     final files = dir.listSync().whereType<File>().where((f) {
       final ext = f.path.split('.').last.toLowerCase();
       return exts.contains(ext);
@@ -875,19 +871,6 @@ class AppState extends ChangeNotifier {
     final idx = _containers.indexWhere((c) => c.id == containerId);
     if (idx < 0) return;
     _containers[idx].name = newName;
-    notifyListeners();
-  }
-
-  void reorderContainerItem(String containerId, int oldIdx, int newIdx) {
-    final idx = _containers.indexWhere((c) => c.id == containerId);
-    if (idx < 0) return;
-    final container = _containers[idx];
-    final sorted = container.sortedItems;
-    if (oldIdx < 0 || oldIdx >= sorted.length || newIdx < 0 || newIdx >= sorted.length) return;
-    final item = sorted.removeAt(oldIdx);
-    sorted.insert(newIdx, item);
-    container.items = sorted;
-    container.reindex();
     notifyListeners();
   }
 
@@ -1136,6 +1119,13 @@ class AppState extends ChangeNotifier {
 
   void processAllTasks() { _cancelRequested = false; processNextTask(); }
 
+  /// 仅测试用：直接注入任务实例（模拟 pending/failed/流水线任务进队列页）。
+  @visibleForTesting
+  void addTaskForTest(TaskInfo task) {
+    _tasks.add(task);
+    _tasksNotify();
+  }
+
   Future<void> processNextTask() async {
     if (_cancelRequested) return;
     final limit = config.maxConcurrentTasks == 0 ? 999 : config.maxConcurrentTasks;
@@ -1181,12 +1171,32 @@ class AppState extends ChangeNotifier {
   Future<void> _runTask(TaskInfo task) async {
     final pi = _tasks.indexWhere((t) => t.id == task.id);
     if (pi < 0) return;
+    _ensureOutputDir(task.outputPath);
     if (task.pipelineCalls != null && task.pipelineCalls!.isNotEmpty) {
       await _processPipelineTask(task.id);
     } else if (task.command != null && task.command!.isNotEmpty) {
       await _processCustomCommand(task.id, task);
     } else {
       await _processLegacyTask(task.id, task);
+    }
+  }
+
+  /// 任务开始前确保输出目录存在：输出节点允许用户填一个尚不存在的目录
+  ///（如 Android 的 /storage/emulated/0/Download/新目录），ffmpeg 会因
+  /// 「No such file or directory」直接开输出文件失败。创建失败不拦任务，
+  /// 让后端给出原始错误（多半是权限问题）。
+  void _ensureOutputDir(String outputPath) {
+    if (outputPath.isEmpty) return;
+    final iSlash = outputPath.lastIndexOf('/');
+    final iBack = outputPath.lastIndexOf('\\');
+    final sepAt = iSlash > iBack ? iSlash : iBack;
+    if (sepAt <= 0) return;
+    try {
+      final dir = Directory(outputPath.substring(0, sepAt));
+      if (!dir.existsSync()) dir.createSync(recursive: true);
+      addLog('输出目录已就绪: ${dir.path}', category: 'info');
+    } catch (e) {
+      addLog('输出目录创建失败（继续尝试处理）: $e', category: 'warn');
     }
   }
 
@@ -2442,7 +2452,7 @@ class AppState extends ChangeNotifier {
     addLog('检测 FFmpeg 环境...', category: 'info');
     await backend.setPaths(ffmpeg: config.ffmpegPath, ffprobe: config.ffprobePath);
     final env = await backend.checkEnv();
-    _envChecked = true; _envOk = env['success'] == true && (env['data']?['all_ok'] as bool? ?? false);
+    _envOk = env['success'] == true && (env['data']?['all_ok'] as bool? ?? false);
     // C++ handleCheckEnv 返回嵌套结构：data.ffmpeg.version / data.ffmpeg.path
     final ffmpegInfo = env['data']?['ffmpeg'] as Map<String, dynamic>?;
     _ffmpegVersion = ffmpegInfo?['version'] as String? ?? '';

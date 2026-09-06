@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -6,10 +5,9 @@ import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import '../pages/pipeline_editor_page.dart';
-import '../services/ffmpeg_installer.dart';
+import '../services/thumbnail_service.dart';
 import '../app.dart';
 import 'app_card.dart';
-import 'config_dialog.dart';
 
 class VideoCard extends StatelessWidget {
   final VideoFile video;
@@ -64,31 +62,20 @@ class VideoCard extends StatelessWidget {
     );
   }
 
+  // 编辑统一进入节点编辑器（传统表单模式 ConfigDialog 已彻底移除）
   void _openConfig(BuildContext context, AppState state) {
-    if (state.config.useNodeEditor) {
-      Navigator.of(context).push(smoothRoute(
-        PipelineEditorPage(
-          video: video,
-          onSave: (graph) {
-            state.updateVideoConfig(video.id, video.config);
-            final idx = state.videos.indexWhere((v) => v.id == video.id);
-            if (idx >= 0) {
-              state.updateVideoPipeline(video.id, graph);
-            }
-          },
-        ),
-      ));
-    } else {
-      showDialog(
-        context: context,
-        builder: (_) => ConfigDialog(
-          video: video,
-          onSave: (cfg) {
-            state.updateVideoConfig(video.id, cfg);
-          },
-        ),
-      );
-    }
+    Navigator.of(context).push(smoothRoute(
+      PipelineEditorPage(
+        video: video,
+        onSave: (graph) {
+          state.updateVideoConfig(video.id, video.config);
+          final idx = state.videos.indexWhere((v) => v.id == video.id);
+          if (idx >= 0) {
+            state.updateVideoPipeline(video.id, graph);
+          }
+        },
+      ),
+    ));
   }
 }
 
@@ -103,38 +90,12 @@ class _ThumbWidget extends StatefulWidget {
 class _ThumbWidgetState extends State<_ThumbWidget> {
   String? _thumbPath;
   @override
-  void initState() { super.initState(); _gen(); }
+  void initState() { super.initState(); _load(); }
 
-  Future<void> _gen() async {
-    final suffix = widget.isAudio ? '_cover' : '';
-    final f = File('${Directory.systemTemp.path}/ffmpegpp_thumb_${widget.filepath.hashCode}$suffix.jpg');
-    if (await f.exists()) { if (mounted) setState(() => _thumbPath = f.path); return; }
-    try {
-      final ext = widget.filepath.split('.').last.toLowerCase();
-      final isImage = kImageExts.contains(ext);
-      final args = <String>['-y'];
-      if (!isImage && !widget.isAudio) args.addAll(['-ss', '5']);
-      if (widget.isAudio) {
-        args.addAll(['-i', widget.filepath, '-an', '-vframes', '1', '-q:v', '3', f.path]);
-      } else {
-        args.addAll(['-i', widget.filepath, '-vframes', '1', '-q:v', '3', '-s', '176x108', f.path]);
-      }
-      // 超时兜底（修复：批量导入后缩略图 ffmpeg 偶发悬挂——损坏文件/超长
-      // seek 会卡住进程，除了自身永不返回外还会拖住同应用进程内其它子进程
-      // 的管道读取，表现为后续导入项一直「解析中」）。用 Process.start +
-      // 定时 kill 而不是 Process.run().timeout()：后者只是放弃等待，
-      // 悬挂的 ffmpeg 进程会继续活着持有管道资源。
-      final proc = await Process.start(FfmpegInstaller.resolveFfmpeg(configured: widget.ffmpeg), args);
-      final killTimer = Timer(const Duration(seconds: 30), () => proc.kill());
-      try {
-        // 排空 stdout/stderr：ffmpeg 的日志输出超过管道缓冲区时会阻塞在写端
-        await Future.wait([proc.stdout.drain<void>(), proc.stderr.drain<void>()]);
-        final exitCode = await proc.exitCode;
-        if (exitCode == 0 && await f.exists()) { if (mounted) setState(() => _thumbPath = f.path); }
-      } finally {
-        killTimer.cancel();
-      }
-    } catch (_) {}
+  Future<void> _load() async {
+    final p = await ThumbnailService.ensureThumbnail(widget.filepath,
+        ffmpeg: widget.ffmpeg, isAudio: widget.isAudio);
+    if (mounted && p != null) setState(() => _thumbPath = p);
   }
 
   @override

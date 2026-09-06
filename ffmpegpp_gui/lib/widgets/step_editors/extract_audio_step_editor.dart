@@ -3,30 +3,26 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import '../../services/ffmpeg_installer.dart';
+import 'editor_kit.dart';
 
-class ExtractAudioStepEditor extends StatefulWidget {
-  final Map<String, dynamic> params;
-  final VoidCallback onChanged;
+class ExtractAudioStepEditor extends ParamsStepEditor {
   final String videoPath;
   final double videoDuration;
-  final bool isZh;
 
   const ExtractAudioStepEditor({
     super.key,
-    required this.params,
-    required this.onChanged,
+    required super.params,
+    required super.onChanged,
     required this.videoPath,
     required this.videoDuration,
-    this.isZh = true,
+    super.isZh = true,
   });
 
   @override
   State<ExtractAudioStepEditor> createState() => _ExtractAudioStepEditorState();
 }
 
-class _ExtractAudioStepEditorState extends State<ExtractAudioStepEditor> {
-  Map<String, dynamic> get p => widget.params;
-
+class _ExtractAudioStepEditorState extends State<ExtractAudioStepEditor> with StepEditorState<ExtractAudioStepEditor> {
   static const _codecs = ['copy', 'aac', 'libmp3lame', 'libopus', 'libvorbis', 'flac', 'pcm_s16le'];
   static const _codecLabels = ['Copy (原始)', 'AAC', 'MP3 (LAME)', 'Opus', 'Vorbis', 'FLAC', 'PCM 16-bit'];
   static const _codecLabelsEn = ['Copy (original)', 'AAC', 'MP3 (LAME)', 'Opus', 'Vorbis', 'FLAC', 'PCM 16-bit'];
@@ -42,10 +38,9 @@ class _ExtractAudioStepEditorState extends State<ExtractAudioStepEditor> {
   @override
   void initState() {
     super.initState();
-    p.putIfAbsent('extract_mode', () => 'full');
-    p.putIfAbsent('audio_codec', () => 'copy');
-    p.putIfAbsent('output_format', () => 'm4a');
+    initDefaults(const {'extract_mode': 'full', 'audio_codec': 'copy', 'output_format': 'm4a'});
     _migrateStringTimes();
+    // end_time 默认值依赖 videoDuration，保持原 putIfAbsent 写法
     p.putIfAbsent('start_time', () => 0.0);
     p.putIfAbsent('end_time', () => widget.videoDuration);
     _startCtrl = TextEditingController(text: _formatTime(_startVal));
@@ -102,11 +97,6 @@ class _ExtractAudioStepEditorState extends State<ExtractAudioStepEditor> {
     }
   }
 
-  void _update(String key, dynamic value) {
-    setState(() => p[key] = value);
-    widget.onChanged();
-  }
-
   Future<void> _playPreview() async {
     if (_isExtracting) return;
     setState(() => _isExtracting = true);
@@ -156,7 +146,6 @@ class _ExtractAudioStepEditorState extends State<ExtractAudioStepEditor> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final zh = widget.isZh;
     final mode = p['extract_mode'] as String? ?? 'full';
     final codec = p['audio_codec'] as String? ?? 'copy';
     final fmt = p['output_format'] as String? ?? 'm4a';
@@ -165,13 +154,12 @@ class _ExtractAudioStepEditorState extends State<ExtractAudioStepEditor> {
     final start = _startVal.clamp(0.0, dur);
     final end = _endVal.clamp(start, dur);
 
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: SingleChildScrollView(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(zh ? '从视频提取音频' : 'Extract Audio from Video',
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        const SizedBox(height: 8),
-
+    return StepEditorScaffold(
+      title: zh ? '从视频提取音频' : 'Extract Audio from Video',
+      infoText: zh ? '选择 Copy 编码器可无损提取原始音频流。\n选择其他编码器将重新编码音频。'
+                   : 'Select "Copy" codec to extract original audio losslessly.\nOther codecs will re-encode the audio.',
+      scrollable: true,
+      children: [
         SegmentedButton<String>(
           segments: [
             ButtonSegment(value: 'full', label: Text(zh ? '完整提取' : 'Full', style: const TextStyle(fontSize: 12))),
@@ -179,7 +167,7 @@ class _ExtractAudioStepEditorState extends State<ExtractAudioStepEditor> {
           ],
           selected: {mode},
           onSelectionChanged: (v) {
-            _update('extract_mode', v.first);
+            update('extract_mode', v.first);
             if (v.first == 'full') _stopPreview();
           },
           style: ButtonStyle(visualDensity: VisualDensity.compact),
@@ -259,52 +247,23 @@ class _ExtractAudioStepEditorState extends State<ExtractAudioStepEditor> {
           const SizedBox(height: 8),
         ],
 
-        DropdownButtonFormField<String>(
-          borderRadius: BorderRadius.circular(12),
-          initialValue: _formats.contains(fmt) ? fmt : _formats.first,
-          isExpanded: true,
-          decoration: InputDecoration(labelText: zh ? '输出格式' : 'Output Format'),
-          dropdownColor: cs.surface,
-          style: TextStyle(fontSize: 13, color: cs.onSurface),
-          items: _formats.map((f) => DropdownMenuItem(
-            value: f, child: Text(f.toUpperCase(), style: TextStyle(fontSize: 13, color: cs.onSurface)),
-          )).toList(),
-          onChanged: (v) { if (v != null) _update('output_format', v); },
+        EditorDropdown(
+          label: zh ? '输出格式' : 'Output Format',
+          value: _formats.contains(fmt) ? fmt : _formats.first,
+          items: [for (final f in _formats) (f, f.toUpperCase())],
+          dense: false,
+          onChanged: (v) => update('output_format', v),
         ),
         const SizedBox(height: 8),
 
-        DropdownButtonFormField<String>(
-          borderRadius: BorderRadius.circular(12),
-          initialValue: _codecs.contains(codec) ? codec : _codecs.first,
-          isExpanded: true,
-          decoration: InputDecoration(labelText: zh ? '编码器' : 'Codec'),
-          dropdownColor: cs.surface,
-          style: TextStyle(fontSize: 13, color: cs.onSurface),
-          items: List.generate(_codecs.length, (i) => DropdownMenuItem(
-            value: _codecs[i],
-            child: Text(labels[i], style: TextStyle(fontSize: 13, color: cs.onSurface)),
-          )),
-          onChanged: (v) { if (v != null) _update('audio_codec', v); },
+        EditorDropdown(
+          label: zh ? '编码器' : 'Codec',
+          value: _codecs.contains(codec) ? codec : _codecs.first,
+          items: [for (var i = 0; i < _codecs.length; i++) (_codecs[i], labels[i])],
+          dense: false,
+          onChanged: (v) => update('audio_codec', v),
         ),
-        const SizedBox(height: 8),
-
-        Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: cs.surfaceContainerHighest.withAlpha(60),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Icon(Icons.info_outline, size: 14, color: cs.outline),
-            const SizedBox(width: 8),
-            Expanded(child: Text(
-              zh ? '选择 Copy 编码器可无损提取原始音频流。\n选择其他编码器将重新编码音频。'
-                 : 'Select "Copy" codec to extract original audio losslessly.\nOther codecs will re-encode the audio.',
-              style: TextStyle(fontSize: 11, color: cs.outline, height: 1.4),
-            )),
-          ]),
-        ),
-      ])),
+      ],
     );
   }
 }

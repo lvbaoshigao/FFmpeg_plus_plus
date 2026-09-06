@@ -6,13 +6,14 @@ import 'package:file_picker/file_picker.dart';
 import 'package:window_manager/window_manager.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
-import '../services/ffmpeg_installer.dart';
+import '../services/thumbnail_service.dart';
 import '../theme/app_strings.dart';
 import '../platform/app_platform.dart';
 import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_glass_pill.dart';
 import 'pipeline_editor_page.dart';
 import '../app.dart';
+import '../widgets/wallpaper_background.dart';
 
 class ContainerDetailPage extends StatefulWidget {
   final String containerId;
@@ -310,29 +311,8 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
     ));
   }
 
-  Widget _withWallpaper(BuildContext context, Widget child) {
-    final cfg = context.watch<AppState>().config;
-    final bg = cfg.backgroundImage;
-    if (bg.isEmpty || !File(bg).existsSync()) return child;
-    final scheme = Theme.of(context).colorScheme;
-    final a = ((1.0 - cfg.backgroundOpacity) * 220).round().clamp(20, 240);
-    return Stack(children: [
-      // 统一走 wallpaperImageProvider 按物理分辨率降采样解码，避免 4K
-      // 壁纸全尺寸解码 + 与主界面缓存 key 不一致
-      Positioned.fill(child: Image(
-        image: wallpaperImageProvider(
-            bg,
-            MediaQuery.sizeOf(context).width,
-            MediaQuery.sizeOf(context).height,
-            MediaQuery.devicePixelRatioOf(context)),
-        fit: BoxFit.cover,
-      )),
-      Positioned.fill(child: Container(color: scheme.surface.withAlpha(a))),
-      Theme(data: Theme.of(context).copyWith(
-        scaffoldBackgroundColor: Colors.transparent,
-      ), child: child),
-    ]);
-  }
+  Widget _withWallpaper(BuildContext context, Widget child) =>
+      withWallpaper(context, child);
 
   Widget _buildCsdTitleBar(ColorScheme scheme) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -378,7 +358,7 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
     final r = await FilePicker.platform.pickFiles(
         allowMultiple: true, type: FileType.custom,
         allowedExtensions: ['mp4', 'mkv', 'mov', 'avi', 'webm', 'flv', 'wmv', 'ts', 'mpg', 'mpeg', 'm4v', '3gp',
-          'mp3', 'wav', 'flac', 'aac', 'm4a', 'ogg', 'opus', 'wma', 'ac3',
+          ...kAudioExts,
           'png', 'jpg', 'jpeg', 'bmp', 'webp', 'tiff', 'tif']);
     if (r != null && r.files.isNotEmpty) {
       final paths = r.files.where((f) => f.path != null).map((f) => f.path!).toList();
@@ -428,25 +408,11 @@ class _Thumb extends StatefulWidget {
 class _ThumbState extends State<_Thumb> {
   String? _path;
   @override
-  void initState() { super.initState(); _gen(); }
-  Future<void> _gen() async {
-    final suffix = widget.isAudio ? '_cover' : '';
-    final f = File('${Directory.systemTemp.path}/ffmpegpp_thumb_${widget.filepath.hashCode}${suffix}_q.jpg');
-    if (await f.exists()) { if (mounted) setState(() => _path = f.path); return; }
-    try {
-      final ext = widget.filepath.split('.').last.toLowerCase();
-      const imageExts = {'png', 'jpg', 'jpeg', 'bmp', 'webp', 'tiff', 'tif'};
-      final isImage = imageExts.contains(ext);
-      final args = <String>['-y'];
-      if (!isImage && !widget.isAudio) args.addAll(['-ss', '2']);
-      if (widget.isAudio) {
-        args.addAll(['-i', widget.filepath, '-an', '-vframes', '1', '-q:v', '5', f.path]);
-      } else {
-        args.addAll(['-i', widget.filepath, '-vframes', '1', '-q:v', '5', '-s', '80x45', f.path]);
-      }
-      final r = await Process.run(FfmpegInstaller.resolveFfmpeg(configured: widget.ffmpeg), args);
-      if (r.exitCode == 0 && await f.exists()) { if (mounted) setState(() => _path = f.path); }
-    } catch (_) {}
+  void initState() { super.initState(); _load(); }
+  Future<void> _load() async {
+    final p = await ThumbnailService.ensureThumbnail(widget.filepath,
+        ffmpeg: widget.ffmpeg, isAudio: widget.isAudio);
+    if (mounted && p != null) setState(() => _path = p);
   }
   @override
   Widget build(BuildContext context) {

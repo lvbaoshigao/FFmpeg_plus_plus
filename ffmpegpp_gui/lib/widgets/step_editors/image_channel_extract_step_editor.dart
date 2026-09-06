@@ -1,50 +1,31 @@
 import 'package:flutter/material.dart';
+import 'editor_kit.dart';
 
-class ImageChannelExtractStepEditor extends StatefulWidget {
-  final Map<String, dynamic> params;
-  final VoidCallback onChanged;
-  final bool isZh;
-
-  const ImageChannelExtractStepEditor({
-    super.key,
-    required this.params,
-    required this.onChanged,
-    this.isZh = true,
-  });
+class ImageChannelExtractStepEditor extends ParamsStepEditor {
+  const ImageChannelExtractStepEditor({super.key, required super.params, required super.onChanged, super.isZh});
 
   @override
   State<ImageChannelExtractStepEditor> createState() => _ImageChannelExtractStepEditorState();
 }
 
-class _ImageChannelExtractStepEditorState extends State<ImageChannelExtractStepEditor> {
-  Map<String, dynamic> get p => widget.params;
-
+class _ImageChannelExtractStepEditorState extends State<ImageChannelExtractStepEditor> with StepEditorState<ImageChannelExtractStepEditor> {
   @override
   void initState() {
     super.initState();
-    p.putIfAbsent('channel', () => 'r');
-    p.putIfAbsent('extract_method', () => 'colorize');
-  }
-
-  void _update(String key, dynamic value) {
-    setState(() => p[key] = value);
-    widget.onChanged();
+    initDefaults(const {'channel': 'r', 'extract_method': 'colorize'});
   }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final zh = widget.isZh;
     final channel = p['channel'] as String? ?? 'r';
     final method = p['extract_method'] as String? ?? 'colorize';
 
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(zh ? '通道提取' : 'Channel Extract',
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        const SizedBox(height: 8),
-
+    return StepEditorScaffold(
+      title: zh ? '通道提取' : 'Channel Extract',
+      infoText: zh ? '保留颜色：使用 colorchannelmixer 将其他通道置零。\n灰度提取：使用 extractplanes 输出单通道灰度图。'
+                   : 'Colorize: uses colorchannelmixer to zero other channels.\nIsolate: uses extractplanes for single-channel grayscale.',
+      children: [
         Text(zh ? '选择通道' : 'Select Channel',
             style: TextStyle(fontSize: 13, color: cs.onSurface)),
         const SizedBox(height: 8),
@@ -57,42 +38,16 @@ class _ImageChannelExtractStepEditorState extends State<ImageChannelExtractStepE
         ]),
         const SizedBox(height: 8),
 
-        DropdownButtonFormField<String>(
-          borderRadius: BorderRadius.circular(12),
-          initialValue: method,
-          isExpanded: true,
-          decoration: InputDecoration(
-            labelText: zh ? '提取方式' : 'Extract Method', isDense: true,
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          ),
-          dropdownColor: cs.surface,
-          style: TextStyle(fontSize: 13, color: cs.onSurface),
+        EditorDropdown(
+          label: zh ? '提取方式' : 'Extract Method',
+          value: method,
           items: [
-            DropdownMenuItem(value: 'colorize', child: Text(zh ? '保留颜色（其他通道置零）' : 'Colorize (zero other channels)', style: TextStyle(fontSize: 13, color: cs.onSurface))),
-            DropdownMenuItem(value: 'isolate', child: Text(zh ? '灰度提取（单通道灰度图）' : 'Isolate (grayscale)', style: TextStyle(fontSize: 13, color: cs.onSurface))),
+            ('colorize', zh ? '保留颜色（其他通道置零）' : 'Colorize (zero other channels)'),
+            ('isolate', zh ? '灰度提取（单通道灰度图）' : 'Isolate (grayscale)'),
           ],
-          onChanged: (v) { if (v != null) _update('extract_method', v); },
+          onChanged: (v) => update('extract_method', v),
         ),
-
-        const SizedBox(height: 8),
-        Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: cs.surfaceContainerHighest.withAlpha(60),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Icon(Icons.info_outline, size: 14, color: cs.outline),
-            const SizedBox(width: 8),
-            Expanded(child: Text(
-              zh ? '保留颜色：使用 colorchannelmixer 将其他通道置零。\n灰度提取：使用 extractplanes 输出单通道灰度图。'
-                 : 'Colorize: uses colorchannelmixer to zero other channels.\nIsolate: uses extractplanes for single-channel grayscale.',
-              style: TextStyle(fontSize: 11, color: cs.outline, height: 1.4),
-            )),
-          ]),
-        ),
-      ]),
+      ],
     );
   }
 
@@ -100,7 +55,7 @@ class _ImageChannelExtractStepEditorState extends State<ImageChannelExtractStepE
     final isSelected = selected == value;
     return Expanded(
       child: GestureDetector(
-        onTap: () => _update('channel', value),
+        onTap: () => update('channel', value),
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(

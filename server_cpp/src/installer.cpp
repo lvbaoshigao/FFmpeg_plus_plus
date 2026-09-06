@@ -135,43 +135,40 @@ std::string getTempDir() {
 }
 
 json ensureFFmpeg() {
-    auto ff_path = getFFmpegPath();
-    auto fp_path = getFFprobePath();
-    bool ff_found = !ff_path.empty() && ff_path != "ffmpeg";
-    bool fp_found = !fp_path.empty() && fp_path != "ffprobe";
-
-    std::string ff_version, fp_version, ff_error, fp_error;
-    if (ff_found) {
-        auto pr = Subprocess::run({ff_path, "-version"}, 10);
+    // ffmpeg / ffprobe 的探测逻辑完全一致，用数组跑两遍消除逐行重复
+    struct ToolState {
+        std::string path;
+        bool found;
+        std::string version;
+        std::string error;
+    };
+    const char* names[2] = {"ffmpeg", "ffprobe"};
+    ToolState tools[2] = {
+        {getFFmpegPath(),  false, "", ""},
+        {getFFprobePath(), false, "", ""},
+    };
+    for (int i = 0; i < 2; ++i) {
+        auto& t = tools[i];
+        t.found = !t.path.empty() && t.path != names[i];
+        if (!t.found) {
+            t.error = std::string(names[i]) + " 未在 PATH 或常见安装目录中找到";
+            continue;
+        }
+        auto pr = Subprocess::run({t.path, "-version"}, 10);
         if (pr.exit_code == 0 && !pr.stdout_output.empty()) {
             auto nl = pr.stdout_output.find('\n');
-            ff_version = (nl != std::string::npos) ? pr.stdout_output.substr(0, nl) : pr.stdout_output;
-            if (!ff_version.empty() && ff_version.back() == '\r') ff_version.pop_back();
+            t.version = (nl != std::string::npos) ? pr.stdout_output.substr(0, nl) : pr.stdout_output;
+            if (!t.version.empty() && t.version.back() == '\r') t.version.pop_back();
         } else {
-            ff_found = false;  // 真正 exec 失败（如 SELinux/PIE 拒绝），found 必须置假
-            ff_error = "执行 -version 失败";
+            t.found = false;  // 真正 exec 失败（如 SELinux/PIE 拒绝），found 必须置假
+            t.error = "执行 -version 失败";
         }
-    } else {
-        ff_error = "ffmpeg 未在 PATH 或常见安装目录中找到";
-    }
-    if (fp_found) {
-        auto pr = Subprocess::run({fp_path, "-version"}, 10);
-        if (pr.exit_code == 0 && !pr.stdout_output.empty()) {
-            auto nl = pr.stdout_output.find('\n');
-            fp_version = (nl != std::string::npos) ? pr.stdout_output.substr(0, nl) : pr.stdout_output;
-            if (!fp_version.empty() && fp_version.back() == '\r') fp_version.pop_back();
-        } else {
-            fp_found = false;  // 真正 exec 失败（如 SELinux/PIE 拒绝），found 必须置假
-            fp_error = "执行 -version 失败";
-        }
-    } else {
-        fp_error = "ffprobe 未在 PATH 或常见安装目录中找到";
     }
 
     return {
-        {"ffmpeg", {{"found", ff_found}, {"path", ff_path}, {"version", ff_version}, {"error", ff_error}}},
-        {"ffprobe", {{"found", fp_found}, {"path", fp_path}, {"version", fp_version}, {"error", fp_error}}},
-        {"all_ok", ff_found && fp_found},
+        {"ffmpeg", {{"found", tools[0].found}, {"path", tools[0].path}, {"version", tools[0].version}, {"error", tools[0].error}}},
+        {"ffprobe", {{"found", tools[1].found}, {"path", tools[1].path}, {"version", tools[1].version}, {"error", tools[1].error}}},
+        {"all_ok", tools[0].found && tools[1].found},
     };
 }
 

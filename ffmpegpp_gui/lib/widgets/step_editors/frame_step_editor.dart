@@ -3,28 +3,26 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import '../../services/frame_preview.dart';
+import 'editor_kit.dart';
 
-class FrameStepEditor extends StatefulWidget {
-  final Map<String, dynamic> params;
-  final VoidCallback onChanged;
+class FrameStepEditor extends ParamsStepEditor {
   final String videoPath;
   final double videoDuration;
-  final bool isZh;
 
   const FrameStepEditor({
     super.key,
-    required this.params,
-    required this.onChanged,
+    required super.params,
+    required super.onChanged,
     required this.videoPath,
     required this.videoDuration,
-    this.isZh = true,
+    super.isZh = true,
   });
 
   @override
   State<FrameStepEditor> createState() => _FrameStepEditorState();
 }
 
-class _FrameStepEditorState extends State<FrameStepEditor> {
+class _FrameStepEditorState extends State<FrameStepEditor> with StepEditorState<FrameStepEditor> {
   late TextEditingController _timeCtrl, _startCtrl, _endCtrl, _fpsCtrl;
   String? _previewPath;
   Timer? _debounceTimer;
@@ -32,15 +30,11 @@ class _FrameStepEditorState extends State<FrameStepEditor> {
 
   static const _formats = ['png', 'jpg', 'bmp'];
 
-  Map<String, dynamic> get p => widget.params;
-
   @override
   void initState() {
     super.initState();
-    p.putIfAbsent('time', () => 0.0);
-    p.putIfAbsent('output_format', () => 'png');
-    p.putIfAbsent('extract_mode', () => 'single');
-    p.putIfAbsent('range_start', () => 0.0);
+    initDefaults(const {'time': 0.0, 'output_format': 'png', 'extract_mode': 'single', 'range_start': 0.0});
+    // 依赖 videoDuration 的默认值，保持原 putIfAbsent 写法（与原键序一致）
     p.putIfAbsent('range_end', () => widget.videoDuration);
     p.putIfAbsent('fps_rate', () => 1.0);
     _timeCtrl = TextEditingController(text: _fmt((p['time'] as num?)?.toDouble() ?? 0.0));

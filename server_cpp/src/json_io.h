@@ -30,10 +30,4 @@ private:
     static std::thread _writerThread;
 };
 
-// stdin JSON 行读取
-class JsonReader {
-public:
-    static bool readLine(json& out);
-};
-
 } // namespace ffmpegpp

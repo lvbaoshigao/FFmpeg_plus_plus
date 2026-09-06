@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
-project(ffmpegpp_server LANGUAGES CXX)
+# C 语言仅用于 vendored miniz（gzip 解压/压缩，fppx_legacy 需要）
+project(ffmpegpp_server LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -22,6 +23,18 @@ set(SHARED_SOURCES
     src/parser.cpp
     src/audit.cpp
     src/ffmpeg_features.cpp
+    src/fppx2.cpp
+    src/fppx_validate.cpp
+    src/fppx_legacy.cpp
+    src/fppx_gzip.cpp
+    src/node_registry.cpp
+)
+
+# vendored miniz（纯 C，仅 gzip 用的 tinfl/tdefl；zip 归档 API 不参与编译）
+set(MINIZ_SOURCES
+    include/miniz/miniz.c
+    include/miniz/miniz_tinfl.c
+    include/miniz/miniz_tdef.c
 )
 
 # ═══════════════════════════════════════════════
@@ -90,6 +103,7 @@ endif() # EXISTS main.cpp
 add_library(ffmpegpp SHARED
     src/dll_main.cpp
     ${SHARED_SOURCES}
+    ${MINIZ_SOURCES}
 )
 
 target_include_directories(ffmpegpp PRIVATE
@@ -136,4 +150,31 @@ else()
     set_target_properties(ffmpegpp PROPERTIES
         OUTPUT_NAME "ffmpegpp"
     )
+endif()
+
+# ═══════════════════════════════════════════════
+# FPPX 单元测试（可选：-DFFMPEGPP_BUILD_TESTS=ON 后 ctest）
+# ═══════════════════════════════════════════════
+option(FFMPEGPP_BUILD_TESTS "Build fppx unit tests" OFF)
+if(FFMPEGPP_BUILD_TESTS)
+    enable_testing()
+    add_executable(fppx_test
+        tests/fppx_test.cpp
+        src/fppx2.cpp
+        src/fppx_validate.cpp
+        src/fppx_legacy.cpp
+        src/fppx_gzip.cpp
+        src/node_registry.cpp
+        ${MINIZ_SOURCES}
+    )
+    target_include_directories(fppx_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    if(MSVC)
+        target_compile_options(fppx_test PRIVATE /W3 /utf-8)
+    else()
+        target_compile_options(fppx_test PRIVATE -Wall)
+    endif()
+    add_test(NAME fppx_test COMMAND fppx_test)
 endif()

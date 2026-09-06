@@ -1,6 +1,5 @@
 #include "audit.h"
 #include "constants.h"
-#include <algorithm>
 #ifdef __cpp_lib_filesystem
 #include <filesystem>
 #endif
