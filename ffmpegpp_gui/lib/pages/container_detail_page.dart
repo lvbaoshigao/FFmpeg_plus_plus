@@ -416,7 +416,8 @@ class _ThumbState extends State<_Thumb> {
   }
   @override
   Widget build(BuildContext context) {
-    if (_path != null) return Image.file(File(_path!), width: 40, height: 25, fit: widget.isAudio ? BoxFit.contain : BoxFit.cover);
+    // 缩略图按显示尺寸 3x 封顶解码（1080p 源 ~8MB/张）
+    if (_path != null) return Image.file(File(_path!), width: 40, height: 25, cacheWidth: 120, fit: widget.isAudio ? BoxFit.contain : BoxFit.cover);
     return Icon(widget.isAudio ? Icons.music_note : Icons.movie_outlined, size: 16, color: Theme.of(context).colorScheme.outline);
   }
 }

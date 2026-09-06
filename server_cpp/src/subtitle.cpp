@@ -173,7 +173,22 @@ std::vector<std::string> buildSubtitleCommand(
     if (!isPathSafe(output_path))
         throw std::runtime_error("输出路径包含不安全字符");
 
-    std::vector<std::string> cmd = {getFFmpegPath(), "-i", input_path};
+    std::vector<std::string> cmd = {getFFmpegPath()};
+
+    // Android GPU 解码：与转码路径一致，用户在视频选项里显式选择
+    // Android GPU 时启用 MediaCodec 硬解（解码帧拷回系统内存后走
+    // 软件字幕滤镜，兼容性不受影响）。
+    if (!video_options.is_null() && video_options.is_object()) {
+        try {
+            if (video_options.value("gpu", "CPU") == std::string("Android")) {
+                cmd.push_back("-hwaccel");
+                cmd.push_back("mediacodec");
+            }
+        } catch (...) {}
+    }
+
+    cmd.push_back("-i");
+    cmd.push_back(input_path);
 
     // 构建视频滤镜链：先追加外部 vf_filters（如 setpts），再追加字幕滤镜
     std::string sub_filter = buildSubtitleFilter(input_path, subtitle_options);

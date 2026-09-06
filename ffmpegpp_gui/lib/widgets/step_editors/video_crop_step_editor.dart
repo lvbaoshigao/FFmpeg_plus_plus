@@ -222,7 +222,7 @@ class _VideoCropStepEditorState extends State<VideoCropStepEditor> {
         if (_framePath != null && File(_framePath!).existsSync())
           ClipRRect(
             borderRadius: BorderRadius.circular(8),
-            child: Image.file(File(_framePath!), width: double.infinity, height: 160, fit: BoxFit.contain),
+            child: Image.file(File(_framePath!), width: double.infinity, height: 160, cacheWidth: 960, fit: BoxFit.contain),
           )
         else
           Container(

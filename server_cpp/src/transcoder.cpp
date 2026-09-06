@@ -139,6 +139,7 @@ std::vector<std::string> buildEncodingParams(const json& options, const std::str
         }
 
         if (encoder != "copy") {
+            bool rate_control_set = false;
             if (options.contains("crf") && !options["crf"].is_null()) {
                 int crf_val;
                 try {
@@ -151,6 +152,7 @@ std::vector<std::string> buildEncodingParams(const json& options, const std::str
                     params.push_back(std::to_string(crf_val));
                     params.push_back("-rc");
                     params.push_back("vbr");
+                    rate_control_set = true;
                 } else if (encoder.find("amf") != std::string::npos) {
                     params.push_back("-qp_i");
                     params.push_back(std::to_string(crf_val));
@@ -158,12 +160,27 @@ std::vector<std::string> buildEncodingParams(const json& options, const std::str
                     params.push_back(std::to_string(crf_val));
                     params.push_back("-rc");
                     params.push_back("cqp");
+                    rate_control_set = true;
                 } else if (encoder.find("qsv") != std::string::npos) {
                     params.push_back("-global_quality");
                     params.push_back(std::to_string(crf_val));
+                    rate_control_set = true;
+                } else if (encoder.find("mediacodec") != std::string::npos) {
+                    // MediaCodec 没有 CRF；用 CQ 模式 + global_quality 实现
+                    // 同样的「按质量控制」。Android 文档要求 CQ 模式同时给出
+                    // 码率上限（部分设备 configure 缺 bitrate 键直接失败），
+                    // 故附带 20M 上限。
+                    params.push_back("-bitrate_mode");
+                    params.push_back("cq");
+                    params.push_back("-global_quality");
+                    params.push_back(std::to_string(crf_val));
+                    params.push_back("-b:v");
+                    params.push_back("20000k");
+                    rate_control_set = true;
                 } else {
                     params.push_back("-crf");
                     params.push_back(std::to_string(crf_val));
+                    rate_control_set = true;
                 }
             } else if (options.contains("video_bitrate") && !options["video_bitrate"].is_null()) {
                 int bitrate_val;
@@ -177,6 +194,16 @@ std::vector<std::string> buildEncodingParams(const json& options, const std::str
                 }
                 params.push_back("-b:v");
                 params.push_back(std::to_string(bitrate_val) + "k");
+                rate_control_set = true;
+            }
+
+            // MediaCodec 编码器必须显式给码率：ffmpeg 的 mediacodecenc 在
+            // avctx->bit_rate 为 0 时不写 bitrate 键，MediaFormat 缺该键时
+            // 多数设备的 MediaCodec.configure 会直接失败（「保持原速」等
+            // 未设码率的模式此前因此在移动端 GPU 编码必败）。
+            if (encoder.find("mediacodec") != std::string::npos && !rate_control_set) {
+                params.push_back("-b:v");
+                params.push_back("8000k");
             }
 
             if (options.contains("framerate") && !options["framerate"].is_null()) {
@@ -193,7 +220,10 @@ std::vector<std::string> buildEncodingParams(const json& options, const std::str
                 params.push_back(std::to_string(fps_val));
             }
 
-            if (gpu == "CPU" && options.contains("preset")) {
+            // preset 是 lib* 软件编码器（x264/x265/vpx/aom）的选项；
+            // 按编码器而非 gpu 判断，避免「gpu=Android 但选了 CPU 软编」
+            // 时 preset 被误丢（软编质量设定失效）
+            if (encoder.rfind("lib", 0) == 0 && options.contains("preset")) {
                 std::string pr;
                 try {
                     pr = options["preset"].get<std::string>();
@@ -322,6 +352,15 @@ std::vector<std::string> buildTranscodeCommand(
         throw std::runtime_error("输入路径包含不安全字符");
     if (!isPathSafe(output_path))
         throw std::runtime_error("输出路径包含不安全字符");
+
+    // Android GPU 解码：MediaCodec 硬解（内置 ffmpeg 以 --enable-mediacodec
+    // 构建）。不加 -hwaccel_output_format，解码帧自动拷回系统内存，与后续
+    // 软件滤镜/缩放完全兼容。仅在用户显式选择 Android GPU 时启用；
+    // copy 流不解码、纯音频无视频流，均无需硬解。
+    if (gpu == "Android" && !audio_only && video_codec != "copy") {
+        cmd.push_back("-hwaccel");
+        cmd.push_back("mediacodec");
+    }
 
     // 片段截取：-ss 放在 -i 之前（input seeking，更快）
     if (options.contains("start_time") && !options["start_time"].is_null()) {

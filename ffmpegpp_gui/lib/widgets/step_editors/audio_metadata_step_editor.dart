@@ -60,7 +60,7 @@ class _AudioMetadataStepEditorState extends State<AudioMetadataStepEditor> with 
           ClipRRect(
             borderRadius: BorderRadius.circular(8),
             child: File(coverPath).existsSync()
-                ? Image.file(File(coverPath), width: double.infinity, height: 120, fit: BoxFit.contain)
+                ? Image.file(File(coverPath), width: double.infinity, height: 120, cacheWidth: 720, fit: BoxFit.contain)
                 : Container(height: 60, color: cs.errorContainer, child: Center(
                     child: Text(zh ? '文件不存在' : 'File not found', style: TextStyle(fontSize: 11, color: cs.error)))),
           ),

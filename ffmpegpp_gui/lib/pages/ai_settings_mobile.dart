@@ -651,20 +651,21 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
               value: _draft.enabled,
               onChanged: (v) => _mutateDraft((d) => d..enabled = v),
             ),
-            // 多 Key 模式：开启后展开 Key 列表编辑
+            // 多 Key 模式：开启后进入二级菜单管理 Key 列表
             _AiSwitchRow(
               label: s.isZh ? '多 Key 模式' : 'Multi-Key Mode',
               desc: s.isZh ? '多个 Key 轮换请求，规避单 Key 限流' : 'Rotate keys to avoid rate limits',
               value: _draft.multiKeyEnabled,
-              onChanged: (v) => _mutateDraft((d) => d..multiKeyEnabled = v),
-            ),
-            AnimatedSize(
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeOutCubic,
-              alignment: Alignment.topCenter,
-              child: _draft.multiKeyEnabled
-                  ? _buildMultiKeyEditor(context, s, scheme)
-                  : const SizedBox(width: double.infinity, height: 0),
+              onChanged: (v) {
+                _mutateDraft((d) => d..multiKeyEnabled = v);
+                if (v) {
+                  // 首次开启：至少放一个空位，直接进二级菜单
+                  if (_draft.apiKeys.isEmpty) {
+                    _draft.apiKeys.add('');
+                  }
+                  _openMultiKeyPage(context, s);
+                }
+              },
             ),
             // Response API（/responses）
             _AiSwitchRow(
@@ -741,12 +742,22 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
               scheme: scheme,
               onCommit: (v) => _mutateDraft((d) => d..name = v),
             )),
-            field('API Key', _AiField(
-              value: _draft.apiKey,
-              scheme: scheme,
-              obscure: true,
-              onCommit: (v) => _mutateDraft((d) => d..apiKey = v),
-            )),
+            // 多 Key 模式：不在连接卡片里放单 Key 输入，Keys 统一进二级菜单管理
+            if (_draft.multiKeyEnabled)
+              field(s.isZh ? 'API Keys' : 'API Keys', _AiNavRow(
+                label: s.isZh
+                    ? '管理 API Keys（${_draft.apiKeys.where((k) => k.isNotEmpty).length} 个）'
+                    : 'Manage API Keys (${_draft.apiKeys.where((k) => k.isNotEmpty).length})',
+                value: s.isZh ? '点按进入' : 'Tap to edit',
+                onTap: () => _openMultiKeyPage(context, s),
+              ))
+            else
+              field('API Key', _AiField(
+                value: _draft.apiKey,
+                scheme: scheme,
+                obscure: true,
+                onCommit: (v) => _mutateDraft((d) => d..apiKey = v),
+              )),
             field('API Base URL', _AiField(
               value: _draft.apiUrl,
               scheme: scheme,
@@ -768,44 +779,10 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
             ),
           ],
         ),
-        const SizedBox(height: 10),
-        // ── 生成参数 ──
-        _AiSectionCard(
-          cardStyle: cfg.cardStyle,
-          icon: Icons.tune_outlined,
-          title: s.isZh ? '生成参数' : 'Generation',
-          children: [
-            field(s.aiModel, _AiField(
-              value: _draft.model,
-              scheme: scheme,
-              onCommit: (v) => _mutateDraft((d) => d..model = v),
-            )),
-            field(s.aiContextWindow, _AiField(
-              value: _draft.contextWindow.toString(),
-              scheme: scheme,
-              keyboardType: TextInputType.number,
-              onCommit: (v) {
-                final n = int.tryParse(v);
-                if (n != null && n > 0) _mutateDraft((d) => d..contextWindow = n);
-              },
-            )),
-            field(s.aiMaxTokens, _AiField(
-              value: _draft.maxTokens.toString(),
-              scheme: scheme,
-              keyboardType: TextInputType.number,
-              onCommit: (v) {
-                final n = int.tryParse(v);
-                if (n != null && n > 0) _mutateDraft((d) => d..maxTokens = n);
-              },
-            )),
-            field(s.aiTemperature, _TemperatureSlider(
-              value: _draft.temperature,
-              scheme: scheme,
-              onCommit: (v) => _mutateDraft((d) => d..temperature = v),
-            )),
-          ],
-        ),
         const SizedBox(height: 12),
+        // 生成参数（上下文窗口/最大输出/温度）已移至「模型」选项卡：
+        // 点击单个模型进入其设置页，按模型单独配置（未设置时继承提供商默认）。
+        // 默认模型在模型列表里点「使用」选择。
         // 设为当前
         if (!_isNew && !isActive)
           SizedBox(
@@ -840,44 +817,34 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
   }
 
   /// 多 Key 编辑器：一行一个 Key，末尾「添加 Key」。
-  Widget _buildMultiKeyEditor(
-      BuildContext context, AppStrings s, ColorScheme scheme) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 6, bottom: 4),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        for (var i = 0; i < _draft.apiKeys.length; i++)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: Row(children: [
-              Expanded(
-                child: _AiField(
-                  // key 绑定索引与内容，删除中间项时不会串位
-                  key: ValueKey('multikey_${i}_${_draft.apiKeys[i].hashCode}'),
-                  value: _draft.apiKeys[i],
-                  scheme: scheme,
-                  obscure: true,
-                  hint: 'sk-...',
-                  onCommit: (v) => _mutateDraft((d) => d.apiKeys[i] = v),
-                ),
-              ),
-              IconButton(
-                icon: Icon(Icons.remove_circle_outline, size: 18, color: scheme.error),
-                tooltip: s.remove,
-                onPressed: () => _mutateDraft((d) => d.apiKeys.removeAt(i)),
-              ),
-            ]),
-          ),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            icon: const Icon(Icons.add, size: 16),
-            label: Text(s.isZh ? '添加 Key' : 'Add Key',
-                style: const TextStyle(fontSize: 12)),
-            onPressed: () => _mutateDraft((d) => d.apiKeys.add('')),
-          ),
-        ),
-      ]),
+  /// 打开「多 Key 管理」二级菜单：列表增删改，逐项实时写回 [AiProfile.apiKeys]
+  ///（详情页草稿），保存仍由顶栏「保存」统一落库。
+  Future<void> _openMultiKeyPage(BuildContext context, AppStrings s) async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => MobileMultiKeyPage(
+        keys: List<String>.of(_draft.apiKeys),
+        onChanged: (list) => _mutateDraft((d) => d..apiKeys = list),
+      ),
+    ));
+  }
+
+  /// 打开单个模型的生成参数设置（二级菜单）。
+  Future<void> _openModelSettings(
+      BuildContext context, AppStrings s, int index) async {
+    final defaults = (
+      contextWindow: _draft.contextWindow,
+      maxTokens: _draft.maxTokens,
+      temperature: _draft.temperature,
     );
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => MobileModelSettingsPage(
+        entry: _draft.models[index],
+        defaultContextWindow: defaults.contextWindow,
+        defaultMaxTokens: defaults.maxTokens,
+        defaultTemperature: defaults.temperature,
+        onChanged: (e) => _mutateDraft((d) => d.models[index] = e),
+      ),
+    ));
   }
 
   // ── Tab 2：模型 ──
@@ -915,6 +882,8 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
                 isActive: models[i].id == _draft.model,
                 isZh: s.isZh,
                 onUse: () => _mutateDraft((d) => d..model = models[i].id),
+                // 点击模型卡片 → 进入该模型的生成参数设置（二级菜单）
+                onOpen: () => _openModelSettings(context, s, i),
                 onToggleCapability: (cap, on) => _mutateDraft((d) {
                   final caps = d.models[i].capabilities;
                   if (on) {
@@ -1237,6 +1206,8 @@ class _AiModelCard extends StatelessWidget {
   final bool isActive;
   final bool isZh;
   final VoidCallback onUse;
+  /// 点击卡片主体 → 打开该模型的生成参数设置（二级菜单）。
+  final VoidCallback onOpen;
   final void Function(String capability, bool enabled) onToggleCapability;
   final VoidCallback onRemove;
 
@@ -1246,6 +1217,7 @@ class _AiModelCard extends StatelessWidget {
     required this.isActive,
     required this.isZh,
     required this.onUse,
+    required this.onOpen,
     required this.onToggleCapability,
     required this.onRemove,
   });
@@ -1266,45 +1238,60 @@ class _AiModelCard extends StatelessWidget {
     return AppCard(
       style: cardStyle,
       radius: 16,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Icon(isActive ? Icons.radio_button_checked : Icons.radio_button_off,
-                size: 16, color: isActive ? scheme.primary : scheme.outline),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(entry.id,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
-                      color: scheme.onSurface)),
-            ),
-            if (!isActive)
-              TextButton(
-                onPressed: onUse,
-                style: TextButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 8)),
-                child: Text(isZh ? '使用' : 'Use',
-                    style: const TextStyle(fontSize: 11)),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onOpen,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Icon(isActive ? Icons.radio_button_checked : Icons.radio_button_off,
+                  size: 16, color: isActive ? scheme.primary : scheme.outline),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(entry.id,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+                        color: scheme.onSurface)),
               ),
-            IconButton(
-              icon: Icon(Icons.close, size: 16, color: scheme.outline),
-              tooltip: isZh ? '移除' : 'Remove',
-              visualDensity: VisualDensity.compact,
-              onPressed: onRemove,
-            ),
+              // 有独立生成参数时显示标记，提示已覆盖提供商默认
+              if (entry.contextWindow != null ||
+                  entry.maxTokens != null ||
+                  entry.temperature != null)
+                Padding(
+                  padding: const EdgeInsets.only(right: 4),
+                  child: Tooltip(
+                    message: isZh ? '该模型已单独设置生成参数' : 'Per-model generation params set',
+                    child: Icon(Icons.tune, size: 14, color: scheme.primary),
+                  ),
+                ),
+              if (!isActive)
+                TextButton(
+                  onPressed: onUse,
+                  style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 8)),
+                  child: Text(isZh ? '使用' : 'Use',
+                      style: const TextStyle(fontSize: 11)),
+                ),
+              IconButton(
+                icon: Icon(Icons.close, size: 16, color: scheme.outline),
+                tooltip: isZh ? '移除' : 'Remove',
+                visualDensity: VisualDensity.compact,
+                onPressed: onRemove,
+              ),
+            ]),
+            const SizedBox(height: 4),
+            // 能力标记：可点选，反映该模型支持的调用方式
+            Wrap(spacing: 6, runSpacing: 6, children: [
+              for (final cap in AiModelCapability.all)
+                _capChip(cap, entry.capabilities.contains(cap), scheme),
+            ]),
           ]),
-          const SizedBox(height: 4),
-          // 能力标记：可点选，反映该模型支持的调用方式
-          Wrap(spacing: 6, runSpacing: 6, children: [
-            for (final cap in AiModelCapability.all)
-              _capChip(cap, entry.capabilities.contains(cap), scheme),
-          ]),
-        ]),
+        ),
       ),
     );
   }
@@ -1320,6 +1307,282 @@ class _AiModelCard extends StatelessWidget {
       labelPadding: const EdgeInsets.symmetric(horizontal: 2),
       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
       onSelected: (v) => onToggleCapability(cap, v),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════
+// 二级菜单：多 Key 管理 / 单模型生成参数
+// ═══════════════════════════════════════════
+
+/// 多 Key 管理二级菜单：Key 列表的增删改，逐项实时写回提供商草稿；
+/// 落库仍由详情页顶栏「保存」统一完成。
+class MobileMultiKeyPage extends StatefulWidget {
+  final List<String> keys;
+  final ValueChanged<List<String>> onChanged;
+  const MobileMultiKeyPage({super.key, required this.keys, required this.onChanged});
+
+  @override
+  State<MobileMultiKeyPage> createState() => _MobileMultiKeyPageState();
+}
+
+class _MobileMultiKeyPageState extends State<MobileMultiKeyPage> {
+  late final List<String> _keys = List<String>.of(widget.keys);
+
+  void _commit() => widget.onChanged(List<String>.of(_keys));
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final s = AppStrings.of(context.read<AppState>().config.language);
+    final filled = _keys.where((k) => k.isNotEmpty).length;
+    return withWallpaper(
+      context,
+      Scaffold(
+        backgroundColor: Colors.transparent,
+        body: SafeArea(
+          child: Column(children: [
+            MobileSubPageTopBar(
+              title: Text(s.isZh ? 'API Keys 管理（$filled）' : 'API Keys ($filled)',
+                  style: const TextStyle(fontSize: 15)),
+              onBack: () => Navigator.of(context).maybePop(),
+            ),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
+                children: [
+                  _AiSectionCard(
+                    cardStyle: context.read<AppState>().config.cardStyle,
+                    icon: Icons.vpn_key_outlined,
+                    title: s.isZh ? 'Key 列表' : 'Key List',
+                    children: [
+                      Text(
+                        s.isZh
+                            ? '请求时按顺序轮换使用这些 Key。清空输入框再返回即删除该 Key。'
+                            : 'Keys are rotated in order. Clear a field to remove it.',
+                        style: TextStyle(fontSize: 11, color: scheme.outline),
+                      ),
+                      const SizedBox(height: 8),
+                      for (var i = 0; i < _keys.length; i++)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Row(children: [
+                            Expanded(
+                              child: _AiField(
+                                // 绑定索引与内容，删除中间项时不会串位
+                                key: ValueKey('mk_${i}_${_keys[i].hashCode}'),
+                                value: _keys[i],
+                                scheme: scheme,
+                                obscure: true,
+                                hint: 'sk-...',
+                                onCommit: (v) {
+                                  _keys[i] = v;
+                                  _commit();
+                                },
+                              ),
+                            ),
+                            IconButton(
+                              icon: Icon(Icons.remove_circle_outline,
+                                  size: 18, color: scheme.error),
+                              tooltip: s.remove,
+                              onPressed: () {
+                                setState(() => _keys.removeAt(i));
+                                _commit();
+                              },
+                            ),
+                          ]),
+                        ),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          icon: const Icon(Icons.add, size: 16),
+                          label: Text(s.isZh ? '添加 Key' : 'Add Key',
+                              style: const TextStyle(fontSize: 12)),
+                          onPressed: () => setState(() => _keys.add('')),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+/// 单模型生成参数设置（点击模型卡片进入）。
+/// 留空 = 继承提供商默认值；填写后覆盖（请求时按当前模型取用）。
+class MobileModelSettingsPage extends StatefulWidget {
+  final AiModelEntry entry;
+  final int defaultContextWindow;
+  final int defaultMaxTokens;
+  final double defaultTemperature;
+  final ValueChanged<AiModelEntry> onChanged;
+
+  const MobileModelSettingsPage({
+    super.key,
+    required this.entry,
+    required this.defaultContextWindow,
+    required this.defaultMaxTokens,
+    required this.defaultTemperature,
+    required this.onChanged,
+  });
+
+  @override
+  State<MobileModelSettingsPage> createState() =>
+      _MobileModelSettingsPageState();
+}
+
+class _MobileModelSettingsPageState extends State<MobileModelSettingsPage> {
+  late final AiModelEntry _entry = widget.entry.copy();
+
+  void _commit() => widget.onChanged(_entry.copy());
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final cfg = context.read<AppState>().config;
+    final s = AppStrings.of(cfg.language);
+    final clr = scheme.onSurface;
+    final zh = s.isZh;
+    final customTemp = _entry.temperature != null;
+
+    Widget field(String label, Widget child, {String? hint}) => Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(label, style: TextStyle(fontSize: 12, color: clr)),
+            if (hint != null) ...[
+              const SizedBox(height: 2),
+              Text(hint, style: TextStyle(fontSize: 10, color: scheme.outline)),
+            ],
+            const SizedBox(height: 5),
+            child,
+          ]),
+        );
+
+    return withWallpaper(
+      context,
+      Scaffold(
+        backgroundColor: Colors.transparent,
+        body: SafeArea(
+          child: Column(children: [
+            MobileSubPageTopBar(
+              title: Text(zh ? '模型设置' : 'Model Settings',
+                  style: const TextStyle(fontSize: 15)),
+              onBack: () => Navigator.of(context).maybePop(),
+              actions: [
+                // 恢复继承提供商默认
+                if (customTemp ||
+                    _entry.contextWindow != null ||
+                    _entry.maxTokens != null)
+                  IconButton(
+                    tooltip: zh ? '恢复继承默认' : 'Inherit defaults',
+                    icon: const Icon(Icons.restart_alt, size: 20),
+                    onPressed: () => setState(() {
+                      _entry
+                        ..contextWindow = null
+                        ..maxTokens = null
+                        ..temperature = null;
+                      _commit();
+                    }),
+                  ),
+              ],
+            ),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
+                children: [
+                  _AiSectionCard(
+                    cardStyle: cfg.cardStyle,
+                    icon: Icons.widgets_outlined,
+                    title: _entry.id,
+                    children: [
+                      field(zh ? '模型 ID' : 'Model ID', _AiField(
+                        value: _entry.id,
+                        scheme: scheme,
+                        onCommit: (v) {
+                          if (v.trim().isNotEmpty) {
+                            _entry.id = v.trim();
+                            _commit();
+                          }
+                        },
+                      )),
+                      field(s.aiContextWindow, _AiField(
+                        value: _entry.contextWindow?.toString() ?? '',
+                        scheme: scheme,
+                        keyboardType: TextInputType.number,
+                        hint: '${widget.defaultContextWindow}',
+                        onCommit: (v) {
+                          final n = int.tryParse(v);
+                          _entry.contextWindow = (n != null && n > 0) ? n : null;
+                          _commit();
+                        },
+                      )),
+                      field(s.aiMaxTokens, _AiField(
+                        value: _entry.maxTokens?.toString() ?? '',
+                        scheme: scheme,
+                        keyboardType: TextInputType.number,
+                        hint: '${widget.defaultMaxTokens}',
+                        onCommit: (v) {
+                          final n = int.tryParse(v);
+                          _entry.maxTokens = (n != null && n > 0) ? n : null;
+                          _commit();
+                        },
+                      )),
+                      field(s.aiTemperature,
+                        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Row(children: [
+                            Expanded(
+                              child: Text(
+                                customTemp
+                                    ? '${s.aiTemperature}: ${_entry.temperature!.toStringAsFixed(1)}'
+                                    : '${s.aiTemperature}: ${zh ? '继承默认' : 'Inherit'} (${widget.defaultTemperature.toStringAsFixed(1)})',
+                                style: TextStyle(fontSize: 12, color: clr),
+                              ),
+                            ),
+                            // 有自定义值时给一个快捷「回到继承默认」
+                            if (customTemp)
+                              TextButton(
+                                onPressed: () => setState(() {
+                                  _entry.temperature = null;
+                                  _commit();
+                                }),
+                                style: TextButton.styleFrom(
+                                    visualDensity: VisualDensity.compact,
+                                    padding: const EdgeInsets.symmetric(horizontal: 6)),
+                                child: Text(zh ? '默认' : 'Default',
+                                    style: const TextStyle(fontSize: 11)),
+                              ),
+                          ]),
+                          _TemperatureSlider(
+                            // 显示有效值；拖动即产生该模型的自定义温度
+                            value: _entry.temperature ?? widget.defaultTemperature,
+                            scheme: scheme,
+                            onCommit: (v) {
+                              setState(() => _entry.temperature = v);
+                              _commit();
+                            },
+                          ),
+                        ]),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    zh
+                        ? '留空的项沿用提供商默认值；设置的值仅对当前选中的这个模型生效。'
+                        : 'Empty fields inherit provider defaults; overrides apply only to this model.',
+                    style: TextStyle(fontSize: 11, color: scheme.outline),
+                  ),
+                ],
+              ),
+            ),
+          ]),
+        ),
+      ),
     );
   }
 }
@@ -1666,18 +1929,33 @@ class _AiField extends StatefulWidget {
 
 class _AiFieldState extends State<_AiField> {
   late final TextEditingController _ctrl = TextEditingController(text: widget.value);
+  late final FocusNode _focus = FocusNode()..addListener(_onFocusChanged);
   bool _visible = false;
+
+  /// 关键修复：焦点丢失时也提交。此前只在键盘「完成」时触发 onCommit，
+  /// 移动端用户输入完 API Key 后直接点顶栏「保存」——TextField 仅失焦、
+  /// 不触发 onSubmitted/onEditingComplete，最后一次输入丢失（表现为
+  /// 「API Key 不保存」）。
+  void _onFocusChanged() {
+    if (!_focus.hasFocus && _ctrl.text != widget.value) {
+      widget.onCommit(_ctrl.text);
+    }
+  }
 
   @override
   void didUpdateWidget(_AiField old) {
     super.didUpdateWidget(old);
-    if (old.value != widget.value && _ctrl.text != widget.value) {
+    // 外部值变化同步进输入框（如新建时供应商预设一键填充）；
+    // 正在聚焦=用户输入中，不覆盖。
+    if (old.value != widget.value && _ctrl.text != widget.value && !_focus.hasFocus) {
       _ctrl.text = widget.value;
     }
   }
 
   @override
   void dispose() {
+    _focus.removeListener(_onFocusChanged);
+    _focus.dispose();
     _ctrl.dispose();
     super.dispose();
   }
@@ -1689,6 +1967,7 @@ class _AiFieldState extends State<_AiField> {
     final clr = scheme.onSurface;
     return TextField(
       controller: _ctrl,
+      focusNode: _focus,
       keyboardType: widget.keyboardType,
       minLines: widget.minLines,
       maxLines: widget.maxLines,

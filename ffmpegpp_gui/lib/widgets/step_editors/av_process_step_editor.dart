@@ -221,6 +221,18 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> with StepEdit
           ])),
         const SizedBox(height: 8),
         _codecDropdown(cs, zh),
+        // Android MediaCodec 提示：硬编按码率/CQ 控制（后端会在未设码率时
+        // 补默认 8 Mbps，CRF 自动映射为 CQ 质量），避免用户误以为设置无效
+        if (p['gpu'] == 'Android' && p['video_codec'] != 'copy')
+          Padding(padding: const EdgeInsets.only(top: 4), child: Row(children: [
+            Icon(Icons.info_outline, size: 13, color: cs.outline),
+            const SizedBox(width: 4),
+            Expanded(child: Text(
+              zh ? 'MediaCodec 硬编：按码率控制质量（未设置时默认 8 Mbps），CRF 模式映射为硬件 CQ 质量'
+                 : 'MediaCodec uses bitrate control (8 Mbps default); CRF maps to hardware CQ quality',
+              style: TextStyle(fontSize: 11, color: cs.outline),
+            )),
+          ])),
         if (p['gpu'] != 'CPU' && !_gpuAccelerated.contains(p['video_codec']) && p['video_codec'] != 'copy')
           Padding(padding: const EdgeInsets.only(top: 4), child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),

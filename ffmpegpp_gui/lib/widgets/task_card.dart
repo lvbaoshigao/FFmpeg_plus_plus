@@ -924,6 +924,8 @@ class _ThumbWidgetState extends State<_ThumbWidget> {
   Widget build(BuildContext context) {
     if (_path != null) {
       return Image.file(File(_path!), width: 40, height: 25,
+          // 缩略图按显示尺寸 3x 封顶解码（1080p 源 ~8MB/张）
+          cacheWidth: 120,
           fit: detectMediaType(widget.filepath) == MediaType.audio ? BoxFit.contain : BoxFit.cover);
     }
     return Icon(Icons.music_note, color: Theme.of(context).colorScheme.outline, size: 16);

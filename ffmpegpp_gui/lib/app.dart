@@ -118,17 +118,33 @@ class _SwipeGatePagePhysics extends PageScrollPhysics {
   }
 }
 
-class _FfmpegppAppState extends State<FfmpegppApp> {
+class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
   /// Android Monet 动态取色的种子色（从系统壁纸读取；null = 不可用）
   int? _monetSeed;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadMonetSeed();
     // 启动时申请必要媒体权限（读取视频/音频/图片），首帧后再请求，
     // 确保 Activity 已 resumed，权限对话框能正常弹出。
     WidgetsBinding.instance.addPostFrameCallback((_) => _requestMediaPermissions());
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// Android onTrimMemory(level≥40) → Flutter memoryPressure：
+  /// 系统内存吃紧时立刻释放图片缓存（壁纸/缩略图，移动端上限 24MB），
+  /// 把内存还给系统，降低被杀后台的概率。UI 侧图片会按需重新解码。
+  @override
+  void didHaveMemoryPressure() {
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
   }
 
   Future<void> _requestMediaPermissions() async {
@@ -953,8 +969,12 @@ class _KeepAlive extends StatefulWidget {
 }
 
 class _KeepAliveState extends State<_KeepAlive> with AutomaticKeepAliveClientMixin {
+  /// 「关闭预加载」开启时不再永久保活：划走的 Tab 状态被释放，
+  /// 内存随用随还（回到该 Tab 时现场重建，可能短暂卡顿——用户已明确
+  /// 选择低内存优先）。默认仍保活，保证翻页流畅。
   @override
-  bool get wantKeepAlive => true;
+  bool get wantKeepAlive => !context.select<AppState, bool>(
+      (s) => s.config.noPreload);
   @override
   Widget build(BuildContext context) {
     super.build(context); // 注册 keep-alive
