@@ -56,7 +56,6 @@ class AppStrings {
   // ── 队列任务卡片 / 展开详情 ──
   String get qInput => lang == 'zh' ? '输入' : 'Input';
   String get qOutput => lang == 'zh' ? '输出' : 'Output';
-  String get qCmd => 'FFmpeg';
   String get qLogs => lang == 'zh' ? '日志' : 'Logs';
   String get qError => lang == 'zh' ? '错误' : 'Error';
   String get qWeight => lang == 'zh' ? '字重' : 'Weight';
@@ -94,8 +93,6 @@ class AppStrings {
   String get themeDynamicColor => lang == 'zh' ? '动态取色（Monet）' : 'Dynamic color (Monet)';
   String get themeDynamicColorHint => lang == 'zh' ? '跟随系统壁纸生成主题色（Material You）' : 'Theme colors derived from your wallpaper (Material You)';
   String get themeDynamicOn => lang == 'zh' ? '动态取色已开启，自定义主题色不生效' : 'Dynamic color active — custom colors are ignored';
-  String get bgCurrentName => lang == 'zh' ? '当前背景' : 'Current background';
-  String get bgChange => lang == 'zh' ? '更换' : 'Change';
   String get styleLabel => lang == 'zh' ? '样式' : 'Style';
   String get cardStyleScope => lang == 'zh' ? '作用于 设置 / 项目 / 处理队列 / 配置库 的卡片' : 'Applies to cards in Settings, Projects, Queue and Config Library';
   String get surfaceStyleTheme => lang == 'zh' ? '跟随主题色（纯色）' : 'Follow theme (solid)';
@@ -115,31 +112,17 @@ class AppStrings {
   String get predictiveBack => lang == 'zh' ? '预测式返回' : 'Predictive back';
   String get predictiveBackHint => lang == 'zh' ? '侧滑返回时预览上一页（Android 14+，Android 16 原生手势）' : 'Preview the previous screen when swiping back (Android 14+ gesture)';
   // Resource monitor
-  String get resCpu => 'CPU';
-  String get resGpu => 'GPU';
-  String get resRam => lang == 'zh' ? '内存' : 'RAM';
   // Command page
-  String get cmdRef => lang == 'zh' ? '命令参考' : 'Command Reference';
-  String get cmdExamples => lang == 'zh' ? '常用示例' : 'Examples';
-  String get cmdParams => lang == 'zh' ? '参数说明' : 'Parameters';
-  String get cmdPlaceholders => lang == 'zh' ? '占位符' : 'Placeholders';
-  String get cmdPlaceholderDesc => lang == 'zh' ? '{input}→输入文件  {output}→输出文件' : '{input}→input file  {output}→output file';
   String get cmdExecute => lang == 'zh' ? '执行' : 'Execute';
-  String get cmdHint => lang == 'zh' ? '命令执行功能将在后续版本实现' : 'Command execution coming in next version';
   String get cmdInput => lang == 'zh' ? '命令输入' : 'Command Input';
   String get cmdOutput => lang == 'zh' ? '命令输出' : 'Command Output';
   String get cmdClear => lang == 'zh' ? '清空' : 'Clear';
   String get cmdClearOutput => lang == 'zh' ? '清空输出' : 'Clear Output';
   String get cmdNoOutput => lang == 'zh' ? '暂无输出' : 'No output yet';
   String get cmdInputHint => lang == 'zh' ? '输入 FFmpeg 命令...' : 'Enter FFmpeg command...';
-  String get cmdError => lang == 'zh' ? '错误' : 'Error';
-  String get cmdStderr => lang == 'zh' ? '标准错误' : 'Stderr';
-  String get cmdStdout => lang == 'zh' ? '标准输出' : 'Stdout';
 
   // ── 设置页 ──
   String get settingsTitle => lang == 'zh' ? '设置' : 'Settings';
-  String get software => lang == 'zh' ? '软件信息' : 'Software';
-  String get appearance => lang == 'zh' ? '外观' : 'Appearance';
   String get language => lang == 'zh' ? '语言' : 'Language';
   String get font => lang == 'zh' ? '字体' : 'Font';
   String get ffmpegSettings => lang == 'zh' ? 'FFmpeg' : 'FFmpeg';
@@ -148,16 +131,8 @@ class AppStrings {
   String get accentColor => lang == 'zh' ? '主题色' : 'Accent Color';
   String get fontFamily => lang == 'zh' ? '字体名称' : 'Font Family';
   String get fontSize => lang == 'zh' ? '字号' : 'Font Size';
-  String get importFont => lang == 'zh' ? '选择系统字体' : 'Pick System Font';
-  String get fontOrSelect => lang == 'zh' ? '输入字体名或从列表选择' : 'Type name or pick from list';
-  String get fontBuiltin => lang == 'zh' ? '内置字体' : 'Built-in fonts';
 
   // ── 软件信息 ──
-  String get swName => lang == 'zh' ? '软件名称' : 'Name';
-  String get swVersion => lang == 'zh' ? '版本' : 'Version';
-  String get swBuild => lang == 'zh' ? '构建日期' : 'Build';
-  String get swProtocol => lang == 'zh' ? '协议' : 'Protocol';
-  String get swFooter => lang == 'zh' ? 'FFmpeg++ Video Tool  v5.2.0  |  构建 2026-08-27  |  JSON v0.1.0' : 'FFmpeg++ Video Tool  v5.2.0  |  Build 2026-08-27  |  JSON v0.1.0';
   String get languageInterface => lang == 'zh' ? '界面语言' : 'Interface Language';
   String get ffmpegFound => lang == 'zh' ? 'FFmpeg 已检测到' : 'FFmpeg detected';
   String get ffmpegNotFound => lang == 'zh' ? 'FFmpeg 未检测到' : 'FFmpeg not found';
@@ -165,7 +140,6 @@ class AppStrings {
   String get ffmpegPath => lang == 'zh' ? 'FFmpeg 路径' : 'FFmpeg path';
   String get ffprobePath => lang == 'zh' ? 'FFprobe 路径' : 'FFprobe path';
   String get outputDir => lang == 'zh' ? '默认输出目录' : 'Default output dir';
-  String get browse => lang == 'zh' ? '浏览' : 'Browse';
   String get save => lang == 'zh' ? '保存' : 'Save';
 
   // ── 编辑配置 ──
@@ -199,11 +173,6 @@ class AppStrings {
   String get cfgRes480p => '480p';
   String get cfgResCustom => lang == 'zh' ? '自定义' : 'Custom';
   String get cfgFps => 'FPS';
-  String get cfgFpsKeep => lang == 'zh' ? '保持' : 'Original';
-  String get cfgFps24 => '24';
-  String get cfgFps30 => '30';
-  String get cfgFps60 => '60';
-  String get cfgFpsCustom => lang == 'zh' ? '自定义' : 'Custom';
   // Audio tab
   String get cfgAudioCodec => lang == 'zh' ? '编码器' : 'Codec';
   String get cfgAudioBitrate => lang == 'zh' ? '码率' : 'Bitrate';
@@ -250,21 +219,13 @@ class AppStrings {
   String get goDownload => lang == 'zh' ? '前往下载' : 'Go to Download';
 
   // ── 步骤编辑器 ──
-  String get stepStart => lang == 'zh' ? '开始' : 'Start';
-  String get stepAvProcess => lang == 'zh' ? '音视频处理' : 'AV Process';
-  String get keepIntermediate => lang == 'zh' ? '保留中间文件' : 'Keep intermediate files';
   String get intermediateDir => lang == 'zh' ? '中间文件目录' : 'Intermediate Dir';
   String get intermediateHint => lang == 'zh' ? '为空则使用系统临时目录' : 'Empty = system temp';
 
   // ── 流程图编辑器 ──
-  String get pipelineAddChain => lang == 'zh' ? '添加链' : 'Add Chain';
-  String get pipelineParallel => lang == 'zh' ? '并行' : 'Parallel';
-  String get pipelineAddStage => lang == 'zh' ? '添加阶段' : 'Add Stage';
-  String get pipelineAddParallel => lang == 'zh' ? '添加并行步骤' : 'Add Parallel';
 
   // ── 容器 ──
   String get container => lang == 'zh' ? '容器' : 'Container';
-  String get containerNew => lang == 'zh' ? '新建容器' : 'New Container';
   String get containerFromFolder => lang == 'zh' ? '从文件夹创建' : 'From Folder';
   String get containerFromFiles => lang == 'zh' ? '选择文件创建' : 'From Files';
   String get containerEnter => lang == 'zh' ? '进入' : 'Enter';
@@ -272,10 +233,7 @@ class AppStrings {
   String get containerSortName => lang == 'zh' ? '按名称' : 'By Name';
   String get containerSortSize => lang == 'zh' ? '按大小' : 'By Size';
   String get containerSortDuration => lang == 'zh' ? '按时长' : 'By Duration';
-  String get containerReindex => lang == 'zh' ? '重新编号' : 'Reindex';
   String get containerAddFiles => lang == 'zh' ? '添加文件' : 'Add Files';
-  String get containerTargetIndex => lang == 'zh' ? '处理编号' : 'Target Index';
-  String get containerAll => lang == 'zh' ? '全部' : 'All';
   String get containerQueueAll => lang == 'zh' ? '全部加入队列' : 'Queue All';
 
   // ── MCP / AI ──
@@ -290,14 +248,10 @@ class AppStrings {
   String get aiListModels => lang == 'zh' ? '获取模型列表' : 'List Models';
   String get aiChatTitle => lang == 'zh' ? 'AI 助手' : 'AI Assistant';
   String get aiChatHint => lang == 'zh' ? '描述你想对媒体文件做的处理...' : 'Describe what processing you want...';
-  String get aiSend => lang == 'zh' ? '发送' : 'Send';
   String get aiSettings => lang == 'zh' ? 'AI 设置' : 'AI Settings';
-  String get aiApplyGraph => lang == 'zh' ? '应用到画布' : 'Apply to Canvas';
   String get aiNotConfigured => lang == 'zh' ? '请先在设置中配置 AI API Key' : 'Please configure AI API Key in Settings first';
   String get aiEnable => lang == 'zh' ? '启用 AI 助手' : 'Enable AI Assistant';
   String get aiMoreOptions => lang == 'zh' ? '更多选项' : 'More Options';
-  String get aiAutoApply => lang == 'zh' ? '自动应用管线' : 'Auto-apply pipeline';
-  String get aiAutoApplyDesc => lang == 'zh' ? '开启后 AI 生成的管线将直接应用到画布' : 'AI-generated pipelines apply to canvas automatically';
   String get aiReadAccess => lang == 'zh' ? '读取权限' : 'Read Access';
   String get aiReadAccessDesc => lang == 'zh' ? '允许 AI 读取文件信息和目录' : 'Allow AI to read files and directories';
   String get aiWriteAccess => lang == 'zh' ? '写入权限' : 'Write Access';
@@ -316,20 +270,14 @@ class AppStrings {
   String get aiGraphModeModify => lang == 'zh' ? '修改' : 'Modify';
   String get aiCustomPrompt => lang == 'zh' ? '自定义系统提示词' : 'Custom System Prompt';
   String get aiCustomPromptHint => lang == 'zh' ? '在此输入额外的指令，会添加到默认提示词之前...' : 'Enter extra instructions prepended to the default prompt...';
-  String get aiConnection => lang == 'zh' ? '连接' : 'Connection';
   String get aiPermissions => lang == 'zh' ? '权限' : 'Permissions';
   String get aiAdvanced => lang == 'zh' ? '高级' : 'Advanced';
-  String get aiTemperatureLabel => lang == 'zh' ? '温度 (随机性)' : 'Temperature (randomness)';
-  String get aiMaxTokensLabel => lang == 'zh' ? '最大输出 Token' : 'Max Output Tokens';
-  String get aiContextWindowLabel => lang == 'zh' ? '上下文窗口 (Token)' : 'Context Window (tokens)';
   String get aiApproveModeLabel => lang == 'zh' ? '会话模式' : 'Session Mode';
   String get aiApproveModeAuto => lang == 'zh' ? '自动模式' : 'Auto';
   String get aiApproveModeAsk => lang == 'zh' ? '询问模式' : 'Ask';
   String get aiApproveModeDesc => lang == 'zh' ? '自动模式：AI 生成的图直接应用；询问模式：每次生成后由你确认' : 'Auto: apply AI graphs directly. Ask: confirm every generated graph before applying.';
   String get aiAskSkipLabel => lang == 'zh' ? '询问模式下无需确认的操作' : 'Operations that skip confirmation in Ask mode';
-  String get aiProviderPresetLabel => lang == 'zh' ? '供应商预设' : 'Provider Preset';
   // ── 移动端 AI 提供商 ──
-  String get aiProviderItem => lang == 'zh' ? '提供商' : 'Provider';
   String get aiProviders => lang == 'zh' ? '提供商' : 'Providers';
   String get aiNewProvider => lang == 'zh' ? '新建提供商' : 'New Provider';
   String get aiProviderCurrent => lang == 'zh' ? '当前' : 'Current';
@@ -339,13 +287,11 @@ class AppStrings {
   String get aiProviderNeedName => lang == 'zh' ? '配置名不能为空' : 'Name is required';
   String get aiProviderDeleted => lang == 'zh' ? '提供商已删除' : 'Provider deleted';
   String get aiDeleteProviderConfirm => lang == 'zh' ? '确定删除此提供商？' : 'Delete this provider?';
-  String get aiProtocol => lang == 'zh' ? '请求协议' : 'Protocol';
   String get aiPreset => lang == 'zh' ? '提供商预设（一键填充）' : 'Provider Preset (auto-fill)';
   String get aiContextWindow => lang == 'zh' ? '上下文窗口 (token)' : 'Context Window (tokens)';
   String get aiMaxTokens => lang == 'zh' ? '最大输出 token' : 'Max Output Tokens';
   String get aiTemperature => lang == 'zh' ? '温度 (0-2)' : 'Temperature (0-2)';
   String get aiNoProviders => lang == 'zh' ? '暂无提供商，点击「新建提供商」添加' : 'No providers yet — tap "New Provider" to add one';
-  String get aiName => lang == 'zh' ? '配置名' : 'Name';
 
   // ── 设置页分区与搜索 ──
   String get setSearchHint => lang == 'zh' ? '搜索设置...' : 'Search settings...';
@@ -354,8 +300,6 @@ class AppStrings {
   String get setClearSearch => lang == 'zh' ? '清除搜索' : 'Clear search';
   String get setCollapse => lang == 'zh' ? '折叠' : 'Collapse';
   String get setExpand => lang == 'zh' ? '展开' : 'Expand';
-  String get setCollapseAll => lang == 'zh' ? '全部折叠' : 'Collapse all';
-  String get setExpandAll => lang == 'zh' ? '全部展开' : 'Expand all';
   String get secGeneral => lang == 'zh' ? '通用' : 'General';
   String get secAppearance => lang == 'zh' ? '外观' : 'Appearance';
   String get secProcessing => lang == 'zh' ? '处理' : 'Processing';
@@ -372,17 +316,5 @@ class AppStrings {
   String get cardCache => lang == 'zh' ? '缓存' : 'Cache';
 
   // ── 节点编辑器 · 逻辑门 & 控制流 ──
-  String get logicGates => lang == 'zh' ? '逻辑门' : 'Logic Gates';
-  String get logicGateAnd => lang == 'zh' ? '与门' : 'AND Gate';
-  String get logicGateOr => lang == 'zh' ? '或门' : 'OR Gate';
-  String get logicGateNot => lang == 'zh' ? '非门' : 'NOT Gate';
-  String get logicGateNand => lang == 'zh' ? '与非门' : 'NAND Gate';
-  String get logicGateNor => lang == 'zh' ? '或非门' : 'NOR Gate';
-  String get logicConst1 => lang == 'zh' ? '恒1' : 'Const 1';
-  String get logicConst0 => lang == 'zh' ? '恒0' : 'Const 0';
-  String get controlFlow => lang == 'zh' ? '控制流' : 'Control Flow';
-  String get enablePort => lang == 'zh' ? '使能端' : 'Enable';
-  String get statusPort => lang == 'zh' ? '状态端' : 'Status';
   String get importConfig => lang == 'zh' ? '加载配置' : 'Load Config';
-  String get importConfigDesc => lang == 'zh' ? '从 .fppx 文件加载节点配置' : 'Load node config from .fppx file';
 }

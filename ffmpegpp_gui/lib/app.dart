@@ -342,7 +342,41 @@ class _AppShellState extends State<AppShell> with WindowListener {
       }
       // 主界面首帧后：后台分帧预热其余页面，减少首次切换卡顿
       _prewarmPages();
+      // 「关闭预加载」运行时切换监听：开启=立即逐出非当前页缓存（释放
+      // 玻璃/模糊离屏纹理内存）；关闭=恢复后台预热。保证该开关在 PC 上
+      // 不只影响下一次启动，而是随时生效。
+      _lastNoPreload = state.config.noPreload;
+      _listenedState = state;
+      state.addListener(_onNoPreloadChanged);
     });
+  }
+
+  /// dispose 时用引用移除监听（dispose 里不能再走 context.lookup）。
+  AppState? _listenedState;
+  bool _lastNoPreload = false;
+
+  void _onNoPreloadChanged() {
+    if (!mounted) return;
+    final state = context.read<AppState>();
+    final now = state.config.noPreload;
+    if (now == _lastNoPreload) return;
+    _lastNoPreload = now;
+    if (now) {
+      // 开启「关闭预加载」：逐出所有非当前页的缓存页面
+      final current = state.selectedNav;
+      var changed = false;
+      for (var i = 0; i < _pageCache.length; i++) {
+        if (i != current && _pageCache[i] != null) {
+          _pageCache[i] = null;
+          _pageLru.remove(i);
+          changed = true;
+        }
+      }
+      if (changed) setState(() {});
+    } else {
+      // 关闭「关闭预加载」：恢复后台预热（_warming 已在跳过时复位）
+      _prewarmPages();
+    }
   }
 
   Future<void> _autoCheckUpdate() async {
@@ -444,6 +478,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
   void dispose() {
     _mobilePageController.dispose();
     if (!isMobilePlatform) windowManager.removeListener(this);
+    _listenedState?.removeListener(_onNoPreloadChanged);
     super.dispose();
   }
   @override
@@ -841,11 +876,18 @@ class _AppShellState extends State<AppShell> with WindowListener {
   void _prewarmPages() {
     if (_warming) return;
     _warming = true;
-    // 关闭预加载：除当前页外不构建任何页面
-    if (context.read<AppState>().config.noPreload) return;
+    final state = context.read<AppState>();
+    // 关闭预加载：除当前页外不构建任何页面。
+    // 复位 _warming：用户之后重新打开预加载时（本监听恢复预热路径）可以再次运行。
+    if (state.config.noPreload) {
+      _warming = false;
+      state.addLog('关闭预加载已开启：跳过后台页面预热，页面在首次切换时才构建', category: 'info');
+      return;
+    }
     final targets = isMobilePlatform
         ? _kMobileNavOrder
         : const [0, 1];
+    state.addLog('后台预热 ${targets.length} 个页面（项目/处理队列）', category: 'info');
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       for (final i in targets) {
         if (!mounted) return;
@@ -853,7 +895,10 @@ class _AppShellState extends State<AppShell> with WindowListener {
         await Future<void>.delayed(const Duration(milliseconds: 160));
         if (!mounted) return;
         // 预热途中用户开启了「关闭预加载」则中止剩余预热
-        if (context.read<AppState>().config.noPreload) return;
+        if (context.read<AppState>().config.noPreload) {
+          _warming = false;
+          return;
+        }
         setState(() { _page(i); });
       }
     });

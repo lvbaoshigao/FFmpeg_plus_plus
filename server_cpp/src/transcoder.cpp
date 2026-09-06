@@ -338,16 +338,6 @@ std::vector<std::string> buildTranscodeCommand(
         cmd.push_back(std::to_string(start_time));
     }
 
-    // 硬件加速解码（纯音频模式跳过）
-    if (!audio_only && HWACCEL_PARAMS.count(gpu)) {
-        std::string encoder = resolveEncoder(gpu, video_codec);
-        if (encoder != "copy") {
-            for (auto& p : HWACCEL_PARAMS.at(gpu)) {
-                cmd.push_back(p);
-            }
-        }
-    }
-
     cmd.push_back("-i");
     cmd.push_back(input_path);
 

@@ -1,23 +1,20 @@
 import 'package:flutter/material.dart';
 import '../../platform/app_platform.dart';
+import 'editor_kit.dart';
 
-class AvProcessStepEditor extends StatefulWidget {
-  final Map<String, dynamic> params;
-  final VoidCallback onChanged;
-  final bool isZh;
-
+class AvProcessStepEditor extends ParamsStepEditor {
   const AvProcessStepEditor({
     super.key,
-    required this.params,
-    required this.onChanged,
-    this.isZh = true,
+    required super.params,
+    required super.onChanged,
+    super.isZh = true,
   });
 
   @override
   State<AvProcessStepEditor> createState() => _AvProcessStepEditorState();
 }
 
-class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
+class _AvProcessStepEditorState extends State<AvProcessStepEditor> with StepEditorState<AvProcessStepEditor> {
   static const _gpuCodecs = {
     'CPU': ['libx264', 'libx265', 'libvpx-vp9', 'libaom-av1', 'libsvtav1', 'libx264rgb', 'copy'],
     'NVIDIA': ['h264_nvenc', 'hevc_nvenc', 'av1_nvenc'],
@@ -69,8 +66,6 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
 
   late TextEditingController _bitrateCtrl, _resWCtrl, _resHCtrl, _fpsCtrl, _audioBitrateCtrl;
 
-  Map<String, dynamic> get p => widget.params;
-
   @override
   void initState() {
     super.initState();
@@ -107,11 +102,6 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
     super.dispose();
   }
 
-  void _update(String key, dynamic value) {
-    setState(() => p[key] = value);
-    widget.onChanged();
-  }
-
   static int _crfMaxForCodec(String codec) {
     if (codec.contains('av1') || codec.contains('vp9') || codec == 'libvpx-vp9' || codec == 'libaom-av1' || codec == 'libsvtav1') return 63;
     return 51; // H.264/H.265
@@ -133,14 +123,12 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
   Widget _dropdown({required String label, required String value, required List<String> items,
       List<String>? itemLabels, required ColorScheme cs, required ValueChanged<String> onChanged}) {
     final safe = items.contains(value) ? value : items.first;
-    return DropdownButtonFormField<String>(
-      borderRadius: BorderRadius.circular(12),
-      initialValue: safe, isExpanded: true, decoration: InputDecoration(labelText: label),
-      dropdownColor: cs.surface, style: TextStyle(fontSize: 13, color: cs.onSurface),
-      items: List.generate(items.length, (i) => DropdownMenuItem(
-        value: items[i], child: Text(itemLabels != null ? itemLabels[i] : items[i], style: TextStyle(fontSize: 13, color: cs.onSurface)),
-      )),
-      onChanged: (v) { if (v != null) onChanged(v); },
+    return EditorDropdown(
+      label: label,
+      value: safe,
+      dense: false,
+      items: List.generate(items.length, (i) => (items[i], itemLabels != null ? itemLabels[i] : items[i])),
+      onChanged: onChanged,
     );
   }
 
@@ -180,7 +168,7 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
       }).toList(),
       onChanged: (v) {
         if (v != null) {
-          _update('video_codec', v);
+          update('video_codec', v);
           // 切换编码器后按新上限夹取已存的 CRF（AV1/VP9 上限 63，H.26x 上限 51），
           // 否则 Slider 断言崩溃且 ffmpeg 收到超界 CRF
           final maxCrf = _crfMaxForCodec(v);
@@ -270,21 +258,21 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
               max: _crfMaxForCodec(p['video_codec'] as String? ?? 'libx264').toDouble(),
               divisions: _crfMaxForCodec(p['video_codec'] as String? ?? 'libx264'),
               label: '${p['crf'] ?? 23}',
-              onChanged: (v) => _update('crf', v.round())),
+              onChanged: (v) => update('crf', v.round())),
           ])),
         if (p['gpu'] == 'CPU') ...[
           _dropdown(label: 'Preset', value: p['preset'] as String? ?? 'medium', items: _presets, cs: cs,
-            onChanged: (v) => _update('preset', v)),
+            onChanged: (v) => update('preset', v)),
           const SizedBox(height: 8),
         ],
         _dropdown(label: zh ? '像素格式' : 'Pixel Format', value: p['pix_fmt'] as String? ?? 'auto',
           items: _pixFmts,
           itemLabels: [zh ? '自动' : 'Auto', 'YUV 4:2:0 8bit', 'YUV 4:2:2 8bit', 'YUV 4:4:4 8bit', 'YUV 4:2:0 10bit', 'YUV 4:2:2 10bit', 'NV12', 'P010LE (10bit)', 'RGB 24bit'],
-          cs: cs, onChanged: (v) => _update('pix_fmt', v)),
+          cs: cs, onChanged: (v) => update('pix_fmt', v)),
         const SizedBox(height: 8),
         _dropdown(label: zh ? '分辨率' : 'Resolution', value: p['resolution'] as String, items: _resolutions,
           itemLabels: zh ? const ['原始', '4K (2160p)', '1080p', '720p', '480p', '360p', '自定义'] : const ['Original', '4K (2160p)', '1080p', '720p', '480p', '360p', 'Custom'],
-          cs: cs, onChanged: (v) => _update('resolution', v)),
+          cs: cs, onChanged: (v) => update('resolution', v)),
         if (p['resolution'] == 'custom')
           Padding(padding: const EdgeInsets.only(top: 12), child: Row(children: [
             Expanded(child: TextField(controller: _resWCtrl, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: 'W'),
@@ -296,7 +284,7 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
         const SizedBox(height: 8),
         _dropdown(label: zh ? '帧率' : 'FPS', value: p['fps'] as String, items: _fpsOptions,
           itemLabels: zh ? const ['保持', '24', '25', '30', '48', '50', '60', '120', '自定义'] : const ['Keep', '24', '25', '30', '48', '50', '60', '120', 'Custom'],
-          cs: cs, onChanged: (v) => _update('fps', v)),
+          cs: cs, onChanged: (v) => update('fps', v)),
         if (p['fps'] == 'custom')
           Padding(padding: const EdgeInsets.only(top: 12), child: TextField(
             controller: _fpsCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: InputDecoration(labelText: zh ? '自定义帧率' : 'Custom FPS'),
@@ -309,7 +297,7 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
         const SizedBox(height: 10),
         _dropdown(label: zh ? '音频编码' : 'Audio Codec', value: p['audio_codec'] as String? ?? 'aac', items: _audioCodecs,
           itemLabels: _audioCodecs.map((c) => _audioCodecLabelsFor(zh)[c] ?? c).toList(),
-          cs: cs, onChanged: (v) => _update('audio_codec', v)),
+          cs: cs, onChanged: (v) => update('audio_codec', v)),
         const SizedBox(height: 8),
         // 音频码率：用 audio_bitrate_mode 记录选择（default/keep/preset/custom）。
         // 原实现 custom 分支写 p['audio_bitrate_custom'] ?? 128，128 恰好在预设列表内，
@@ -326,14 +314,14 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
               itemLabels: [zh ? '不指定' : 'Default', zh ? '保持原样' : 'Keep Original', ..._audioBitrates.map((b) => '$b kbps'), zh ? '自定义' : 'Custom'],
               cs: cs, onChanged: (v) {
                 if (v == 'keep') {
-                  _update('audio_bitrate_mode', 'keep');
-                  _update('audio_bitrate', null);
+                  update('audio_bitrate_mode', 'keep');
+                  update('audio_bitrate', null);
                 } else if (v == 'custom') {
-                  _update('audio_bitrate_mode', 'custom');
-                  _update('audio_bitrate', null);
+                  update('audio_bitrate_mode', 'custom');
+                  update('audio_bitrate', null);
                 } else {
-                  _update('audio_bitrate_mode', v.isEmpty ? 'default' : 'preset');
-                  _update('audio_bitrate', v.isEmpty ? null : int.tryParse(v));
+                  update('audio_bitrate_mode', v.isEmpty ? 'default' : 'preset');
+                  update('audio_bitrate', v.isEmpty ? null : int.tryParse(v));
                 }
               }),
             if (abValue == 'custom')
@@ -348,7 +336,7 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> {
         const SizedBox(height: 8),
         _dropdown(label: zh ? '声道' : 'Channels', value: p['audio_channels'] as String? ?? 'keep', items: _channels,
           itemLabels: zh ? const ['保持', '单声道', '立体声', '5.1 环绕', '7.1 环绕'] : const ['Keep', 'Mono', 'Stereo', '5.1', '7.1'],
-          cs: cs, onChanged: (v) => _update('audio_channels', v)),
+          cs: cs, onChanged: (v) => update('audio_channels', v)),
       ]),
     );
   }

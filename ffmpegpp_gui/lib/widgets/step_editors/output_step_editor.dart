@@ -1,19 +1,17 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'editor_kit.dart';
 
-class OutputStepEditor extends StatefulWidget {
-  final Map<String, dynamic> params;
-  final VoidCallback onChanged;
-  final bool isZh;
+class OutputStepEditor extends ParamsStepEditor {
   final String sourceFilename;
   final String defaultOutputDir;
 
   const OutputStepEditor({
     super.key,
-    required this.params,
-    required this.onChanged,
-    this.isZh = true,
+    required super.params,
+    required super.onChanged,
+    super.isZh = true,
     this.sourceFilename = '',
     this.defaultOutputDir = '',
   });
@@ -22,20 +20,17 @@ class OutputStepEditor extends StatefulWidget {
   State<OutputStepEditor> createState() => _OutputStepEditorState();
 }
 
-class _OutputStepEditorState extends State<OutputStepEditor> {
+class _OutputStepEditorState extends State<OutputStepEditor> with StepEditorState<OutputStepEditor> {
   late TextEditingController _namingCtrl;
   late TextEditingController _dirCtrl;
-
-  Map<String, dynamic> get p => widget.params;
 
   static const _namingModes = ['keep', 'suffix', 'custom'];
 
   @override
   void initState() {
     super.initState();
-    p.putIfAbsent('format', () => 'keep');
-    p.putIfAbsent('naming_mode', () => 'keep');
-    p.putIfAbsent('naming_value', () => '_processed');
+    initDefaults(const {'format': 'keep', 'naming_mode': 'keep', 'naming_value': '_processed'});
+    // output_dir 默认值依赖 widget.defaultOutputDir，保持原 putIfAbsent 写法
     p.putIfAbsent('output_dir', () => widget.defaultOutputDir);
     _namingCtrl = TextEditingController(text: p['naming_value'] as String? ?? '_processed');
     _dirCtrl = TextEditingController(text: p['output_dir'] as String? ?? widget.defaultOutputDir);
@@ -146,15 +141,12 @@ class _OutputStepEditorState extends State<OutputStepEditor> {
   Widget _buildDropdown({required String label, required String value, required List<String> items,
       List<String>? itemLabels, required ColorScheme cs, required ValueChanged<String> onChanged}) {
     final safe = items.contains(value) ? value : items.first;
-    return DropdownButtonFormField<String>(
-      borderRadius: BorderRadius.circular(12),
-      initialValue: safe, isExpanded: true, decoration: InputDecoration(labelText: label),
-      dropdownColor: cs.surface, style: TextStyle(fontSize: 13, color: cs.onSurface),
-      items: List.generate(items.length, (i) => DropdownMenuItem(
-        value: items[i], child: Text(itemLabels != null ? itemLabels[i] : items[i], style: TextStyle(fontSize: 13, color: cs.onSurface)),
-      )),
-      onChanged: (v) { if (v != null) onChanged(v); },
+    return EditorDropdown(
+      label: label,
+      value: safe,
+      dense: false,
+      items: List.generate(items.length, (i) => (items[i], itemLabels != null ? itemLabels[i] : items[i])),
+      onChanged: onChanged,
     );
   }
 }
-

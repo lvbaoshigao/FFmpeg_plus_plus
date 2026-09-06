@@ -127,18 +127,24 @@ class _QueuePageState extends State<QueuePage> {
   /// 卡片会重建，而不是整列 20~50 张卡片每 300ms 全量重建。
   TaskCard _taskCardFor(AppState state, int i) {
     final tasks = state.tasks;
+    // 任务列表缩短时裁掉尾部缓存
     if (_taskCardWidgets.length > tasks.length) {
-      _taskCardWidgets.length = tasks.length;
+      _taskCardWidgets.removeRange(tasks.length, _taskCardWidgets.length);
     }
     final task = tasks[i];
     if (i < _taskCardWidgets.length && identical(_taskCardWidgets[i].task, task)) {
       return _taskCardWidgets[i];
     }
     final card = TaskCard(key: ValueKey(task.id), task: task);
+    // 关键修复：不能用 `_taskCardWidgets.length = i + 1` 扩容——非空类型
+    // List 的 length= 会以 null 填充新槽位，运行时抛
+    // 「type 'Null' is not a subtype of type 'TaskCard'」，队列页只要有任务
+    // 就构建失败 → 整页白屏。必须用 add / 下标赋值。
     if (i >= _taskCardWidgets.length) {
-      _taskCardWidgets.length = i + 1;
+      _taskCardWidgets.add(card);
+    } else {
+      _taskCardWidgets[i] = card;
     }
-    _taskCardWidgets[i] = card;
     return card;
   }
 
@@ -236,6 +242,9 @@ class _QueuePageState extends State<QueuePage> {
         const SizedBox(width: 8),
         // 右：操作药丸（高度 44；宽度完全跟随内部元素总长度——
         // SingleChildScrollView 会把药丸撑满剩余宽度，故改回 mainAxisSize.min 的 Row）。
+        // FittedBox(scaleDown)：任务存在时顶栏会多出 3 个操作按钮，窄屏
+        // （如 412dp 手机）下 Row 整体溢出 ~190px；空间不足时整体等比缩小，
+        // 不再溢出裁切。
         Flexible(
           child: Align(
             alignment: Alignment.centerRight,
@@ -243,9 +252,12 @@ class _QueuePageState extends State<QueuePage> {
               radius: 22,
               height: 44,
               padding: const EdgeInsets.symmetric(horizontal: 6),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: _buildMobileActions(scheme, state, s),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: _buildMobileActions(scheme, state, s),
+                ),
               ),
             ),
           ),

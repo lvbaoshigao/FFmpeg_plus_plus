@@ -1,18 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import '../font_picker.dart';
+import 'editor_kit.dart';
 
-class SubtitleStepEditor extends StatefulWidget {
-  final Map<String, dynamic> params;
-  final VoidCallback onChanged;
-  final bool isZh;
+class SubtitleStepEditor extends ParamsStepEditor {
   final List<dynamic> embeddedSubtitles;
 
   const SubtitleStepEditor({
     super.key,
-    required this.params,
-    required this.onChanged,
-    this.isZh = true,
+    required super.params,
+    required super.onChanged,
+    super.isZh = true,
     this.embeddedSubtitles = const [],
   });
 
@@ -20,26 +18,15 @@ class SubtitleStepEditor extends StatefulWidget {
   State<SubtitleStepEditor> createState() => _SubtitleStepEditorState();
 }
 
-class _SubtitleStepEditorState extends State<SubtitleStepEditor> {
-  Map<String, dynamic> get p => widget.params;
-
+class _SubtitleStepEditorState extends State<SubtitleStepEditor> with StepEditorState<SubtitleStepEditor> {
   @override
   void initState() {
     super.initState();
-    p.putIfAbsent('source', () => 'external');
-    p.putIfAbsent('subtitle_index', () => 0);
-    p.putIfAbsent('font_name', () => 'Arial');
-    p.putIfAbsent('font_size', () => 24);
-    p.putIfAbsent('font_color', () => '#FFFFFF');
-    p.putIfAbsent('outline_width', () => 2);
-    p.putIfAbsent('outline_color', () => '#000000');
+    initDefaults(const {
+      'source': 'external', 'subtitle_index': 0, 'font_name': 'Arial',
+      'font_size': 24, 'font_color': '#FFFFFF', 'outline_width': 2, 'outline_color': '#000000',
+    });
   }
-
-  void _update(String key, dynamic value) {
-    setState(() => p[key] = value);
-    widget.onChanged();
-  }
-
 
   Color _hexToColor(String hex) {
     hex = hex.replaceAll('#', '');
@@ -61,7 +48,7 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> {
     );
     if (result != null && result.files.isNotEmpty && result.files.first.path != null) {
       if (!mounted) return;
-      _update('subtitle_file', result.files.first.path!);
+      update('subtitle_file', result.files.first.path!);
     }
   }
 
@@ -70,7 +57,7 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> {
     showDialog(
       context: context,
       builder: (ctx) => _ColorPickerDialog(initialColor: current, isZh: widget.isZh, onPicked: (color) {
-        _update(key, _colorToHex(color));
+        update(key, _colorToHex(color));
       }),
     );
   }
@@ -78,116 +65,109 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final zh = widget.isZh;
     final subs = widget.embeddedSubtitles;
 
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: SingleChildScrollView(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          _buildDropdown(label: zh ? '字幕来源' : 'Source', value: p['source'] as String,
-            items: const ['external', 'embedded'],
-            itemLabels: zh ? const ['外挂字幕', '内嵌字幕'] : const ['External', 'Embedded'],
-            cs: cs, onChanged: (v) {
-              p['source'] = v;
-              if (v == 'embedded' && subs.isNotEmpty) p['subtitle_index'] = 0;
-              setState(() {}); widget.onChanged();
-            }),
-          const SizedBox(height: 8),
+    return StepEditorScaffold(
+      scrollable: true,
+      children: [
+        _buildDropdown(label: zh ? '字幕来源' : 'Source', value: p['source'] as String,
+          items: const ['external', 'embedded'],
+          itemLabels: zh ? const ['外挂字幕', '内嵌字幕'] : const ['External', 'Embedded'],
+          cs: cs, onChanged: (v) {
+            p['source'] = v;
+            if (v == 'embedded' && subs.isNotEmpty) p['subtitle_index'] = 0;
+            setState(() {}); widget.onChanged();
+          }),
+        const SizedBox(height: 8),
 
-          if (p['source'] == 'external') ...[
-            Row(children: [
-              Expanded(child: Text(
-                (p['subtitle_file'] as String?)?.split(RegExp(r'[/\\]')).last ?? (zh ? '未选择文件' : 'No file selected'),
-                style: TextStyle(fontSize: 13, color: cs.onSurface), overflow: TextOverflow.ellipsis,
-              )),
-              const SizedBox(width: 8),
-              FilledButton.tonalIcon(onPressed: _pickSubtitleFile, icon: const Icon(Icons.folder_open, size: 18), label: Text(zh ? '选择' : 'Browse')),
-            ]),
-            const SizedBox(height: 8),
-          ],
-
-          if (p['source'] == 'embedded') ...[
-            if (subs.isEmpty)
-              Text(zh ? '此视频无内嵌字幕轨道' : 'No embedded subtitle tracks', style: TextStyle(fontSize: 13, color: cs.error))
-            else
-              _buildDropdown(label: zh ? '字幕轨道' : 'Track', value: '${p['subtitle_index'] ?? 0}',
-                items: List.generate(subs.length, (i) => '$i'),
-                itemLabels: List.generate(subs.length, (i) {
-                  final s = subs[i];
-                  if (s is Map) return '#${s['index'] ?? i} [${s['codec'] ?? ''}] ${s['language'] ?? ''}';
-                  return '#$i';
-                }), cs: cs, onChanged: (v) => _update('subtitle_index', int.tryParse(v) ?? 0)),
-            const SizedBox(height: 8),
-          ],
-
-          const Divider(),
-          const SizedBox(height: 8),
-          Text(zh ? '字幕样式' : 'Subtitle Style', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-          const SizedBox(height: 8),
-
-          // 字体选择
-          FontPicker(
-            currentFont: p['font_name'] as String? ?? 'Arial',
-            language: zh ? 'zh' : 'en',
-            onSelected: (v) => _update('font_name', v),
-          ),
-          const SizedBox(height: 8),
-
-          // 字体+字号预览
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.black87,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              zh ? '字幕预览 Subtitle Preview 123' : 'Subtitle Preview 字幕预览 123',
-              style: TextStyle(
-                fontFamily: p['font_name'] as String? ?? 'Arial',
-                fontSize: (p['font_size'] as int? ?? 24).toDouble() * 0.6,
-                color: _hexToColor(p['font_color'] as String? ?? '#FFFFFF'),
-                shadows: [
-                  Shadow(
-                    color: _hexToColor(p['outline_color'] as String? ?? '#000000'),
-                    blurRadius: (p['outline_width'] as int? ?? 2).toDouble(),
-                  ),
-                ],
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ),
-          const SizedBox(height: 8),
-
-          // 字号
+        if (p['source'] == 'external') ...[
           Row(children: [
-            Text('${zh ? "字号" : "Size"}: ${p['font_size']}', style: TextStyle(fontSize: 13, color: cs.onSurface)),
-            Expanded(child: Slider(
-              value: (p['font_size'] as num?)?.toDouble() ?? 24, min: 12, max: 72, divisions: 60, label: '${p['font_size']}',
-              onChanged: (v) => _update('font_size', v.round()),
+            Expanded(child: Text(
+              (p['subtitle_file'] as String?)?.split(RegExp(r'[/\\]')).last ?? (zh ? '未选择文件' : 'No file selected'),
+              style: TextStyle(fontSize: 13, color: cs.onSurface), overflow: TextOverflow.ellipsis,
             )),
+            const SizedBox(width: 8),
+            FilledButton.tonalIcon(onPressed: _pickSubtitleFile, icon: const Icon(Icons.folder_open, size: 18), label: Text(zh ? '选择' : 'Browse')),
           ]),
           const SizedBox(height: 8),
+        ],
 
-          // 描边宽度
-          Row(children: [
-            Text('${zh ? "描边" : "Outline"}: ${p['outline_width']}', style: TextStyle(fontSize: 13, color: cs.onSurface)),
-            Expanded(child: Slider(
-              value: (p['outline_width'] as num?)?.toDouble() ?? 2, min: 0, max: 8, divisions: 8, label: '${p['outline_width']}',
-              onChanged: (v) => _update('outline_width', v.round()),
-            )),
-          ]),
+        if (p['source'] == 'embedded') ...[
+          if (subs.isEmpty)
+            Text(zh ? '此视频无内嵌字幕轨道' : 'No embedded subtitle tracks', style: TextStyle(fontSize: 13, color: cs.error))
+          else
+            _buildDropdown(label: zh ? '字幕轨道' : 'Track', value: '${p['subtitle_index'] ?? 0}',
+              items: List.generate(subs.length, (i) => '$i'),
+              itemLabels: List.generate(subs.length, (i) {
+                final s = subs[i];
+                if (s is Map) return '#${s['index'] ?? i} [${s['codec'] ?? ''}] ${s['language'] ?? ''}';
+                return '#$i';
+              }), cs: cs, onChanged: (v) => update('subtitle_index', int.tryParse(v) ?? 0)),
           const SizedBox(height: 8),
+        ],
 
-          // 字体颜色
-          _colorRow(zh ? '字体颜色' : 'Font Color', 'font_color', cs),
-          const SizedBox(height: 8),
+        const Divider(),
+        const SizedBox(height: 8),
+        Text(zh ? '字幕样式' : 'Subtitle Style', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
+        const SizedBox(height: 8),
 
-          // 描边颜色
-          _colorRow(zh ? '描边颜色' : 'Outline Color', 'outline_color', cs),
-        ]),
-      ),
+        // 字体选择
+        FontPicker(
+          currentFont: p['font_name'] as String? ?? 'Arial',
+          language: zh ? 'zh' : 'en',
+          onSelected: (v) => update('font_name', v),
+        ),
+        const SizedBox(height: 8),
+
+        // 字体+字号预览
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.black87,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            zh ? '字幕预览 Subtitle Preview 123' : 'Subtitle Preview 字幕预览 123',
+            style: TextStyle(
+              fontFamily: p['font_name'] as String? ?? 'Arial',
+              fontSize: (p['font_size'] as int? ?? 24).toDouble() * 0.6,
+              color: _hexToColor(p['font_color'] as String? ?? '#FFFFFF'),
+              shadows: [
+                Shadow(
+                  color: _hexToColor(p['outline_color'] as String? ?? '#000000'),
+                  blurRadius: (p['outline_width'] as int? ?? 2).toDouble(),
+                ),
+              ],
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ),
+        const SizedBox(height: 8),
+
+        // 字号
+        LabeledSlider(
+          text: '${zh ? "字号" : "Size"}: ${p['font_size']}',
+          value: (p['font_size'] as num?)?.toDouble() ?? 24, min: 12, max: 72, divisions: 60, sliderLabel: '${p['font_size']}',
+          onChanged: (v) => update('font_size', v.round()),
+        ),
+        const SizedBox(height: 8),
+
+        // 描边宽度
+        LabeledSlider(
+          text: '${zh ? "描边" : "Outline"}: ${p['outline_width']}',
+          value: (p['outline_width'] as num?)?.toDouble() ?? 2, min: 0, max: 8, divisions: 8, sliderLabel: '${p['outline_width']}',
+          onChanged: (v) => update('outline_width', v.round()),
+        ),
+        const SizedBox(height: 8),
+
+        // 字体颜色
+        _colorRow(zh ? '字体颜色' : 'Font Color', 'font_color', cs),
+        const SizedBox(height: 8),
+
+        // 描边颜色
+        _colorRow(zh ? '描边颜色' : 'Outline Color', 'outline_color', cs),
+      ],
     );
   }
 
@@ -216,14 +196,12 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> {
   Widget _buildDropdown({required String label, required String value, required List<String> items,
       List<String>? itemLabels, required ColorScheme cs, required ValueChanged<String> onChanged}) {
     final safe = items.contains(value) ? value : items.first;
-    return DropdownButtonFormField<String>(
-      borderRadius: BorderRadius.circular(12),
-      initialValue: safe, isExpanded: true, decoration: InputDecoration(labelText: label),
-      dropdownColor: cs.surface, style: TextStyle(fontSize: 13, color: cs.onSurface),
-      items: List.generate(items.length, (i) => DropdownMenuItem(
-        value: items[i], child: Text(itemLabels != null ? itemLabels[i] : items[i], style: TextStyle(fontSize: 13, color: cs.onSurface)),
-      )),
-      onChanged: (v) { if (v != null) onChanged(v); },
+    return EditorDropdown(
+      label: label,
+      value: safe,
+      dense: false,
+      items: List.generate(items.length, (i) => (items[i], itemLabels != null ? itemLabels[i] : items[i])),
+      onChanged: onChanged,
     );
   }
 }

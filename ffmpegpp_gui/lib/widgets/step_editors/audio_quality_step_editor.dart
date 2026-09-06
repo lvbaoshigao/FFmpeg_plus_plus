@@ -1,17 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'editor_kit.dart';
 
-class AudioQualityStepEditor extends StatefulWidget {
-  final Map<String, dynamic> params;
-  final VoidCallback onChanged;
-  final bool isZh;
-  const AudioQualityStepEditor({super.key, required this.params, required this.onChanged, this.isZh = true});
+class AudioQualityStepEditor extends ParamsStepEditor {
+  const AudioQualityStepEditor({super.key, required super.params, required super.onChanged, super.isZh = true});
   @override
   State<AudioQualityStepEditor> createState() => _AudioQualityStepEditorState();
 }
 
-class _AudioQualityStepEditorState extends State<AudioQualityStepEditor> {
-  Map<String, dynamic> get p => widget.params;
+class _AudioQualityStepEditorState extends State<AudioQualityStepEditor> with StepEditorState<AudioQualityStepEditor> {
   late TextEditingController _customBitrateCtrl;
 
   static const _sampleRates = ['keep', '22050', '44100', '48000', '96000'];
@@ -25,47 +22,32 @@ class _AudioQualityStepEditorState extends State<AudioQualityStepEditor> {
   @override
   void initState() {
     super.initState();
-    p.putIfAbsent('bitrate_mode', () => 'keep');
-    p.putIfAbsent('audio_bitrate', () => null);
-    p.putIfAbsent('sample_rate', () => 'keep');
+    // audio_bitrate 为 null 表示不指定码率（keep），非 keep 非 custom 时写入 int kbps
+    initDefaults(const {'bitrate_mode': 'keep', 'audio_bitrate': null, 'sample_rate': 'keep'});
     _customBitrateCtrl = TextEditingController(text: '${(p['audio_bitrate'] as num?)?.toInt() ?? 128}');
   }
 
   @override
   void dispose() { _customBitrateCtrl.dispose(); super.dispose(); }
 
-  void _update(String key, dynamic value) { setState(() => p[key] = value); widget.onChanged(); }
-
-
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final zh = widget.isZh;
     final sr = p['sample_rate'] as String? ?? 'keep';
     final bitrateMode = p['bitrate_mode'] as String? ?? 'keep';
 
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(zh ? '音质调整' : 'Audio Quality', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        const SizedBox(height: 8),
-
-        DropdownButtonFormField<String>(
-          borderRadius: BorderRadius.circular(12),
-          initialValue: _bitratePresets.contains(bitrateMode) ? bitrateMode : 'keep',
-          isExpanded: true,
-          decoration: InputDecoration(labelText: zh ? '码率' : 'Bitrate'),
-          dropdownColor: cs.surface,
-          style: TextStyle(fontSize: 13, color: cs.onSurface),
-          items: List.generate(_bitratePresets.length, (i) => DropdownMenuItem(
-            value: _bitratePresets[i],
-            child: Text(zh ? _bitrateLabels[i] : _bitrateLabelsEn[i], style: TextStyle(fontSize: 13, color: cs.onSurface)),
-          )),
+    return StepEditorScaffold(
+      title: zh ? '音质调整' : 'Audio Quality',
+      children: [
+        EditorDropdown(
+          label: zh ? '码率' : 'Bitrate',
+          value: _bitratePresets.contains(bitrateMode) ? bitrateMode : 'keep',
+          items: [for (var i = 0; i < _bitratePresets.length; i++)
+            (_bitratePresets[i], zh ? _bitrateLabels[i] : _bitrateLabelsEn[i])],
+          dense: false,
           onChanged: (v) {
-            if (v == null) return;
-            _update('bitrate_mode', v);
-            if (v == 'keep') { _update('audio_bitrate', null); }
-            else if (v != 'custom') { final bv = int.tryParse(v) ?? 128; _update('audio_bitrate', bv); _customBitrateCtrl.text = '$bv'; }
+            update('bitrate_mode', v);
+            if (v == 'keep') { update('audio_bitrate', null); }
+            else if (v != 'custom') { final bv = int.tryParse(v) ?? 128; update('audio_bitrate', bv); _customBitrateCtrl.text = '$bv'; }
           },
         ),
         if (bitrateMode == 'custom') ...[
@@ -75,25 +57,20 @@ class _AudioQualityStepEditorState extends State<AudioQualityStepEditor> {
             decoration: InputDecoration(labelText: zh ? '自定义码率 (kbps)' : 'Custom Bitrate (kbps)'),
             keyboardType: TextInputType.number,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-            onChanged: (v) { final bv = int.tryParse(v); if (v.isEmpty) { _update('audio_bitrate', null); } else if (bv != null && bv > 0) { _update('audio_bitrate', bv); } },
+            onChanged: (v) { final bv = int.tryParse(v); if (v.isEmpty) { update('audio_bitrate', null); } else if (bv != null && bv > 0) { update('audio_bitrate', bv); } },
           ),
         ],
         const SizedBox(height: 8),
 
-        DropdownButtonFormField<String>(
-          borderRadius: BorderRadius.circular(12),
-          initialValue: _sampleRates.contains(sr) ? sr : _sampleRates.first,
-          isExpanded: true,
-          decoration: InputDecoration(labelText: zh ? '采样率' : 'Sample Rate'),
-          dropdownColor: cs.surface,
-          style: TextStyle(fontSize: 13, color: cs.onSurface),
-          items: List.generate(_sampleRates.length, (i) => DropdownMenuItem(
-            value: _sampleRates[i],
-            child: Text(zh ? _sampleRateLabels[i] : _sampleRateLabelsEn[i], style: TextStyle(fontSize: 13, color: cs.onSurface)),
-          )),
-          onChanged: (v) { if (v != null) _update('sample_rate', v); },
+        EditorDropdown(
+          label: zh ? '采样率' : 'Sample Rate',
+          value: _sampleRates.contains(sr) ? sr : _sampleRates.first,
+          items: [for (var i = 0; i < _sampleRates.length; i++)
+            (_sampleRates[i], zh ? _sampleRateLabels[i] : _sampleRateLabelsEn[i])],
+          dense: false,
+          onChanged: (v) => update('sample_rate', v),
         ),
-      ]),
+      ],
     );
   }
 }

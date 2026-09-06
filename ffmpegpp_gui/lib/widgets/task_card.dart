@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
-import '../services/ffmpeg_installer.dart';
+import '../services/thumbnail_service.dart';
 import '../services/shell_open.dart';
 import '../theme/app_strings.dart';
 import 'app_card.dart';
@@ -904,17 +904,7 @@ class _NodeCircle extends StatelessWidget {
   }
 }
 
-// 缩略图缓存键：FNV-1a 稳定摘要（String.hashCode 跨运行不稳定且 32 位易碰撞）
-String _stableThumbHash(String s) {
-  var h = 0x811c9dc5;
-  for (final c in s.codeUnits) {
-    h ^= c;
-    h = (h * 0x01000193) & 0xFFFFFFFF;
-  }
-  return h.toRadixString(16).padLeft(8, '0');
-}
-
-// 缩略图（与 video_card 共用逻辑）
+// 缩略图（生成逻辑统一走 ThumbnailService）
 class _ThumbWidget extends StatefulWidget {
   final String filepath;
   final String? ffmpeg;
@@ -925,34 +915,16 @@ class _ThumbWidget extends StatefulWidget {
 class _ThumbWidgetState extends State<_ThumbWidget> {
   String? _path;
   @override
-  void initState() { super.initState(); _gen(); }
-  Future<void> _gen() async {
-    final ext = widget.filepath.split('.').last.toLowerCase();
-    const audioExts = {'mp3', 'wav', 'flac', 'aac', 'm4a', 'ogg', 'opus', 'wma', 'ac3'};
-    final isAudio = audioExts.contains(ext);
-    final isImage = kImageExts.contains(ext);
-    final suffix = isAudio ? '_cover' : '';
-    final f = File('${Directory.systemTemp.path}/ffmpegpp_thumb_${_stableThumbHash(widget.filepath)}${suffix}_q.jpg');
-    if (await f.exists()) { if (mounted) setState(() => _path = f.path); return; }
-    try {
-      final args = <String>['-y'];
-      if (!isImage && !isAudio) args.addAll(['-ss', '2']);
-      if (isAudio) {
-        args.addAll(['-i', widget.filepath, '-an', '-vframes', '1', '-q:v', '5', f.path]);
-      } else {
-        args.addAll(['-i', widget.filepath, '-vframes', '1', '-q:v', '5', '-s', '80x45', f.path]);
-      }
-      final r = await Process.run(FfmpegInstaller.resolveFfmpeg(configured: widget.ffmpeg), args);
-      if (r.exitCode == 0 && await f.exists()) { if (mounted) setState(() => _path = f.path); }
-    } catch (_) {}
+  void initState() { super.initState(); _load(); }
+  Future<void> _load() async {
+    final p = await ThumbnailService.ensureThumbnail(widget.filepath, ffmpeg: widget.ffmpeg);
+    if (mounted && p != null) setState(() => _path = p);
   }
   @override
   Widget build(BuildContext context) {
     if (_path != null) {
-      final ext = widget.filepath.split('.').last.toLowerCase();
-      const audioExts = {'mp3', 'wav', 'flac', 'aac', 'm4a', 'ogg', 'opus', 'wma', 'ac3'};
       return Image.file(File(_path!), width: 40, height: 25,
-          fit: audioExts.contains(ext) ? BoxFit.contain : BoxFit.cover);
+          fit: detectMediaType(widget.filepath) == MediaType.audio ? BoxFit.contain : BoxFit.cover);
     }
     return Icon(Icons.music_note, color: Theme.of(context).colorScheme.outline, size: 16);
   }

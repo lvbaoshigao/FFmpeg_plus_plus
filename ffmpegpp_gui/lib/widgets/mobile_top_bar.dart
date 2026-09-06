@@ -31,9 +31,8 @@ class MobileTopBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final cfg = context.watch<AppState>().config;
-    final op = cfg.cardOpacity.clamp(0.0, 1.0);
-    final style = cfg.pillStyle;
+    final op = context.select<AppState, double>((s) => s.config.cardOpacity).clamp(0.0, 1.0);
+    final style = context.select<AppState, String>((s) => s.config.pillStyle);
 
     // 顶栏内容（状态栏高度在容器内，内容区高度固定为 height）
     Widget barBody(Color bg) => Container(

@@ -4,16 +4,21 @@ import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../platform/app_platform.dart';
+import 'app_card.dart' show SurfaceStyle;
 import 'liquid_glass_fallback.dart';
 import 'mobile_top_bar.dart';
 import 'mobile_glass_pill.dart';
 
-/// 玻璃面板 —— 支持三种效果（由设置→外观→玻璃效果控制）：
+/// 玻璃面板 —— 支持的效果（由设置→外观控制）：
 /// - liquid：液态玻璃（Impeller 平台走 oc_liquid_glass GPU shader 真折射；
 ///   Windows 默认 Skia 退回「高斯模糊 + 液态玻璃倒角高光」回退，见
 ///   liquid_glass_fallback.dart 的 shaderGlassSupported 说明）
 /// - blur：仅高斯模糊背景（半透明，简洁）
-/// - none：无效果（纯色半透明卡片）
+/// - theme / gray：纯色（跟随主题色 / 灰色），桌面端菜单样式新增
+/// - none：无效果（纯色卡片，遗留值）
+///
+/// [style] 允许调用方覆盖全局玻璃效果（如桌面端「菜单样式」menuStyle
+/// 只作用于侧边栏与页面顶栏，不影响弹窗/页面面板）。
 class GlassPanel extends StatelessWidget {
   final Widget child;
   final double radius;
@@ -23,6 +28,8 @@ class GlassPanel extends StatelessWidget {
   final EdgeInsetsGeometry? padding;
   /// 顶部渐变的不透明度 (0-255)。为空时使用主题默认值。
   final int? tintAlpha;
+  /// 表面样式覆盖（SurfaceStyle 四值或遗留 'none'）。null = 跟随全局 glassEffect。
+  final String? style;
 
   const GlassPanel({
     super.key,
@@ -31,30 +38,39 @@ class GlassPanel extends StatelessWidget {
     this.blur = 12,
     this.padding,
     this.tintAlpha,
+    this.style,
   });
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    // 读取玻璃效果配置 + 透明度（cardOpacity 控制玻璃不透明度）
-    final cfg = context.watch<AppState>().config;
-    final effect = cfg.glassEffect;
+    // 读取玻璃效果配置 + 透明度（cardOpacity 控制玻璃不透明度）。
+    // 细粒度 select 而非 watch 整个 AppState：转码进度/日志的 notifyListeners
+    // 不再触发全应用玻璃面板重建。
+    final globalEffect = context.select<AppState, String>((s) => s.config.glassEffect);
+    final cardOpacity = context.select<AppState, double>((s) => s.config.cardOpacity);
+    final follow = context.select<AppState, bool>((s) => s.config.glassFollowTheme);
+    final themeColor = context.select<AppState, int>((s) => s.config.themeColor);
+    final themeColor2 = context.select<AppState, int>((s) => s.config.themeColor2);
+    final noCardGlass = context.select<AppState, bool>((s) => s.config.noCardGlass);
+    final settingsFrostedGlass = context.select<AppState, bool>((s) => s.config.settingsFrostedGlass);
+    final effect = style ?? globalEffect;
     // 透明度：0.0~1.0，映射到背景 alpha；0 时完全透明（仅保留边缘扭曲/折射）
-    final op = cfg.cardOpacity.clamp(0.0, 1.0);
+    final op = cardOpacity.clamp(0.0, 1.0);
     final br = BorderRadius.circular(radius);
     // 遵循主题色：底色/渐变用主题色替代 surface 灰，所有元素统一主题色观感
-    // 「透明」(none) 效果同样退回主题色显示
-    final follow = cfg.glassFollowTheme;
-    final baseColor = (follow || effect == 'none') ? scheme.primary : scheme.surface;
-    final baseAlt = (follow || effect == 'none') ? scheme.tertiary : scheme.surface;
-    final borderColor = (follow || effect == 'none') ? scheme.primary.withAlpha(isDark ? 110 : 150) : scheme.outlineVariant;
+    // 「透明」(none) 与纯色 theme 效果同样退回主题色显示
+    final solidTheme = effect == 'none' || effect == SurfaceStyle.theme;
+    final baseColor = (follow || solidTheme) ? scheme.primary : scheme.surface;
+    final baseAlt = (follow || solidTheme) ? scheme.tertiary : scheme.surface;
+    final borderColor = (follow || solidTheme) ? scheme.primary.withAlpha(isDark ? 110 : 150) : scheme.outlineVariant;
     // 主题渐变色：设置了 themeColor2（>=0）时，主题色在 themeColor→themeColor2 之间渐变
-    final grad = (cfg.themeColor2 >= 0)
+    final grad = (themeColor2 >= 0)
         ? LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(cfg.themeColor), Color(cfg.themeColor2)],
+            colors: [Color(themeColor), Color(themeColor2)],
           )
         : null;
 
@@ -64,7 +80,7 @@ class GlassPanel extends StatelessWidget {
     if (isMobilePlatform) {
       // 「不使用卡片玻璃效果」：跳过液态玻璃/毛玻璃渲染，退回主题色实心卡片
       // （纯色语义即实心：完全不透明，不跟随 cardOpacity）
-      if (cfg.noCardGlass) {
+      if (noCardGlass) {
         const solidAlpha = 255;
         return RepaintBoundary(
           child: Container(
@@ -94,7 +110,7 @@ class GlassPanel extends StatelessWidget {
           ),
         );
       }
-      if (cfg.settingsFrostedGlass && effect == 'liquid') {
+      if (settingsFrostedGlass && effect == 'liquid') {
         // 压低 alpha：快速滚动时 BackdropFilter 偶尔失效，alpha 过高会露出
         // 大面积纯色主题底色（「诡异的玻璃 + 主题色块」）。与 mobile_glass_pill
         // 一致的 120/105 上限，让纯色层在失效时仅表现为轻微 tint，不会被察觉。
@@ -129,7 +145,7 @@ class GlassPanel extends StatelessWidget {
 
     // 桌面端「不使用卡片玻璃效果」：实心主题色卡片（纯色语义即实心：
     // 完全不透明，不跟随 cardOpacity）
-    if (cfg.noCardGlass) {
+    if (noCardGlass) {
       const solidAlpha = 255;
       return RepaintBoundary(
         child: Container(
@@ -158,16 +174,21 @@ class GlassPanel extends StatelessWidget {
       );
     }
 
-    if (effect == 'none') {
-      // 无效果：纯色卡片 + 圆角 + 细边框；纯色语义即实心（完全不透明，
-      // 不跟随 cardOpacity）；主题渐变时用渐变底色
+    // 纯色分支：theme（跟随主题色）/ gray（灰色）/ none（遗留「无效果」）。
+    // 纯色语义即实心：完全不透明，不跟随 cardOpacity；主题渐变（themeColor2）
+    // 时 theme/none 用渐变底色，gray 恒为纯灰。
+    if (effect == 'none' || effect == SurfaceStyle.theme || effect == SurfaceStyle.gray) {
       const noneAlpha = 255;
+      final Color base = effect == SurfaceStyle.gray
+          ? scheme.surfaceContainerHigh
+          : baseColor;
+      final useGrad = effect != SurfaceStyle.gray && grad != null;
       return RepaintBoundary(
         child: Container(
           padding: padding,
           decoration: BoxDecoration(
-            color: grad == null ? baseColor.withAlpha(noneAlpha) : null,
-            gradient: grad != null
+            color: useGrad ? null : base.withAlpha(noneAlpha),
+            gradient: useGrad
                 ? LinearGradient(
                     begin: grad.begin,
                     end: grad.end,
@@ -363,12 +384,14 @@ class GlassTopBar extends StatelessWidget {
         height: height,
       );
     }
-    // 桌面端：原有的浮动玻璃圆角框
+    // 桌面端：原有的浮动玻璃圆角框（样式跟随「菜单样式」menuStyle）
     final scheme = Theme.of(context).colorScheme;
+    final menuStyle = context.select<AppState, String>((s) => s.config.menuStyle);
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
       child: GlassPanel(
         radius: 18,
+        style: menuStyle,
         child: SizedBox(
           height: height,
           child: Stack(children: [

@@ -15,15 +15,15 @@ import 'package:uuid/uuid.dart';
 import 'package:window_manager/window_manager.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
+import '../services/fppx2_service.dart';
 import '../services/graph_executor.dart';
-import '../services/ffmpeg_installer.dart';
+import '../services/thumbnail_service.dart';
 import '../services/ai_chat_history.dart';
 import '../services/pipeline_autosave.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_strings.dart';
-import '../app.dart' show wallpaperImageProvider;
+import '../widgets/wallpaper_background.dart';
 import '../platform/app_platform.dart';
-import '../services/config_export.dart';
 import '../widgets/animated_popup.dart';
 import '../widgets/step_editors/start_step_editor.dart';
 import '../widgets/step_editors/av_process_step_editor.dart';
@@ -58,20 +58,15 @@ import '../widgets/gate_symbol_painter.dart';
 
 const _uuid = Uuid();
 
-// 缩略图缓存键：FNV-1a 稳定摘要（String.hashCode 跨运行不稳定且 32 位易碰撞）
-String _stableThumbHash(String s) {
-  var h = 0x811c9dc5;
-  for (final c in s.codeUnits) {
-    h ^= c;
-    h = (h * 0x01000193) & 0xFFFFFFFF;
-  }
-  return h.toRadixString(16).padLeft(8, '0');
-}
-
 const _nodeW = 200.0;
 const _nodeWNarrow = 150.0;
 const _nodeH = 68.0;
-const _canvasSize = 6000.0;
+/// 无限画布：网格背景铺满整个可视区（随缩放/平移重绘，可越出世界框），
+/// 世界框（承载节点的 SizedBox）只决定可命中测试范围，随内容自动扩张。
+/// 节点坐标仍是画布坐标（不随世界框移动），原点固定。
+const _spawnCenter = Offset(3000, 3000); // 新节点默认落点（原 6000x6000 画布中心）
+const _initialWorldExtent = Size(4000, 3200); // 初始世界框（未加载节点时）
+const _worldMargin = 800.0; // 世界框在内容包围盒外保留的可命中余量
 const _portZoneW = 18.0;
 
 double _nodeWFor(PipelineStepType type) =>
@@ -93,7 +88,10 @@ class PipelineEditorPage extends StatefulWidget {
   final void Function(PipelineGraph graph) onSave;
   final PipelineGraph? initialGraph;
   final ({String name, int fileCount, Map<MediaType, int> typeCounts, List<String> fileIds})? containerInfo;
-  const PipelineEditorPage({super.key, required this.video, required this.onSave, this.initialGraph, this.containerInfo});
+  /// 配置库模式下该配置的导出格式：'legacy'（默认）| 'v2'（新版模块化二进制）。
+  /// 仅影响导出 .fppx 时走哪条路径（均由 C++ 端写盘）。
+  final String configFormat;
+  const PipelineEditorPage({super.key, required this.video, required this.onSave, this.initialGraph, this.containerInfo, this.configFormat = 'legacy'});
   @override
   State<PipelineEditorPage> createState() => _PipelineEditorPageState();
 }
@@ -156,6 +154,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   bool _isLogicBoxSelecting = false;
   LogicBlockType? _pendingLogicType;
   String? _selectedLogicBlockId;
+
+  /// 世界框（承载节点的可命中区域），每次 build 由 [_computeWorldRect]
+  /// 依据当前节点/逻辑块重算；节点坐标不受其影响（画布坐标原点固定）。
+  Rect _world = Rect.fromCenter(center: _spawnCenter, width: _initialWorldExtent.width, height: _initialWorldExtent.height);
 
   // 探测模式：悬停端口显示信号值提示
   bool _probeMode = false;
@@ -292,8 +294,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       _connections.addAll(copied.connections);
       _logicBlocks.addAll(copied.logicBlocks);
     } else {
-      final cx = _canvasSize / 2;
-      final cy = _canvasSize / 2;
+      final cx = _spawnCenter.dx;
+      final cy = _spawnCenter.dy;
       final startNode = PipelineNode(
         id: _uuid.v4(), type: PipelineStepType.start,
         x: cx - 100, y: cy,
@@ -319,7 +321,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     _genThumb();
     _transformCtrl.addListener(_onScaleChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _transformCtrl.value = Matrix4.identity()..translateByDouble(-_canvasSize / 2 + 300, -_canvasSize / 2 + 200, 0, 1);
+      // 世界框本地坐标 = 画布坐标 - 世界偏移；目标：把 spawn 中心放到屏幕 (300,200)
+      _transformCtrl.value = Matrix4.identity()..translateByDouble(-_spawnCenter.dx + 300 + _world.left, -_spawnCenter.dy + 200 + _world.top, 0, 1);
     });
     _appState = context.read<AppState>();
     // 初始化横竖屏偏好
@@ -468,30 +471,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   Future<void> _genThumb() async {
     final fp = widget.video.filepath;
-    final suffix = widget.video.fileMediaType == MediaType.audio ? '_cover' : '';
-    final f = File('${Directory.systemTemp.path}/ffmpegpp_thumb_${_stableThumbHash(fp)}$suffix.jpg');
-    if (await f.exists()) { if (mounted) setState(() => _thumbPath = f.path); return; }
-    try {
-      final ext = fp.split('.').last.toLowerCase();
-      final isImage = kImageExts.contains(ext);
-      final isAudio = widget.video.fileMediaType == MediaType.audio;
-      final args = <String>['-y'];
-      if (!isImage && !isAudio) args.addAll(['-ss', '5']);
-      if (isAudio) {
-        args.addAll(['-i', fp, '-an', '-vframes', '1', '-q:v', '3', f.path]);
-      } else {
-        args.addAll(['-i', fp, '-vframes', '1', '-q:v', '3', '-s', '176x108', f.path]);
-      }
-      final r = await Process.run(FfmpegInstaller.resolveFfmpeg(configured: _appState.config.ffmpegPath), args);
-      if (r.exitCode == 0 && await f.exists()) {
-        if (mounted) setState(() { _thumbPath = f.path; _isAudioNoCover = false; });
-      } else if (isAudio && mounted) {
-        setState(() => _isAudioNoCover = true);
-      }
-    } catch (_) {
-      if (widget.video.fileMediaType == MediaType.audio && mounted) {
-        setState(() => _isAudioNoCover = true);
-      }
+    final isAudio = widget.video.fileMediaType == MediaType.audio;
+    final p = await ThumbnailService.ensureThumbnail(fp,
+        ffmpeg: _appState.config.ffmpegPath, isAudio: isAudio);
+    if (!mounted) return;
+    if (p != null) {
+      setState(() { _thumbPath = p; _isAudioNoCover = false; });
+    } else if (isAudio) {
+      setState(() => _isAudioNoCover = true);
     }
   }
 
@@ -529,6 +516,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       case PipelineStepType.imageChannelExtract: return Icons.color_lens_outlined;
       case PipelineStepType.videoCrop: return Icons.crop_free;
       case PipelineStepType.output: return Icons.save_alt_outlined;
+      case PipelineStepType.unknown: return Icons.help_outline;
     }
   }
 
@@ -959,8 +947,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   }
 
   Future<void> _exportConfig(AppStrings s) async {
+    final appState = context.read<AppState>();
     final graph = PipelineGraph(nodes: _nodes, connections: _connections, logicBlocks: _logicBlocks);
-    final errors = GraphExecutor.validateGraph(graph);
+    // 新版格式由 C++ 端写前校验（允许未知节点原样导出），本地预检会误拦；
+    // 旧版沿用本地预检保持历史行为。
+    final errors = widget.configFormat == 'v2'
+        ? <String>[]
+        : GraphExecutor.validateGraph(graph);
     if (errors.isNotEmpty) {
       final scheme = Theme.of(context).colorScheme;
       final zh = s.isZh;
@@ -1058,58 +1051,134 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     );
     if (result == null) return;
 
-    final bytes = FppxExporter.exportGraph(graph, desc);
-    await File(result).writeAsBytes(bytes);
+    // 写盘由 C++ 端完成（写前完整校验；失败不落盘并带回 errors）
+    final exportRes = await FppxService(appState.backend).exportGraph(
+      graph, result, description: desc, newFormat: widget.configFormat == 'v2',
+    );
+    if (!mounted) return;
+    if (!exportRes.success) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(children: [
+            Icon(Icons.error_outline, size: 20, color: scheme.error),
+            const SizedBox(width: 8),
+            Text(zh ? '无法导出' : 'Cannot Export', style: TextStyle(color: scheme.onSurface)),
+          ]),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ...exportRes.errors.map((e) => Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('• ', style: TextStyle(color: scheme.error, fontWeight: FontWeight.bold)),
+                  Expanded(child: Text(e, style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13))),
+                ]),
+              )),
+            ],
+          ),
+          actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: Text(zh ? '知道了' : 'OK'))],
+        ),
+      );
+      return;
+    }
+    for (final w in exportRes.warnings) {
+      appState.addLog('[导出] $w', category: 'info');
+    }
 
     if (mounted) {
       showToast(context, zh ? '已导出: $result' : 'Exported: $result', type: ToastType.success);
     }
   }
 
-  /// 从 .fppx 文件加载节点配置到画布（覆盖当前画布）
-  Future<void> _importConfig(AppStrings s) async {
+  /// 从 .fppx 文件加载节点配置到画布（覆盖当前画布）。
+  /// 新旧格式均由 C++ 端解析；[force]=true 表示用户已确认强制导入未知节点。
+  Future<void> _importConfig(AppStrings s, {bool force = false}) async {
     final zh = s.isZh;
     final scheme = Theme.of(context).colorScheme;
+    // Android 上 fppx 无 MIME 映射，FileType.custom 会失效（文件选择器不显示
+    // 任何文件）。与项目页/配置库一致：FileType.any + Dart 侧校验扩展名。
     final result = await FilePicker.platform.pickFiles(
       dialogTitle: zh ? '选择配置文件' : 'Select Config File',
-      type: FileType.custom,
-      allowedExtensions: ['fppx'],
+      type: FileType.any,
     );
     if (result == null || result.files.isEmpty || result.files.first.path == null) return;
+    if (!mounted) return;
     final path = result.files.first.path!;
+    if (!result.files.first.name.endsWith('.fppx')) {
+      showToast(context, zh ? '请选择 .fppx 文件' : 'Please select a .fppx file', type: ToastType.warning);
+      return;
+    }
 
     try {
-      final bytes = await File(path).readAsBytes();
+      final imported = await FppxService(context.read<AppState>().backend)
+          .importFile(path, force: force);
       if (!mounted) return;
-      final fppx = FppxExporter.import(bytes);
-      if (fppx == null) {
-        showToast(context, zh ? '无法解析该文件' : 'Cannot parse this file', type: ToastType.error);
-        return;
-      }
-      if (fppx.errors.isNotEmpty) {
+      if (!imported.success) {
+        final detail = imported.errors.isNotEmpty
+            ? imported.errors.join('\n')
+            : (imported.error ?? '');
         showDialog(
           context: context,
           builder: (ctx) => AlertDialog(
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             title: Text(zh ? '配置加载失败' : 'Load Failed', style: TextStyle(color: scheme.onSurface)),
             content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-              ...fppx.errors.map((e) => Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text('• $e', style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
-              )),
+              Text('• $detail', style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
             ]),
             actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: Text(s.isZh ? '知道了' : 'OK'))],
           ),
         );
         return;
       }
-      final graph = fppx.graph;
-      if (graph == null) {
-        showToast(context, zh ? '该文件不是节点配置' : 'Not a node config', type: ToastType.error);
+      // 存在未知节点类型且尚未确认强制导入
+      if (imported.needsForceConfirm) {
+        final ids = imported.unknownTypeIds.join(', ');
+        final goOn = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: Row(children: [
+              Icon(Icons.help_outline, size: 20, color: Colors.orange),
+              const SizedBox(width: 8),
+              Text(zh ? '发现未知节点' : 'Unknown Node Type', style: TextStyle(color: scheme.onSurface)),
+            ]),
+            content: Text(
+              zh
+                  ? '程序找不到ID为$ids节点的具体含义，可能是因为版本太旧，你可以尝试强制导入，但这可能会发生意料之外的事情'
+                  : 'The program cannot resolve node ID $ids (possibly created by a newer version). You can force-import, but unexpected behavior may occur.',
+              style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(s.cancel)),
+              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(zh ? '强制导入' : 'Force Import')),
+            ],
+          ),
+        );
+        if (!mounted) return;
+        if (goOn == true) {
+          await _importConfigPath(path, s, force: true);
+        }
         return;
       }
-      if (fppx.warnings.isNotEmpty) {
-        showToast(context, fppx.warnings.join('\n'), type: ToastType.warning);
+      if (imported.mode == FppxService.modeQuick) {
+        showToast(context,
+            zh ? '这是快速模式配置，请在配置库导入（会存为快捷配置）'
+               : 'This is a quick-mode config; import it from the config library',
+            type: ToastType.warning);
+        return;
+      }
+      final graph = imported.graph;
+      if (graph == null) {
+        showToast(context,
+            zh ? '配置里没有节点图' : 'No node graph in this config',
+            type: ToastType.warning);
+        return;
+      }
+      if (imported.warnings.isNotEmpty) {
+        showToast(context, imported.warnings.join('\n'), type: ToastType.warning);
       }
       // 覆盖当前画布
       _pushUndo();
@@ -1126,6 +1195,38 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       if (mounted) {
         showToast(context, zh ? '已加载 ${_nodes.length} 个节点' : 'Loaded ${_nodes.length} nodes', type: ToastType.success);
       }
+    } catch (e) {
+      if (mounted) showToast(context, zh ? '加载失败: $e' : 'Load failed: $e', type: ToastType.error);
+    }
+  }
+
+  /// 强制导入确认后对同一文件重试（免得让用户再选一次文件）
+  Future<void> _importConfigPath(String path, AppStrings s, {bool force = false}) async {
+    final zh = s.isZh;
+    try {
+      final imported = await FppxService(context.read<AppState>().backend)
+          .importFile(path, force: force);
+      if (!mounted) return;
+      if (!imported.success || imported.graph == null) {
+        final detail = imported.errors.isNotEmpty
+            ? imported.errors.join('\n')
+            : (imported.error ?? '');
+        showToast(context, zh ? '配置加载失败: $detail' : 'Load failed: $detail', type: ToastType.error);
+        return;
+      }
+      final graph = imported.graph!;
+      _pushUndo();
+      setState(() {
+        _nodes.clear();
+        _nodes.addAll(graph.nodes);
+        _connections.clear();
+        _connections.addAll(graph.connections);
+        _logicBlocks.clear();
+        _logicBlocks.addAll(graph.logicBlocks);
+        _selectedNodeIds.clear();
+        _lastSelectedId = null;
+      });
+      showToast(context, zh ? '已加载 ${_nodes.length} 个节点' : 'Loaded ${_nodes.length} nodes', type: ToastType.success);
     } catch (e) {
       if (mounted) showToast(context, zh ? '加载失败: $e' : 'Load failed: $e', type: ToastType.error);
     }
@@ -1156,7 +1257,34 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     final inv = Matrix4.inverted(_transformCtrl.value);
     final x = inv.storage[0] * screen.dx + inv.storage[4] * screen.dy + inv.storage[12];
     final y = inv.storage[1] * screen.dx + inv.storage[5] * screen.dy + inv.storage[13];
-    return Offset(x, y);
+    // 逆变换给出的是世界框（IV 子空间）坐标；画布坐标原点固定在世界(0,0)，
+    // 需加回世界框左上角偏移
+    return Offset(x + _world.left, y + _world.top);
+  }
+
+  /// 计算当前世界框：初始范围 ∪ 全部节点/逻辑块包围盒，四周各留 [_worldMargin]
+  /// 余量（保证拖到边缘的节点仍可命中/继续拖动）。
+  Rect _computeWorldRect() {
+    var r = Rect.fromCenter(center: _spawnCenter, width: _initialWorldExtent.width, height: _initialWorldExtent.height);
+    for (final n in _nodes) {
+      r = r.expandToInclude(Rect.fromLTWH(n.x, n.y, _totalNodeWidth(n), _nodeHeight(n)));
+    }
+    for (final b in _logicBlocks) {
+      r = r.expandToInclude(Rect.fromLTWH(b.x, b.y, b.width, b.height));
+    }
+    return r.inflate(_worldMargin);
+  }
+
+  /// 当前可视区对应的画布坐标矩形（供网格等只绘制可视部分的绘制器使用）。
+  /// 首帧布局未完成时返回 null。
+  Rect? _visibleCanvasRect() {
+    final rb = _canvasKey.currentContext?.findRenderObject() as RenderBox?;
+    if (rb == null || !rb.hasSize) return null;
+    final inv = Matrix4.inverted(_transformCtrl.value);
+    final tl = MatrixUtils.transformPoint(inv, Offset.zero);
+    final br = MatrixUtils.transformPoint(inv, rb.size.bottomRight(Offset.zero));
+    // 逆变换是世界框本地坐标，转成画布坐标
+    return Rect.fromPoints(tl, br).translate(_world.left, _world.top);
   }
 
   // ── 缩放/整理/定位 ──
@@ -1170,7 +1298,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     _transformCtrl.value = Matrix4.identity()
       ..translateByDouble(viewCenter.dx, viewCenter.dy, 0, 1)
       ..scaleByDouble(clamped, clamped, 1, 1)
-      ..translateByDouble(-canvasCenter.dx, -canvasCenter.dy, 0, 1);
+      ..translateByDouble(-canvasCenter.dx + _world.left, -canvasCenter.dy + _world.top, 0, 1);
   }
 
   void _zoomToFit() {
@@ -1194,7 +1322,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     _transformCtrl.value = Matrix4.identity()
       ..translateByDouble(viewSize.width / 2, viewSize.height / 2, 0, 1)
       ..scaleByDouble(scale, scale, 1, 1)
-      ..translateByDouble(-cx, -cy, 0, 1);
+      ..translateByDouble(-cx + _world.left, -cy + _world.top, 0, 1);
   }
 
   void _autoLayout() {
@@ -1232,11 +1360,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
     const gapX = 300.0;
     const gapY = 100.0;
-    final startX = _canvasSize / 2 - (layers.length * gapX) / 2;
+    final startX = _spawnCenter.dx - (layers.length * gapX) / 2;
     setState(() {
       for (var col = 0; col < layers.length; col++) {
         final layer = layers[col];
-        final startY = _canvasSize / 2 - (layer.length * (_nodeH + gapY)) / 2;
+        final startY = _spawnCenter.dy - (layer.length * (_nodeH + gapY)) / 2;
         for (var row = 0; row < layer.length; row++) {
           final node = _nodes.firstWhere((n) => n.id == layer[row]);
           node.x = startX + col * gapX;
@@ -1264,7 +1392,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     _transformCtrl.value = Matrix4.identity()
       ..translateByDouble(viewCenter.dx, viewCenter.dy, 0, 1)
       ..scaleByDouble(_currentScale, _currentScale, 1, 1)
-      ..translateByDouble(-nodeCenterX, -nodeCenterY, 0, 1);
+      ..translateByDouble(-nodeCenterX + _world.left, -nodeCenterY + _world.top, 0, 1);
     setState(() {
       _selectedNodeIds = {target.id};
       _lastSelectedId = target.id;
@@ -1688,6 +1816,33 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       case PipelineStepType.videoCrop:
         editor = VideoCropStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh,
             videoPath: v.filepath, videoWidth: v.width, videoHeight: v.height, fps: v.fps);
+      case PipelineStepType.unknown:
+        // 新版 .fppx 强制导入的未知节点：不可编辑参数，仅显示类型 ID
+        final cs2 = Theme.of(context).colorScheme;
+        editor = Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: cs2.surfaceContainerHighest.withAlpha(60),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Icon(Icons.help_outline, size: 16, color: cs2.outline),
+              const SizedBox(width: 6),
+              Text(isZh ? '未知节点类型' : 'Unknown node type',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs2.onSurface)),
+            ]),
+            const SizedBox(height: 4),
+            Text(isZh ? '节点类型 ID: ${node.unknownTypeId ?? '?'}'
+                      : 'Node type ID: ${node.unknownTypeId ?? '?'}',
+                style: TextStyle(fontSize: 12, color: cs2.outline)),
+            const SizedBox(height: 4),
+            Text(isZh ? '可编辑/保存/导出此配置，但不能用于转码任务'
+                      : 'Editable/savable/exportable, but cannot run tasks',
+                style: TextStyle(fontSize: 11, color: cs2.outline.withAlpha(180))),
+          ]),
+        );
     }
 
     // Wrap with container file-selection header + node naming/coloring footer
@@ -1826,7 +1981,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final s = AppStrings.of(context.watch<AppState>().config.language);
+    final s = AppStrings.of(context.select<AppState, String>((st) => st.config.language));
 
     return PopScope(
       canPop: false,
@@ -2256,31 +2411,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   // ── 壁纸 ──
 
-  Widget _withWallpaper(BuildContext context, Widget child) {
-    final cfg = context.watch<AppState>().config;
-    final bg = cfg.backgroundImage;
-    if (bg.isEmpty || !File(bg).existsSync()) return child;
-    final scheme = Theme.of(context).colorScheme;
-    final a = ((1.0 - cfg.backgroundOpacity) * 220).round().clamp(20, 240);
-    // 壁纸统一走 wallpaperImageProvider（按物理分辨率等比降采样解码），
-    // 直接 Image.file 会按原图尺寸解码（4K 壁纸 ~33MB）且与主界面解码
-    // 的 provider 不同 key，缓存无法复用
-    return Stack(children: [
-      Positioned.fill(child: Image(
-        image: wallpaperImageProvider(
-            bg,
-            MediaQuery.sizeOf(context).width,
-            MediaQuery.sizeOf(context).height,
-            MediaQuery.devicePixelRatioOf(context)),
-        fit: BoxFit.cover,
-      )),
-      Positioned.fill(child: Container(color: scheme.surface.withAlpha(a))),
-      Theme(data: Theme.of(context).copyWith(
-        scaffoldBackgroundColor: Colors.transparent,
-        appBarTheme: Theme.of(context).appBarTheme.copyWith(backgroundColor: Colors.transparent),
-      ), child: child),
-    ]);
-  }
+  Widget _withWallpaper(BuildContext context, Widget child) =>
+      withWallpaper(context, child, transparentAppBar: true);
 
   Widget _glassWrap(Widget child, ColorScheme scheme) {
     final cfg = context.read<AppState>().config;
@@ -2314,6 +2446,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   Widget _buildCanvas(ColorScheme scheme, AppStrings s) {
     final aiEnabled = context.read<AppState>().config.aiEnabled;
+    // 世界框随内容重算（拖动节点出界时同步扩张，保证仍可命中）
+    _world = _computeWorldRect();
     // 画布背景：跟随全局(global)时透明显示页面全局背景/壁纸/玻璃；
     // 否则用指定实色填充画布
     final canvasBg = context.read<AppState>().config.canvasBg;
@@ -2452,18 +2586,22 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         minScale: 0.3,
         maxScale: 2.0,
         child: SizedBox(
-          width: _canvasSize,
-          height: _canvasSize,
+          width: _world.width,
+          height: _world.height,
           child: Stack(clipBehavior: Clip.none, children: [
-            // 网格背景
+            // 网格背景（只绘制可视区，可越出世界框 → 视觉上无限）
             Positioned.fill(child: CustomPaint(painter: _GridPainter(
               color: gridColor,
               fill: canvasFill,
+              visible: _visibleCanvasRect(),
+              world: _world,
+              repaintListenable: _transformCtrl,
             ))),
             // 连线
             CustomPaint(
-              size: Size(_canvasSize, _canvasSize),
+              size: Size(_world.width, _world.height),
               painter: _ConnectionPainter(
+                origin: Offset(-_world.left, -_world.top),
                 nodes: _nodes,
                 connections: _hideLogic
                     ? _connections.where((c) => c.kind != 'control').toList()
@@ -2476,8 +2614,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             // 临时拖拽连线
             if (_dragFromNodeId != null && _dragLineEnd != null)
               CustomPaint(
-                size: Size(_canvasSize, _canvasSize),
+                size: Size(_world.width, _world.height),
                 painter: _TempLinePainter(
+                  origin: Offset(-_world.left, -_world.top),
                   from: _dragLineStart(),
                   to: _dragLineEnd!,
                   color: _dragPort.contains('gate') || _dragPort.contains('status') || _dragPort.contains('enable')
@@ -2486,30 +2625,33 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                   isControl: _dragPort.contains('gate') || _dragPort.contains('status') || _dragPort.contains('enable'),
                 ),
               ),
-            // 节点
+            // 节点（画布坐标 → 世界框本地坐标）
             for (final node in _nodes)
               if (!(_hideLogic && node.isGate))
                 Positioned(
-                  left: node.x, top: node.y,
+                  left: node.x - _world.left, top: node.y - _world.top,
                   child: _buildNodeWidget(node, scheme, s),
                 ),
             // 逻辑块虚线框
             for (final block in _logicBlocks)
               Positioned(
-                left: block.x, top: block.y,
+                left: block.x - _world.left, top: block.y - _world.top,
                 child: _buildLogicBlockOverlay(block, scheme, s),
               ),
             // Box-select overlay
             if (_boxSelectRect != null)
               CustomPaint(
-                size: Size(_canvasSize, _canvasSize),
-                painter: _BoxSelectPainter(rect: _boxSelectRect!, color: scheme.primary),
+                size: Size(_world.width, _world.height),
+                painter: _BoxSelectPainter(
+                  origin: Offset(-_world.left, -_world.top),
+                  rect: _boxSelectRect!, color: scheme.primary,
+                ),
               ),
             // 探测模式：在端口位置显示信号提示（画布坐标系，随缩放平移）
             if (_probeMode && _probeTooltip != null && _probeTooltipPos != null)
               Positioned(
-                left: _probeTooltipPos!.dx + 10,
-                top: _probeTooltipPos!.dy - 12,
+                left: _probeTooltipPos!.dx - _world.left + 10,
+                top: _probeTooltipPos!.dy - _world.top - 12,
                 child: IgnorePointer(child: Material(
                   color: Colors.transparent,
                   child: Container(
@@ -5425,41 +5567,55 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 class _GridPainter extends CustomPainter {
   final Color color;
   final Color? fill;
-  _GridPainter({required this.color, this.fill});
+  /// 可视区（画布坐标）：只绘制该范围内的填充与网格线；
+  /// 可越出世界框 → 视觉上无限画布。null 时退回绘制世界框范围。
+  final Rect? visible;
+  final Rect world;
+  _GridPainter({required this.color, this.fill, this.visible, required this.world, Listenable? repaintListenable})
+      : super(repaint: repaintListenable);
 
   @override
   void paint(Canvas canvas, Size size) {
+    // 世界框本地坐标 → 画布坐标
+    canvas.translate(-world.left, -world.top);
+    final area = visible ?? Rect.fromLTWH(world.left, world.top, world.width, world.height);
     if (fill != null) {
-      canvas.drawRect(Offset.zero & size, Paint()..color = fill!);
+      canvas.drawRect(area, Paint()..color = fill!);
     }
     final paint = Paint()..color = color..strokeWidth = 0.5;
     const step = 40.0;
-    for (var x = 0.0; x < size.width; x += step) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+    final startX = (area.left / step).floor() * step;
+    final startY = (area.top / step).floor() * step;
+    for (var x = startX; x <= area.right; x += step) {
+      canvas.drawLine(Offset(x, area.top), Offset(x, area.bottom), paint);
     }
-    for (var y = 0.0; y < size.height; y += step) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+    for (var y = startY; y <= area.bottom; y += step) {
+      canvas.drawLine(Offset(area.left, y), Offset(area.right, y), paint);
     }
   }
 
   @override
-  bool shouldRepaint(_GridPainter old) => old.color != color || old.fill != fill;
+  bool shouldRepaint(_GridPainter old) =>
+      old.color != color || old.fill != fill || old.visible != visible || old.world != world;
 }
 
 // ── 连线绘制 ──
 
 class _ConnectionPainter extends CustomPainter {
+  /// 世界框本地坐标 → 画布坐标的偏移（画布坐标 = 本地坐标 - origin... 反之 +）
+  final Offset origin;
   final List<PipelineNode> nodes;
   final List<PipelineConnection> connections;
   final Color color;
   final Color controlColor;
   final Set<String> selectedNodeIds;
 
-  _ConnectionPainter({required this.nodes, required this.connections, required this.color,
+  _ConnectionPainter({required this.origin, required this.nodes, required this.connections, required this.color,
     required this.selectedNodeIds, this.controlColor = const Color(0xFFFF8F00)});
 
   @override
   void paint(Canvas canvas, Size size) {
+    canvas.translate(origin.dx, origin.dy);
     for (final conn in connections) {
       final fromIdx = nodes.indexWhere((n) => n.id == conn.fromNodeId);
       final toIdx = nodes.indexWhere((n) => n.id == conn.toNodeId);
@@ -5659,13 +5815,15 @@ class _ConnectionPainter extends CustomPainter {
 // ── 临时拖拽连线 ──
 
 class _TempLinePainter extends CustomPainter {
+  final Offset origin;
   final Offset from, to;
   final Color color;
   final bool isControl;
-  _TempLinePainter({required this.from, required this.to, required this.color, this.isControl = false});
+  _TempLinePainter({required this.origin, required this.from, required this.to, required this.color, this.isControl = false});
 
   @override
   void paint(Canvas canvas, Size size) {
+    canvas.translate(origin.dx, origin.dy);
     final paint = Paint()..color = color..strokeWidth = 2..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round;
     if (isControl) {
@@ -5744,12 +5902,14 @@ class _LogicBlockPainter extends CustomPainter {
 }
 
 class _BoxSelectPainter extends CustomPainter {
+  final Offset origin;
   final Rect rect;
   final Color color;
-  _BoxSelectPainter({required this.rect, required this.color});
+  _BoxSelectPainter({required this.origin, required this.rect, required this.color});
 
   @override
   void paint(Canvas canvas, Size size) {
+    canvas.translate(origin.dx, origin.dy);
     // Semi-transparent fill
     final fillPaint = Paint()
       ..color = color.withAlpha(25)

@@ -1,12 +1,12 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
-import '../services/config_export.dart';
+import '../services/fppx2_service.dart';
 import '../services/graph_executor.dart';
 import '../services/quick_config_storage.dart';
 import '../theme/app_strings.dart';
@@ -27,6 +27,9 @@ class _ConfigEntry {
   PipelineGraph graph;
   String description;
   DateTime updatedAt;
+  /// 导出用的文件格式：'legacy' = 旧版 FPPX（gzip+JSON），'v2' = 新版模块化二进制。
+  /// 库内部始终存 JSON 图，此字段只决定导出 .fppx 时走哪种格式。
+  String format;
 
   _ConfigEntry({
     required this.id,
@@ -34,6 +37,7 @@ class _ConfigEntry {
     required this.graph,
     this.description = '',
     DateTime? updatedAt,
+    this.format = 'legacy',
   }) : updatedAt = updatedAt ?? DateTime.now();
 
   Map<String, dynamic> toJson() => {
@@ -42,6 +46,7 @@ class _ConfigEntry {
     'graph': graph.toJson(),
     'description': description,
     'updated_at': updatedAt.toIso8601String(),
+    'format': format,
   };
 
   factory _ConfigEntry.fromJson(Map<String, dynamic> json) => _ConfigEntry(
@@ -50,6 +55,7 @@ class _ConfigEntry {
     graph: json['graph'] != null ? PipelineGraph.fromJson(json['graph'] as Map<String, dynamic>) : PipelineGraph(),
     description: json['description'] as String? ?? '',
     updatedAt: json['updated_at'] != null ? DateTime.tryParse(json['updated_at'] as String) ?? DateTime.now() : DateTime.now(),
+    format: json['format'] as String? ?? 'legacy',
   );
 }
 
@@ -104,49 +110,83 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
 
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(children: [
-          Icon(Icons.add_circle_outline, size: 20, color: scheme.primary),
-          const SizedBox(width: 8),
-          Text(zh ? '新建配置' : 'New Config', style: TextStyle(color: scheme.onSurface)),
-        ]),
-        content: SizedBox(width: 360, child: TextField(
-          controller: nameCtrl, autofocus: true,
-          decoration: InputDecoration(
-            labelText: zh ? '配置名称' : 'Config Name',
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-          ),
-          style: TextStyle(fontSize: 14, color: scheme.onSurface),
-          onSubmitted: (_) {
-            Navigator.pop(ctx);
-            _createEntry(nameCtrl.text, zh);
-          },
-        )),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx),
-              child: Text(zh ? '取消' : 'Cancel')),
-          FilledButton(onPressed: () {
-            Navigator.pop(ctx);
-            _createEntry(nameCtrl.text, zh);
-          }, child: Text(zh ? '创建' : 'Create')),
-        ],
-      ),
+      builder: (ctx) {
+        // 新建时选择文件版本：新版为 v2 模块化二进制（Beta），旧版完全兼容历史行为
+        var newFormat = false;
+        return StatefulBuilder(builder: (ctx, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(children: [
+            Icon(Icons.add_circle_outline, size: 20, color: scheme.primary),
+            const SizedBox(width: 8),
+            Text(zh ? '新建配置' : 'New Config', style: TextStyle(color: scheme.onSurface)),
+          ]),
+          content: SizedBox(width: 360, child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(
+              controller: nameCtrl, autofocus: true,
+              decoration: InputDecoration(
+                labelText: zh ? '配置名称' : 'Config Name',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              style: TextStyle(fontSize: 14, color: scheme.onSurface),
+              onSubmitted: (_) {
+                Navigator.pop(ctx);
+                _createEntry(nameCtrl.text, zh, newFormat: newFormat);
+              },
+            ),
+            const SizedBox(height: 12),
+            SegmentedButton<bool>(
+              segments: [
+                ButtonSegment(
+                  value: false,
+                  label: Text(zh ? '旧版' : 'Legacy'),
+                  icon: const Icon(Icons.history, size: 16),
+                ),
+                ButtonSegment(
+                  value: true,
+                  label: Text(zh ? '新版 (Beta，不稳定)' : 'New (Beta)'),
+                  icon: const Icon(Icons.auto_awesome, size: 16),
+                ),
+              ],
+              selected: {newFormat},
+              onSelectionChanged: (s) => setDialogState(() => newFormat = s.first),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              newFormat
+                  ? (zh ? '模块化二进制格式，导出前深度校验；旧版软件无法读取' : 'Modular binary with deep validation; not readable by older builds')
+                  : (zh ? '与历史版本完全兼容的经典格式' : 'Classic format, fully compatible'),
+              style: TextStyle(fontSize: 11, color: scheme.outline),
+            ),
+          ])),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx),
+                child: Text(zh ? '取消' : 'Cancel')),
+            FilledButton(onPressed: () {
+              Navigator.pop(ctx);
+              _createEntry(nameCtrl.text, zh, newFormat: newFormat);
+            }, child: Text(zh ? '创建' : 'Create')),
+          ],
+        ));
+      },
       // 统一在对话框关闭后释放：点遮罩/按 Esc 关闭时不会走任何按钮回调，
       // 原先那几处 dispose() 都不会执行，controller 就泄漏了。
     ).whenComplete(nameCtrl.dispose);
   }
 
-  void _createEntry(String rawName, bool zh) {
+  void _createEntry(String rawName, bool zh, {bool newFormat = false}) {
     final name = rawName.trim().isEmpty ? (zh ? '新配置' : 'New Config') : rawName.trim();
-    final entry = _ConfigEntry(id: _uuid.v4(), name: name, graph: PipelineGraph());
+    final entry = _ConfigEntry(
+      id: _uuid.v4(), name: name, graph: PipelineGraph(),
+      format: newFormat ? 'v2' : 'legacy',
+    );
     setState(() => _configs.add(entry));
     _saveLibrary();
     _openEditor(entry);
   }
 
-  Future<void> _importFppx() async {
+  Future<void> _importFppx({bool force = false}) async {
     final zh = AppStrings.of(context.read<AppState>().config.language).isZh;
+    final scheme = Theme.of(context).colorScheme;
     // Android 上 fppx 无 MIME 映射，FileType.custom 会失效（文件选择器不显示任何文件）。
     // 改用 FileType.any 并在 Dart 侧校验扩展名。
     final r = await FilePicker.platform.pickFiles(
@@ -159,44 +199,50 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       if (mounted) showToast(context, zh ? '请选择 .fppx 文件' : 'Please select a .fppx file', type: ToastType.warning);
       return;
     }
-    final Uint8List bytes;
-    try {
-      bytes = await File(r.files.first.path!).readAsBytes();
-    } catch (e) {
-      if (mounted) showToast(context, zh ? '读取文件失败: $e' : 'Failed to read file: $e', type: ToastType.error);
+    final path = r.files.first.path!;
+    final state = context.read<AppState>();
+
+    // 新旧格式由 C++ 端解析（第 5 字节 0xFF = 新版），导入与校验行为完全一致
+    final result = await FppxService(state.backend).importFile(path, force: force);
+    if (!mounted) return;
+
+    if (!result.success) {
+      _showImportErrors(zh ? '导入失败' : 'Import Failed', result.errors.isEmpty ? [result.error ?? ''] : result.errors);
       return;
     }
-    final fppx = FppxExporter.import(bytes);
-    if (fppx == null || !fppx.isNodeEditor) {
-      if (mounted) showToast(context, zh ? '仅支持导入节点编辑器配置' : 'Only node editor configs supported', type: ToastType.warning);
-      return;
-    }
-    if (fppx.errors.isNotEmpty) {
-      if (mounted) {
-        showDialog(context: context, builder: (ctx) {
-          final scheme = Theme.of(context).colorScheme;
-          return AlertDialog(
-            title: Row(children: [
-              Icon(Icons.error_outline, size: 20, color: scheme.error),
-              const SizedBox(width: 8),
-              Text(zh ? '导入失败' : 'Import Failed', style: TextStyle(color: scheme.onSurface)),
-            ]),
-            content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-              for (final e in fppx.errors) Padding(padding: const EdgeInsets.only(bottom: 4),
-                child: Text('• $e', style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant))),
-            ]),
-            actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: Text(zh ? '知道了' : 'OK'))],
-          );
-        });
+
+    // 存在未知节点类型且尚未确认强制导入：弹确认框（文案与交互按规格固定）
+    if (result.needsForceConfirm) {
+      final ids = result.unknownTypeIds.join(', ');
+      final goOn = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(children: [
+            Icon(Icons.help_outline, size: 20, color: Colors.orange),
+            const SizedBox(width: 8),
+            Text(zh ? '发现未知节点' : 'Unknown Node Type', style: TextStyle(color: scheme.onSurface)),
+          ]),
+          content: Text(
+            zh
+                ? '程序找不到ID为$ids节点的具体含义，可能是因为版本太旧，你可以尝试强制导入，但这可能会发生意料之外的事情'
+                : 'The program cannot resolve node ID $ids (possibly created by a newer version). You can force-import, but unexpected behavior may occur.',
+            style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(zh ? '取消' : 'Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(zh ? '强制导入' : 'Force Import')),
+          ],
+        ),
+      );
+      if (goOn == true) {
+        // 重新选同一个文件强制导入
+        _importFppxPath(path, force: true);
       }
       return;
     }
-    if (fppx.graph == null) {
-      if (mounted) showToast(context, zh ? '配置解析失败' : 'Config parse failed', type: ToastType.warning);
-      return;
-    }
-    if (fppx.warnings.isNotEmpty && mounted) {
-      final scheme = Theme.of(context).colorScheme;
+
+    if (result.warnings.isNotEmpty) {
       final proceed = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
         title: Row(children: [
           Icon(Icons.warning_amber, size: 20, color: Colors.orange),
@@ -204,7 +250,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
           Text(zh ? '版本警告' : 'Version Warning', style: TextStyle(color: scheme.onSurface)),
         ]),
         content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          for (final w in fppx.warnings) Padding(padding: const EdgeInsets.only(bottom: 4),
+          for (final w in result.warnings) Padding(padding: const EdgeInsets.only(bottom: 4),
             child: Text('• $w', style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant))),
           const SizedBox(height: 8),
           Text(zh ? '是否继续导入？' : 'Continue importing?', style: TextStyle(fontSize: 13, color: scheme.onSurface)),
@@ -214,18 +260,101 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
           FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(zh ? '继续' : 'Continue')),
         ],
       ));
-      if (proceed != true) return;
+      if (proceed != true || !mounted) return;
     }
-    final baseName = r.files.first.name.replaceAll(RegExp(r'\.[^.]+$'), '');
+
+    final baseName = name.replaceAll(RegExp(r'\.[^.]+$'), '');
+
+    // 快速模式（0x02）：导入为快捷配置（逻辑块无节点 ID，只存命令参数）
+    if (result.mode == FppxService.modeQuick) {
+      final now = DateTime.now();
+      final cfg = QuickConfig(
+        id: _uuid.v4(),
+        fileType: QuickFileType.video,
+        name: baseName,
+        description: result.description,
+        createdAt: now,
+        updatedAt: now,
+        items: [for (final item in result.quickItems)
+          QuickConfigItem(
+            key: item['key'] as String? ?? '',
+            params: (item['params'] as Map<String, dynamic>?) ?? {},
+            enabled: item['enabled'] != false,
+          )],
+      );
+      await QuickConfigStorage.save(cfg);
+      if (!mounted) return;
+      setState(() {
+        _quickConfigs.insert(0, cfg);
+        _tabIndex = 1; // 跳到快捷配置标签页
+      });
+      showToast(context, zh ? '已导入为快捷配置: $baseName' : 'Imported as quick config: $baseName', type: ToastType.success);
+      return;
+    }
+
+    final graph = result.graph;
+    if (graph == null) {
+      if (mounted) showToast(context, zh ? '该文件不是节点编辑器配置' : 'Not a node editor config', type: ToastType.warning);
+      return;
+    }
     final entry = _ConfigEntry(
       id: _uuid.v4(),
       name: baseName,
-      graph: fppx.graph!,
-      description: fppx.description,
+      graph: graph,
+      description: result.description,
+      format: result.isNewFormat ? 'v2' : 'legacy',
     );
     if (mounted) setState(() => _configs.add(entry));
     _saveLibrary();
     if (mounted) showToast(context, zh ? '已导入: $baseName' : 'Imported: $baseName', type: ToastType.success);
+  }
+
+  /// 强制导入确认后对同一文件重试（免得让用户再选一次文件）
+  Future<void> _importFppxPath(String path, {bool force = false}) async {
+    final zh = AppStrings.of(context.read<AppState>().config.language).isZh;
+    final state = context.read<AppState>();
+    final result = await FppxService(state.backend).importFile(path, force: force);
+    if (!mounted) return;
+    if (!result.success) {
+      _showImportErrors(zh ? '导入失败' : 'Import Failed', result.errors.isEmpty ? [result.error ?? ''] : result.errors);
+      return;
+    }
+    final graph = result.graph;
+    if (graph == null) {
+      if (mounted) showToast(context, zh ? '配置解析失败' : 'Config parse failed', type: ToastType.warning);
+      return;
+    }
+    final baseName = path.split(Platform.pathSeparator).last.replaceAll(RegExp(r'\.[^.]+$'), '');
+    final entry = _ConfigEntry(
+      id: _uuid.v4(),
+      name: baseName,
+      graph: graph,
+      description: result.description,
+      format: result.isNewFormat ? 'v2' : 'legacy',
+    );
+    setState(() => _configs.add(entry));
+    _saveLibrary();
+    showToast(context, zh ? '已导入: $baseName' : 'Imported: $baseName', type: ToastType.success);
+  }
+
+  void _showImportErrors(String title, List<String> errors) {
+    final zh = AppStrings.of(context.read<AppState>().config.language).isZh;
+    final scheme = Theme.of(context).colorScheme;
+    showDialog(context: context, builder: (ctx) {
+      return AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(children: [
+          Icon(Icons.error_outline, size: 20, color: scheme.error),
+          const SizedBox(width: 8),
+          Text(title, style: TextStyle(color: scheme.onSurface)),
+        ]),
+        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          for (final e in errors) Padding(padding: const EdgeInsets.only(bottom: 4),
+            child: Text('• $e', style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant))),
+        ]),
+        actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: Text(zh ? '知道了' : 'OK'))],
+      );
+    });
   }
 
   void _openEditor(_ConfigEntry entry) {
@@ -292,7 +421,11 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     final zh = AppStrings.of(context.read<AppState>().config.language).isZh;
     final scheme = Theme.of(context).colorScheme;
 
-    final errors = GraphExecutor.validateGraph(entry.graph);
+    // 旧版沿用本地 GraphExecutor 预检；新版由 C++ 端写前校验（其允许未知节点，
+    // 本地预检会把强制导入的未知节点误判为不可执行）
+    final errors = entry.format == 'v2'
+        ? <String>[]
+        : GraphExecutor.validateGraph(entry.graph);
     if (errors.isNotEmpty) {
       showDialog(context: context, builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -338,13 +471,113 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     descCtrl.dispose();
     _saveLibrary();
 
-    final result = await FilePicker.platform.saveFile(
-      dialogTitle: zh ? '保存配置' : 'Save Config',
-      fileName: '${entry.name}.fppx',
-      type: FileType.custom, allowedExtensions: ['fppx'],
-    );
-    if (result == null) return;
-    await File(result).writeAsBytes(FppxExporter.exportGraph(entry.graph, entry.description));
+    // 写盘由 C++ 端完成（写前完整校验，失败不落盘）。
+    // 桌面端：saveFile 只取目标路径 → C++ 直接写；
+    // 移动端：SAF 只接受字节流 → C++ 先写临时文件 → 读出 bytes 交给插件写入。
+    final state = context.read<AppState>();
+    final newFormat = entry.format == 'v2';
+    String? result;
+    String? tmpPath;
+    try {
+      if (!isMobilePlatform) {
+        result = await FilePicker.platform.saveFile(
+          dialogTitle: zh ? '保存配置' : 'Save Config',
+          fileName: '${entry.name}.fppx',
+          type: FileType.custom,
+          allowedExtensions: ['fppx'],
+        );
+        if (result == null) return;
+      }
+      final exportRes = await FppxService(state.backend).exportGraph(
+        entry.graph,
+        result ?? (tmpPath = await _tempExportPath('${entry.name}.fppx')),
+        description: entry.description,
+        newFormat: newFormat,
+      );
+      if (!mounted) return;
+      if (!exportRes.success) {
+        _showImportErrors(zh ? '无法导出' : 'Cannot Export', exportRes.errors.isEmpty ? [exportRes.error ?? ''] : exportRes.errors);
+        return;
+      }
+      if (isMobilePlatform) {
+        final bytes = await File(tmpPath!).readAsBytes();
+        result = await FilePicker.platform.saveFile(
+          dialogTitle: zh ? '保存配置' : 'Save Config',
+          fileName: '${entry.name}.fppx',
+          type: FileType.custom,
+          allowedExtensions: ['fppx'],
+          bytes: bytes,
+        );
+        if (result == null) return;
+      }
+    } catch (e) {
+      if (mounted) {
+        showToast(context, zh ? '导出失败: $e' : 'Export failed: $e', type: ToastType.error);
+      }
+      return;
+    } finally {
+      if (tmpPath != null) {
+        try { await File(tmpPath).delete(); } catch (_) {}
+      }
+    }
+    if (mounted) showToast(context, zh ? '已导出: $result' : 'Exported: $result', type: ToastType.success);
+  }
+
+  /// 移动端导出用的临时文件路径（应用缓存目录，C++ 可直接写）
+  Future<String> _tempExportPath(String name) async {
+    final dir = await getTemporaryDirectory();
+    return '${dir.path}${Platform.pathSeparator}export_$name';
+  }
+
+  /// 快捷配置导出为新版 .fppx（0x02：逻辑块无节点 ID，只存命令参数）
+  Future<void> _exportQuickConfig(QuickConfig cfg) async {
+    final zh = AppStrings.of(context.read<AppState>().config.language).isZh;
+    final state = context.read<AppState>();
+    final items = [for (final i in cfg.items)
+      {'key': i.key, 'params': i.params, 'enabled': i.enabled}];
+    String? result;
+    String? tmpPath;
+    try {
+      if (!isMobilePlatform) {
+        result = await FilePicker.platform.saveFile(
+          dialogTitle: zh ? '保存配置' : 'Save Config',
+          fileName: '${cfg.name}.fppx',
+          type: FileType.custom,
+          allowedExtensions: ['fppx'],
+        );
+        if (result == null) return;
+      }
+      final exportRes = await FppxService(state.backend).exportQuickItems(
+        result ?? (tmpPath = await _tempExportPath('${cfg.name}.fppx')),
+        description: cfg.description,
+        items: items,
+      );
+      if (!mounted) return;
+      if (!exportRes.success) {
+        _showImportErrors(zh ? '无法导出' : 'Cannot Export', exportRes.errors.isEmpty ? [exportRes.error ?? ''] : exportRes.errors);
+        return;
+      }
+      if (isMobilePlatform) {
+        final bytes = await File(tmpPath!).readAsBytes();
+        result = await FilePicker.platform.saveFile(
+          dialogTitle: zh ? '保存配置' : 'Save Config',
+          fileName: '${cfg.name}.fppx',
+          type: FileType.custom,
+          allowedExtensions: ['fppx'],
+          bytes: bytes,
+        );
+        if (result == null) return;
+      }
+    } catch (e) {
+      if (mounted) {
+        showToast(context, zh ? '导出失败: $e' : 'Export failed: $e', type: ToastType.error);
+      }
+      return;
+    } finally {
+      if (tmpPath != null) {
+        try { await File(tmpPath).delete(); } catch (_) {}
+      }
+    }
     if (mounted) showToast(context, zh ? '已导出: $result' : 'Exported: $result', type: ToastType.success);
   }
 
@@ -572,6 +805,11 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
           icon: Icon(Icons.edit_outlined, size: 18, color: scheme.outline),
           tooltip: zh ? '编辑' : 'Edit',
           onPressed: () => _openQuickEditor(cfg),
+        ),
+        IconButton(
+          icon: Icon(Icons.file_upload_outlined, size: 18, color: scheme.outline),
+          tooltip: zh ? '导出为新版文件 (Beta)' : 'Export as new-format file (Beta)',
+          onPressed: () => _exportQuickConfig(cfg),
         ),
         IconButton(
           icon: Icon(Icons.delete_outline, size: 18, color: scheme.outline),

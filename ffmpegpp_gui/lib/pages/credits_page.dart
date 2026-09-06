@@ -1,9 +1,8 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
-import '../app.dart' show wallpaperImageProvider;
+import '../widgets/wallpaper_background.dart';
 import '../platform/app_platform.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_top_bar.dart';
@@ -15,39 +14,15 @@ class CreditsPage extends StatelessWidget {
 
   /// 与其它二级页（容器详情等）一致：有壁纸铺壁纸，无壁纸至少铺一层不透明
   /// 主题底色。修复点：此前本页 Scaffold 透明且外层没有铺任何背景，
-  /// 在移动端（页面直接 push 出新路由、底下不是壁纸 Stack）会露出系统
-  /// 窗口黑底 → 整页黑屏、文字不可见。
-  Widget _withWallpaper(BuildContext context, Widget child) {
-    final cfg = context.watch<AppState>().config;
-    final bg = cfg.backgroundImage;
-    final scheme = Theme.of(context).colorScheme;
-    final base = Positioned.fill(child: Container(color: scheme.surface));
-    if (bg.isEmpty || !File(bg).existsSync()) {
-      return Stack(children: [base, child]);
-    }
-    final a = ((1.0 - cfg.backgroundOpacity) * 220).round().clamp(20, 240);
-    return Stack(children: [
-      base,
-      // 统一走 wallpaperImageProvider 按物理分辨率降采样解码
-      Positioned.fill(child: Image(
-        image: wallpaperImageProvider(
-            bg,
-            MediaQuery.sizeOf(context).width,
-            MediaQuery.sizeOf(context).height,
-            MediaQuery.devicePixelRatioOf(context)),
-        fit: BoxFit.cover,
-      )),
-      Positioned.fill(child: Container(color: scheme.surface.withAlpha(a))),
-      Theme(data: Theme.of(context).copyWith(
-        scaffoldBackgroundColor: Colors.transparent,
-      ), child: child),
-    ]);
-  }
+  /// 与其它二级页（容器详情等）一致：有壁纸铺壁纸，无壁纸至少铺一层不透明
+  /// 主题底色（实现统一在 widgets/wallpaper_background.dart）。
+  Widget _withWallpaper(BuildContext context, Widget child) =>
+      withWallpaper(context, child);
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final s = AppStrings.of(context.watch<AppState>().config.language);
+    final s = AppStrings.of(context.select<AppState, String>((st) => st.config.language));
 
     final title = Row(mainAxisSize: MainAxisSize.min, children: [
       Icon(Icons.favorite_outline, size: 20, color: scheme.primary),

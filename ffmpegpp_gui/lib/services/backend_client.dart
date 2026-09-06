@@ -123,16 +123,6 @@ class BackendClient {
     return resp;
   }
 
-  /// ping 检测连接
-  Future<bool> ping() async {
-    try {
-      final resp = await _process.request('ping');
-      return resp['success'] == true;
-    } catch (_) {
-      return false;
-    }
-  }
-
   /// 合并音频/视频
   Future<Map<String, dynamic>> concat(String taskId, {
     required List<String> files, required String output,
@@ -152,6 +142,60 @@ class BackendClient {
     return await _process.requestWithId(taskId, 'image_sequence', {
       'files': files, 'output': output, 'framerate': framerate,
       'options': ?options,
+    });
+  }
+
+  // ── FPPX 配置文件（新版 v2 / 旧版迁移），由 C++ 端直接读写文件 ──
+
+  /// 导入 .fppx（自动路由：C++ 按文件头第 5 字节判别新旧格式后分发，
+  /// Dart 不读配置文件的任何字节）。
+  /// [force]=true 表示用户确认强制导入未知节点类型。
+  /// 返回 data: {mode, is_new_format, description, encrypted, graph?, quick_items?,
+  ///             errors, warnings, unknown_type_ids, forced}
+  Future<Map<String, dynamic>> fppxImport(String path, {bool force = false}) async {
+    return await _process.requestWithTimeout(
+        'fppx_import', 30, {'path': path, 'force': force});
+  }
+
+  /// 导入新版 .fppx（明确指定 v2 解析器，正常流程请用 [fppxImport]）。
+  Future<Map<String, dynamic>> fppx2Import(String path, {bool force = false}) async {
+    return await _process.requestWithTimeout(
+        'fppx2_import', 30, {'path': path, 'force': force});
+  }
+
+  /// 导出新版 .fppx。mode: 1=节点编辑器(需 graph) 2=快速模式(需 quickItems)。
+  /// C++ 端写盘前完整校验；校验失败时 success=false 且 data.errors 带回原因。
+  Future<Map<String, dynamic>> fppx2Export(String path, {
+    required int mode,
+    required String description,
+    Map<String, dynamic>? graph,
+    List<dynamic>? quickItems,
+    bool encrypted = false,
+  }) async {
+    return await _process.requestWithTimeout('fppx2_export', 30, {
+      'path': path,
+      'mode': mode,
+      'description': description,
+      'encrypted': encrypted,
+      'graph': ?graph,
+      'quick_items': ?quickItems,
+    });
+  }
+
+  /// 导入旧版 .fppx（魔数 + 版本号 + gzip(JSON)，完整迁移自 Dart FppxExporter）。
+  Future<Map<String, dynamic>> fppxLegacyImport(String path) async {
+    return await _process.requestWithTimeout('fppx_legacy_import', 30, {'path': path});
+  }
+
+  /// 导出旧版 .fppx（与 Dart FppxExporter 输出逐字节兼容）。
+  Future<Map<String, dynamic>> fppxLegacyExport(String path, {
+    required Map<String, dynamic> graph,
+    required String description,
+  }) async {
+    return await _process.requestWithTimeout('fppx_legacy_export', 30, {
+      'path': path,
+      'graph': graph,
+      'description': description,
     });
   }
 

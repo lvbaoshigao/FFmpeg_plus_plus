@@ -2,7 +2,6 @@
 #include "subprocess.h"
 #include "installer.h"
 #include <sstream>
-#include <algorithm>
 #include <mutex>
 
 namespace ffmpegpp {

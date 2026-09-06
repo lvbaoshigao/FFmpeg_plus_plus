@@ -1,5 +1,4 @@
 #include "json_io.h"
-#include "handlers.h"  // slog 声明（readLine 中记录 JSON 解析错误）
 #include <string>
 #ifdef _WIN32
 #include <windows.h>
@@ -127,63 +126,5 @@ void JsonWriter::audit(const std::string& task_id, const std::vector<std::string
     json obj = {{"type", "audit"}, {"task_id", task_id}, {"warnings", warnings}};
     send(obj);
 }
-
-#ifndef FFMPEGPP_DLL_MODE
-
-// EXE 模式才需要 stdin 读取
-// 块缓冲读取：避免逐字节 read 系统调用；readLine 仅由单线程主循环调用
-// 注意：JsonReader 仅被单线程 workerLoop 调用，不需要额外的线程安全保护
-bool JsonReader::readLine(json& out) {
-    static std::string buffer;          // 当前行累积
-    static std::string readBuf(8192, '\0');
-    static size_t readPos = 0, readLen = 0;
-    static std::mutex readMutex;  // 防止多线程并发调用（如果未来有变化）
-    
-    std::lock_guard<std::mutex> lock(readMutex);
-    
-#ifdef _WIN32
-    static HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
-    if (hIn == INVALID_HANDLE_VALUE || hIn == nullptr) return false;
-#endif
-
-    while (true) {
-        // 缓冲耗尽时再读一块
-        if (readPos >= readLen) {
-#ifdef _WIN32
-            DWORD n;
-            if (!ReadFile(hIn, &readBuf[0], (DWORD)readBuf.size(), &n, nullptr) || n == 0) {
-                return false;
-            }
-            readLen = n; readPos = 0;
-#else
-            ssize_t n = read(STDIN_FILENO, &readBuf[0], readBuf.size());
-            if (n <= 0) return false;
-            readLen = (size_t)n; readPos = 0;
-#endif
-        }
-        size_t nl = readBuf.find('\n', readPos);
-        if (nl != std::string::npos && nl < readLen) {
-            buffer.append(readBuf, readPos, nl - readPos);
-            readPos = nl + 1;
-            std::string line = buffer;
-            buffer.clear();
-            if (line.empty()) continue;
-            if (!line.empty() && line.back() == '\r') line.pop_back();
-            try {
-                out = json::parse(line);
-                return true;
-            } catch (const std::exception& e) {
-                // 记录解析错误以便调试
-                slog("JSON parse error: %s, line: %s", e.what(), line.substr(0, 100).c_str());
-                continue;
-            }
-        } else {
-            buffer.append(readBuf, readPos, readLen - readPos);
-            readPos = readLen;
-        }
-    }
-}
-
-#endif // !FFMPEGPP_DLL_MODE
 
 } // namespace ffmpegpp

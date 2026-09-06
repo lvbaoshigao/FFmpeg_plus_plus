@@ -44,6 +44,13 @@ void handleConcat(const json& req, std::atomic<bool>& cancel_flag);
 void handleImageSequence(const json& req, std::atomic<bool>& cancel_flag);
 void handleCustomCommand(const json& req, std::atomic<bool>& cancel_flag);
 
+// FPPX 配置文件（新版 v2 + 旧版迁移），纯文件解析无 ffmpeg 依赖
+void handleFppxImport(const json& req);       // 自动路由（按文件头判别新旧格式）
+void handleFppx2Import(const json& req);
+void handleFppx2Export(const json& req);
+void handleFppxLegacyImport(const json& req);
+void handleFppxLegacyExport(const json& req);
+
 void runFFmpegProcess(const std::string& task_id,
                       const std::vector<std::string>& cmd,
                       std::atomic<bool>& cancel_flag,

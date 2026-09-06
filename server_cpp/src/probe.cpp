@@ -2,16 +2,9 @@
 #include "subprocess.h"
 #include "installer.h"
 #include <cmath>
-#include <sstream>
 #include <algorithm>
 #include <cctype>
-// 用 SIGSEGV 等常量名映射信号终止原因（不同平台 signal.h 头不同，
-// 这里 _WIN32 路径上 probe.cpp 不会触发信号分支，但仍要兼容。）
-#ifdef _WIN32
 #include <signal.h>
-#else
-#include <signal.h>
-#endif
 
 namespace ffmpegpp {
 
@@ -190,9 +183,13 @@ ProbeResult probeVideo(const std::string& filepath) {
             return result;
         }
 
+        // ffprobe 对某些容器会输出 "N/A"，std::stod/stoll 直接抛异常导致整个
+        // 探测失败，因此全部 try 包裹、失败回退 0（与上面 bit_rate 同样处理）。
         std::string size_str = format.value("size", "0");
-        int64_t format_size = (size_str == "0") ? 0 : (int64_t)std::stoll(size_str);
-        double format_duration = std::stod(format.value("duration", "0.0"));
+        int64_t format_size = 0;
+        try { format_size = std::stoll(size_str); } catch (...) {}
+        double format_duration = 0.0;
+        try { format_duration = std::stod(format.value("duration", "0.0")); } catch (...) {}
 
         // 检测文件媒体类型：video / audio / image
         std::string media_type = "video";
@@ -237,35 +234,6 @@ ProbeResult probeVideo(const std::string& filepath) {
         result.success = true;
     } catch (const std::exception& e) {
         result.error = std::string("解析视频信息时出错: ") + e.what();
-    }
-    return result;
-}
-
-ProbeResult probeSubtitle(const std::string& filepath) {
-    auto raw = probeFile(filepath);
-    if (!raw.success) return raw;
-
-    ProbeResult result;
-    try {
-        auto& data = raw.info;
-        auto format = data.value("format", json::object());
-        auto streams = data.value("streams", json::array());
-        if (streams.empty()) { result.error = "未检测到字幕流"; return result; }
-
-        auto stream = streams[0];
-        auto tags = stream.value("tags", json::object());
-        auto sep_pos = filepath.find_last_of("/\\");
-        result.info = {
-            {"filename", (sep_pos != std::string::npos) ? filepath.substr(sep_pos + 1) : filepath},
-            {"filepath", filepath},
-            {"format", format.value("format_name", "N/A")},
-            {"codec", stream.value("codec_name", "N/A")},
-            {"codec_long_name", stream.value("codec_long_name", "N/A")},
-            {"language", tags.value("language", "N/A")},
-        };
-        result.success = true;
-    } catch (const std::exception& e) {
-        result.error = std::string("解析字幕信息时出错: ") + e.what();
     }
     return result;
 }

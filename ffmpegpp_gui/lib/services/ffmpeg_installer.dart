@@ -1,9 +1,5 @@
 import 'dart:io';
 import 'package:archive/archive.dart';
-import 'shell_open.dart';
-
-const _ffmpegLanzouUrl = 'https://wwbrq.lanzouv.com/iTF9n3sb937c';
-const _ffprobeLanzouUrl = 'https://wwbrq.lanzouv.com/itEOt3t5yogh';
 
 class FfmpegInstaller {
   static String get _appDir => Directory(Platform.resolvedExecutable).parent.path;
@@ -147,21 +143,6 @@ class FfmpegInstaller {
       throw Exception('winget 安装失败 (exit code: $exitCode)');
     }
   }
-
-  // ── 蓝奏云（浏览器下载 + 手动导入）──
-
-  static Future<void> openLanzouInBrowser({
-    required void Function(String status) onStatus,
-  }) async {
-    onStatus('正在打开浏览器下载 ffmpeg...');
-    await _openUrl(_ffmpegLanzouUrl);
-    await Future.delayed(const Duration(seconds: 2));
-    onStatus('正在打开浏览器下载 ffprobe...');
-    await _openUrl(_ffprobeLanzouUrl);
-    onStatus('已打开浏览器，请手动下载两个压缩包后点击"导入"');
-  }
-
-  static Future<void> _openUrl(String url) => ShellOpen.url(url);
 
   static Future<void> importFromZips({
     required String ffmpegZipPath,

@@ -4,6 +4,7 @@ import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import '../widgets/app_card.dart';
+import '../widgets/mobile_bottom_nav.dart';
 import '../widgets/mobile_top_bar.dart';
 import '../widgets/toast.dart';
 import 'settings_page.dart'
@@ -11,8 +12,8 @@ import 'settings_page.dart'
         applyProfilePreset,
         fetchAiBalance,
         listAiModels,
-        pingAi,
-        withWallpaperBg;
+        pingAi;
+import '../widgets/wallpaper_background.dart';
 
 /// 询问模式下可选「无需确认」的操作（显示名, 内部 key）—— 与桌面端一致。
 const _askSkipOptions = <(String, String)>[
@@ -527,12 +528,13 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
     final s = AppStrings.of(cfg.language);
     final scheme = Theme.of(context).colorScheme;
 
-    return withWallpaperBg(
+    return withWallpaper(
       context,
-      state,
       Scaffold(
         backgroundColor: Colors.transparent,
+        // bottom: false——底部切换栏（NavGlassShell）自带 bottomSafe padding
         body: SafeArea(
+          bottom: false,
           child: Column(children: [
             MobileSubPageTopBar(
               title: Text(_isNew ? s.aiNewProvider : s.aiProviderDetail,
@@ -575,56 +577,26 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
                     : _buildModelsTab(context, state, s, scheme),
               ),
             ),
-            // 底部分栏切换
-            _buildTabBar(s, scheme, cfg.cardStyle),
+            // 底部分栏切换（跟随全局 navStyle；自身带底部安全区 padding，
+            // SafeArea 不再吃掉 bottom，避免双重留白）
+            _buildTabBar(s),
           ]),
         ),
       ),
     );
   }
 
-  /// 底部「配置 / 模型」切换栏。
-  Widget _buildTabBar(AppStrings s, ColorScheme scheme, String cardStyle) {
-    Widget item(int index, IconData icon, String label) {
-      final selected = _tab == index;
-      return Expanded(
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: () => setState(() => _tab = index),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              // 选中态用主题色 + 轻微放大，无选中态为次要色
-              AnimatedScale(
-                scale: selected ? 1.0 : 0.92,
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOut,
-                child: Icon(icon,
-                    size: 19,
-                    color: selected ? scheme.primary : scheme.onSurfaceVariant),
-              ),
-              const SizedBox(height: 3),
-              Text(label,
-                  style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                      color: selected ? scheme.primary : scheme.onSurfaceVariant)),
-            ]),
-          ),
-        ),
-      );
-    }
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 2, 12, 8),
-      child: AppCard(
-        style: cardStyle,
-        radius: 18,
-        child: Row(children: [
-          item(0, Icons.tune_rounded, s.isZh ? '配置' : 'Config'),
-          item(1, Icons.widgets_outlined, s.isZh ? '模型' : 'Models'),
-        ]),
-      ),
+  /// 底部「配置 / 模型」切换栏 —— 跟随全局「底部菜单栏样式」（navStyle 四值：
+  /// theme/liquid/blur/gray），与主界面 MobileBottomNav 同一套玻璃视觉。
+  /// 此前为自绘 AppCard，只跟随卡片样式，切全局导航样式时这里不跟。
+  Widget _buildTabBar(AppStrings s) {
+    return MobileNavStyleTabBar(
+      items: [
+        (Icons.tune_rounded, s.isZh ? '配置' : 'Config'),
+        (Icons.widgets_outlined, s.isZh ? '模型' : 'Models'),
+      ],
+      selectedIndex: _tab,
+      onSelected: (i) => setState(() => _tab = i),
     );
   }
 
@@ -1370,9 +1342,8 @@ class MobileAiAdvancedPage extends StatelessWidget {
         final scheme = Theme.of(context).colorScheme;
         final clr = scheme.onSurface;
 
-        return withWallpaperBg(
+        return withWallpaper(
           context,
-          state,
           Scaffold(
             backgroundColor: Colors.transparent,
             body: SafeArea(
