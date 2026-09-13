@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../theme/mobile_ui.dart';
 import 'mobile_glass_pill.dart';
+// 「左半 / 右半 + 操作溢出收纳」布局与 MobileSubPageTopBar 同源，共用唯一实现
+import 'mobile_top_bar.dart';
 
 export '../theme/mobile_ui.dart' show MobileUi;
 
@@ -18,10 +20,12 @@ export '../theme/mobile_ui.dart' show MobileUi;
 /// 结构（与主界面一致）：
 ///   Padding(8, safeTop+6, 8, 6)
 ///     Stack(center)
-///       ├ 常规层：左标题药丸(44/22/pad14, 可按压) + 间距 + 右操作药丸(44/22/pad6)
+///       ├ 常规层：[MobilePillBarLayout] —— 左标题药丸(44/22/pad14, 可按压)
+///       │         + 间距 + 右操作药丸(44/22/pad6)；操作放不下时右半只留「…」，
+///       │         点开向左展开（详见 MobilePillBarLayout 注释）
 ///       │         搜索时整体 220ms 淡出 + 缩放 0.9（仍占位）
-///       └ 搜索层：同一颗搜索药丸 220ms 淡入，AnimatedSize 320ms 从 44px 变长到
-///                 [MobileUi.searchPillWidth] 并水平居中
+///       └ 搜索层：同一颗搜索药丸 220ms 淡入 + 缩放 0.86→1.0（锚点居中），
+///                 尺寸恒为 [MobileUi.searchPillWidth] × [MobileUi.pillHeight]
 ///
 /// [searchChild] 为 null 时不启用搜索层（如配置库、队列页）。
 /// ═══════════════════════════════════════════════════════════════════════════
@@ -46,8 +50,9 @@ class MobilePillTopBar extends StatelessWidget {
     this.searchChild,
   });
 
+  /// 搜索层淡入淡出 + 缩放的时长（落在 180~220ms 区间；缩放与淡入共用一个时长，
+  /// 不再像旧实现那样「220ms 淡入 + 320ms 变长」两条节奏互相打架）。
   static const Duration _fade = Duration(milliseconds: 220);
-  static const Duration _grow = Duration(milliseconds: 320);
 
   @override
   Widget build(BuildContext context) {
@@ -58,40 +63,26 @@ class MobilePillTopBar extends StatelessWidget {
 
     final normal = Padding(
       padding: const EdgeInsets.only(bottom: 6),
-      child: Row(children: [
-        // 标题药丸：占据全部剩余宽度、内容左对齐（长标题省略号收尾），
-        // 从而把操作药丸顶到最右侧——与主界面布局一致。
-        Expanded(
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: MobileGlassPill(
-              radius: MobileUi.pillRadius,
-              height: MobileUi.pillHeight,
-              padding: const EdgeInsets.symmetric(horizontal: MobileUi.titlePillPadH),
-              pressable: true,
-              child: DefaultTextStyle.merge(
-                style: MobileUi.titleStyle(context),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                child: title,
-              ),
-            ),
+      // 左半标题药丸（占满剩余宽度、内容左对齐、长标题省略号收尾）+
+      // 右半操作药丸；「左右原则」与操作溢出收纳统一交给 MobilePillBarLayout，
+      // 本页不再自己判断宽度 / 拼 FittedBox。
+      child: MobilePillBarLayout(
+        titlePill: MobileGlassPill(
+          radius: MobileUi.pillRadius,
+          height: MobileUi.pillHeight,
+          padding: const EdgeInsets.symmetric(horizontal: MobileUi.titlePillPadH),
+          pressable: true,
+          child: DefaultTextStyle.merge(
+            style: MobileUi.titleStyle(context),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            child: title,
           ),
         ),
-        // 操作药丸：宽度贴合内容；窄屏空间不足时内部等比缩小而不是溢出
-        if (actions.isNotEmpty) ...[
-          const SizedBox(width: 8),
-          MobileGlassPill(
-            radius: MobileUi.pillRadius,
-            height: MobileUi.pillHeight,
-            padding: const EdgeInsets.symmetric(horizontal: MobileUi.actionsPillPadH),
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Row(mainAxisSize: MainAxisSize.min, children: actions),
-            ),
-          ),
-        ],
-      ]),
+        actions: actions,
+        // 搜索态下右侧不允许停留在「操作已展开」形态：搜索药丸会盖住它
+        forceCollapsed: searchOpen,
+      ),
     );
 
     final Widget body;
@@ -116,20 +107,30 @@ class MobilePillTopBar extends StatelessWidget {
             ignoring: !searchOpen,
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 6),
-              child: AnimatedSize(
-                duration: _grow,
-                curve: Curves.easeOutCubic,
+              // 展开动画 = 缩放 + 淡入：整颗药丸从 0.86 放大到 1.0 出现，
+              // 不再像旧实现那样把同一颗 44px 药丸横向拉到 [MobileUi.searchPillWidth]
+              // （宽度突变时边框与内边距像被「两把刀」左右撕开）。
+              // 锚点取 center：药丸本身在顶栏里水平居中，从中心放大最自然。
+              child: AnimatedScale(
+                scale: searchOpen ? 1.0 : 0.86,
                 alignment: Alignment.center,
-                child: searchOpen
-                    ? MobileGlassPill(
-                        radius: MobileUi.pillRadius,
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                        child: search,
-                      )
-                    : const SizedBox(
-                        width: MobileUi.pillHeight,
-                        height: MobileUi.pillHeight,
-                      ),
+                duration: _fade,
+                curve: Curves.easeOutCubic,
+                child: MobileGlassPill(
+                  radius: MobileUi.pillRadius,
+                  // 只留水平内边距：药丸总高 = MobileUi.pillHeight(44)，与标题 /
+                  // 操作药丸严格等高（旧的 vertical 内边距会让它高出 4px）。
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  // 收起态只换内容、不换外壳尺寸：宽度恒为 MobileUi.searchPillWidth，
+                  // 缩放期间零布局跳动；同时避免空闲时也构建 autofocus 的 TextField
+                  // （那会在页面首帧抢走输入焦点）。
+                  child: searchOpen
+                      ? search
+                      : const SizedBox(
+                          width: MobileUi.searchPillWidth,
+                          height: MobileUi.pillHeight,
+                        ),
+                ),
               ),
             ),
           ),
@@ -278,7 +279,11 @@ class MobileSegmentedPills extends StatelessWidget {
           // 桌面端也不产生高度差。
           return SizedBox(
             height: 32,
-            child: Stack(children: [
+            // 关键：Stack 默认 alignment 是 topStart，非定位的 Row 只拿 loose 约束、
+            // 按自身内容高度（约 18px）贴在 32px 盒子顶部 —— 文字中心因此比指示器
+            // 中心高约 7px，下方留白大于上方，看起来就是「选项文字偏上」。
+            // 显式 center 让内容行与 32px 高的指示器同心。
+            child: Stack(alignment: Alignment.center, children: [
               // 滑动指示器：随选中项在等宽分区之间平滑移动
               AnimatedPositioned(
                 duration: const Duration(milliseconds: 240),

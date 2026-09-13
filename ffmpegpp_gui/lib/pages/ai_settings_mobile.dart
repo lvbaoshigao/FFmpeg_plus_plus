@@ -18,14 +18,28 @@ import 'settings_page.dart'
         pingAi;
 import '../widgets/wallpaper_background.dart';
 
-/// 询问模式下可选「无需确认」的操作（显示名, 内部 key）—— 与桌面端一致。
-const _askSkipOptions = <(String, String)>[
-  ('保存', 'save'),
-  ('撤销/重做', 'undo_redo'),
-  ('错误检查', 'error_check'),
-  ('清空画布', 'clear_all'),
-  ('工具执行', 'tools'),
+/// 询问模式下可选「无需确认」的操作内部 key —— 与桌面端一致。
+///
+/// 只存 key，显示名在 build 时按当前语言取：此前常量里固化了中文显示名，
+/// 英文界面下这几个 chip 仍是中文（与主设置语言不符）。
+const _askSkipKeys = <String>[
+  'save',
+  'undo_redo',
+  'error_check',
+  'clear_all',
+  'tools',
 ];
+
+/// 无需确认的操作 key → 当前语言下的显示名。
+String _askSkipLabel(String key, bool isZh) => switch (key) {
+      'save' => isZh ? '保存' : 'Save',
+      'undo_redo' => isZh ? '撤销/重做' : 'Undo/Redo',
+      'error_check' => isZh ? '错误检查' : 'Error Check',
+      'clear_all' => isZh ? '清空画布' : 'Clear Canvas',
+      'tools' => isZh ? '工具执行' : 'Run Tools',
+      // 未知 key（如后端新增）直接显示 key，避免出现空白 chip
+      _ => key,
+    };
 
 /// 移动端「MCP / AI」设置内容（二级菜单，提供商列表式）。
 ///
@@ -82,7 +96,7 @@ Widget mobileAiSettingsContent(BuildContext ctx, AppState state) {
                       profile: p,
                       active: cfg.activeAiProfileId == p.id,
                       onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
+                        MaterialPageRoute<void>(allowSnapshotting: false, 
                             builder: (_) => MobileAiProviderDetailPage(profileId: p.id)),
                       ),
                     ),
@@ -95,7 +109,7 @@ Widget mobileAiSettingsContent(BuildContext ctx, AppState state) {
                       icon: const Icon(Icons.add, size: 16),
                       label: Text(s.aiNewProvider, style: const TextStyle(fontSize: 12)),
                       onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
+                        MaterialPageRoute<void>(allowSnapshotting: false, 
                             builder: (_) => const MobileAiProviderDetailPage()),
                       ),
                     ),
@@ -169,7 +183,7 @@ Widget mobileAiSettingsContent(BuildContext ctx, AppState state) {
             title: Text(s.aiAdvanced, style: TextStyle(fontSize: 13, color: clr)),
             trailing: Icon(Icons.chevron_right, size: 20, color: scheme.outline),
             onTap: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(builder: (_) => const MobileAiAdvancedPage()),
+              MaterialPageRoute<void>(allowSnapshotting: false, builder: (_) => const MobileAiAdvancedPage()),
             ),
           ),
         ),
@@ -568,8 +582,10 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
   Widget build(BuildContext context) {
     _ensureLoaded(context);
     final state = context.read<AppState>();
-    final cfg = state.config;
-    final s = AppStrings.of(cfg.language);
+    // 语言必须用 select 建立依赖：read/initState 只取一次快照，切语言后本页
+    // 不会重建，会出现「底部分栏已跟随新语言、标题与表单仍是旧语言」的半中半英。
+    final s = AppStrings.of(
+        context.select<AppState, String>((st) => st.config.language));
     final scheme = Theme.of(context).colorScheme;
 
     return withWallpaper(
@@ -769,11 +785,16 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
                   width: double.infinity,
                   menuHeight: 240,
                   textStyle: TextStyle(fontSize: 12, color: clr),
-                  dropdownMenuEntries: const [
-                    DropdownMenuEntry(value: 'openai', label: 'OpenAI'),
-                    DropdownMenuEntry(value: 'anthropic', label: 'Anthropic (Claude)'),
-                    DropdownMenuEntry(value: 'deepseek', label: 'DeepSeek'),
-                    DropdownMenuEntry(value: 'ollama', label: 'Ollama (本地)'),
+                  // 「本地」标注要跟随语言，整表不能再是 const；
+                  // 各条目本身仍是 const，避免每帧重建。
+                  dropdownMenuEntries: [
+                    const DropdownMenuEntry(value: 'openai', label: 'OpenAI'),
+                    const DropdownMenuEntry(
+                        value: 'anthropic', label: 'Anthropic (Claude)'),
+                    const DropdownMenuEntry(value: 'deepseek', label: 'DeepSeek'),
+                    DropdownMenuEntry(
+                        value: 'ollama',
+                        label: s.isZh ? 'Ollama (本地)' : 'Ollama (Local)'),
                   ],
                   onSelected: (preset) {
                     if (preset == null) return;
@@ -865,7 +886,7 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
   /// 打开「多 Key 管理」二级菜单：列表增删改，逐项实时写回 [AiProfile.apiKeys]
   ///（详情页草稿），保存仍由顶栏「保存」统一落库。
   Future<void> _openMultiKeyPage(BuildContext context, AppStrings s) async {
-    await Navigator.of(context).push(MaterialPageRoute<void>(
+    await Navigator.of(context).push(MaterialPageRoute<void>(allowSnapshotting: false, 
       builder: (_) => MobileMultiKeyPage(
         keys: List<String>.of(_draft.apiKeys),
         onChanged: (list) => _mutateDraft((d) => d..apiKeys = list),
@@ -881,7 +902,7 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
       maxTokens: _draft.maxTokens,
       temperature: _draft.temperature,
     );
-    await Navigator.of(context).push(MaterialPageRoute<void>(
+    await Navigator.of(context).push(MaterialPageRoute<void>(allowSnapshotting: false, 
       builder: (_) => MobileModelSettingsPage(
         entry: _draft.models[index],
         defaultContextWindow: defaults.contextWindow,
@@ -898,91 +919,107 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
       BuildContext context, AppState state, AppStrings s, ColorScheme scheme) {
     final cfg = state.config;
     final models = _draft.models;
+    final isZh = s.isZh;
+    // 模型可能上百条（例如从 OpenRouter 拉取）：改用 builder 惰性构建，
+    // 每帧只为视口内的卡片创建 widget。此前是 ListView(children: [...for...])，
+    // 一次 build 就要 new 出全部卡片，列表一长就掉帧。
+    final hasModels = models.isNotEmpty;
+    // 空列表时 index 0 是占位卡；末位固定是操作行。
+    final itemCount = (hasModels ? models.length : 1) + 1;
 
-    return ListView(
+    // 列表尾部的操作行：获取 / 添加新 / 清空
+    Widget buildActions() => Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Row(children: [
+            Expanded(
+              child: SizedBox(
+                height: 42,
+                child: OutlinedButton.icon(
+                  icon: _fetchingModels
+                      ? const SizedBox(
+                          width: 14, height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.cloud_download_outlined, size: 15),
+                  label: Text(isZh ? '获取' : 'Fetch',
+                      style: const TextStyle(fontSize: 12)),
+                  onPressed:
+                      _fetchingModels ? null : () => _fetchModels(context, state, s),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: SizedBox(
+                height: 42,
+                child: FilledButton.tonalIcon(
+                  icon: const Icon(Icons.add, size: 16),
+                  label: Text(isZh ? '添加新…' : 'Add new…',
+                      style: const TextStyle(fontSize: 12)),
+                  onPressed: () => _addModel(context, s),
+                ),
+              ),
+            ),
+            if (hasModels) ...[
+              const SizedBox(width: 8),
+              SizedBox(
+                height: 42,
+                child: IconButton(
+                  tooltip: isZh ? '清空模型列表' : 'Clear models',
+                  icon: Icon(Icons.delete_outline, size: 19, color: scheme.error),
+                  onPressed: () => _mutateDraft((d) => d.models.clear()),
+                ),
+              ),
+            ],
+          ]),
+        );
+
+    return ListView.builder(
       key: const ValueKey('ai_provider_models'),
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-      children: [
-        if (models.isEmpty)
-          _AiSectionCard(
+      itemCount: itemCount,
+      // 卡片自身无状态、不需要保活，关掉 keep-alive 省去每个条目的保活包装。
+      // 不设 itemExtent/prototypeItem：行高随能力 chip 是否换行变化
+      //（中英文标签宽度不同），固定行高会裁切内容。
+      addAutomaticKeepAlives: false,
+      itemBuilder: (_, index) {
+        if (!hasModels && index == 0) {
+          return _AiSectionCard(
             cardStyle: cfg.cardStyle,
             icon: Icons.widgets_outlined,
-            title: s.isZh ? '模型' : 'Models',
+            title: isZh ? '模型' : 'Models',
             children: [
               Text(
-                s.isZh
+                isZh
                     ? '还没有模型。点下方「获取」从供应商拉取列表，或「添加新…」手动填写。'
                     : 'No models yet. Use "Fetch" to load from the provider, or "Add new…".',
                 style: TextStyle(fontSize: 12, color: scheme.outline),
               ),
             ],
-          )
-        else
-          for (var i = 0; i < models.length; i++)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: _AiModelCard(
-                cardStyle: cfg.cardStyle,
-                entry: models[i],
-                isActive: models[i].id == _draft.model,
-                isZh: s.isZh,
-                onUse: () => _mutateDraft((d) => d..model = models[i].id),
-                // 点击模型卡片 → 进入该模型的生成参数设置（二级菜单）
-                onOpen: () => _openModelSettings(context, s, i),
-                onToggleCapability: (cap, on) => _mutateDraft((d) {
-                  final caps = d.models[i].capabilities;
-                  if (on) {
-                    if (!caps.contains(cap)) caps.add(cap);
-                  } else {
-                    caps.remove(cap);
-                  }
-                }),
-                onRemove: () => _mutateDraft((d) => d.models.removeAt(i)),
-              ),
-            ),
-        const SizedBox(height: 4),
-        // 获取 / 添加新 / 清空
-        Row(children: [
-          Expanded(
-            child: SizedBox(
-              height: 42,
-              child: OutlinedButton.icon(
-                icon: _fetchingModels
-                    ? const SizedBox(
-                        width: 14, height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.cloud_download_outlined, size: 15),
-                label: Text(s.isZh ? '获取' : 'Fetch',
-                    style: const TextStyle(fontSize: 12)),
-                onPressed: _fetchingModels ? null : () => _fetchModels(context, state, s),
-              ),
-            ),
+          );
+        }
+        if (index == itemCount - 1) return buildActions();
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: _AiModelCard(
+            cardStyle: cfg.cardStyle,
+            entry: models[index],
+            isActive: models[index].id == _draft.model,
+            isZh: isZh,
+            onUse: () => _mutateDraft((d) => d..model = models[index].id),
+            // 点击模型卡片 → 进入该模型的生成参数设置（二级菜单）
+            onOpen: () => _openModelSettings(context, s, index),
+            onToggleCapability: (cap, on) => _mutateDraft((d) {
+              final caps = d.models[index].capabilities;
+              if (on) {
+                if (!caps.contains(cap)) caps.add(cap);
+              } else {
+                caps.remove(cap);
+              }
+            }),
+            onRemove: () => _mutateDraft((d) => d.models.removeAt(index)),
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: SizedBox(
-              height: 42,
-              child: FilledButton.tonalIcon(
-                icon: const Icon(Icons.add, size: 16),
-                label: Text(s.isZh ? '添加新…' : 'Add new…',
-                    style: const TextStyle(fontSize: 12)),
-                onPressed: () => _addModel(context, s),
-              ),
-            ),
-          ),
-          if (models.isNotEmpty) ...[
-            const SizedBox(width: 8),
-            SizedBox(
-              height: 42,
-              child: IconButton(
-                tooltip: s.isZh ? '清空模型列表' : 'Clear models',
-                icon: Icon(Icons.delete_outline, size: 19, color: scheme.error),
-                onPressed: () => _mutateDraft((d) => d.models.clear()),
-              ),
-            ),
-          ],
-        ]),
-      ],
+        );
+      },
     );
   }
 
@@ -1068,9 +1105,13 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
         _mutateDraft((d) => d..model = m);
       }, onListed: (ids) {
         _mutateDraft((d) {
+          // 供应商一次可能返回数百个模型：先把已有 id 收成 Set，
+          // 逐条 any() 查重是 O(N²)，这里改成均摊 O(1)。
+          final existing = d.models.map((m) => m.id).toSet();
           for (final id in ids) {
             if (id.trim().isEmpty) continue;
-            if (d.models.any((m) => m.id == id)) continue;
+            // add 返回 false 表示已有，顺带过滤 ids 自身的重复项
+            if (!existing.add(id)) continue;
             d.models.add(AiModelEntry(
               id: id,
               // 依据模型名推断能力，用户可再手动勾选
@@ -1379,7 +1420,9 @@ class _MobileMultiKeyPageState extends State<MobileMultiKeyPage> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final s = AppStrings.of(context.read<AppState>().config.language);
+    // 同详情页：语言要用 select 订阅，否则切语言后本页不重建。
+    final s = AppStrings.of(
+        context.select<AppState, String>((st) => st.config.language));
     final filled = _keys.where((k) => k.isNotEmpty).length;
     return withWallpaper(
       context,
@@ -1489,7 +1532,9 @@ class _MobileModelSettingsPageState extends State<MobileModelSettingsPage> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final cfg = context.read<AppState>().config;
-    final s = AppStrings.of(cfg.language);
+    // 语言用 select 订阅：read 只在本次 build 取快照，切语言后本页不重建。
+    final s = AppStrings.of(
+        context.select<AppState, String>((st) => st.config.language));
     final clr = scheme.onSurface;
     final zh = s.isZh;
     final customTemp = _entry.temperature != null;
@@ -1770,18 +1815,19 @@ class MobileAiAdvancedPage extends StatelessWidget {
                           Text(s.aiAskSkipLabel, style: TextStyle(fontSize: 12, color: clr)),
                           const SizedBox(height: 6),
                           Wrap(spacing: 6, runSpacing: 6, children: [
-                            for (final op in _askSkipOptions)
+                            for (final key in _askSkipKeys)
                               FilterChip(
-                                label: Text(op.$1, style: const TextStyle(fontSize: 11)),
-                                selected: cfg.aiAskSkipTools.contains(op.$2),
+                                label: Text(_askSkipLabel(key, s.isZh),
+                                    style: const TextStyle(fontSize: 11)),
+                                selected: cfg.aiAskSkipTools.contains(key),
                                 visualDensity: VisualDensity.compact,
                                 onSelected: (sel) {
                                   state.updateConfig((c) {
                                     final set = c.aiAskSkipTools.toSet();
                                     if (sel) {
-                                      set.add(op.$2);
+                                      set.add(key);
                                     } else {
-                                      set.remove(op.$2);
+                                      set.remove(key);
                                     }
                                     c.aiAskSkipTools = set.toList();
                                     return c;

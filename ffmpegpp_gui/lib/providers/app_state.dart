@@ -475,24 +475,6 @@ class AppState extends ChangeNotifier {
 
   void selectNav(int i) { _selectedNav = i; notifyListeners(); }
 
-  /// 全局搜索 → 设置页的跳转请求：非空时设置页应选中该设置卡片所属分区，
-  /// 并把对应卡片滚动 / 高亮到视野内（值见 settings_page 的 _CardDef.id）。
-  /// 由 [focusSettingsCard] 写入，设置页消费后调用 [clearSettingsFocus] 复位。
-  String? settingsFocusCardId;
-
-  /// 请求打开设置页并聚焦某个设置卡片（全局搜索结果的动作）。
-  void focusSettingsCard(String cardId) {
-    settingsFocusCardId = cardId;
-    _selectedNav = 4;
-    notifyListeners();
-  }
-
-  /// 设置页已消费跳转请求 → 复位（避免下次进入设置页又跳一次）。
-  void clearSettingsFocus() {
-    if (settingsFocusCardId == null) return;
-    settingsFocusCardId = null;
-    notifyListeners();
-  }
 
   // ══════════════════════════════════════════════════════════════
   // 处理队列结果持久化（PC/Mac/移动 全平台）

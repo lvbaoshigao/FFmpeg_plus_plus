@@ -92,7 +92,7 @@ class OCLiquidGlassSettings {
   }
 
   /// 值相等语义（本类字段全部不可变）。
-  /// 用途：liquid_glass_fallback.glassSettingsFor 按值缓存实例；以及
+  /// 用途：应用侧所有玻璃共用一个 const 基准实例（kLiquidGlassSettings）；以及
   /// _RenderLiquidGlassGroup 在 settings 未变时跳过 markNeedsPaint —— 否则父级
   /// 每次 rebuild 都会让每张玻璃卡片白白重绘一次 backdrop 滤镜。
   @override
@@ -432,7 +432,7 @@ class _RenderLiquidGlassGroup extends RenderProxyBox {
   // Visual settings for the shader effect
   OCLiquidGlassSettings _settings;
   set settings(OCLiquidGlassSettings v) {
-    // 值相同直接返回：settings 由 glassSettingsFor 按「值」缓存，配置没变时
+    // 值相同直接返回：应用侧始终传同一个 const settings，配置没变时
     // 传进来的就是同一个实例；但父级任何 rebuild 都会走到这里，无条件
     // markNeedsPaint 会让每张玻璃卡片在无关 notify（转码进度/日志/任务状态）
     // 时重绘一次 backdrop 滤镜。

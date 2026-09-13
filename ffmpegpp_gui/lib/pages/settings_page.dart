@@ -312,55 +312,87 @@ class _SettingsPageState extends State<SettingsPage> {
   String? _highlightCardId;
   Timer? _highlightTimer;
 
-  /// 消费全局搜索的跳转请求（AppState.settingsFocusCardId）：切到目标卡片所属
-  /// 分区、清空搜索、短暂高亮该卡片；移动端还会直接打开该设置项的二级菜单
-  /// （真正的「跳转」）。请求处理完在帧后复位，避免重复触发。
-  ///
-  /// 该方法在 build 中被调用：只做纯字段赋值（与已有 _selectedSection 赋值写法
-  /// 一致），不在这里 setState。
-  void _consumeSearchFocus(AppState state) {
-    final id = state.settingsFocusCardId;
-    if (id == null) return;
+  /// 搜索结果 / 分区导航的「定位到某个设置卡片」：
+  /// 切到该卡片所属分区、清空搜索、把卡片滚动到视野内并短暂高亮描边。
+  /// （这是设置页搜索的核心：搜索 → 直接落到具体设置项，而不是让用户自己再找。）
+  void _jumpToCard(String cardId) {
     _CardDef? target;
+    String sectionId = _selectedSection;
     for (final sec in _sections) {
       for (final c in sec.cards) {
-        if (c.id == id) {
+        if (c.id == cardId) {
           target = c;
-          _selectedSection = sec.id;
+          sectionId = sec.id;
           break;
         }
       }
       if (target != null) break;
     }
-    if (_query.isNotEmpty) {
-      _searchCtrl.clear();
-      _query = '';
-    }
-    _highlightCardId = id;
+    if (target == null) return;
     _highlightTimer?.cancel();
-    _highlightTimer = Timer(const Duration(milliseconds: 1800), () {
+    setState(() {
+      _selectedSection = sectionId;
+      _query = '';
+      _searchExpanded = false;
+      _highlightCardId = cardId;
+    });
+    _searchCtrl.clear();
+    _searchFocus.unfocus();
+    _highlightTimer = Timer(const Duration(milliseconds: 1600), () {
       if (mounted) setState(() => _highlightCardId = null);
     });
-    // 移动端：一级菜单只是入口行，真正的「跳转」应直接打开该设置项的二级菜单。
-    // 与 _buildMobileRow 的 onTap 保持同一套分支（开关/语言/页面入口不推二级页）。
-    final card = target;
-    if (isMobilePlatform && card != null) {
-      final cid = card.id;
-      final pushable = cid != 'predictiveBack' && cid != 'language' &&
-          cid != 'command' && cid != 'logs' && cid != 'cache';
-      if (pushable) {
-        final lang = state.config.language;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          _pushMobileSubPage(context, card.title(AppStrings.of(lang)), card.build);
-        });
-      }
-    }
+    // 帧后滚动到该卡片（GlobalKey 由 _cardKey 统一维护，桌面/移动两条渲染路径共用）。
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) state.clearSettingsFocus();
+      final ctx = _cardKeys[cardId]?.currentContext;
+      if (ctx == null) return;
+      Scrollable.ensureVisible(ctx,
+          duration: const Duration(milliseconds: 260),
+          curve: Curves.easeOutCubic,
+          alignment: 0.15);
     });
   }
+
+  /// 每个设置卡片一个稳定 GlobalKey（用于 [Scrollable.ensureVisible] 定位）。
+  final Map<String, GlobalKey> _cardKeys = <String, GlobalKey>{};
+  GlobalKey _cardKey(String id) => _cardKeys.putIfAbsent(id, () => GlobalKey());
+
   /// 搜索结果跳转后的短暂高亮描边（渐隐；1.8s 后由 _highlightCardId 清空）。
+  /// 搜索结果里每张卡片的头部：分区 · 卡片名 + 「定位」按钮。
+  ///
+  /// 用户要的是「搜索设置项可以更好的定位到需要的项」（尤其是电脑端）：
+  /// 光列出命中的卡片还不够，点「定位」才是真正的跳转 —— 切分区 + 滚动到卡片 + 高亮。
+  Widget _resultHeader(
+      _SectionDef sec, _CardDef c, ColorScheme scheme, AppStrings s, BuildContext ctx) {
+    final AppStrings ls = AppStrings.of(ctx.read<AppState>().config.language);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(2, 0, 2, 4),
+      child: Row(children: [
+        Icon(sec.icon, size: 13, color: scheme.primary),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text('${sec.title(ls)} · ${c.title(ls)}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: scheme.onSurfaceVariant)),
+        ),
+        TextButton.icon(
+          onPressed: () => _jumpToCard(c.id),
+          icon: const Icon(Icons.my_location, size: 13),
+          label: Text(s.isZh ? '定位' : 'Locate', style: const TextStyle(fontSize: 11)),
+          style: TextButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            minimumSize: const Size(0, 26),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            visualDensity: VisualDensity.compact,
+          ),
+        ),
+      ]),
+    );
+  }
+
   Widget _highlightWrap(String cardId, Widget child) {
     final on = _highlightCardId == cardId;
     return AnimatedContainer(
@@ -436,19 +468,11 @@ class _SettingsPageState extends State<SettingsPage> {
           keywords: ['样式', 'style', '卡片', 'card', '液态玻璃', 'liquid',
               '玻璃', 'glass', '模糊', 'blur', '灰色', 'gray',
               '底部', 'bottom', 'nav', '导航', '药丸', 'pill', '表面', 'surface',
-              '菜单', 'menu', '侧边栏', 'sidebar', '顶栏', 'topbar', '顶部菜单'],
+              '菜单', 'menu', '侧边栏', 'sidebar', '顶栏', 'topbar', '顶部菜单',
+              '毛玻璃', 'frosted', '透明度', '不透明度', 'opacity', 'alpha',
+              '边框', '描边', '线条', 'border', 'outline', 'stroke', '颜色', '宽度',
+              '跟随主题色', 'follow', 'gpu', '实验'],
           build: _buildSurfaceStyleCard,
-        ),
-        // 「液态玻璃效果」：把与玻璃/透明度相关的可调项集中到一张卡里
-        // （用户反馈：样式设置项太少、且希望有一个卡片集中调背景透明度与玻璃效果）。
-        _CardDef(
-          id: 'glassOptions',
-          title: (s) => s.isZh ? '液态玻璃效果' : 'Liquid Glass',
-          icon: Icons.water_drop_outlined,
-          keywords: ['液态玻璃', '玻璃', '折射', '高光', '模糊', '透明度', '不透明度',
-              '毛玻璃', '跟随主题色', 'glass', 'liquid', 'refract', 'specular',
-              'blur', 'opacity', 'alpha', 'frosted', 'follow', 'gpu'],
-          build: _buildGlassOptionsCard,
         ),
         _CardDef(
           id: 'nodeEditorStyle',
@@ -668,23 +692,12 @@ class _SettingsPageState extends State<SettingsPage> {
         state.config.settingsFrostedGlass,
         state.config.noCardGlass,
         state.config.glassGpuOnDesktop,
-        state.config.glassRefractStrength,
-        state.config.glassSpecStrength,
-        state.config.glassBlurSigma,
         state.config.ffmpegPath,
-        // 全局搜索的跳转请求也属于「会影响设置页 UI」的状态：不放进签名的话，
-        // 已经在设置页时 focusSettingsCard 只 notifyListeners 而设置页不重建，
-        // 请求会滞留到下一次无关重建才「迟到跳转」（移动端 PageView 的稳定实例下
-        // 更是基本不生效）。
-        state.settingsFocusCardId,
       ]),
       builder: (context, _, _) {
         final state = context.read<AppState>();
         final s = AppStrings.of(state.config.language);
         final scheme = Theme.of(context).colorScheme;
-        // 全局搜索跳转过来时：切分区 + 清搜索 + 高亮目标卡片（见 _consumeSearchFocus）
-        _consumeSearchFocus(state);
-
         if (isMobilePlatform) {
           // ═══════════════════════════════════════
           // 移动端独立设置界面
@@ -921,11 +934,15 @@ class _SettingsPageState extends State<SettingsPage> {
               runSpacing: 8,
               children: [
                 for (final c in sec.cards)
-                  _highlightWrap(
-                    c.id,
-                    RepaintBoundary(
-                      key: ValueKey(c.id),
-                      child: c.build(ctx, state),
+                  // GlobalKey：搜索结果「定位」时用 Scrollable.ensureVisible 滚到这里
+                  KeyedSubtree(
+                    key: _cardKey(c.id),
+                    child: _highlightWrap(
+                      c.id,
+                      RepaintBoundary(
+                        key: ValueKey(c.id),
+                        child: c.build(ctx, state),
+                      ),
                     ),
                   ),
               ],
@@ -979,12 +996,20 @@ class _SettingsPageState extends State<SettingsPage> {
               runSpacing: 8,
               children: [
                 for (final c in cards)
-                  _highlightWrap(
-                    c.id,
-                    RepaintBoundary(
-                      key: ValueKey(c.id),
-                      child: c.build(ctx, state),
-                    ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // 搜索结果头：分区 · 卡片名 + 「定位」按钮 ——
+                      // 点一下即切到该分区、把卡片滚进视野并高亮（设置页搜索的核心动作）。
+                      _resultHeader(sec, c, scheme, AppStrings.of(state.config.language), ctx),
+                      _highlightWrap(
+                        c.id,
+                        RepaintBoundary(
+                          key: ValueKey(c.id),
+                          child: c.build(ctx, state),
+                        ),
+                      ),
+                    ],
                   ),
               ],
             ),
@@ -1050,8 +1075,11 @@ class _SettingsPageState extends State<SettingsPage> {
     final rows = <Widget>[];
     for (var i = 0; i < cards.length; i++) {
       // 全局搜索跳转过来时高亮命中的设置行（见 _highlightWrap）
-      rows.add(_highlightWrap(
-          cards[i].id, _buildMobileRow(cards[i], context, state, scheme, s)));
+      rows.add(KeyedSubtree(
+        key: _cardKey(cards[i].id),
+        child: _highlightWrap(
+            cards[i].id, _buildMobileRow(cards[i], context, state, scheme, s)),
+      ));
       if (i < cards.length - 1) {
         rows.add(Divider(
           height: 0.5,
@@ -1118,10 +1146,10 @@ class _SettingsPageState extends State<SettingsPage> {
           //   1) 双层壁纸多解码一次并多一层遮罩；
           //   2) SafeArea 会把子树的 MediaQuery.padding.top 清零 → 顶栏被状态栏压住。
           Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const CommandPage()));
+              MaterialPageRoute(allowSnapshotting: false, builder: (_) => const CommandPage()));
         } else if (c.id == 'logs') {
           Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const LogPage()));
+              MaterialPageRoute(allowSnapshotting: false, builder: (_) => const LogPage()));
         } else if (c.id == 'cache') {
           // 缓存：直接弹出确认框，不进入二级页
           _clearCache(context, state, scheme, s);
@@ -1159,7 +1187,7 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 二级设置页：全屏（覆盖底部导航栏），顶部返回栏 + 可滚动内容。
   void _pushMobileSubPage(
     BuildContext context, String title, Widget Function(BuildContext, AppState) contentBuilder) {
-    Navigator.of(context).push(MaterialPageRoute(
+    Navigator.of(context).push(MaterialPageRoute(allowSnapshotting: false, 
       builder: (ctx) => Consumer<AppState>(
         builder: (ctx2, state, _) => withWallpaper(
           ctx2,
@@ -1485,14 +1513,20 @@ const _presets = [
 
 const _kDefaultAnthropicModel = 'claude-3-5-sonnet-20241022';
 
-/// 询问模式下可选"无需确认"的操作（显示名, 内部 key）。
-const _askSkipOptions = <(String, String)>[
-  ('保存', 'save'),
-  ('撤销/重做', 'undo_redo'),
-  ('错误检查', 'error_check'),
-  ('清空画布', 'clear_all'),
-  ('工具执行', 'tools'),
-];
+/// 询问模式下可选「无需确认」的操作 key。
+///
+/// 只存 key、显示名由 [_askSkipLabel] 按语言给出：原先这里把中文显示名写进常量，
+/// 英文界面下这 5 个 chip 恒为中文（与 ai_settings_mobile.dart 里同款 bug 一并修掉）。
+const _askSkipKeys = <String>['save', 'undo_redo', 'error_check', 'clear_all', 'tools'];
+
+String _askSkipLabel(String key, bool isZh) => switch (key) {
+      'save' => isZh ? '保存' : 'Save',
+      'undo_redo' => isZh ? '撤销/重做' : 'Undo/Redo',
+      'error_check' => isZh ? '错误检查' : 'Error check',
+      'clear_all' => isZh ? '清空画布' : 'Clear canvas',
+      'tools' => isZh ? '工具执行' : 'Run tools',
+      _ => key,
+    };
 
 /// 主题卡：模式 / 主题色 / 背景 / 样式（卡片样式、底部菜单栏样式、
 /// 顶部药丸样式、节点编辑器）。桌面端内联在「外观」分区，移动端作为
@@ -1614,30 +1648,30 @@ Widget _buildSurfaceStyleCard(BuildContext ctx, AppState state) {
           value: cfg.pillStyle,
           onSelected: (v) => state.updateConfig((c) => c..pillStyle = v)),
     ],
+    // 液态玻璃相关项 + 「添加边框」都并入本卡（见 _buildStyleGlassAndBorder）
+    ..._buildStyleGlassAndBorder(ctx, state),
   ]);
 }
 
-/// 「外观 → 液态玻璃效果」卡片：把与玻璃/透明度相关的可调项集中在一张卡里。
+/// 「样式」卡里的液态玻璃相关项 + 「添加边框」项。
 ///
-/// 用户反馈：「设置-样式的改变增加若干个选项，比如液态玻璃效果设置增加一个卡片，
-/// 里面可以改变背景透明度，玻璃效果等等选项。」因此这里提供：
-/// * 全局玻璃效果（作用于**非卡片**表面：桌面顶栏/侧边栏/弹窗菜单）三值；
-/// * 玻璃参数：折射强度 / 镜面高光 / 模糊 σ（前两项走 GPU 液态玻璃 shader，
-///   模糊 σ 走模糊样式与无 Impeller 时的液态玻璃回退）；
-/// * 透明度：背景不透明度 / 卡片不透明度（与「背景」卡片写同一份配置，两处都能调）；
-/// * 开关：遵循主题色 / 设置项毛玻璃 / 不使用卡片玻璃 / PC 端 GPU 液态玻璃。
-///
-/// 所有枚举都用「行内分段药丸」（expandable: false）——不展开、不改变卡片高度，
-/// 符合用户「展开设置项时卡片不应该跟着变长」的要求。
-Widget _buildGlassOptionsCard(BuildContext ctx, AppState state) {
+/// 用户反馈与对应做法：
+/// * 「液态玻璃效果选项放进样式里面」→ 原独立卡片并入「样式」卡；
+/// * 「模糊强度不管用…下面三个选项也不管用，而且也没有存在的必要」→ 删除折射强度/镜面高光/
+///   模糊强度三个数值项（只作用于桌面 GPU shader 路径与模糊 σ，实测无感；σ 已回到各调用点常量）；
+/// * 「样式里面增加『添加边框选项』，开启后为所有卡片以及药丸添加有线的边框，可改颜色和宽度」→
+///   新增 borderEnabled/borderColor/borderWidth，由 widgets/liquid_glass_fallback.dart 的
+///   withConfigurableBorder 统一叠加到所有卡片与药丸上。
+List<Widget> _buildStyleGlassAndBorder(BuildContext ctx, AppState state) {
   final cfg = state.config;
   final s = AppStrings.of(cfg.language);
   final scheme = Theme.of(ctx).colorScheme;
   final clr = scheme.onSurface;
   final zh = s.isZh;
 
-  return _glass(ctx, state, zh ? '液态玻璃效果' : 'Liquid Glass', [
-    // ── 全局玻璃效果（非卡片表面）──
+  return [
+    const SizedBox(height: 4),
+    // ── 玻璃效果（非卡片表面：桌面顶栏 / 侧边栏 / 弹窗菜单）──
     Row(children: [
       Expanded(
         child: Text(zh ? '玻璃效果（顶栏/侧栏/菜单）' : 'Glass effect (bars & menus)',
@@ -1645,7 +1679,7 @@ Widget _buildGlassOptionsCard(BuildContext ctx, AppState state) {
             style: TextStyle(color: clr, fontSize: 12)),
       ),
       SizedBox(
-        width: 168,
+        width: _kMenuWidth,
         child: OptionMenuBar<String>(
           expandable: false,
           value: (cfg.glassEffect == 'blur' || cfg.glassEffect == 'none')
@@ -1660,42 +1694,7 @@ Widget _buildGlassOptionsCard(BuildContext ctx, AppState state) {
         ),
       ),
     ]),
-    const SizedBox(height: 10),
-    // ── 玻璃参数 ──
-    _SettingSlider(
-      value: cfg.glassRefractStrength, min: -0.30, max: 0.0, divisions: 30,
-      label: (v) => '${zh ? '折射强度' : 'Refraction'}: ${v.toStringAsFixed(2)}',
-      labelStyle: TextStyle(color: clr, fontSize: 12),
-      onCommit: (v) => state.updateConfig((c) => c..glassRefractStrength = v),
-    ),
-    _SettingSlider(
-      value: cfg.glassSpecStrength, min: 0.0, max: 2.0, divisions: 40,
-      label: (v) => '${zh ? '镜面高光' : 'Specular'}: ${v.toStringAsFixed(2)}',
-      labelStyle: TextStyle(color: clr, fontSize: 12),
-      onCommit: (v) => state.updateConfig((c) => c..glassSpecStrength = v),
-    ),
-    _SettingSlider(
-      value: cfg.glassBlurSigma, min: 4.0, max: 24.0, divisions: 20,
-      label: (v) => '${zh ? '模糊强度' : 'Blur'}: ${v.round()}',
-      labelStyle: TextStyle(color: clr, fontSize: 12),
-      onCommit: (v) => state.updateConfig((c) => c..glassBlurSigma = v),
-    ),
-    const SizedBox(height: 4),
-    // ── 透明度（与「背景」卡片同源配置，这里也能直接调）──
-    _SettingSlider(
-      value: cfg.backgroundOpacity, min: 0.0, max: 1.0, divisions: 100,
-      label: (v) => '${s.bgOpacity}: ${(v * 100).round()}%',
-      labelStyle: TextStyle(color: clr, fontSize: 12),
-      onCommit: (v) => state.updateConfig((c) => c..backgroundOpacity = v),
-    ),
-    _SettingSlider(
-      value: cfg.cardOpacity, min: 0.0, max: 1.0, divisions: 100,
-      label: (v) => '${s.cardOpacity}: ${(v * 100).round()}%',
-      labelStyle: TextStyle(color: clr, fontSize: 12),
-      onCommit: (v) => state.updateConfig((c) => c..cardOpacity = v),
-    ),
-    const SizedBox(height: 4),
-    // ── 开关 ──
+    const SizedBox(height: 6),
     SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
         title: Text(zh ? '玻璃底色遵循主题色' : 'Tint glass with theme color',
             style: TextStyle(color: clr, fontSize: 13)),
@@ -1720,8 +1719,8 @@ Widget _buildGlassOptionsCard(BuildContext ctx, AppState state) {
             style: TextStyle(fontSize: 11, color: scheme.outline)),
         value: cfg.noCardGlass,
         onChanged: (v) => state.updateConfig((c) => c..noCardGlass = v)),
-    // PC 专属：桌面端 shader 玻璃在不同图形后端下的取向并不一致，
-    // 默认关闭（走「模糊 + 倒角高光」回退，背景就是真实壁纸），需要的用户可手动开启。
+    // PC 专属：桌面端 shader 玻璃在不同图形后端下的取向并不一致，默认关闭
+    // （走「模糊 + 倒角高光」回退，背景就是真实壁纸），需要的用户可手动开启。
     if (!isMobilePlatform)
       SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
           title: Text(zh ? '启用 GPU 液态玻璃（实验）' : 'GPU liquid glass (experimental)',
@@ -1731,7 +1730,71 @@ Widget _buildGlassOptionsCard(BuildContext ctx, AppState state) {
               style: TextStyle(fontSize: 11, color: scheme.outline)),
           value: cfg.glassGpuOnDesktop,
           onChanged: (v) => state.updateConfig((c) => c..glassGpuOnDesktop = v)),
-  ]);
+    const SizedBox(height: 4),
+    // ── 添加边框：所有卡片与药丸的实线描边 ──
+    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+        title: Text(zh ? '添加边框' : 'Add borders',
+            style: TextStyle(color: clr, fontSize: 13)),
+        subtitle: Text(
+            zh ? '为所有卡片与药丸添加实线边框，可自定义颜色与宽度'
+               : 'Draw a solid border around all cards and pills (custom color & width)',
+            style: TextStyle(fontSize: 11, color: scheme.outline)),
+        value: cfg.borderEnabled,
+        onChanged: (v) => state.updateConfig((c) => c..borderEnabled = v)),
+    if (cfg.borderEnabled) ...[
+      Row(children: [
+        Expanded(
+          child: Text(zh ? '边框颜色' : 'Border color',
+              maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: clr, fontSize: 12)),
+        ),
+        const SizedBox(width: 8),
+        // 色块即按钮：点开复用主题色取色面板（只取单色，渐变开关被忽略），样式一致
+        InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => _pickBorderColor(ctx, state),
+          child: Container(
+            width: 44,
+            height: 26,
+            decoration: BoxDecoration(
+              color: Color(cfg.borderColor),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: scheme.outlineVariant.withAlpha(120)),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text('#${(cfg.borderColor & 0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase()}',
+            style: TextStyle(fontSize: 11, color: scheme.outline)),
+      ]),
+      const SizedBox(height: 6),
+      _SettingSlider(
+        value: cfg.borderWidth, min: 0.5, max: 4.0, divisions: 7,
+        label: (v) => '${zh ? '边框宽度' : 'Border width'}: ${v.toStringAsFixed(1)}',
+        labelStyle: TextStyle(color: clr, fontSize: 12),
+        onCommit: (v) => state.updateConfig((c) => c..borderWidth = v),
+      ),
+    ],
+  ];
+}
+
+/// 边框颜色选择：复用主题色的取色面板 [_CP]（只取第一个颜色）。
+Future<void> _pickBorderColor(BuildContext ctx, AppState state) async {
+  final isZh = state.config.language == 'zh';
+  final cp = _CP(initial: Color(state.config.borderColor), isZh: isZh);
+  final res = isMobilePlatform
+      ? await showModalBottomSheet<_GradResult>(
+          context: ctx,
+          isScrollControlled: true,
+          backgroundColor: Colors.transparent,
+          builder: (_) => SafeArea(top: false, child: cp),
+        )
+      : await showDialog<_GradResult>(
+          context: ctx,
+          builder: (_) => Center(child: SizedBox(width: 320, child: cp)),
+        );
+  if (res == null) return;
+  state.updateConfig((c) => c..borderColor = res.c1);
 }
 
 /// 「外观 → 节点编辑器」卡片：画布背景 + 逻辑门符号标准。
@@ -1760,24 +1823,34 @@ Widget _buildNodeEditorStyleCard(BuildContext ctx, AppState state) {
     ]),
     const SizedBox(height: 10),
     // 逻辑门符号标准：ANSI/IEEE 或 IEC
-    Text(s.gateStdLabel, style: TextStyle(color: clr, fontSize: 12)),
-    const SizedBox(height: 6),
-    OptionMenuBar<String>(
-      expandable: false,
-      value: cfg.gateStd,
-      items: const [
-        OptionItem('ansi', 'ANSI/IEEE'),
-        OptionItem('iec', 'IEC'),
-      ],
-      onChanged: (v) => state.updateConfig((c) => c..gateStd = v),
-    ),
+    // 统一「左 = 图标+文字描述，右 = 调节选项」：标签在左、分段药丸在右，
+    // 不再让标签独占一行把控件挤到下一行。
+    Row(children: [
+      Expanded(
+        child: Text(s.gateStdLabel,
+            maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: clr, fontSize: 12)),
+      ),
+      SizedBox(
+        width: _kMenuWidth,
+        child: OptionMenuBar<String>(
+          expandable: false,
+          value: cfg.gateStd,
+          items: const [
+            OptionItem('ansi', 'ANSI/IEEE'),
+            OptionItem('iec', 'IEC'),
+          ],
+          onChanged: (v) => state.updateConfig((c) => c..gateStd = v),
+        ),
+      ),
+    ]),
   ]);
 }
 
 /// 设置页「菜单栏选项」控件的统一触发宽度与选项列表历史上限。
 /// （选项控件统一为 widgets/option_menu_bar.dart 的 OptionMenuBar：
 ///   任务卡下拉的触发按钮样式 + 主菜单条目的药丸选中动画。）
-const double _kMenuWidth = 168;
+const double _kMenuWidth = 132;
 
 /// 表面样式设置行：左 = 图标 + 文字（可选作用范围说明），右 = 四值
 /// 「菜单栏选项」控件（按钮 + 展开选项列表，key 绑定当前值，配置被外部
@@ -1935,7 +2008,7 @@ Widget _buildMobileCommandEntry(BuildContext ctx, AppState state) {
       trailing: Icon(Icons.chevron_right, color: scheme.outline),
       // CommandPage 自带壁纸与安全区顶栏，不再外层重复包装（见 _mobileToolRow 注释）
       onTap: () => Navigator.of(ctx).push(
-          MaterialPageRoute(builder: (_) => const CommandPage())),
+          MaterialPageRoute(allowSnapshotting: false, builder: (_) => const CommandPage())),
     ),
   ]);
 }
@@ -1956,7 +2029,7 @@ Widget _buildMobileLogsEntry(BuildContext ctx, AppState state) {
       trailing: Icon(Icons.chevron_right, color: scheme.outline),
       // LogPage 自带壁纸与安全区顶栏，不再外层重复包装（见 _mobileToolRow 注释）
       onTap: () => Navigator.of(ctx).push(
-          MaterialPageRoute(builder: (_) => const LogPage())),
+          MaterialPageRoute(allowSnapshotting: false, builder: (_) => const LogPage())),
     ),
   ]);
 }
@@ -2007,7 +2080,7 @@ Widget _buildLanguage(BuildContext ctx, AppState state) {
     Row(children: [
       Expanded(child: Text(s.languageInterface, maxLines: 1, overflow: TextOverflow.ellipsis,
           style: TextStyle(color: clr, fontSize: 12))),
-      SizedBox(width: 150, child: OptionMenuBar<String>(
+      SizedBox(width: 126, child: OptionMenuBar<String>(
         expandable: true,
         value: cfg.language,
         leadingIcon: Icons.language,
@@ -2069,7 +2142,7 @@ Widget _buildFont(BuildContext ctx, AppState state) {
       Row(children: [
         Expanded(child: Text(s.qWeight, maxLines: 1, overflow: TextOverflow.ellipsis,
             style: TextStyle(color: clr, fontSize: 12))),
-        SizedBox(width: 150, child: OptionMenuBar<int>(
+        SizedBox(width: 126, child: OptionMenuBar<int>(
           expandable: true,
           value: cfg.fontWeightIndex,
           items: const [
@@ -2099,7 +2172,7 @@ Widget _buildFont(BuildContext ctx, AppState state) {
     // 字重：左右布局（标签左、下拉右，固定宽度）
     Row(children: [
       Expanded(child: Text(s.qWeight, style: TextStyle(color: clr, fontSize: 12))),
-      SizedBox(width: 150, child: OptionMenuBar<int>(
+      SizedBox(width: 126, child: OptionMenuBar<int>(
         expandable: true,
         value: cfg.fontWeightIndex,
         items: const [
@@ -2169,29 +2242,22 @@ Widget _buildAutosave(BuildContext ctx, AppState state) {
           onChanged: (v) => state.updateConfig((c) => c..useNodeEditorLandscape = v)),
       const Divider(height: 4, color: Colors.transparent),
       // 画布编辑器 UI 尺寸调节（移动端点按目标偏小/偏大时的补偿）
-      Text(s.isZh ? '顶部菜单栏大小' : 'Top toolbar size', style: TextStyle(color: clr, fontSize: 12)),
-      Row(children: [
-        Expanded(child: Slider(
-          value: cfg.editorToolbarScale.clamp(0.7, 1.6),
-          min: 0.7, max: 1.6, divisions: 9,
-          label: '${(cfg.editorToolbarScale * 100).round()}%',
-          onChanged: (v) => state.updateConfig((c) => c..editorToolbarScale = v),
-        )),
-        SizedBox(width: 42, child: Text('${(cfg.editorToolbarScale * 100).round()}%',
-            textAlign: TextAlign.right, style: TextStyle(fontSize: 11, color: scheme.outline))),
-      ]),
-      const SizedBox(height: 2),
-      Text(s.isZh ? '放大镜（缩放药丸）大小' : 'Zoom pill size', style: TextStyle(color: clr, fontSize: 12)),
-      Row(children: [
-        Expanded(child: Slider(
-          value: cfg.editorZoomScale.clamp(0.7, 1.6),
-          min: 0.7, max: 1.6, divisions: 9,
-          label: '${(cfg.editorZoomScale * 100).round()}%',
-          onChanged: (v) => state.updateConfig((c) => c..editorZoomScale = v),
-        )),
-        SizedBox(width: 42, child: Text('${(cfg.editorZoomScale * 100).round()}%',
-            textAlign: TextAlign.right, style: TextStyle(fontSize: 11, color: scheme.outline))),
-      ]),
+      // 统一「左 = 文字描述，右 = 滑动条」；_SettingSlider 自带「拖动只改本地、
+      // 松手才写配置」的节流语义，比原来的每帧 updateConfig 更省。
+      _SettingSlider(
+        value: cfg.editorToolbarScale.clamp(0.7, 1.6),
+        min: 0.7, max: 1.6, divisions: 9,
+        label: (v) => '${s.isZh ? '顶部菜单栏大小' : 'Top toolbar size'}: ${(v * 100).round()}%',
+        labelStyle: TextStyle(color: clr, fontSize: 12),
+        onCommit: (v) => state.updateConfig((c) => c..editorToolbarScale = v),
+      ),
+      _SettingSlider(
+        value: cfg.editorZoomScale.clamp(0.7, 1.6),
+        min: 0.7, max: 1.6, divisions: 9,
+        label: (v) => '${s.isZh ? '放大镜（缩放药丸）大小' : 'Zoom pill size'}: ${(v * 100).round()}%',
+        labelStyle: TextStyle(color: clr, fontSize: 12),
+        onCommit: (v) => state.updateConfig((c) => c..editorZoomScale = v),
+      ),
       const Divider(height: 8, color: Colors.transparent),
     ],
     SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
@@ -2205,7 +2271,7 @@ Widget _buildAutosave(BuildContext ctx, AppState state) {
     Row(children: [
       Expanded(child: Text(s.isZh ? '保存间隔' : 'Save Interval', maxLines: 1,
           overflow: TextOverflow.ellipsis, style: TextStyle(color: clr, fontSize: 12))),
-      SizedBox(width: 130, child: DropdownButtonFormField<int>(borderRadius: BorderRadius.circular(12), initialValue: cfg.autosaveIntervalSec, isDense: true, isExpanded: true,
+      SizedBox(width: 104, child: DropdownButtonFormField<int>(borderRadius: BorderRadius.circular(12), initialValue: cfg.autosaveIntervalSec, isDense: true, isExpanded: true,
           style: TextStyle(fontSize: 12, color: clr), dropdownColor: scheme.surface,
           decoration: InputDecoration(isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
@@ -2246,7 +2312,7 @@ Widget _buildTasks(BuildContext ctx, AppState state) {
     Row(children: [
       Expanded(child: Text(s.isZh ? '同时启用任务数' : 'Concurrent Tasks', maxLines: 1,
           overflow: TextOverflow.ellipsis, style: TextStyle(color: clr, fontSize: 12))),
-      SizedBox(width: 130, child: DropdownButtonFormField<int>(borderRadius: BorderRadius.circular(12), initialValue: cfg.maxConcurrentTasks, isDense: true, isExpanded: true,
+      SizedBox(width: 104, child: DropdownButtonFormField<int>(borderRadius: BorderRadius.circular(12), initialValue: cfg.maxConcurrentTasks, isDense: true, isExpanded: true,
           style: TextStyle(fontSize: 12, color: clr), dropdownColor: scheme.surface,
           decoration: InputDecoration(isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
@@ -2262,7 +2328,7 @@ Widget _buildTasks(BuildContext ctx, AppState state) {
     Row(children: [
       Expanded(child: Text(s.isZh ? '解析线程数' : 'Probe Threads', maxLines: 1,
           overflow: TextOverflow.ellipsis, style: TextStyle(color: clr, fontSize: 12))),
-      SizedBox(width: 130, child: DropdownButtonFormField<int>(borderRadius: BorderRadius.circular(12), initialValue: cfg.probeThreads, isDense: true, isExpanded: true,
+      SizedBox(width: 104, child: DropdownButtonFormField<int>(borderRadius: BorderRadius.circular(12), initialValue: cfg.probeThreads, isDense: true, isExpanded: true,
           style: TextStyle(fontSize: 12, color: clr), dropdownColor: scheme.surface,
           decoration: InputDecoration(isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
@@ -2350,14 +2416,14 @@ Widget _buildCache(BuildContext ctx, AppState state) {
 /// AdsPage 与 CreditsPage 一样自带壁纸与安全区顶栏，这里不再包 SafeArea
 /// （外层 SafeArea 会把 MediaQuery.padding.top 清零，顶栏会被状态栏压住）。
 void _openAds(BuildContext ctx) {
-  Navigator.of(ctx).push(MaterialPageRoute(builder: (_) => const AdsPage()));
+  Navigator.of(ctx).push(MaterialPageRoute(allowSnapshotting: false, builder: (_) => const AdsPage()));
 }
 
 void _openCredits(BuildContext ctx) {
   // CreditsPage 自带壁纸与安全区顶栏（MobileSubPageTopBar 读取 padding.top），
   // 外层再套 SafeArea 会把 padding.top 清零 → 顶栏被状态栏压住。
   // 桌面端 padding 恒为 0，去掉 SafeArea 无影响。
-  Navigator.of(ctx).push(MaterialPageRoute(builder: (_) => const CreditsPage()));
+  Navigator.of(ctx).push(MaterialPageRoute(allowSnapshotting: false, builder: (_) => const CreditsPage()));
 }
 
 Widget _buildAbout(BuildContext ctx, AppState state) {
@@ -2599,7 +2665,7 @@ Widget _buildMcpAi(BuildContext ctx, AppState state) {
 void _showAiSettingsDialog(BuildContext ctx, AppState state, AppStrings s) {
   if (isMobilePlatform) {
     // 移动端：AI「更多选项」改为二级页面（全屏 + 返回按钮），而非 PC 式底部弹窗
-    Navigator.of(ctx).push(MaterialPageRoute<void>(
+    Navigator.of(ctx).push(MaterialPageRoute<void>(allowSnapshotting: false, 
       builder: (bCtx) => Scaffold(
         body: SafeArea(child: _aiSettingsContent(bCtx, state, s, asSheet: false)),
       ),
@@ -2867,15 +2933,16 @@ Widget _aiSettingsContent(BuildContext bCtx, AppState state, AppStrings s, {requ
                     Text(s.aiAskSkipLabel, style: TextStyle(color: clr, fontSize: 12)),
                     const SizedBox(height: 6),
                     Wrap(spacing: 6, runSpacing: 6, children: [
-                      for (final op in _askSkipOptions)
+                      for (final key in _askSkipKeys)
                         FilterChip(
-                          label: Text(op.$1, style: const TextStyle(fontSize: 11)),
-                          selected: cfg.aiAskSkipTools.contains(op.$2),
+                          label: Text(_askSkipLabel(key, s.isZh),
+                              style: const TextStyle(fontSize: 11)),
+                          selected: cfg.aiAskSkipTools.contains(key),
                           visualDensity: VisualDensity.compact,
                           onSelected: (sel) {
                             state.updateConfig((c) {
                               final set = c.aiAskSkipTools.toSet();
-                              if (sel) { set.add(op.$2); } else { set.remove(op.$2); }
+                              if (sel) { set.add(key); } else { set.remove(key); }
                               c.aiAskSkipTools = set.toList();
                               return c;
                             });

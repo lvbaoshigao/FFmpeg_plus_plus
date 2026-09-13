@@ -150,10 +150,10 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
   // 进度/日志/任务等高频 notify 会反复重建 OCLiquidGlassGroup + OCLiquidGlass，
   // 导致 GPU shader uniform 重新初始化 → 视觉上"液态玻璃来回跳跃"。
   // 改用 Selector 精细订阅 + 稳定 key 后，shader 内部状态得以保留。
-  // 液态玻璃 settings 统一由 liquid_glass_fallback.glassSettingsFor(cfg) 按值生成并
-  // 缓存：基准值来自 kLiquidGlassSettings（与底部导航 / 卡片同源，避免三份重复常量
-  // 漂移），设置里的「折射强度 / 镜面高光」在其上覆盖；实例不变时不会重新下发
-  // shader uniform（这是移动端「玻璃来回跳跃」闪烁的根因）。
+  // 液态玻璃 settings 统一用 liquid_glass_fallback.kLiquidGlassSettings（全应用
+  // 唯一一份 const 基准实例，与底部导航 / 卡片同源，避免多份重复常量漂移）：
+  // 实例恒定，就不会因为 build 重新下发 shader uniform（这是移动端
+  //「玻璃来回跳跃」闪烁的根因）。
 
   void _set(bool v) {
     if (_pressed == v) return;
@@ -178,10 +178,10 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final key = context.select<AppState, _PillGlassKey>(_keyOf);
-    // 玻璃 GPU 参数（细粒度 select）：折射 / 高光走 shader，模糊 σ 走模糊/回退分支，
-    // 是否启用 shader 在此统一判定（PC 默认关闭，见 gpuGlassEnabled）。
-    final glassCfg = glassGpuConfigOf(context);
-    final double pillSigma = effectiveGlassSigma(glassCfg);
+    // 模糊 σ = 14（固定基准值，模糊/回退分支共用），Windows 上由
+    // effectiveGlassSigma 钳到 ≤12；是否走 shader 由 gpuGlassEnabledOf 统一判定
+    //（PC 端默认关闭）。
+    final double pillSigma = effectiveGlassSigma(14);
     final style = key.style;
     final op = key.op.clamp(0.0, 1.0);
     // 玻璃样式（liquid/blur）的 tint 与底部导航栏对齐：* 255 无截断，
@@ -243,16 +243,16 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
           child: inner,
         ),
       );
-    } else if (gpuGlassEnabled(glassCfg)) {
+    } else if (gpuGlassEnabledOf(context)) {
       // liquid：液态玻璃 shader（Impeller 可用时）
       // 关闭高光带（lightband）与压低镜面高光：高光带按固定像素偏移绘制，
       // 在较「高」的内容（如设置项卡片）上会变成一条横向"分界线"，
       // 视觉上把内容截成两段 —— 这里去掉它，仅保留折射 + 柔和高光。
       //
       // 关键修复：
-      // 1) settings 走 glassSettingsFor(glassCfg)（按值缓存的同一实例，dark 差异化
-      //    交给 tint + shadow），避免每次 build 新建 OCLiquidGlassSettings 触发
-      //    shader uniform 重置；
+      // 1) settings 用 kLiquidGlassSettings（全应用唯一 const 基准实例，dark
+      //    差异化交给 tint + shadow），避免每次 build 新建 OCLiquidGlassSettings
+      //    触发 shader uniform 重置；
       // 2) 给 OCLiquidGlassGroup 加 ValueKey(key)，仅当玻璃配置
       //    变化时才真的销毁/重建液态玻璃节点；普通 AppState notify（进度、
       //    日志、任务状态等）会让 key 不变，Element 复用，shader 内部状态稳定；
@@ -264,7 +264,7 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
       pill = RepaintBoundary(
         child: OCLiquidGlassGroup(
           key: glassKey,
-          settings: glassSettingsFor(glassCfg),
+          settings: kLiquidGlassSettings,
           child: OCLiquidGlass(
             key: innerKey,
             borderRadius: widget.radius,
@@ -285,7 +285,7 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
       // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
       pill = LiquidGlassBackdrop(
         borderRadius: BorderRadius.circular(widget.radius),
-        // σ 由设置→「模糊强度」驱动（Windows 钳到 12）
+        // σ = 14（固定基准值，Windows 上已由 effectiveGlassSigma 钳到 ≤12）
         sigma: pillSigma,
         opacity: op,
         shadow: BoxShadow(
@@ -297,7 +297,14 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
       );
     }
 
-    Widget result = pill;
+    // 「样式 → 添加边框」：开启时在药丸表面之上叠一层同圆角描边（关闭时原样
+    // 返回 pill，零额外层级）。放在点击/外边距包装之内：描边严格贴合药丸本体
+    //（而不是含 margin 的外框），并随按压缩放一起动画。
+    Widget result = withConfigurableBorder(
+      context,
+      pill,
+      radius: BorderRadius.circular(widget.radius),
+    );
 
     if (widget.pressable || widget.onTap != null) {
       // 按下放大、按住保持、松手回弹。

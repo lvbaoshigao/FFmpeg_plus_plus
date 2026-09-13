@@ -171,10 +171,9 @@ Widget navMaskPill(ColorScheme scheme, bool isDark, String style) {
 /// OCLiquidGlass 静态 settings：dark/light 差异化由 tint/shadow 承担，
 /// 这样所有 build 都使用同一份 const 实例，避免每次新建 settings 触发
 /// shader uniform 重置（移动端表现为液态玻璃"来回跳跃"闪烁）。
-// 液态玻璃 settings 统一由 liquid_glass_fallback.glassSettingsFor(cfg) 按值生成并缓存：
-// 基准值 kLiquidGlassSettings（与顶部药丸 / 卡片同源，避免多份重复常量漂移），
-// 设置里的「折射强度 / 镜面高光」在其上覆盖；实例不变时不会重新下发 shader uniform
-// （这是液态玻璃「来回跳跃」闪烁的根因）。
+// 液态玻璃 settings 统一用 liquid_glass_fallback.kLiquidGlassSettings（全应用唯一一份
+// const 基准实例，与顶部药丸 / 卡片同源，避免多份重复常量漂移）：实例恒定，就不会因为
+// build 重新下发 shader uniform（这是液态玻璃「来回跳跃」闪烁的根因）。
 
 /// navStyle 感知的玻璃外壳：把 [child] 按「底部菜单栏样式」四值套上外皮——
 /// theme/gray 直出、blur 高斯模糊、liquid GPU 液态玻璃（无 Impeller 时回退）。
@@ -200,17 +199,26 @@ class NavGlassShell extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final look = navGlassLook(scheme, isDark, pal);
-    // 玻璃 GPU 参数（细粒度 select）：是否启用 shader、模糊 σ 都在这里判定。
-    final glassCfg = glassGpuConfigOf(context);
-    final double shellSigma = effectiveGlassSigma(glassCfg);
+    // 模糊 σ = 16（固定基准值），Windows 上由 effectiveGlassSigma 钳到 ≤12；
+    // 是否走 shader 由 gpuGlassEnabledOf 统一判定（PC 端默认关闭）。
+    final double shellSigma = effectiveGlassSigma(16);
     final bottomSafe = MediaQuery.of(context).padding.bottom;
     final op = pal.op.clamp(0.0, 1.0);
+    // 「样式 → 添加边框」：给导航/切换栏胶囊叠一条同圆角描边。
+    // 只包 child 而不是整个 build：外壳外面还有 (14,2,14,bottomSafe+8) 的栏内
+    // 边距，描边必须贴合胶囊本体而不是含内边距的外框；关闭时原样返回 child，
+    // 零额外层级，与改动前像素一致。
+    final Widget borderedChild = withConfigurableBorder(
+      context,
+      child,
+      radius: BorderRadius.circular(radius),
+    );
 
     // theme/gray：纯色药丸（无玻璃光效）
     if (look.solid) {
       return Padding(
         padding: EdgeInsets.fromLTRB(14, 2, 14, bottomSafe + 8),
-        child: child,
+        child: borderedChild,
       );
     }
 
@@ -222,9 +230,9 @@ class NavGlassShell extends StatelessWidget {
         child: ClipRRect(
           borderRadius: BorderRadius.circular(radius),
           child: BackdropFilter(
-            // σ 由设置→「模糊强度」驱动（Windows 钳到 12）
+            // σ = 16（固定基准值，Windows 上已由 effectiveGlassSigma 钳到 ≤12）
             filter: ImageFilter.blur(sigmaX: shellSigma, sigmaY: shellSigma),
-            child: child,
+            child: borderedChild,
           ),
         ),
       );
@@ -236,13 +244,13 @@ class NavGlassShell extends StatelessWidget {
     // （用户反馈「PC 玻璃背景倒置且不是壁纸」）；无 Impeller（Windows 默认 Skia）
     // 时也走这里 → 回退为高斯模糊 + 倒角高光，避免 shader backdrop 被整体跳过、
     // 底部导航玻璃整块消失。
-    if (!gpuGlassEnabled(glassCfg)) {
+    if (!gpuGlassEnabledOf(context)) {
       return Padding(
         padding: EdgeInsets.fromLTRB(14, 2, 14, bottomSafe + 8),
         // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
         child: LiquidGlassBackdrop(
           borderRadius: BorderRadius.circular(radius),
-          // σ 由设置→「模糊强度」驱动（Windows 钳到 12）
+          // σ = 16（固定基准值，Windows 上已由 effectiveGlassSigma 钳到 ≤12）
           sigma: shellSigma,
           opacity: op,
           shadow: BoxShadow(
@@ -250,21 +258,21 @@ class NavGlassShell extends StatelessWidget {
             blurRadius: 22,
             offset: const Offset(0, 6),
           ),
-          child: child,
+          child: borderedChild,
         ),
       );
     }
 
     // 关键修复（沿用主底部导航的防闪烁策略）：
-    // 1) settings 走 glassSettingsFor(glassCfg)（按值缓存复用），避免每次 build
-    //    新建 settings 触发 shader uniform 重置；
+    // 1) settings 用 kLiquidGlassSettings（全应用唯一 const 实例），避免每次
+    //    build 新建 settings 触发 shader uniform 重置；
     // 2) OCLiquidGlassGroup 用 ValueKey(NavGlassPal)，仅玻璃配置变化才重建节点；
     // 3) OCLiquidGlass 独立 key（带 keyPrefix 防多实例冲突）；
     // 4) RepaintBoundary 放在 OCLiquidGlassGroup 外部隔离重绘。
     return RepaintBoundary(
       child: OCLiquidGlassGroup(
         key: ValueKey<NavGlassPal>(pal),
-        settings: glassSettingsFor(glassCfg),
+        settings: kLiquidGlassSettings,
         child: Padding(
           padding: EdgeInsets.fromLTRB(14, 2, 14, bottomSafe + 8),
           child: OCLiquidGlass(
@@ -276,7 +284,7 @@ class NavGlassShell extends StatelessWidget {
               blurRadius: 22,
               offset: const Offset(0, 6),
             ),
-            child: child,
+            child: borderedChild,
           ),
         ),
       ),

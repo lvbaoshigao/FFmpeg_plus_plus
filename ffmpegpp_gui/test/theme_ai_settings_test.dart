@@ -131,7 +131,9 @@ void main() {
         state,
         Navigator(
           initialRoute: '/',
+          // 与生产一致：路由层关闭 framework 快照（见 lib/app.dart 的 smoothRoute）
           onGenerateRoute: (r) => MaterialPageRoute<void>(
+            allowSnapshotting: false,
             builder: (_) => const MobileAiAdvancedPage(),
           ),
         ),

@@ -43,6 +43,22 @@ class GlassPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 「样式 → 添加边框」：开启时给整块面板叠一条同圆角描边。
+    // 包在最外层而不是逐分支改 border：本面板的渲染分支很多（移动端 3 个 /
+    // 桌面端 4 个），逐个改容易漏；且 withConfigurableBorder 在关闭时原样返回
+    // child，因此不开启边框时与改动前完全一致。
+    // 注：移动端走到 MobileGlassPill 分支时，药丸自身也会按**同一 radius**
+    // 画一层边框，两层完全重合；设置里的边框颜色恒为不透明（颜色选择器固定
+    // alpha=255），重合后的像素与单层一致，观感无差异。
+    return withConfigurableBorder(
+      context,
+      _buildPanel(context),
+      radius: BorderRadius.circular(radius),
+    );
+  }
+
+  /// [build] 的实际渲染分支（边框包装见上方 [build]）。
+  Widget _buildPanel(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     // 读取玻璃效果配置 + 透明度（cardOpacity 控制玻璃不透明度）。
@@ -55,9 +71,8 @@ class GlassPanel extends StatelessWidget {
     final themeColor2 = context.select<AppState, int>((s) => s.config.themeColor2);
     final noCardGlass = context.select<AppState, bool>((s) => s.config.noCardGlass);
     final settingsFrostedGlass = context.select<AppState, bool>((s) => s.config.settingsFrostedGlass);
-    // 玻璃 GPU 参数（同样细粒度 select）：折射 / 镜面高光走 shader，模糊 σ 走
-    // 模糊样式与无 Impeller 时的液态玻璃回退，PC 是否启用 shader 也在这里统一判定。
-    final glassCfg = glassGpuConfigOf(context);
+    // 模糊 σ 取本 widget 的 blur 参数（见下方 sigma）；是否走 shader 由
+    // liquid_glass_fallback.gpuGlassEnabledOf 统一判定（PC 端默认关闭）。
     final effect = style ?? globalEffect;
     // 透明度：0.0~1.0，映射到背景 alpha；0 时完全透明（仅保留边缘扭曲/折射）
     final op = cardOpacity.clamp(0.0, 1.0);
@@ -216,10 +231,10 @@ class GlassPanel extends StatelessWidget {
     // 内存优化：Windows（D3D12）上高斯模糊的中间纹理按「面板尺寸 +
     // 约 3σ 各边 padding」分配，σ 从 16/18 降到 12 时视觉几乎无差别，
     // 但每块玻璃面板的离屏内存明显下降（配合页面常驻上限一起生效）。
-    // σ 统一由设置→「模糊强度」（AppConfig.glassBlurSigma，默认 14）驱动，
-    // Windows 侧继续钳制到 12（见 liquid_glass_fallback.effectiveGlassSigma）；
-    // 本 widget 的 blur 参数仅保留给移动端「设置项毛玻璃」分支使用。
-    final double sigma = effectiveGlassSigma(glassCfg);
+    // 因此桌面端 blur/liquid 回退统一用本 widget 的 blur（默认 12）作 σ，
+    // 并经 effectiveGlassSigma 做平台钳制（Windows ≤12、其余 ≤24）；
+    // 移动端「设置项毛玻璃」分支直接用同一个 blur，语义一致。
+    final double sigma = effectiveGlassSigma(blur);
 
     if (effect == 'blur') {
       // 仅高斯模糊背景：半透明 + 模糊，无渐变、无阴影、无折射 —— 最简洁
@@ -316,10 +331,10 @@ class GlassPanel extends StatelessWidget {
     // shaderGlassSupported 本身即为 false。
     // shader 路径里 tint 由 OCLiquidGlass.color 提供（GPU 内部叠加），
     // 内层只保留描边，避免「主题色 + 主题色」双重染色。
-    if (gpuGlassEnabled(glassCfg)) {
+    if (gpuGlassEnabledOf(context)) {
       return RepaintBoundary(
         child: OCLiquidGlassGroup(
-          settings: glassSettingsFor(glassCfg),
+          settings: kLiquidGlassSettings,
           child: OCLiquidGlass(
             borderRadius: radius,
             color: baseColor.withAlpha(liqTop),

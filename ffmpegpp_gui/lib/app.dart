@@ -17,7 +17,6 @@ import 'pages/config_library_page.dart';
 import 'pages/settings_page.dart';
 import 'pages/log_page.dart';
 import 'widgets/sidebar.dart';
-import 'widgets/app_search_overlay.dart';
 import 'widgets/app_slider.dart';
 import 'widgets/toast.dart';
 import 'widgets/mobile_bottom_nav.dart';
@@ -562,21 +561,6 @@ class _AppShellState extends State<AppShell> with WindowListener {
     final s = AppStrings.of(state.config.language);
     final nav = state.selectedNav;
 
-    // ── 搜索引擎式全局搜索（任意页面可用）──
-    // 绑定位：global_search（默认 Ctrl+K）；同时把「搜索项目」的旧绑定（默认 Ctrl+F）
-    // 也接到全局搜索上 —— 它此前只在快捷键列表里登记、并没有任何实现，
-    // 全局搜索浮层内部已能搜项目文件，语义一致。
-    final globalSearchBinding = bindings['global_search'] ?? ['Control', 'K'];
-    if (_matchesBinding(event, globalSearchBinding)) {
-      showAppSearch(context);
-      return KeyEventResult.handled;
-    }
-    final projectSearchBinding = bindings['project_search'] ?? ['Control', 'F'];
-    if (_matchesBinding(event, projectSearchBinding)) {
-      showAppSearch(context);
-      return KeyEventResult.handled;
-    }
-
     // Project page shortcuts (nav == 0)
     if (nav == 0) {
       final selectAllBinding = bindings['project_select_all'] ?? ['Control', 'A'];
@@ -1030,16 +1014,31 @@ class _KeepAliveState extends State<_KeepAlive> with AutomaticKeepAliveClientMix
   }
 }
 
+/// 二级页面统一转场：位移为主、淡入为辅，并**关闭 framework 的路由快照**。
+///
+/// - 关闭快照（allowSnapshotting: false）：Zoom/预测式返回转场默认会把进入的路由
+///   光栅化成离屏快照，而快照采不到 BackdropFilter 的 backdrop —— 玻璃区域会变黑、
+///   首帧还会整屏黑一下（「进入二级菜单屏幕总会先黑一下」）。在路由层关掉即可解决，
+///   不必替换 framework 的转场实现（替换会连预测式返回的手势检测一起丢掉）。
+/// - 观感：以前是「淡入为主（0→1）+ 3% 位移」，进入第一帧几乎全透明，看起来发飘；
+///   现在位移放到 6%、时长 220ms、反向 180ms，曲线 easeOutCubic/easeInCubic，
+///   以滑入为主、淡入仅作辅助，落地感更实。
 Route<T> smoothRoute<T>(Widget page) => PageRouteBuilder<T>(
   pageBuilder: (_, a, b) => page,
-  transitionDuration: const Duration(milliseconds: 250),
-  reverseTransitionDuration: const Duration(milliseconds: 200),
+  allowSnapshotting: false,
+  transitionDuration: const Duration(milliseconds: 220),
+  reverseTransitionDuration: const Duration(milliseconds: 180),
   transitionsBuilder: (_, anim, c, child) {
-    final curve = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
-    return FadeTransition(
-      opacity: curve,
-      child: SlideTransition(
-        position: Tween(begin: const Offset(0.03, 0), end: Offset.zero).animate(curve),
+    final curve = CurvedAnimation(
+      parent: anim,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    );
+    return SlideTransition(
+      position: Tween(begin: const Offset(0.06, 0), end: Offset.zero).animate(curve),
+      child: FadeTransition(
+        // 淡入只做辅助：不完全透明起步，避免第一帧「空屏」
+        opacity: Tween<double>(begin: 0.55, end: 1.0).animate(curve),
         child: child,
       ),
     );

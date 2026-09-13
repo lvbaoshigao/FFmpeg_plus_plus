@@ -1,5 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+// Esc 收起溢出操作（桌面端键盘可达）；只取需要的两个名字，避免整包 services 泄漏到本文件。
+import 'package:flutter/services.dart' show KeyDownEvent, LogicalKeyboardKey;
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/mobile_ui.dart';
@@ -94,6 +96,314 @@ class MobileTopBar extends StatelessWidget {
   }
 }
 
+/// 药丸顶栏里各药丸之间的横向间距（标题药丸 ↔ 操作药丸、返回钮 ↔ 标题药丸）。
+const double _pillBarGap = 8;
+
+/// 溢出展开 / 收起动画时长：落在「180~220ms」区间，与仓库其它顶栏过渡同拍。
+const Duration _overflowDuration = Duration(milliseconds: 200);
+
+/// 标题药丸在「是否溢出」判定里的保底可读宽度 = 44 × 2 = 88（约 4 个中文字符）。
+/// 低于它标题就只剩省略号，此时宁可把操作收进「…」也不挤掉标题。
+const double _titlePillMinWidth = MobileUi.pillHeight * 2;
+
+/// 估算单个操作控件的自然宽度，供溢出判定使用。
+///
+/// 为什么是「估算」而不是真测量：顶栏必须在自己的 build 阶段就决定
+/// 「全部显示还是收进 …」，此时子控件尚未布局，拿不到真实尺寸；
+/// 而顶栏里能出现的操作只有两类，宽度都能从它们的声明参数精确推出：
+/// * [MobileGlassPillAction]：固定 [MobileGlassPillAction.size]（34）+ 水平内边距；
+/// * [PopupMenuButton]：各调用点都按 34×34 声明（padding: zero + 19px 图标）；
+/// 其它未知控件按 [MobileUi.pillHeight]（44，一行里最宽的常规药丸）保守估算 ——
+/// 估大只会让「…」更早出现，绝不会横向溢出（RenderFlex overflow）。
+double _estimateActionWidth(Widget action) {
+  if (action is MobileGlassPillAction) {
+    // 默认水平内边距移动端 1 / 桌面端 2，这里统一按 2 计，误差 ≤ 2px/项。
+    return action.size + (action.padding?.horizontal ?? 2);
+  }
+  if (action is PopupMenuButton) return MobileUi.actionButtonSize;
+  return MobileUi.pillHeight;
+}
+
+/// ═══════════════════════════════════════════════════════════════════════════
+/// 药丸顶栏的「左半 / 右半 + 操作溢出收纳」布局 ——
+/// [MobileSubPageTopBar] 与 [MobilePillTopBar] 共用的实现，页面不直接使用。
+///
+/// 硬规则（用户要求的「严格左右原则」）：
+/// * 左半只放返回 / 标题文字，右半只放操作 / 设置项，两者永不互换、永不混排；
+/// * 操作放不下时右半只保留一颗「…」触发药丸，其余操作全部隐藏；
+/// * 点「…」展开：全部操作自右向左滑入，同时左半（返回 + 标题）向左滑出并淡出，
+///   触发药丸图标 … 变 →；再点它 / 点空白处 / Esc 均收回原状。
+///
+/// 为什么不再用 FittedBox 压扁：旧实现让整排按钮等比缩小，动作一多图标就挤成
+/// 小点、长标题还会被顶掉 ——「显示得下」并不等于「看得清、点得着」。
+///
+/// 溢出判定基于 [LayoutBuilder] 给出的**真实可用宽度**，不写死条数阈值：
+///   需要宽度 = 左半保底宽度 + 间距 + (各操作估算宽度之和 + 操作药丸左右内边距)
+/// ═══════════════════════════════════════════════════════════════════════════
+class MobilePillBarLayout extends StatefulWidget {
+  /// 左半：返回圆钮（主 Tab 页没有返回，传 null）
+  final Widget? leading;
+
+  /// 左半：已完成药丸包装的标题（本组件负责放进 Expanded 并左对齐）
+  final Widget titlePill;
+
+  /// 右半：全部操作；放不下时收进「…」
+  final List<Widget> actions;
+
+  /// 外部原因强制收起（如主 Tab 页进入搜索态，右侧不允许停留展开态）
+  final bool forceCollapsed;
+
+  const MobilePillBarLayout({
+    super.key,
+    this.leading,
+    required this.titlePill,
+    this.actions = const [],
+    this.forceCollapsed = false,
+  });
+
+  @override
+  State<MobilePillBarLayout> createState() => _MobilePillBarLayoutState();
+}
+
+class _MobilePillBarLayoutState extends State<MobilePillBarLayout>
+    with SingleTickerProviderStateMixin {
+  /// 右半操作是否已展开（只在「确实放不下」的状态下才可能为 true）
+  bool _expanded = false;
+
+  /// 0 = 左半可见、操作收在「…」里；1 = 左半已隐藏、全部操作已滑入。
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: _overflowDuration,
+    reverseDuration: _overflowDuration,
+  );
+
+  /// 用 drive(CurveTween) 而不是 CurvedAnimation：不需要额外释放，且正反两个
+  /// 方向都走同一条 easeOutCubic。
+  late final Animation<double> _progress =
+      _controller.drive(CurveTween(curve: Curves.easeOutCubic));
+
+  /// Esc 只有在拥有键盘焦点时才会派发到 [Focus.onKeyEvent]，展开时把焦点收过来。
+  final FocusNode _focusNode = FocusNode(debugLabel: 'MobilePillBarLayout');
+
+  /// 展开前的主焦点：收起时还回去，避免抢走 App 级快捷键 Focus
+  /// （app.dart 的 Focus(autofocus: true, onKeyEvent: _handleGlobalKey)）导致全局快捷键失效。
+  FocusNode? _previousFocus;
+
+  @override
+  void didUpdateWidget(covariant MobilePillBarLayout oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 外部强制收起（搜索态）或操作数量变化：回到收起态。
+    // 此处正处在 rebuild 中，改字段即可，不需要（也不应该）再 setState。
+    if (_expanded &&
+        (widget.forceCollapsed || oldWidget.actions.length != widget.actions.length)) {
+      _collapse(fromUpdate: true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _expand() {
+    if (_expanded) return;
+    setState(() => _expanded = true);
+    _previousFocus = FocusManager.instance.primaryFocus;
+    _focusNode.requestFocus();
+    _controller.forward();
+  }
+
+  /// 收起。[fromUpdate] = true 表示在 didUpdateWidget 内调用（重建已在进行）。
+  void _collapse({bool fromUpdate = false}) {
+    if (!_expanded) return;
+    if (fromUpdate) {
+      _expanded = false;
+    } else {
+      setState(() => _expanded = false);
+    }
+    _controller.reverse();
+    final previous = _previousFocus;
+    _previousFocus = null;
+    if (previous != null && previous.canRequestFocus) {
+      previous.requestFocus();
+    } else if (_focusNode.hasFocus) {
+      _focusNode.unfocus();
+    }
+  }
+
+  void _toggle() => _expanded ? _collapse() : _expand();
+
+  /// Esc 收起。必须返回 handled，否则按键继续冒泡到 App 级快捷键 / 页面关闭。
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.escape) {
+      _collapse();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  /// 左半：返回圆钮（可选）+ 标题药丸；标题药丸占满剩余宽度并左对齐。
+  Widget _leadingHalf() => Row(children: [
+        if (widget.leading != null) ...[
+          widget.leading!,
+          const SizedBox(width: _pillBarGap),
+        ],
+        Expanded(
+          child: Align(alignment: Alignment.centerLeft, child: widget.titlePill),
+        ),
+      ]);
+
+  /// 操作药丸：44 高、左右内边距 6，内容用 FittedBox 兜底
+  /// （极端窄屏等比缩小，而不是横向溢出）。
+  Widget _actionsPill(List<Widget> actions) => MobileGlassPill(
+        radius: MobileUi.pillRadius,
+        height: MobileUi.pillHeight,
+        padding: const EdgeInsets.symmetric(horizontal: MobileUi.actionsPillPadH),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Row(mainAxisSize: MainAxisSize.min, children: actions),
+        ),
+      );
+
+  /// 真实可用宽度是否容不下全部操作（= 是否要把操作收进「…」）。
+  bool _needsOverflow(double availableWidth) {
+    if (widget.actions.isEmpty || !availableWidth.isFinite) return false;
+    final actionsWidth = MobileUi.actionsPillPadH * 2 +
+        widget.actions.fold<double>(0, (sum, a) => sum + _estimateActionWidth(a));
+    final leadingMin = _titlePillMinWidth +
+        (widget.leading == null ? 0.0 : MobileUi.pillHeight + _pillBarGap);
+    return leadingMin + _pillBarGap + actionsWidth > availableWidth;
+  }
+
+  /// 放得下：保持原来的「左半 + 间距 + 右半」一行，不引入任何额外动画层。
+  Widget _plainRow() => Row(children: [
+        Expanded(child: _leadingHalf()),
+        if (widget.actions.isNotEmpty) ...[
+          const SizedBox(width: _pillBarGap),
+          _actionsPill(widget.actions),
+        ],
+      ]);
+
+  /// 放不下：右半只留「…」；展开后左半滑出、全部操作自右向左滑入。
+  Widget _overflowRow() => Row(children: [
+        Expanded(
+          // ClipRect 让滑入的操作「从药丸边缘切进来」而不是飞到药丸外面。
+          child: ClipRect(
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                // 左半：展开时向左滑出 + 淡出（即「隐藏左半边的选项」）
+                SlideTransition(
+                  position: Tween<Offset>(
+                    begin: Offset.zero,
+                    end: const Offset(-0.35, 0),
+                  ).animate(_progress),
+                  child: FadeTransition(
+                    opacity: ReverseAnimation(_progress),
+                    child: IgnorePointer(ignoring: _expanded, child: _leadingHalf()),
+                  ),
+                ),
+                // 右半全部操作：收起时停在药丸外侧（被 ClipRect 裁掉），
+                // 展开时从右向左滑入 —— 就是「向左切入」。
+                SlideTransition(
+                  position: Tween<Offset>(
+                    begin: const Offset(1.05, 0),
+                    end: Offset.zero,
+                  ).animate(_progress),
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: IgnorePointer(
+                      ignoring: !_expanded,
+                      child: _actionsPill(widget.actions),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: _pillBarGap),
+        _triggerPill(context),
+      ]);
+
+  /// 溢出触发药丸：收起时是「…」，展开后变「→」（同一颗药丸，位置固定不动）。
+  ///
+  /// 为什么不复用 [MobileGlassPillAction]：它内部写死一颗 [Icon]，装不下
+  /// 「… ⇄ →」的切换动画；这里按它的同一规格手写按钮（34×34 圆形、透明涟漪、
+  /// 水平内边距 1/2），只在图标位放 AnimatedSwitcher，观感与其它操作按钮一致。
+  Widget _triggerPill(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final zh = Localizations.localeOf(context).languageCode == 'zh';
+    return MobileGlassPill(
+      radius: MobileUi.pillRadius,
+      height: MobileUi.pillHeight,
+      padding: const EdgeInsets.symmetric(horizontal: MobileUi.actionsPillPadH),
+      child: Tooltip(
+        message: _expanded
+            ? (zh ? '收起' : 'Collapse')
+            : (zh ? '更多操作' : 'More actions'),
+        child: InkWell(
+          onTap: _toggle,
+          borderRadius: BorderRadius.circular(MobileUi.actionButtonSize / 2),
+          splashColor: Colors.transparent,
+          highlightColor: Colors.transparent,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 2),
+            child: SizedBox(
+              width: MobileUi.actionButtonSize,
+              height: MobileUi.actionButtonSize,
+              child: AnimatedSwitcher(
+                duration: _overflowDuration,
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeOutCubic,
+                transitionBuilder: (child, anim) => ScaleTransition(
+                  scale: anim,
+                  child: FadeTransition(opacity: anim, child: child),
+                ),
+                child: Icon(
+                  _expanded ? Icons.arrow_forward : Icons.more_horiz,
+                  key: ValueKey<bool>(_expanded),
+                  size: MobileUi.actionIconSize,
+                  color: scheme.onSurface,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (context, constraints) {
+      final overflow = _needsOverflow(constraints.maxWidth);
+      if (!overflow && _expanded) {
+        // 宽度又够了（旋转 / 分屏 / 操作变少）：自动收回。
+        // build 阶段不能 setState，推迟到本帧结束。
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _collapse();
+        });
+      }
+      // TapRegion（点空白处收起）与 Focus（Esc 收起）都是纯代理盒子，
+      // 不影响布局；常驻可避免展开瞬间才挂载导致 requestFocus 落空。
+      return TapRegion(
+        onTapOutside: (_) {
+          if (_expanded) _collapse();
+        },
+        child: Focus(
+          focusNode: _focusNode,
+          skipTraversal: true,
+          onKeyEvent: _onKey,
+          child: overflow ? _overflowRow() : _plainRow(),
+        ),
+      );
+    });
+  }
+}
+
 /// 移动端「二级页面」统一顶栏 —— 与主界面同一套药丸语言：
 /// 左圆形玻璃返回按钮 + 标题药丸（**左对齐，与主界面一致**）+ 右操作药丸。
 ///
@@ -105,6 +415,9 @@ class MobileTopBar extends StatelessWidget {
 ///   不再用自带 48×48 最小尺寸的 Material IconButton；
 /// * 标题药丸：44 高、radius 22、内边距 14，占据剩余宽度、超长省略；
 /// * 操作药丸：44 高、内边距 6，内部请放 [MobileGlassPillAction]。
+///
+/// 「左右原则」由 [MobilePillBarLayout] 强制：任何状态下左半只放返回 + 标题、
+/// 右半只放操作；操作放不下时右半收成一颗「…」，点开后再向左展开。
 class MobileSubPageTopBar extends StatelessWidget {
   final Widget title;
   final List<Widget> actions;
@@ -128,9 +441,9 @@ class MobileSubPageTopBar extends StatelessWidget {
         MobileUi.barInsetH,
         MobileUi.barInsetBottom,
       ),
-      child: Row(children: [
+      child: MobilePillBarLayout(
         // 左：圆形玻璃返回按钮（44×44、radius 22 = 正圆）
-        MobileGlassPill(
+        leading: MobileGlassPill(
           radius: MobileUi.pillRadius,
           padding: EdgeInsets.zero,
           child: MobileGlassPillAction(
@@ -143,38 +456,21 @@ class MobileSubPageTopBar extends StatelessWidget {
             onTap: onBack ?? () => Navigator.of(context).maybePop(),
           ),
         ),
-        const SizedBox(width: 8),
         // 中：标题药丸，左对齐并占据剩余宽度（与主界面一致）
-        Expanded(
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: MobileGlassPill(
-              radius: MobileUi.pillRadius,
-              height: MobileUi.pillHeight,
-              padding: const EdgeInsets.symmetric(horizontal: MobileUi.titlePillPadH),
-              child: DefaultTextStyle.merge(
-                style: MobileUi.titleStyle(context),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                child: title,
-              ),
-            ),
+        titlePill: MobileGlassPill(
+          radius: MobileUi.pillRadius,
+          height: MobileUi.pillHeight,
+          padding: const EdgeInsets.symmetric(horizontal: MobileUi.titlePillPadH),
+          child: DefaultTextStyle.merge(
+            style: MobileUi.titleStyle(context),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            child: title,
           ),
         ),
         // 右：操作药丸（高度 44，与返回按钮、标题药丸对齐）
-        if (actions.isNotEmpty) ...[
-          const SizedBox(width: 8),
-          MobileGlassPill(
-            radius: MobileUi.pillRadius,
-            height: MobileUi.pillHeight,
-            padding: const EdgeInsets.symmetric(horizontal: MobileUi.actionsPillPadH),
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Row(mainAxisSize: MainAxisSize.min, children: actions),
-            ),
-          ),
-        ],
-      ]),
+        actions: actions,
+      ),
     );
   }
 }

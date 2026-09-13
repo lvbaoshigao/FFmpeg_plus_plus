@@ -1312,13 +1312,13 @@ class AppConfig {
   /// （高斯模糊 + 倒角高光），背景即真实壁纸；想要 shader 玻璃可在
   /// 设置→外观→液态玻璃效果里手动开启。
   bool glassGpuOnDesktop;
-  /// 液态玻璃折射强度（负值 = 凹透镜；建议 -0.30 ~ 0.0，默认 -0.10）
-  double glassRefractStrength;
-  /// 液态玻璃镜面高光强度（建议 0.0 ~ 2.0，默认 0.5）
-  double glassSpecStrength;
-  /// 玻璃高斯模糊 σ（建议 4 ~ 24，默认 14）：blur 样式与 LiquidGlassBackdrop
-  /// 回退共用；Windows 侧会再按性能上限钳制。
-  double glassBlurSigma;
+  /// 「样式 → 添加边框」：为所有卡片与药丸画一条用户可配置的实线描边。
+  /// 默认关闭（关闭时必须与现状像素一致）；颜色/宽度由用户在设置里自己改。
+  bool borderEnabled;
+  /// 边框颜色（ARGB int）
+  int borderColor;
+  /// 边框宽度（逻辑像素，0.5 ~ 4.0）
+  double borderWidth;
 
   static const fontWeightValues = [300, 400, 500, 600, 700];
   static const fontWeightLabels = ['Light', 'Regular', 'Medium', 'SemiBold', 'Bold'];
@@ -1346,7 +1346,6 @@ class AppConfig {
     'nav_command': ['Control', '3'],
     'nav_settings': ['Control', '4'],
     'project_search': ['Control', 'F'],
-    'global_search': ['Control', 'K'],
   };
 
   AppConfig({
@@ -1406,9 +1405,9 @@ class AppConfig {
     this.predictiveBack = true,
     this.noPreload = false,
     this.glassGpuOnDesktop = false,
-    this.glassRefractStrength = -0.10,
-    this.glassSpecStrength = 0.5,
-    this.glassBlurSigma = 14.0,
+    this.borderEnabled = false,
+    this.borderColor = 0xFF9E9E9E,
+    this.borderWidth = 1.0,
   }) : fontFamily = fontFamily ?? _defaultFontFamily,
        aiProfiles = aiProfiles ?? <AiProfile>[],
        nodeUsageCount = nodeUsageCount ?? {},
@@ -1519,9 +1518,9 @@ class AppConfig {
         predictiveBack: json['predictive_back'] as bool? ?? true,
         noPreload: json['no_preload'] as bool? ?? false,
         glassGpuOnDesktop: json['glass_gpu_on_desktop'] as bool? ?? false,
-        glassRefractStrength: ((json['glass_refract_strength'] as num?)?.toDouble() ?? -0.10).clamp(-0.30, 0.0),
-        glassSpecStrength: ((json['glass_spec_strength'] as num?)?.toDouble() ?? 0.5).clamp(0.0, 2.0),
-        glassBlurSigma: ((json['glass_blur_sigma'] as num?)?.toDouble() ?? 14.0).clamp(4.0, 24.0),
+        borderEnabled: json['border_enabled'] as bool? ?? false,
+        borderColor: json['border_color'] as int? ?? 0xFF9E9E9E,
+        borderWidth: ((json['border_width'] as num?)?.toDouble() ?? 1.0).clamp(0.5, 4.0),
       );
 
   Map<String, dynamic> toJson() => {
@@ -1580,9 +1579,9 @@ class AppConfig {
         'predictive_back': predictiveBack,
         'no_preload': noPreload,
         'glass_gpu_on_desktop': glassGpuOnDesktop,
-        'glass_refract_strength': glassRefractStrength,
-        'glass_spec_strength': glassSpecStrength,
-        'glass_blur_sigma': glassBlurSigma,
+        'border_enabled': borderEnabled,
+        'border_color': borderColor,
+        'border_width': borderWidth,
       };
 }
 

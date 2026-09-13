@@ -83,10 +83,10 @@ class AppCard extends StatefulWidget {
 class _AppCardState extends State<AppCard> {
   bool _pressed = false;
 
-  // 液态玻璃 settings 不再在本文件硬编码：统一由 liquid_glass_fallback 的
-  // glassSettingsFor(cfg) 生成「基准值（kLiquidGlassSettings，与底部导航/药丸
-  // 同源）+ 设置里的折射/镜面高光」，并按值缓存复用 —— 每次 build 新建实例会
-  // 触发 shader uniform 重置（移动端表现为液态玻璃「来回跳跃」闪烁）。
+  // 液态玻璃 settings 不在本文件硬编码：统一使用 liquid_glass_fallback 的
+  // kLiquidGlassSettings（全应用唯一一份 const 基准实例，与底部导航/药丸同源）
+  // —— 每次 build 新建实例会触发 shader uniform 重置（移动端表现为液态玻璃
+  //「来回跳跃」闪烁），因此这里绝不能另写一份 settings。
   static _CardGlassKey _keyOf(AppState s, String style) {
     final c = s.config;
     return _CardGlassKey(
@@ -109,9 +109,8 @@ class _AppCardState extends State<AppCard> {
     final style = widget.style;
     // 仅订阅玻璃渲染相关字段，进度/日志等高频 notify 不会重建卡片。
     final key = context.select<AppState, _CardGlassKey>((s) => _keyOf(s, style));
-    // 玻璃 GPU 参数（细粒度 select）：折射 / 镜面高光走 shader，模糊 σ 走模糊样式
-    // 与无 Impeller 时的液态玻璃回退；是否启用 shader 也在此统一判定（PC 默认关闭）。
-    final glassCfg = glassGpuConfigOf(context);
+    // 模糊 σ 与「是否走 shader」统一来自 liquid_glass_fallback（各调用点固定 σ +
+    // Windows ≤12 钳制；PC 端默认不走 shader，见 gpuGlassEnabledOf）。
     final op = key.op.clamp(0.0, 1.0);
     final radius = widget.radius;
     final br = BorderRadius.circular(radius);
@@ -160,8 +159,9 @@ class _AppCardState extends State<AppCard> {
       );
     } else if (style == SurfaceStyle.blur) {
       final alpha = ((isDark ? 110.0 : 130.0) * op).round().clamp(0, 255);
-      // σ 由设置→「模糊强度」驱动（Windows 继续钳到 12，见 effectiveGlassSigma）
-      final sigma = effectiveGlassSigma(glassCfg);
+      // σ = 16（固定基准值）：Windows 上再被 effectiveGlassSigma 钳到 ≤12，
+      // 兼顾模糊观感与离屏纹理内存（见该函数注释）
+      final sigma = effectiveGlassSigma(16);
       // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
       core = ClipRRect(
         borderRadius: br,
@@ -178,7 +178,7 @@ class _AppCardState extends State<AppCard> {
           ),
         ),
       );
-    } else if (style == SurfaceStyle.liquid && gpuGlassEnabled(glassCfg)) {
+    } else if (style == SurfaceStyle.liquid && gpuGlassEnabledOf(context)) {
       // 液态玻璃：oc_liquid_glass GPU shader（与底部导航/药丸一致）。
       // 走 shader 的条件 = 引擎支持（Impeller）且（移动端 || 设置里显式开启 PC GPU
       // 玻璃）；桌面默认关闭：shader backdrop 的纹理取向/坐标空间在桌面后端不一致
@@ -192,7 +192,7 @@ class _AppCardState extends State<AppCard> {
       core = RepaintBoundary(
         child: OCLiquidGlassGroup(
           key: glassKey,
-          settings: glassSettingsFor(glassCfg),
+          settings: kLiquidGlassSettings,
           child: OCLiquidGlass(
             key: innerKey,
             borderRadius: radius,
@@ -225,8 +225,8 @@ class _AppCardState extends State<AppCard> {
       // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
       core = LiquidGlassBackdrop(
         borderRadius: br,
-        // σ 由设置→「模糊强度」驱动（Windows 钳到 12）
-        sigma: effectiveGlassSigma(glassCfg),
+        // σ = 12（固定基准值）：回退分支沿用既有的观感/内存平衡
+        sigma: effectiveGlassSigma(12),
         opacity: op,
         shadow: BoxShadow(
           color: Colors.black.withAlpha(isDark ? 60 : 26),
@@ -267,7 +267,11 @@ class _AppCardState extends State<AppCard> {
       );
     }
 
-    Widget result = core;
+    // 「样式 → 添加边框」：开启时在卡片表面之上叠一层同圆角描边。
+    // 位置在 margin / 点击包装之内：描边严格贴合卡片本体（而非含外边距的外框），
+    // 并随按压缩放一起动画；关闭时 withConfigurableBorder 原样返回 core，
+    // 零额外层级（不改变布局与像素）。
+    Widget result = withConfigurableBorder(context, core, radius: br);
     if (widget.margin != null) {
       result = Padding(padding: widget.margin!, child: result);
     }

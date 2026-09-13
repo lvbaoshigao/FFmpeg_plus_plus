@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 
 // ═══════════════════════════════════════════
@@ -38,11 +36,17 @@ const double _kTrackHeight = 6;
 /// [AppSlider.compact] 模式的轨道高度。
 const double _kCompactTrackHeight = 4;
 
-/// 统一 thumb 半径。
-const double _kThumbRadius = 9;
+/// 统一 thumb 尺寸：**宽度较大的圆角矩形**。
+///
+/// 用户明确要求去掉圆形滑块（原来的样子是 `------o`）：「不要有 o，直接改成宽度较大的圆矩形」。
+/// 因此 thumb 由「半径 9 的圆点」改为「宽 18、高 = 轨道高 + 4、圆角 = 高/2」的粗短胶囊，
+/// 按下/拖动时按 activationAnimation 轻微放大（仍是圆角矩形，不会变圆）。
+const double _kThumbWidth = 18;
+const double _kThumbHeight = _kTrackHeight + 4;
 
-/// [AppSlider.compact] 模式的 thumb 半径。
-const double _kCompactThumbRadius = 7;
+/// [AppSlider.compact] 模式的 thumb 尺寸。
+const double _kCompactThumbWidth = 14;
+const double _kCompactThumbHeight = _kCompactTrackHeight + 4;
 
 /// 按下/拖动时 thumb 的放大倍数（与 framework 里 pressedElevation 的用意相同：
 /// 给「正在操作这个滑块」一个可见的反馈）。
@@ -67,28 +71,38 @@ const int _kIndeterminateDurationMs = 1800;
 // 自绘形状：轨道同高、thumb 带描边
 // ═══════════════════════════════════════════
 
-/// 画一个「主题色圆点 + 细描边 + 轻阴影」的 thumb。
+/// 画一个「主题色圆角矩形 + 细描边 + 轻阴影」的 thumb。
 ///
-/// 抽成函数是因为单值滑块与区间滑块的两个 thumb 必须完全一致。
+/// 抽成函数是因为单值滑块与区间滑块的两个 thumb 必须完全一致；
+/// 形状固定为圆角矩形（圆角 = 高/2），不再画圆 —— 见 [_kThumbWidth] 的说明。
 void _paintAppThumb(
   Canvas canvas,
   Offset center, {
-  required double radius,
+  required double width,
+  required double height,
   required Color fill,
   required Color borderColor,
   required double scale,
   required double shadowElevation,
 }) {
-  final double r = radius * scale;
-  final Path path = Path()..addArc(Rect.fromCircle(center: center, radius: r), 0, math.pi * 2);
-  // 轻阴影：让 thumb 浮在轨道之上（与 framework RoundSliderThumbShape 的做法一致，
-  // 用 Path + drawShadow 而不是 BoxShadow，因为这里是在画布上直接绘制）。
-  canvas.drawShadow(path, Colors.black, shadowElevation, true);
-  canvas.drawCircle(center, r, Paint()..color = fill);
+  final double w = width * scale;
+  final double h = height * scale;
+  final RRect rr = RRect.fromRectAndRadius(
+    Rect.fromCenter(center: center, width: w, height: h),
+    Radius.circular(h / 2),
+  );
+  // 轻阴影：让 thumb 浮在轨道之上（用 Path + drawShadow，与 framework 的做法一致，
+  // 因为这里是在画布上直接绘制）。
+  canvas.drawShadow(Path()..addRRect(rr), Colors.black, shadowElevation, true);
+  canvas.drawRRect(rr, Paint()..color = fill);
   if (_kThumbBorderWidth > 0) {
-    canvas.drawCircle(
-      center,
-      r - _kThumbBorderWidth / 2,
+    final double iw = (w - _kThumbBorderWidth).clamp(1.0, w);
+    final double ih = (h - _kThumbBorderWidth).clamp(1.0, h);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromCenter(center: center, width: iw, height: ih),
+        Radius.circular(ih / 2),
+      ),
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = _kThumbBorderWidth
@@ -97,19 +111,50 @@ void _paintAppThumb(
   }
 }
 
-/// 单值滑块的 thumb：半径固定 + 按下放大 + 细描边。
+/// 「只占位、不绘制」的 overlay 形状。
+///
+/// 用途：既满足「滑块附近不能出现圆」（framework 默认的 RoundSliderOverlayShape 是圆形
+/// 光晕），又保留 overlay 在布局上的作用 —— 它参与 BaseSliderTrackShape 的轨道内缩与
+/// Slider 的固有高度（见 _appSliderTheme 里的用法）。paint 里什么都不画。
+class _InvisibleOverlayShape extends SliderComponentShape {
+  const _InvisibleOverlayShape(this.size);
+
+  final Size size;
+
+  @override
+  Size getPreferredSize(bool isEnabled, bool isDiscrete) => size;
+
+  @override
+  void paint(
+    PaintingContext context,
+    Offset center, {
+    required Animation<double> activationAnimation,
+    required Animation<double> enableAnimation,
+    required bool isDiscrete,
+    required TextPainter labelPainter,
+    required RenderBox parentBox,
+    required SliderThemeData sliderTheme,
+    required TextDirection textDirection,
+    required double value,
+    required double textScaleFactor,
+    required Size sizeWithOverflow,
+  }) {}
+}
+
+/// 单值滑块的 thumb：圆角矩形 + 按下放大 + 细描边。
 ///
 /// 为什么不用 framework 的 [RoundSliderThumbShape]：它只画一个纯色圆 + 阴影，
 /// 没法加描边；而「同为主题色的 thumb 压在激活轨道上」如果没有描边就会糊成一团，
 /// 看不出滑块在哪。
 class _AppThumbShape extends SliderComponentShape {
-  const _AppThumbShape({required this.radius, required this.borderColor});
+  const _AppThumbShape({required this.width, required this.height, required this.borderColor});
 
-  final double radius;
+  final double width;
+  final double height;
   final Color borderColor;
 
   @override
-  Size getPreferredSize(bool isEnabled, bool isDiscrete) => Size.fromRadius(radius);
+  Size getPreferredSize(bool isEnabled, bool isDiscrete) => Size(width, height);
 
   @override
   void paint(
@@ -138,7 +183,8 @@ class _AppThumbShape extends SliderComponentShape {
     _paintAppThumb(
       context.canvas,
       center,
-      radius: radius,
+      width: width,
+      height: height,
       fill: fill,
       borderColor: borderColor,
       scale: scale,
@@ -152,13 +198,14 @@ class _AppThumbShape extends SliderComponentShape {
 /// 必须单独写一个类，因为 RangeSlider 用的是 [RangeSliderThumbShape] 接口
 /// （多出 thumb / isOnTop / isPressed 参数），与 SliderComponentShape 不通用。
 class _AppRangeThumbShape extends RangeSliderThumbShape {
-  const _AppRangeThumbShape({required this.radius, required this.borderColor});
+  const _AppRangeThumbShape({required this.width, required this.height, required this.borderColor});
 
-  final double radius;
+  final double width;
+  final double height;
   final Color borderColor;
 
   @override
-  Size getPreferredSize(bool isEnabled, bool isDiscrete) => Size.fromRadius(radius);
+  Size getPreferredSize(bool isEnabled, bool isDiscrete) => Size(width, height);
 
   @override
   void paint(
@@ -183,7 +230,8 @@ class _AppRangeThumbShape extends RangeSliderThumbShape {
     _paintAppThumb(
       context.canvas,
       center,
-      radius: radius,
+      width: width,
+      height: height,
       fill: fill,
       borderColor: borderColor,
       scale: scale,
@@ -273,7 +321,8 @@ SliderThemeData appSliderThemeFor(ColorScheme scheme, {bool compact = false}) =>
       scheme: scheme,
       accent: scheme.primary,
       trackHeight: compact ? _kCompactTrackHeight : _kTrackHeight,
-      thumbRadius: compact ? _kCompactThumbRadius : _kThumbRadius,
+      thumbWidth: compact ? _kCompactThumbWidth : _kThumbWidth,
+      thumbHeight: compact ? _kCompactThumbHeight : _kThumbHeight,
       compact: compact,
     );
 
@@ -286,7 +335,8 @@ SliderThemeData _appSliderTheme({
   required ColorScheme scheme,
   required Color accent,
   required double trackHeight,
-  required double thumbRadius,
+  required double thumbWidth,
+  required double thumbHeight,
   required bool compact,
 }) {
   // 细描边用白色系：thumb 与激活轨道都是主题色，只有一道浅色描边能把两者分开，
@@ -299,13 +349,21 @@ SliderThemeData _appSliderTheme({
     inactiveTrackColor: scheme.surfaceContainerHighest,
     thumbColor: accent,
     overlayColor: accent.withAlpha(_kOverlayAlpha),
-    thumbShape: _AppThumbShape(radius: thumbRadius, borderColor: borderColor),
+    thumbShape: _AppThumbShape(
+        width: thumbWidth, height: thumbHeight, borderColor: borderColor),
     trackShape: const _AppTrackShape(),
-    rangeThumbShape: _AppRangeThumbShape(radius: thumbRadius, borderColor: borderColor),
+    rangeThumbShape: _AppRangeThumbShape(
+        width: thumbWidth, height: thumbHeight, borderColor: borderColor),
     rangeTrackShape: const _AppRangeTrackShape(),
-    // 默认半径是 24，相对半径 9 的 thumb 偏大；这里收紧一点，
-    // 保证在密集表单里按住滑块时不会盖住相邻控件。
-    overlayShape: RoundSliderOverlayShape(overlayRadius: compact ? 16 : 22),
+    // 不要按下时的圆形光晕（用户要求滑块附近不出现圆），但也不能用
+    // SliderComponentShape.noOverlay：overlay 的尺寸参与 framework 的轨道内缩
+    // （max(overlayWidth/2, thumbWidth/2)）与 Slider 固有高度（取最大部件高，原为 44），
+    // 直接去掉会让轨道两端各多出十几 px、行高从 44 掉到 10、纵向触摸区一起缩小。
+    // 这里用「只占位、不绘制」的 overlay：尺寸保持原样，画面上什么都没有。
+    overlayShape: _InvisibleOverlayShape(Size(thumbWidth, 44)),
+    // 离散刻度的默认形状是 RoundSliderTickMarkShape（⌀4 圆点）；用户要「不要圆」，
+    // 因此关闭刻度点（divisions 的吸附行为不受影响）。
+    tickMarkShape: SliderTickMarkShape.noTickMark,
   );
 }
 
@@ -433,14 +491,16 @@ class _AppSliderState extends State<AppSlider> with SingleTickerProviderStateMix
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final Color accent = widget.color ?? scheme.primary;
     final double trackHeight = widget.compact ? _kCompactTrackHeight : _kTrackHeight;
-    final double thumbRadius = widget.compact ? _kCompactThumbRadius : _kThumbRadius;
+    final double thumbWidth = widget.compact ? _kCompactThumbWidth : _kThumbWidth;
+    final double thumbHeight = widget.compact ? _kCompactThumbHeight : _kThumbHeight;
 
     return SliderTheme(
       data: _appSliderTheme(
         scheme: scheme,
         accent: accent,
         trackHeight: trackHeight,
-        thumbRadius: thumbRadius,
+        thumbWidth: thumbWidth,
+      thumbHeight: thumbHeight,
         compact: widget.compact,
       ),
       child: Slider(
@@ -528,7 +588,8 @@ class AppRangeSlider extends StatelessWidget {
         scheme: scheme,
         accent: accent,
         trackHeight: compact ? _kCompactTrackHeight : _kTrackHeight,
-        thumbRadius: compact ? _kCompactThumbRadius : _kThumbRadius,
+        thumbWidth: compact ? _kCompactThumbWidth : _kThumbWidth,
+        thumbHeight: compact ? _kCompactThumbHeight : _kThumbHeight,
         compact: compact,
       ),
       child: RangeSlider(
