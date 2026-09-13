@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import 'glass_panel.dart';
+import 'app_search_overlay.dart';
 
 class Sidebar extends StatefulWidget {
   final int selectedIndex;
@@ -91,6 +92,9 @@ class _SidebarState extends State<Sidebar> {
                 _header(scheme, s),
                 Divider(color: scheme.outlineVariant.withAlpha(80), height: 1),
                 const SizedBox(height: 8),
+                // 全局搜索入口（搜索引擎式浮层；Ctrl+K / Ctrl+F 同效）
+                _searchEntry(scheme, clr, s, lang),
+                const SizedBox(height: 4),
                 // 导航项：底部滑动遮罩按像素精确定位（从选中项滑到新选中项）
                 Stack(children: [
                   // 滑动遮罩：默认随选中项动画滑动；按住可拖动，松开吸附到最近项并跳转。
@@ -152,6 +156,62 @@ class _SidebarState extends State<Sidebar> {
     );
   }
 
+  /// 搜索引擎式全局搜索入口（Ctrl+K / Ctrl+F 亦可唤起，见 app.dart 的全局快捷键）。
+  /// 展开态显示「搜索」+ 快捷键提示，收起态只显示图标（与导航项同一套自适应）。
+  Widget _searchEntry(ColorScheme scheme, Color clr, AppStrings s, String lang) {
+    return LayoutBuilder(builder: (ctx, cons) {
+      final showText = cons.maxWidth > 90;
+      final label = lang == 'zh' ? '搜索' : 'Search';
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+        child: _maybeTooltip(
+          showText ? null : label,
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(10),
+              onTap: () => showAppSearch(context),
+              child: Container(
+                height: 34,
+                padding: EdgeInsets.symmetric(horizontal: showText ? 10 : 0),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  color: scheme.surfaceContainerHighest.withAlpha(120),
+                  border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
+                ),
+                child: Row(
+                  mainAxisAlignment:
+                      showText ? MainAxisAlignment.start : MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.search, size: 17, color: clr),
+                    if (showText) ...[
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 12.5, color: clr)),
+                      ),
+                      // 快捷键提示：与系统搜索框一致的语言
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(5),
+                          border: Border.all(color: scheme.outlineVariant.withAlpha(120)),
+                        ),
+                        child: Text('Ctrl K',
+                            style: TextStyle(fontSize: 9, color: scheme.outline)),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    });
+  }
   /// 顶部品牌区，整行可点击用于折叠/展开
   Widget _header(ColorScheme scheme, AppStrings s) {
     return Tooltip(

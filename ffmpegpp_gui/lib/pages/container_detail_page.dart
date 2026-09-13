@@ -169,20 +169,29 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
         )
       else
       Padding(
-        padding: EdgeInsets.fromLTRB(8, Platform.isWindows ? 4 : 40, 8, 2),
+        // 垂直内边距上下相等（Windows 上 4/4）：原先下边距只有 2，工具栏整体偏上。
+        // Linux 顶部 40 是给自绘标题栏让位，底部同样保持 4。
+        padding: EdgeInsets.fromLTRB(8, Platform.isWindows ? 4 : 40, 8, 4),
         child: Row(children: [
           IconButton(icon: const Icon(Icons.arrow_back, size: 20), onPressed: () => Navigator.pop(context)),
           const SizedBox(width: 4),
-          GestureDetector(
-            onDoubleTap: () => _rename(state, container, s),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(Icons.folder_special, size: 18, color: scheme.primary),
-              const SizedBox(width: 6),
-              Text(container.name, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-              Text('  (${container.fileCount})', style: TextStyle(fontSize: 12, color: scheme.outline)),
-            ]),
+          // 标题组由「裸 GestureDetector + Spacer」改为 Expanded：容器名拿到有界宽度，
+          // 大字号/超长名称时单行省略，而不是把整条工具栏撑到横向溢出。
+          // Expanded 已吸收全部剩余空间，操作按钮依旧被顶到最右侧（原 Spacer 的作用）。
+          Expanded(
+            child: GestureDetector(
+              onDoubleTap: () => _rename(state, container, s),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.folder_special, size: 18, color: scheme.primary),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(container.name, maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+                ),
+                Text('  (${container.fileCount})', style: TextStyle(fontSize: 12, color: scheme.outline)),
+              ]),
+            ),
           ),
-          const Spacer(),
           ...toolbarActions,
         ]),
       ),
@@ -230,7 +239,14 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
                 : Container(
                     width: 36, height: 36,
                     decoration: BoxDecoration(color: scheme.primaryContainer.withAlpha(80), borderRadius: BorderRadius.circular(6)),
-                    child: Center(child: Text('${item.index}', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: scheme.primary))),
+                    // 固定 36×36 容器内的单行序号：字号调大时等比缩小而不是换行/溢出
+                    child: Center(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text('${item.index}', maxLines: 1,
+                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: scheme.primary)),
+                      ),
+                    ),
                   ),
           ),
           const SizedBox(width: 8),
@@ -241,11 +257,15 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
           // 文件信息
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
             Text(video.filename, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: clr), maxLines: 1, overflow: TextOverflow.ellipsis),
+            // 分辨率/时长/大小信息行单行省略：大字号下折成两行会把卡片撑高，
+            // 并让右侧操作按钮与文件名首行错位
             if (video.parsed)
               Text('${video.resolution != "N/A" ? "${video.resolution}  •  " : ""}${video.durationStr}  •  ${formatFileSize(video.sizeMb)}',
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant))
             else
-              Text(s.probing, style: TextStyle(fontSize: 11, color: scheme.outline)),
+              Text(s.probing, maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11, color: scheme.outline)),
           ])),
           // 仅删除按钮
           IconButton(icon: Icon(Icons.arrow_upward, size: 16, color: scheme.outline), tooltip: s.isZh ? '上移' : 'Move Up',

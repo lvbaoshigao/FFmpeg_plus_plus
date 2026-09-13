@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'editor_kit.dart';
+import '../app_slider.dart';
 
 class SpeedStepEditor extends ParamsStepEditor {
   const SpeedStepEditor({super.key, required super.params, required super.onChanged, super.isZh = true});
@@ -110,7 +111,7 @@ class _SpeedStepEditorState extends State<SpeedStepEditor> with StepEditorState<
           // Slider (preset mode)
           Row(children: [
             Text('0.25x', style: TextStyle(fontSize: 10, color: cs.outline)),
-            Expanded(child: Slider(
+            Expanded(child: AppSlider(
               value: speed,
               min: 0.25,
               max: 4.0,

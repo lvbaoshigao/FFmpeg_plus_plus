@@ -4,7 +4,6 @@
 // 在折叠与展开两种状态下都能构建，且尺寸令牌与主界面基准一致。
 import 'package:ffmpegpp_gui/providers/app_state.dart';
 import 'package:ffmpegpp_gui/theme/app_theme.dart';
-import 'package:ffmpegpp_gui/theme/mobile_ui.dart';
 import 'package:ffmpegpp_gui/widgets/mobile_glass_pill.dart';
 import 'package:ffmpegpp_gui/widgets/mobile_top_bar.dart';
 import 'package:ffmpegpp_gui/widgets/mobile_ui.dart';

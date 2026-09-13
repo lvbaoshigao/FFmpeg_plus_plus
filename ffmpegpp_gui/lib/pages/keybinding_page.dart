@@ -174,7 +174,11 @@ class _KeybindingDialogState extends State<_KeybindingDialog> {
                   keys: config.keyBindings['nav_command'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
               _shortcutTile(actionId: 'nav_settings', label: isZh ? '跳转设置页' : 'Go to Settings',
                   keys: config.keyBindings['nav_settings'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
-              _shortcutTile(actionId: 'project_search', label: isZh ? '搜索项目' : 'Search Projects',
+              // 「搜索项目」的旧绑定现在打开的是全局搜索（见 app.dart 的快捷键分发），
+              // 文案一并改成「全局搜索」，并补上 global_search 条目让用户能改绑 Ctrl+K。
+              _shortcutTile(actionId: 'global_search', label: isZh ? '全局搜索' : 'Global Search',
+                  keys: config.keyBindings['global_search'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
+              _shortcutTile(actionId: 'project_search', label: isZh ? '全局搜索（旧绑定）' : 'Global Search (legacy key)',
                   keys: config.keyBindings['project_search'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
               const SizedBox(height: 16),
 

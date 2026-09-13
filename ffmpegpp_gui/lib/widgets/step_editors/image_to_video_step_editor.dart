@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'editor_kit.dart';
+import '../app_slider.dart';
 
 class ImageToVideoStepEditor extends ParamsStepEditor {
   final int containerFileCount;
@@ -43,7 +44,7 @@ class _ImageToVideoStepEditorState extends State<ImageToVideoStepEditor> with St
               child: Text(zh ? '重置' : 'Reset', style: const TextStyle(fontSize: 11))),
         ]),
         Row(children: [
-          Expanded(child: Slider(
+          Expanded(child: AppSlider(
             value: fps.clamp(1.0, 60.0), min: 1, max: 60, divisions: 59,
             onChanged: (v) => update('framerate', v.roundToDouble()),
           )),

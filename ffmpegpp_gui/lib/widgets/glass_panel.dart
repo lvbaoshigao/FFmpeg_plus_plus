@@ -55,6 +55,9 @@ class GlassPanel extends StatelessWidget {
     final themeColor2 = context.select<AppState, int>((s) => s.config.themeColor2);
     final noCardGlass = context.select<AppState, bool>((s) => s.config.noCardGlass);
     final settingsFrostedGlass = context.select<AppState, bool>((s) => s.config.settingsFrostedGlass);
+    // 玻璃 GPU 参数（同样细粒度 select）：折射 / 镜面高光走 shader，模糊 σ 走
+    // 模糊样式与无 Impeller 时的液态玻璃回退，PC 是否启用 shader 也在这里统一判定。
+    final glassCfg = glassGpuConfigOf(context);
     final effect = style ?? globalEffect;
     // 透明度：0.0~1.0，映射到背景 alpha；0 时完全透明（仅保留边缘扭曲/折射）
     final op = cardOpacity.clamp(0.0, 1.0);
@@ -213,7 +216,10 @@ class GlassPanel extends StatelessWidget {
     // 内存优化：Windows（D3D12）上高斯模糊的中间纹理按「面板尺寸 +
     // 约 3σ 各边 padding」分配，σ 从 16/18 降到 12 时视觉几乎无差别，
     // 但每块玻璃面板的离屏内存明显下降（配合页面常驻上限一起生效）。
-    final double sigma = isWindowsPlatform ? blur.clamp(0.0, 12.0) : blur;
+    // σ 统一由设置→「模糊强度」（AppConfig.glassBlurSigma，默认 14）驱动，
+    // Windows 侧继续钳制到 12（见 liquid_glass_fallback.effectiveGlassSigma）；
+    // 本 widget 的 blur 参数仅保留给移动端「设置项毛玻璃」分支使用。
+    final double sigma = effectiveGlassSigma(glassCfg);
 
     if (effect == 'blur') {
       // 仅高斯模糊背景：半透明 + 模糊，无渐变、无阴影、无折射 —— 最简洁
@@ -301,15 +307,19 @@ class GlassPanel extends StatelessWidget {
       child: child,
     );
 
-    // 真液态玻璃（Impeller）：GPU shader 折射 + 镜面高光，与移动端药丸一致。
-    // Windows 桌面端默认 Skia（tools 对 desktop 传 enable-impeller=false），
-    // ImageFilter.shader 不可用 → 自动落入下方 LiquidGlassBackdrop 回退。
+    // 真液态玻璃（GPU shader）：折射 + 镜面高光，与移动端药丸一致。
+    // 桌面端默认关闭（gpuGlassEnabled = 引擎支持 && (移动端 || 设置里显式开启 PC 端 GPU 玻璃)）：
+    // ImageFilter.shader 的 backdrop 纹理取向与坐标空间在桌面各后端不一致
+    // （用户反馈过「PC 玻璃背景倒置且不是壁纸」），关闭后落到下方
+    // LiquidGlassBackdrop（高斯模糊 + 倒角高光）→ 背景就是真实壁纸；
+    // 另外 Windows 默认 Skia（tools 对 desktop 传 enable-impeller=false）时
+    // shaderGlassSupported 本身即为 false。
     // shader 路径里 tint 由 OCLiquidGlass.color 提供（GPU 内部叠加），
     // 内层只保留描边，避免「主题色 + 主题色」双重染色。
-    if (shaderGlassSupported) {
+    if (gpuGlassEnabled(glassCfg)) {
       return RepaintBoundary(
         child: OCLiquidGlassGroup(
-          settings: kLiquidGlassSettings,
+          settings: glassSettingsFor(glassCfg),
           child: OCLiquidGlass(
             borderRadius: radius,
             color: baseColor.withAlpha(liqTop),

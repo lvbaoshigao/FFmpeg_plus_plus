@@ -171,24 +171,10 @@ Widget navMaskPill(ColorScheme scheme, bool isDark, String style) {
 /// OCLiquidGlass 静态 settings：dark/light 差异化由 tint/shadow 承担，
 /// 这样所有 build 都使用同一份 const 实例，避免每次新建 settings 触发
 /// shader uniform 重置（移动端表现为液态玻璃"来回跳跃"闪烁）。
-const _navLiquidSettings = OCLiquidGlassSettings(
-  // 3D 液态玻璃：u_size 修复后这些参数才真正生效。
-  // refractStrength（负 = 凹透镜）给水滴折射；spec 给镜面高光；lightband 给光带。
-  // 数值取中等：可见 3D，但不复现早期的「光污染/横线」。
-  // specStrength 3.0→0.5、specPower 100→48：shader 的 L1/L2 两盏对向灯会在
-  // 圆角的左上/右下角各打出一个镜面光点，原参数峰值 +2.5 直接过曝成明显白点；
-  // 降低强度并放宽高光锐度后变成柔和的角部光泽，不再抢眼。
-  // blurRadiusPx/lightbandStrength 与 mobile_glass_pill 同步归零：
-  // 1px 径向模糊每像素 49 次纹理采样，进度刷新时导航栏每帧重采样浪费 GPU；
-  // 光带在药丸中线上形成横向分界线（上下分层），彻底关闭。
-  refractStrength: -0.10,
-  blurRadiusPx: 0.0,
-  specStrength: 0.5,
-  specPower: 48,
-  specWidth: 10,
-  lightbandStrength: 0.0,
-  lightbandColor: Colors.white,
-);
+// 液态玻璃 settings 统一由 liquid_glass_fallback.glassSettingsFor(cfg) 按值生成并缓存：
+// 基准值 kLiquidGlassSettings（与顶部药丸 / 卡片同源，避免多份重复常量漂移），
+// 设置里的「折射强度 / 镜面高光」在其上覆盖；实例不变时不会重新下发 shader uniform
+// （这是液态玻璃「来回跳跃」闪烁的根因）。
 
 /// navStyle 感知的玻璃外壳：把 [child] 按「底部菜单栏样式」四值套上外皮——
 /// theme/gray 直出、blur 高斯模糊、liquid GPU 液态玻璃（无 Impeller 时回退）。
@@ -214,6 +200,9 @@ class NavGlassShell extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final look = navGlassLook(scheme, isDark, pal);
+    // 玻璃 GPU 参数（细粒度 select）：是否启用 shader、模糊 σ 都在这里判定。
+    final glassCfg = glassGpuConfigOf(context);
+    final double shellSigma = effectiveGlassSigma(glassCfg);
     final bottomSafe = MediaQuery.of(context).padding.bottom;
     final op = pal.op.clamp(0.0, 1.0);
 
@@ -233,7 +222,8 @@ class NavGlassShell extends StatelessWidget {
         child: ClipRRect(
           borderRadius: BorderRadius.circular(radius),
           child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+            // σ 由设置→「模糊强度」驱动（Windows 钳到 12）
+            filter: ImageFilter.blur(sigmaX: shellSigma, sigmaY: shellSigma),
             child: child,
           ),
         ),
@@ -241,15 +231,19 @@ class NavGlassShell extends StatelessWidget {
     }
 
     // liquid：oc_liquid_glass 液态玻璃（GPU fragment shader）。
-    // 无 Impeller（Windows 默认 Skia）时回退为高斯模糊 + 倒角高光，
-    // 避免 shader backdrop 被整体跳过、底部导航玻璃整块消失。
-    if (!shaderGlassSupported) {
+    // 走 shader 的条件 = 引擎支持（Impeller）且（移动端 || 设置里显式开启 PC GPU
+    // 玻璃）—— 桌面默认关闭：shader backdrop 的纹理取向/坐标空间在桌面后端不一致
+    // （用户反馈「PC 玻璃背景倒置且不是壁纸」）；无 Impeller（Windows 默认 Skia）
+    // 时也走这里 → 回退为高斯模糊 + 倒角高光，避免 shader backdrop 被整体跳过、
+    // 底部导航玻璃整块消失。
+    if (!gpuGlassEnabled(glassCfg)) {
       return Padding(
         padding: EdgeInsets.fromLTRB(14, 2, 14, bottomSafe + 8),
         // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
         child: LiquidGlassBackdrop(
           borderRadius: BorderRadius.circular(radius),
-          sigma: 16,
+          // σ 由设置→「模糊强度」驱动（Windows 钳到 12）
+          sigma: shellSigma,
           opacity: op,
           shadow: BoxShadow(
             color: Colors.black.withAlpha(isDark ? 70 : 26),
@@ -262,14 +256,15 @@ class NavGlassShell extends StatelessWidget {
     }
 
     // 关键修复（沿用主底部导航的防闪烁策略）：
-    // 1) const _navLiquidSettings，避免每次 build 新建 settings 触发 shader 重置；
+    // 1) settings 走 glassSettingsFor(glassCfg)（按值缓存复用），避免每次 build
+    //    新建 settings 触发 shader uniform 重置；
     // 2) OCLiquidGlassGroup 用 ValueKey(NavGlassPal)，仅玻璃配置变化才重建节点；
     // 3) OCLiquidGlass 独立 key（带 keyPrefix 防多实例冲突）；
     // 4) RepaintBoundary 放在 OCLiquidGlassGroup 外部隔离重绘。
     return RepaintBoundary(
       child: OCLiquidGlassGroup(
         key: ValueKey<NavGlassPal>(pal),
-        settings: _navLiquidSettings,
+        settings: glassSettingsFor(glassCfg),
         child: Padding(
           padding: EdgeInsets.fromLTRB(14, 2, 14, bottomSafe + 8),
           child: OCLiquidGlass(
@@ -331,6 +326,41 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
   /// 否则遮罩会先跳回旧选中项、再被长按移动拉回，出现可见的双吸附抖动）。
   bool _longPressActive = false;
 
+  /// 遮罩位置相关的「页面侧」变化信号：PageView 位置变化 + 滚动活动开始/结束。
+  /// 用 `ValueNotifier<int>`（而不是 setState）只让遮罩子树重建 —— 页面滑动期间
+  /// 每帧都会变，重建整条导航栏（含 OCLiquidGlassGroup 的 shader 组件）代价太大。
+  final ValueNotifier<int> _pageTick = ValueNotifier<int>(0);
+
+  /// 当前绑定的 PageView 滚动位置（PageView 尚未 attach 时为 null）。
+  ScrollPosition? _pagePosition;
+
+  /// 是否处于「手指拖菜单栏松手后」的吸附窗口：这段时间内即使 PageView 收到
+  /// 程序驱动的 animateToPage（app.dart 的 _selectMobileNav 紧接着就会调用它），
+  /// 遮罩也必须用 260ms 从松手点吸附到目标药丸，不能改成跟随页面 —— 否则会先
+  /// 弹回旧页面位置再跟着页面走（用户反馈的「弹一下才移动」）。页面停稳后自动清除。
+  bool _releasedFromDrag = false;
+
+  bool get _pageIsScrolling => _pagePosition?.isScrollingNotifier.value ?? false;
+
+  /// 绑定 / 解绑 pageController 的 ScrollPosition（幂等，可在 build 中安全调用）。
+  /// 之所以要拿 position：需要 isScrollingNotifier 判断「PageView 是否真的在滑动」，
+  /// 这是区分「跟随页面」与「吸附到选中项」的唯一可靠信号（只看 pc.page 是否为
+  /// 小数做不到，见 _buildMaskFor 的注释）。
+  void _syncPagePosition() {
+    final pc = widget.pageController;
+    final pos = (pc != null && pc.hasClients) ? pc.position : null;
+    if (identical(pos, _pagePosition)) return;
+    _pagePosition?.isScrollingNotifier.removeListener(_onPageSideChanged);
+    _pagePosition?.removeListener(_onPageSideChanged);
+    _pagePosition = pos;
+    _pagePosition?.isScrollingNotifier.addListener(_onPageSideChanged);
+    _pagePosition?.addListener(_onPageSideChanged);
+    // 注意：此处可能发生在 build 中，不能 _pageTick.value++（那会在 build 期间触发
+    // 监听者 setState）；本次 build 的遮罩子树紧接着就会用新绑定重算位置。
+  }
+
+  void _onPageSideChanged() => _pageTick.value++;
+
   @override
   void initState() {
     super.initState();
@@ -342,11 +372,17 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
   @override
   void dispose() {
     _dragX.dispose();
+    _pagePosition?.isScrollingNotifier.removeListener(_onPageSideChanged);
+    _pagePosition?.removeListener(_onPageSideChanged);
+    _pagePosition = null;
+    _pageTick.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    // 幂等同步 PageView 的 ScrollPosition（首帧布局后才 attach，之后同实例直接返回）。
+    _syncPagePosition();
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     // 仅订阅玻璃渲染 + 主题色相关字段（navGlassPalOf 内部用 select），避免
@@ -530,6 +566,10 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
   /// 现在：先切页（父组件同帧更新 selectedIndex），再复位拖动态；
   /// 目标用最近中心选取，无缝隙死区。
   void _endDrag(double itemW, int itemCount, double gap, Map<int, int> pageMap) {
+    // 进入「吸附窗口」：app.dart 的 _selectMobileNav 会紧接着对该 PageView 调用
+    // animateToPage，此时遮罩必须继续用 260ms 从松手点吸附到目标药丸，而不能切到
+    // 「跟随页面」（否则会先弹回旧页面位置 —— 见 _buildMaskFor 的注释）。
+    _releasedFromDrag = true;
     final dx = _dragX.value;
     if (dx != null) {
       int target = 0;
@@ -556,13 +596,22 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
 
   /// 构建遮罩胶囊的定位子树。
   ///
-  /// 三种状态：
-  /// 1. 药丸拖动（_dragX != null）：Duration.zero 精确跟随手指；
-  /// 2. PageView 滑动中（pageController.page 为非整页小数）：遮罩以
-  ///    Duration.zero 连续跟随页面实时位置 —— 修复快速滑动跨页时，
-  ///    遮罩先在中途项停留一拍再跳到目标项的「跳跃」观感；
-  /// 3. 静止：AnimatedPositioned 以 260ms easeOutCubic 吸附到选中项。
-  /// 仅此子树订阅 pageController，页面滑动期间每帧只重建这个小 Positioned。
+  /// 位置来源有三种，且**互斥**（这是「弹一下」的修复核心）：
+  /// 1. 手指拖菜单栏（_dragX != null）：严格 1:1 跟随手指，时长 0；
+  /// 2. PageView 正在滑动（isScrollingNotifier == true）且不处于「拖菜单栏松手后的
+  ///    吸附窗口」：跟随 pc.page 的实时小数位置，时长 0 —— 与页面 1:1 同步；
+  /// 3. 其余（静止 / 等待吸附）：260ms easeOutCubic 吸附到选中项。
+  ///
+  /// 为什么不能再按「pc.page 是否为小数」来切换：app.dart 点按菜单是
+  /// 「先更新 selectedIndex，再 animateToPage」，中间存在一帧 pc.page 仍是整数：
+  /// 那一帧遮罩会走 260ms 吸附、朝**新**选中项起步，下一帧 pc.page 变成小数又切回
+  /// 跟随，于是被拉回**旧**页面位置再跟页面走 —— 肉眼就是「先弹一下才移动」。
+  /// 现在改用「页面是否真的在滚动」判断，并让三个来源共用同一个 AnimatedPositioned
+  /// （Element 复用不重建子树，ImplicitlyAnimatedWidget 还会用当前动画值作为新
+  /// tween 起点，因此 拖动 → 吸附 的交接是连续的）。
+  ///
+  /// 仅此子树订阅 _dragX / _pageTick，页面滑动与拖动期间导航栏其余部分
+  /// （药丸行、玻璃 shader 组件）不随每帧重建。
   Widget _buildMaskPositioned(
     int itemIdx,
     double itemW,
@@ -572,13 +621,14 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
     required bool isDark,
     required String style,
   }) {
-    // 只有这个子树订阅 _dragX：拖动时导航栏其余部分（药丸行、玻璃 shader 组件）
-    // 不再随每帧重建，仅遮罩位置变化。
     return ValueListenableBuilder<double?>(
       valueListenable: _dragX,
-      builder: (context, dragX, _) => _buildMaskFor(
-        dragX, itemIdx, itemW, pillGap, itemCount,
-        scheme: scheme, isDark: isDark, style: style,
+      builder: (context, dragX, _) => ValueListenableBuilder<int>(
+        valueListenable: _pageTick,
+        builder: (context, _, _) => _buildMaskFor(
+          dragX, itemIdx, itemW, pillGap, itemCount,
+          scheme: scheme, isDark: isDark, style: style,
+        ),
       ),
     );
   }
@@ -602,41 +652,45 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
       child: RepaintBoundary(child: navMaskPill(scheme, isDark, style)),
     );
 
-    Widget buildStatic() => AnimatedPositioned(
-          duration: dragging ? Duration.zero : const Duration(milliseconds: 260),
-          curve: Curves.easeOutCubic,
-          left: dragging ? (dragX - itemW / 2) : _itemLeft(itemIdx, itemW, pillGap),
-          top: 2,
-          bottom: 2,
-          width: itemW,
-          child: mask,
-        );
+    // 退出「拖菜单栏松手后的吸附窗口」的条件：PageView 已停稳且停在选中项上
+    // （页面若根本没动 —— 例如点按当前项 —— 本次 build 就会清除）。
+    if (_releasedFromDrag) {
+      final pc = widget.pageController;
+      final p = (pc != null && pc.hasClients) ? pc.page : null;
+      if (!_pageIsScrolling && (p == null || (p - itemIdx).abs() <= 0.01)) {
+        _releasedFromDrag = false;
+      }
+    }
 
-    final pc = widget.pageController;
-    if (pc == null || dragging) return buildStatic();
+    // 位置来源①：跟随手指（时长 0）
+    double? followLeft;
+    if (dragging) {
+      followLeft = dragX - itemW / 2;
+    } else if (!_releasedFromDrag && _pageIsScrolling) {
+      // 位置来源②：跟随 PageView。用户拖页面、松手后的惯性吸附、以及点按菜单后的
+      // animateToPage 都与页面实时位置 1:1（不再与吸附动画互相覆盖或抖动）。
+      final pc = widget.pageController;
+      final p = (pc != null && pc.hasClients) ? pc.page : null;
+      if (p != null) {
+        // PageView 的下标空间与菜单项序号同序（app.dart 的 _kMobileNavOrder
+        // = [0,1,3,4]，正好是 4 个 Tab 的 PageView 下标），故可直接按项宽定位。
+        followLeft = p.clamp(0.0, itemCount - 1).toDouble() * (itemW + pillGap);
+      }
+    }
 
-    return AnimatedBuilder(
-      animation: pc,
-      builder: (ctx, _) {
-        double? frac;
-        if (pc.hasClients) {
-          final p = pc.page ?? itemIdx.toDouble();
-          if ((p - itemIdx).abs() > 0.005 &&
-              p >= -0.001 &&
-              p <= itemCount - 1 + 0.001) {
-            frac = p.clamp(0.0, itemCount - 1).toDouble();
-          }
-        }
-        if (frac == null) return buildStatic();
-        // 页面滑动中：连续位置。药丸中心间距 = itemW + pillGap。
-        return Positioned(
-          left: frac * (itemW + pillGap),
-          top: 2,
-          bottom: 2,
-          width: itemW,
-          child: mask,
-        );
-      },
+    // 位置来源③：吸附（260ms）。follow 分支用 Duration.zero —— AnimationController
+    // 对 0 时长直接赋值（_animateToInternal 的 simulationDuration == Duration.zero
+    // 分支），因此就是逐帧 1:1 跟随，不会引入一帧延迟。
+    return AnimatedPositioned(
+      duration: followLeft != null
+          ? Duration.zero
+          : const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+      left: followLeft ?? _itemLeft(itemIdx, itemW, pillGap),
+      top: 2,
+      bottom: 2,
+      width: itemW,
+      child: mask,
     );
   }
 }

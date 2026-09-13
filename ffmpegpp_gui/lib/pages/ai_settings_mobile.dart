@@ -4,6 +4,7 @@ import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import '../widgets/app_card.dart';
+import '../widgets/app_slider.dart';
 import '../widgets/mobile_bottom_nav.dart';
 import '../widgets/mobile_glass_pill.dart';
 import '../widgets/mobile_top_bar.dart';
@@ -2076,7 +2077,9 @@ class _TemperatureSliderState extends State<_TemperatureSlider> {
             style: TextStyle(fontSize: 12, color: scheme.onSurface, fontWeight: FontWeight.w600)),
       ),
       Expanded(
-        child: Slider(
+        // 统一滑杆样式；「拖动只改本地 _drag、松手 onChangeEnd 才提交」的节流语义
+        // 保持不变（这正是 AppSlider 推荐的用法）。
+        child: AppSlider(
           value: v,
           min: 0,
           max: 2,

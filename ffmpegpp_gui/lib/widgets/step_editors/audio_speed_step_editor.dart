@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'editor_kit.dart';
+import '../app_slider.dart';
 
 class AudioSpeedStepEditor extends ParamsStepEditor {
   const AudioSpeedStepEditor({super.key, required super.params, required super.onChanged, super.isZh});
@@ -32,7 +33,7 @@ class _AudioSpeedStepEditorState extends State<AudioSpeedStepEditor> with StepEd
               child: Text(zh ? '重置' : 'Reset', style: const TextStyle(fontSize: 11))),
         ]),
         Row(children: [
-          Expanded(child: Slider(
+          Expanded(child: AppSlider(
             value: tempo.clamp(0.5, 4.0),
             min: 0.5, max: 4.0, divisions: 70,
             label: '${tempo.toStringAsFixed(2)}x',

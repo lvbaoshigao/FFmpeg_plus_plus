@@ -43,10 +43,7 @@ class MobileUi {
   static const double actionButtonSize = 34;
   /// 动作按钮图标尺寸
   static const double actionIconSize = 19;
-  /// 动作按钮圆角半径
-  static const double actionRadius = 18;
-
-  /// 搜索药丸展开后的宽度
+  /// 搜索药丸展开后的宽度（MobileSearchPill 的默认宽度）。
   static const double searchPillWidth = 200;
 
   /// 内容区从顶栏下方开始的额外留白：

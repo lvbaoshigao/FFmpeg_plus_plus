@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../services/frame_preview.dart';
 import 'editor_kit.dart';
+import '../app_slider.dart';
 
 class ClipStepEditor extends ParamsStepEditor {
   final String videoPath;
@@ -142,7 +143,7 @@ class _ClipStepEditorState extends State<ClipStepEditor> with StepEditorState<Cl
             )),
           ]),
           const SizedBox(height: 8),
-          RangeSlider(
+          AppRangeSlider(
             values: RangeValues(start, end),
             min: 0, max: dur > 0 ? dur : 1,
             labels: RangeLabels(_formatTime(start), _formatTime(end)),

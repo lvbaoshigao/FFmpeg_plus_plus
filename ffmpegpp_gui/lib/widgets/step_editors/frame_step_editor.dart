@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../services/frame_preview.dart';
 import 'editor_kit.dart';
+import '../app_slider.dart';
 
 class FrameStepEditor extends ParamsStepEditor {
   final String videoPath;
@@ -168,10 +169,9 @@ class _FrameStepEditorState extends State<FrameStepEditor> with StepEditorState<
   List<Widget> _buildSingleMode(ColorScheme cs, bool zh, double dur) {
     final time = ((p['time'] as num?)?.toDouble() ?? 0.0).clamp(0.0, dur);
     return [
-      SliderTheme(
-        data: SliderTheme.of(context).copyWith(trackHeight: 4, thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7)),
-        child: Slider(value: time, min: 0, max: dur > 0 ? dur : 1, onChanged: _updateTime),
-      ),
+      // 交给 AppSlider 统一外观（原来是就地包一层 SliderTheme 把轨道压到 4、thumb 缩到 7，
+      // 与其它页面的滑杆不一致）。
+      AppSlider(value: time, min: 0, max: dur > 0 ? dur : 1, onChanged: _updateTime),
       Row(children: [
         Expanded(child: TextFormField(controller: _timeCtrl,
           decoration: InputDecoration(labelText: zh ? '提取时间' : 'Time').copyWith(prefixIcon: const Icon(Icons.access_time, size: 18)),
@@ -199,7 +199,7 @@ class _FrameStepEditorState extends State<FrameStepEditor> with StepEditorState<
     final fpsRate = (p['fps_rate'] as num?)?.toDouble() ?? 1.0;
     final frameCount = re > rs ? ((re - rs) * fpsRate).ceil() : 0;
     return [
-      RangeSlider(
+      AppRangeSlider(
         values: RangeValues(rs, re), min: 0, max: dur > 0 ? dur : 1,
         onChanged: (v) {
           setState(() { p['range_start'] = v.start; p['range_end'] = v.end;

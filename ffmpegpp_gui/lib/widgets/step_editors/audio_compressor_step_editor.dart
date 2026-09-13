@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'editor_kit.dart';
+import '../app_slider.dart';
 
 class AudioCompressorStepEditor extends ParamsStepEditor {
   const AudioCompressorStepEditor({super.key, required super.params, required super.onChanged, super.isZh = true});
@@ -75,7 +76,7 @@ class _AudioCompressorStepEditorState extends State<AudioCompressorStepEditor> w
           Text(valueStr, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cs.primary)),
         ]),
         Row(children: [
-          Expanded(child: Slider(value: value.clamp(min, max), min: min, max: max, divisions: divisions, onChanged: onChanged)),
+          Expanded(child: AppSlider(value: value.clamp(min, max), min: min, max: max, divisions: divisions, onChanged: onChanged)),
         ]),
       ]),
     );

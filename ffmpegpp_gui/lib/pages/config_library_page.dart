@@ -779,7 +779,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
   Widget _buildQuickConfigCard(QuickConfig cfg, ColorScheme scheme, bool zh) {
     final content = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      child: Row(children: [
+      // 左侧图标/文字与右侧操作按钮显式居中对齐（Row 默认即 center，写明意图）：
+      // 配合标题的「单行省略」，大字号下文字不会换成两行把图标与按钮顶偏。
+      child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
         Container(
           width: 42, height: 42,
           decoration: BoxDecoration(
@@ -790,17 +792,24 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         ),
         const SizedBox(width: 14),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(cfg.name,
+          // 名称单行省略：字号调大时不再折成两行，卡片高度与图标中心线保持稳定
+          Text(cfg.name, maxLines: 1, overflow: TextOverflow.ellipsis,
               style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: scheme.onSurface)),
           const SizedBox(height: 3),
-          Row(children: [
-            Icon(_quickTypeIcon(cfg.fileType), size: 11, color: scheme.outline.withAlpha(100)),
-            const SizedBox(width: 3),
-            Text(cfg.fileType.label(zh), style: TextStyle(fontSize: 11, color: scheme.outline)),
-            const SizedBox(width: 8),
-            Text('${cfg.items.length} ${zh ? '项' : 'items'}',
-                style: TextStyle(fontSize: 11, color: scheme.outline)),
-          ]),
+          // 元信息行：Row 内文本不换行，只能溢出（debug 下黄黑条纹）。
+          // 用 FittedBox 等比缩小而不是省略，三段信息在任何字号下都完整可见。
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Row(children: [
+              Icon(_quickTypeIcon(cfg.fileType), size: 11, color: scheme.outline.withAlpha(100)),
+              const SizedBox(width: 3),
+              Text(cfg.fileType.label(zh), style: TextStyle(fontSize: 11, color: scheme.outline)),
+              const SizedBox(width: 8),
+              Text('${cfg.items.length} ${zh ? '项' : 'items'}',
+                  style: TextStyle(fontSize: 11, color: scheme.outline)),
+            ]),
+          ),
         ])),
         IconButton(
           icon: Icon(Icons.edit_outlined, size: 18, color: scheme.outline),
@@ -864,7 +873,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
               )
             : Column(children: [
                 GlassTopBar(
-                  title: Text(zh ? '配置库' : 'Config Library'),
+                  // 顶栏高度固定 56：标题必须单行省略，否则大字号下换行会顶出栏外
+                  title: Text(zh ? '配置库' : 'Config Library',
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
                   actions: _buildTopActions(scheme, zh),
                 ),
                 _buildTabSelector(scheme, zh),
@@ -958,7 +969,10 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
   /// 安全区内边距全部由顶栏提供），不再本页拼 Row/Flexible/Align。
   Widget _buildMobileTopBar(ColorScheme scheme, bool zh) {
     return MobilePillTopBar(
-      title: Text(zh ? '配置库' : 'Config Library'),
+      // 药丸高度固定（MobileUi.pillHeight）：标题单行省略；顶栏内部已用
+      // DefaultTextStyle.maxLines 兜底，这里再显式声明一次意图，避免以后回归。
+      title: Text(zh ? '配置库' : 'Config Library',
+          maxLines: 1, overflow: TextOverflow.ellipsis),
       actions: _buildTopActions(scheme, zh),
     );
   }
@@ -979,7 +993,8 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
 
     final content = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      child: Row(children: [
+      // 同快捷配置卡片：显式居中对齐 + 单行省略，避免大字号下标签折行把图标顶偏
+      child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
         Container(
           width: 42, height: 42,
           decoration: BoxDecoration(
@@ -990,21 +1005,28 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         ),
         const SizedBox(width: 14),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(entry.name, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: scheme.onSurface)),
+          Text(entry.name, maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: scheme.onSurface)),
           const SizedBox(height: 3),
-          Row(children: [
-            Icon(Icons.circle, size: 6, color: scheme.outline.withAlpha(100)),
-            const SizedBox(width: 4),
-            Text('$nodeCount ${zh ? '节点' : 'nodes'}', style: TextStyle(fontSize: 11, color: scheme.outline)),
-            const SizedBox(width: 8),
-            Icon(Icons.circle, size: 6, color: scheme.outline.withAlpha(100)),
-            const SizedBox(width: 4),
-            Text('$connCount ${zh ? '连线' : 'links'}', style: TextStyle(fontSize: 11, color: scheme.outline)),
-            const SizedBox(width: 8),
-            Icon(Icons.access_time, size: 11, color: scheme.outline.withAlpha(100)),
-            const SizedBox(width: 3),
-            Text(_formatTime(entry.updatedAt, zh), style: TextStyle(fontSize: 11, color: scheme.outline)),
-          ]),
+          // 同快捷配置卡片：FittedBox 等比缩小，节点数/连线数/时间在大字号下
+          // 既不会换行也不会溢出卡片，三段信息都保留。
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Row(children: [
+              Icon(Icons.circle, size: 6, color: scheme.outline.withAlpha(100)),
+              const SizedBox(width: 4),
+              Text('$nodeCount ${zh ? '节点' : 'nodes'}', style: TextStyle(fontSize: 11, color: scheme.outline)),
+              const SizedBox(width: 8),
+              Icon(Icons.circle, size: 6, color: scheme.outline.withAlpha(100)),
+              const SizedBox(width: 4),
+              Text('$connCount ${zh ? '连线' : 'links'}', style: TextStyle(fontSize: 11, color: scheme.outline)),
+              const SizedBox(width: 8),
+              Icon(Icons.access_time, size: 11, color: scheme.outline.withAlpha(100)),
+              const SizedBox(width: 3),
+              Text(_formatTime(entry.updatedAt, zh), style: TextStyle(fontSize: 11, color: scheme.outline)),
+            ]),
+          ),
           if (entry.description.isNotEmpty) ...[
             const SizedBox(height: 2),
             Text(entry.description, maxLines: 1, overflow: TextOverflow.ellipsis,

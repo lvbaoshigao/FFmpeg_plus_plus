@@ -150,30 +150,10 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
   // 进度/日志/任务等高频 notify 会反复重建 OCLiquidGlassGroup + OCLiquidGlass，
   // 导致 GPU shader uniform 重新初始化 → 视觉上"液态玻璃来回跳跃"。
   // 改用 Selector 精细订阅 + 稳定 key 后，shader 内部状态得以保留。
-  static const _liquidSettings = OCLiquidGlassSettings(
-    // 3D 液态玻璃：u_size 修复后这些参数才真正生效。
-    // refractStrength（负 = 凹透镜）给水滴折射；spec 给镜面高光；lightband 给光带。
-    // 数值取中等：可见 3D，但不复现早期的「光污染/横线」。
-    // specStrength 3.0→0.5、specPower 100→48：shader 的 L1/L2 两盏对向灯会在
-    // 圆角的左上/右下角各打出一个镜面光点，原参数峰值 +2.5 直接过曝成明显白点；
-    // 降低强度并放宽高光锐度后变成柔和的角部光泽，不再抢眼。
-    //
-    // blurRadiusPx 1.0→0：shader 的 radialBlur 每像素要采 1+4×12=49 次纹理，
-    // 页面每个玻璃卡片都是独立 BackdropFilter 层，路由转场（如设置二级菜单
-    // 返回）时所有层每帧全量重采样 → 移动端 GPU 过载掉帧。1px 模糊肉眼不可辨，
-    // 置 0 后单采样直通，转场恢复流畅。
-    //
-    // lightbandStrength 0.35→0：光带按固定像素偏移绘制，在较「高」的内容
-    // （设置项卡片等）上是一条横向亮带，把玻璃内容视觉截成两段，即「上下分层
-    // 有分界」的来源之一；彻底关掉（下方注释原本就声明去掉它，数值却遗留了）。
-    refractStrength: -0.10,
-    blurRadiusPx: 0.0,
-    specStrength: 0.5,
-    specPower: 48,
-    specWidth: 10,
-    lightbandStrength: 0.0,
-    lightbandColor: Colors.white,
-  );
+  // 液态玻璃 settings 统一由 liquid_glass_fallback.glassSettingsFor(cfg) 按值生成并
+  // 缓存：基准值来自 kLiquidGlassSettings（与底部导航 / 卡片同源，避免三份重复常量
+  // 漂移），设置里的「折射强度 / 镜面高光」在其上覆盖；实例不变时不会重新下发
+  // shader uniform（这是移动端「玻璃来回跳跃」闪烁的根因）。
 
   void _set(bool v) {
     if (_pressed == v) return;
@@ -198,6 +178,10 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final key = context.select<AppState, _PillGlassKey>(_keyOf);
+    // 玻璃 GPU 参数（细粒度 select）：折射 / 高光走 shader，模糊 σ 走模糊/回退分支，
+    // 是否启用 shader 在此统一判定（PC 默认关闭，见 gpuGlassEnabled）。
+    final glassCfg = glassGpuConfigOf(context);
+    final double pillSigma = effectiveGlassSigma(glassCfg);
     final style = key.style;
     final op = key.op.clamp(0.0, 1.0);
     // 玻璃样式（liquid/blur）的 tint 与底部导航栏对齐：* 255 无截断，
@@ -255,19 +239,20 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
       pill = ClipRRect(
         borderRadius: BorderRadius.circular(widget.radius),
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+          filter: ImageFilter.blur(sigmaX: pillSigma, sigmaY: pillSigma),
           child: inner,
         ),
       );
-    } else if (shaderGlassSupported) {
+    } else if (gpuGlassEnabled(glassCfg)) {
       // liquid：液态玻璃 shader（Impeller 可用时）
       // 关闭高光带（lightband）与压低镜面高光：高光带按固定像素偏移绘制，
       // 在较「高」的内容（如设置项卡片）上会变成一条横向"分界线"，
       // 视觉上把内容截成两段 —— 这里去掉它，仅保留折射 + 柔和高光。
       //
       // 关键修复：
-      // 1) 使用静态 const _liquidSettings（dark 差异化交给 tint + shadow），
-      //    避免每次 build 都新建 OCLiquidGlassSettings 触发 shader uniform 重置；
+      // 1) settings 走 glassSettingsFor(glassCfg)（按值缓存的同一实例，dark 差异化
+      //    交给 tint + shadow），避免每次 build 新建 OCLiquidGlassSettings 触发
+      //    shader uniform 重置；
       // 2) 给 OCLiquidGlassGroup 加 ValueKey(key)，仅当玻璃配置
       //    变化时才真的销毁/重建液态玻璃节点；普通 AppState notify（进度、
       //    日志、任务状态等）会让 key 不变，Element 复用，shader 内部状态稳定；
@@ -279,7 +264,7 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
       pill = RepaintBoundary(
         child: OCLiquidGlassGroup(
           key: glassKey,
-          settings: _liquidSettings,
+          settings: glassSettingsFor(glassCfg),
           child: OCLiquidGlass(
             key: innerKey,
             borderRadius: widget.radius,
@@ -300,7 +285,8 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
       // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
       pill = LiquidGlassBackdrop(
         borderRadius: BorderRadius.circular(widget.radius),
-        sigma: 16,
+        // σ 由设置→「模糊强度」驱动（Windows 钳到 12）
+        sigma: pillSigma,
         opacity: op,
         shadow: BoxShadow(
           color: Colors.black.withAlpha(isDark ? 60 : 22),

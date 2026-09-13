@@ -328,8 +328,11 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
   /// 窗口顶栏：标题 + 文件类型徽章 + 保存/关闭。
   Widget _buildHeader(ColorScheme scheme, bool isZh) {
     return Padding(
+      // 垂直内边距上下同为 12（左右 18/12 是玻璃圆角留白）；Row 显式居中对齐，
+      // 让标题、文件类型徽标、保存/关闭按钮在任意字号下保持同一条垂直中心线。
       padding: const EdgeInsets.fromLTRB(18, 12, 12, 12),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Expanded(
             child: Column(
@@ -338,6 +341,9 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
               children: [
                 Text(
                   _config.name,
+                  // 标题单行省略：大字号下不再折成两行把顶栏撑高（保存/关闭按钮会跟着下移）
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
@@ -364,6 +370,9 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
             ),
             child: Text(
               _config.fileType.label(isZh),
+              // 徽标随字号加宽会顶开右侧按钮：单行省略，高度始终与顶栏一致
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _fileTypeColor(_config.fileType, scheme)),
             ),
           ),
@@ -377,7 +386,8 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
           const SizedBox(width: 8),
           FilledButton.icon(
             icon: const Icon(Icons.save_outlined, size: 16),
-            label: Text(isZh ? '保存' : 'Save'),
+            // 按钮文字单行省略（窄窗口/大字号下不再折行把按钮撑高）
+            label: Text(isZh ? '保存' : 'Save', maxLines: 1, overflow: TextOverflow.ellipsis),
             onPressed: _dirty ? _save : null,
             style: FilledButton.styleFrom(
               padding: EdgeInsets.symmetric(horizontal: 14, vertical: isMobileContext ? 0 : 0),
@@ -438,18 +448,25 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+          // 上下留白必须相等（原来上 14 / 下 8）：这一行紧贴面板顶边与下方分隔线，
+          // 不等会让人误以为「配置项」标签整体偏上；左右 16 与列表项对齐。
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Icon(Icons.list, size: 14, color: scheme.outline),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
                   isZh ? '配置项' : 'Config Items',
+                  // 头部行高度固定：标签与数量都单行省略，大字号下不会折行加高
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.outline),
                 ),
               ),
-              Text('${_config.items.length}', style: TextStyle(fontSize: 11, color: scheme.outline.withAlpha(120))),
+              Text('${_config.items.length}', maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11, color: scheme.outline.withAlpha(120))),
             ],
           ),
         ),
@@ -516,8 +533,12 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // 标题必须单行：折行后左侧勾选框/图标会与「首行」错位，
+                    // 视觉上就是勾选框偏上、与文字上下不对称。
                     Text(
                       title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
@@ -577,13 +598,19 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // 标题与右侧开关同处一行：显式居中对齐 + 标题单行省略。
+          // 否则大字号下标题折成两行，首行会高于开关中心 —— 正是
+          // 「字体与选择框上下不对称、整体偏上」的观感来源。
           Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Icon(_itemIcon(item.key), size: 20, color: scheme.primary),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: scheme.onSurface),
                 ),
               ),
@@ -1008,9 +1035,13 @@ class _BoolSwitch extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    // 标签与开关同处一行：标签必须单行省略，否则大字号下折成两行后
+    // 首行明显高于开关中心 —— 即「字体与选择框上下不对称、整体偏上」的观感。
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Expanded(child: Text(label, style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant))),
+        Expanded(child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant))),
         Switch(
           value: value,
           onChanged: onChanged,

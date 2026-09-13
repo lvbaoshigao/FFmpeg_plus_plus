@@ -7,6 +7,7 @@ import '../services/thumbnail_service.dart';
 import '../services/shell_open.dart';
 import '../theme/app_strings.dart';
 import 'app_card.dart';
+import 'app_slider.dart';
 
 /// 后端流水线步骤 action → 本地化名称。
 /// 详细进度（节点圆圈、tooltip）不再直接展示英文 action 名。
@@ -147,13 +148,12 @@ class TaskCard extends StatelessWidget {
                   height: 6,
                 ),
                 const SizedBox(height: 4),
-                // 下层：当前步骤进度
-                LinearProgressIndicator(
+                // 下层：当前步骤进度。高度由 AppProgressBar 统一为 6（原来是 3，
+                // 与上面 6px 的分段条、与其它页面的进度条都不一致）。
+                AppProgressBar(
                   value: task.callProgresses.isNotEmpty && task.currentCallIndex < task.callProgresses.length
                       ? task.callProgresses[task.currentCallIndex]
                       : null,
-                  minHeight: 3,
-                  backgroundColor: scheme.surfaceContainerHighest,
                 ),
               ],
               const SizedBox(height: 4),

@@ -90,6 +90,44 @@ class OCLiquidGlassSettings {
       lightbandColor: lightbandColor ?? this.lightbandColor,
     );
   }
+
+  /// 值相等语义（本类字段全部不可变）。
+  /// 用途：liquid_glass_fallback.glassSettingsFor 按值缓存实例；以及
+  /// _RenderLiquidGlassGroup 在 settings 未变时跳过 markNeedsPaint —— 否则父级
+  /// 每次 rebuild 都会让每张玻璃卡片白白重绘一次 backdrop 滤镜。
+  @override
+  bool operator ==(Object other) =>
+      other is OCLiquidGlassSettings &&
+      other.blendPx == blendPx &&
+      other.refractStrength == refractStrength &&
+      other.distortFalloffPx == distortFalloffPx &&
+      other.distortExponent == distortExponent &&
+      other.blurRadiusPx == blurRadiusPx &&
+      other.specAngle == specAngle &&
+      other.specStrength == specStrength &&
+      other.specPower == specPower &&
+      other.specWidth == specWidth &&
+      other.lightbandOffsetPx == lightbandOffsetPx &&
+      other.lightbandWidthPx == lightbandWidthPx &&
+      other.lightbandStrength == lightbandStrength &&
+      other.lightbandColor == lightbandColor;
+
+  @override
+  int get hashCode => Object.hash(
+        blendPx,
+        refractStrength,
+        distortFalloffPx,
+        distortExponent,
+        blurRadiusPx,
+        specAngle,
+        specStrength,
+        specPower,
+        specWidth,
+        lightbandOffsetPx,
+        lightbandWidthPx,
+        lightbandStrength,
+        lightbandColor,
+      );
 }
 
 /// Simplified shape data structure used to pass geometry information to the shader.
@@ -176,6 +214,15 @@ class OCLiquidGlassGroup extends StatefulWidget {
 class _OCLiquidGlassGroupState extends State<OCLiquidGlassGroup> {
   FragmentProgram? _program = _OCLiquidGlassShaderCache.cachedProgram;
 
+  /// 本 State 独占的 FragmentShader（首次 build 创建后复用）。
+  /// 为什么缓存：fragmentShader() 每次调用都会分配一份 uniform 缓冲
+  /// （Float32List），而 render object 只在 createRenderObject 里取用一次，
+  /// 之后每次 build 新建的实例都会被直接丢弃 —— 父级 rebuild 越频繁越浪费。
+  /// 安全前提：每个 group 各持一份实例（uniform 是该实例内的可变状态）；
+  /// 且 uniform 取值会在 ImageFilter.shader(shader) 构造时被引擎拷贝快照
+  /// （engine/lib/ui/painting/fragment_shader.cc 的 as_image_filter() 里 memcpy）。
+  FragmentShader? _shader;
+
   @override
   void initState() {
     super.initState();
@@ -213,7 +260,7 @@ class _OCLiquidGlassGroupState extends State<OCLiquidGlassGroup> {
     }
     // Once shader is loaded, create the render object that applies the effect
     return _LiquidGlassGroupRenderObject(
-      shader: _program!.fragmentShader(),
+      shader: _shader ??= _program!.fragmentShader(),
       settings: widget.settings,
       repaint: widget.repaint,
       child: widget.child,
@@ -385,6 +432,11 @@ class _RenderLiquidGlassGroup extends RenderProxyBox {
   // Visual settings for the shader effect
   OCLiquidGlassSettings _settings;
   set settings(OCLiquidGlassSettings v) {
+    // 值相同直接返回：settings 由 glassSettingsFor 按「值」缓存，配置没变时
+    // 传进来的就是同一个实例；但父级任何 rebuild 都会走到这里，无条件
+    // markNeedsPaint 会让每张玻璃卡片在无关 notify（转码进度/日志/任务状态）
+    // 时重绘一次 backdrop 滤镜。
+    if (_settings == v) return;
     _settings = v;
     markNeedsPaint(); // Trigger repaint when settings change
   }
@@ -413,49 +465,82 @@ class _RenderLiquidGlassGroup extends RenderProxyBox {
     _externalRepaint?.removeListener(markNeedsPaint);
   }
 
-  // ── 全局变换监视 ──
+  // ── 全局变换监视（回调始终挂着，只在可能有变换源时比较） ──
   //
   // 背景：本渲染对象在 paint() 时把玻璃形状的场景坐标（getTransformTo(null)）
   // 烘焙进 shader uniform。但「祖先 TransformLayer 变化」（PageView 横向翻页、
   // 过场动画、预测式返回手势等）只会改合成层的变换，不会触发本对象 repaint，
   // 于是 shader 仍按旧坐标计算 SDF 遮罩 → 玻璃光影层与内容层错位（分层），
   // 偏移稍大时当前像素全部落在旧遮罩外 → 玻璃整块「消失」。
-  //
   // 现有缓解（路由动画监听 + 最近 Scrollable 监听）覆盖不了所有路径：
   // PageView 翻页对「最近 Scrollable 是页面内 ListView」的玻璃卡片不可见，
   // 各种非滚动的变换动画也都没有通知。
   //
-  // 修复：每帧帧后回调比较自身全局变换，变化即 markNeedsPaint。
-  // postFrame 回调只在「有帧产出」时执行且不会自行调度新帧，
-  // 应用空闲时零开销；动画期间天然每帧运行，且 paint 用的是当前帧的
-  // 最新变换，玻璃与内容始终同步（最多首帧一拍延迟，不可感知）。
+  // 性能与「不漏检」的取舍（重要）：
+  // * 帧后回调必须**始终存在一个待执行实例**：addPostFrameCallback 自身不会调度
+  //   新帧（空闲时零开销，见 scheduler/binding.dart），但只要回调在，任何一帧
+  //   结束时都会执行检查 —— 于是「动画第一帧」也能被看到。反之，若静止时把回调
+  //   摘掉、等发现 Ticker 再挂，PageView 翻页的第一帧就会漏检：那一帧变换已经变了
+  //   而本对象没有重绘，之后整段翻页动画玻璃都按旧坐标画遮罩（错位/整块消失），
+  //   正是这个监视器要防的故障。
+  // * 真正的省力点在比较之前（每帧最多两次字段读取）：
+  //     ① 本帧已在 paint() 里用最新变换重绘过（_paintedSinceWatch）→ uniform 已同步，
+  //        直接跳过比较。滚动玻璃卡片时每帧都会 repaint，这条命中率最高；
+  //     ② 既没有 Ticker（transientCallbackCount == 0）也没有排队的下一帧
+  //        （!hasScheduledFrame）→ 变换不可能变化，跳过 getTransformTo(null) 这条
+  //        要沿祖先链构造 Matrix4 的贵路径。
   Matrix4? _lastGlobalTransform;
   bool _transformWatchScheduled = false;
 
+  /// 本帧是否已在 paint() 里用最新变换重绘（用于跳过冗余的变换比较）。
+  bool _paintedSinceWatch = false;
+
+  /// 挂上「帧后比较全局变换」的一次性回调（已挂或已 detach 则忽略）。
+  /// addPostFrameCallback 自身不会调度新帧，因此这里不会造成空转。
   void _scheduleTransformWatch() {
-    if (_transformWatchScheduled) return;
+    if (_transformWatchScheduled || !attached) return;
     _transformWatchScheduled = true;
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      _transformWatchScheduled = false;
-      if (!attached) return; // 链式重挂随 detach 自动停止
-      try {
-        final t = getTransformTo(null);
-        final last = _lastGlobalTransform;
-        if (last == null || !MatrixUtils.matrixEquals(last, t)) {
-          _lastGlobalTransform = t;
-          markNeedsPaint();
+    SchedulerBinding.instance.addPostFrameCallback(_onTransformWatch);
+  }
+
+  void _onTransformWatch(Duration _) {
+    _transformWatchScheduled = false;
+    if (!attached) return; // detach 后自然停止（pending 回调只空跑这一帧）
+    final paintedWithFreshTransform = _paintedSinceWatch;
+    _paintedSinceWatch = false;
+    if (!paintedWithFreshTransform) {
+      final binding = SchedulerBinding.instance;
+      if (binding.transientCallbackCount > 0 || binding.hasScheduledFrame) {
+        try {
+          final t = getTransformTo(null);
+          final last = _lastGlobalTransform;
+          if (last == null || !MatrixUtils.matrixEquals(last, t)) {
+            _lastGlobalTransform = t;
+            // 变换变了却没人重绘：立刻用新坐标重绘（下一帧生效，一拍延迟不可感知）
+            markNeedsPaint();
+          }
+        } catch (_) {
+          // 树处于瞬态（如刚被移出）时忽略本帧
         }
-      } catch (_) {
-        // 树处于瞬态（如刚被移出）时忽略本帧
       }
-      _scheduleTransformWatch();
-    });
+    }
+    _scheduleTransformWatch();
+  }
+
+  @override
+  void markNeedsPaint() {
+    super.markNeedsPaint();
+    // 任何重绘请求都可能是「变换源苏醒」的信号（滚动、路由动画、窗口尺寸变化、
+    // externalRepaint…），顺手确保监视回调在挂；静止时它只是躺在队列里不做事。
+    // 注意必须调 super：否则本对象不会真的进入重绘队列。
+    _scheduleTransformWatch();
   }
 
   @override
   void attach(PipelineOwner owner) {
     super.attach(owner);
     _lastGlobalTransform = null;
+    _paintedSinceWatch = false;
     _scheduleTransformWatch();
     markNeedsPaint();
   }
@@ -510,7 +595,15 @@ class _RenderLiquidGlassGroup extends RenderProxyBox {
     }
 
     // Calculate boundary of current render object in scene space.
+    // 坐标空间耦合（重要）：shader 的 fragPx 是「绑定纹理像素空间」的坐标，
+    // 而这里写入的 boundary / 形状中心是**场景物理像素**（logical * dpr）；
+    // 二者一致的充分条件是「绑定纹理 = 整帧 且 pass 的 snapshot 变换恒等」。
+    // 移动端满足（故可用）；桌面端（窗口缩放 / 子 pass 变换 / 后端 y 取向差异）
+    // 不保证，这正是 PC 默认关闭 shader 路径、改走 LiquidGlassBackdrop 的原因。
     final boundaryTransform = getTransformTo(null);
+    // 记录本帧使用的变换：帧后监视器据此跳过冗余比较（本帧 uniform 已是最新）。
+    _lastGlobalTransform = boundaryTransform;
+    _paintedSinceWatch = true;
     final boundary = MatrixUtils.transformRect(
       boundaryTransform,
       Offset.zero & size,
@@ -526,13 +619,25 @@ class _RenderLiquidGlassGroup extends RenderProxyBox {
 
     // Global shader parameters
     //
-    // 上游 bug 修复：原版 `var idx = 2` 直接跳过 u_size（索引 0/1），导致
-    // shader 里 `R = u_size = (0,0)`，uv0/hsz/posN 全部除以 0 → NaN，
-    // 折射/镜面高光/光带永远算不出来（「没有 3D」且整体发灰/透明失效）。
-    // 这里显式写入 framebuffer 物理尺寸，让 `uv = FlutterFragCoord()/u_size` 归一化正确。
+    // u_size（uniform 0/1）的真实语义：dart:ui 规定 ImageFilter.shader 的
+    // **第一个 vec2 uniform 由引擎写入「绑定纹理的像素尺寸」**，第一个
+    // sampler2D 为滤镜输入（见 ImageFilter.shader 官方文档）。Impeller 实现：
+    //   // impeller/entity/contents/filters/runtime_effect_filter_contents.cc
+    //   Size size = Size(input_snapshot->texture->GetSize());
+    //   memcpy(uniforms_->data(), &size, sizeof(Size));   // ← 覆盖 uniform 0/1
+    // 也就是说下面两行写入的值会被引擎覆盖，真正生效的是绑定纹理尺寸
+    // （正常情况下 = 整帧 framebuffer 的物理尺寸，与本处取值一致）。
+    // 仍然保留显式写入：① 语义自解释；② 万一后端不覆盖，也不会退化成
+    // R=(0,0) 让 uv0/hsz/posN 全除 0 → NaN（历史上正是这个 bug 让折射整体失效）。
+    //
+    // 由此得出的空间约定：shader 里的 FlutterFragCoord() 处于该纹理的像素
+    // 空间，本文件写入的形状/边界 uniform 用的是**场景物理像素**，二者只有在
+    // 「绑定纹理 = 整帧 且 当前 pass 的 snapshot 变换为恒等」时才一致 ——
+    // 移动端成立（所以移动端可用）；桌面端不保证，故 PC 默认走模糊回退
+    // （见 liquid_glass_fallback.gpuGlassEnabled）。
     sh
-      ..setFloat(0, _screenSize.width * _devicePixelRatio) // u_size.x = framebuffer width px
-      ..setFloat(1, _screenSize.height * _devicePixelRatio) // u_size.y = framebuffer height px
+      ..setFloat(0, _screenSize.width * _devicePixelRatio) // u_size.x（引擎会覆盖为纹理宽 px）
+      ..setFloat(1, _screenSize.height * _devicePixelRatio) // u_size.y（引擎会覆盖为纹理高 px）
 
       // boundary
       ..setFloat(
@@ -597,39 +702,19 @@ class _RenderLiquidGlassGroup extends RenderProxyBox {
           ;
     }
 
-    // STEP 4: Apply the shader as a backdrop filter and paint the child inside
-    // the layer. This keeps opacity/fade animations in sync with the backdrop.
-    // If this is clipped for performance later, inflate the clip by the shader's
-    // refraction sample reach or edge pixels will clamp during strong refraction.
+    // STEP 4：把 shader 作为 backdrop 滤镜压入图层，子内容仍由 super.paint 绘制。
+    // 这样透明度/淡入淡出动画与背景滤镜保持同步。
+    //
+    // 说明（原注释称「若日后为性能裁剪，需要按折射采样半径外扩 clip，否则强折射
+    // 时边缘像素会被 clamp」）：当前配置下 uRefractStrength 恒为负值（凹透镜，
+    // 采样点指向形状内侧），不会采到形状之外，因此**不需要**外扩 clip；
+    // 这里保留的是唯一正确的画法（曾经尝试过的 ClipRRect 方案会先把 backdrop
+    // 裁到形状范围，反而破坏 shader 对场景坐标的假设，已删除以免误用）。
     context.pushLayer(
       BackdropFilterLayer(filter: ImageFilter.shader(sh)),
       super.paint,
       offset,
     );
-
-    // if (child != null) {
-    //   context.paintChild(child!, offset);
-    // }
-    // super.paint(context, offset);
-
-    // final Rect bounds = Offset.zero & size;
-    // context.pushClipRRect(
-    //   needsCompositing,
-    //   offset,
-    //   bounds,
-    //   BorderRadius.circular(100).toRRect(bounds),
-    //   (PaintingContext ctx, Offset ofs) {
-    //     // ② Filter layer sits *inside* the clip.
-    //     ctx.pushLayer(
-    //       BackdropFilterLayer(
-    //         filter: ImageFilter.shader(sh),
-    //       ),
-    //       super.paint,
-    //       ofs,
-    //     );
-    //   },
-    //   clipBehavior: Clip.antiAlias,
-    // );
   }
 }
 

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'editor_kit.dart';
+import '../app_slider.dart';
 
 class AudioVolumeStepEditor extends ParamsStepEditor {
   const AudioVolumeStepEditor({super.key, required super.params, required super.onChanged, super.isZh = true});
@@ -32,7 +33,7 @@ class _AudioVolumeStepEditorState extends State<AudioVolumeStepEditor> with Step
               child: Text(zh ? '重置' : 'Reset', style: const TextStyle(fontSize: 11))),
         ]),
         Row(children: [
-          Expanded(child: Slider(
+          Expanded(child: AppSlider(
             value: db.clamp(-30.0, 30.0),
             min: -30.0, max: 30.0, divisions: 120,
             label: '${db.toStringAsFixed(1)} dB',

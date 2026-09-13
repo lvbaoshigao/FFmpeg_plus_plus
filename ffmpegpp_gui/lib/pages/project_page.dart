@@ -18,6 +18,7 @@ import '../services/quick_config_storage.dart';
 import '../services/quick_config_pipeline.dart';
 import '../app.dart' show smoothRoute;
 import 'quick_config_page.dart';
+import '../widgets/app_search_overlay.dart';
 import 'pipeline_editor_page.dart';
 
 /// 快速配置选择器「现场编辑」的哨兵返回值（区别于 QuickConfig 预设与 null 取消）。
@@ -46,6 +47,29 @@ class ProjectPageState extends State<ProjectPage> {
   bool _dragging = false;
   /// 移动端多选模式：长按单个项目进入，选中项高亮（左侧不再常驻复选框）。
   bool _selectionMode = false;
+
+  /// 当前活动实例。项目页常驻在页面缓存里（IndexedStack / PageView），同一时刻只有
+  /// 一个实例；全局搜索跳转到某个项目文件时需要拿到它来回填搜索框（见 build 里的注册）。
+  static ProjectPageState? current;
+
+  /// 供全局搜索调用：打开搜索框并按其文件名过滤，实现「跳转到那一条」。
+  void applyGlobalSearch(String query) {
+    if (!mounted) return;
+    setState(() {
+      _searchVisible = true;
+      _searchQuery = query;
+    });
+  }
+
+  @override
+  void dispose() {
+    // 只清掉「还指向自己」的注册，避免把新实例的回调误清。
+    if (identical(onProjectSearchRequest, applyGlobalSearch)) {
+      onProjectSearchRequest = null;
+    }
+    if (identical(ProjectPageState.current, this)) ProjectPageState.current = null;
+    super.dispose();
+  }
 
   void _enterSelectionMode() {
     if (_selectionMode) return;
@@ -120,6 +144,9 @@ class ProjectPageState extends State<ProjectPage> {
 
   @override
   Widget build(BuildContext context) {
+    // 注册「全局搜索 → 按文件名回填搜索框」的回调（幂等；dispose 时注销）。
+    ProjectPageState.current = this;
+    onProjectSearchRequest = applyGlobalSearch;
     final theme = Theme.of(context);
     final clr = theme.colorScheme.outline;
     final scheme = theme.colorScheme;
@@ -339,6 +366,14 @@ class ProjectPageState extends State<ProjectPage> {
       ];
     }
     return [
+      // 搜索引擎式全局搜索（跨页面：设置项 / 项目文件 / 容器 / 快捷配置 / 快捷键），
+      // 与下面「搜索文件」不同：那个只过滤当前项目列表。
+      MobileGlassPillAction(
+        icon: Icons.travel_explore,
+        tooltip: s.isZh ? '全局搜索' : 'Global search',
+        color: scheme.onSurface,
+        onTap: () => showAppSearch(context),
+      ),
       MobileGlassPillAction(
         icon: Icons.search,
         tooltip: s.search,

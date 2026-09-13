@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import '../font_picker.dart';
 import 'editor_kit.dart';
+import '../app_slider.dart';
 
 class SubtitleStepEditor extends ParamsStepEditor {
   final List<dynamic> embeddedSubtitles;
@@ -251,24 +252,23 @@ class _ColorPickerDialogState extends State<_ColorPickerDialog> {
       content: SizedBox(
         width: 280,
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          // 色相条
-          SizedBox(height: 24, child: SliderTheme(
-            data: SliderThemeData(trackHeight: 16, thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 10)),
-            child: Slider(
-              value: _hue, min: 0, max: 360,
-              activeColor: HSVColor.fromAHSV(1, _hue, 1, 1).toColor(),
-              onChanged: (v) => setState(() { _hue = v; _hexCtrl.text = _currentHex(); }),
-            ),
+          // 色相条：滑块本身就是颜色，所以用 color 覆盖主题色。
+          // 原来这里是就地包一层 SliderTheme 把轨道加厚到 16px；全应用统一为 6px 轨道后
+          // 该特例失去意义（外层的 24px 高度保留，避免对话框高度跳动）。
+          SizedBox(height: 24, child: AppSlider(
+            value: _hue, min: 0, max: 360,
+            color: HSVColor.fromAHSV(1, _hue, 1, 1).toColor(),
+            onChanged: (v) => setState(() { _hue = v; _hexCtrl.text = _currentHex(); }),
           )),
           const SizedBox(height: 8),
           Row(children: [
             Text(zh ? '饱和度' : 'Saturation', style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
-            Expanded(child: Slider(value: _sat, min: 0, max: 1, activeColor: _color,
+            Expanded(child: AppSlider(value: _sat, min: 0, max: 1, color: _color,
               onChanged: (v) => setState(() { _sat = v; _hexCtrl.text = _currentHex(); }))),
           ]),
           Row(children: [
             Text(zh ? '亮度' : 'Brightness', style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
-            Expanded(child: Slider(value: _val, min: 0, max: 1, activeColor: _color,
+            Expanded(child: AppSlider(value: _val, min: 0, max: 1, color: _color,
               onChanged: (v) => setState(() { _val = v; _hexCtrl.text = _currentHex(); }))),
           ]),
           const SizedBox(height: 8),

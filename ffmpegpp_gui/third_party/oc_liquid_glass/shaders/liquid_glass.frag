@@ -41,7 +41,9 @@ precision highp float;
 // Fallback opacity preserves readability when refraction/blur cannot sample
 // native/platform views.
 #define BACKDROP_FALLBACK_ALPHA 0.95
-// Must stay in sync with any Dart-side backdrop clipping inflation.
+// 折射采样位移的缩放系数（纯视觉参数：把 uv 空间的位移乘一个 <1 的系数，
+// 避免位移过大时采样越出形状/屏外）。当前折射强度恒为负值（采样指向形状
+// 内侧），因此 Dart 侧无需为它外扩 backdrop 裁剪区域。
 #define REFRACTION_SAMPLE_SCALE 0.6
 
 /* ── Global uniforms ─────────────────────────────────────────── */
@@ -80,6 +82,19 @@ out vec4 fragColor;
 /* ── Helpers ─────────────────────────────────────────────────── */
 #define R u_size
 float px(float v) { return v / R.y; }
+
+/* 「按高度归一化像素空间」→ 纹理 uv 的换算矩阵（逐轴，见下）。
+   本文件里 SDF / falloff / off 都在「按高度归一化」空间里推导：两轴都除以
+   R.y，因此该空间对像素而言是各向同性的（1.0 = R.y 像素）。
+   而 uv0 = FlutterFragCoord()/u_size 是纹理 uv：x 按纹理宽、y 按纹理高归一化，
+   与上面的空间在 x 向差 R.x/R.y 的尺度。
+   把「高度归一化」的位移 off 直接加到 uv 上，水平分量会被解释成 R.x 像素，
+   于是水平折射被放大 R.x/R.y 倍：竖屏手机（宽/高 < 1）左右两边被压缩到几乎
+   看不见、横屏 PC 上又过冲到采样不到有效内容 —— 这就是用户反馈的
+   「只有上下能看到扭曲/折射，左右看不到」的根因。
+   逐轴换算 Δuv = Δpx/R 得 UV_PER_PX = vec2(R.y/R.x, 1.0)，乘上它之后折射位移
+   在像素空间各向同性，四条边的折射带宽度与强度一致。 */
+#define UV_PER_PX vec2(R.y / max(R.x, 1.0), 1.0)
 vec4 rawBg(vec2 uv) {
   vec2 sampleUv = clamp(uv, 0.0, 1.0);
 #ifdef IMPELLER_TARGET_OPENGLES
@@ -147,6 +162,8 @@ vec2 unionGradient(vec2 uvCenter, int cnt, float k){
 
 /* radial blur */
 vec4 radialBlur(vec2 uv,float radiusPx){
+  /* 0 = 关闭：直接单次采样短路。radialBlur 每像素要采 1+4*BLUR_STEPS=49 次，
+     绝大多数配置 blurRadiusPx=0，短路后单采样直通（移动端转场掉帧的主因之一）。 */
   if(radiusPx<0.5) return glassBg(uv);
   vec4 sum = glassBg(uv);
   float nr = px(radiusPx);
@@ -155,7 +172,8 @@ vec4 radialBlur(vec2 uv,float radiusPx){
     float rad = nr * float(ring)/4.0;
     for(int j=0; j<BLUR_STEPS; ++j){
       float a = float(j)*2.0*PI/float(BLUR_STEPS);
-      sum += glassBg(uv + vec2(cos(a),sin(a))*rad);
+      // 环形采样半径同样要逐轴换算成 uv（否则竖直方向模糊半径被放大 R.x/R.y 倍）
+      sum += glassBg(uv + vec2(cos(a),sin(a))*rad*UV_PER_PX);
       cnt++;
     }
   }
@@ -213,7 +231,14 @@ void main(){
   vec2 off = grad * pow(smoothstep(-falloff,0.0,dU),
                         uDistortExponent) * uRefractStrength * mask;
 
-  vec4 glassBase = radialBlur(uv0 + off*REFRACTION_SAMPLE_SCALE, uRadialBlurPx);
+  /* 折射采样：off 是在「按高度归一化」空间里算出来的位移（1.0 = R.y 像素），
+     必须乘 UV_PER_PX 换算回纹理 uv（逐轴 Δuv = Δpx/R），否则水平折射被放大
+     R.x/R.y 倍 —— 竖屏手机左右两边几乎看不到折射、横屏 PC 上过冲，正是
+     「只有上下能看到扭曲」的根因，改完后四条边一致。
+     uRefractStrength 恒为负（设置范围 -0.30~0.0）→ off 指向形状内侧，
+     采样点始终落在纹理范围内，rawBg 的 clamp 不会介入，无需扩大 backdrop 层。 */
+  vec4 glassBase = radialBlur(uv0 + off * UV_PER_PX * REFRACTION_SAMPLE_SCALE,
+                              uRadialBlurPx);
 
   /* tint blend (soft-max) */
   vec3  accum = vec3(0.0);

@@ -142,58 +142,6 @@ class AppStrings {
   String get outputDir => lang == 'zh' ? '默认输出目录' : 'Default output dir';
   String get save => lang == 'zh' ? '保存' : 'Save';
 
-  // ── 编辑配置 ──
-  String get editTitle => lang == 'zh' ? '编辑' : 'Edit';
-  String get tabOutput => lang == 'zh' ? '输出' : 'Output';
-  String get tabVideo => lang == 'zh' ? '视频' : 'Video';
-  String get tabAudio => lang == 'zh' ? '音频' : 'Audio';
-  String get tabSubtitle => lang == 'zh' ? '字幕' : 'Subtitle';
-  String get saveConfig => lang == 'zh' ? '保存配置' : 'Save Config';
-  // Output tab
-  String get cfgFormat => lang == 'zh' ? '格式' : 'Format';
-  String get cfgFormatKeep => lang == 'zh' ? '保持原格式' : 'Original';
-  String get cfgNaming => lang == 'zh' ? '命名' : 'Naming';
-  String get cfgNamingKeep => lang == 'zh' ? '保持原名' : 'Original';
-  String get cfgNamingSuffix => lang == 'zh' ? '添加后缀' : 'Suffix';
-  String get cfgNamingCustom => lang == 'zh' ? '自定义' : 'Custom';
-  String get cfgSuffix => lang == 'zh' ? '后缀' : 'Suffix';
-  String get cfgFilename => lang == 'zh' ? '文件名' : 'Filename';
-  // Video tab
-  String get cfgCodec => lang == 'zh' ? '编码器' : 'Codec';
-  String get cfgGpu => lang == 'zh' ? 'GPU' : 'GPU';
-  String get cfgRate => lang == 'zh' ? '码率' : 'Rate';
-  String get cfgBitrate => lang == 'zh' ? '码率 (kbps)' : 'Bitrate';
-  String get cfgCrf => lang == 'zh' ? 'CRF 质量' : 'CRF';
-  String get cfgRateKeep => lang == 'zh' ? '不变 (保持原码率)' : 'Keep (original)';
-  String get cfgRes => lang == 'zh' ? '分辨率' : 'Res';
-  String get cfgResOrig => lang == 'zh' ? '保持原分辨率' : 'Original';
-  String get cfgRes4k => lang == 'zh' ? '4K' : '4K';
-  String get cfgRes1080p => '1080p';
-  String get cfgRes720p => '720p';
-  String get cfgRes480p => '480p';
-  String get cfgResCustom => lang == 'zh' ? '自定义' : 'Custom';
-  String get cfgFps => 'FPS';
-  // Audio tab
-  String get cfgAudioCodec => lang == 'zh' ? '编码器' : 'Codec';
-  String get cfgAudioBitrate => lang == 'zh' ? '码率' : 'Bitrate';
-  String get cfgChannels => lang == 'zh' ? '声道' : 'Ch';
-  String get cfgChKeep => lang == 'zh' ? '保持' : 'Original';
-  String get cfgChMono => lang == 'zh' ? '单声道' : 'Mono';
-  String get cfgChStereo => lang == 'zh' ? '立体声' : 'Stereo';
-  String get cfgCh51 => lang == 'zh' ? '5.1环绕' : '5.1';
-  // Subtitle tab
-  String get cfgBurn => lang == 'zh' ? '烧录字幕' : 'Burn subtitles';
-  String get cfgSubSource => lang == 'zh' ? '来源' : 'Source';
-  String get cfgSubExternal => lang == 'zh' ? '外挂文件' : 'External file';
-  String get cfgSubEmbedded => lang == 'zh' ? '内嵌轨道' : 'Embedded track';
-  String get cfgSubNotSel => lang == 'zh' ? '未选择' : 'Not selected';
-  // Subtitle style
-  String get cfgSubStyle => lang == 'zh' ? '字幕样式 (ASS/SSA)' : 'Subtitle Style (ASS/SSA)';
-  String get cfgSubFont => lang == 'zh' ? '字体' : 'Font';
-  String get cfgSubSize => lang == 'zh' ? '大小' : 'Size';
-  String get cfgSubColor => lang == 'zh' ? '颜色' : 'Color';
-  String get cfgSubOutline => lang == 'zh' ? '描边' : 'Outline';
-  String get cfgSubOutlineColor => lang == 'zh' ? '描边颜色' : 'Outline Color';
   // About
   String get aboutTitle => lang == 'zh' ? '关于' : 'About';
   String get aboutVersion => lang == 'zh' ? '版本' : 'Version';
@@ -298,8 +246,6 @@ class AppStrings {
   String get setNoMatch => lang == 'zh' ? '没有匹配的设置项' : 'No matching settings';
   String get setNoMatchHint => lang == 'zh' ? '换个关键词试试' : 'Try a different keyword';
   String get setClearSearch => lang == 'zh' ? '清除搜索' : 'Clear search';
-  String get setCollapse => lang == 'zh' ? '折叠' : 'Collapse';
-  String get setExpand => lang == 'zh' ? '展开' : 'Expand';
   String get secGeneral => lang == 'zh' ? '通用' : 'General';
   String get secAppearance => lang == 'zh' ? '外观' : 'Appearance';
   String get secProcessing => lang == 'zh' ? '处理' : 'Processing';

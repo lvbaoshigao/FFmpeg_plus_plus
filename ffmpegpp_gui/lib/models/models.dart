@@ -1295,7 +1295,6 @@ class AppConfig {
   int aiContextWindow; // 模型上下文窗口（token）
   String aiApproveMode; // 'auto' = 自动批准图应用; 'ask' = 每次询问
   List<String> aiAskSkipTools; // 询问模式下无需确认的操作白名单（如 'clear_all','undo','save'）
-  String aiProviderPreset; // 供应商预设名：'openai','anthropic','deepseek','ollama','custom'
   List<AiProfile> aiProfiles; // 可复用的 AI 配置项（配置管理）
   String activeAiProfileId;   // 当前选中的配置 id（空 = 使用下方默认字段）
   // Android Monet 动态取色（跟随系统壁纸；桌面端始终关闭）
@@ -1306,6 +1305,20 @@ class AppConfig {
   // （处理队列、设置等）切换到时才构建。代价是首次切换页面有构建耗时
   // （可能瞬间增加 CPU 占用），收益是启动更快、启动内存更低。
   bool noPreload;
+  /// PC 端是否启用 GPU 液态玻璃（oc_liquid_glass shader 折射）。
+  /// 默认关闭：桌面端 ImageFilter.shader 作为 backdrop 时，纹理/坐标取向在
+  /// 不同后端（Skia / Impeller-GLES / Metal / D3D）并不一致——用户反馈 PC 上
+  /// 「玻璃背景倒置且不是壁纸」。关闭后桌面端走 LiquidGlassBackdrop
+  /// （高斯模糊 + 倒角高光），背景即真实壁纸；想要 shader 玻璃可在
+  /// 设置→外观→液态玻璃效果里手动开启。
+  bool glassGpuOnDesktop;
+  /// 液态玻璃折射强度（负值 = 凹透镜；建议 -0.30 ~ 0.0，默认 -0.10）
+  double glassRefractStrength;
+  /// 液态玻璃镜面高光强度（建议 0.0 ~ 2.0，默认 0.5）
+  double glassSpecStrength;
+  /// 玻璃高斯模糊 σ（建议 4 ~ 24，默认 14）：blur 样式与 LiquidGlassBackdrop
+  /// 回退共用；Windows 侧会再按性能上限钳制。
+  double glassBlurSigma;
 
   static const fontWeightValues = [300, 400, 500, 600, 700];
   static const fontWeightLabels = ['Light', 'Regular', 'Medium', 'SemiBold', 'Bold'];
@@ -1333,6 +1346,7 @@ class AppConfig {
     'nav_command': ['Control', '3'],
     'nav_settings': ['Control', '4'],
     'project_search': ['Control', 'F'],
+    'global_search': ['Control', 'K'],
   };
 
   AppConfig({
@@ -1386,12 +1400,15 @@ class AppConfig {
     this.aiContextWindow = 128000,
     this.aiApproveMode = 'ask',
     this.aiAskSkipTools = const ['save', 'undo', 'redo', 'error_check'],
-    this.aiProviderPreset = 'openai',
     List<AiProfile>? aiProfiles,
     this.activeAiProfileId = '',
     this.useDynamicColor = false,
     this.predictiveBack = true,
     this.noPreload = false,
+    this.glassGpuOnDesktop = false,
+    this.glassRefractStrength = -0.10,
+    this.glassSpecStrength = 0.5,
+    this.glassBlurSigma = 14.0,
   }) : fontFamily = fontFamily ?? _defaultFontFamily,
        aiProfiles = aiProfiles ?? <AiProfile>[],
        nodeUsageCount = nodeUsageCount ?? {},
@@ -1496,12 +1513,15 @@ class AppConfig {
         aiContextWindow: json['ai_context_window'] as int? ?? 128000,
         aiApproveMode: json['ai_approve_mode'] as String? ?? 'ask',
         aiAskSkipTools: (json['ai_ask_skip_tools'] as List<dynamic>?)?.cast<String>() ?? const ['save', 'undo', 'redo', 'error_check'],
-        aiProviderPreset: json['ai_provider_preset'] as String? ?? 'openai',
         aiProfiles: (json['ai_profiles'] as List<dynamic>?)?.map((e) => AiProfile.fromJson(e as Map<String, dynamic>)).toList() ?? <AiProfile>[],
         activeAiProfileId: json['active_ai_profile_id'] as String? ?? '',
         useDynamicColor: json['use_dynamic_color'] as bool? ?? false,
         predictiveBack: json['predictive_back'] as bool? ?? true,
         noPreload: json['no_preload'] as bool? ?? false,
+        glassGpuOnDesktop: json['glass_gpu_on_desktop'] as bool? ?? false,
+        glassRefractStrength: ((json['glass_refract_strength'] as num?)?.toDouble() ?? -0.10).clamp(-0.30, 0.0),
+        glassSpecStrength: ((json['glass_spec_strength'] as num?)?.toDouble() ?? 0.5).clamp(0.0, 2.0),
+        glassBlurSigma: ((json['glass_blur_sigma'] as num?)?.toDouble() ?? 14.0).clamp(4.0, 24.0),
       );
 
   Map<String, dynamic> toJson() => {
@@ -1554,12 +1574,15 @@ class AppConfig {
         'ai_context_window': aiContextWindow,
         'ai_approve_mode': aiApproveMode,
         'ai_ask_skip_tools': aiAskSkipTools,
-        'ai_provider_preset': aiProviderPreset,
         'ai_profiles': aiProfiles.map((e) => e.toJson()).toList(),
         'active_ai_profile_id': activeAiProfileId,
         'use_dynamic_color': useDynamicColor,
         'predictive_back': predictiveBack,
         'no_preload': noPreload,
+        'glass_gpu_on_desktop': glassGpuOnDesktop,
+        'glass_refract_strength': glassRefractStrength,
+        'glass_spec_strength': glassSpecStrength,
+        'glass_blur_sigma': glassBlurSigma,
       };
 }
 

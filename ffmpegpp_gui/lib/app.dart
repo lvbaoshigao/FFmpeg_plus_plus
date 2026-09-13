@@ -17,6 +17,8 @@ import 'pages/config_library_page.dart';
 import 'pages/settings_page.dart';
 import 'pages/log_page.dart';
 import 'widgets/sidebar.dart';
+import 'widgets/app_search_overlay.dart';
+import 'widgets/app_slider.dart';
 import 'widgets/toast.dart';
 import 'widgets/mobile_bottom_nav.dart';
 import 'platform/app_platform.dart';
@@ -304,17 +306,8 @@ class _SplashScreenState extends State<_SplashScreen> {
                   letterSpacing: 0.5)),
           const SizedBox(height: 26),
           // 进度条：不确定进度（真实进度由初始化状态驱动）
-          SizedBox(
-            width: 140,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                minHeight: 4,
-                color: scheme.primary,
-                backgroundColor: scheme.surfaceContainerHighest,
-              ),
-            ),
-          ),
+          // 统一走 AppProgressBar —— 与全应用滑动条同一规格（高 6、两端半圆、主题色）
+          const SizedBox(width: 140, child: AppProgressBar()),
         ]),
       ),
     );
@@ -362,14 +355,21 @@ class _AppShellState extends State<AppShell> with WindowListener {
       // 玻璃/模糊离屏纹理内存）；关闭=恢复后台预热。保证该开关在 PC 上
       // 不只影响下一次启动，而是随时生效。
       _lastNoPreload = state.config.noPreload;
+      _lastNav = state.selectedNav;
       _listenedState = state;
       state.addListener(_onNoPreloadChanged);
+      // 非底部导航触发的页面切换（全局搜索跳转、focusSettingsCard 等直接调用
+      // selectNav）也必须让移动端 PageView 跟过去，否则底部导航高亮切走了、
+      // 可见内容还停在旧 Tab。
+      state.addListener(_onNavChanged);
     });
   }
 
   /// dispose 时用引用移除监听（dispose 里不能再走 context.lookup）。
   AppState? _listenedState;
   bool _lastNoPreload = false;
+  /// 上一次已知的导航索引（用于识别「外部调用 selectNav」并同步 PageView）。
+  int _lastNav = 0;
 
   void _onNoPreloadChanged() {
     if (!mounted) return;
@@ -393,6 +393,28 @@ class _AppShellState extends State<AppShell> with WindowListener {
       // 关闭「关闭预加载」：恢复后台预热（_warming 已在跳过时复位）
       _prewarmPages();
     }
+  }
+
+  /// selectedNav 被外部改动（不经过底部导航）时，让移动端 PageView 滑动到对应 Tab。
+  void _onNavChanged() {
+    if (!mounted || !isMobilePlatform) return;
+    final nav = context.read<AppState>().selectedNav;
+    if (nav == _lastNav) return;
+    _lastNav = nav;
+    final idx = _kMobileNavOrder.indexOf(nav);
+    if (idx < 0) return;
+    // 帧后再动 PageController：监听回调可能发生在 build/layout 阶段，
+    // 此时直接 animateToPage 会与正在进行的布局冲突。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_mobilePageController.hasClients) return;
+      final current = _mobilePageController.page?.round() ?? idx;
+      if (current == idx) return; // 已在该 Tab（底部导航点击路径）→ 无需重复动画
+      _mobilePageController.animateToPage(
+        idx,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOutCubic,
+      );
+    });
   }
 
   Future<void> _autoCheckUpdate() async {
@@ -495,6 +517,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
     _mobilePageController.dispose();
     if (!isMobilePlatform) windowManager.removeListener(this);
     _listenedState?.removeListener(_onNoPreloadChanged);
+    _listenedState?.removeListener(_onNavChanged);
     super.dispose();
   }
   @override
@@ -538,6 +561,21 @@ class _AppShellState extends State<AppShell> with WindowListener {
     final bindings = state.config.keyBindings;
     final s = AppStrings.of(state.config.language);
     final nav = state.selectedNav;
+
+    // ── 搜索引擎式全局搜索（任意页面可用）──
+    // 绑定位：global_search（默认 Ctrl+K）；同时把「搜索项目」的旧绑定（默认 Ctrl+F）
+    // 也接到全局搜索上 —— 它此前只在快捷键列表里登记、并没有任何实现，
+    // 全局搜索浮层内部已能搜项目文件，语义一致。
+    final globalSearchBinding = bindings['global_search'] ?? ['Control', 'K'];
+    if (_matchesBinding(event, globalSearchBinding)) {
+      showAppSearch(context);
+      return KeyEventResult.handled;
+    }
+    final projectSearchBinding = bindings['project_search'] ?? ['Control', 'F'];
+    if (_matchesBinding(event, projectSearchBinding)) {
+      showAppSearch(context);
+      return KeyEventResult.handled;
+    }
 
     // Project page shortcuts (nav == 0)
     if (nav == 0) {
@@ -793,7 +831,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
         }
       },
       children: [
-        for (final i in _kMobileNavOrder) _KeepAlive(child: _page(i)),
+        for (final i in _kMobileNavOrder) _KeepAlive(key: ValueKey<int>(i), child: _page(i)),
       ],
     );
   }
@@ -817,7 +855,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
     _pageLru.remove(i);
     _pageLru.add(i);
     final cached = _pageCache[i];
-    if (cached != null) return KeyedSubtree(key: ValueKey(i), child: cached);
+    if (cached != null) return cached;
     // 首次访问：构建页面并缓存
     final page = switch (i) {
       0 => ProjectPage(key: _projectPageKey), 1 => const QueuePage(),
@@ -836,7 +874,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
         }
       });
     }
-    return KeyedSubtree(key: ValueKey(i), child: page);
+    return page;
   }
 
   /// 常驻页数超过 _kMaxAlivePages 时，从最久未访问的页面开始逐出
@@ -873,11 +911,21 @@ class _AppShellState extends State<AppShell> with WindowListener {
 
   /// 所有页面同时存在于 IndexedStack（已访问的缓存、未访问的占位），
   /// 切换零重建、零动画开销。
+  ///
+  /// 每个槽位**固定**是 `KeyedSubtree(key: ValueKey(i))`，子节点才是页面本身：
+  /// 之前当前页走 `_page(i)`（内部又包了一层 KeyedSubtree）、非当前页直接放裸页面
+  /// widget，同一个槽位的 runtimeType 会随选中页切换而变（KeyedSubtree ↔ ProjectPage）
+  /// → framework 判定无法复用 Element，整页 State 被销毁重建（滚动位置、多选状态
+  /// 全部丢失），与「切换零重建」的意图相反。现在槽位类型恒定，切换只更新子节点。
   Widget _pageStack(int current) => IndexedStack(
     index: current,
     children: [
       for (var i = 0; i < 6; i++)
-        i == current ? _page(i) : (_pageCache[i] ?? const SizedBox.shrink()),
+        KeyedSubtree(
+          key: ValueKey<int>(i),
+          // 当前页走 _page(i)（顺带刷新 LRU）；非当前页直接取缓存，未访问则为空占位
+          child: i == current ? _page(i) : (_pageCache[i] ?? const SizedBox.shrink()),
+        ),
     ],
   );
 
@@ -963,7 +1011,7 @@ class _CsdWindowButtonState extends State<_CsdWindowButton> {
 /// 否则左右滑动返回时页面会被重建，丢失滚动位置/输入状态。
 class _KeepAlive extends StatefulWidget {
   final Widget child;
-  const _KeepAlive({required this.child});
+  const _KeepAlive({super.key, required this.child});
   @override
   State<_KeepAlive> createState() => _KeepAliveState();
 }

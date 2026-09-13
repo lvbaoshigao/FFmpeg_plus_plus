@@ -88,7 +88,8 @@ class _QueuePageState extends State<QueuePage> {
                   )
                 : Column(children: [
                     GlassTopBar(
-                      title: Text(s.navQueue),
+                      // 桌面顶栏高度固定 56：标题单行省略，大字号下不会折行顶出栏外
+                      title: Text(s.navQueue, maxLines: 1, overflow: TextOverflow.ellipsis),
                       actions: _buildActions(scheme, state, s),
                     ),
                     Expanded(
@@ -154,24 +155,30 @@ class _QueuePageState extends State<QueuePage> {
   }
 
   /// 顶栏操作按钮 + 资源占用（桌面端与移动端共用同一份逻辑）。
+  /// 按钮文字统一单行省略：顶栏高度固定，字号调大时折行会把整条顶栏撑高
+  /// （按钮本身宽度由内容决定，纯文本按钮最容易在窄窗口下折成两行）。
   List<Widget> _buildActions(ColorScheme scheme, AppState state, AppStrings s) {
     return [
       if (state.processing)
         OutlinedButton.icon(
-            icon: const Icon(Icons.stop, size: 16), label: Text(s.cancelAll),
+            icon: const Icon(Icons.stop, size: 16),
+            label: Text(s.cancelAll, maxLines: 1, overflow: TextOverflow.ellipsis),
             onPressed: () => state.cancelProcessing())
       else ...[
         if (state.tasks.any((t) => t.status == TaskStatus.pending))
           FilledButton.icon(
-              icon: const Icon(Icons.play_arrow, size: 18), label: Text(s.startProcessing),
+              icon: const Icon(Icons.play_arrow, size: 18),
+              label: Text(s.startProcessing, maxLines: 1, overflow: TextOverflow.ellipsis),
               onPressed: () => state.processAllTasks()),
         if (state.tasks.any((t) => t.status == TaskStatus.completed || t.status == TaskStatus.failed || t.status == TaskStatus.cancelled))
           TextButton.icon(
-              icon: const Icon(Icons.cleaning_services_outlined, size: 16), label: Text(s.clearCompleted),
+              icon: const Icon(Icons.cleaning_services_outlined, size: 16),
+              label: Text(s.clearCompleted, maxLines: 1, overflow: TextOverflow.ellipsis),
               onPressed: () => state.clearCompletedTasks()),
         if (state.tasks.isNotEmpty)
           TextButton.icon(
-              icon: const Icon(Icons.delete_sweep, size: 16), label: Text(s.clearAll),
+              icon: const Icon(Icons.delete_sweep, size: 16),
+              label: Text(s.clearAll, maxLines: 1, overflow: TextOverflow.ellipsis),
               onPressed: () => state.clearAllTasks()),
       ],
       // 紧凑资源占用（顶栏右侧，小尺寸）
@@ -229,7 +236,8 @@ class _QueuePageState extends State<QueuePage> {
   /// 内边距全部由顶栏提供），不再本页拼 Row/Flexible/Align/FittedBox。
   Widget _buildMobileTopBar(ColorScheme scheme, AppState state, AppStrings s) {
     return MobilePillTopBar(
-      title: Text(s.navQueue),
+      // 药丸高度固定：标题单行省略（顶栏内部已有 DefaultTextStyle.maxLines 兜底）
+      title: Text(s.navQueue, maxLines: 1, overflow: TextOverflow.ellipsis),
       actions: _buildMobileActions(scheme, state, s),
     );
   }

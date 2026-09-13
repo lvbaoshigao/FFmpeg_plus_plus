@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import '../../services/ffmpeg_installer.dart';
 import 'editor_kit.dart';
+import '../app_slider.dart';
 
 class ExtractAudioStepEditor extends ParamsStepEditor {
   final String videoPath;
@@ -214,7 +215,7 @@ class _ExtractAudioStepEditorState extends State<ExtractAudioStepEditor> with St
           ]),
           const SizedBox(height: 8),
 
-          RangeSlider(
+          AppRangeSlider(
             values: RangeValues(start, end),
             min: 0,
             max: dur > 0 ? dur : 1,

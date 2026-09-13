@@ -94,13 +94,27 @@ class FontPicker extends StatelessWidget {
 
   static List<(String, String)>? _cachedFonts;
 
+  /// 正在进行中的枚举 Future。
+  /// 启动预热（preloadFonts）与「首次打开选择器」可能几乎同时触发枚举，
+  /// 共享同一个 Future 可以避免并发跑两遍 reg query / fc-list / system_profiler。
+  static Future<List<(String, String)>>? _loading;
+
   /// 启动预加载：提前枚举系统字体并缓存，避免首次打开字体选择器时卡顿。
-  /// 幂等：已缓存时直接返回。
+  /// 幂等：已缓存直接返回；枚举进行中则复用同一个 Future。
   static Future<List<(String, String)>> preloadFonts() => _getAllFonts();
 
-  static Future<List<(String, String)>> _getAllFonts() async {
-    if (_cachedFonts != null) return _cachedFonts!;
+  static Future<List<(String, String)>> _getAllFonts() {
+    final cached = _cachedFonts;
+    if (cached != null) return Future.value(cached);
+    // whenComplete 里清空在途标记：枚举失败后允许下次重试，
+    // 否则一次异常会把后续所有调用都钉死在同一个失败的 Future 上。
+    return _loading ??= _enumerateFonts().then((fonts) {
+      _cachedFonts = fonts;
+      return fonts;
+    }).whenComplete(() => _loading = null);
+  }
 
+  static Future<List<(String, String)>> _enumerateFonts() async {
     final builtinFamilies = <String>{for (final (_, f) in _builtinFonts) f};
     final merged = <(String, String)>[..._builtinFonts];
 
@@ -198,7 +212,6 @@ class FontPicker extends StatelessWidget {
     }
 
     merged.sort((a, b) => a.$1.toLowerCase().compareTo(b.$1.toLowerCase()));
-    _cachedFonts = merged;
     return merged;
   }
 
@@ -222,9 +235,14 @@ class FontPicker extends StatelessWidget {
           borderRadius: BorderRadius.circular(10),
         ),
         child: Row(children: [
-          Expanded(child: Text(displayName, style: TextStyle(
-            fontSize: 13, fontFamily: currentFont, color: scheme.onSurface,
-          ))),
+          // 长字体名（Source Han Serif CN / Palatino Linotype…）在字号调大时会
+          // 折成两行，触发框被撑高、文字与右侧图标不再垂直居中对齐
+          // （用户反馈的「字体与选择框不对称」）。这里固定单行 + 省略号。
+          Expanded(child: Text(displayName,
+            maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 13, fontFamily: currentFont, color: scheme.onSurface,
+            ))),
           Icon(Icons.arrow_drop_down, size: 20, color: scheme.outline),
           if (showImport && onImport != null) ...[
             const SizedBox(width: 4),
@@ -267,16 +285,55 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
   late TextEditingController _ctrl;
   List<(String, String)>? _fonts;
   bool _loading = true;
+  // 枚举失败标记：用于给出「可重试」的失败态，而不是永久转圈或谎报无匹配
+  bool _failed = false;
   // 悬停预览：鼠标停留的字体（null=未悬停，回退显示当前选中字体）
   String? _hoverFamily;
+
+  /// 过滤结果缓存：只在字体列表或搜索词变化时重算一次。
+  /// 之前是在 build 里现算，于是每次重建（包括鼠标在列表上移动触发的
+  /// setState）都要对全量系统字体跑一遍 contains 并生成新 List。
+  List<(String, String)> _filtered = const [];
 
   @override
   void initState() {
     super.initState();
     _ctrl = TextEditingController();
+    _loadFonts();
+  }
+
+  /// 触发一次字体枚举。失败时 FontPicker 不写缓存、并清掉在途标记，
+  /// 所以「重试」能真正重跑一遍枚举。
+  void _loadFonts() {
     FontPicker._getAllFonts().then((fonts) {
-      if (mounted) setState(() { _fonts = fonts; _loading = false; });
+      if (!mounted) return;
+      setState(() {
+        _fonts = fonts;
+        _failed = false;
+        _loading = false;
+        _applyFilter();
+      });
+    }, onError: (Object _) {
+      if (!mounted) return;
+      setState(() {
+        _failed = true;
+        _loading = false;
+        _applyFilter();
+      });
     });
+  }
+
+  /// 重算过滤结果（字体列表或 _filter 变化时调用一次）。
+  void _applyFilter() {
+    final all = _fonts ?? FontPicker._builtinFonts;
+    final keyword = _filter.trim().toLowerCase();
+    _filtered = keyword.isEmpty
+        ? all
+        : all
+            .where((f) =>
+                f.$1.toLowerCase().contains(keyword) ||
+                f.$2.toLowerCase().contains(keyword))
+            .toList(growable: false);
   }
 
   @override
@@ -291,11 +348,8 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
     final isZh = widget.language == 'zh';
 
     final allFonts = _fonts ?? FontPicker._builtinFonts;
-    final filtered = _filter.isEmpty
-        ? allFonts
-        : allFonts.where((f) =>
-            f.$1.toLowerCase().contains(_filter.toLowerCase()) ||
-            f.$2.toLowerCase().contains(_filter.toLowerCase())).toList();
+    // 过滤结果走缓存（见 _applyFilter）：build 只取值，不重跑全量筛选。
+    final filtered = _filtered;
 
     // 预览条字体：优先悬停项，其次当前选中项
     final previewFamily = _hoverFamily ?? widget.currentFont;
@@ -346,7 +400,10 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
                   ? null
                   : IconButton(
                       icon: Icon(Icons.close, size: 16, color: scheme.outline),
-                      onPressed: () { _ctrl.clear(); setState(() => _filter = ''); },
+                      onPressed: () {
+                        _ctrl.clear();
+                        setState(() { _filter = ''; _applyFilter(); });
+                      },
                     ),
               filled: true,
               fillColor: scheme.surfaceContainerHighest.withAlpha(90),
@@ -364,12 +421,28 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
               ),
               contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             ),
-            onChanged: (v) => setState(() => _filter = v),
+            onChanged: (v) => setState(() { _filter = v; _applyFilter(); }),
           ),
           const SizedBox(height: 8),
           // 字体列表
           if (_loading)
             const SizedBox(height: 240, child: Center(child: CircularProgressIndicator()))
+          else if (_failed)
+            // 枚举失败：给出可重试的失败态（既不永久转圈，也不谎报「无匹配字体」）
+            SizedBox(height: 240, child: Center(child: Column(
+                mainAxisSize: MainAxisSize.min, children: [
+              Text(isZh ? '字体列表读取失败' : 'Failed to read the font list',
+                  style: TextStyle(fontSize: 12, color: scheme.outline)),
+              const SizedBox(height: 6),
+              TextButton.icon(
+                onPressed: () {
+                  setState(() { _loading = true; _failed = false; });
+                  _loadFonts();
+                },
+                icon: const Icon(Icons.refresh, size: 16),
+                label: Text(isZh ? '重试' : 'Retry'),
+              ),
+            ])))
           else if (filtered.isEmpty)
             SizedBox(height: 240, child: Center(child: Text(
                 isZh ? '未找到匹配字体' : 'No matching fonts',
@@ -384,8 +457,14 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
                 final isSelected = family == widget.currentFont;
                 final isHover = family == _hoverFamily;
                 return MouseRegion(
-                  onEnter: (_) => setState(() => _hoverFamily = family),
-                  onExit: (_) => setState(() => _hoverFamily = null),
+                  // 只有悬停项真的变了才 setState：同一行的重复进入/离开
+                  // 不该重建整个对话框（含搜索框和列表）
+                  onEnter: (_) {
+                    if (_hoverFamily != family) setState(() => _hoverFamily = family);
+                  },
+                  onExit: (_) {
+                    if (_hoverFamily != null) setState(() => _hoverFamily = null);
+                  },
                   child: InkWell(
                     onTap: () => widget.onSelected(family),
                     // 右键：放大预览

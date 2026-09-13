@@ -81,7 +81,9 @@ class _LogPageState extends State<LogPage> {
   Widget _toolbar(ColorScheme scheme, AppConfig cfg, List<LogEntry> entries, List<LogEntry> filtered, bool isZh) {
     final hasSelection = _selectedIndices.isNotEmpty;
     final titleRow = Row(mainAxisSize: MainAxisSize.min, children: [
-      Text(isZh ? '日志' : 'Logs', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+      // 顶栏高度固定：标题单行省略，字号调大时不再折成两行顶出顶栏
+      Text(isZh ? '日志' : 'Logs', maxLines: 1, overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
       const SizedBox(width: 12),
       // 变长文本用 Flexible + 省略号：标题药丸右侧还有操作药丸，宽度有限，
       // 条数/多选计数较长时不能溢出（顶栏整体 maxLines:1 + ellipsis 收尾）。

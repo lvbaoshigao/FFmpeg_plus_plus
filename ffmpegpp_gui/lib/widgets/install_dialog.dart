@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import '../services/ffmpeg_installer.dart';
 import '../services/shell_open.dart';
 import '../theme/app_theme.dart';
+import 'app_slider.dart';
 
 const _ffmpegUrl = 'https://wwbrq.lanzouv.com/iTF9n3sb937c';
 const _ffprobeUrl = 'https://wwbrq.lanzouv.com/itEOt3t5yogh';
@@ -331,7 +332,8 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
 
   Widget _buildProgress(ColorScheme scheme) {
     return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-      LinearProgressIndicator(value: _progress, borderRadius: BorderRadius.circular(4)),
+      // 统一进度条（圆角/高度/配色与全局滑杆一致）
+      AppProgressBar(value: _progress),
       const SizedBox(height: 8),
       Row(children: [
         Expanded(child: Text(_status, style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant), maxLines: 2, overflow: TextOverflow.ellipsis)),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../platform/app_platform.dart';
 import 'editor_kit.dart';
+import '../app_slider.dart';
 
 class AvProcessStepEditor extends ParamsStepEditor {
   const AvProcessStepEditor({
@@ -266,7 +267,7 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> with StepEdit
         if (p['rate_mode'] == 'crf')
           Padding(padding: const EdgeInsets.only(bottom: 12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('CRF: ${p['crf'] ?? 23}', style: TextStyle(fontSize: 13, color: cs.onSurface)),
-            Slider(value: ((p['crf'] as int? ?? 23)).clamp(0, _crfMaxForCodec(p['video_codec'] as String? ?? 'libx264')).toDouble(), min: 0,
+            AppSlider(value: ((p['crf'] as int? ?? 23)).clamp(0, _crfMaxForCodec(p['video_codec'] as String? ?? 'libx264')).toDouble(), min: 0,
               max: _crfMaxForCodec(p['video_codec'] as String? ?? 'libx264').toDouble(),
               divisions: _crfMaxForCodec(p['video_codec'] as String? ?? 'libx264'),
               label: '${p['crf'] ?? 23}',

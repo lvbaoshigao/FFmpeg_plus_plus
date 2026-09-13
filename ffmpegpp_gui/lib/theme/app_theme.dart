@@ -1,6 +1,80 @@
 import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
+import '../widgets/app_slider.dart' show appSliderThemeFor;
+
+// ═══════════════════════════════════════════
+// 路由转场：关闭「快照（SnapshotWidget）」版转场
+// ═══════════════════════════════════════════
+
+/// 无快照的 Zoom 转场（Android 默认转场的同款动画，但不抓离屏快照）。
+///
+/// 为什么必须关掉快照：
+/// 1) framework 的 [ZoomPageTransitionsBuilder] 默认 allowSnapshotting = true，
+///    会把**进入的路由**用 framework 的 SnapshotWidget 先抓成一张离屏快照再对快照做
+///    缩放/淡入。本应用所有二级页面（设置二级菜单、命令页、日志页、节点编辑器…）都
+///    铺了壁纸 + 玻璃（BackdropFilter / ImageFilter.shader）。快照是把子树光栅化到
+///    一张图片，**采样不到 backdrop**——玻璃区域在快照里直接变成透明/黑色；
+///    而且首帧快照尚未产出时整屏会先黑一下，用户反馈的「进入二级菜单屏幕总会先黑一下」
+///    正是这个现象。
+/// 2) 关闭后进入/退出的路由每帧实时绘制，壁纸与玻璃和内容保持一致，也不再黑屏。
+///    代价只是转场期间失去 framework 的快照缓存优化（本应用的转场只有 200~250ms）。
+///
+/// [PredictiveBackPageTransitionsBuilder] 在**非返回手势**时也会回退到默认
+/// ZoomPageTransitionsBuilder（同样开快照），所以这里一并替换。
+class _NoSnapshotZoomTransitionsBuilder extends PageTransitionsBuilder {
+  const _NoSnapshotZoomTransitionsBuilder();
+
+  static const ZoomPageTransitionsBuilder _zoom = ZoomPageTransitionsBuilder(
+    allowSnapshotting: false,
+    allowEnterRouteSnapshotting: false,
+  );
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) =>
+      _zoom.buildTransitions(route, context, animation, secondaryAnimation, child);
+
+  @override
+  DelegatedTransitionBuilder? get delegatedTransition => _zoom.delegatedTransition;
+}
+
+/// 预测式返回手势（Android 14+）：仅在实际的返回（pop）手势期间使用 framework 的
+/// [PredictiveBackPageTransitionsBuilder]（保留跟手动画），其余路径（push、
+/// 按钮返回、程序化导航）统一走无快照 Zoom，避免“黑一下”与玻璃失效。
+class _NoSnapshotPredictiveBackTransitionsBuilder extends PageTransitionsBuilder {
+  const _NoSnapshotPredictiveBackTransitionsBuilder();
+
+  static const PredictiveBackPageTransitionsBuilder _predictive =
+      PredictiveBackPageTransitionsBuilder();
+  static const ZoomPageTransitionsBuilder _zoom = ZoomPageTransitionsBuilder(
+    allowSnapshotting: false,
+    allowEnterRouteSnapshotting: false,
+  );
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    if (route.popGestureInProgress) {
+      return _predictive.buildTransitions(
+          route, context, animation, secondaryAnimation, child);
+    }
+    return _zoom.buildTransitions(route, context, animation, secondaryAnimation, child);
+  }
+
+  @override
+  DelegatedTransitionBuilder? get delegatedTransition => _zoom.delegatedTransition;
+}
 
 class AppTheme {
   static final String monoFont = Platform.isWindows ? 'Consolas' : 'monospace';
@@ -55,15 +129,18 @@ class AppTheme {
       colorScheme: scheme,
       // 预测式返回手势（Android 14+）：开启时 Android 使用 PredictiveBack 转场，
       // 关闭时回退到 Zoom 转场。iOS/macOS 沿用 Cupertino，桌面沿用 Zoom。
+      // 转场统一使用「无快照」版本，见 _NoSnapshotZoomTransitionsBuilder 的说明：
+      // 快照（SnapshotWidget）抓不到 BackdropFilter 的 backdrop → 二级页面首帧黑屏、
+      // 玻璃区域变黑；关闭后壁纸与玻璃全程实时绘制。
       pageTransitionsTheme: PageTransitionsTheme(
         builders: <TargetPlatform, PageTransitionsBuilder>{
           TargetPlatform.android: predictiveBack
-              ? const PredictiveBackPageTransitionsBuilder()
-              : const ZoomPageTransitionsBuilder(),
+              ? const _NoSnapshotPredictiveBackTransitionsBuilder()
+              : const _NoSnapshotZoomTransitionsBuilder(),
           TargetPlatform.iOS: const CupertinoPageTransitionsBuilder(),
           TargetPlatform.macOS: const CupertinoPageTransitionsBuilder(),
-          TargetPlatform.windows: const ZoomPageTransitionsBuilder(),
-          TargetPlatform.linux: const ZoomPageTransitionsBuilder(),
+          TargetPlatform.windows: const _NoSnapshotZoomTransitionsBuilder(),
+          TargetPlatform.linux: const _NoSnapshotZoomTransitionsBuilder(),
         },
       ),
       fontFamilyFallback: fallback,
@@ -116,6 +193,24 @@ class AppTheme {
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
             side: BorderSide(color: scheme.outlineVariant.withAlpha(160)),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+      ),
+      // ── 统一的滑动条 / 进度条样式 ──
+      // 用户要求：所有进度条（滑动条）样式统一 —— 两边大圆角的矩形轨道、内部可滑动、
+      // 滑块为主题色，并带滑动动画。
+      // 放在主题层一次生效：设置页、视频滤镜/节点参数面板、任务卡等所有
+      // Slider / RangeSlider 都会跟随，避免逐处替换却漏掉某处又变成两套样式。
+      // 规格定义在唯一来源 widgets/app_slider.dart（轨道高 6、两端半圆、主题色滑块
+      // + activationAnimation 驱动的按下放大与光晕），显式使用 AppSlider 的地方
+      // 与这里完全同源，因此全应用滑动条外观一致。
+      sliderTheme: appSliderThemeFor(scheme),
+      progressIndicatorTheme: ProgressIndicatorThemeData(
+        color: scheme.primary,
+        linearTrackColor: scheme.surfaceContainerHighest,
+        linearMinHeight: 8,
+        // 两端大圆角（高度 8 → 半径 4 = 半圆端）
+        borderRadius: BorderRadius.circular(4),
+        stopIndicatorColor: scheme.primary,
+        circularTrackColor: scheme.surfaceContainerHighest,
       ),
       dividerTheme: const DividerThemeData(space: 1, thickness: 1),
       // DropdownMenu / 下拉菜单：大圆角 + 玻璃质感 + 阴影（避免深色下纯黑）

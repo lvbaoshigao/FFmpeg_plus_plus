@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../app_slider.dart';
+
 /// 步骤编辑器公共组件库（editor_kit）。
 ///
 /// 抽取各 `*_step_editor.dart` 中逐字重复的脚手架代码：
@@ -234,7 +236,8 @@ class NumberRangeFields extends StatelessWidget {
 
 /// 「标签: 值」文本 + 滑杆行（原 13 个编辑器重复的模式）。
 ///
-/// 左侧文本 fontSize [fontSize]（默认 13）/ onSurface，右侧 Expanded(Slider)。
+/// 左侧文本 fontSize [fontSize]（默认 13）/ onSurface，右侧 Expanded([AppSlider])。
+/// 滑杆一律用 [AppSlider]（全应用统一样式），不要再改回裸 `Slider`。
 /// [text] 为完整文本（含当前值，如 `'亮度: 0.30'`），由调用方拼接。
 class LabeledSlider extends StatelessWidget {
   const LabeledSlider({
@@ -263,7 +266,7 @@ class LabeledSlider extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     return Row(children: [
       Text(text, style: TextStyle(fontSize: fontSize, color: cs.onSurface)),
-      Expanded(child: Slider(
+      Expanded(child: AppSlider(
         value: value, min: min, max: max, divisions: divisions, label: sliderLabel,
         onChanged: onChanged,
       )),
