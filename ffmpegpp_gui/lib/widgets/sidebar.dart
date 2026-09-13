@@ -20,15 +20,24 @@ class _SidebarState extends State<Sidebar> {
   static const _curve = Curves.easeInOutCubic;
 
   bool _collapsed = false;
-  // 遮罩拖动：拖动中的临时 top 偏移（null = 未拖动）
-  double? _maskDragTop;
+  // 遮罩拖动：拖动中的临时 top 偏移（null = 未拖动）。
+  // 用 ValueNotifier 而非 State 字段 —— 拖动期间 onVerticalDragUpdate 以
+  // 60–120Hz 触发，走 setState 会重建整个 GlassPanel（含 BackdropFilter 离屏
+  // 模糊层），代价高昂；改为只让遮罩的 AnimatedPositioned 订阅。
+  final ValueNotifier<double?> _maskDragTop = ValueNotifier<double?>(null);
+
+  @override
+  void dispose() {
+    _maskDragTop.dispose();
+    super.dispose();
+  }
 
   void _toggle() => setState(() => _collapsed = !_collapsed);
 
   /// 遮罩拖动结束：吸附到最近的导航项并跳转。
   void _endMaskDrag(int count, double dragTop) {
     final idx = (dragTop / _itemH).round().clamp(0, count - 1);
-    setState(() => _maskDragTop = null);
+    _maskDragTop.value = null;
     if (idx != widget.selectedIndex) {
       widget.onSelected(idx);
     }
@@ -84,23 +93,27 @@ class _SidebarState extends State<Sidebar> {
                 const SizedBox(height: 8),
                 // 导航项：底部滑动遮罩按像素精确定位（从选中项滑到新选中项）
                 Stack(children: [
-                  // 滑动遮罩：默认随选中项动画滑动；按住可拖动，松开吸附到最近项并跳转
-                  AnimatedPositioned(
-                    duration: _maskDragTop == null ? _anim : Duration.zero,
-                    curve: _curve,
-                    top: (_maskDragTop ?? (widget.selectedIndex.clamp(0, items.length - 1)).toDouble() * _itemH)
-                        .clamp(0.0, ((items.length - 1) * _itemH).toDouble()),
-                    left: 0,
-                    right: 0,
-                    height: _itemH,
-                    // 遮罩保留边距：与侧边栏左右边缘留 8px 缝隙（不贴合），
-                    // 同时比 150 内容区宽，图标/文字四周各留 ~12px 间距
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: scheme.secondaryContainer.withAlpha(200),
-                          borderRadius: BorderRadius.circular(12),
+                  // 滑动遮罩：默认随选中项动画滑动；按住可拖动，松开吸附到最近项并跳转。
+                  // 仅此子树订阅 _maskDragTop，拖动时不重建整个 GlassPanel。
+                  ValueListenableBuilder<double?>(
+                    valueListenable: _maskDragTop,
+                    builder: (context, maskDragTop, _) => AnimatedPositioned(
+                      duration: maskDragTop == null ? _anim : Duration.zero,
+                      curve: _curve,
+                      top: (maskDragTop ?? (widget.selectedIndex.clamp(0, items.length - 1)).toDouble() * _itemH)
+                          .clamp(0.0, ((items.length - 1) * _itemH).toDouble()),
+                      left: 0,
+                      right: 0,
+                      height: _itemH,
+                      // 遮罩保留边距：与侧边栏左右边缘留 8px 缝隙（不贴合），
+                      // 同时比 150 内容区宽，图标/文字四周各留 ~12px 间距
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: scheme.secondaryContainer.withAlpha(200),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                         ),
                       ),
                     ),
@@ -113,19 +126,19 @@ class _SidebarState extends State<Sidebar> {
                   Positioned.fill(
                     child: GestureDetector(
                       behavior: HitTestBehavior.translucent,
-                      onVerticalDragStart: (d) => setState(() {
-                        _maskDragTop =
+                      onVerticalDragStart: (d) {
+                        _maskDragTop.value =
                             (widget.selectedIndex.clamp(0, items.length - 1)).toDouble() * _itemH +
                             d.localPosition.dy.clamp(0.0, _itemH);
-                      }),
-                      onVerticalDragUpdate: (d) => setState(() {
-                        _maskDragTop = (_maskDragTop ?? 0) + d.delta.dy;
-                      }),
+                      },
+                      onVerticalDragUpdate: (d) {
+                        _maskDragTop.value = (_maskDragTop.value ?? 0) + d.delta.dy;
+                      },
                       onVerticalDragEnd: (_) {
-                        final t = _maskDragTop;
+                        final t = _maskDragTop.value;
                         if (t != null) _endMaskDrag(items.length, t);
                       },
-                      onVerticalDragCancel: () => setState(() => _maskDragTop = null),
+                      onVerticalDragCancel: () => _maskDragTop.value = null,
                     ),
                   ),
                 ]),

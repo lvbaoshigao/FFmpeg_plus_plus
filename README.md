@@ -59,13 +59,16 @@ FFmpeg++ 是一款基于 **Flutter**（Material Design 3 前端）+ **C++17**（
 |------|------|
 | 🎬 **项目** | 多视频导入、ffprobe 自动探测、缩略图预览 |
 | 📋 **处理队列** | 顺序批量处理、实时进度解析 |
-| 🧩 **节点编辑器** | 蓝图式 DAG 画布，25+ 节点类型，构建复杂多步骤处理流程 |
+| 🧩 **节点编辑器** | 蓝图式 DAG 画布，30 节点类型，构建复杂多步骤处理流程 |
 | 🎞 **视频转码** | 17+ 编码器（H.264/H.265/AV1/VP9/SVT-AV1），GPU 加速（NVIDIA/AMD/Intel）|
-| 🎵 **音频处理** | 转码 / 变速 / 音量调整 / 动态压缩 / 元信息编辑 / 提取音频（带预览播放）|
+| ✨ **视频滤镜** | 调色增强多选合并：亮度 / 对比度 / 饱和度 / 伽马 / 色相 / 暗角 / 降噪 / 锐化 / 黑白 |
+| 📐 **画面变换** | 缩放（宽/高/百分比）/ 翻转 / 旋转，任意链路位置生效 |
+| 📚 **画面叠加** | 水印 / Logo 叠加，五档定位 + 透明度 + 缩放 + 边距 |
+| 🎵 **音频处理** | 转码 / 变速 / 音量调整 / 动态压缩 / 元信息编辑 / 提取音频（带预览播放）/ 淡入淡出 |
 | 📝 **字幕** | 烧录外挂 SRT/ASS/SSA，拾色器，系统字体选择器（含预览）|
 | 📷 **帧提取** | 单帧 / 范围分帧 / 全部分帧 |
 | ✂️ **片段截取** | 时间范围截取，级联时长约束 |
-| 🖼 **图片处理** | 格式转换 / 裁剪 / 旋转 / 缩放 / 亮度 / 噪点 / 锐化 / 降噪 / 通道提取 |
+| 🖼 **图片处理** | 格式转换 / 裁剪 / 旋转 / 缩放 / 亮度 / 调整（饱和度·伽马·对比度）/ 噪点 / 锐化 / 降噪 / 通道提取 |
 | 🎬 **视频裁剪** | 交互式选区工具，支持多选区、拖拽调整、保留/移除模式 |
 | 🔗 **合并媒体** | 多文件顺序合并，图片序列合成视频 |
 | 🧠 **命令** | 手动输入 ffmpeg 命令 + 快捷模板 + 参数参考 |
@@ -79,12 +82,27 @@ FFmpeg++ 是一款基于 **Flutter**（Material Design 3 前端）+ **C++17**（
 - 无限画布，支持平移缩放
 - 拖拽节点，自由连线
 - 右键添加节点 / 删除连线
-- 25+ 节点类型覆盖视频、音频、图片处理
+- 30 节点类型覆盖视频、音频、图片处理
 - 自动验证（环路检测、类型冲突、时长约束）
 - 智能合并：音视频处理 + 字幕 = 单条 ffmpeg 命令
 - 逻辑块：循环处理支持
 - 调试覆盖层显示执行计划
 - 多源文件节点 = 多个独立任务
+
+### 🤖 MCP 服务
+
+FFmpeg++ 内置 MCP（Model Context Protocol）HTTP 服务器，可把本应用接入支持 MCP 的 AI 客户端 / 自动化工作流：
+
+- **开启**：设置 → MCP / AI → 启用 MCP 服务（默认关闭）
+- **端点**：`http://127.0.0.1:<端口>/`，JSON-RPC 2.0 over HTTP POST（支持批量请求、协议版本协商）
+- **工具**（28 个）：画布操作（add_node / connect_nodes / modify_node_params / undo / save …）、
+  文件与媒体读取（list_directory / read_file_info / probe_video）、任务查询（list_tasks / get_task_info / cancel_tasks）、
+  逻辑门（add_gate / set_gate_types）等
+- **资源**（3 个）：`pipeline://current`、`videos://loaded`、`tasks://all`
+- **权限开关**：允许写入（默认关，写操作全部拒绝）、允许文件系统访问（默认开，可单独关闭列目录/文件信息/媒体探测）
+- **安全**：默认仅监听 `127.0.0.1`（本机回环，无需令牌）；监听地址改为 `0.0.0.0` 可暴露到局域网，
+  此时强制校验访问令牌（请求头 `x-mcp-token` 或 `Authorization: Bearer <token>`，令牌在设置页显示）
+- **注意**：Claude Desktop / Cursor 等主流 MCP 客户端使用 stdio 传输，如需接入请经 HTTP↔stdio 桥接工具（如 `mcp-proxy`）转发
 
 ### 📦 安装
 
@@ -231,13 +249,16 @@ Supports **Windows**, **Linux** (x64 / ARM64), and **macOS** (Universal).
 |--------|-------------|
 | 🎬 **Projects** | Multi-video import, auto ffprobe probing, thumbnail preview |
 | 📋 **Queue** | Sequential batch processing, real-time progress parsing |
-| 🧩 **Node Editor** | Blueprint-style DAG canvas, 25+ node types for complex workflows |
+| 🧩 **Node Editor** | Blueprint-style DAG canvas, 30 node types for complex workflows |
 | 🎞 **Transcode** | 17+ codecs (H.264/H.265/AV1/VP9/SVT-AV1), GPU acceleration (NVIDIA/AMD/Intel) |
-| 🎵 **Audio** | Transcode / speed / volume / dynamic compressor / metadata / extract audio (with playback preview) |
+| ✨ **Video Filters** | Merged color grading: brightness / contrast / saturation / gamma / hue / vignette / denoise / sharpen / grayscale |
+| 📐 **Geometry** | Scale (width/height/percent) / flip / rotate at any point in the chain |
+| 📚 **Overlay** | Watermark / logo with 5-position placement, opacity, scale, margin |
+| 🎵 **Audio** | Transcode / speed / volume / dynamic compressor / metadata / extract audio (with playback preview) / fade in-out |
 | 📝 **Subtitles** | Burn-in external SRT/ASS/SSA, color picker, system font selector with preview |
 | 📷 **Frames** | Single frame / range / full video decomposition |
 | ✂️ **Clipping** | Time-range extraction with cascading duration constraints |
-| 🖼 **Image** | Format convert / crop / rotate / scale / brightness / noise / sharpen / denoise / channel extract |
+| 🖼 **Image** | Format convert / crop / rotate / scale / brightness / adjust (saturation·gamma·contrast) / noise / sharpen / denoise / channel extract |
 | 🎬 **Video Crop** | Interactive selection tool with multi-region, drag-resize, keep/remove modes |
 | 🔗 **Concat** | Multi-file sequential merge, image sequence to video |
 | 🧠 **Command** | Manual ffmpeg command input with templates & parameter reference |
@@ -251,12 +272,28 @@ The node editor is the core of FFmpeg++. See **[NODE_EDITOR.md](NODE_EDITOR.md)*
 - Infinite canvas with pan & zoom
 - Drag-and-drop nodes, freeform connections
 - Right-click to add nodes, right-click connections to delete
-- 25+ node types covering video, audio, and image processing
+- 30 node types covering video, audio, and image processing
 - Automatic validation (cycle detection, type conflicts, duration constraints)
 - Smart merge: AV processing + subtitle burn = single ffmpeg command
 - Logic blocks: loop processing support
 - Debug overlay showing execution plan
 - Multiple source nodes = multiple independent tasks
+
+### 🤖 MCP Server
+
+FFmpeg++ ships with a built-in MCP (Model Context Protocol) HTTP server so AI clients / automation workflows can drive the app:
+
+- **Enable**: Settings → MCP / AI → Enable MCP Server (off by default)
+- **Endpoint**: `http://127.0.0.1:<port>/`, JSON-RPC 2.0 over HTTP POST (batch requests & protocol-version negotiation supported)
+- **Tools** (28): canvas operations (add_node / connect_nodes / modify_node_params / undo / save …),
+  file & media reads (list_directory / read_file_info / probe_video), task queries (list_tasks / get_task_info / cancel_tasks),
+  logic gates (add_gate / set_gate_params), etc.
+- **Resources** (3): `pipeline://current`, `videos://loaded`, `tasks://all`
+- **Permission switches**: Allow Write (off by default — all write tools rejected), Allow File Access
+  (on by default; gates list_directory / read_file_info / probe_video)
+- **Security**: binds `127.0.0.1` only by default (loopback, no token). Set the bind host to `0.0.0.0`
+  to expose it on the LAN — an access token is then enforced (`x-mcp-token` header or `Authorization: Bearer <token>`, shown in Settings)
+- **Note**: mainstream MCP desktop clients (Claude Desktop / Cursor) speak stdio; bridge via an HTTP↔stdio proxy (e.g. `mcp-proxy`) if needed
 
 ### 📦 Installation
 

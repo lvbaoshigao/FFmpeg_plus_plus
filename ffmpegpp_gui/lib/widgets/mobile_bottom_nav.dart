@@ -319,7 +319,12 @@ class MobileBottomNav extends StatefulWidget {
 
 class _MobileBottomNavState extends State<MobileBottomNav> {
   /// 拖动中遮罩中心的水平位置（相对 bar 内容区，null = 未在拖动）。
-  double? _dragX;
+  ///
+  /// 用 ValueNotifier 而非 State 字段：拖动期间 `onLongPressMoveUpdate` /
+  /// `onHorizontalDragUpdate` 以 60–120Hz 触发，若走 setState 会重建整个
+  /// 导航栏（含 OCLiquidGlassGroup / OCLiquidGlass 的 GPU shader 组件），
+  /// 造成 shader uniform 重置与移动端掉帧。改为只让遮罩定位子树订阅。
+  final ValueNotifier<double?> _dragX = ValueNotifier<double?>(null);
   /// 拖动开始时手指相对遮罩中心的偏移：抓取点不跳变。
   double _dragGrabOffset = 0;
   /// 长按手势是否已接管拖动（接管后 horizontalDrag 的 cancel 不得复位遮罩，
@@ -332,6 +337,12 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
     // 首次进入主界面即预加载 oc_liquid_glass 的 fragment shader，
     // 避免底部导航第一次渲染时的异步加载闪烁。
     OCLiquidGlassGroup.precacheShader();
+  }
+
+  @override
+  void dispose() {
+    _dragX.dispose();
+    super.dispose();
   }
 
   @override
@@ -422,22 +433,22 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
               }
               final grabCenter = _itemCenter(nearest, itemW, pillGap);
               _dragGrabOffset = d.localPosition.dx - grabCenter;
-              _dragX = grabCenter;
+              _dragX.value = grabCenter;
             }),
-            onLongPressMoveUpdate: (d) => setState(() {
-              _dragX = (d.localPosition.dx - _dragGrabOffset)
+            onLongPressMoveUpdate: (d) {
+              _dragX.value = (d.localPosition.dx - _dragGrabOffset)
                   .clamp(itemW / 2, cons.maxWidth - itemW / 2);
-            }),
+            },
             onLongPressEnd: (_) {
               _longPressActive = false;
               _endDrag(itemW, items.length, pillGap, itemToPage);
             },
             onLongPressCancel: () {
               _longPressActive = false;
-              setState(() => _dragX = null);
+              _dragX.value = null;
             },
             // ── 快速水平滑动（<500ms）：同样走拖动跟随 ──
-            onHorizontalDragStart: (d) => setState(() {
+            onHorizontalDragStart: (d) {
               final dx = d.localPosition.dx;
               int nearest = 0;
               var bestDist = double.infinity;
@@ -450,17 +461,17 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
               }
               final grabCenter = _itemCenter(nearest, itemW, pillGap);
               _dragGrabOffset = d.localPosition.dx - grabCenter;
-              _dragX = grabCenter;
-            }),
-            onHorizontalDragUpdate: (d) => setState(() {
-              _dragX = (d.localPosition.dx - _dragGrabOffset)
+              _dragX.value = grabCenter;
+            },
+            onHorizontalDragUpdate: (d) {
+              _dragX.value = (d.localPosition.dx - _dragGrabOffset)
                   .clamp(itemW / 2, cons.maxWidth - itemW / 2);
-            }),
+            },
             onHorizontalDragEnd: (_) => _endDrag(itemW, items.length, pillGap, itemToPage),
             onHorizontalDragCancel: () {
               // 长按已接管时由长按流程收尾，这里不要复位遮罩（否则先跳回旧项）。
               if (_longPressActive) return;
-              setState(() => _dragX = null);
+              _dragX.value = null;
             },
             child: SizedBox(
               width: cons.maxWidth,
@@ -519,7 +530,7 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
   /// 现在：先切页（父组件同帧更新 selectedIndex），再复位拖动态；
   /// 目标用最近中心选取，无缝隙死区。
   void _endDrag(double itemW, int itemCount, double gap, Map<int, int> pageMap) {
-    final dx = _dragX;
+    final dx = _dragX.value;
     if (dx != null) {
       int target = 0;
       var bestDist = double.infinity;
@@ -534,7 +545,7 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
       // 随后的 _dragX=null 复位让遮罩直接从松手点一次动画到新药丸。
       widget.onSelected(pageMap[target] ?? 0);
     }
-    setState(() => _dragX = null);
+    _dragX.value = null;
   }
 
   /// 第 i 个药丸的左边缘位置（考虑间距）。
@@ -561,7 +572,28 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
     required bool isDark,
     required String style,
   }) {
-    final dragging = _dragX != null;
+    // 只有这个子树订阅 _dragX：拖动时导航栏其余部分（药丸行、玻璃 shader 组件）
+    // 不再随每帧重建，仅遮罩位置变化。
+    return ValueListenableBuilder<double?>(
+      valueListenable: _dragX,
+      builder: (context, dragX, _) => _buildMaskFor(
+        dragX, itemIdx, itemW, pillGap, itemCount,
+        scheme: scheme, isDark: isDark, style: style,
+      ),
+    );
+  }
+
+  Widget _buildMaskFor(
+    double? dragX,
+    int itemIdx,
+    double itemW,
+    double pillGap,
+    int itemCount, {
+    required ColorScheme scheme,
+    required bool isDark,
+    required String style,
+  }) {
+    final dragging = dragX != null;
     final mask = AnimatedScale(
       // 长按/拖动时放大，明确标识「已抓取/被选中」
       scale: dragging ? 1.25 : 1.0,
@@ -573,7 +605,7 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
     Widget buildStatic() => AnimatedPositioned(
           duration: dragging ? Duration.zero : const Duration(milliseconds: 260),
           curve: Curves.easeOutCubic,
-          left: dragging ? (_dragX! - itemW / 2) : _itemLeft(itemIdx, itemW, pillGap),
+          left: dragging ? (dragX - itemW / 2) : _itemLeft(itemIdx, itemW, pillGap),
           top: 2,
           bottom: 2,
           width: itemW,

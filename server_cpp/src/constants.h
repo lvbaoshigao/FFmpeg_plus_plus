@@ -25,6 +25,8 @@ inline std::map<std::string, std::map<std::string, std::string>> GPU_ENCODERS = 
 // 检查文件路径是否包含危险字符（防止命令注入）
 inline bool isPathSafe(const std::string& path) {
     if (path.empty()) return false;
+    // 禁止以 '-' 开头：ffmpeg 会把 "-y"、"-i" 之类的值解释为选项（参数注入）
+    if (path[0] == '-') return false;
     // 禁止 UNC 路径（防止 NTLM 凭证泄漏）
     if (path.size() >= 2 && path[0] == '\\' && path[1] == '\\') return false;
     if (path.size() >= 2 && path[0] == '/' && path[1] == '/') return false;
@@ -75,6 +77,12 @@ inline std::vector<std::string> DANGEROUS_FILTERS = {
     "subtitles", "ass", "ssa",
     // readfile 读取任意文件内容注入滤镜元数据
     "readfile",
+    // metadata/sidedata 支持 file= 参数向任意路径写出文件（任意文件写入/覆盖）
+    "metadata", "sidedata",
+    // frei0r 加载外部动态库；signature 写文件；fsync 无实际用途但可探测路径
+    "frei0r", "signature",
+    // 外部进程/文件类滤镜
+    "file", "exec", "streamselect", "thumbnail_cuda",
 };
 
 // 验证过滤器字符串是否安全

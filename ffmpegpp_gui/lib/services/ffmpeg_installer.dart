@@ -171,18 +171,42 @@ class FfmpegInstaller {
 
   static Future<void> _extractExeFromZip(String zipPath, String targetName, String destPath) async {
     final bytes = await File(zipPath).readAsBytes();
+    // 解压炸弹防护必须在 decodeBytes 之前完成：decodeBytes 会把所有条目一次性
+    // 解压到内存，事后再检查 file.size 已经太晚（M-8）。
+    // 这里先从中央目录汇总声明的大小，超阈值直接拒绝，不做全量解压。
+    final probe = ZipDecoder().decodeBytes(bytes, verify: false);
+    var declaredTotal = 0;
+    for (final f in probe) {
+      if (!f.isFile) continue;
+      declaredTotal += f.size;
+      if (f.size > 512 * 1024 * 1024) {
+        throw Exception('ZIP 条目过大 (${f.name}): ${(f.size / 1024 / 1024).toStringAsFixed(0)}MB');
+      }
+      // 高压缩比是 zip bomb 的典型特征（ffmpeg 二进制压缩比约 3-4 倍）。
+      // compressedSize 定义在 ZipFile 上；迭代变量静态类型为 ArchiveFile，
+      // 需用 as 取到子类型才能访问该字段。
+      final compressed = (f as dynamic).compressedSize as int? ?? 0;
+      if (compressed > 0 && f.size / compressed > 200) {
+        throw Exception('ZIP 条目压缩比异常 (${f.name})，疑似解压炸弹');
+      }
+    }
+    const maxTotal = 1024 * 1024 * 1024; // 全部条目解压后合计上限 1GB
+    if (declaredTotal > maxTotal) {
+      throw Exception('ZIP 解压后总大小过大: ${(declaredTotal / 1024 / 1024).toStringAsFixed(0)}MB');
+    }
+
     final archive = ZipDecoder().decodeBytes(bytes);
     for (final file in archive) {
-      // 解压炸弹防护：拒绝超大的解压条目（ffmpeg 二进制合理上限 512MB）
-      if (file.isFile && file.size > 512 * 1024 * 1024) {
-        throw Exception('ZIP 条目过大 (${file.name}): ${(file.size / 1024 / 1024).toStringAsFixed(0)}MB');
-      }
       if (file.isFile && file.name.toLowerCase().endsWith(targetName.toLowerCase())) {
         // 安全检查：拒绝包含路径穿越的 ZIP 条目
         if (file.name.contains('..')) {
           throw Exception('ZIP 条目包含不安全路径: ${file.name}');
         }
         final content = file.content as List<int>;
+        // 二次防护：声明与实际不符时同样拒绝
+        if (content.length > 512 * 1024 * 1024) {
+          throw Exception('$targetName 解压后过大 (${content.length} 字节)，已拒绝');
+        }
         await File(destPath).writeAsBytes(content);
         // POSIX 平台（macOS/Linux）：提取的二进制需要可执行权限，
         // 否则运行 ffmpeg -version 会 Permission denied。

@@ -2,7 +2,9 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
+import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
+import '../theme/mobile_ui.dart';
 import 'app_card.dart' show SurfaceStyle;
 import 'liquid_glass_fallback.dart';
 
@@ -44,20 +46,31 @@ class MobileGlassPill extends StatefulWidget {
   State<MobileGlassPill> createState() => _MobileGlassPillState();
 }
 
-/// 药丸内紧凑圆形图标按钮（与项目页"+/导入/容器"等按钮一致的风格）。
+/// 药丸内紧凑圆形图标按钮 —— **全应用移动端顶栏动作按钮的唯一实现**。
+/// 与主界面（项目页）"搜索/导入/容器/+"按钮逐像素一致。
 ///
 /// 为什么不用 IconButton：Material IconButton 会按主题色渲染 splash/focus/hover，
-/// 在液态玻璃药丸里会显示一片主题色块（特别是搜索→关闭切换瞬间的涟漪 + 蓝色边框）。
+/// 在液态玻璃药丸里会显示一片主题色块（特别是搜索→关闭切换瞬间的涟漪 + 蓝色边框），
+/// 且自带 48×48 最小尺寸约束，会把药丸撑得比标题药丸更高。
 /// 这里手写一个透明 InkWell 的紧凑按钮：
 /// - 默认无背景；[bg] 传入后变成实心主题色圆形（用于"+"加号 CTA）
 /// - splash/highlight 都透明，避免蓝色涟漪
-/// - 圆角半径 18、内边距 2、直径 34 —— 与 project_page _pillAction 完全一致
+/// - 尺寸/图标/内边距统一取自 [MobileUi]（34/19/h1|h2）
+///
+/// 移动端横向内边距取 1（比桌面 2 更紧凑），与主界面一致。
 class MobileGlassPillAction extends StatelessWidget {
   final IconData icon;
   final String tooltip;
   final Color? color;
   final Color? bg;
   final VoidCallback? onTap;
+
+  /// 按钮直径（默认 [MobileUi.actionButtonSize]）
+  final double size;
+  /// 图标尺寸（默认 [MobileUi.actionIconSize]）
+  final double iconSize;
+  /// 覆盖默认内边距（默认移动端 h1/v2，桌面端 h2/v2）
+  final EdgeInsetsGeometry? padding;
 
   const MobileGlassPillAction({
     super.key,
@@ -66,27 +79,35 @@ class MobileGlassPillAction extends StatelessWidget {
     required this.color,
     required this.onTap,
     this.bg,
+    this.size = MobileUi.actionButtonSize,
+    this.iconSize = MobileUi.actionIconSize,
+    this.padding,
   });
 
   @override
   Widget build(BuildContext context) {
+    final pad = padding ??
+        EdgeInsets.symmetric(
+          horizontal: isMobilePlatform ? 1 : 2,
+          vertical: 2,
+        );
     return Tooltip(
       message: tooltip,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(size / 2),
         splashColor: Colors.transparent,
         highlightColor: Colors.transparent,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+          padding: pad,
           child: Container(
-            width: 34,
-            height: 34,
+            width: size,
+            height: size,
             decoration: BoxDecoration(
               color: bg,
               shape: BoxShape.circle,
             ),
-            child: Icon(icon, size: 19, color: color),
+            child: Icon(icon, size: iconSize, color: color),
           ),
         ),
       ),

@@ -12,7 +12,9 @@ namespace {
 
 double parseFps(const json& stream) {
     for (const auto& key : {"r_frame_rate", "avg_frame_rate"}) {
-        if (stream.contains(key)) {
+        // 字段可能缺失、为 null 或非字符串（不同 ffprobe 版本/异常流），
+        // 直接 get<std::string>() 会抛 type_error 中断整个探测（M-12）。
+        if (stream.contains(key) && stream[key].is_string()) {
             std::string fps_str = stream[key].get<std::string>();
             auto slash = fps_str.find('/');
             if (slash != std::string::npos) {

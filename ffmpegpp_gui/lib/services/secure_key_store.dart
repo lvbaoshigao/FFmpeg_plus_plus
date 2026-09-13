@@ -33,6 +33,8 @@ class SecureKeyStore {
 
   static List<int> _deriveKey() {
     final hmac = Hmac(sha256, utf8.encode(_appSecret));
+    // 注意：派生算法必须保持稳定，否则已保存的 API Key 会在升级后无法解密
+    // （静默丢数据）。任何密钥派生改动都要走新前缀版本（见下方「版本化」注释）。
     return hmac.convert(utf8.encode(_salt)).bytes; // 32 字节
   }
 

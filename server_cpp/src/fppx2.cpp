@@ -271,9 +271,21 @@ bool parseNodeGraph(const std::vector<uint8_t>& payload, bool force, Fppx2Result
         r.errors.push_back("节点数量字段不完整，逻辑块内容已损坏");
         return false;
     }
-    if (n > rd.remaining() / 44 + 1) {
+    // 单条节点记录的最小字节数：
+    //   16B 类型 ID + 4B recSize + 4B fileId + 4×(4B 块大小 + 4B 计数) + 4B 属性长度 = 60B
+    // 旧实现用 /44 作为上限，比真实下界低估约 36%，可让 256MB 恶意文件触发
+    // 约 600 万个节点的 vector 分配（数 GB 级），导致 OOM（M-3）。
+    constexpr uint32_t kMinNodeRecordBytes = 60;
+    if (n > rd.remaining() / kMinNodeRecordBytes) {
         r.errors.push_back("节点数量异常（声明 " + std::to_string(n) +
                            " 个，超出载荷容量）");
+        return false;
+    }
+    // 额外硬上限：任何真实工程的节点数都远低于此值
+    constexpr uint32_t kMaxNodes = 200000;
+    if (n > kMaxNodes) {
+        r.errors.push_back("节点数量超出上限（" + std::to_string(n) + " > " +
+                           std::to_string(kMaxNodes) + "）");
         return false;
     }
 

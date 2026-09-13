@@ -10,6 +10,7 @@ import '../theme/app_strings.dart';
 import '../widgets/task_card.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_glass_pill.dart';
+import '../widgets/mobile_ui.dart';
 import '../platform/app_platform.dart';
 
 /// 队列页刷新依赖：任务列表版本号（已含节流）+ 界面语言。
@@ -70,7 +71,7 @@ class _QueuePageState extends State<QueuePage> {
             // 全屏可滚动的内容（移动端顶部留出药丸空间）
             isMobilePlatform
                 ? Padding(
-                    padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top + 60),
+                    padding: EdgeInsets.only(top: MobileUi.pageTopPadding(context)),
                     child: state.tasks.isEmpty
                         ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
                             Icon(Icons.inbox_outlined, size: 64, color: scheme.outline),
@@ -80,7 +81,7 @@ class _QueuePageState extends State<QueuePage> {
                             Text(s.emptyQueueHint, style: TextStyle(fontSize: 13, color: scheme.outline)),
                           ]))
                         : ListView.builder(
-                            padding: EdgeInsets.fromLTRB(8, 8, 8, kMobileNavClearance),
+                            padding: MobileUi.mainListPadding(),
                             itemCount: state.tasks.length,
                             itemBuilder: (_, i) => _taskCardFor(state, i),
                           ),
@@ -182,87 +183,54 @@ class _QueuePageState extends State<QueuePage> {
     ];
   }
 
-  /// 移动端顶栏：左侧标题药丸自适应宽度（内容贴合，不撑满），
-  /// 右侧操作药丸也按内容自适应（贴合 CPU/内存占用条 + 按钮），
-  /// 两者之间留固定 8px 间隙，不再用 Expanded 强制撑满剩余宽度。
-  /// 移动端顶栏操作（紧凑图标按钮，无文字）：和处理队列相关的按钮全部用图标，
-  /// 避免带文字的按钮在顶栏药丸里太长（任务全部完成时尤其突兀）。
+  /// 移动端顶栏操作（紧凑圆形图标按钮，无文字）：与项目页/配置库页共用
+  /// [MobileGlassPillAction]（34×34、图标 19、透明涟漪），不再本页自绘一份。
+  /// 「停止」用 error 色，与项目页删除按钮一致。
   List<Widget> _buildMobileActions(ColorScheme scheme, AppState state, AppStrings s) {
-    Widget iconBtn(IconData icon, String tooltip, VoidCallback? onTap, {Color? color}) {
-      return Tooltip(
-        message: tooltip,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(18),
-          splashColor: Colors.transparent,
-          highlightColor: Colors.transparent,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-            child: Container(
-              width: 34,
-              height: 34,
-              decoration: const BoxDecoration(shape: BoxShape.circle),
-              child: Icon(icon, size: 19, color: color ?? scheme.onSurface),
-            ),
-          ),
-        ),
-      );
-    }
     return [
       if (state.processing)
-        iconBtn(Icons.stop, s.cancelAll, () => state.cancelProcessing()),
+        MobileGlassPillAction(
+          icon: Icons.stop,
+          tooltip: s.cancelAll,
+          color: scheme.error,
+          onTap: () => state.cancelProcessing(),
+        ),
       if (!state.processing && state.tasks.any((t) => t.status == TaskStatus.pending))
-        iconBtn(Icons.play_arrow, s.startProcessing, () => state.processAllTasks()),
+        MobileGlassPillAction(
+          icon: Icons.play_arrow,
+          tooltip: s.startProcessing,
+          color: scheme.onSurface,
+          onTap: () => state.processAllTasks(),
+        ),
       if (state.tasks.any((t) => t.status == TaskStatus.completed || t.status == TaskStatus.failed || t.status == TaskStatus.cancelled))
-        iconBtn(Icons.cleaning_services_outlined, s.clearCompleted, () => state.clearCompletedTasks()),
+        MobileGlassPillAction(
+          icon: Icons.cleaning_services_outlined,
+          tooltip: s.clearCompleted,
+          color: scheme.onSurface,
+          onTap: () => state.clearCompletedTasks(),
+        ),
       if (state.tasks.isNotEmpty)
-        iconBtn(Icons.delete_sweep, s.clearAll, () => state.clearAllTasks()),
-      const SizedBox(width: 8),
+        MobileGlassPillAction(
+          icon: Icons.delete_sweep,
+          tooltip: s.clearAll,
+          color: scheme.onSurface,
+          onTap: () => state.clearAllTasks(),
+        ),
+      // 紧凑资源占用（CPU/内存/GPU）：左右各 4px 由药丸内边距承担，
+      // 与 34×34 圆形按钮垂直居中对齐（不再额外加 SizedBox）。
       Padding(
-        padding: const EdgeInsets.only(right: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 4),
         child: _monitorBar(scheme, state),
       ),
     ];
   }
 
+  /// 移动端顶栏：统一走 [MobilePillTopBar]（标题药丸 + 操作药丸 + 安全区
+  /// 内边距全部由顶栏提供），不再本页拼 Row/Flexible/Align/FittedBox。
   Widget _buildMobileTopBar(ColorScheme scheme, AppState state, AppStrings s) {
-    final safeTop = MediaQuery.of(context).padding.top;
-    return Padding(
-      padding: EdgeInsets.fromLTRB(8, safeTop + 6, 8, 6),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-        // 左：标题药丸（高度 44，与项目页「项目」药丸完全一致）
-        MobileGlassPill(
-          radius: 22,
-          height: 44,
-          padding: const EdgeInsets.symmetric(horizontal: 14),
-          pressable: true,
-          child: Text(s.navQueue,
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-        ),
-        const SizedBox(width: 8),
-        // 右：操作药丸（高度 44；宽度完全跟随内部元素总长度——
-        // SingleChildScrollView 会把药丸撑满剩余宽度，故改回 mainAxisSize.min 的 Row）。
-        // FittedBox(scaleDown)：任务存在时顶栏会多出 3 个操作按钮，窄屏
-        // （如 412dp 手机）下 Row 整体溢出 ~190px；空间不足时整体等比缩小，
-        // 不再溢出裁切。
-        Flexible(
-          child: Align(
-            alignment: Alignment.centerRight,
-            child: MobileGlassPill(
-              radius: 22,
-              height: 44,
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: _buildMobileActions(scheme, state, s),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ]),
+    return MobilePillTopBar(
+      title: Text(s.navQueue),
+      actions: _buildMobileActions(scheme, state, s),
     );
   }
 }
@@ -277,13 +245,24 @@ class _MonitorWidget extends StatefulWidget {
 
 class _MonitorWidgetState extends State<_MonitorWidget> {
   Timer? _refreshTimer;
+  // 上次渲染的指标快照：仅在数值真正变化时才 setState，
+  // 避免空闲/数值稳定时每 2 秒无条件重建（长任务期间累积无谓 build）。
+  String? _lastSnapshot;
 
   @override
   void initState() {
     super.initState();
     _refreshTimer = Timer.periodic(const Duration(seconds: 2), (_) {
-      if (mounted) setState(() {});
+      if (!mounted) return;
+      if (_snapshot() != _lastSnapshot) setState(() {});
     });
+  }
+
+  /// 把当前指标压成一个可比较的字符串（仅用于变更检测）。
+  String _snapshot() {
+    final m = widget.monitor;
+    return '${m.cpuPercent.toStringAsFixed(0)}|${m.ramUsedGb.toStringAsFixed(1)}'
+        '|${m.ramPercent.toStringAsFixed(0)}|${m.gpuPercent.toStringAsFixed(0)}';
   }
 
   @override
@@ -294,6 +273,7 @@ class _MonitorWidgetState extends State<_MonitorWidget> {
 
   @override
   Widget build(BuildContext context) {
+    _lastSnapshot = _snapshot(); // 记录本次已渲染的数值
     final m = widget.monitor;
     final sc = widget.scheme;
     // 紧凑小尺寸：仅图标 + 数值，适合放在顶栏右侧

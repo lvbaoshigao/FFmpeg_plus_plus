@@ -89,6 +89,27 @@ const NodeTypeSpec kTypes[] = {
     {makeTypeId(0x18), "videoCrop", nullptr, "视频裁剪",
      MK_VIDEO, MK_VIDEO, false, 0,
      {COMMON_KEYS, "crop_w", "crop_h", "crop_x", "crop_y"}},
+
+    // ── 扩展节点（v5.4 新增；ID 自 0x19 顺延，勿插队以免破坏既有文件往返）──
+    {makeTypeId(0x19), "videoFilter", nullptr, "视频滤镜",
+     MK_VIDEO, MK_VIDEO, false, 0,
+     {COMMON_KEYS, "presets", "eq_brightness", "eq_contrast", "eq_saturation",
+      "eq_gamma", "hue_degrees", "vignette_angle", "denoise_strength",
+      "unsharp_amount"}},
+    {makeTypeId(0x1A), "videoGeometry", nullptr, "画面变换",
+     MK_VIDEO, MK_VIDEO, false, 0,
+     {COMMON_KEYS, "scale_mode", "scale_width", "scale_height", "scale_percent",
+      "flip", "rotate"}},
+    {makeTypeId(0x1B), "videoOverlay", nullptr, "画面叠加",
+     MK_VIDEO, MK_VIDEO, false, 0,
+     {COMMON_KEYS, "overlay_path", "position", "opacity", "margin",
+      "overlay_scale"}},
+    {makeTypeId(0x1C), "audioFade", nullptr, "音频淡入淡出",
+     MK_AUDIO, MK_AUDIO, false, 0,
+     {COMMON_KEYS, "fade_in", "fade_out", "fade_out_start", "curve"}},
+    {makeTypeId(0x1D), "imageAdjust", nullptr, "图片调整",
+     MK_IMAGE, MK_IMAGE, false, 0,
+     {COMMON_KEYS, "saturation", "gamma", "contrast"}},
 };
 
 // ── 结构性节点（源/输出）──────────────────────────────────────

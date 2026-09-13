@@ -74,9 +74,14 @@ void main() async {
   }
   _startupLog('1a-ImageCache capped');
 
-  // 完整性校验 — 后台执行，失败不退出
+  // 完整性校验 — 后台执行，失败不退出（策略：写日志 + 记录原因，不阻断启动）
   IntegrityCheck.verify().then((ok) {
-    _startupLog('IntegrityCheck: ${ok ? "PASS" : "FAIL"}');
+    _startupLog('IntegrityCheck(assets): ${ok ? "PASS" : "FAIL"}'
+        '${ok ? "" : " - ${IntegrityCheck.lastFailure}"}');
+  });
+  IntegrityCheck.verifyCritical().then((ok) {
+    _startupLog('IntegrityCheck(critical): ${ok ? "PASS" : "FAIL"}'
+        '${ok ? "" : " - ${IntegrityCheck.lastFailure}"}');
   });
 
   FlutterError.onError = (details) {

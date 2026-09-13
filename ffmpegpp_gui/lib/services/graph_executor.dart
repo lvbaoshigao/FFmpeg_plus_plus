@@ -15,7 +15,11 @@ class ExecutionPlan {
   final PipelineNode startNode;
   final List<ExecutionStep> steps;
   final PipelineNode? outputNode;
-  ExecutionPlan({required this.startNode, required this.steps, this.outputNode});
+  /// 计划构建期间产生的非致命告警（如节点参数非法被忽略）。
+  /// 调用方读取后可写入日志，便于用户定位「为什么这一步没生效」。
+  final List<String> warnings;
+  ExecutionPlan({required this.startNode, required this.steps, this.outputNode, List<String>? warnings})
+      : warnings = warnings ?? [];
 }
 
 class GraphExecutor {
@@ -52,6 +56,22 @@ class GraphExecutor {
       if (node.type == PipelineStepType.start) continue;
       if (!dataConns.any((c) => c.toNodeId == node.id)) {
         errors.add('"${node.label}" 没有输入连线');
+      }
+    }
+
+    // 执行引擎用单一 currentInput 串行传递：一个节点收到两条及以上数据输入
+    // 时，第二条分支的产物会被静默丢弃（M-1）。明确拒绝这种「菱形合流」，
+    // 避免用户误以为做了两路合并而实际只处理一路。
+    final inDegree = <String, int>{};
+    for (final c in dataConns) {
+      inDegree[c.toNodeId] = (inDegree[c.toNodeId] ?? 0) + 1;
+    }
+    for (final node in graph.nodes) {
+      if (node.isGate) continue;
+      final cnt = inDegree[node.id] ?? 0;
+      if (cnt > 1) {
+        errors.add('"${node.label}" 有 $cnt 条数据输入连线（仅支持单输入串联，'
+            '多路合并请用「合并」节点）');
       }
     }
 
@@ -195,7 +215,12 @@ class GraphExecutor {
             || types.contains(PipelineStepType.imageChannelExtract) || types.contains(PipelineStepType.audioMetadata)
             || types.contains(PipelineStepType.concatMedia) || types.contains(PipelineStepType.imageToVideo)
             || types.contains(PipelineStepType.extractAudio)
-            || types.contains(PipelineStepType.videoCrop);
+            || types.contains(PipelineStepType.videoCrop)
+            || types.contains(PipelineStepType.videoFilter)
+            || types.contains(PipelineStepType.videoGeometry)
+            || types.contains(PipelineStepType.videoOverlay)
+            || types.contains(PipelineStepType.audioFade)
+            || types.contains(PipelineStepType.imageAdjust);
         if (hasMergeable && hasSequential) {
           final names = step.nodes.map((n) => n.label).join(', ');
           errors.add('同层级节点冲突: $names (合并节点不能与独立节点在同一层级)');
@@ -259,6 +284,21 @@ class GraphExecutor {
         if (types.contains(PipelineStepType.videoCrop) && types.length > 1) {
           errors.add('视频裁剪 不能与其他操作并行');
         }
+        if (types.contains(PipelineStepType.videoFilter) && types.length > 1) {
+          errors.add('视频滤镜 不能与其他操作并行');
+        }
+        if (types.contains(PipelineStepType.videoGeometry) && types.length > 1) {
+          errors.add('画面变换 不能与其他操作并行');
+        }
+        if (types.contains(PipelineStepType.videoOverlay) && types.length > 1) {
+          errors.add('画面叠加 不能与其他操作并行');
+        }
+        if (types.contains(PipelineStepType.audioFade) && types.length > 1) {
+          errors.add('音频淡入淡出 不能与其他操作并行');
+        }
+        if (types.contains(PipelineStepType.imageAdjust) && types.length > 1) {
+          errors.add('图片调整 不能与其他操作并行');
+        }
         if (types.contains(PipelineStepType.videoCrop)) {
           final vcNode = step.nodes.firstWhere((n) => n.type == PipelineStepType.videoCrop);
           final cw = (vcNode.params['crop_w'] as num?)?.toInt() ?? 0;
@@ -272,6 +312,14 @@ class GraphExecutor {
           final clipNode = step.nodes.firstWhere((n) => n.type == PipelineStepType.clip);
           final st = (clipNode.params['start_time'] as num?)?.toDouble() ?? 0;
           final et = (clipNode.params['end_time'] as num?)?.toDouble();
+          // 负时间在校验阶段就拦截：原实现要到后端 -ss 参数校验才报错，
+          // 用户拿到的提示离根源很远（L-7）。
+          if (st < 0) {
+            errors.add('片段截取起始时间不能为负（当前 ${st}s）');
+          }
+          if (et != null && et < 0) {
+            errors.add('片段截取结束时间不能为负（当前 ${et}s）');
+          }
           if (clipCeiling != null) {
             final duration = clipCeiling;
             if (st > duration) {
@@ -383,6 +431,11 @@ class GraphExecutor {
             PipelineStepType.imageDenoise => 'image_denoise',
             PipelineStepType.imageChannelExtract => 'image_channel_extract',
             PipelineStepType.videoCrop => 'video_crop',
+            PipelineStepType.videoFilter => 'video_filter',
+            PipelineStepType.videoGeometry => 'video_geometry',
+            PipelineStepType.videoOverlay => 'video_overlay',
+            PipelineStepType.audioFade => 'audio_fade',
+            PipelineStepType.imageAdjust => 'image_adjust',
             _ => 'single',
           };
           steps.add(ExecutionStep(action, [n]));
@@ -425,11 +478,16 @@ class GraphExecutor {
 
   // ── 将执行计划转为后端调用 ──
 
-  static List<BackendCall> buildBackendCalls(
+  /// 将执行计划转为后端调用。
+  /// 返回 null 表示计划构建失败（遇到未知/不支持的节点类型），调用方必须终止
+  /// 该任务；返回空列表表示图中无实际处理步骤（仅 源文件→输出），由调用方兜底。
+  static List<BackendCall>? buildBackendCalls(
       ExecutionPlan plan, String inputPath, String outputPath) {
     final calls = <BackendCall>[];
     final tempFiles = <String>[];
     final stepCallRanges = <(int, int, ExecutionStep)>[];
+    // 收集本次构建的非致命告警，调用方可通过 plan.warnings 读取
+    final warnings = <String>[];
     // 以输出节点 id + 最终输出路径作盐，区分同源多输出计划的中间文件，避免并发时互相覆盖
     // （即便两个输出节点命名相同，id 也保证盐唯一）
     final tmpSalt = _stableHash('${plan.outputNode?.id ?? ''}\u0000$outputPath');
@@ -583,6 +641,12 @@ class GraphExecutor {
               action: 'transcode',
               params: {'input': currentInput, 'output': currentOutput, 'options': opts},
             ));
+          } else {
+            // 走到了 'single' 但节点类型不在上面三种之内 —— 说明这是未知/不支持的
+            // 节点类型（PipelineStepType.unknown 会被 action 映射降级为 'single'）。
+            // 绝不能静默跳过：必须让调用方知道执行计划构建失败，
+            // 否则下游会把「预期存在的中间文件」当作已生成继续执行（H-2）。
+            return null;
           }
           break;
 
@@ -817,6 +881,75 @@ class GraphExecutor {
           currentInput = outPath;
           continue;
 
+        // ── 扩展节点：视频滤镜 / 画面变换 / 画面叠加 ──
+        // 统一走后端 transcode 的 vf_filters 通道（与 speed 节点同机制），
+        // 由后端负责编码器/GPU/pix_fmt 解析，前端只产出滤镜串。
+        case 'video_filter':
+          final node = step.nodes.first;
+          final ext = currentInput.split('.').last;
+          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext, tmpSalt);
+          if (!isLast) tempFiles.add(outPath);
+          calls.add(BackendCall(action: 'transcode', params: {
+            'input': currentInput, 'output': outPath,
+            'options': _defaultAvOptions()..['vf_filters'] = [_videoFilterChain(node)],
+          }));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
+        case 'video_geometry':
+          final node = step.nodes.first;
+          final ext = currentInput.split('.').last;
+          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext, tmpSalt);
+          if (!isLast) tempFiles.add(outPath);
+          calls.add(BackendCall(action: 'transcode', params: {
+            'input': currentInput, 'output': outPath,
+            'options': _defaultAvOptions()..['vf_filters'] = [_videoGeometryChain(node)],
+          }));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
+        case 'video_overlay':
+          final node = step.nodes.first;
+          final ext = currentInput.split('.').last;
+          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext, tmpSalt);
+          final overlayPath = (node.params['overlay_path'] as String? ?? '').trim();
+          final overlayChain = _videoOverlayChain(node);
+          // 未选素材时该节点在链路上跳过：保持输入/输出链不变，不产生空转命令
+          if (overlayChain == null || overlayPath.isEmpty) continue;
+          if (!isLast) tempFiles.add(outPath);
+          // overlay_input 必须显式传给后端，否则滤镜图引用 [1:v] 时输入不存在（C-1）
+          calls.add(BackendCall(action: 'transcode', params: {
+            'input': currentInput, 'output': outPath,
+            'options': _defaultAvOptions()
+              ..['overlay_input'] = overlayPath
+              ..['vf_filters'] = [overlayChain],
+          }));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
+        // ── 扩展节点：图片调整（色彩/伽马）──
+        // 与 image_* 系列一致，由 Dart 端 _runXxx 直接跑 ffmpeg。
+        case 'image_adjust':
+          final node = step.nodes.first;
+          final ext = currentInput.split('.').last;
+          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext, tmpSalt);
+          if (!isLast) tempFiles.add(outPath);
+          calls.add(BackendCall(
+            action: 'image_adjust',
+            params: {
+              'input': currentInput, 'output': outPath,
+              'saturation': node.params['saturation'] ?? 1.0,
+              'gamma': node.params['gamma'] ?? 1.0,
+              'contrast': node.params['contrast'] ?? 1.0,
+            },
+          ));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
         case 'audio_convert':
           final node = step.nodes.first;
           final p = node.params;
@@ -896,11 +1029,22 @@ class GraphExecutor {
           if (!isLast) tempFiles.add(outPath);
           final opts = <String, dynamic>{'video_codec': 'none', 'audio_codec': 'copy', 'overwrite': true};
           final bitrateVal = p['audio_bitrate'];
-          if (bitrateVal != null) {
+          final brNum = (bitrateVal as num?)?.toInt();
+          if (brNum != null && brNum > 0) {
             opts['audio_codec'] = _codecForFormat[ext] ?? 'aac';
-            opts['audio_bitrate'] = (bitrateVal as num).toInt();
+            opts['audio_bitrate'] = brNum;
           }
-          if (sr != 'keep') { opts['audio_codec'] = _codecForFormat[ext] ?? 'aac'; final v = int.tryParse(sr); if (v != null) opts['sample_rate'] = v; }
+          if (sr != 'keep') {
+            // 采样率非法（非数字）时不要静默生成 `-c:a copy` 降级命令，
+            // 否则含视频流的输入会被 `-c:v none` 直接丢视频（L-2）。
+            final v = int.tryParse(sr);
+            if (v == null || v <= 0) {
+              warnings.add('音质调整：非法采样率 "$sr"，已忽略该项设置');
+            } else {
+              opts['audio_codec'] = _codecForFormat[ext] ?? 'aac';
+              opts['sample_rate'] = v;
+            }
+          }
           calls.add(BackendCall(action: 'transcode', params: {'input': currentInput, 'output': outPath, 'options': opts}));
           stepCallRanges.add((callsBeforeStep, calls.length, step));
           currentInput = outPath;
@@ -956,6 +1100,25 @@ class GraphExecutor {
           calls.add(BackendCall(action: 'transcode', params: {
             'input': currentInput, 'output': outPath,
             'options': {'video_codec': 'none', 'audio_codec': _codecForFormat[ext] ?? 'aac', 'af_filters': [filter], 'overwrite': true},
+          }));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
+        case 'audio_fade':
+          final node = step.nodes.first;
+          final ext = currentInput.split('.').last.toLowerCase();
+          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext, tmpSalt);
+          if (!isLast) tempFiles.add(outPath);
+          final fadeFilters = _audioFadeFilters(node);
+          calls.add(BackendCall(action: 'transcode', params: {
+            'input': currentInput, 'output': outPath,
+            'options': {
+              'video_codec': 'none',
+              'audio_codec': _codecForFormat[ext] ?? 'aac',
+              if (fadeFilters.isNotEmpty) 'af_filters': fadeFilters,
+              'overwrite': true,
+            },
           }));
           stepCallRanges.add((callsBeforeStep, calls.length, step));
           currentInput = outPath;
@@ -1019,6 +1182,12 @@ class GraphExecutor {
             },
           ));
           break;
+
+        default:
+          // _buildPlanForOutput 的 `_ => 'single'` 兜底会把未知类型映射为 'single'，
+          // 这里再兜一层：任何未识别的 action 都视为构建失败，
+          // 不再静默产出空链路让下游误以为中间文件已生成（H-2）。
+          return null;
       }
 
       // Record the range of calls generated by this step
@@ -1040,6 +1209,10 @@ class GraphExecutor {
     for (final tf in tempFiles) {
       calls.add(BackendCall(action: '_cleanup', params: {'path': tf}));
     }
+    // 回传构建期告警（如被忽略的非法参数），供调用方写日志
+    plan.warnings
+      ..clear()
+      ..addAll(warnings);
     return calls;
   }
 
@@ -1069,6 +1242,8 @@ class GraphExecutor {
         } else if (step.action == 'image_convert') {
           final n = step.nodes.first;
           overrideExt = n.params['output_format'] as String? ?? 'png';
+        } else if (step.action == 'image_adjust') {
+          // 图片调整保持输入格式（不改变容器），extension 沿用源文件
         }
       }
       ext = overrideExt ?? video.filename.split('.').last;
@@ -1085,6 +1260,9 @@ class GraphExecutor {
     var dir = (outputDir != null && outputDir.isNotEmpty) ? outputDir
         : config.defaultOutputDir.isNotEmpty ? config.defaultOutputDir
         : video.filepath.replaceAll(RegExp(r'[^\\/]+$'), '');
+    // filepath 不含任何分隔符时上面的正则返回空串，直接拼分隔符会得到
+    // 文件系统根路径（如 "/name.mp4"），可能写到根目录（M-13）。
+    if (dir.isEmpty) dir = Directory.current.path;
     if (!dir.endsWith('/') && !dir.endsWith('\\')) dir = '$dir${Platform.pathSeparator}';
 
     var out = '$dir$fn';
@@ -1210,6 +1388,22 @@ class GraphExecutor {
             case PipelineStepType.videoCrop:
               descs.add('视频裁剪(${n.params['crop_w'] ?? '?'}x${n.params['crop_h'] ?? '?'})');
               break;
+            case PipelineStepType.videoFilter:
+              final pr = (n.params['presets'] as List?)?.whereType<String>().toList() ?? const <String>[];
+              descs.add('视频滤镜(${pr.isEmpty ? "无" : pr.join("/")})');
+              break;
+            case PipelineStepType.videoGeometry:
+              descs.add('画面变换(${n.params['scale_mode'] ?? 'none'}/${n.params['flip'] ?? 'none'}/${n.params['rotate'] ?? 'none'})');
+              break;
+            case PipelineStepType.videoOverlay:
+              descs.add('画面叠加(${n.params['position'] ?? 'bottom-right'}, α=${n.params['opacity'] ?? 1.0})');
+              break;
+            case PipelineStepType.audioFade:
+              descs.add('淡入淡出(in=${n.params['fade_in'] ?? 0}s, out=${n.params['fade_out'] ?? 0}s)');
+              break;
+            case PipelineStepType.imageAdjust:
+              descs.add('图片调整(sat=${n.params['saturation'] ?? 1.0}, γ=${n.params['gamma'] ?? 1.0})');
+              break;
             default: break;
           }
         }
@@ -1284,6 +1478,151 @@ class GraphExecutor {
     'audio_codec': 'aac', 'overwrite': true,
   };
 
+  // ── 扩展节点：滤镜串生成 ──
+
+  /// 视频滤镜：按 [PipelineNode] 的 presets 勾选集拼接 vf 链。
+  /// 每个 preset 的滤镜串为固定安全字面量（不含用户输入），参数只做数值钳制，
+  /// 因此不存在滤镜注入风险。
+  static String _videoFilterChain(PipelineNode node) {
+    final p = node.params;
+    final presets = (p['presets'] as List?)?.whereType<String>().toSet() ?? <String>{};
+    final chains = <String>[];
+
+    if (presets.contains('brightness')) {
+      final v = _clampD(p['eq_brightness'], -1.0, 1.0, 0.0);
+      if (v != 0.0) chains.add('eq=brightness=${v.toStringAsFixed(3)}');
+    }
+    if (presets.contains('contrast')) {
+      final v = _clampD(p['eq_contrast'], 0.0, 4.0, 1.0);
+      if (v != 1.0) chains.add('eq=contrast=${v.toStringAsFixed(3)}');
+    }
+    if (presets.contains('saturation')) {
+      final v = _clampD(p['eq_saturation'], 0.0, 3.0, 1.0);
+      if (v != 1.0) chains.add('eq=saturation=${v.toStringAsFixed(3)}');
+    }
+    if (presets.contains('gamma')) {
+      final v = _clampD(p['eq_gamma'], 0.1, 10.0, 1.0);
+      if (v != 1.0) chains.add('eq=gamma=${v.toStringAsFixed(3)}');
+    }
+    // 色相/饱和度/明度：hue 滤镜用角度制
+    if (presets.contains('hue')) {
+      final deg = _clampD(p['hue_degrees'], -180.0, 180.0, 0.0);
+      if (deg != 0.0) chains.add('hue=h=${deg.toStringAsFixed(1)}');
+    }
+    if (presets.contains('vignette')) {
+      final a = _clampD(p['vignette_angle'], 0.0, 3.14159265, 0.62831853);
+      if (a > 0) chains.add('vignette=angle=${a.toStringAsFixed(4)}');
+    }
+    if (presets.contains('denoise')) {
+      final s = _clampD(p['denoise_strength'], 0.0, 30.0, 6.0);
+      chains.add('hqdn3d=luma_spatial=${s.toStringAsFixed(2)}:chroma_spatial=${s.toStringAsFixed(2)}');
+    }
+    if (presets.contains('sharpen')) {
+      final s = _clampD(p['unsharp_amount'], 0.0, 5.0, 1.0);
+      if (s > 0) chains.add('unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount=${s.toStringAsFixed(3)}');
+    }
+    if (presets.contains('grayscale')) chains.add('hue=s=0');
+    return chains.isEmpty ? 'null' : chains.join(',');
+  }
+
+  /// 画面变换：缩放 → 翻转 → 旋转（顺序固定，保证可预期）。
+  static String _videoGeometryChain(PipelineNode node) {
+    final p = node.params;
+    final chains = <String>[];
+
+    final scaleMode = p['scale_mode'] as String? ?? 'none';
+    final hasScale = scaleMode != 'none';
+    if (hasScale) {
+      if (scaleMode == 'width') {
+        final w = _clampD(p['scale_width'], 16, 7680, 1280).round();
+        chains.add('scale=$w:-2');
+      } else if (scaleMode == 'height') {
+        final h = _clampD(p['scale_height'], 16, 4320, 720).round();
+        chains.add('scale=-2:$h');
+      } else if (scaleMode == 'percent') {
+        final pct = _clampD(p['scale_percent'], 1, 400, 100);
+        // 宽度按比例，高度 -2 保持偶数且维持宽高比
+        chains.add('scale=trunc(iw*${(pct / 100).toStringAsFixed(4)}/2)*2:-2');
+      }
+    }
+
+    final flip = p['flip'] as String? ?? 'none';
+    if (flip == 'hflip') chains.add('hflip');
+    if (flip == 'vflip') chains.add('vflip');
+    if (flip == 'both') chains.addAll(['hflip', 'vflip']);
+
+    final rotate = p['rotate'] as String? ?? 'none';
+    switch (rotate) {
+      case '90': chains.add('transpose=1');
+      case '180': chains.add('transpose=1,transpose=1');
+      case '270': chains.add('transpose=2');
+    }
+
+    return chains.isEmpty ? 'null' : chains.join(',');
+  }
+
+  /// 画面叠加：主视频 + 叠加图 overlay。
+  /// 返回 null 表示未选择叠加素材（调用方跳过该节点）。
+  /// 产出的是合法的 filter_complex 滤镜图（含 [0:v]/[1:v] 标签），
+  /// 由后端根据是否含 '[' / ';' 自动改走 -filter_complex 通道（C-1）。
+  static String? _videoOverlayChain(PipelineNode node) {
+    final overlayPath = node.params['overlay_path'] as String? ?? '';
+    if (overlayPath.trim().isEmpty) return null;
+
+    final pos = node.params['position'] as String? ?? 'bottom-right';
+    final opacity = _clampD(node.params['opacity'], 0.0, 1.0, 1.0);
+    final margin = _clampD(node.params['margin'], 0, 500, 16).round();
+    final scalePct = _clampD(node.params['overlay_scale'], 1.0, 100.0, 100.0);
+
+    final offset = switch (pos) {
+      'top-left' => '$margin:$margin',
+      'top-right' => 'W-w-$margin:$margin',
+      'bottom-left' => '$margin:H-h-$margin',
+      'center' => '(W-w)/2:(H-h)/2',
+      _ => 'W-w-$margin:H-h-$margin',
+    };
+
+    // 主输入在 filter_complex 中记为 [0:v]，叠加图 [1:v]；透明度用 format=rgba+colorchannelmixer。
+    // 注意：叠加图缩放必须按比例缩放后再对齐，scale 的 -2 保证偶数高度。
+    final parts = <String>[];
+    parts.add('[1:v]scale=iw*${(scalePct / 100).toStringAsFixed(4)}:-2');
+    if (opacity < 1.0) {
+      parts.add('format=rgba,colorchannelmixer=aa=${opacity.toStringAsFixed(3)}');
+    }
+    parts.add('ovr');
+    parts.add('[0:v][ovr]overlay=$offset[v]');
+    return parts.join(';');
+  }
+
+  /// 音频淡入/淡出滤镜串（afade）。
+  static List<String> _audioFadeFilters(PipelineNode node) {
+    final p = node.params;
+    final filters = <String>[];
+    final fadeIn = _clampD(p['fade_in'], 0.0, 600.0, 0.0);
+    final fadeOut = _clampD(p['fade_out'], 0.0, 600.0, 0.0);
+    final fadeOutStart = _clampD(p['fade_out_start'], 0.0, 86400.0, 0.0);
+
+    // 曲线：tri(线性) / qsin / exp / log / par / qua / cbr / squ
+    final curve = (p['curve'] as String? ?? 'tri');
+    const allowed = {'tri', 'qsin', 'exp', 'log', 'par', 'qua', 'cbr', 'squ'};
+    final c = allowed.contains(curve) ? curve : 'tri';
+
+    if (fadeIn > 0) {
+      filters.add('afade=t=in:st=0:d=${fadeIn.toStringAsFixed(2)}:curve=$c');
+    }
+    if (fadeOut > 0) {
+      filters.add('afade=t=out:st=${fadeOutStart.toStringAsFixed(2)}:d=${fadeOut.toStringAsFixed(2)}:curve=$c');
+    }
+    return filters;
+  }
+
+  /// 数值钳制：非法值（null / NaN / Infinity）回退 fallback。
+  static double _clampD(dynamic raw, double lo, double hi, double fallback) {
+    final v = (raw as num?)?.toDouble();
+    if (v == null || !v.isFinite) return fallback;
+    return v.clamp(lo, hi).toDouble();
+  }
+
   static double _effectiveSpeed(Map<String, dynamic> params) {
     final isCustom = params['custom_speed'] as bool? ?? false;
     if (isCustom) {
@@ -1330,13 +1669,30 @@ class GraphExecutor {
   }
 
   static String _tempPath(String inputPath, int step, [String ext = 'mp4', String salt = '']) {
-    final dir = Directory.systemTemp.path;
     final base = inputPath.split('\\').last.split('/').last.replaceAll(RegExp(r'\.[^.]+$'), '');
     // String.hashCode 跨运行不稳定且可碰撞；改用稳定的 FNV-1a 摘要。
     // 引入 salt（本计划最终输出路径）区分：同一源文件拆成多个输出计划并发执行时，
     // 各自的中间产物不会互相覆盖。
     final pathHash = _stableHash(salt.isEmpty ? inputPath : '$inputPath\u0000$salt');
+    // 中间产物放在系统临时目录下的独占子目录，而不是共享临时根：
+    // 32 位哈希盐撞名 + 共享目录的符号链接抢占都是可实现的攻击面（M-6）。
+    // 按「本次运行」创建一个随机子目录，目录属主即当前进程，既避免跨会话
+    // 撞名，也避免其它用户/进程提前占位。
+    final dir = _sessionTempDir();
     return '$dir${Platform.pathSeparator}ffmpegpp_${pathHash}_${base}_step$step.$ext';
+  }
+
+  // 进程级独占临时子目录：惰性创建，整个会话复用（每个任务内部仍用哈希+步骤区分，
+  // 互不覆盖）。放在 systemTemp 下以继承系统临时目录的清理策略。
+  static String? _sessionTempDirPath;
+  static String _sessionTempDir() {
+    final existing = _sessionTempDirPath;
+    if (existing != null && Directory(existing).existsSync()) return existing;
+    final root = Directory.systemTemp;
+    // createTempSync 生成带随机后缀的目录，天然独占且不可预测
+    final dir = root.createTempSync('ffmpegpp_work_');
+    _sessionTempDirPath = dir.path;
+    return dir.path;
   }
 
   /// FNV-1a 32 位哈希（稳定：同一路径每次运行结果一致）。

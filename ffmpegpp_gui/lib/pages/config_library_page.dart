@@ -13,6 +13,7 @@ import '../theme/app_strings.dart';
 import '../widgets/toast.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_glass_pill.dart';
+import '../widgets/mobile_ui.dart';
 import '../widgets/app_card.dart';
 import '../platform/app_platform.dart';
 import '../app.dart';
@@ -838,7 +839,8 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final zh = AppStrings.of(context.watch<AppState>().config.language).isZh;
+    // 只订阅语言字段：进度心跳/日志等无关通知不再重建本页
+    final zh = AppStrings.of(context.select<AppState, String>((s) => s.config.language)).isZh;
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -847,14 +849,14 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         // 不再用上下两块区域堆叠（原方案）—— 二者用标签区分。
         isMobilePlatform
             ? Padding(
-                padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top + 60),
+                padding: EdgeInsets.only(top: MobileUi.pageTopPadding(context)),
                 child: !_loaded
                     ? const Center(child: CircularProgressIndicator())
                     : Column(children: [
                         _buildTabSelector(scheme, zh),
                         Expanded(
                           child: ListView(
-                            padding: EdgeInsets.fromLTRB(8, 8, 8, kMobileNavClearance),
+                            padding: MobileUi.mainListPadding(),
                             children: _buildTabContent(scheme, zh),
                           ),
                         ),
@@ -888,70 +890,20 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
   }
 
   /// 标签切换器：节点编辑器 / 快捷配置，各自带数量角标。
-  /// 液态玻璃/模糊药丸外壳（跟随全局玻璃配置）+ 选中项滑动指示器动画。
+  /// 统一改用 [MobileSegmentedPills]（玻璃药丸外壳 + 主题色滑动指示器），
+  /// 不再本页自绘 LayoutBuilder + Stack + AnimatedPositioned。
   Widget _buildTabSelector(ColorScheme scheme, bool zh) {
-    final tabs = [
-      (Icons.account_tree, zh ? '节点编辑器' : 'Node Editor', _configs.length),
-      (Icons.bolt, zh ? '快捷配置' : 'Quick Config', _quickConfigs.length),
-    ];
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    // 内容：滑动高亮指示器 + 两个等宽标签
-    final tabsRow = LayoutBuilder(builder: (_, cons) {
-      final w = cons.maxWidth;
-      return Stack(children: [
-        // 滑动指示器：随 _tabIndex 在左右半区之间平滑移动
-        AnimatedPositioned(
-          duration: const Duration(milliseconds: 240),
-          curve: Curves.easeOutCubic,
-          top: 0, bottom: 0,
-          left: _tabIndex == 0 ? 0 : w / 2,
-          width: w / 2,
-          child: Container(
-            decoration: BoxDecoration(
-              color: scheme.primary.withAlpha(isDark ? 80 : 60),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: scheme.primary.withAlpha(110)),
-            ),
-          ),
-        ),
-        Row(children: [
-          for (var i = 0; i < tabs.length; i ++)
-            Expanded(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () => setState(() => _tabIndex = i),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
-                  child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    Icon(tabs[i].$1, size: 15,
-                        color: _tabIndex == i ? scheme.primary : scheme.outline),
-                    const SizedBox(width: 6),
-                    Flexible(child: Text(tabs[i].$2,
-                        maxLines: 1, overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 13, fontWeight: FontWeight.w600,
-                          color: _tabIndex == i ? scheme.primary : scheme.outline))),
-                    const SizedBox(width: 5),
-                    Text('${tabs[i].$3}', style: TextStyle(
-                        fontSize: 11, fontWeight: FontWeight.w600,
-                        color: _tabIndex == i ? scheme.primary.withAlpha(200) : scheme.outline.withAlpha(140))),
-                  ]),
-                ),
-              ),
-            ),
-        ]),
-      ]);
-    });
-
-    // 玻璃药丸外壳：复用移动端玻璃药丸（自动跟随液态玻璃/模糊/无效果配置）
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 12, 16, 6),
-      child: MobileGlassPill(
-        radius: 24,
-        padding: const EdgeInsets.all(4),
-        child: tabsRow,
-      ),
+    return MobileSegmentedPills(
+      tabs: [
+        MobilePillTab(zh ? '节点编辑器' : 'Node Editor',
+            icon: Icons.account_tree, badge: '${_configs.length}'),
+        MobilePillTab(zh ? '快捷配置' : 'Quick Config',
+            icon: Icons.bolt, badge: '${_quickConfigs.length}'),
+      ],
+      selectedIndex: _tabIndex,
+      onSelected: (i) => setState(() => _tabIndex = i),
+      margin: EdgeInsets.fromLTRB(
+          isMobilePlatform ? 8 : 16, 12, isMobilePlatform ? 8 : 16, 6),
     );
   }
 
@@ -1002,40 +954,12 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     ];
   }
 
-  /// 移动端顶栏：标题药丸自适应宽度（贴合内容），右侧操作药丸也按内容自适应
-  ///（贴合图标按钮宽度，不再用 Expanded 强制填满剩余空间）。
+  /// 移动端顶栏：统一走 [MobilePillTopBar]（标题药丸 16/w600 + 操作药丸 +
+  /// 安全区内边距全部由顶栏提供），不再本页拼 Row/Flexible/Align。
   Widget _buildMobileTopBar(ColorScheme scheme, bool zh) {
-    final safeTop = MediaQuery.of(context).padding.top;
-    return Padding(
-      padding: EdgeInsets.fromLTRB(8, safeTop + 6, 8, 6),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-        // 左：标题药丸（高度 44，与项目页「项目」药丸完全一致）
-        MobileGlassPill(
-          radius: 22,
-          height: 44,
-          padding: const EdgeInsets.symmetric(horizontal: 14),
-          pressable: true,
-          child: Text(zh ? '配置库' : 'Config Library',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-        ),
-        const SizedBox(width: 8),
-        // 右：操作药丸（高度 44；宽度完全跟随内部元素总长度——
-        // SingleChildScrollView 会把药丸撑满剩余宽度，故改回 mainAxisSize.min 的 Row）。
-        Flexible(
-          child: Align(
-            alignment: Alignment.centerRight,
-            child: MobileGlassPill(
-              radius: 22,
-              height: 44,
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: _buildTopActions(scheme, zh),
-              ),
-            ),
-          ),
-        ),
-      ]),
+    return MobilePillTopBar(
+      title: Text(zh ? '配置库' : 'Config Library'),
+      actions: _buildTopActions(scheme, zh),
     );
   }
 

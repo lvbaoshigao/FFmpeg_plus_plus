@@ -2,6 +2,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
+import '../theme/mobile_ui.dart';
 import 'app_card.dart' show SurfaceStyle;
 import 'mobile_glass_pill.dart';
 
@@ -93,8 +94,17 @@ class MobileTopBar extends StatelessWidget {
   }
 }
 
-/// 移动端「二级页面」顶栏：左上角圆形玻璃返回按钮 + 右上角标题药丸（+ 可选操作药丸）。
-/// 用于设置二级菜单、命令、日志等 push 出来的子页面。
+/// 移动端「二级页面」统一顶栏 —— 与主界面同一套药丸语言：
+/// 左圆形玻璃返回按钮 + 标题药丸（**左对齐，与主界面一致**）+ 右操作药丸。
+///
+/// 用于设置二级菜单、命令、日志、容器详情、AI 设置等 push 出来的子页面。
+///
+/// 此前标题药丸靠右，与主界面「标题在左」相反，且各二级页各自拼装
+/// （日志页甚至手写了一份完全不同的布局）；这里收敛为唯一实现：
+/// * 返回按钮：44×44 正圆药丸，内部用 [MobileGlassPillAction]（透明涟漪），
+///   不再用自带 48×48 最小尺寸的 Material IconButton；
+/// * 标题药丸：44 高、radius 22、内边距 14，占据剩余宽度、超长省略；
+/// * 操作药丸：44 高、内边距 6，内部请放 [MobileGlassPillAction]。
 class MobileSubPageTopBar extends StatelessWidget {
   final Widget title;
   final List<Widget> actions;
@@ -112,47 +122,58 @@ class MobileSubPageTopBar extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final safeTop = MediaQuery.of(context).padding.top;
     return Padding(
-      padding: EdgeInsets.fromLTRB(12, safeTop + 6, 12, 6),
+      padding: EdgeInsets.fromLTRB(
+        MobileUi.barInsetH,
+        safeTop + MobileUi.barInsetTop,
+        MobileUi.barInsetH,
+        MobileUi.barInsetBottom,
+      ),
       child: Row(children: [
         // 左：圆形玻璃返回按钮（44×44、radius 22 = 正圆）
         MobileGlassPill(
-          radius: 22,
+          radius: MobileUi.pillRadius,
           padding: EdgeInsets.zero,
-          child: SizedBox(
-            width: 44,
-            height: 44,
-            child: IconButton(
-              icon: Icon(Icons.arrow_back, size: 22, color: scheme.onSurface),
-              tooltip: 'back',
-              onPressed: onBack ?? () => Navigator.of(context).maybePop(),
-              padding: EdgeInsets.zero,
+          child: MobileGlassPillAction(
+            icon: Icons.arrow_back,
+            tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+            color: scheme.onSurface,
+            size: MobileUi.pillHeight,
+            iconSize: 22,
+            padding: EdgeInsets.zero,
+            onTap: onBack ?? () => Navigator.of(context).maybePop(),
+          ),
+        ),
+        const SizedBox(width: 8),
+        // 中：标题药丸，左对齐并占据剩余宽度（与主界面一致）
+        Expanded(
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: MobileGlassPill(
+              radius: MobileUi.pillRadius,
+              height: MobileUi.pillHeight,
+              padding: const EdgeInsets.symmetric(horizontal: MobileUi.titlePillPadH),
+              child: DefaultTextStyle.merge(
+                style: MobileUi.titleStyle(context),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                child: title,
+              ),
             ),
           ),
         ),
-        const Spacer(),
+        // 右：操作药丸（高度 44，与返回按钮、标题药丸对齐）
         if (actions.isNotEmpty) ...[
-          MobileGlassPill(
-            radius: 22,
-            height: 44,
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: Row(children: actions),
-          ),
           const SizedBox(width: 8),
-        ],
-        // 右：标题药丸（高度 44，与左侧圆形返回按钮、操作药丸对齐）
-        MobileGlassPill(
-          radius: 22,
-          height: 44,
-          padding: const EdgeInsets.symmetric(horizontal: 14),
-          child: DefaultTextStyle.merge(
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-              color: scheme.onSurface,
+          MobileGlassPill(
+            radius: MobileUi.pillRadius,
+            height: MobileUi.pillHeight,
+            padding: const EdgeInsets.symmetric(horizontal: MobileUi.actionsPillPadH),
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Row(mainAxisSize: MainAxisSize.min, children: actions),
             ),
-            child: title,
           ),
-        ),
+        ],
       ]),
     );
   }

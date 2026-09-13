@@ -7,8 +7,10 @@ import '../providers/app_state.dart';
 import '../widgets/toast.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_glass_pill.dart';
+import '../widgets/mobile_top_bar.dart';
+import '../widgets/mobile_ui.dart';
+import '../widgets/wallpaper_background.dart';
 import '../platform/app_platform.dart';
-import '../app.dart' show wallpaperImageProvider;
 
 class LogPage extends StatefulWidget {
   const LogPage({super.key});
@@ -44,43 +46,35 @@ class _LogPageState extends State<LogPage> {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final cfg = context.watch<AppState>().config;
-    final entries = context.watch<AppState>().logEntries;
-    final isZh = cfg.language == 'zh';
-    final filtered = _filter == 'all' ? entries : entries.where((e) => e.category == _filter).toList();
+    // 只用 Selector 订阅日志版本号：进度心跳/任务更新等无关通知不再重建本页。
+    // （原实现两次 context.watch<AppState>() 会订阅整个 AppState，且 logEntries
+    //  getter 每次读取都分配一个包装列表；现改为单次 Selector + 过滤结果缓存。）
+    return Selector<AppState, (int, String)>(
+      selector: (_, s) => (s.logVersion, s.config.language),
+      builder: (context, key, _) {
+        final (_, language) = key;
+        final state = context.read<AppState>();
+        final scheme = Theme.of(context).colorScheme;
+        final cfg = state.config;
+        final entries = state.logEntries;
+        final isZh = language == 'zh';
+        final filtered = _filter == 'all' ? entries : entries.where((e) => e.category == _filter).toList();
 
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      // 日志页是通过 Navigator.push 推到根 Navigator 的新路由，
-      // 不在 _buildRootStack 的壁纸 Stack 里。需要自己再贴一份壁纸。
-      // 这里用 Selector 只监听壁纸路径/透明度，避免每条日志 tick 都重建。
-      body: Selector<AppState, (String, double)>(
-        selector: (_, s) => (s.config.backgroundImage, s.config.backgroundOpacity),
-        builder: (context, bgTuple, _) {
-          final bg = bgTuple.$1;
-          final hasBg = bg.isNotEmpty;
-          return Stack(children: [
-            if (hasBg)
-              Positioned.fill(child: Image(
-                image: wallpaperImageProvider(bg, MediaQuery.sizeOf(context).width, MediaQuery.sizeOf(context).height, MediaQuery.devicePixelRatioOf(context)),
-                fit: BoxFit.cover,
-                errorBuilder: (_, _, _) => const SizedBox.shrink(),
-              )),
-            Positioned.fill(child: Container(
-              color: scheme.surface.withAlpha(((1.0 - bgTuple.$2) * 220).round().clamp(20, 240)),
-            )),
-            Column(children: [
-              _toolbar(scheme, cfg, entries, filtered, isZh),
-              _filterBar(scheme, isZh),
-              Expanded(child: filtered.isEmpty
-                  ? Center(child: Text(isZh ? '暂无日志' : 'No logs yet',
-                      style: TextStyle(color: scheme.outline, fontSize: 13)))
-                  : _buildList(filtered, scheme, cfg, isZh)),
-            ]),
-          ]);
-        },
-      ),
+        // 日志页是通过 Navigator.push 推到根 Navigator 的新路由，不在 _buildRootStack
+        // 的壁纸 Stack 里。统一交给 withWallpaper 铺「主题底色 + 壁纸 + 遮罩」，
+        // 与其它二级页保持一致（内部只细粒度 select 壁纸路径/透明度）。
+        return withWallpaper(context, Scaffold(
+          backgroundColor: Colors.transparent,
+          body: Column(children: [
+            _toolbar(scheme, cfg, entries, filtered, isZh),
+            _filterBar(scheme, isZh),
+            Expanded(child: filtered.isEmpty
+                ? Center(child: Text(isZh ? '暂无日志' : 'No logs yet',
+                    style: TextStyle(color: scheme.outline, fontSize: 13)))
+                : _buildList(filtered, scheme, cfg, isZh)),
+          ]),
+        ));
+      },
     );
   }
 
@@ -89,10 +83,16 @@ class _LogPageState extends State<LogPage> {
     final titleRow = Row(mainAxisSize: MainAxisSize.min, children: [
       Text(isZh ? '日志' : 'Logs', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
       const SizedBox(width: 12),
-      Text('${filtered.length} ${isZh ? '条' : 'entries'}', style: TextStyle(fontSize: 11, color: scheme.outline)),
+      // 变长文本用 Flexible + 省略号：标题药丸右侧还有操作药丸，宽度有限，
+      // 条数/多选计数较长时不能溢出（顶栏整体 maxLines:1 + ellipsis 收尾）。
+      Flexible(child: Text('${filtered.length} ${isZh ? '条' : 'entries'}',
+          maxLines: 1, overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 11, color: scheme.outline))),
       if (hasSelection) ...[
         const SizedBox(width: 8),
-        Text('${isZh ? '已选' : 'Selected'} ${_selectedIndices.length}', style: TextStyle(fontSize: 11, color: scheme.primary)),
+        Flexible(child: Text('${isZh ? '已选' : 'Selected'} ${_selectedIndices.length}',
+            maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 11, color: scheme.primary))),
       ],
     ]);
     final actionWidgets = <Widget>[
@@ -118,10 +118,8 @@ class _LogPageState extends State<LogPage> {
     ];
 
     if (isMobilePlatform) {
-      final safeTop = MediaQuery.of(context).padding.top;
-      // 与主界面（项目/设置页顶栏）完全一致的药丸规格：
-      // 标题药丸 padding 14/8、动作药丸 padding 4/3、内部用 34×34 紧凑圆形按钮
-      // （MobileGlassPillAction），替换掉原来大小不一的 Material IconButton。
+      // 操作药丸内统一用 34×34 紧凑圆形按钮（MobileGlassPillAction），
+      // 不再用自带 48×48 最小尺寸、会撑高药丸的 Material IconButton。
       final mobileActions = <Widget>[
         if (hasSelection)
           MobileGlassPillAction(
@@ -144,56 +142,51 @@ class _LogPageState extends State<LogPage> {
           color: scheme.error, onTap: () { setState(() => _selectedIndices.clear()); context.read<AppState>().clearLogs(); },
         ),
       ];
-      return Padding(
-        padding: EdgeInsets.fromLTRB(8, safeTop + 6, 8, 6),
-        child: Row(children: [
-          MobileGlassPill(
-            radius: 22, padding: EdgeInsets.zero,
-            child: SizedBox(
-              width: 44, height: 44,
-              child: IconButton(
-                icon: Icon(Icons.arrow_back, size: 22, color: scheme.onSurface),
-                onPressed: () => Navigator.of(context).maybePop(),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          MobileGlassPill(
-            radius: 22,
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            pressable: true,
-            child: titleRow,
-          ),
-          const Spacer(),
-          MobileGlassPill(
-            radius: 22,
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
-            child: Row(mainAxisSize: MainAxisSize.min, children: mobileActions),
-          ),
-        ]),
+      // 与其它二级页一致：统一顶栏（返回圆钮 + 标题药丸 + 操作药丸）。
+      return MobileSubPageTopBar(
+        title: titleRow,
+        actions: mobileActions,
+        onBack: () => Navigator.of(context).maybePop(),
       );
     }
     return GlassTopBar(title: titleRow, actions: actionWidgets);
   }
 
+  /// 过滤器：**移动端**改用统一分段药丸控件（原先用 Material FilterChip，
+  /// 与应用药丸语言脱节）；桌面端保持原有 FilterChip 外观逐像素不变。
   Widget _filterBar(ColorScheme scheme, bool isZh) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: _filters.map((f) {
-        final sel = _filter == f;
-        return Padding(padding: const EdgeInsets.only(right: 6), child: FilterChip(
-          label: Text(_filterLabel(f, isZh), style: TextStyle(fontSize: 11, color: sel ? scheme.onPrimaryContainer : scheme.onSurface)),
-          selected: sel,
-          onSelected: (v) => setState(() { _filter = f; _selectedIndices.clear(); }),
-          selectedColor: scheme.primaryContainer,
-          backgroundColor: scheme.surfaceContainerHighest,
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          visualDensity: VisualDensity.compact,
-          showCheckmark: false,
-        ));
-      }).toList())),
+    if (!isMobilePlatform) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(children: _filters.map((f) {
+            final sel = _filter == f;
+            return Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: FilterChip(
+                label: Text(_filterLabel(f, isZh),
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: sel ? scheme.onPrimaryContainer : scheme.onSurface)),
+                selected: sel,
+                onSelected: (v) => setState(() { _filter = f; _selectedIndices.clear(); }),
+                selectedColor: scheme.primaryContainer,
+                backgroundColor: scheme.surfaceContainerHighest,
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                visualDensity: VisualDensity.compact,
+                showCheckmark: false,
+              ),
+            );
+          }).toList()),
+        ),
+      );
+    }
+    return MobileSegmentedPills(
+      tabs: [for (final f in _filters) MobilePillTab(_filterLabel(f, isZh))],
+      selectedIndex: _filters.indexOf(_filter),
+      onSelected: (i) => setState(() { _filter = _filters[i]; _selectedIndices.clear(); }),
+      margin: EdgeInsets.fromLTRB(MobileUi.subPagePaddingH, 8, MobileUi.subPagePaddingH, 8),
     );
   }
 

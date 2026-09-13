@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -30,9 +31,21 @@ class AppState extends ChangeNotifier {
   String get ffmpegVersion => _ffmpegVersion;
 
   final List<VideoFile> _videos = [];
-  List<VideoFile> get videos => List.unmodifiable(_videos);
+  List<VideoFile> get videos => UnmodifiableListView(_videos);
   int _probeCount = 0;
   bool get probingVideos => _probeCount > 0;
+  // 媒体库指纹：项目页用 Selector 订阅它，替代「订阅整个 AppState」。
+  // 只聚合媒体库相关的可变状态（视频/容器数量、探测状态、语言），
+  // 因此进度心跳、日志、任务等无关 notifyListeners 不会触发项目页重建。
+  // 用 Object.hash 组合，比较成本 O(1)；数量变化即代表列表结构变化，
+  // 足以覆盖增删/导入/清空等场景（元素内容变化由数量或探测状态间接反映）。
+  int get librarySignature => Object.hash(
+        _videos.length,
+        _containers.length,
+        _probeCount,
+        _probeErrors.length,
+        config.language,
+      );
   final Map<String, String> _probeErrors = {};
   Map<String, String> get probeErrors => Map.unmodifiable(_probeErrors);
 
@@ -108,16 +121,23 @@ class AppState extends ChangeNotifier {
   // 日志内存上限：长任务期间 stderr 逐行入队会无界增长，超出后丢弃最旧
   static const int _maxLogEntries = 2000;
   bool _logNotifyPending = false;
+  // 日志版本号：每次日志内容变化时自增。日志页用 Selector 订阅该计数
+  // 而非整个 AppState，避免无关的进度心跳/任务更新触发日志页重建。
+  int _logVersion = 0;
+  int get logVersion => _logVersion;
   // 进度类日志的合批通知定时器（见 addLog 注释）
   Timer? _progressLogNotifyTimer;
   // 日志目录探测缓存（避免每条日志同步 existsSync/createSync）
   String? _logDirReadyFor;
-  List<LogEntry> get logEntries => List.unmodifiable(_logEntries);
+  // UnmodifiableListView 是零拷贝视图（List.unmodifiable 每次都会构造新列表），
+  // 避免每次 build 读取都分配一个包装列表；调用方只读，不缓存引用。
+  List<LogEntry> get logEntries => UnmodifiableListView(_logEntries);
   void addLog(String message, {String category = 'general'}) {
     // 调试模式关闭时，仅保留 error 和 progress 类日志（不主动记录非关键日志）
     if (!config.debugMode && category != 'error' && category != 'progress') return;
 
     _logEntries.add(LogEntry(timestamp: DateTime.now(), message: message, category: category));
+    _logVersion++;
     if (_logEntries.length > _maxLogEntries) {
       _logEntries.removeRange(0, _logEntries.length - _maxLogEntries);
     }
@@ -146,7 +166,7 @@ class AppState extends ChangeNotifier {
       });
     }
   }
-  void clearLogs() { _logEntries.clear(); notifyListeners(); }
+  void clearLogs() { _logEntries.clear(); _logVersion++; notifyListeners(); }
 
   /// 日志文件串行化写入链（异步，避免阻塞 UI 且防止交错写坏文件）
   Future<void>? _logWriteInFlight;
@@ -727,7 +747,7 @@ class AppState extends ChangeNotifier {
   // ── 容器管理 ──
 
   final List<FileContainer> _containers = [];
-  List<FileContainer> get containers => List.unmodifiable(_containers);
+  List<FileContainer> get containers => UnmodifiableListView(_containers);
 
   Set<String> get _containerFileIds {
     final ids = <String>{};
@@ -772,13 +792,17 @@ class AppState extends ChangeNotifier {
 
   Future<void> addContainerFromFolder(String dirPath) async {
     final dir = Directory(dirPath);
-    if (!dir.existsSync()) return;
+    if (!await dir.exists()) return;
     final exts = {...kImageExts, 'mp4', 'mkv', 'mov', 'avi', 'webm', 'flv', 'wmv', 'ts', 'mpg', 'mpeg', 'm4v', '3gp', ...kAudioExts};
-    final files = dir.listSync().whereType<File>().where((f) {
+    // 异步遍历：大目录（数千文件）下 listSync() 会同步阻塞 UI isolate。
+    final files = <String>[];
+    await for (final f in dir.list()) {
+      if (f is! File) continue;
       final ext = f.path.split('.').last.toLowerCase();
-      return exts.contains(ext);
-    }).map((f) => f.path).toList()..sort();
+      if (exts.contains(ext)) files.add(f.path);
+    }
     if (files.isEmpty) return;
+    files.sort();
     final name = dirPath.split('/').last.split('\\').last;
     await addContainer(name, files);
   }
@@ -998,6 +1022,8 @@ class AppState extends ChangeNotifier {
     final base = video.filename.replaceAll(RegExp(r'\.[^.]+$'), '');
     String fn = cfg.namingMode == 'keep' ? '$base.$ext' : cfg.namingMode == 'suffix' ? '$base${cfg.namingValue}.$ext' : '${cfg.namingValue}.$ext';
     String dir = config.defaultOutputDir.isNotEmpty ? config.defaultOutputDir : video.filepath.replaceAll(RegExp(r'[^\\/]+$'), '');
+    // filepath 无分隔符时正则返回空串，会导致写入文件系统根目录（M-13）
+    if (dir.isEmpty) dir = Directory.current.path;
     if (!dir.endsWith('/') && !dir.endsWith('\\')) dir = '$dir${Platform.pathSeparator}';
     var out = '$dir$fn';
     if (out == video.filepath) { final be = fn.replaceAll(RegExp(r'\.[^.]+$'), ''); final ee = fn.split('.').last; out = '$dir${be}_processed.$ee'; }
@@ -1006,6 +1032,17 @@ class AppState extends ChangeNotifier {
   }
 
   void _addTasksFromGraph(VideoFile video) {
+    // 入队前必须做完整的图校验：环路、媒体类型匹配、悬空节点、裁剪参数、
+    // 并行冲突等。此前校验只在若干 UI 入口触发，程序化入队（AI 生成图 /
+    // 强制导入 / 批量入队）会绕过全部保证（H-1）。
+    final errors = GraphExecutor.validateGraph(video.pipelineGraph);
+    if (errors.isNotEmpty) {
+      addLog('节点图校验失败，已阻止入队: ${errors.first}'
+          '${errors.length > 1 ? "（共 ${errors.length} 个问题）" : ""}',
+          category: 'error');
+      return;
+    }
+
     final plans = GraphExecutor.resolvePlans(video.pipelineGraph);
     if (plans.isEmpty) {
       addLog('节点图中未找到完整的 源文件→输出 任务', category: 'error');
@@ -1015,6 +1052,17 @@ class AppState extends ChangeNotifier {
       final plan = plans[i];
       final outputPath = GraphExecutor.resolveOutputPath(plan, video, config);
       var calls = GraphExecutor.buildBackendCalls(plan, video.filepath, outputPath);
+      // buildBackendCalls 返回 null 表示执行计划构建失败（如遇到未知/不支持的
+      // 节点类型），此时必须终止而不是继续入队一条断裂的链路（H-2）。
+      if (calls == null) {
+        addLog('任务 ${i + 1} 执行计划构建失败，已跳过（可能包含不支持的节点类型）',
+            category: 'error');
+        continue;
+      }
+      // 计划构建期告警（如非法参数被忽略），写日志便于定位
+      for (final w in plan.warnings) {
+        addLog(w, category: 'warning');
+      }
       // 如果节点图没有处理步骤（只有源文件→输出），创建一个默认的转码任务
       if (calls.isEmpty) {
         calls = [BackendCall(
@@ -1457,9 +1505,11 @@ class AppState extends ChangeNotifier {
       try {
       switch (call.action) {
         case 'transcode':
+          // 缺 options 时用空对象兜底：直接 as 转换会抛 TypeError 被外层 catch
+          // 捕获成不可读的「处理异常」（L-3）。
           resp = await backend.transcode(task.id,
               input: p['input'] as String, output: p['output'] as String,
-              options: p['options'] as Map<String, dynamic>);
+              options: (p['options'] as Map<String, dynamic>?) ?? const <String, dynamic>{});
           break;
         case 'subtitle':
           resp = await backend.subtitle(task.id,
@@ -1502,6 +1552,9 @@ class AppState extends ChangeNotifier {
           break;
         case 'image_channel_extract':
           resp = await _runImageChannelExtract(p);
+          break;
+        case 'image_adjust':
+          resp = await _runImageAdjust(p);
           break;
         case 'video_crop':
           resp = await _runVideoCrop(taskId, p, callIndex: ci);
@@ -1576,21 +1629,25 @@ class AppState extends ChangeNotifier {
       final actualOut = resp['_actual_output'];
       if (actualOut is String && actualOut.isNotEmpty) {
         pendingActualOutput = actualOut;
+        // 运行时改写了产物路径（典型：extract_audio 的 copy 模式按源编码换扩展名）。
+        // 原计划里登记的中间文件路径已经是「不存在的旧路径」，必须把清理清单里的
+        // 对应项改成真实路径，否则真实中间文件会永久残留在临时目录（M-7）。
+        final planned = call.params['output'];
+        if (planned is String && planned != actualOut && ci < expandedCalls.length - 1) {
+          for (var k = 0; k < cleanupCalls.length; k++) {
+            if (cleanupCalls[k].params['path'] == planned) {
+              cleanupCalls[k] = BackendCall(
+                  action: '_cleanup',
+                  params: {'path': actualOut});
+            }
+          }
+        }
       }
     }
 
     final fi3 = _tasks.indexWhere((t) => t.id == taskId);
     if (fi3 >= 0 && !_cancelRequested && _tasks[fi3].status == TaskStatus.processing) {
-      int? outSize;
-      if (FileSystemEntity.isDirectorySync(task.outputPath)) {
-        try {
-          outSize = Directory(task.outputPath).listSync().whereType<File>().fold<int>(0, (sum, f) => sum + f.lengthSync());
-        } catch (_) {}
-      } else if (FileSystemEntity.isFileSync(task.outputPath)) {
-        try {
-          outSize = File(task.outputPath).lengthSync();
-        } catch (_) {}
-      }
+      final outSize = await _measureOutputSize(task.outputPath);
       _tasks[fi3] = _tasks[fi3].copyWith(status: TaskStatus.completed, progress: 100, outputSize: outSize);
       addLog('任务完成: ${task.filename}', category: 'info');
       onTaskFinished?.call(task.filename, TaskStatus.completed);
@@ -1599,6 +1656,35 @@ class AppState extends ChangeNotifier {
     }
 
     _cleanupTempFiles(cleanupCalls);
+  }
+
+  /// 计算任务产物的体积。
+  /// 帧提取任务可能产出上万张 PNG；原实现用 listSync() 一次性枚举目录、
+  /// 再对每一项调用 lengthSync()（N 次同步 stat），在「任务完成」这一关键
+  /// 交互时刻会把 UI isolate 冻结数秒。改为异步遍历 + 异步 stat，
+  /// 单次遍历同时完成计数与求和，统计失败时返回 null（UI 显示为「—」）。
+  Future<int?> _measureOutputSize(String outputPath) async {
+    try {
+      final type = await FileSystemEntity.type(outputPath);
+      if (type == FileSystemEntityType.file) {
+        return await File(outputPath).length();
+      }
+      if (type == FileSystemEntityType.directory) {
+        var total = 0;
+        await for (final f in Directory(outputPath).list()) {
+          if (f is! File) continue;
+          try {
+            total += await f.length();
+          } catch (_) {
+            // 单项 stat 失败（文件被并发删除等）跳过，不影响其余统计
+          }
+        }
+        return total;
+      }
+    } catch (_) {
+      // 路径不可访问：交给 UI 显示「—」
+    }
+    return null;
   }
 
   Future<Map<String, dynamic>> _runFrameExtraction(Map<String, dynamic> p) async {
@@ -1622,7 +1708,13 @@ class AppState extends ChangeNotifier {
       addLog('帧提取: $_ffmpegBin ${args.join(' ')}', category: 'info');
       final result = await Process.run(_ffmpegBin, args);
       if (result.exitCode == 0) {
-        final count = dir.listSync().where((f) => f.path.endsWith('.$fmt')).length;
+        // 异步遍历目录计数：帧提取可产出上万张 PNG，原 listSync() 会在
+        // UI isolate 同步枚举全部目录项并构造 File 对象，导致界面冻结。
+        var count = 0;
+        final suffix = '.$fmt';
+        await for (final f in dir.list()) {
+          if (f.path.endsWith(suffix)) count++;
+        }
         addLog('帧提取完成: $count 帧 → $outDir', category: 'info');
         return {'success': true, 'data': {'output_path': outDir, 'frame_count': count}};
       } else {
@@ -1633,9 +1725,24 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  // ── ffmpeg/ffprobe 可执行路径缓存 ──
+  // 原实现每次读取都做一次 File.existsSync()（同步 stat）。这两个 getter 在
+  // 任务热路径上被高频调用（每个探测/每个步骤/循环任务内每轮），
+  // 累计成千上万次零收益的同步系统调用。路径在运行期几乎不变，
+  // 仅在 config 变更（updateConfig）或环境重检（recheckEnv）时失效。
+  String? _cachedFfmpegBin;
+  String? _cachedFfprobeBin;
+  /// 使路径缓存失效，下次读取时重新解析并各做一次 existsSync。
+  void _invalidateBinCache() {
+    _cachedFfmpegBin = null;
+    _cachedFfprobeBin = null;
+  }
+
   String get _ffmpegBin {
+    final cached = _cachedFfmpegBin;
+    if (cached != null) return cached;
     final p = config.ffmpegPath;
-    return (p.isNotEmpty && File(p).existsSync()) ? p : 'ffmpeg';
+    return _cachedFfmpegBin = (p.isNotEmpty && File(p).existsSync()) ? p : 'ffmpeg';
   }
 
   /// 本地 ffmpeg 失败结果：error 只保留最后几行（卡片横幅摘要），
@@ -1776,8 +1883,10 @@ class AppState extends ChangeNotifier {
   }
 
   String get _ffprobeBin {
+    final cached = _cachedFfprobeBin;
+    if (cached != null) return cached;
     final p = config.ffprobePath;
-    return (p.isNotEmpty && File(p).existsSync()) ? p : 'ffprobe';
+    return _cachedFfprobeBin = (p.isNotEmpty && File(p).existsSync()) ? p : 'ffprobe';
   }
 
   // source codec → compatible output formats for copy mode
@@ -2279,6 +2388,48 @@ class AppState extends ChangeNotifier {
   }
 
 
+  /// 图片调整：饱和度 / 伽马 / 对比度（eq 滤镜）。
+  /// 三个参数都为默认值时退化为"直接复制"，避免无意义的二次编码。
+  Future<Map<String, dynamic>> _runImageAdjust(Map<String, dynamic> p) async {
+    final input = p['input'] as String;
+    final output = p['output'] as String;
+    final sat = _clampNum(p['saturation'], 0.0, 3.0, 1.0);
+    final gamma = _clampNum(p['gamma'], 0.1, 10.0, 1.0);
+    final contrast = _clampNum(p['contrast'], 0.0, 4.0, 1.0);
+
+    if (sat == 1.0 && gamma == 1.0 && contrast == 1.0) {
+      addLog('图片调整: 参数均为默认值，直接复制', category: 'info');
+      return _runFileCopy(p);
+    }
+
+    try {
+      final outDir = File(output).parent;
+      if (!outDir.existsSync()) outDir.createSync(recursive: true);
+      final vf = 'eq=saturation=${sat.toStringAsFixed(3)}'
+          ':gamma=${gamma.toStringAsFixed(3)}'
+          ':contrast=${contrast.toStringAsFixed(3)}';
+      final args = <String>['-y', '-i', input, '-vf', vf, output];
+      addLog('图片调整: $_ffmpegBin ${args.join(' ')}', category: 'info');
+      final result = await Process.run(_ffmpegBin, args);
+      if (result.exitCode == 0 && File(output).existsSync()) {
+        addLog('图片调整完成: $output', category: 'info');
+        return {'success': true, 'data': {'output_path': output}};
+      } else {
+        return _ffmpegFailResult('图片调整', (result.stderr as String).trim(), args);
+      }
+    } catch (e) {
+      addLog('图片调整异常: $e', category: 'error');
+      return {'success': false, 'error': '图片调整异常: $e'};
+    }
+  }
+
+  /// 数值钳制（非法值回退 fallback），用于滤镜参数防注入。
+  static double _clampNum(dynamic raw, double lo, double hi, double fallback) {
+    final v = (raw as num?)?.toDouble();
+    if (v == null || !v.isFinite) return fallback;
+    return v.clamp(lo, hi).toDouble();
+  }
+
   Future<Map<String, dynamic>> _runFileCopy(Map<String, dynamic> p) async {
     final input = p['input'] as String;
     final output = p['output'] as String;
@@ -2332,12 +2483,16 @@ class AppState extends ChangeNotifier {
   Future<List<String>> _resolveMergeFiles(String? input) async {
     if (input == null || input.isEmpty) return const <String>[];
     final dir = Directory(input);
-    if (dir.existsSync()) {
-      final files = dir.listSync().whereType<File>().map((f) => f.path).toList();
+    if (await dir.exists()) {
+      // 异步遍历：抽帧目录可能有上万文件，listSync() 会阻塞 UI isolate。
+      final files = <String>[];
+      await for (final f in dir.list()) {
+        if (f is File) files.add(f.path);
+      }
       files.sort();
       return files;
     }
-    if (File(input).existsSync()) return [input];
+    if (await File(input).exists()) return [input];
     return const <String>[];
   }
 
@@ -2446,10 +2601,15 @@ class AppState extends ChangeNotifier {
   void toggleTaskExpanded(String tid) { final i = _tasks.indexWhere((t) => t.id == tid); if (i >= 0) { _tasks[i] = _tasks[i].copyWith(expanded: !_tasks[i].expanded); _tasksNotify(); } }
 
   Future<void> toggleDarkMode(bool v) async { await configService.update((c) => c..darkMode = v); notifyListeners(); }
-  Future<void> updateConfig(AppConfig Function(AppConfig) f) async { await configService.update(f); notifyListeners(); }
+  Future<void> updateConfig(AppConfig Function(AppConfig) f) async {
+    await configService.update(f);
+    _invalidateBinCache(); // ffmpeg/ffprobe 路径可能已变更
+    notifyListeners();
+  }
 
   Future<Map<String, dynamic>> recheckEnv() async {
     addLog('检测 FFmpeg 环境...', category: 'info');
+    _invalidateBinCache();
     await backend.setPaths(ffmpeg: config.ffmpegPath, ffprobe: config.ffprobePath);
     final env = await backend.checkEnv();
     _envOk = env['success'] == true && (env['data']?['all_ok'] as bool? ?? false);
@@ -2475,7 +2635,10 @@ class AppState extends ChangeNotifier {
   String? get mcpToken => _mcpToken;
 
   PipelineGraph? _currentPipelineGraph;
-  void setCurrentPipeline(PipelineGraph g) { _currentPipelineGraph = g; }
+  /// 记录当前打开的节点编辑器画布（供 MCP error_check / get_graph_stats /
+  /// pipeline://current 读取）。编辑器关闭时应传 null 清空，
+  /// 否则这些工具会返回已关闭画布的陈旧数据。
+  void setCurrentPipeline(PipelineGraph? g) { _currentPipelineGraph = g; }
   VoidCallback? mcpOnClearAll, mcpOnUndo, mcpOnRedo, mcpOnSave;
   bool Function(String nodeId, Map<String, dynamic> params)? mcpOnModifyNode;
   String Function(String type, double x, double y)? mcpOnAddNode;
@@ -2582,78 +2745,122 @@ class AppState extends ChangeNotifier {
     }
     try {
       final body = await utf8.decoder.bind(req).join();
-      final json = jsonDecode(body) as Map<String, dynamic>;
-      final id = json['id'];
-      final method = json['method'] as String? ?? '';
-      final params = json['params'] as Map<String, dynamic>? ?? {};
+      final decoded = jsonDecode(body);
 
-      // JSON-RPC 通知（没有 id，如 notifications/initialized、
-      // notifications/cancelled）按规范「绝不能」返回响应体：MCP 客户端收到
-      // 带 id:null 的响应会当成协议错误报警。这里直接 202 空响应。
-      if (!json.containsKey('id') || id == null) {
-        req.response.statusCode = HttpStatus.accepted;
+      // JSON-RPC 2.0 批量请求（MCP 规范允许）：数组中的每个请求各产生一条响应，
+      // 通知（无 id）不产生响应；全部是通知时按规范返回 202 空体。
+      if (decoded is List) {
+        final responses = <Map<String, dynamic>>[];
+        for (final item in decoded) {
+          if (item is Map<String, dynamic>) {
+            final r = await _handleMcpJsonRpcItem(item);
+            if (r != null) responses.add(r);
+          } else {
+            // 批量中混入非对象元素：按 Invalid Request 回错（id 未知则为 null）
+            responses.add({
+              'jsonrpc': '2.0', 'id': null,
+              'error': {'code': -32600, 'message': 'Invalid Request: batch items must be objects'},
+            });
+          }
+        }
+        req.response
+          ..statusCode = responses.isEmpty ? HttpStatus.accepted : HttpStatus.ok
+          ..headers.contentType = ContentType.json;
+        if (responses.isNotEmpty) req.response.write(jsonEncode(responses));
         await req.response.close();
         return;
       }
 
-      req.response
-        ..statusCode = HttpStatus.ok
-        ..headers.contentType = ContentType.json;
-      switch (method) {
-        case 'initialize':
-          req.response.write(jsonEncode({
-            'jsonrpc': '2.0', 'id': id,
-            'result': {
-              'protocolVersion': '2024-11-05',
-              'capabilities': {'tools': {}, 'resources': {}},
-              'serverInfo': {'name': 'ffmpegpp', 'version': '5.3.6'},
-            },
-          }));
-          break;
-        // MCP 规范要求的心跳：客户端定期 ping 判定连接存活，
-        // 缺失时部分客户端会认为服务器已失联并断开。返回空结果即表示存活。
-        case 'ping':
-          req.response.write(jsonEncode({'jsonrpc': '2.0', 'id': id, 'result': {}}));
-          break;
-        case 'tools/list':
-          // nextCursor 省略 = 无更多分页（工具数量固定且很小，无需真实分页，
-          // 但保留字段语义以兼容会检查分页的客户端）。
-          req.response.write(jsonEncode({'jsonrpc': '2.0', 'id': id, 'result': {'tools': _mcpToolsList()}}));
-          break;
-        case 'tools/call':
-          final toolName = params['name'] as String? ?? '';
-          final args = params['arguments'] as Map<String, dynamic>? ?? {};
-          final (result, isError) = await _mcpCallTool(toolName, args);
-          req.response.write(jsonEncode({
-            'jsonrpc': '2.0', 'id': id,
-            'result': {'content': [{'type': 'text', 'text': result}], if (isError) 'isError': true},
-          }));
-          break;
-        case 'resources/list':
-          req.response.write(jsonEncode({'jsonrpc': '2.0', 'id': id, 'result': {'resources': _mcpResourcesList()}}));
-          break;
-        case 'resources/read':
-          final uri = params['uri'] as String? ?? '';
-          final result = _mcpReadResource(uri);
-          req.response.write(jsonEncode({
-            'jsonrpc': '2.0', 'id': id,
-            'result': {'contents': [{'uri': uri, 'mimeType': 'application/json', 'text': result}]},
-          }));
-          break;
-        default:
-          req.response.write(jsonEncode({
-            'jsonrpc': '2.0', 'id': id,
-            'error': {'code': -32601, 'message': 'Method not found: $method'},
-          }));
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('Request body must be a JSON object or array');
       }
+      final single = await _handleMcpJsonRpcItem(decoded);
+      req.response
+        ..statusCode = single == null ? HttpStatus.accepted : HttpStatus.ok
+        ..headers.contentType = ContentType.json;
+      if (single != null) req.response.write(jsonEncode(single));
       await req.response.close();
-    } catch (e) {
-      addLog('[MCP] Error: $e', category: 'error');
+    } on FormatException catch (e) {
+      addLog('[MCP] Parse error: $e', category: 'error');
       req.response
         ..statusCode = HttpStatus.badRequest
         ..headers.contentType = ContentType.json
-        ..write('{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error"}}');
+        ..write('{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error"}}');
       await req.response.close();
+    } catch (e) {
+      addLog('[MCP] Error: $e', category: 'error');
+      try {
+        req.response
+          ..statusCode = HttpStatus.badRequest
+          ..headers.contentType = ContentType.json
+          ..write('{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error"}}');
+        await req.response.close();
+      } catch (_) {}
+    }
+  }
+
+  /// 本服务可协商的 MCP 协议版本（capabilities 在这些版本间兼容：
+  /// tools + resources 均为核心能力）。
+  static const Set<String> _mcpSupportedVersions = {'2024-11-05', '2025-03-26', '2025-06-18'};
+  static const String _mcpDefaultVersion = '2024-11-05';
+
+  /// 处理单个 JSON-RPC 消息，返回响应对象；通知（无 id）返回 null（不回应）。
+  Future<Map<String, dynamic>?> _handleMcpJsonRpcItem(Map<String, dynamic> json) async {
+    final id = json['id'];
+    final method = json['method'] as String? ?? '';
+    final params = json['params'] as Map<String, dynamic>? ?? {};
+
+    // JSON-RPC 通知（没有 id，如 notifications/initialized、
+    // notifications/cancelled）按规范「绝不能」返回响应体：MCP 客户端收到
+    // 带 id:null 的响应会当成协议错误报警。
+    if (!json.containsKey('id') || id == null) return null;
+
+    switch (method) {
+      case 'initialize':
+        // 版本协商：客户端请求的版本在支持集合内则原样回显；
+        // 不支持时按规范返回服务器自己的最新受支持版本（此处为基线版本）。
+        final requested = params['protocolVersion'];
+        final negotiated = requested is String && _mcpSupportedVersions.contains(requested)
+            ? requested
+            : _mcpDefaultVersion;
+        return {
+          'jsonrpc': '2.0', 'id': id,
+          'result': {
+            'protocolVersion': negotiated,
+            'capabilities': {'tools': {}, 'resources': {}},
+            'serverInfo': {'name': 'ffmpegpp', 'version': '5.3.6'},
+          },
+        };
+      // MCP 规范要求的心跳：客户端定期 ping 判定连接存活，
+      // 缺失时部分客户端会认为服务器已失联并断开。返回空结果即表示存活。
+      case 'ping':
+        return {'jsonrpc': '2.0', 'id': id, 'result': {}};
+      case 'tools/list':
+        // nextCursor 省略 = 无更多分页（工具数量固定且很小，无需真实分页，
+        // 但保留字段语义以兼容会检查分页的客户端）。
+        return {'jsonrpc': '2.0', 'id': id, 'result': {'tools': _mcpToolsList()}};
+      case 'tools/call':
+        final toolName = params['name'] as String? ?? '';
+        final args = params['arguments'] as Map<String, dynamic>? ?? {};
+        final (result, isError) = await _mcpCallTool(toolName, args);
+        return {
+          'jsonrpc': '2.0', 'id': id,
+          'result': {'content': [{'type': 'text', 'text': result}], if (isError) 'isError': true},
+        };
+      case 'resources/list':
+        return {'jsonrpc': '2.0', 'id': id, 'result': {'resources': _mcpResourcesList()}};
+      case 'resources/read':
+        final uri = params['uri'] as String? ?? '';
+        final result = _mcpReadResource(uri);
+        return {
+          'jsonrpc': '2.0', 'id': id,
+          'result': {'contents': [{'uri': uri, 'mimeType': 'application/json', 'text': result}]},
+        };
+      default:
+        return {
+          'jsonrpc': '2.0', 'id': id,
+          'error': {'code': -32601, 'message': 'Method not found: $method'},
+        };
     }
   }
 
@@ -2714,21 +2921,28 @@ class AppState extends ChangeNotifier {
     if (writeTools.contains(name) && !config.mcpAllowWrite) {
       return ('Error: MCP write access is disabled — enable "Allow write" in Settings → AI', true);
     }
+    // 文件系统类工具受独立开关门控（回环监听无令牌，本机任意进程都能调用，
+    // 用户可关闭以禁用目录枚举/文件信息/媒体探测三个读取入口）
+    const fsTools = {'list_directory', 'read_file_info', 'probe_video'};
+    if (fsTools.contains(name) && !config.mcpAllowFsAccess) {
+      return ('Error: MCP file system access is disabled — enable "Allow file access" in Settings → AI', true);
+    }
+    const noEditor = 'Error: No editor open — open a pipeline editor first';
     switch (name) {
       case 'clear_all':
-        if (mcpOnClearAll == null) return ('Error: No editor open — open a pipeline editor first', true);
+        if (mcpOnClearAll == null) return (noEditor, true);
         mcpOnClearAll!();
         return ('Canvas cleared', false);
       case 'undo':
-        if (mcpOnUndo == null) return ('Error: No editor open — open a pipeline editor first', true);
+        if (mcpOnUndo == null) return (noEditor, true);
         mcpOnUndo!();
         return ('Undo executed', false);
       case 'redo':
-        if (mcpOnRedo == null) return ('Error: No editor open — open a pipeline editor first', true);
+        if (mcpOnRedo == null) return (noEditor, true);
         mcpOnRedo!();
         return ('Redo executed', false);
       case 'save':
-        if (mcpOnSave == null) return ('Error: No editor open — open a pipeline editor first', true);
+        if (mcpOnSave == null) return (noEditor, true);
         mcpOnSave!();
         return ('Save executed', false);
       case 'list_directory':
@@ -2756,25 +2970,19 @@ class AppState extends ChangeNotifier {
       case 'modify_node_params':
         final nodeId = args['nodeId'] as String? ?? '';
         final params = args['params'] as Map<String, dynamic>? ?? {};
-        if (mcpOnModifyNode == null) return ('Error: No editor open — open a pipeline editor first', true);
+        if (mcpOnModifyNode == null) return (noEditor, true);
         if (mcpOnModifyNode!(nodeId, params)) {
           return ('Node $nodeId params updated', false);
         }
         return ('Error: node $nodeId not found on canvas', true);
       case 'error_check':
-        if (_currentPipelineGraph == null) return ('Error: No pipeline loaded — open a pipeline editor first', true);
-        final g = _currentPipelineGraph!;
-        final errors = <String>[];
-        if (!g.nodes.any((n) => n.type == PipelineStepType.start)) errors.add('Missing start node');
-        if (!g.nodes.any((n) => n.type == PipelineStepType.output)) errors.add('Missing output node');
-        final connectedIds = <String>{};
-        for (final c in g.connections) { connectedIds.add(c.fromNodeId); connectedIds.add(c.toNodeId); }
-        for (final n in g.nodes) {
-          if (!connectedIds.contains(n.id) && g.nodes.length > 1) errors.add('Disconnected: ${n.type.name} (${n.id.substring(0, 8)})');
-        }
+        if (_currentPipelineGraph == null) return (noEditor, true);
+        // 委托给与执行链一致的完整校验器（环路/逻辑门/连线类型/悬空节点等），
+        // 此前这里是一份只查 start/output/悬空的弱化拷贝，会与真实校验结论相左。
+        final errors = GraphExecutor.validateGraph(_currentPipelineGraph!);
         return (errors.isEmpty ? 'No errors found' : errors.join('; '), false);
       case 'add_node':
-        if (mcpOnAddNode == null) return ('Error: No editor open', true);
+        if (mcpOnAddNode == null) return (noEditor, true);
         final typeName = args['type'] as String? ?? '';
         final x = (args['x'] as num?)?.toDouble() ?? 200;
         final y = (args['y'] as num?)?.toDouble() ?? 200;
@@ -2783,26 +2991,26 @@ class AppState extends ChangeNotifier {
           return ('Node added: $nodeId (type: $typeName)', false);
         } catch (e) { return ('Error: $e', true); }
       case 'delete_node':
-        if (mcpOnDeleteNode == null) return ('Error: No editor open', true);
+        if (mcpOnDeleteNode == null) return (noEditor, true);
         final nodeId = args['nodeId'] as String? ?? '';
         try { mcpOnDeleteNode!(nodeId); return ('Node $nodeId deleted', false); }
         catch (e) { return ('Error: $e', true); }
       case 'connect_nodes':
-        if (mcpOnConnect == null) return ('Error: No editor open', true);
+        if (mcpOnConnect == null) return (noEditor, true);
         final fromId = args['fromNodeId'] as String? ?? '';
         final toId = args['toNodeId'] as String? ?? '';
         final ok = mcpOnConnect!(fromId, toId);
         return ok ? ('Connected $fromId → $toId', false) : ('Error: Connection failed (invalid nodes or already connected)', true);
       case 'disconnect_nodes':
-        if (mcpOnDisconnect == null) return ('Error: No editor open', true);
+        if (mcpOnDisconnect == null) return (noEditor, true);
         final connId = args['connectionId'] as String? ?? '';
         final ok = mcpOnDisconnect!(connId);
         return ok ? ('Connection $connId removed', false) : ('Error: Connection not found', true);
       case 'list_nodes':
-        if (mcpOnListNodes == null) return ('Error: No editor open', true);
+        if (mcpOnListNodes == null) return (noEditor, true);
         return (jsonEncode(mcpOnListNodes!()), false);
       case 'list_connections':
-        if (mcpOnListConnections == null) return ('Error: No editor open', true);
+        if (mcpOnListConnections == null) return (noEditor, true);
         return (jsonEncode(mcpOnListConnections!()), false);
       case 'get_node_types':
         final types = PipelineStepType.values.map((t) => {'name': t.name, 'label': PipelineStep(id: '', type: t).labelEn}).toList();
@@ -2849,7 +3057,7 @@ class AppState extends ChangeNotifier {
           'resolution': v.resolution,
         }).toList()), false);
       case 'add_gate':
-        if (mcpOnAddGate == null) return ('Error: No editor open', true);
+        if (mcpOnAddGate == null) return (noEditor, true);
         final gateType = args['type'] as String? ?? '';
         final gx = (args['x'] as num?)?.toDouble() ?? 200;
         final gy = (args['y'] as num?)?.toDouble() ?? 200;
@@ -2858,7 +3066,7 @@ class AppState extends ChangeNotifier {
           return ('Gate added: $nodeId (type: $gateType)', false);
         } catch (e) { return ('Error: $e', true); }
       case 'set_gate_params':
-        if (mcpOnModifyNode == null) return ('Error: No editor open', true);
+        if (mcpOnModifyNode == null) return (noEditor, true);
         final nodeId = args['nodeId'] as String? ?? '';
         final params = args['params'] as Map<String, dynamic>? ?? {};
         if (mcpOnModifyNode!(nodeId, params)) {
@@ -2896,7 +3104,7 @@ class AppState extends ChangeNotifier {
           if (task.error != null) 'error': task.error,
         }), false);
       case 'rename_node':
-        if (mcpOnModifyNode == null) return ('Error: No editor open', true);
+        if (mcpOnModifyNode == null) return (noEditor, true);
         final nid = args['nodeId'] as String? ?? '';
         final name = args['name'] as String? ?? '';
         if (mcpOnModifyNode!(nid, {'node_name': name})) {

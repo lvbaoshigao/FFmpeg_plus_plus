@@ -9,8 +9,10 @@ import '../providers/app_state.dart';
 import '../services/thumbnail_service.dart';
 import '../theme/app_strings.dart';
 import '../platform/app_platform.dart';
+import '../widgets/app_card.dart';
 import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_glass_pill.dart';
+import '../widgets/mobile_ui.dart';
 import 'pipeline_editor_page.dart';
 import '../app.dart';
 import '../widgets/wallpaper_background.dart';
@@ -74,7 +76,10 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
                 style: TextStyle(color: scheme.outline, fontSize: 13)),
           ]))
         : ListView.builder(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+            // 移动端与其它二级页统一（左右 12、下 16）；桌面端保持原内边距
+            padding: isMobilePlatform
+                ? MobileUi.subListPadding(top: 4, bottom: 16)
+                : const EdgeInsets.fromLTRB(16, 4, 16, 16),
             itemCount: items.length,
             itemBuilder: (ctx, i) {
               final item = items[i];
@@ -205,11 +210,9 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
     final clr = scheme.onSurface;
     final isEditing = _editingIndex == item.index;
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 6),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Row(children: [
+    final row = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      child: Row(children: [
           // 编号
           GestureDetector(
             onDoubleTap: () => setState(() { _editingIndex = item.index; _indexCtrl.text = '${item.index}'; }),
@@ -255,8 +258,19 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
               constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               onPressed: () => state.removeFileFromContainer(container.id, item.fileId)),
         ]),
-      ),
     );
+
+    // 卡片统一走 AppCard：移动端跟随「卡片样式」（liquid/blur/theme/gray），
+    // 与项目页/设置页/配置库的卡片语言一致；桌面端保持原有 Card 外观不变。
+    if (isMobilePlatform) {
+      return AppCard(
+        style: state.config.cardStyle,
+        radius: 12,
+        margin: const EdgeInsets.only(bottom: 6),
+        child: row,
+      );
+    }
+    return Card(margin: const EdgeInsets.only(bottom: 6), child: row);
   }
 
   void _swapItems(AppState state, FileContainer container, int idxA, int idxB) {

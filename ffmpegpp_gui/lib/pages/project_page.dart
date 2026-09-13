@@ -11,6 +11,7 @@ import '../widgets/video_card.dart';
 import '../widgets/container_card.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_glass_pill.dart';
+import '../widgets/mobile_ui.dart';
 import '../widgets/toast.dart';
 import '../platform/app_platform.dart';
 import '../services/quick_config_storage.dart';
@@ -123,14 +124,19 @@ class ProjectPageState extends State<ProjectPage> {
     final clr = theme.colorScheme.outline;
     final scheme = theme.colorScheme;
 
-    return Consumer<AppState>(
-      builder: (context, state, _) {
+    // 只在媒体库相关状态变化时重建（视频/容器数量、探测状态、语言），
+    // 不再订阅整个 AppState——进度心跳/日志/任务通知不会触发本页重建。
+    return Selector<AppState, int>(
+      selector: (_, state) => state.librarySignature,
+      builder: (context, _, _) {
+        final state = context.read<AppState>();
         final s = AppStrings.of(state.config.language);
 
-        // 搜索过滤
-        final videos = _searchQuery.isEmpty
+        // 搜索过滤（查询串小写化一次，避免每项重复 toLowerCase）
+        final q = _searchQuery.trim().toLowerCase();
+        final videos = q.isEmpty
             ? state.videos
-            : state.videos.where((v) => v.filename.toLowerCase().contains(_searchQuery.toLowerCase())).toList();
+            : state.videos.where((v) => v.filename.toLowerCase().contains(q)).toList();
 
         return Scaffold(
           backgroundColor: Colors.transparent,
@@ -138,7 +144,7 @@ class ProjectPageState extends State<ProjectPage> {
             // 全屏可滚动的内容（移动端顶部留出药丸空间）
             if (isMobilePlatform)
               Padding(
-                padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top + 60),
+                padding: EdgeInsets.only(top: MobileUi.pageTopPadding(context)),
                 child: _buildBody(context, state, videos, s, clr, scheme),
               )
             else
@@ -259,226 +265,117 @@ class ProjectPageState extends State<ProjectPage> {
     );
   }
 
-  /// 移动端顶栏：液态玻璃药丸（不再全宽模糊）——左标题药丸 + 右动作长药丸；
-  /// 搜索时标题药丸变成搜索药丸（变长），右侧动作药丸缩放隐藏。
+  /// 移动端顶栏：统一走 [MobilePillTopBar]（主界面基准的唯一实现）——
+  /// 左标题药丸（多选时变成「已选 N 项 + 关闭」）+ 右动作药丸；
+  /// 搜索时标题/动作层整体淡出缩放，同一颗搜索药丸「变长」到 200px 并居中。
   Widget _buildMobileTopBar(
       BuildContext context, AppState state, AppStrings s, ColorScheme scheme, Color clr) {
-    final safeTop = MediaQuery.of(context).padding.top;
-    final searching = _searchVisible;
     final inSelection = _selectionMode;
     final selectedCount = _selectedIds.length + _selectedContainerIds.length;
 
     final Widget titleChild = inSelection
         ? Row(mainAxisSize: MainAxisSize.min, children: [
-            Text(
-              '${s.isZh ? '已选' : 'Selected'} $selectedCount ${s.isZh ? '项' : 'items'}',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface),
+            Flexible(
+              child: Text(
+                '${s.isZh ? '已选' : 'Selected'} $selectedCount ${s.isZh ? '项' : 'items'}',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface),
+              ),
             ),
             const SizedBox(width: 6),
-            InkWell(
+            // 关闭多选：统一使用 34×34 圆形动作按钮（与主界面一致）
+            MobileGlassPillAction(
+              icon: Icons.close,
+              tooltip: s.isZh ? '退出多选' : 'Exit selection',
+              color: scheme.onSurfaceVariant,
               onTap: _exitSelectionMode,
-              borderRadius: BorderRadius.circular(12),
-              child: Padding(
-                padding: const EdgeInsets.all(2),
-                child: Icon(Icons.close, size: 17, color: scheme.onSurfaceVariant),
-              ),
             ),
           ])
-        : Text(s.navProjects,
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface));
+        : Text(s.navProjects);
 
-    // 只构建一次动作按钮列表，避免在 for-loop 里反复调用 _buildMobileActions()。
-    final actionWidgets = _buildMobileActions(context, state, s, scheme, inSelection);
-
-    // 顶栏改成 Stack：
-    // - 常规层（左标题药丸 + 右动作药丸）搜索时整体淡出+缩放（仍占位），
-    //   让搜索药丸能真正水平居中（不再被左侧标题药丸+8px 间隙向右挤）；
-    // - 搜索药丸单独叠一层，常态 44px 折叠、搜索时 AnimatedSize「变长」到 200px
-    //   并水平居中；宽度固定 200，不再用 Expanded 把输入框撑满整行。
-    return Padding(
-      padding: EdgeInsets.fromLTRB(8, safeTop + 6, 8, 6),
-      child: Stack(alignment: Alignment.center, children: [
-        // 常规状态：左标题药丸 + 右动作药丸
-        AnimatedOpacity(
-          opacity: searching ? 0.0 : 1.0,
-          duration: const Duration(milliseconds: 220),
-          child: AnimatedScale(
-            scale: searching ? 0.9 : 1.0,
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeOutCubic,
-            child: IgnorePointer(
-              ignoring: searching,
-              child: Padding(
-                padding: const EdgeInsets.only(top: 0, bottom: 6),
-                child: Row(children: [
-                  MobileGlassPill(
-                    radius: 22,
-                    height: 44,
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
-                    pressable: true,
-                    child: titleChild,
-                  ),
-                  const Spacer(),
-                  MobileGlassPill(
-                    radius: 22,
-                    height: 44,
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: actionWidgets),
-                  ),
-                ]),
-              ),
-            ),
-          ),
-        ),
-        // 搜索状态：同一搜索药丸从 44px「变长」到 200px（AnimatedSize）并水平居中
-        AnimatedOpacity(
-          opacity: searching ? 1.0 : 0.0,
-          duration: const Duration(milliseconds: 220),
-          child: IgnorePointer(
-            ignoring: !searching,
-            child: Padding(
-              padding: const EdgeInsets.only(top: 6, bottom: 6),
-              child: AnimatedSize(
-                duration: const Duration(milliseconds: 320),
-                curve: Curves.easeOutCubic,
-                alignment: Alignment.center,
-                child: searching
-                    ? MobileGlassPill(
-                        radius: 22,
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                        child: _buildSearchField(s, scheme),
-                      )
-                    : const SizedBox(width: 44, height: 44),
-              ),
-            ),
-          ),
-        ),
-      ]),
-    );
-  }
-
-  /// 搜索输入框：嵌在 MobileGlassPill 内部，不再使用 Material outline 边框。
-  /// 通过 AnimatedSwitcher 让图标们"缩放到消失"，TextField 平滑出现。
-  Widget _buildSearchField(AppStrings s, ColorScheme scheme) {
-    return SizedBox(
-      width: 200,
-      height: 44,
-      child: Row(children: [
-        AnimatedSwitcher(
-          duration: const Duration(milliseconds: 180),
-          transitionBuilder: (child, anim) =>
-              FadeTransition(opacity: anim, child: child),
-          child: Icon(
-            Icons.search,
-            key: const ValueKey('search-icon'),
-            size: 18,
-            color: scheme.onSurfaceVariant,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: TextField(
-            autofocus: true,
-            style: TextStyle(fontSize: 14, color: scheme.onSurface),
-            cursorColor: scheme.onSurfaceVariant,
-            decoration: InputDecoration(
-              hintText: s.searchVideos,
-              hintStyle: TextStyle(color: scheme.onSurfaceVariant, fontSize: 14),
-              // 显式清掉所有状态下的主题色边框：液态玻璃药丸本身就是容器，
-              // 不再让 Material3 给一个 primary 色的下划线 / 轮廓。
-              border: InputBorder.none,
-              focusedBorder: InputBorder.none,
-              enabledBorder: InputBorder.none,
-              disabledBorder: InputBorder.none,
-              errorBorder: InputBorder.none,
-              focusedErrorBorder: InputBorder.none,
-              isCollapsed: true,
-              contentPadding: const EdgeInsets.symmetric(vertical: 13),
-            ),
-            onChanged: (v) => setState(() => _searchQuery = v),
-          ),
-        ),
-        // 关闭按钮：与动作药丸里的图标保持一致的圆形可点形态
-        _pillAction(
-          scheme,
-          Icons.close,
-          s.cancel,
-          scheme.onSurfaceVariant,
-          () => setState(() {
-            _searchVisible = false;
-            _searchQuery = '';
-          }),
-        ),
-
-      ]),
+    return MobilePillTopBar(
+      title: titleChild,
+      actions: _buildMobileActions(context, state, s, scheme, inSelection),
+      searching: _searchVisible,
+      // 搜索药丸：搜索时从 44px 变长到 200px 并水平居中（与设置页同一实现）
+      searchChild: MobileSearchPill(
+        hint: s.searchVideos,
+        onChanged: (v) => setState(() => _searchQuery = v),
+        onClose: () => setState(() {
+          _searchVisible = false;
+          _searchQuery = '';
+        }),
+      ),
     );
   }
 
   /// 移动端顶栏右侧动作（长药丸内）：多选=全选/反选/删除；普通=搜索/导入/容器/添加。
+  /// 全部使用统一的 [MobileGlassPillAction]（34×34 圆形、透明涟漪），
+  /// 取代此前本页私有 _pillAction（各页各写一份，尺寸/内边距却各不相同）。
   List<Widget> _buildMobileActions(BuildContext context, AppState state, AppStrings s,
       ColorScheme scheme, bool inSelection) {
     if (inSelection) {
       return [
-        _pillAction(scheme, Icons.select_all, s.selectAll, scheme.onSurface, () => setState(() {
-          _selectedIds.addAll(state.videos.map((v) => v.id));
-          _selectedContainerIds.addAll(state.containers.map((c) => c.id));
-        })),
-        _pillAction(scheme, Icons.flip, s.isZh ? '反选' : 'Invert', scheme.onSurface,
-            () => _invertSelection(state)),
-        _pillAction(scheme, Icons.delete_outline, s.deleteSelected, scheme.error,
-            () => _deleteSelected(state)),
+        MobileGlassPillAction(
+          icon: Icons.select_all,
+          tooltip: s.selectAll,
+          color: scheme.onSurface,
+          onTap: () => setState(() {
+            _selectedIds.addAll(state.videos.map((v) => v.id));
+            _selectedContainerIds.addAll(state.containers.map((c) => c.id));
+          }),
+        ),
+        MobileGlassPillAction(
+          icon: Icons.flip,
+          tooltip: s.isZh ? '反选' : 'Invert',
+          color: scheme.onSurface,
+          onTap: () => _invertSelection(state),
+        ),
+        MobileGlassPillAction(
+          icon: Icons.delete_outline,
+          tooltip: s.deleteSelected,
+          color: scheme.error,
+          onTap: () => _deleteSelected(state),
+        ),
       ];
     }
     return [
-      _pillAction(scheme, Icons.search, s.search, scheme.onSurface, () => setState(() {
-        _searchVisible = !_searchVisible;
-        if (!_searchVisible) _searchQuery = '';
-      })),
+      MobileGlassPillAction(
+        icon: Icons.search,
+        tooltip: s.search,
+        color: scheme.onSurface,
+        onTap: () => setState(() {
+          _searchVisible = !_searchVisible;
+          if (!_searchVisible) _searchQuery = '';
+        }),
+      ),
       // 导入配置：修复“点击无任何响应”——原先视频列表为空时 onTap 直接传 null，
       // 按钮可点但毫无反馈。空列表时给出明确的操作引导提示。
-      _pillAction(scheme, Icons.file_download_outlined, s.isZh ? '导入配置' : 'Import Config',
-          scheme.onSurface,
-          state.videos.isEmpty
-              ? () => showToast(context,
-                  s.isZh ? '请先用「+」添加文件，再导入配置并应用' : 'Add files with "+" first, then import a config to apply',
-                  type: ToastType.info)
-              : () => _importConfig(state, s)),
-      if (state.config.editMode != 1)
-        _pillAction(scheme, Icons.create_new_folder_outlined, s.container, scheme.onSurface,
-            () => _showContainerMenu(context, state, s)),
-      _pillAction(scheme, Icons.add, s.addVideo, scheme.onPrimary, () => _pick(state),
-          bg: scheme.primary),
-    ];
-  }
-
-  /// 药丸内紧凑圆形图标按钮（缩小按钮间距）。
-  /// 移动端进一步把按钮间水平 padding 压到 1，让多个按钮排在药丸里更紧凑。
-  Widget _pillAction(ColorScheme scheme, IconData icon, String tooltip, Color color,
-      VoidCallback? onTap, {Color? bg}) {
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
-        splashColor: Colors.transparent,
-        highlightColor: Colors.transparent,
-        child: Padding(
-          padding: EdgeInsets.symmetric(
-            horizontal: isMobilePlatform ? 1 : 2,
-            vertical: 2,
-          ),
-          child: Container(
-            width: 34,
-            height: 34,
-            decoration: BoxDecoration(
-              color: bg,
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon, size: 19, color: color),
-          ),
-        ),
+      MobileGlassPillAction(
+        icon: Icons.file_download_outlined,
+        tooltip: s.isZh ? '导入配置' : 'Import Config',
+        color: scheme.onSurface,
+        onTap: state.videos.isEmpty
+            ? () => showToast(context,
+                s.isZh ? '请先用「+」添加文件，再导入配置并应用' : 'Add files with "+" first, then import a config to apply',
+                type: ToastType.info)
+            : () => _importConfig(state, s),
       ),
-    );
+      if (state.config.editMode != 1)
+        MobileGlassPillAction(
+          icon: Icons.create_new_folder_outlined,
+          tooltip: s.container,
+          color: scheme.onSurface,
+          onTap: () => _showContainerMenu(context, state, s),
+        ),
+      // 主题色实心「+」CTA
+      MobileGlassPillAction(
+        icon: Icons.add,
+        tooltip: s.addVideo,
+        color: scheme.onPrimary,
+        bg: scheme.primary,
+        onTap: () => _pick(state),
+      ),
+    ];
   }
 
   Widget _buildBody(BuildContext context, AppState state, List videos, AppStrings s, Color clr, ColorScheme scheme) {
@@ -526,7 +423,10 @@ class ProjectPageState extends State<ProjectPage> {
     return Column(children: [
       ?probingBanner,
       Expanded(child: ListView.builder(
-        padding: EdgeInsets.fromLTRB(isMobilePlatform ? 8 : 16, probingBanner != null ? 4 : 16, isMobilePlatform ? 8 : 16, isMobilePlatform ? kMobileNavClearance : 16),
+        // 移动端走统一内边距令牌（左右 8 + 底部让出悬浮导航）；桌面端保持 16
+        padding: isMobilePlatform
+            ? MobileUi.mainListPadding(top: probingBanner != null ? 4 : 16)
+            : EdgeInsets.fromLTRB(16, probingBanner != null ? 4 : 16, 16, 16),
         itemCount: totalCount,
         itemBuilder: (_, i) {
         if (i < containerCount) {

@@ -27,6 +27,7 @@ import '../services/shell_open.dart';
 import '../widgets/toast.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_glass_pill.dart';
+import '../widgets/mobile_ui.dart';
 import '../widgets/mobile_top_bar.dart';
 import '../widgets/option_menu_bar.dart';
 import '../widgets/app_card.dart';
@@ -557,8 +558,23 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<AppState>(
-      builder: (context, state, _) {
+    // 只在配置变化时重建：卡片内容全部派生自 config，而进度心跳/日志/任务
+    // 等无关通知不该触发设置页整页重建。签名比较成本 O(1)。
+    return Selector<AppState, int>(
+      selector: (_, state) => Object.hash(
+        state.config.language,
+        state.darkMode,
+        state.config.cardStyle,
+        state.config.menuStyle,
+        state.config.navStyle,
+        state.config.pillStyle,
+        state.config.fontSize,
+        state.config.backgroundImage,
+        state.config.cardOpacity,
+        state.config.ffmpegPath,
+      ),
+      builder: (context, _, _) {
+        final state = context.read<AppState>();
         final s = AppStrings.of(state.config.language);
         final scheme = Theme.of(context).colorScheme;
 
@@ -587,7 +603,8 @@ class _SettingsPageState extends State<SettingsPage> {
                 _emptyState(scheme, s)
               else
                 ListView(
-                  padding: EdgeInsets.fromLTRB(6, MediaQuery.of(context).padding.top + 60, 6, kMobileNavClearance),
+                  // 统一内边距：ListView 左右 0 + 分区卡自身 8 = 与主界面一致的 8px
+                  padding: EdgeInsets.fromLTRB(0, MobileUi.pageTopPadding(context), 0, kMobileNavClearance),
                   children: [
                     for (final (sec, cards) in visible)
                       _buildMobileSection(sec, cards, context, state, scheme, s),
@@ -867,150 +884,41 @@ class _SettingsPageState extends State<SettingsPage> {
 
   // ── 移动端专用 ──
 
-  /// 移动端顶栏：液态玻璃药丸——左标题药丸 + 右搜索药丸；
-  /// 点击搜索后使用 AnimatedContainer 平滑展开，无卡顿。
+  /// 移动端顶栏：统一走 [MobilePillTopBar]（主界面基准的唯一实现）——
+  /// 左标题药丸 + 右搜索按钮药丸；搜索时标题层淡出缩放，同一颗搜索药丸
+  /// 从 44px「变长」到 200px 并水平居中，关闭即收起并清空。
   Widget _buildMobileTopBar(AppStrings s, ColorScheme scheme) {
-    final safeTop = MediaQuery.of(context).padding.top;
-    final searching = _searchExpanded;
-
-    // 顶栏改成 Stack：常规层（左标题药丸 + 右搜索按钮药丸）搜索时整体淡出+缩放
-    // （仍占位），让搜索药丸能真正水平居中；搜索药丸单独叠一层，常态 44px
-    // 折叠、搜索时 AnimatedSize「变长」到 200px 并水平居中。宽度固定 200，
-    // 不再用 Expanded 把输入框撑满整行。
-    return Padding(
-      padding: EdgeInsets.fromLTRB(8, safeTop + 6, 8, 6),
-      child: Stack(alignment: Alignment.center, children: [
-        // 常规状态：左标题药丸 + 右搜索按钮药丸
-        AnimatedOpacity(
-          opacity: searching ? 0.0 : 1.0,
-          duration: const Duration(milliseconds: 220),
-          child: AnimatedScale(
-            scale: searching ? 0.9 : 1.0,
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeOutCubic,
-            child: IgnorePointer(
-              ignoring: searching,
-              child: Padding(
-                padding: const EdgeInsets.only(top: 0, bottom: 6),
-                child: Row(children: [
-                  MobileGlassPill(
-                    radius: 22,
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                    pressable: true,
-                    child: Text(s.settingsTitle,
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-                  ),
-                  const Spacer(),
-                  MobileGlassPill(
-                    radius: 22,
-                    padding: EdgeInsets.zero,
-                    child: SizedBox(
-                      width: 44,
-                      height: 44,
-                      child: IconButton(
-                        icon: Icon(Icons.search, size: 20, color: scheme.onSurface),
-                        tooltip: s.setSearchHint,
-                        onPressed: () {
-                          setState(() => _searchExpanded = true);
-                          WidgetsBinding.instance.addPostFrameCallback((_) => _searchFocus.requestFocus());
-                        },
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-                      ),
-                    ),
-                  ),
-                ]),
-              ),
-            ),
-          ),
-        ),
-        // 搜索状态：同一搜索药丸从 44px「变长」到 200px（AnimatedSize）并水平居中
-        AnimatedOpacity(
-          opacity: searching ? 1.0 : 0.0,
-          duration: const Duration(milliseconds: 220),
-          child: IgnorePointer(
-            ignoring: !searching,
-            child: Padding(
-              padding: const EdgeInsets.only(top: 6, bottom: 6),
-              child: AnimatedSize(
-                duration: const Duration(milliseconds: 320),
-                curve: Curves.easeOutCubic,
-                alignment: Alignment.center,
-                child: searching
-                    ? MobileGlassPill(
-                        radius: 22,
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                        child: _buildSearchField(s, scheme),
-                      )
-                    : const SizedBox(width: 44, height: 44),
-              ),
-            ),
-          ),
-        ),
-      ]),
-    );
-  }
-
-  /// 搜索输入框：嵌在 MobileGlassPill 内部，不再使用 Material outline 边框。
-  /// Material3 TextField 在 focus 时会按 theme primary 画下划线；显式清空所有
-  /// border（focused / enabled / disabled / hovered），只保留液态玻璃药丸作为容器。
-  Widget _buildSearchField(AppStrings s, ColorScheme scheme) {
-    return SizedBox(
-      width: 200,
-      height: 44,
-      child: Row(children: [
-        AnimatedSwitcher(
-          duration: const Duration(milliseconds: 180),
-          transitionBuilder: (child, anim) =>
-              FadeTransition(opacity: anim, child: child),
-          child: Icon(
-            Icons.search,
-            key: const ValueKey('settings-search-icon'),
-            size: 18,
-            color: scheme.onSurfaceVariant,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: TextField(
-            controller: _searchCtrl,
-            focusNode: _searchFocus,
-            style: TextStyle(fontSize: 14, color: scheme.onSurface),
-            cursorColor: scheme.onSurfaceVariant,
-            decoration: InputDecoration(
-              hintText: s.setSearchHint,
-              hintStyle: TextStyle(fontSize: 14, color: scheme.onSurfaceVariant),
-              // 彻底清掉所有状态下的主题色边框：液态玻璃药丸本身就是容器，
-              // 不再让 Material3 给一个 primary 色的下划线 / 轮廓。
-              border: InputBorder.none,
-              focusedBorder: InputBorder.none,
-              enabledBorder: InputBorder.none,
-              disabledBorder: InputBorder.none,
-              errorBorder: InputBorder.none,
-              focusedErrorBorder: InputBorder.none,
-              isCollapsed: true,
-              contentPadding: const EdgeInsets.symmetric(vertical: 13),
-            ),
-            onChanged: (v) => setState(() => _query = v),
-          ),
-        ),
-        // 关闭按钮
-        IconButton(
-          icon: Icon(Icons.close, size: 18, color: scheme.onSurfaceVariant),
-          tooltip: s.setClearSearch,
-          onPressed: () {
-            setState(() {
-              _searchExpanded = false;
-              _searchCtrl.clear();
-              _query = '';
+    return MobilePillTopBar(
+      title: Text(s.settingsTitle),
+      actions: [
+        MobileGlassPillAction(
+          icon: Icons.search,
+          tooltip: s.setSearchHint,
+          color: scheme.onSurface,
+          onTap: () {
+            setState(() => _searchExpanded = true);
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _searchFocus.requestFocus();
             });
-            _searchFocus.unfocus();
           },
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
         ),
-        const SizedBox(width: 4),
-      ]),
+      ],
+      searching: _searchExpanded,
+      // 搜索药丸：与主界面（项目页）共用同一实现，不再各写一份
+      searchChild: MobileSearchPill(
+        controller: _searchCtrl,
+        focusNode: _searchFocus,
+        hint: s.setSearchHint,
+        onChanged: (v) => setState(() => _query = v),
+        onClose: () {
+          setState(() {
+            _searchExpanded = false;
+            _searchCtrl.clear();
+            _query = '';
+          });
+          _searchFocus.unfocus();
+        },
+      ),
     );
   }
 
@@ -1090,15 +998,15 @@ class _SettingsPageState extends State<SettingsPage> {
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       onTap: () {
         if (c.id == 'command') {
-          // 移动端单独推入时无主界面壁纸壳，需自带壁纸背景
-          // （与 AI 提供商/高级设置等二级页一致，否则露出系统黑底）
-          Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => withWallpaper(
-                  context, const SafeArea(child: CommandPage()))));
+          // CommandPage / LogPage 自身已用 withWallpaper 铺壁纸，且顶栏自带安全区
+          // 偏移。这里若再套一层 withWallpaper + SafeArea：
+          //   1) 双层壁纸多解码一次并多一层遮罩；
+          //   2) SafeArea 会把子树的 MediaQuery.padding.top 清零 → 顶栏被状态栏压住。
+          Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const CommandPage()));
         } else if (c.id == 'logs') {
-          Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => withWallpaper(
-                  context, const SafeArea(child: LogPage()))));
+          Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const LogPage()));
         } else if (c.id == 'cache') {
           // 缓存：直接弹出确认框，不进入二级页
           _clearCache(context, state, scheme, s);
@@ -1151,7 +1059,7 @@ class _SettingsPageState extends State<SettingsPage> {
               child: ListView(
                 // 左右间距与设置主界面卡片对齐（主界面 = ListView 6px + 分区 8px = 14px）。
                 // 此前为 0：MCP/AI 等二级页卡片通顶通底，比主界面卡片明显更宽。
-                padding: const EdgeInsets.fromLTRB(14, 12, 14, 48),
+                padding: MobileUi.subListPadding(top: 12, bottom: 48),
                 children: [contentBuilder(ctx2, state)],
               ),
             ),
@@ -1819,9 +1727,9 @@ Widget _buildMobileCommandEntry(BuildContext ctx, AppState state) {
           : 'Manual input + quick templates + parameter reference',
           style: TextStyle(fontSize: 11, color: scheme.outline)),
       trailing: Icon(Icons.chevron_right, color: scheme.outline),
-      onTap: () => Navigator.of(ctx).push(MaterialPageRoute(
-          builder: (_) =>
-              withWallpaper(ctx, SafeArea(child: const CommandPage())))),
+      // CommandPage 自带壁纸与安全区顶栏，不再外层重复包装（见 _mobileToolRow 注释）
+      onTap: () => Navigator.of(ctx).push(
+          MaterialPageRoute(builder: (_) => const CommandPage())),
     ),
   ]);
 }
@@ -1840,9 +1748,9 @@ Widget _buildMobileLogsEntry(BuildContext ctx, AppState state) {
           : 'Backend output, FFmpeg progress and errors',
           style: TextStyle(fontSize: 11, color: scheme.outline)),
       trailing: Icon(Icons.chevron_right, color: scheme.outline),
-      onTap: () => Navigator.of(ctx).push(MaterialPageRoute(
-          builder: (_) =>
-              withWallpaper(ctx, SafeArea(child: const LogPage())))),
+      // LogPage 自带壁纸与安全区顶栏，不再外层重复包装（见 _mobileToolRow 注释）
+      onTap: () => Navigator.of(ctx).push(
+          MaterialPageRoute(builder: (_) => const LogPage())),
     ),
   ]);
 }
@@ -2228,7 +2136,10 @@ Widget _buildCache(BuildContext ctx, AppState state) {
 }
 
 void _openCredits(BuildContext ctx) {
-  Navigator.of(ctx).push(MaterialPageRoute(builder: (_) => SafeArea(child: const CreditsPage())));
+  // CreditsPage 自带壁纸与安全区顶栏（MobileSubPageTopBar 读取 padding.top），
+  // 外层再套 SafeArea 会把 padding.top 清零 → 顶栏被状态栏压住。
+  // 桌面端 padding 恒为 0，去掉 SafeArea 无影响。
+  Navigator.of(ctx).push(MaterialPageRoute(builder: (_) => const CreditsPage()));
 }
 
 Widget _buildAbout(BuildContext ctx, AppState state) {
@@ -2370,7 +2281,7 @@ Widget _buildMcpAi(BuildContext ctx, AppState state) {
             : null,
         value: cfg.mcpEnabled,
         onChanged: (v) => state.toggleMcpServer(v)),
-    if (cfg.mcpEnabled)
+    if (cfg.mcpEnabled) ...[
       Row(children: [
         Text('${s.mcpPort}: ', style: TextStyle(color: clr, fontSize: 12)),
         SizedBox(width: 80, child: _McpTextField(
@@ -2393,6 +2304,27 @@ Widget _buildMcpAi(BuildContext ctx, AppState state) {
           },
         )),
       ]),
+      const SizedBox(height: 4),
+      Row(children: [
+        Text(s.isZh ? '监听地址: ' : 'Bind host: ', style: TextStyle(color: clr, fontSize: 12)),
+        SizedBox(width: 130, child: _McpTextField(
+          value: cfg.mcpHost, label: '', scheme: scheme,
+          hint: '127.0.0.1',
+          onChange: (v) {
+            final host = v.trim();
+            // 允许留空（回退 127.0.0.1）；其余只做基本字符校验，重启后生效
+            if (host.isEmpty || RegExp(r'^[A-Za-z0-9.:_-]+$').hasMatch(host)) {
+              state.updateConfig((c) => c..mcpHost = host);
+            }
+          },
+        )),
+        const SizedBox(width: 6),
+        Expanded(child: Text(
+          s.isZh ? '改后点「应用」。设为 0.0.0.0 将暴露到局域网并启用访问令牌' : 'Click Apply. 0.0.0.0 exposes to LAN and enables token',
+          style: TextStyle(fontSize: 10, color: scheme.outline),
+        )),
+      ]),
+    ],
     if (cfg.mcpEnabled && state.mcpRunning && state.mcpToken != null)
       Padding(
         padding: const EdgeInsets.only(top: 4),
@@ -2407,6 +2339,12 @@ Widget _buildMcpAi(BuildContext ctx, AppState state) {
             style: TextStyle(fontSize: 10, color: scheme.outline)),
         value: cfg.mcpAllowWrite,
         onChanged: (v) => state.updateConfig((c) => c..mcpAllowWrite = v)),
+    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+        title: Text(s.isZh ? '允许 MCP 访问文件系统' : 'Allow MCP File Access', style: TextStyle(color: clr, fontSize: 12)),
+        subtitle: Text(s.isZh ? '控制列目录/文件信息/媒体探测三个工具；本机任何程序都能调用 MCP，不依赖时可关闭' : 'Gates list_directory / read_file_info / probe_video; any local program can call MCP — turn off when unused',
+            style: TextStyle(fontSize: 10, color: scheme.outline)),
+        value: cfg.mcpAllowFsAccess,
+        onChanged: (v) => state.updateConfig((c) => c..mcpAllowFsAccess = v)),
     const SizedBox(height: 8),
     SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
         title: Text(s.aiEnable, style: TextStyle(color: clr)),
@@ -3340,7 +3278,7 @@ void _showUpdateDialog(BuildContext ctx, AppStrings s, updater.UpdateResult resu
       actions: [
         TextButton(onPressed: () => Navigator.pop(dCtx), child: Text(s.aboutClose)),
         if (allowAutoUpdate)
-          FilledButton(onPressed: () { Navigator.pop(dCtx); _downloadAndInstall(ctx, s, result.downloadUrl!); },
+          FilledButton(onPressed: () { Navigator.pop(dCtx); _downloadAndInstall(ctx, s, result.downloadUrl!, result.downloadSha256); },
               child: Text(s.isZh ? '自动更新' : 'Auto Update'))
         else
           FilledButton(onPressed: () {
@@ -3352,7 +3290,7 @@ void _showUpdateDialog(BuildContext ctx, AppStrings s, updater.UpdateResult resu
   );
 }
 
-Future<void> _downloadAndInstall(BuildContext ctx, AppStrings s, String url) async {
+Future<void> _downloadAndInstall(BuildContext ctx, AppStrings s, String url, [String? expectedSha256]) async {
   final scheme = Theme.of(ctx).colorScheme;
   final progressNotifier = ValueNotifier<double>(0);
   final statusNotifier = ValueNotifier<String>(s.isZh ? '准备下载...' : 'Preparing...');
@@ -3375,8 +3313,15 @@ Future<void> _downloadAndInstall(BuildContext ctx, AppStrings s, String url) asy
         progressNotifier.value = received / total;
         statusNotifier.value = '${(received / 1024 / 1024).toStringAsFixed(1)} / ${(total / 1024 / 1024).toStringAsFixed(1)} MB';
       }
-    });
+    }, expectedSha256: expectedSha256);
     if (!ctx.mounted) return;
+    // 未提供校验文件时给出明确警示，避免用户误以为已做过完整性校验（H-4）
+    if (expectedSha256 == null || expectedSha256.isEmpty) {
+      showToast(ctx, s.isZh
+          ? '提示：发布方未提供 SHA-256，安装包未做完整性校验'
+          : 'Note: publisher provided no SHA-256; package integrity was not verified',
+          type: ToastType.warning);
+    }
     if (dialogOpen) Navigator.pop(ctx);
     await updater.installAndRestart(filePath);
   } catch (e) {
@@ -3560,11 +3505,19 @@ class _FfmpegCardState extends State<_FfmpegCard> {
         return;
       }
       final newPath = '$existingPath;$dir';
-      if (newPath.length > 1024) {
-        if (mounted) showToast(context, isZh ? 'PATH 过长（超过 1024 字符），已跳过' : 'PATH too long (>1024 chars), skipped', type: ToastType.warning);
-        return;
+      // 原实现用 `setx`：它有 1024 字符硬上限会截断 PATH，且会把
+      // REG_EXPAND_SZ（含 %SystemRoot% 等引用）强制展开成 REG_SZ，
+      // 可能永久损坏用户 PATH（L-5）。改用 PowerShell 的
+      // [Environment]::SetEnvironmentVariable(...,'User')，走注册表 API：
+      // 无长度截断、保留原有值类型，且只影响当前用户。
+      final escaped = newPath.replaceAll("'", "''");
+      final ps = await Process.run('powershell', [
+        '-NoProfile', '-NonInteractive', '-Command',
+        "[Environment]::SetEnvironmentVariable('Path','$escaped','User')",
+      ]);
+      if (ps.exitCode != 0) {
+        throw Exception('设置用户 PATH 失败: ${ps.stderr}');
       }
-      await Process.run('setx', ['Path', newPath]);
     } catch (e) {
       if (mounted) showToast(context, isZh ? '添加到系统 PATH 失败: $e' : 'Failed to add to PATH: $e', type: ToastType.error);
     }

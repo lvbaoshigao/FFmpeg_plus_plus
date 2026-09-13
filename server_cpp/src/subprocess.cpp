@@ -212,10 +212,23 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
         Sleep(10);
     }
 
+    // 兜底排空：与主循环保持同一上限，避免子进程在被 kill 前疯狂输出导致无界累积（L-6）
     while (ReadFile(hStdoutRead, buf, sizeof(buf)-1, &n, nullptr) && n > 0) {
+        if (stdout_data.size() + n > kMaxOutputBytes) {
+            size_t room = kMaxOutputBytes - stdout_data.size();
+            if (room > 0) stdout_data.append(buf, room);
+            truncated = true;
+            break;
+        }
         stdout_data.append(buf, n);
     }
     while (ReadFile(hStderrRead, buf, sizeof(buf)-1, &n, nullptr) && n > 0) {
+        if (stderr_data.size() + n > kMaxOutputBytes) {
+            size_t room = kMaxOutputBytes - stderr_data.size();
+            if (room > 0) stderr_data.append(buf, room);
+            truncated = true;
+            break;
+        }
         stderr_data.append(buf, n);
     }
 
@@ -234,7 +247,7 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
 ProcessResult Subprocess::runWithProgress(
     const std::vector<std::string>& cmd,
     std::function<void(const std::string&)> on_stderr_line,
-    std::atomic<bool>& cancel_flag,
+    std::function<bool()> isCancelled,
     int timeout_sec) {
 
     ProcessResult result;
@@ -330,7 +343,7 @@ ProcessResult Subprocess::runWithProgress(
     // 主线程：等待进程退出或取消
     auto start = std::chrono::steady_clock::now();
     while (true) {
-        if (cancel_flag.load()) {
+        if (isCancelled && isCancelled()) {
             TerminateProcess(pi.hProcess, 1);
             result.exit_code = -1;
             break;
@@ -591,7 +604,7 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
 ProcessResult Subprocess::runWithProgress(
     const std::vector<std::string>& cmd,
     std::function<void(const std::string&)> on_stderr_line,
-    std::atomic<bool>& cancel_flag,
+    std::function<bool()> isCancelled,
     int timeout_sec) {
 
     ProcessResult result;
@@ -695,7 +708,7 @@ ProcessResult Subprocess::runWithProgress(
     // 主线程：等待进程退出或取消
     auto start = std::chrono::steady_clock::now();
     while (true) {
-        if (cancel_flag.load()) {
+        if (isCancelled && isCancelled()) {
             kill(pid, SIGKILL);
             waitpid(pid, nullptr, 0);
             result.exit_code = -1;

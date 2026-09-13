@@ -4,8 +4,10 @@
 #include <string>
 #include <thread>
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 
 #include "ffmpegpp_exports.h"
 #include "nlohmann/json.hpp"
@@ -32,6 +34,10 @@ static std::atomic<bool> g_shutdownFlag{false};
 static std::set<std::string> g_cancelledTaskIds;
 static std::mutex g_cancelMutex;
 
+// 与 g_cancelledTaskIds 对应的入队时间戳，用于清理长期不被消费的陈旧条目（L-1）
+static std::map<std::string, std::chrono::steady_clock::time_point> g_cancelledTaskTimes;
+static constexpr int kCancelledIdTtlSeconds = 600;
+
 // 一次性 init 保护：并发 init 会对 joinable 的 g_workerThread 重新赋值导致 std::terminate
 static std::mutex g_initMutex;
 
@@ -39,10 +45,32 @@ static std::mutex g_initMutex;
 // 避免库卸载（dlclose / DLL_PROCESS_DETACH）时这些线程仍在库代码内执行而崩溃。
 static std::mutex g_auxThreadsMutex;
 static std::vector<std::thread> g_auxThreads;
+// 已完成（可 join）的辅助线程数量。线程结束时自增（H-3：长期运行会话中
+// 线程对象/handle 只增不减，需要 spawn 时顺带回收一批）。
+static std::atomic<size_t> g_auxThreadsFinished{0};
 
 static void spawnAuxThread(std::function<void()> fn) {
+    // 回收已完成的辅助线程：把 vector 里所有 thread 移出并 join。
+    // 由于辅助任务都很短（probe / 特性查询 / 导入导出），绝大多数此时已结束，
+    // join 立即返回；个别仍在运行的会在下一次 spawn 或 shutdown 的
+    // joinAuxThreads() 里兜底回收。vector 不再无界增长，OS handle 得以及时释放。
+    if (g_auxThreadsFinished.load() > 0) {
+        std::vector<std::thread> done;
+        {
+            std::lock_guard<std::mutex> lock(g_auxThreadsMutex);
+            done.swap(g_auxThreads);
+            g_auxThreadsFinished.store(0);
+        }
+        for (auto& t : done) {
+            if (t.joinable()) t.join();
+        }
+    }
+
     std::lock_guard<std::mutex> lock(g_auxThreadsMutex);
-    g_auxThreads.emplace_back(std::move(fn));
+    g_auxThreads.emplace_back([fn]() {
+        fn();
+        g_auxThreadsFinished.fetch_add(1);
+    });
 }
 
 static void joinAuxThreads() {
@@ -50,6 +78,7 @@ static void joinAuxThreads() {
     {
         std::lock_guard<std::mutex> lock(g_auxThreadsMutex);
         threads.swap(g_auxThreads);
+        g_auxThreadsFinished.store(0);
     }
     for (auto& t : threads) {
         if (t.joinable()) t.join();
@@ -77,36 +106,55 @@ static void workerLoop() {
         slog("dll worker: processing action=%s", action.c_str());
 
         try {
+            const std::string reqId = req.value("id", "");
+
             // 队列中已被取消的任务直接跳过（cancel 携带 task_ids 时），
             // 避免「停止所有」后后端仍继续执行排队任务
             {
                 std::lock_guard<std::mutex> lock(g_cancelMutex);
-                auto it = g_cancelledTaskIds.find(req.value("id", ""));
+                auto it = g_cancelledTaskIds.find(reqId);
                 if (it != g_cancelledTaskIds.end()) {
                     g_cancelledTaskIds.erase(it);
-                    JsonWriter::reply(req.value("id", ""), false, nullptr, "任务已取消");
+                    g_cancelledTaskTimes.erase(reqId);
+                    JsonWriter::reply(reqId, false, nullptr, "任务已取消");
                     continue;
                 }
+                // 清理陈旧的取消记录（任务可能从未入队/早已完成），避免无界增长
+                auto now = std::chrono::steady_clock::now();
+                for (auto sit = g_cancelledTaskTimes.begin(); sit != g_cancelledTaskTimes.end();) {
+                    if (std::chrono::duration_cast<std::chrono::seconds>(now - sit->second).count()
+                            > kCancelledIdTtlSeconds) {
+                        g_cancelledTaskIds.erase(sit->first);
+                        sit = g_cancelledTaskTimes.erase(sit);
+                    } else {
+                        ++sit;
+                    }
+                }
             }
+
+            // 任务级取消标志：仅当本次请求的 id 已被取消才为 true。
+            // 旧实现用全局 g_cancelFlag 并在任务启动时清零，导致「取消」被下一任务的
+            // 启动清掉（取消失效）或误作用于其它任务（M-5）。这里改为按 id 判定。
+            auto isCancelled = [reqId]() {
+                if (g_cancelFlag.load()) return true;  // 全局「停止所有」仍生效
+                std::lock_guard<std::mutex> lock(g_cancelMutex);
+                return g_cancelledTaskIds.count(reqId) > 0;
+            };
+
             if (action == "transcode") {
-                g_cancelFlag.store(false);
-                handleTranscode(req, g_cancelFlag);
+                handleTranscode(req, isCancelled);
             } else if (action == "subtitle") {
-                g_cancelFlag.store(false);
-                handleSubtitle(req, g_cancelFlag);
+                handleSubtitle(req, isCancelled);
             } else if (action == "extract_frame") {
-                handleExtractFrame(req);
+                handleExtractFrame(req, isCancelled);
             } else if (action == "concat") {
-                g_cancelFlag.store(false);
-                handleConcat(req, g_cancelFlag);
+                handleConcat(req, isCancelled);
             } else if (action == "image_sequence") {
-                g_cancelFlag.store(false);
-                handleImageSequence(req, g_cancelFlag);
+                handleImageSequence(req, isCancelled);
             } else if (action == "custom_command") {
-                g_cancelFlag.store(false);
-                handleCustomCommand(req, g_cancelFlag);
+                handleCustomCommand(req, isCancelled);
             } else {
-                JsonWriter::reply(req.value("id", ""), false, nullptr, "未知 action: " + action);
+                JsonWriter::reply(reqId, false, nullptr, "未知 action: " + action);
             }
         } catch (const std::exception& e) {
             slog("dll worker: EXCEPTION: %s", e.what());
@@ -157,13 +205,22 @@ FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
         std::string action = req.value("action", "");
 
         if (action == "cancel") {
-            g_cancelFlag.store(true);
-            // 支持批量取消：携带 task_ids 时，worker 处理这些任务前会跳过
+            // 注意：不再无条件设置全局 g_cancelFlag。全局标志只在「停止所有」
+            // （未携带 task_ids）时置位；精确取消由 g_cancelledTaskIds 按 id 判定。
             auto params = req.value("params", json::object());
-            if (params.contains("task_ids") && params["task_ids"].is_array()) {
+            const bool hasTaskIds = params.contains("task_ids") && params["task_ids"].is_array()
+                                    && !params["task_ids"].empty();
+            if (!hasTaskIds) {
+                g_cancelFlag.store(true);
+            } else {
                 std::lock_guard<std::mutex> lock(g_cancelMutex);
+                auto now = std::chrono::steady_clock::now();
                 for (auto& tid : params["task_ids"]) {
-                    if (tid.is_string()) g_cancelledTaskIds.insert(tid.get<std::string>());
+                    if (tid.is_string()) {
+                        std::string id = tid.get<std::string>();
+                        g_cancelledTaskIds.insert(id);
+                        g_cancelledTaskTimes[id] = now;
+                    }
                 }
             }
             JsonWriter::reply(req.value("id", ""), true, {{"message", "取消信号已发送"}});

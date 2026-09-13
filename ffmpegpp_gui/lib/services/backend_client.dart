@@ -157,12 +157,6 @@ class BackendClient {
         'fppx_import', 30, {'path': path, 'force': force});
   }
 
-  /// 导入新版 .fppx（明确指定 v2 解析器，正常流程请用 [fppxImport]）。
-  Future<Map<String, dynamic>> fppx2Import(String path, {bool force = false}) async {
-    return await _process.requestWithTimeout(
-        'fppx2_import', 30, {'path': path, 'force': force});
-  }
-
   /// 导出新版 .fppx。mode: 1=节点编辑器(需 graph) 2=快速模式(需 quickItems)。
   /// C++ 端写盘前完整校验；校验失败时 success=false 且 data.errors 带回原因。
   Future<Map<String, dynamic>> fppx2Export(String path, {
@@ -180,11 +174,6 @@ class BackendClient {
       'graph': ?graph,
       'quick_items': ?quickItems,
     });
-  }
-
-  /// 导入旧版 .fppx（魔数 + 版本号 + gzip(JSON)，完整迁移自 Dart FppxExporter）。
-  Future<Map<String, dynamic>> fppxLegacyImport(String path) async {
-    return await _process.requestWithTimeout('fppx_legacy_import', 30, {'path': path});
   }
 
   /// 导出旧版 .fppx（与 Dart FppxExporter 输出逐字节兼容）。

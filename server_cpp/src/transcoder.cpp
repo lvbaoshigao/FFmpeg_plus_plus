@@ -390,6 +390,18 @@ std::vector<std::string> buildTranscodeCommand(
         cmd.push_back(cover);
     }
 
+    // 叠加素材（画面叠加节点）作为第二个输入。
+    // 与封面互斥：两者都占 [1:v]，同时开启会导致滤镜图标签冲突。
+    bool hasOverlayInput = false;
+    if (!hasCoverInput && options.contains("overlay_input") && options["overlay_input"].is_string()) {
+        std::string ov = options["overlay_input"].get<std::string>();
+        if (!isPathSafe(ov))
+            throw std::runtime_error("叠加素材路径包含不安全字符");
+        cmd.push_back("-i");
+        cmd.push_back(ov);
+        hasOverlayInput = true;
+    }
+
     // 片段截取结束时间（-ss 在 -i 前时用 -t duration，避免时间戳重置问题）
     if (options.contains("end_time") && !options["end_time"].is_null()) {
         double end_time;
@@ -504,6 +516,9 @@ std::vector<std::string> buildTranscodeCommand(
     // 视频滤镜（如变速 setpts）— 纯音频模式跳过
     if (!audio_only && options.contains("vf_filters") && options["vf_filters"].is_array() && !options["vf_filters"].empty()) {
         std::string vf;
+        // 带标签/多输入的滤镜图（如 overlay 依赖 [0:v][1:v]）必须走 -filter_complex，
+        // -vf 不接受带标签的滤镜图（C-1）。
+        bool needsComplex = false;
         for (auto& f : options["vf_filters"]) {
             if (!f.is_string()) {
                 throw std::runtime_error("vf_filters 中的元素必须是字符串");
@@ -511,11 +526,33 @@ std::vector<std::string> buildTranscodeCommand(
             std::string fs = f.get<std::string>();
             if (!isFilterSafe(fs))
                 throw std::runtime_error("视频滤镜包含不安全内容: " + fs);
+            // 出现 "["（输入/输出标签）或 ";"（滤镜链分隔）即判定为滤镜图
+            if (fs.find('[') != std::string::npos || fs.find(';') != std::string::npos) {
+                needsComplex = true;
+            }
             if (!vf.empty()) vf += ",";
             vf += fs;
         }
-        cmd.push_back("-vf");
-        cmd.push_back(vf);
+        if (needsComplex) {
+            // 多输入滤镜图要求第二路输入存在，否则 ffmpeg 报 "Invalid file index"
+            if (!hasOverlayInput && vf.find("[1:") != std::string::npos) {
+                throw std::runtime_error("滤镜图引用了第二路输入，但未提供叠加素材");
+            }
+            cmd.push_back("-filter_complex");
+            cmd.push_back(vf);
+            // 滤镜图以标签 [v] 结尾时必须显式映射，否则该路输出被丢弃、
+            // ffmpeg 退回到未过滤的原始视频流（画面叠加看起来「没生效」）。
+            if (vf.find("[v]") != std::string::npos) {
+                cmd.push_back("-map");
+                cmd.push_back("[v]");
+                // 音频不受影响，沿用源音频流
+                cmd.push_back("-map");
+                cmd.push_back("0:a?");
+            }
+        } else {
+            cmd.push_back("-vf");
+            cmd.push_back(vf);
+        }
     }
 
     // 音频滤镜（如变速 atempo）

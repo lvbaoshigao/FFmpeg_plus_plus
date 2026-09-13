@@ -5,7 +5,9 @@ import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import '../widgets/app_card.dart';
 import '../widgets/mobile_bottom_nav.dart';
+import '../widgets/mobile_glass_pill.dart';
 import '../widgets/mobile_top_bar.dart';
+import '../widgets/mobile_ui.dart';
 import '../widgets/toast.dart';
 import 'settings_page.dart'
     show
@@ -242,6 +244,34 @@ Widget mobileAiSettingsContent(BuildContext ctx, AppState state) {
                     ),
                   ]),
                 ),
+                Padding(
+                  padding: const EdgeInsets.only(left: 8),
+                  child: Row(children: [
+                    Text(s.isZh ? '监听地址: ' : 'Bind host: ',
+                        style: TextStyle(fontSize: 12, color: clr)),
+                    Expanded(
+                      child: _AiField(
+                        value: cfg.mcpHost,
+                        scheme: scheme,
+                        hint: '127.0.0.1',
+                        onCommit: (v) {
+                          final host = v.trim();
+                          // 允许留空（回退 127.0.0.1）；其余只做基本字符校验，重启后生效
+                          if (host.isEmpty || RegExp(r'^[A-Za-z0-9.:_-]+$').hasMatch(host)) {
+                            state.updateConfig((c) => c..mcpHost = host);
+                          }
+                        },
+                      ),
+                    ),
+                  ]),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 2, 8, 0),
+                  child: Text(
+                    s.isZh ? '改后点「应用」。设为 0.0.0.0 将暴露到局域网并启用访问令牌' : 'Click Apply. 0.0.0.0 exposes to LAN and enables token',
+                    style: TextStyle(fontSize: 10, color: scheme.outline),
+                  ),
+                ),
                 if (state.mcpRunning && state.mcpToken != null)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
@@ -263,6 +293,19 @@ Widget mobileAiSettingsContent(BuildContext ctx, AppState state) {
                       style: TextStyle(fontSize: 10, color: scheme.outline)),
                   value: cfg.mcpAllowWrite,
                   onChanged: (v) => state.updateConfig((c) => c..mcpAllowWrite = v),
+                ),
+                SwitchListTile(
+                  dense: true,
+                  contentPadding: const EdgeInsets.only(left: 8),
+                  title: Text(s.isZh ? '允许 MCP 访问文件系统' : 'Allow MCP File Access',
+                      style: TextStyle(fontSize: 12, color: clr)),
+                  subtitle: Text(
+                      s.isZh
+                          ? '控制列目录/文件信息/媒体探测三个工具；本机任何程序都能调用 MCP，不依赖时可关闭'
+                          : 'Gates list_directory / read_file_info / probe_video; any local program can call MCP — turn off when unused',
+                      style: TextStyle(fontSize: 10, color: scheme.outline)),
+                  value: cfg.mcpAllowFsAccess,
+                  onChanged: (v) => state.updateConfig((c) => c..mcpAllowFsAccess = v),
                 ),
               ],
             ]),
@@ -538,22 +581,23 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
           child: Column(children: [
             MobileSubPageTopBar(
               title: Text(_isNew ? s.aiNewProvider : s.aiProviderDetail,
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 15)),
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
               onBack: () => Navigator.of(context).maybePop(),
               actions: [
                 // 保存
-                IconButton(
+                MobileGlassPillAction(
+                  icon: Icons.check_rounded,
                   tooltip: s.save,
-                  icon: const Icon(Icons.check_rounded, size: 20),
-                  onPressed: _save,
+                  color: scheme.onSurface,
+                  onTap: _save,
                 ),
                 // 删除（仅已有提供商）
                 if (!_isNew)
-                  IconButton(
+                  MobileGlassPillAction(
+                    icon: Icons.delete_outline,
                     tooltip: s.remove,
-                    icon: Icon(Icons.delete_outline, size: 20, color: scheme.error),
-                    onPressed: _delete,
+                    color: scheme.error,
+                    onTap: _delete,
                   ),
               ],
             ),
@@ -1343,13 +1387,12 @@ class _MobileMultiKeyPageState extends State<MobileMultiKeyPage> {
         body: SafeArea(
           child: Column(children: [
             MobileSubPageTopBar(
-              title: Text(s.isZh ? 'API Keys 管理（$filled）' : 'API Keys ($filled)',
-                  style: const TextStyle(fontSize: 15)),
+              title: Text(s.isZh ? 'API Keys 管理（$filled）' : 'API Keys ($filled)'),
               onBack: () => Navigator.of(context).maybePop(),
             ),
             Expanded(
               child: ListView(
-                padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
+                padding: MobileUi.subListPadding(top: 4, bottom: 16),
                 children: [
                   _AiSectionCard(
                     cardStyle: context.read<AppState>().config.cardStyle,
@@ -1470,18 +1513,18 @@ class _MobileModelSettingsPageState extends State<MobileModelSettingsPage> {
         body: SafeArea(
           child: Column(children: [
             MobileSubPageTopBar(
-              title: Text(zh ? '模型设置' : 'Model Settings',
-                  style: const TextStyle(fontSize: 15)),
+              title: Text(zh ? '模型设置' : 'Model Settings'),
               onBack: () => Navigator.of(context).maybePop(),
               actions: [
                 // 恢复继承提供商默认
                 if (customTemp ||
                     _entry.contextWindow != null ||
                     _entry.maxTokens != null)
-                  IconButton(
+                  MobileGlassPillAction(
+                    icon: Icons.restart_alt,
                     tooltip: zh ? '恢复继承默认' : 'Inherit defaults',
-                    icon: const Icon(Icons.restart_alt, size: 20),
-                    onPressed: () => setState(() {
+                    color: scheme.onSurface,
+                    onTap: () => setState(() {
                       _entry
                         ..contextWindow = null
                         ..maxTokens = null
@@ -1493,7 +1536,7 @@ class _MobileModelSettingsPageState extends State<MobileModelSettingsPage> {
             ),
             Expanded(
               child: ListView(
-                padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
+                padding: MobileUi.subListPadding(top: 4, bottom: 16),
                 children: [
                   _AiSectionCard(
                     cardStyle: cfg.cardStyle,
@@ -1612,12 +1655,12 @@ class MobileAiAdvancedPage extends StatelessWidget {
             body: SafeArea(
               child: Column(children: [
                 MobileSubPageTopBar(
-                  title: Text(s.aiAdvanced, style: const TextStyle(fontSize: 15)),
+                  title: Text(s.aiAdvanced),
                   onBack: () => Navigator.of(context).maybePop(),
                 ),
                 Expanded(
                   child: ListView(
-                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
+                    padding: MobileUi.subListPadding(top: 4, bottom: 16),
                     children: [
                       // ── 生成（图生成模式 + 思考过程） ──
                       // 原先这张卡把 图生成/思考/自动命名/标题提示词 全塞在一起，

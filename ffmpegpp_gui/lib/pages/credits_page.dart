@@ -4,8 +4,10 @@ import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import '../widgets/wallpaper_background.dart';
 import '../platform/app_platform.dart';
+import '../widgets/app_card.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_top_bar.dart';
+import '../widgets/mobile_ui.dart';
 import '../services/shell_open.dart';
 
 /// 「引用」页：列出本应用使用的第三方开源项目并致谢。
@@ -47,12 +49,15 @@ class CreditsPage extends StatelessWidget {
               ),
         Expanded(
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+            // 移动端与其它二级页统一（左右 12）；桌面端保持原内边距
+            padding: isMobilePlatform
+                ? MobileUi.subListPadding(top: 8, bottom: 24)
+                : const EdgeInsets.fromLTRB(16, 8, 16, 24),
             children: [
               Text(s.aboutReferencesIntro,
                   style: TextStyle(fontSize: 13, color: scheme.outline)),
               const SizedBox(height: 14),
-              _projectCard(scheme, s,
+              _projectCard(context, scheme, s,
                   name: 'tabler-icons',
                   license: 'MIT License',
                   desc: s.isZh
@@ -66,15 +71,14 @@ class CreditsPage extends StatelessWidget {
     ));
   }
 
-  Widget _projectCard(ColorScheme scheme, AppStrings s,
+  Widget _projectCard(BuildContext context, ColorScheme scheme, AppStrings s,
       {required String name, required String license, required String desc, required String url}) {
-    return Container(
+    // 卡片统一走 AppCard（跟随 主题→样式→卡片样式 cfg.cardStyle），
+    // 不再本页手写 BoxDecoration（此前与项目页/设置页的卡片语言不一致）。
+    return AppCard(
+      style: context.select<AppState, String>((s) => s.config.cardStyle),
+      radius: 14,
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withAlpha(80),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
-      ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           Icon(Icons.category_outlined, size: 20, color: scheme.primary),

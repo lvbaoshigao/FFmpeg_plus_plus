@@ -65,6 +65,12 @@ enum PipelineStepType {
   imageDenoise,
   imageChannelExtract,
   videoCrop,
+  // ── 扩展节点（对应后端 node_registry ID 0x19 起）──
+  videoFilter,
+  videoGeometry,
+  videoOverlay,
+  audioFade,
+  imageAdjust,
   output,
   /// 新版 .fppx 强制导入的未知类型节点：真实类型 ID 存 [PipelineNode.unknownTypeId]，
   /// 仅可编辑/保存/原样导出，不参与转码执行。
@@ -108,6 +114,11 @@ class PipelineStep {
       case PipelineStepType.imageDenoise: return '图片降噪';
       case PipelineStepType.imageChannelExtract: return '通道提取';
       case PipelineStepType.videoCrop: return '视频裁剪';
+      case PipelineStepType.videoFilter: return '视频滤镜';
+      case PipelineStepType.videoGeometry: return '画面变换';
+      case PipelineStepType.videoOverlay: return '画面叠加';
+      case PipelineStepType.audioFade: return '音频淡入淡出';
+      case PipelineStepType.imageAdjust: return '图片调整';
       case PipelineStepType.output: return '输出';
       case PipelineStepType.unknown: return '未知节点';
     }
@@ -140,6 +151,11 @@ class PipelineStep {
       case PipelineStepType.imageDenoise: return 'Denoise';
       case PipelineStepType.imageChannelExtract: return 'Channel Extract';
       case PipelineStepType.videoCrop: return 'Video Crop';
+      case PipelineStepType.videoFilter: return 'Video Filter';
+      case PipelineStepType.videoGeometry: return 'Geometry';
+      case PipelineStepType.videoOverlay: return 'Overlay';
+      case PipelineStepType.audioFade: return 'Audio Fade';
+      case PipelineStepType.imageAdjust: return 'Image Adjust';
       case PipelineStepType.output: return 'Output';
       case PipelineStepType.unknown: return 'Unknown';
     }
@@ -210,6 +226,27 @@ class PipelineNode {
     x: x, y: y, gateType: gateType, unknownTypeId: unknownTypeId,
   );
 
+  /// 保留 id 的深拷贝，用于 undo/redo 快照。
+  /// params 递归复制，确保快照不被后续参数编辑回溯改写；
+  /// 相比 jsonEncode→jsonDecode 往返，省去字符串编解码与类型转换开销。
+  PipelineNode deepCopy() => PipelineNode(
+    id: id, type: type, params: deepCopyMap(params),
+    x: x, y: y, gateType: gateType, unknownTypeId: unknownTypeId,
+  );
+
+  /// 递归深拷贝一个 params Map（供 PipelineNode / LogicBlock 快照共用）。
+  static Map<String, dynamic> deepCopyMap(Map<String, dynamic> src) {
+    final out = <String, dynamic>{};
+    src.forEach((k, v) => out[k] = _deepCopyValue(v));
+    return out;
+  }
+
+  static dynamic _deepCopyValue(dynamic v) {
+    if (v is Map) return deepCopyMap(v.cast<String, dynamic>());
+    if (v is List) return v.map(_deepCopyValue).toList();
+    return v; // 标量（num/String/bool/null）不可变，直接共享
+  }
+
   /// 是否为逻辑门节点（控制流节点）
   bool get isGate => gateType != null;
 
@@ -264,6 +301,11 @@ class PipelineNode {
       case PipelineStepType.imageDenoise: return '图片降噪';
       case PipelineStepType.imageChannelExtract: return '通道提取';
       case PipelineStepType.videoCrop: return '视频裁剪';
+      case PipelineStepType.videoFilter: return '视频滤镜';
+      case PipelineStepType.videoGeometry: return '画面变换';
+      case PipelineStepType.videoOverlay: return '画面叠加';
+      case PipelineStepType.audioFade: return '音频淡入淡出';
+      case PipelineStepType.imageAdjust: return '图片调整';
       case PipelineStepType.output: return '输出';
       case PipelineStepType.unknown:
         return '未知节点${unknownTypeId == null ? '' : ' $unknownTypeId'}';
@@ -297,6 +339,11 @@ class PipelineNode {
       case PipelineStepType.imageDenoise: return 'Denoise';
       case PipelineStepType.imageChannelExtract: return 'Channel Extract';
       case PipelineStepType.videoCrop: return 'Video Crop';
+      case PipelineStepType.videoFilter: return 'Video Filter';
+      case PipelineStepType.videoGeometry: return 'Geometry';
+      case PipelineStepType.videoOverlay: return 'Overlay';
+      case PipelineStepType.audioFade: return 'Audio Fade';
+      case PipelineStepType.imageAdjust: return 'Image Adjust';
       case PipelineStepType.output: return 'Output';
       case PipelineStepType.unknown: return 'Unknown';
     }
@@ -331,6 +378,11 @@ class PipelineNode {
     PipelineStepType.imageDenoise => {MediaType.image},
     PipelineStepType.imageChannelExtract => {MediaType.image},
     PipelineStepType.videoCrop => {MediaType.video},
+    PipelineStepType.videoFilter => {MediaType.video},
+    PipelineStepType.videoGeometry => {MediaType.video},
+    PipelineStepType.videoOverlay => {MediaType.video},
+    PipelineStepType.audioFade => {MediaType.audio},
+    PipelineStepType.imageAdjust => {MediaType.image},
     PipelineStepType.output => {MediaType.video, MediaType.image, MediaType.audio},
     PipelineStepType.unknown => {},
   };
@@ -363,6 +415,11 @@ class PipelineNode {
     PipelineStepType.imageDenoise => MediaType.image,
     PipelineStepType.imageChannelExtract => MediaType.image,
     PipelineStepType.videoCrop => MediaType.video,
+    PipelineStepType.videoFilter => MediaType.video,
+    PipelineStepType.videoGeometry => MediaType.video,
+    PipelineStepType.videoOverlay => MediaType.video,
+    PipelineStepType.audioFade => MediaType.audio,
+    PipelineStepType.imageAdjust => MediaType.image,
     PipelineStepType.output => null,
     PipelineStepType.unknown => null,
   };
@@ -389,6 +446,9 @@ class PipelineConnection {
   PipelineConnection({required this.id, required this.fromNodeId, required this.toNodeId, this.kind = 'data'});
 
   PipelineConnection copy() => PipelineConnection(id: _uuid.v4(), fromNodeId: fromNodeId, toNodeId: toNodeId, kind: kind);
+
+  /// 保留 id 的拷贝（字段全为不可变标量，无需递归深拷贝），用于 undo/redo 快照。
+  PipelineConnection deepCopy() => PipelineConnection(id: id, fromNodeId: fromNodeId, toNodeId: toNodeId, kind: kind);
 
   Map<String, dynamic> toJson() => {'id': id, 'from': fromNodeId, 'to': toNodeId, if (kind != 'data') 'kind': kind};
 
@@ -425,6 +485,14 @@ class LogicBlock {
     id: _uuid.v4(), type: type, name: name,
     childNodeIds: List.of(childNodeIds),
     params: Map.of(params),
+    x: x, y: y, width: width, height: height,
+  );
+
+  /// 保留 id 的深拷贝，用于 undo/redo 快照（params 递归复制、childNodeIds 复制）。
+  LogicBlock deepCopy() => LogicBlock(
+    id: id, type: type, name: name,
+    childNodeIds: List.of(childNodeIds),
+    params: PipelineNode.deepCopyMap(params),
     x: x, y: y, width: width, height: height,
   );
 
@@ -473,7 +541,11 @@ class PipelineGraph {
     final newNodes = nodes.map((n) {
       final newId = _uuid.v4();
       idMap[n.id] = newId;
-      return PipelineNode(id: newId, type: n.type, params: Map.of(n.params), x: n.x, y: n.y, gateType: n.gateType);
+      // unknownTypeId 必须一并复制：含未知节点的图被复制（撤销/重做、模板复用、
+      // 容器复制）后若丢失该字段，再次导出时 type_id 变为 null，
+      // 原本「原样保留、可重新导入」的未知节点会破坏 .fppx 往返契约（M-2）。
+      return PipelineNode(id: newId, type: n.type, params: Map.of(n.params),
+          x: n.x, y: n.y, gateType: n.gateType, unknownTypeId: n.unknownTypeId);
     }).toList();
     final newConns = connections.map((c) => PipelineConnection(
       id: _uuid.v4(),
@@ -488,6 +560,14 @@ class PipelineGraph {
     }).toList();
     return PipelineGraph(nodes: newNodes, connections: newConns, logicBlocks: newBlocks);
   }
+
+  /// 保留 id 的整体深拷贝，用于 undo/redo 快照与节点复制以外的场景。
+  /// 相比 jsonEncode→jsonDecode 往返，省去字符串编解码、字段名查找与类型转换开销。
+  PipelineGraph deepCopy() => PipelineGraph(
+    nodes: nodes.map((n) => n.deepCopy()).toList(),
+    connections: connections.map((c) => c.deepCopy()).toList(),
+    logicBlocks: logicBlocks.map((b) => b.deepCopy()).toList(),
+  );
 
   Map<String, dynamic> toJson() => {
     'nodes': nodes.map((n) => n.toJson()).toList(),
@@ -1195,6 +1275,7 @@ class AppConfig {
   int mcpPort;
   String mcpHost;          // MCP 绑定地址（默认 127.0.0.1）
   bool mcpAllowWrite; // MCP 是否允许写操作（默认只读）
+  bool mcpAllowFsAccess; // MCP 是否允许 list_directory/read_file_info/probe_video 访问文件系统（默认允许）
   String aiProvider; // 'openai' or 'anthropic' or 'custom'
   String aiApiKey;
   String aiApiUrl;
@@ -1285,6 +1366,7 @@ class AppConfig {
     this.mcpPort = 3000,
     this.mcpHost = '127.0.0.1',
     this.mcpAllowWrite = false,
+    this.mcpAllowFsAccess = true,
     this.aiProvider = 'openai',
     this.aiApiKey = '',
     this.aiApiUrl = 'https://api.openai.com/v1/chat/completions',
@@ -1393,6 +1475,7 @@ class AppConfig {
         mcpPort: json['mcp_port'] as int? ?? 3000,
         mcpHost: json['mcp_host'] as String? ?? '127.0.0.1',
         mcpAllowWrite: json['mcp_allow_write'] as bool? ?? false,
+        mcpAllowFsAccess: json['mcp_allow_fs'] as bool? ?? true,
         aiProvider: json['ai_provider'] as String? ?? 'openai',
         aiApiKey: SecureKeyStore.decrypt(json['ai_api_key'] as String? ?? ''),
         aiApiUrl: json['ai_api_url'] as String? ?? 'https://api.openai.com/v1/chat/completions',
@@ -1451,6 +1534,7 @@ class AppConfig {
         'mcp_port': mcpPort,
         'mcp_host': mcpHost,
         'mcp_allow_write': mcpAllowWrite,
+        'mcp_allow_fs': mcpAllowFsAccess,
         'ai_provider': aiProvider,
         'ai_api_key': SecureKeyStore.encrypt(aiApiKey),
         'ai_api_url': aiApiUrl,

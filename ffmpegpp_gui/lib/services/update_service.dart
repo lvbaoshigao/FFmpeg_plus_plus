@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 
 const _currentVersion = '5.3.6';
@@ -46,7 +47,10 @@ class UpdateResult {
   final String? error;
   final bool releaseNotesError;
   final UpdateSource source;
-  UpdateResult({this.remoteVersion, this.releaseNotes, this.downloadUrl, this.password, this.error, this.releaseNotesError = false, this.source = UpdateSource.github});
+  /// 安装包的期望 SHA-256（取自 release 资产里的 `<asset>.sha256`）。
+  /// 为空表示发布方未提供校验文件，此时无法校验完整性（H-4）。
+  final String? downloadSha256;
+  UpdateResult({this.remoteVersion, this.releaseNotes, this.downloadUrl, this.password, this.error, this.releaseNotesError = false, this.source = UpdateSource.github, this.downloadSha256});
   bool get hasUpdate => remoteVersion != null && compareVersions(remoteVersion!, _currentVersion) > 0;
 }
 
@@ -165,23 +169,53 @@ Future<UpdateResult> _checkGithub() async {
     final assets = (json['assets'] as List?) ?? [];
 
     String? assetUrl;
+    String? checksumUrl;
     final archSuffix = _assetSuffix();
     for (final a in assets) {
       final name = (a['name'] as String?) ?? '';
       if (name.contains(archSuffix)) {
         assetUrl = a['browser_download_url'] as String?;
+        // 同名 .sha256 资产（发布侧约定）；找不到则下载时无法校验
+        for (final b in assets) {
+          final bName = (b['name'] as String?) ?? '';
+          if (bName == '$name.sha256') {
+            checksumUrl = b['browser_download_url'] as String?;
+            break;
+          }
+        }
         break;
       }
+    }
+
+    String? sha256Hex;
+    if (checksumUrl != null) {
+      sha256Hex = await _fetchSha256(checksumUrl);
     }
 
     return UpdateResult(
       remoteVersion: tagName,
       releaseNotes: body,
       downloadUrl: assetUrl,
+      downloadSha256: sha256Hex,
       source: UpdateSource.github,
     );
   } catch (e) {
     return UpdateResult(error: e.toString(), source: UpdateSource.github);
+  }
+}
+
+/// 取回 `.sha256` 文件并解析出十六进制摘要。
+/// 兼容 `"<hash>"`、`"<hash>  <filename>"`（sha256sum 格式）两种写法。
+Future<String?> _fetchSha256(String url) async {
+  try {
+    final uri = Uri.parse(url);
+    if (uri.scheme != 'https') return null;
+    final resp = await http.get(uri).timeout(const Duration(seconds: 15));
+    if (resp.statusCode != 200) return null;
+    final m = RegExp(r'\b([0-9a-fA-F]{64})\b').firstMatch(resp.body);
+    return m?.group(1)?.toLowerCase();
+  } catch (_) {
+    return null;
   }
 }
 
@@ -215,10 +249,20 @@ bool _isArm64() {
 }
 bool? _arm64Cache;
 
-Future<String> downloadUpdate(String url, {void Function(int received, int total)? onProgress}) async {
+/// 下载更新包。
+///
+/// 安全约束（H-4）：
+/// - 只接受 https：明文 http 可被中间人替换安装包，直接拒绝。
+/// - 若提供 [expectedSha256]，下载后必须比对，不一致立即删除并报错。
+///   发布侧应把安装包的 SHA-256 放在同名 `.sha256` 资产里，由调用方先取回。
+Future<String> downloadUpdate(String url, {
+  void Function(int received, int total)? onProgress,
+  String? expectedSha256,
+}) async {
   final uri = Uri.parse(url);
-  if (uri.scheme != 'http' && uri.scheme != 'https') {
-    throw Exception('拒绝下载：不支持的协议 ${uri.scheme}');
+  // 明文 http 一律拒绝：更新包会被以应用（Linux 下甚至提权）身份执行
+  if (uri.scheme != 'https') {
+    throw Exception('拒绝下载：更新包必须使用 https（当前 ${uri.scheme}）');
   }
   final dir = Directory('${_dataDir()}${_s}update');
   if (!dir.existsSync()) dir.createSync(recursive: true);
@@ -263,6 +307,15 @@ Future<String> downloadUpdate(String url, {void Function(int received, int total
     // contentLength 为 -1 表示服务端没给长度，此时无法校验完整性
     if (total > 0 && received != total) {
       throw Exception('下载不完整：$received / $total 字节');
+    }
+
+    // 哈希校验：提供期望值时必须一致，否则视为被篡改/损坏（供应链/中间人）
+    if (expectedSha256 != null && expectedSha256.trim().isNotEmpty) {
+      final expected = expectedSha256.trim().toLowerCase();
+      final actual = sha256.convert(await file.readAsBytes()).toString();
+      if (actual != expected) {
+        throw Exception('安装包校验失败：SHA-256 不匹配（期望 $expected，实际 $actual）');
+      }
     }
   } catch (_) {
     // 失败时清掉半截文件，避免下次被误当成有效安装包执行

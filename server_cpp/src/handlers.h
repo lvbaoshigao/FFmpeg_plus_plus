@@ -2,11 +2,17 @@
 #include <string>
 #include <vector>
 #include <atomic>
+#include <functional>
 #include "nlohmann/json.hpp"
 
 namespace ffmpegpp {
 
 using json = nlohmann::json;
+
+// 取消判定回调：返回 true 表示当前任务已被取消。
+// 取代旧的全局 std::atomic<bool>& cancel_flag（全局标志会在任务启动时被清零，
+// 导致精确取消失效或误作用于其它任务，见 M-5）。
+using CancelCheck = std::function<bool()>;
 
 // 文件日志
 void slog_init();
@@ -37,12 +43,12 @@ private:
 void handleCheckEnv(const json& req);
 void handleProbe(const json& req);
 void handleQueryFeatures(const json& req);
-void handleTranscode(const json& req, std::atomic<bool>& cancel_flag);
-void handleSubtitle(const json& req, std::atomic<bool>& cancel_flag);
-void handleExtractFrame(const json& req);
-void handleConcat(const json& req, std::atomic<bool>& cancel_flag);
-void handleImageSequence(const json& req, std::atomic<bool>& cancel_flag);
-void handleCustomCommand(const json& req, std::atomic<bool>& cancel_flag);
+void handleTranscode(const json& req, const CancelCheck& isCancelled);
+void handleSubtitle(const json& req, const CancelCheck& isCancelled);
+void handleExtractFrame(const json& req, const CancelCheck& isCancelled);
+void handleConcat(const json& req, const CancelCheck& isCancelled);
+void handleImageSequence(const json& req, const CancelCheck& isCancelled);
+void handleCustomCommand(const json& req, const CancelCheck& isCancelled);
 
 // FPPX 配置文件（新版 v2 + 旧版迁移），纯文件解析无 ffmpeg 依赖
 void handleFppxImport(const json& req);       // 自动路由（按文件头判别新旧格式）
@@ -53,7 +59,7 @@ void handleFppxLegacyExport(const json& req);
 
 void runFFmpegProcess(const std::string& task_id,
                       const std::vector<std::string>& cmd,
-                      std::atomic<bool>& cancel_flag,
+                      const CancelCheck& isCancelled,
                       const std::string& output_path);
 
 } // namespace ffmpegpp

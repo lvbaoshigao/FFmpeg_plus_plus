@@ -51,6 +51,11 @@ import '../widgets/step_editors/image_sharpen_step_editor.dart';
 import '../widgets/step_editors/image_denoise_step_editor.dart';
 import '../widgets/step_editors/image_channel_extract_step_editor.dart';
 import '../widgets/step_editors/video_crop_step_editor.dart';
+import '../widgets/step_editors/video_filter_step_editor.dart';
+import '../widgets/step_editors/video_geometry_step_editor.dart';
+import '../widgets/step_editors/video_overlay_step_editor.dart';
+import '../widgets/step_editors/audio_fade_step_editor.dart';
+import '../widgets/step_editors/image_adjust_step_editor.dart';
 import '../widgets/step_editors/logic_block_editor.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/toast.dart';
@@ -112,6 +117,22 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   String _dragPort = 'dataOut';
   Offset? _dragLineEnd;
 
+  // ── 高频瞬时状态（每帧变化），改由 ValueNotifier 驱动 ──
+  // 原实现把这些状态放在 State 字段里用 setState 更新，导致拖动/框选/连线
+  // 期间以 60~120Hz 重建整棵画布子树（全部节点 widget + 连线 + 工具面板）。
+  // 现改为 notifier 驱动局部的 ValueListenableBuilder / CustomPaint(repaint:)，
+  // 只更新受影响的那一小块；拖动结束才走一次 setState 提交到模型。
+  //
+  // 拖动中节点的累计位移（按节点 id），null = 未在拖动。
+  final ValueNotifier<Map<String, Offset>?> _dragDeltas =
+      ValueNotifier<Map<String, Offset>?>(null);
+  // 临时拖拽连线的终点（画布坐标），null = 未在连线。
+  final ValueNotifier<Offset?> _dragLineEndNotifier = ValueNotifier<Offset?>(null);
+  // 框选矩形（画布坐标），null = 未在框选。
+  final ValueNotifier<Rect?> _boxSelectRectNotifier = ValueNotifier<Rect?>(null);
+  // 当前缩放（驱动节点文字大小等）。用 notifier 避免每次缩放 setState 全页。
+  final ValueNotifier<double> _scaleNotifier = ValueNotifier<double>(1.0);
+
   // Box-select state
   Offset? _boxSelectStart;
   Rect? _boxSelectRect;
@@ -132,6 +153,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   double _toolboxFraction = 0.4;
   // 画布 / 右面板 水平分割比例（默认画布占 60%）
   double _canvasFraction = 0.6;
+  // 分割比例 notifier：拖动分割线时只重建受影响的两个 SizedBox，
+  // 不重建画布与右侧面板内容。
+  final ValueNotifier<double> _canvasFractionNotifier = ValueNotifier<double>(0.6);
+  final ValueNotifier<double> _toolboxFractionNotifier = ValueNotifier<double>(0.4);
   // 移动端横竖屏切换（默认竖屏）
   bool _isLandscape = false;
   // AI 侧边面板是否展开（左侧 ">" 按钮）
@@ -171,11 +196,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   bool _hideLogic = false;
 
   // Undo/redo
-  final List<Map<String, dynamic>> _undoStack = [];
-  final List<Map<String, dynamic>> _redoStack = [];
+  final List<PipelineGraph> _undoStack = [];
+  final List<PipelineGraph> _redoStack = [];
 
-  // jsonEncode/jsonDecode 做深拷贝，避免节点 params 是活引用导致 undo 快照被后续参数编辑回溯改写
-  Map<String, dynamic> _snapshot() => jsonDecode(jsonEncode(PipelineGraph(nodes: List.of(_nodes), connections: List.of(_connections), logicBlocks: List.of(_logicBlocks)).toJson())) as Map<String, dynamic>;
+  // 直接对对象做深拷贝，避免节点 params 是活引用导致 undo 快照被后续参数编辑回溯改写。
+  // 原先走 jsonEncode→jsonDecode 往返：一次快照需序列化整图 + 反序列化重建全部对象，
+  // 在 50 步栈深、大图（数百节点）场景下是明确的卡顿源；改为模型层 deepCopy() 后省去
+  // 字符串编解码、字段名 hash 查找与 num/String 装箱转换，同时保住 id（含未知类型节点）。
+  PipelineGraph _snapshot() => PipelineGraph(
+    nodes: List.of(_nodes), connections: List.of(_connections),
+    logicBlocks: List.of(_logicBlocks),
+  ).deepCopy();
   void _pushUndo() {
     _undoStack.add(_snapshot());
     if (_undoStack.length > 50) _undoStack.removeAt(0);
@@ -191,8 +222,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     _undoStack.add(_snapshot());
     _restoreSnapshot(_redoStack.removeLast());
   }
-  void _restoreSnapshot(Map<String, dynamic> snap) {
-    final g = PipelineGraph.fromJson(snap);
+  void _restoreSnapshot(PipelineGraph g) {
     setState(() {
       _nodes.clear(); _nodes.addAll(g.nodes);
       _connections.clear(); _connections.addAll(g.connections);
@@ -323,6 +353,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     }
     _setupAutosave(isConfigMode);
     _genThumb();
+    // 逆矩阵缓存：变换任何变化（平移或缩放）都必须失效，与只关心缩放的
+    // _onScaleChanged 分开注册，避免平移时缓存变陈旧。
+    _transformCtrl.addListener(_invalidateTransformCache);
     _transformCtrl.addListener(_onScaleChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       // 世界框本地坐标 = 画布坐标 - 世界偏移；目标：把 spawn 中心放到屏幕 (300,200)
@@ -437,8 +470,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       ]);
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     }
+    _transformCtrl.removeListener(_invalidateTransformCache);
     _transformCtrl.removeListener(_onScaleChanged);
     _transformCtrl.dispose();
+    // 释放高频状态 notifier
+    _dragDeltas.dispose();
+    _dragLineEndNotifier.dispose();
+    _boxSelectRectNotifier.dispose();
+    _scaleNotifier.dispose();
+    _canvasFractionNotifier.dispose();
+    _toolboxFractionNotifier.dispose();
     // 移除 windowManager 监听，避免 window manager 持有本 State 的强引用导致泄漏
     if (!Platform.isWindows && !isMobilePlatform) {
       windowManager.removeListener(this);
@@ -446,6 +487,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     // 只取消定时器，不在此清除草稿：草稿改为在「显式保存／确认放弃」时清除。
     // 经窗口关闭按钮、崩溃等未确认路径退出时草稿保留，下次打开可恢复。
     _autosaveTimer?.cancel();
+    // 清空 MCP 侧的"当前画布"引用：编辑器已关闭，否则 error_check /
+    // get_graph_stats / pipeline://current 会继续返回这份陈旧图。
+    _appState.setCurrentPipeline(null);
     _appState.mcpOnClearAll = null;
     _appState.mcpOnUndo = null;
     _appState.mcpOnRedo = null;
@@ -464,9 +508,21 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   void _onScaleChanged() {
     final s = _transformCtrl.value.getMaxScaleOnAxis();
     if ((s - _currentScale).abs() > 0.01) {
-      setState(() => _currentScale = s);
+      _currentScale = s;
+      _scaleNotifier.value = s; // 只通知订阅缩放值的那部分（节点文字大小）
     }
   }
+
+  /// 变换/逆变换缓存：`_screenToCanvas` 等热路径（指针事件、悬停每帧）原本
+  /// 每次调用都做一次 4×4 `Matrix4.inverted`。现在仅在变换变化时重算一次。
+  Matrix4? _cachedInverse;
+  /// 缓存的逆矩阵；按需重算（变换未变时零成本）。
+  Matrix4 get _inverseTransform {
+    final cached = _cachedInverse;
+    if (cached != null) return cached;
+    return _cachedInverse = Matrix4.inverted(_transformCtrl.value);
+  }
+  void _invalidateTransformCache() => _cachedInverse = null;
 
   @override
   void onWindowMaximize() { if (mounted) setState(() => _isMaximized = true); }
@@ -519,6 +575,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       case PipelineStepType.imageDenoise: return Icons.blur_on;
       case PipelineStepType.imageChannelExtract: return Icons.color_lens_outlined;
       case PipelineStepType.videoCrop: return Icons.crop_free;
+      case PipelineStepType.videoFilter: return Icons.auto_fix_high;
+      case PipelineStepType.videoGeometry: return Icons.aspect_ratio;
+      case PipelineStepType.videoOverlay: return Icons.layers_outlined;
+      case PipelineStepType.audioFade: return Icons.gradient;
+      case PipelineStepType.imageAdjust: return Icons.tune;
       case PipelineStepType.output: return Icons.save_alt_outlined;
       case PipelineStepType.unknown: return Icons.help_outline;
     }
@@ -1258,7 +1319,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   }
 
   Offset _screenToCanvas(Offset screen) {
-    final inv = Matrix4.inverted(_transformCtrl.value);
+    final inv = _inverseTransform; // 缓存的逆矩阵，避免每次调用重复求逆
     final x = inv.storage[0] * screen.dx + inv.storage[4] * screen.dy + inv.storage[12];
     final y = inv.storage[1] * screen.dx + inv.storage[5] * screen.dy + inv.storage[13];
     // 逆变换给出的是世界框（IV 子空间）坐标；画布坐标原点固定在世界(0,0)，
@@ -1482,6 +1543,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     PipelineStepType.speed,
     PipelineStepType.extractAudio,
     PipelineStepType.videoCrop,
+    PipelineStepType.videoFilter,
+    PipelineStepType.videoGeometry,
+    PipelineStepType.videoOverlay,
   ];
   static const _audioTypes = [
     PipelineStepType.audioConvert,
@@ -1490,6 +1554,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     PipelineStepType.audioVolume,
     PipelineStepType.audioCompressor,
     PipelineStepType.audioMetadata,
+    PipelineStepType.audioFade,
   ];
   static const _imageTypes = [
     PipelineStepType.imageConvert,
@@ -1501,6 +1566,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     PipelineStepType.imageSharpen,
     PipelineStepType.imageDenoise,
     PipelineStepType.imageChannelExtract,
+    PipelineStepType.imageAdjust,
   ];
   static const _containerTypes = [
     PipelineStepType.concatMedia,
@@ -1797,6 +1863,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       case PipelineStepType.videoCrop:
         editor = VideoCropStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh,
             videoPath: v.filepath, videoWidth: v.width, videoHeight: v.height, fps: v.fps);
+      case PipelineStepType.videoFilter:
+        editor = VideoFilterStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+      case PipelineStepType.videoGeometry:
+        editor = VideoGeometryStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+      case PipelineStepType.videoOverlay:
+        editor = VideoOverlayStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+      case PipelineStepType.audioFade:
+        editor = AudioFadeStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+      case PipelineStepType.imageAdjust:
+        editor = ImageAdjustStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
       case PipelineStepType.unknown:
         // 新版 .fppx 强制导入的未知节点：不可编辑参数，仅显示类型 ID
         final cs2 = Theme.of(context).colorScheme;
@@ -2290,33 +2366,41 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             // 横屏/桌面模式：原有的水平并排布局
             const dividerW = 6.0;
             final totalW = cons.maxWidth - dividerW;
-            final canvasW = totalW * _canvasFraction;
-            final rightW = totalW * (1 - _canvasFraction);
-            return Row(children: [
-              SizedBox(width: canvasW, child: _buildCanvas(scheme, s)),
-              // 可拖动分割线
-              MouseRegion(
-                cursor: SystemMouseCursors.resizeColumn,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onHorizontalDragUpdate: (d) => setState(() {
-                    _canvasFraction = ((_canvasFraction * totalW + d.delta.dx) / totalW).clamp(0.15, 0.85);
-                  }),
-                  child: Container(
-                    width: dividerW,
-                    color: Colors.transparent,
-                    child: Center(child: Container(
-                      width: 3, height: 36,
-                      decoration: BoxDecoration(
-                        color: scheme.outlineVariant.withAlpha(90),
-                        borderRadius: BorderRadius.circular(2),
+            // 拖动分割线只重建两个 SizedBox 的宽度；画布与右面板作为 child
+            // 传入（Element 复用），不随拖动重建。
+            return ValueListenableBuilder<double>(
+              valueListenable: _canvasFractionNotifier,
+              builder: (context, fraction, _) {
+                final canvasW = totalW * fraction;
+                final rightW = totalW * (1 - fraction);
+                return Row(children: [
+                  SizedBox(width: canvasW, child: _buildCanvas(scheme, s)),
+                  // 可拖动分割线
+                  MouseRegion(
+                    cursor: SystemMouseCursors.resizeColumn,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onHorizontalDragUpdate: (d) {
+                        _canvasFraction = ((_canvasFraction * totalW + d.delta.dx) / totalW).clamp(0.15, 0.85);
+                        _canvasFractionNotifier.value = _canvasFraction;
+                      },
+                      child: Container(
+                        width: dividerW,
+                        color: Colors.transparent,
+                        child: Center(child: Container(
+                          width: 3, height: 36,
+                          decoration: BoxDecoration(
+                            color: scheme.outlineVariant.withAlpha(90),
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        )),
                       ),
-                    )),
+                    ),
                   ),
-                ),
-              ),
-              SizedBox(width: rightW, child: _buildRightPanel(scheme, s)),
-            ]);
+                  SizedBox(width: rightW, child: _buildRightPanel(scheme, s)),
+                ]);
+              },
+            );
           }),
         )),
         if (!isMobilePlatform) _buildBottomBar(scheme, s),
@@ -2512,12 +2596,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             _transformCtrl.value = _transformCtrl.value.clone()..translateByDouble(delta.dx, delta.dy, 0, 1);
           }
         }
-        // Left-click box-select drag
+        // Left-click box-select drag：只更新矩形 notifier，避免每帧整页重建
         if (_isBoxSelecting && _boxSelectStart != null && (e.buttons & kPrimaryMouseButton) != 0) {
           final canvasPos = _screenToCanvas(e.localPosition);
-          setState(() {
-            _boxSelectRect = Rect.fromPoints(_boxSelectStart!, canvasPos);
-          });
+          _boxSelectRect = Rect.fromPoints(_boxSelectStart!, canvasPos);
+          _boxSelectRectNotifier.value = _boxSelectRect;
         }
         // 探测模式：按下移动时也更新
         if (_probeMode) _updateProbe(e.localPosition);
@@ -2592,6 +2675,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           height: _world.height,
           child: Stack(clipBehavior: Clip.none, children: [
             // 连线
+            // 拖动节点时不 setState，节点位置由 _dragDeltas 局部驱动；
+            // 连线层同样订阅该 notifier（repaint 触发重绘），并读取 deltas
+            // 做位置补偿，使连线端点跟随拖动中的节点。
             CustomPaint(
               size: Size(_world.width, _world.height),
               painter: _ConnectionPainter(
@@ -2603,28 +2689,50 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                 color: scheme.primary.withAlpha(140),
                 controlColor: scheme.tertiary.withAlpha(180),
                 selectedNodeIds: _selectedNodeIds,
+                dragDeltas: _dragDeltas.value,
+                repaint: _dragDeltas,
               ),
             ),
-            // 临时拖拽连线
-            if (_dragFromNodeId != null && _dragLineEnd != null)
-              CustomPaint(
-                size: Size(_world.width, _world.height),
-                painter: _TempLinePainter(
-                  origin: Offset(-_world.left, -_world.top),
-                  from: _dragLineStart(),
-                  to: _dragLineEnd!,
-                  color: _dragPort.contains('gate') || _dragPort.contains('status') || _dragPort.contains('enable')
-                      ? scheme.tertiary.withAlpha(120)
-                      : scheme.primary.withAlpha(100),
-                  isControl: _dragPort.contains('gate') || _dragPort.contains('status') || _dragPort.contains('enable'),
-                ),
+            // 临时拖拽连线：终点由 notifier 局部驱动，拖动时只重绘这一层
+            if (_dragFromNodeId != null)
+              ValueListenableBuilder<Offset?>(
+                valueListenable: _dragLineEndNotifier,
+                builder: (context, dragEnd, _) {
+                  if (dragEnd == null) return const SizedBox.shrink();
+                  final isCtrl = _dragPort.contains('gate') || _dragPort.contains('status') || _dragPort.contains('enable');
+                  return CustomPaint(
+                    size: Size(_world.width, _world.height),
+                    painter: _TempLinePainter(
+                      origin: Offset(-_world.left, -_world.top),
+                      from: _dragLineStart(),
+                      to: dragEnd,
+                      color: isCtrl ? scheme.tertiary.withAlpha(120) : scheme.primary.withAlpha(100),
+                      isControl: isCtrl,
+                    ),
+                  );
+                },
               ),
             // 节点（画布坐标 → 世界框本地坐标）
+            // 每个节点：RepaintBoundary 独立光栅缓存 + ValueKey 让 Element 按 id 复用；
+            // Positioned 由 _dragDeltas 局部驱动，拖动时只重建被拖动的节点。
             for (final node in _nodes)
               if (!(_hideLogic && node.isGate))
-                Positioned(
-                  left: node.x - _world.left, top: node.y - _world.top,
-                  child: _buildNodeWidget(node, scheme, s),
+                ValueListenableBuilder<Map<String, Offset>?>(
+                  key: ValueKey('node-${node.id}'),
+                  valueListenable: _dragDeltas,
+                  child: RepaintBoundary(child: _buildNodeWidget(node, scheme, s)),
+                  builder: (context, deltas, child) {
+                    final d = deltas?[node.id];
+                    final dx = d?.dx ?? 0.0;
+                    final dy = d?.dy ?? 0.0;
+                    // 连接线也要跟着动：拖动期间节点 widget 位置立即变化，
+                    // 但模型坐标未变，见 _ConnectionPainter 的 dragDeltas 补偿。
+                    return Positioned(
+                      left: node.x + dx - _world.left,
+                      top: node.y + dy - _world.top,
+                      child: child!,
+                    );
+                  },
                 ),
             // 逻辑块虚线框
             for (final block in _logicBlocks)
@@ -2632,15 +2740,20 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                 left: block.x - _world.left, top: block.y - _world.top,
                 child: _buildLogicBlockOverlay(block, scheme, s),
               ),
-            // Box-select overlay
-            if (_boxSelectRect != null)
-              CustomPaint(
-                size: Size(_world.width, _world.height),
-                painter: _BoxSelectPainter(
-                  origin: Offset(-_world.left, -_world.top),
-                  rect: _boxSelectRect!, color: scheme.primary,
-                ),
-              ),
+            // Box-select overlay：订阅独立 notifier，框选拖动只重绘这一层
+            ValueListenableBuilder<Rect?>(
+              valueListenable: _boxSelectRectNotifier,
+              builder: (context, rect, _) {
+                if (rect == null) return const SizedBox.shrink();
+                return CustomPaint(
+                  size: Size(_world.width, _world.height),
+                  painter: _BoxSelectPainter(
+                    origin: Offset(-_world.left, -_world.top),
+                    rect: rect, color: scheme.primary,
+                  ),
+                );
+              },
+            ),
             // 探测模式：在端口位置显示信号提示（画布坐标系，随缩放平移）
             if (_probeMode && _probeTooltip != null && _probeTooltipPos != null)
               Positioned(
@@ -3179,10 +3292,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       _dragFromNodeId = nodeId;
       _dragPort = portKind;
     });
+    _dragLineEndNotifier.value = _dragLineEnd;
   }
 
   void _onPortDragUpdate(Offset globalPos) {
-    setState(() => _dragLineEnd = _canvasFromGlobal(globalPos));
+    // 只更新 notifier：临时连线由独立 CustomPaint 订阅重绘，不重建整页
+    final p = _canvasFromGlobal(globalPos);
+    _dragLineEnd = p;
+    _dragLineEndNotifier.value = p;
   }
 
   /// 探测模式：根据鼠标位置判断悬停在哪个端口上，并给出信号提示
@@ -3875,6 +3992,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       _dragFromNodeId = null;
       _dragLineEnd = null;
     });
+    _dragLineEndNotifier.value = null;
   }
 
   Widget _buildNodeWidget(PipelineNode node, ColorScheme scheme, AppStrings s) {
@@ -3982,20 +4100,40 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               }
             });
           },
-          onPanStart: (_) => _pushUndo(),
+          onPanStart: (_) {
+            _pushUndo();
+            // 拖动期间不改模型：把累计位移放进 notifier，由节点的
+            // Positioned 局部订阅重建；避免每帧 setState 整页重建。
+            _dragDeltas.value = {
+              for (final n in _nodes)
+                if (_selectedNodeIds.contains(node.id)
+                    ? _selectedNodeIds.contains(n.id)
+                    : n.id == node.id)
+                  n.id: Offset.zero,
+            };
+          },
           onPanUpdate: (d) {
             final scale = _transformCtrl.value.getMaxScaleOnAxis();
-            final dx = d.delta.dx / scale;
-            final dy = d.delta.dy / scale;
-            setState(() {
-              if (_selectedNodeIds.contains(node.id)) {
-                for (final n in _nodes) {
-                  if (_selectedNodeIds.contains(n.id)) { n.x += dx; n.y += dy; }
-                }
-              } else { node.x += dx; node.y += dy; }
-            });
+            final delta = Offset(d.delta.dx / scale, d.delta.dy / scale);
+            final cur = _dragDeltas.value;
+            if (cur == null) return;
+            _dragDeltas.value = {
+              for (final e in cur.entries) e.key: e.value + delta,
+            };
           },
-          onPanEnd: (_) => _markDirty(),
+          onPanEnd: (_) {
+            final deltas = _dragDeltas.value;
+            _dragDeltas.value = null;
+            if (deltas == null || deltas.isEmpty) return;
+            // 一次性把累计位移提交到模型，随后统一重建一次
+            setState(() {
+              for (final n in _nodes) {
+                final d = deltas[n.id];
+                if (d != null) { n.x += d.dx; n.y += d.dy; }
+              }
+            });
+            _markDirty();
+          },
           onSecondaryTapUp: (d) => _showNodeMenu(d.globalPosition, node.id),
           onLongPressStart: isMobilePlatform
               ? (d) => _showNodeMenu(d.globalPosition, node.id)
@@ -4013,7 +4151,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(30), blurRadius: 6, offset: const Offset(0, 2))],
             ),
             padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: _currentScale >= 0.6
+            // 文字大小随缩放变化：订阅 _scaleNotifier，缩放时只重建节点内容，
+            // 不再让整个页面 setState。
+            child: ValueListenableBuilder<double>(
+              valueListenable: _scaleNotifier,
+              builder: (context, scale, _) => scale >= 0.6
                 ? Stack(children: [
                     Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Row(children: [
@@ -4051,11 +4193,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                 : Center(child: Text(
                     s.isZh ? node.label : node.labelEn,
                     style: TextStyle(
-                      fontSize: _currentScale < 0.4 ? (13 / _currentScale * 0.5).clamp(13.0, 40.0) : (13 / _currentScale * 0.7).clamp(13.0, 28.0),
+                      fontSize: scale < 0.4 ? (13 / scale * 0.5).clamp(13.0, 40.0) : (13 / scale * 0.7).clamp(13.0, 28.0),
                       fontWeight: FontWeight.w600, color: scheme.onSurface,
                     ),
                     overflow: TextOverflow.ellipsis, textAlign: TextAlign.center,
                   )),
+            ),
           ),
         ),
       );
@@ -4130,26 +4273,37 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             }
           });
         },
-        onPanStart: (_) => _pushUndo(),
+        onPanStart: (_) {
+          _pushUndo();
+          _dragDeltas.value = {
+            for (final n in _nodes)
+              if (_selectedNodeIds.contains(node.id)
+                  ? _selectedNodeIds.contains(n.id)
+                  : n.id == node.id)
+                n.id: Offset.zero,
+          };
+        },
         onPanUpdate: (d) {
           final scale = _transformCtrl.value.getMaxScaleOnAxis();
-          final dx = d.delta.dx / scale;
-          final dy = d.delta.dy / scale;
+          final delta = Offset(d.delta.dx / scale, d.delta.dy / scale);
+          final cur = _dragDeltas.value;
+          if (cur == null) return;
+          _dragDeltas.value = {
+            for (final e in cur.entries) e.key: e.value + delta,
+          };
+        },
+        onPanEnd: (_) {
+          final deltas = _dragDeltas.value;
+          _dragDeltas.value = null;
+          if (deltas == null || deltas.isEmpty) return;
           setState(() {
-            if (_selectedNodeIds.contains(node.id)) {
-              for (final n in _nodes) {
-                if (_selectedNodeIds.contains(n.id)) {
-                  n.x += dx;
-                  n.y += dy;
-                }
-              }
-            } else {
-              node.x += dx;
-              node.y += dy;
+            for (final n in _nodes) {
+              final d = deltas[n.id];
+              if (d != null) { n.x += d.dx; n.y += d.dy; }
             }
           });
+          _markDirty();
         },
-        onPanEnd: (_) => _markDirty(),
         onSecondaryTapUp: (d) => _showNodeMenu(d.globalPosition, node.id),
           onLongPressStart: isMobilePlatform
               ? (d) => _showNodeMenu(d.globalPosition, node.id)
@@ -4185,26 +4339,37 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               const SizedBox(width: _portZoneW, height: _gateH),
             // 中心：ANSI 符号
             GestureDetector(
-              onPanStart: (_) => _pushUndo(),
+              onPanStart: (_) {
+                _pushUndo();
+                _dragDeltas.value = {
+                  for (final n in _nodes)
+                    if (_selectedNodeIds.contains(node.id)
+                        ? _selectedNodeIds.contains(n.id)
+                        : n.id == node.id)
+                      n.id: Offset.zero,
+                };
+              },
               onPanUpdate: (d) {
                 final scale = _transformCtrl.value.getMaxScaleOnAxis();
-                final dx = d.delta.dx / scale;
-                final dy = d.delta.dy / scale;
+                final delta = Offset(d.delta.dx / scale, d.delta.dy / scale);
+                final cur = _dragDeltas.value;
+                if (cur == null) return;
+                _dragDeltas.value = {
+                  for (final e in cur.entries) e.key: e.value + delta,
+                };
+              },
+              onPanEnd: (_) {
+                final deltas = _dragDeltas.value;
+                _dragDeltas.value = null;
+                if (deltas == null || deltas.isEmpty) return;
                 setState(() {
-                  if (_selectedNodeIds.contains(node.id)) {
-                    for (final n in _nodes) {
-                      if (_selectedNodeIds.contains(n.id)) {
-                        n.x += dx;
-                        n.y += dy;
-                      }
-                    }
-                  } else {
-                    node.x += dx;
-                    node.y += dy;
+                  for (final n in _nodes) {
+                    final dlt = deltas[n.id];
+                    if (dlt != null) { n.x += dlt.dx; n.y += dlt.dy; }
                   }
                 });
+                _markDirty();
               },
-              onPanEnd: (_) => _markDirty(),
               child: Container(
                 width: _gateW,
                 height: _gateH,
@@ -4385,10 +4550,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       final totalH = constraints.maxHeight;
       const dividerH = 10.0;
       final usable = totalH - dividerH;
-      final toolboxH = usable * _toolboxFraction;
-      final editorH = usable * (1 - _toolboxFraction);
-
-      return Column(children: [
+      // 拖动分割线时只重建两个高度值（见下方 ValueListenableBuilder），
+      // 不再整页 setState 重建工具箱与属性编辑器。
+      return ValueListenableBuilder<double>(
+        valueListenable: _toolboxFractionNotifier,
+        builder: (ctx, fraction, _) {
+          final toolboxH = usable * fraction;
+          final editorH = usable * (1 - fraction);
+          return Column(children: [
         // ── 元素工具栏 ──
         SizedBox(height: toolboxH, child: Column(children: [
           _buildCollapsibleHeader(
@@ -4454,9 +4623,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           cursor: SystemMouseCursors.resizeRow,
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onVerticalDragUpdate: (d) => setState(() {
+            onVerticalDragUpdate: (d) {
               _toolboxFraction = ((_toolboxFraction * usable + d.delta.dy) / usable).clamp(0.15, 0.85);
-            }),
+              _toolboxFractionNotifier.value = _toolboxFraction;
+            },
             child: Container(
               height: 10,
               color: Colors.transparent,
@@ -4537,6 +4707,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             ),
         ])),
       ]);
+        },
+      );
     });
 
     return _glassWrap(inner, scheme);
@@ -4592,7 +4764,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           ]),
         ),
       ),
-      childWhenDragging: Opacity(opacity: 0.3, child: _toolboxChip(t, dummy, tag, scheme, s)),
+      childWhenDragging: _toolboxChip(t, dummy, tag, scheme, s, opacity: 0.3),
       child: GestureDetector(
         onTap: () {
           setState(() {
@@ -4707,46 +4879,54 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           child: Text(sym, style: TextStyle(fontSize: isMobilePlatform ? 10 : 11, fontWeight: FontWeight.w700, color: scheme.onTertiaryContainer, decoration: TextDecoration.none)),
         ),
       ),
-      childWhenDragging: Opacity(opacity: 0.3, child: _gateChip(gate, scheme, s)),
+      childWhenDragging: _gateChip(gate, scheme, s, opacity: 0.3),
       child: _gateChip(gate, scheme, s),
     );
   }
 
-  Widget _gateChip(LogicGateType gate, ColorScheme scheme, AppStrings s) {
+  Widget _gateChip(LogicGateType gate, ColorScheme scheme, AppStrings s, {double opacity = 1.0}) {
     final sym = gate.symbol(s.isZh);
     final name = gate.name.toUpperCase();
+    // 透明度预乘进颜色，避免 childWhenDragging 外包 Opacity 触发 saveLayer。
+    final o = opacity.clamp(0.0, 1.0);
+    Color fade(Color c) => o >= 1.0 ? c : c.withAlpha((c.a * 255 * o).round());
     return Tooltip(
       message: name,
       waitDuration: const Duration(milliseconds: 500),
       child: Container(
         padding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 6 : 7, vertical: isMobilePlatform ? 3 : 3),
         decoration: BoxDecoration(
-          color: scheme.tertiaryContainer.withAlpha(gate.isConstant ? 120 : 80),
+          color: fade(scheme.tertiaryContainer.withAlpha(gate.isConstant ? 120 : 80)),
           borderRadius: BorderRadius.circular(5),
-          border: Border.all(color: scheme.tertiary.withAlpha(60)),
+          border: Border.all(color: fade(scheme.tertiary.withAlpha(60))),
         ),
-        child: Text(sym, style: TextStyle(fontSize: isMobilePlatform ? 9 : 10, fontWeight: FontWeight.w700, color: scheme.onTertiaryContainer)),
+        child: Text(sym, style: TextStyle(fontSize: isMobilePlatform ? 9 : 10, fontWeight: FontWeight.w700, color: fade(scheme.onTertiaryContainer))),
       ),
     );
   }
 
-  Widget _toolboxChip(PipelineStepType t, PipelineNode dummy, String tag, ColorScheme scheme, AppStrings s, {bool isSelected = false}) {
+  /// [opacity] 用于拖拽占位（childWhenDragging）时的淡化：把透明度预乘进
+  /// 各颜色，而不是外包一层 `Opacity`——后者在非 0/1 值时会触发 saveLayer
+  /// 离屏渲染，每个芯片一层，代价明显。
+  Widget _toolboxChip(PipelineStepType t, PipelineNode dummy, String tag, ColorScheme scheme, AppStrings s, {bool isSelected = false, double opacity = 1.0}) {
+    final o = opacity.clamp(0.0, 1.0);
+    Color fade(Color c) => o >= 1.0 ? c : c.withAlpha((c.a * 255 * o).round());
     return AnimatedContainer(
       duration: const Duration(milliseconds: 150),
       padding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 8 : 10, vertical: isMobilePlatform ? 5 : 5),
       decoration: BoxDecoration(
-        color: isSelected ? scheme.primary.withAlpha(40) : _nodeColor(t, scheme).withAlpha(180),
+        color: fade(isSelected ? scheme.primary.withAlpha(40) : _nodeColor(t, scheme).withAlpha(180)),
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: isSelected ? scheme.primary : scheme.outlineVariant.withAlpha(60), width: isSelected ? 2 : 1),
-        boxShadow: isSelected ? [BoxShadow(color: scheme.primary.withAlpha(40), blurRadius: 6)] : null,
+        border: Border.all(color: fade(isSelected ? scheme.primary : scheme.outlineVariant.withAlpha(60)), width: isSelected ? 2 : 1),
+        boxShadow: isSelected ? [BoxShadow(color: fade(scheme.primary.withAlpha(40)), blurRadius: 6)] : null,
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(_stepIcon(t), size: isMobilePlatform ? 12 : 14, color: scheme.onSurface),
+        Icon(_stepIcon(t), size: isMobilePlatform ? 12 : 14, color: fade(scheme.onSurface)),
         SizedBox(width: isMobilePlatform ? 3 : 4),
-        Text(s.isZh ? dummy.label : dummy.labelEn, style: TextStyle(fontSize: isMobilePlatform ? 9 : 12, color: scheme.onSurface)),
+        Text(s.isZh ? dummy.label : dummy.labelEn, style: TextStyle(fontSize: isMobilePlatform ? 9 : 12, color: fade(scheme.onSurface))),
         if (tag.isNotEmpty) ...[
           SizedBox(width: isMobilePlatform ? 2 : 4),
-          Text(tag, style: TextStyle(fontSize: isMobilePlatform ? 5 : 9, color: scheme.outline, fontWeight: FontWeight.w600)),
+          Text(tag, style: TextStyle(fontSize: isMobilePlatform ? 5 : 9, color: fade(scheme.outline), fontWeight: FontWeight.w600)),
         ],
       ]),
     );
@@ -5614,25 +5794,81 @@ class _ConnectionPainter extends CustomPainter {
   final Color color;
   final Color controlColor;
   final Set<String> selectedNodeIds;
+  /// 拖动中节点的累计位移（画布坐标）。拖动期间模型坐标未更新，
+  /// 这里做位置补偿，使连线端点跟随拖动中的节点。
+  final Map<String, Offset>? dragDeltas;
 
-  _ConnectionPainter({required this.origin, required this.nodes, required this.connections, required this.color,
-    required this.selectedNodeIds, this.controlColor = const Color(0xFFFF8F00)});
+  // ── 每帧查找的索引缓存 ──
+  // 原实现在 paint 内对每条连线做 2 次 nodes.indexWhere（O(n)），并对控制
+  // 连线做 connections.where(...).toList()（每次分配 List，O(m)）→ 整体
+  // O(m·n + m²) 且每帧重复。改为按 nodes/connections 的 identity 惰性建索引：
+  // 同一批节点/连线连续多帧重绘时只建一次，命中 O(1)。
+  List<PipelineNode>? _idxForNodes;
+  Map<String, PipelineNode> _nodeById = const {};
+  List<PipelineConnection>? _idxForConns;
+  Map<String, int> _gateInputIndex = const {};
+
+  _ConnectionPainter({
+    required this.origin,
+    required this.nodes,
+    required this.connections,
+    required this.color,
+    required this.selectedNodeIds,
+    this.controlColor = const Color(0xFFFF8F00),
+    this.dragDeltas,
+    super.repaint,
+  });
+
+  void _ensureIndex() {
+    if (!identical(_idxForNodes, nodes)) {
+      _idxForNodes = nodes;
+      _nodeById = {for (final n in nodes) n.id: n};
+    }
+    if (!identical(_idxForConns, connections)) {
+      _idxForConns = connections;
+      // 逻辑门输入的序号：按 toNodeId 分组计数，等价于该连线在
+      // 「指向同一逻辑门的控制连线」里的下标，但只需一次遍历。
+      final gateInputIndex = <String, int>{};
+      final cursor = <String, int>{};
+      for (final c in connections) {
+        if (c.kind != 'control') continue;
+        final n = _nodeById[c.toNodeId];
+        if (n == null || !n.isGate) continue;
+        final i = cursor[c.toNodeId] ?? 0;
+        gateInputIndex[c.id] = i;
+        cursor[c.toNodeId] = i + 1;
+      }
+      _gateInputIndex = gateInputIndex;
+    }
+  }
+
+  /// 返回带位移补偿的节点副本（仅拖动期间；无位移时直接返回原对象，零分配）。
+  /// 端口坐标计算依赖 n.x/n.y，因此需要一个位置已偏移的实例参与运算。
+  PipelineNode _shifted(PipelineNode n) {
+    final d = dragDeltas?[n.id];
+    if (d == null || (d.dx == 0 && d.dy == 0)) return n;
+    return PipelineNode(
+      id: n.id, type: n.type, params: n.params,
+      x: n.x + d.dx, y: n.y + d.dy,
+      gateType: n.gateType, unknownTypeId: n.unknownTypeId,
+    );
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
+    _ensureIndex();
     canvas.translate(origin.dx, origin.dy);
     for (final conn in connections) {
-      final fromIdx = nodes.indexWhere((n) => n.id == conn.fromNodeId);
-      final toIdx = nodes.indexWhere((n) => n.id == conn.toNodeId);
-      if (fromIdx < 0 || toIdx < 0) continue;
+      final fromFlat = _nodeById[conn.fromNodeId];
+      final toFlat = _nodeById[conn.toNodeId];
+      if (fromFlat == null || toFlat == null) continue;
 
-      final from = nodes[fromIdx];
-      final to = nodes[toIdx];
+      // 用带位移补偿的副本参与端口坐标计算
+      final from = _shifted(fromFlat);
+      final to = _shifted(toFlat);
       final isControl = conn.kind == 'control';
       // 到逻辑门目标时，计算该连线是第几个输入（用于对准圆圈）
-      final inputIdx = (isControl && to.isGate)
-          ? connections.where((c) => c.toNodeId == conn.toNodeId && c.kind == 'control').toList().indexOf(conn)
-          : 0;
+      final inputIdx = (isControl && to.isGate) ? (_gateInputIndex[conn.id] ?? 0) : 0;
       if (inputIdx < 0) continue;
 
       final p1 = _portPos(from, isOutput: true, isControl: isControl);
@@ -5813,8 +6049,16 @@ class _ConnectionPainter extends CustomPainter {
     }
   }
 
+  // 拖动期间由 repaint（_dragDeltas）驱动重绘；其余情况只在数据/选中/
+  // 配色真正变化时重绘。原实现恒 true，导致父级每次重建都全量重绘连线。
   @override
-  bool shouldRepaint(_ConnectionPainter old) => true;
+  bool shouldRepaint(_ConnectionPainter old) =>
+      !identical(old.nodes, nodes) ||
+      !identical(old.connections, connections) ||
+      old.color != color ||
+      old.controlColor != controlColor ||
+      !identical(old.selectedNodeIds, selectedNodeIds) ||
+      !identical(old.dragDeltas, dragDeltas);
 }
 
 // ── 临时拖拽连线 ──

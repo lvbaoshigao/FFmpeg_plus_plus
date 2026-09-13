@@ -30,11 +30,11 @@ public:
                              int timeout_sec = 0);
 
     // 异步执行，通过回调实时输出 stderr 每一行
-    // cancel_flag 为 true 时立即终止进程
+    // isCancelled 返回 true 时立即终止进程
     static ProcessResult runWithProgress(
         const std::vector<std::string>& cmd,
         std::function<void(const std::string& line)> on_stderr_line,
-        std::atomic<bool>& cancel_flag,
+        std::function<bool()> isCancelled,
         int timeout_sec = 0);
 
 #ifdef _WIN32

@@ -75,6 +75,25 @@ void collect10BitWarnings(std::vector<std::string>& warnings,
     }
 }
 
+// 把请求 id 消毒为可安全用于文件名的字符串。
+// 请求 id 来自前端（理论上可被篡改），若含 / \ .. 等字符会逃出临时目录
+// （路径穿越 / 任意文件写入，见 M-4）。非 [A-Za-z0-9_-] 一律替换为 '_'。
+std::string sanitizeIdForFilename(const std::string& id) {
+    std::string out;
+    out.reserve(id.size());
+    for (unsigned char c : id) {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '_' || c == '-') {
+            out.push_back(static_cast<char>(c));
+        } else {
+            out.push_back('_');
+        }
+    }
+    if (out.empty()) out = "task";
+    if (out.size() > 128) out.resize(128);
+    return out;
+}
+
 // RAII 临时文件守卫：作用域结束时（含异常/提前 return 路径）自动删除文件，
 // 避免 concat / 图片序列生成的列表文件在异常退出时残留。
 class TempFileGuard {
@@ -297,7 +316,7 @@ void handleQueryFeatures(const json& req) {
 
 void runFFmpegProcess(const std::string& task_id,
                       const std::vector<std::string>& cmd,
-                      std::atomic<bool>& cancel_flag,
+                      const CancelCheck& isCancelled,
                       const std::string& output_path) {
     std::string cmd_str;
     for (auto& a : cmd) { if (!cmd_str.empty()) cmd_str += " "; cmd_str += a; }
@@ -360,7 +379,7 @@ void runFFmpegProcess(const std::string& task_id,
                 last_sent_time = now;
             }
         },
-        cancel_flag);
+        isCancelled);
 
     JsonWriter::progress(task_id, parser.stats());
     slog("runFFmpeg: done, code=%d, stderr=%zu, progress_count=%d", result.exit_code, stderr_lines.size(), progress_count);
@@ -368,7 +387,7 @@ void runFFmpegProcess(const std::string& task_id,
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - start).count() / 1000.0;
 
-    if (cancel_flag.load()) {
+    if (isCancelled && isCancelled()) {
         JsonWriter::reply(task_id, false, nullptr, "任务已取消");
         return;
     }
@@ -405,7 +424,7 @@ void runFFmpegProcess(const std::string& task_id,
     }
 }
 
-void handleTranscode(const json& req, std::atomic<bool>& cancel_flag) {
+void handleTranscode(const json& req, const CancelCheck& isCancelled) {
     json params = getParams(req);
     std::string input = params.value("input", "");
     std::string output = params.value("output", "");
@@ -442,10 +461,10 @@ void handleTranscode(const json& req, std::atomic<bool>& cancel_flag) {
         JsonWriter::audit(req["id"], warnings);
     }
 
-    runFFmpegProcess(req["id"], cmd, cancel_flag, output);
+    runFFmpegProcess(req["id"], cmd, isCancelled, output);
 }
 
-void handleSubtitle(const json& req, std::atomic<bool>& cancel_flag) {
+void handleSubtitle(const json& req, const CancelCheck& isCancelled) {
     json params = getParams(req);
     std::string input = params.value("input", "");
     std::string output = params.value("output", "");
@@ -483,10 +502,10 @@ void handleSubtitle(const json& req, std::atomic<bool>& cancel_flag) {
         JsonWriter::audit(req["id"], warnings);
     }
 
-    runFFmpegProcess(req["id"], cmd, cancel_flag, output);
+    runFFmpegProcess(req["id"], cmd, isCancelled, output);
 }
 
-void handleExtractFrame(const json& req) {
+void handleExtractFrame(const json& req, const CancelCheck& isCancelled) {
     json params = getParams(req);
     std::string input = params.value("input", "");
     std::string output = params.value("output", "");
@@ -504,7 +523,14 @@ void handleExtractFrame(const json& req) {
 
     slog("extractFrame: time=%.3f input=%s output=%s", time, input.c_str(), output.c_str());
 
-    auto result = Subprocess::run(cmd, 30);
+    // 走 runWithProgress 以支持取消（原实现用 Subprocess::run，帧提取无法中断）
+    auto result = Subprocess::runWithProgress(cmd, [](const std::string&) {}, isCancelled, 30);
+
+    if (isCancelled && isCancelled()) {
+        JsonWriter::reply(req["id"], false, nullptr, "任务已取消");
+        return;
+    }
+
     if (result.exit_code == 0) {
         int64_t out_size = 0;
         try { out_size = std::filesystem::file_size(u8path(output)); } catch (...) {}
@@ -522,7 +548,7 @@ void handleExtractFrame(const json& req) {
 // handleConcat — 合并音频/视频
 // ═══════════════════════════════════════════
 
-void handleConcat(const json& req, std::atomic<bool>& cancel_flag) {
+void handleConcat(const json& req, const CancelCheck& isCancelled) {
     if (!req.contains("params") || !req["params"].is_object()) {
         JsonWriter::reply(req["id"], false, nullptr, "缺少或无效 params 参数");
         return;
@@ -583,7 +609,7 @@ void handleConcat(const json& req, std::atomic<bool>& cancel_flag) {
 
     // Write temp concat list
     auto tmpDir = std::filesystem::path(ffmpegpp::getTempDir());
-    std::string listPath = (tmpDir / ("ffmpegpp_concat_" + req["id"].get<std::string>() + ".txt")).string();
+    std::string listPath = (tmpDir / ("ffmpegpp_concat_" + sanitizeIdForFilename(req["id"].get<std::string>()) + ".txt")).string();
     TempFileGuard listCleanup(listPath); // 作用域结束自动清理，异常/提前 return 也不残留
     {
         std::ofstream ofs(listPath, std::ios::binary);
@@ -613,14 +639,14 @@ void handleConcat(const json& req, std::atomic<bool>& cancel_flag) {
     cmd.push_back(output);
 
     slog("handleConcat: %zu files -> %s (mode=%s)", files.size(), output.c_str(), mode.c_str());
-    runFFmpegProcess(req["id"], cmd, cancel_flag, output);
+    runFFmpegProcess(req["id"], cmd, isCancelled, output);
 }
 
 // ═══════════════════════════════════════════
 // handleImageSequence — 图片序列→视频
 // ═══════════════════════════════════════════
 
-void handleImageSequence(const json& req, std::atomic<bool>& cancel_flag) {
+void handleImageSequence(const json& req, const CancelCheck& isCancelled) {
     if (!req.contains("params") || !req["params"].is_object()) {
         JsonWriter::reply(req["id"], false, nullptr, "缺少或无效 params 参数");
         return;
@@ -690,7 +716,7 @@ void handleImageSequence(const json& req, std::atomic<bool>& cancel_flag) {
 
     // Write temp concat list with duration per frame
     auto tmpDir = std::filesystem::path(ffmpegpp::getTempDir());
-    std::string listPath = (tmpDir / ("ffmpegpp_imgseq_" + req["id"].get<std::string>() + ".txt")).string();
+    std::string listPath = (tmpDir / ("ffmpegpp_imgseq_" + sanitizeIdForFilename(req["id"].get<std::string>()) + ".txt")).string();
     TempFileGuard listCleanup(listPath); // 作用域结束自动清理，异常/提前 return 也不残留
     {
         std::ofstream ofs(listPath, std::ios::binary);
@@ -712,7 +738,8 @@ void handleImageSequence(const json& req, std::atomic<bool>& cancel_flag) {
     }
 
     std::vector<std::string> cmd = {getFFmpegPath(), "-f", "concat", "-safe", "0", "-i", listPath};
-    cmd.push_back("-vsync");
+    // -fps_mode vfr 取代已弃用的 -vsync vfr（新版 ffmpeg 会警告/移除该选项，L-4）
+    cmd.push_back("-fps_mode");
     cmd.push_back("vfr");
     cmd.push_back("-vf");
     cmd.push_back("scale=trunc(iw/2)*2:trunc(ih/2)*2");
@@ -721,7 +748,14 @@ void handleImageSequence(const json& req, std::atomic<bool>& cancel_flag) {
 
     if (params.contains("options") && params["options"].is_object()) {
         auto enc = buildEncodingParams(params["options"]);
-        cmd.insert(cmd.end(), enc.begin(), enc.end());
+        // buildEncodingParams 可能再次推入 -pix_fmt（后者覆盖前者，L-4）：
+        // 先剔除重复项，仅保留前面固定的 yuv420p。
+        std::vector<std::string> filtered;
+        for (size_t i = 0; i < enc.size(); ++i) {
+            if (enc[i] == "-pix_fmt" && i + 1 < enc.size()) { ++i; continue; }
+            filtered.push_back(enc[i]);
+        }
+        cmd.insert(cmd.end(), filtered.begin(), filtered.end());
     } else {
         cmd.push_back("-c:v");
         cmd.push_back("libx264");
@@ -733,14 +767,14 @@ void handleImageSequence(const json& req, std::atomic<bool>& cancel_flag) {
     cmd.push_back(output);
 
     slog("handleImageSequence: %zu images -> %s @%.1f fps", files.size(), output.c_str(), framerate);
-    runFFmpegProcess(req["id"], cmd, cancel_flag, output);
+    runFFmpegProcess(req["id"], cmd, isCancelled, output);
 }
 
 // ═══════════════════════════════════════════
 // handleCustomCommand — 用户自定义 ffmpeg 命令
 // ═══════════════════════════════════════════
 
-void handleCustomCommand(const json& req, std::atomic<bool>& cancel_flag) {
+void handleCustomCommand(const json& req, const CancelCheck& isCancelled) {
     json params = getParams(req);
     std::string command = params.value("command", "");
     std::string output_path = params.value("output", "");
@@ -767,7 +801,7 @@ void handleCustomCommand(const json& req, std::atomic<bool>& cancel_flag) {
     }
 
     slog("handleCustomCommand: %s", command.c_str());
-    runFFmpegProcess(req["id"], tokens, cancel_flag, output_path);
+    runFFmpegProcess(req["id"], tokens, isCancelled, output_path);
 }
 
 // ── FPPX 配置文件（无论成败都把 errors/warnings 结构化带回，GUI 据此弹窗）──
