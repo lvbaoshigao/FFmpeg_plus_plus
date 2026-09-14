@@ -13,6 +13,8 @@
 
          This Theme is only used starting with V2 of Flutter's Android embedding. -->
     <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
-        <item name="android:windowBackground">?android:colorBackground</item>
+        <!-- [FIX UI-返回黑闪] 显式指定中性窗口背景，避免 ?android:colorBackground
+             在部分主题下解析为纯黑，导致路由切换/冷启动空白帧闪黑。 -->
+        <item name="android:windowBackground">@color/window_bg</item>
     </style>
 </resources>

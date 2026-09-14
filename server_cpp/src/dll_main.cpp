@@ -18,6 +18,7 @@
 #include <set>
 #include <mutex>
 #include <vector>
+#include <memory>
 #include <functional>
 
 using json = nlohmann::json;
@@ -44,44 +45,47 @@ static std::mutex g_initMutex;
 // probe / check_env / query_ffmpeg_features 跑在辅助线程上；追踪并统一 join，
 // 避免库卸载（dlclose / DLL_PROCESS_DETACH）时这些线程仍在库代码内执行而崩溃。
 static std::mutex g_auxThreadsMutex;
-static std::vector<std::thread> g_auxThreads;
-// 已完成（可 join）的辅助线程数量。线程结束时自增（H-3：长期运行会话中
-// 线程对象/handle 只增不减，需要 spawn 时顺带回收一批）。
-static std::atomic<size_t> g_auxThreadsFinished{0};
+// [FIX H-11] 每个辅助线程绑定一个完成标志（shared_ptr<atomic<bool>>），
+// 回收时只 join 已完成者，避免 swap 出仍在运行的线程并 join 阻塞在长任务
+//（如 240s probe）上，造成后续请求被意外串行化。
+struct AuxThread {
+    std::thread thread;
+    std::shared_ptr<std::atomic<bool>> done;
+};
+static std::vector<AuxThread> g_auxThreads;
 
 static void spawnAuxThread(std::function<void()> fn) {
-    // 回收已完成的辅助线程：把 vector 里所有 thread 移出并 join。
-    // 由于辅助任务都很短（probe / 特性查询 / 导入导出），绝大多数此时已结束，
-    // join 立即返回；个别仍在运行的会在下一次 spawn 或 shutdown 的
-    // joinAuxThreads() 里兜底回收。vector 不再无界增长，OS handle 得以及时释放。
-    if (g_auxThreadsFinished.load() > 0) {
-        std::vector<std::thread> done;
-        {
-            std::lock_guard<std::mutex> lock(g_auxThreadsMutex);
-            done.swap(g_auxThreads);
-            g_auxThreadsFinished.store(0);
-        }
-        for (auto& t : done) {
-            if (t.joinable()) t.join();
+    // [FIX H-11] 只回收已完成线程：遍历 vector，done 为 true 的才 join 并移除，
+    // 仍在运行的留待下一次 spawn 或 joinAuxThreads() 兜底回收，绝不阻塞在未完成任务上。
+    {
+        std::lock_guard<std::mutex> lock(g_auxThreadsMutex);
+        for (auto it = g_auxThreads.begin(); it != g_auxThreads.end(); ) {
+            if (it->done->load()) {
+                if (it->thread.joinable()) it->thread.join();
+                it = g_auxThreads.erase(it);
+            } else {
+                ++it;
+            }
         }
     }
 
     std::lock_guard<std::mutex> lock(g_auxThreadsMutex);
-    g_auxThreads.emplace_back([fn]() {
+    auto done = std::make_shared<std::atomic<bool>>(false);
+    g_auxThreads.push_back(AuxThread{std::thread([fn, done]() {
         fn();
-        g_auxThreadsFinished.fetch_add(1);
-    });
+        done->store(true);
+    }), done});
 }
 
 static void joinAuxThreads() {
-    std::vector<std::thread> threads;
+    // 兜底回收：shutdown / DETACH 时等待所有辅助线程结束（此时允许阻塞）。
+    std::vector<AuxThread> threads;
     {
         std::lock_guard<std::mutex> lock(g_auxThreadsMutex);
         threads.swap(g_auxThreads);
-        g_auxThreadsFinished.store(0);
     }
     for (auto& t : threads) {
-        if (t.joinable()) t.join();
+        if (t.thread.joinable()) t.thread.join();
     }
 }
 
@@ -196,7 +200,13 @@ FFMPEGPP_API int ffmpegpp_init() {
 FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
     if (!g_running.load() || json_utf8 == nullptr) return -1;
 
-    std::string line(json_utf8);
+    // [FIX S-5] 长度上限 4MB，防止超大输入导致 json::parse 申请巨量内存；
+    // 手写扫描避免依赖 strnlen 的平台可用性差异（部分老 libc 可能缺失）。
+    constexpr size_t kMaxRequestLen = 1u << 22;
+    size_t len = 0;
+    while (len < kMaxRequestLen && json_utf8[len] != '\0') ++len;
+    if (len >= kMaxRequestLen) return -1;
+    std::string line(json_utf8, len);
     slog("dll request: %s", line.substr(0, 200).c_str());
 
     // cancel/ping/shutdown 内联处理（不进工作线程队列）
@@ -345,13 +355,18 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
     case DLL_THREAD_DETACH:
         break;
     case DLL_PROCESS_DETACH:
-        // 不在 DllMain 中 join 线程（持有 loader lock 会导致死锁）
-        // 仅发信号让 worker 退出，线程随进程终止自然销毁
-        if (g_running.load()) {
+        // [FIX S-4] lpReserved == nullptr 表示 FreeLibrary 显式卸载，进程仍存活，
+        // 可安全做 C++ 收尾：置位退出标志并正确 join worker 与辅助线程，避免被
+        // detach 的 worker 在静态对象（g_inputQueue/g_inputCv/JsonWriter 队列等）
+        // 析构后继续访问已销毁的互斥量/条件变量/队列导致 UAF（退出时偶发崩溃/死锁）。
+        // lpReserved != nullptr 表示进程正在终止，CRT 与 C++ 静态对象可能已被销毁，
+        // 任何静态对象/分配器访问都是 UB，必须直接返回，不做任何收尾。
+        if (lpReserved == nullptr && g_running.load()) {
             g_shutdownFlag.store(true);
             g_cancelFlag.store(true);
-            wakeInput();
-            g_workerThread.detach();
+            wakeInput();                       // 唤醒阻塞在 popInput 的 worker
+            if (g_workerThread.joinable()) g_workerThread.join();
+            joinAuxThreads();                  // 回收仍在运行的辅助线程（与 shutdown 一致）
             g_running.store(false);
         }
         break;

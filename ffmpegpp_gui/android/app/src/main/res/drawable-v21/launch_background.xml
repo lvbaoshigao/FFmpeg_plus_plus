@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Modify this file to customize your launch splash screen -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="?android:colorBackground" />
+    <!-- [FIX UI-返回黑闪] 原为 ?android:colorBackground（night 下 = 纯黑）。
+         改用 window_bg，随日夜自动取对应中性色，冷启动不再先闪黑一帧。 -->
+    <item android:drawable="@color/window_bg" />
 
     <!-- You can insert your own image assets here -->
     <!-- <item>

@@ -96,7 +96,7 @@ class GateSymbolPainter extends CustomPainter {
     // ANSI/IEEE 用特色形状本身表达语义（D 形=与、盾形=或、三角=非、盾形+弧=异或），
     // 中间不再写 & / 1 之类数据，符合 ANSI unique-shape 规范。
     if (iec) {
-      final labelX = _labelCenterX(gate, left, rightLimit, bottom - top, w);
+      final labelX = _labelCenterX(left, rightLimit);
       _label(canvas, _symbol, Offset(labelX, cy), math.min(w, h) * 0.20);
     }
 
@@ -109,21 +109,9 @@ class GateSymbolPainter extends CustomPainter {
     }
   }
 
-  double _labelCenterX(LogicGateType g, double left, double right, double half, double w) {
-    if (!iec) {
-      switch (g) {
-        case LogicGateType.and:
-        case LogicGateType.nand:
-          return left + half * 0.5; // D 形左侧平直区
-        case LogicGateType.not:
-          return left + (right - left) * 0.36; // 三角形偏左
-        case LogicGateType.xor:
-        case LogicGateType.xnor:
-          return left + w * 0.10 + (right - (left + w * 0.10)) * 0.45;
-        default:
-          return left + (right - left) * 0.45;
-      }
-    }
+  double _labelCenterX(double left, double right) {
+    // [FIX L-14] 仅 IEC 矩形框标准标注内部符号文本且水平居中；非 IEC（ANSI/IEEE）以形状表意不写文字，
+    // 原 !iec 分支为死代码（唯一调用点在 if (iec) 内）已删除。
     return left + (right - left) / 2;
   }
 

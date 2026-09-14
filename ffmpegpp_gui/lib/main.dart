@@ -301,14 +301,19 @@ void _killOldProcesses() {
     }
   } else {
     final myPid = pid.toString();
-    // macOS 的 BSD xargs 不支持 -r（GNU 专属）；去掉后没有匹配项时 xargs 仍会
-    // 执行一次 kill，从而把 "kill" 本身当参数——这里改用 pgrep 直接输出 PID 再逐个 kill，
-    // 避免依赖平台差异。命令行不可拼接用户输入，仅常量，无注入风险。
-    // 注意：Dart 字符串里的 $ 需转义——$myPid 是想要的插值，
-    // 但 bash 的 $(...) 命令替换和 "$p" 里的 $ 必须写成 \$( 和 \$p。
-    // grep -v $$：执行该命令的 bash -c 自身 cmdline 也包含 "ffmpegpp_gui"，
-    // 必须一并排除，否则清理旧进程时会把正在运行的这条命令一起 kill 掉。
-    Process.run('bash', ['-c', 'for p in \$(pgrep -f ffmpegpp_gui | grep -v $myPid | grep -v \$\$); do kill -9 "\$p" 2>/dev/null; done']).ignore();
+    // [FIX L-9] 收紧匹配，避免误杀无关进程（如 "vim ffmpegpp_gui.log"）。
+    // 策略：先用 pgrep -f 取候选 PID，再逐个用 ps -o comm= 二次确认其可执行名 basename
+    // 确为 ffmpegpp_gui（或 .exe）才 kill；命令里无用户输入，仅常量，无注入风险。
+    // 这样既不会误杀 comm 为 vim 的编辑器进程，也无需依赖 grep -v $$ 排除 bash 自身。
+    Process.run('bash', ['-c',
+      'for p in \$(pgrep -f "ffmpegpp_gui" 2>/dev/null); do '
+      '[ "\$p" = "$myPid" ] && continue; '
+      'comm=\$(ps -o comm= -p "\$p" 2>/dev/null | tr -d " \\n"); '
+      'base=\$(basename "\$comm"); '
+      'case "\$base" in '
+      'ffmpegpp_gui|ffmpegpp_gui.exe) kill -9 "\$p" 2>/dev/null ;; '
+      'esac; '
+      'done']).ignore();
   }
 }
 

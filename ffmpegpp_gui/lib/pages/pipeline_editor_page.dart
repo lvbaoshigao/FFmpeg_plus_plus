@@ -630,10 +630,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     return node.id;
   }
 
+  /// [FIX H-5] 取画布可视中心（画布局部坐标系）；用画布自身 RenderBox 避免页面级 context 偏移。
+  Offset _canvasCenterCanvasPos() {
+    final rb = _canvasKey.currentContext?.findRenderObject() as RenderBox?;
+    final center = rb == null
+        ? (context.findRenderObject() as RenderBox).size.center(Offset.zero)
+        : rb.size.center(Offset.zero);
+    return _screenToCanvas(center);
+  }
+
   void _addNodeAtCenter(PipelineStepType type) {
-    final rb = context.findRenderObject() as RenderBox;
-    final center = rb.size.center(Offset.zero);
-    final canvasPos = _screenToCanvas(center);
+    final canvasPos = _canvasCenterCanvasPos(); // [FIX H-5]
     _addNodeAt(type, canvasPos);
   }
 
@@ -644,8 +651,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   // 因此移动端改为：点击工具项 → 添加到画布可视中心 → 收起工具箱 → 选中新节点
   // （选中后右侧属性卡片自动弹出，可立即编辑）。
   void _mobileAddNode(PipelineStepType type) {
-    final rb = context.findRenderObject() as RenderBox;
-    final id = _addNodeAt(type, _screenToCanvas(rb.size.center(Offset.zero)));
+    final id = _addNodeAt(type, _canvasCenterCanvasPos()); // [FIX H-5]
     setState(() {
       _mobileToolboxOpen = false;
       _previewedToolboxType = null;
@@ -658,8 +664,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   }
 
   void _mobileAddGate(LogicGateType gate) {
-    final rb = context.findRenderObject() as RenderBox;
-    final id = _addGateAt(gate, _screenToCanvas(rb.size.center(Offset.zero)));
+    final id = _addGateAt(gate, _canvasCenterCanvasPos()); // [FIX H-5]
     setState(() {
       _mobileToolboxOpen = false;
       _previewedToolboxType = null;
@@ -688,6 +693,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       if (_lastSelectedId == nodeId) {
         _lastSelectedId = _selectedNodeIds.isEmpty ? null : _selectedNodeIds.last;
       }
+      _purgeDeletedFromLogicBlocks({nodeId}); // [FIX H-6] 清理悬空的逻辑块引用
     });
     _saveGraph();
   }
@@ -703,8 +709,43 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       }
       _selectedNodeIds.clear();
       _lastSelectedId = null;
+      _purgeDeletedFromLogicBlocks(ids); // [FIX H-6] 清理悬空的逻辑块引用
     });
     _saveGraph();
+  }
+
+  /// [FIX H-6] 删除节点后：移除逻辑块对已删节点的悬空引用、删除因此变空的逻辑块、
+  /// 清理失效的选择态，并重算剩余逻辑块虚框尺寸。必须在 setState 内调用。
+  void _purgeDeletedFromLogicBlocks(Set<String> deletedIds) {
+    for (final b in _logicBlocks) {
+      b.childNodeIds.removeWhere(deletedIds.contains);
+    }
+    _logicBlocks.removeWhere((b) => b.childNodeIds.isEmpty);
+    if (_selectedLogicBlockId != null && !_logicBlocks.any((b) => b.id == _selectedLogicBlockId)) {
+      _selectedLogicBlockId = null; // [FIX H-6] 避免 UI 引用已不存在的逻辑块
+    }
+    _recomputeLogicBlockRects();
+  }
+
+  /// [FIX H-6] 依据当前子节点位置重算逻辑块虚框包围盒（建块时算定后需随删除刷新）。
+  void _recomputeLogicBlockRects() {
+    const padding = 20.0;
+    for (final b in _logicBlocks) {
+      final ns = _nodes.where((n) => b.childNodeIds.contains(n.id)).toList();
+      if (ns.isEmpty) continue;
+      var minX = double.infinity, minY = double.infinity;
+      var maxX = double.negativeInfinity, maxY = double.negativeInfinity;
+      for (final n in ns) {
+        minX = math.min(minX, n.x);
+        minY = math.min(minY, n.y);
+        maxX = math.max(maxX, n.x + _totalNodeWidth(n));
+        maxY = math.max(maxY, n.y + _nodeHeight(n));
+      }
+      b.x = minX - padding;
+      b.y = minY - padding - 20;
+      b.width = maxX - minX + padding * 2;
+      b.height = maxY - minY + padding * 2 + 20;
+    }
   }
 
   String _mediaTypeName(MediaType t, bool zh) => switch (t) {
@@ -873,6 +914,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   PipelineConnection? _hitTestConnection(Offset pos) {
     // 移动端手指热区 ~24-32px；桌面端保持 8px 的精确判定。
     final threshold = isMobilePlatform ? 28.0 : 8.0;
+    // [FIX L-15] 循环外预计算每个目标节点的控制连线列表，避免循环内 O(n) 过滤 + indexOf（原 O(n²)）。
+    final ctrlByTarget = <String, List<PipelineConnection>>{};
+    for (final c in _connections) {
+      if (c.kind == 'control') {
+        ctrlByTarget.putIfAbsent(c.toNodeId, () => []).add(c);
+      }
+    }
     for (final conn in _connections) {
       final fi = _nodes.indexWhere((n) => n.id == conn.fromNodeId);
       final ti = _nodes.indexWhere((n) => n.id == conn.toNodeId);
@@ -882,7 +930,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       final isControl = conn.kind == 'control';
       // 与 _ConnectionPainter 一致：控制连线到逻辑门目标时，按顺序计算第几个输入
       final inputIdx = (isControl && to.isGate)
-          ? _connections.where((c) => c.toNodeId == conn.toNodeId && c.kind == 'control').toList().indexOf(conn)
+          ? (ctrlByTarget[conn.toNodeId]?.indexOf(conn) ?? -1)
           : 0;
       if (inputIdx < 0) continue;
       final p1 = _hitPortPos(from, isOutput: true, isControl: isControl);
@@ -3074,8 +3122,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(12), bottomRight: Radius.circular(12)),
         child: DragTarget<Object>(
           onAcceptWithDetails: (details) {
-            final rb = context.findRenderObject() as RenderBox;
-            final local = rb.globalToLocal(details.offset);
+            // [FIX H-5] 改用画布自身的 RenderBox，避免页面级 context 引入顶栏偏移
+            final rb = _canvasKey.currentContext?.findRenderObject() as RenderBox?;
+            final local = rb == null ? details.offset : rb.globalToLocal(details.offset);
             final canvasPos = _screenToCanvas(local);
             final data = details.data;
             if (data is PipelineStepType) {
@@ -3283,8 +3332,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   // ── 节点 Widget ──
 
   Offset _canvasFromGlobal(Offset global) {
-    final rb = context.findRenderObject() as RenderBox;
-    return _screenToCanvas(rb.globalToLocal(global));
+    // [FIX H-5] 改用画布自身的 RenderBox，与 DragTarget 落点修正保持一致
+    final rb = _canvasKey.currentContext?.findRenderObject() as RenderBox?;
+    final local = rb == null ? global : rb.globalToLocal(global);
+    return _screenToCanvas(local);
   }
 
   void _onPortDragStart(String nodeId, String portKind) {
@@ -3969,22 +4020,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   void _onPortDragEnd() {    if (_dragFromNodeId != null && _dragLineEnd != null) {
       final target = _findNodeAtCanvasPos(_dragLineEnd!);
       if (target != null && target.id != _dragFromNodeId) {
-        // 根据端口类型决定连接方向和类型
-        switch (_dragPort) {
-          case 'dataOut':
-            _addConnection(_dragFromNodeId!, target.id, 'data');
-          case 'dataIn':
-            _addConnection(target.id, _dragFromNodeId!, 'data');
-          case 'statusOut':
-            // 状态输出 → 使能输入 / 逻辑门输入
-            _addConnection(_dragFromNodeId!, target.id, 'control');
-          case 'enableIn':
-            // 使能输入 ← 来自状态输出或逻辑门输出
-            _addConnection(target.id, _dragFromNodeId!, 'control');
-          case 'gateOut':
-            _addConnection(_dragFromNodeId!, target.id, 'control');
-          case 'gateIn':
-            _addConnection(target.id, _dragFromNodeId!, 'control');
+        // [FIX M-20] 命中目标端口，由「源端口类型 + 目标端口类型」共同决定连线 kind，
+        // 不再仅按源端口类型用整节点包围盒判定；无法命中任何端口则取消建连。
+        final tgtPort = _hitPortOnNode(target, _dragLineEnd!);
+        if (tgtPort != null) {
+          final resolved = _resolveConnectionKind(_dragPort, tgtPort, _dragFromNodeId!, target.id);
+          if (resolved != null) {
+            _addConnection(resolved.$1, resolved.$2, resolved.$3);
+          }
         }
       }
     }
@@ -3993,6 +4036,55 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       _dragLineEnd = null;
     });
     _dragLineEndNotifier.value = null;
+  }
+
+  /// [FIX M-20] 命中节点的端口：返回画布坐标系下最近的端口种类（dataOut/dataIn/statusOut/enableIn/gateOut/gateIn），无命中返回 null。
+  String? _hitPortOnNode(PipelineNode node, Offset pos) {
+    final candidates = <(String, Offset)>[];
+    if (node.isGate) {
+      if (node.hasGateOutput) {
+        candidates.add(('gateOut', _hitPortPos(node, isOutput: true, isControl: true)));
+      }
+      if (node.hasGateInput) {
+        final inputCount = node.gate?.inputCount ?? 0;
+        if (inputCount <= 0) {
+          candidates.add(('gateIn', _hitPortPos(node, isOutput: false, isControl: true)));
+        } else {
+          for (var i = 0; i < inputCount; i++) {
+            candidates.add(('gateIn', _hitPortPos(node, isOutput: false, isControl: true, gateInputIndex: i)));
+          }
+        }
+      }
+    } else {
+      if (node.hasOutput) candidates.add(('dataOut', _hitPortPos(node, isOutput: true, isControl: false)));
+      if (node.hasInput) candidates.add(('dataIn', _hitPortPos(node, isOutput: false, isControl: false)));
+      if (node.type != PipelineStepType.start) {
+        candidates.add(('statusOut', _hitPortPos(node, isOutput: true, isControl: true)));
+        candidates.add(('enableIn', _hitPortPos(node, isOutput: false, isControl: true)));
+      }
+    }
+    var best = '';
+    var bestDist = double.infinity;
+    for (final c in candidates) {
+      final d = (c.$2 - pos).distance;
+      if (d < bestDist) { bestDist = d; best = c.$1; }
+    }
+    const portThreshold = 14.0;
+    return bestDist <= portThreshold ? best : null;
+  }
+
+  /// [FIX M-20] 由源端口与目标端口类型共同决定连线方向与 kind，复用 _addConnection 的建连校验语义。
+  /// 仅「控制输出→控制输入」「数据输出→数据输入」合法；其余组合（如状态端口→数据输入）返回 null 取消建连。
+  (String, String, String)? _resolveConnectionKind(String srcPort, String tgtPort, String srcId, String tgtId) {
+    final isControlOut = srcPort == 'statusOut' || srcPort == 'gateOut';
+    final isControlIn = srcPort == 'enableIn' || srcPort == 'gateIn';
+    final tgtControlOut = tgtPort == 'statusOut' || tgtPort == 'gateOut';
+    final tgtControlIn = tgtPort == 'enableIn' || tgtPort == 'gateIn';
+    if (isControlOut && tgtControlIn) return (srcId, tgtId, 'control');
+    if (isControlIn && tgtControlOut) return (tgtId, srcId, 'control');
+    if (srcPort == 'dataOut' && tgtPort == 'dataIn') return (srcId, tgtId, 'data');
+    if (srcPort == 'dataIn' && tgtPort == 'dataOut') return (tgtId, srcId, 'data');
+    return null;
   }
 
   Widget _buildNodeWidget(PipelineNode node, ColorScheme scheme, AppStrings s) {
@@ -4496,10 +4588,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             }),
             const SizedBox(width: 2),
             _logicIconBtn(Icons.close, () {
-              _pushUndo();
+              _pushUndo(); // [FIX S-1] 真正删除逻辑块（此前只清选择态，块永久驻留落盘）
               setState(() {
+                _logicBlocks.removeWhere((b) => b.id == block.id);
                 if (_selectedLogicBlockId == block.id) _selectedLogicBlockId = null;
               });
+              _saveGraph(); // [FIX S-1] 与其它结构变更一致地落盘
             }),
           ]),
         ),

@@ -21,11 +21,16 @@ class NavGlassPal {
   final double op;
   final int primary;
   final int second;
+  /// 「设置 → 样式 → 玻璃底色遵循主题色」：玻璃 tint 用主题色而非 surface 灰。
+  /// 此前只有桌面端 GlassPanel 读它，移动端底栏/药丸完全不读 → 该开关在移动端
+  /// 表现为「无效」。这里纳入指纹并落到 tint 上（默认 false，观感不变）。
+  final bool follow;
   const NavGlassPal({
     required this.style,
     required this.op,
     required this.primary,
     required this.second,
+    required this.follow,
   });
 
   @override
@@ -34,10 +39,11 @@ class NavGlassPal {
       other.style == style &&
       other.op == op &&
       other.primary == primary &&
-      other.second == second;
+      other.second == second &&
+      other.follow == follow;
 
   @override
-  int get hashCode => Object.hash(style, op, primary, second);
+  int get hashCode => Object.hash(style, op, primary, second, follow);
 }
 
 /// 订阅玻璃渲染 + 主题色相关字段（不订阅日志/进度/任务等高频 notify）。
@@ -49,6 +55,7 @@ NavGlassPal navGlassPalOf(BuildContext context) =>
         op: c.cardOpacity,
         primary: c.themeColor,
         second: c.themeColor2,
+        follow: c.glassFollowTheme,
       );
     });
 
@@ -85,7 +92,7 @@ NavGlassLook navGlassLook(ColorScheme scheme, bool isDark, NavGlassPal pal) {
       ? scheme.primary
       : style == SurfaceStyle.gray
           ? scheme.surfaceContainerHigh
-          : scheme.surface;
+          : (pal.follow ? scheme.primary : scheme.surface);
   return NavGlassLook(
     style: style,
     solid: solid,
@@ -543,6 +550,7 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
                         selected: i == itemIdx,
                         selectedColor: selectedColor,
                         unselectedColor: unselectedColor,
+                        maxWidth: itemW,
                       ),
                     ),
                   ],
@@ -713,6 +721,11 @@ class _NavItem extends StatelessWidget {
   /// 图标/文字尺寸：主导航 60px 高用默认值，较矮的子页面切换栏可调小。
   final double iconSize;
   final double labelSize;
+  /// 可用宽度（= 父级 SizedBox 给出的 itemW）。
+  /// [FIX UI-文字缩放溢出] 把内容宽度钉死为 itemW，使 FittedBox(scaleDown)
+  /// 只做**纵向**缩放；否则 FittedBox 会以无界宽度测量子节点，长标签会从
+  /// 「省略号」变成「整体缩小」，破坏既有排版语义。
+  final double maxWidth;
 
   const _NavItem({
     required this.icon,
@@ -721,6 +734,7 @@ class _NavItem extends StatelessWidget {
     required this.selected,
     required this.selectedColor,
     required this.unselectedColor,
+    required this.maxWidth,
     this.iconSize = 27,
     this.labelSize = 9.0,
   });
@@ -729,39 +743,57 @@ class _NavItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = selected ? selectedColor : unselectedColor;
     // 纯展示：点按/拖动统一由父级 GestureDetector 处理，避免手势竞争。
+    //
+    // [FIX UI-文字缩放溢出] 原实现把 Column 直接放进 Row(crossAxisAlignment:
+    // stretch) 的**紧高度**约束里：图标 27 + 间距 1 + 文字 (labelSize ×
+    // textScale × height 1.1)。textScale 上限是 AppTextScale.maxScale = 2.6
+    // （系统字号 × 应用内字号，见 app.dart），此时内容高约 53.7px，而栏内可用
+    // 高度只有 60 - 上下 padding 8 = 52px（子页面切换栏更矮：54 - 8 = 46px，
+    // 溢出更早更明显）→ 必然抛「A RenderFlex overflowed by N pixels」并在
+    // debug 下画黄黑溢出条纹。现在外面套一层 FittedBox(scaleDown)：内容超高时
+    // 整体等比缩小到刚好放下；正常字号不会触发缩放（像素与改动前一致）。
+    // 宽度用 maxWidth 钉死为 itemW，保证 Text 仍在 itemW 内做 ellipsis，
+    // 而不是被无界测量后整体缩小。
     return Semantics(
       selected: selected,
       button: true,
       label: label,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          TweenAnimationBuilder<Color?>(
-            tween: ColorTween(end: color),
-            duration: const Duration(milliseconds: 220),
-            builder: (ctx, c, child) => Icon(
-              selected ? activeIcon : icon,
-              size: iconSize,
-              color: c,
-            ),
-          ),
-          const SizedBox(height: 1),
-          TweenAnimationBuilder<Color?>(
-            tween: ColorTween(end: color),
-            duration: const Duration(milliseconds: 220),
-            builder: (ctx, c, child) => Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: labelSize,
-                fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                color: c,
-                height: 1.1,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: SizedBox(
+          width: maxWidth,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              TweenAnimationBuilder<Color?>(
+                tween: ColorTween(end: color),
+                duration: const Duration(milliseconds: 220),
+                builder: (ctx, c, child) => Icon(
+                  selected ? activeIcon : icon,
+                  size: iconSize,
+                  color: c,
+                ),
               ),
-            ),
+              const SizedBox(height: 1),
+              TweenAnimationBuilder<Color?>(
+                tween: ColorTween(end: color),
+                duration: const Duration(milliseconds: 220),
+                builder: (ctx, c, child) => Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: labelSize,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                    color: c,
+                    height: 1.1,
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -874,6 +906,7 @@ class _MobileNavStyleTabBarState extends State<MobileNavStyleTabBar> {
                           selected: i == widget.selectedIndex,
                           selectedColor: look.selectedColor,
                           unselectedColor: look.unselectedColor,
+                          maxWidth: itemW,
                           iconSize: 21,
                           labelSize: 10,
                         ),

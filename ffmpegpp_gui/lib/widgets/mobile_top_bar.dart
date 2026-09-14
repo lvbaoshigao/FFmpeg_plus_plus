@@ -106,6 +106,18 @@ const Duration _overflowDuration = Duration(milliseconds: 200);
 /// 低于它标题就只剩省略号，此时宁可把操作收进「…」也不挤掉标题。
 const double _titlePillMinWidth = MobileUi.pillHeight * 2;
 
+/// 右半「行内直排操作」的最大数量：超过它就把操作全部收进「…」。
+///
+/// 用户规则（优先于宽度判定）：
+/// * 只有两个操作 → 左标题 / 右两操作，左右排布，直接平铺；
+/// * 多于两个 → 左半只保留一个药丸（存在返回按钮时优先保留返回按钮），
+///   右半只保留一颗「…」，其余操作收进浮层；点「…」后左半滑出隐藏、
+///   全部操作自右向左滑入，图标 … 变 →，再点收起。
+///
+/// 宽度判定依然保留（作为兜底）：极窄屏 / 超长标题时即使只有两个操作，
+/// 也会收进「…」，避免标题被挤成一个省略号。
+const int _maxInlineActions = 2;
+
 /// 估算单个操作控件的自然宽度，供溢出判定使用。
 ///
 /// 为什么是「估算」而不是真测量：顶栏必须在自己的 build 阶段就决定
@@ -268,8 +280,13 @@ class _MobilePillBarLayoutState extends State<MobilePillBarLayout>
       );
 
   /// 真实可用宽度是否容不下全部操作（= 是否要把操作收进「…」）。
+  ///
+  /// 判定顺序：
+  ///  1. 条数规则（用户要求，优先）：操作多于 [._maxInlineActions] 个 → 收起；
+  ///  2. 宽度兜底：即使只有 1~2 个操作，窄屏 + 长标题下也收起，保证标题可读。
   bool _needsOverflow(double availableWidth) {
     if (widget.actions.isEmpty || !availableWidth.isFinite) return false;
+    if (widget.actions.length > _maxInlineActions) return true;
     final actionsWidth = MobileUi.actionsPillPadH * 2 +
         widget.actions.fold<double>(0, (sum, a) => sum + _estimateActionWidth(a));
     final leadingMin = _titlePillMinWidth +

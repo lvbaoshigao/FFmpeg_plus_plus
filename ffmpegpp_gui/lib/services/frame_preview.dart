@@ -43,11 +43,14 @@ class FramePreview {
   }) async {
     // 用视频绝对路径 + 宽度作为稳定 key，避免 hashCode 碰撞
     final stableKey = videoPath.replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '_');
+    // [FIX L-5] 时间戳左补零到固定 12 位：保证文件名字典序 == 数值序，
+    // 清理旧预览时按字符串排序即等于按时间排序（否则 "100" 会排在 "90" 之前）。
+    final timePart = (timeSeconds * 10).round().toString().padLeft(12, '0');
     final key = [
       'ffmpegpp_$prefix',
       stableKey,
       ?width,
-      (timeSeconds * 10).round(),
+      timePart,
     ].join('_');
     final tmpPath = '${Directory.systemTemp.path}${Platform.pathSeparator}$key.jpg';
 

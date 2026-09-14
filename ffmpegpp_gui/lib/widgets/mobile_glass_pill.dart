@@ -123,11 +123,15 @@ class _PillGlassKey {
   final double op;
   final int primary;
   final int second;
+  /// 「设置 → 样式 → 玻璃底色遵循主题色」：玻璃 tint 用主题色而非 surface 灰
+  /// （此前只有桌面端 GlassPanel 读它，移动端药丸不读 → 开关表现为「无效」）。
+  final bool follow;
   const _PillGlassKey({
     required this.style,
     required this.op,
     required this.primary,
     required this.second,
+    required this.follow,
   });
 
   @override
@@ -136,10 +140,11 @@ class _PillGlassKey {
       other.style == style &&
       other.op == op &&
       other.primary == primary &&
-      other.second == second;
+      other.second == second &&
+      other.follow == follow;
 
   @override
-  int get hashCode => Object.hash(style, op, primary, second);
+  int get hashCode => Object.hash(style, op, primary, second, follow);
 }
 
 class _MobileGlassPillState extends State<MobileGlassPill> {
@@ -170,6 +175,7 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
       op: cfg.cardOpacity,
       primary: cfg.themeColor,
       second: cfg.themeColor2,
+      follow: cfg.glassFollowTheme,
     );
   }
 
@@ -193,7 +199,8 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
         ? scheme.primary
         : style == SurfaceStyle.gray
             ? scheme.surfaceContainerHigh
-            : scheme.surface;
+            // 「玻璃底色遵循主题色」：玻璃样式（liquid/blur）的 tint 用主题色
+            : (key.follow ? scheme.primary : scheme.surface);
     final tint = baseColor.withAlpha(baseAlpha);
 
     // 关键修复：liquid 模式下 OCLiquidGlass 自身已经接收 color=tint 作为

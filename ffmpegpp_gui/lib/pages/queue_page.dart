@@ -262,7 +262,12 @@ class _MonitorWidgetState extends State<_MonitorWidget> {
     super.initState();
     _refreshTimer = Timer.periodic(const Duration(seconds: 2), (_) {
       if (!mounted) return;
-      if (_snapshot() != _lastSnapshot) setState(() {});
+      final snap = _snapshot();
+      // [FIX L-13] 在状态变化时更新快照并触发重建，移出 build() 避免 build 副作用
+      if (snap != _lastSnapshot) {
+        _lastSnapshot = snap;
+        setState(() {});
+      }
     });
   }
 
@@ -281,7 +286,6 @@ class _MonitorWidgetState extends State<_MonitorWidget> {
 
   @override
   Widget build(BuildContext context) {
-    _lastSnapshot = _snapshot(); // 记录本次已渲染的数值
     final m = widget.monitor;
     final sc = widget.scheme;
     // 紧凑小尺寸：仅图标 + 数值，适合放在顶栏右侧

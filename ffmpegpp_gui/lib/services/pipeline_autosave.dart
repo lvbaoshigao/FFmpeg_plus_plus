@@ -72,9 +72,6 @@ class PipelineAutosave {
     }
   }
 
-  /// 判断是否存在草稿（比"有无文件"更精确：存在且可正常解析才算有草稿）。
-  static Future<bool> hasDraft(String key) async => (await load(key)) != null;
-
   /// 清除（成功保存后调用）草稿。
   static Future<void> clear(String key) async {
     try {

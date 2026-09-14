@@ -41,7 +41,20 @@ static std::string resolvePixFmt(const std::string& encoder, const std::string& 
         return "yuv420p";
     }
 
-    // 其他编码器：默认 8-bit
+    // [FIX M-19] 其他编码器：按编码器特性选择像素格式，不再一刀切强制 yuv420p。
+    // ProRes 标准 4:2:2；10-bit 源保留位深。
+    if (encoder == "prores_ks") {
+        return is10bit ? "yuv422p10le" : "yuv422p";
+    }
+    // FFV1 无损：保留源位深与色度（10-bit 源用 yuv420p10le，否则 8-bit）。
+    if (encoder == "ffv1") {
+        if (input_pix_fmt.find("422") != std::string::npos)
+            return is10bit ? "yuv422p10le" : "yuv422p";
+        if (input_pix_fmt.find("444") != std::string::npos)
+            return is10bit ? "yuv444p10le" : "yuv444p";
+        return is10bit ? "yuv420p10le" : "yuv420p";
+    }
+    // 其余（mpeg4 / vp9 / av1 等）保持原 8-bit 默认
     return "yuv420p";
 }
 

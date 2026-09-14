@@ -10,6 +10,9 @@
 namespace ffmpegpp {
 
 namespace {
+// [FIX M-18] 非法颜色（长度非 6/8 位）时的安全默认 ASS 颜色（白色）
+static const std::string kDefaultAssColor = "&HFFFFFF&";
+
 std::string escapeFilterPath(const std::string& filepath) {
     std::string p = filepath;
 #ifdef _WIN32
@@ -32,20 +35,20 @@ std::string escapeFilterPath(const std::string& filepath) {
 std::string hexToASS(const std::string& hex) {
     std::string h = hex;
     if (!h.empty() && h[0] == '#') h = h.substr(1);
-    // 严格验证：只允许十六进制字符
+    // 严格验证：只允许十六进制字符（保留原校验，非法字符仍抛异常由上层转为错误）
     for (char c : h) {
         if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')))
             throw std::runtime_error("颜色值包含非法字符");
     }
+    // [FIX M-18] 只接受 6/8 位十六进制颜色，非法长度（含原 size()>8 丢弃中间字符、
+    // 或 <6 产出非法 ASS）一律返回安全默认色，避免产出非法 ASS 导致滤镜解析失败。
+    if (h.size() != 6 && h.size() != 8) return kDefaultAssColor;
     // 8 位 ARGB(#AARRGGBB) → ASS &HAABBGGRR&：高位 alpha，之后 B、G、R
-    if (h.size() >= 8) {
+    if (h.size() == 8) {
         return "&H" + h.substr(0, 2) + h.substr(6, 2) + h.substr(4, 2) + h.substr(2, 2) + "&";
     }
     // 6 位 RGB → ASS BGR 格式 (&HBBGGRR&)
-    if (h.size() >= 6) {
-        return "&H" + h.substr(4, 2) + h.substr(2, 2) + h.substr(0, 2) + "&";
-    }
-    return "&H" + h + "&";
+    return "&H" + h.substr(4, 2) + h.substr(2, 2) + h.substr(0, 2) + "&";
 }
 } // namespace
 

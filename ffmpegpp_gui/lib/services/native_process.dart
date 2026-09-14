@@ -13,6 +13,9 @@ class NativeProcessManager {
   final _errorController = StreamController<String>.broadcast();
   final _pendingCompleters = <String, Completer<Map<String, dynamic>>>{};
   int _reqCounter = 0;
+  // [FIX M-2] 析构标志：置位后所有 Stream add 与轮询回调静默跳过，避免关闭
+  // Controller 后继续 add 抛 StateError（Controller closed）。
+  bool _disposed = false;
 
   Map<String, dynamic>? _cachedReady;
   Completer<Map<String, dynamic>>? _readyCompleter;
@@ -46,14 +49,16 @@ class NativeProcessManager {
       _startPolling();
     } catch (e) {
       debugPrint('[DLL] LOAD ERROR: $e');
-      _errorController.add('DLL load error: $e');
+      // [FIX M-2] 析构后不要对已关闭的 Controller 调 add
+      if (!_errorController.isClosed) _errorController.add('DLL load error: $e');
       _bridge = null;
     }
   }
 
   void _startPolling() {
     _pollTimer = Timer.periodic(const Duration(milliseconds: 16), (_) {
-      if (_bridge == null) return;
+      // [FIX M-2] 析构后不再轮询，避免回调对已关闭的 Controller 调 add
+      if (_disposed || _bridge == null) return;
       int count = 0;
       while (count < 100) {
         final line = _bridge!.poll();
@@ -65,7 +70,8 @@ class NativeProcessManager {
   }
 
   void _handleLine(String line) {
-    if (line.isEmpty) return;
+    // [FIX M-2] 析构后丢弃后续行，避免对已关闭的 Controller 调 add
+    if (_disposed || line.isEmpty) return;
     try {
       final obj = jsonDecode(line) as Map<String, dynamic>;
       if (obj.containsKey('type')) {
@@ -75,7 +81,8 @@ class NativeProcessManager {
             _readyCompleter!.complete(obj);
           }
         }
-        _responseController.add(obj);
+        // [FIX M-2] 关闭后仍可能进入，先判 isClosed 再 add
+        if (!_responseController.isClosed) _responseController.add(obj);
       }
       // 响应可能同时带 'id' 与 'type'：只要有 String id 就完成挂起的请求，
       // 两条分支非互斥，避免带 id 的响应永远不被消费导致 Future 挂起。
@@ -85,7 +92,14 @@ class NativeProcessManager {
         if (completer != null) completer.complete(obj);
       }
     } catch (e) {
-      _errorController.add('parse error: $e');
+      // [FIX M-2] 关闭后不要对已关闭的 Controller 调 add
+      if (!_errorController.isClosed) _errorController.add('parse error: $e');
+      // [FIX S-2] 解析失败时兜底完成对应 completer，避免长任务 Future 永久挂起
+      final m = RegExp(r'"id"\s*:\s*"([^"]+)"').firstMatch(line);
+      final c = m == null ? null : _pendingCompleters.remove(m.group(1));
+      if (c != null && !c.isCompleted) {
+        c.complete({'success': false, 'error': '响应解析失败（后端返回的 JSON 不完整）'});
+      }
     }
   }
 
@@ -153,14 +167,15 @@ class NativeProcessManager {
 
   /// 后端关闭/销毁时完成所有挂起请求，防止调用方 Future 永久挂起
   /// （transcode 等长任务请求无超时，若后端崩溃且无人 complete，会一直悬着）。
+  // [FIX M-1] 失败所有挂起请求时把 id 一并写进响应，调用方可用 resp['id'] 关联任务
   void _failAllPending(String error) {
-    final pending = _pendingCompleters.values.toList();
+    final pending = Map<String, Completer<Map<String, dynamic>>>.from(_pendingCompleters);
     _pendingCompleters.clear();
-    for (final c in pending) {
+    pending.forEach((id, c) {
       if (!c.isCompleted) {
-        c.complete({'success': false, 'error': error});
+        c.complete({'id': id, 'success': false, 'error': error});
       }
-    }
+    });
   }
 
   Future<void> shutdown() async {
@@ -176,10 +191,19 @@ class NativeProcessManager {
   }
 
   void dispose() {
+    // [FIX M-2] 先置析构标志并取消轮询 Timer，再关闭流控制器；不 await 异步
+    // shutdown（dispose 同步），但各 add 点已被 _disposed / isClosed 守卫，
+    // 末尾到达的 poll 回调不会再对已关闭的 Controller 调 add 而抛 StateError。
+    _disposed = true;
     _pollTimer?.cancel();
     _pollTimer = null;
     _failAllPending('后端已销毁');
-    shutdown().ignore();
+    if (_bridge != null) {
+      try {
+        _bridge!.shutdown(); // 触发原生后端关闭（同步）
+      } catch (_) {}
+      _bridge = null;
+    }
     if (!_responseController.isClosed) _responseController.close();
     if (!_errorController.isClosed) _errorController.close();
   }

@@ -315,13 +315,19 @@ bool parseNodeGraph(const std::vector<uint8_t>& payload, bool force, Fppx2Result
         for (int b = 0; b < FPPX2_CONN_BLOCK_COUNT; ++b) {
             uint32_t bs = rd.u32();
             uint32_t k = rd.u32();
-            if (!rd.ok() || bs < 4 + 4 * k) {
+            // [FIX M-17] 用 64 位计算 4 + 4*k，防止 uint32 回绕绕过校验；限制条目数上限
+            // 防 OOM；并要求 peer 表大小不超过声明块大小与实际剩余可读字节。
+            constexpr uint32_t kMaxConnections = 1u << 20;
+            const uint64_t need = 4ull + 4ull * static_cast<uint64_t>(k);
+            if (!rd.ok() || k > kMaxConnections ||
+                need > static_cast<uint64_t>(bs) ||
+                need > static_cast<uint64_t>(rd.remaining())) {
                 r.errors.push_back("连线块大小异常（节点 " + std::to_string(fid) + "）");
                 return false;
             }
-            if (bs > 4 + 4 * k)
+            if (bs > need)
                 r.warnings.push_back("连线块含未知扩展数据（" +
-                                     std::to_string(bs - 4 - 4 * k) + " 字节），已跳过");
+                                     std::to_string(bs - static_cast<uint32_t>(need)) + " 字节），已跳过");
             for (uint32_t p = 0; p < k; ++p) {
                 uint32_t peer = rd.u32();
                 if (peer >= n) {
@@ -331,7 +337,7 @@ bool parseNodeGraph(const std::vector<uint8_t>& payload, bool force, Fppx2Result
                 }
                 blocks[i][b].push_back(static_cast<int>(peer));
             }
-            rd.skip(bs - 4 - 4 * k);
+            rd.skip(bs - static_cast<uint32_t>(need));
         }
 
         // 属性区

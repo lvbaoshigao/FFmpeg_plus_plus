@@ -120,8 +120,17 @@ class QuickConfig {
       description: json['description'] as String? ?? '',
       createdAt: created ?? DateTime.now(),
       updatedAt: updated ?? DateTime.now(),
+      // [FIX L-7] 过滤非 Map 元素，并对单条坏元素 try/catch 跳过，坏一条不影响其余
       items: (json['items'] as List?)
-              ?.map((e) => QuickConfigItem.fromJson(e as Map<String, dynamic>))
+              ?.whereType<Map>()
+              .map((e) {
+                try {
+                  return QuickConfigItem.fromJson(e as Map<String, dynamic>);
+                } catch (_) {
+                  return null; // 单条解析失败：跳过而非整份配置崩溃
+                }
+              })
+              .whereType<QuickConfigItem>()
               .toList() ??
           [],
     );

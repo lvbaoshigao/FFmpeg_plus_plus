@@ -84,6 +84,17 @@ class ConfigService {
   void dispose() {
     _saveTimer?.cancel();
     _saveTimer = null;
+    // [FIX L-6] 退出时确保最后一次落盘不被取消：若仍有未落盘的修改（防抖尚未
+    // 触发的 save），先触发一次 save() 产生写盘 Future；再保留正在进行的写盘
+    // Future（不主动取消），并在协程中吞掉异常。dispose 是同步的，无法 await。
+    if (_dirty) {
+      _saveInFlight = save(); // save() 内部会串行等待前一次写盘
+    }
+    final inFlight = _saveInFlight;
+    if (inFlight != null) {
+      unawaited(inFlight.catchError((_) {}));
+    }
+    _saveInFlight = null;
   }
 
   // --- Config Library persistence ---

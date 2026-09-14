@@ -27,11 +27,21 @@ class _CardGlassKey {
   final double op;
   final int primary;
   final int second;
+  /// 「样式 → 设置项以毛玻璃展示」（液体玻璃改用扁平高斯模糊）
+  final bool frosted;
+  /// 「样式 → 不使用卡片玻璃效果」（卡片退回主题色实心）
+  final bool noGlass;
+  /// 「样式 → 玻璃底色遵循主题色」（玻璃 tint 用主题色而非 surface 灰）
+  final bool follow;
+
   const _CardGlassKey({
     required this.style,
     required this.op,
     required this.primary,
     required this.second,
+    required this.frosted,
+    required this.noGlass,
+    required this.follow,
   });
 
   @override
@@ -40,10 +50,14 @@ class _CardGlassKey {
       other.style == style &&
       other.op == op &&
       other.primary == primary &&
-      other.second == second;
+      other.second == second &&
+      other.frosted == frosted &&
+      other.noGlass == noGlass &&
+      other.follow == follow;
 
   @override
-  int get hashCode => Object.hash(style, op, primary, second);
+  int get hashCode =>
+      Object.hash(style, op, primary, second, frosted, noGlass, follow);
 }
 
 /// 应用统一卡片容器 —— 接管「设置 / 项目 / 处理队列 / 配置库」的卡片样式。
@@ -94,6 +108,9 @@ class _AppCardState extends State<AppCard> {
       op: c.cardOpacity,
       primary: c.themeColor,
       second: c.themeColor2,
+      frosted: c.settingsFrostedGlass,
+      noGlass: c.noCardGlass,
+      follow: c.glassFollowTheme,
     );
   }
 
@@ -123,7 +140,23 @@ class _AppCardState extends State<AppCard> {
     final themeGrad = key.second >= 0
         ? <Color>[Color(key.primary), Color(key.second)]
         : null;
-    final grad = style == SurfaceStyle.theme ? themeGrad : null;
+    // ── 「设置 → 样式」里三个玻璃开关在本组件内的落地（见下方分支）──
+    // 它们此前只被桌面端的 GlassPanel 读取，移动端卡片完全不读 → 用户反馈
+    // 「设置-样式 里的开关按了没反应」。这里把语义接上：
+    //  * noGlass   「不使用卡片玻璃效果」→ 玻璃样式（liquid/blur）退回主题色实心；
+    //  * frosted   「设置项以毛玻璃展示」→ 液态玻璃改用扁平高斯模糊（走 blur 分支）；
+    //  * follow    「玻璃底色遵循主题色」→ 玻璃 tint/gradient 用主题色而非 surface 灰。
+    // 三者默认都是 false，因此默认观感与改动前逐像素一致。
+    final bool glassStyle =
+        style == SurfaceStyle.liquid || style == SurfaceStyle.blur;
+    final bool solidStyle = !glassStyle || key.noGlass;
+    // 纯色分支的底色：gray 恒为容器灰；theme 与「关了玻璃的玻璃卡」用主题色。
+    final Color solidBase =
+        style == SurfaceStyle.gray ? scheme.surfaceContainerHigh : scheme.primary;
+    // 纯色分支的渐变：仅主题色纯色卡（含关玻璃后的卡）才带主题渐变，灰色恒纯灰。
+    final grad = solidStyle && style != SurfaceStyle.gray ? themeGrad : null;
+    // 玻璃 tint 的基色（follow 时用主题色）。
+    final Color glassBase = key.follow ? scheme.primary : scheme.surface;
     // 卡片内放一层透明 Material 作为 ink 宿主：纯色/模糊表面有背景色，
     // 内部 ListTile/SwitchListTile 的水波纹与选中底色必须画在「卡片之上」
     // 才会可见（否则画在页面 Material 上被卡片背景遮住，并触发
@@ -131,10 +164,10 @@ class _AppCardState extends State<AppCard> {
     final inner = Material(type: MaterialType.transparency, child: widget.child);
 
     Widget core;
-    if (style == SurfaceStyle.theme || style == SurfaceStyle.gray) {
+    if (solidStyle) {
       // 纯色卡片：强制完全不透明（255）。此前 alpha 跟随 cardOpacity（保底 ~88%），
       // 用户反馈「纯色模式下卡片仍然有透明度」——纯色语义就是实心，不再透底。
-      final base = style == SurfaceStyle.theme ? scheme.primary : scheme.surfaceContainerHigh;
+      final base = solidBase;
       const int alpha = 255;
       core = RepaintBoundary(
         child: Container(
@@ -157,7 +190,9 @@ class _AppCardState extends State<AppCard> {
           child: inner,
         ),
       );
-    } else if (style == SurfaceStyle.blur) {
+    } else if (style == SurfaceStyle.blur || key.frosted) {
+      // 扁平高斯模糊：卡片样式为「模糊」，或用户开启「设置项以毛玻璃展示」
+      // （后者把「液态玻璃」也改成扁平模糊，长列表更易读）。
       final alpha = ((isDark ? 110.0 : 130.0) * op).round().clamp(0, 255);
       // σ = 16（固定基准值）：Windows 上再被 effectiveGlassSigma 钳到 ≤12，
       // 兼顾模糊观感与离屏纹理内存（见该函数注释）
@@ -171,7 +206,7 @@ class _AppCardState extends State<AppCard> {
               padding: widget.padding,
               decoration: BoxDecoration(
                 borderRadius: br,
-                color: scheme.surface.withAlpha(alpha),
+                color: glassBase.withAlpha(alpha),
                 border: Border.all(color: scheme.outlineVariant.withAlpha(isDark ? 60 : 80), width: 0.6),
               ),
             child: inner,
@@ -186,7 +221,8 @@ class _AppCardState extends State<AppCard> {
       // Impeller 不可用时（Windows 默认 Skia，部分安卓低端机也回退 Skia）同样
       // 落入回退，避免 shader backdrop 被整体跳过、玻璃整块消失。
       // OCLiquidGlass 自身接收 color=tint；inner 只保留边框，避免双重染色。
-      final tint = scheme.surface.withAlpha((op * 255).round().clamp(0, 255));
+      // tint 基色随「玻璃底色遵循主题色」切换（glassBase）。
+      final tint = glassBase.withAlpha((op * 255).round().clamp(0, 255));
       final glassKey = ValueKey<_CardGlassKey>(key);
       final innerKey = ValueKey<String>('${key.hashCode}_appcard_inner');
       core = RepaintBoundary(
@@ -248,9 +284,9 @@ class _AppCardState extends State<AppCard> {
                             Color.lerp(themeGrad.last, Colors.black, 0.15)!.withAlpha(alphaBot),
                           ]
                         : [
-                            scheme.surface.withAlpha(alphaTop),
-                            scheme.surface.withAlpha((alphaTop + alphaBot) ~/ 2),
-                            scheme.surface.withAlpha(alphaBot),
+                            glassBase.withAlpha(alphaTop),
+                            glassBase.withAlpha((alphaTop + alphaBot) ~/ 2),
+                            glassBase.withAlpha(alphaBot),
                           ],
                     stops: themeGrad == null ? const [0.0, 0.55, 1.0] : null,
                   )

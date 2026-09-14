@@ -95,7 +95,9 @@ class AppStrings {
   String get themeDynamicOn => lang == 'zh' ? '动态取色已开启，自定义主题色不生效' : 'Dynamic color active — custom colors are ignored';
   String get styleLabel => lang == 'zh' ? '样式' : 'Style';
   String get cardStyleScope => lang == 'zh' ? '作用于 设置 / 项目 / 处理队列 / 配置库 的卡片' : 'Applies to cards in Settings, Projects, Queue and Config Library';
-  String get surfaceStyleTheme => lang == 'zh' ? '跟随主题色（纯色）' : 'Follow theme (solid)';
+  // 触发按钮宽度有限（见 settings_page 的 _kMenuWidth）：这里保持 5 个汉字
+  // 以内，保证下拉框内当前值完整显示不被截断（「纯色」语义由图标与说明承担）。
+  String get surfaceStyleTheme => lang == 'zh' ? '跟随主题色' : 'Follow theme';
   String get surfaceStyleLiquid => lang == 'zh' ? '液态玻璃' : 'Liquid glass';
   String get surfaceStyleGray => lang == 'zh' ? '灰色' : 'Gray';
   String get navStyleLabel => lang == 'zh' ? '底部菜单栏样式' : 'Bottom nav style';

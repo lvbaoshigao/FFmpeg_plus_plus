@@ -55,6 +55,15 @@ class QuickConfigStorage {
         if (entity is! File || !entity.path.endsWith('.fppq.json')) continue;
         try {
           final json = jsonDecode(await entity.readAsString()) as Map<String, dynamic>;
+          // [FIX L-8] 以文件名为权威 id 来源：文件名去掉扩展名即 id。
+          // 文件内容里的 id 若被篡改，统一以文件名为准，避免 save 写到别的文件
+          // 产生孤儿文件 + 列表重复项；保证「加载 → 再保存」写回同一文件。
+          final name = entity.path.split(_sep).last;
+          final fileNameId = name.substring(0, name.length - '.fppq.json'.length);
+          if (json['id'] != fileNameId) {
+            // 内容 id 与文件名不一致：以文件名为准（调试期可观察该告警）。
+            json['id'] = fileNameId;
+          }
           final cfg = QuickConfig.fromJson(json);
           if (type == null || cfg.fileType == type) result.add(cfg);
         } catch (_) {}

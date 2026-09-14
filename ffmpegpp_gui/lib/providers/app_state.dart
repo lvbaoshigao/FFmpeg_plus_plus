@@ -20,8 +20,25 @@ class AppState extends ChangeNotifier {
   /// 否则同一毫秒内多次实例化会因时间种子相同而退化为固定偏移的伪随机序列。
   static final Random _rng = Random();
   final NativeProcessManager pythonProcess = NativeProcessManager();
-  late final BackendClient backend = BackendClient(pythonProcess);
+  late final BackendClient backend = _createBackend();
   final ConfigService configService = ConfigService();
+
+  /// [FIX audit] 后端的滤镜安全审计告警此前无人消费、被静默丢弃：
+  /// handleTranscode / handleSubtitle 在启动 ffmpeg 之前会先发
+  /// `{"type":"audit","warnings":[...]}`（见 json_io.cpp 的 JsonWriter::audit），
+  /// 但 `BackendClient.auditStream` 在本项目里零监听者，用户永远看不到
+  /// 「输出文件与输入相同，会覆盖源文件」这类告警。这里把它接进日志。
+  StreamSubscription<List<String>>? _auditSub;
+  BackendClient _createBackend() {
+    final client = BackendClient(pythonProcess);
+    _auditSub = client.auditStream.listen((warnings) {
+      for (final w in warnings) {
+        // audit.cpp 用 ERROR:/WARNING: 前缀区分严重程度
+        addLog(w, category: w.startsWith('ERROR') ? 'error' : 'warn');
+      }
+    });
+    return client;
+  }
 
   void Function(String filename, TaskStatus status)? onTaskFinished;
 
@@ -61,6 +78,10 @@ class AppState extends ChangeNotifier {
   // 取消标记：cancelProcessing 置位后，正在途中的任务完成/失败回调不得覆盖
   // cancelled 状态，processNextTask 也不得继续拉取 pending 任务。
   bool _cancelRequested = false;
+  // [FIX H-3/H-8] 调度批次计数：startAll/processSingleTask 自增，收尾续体比对
+  // 本批次编号决定是否继续拉取；「停止所有」(cancelProcessing) 与「单任务取消」
+  // (cancelTask) 用此区分，避免二者状态语义互相污染。
+  int _runGeneration = 0;
   // 单个任务取消：cancelTask 只取消指定任务（不触碰全局 _cancelRequested），
   // 多任务并发时其余任务继续执行。
   final Set<String> _cancelledTaskIds = {};
@@ -77,6 +98,17 @@ class AppState extends ChangeNotifier {
   /// 任务列表内容变化后调用：版本号 +1 并通知 UI。
   void _tasksNotify() {
     _tasksVersion++;
+    notifyListeners();
+  }
+
+  // ── 释放守卫（S-6）──
+  // dispose() 只能 cancel 尚未触发的 Timer，无法撤销已进入微任务/定时器队列
+  // 的回调；而 addLog 由 AI 流式响应 / stderr 监听驱动，页面销毁后仍会被调用。
+  // 所有延迟路径（Timer 回调、scheduleMicrotask、Future.then 续体）改用
+  // _safeNotify，释放后直接短路，避免「dispose 后 notify」的静默丢通知/断言崩溃。
+  bool _disposed = false;
+  void _safeNotify() {
+    if (_disposed) return;
     notifyListeners();
   }
 
@@ -112,7 +144,7 @@ class AppState extends ChangeNotifier {
     }
     if (changed) {
       _tasksVersion++;
-      notifyListeners();
+      _safeNotify(); // [FIX S-6] dispose 后短路
     }
   }
 
@@ -120,6 +152,8 @@ class AppState extends ChangeNotifier {
   final List<LogEntry> _logEntries = [];
   // 日志内存上限：长任务期间 stderr 逐行入队会无界增长，超出后丢弃最旧
   static const int _maxLogEntries = 2000;
+  // L-11：单日志文件磁盘上限，超出轮转到 .1 备份，避免写盘无界增长
+  static const int _maxLogDiskBytes = 10 * 1024 * 1024;
   bool _logNotifyPending = false;
   // 日志版本号：每次日志内容变化时自增。日志页用 Selector 订阅该计数
   // 而非整个 AppState，避免无关的进度心跳/任务更新触发日志页重建。
@@ -129,31 +163,39 @@ class AppState extends ChangeNotifier {
   Timer? _progressLogNotifyTimer;
   // 日志目录探测缓存（避免每条日志同步 existsSync/createSync）
   String? _logDirReadyFor;
+  // L-11：stderr 进度行节流时间戳（避免高频 time= 行让日志/通知无界增长）
+  DateTime? _lastStderrProgressAt;
   // UnmodifiableListView 是零拷贝视图（List.unmodifiable 每次都会构造新列表），
   // 避免每次 build 读取都分配一个包装列表；调用方只读，不缓存引用。
   List<LogEntry> get logEntries => UnmodifiableListView(_logEntries);
   void addLog(String message, {String category = 'general'}) {
-    // 调试模式关闭时，仅保留 error 和 progress 类日志（不主动记录非关键日志）
-    if (!config.debugMode && category != 'error' && category != 'progress') return;
+    // M-12：统一 category 大小写并归并 warn/warning 两种拼写（项目内混用），
+    // 否则关键失败日志（'warn'）因不在白名单被静默丢弃。
+    final String cat;
+    final raw = category.toLowerCase();
+    cat = raw == 'warning' ? 'warn' : raw;
+    // 调试模式关闭时，仅保留 error / progress / warn 类关键日志（不记录一般日志）
+    if (!config.debugMode && cat != 'error' && cat != 'progress' && cat != 'warn') return;
 
-    _logEntries.add(LogEntry(timestamp: DateTime.now(), message: message, category: category));
+    _logEntries.add(LogEntry(timestamp: DateTime.now(), message: message, category: cat));
     _logVersion++;
     if (_logEntries.length > _maxLogEntries) {
       _logEntries.removeRange(0, _logEntries.length - _maxLogEntries);
     }
-    if (config.saveLogs && config.logSavePath.isNotEmpty) {
-      _writeLogToFile(message, category);
+    // L-11：progress 类日志不写盘（高频、纯进度，无价值且会让日志文件无界膨胀）
+    if (config.saveLogs && config.logSavePath.isNotEmpty && cat != 'progress') {
+      _writeLogToFile(message, cat);
     }
     // Progress logs need near-real-time UI updates, but ffmpeg 进度行每秒
     // 数次（本地任务 stderr 每行都进这里）。逐条 notify 会让整棵订阅树
     // （项目页/设置页的 Consumer）以 4~10Hz 全量重建。改为 400ms 合批：
     // 日志页观感上仍是实时的，重建频率降到 2.5Hz 封顶。
-    if (category == 'progress') {
+    if (cat == 'progress') {
       _progressLogNotifyTimer?.cancel();
       _progressLogNotifyTimer =
           Timer(const Duration(milliseconds: 400), () {
         _progressLogNotifyTimer = null;
-        notifyListeners();
+        _safeNotify(); // [FIX S-6] dispose 后短路
       });
       return;
     }
@@ -162,7 +204,7 @@ class AppState extends ChangeNotifier {
       _logNotifyPending = true;
       scheduleMicrotask(() {
         _logNotifyPending = false;
-        notifyListeners();
+        _safeNotify(); // [FIX S-6] dispose 后短路
       });
     }
   }
@@ -185,6 +227,17 @@ class AppState extends ChangeNotifier {
       // 原 writeAsStringSync 每次打开-写入-关闭阻塞 UI；改为异步串行追加
       _logWriteInFlight = (_logWriteInFlight ?? Future<void>.value()).then((_) async {
         try {
+          // L-11：磁盘日志上限，超出则轮转到 .1 备份，避免写盘无界增长
+          if (await file.exists()) {
+            final size = await file.length();
+            if (size > _maxLogDiskBytes) {
+              final rotated = File('${file.path}.1');
+              try {
+                if (await rotated.exists()) await rotated.delete();
+                await file.rename(rotated.path);
+              } catch (_) {}
+            }
+          }
           await file.writeAsString(line, mode: FileMode.append);
         } catch (_) {}
       });
@@ -192,26 +245,6 @@ class AppState extends ChangeNotifier {
       // 目录创建失败等：重置缓存，下次重试
       _logDirReadyFor = null;
     }
-  }
-
-  // ── FFmpeg features ──
-  Map<String, List<String>> _ffmpegFeatures = {};
-  Map<String, List<String>> get ffmpegFeatures => _ffmpegFeatures;
-  Future<void> queryFeatures() async {
-    addLog('正在查询 FFmpeg 支持的功能...', category: 'info');
-    final resp = await backend.queryFeatures();
-    if (resp['success'] == true) {
-      final data = resp['data'];
-      if (data is Map<String, dynamic>) {
-        _ffmpegFeatures = data.map((k, v) => MapEntry(k, v is List ? v.whereType<String>().toList() : const <String>[]));
-        addLog('功能查询完成: ${_ffmpegFeatures.keys.join(', ')}', category: 'info');
-      } else {
-        addLog('功能查询失败: 返回数据格式异常', category: 'error');
-      }
-    } else {
-      addLog('功能查询失败: ${resp['error']}', category: 'error');
-    }
-    notifyListeners();
   }
 
   AppConfig get config => configService.config;
@@ -249,8 +282,8 @@ class AppState extends ChangeNotifier {
       debugPrint('[init] 6-ERROR: $e');
       _envOk = false; _initialized = true; notifyListeners(); return;
     }
-    _envOk = false;
-    notifyListeners();
+    // L-10：此处 env 尚未确知，recheckEnv() 会在结果确定后置真值并通知；
+    // 不再抢先置 false 并 notify，避免启动瞬间 UI 闪一下「环境异常」。
     debugPrint('[init] 7-setup log listeners');
     _setupLogListeners();
     if (isAndroidPlatform) {
@@ -463,7 +496,13 @@ class AppState extends ChangeNotifier {
       final timeMatch = _stderrTimeRe.firstMatch(line);
       final speedMatch = _speedRe.firstMatch(line);
       if (timeMatch != null && speedMatch != null) {
-        addLog('转码 ${timeMatch.group(1)} ${speedMatch.group(1)}x', category: 'progress');
+        // L-11：stderr 进度行高频（每秒数次），做每 200ms 节流，避免日志/通知无界增长
+        final now = DateTime.now();
+        if (_lastStderrProgressAt == null ||
+            now.difference(_lastStderrProgressAt!) >= const Duration(milliseconds: 200)) {
+          _lastStderrProgressAt = now;
+          addLog('转码 ${timeMatch.group(1)} ${speedMatch.group(1)}x', category: 'progress');
+        }
         return;
       }
       addLog(line, category: 'ffmpeg');
@@ -531,8 +570,21 @@ class AppState extends ChangeNotifier {
           if (t.id.isEmpty) continue;
           if (_tasks.any((x) => x.id == t.id)) continue;
           if (t.status == TaskStatus.processing) {
+            // [FIX S-3 落地] 上次退出时被中断的任务：除了改状态，还要清掉「上一次
+            // 运行」残留的实时心跳（进度百分比 / 已用剩余时间 / 速度 / fps / 码率 /
+            // 帧号 / 分步进度）。此前只改 status，卡片会显示「已取消」却挂着冻结在
+            // 中断那一刻的进度条与速度数值（例如 87% + 12.5x），看起来像还在跑。
             t = t.copyWith(
               status: TaskStatus.cancelled,
+              progress: 0,
+              frame: 0,
+              elapsed: '',
+              remaining: '',
+              speed: '',
+              fps: '',
+              bitrate: '',
+              callProgresses: const [],
+              currentCallIndex: 0,
               error: t.error ?? (zh ? '应用退出，处理中断' : 'Interrupted: app exited'),
             );
           }
@@ -560,8 +612,12 @@ class AppState extends ChangeNotifier {
   /// 安全边界：只删应用自己创建的缓存目录内容（systemTemp / file_picker /
   /// docsDir/ffmpegpp_imports），绝不动用户原文件目录；且仍被视频列表或
   /// 任务（输入/输出）引用的文件一律保留。
-  Future<void> _cleanupOrphanImportCaches() async {
-    if (!isMobilePlatform) return;
+  ///
+  /// [thumbOlderThan] 为 null 时缩略图也一并清掉（用户主动清理的场景）。
+  /// 返回本次释放的字节数。
+  Future<int> _purgeImportCaches(
+      {Duration? thumbOlderThan = const Duration(days: 3)}) async {
+    var freed = 0;
     try {
       final referenced = <String>{
         for (final v in _videos) v.filepath,
@@ -585,7 +641,10 @@ class AppState extends ChangeNotifier {
               } catch (_) {}
             }
             try {
+              // 先量体积再删：删除失败时不会把未释放的空间算进「已释放」。
+              final len = await ent.length();
               await ent.delete();
+              freed += len;
             } catch (_) {}
           }
         } catch (_) {}
@@ -596,9 +655,9 @@ class AppState extends ChangeNotifier {
       await purge(cacheDir, (n) => n.startsWith('ffmpegpp_import_'));
       // file_picker 的 SAF 缓存目录
       await purge('$cacheDir${Platform.pathSeparator}file_picker', (n) => true);
-      // 任务卡片缩略图（可重建，只清 3 天前的，避免频繁重新生成）
+      // 任务卡片缩略图（可重建）
       await purge(cacheDir, (n) => n.startsWith('ffmpegpp_thumb_'),
-          olderThan: const Duration(days: 3));
+          olderThan: thumbOlderThan);
       // 旧版 ensureReadableImport 的兜底复制目录
       try {
         final docsDir = await getApplicationDocumentsDirectory();
@@ -606,7 +665,21 @@ class AppState extends ChangeNotifier {
             (n) => true);
       } catch (_) {}
     } catch (_) {}
+    return freed;
   }
+
+  /// 启动后的静默清理（仅移动端：桌面端导入直接用原路径，不会产生副本）。
+  Future<void> _cleanupOrphanImportCaches() async {
+    if (!isMobilePlatform) return;
+    await _purgeImportCaches();
+  }
+
+  /// 用户主动清理导入缓存（设置 → 清除缓存），返回释放的字节数。
+  ///
+  /// 与启动静默清理的区别：缩略图不再只清 3 天前的（可重建，用户点了就是要腾空间），
+  /// 且所有平台都执行。仍被当前视频列表 / 队列任务引用的副本一律保留 —— 删掉会让
+  /// 对应项目指向一个不存在的文件，调用方应把「有多少被保留、为什么」提示给用户。
+  Future<int> purgeImportCachesNow() => _purgeImportCaches(thumbOlderThan: null);
 
   Future<void> addVideos(List<String> filepaths) async {
     _probeCount++; notifyListeners();
@@ -672,7 +745,7 @@ class AppState extends ChangeNotifier {
       scheduleMicrotask(() {
         _probeNotifyPending = false;
         if (_probeNotifyCount > 0) {
-          notifyListeners();
+          _safeNotify(); // [FIX S-6] dispose 后短路
           _probeNotifyCount = 0;
         }
       });
@@ -768,25 +841,30 @@ class AppState extends ChangeNotifier {
   Future<void> addContainer(String name, List<String> filepaths) async {
     if (filepaths.isEmpty) return;
     _probeCount++; notifyListeners();
-    final entries = <VideoFile>[];
-    for (final fp in filepaths) {
-      // 容器路径同样需要保证 ffprobe 可读取（Android 上 SAF 缓存路径在子进程不可见）。
-      final path = await _ensureReadableForProbe(fp);
-      final vf = VideoFile.fromFilepath(path);
-      _videos.add(vf);
-      entries.add(vf);
+    final entries = <VideoFile>[]; // [FIX H-4] 声明在 try 外，finally 后仍可记日志
+    try {
+      for (final fp in filepaths) {
+        // 容器路径同样需要保证 ffprobe 可读取（Android 上 SAF 缓存路径在子进程不可见）。
+        final path = await _ensureReadableForProbe(fp);
+        final vf = VideoFile.fromFilepath(path);
+        _videos.add(vf);
+        entries.add(vf);
+      }
+      final items = List.generate(entries.length, (i) => ContainerItem(fileId: entries[i].id, index: i + 1));
+      // [FIX H-12] items 用不可变视图，外部拿到的容器引用无法再改内部集合
+      _containers.add(FileContainer(id: const Uuid().v4(), name: name, items: List.unmodifiable(items)));
+      notifyListeners();
+      await _probeAll(entries);
+    } finally {
+      _probeCount--; _safeNotify(); // [FIX H-4] 异常路径也复位，避免 probingVideos 永久为 true
     }
-    final items = List.generate(entries.length, (i) => ContainerItem(fileId: entries[i].id, index: i + 1));
-    _containers.add(FileContainer(id: const Uuid().v4(), name: name, items: items));
-    notifyListeners();
-    await _probeAll(entries);
-    _probeCount--; notifyListeners();
     addLog('创建容器 "$name"，${entries.length} 个文件', category: 'info');
   }
 
   /// 创建空容器（不含任何文件，用户可稍后手动添加）
   void addEmptyContainer(String name) {
-    _containers.add(FileContainer(id: const Uuid().v4(), name: name));
+    // [FIX H-12] items 用不可变空列表，外部引用无法改内部集合
+    _containers.add(FileContainer(id: const Uuid().v4(), name: name, items: const <ContainerItem>[]));
     notifyListeners();
     addLog('创建空容器 "$name"', category: 'info');
   }
@@ -831,6 +909,8 @@ class AppState extends ChangeNotifier {
     final container = _containers[idx];
     final baseIndex = container.items.isEmpty ? 1 : container.items.map((i) => i.index).reduce(max) + 1;
     final entries = <VideoFile>[];
+    // [FIX H-12] 复制一份 items，不再直接 container.items.add(...)，写操作经 copyWith 替换元素
+    final newItems = List<ContainerItem>.from(container.items);
     for (var i = 0; i < filepaths.length; i++) {
       // 容器追加文件同样需要把 SAF 缓存路径复制到应用私有目录，
       // 否则后续 ffprobe 会以"无法读取文件"失败。
@@ -838,17 +918,35 @@ class AppState extends ChangeNotifier {
       final vf = VideoFile.fromFilepath(path);
       _videos.add(vf);
       entries.add(vf);
-      container.items.add(ContainerItem(fileId: vf.id, index: baseIndex + i));
+      newItems.add(ContainerItem(fileId: vf.id, index: baseIndex + i));
     }
+    // [FIX H-12] 生成新 FileContainer 实例（旧引用失效），items 用不可变视图
+    _containers[idx] = FileContainer(
+      id: container.id,
+      name: container.name,
+      items: List.unmodifiable(newItems),
+      pipelineGraph: container.pipelineGraph,
+      expanded: container.expanded,
+    );
     notifyListeners();
-    await _probeAll(entries);
-    _probeCount--; notifyListeners();
+    try {
+      await _probeAll(entries);
+    } finally {
+      _probeCount--; _safeNotify(); // [FIX H-4] 异常路径也复位
+    }
   }
 
   void removeFileFromContainer(String containerId, String fileId) {
     final idx = _containers.indexWhere((c) => c.id == containerId);
     if (idx < 0) return;
-    _containers[idx].items.removeWhere((i) => i.fileId == fileId);
+    // [FIX H-12] 经 copyWith 替换元素，而非直接改内部集合
+    final container = _containers[idx];
+    final newItems = container.items.where((i) => i.fileId != fileId).toList();
+    _containers[idx] = FileContainer(
+      id: container.id, name: container.name,
+      items: List.unmodifiable(newItems),
+      pipelineGraph: container.pipelineGraph, expanded: container.expanded,
+    );
     String? removedPath;
     _videos.removeWhere((v) { if (v.id == fileId) { removedPath = v.filepath; return true; } return false; });
     if (removedPath != null) _cleanupTempImportFile(removedPath!);
@@ -859,7 +957,8 @@ class AppState extends ChangeNotifier {
     final idx = _containers.indexWhere((c) => c.id == containerId);
     if (idx < 0) return;
     final container = _containers[idx];
-    final items = container.items;
+    // [FIX H-12] 复制一份再排序，避免直接改内部集合
+    final items = List<ContainerItem>.from(container.items);
     // 排序比较器内按 fileId 查 _videos，先建一次 Map 索引，避免 O(n²) 线性扫描
     final byId = <String, VideoFile>{for (final v in _videos) v.id: v};
     items.sort((a, b) {
@@ -873,7 +972,16 @@ class AppState extends ChangeNotifier {
         ContainerSortMode.custom => a.index.compareTo(b.index),
       };
     });
-    for (var i = 0; i < items.length; i++) { items[i].index = i + 1; }
+    // [FIX M-13] 保证 index 唯一且 1..n 重新编号（用新元素实例而非改原字段）
+    final reindexed = <ContainerItem>[
+      for (var i = 0; i < items.length; i++)
+        ContainerItem(fileId: items[i].fileId, index: i + 1),
+    ];
+    _containers[idx] = FileContainer(
+      id: container.id, name: container.name,
+      items: List.unmodifiable(reindexed),
+      pipelineGraph: container.pipelineGraph, expanded: container.expanded,
+    );
     addLog('容器排序: ${mode.name}，${items.length} 个文件', category: 'info');
     notifyListeners();
   }
@@ -881,21 +989,41 @@ class AppState extends ChangeNotifier {
   void updateContainerItemIndex(String containerId, String fileId, int newIndex) {
     final idx = _containers.indexWhere((c) => c.id == containerId);
     if (idx < 0) return;
-    final item = _containers[idx].items.where((i) => i.fileId == fileId).firstOrNull;
-    if (item != null) { item.index = newIndex; notifyListeners(); }
+    final container = _containers[idx];
+    final item = container.items.where((i) => i.fileId == fileId).firstOrNull;
+    if (item != null) {
+      // [FIX H-12] 经 copyWith 替换元素，而非直接改内部字段
+      final newItems = container.items.map((i) => i.fileId == fileId ? ContainerItem(fileId: i.fileId, index: newIndex) : i).toList();
+      _containers[idx] = FileContainer(
+        id: container.id, name: container.name,
+        items: List.unmodifiable(newItems),
+        pipelineGraph: container.pipelineGraph, expanded: container.expanded,
+      );
+      notifyListeners();
+    }
   }
 
   void updateContainerPipeline(String containerId, PipelineGraph graph) {
     final idx = _containers.indexWhere((c) => c.id == containerId);
     if (idx < 0) return;
-    _containers[idx].pipelineGraph = graph;
+    // [FIX H-12] 生成新实例，而非直接改可变字段
+    final container = _containers[idx];
+    _containers[idx] = FileContainer(
+      id: container.id, name: container.name,
+      items: container.items, pipelineGraph: graph, expanded: container.expanded,
+    );
     notifyListeners();
   }
 
   void renameContainer(String containerId, String newName) {
     final idx = _containers.indexWhere((c) => c.id == containerId);
     if (idx < 0) return;
-    _containers[idx].name = newName;
+    // [FIX H-12] 生成新实例，而非直接改可变字段
+    final container = _containers[idx];
+    _containers[idx] = FileContainer(
+      id: container.id, name: newName,
+      items: container.items, pipelineGraph: container.pipelineGraph, expanded: container.expanded,
+    );
     notifyListeners();
   }
 
@@ -903,11 +1031,23 @@ class AppState extends ChangeNotifier {
     final ci = _containers.indexWhere((c) => c.id == containerId);
     if (ci < 0) return;
     final container = _containers[ci];
-    final a = container.items.where((i) => i.index == idxA).firstOrNull;
-    final b = container.items.where((i) => i.index == idxB).firstOrNull;
-    if (a == null || b == null) return;
-    a.index = idxB;
-    b.index = idxA;
+    final items = container.items;
+    // [FIX M-13] 调用方传入 item.index 值（1..n）；sortContainerBy 已保证 index 唯一，
+    // 故按 index 值定位唯一命中，交换两者的列表位置与 index 值（不再因重复 index
+    // 导致 firstWhere 只命中第一项而「交换了但 UI 没变」）。
+    final pa = items.indexWhere((i) => i.index == idxA);
+    final pb = items.indexWhere((i) => i.index == idxB);
+    if (pa < 0 || pb < 0) return;
+    final a = items[pa];
+    final b = items[pb];
+    final newItems = List<ContainerItem>.from(items);
+    newItems[pa] = ContainerItem(fileId: b.fileId, index: a.index);
+    newItems[pb] = ContainerItem(fileId: a.fileId, index: b.index);
+    _containers[ci] = FileContainer(
+      id: container.id, name: container.name,
+      items: List.unmodifiable(newItems),
+      pipelineGraph: container.pipelineGraph, expanded: container.expanded,
+    );
     notifyListeners();
   }
 
@@ -1062,7 +1202,7 @@ class AppState extends ChangeNotifier {
       }
       // 计划构建期告警（如非法参数被忽略），写日志便于定位
       for (final w in plan.warnings) {
-        addLog(w, category: 'warning');
+        addLog(w, category: 'warn'); // [FIX M-12] 统一拼写
       }
       // 如果节点图没有处理步骤（只有源文件→输出），创建一个默认的转码任务
       if (calls.isEmpty) {
@@ -1163,10 +1303,18 @@ class AppState extends ChangeNotifier {
     _cancelRequested = false;
     _cancelledTaskIds.remove(tid);
     final t = _tasks.removeAt(i); _tasks.insert(0, t);
-    _tasksNotify(); processNextTask();
+    _tasksNotify();
+    // [FIX H-3/H-8] 新批次：自增 generation 并传入，旧批次在途续体不会继续拉取
+    final gen = ++_runGeneration;
+    processNextTask(generation: gen);
   }
 
-  void processAllTasks() { _cancelRequested = false; processNextTask(); }
+  void processAllTasks() {
+    _cancelRequested = false;
+    // [FIX H-3/H-8] 新批次自增 generation
+    final gen = ++_runGeneration;
+    processNextTask(generation: gen);
+  }
 
   /// 仅测试用：直接注入任务实例（模拟 pending/failed/流水线任务进队列页）。
   @visibleForTesting
@@ -1175,14 +1323,18 @@ class AppState extends ChangeNotifier {
     _tasksNotify();
   }
 
-  Future<void> processNextTask() async {
+  Future<void> processNextTask({int? generation}) async {
+    final gen = generation ?? _runGeneration;
     if (_cancelRequested) return;
     final limit = config.maxConcurrentTasks == 0 ? 999 : config.maxConcurrentTasks;
     while (_runningTaskIds.length < limit) {
       if (_cancelRequested) break;
       final pi = _tasks.indexWhere((t) => t.status == TaskStatus.pending);
       if (pi < 0) break;
+      // [FIX H-3] 二次确认：状态可能被并发的 cancelTask 改掉，避免已取消任务被改回 processing
+      if (_tasks[pi].status != TaskStatus.pending) continue;
       final task = _tasks[pi];
+      // 只有确实要开始执行时才移除取消标记（收敛 H-3 竞态窗口）
       _cancelledTaskIds.remove(task.id);
       _runningTaskIds.add(task.id);
       _currentTaskId = task.id;
@@ -1197,8 +1349,9 @@ class AppState extends ChangeNotifier {
       _runTask(task).then((_) {
         _runningTaskIds.remove(task.id);
         if (_currentTaskId == task.id) _currentTaskId = null;
-        if (!_cancelRequested && _tasks.any((t) => t.status == TaskStatus.pending)) {
-          processNextTask();
+        // [FIX H-3/H-8] 仅本批次仍有效才继续拉取，避免「停止所有」与「单任务取消」互相污染
+        if (gen == _runGeneration && !_cancelRequested && _tasks.any((t) => t.status == TaskStatus.pending)) {
+          processNextTask(generation: gen);
         }
       }).catchError((Object e, StackTrace st) {
         _runningTaskIds.remove(task.id);
@@ -1210,8 +1363,8 @@ class AppState extends ChangeNotifier {
           _tasksNotify();
           _scheduleTaskPersist();
         }
-        if (!_cancelRequested && _tasks.any((t) => t.status == TaskStatus.pending)) {
-          processNextTask();
+        if (gen == _runGeneration && !_cancelRequested && _tasks.any((t) => t.status == TaskStatus.pending)) {
+          processNextTask(generation: gen);
         }
       });
     }
@@ -1450,20 +1603,19 @@ class AppState extends ChangeNotifier {
       _tasksNotify();
     }
 
-    // 记录上一步"实际"产物路径：extract_audio 等可能运行时改扩展名，下游 input 需要跟随
-    String? pendingActualOutput;
+    // [FIX M-14] 记录「计划产物路径 -> 实际产物路径」映射：extract_audio 等会运行时改写
+    // 扩展名，下游 input 需要跟随最近一个实际产物，而非只看紧邻上一步（否则中间有不消费
+    // input 的步骤时链路断裂，第三步指向不存在的旧路径）。
+    final actualOutputFor = <String, String>{};
     for (var ci = 0; ci < expandedCalls.length; ci++) {
       // 取消后不再执行后续步骤（本地 Process.run 步骤无法被 kill，必须靠这里停下）
       if (_cancelRequested || _cancelledTaskIds.contains(taskId)) break;
       final call = expandedCalls[ci];
-      // 上一步产物被运行时改写时，修正紧邻下一步的 input（仅当它确实消费了上一步 output）
-      if (ci > 0 && pendingActualOutput != null) {
-        final inp = call.params['input'];
-        final prevOut = expandedCalls[ci - 1].params['output'];
-        if (inp is String && inp == prevOut) {
-          call.params['input'] = pendingActualOutput;
-        }
-        pendingActualOutput = null;
+      // 沿执行链向前查找：若本步 input 等于某步「计划 output」且那一步改写了实际产物，
+      // 则用实际产物路径替换（中间有「不消费/不产出」的步骤也不会断裂）。
+      final inp = call.params['input'];
+      if (inp is String && actualOutputFor.containsKey(inp)) {
+        call.params['input'] = actualOutputFor[inp]!;
       }
       final stepProgress = ci / expandedCalls.length;
 
@@ -1629,11 +1781,14 @@ class AppState extends ChangeNotifier {
       addLog('步骤 ${ci + 1} 完成', category: 'info');
       final actualOut = resp['_actual_output'];
       if (actualOut is String && actualOut.isNotEmpty) {
-        pendingActualOutput = actualOut;
+        // [FIX M-14] 记录 计划->实际 映射，供后续任意步骤按 input 命中替换
+        final planned = call.params['output'];
+        if (planned is String) {
+          actualOutputFor[planned] = actualOut;
+        }
         // 运行时改写了产物路径（典型：extract_audio 的 copy 模式按源编码换扩展名）。
         // 原计划里登记的中间文件路径已经是「不存在的旧路径」，必须把清理清单里的
         // 对应项改成真实路径，否则真实中间文件会永久残留在临时目录（M-7）。
-        final planned = call.params['output'];
         if (planned is String && planned != actualOut && ci < expandedCalls.length - 1) {
           for (var k = 0; k < cleanupCalls.length; k++) {
             if (cleanupCalls[k].params['path'] == planned) {
@@ -2062,12 +2217,12 @@ class AppState extends ChangeNotifier {
           addLog('copy 模式: $sourceCodec → $outExt (兼容)', category: 'info');
         } else {
           final bestFmt = _codecDefaultFormat[sourceCodec] ?? 'mka';
-          addLog('copy 模式: $sourceCodec 不兼容 $outExt, 自动切换为 $bestFmt', category: 'warning');
+          addLog('copy 模式: $sourceCodec 不兼容 $outExt, 自动切换为 $bestFmt', category: 'warn'); // [FIX M-12] 统一拼写
           output = output.replaceAll(RegExp(r'\.[^.]+$'), '.$bestFmt');
         }
       } else if (codec == 'copy') {
         output = output.replaceAll(RegExp(r'\.[^.]+$'), '.mka');
-        addLog('copy 模式: 未知源编码, 使用 mka 容器', category: 'warning');
+        addLog('copy 模式: 未知源编码, 使用 mka 容器', category: 'warn'); // [FIX M-12] 统一拼写
       }
 
       final outDir = File(output).parent;
@@ -2517,6 +2672,8 @@ class AppState extends ChangeNotifier {
     // 否则正在跑的 .then 回调回来后看到还有 pending 任务就会立刻重启队列，
     // 「停止所有」就失效了。
     _cancelRequested = true;
+    // [FIX H-3/H-8] 终止所有在途调度批次：在途 .then 续体比对 generation 失效，不再继续拉取
+    _runGeneration++;
     // 携带任务 id 集合：后端 worker 处理这些任务前会直接跳过
     // （否则「停止所有」后，C++ 单线程 worker 仍会执行队列中剩余任务）
     final ids = _tasks
@@ -2544,7 +2701,9 @@ class AppState extends ChangeNotifier {
     if (i < 0) return;
     final st = _tasks[i].status;
     if (st != TaskStatus.processing && st != TaskStatus.pending) return;
-    // 标记"该任务被取消"，让 pipeline 循环与在途回调不再把它写成终态
+    // [FIX H-3] 先置状态（copyWith cancelled），再写取消标记：避免「置 processing」与
+    // 「写 cancelledTaskIds」之间的竞态窗口丢失取消意图。
+    _tasks[i] = _tasks[i].copyWith(status: TaskStatus.cancelled);
     _cancelledTaskIds.add(taskId);
     // 通知后端跳过该任务（若仍在队列/未开始）
     backend.cancel([taskId]);
@@ -2558,9 +2717,9 @@ class AppState extends ChangeNotifier {
     // 从运行序列移除，释放 slots 让队列继续拉取下一个 pending 任务
     _runningTaskIds.remove(taskId);
     if (_currentTaskId == taskId) _currentTaskId = null;
-    _tasks[i] = _tasks[i].copyWith(status: TaskStatus.cancelled);
     _tasksNotify();
     _scheduleTaskPersist();
+    // 单任务取消不触碰 _cancelRequested / _runGeneration，继续当前批次拉取
     if (!_cancelRequested && _tasks.any((t) => t.status == TaskStatus.pending)) {
       processNextTask();
     }
@@ -2666,7 +2825,7 @@ class AppState extends ChangeNotifier {
       if (isLoopback) {
         addLog('[MCP] 服务已启动 (仅本机)，端口: $port', category: 'info');
       } else {
-        addLog('[MCP] 服务已启动 (监听 $host:$port)，访问令牌: $_mcpToken — 请勿泄露', category: 'warning');
+        addLog('[MCP] 服务已启动 (监听 $host:$port)，访问令牌: $_mcpToken — 请勿泄露', category: 'warn'); // [FIX M-12] 统一拼写
       }
       final server = _mcpServer!;
       server.listen((req) {
@@ -2735,7 +2894,7 @@ class AppState extends ChangeNotifier {
           ? xToken
           : (auth.startsWith('Bearer ') ? auth.substring(7) : '');
       if (provided != token) {
-        addLog('[MCP] 拒绝未授权请求 (${req.connectionInfo?.remoteAddress})', category: 'warning');
+        addLog('[MCP] 拒绝未授权请求 (${req.connectionInfo?.remoteAddress})', category: 'warn'); // [FIX M-12] 统一拼写
         req.response
           ..statusCode = HttpStatus.unauthorized
           ..headers.contentType = ContentType.json
@@ -2744,8 +2903,43 @@ class AppState extends ChangeNotifier {
         return;
       }
     }
+    // H-2/M-11：仅本机监听时，额外校验来源确为回环地址。用 InternetAddress.isLoopback
+    // 属性（而非字符串比较 / 构造 InternetAddress('::1')，后者在部分平台解析失败），
+    // 防止监听回环却被非回环来源越权访问本机任意进程可调用的 MCP 接口。
+    final bindHost = config.mcpHost.isEmpty ? '127.0.0.1' : config.mcpHost;
+    const loopbackHosts = {'127.0.0.1', 'localhost', '::1'};
+    if (loopbackHosts.contains(bindHost)) {
+      final remote = req.connectionInfo?.remoteAddress;
+      if (remote != null && !remote.isLoopback) {
+        addLog('[MCP] 拒绝非回环来源: $remote', category: 'warn');
+        req.response
+          ..statusCode = HttpStatus.forbidden
+          ..headers.contentType = ContentType.json
+          ..write('{"jsonrpc":"2.0","error":{"code":-32000,"message":"Forbidden: non-loopback origin"}}');
+        await req.response.close();
+        return;
+      }
+    }
     try {
-      final body = await utf8.decoder.bind(req).join();
+      // M-10：请求体流式累计并限制上限（4MB）。先累计原始字节再一次性解码，避免多字节
+      // UTF-8 跨块截断；超出上限立即断开回 -32600。真正的 JSON 解析错误由下方
+      // FormatException 统一回 -32700。
+      const maxBodyBytes = 4 * 1024 * 1024;
+      final all = <int>[]; // 累积原始字节，避免引入 dart:typed_data 依赖
+      var tooBig = false;
+      await for (final chunk in req) {
+        all.addAll(chunk);
+        if (all.length > maxBodyBytes) { tooBig = true; break; }
+      }
+      if (tooBig) {
+        req.response
+          ..statusCode = HttpStatus.badRequest
+          ..headers.contentType = ContentType.json
+          ..write('{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid Request: body too large"}}');
+        await req.response.close();
+        return;
+      }
+      final body = utf8.decode(all, allowMalformed: true);
       final decoded = jsonDecode(body);
 
       // JSON-RPC 2.0 批量请求（MCP 规范允许）：数组中的每个请求各产生一条响应，
@@ -2791,10 +2985,11 @@ class AppState extends ChangeNotifier {
     } catch (e) {
       addLog('[MCP] Error: $e', category: 'error');
       try {
+        // M-10：内部异常用 -32603（区别于解析失败的 -32700），按语义区分
         req.response
           ..statusCode = HttpStatus.badRequest
           ..headers.contentType = ContentType.json
-          ..write('{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error"}}');
+          ..write('{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"Internal error"}}');
         await req.response.close();
       } catch (_) {}
     }
@@ -2852,6 +3047,21 @@ class AppState extends ChangeNotifier {
         return {'jsonrpc': '2.0', 'id': id, 'result': {'resources': _mcpResourcesList()}};
       case 'resources/read':
         final uri = params['uri'] as String? ?? '';
+        // H-2/M-11：所有资源接口（含文件名/用户路径）受文件系统访问开关约束
+        if (!config.mcpAllowFsAccess) {
+          return {
+            'jsonrpc': '2.0', 'id': id,
+            'error': {'code': -32000, 'message': 'MCP file system access is disabled — enable "Allow file access" in Settings → AI'},
+          };
+        }
+        // M-10：未知资源视为参数非法，回 -32602
+        const knownResources = {'pipeline://current', 'videos://loaded', 'tasks://all'};
+        if (!knownResources.contains(uri)) {
+          return {
+            'jsonrpc': '2.0', 'id': id,
+            'error': {'code': -32602, 'message': 'Unknown resource: $uri'},
+          };
+        }
         final result = _mcpReadResource(uri);
         return {
           'jsonrpc': '2.0', 'id': id,
@@ -2879,7 +3089,10 @@ class AppState extends ChangeNotifier {
     return tools;
   }
 
-  List<Map<String, dynamic>> _mcpToolsRaw() => [
+  // L-12：工具 schema 为纯静态结构（不依赖运行期权限开关），构建一次缓存复用，
+  // 避免每次 tools/list 都重新编码 27 个 map 造成同步 JSON 编码卡顿。
+  static final List<Map<String, dynamic>> _mcpToolsRawCache = _buildMcpToolsRaw();
+  static List<Map<String, dynamic>> _buildMcpToolsRaw() => [
     {'name': 'clear_all', 'description': 'Clear all nodes from canvas', 'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'undo', 'description': 'Undo last action', 'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'redo', 'description': 'Redo last action', 'inputSchema': {'type': 'object', 'properties': {}}},
@@ -2910,11 +3123,42 @@ class AppState extends ChangeNotifier {
     {'name': 'rename_node', 'description': 'Set a custom name for a node on the canvas', 'inputSchema': {'type': 'object', 'properties': {'nodeId': {'type': 'string'}, 'name': {'type': 'string', 'description': 'New custom name'}}, 'required': ['nodeId', 'name']}},
   ];
 
+  List<Map<String, dynamic>> _mcpToolsRaw() => _mcpToolsRawCache;
+
   List<Map<String, dynamic>> _mcpResourcesList() => [
     {'uri': 'pipeline://current', 'name': 'Current Pipeline', 'mimeType': 'application/json'},
     {'uri': 'videos://loaded', 'name': 'Loaded Videos', 'mimeType': 'application/json'},
     {'uri': 'tasks://all', 'name': 'Task Queue', 'mimeType': 'application/json'},
   ];
+
+  // H-2/M-11：MCP 文件系统工具允许访问的「根目录」集合（项目内已知目录）。
+  // 仅系统临时目录、默认输出目录、应用导入缓存目录，防止枚举全盘。
+  Future<List<String>> _mcpAllowedRoots() async {
+    final roots = <String>[];
+    roots.add(Directory.systemTemp.path); // 临时工作目录
+    if (config.defaultOutputDir.isNotEmpty) roots.add(config.defaultOutputDir); // 输出目录
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      roots.add('${docs.path}${Platform.pathSeparator}ffmpegpp_imports'); // 导入缓存目录
+    } catch (_) {}
+    return roots;
+  }
+
+  // 规范化后判断 [normalized] 是否等于 root 或以 root + 分隔符为前缀
+  bool _mcpPathWithin(String normalized, String root) {
+    final r = root.replaceAll('\\', '/');
+    final n = normalized.replaceAll('\\', '/');
+    return n == r || n.startsWith('$r/');
+  }
+
+  Future<bool> _mcpFsAllowed(String path) async {
+    final normalized = path.replaceAll('\\', '/');
+    final roots = await _mcpAllowedRoots();
+    for (final r in roots) {
+      if (_mcpPathWithin(normalized, r)) return true;
+    }
+    return false;
+  }
 
   Future<(String, bool)> _mcpCallTool(String name, Map<String, dynamic> args) async {
     // 写操作需在设置里开启 MCP 写入权限（默认只读，防止未经授权的修改）
@@ -2923,8 +3167,9 @@ class AppState extends ChangeNotifier {
       return ('Error: MCP write access is disabled — enable "Allow write" in Settings → AI', true);
     }
     // 文件系统类工具受独立开关门控（回环监听无令牌，本机任意进程都能调用，
-    // 用户可关闭以禁用目录枚举/文件信息/媒体探测三个读取入口）
-    const fsTools = {'list_directory', 'read_file_info', 'probe_video'};
+    // 用户可关闭以禁用目录枚举/文件信息/媒体探测三个读取入口）。read_logs 与
+    // 资源接口会泄露文件名/用户路径，同样纳入本开关（H-2/M-11）。
+    const fsTools = {'list_directory', 'read_file_info', 'probe_video', 'read_logs'};
     if (fsTools.contains(name) && !config.mcpAllowFsAccess) {
       return ('Error: MCP file system access is disabled — enable "Allow file access" in Settings → AI', true);
     }
@@ -2949,9 +3194,18 @@ class AppState extends ChangeNotifier {
       case 'list_directory':
         final path = args['path'] as String? ?? '.';
         try {
-          // 异步遍历，避免在 UI isolate 同步 listSync/statSync 卡界面
+          // H-2/M-11：仅允许项目内已知目录，拒绝越界枚举全盘
+          // （_mcpFsAllowed 是 async：漏 await 会得到 Future<bool>，
+          //   `!Future` 直接编译不过 —— 这里补上 await）
+          if (!await _mcpFsAllowed(path)) {
+            return ('Error: path not allowed: $path (MCP 仅允许项目内已知目录)', true);
+          }
+          final dir = Directory(path);
+          if (!await dir.exists()) return ('Error: directory not found: $path', true);
+          // 异步遍历，避免在 UI isolate 同步 listSync/statSync 卡界面；
+          // 限制单次返回条目数（.take(50)）与深度（list 非递归，深度 1）
           final entries = <Map<String, dynamic>>[];
-          await for (final e in Directory(path).list().take(50)) {
+          await for (final e in dir.list().take(50)) {
             FileSystemEntityType t;
             try { t = await FileSystemEntity.type(e.path); } catch (_) { t = FileSystemEntityType.notFound; }
             int size = 0;
@@ -2965,8 +3219,17 @@ class AppState extends ChangeNotifier {
       case 'read_file_info':
         final path = args['path'] as String? ?? '';
         try {
+          // H-2/M-11：用 FileSystemEntity.type() 返回真实类型，不再靠扩展名猜测
+          // （无扩展名文件原返回 "Dockerfile"、目录 "/home/user" 原返回 "user"，语义错误）
+          final type = await FileSystemEntity.type(path);
+          final typeStr = switch (type) {
+            FileSystemEntityType.file => 'file',
+            FileSystemEntityType.directory => 'directory',
+            FileSystemEntityType.link => 'link',
+            _ => 'not_found',
+          };
           final s = await File(path).stat();
-          return (jsonEncode({'path': path, 'size': s.size, 'modified': s.modified.toIso8601String(), 'type': path.split('.').last}), false);
+          return (jsonEncode({'path': path, 'size': s.size, 'modified': s.modified.toIso8601String(), 'type': typeStr}), false);
         } catch (e) { return ('Error: $e', true); }
       case 'modify_node_params':
         final nodeId = args['nodeId'] as String? ?? '';
@@ -3163,11 +3426,16 @@ class AppState extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true; // [FIX S-6] 之后所有 _safeNotify 直接短路
     _taskPersistTimer?.cancel();
     _progressFlushTimer?.cancel();
     _progressLogNotifyTimer?.cancel();
     configService.dispose();
+    // backend 是 late final：这一次访问有可能才是它的首次构造（连带建立 audit 订阅），
+    // 所以必须「先 dispose 再取消订阅」，顺序反了会漏掉这条晚建的订阅。
     backend.dispose();
+    _auditSub?.cancel(); // [FIX audit]
+    _auditSub = null;
     pythonProcess.dispose();
     super.dispose();
   }

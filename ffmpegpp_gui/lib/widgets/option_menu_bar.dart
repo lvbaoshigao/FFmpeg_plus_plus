@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show KeyDownEvent, KeyRepeatEvent, LogicalKeyboardKey;
 
+import '../theme/app_text_scale.dart';
+
 /// 统一的「菜单栏选项」控件 —— 融合两处参考样式：
 /// * 触发按钮：设置→任务卡片下拉菜单的外观（圆角描边、紧凑高度、展开/收起动画）；
 /// * 选项条目：设置页左侧主菜单条目（图标+文字，选中为主题色药丸，
@@ -8,7 +10,7 @@ import 'package:flutter/services.dart' show KeyDownEvent, KeyRepeatEvent, Logica
 ///
 /// 两种形态（同一组件，按 [expandable] 切换）：
 /// * `expandable: false` —— 行内分段药丸（替代 SegmentedButton），适合 2~4 个短选项；
-/// * `expandable: true`  —— 一个按钮，点开 AnimatedSize 展开选项列表
+/// * `expandable: true`  —— 一个按钮，点开在 Overlay 上展开选项列表
 ///   （替代 DropdownMenu / RadioListTile 单选组），选中即回调并收起。
 ///
 /// 供设置页所有枚举型选项控件统一使用；数值型数量选择（并发数/线程数）
@@ -49,7 +51,8 @@ class OptionMenuBar<T> extends StatefulWidget {
   State<OptionMenuBar<T>> createState() => _OptionMenuBarState<T>();
 }
 
-class _OptionMenuBarState<T> extends State<OptionMenuBar<T>> {
+class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
+    with SingleTickerProviderStateMixin {
   bool _expanded = false;
 
   /// 浮层控制器：展开的选项列表挂在 Overlay 上（不参与宿主卡的布局）。
@@ -66,9 +69,30 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>> {
   /// 把它滚回来（浮层高度上限 300，条目多时确实会滚）。
   List<GlobalKey> _rowKeys = const [];
 
+  /// 浮层展开/收起动画（淡入 + 从锚点方向缩放，170ms）。
+  ///
+  /// 此前浮层是「瞬间出现」的：`_portal.show()` 后直接重绘，没有任何过渡，
+  /// 用户反馈「展开没有动画」。这里用一个控制器把「展开 + 收起」都做成
+  /// 连续动画：展开时 0→1；收起时先 1→0 再 `hide()`（见 [_close]），
+  /// 因此收起也是动画而不是瞬间消失。
+  ///
+  /// 必须是 `late final` + 在 [initState] 里赋值：若写成 `late final ... =
+  /// AnimationController(...)` 的惰性初始化，从未展开过的实例会在 [dispose]
+  /// 里才第一次建 Ticker —— 那时 element 已 defunct，
+  /// `TickerMode.getNotifier(context)` 的 `dependOnInheritedWidgetOfExactType`
+  /// 会直接抛断言。
+  late final AnimationController _ovCtrl;
+
+  /// 浮层收起动画结束后再真正卸载的宽限时长（略大于动画时长，避免尾帧被截断）。
+  static const Duration _overlayHideDelay = Duration(milliseconds: 210);
+
   @override
   void initState() {
     super.initState();
+    _ovCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 170),
+    );
     _syncRowKeys();
   }
 
@@ -76,6 +100,12 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>> {
   void didUpdateWidget(covariant OptionMenuBar<T> oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.items.length != widget.items.length) _syncRowKeys();
+  }
+
+  @override
+  void dispose() {
+    _ovCtrl.dispose();
+    super.dispose();
   }
 
   void _syncRowKeys() {
@@ -86,12 +116,8 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>> {
   /// 当前选中项下标（没有匹配项时为 -1）。
   int _selectedIndex() => widget.items.indexWhere(_selected);
 
-  /// 展开/收起浮层（箭头旋转动画由 _expanded 驱动）。
-  void _toggle() {
-    if (_portal.isShowing) {
-      _close();
-      return;
-    }
+  /// 展开浮层（箭头旋转动画由 _expanded 驱动，浮层本身由 _ovCtrl 驱动）。
+  void _open() {
     _openUp = _shouldOpenUp();
     _portal.show();
     // 打开时键盘高亮默认落在当前选中项：先看清「现在选的是什么」，
@@ -100,11 +126,25 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>> {
       _expanded = true;
       _highlightIndex = _selectedIndex();
     });
+    _ovCtrl.forward(from: 0);
     // 选中项可能在滚动区之外：等浮层首帧布局完成后把它滚进可视区，
     // 否则长列表里「默认高亮当前选中项」根本看不见。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _ensureHighlightVisible();
     });
+  }
+
+  /// 展开/收起浮层。
+  ///
+  /// 判定用 [_expanded] 而不是 `_portal.isShowing`：收起动画期间浮层仍在
+  /// Overlay 上（等动画播完才 hide），此时用户再点一下应当「重新展开」，
+  /// 而不是被当成第二次收起。
+  void _toggle() {
+    if (_expanded) {
+      _close();
+      return;
+    }
+    _open();
   }
 
   /// 把键盘高亮行滚进可视区（面板高度上限 300，条目多时会滚）。
@@ -117,15 +157,24 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>> {
     }
   }
 
+  /// 收起（先播收起动画，动画结束才真正把浮层从 Overlay 上卸载）。
   void _close() {
     if (!mounted) return;
-    if (_portal.isShowing) _portal.hide();
     if (_expanded || _highlightIndex != null) {
       setState(() {
         _expanded = false;
         _highlightIndex = null;
       });
     }
+    if (!_portal.isShowing) return;
+    _ovCtrl.reverse();
+    // 不用 TickerFuture.whenComplete：动画被打断（用户马上又点开）时
+    // TickerFuture 会以 TickerCanceled 结束，未处理的错误会冒泡到 Zone。
+    // 用一个延迟回调 + 状态复查，既能等到动画播完，又天然支持「打断」。
+    Future.delayed(_overlayHideDelay, () {
+      if (!mounted || _expanded) return; // 已被重新展开
+      if (_portal.isShowing) _portal.hide();
+    });
   }
 
   /// PC 键盘导航：↑/↓ 移动高亮、Enter/Space 选中、Esc 关闭。
@@ -203,6 +252,14 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>> {
 
   @override
   Widget build(BuildContext context) {
+    // 「字体大小的调整不要应用于选项文字」（用户要求）：下拉按钮与分段药丸的宽度
+    // 是固定的（设置页 _kMenuWidth = 116），字号一大框内文字就只剩省略号，
+    // 而且「选中了什么」本身也会被字号变化搅乱。整棵控件退回到「只跟系统字号」：
+    // 系统字体大小设置照旧生效（见 theme/app_text_scale.dart）。
+    return withoutAppTextScale(context, _buildControl(context));
+  }
+
+  Widget _buildControl(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final current = widget.items.where(_selected).firstOrNull;
     final trigger = BoxDecoration(
@@ -246,31 +303,38 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>> {
           onTap: _toggle,
           child: Container(
             height: widget.triggerHeight,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
             decoration: trigger,
             child: Row(children: [
               if (widget.leadingIcon != null) ...[
                 Icon(widget.leadingIcon, size: 15, color: scheme.primary),
-                const SizedBox(width: 8),
+                const SizedBox(width: 7),
               ],
               if (widget.label != null) ...[
                 Flexible(child: Text(widget.label!,
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
                     style: TextStyle(fontSize: 12, color: scheme.onSurface))),
                 const SizedBox(width: 8),
               ],
-              const Spacer(),
-              Flexible(
+              // 当前值：独占全部剩余宽度（Expanded），不与任何 Spacer 平分。
+              //
+              // 旧写法是 [const Spacer(), Flexible(Text)]，两者 flex 都是 1，
+              // 剩余宽度被平分成两半 —— 文字只拿到一半，于是 132px 的框里
+              // 「跟随主题色（纯色）」被截成「跟随 ...」，就是用户反馈的
+              // 「右侧选项框内的文字显示不全」。这里没有 label 时只有一个
+              // 弹性子项，文字自然占满整行；箭头固定在右端。
+              Expanded(
                 child: Text(current?.label ?? '',
                     maxLines: 1, overflow: TextOverflow.ellipsis,
                     style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500,
                         color: scheme.onSurface)),
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 4),
               // 展开时箭头旋转 180°，与设置页二级菜单同一动画语言
               AnimatedRotation(
                 turns: _expanded ? 0.5 : 0,
                 duration: const Duration(milliseconds: 180),
-                child: Icon(Icons.expand_more, size: 17, color: scheme.outline),
+                child: Icon(Icons.expand_more, size: 16, color: scheme.outline),
               ),
             ]),
           ),
@@ -307,7 +371,13 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>> {
       ),
     );
     return Positioned.fill(
-      child: Stack(children: [
+      // 浮层挂在 Overlay 上（不在宿主卡片里），同样要退回到「只跟系统字号」，
+      // 否则展开后的选项列表字号会和触发按钮对不上。
+      // 注意：MediaQuery 必须包在 Stack **里面** —— Positioned 必须是 Overlay
+      // 那个 Stack 的直接子节点，中间夹一层会触发 ParentDataWidget 报错。
+      child: withoutAppTextScale(
+        overlayContext,
+        Stack(children: [
         // 全屏透明遮罩：点浮层以外任意位置关闭。用 opaque 命中，
         // 避免误触到底层控件（与系统下拉菜单的行为一致）。
         Positioned.fill(
@@ -331,12 +401,28 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>> {
                 autofocus: true,
                 // PC 键盘：↑/↓ 移动高亮、Enter/Space 选中、Esc 关闭
                 onKeyEvent: _onPanelKey,
-                child: panel,
+                // 展开 / 收起动画：淡入 + 从锚点角缩放（170ms）。
+                // 旧实现是 `_portal.show()` 后直接出现，没有任何过渡，
+                // 用户反馈「展开没有动画」。
+                child: FadeTransition(
+                  opacity:
+                      CurvedAnimation(parent: _ovCtrl, curve: Curves.easeOut),
+                  child: ScaleTransition(
+                    scale: Tween<double>(begin: 0.94, end: 1.0).animate(
+                        CurvedAnimation(
+                            parent: _ovCtrl, curve: Curves.easeOutCubic)),
+                    // 锚点与弹出方向一致：向下弹从左上角放大，向上弹从左下角放大
+                    alignment:
+                        _openUp ? Alignment.bottomLeft : Alignment.topLeft,
+                    child: panel,
+                  ),
+                ),
               ),
             ),
           ),
         ),
-      ]),
+        ]),
+      ),
     );
   }
   /// 行内药丸（bar 模式条目）

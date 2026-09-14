@@ -150,23 +150,60 @@ class FfmpegInstaller {
     required void Function(String status) onStatus,
     required void Function(double progress) onProgress,
   }) async {
-    onStatus('正在解压 ffmpeg...');
-    onProgress(0.3);
-    final ffmpegExeName = Platform.isWindows ? 'ffmpeg.exe' : 'ffmpeg';
-    final ffprobeExeName = Platform.isWindows ? 'ffprobe.exe' : 'ffprobe';
-    await _extractExeFromZip(ffmpegZipPath, ffmpegExeName, ffmpegPath);
-    onStatus('正在解压 ffprobe...');
-    onProgress(0.7);
-    await _extractExeFromZip(ffprobeZipPath, ffprobeExeName, ffprobePath);
-    // 验证提取的二进制是否可正常运行
-    onStatus('正在验证...');
-    onProgress(0.9);
-    if (!await verifyInstalled()) {
-      uninstall();
-      throw Exception('提取的 FFmpeg 二进制无法正常运行，已删除');
+    // [FIX L-4] 保护用户原有可用 ffmpeg：升级前若已存在可运行的版本则先备份，
+    // 仅当「本次安装事务内」新二进制验证失败且此前无可用版本时，才清理本次写入的文件。
+    // 任何异常都不应删除用户此前可用的 ffmpeg。
+    final prevWorking = isInstalled && await verifyInstalled();
+    String? backupDir;
+    if (prevWorking) {
+      backupDir = '$_appDir${Platform.pathSeparator}'
+          'ffmpegpp_bak_${DateTime.now().microsecondsSinceEpoch}';
+      try {
+        Directory(backupDir).createSync(recursive: true);
+        final ext = Platform.isWindows ? '.exe' : '';
+        File(ffmpegPath).copySync('$backupDir${Platform.pathSeparator}ffmpeg$ext');
+        File(ffprobePath).copySync('$backupDir${Platform.pathSeparator}ffprobe$ext');
+      } catch (_) {
+        backupDir = null;  // 备份失败则放弃保护，回退到原有逻辑
+      }
     }
-    onStatus('安装完成！');
-    onProgress(1.0);
+
+    try {
+      onStatus('正在解压 ffmpeg...');
+      onProgress(0.3);
+      final ffmpegExeName = Platform.isWindows ? 'ffmpeg.exe' : 'ffmpeg';
+      final ffprobeExeName = Platform.isWindows ? 'ffprobe.exe' : 'ffprobe';
+      await _extractExeFromZip(ffmpegZipPath, ffmpegExeName, ffmpegPath);
+      onStatus('正在解压 ffprobe...');
+      onProgress(0.7);
+      await _extractExeFromZip(ffprobeZipPath, ffprobeExeName, ffprobePath);
+      // 验证提取的二进制是否可正常运行
+      onStatus('正在验证...');
+      onProgress(0.9);
+      if (!await verifyInstalled()) {
+        // [FIX L-4] 交由下方 catch 统一处理，不再在此直接 uninstall
+        throw Exception('提取的 FFmpeg 二进制无法正常运行');
+      }
+      onStatus('安装完成！');
+      onProgress(1.0);
+    } catch (e) {
+      // [FIX L-4] 本次安装事务失败：
+      // - 若此前有可用版本，恢复备份（绝不删除用户原有 ffmpeg）；
+      // - 仅当此前不存在可用版本时，才清理本次写入的可能损坏的文件。
+      if (backupDir != null) {
+        try {
+          final ext = Platform.isWindows ? '.exe' : '';
+          File('$backupDir${Platform.pathSeparator}ffmpeg$ext').copySync(ffmpegPath);
+          File('$backupDir${Platform.pathSeparator}ffprobe$ext').copySync(ffprobePath);
+        } catch (_) {}
+      } else {
+        uninstall();
+      }
+      try {
+        if (backupDir != null) Directory(backupDir).deleteSync(recursive: true);
+      } catch (_) {}
+      throw Exception('FFmpeg 安装失败: $e');
+    }
   }
 
   static Future<void> _extractExeFromZip(String zipPath, String targetName, String destPath) async {
@@ -183,10 +220,25 @@ class FfmpegInstaller {
         throw Exception('ZIP 条目过大 (${f.name}): ${(f.size / 1024 / 1024).toStringAsFixed(0)}MB');
       }
       // 高压缩比是 zip bomb 的典型特征（ffmpeg 二进制压缩比约 3-4 倍）。
-      // compressedSize 定义在 ZipFile 上；迭代变量静态类型为 ArchiveFile，
-      // 需用 as 取到子类型才能访问该字段。
-      final compressed = (f as dynamic).compressedSize as int? ?? 0;
-      if (compressed > 0 && f.size / compressed > 200) {
+      // [FIX L-4 / M-9] archive 4.x 的 ZipDecoder 产出的是 ArchiveFile，
+      // 它本身没有 compressedSize —— 压缩后的字节数在解码时被写进了
+      // `ArchiveFile.rawContent`（一个 ZipFile / FileContent），见 zip_decoder.dart 的
+      // `ArchiveFile.file(filename, zf.uncompressedSize, zf)`。
+      //
+      // 旧写法是 `if (f is ZipFile) compressed = f.compressedSize;`：
+      // ArchiveFile 与 ZipFile(extends FileContent) 之间**没有继承关系**，
+      // 该判断恒为假 —— 既永远做不了炸弹检测，类型提升也失效，
+      // 于是 compressedSize 报 undefined_getter。这是一条**编译错误**，
+      // 会让 `flutter build` 直接失败（不只是分析告警）。
+      // 现在改成判断 rawContent 的类型，既类型安全又确实能拿到压缩比。
+      int? compressed;
+      try {
+        final raw = f.rawContent;
+        if (raw is ZipFile) compressed = raw.compressedSize;
+      } catch (_) {
+        compressed = null;  // [FIX L-4] 读取异常：跳过炸弹检测，不中断解压
+      }
+      if (compressed != null && compressed > 0 && f.size / compressed > 200) {
         throw Exception('ZIP 条目压缩比异常 (${f.name})，疑似解压炸弹');
       }
     }

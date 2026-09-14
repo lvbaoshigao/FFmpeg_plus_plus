@@ -70,19 +70,30 @@ bool gzipDecompress(const uint8_t* data, size_t len, std::vector<uint8_t>& out,
         if (pos + 2 > len) { error = "gzip 头不完整"; return false; }
         uint16_t xlen = static_cast<uint16_t>(data[pos] | (data[pos + 1] << 8));
         pos += 2 + xlen;
+        // [FIX M-16] 推进后必须校验，避免 xlen 越界；后续 len - pos - 8 用无符号减法
+        // 若 pos 超过 len 会回绕成巨大值 → 越界读取。
+        if (pos > len) { error = "gzip FEXTRA 数据越界"; return false; }
     }
     if (flg & 0x08) {
         while (pos < len && data[pos] != 0) ++pos;
+        // [FIX M-16] 必须以 NUL 结尾，否则 ++pos 会越过缓冲尾
+        if (pos >= len) { error = "gzip FNAME 未以 NUL 结尾"; return false; }
         ++pos;
     }
     if (flg & 0x16) { // FCOMMENT (0x10) 与 FHCRC (0x02)
         if (flg & 0x10) {
             while (pos < len && data[pos] != 0) ++pos;
+            if (pos >= len) { error = "gzip FCOMMENT 未以 NUL 结尾"; return false; }  // [FIX M-16]
             ++pos;
         }
-        if (flg & 0x02) pos += 2;
+        if (flg & 0x02) {
+            if (pos + 2 > len) { error = "gzip FHCRC 越界"; return false; }  // [FIX M-16]
+            pos += 2;
+        }
     }
-    if (pos + 8 > len) { error = "gzip 头不完整"; return false; }
+    // [FIX M-16] 用 pos <= len - 8 显式校验（等价于 pos + 8 > len，但避免无符号回绕），
+    // 确保下方 data + pos 与 len - pos - 8 不会越界。
+    if (pos > len - 8) { error = "gzip 头不完整"; return false; }
 
     // ISIZE 来自尾部（Dart gzip.encode 与常规工具都在最后 4 字节）
     uint32_t isize = 0;

@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="ic_launcher_background">#5E6AD2</color>
+    <!-- [FIX UI-返回黑闪] 窗口背景色（浅色模式）。
+         原实现用 ?android:colorBackground，在 night 模式下由 Theme.Black 解析为
+         纯黑 —— 任何「Flutter 尚未绘制」的帧（冷启动、路由切换中间帧）都会闪黑。
+         这里显式给出与应用主题 surface 接近的中性色，避免闪黑。 -->
+    <color name="window_bg">#FFFBF8FF</color>
 </resources>

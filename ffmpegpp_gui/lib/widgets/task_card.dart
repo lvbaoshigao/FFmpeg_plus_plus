@@ -145,7 +145,8 @@ class TaskCard extends StatelessWidget {
                   segments: task.pipelineCalls?.length ?? 1,
                   callProgresses: task.callProgresses,
                   currentCallIndex: task.currentCallIndex,
-                  height: 6,
+                  // 与下方 AppProgressBar / 全应用滑块同一规格（胶囊高 kAppTrackHeight）
+                  height: kAppTrackHeight,
                 ),
                 const SizedBox(height: 4),
                 // 下层：当前步骤进度。高度由 AppProgressBar 统一为 6（原来是 3，
@@ -780,7 +781,11 @@ class _InfoBlock extends StatelessWidget {
   }
 }
 
-/// 分段进度条：上层整体进度，每段代表一个节点
+/// 分段进度条：上层整体进度，每段代表一个节点。
+///
+/// 外观与全应用滑块 / 进度条统一（胶囊 + 玻璃留空）：整条轨道底下垫**一层**
+/// [AppTrackGlass]（不是每段一个 —— 那会为每段建一个 BackdropFilter），
+/// 段与段的缝隙正好露出底下那层玻璃；每段的已填充部分是同色胶囊。
 class _SegmentedProgressBar extends StatelessWidget {
   final int segments;
   final List<double> callProgresses;
@@ -797,39 +802,42 @@ class _SegmentedProgressBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Row(children: [
-      for (int i = 0; i < segments; i++) ...[
-        Expanded(
-          child: Container(
-            height: height,
-            margin: EdgeInsets.only(right: i < segments - 1 ? 2 : 0),
-            decoration: BoxDecoration(
-              color: scheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(2),
-            ),
-            child: FractionallySizedBox(
-              alignment: Alignment.centerLeft,
-              widthFactor: i < callProgresses.length ? callProgresses[i].clamp(0.0, 1.0) : 0.0,
+    final radius = BorderRadius.circular(height / 2);
+    return Stack(
+      children: [
+        Positioned.fill(child: IgnorePointer(child: AppTrackGlass(height: height))),
+        Row(children: [
+          for (int i = 0; i < segments; i++) ...[
+            Expanded(
               child: Container(
-                decoration: BoxDecoration(
-                  // 关键修复：callProgresses 长度可能 < segments（task 刚创建或 pipelineCalls 还没展开），
-                  // 直接 callProgresses[i] 会抛 RangeError 把整张 TaskCard 渲染挂掉 → 灰屏。
-                  // 越界时按 0.0 处理（pending 灰段）。
-                  color: i < callProgresses.length
-                      ? (i == currentCallIndex && callProgresses[i] < 1.0
-                          ? Colors.amber
-                          : callProgresses[i] >= 1.0
-                              ? Colors.green
-                              : scheme.primary)
-                      : scheme.primary,
-                  borderRadius: BorderRadius.circular(2),
+                height: height,
+                margin: EdgeInsets.only(right: i < segments - 1 ? 2 : 0),
+                child: FractionallySizedBox(
+                  alignment: Alignment.centerLeft,
+                  widthFactor: i < callProgresses.length ? callProgresses[i].clamp(0.0, 1.0) : 0.0,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      // 关键修复：callProgresses 长度可能 < segments（task 刚创建或 pipelineCalls 还没展开），
+                      // 直接 callProgresses[i] 会抛 RangeError 把整张 TaskCard 渲染挂掉 → 灰屏。
+                      // 越界时按 0.0 处理（pending 灰段）。
+                      color: i < callProgresses.length
+                          ? (i == currentCallIndex && callProgresses[i] < 1.0
+                              ? Colors.amber
+                              : callProgresses[i] >= 1.0
+                                  ? Colors.green
+                                  : scheme.primary)
+                          : scheme.primary,
+                      // 两端全圆角：与滑块/进度条同一种胶囊语言
+                      borderRadius: radius,
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
-        ),
+          ],
+        ]),
       ],
-    ]);
+    );
   }
 }
 

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <thread>
 #include <mutex>
+#include <atomic>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -213,23 +214,38 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
     }
 
     // 兜底排空：与主循环保持同一上限，避免子进程在被 kill 前疯狂输出导致无界累积（L-6）
-    while (ReadFile(hStdoutRead, buf, sizeof(buf)-1, &n, nullptr) && n > 0) {
-        if (stdout_data.size() + n > kMaxOutputBytes) {
-            size_t room = kMaxOutputBytes - stdout_data.size();
-            if (room > 0) stdout_data.append(buf, room);
-            truncated = true;
-            break;
+    // [FIX H-9] 先 PeekNamedPipe 探测可读数据量，避免写端被孙进程持有导致 ReadFile
+    // 永久阻塞（worker 线程挂死，后续请求不再响应）；并设总体超时上限与 POSIX 对齐（15s）。
+    {
+        auto drainDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+        while (std::chrono::steady_clock::now() < drainDeadline) {
+            DWORD avail = 0;
+            if (!PeekNamedPipe(hStdoutRead, nullptr, 0, nullptr, &avail, nullptr) || avail == 0) break;
+            DWORD want = (DWORD)std::min<size_t>(sizeof(buf) - 1, (size_t)avail);
+            DWORD n = 0;
+            if (!ReadFile(hStdoutRead, buf, want, &n, nullptr) || n == 0) break;
+            if (stdout_data.size() + n > kMaxOutputBytes) {
+                size_t room = kMaxOutputBytes - stdout_data.size();
+                if (room > 0) stdout_data.append(buf, room);
+                truncated = true;
+                break;
+            }
+            stdout_data.append(buf, n);
         }
-        stdout_data.append(buf, n);
-    }
-    while (ReadFile(hStderrRead, buf, sizeof(buf)-1, &n, nullptr) && n > 0) {
-        if (stderr_data.size() + n > kMaxOutputBytes) {
-            size_t room = kMaxOutputBytes - stderr_data.size();
-            if (room > 0) stderr_data.append(buf, room);
-            truncated = true;
-            break;
+        while (std::chrono::steady_clock::now() < drainDeadline) {
+            DWORD avail = 0;
+            if (!PeekNamedPipe(hStderrRead, nullptr, 0, nullptr, &avail, nullptr) || avail == 0) break;
+            DWORD want = (DWORD)std::min<size_t>(sizeof(buf) - 1, (size_t)avail);
+            DWORD n = 0;
+            if (!ReadFile(hStderrRead, buf, want, &n, nullptr) || n == 0) break;
+            if (stderr_data.size() + n > kMaxOutputBytes) {
+                size_t room = kMaxOutputBytes - stderr_data.size();
+                if (room > 0) stderr_data.append(buf, room);
+                truncated = true;
+                break;
+            }
+            stderr_data.append(buf, n);
         }
-        stderr_data.append(buf, n);
     }
 
     result.stdout_output = stdout_data;
@@ -295,10 +311,20 @@ ProcessResult Subprocess::runWithProgress(
     // stderr 读取线程：缓冲读取（避免逐字节系统调用 + 每字节加锁），按 \r 和 \n 分割行
     std::mutex stderr_mutex;
     std::string stderr_line_buf;
-    std::thread stderr_thread([hStderrRead, &on_stderr_line, &stderr_mutex, &stderr_line_buf]() {
+    // [FIX H-10] 取消/卸载时置位 readStop，让原本阻塞在 ReadFile 的读取线程能周期性
+    // 检查并自行退出（配合下方 PeekNamedPipe 探询），避免写端被孙进程持有导致 join 永久阻塞。
+    std::atomic<bool> readStop{false};
+    std::thread stderr_thread([hStderrRead, &on_stderr_line, &stderr_mutex, &stderr_line_buf, &readStop]() {
         char buf[4096];
-        DWORD n = 0;
-        while (ReadFile(hStderrRead, buf, sizeof(buf), &n, nullptr) && n > 0) {
+        while (!readStop.load()) {
+            DWORD avail = 0;
+            // [FIX H-10] 先探再读：管道损坏/关闭时 PeekNamedPipe 失败立即退出；
+            // 无数据时用短轮询 + readStop 检查，避免 ReadFile 永久阻塞。
+            if (!PeekNamedPipe(hStderrRead, nullptr, 0, nullptr, &avail, nullptr)) break;
+            if (avail == 0) { Sleep(10); continue; }
+            DWORD n = 0;
+            DWORD want = (DWORD)std::min<size_t>(sizeof(buf), (size_t)avail);
+            if (!ReadFile(hStderrRead, buf, want, &n, nullptr) || n == 0) break;
             size_t seg_start = 0;
             for (DWORD i = 0; i < n; ++i) {
                 if (buf[i] == '\r' || buf[i] == '\n') {
@@ -332,10 +358,17 @@ ProcessResult Subprocess::runWithProgress(
 
     // stdout 读取线程
     std::string stdout_data;
-    std::thread stdout_thread([hStdoutRead, &stdout_data]() {
+    std::thread stdout_thread([hStdoutRead, &stdout_data, &readStop]() {
         char buf[4096];
-        DWORD n = 0;
-        while (ReadFile(hStdoutRead, buf, sizeof(buf), &n, nullptr) && n > 0) {
+        while (!readStop.load()) {
+            DWORD avail = 0;
+            // [FIX H-10] 先探再读，同 stderr 线程；写端关闭后 PeekNamedPipe 返回 avail==0，
+            // 经短轮询检查 readStop 后退出，避免阻塞在 ReadFile。
+            if (!PeekNamedPipe(hStdoutRead, nullptr, 0, nullptr, &avail, nullptr)) break;
+            if (avail == 0) { Sleep(10); continue; }
+            DWORD n = 0;
+            DWORD want = (DWORD)std::min<size_t>(sizeof(buf), (size_t)avail);
+            if (!ReadFile(hStdoutRead, buf, want, &n, nullptr) || n == 0) break;
             stdout_data.append(buf, n);  // append(buf,n) 免去多余 strlen 扫描
         }
     });
@@ -368,16 +401,18 @@ ProcessResult Subprocess::runWithProgress(
         Sleep(100);
     }
 
-    // 确保进程已退出后再关管道：若进程还没退出就 CloseHandle + join，
-    // 阻塞在 ReadFile 上的读取线程不会因句柄关闭而返回，join 会永久死锁。
+    // 确保进程已退出：写端随子进程退出而关闭，读取线程会读到 EOF 自然退出。
+    // [FIX H-10] 进程退出后先置位 readStop，作为写端被孙进程持有时的兜底，
+    // 确保 join 不会永久阻塞在仍阻塞于 ReadFile 的读取线程上。
     if (WaitForSingleObject(pi.hProcess, 3000) != WAIT_OBJECT_0) {
         TerminateProcess(pi.hProcess, 1);
         WaitForSingleObject(pi.hProcess, 3000);
     }
-    CloseHandle(hStderrRead);
-    CloseHandle(hStdoutRead);
+    readStop.store(true);
     if (stderr_thread.joinable()) stderr_thread.join();
     if (stdout_thread.joinable()) stdout_thread.join();
+    CloseHandle(hStderrRead);
+    CloseHandle(hStdoutRead);
 
     result.stdout_output = stdout_data;
     {

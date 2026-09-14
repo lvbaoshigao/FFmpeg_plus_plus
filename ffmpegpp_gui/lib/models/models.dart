@@ -6,9 +6,29 @@ export 'quick_config.dart';
 
 const _uuid = Uuid();
 
+/// 默认字体族。
+///
+/// 桌面端给出各自的系统中文字体族名（theme 里 `fontFamily.isNotEmpty` 才应用它）。
+/// **Android 返回空串**：空串才是「系统字体（默认）」在 UI 与主题层统一的表示——
+///   * 设置页移动端分支用 `fontFamily.isEmpty` 判断「系统字体 / 导入字体」哪一行
+///     打勾；给一个非空族名会让「导入字体」被误标为已选中；
+///   * AppTheme 对空串走 `fontFamilyFallback`（其中第一个就是 'Noto Sans CJK SC'），
+///     效果与直接写 'Noto Sans CJK SC' 相同，但不会去应用一个安卓上并不存在的
+///     字体族名（安卓系统字体的族名由 fonts.xml 决定，SDK 版本间并不统一）。
 final String _defaultFontFamily = Platform.isWindows ? 'Microsoft YaHei'
     : Platform.isMacOS ? 'PingFang SC'
-    : 'Noto Sans CJK SC';
+    : '';
+
+/// Android 上早期的默认字体族（见 [_defaultFontFamily] 的说明）。
+/// 老配置里存的这个值在安卓上不可解析，等同「系统字体」，加载时归一化为空串。
+const String _legacyAndroidFontFamily = 'Noto Sans CJK SC';
+
+/// 字体族容错解析：缺失回退默认值，并把安卓上的历史默认值归一化为空串。
+String _parseFontFamily(dynamic raw) {
+  if (raw is! String) return _defaultFontFamily;
+  if (Platform.isAndroid && raw == _legacyAndroidFontFamily) return '';
+  return raw;
+}
 
 // ═══════════════════════════════════════════
 // 媒体类型标签
@@ -714,16 +734,16 @@ class VideoFile {
       bitRateKbps: (info['bit_rate_kbps'] as num?)?.toDouble() ?? 0,
       codec: info['codec'] as String? ?? '',
       codecLongName: info['codec_long_name'] as String? ?? '',
-      width: info['width'] as int? ?? 0, height: info['height'] as int? ?? 0,
+      width: AppConfig._asInt(info['width'], 0), height: AppConfig._asInt(info['height'], 0), // [FIX M-7]
       resolution: info['resolution'] as String? ?? '',
       fps: (info['fps'] as num?)?.toDouble() ?? 0,
       pixFmt: info['pix_fmt'] as String? ?? '',
       isHdr: info['is_hdr'] as bool? ?? false,
       audioCodec: info['audio_codec'] as String? ?? '',
-      audioChannels: info['audio_channels'] as int? ?? 0,
+      audioChannels: AppConfig._asInt(info['audio_channels'], 0), // [FIX M-7]
       audioSampleRate: '${info['audio_sample_rate'] ?? 'N/A'}',
       hasSubtitles: info['has_subtitles'] as bool? ?? false,
-      subtitleCount: info['subtitle_count'] as int? ?? 0,
+      subtitleCount: AppConfig._asInt(info['subtitle_count'], 0), // [FIX M-7]
       subtitles: (info['subtitles'] as List<dynamic>?)
               ?.map((s) => SubtitleStream.fromJson(s as Map<String, dynamic>)).toList() ?? [],
       config: TranscodeConfig(), parsed: true,
@@ -886,22 +906,35 @@ class TaskInfo {
     this.pipelineCalls, this.currentCallIndex = 0, this.callProgresses = const [],
   });
 
+  // [FIX S-3] copyWith 为所有「语义上可清空」的可空字段增加显式清除开关（clearXxx）。
+  // 现有调用点全部使用命名参数，且新参数均有默认值，向后兼容、编译不受影响。
   TaskInfo copyWith({
     TaskStatus? status, double? progress, String? elapsed, String? remaining,
     String? speed, String? fps, String? bitrate, int? frame, String? error,
-    List<String>? logLines, bool? expanded, int? outputSize, double? duration, List<String>? command,
-    List<BackendCall>? pipelineCalls, int? currentCallIndex, List<double>? callProgresses,
+    bool clearError = false,
+    List<String>? logLines, bool? expanded, int? outputSize,
+    bool clearOutputSize = false,
+    double? duration, bool clearDuration = false,
+    List<String>? command, bool clearCommand = false,
+    List<BackendCall>? pipelineCalls, bool clearPipelineCalls = false,
+    int? currentCallIndex, List<double>? callProgresses,
+    bool clearCallProgresses = false,
   }) => TaskInfo(
         id: id, videoId: videoId, filename: filename, inputPath: inputPath, outputPath: outputPath,
         status: status ?? this.status, progress: progress ?? this.progress,
         elapsed: elapsed ?? this.elapsed, remaining: remaining ?? this.remaining,
         speed: speed ?? this.speed, fps: fps ?? this.fps, bitrate: bitrate ?? this.bitrate,
-        frame: frame ?? this.frame, error: error ?? this.error,
+        frame: frame ?? this.frame,
+        // [FIX S-3] clearError 优先：失败→重跑时先清掉旧错误，避免「处理中」与旧错误横幅并存
+        error: clearError ? null : (error ?? this.error),
         logLines: logLines ?? this.logLines, config: config,
-        expanded: expanded ?? this.expanded, outputSize: outputSize ?? this.outputSize,
-        duration: duration ?? this.duration, command: command ?? this.command,
-        pipelineCalls: pipelineCalls ?? this.pipelineCalls, currentCallIndex: currentCallIndex ?? this.currentCallIndex,
-        callProgresses: callProgresses ?? this.callProgresses,
+        expanded: expanded ?? this.expanded,
+        outputSize: clearOutputSize ? null : (outputSize ?? this.outputSize),
+        duration: clearDuration ? null : (duration ?? this.duration),
+        command: clearCommand ? null : (command ?? this.command),
+        pipelineCalls: clearPipelineCalls ? null : (pipelineCalls ?? this.pipelineCalls),
+        currentCallIndex: currentCallIndex ?? this.currentCallIndex,
+        callProgresses: clearCallProgresses ? const [] : (callProgresses ?? this.callProgresses),
       );
 
   String get statusLabel {
@@ -953,8 +986,13 @@ class TaskInfo {
         .map((e) => BackendCall.fromJson(e.cast<String, dynamic>()))
         .toList(),
     currentCallIndex: (json['current_call_index'] as num?)?.toInt() ?? 0,
+    // [FIX M-8] 逐元素容错：单个元素为 null/字符串/非数字时不再抛错，
+    // 避免整条任务记录被外层 catch 静默丢弃。
     callProgresses: (json['call_progresses'] as List?)
-        ?.map((e) => (e as num).toDouble()).toList() ?? const [],
+        ?.map((e) =>
+            e is num ? e.toDouble() : (e is String ? double.tryParse(e) ?? 0.0 : 0.0))
+        .toList() ??
+        const [],
   );
 
   String get outputSizeStr {
@@ -1106,8 +1144,8 @@ class AiProfile {
         apiKey: SecureKeyStore.decrypt(json['api_key'] as String? ?? ''),
         apiUrl: json['api_url'] as String? ?? 'https://api.openai.com/v1/chat/completions',
         model: json['model'] as String? ?? 'gpt-4o',
-        contextWindow: json['context_window'] as int? ?? 128000,
-        maxTokens: json['max_tokens'] as int? ?? 4096,
+        contextWindow: AppConfig._asInt(json['context_window'], 128000), // [FIX M-7]
+        maxTokens: AppConfig._asInt(json['max_tokens'], 4096), // [FIX M-7]
         temperature: (json['temperature'] as num?)?.toDouble() ?? 0.3,
         group: json['group'] as String? ?? '',
         multiKeyEnabled: json['multi_key_enabled'] as bool? ?? false,
@@ -1249,6 +1287,9 @@ class AppConfig {
   /// 设置项不使用卡片玻璃效果：设置卡片跳过液态玻璃渲染，退回主题色样式
   ///（与 settingsFrostedGlass 互斥）
   bool noCardGlass;
+  /// 拖动滑块时的星点特效（默认开）。关闭后星点层完全不建 Ticker / 绘制层，
+  /// 低配设备用来换帧率（见 widgets/app_slider.dart 的性能约定）。
+  bool sliderStars;
   /// 逻辑门符号标准：'ansi' ANSI/IEEE 标准 / 'iec' IEC 标准
   String gateStd;
   bool debugMode;
@@ -1321,7 +1362,6 @@ class AppConfig {
   double borderWidth;
 
   static const fontWeightValues = [300, 400, 500, 600, 700];
-  static const fontWeightLabels = ['Light', 'Regular', 'Medium', 'SemiBold', 'Bold'];
   int get fontWeightValue => fontWeightValues[fontWeightIndex.clamp(0, 4)];
 
   /// 平台默认字体，用于「清除缓存」后回退（导入的字体文件已被删除）
@@ -1362,6 +1402,7 @@ class AppConfig {
     this.glassFollowTheme = false,
     this.settingsFrostedGlass = false,
     this.noCardGlass = false,
+    this.sliderStars = true,
     this.gateStd = 'ansi',
     this.debugMode = false, this.saveLogs = false, this.enableSystemNotification = false, this.logSavePath = '',
     this.editMode = 0,
@@ -1446,6 +1487,25 @@ class AppConfig {
     return out;
   }
 
+  // [FIX H-14] 带 NaN/Infinity 过滤与范围钳制的 double 解析。
+  // JSON 含 1e999 → jsonDecode 得到 double.infinity，若不处理会令
+  // app.dart 的 ((-inf) * 220).round() 抛 UnsupportedError 导致启动崩溃。
+  static double _clampDouble(dynamic raw, double lo, double hi, double fb) {
+    assert(lo <= hi, 'clamp 区间必须满足 lo <= hi');
+    final v = (raw as num?)?.toDouble();
+    if (v == null || !v.isFinite) return fb; // 缺失 / NaN / Infinity / -Infinity 均回退默认值
+    return v.clamp(lo, hi).toDouble();
+  }
+
+  // [FIX M-7] 容错 int 解析：JSON 浮点 / 字符串数字都不再抛 TypeError，
+  // 否则 ConfigService.load 的 catch 会把整份配置回退默认值（用户全部设置丢失）。
+  static int _asInt(dynamic raw, int fb) {
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    if (raw is String) return int.tryParse(raw) ?? fb;
+    return fb; // 缺失或非数字类型 → 回退默认值
+  }
+
   factory AppConfig.fromJson(Map<String, dynamic> json) => AppConfig(
         language: json['language'] as String? ?? 'zh',
         ffmpegPath: json['ffmpeg_path'] as String? ?? '',
@@ -1453,13 +1513,13 @@ class AppConfig {
         defaultOutputDir: json['default_output_dir'] as String? ?? '',
         intermediateDir: json['intermediate_dir'] as String? ?? '',
         darkMode: json['dark_mode'] as bool? ?? true,
-        themeColor: json['theme_color'] as int? ?? 0xFF5E6AD2,
-        themeColor2: (json['theme_color2'] as int?) ?? -1,
-        fontFamily: json['font_family'] as String? ?? _defaultFontFamily,
-        fontSize: (json['font_size'] as num?)?.toDouble() ?? 17.0,
-        fontWeightIndex: json['font_weight'] as int? ?? 1,
+        themeColor: _asInt(json['theme_color'], 0xFF5E6AD2), // [FIX M-7]
+        themeColor2: _asInt(json['theme_color2'], -1), // [FIX M-7]
+        fontFamily: _parseFontFamily(json['font_family']),
+        fontSize: _clampDouble(json['font_size'], 8.0, 64.0, 17.0), // [FIX H-14] 字号缩放钳制 8~64
+        fontWeightIndex: _asInt(json['font_weight'], 1), // [FIX M-7]
         backgroundImage: json['background_image'] as String? ?? '',
-        backgroundOpacity: (json['background_opacity'] as num?)?.toDouble() ?? 0.8,
+        backgroundOpacity: _clampDouble(json['background_opacity'], 0.0, 1.0, 0.8), // [FIX H-14] 透明度钳制 0~1
         glassEffect: json['glass_effect'] as String? ?? 'liquid',
         cardStyle: _migrateSurfaceStyle(json['card_style'] as String?),
         navStyle: _migrateSurfaceStyle(json['nav_style'] as String?),
@@ -1468,27 +1528,32 @@ class AppConfig {
         glassFollowTheme: json['glass_follow_theme'] as bool? ?? false,
         settingsFrostedGlass: json['settings_frosted_glass'] as bool? ?? false,
         noCardGlass: json['no_card_glass'] as bool? ?? false,
+        sliderStars: json['slider_stars'] as bool? ?? true,
         gateStd: json['gate_std'] as String? ?? 'ansi',
-        cardOpacity: (json['card_opacity'] as num?)?.toDouble() ?? 0.7,
+        cardOpacity: _clampDouble(json['card_opacity'], 0.0, 1.0, 0.7), // [FIX H-14] 透明度钳制 0~1
         canvasBg: json['canvas_bg'] as String? ?? 'global',
         debugMode: json['debug_mode'] as bool? ?? false,
         saveLogs: json['save_logs'] as bool? ?? false,
         enableSystemNotification: json['enable_system_notification'] as bool? ?? false,
         logSavePath: json['log_save_path'] as String? ?? '',
         // 传统模式（旧值 2）已移除：自动迁移为节点编辑器
-        editMode: (json['edit_mode'] as int?) == 2 ? 0 : (json['edit_mode'] as int? ?? 0),
+        // [FIX M-7] 旧值 2（传统模式）已移除→迁移为 0；用 _asInt 容错解析避免浮点 JSON 抛错
+        editMode: (() {
+          final v = _asInt(json['edit_mode'], 0);
+          return v == 2 ? 0 : v;
+        })(),
         useNodeEditorLandscape: json['use_node_editor_landscape'] as bool? ?? false,
-        editorToolbarScale: (json['editor_toolbar_scale'] as num?)?.toDouble() ?? 1.0,
-        editorZoomScale: (json['editor_zoom_scale'] as num?)?.toDouble() ?? 1.0,
+        editorToolbarScale: _clampDouble(json['editor_toolbar_scale'], 0.5, 3.0, 1.0), // [FIX H-14] 缩放钳制 0.5~3.0
+        editorZoomScale: _clampDouble(json['editor_zoom_scale'], 0.5, 3.0, 1.0), // [FIX H-14] 缩放钳制 0.5~3.0
         autosaveEnabled: json['autosave_enabled'] as bool? ?? true,
-        autosaveIntervalSec: json['autosave_interval_sec'] as int? ?? 30,
-        maxConcurrentTasks: json['max_concurrent_tasks'] as int? ?? 1,
-        probeThreads: json['probe_threads'] as int? ?? 1,
+        autosaveIntervalSec: _asInt(json['autosave_interval_sec'], 30), // [FIX M-7]
+        maxConcurrentTasks: _asInt(json['max_concurrent_tasks'], 1), // [FIX M-7]
+        probeThreads: _asInt(json['probe_threads'], 1), // [FIX M-7]
         nodeUsageCount: _safeIntMap(json['node_usage_count']),
         keyBindings: _safeStringListMap(json['key_bindings']) ?? Map.from(defaultKeyBindings),
         autoCheckUpdate: json['auto_check_update'] as bool? ?? true,
         mcpEnabled: json['mcp_enabled'] as bool? ?? false,
-        mcpPort: json['mcp_port'] as int? ?? 3000,
+        mcpPort: _asInt(json['mcp_port'], 3000), // [FIX M-7]
         mcpHost: json['mcp_host'] as String? ?? '127.0.0.1',
         mcpAllowWrite: json['mcp_allow_write'] as bool? ?? false,
         mcpAllowFsAccess: json['mcp_allow_fs'] as bool? ?? true,
@@ -1508,8 +1573,8 @@ class AppConfig {
         aiGraphMode: json['ai_graph_mode'] as String? ?? 'redo',
         aiSystemPrompt: json['ai_system_prompt'] as String? ?? '',
         aiTemperature: (json['ai_temperature'] as num?)?.toDouble() ?? 0.3,
-        aiMaxTokens: json['ai_max_tokens'] as int? ?? 4096,
-        aiContextWindow: json['ai_context_window'] as int? ?? 128000,
+        aiMaxTokens: _asInt(json['ai_max_tokens'], 4096), // [FIX M-7]
+        aiContextWindow: _asInt(json['ai_context_window'], 128000), // [FIX M-7]
         aiApproveMode: json['ai_approve_mode'] as String? ?? 'ask',
         aiAskSkipTools: (json['ai_ask_skip_tools'] as List<dynamic>?)?.cast<String>() ?? const ['save', 'undo', 'redo', 'error_check'],
         aiProfiles: (json['ai_profiles'] as List<dynamic>?)?.map((e) => AiProfile.fromJson(e as Map<String, dynamic>)).toList() ?? <AiProfile>[],
@@ -1519,7 +1584,7 @@ class AppConfig {
         noPreload: json['no_preload'] as bool? ?? false,
         glassGpuOnDesktop: json['glass_gpu_on_desktop'] as bool? ?? false,
         borderEnabled: json['border_enabled'] as bool? ?? false,
-        borderColor: json['border_color'] as int? ?? 0xFF9E9E9E,
+        borderColor: _asInt(json['border_color'], 0xFF9E9E9E), // [FIX M-7]
         borderWidth: ((json['border_width'] as num?)?.toDouble() ?? 1.0).clamp(0.5, 4.0),
       );
 
@@ -1534,6 +1599,7 @@ class AppConfig {
         'menu_style': menuStyle,
         'glass_follow_theme': glassFollowTheme,
         'settings_frosted_glass': settingsFrostedGlass, 'no_card_glass': noCardGlass, 'gate_std': gateStd,
+        'slider_stars': sliderStars,
         'card_opacity': cardOpacity,
         'canvas_bg': canvasBg,
         'debug_mode': debugMode,
@@ -1608,9 +1674,31 @@ class ContainerItem {
   int index;
   ContainerItem({required this.fileId, required this.index});
 
+  // [FIX M-9] 确定性 FNV-1a 32 位哈希：替代不稳定的 String.hashCode（项目已明确弃用）。
+  static int _stableHash(String s) {
+    var h = 0x811c9dc5;
+    for (final b in s.codeUnits) {
+      h ^= b;
+      h = (h * 0x01000193) & 0xFFFFFFFF;
+    }
+    return h;
+  }
+
   Map<String, dynamic> toJson() => {'fileId': fileId, 'index': index};
-  factory ContainerItem.fromJson(Map<String, dynamic> json) =>
-      ContainerItem(fileId: json['fileId'] as String, index: json['index'] as int? ?? 0);
+
+  // [FIX M-9] 对任意畸形 JSON 都不抛异常：嵌套整条非 Map / fileId 缺失或非字符串时，
+  // 用「索引 + 整条 JSON 的稳定哈希」生成唯一且可复现的回退 id，避免一个容器损坏导致整个配置库加载失败。
+  factory ContainerItem.fromJson(dynamic json) {
+    if (json is! Map) {
+      // 列表里混入了 null / 字符串等非法元素：返回确定占位，绝不让上层 map 抛错
+      return ContainerItem(fileId: '__invalid_item__', index: 0);
+    }
+    final map = json as Map<Object?, Object?>;
+    final fileId = map['fileId'] as String?;
+    final index = (map['index'] as num?)?.toInt() ?? 0;
+    final id = fileId ?? '__cid_${index}_${_stableHash(map.toString())}';
+    return ContainerItem(fileId: id, index: index);
+  }
 }
 
 class FileContainer {

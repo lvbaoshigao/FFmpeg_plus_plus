@@ -138,9 +138,14 @@ class SystemMonitor {
         final totalT = _fileTime64(kernel) + _fileTime64(user);
         final dTotal = totalT - _wPrevTotal;
         final dIdle = idleT - _wPrevIdle;
+        // [FIX L-3] 在覆盖基线前先判断上一轮是否为 0：首帧无基线时不计算增量百分比，
+        // 保持 cpuPercent 现状（仍为 0），避免基于 0 基线算出虚假 CPU 值。
+        // 原写法在上一行已把 _wPrevTotal 赋为新值，导致 `_wPrevTotal > 0` 恒为真、
+        // 首次采样即误算。对齐 Linux 分支 _readCpuLinux（221 行）的正确顺序。
+        final hasPrev = _wPrevTotal > 0;
         _wPrevIdle = idleT;
         _wPrevTotal = totalT;
-        if (dTotal > 0 && _wPrevTotal > 0) {
+        if (dTotal > 0 && hasPrev) {
           cpuPercent = (100.0 * (1 - dIdle / dTotal)).clamp(0.0, 100.0);
         }
       } finally {

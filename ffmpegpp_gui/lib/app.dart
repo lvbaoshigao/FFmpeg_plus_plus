@@ -9,6 +9,7 @@ import 'providers/app_state.dart';
 import 'models/models.dart';
 import 'theme/app_theme.dart';
 import 'theme/app_strings.dart';
+import 'theme/app_text_scale.dart';
 import 'services/update_service.dart' as updater;
 import 'pages/project_page.dart';
 import 'pages/queue_page.dart';
@@ -207,10 +208,49 @@ class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
           // 桌面端本来就没有过滚动指示器，此覆盖对桌面行为无影响。
           scrollBehavior: const _AppScrollBehavior(),
           builder: (context, child) {
-            final scale = k.fontSize / 14.0;
-            return MediaQuery(
-              data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(scale)),
-              child: child!,
+            final mq = MediaQuery.of(context);
+            // 「应用内字号」（设置 → 字体 → 字号，基准 14）必须**乘**在系统字号上，
+            // 不能覆盖：旧实现直接 `copyWith(textScaler: TextScaler.linear(fontSize/14))`，
+            // 等价于把 Android「设置 → 显示 → 字体大小」整个丢掉 —— 系统里把字号调到
+            // 最大/最小，应用内所有文字纹丝不动（用户反馈的「移动端字号无法调整」）。
+            //
+            // 取系统倍率用 scale(14)/14 而不是已废弃的 TextScaler.textScaleFactor：
+            // Flutter 目前下发的系统缩放都是线性的（TextScaler.linear），二者等价，
+            // 且不会因使用废弃 API 触发 analyzer 警告。
+            final sysScale = mq.textScaler.scale(14.0) / 14.0;
+            // 应用内倍率：设置里的字号（基准 14，默认 17）。
+            final appScale = k.fontSize / 14.0;
+            // 再钳到 0.5~2.6：系统 2.0 叠应用内 1.5 会到 3.0，移动端顶栏药丸/卡片
+            // 的固定高度（MobileUi.pillHeight 等）撑不住，反而会溢出。
+            final scale = (sysScale * appScale)
+                .clamp(AppTextScale.minScale, AppTextScale.maxScale);
+            // AppTextScale 把两个倍率**分别**暴露出去（不是只给乘积）：
+            // 选项控件（OptionMenuBar）要「只跟系统、不跟应用内设置」的字号，
+            // 见 theme/app_text_scale.dart 的 withoutAppTextScale。
+            //
+            // [FIX UI-返回黑闪] 在 Navigator **背后**垫一层不透明主题底色。
+            // 为什么需要：本层 child 就是 Navigator，各路由是它的兄弟节点；
+            // 路由切换（尤其是返回/pop）时存在「下层路由还没画出、上层路由已开始
+            // 退场」的中间帧，此时这一帧没有任何路由覆盖 → 直接露出平台窗口背景。
+            // Android 侧 NormalTheme 继承 Theme.Black.NoTitleBar 且
+            // windowBackground=?android:colorBackground（夜里就是纯黑），于是
+            // 用户看到的就是「返回时突然黑一下」。
+            // AppShell 内部虽有同样的底色垫层，但 AppShell 只是 home 路由，
+            // 覆盖不到「路由之间的空白帧」；只有垫在 Navigator 外面才真正兜住。
+            // 取色用 Theme.of —— MaterialApp 内部专门用 Builder 包了 builder，
+            // 保证此处 context 能解析到上面设置的 theme（见 _materialBuilder）。
+            // 该图层只在「无路由绘制」时可见，有路由时被完全覆盖，不影响任何观感。
+            final Color baseSurface = Theme.of(context).colorScheme.surface;
+            return AppTextScale(
+              systemScale: sysScale,
+              appScale: appScale,
+              child: MediaQuery(
+                data: mq.copyWith(textScaler: TextScaler.linear(scale)),
+                child: ColoredBox(
+                  color: baseSurface,
+                  child: child!,
+                ),
+              ),
             );
           },
           home: k.initialized ? const AppShell() : const _SplashScreen(),
@@ -305,7 +345,8 @@ class _SplashScreenState extends State<_SplashScreen> {
                   letterSpacing: 0.5)),
           const SizedBox(height: 26),
           // 进度条：不确定进度（真实进度由初始化状态驱动）
-          // 统一走 AppProgressBar —— 与全应用滑动条同一规格（高 6、两端半圆、主题色）
+          // 统一走 AppProgressBar —— 与全应用滑动条同一规格
+          //（胶囊高 kAppTrackHeight、两端半圆、主题色填充 + 玻璃留空）
           const SizedBox(width: 140, child: AppProgressBar()),
         ]),
       ),

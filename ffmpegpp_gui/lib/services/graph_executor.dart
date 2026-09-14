@@ -575,7 +575,11 @@ class GraphExecutor {
           final baseName = isLast
               ? outputPath.replaceAll(RegExp(r'\.[^.]+$'), '')
               : '${outputPath.replaceAll(RegExp(r'\.[^.]+$'), '')}_step$i';
-          final framesDir = '${baseName}_frames';
+          // [FIX M-15] 帧目录必须包含本次执行会话唯一盐 tmpSalt：同一源文件的两个输出计划
+          // 并发抽帧（maxConcurrentTasks>1）时，framesDir 才能彼此区分、不互相覆盖帧目录。
+          // tmpSalt 由 plan.outputNode.id + outputPath 经稳定 FNV-1a 哈希得出：同一计划内多次
+          // 调用得到同一目录，不同计划得到不同目录（不使用易碰撞/不稳定的 String.hashCode）。
+          final framesDir = '${baseName}_frames_$tmpSalt';
 
           if (mode == 'single') {
             final time = (p['time'] as num?)?.toDouble() ?? 0;

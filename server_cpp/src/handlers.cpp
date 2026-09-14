@@ -185,19 +185,49 @@ void slog_cleanup() {
 void ProgressParser::feed(const std::string& line) {
     // 兼容 ffmpeg 4.x 的 2 位小数与新版（6 位微秒）进度输出，
     // 小数位数不固定，按实际位数换算（不能用固定 /100）
-    auto m = findRegex(line, R"(time=(\d{2}):(\d{2}):(\d{2})\.(\d+))");
-    if (!m.empty()) {
-        current_time = std::stoi(m[1]) * 3600 + std::stoi(m[2]) * 60 + std::stod(m[3])
-                     + std::stod(m[4]) / std::pow(10.0, (int)m[4].size());
+    // [FIX H-15] 先把每个字段解析到局部变量，全部成功后再一次性提交；
+    // 任一字段转换失败（如超长数字抛 out_of_range）都不改变成员状态，
+    // 保留上一次有效值，避免半更新（current_time 已改而 speed 未改）导致的进度跳变。
+    double new_current_time = current_time;
+    double new_speed = speed;
+    double new_fps = fps;
+    double new_bitrate = bitrate;
+    int new_frame = frame;
+
+    auto t = findRegex(line, R"(time=(\d{2}):(\d{2}):(\d{2})\.(\d+))");
+    if (!t.empty()) {
+        try {
+            double hh = std::stoi(t[1]);
+            double mm = std::stoi(t[2]);
+            double ss = std::stod(t[3]);
+            double frac = std::stod(t[4]) / std::pow(10.0, (int)t[4].size());
+            new_current_time = hh * 3600 + mm * 60 + ss + frac;
+        } catch (...) {
+            // 转换失败：保留旧值，不提交当前字段
+        }
     }
-    m = findRegex(line, R"(speed=\s*([\d.]+)x)");
-    if (!m.empty()) speed = std::stod(m[1]);
-    m = findRegex(line, R"(fps=\s*([\d.]+))");
-    if (!m.empty()) fps = std::stod(m[1]);
-    m = findRegex(line, R"(bitrate=\s*([\d.]+)\s*kbits/s)");
-    if (!m.empty()) bitrate = std::stod(m[1]);
-    m = findRegex(line, R"(frame=\s*(\d+))");
-    if (!m.empty()) frame = std::stoi(m[1]);
+    auto sp = findRegex(line, R"(speed=\s*([\d.]+)x)");
+    if (!sp.empty()) {
+        try { new_speed = std::stod(sp[1]); } catch (...) {}
+    }
+    auto fp = findRegex(line, R"(fps=\s*([\d.]+))");
+    if (!fp.empty()) {
+        try { new_fps = std::stod(fp[1]); } catch (...) {}
+    }
+    auto br = findRegex(line, R"(bitrate=\s*([\d.]+)\s*kbits/s)");
+    if (!br.empty()) {
+        try { new_bitrate = std::stod(br[1]); } catch (...) {}
+    }
+    auto fr = findRegex(line, R"(frame=\s*(\d+))");
+    if (!fr.empty()) {
+        try { new_frame = std::stoi(fr[1]); } catch (...) {}
+    }
+
+    current_time = new_current_time;
+    speed = new_speed;
+    fps = new_fps;
+    bitrate = new_bitrate;
+    frame = new_frame;
 }
 
 double ProgressParser::progress() const {
@@ -801,6 +831,28 @@ void handleCustomCommand(const json& req, const CancelCheck& isCancelled) {
     }
 
     slog("handleCustomCommand: %s", command.c_str());
+
+    // [FIX S-7] 自定义命令同样必须过滤镜安全白名单，防止 subtitles=/etc/passwd、
+    // movie= 等可读本地任意文件/执行命令的危险滤镜绕过黑名单（与 handleTranscode 一致）。
+    for (size_t i = 0; i + 1 < tokens.size(); ++i) {
+        if ((tokens[i] == "-vf" || tokens[i] == "-af" || tokens[i] == "-filter_complex")
+            && !isFilterSafe(tokens[i + 1])) {
+            JsonWriter::reply(req["id"], false, nullptr, "自定义命令包含不安全滤镜");
+            return;
+        }
+    }
+    // [FIX S-7] 输入/输出路径同样走既有安全校验，防止路径穿越/任意文件读取。
+    for (size_t i = 0; i + 1 < tokens.size(); ++i) {
+        if (tokens[i] == "-i" && !isPathSafe(tokens[i + 1])) {
+            JsonWriter::reply(req["id"], false, nullptr, "自定义命令包含不安全输入路径");
+            return;
+        }
+    }
+    if (!output_path.empty() && !isPathSafe(output_path)) {
+        JsonWriter::reply(req["id"], false, nullptr, "自定义命令包含不安全输出路径");
+        return;
+    }
+
     runFFmpegProcess(req["id"], tokens, isCancelled, output_path);
 }
 

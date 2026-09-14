@@ -13,6 +13,7 @@ import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
+import '../theme/app_text_scale.dart';
 import '../widgets/masonry_grid.dart';
 import '../widgets/install_dialog.dart';
 import 'keybinding_page.dart';
@@ -50,7 +51,12 @@ Future<void> _ensureAndroidAppDir() async {
   try {
     final dir = await getApplicationDocumentsDirectory();
     _cachedAppDir = '${dir.path}${_s}FFmpeg++';
-  } catch (_) {}
+  } catch (_) {
+    // 解析失败（罕见）：把标记复位以便下次重试。否则 _cachedAppDir 会永久停在
+    // systemTemp 兜底值 —— 导入的字体被写进缓存目录，而启动时 main._loadCustomFonts()
+    // 只从「应用文档目录/FFmpeg++/fonts」加载，重启后字体就「消失」了。
+    _appDirInit = false;
+  }
 }
 
 /// 获取用户数据目录，避免 Program Files 权限问题
@@ -691,6 +697,7 @@ class _SettingsPageState extends State<SettingsPage> {
         state.config.glassFollowTheme,
         state.config.settingsFrostedGlass,
         state.config.noCardGlass,
+        state.config.sliderStars,
         state.config.glassGpuOnDesktop,
         state.config.ffmpegPath,
       ]),
@@ -1169,8 +1176,11 @@ class _SettingsPageState extends State<SettingsPage> {
           style: TextStyle(fontSize: 14, color: scheme.onSurface)),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       // 统一「菜单栏选项」控件：行内分段药丸（选中主题色药丸 + 图标淡入动画）
+      //
+      // 宽度 108：两个短选项（中文 / EN）足够紧凑。此前 128 时两段各约 62px，
+      // 在只有 2~3 个汉字的标签旁留下大片空白，视觉上「选项卡过宽」。
       trailing: SizedBox(
-        width: 128,
+        width: 108,
         child: OptionMenuBar<String>(
           expandable: false,
           value: cfg.language,
@@ -1445,6 +1455,14 @@ class _SettingSlider extends StatefulWidget {
   final TextStyle labelStyle;
   final ValueChanged<double> onCommit;
 
+  /// 拖动过程中就写回配置（而不仅仅是松手时写一次）。
+  ///
+  /// 默认 false：只改本地状态，父级不重建，滑动全程流畅无中断。
+  /// 字号滑块传 true —— 用户要的是「滑一下就能看出整个界面变大变小」，
+  /// 松手才生效的话，在一堆 12~13px 的文字里很难察觉到变化
+  /// （用户反馈的「滑动滑块后软件实际字体大小并未发生变化」）。
+  final bool liveCommit;
+
   const _SettingSlider({
     required this.value,
     required this.min,
@@ -1453,6 +1471,7 @@ class _SettingSlider extends StatefulWidget {
     required this.labelStyle,
     required this.onCommit,
     this.divisions,
+    this.liveCommit = false,
   });
 
   @override
@@ -1462,16 +1481,34 @@ class _SettingSlider extends StatefulWidget {
 class _SettingSliderState extends State<_SettingSlider> {
   double? _dragValue;
 
+  /// [ _SettingSlider.liveCommit] 的节流定时器：拖动时每 80ms 才写一次配置，
+  /// 否则每帧都 notifyListeners → 整页（含液态玻璃卡片）逐帧重建会掉帧。
+  Timer? _liveTimer;
+  static const Duration _liveThrottle = Duration(milliseconds: 80);
+
   double get _current => _dragValue ?? widget.value;
 
   void _onChanged(double v) {
     setState(() => _dragValue = v);
     // 仅本地更新不触发父级重建，确保滑动全程流畅无中断
+    if (!widget.liveCommit) return;
+    _liveTimer?.cancel();
+    _liveTimer = Timer(_liveThrottle, () {
+      if (mounted) widget.onCommit(v);
+    });
   }
 
   void _onChangeEnd(double v) {
+    _liveTimer?.cancel();
+    _liveTimer = null;
     widget.onCommit(v);
     setState(() => _dragValue = null);
+  }
+
+  @override
+  void dispose() {
+    _liveTimer?.cancel();
+    super.dispose();
   }
 
   @override
@@ -1485,9 +1522,10 @@ class _SettingSliderState extends State<_SettingSlider> {
         ),
         const SizedBox(width: 8),
         Expanded(
-          // 滑块样式统一由主题层接管（AppTheme.sliderTheme：两边大圆角轨道 +
-          // 主题色滑块 + 拖动光晕动画），这里不再覆盖局部 SliderTheme。
-          child: Slider(
+          // 统一走 AppSlider（全应用唯一滑块实现）：胶囊轨道 + 主题色填充 +
+          // 玻璃留空 + 拖动星点。裸 Slider 拿不到玻璃底（那需要一层 widget），
+          // 所以这里改为显式使用 AppSlider，不要再改回 `Slider(`。
+          child: AppSlider(
             value: _current.clamp(widget.min, widget.max),
             min: widget.min,
             max: widget.max,
@@ -1662,6 +1700,16 @@ Widget _buildSurfaceStyleCard(BuildContext ctx, AppState state) {
 /// * 「样式里面增加『添加边框选项』，开启后为所有卡片以及药丸添加有线的边框，可改颜色和宽度」→
 ///   新增 borderEnabled/borderColor/borderWidth，由 widgets/liquid_glass_fallback.dart 的
 ///   withConfigurableBorder 统一叠加到所有卡片与药丸上。
+///
+/// 移动端可用性修复（用户反馈「设置-样式 里的玻璃效果与下面三个开关无效」）：
+/// 这三个开关与「玻璃效果」此前只被桌面端的 [GlassPanel] 读取，而移动端的
+/// 卡片 / 药丸 / 底部菜单栏走的是 AppCard、MobileGlassPill、MobileBottomNav，
+/// 它们完全不读这些字段 —— 于是开关拨动后界面毫无变化。现在语义已经接通：
+/// * glassFollowTheme → AppCard / MobileGlassPill / MobileBottomNav 的玻璃 tint；
+/// * settingsFrostedGlass → AppCard 的「液态玻璃改走扁平模糊」分支；
+/// * noCardGlass → AppCard 退回主题色实心；
+/// * glassEffect → GlassPanel 系面板（弹窗 / 命令页 / 日志页 / 节点编辑器等）。
+/// 三者默认均为 false，默认观感与修复前保持一致。
 List<Widget> _buildStyleGlassAndBorder(BuildContext ctx, AppState state) {
   final cfg = state.config;
   final s = AppStrings.of(cfg.language);
@@ -1671,30 +1719,61 @@ List<Widget> _buildStyleGlassAndBorder(BuildContext ctx, AppState state) {
 
   return [
     const SizedBox(height: 4),
-    // ── 玻璃效果（非卡片表面：桌面顶栏 / 侧边栏 / 弹窗菜单）──
-    Row(children: [
-      Expanded(
-        child: Text(zh ? '玻璃效果（顶栏/侧栏/菜单）' : 'Glass effect (bars & menus)',
-            maxLines: 1, overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: clr, fontSize: 12)),
-      ),
-      SizedBox(
-        width: _kMenuWidth,
-        child: OptionMenuBar<String>(
-          expandable: false,
-          value: (cfg.glassEffect == 'blur' || cfg.glassEffect == 'none')
-              ? cfg.glassEffect
-              : 'liquid',
-          items: [
-            OptionItem('liquid', s.surfaceStyleLiquid, icon: Icons.water_drop_outlined),
-            OptionItem('blur', s.glassBlur, icon: Icons.blur_on_outlined),
-            OptionItem('none', s.surfaceStyleTheme, icon: Icons.format_color_fill),
-          ],
-          onChanged: (v) => state.updateConfig((c) => c..glassEffect = v),
+    // ── 玻璃效果（非卡片表面：弹窗 / 面板；桌面端另含顶栏与侧边栏）──
+    //
+    // 与上面三行同构：左 = 图标 + 文字（+ 作用范围说明），右 = 固定宽度下拉。
+    // 旧实现把「液态玻璃 / 模糊 / 跟随主题色」三个选项硬塞进右侧 _kMenuWidth
+    // 宽的小框里，每项只剩约 40px，文字全部被截断、只剩三个图标 —— 即用户
+    // 反馈的「玻璃效果的具体设置项未显示」「字体都显示不全」。改成下拉后：
+    // 当前值在框内完整显示，展开列表里三个选项也都带完整文字。
+    //
+    // 作用范围说明也补上了：移动端没有「顶栏/侧栏」这两类 GlassPanel 表面
+    // （顶栏/底部栏分别由「顶部药丸样式」「底部菜单栏样式」接管），本项在
+    // 移动端实际作用于弹窗与各类面板（命令 / 日志 / 字体选择 / 节点编辑器等），
+    // 用户因此不会再以为它「无效」。
+    Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(children: [
+        Icon(Icons.blur_on_outlined, size: 15, color: scheme.primary),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(zh ? '玻璃效果' : 'Glass effect',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: clr, fontSize: 12)),
+            const SizedBox(height: 2),
+            Text(
+                zh
+                    ? (isMobilePlatform
+                        ? '作用于 弹窗 / 面板'
+                        : '作用于 顶栏 / 侧边栏 / 弹窗菜单')
+                    : (isMobilePlatform
+                        ? 'Applies to popups & panels'
+                        : 'Applies to bars, sidebar and menus'),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 10, color: scheme.outline)),
+          ]),
         ),
-      ),
-    ]),
-    const SizedBox(height: 6),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: _kMenuWidth,
+          child: OptionMenuBar<String>(
+            expandable: true,
+            value: (cfg.glassEffect == 'blur' || cfg.glassEffect == 'none')
+                ? cfg.glassEffect
+                : 'liquid',
+            items: [
+              OptionItem('liquid', s.surfaceStyleLiquid, icon: Icons.water_drop_outlined),
+              OptionItem('blur', s.glassBlur, icon: Icons.blur_on_outlined),
+              OptionItem('none', s.surfaceStyleTheme, icon: Icons.format_color_fill),
+            ],
+            onChanged: (v) => state.updateConfig((c) => c..glassEffect = v),
+          ),
+        ),
+      ]),
+    ),
     SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
         title: Text(zh ? '玻璃底色遵循主题色' : 'Tint glass with theme color',
             style: TextStyle(color: clr, fontSize: 13)),
@@ -1730,6 +1809,16 @@ List<Widget> _buildStyleGlassAndBorder(BuildContext ctx, AppState state) {
               style: TextStyle(fontSize: 11, color: scheme.outline)),
           value: cfg.glassGpuOnDesktop,
           onChanged: (v) => state.updateConfig((c) => c..glassGpuOnDesktop = v)),
+    // 拖动滑块时的星点特效：只在拖动期间起 Ticker，关闭后连绘制层都不建
+    //（低配设备 / 不喜欢动效的用户用来换帧率，见 widgets/app_slider.dart 的性能约定）。
+    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+        title: Text(zh ? '滑块星点特效' : 'Slider star particles',
+            style: TextStyle(color: clr, fontSize: 13)),
+        subtitle: Text(zh ? '拖动滑块时从填充边缘向左飘散的星点（关闭后零帧开销）'
+                : 'Sparkles drifting left while dragging a slider (off = zero frame cost)',
+            style: TextStyle(fontSize: 11, color: scheme.outline)),
+        value: cfg.sliderStars,
+        onChanged: (v) => state.updateConfig((c) => c..sliderStars = v)),
     const SizedBox(height: 4),
     // ── 添加边框：所有卡片与药丸的实线描边 ──
     SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
@@ -1850,7 +1939,26 @@ Widget _buildNodeEditorStyleCard(BuildContext ctx, AppState state) {
 /// 设置页「菜单栏选项」控件的统一触发宽度与选项列表历史上限。
 /// （选项控件统一为 widgets/option_menu_bar.dart 的 OptionMenuBar：
 ///   任务卡下拉的触发按钮样式 + 主菜单条目的药丸选中动画。）
-const double _kMenuWidth = 132;
+///
+/// 宽度取值依据：触发按钮内的固定开销 = 左右内边距 2×10 + 箭头 16 + 间隙 4
+/// = 40px，剩余全部给当前值文字。选项里最长的值是「跟随主题色」（5 个汉字，
+/// 约 60px @12sp），因此 116 即可完整显示——此前为 132 且触发按钮内还有一个
+/// 与文字平分剩余宽度的 Spacer，导致「框比内容宽、框内文字反而被截断」。
+/// 用户反馈「右侧选项框过宽需收窄、框内文字要完整显示」，故收窄到 116。
+const double _kMenuWidth = 116;
+
+/// 字重下拉的选项。
+///
+/// 触发按钮只有 [_kMenuWidth] 宽，去掉内边距与箭头后留给文字约 76px；
+/// 原先写死的「细体 (Light)」「半粗 (SemiBold)」这类中英混排约 74~92px，
+/// 在框内会被截断成「细体 (Li…」。这里按语言二选一，两种语言都能完整显示。
+List<OptionItem<int>> _fontWeightItems(AppStrings s) => [
+      OptionItem(0, s.isZh ? '细体' : 'Light'),
+      OptionItem(1, s.isZh ? '常规' : 'Regular'),
+      OptionItem(2, s.isZh ? '中等' : 'Medium'),
+      OptionItem(3, s.isZh ? '半粗' : 'SemiBold'),
+      OptionItem(4, s.isZh ? '粗体' : 'Bold'),
+    ];
 
 /// 表面样式设置行：左 = 图标 + 文字（可选作用范围说明），右 = 四值
 /// 「菜单栏选项」控件（按钮 + 展开选项列表，key 绑定当前值，配置被外部
@@ -1886,7 +1994,11 @@ Widget _styleRow(
       SizedBox(
         width: _kMenuWidth,
         child: OptionMenuBar<String>(
-          key: ValueKey('styleRow_${label}_$value'),
+          // 这里刻意不再给 OptionMenuBar 绑「随 value 变化」的 key。
+          // 当前值由 value 参数直接下发，State 不缓存它，所以外部改动
+          // （如低配自动降级）本就能正确刷新；而带 value 的 key 会在每次
+          // 选值后把 State 整个重建 —— State 一换，收起动画刚开始就被卸载，
+          // 浮层「啪」地消失（用户反馈「展开/收起没有动画」）。
           expandable: true,
           value: value,
           items: [
@@ -2080,12 +2192,14 @@ Widget _buildLanguage(BuildContext ctx, AppState state) {
     Row(children: [
       Expanded(child: Text(s.languageInterface, maxLines: 1, overflow: TextOverflow.ellipsis,
           style: TextStyle(color: clr, fontSize: 12))),
-      SizedBox(width: 126, child: OptionMenuBar<String>(
+      // 宽度统一取 _kMenuWidth（含前置图标后留给文字约 54px）：标签用
+      // 「中文 / English」而不是「中文 (简体)」，保证框内文字完整不被截断。
+      SizedBox(width: _kMenuWidth, child: OptionMenuBar<String>(
         expandable: true,
         value: cfg.language,
         leadingIcon: Icons.language,
-        items: const [
-          OptionItem('zh', '中文 (简体)'),
+        items: [
+          OptionItem('zh', s.isZh ? '中文' : 'Chinese'),
           OptionItem('en', 'English'),
         ],
         onChanged: (v) => state.updateConfig((c) => c..language = v),
@@ -2131,9 +2245,33 @@ Widget _buildFont(BuildContext ctx, AppState state) {
             : Icon(Icons.chevron_right, size: 19, color: scheme.outline),
         onTap: () => _pickFont(ctx, state),
       ),
+      // 导入后给一行「用该字体真实渲染」的预览：此前移动端导入完只有一行文件名，
+      // 且那行字本身还是系统字体渲染的，用户完全无法判断字体有没有生效
+      // （用户反馈的「字体能否导入后显示」）。这一行同时也是字号滑块的直观反馈。
+      if (cfg.fontFamily.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHighest.withAlpha(90),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: scheme.outlineVariant.withAlpha(90)),
+            ),
+            child: Text('字体预览 Font Preview 123',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 15, fontFamily: cfg.fontFamily, color: clr)),
+          ),
+        ),
       const Divider(height: 12, color: Colors.transparent),
       _SettingSlider(
         value: cfg.fontSize, min: 10, max: 21, divisions: 11,
+        // liveCommit：拖动过程中整页字号就跟着变（见 _SettingSlider.liveCommit）。
+        // 松手才生效时，12~13px 的文字只差 1~2px，用户会以为「滑块没作用」。
+        liveCommit: true,
         label: (v) => '${s.fontSize}: ${v.round()}',
         labelStyle: TextStyle(color: clr, fontSize: 12),
         onCommit: (v) => state.updateConfig((c) => c..fontSize = v),
@@ -2142,16 +2280,10 @@ Widget _buildFont(BuildContext ctx, AppState state) {
       Row(children: [
         Expanded(child: Text(s.qWeight, maxLines: 1, overflow: TextOverflow.ellipsis,
             style: TextStyle(color: clr, fontSize: 12))),
-        SizedBox(width: 126, child: OptionMenuBar<int>(
+        SizedBox(width: _kMenuWidth, child: OptionMenuBar<int>(
           expandable: true,
           value: cfg.fontWeightIndex,
-          items: const [
-            OptionItem(0, '细体 (Light)'),
-            OptionItem(1, '常规 (Regular)'),
-            OptionItem(2, '中等 (Medium)'),
-            OptionItem(3, '半粗 (SemiBold)'),
-            OptionItem(4, '粗体 (Bold)'),
-          ],
+          items: _fontWeightItems(s),
           onChanged: (v) => state.updateConfig((c) => c..fontWeightIndex = v),
         )),
       ]),
@@ -2165,6 +2297,7 @@ Widget _buildFont(BuildContext ctx, AppState state) {
     const SizedBox(height: 10),
     _SettingSlider(
       value: cfg.fontSize, min: 10, max: 21, divisions: 11,
+      liveCommit: true, // 拖动即生效，理由同移动端分支
       label: (v) => '${s.fontSize}: ${v.round()}',
       labelStyle: TextStyle(color: clr, fontSize: 12),
       onCommit: (v) => state.updateConfig((c) => c..fontSize = v),
@@ -2172,16 +2305,10 @@ Widget _buildFont(BuildContext ctx, AppState state) {
     // 字重：左右布局（标签左、下拉右，固定宽度）
     Row(children: [
       Expanded(child: Text(s.qWeight, style: TextStyle(color: clr, fontSize: 12))),
-      SizedBox(width: 126, child: OptionMenuBar<int>(
+      SizedBox(width: _kMenuWidth, child: OptionMenuBar<int>(
         expandable: true,
         value: cfg.fontWeightIndex,
-        items: const [
-          OptionItem(0, '细体 (Light)'),
-          OptionItem(1, '常规 (Regular)'),
-          OptionItem(2, '中等 (Medium)'),
-          OptionItem(3, '半粗 (SemiBold)'),
-          OptionItem(4, '粗体 (Bold)'),
-        ],
+        items: _fontWeightItems(s),
         onChanged: (v) => state.updateConfig((c) => c..fontWeightIndex = v),
       )),
     ]),
@@ -2271,7 +2398,10 @@ Widget _buildAutosave(BuildContext ctx, AppState state) {
     Row(children: [
       Expanded(child: Text(s.isZh ? '保存间隔' : 'Save Interval', maxLines: 1,
           overflow: TextOverflow.ellipsis, style: TextStyle(color: clr, fontSize: 12))),
-      SizedBox(width: 104, child: DropdownButtonFormField<int>(borderRadius: BorderRadius.circular(12), initialValue: cfg.autosaveIntervalSec, isDense: true, isExpanded: true,
+      // 「选项文字不跟随应用内字号」（用户要求）：下拉是固定宽度(104)的选项控件，
+      // 字号一大，「30 秒 / 不限制」这类文字就被省略号截断。系统字号仍然生效，
+      // 见 theme/app_text_scale.dart 的 withoutAppTextScale。
+      withoutAppTextScale(ctx, SizedBox(width: 104, child: DropdownButtonFormField<int>(borderRadius: BorderRadius.circular(12), initialValue: cfg.autosaveIntervalSec, isDense: true, isExpanded: true,
           style: TextStyle(fontSize: 12, color: clr), dropdownColor: scheme.surface,
           decoration: InputDecoration(isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
@@ -2281,7 +2411,7 @@ Widget _buildAutosave(BuildContext ctx, AppState state) {
                   ? (s.isZh ? '$sec 秒' : '$sec s')
                   : (s.isZh ? '${sec ~/ 60} 分钟' : '${sec ~/ 60} min'))),
           ],
-          onChanged: (v) { if (v != null) state.updateConfig((c) => c..autosaveIntervalSec = v); })),
+          onChanged: (v) { if (v != null) state.updateConfig((c) => c..autosaveIntervalSec = v); }))),
     ]),
     const SizedBox(height: 4),
     Text(s.isZh ? '停止操作后多久自动保存一次' : 'How long after edits stop before autosaving', style: TextStyle(fontSize: 10, color: scheme.outline)),
@@ -2312,7 +2442,7 @@ Widget _buildTasks(BuildContext ctx, AppState state) {
     Row(children: [
       Expanded(child: Text(s.isZh ? '同时启用任务数' : 'Concurrent Tasks', maxLines: 1,
           overflow: TextOverflow.ellipsis, style: TextStyle(color: clr, fontSize: 12))),
-      SizedBox(width: 104, child: DropdownButtonFormField<int>(borderRadius: BorderRadius.circular(12), initialValue: cfg.maxConcurrentTasks, isDense: true, isExpanded: true,
+      withoutAppTextScale(ctx, SizedBox(width: 104, child: DropdownButtonFormField<int>(borderRadius: BorderRadius.circular(12), initialValue: cfg.maxConcurrentTasks, isDense: true, isExpanded: true,
           style: TextStyle(fontSize: 12, color: clr), dropdownColor: scheme.surface,
           decoration: InputDecoration(isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
@@ -2320,7 +2450,7 @@ Widget _buildTasks(BuildContext ctx, AppState state) {
             ...List.generate(8, (i) => DropdownMenuItem(value: i + 1, child: Text('${i + 1}'))),
             DropdownMenuItem(value: 0, child: Text(s.isZh ? '不限制' : 'Unlimited')),
           ],
-          onChanged: (v) { if (v != null) state.updateConfig((c) => c..maxConcurrentTasks = v); })),
+          onChanged: (v) { if (v != null) state.updateConfig((c) => c..maxConcurrentTasks = v); }))),
     ]),
     const SizedBox(height: 4),
     Text(s.isZh ? '控制队列中同时处理的任务数量' : 'Controls how many tasks run in parallel', style: TextStyle(fontSize: 10, color: scheme.outline)),
@@ -2328,12 +2458,12 @@ Widget _buildTasks(BuildContext ctx, AppState state) {
     Row(children: [
       Expanded(child: Text(s.isZh ? '解析线程数' : 'Probe Threads', maxLines: 1,
           overflow: TextOverflow.ellipsis, style: TextStyle(color: clr, fontSize: 12))),
-      SizedBox(width: 104, child: DropdownButtonFormField<int>(borderRadius: BorderRadius.circular(12), initialValue: cfg.probeThreads, isDense: true, isExpanded: true,
+      withoutAppTextScale(ctx, SizedBox(width: 104, child: DropdownButtonFormField<int>(borderRadius: BorderRadius.circular(12), initialValue: cfg.probeThreads, isDense: true, isExpanded: true,
           style: TextStyle(fontSize: 12, color: clr), dropdownColor: scheme.surface,
           decoration: InputDecoration(isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
           items: List.generate(8, (i) => DropdownMenuItem(value: i + 1, child: Text('${i + 1}'))),
-          onChanged: (v) { if (v != null) state.updateConfig((c) => c..probeThreads = v); })),
+          onChanged: (v) { if (v != null) state.updateConfig((c) => c..probeThreads = v); }))),
     ]),
     const SizedBox(height: 4),
     Text(s.isZh ? '添加文件时同时解析的线程数，增大可加快批量导入速度' : 'Number of concurrent probe threads when importing files', style: TextStyle(fontSize: 10, color: scheme.outline)),
@@ -2408,7 +2538,12 @@ Widget _buildCache(BuildContext ctx, AppState state) {
       ),
     )),
     const SizedBox(height: 6),
-    Text(s.isZh ? '清除已导入的字体文件和背景图片' : 'Clear imported fonts and background images', style: TextStyle(fontSize: 10, color: scheme.outline)),
+    // 说明两个子选项各自的代价：图片/字体删掉要重新导入，导入缓存删掉只是回收空间
+    Text(
+        s.isZh
+            ? '点击后选择：清除「图片 / 字体」，或清除导入缓存（副本、缩略图）'
+            : 'Choose: clear images/fonts, or clear import cache (copies, thumbnails)',
+        style: TextStyle(fontSize: 10, height: 1.35, color: scheme.outline)),
   ]);
 }
 
@@ -3441,6 +3576,11 @@ Future<void> _pickFont(BuildContext ctx, AppState state) async {
     return;
   }
   final fontName = fileName.replaceAll(RegExp(r'\.[^.]+$'), '');
+  // 落盘目录必须先确定：_ensureAndroidAppDir 是 initState 里 fire-and-forget 的，
+  // 之前这里不 await，一旦它还没解析完就把字体写进了 systemTemp/FFmpeg++/fonts
+  // （安卓上即应用缓存目录），而启动加载只认「应用文档目录/FFmpeg++/fonts」
+  // → 表现为「导入的字体重启后不见了」（用户反馈的「导入后不显示」）。
+  await _ensureAndroidAppDir();
   try {
     // 1) 取得字体字节：优先磁盘路径，content:// 时用内存字节
     Uint8List? bytes;
@@ -3479,47 +3619,166 @@ Future<void> _pickFont(BuildContext ctx, AppState state) async {
   }
 }
 
+/// 「清除缓存」的两个子选项（用户要求点按钮后先让用户选清哪一类）。
+///
+/// 两件事的代价完全不同，混在一起做并不合适：
+/// * [assets] —— 删掉已导入的字体文件与背景图片，**之后要重新导入**；
+/// * [caches] —— 删掉导入副本（file_picker 副本 / ffmpegpp_import_* / 缩略图），
+///   只是回收空间，项目内容不受影响，大文件可能释放几百 MB。
+enum _CacheScope {
+  /// 只清除已导入的字体文件与背景图片
+  assets,
+
+  /// 只清除导入缓存（不含字体与背景图片）
+  caches,
+}
+
+/// 「清除缓存」入口：先弹出两个子选项，再执行对应清理。
 Future<void> _clearCache(BuildContext ctx, AppState state, ColorScheme scheme, AppStrings s) async {
-  final confirmed = await showDialog<bool>(
+  final scope = await showDialog<_CacheScope>(
     context: ctx,
     builder: (dCtx) => AlertDialog(
-      title: Text(s.isZh ? '确认清除缓存' : 'Confirm Clear Cache', style: TextStyle(color: scheme.onSurface)),
-      content: Text(s.isZh ? '将清除已导入的字体文件和背景图片。\n清除后需要重新选择字体和背景。\n\n确定继续？'
-          : 'This will clear imported fonts and background images.\nYou will need to re-select them.\n\nContinue?',
+      title: Text(s.isZh ? '清除缓存' : 'Clear Cache',
           style: TextStyle(color: scheme.onSurface)),
+      contentPadding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        _cacheOption(
+          dCtx,
+          scheme,
+          scope: _CacheScope.assets,
+          icon: Icons.image_outlined,
+          title: s.isZh ? '清除图片 / 字体' : 'Clear images / fonts',
+          desc: s.isZh
+              ? '删除已导入的字体文件和背景图片，之后需要重新选择'
+              : 'Delete imported fonts and background image; re-select afterwards',
+        ),
+        const SizedBox(height: 6),
+        _cacheOption(
+          dCtx,
+          scheme,
+          scope: _CacheScope.caches,
+          icon: Icons.cleaning_services_outlined,
+          title: s.isZh ? '清除缓存' : 'Clear cache',
+          desc: s.isZh
+              ? '删除导入副本（大文件可能占几百 MB）与缩略图；\n仍被项目 / 队列引用的副本会保留'
+              : 'Delete import copies (hundreds of MB possible) and thumbnails;\n'
+                'copies still referenced by projects/queue are kept',
+        ),
+      ]),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(dCtx, false), child: Text(s.isZh ? '取消' : 'Cancel')),
-        FilledButton(onPressed: () => Navigator.pop(dCtx, true),
-            style: FilledButton.styleFrom(backgroundColor: scheme.error), child: Text(s.isZh ? '清除' : 'Clear')),
+        TextButton(
+            onPressed: () => Navigator.pop(dCtx),
+            child: Text(s.isZh ? '取消' : 'Cancel')),
       ],
     ),
   );
-  if (confirmed != true || !ctx.mounted) return;
+  if (scope == null || !ctx.mounted) return;
+
   try {
-    final dataDir = _userDataDir();
-    // 记下被删掉的字体名：如果当前正在用其中之一，就回退到系统默认字体，
-    // 否则 fontFamily 会一直指向一个已经不存在的字体。
-    final removedFonts = <String>{};
-    for (final sub in ['fonts', 'background']) {
-      final dir = Directory('$dataDir$_s$sub');
-      if (dir.existsSync()) {
-        for (final f in dir.listSync().whereType<File>()) {
-          if (sub == 'fonts') {
-            removedFonts.add(f.path.split(RegExp(r'[\\/]')).last.replaceAll(RegExp(r'\.[^.]+$'), ''));
-          }
-          try { f.deleteSync(); } catch (_) {}
-        }
+    // ── 分支一：只清字体 / 背景图 ──
+    if (scope == _CacheScope.assets) {
+      final freed = await _clearImportedAssets(state);
+      if (ctx.mounted) {
+        final freedText = freed > 0 ? '（释放 ${_humanSize(freed)}）' : '';
+        showToast(ctx,
+            s.isZh ? '已清除导入的图片和字体$freedText' : 'Images and fonts cleared$freedText',
+            type: ToastType.success);
       }
+      return;
     }
-    state.updateConfig((c) {
-      c.backgroundImage = '';
-      if (removedFonts.contains(c.fontFamily)) c.fontFamily = AppConfig.defaultFontFamily;
-      return c;
-    });
-    if (ctx.mounted) showToast(ctx, s.isZh ? '缓存已清除' : 'Cache cleared', type: ToastType.success);
+
+    // ── 分支二：只清导入缓存 ──
+    final freed = await state.purgeImportCachesNow();
+    if (ctx.mounted) {
+      final freedText = freed > 0 ? '（释放 ${_humanSize(freed)}）' : '';
+      showToast(ctx,
+          s.isZh ? '缓存已清除$freedText' : 'Cache cleared$freedText',
+          type: ToastType.success);
+    }
   } catch (e) {
     if (ctx.mounted) showToast(ctx, s.isZh ? '清除失败: $e' : 'Clear failed: $e', type: ToastType.error);
   }
+}
+
+/// 弹窗里的一个子选项行（图标 + 标题 + 说明），点选后以 [_CacheScope] 结束对话框。
+Widget _cacheOption(
+  BuildContext dCtx,
+  ColorScheme scheme, {
+  required _CacheScope scope,
+  required IconData icon,
+  required String title,
+  required String desc,
+}) {
+  return Material(
+    color: scheme.surfaceContainerHighest.withAlpha(90),
+    borderRadius: BorderRadius.circular(12),
+    child: InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => Navigator.pop(dCtx, scope),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Icon(icon, size: 20, color: scheme.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title,
+                  style: TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+              const SizedBox(height: 2),
+              Text(desc,
+                  style: TextStyle(fontSize: 10.5, height: 1.35, color: scheme.outline)),
+            ]),
+          ),
+        ]),
+      ),
+    ),
+  );
+}
+
+/// 只清除「已导入的字体文件 + 背景图片」，返回释放的字节数。
+///
+/// 与 `AppState.purgeImportCachesNow()`（导入副本）分开：字体/图片删掉要重新导入，
+/// 导入副本删掉只是少占空间 —— 代价不同，所以由用户在弹窗里自己选（见 [_CacheScope]）。
+Future<int> _clearImportedAssets(AppState state) async {
+  final dataDir = _userDataDir();
+  // 记下被删掉的字体名：如果当前正在用其中之一，就回退到系统默认字体，
+  // 否则 fontFamily 会一直指向一个已经不存在的字体。
+  final removedFonts = <String>{};
+  var freed = 0;
+  for (final sub in ['fonts', 'background']) {
+    final dir = Directory('$dataDir$_s$sub');
+    if (!dir.existsSync()) continue;
+    for (final f in dir.listSync().whereType<File>()) {
+      if (sub == 'fonts') {
+        removedFonts.add(f.path.split(RegExp(r'[\\/]')).last.replaceAll(RegExp(r'\.[^.]+$'), ''));
+      }
+      try {
+        freed += f.lengthSync();
+        f.deleteSync();
+      } catch (_) {}
+    }
+  }
+  state.updateConfig((c) {
+    c.backgroundImage = '';
+    if (removedFonts.contains(c.fontFamily)) c.fontFamily = AppConfig.defaultFontFamily;
+    return c;
+  });
+  return freed;
+}
+
+/// 字节数 → 人类可读文本（B / KB / MB / GB，保留 1 位小数）。
+/// 用于「清除缓存」后告知用户实际释放了多少空间。
+String _humanSize(int bytes) {
+  if (bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  var v = bytes.toDouble();
+  var i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return '${v.toStringAsFixed(i == 0 ? 0 : 1)} ${units[i]}';
 }
 
 Future<void> _checkForUpdate(BuildContext ctx, AppStrings s) async {
@@ -4165,9 +4424,11 @@ class _CPState extends State<_CP> {
     ]);
   }
 
+  // 取色面板的 R/G/B 滑杆：同样走 AppSlider（胶囊 + 主题色填充 + 玻璃留空），
+  // 不要改回裸 Slider —— 裸 Slider 没有玻璃底那一层。
   Widget _sl(String l, double v, double min, double max, ValueChanged<double> cb) => Row(children: [
     SizedBox(width: 12, child: Text(l, style: TextStyle(fontSize: 10))),
-    Expanded(child: Slider(value: v, min: min, max: max, onChanged: cb)),
+    Expanded(child: AppSlider(value: v, min: min, max: max, compact: true, onChanged: cb)),
   ]);
 }
 

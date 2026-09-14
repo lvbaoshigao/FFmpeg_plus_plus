@@ -129,27 +129,31 @@ class GlassPanel extends StatelessWidget {
         );
       }
       if (settingsFrostedGlass && effect == 'liquid') {
-        // 压低 alpha：快速滚动时 BackdropFilter 偶尔失效，alpha 过高会露出
-        // 大面积纯色主题底色（「诡异的玻璃 + 主题色块」）。与 mobile_glass_pill
-        // 一致的 120/105 上限，让纯色层在失效时仅表现为轻微 tint，不会被察觉。
+        // 压低 alpha：alpha 过高时玻璃层的 tint 会盖住背景模糊（观感偏实心）。
+        // 与 mobile_glass_pill 一致的 120/105 上限。
         final frostedAlpha = ((isDark ? 105 : 120) * op).round().clamp(0, 255);
-        return RepaintBoundary(
-          child: ClipRRect(
-            borderRadius: br,
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-              child: Container(
-                padding: padding,
-                decoration: BoxDecoration(
-                  borderRadius: br,
-                  color: baseColor.withAlpha(frostedAlpha),
-                  border: Border.all(
-                    color: borderColor.withAlpha(isDark ? 60 : 80),
-                    width: 0.6,
-                  ),
+        // [FIX UI-玻璃脱节] 此处**不能**包 RepaintBoundary。
+        // 历史代码在这里包了一层 RepaintBoundary，直接违反了本文件 241 / 368 行
+        // 已明确写下的规则：「含 BackdropFilter 的图层一旦成为光栅缓存候选，
+        // Skia/Impeller 会在玻璃自身内容不变时复用上一次的滤波快照 —— 背后内容
+        // 滚动后玻璃里仍是旧画面，与当前位置的背景错位（玻璃与背景脱节）」。
+        // 当时的处理是「把 alpha 压低到 105/120 让脱节不易被察觉」，属于掩盖症状；
+        // 根因就是这层 RepaintBoundary。移除后与 blur / 液态回退分支写法一致。
+        return ClipRRect(
+          borderRadius: br,
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+            child: Container(
+              padding: padding,
+              decoration: BoxDecoration(
+                borderRadius: br,
+                color: baseColor.withAlpha(frostedAlpha),
+                border: Border.all(
+                  color: borderColor.withAlpha(isDark ? 60 : 80),
+                  width: 0.6,
                 ),
-                child: child,
               ),
+              child: child,
             ),
           ),
         );

@@ -1,5 +1,8 @@
 import 'dart:io';
 import 'dart:math' as math;
+// [FIX H-13 快修] shouldRepaint 里用了 listEquals，但它不在 material/widgets 的
+// 导出面里，缺这一行是**编译错误**（会让 flutter build 直接失败）。
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../services/frame_preview.dart';
@@ -436,11 +439,11 @@ class _VideoCropOverlayDialogState extends State<_VideoCropOverlayDialog> {
                   if (hit != null) {
                     _activeRegionIdx = hit.$1;
                     _activeEdge = hit.$2;
-                    if (_activeEdge != 'move') _pushUndo();
+                    _pushUndo(); // [FIX H-7] 移动/缩放前都压栈，保存拖动前快照（撤销才有反应）
                   } else {
                     _activeRegionIdx = null;
                     _activeEdge = null;
-                    _pushUndo();
+                    // [FIX H-7] 无命中时不提前压栈，避免空白误触塞入无效快照（压栈延后到 onPanEnd 且确认有效矩形）
                   }
                   _dragStart = local;
                   if (_activeRegionIdx == null) {
@@ -493,6 +496,8 @@ class _VideoCropOverlayDialogState extends State<_VideoCropOverlayDialog> {
                   if (_currentDrag != null && _currentDrag!.width > 5 && _currentDrag!.height > 5) {
                     final r = _toVideo(_currentDrag!, scale, imgOffset);
                     if (r.width > 2 && r.height > 2) {
+                      // [FIX H-7] 仅在有有效矩形时压栈（此时 _regions 仍为拖动前快照）
+                      _pushUndo();
                       _regions.add(r);
                     }
                   }
@@ -612,5 +617,9 @@ class _RegionOverlayPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _RegionOverlayPainter old) => true;
+  bool shouldRepaint(covariant _RegionOverlayPainter old) =>
+      !listEquals(old.regions, regions) || // [FIX H-13] Rect 已实现 ==，逐元素比较避免每次父级重建都强制重绘
+      old.currentDrag != currentDrag ||
+      old.isRemoveMode != isRemoveMode ||
+      old.imgRect != imgRect;
 }

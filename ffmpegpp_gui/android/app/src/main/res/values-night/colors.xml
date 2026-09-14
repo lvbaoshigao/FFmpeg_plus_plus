@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- [FIX UI-返回黑闪] 窗口背景色（深色模式）。
+         Night 下 ?android:colorBackground 来自 Theme.Black = 纯黑，冷启动/路由切换
+         的空白帧会闪黑；改为与应用深色 surface 接近的深灰。 -->
+    <color name="window_bg">#FF121318</color>
+</resources>

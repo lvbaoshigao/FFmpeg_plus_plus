@@ -57,8 +57,10 @@ class UpdateResult {
 enum UpdateSource { lanzou, github }
 
 int compareVersions(String a, String b) {
-  final (na, pa) = _parseVersionParts(a.replaceFirst(RegExp(r'^v'), ''));
-  final (nb, pb) = _parseVersionParts(b.replaceFirst(RegExp(r'^v'), ''));
+  // [FIX M-3] 前缀剥离改为大小写不敏感：'V5.3.6' 的大写 V 也要剥掉，
+  // 否则 'V5' 被 int.tryParse 抹平成 0，大版本号被错误拉低。
+  final (na, pa) = _parseVersionParts(a.replaceFirst(RegExp(r'^[vV]'), ''));
+  final (nb, pb) = _parseVersionParts(b.replaceFirst(RegExp(r'^[vV]'), ''));
   var i = 0;
   while (i < na.length || i < nb.length) {
     final va = i < na.length ? na[i] : 0;
@@ -93,7 +95,15 @@ int compareVersions(String a, String b) {
   final dash = s.indexOf('-');
   final core = dash >= 0 ? s.substring(0, dash) : s;
   final pre = dash >= 0 ? s.substring(dash + 1) : '';
-  final nums = core.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+  // [FIX M-3] 空串 / 只有 "v" 等：返回 [0] 表示「未知/无版本」，不崩溃
+  //（比较时视为低于任何真实版本，不会误报更新）。
+  if (core.isEmpty) return (<int>[0], pre);
+  // [FIX M-3] 分段解析：纯数字转 int；非数字段记为 -1（语义上「低于任何数字段」，
+  // 即预发布/无效字段 < 对应数字字段，例如 5.3.x < 5.3.0，避免误判为「无更新」）。
+  final nums = core.split('.').map((e) {
+    final n = int.tryParse(e);
+    return n ?? -1;
+  }).toList();
   return (nums, pre);
 }
 
@@ -146,9 +156,10 @@ Future<UpdateResult> _checkLanzou() async {
     final match = RegExp(r'<span id="filename">([^<]+)</span>').firstMatch(resp.body);
     if (match == null) return UpdateResult(error: 'parse_failed', source: UpdateSource.lanzou);
     final raw = match.group(1)!.trim();
-    // 保留 beta/rc 等预发布后缀：若文件名含 "5.3.6"，只截到 "5.3.6"
+    // [FIX M-4] 正则失败时不要用文件名原文当版本号（否则几乎必然误报有新版本），
+    // 置为 null：hasUpdate 在 remoteVersion 为 null 时显式视为「无更新」。
     final version = RegExp(r'(\d+(?:\.\d+){1,3}(?:-[a-zA-Z]+\d*)?)')
-        .firstMatch(raw)?.group(1) ?? raw;
+        .firstMatch(raw)?.group(1);
     final password = _lanzouPasswords[key];
     return UpdateResult(remoteVersion: version, downloadUrl: url, password: password, source: UpdateSource.lanzou);
   } catch (e) {
@@ -255,6 +266,31 @@ bool? _arm64Cache;
 /// - 只接受 https：明文 http 可被中间人替换安装包，直接拒绝。
 /// - 若提供 [expectedSha256]，下载后必须比对，不一致立即删除并报错。
 ///   发布侧应把安装包的 SHA-256 放在同名 `.sha256` 资产里，由调用方先取回。
+/// [FIX M-5] 净化下载文件名，避免 Windows 保留名 / 结尾点空格 / 非法字符
+/// 导致文件被系统裁剪或写入失败：
+/// - 去掉结尾的 '.' 与空格（Windows 会静默裁剪）；
+/// - 过滤非法字符 < > : " / \ | ? * ；
+/// - 基名（不含扩展名）命中保留名（CON/PRN/AUX/NUL/COM1-9/LPT1-9）时加前缀 '_'。
+/// 正常文件名原样保留；空 / 路径段（含 '/' '\' / '.' '..'）退回到固定名。
+String _safeDownloadName(String rawName) {
+  if (rawName.isEmpty || rawName == '.' || rawName == '..' ||
+      rawName.contains('/') || rawName.contains(r'\')) {
+    return 'update.download';
+  }
+  var name = rawName.replaceAll(RegExp(r'[. ]+$'), '');
+  name = name.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
+  if (name.isEmpty) return 'update.download';
+  final dot = name.lastIndexOf('.');
+  final base = dot > 0 ? name.substring(0, dot) : name;
+  final ext = dot > 0 ? name.substring(dot) : '';
+  final reserved = RegExp(
+    r'^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$',
+    caseSensitive: false,
+  );
+  final safeBase = reserved.hasMatch(base) ? '_$base' : base;
+  return '$safeBase$ext';
+}
+
 Future<String> downloadUpdate(String url, {
   void Function(int received, int total)? onProgress,
   String? expectedSha256,
@@ -268,12 +304,9 @@ Future<String> downloadUpdate(String url, {
   if (!dir.existsSync()) dir.createSync(recursive: true);
 
   // pathSegments.last 可能是空串或 ".."（URL 以 / 结尾、或含相对段），
-  // 直接拼进路径会写到 update/ 之外，这里退回一个固定名字。
+  // 直接拼进路径会写到 update/ 之外；这里做净化并退回一个固定名字。
   final rawName = uri.pathSegments.isEmpty ? '' : uri.pathSegments.last;
-  final fileName = (rawName.isEmpty || rawName == '.' || rawName == '..' ||
-          rawName.contains('/') || rawName.contains(r'\'))
-      ? 'update.download'
-      : rawName;
+  final fileName = _safeDownloadName(rawName);
   final savePath = '${dir.path}$_s$fileName';
 
   final client = HttpClient();

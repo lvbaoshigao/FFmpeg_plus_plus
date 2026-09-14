@@ -23,7 +23,15 @@ class IntegrityCheck {
   };
 
   /// 上一次校验失败的原因（null 表示上次校验通过/尚未执行）。
+  /// [FIX M-6] 注意：verify() 与 verifyCritical() 可能并发执行，二者都会写本字段。
+  /// 为降低互相覆盖的影响，统一通过 [_setFailure] 写入（首次写入优先，不覆盖已记录失败）。
   static String? lastFailure;
+
+  /// [FIX M-6] 写入失败原因：首次写入优先，不覆盖已记录的（可能更严重的）失败，
+  /// 避免 verify() 与 verifyCritical() 并发执行时互相覆盖 [lastFailure]。
+  static void _setFailure(String msg) {
+    lastFailure ??= msg;
+  }
 
   static Future<String?> _assetsDir() async {
     final exeDir = Directory(Platform.resolvedExecutable).parent;
@@ -45,26 +53,27 @@ class IntegrityCheck {
     try {
       final dir = await _assetsDir();
       if (dir == null) {
-        lastFailure = '未找到 flutter_assets 目录';
+        _setFailure('未找到 flutter_assets 目录');  // [FIX M-6]
         return false;
       }
       for (final entry in _expectedMd5.entries) {
         final file = File('$dir$_s${entry.key}');
         if (!await file.exists()) {
-          lastFailure = '资源缺失: ${entry.key}';
+          _setFailure('资源缺失: ${entry.key}');  // [FIX M-6]
           return false;
         }
         final bytes = await file.readAsBytes();
         final actual = md5.convert(bytes).toString();
         if (actual != entry.value) {
-          lastFailure = '资源被篡改: ${entry.key}';
+          _setFailure('资源被篡改: ${entry.key}');  // [FIX M-6]
           return false;
         }
       }
-      lastFailure = null;
+      // [FIX M-6] 通过时不置空 lastFailure：避免清掉并发执行的另一校验已写入的失败原因。
+      // 调用方在 ok==true 时不会读取本字段，因此无需清零。
       return true;
     } catch (e) {
-      lastFailure = '校验异常: $e';
+      _setFailure('校验异常: $e');  // [FIX M-6]
       return false;
     }
   }
@@ -94,6 +103,8 @@ class IntegrityCheck {
 
       final manifest = await _loadManifest(exeDir.path);
 
+      var missingCount = 0;
+      final missingNames = <String>[];
       for (final name in targets) {
         File? found;
         for (final d in dirs) {
@@ -104,13 +115,14 @@ class IntegrityCheck {
           }
         }
         if (found == null) {
-          // 内置 ffmpeg 允许缺失（用户可自行指定外部路径），仅记录
-          lastFailure = '关键组件缺失: $name';
+          // 内置 ffmpeg 允许缺失（用户可自行指定外部路径），仅记录，不直接失败
+          missingCount++;  // [FIX M-6] 统计缺失数量，用于末尾语义判定
+          missingNames.add(name);
           continue;
         }
         final len = await found.length();
         if (len == 0) {
-          lastFailure = '关键组件为空文件: $name';
+          _setFailure('关键组件为空文件: $name');  // [FIX M-6] 仅在真正失败时写入
           return false;
         }
         // 有可信清单时做严格哈希比对
@@ -118,14 +130,21 @@ class IntegrityCheck {
         if (expected != null) {
           final actual = sha256.convert(await found.readAsBytes()).toString();
           if (actual != expected) {
-            lastFailure = '关键组件哈希不匹配: $name';
+            _setFailure('关键组件哈希不匹配: $name');  // [FIX M-6] 仅在真正失败时写入
             return false;
           }
         }
       }
+      // [FIX M-6] 语义修正：三个关键组件「全部」缺失时关键校验应判失败。
+      // 原实现会在循环里 continue 后返回 true，却留下失败串，调用方按返回值会误判
+      // 为「关键组件 OK」。部分缺失（如仅 ffmpeg 缺失、用户已指定外部路径）仍视为通过。
+      if (missingCount == targets.length) {
+        _setFailure('关键组件全部缺失: ${missingNames.join('、')}');
+        return false;
+      }
       return true;
     } catch (e) {
-      lastFailure = '关键校验异常: $e';
+      _setFailure('关键校验异常: $e');  // [FIX M-6]
       return false;
     }
   }
