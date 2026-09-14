@@ -2736,8 +2736,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           child: Stack(clipBehavior: Clip.none, children: [
             // 连线
             // 拖动节点时不 setState，节点位置由 _dragDeltas 局部驱动；
-            // 连线层同样订阅该 notifier（repaint 触发重绘），并读取 deltas
-            // 做位置补偿，使连线端点跟随拖动中的节点。
+            // 连线层把该 notifier 作为 repaint 监听（每帧重绘），painter
+            // 内部每帧读 .value 做位置补偿，使连线端点实时跟随拖动节点。
             CustomPaint(
               size: Size(_world.width, _world.height),
               painter: _ConnectionPainter(
@@ -2749,7 +2749,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                 color: scheme.primary.withAlpha(140),
                 controlColor: scheme.tertiary.withAlpha(180),
                 selectedNodeIds: _selectedNodeIds,
-                dragDeltas: _dragDeltas.value,
+                dragDeltas: _dragDeltas,
                 repaint: _dragDeltas,
               ),
             ),
@@ -5902,7 +5902,10 @@ class _ConnectionPainter extends CustomPainter {
   final Set<String> selectedNodeIds;
   /// 拖动中节点的累计位移（画布坐标）。拖动期间模型坐标未更新，
   /// 这里做位置补偿，使连线端点跟随拖动中的节点。
-  final Map<String, Offset>? dragDeltas;
+  /// 必须持有 notifier 本体（而非 `.value` 快照）：repaint 只触发 paint
+  /// 不触发重建，快照在整个拖动期间都是构建时的旧值——连线不实时
+  /// 跟随的根因。paint 每帧读 `.value` 取最新位移。
+  final ValueNotifier<Map<String, Offset>?>? dragDeltas;
 
   // ── 每帧查找的索引缓存 ──
   // 原实现在 paint 内对每条连线做 2 次 nodes.indexWhere（O(n)），并对控制
@@ -5951,7 +5954,7 @@ class _ConnectionPainter extends CustomPainter {
   /// 返回带位移补偿的节点副本（仅拖动期间；无位移时直接返回原对象，零分配）。
   /// 端口坐标计算依赖 n.x/n.y，因此需要一个位置已偏移的实例参与运算。
   PipelineNode _shifted(PipelineNode n) {
-    final d = dragDeltas?[n.id];
+    final d = dragDeltas?.value?[n.id];
     if (d == null || (d.dx == 0 && d.dy == 0)) return n;
     return PipelineNode(
       id: n.id, type: n.type, params: n.params,

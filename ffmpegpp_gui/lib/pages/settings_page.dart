@@ -1367,15 +1367,18 @@ Widget _miIcon(ColorScheme scheme, IconData icon) => Container(
   child: Icon(icon, size: 19, color: scheme.primary),
 );
 
-/// 设置页「滚动中玻璃降级」开关：滚动进行中把玻璃卡临时切换为纯色，
+/// 设置页「滚动中玻璃降级」开关：快速滚动时把玻璃卡临时切换为纯色，
 /// 停止后恢复。根因：玻璃卡（BackdropFilter / shader backdrop）每帧重采样
 /// 滚动中的背景，Skia 与移动端下采样会滞后一帧，快速滑动时玻璃与背景出现
 /// 「图层分离」；纯色卡不采样背景，从根本上消除分离。
+/// 只在滚动速度超过阈值时降级：手指按住缓慢拖动时保持玻璃、不变色
+///（慢速下分离几乎不可见，不值得牺牲观感）。
 final ValueNotifier<bool> kSettingsScrollDegraded = ValueNotifier(false);
 
 /// 包住设置页的滚动容器：监听滚动事件驱动 [kSettingsScrollDegraded]。
-/// 滚动开始立即置 true；ScrollEnd 后延迟 ~160ms 恢复（吸收惯性滚动的
-/// 连续 ScrollEnd 边界抖动）。桌面 / 移动端主列表与二级页共用。
+/// 用瞬时速度的 EMA 估计判断是否「快速滚动」，超过阈值才降级；
+/// 速度回落后延迟恢复，ScrollEnd 后再延迟 ~160ms 兜底恢复。
+/// 桌面 / 移动端主列表与二级页共用。
 class _GlassScrollGuard extends StatefulWidget {
   final Widget child;
   const _GlassScrollGuard({required this.child});
@@ -1384,17 +1387,60 @@ class _GlassScrollGuard extends StatefulWidget {
 }
 
 class _GlassScrollGuardState extends State<_GlassScrollGuard> {
+  /// 降级速度阈值（px/s）。慢速拖动通常 <300；轻扫/滚轮 >1500。
+  static const _kSpeedThreshold = 900.0;
   Timer? _endTimer;
+  double? _lastPixels;
+  int? _lastMs;
+  double _speed = 0;
+
   @override
   void dispose() { _endTimer?.cancel(); super.dispose(); }
+
+  void _degrade() {
+    _endTimer?.cancel();
+    _endTimer = null;
+    if (!kSettingsScrollDegraded.value) kSettingsScrollDegraded.value = true;
+  }
+
+  void _scheduleRestore(int delayMs) {
+    if (_endTimer != null) return; // 已有恢复计时在跑
+    _endTimer = Timer(Duration(milliseconds: delayMs), () {
+      kSettingsScrollDegraded.value = false;
+      _endTimer = null;
+    });
+  }
+
   bool _onNotification(ScrollNotification n) {
-    if (n is ScrollStartNotification || n is ScrollUpdateNotification) {
-      _endTimer?.cancel();
-      if (!kSettingsScrollDegraded.value) kSettingsScrollDegraded.value = true;
+    if (n is ScrollUpdateNotification) {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final px = n.metrics.pixels;
+      if (_lastMs != null) {
+        final dt = (now - _lastMs!) / 1000;
+        if (dt > 0) {
+          // EMA 平滑瞬时速度，避免逐帧抖动导致阈值附近反复切换
+          _speed = _speed * 0.5 + ((px - _lastPixels!).abs() / dt) * 0.5;
+        }
+      }
+      _lastMs = now;
+      _lastPixels = px;
+      if (_speed > _kSpeedThreshold) {
+        _degrade();
+      } else if (kSettingsScrollDegraded.value) {
+        // 已处于降级但速度回落（甩动减速/手指停住）→ 安排恢复
+        _scheduleRestore(120);
+      }
     } else if (n is ScrollEndNotification) {
+      _lastMs = null;
+      _lastPixels = null;
+      _speed = 0;
       _endTimer?.cancel();
-      _endTimer = Timer(const Duration(milliseconds: 160),
-          () => kSettingsScrollDegraded.value = false);
+      _endTimer = null;
+      _scheduleRestore(160);
+    } else if (n is ScrollStartNotification) {
+      _lastMs = null;
+      _lastPixels = null;
+      _speed = 0;
     }
     return false;
   }
