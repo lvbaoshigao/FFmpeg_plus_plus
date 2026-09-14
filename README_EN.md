@@ -52,7 +52,7 @@ With nodes, a processing chain becomes a graph you can see, save, reuse, and sha
 
 ### Main Window
 
-<img src="make/1.jpg" alt="FFmpeg++ main window" width="100%">
+<img src="make/1.png" alt="FFmpeg++ main window" width="100%">
 
 The Projects page is the entry point: the sidebar switches between Projects / Queue / Command /
 Config Library / Settings. Media appears as cards with drag-and-drop import, thumbnail previews and
@@ -61,7 +61,7 @@ the node editor, apply a quick-config preset, and every processing job lands in 
 
 ### Node Editor
 
-<img src="make/2.jpg" alt="FFmpeg++ node editor" width="100%">
+<img src="make/2.png" alt="FFmpeg++ node editor" width="100%">
 
 The node editor is the core workspace: the top toolbar handles save, undo, redo, auto-layout and the
 debug view; the center is an infinite canvas where nodes are wired port to port and right-click adds
