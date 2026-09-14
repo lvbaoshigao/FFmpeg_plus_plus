@@ -126,12 +126,18 @@ class _PillGlassKey {
   /// 「设置 → 样式 → 玻璃底色遵循主题色」：玻璃 tint 用主题色而非 surface 灰
   /// （此前只有桌面端 GlassPanel 读它，移动端药丸不读 → 开关表现为「无效」）。
   final bool follow;
+  /// 玻璃细节（模糊度 / 通透度 / 高光强度与位置 / 边缘光）
+  final GlassTuning tuning;
+  /// 主题色协调度（避免直接铺 scheme.primary 过亮）
+  final double tone;
   const _PillGlassKey({
     required this.style,
     required this.op,
     required this.primary,
     required this.second,
     required this.follow,
+    required this.tuning,
+    required this.tone,
   });
 
   @override
@@ -141,10 +147,13 @@ class _PillGlassKey {
       other.op == op &&
       other.primary == primary &&
       other.second == second &&
-      other.follow == follow;
+      other.follow == follow &&
+      other.tuning == tuning &&
+      other.tone == tone;
 
   @override
-  int get hashCode => Object.hash(style, op, primary, second, follow);
+  int get hashCode =>
+      Object.hash(style, op, primary, second, follow, tuning, tone);
 }
 
 class _MobileGlassPillState extends State<MobileGlassPill> {
@@ -176,6 +185,14 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
       primary: cfg.themeColor,
       second: cfg.themeColor2,
       follow: cfg.glassFollowTheme,
+      tuning: GlassTuning(
+        blur: cfg.glassBlur,
+        clarity: cfg.glassClarity,
+        highlight: cfg.glassHighlight,
+        lightPos: cfg.glassLightPos,
+        edge: cfg.glassEdge,
+      ),
+      tone: cfg.themeTone,
     );
   }
 
@@ -184,23 +201,28 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final key = context.select<AppState, _PillGlassKey>(_keyOf);
-    // 模糊 σ = 14（固定基准值，模糊/回退分支共用），Windows 上由
-    // effectiveGlassSigma 钳到 ≤12；是否走 shader 由 gpuGlassEnabledOf 统一判定
-    //（PC 端默认关闭）。
-    final double pillSigma = effectiveGlassSigma(14);
+    // 模糊 σ 来自「设置 → 样式 → 玻璃细节 → 模糊度」（默认 16，与改动前一致），
+    // Windows 上由 effectiveGlassSigma 钳到 ≤12；是否走 shader 由
+    // gpuGlassEnabledOf 统一判定（PC 端默认关闭）。
+    final GlassTuning tuning = key.tuning;
+    final double pillSigma = effectiveGlassSigma(tuning.blur);
+    final double tScale = tuning.tintScale;
     final style = key.style;
     final op = key.op.clamp(0.0, 1.0);
     // 玻璃样式（liquid/blur）的 tint 与底部导航栏对齐：* 255 无截断，
     // 让玻璃质感与底部栏一致；纯色样式（theme/gray）强制完全不透明（255）
     // ——纯色语义即实心，不再跟随 cardOpacity（此前 ~88% 保底仍透底）。
     final solid = style == SurfaceStyle.theme || style == SurfaceStyle.gray;
-    final baseAlpha = solid ? 255 : (op * 255).round().clamp(0, 255);
+    final baseAlpha =
+        solid ? 255 : ((op * 255) * tScale).round().clamp(0, 255);
     final baseColor = style == SurfaceStyle.theme
-        ? scheme.primary
+        // 跟随主题色：用与表面色混合后的协调色（原 scheme.primary 过亮）
+        ? harmonizedAccent(scheme, key.tone)
         : style == SurfaceStyle.gray
-            ? scheme.surfaceContainerHigh
+            // 灰色：去饱和，避免 fromSeed 的种子色偏（「灰色夹杂主题色」）
+            ? neutralGray(scheme.surfaceContainerHigh)
             // 「玻璃底色遵循主题色」：玻璃样式（liquid/blur）的 tint 用主题色
-            : (key.follow ? scheme.primary : scheme.surface);
+            : (key.follow ? harmonizedAccent(scheme, key.tone) : scheme.surface);
     final tint = baseColor.withAlpha(baseAlpha);
 
     // 关键修复：liquid 模式下 OCLiquidGlass 自身已经接收 color=tint 作为
@@ -208,6 +230,9 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
     // color=tint，相当于「主题色 + 主题色」双重染色，
     // 切换页面瞬间会出现「一大片主题色块」闪烁。
     // liquid 模式 inner 用透明，只保留边框；blur/theme/gray 模式保留 tint。
+    // 边框（=「边缘光」）随玻璃细节缩放：基准 1.0 时与改动前逐像素一致。
+    final edgeBlur = edgeBorder(80 / 255, 0.5, tuning.edge);
+    final edgeWhite = edgeBorder(isDark ? 0.12 : 0.18, 0.7, tuning.edge);
     final inner = Container(
       padding: widget.padding,
       decoration: BoxDecoration(
@@ -215,9 +240,10 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
         borderRadius: BorderRadius.circular(widget.radius),
         border: Border.all(
           color: style == SurfaceStyle.blur
-              ? scheme.outlineVariant.withAlpha(80)
-              : Colors.white.withValues(alpha: isDark ? 0.12 : 0.18),
-          width: style == SurfaceStyle.blur ? 0.5 : 0.7,
+              ? scheme.outlineVariant.withAlpha(
+                  (edgeBlur.alpha * 255).round().clamp(0, 255))
+              : Colors.white.withValues(alpha: edgeWhite.alpha),
+          width: style == SurfaceStyle.blur ? edgeBlur.width : edgeWhite.width,
         ),
       ),
       // 固定总高度：把内容区压到 height - padding.vertical 并垂直居中，
@@ -247,7 +273,17 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
         borderRadius: BorderRadius.circular(widget.radius),
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: pillSigma, sigmaY: pillSigma),
-          child: inner,
+          child: CustomPaint(
+            // 高光 / 边缘光与液态玻璃回退共用同一支画笔
+            painter: LiquidGlassPainter(
+              borderRadius: BorderRadius.circular(widget.radius),
+              opacity: op,
+              highlight: tuning.highlight,
+              lightPos: tuning.lightPos,
+              edge: tuning.edge,
+            ),
+            child: inner,
+          ),
         ),
       );
     } else if (gpuGlassEnabledOf(context)) {
@@ -271,7 +307,8 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
       pill = RepaintBoundary(
         child: OCLiquidGlassGroup(
           key: glassKey,
-          settings: kLiquidGlassSettings,
+          // 参数化 settings（带实例缓存，参数不变即复用同一实例）
+          settings: liquidGlassSettingsFor(tuning),
           child: OCLiquidGlass(
             key: innerKey,
             borderRadius: widget.radius,

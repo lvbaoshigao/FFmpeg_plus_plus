@@ -1282,14 +1282,65 @@ class AppConfig {
   String menuStyle;
   // 遵循主题色：true 时玻璃/卡片底色使用主题色而非 surface 灰
   bool glassFollowTheme;
-  /// 设置项以毛玻璃展示（仅「液态玻璃」生效时可开启，提升列表可读性）
-  bool settingsFrostedGlass;
-  /// 设置项不使用卡片玻璃效果：设置卡片跳过液态玻璃渲染，退回主题色样式
-  ///（与 settingsFrostedGlass 互斥）
-  bool noCardGlass;
-  /// 拖动滑块时的星点特效（默认开）。关闭后星点层完全不建 Ticker / 绘制层，
-  /// 低配设备用来换帧率（见 widgets/app_slider.dart 的性能约定）。
-  bool sliderStars;
+  /// 设置项以毛玻璃展示（仅「液态玻璃」生效时可开启，提升列表可读性）。
+  ///
+  /// 兼容视图：历史上这是与 [noCardGlass] 互相冲突的两个独立开关，
+  /// 设置页同时呈现两项，语义重复（用户反馈「下面选项有重复项」）。
+  /// 现在唯一的数据源是 [settingsGlassMode]，这里降级为派生属性，
+  /// 所有既有读取点（GlassPanel / AppCard / AppSlider）无需改动。
+  bool get settingsFrostedGlass => settingsGlassMode == 'frosted';
+  /// 设置项不使用卡片玻璃效果：设置卡片跳过液态玻璃渲染，退回主题色样式。
+  /// 同样是 [settingsGlassMode] 的派生视图（见上）。
+  bool get noCardGlass => settingsGlassMode == 'solid';
+  /// 拖动滑块时的粒子特效（默认开）。
+  ///
+  /// 2026-09-14 由「星点」改为「粒子」（用户要求）：粒子从填充段最右端（把手）
+  /// 发射后向左散开，亮度由暗逐渐变亮，整条粒子带不超过轨道总长的 15%，
+  /// 每颗粒子的消亡距离在 8%~15% 之间随机。
+  ///
+  /// 关闭后粒子层完全不建 Ticker / 绘制层，低配设备用来换帧率
+  /// （见 widgets/app_slider.dart 的性能约定）。
+  bool sliderParticles;
+
+  // ═══ 玻璃细节参数（设置 → 样式 → 玻璃细节）═══
+  //
+  // 用户要求：玻璃效果要能逐项调节（模糊度 / 通透度 / 高光强度与位置 / 边缘光），
+  // 而不是只给一个「有 / 无」的总开关。五项统一由 widgets/liquid_glass_fallback.dart
+  // 的 GlassTuning 打包，所有玻璃渲染路径（AppCard / MobileGlassPill /
+  // MobileBottomNav / LiquidGlassBackdrop / GlassPanel）都读同一份，避免各画各的。
+  //
+  // 默认值刻意取「与引入本项之前的像素观感一致」：
+  // * glassBlur 16 = 各调用点此前的固定基准 σ（Windows 由 effectiveGlassSigma 钳到 12）；
+  // * glassClarity 0.45 → tint alpha ≈ 140（原卡片 130、药丸/底栏 178，取中间值统一）；
+  // * glassHighlight/glassLightPos/glassEdge 的默认值＝「不做任何改变」。
+  /// 玻璃高斯模糊 σ（0~30）。0 = 完全不模糊；液态玻璃（GPU）路径只额外模糊
+  /// 超过基准 16 的那部分（见 widgets/liquid_glass_fallback.dart）。
+  double glassBlur;
+
+  /// 玻璃通透度（0~1）。越大越通透（底色越淡、越接近纯模糊）。
+  /// 换算：tint alpha = 255 × (1 − clarity) × cardOpacity。
+  double glassClarity;
+
+  /// 高光（镜面反射）强度（0~1.6）。1.0 = 基准。
+  double glassHighlight;
+
+  /// 高光位置（0~1）。0 = 左上角受光（基准），1 = 右下角受光。
+  double glassLightPos;
+
+  /// 边缘光强度（0~2）。作用于玻璃四周的亮边 / 倒角棱线。1.0 = 基准。
+  double glassEdge;
+
+  /// 主题色协调度（0~0.8）。「跟随主题色」的卡片与玻璃底色会用
+  /// `Color.lerp(主题色, 表面色, themeTone)` —— 直接用 scheme.primary 在暗色
+  /// 主题下是 tone 80 的高亮色，大面积铺开非常刺眼（用户反馈「过于明亮」）。
+  /// 0 = 完全用原主题色；0.8 = 几乎并入表面色。
+  double themeTone;
+
+  /// 设置卡片（设置页卡片）的玻璃模式：
+  /// 'follow' 跟随「卡片样式」/ 'frosted' 扁平毛玻璃 / 'solid' 主题色实心。
+  /// 取代历史上互斥且语义重复的两个开关（settingsFrostedGlass / noCardGlass），
+  /// 旧配置在 [_migrateSettingsGlass] 里自动迁移进来。
+  String settingsGlassMode;
   /// 逻辑门符号标准：'ansi' ANSI/IEEE 标准 / 'iec' IEC 标准
   String gateStd;
   bool debugMode;
@@ -1400,9 +1451,14 @@ class AppConfig {
     this.pillStyle = 'liquid',
     this.menuStyle = 'liquid',
     this.glassFollowTheme = false,
-    this.settingsFrostedGlass = false,
-    this.noCardGlass = false,
-    this.sliderStars = true,
+    this.sliderParticles = true,
+    this.glassBlur = 16.0,
+    this.glassClarity = 0.45,
+    this.glassHighlight = 1.0,
+    this.glassLightPos = 0.0,
+    this.glassEdge = 1.0,
+    this.themeTone = 0.45,
+    this.settingsGlassMode = 'follow',
     this.gateStd = 'ansi',
     this.debugMode = false, this.saveLogs = false, this.enableSystemNotification = false, this.logSavePath = '',
     this.editMode = 0,
@@ -1456,6 +1512,18 @@ class AppConfig {
 
   static bool? _softBool(dynamic v) => v is bool ? v : null;
 
+  /// 「设置卡片玻璃」兼容迁移：新值直接通过；老配置里互斥的两个布尔开关
+  /// （settings_frosted_glass / no_card_glass）折算成单一模式。
+  static String _migrateSettingsGlass(Map<String, dynamic> j) {
+    final raw = j['settings_glass_mode'];
+    if (raw is String && const ['follow', 'frosted', 'solid'].contains(raw)) {
+      return raw;
+    }
+    if (j['no_card_glass'] == true) return 'solid';
+    if (j['settings_frosted_glass'] == true) return 'frosted';
+    return 'follow';
+  }
+
   /// 表面样式（卡片/底部菜单栏/顶部药丸）兼容迁移：
   /// 旧版 cardStyle 的 'glass' → 'liquid'、'flat' → 'gray'；新四值直接通过；
   /// 缺失/未知值回退 'liquid'（与旧默认 'glass' 观感一致）。
@@ -1466,8 +1534,7 @@ class AppConfig {
         _ => 'liquid',
       };
 
-  static Map<String, int> _safeIntMap(dynamic v) {
-    if (v is! Map) return {};
+  static Map<String, int> _safeIntMap(dynamic v) {    if (v is! Map) return {};
     final out = <String, int>{};
     for (final e in v.entries) {
       if (e.value is num) out['${e.key}'] = (e.value as num).toInt();
@@ -1526,9 +1593,19 @@ class AppConfig {
         pillStyle: _migrateSurfaceStyle(json['pill_style'] as String?),
         menuStyle: _migrateSurfaceStyle(json['menu_style'] as String? ?? 'liquid'),
         glassFollowTheme: json['glass_follow_theme'] as bool? ?? false,
-        settingsFrostedGlass: json['settings_frosted_glass'] as bool? ?? false,
-        noCardGlass: json['no_card_glass'] as bool? ?? false,
-        sliderStars: json['slider_stars'] as bool? ?? true,
+        settingsGlassMode: _migrateSettingsGlass(json),
+        // 玻璃细节参数：均可调，默认值＝引入本项之前的观感（见字段注释）
+        glassBlur: _clampDouble(json['glass_blur'], 0.0, 30.0, 16.0),
+        glassClarity: _clampDouble(json['glass_clarity'], 0.0, 1.0, 0.45),
+        glassHighlight: _clampDouble(json['glass_highlight'], 0.0, 1.6, 1.0),
+        glassLightPos: _clampDouble(json['glass_light_pos'], 0.0, 1.0, 0.0),
+        glassEdge: _clampDouble(json['glass_edge'], 0.0, 2.0, 1.0),
+        themeTone: _clampDouble(json['theme_tone'], 0.0, 0.8, 0.45),
+        // 拖动粒子特效：新键 slider_particles，旧键 slider_stars 继续读
+        //（老配置文件里写的是 slider_stars，语义完全相同）。
+        sliderParticles: json['slider_particles'] as bool? ??
+            json['slider_stars'] as bool? ??
+            true,
         gateStd: json['gate_std'] as String? ?? 'ansi',
         cardOpacity: _clampDouble(json['card_opacity'], 0.0, 1.0, 0.7), // [FIX H-14] 透明度钳制 0~1
         canvasBg: json['canvas_bg'] as String? ?? 'global',
@@ -1598,8 +1675,13 @@ class AppConfig {
         'card_style': cardStyle, 'nav_style': navStyle, 'pill_style': pillStyle,
         'menu_style': menuStyle,
         'glass_follow_theme': glassFollowTheme,
+        'settings_glass_mode': settingsGlassMode,
+        // 兼容旧读端：两个派生布尔继续写出（读取时由 _migrateSettingsGlass 折算）
         'settings_frosted_glass': settingsFrostedGlass, 'no_card_glass': noCardGlass, 'gate_std': gateStd,
-        'slider_stars': sliderStars,
+        // 粒子特效：新键 + 旧键一起写出，回滚到旧版本也读得到同一个开关
+        'slider_particles': sliderParticles, 'slider_stars': sliderParticles,
+        'glass_blur': glassBlur, 'glass_clarity': glassClarity, 'glass_highlight': glassHighlight,
+        'glass_light_pos': glassLightPos, 'glass_edge': glassEdge, 'theme_tone': themeTone,
         'card_opacity': cardOpacity,
         'canvas_bg': canvasBg,
         'debug_mode': debugMode,

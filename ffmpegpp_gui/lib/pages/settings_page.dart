@@ -34,6 +34,9 @@ import '../widgets/mobile_top_bar.dart';
 import '../widgets/option_menu_bar.dart';
 import '../widgets/app_card.dart';
 import '../widgets/app_slider.dart';
+// harmonizedAccent（协调主题色，解决「选主题色太亮」）/ neutralGray（真中性灰，
+// 解决「灰色夹杂主题色」）/ GlassTuning（玻璃细节参数）都在这里。
+import '../widgets/liquid_glass_fallback.dart';
 import '../widgets/wallpaper_background.dart';
 import 'ai_settings_mobile.dart';
 
@@ -477,8 +480,23 @@ class _SettingsPageState extends State<SettingsPage> {
               '菜单', 'menu', '侧边栏', 'sidebar', '顶栏', 'topbar', '顶部菜单',
               '毛玻璃', 'frosted', '透明度', '不透明度', 'opacity', 'alpha',
               '边框', '描边', '线条', 'border', 'outline', 'stroke', '颜色', '宽度',
-              '跟随主题色', 'follow', 'gpu', '实验'],
+              '跟随主题色', 'follow', 'gpu', '实验',
+              // 拆卡后的三张卡标题也要能被搜到（预设 / 玻璃与材质 / 特效）
+              '预设', 'preset', '方案', '材质', 'material',
+              '粒子', 'particle', '特效', 'effect', '动效', '动画'],
           build: _buildSurfaceStyleCard,
+        ),
+        // 玻璃细节单独成卡：五项参数（模糊度 / 通透度 / 高光强度 / 高光位置 /
+        // 边缘光）都属于「手感微调」，塞进样式卡会把那卡撑到要滑很久；独立成卡
+        // 后能被搜索命中，也不会与样式卡里的预设选择混在一起。
+        _CardDef(
+          id: 'glassDetail',
+          title: (s) => s.isZh ? '玻璃细节' : 'Glass details',
+          icon: Icons.blur_on_outlined,
+          keywords: ['玻璃', 'glass', '模糊', 'blur', '模糊度', '通透', 'clarity',
+              '透明', '高光', 'highlight', 'specular', '光斑', '位置', 'position',
+              '边缘光', 'edge', 'rim', '描边', '细节', 'detail', '微调'],
+          build: _buildGlassDetailCard,
         ),
         _CardDef(
           id: 'nodeEditorStyle',
@@ -695,10 +713,18 @@ class _SettingsPageState extends State<SettingsPage> {
         state.config.cardOpacity,
         state.config.glassEffect,
         state.config.glassFollowTheme,
-        state.config.settingsFrostedGlass,
-        state.config.noCardGlass,
-        state.config.sliderStars,
+        // 设置卡片玻璃：原 settingsFrostedGlass / noCardGlass 两个互斥开关已
+        // 合并为单一 settingsGlassMode（派生 getter 仍可读，见 AppConfig）。
+        state.config.settingsGlassMode,
+        state.config.sliderParticles,
         state.config.glassGpuOnDesktop,
+        // 玻璃细节：任何一项变化都要重建设置页，否则控件显示旧值
+        state.config.glassBlur,
+        state.config.glassClarity,
+        state.config.glassHighlight,
+        state.config.glassLightPos,
+        state.config.glassEdge,
+        state.config.themeTone,
         state.config.ffmpegPath,
       ]),
       builder: (context, _, _) {
@@ -730,7 +756,8 @@ class _SettingsPageState extends State<SettingsPage> {
                 _emptyState(scheme, s)
               else
                 ListView(
-                  // 统一内边距：ListView 左右 0 + 分区卡自身 8 = 与主界面一致的 8px
+                  // 左右留白全部交给分区卡自己（见 _buildMobileSection 的 14px 内边距），
+                  // ListView 只负责上下：顶部药丸占位 + 底部导航栏净空。
                   padding: EdgeInsets.fromLTRB(0, MobileUi.pageTopPadding(context), 0, kMobileNavClearance),
                   children: [
                     for (final (sec, cards) in visible)
@@ -778,7 +805,7 @@ class _SettingsPageState extends State<SettingsPage> {
             Expanded(
               child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 // 左：主菜单（分区导航，搜索时显示命中数徽标）
-                _buildSectionNav(hitsBySection, searching, scheme),
+                _buildSectionNav(hitsBySection, searching, scheme, state),
                 // 右：子选项面板（搜索时为跨分区命中结果）
                 Expanded(
                   child: searching
@@ -803,6 +830,7 @@ class _SettingsPageState extends State<SettingsPage> {
     List<(_SectionDef, List<_CardDef>)> hitsBySection,
     bool searching,
     ColorScheme scheme,
+    AppState state,
   ) {
     final hitCounts = <String, int>{
       for (final (sec, cards) in hitsBySection) sec.id: cards.length,
@@ -810,12 +838,26 @@ class _SettingsPageState extends State<SettingsPage> {
     return SizedBox(
       width: 190,
       child: ListView(
+        // addRepaintBoundaries:false —— 子项是玻璃卡（BackdropFilter），而 Skia 下
+        // BackdropFilter 的输入会被光栅缓存：外层若套 RepaintBoundary，玻璃自身
+        // 内容不变时引擎直接复用上一次的滤波快照，滚动后玻璃里仍是旧背景
+        //（见 LiquidGlassBackdrop 顶部的图层约定）。左栏几乎不滚动，关掉无碍。
+        addRepaintBoundaries: false,
         padding: const EdgeInsets.fromLTRB(10, 12, 6, 16),
         children: [
           for (final sec in _sections)
             Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: _navItem(sec, searching, hitCounts[sec.id] ?? 0, scheme),
+              // 每个父选项各占一张卡（原先是裸排在左栏上、未选中态完全透明）：
+              // 用户反馈「通用 / 外观等父选项没有框包裹」。走 _cardShell → AppCard
+              // 后左栏与右侧面板同材质，同样跟随「主题 → 样式 → 卡片样式」。
+              // 圆角 12 与 _navItem 的选中胶囊一致 —— 选中时胶囊正好贴满整张卡。
+              padding: const EdgeInsets.only(bottom: 6),
+              child: _cardShell(
+                context,
+                state,
+                _navItem(sec, searching, hitCounts[sec.id] ?? 0, scheme),
+                radius: 12,
+              ),
             ),
         ],
       ),
@@ -1069,8 +1111,13 @@ class _SettingsPageState extends State<SettingsPage> {
 
   /// 移动端设置分区：Android 16 原生设置风格 —— 小号字重标题，
   /// 无图标、无着色，仅灰色文字（onSurfaceVariant），下方为卡片项。
-  /// Android 16 风格移动端分区：一级菜单只展示「标题在左、开关/箭头在右」的
-  /// 设置行，统一放在一张圆角卡片内，条目间用细分隔线；具体设置项进入二级菜单。
+  /// Android 16 风格移动端分区：一级菜单只展示「标题在左、开关/箭头在右」的设置行，
+  /// 具体设置项进入二级菜单。
+  ///
+  /// **一主题一卡**（2026-09-14 改）：此前整个分区的设置行被合并进同一张圆角卡片、
+  /// 行之间用细分隔线，于是「主题色 / 背景 / 表面样式 / 玻璃细节 / 字体」看起来是
+  /// 一大坨（用户反馈「卡片给我分开，按主题分开不要合并到一块」）。现在每个
+  /// [_CardDef]（= 一个主题）各占一张卡，与桌面端右侧面板「一卡一主题」的粒度一致。
   Widget _buildMobileSection(
     _SectionDef sec,
     List<_CardDef> cards,
@@ -1079,25 +1126,32 @@ class _SettingsPageState extends State<SettingsPage> {
     ColorScheme scheme,
     AppStrings s,
   ) {
-    final rows = <Widget>[];
-    for (var i = 0; i < cards.length; i++) {
-      // 全局搜索跳转过来时高亮命中的设置行（见 _highlightWrap）
-      rows.add(KeyedSubtree(
-        key: _cardKey(cards[i].id),
-        child: _highlightWrap(
-            cards[i].id, _buildMobileRow(cards[i], context, state, scheme, s)),
-      ));
-      if (i < cards.length - 1) {
-        rows.add(Divider(
-          height: 0.5,
-          thickness: 0.5,
-          indent: 16,
-          endIndent: 16,
-          color: scheme.outlineVariant.withAlpha(60),
-        ));
-      }
-    }
     if (cards.isEmpty) return const SizedBox.shrink();
+
+    final tiles = <Widget>[];
+    for (final c in cards) {
+      tiles.add(Padding(
+        // 卡片左右内边距 14（原 8）：用户反馈「设置的卡片宽度过宽，再缩小」。
+        // 与二级页（subListPadding 12 + _glass 12 = 24）相比主界面仍略宽一点，
+        // 保持「主界面列表行 / 二级页玻璃卡」两级的层次差别。
+        // 底部 7 = 相邻两张卡之间的间距。
+        padding: const EdgeInsets.fromLTRB(14, 0, 14, 7),
+        // 全局搜索跳转过来时高亮命中的设置行（见 _highlightWrap）；
+        // 设置项卡片统一走 _cardShell → AppCard，遵循「主题→样式→卡片样式」。
+        child: KeyedSubtree(
+          key: _cardKey(c.id),
+          child: _highlightWrap(
+            c.id,
+            _cardShell(
+              context,
+              state,
+              _buildMobileRow(c, context, state, scheme, s),
+            ),
+          ),
+        ),
+      ));
+    }
+
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Padding(
         padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
@@ -1108,11 +1162,7 @@ class _SettingsPageState extends State<SettingsPage> {
           letterSpacing: 0.3,
         )),
       ),
-      Padding(
-        padding: const EdgeInsets.fromLTRB(8, 0, 8, 7),
-        // 设置项卡片：统一走 _cardShell → AppCard，遵循「主题→样式→卡片样式」。
-        child: _cardShell(context, state, Column(children: rows)),
-      ),
+      ...tiles,
     ]);
   }
 
@@ -1345,7 +1395,10 @@ Widget _glass(BuildContext ctx, AppState state, String title, List<Widget> child
   );
 
   return Padding(
-    padding: const EdgeInsets.fromLTRB(10, 0, 10, 0),
+    // 卡片相对内容区的左右留白（10 → 12）：用户反馈「设置的卡片宽度过宽，再缩小」。
+    // 主界面列表行另有 14px 分区内边距（见 _buildMobileSection），两级合计 26；
+    // 二级页为 subListPadding 12 + 这里 12 = 24，与主界面基本对齐。
+    padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
     child: _cardShell(ctx, state, titleRow, radius: radius),
   );
 }
@@ -1514,25 +1567,27 @@ class _SettingSliderState extends State<_SettingSlider> {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-        // 大字号下标签不再被右侧 Slider 挤没：允许换行到两行并在必要时收缩
-        Flexible(
-          child: Text(widget.label(_current), maxLines: 2, overflow: TextOverflow.ellipsis, style: widget.labelStyle),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          // 统一走 AppSlider（全应用唯一滑块实现）：胶囊轨道 + 主题色填充 +
-          // 玻璃留空 + 拖动星点。裸 Slider 拿不到玻璃底（那需要一层 widget），
-          // 所以这里改为显式使用 AppSlider，不要再改回 `Slider(`。
-          child: AppSlider(
-            value: _current.clamp(widget.min, widget.max),
-            min: widget.min,
-            max: widget.max,
-            divisions: widget.divisions,
-            onChanged: _onChanged,
-            onChangeEnd: _onChangeEnd,
-          ),
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      // 布局约定（用户要求）：**上面**是描述该项滑块改变的内容（如「字号: 17」），
+      // **下面**才是滑块本体，且滑块独占一整行（不再与标签左右分栏）。
+      // 旧实现是 `Row(label, Expanded(slider))`：标签与滑块挤在一行，长标签
+      // （如「边框宽度」）会把滑块压窄，滑动手感与可读性都差。
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(widget.label(_current),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: widget.labelStyle),
+        const SizedBox(height: 2),
+        // 统一走 AppSlider（全应用唯一滑块实现）：胶囊轨道 + 主题色填充 +
+        // 玻璃留空 + 拖动粒子。裸 Slider 拿不到玻璃底（那需要一层 widget），
+        // 所以这里改为显式使用 AppSlider，不要再改回 `Slider(`。
+        AppSlider(
+          value: _current.clamp(widget.min, widget.max),
+          min: widget.min,
+          max: widget.max,
+          divisions: widget.divisions,
+          onChanged: _onChanged,
+          onChangeEnd: _onChangeEnd,
         ),
       ]),
     );
@@ -1640,6 +1695,23 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
           ]),
         ),
       ),
+    const SizedBox(height: 6),
+    // ── 主题色协调度 ──
+    // 「跟随主题色」大面积铺底时若直接用 scheme.primary（暗色下是 tone 80 的
+    // 高亮色）非常刺眼 —— 用户反馈「选择主题色又很亮」。这里给一个 0~0.8 的
+    // 混合系数：0% = 原色（与改动前一致），越大越并入表面色。由
+    // liquid_glass_fallback.harmonizedAccent 统一应用到所有「跟随主题色」的
+    // 玻璃/实色表面（AppCard / MobileGlassPill / MobileBottomNav / GlassPanel）。
+    _SettingSlider(
+      value: cfg.themeTone, min: 0, max: 0.8, divisions: 16,
+      label: (v) => '${s.isZh ? '主题色协调度' : 'Accent harmony'}: ${(v * 100).round()}%',
+      labelStyle: TextStyle(color: clr, fontSize: 12),
+      onCommit: (v) => state.updateConfig((c) => c..themeTone = v),
+    ),
+    Text(s.isZh
+            ? '仅作用于「跟随主题色」的卡片 / 底栏 / 药丸底色，0% 即原主题色'
+            : 'Only affects accent-tinted cards, nav bar and pills; 0% = raw accent',
+        style: TextStyle(fontSize: 10, color: scheme.outline)),
   ]);
 }
 
@@ -1651,50 +1723,120 @@ Widget _buildBackgroundCard(BuildContext ctx, AppState state) {
   ]);
 }
 
-/// 「外观 → 表面样式」卡片：卡片 / 移动端底部菜单栏 / 移动端顶部药丸的
-/// 表面样式（四值：跟随主题 / 液态玻璃 / 模糊 / 灰色）。
+/// 「外观 → 表面样式」二级页。
+///
+/// **按主题拆成 4 张卡**（用户反馈「二级菜单卡片给我分开，按主题分开不要合并到
+/// 一块」——此前 预设 / 表面样式 / 面板玻璃 / 开关们 / 边框 / 粒子 全挤在同一张卡里，
+/// 找不到东西）：
+/// ① 样式预设（整套外观一键切换）
+/// ② 表面样式（卡片 / 菜单 / 底部菜单栏 / 顶部药丸，逐项调 + 模糊度）
+/// ③ 玻璃与材质（面板玻璃 / 玻璃底色 / 设置卡片玻璃 / GPU / 添加边框）
+/// ④ 特效（滑块粒子）
+///
+/// 返回 Column 是安全的：桌面端本函数被塞进 MasonryGrid 的单元格里，一个 Column
+/// 就等价于「同一列的 4 张卡」，MasonryGrid 不会再包一层 AppCard（不会套娃）；
+/// 移动端二级页把它放进 ListView，同样是 4 张独立的卡。
 Widget _buildSurfaceStyleCard(BuildContext ctx, AppState state) {
   final cfg = state.config;
   final s = AppStrings.of(cfg.language);
-  return _glass(ctx, state, s.styleLabel, [
-    // 布局统一：左 = 图标 + 文字（含作用范围说明），右 = 下拉菜单（展开动画）
-    _styleRow(ctx,
-        icon: Icons.view_carousel_outlined,
-        label: s.cardStyleLabel,
-        scope: s.cardStyleScope,
-        value: cfg.cardStyle,
-        onSelected: (v) => state.updateConfig((c) => c..cardStyle = v)),
-    // 桌面端：左侧菜单栏 + 各页顶部菜单栏的表面样式（原来固定液态玻璃）
-    if (!isMobilePlatform)
+  final zh = s.isZh;
+  final scheme = Theme.of(ctx).colorScheme;
+  final clr = scheme.onSurface;
+
+  // 只有真的有表面样式选了「模糊」，才需要那颗模糊度滑块（见下）。
+  final bool anyBlur = cfg.cardStyle == SurfaceStyle.blur ||
+      cfg.navStyle == SurfaceStyle.blur ||
+      cfg.pillStyle == SurfaceStyle.blur ||
+      (!isMobilePlatform && cfg.menuStyle == SurfaceStyle.blur);
+
+  return Column(children: [
+    // ① 样式预设
+    _glass(ctx, state, zh ? '样式预设' : 'Style presets',
+        _buildStylePresets(ctx, state)),
+    const SizedBox(height: 8),
+    // ② 表面样式（卡标题与二级页标题「样式」区分开，否则一进来看不出哪张卡
+    //    是「逐项调样式」的那张）
+    _glass(ctx, state, zh ? '表面样式' : 'Surface style', [
+      // 布局统一：左 = 图标 + 文字（含作用范围说明），右 = 下拉菜单（展开动画）
       _styleRow(ctx,
-          icon: Icons.view_sidebar_outlined,
-          label: s.isZh ? '菜单样式' : 'Menu Style',
-          scope: s.isZh
-              ? '作用于 左侧菜单栏 和 各页顶部菜单栏（仅桌面端）'
-              : 'Applies to the sidebar and page top bars (desktop only)',
-          value: cfg.menuStyle,
-          onSelected: (v) => state.updateConfig((c) => c..menuStyle = v)),
-    if (isMobilePlatform) ...[
-      _styleRow(ctx,
-          icon: Icons.menu,
-          label: s.navStyleLabel,
-          value: cfg.navStyle,
-          onSelected: (v) => state.updateConfig((c) => c..navStyle = v)),
-      _styleRow(ctx,
-          icon: Icons.crop_landscape_outlined,
-          label: s.pillStyleLabel,
-          value: cfg.pillStyle,
-          onSelected: (v) => state.updateConfig((c) => c..pillStyle = v)),
-    ],
-    // 液态玻璃相关项 + 「添加边框」都并入本卡（见 _buildStyleGlassAndBorder）
-    ..._buildStyleGlassAndBorder(ctx, state),
+          icon: Icons.view_carousel_outlined,
+          label: s.cardStyleLabel,
+          scope: s.cardStyleScope,
+          value: cfg.cardStyle,
+          onSelected: (v) => state.updateConfig((c) => c..cardStyle = v)),
+      // 桌面端：左侧菜单栏 + 各页顶部菜单栏的表面样式（原来固定液态玻璃）
+      if (!isMobilePlatform)
+        _styleRow(ctx,
+            icon: Icons.view_sidebar_outlined,
+            label: s.isZh ? '菜单样式' : 'Menu Style',
+            scope: s.isZh
+                ? '作用于 左侧菜单栏 和 各页顶部菜单栏（仅桌面端）'
+                : 'Applies to the sidebar and page top bars (desktop only)',
+            value: cfg.menuStyle,
+            onSelected: (v) => state.updateConfig((c) => c..menuStyle = v)),
+      if (isMobilePlatform) ...[
+        _styleRow(ctx,
+            icon: Icons.menu,
+            label: s.navStyleLabel,
+            value: cfg.navStyle,
+            onSelected: (v) => state.updateConfig((c) => c..navStyle = v)),
+        _styleRow(ctx,
+            icon: Icons.crop_landscape_outlined,
+            label: s.pillStyleLabel,
+            value: cfg.pillStyle,
+            onSelected: (v) => state.updateConfig((c) => c..pillStyle = v)),
+      ],
+      // ── 「模糊」样式的模糊度 ──
+      //
+      // 用户要求：「如果样式选了模糊，那么下面的滑块就要能调节它的模糊度」。
+      // 四个表面样式（卡片 / 菜单 / 底部菜单栏 / 顶部药丸）的 blur 分支都从同一个
+      // `glassBlur` 取 σ（AppCard / MobileBottomNav / MobileGlassPill / GlassPanel），
+      // 所以这颗滑块直接绑 `glassBlur` 就对全部「模糊」表面生效。它与「玻璃细节 →
+      // 玻璃模糊度」是**同一个参数**，这里只是把它放到真正需要它的地方：
+      // 仅当确实有表面选了「模糊」时才出现，因此不会多出一个常年可见的重复项。
+      if (anyBlur) ...[
+        const SizedBox(height: 6),
+        _SettingSlider(
+          value: cfg.glassBlur,
+          min: 0,
+          max: 30,
+          divisions: 30,
+          // 拖动过程中就写回配置：模糊度改的是整块卡片的模糊程度，若松手才生效，
+          // 拖动时看着毫无变化，会被判定成「滑块坏了」（与字号滑块同一个坑）。
+          liveCommit: true,
+          label: (v) => '${zh ? '模糊度' : 'Blur'}: ${v.round()}',
+          labelStyle: TextStyle(color: clr, fontSize: 12),
+          onCommit: (v) => state.updateConfig((c) => c..glassBlur = v),
+        ),
+        Text(
+            zh
+                ? '即时作用于所有「模糊」表面（卡片 / 菜单 / 底部菜单栏 / 药丸）；'
+                    '与「玻璃细节 → 玻璃模糊度」是同一个参数'
+                : 'Applies live to every "Blur" surface; same value as '
+                    'Glass details → Blur',
+            style: TextStyle(fontSize: 10, color: scheme.outline)),
+      ],
+    ]),
+    const SizedBox(height: 8),
+    // ③ 玻璃与材质
+    _glass(ctx, state, zh ? '玻璃与材质' : 'Glass & material',
+        _buildGlassMaterialItems(ctx, state)),
+    const SizedBox(height: 8),
+    // ④ 特效
+    _glass(ctx, state, zh ? '特效' : 'Effects', _buildEffectItems(ctx, state)),
   ]);
 }
 
-/// 「样式」卡里的液态玻璃相关项 + 「添加边框」项。
+/// 「玻璃与材质」卡的内容：面板玻璃效果 + 玻璃底色遵循主题色 + 设置卡片玻璃 +
+/// GPU 液态玻璃 + 「添加边框」。
+///
+/// 2026-09-14 拆分：原先这些项与「样式预设 / 表面样式 / 滑块粒子」同挤在一张卡里
+/// （用户反馈「二级菜单卡片给我分开，按主题分开不要合并到一块」），现已按主题拆开 ——
+/// 本函数只保留「玻璃与材质」，预设与特效分别移到 [_buildStylePresets]（在
+/// [_buildSurfaceStyleCard] 里单独成卡）与 [_buildEffectItems]。
 ///
 /// 用户反馈与对应做法：
-/// * 「液态玻璃效果选项放进样式里面」→ 原独立卡片并入「样式」卡；
+/// * 「液态玻璃效果选项放进样式里面」→ 原独立卡片并入「样式」二级页；
 /// * 「模糊强度不管用…下面三个选项也不管用，而且也没有存在的必要」→ 删除折射强度/镜面高光/
 ///   模糊强度三个数值项（只作用于桌面 GPU shader 路径与模糊 σ，实测无感；σ 已回到各调用点常量）；
 /// * 「样式里面增加『添加边框选项』，开启后为所有卡片以及药丸添加有线的边框，可改颜色和宽度」→
@@ -1710,7 +1852,7 @@ Widget _buildSurfaceStyleCard(BuildContext ctx, AppState state) {
 /// * noCardGlass → AppCard 退回主题色实心；
 /// * glassEffect → GlassPanel 系面板（弹窗 / 命令页 / 日志页 / 节点编辑器等）。
 /// 三者默认均为 false，默认观感与修复前保持一致。
-List<Widget> _buildStyleGlassAndBorder(BuildContext ctx, AppState state) {
+List<Widget> _buildGlassMaterialItems(BuildContext ctx, AppState state) {
   final cfg = state.config;
   final s = AppStrings.of(cfg.language);
   final scheme = Theme.of(ctx).colorScheme;
@@ -1718,7 +1860,6 @@ List<Widget> _buildStyleGlassAndBorder(BuildContext ctx, AppState state) {
   final zh = s.isZh;
 
   return [
-    const SizedBox(height: 4),
     // ── 玻璃效果（非卡片表面：弹窗 / 面板；桌面端另含顶栏与侧边栏）──
     //
     // 与上面三行同构：左 = 图标 + 文字（+ 作用范围说明），右 = 固定宽度下拉。
@@ -1726,11 +1867,6 @@ List<Widget> _buildStyleGlassAndBorder(BuildContext ctx, AppState state) {
     // 宽的小框里，每项只剩约 40px，文字全部被截断、只剩三个图标 —— 即用户
     // 反馈的「玻璃效果的具体设置项未显示」「字体都显示不全」。改成下拉后：
     // 当前值在框内完整显示，展开列表里三个选项也都带完整文字。
-    //
-    // 作用范围说明也补上了：移动端没有「顶栏/侧栏」这两类 GlassPanel 表面
-    // （顶栏/底部栏分别由「顶部药丸样式」「底部菜单栏样式」接管），本项在
-    // 移动端实际作用于弹窗与各类面板（命令 / 日志 / 字体选择 / 节点编辑器等），
-    // 用户因此不会再以为它「无效」。
     Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(children: [
@@ -1738,7 +1874,7 @@ List<Widget> _buildStyleGlassAndBorder(BuildContext ctx, AppState state) {
         const SizedBox(width: 8),
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(zh ? '玻璃效果' : 'Glass effect',
+            Text(zh ? '面板玻璃效果' : 'Panel glass effect',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(color: clr, fontSize: 12)),
@@ -1777,27 +1913,58 @@ List<Widget> _buildStyleGlassAndBorder(BuildContext ctx, AppState state) {
     SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
         title: Text(zh ? '玻璃底色遵循主题色' : 'Tint glass with theme color',
             style: TextStyle(color: clr, fontSize: 13)),
-        subtitle: Text(zh ? '开启后玻璃/卡片底色使用主题色而不是表面灰'
-                : 'Use the accent color instead of surface gray',
+        subtitle: Text(zh ? '开启后玻璃/卡片底色使用协调后的主题色而不是表面灰'
+                : 'Use the harmonized accent color instead of surface gray',
             style: TextStyle(fontSize: 11, color: scheme.outline)),
         value: cfg.glassFollowTheme,
         onChanged: (v) => state.updateConfig((c) => c..glassFollowTheme = v)),
-    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-        title: Text(zh ? '设置项以毛玻璃展示' : 'Frosted settings cards',
-            style: TextStyle(color: clr, fontSize: 13)),
-        subtitle: Text(zh ? '使用扁平高斯模糊替代 GPU 液态玻璃，长列表更易读'
-                : 'Flat gaussian blur instead of GPU liquid glass (easier to read)',
-            style: TextStyle(fontSize: 11, color: scheme.outline)),
-        value: cfg.settingsFrostedGlass,
-        onChanged: (v) => state.updateConfig((c) => c..settingsFrostedGlass = v)),
-    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-        title: Text(zh ? '不使用卡片玻璃效果' : 'Disable glass on cards',
-            style: TextStyle(color: clr, fontSize: 13)),
-        subtitle: Text(zh ? '卡片退回主题色实心（低配设备更省电、更流畅）'
-                : 'Solid accent-color cards (smoother on low-end devices)',
-            style: TextStyle(fontSize: 11, color: scheme.outline)),
-        value: cfg.noCardGlass,
-        onChanged: (v) => state.updateConfig((c) => c..noCardGlass = v)),
+    // ── 设置卡片玻璃（三选一）──
+    // 去重：原先这里是「设置项以毛玻璃展示」+「不使用卡片玻璃效果」两个独立
+    // 开关，语义互斥又重复（用户反馈「下方选项中有重复项」）。现在合并为一个
+    // 三选一下拉，唯一数据源是 AppConfig.settingsGlassMode。
+    Padding(
+      padding: const EdgeInsets.only(top: 6, bottom: 10),
+      child: Row(children: [
+        Icon(Icons.dashboard_customize_outlined, size: 15, color: scheme.primary),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(zh ? '设置卡片玻璃' : 'Settings card glass',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: clr, fontSize: 12)),
+            const SizedBox(height: 2),
+            Text(zh ? '仅作用于设置页的卡片' : 'Applies to settings cards only',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 10, color: scheme.outline)),
+          ]),
+        ),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: _kMenuWidth,
+          child: OptionMenuBar<String>(
+            expandable: true,
+            value: cfg.settingsGlassMode,
+            items: [
+              OptionItem('follow',
+                  zh ? '跟随样式' : 'Follow',
+                  icon: Icons.link,
+                  subtitle: zh ? '与卡片样式一致' : 'Same as card style'),
+              OptionItem('frosted',
+                  zh ? '毛玻璃' : 'Frosted',
+                  icon: Icons.blur_on_outlined,
+                  subtitle: zh ? '扁平模糊，长列表更易读' : 'Flat blur, easier to read'),
+              OptionItem('solid',
+                  zh ? '主题色实心' : 'Solid',
+                  icon: Icons.format_color_fill,
+                  subtitle: zh ? '不透明，低配更流畅' : 'Opaque, smoother on low-end'),
+            ],
+            onChanged: (v) => state.updateConfig((c) => c..settingsGlassMode = v),
+          ),
+        ),
+      ]),
+    ),
     // PC 专属：桌面端 shader 玻璃在不同图形后端下的取向并不一致，默认关闭
     // （走「模糊 + 倒角高光」回退，背景就是真实壁纸），需要的用户可手动开启。
     if (!isMobilePlatform)
@@ -1809,16 +1976,6 @@ List<Widget> _buildStyleGlassAndBorder(BuildContext ctx, AppState state) {
               style: TextStyle(fontSize: 11, color: scheme.outline)),
           value: cfg.glassGpuOnDesktop,
           onChanged: (v) => state.updateConfig((c) => c..glassGpuOnDesktop = v)),
-    // 拖动滑块时的星点特效：只在拖动期间起 Ticker，关闭后连绘制层都不建
-    //（低配设备 / 不喜欢动效的用户用来换帧率，见 widgets/app_slider.dart 的性能约定）。
-    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-        title: Text(zh ? '滑块星点特效' : 'Slider star particles',
-            style: TextStyle(color: clr, fontSize: 13)),
-        subtitle: Text(zh ? '拖动滑块时从填充边缘向左飘散的星点（关闭后零帧开销）'
-                : 'Sparkles drifting left while dragging a slider (off = zero frame cost)',
-            style: TextStyle(fontSize: 11, color: scheme.outline)),
-        value: cfg.sliderStars,
-        onChanged: (v) => state.updateConfig((c) => c..sliderStars = v)),
     const SizedBox(height: 4),
     // ── 添加边框：所有卡片与药丸的实线描边 ──
     SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
@@ -1865,6 +2022,400 @@ List<Widget> _buildStyleGlassAndBorder(BuildContext ctx, AppState state) {
       ),
     ],
   ];
+}
+
+/// 「特效」卡：滑块拖动时的粒子（自 [_buildSurfaceStyleCard] 的 ④ 使用）。
+///
+/// 单独成卡（而不是并进「玻璃与材质」）：它是动画项，跟玻璃材质不是一个主题。
+/// 关闭后粒子层连 Ticker / 绘制层都不建，是低配设备换帧率的开关
+/// （见 widgets/app_slider.dart 的性能约定）。
+List<Widget> _buildEffectItems(BuildContext ctx, AppState state) {
+  final cfg = state.config;
+  final scheme = Theme.of(ctx).colorScheme;
+  final clr = scheme.onSurface;
+  final zh = cfg.language == 'zh';
+  return [
+    SwitchListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        title: Text(zh ? '滑块粒子特效' : 'Slider particle trail',
+            style: TextStyle(color: clr, fontSize: 13)),
+        subtitle: Text(
+            zh
+                ? '拖动滑块时从把手（填充段最右端）向左喷出的粒子，最多占轨道总长 15%（关闭后零帧开销）'
+                : 'Particles sprayed left from the handle while dragging, up to 15% of the track '
+                    '(off = zero frame cost)',
+            style: TextStyle(fontSize: 11, color: scheme.outline)),
+        value: cfg.sliderParticles,
+        onChanged: (v) => state.updateConfig((c) => c..sliderParticles = v)),
+  ];
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 样式预设（样式卡顶部的可视化方案选择）
+// ═══════════════════════════════════════════════════════════════════
+
+/// 一套样式预设：`apply` 一次写入多个外观字段（卡片/底栏/药丸/菜单样式 +
+/// 玻璃细节 + 主题色协调度），`matches` 判断当前配置是否正是这套方案。
+class _StylePreset {
+  final String id;
+  final String Function(bool zh) name;
+  final String Function(bool zh) desc;
+  /// 预览卡的样式类别：'liquid' | 'theme' | 'blur' | 'gray' | 'clear'
+  final String preview;
+  /// 写入整套外观字段。返回 AppConfig 是为了能直接喂给 `updateConfig` ——
+  /// 各实现的写法都是级联（`c..a = 1..b = 2`），级联表达式的值就是接收者本身。
+  final AppConfig Function(AppConfig c) apply;
+  final bool Function(AppConfig c) matches;
+  const _StylePreset({
+    required this.id,
+    required this.name,
+    required this.desc,
+    required this.preview,
+    required this.apply,
+    required this.matches,
+  });
+}
+
+bool _allStylesAre(AppConfig c, String v) =>
+    c.cardStyle == v && c.navStyle == v && c.pillStyle == v && c.menuStyle == v;
+
+/// 5 套预设。默认值全部有出处（见 AppConfig 里各字段注释）。
+final List<_StylePreset> _stylePresets = [
+  _StylePreset(
+    id: 'liquid',
+    name: (zh) => zh ? '液态玻璃' : 'Liquid',
+    desc: (zh) => zh ? '折射玻璃' : 'Refraction',
+    preview: 'liquid',
+    apply: (c) => c
+      ..cardStyle = 'liquid'
+      ..navStyle = 'liquid'
+      ..pillStyle = 'liquid'
+      ..menuStyle = 'liquid'
+      ..glassEffect = 'liquid'
+      ..settingsGlassMode = 'follow'
+      ..glassFollowTheme = false
+      ..glassBlur = 16.0
+      ..glassClarity = 0.45
+      ..glassHighlight = 1.0
+      ..glassLightPos = 0.0
+      ..glassEdge = 1.0,
+    matches: (c) =>
+        _allStylesAre(c, 'liquid') &&
+        c.glassEffect == 'liquid' &&
+        !c.glassFollowTheme &&
+        (c.glassClarity - 0.45).abs() < 0.005,
+  ),
+  _StylePreset(
+    id: 'clear',
+    name: (zh) => zh ? '轻薄通透' : 'Airy',
+    desc: (zh) => zh ? '高透光' : 'High clarity',
+    preview: 'clear',
+    apply: (c) => c
+      ..cardStyle = 'liquid'
+      ..navStyle = 'liquid'
+      ..pillStyle = 'liquid'
+      ..menuStyle = 'liquid'
+      ..glassEffect = 'liquid'
+      ..settingsGlassMode = 'follow'
+      ..glassFollowTheme = false
+      ..glassBlur = 24.0
+      ..glassClarity = 0.82
+      ..glassHighlight = 1.3
+      ..glassLightPos = 0.25
+      ..glassEdge = 1.4,
+    matches: (c) =>
+        _allStylesAre(c, 'liquid') && (c.glassClarity - 0.82).abs() < 0.005,
+  ),
+  _StylePreset(
+    id: 'theme',
+    name: (zh) => zh ? '主题色' : 'Accent',
+    desc: (zh) => zh ? '协调实色' : 'Harmonized',
+    preview: 'theme',
+    apply: (c) => c
+      ..cardStyle = 'theme'
+      ..navStyle = 'theme'
+      ..pillStyle = 'theme'
+      ..menuStyle = 'theme'
+      ..glassEffect = 'none'
+      ..settingsGlassMode = 'solid'
+      ..glassFollowTheme = true
+      ..themeTone = 0.55,
+    matches: (c) => _allStylesAre(c, 'theme') && c.settingsGlassMode == 'solid',
+  ),
+  _StylePreset(
+    id: 'blur',
+    name: (zh) => zh ? '扁平模糊' : 'Flat blur',
+    desc: (zh) => zh ? '易读' : 'Readable',
+    preview: 'blur',
+    apply: (c) => c
+      ..cardStyle = 'blur'
+      ..navStyle = 'blur'
+      ..pillStyle = 'blur'
+      ..menuStyle = 'blur'
+      ..glassEffect = 'blur'
+      ..settingsGlassMode = 'follow'
+      ..glassFollowTheme = false
+      ..glassBlur = 20.0
+      ..glassClarity = 0.55
+      ..glassHighlight = 0.6
+      ..glassLightPos = 0.0
+      ..glassEdge = 0.5,
+    matches: (c) =>
+        _allStylesAre(c, 'blur') && (c.glassClarity - 0.55).abs() < 0.005,
+  ),
+  _StylePreset(
+    id: 'gray',
+    name: (zh) => zh ? '极简灰' : 'Minimal gray',
+    desc: (zh) => zh ? '中性无彩' : 'Neutral',
+    preview: 'gray',
+    apply: (c) => c
+      ..cardStyle = 'gray'
+      ..navStyle = 'gray'
+      ..pillStyle = 'gray'
+      ..menuStyle = 'gray'
+      ..glassEffect = 'none'
+      ..settingsGlassMode = 'follow'
+      ..glassFollowTheme = false,
+    matches: (c) => _allStylesAre(c, 'gray'),
+  ),
+];
+
+/// 预设预览的小块玻璃：用当前主题色/协调度画出该方案的大致观感。
+Widget _presetSwatch(BuildContext ctx, _StylePreset p, bool selected) {
+  final scheme = Theme.of(ctx).colorScheme;
+  final isDark = scheme.brightness == Brightness.dark;
+  final tone = ctx.select<AppState, double>((s) => s.config.themeTone);
+  final accent = harmonizedAccent(scheme, tone);
+  final gray = neutralGray(scheme.surfaceContainerHigh);
+  // 声明成 BoxDecoration（而非抽象 Decoration）：下面选中态要用 copyWith 加柔光，
+  // copyWith 只存在于 BoxDecoration 上。
+  BoxDecoration deco;
+  switch (p.preview) {
+    case 'theme':
+      deco = BoxDecoration(
+        borderRadius: BorderRadius.circular(9),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [accent, Color.lerp(accent, scheme.surface, 0.35)!],
+        ),
+      );
+      break;
+    case 'gray':
+      deco = BoxDecoration(
+        color: gray,
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: scheme.outlineVariant.withAlpha(120)),
+      );
+      break;
+    case 'blur':
+      deco = BoxDecoration(
+        color: scheme.surface.withAlpha(isDark ? 200 : 220),
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.35)),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withAlpha(isDark ? 40 : 14), blurRadius: 6, offset: const Offset(0, 2)),
+        ],
+      );
+      break;
+    case 'clear':
+      deco = BoxDecoration(
+        borderRadius: BorderRadius.circular(9),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            scheme.surface.withAlpha(isDark ? 90 : 120),
+            scheme.surface.withAlpha(isDark ? 30 : 40),
+          ],
+        ),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.55), width: 1.2),
+      );
+      break;
+    default: // liquid
+      deco = BoxDecoration(
+        borderRadius: BorderRadius.circular(9),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            scheme.surface.withAlpha(isDark ? 210 : 225),
+            scheme.surface.withAlpha(isDark ? 120 : 150),
+          ],
+        ),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.45)),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withAlpha(isDark ? 45 : 16), blurRadius: 7, offset: const Offset(0, 2)),
+        ],
+      );
+  }
+  return Stack(children: [
+    // 预览块：选中态额外加一层主题色柔光，让「当前正在用哪套」一眼可见
+    //（外框的高亮见 _buildStylePresets 的 AnimatedContainer）。
+    Container(
+      width: 58,
+      height: 30,
+      decoration: selected
+          ? deco.copyWith(boxShadow: [
+              BoxShadow(
+                color: scheme.primary.withAlpha(isDark ? 90 : 60),
+                blurRadius: 8,
+                spreadRadius: 0.5,
+              ),
+            ])
+          : deco,
+    ),
+    // 左上角高光：所有玻璃方案的共同特征
+    Positioned(
+      left: 6, top: 3,
+      child: Container(
+        width: p.preview == 'gray' ? 0 : (selected ? 26 : 22),
+        height: 6,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(3),
+          gradient: LinearGradient(colors: [
+            Colors.white.withValues(alpha: 0.45),
+            Colors.white.withValues(alpha: 0.0),
+          ]),
+        ),
+      ),
+    ),
+  ]);
+}
+
+/// 样式预设选择行（样式卡顶部）。点一下即套用整套外观。
+List<Widget> _buildStylePresets(BuildContext ctx, AppState state) {
+  final cfg = state.config;
+  final scheme = Theme.of(ctx).colorScheme;
+  final clr = scheme.onSurface;
+  final zh = cfg.language == 'zh';
+
+  Widget entry(_StylePreset p) {
+    final selected = p.matches(cfg);
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => state.updateConfig((c) => p.apply(c)),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.fromLTRB(8, 8, 8, 6),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            color: selected
+                ? scheme.primary.withAlpha(30)
+                : scheme.surfaceContainerHighest.withAlpha(60),
+            border: Border.all(
+              color: selected
+                  ? scheme.primary
+                  : scheme.outlineVariant.withAlpha(80),
+              width: selected ? 1.5 : 0.8,
+            ),
+          ),
+          child: Column(children: [
+            _presetSwatch(ctx, p, selected),
+            const SizedBox(height: 5),
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              if (selected) ...[
+                Icon(Icons.check_circle, size: 11, color: scheme.primary),
+                const SizedBox(width: 3),
+              ],
+              Text(p.name(zh),
+                  style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight:
+                          selected ? FontWeight.w600 : FontWeight.w400,
+                      color: selected ? scheme.primary : clr)),
+            ]),
+            Text(p.desc(zh),
+                style: TextStyle(fontSize: 9, color: scheme.outline)),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  return [
+    // 不再自带「预设方案」小标题：拆卡之后它就是「样式预设」这张卡的正文，
+    // 再加一层小标题会与卡片标题重复（用户对重复项敏感）。
+    SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(children: [for (final p in _stylePresets) entry(p)]),
+    ),
+  ];
+}
+
+/// 「玻璃细节」卡：模糊度 / 通透度 / 高光强度与位置 / 边缘光。
+///
+/// 用户反馈「玻璃效果需提供详细可调的设置项，包括玻璃模糊度、通透度、
+/// 高光强度与位置、边缘光等具体参数」。五项都接到全部玻璃渲染路径
+/// （见 widgets/liquid_glass_fallback.dart 的 GlassTuning）。
+Widget _buildGlassDetailCard(BuildContext ctx, AppState state) {
+  final cfg = state.config;
+  final scheme = Theme.of(ctx).colorScheme;
+  final clr = scheme.onSurface;
+  final zh = cfg.language == 'zh';
+  return _glass(ctx, state, zh ? '玻璃细节' : 'Glass details', [
+    Text(
+        zh
+            ? '作用于所有玻璃表面：卡片 / 底部菜单栏 / 顶部药丸 / 弹窗与面板'
+            : 'Applies to every glass surface: cards, bottom nav, pills, popups, panels',
+        style: TextStyle(fontSize: 10, color: scheme.outline)),
+    const SizedBox(height: 10),
+    _SettingSlider(
+      value: cfg.glassBlur, min: 0, max: 30, divisions: 30,
+      // 拖动中就写回配置：模糊度的效果是「整块玻璃变糊/变清」，松手才生效时
+      // 拖动过程中看不出差别，会被判定成「滑块不管用」（与字号滑块同一个坑）。
+      liveCommit: true,
+      label: (v) => '${zh ? '玻璃模糊度' : 'Blur'}: ${v.round()}',
+      labelStyle: TextStyle(color: clr, fontSize: 12),
+      onCommit: (v) => state.updateConfig((c) => c..glassBlur = v),
+    ),
+    _SettingSlider(
+      value: cfg.glassClarity, min: 0, max: 1, divisions: 20,
+      label: (v) => '${zh ? '通透度' : 'Clarity'}: ${(v * 100).round()}%',
+      labelStyle: TextStyle(color: clr, fontSize: 12),
+      onCommit: (v) => state.updateConfig((c) => c..glassClarity = v),
+    ),
+    _SettingSlider(
+      value: cfg.glassHighlight, min: 0, max: 1.6, divisions: 16,
+      label: (v) => '${zh ? '高光强度' : 'Highlight'}: ${v.toStringAsFixed(1)}',
+      labelStyle: TextStyle(color: clr, fontSize: 12),
+      onCommit: (v) => state.updateConfig((c) => c..glassHighlight = v),
+    ),
+    _SettingSlider(
+      value: cfg.glassLightPos, min: 0, max: 1, divisions: 20,
+      label: (v) =>
+          '${zh ? '高光位置' : 'Light position'}: ${zh ? (v <= 0.05 ? '左上' : v >= 0.95 ? '右下' : '${(v * 100).round()}%') : '${(v * 100).round()}%'}',
+      labelStyle: TextStyle(color: clr, fontSize: 12),
+      onCommit: (v) => state.updateConfig((c) => c..glassLightPos = v),
+    ),
+    _SettingSlider(
+      value: cfg.glassEdge, min: 0, max: 2, divisions: 20,
+      label: (v) => '${zh ? '边缘光' : 'Edge light'}: ${v.toStringAsFixed(1)}',
+      labelStyle: TextStyle(color: clr, fontSize: 12),
+      onCommit: (v) => state.updateConfig((c) => c..glassEdge = v),
+    ),
+    const SizedBox(height: 4),
+    Align(
+      alignment: Alignment.centerRight,
+      child: TextButton.icon(
+        onPressed: () => state.updateConfig((c) => c
+          ..glassBlur = 16.0
+          ..glassClarity = 0.45
+          ..glassHighlight = 1.0
+          ..glassLightPos = 0.0
+          ..glassEdge = 1.0),
+        icon: const Icon(Icons.restart_alt, size: 15),
+        label: Text(zh ? '恢复默认' : 'Reset', style: const TextStyle(fontSize: 12)),
+        style: TextButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            minimumSize: const Size(0, 30),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+      ),
+    ),
+  ]);
 }
 
 /// 边框颜色选择：复用主题色的取色面板 [_CP]（只取第一个颜色）。
@@ -1947,18 +2498,88 @@ Widget _buildNodeEditorStyleCard(BuildContext ctx, AppState state) {
 /// 用户反馈「右侧选项框过宽需收窄、框内文字要完整显示」，故收窄到 116。
 const double _kMenuWidth = 116;
 
-/// 字重下拉的选项。
+/// 各字重样本使用的 FontWeight（与 AppConfig.fontWeightValues 一一对应）。
+const List<FontWeight> _kFontWeights = [
+  FontWeight.w300,
+  FontWeight.w400,
+  FontWeight.w500,
+  FontWeight.w600,
+  FontWeight.w700,
+];
+
+/// 字重选择控件：5 个各自用**该字重**渲染的「Aa」样本，点一下即生效。
 ///
-/// 触发按钮只有 [_kMenuWidth] 宽，去掉内边距与箭头后留给文字约 76px；
-/// 原先写死的「细体 (Light)」「半粗 (SemiBold)」这类中英混排约 74~92px，
-/// 在框内会被截断成「细体 (Li…」。这里按语言二选一，两种语言都能完整显示。
-List<OptionItem<int>> _fontWeightItems(AppStrings s) => [
-      OptionItem(0, s.isZh ? '细体' : 'Light'),
-      OptionItem(1, s.isZh ? '常规' : 'Regular'),
-      OptionItem(2, s.isZh ? '中等' : 'Medium'),
-      OptionItem(3, s.isZh ? '半粗' : 'SemiBold'),
-      OptionItem(4, s.isZh ? '粗体' : 'Bold'),
-    ];
+/// 为什么不用下拉：下拉选项文字本身是同一字重（选项列表只有名字），用户
+/// 看不到「细体 / 粗体」的实际差别，反馈「字重设置项需提供可选字重选项，
+/// 使用户能够实际选择字重」。这里直接给出可视化样本，所见即所点。
+Widget _fontWeightPicker(
+  BuildContext ctx,
+  AppState state,
+  AppStrings s,
+  ColorScheme scheme,
+) {
+  final cfg = state.config;
+  final clr = scheme.onSurface;
+  final labels = s.isZh
+      ? const ['细体', '常规', '中等', '半粗', '粗体']
+      : const ['Light', 'Regular', 'Medium', 'SemiBold', 'Bold'];
+  final family = cfg.fontFamily.isEmpty ? null : cfg.fontFamily;
+  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    Text(s.qWeight, style: TextStyle(color: clr, fontSize: 12)),
+    const SizedBox(height: 6),
+    Row(children: [
+      for (var i = 0; i < _kFontWeights.length; i++) ...[
+        if (i > 0) const SizedBox(width: 6),
+        Expanded(
+          child: Tooltip(
+            message: '${labels[i]} · ${AppConfig.fontWeightValues[i]}',
+            child: InkWell(
+              borderRadius: BorderRadius.circular(10),
+              onTap: () => state.updateConfig((c) => c..fontWeightIndex = i),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                height: 48,
+                decoration: BoxDecoration(
+                  color: cfg.fontWeightIndex == i
+                      ? scheme.primary.withAlpha(38)
+                      : scheme.surfaceContainerHighest.withAlpha(70),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: cfg.fontWeightIndex == i
+                        ? scheme.primary
+                        : scheme.outlineVariant.withAlpha(90),
+                    width: cfg.fontWeightIndex == i ? 1.4 : 0.8,
+                  ),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text('Aa',
+                        style: TextStyle(
+                          fontSize: 15,
+                          height: 1.1,
+                          fontFamily: family,
+                          fontWeight: _kFontWeights[i],
+                          color: cfg.fontWeightIndex == i ? scheme.primary : clr,
+                        )),
+                    Text(labels[i],
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontSize: 9,
+                            height: 1.2,
+                            fontFamily: family,
+                            color: scheme.outline)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    ]),
+  ]);
+}
 
 /// 表面样式设置行：左 = 图标 + 文字（可选作用范围说明），右 = 四值
 /// 「菜单栏选项」控件（按钮 + 展开选项列表，key 绑定当前值，配置被外部
@@ -2276,17 +2897,8 @@ Widget _buildFont(BuildContext ctx, AppState state) {
         labelStyle: TextStyle(color: clr, fontSize: 12),
         onCommit: (v) => state.updateConfig((c) => c..fontSize = v),
       ),
-      // 字重：左右布局（标签左、下拉右，固定宽度）
-      Row(children: [
-        Expanded(child: Text(s.qWeight, maxLines: 1, overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: clr, fontSize: 12))),
-        SizedBox(width: _kMenuWidth, child: OptionMenuBar<int>(
-          expandable: true,
-          value: cfg.fontWeightIndex,
-          items: _fontWeightItems(s),
-          onChanged: (v) => state.updateConfig((c) => c..fontWeightIndex = v),
-        )),
-      ]),
+      // 字重：可视化样本（每个「Aa」用对应字重渲染，点选即生效）
+      _fontWeightPicker(ctx, state, s, scheme),
     ]);
   }
 
@@ -2302,16 +2914,8 @@ Widget _buildFont(BuildContext ctx, AppState state) {
       labelStyle: TextStyle(color: clr, fontSize: 12),
       onCommit: (v) => state.updateConfig((c) => c..fontSize = v),
     ),
-    // 字重：左右布局（标签左、下拉右，固定宽度）
-    Row(children: [
-      Expanded(child: Text(s.qWeight, style: TextStyle(color: clr, fontSize: 12))),
-      SizedBox(width: _kMenuWidth, child: OptionMenuBar<int>(
-        expandable: true,
-        value: cfg.fontWeightIndex,
-        items: _fontWeightItems(s),
-        onChanged: (v) => state.updateConfig((c) => c..fontWeightIndex = v),
-      )),
-    ]),
+    // 字重：可视化样本（每个「Aa」用对应字重渲染，点选即生效）
+    _fontWeightPicker(ctx, state, s, scheme),
   ]);
 }
 

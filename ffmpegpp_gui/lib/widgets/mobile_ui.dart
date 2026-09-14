@@ -42,12 +42,17 @@ class MobilePillTopBar extends StatelessWidget {
   /// 搜索药丸内容（一般为 [MobileSearchPill]）
   final Widget? searchChild;
 
+  /// 是否允许把放不下的操作收进「…」（默认 true）。
+  /// 配置库传 false：3 个固定操作直接 inline 展示，不再折叠。
+  final bool collapseActions;
+
   const MobilePillTopBar({
     super.key,
     required this.title,
     this.actions = const [],
     this.searching = false,
     this.searchChild,
+    this.collapseActions = true,
   });
 
   /// 搜索层淡入淡出 + 缩放的时长（落在 180~220ms 区间；缩放与淡入共用一个时长，
@@ -82,6 +87,8 @@ class MobilePillTopBar extends StatelessWidget {
         actions: actions,
         // 搜索态下右侧不允许停留在「操作已展开」形态：搜索药丸会盖住它
         forceCollapsed: searchOpen,
+        // 折叠策略逐页可控（配置库关掉折叠，见 MobilePillTopBar.collapseActions）
+        collapseActions: collapseActions,
       ),
     );
 
@@ -194,6 +201,12 @@ class MobileSearchPill extends StatelessWidget {
             decoration: InputDecoration(
               hintText: hint,
               hintStyle: TextStyle(color: scheme.onSurfaceVariant, fontSize: 14),
+              // filled 必须显式关掉：全局 InputDecorationTheme 是 filled: true +
+              // fillColor(surfaceContainerHighest/80)，这里不写 filled 就会继承它，
+              // 于是药丸内部多出一块暗色圆角矩形 —— 即用户反馈的
+              // 「设置与主界面的搜索框内怎么有个暗色的矩形」。
+              // 搜索框的容器是液态玻璃药丸本身，不需要任何填充。
+              filled: false,
               // 显式清掉所有状态下的主题色边框：液态玻璃药丸本身就是容器，
               // 不再让 Material3 给一个 primary 色的下划线 / 轮廓。
               border: InputBorder.none,

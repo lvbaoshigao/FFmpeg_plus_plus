@@ -165,12 +165,20 @@ class MobilePillBarLayout extends StatefulWidget {
   /// 外部原因强制收起（如主 Tab 页进入搜索态，右侧不允许停留展开态）
   final bool forceCollapsed;
 
+  /// 是否允许把放不下的操作收进「…」。
+  ///
+  /// 默认 true（条数 > 2 一律收起，见 [_maxInlineActions]）。配置库这类
+  /// 「操作固定且只有 3 个」的页面传 false：全部操作直接 inline 展示，
+  /// 不再出现「…」—— 用户反馈「主界面配置库右上角的药丸不要折叠」。
+  final bool collapseActions;
+
   const MobilePillBarLayout({
     super.key,
     this.leading,
     required this.titlePill,
     this.actions = const [],
     this.forceCollapsed = false,
+    this.collapseActions = true,
   });
 
   @override
@@ -284,7 +292,12 @@ class _MobilePillBarLayoutState extends State<MobilePillBarLayout>
   /// 判定顺序：
   ///  1. 条数规则（用户要求，优先）：操作多于 [._maxInlineActions] 个 → 收起；
   ///  2. 宽度兜底：即使只有 1~2 个操作，窄屏 + 长标题下也收起，保证标题可读。
+  ///
+  /// [MobilePillTopBar.collapseActions] 为 false 时**两条规则都不生效**：操作
+  /// 一律inline 展示（用户要求「配置库右上角的药丸不要折叠」）。这种页面操作
+  /// 数量固定且不多，极端窄屏由 _actionsPill 里的 FittedBox 等比缩小兜底。
   bool _needsOverflow(double availableWidth) {
+    if (!widget.collapseActions) return false;
     if (widget.actions.isEmpty || !availableWidth.isFinite) return false;
     if (widget.actions.length > _maxInlineActions) return true;
     final actionsWidth = MobileUi.actionsPillPadH * 2 +
@@ -348,15 +361,21 @@ class _MobilePillBarLayoutState extends State<MobilePillBarLayout>
   /// 溢出触发药丸：收起时是「…」，展开后变「→」（同一颗药丸，位置固定不动）。
   ///
   /// 为什么不复用 [MobileGlassPillAction]：它内部写死一颗 [Icon]，装不下
-  /// 「… ⇄ →」的切换动画；这里按它的同一规格手写按钮（34×34 圆形、透明涟漪、
-  /// 水平内边距 1/2），只在图标位放 AnimatedSwitcher，观感与其它操作按钮一致。
+  /// 「… ⇄ →」的切换动画；这里按它的同一规格手写按钮（34×34 圆形、透明涟漪），
+  /// 只在图标位放 AnimatedSwitcher，观感与其它操作按钮一致。
+  ///
+  /// 尺寸：药丸**必须是正圆**（用户反馈「你这个更多选项药丸不是圆的」）。
+  /// 做法是让药丸总宽 = 总高：内边距取 (44 - 34) / 2 = 5，5 + 34 + 5 = 44，
+  /// 配上 radius = pillHeight / 2 = 22 就是直径 44 的正圆。旧写法用了
+  /// [MobileUi.actionsPillPadH]（6）+ 内层 1px 内边距 → 48 × 44，是个扁圆角矩形。
   Widget _triggerPill(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final zh = Localizations.localeOf(context).languageCode == 'zh';
     return MobileGlassPill(
       radius: MobileUi.pillRadius,
       height: MobileUi.pillHeight,
-      padding: const EdgeInsets.symmetric(horizontal: MobileUi.actionsPillPadH),
+      padding: const EdgeInsets.symmetric(
+          horizontal: (MobileUi.pillHeight - MobileUi.actionButtonSize) / 2),
       child: Tooltip(
         message: _expanded
             ? (zh ? '收起' : 'Collapse')
@@ -366,25 +385,22 @@ class _MobilePillBarLayoutState extends State<MobilePillBarLayout>
           borderRadius: BorderRadius.circular(MobileUi.actionButtonSize / 2),
           splashColor: Colors.transparent,
           highlightColor: Colors.transparent,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 2),
-            child: SizedBox(
-              width: MobileUi.actionButtonSize,
-              height: MobileUi.actionButtonSize,
-              child: AnimatedSwitcher(
-                duration: _overflowDuration,
-                switchInCurve: Curves.easeOutCubic,
-                switchOutCurve: Curves.easeOutCubic,
-                transitionBuilder: (child, anim) => ScaleTransition(
-                  scale: anim,
-                  child: FadeTransition(opacity: anim, child: child),
-                ),
-                child: Icon(
-                  _expanded ? Icons.arrow_forward : Icons.more_horiz,
-                  key: ValueKey<bool>(_expanded),
-                  size: MobileUi.actionIconSize,
-                  color: scheme.onSurface,
-                ),
+          child: SizedBox(
+            width: MobileUi.actionButtonSize,
+            height: MobileUi.actionButtonSize,
+            child: AnimatedSwitcher(
+              duration: _overflowDuration,
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeOutCubic,
+              transitionBuilder: (child, anim) => ScaleTransition(
+                scale: anim,
+                child: FadeTransition(opacity: anim, child: child),
+              ),
+              child: Icon(
+                _expanded ? Icons.arrow_forward : Icons.more_horiz,
+                key: ValueKey<bool>(_expanded),
+                size: MobileUi.actionIconSize,
+                color: scheme.onSurface,
               ),
             ),
           ),

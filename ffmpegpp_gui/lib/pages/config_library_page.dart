@@ -974,6 +974,10 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       title: Text(zh ? '配置库' : 'Config Library',
           maxLines: 1, overflow: TextOverflow.ellipsis),
       actions: _buildTopActions(scheme, zh),
+      // 配置库右上角只有 3 个固定操作（导入 .fppx / 新建快捷配置 / 新建配置），
+      // 数量固定且都属于高频入口 —— 用户反馈「主界面配置库右上角的药丸不要折叠」，
+      // 这里关掉「…」收纳，三个按钮直接 inline 展示（窄屏由 FittedBox 等比缩小兜底）。
+      collapseActions: false,
     );
   }
 

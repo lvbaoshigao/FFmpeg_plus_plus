@@ -80,29 +80,78 @@ const int _kOverlayAlpha = 31;
 /// 直接搬过来（见 [_IndeterminateBarPainter]），这样不确定进度的节奏与系统一致。
 const int _kIndeterminateDurationMs = 1800;
 
-// ── 拖动星点特效 ──
+// ── 拖动粒子特效 ──
 //
-// 用户要求：「拖动时增加粒子特效，就是随机的星星向左滑动（同时兼顾性能）」。
+// 用户要求（2026-09-14 改版）：「把滑块交互动效中的星星特效替换为粒子特效，
+// 用于滑块最右端触发发射」。据此定下的规格就是下面这一组常量：
+// * 发射点 = 填充段**最右端**（= 把手，也就是用户说的「滑块最右端」），粒子出射
+//   后**向左**飘散：`------(粒子发射处)>-------`；
+// * 密度适中、有颗粒感但不过于密集 —— 池子上限 [_kParticlePool] 个，实际同时
+//   存活的数量按「粒子带」宽度折算（[_kParticleSpacing]）：窄轨道少发、宽轨道
+//   多发，任何宽度都不会连成一坨实色；
+// * 亮度**由暗逐渐变亮**：出生是一颗很暗的小点，越走越亮（[_particleAlphaOf]）；
+// * 「粒子占据滑块的空间不超过滑块总长的 15%」—— 每颗粒子的消亡距离取
+//   [_kParticleSpanMin] ~ [_kParticleSpanMax] 个轨道总长，因此整条带最多 15%：
+//   `-----------(粒子截止处)-(粒子开始处)>----------`；
+// * 「每个粒子消失位置不统一」—— 消亡距离逐粒子独立随机（8%~15%），于是消失点
+//   参差不齐，不会切出一条整齐的直线。
+//
 // 性能约定（改这里前先读）：
-// * 只在拖动期间 `repeat()`，松手后 [_kStarFadeOut] 内淡出并 `stop()` ——
+// * 只在拖动期间 `repeat()`，松手后 [_kParticleFadeOut] 内淡出并 `stop()` ——
 //   静止时**不建绘制层、不起 Ticker**，零帧开销；
-// * 固定 [_kStarCount] 颗星的池子，位置由时间差积分算出，没有逐星 widget、
-//   没有逐帧 setState；
-// * 星点层单独包 RepaintBoundary：每帧只脏自己这一层，不牵连 Slider 与卡片；
-// * 只在填充段内绘制（含淡入淡出），因此星点永远落在主题色块上，白星对比度足够；
-// * 设置里可关闭（`AppConfig.sliderStars`），系统开启「减弱动态效果」时也自动关闭。
-const int _kStarCount = 14;
-const double _kStarLifeMin = 0.55;
-const double _kStarLifeMax = 1.05;
-const double _kStarSpeedMin = 46;
-const double _kStarSpeedMax = 132;
-const Duration _kStarFadeOut = Duration(milliseconds: 260);
+// * 固定池子，位置由时间差积分算出，没有逐粒子 widget、没有逐帧 setState；
+// * 每帧只有 `drawCircle`（半径 0.7~1.6 的小圆点）：比原先的八点星形 Path 少了
+//   save / translate / rotate / scale，也没有 saveLayer；
+// * 粒子层单独包 RepaintBoundary：每帧只脏自己这一层，不牵连 Slider 与卡片；
+// * 只在已填充段内绘制，粒子永远落在主题色块上，对比度足够；
+// * 设置里可关闭（`AppConfig.sliderParticles`），系统开启「减弱动态效果」时也自动关闭。
 
-/// 单帧最大积分步长：页面卡顿/后台回来时不要让星点「瞬移」。
-const double _kStarMaxStep = 0.05;
+/// 粒子池容量（上限）。实际同时存活的数量由粒子带宽度折算，见 [_particleActiveCount]。
+const int _kParticlePool = 32;
+
+/// 粒子带里两颗粒子平均占用的横向像素。
+///
+/// 取 2.3px ≈ 一个圆点直径 + 一点空隙：既能看出「一颗一颗」的颗粒感，又不会稀到
+/// 断成几段。想整体调密 / 调疏只改这一个值（越小越密）。
+const double _kParticleSpacing = 2.3;
+
+/// 池子里至少同时存活的粒子数（很窄的轨道也别只剩两三颗）。
+const int _kParticleMinActive = 9;
+
+/// 粒子横向寿命（秒）：一颗粒子从发射到消失要走多久。
+/// 速度由「消亡距离 ÷ 寿命」反推（见 [_ParticleField._respawn]），所以改这里只影响
+/// 快慢，不会破坏「最远 15%」的约束。
+const double _kParticleLifeMin = 0.50;
+const double _kParticleLifeMax = 0.95;
+
+/// 消亡距离下限 / 上限（相对**轨道总长**）。
+///
+/// 上限 0.15 就是用户给的硬约束：整条粒子带不会超过滑块总长的 15%；每颗粒子在这
+/// 两个值之间随机取值，所以消失点不统一（用户明确要求 8%~15%）。
+const double _kParticleSpanMin = 0.08;
+const double _kParticleSpanMax = 0.15;
+
+/// 发射点抖动（px）：让粒子不从同一条竖线上出发。
+/// 它从消亡距离里**扣掉**（见 [_ParticleField._respawn]），因此不会把 15% 撑大。
+const double _kParticleJitter = 3;
+
+/// 出生时的最低亮度（0~1）。用户要求「由暗逐渐变亮」，起点刻意压得很暗。
+const double _kParticleAlphaMin = 0.10;
+
+/// 亮度涨到最亮时的生命进度（0.85 = 走完 85% 寿命时最亮）。
+const double _kParticleHoldU = 0.85;
+
+/// 最后一小段生命用来的淡出比例（0.12 = 最后 12% 淡出，避免最亮的一刻硬切）。
+const double _kParticleTail = 0.12;
+
+/// 松手后整条粒子带的淡出时长。
+const Duration _kParticleFadeOut = Duration(milliseconds: 240);
+
+/// 单帧最大积分步长：页面卡顿 / 后台回来时不要让粒子「瞬移」。
+const double _kParticleMaxStep = 0.05;
 
 // ═══════════════════════════════════════════
-// 表面配置指纹（玻璃 / 星点开关）
+// 表面配置指纹（玻璃 / 粒子开关）
 // ═══════════════════════════════════════════
 
 /// 轨道渲染所需的配置指纹：只订阅影响渲染的字段，
@@ -115,27 +164,27 @@ class _TrackCfg {
   /// 「样式 → 玻璃底色遵循主题色」：玻璃底色改用主题色而不是白/灰。
   final bool follow;
 
-  /// 「样式 → 滑块星点特效」：拖动时是否出现星点。
-  final bool stars;
+  /// 「样式 → 滑块粒子特效」：拖动时是否出现粒子。
+  final bool particles;
 
-  const _TrackCfg({required this.noGlass, required this.follow, required this.stars});
+  const _TrackCfg({required this.noGlass, required this.follow, required this.particles});
 
   @override
   bool operator ==(Object other) =>
       other is _TrackCfg &&
       other.noGlass == noGlass &&
       other.follow == follow &&
-      other.stars == stars;
+      other.particles == particles;
 
   @override
-  int get hashCode => Object.hash(noGlass, follow, stars);
+  int get hashCode => Object.hash(noGlass, follow, particles);
 }
 
 _TrackCfg _trackCfgOf(BuildContext context) => context.select<AppState, _TrackCfg>(
       (s) => _TrackCfg(
         noGlass: s.config.noCardGlass,
         follow: s.config.glassFollowTheme,
-        stars: s.config.sliderStars,
+        particles: s.config.sliderParticles,
       ),
     );
 
@@ -596,7 +645,7 @@ class AppSlider extends StatefulWidget {
     this.onChangeEnd,
     this.color,
     this.compact = false,
-    this.stars = true,
+    this.particles = true,
   });
 
   /// 当前值（受控，由调用方持有，与 [Slider.value] 语义一致）。
@@ -627,8 +676,8 @@ class AppSlider extends StatefulWidget {
   /// 默认 false：统一规格就是 [kAppTrackHeight]，除确有必要不要打开。
   final bool compact;
 
-  /// 拖动时是否允许星点特效（调用方想单独关掉时用；全局开关在设置 → 样式）。
-  final bool stars;
+  /// 拖动时是否允许粒子特效（调用方想单独关掉时用；全局开关在设置 → 样式）。
+  final bool particles;
 
   @override
   State<AppSlider> createState() => _AppSliderState();
@@ -706,16 +755,16 @@ class _AppSliderState extends State<AppSlider> with SingleTickerProviderStateMix
     final Color accent = widget.color ?? scheme.primary;
     final double trackHeight = widget.compact ? kAppCompactTrackHeight : kAppTrackHeight;
     final _TrackCfg cfg = _trackCfgOf(context);
-    // 星点颜色跟填充段的明暗走：浅色填充配深色星点，否则白星在浅色块上不可见。
+    // 粒子颜色跟填充段的明暗走：浅色填充配深色粒子，否则白粒子在浅色块上不可见。
     // 系统开启「减弱动态效果」时完全不做特效（无障碍 + 省电）。
-    final bool starsOn = widget.stars &&
-        cfg.stars &&
+    final bool particlesOn = widget.particles &&
+        cfg.particles &&
         !MediaQuery.disableAnimationsOf(context);
 
     return SliderTheme(
       data: appSliderThemeFor(scheme, compact: widget.compact, accent: accent, glassTrack: true),
       child: Stack(
-        // 只让 Slider 决定尺寸；玻璃层与星点层都是 Positioned.fill 的纯装饰层。
+        // 只让 Slider 决定尺寸；玻璃层与粒子层都是 Positioned.fill 的纯装饰层。
         children: [
           // ① 轨道留空段的玻璃（在最底层：Slider 只画填充段，压在上面）
           Positioned.fill(
@@ -755,11 +804,12 @@ class _AppSliderState extends State<AppSlider> with SingleTickerProviderStateMix
               widget.onChangeEnd?.call(nv);
             },
           ),
-          // ③ 拖动时的星点（纯前景装饰，IgnorePointer 保证不抢手势）
-          if (starsOn)
+          // ③ 拖动时从把手（填充段最右端）向左喷出的粒子（纯前景装饰，
+          //     IgnorePointer 保证不抢手势）。发射点 = fillEnd，见 [_ParticleLayer]。
+          if (particlesOn)
             Positioned.fill(
               child: IgnorePointer(
-                child: _StarLayer(
+                child: _ParticleLayer(
                   active: _dragValue != null,
                   fillStart: 0,
                   fillEnd: _fillFraction.clamp(0.0, 1.0),
@@ -796,7 +846,7 @@ class AppRangeSlider extends StatefulWidget {
     this.onChangeEnd,
     this.color,
     this.compact = false,
-    this.stars = true,
+    this.particles = true,
   });
 
   /// 当前区间。
@@ -823,15 +873,15 @@ class AppRangeSlider extends StatefulWidget {
   /// 紧凑尺寸（与 [AppSlider.compact] 同义）。
   final bool compact;
 
-  /// 拖动时是否允许星点特效。
-  final bool stars;
+  /// 拖动时是否允许粒子特效。
+  final bool particles;
 
   @override
   State<AppRangeSlider> createState() => _AppRangeSliderState();
 }
 
 class _AppRangeSliderState extends State<AppRangeSlider> {
-  /// 是否有手指按在任一端（决定星点是否飘散）。
+  /// 是否有手指按在任一端（决定粒子是否喷出）。
   bool _dragging = false;
 
   double _fractionOf(double v) {
@@ -847,8 +897,8 @@ class _AppRangeSliderState extends State<AppRangeSlider> {
     final double trackHeight =
         widget.compact ? kAppCompactTrackHeight : kAppTrackHeight;
     final _TrackCfg cfg = _trackCfgOf(context);
-    final bool starsOn = widget.stars &&
-        cfg.stars &&
+    final bool particlesOn = widget.particles &&
+        cfg.particles &&
         !MediaQuery.disableAnimationsOf(context);
 
     return SliderTheme(
@@ -880,10 +930,11 @@ class _AppRangeSliderState extends State<AppRangeSlider> {
               widget.onChangeEnd?.call(v);
             },
           ),
-          if (starsOn)
+          // 拖动时从**区间的右端**（= 用户说的「滑块最右端」）向左喷出的粒子。
+          if (particlesOn)
             Positioned.fill(
               child: IgnorePointer(
-                child: _StarLayer(
+                child: _ParticleLayer(
                   active: _dragging,
                   fillStart: _fractionOf(widget.values.start),
                   fillEnd: _fractionOf(widget.values.end),
@@ -899,112 +950,171 @@ class _AppRangeSliderState extends State<AppRangeSlider> {
 }
 
 // ═══════════════════════════════════════════
-// 拖动星点粒子
+// 拖动粒子
 // ═══════════════════════════════════════════
 
-/// 一颗星点的全部状态（固定池子里的元素，反复复用，不新建对象）。
-class _Star {
+/// 一颗粒子的全部状态（固定池子里的元素，反复复用，不新建对象）。
+class _Particle {
+  /// 轨道局部坐标（px）：[x] 相对轨道左端，[y] 相对轨道竖直中心。
   double x = 0;
   double y = 0;
-  double size = 3;
-  double speed = 80;
-  double life = 0;
-  double lifeMax = 0.8;
-  double rot = 0;
-  double spin = 0;
 
-  /// 是否已被首次点亮（未点亮的星点不参与绘制，避免开局一堆星挤在边界上）。
+  /// 向左速度（px/s，正值 = 向左）。由「消亡距离 ÷ 寿命」反推，见 [_respawn]。
+  double vx = 60;
+
+  /// 竖直漂移（px/s）：让粒子带看起来是「喷」出来的，而不是整齐平移的一条线。
+  double vy = 0;
+
+  /// 半径（px）。0.7~1.6 的小圆点才有颗粒感，不要放大成光斑。
+  double r = 1.1;
+
+  /// 已存活 / 总寿命（秒）。`寿命 × 速度` 就是这颗粒子的消亡距离。
+  double life = 0;
+  double lifeMax = 0.7;
+
+  /// 亮度抖动系数：让同一时刻的粒子不是一个亮度，避免整条带一起「呼吸」。
+  double tone = 1;
+
+  /// 是否已被首次点亮（未点亮的粒子不参与绘制，避免开局挤在发射点上）。
   bool alive = false;
 }
 
-/// 星点池：按时间步长积分推进所有星点，出界即回到「填充边界」重新发射。
+/// 当前「粒子带」宽度下应当同时存活的粒子数。
+///
+/// 带越宽能放越多，但**不能线性放大**：粒子数一旦超过带内像素数，小圆点就会连成
+/// 一片实色，也就没有颗粒感了（用户要求「有颗粒感但不过于密集」）。因此按
+/// [_kParticleSpacing] 折算密度，再夹在 [_kParticleMinActive] 与池容量之间。
+int _particleActiveCount(double bandWidth) =>
+    (bandWidth / _kParticleSpacing).round().clamp(_kParticleMinActive, _kParticlePool);
+
+/// 粒子亮度曲线（0~1）。用户要求「亮度由暗逐渐变亮」：出生时只有
+/// [_kParticleAlphaMin] 那么暗，随存活时间单调变亮，到 [_kParticleHoldU] 处最亮，
+/// 最后 [_kParticleTail] 一小段再快速淡出 —— 纯粹为了让粒子消失得干净（否则会在
+/// 最亮的一刻硬切、看起来像闪一下）。
+///
+/// 注意它**不决定**消失位置：位置由每颗粒子自己的消亡距离决定
+/// （[_Particle.vx] × [_Particle.lifeMax]），见 [_ParticleField._respawn]。
+double _particleAlphaOf(_Particle p) {
+  final double u = (p.life / p.lifeMax).clamp(0.0, 1.0);
+  final double rise = Curves.easeOutCubic.transform(math.min(1.0, u / _kParticleHoldU));
+  final double a = _kParticleAlphaMin + (1 - _kParticleAlphaMin) * rise;
+  if (u <= 1 - _kParticleTail) return a;
+  return a * ((1 - u) / _kParticleTail).clamp(0.0, 1.0);
+}
+
+/// 粒子池：按时间步长积分推进所有粒子，走完自己的消亡距离就回到发射点重新发射。
 ///
 /// 放在 State 里持有、由 painter 复用（painter 每帧会被重建，池子不能跟着重建，
-/// 否则每帧都会重新随机、星点看起来是闪烁的噪声）。
-class _StarField {
-  _StarField(this._rnd);
+/// 否则每帧都会重新随机、粒子看起来是闪烁的噪声）。
+class _ParticleField {
+  _ParticleField(this._rnd);
 
   final math.Random _rnd;
-  final List<_Star> stars = List<_Star>.generate(_kStarCount, (_) => _Star());
+
+  /// 池子按上限分配；实际同时存活的只有前 [activeCount] 颗。
+  final List<_Particle> all = List<_Particle>.generate(_kParticlePool, (_) => _Particle());
 
   /// 上一次积分的时间戳（秒）。
   double lastT = 0;
 
-  /// 是否已按「首次绘制」铺开过整池星点。
+  /// 当前宽度下同时存活的粒子数（由 [advance] 按轨道宽度刷新）。
+  int activeCount = _kParticleMinActive;
+
+  /// 是否已按「首次绘制」铺开过整池粒子。
   bool _seeded = false;
 
   void reset() {
     lastT = 0;
     _seeded = false;
-    for (final _Star s in stars) {
-      s.alive = false;
-      s.life = 0;
+    for (final _Particle p in all) {
+      p.alive = false;
+      p.life = 0;
     }
   }
 
-  void _respawn(_Star s, double boundaryX, double halfHeight) {
-    // 从填充边界稍靠左的位置「喷」出来：拖动时星点像是被把手甩出去的。
-    s.x = boundaryX - _rnd.nextDouble() * 6;
-    // 竖直方向限制在胶囊内部（±0.42 半高），避免星点被圆角裁掉一半。
-    s.y = (_rnd.nextDouble() * 2 - 1) * halfHeight * 0.42;
-    s.size = 2.2 + _rnd.nextDouble() * 2.6;
-    s.speed = _kStarSpeedMin + _rnd.nextDouble() * (_kStarSpeedMax - _kStarSpeedMin);
-    s.lifeMax = _kStarLifeMin + _rnd.nextDouble() * (_kStarLifeMax - _kStarLifeMin);
-    // 给一点初始寿命：避免松手瞬间 14 颗星同一亮度、看起来像闪一下。
-    s.life = _rnd.nextDouble() * s.lifeMax * 0.5;
-    s.rot = _rnd.nextDouble() * math.pi * 2;
-    s.spin = (_rnd.nextDouble() * 2 - 1) * 1.8;
-    s.alive = true;
+  /// 在发射点上重新发射一颗粒子。
+  ///
+  /// [emitterX] = 填充段最右端（= 把手），[trackWidth] = 轨道总长（px）。
+  /// 消亡距离取 `trackWidth × 8%~15%` 且**逐粒子独立随机** —— 这正是用户要的
+  /// 「每个粒子消失位置不统一，其最远距离不超过滑块的 15%」。
+  void _respawn(_Particle p, double emitterX, double halfHeight, double trackWidth) {
+    final double span = trackWidth *
+        (_kParticleSpanMin + _rnd.nextDouble() * (_kParticleSpanMax - _kParticleSpanMin));
+    // 发射点抖动要从消亡距离里扣掉，否则「最远不超过 15%」会被撑大一点点。
+    final double jitter = _rnd.nextDouble() * _kParticleJitter;
+    final double travel = math.max(0.6, span - jitter);
+    p.lifeMax = _kParticleLifeMin + _rnd.nextDouble() * (_kParticleLifeMax - _kParticleLifeMin);
+    // 速度由「距离 ÷ 寿命」反推：走得远的粒子更快，于是整条带是同步向前流的，
+    // 不会出现「近处慢慢爬、远处已经飞出去」的割裂感。
+    p.vx = travel / p.lifeMax;
+    p.x = emitterX - jitter;
+    // 竖直方向限制在胶囊内部（±0.5 半高），避免粒子被圆角裁掉一半。
+    p.y = (_rnd.nextDouble() * 2 - 1) * halfHeight * 0.5;
+    p.vy = (_rnd.nextDouble() * 2 - 1) * 8;
+    p.r = 0.7 + _rnd.nextDouble() * 0.9;
+    p.tone = 0.72 + _rnd.nextDouble() * 0.28;
+    p.life = 0;
+    p.alive = true;
   }
 
-  /// 拖动开始时把整池星点铺开：位置从边界向左随机散布、年龄也随机，
-  /// 于是第一帧就是一条「已流动起来」的星带，而不是 14 颗星挤在把手处齐闪。
-  void _seed(double boundaryX, double halfHeight) {
-    for (final _Star s in stars) {
-      _respawn(s, boundaryX, halfHeight);
-      s.life = _rnd.nextDouble() * s.lifeMax;
-      s.x -= _rnd.nextDouble() * s.speed * s.lifeMax;
+  /// 拖动开始时把整池粒子铺开：让每颗粒子「已经飞了一会儿」，
+  /// 于是第一帧就是一条流动中的粒子带，而不是整池粒子从发射点齐射。
+  void _seed(double emitterX, double halfHeight, double trackWidth) {
+    for (int i = 0; i < all.length; i++) {
+      final _Particle p = all[i];
+      _respawn(p, emitterX, halfHeight, trackWidth);
+      if (i >= activeCount) {
+        // 这一宽度下用不到的粒子先不点亮，等轨道变宽再自动加入。
+        p.alive = false;
+        continue;
+      }
+      p.life = _rnd.nextDouble() * p.lifeMax * 0.85;
+      p.x = emitterX - p.vx * p.life;
     }
     _seeded = true;
   }
 
-  /// 推进 [dt] 秒；[boundaryX] 是当前填充段的边界（像素，轨道局部坐标）。
-  void advance(double dt, double boundaryX, double halfHeight) {
+  /// 推进 [dt] 秒。[emitterX] 是当前发射点（轨道局部坐标）。
+  void advance(double dt, double emitterX, double halfHeight, double trackWidth) {
+    // 粒子带宽度 = 最远消亡距离（轨道总长 × 15%），密度按它折算。
+    activeCount = _particleActiveCount(trackWidth * _kParticleSpanMax);
     if (!_seeded) {
-      _seed(boundaryX, halfHeight);
+      _seed(emitterX, halfHeight, trackWidth);
       return;
     }
-    for (final _Star s in stars) {
-      if (!s.alive) {
-        _respawn(s, boundaryX, halfHeight);
+    final double yLimit = halfHeight * 0.62;
+    for (int i = 0; i < all.length; i++) {
+      final _Particle p = all[i];
+      if (i >= activeCount) {
+        p.alive = false;
         continue;
       }
-      s.life += dt;
-      s.x -= s.speed * dt;
-      s.rot += s.spin * dt;
-      if (s.life >= s.lifeMax || s.x < -s.size * 2) {
-        _respawn(s, boundaryX, halfHeight);
+      if (!p.alive) {
+        _respawn(p, emitterX, halfHeight, trackWidth);
+        continue;
+      }
+      p.life += dt;
+      p.x -= p.vx * dt;
+      p.y += p.vy * dt;
+      // 轻推回带内：竖直漂移不设边界的话，长寿命粒子会被胶囊的圆角裁掉一半。
+      if (p.y > yLimit || p.y < -yLimit) p.vy = -p.vy;
+      // 回收条件有两个：
+      // ① 走完自己的寿命（= 走完自己的消亡距离）—— 这就是「消失位置不统一」的来源；
+      // ② 把手被向左拖过头、发射点跑到了这颗粒子左边：它此刻落在「还没被填充」的
+      //    区域里，直接回收重发，否则整条带会一起瞬移消失。
+      if (p.life >= p.lifeMax || p.x > emitterX) {
+        _respawn(p, emitterX, halfHeight, trackWidth);
       }
     }
   }
 }
 
-/// 四角星（菱形闪光）的**单位路径**（半径 1，中心原点）。
-/// 每颗星只做一次 translate/rotate/scale + drawPath，不重复构造 Path。
-final Path _kStarPath = Path()
-  ..moveTo(0, -1)
-  ..lineTo(0.19, -0.19)
-  ..lineTo(1, 0)
-  ..lineTo(0.19, 0.19)
-  ..lineTo(0, 1)
-  ..lineTo(-0.19, 0.19)
-  ..lineTo(-1, 0)
-  ..lineTo(-0.19, -0.19)
-  ..close();
-
-/// 星点画笔：每帧只做「积分推进 + 14 次 drawPath」，无分配、无 saveLayer。
-class _StarPainter extends CustomPainter {
-  _StarPainter({
+/// 粒子画笔：每帧只做「积分推进 + N 次 drawCircle」，无分配、无 saveLayer。
+///
+/// 与旧版星点相比省掉了 `canvas.save / translate / rotate / scale + drawPath`：
+/// 圆点直接按 (x, y, r) 画，逻辑更少、栅格化更便宜。
+class _ParticlePainter extends CustomPainter {
+  _ParticlePainter({
     required this.field,
     required this.controller,
     required this.fade,
@@ -1015,7 +1125,7 @@ class _StarPainter extends CustomPainter {
     required Listenable repaint,
   }) : super(repaint: repaint);
 
-  final _StarField field;
+  final _ParticleField field;
   final AnimationController controller;
   final AnimationController fade;
   final double fillStart;
@@ -1028,43 +1138,50 @@ class _StarPainter extends CustomPainter {
     if (size.isEmpty) return;
     final double t =
         (controller.lastElapsedDuration ?? Duration.zero).inMicroseconds / 1e6;
-    final double dt = (t - field.lastT).clamp(0.0, _kStarMaxStep);
+    final double dt = (t - field.lastT).clamp(0.0, _kParticleMaxStep);
     field.lastT = t;
 
-    // RTL：值 0 在右侧，填充段从右往左，光点统一向左飘 = 朝向值更小的一侧。
+    // RTL：值 0 在右侧，填充段从右往左长；发射点统一取填充段「值更大」的那一端，
+    // 也就是用户说的「滑块最右端」。
     final bool ltr = textDirection == TextDirection.ltr;
     double px(double frac) => (ltr ? frac : 1 - frac) * size.width;
-    final double boundaryX = px(fillEnd.clamp(0.0, 1.0));
-    final double regionStart = math.min(px(fillStart.clamp(0.0, 1.0)), boundaryX);
-    final double regionEnd = math.max(px(fillStart.clamp(0.0, 1.0)), boundaryX);
+    final double emitterX = px(fillEnd.clamp(0.0, 1.0));
+    final double otherEnd = px(fillStart.clamp(0.0, 1.0));
+    final double regionStart = math.min(otherEnd, emitterX);
+    final double regionEnd = math.max(otherEnd, emitterX);
 
-    if (dt > 0) field.advance(dt, boundaryX, size.height / 2);
+    // 轨道总长（= 用户说的「滑块总长」）：消亡距离按它折算，于是整条粒子带最多
+    // 15%（[_kParticleSpanMax]），单颗粒子落在 8%~15% 之间。
+    final double trackWidth = size.width;
+
+    if (dt > 0) field.advance(dt, emitterX, size.height / 2, trackWidth);
 
     final double baseAlpha = (1 - fade.value).clamp(0.0, 1.0);
     if (baseAlpha <= 0.001) return;
     final double cy = size.height / 2;
-    final Paint paint = Paint()..color = color;
-    for (final _Star s in field.stars) {
-      if (!s.alive) continue;
-      // 只画在已填充段里：星点永远落在主题色块上，白星对比度足够；
-      // 也顺带避免了星点飘到玻璃留空段上「看不清」。
-      if (s.x < regionStart - s.size || s.x > regionEnd + s.size) continue;
-      final double u = (s.life / s.lifeMax).clamp(0.0, 1.0);
-      // sin 曲线：出生淡入 / 消亡淡出，中途最亮。
-      final double a = math.sin(math.pi * u) * 0.9 * baseAlpha;
-      if (a <= 0.01) continue;
-      paint.color = color.withAlpha((a * 255).round().clamp(0, 255));
-      canvas.save();
-      canvas.translate(s.x, cy + s.y);
-      canvas.rotate(s.rot);
-      canvas.scale(s.size, s.size);
-      canvas.drawPath(_kStarPath, paint);
-      canvas.restore();
+    final Paint paint = Paint();
+    for (final _Particle p in field.all) {
+      if (!p.alive) continue;
+      // 只画在已填充段里：粒子永远落在主题色块上，对比度足够；
+      // 也顺带避免了粒子飘到玻璃留空段上「看不清」。
+      if (p.x < regionStart - p.r * 2 || p.x > regionEnd + p.r) continue;
+      final double a = _particleAlphaOf(p) * p.tone * baseAlpha;
+      if (a <= 0.012) continue;
+      final int alpha255 = (a * 255).round().clamp(0, 255);
+      final Offset center = Offset(p.x, cy + p.y);
+      // 亮起来之后才给一圈很淡的光晕 —— 于是「由暗逐渐变亮」在视觉上是
+      // 「先是一颗暗点，随后点亮并泛起微光」。两笔 drawCircle，不做 saveLayer。
+      if (a > 0.34) {
+        paint.color = color.withAlpha((alpha255 * 0.30).round());
+        canvas.drawCircle(center, p.r * 2.1, paint);
+      }
+      paint.color = color.withAlpha(alpha255);
+      canvas.drawCircle(center, p.r, paint);
     }
   }
 
   @override
-  bool shouldRepaint(_StarPainter oldDelegate) =>
+  bool shouldRepaint(_ParticlePainter oldDelegate) =>
       oldDelegate.field != field ||
       oldDelegate.fillStart != fillStart ||
       oldDelegate.fillEnd != fillEnd ||
@@ -1072,11 +1189,12 @@ class _StarPainter extends CustomPainter {
       oldDelegate.textDirection != textDirection;
 }
 
-/// 星点层：只在拖动期间起 Ticker，松手淡出后自毁（返回零尺寸）。
+/// 粒子层：只在拖动期间起 Ticker，松手淡出后自毁（返回零尺寸）。
 ///
-/// [fillStart] / [fillEnd] 是填充段在轨道上的比例（0..1，相对轨道起点）。
-class _StarLayer extends StatefulWidget {
-  const _StarLayer({
+/// [fillStart] / [fillEnd] 是填充段在轨道上的比例（0..1，相对轨道起点）；
+/// 发射点取其中**更靠右**的一端 —— 用户要求「粒子从滑块最右端触发发射」。
+class _ParticleLayer extends StatefulWidget {
+  const _ParticleLayer({
     required this.active,
     required this.fillStart,
     required this.fillEnd,
@@ -1091,21 +1209,21 @@ class _StarLayer extends StatefulWidget {
   final Color color;
 
   @override
-  State<_StarLayer> createState() => _StarLayerState();
+  State<_ParticleLayer> createState() => _ParticleLayerState();
 }
 
-class _StarLayerState extends State<_StarLayer> with TickerProviderStateMixin {
+class _ParticleLayerState extends State<_ParticleLayer> with TickerProviderStateMixin {
   // 在 initState 里显式创建（不要用 `late final X = ...` 的惰性初始化器：那样
   // 组件若在首次 build 前就被移除，dispose() 反而会去创建一个已失效的 Ticker）。
   late final AnimationController _tick;
   late final AnimationController _fade;
-  final _StarField _field = _StarField(math.Random());
+  final _ParticleField _field = _ParticleField(math.Random());
 
   @override
   void initState() {
     super.initState();
     _tick = AnimationController(vsync: this, duration: const Duration(seconds: 1));
-    _fade = AnimationController(vsync: this, duration: _kStarFadeOut);
+    _fade = AnimationController(vsync: this, duration: _kParticleFadeOut);
     _fade.addStatusListener((AnimationStatus st) {
       if (st != AnimationStatus.completed) return;
       // 淡出结束：停掉 Ticker 并重建一次，让 build 返回零尺寸（彻底不做绘制）。
@@ -1122,7 +1240,7 @@ class _StarLayerState extends State<_StarLayer> with TickerProviderStateMixin {
   }
 
   @override
-  void didUpdateWidget(covariant _StarLayer oldWidget) {
+  void didUpdateWidget(covariant _ParticleLayer oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.active && !oldWidget.active) {
       _start();
@@ -1151,13 +1269,14 @@ class _StarLayerState extends State<_StarLayer> with TickerProviderStateMixin {
         child: SizedBox(
           height: widget.trackHeight,
           width: double.infinity,
-          // 裁到胶囊内：星点不会溢出圆角两端。
+          // 裁到胶囊内：粒子不会溢出圆角两端。最左端那几颗因此被自然截断，
+          // 而这**不会**让粒子带超过 15% —— 上限由消亡距离本身保证。
           child: ClipRRect(
             borderRadius: BorderRadius.circular(widget.trackHeight / 2),
             child: RepaintBoundary(
               child: CustomPaint(
                 size: Size.infinite,
-                painter: _StarPainter(
+                painter: _ParticlePainter(
                   field: _field,
                   controller: _tick,
                   fade: _fade,

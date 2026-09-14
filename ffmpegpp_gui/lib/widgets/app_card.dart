@@ -27,22 +27,29 @@ class _CardGlassKey {
   final double op;
   final int primary;
   final int second;
-  /// 「样式 → 设置项以毛玻璃展示」（液体玻璃改用扁平高斯模糊）
-  final bool frosted;
-  /// 「样式 → 不使用卡片玻璃效果」（卡片退回主题色实心）
-  final bool noGlass;
+  /// 「样式 → 设置卡片玻璃」：'solid' 退回主题色实心、'frosted' 改走扁平模糊
+  /// （见 AppConfig.settingsGlassMode；历史上是两个互斥布尔，现已合并为单值）
+  final String settingsGlass;
   /// 「样式 → 玻璃底色遵循主题色」（玻璃 tint 用主题色而非 surface 灰）
   final bool follow;
+  /// 玻璃细节（模糊度 / 通透度 / 高光强度 / 高光位置 / 边缘光）
+  final GlassTuning tuning;
+  /// 主题色协调度（「跟随主题色」的底色与表面色混合比例）
+  final double tone;
 
   const _CardGlassKey({
     required this.style,
     required this.op,
     required this.primary,
     required this.second,
-    required this.frosted,
-    required this.noGlass,
+    required this.settingsGlass,
     required this.follow,
+    required this.tuning,
+    required this.tone,
   });
+
+  bool get noGlass => settingsGlass == 'solid';
+  bool get frosted => settingsGlass == 'frosted';
 
   @override
   bool operator ==(Object other) =>
@@ -51,13 +58,14 @@ class _CardGlassKey {
       other.op == op &&
       other.primary == primary &&
       other.second == second &&
-      other.frosted == frosted &&
-      other.noGlass == noGlass &&
-      other.follow == follow;
+      other.settingsGlass == settingsGlass &&
+      other.follow == follow &&
+      other.tuning == tuning &&
+      other.tone == tone;
 
   @override
-  int get hashCode =>
-      Object.hash(style, op, primary, second, frosted, noGlass, follow);
+  int get hashCode => Object.hash(
+      style, op, primary, second, settingsGlass, follow, tuning, tone);
 }
 
 /// 应用统一卡片容器 —— 接管「设置 / 项目 / 处理队列 / 配置库」的卡片样式。
@@ -108,9 +116,16 @@ class _AppCardState extends State<AppCard> {
       op: c.cardOpacity,
       primary: c.themeColor,
       second: c.themeColor2,
-      frosted: c.settingsFrostedGlass,
-      noGlass: c.noCardGlass,
+      settingsGlass: c.settingsGlassMode,
       follow: c.glassFollowTheme,
+      tuning: GlassTuning(
+        blur: c.glassBlur,
+        clarity: c.glassClarity,
+        highlight: c.glassHighlight,
+        lightPos: c.glassLightPos,
+        edge: c.glassEdge,
+      ),
+      tone: c.themeTone,
     );
   }
 
@@ -140,23 +155,39 @@ class _AppCardState extends State<AppCard> {
     final themeGrad = key.second >= 0
         ? <Color>[Color(key.primary), Color(key.second)]
         : null;
-    // ── 「设置 → 样式」里三个玻璃开关在本组件内的落地（见下方分支）──
-    // 它们此前只被桌面端的 GlassPanel 读取，移动端卡片完全不读 → 用户反馈
-    // 「设置-样式 里的开关按了没反应」。这里把语义接上：
-    //  * noGlass   「不使用卡片玻璃效果」→ 玻璃样式（liquid/blur）退回主题色实心；
-    //  * frosted   「设置项以毛玻璃展示」→ 液态玻璃改用扁平高斯模糊（走 blur 分支）；
-    //  * follow    「玻璃底色遵循主题色」→ 玻璃 tint/gradient 用主题色而非 surface 灰。
-    // 三者默认都是 false，因此默认观感与改动前逐像素一致。
+    // ── 「设置 → 样式」里各开关在本组件内的落地（见下方分支）──
+    // * settingsGlass='solid'   「不使用卡片玻璃效果」→ 玻璃样式退回主题色实心；
+    // * settingsGlass='frosted' 「设置卡片以毛玻璃展示」→ 液态玻璃改用扁平高斯模糊；
+    // * follow                  「玻璃底色遵循主题色」→ 玻璃 tint 用主题色而非 surface 灰；
+    // * tuning                  模糊度 / 通透度 / 高光强度与位置 / 边缘光（见 GlassTuning）。
+    // solid / frosted 默认关闭、follow 默认关闭、tuning 默认值为「不改观感」。
     final bool glassStyle =
         style == SurfaceStyle.liquid || style == SurfaceStyle.blur;
     final bool solidStyle = !glassStyle || key.noGlass;
-    // 纯色分支的底色：gray 恒为容器灰；theme 与「关了玻璃的玻璃卡」用主题色。
-    final Color solidBase =
-        style == SurfaceStyle.gray ? scheme.surfaceContainerHigh : scheme.primary;
+    // 「跟随主题色」的底色：直接铺 scheme.primary 在暗色主题下是 tone 80 的
+    // 高亮色，非常刺眼（用户反馈「选择主题色又很亮」）。改为按 themeTone 与
+    // 表面色混合后的协调色（默认 0.45）。
+    final Color accent = harmonizedAccent(scheme, key.tone);
+    // 纯色分支的底色：gray 恒为中性灰（去饱和，避免 fromSeed 的种子色偏造成
+    // 「灰色夹杂主题色」）；theme 与「关了玻璃的玻璃卡」用协调后的主题色。
+    final Color solidBase = style == SurfaceStyle.gray
+        ? neutralGray(scheme.surfaceContainerHigh)
+        : accent;
     // 纯色分支的渐变：仅主题色纯色卡（含关玻璃后的卡）才带主题渐变，灰色恒纯灰。
-    final grad = solidStyle && style != SurfaceStyle.gray ? themeGrad : null;
-    // 玻璃 tint 的基色（follow 时用主题色）。
-    final Color glassBase = key.follow ? scheme.primary : scheme.surface;
+    final grad = solidStyle && style != SurfaceStyle.gray && themeGrad != null
+        ? harmonizedAccentGradient(scheme, themeGrad, key.tone)
+        : null;
+    // 玻璃 tint 的基色（follow 时用协调主题色）。
+    final Color glassBase = key.follow ? accent : scheme.surface;
+    // 通透度 → 各处基准 alpha 的等比缩放（默认 1.0，即观感不变）。
+    final double tScale = key.tuning.tintScale;
+    final GlassTuning tuning = key.tuning;
+    final double sigma = effectiveGlassSigma(tuning.blur);
+    // 边缘光 → 描边的透明度/线宽（基准 1.0 时与改动前一致）。
+    final edgeWhite = edgeBorder(isDark ? 0.12 : 0.18, 0.7, tuning.edge);
+    final edgeOutline = edgeBorder(isDark ? 60 / 255 : 80 / 255, 0.6, tuning.edge);
+    // 液态玻璃回退分支的描边基准（alpha 0.14/0.28、宽 1）与之不同，单独算。
+    final edgeLiquid = edgeBorder(isDark ? 0.14 : 0.28, 1.0, tuning.edge);
     // 卡片内放一层透明 Material 作为 ink 宿主：纯色/模糊表面有背景色，
     // 内部 ListTile/SwitchListTile 的水波纹与选中底色必须画在「卡片之上」
     // 才会可见（否则画在页面 Material 上被卡片背景遮住，并触发
@@ -182,7 +213,13 @@ class _AppCardState extends State<AppCard> {
                   )
                 : null,
             borderRadius: br,
-            border: Border.all(color: scheme.outlineVariant.withAlpha(isDark ? 45 : 70), width: 0.6),
+            border: Border.all(
+              color: (style == SurfaceStyle.gray
+                      ? neutralGray(scheme.outlineVariant)
+                      : scheme.outlineVariant)
+                  .withAlpha(isDark ? 45 : 70),
+              width: 0.6,
+            ),
             boxShadow: [
               BoxShadow(color: Colors.black.withAlpha(isDark ? 30 : 12), blurRadius: 12, offset: const Offset(0, 3)),
             ],
@@ -191,25 +228,36 @@ class _AppCardState extends State<AppCard> {
         ),
       );
     } else if (style == SurfaceStyle.blur || key.frosted) {
-      // 扁平高斯模糊：卡片样式为「模糊」，或用户开启「设置项以毛玻璃展示」
+      // 扁平高斯模糊：卡片样式为「模糊」，或「设置卡片以毛玻璃展示」
       // （后者把「液态玻璃」也改成扁平模糊，长列表更易读）。
-      final alpha = ((isDark ? 110.0 : 130.0) * op).round().clamp(0, 255);
-      // σ = 16（固定基准值）：Windows 上再被 effectiveGlassSigma 钳到 ≤12，
-      // 兼顾模糊观感与离屏纹理内存（见该函数注释）
-      final sigma = effectiveGlassSigma(16);
+      // σ 与 tint 分别由「玻璃细节」的模糊度 / 通透度控制（默认观感不变）。
+      final alpha = (((isDark ? 110.0 : 130.0) * op * tScale).round()).clamp(0, 255);
       // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
       core = ClipRRect(
         borderRadius: br,
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
-          child: Container(
-              padding: widget.padding,
-              decoration: BoxDecoration(
-                borderRadius: br,
-                color: glassBase.withAlpha(alpha),
-                border: Border.all(color: scheme.outlineVariant.withAlpha(isDark ? 60 : 80), width: 0.6),
-              ),
-            child: inner,
+          child: CustomPaint(
+            // 高光 / 边缘光：与液态玻璃回退同一支画笔，扁平模糊同样有玻璃光泽
+            painter: LiquidGlassPainter(
+              borderRadius: br,
+              opacity: op,
+              highlight: tuning.highlight,
+              lightPos: tuning.lightPos,
+              edge: tuning.edge,
+            ),
+            child: Container(
+                padding: widget.padding,
+                decoration: BoxDecoration(
+                  borderRadius: br,
+                  color: glassBase.withAlpha(alpha),
+                  border: Border.all(
+                      color: scheme.outlineVariant
+                          .withAlpha((edgeOutline.alpha * 255).round().clamp(0, 255)),
+                      width: edgeOutline.width),
+                ),
+              child: inner,
+            ),
           ),
         ),
       );
@@ -221,14 +269,16 @@ class _AppCardState extends State<AppCard> {
       // Impeller 不可用时（Windows 默认 Skia，部分安卓低端机也回退 Skia）同样
       // 落入回退，避免 shader backdrop 被整体跳过、玻璃整块消失。
       // OCLiquidGlass 自身接收 color=tint；inner 只保留边框，避免双重染色。
-      // tint 基色随「玻璃底色遵循主题色」切换（glassBase）。
-      final tint = glassBase.withAlpha((op * 255).round().clamp(0, 255));
+      // tint 基色随「玻璃底色遵循主题色」切换（glassBase）；透明度随通透度缩放。
+      final tint = glassBase.withAlpha(((op * 255) * tScale).round().clamp(0, 255));
       final glassKey = ValueKey<_CardGlassKey>(key);
       final innerKey = ValueKey<String>('${key.hashCode}_appcard_inner');
       core = RepaintBoundary(
         child: OCLiquidGlassGroup(
           key: glassKey,
-          settings: kLiquidGlassSettings,
+          // 参数化的 settings（带实例缓存，参数不变时复用同一对象，
+          // 避免每次 build 重新下发 uniform 造成液态玻璃「来回跳跃」）。
+          settings: liquidGlassSettingsFor(tuning),
           child: OCLiquidGlass(
             key: innerKey,
             borderRadius: radius,
@@ -244,8 +294,8 @@ class _AppCardState extends State<AppCard> {
                 color: Colors.transparent,
                 borderRadius: br,
                 border: Border.all(
-                  color: Colors.white.withValues(alpha: isDark ? 0.12 : 0.18),
-                  width: 0.7,
+                  color: Colors.white.withValues(alpha: edgeWhite.alpha),
+                  width: edgeWhite.width,
                 ),
               ),
               child: inner,
@@ -256,13 +306,13 @@ class _AppCardState extends State<AppCard> {
     } else {
       // 液态玻璃回退（无 Impeller）：高斯模糊 + 液态玻璃倒角高光（与
       // GlassPanel liquid 回退一致，不再依赖全局 glassEffect）。
-      final alphaTop = ((isDark ? 96.0 : 118.0) * op).round();
-      final alphaBot = ((isDark ? 46.0 : 62.0) * op).round();
+      final alphaTop = ((isDark ? 96.0 : 118.0) * op * tScale).round();
+      final alphaBot = ((isDark ? 46.0 : 62.0) * op * tScale).round();
       // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
       core = LiquidGlassBackdrop(
         borderRadius: br,
-        // σ = 12（固定基准值）：回退分支沿用既有的观感/内存平衡
-        sigma: effectiveGlassSigma(12),
+        // σ 由「玻璃细节 → 模糊度」控制（Windows 上被 effectiveGlassSigma 钳制）
+        sigma: sigma,
         opacity: op,
         shadow: BoxShadow(
           color: Colors.black.withAlpha(isDark ? 60 : 26),
@@ -278,24 +328,24 @@ class _AppCardState extends State<AppCard> {
                 ? LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
-                    colors: themeGrad != null
+                    colors: grad != null
                         ? [
-                            Color.lerp(themeGrad.first, Colors.black, 0)!.withAlpha(alphaTop),
-                            Color.lerp(themeGrad.last, Colors.black, 0.15)!.withAlpha(alphaBot),
+                            grad.first.withAlpha(alphaTop),
+                            grad.last.withAlpha(alphaBot),
                           ]
                         : [
                             glassBase.withAlpha(alphaTop),
                             glassBase.withAlpha((alphaTop + alphaBot) ~/ 2),
                             glassBase.withAlpha(alphaBot),
                           ],
-                    stops: themeGrad == null ? const [0.0, 0.55, 1.0] : null,
+                    stops: grad == null ? const [0.0, 0.55, 1.0] : null,
                   )
                 : null,
             border: Border.all(
               color: op <= 0.001
                   ? Colors.transparent
-                  : Colors.white.withValues(alpha: isDark ? 0.14 : 0.28),
-              width: 1,
+                  : Colors.white.withValues(alpha: edgeLiquid.alpha),
+              width: edgeLiquid.width,
             ),
           ),
           child: inner,

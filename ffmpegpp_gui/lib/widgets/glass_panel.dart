@@ -71,6 +71,14 @@ class GlassPanel extends StatelessWidget {
     final themeColor2 = context.select<AppState, int>((s) => s.config.themeColor2);
     final noCardGlass = context.select<AppState, bool>((s) => s.config.noCardGlass);
     final settingsFrostedGlass = context.select<AppState, bool>((s) => s.config.settingsFrostedGlass);
+    // 玻璃细节（模糊度 / 通透度 / 高光强度与位置 / 边缘光）+ 主题色协调度。
+    // 高光/边缘光由 [LiquidGlassBackdrop] 内部读同一份配置，这里只取模糊与通透。
+    final tuning = glassTuningOf(context);
+    final tone = context.select<AppState, double>((s) => s.config.themeTone);
+    // 本 widget 的 blur 参数是**基准 σ**（默认 12），按「玻璃细节 → 模糊度」等比
+    // 缩放（默认 16 → 系数 1.0，观感不变；Windows 上再由 effectiveGlassSigma 钳制）。
+    final double sigma =
+        effectiveGlassSigma(blur * (tuning.blur / kGlassBlurBaseline));
     // 模糊 σ 取本 widget 的 blur 参数（见下方 sigma）；是否走 shader 由
     // liquid_glass_fallback.gpuGlassEnabledOf 统一判定（PC 端默认关闭）。
     final effect = style ?? globalEffect;
@@ -78,11 +86,16 @@ class GlassPanel extends StatelessWidget {
     final op = cardOpacity.clamp(0.0, 1.0);
     final br = BorderRadius.circular(radius);
     // 遵循主题色：底色/渐变用主题色替代 surface 灰，所有元素统一主题色观感
-    // 「透明」(none) 与纯色 theme 效果同样退回主题色显示
+    // 「透明」(none) 与纯色 theme 效果同样退回主题色显示。
+    // 用 harmonizedAccent：直接铺 scheme.primary 在暗色下是 tone 80，大面积
+    // 铺开非常刺眼（用户反馈「选择主题色又很亮」）。
     final solidTheme = effect == 'none' || effect == SurfaceStyle.theme;
-    final baseColor = (follow || solidTheme) ? scheme.primary : scheme.surface;
-    final baseAlt = (follow || solidTheme) ? scheme.tertiary : scheme.surface;
-    final borderColor = (follow || solidTheme) ? scheme.primary.withAlpha(isDark ? 110 : 150) : scheme.outlineVariant;
+    final accent = harmonizedAccent(scheme, tone);
+    final accentAlt =
+        Color.lerp(scheme.tertiary, scheme.surface, tone.clamp(0.0, 0.9))!;
+    final baseColor = (follow || solidTheme) ? accent : scheme.surface;
+    final baseAlt = (follow || solidTheme) ? accentAlt : scheme.surface;
+    final borderColor = (follow || solidTheme) ? accent.withAlpha(isDark ? 110 : 150) : scheme.outlineVariant;
     // 主题渐变色：设置了 themeColor2（>=0）时，主题色在 themeColor→themeColor2 之间渐变
     final grad = (themeColor2 >= 0)
         ? LinearGradient(
@@ -131,7 +144,8 @@ class GlassPanel extends StatelessWidget {
       if (settingsFrostedGlass && effect == 'liquid') {
         // 压低 alpha：alpha 过高时玻璃层的 tint 会盖住背景模糊（观感偏实心）。
         // 与 mobile_glass_pill 一致的 120/105 上限。
-        final frostedAlpha = ((isDark ? 105 : 120) * op).round().clamp(0, 255);
+        final frostedAlpha =
+            (((isDark ? 105 : 120) * op) * tuning.tintScale).round().clamp(0, 255);
         // [FIX UI-玻璃脱节] 此处**不能**包 RepaintBoundary。
         // 历史代码在这里包了一层 RepaintBoundary，直接违反了本文件 241 / 368 行
         // 已明确写下的规则：「含 BackdropFilter 的图层一旦成为光栅缓存候选，
@@ -142,7 +156,7 @@ class GlassPanel extends StatelessWidget {
         return ClipRRect(
           borderRadius: br,
           child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+            filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
             child: Container(
               padding: padding,
               decoration: BoxDecoration(
@@ -202,7 +216,9 @@ class GlassPanel extends StatelessWidget {
     if (effect == 'none' || effect == SurfaceStyle.theme || effect == SurfaceStyle.gray) {
       const noneAlpha = 255;
       final Color base = effect == SurfaceStyle.gray
-          ? scheme.surfaceContainerHigh
+          // 灰色恒为**中性**灰：fromSeed 生成的容器灰带种子色偏，会让人误以为
+          // 「选了灰色却夹杂主题色」（用户反馈），这里统一去饱和。
+          ? neutralGray(scheme.surfaceContainerHigh)
           : baseColor;
       final useGrad = effect != SurfaceStyle.gray && grad != null;
       return RepaintBoundary(
@@ -232,13 +248,8 @@ class GlassPanel extends StatelessWidget {
       );
     }
 
-    // 内存优化：Windows（D3D12）上高斯模糊的中间纹理按「面板尺寸 +
-    // 约 3σ 各边 padding」分配，σ 从 16/18 降到 12 时视觉几乎无差别，
-    // 但每块玻璃面板的离屏内存明显下降（配合页面常驻上限一起生效）。
-    // 因此桌面端 blur/liquid 回退统一用本 widget 的 blur（默认 12）作 σ，
-    // 并经 effectiveGlassSigma 做平台钳制（Windows ≤12、其余 ≤24）；
-    // 移动端「设置项毛玻璃」分支直接用同一个 blur，语义一致。
-    final double sigma = effectiveGlassSigma(blur);
+    // σ 已在 build 开头按「玻璃细节 → 模糊度」算好（见上方 sigma 定义），
+    // 这里不再重复计算。
 
     if (effect == 'blur') {
       // 仅高斯模糊背景：半透明 + 模糊，无渐变、无阴影、无折射 —— 最简洁
@@ -276,10 +287,14 @@ class GlassPanel extends StatelessWidget {
     //  - 背景模糊（不再做 1.06 放大折射，避免文字/图案畸变）
     //  - 光影简化：仅保留边缘高光描边 + 上亮下暗体感渐变（去除镜面光斑、
     //    果冻壁内阴影等冗余光效）
-    final liqTop = ((tintAlpha ?? (isDark ? 96 : 118)) * op).round();
+    final liqTop =
+        (((tintAlpha ?? (isDark ? 96 : 118)) * op) * tuning.tintScale).round();
     final liqBot = ((tintAlpha != null
-        ? (tintAlpha! - 60).clamp(8, 255)
-        : (isDark ? 46 : 62)) * op).round();
+                ? (tintAlpha! - 60).clamp(8, 255)
+                : (isDark ? 46 : 62)) *
+            op *
+            tuning.tintScale)
+        .round();
     // 背景完全透明（op==0）时仍保留果冻边缘描边与折射扭曲，
     // 仅去掉玻璃体感的底色渐变 —— 达到"仅边缘扭曲"的全透明液态玻璃
     final fullyTransparent = op <= 0.001;
@@ -318,7 +333,7 @@ class GlassPanel extends StatelessWidget {
           color: fullyTransparent
               ? Colors.transparent
               : (follow
-                  ? scheme.primary.withValues(alpha: isDark ? 0.30 : 0.45)
+                  ? accent.withValues(alpha: isDark ? 0.30 : 0.45)
                   : Colors.white.withValues(alpha: isDark ? 0.14 : 0.28)),
           width: 1,
         ),
@@ -338,7 +353,8 @@ class GlassPanel extends StatelessWidget {
     if (gpuGlassEnabledOf(context)) {
       return RepaintBoundary(
         child: OCLiquidGlassGroup(
-          settings: kLiquidGlassSettings,
+          // 参数化 settings（含高光强度/位置与额外模糊；实例带缓存）
+          settings: liquidGlassSettingsFor(tuning),
           child: OCLiquidGlass(
             borderRadius: radius,
             color: baseColor.withAlpha(liqTop),
@@ -355,7 +371,7 @@ class GlassPanel extends StatelessWidget {
                   color: fullyTransparent
                       ? Colors.transparent
                       : (follow
-                          ? scheme.primary.withValues(alpha: isDark ? 0.30 : 0.45)
+                          ? accent.withValues(alpha: isDark ? 0.30 : 0.45)
                           : Colors.white.withValues(alpha: isDark ? 0.14 : 0.28)),
                   width: 1,
                 ),

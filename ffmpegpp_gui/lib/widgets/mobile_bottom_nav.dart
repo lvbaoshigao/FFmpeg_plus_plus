@@ -25,12 +25,18 @@ class NavGlassPal {
   /// 此前只有桌面端 GlassPanel 读它，移动端底栏/药丸完全不读 → 该开关在移动端
   /// 表现为「无效」。这里纳入指纹并落到 tint 上（默认 false，观感不变）。
   final bool follow;
+  /// 玻璃细节（模糊度 / 通透度 / 高光强度与位置 / 边缘光）
+  final GlassTuning tuning;
+  /// 主题色协调度（避免直接铺 scheme.primary 过亮）
+  final double tone;
   const NavGlassPal({
     required this.style,
     required this.op,
     required this.primary,
     required this.second,
     required this.follow,
+    required this.tuning,
+    required this.tone,
   });
 
   @override
@@ -40,10 +46,13 @@ class NavGlassPal {
       other.op == op &&
       other.primary == primary &&
       other.second == second &&
-      other.follow == follow;
+      other.follow == follow &&
+      other.tuning == tuning &&
+      other.tone == tone;
 
   @override
-  int get hashCode => Object.hash(style, op, primary, second, follow);
+  int get hashCode =>
+      Object.hash(style, op, primary, second, follow, tuning, tone);
 }
 
 /// 订阅玻璃渲染 + 主题色相关字段（不订阅日志/进度/任务等高频 notify）。
@@ -56,6 +65,14 @@ NavGlassPal navGlassPalOf(BuildContext context) =>
         primary: c.themeColor,
         second: c.themeColor2,
         follow: c.glassFollowTheme,
+        tuning: GlassTuning(
+          blur: c.glassBlur,
+          clarity: c.glassClarity,
+          highlight: c.glassHighlight,
+          lightPos: c.glassLightPos,
+          edge: c.glassEdge,
+        ),
+        tone: c.themeTone,
       );
     });
 
@@ -87,30 +104,45 @@ NavGlassLook navGlassLook(ColorScheme scheme, bool isDark, NavGlassPal pal) {
   // 纯色样式（theme/gray）强制完全不透明（255）——纯色语义即实心，
   // 不再跟随 cardOpacity（此前 ~88% 保底仍透底，被反馈为「仍有透明度」）。
   final solid = style == SurfaceStyle.theme || style == SurfaceStyle.gray;
-  final baseAlpha = solid ? 255 : (op * 255).round().clamp(0, 255);
+  // 通透度 → 基准 alpha 的等比缩放（默认 1.0，观感不变）
+  final baseAlpha = solid
+      ? 255
+      : ((op * 255) * pal.tuning.tintScale).round().clamp(0, 255);
+  // 主题色基底：跟随主题色 / 玻璃遵循主题色时都用「与表面色混合后的协调色」，
+  // 避免 scheme.primary（暗色下 tone 80）大面积铺开过亮；
+  // 灰色样式额外去饱和，保证是真正的中性灰（原有 fromSeed 种子色偏）。
+  final accent = harmonizedAccent(scheme, pal.tone);
   final baseColor = style == SurfaceStyle.theme
-      ? scheme.primary
+      ? accent
       : style == SurfaceStyle.gray
-          ? scheme.surfaceContainerHigh
-          : (pal.follow ? scheme.primary : scheme.surface);
+          ? neutralGray(scheme.surfaceContainerHigh)
+          : (pal.follow ? accent : scheme.surface);
+  // 边缘光 → 描边的透明度/线宽缩放（基准 1.0 = 与改动前一致）
+  final edgeBlur = edgeBorder(70 / 255, 0.5, pal.tuning.edge);
+  final edgeWhite = edgeBorder(isDark ? 0.16 : 0.32, 0.7, pal.tuning.edge);
   return NavGlassLook(
     style: style,
     solid: solid,
     tint: baseColor.withAlpha(baseAlpha),
     borderColor: style == SurfaceStyle.blur
-        ? scheme.outlineVariant.withAlpha(70)
-        : Colors.white.withValues(alpha: isDark ? 0.16 : 0.32),
-    borderWidth: style == SurfaceStyle.blur ? 0.5 : 0.7,
-    // blur/theme 时遮罩是实色块，选中项用 onPrimary 反白；其余用主题色。
+        ? scheme.outlineVariant.withAlpha((edgeBlur.alpha * 255).round().clamp(0, 255))
+        : Colors.white.withValues(alpha: edgeWhite.alpha),
+    borderWidth: style == SurfaceStyle.blur ? edgeBlur.width : edgeWhite.width,
+    // blur/theme/gray 时遮罩是实色块/中性底，选中项用 onPrimary 反白；
+    // 其余用主题色。gray 特意用 onSurface：灰色样式下不应再出现主题色。
     selectedColor: style == SurfaceStyle.blur || style == SurfaceStyle.theme
         ? scheme.onPrimary
-        : scheme.primary,
+        : style == SurfaceStyle.gray
+            ? scheme.onSurface
+            : scheme.primary,
     unselectedColor: scheme.onSurfaceVariant,
   );
 }
 
 /// 遮罩胶囊外观：blur=实心主题色；theme=白色高亮（底栏本身即主题色）；
-/// liquid/gray=白→主题色渐变。
+/// gray=中性白高亮（灰色样式的底栏不应再出现主题色 —— 之前 gray 落到
+/// 「白→主题色渐变」分支，于是选了灰色也「夹杂主题色」，用户已反馈）；
+/// liquid=白→主题色渐变。
 Widget navMaskPill(ColorScheme scheme, bool isDark, String style) {
   if (style == SurfaceStyle.blur) {
     return Container(
@@ -122,6 +154,28 @@ Widget navMaskPill(ColorScheme scheme, bool isDark, String style) {
           BoxShadow(
             color: scheme.primary.withAlpha(70),
             blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+    );
+  }
+  if (style == SurfaceStyle.gray) {
+    // 灰色样式：中性高亮（暗色 → 提亮、亮色 → 压暗），完全不引入主题色
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        color: isDark ? Colors.white.withAlpha(56) : Colors.black.withAlpha(26),
+        border: Border.all(
+          color: isDark
+              ? Colors.white.withValues(alpha: 0.30)
+              : Colors.black.withValues(alpha: 0.10),
+          width: 0.8,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.18 : 0.06),
+            blurRadius: 5,
             offset: const Offset(0, 2),
           ),
         ],
@@ -206,9 +260,11 @@ class NavGlassShell extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final look = navGlassLook(scheme, isDark, pal);
-    // 模糊 σ = 16（固定基准值），Windows 上由 effectiveGlassSigma 钳到 ≤12；
-    // 是否走 shader 由 gpuGlassEnabledOf 统一判定（PC 端默认关闭）。
-    final double shellSigma = effectiveGlassSigma(16);
+    // 模糊 σ 来自「设置 → 样式 → 玻璃细节 → 模糊度」（默认 16，与改动前一致），
+    // Windows 上由 effectiveGlassSigma 钳到 ≤12；是否走 shader 由
+    // gpuGlassEnabledOf 统一判定（PC 端默认关闭）。
+    final GlassTuning tuning = pal.tuning;
+    final double shellSigma = effectiveGlassSigma(tuning.blur);
     final bottomSafe = MediaQuery.of(context).padding.bottom;
     final op = pal.op.clamp(0.0, 1.0);
     // 「样式 → 添加边框」：给导航/切换栏胶囊叠一条同圆角描边。
@@ -237,9 +293,19 @@ class NavGlassShell extends StatelessWidget {
         child: ClipRRect(
           borderRadius: BorderRadius.circular(radius),
           child: BackdropFilter(
-            // σ = 16（固定基准值，Windows 上已由 effectiveGlassSigma 钳到 ≤12）
+            // σ 由「玻璃细节 → 模糊度」控制（Windows 上已由 effectiveGlassSigma 钳制）
             filter: ImageFilter.blur(sigmaX: shellSigma, sigmaY: shellSigma),
-            child: borderedChild,
+            child: CustomPaint(
+              // 高光 / 边缘光：与卡片、药丸共用同一支画笔
+              painter: LiquidGlassPainter(
+                borderRadius: BorderRadius.circular(radius),
+                opacity: op,
+                highlight: tuning.highlight,
+                lightPos: tuning.lightPos,
+                edge: tuning.edge,
+              ),
+              child: borderedChild,
+            ),
           ),
         ),
       );
@@ -257,7 +323,7 @@ class NavGlassShell extends StatelessWidget {
         // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
         child: LiquidGlassBackdrop(
           borderRadius: BorderRadius.circular(radius),
-          // σ = 16（固定基准值，Windows 上已由 effectiveGlassSigma 钳到 ≤12）
+          // σ 由「玻璃细节 → 模糊度」控制（Windows 上已由 effectiveGlassSigma 钳制）
           sigma: shellSigma,
           opacity: op,
           shadow: BoxShadow(
@@ -279,7 +345,8 @@ class NavGlassShell extends StatelessWidget {
     return RepaintBoundary(
       child: OCLiquidGlassGroup(
         key: ValueKey<NavGlassPal>(pal),
-        settings: kLiquidGlassSettings,
+        // 参数化 settings（带实例缓存，参数不变即复用同一实例，避免 uniform 重置）
+        settings: liquidGlassSettingsFor(tuning),
         child: Padding(
           padding: EdgeInsets.fromLTRB(14, 2, 14, bottomSafe + 8),
           child: OCLiquidGlass(

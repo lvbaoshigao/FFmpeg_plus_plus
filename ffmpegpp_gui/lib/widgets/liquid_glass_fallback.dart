@@ -68,12 +68,163 @@ bool gpuGlassEnabledOf(BuildContext context) {
   return shaderGlassSupported && (isMobilePlatform || onDesktop);
 }
 
+/// 按用户配置参数化的液态玻璃 settings（带实例缓存）。
+///
+/// 为什么不直接 `OCLiquidGlassSettings(...)`：每次 build 新建实例会重新下发
+/// shader uniform，移动端表现为液态玻璃「来回跳跃」闪烁（历史踩坑）。
+/// 这里按参数哈希缓存同一个实例 —— 参数没变就复用同一对象；只有用户真的拖动
+/// 「玻璃细节」滑块时才产生新实例（此时本来就该重绘一次）。
+OCLiquidGlassSettings _cachedGlassSettings = kLiquidGlassSettings;
+int _cachedGlassSettingsHash = 0;
+
+OCLiquidGlassSettings liquidGlassSettingsFor(GlassTuning t) {
+  final int h = Object.hash(t.highlight, t.lightPos, t.blur);
+  if (_cachedGlassSettingsHash == h) return _cachedGlassSettings;
+  _cachedGlassSettingsHash = h;
+  // 高光强度 → specStrength（基准 0.5）；高光位置 → specAngle（基准 4°）；
+  // 模糊度 → blurRadiusPx，只取「超过基准」的部分（见 kGlassBlurBaseline）。
+  // 边缘光在 shader 路径由上层容器的描边承担：shader 自带的 lightband 会画成
+  // 一条横贯的亮带，在高卡片上像一条「分界线」，实测观感很差，故不启用。
+  return _cachedGlassSettings = OCLiquidGlassSettings(
+    refractStrength: kLiquidGlassSettings.refractStrength,
+    blurRadiusPx: t.shaderExtraBlur,
+    specStrength: (kLiquidGlassSettings.specStrength * t.highlight).clamp(0.0, 2.0),
+    specPower: kLiquidGlassSettings.specPower,
+    specWidth: kLiquidGlassSettings.specWidth,
+    specAngle: 4 + t.lightPos * 180,
+    lightbandStrength: 0.0,
+    lightbandColor: Colors.white,
+  );
+}
+
 /// 玻璃高斯模糊 σ：Windows 沿用既有上限。
 ///
 /// σ16/18 的高斯模糊要在面板尺寸之外再多分配约 3σ 的离屏纹理；降到 12 视觉几乎
 /// 无差别但内存明显更低（见 glass_panel 的注释）。
 double effectiveGlassSigma(double value) =>
     isWindowsPlatform ? value.clamp(0.0, 12.0) : value.clamp(0.0, 24.0);
+
+/// 液态玻璃（GPU shader）路径的基准模糊度。
+///
+/// 用户可调的 `glassBlur` 是**绝对 σ**（模糊样式 / 走 Skia 回退的玻璃都用它）。
+/// 而 GPU shader 内部本来就不做高斯模糊（`blurRadiusPx` 一直是 0，观感是
+/// 「清晰 + 折射」），若把 σ 直接灌进去会平白改变既有观感。因此 shader 路径只
+/// 额外模糊「超过本基准」的部分：`glassBlur == 16`（默认）→ 0，与改动前一致；
+/// 往上调才会变糊，往下调不会变清晰（下限就是 0）。
+const double kGlassBlurBaseline = 16.0;
+
+/// 通透度的基准值（= [AppConfig.glassClarity] 的默认值）。
+/// 见 [GlassTuning.tintScale]：默认值即系数 1.0（各处默认 alpha 不变）。
+const double kGlassClarityBaseline = 0.45;
+
+/// 边缘光缩放：把「基准描边」按 edge 参数放大 / 缩小。
+/// edge = 1（默认）时返回原值，保证默认观感不变。
+({double alpha, double width}) edgeBorder(
+    double baseAlpha, double baseWidth, double edge) {
+  final e = edge.clamp(0.0, 2.0);
+  return (
+    alpha: (baseAlpha * e).clamp(0.0, 1.0),
+    width: (baseWidth * e).clamp(0.0, 3.0),
+  );
+}
+
+/// 「设置 → 样式 → 玻璃细节」的参数包（也是 `context.select` 的配置指纹）。
+///
+/// 为什么打包成一个值对象：玻璃的所有渲染路径（AppCard / MobileGlassPill /
+/// MobileBottomNav / LiquidGlassBackdrop / GlassPanel）都要读同一份参数，
+/// 逐字段 select 会让每处都写 5 个 select；打包后只订阅一次，且只有真的
+/// 影响渲染的字段变化才重建（进度/日志等高频 notify 不会重建玻璃）。
+@immutable
+class GlassTuning {
+  /// 模糊度（σ，0~30）
+  final double blur;
+  /// 通透度（0~1）：越大越通透（底色越淡）
+  final double clarity;
+  /// 高光强度（0~1.6，1 = 基准）
+  final double highlight;
+  /// 高光位置（0~1）：0 = 左上受光（基准），1 = 右下受光
+  final double lightPos;
+  /// 边缘光强度（0~2，1 = 基准）
+  final double edge;
+
+  const GlassTuning({
+    this.blur = 16.0,
+    this.clarity = 0.45,
+    this.highlight = 1.0,
+    this.lightPos = 0.0,
+    this.edge = 1.0,
+  });
+
+  /// tint alpha 系数：`tintAlpha = 255 × tintFactor × cardOpacity`。
+  double get tintFactor => (1.0 - clarity).clamp(0.0, 1.0);
+
+  /// 相对于「基准通透度」的 tint 缩放系数。
+  ///
+  /// 各调用点的基准 alpha 表达式写法不同（卡片 `130×op`、药丸与底栏
+  /// `255×op`），直接统一成 `255×(1-clarity)×op` 会让默认观感发生变化。
+  /// 这里改为**等比缩放**：默认 clarity（0.45）→ 系数 1.0，各处的默认 alpha
+  /// 与改动前逐像素一致；拖动通透度滑块时全部同步增减。
+  double get tintScale =>
+      (tintFactor / (1.0 - kGlassClarityBaseline)).clamp(0.0, 4.0);
+
+  /// 走 GPU shader 时的额外模糊 σ（见 [kGlassBlurBaseline]）。
+  double get shaderExtraBlur =>
+      (blur - kGlassBlurBaseline).clamp(0.0, 30.0);
+
+  @override
+  bool operator ==(Object other) =>
+      other is GlassTuning &&
+      other.blur == blur &&
+      other.clarity == clarity &&
+      other.highlight == highlight &&
+      other.lightPos == lightPos &&
+      other.edge == edge;
+
+  @override
+  int get hashCode => Object.hash(blur, clarity, highlight, lightPos, edge);
+}
+
+/// 订阅玻璃细节参数。
+GlassTuning glassTuningOf(BuildContext context) =>
+    context.select<AppState, GlassTuning>((s) {
+      final c = s.config;
+      return GlassTuning(
+        blur: c.glassBlur,
+        clarity: c.glassClarity,
+        highlight: c.glassHighlight,
+        lightPos: c.glassLightPos,
+        edge: c.glassEdge,
+      );
+    });
+
+/// 真正的中性灰：把颜色中的彩度抹掉。
+///
+/// 为什么需要：「灰色」表面样式用的是 `ColorScheme.surfaceContainerHigh`，
+/// 而 `ColorScheme.fromSeed` 生成的 neutral 色**带有种子色的色相偏移**
+/// （Material You 的 tonalSpot 方案），于是选了「灰色」卡片仍会泛出主题色的
+/// 色偏 —— 用户反馈「样式选成灰色后是灰色夹杂主题色」。这里统一去饱和。
+Color neutralGray(Color c) => HSLColor.fromColor(c).withSaturation(0).toColor();
+
+/// 「跟随主题色 / 玻璃底色遵循主题色」使用的**协调主题色**。
+///
+/// `scheme.primary` 在暗色主题下是 tone 80 的高亮色，大面积铺成卡片底色非常
+/// 刺眼（用户反馈「选择主题色又很亮」）。按 [tone] 与表面色混合后得到一个
+/// 低饱和、与界面协调的底色；[tone] 由设置页的「主题色协调度」滑块控制
+/// （0 = 保留原主题色，0.8 = 几乎并入表面色）。
+Color harmonizedAccent(ColorScheme scheme, double tone) {
+  final t = tone.clamp(0.0, 0.9);
+  if (t <= 0.001) return scheme.primary;
+  return Color.lerp(scheme.primary, scheme.surface, t)!;
+}
+
+/// 协调主题色的渐变版（主题渐变 themeColor2 生效时用）。
+List<Color> harmonizedAccentGradient(
+        ColorScheme scheme, List<Color> grad, double tone) =>
+    [
+      for (final c in grad)
+        Color.lerp(c, scheme.surface, tone.clamp(0.0, 0.9))!
+    ];
+
 
 /// 「设置 → 样式 → 添加边框」的配置指纹（供 `context.select` 细粒度订阅）。
 ///
@@ -142,17 +293,34 @@ Widget withConfigurableBorder(
 }
 
 /// Skia 回退的液态玻璃光影画笔 —— 画在内容**之上**的前景层：
-///  1. 对角倒角边：左上受光亮边 → 右下背光暗边（模拟厚玻璃的折射棱），
+///  1. 对角倒角边：受光亮边 → 背光暗边（模拟厚玻璃的折射棱），
 ///     替代旧版「仅顶部一条高光」的单薄观感；
 ///  2. 内圈细亮线：玻璃内壁的反光；
-///  3. 左上/右下两团柔和镜面光斑（对应 shader 的 L1/L2 对向灯）。
+///  3. 两团柔和镜面光斑（对应 shader 的 L1/L2 对向灯）。
 ///
 /// 所有透明度都乘 [opacity]，cardOpacity=0 时只剩纯背景模糊。
+/// 高光强度 / 位置 / 边缘光三项由「设置 → 样式 → 玻璃细节」控制
+/// （[highlight] / [lightPos] / [edge]），默认值 1.0 / 0.0 / 1.0 即改动前观感。
 class LiquidGlassPainter extends CustomPainter {
   final BorderRadius borderRadius;
   final double opacity;
 
-  const LiquidGlassPainter({required this.borderRadius, this.opacity = 1.0});
+  /// 高光强度倍率（0~1.6）
+  final double highlight;
+
+  /// 高光位置（0 = 左上受光，1 = 右下受光）
+  final double lightPos;
+
+  /// 边缘光强度倍率（0~2）：同时作用于倒角棱线与内圈亮线
+  final double edge;
+
+  const LiquidGlassPainter({
+    required this.borderRadius,
+    this.opacity = 1.0,
+    this.highlight = 1.0,
+    this.lightPos = 0.0,
+    this.edge = 1.0,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -160,6 +328,12 @@ class LiquidGlassPainter extends CustomPainter {
     if (size.shortestSide < 12) return;
     final o = opacity.clamp(0.0, 1.0);
     if (o <= 0.001) return;
+    final h = highlight.clamp(0.0, 1.6);
+    final e = edge.clamp(0.0, 2.0);
+    final p = lightPos.clamp(0.0, 1.0);
+    // 高光与边缘光都被关掉时不必建绘制层。
+    if (h <= 0.001 && e <= 0.001) return;
+
     final rrect = RRect.fromRectAndCorners(
       Offset.zero & size,
       topLeft: borderRadius.topLeft,
@@ -170,57 +344,73 @@ class LiquidGlassPainter extends CustomPainter {
     canvas.save();
     canvas.clipRRect(rrect);
 
-    // 1) 对角倒角边：亮→暗过渡的棱边（受光面在左上）
-    final rim = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.8
-      ..shader = LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [
-          Colors.white.withValues(alpha: 0.50 * o),
-          Colors.white.withValues(alpha: 0.06 * o),
-          Colors.black.withValues(alpha: 0.18 * o),
-        ],
-        stops: const [0.0, 0.45, 1.0],
-      ).createShader(rrect.outerRect);
-    canvas.drawRRect(rrect.deflate(0.7), rim);
+    // 受光方向：p=0 → 左上（基准），p=1 → 右下。渐变轴随之翻转。
+    final begin = Alignment(-1 + 2 * p, -1 + 2 * p);
+    final end = Alignment(1 - 2 * p, 1 - 2 * p);
 
-    // 2) 内圈细亮线（玻璃内壁反光）
-    canvas.drawRRect(
-      rrect.deflate(2.2),
-      Paint()
+    // 1) 对角倒角边：亮→暗过渡的棱边
+    if (e > 0.001) {
+      final rim = Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 0.8
-        ..color = Colors.white.withValues(alpha: 0.10 * o),
-    );
+        ..strokeWidth = (1.8 * e).clamp(0.4, 4.0)
+        ..shader = LinearGradient(
+          begin: begin,
+          end: end,
+          colors: [
+            Colors.white.withValues(alpha: (0.50 * e).clamp(0.0, 1.0) * o),
+            Colors.white.withValues(alpha: (0.06 * e).clamp(0.0, 1.0) * o),
+            Colors.black.withValues(alpha: (0.18 * e).clamp(0.0, 1.0) * o),
+          ],
+          stops: const [0.0, 0.45, 1.0],
+        ).createShader(rrect.outerRect);
+      canvas.drawRRect(rrect.deflate(0.7), rim);
 
-    // 3) 对向镜面光斑：左上主光 + 右下副光（柔和径向渐变）
-    final shortest = size.shortestSide;
-    final spotR = shortest * 0.55;
-    void spot(Offset c, double alpha) {
-      canvas.drawCircle(
-        c,
-        spotR,
+      // 2) 内圈细亮线（玻璃内壁反光）
+      canvas.drawRRect(
+        rrect.deflate(2.2),
         Paint()
-          ..shader = RadialGradient(
-            colors: [
-              Colors.white.withValues(alpha: alpha),
-              Colors.white.withValues(alpha: 0.0),
-            ],
-          ).createShader(Rect.fromCircle(center: c, radius: spotR)),
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = (0.8 * e).clamp(0.3, 2.0)
+          ..color = Colors.white.withValues(alpha: (0.10 * e).clamp(0.0, 1.0) * o),
       );
     }
 
-    spot(Offset(size.width * 0.14, size.height * 0.10), 0.10 * o);
-    spot(Offset(size.width * 0.88, size.height * 0.92), 0.06 * o);
+    // 3) 对向镜面光斑：主光 + 副光（柔和径向渐变）。位置随 lightPos 沿对角线移动。
+    if (h > 0.001) {
+      final shortest = size.shortestSide;
+      final spotR = shortest * 0.55;
+      void spot(Offset c, double alpha) {
+        canvas.drawCircle(
+          c,
+          spotR,
+          Paint()
+            ..shader = RadialGradient(
+              colors: [
+                Colors.white.withValues(alpha: (alpha * h).clamp(0.0, 1.0)),
+                Colors.white.withValues(alpha: 0.0),
+              ],
+            ).createShader(Rect.fromCircle(center: c, radius: spotR)),
+        );
+      }
+
+      Offset along(double fromX, double fromY, double toX, double toY) =>
+          Offset(size.width * (fromX + (toX - fromX) * p),
+              size.height * (fromY + (toY - fromY) * p));
+
+      spot(along(0.14, 0.10, 0.86, 0.90), 0.10 * o);
+      spot(along(0.88, 0.92, 0.12, 0.08), 0.06 * o);
+    }
 
     canvas.restore();
   }
 
   @override
   bool shouldRepaint(LiquidGlassPainter old) =>
-      old.borderRadius != borderRadius || old.opacity != opacity;
+      old.borderRadius != borderRadius ||
+      old.opacity != opacity ||
+      old.highlight != highlight ||
+      old.lightPos != lightPos ||
+      old.edge != edge;
 }
 
 /// 无 Impeller 平台的液态玻璃回退容器：
@@ -229,7 +419,8 @@ class LiquidGlassPainter extends CustomPainter {
 class LiquidGlassBackdrop extends StatelessWidget {
   final BorderRadius borderRadius;
   /// 背景模糊 σ。调用方自行处理平台 clamp（如 Windows 限 12）。
-  final double sigma;
+  /// 传 null 时取自「设置 → 样式 → 玻璃细节」的模糊度。
+  final double? sigma;
   final double opacity;
   final BoxShadow? shadow;
   final Widget child;
@@ -237,7 +428,7 @@ class LiquidGlassBackdrop extends StatelessWidget {
   const LiquidGlassBackdrop({
     super.key,
     required this.borderRadius,
-    this.sigma = 12,
+    this.sigma,
     this.opacity = 1.0,
     this.shadow,
     required this.child,
@@ -245,6 +436,9 @@ class LiquidGlassBackdrop extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 高光 / 位置 / 边缘光统一从配置读，调用方无需逐个透传。
+    final tuning = glassTuningOf(context);
+    final resolvedSigma = sigma ?? tuning.blur;
     // 图层算法注意（Skia/Windows 实测相关）：
     // 1. 这里绝不能再包 RepaintBoundary。BackdropFilter 的输入（背后场景）
     //    在 Skia 下会被光栅缓存——若外层有 RepaintBoundary，玻璃自身内容
@@ -256,10 +450,15 @@ class LiquidGlassBackdrop extends StatelessWidget {
     Widget glass = ClipRRect(
       borderRadius: borderRadius,
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+        filter: ImageFilter.blur(sigmaX: resolvedSigma, sigmaY: resolvedSigma),
         child: CustomPaint(
           painter: LiquidGlassPainter(
-              borderRadius: borderRadius, opacity: opacity),
+            borderRadius: borderRadius,
+            opacity: opacity,
+            highlight: tuning.highlight,
+            lightPos: tuning.lightPos,
+            edge: tuning.edge,
+          ),
           child: child,
         ),
       ),
