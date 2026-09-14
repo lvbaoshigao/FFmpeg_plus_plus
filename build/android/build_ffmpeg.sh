@@ -391,12 +391,21 @@ if [ ! -f $PREFIX/bin/ffmpeg ] || ! _ffmpeg_dist_ok; then
         exit 1; }
   # ── 配置结果硬校验（fail fast，避免白跑几分钟 make）──
   # mediacodec 是显式请求的外部库：依赖（android/mediandk/pthreads）不满足时
-  # configure 会 die，能走到这里说明依赖通过。但仍直接核对 config.h，把
+  # configure 会 die，能走到这里说明依赖通过。但仍直接核对生成的头文件，把
   # 「编码器没编进去」的失败拦在 make 之前。
+  #
+  # 注意：宏所在文件分两层。CONFIG_MEDIACODEC / CONFIG_JNI 这类全局宏在
+  # config.h；而 CONFIG_H264_MEDIACODEC_ENCODER 这类按编解码器粒度的宏
+  # 自 FFmpeg n5.0 起全部在 config_components.h —— 只 grep config.h 会把
+  # configure 成功的构建误判为「编码器未启用」直接 exit 1（CI 白跑）。
   _FFMPEG_CONFIG_H=$BUILD/src/ffmpeg/config.h
+  _FFMPEG_CONFIG_COMPONENTS_H=$BUILD/src/ffmpeg/config_components.h
   _dump_mediacodec_diag() {
     echo "--- config.h 中 mediacodec 相关标志 ---" >&2
-    grep -E 'CONFIG_(MEDIACODEC|H264_MEDIACODEC|HEVC_MEDIACODEC|JNI)' "$_FFMPEG_CONFIG_H" 2>/dev/null || echo "(无匹配行)" >&2
+    grep -E 'CONFIG_(MEDIACODEC|JNI)' "$_FFMPEG_CONFIG_H" 2>/dev/null || echo "(无匹配行)" >&2
+    echo "--- config_components.h 中 mediacodec 编解码器标志 ---" >&2
+    grep -E 'CONFIG_(H264|HEVC|VP8|VP9|AV1|MP3|MPEG2|MPEG4)_MEDIACODEC_(DECODER|ENCODER)' \
+        "$_FFMPEG_CONFIG_COMPONENTS_H" 2>/dev/null || echo "(无匹配行)" >&2
     echo "--- ffbuild/config.log 中 mediacodec/jni/mediandk 检测记录（末 40 行）---" >&2
     grep -iE 'mediacodec|mediandk|jni' "$BUILD/src/ffmpeg/ffbuild/config.log" 2>/dev/null | tail -40 || echo "(无匹配行)" >&2
   }
@@ -405,12 +414,19 @@ if [ ! -f $PREFIX/bin/ffmpeg ] || ! _ffmpeg_dist_ok; then
     _dump_mediacodec_diag
     exit 1
   fi
-  if ! grep -q 'define CONFIG_H264_MEDIACODEC_ENCODER 1' "$_FFMPEG_CONFIG_H" 2>/dev/null; then
-    echo "ERROR: CONFIG_H264_MEDIACODEC_ENCODER 未启用（h264_mediacodec 编码器不会编入）" >&2
-    _dump_mediacodec_diag
-    exit 1
-  fi
-  log "config.h 校验通过：mediacodec + h264/hevc_mediacodec encoder 已启用"
+  _check_enc_macro() {
+    # 编解码器粒度宏：新版在 config_components.h，旧版(n5.0 前)在 config.h
+    { grep -q "define $1 1" "$_FFMPEG_CONFIG_COMPONENTS_H" 2>/dev/null \
+       || grep -q "define $1 1" "$_FFMPEG_CONFIG_H" 2>/dev/null; }
+  }
+  for _enc in CONFIG_H264_MEDIACODEC_ENCODER CONFIG_HEVC_MEDIACODEC_ENCODER; do
+    if ! _check_enc_macro "$_enc"; then
+      echo "ERROR: $_enc 未启用（mediacodec 硬编编码器不会编入）" >&2
+      _dump_mediacodec_diag
+      exit 1
+    fi
+  done
+  log "config 校验通过：mediacodec + h264/hevc_mediacodec encoder 已启用"
   log "building ffmpeg"
   make -j$JOBS > $BUILD/ffmpeg_make.log 2>&1 || { tail -40 $BUILD/ffmpeg_make.log; exit 1; }
   make install >> $BUILD/ffmpeg_make.log 2>&1
@@ -458,8 +474,11 @@ done
 # 下会因 SIGPIPE 把「匹配成功」误判为失败（教训详见 _ffmpeg_dist_ok）。
 if ! grep -aq 'h264_mediacodec' "$BUILD/dist/libffmpeg.so"; then
   echo "ERROR: libffmpeg.so 未包含 h264_mediacodec 编码器" >&2
-  echo "--- config.h 中 mediacodec 相关标志 ---" >&2
-  grep -E 'CONFIG_(MEDIACODEC|H264_MEDIACODEC|HEVC_MEDIACODEC|JNI)' "$BUILD/src/ffmpeg/config.h" 2>/dev/null || echo "(无匹配行)" >&2
+  echo "--- config.h / config_components.h 中 mediacodec 相关标志 ---" >&2
+  grep -E 'CONFIG_(MEDIACODEC|JNI)' "$BUILD/src/ffmpeg/config.h" 2>/dev/null || echo "(config.h 无匹配行)" >&2
+  # 按编解码器粒度的宏自 FFmpeg n5.0 起在 config_components.h（不在 config.h）
+  grep -E 'CONFIG_(H264|HEVC|VP8|VP9|AV1|MP3|MPEG2|MPEG4)_MEDIACODEC_(DECODER|ENCODER)' \
+      "$BUILD/src/ffmpeg/config_components.h" 2>/dev/null || echo "(config_components.h 无匹配行)" >&2
   echo "--- ffbuild/config.log 中 mediacodec/jni/mediandk 检测记录（末 40 行）---" >&2
   grep -iE 'mediacodec|mediandk|jni' "$BUILD/src/ffmpeg/ffbuild/config.log" 2>/dev/null | tail -40 || echo "(无匹配行)" >&2
   echo "       若以上显示 mediacodec 已启用但二进制仍缺编码器，请清掉" >&2
