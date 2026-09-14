@@ -767,17 +767,19 @@ class _SettingsPageState extends State<SettingsPage> {
               if (visible.isEmpty && searching)
                 _emptyState(scheme, s)
               else
-                _GlassScrollGuard(
-                  child: ListView(
-                    // 左右留白全部交给分区卡自己（见 _buildMobileSection 的 14px 内边距），
-                    // ListView 只负责上下：顶部药丸占位 + 底部导航栏净空。
-                    padding: EdgeInsets.fromLTRB(0, MobileUi.pageTopPadding(context), 0, kMobileNavClearance),
-                    children: [
-                      for (final (sec, cards) in visible)
-                        _buildMobileSection(sec, cards, context, state, scheme, s),
-                      const SizedBox(height: 16),
-                    ],
-                  ),
+                ListView(
+                  // addRepaintBoundaries:false：卡片内的壁纸开窗 painter 必须每帧
+                  // 按当前变换重算（若子项被 RepaintBoundary 缓存，滚动时缓存
+                  // 平移会重新引入「玻璃与背景错位」）。
+                  // 左右留白全部交给分区卡自己（见 _buildMobileSection 的 14px 内边距），
+                  // ListView 只负责上下：顶部药丸占位 + 底部导航栏净空。
+                  addRepaintBoundaries: false,
+                  padding: EdgeInsets.fromLTRB(0, MobileUi.pageTopPadding(context), 0, kMobileNavClearance),
+                  children: [
+                    for (final (sec, cards) in visible)
+                      _buildMobileSection(sec, cards, context, state, scheme, s),
+                    const SizedBox(height: 16),
+                  ],
                 ),
               // 顶部药丸浮层（不影响滚动）
               Positioned(
@@ -966,8 +968,7 @@ class _SettingsPageState extends State<SettingsPage> {
             child: child,
           ),
         ),
-        child: _GlassScrollGuard(
-          child: SingleChildScrollView(
+        child: SingleChildScrollView(
             key: ValueKey('pane_${sec.id}'),
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
           child: Column(
@@ -1012,7 +1013,6 @@ class _SettingsPageState extends State<SettingsPage> {
               ],
             ),
           ]),
-          ),
         ),
       );
     });
@@ -1367,126 +1367,26 @@ Widget _miIcon(ColorScheme scheme, IconData icon) => Container(
   child: Icon(icon, size: 19, color: scheme.primary),
 );
 
-/// 设置页「滚动中玻璃降级」开关：快速滚动时把玻璃卡临时切换为纯色，
-/// 停止后恢复。根因：玻璃卡（BackdropFilter / shader backdrop）每帧重采样
-/// 滚动中的背景，Skia 与移动端下采样会滞后一帧，快速滑动时玻璃与背景出现
-/// 「图层分离」；纯色卡不采样背景，从根本上消除分离。
-/// 只在滚动速度超过阈值时降级：手指按住缓慢拖动时保持玻璃、不变色
-///（慢速下分离几乎不可见，不值得牺牲观感）。
-final ValueNotifier<bool> kSettingsScrollDegraded = ValueNotifier(false);
-
-/// 包住设置页的滚动容器：监听滚动事件驱动 [kSettingsScrollDegraded]。
-/// 用瞬时速度的 EMA 估计判断是否「快速滚动」，超过阈值才降级；
-/// 速度回落后延迟恢复，ScrollEnd 后再延迟 ~160ms 兜底恢复。
-/// 桌面 / 移动端主列表与二级页共用。
-class _GlassScrollGuard extends StatefulWidget {
-  final Widget child;
-  const _GlassScrollGuard({required this.child});
-  @override
-  State<_GlassScrollGuard> createState() => _GlassScrollGuardState();
-}
-
-class _GlassScrollGuardState extends State<_GlassScrollGuard> {
-  /// 降级速度阈值（px/s）。慢速拖动通常 <300；轻扫/滚轮 >1500。
-  static const _kSpeedThreshold = 900.0;
-  Timer? _endTimer;
-  double? _lastPixels;
-  int? _lastMs;
-  double _speed = 0;
-
-  @override
-  void dispose() { _endTimer?.cancel(); super.dispose(); }
-
-  void _degrade() {
-    _endTimer?.cancel();
-    _endTimer = null;
-    if (!kSettingsScrollDegraded.value) kSettingsScrollDegraded.value = true;
-  }
-
-  void _scheduleRestore(int delayMs) {
-    if (_endTimer != null) return; // 已有恢复计时在跑
-    _endTimer = Timer(Duration(milliseconds: delayMs), () {
-      kSettingsScrollDegraded.value = false;
-      _endTimer = null;
-    });
-  }
-
-  bool _onNotification(ScrollNotification n) {
-    if (n is ScrollUpdateNotification) {
-      final now = DateTime.now().millisecondsSinceEpoch;
-      final px = n.metrics.pixels;
-      if (_lastMs != null) {
-        final dt = (now - _lastMs!) / 1000;
-        if (dt > 0) {
-          // EMA 平滑瞬时速度，避免逐帧抖动导致阈值附近反复切换
-          _speed = _speed * 0.5 + ((px - _lastPixels!).abs() / dt) * 0.5;
-        }
-      }
-      _lastMs = now;
-      _lastPixels = px;
-      if (_speed > _kSpeedThreshold) {
-        _degrade();
-      } else if (kSettingsScrollDegraded.value) {
-        // 已处于降级但速度回落（甩动减速/手指停住）→ 安排恢复。
-        // 200ms：避开 EMA 在减速末段的速度抖动，减少来回切换。
-        _scheduleRestore(200);
-      }
-    } else if (n is ScrollEndNotification) {
-      _lastMs = null;
-      _lastPixels = null;
-      _speed = 0;
-      _endTimer?.cancel();
-      _endTimer = null;
-      _scheduleRestore(160);
-    } else if (n is ScrollStartNotification) {
-      _lastMs = null;
-      _lastPixels = null;
-      _speed = 0;
-    }
-    return false;
-  }
-  @override
-  Widget build(BuildContext context) =>
-      NotificationListener<ScrollNotification>(
-        onNotification: _onNotification,
-        child: widget.child,
-      );
-}
-
 /// 设置页分组卡片外壳 —— 所有分组卡（设置行 / AI·MCP 卡 / 各设置卡）
 /// 统一委托给 AppCard，由「主题→样式→卡片样式」（cfg.cardStyle 四值）接管：
 /// 跟随主题色(纯色) / 液态玻璃 / 模糊 / 灰色。
+///
+/// 玻璃卡在滚动中的「图层分离」由 app_card 的壁纸开窗（绑定渲染）根治：
+/// 卡片 paint 时直接画静态壁纸、按当前帧变换对齐，不再有采样滞后，
+/// 因此这里不再需要任何「滚动降级 / 变色」机制（已整体移除）。
 Widget _cardShell(
   BuildContext ctx,
   AppState state,
   Widget child, {
   double radius = 18,
 }) {
-  final style = state.config.cardStyle;
-  return ValueListenableBuilder<bool>(
-    valueListenable: kSettingsScrollDegraded,
-    builder: (ctx, degraded, _) {
-      // 滚动中把玻璃类样式（液态玻璃/模糊）临时降级为主题色纯色卡，
-      // 见 kSettingsScrollDegraded 顶部注释；纯色样式无需降级。
-      final isGlass = style == SurfaceStyle.liquid || style == SurfaceStyle.blur;
-      final effective = degraded && isGlass ? SurfaceStyle.theme : style;
-      // 交叉淡入淡出而非硬切换：降级/恢复时玻璃与纯色卡平滑过渡，
-      // 否则快速滚动中样式突跳会形成「闪一下」。
-      return AnimatedSwitcher(
-        duration: const Duration(milliseconds: 180),
-        switchInCurve: Curves.easeOut,
-        switchOutCurve: Curves.easeOut,
-        child: AppCard(
-          key: ValueKey(effective),
-          style: effective,
-          radius: radius,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minWidth: double.infinity),
-            child: child,
-          ),
-        ),
-      );
-    },
+  return AppCard(
+    style: state.config.cardStyle,
+    radius: radius,
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: double.infinity),
+      child: child,
+    ),
   );
 }
 
@@ -1513,13 +1413,14 @@ void _pushSettingsSubPage(
               onBack: () => Navigator.of(ctx2).maybePop(),
             ),
             Expanded(
-              child: _GlassScrollGuard(
-                child: ListView(
-                  // 左右间距与设置主界面卡片对齐（主界面 = ListView + 分区卡内边距 14）。
-                  // 此前为 0：MCP/AI 等二级页卡片通顶通底，比主界面卡片明显更宽。
-                  padding: MobileUi.subListPadding(top: 12, bottom: 48),
-                  children: [contentBuilder(ctx2, state)],
-                ),
+              child: ListView(
+                // addRepaintBoundaries:false —— 见移动端主列表同款注释：
+                // 壁纸开窗 painter 必须每帧按当前变换重算，不能被子项缓存平移。
+                // 左右间距与设置主界面卡片对齐（主界面 = ListView + 分区卡内边距 14）。
+                // 此前为 0：MCP/AI 等二级页卡片通顶通底，比主界面卡片明显更宽。
+                addRepaintBoundaries: false,
+                padding: MobileUi.subListPadding(top: 12, bottom: 48),
+                children: [contentBuilder(ctx2, state)],
               ),
             ),
           ]),

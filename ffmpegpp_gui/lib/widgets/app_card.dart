@@ -1,9 +1,12 @@
-import 'dart:ui';
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import 'liquid_glass_fallback.dart';
+import 'wallpaper_background.dart';
 
 /// 统一「表面样式」常量（卡片 / 移动端底部菜单栏 / 移动端顶部药丸共用）：
 /// - [theme]  跟随主题色（纯色，不透明卡片；设置了主题渐变时显示渐变）
@@ -105,6 +108,9 @@ class AppCard extends StatefulWidget {
 class _AppCardState extends State<AppCard> {
   bool _pressed = false;
 
+  /// 无壁纸作用域时的占位 notifier（恒 null → 玻璃走原 BackdropFilter 路径）。
+  static final ValueNotifier<WallpaperWindow?> _noWindow = ValueNotifier(null);
+
   // 液态玻璃 settings 不在本文件硬编码：统一使用 liquid_glass_fallback 的
   // kLiquidGlassSettings（全应用唯一一份 const 基准实例，与底部导航/药丸同源）
   // —— 每次 build 新建实例会触发 shader uniform 重置（移动端表现为液态玻璃
@@ -164,6 +170,9 @@ class _AppCardState extends State<AppCard> {
     final bool glassStyle =
         style == SurfaceStyle.liquid || style == SurfaceStyle.blur;
     final bool solidStyle = !glassStyle || key.noGlass;
+    // GPU shader 判定无条件调用（内部是 context.select，不能写进 || 短路里，
+    // 见 gpuGlassEnabledOf 注释）。
+    final bool gpuGlass = style == SurfaceStyle.liquid && gpuGlassEnabledOf(context);
     // 「跟随主题色」的底色：直接铺 scheme.primary 在暗色主题下是 tone 80 的
     // 高亮色，非常刺眼（用户反馈「选择主题色又很亮」）。改为按 themeTone 与
     // 表面色混合后的协调色（默认 0.45）。
@@ -227,16 +236,96 @@ class _AppCardState extends State<AppCard> {
           child: inner,
         ),
       );
-    } else if (style == SurfaceStyle.blur || key.frosted) {
+    } else {
+      // ── 玻璃分支：优先「壁纸开窗」绑定渲染 ──
+      // 卡片不再实时采样合成场景（滚动中引擎 backdrop 采样滞后一帧 →
+      // 玻璃与背景「图层分离」），而是 paint 时按当前帧的变换把静态
+      // 壁纸直接画进卡片 —— 卡片与背景同帧、同变换光栅化，几何上锁死，
+      // 滚动零滞后。壁纸源不可用（无壁纸 / 未加载完 / 非平移变换）时
+      // 回退到下方原 BackdropFilter / shader 路径。
+      final win = WallpaperWindowScope.maybeOf(context);
+      core = ValueListenableBuilder<WallpaperWindow?>(
+        valueListenable: win ?? _noWindow,
+        builder: (ctx, w, _) {
+          if (w != null) {
+            final bool blurLike = style == SurfaceStyle.blur || key.frosted;
+            final Color? tint;
+            final Gradient? tintGrad;
+            final Border border;
+            if (blurLike) {
+              tint = glassBase.withAlpha(
+                  (((isDark ? 110.0 : 130.0) * op * tScale).round()).clamp(0, 255));
+              tintGrad = null;
+              border = Border.all(
+                  color: scheme.outlineVariant
+                      .withAlpha((edgeOutline.alpha * 255).round().clamp(0, 255)),
+                  width: edgeOutline.width);
+            } else if (gpuGlass) {
+              tint = glassBase.withAlpha(((op * 255) * tScale).round().clamp(0, 255));
+              tintGrad = null;
+              border = Border.all(
+                  color: Colors.white.withValues(alpha: edgeWhite.alpha),
+                  width: edgeWhite.width);
+            } else {
+              tint = null;
+              final alphaTop = ((isDark ? 96.0 : 118.0) * op * tScale).round();
+              final alphaBot = ((isDark ? 46.0 : 62.0) * op * tScale).round();
+              tintGrad = LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: grad != null
+                    ? [grad.first.withAlpha(alphaTop), grad.last.withAlpha(alphaBot)]
+                    : [
+                        glassBase.withAlpha(alphaTop),
+                        glassBase.withAlpha((alphaTop + alphaBot) ~/ 2),
+                        glassBase.withAlpha(alphaBot),
+                      ],
+                stops: grad == null ? const [0.0, 0.55, 1.0] : null,
+              );
+              border = Border.all(
+                  color: Colors.white.withValues(alpha: edgeLiquid.alpha),
+                  width: edgeLiquid.width);
+            }
+            return ClipRRect(
+              borderRadius: br,
+              child: CustomPaint(
+                painter: _WallpaperWindowPainter(
+                    image: w.image,
+                    screen: w.screen,
+                    overlay: w.overlayColor,
+                    sigma: sigma),
+                child: CustomPaint(
+                  painter: LiquidGlassPainter(
+                      borderRadius: br,
+                      opacity: op,
+                      highlight: tuning.highlight,
+                      lightPos: tuning.lightPos,
+                      edge: tuning.edge),
+                  child: Container(
+                    padding: widget.padding,
+                    decoration: BoxDecoration(
+                      borderRadius: br,
+                      color: tint,
+                      gradient: tintGrad,
+                      border: border,
+                    ),
+                    child: inner,
+                  ),
+                ),
+              ),
+            );
+          }
+          // ── 回退：无壁纸源时沿用原玻璃路径 ──
+          if (style == SurfaceStyle.blur || key.frosted) {
       // 扁平高斯模糊：卡片样式为「模糊」，或「设置卡片以毛玻璃展示」
       // （后者把「液态玻璃」也改成扁平模糊，长列表更易读）。
       // σ 与 tint 分别由「玻璃细节」的模糊度 / 通透度控制（默认观感不变）。
       final alpha = (((isDark ? 110.0 : 130.0) * op * tScale).round()).clamp(0, 255);
       // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
-      core = ClipRRect(
+      return ClipRRect(
         borderRadius: br,
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+          filter: ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
           child: CustomPaint(
             // 高光 / 边缘光：与液态玻璃回退同一支画笔，扁平模糊同样有玻璃光泽
             painter: LiquidGlassPainter(
@@ -261,7 +350,7 @@ class _AppCardState extends State<AppCard> {
           ),
         ),
       );
-    } else if (style == SurfaceStyle.liquid && gpuGlassEnabledOf(context)) {
+          } else if (gpuGlass) {
       // 液态玻璃：oc_liquid_glass GPU shader（与底部导航/药丸一致）。
       // 走 shader 的条件 = 引擎支持（Impeller）且（移动端 || 设置里显式开启 PC GPU
       // 玻璃）；桌面默认关闭：shader backdrop 的纹理取向/坐标空间在桌面后端不一致
@@ -273,7 +362,7 @@ class _AppCardState extends State<AppCard> {
       final tint = glassBase.withAlpha(((op * 255) * tScale).round().clamp(0, 255));
       final glassKey = ValueKey<_CardGlassKey>(key);
       final innerKey = ValueKey<String>('${key.hashCode}_appcard_inner');
-      core = RepaintBoundary(
+      return RepaintBoundary(
         child: OCLiquidGlassGroup(
           key: glassKey,
           // 参数化的 settings（带实例缓存，参数不变时复用同一对象，
@@ -303,13 +392,13 @@ class _AppCardState extends State<AppCard> {
           ),
         ),
       );
-    } else {
+          } else {
       // 液态玻璃回退（无 Impeller）：高斯模糊 + 液态玻璃倒角高光（与
       // GlassPanel liquid 回退一致，不再依赖全局 glassEffect）。
       final alphaTop = ((isDark ? 96.0 : 118.0) * op * tScale).round();
       final alphaBot = ((isDark ? 46.0 : 62.0) * op * tScale).round();
       // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
-      core = LiquidGlassBackdrop(
+      return LiquidGlassBackdrop(
         borderRadius: br,
         // σ 由「玻璃细节 → 模糊度」控制（Windows 上被 effectiveGlassSigma 钳制）
         sigma: sigma,
@@ -351,6 +440,9 @@ class _AppCardState extends State<AppCard> {
           child: inner,
         ),
       );
+          }
+        },
+      );
     }
 
     // 「样式 → 添加边框」：开启时在卡片表面之上叠一层同圆角描边。
@@ -380,4 +472,67 @@ class _AppCardState extends State<AppCard> {
     }
     return result;
   }
+}
+
+/// 壁纸开窗画笔：把静态壁纸按「当前帧卡片→屏幕的变换」画进卡片本地坐标，
+/// 与背景壁纸逐像素对齐（同一帧、同一变换矩阵光栅化，不存在采样滞后）。
+///
+/// 对齐方式：壁纸 cover 铺满整屏且原点在屏幕 (0,0)，卡片本地坐标下屏幕矩形
+/// 的位置 = 画布当前变换的平移量（逆 DPR 到逻辑坐标）。随后：
+///  1. drawImageRect 把壁纸画到屏幕对应位置（σ 取「玻璃细节→模糊度」）；
+///  2. 叠 withWallpaper 的遮罩色（背景不透明度），保证玻璃里的壁纸亮度
+///     与卡片外的背景一致。
+///
+/// 已知限制：模糊在壁纸图像边界处会向透明衰减（贴屏幕边缘的卡片可能有
+/// 极窄的边缘变暗，通常被遮罩色盖住）；背景上若出现壁纸之外的内容
+/// （如另一张卡恰好滚到玻璃卡后面），开窗不会把它模糊进来 —— 设置列表
+/// 等卡片互不重叠的页面无此问题。
+class _WallpaperWindowPainter extends CustomPainter {
+  final ui.Image image;
+  final Size screen;
+  final Color overlay;
+  final double sigma;
+
+  const _WallpaperWindowPainter({
+    required this.image,
+    required this.screen,
+    required this.overlay,
+    required this.sigma,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final m = Matrix4.fromFloat64List(canvas.getTransform());
+    final st = m.storage;
+    final dpr = st[0];
+    // 仅支持「等比缩放（DPR）+ 平移」的祖先变换（各页面均如此）；
+    // 出现旋转 / 非等比缩放（如 InteractiveViewer）时放弃开窗。
+    if (dpr <= 0 || st[1] != 0 || st[4] != 0 || st[5] != dpr) return;
+    final cardX = st[12] / dpr;
+    final cardY = st[13] / dpr;
+    final screenRect = Rect.fromLTWH(-cardX, -cardY, screen.width, screen.height);
+    final iw = image.width.toDouble();
+    final ih = image.height.toDouble();
+    final scale = math.max(screen.width / iw, screen.height / ih);
+    final cover = Rect.fromLTWH(
+      screenRect.left + (screen.width - iw * scale) / 2,
+      screenRect.top + (screen.height - ih * scale) / 2,
+      iw * scale,
+      ih * scale,
+    );
+    final p = Paint()
+      ..imageFilter = ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma)
+      ..filterQuality = FilterQuality.medium;
+    canvas.drawImageRect(image, Rect.fromLTWH(0, 0, iw, ih), cover, p);
+    if (overlay.a > 0) {
+      canvas.drawRect(screenRect, Paint()..color = overlay);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_WallpaperWindowPainter old) =>
+      old.image != image ||
+      old.screen != screen ||
+      old.overlay != overlay ||
+      old.sigma != sigma;
 }
