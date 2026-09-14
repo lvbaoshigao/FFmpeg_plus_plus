@@ -5475,7 +5475,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   Widget _buildMobileTopBar(ColorScheme scheme, AppStrings s) {
     final cfg = context.read<AppState>().config;
     // 顶部菜单栏药丸大小可在设置中调节（editorToolbarScale）
-    final scale = cfg.editorToolbarScale.clamp(0.5, 1.6);
+    final scale = cfg.editorToolbarScale.clamp(0.7, 1.6);
     return Transform.scale(
       scale: scale,
       alignment: Alignment.topCenter,
@@ -5591,7 +5591,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   Widget _buildMobileBottomLeftBar(ColorScheme scheme, AppStrings s) {
     // 放大镜药丸大小可在设置中调节（editorZoomScale），且基础尺寸放大：
     // 原 16px 图标 + 4px 内边距在手机上过小，难以点按。
-    final scale = context.read<AppState>().config.editorZoomScale.clamp(0.5, 1.6);
+    final scale = context.read<AppState>().config.editorZoomScale.clamp(0.7, 1.6);
     return Transform.scale(
       scale: scale,
       alignment: Alignment.bottomLeft,
@@ -5623,7 +5623,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     final nodesLabel = s.isZh ? '节点' : 'nodes';
     // 左下缩放悬浮条放大后约 116px 宽（3 个 20px 图标按钮），
     // 中央信息条扣除这部分宽度 + 缩放系数，避免窄屏重叠。
-    final zoomScale = context.read<AppState>().config.editorZoomScale.clamp(0.5, 1.6);
+    final zoomScale = context.read<AppState>().config.editorZoomScale.clamp(0.7, 1.6);
     final reserved = 130.0 * zoomScale + 16;
     final maxW = math.max(96.0, MediaQuery.of(context).size.width - reserved);
     return Container(
