@@ -11,7 +11,7 @@ import '../platform/app_platform.dart';
 
 /// 一条广告数据。
 ///
-/// 目前没有任何广告投放（见 [kAds] 为空），因此页面展示「空空如也」空状态。
+/// 目前没有任何广告投放（见 [kAds] 为空），因此页面展示「哦先生目前并没有放广告」空状态。
 /// 后续接入广告时只需往 [kAds] 里加数据，UI 会自动渲染成卡片列表 ——
 /// 页面骨架、样式（壁纸背景 + 玻璃卡片 + 与其它三级页一致的顶栏）都已就位。
 class AdItem {
@@ -101,7 +101,7 @@ class AdsPage extends StatelessWidget {
     ));
   }
 
-  /// 空状态：暂无广告内容（用户要求「没有广告显示空空如也」）。
+  /// 空状态：暂无广告内容（用户要求「没有广告显示哦先生目前并没有放广告」）。
   /// 用 AppCard 承载，样式与其它三级页的卡片完全一致。
   Widget _emptyState(BuildContext context, ColorScheme scheme, AppStrings s) {
     final cardStyle = context.select<AppState, String>((st) => st.config.cardStyle);
@@ -117,7 +117,7 @@ class AdsPage extends StatelessWidget {
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             Icon(Icons.inbox_outlined, size: 46, color: scheme.outline.withAlpha(140)),
             const SizedBox(height: 14),
-            Text(s.isZh ? '空空如也' : 'Nothing here yet',
+            Text(s.isZh ? '哦先生目前并没有放广告' : 'Nothing here yet',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(

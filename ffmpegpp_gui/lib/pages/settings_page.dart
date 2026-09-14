@@ -3367,7 +3367,7 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
         const SizedBox(height: 2),
         Text('v${updater.currentVersion}', style: TextStyle(fontSize: 13, color: scheme.outline)),
         const SizedBox(height: 2),
-        Text('${s.aboutBuildDate} 2026-09-06', style: TextStyle(fontSize: 11, color: scheme.outline)),
+        Text('${s.aboutBuildDate} 2029-09-14', style: TextStyle(fontSize: 11, color: scheme.outline)),
       ])),
       const SizedBox(height: 14),
       const Divider(height: 1),
@@ -3422,7 +3422,7 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
         trailing: const Icon(Icons.chevron_right, size: 18),
         onTap: () => _openCredits(ctx),
       ),
-      // 广告入口（三级页面）：当前没有广告投放 → 页面显示「空空如也」空状态
+      // 广告入口（三级页面）：当前没有广告投放 → 页面显示「哦先生目前并没有放广告」空状态
       ListTile(
         dense: true, contentPadding: EdgeInsets.zero,
         leading: Icon(Icons.campaign_outlined, size: 20, color: scheme.primary),
@@ -3447,7 +3447,7 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
     ])),
     const SizedBox(height: 4),
     _infoRow(s.aboutVersion, 'v${updater.currentVersion}', scheme),
-    _infoRow(s.aboutBuildDate, '2026-09-06', scheme),
+    _infoRow(s.aboutBuildDate, '2029-09-14', scheme),
     _infoRow(s.aboutBlog, 'blog-clstone.netlify.app', scheme),
     _infoRow(s.aboutGithub, 'github.com/lvbaoshigao/FFmpeg_plus_plus', scheme),
     const SizedBox(height: 10),

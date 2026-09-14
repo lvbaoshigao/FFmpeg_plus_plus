@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 
-const _currentVersion = '5.3.6';
+const _currentVersion = '5.10.31';
 
 const _lanzouUrls = {
   'windows': 'https://wwbrq.lanzouv.com/b002w12goj',
@@ -57,7 +57,7 @@ class UpdateResult {
 enum UpdateSource { lanzou, github }
 
 int compareVersions(String a, String b) {
-  // [FIX M-3] 前缀剥离改为大小写不敏感：'V5.3.6' 的大写 V 也要剥掉，
+  // [FIX M-3] 前缀剥离改为大小写不敏感：'V5.10.31' 的大写 V 也要剥掉，
   // 否则 'V5' 被 int.tryParse 抹平成 0，大版本号被错误拉低。
   final (na, pa) = _parseVersionParts(a.replaceFirst(RegExp(r'^[vV]'), ''));
   final (nb, pb) = _parseVersionParts(b.replaceFirst(RegExp(r'^[vV]'), ''));

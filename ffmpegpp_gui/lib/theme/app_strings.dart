@@ -159,7 +159,7 @@ class AppStrings {
   String get aboutClose => lang == 'zh' ? '关闭' : 'Close';
   String get aboutZoomHint => lang == 'zh' ? '点击放大' : 'Tap to zoom';
   String get aboutReferences => lang == 'zh' ? '引用' : 'Attribution';
-  String get aboutReferencesTitle => lang == 'zh' ? '使用了以下的项目' : 'Projects Used';
+  String get aboutReferencesTitle => lang == 'zh' ? '引用项目' : 'Projects Used';
   String get aboutReferencesIntro => lang == 'zh' ? '本应用使用了以下开源项目，特此致谢：' : 'This app uses the following open-source projects:';
   String get checkUpdate => lang == 'zh' ? '检查更新' : 'Check for Updates';
   String get checking => lang == 'zh' ? '检查中...' : 'Checking...';
