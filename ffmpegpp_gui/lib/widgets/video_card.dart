@@ -109,7 +109,7 @@ class _ThumbWidgetState extends State<_ThumbWidget> {
           fit: BoxFit.cover, width: 88, height: 54,
           // 缩略图按显示尺寸 3x 封顶解码
           cacheWidth: 264,
-          errorBuilder: (_, __, ___) => Icon(Icons.image_outlined,
+          errorBuilder: (_, _, _) => Icon(Icons.image_outlined,
               color: Theme.of(context).colorScheme.outline, size: 24)));
     }
     if (_thumbPath != null) {

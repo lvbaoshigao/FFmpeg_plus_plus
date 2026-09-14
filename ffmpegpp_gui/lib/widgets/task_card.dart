@@ -997,7 +997,7 @@ class _ThumbWidgetState extends State<_ThumbWidget> {
           // 缩略图按显示尺寸 3x 封顶解码（1080p 源 ~8MB/张）
           cacheWidth: 120,
           fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => Icon(Icons.image_outlined,
+          errorBuilder: (_, _, _) => Icon(Icons.image_outlined,
               color: Theme.of(context).colorScheme.outline, size: 16));
     }
     if (_path != null) {
