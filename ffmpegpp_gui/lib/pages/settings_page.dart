@@ -507,7 +507,12 @@ class _SettingsPageState extends State<SettingsPage> {
               '逻辑门', 'gate', 'ansi', 'iec', 'ieee', '符号', 'symbol',
               // 界面尺寸（药丸大小）也在这张卡里，补上对应搜索词
               '药丸', 'pill', '大小', 'size', '尺寸', '放大镜', 'zoom',
-              '界面', 'ui', '菜单栏', 'toolbar', '缩放', 'scale'],
+              '界面', 'ui', '菜单栏', 'toolbar', '缩放', 'scale',
+              // 三级页（编辑模式 / 自动保存）的搜索词也要挂在这张卡上，
+              // 否则移动端在设置里搜「自动保存」找不到东西。
+              '编辑模式', '快速模式', 'edit', 'mode', 'classic', '蓝图', 'blueprint',
+              '自动保存', '草稿', '保存间隔', 'autosave', 'draft', 'save',
+              '横屏', 'landscape'],
           build: _buildNodeEditorStyleCard,
         ),
         _CardDef(
@@ -554,21 +559,24 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
       ],
     ),
-    _SectionDef(
-      id: 'editor',
-      title: (s) => s.secEditor,
-      icon: Icons.account_tree_outlined,
-      cards: [
-        _CardDef(
-          id: 'editorMode',
-          title: (s) => s.cardEditorMode,
-          icon: Icons.account_tree_outlined,
-          keywords: ['编辑', '编辑器', '节点', '画布', '蓝图',
-              'editor', 'node', 'canvas', 'blueprint', 'classic', 'mode', '模式'],
-          build: _buildEditorMode,
-        ),
-        // 移动端无物理键盘，快捷键编辑无意义 —— 隐藏该设置项
-        if (!isMobilePlatform)
+    // 「编辑器」分区**仅桌面端保留**：移动端的「编辑模式 / 自动保存」已下沉为
+    // 「外观 → 节点编辑器 → 编辑模式 / 自动保存」三级页（见
+    // _buildNodeEditorStyleCard），快捷键本来就只在桌面端有意义 —— 整段在移动端
+    // 会变成一个空分区（一级菜单里多出一行点不动的标题）。
+    if (!isMobilePlatform)
+      _SectionDef(
+        id: 'editor',
+        title: (s) => s.secEditor,
+        icon: Icons.account_tree_outlined,
+        cards: [
+          _CardDef(
+            id: 'editorMode',
+            title: (s) => s.cardEditorMode,
+            icon: Icons.account_tree_outlined,
+            keywords: ['编辑', '编辑器', '节点', '画布', '蓝图',
+                'editor', 'node', 'canvas', 'blueprint', 'classic', 'mode', '模式'],
+            build: _buildEditorMode,
+          ),
           _CardDef(
             id: 'shortcuts',
             title: (s) => s.cardShortcuts,
@@ -577,16 +585,16 @@ class _SettingsPageState extends State<SettingsPage> {
                 'keyboard', 'hotkey', 'key'],
             build: _buildShortcuts,
           ),
-        _CardDef(
-          id: 'autosave',
-          title: (s) => s.cardAutosave,
-          icon: Icons.save_outlined,
-          keywords: ['自动保存', '草稿', '恢复', 'autosave', 'draft', 'autosave',
-              'auto', 'save', '恢复'],
-          build: _buildAutosave,
-        ),
-      ],
-    ),
+          _CardDef(
+            id: 'autosave',
+            title: (s) => s.cardAutosave,
+            icon: Icons.save_outlined,
+            keywords: ['自动保存', '草稿', '恢复', 'autosave', 'draft',
+                'auto', 'save', '恢复'],
+            build: _buildAutosave,
+          ),
+        ],
+      ),
     // 移动端专用：命令与日志从底部导航移入设置（避免底部元素过多）
     if (isMobilePlatform)
       _SectionDef(
@@ -1094,6 +1102,9 @@ class _SettingsPageState extends State<SettingsPage> {
           },
         ),
       ],
+      // 主界面不折叠（用户要求「主界面不要搞...了」）。本页常驻操作只有「搜索」
+      // 一个，本来也不会折叠，这里显式关掉以免以后加操作时行为与其它主界面不一致。
+      collapseActions: false,
       searching: _searchExpanded,
       // 搜索药丸：与主界面（项目页）共用同一实现，不再各写一份
       searchChild: MobileSearchPill(
@@ -1431,6 +1442,49 @@ Widget _glass(BuildContext ctx, AppState state, String title, List<Widget> child
   );
 }
 
+/// 二级页里的「三级页入口」行：图标 + 标题 + 一行作用说明 + 右箭头。
+///
+/// 抽成共享实现的原因：玻璃细节 / 编辑模式 / 自动保存等入口形态完全一样，
+/// 各写一遍就会在字号、内边距、图标尺寸上互相差几个 px（用户对这类不一致
+/// 很敏感）。调用前**自己加一条细分隔线**（`Divider` height 1）与上方内容分开。
+Widget _subPageEntry(
+  BuildContext ctx,
+  ColorScheme scheme,
+  Color clr, {
+  required IconData icon,
+  required String label,
+  required String scope,
+  required VoidCallback onTap,
+}) {
+  return InkWell(
+    borderRadius: BorderRadius.circular(10),
+    onTap: onTap,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(children: [
+        Icon(icon, size: 15, color: scheme.primary),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: clr, fontSize: 12)),
+                const SizedBox(height: 2),
+                Text(scope,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 10, color: scheme.outline)),
+              ]),
+        ),
+        Icon(Icons.chevron_right, size: 18, color: scheme.outline),
+      ]),
+    ),
+  );
+}
+
 /// 路径字段（标签 + 输入框 + 浏览按钮）
 Widget _pf(BuildContext ctx, String label, String value, ValueChanged<String> onChange, VoidCallback onBrowse) {
   final scheme = Theme.of(ctx).colorScheme;
@@ -1665,14 +1719,20 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
   // 动态取色开启时，自定义主题色（预设/取色器）不生效
   final dynamicOn = isMobilePlatform && cfg.useDynamicColor;
 
-  return _glass(ctx, state, s.cardTheme, [
-    // ── 模式（亮/暗色切换） ──
-    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-        title: Text(s.themeMode, style: TextStyle(color: clr)),
-        subtitle: Text(state.darkMode ? s.darkMode : (s.isZh ? '浅色模式' : 'Light Mode'),
-            style: TextStyle(fontSize: 11, color: scheme.outline)),
-        value: state.darkMode,
-        onChanged: (v) => state.toggleDarkMode(v)),
+  // 二级页「按主题分开、不要集中在一个卡片内」（用户要求）：本页拆成两张卡 ——
+  // ① 模式（亮 / 暗）② 主题色（预设 / 自定义取色 / 动态取色 / 协调度）。
+  return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+    _glass(ctx, state, s.isZh ? '模式' : 'Appearance mode', [
+      // 亮 / 暗色切换
+      SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+          title: Text(s.themeMode, style: TextStyle(color: clr)),
+          subtitle: Text(state.darkMode ? s.darkMode : (s.isZh ? '浅色模式' : 'Light Mode'),
+              style: TextStyle(fontSize: 11, color: scheme.outline)),
+          value: state.darkMode,
+          onChanged: (v) => state.toggleDarkMode(v)),
+    ]),
+    const SizedBox(height: 8),
+    _glass(ctx, state, s.isZh ? '主题色' : 'Accent color', [
     // ── 主题色（预设 / 自定义 / 动态取色） ──
     Row(children: [
       Expanded(child: Text(s.accentColor, maxLines: 1, overflow: TextOverflow.ellipsis,
@@ -1740,6 +1800,7 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
             ? '仅作用于「跟随主题色」的卡片 / 底栏 / 药丸底色，0% 即原主题色'
             : 'Only affects accent-tinted cards, nav bar and pills; 0% = raw accent',
         style: TextStyle(fontSize: 10, color: scheme.outline)),
+    ]),
   ]);
 }
 
@@ -1777,34 +1838,21 @@ Widget _buildSurfaceStyleCard(BuildContext ctx, AppState state) {
       cfg.pillStyle == SurfaceStyle.blur ||
       (!isMobilePlatform && cfg.menuStyle == SurfaceStyle.blur);
 
-  // 卡内分组小标题。
+  // 二级页也「一主题一张卡」。
   //
-  // 用户要求「设置界面你不要每个都分开，像是主题、背景等整合到一张卡片，在二级
-  // 菜单也是这样」—— 本页此前被拆成 4 张卡（样式预设 / 表面样式 / 玻璃与材质 /
-  // 特效），现在合并回**一张卡**，靠这行小标题 + 细分隔线分段，既整又不失可读性。
-  Widget group(String label) => Padding(
-        padding: const EdgeInsets.only(top: 14, bottom: 10),
-        child: Row(children: [
-          Text(label,
-              style: TextStyle(
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w600,
-                  color: scheme.primary,
-                  letterSpacing: 0.2)),
-          const SizedBox(width: 8),
-          Expanded(
-              child:
-                  Divider(height: 1, color: scheme.outlineVariant.withAlpha(70))),
-        ]),
-      );
-
-  return _glass(ctx, state, s.styleLabel, [
+  // 口径变更史（改前必读）：**一级菜单**要求「一个分区一张卡」（整合成一张），
+  // **二级页**反过来 —— 用户原话「你设置界面分的很好，但是二级菜单比如样式界面
+  // (样式预设与表面样式等等)没有进行分开，而是集中在一个卡片内」。所以本页返回
+  // **4 张独立卡**：样式预设 / 表面样式 / 玻璃与材质 / 特效，各自带自己的卡标题。
+  // 桌面端这个返回值被放进 MasonryGrid 单元格，所以**绝不能在外面再包 AppCard**。
+  return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
     // ① 样式预设
-    group(zh ? '样式预设' : 'Style presets'),
-    ..._buildStylePresets(ctx, state),
+    _glass(ctx, state, zh ? '样式预设' : 'Style presets',
+        _buildStylePresets(ctx, state)),
+    const SizedBox(height: 8),
 
     // ② 表面样式
-    group(zh ? '表面样式' : 'Surface style'),
+    _glass(ctx, state, zh ? '表面样式' : 'Surface style', [
     // 布局统一：左 = 图标 + 文字（含作用范围说明），右 = 下拉菜单（展开动画）
     _styleRow(ctx,
         icon: Icons.view_carousel_outlined,
@@ -1864,55 +1912,32 @@ Widget _buildSurfaceStyleCard(BuildContext ctx, AppState state) {
                   'Glass details → Blur',
           style: TextStyle(fontSize: 10, color: scheme.outline)),
     ],
-    // ── 玻璃细节（三级页入口，仅移动端）──
-    //
-    // 五项微调参数（模糊度 / 通透度 / 高光强度与位置 / 边缘光）下沉到第三层，
-    // 二级页只留这一行入口，避免把样式卡撑到要滑很久。桌面端仍是独立卡片
-    // （见 _sections 里带 `if (!isMobilePlatform)` 的那张）。
-    if (isMobilePlatform) ...[
-      const SizedBox(height: 10),
-      InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: () => _pushSettingsSubPage(
-            ctx,
-            zh ? '玻璃细节' : 'Glass details',
-            _buildGlassDetailCard),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Row(children: [
-            Icon(Icons.blur_on_outlined, size: 15, color: scheme.primary),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(zh ? '玻璃细节' : 'Glass details',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: clr, fontSize: 12)),
-                    const SizedBox(height: 2),
-                    Text(
-                        zh
-                            ? '模糊度 / 通透度 / 高光强度与位置 / 边缘光'
-                            : 'Blur, clarity, highlight position, edge light',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: 10, color: scheme.outline)),
-                  ]),
-            ),
-            Icon(Icons.chevron_right, size: 18, color: scheme.outline),
-          ]),
-        ),
-      ),
-    ],
+    ]),
+    const SizedBox(height: 8),
 
     // ③ 玻璃与材质
-    group(zh ? '玻璃与材质' : 'Glass & material'),
+    _glass(ctx, state, zh ? '玻璃与材质' : 'Glass & material', [
+    // ── 玻璃与材质各项（面板玻璃 / 玻璃底色 / 设置卡片玻璃 / GPU / 边框）──
     ..._buildGlassMaterialItems(ctx, state),
 
+    // ── 玻璃细节入口（放在卡末：下行导航行按惯例排最后）──
+    if (isMobilePlatform) ...[
+      const SizedBox(height: 6),
+      Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
+      _subPageEntry(ctx, scheme, clr,
+          icon: Icons.blur_on_outlined,
+          label: zh ? '玻璃细节' : 'Glass details',
+          scope: zh
+              ? '模糊度 / 通透度 / 高光强度与位置 / 边缘光'
+              : 'Blur, clarity, highlight position, edge light',
+          onTap: () => _pushSettingsSubPage(
+              ctx, zh ? '玻璃细节' : 'Glass details', _buildGlassDetailCard)),
+    ],
+    ]),
+    const SizedBox(height: 8),
+
     // ④ 特效
-    group(zh ? '特效' : 'Effects'),
-    ..._buildEffectItems(ctx, state),
+    _glass(ctx, state, zh ? '特效' : 'Effects', _buildEffectItems(ctx, state)),
   ]);
 }
 
@@ -2562,8 +2587,11 @@ Widget _buildNodeEditorStyleCard(BuildContext ctx, AppState state) {
       ),
       SizedBox(
         width: _kMenuWidth,
+        // 下拉菜单（expandable: true）：用户要求「逻辑门符号标准改为下拉菜单样式，
+        // 跟上面画布背景选项一样」—— 两个选项的短列表用行内分段药丸会让触控目标
+        // 只有 ~58px 宽，且与上方「画布背景」的控件形态不一致。
         child: OptionMenuBar<String>(
-          expandable: false,
+          expandable: true,
           value: cfg.gateStd,
           items: const [
             OptionItem('ansi', 'ANSI/IEEE'),
@@ -2617,6 +2645,32 @@ Widget _buildNodeEditorStyleCard(BuildContext ctx, AppState state) {
         labelStyle: TextStyle(color: clr, fontSize: 12),
         onCommit: (v) => state.updateConfig((c) => c..editorZoomScale = v),
       ),
+      const SizedBox(height: 8),
+    ],
+
+    // ── 编辑器设置（编辑模式 / 自动保存）：三级菜单 ──
+    //
+    // 用户要求「编辑器设置(包括编辑模式和自动保存)迁移到节点编辑器这个设置项目内，
+    // 它们作为三级菜单」。这两项原本是「编辑器」分区里的两张一级卡片（一级菜单
+    // 点一下就直接进二级页），现在收进本卡、点进去才是设置本体。
+    // 桌面端仍是独立卡片：桌面右栏没有三级页机制（与「玻璃细节」同一处理）。
+    if (isMobilePlatform) ...[
+      const SizedBox(height: 6),
+      Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
+      _subPageEntry(ctx, scheme, clr,
+          icon: Icons.account_tree_outlined,
+          label: s.cardEditorMode,
+          scope: s.isZh ? '节点编辑器 / 快速模式' : 'Node editor / Quick mode',
+          onTap: () =>
+              _pushSettingsSubPage(ctx, s.cardEditorMode, _buildEditorMode)),
+      _subPageEntry(ctx, scheme, clr,
+          icon: Icons.save_outlined,
+          label: s.cardAutosave,
+          scope: s.isZh
+              ? '草稿自动保存与保存间隔'
+              : 'Draft autosave and save interval',
+          onTap: () =>
+              _pushSettingsSubPage(ctx, s.cardAutosave, _buildAutosave)),
     ],
   ]);
 }
@@ -3157,7 +3211,9 @@ Widget _buildTasks(BuildContext ctx, AppState state) {
   final s = AppStrings.of(cfg.language);
   final scheme = Theme.of(ctx).colorScheme;
   final clr = scheme.onSurface;
-  return _glass(ctx, state, s.cardTasks, [
+  // 二级页「按主题分开」：拆成 ① 并发与解析（性能）② 通知。
+  return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+    _glass(ctx, state, s.isZh ? '并发与解析' : 'Concurrency & probing', [
     // 左右布局：标签左、下拉右（固定宽度，不再整行拉满）
     Row(children: [
       Expanded(child: Text(s.isZh ? '同时启用任务数' : 'Concurrent Tasks', maxLines: 1,
@@ -3187,12 +3243,15 @@ Widget _buildTasks(BuildContext ctx, AppState state) {
     ]),
     const SizedBox(height: 4),
     Text(s.isZh ? '添加文件时同时解析的线程数，增大可加快批量导入速度' : 'Number of concurrent probe threads when importing files', style: TextStyle(fontSize: 10, color: scheme.outline)),
+    ]),
     const SizedBox(height: 8),
-    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-        title: Text(s.isZh ? '任务完成系统通知' : 'Task completion notification', style: TextStyle(color: clr, fontSize: 13)),
-        subtitle: Text(s.isZh ? '每个任务完成时发送系统通知' : 'Send system notification when each task finishes', style: TextStyle(fontSize: 11, color: scheme.outline)),
-        value: cfg.enableSystemNotification,
-        onChanged: (v) => state.updateConfig((c) => c..enableSystemNotification = v)),
+    _glass(ctx, state, s.isZh ? '通知' : 'Notifications', [
+      SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+          title: Text(s.isZh ? '任务完成系统通知' : 'Task completion notification', style: TextStyle(color: clr, fontSize: 13)),
+          subtitle: Text(s.isZh ? '每个任务完成时发送系统通知' : 'Send system notification when each task finishes', style: TextStyle(fontSize: 11, color: scheme.outline)),
+          value: cfg.enableSystemNotification,
+          onChanged: (v) => state.updateConfig((c) => c..enableSystemNotification = v)),
+    ]),
   ]);
 }
 

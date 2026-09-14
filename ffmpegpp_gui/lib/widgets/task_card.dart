@@ -97,18 +97,36 @@ class TaskCard extends StatelessWidget {
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: Column(children: [
-              Row(children: [
+              // 头部：缩略图 + 「文件名 / 状态」两行左列 + 右侧操作按钮 + 展开箭头。
+              // 原版状态文字（11px）夹在操作按钮和展开箭头中间，窄屏下标题行
+              // 非常拥挤；现在状态连同剩余时间下沉为文件名下的小字行。
+              Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
                 // 缩略图
                 ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
+                  borderRadius: BorderRadius.circular(6),
                   child: _ThumbWidget(filepath: task.inputPath, ffmpeg: ffmpeg),
                 ),
-                const SizedBox(width: 8),
-                Icon(_statusIcon, size: 20, color: _statusColor(scheme)),
                 const SizedBox(width: 10),
-                Expanded(child: Text(task.filename,
-                    style: TextStyle(fontWeight: FontWeight.w600, color: clr),
-                    maxLines: 1, overflow: TextOverflow.ellipsis)),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(task.filename,
+                        style: TextStyle(fontWeight: FontWeight.w600, color: clr),
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                    const SizedBox(height: 3),
+                    Row(children: [
+                      Icon(_statusIcon, size: 13, color: _statusColor(scheme)),
+                      const SizedBox(width: 4),
+                      Text(statusLabel(),
+                          style: TextStyle(fontSize: 11, color: _statusColor(scheme))),
+                      // 剩余时间紧跟状态：仅处理中有意义，等待/终态不占位
+                      if (task.status == TaskStatus.processing) ...[
+                        const SizedBox(width: 8),
+                        _chip(Icons.timer_outlined,
+                            '${s.remaining}: ${_dashIfNa(task.remaining, s.isZh)}', scheme),
+                      ],
+                    ]),
+                  ]),
+                ),
                 if (task.status == TaskStatus.pending)
                   IconButton(icon: Icon(Icons.play_circle_filled, color: scheme.primary, size: 22),
                       tooltip: s.startProcessing, onPressed: () => context.read<AppState>().processSingleTask(task.id)),
@@ -133,13 +151,11 @@ class TaskCard extends StatelessWidget {
                     icon: Icon(Icons.delete_outline, size: 18, color: scheme.error), tooltip: s.cancel,
                     onPressed: () => context.read<AppState>().removeTask(task.id),
                     padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 28, minHeight: 28)),
-                Text(statusLabel(), style: TextStyle(fontSize: 11, color: _statusColor(scheme))),
-                const SizedBox(width: 8),
                 Icon(task.expanded ? Icons.expand_less : Icons.expand_more, size: 20, color: scheme.outline),
               ]),
-              const SizedBox(height: 8),
-              // 双进度条
+              // 双进度条 + 速度/百分比：仅处理中/已完成显示（等待与终态不占位）
               if (task.status == TaskStatus.processing || task.status == TaskStatus.completed) ...[
+                const SizedBox(height: 10),
                 // 上层：整体进度（分段）
                 _SegmentedProgressBar(
                   segments: task.pipelineCalls?.length ?? 1,
@@ -156,17 +172,15 @@ class TaskCard extends StatelessWidget {
                       ? task.callProgresses[task.currentCallIndex]
                       : null,
                 ),
+                const SizedBox(height: 6),
+                Row(children: [
+                  if (task.speed.isNotEmpty)
+                    _chip(Icons.speed, _dashIfNa(task.speed, s.isZh), scheme),
+                  const Spacer(),
+                  Text('${task.progress.toStringAsFixed(0)}%',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: clr)),
+                ]),
               ],
-              const SizedBox(height: 4),
-              Row(children: [
-                // 占位值（N/A / 空）统一本地化：中文下显示「—」，避免
-                // "Remaining: N/A" 这类混合英文出现在队列详情里。
-                _chip(Icons.timer_outlined, '${s.remaining}: ${_dashIfNa(task.remaining, s.isZh)}', scheme),
-                const SizedBox(width: 12),
-                if (task.speed.isNotEmpty) _chip(Icons.speed, _dashIfNa(task.speed, s.isZh), scheme),
-                const Spacer(),
-                Text('${task.progress.toStringAsFixed(0)}%', style: TextStyle(fontSize: 12, color: clr)),
-              ]),
               // 失败任务：折叠态也直接显示错误摘要，点开卡片可查看完整日志
               if (task.status == TaskStatus.failed && task.error != null) ...[
                 const SizedBox(height: 6),
@@ -284,7 +298,7 @@ class TaskCard extends StatelessWidget {
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
             color: scheme.surfaceContainerHighest.withAlpha(60),
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(10),
             border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
           ),
           child: Column(
@@ -487,9 +501,11 @@ class _FileInfoCard extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
+      // 与流水线容器同规格（surfaceContainerHighest 底 + outlineVariant 细描边）
       decoration: BoxDecoration(
         color: scheme.surfaceContainerHighest.withAlpha(40),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -630,7 +646,7 @@ class _AdvancedInfoSectionState extends State<_AdvancedInfoSection> {
     return Container(
       decoration: BoxDecoration(
         color: widget.scheme.surfaceContainerHighest.withAlpha(30),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(10),
       ),
       child: Column(
         children: [
@@ -869,7 +885,7 @@ class _NodeMiniCanvas extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 8),
       decoration: BoxDecoration(
         color: scheme.surfaceContainerHighest.withAlpha(80),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(10),
       ),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,

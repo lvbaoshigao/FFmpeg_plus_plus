@@ -297,6 +297,11 @@ class ProjectPageState extends State<ProjectPage> {
     return MobilePillTopBar(
       title: titleChild,
       actions: _buildMobileActions(context, state, s, scheme, inSelection),
+      // 主界面不折叠：搜索 / 导入 / 容器 / 添加（多选态则是 全选 / 反选 / 删除）
+      // 全部 inline 挤在同一颗药丸里。用户要求「主界面不要搞...了（右上角药丸
+      // 样式不用折叠，因为项挤在一个药丸里比较合适）」。极端窄屏由
+      // _actionsPill 内的 FittedBox 等比缩小兜底，不会 RenderFlex 溢出。
+      collapseActions: false,
       searching: _searchVisible,
       // 搜索药丸：搜索时从 44px 变长到 200px 并水平居中（与设置页同一实现）
       searchChild: MobileSearchPill(

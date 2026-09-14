@@ -1,3 +1,7 @@
+# ============================================================
+# FFmpeg_plus_plus 根级忽略规则
+# ============================================================
+
 # Flutter 工具状态缓存（误提交过，禁止再入库）
 .config/
 
@@ -8,3 +12,32 @@
 *.log
 *.tmp
 .DS_Store
+
+# ---- 编辑器 / 智能体本地状态目录 ----
+# 曾误提交 .zcode/plans/ 与 .workbuddy/memory/，故一并拦截
+.vscode/
+.claude/
+.idea/
+.zcode/
+.workbuddy/
+
+# ---- 编译产物 / 分发目录 ----
+# server.dist/ 曾整体入库（server.exe、python311.dll、*.pyd 等，约 23MB）
+server.dist/
+*.exe
+*.dll
+*.pyd
+*.res
+*.obj
+*.pdb
+*.ilk
+*.exp
+nuitka-crash-report.xml
+
+# ---- 依赖 / 缓存 ----
+__pycache__/
+*.pyc
+.cache/
+
+# ---- 工具误产出的临时文件（曾误提交 wb_an_a1/a2.txt）----
+wb_an_*

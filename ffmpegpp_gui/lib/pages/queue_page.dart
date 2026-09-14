@@ -239,6 +239,9 @@ class _QueuePageState extends State<QueuePage> {
       // 药丸高度固定：标题单行省略（顶栏内部已有 DefaultTextStyle.maxLines 兜底）
       title: Text(s.navQueue, maxLines: 1, overflow: TextOverflow.ellipsis),
       actions: _buildMobileActions(scheme, state, s),
+      // 主界面不折叠（用户要求「主界面不要搞...了」）：队列页的操作项固定且不多，
+      // 挤在同一颗药丸里比收进「…」更好点。
+      collapseActions: false,
     );
   }
 }
