@@ -89,10 +89,14 @@ class _ThumbWidget extends StatefulWidget {
 }
 class _ThumbWidgetState extends State<_ThumbWidget> {
   String? _thumbPath;
+  /// 图片（截图等）不走 ffmpeg 抽帧：直接 Image.file 解码源文件，
+  /// 移动端子进程抽帧失败时不再只剩占位图标。
+  bool get _isImage => detectMediaType(widget.filepath) == MediaType.image;
   @override
   void initState() { super.initState(); _load(); }
 
   Future<void> _load() async {
+    if (_isImage) return;
     final p = await ThumbnailService.ensureThumbnail(widget.filepath,
         ffmpeg: widget.ffmpeg, isAudio: widget.isAudio);
     if (mounted && p != null) setState(() => _thumbPath = p);
@@ -100,6 +104,14 @@ class _ThumbWidgetState extends State<_ThumbWidget> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isImage) {
+      return ClipRRect(borderRadius: BorderRadius.circular(6), child: Image.file(File(widget.filepath),
+          fit: BoxFit.cover, width: 88, height: 54,
+          // 缩略图按显示尺寸 3x 封顶解码
+          cacheWidth: 264,
+          errorBuilder: (_, __, ___) => Icon(Icons.image_outlined,
+              color: Theme.of(context).colorScheme.outline, size: 24)));
+    }
     if (_thumbPath != null) {
       return ClipRRect(borderRadius: BorderRadius.circular(6), child: Image.file(File(_thumbPath!),
           fit: widget.isAudio ? BoxFit.contain : BoxFit.cover, width: 88, height: 54,

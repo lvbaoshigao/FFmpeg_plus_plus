@@ -234,12 +234,24 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   }
 
   void _saveGraph() {
-    final graph = PipelineGraph(nodes: _nodes, connections: _connections, logicBlocks: _logicBlocks);
+    final graph = _currentGraph();
     widget.onSave(graph);
     context.read<AppState>().setCurrentPipeline(graph);
     // 防抖自动保存草稿：编辑后 1.2s 无新动作才落盘，避免拖动/快速连续操作时频繁写磁盘。
     _scheduleAutosave(graph);
   }
+
+  /// 编辑动作后的内部提交：只同步 AI/MCP 工具可见的实时画布（_currentPipelineGraph）
+  /// 和防抖草稿，不触发父级持久化（widget.onSave）。
+  /// 此前所有编辑动作都直接调 _saveGraph → 画布被逐次写入配置库/视频，
+  /// 「放弃更改」形同虚设；现在只有显式保存（保存按钮 / AI·MCP save 工具）才持久化。
+  void _commitChange() {
+    final graph = _currentGraph();
+    context.read<AppState>().setCurrentPipeline(graph);
+    _scheduleAutosave(graph);
+  }
+
+  PipelineGraph _currentGraph() => PipelineGraph(nodes: _nodes, connections: _connections, logicBlocks: _logicBlocks);
 
   void _scheduleAutosave(PipelineGraph graph) {
     _autosaveTimer?.cancel();
@@ -374,7 +386,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
       }
     }
-    _appState.mcpOnClearAll = () { _pushUndo(); setState(() { _nodes.clear(); _connections.clear(); _logicBlocks.clear(); _selectedNodeIds.clear(); _saveGraph(); }); };
+    _appState.mcpOnClearAll = () { _pushUndo(); setState(() { _nodes.clear(); _connections.clear(); _logicBlocks.clear(); _selectedNodeIds.clear(); _commitChange(); }); };
     _appState.mcpOnUndo = _undo;
     _appState.mcpOnRedo = _redo;
     _appState.mcpOnSave = _saveGraph;
@@ -386,7 +398,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       setState(() {
         params.forEach((k, v) { _nodes[idx].params[k] = v; });
       });
-      _saveGraph();
+      _commitChange();
       return true;
     };
     _appState.mcpOnAddNode = (typeName, x, y) {
@@ -394,7 +406,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       final node = PipelineNode(id: _uuid.v4(), type: type, x: x, y: y);
       _pushUndo();
       setState(() => _nodes.add(node));
-      _saveGraph();
+      _commitChange();
       return node.id;
     };
     _appState.mcpOnAddGate = (gateName, x, y) {
@@ -406,13 +418,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       final node = PipelineNode(id: _uuid.v4(), type: PipelineStepType.start, gateType: gate.name, x: x, y: y);
       _pushUndo();
       setState(() => _nodes.add(node));
-      _saveGraph();
+      _commitChange();
       return node.id;
     };
     _appState.mcpOnDeleteNode = (nodeId) {
       if (!_nodes.any((n) => n.id == nodeId)) throw ArgumentError('Node not found: $nodeId');
       _deleteNode(nodeId);
-      _saveGraph();
+      _commitChange();
     };
     _appState.mcpOnConnect = (fromId, toId) {
       if (fromId == toId) return false;
@@ -420,7 +432,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       if (_connections.any((c) => c.fromNodeId == fromId && c.toNodeId == toId)) return false;
       _pushUndo();
       setState(() => _connections.add(PipelineConnection(id: _uuid.v4(), fromNodeId: fromId, toNodeId: toId)));
-      _saveGraph();
+      _commitChange();
       return true;
     };
     _appState.mcpOnDisconnect = (connId) {
@@ -428,7 +440,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       if (idx < 0) return false;
       _pushUndo();
       setState(() => _connections.removeAt(idx));
-      _saveGraph();
+      _commitChange();
       return true;
     };
     _appState.mcpOnListNodes = () => _nodes.map((n) => n.toJson()).toList();
@@ -606,7 +618,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       node.params['file_media_type'] = widget.video.fileMediaType.name;
     }
     setState(() => _nodes.add(node));
-    _saveGraph();
+    _commitChange();
     _trackUsage(type);
     if (context.read<AppState>().config.debugMode) {
       context.read<AppState>().addLog('[节点] 添加 ${type.name} @ (${canvasPos.dx.toStringAsFixed(0)}, ${canvasPos.dy.toStringAsFixed(0)}) id=${node.id.substring(0, 8)}', category: 'info');
@@ -623,7 +635,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       gateType: gate.name,
     );
     setState(() => _nodes.add(node));
-    _saveGraph();
+    _commitChange();
     if (context.read<AppState>().config.debugMode) {
       context.read<AppState>().addLog('[逻辑门] 添加 ${gate.name} @ (${canvasPos.dx.toStringAsFixed(0)}, ${canvasPos.dy.toStringAsFixed(0)}) id=${node.id.substring(0, 8)}', category: 'info');
     }
@@ -695,7 +707,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       }
       _purgeDeletedFromLogicBlocks({nodeId}); // [FIX H-6] 清理悬空的逻辑块引用
     });
-    _saveGraph();
+    _commitChange();
   }
 
   void _deleteSelectedNodes() {
@@ -711,7 +723,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       _lastSelectedId = null;
       _purgeDeletedFromLogicBlocks(ids); // [FIX H-6] 清理悬空的逻辑块引用
     });
-    _saveGraph();
+    _commitChange();
   }
 
   /// [FIX H-6] 删除节点后：移除逻辑块对已删节点的悬空引用、删除因此变空的逻辑块、
@@ -804,7 +816,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       setState(() {
         _connections.add(PipelineConnection(id: _uuid.v4(), fromNodeId: fromId, toNodeId: toId, kind: 'control'));
       });
-      _saveGraph();
+      _commitChange();
       return;
     }
 
@@ -884,7 +896,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     setState(() {
       _connections.add(PipelineConnection(id: _uuid.v4(), fromNodeId: fromId, toNodeId: toId, kind: kind));
     });
-    _saveGraph();
+    _commitChange();
   }
 
   void _deleteConnection(String connId) {
@@ -908,7 +920,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         }
       }
     }
-    _saveGraph();
+    _commitChange();
   }
 
   PipelineConnection? _hitTestConnection(Offset pos) {
@@ -1460,7 +1472,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         }
       }
     });
-    _saveGraph();
+    _commitChange();
     WidgetsBinding.instance.addPostFrameCallback((_) => _zoomToFit());
   }
 
@@ -3227,7 +3239,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                       final node = _nodes.firstWhere((n) => n.id == nodeId, orElse: () => _nodes.first);
                       params.forEach((k, v) { node.params[k] = v; });
                     });
-                    _saveGraph();
+                    _commitChange();
                   },
                   onClearAll: () {
                     _pushUndo();
@@ -3236,7 +3248,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                       _connections.clear();
                       _logicBlocks.clear();
                       _selectedNodeIds.clear();
-                      _saveGraph();
+                      _commitChange();
                     });
                   },
                   onUndo: _undo,
@@ -3247,7 +3259,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                     final node = PipelineNode(id: _uuid.v4(), type: stepType, x: x, y: y);
                     _pushUndo();
                     setState(() => _nodes.add(node));
-                    _saveGraph();
+                    _commitChange();
                     return node.id;
                   },
                   onAddGate: (gateName, x, y) {
@@ -3261,7 +3273,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                     );
                     _pushUndo();
                     setState(() => _nodes.add(node));
-                    _saveGraph();
+                    _commitChange();
                     return node.id;
                   },
                   onSetGateParams: (nodeId, params) {
@@ -3271,12 +3283,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                     setState(() {
                       params.forEach((k, v) { _nodes[idx].params[k] = v; });
                     });
-                    _saveGraph();
+                    _commitChange();
                     return true;
                   },
                   onDeleteNode: (nodeId) {
                     _deleteNode(nodeId);
-                    _saveGraph();
+                    _commitChange();
                   },
                   onConnectNodes: (fromId, toId) {
                     if (fromId == toId) return false;
@@ -3284,7 +3296,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                     if (_connections.any((c) => c.fromNodeId == fromId && c.toNodeId == toId)) return false;
                     _pushUndo();
                     setState(() => _connections.add(PipelineConnection(id: _uuid.v4(), fromNodeId: fromId, toNodeId: toId)));
-                    _saveGraph();
+                    _commitChange();
                     return true;
                   },
                   onDisconnectNodes: (connId) {
@@ -3292,7 +3304,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                     if (idx < 0) return false;
                     _pushUndo();
                     setState(() => _connections.removeAt(idx));
-                    _saveGraph();
+                    _commitChange();
                     return true;
                   },
                     onCancelTasks: () => context.read<AppState>().cancelProcessing(),
@@ -3784,7 +3796,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           node.params.remove('tt_end');
         }
       });
-      _saveGraph();
+      _commitChange();
     }
 
     return StatefulBuilder(
@@ -4593,7 +4605,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                 _logicBlocks.removeWhere((b) => b.id == block.id);
                 if (_selectedLogicBlockId == block.id) _selectedLogicBlockId = null;
               });
-              _saveGraph(); // [FIX S-1] 与其它结构变更一致地落盘
+              _commitChange(); // [FIX S-1] 与其它结构变更一致地落盘
             }),
           ]),
         ),
@@ -5096,7 +5108,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           final node = _nodes.firstWhere((n) => n.id == nodeId, orElse: () => _nodes.first);
           params.forEach((k, v) { node.params[k] = v; });
         });
-        _saveGraph();
+        _commitChange();
       },
       onClearAll: () {
         _pushUndo();
@@ -5105,7 +5117,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           _connections.clear();
           _logicBlocks.clear();
           _selectedNodeIds.clear();
-          _saveGraph();
+          _commitChange();
         });
       },
       onUndo: _undo,
@@ -5116,7 +5128,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         final node = PipelineNode(id: _uuid.v4(), type: stepType, x: x, y: y);
         _pushUndo();
         setState(() => _nodes.add(node));
-        _saveGraph();
+        _commitChange();
         return node.id;
       },
       onAddGate: (gateName, x, y) {
@@ -5130,7 +5142,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         );
         _pushUndo();
         setState(() => _nodes.add(node));
-        _saveGraph();
+        _commitChange();
         return node.id;
       },
       onSetGateParams: (nodeId, params) {
@@ -5140,12 +5152,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         setState(() {
           params.forEach((k, v) { _nodes[idx].params[k] = v; });
         });
-        _saveGraph();
+        _commitChange();
         return true;
       },
       onDeleteNode: (nodeId) {
         _deleteNode(nodeId);
-        _saveGraph();
+        _commitChange();
       },
       onConnectNodes: (fromId, toId) {
         if (fromId == toId) return false;
@@ -5153,7 +5165,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         if (_connections.any((c) => c.fromNodeId == fromId && c.toNodeId == toId)) return false;
         _pushUndo();
         setState(() => _connections.add(PipelineConnection(id: _uuid.v4(), fromNodeId: fromId, toNodeId: toId)));
-        _saveGraph();
+        _commitChange();
         return true;
       },
       onDisconnectNodes: (connId) {
@@ -5161,7 +5173,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         if (idx < 0) return false;
         _pushUndo();
         setState(() => _connections.removeAt(idx));
-        _saveGraph();
+        _commitChange();
         return true;
       },
       onCancelTasks: () => context.read<AppState>().cancelProcessing(),

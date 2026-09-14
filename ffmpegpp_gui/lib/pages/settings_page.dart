@@ -767,15 +767,17 @@ class _SettingsPageState extends State<SettingsPage> {
               if (visible.isEmpty && searching)
                 _emptyState(scheme, s)
               else
-                ListView(
-                  // 左右留白全部交给分区卡自己（见 _buildMobileSection 的 14px 内边距），
-                  // ListView 只负责上下：顶部药丸占位 + 底部导航栏净空。
-                  padding: EdgeInsets.fromLTRB(0, MobileUi.pageTopPadding(context), 0, kMobileNavClearance),
-                  children: [
-                    for (final (sec, cards) in visible)
-                      _buildMobileSection(sec, cards, context, state, scheme, s),
-                    const SizedBox(height: 16),
-                  ],
+                _GlassScrollGuard(
+                  child: ListView(
+                    // 左右留白全部交给分区卡自己（见 _buildMobileSection 的 14px 内边距），
+                    // ListView 只负责上下：顶部药丸占位 + 底部导航栏净空。
+                    padding: EdgeInsets.fromLTRB(0, MobileUi.pageTopPadding(context), 0, kMobileNavClearance),
+                    children: [
+                      for (final (sec, cards) in visible)
+                        _buildMobileSection(sec, cards, context, state, scheme, s),
+                      const SizedBox(height: 16),
+                    ],
+                  ),
                 ),
               // 顶部药丸浮层（不影响滚动）
               Positioned(
@@ -964,9 +966,10 @@ class _SettingsPageState extends State<SettingsPage> {
             child: child,
           ),
         ),
-        child: SingleChildScrollView(
-          key: ValueKey('pane_${sec.id}'),
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
+        child: _GlassScrollGuard(
+          child: SingleChildScrollView(
+            key: ValueKey('pane_${sec.id}'),
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
           child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1077,7 +1080,8 @@ class _SettingsPageState extends State<SettingsPage> {
             const SizedBox(height: 16),
           ],
         ]),
-      );
+          ),
+        );
     });
   }
 
@@ -1363,6 +1367,45 @@ Widget _miIcon(ColorScheme scheme, IconData icon) => Container(
   child: Icon(icon, size: 19, color: scheme.primary),
 );
 
+/// 设置页「滚动中玻璃降级」开关：滚动进行中把玻璃卡临时切换为纯色，
+/// 停止后恢复。根因：玻璃卡（BackdropFilter / shader backdrop）每帧重采样
+/// 滚动中的背景，Skia 与移动端下采样会滞后一帧，快速滑动时玻璃与背景出现
+/// 「图层分离」；纯色卡不采样背景，从根本上消除分离。
+final ValueNotifier<bool> kSettingsScrollDegraded = ValueNotifier(false);
+
+/// 包住设置页的滚动容器：监听滚动事件驱动 [kSettingsScrollDegraded]。
+/// 滚动开始立即置 true；ScrollEnd 后延迟 ~160ms 恢复（吸收惯性滚动的
+/// 连续 ScrollEnd 边界抖动）。桌面 / 移动端主列表与二级页共用。
+class _GlassScrollGuard extends StatefulWidget {
+  final Widget child;
+  const _GlassScrollGuard({required this.child});
+  @override
+  State<_GlassScrollGuard> createState() => _GlassScrollGuardState();
+}
+
+class _GlassScrollGuardState extends State<_GlassScrollGuard> {
+  Timer? _endTimer;
+  @override
+  void dispose() { _endTimer?.cancel(); super.dispose(); }
+  bool _onNotification(ScrollNotification n) {
+    if (n is ScrollStartNotification || n is ScrollUpdateNotification) {
+      _endTimer?.cancel();
+      if (!kSettingsScrollDegraded.value) kSettingsScrollDegraded.value = true;
+    } else if (n is ScrollEndNotification) {
+      _endTimer?.cancel();
+      _endTimer = Timer(const Duration(milliseconds: 160),
+          () => kSettingsScrollDegraded.value = false);
+    }
+    return false;
+  }
+  @override
+  Widget build(BuildContext context) =>
+      NotificationListener<ScrollNotification>(
+        onNotification: _onNotification,
+        child: widget.child,
+      );
+}
+
 /// 设置页分组卡片外壳 —— 所有分组卡（设置行 / AI·MCP 卡 / 各设置卡）
 /// 统一委托给 AppCard，由「主题→样式→卡片样式」（cfg.cardStyle 四值）接管：
 /// 跟随主题色(纯色) / 液态玻璃 / 模糊 / 灰色。
@@ -1373,13 +1416,21 @@ Widget _cardShell(
   double radius = 18,
 }) {
   final style = state.config.cardStyle;
-  return AppCard(
-    style: style,
-    radius: radius,
-    child: ConstrainedBox(
-      constraints: const BoxConstraints(minWidth: double.infinity),
-      child: child,
-    ),
+  return ValueListenableBuilder<bool>(
+    valueListenable: kSettingsScrollDegraded,
+    builder: (ctx, degraded, _) {
+      // 滚动中把玻璃类样式（液态玻璃/模糊）临时降级为主题色纯色卡，
+      // 见 kSettingsScrollDegraded 顶部注释；纯色样式无需降级。
+      final isGlass = style == SurfaceStyle.liquid || style == SurfaceStyle.blur;
+      return AppCard(
+        style: degraded && isGlass ? SurfaceStyle.theme : style,
+        radius: radius,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: double.infinity),
+          child: child,
+        ),
+      );
+    },
   );
 }
 
@@ -1406,11 +1457,13 @@ void _pushSettingsSubPage(
               onBack: () => Navigator.of(ctx2).maybePop(),
             ),
             Expanded(
-              child: ListView(
-                // 左右间距与设置主界面卡片对齐（主界面 = ListView + 分区卡内边距 14）。
-                // 此前为 0：MCP/AI 等二级页卡片通顶通底，比主界面卡片明显更宽。
-                padding: MobileUi.subListPadding(top: 12, bottom: 48),
-                children: [contentBuilder(ctx2, state)],
+              child: _GlassScrollGuard(
+                child: ListView(
+                  // 左右间距与设置主界面卡片对齐（主界面 = ListView + 分区卡内边距 14）。
+                  // 此前为 0：MCP/AI 等二级页卡片通顶通底，比主界面卡片明显更宽。
+                  padding: MobileUi.subListPadding(top: 12, bottom: 48),
+                  children: [contentBuilder(ctx2, state)],
+                ),
               ),
             ),
           ]),

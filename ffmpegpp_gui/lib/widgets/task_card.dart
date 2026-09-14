@@ -979,14 +979,27 @@ class _ThumbWidget extends StatefulWidget {
 }
 class _ThumbWidgetState extends State<_ThumbWidget> {
   String? _path;
+  /// 图片（截图等）不走 ffmpeg 抽帧：移动端 fork+exec 起子进程生成缩略图
+  /// 并不稳定（失败时只有占位图标），而 Image.file 可直接解码源文件，
+  /// 配合 cacheWidth 限制解码尺寸即可。
+  bool get _isImage => detectMediaType(widget.filepath) == MediaType.image;
   @override
   void initState() { super.initState(); _load(); }
   Future<void> _load() async {
+    if (_isImage) return;
     final p = await ThumbnailService.ensureThumbnail(widget.filepath, ffmpeg: widget.ffmpeg);
     if (mounted && p != null) setState(() => _path = p);
   }
   @override
   Widget build(BuildContext context) {
+    if (_isImage) {
+      return Image.file(File(widget.filepath), width: 40, height: 25,
+          // 缩略图按显示尺寸 3x 封顶解码（1080p 源 ~8MB/张）
+          cacheWidth: 120,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => Icon(Icons.image_outlined,
+              color: Theme.of(context).colorScheme.outline, size: 16));
+    }
     if (_path != null) {
       return Image.file(File(_path!), width: 40, height: 25,
           // 缩略图按显示尺寸 3x 封顶解码（1080p 源 ~8MB/张）
