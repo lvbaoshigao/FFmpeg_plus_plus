@@ -1427,8 +1427,9 @@ class _GlassScrollGuardState extends State<_GlassScrollGuard> {
       if (_speed > _kSpeedThreshold) {
         _degrade();
       } else if (kSettingsScrollDegraded.value) {
-        // 已处于降级但速度回落（甩动减速/手指停住）→ 安排恢复
-        _scheduleRestore(120);
+        // 已处于降级但速度回落（甩动减速/手指停住）→ 安排恢复。
+        // 200ms：避开 EMA 在减速末段的速度抖动，减少来回切换。
+        _scheduleRestore(200);
       }
     } else if (n is ScrollEndNotification) {
       _lastMs = null;
@@ -1468,12 +1469,21 @@ Widget _cardShell(
       // 滚动中把玻璃类样式（液态玻璃/模糊）临时降级为主题色纯色卡，
       // 见 kSettingsScrollDegraded 顶部注释；纯色样式无需降级。
       final isGlass = style == SurfaceStyle.liquid || style == SurfaceStyle.blur;
-      return AppCard(
-        style: degraded && isGlass ? SurfaceStyle.theme : style,
-        radius: radius,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minWidth: double.infinity),
-          child: child,
+      final effective = degraded && isGlass ? SurfaceStyle.theme : style;
+      // 交叉淡入淡出而非硬切换：降级/恢复时玻璃与纯色卡平滑过渡，
+      // 否则快速滚动中样式突跳会形成「闪一下」。
+      return AnimatedSwitcher(
+        duration: const Duration(milliseconds: 180),
+        switchInCurve: Curves.easeOut,
+        switchOutCurve: Curves.easeOut,
+        child: AppCard(
+          key: ValueKey(effective),
+          style: effective,
+          radius: radius,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: double.infinity),
+            child: child,
+          ),
         ),
       );
     },
