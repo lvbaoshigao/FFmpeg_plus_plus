@@ -58,82 +58,81 @@ Widget mobileAiSettingsContent(BuildContext ctx, AppState state) {
 
       return Column(children: [
         // ── AI 助手（提供商列表） ──
-        AppCard(
-          style: cfg.cardStyle,
-          radius: 18,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 8, 8, 10),
-            child: Column(children: [
-              Row(children: [
-                Icon(Icons.auto_awesome_outlined, size: 18, color: scheme.primary),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(s.aiChatTitle,
-                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: clr)),
-                ),
-                Switch(
-                  value: cfg.aiEnabled,
-                  onChanged: (v) => state.updateConfig((c) => c..aiEnabled = v),
-                ),
-              ]),
-              if (cfg.aiEnabled) ...[
-                const SizedBox(height: 4),
+        _AiSectionCard(
+          cardStyle: cfg.cardStyle,
+          icon: Icons.auto_awesome_outlined,
+          title: s.aiChatTitle,
+          trailing: Switch(
+            value: cfg.aiEnabled,
+            onChanged: (v) => state.updateConfig((c) => c..aiEnabled = v),
+          ),
+          children: [
+            if (cfg.aiEnabled) ...[
+              Text(s.aiProviders, style: TextStyle(fontSize: 11, color: scheme.outline)),
+              const SizedBox(height: 2),
+              if (cfg.aiProfiles.isEmpty)
                 Padding(
-                  padding: const EdgeInsets.only(left: 28),
-                  child: Text(s.aiProviders, style: TextStyle(fontSize: 11, color: scheme.outline)),
-                ),
-                const SizedBox(height: 4),
-                if (cfg.aiProfiles.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(28, 4, 16, 8),
-                    child: Text(s.aiNoProviders, style: TextStyle(fontSize: 12, color: scheme.outline)),
-                  )
-                else
-                  for (final p in cfg.aiProfiles)
-                    _MobileProviderRow(
-                      s: s,
-                      scheme: scheme,
-                      profile: p,
-                      active: cfg.activeAiProfileId == p.id,
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(allowSnapshotting: false, 
-                            builder: (_) => MobileAiProviderDetailPage(profileId: p.id)),
-                      ),
-                    ),
-                const SizedBox(height: 6),
-                Padding(
-                  padding: const EdgeInsets.only(left: 28),
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.tonalIcon(
-                      icon: const Icon(Icons.add, size: 16),
-                      label: Text(s.aiNewProvider, style: const TextStyle(fontSize: 12)),
-                      onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(allowSnapshotting: false, 
-                            builder: (_) => const MobileAiProviderDetailPage()),
-                      ),
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Text(s.aiNoProviders,
+                      style: TextStyle(fontSize: 12, color: scheme.outline)),
+                )
+              else
+                for (final p in cfg.aiProfiles)
+                  _MobileProviderRow(
+                    s: s,
+                    scheme: scheme,
+                    profile: p,
+                    active: cfg.activeAiProfileId == p.id,
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(allowSnapshotting: false, 
+                          builder: (_) => MobileAiProviderDetailPage(profileId: p.id)),
                     ),
                   ),
+              const SizedBox(height: 4),
+              // 「新建提供商」：与上面的提供商行同构（圆形图标槽 + 文字 + 箭头），
+              // 不再用通栏 Material 实心按钮 —— 那是本页最跳的异类元素。
+              InkWell(
+                borderRadius: BorderRadius.circular(8),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(allowSnapshotting: false, 
+                      builder: (_) => const MobileAiProviderDetailPage()),
                 ),
-              ],
-            ]),
-          ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 9),
+                  child: Row(children: [
+                    Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        color: scheme.primary.withAlpha(26),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: scheme.primary.withAlpha(90)),
+                      ),
+                      child: Icon(Icons.add, size: 17, color: scheme.primary),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(s.aiNewProvider,
+                          maxLines: 1, overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: scheme.primary)),
+                    ),
+                    Icon(Icons.chevron_right, size: 20, color: scheme.outline),
+                  ]),
+                ),
+              ),
+            ],
+          ],
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         // ── 权限 ──
-        AppCard(
-          style: cfg.cardStyle,
-          radius: 18,
-          child: Column(children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 10, 14, 2),
-              child: Row(children: [
-                Icon(Icons.shield_outlined, size: 18, color: scheme.primary),
-                const SizedBox(width: 10),
-                Text(s.aiPermissions,
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: clr)),
-              ]),
-            ),
+        _AiSectionCard(
+          cardStyle: cfg.cardStyle,
+          icon: Icons.shield_outlined,
+          title: s.aiPermissions,
+          children: [
             _PermRow(
               s: s,
               icon: Icons.visibility_outlined,
@@ -169,41 +168,29 @@ Widget mobileAiSettingsContent(BuildContext ctx, AppState state) {
               value: cfg.aiAllowAsk,
               onChanged: (v) => state.updateConfig((c) => c..aiAllowAsk = v),
             ),
-          ]),
+          ],
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         // ── 高级（三级菜单） ──
-        AppCard(
-          style: cfg.cardStyle,
-          radius: 18,
-          child: ListTile(
-            dense: true,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-            leading: Icon(Icons.tune, size: 20, color: scheme.primary),
-            title: Text(s.aiAdvanced, style: TextStyle(fontSize: 13, color: clr)),
-            trailing: Icon(Icons.chevron_right, size: 20, color: scheme.outline),
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(allowSnapshotting: false, builder: (_) => const MobileAiAdvancedPage()),
-            ),
+        _AiSectionCard(
+          cardStyle: cfg.cardStyle,
+          icon: Icons.tune,
+          title: s.aiAdvanced,
+          subtitle: s.isZh
+              ? '图生成模式 / 思考 / 自动命名 / 会话模式 / 系统提示词'
+              : 'Image mode, thinking, auto-naming, session mode, system prompt',
+          trailing: Icon(Icons.chevron_right, size: 20, color: scheme.outline),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(allowSnapshotting: false, builder: (_) => const MobileAiAdvancedPage()),
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         // ── MCP 服务 ──
-        AppCard(
-          style: cfg.cardStyle,
-          radius: 18,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 8, 8, 10),
-            child: Column(children: [
-              Row(children: [
-                Icon(Icons.hardware, size: 18, color: scheme.primary),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(s.mcpTitle,
-                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: clr)),
-                ),
-              ]),
-              const SizedBox(height: 2),
+        _AiSectionCard(
+          cardStyle: cfg.cardStyle,
+          icon: Icons.hardware,
+          title: s.mcpTitle,
+          children: [
               SwitchListTile(
                 dense: true,
                 contentPadding: EdgeInsets.zero,
@@ -226,62 +213,62 @@ Widget mobileAiSettingsContent(BuildContext ctx, AppState state) {
                 onChanged: (v) => state.toggleMcpServer(v),
               ),
               if (cfg.mcpEnabled) ...[
-                Padding(
-                  padding: const EdgeInsets.only(left: 8),
-                  child: Row(children: [
-                    Text('${s.mcpPort}: ', style: TextStyle(fontSize: 12, color: clr)),
-                    SizedBox(
-                      width: 90,
-                      child: _AiField(
-                        value: cfg.mcpPort.toString(),
-                        scheme: scheme,
-                        keyboardType: TextInputType.number,
-                        onCommit: (v) {
-                          final port = int.tryParse(v);
-                          if (port != null && port > 0 && port < 65536) {
-                            state.updateConfig((c) => c..mcpPort = port);
-                          }
-                        },
-                      ),
+                Row(children: [
+                  Text('${s.mcpPort}: ', style: TextStyle(fontSize: 12, color: clr)),
+                  SizedBox(
+                    width: 90,
+                    child: _AiField(
+                      value: cfg.mcpPort.toString(),
+                      scheme: scheme,
+                      keyboardType: TextInputType.number,
+                      onCommit: (v) {
+                        final port = int.tryParse(v);
+                        if (port != null && port > 0 && port < 65536) {
+                          state.updateConfig((c) => c..mcpPort = port);
+                        }
+                      },
                     ),
-                    const SizedBox(width: 8),
-                    SizedBox(
-                      height: 40,
-                      child: FilledButton.tonalIcon(
-                        icon: const Icon(Icons.refresh, size: 14),
-                        label: Text(s.isZh ? '应用' : 'Apply', style: const TextStyle(fontSize: 11)),
-                        onPressed: () async {
-                          state.mcpError = null;
-                          await state.stopMcpServer();
-                          await state.startMcpServer();
-                        },
+                  ),
+                  const SizedBox(width: 8),
+                  // 「应用」用描边按钮而非 Material 实心 tonal 按钮：与页面其余
+                  // 玻璃 / 描边控件统一（原先那颗实心按钮是本页第二处割裂元素）。
+                  SizedBox(
+                    height: 40,
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.refresh, size: 14),
+                      label: Text(s.isZh ? '应用' : 'Apply', style: const TextStyle(fontSize: 11)),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       ),
+                      onPressed: () async {
+                        state.mcpError = null;
+                        await state.stopMcpServer();
+                        await state.startMcpServer();
+                      },
                     ),
-                  ]),
-                ),
-                Padding(
-                  padding: const EdgeInsets.only(left: 8),
-                  child: Row(children: [
-                    Text(s.isZh ? '监听地址: ' : 'Bind host: ',
-                        style: TextStyle(fontSize: 12, color: clr)),
-                    Expanded(
-                      child: _AiField(
-                        value: cfg.mcpHost,
-                        scheme: scheme,
-                        hint: '127.0.0.1',
-                        onCommit: (v) {
-                          final host = v.trim();
-                          // 允许留空（回退 127.0.0.1）；其余只做基本字符校验，重启后生效
-                          if (host.isEmpty || RegExp(r'^[A-Za-z0-9.:_-]+$').hasMatch(host)) {
-                            state.updateConfig((c) => c..mcpHost = host);
-                          }
-                        },
-                      ),
+                  ),
+                ]),
+                Row(children: [
+                  Text(s.isZh ? '监听地址: ' : 'Bind host: ',
+                      style: TextStyle(fontSize: 12, color: clr)),
+                  Expanded(
+                    child: _AiField(
+                      value: cfg.mcpHost,
+                      scheme: scheme,
+                      hint: '127.0.0.1',
+                      onCommit: (v) {
+                        final host = v.trim();
+                        // 允许留空（回退 127.0.0.1）；其余只做基本字符校验，重启后生效
+                        if (host.isEmpty || RegExp(r'^[A-Za-z0-9.:_-]+$').hasMatch(host)) {
+                          state.updateConfig((c) => c..mcpHost = host);
+                        }
+                      },
                     ),
-                  ]),
-                ),
+                  ),
+                ]),
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 2, 8, 0),
+                  padding: const EdgeInsets.only(top: 2),
                   child: Text(
                     s.isZh ? '改后点「应用」。设为 0.0.0.0 将暴露到局域网并启用访问令牌' : 'Click Apply. 0.0.0.0 exposes to LAN and enables token',
                     style: TextStyle(fontSize: 10, color: scheme.outline),
@@ -289,7 +276,7 @@ Widget mobileAiSettingsContent(BuildContext ctx, AppState state) {
                 ),
                 if (state.mcpRunning && state.mcpToken != null)
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
+                    padding: const EdgeInsets.only(top: 6),
                     child: SelectableText(
                       '${s.isZh ? '局域网访问令牌' : 'LAN access token'}: ${state.mcpToken}',
                       style: TextStyle(fontSize: 11, color: scheme.primary, fontWeight: FontWeight.w600),
@@ -298,7 +285,7 @@ Widget mobileAiSettingsContent(BuildContext ctx, AppState state) {
                 const SizedBox(height: 4),
                 SwitchListTile(
                   dense: true,
-                  contentPadding: const EdgeInsets.only(left: 8),
+                  contentPadding: EdgeInsets.zero,
                   title: Text(s.isZh ? '允许 MCP 写入' : 'Allow MCP Write',
                       style: TextStyle(fontSize: 12, color: clr)),
                   subtitle: Text(
@@ -311,7 +298,7 @@ Widget mobileAiSettingsContent(BuildContext ctx, AppState state) {
                 ),
                 SwitchListTile(
                   dense: true,
-                  contentPadding: const EdgeInsets.only(left: 8),
+                  contentPadding: EdgeInsets.zero,
                   title: Text(s.isZh ? '允许 MCP 访问文件系统' : 'Allow MCP File Access',
                       style: TextStyle(fontSize: 12, color: clr)),
                   subtitle: Text(
@@ -323,8 +310,7 @@ Widget mobileAiSettingsContent(BuildContext ctx, AppState state) {
                   onChanged: (v) => state.updateConfig((c) => c..mcpAllowFsAccess = v),
                 ),
               ],
-            ]),
-          ),
+          ],
         ),
       ]);
     },
@@ -352,7 +338,8 @@ class _MobileProviderRow extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(28, 9, 14, 9),
+        // 不再手工缩进 28：卡内左右留白现由 _AiSectionCard 统一提供（16）。
+        padding: const EdgeInsets.symmetric(vertical: 9),
         child: Row(children: [
           Container(
             width: 34,
@@ -430,7 +417,8 @@ class _PermRow extends StatelessWidget {
     final clr = scheme.onSurface;
     return SwitchListTile(
       dense: true,
-      contentPadding: const EdgeInsets.fromLTRB(14, 2, 10, 2),
+      // 左右留白交给 _AiSectionCard（16），这里只管行内上下间距。
+      contentPadding: const EdgeInsets.symmetric(vertical: 2),
       secondary: Icon(icon, size: 18, color: scheme.primary),
       title: Text(title, style: TextStyle(fontSize: 12, color: clr)),
       subtitle: Text(desc, style: TextStyle(fontSize: 10, color: scheme.outline)),
@@ -1874,44 +1862,78 @@ class MobileAiAdvancedPage extends StatelessWidget {
 ///
 /// 统一各二级/三级页面的分层结构：一张卡只承载一个主题的设置项，
 /// 避免此前「一张卡塞十几项」导致的滑动疲劳。
+/// AI 设置页的卡片外壳：与设置页的 `_glass(...)` **逐项对齐**。
+///
+/// 用户反馈「移动端的 AI 功能比较割裂，布局不合适，样式不受设置控制」以及
+/// 「MCP/AI 设置界面的 AI 助手比较丑」。原因很具体：这些卡此前是**裸 AppCard**
+/// （radius 18、完全没有左右留白），于是比其它二级页的卡宽 24px、圆角也不同；
+/// 标题字号 13 也与设置页的 12 不一致。现在统一为：
+/// 圆角 20 / 左右留白 12 / 内边距 16·12 / 标题 12·w600·onSurfaceVariant。
 class _AiSectionCard extends StatelessWidget {
   final String cardStyle;
   final IconData icon;
   final String title;
+  /// 标题下的说明行（可选）。
+  final String? subtitle;
+  /// 标题右侧控件（如整卡开关 / 箭头）。
+  final Widget? trailing;
+  /// 整卡点按（如「高级」入口）。
+  final VoidCallback? onTap;
   final List<Widget> children;
 
   const _AiSectionCard({
     required this.cardStyle,
     required this.icon,
     required this.title,
-    required this.children,
+    this.subtitle,
+    this.trailing,
+    this.onTap,
+    this.children = const <Widget>[],
   });
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return AppCard(
-      style: cardStyle,
-      radius: 18,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Icon(icon, size: 17, color: scheme.primary),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(title,
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: scheme.onSurface)),
-            ),
-          ]),
-          const SizedBox(height: 10),
-          ...children,
+    Widget body = Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(icon, size: 17, color: scheme.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(title,
+                maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.onSurfaceVariant)),
+          ),
+          // 空值元素（null-aware element）：trailing 为空时不占位。
+          ?trailing,
         ]),
-      ),
+        if (subtitle != null) ...[
+          const SizedBox(height: 3),
+          Text(subtitle!,
+              maxLines: 2, overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 10, color: scheme.outline)),
+        ],
+        if (children.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          ...children,
+        ],
+      ]),
+    );
+    if (onTap != null) {
+      body = InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: body,
+      );
+    }
+    return Padding(
+      // 左右 12：与设置页 _glass 的卡片留白一致（二级页 = ListView 12 + 卡片 12）。
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: AppCard(style: cardStyle, radius: 20, child: body),
     );
   }
 }

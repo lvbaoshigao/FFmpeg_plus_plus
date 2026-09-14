@@ -751,12 +751,13 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         const SizedBox(height: 6),
         Text(zh ? '点击「新建」创建节点编辑器配置模板' : 'Click "New" to create a node editor config',
             style: TextStyle(color: scheme.outline.withAlpha(120), fontSize: 12)),
-        const SizedBox(height: 16),
-        OutlinedButton.icon(
-          icon: const Icon(Icons.file_download_outlined, size: 16),
-          label: Text(zh ? '或导入 .fppx 文件' : 'Or import .fppx file'),
-          onPressed: _importFppx,
-        ),
+        const SizedBox(height: 6),
+        // 原先这里有一颗裸 `OutlinedButton.icon`（Material 描边按钮），与整页的
+        // 玻璃药丸 + 纯文字指路风格明显割裂（用户反馈「配置库的导入 ffpx 按钮比较
+        // 与其他 UI 割裂」）。导入入口本就是顶栏那颗玻璃药丸，这里改成与
+        // _buildQuickEmptyState 完全同款的文案指路，不再单开一个异类按钮。
+        Text(zh ? '或点上栏「⬇」导入 .fppx 文件' : 'Or use ⬇ in the top bar to import a .fppx',
+            style: TextStyle(color: scheme.outline.withAlpha(120), fontSize: 12)),
       ])),
     );
   }

@@ -196,6 +196,11 @@ class _LogPageState extends State<LogPage> {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12),
       child: GlassPanel(
+        // 面板玻璃样式跟随「卡片样式」（用户反馈「日志面板的模糊样式好像跟随药丸的」）。
+        // 不传 style 时 GlassPanel 会落到全局 `glassEffect`（那是「弹窗 / 面板」的
+        // 通用设置），于是设置里改「卡片样式」时日志面板纹丝不动，观感上就跟错了对象。
+        // 日志面板语义上属于内容面板，与设置页卡片、其它内容面板保持一致。
+        style: cfg.cardStyle,
         radius: 16,
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
         child: ListView.builder(

@@ -486,24 +486,28 @@ class _SettingsPageState extends State<SettingsPage> {
               '粒子', 'particle', '特效', 'effect', '动效', '动画'],
           build: _buildSurfaceStyleCard,
         ),
-        // 玻璃细节单独成卡：五项参数（模糊度 / 通透度 / 高光强度 / 高光位置 /
-        // 边缘光）都属于「手感微调」，塞进样式卡会把那卡撑到要滑很久；独立成卡
-        // 后能被搜索命中，也不会与样式卡里的预设选择混在一起。
-        _CardDef(
-          id: 'glassDetail',
-          title: (s) => s.isZh ? '玻璃细节' : 'Glass details',
-          icon: Icons.blur_on_outlined,
-          keywords: ['玻璃', 'glass', '模糊', 'blur', '模糊度', '通透', 'clarity',
-              '透明', '高光', 'highlight', 'specular', '光斑', '位置', 'position',
-              '边缘光', 'edge', 'rim', '描边', '细节', 'detail', '微调'],
-          build: _buildGlassDetailCard,
-        ),
+        // 玻璃细节：桌面端独立成卡（右侧面板没有三级页机制，一屏平铺得下）。
+        // 移动端已下沉为「外观 → 样式 → 玻璃细节」三级页 —— 用户要求
+        // 「玻璃细节放到样式里面（就是玻璃细节成三级菜单）」。
+        if (!isMobilePlatform)
+          _CardDef(
+            id: 'glassDetail',
+            title: (s) => s.isZh ? '玻璃细节' : 'Glass details',
+            icon: Icons.blur_on_outlined,
+            keywords: ['玻璃', 'glass', '模糊', 'blur', '模糊度', '通透', 'clarity',
+                '透明', '高光', 'highlight', 'specular', '光斑', '位置', 'position',
+                '边缘光', 'edge', 'rim', '描边', '细节', 'detail', '微调'],
+            build: _buildGlassDetailCard,
+          ),
         _CardDef(
           id: 'nodeEditorStyle',
           title: (s) => s.nodeEditorStyleLabel,
           icon: Icons.account_tree_outlined,
           keywords: ['节点编辑器', '画布', 'canvas', '背景', 'grid',
-              '逻辑门', 'gate', 'ansi', 'iec', 'ieee', '符号', 'symbol'],
+              '逻辑门', 'gate', 'ansi', 'iec', 'ieee', '符号', 'symbol',
+              // 界面尺寸（药丸大小）也在这张卡里，补上对应搜索词
+              '药丸', 'pill', '大小', 'size', '尺寸', '放大镜', 'zoom',
+              '界面', 'ui', '菜单栏', 'toolbar', '缩放', 'scale'],
           build: _buildNodeEditorStyleCard,
         ),
         _CardDef(
@@ -1128,28 +1132,28 @@ class _SettingsPageState extends State<SettingsPage> {
   ) {
     if (cards.isEmpty) return const SizedBox.shrink();
 
-    final tiles = <Widget>[];
-    for (final c in cards) {
-      tiles.add(Padding(
-        // 卡片左右内边距 14（原 8）：用户反馈「设置的卡片宽度过宽，再缩小」。
-        // 与二级页（subListPadding 12 + _glass 12 = 24）相比主界面仍略宽一点，
-        // 保持「主界面列表行 / 二级页玻璃卡」两级的层次差别。
-        // 底部 7 = 相邻两张卡之间的间距。
-        padding: const EdgeInsets.fromLTRB(14, 0, 14, 7),
-        // 全局搜索跳转过来时高亮命中的设置行（见 _highlightWrap）；
-        // 设置项卡片统一走 _cardShell → AppCard，遵循「主题→样式→卡片样式」。
-        child: KeyedSubtree(
-          key: _cardKey(c.id),
-          child: _highlightWrap(
-            c.id,
-            _cardShell(
-              context,
-              state,
-              _buildMobileRow(c, context, state, scheme, s),
-            ),
-          ),
-        ),
+    // 一个分区 = 一张卡：条目之间用细分隔线区分。
+    //
+    // 曾经改成「一主题一卡」（每个设置项各占一张卡），但用户明确要求
+    // 「设置界面你不要每个都分开，像是主题、背景等整合到一张卡片」，
+    // 于是回到分区级卡片 —— 视觉上更整、滚动距离更短，靠分隔线仍能分清单项。
+    final rows = <Widget>[];
+    for (var i = 0; i < cards.length; i++) {
+      // 全局搜索跳转过来时高亮命中的设置行（见 _highlightWrap）
+      rows.add(KeyedSubtree(
+        key: _cardKey(cards[i].id),
+        child: _highlightWrap(
+            cards[i].id, _buildMobileRow(cards[i], context, state, scheme, s)),
       ));
+      if (i < cards.length - 1) {
+        rows.add(Divider(
+          height: 0.5,
+          thickness: 0.5,
+          indent: 16,
+          endIndent: 16,
+          color: scheme.outlineVariant.withAlpha(60),
+        ));
+      }
     }
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1162,7 +1166,14 @@ class _SettingsPageState extends State<SettingsPage> {
           letterSpacing: 0.3,
         )),
       ),
-      ...tiles,
+      Padding(
+        // 卡片左右内边距 14（原 8）：用户反馈「设置的卡片宽度过宽，再缩小」。
+        // 二级页为 subListPadding 12 + _glass 12 = 24，比一级菜单更窄一点，
+        // 刻意保留这个两级层次差别。底部 7 = 相邻两张卡之间的间距。
+        padding: const EdgeInsets.fromLTRB(14, 0, 14, 7),
+        // 分区卡统一走 _cardShell → AppCard，遵循「主题→样式→卡片样式」。
+        child: _cardShell(context, state, Column(children: rows)),
+      ),
     ]);
   }
 
@@ -1245,32 +1256,13 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   /// 二级设置页：全屏（覆盖底部导航栏），顶部返回栏 + 可滚动内容。
+  ///
+  /// 薄包装：真正的实现在顶层函数 [_pushSettingsSubPage]。之所以提升出去，是因为
+  /// 「外观 → 样式 → 玻璃细节」这类**三级**页的入口写在顶层的卡片构建函数
+  /// （[_buildSurfaceStyleCard]）里，那里拿不到 State 实例。
   void _pushMobileSubPage(
     BuildContext context, String title, Widget Function(BuildContext, AppState) contentBuilder) {
-    Navigator.of(context).push(MaterialPageRoute(allowSnapshotting: false, 
-      builder: (ctx) => Consumer<AppState>(
-        builder: (ctx2, state, _) => withWallpaper(
-          ctx2,
-          Scaffold(
-          backgroundColor: Colors.transparent,
-          body: Column(children: [
-            MobileSubPageTopBar(
-              title: Text(title),
-              onBack: () => Navigator.of(ctx2).maybePop(),
-            ),
-            Expanded(
-              child: ListView(
-                // 左右间距与设置主界面卡片对齐（主界面 = ListView 6px + 分区 8px = 14px）。
-                // 此前为 0：MCP/AI 等二级页卡片通顶通底，比主界面卡片明显更宽。
-                padding: MobileUi.subListPadding(top: 12, bottom: 48),
-                children: [contentBuilder(ctx2, state)],
-              ),
-            ),
-          ]),
-          ),
-        ),
-      ),
-    ));
+    _pushSettingsSubPage(context, title, contentBuilder);
   }
 
   Widget _searchField(ColorScheme scheme, AppStrings s) => Padding(
@@ -1378,6 +1370,42 @@ Widget _cardShell(
       child: child,
     ),
   );
+}
+
+/// 设置二级 / 三级页：全屏（覆盖底部导航栏），顶部返回栏 + 可滚动内容。
+///
+/// 顶层函数（原先只是 `_SettingsPageState._pushMobileSubPage` 私有方法）：三级页
+/// （如「外观 → 样式 → 玻璃细节」）的入口写在顶层的卡片构建函数里，拿不到 State，
+/// 所以打开逻辑必须能在顶层直接调用。State 里的 [_SettingsPageState._pushMobileSubPage]
+/// 保留为同名薄包装，既有二级页调用点无需改动。
+void _pushSettingsSubPage(
+  BuildContext context,
+  String title,
+  Widget Function(BuildContext, AppState) contentBuilder,
+) {
+  Navigator.of(context).push(MaterialPageRoute(allowSnapshotting: false,
+    builder: (ctx) => Consumer<AppState>(
+      builder: (ctx2, state, _) => withWallpaper(
+        ctx2,
+        Scaffold(
+          backgroundColor: Colors.transparent,
+          body: Column(children: [
+            MobileSubPageTopBar(
+              title: Text(title),
+              onBack: () => Navigator.of(ctx2).maybePop(),
+            ),
+            Expanded(
+              child: ListView(
+                // 左右间距与设置主界面卡片对齐（主界面 = ListView + 分区卡内边距 14）。
+                // 此前为 0：MCP/AI 等二级页卡片通顶通底，比主界面卡片明显更宽。
+                padding: MobileUi.subListPadding(top: 12, bottom: 48),
+                children: [contentBuilder(ctx2, state)],
+              ),
+            ),
+          ]),
+        ),
+      ),
+    )));
 }
 
 Widget _glass(BuildContext ctx, AppState state, String title, List<Widget> children) {
@@ -1749,81 +1777,142 @@ Widget _buildSurfaceStyleCard(BuildContext ctx, AppState state) {
       cfg.pillStyle == SurfaceStyle.blur ||
       (!isMobilePlatform && cfg.menuStyle == SurfaceStyle.blur);
 
-  return Column(children: [
+  // 卡内分组小标题。
+  //
+  // 用户要求「设置界面你不要每个都分开，像是主题、背景等整合到一张卡片，在二级
+  // 菜单也是这样」—— 本页此前被拆成 4 张卡（样式预设 / 表面样式 / 玻璃与材质 /
+  // 特效），现在合并回**一张卡**，靠这行小标题 + 细分隔线分段，既整又不失可读性。
+  Widget group(String label) => Padding(
+        padding: const EdgeInsets.only(top: 14, bottom: 10),
+        child: Row(children: [
+          Text(label,
+              style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                  color: scheme.primary,
+                  letterSpacing: 0.2)),
+          const SizedBox(width: 8),
+          Expanded(
+              child:
+                  Divider(height: 1, color: scheme.outlineVariant.withAlpha(70))),
+        ]),
+      );
+
+  return _glass(ctx, state, s.styleLabel, [
     // ① 样式预设
-    _glass(ctx, state, zh ? '样式预设' : 'Style presets',
-        _buildStylePresets(ctx, state)),
-    const SizedBox(height: 8),
-    // ② 表面样式（卡标题与二级页标题「样式」区分开，否则一进来看不出哪张卡
-    //    是「逐项调样式」的那张）
-    _glass(ctx, state, zh ? '表面样式' : 'Surface style', [
-      // 布局统一：左 = 图标 + 文字（含作用范围说明），右 = 下拉菜单（展开动画）
+    group(zh ? '样式预设' : 'Style presets'),
+    ..._buildStylePresets(ctx, state),
+
+    // ② 表面样式
+    group(zh ? '表面样式' : 'Surface style'),
+    // 布局统一：左 = 图标 + 文字（含作用范围说明），右 = 下拉菜单（展开动画）
+    _styleRow(ctx,
+        icon: Icons.view_carousel_outlined,
+        label: s.cardStyleLabel,
+        scope: s.cardStyleScope,
+        value: cfg.cardStyle,
+        onSelected: (v) => state.updateConfig((c) => c..cardStyle = v)),
+    // 桌面端：左侧菜单栏 + 各页顶部菜单栏的表面样式（原来固定液态玻璃）
+    if (!isMobilePlatform)
       _styleRow(ctx,
-          icon: Icons.view_carousel_outlined,
-          label: s.cardStyleLabel,
-          scope: s.cardStyleScope,
-          value: cfg.cardStyle,
-          onSelected: (v) => state.updateConfig((c) => c..cardStyle = v)),
-      // 桌面端：左侧菜单栏 + 各页顶部菜单栏的表面样式（原来固定液态玻璃）
-      if (!isMobilePlatform)
-        _styleRow(ctx,
-            icon: Icons.view_sidebar_outlined,
-            label: s.isZh ? '菜单样式' : 'Menu Style',
-            scope: s.isZh
-                ? '作用于 左侧菜单栏 和 各页顶部菜单栏（仅桌面端）'
-                : 'Applies to the sidebar and page top bars (desktop only)',
-            value: cfg.menuStyle,
-            onSelected: (v) => state.updateConfig((c) => c..menuStyle = v)),
-      if (isMobilePlatform) ...[
-        _styleRow(ctx,
-            icon: Icons.menu,
-            label: s.navStyleLabel,
-            value: cfg.navStyle,
-            onSelected: (v) => state.updateConfig((c) => c..navStyle = v)),
-        _styleRow(ctx,
-            icon: Icons.crop_landscape_outlined,
-            label: s.pillStyleLabel,
-            value: cfg.pillStyle,
-            onSelected: (v) => state.updateConfig((c) => c..pillStyle = v)),
-      ],
-      // ── 「模糊」样式的模糊度 ──
-      //
-      // 用户要求：「如果样式选了模糊，那么下面的滑块就要能调节它的模糊度」。
-      // 四个表面样式（卡片 / 菜单 / 底部菜单栏 / 顶部药丸）的 blur 分支都从同一个
-      // `glassBlur` 取 σ（AppCard / MobileBottomNav / MobileGlassPill / GlassPanel），
-      // 所以这颗滑块直接绑 `glassBlur` 就对全部「模糊」表面生效。它与「玻璃细节 →
-      // 玻璃模糊度」是**同一个参数**，这里只是把它放到真正需要它的地方：
-      // 仅当确实有表面选了「模糊」时才出现，因此不会多出一个常年可见的重复项。
-      if (anyBlur) ...[
-        const SizedBox(height: 6),
-        _SettingSlider(
-          value: cfg.glassBlur,
-          min: 0,
-          max: 30,
-          divisions: 30,
-          // 拖动过程中就写回配置：模糊度改的是整块卡片的模糊程度，若松手才生效，
-          // 拖动时看着毫无变化，会被判定成「滑块坏了」（与字号滑块同一个坑）。
-          liveCommit: true,
-          label: (v) => '${zh ? '模糊度' : 'Blur'}: ${v.round()}',
-          labelStyle: TextStyle(color: clr, fontSize: 12),
-          onCommit: (v) => state.updateConfig((c) => c..glassBlur = v),
+          icon: Icons.view_sidebar_outlined,
+          label: s.isZh ? '菜单样式' : 'Menu Style',
+          scope: s.isZh
+              ? '作用于 左侧菜单栏 和 各页顶部菜单栏（仅桌面端）'
+              : 'Applies to the sidebar and page top bars (desktop only)',
+          value: cfg.menuStyle,
+          onSelected: (v) => state.updateConfig((c) => c..menuStyle = v)),
+    if (isMobilePlatform) ...[
+      _styleRow(ctx,
+          icon: Icons.menu,
+          label: s.navStyleLabel,
+          value: cfg.navStyle,
+          onSelected: (v) => state.updateConfig((c) => c..navStyle = v)),
+      _styleRow(ctx,
+          icon: Icons.crop_landscape_outlined,
+          label: s.pillStyleLabel,
+          value: cfg.pillStyle,
+          onSelected: (v) => state.updateConfig((c) => c..pillStyle = v)),
+    ],
+    // ── 「模糊」样式的模糊度 ──
+    //
+    // 用户要求：「如果样式选了模糊，那么下面的滑块就要能调节它的模糊度」。
+    // 四个表面样式（卡片 / 菜单 / 底部菜单栏 / 顶部药丸）的 blur 分支都从同一个
+    // `glassBlur` 取 σ（AppCard / MobileBottomNav / MobileGlassPill / GlassPanel），
+    // 所以这颗滑块直接绑 `glassBlur` 就对全部「模糊」表面生效。它与「玻璃细节 →
+    // 玻璃模糊度」是**同一个参数**，这里只是把它放到真正需要它的地方：
+    // 仅当确实有表面选了「模糊」时才出现，因此不会多出一个常年可见的重复项。
+    if (anyBlur) ...[
+      const SizedBox(height: 6),
+      _SettingSlider(
+        value: cfg.glassBlur,
+        min: 0,
+        max: 30,
+        divisions: 30,
+        // 拖动过程中就写回配置：模糊度改的是整块卡片的模糊程度，若松手才生效，
+        // 拖动时看着毫无变化，会被判定成「滑块坏了」（与字号滑块同一个坑）。
+        liveCommit: true,
+        label: (v) => '${zh ? '模糊度' : 'Blur'}: ${v.round()}',
+        labelStyle: TextStyle(color: clr, fontSize: 12),
+        onCommit: (v) => state.updateConfig((c) => c..glassBlur = v),
+      ),
+      Text(
+          zh
+              ? '即时作用于所有「模糊」表面（卡片 / 菜单 / 底部菜单栏 / 药丸）；'
+                  '与「玻璃细节 → 玻璃模糊度」是同一个参数'
+              : 'Applies live to every "Blur" surface; same value as '
+                  'Glass details → Blur',
+          style: TextStyle(fontSize: 10, color: scheme.outline)),
+    ],
+    // ── 玻璃细节（三级页入口，仅移动端）──
+    //
+    // 五项微调参数（模糊度 / 通透度 / 高光强度与位置 / 边缘光）下沉到第三层，
+    // 二级页只留这一行入口，避免把样式卡撑到要滑很久。桌面端仍是独立卡片
+    // （见 _sections 里带 `if (!isMobilePlatform)` 的那张）。
+    if (isMobilePlatform) ...[
+      const SizedBox(height: 10),
+      InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: () => _pushSettingsSubPage(
+            ctx,
+            zh ? '玻璃细节' : 'Glass details',
+            _buildGlassDetailCard),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(children: [
+            Icon(Icons.blur_on_outlined, size: 15, color: scheme.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(zh ? '玻璃细节' : 'Glass details',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: clr, fontSize: 12)),
+                    const SizedBox(height: 2),
+                    Text(
+                        zh
+                            ? '模糊度 / 通透度 / 高光强度与位置 / 边缘光'
+                            : 'Blur, clarity, highlight position, edge light',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 10, color: scheme.outline)),
+                  ]),
+            ),
+            Icon(Icons.chevron_right, size: 18, color: scheme.outline),
+          ]),
         ),
-        Text(
-            zh
-                ? '即时作用于所有「模糊」表面（卡片 / 菜单 / 底部菜单栏 / 药丸）；'
-                    '与「玻璃细节 → 玻璃模糊度」是同一个参数'
-                : 'Applies live to every "Blur" surface; same value as '
-                    'Glass details → Blur',
-            style: TextStyle(fontSize: 10, color: scheme.outline)),
-      ],
-    ]),
-    const SizedBox(height: 8),
+      ),
+    ],
+
     // ③ 玻璃与材质
-    _glass(ctx, state, zh ? '玻璃与材质' : 'Glass & material',
-        _buildGlassMaterialItems(ctx, state)),
-    const SizedBox(height: 8),
+    group(zh ? '玻璃与材质' : 'Glass & material'),
+    ..._buildGlassMaterialItems(ctx, state),
+
     // ④ 特效
-    _glass(ctx, state, zh ? '特效' : 'Effects', _buildEffectItems(ctx, state)),
+    group(zh ? '特效' : 'Effects'),
+    ..._buildEffectItems(ctx, state),
   ]);
 }
 
@@ -2484,6 +2573,51 @@ Widget _buildNodeEditorStyleCard(BuildContext ctx, AppState state) {
         ),
       ),
     ]),
+
+    // ── 界面尺寸（仅移动端）──
+    //
+    // 用户反馈「节点编辑器界面的上方药丸太大了（在竖屏下）希望设置能加一个调整这个
+    // 大小的功能（再加一个调整左下方放大镜那个药丸大小的选项）」。
+    //
+    // 这两项配置其实早就存在（editorToolbarScale / editorZoomScale），但原先埋在
+    // 「自动保存」那张卡里 —— 卡名与「药丸大小」毫无关系，用户根本找不到，于是
+    // 反馈成「希望加一个这个功能」。这里移到画布外观相关的本卡，并：
+    // * 范围下限 0.7 → 0.5（竖屏下 0.7 仍偏大，用户希望还能更小）；
+    // * 拖动即生效（liveCommit）：改的是工具栏/药丸尺寸，松手才生效时拖动过程
+    //   看不出变化，容易被判定成「滑块坏了」。
+    if (isMobilePlatform) ...[
+      Padding(
+        padding: const EdgeInsets.only(top: 14, bottom: 8),
+        child: Row(children: [
+          Text(s.isZh ? '界面尺寸' : 'UI size',
+              style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                  color: scheme.primary,
+                  letterSpacing: 0.2)),
+          const SizedBox(width: 8),
+          Expanded(
+              child:
+                  Divider(height: 1, color: scheme.outlineVariant.withAlpha(70))),
+        ]),
+      ),
+      _SettingSlider(
+        value: cfg.editorToolbarScale.clamp(0.5, 1.6),
+        min: 0.5, max: 1.6, divisions: 11,
+        liveCommit: true,
+        label: (v) => '${s.isZh ? '顶部菜单栏大小' : 'Top toolbar size'}: ${(v * 100).round()}%',
+        labelStyle: TextStyle(color: clr, fontSize: 12),
+        onCommit: (v) => state.updateConfig((c) => c..editorToolbarScale = v),
+      ),
+      _SettingSlider(
+        value: cfg.editorZoomScale.clamp(0.5, 1.6),
+        min: 0.5, max: 1.6, divisions: 11,
+        liveCommit: true,
+        label: (v) => '${s.isZh ? '放大镜（缩放药丸）大小' : 'Zoom pill size'}: ${(v * 100).round()}%',
+        labelStyle: TextStyle(color: clr, fontSize: 12),
+        onCommit: (v) => state.updateConfig((c) => c..editorZoomScale = v),
+      ),
+    ],
   ]);
 }
 
@@ -2972,24 +3106,6 @@ Widget _buildAutosave(BuildContext ctx, AppState state) {
           value: cfg.useNodeEditorLandscape,
           onChanged: (v) => state.updateConfig((c) => c..useNodeEditorLandscape = v)),
       const Divider(height: 4, color: Colors.transparent),
-      // 画布编辑器 UI 尺寸调节（移动端点按目标偏小/偏大时的补偿）
-      // 统一「左 = 文字描述，右 = 滑动条」；_SettingSlider 自带「拖动只改本地、
-      // 松手才写配置」的节流语义，比原来的每帧 updateConfig 更省。
-      _SettingSlider(
-        value: cfg.editorToolbarScale.clamp(0.7, 1.6),
-        min: 0.7, max: 1.6, divisions: 9,
-        label: (v) => '${s.isZh ? '顶部菜单栏大小' : 'Top toolbar size'}: ${(v * 100).round()}%',
-        labelStyle: TextStyle(color: clr, fontSize: 12),
-        onCommit: (v) => state.updateConfig((c) => c..editorToolbarScale = v),
-      ),
-      _SettingSlider(
-        value: cfg.editorZoomScale.clamp(0.7, 1.6),
-        min: 0.7, max: 1.6, divisions: 9,
-        label: (v) => '${s.isZh ? '放大镜（缩放药丸）大小' : 'Zoom pill size'}: ${(v * 100).round()}%',
-        labelStyle: TextStyle(color: clr, fontSize: 12),
-        onCommit: (v) => state.updateConfig((c) => c..editorZoomScale = v),
-      ),
-      const Divider(height: 8, color: Colors.transparent),
     ],
     SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
         title: Text(s.isZh ? '启用节点编辑器自动保存' : 'Enable editor autosave', style: TextStyle(color: clr, fontSize: 13)),
