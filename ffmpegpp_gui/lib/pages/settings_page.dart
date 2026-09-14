@@ -486,24 +486,29 @@ class _SettingsPageState extends State<SettingsPage> {
               '粒子', 'particle', '特效', 'effect', '动效', '动画'],
           build: _buildSurfaceStyleCard,
         ),
-        // 玻璃细节单独成卡：五项参数（模糊度 / 通透度 / 高光强度 / 高光位置 /
-        // 边缘光）都属于「手感微调」，塞进样式卡会把那卡撑到要滑很久；独立成卡
-        // 后能被搜索命中，也不会与样式卡里的预设选择混在一起。
-        _CardDef(
-          id: 'glassDetail',
-          title: (s) => s.isZh ? '玻璃细节' : 'Glass details',
-          icon: Icons.blur_on_outlined,
-          keywords: ['玻璃', 'glass', '模糊', 'blur', '模糊度', '通透', 'clarity',
-              '透明', '高光', 'highlight', 'specular', '光斑', '位置', 'position',
-              '边缘光', 'edge', 'rim', '描边', '细节', 'detail', '微调'],
-          build: _buildGlassDetailCard,
-        ),
+        // 玻璃细节：**仅桌面端**在一级菜单成卡。移动端它被移进「样式」二级页，
+        // 成为三级页（用户要求「玻璃细节放到样式里面，就是玻璃细节成三级菜单」）——
+        // 见 _buildSurfaceStyleCard 里的 _glassDetailEntry。
+        // 桌面端右侧面板没有三级页机制、一屏也能平铺放下，故仍保留独立卡。
+        if (!isMobilePlatform)
+          _CardDef(
+            id: 'glassDetail',
+            title: (s) => s.isZh ? '玻璃细节' : 'Glass details',
+            icon: Icons.blur_on_outlined,
+            keywords: ['玻璃', 'glass', '模糊', 'blur', '模糊度', '通透', 'clarity',
+                '透明', '高光', 'highlight', 'specular', '光斑', '位置', 'position',
+                '边缘光', 'edge', 'rim', '描边', '细节', 'detail', '微调'],
+            build: _buildGlassDetailCard,
+          ),
         _CardDef(
           id: 'nodeEditorStyle',
           title: (s) => s.nodeEditorStyleLabel,
           icon: Icons.account_tree_outlined,
           keywords: ['节点编辑器', '画布', 'canvas', '背景', 'grid',
-              '逻辑门', 'gate', 'ansi', 'iec', 'ieee', '符号', 'symbol'],
+              '逻辑门', 'gate', 'ansi', 'iec', 'ieee', '符号', 'symbol',
+              // 界面尺寸（顶部药丸 / 放大镜药丸）也在这张卡里，补上搜索词
+              '药丸', 'pill', '大小', '尺寸', 'size', '界面', 'ui',
+              '顶部', '菜单栏', 'toolbar', '放大镜', 'zoom', '缩放'],
           build: _buildNodeEditorStyleCard,
         ),
         _CardDef(
@@ -1128,28 +1133,32 @@ class _SettingsPageState extends State<SettingsPage> {
   ) {
     if (cards.isEmpty) return const SizedBox.shrink();
 
-    final tiles = <Widget>[];
-    for (final c in cards) {
-      tiles.add(Padding(
-        // 卡片左右内边距 14（原 8）：用户反馈「设置的卡片宽度过宽，再缩小」。
-        // 与二级页（subListPadding 12 + _glass 12 = 24）相比主界面仍略宽一点，
-        // 保持「主界面列表行 / 二级页玻璃卡」两级的层次差别。
-        // 底部 7 = 相邻两张卡之间的间距。
-        padding: const EdgeInsets.fromLTRB(14, 0, 14, 7),
-        // 全局搜索跳转过来时高亮命中的设置行（见 _highlightWrap）；
-        // 设置项卡片统一走 _cardShell → AppCard，遵循「主题→样式→卡片样式」。
-        child: KeyedSubtree(
-          key: _cardKey(c.id),
-          child: _highlightWrap(
-            c.id,
-            _cardShell(
-              context,
-              state,
-              _buildMobileRow(c, context, state, scheme, s),
-            ),
-          ),
+    // ── 一个分区 = 一张卡 ──
+    // 用户要求：「设置界面你不要每个都分开，像是主题、背景等整合到一张卡片，
+    // 在二级菜单也是这样」。此前每个 _CardDef（= 一个主题）各占一张卡，卡片
+    // 数量一多就显得碎；现在它们只是同一张卡里的行，行之间用细分隔线区分。
+    // 二级页同一口径，见 _buildSurfaceStyleCard。
+    final rows = <Widget>[];
+    for (var i = 0; i < cards.length; i++) {
+      final c = cards[i];
+      // 全局搜索跳转过来时高亮命中的设置行（见 _highlightWrap）；
+      // 设置项卡片统一走 _cardShell → AppCard，遵循「主题→样式→卡片样式」。
+      rows.add(KeyedSubtree(
+        key: _cardKey(c.id),
+        child: _highlightWrap(
+          c.id,
+          _buildMobileRow(c, context, state, scheme, s),
         ),
       ));
+      if (i < cards.length - 1) {
+        rows.add(Divider(
+          height: 0.5,
+          thickness: 0.5,
+          indent: 16,
+          endIndent: 16,
+          color: scheme.outlineVariant.withAlpha(60),
+        ));
+      }
     }
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1162,7 +1171,14 @@ class _SettingsPageState extends State<SettingsPage> {
           letterSpacing: 0.3,
         )),
       ),
-      ...tiles,
+      Padding(
+        // 卡片左右内边距 14（原 8）：用户反馈「设置的卡片宽度过宽，再缩小」。
+        // 与二级页（subListPadding 12 + _glass 12 = 24）相比主界面仍略宽一点，
+        // 保持「主界面列表行 / 二级页玻璃卡」两级的层次差别。
+        // 底部 7 = 相邻两个分区之间的间距。
+        padding: const EdgeInsets.fromLTRB(14, 0, 14, 7),
+        child: _cardShell(context, state, Column(children: rows)),
+      ),
     ]);
   }
 
@@ -1245,33 +1261,11 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   /// 二级设置页：全屏（覆盖底部导航栏），顶部返回栏 + 可滚动内容。
+  /// 三级页（「样式 → 玻璃细节」）由 [_pushSettingsSubPage] 再 push 一层，
+  /// 这里保留同名薄包装，避免改动既有调用点。
   void _pushMobileSubPage(
-    BuildContext context, String title, Widget Function(BuildContext, AppState) contentBuilder) {
-    Navigator.of(context).push(MaterialPageRoute(allowSnapshotting: false, 
-      builder: (ctx) => Consumer<AppState>(
-        builder: (ctx2, state, _) => withWallpaper(
-          ctx2,
-          Scaffold(
-          backgroundColor: Colors.transparent,
-          body: Column(children: [
-            MobileSubPageTopBar(
-              title: Text(title),
-              onBack: () => Navigator.of(ctx2).maybePop(),
-            ),
-            Expanded(
-              child: ListView(
-                // 左右间距与设置主界面卡片对齐（主界面 = ListView 6px + 分区 8px = 14px）。
-                // 此前为 0：MCP/AI 等二级页卡片通顶通底，比主界面卡片明显更宽。
-                padding: MobileUi.subListPadding(top: 12, bottom: 48),
-                children: [contentBuilder(ctx2, state)],
-              ),
-            ),
-          ]),
-          ),
-        ),
-      ),
-    ));
-  }
+    BuildContext context, String title, Widget Function(BuildContext, AppState) contentBuilder) =>
+      _pushSettingsSubPage(context, title, contentBuilder);
 
   Widget _searchField(ColorScheme scheme, AppStrings s) => Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -1377,6 +1371,67 @@ Widget _cardShell(
       constraints: const BoxConstraints(minWidth: double.infinity),
       child: child,
     ),
+  );
+}
+
+/// 二级 / 三级设置页：全屏（覆盖底部导航栏），顶部返回栏 + 可滚动内容。
+///
+/// 做成**顶层函数**（而不是只留在 State 里）是为了让三级页也能复用同一个入口 ——
+/// `_buildSurfaceStyleCard` 这类卡片构建函数是顶层函数、拿不到 State，
+/// 「样式 → 玻璃细节」就是靠它从二级页再 push 一层的。
+void _pushSettingsSubPage(
+  BuildContext context,
+  String title,
+  Widget Function(BuildContext, AppState) contentBuilder,
+) {
+  Navigator.of(context).push(MaterialPageRoute(allowSnapshotting: false,
+    builder: (ctx) => Consumer<AppState>(
+      builder: (ctx2, state, _) => withWallpaper(
+        ctx2,
+        Scaffold(
+        backgroundColor: Colors.transparent,
+        body: Column(children: [
+          MobileSubPageTopBar(
+            title: Text(title),
+            onBack: () => Navigator.of(ctx2).maybePop(),
+          ),
+          Expanded(
+            child: ListView(
+              // 左右间距与设置主界面卡片对齐（主界面 = ListView 6px + 分区 8px = 14px）。
+              padding: MobileUi.subListPadding(top: 12, bottom: 48),
+              children: [contentBuilder(ctx2, state)],
+            ),
+          ),
+        ]),
+        ),
+      ),
+    ),
+  ));
+}
+
+/// 「玻璃细节」入口行（**仅移动端**）：玻璃细节在移动端是三级页
+/// （一级菜单「外观」→「样式」二级页 →「玻璃细节」三级页），所以二级页里
+/// 只放一个可点的入口行，而不是把五颗滑块平铺进来。
+///
+/// 桌面端右侧面板没有三级页机制、一屏也能平铺放下，所以玻璃细节在桌面端
+/// 仍是一级菜单里的独立卡（见 `_sections` 里 glassDetail 的 `if (!isMobilePlatform)`）。
+Widget _glassDetailEntry(BuildContext ctx, AppState state) {
+  final zh = state.config.language == 'zh';
+  final scheme = Theme.of(ctx).colorScheme;
+  return ListTile(
+    dense: true,
+    contentPadding: EdgeInsets.zero,
+    leading: Icon(Icons.blur_on_outlined, size: 19, color: scheme.primary),
+    title: Text(zh ? '玻璃细节' : 'Glass details',
+        style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+    subtitle: Text(
+        zh
+            ? '模糊度 / 通透度 / 高光强度与位置 / 边缘光'
+            : 'Blur, clarity, highlight & position, edge light',
+        style: TextStyle(fontSize: 11, color: scheme.outline)),
+    trailing: Icon(Icons.chevron_right, size: 20, color: scheme.outline),
+    onTap: () => _pushSettingsSubPage(
+        ctx, zh ? '玻璃细节' : 'Glass details', _buildGlassDetailCard),
   );
 }
 
@@ -1749,81 +1804,93 @@ Widget _buildSurfaceStyleCard(BuildContext ctx, AppState state) {
       cfg.pillStyle == SurfaceStyle.blur ||
       (!isMobilePlatform && cfg.menuStyle == SurfaceStyle.blur);
 
-  return Column(children: [
+  // 卡内分组小标题：用户要求「二级菜单也是这样（整合到一张卡片）」，于是这里
+  // 用分组小标题代替原先「一组一张卡」的做法。
+  Widget group(String t) => Padding(
+        padding: const EdgeInsets.only(top: 16, bottom: 4),
+        child: Text(t,
+            style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                color: scheme.primary)),
+      );
+
+  return _glass(ctx, state, s.styleLabel, [
     // ① 样式预设
-    _glass(ctx, state, zh ? '样式预设' : 'Style presets',
-        _buildStylePresets(ctx, state)),
-    const SizedBox(height: 8),
-    // ② 表面样式（卡标题与二级页标题「样式」区分开，否则一进来看不出哪张卡
-    //    是「逐项调样式」的那张）
-    _glass(ctx, state, zh ? '表面样式' : 'Surface style', [
-      // 布局统一：左 = 图标 + 文字（含作用范围说明），右 = 下拉菜单（展开动画）
+    group(zh ? '样式预设' : 'Style presets'),
+    ..._buildStylePresets(ctx, state),
+    // ② 表面样式（逐项调）
+    group(zh ? '表面样式' : 'Surface style'),
+    // 布局统一：左 = 图标 + 文字（含作用范围说明），右 = 下拉菜单（展开动画）
+    _styleRow(ctx,
+        icon: Icons.view_carousel_outlined,
+        label: s.cardStyleLabel,
+        scope: s.cardStyleScope,
+        value: cfg.cardStyle,
+        onSelected: (v) => state.updateConfig((c) => c..cardStyle = v)),
+    // 桌面端：左侧菜单栏 + 各页顶部菜单栏的表面样式
+    if (!isMobilePlatform)
       _styleRow(ctx,
-          icon: Icons.view_carousel_outlined,
-          label: s.cardStyleLabel,
-          scope: s.cardStyleScope,
-          value: cfg.cardStyle,
-          onSelected: (v) => state.updateConfig((c) => c..cardStyle = v)),
-      // 桌面端：左侧菜单栏 + 各页顶部菜单栏的表面样式（原来固定液态玻璃）
-      if (!isMobilePlatform)
-        _styleRow(ctx,
-            icon: Icons.view_sidebar_outlined,
-            label: s.isZh ? '菜单样式' : 'Menu Style',
-            scope: s.isZh
-                ? '作用于 左侧菜单栏 和 各页顶部菜单栏（仅桌面端）'
-                : 'Applies to the sidebar and page top bars (desktop only)',
-            value: cfg.menuStyle,
-            onSelected: (v) => state.updateConfig((c) => c..menuStyle = v)),
-      if (isMobilePlatform) ...[
-        _styleRow(ctx,
-            icon: Icons.menu,
-            label: s.navStyleLabel,
-            value: cfg.navStyle,
-            onSelected: (v) => state.updateConfig((c) => c..navStyle = v)),
-        _styleRow(ctx,
-            icon: Icons.crop_landscape_outlined,
-            label: s.pillStyleLabel,
-            value: cfg.pillStyle,
-            onSelected: (v) => state.updateConfig((c) => c..pillStyle = v)),
-      ],
-      // ── 「模糊」样式的模糊度 ──
-      //
-      // 用户要求：「如果样式选了模糊，那么下面的滑块就要能调节它的模糊度」。
-      // 四个表面样式（卡片 / 菜单 / 底部菜单栏 / 顶部药丸）的 blur 分支都从同一个
-      // `glassBlur` 取 σ（AppCard / MobileBottomNav / MobileGlassPill / GlassPanel），
-      // 所以这颗滑块直接绑 `glassBlur` 就对全部「模糊」表面生效。它与「玻璃细节 →
-      // 玻璃模糊度」是**同一个参数**，这里只是把它放到真正需要它的地方：
-      // 仅当确实有表面选了「模糊」时才出现，因此不会多出一个常年可见的重复项。
-      if (anyBlur) ...[
-        const SizedBox(height: 6),
-        _SettingSlider(
-          value: cfg.glassBlur,
-          min: 0,
-          max: 30,
-          divisions: 30,
-          // 拖动过程中就写回配置：模糊度改的是整块卡片的模糊程度，若松手才生效，
-          // 拖动时看着毫无变化，会被判定成「滑块坏了」（与字号滑块同一个坑）。
-          liveCommit: true,
-          label: (v) => '${zh ? '模糊度' : 'Blur'}: ${v.round()}',
-          labelStyle: TextStyle(color: clr, fontSize: 12),
-          onCommit: (v) => state.updateConfig((c) => c..glassBlur = v),
-        ),
-        Text(
-            zh
-                ? '即时作用于所有「模糊」表面（卡片 / 菜单 / 底部菜单栏 / 药丸）；'
-                    '与「玻璃细节 → 玻璃模糊度」是同一个参数'
-                : 'Applies live to every "Blur" surface; same value as '
-                    'Glass details → Blur',
-            style: TextStyle(fontSize: 10, color: scheme.outline)),
-      ],
-    ]),
-    const SizedBox(height: 8),
-    // ③ 玻璃与材质
-    _glass(ctx, state, zh ? '玻璃与材质' : 'Glass & material',
-        _buildGlassMaterialItems(ctx, state)),
-    const SizedBox(height: 8),
-    // ④ 特效
-    _glass(ctx, state, zh ? '特效' : 'Effects', _buildEffectItems(ctx, state)),
+          icon: Icons.view_sidebar_outlined,
+          label: s.isZh ? '菜单样式' : 'Menu Style',
+          scope: s.isZh
+              ? '作用于 左侧菜单栏 和 各页顶部菜单栏（仅桌面端）'
+              : 'Applies to the sidebar and page top bars (desktop only)',
+          value: cfg.menuStyle,
+          onSelected: (v) => state.updateConfig((c) => c..menuStyle = v)),
+    if (isMobilePlatform) ...[
+      _styleRow(ctx,
+          icon: Icons.menu,
+          label: s.navStyleLabel,
+          value: cfg.navStyle,
+          onSelected: (v) => state.updateConfig((c) => c..navStyle = v)),
+      _styleRow(ctx,
+          icon: Icons.crop_landscape_outlined,
+          label: s.pillStyleLabel,
+          value: cfg.pillStyle,
+          onSelected: (v) => state.updateConfig((c) => c..pillStyle = v)),
+    ],
+    // ── 「模糊」样式的模糊度 ──
+    //
+    // 用户要求：「如果样式选了模糊，那么下面的滑块就要能调节它的模糊度」。
+    // 四个表面样式（卡片 / 菜单 / 底部菜单栏 / 顶部药丸）的 blur 分支都从同一个
+    // `glassBlur` 取 σ（AppCard / MobileBottomNav / MobileGlassPill / GlassPanel），
+    // 所以这颗滑块直接绑 `glassBlur` 就对全部「模糊」表面生效。它与「玻璃细节 →
+    // 玻璃模糊度」是**同一个参数**，这里只是把它放到真正需要它的地方：
+    // 仅当确实有表面选了「模糊」时才出现，因此不会多出一个常年可见的重复项。
+    if (anyBlur) ...[
+      const SizedBox(height: 6),
+      _SettingSlider(
+        value: cfg.glassBlur,
+        min: 0,
+        max: 30,
+        divisions: 30,
+        // 拖动过程中就写回配置：模糊度改的是整块卡片的模糊程度，若松手才生效，
+        // 拖动时看着毫无变化，会被判定成「滑块坏了」（与字号滑块同一个坑）。
+        liveCommit: true,
+        label: (v) => '${zh ? '模糊度' : 'Blur'}: ${v.round()}',
+        labelStyle: TextStyle(color: clr, fontSize: 12),
+        onCommit: (v) => state.updateConfig((c) => c..glassBlur = v),
+      ),
+      Text(
+          zh
+              ? '即时作用于所有「模糊」表面（卡片 / 菜单 / 底部菜单栏 / 药丸）；'
+                  '与「玻璃细节 → 玻璃模糊度」是同一个参数'
+              : 'Applies live to every "Blur" surface; same value as '
+                  'Glass details → Blur',
+          style: TextStyle(fontSize: 10, color: scheme.outline)),
+    ],
+    // ③ 玻璃细节（移动端 = 三级页入口；桌面端在一级菜单里仍是独立卡）
+    if (isMobilePlatform) ...[
+      group(zh ? '玻璃细节' : 'Glass details'),
+      _glassDetailEntry(ctx, state),
+    ],
+    // ④ 玻璃与材质
+    group(zh ? '玻璃与材质' : 'Glass & material'),
+    ..._buildGlassMaterialItems(ctx, state),
+    // ⑤ 特效
+    group(zh ? '特效' : 'Effects'),
+    ..._buildEffectItems(ctx, state),
   ]);
 }
 
@@ -2445,6 +2512,46 @@ Widget _buildNodeEditorStyleCard(BuildContext ctx, AppState state) {
   final clr = scheme.onSurface;
 
   return _glass(ctx, state, s.nodeEditorStyleLabel, [
+    // ── 界面尺寸（移动端）──
+    //
+    // 用户反馈「节点编辑器界面的上方药丸太大了（在竖屏下），希望设置能加一个
+    // 调整这个大小的功能」+「再加一个调整左下方放大镜那个药丸大小的选项」。
+    // 这两项其实**早就存在**（editorToolbarScale / editorZoomScale），但原先被塞在
+    // 「自动保存」卡里 —— 卡名与它们完全无关，根本找不到。现挪到这张名字对得上
+    // 的卡里，并把下限从 0.7 放宽到 0.5（竖屏下原先调到最小仍然偏大）。
+    if (isMobilePlatform) ...[
+      Text(s.isZh ? '界面尺寸' : 'UI size',
+          style: TextStyle(
+              fontSize: 11.5, fontWeight: FontWeight.w600, color: scheme.primary)),
+      const SizedBox(height: 2),
+      Text(
+          s.isZh
+              ? '调节节点编辑器里两个悬浮药丸的大小；竖屏觉得挡视野就调小'
+              : 'Scale the two floating pills in the node editor',
+          style: TextStyle(fontSize: 10, color: scheme.outline)),
+      const SizedBox(height: 8),
+      _SettingSlider(
+        value: cfg.editorToolbarScale.clamp(0.5, 1.6),
+        min: 0.5, max: 1.6, divisions: 11,
+        // 拖动即时生效：药丸大小是纯视觉量，松手才生效时看不出中间档位差别，
+        // 会被判定成「滑块坏了」（与字号 / 模糊度滑块同一个坑）。
+        liveCommit: true,
+        label: (v) => '${s.isZh ? '顶部菜单栏大小' : 'Top toolbar size'}: ${(v * 100).round()}%',
+        labelStyle: TextStyle(color: clr, fontSize: 12),
+        onCommit: (v) => state.updateConfig((c) => c..editorToolbarScale = v),
+      ),
+      _SettingSlider(
+        value: cfg.editorZoomScale.clamp(0.5, 1.6),
+        min: 0.5, max: 1.6, divisions: 11,
+        liveCommit: true,
+        label: (v) => '${s.isZh ? '放大镜药丸大小' : 'Zoom pill size'}: ${(v * 100).round()}%',
+        labelStyle: TextStyle(color: clr, fontSize: 12),
+        onCommit: (v) => state.updateConfig((c) => c..editorZoomScale = v),
+      ),
+      const SizedBox(height: 12),
+      Divider(height: 0.5, thickness: 0.5, color: scheme.outlineVariant.withAlpha(60)),
+      const SizedBox(height: 10),
+    ],
     // 画布背景：下拉菜单样式（跟随全局 / 灰色 / 黑色 / 白色）
     Row(children: [
       Expanded(child: Text(s.canvasBgLabel, maxLines: 1, overflow: TextOverflow.ellipsis,
@@ -2971,24 +3078,9 @@ Widget _buildAutosave(BuildContext ctx, AppState state) {
               style: TextStyle(fontSize: 11, color: scheme.outline)),
           value: cfg.useNodeEditorLandscape,
           onChanged: (v) => state.updateConfig((c) => c..useNodeEditorLandscape = v)),
-      const Divider(height: 4, color: Colors.transparent),
-      // 画布编辑器 UI 尺寸调节（移动端点按目标偏小/偏大时的补偿）
-      // 统一「左 = 文字描述，右 = 滑动条」；_SettingSlider 自带「拖动只改本地、
-      // 松手才写配置」的节流语义，比原来的每帧 updateConfig 更省。
-      _SettingSlider(
-        value: cfg.editorToolbarScale.clamp(0.7, 1.6),
-        min: 0.7, max: 1.6, divisions: 9,
-        label: (v) => '${s.isZh ? '顶部菜单栏大小' : 'Top toolbar size'}: ${(v * 100).round()}%',
-        labelStyle: TextStyle(color: clr, fontSize: 12),
-        onCommit: (v) => state.updateConfig((c) => c..editorToolbarScale = v),
-      ),
-      _SettingSlider(
-        value: cfg.editorZoomScale.clamp(0.7, 1.6),
-        min: 0.7, max: 1.6, divisions: 9,
-        label: (v) => '${s.isZh ? '放大镜（缩放药丸）大小' : 'Zoom pill size'}: ${(v * 100).round()}%',
-        labelStyle: TextStyle(color: clr, fontSize: 12),
-        onCommit: (v) => state.updateConfig((c) => c..editorZoomScale = v),
-      ),
+      // 注：「顶部菜单栏大小 / 放大镜药丸大小」两颗滑块原先挤在这张「自动保存」卡里
+      // —— 卡名与它们完全无关，用户根本找不到（反馈「希望设置能加一个调整这个
+      // 大小的功能」，其实早就有了）。已移到「节点编辑器界面」卡。
       const Divider(height: 8, color: Colors.transparent),
     ],
     SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,

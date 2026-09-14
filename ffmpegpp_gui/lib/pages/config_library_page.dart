@@ -751,12 +751,15 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         const SizedBox(height: 6),
         Text(zh ? '点击「新建」创建节点编辑器配置模板' : 'Click "New" to create a node editor config',
             style: TextStyle(color: scheme.outline.withAlpha(120), fontSize: 12)),
-        const SizedBox(height: 16),
-        OutlinedButton.icon(
-          icon: const Icon(Icons.file_download_outlined, size: 16),
-          label: Text(zh ? '或导入 .fppx 文件' : 'Or import .fppx file'),
-          onPressed: _importFppx,
-        ),
+        // 这里原先是一个裸 OutlinedButton（导入 .fppx），与页面其它 UI 风格割裂
+        // （顶栏是玻璃药丸、快捷配置空状态是纯文字指路）。改为与快捷配置空状态
+        // 完全同一种写法：只给指路文案，导入入口就是右上角那颗玻璃药丸。
+        const SizedBox(height: 4),
+        Text(
+            zh
+                ? '或点右上角「⬇」导入 .fppx 文件'
+                : 'Or use the ⬇ button at top-right to import a .fppx file',
+            style: TextStyle(color: scheme.outline.withAlpha(120), fontSize: 12)),
       ])),
     );
   }

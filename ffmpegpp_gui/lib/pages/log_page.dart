@@ -197,6 +197,10 @@ class _LogPageState extends State<LogPage> {
       margin: const EdgeInsets.symmetric(horizontal: 12),
       child: GlassPanel(
         radius: 16,
+        // 面板表面样式跟随「卡片样式」（用户反馈「日志面板的模糊样式好像跟随
+        // 药丸的」）：此前没传 style，GlassPanel 会落到全局 glassEffect，
+        // 与设置里选的卡片样式无关，看起来就像跟着别的开关走。
+        style: cfg.cardStyle,
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
         child: ListView.builder(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
