@@ -1004,10 +1004,11 @@ class _SettingsPageState extends State<SettingsPage> {
                     key: _cardKey(c.id),
                     child: _highlightWrap(
                       c.id,
-                      RepaintBoundary(
-                        key: ValueKey(c.id),
-                        child: c.build(ctx, state),
-                      ),
+                      // 不包 RepaintBoundary：它会光栅缓存玻璃卡的开窗 painter，
+                      // 滚动时直接复用旧图层平移 → 卡内壁纸跟着卡片走
+                      //（见 app_card 的 _WallpaperWindowPainter）。
+                      // 搜索定位依赖外层 KeyedSubtree 的 GlobalKey，与本层无关。
+                      c.build(ctx, state),
                     ),
                   ),
               ],
@@ -1069,10 +1070,8 @@ class _SettingsPageState extends State<SettingsPage> {
                       _resultHeader(sec, c, scheme, AppStrings.of(state.config.language), ctx),
                       _highlightWrap(
                         c.id,
-                        RepaintBoundary(
-                          key: ValueKey(c.id),
-                          child: c.build(ctx, state),
-                        ),
+                        // 同上：不包 RepaintBoundary，避免开窗 painter 被缓存。
+                        c.build(ctx, state),
                       ),
                     ],
                   ),

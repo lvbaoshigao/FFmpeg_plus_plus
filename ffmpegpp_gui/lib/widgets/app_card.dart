@@ -252,10 +252,16 @@ class _AppCardState extends State<AppCard> {
             final Color? tint;
             final Gradient? tintGrad;
             final Border border;
+            // 阴影必须与下方各回退分支逐项对齐：此前开窗分支直接
+            // 从 ClipRRect 开始、没有阴影，导致「设了壁纸的用户」
+            // 液态玻璃卡比无壁纸时扁平一块（两条路径观感不一致）。
+            final BoxShadow? shadow;
             if (blurLike) {
               tint = glassBase.withAlpha(
                   (((isDark ? 110.0 : 130.0) * op * tScale).round()).clamp(0, 255));
               tintGrad = null;
+              // 扁平模糊路径本身无阴影（与回退分支一致）。
+              shadow = null;
               border = Border.all(
                   color: scheme.outlineVariant
                       .withAlpha((edgeOutline.alpha * 255).round().clamp(0, 255)),
@@ -263,6 +269,12 @@ class _AppCardState extends State<AppCard> {
             } else if (gpuGlass) {
               tint = glassBase.withAlpha(((op * 255) * tScale).round().clamp(0, 255));
               tintGrad = null;
+              // 与 OCLiquidGlass(shadow:) 同参数。
+              shadow = BoxShadow(
+                color: Colors.black.withAlpha(isDark ? 60 : 22),
+                blurRadius: 16,
+                offset: const Offset(0, 5),
+              );
               border = Border.all(
                   color: Colors.white.withValues(alpha: edgeWhite.alpha),
                   width: edgeWhite.width);
@@ -282,18 +294,32 @@ class _AppCardState extends State<AppCard> {
                       ],
                 stops: grad == null ? const [0.0, 0.55, 1.0] : null,
               );
+              // 与 LiquidGlassBackdrop(shadow:) 同参数。
+              shadow = BoxShadow(
+                color: Colors.black.withAlpha(isDark ? 60 : 26),
+                blurRadius: 18,
+                offset: const Offset(0, 6),
+              );
               border = Border.all(
                   color: Colors.white.withValues(alpha: edgeLiquid.alpha),
                   width: edgeLiquid.width);
             }
-            return ClipRRect(
+            final Widget glassSurface = ClipRRect(
               borderRadius: br,
               child: CustomPaint(
                 painter: _WallpaperWindowPainter(
                     image: w.image,
+                    // 预模糊整屏壁纸（所有玻璃卡共享一张）：非 null 时 painter
+                    // 只做普通贴图，不再每帧每卡跑高斯模糊。为 null 时回退实时
+                    // 模糊（见 painter 注释）。
+                    blurred: w.blurred,
                     screen: w.screen,
                     overlay: w.overlayColor,
-                    sigma: sigma),
+                    sigma: sigma,
+                    // 真实 DPR 必须由 MediaQuery 提供：画布变换矩阵里的
+                    // st[0] 是「DPR × 祖先缩放」（onTap 卡的 AnimatedScale、
+                    // 路由转场都会贡献缩放），拿它当 DPR 会把屏幕矩形算错。
+                    devicePixelRatio: MediaQuery.devicePixelRatioOf(context)),
                 child: CustomPaint(
                   painter: LiquidGlassPainter(
                       borderRadius: br,
@@ -313,6 +339,14 @@ class _AppCardState extends State<AppCard> {
                   ),
                 ),
               ),
+            );
+            // 阴影必须在 ClipRRect 之外绘制（裁剪层会把 boxShadow 一并裁掉），
+            // 且不能包 RepaintBoundary（会把开窗 painter 光栅缓存掉，
+            // 滚动时表现为卡内壁纸跟着卡平移）。
+            if (shadow == null) return glassSurface;
+            return DecoratedBox(
+              decoration: BoxDecoration(borderRadius: br, boxShadow: [shadow]),
+              child: glassSurface,
             );
           }
           // ── 回退：无壁纸源时沿用原玻璃路径 ──
@@ -478,10 +512,20 @@ class _AppCardState extends State<AppCard> {
 /// 与背景壁纸逐像素对齐（同一帧、同一变换矩阵光栅化，不存在采样滞后）。
 ///
 /// 对齐方式：壁纸 cover 铺满整屏且原点在屏幕 (0,0)，卡片本地坐标下屏幕矩形
-/// 的位置 = 画布当前变换的平移量（逆 DPR 到逻辑坐标）。随后：
-///  1. drawImageRect 把壁纸画到屏幕对应位置（σ 取「玻璃细节→模糊度」）；
+/// 的位置与尺寸由画布变换矩阵推得：位置 = 设备平移 ÷ 总缩放，尺寸 =
+/// 逻辑尺寸 × 真实 DPR ÷ 总缩放（总缩放含 DPR 与祖先缩放）。随后：
+///  1. drawImageRect 把壁纸画到屏幕对应位置（清晰度见下）；
 ///  2. 叠 withWallpaper 的遮罩色（背景不透明度），保证玻璃里的壁纸亮度
 ///     与卡片外的背景一致。
+///
+/// 清晰度来源有两条路径，观感一致、开销差一个数量级：
+///  - **首选**：用 [blurred]（WallpaperWindowScope 预先离屏渲染好的整屏模糊
+///    壁纸），这里只做一次普通 drawImageRect。同一张图被页内所有玻璃卡共享，
+///    每帧不再产生任何模糊。
+///  - **回退**：没有预模糊图时（无壁纸 / 尚未生成 / 生成失败）在本方法里实时
+///    模糊。这是老路径：每次 paint 都要为「整屏 dst」跑一次高斯模糊，模糊需要
+///    在目标外多分配约 3σ 的离屏纹理，是「开玻璃后进程常驻内存几百 MB」的
+///    主要来源 —— 所以正常情况不应走到这里。
 ///
 /// 已知限制：模糊在壁纸图像边界处会向透明衰减（贴屏幕边缘的卡片可能有
 /// 极窄的边缘变暗，通常被遮罩色盖住）；背景上若出现壁纸之外的内容
@@ -489,41 +533,75 @@ class _AppCardState extends State<AppCard> {
 /// 等卡片互不重叠的页面无此问题。
 class _WallpaperWindowPainter extends CustomPainter {
   final ui.Image image;
+
+  /// 预模糊好的整屏壁纸（设备像素尺寸，见 [WallpaperWindow.blurred]）。
+  /// 非 null 时不再触发任何模糊。
+  final ui.Image? blurred;
+
   final Size screen;
   final Color overlay;
   final double sigma;
+
+  /// 真实设备像素比（由 MediaQuery 下发，必须与画布变换里的缩放分开）：
+  /// 画布变换的 st[0] 是「DPR × 祖先缩放」，两者混为一谈时，
+  /// 任何带缩放的祖先（onTap 卡片的 AnimatedScale、路由转场）都会让
+  /// 屏幕矩形算错，卡内壁纸与背景错位。
+  final double devicePixelRatio;
 
   const _WallpaperWindowPainter({
     required this.image,
     required this.screen,
     required this.overlay,
     required this.sigma,
+    required this.devicePixelRatio,
+    this.blurred,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     final m = Matrix4.fromFloat64List(canvas.getTransform());
     final st = m.storage;
-    final dpr = st[0];
-    // 仅支持「等比缩放（DPR）+ 平移」的祖先变换（各页面均如此）；
-    // 出现旋转 / 非等比缩放（如 InteractiveViewer）时放弃开窗。
-    if (dpr <= 0 || st[1] != 0 || st[4] != 0 || st[5] != dpr) return;
-    final cardX = st[12] / dpr;
-    final cardY = st[13] / dpr;
-    final screenRect = Rect.fromLTWH(-cardX, -cardY, screen.width, screen.height);
-    final iw = image.width.toDouble();
-    final ih = image.height.toDouble();
-    final scale = math.max(screen.width / iw, screen.height / ih);
-    final cover = Rect.fromLTWH(
-      screenRect.left + (screen.width - iw * scale) / 2,
-      screenRect.top + (screen.height - ih * scale) / 2,
-      iw * scale,
-      ih * scale,
-    );
-    final p = Paint()
-      ..imageFilter = ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma)
-      ..filterQuality = FilterQuality.medium;
-    canvas.drawImageRect(image, Rect.fromLTWH(0, 0, iw, ih), cover, p);
+    // st[0]/st[5] = 本地→设备的总缩放（DPR × 祖先缩放）；
+    // st[12]/st[13] = 设备单位的平移。
+    // 仅接受「等比缩放 + 平移」的变换：出现旋转 / 斜切 / 非等比缩放
+    // （如 InteractiveViewer 拉伸）时放弃开窗，回退 BackdropFilter。
+    final scaleX = st[0];
+    final scaleY = st[5];
+    if (scaleX <= 0 || st[1] != 0 || st[4] != 0 || scaleY != scaleX) return;
+    if (devicePixelRatio <= 0) return;
+    // 屏幕左上角在卡片本地坐标下的位置 = 设备平移取反 ÷ 总缩放。
+    final cardX = st[12] / scaleX;
+    final cardY = st[13] / scaleY;
+    // 屏幕逻辑尺寸换算为本地长度：逻辑 →设备（×DPR）→本地（÷总缩放）。
+    final screenRect = Rect.fromLTWH(-cardX, -cardY,
+        screen.width * devicePixelRatio / scaleX,
+        screen.height * devicePixelRatio / scaleY);
+
+    final b = blurred;
+    if (b != null) {
+      // 预模糊图已按 cover 铺满整屏（见 WallpaperWindowScope._buildBlurred），
+      // 这里整张铺到屏幕矩形即可 —— 与卡外背景逐像素对齐，且不做模糊。
+      canvas.drawImageRect(
+        b,
+        Rect.fromLTWH(0, 0, b.width.toDouble(), b.height.toDouble()),
+        screenRect,
+        Paint()..filterQuality = FilterQuality.medium,
+      );
+    } else {
+      final iw = image.width.toDouble();
+      final ih = image.height.toDouble();
+      final scale = math.max(screen.width / iw, screen.height / ih);
+      final cover = Rect.fromLTWH(
+        screenRect.left + (screen.width - iw * scale) / 2,
+        screenRect.top + (screen.height - ih * scale) / 2,
+        iw * scale,
+        ih * scale,
+      );
+      final p = Paint()
+        ..imageFilter = ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma)
+        ..filterQuality = FilterQuality.medium;
+      canvas.drawImageRect(image, Rect.fromLTWH(0, 0, iw, ih), cover, p);
+    }
     if (overlay.a > 0) {
       canvas.drawRect(screenRect, Paint()..color = overlay);
     }
@@ -532,7 +610,10 @@ class _WallpaperWindowPainter extends CustomPainter {
   @override
   bool shouldRepaint(_WallpaperWindowPainter old) =>
       old.image != image ||
+      // 预模糊图换成新的（含 null → 非 null）必须重绘，否则会停留在老清晰度
+      old.blurred != blurred ||
       old.screen != screen ||
       old.overlay != overlay ||
-      old.sigma != sigma;
+      old.sigma != sigma ||
+      old.devicePixelRatio != devicePixelRatio;
 }

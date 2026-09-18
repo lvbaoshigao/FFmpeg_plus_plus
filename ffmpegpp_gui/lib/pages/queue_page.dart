@@ -81,6 +81,9 @@ class _QueuePageState extends State<QueuePage> {
                             Text(s.emptyQueueHint, style: TextStyle(fontSize: 13, color: scheme.outline)),
                           ]))
                         : ListView.builder(
+                            // 开窗卡所在列表必须关（见 app_card 的
+                            // _WallpaperWindowPainter）
+                            addRepaintBoundaries: false,
                             padding: MobileUi.mainListPadding(),
                             itemCount: state.tasks.length,
                             itemBuilder: (_, i) => _taskCardFor(state, i),
@@ -103,6 +106,9 @@ class _QueuePageState extends State<QueuePage> {
                             ]))
                           : RepaintBoundary(
                               child: ListView.builder(
+                                // 开窗卡所在列表必须关（见 app_card 的
+                                // _WallpaperWindowPainter）
+                                addRepaintBoundaries: false,
                                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
                                 itemCount: state.tasks.length,
                                 itemBuilder: (_, i) => _taskCardFor(state, i),

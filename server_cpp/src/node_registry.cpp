@@ -26,6 +26,14 @@ namespace {
 // 通用媒体处理节点的参数键（所有节点都允许 node_name 显示别名）
 #define COMMON_KEYS "node_name"
 
+// 注意：同一个键名**可以**登记在多个节点类型名下，这不是笔误。
+// 不同节点的同名参数语义各自独立（如 output_format 在 imageConvert 是出图格式、
+// 在 imageToVideo 是视频容器格式、在 audioConvert 是音频容器格式），而张冠李戴
+// 检查按「该键是否登记在本节点名下」判定（classifyParamKey），因此**每个节点
+// 实际会写入的参数键都必须登记**，漏登记会被判成 PKC_MISMATCH 而拒绝写盘。
+// 新增节点参数的流程：先在 GUI 侧（step_editors / quick_config_pipeline）落键，
+// 再回到这里补登记，否则该节点的配置无法导出为 FPPX v2。
+
 // ── 媒体处理节点（数据流）──────────────────────────────────────
 const NodeTypeSpec kTypes[] = {
     // ID 按整数顺序分配；avProcess=0x1（历史约定），其余按 GUI 枚举序
@@ -42,7 +50,8 @@ const NodeTypeSpec kTypes[] = {
      MK_VIDEO, MK_VIDEO, false, 0, {COMMON_KEYS, "start_time", "end_time"}},
     {makeTypeId(0x4), "frame", nullptr, "帧提取",
      MK_VIDEO, MK_IMAGE, false, 0,
-     {COMMON_KEYS, "extract_mode", "time", "range_start", "range_end", "fps_rate"}},
+     {COMMON_KEYS, "extract_mode", "time", "range_start", "range_end", "fps_rate",
+      "output_format" /* 提取帧的图片格式 png/jpg/bmp，与 imageConvert 同名不同义 */}},
     {makeTypeId(0x5), "speed", nullptr, "变速",
      MK_VIDEO, MK_VIDEO, false, 0,
      {COMMON_KEYS, "speed", "custom_speed", "custom_speed_value"}},
@@ -66,16 +75,20 @@ const NodeTypeSpec kTypes[] = {
      {COMMON_KEYS, "extract_mode", "start_time", "end_time", "audio_codec",
       "output_format"}},
     {makeTypeId(0xE), "concatMedia", nullptr, "合并媒体",
-     MK_VIDEO | MK_AUDIO, MK_VIDEO, false, 0, {COMMON_KEYS, "mode"}},
+     MK_VIDEO | MK_AUDIO, MK_VIDEO, false, 0,
+     {COMMON_KEYS, "mode", "order_mode", "manual_order"}},
     {makeTypeId(0xF), "imageToVideo", nullptr, "图片合成视频",
-     MK_IMAGE, MK_VIDEO, false, 0, {COMMON_KEYS, "framerate"}},
+     MK_IMAGE, MK_VIDEO, false, 0,
+     {COMMON_KEYS, "framerate", "output_format", "video_codec", "order_mode",
+      "manual_order"}},
     {makeTypeId(0x10), "imageCrop", nullptr, "图片裁剪",
      MK_IMAGE, MK_IMAGE, false, 0,
      {COMMON_KEYS, "crop_w", "crop_h", "crop_x", "crop_y"}},
     {makeTypeId(0x11), "imageRotate", nullptr, "图片旋转",
      MK_IMAGE, MK_IMAGE, false, 0, {COMMON_KEYS, "angle"}},
     {makeTypeId(0x12), "imageScale", nullptr, "图片缩放",
-     MK_IMAGE, MK_IMAGE, false, 0, {COMMON_KEYS, "scale_factor"}},
+     MK_IMAGE, MK_IMAGE, false, 0,
+     {COMMON_KEYS, "scale_factor", "scale_mode", "target_w", "target_h", "fit"}},
     {makeTypeId(0x13), "imageBrightness", nullptr, "图片亮度",
      MK_IMAGE, MK_IMAGE, false, 0, {COMMON_KEYS, "brightness"}},
     {makeTypeId(0x14), "imageNoise", nullptr, "图片噪声",
@@ -83,7 +96,8 @@ const NodeTypeSpec kTypes[] = {
     {makeTypeId(0x15), "imageSharpen", nullptr, "图片锐化",
      MK_IMAGE, MK_IMAGE, false, 0, {COMMON_KEYS, "sharpen_strength"}},
     {makeTypeId(0x16), "imageDenoise", nullptr, "图片降噪",
-     MK_IMAGE, MK_IMAGE, false, 0, {COMMON_KEYS, "denoise_method"}},
+     MK_IMAGE, MK_IMAGE, false, 0,
+     {COMMON_KEYS, "denoise_method", "denoise_mode", "denoise_strength"}},
     {makeTypeId(0x17), "imageChannelExtract", nullptr, "通道提取",
      MK_IMAGE, MK_IMAGE, false, 0, {COMMON_KEYS, "channel"}},
     {makeTypeId(0x18), "videoCrop", nullptr, "视频裁剪",

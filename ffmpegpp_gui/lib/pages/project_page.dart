@@ -431,6 +431,10 @@ class ProjectPageState extends State<ProjectPage> {
     return Column(children: [
       ?probingBanner,
       Expanded(child: ListView.builder(
+        // 开窗卡所在列表必须关：子项若被自动套上 RepaintBoundary，
+        // 滚动时会直接复用旧图层平移，卡内壁纸跟着卡走（见 app_card 的
+        // _WallpaperWindowPainter）。
+        addRepaintBoundaries: false,
         // 移动端走统一内边距令牌（左右 8 + 底部让出悬浮导航）；桌面端保持 16
         padding: isMobilePlatform
             ? MobileUi.mainListPadding(top: probingBanner != null ? 4 : 16)

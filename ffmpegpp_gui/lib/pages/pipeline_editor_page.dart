@@ -58,6 +58,7 @@ import '../widgets/step_editors/audio_fade_step_editor.dart';
 import '../widgets/step_editors/image_adjust_step_editor.dart';
 import '../widgets/step_editors/logic_block_editor.dart';
 import '../widgets/glass_panel.dart';
+import '../widgets/liquid_glass_fallback.dart';
 import '../widgets/toast.dart';
 import '../widgets/gate_symbol_painter.dart';
 
@@ -273,12 +274,15 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     });
   }
 
-  /// 标记草稿变更（自动保存草稿而不触发父组件的持久化保存）。
-  /// 用于参数编辑、节点拖拽等"非结构变更"操作。
-  void _markDirty() {
-    final graph = PipelineGraph(nodes: _nodes, connections: _connections, logicBlocks: _logicBlocks);
-    _scheduleAutosave(graph);
-  }
+  /// 参数编辑 / 节点拖拽等"非结构变更"的内部提交。
+  ///
+  /// 与 _commitChange 完全同义：只同步 AI/MCP 可见的实时画布
+  /// （_currentPipelineGraph）+ 防抖草稿，不触发父组件持久化。
+  /// 此前这里**只**调 _scheduleAutosave、漏了 setCurrentPipeline，于是参数面板
+  /// 改完参数后 MCP 的 error_check / pipeline://current / get_graph_stats 读到的
+  /// 仍是上一次结构化变更前的旧图，AI 可能据此把刚调好的值覆盖掉。
+  /// 直接委托给 _commitChange，避免两处实现再次跑偏。
+  void _markDirty() => _commitChange();
 
   /// 仅「显式保存」或「确认放弃」时清除草稿；普通退出（窗口关闭/崩溃）保留草稿供恢复。
   void _clearDraft() {
@@ -326,6 +330,15 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   @override
   void initState() {
     super.initState();
+    // _appState 必须最先赋值：initState 中段的 _genThumb() 会同步读取
+    // _appState.config.ffmpegPath（async 函数在第一个 await 之前是同步执行的），
+    // 而此前这一行排在它之后 → 每次打开编辑器都在 _genThumb 里抛
+    // LateInitializationError，initState 就此中断：后面 12 个 MCP 回调赋值与
+    // 横竖屏初始化全部跳过。更糟的是 dispose() 同样要访问 _appState，关闭编辑器
+    // 时再抛一次会让它中断、super.dispose() 被跳过，Element 无法正常 unmount，
+    // 整页子树（玻璃图层、RenderObject、图片引用）就此泄漏 —— 反复进出编辑器
+    // 即反复泄漏，这是「用一段时间后内存涨到几百 MB」的来源之一。
+    _appState = context.read<AppState>();
     if (!Platform.isWindows && !isMobilePlatform) {
       windowManager.addListener(this);
       windowManager.isMaximized().then((v) {
@@ -373,7 +386,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       // 世界框本地坐标 = 画布坐标 - 世界偏移；目标：把 spawn 中心放到屏幕 (300,200)
       _transformCtrl.value = Matrix4.identity()..translateByDouble(-_spawnCenter.dx + 300 + _world.left, -_spawnCenter.dy + 200 + _world.top, 0, 1);
     });
-    _appState = context.read<AppState>();
+    // _appState 已在 initState 开头赋值（见上方注释）。
     // 初始化横竖屏偏好
     if (isMobilePlatform) {
       _isLandscape = _appState.config.useNodeEditorLandscape;
@@ -501,19 +514,27 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     _autosaveTimer?.cancel();
     // 清空 MCP 侧的"当前画布"引用：编辑器已关闭，否则 error_check /
     // get_graph_stats / pipeline://current 会继续返回这份陈旧图。
-    _appState.setCurrentPipeline(null);
-    _appState.mcpOnClearAll = null;
-    _appState.mcpOnUndo = null;
-    _appState.mcpOnRedo = null;
-    _appState.mcpOnSave = null;
-    _appState.mcpOnModifyNode = null;
-    _appState.mcpOnAddNode = null;
-    _appState.mcpOnAddGate = null;
-    _appState.mcpOnDeleteNode = null;
-    _appState.mcpOnConnect = null;
-    _appState.mcpOnDisconnect = null;
-    _appState.mcpOnListNodes = null;
-    _appState.mcpOnListConnections = null;
+    //
+    // 整段必须包 try/catch：_appState 是 late 字段，任何让它未初始化的路径
+    // （历史上 _genThumb 在赋值前抢跑就触发过）都会使这里抛
+    // LateInitializationError，进而跳过 super.dispose() —— Element 无法正常
+    // unmount，整页子树连同玻璃图层、图片引用一起泄漏。宁可少清几个回调，
+    // 也必须保证 super.dispose() 一定执行。
+    try {
+      _appState.setCurrentPipeline(null);
+      _appState.mcpOnClearAll = null;
+      _appState.mcpOnUndo = null;
+      _appState.mcpOnRedo = null;
+      _appState.mcpOnSave = null;
+      _appState.mcpOnModifyNode = null;
+      _appState.mcpOnAddNode = null;
+      _appState.mcpOnAddGate = null;
+      _appState.mcpOnDeleteNode = null;
+      _appState.mcpOnConnect = null;
+      _appState.mcpOnDisconnect = null;
+      _appState.mcpOnListNodes = null;
+      _appState.mcpOnListConnections = null;
+    } catch (_) {}
     super.dispose();
   }
 
@@ -2475,11 +2496,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     ]);
   }
 
+  /// Linux 专用自绘标题栏（CSD）；Windows/macOS/移动端用系统标题栏，见调用点。
+  ///
+  /// 它同样是玻璃表面，因此也吃「玻璃细节」：σ18 与 alpha 160/180 是历史基准，
+  /// 默认参数下观感不变（Linux 不钳制 σ，18 × 1.0 = 18）。
   Widget _buildEditorCsdTitleBar(ColorScheme scheme) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final tuning = glassTuningOf(context);
+    final double sigma = tunedGlassSigma(18, tuning);
     return ClipRect(
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
         child: Container(
           height: 36,
           decoration: BoxDecoration(
@@ -2487,8 +2514,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
               colors: [
-                scheme.surface.withAlpha(isDark ? 160 : 180),
-                scheme.surface.withAlpha(isDark ? 120 : 140),
+                scheme.surface.withAlpha(tunedGlassAlpha(isDark ? 160 : 180, tuning)),
+                scheme.surface.withAlpha(tunedGlassAlpha(isDark ? 120 : 140, tuning)),
               ],
             ),
             border: Border(bottom: BorderSide(
@@ -2539,13 +2566,22 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   Widget _withWallpaper(BuildContext context, Widget child) =>
       withWallpaper(context, child, transparentAppBar: true);
 
+  /// 编辑器玻璃面板（左右侧面板等）。
+  ///
+  /// 「玻璃细节」必须贯彻到这里：此前是固定 σ6 + 裸 cardOpacity（没用
+  /// effectiveGlassSigma / tintScale），于是编辑器面板完全不响应设置里的
+  /// 「模糊度 / 通透度」滑块，Windows 上也不做 σ 上限钳制。σ 与 tint alpha
+  /// 改走 [tunedGlassSigma] / [tunedGlassAlpha] —— 6 与 255×op 是本面板的
+  /// 历史基准，默认参数下逐像素不变（见 liquid_glass_fallback 的换算说明）。
   Widget _glassWrap(Widget child, ColorScheme scheme) {
-    final cfg = context.read<AppState>().config;
-    final ca = (cfg.cardOpacity * 255).round().clamp(0, 255);
+    final op = context.select<AppState, double>((s) => s.config.cardOpacity);
+    final tuning = glassTuningOf(context);
+    final double sigma = tunedGlassSigma(6, tuning);
+    final ca = tunedGlassAlpha((op * 255).round(), tuning);
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+        filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
         child: Container(
           decoration: BoxDecoration(
             color: scheme.surface.withAlpha(ca),
@@ -3233,13 +3269,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                     });
                   },
                   onModifyNodeParams: (nodeId, params) {
+                    // 找不到节点直接返回 false，让 AI 面板把失败回填给模型；
+                    // 原实现用 orElse: () => _nodes.first，nodeId 打错就静默改写画布首节点
+                    final idx = _nodes.indexWhere((n) => n.id == nodeId);
+                    if (idx < 0) return false;
                     _pushUndo();
                     setState(() {
-                      if (_nodes.isEmpty) return;
-                      final node = _nodes.firstWhere((n) => n.id == nodeId, orElse: () => _nodes.first);
-                      params.forEach((k, v) { node.params[k] = v; });
+                      params.forEach((k, v) { _nodes[idx].params[k] = v; });
                     });
                     _commitChange();
+                    return true;
                   },
                   onClearAll: () {
                     _pushUndo();
@@ -5102,13 +5141,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         });
       },
       onModifyNodeParams: (nodeId, params) {
+        // 与另一处 _AiPanel 构造（桌面/移动）共用同一约定：
+        // 找不到节点返回 false，不再静默改写 _nodes.first
+        final idx = _nodes.indexWhere((n) => n.id == nodeId);
+        if (idx < 0) return false;
         _pushUndo();
         setState(() {
-          if (_nodes.isEmpty) return;
-          final node = _nodes.firstWhere((n) => n.id == nodeId, orElse: () => _nodes.first);
-          params.forEach((k, v) { node.params[k] = v; });
+          params.forEach((k, v) { _nodes[idx].params[k] = v; });
         });
         _commitChange();
+        return true;
       },
       onClearAll: () {
         _pushUndo();
@@ -6357,14 +6399,20 @@ class _AiPanel extends StatefulWidget {
   final List<PipelineConnection> existingConnections;
   final void Function(List<PipelineNode>, List<PipelineConnection>) onApplyGraph;
   final void Function(List<PipelineNode>, List<PipelineConnection>) onMergeGraph;
-  final void Function(String nodeId, Map<String, String> params) onModifyNodeParams;
+  /// 修改节点参数。返回 false 表示目标节点不存在——调用方必须把失败回填给 AI，
+  /// 不允许静默改写其它节点（原实现用 orElse: () => _nodes.first，
+  /// nodeId 打错就会污染画布首节点且毫无提示）。
+  /// 值类型是 dynamic：AI 面板走文本协议，_parseToolParams 负责把 "k=v" 还原成
+  /// num / bool / String，MCP 路径本来就是 JSON。此前声明为 `Map<String, String>`
+  /// 逼着文本面板把所有值塞成字符串，数字参数在下游 `as num?` 全部取到 null。
+  final bool Function(String nodeId, Map<String, dynamic> params) onModifyNodeParams;
   final VoidCallback onClearAll;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
   final VoidCallback onSave;
   final String Function(String type, double x, double y) onAddNode;
   final String Function(String gateName, double x, double y) onAddGate;
-  final bool Function(String nodeId, Map<String, String> params) onSetGateParams;
+  final bool Function(String nodeId, Map<String, dynamic> params) onSetGateParams;
   final void Function(String nodeId) onDeleteNode;
   final bool Function(String fromId, String toId) onConnectNodes;
   final bool Function(String connId) onDisconnectNodes;
@@ -6747,12 +6795,22 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
           if (cfg.aiReadAccess && parts.length >= 2) _executeReadFileInfo(parts[1]);
         case 'modify_node':
           if (cfg.aiWriteAccess && parts.length >= 3) {
-            final params = <String, String>{};
-            for (final p in parts[2].split(',')) {
-              final kv = p.split('=');
-              if (kv.length == 2) params[kv[0].trim()] = kv[1].trim();
+            // 文本协议 → 带类型参数：数字/布尔不再被塞成 String（见 _parseToolParams）
+            final params = _parseToolParams(parts[1], parts[2]);
+            if (params.isEmpty) {
+              // 旧实现解析不出键值时静默调用空 Map，AI 会以为改成功了
+              _addToolResult(
+                  'modify_node', 'Error: no key=value pair parsed from "${parts[2]}"');
+            } else {
+              run(() {
+                final ok = widget.onModifyNodeParams(parts[1], params);
+                _addToolResult(
+                    'modify_node',
+                    ok
+                        ? 'Updated ${parts[1]}: ${params.entries.map((e) => '${e.key}=${e.value}').join(', ')}'
+                        : 'Error: node not found: ${parts[1]}');
+              });
             }
-            run(() => widget.onModifyNodeParams(parts[1], params));
           }
         case 'add_node':
           if (cfg.aiWriteAccess && parts.length >= 2) {
@@ -6837,15 +6895,19 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
           }
         case 'set_gate_params':
           if (cfg.aiWriteAccess && parts.length >= 3) {
-            final params = <String, String>{};
-            for (final p in parts[2].split(',')) {
-              final kv = p.split('=');
-              if (kv.length == 2) params[kv[0].trim()] = kv[1].trim();
+            final params = _parseToolParams(parts[1], parts[2]);
+            if (params.isEmpty) {
+              _addToolResult(
+                  'set_gate_params', 'Error: no key=value pair parsed from "${parts[2]}"');
+            } else {
+              run(() {
+                // 门参数走 onSetGateParams：该回调此前从未被调用，set_gate_params
+                // 一直误用 onModifyNodeParams，改失败时无从回填给 AI
+                final ok = widget.onSetGateParams(parts[1], params);
+                _addToolResult('set_gate_params',
+                    ok ? 'Gate ${parts[1]} params updated' : 'Error: gate not found: ${parts[1]}');
+              });
             }
-            run(() {
-              widget.onModifyNodeParams(parts[1], params);
-              _addToolResult('set_gate_params', 'Gate ${parts[1]} params updated');
-            });
           }
         case 'get_gate_types':
           final gateTypes = LogicGateType.values.map((t) => t.name).toList();
@@ -6890,12 +6952,86 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
             final nodeId = parts[1];
             final name = parts[2];
             run(() {
-              widget.onModifyNodeParams(nodeId, {'node_name': name});
-              _addToolResult('rename_node', 'Node $nodeId renamed to "$name"');
+              final ok = widget
+                  .onModifyNodeParams(nodeId, <String, dynamic>{'node_name': name});
+              _addToolResult('rename_node',
+                  ok ? 'Node $nodeId renamed to "$name"' : 'Error: node not found: $nodeId');
             });
           }
       }
     }
+  }
+
+  // ══════════ AI 文本协议 → 带类型参数的适配 ══════════
+
+  /// 节点参数中「以字符串承载」的键。
+  ///
+  /// 这些键即使拿到纯数字文本（如 rotate='90'、sample_rate='44100'）也必须保持
+  /// String——消费侧是按 `params['x'] as String?` 读的，被转成 int 后会得到 null
+  /// 并回落到默认值，等于参数被静默丢弃。
+  /// 取值来源：全局 `params['…'] as String?` 的读取点（step_editors /
+  /// graph_executor / app_state / 本文件）。
+  static const Set<String> _stringParamKeys = {
+    // 编码与容器
+    'format', 'output_format', 'video_codec', 'audio_codec', 'audio_bitrate_mode',
+    'bitrate_mode', 'preset', 'pix_fmt', 'resolution', 'rate_mode', 'fps',
+    'sample_rate', 'audio_channels',
+    // 模式 / 枚举
+    'mode', 'order_mode', 'manual_order', 'extract_mode', 'scale_mode', 'flip',
+    'rotate', 'curve', 'position', 'channel', 'extract_method',
+    'denoise_method', 'denoise_mode', 'noise_mode', 'noise_type', 'sharpen_mode',
+    'brightness_mode', 'rotate_mode', 'crop_mode',
+    // 路径 / 文本
+    'naming_mode', 'naming_value', 'output_dir', 'file_media_type', 'node_name',
+    'overlay_path', 'cover_path', 'lyrics_path', 'subtitle_file', 'subtitle_path',
+    'font_name', 'font_color', 'outline_color', 'container_file_select',
+    'container_selected_indices', 'tt_date', 'tt_start', 'tt_end',
+  };
+
+  /// 把 AI 工具的 "k=v,k2=v2" 文本参数还原成带类型的 Map。
+  ///
+  /// 文本协议里所有值天然是 String，直接写进 node.params 会让下游
+  /// `(p['crf'] as num?)` 取到 null → 数字参数静默不生效；而 MCP 路径走 JSON、
+  /// 类型正确，同一功能两条路径行为不一致。这里按优先级定类型：
+  /// 1. 目标节点已有同键 → 跟随已有类型（最可靠：参数面板写入的默认值即类型）；
+  /// 2. 键在 [_stringParamKeys] 中 → 保持 String；
+  /// 3. 其余按字面量推断：bool → int → double → String。
+  Map<String, dynamic> _parseToolParams(String nodeId, String spec) {
+    PipelineNode? target;
+    for (final n in widget.existingNodes) {
+      if (n.id == nodeId) { target = n; break; }
+    }
+    final out = <String, dynamic>{};
+    for (final part in spec.split(',')) {
+      // 按「首个 =」切分：旧写法 split('=') 要求恰好两段，
+      // 'vf_filters=eq=brightness=0.1' 这类含 = 的值会被整项丢弃
+      final cut = part.indexOf('=');
+      if (cut <= 0) continue;
+      final key = part.substring(0, cut).trim();
+      if (key.isEmpty) continue;
+      out[key] = _coerceToolParam(key, part.substring(cut + 1).trim(), target?.params[key]);
+    }
+    return out;
+  }
+
+  /// 单个文本值的类型还原（优先级见 [_parseToolParams]）。
+  static Object _coerceToolParam(String key, String raw, Object? existing) {
+    if (existing is int) {
+      return int.tryParse(raw) ?? double.tryParse(raw)?.round() ?? raw;
+    }
+    if (existing is double) return double.tryParse(raw) ?? raw;
+    if (existing is num) return num.tryParse(raw) ?? raw;
+    if (existing is bool) {
+      if (raw == 'true') return true;
+      if (raw == 'false') return false;
+      return raw;
+    }
+    // 已有值是 String（或 List/Map 等文本无法构造的类型）→ 原样保留文本
+    if (existing != null) return raw;
+    if (_stringParamKeys.contains(key)) return raw;
+    if (raw == 'true') return true;
+    if (raw == 'false') return false;
+    return int.tryParse(raw) ?? double.tryParse(raw) ?? raw;
   }
 
   void _addToolResult(String toolName, String result) {

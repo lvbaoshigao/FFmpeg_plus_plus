@@ -668,6 +668,8 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
 
     return ListView(
       key: const ValueKey('ai_provider_config'),
+      // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
+      addRepaintBoundaries: false,
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
       children: [
         // ── 管理：供应商类型 / 分组 / 启用 / 多Key / Response API / 余额 / 代理 / 自定义请求 ──
@@ -963,6 +965,8 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
 
     return ListView.builder(
       key: const ValueKey('ai_provider_models'),
+      // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
+      addRepaintBoundaries: false,
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
       itemCount: itemCount,
       // 卡片自身无状态、不需要保活，关掉 keep-alive 省去每个条目的保活包装。
@@ -1424,6 +1428,8 @@ class _MobileMultiKeyPageState extends State<MobileMultiKeyPage> {
             ),
             Expanded(
               child: ListView(
+                // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
+                addRepaintBoundaries: false,
                 padding: MobileUi.subListPadding(top: 4, bottom: 16),
                 children: [
                   _AiSectionCard(
@@ -1570,6 +1576,8 @@ class _MobileModelSettingsPageState extends State<MobileModelSettingsPage> {
             ),
             Expanded(
               child: ListView(
+                // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
+                addRepaintBoundaries: false,
                 padding: MobileUi.subListPadding(top: 4, bottom: 16),
                 children: [
                   _AiSectionCard(
@@ -1694,6 +1702,8 @@ class MobileAiAdvancedPage extends StatelessWidget {
                 ),
                 Expanded(
                   child: ListView(
+                    // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
+                    addRepaintBoundaries: false,
                     padding: MobileUi.subListPadding(top: 4, bottom: 16),
                     children: [
                       // ── 生成（图生成模式 + 思考过程） ──

@@ -866,6 +866,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                         _buildTabSelector(scheme, zh),
                         Expanded(
                           child: ListView(
+                            // 开窗卡所在列表必须关（见 app_card 的
+                            // _WallpaperWindowPainter）
+                            addRepaintBoundaries: false,
                             padding: MobileUi.mainListPadding(),
                             children: _buildTabContent(scheme, zh),
                           ),
@@ -884,6 +887,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                   child: !_loaded
                       ? const Center(child: CircularProgressIndicator())
                       : ListView(
+                            // 开窗卡所在列表必须关（见 app_card 的
+                            // _WallpaperWindowPainter）
+                            addRepaintBoundaries: false,
                             padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                             children: _buildTabContent(scheme, zh),
                           ),

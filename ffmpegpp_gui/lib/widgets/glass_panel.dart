@@ -6,7 +6,6 @@ import '../providers/app_state.dart';
 import '../platform/app_platform.dart';
 import 'app_card.dart' show SurfaceStyle;
 import 'liquid_glass_fallback.dart';
-import 'mobile_top_bar.dart';
 import 'mobile_glass_pill.dart';
 
 /// 玻璃面板 —— 支持的效果（由设置→外观控制）：
@@ -75,10 +74,9 @@ class GlassPanel extends StatelessWidget {
     // 高光/边缘光由 [LiquidGlassBackdrop] 内部读同一份配置，这里只取模糊与通透。
     final tuning = glassTuningOf(context);
     final tone = context.select<AppState, double>((s) => s.config.themeTone);
-    // 本 widget 的 blur 参数是**基准 σ**（默认 12），按「玻璃细节 → 模糊度」等比
-    // 缩放（默认 16 → 系数 1.0，观感不变；Windows 上再由 effectiveGlassSigma 钳制）。
-    final double sigma =
-        effectiveGlassSigma(blur * (tuning.blur / kGlassBlurBaseline));
+    // 本 widget 的 blur 参数是**基准 σ**（默认 12），缩放与平台钳制统一在
+    // tunedGlassSigma 里（默认模糊度 → 系数 1.0，观感不变；Windows 钳到 ≤12）。
+    final double sigma = tunedGlassSigma(blur, tuning);
     // 模糊 σ 取本 widget 的 blur 参数（见下方 sigma）；是否走 shader 由
     // liquid_glass_fallback.gpuGlassEnabledOf 统一判定（PC 端默认关闭）。
     final effect = style ?? globalEffect;
@@ -402,7 +400,12 @@ class GlassPanel extends StatelessWidget {
   }
 }
 
-/// 浮动液态玻璃顶栏 —— 每个页面顶部的标题+操作按钮容器
+/// 浮动液态玻璃顶栏（**仅桌面端**）—— 每个页面顶部的标题+操作按钮容器。
+///
+/// 移动端请用 mobile_ui.dart 的 `MobilePillTopBar`（主 Tab）或
+/// mobile_top_bar.dart 的 `MobileSubPageTopBar`（二级页）：各调用点都已先按
+/// `isMobilePlatform` 分流，因此本组件不再包含移动端分支（原分支依赖的
+/// `MobileTopBar` 是不可达的死代码，已删除）。
 class GlassTopBar extends StatelessWidget {
   final Widget title;
   final List<Widget> actions;
@@ -420,17 +423,7 @@ class GlassTopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (isMobilePlatform) {
-      // 移动端：通用模糊顶栏，无独立圆角矩形框
-      // 居中内容（如搜索框）在移动端用 MobileTopBar 的 center 参数暂不支持，
-      // 但 settings_page 在移动端会走独立 UI，不再需要 center。
-      return MobileTopBar(
-        title: title,
-        actions: actions,
-        height: height,
-      );
-    }
-    // 桌面端：原有的浮动玻璃圆角框（样式跟随「菜单样式」menuStyle）
+    // 桌面端：浮动玻璃圆角框（样式跟随「菜单样式」menuStyle）
     final scheme = Theme.of(context).colorScheme;
     final menuStyle = context.select<AppState, String>((s) => s.config.menuStyle);
     return Padding(

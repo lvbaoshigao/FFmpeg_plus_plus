@@ -10,6 +10,7 @@ import '../services/thumbnail_service.dart';
 import '../theme/app_strings.dart';
 import '../platform/app_platform.dart';
 import '../widgets/app_card.dart';
+import '../widgets/liquid_glass_fallback.dart';
 import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_glass_pill.dart';
 import '../widgets/mobile_ui.dart';
@@ -76,6 +77,8 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
                 style: TextStyle(color: scheme.outline, fontSize: 13)),
           ]))
         : ListView.builder(
+            // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
+            addRepaintBoundaries: false,
             // 移动端与其它二级页统一（左右 12、下 16）；桌面端保持原内边距
             padding: isMobilePlatform
                 ? MobileUi.subListPadding(top: 4, bottom: 16)
@@ -348,17 +351,23 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
   Widget _withWallpaper(BuildContext context, Widget child) =>
       withWallpaper(context, child);
 
+  /// Linux 专用自绘标题栏（CSD，仅 `isLinuxPlatform` 时挂载，见调用点）。
+  ///
+  /// 作为玻璃表面同样吃「玻璃细节」：σ18 与 alpha 160/180 是历史基准值，
+  /// 默认参数下观感不变（Linux 不钳制 σ，18 × 1.0 = 18）。
   Widget _buildCsdTitleBar(ColorScheme scheme) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final tuning = glassTuningOf(context);
+    final double sigma = tunedGlassSigma(18, tuning);
     return ClipRect(
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
         child: Container(
           height: 36,
           decoration: BoxDecoration(
             gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [
-              scheme.surface.withAlpha(isDark ? 160 : 180),
-              scheme.surface.withAlpha(isDark ? 120 : 140),
+              scheme.surface.withAlpha(tunedGlassAlpha(isDark ? 160 : 180, tuning)),
+              scheme.surface.withAlpha(tunedGlassAlpha(isDark ? 120 : 140, tuning)),
             ]),
             border: Border(bottom: BorderSide(color: scheme.outlineVariant.withAlpha(isDark ? 60 : 80), width: 0.5)),
           ),

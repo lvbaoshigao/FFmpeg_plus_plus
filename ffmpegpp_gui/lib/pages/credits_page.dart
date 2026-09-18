@@ -49,6 +49,8 @@ class CreditsPage extends StatelessWidget {
               ),
         Expanded(
           child: ListView(
+            // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
+            addRepaintBoundaries: false,
             // 移动端与其它二级页统一（左右 12）；桌面端保持原内边距
             padding: isMobilePlatform
                 ? MobileUi.subListPadding(top: 8, bottom: 24)

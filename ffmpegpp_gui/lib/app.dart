@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -21,6 +22,11 @@ import 'widgets/sidebar.dart';
 import 'widgets/app_slider.dart';
 import 'widgets/toast.dart';
 import 'widgets/mobile_bottom_nav.dart';
+// 「玻璃细节 → 生效 σ / tint alpha」的统一换算（见 liquid_glass_fallback）。
+import 'widgets/liquid_glass_fallback.dart';
+// 与 wallpaper_background.dart 互为循环引用（它用本文件的
+// wallpaperImageProvider，本文件用它的 WallpaperWindowScope），Dart 允许。
+import 'widgets/wallpaper_background.dart';
 import 'platform/app_platform.dart';
 import 'services/android_platform.dart';
 
@@ -132,10 +138,32 @@ class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
     // 启动时申请必要媒体权限（读取视频/音频/图片），首帧后再请求，
     // 确保 Activity 已 resumed，权限对话框能正常弹出。
     WidgetsBinding.instance.addPostFrameCallback((_) => _requestMediaPermissions());
+    // ── 内存自检 ──
+    // 每 60 秒把进程 RSS 与图片缓存占用记一条日志（debug 模式开启时可见，
+    // 关闭 debug 模式则整类 info 日志不记录，零成本）。用途是**区分**两种
+    // 完全不同的情况：
+    //  - 常态化高水位（玻璃离屏纹理 / 引擎 / .so）：数字大但来回切换页面、
+    //    反复进出编辑器时基本不涨 → 属渲染开销，只能用「少用玻璃」来换；
+    //  - 真泄漏：数字只增不减，且与操作次数正相关（如进出编辑器 N 次涨 N 份）
+    //    → 需要修代码。
+    // 没有这行数字就只能靠猜，所以留着。
+    _memProbe = Timer.periodic(const Duration(seconds: 60), (_) {
+      if (!mounted) return;
+      final cache = PaintingBinding.instance.imageCache;
+      context.read<AppState>().addLog(
+        '[内存] RSS ${(ProcessInfo.currentRss / 1048576).toStringAsFixed(1)}MB · '
+        '图片缓存 ${(cache.currentSizeBytes / 1048576).toStringAsFixed(1)}MB/'
+        '${cache.currentSize}张（存活 ${cache.liveImageCount}）',
+        category: 'info',
+      );
+    });
   }
+
+  Timer? _memProbe;
 
   @override
   void dispose() {
+    _memProbe?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -742,7 +770,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
         // （而不是按逻辑尺寸 cacheWidth/cacheHeight 强扯成矩形去解码）。
         final size = MediaQuery.sizeOf(context);
         final dpr = MediaQuery.devicePixelRatioOf(context);
-        return Stack(children: [
+        final Widget stacked = Stack(children: [
           // 不透明主题底色铺底：避免子页面返回过渡首帧露出系统窗口黑底
           Positioned.fill(child: Container(color: scheme.surface)),
           Positioned.fill(child: Image(
@@ -759,6 +787,21 @@ class _AppShellState extends State<AppShell> with WindowListener {
             child: Scaffold(backgroundColor: Colors.transparent, body: body),
           ),
         ]);
+        // 壁纸窗口作用域：把壁纸解析为 ui.Image 下发给主 Tab 各页的玻璃卡，
+        // 让它们走「开窗绑定渲染」（同帧、同变换光栅化 → 滚动零滞后）。
+        // 此前主壳自己手写壁纸 Stack、未提供 scope，主 Tab 的玻璃卡只能走
+        // BackdropFilter：同一个「滚动中玻璃与背景图层分离」的缺陷在二级页
+        // 已修好、在主界面却依然存在，同一套 cardStyle 出现两种渲染结果。
+        // provider 与上方 Image 使用同参数的 ResizeImage（== 相等），
+        // 命中同一 ImageCache 条目，不二次解码、不额外占内存。
+        return WallpaperWindowScope(
+          provider: wallpaperImageProvider(bg, size.width, size.height, dpr),
+          screenSize: size,
+          // 遮罩色必须与叠在壁纸上那层完全一致，否则卡内壁纸亮度与
+          // 卡外背景对不上。
+          overlayColor: scheme.surface.withAlpha(a),
+          child: stacked,
+        );
       },
     );
   }
@@ -769,11 +812,17 @@ class _AppShellState extends State<AppShell> with WindowListener {
   }
   static void clearBgCache() => _bgCache.clear();
 
+  /// Linux 专用自绘标题栏（CSD）；Windows/macOS 走系统标题栏，见 body 的分支。
+  ///
+  /// 作为玻璃表面同样吃「玻璃细节」：σ18 与 alpha 160/180 是历史基准值，
+  /// 默认参数下观感不变（Linux 不钳制 σ，18 × 1.0 = 18）。
   Widget _buildCsdTitleBar(ColorScheme scheme) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final tuning = glassTuningOf(context);
+    final double sigma = tunedGlassSigma(18, tuning);
     return ClipRect(
       child: BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        filter: ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
         child: Container(
           height: 36,
           decoration: BoxDecoration(
@@ -781,8 +830,8 @@ class _AppShellState extends State<AppShell> with WindowListener {
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
               colors: [
-                scheme.surface.withAlpha(isDark ? 160 : 180),
-                scheme.surface.withAlpha(isDark ? 120 : 140),
+                scheme.surface.withAlpha(tunedGlassAlpha(isDark ? 160 : 180, tuning)),
+                scheme.surface.withAlpha(tunedGlassAlpha(isDark ? 120 : 140, tuning)),
               ],
             ),
             border: Border(bottom: BorderSide(
@@ -907,8 +956,10 @@ class _AppShellState extends State<AppShell> with WindowListener {
   void _evictStalePages(int current) {
     // 移动端 PageView 会为四个 Tab 直接调用 _page(i)，逐出后会立刻重建，
     // 反而造成抖动；移动端保持原行为（四个 Tab 全部常驻）。
-    // （内存压测：移动端玻璃纹理的真正大头是非当前页的 BackdropFilter，
-    //  已通过 AppCard 的可见性懒渲染处理，见 app_card.dart。）
+    // 代价要记住：四个 Tab 的玻璃纹理（开窗路径的壁纸采样 painter /
+    // 非开窗路径的 BackdropFilter 截屏）全部常驻，目前没有释放路径。
+    // 旧注释声称「已通过 AppCard 的可见性懒渲染处理，见 app_card.dart」——
+    // app_card.dart 里并不存在该机制，属过期说明，别再据此判断内存行为。
     if (isMobilePlatform) return;
     int alive() {
       var n = 0;
@@ -976,7 +1027,11 @@ class _AppShellState extends State<AppShell> with WindowListener {
     final targets = isMobilePlatform
         ? _kMobileNavOrder
         : const [0, 1];
-    state.addLog('后台预热 ${targets.length} 个页面（项目/处理队列）', category: 'info');
+    // 页数与页名都按 targets 推导：此前写死「N 个页面（项目/处理队列）」，
+    // 而移动端预热的是 项目/处理队列/配置库/设置 四个 Tab，日志与实际不符。
+    state.addLog(
+        '后台预热 ${targets.length} 个页面（${targets.map(_navLabel).join('/')}）',
+        category: 'info');
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       for (final i in targets) {
         if (!mounted) return;
@@ -990,8 +1045,24 @@ class _AppShellState extends State<AppShell> with WindowListener {
         }
         setState(() { _page(i); });
       }
+      // 正常跑完必须复位 _warming：否则用户把「关闭预加载」重新关掉时，
+      // _onNoPreloadChanged 的 else 分支调 _prewarmPages() 会在开头的
+      // `if (_warming) return;` 处直接短路——开关显示已恢复后台预热，
+      // 实际首次切页仍是现场构建。（移动端尤其明显：PageView 懒布局）
+      _warming = false;
     });
   }
+
+  /// 导航序号 → 中文页名（仅用于预热日志，与 _page 的分支保持一致）。
+  static String _navLabel(int i) => switch (i) {
+    0 => '项目',
+    1 => '处理队列',
+    2 => '命令',
+    3 => '配置库',
+    4 => '设置',
+    5 => '日志',
+    _ => '页$i',
+  };
   bool _warming = false;
 }
 

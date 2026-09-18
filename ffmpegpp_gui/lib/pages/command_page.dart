@@ -8,6 +8,7 @@ import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import '../widgets/toast.dart';
 import '../widgets/glass_panel.dart';
+import '../widgets/liquid_glass_fallback.dart';
 import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_glass_pill.dart';
 import '../widgets/mobile_ui.dart';
@@ -574,14 +575,21 @@ class _CommandPageState extends State<CommandPage> {
   }
 
 
+  /// 命令参考卡（玻璃）。σ 与 tint alpha 走「玻璃细节」统一换算：
+  /// 6 / 160 是本卡的历史基准值，默认参数下观感不变。
+  ///
+  /// 注：本卡底色**不使用** cardOpacity（历史基准 160 ≈ 63%，比卡片玻璃的
+  /// 130×op 更实），因此「卡片不透明度」滑块不作用于它；只跟随「通透度」。
   Widget _wrapCard(ColorScheme scheme, Widget child) {
+    final tuning = glassTuningOf(context);
+    final double sigma = tunedGlassSigma(6, tuning);
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+        filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
         child: Container(
           decoration: BoxDecoration(
-            color: scheme.surface.withAlpha(160),
+            color: scheme.surface.withAlpha(tunedGlassAlpha(160, tuning)),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
           ),

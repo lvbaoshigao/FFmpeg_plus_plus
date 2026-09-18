@@ -113,6 +113,26 @@ double effectiveGlassSigma(double value) =>
 /// 往上调才会变糊，往下调不会变清晰（下限就是 0）。
 const double kGlassBlurBaseline = 16.0;
 
+/// 「调用点基准 σ → 生效 σ」的统一换算。
+///
+/// 为什么是**等比**而不是直接取 `tuning.blur`：各玻璃表面的历史基准 σ 本来就
+/// 不同（卡片 16、GlassPanel 默认 12、命令页参考卡与编辑器面板 6、CSD 窗口
+/// 标题栏 18），直接取绝对值会把默认观感统一改成 16。等比换算保证
+/// **默认参数（glassBlur = 16）= 各表面 σ 与改动前逐像素一致**，只有用户真的
+/// 拖动「模糊度」滑块时全部同步增减；Windows 上再由 [effectiveGlassSigma]
+/// 钳到 ≤12（离屏纹理内存，见其注释）。
+///
+/// 凡是不想被「模糊度」滑块牵动的固定玻璃，请显式写常量并注明理由。
+double tunedGlassSigma(double base, GlassTuning tuning) =>
+    effectiveGlassSigma(base * (tuning.blur / kGlassBlurBaseline));
+
+/// 「调用点基准 tint alpha → 生效 alpha」：乘以 [GlassTuning.tintScale]（通透度）。
+///
+/// 与 [tunedGlassSigma] 同理：默认通透度（0.45）→ 系数 1.0，各表面默认 alpha
+/// 不变；拖动「通透度」滑块时全部同步增减。
+int tunedGlassAlpha(int baseAlpha, GlassTuning tuning) =>
+    (baseAlpha * tuning.tintScale).round().clamp(0, 255);
+
 /// 通透度的基准值（= [AppConfig.glassClarity] 的默认值）。
 /// 见 [GlassTuning.tintScale]：默认值即系数 1.0（各处默认 alpha 不变）。
 const double kGlassClarityBaseline = 0.45;

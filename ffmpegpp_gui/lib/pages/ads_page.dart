@@ -67,6 +67,10 @@ class AdsPage extends StatelessWidget {
           child: kAds.isEmpty
               ? _emptyState(context, scheme, s)
               : ListView.separated(
+                  // 开窗卡所在列表必须关：子项若被自动套上 RepaintBoundary，
+                  // 滚动时会直接复用旧图层平移，卡内壁纸跟着卡走（见 app_card 的
+                  // _WallpaperWindowPainter）。
+                  addRepaintBoundaries: false,
                   padding: isMobilePlatform
                       ? MobileUi.subListPadding(top: 10, bottom: 24)
                       : const EdgeInsets.fromLTRB(16, 10, 16, 24),
