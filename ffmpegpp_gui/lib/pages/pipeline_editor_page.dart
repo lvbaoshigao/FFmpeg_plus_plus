@@ -2670,6 +2670,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               setState(() {
                 _boxSelectStart = canvasPos;
                 _boxSelectRect = null;
+                // 覆盖层订阅的是 notifier 而非 State 字段：起点同步清空，
+                // 否则上次残留的矩形会先闪现一帧。
+                _boxSelectRectNotifier.value = null;
                 _isBoxSelecting = true;
                 if (!_isCtrlPressed()) {
                   _selectedNodeIds.clear();
@@ -2754,11 +2757,26 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           setState(() {
             _boxSelectStart = null;
             _boxSelectRect = null;
+            // [FIX] 覆盖层订阅的是 _boxSelectRectNotifier：只清 State 字段不清
+            // notifier，松手后最后一个框选矩形会永久留在画布上（PC 端用户报障）。
+            _boxSelectRectNotifier.value = null;
             _isBoxSelecting = false;
           });
           if (_isLogicBoxSelecting && _selectedNodeIds.isNotEmpty) {
             _finishLogicBoxSelect(s);
           }
+        }
+      },
+      onPointerCancel: (e) {
+        // 指针被系统抢占（拖出窗口 / 系统手势 / 模态弹出）时 onPointerUp 不会来，
+        // 必须做同样的清理，否则框选状态悬挂、矩形残留。
+        if (_isBoxSelecting) {
+          setState(() {
+            _boxSelectStart = null;
+            _boxSelectRect = null;
+            _boxSelectRectNotifier.value = null;
+            _isBoxSelecting = false;
+          });
         }
       },
       child: InteractiveViewer(
