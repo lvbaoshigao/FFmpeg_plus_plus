@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -586,7 +585,8 @@ class _CommandPageState extends State<CommandPage> {
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+        // σ 走进程级缓存（见 cachedGlassBlur 说明）。
+        filter: cachedGlassBlur(sigma),
         child: Container(
           decoration: BoxDecoration(
             color: scheme.surface.withAlpha(tunedGlassAlpha(160, tuning)),

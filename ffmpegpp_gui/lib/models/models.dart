@@ -1404,6 +1404,17 @@ class AppConfig {
   /// （高斯模糊 + 倒角高光），背景即真实壁纸；想要 shader 玻璃可在
   /// 设置→外观→液态玻璃效果里手动开启。
   bool glassGpuOnDesktop;
+  /// 移动端主导航位置：'auto' / 'bottom' / 'left' / 'right'（默认 'auto'）。
+  ///
+  /// 'auto' 按屏幕横纵比自动判定 —— 宽屏（平板 / 横屏，宽 ≥ 高 × 1.25）把菜单栏
+  /// 从底部搬到**左侧**竖排导轨，纵向空间还给内容；其余保持底部胶囊。
+  /// 用户可在「设置 → 外观 → 样式 → 菜单栏位置」强制指定三个方向之一。
+  /// 仅移动端生效（桌面端是左侧边栏 + 顶栏，与本项无关）。
+  String mobileNavPlacement;
+  /// 移动端高刷新率：在支持 90 / 120 / 144Hz 的屏幕上请求该屏幕的最高刷新率
+  /// （Android 专用，见 services/refresh_rate.dart + MainActivity 的原生实现）。
+  /// 默认开启；关闭 = 交还系统默认刷新率（不干预），用于省电。
+  bool highRefreshRate;
   /// 「样式 → 添加边框」：为所有卡片与药丸画一条用户可配置的实线描边。
   /// 默认关闭（关闭时必须与现状像素一致）；颜色/宽度由用户在设置里自己改。
   bool borderEnabled;
@@ -1502,6 +1513,8 @@ class AppConfig {
     this.predictiveBack = true,
     this.noPreload = false,
     this.glassGpuOnDesktop = false,
+    this.mobileNavPlacement = 'auto',
+    this.highRefreshRate = true,
     this.borderEnabled = false,
     this.borderColor = 0xFF9E9E9E,
     this.borderWidth = 1.0,
@@ -1660,6 +1673,13 @@ class AppConfig {
         predictiveBack: json['predictive_back'] as bool? ?? true,
         noPreload: json['no_preload'] as bool? ?? false,
         glassGpuOnDesktop: json['glass_gpu_on_desktop'] as bool? ?? false,
+        // 移动端导航位置：非法/缺失值一律回退 'auto'（自动按横纵比判定），
+        // 这样老配置文件升级后不需要迁移步骤。
+        mobileNavPlacement: () {
+          final v = json['mobile_nav_placement'] as String?;
+          return const ['auto', 'bottom', 'left', 'right'].contains(v) ? v! : 'auto';
+        }(),
+        highRefreshRate: json['high_refresh_rate'] as bool? ?? true,
         borderEnabled: json['border_enabled'] as bool? ?? false,
         borderColor: _asInt(json['border_color'], 0xFF9E9E9E), // [FIX M-7]
         borderWidth: ((json['border_width'] as num?)?.toDouble() ?? 1.0).clamp(0.5, 4.0),
@@ -1727,6 +1747,8 @@ class AppConfig {
         'predictive_back': predictiveBack,
         'no_preload': noPreload,
         'glass_gpu_on_desktop': glassGpuOnDesktop,
+        'mobile_nav_placement': mobileNavPlacement,
+        'high_refresh_rate': highRefreshRate,
         'border_enabled': borderEnabled,
         'border_color': borderColor,
         'border_width': borderWidth,
@@ -1805,13 +1827,6 @@ class FileContainer {
     final sorted = List<ContainerItem>.from(items);
     sorted.sort((a, b) => a.index.compareTo(b.index));
     return sorted;
-  }
-
-  void reindex() {
-    items.sort((a, b) => a.index.compareTo(b.index));
-    for (var i = 0; i < items.length; i++) {
-      items[i].index = i + 1;
-    }
   }
 
   Map<String, dynamic> toJson() => {

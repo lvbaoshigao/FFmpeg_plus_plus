@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
@@ -361,7 +360,9 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
     final double sigma = tunedGlassSigma(18, tuning);
     return ClipRect(
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+        // σ 走进程级缓存，避免每次 build 新建持有 native handle 的 filter
+        // （见 cachedGlassBlur 说明）。σ 值域有限，命中率高。
+        filter: cachedGlassBlur(sigma),
         child: Container(
           height: 36,
           decoration: BoxDecoration(

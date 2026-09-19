@@ -1,11 +1,14 @@
 import 'dart:math' as math;
-import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/app_state.dart';
-import 'liquid_glass_fallback.dart' show effectiveGlassSigma;
+// cachedGlassBlur：轨道玻璃的 σ 走进程级实例缓存（避免设置页里几十个滑块
+// 各自在每帧 build 时新建一份持有 native handle 的 ImageFilter）；
+// effectiveGlassSigma：Windows 的 σ 上限钳制。
+import 'liquid_glass_fallback.dart'
+    show cachedGlassBlur, effectiveGlassSigma;
 
 // ═══════════════════════════════════════════
 // 统一滑块 / 进度条（全应用唯一来源）
@@ -250,10 +253,8 @@ class AppTrackGlass extends StatelessWidget {
       child: ClipRRect(
         borderRadius: br,
         child: BackdropFilter(
-          filter: ImageFilter.blur(
-            sigmaX: effectiveGlassSigma(_kTrackGlassSigma),
-            sigmaY: effectiveGlassSigma(_kTrackGlassSigma),
-          ),
+          // 轨道 σ 恒定，走缓存 → 设置页里几十个滑块不再各自新建 filter。
+          filter: cachedGlassBlur(effectiveGlassSigma(_kTrackGlassSigma)),
           child: fill,
         ),
       ),

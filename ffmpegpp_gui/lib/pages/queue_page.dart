@@ -12,6 +12,8 @@ import '../widgets/glass_panel.dart';
 import '../widgets/mobile_glass_pill.dart';
 import '../widgets/mobile_ui.dart';
 import '../platform/app_platform.dart';
+// 生效的菜单栏位置（底部 ↔ 左右竖排导轨）：列表底部留白随之在 96 / 20 间切换
+import '../widgets/mobile_nav_scope.dart';
 
 /// 队列页刷新依赖：任务列表版本号（已含节流）+ 界面语言。
 /// 不再用 Consumer 订阅整个 AppState——日志/探测/配置等无关 notify
@@ -84,7 +86,8 @@ class _QueuePageState extends State<QueuePage> {
                             // 开窗卡所在列表必须关（见 app_card 的
                             // _WallpaperWindowPainter）
                             addRepaintBoundaries: false,
-                            padding: MobileUi.mainListPadding(),
+                            padding: MobileUi.mainListPadding(
+                                placement: MobileNavPlacementScope.of(context)),
                             itemCount: state.tasks.length,
                             itemBuilder: (_, i) => _taskCardFor(state, i),
                           ),

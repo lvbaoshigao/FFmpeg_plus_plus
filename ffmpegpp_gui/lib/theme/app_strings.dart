@@ -102,6 +102,22 @@ class AppStrings {
   String get surfaceStyleGray => lang == 'zh' ? '灰色' : 'Gray';
   String get navStyleLabel => lang == 'zh' ? '底部菜单栏样式' : 'Bottom nav style';
   String get pillStyleLabel => lang == 'zh' ? '顶部药丸样式' : 'Top pill style';
+  // ── 菜单栏位置（仅移动端）──
+  // 「自动」按屏幕横纵比判定（宽屏 → 左侧竖排导轨），三个显式方向可强制指定。
+  String get navPlacementLabel => lang == 'zh' ? '菜单栏位置' : 'Nav position';
+  String get navPlacementAuto => lang == 'zh' ? '自动' : 'Auto';
+  String get navPlacementBottom => lang == 'zh' ? '底部' : 'Bottom';
+  String get navPlacementLeft => lang == 'zh' ? '左侧' : 'Left';
+  String get navPlacementRight => lang == 'zh' ? '右侧' : 'Right';
+  String get navPlacementScope => lang == 'zh'
+      ? '宽屏（平板 / 横屏）自动改为左侧竖排（仅移动端）'
+      : 'Wide screens switch to a left rail (mobile only)';
+  // ── 显示（仅移动端）──
+  String get displayLabel => lang == 'zh' ? '显示' : 'Display';
+  String get highRefreshRateLabel => lang == 'zh' ? '高刷新率' : 'High refresh rate';
+  String get highRefreshRateHint => lang == 'zh'
+      ? '在支持 90 / 120 / 144Hz 的屏幕上按屏幕最高刷新率渲染；关闭则交还系统默认（更省电）'
+      : "Render at the display's highest refresh rate (90/120/144Hz). Turn off to let the system decide (saves power).";
   String get nodeEditorStyleLabel => lang == 'zh' ? '节点编辑器' : 'Node editor';
   String get gateStdLabel => lang == 'zh' ? '逻辑门符号标准' : 'Gate symbol standard';
   String get canvasFollowGlobal => lang == 'zh' ? '跟随全局' : 'Follow global';

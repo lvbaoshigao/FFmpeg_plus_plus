@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
@@ -272,7 +271,7 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
       pill = ClipRRect(
         borderRadius: BorderRadius.circular(widget.radius),
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: pillSigma, sigmaY: pillSigma),
+          filter: cachedGlassBlur(pillSigma),
           child: CustomPaint(
             // 高光 / 边缘光与液态玻璃回退共用同一支画笔
             painter: LiquidGlassPainter(

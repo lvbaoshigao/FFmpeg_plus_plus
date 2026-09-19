@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -22,6 +21,8 @@ import 'widgets/sidebar.dart';
 import 'widgets/app_slider.dart';
 import 'widgets/toast.dart';
 import 'widgets/mobile_bottom_nav.dart';
+// 生效的菜单栏位置下发（底部 ↔ 左右竖排导轨时，主 Tab 各页的底部留白随之切换）
+import 'widgets/mobile_nav_scope.dart';
 // 「玻璃细节 → 生效 σ / tint alpha」的统一换算（见 liquid_glass_fallback）。
 import 'widgets/liquid_glass_fallback.dart';
 // 与 wallpaper_background.dart 互为循环引用（它用本文件的
@@ -703,6 +704,11 @@ class _AppShellState extends State<AppShell> with WindowListener {
     final scheme = Theme.of(context).colorScheme;
     // 用 select 只监听导航索引，避免任何进度/日志 notify 都重建整棵页面树。
     final nav = context.select<AppState, int>((s) => s.selectedNav);
+    // 菜单栏位置设置（'auto' / 'bottom' / 'left' / 'right'）。必须在这里订阅：
+    // 主壳原本只 select 了 selectedNav，不订阅本字段的话在设置里改方向不会重排
+    // 布局。select 只在该值变化时触发重建，不引入额外重建开销。
+    final placementCfg =
+        context.select<AppState, String>((s) => s.config.mobileNavPlacement);
     final mobile = isMobilePlatform;
 
     // 桌面端：左侧边栏 + 页面；移动端页面在下方用 _mobilePageView（PageView）。
@@ -721,22 +727,51 @@ class _AppShellState extends State<AppShell> with WindowListener {
 
     final Widget body;
     if (mobile) {
-      // 移动端布局：内容区全屏铺满，底部液态玻璃导航栏悬浮叠加在上方。
-      // 页面区改用 PageView：[0,1,3,4] 四个 Tab 滑动全程跟随手指（拖到一半即
-      // 「各展示一半」），松手由 PageView 决定回弹或翻页；底部导航点击时同步。
-      body = Stack(children: [
-        Positioned.fill(child: _mobilePageView()),
-        Positioned(
-          left: 0, right: 0, bottom: 0,
-          child: MobileBottomNav(
-            selectedIndex: nav,
-            onSelected: _selectMobileNav,
-            // 让遮罩连续跟随 PageView 实时位置，避免滑动切换时
-            // 遮罩在中途项「停留一拍再跳走」的动画跳跃。
-            pageController: _mobilePageController,
-          ),
-        ),
-      ]);
+      // ── 菜单栏位置（底部 / 左 / 右）──
+      //
+      // 位置来自「设置 → 外观 → 样式 → 菜单栏位置」，'auto'（默认）时按屏幕
+      // 横纵比自动判定：宽屏（平板 / 横屏，宽 ≥ 高 × 1.25）→ 左侧竖排导轨，
+      // 把纵向空间还给内容；手机竖屏仍是原来的悬浮底部胶囊。
+      //
+      // 判定必须在**这里**做：形态决定页面树是「Stack 悬浮」还是「Row 并排」，
+      // 导航栏自己改不了外层结构，所以导航栏只接受一个已解析好的 placement。
+      final size = MediaQuery.sizeOf(context);
+      final placement = resolveMobileNavPlacement(
+          placementCfg, size.width, size.height);
+      final navBar = MobileBottomNav(
+        placement: placement,
+        selectedIndex: nav,
+        onSelected: _selectMobileNav,
+        // 让遮罩连续跟随 PageView 实时位置，避免滑动切换时
+        // 遮罩在中途项「停留一拍再跳走」的动画跳跃。
+        pageController: _mobilePageController,
+      );
+      // 形态二选一：底部悬浮 / 左右并排（body 是 final，只能赋值一次，
+      // 故先算进 mobileBody 再统一套上下发作用域）。
+      final Widget mobileBody;
+      if (placement == MobileNavPlacement.bottom) {
+        // 底部：内容区全屏铺满，底部液态玻璃导航栏悬浮叠加在上方。
+        // 页面区改用 PageView：[0,1,3,4] 四个 Tab 滑动全程跟随手指（拖到一半即
+        // 「各展示一半」），松手由 PageView 决定回弹或翻页；底部导航点击时同步。
+        mobileBody = Stack(children: [
+          Positioned.fill(child: _mobilePageView()),
+          Positioned(left: 0, right: 0, bottom: 0, child: navBar),
+        ]);
+      } else {
+        // 左 / 右导轨：与内容**并排**（不是悬浮叠加）——宽屏下悬浮导轨会压住
+        // 列表左列内容，且平板用户期待的是「侧向导航 + 完整内容区」。
+        // Row 的默认交叉轴对齐（center）会让导轨在纵向居中，成为一颗悬浮胶囊。
+        mobileBody = Row(children: [
+          if (placement == MobileNavPlacement.left) navBar,
+          Expanded(child: _mobilePageView()),
+          if (placement == MobileNavPlacement.right) navBar,
+        ]);
+      }
+      // 把生效位置下发给主 Tab 各页：列表底部留白随之在 96 / 20 之间切换
+      // （见 MobileUi.mainListPadding）。页面实例被 _pageCache 缓存并原样复用，
+      // 上层重建不会触发它们 build —— 只有 InheritedWidget 的依赖关系能保证
+      // 「位置一变，依赖它的页面下一帧就重建」。
+      body = MobileNavPlacementScope(placement: placement, child: mobileBody);
     } else {
       body = (Platform.isWindows || Platform.isMacOS)
           // Windows / macOS 使用系统默认标题栏，内容直接铺满（无自绘 CSD）
@@ -822,7 +857,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
     final double sigma = tunedGlassSigma(18, tuning);
     return ClipRect(
       child: BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+        filter: cachedGlassBlur(sigma),
         child: Container(
           height: 36,
           decoration: BoxDecoration(

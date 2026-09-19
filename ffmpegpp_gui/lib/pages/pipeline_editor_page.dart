@@ -2506,7 +2506,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     final double sigma = tunedGlassSigma(18, tuning);
     return ClipRect(
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+        // σ 走进程级缓存（见 cachedGlassBlur 说明）。
+        filter: cachedGlassBlur(sigma),
         child: Container(
           height: 36,
           decoration: BoxDecoration(
@@ -2581,7 +2582,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+        // σ 走进程级缓存（见 cachedGlassBlur 说明）。
+        filter: cachedGlassBlur(sigma),
         child: Container(
           decoration: BoxDecoration(
             color: scheme.surface.withAlpha(ca),

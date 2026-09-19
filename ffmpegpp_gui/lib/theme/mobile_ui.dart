@@ -69,9 +69,27 @@ class MobileUi {
     );
   }
 
-  /// 主 Tab 页列表内边距：左右 8、上 8、下让出悬浮底部导航。
-  static EdgeInsets mainListPadding({double top = 8}) =>
-      EdgeInsets.fromLTRB(pagePaddingH, top, pagePaddingH, kMobileNavClearance);
+  /// 主 Tab 页列表内边距：左右 8、上 8、下按导航位置留白。
+  ///
+  /// [placement] 由调用方从 [MobileNavPlacementScope.of] 取（那是**必填**的依赖
+  /// 来源：菜单栏位置变化时页面会重建）。底部形态让出 [kMobileNavClearance]；
+  /// 左侧 / 右侧竖排导轨与内容并排、不遮挡内容，只留 [kMobileNavSideClearance]。
+  static EdgeInsets mainListPadding({
+    double top = 8,
+    MobileNavPlacement placement = MobileNavPlacement.bottom,
+  }) =>
+      EdgeInsets.fromLTRB(
+        pagePaddingH,
+        top,
+        pagePaddingH,
+        navClearanceFor(placement),
+      );
+
+  /// 主导航占据的纵向（底部）留白。
+  static double navClearanceFor(MobileNavPlacement placement) =>
+      placement == MobileNavPlacement.bottom
+          ? kMobileNavClearance
+          : kMobileNavSideClearance;
 
   /// 二级页面列表内边距：左右 12、上 4、下 24。
   static EdgeInsets subListPadding({double top = 4, double bottom = 24}) =>

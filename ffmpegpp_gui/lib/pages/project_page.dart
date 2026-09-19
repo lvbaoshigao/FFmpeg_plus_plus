@@ -14,6 +14,8 @@ import '../widgets/mobile_glass_pill.dart';
 import '../widgets/mobile_ui.dart';
 import '../widgets/toast.dart';
 import '../platform/app_platform.dart';
+// 生效的菜单栏位置（底部 ↔ 左右竖排导轨）：列表底部留白随之在 96 / 20 间切换
+import '../widgets/mobile_nav_scope.dart';
 import '../services/quick_config_storage.dart';
 import '../services/quick_config_pipeline.dart';
 import '../app.dart' show smoothRoute;
@@ -435,9 +437,12 @@ class ProjectPageState extends State<ProjectPage> {
         // 滚动时会直接复用旧图层平移，卡内壁纸跟着卡走（见 app_card 的
         // _WallpaperWindowPainter）。
         addRepaintBoundaries: false,
-        // 移动端走统一内边距令牌（左右 8 + 底部让出悬浮导航）；桌面端保持 16
+        // 移动端走统一内边距令牌（左右 8 + 底部按菜单栏位置让出：底部悬浮胶囊
+        // 让出 96px，左右竖排导轨只留 20px）；桌面端保持 16
         padding: isMobilePlatform
-            ? MobileUi.mainListPadding(top: probingBanner != null ? 4 : 16)
+            ? MobileUi.mainListPadding(
+                top: probingBanner != null ? 4 : 16,
+                placement: MobileNavPlacementScope.of(context))
             : EdgeInsets.fromLTRB(16, probingBanner != null ? 4 : 16, 16, 16),
         itemCount: totalCount,
         itemBuilder: (_, i) {

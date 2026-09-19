@@ -22,6 +22,11 @@ import 'log_page.dart';
 import 'credits_page.dart';
 import 'ads_page.dart';
 import '../platform/app_platform.dart';
+// 高刷新率开关的即时生效（Android 专用，见 services/refresh_rate.dart）
+import '../services/refresh_rate.dart';
+// 生效的菜单栏位置：设置页自身也在主 Tab 的 PageView 里，底部让出的高度
+// 要跟着菜单栏位置走（底部胶囊 96 / 竖排导轨 20）
+import '../widgets/mobile_nav_scope.dart';
 import '../widgets/font_picker.dart';
 import '../services/ffmpeg_installer.dart';
 import '../services/update_service.dart' as updater;
@@ -653,6 +658,17 @@ class _SettingsPageState extends State<SettingsPage> {
                 'predictive', 'swipe', '返回动画', '系统', 'system'],
             build: _buildPredictiveBack,
           ),
+        // 显示（仅移动端）：高刷新率（90 / 120 / 144Hz）
+        if (isMobilePlatform)
+          _CardDef(
+            id: 'display',
+            title: (s) => s.displayLabel,
+            icon: Icons.screenshot_monitor_outlined,
+            keywords: ['显示', '刷新率', '高刷', '高刷新率', '帧率', '流畅', '顺滑',
+                'display', 'refresh', 'rate', 'hz', 'high', 'smooth', 'fps',
+                '120', '90', '144', '60', '屏幕', 'screen'],
+            build: _buildDisplay,
+          ),
         _CardDef(
           id: 'preload',
           title: (s) => s.isZh ? '预加载' : 'Preload',
@@ -774,7 +790,12 @@ class _SettingsPageState extends State<SettingsPage> {
                   // 左右留白全部交给分区卡自己（见 _buildMobileSection 的 14px 内边距），
                   // ListView 只负责上下：顶部药丸占位 + 底部导航栏净空。
                   addRepaintBoundaries: false,
-                  padding: EdgeInsets.fromLTRB(0, MobileUi.pageTopPadding(context), 0, kMobileNavClearance),
+                  padding: EdgeInsets.fromLTRB(
+                      0,
+                      MobileUi.pageTopPadding(context),
+                      0,
+                      MobileUi.navClearanceFor(
+                          MobileNavPlacementScope.of(context))),
                   children: [
                     for (final (sec, cards) in visible)
                       _buildMobileSection(sec, cards, context, state, scheme, s),
@@ -1885,6 +1906,26 @@ Widget _buildSurfaceStyleCard(BuildContext ctx, AppState state) {
           label: s.navStyleLabel,
           value: cfg.navStyle,
           onSelected: (v) => state.updateConfig((c) => c..navStyle = v)),
+      // 菜单栏位置（仅移动端）：自动（宽屏 → 左侧竖排导轨）/ 底部 / 左侧 / 右侧。
+      // 「自动」按屏幕横纵比判定，判定逻辑全应用只有一份
+      // （platform/app_platform.dart 的 resolveMobileNavPlacement），
+      // 这里只负责把用户的选择写进配置。
+      _optionRow(ctx,
+          icon: Icons.vertical_split_outlined,
+          label: s.navPlacementLabel,
+          scope: s.navPlacementScope,
+          value: cfg.mobileNavPlacement,
+          items: [
+            OptionItem('auto', s.navPlacementAuto, icon: Icons.auto_mode),
+            OptionItem('bottom', s.navPlacementBottom,
+                icon: Icons.align_vertical_bottom),
+            OptionItem('left', s.navPlacementLeft,
+                icon: Icons.align_horizontal_left),
+            OptionItem('right', s.navPlacementRight,
+                icon: Icons.align_horizontal_right),
+          ],
+          onSelected: (v) =>
+              state.updateConfig((c) => c..mobileNavPlacement = v)),
       _styleRow(ctx,
           icon: Icons.crop_landscape_outlined,
           label: s.pillStyleLabel,
@@ -2088,17 +2129,20 @@ List<Widget> _buildGlassMaterialItems(BuildContext ctx, AppState state) {
         ),
       ]),
     ),
-    // PC 专属：桌面端 shader 玻璃在不同图形后端下的取向并不一致，默认关闭
-    // （走「模糊 + 倒角高光」回退，背景就是真实壁纸），需要的用户可手动开启。
+    // PC 专属：桌面端的 shader backdrop 坐标系不成立（见 gpuGlassEnabledOf 注释），
+    // 开启后顶栏/侧栏/页签栏的玻璃里会出现被放大错位的壁纸片段，且内存最贵。
+    // 2026-09-18 起桌面端**无条件**走「模糊 + 倒角高光」回退，该开关不再生效，
+    // 因此这里改为不可交互的说明行 —— 留一个拨不动的开关等于骗用户。
+    // （配置字段 glassGpuOnDesktop 仍保留：JSON 兼容，且将来若修好坐标系可直接复用。）
     if (!isMobilePlatform)
-      SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-          title: Text(zh ? '启用 GPU 液态玻璃（实验）' : 'GPU liquid glass (experimental)',
-              style: TextStyle(color: clr, fontSize: 13)),
-          subtitle: Text(zh ? '桌面端默认使用模糊+倒角高光回退（以壁纸为背景）；开启后使用 shader 折射'
-                  : 'Desktop uses blur + bevel highlight by default; enable for shader refraction',
+      ListTile(dense: true, contentPadding: EdgeInsets.zero,
+          title: Text(zh ? 'GPU 液态玻璃（桌面端不可用）' : 'GPU liquid glass (unavailable on desktop)',
+              style: TextStyle(color: scheme.outline, fontSize: 13)),
+          subtitle: Text(zh
+                  ? '桌面图形后端的 backdrop 坐标系与 shader 假设不一致，开启会导致玻璃里出现放大的壁纸碎片，已停用；当前使用「模糊 + 倒角高光」回退（背景即真实壁纸）'
+                  : 'Shader backdrop coordinates are not reliable on desktop backends; disabled. Using blur + bevel highlight fallback instead.',
               style: TextStyle(fontSize: 11, color: scheme.outline)),
-          value: cfg.glassGpuOnDesktop,
-          onChanged: (v) => state.updateConfig((c) => c..glassGpuOnDesktop = v)),
+          trailing: Icon(Icons.block, size: 18, color: scheme.outline)),
     const SizedBox(height: 4),
     // ── 添加边框：所有卡片与药丸的实线描边 ──
     SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
@@ -2781,17 +2825,22 @@ Widget _fontWeightPicker(
 /// 表面样式设置行：左 = 图标 + 文字（可选作用范围说明），右 = 四值
 /// 「菜单栏选项」控件（按钮 + 展开选项列表，key 绑定当前值，配置被外部
 /// 改动如低配自动降级后重建时菜单显示最新值）。
-Widget _styleRow(
+/// 通用「图标 + 标签（可选说明）+ 下拉选项」设置行。
+///
+/// 抽出来的原因：表面样式那四行与新增的「菜单栏位置」是同一套版式，若各自
+/// 内联一遍，间距、溢出处理、OptionMenuBar 的展开动画约定迟早漂移
+///（原实现明确要求「不给 OptionMenuBar 绑随 value 变化的 key」，见下）。
+Widget _optionRow(
   BuildContext ctx, {
   required IconData icon,
   required String label,
   String? scope,
   required String value,
+  required List<OptionItem<String>> items,
   required ValueChanged<String> onSelected,
 }) {
   final scheme = Theme.of(ctx).colorScheme;
   final clr = scheme.onSurface;
-  final s = AppStrings.of(ctx.read<AppState>().config.language);
   return Padding(
     padding: const EdgeInsets.only(bottom: 10),
     child: Row(children: [
@@ -2819,16 +2868,37 @@ Widget _styleRow(
           // 浮层「啪」地消失（用户反馈「展开/收起没有动画」）。
           expandable: true,
           value: value,
-          items: [
-            OptionItem('theme', s.surfaceStyleTheme, icon: Icons.format_color_fill),
-            OptionItem('liquid', s.surfaceStyleLiquid, icon: Icons.water_drop_outlined),
-            OptionItem('blur', s.glassBlur, icon: Icons.blur_on_outlined),
-            OptionItem('gray', s.surfaceStyleGray, icon: Icons.grid_4x4),
-          ],
+          items: items,
           onChanged: onSelected,
         ),
       ),
     ]),
+  );
+}
+
+/// 表面样式行（卡片 / 菜单 / 底部菜单栏 / 顶部药丸共用同一组四值）。
+Widget _styleRow(
+  BuildContext ctx, {
+  required IconData icon,
+  required String label,
+  String? scope,
+  required String value,
+  required ValueChanged<String> onSelected,
+}) {
+  final s = AppStrings.of(ctx.read<AppState>().config.language);
+  return _optionRow(
+    ctx,
+    icon: icon,
+    label: label,
+    scope: scope,
+    value: value,
+    items: [
+      OptionItem('theme', s.surfaceStyleTheme, icon: Icons.format_color_fill),
+      OptionItem('liquid', s.surfaceStyleLiquid, icon: Icons.water_drop_outlined),
+      OptionItem('blur', s.glassBlur, icon: Icons.blur_on_outlined),
+      OptionItem('gray', s.surfaceStyleGray, icon: Icons.grid_4x4),
+    ],
+    onSelected: onSelected,
   );
 }
 
@@ -3269,6 +3339,71 @@ Widget _buildTasks(BuildContext ctx, AppState state) {
 /// 开启后启动时仅构建/绘制当前页面（如项目页），处理队列、设置等其余页面
 /// 等用户手动切换到时才构建——启动更快、启动内存更低，代价是首次切换
 /// 页面时现场构建（可能短暂增加 CPU 占用）。
+/// 屏幕最高刷新率的探测结果缓存（进程内只查一次）。
+///
+/// 必须缓存**同一个 Future 实例**：FutureBuilder 若在 build 里新建 Future，
+/// 会在「完成 → 重建 → 又新建 → 又完成」之间自激循环。
+Future<double?>? _maxRateFuture;
+
+/// 「显示」卡片（仅移动端）：高刷新率。
+///
+/// 开启 = 请求「当前分辨率下的最高刷新率」（原生三条路径见
+/// services/refresh_rate.dart 与 MainActivity.applyRefreshRate）；关闭 = 交还
+/// 系统默认（更省电）。屏幕本身只有 60Hz 时开启不会有任何变化 —— 因此这里把
+/// 实测值直接显示出来，用户能自己确认「设备支持多少」。
+Widget _buildDisplay(BuildContext ctx, AppState state) {
+  final cfg = state.config;
+  final s = AppStrings.of(cfg.language);
+  final scheme = Theme.of(ctx).colorScheme;
+  final clr = scheme.onSurface;
+  final maxRate = _maxRateFuture ??= RefreshRate.maxRefreshRate();
+  return _glass(ctx, state, s.displayLabel, [
+    SwitchListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: Text(s.highRefreshRateLabel,
+          style: TextStyle(color: clr, fontSize: 13)),
+      subtitle: Text(s.highRefreshRateHint,
+          style: TextStyle(fontSize: 10, color: scheme.outline)),
+      value: cfg.highRefreshRate,
+      onChanged: (v) {
+        state.updateConfig((c) => c..highRefreshRate = v);
+        // 立即生效（不等下次启动）：toggle 一按就改窗口帧率偏好
+        unawaited(RefreshRate.applyEnabled(v));
+      },
+    ),
+    FutureBuilder<double?>(
+      future: maxRate,
+      builder: (ctx, snap) {
+        final max = snap.data;
+        final text = max == null
+            ? (s.isZh
+                ? '未能读取屏幕刷新率（非 Android 或系统限制）'
+                : 'Display refresh rate unavailable')
+            : (s.isZh
+                ? '屏幕当前分辨率最高刷新率：${_fmtHz(max)}'
+                : 'Display max refresh rate: ${_fmtHz(max)}');
+        return Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Row(children: [
+            Icon(Icons.speed_outlined, size: 14, color: scheme.primary),
+            const SizedBox(width: 6),
+            Expanded(
+                child: Text(text,
+                    style: TextStyle(fontSize: 10.5, color: scheme.outline))),
+          ]),
+        );
+      },
+    ),
+  ]);
+}
+
+/// 119.99 → '120Hz'；非整数（如 59.94）保留一位小数。
+String _fmtHz(double v) {
+  final r = v.roundToDouble();
+  return (v - r).abs() < 0.5 ? '${r.toInt()}Hz' : '${v.toStringAsFixed(1)}Hz';
+}
+
 Widget _buildPreload(BuildContext ctx, AppState state) {
   final cfg = state.config;
   final s = AppStrings.of(cfg.language);
@@ -4730,7 +4865,14 @@ Widget _qrImage(BuildContext ctx, String asset, String label, ColorScheme scheme
     Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.primary)),
     const SizedBox(height: 8),
     ClipRRect(borderRadius: BorderRadius.circular(8),
-        child: Image.asset(asset, height: 160, fit: BoxFit.contain,
+        // 缩略图固定高 160 逻辑像素，而 wx.png / zfb.jpg 是 1220x1563 / 1170x1755
+        // 的原图 —— 不设 cacheHeight 会按原始分辨率解码（单张约 7~8MB RGBA，
+        // 且 Image.asset 不会自动套 ResizeImage）。全屏查看走 _showFullImage，
+        // 那条路径刻意不设 cap，以保留 InteractiveViewer 4x 缩放的清晰度。
+        child: Image.asset(asset,
+            height: 160,
+            cacheHeight: (160 * MediaQuery.devicePixelRatioOf(ctx)).round(),
+            fit: BoxFit.contain,
             errorBuilder: (_, _, _) => Container(height: 160, alignment: Alignment.center,
                 child: Text('加载失败', style: TextStyle(color: scheme.outline))))),
   ]),

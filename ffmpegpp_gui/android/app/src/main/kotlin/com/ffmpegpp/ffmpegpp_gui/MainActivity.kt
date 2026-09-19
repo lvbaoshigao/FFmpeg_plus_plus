@@ -70,9 +70,142 @@ class MainActivity : FlutterActivity() {
                     "requestMediaPermissions" -> result.success(requestMediaPermissions())
                     // 系统资源占用：CPU / 内存 / GPU（顶栏资源监视器）
                     "systemStats" -> result.success(systemStats())
+                    // 高刷新率（Dart 侧 services/refresh_rate.dart）：
+                    //  - maxRefreshRate：当前分辨率下可用的最高刷新率（Hz）
+                    //  - setPreferredRefreshRate：请求指定刷新率（0 = 交还系统默认）
+                    "maxRefreshRate" -> result.success(maxRefreshRate().toDouble())
+                    "setPreferredRefreshRate" -> {
+                        val rate = (call.argument<Number>("rate") ?: 0).toFloat()
+                        result.success(applyRefreshRate(rate))
+                    }
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    // ── 高刷新率（90 / 120 / 144Hz） ──
+    //
+    // 为什么需要原生实现：Android 应用默认不一定跑在屏幕的最高刷新率上 ——
+    // 大量 ROM（MIUI / ColorOS / HarmonyOS 等）只给「声明了高刷意图」的应用开高帧，
+    // 窗口的 preferredRefreshRate 留空时会把帧率锁在 60Hz，于是 120Hz 屏幕上的
+    // Flutter 界面仍按 60fps 渲染。这里三条路径一起上：
+    //  1. API 30+ 的 View.setFrameRate(rate, FRAME_RATE_COMPATIBILITY_DEFAULT)
+    //     —— 官方推荐入口，也是唯一能被系统「自适应刷新率」协商的 API
+    //     （它随内容静止/滚动自动升降，而不是死锁 120Hz）；
+    //  2. window.attributes.preferredRefreshRate（全版本，部分 ROM 只认它）；
+    //  3. API 23~29 的 preferredDisplayModeId，精确选中「**同分辨率**下刷新率
+    //     最高」的显示模式 —— 绝不能跨分辨率选模式（那会把屏幕分辨率改掉）。
+
+    /** 上次请求的刷新率（< 0 = 尚未设置过）；onResume 时重放，见下。 */
+    private var lastRefreshRate: Float = -1f
+
+    override fun onResume() {
+        super.onResume()
+        // 系统在 pause/resume 后可能重置帧率偏好（部分 ROM 会退回 60Hz），
+        // 这里按上次请求重放一次；从未设置过则什么都不做。
+        if (lastRefreshRate >= 0f) applyRefreshRate(lastRefreshRate)
+    }
+
+    /**
+     * 当前显示屏。API 30+ 用 Activity.getDisplay()；旧版本上
+     * windowManager.defaultDisplay 虽被标记废弃，但仍是唯一可用入口，
+     * 故在函数级抑制 DEPRECATION（写成局部表达式注解在部分 Kotlin 版本上不可靠）。
+     */
+    @Suppress("DEPRECATION")
+    private fun currentDisplay(): android.view.Display? = try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display
+        else windowManager.defaultDisplay
+    } catch (_: Exception) {
+        null
+    }
+
+    /**
+     * 当前分辨率下可用的最高刷新率（Hz）。取不到返回 0。
+     *
+     * 只在「与当前模式同宽高」的候选里取最大值：跨分辨率的高刷模式
+     * （如 QHD@60 vs FHD@120）不能随便切，切了等于改用户的分辨率设置。
+     */
+    @Suppress("DEPRECATION")
+    private fun maxRefreshRate(): Float {
+        val d = currentDisplay() ?: return 0f
+        val currentRate = try {
+            d.refreshRate
+        } catch (_: Exception) {
+            0f
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return currentRate
+        return try {
+            val cur = d.mode
+            var bestSameRes = 0f
+            for (m in d.supportedModes) {
+                if (m.physicalWidth == cur.physicalWidth &&
+                    m.physicalHeight == cur.physicalHeight &&
+                    m.refreshRate > bestSameRes
+                ) {
+                    bestSameRes = m.refreshRate
+                }
+            }
+            if (bestSameRes > 0f) maxOf(bestSameRes, currentRate) else currentRate
+        } catch (_: Exception) {
+            currentRate
+        }
+    }
+
+    /**
+     * 请求以 [rate] 刷新；rate <= 0 表示交还系统默认（不干预）。
+     * 返回是否至少有一条设置路径生效（仅用于日志/诊断，失败不抛异常）。
+     */
+    private fun applyRefreshRate(rate: Float): Boolean {
+        val target = if (rate > 0f) rate else 0f
+        return try {
+            var ok = false
+            // 路径①：API 30+ 官方接口（作用于已挂载的窗口 Surface）
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val v = window?.decorView
+                if (v != null) {
+                    try {
+                        v.setFrameRate(target, android.view.View.FRAME_RATE_COMPATIBILITY_DEFAULT)
+                        ok = true
+                    } catch (e: Exception) {
+                        Log.w("FFmpegpp", "setFrameRate failed: " + e.message)
+                    }
+                }
+            }
+            // 路径②：窗口属性（全版本；部分 ROM 只认这个）
+            val attrs = window?.attributes
+            if (attrs != null) {
+                attrs.preferredRefreshRate = if (target <= 0f) 0f else target
+                // 路径③：API 23~29 用显示模式 ID 精确指定（API 30+ 该字段已废弃）
+                if (target > 0f && Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                    val d = currentDisplay()
+                    val cur = d?.mode
+                    var bestId = -1
+                    var bestRate = -1f
+                    if (d != null && cur != null) {
+                        for (m in d.supportedModes) {
+                            if (m.physicalWidth != cur.physicalWidth ||
+                                m.physicalHeight != cur.physicalHeight
+                            ) continue
+                            // 取「不超过请求值的最接近档位」，避免请求 90 却拿到 120
+                            val r = m.refreshRate
+                            if (r <= target + 1f && r > bestRate) {
+                                bestRate = r
+                                bestId = m.modeId
+                            }
+                        }
+                    }
+                    if (bestId >= 0) attrs.preferredDisplayModeId = bestId
+                }
+                window.attributes = attrs
+                ok = true
+            }
+            lastRefreshRate = target
+            Log.i("FFmpegpp", "applyRefreshRate target=" + target + " ok=" + ok)
+            ok
+        } catch (e: Exception) {
+            Log.e("FFmpegpp", "applyRefreshRate error", e)
+            false
+        }
     }
 
     /** 用默认应用打开本地文件（目录交给系统文件管理器）。 */

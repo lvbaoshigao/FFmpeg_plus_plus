@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -72,6 +73,18 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
     }
   }
 
+  /// 读取源图宽高 —— **不做像素解码**。
+  ///
+  /// 旧实现 `file.readAsBytes()` + `decodeImageFromList(bytes)`：
+  /// 1) 把整张图按**原始分辨率**解码成 RGBA（24MP 照片 ≈ 96MB），却只取
+  ///    width/height 两个数字；
+  /// 2) 返回的 `ui.Image` 从不 `.dispose()`（它也不在 ImageCache 管辖内，
+  ///    48MB 上限对它无效），只能等 GC 终结器兜底。
+  /// 结果是「打开一次图片裁剪节点 = 白吃一次百兆级峰值」——正是用户反馈的
+  /// 「打开/切换特效时内存飙升」。
+  ///
+  /// 现在改用 [ui.ImageDescriptor.encoded] 只解析编码流头部拿尺寸，开销 KB 级，
+  /// 无离屏位图、无待释放对象。
   Future<void> _loadImageSize() async {
     final path = widget.sourceImagePath;
     if (path == null || path.isEmpty) return;
@@ -80,23 +93,33 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
       if (mounted) setState(() => _imageExists = false);
       return;
     }
+    ui.ImmutableBuffer? buffer;
+    ui.ImageDescriptor? descriptor;
     try {
       final bytes = await file.readAsBytes();
-      final decoded = await decodeImageFromList(bytes);
-      if (mounted) {
-        setState(() {
-          _imageExists = true;
-          _imageSize = Size(decoded.width.toDouble(), decoded.height.toDouble());
-          if ((p['crop_w'] as num?)?.toInt() == 0 && _imageSize != null) {
-            p['crop_w'] = _imageSize!.width.toInt();
-            p['crop_h'] = _imageSize!.height.toInt();
-            _wCtrl.text = '${_imageSize!.width.toInt()}';
-            _hCtrl.text = '${_imageSize!.height.toInt()}';
-            widget.onChanged();
-          }
-        });
-      }
-    } catch (_) {}
+      buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
+      descriptor = await ui.ImageDescriptor.encoded(buffer);
+      final w = descriptor.width;
+      final h = descriptor.height;
+      if (!mounted) return;
+      setState(() {
+        _imageExists = true;
+        _imageSize = Size(w.toDouble(), h.toDouble());
+        if ((p['crop_w'] as num?)?.toInt() == 0) {
+          p['crop_w'] = w;
+          p['crop_h'] = h;
+          _wCtrl.text = '$w';
+          _hCtrl.text = '$h';
+          widget.onChanged();
+        }
+      });
+    } catch (_) {
+      // 头解析失败（非图片 / 文件损坏）：与旧实现一致，按「图片不存在」处理
+      if (mounted) setState(() => _imageExists = false);
+    } finally {
+      descriptor?.dispose();
+      buffer?.dispose();
+    }
   }
 
   void _updateParam(String key, int value) {
@@ -366,7 +389,16 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
         width: effectiveW,
         height: clampedH,
         child: Stack(children: [
-          Image.file(File(path), width: effectiveW, height: clampedH, fit: BoxFit.fill),
+          Image.file(File(path), width: effectiveW, height: clampedH, fit: BoxFit.fill,
+              // 按**显示**尺寸封顶解码。旧实现不给 cacheWidth，Image.file 会按
+              // 源图**原始分辨率**解码（24MP 照片 = 96MB RGBA）并把它挂进
+              // ImageCache —— 而此处显示区最大只有 effectiveW(≤ maxWidth) ×
+              // clampedH(≤300) 逻辑像素，浪费约两个数量级。且只要该 widget 在
+              // 树上持有 ImageStreamListener，这张图就落在 ImageCache 的
+              // _liveImages 里，**不受 48MB 上限逐出**，等于把全尺寸位图钉死。
+              cacheWidth: (effectiveW * MediaQuery.devicePixelRatioOf(context))
+                  .round()
+                  .clamp(1, 4096)),
           // dim area outside crop
           CustomPaint(
             size: Size(effectiveW, clampedH),

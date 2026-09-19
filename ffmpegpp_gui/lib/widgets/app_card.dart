@@ -359,7 +359,9 @@ class _AppCardState extends State<AppCard> {
       return ClipRRect(
         borderRadius: br,
         child: BackdropFilter(
-          filter: ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+          // σ 已由 effectiveGlassSigma 按平台钳制；走缓存避免每帧每卡新建
+          // 一份持有 native handle 的 ImageFilter（见 cachedGlassBlur 注释）。
+          filter: cachedGlassBlur(sigma),
           child: CustomPaint(
             // 高光 / 边缘光：与液态玻璃回退同一支画笔，扁平模糊同样有玻璃光泽
             painter: LiquidGlassPainter(
@@ -579,13 +581,20 @@ class _WallpaperWindowPainter extends CustomPainter {
 
     final b = blurred;
     if (b != null) {
-      // 预模糊图已按 cover 铺满整屏（见 WallpaperWindowScope._buildBlurred），
-      // 这里整张铺到屏幕矩形即可 —— 与卡外背景逐像素对齐，且不做模糊。
+      // 预模糊图已按 cover 铺满整屏（见 WallpaperBlurCache._rebuild），
+      // 这里把**整张**铺到屏幕矩形即可 —— 与卡外背景逐像素对齐，且不做模糊。
+      // 注意：该图可能是半分辨率（有真实模糊时为省纹理内存而降采样），所以
+      // 这里必须用「整张 → screenRect」的映射，不能假设 b.width == 屏幕设备宽。
+      //
+      // filterQuality 用 low（双线性）而非 medium：medium 会在引擎侧为源图
+      // 额外生成一条 mipmap 链（≈ +1/3 纹理内存），而 mipmap 只在**缩小**
+      // 采样时才有意义 —— 这里源图 ≤ 屏幕设备像素、目标就是整屏，属于放大
+      // 或 1:1，mipmap 永远用不到，纯粹白占显存。
       canvas.drawImageRect(
         b,
         Rect.fromLTWH(0, 0, b.width.toDouble(), b.height.toDouble()),
         screenRect,
-        Paint()..filterQuality = FilterQuality.medium,
+        Paint()..filterQuality = FilterQuality.low,
       );
     } else {
       final iw = image.width.toDouble();
@@ -597,9 +606,12 @@ class _WallpaperWindowPainter extends CustomPainter {
         iw * scale,
         ih * scale,
       );
+      // 实时模糊回退路径（预模糊图尚未就绪 / 生成失败）：σ 走进程级缓存，
+      // 避免滚动时每帧每卡新建一份持有 native handle 的 ImageFilter。
       final p = Paint()
-        ..imageFilter = ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma)
-        ..filterQuality = FilterQuality.medium;
+        ..imageFilter = cachedGlassBlur(sigma)
+        // 同上：此处同样是放大，low 足够且不生成 mipmap。
+        ..filterQuality = FilterQuality.low;
       canvas.drawImageRect(image, Rect.fromLTWH(0, 0, iw, ih), cover, p);
     }
     if (overlay.a > 0) {

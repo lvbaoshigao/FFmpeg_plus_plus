@@ -1,7 +1,7 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
+import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import 'app_card.dart' show SurfaceStyle;
@@ -245,6 +245,9 @@ class NavGlassShell extends StatelessWidget {
   final double radius;
   /// OCLiquidGlass 的 key 前缀：同屏多实例（如主导航 + 弹层内切换栏）时防 key 冲突
   final String keyPrefix;
+  /// 菜单栏摆放位置：决定外壳四周「让出哪一边的安全区」。子页面切换栏
+  /// （MobileNavStyleTabBar）恒在底部，故默认值即其原有行为。
+  final MobileNavPlacement placement;
   final Widget child;
 
   const NavGlassShell({
@@ -252,8 +255,32 @@ class NavGlassShell extends StatelessWidget {
     required this.pal,
     required this.radius,
     required this.keyPrefix,
+    this.placement = MobileNavPlacement.bottom,
     required this.child,
   });
+
+  /// 外壳内边距。
+  ///
+  /// * 底部形态：(14, 2, 14, **底部安全区 + 8**) —— 与改动前逐像素一致；
+  /// * 左侧导轨：把「让出贴屏那一侧」的规则原样搬到左边 → (左安全区 + 8, 14, 8, 14)；
+  /// * 右侧导轨：镜像到右边 → (8, 14, 右安全区 + 8, 14)。
+  ///
+  /// 注意竖排时**纵向不再吃底部安全区**：导轨与内容并排，底部有安全区的设备
+  /// （横屏刘海机、带 Home 指示条的平板）该由页面内容自己去避让，导轨若也跟着
+  /// 缩进会在底端留下空隙，看起来像「导轨没贴到底」。
+  static EdgeInsets shellPadding(
+    EdgeInsets safe,
+    MobileNavPlacement placement,
+  ) {
+    switch (placement) {
+      case MobileNavPlacement.left:
+        return EdgeInsets.fromLTRB(safe.left + 8, 14, 8, 14);
+      case MobileNavPlacement.right:
+        return EdgeInsets.fromLTRB(8, 14, safe.right + 8, 14);
+      case MobileNavPlacement.bottom:
+        return EdgeInsets.fromLTRB(14, 2, 14, safe.bottom + 8);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -265,11 +292,13 @@ class NavGlassShell extends StatelessWidget {
     // gpuGlassEnabledOf 统一判定（PC 端默认关闭）。
     final GlassTuning tuning = pal.tuning;
     final double shellSigma = effectiveGlassSigma(tuning.blur);
-    final bottomSafe = MediaQuery.of(context).padding.bottom;
+    final EdgeInsets shellPad =
+        shellPadding(MediaQuery.of(context).padding, placement);
     final op = pal.op.clamp(0.0, 1.0);
     // 「样式 → 添加边框」：给导航/切换栏胶囊叠一条同圆角描边。
-    // 只包 child 而不是整个 build：外壳外面还有 (14,2,14,bottomSafe+8) 的栏内
-    // 边距，描边必须贴合胶囊本体而不是含内边距的外框；关闭时原样返回 child，
+    // 只包 child 而不是整个 build：外壳外面还有一层「栏内边距」（底部形态是
+    // (14, 2, 14, 底部安全区 + 8)，由 [shellPadding] 按 placement 给出），
+    // 描边必须贴合胶囊本体而不是含内边距的外框；关闭时原样返回 child，
     // 零额外层级，与改动前像素一致。
     final Widget borderedChild = withConfigurableBorder(
       context,
@@ -280,7 +309,7 @@ class NavGlassShell extends StatelessWidget {
     // theme/gray：纯色药丸（无玻璃光效）
     if (look.solid) {
       return Padding(
-        padding: EdgeInsets.fromLTRB(14, 2, 14, bottomSafe + 8),
+        padding: shellPad,
         child: borderedChild,
       );
     }
@@ -288,13 +317,13 @@ class NavGlassShell extends StatelessWidget {
     // blur：扁平高斯模糊（无 3D 液态光效），遮罩为实心主题色
     if (look.style == SurfaceStyle.blur) {
       return Padding(
-        padding: EdgeInsets.fromLTRB(14, 2, 14, bottomSafe + 8),
+        padding: shellPad,
         // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
         child: ClipRRect(
           borderRadius: BorderRadius.circular(radius),
           child: BackdropFilter(
             // σ 由「玻璃细节 → 模糊度」控制（Windows 上已由 effectiveGlassSigma 钳制）
-            filter: ImageFilter.blur(sigmaX: shellSigma, sigmaY: shellSigma),
+            filter: cachedGlassBlur(shellSigma),
             child: CustomPaint(
               // 高光 / 边缘光：与卡片、药丸共用同一支画笔
               painter: LiquidGlassPainter(
@@ -319,7 +348,7 @@ class NavGlassShell extends StatelessWidget {
     // 底部导航玻璃整块消失。
     if (!gpuGlassEnabledOf(context)) {
       return Padding(
-        padding: EdgeInsets.fromLTRB(14, 2, 14, bottomSafe + 8),
+        padding: shellPad,
         // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
         child: LiquidGlassBackdrop(
           borderRadius: BorderRadius.circular(radius),
@@ -348,7 +377,7 @@ class NavGlassShell extends StatelessWidget {
         // 参数化 settings（带实例缓存，参数不变即复用同一实例，避免 uniform 重置）
         settings: liquidGlassSettingsFor(tuning),
         child: Padding(
-          padding: EdgeInsets.fromLTRB(14, 2, 14, bottomSafe + 8),
+          padding: shellPad,
           child: OCLiquidGlass(
             key: ValueKey<String>('${pal.hashCode}_${keyPrefix}_inner'),
             borderRadius: radius,
@@ -366,17 +395,27 @@ class NavGlassShell extends StatelessWidget {
   }
 }
 
-/// 移动端底部导航栏 —— 样式由「底部菜单栏样式」（AppConfig.navStyle）接管。
+/// 移动端主导航栏 —— 样式由「底部菜单栏样式」（AppConfig.navStyle）接管，
+/// **位置**由 [MobileBottomNav.placement] 接管（底部胶囊 / 左右竖排导轨）。
 ///
 /// - 整体是一颗悬浮「药丸」（胶囊）；四种样式：
 ///   liquid 液态玻璃（oc_liquid_glass GPU shader）、blur 扁平高斯模糊
 ///   （BackdropFilter）、theme 跟随主题色（纯色）、gray 灰色（纯色）；
 /// - 选中项使用胶囊「药丸」指示器；按下拖动（无需长按）遮罩即跟随手指，
 ///   松手吸附到最近药丸并切换页面；点按直接切换（带滑动动画）；
+/// - 位置：默认 [MobileNavPlacement.bottom]（悬浮底部，与改动前逐像素一致）。
+///   宽屏移动端（平板 / 横屏）或用户在设置里强制指定时，变为
+///   [MobileNavPlacement.left] / [MobileNavPlacement.right] 的**竖排导轨**：
+///   药丸行改竖排、拖动轴换成纵轴、遮罩按纵轴定位、外壳让出「贴屏那一侧」的
+///   安全区（见 NavGlassShell.shellPadding）。
 /// - 遵循设置→主题→样式→底部菜单栏样式（navStyle 四值）。
 class MobileBottomNav extends StatefulWidget {
   final int selectedIndex;
   final ValueChanged<int> onSelected;
+  /// 菜单栏摆放位置。由 app.dart 用
+  /// `resolveMobileNavPlacement(config.mobileNavPlacement, 屏宽, 屏高)` 解析后下发
+  /// —— 判定逻辑只此一份，导航栏本身不做平台/尺寸判定。
+  final MobileNavPlacement placement;
   /// 可选：主界面 PageView 的控制器。传入后遮罩在「页面滑动中」会连续跟随
   /// PageView 的实时位置（0.0~3.0 的小数页），而不是等 onPageChanged 按整页
   /// 跳变 —— 修复从第 1 页快速滑到第 4 页时遮罩在第 3 项短暂停留再跳走的
@@ -387,6 +426,7 @@ class MobileBottomNav extends StatefulWidget {
     super.key,
     required this.selectedIndex,
     required this.onSelected,
+    this.placement = MobileNavPlacement.bottom,
     this.pageController,
   });
 
@@ -395,7 +435,13 @@ class MobileBottomNav extends StatefulWidget {
 }
 
 class _MobileBottomNavState extends State<MobileBottomNav> {
-  /// 拖动中遮罩中心的水平位置（相对 bar 内容区，null = 未在拖动）。
+  /// 是否竖排导轨（左 / 右）：横排与竖排共用同一套「主轴线位置」状态
+  /// （[_dragX] = 主轴线上的遮罩中心、[itemExtent] = 每个药丸在主轴上的长度），
+  /// 只有轴向映射与手势类型不同。
+  bool get _vertical => widget.placement != MobileNavPlacement.bottom;
+
+  /// 拖动中遮罩中心在**主轴线**上的位置（相对 bar 内容区；横排 = 水平 dx、
+  /// 竖排 = 垂直 dy；null = 未在拖动）。
   ///
   /// 用 ValueNotifier 而非 State 字段：拖动期间 `onLongPressMoveUpdate` /
   /// `onHorizontalDragUpdate` 以 60–120Hz 触发，若走 setState 会重建整个
@@ -497,7 +543,116 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
     // 药丸间距：每个药丸之间留 4px 间隔
     const pillGap = 4.0;
 
+    // ── 竖排导轨（左 / 右）────────────────────────────────────────────────
+    //
+    // 与横排**完全独立**的构建分支：横排分支一字未改（底部形态是绝大多数用户
+    // 的形态，不能为了竖排把它的像素、手势、遮罩动画改坏）。竖排复用同一套
+    // 「主轴线」状态与吸附逻辑（_dragX / _itemCenter / _endDrag），只把
+    // dx↔dy、Row↔Column、宽↔高对调，因此两种形态的选中反馈完全一致。
+    //
+    // 尺寸：短边（屏幕上的宽度）与底部形态的栏高同为 60；每项在主轴（纵轴）上
+    // 固定 54，**不撑满可用高度** —— 导轨是一颗悬浮胶囊，拉满整屏高会退化成像
+    // 素系统侧边栏，与现有玻璃语言不符；内容总高由药丸数决定，再由外层 Row 的
+    // 交叉轴对齐把它居中。
+    Widget buildRailBar() {
+      const barExtent = 60.0;
+      // 圆角直接用外层的 radius（= 栏高 60 / 2），两处同为 30，不重复声明
+      const itemExtent = 54.0;
+      // 交叉轴可用宽度 = 短边 − 上下各 4px 内边距（与横排的 padding 对称）
+      const crossExtent = barExtent - 8;
+      final totalMain =
+          itemExtent * items.length + pillGap * (items.length - 1);
+      return Container(
+        width: barExtent,
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+        decoration: BoxDecoration(
+          // 与横排同一条规则：liquid 的 tint 由 OCLiquidGlass 承担，内层不再叠色
+          color: style == SurfaceStyle.liquid ? Colors.transparent : look.tint,
+          borderRadius: BorderRadius.circular(radius),
+          border: Border.all(color: look.borderColor, width: look.borderWidth),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: SizedBox(
+          height: totalMain,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            // ── 点按：切到纵轴上最近的药丸（与横排同一套「最近中心」判定） ──
+            onTapUp: (d) => widget.onSelected(itemToPage[_nearestIndex(
+                    d.localPosition.dy, itemExtent, pillGap, items.length)] ??
+                0),
+            // ── 长按：遮罩放大反馈 + 抓取，随后跟随手指 ──
+            onLongPressStart: (d) => setState(() {
+              _longPressActive = true;
+              final nearest = _nearestIndex(
+                  d.localPosition.dy, itemExtent, pillGap, items.length);
+              final grabCenter = _itemCenter(nearest, itemExtent, pillGap);
+              _dragGrabOffset = d.localPosition.dy - grabCenter;
+              _dragX.value = grabCenter;
+            }),
+            onLongPressMoveUpdate: (d) {
+              _dragX.value = (d.localPosition.dy - _dragGrabOffset)
+                  .clamp(itemExtent / 2, totalMain - itemExtent / 2);
+            },
+            onLongPressEnd: (_) {
+              _longPressActive = false;
+              _endDrag(itemExtent, items.length, pillGap, itemToPage);
+            },
+            onLongPressCancel: () {
+              _longPressActive = false;
+              _dragX.value = null;
+            },
+            // ── 纵向快速滑动：同样走拖动跟随（轴向换成 dy） ──
+            onVerticalDragStart: (d) {
+              final nearest = _nearestIndex(
+                  d.localPosition.dy, itemExtent, pillGap, items.length);
+              final grabCenter = _itemCenter(nearest, itemExtent, pillGap);
+              _dragGrabOffset = d.localPosition.dy - grabCenter;
+              _dragX.value = grabCenter;
+            },
+            onVerticalDragUpdate: (d) {
+              _dragX.value = (d.localPosition.dy - _dragGrabOffset)
+                  .clamp(itemExtent / 2, totalMain - itemExtent / 2);
+            },
+            onVerticalDragEnd: (_) =>
+                _endDrag(itemExtent, items.length, pillGap, itemToPage),
+            onVerticalDragCancel: () {
+              // 长按已接管时由长按流程收尾（与横排同规则）
+              if (_longPressActive) return;
+              _dragX.value = null;
+            },
+            child: Stack(children: [
+              _buildRailMask(itemIdx, itemExtent, pillGap, items.length,
+                  scheme: scheme, isDark: isDark, style: style),
+              // 药丸列：主轴按固定 54 依次排布，交叉轴 stretch 撑满 52
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var i = 0; i < items.length; i++) ...[
+                    if (i > 0) SizedBox(height: pillGap),
+                    SizedBox(
+                      height: itemExtent,
+                      child: _NavItem(
+                        icon: items[i].$1,
+                        activeIcon: items[i].$2,
+                        label: items[i].$3,
+                        selected: i == itemIdx,
+                        selectedColor: selectedColor,
+                        unselectedColor: unselectedColor,
+                        maxWidth: crossExtent,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ]),
+          ),
+        ),
+      );
+    }
+
     Widget buildBarIn() {
+      // 竖排（左 / 右导轨）：走独立分支，横排代码保持原样
+      if (_vertical) return buildRailBar();
       // 关键修复：liquid 模式下 OCLiquidGlass 自身已经接收 color=tint 作为
       // 玻璃的 tint（GPU shader 内部叠加）；如果 buildBarIn 的外层 Container
       // 再叠一层 color=tint，相当于「主题色 + 主题色」双重染色，
@@ -636,6 +791,8 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
       pal: pal,
       radius: radius,
       keyPrefix: 'nav',
+      // 竖排导轨时外壳内边距改为让「贴屏那一侧」的安全区（见 shellPadding）
+      placement: widget.placement,
       child: buildBarIn(),
     );
   }
@@ -774,6 +931,96 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
       bottom: 2,
       width: itemW,
       child: mask,
+    );
+  }
+
+  /// 主轴上离 [pos] 最近的药丸序号。横排的「点按 / 长按 / 滑动起点」三处
+  /// 都是这个公式（只是喂 dx），竖排复用同一份，避免两份判定漂移。
+  int _nearestIndex(double pos, double extent, double gap, int count) {
+    var nearest = 0;
+    var best = double.infinity;
+    for (var i = 0; i < count; i++) {
+      final d = (pos - _itemCenter(i, extent, gap)).abs();
+      if (d < best) {
+        best = d;
+        nearest = i;
+      }
+    }
+    return nearest;
+  }
+
+  /// 竖排导轨的遮罩定位子树 —— 与横排 [_buildMaskFor] 同一套「三来源」策略
+  /// （① 跟手 ② 跟随 PageView ③ 260ms 吸附），只把 `left + width` 换成
+  /// `top + height`，因此「拖动 → 吸附」的交接动画与横排完全一致。
+  ///
+  /// 直接复用 [_dragX] / [_pageTick] / [_releasedFromDrag] / [_pageIsScrolling]：
+  /// 任一时刻树上只有一个形态，两套定位不会互相干扰；遮罩本身也仍是同一个
+  /// [navMaskPill]（glass 样式差异自动跟随 navStyle）。
+  Widget _buildRailMask(
+    int itemIdx,
+    double itemExtent,
+    double gap,
+    int itemCount, {
+    required ColorScheme scheme,
+    required bool isDark,
+    required String style,
+  }) {
+    return ValueListenableBuilder<double?>(
+      valueListenable: _dragX,
+      builder: (context, dragPos, _) => ValueListenableBuilder<int>(
+        valueListenable: _pageTick,
+        builder: (context, _, _) {
+          final dragging = dragPos != null;
+          final mask = AnimatedScale(
+            // 与横排同规则：长按/拖动时放大，明确标识「已抓取/被选中」
+            scale: dragging ? 1.25 : 1.0,
+            duration: const Duration(milliseconds: 150),
+            curve: Curves.easeOut,
+            child: RepaintBoundary(child: navMaskPill(scheme, isDark, style)),
+          );
+
+          // 退出「拖菜单栏松手后的吸附窗口」的判定与横排一致：页面已停稳且
+          // 停在选中项上即退出（页面若根本没动，本次 build 就会清除）。
+          if (_releasedFromDrag) {
+            final pc = widget.pageController;
+            final p = (pc != null && pc.hasClients) ? pc.page : null;
+            if (!_pageIsScrolling &&
+                (p == null || (p - itemIdx).abs() <= 0.01)) {
+              _releasedFromDrag = false;
+            }
+          }
+
+          // 位置来源①：跟随手指（时长 0）
+          double? followTop;
+          if (dragging) {
+            followTop = dragPos - itemExtent / 2;
+          } else if (!_releasedFromDrag && _pageIsScrolling) {
+            // 位置来源②：跟随 PageView。PageView 仍是横向翻页，但菜单项序号与
+            // 页序号同序（app.dart 的 _kMobileNavOrder），故可直接按主轴位移映射
+            // —— 左右拖页面时，竖排导轨的遮罩同样跟着实时位置走。
+            final pc = widget.pageController;
+            final p = (pc != null && pc.hasClients) ? pc.page : null;
+            if (p != null) {
+              followTop =
+                  p.clamp(0.0, itemCount - 1).toDouble() * (itemExtent + gap);
+            }
+          }
+
+          // 位置来源③：吸附（260ms）。follow 分支用 Duration.zero —— 逐帧 1:1
+          // 跟随，不引入一帧延迟（与横排同一实现）。
+          return AnimatedPositioned(
+            duration: followTop != null
+                ? Duration.zero
+                : const Duration(milliseconds: 260),
+            curve: Curves.easeOutCubic,
+            top: followTop ?? _itemLeft(itemIdx, itemExtent, gap),
+            left: 2,
+            right: 2,
+            height: itemExtent,
+            child: mask,
+          );
+        },
+      ),
     );
   }
 }

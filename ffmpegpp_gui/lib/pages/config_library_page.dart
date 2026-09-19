@@ -16,6 +16,8 @@ import '../widgets/mobile_glass_pill.dart';
 import '../widgets/mobile_ui.dart';
 import '../widgets/app_card.dart';
 import '../platform/app_platform.dart';
+// 生效的菜单栏位置（底部 ↔ 左右竖排导轨）：列表底部留白随之在 96 / 20 间切换
+import '../widgets/mobile_nav_scope.dart';
 import '../app.dart';
 import 'pipeline_editor_page.dart';
 import 'quick_config_page.dart';
@@ -869,7 +871,8 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                             // 开窗卡所在列表必须关（见 app_card 的
                             // _WallpaperWindowPainter）
                             addRepaintBoundaries: false,
-                            padding: MobileUi.mainListPadding(),
+                            padding: MobileUi.mainListPadding(
+                                placement: MobileNavPlacementScope.of(context)),
                             children: _buildTabContent(scheme, zh),
                           ),
                         ),

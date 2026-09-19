@@ -9,9 +9,14 @@ import 'package:path_provider/path_provider.dart';
 import 'package:window_manager/window_manager.dart';
 import 'providers/app_state.dart';
 import 'services/gpu_info.dart';
+// 高刷新率（Android 专用）：在支持 90/120/144Hz 的屏幕上按设置请求最高刷新率
+import 'services/refresh_rate.dart';
 import 'services/integrity.dart';
 import 'platform/app_platform.dart';
 import 'widgets/font_picker.dart';
+// shaderGlassSupported：玻璃 shader 是否被当前后端支持（Skia/Windows 为 false）。
+// 用于门控下面的 shader 预加载，避免在永远走不到 shader 分支的平台上白编译。
+import 'widgets/liquid_glass_fallback.dart';
 import 'app.dart';
 
 final String _sep = Platform.pathSeparator;
@@ -115,8 +120,16 @@ void main() async {
   _startupLog('7-calling runApp');
   // 预加载液态玻璃 shader：Impeller 平台（移动端 / macOS / 开启
   // --enable-impeller 的 Windows）上首块玻璃不用等异步加载，避免闪烁。
-  // Skia 平台（Windows 默认）加载即被 shaderGlassSupported 短路，无开销。
-  unawaited(OCLiquidGlassGroup.precacheShader().catchError((_) {}));
+  //
+  // 必须用 shaderGlassSupported 门控：Skia 平台（Windows 默认）下
+  // `ImageFilter.isShaderFilterSupported == false`，玻璃渲染**永远不会走到**
+  // shader 分支（见 liquid_glass_fallback.gpuGlassEnabledOf），但
+  // FragmentProgram.fromAsset 仍会真的加载并编译 SkSL 运行时效应 —— 一份
+  // 永远用不到的编译产物白占内存。（原注释称「加载即被短路，无开销」是错的：
+  // 短路的是渲染路径，不是这次预加载本身。）
+  if (shaderGlassSupported) {
+    unawaited(OCLiquidGlassGroup.precacheShader().catchError((_) {}));
+  }
   runApp(
     ChangeNotifierProvider.value(
       value: appState,
@@ -140,6 +153,14 @@ void main() async {
   await WidgetsBinding.instance.endOfFrame;
   await appState.init(serverPath);
   _startupLog('6-AppState.init OK');
+
+  // 高刷新率：在支持 90 / 120 / 144Hz 的设备上按设置请求屏幕的最高刷新率。
+  // 必须等到窗口已 attach 之后再调用（原生侧 setFrameRate 作用于已挂载的
+  // View），所以放在这里而不是 main() 开头。Android 专用，其它平台 no-op。
+  unawaited(RefreshRate.applyEnabled(appState.config.highRefreshRate).then((ok) {
+    _startupLog('6a-highRefreshRate: '
+        '${appState.config.highRefreshRate ? "max" : "system default"} -> $ok');
+  }));
 
   // 后端就绪后预热壁纸解码（进主界面不再卡首帧）——仅在配置了壁纸时
   unawaited(_precacheWallpaper(appState));

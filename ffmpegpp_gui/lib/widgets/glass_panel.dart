@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
@@ -154,7 +153,7 @@ class GlassPanel extends StatelessWidget {
         return ClipRRect(
           borderRadius: br,
           child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+            filter: cachedGlassBlur(sigma),
             child: Container(
               padding: padding,
               decoration: BoxDecoration(
@@ -256,7 +255,7 @@ class GlassPanel extends StatelessWidget {
       return ClipRRect(
         borderRadius: br,
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+          filter: cachedGlassBlur(sigma),
           child: Container(
             padding: padding,
             decoration: BoxDecoration(

@@ -43,29 +43,34 @@ const OCLiquidGlassSettings kLiquidGlassSettings = OCLiquidGlassSettings(
   lightbandColor: Colors.white,
 );
 
-/// 本平台 + 本配置下是否走 GPU 液态玻璃 shader 路径。
+/// 本平台下是否走 GPU 液态玻璃 shader 路径。
 ///
-/// 判定 = `shaderGlassSupported && (isMobilePlatform || cfg.glassGpuOnDesktop)`：
-/// **移动端始终走 shader；桌面端默认不走 shader**，只有用户在设置里显式开启
-/// 「PC 端 GPU 液态玻璃」才走。依据（dart:ui 官方文档 + 引擎实现）：
-/// * `ImageFilter.shader` 要求 shader 的第一个 vec2 uniform 由引擎写入
-///   「绑定纹理尺寸」，第一个 sampler2D 为滤镜输入，而 `FlutterFragCoord()`
-///   处于该纹理的像素空间（Impeller runtime_effect_filter_contents.cc：
-///   `Size size = input_snapshot->texture->GetSize(); memcpy(uniforms_->data(), ...)`）。
-///   本仓库的 Dart 侧把**场景物理像素**写进 uniform，只有在「绑定纹理 = 整帧、
-///   且当前 pass 的 snapshot 变换为恒等」时才成立——桌面端的窗口缩放 / 子 pass
-///   变换会让它不成立，采样到的就不是壁纸。
-/// * y 取向只在 Impeller 的 OpenGL(ES) 后端需要翻转（官方文档：`#ifdef
-///   IMPELLER_TARGET_OPENGLES` 时 `uv.y = 1.0 - uv.y`），Metal/Vulkan 不翻；
-///   桌面后端组合无法在本机逐一验证，用户反馈过 PC 上「玻璃背景倒置且不是壁纸」。
-/// 结论：PC 默认退回 [LiquidGlassBackdrop]（高斯模糊 + 倒角高光），背景即真实
-/// 壁纸；想要 shader 玻璃的用户可在设置→外观→样式里手动开启。
+/// 判定 = `shaderGlassSupported && isMobilePlatform`：**只有移动端走 shader**。
 ///
-/// 注意：`context.select` 必须无条件调用（不能写进 `||` 的短路里），否则订阅不一致。
+/// ⚠️ 桌面端（Windows / macOS / Linux）**一律**走 [LiquidGlassBackdrop] 回退，
+/// 即使用户在设置里打开了「PC 端 GPU 液态玻璃」也不生效。该开关因此不再被本
+/// 函数读取 —— 也刻意**不**再订阅它：订阅只会让拨动开关重建全部玻璃，而它已
+/// 不影响任何渲染分支（`shaderGlassSupported` 与 `isMobilePlatform` 都是常量）。
+///
+/// 为什么桌面端无条件关闭（2026-09-18 实测复现）：
+/// * `ImageFilter.shader` 要求 shader 的第一个 vec2 uniform 由引擎写入「绑定纹理
+///   尺寸」，第一个 sampler2D 为滤镜输入，而 `FlutterFragCoord()` 处于该纹理的
+///   像素空间（Impeller：`Size size = input_snapshot->texture->GetSize();
+///   memcpy(uniforms_->data(), ...)`）。而 oc_liquid_glass 写入的形状 / 边界
+///   uniform 用的是**场景物理像素**，二者只有在「绑定纹理 = 整帧 **且** 当前 pass
+///   的 snapshot 变换为恒等」时才一致。
+/// * 桌面端的窗口缩放 / 子 pass 变换让该条件不成立 → 采样到的不是壁纸。实测
+///   （用户开启该开关后的截图）：**顶栏 / 左侧菜单栏 / 页签栏的玻璃里出现被放大
+///   错位的壁纸片段** —— 顶栏显示的是壁纸底部的橙色地平线，而它背后实际是深色
+///   夜空；侧栏显示的是大幅放大的树影。与历史反馈「PC 玻璃背景倒置且不是壁纸」
+///   完全一致。
+/// * 该路径同时是内存最贵的：每个玻璃面都要为 backdrop 压一层滤镜图层，桌面端
+///   实测开关前后进程内存相差约 200MB（480MB ↔ 280MB）。
+///
+/// 结论：桌面端要恢复 shader 玻璃，必须先把坐标系 / y 取向问题在桌面后端上修掉
+/// （需要能实机验证 Skia/ANGLE/Vulkan 各组合），在那之前不提供可用入口。
 bool gpuGlassEnabledOf(BuildContext context) {
-  final bool onDesktop =
-      context.select<AppState, bool>((s) => s.config.glassGpuOnDesktop);
-  return shaderGlassSupported && (isMobilePlatform || onDesktop);
+  return shaderGlassSupported && isMobilePlatform;
 }
 
 /// 按用户配置参数化的液态玻璃 settings（带实例缓存）。
@@ -103,6 +108,45 @@ OCLiquidGlassSettings liquidGlassSettingsFor(GlassTuning t) {
 /// 无差别但内存明显更低（见 glass_panel 的注释）。
 double effectiveGlassSigma(double value) =>
     isWindowsPlatform ? value.clamp(0.0, 12.0) : value.clamp(0.0, 24.0);
+
+/// `ImageFilter.blur` 的进程级实例缓存（所有玻璃表面统一走这里）。
+///
+/// 为什么必须缓存（2026-09-19 玻璃内存审查）：
+/// `ui.ImageFilter.blur(...)` 每次调用都会新建一个持有 **native handle** 的
+/// Dart 对象，并向 GC 注册 finalizer。而本项目里所有玻璃件（卡片 / 面板 /
+/// 药丸 / 滑块轨道 / 底栏 / CSD 标题栏）都是在 `build` 里现场构造 filter：
+/// 列表滚动时「每帧 × 每张可见玻璃卡」各新建一个，`BackdropFilter` 拿到后
+/// 又原样传给引擎。这些对象本身很小，但 **native 侧的资源要等 GC 跑完才回收**，
+/// 高频滚动时表现为「打开玻璃后内存持续上涨、停下来也不立刻回落」。
+///
+/// σ 的取值集合是有限的（各表面基准 σ 固定、只随「模糊度」滑块等比缩放，
+/// Windows 还统一钳到 ≤12），所以按 σ 缓存后这些分配可以降到零，且
+/// `BackdropFilter` 内部用 `==` 比较 filter —— 命中同一实例还能顺带省掉
+/// 一次无谓的 `markNeedsPaint`。
+///
+/// 容量上限：[kGlassBlurCacheMax]。拖「模糊度」滑块时 σ 是连续值，会产生
+/// 大量互不相同的键；超过上限直接整体清空重建（代价只是随后几帧重新分配，
+/// 可忽略），避免缓存无限增长。缓存永不 dispose —— 最多几十个实例，
+/// 常驻开销可忽略，而 dispose 反而可能让仍在帧内使用的对象失效。
+const int kGlassBlurCacheMax = 64;
+final Map<double, ImageFilter> _glassBlurCache = <double, ImageFilter>{};
+
+/// 取一个 σ 对应的、可复用的 [ImageFilter.blur]（见 [kGlassBlurCacheMax]）。
+///
+/// 语义与 `ImageFilter.blur(sigmaX: s, sigmaY: s)` 完全一致，σ ≤ 0 时返回
+/// 同一个「零模糊」实例（与现状一致：`BackdropFilter` 收到 σ=0 等价于不模糊）。
+ImageFilter cachedGlassBlur(double sigma) {
+  if (!sigma.isFinite || sigma <= 0) return _kGlassZeroBlur;
+  final cached = _glassBlurCache[sigma];
+  if (cached != null) return cached;
+  if (_glassBlurCache.length >= kGlassBlurCacheMax) {
+    _glassBlurCache.clear();
+  }
+  return _glassBlurCache[sigma] =
+      ImageFilter.blur(sigmaX: sigma, sigmaY: sigma);
+}
+
+final ImageFilter _kGlassZeroBlur = ImageFilter.blur(sigmaX: 0, sigmaY: 0);
 
 /// 液态玻璃（GPU shader）路径的基准模糊度。
 ///
@@ -470,7 +514,7 @@ class LiquidGlassBackdrop extends StatelessWidget {
     Widget glass = ClipRRect(
       borderRadius: borderRadius,
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: resolvedSigma, sigmaY: resolvedSigma),
+        filter: cachedGlassBlur(resolvedSigma),
         child: CustomPaint(
           painter: LiquidGlassPainter(
             borderRadius: borderRadius,

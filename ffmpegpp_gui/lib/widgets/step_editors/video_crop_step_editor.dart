@@ -512,7 +512,16 @@ class _VideoCropOverlayDialogState extends State<_VideoCropOverlayDialog> {
                   Positioned(
                     left: offsetX, top: offsetY,
                     width: displayW, height: displayH,
-                    child: Image.file(File(widget.framePath), fit: BoxFit.fill),
+                    // 按**显示**尺寸封顶解码：帧图由 FramePreview.generateFullFrame
+                    // 以视频**原生分辨率**抽出（1080p ≈ 8.3MB RGBA、4K ≈ 33MB），
+                    // 而这里最大只画到 displayW×displayH（对话框内一屏）。
+                    // 旧实现不给 cacheWidth → 按原生分辨率整帧解码，且同文件 228 行
+                    // 对同一张图用的是 cacheWidth:960，两份位图会同时挂在 ImageCache 上。
+                    child: Image.file(File(widget.framePath), fit: BoxFit.fill,
+                        cacheWidth: (displayW *
+                                MediaQuery.devicePixelRatioOf(ctx))
+                            .round()
+                            .clamp(1, 4096)),
                   ),
                   Positioned.fill(
                     child: CustomPaint(

@@ -101,7 +101,10 @@ class WallpaperWindow {
   /// 像素 + 当前 σ」离屏渲染**一次**，所有玻璃卡共享同一张已模糊图，
   /// painter 退化成一次普通 drawImageRect，不再触发任何模糊。
   ///
-  /// 尺寸 = 屏幕逻辑尺寸 × DPR；σ 已按 DPR 换算到设备像素空间。
+  /// 长宽比 = 屏幕长宽比；绝对像素尺寸 ≤ 屏幕逻辑尺寸 × DPR（有真实模糊时按
+  /// 1/2 分辨率渲染以省 3/4 纹理内存，见 [WallpaperBlurCache._rebuild]），
+  /// σ 已按 DPR 换算到设备像素空间。painter 侧只做「整张 → 屏幕矩形」的映射，
+  /// 因此分辨率与屏幕无关，不需要也不应该在这里假设满分辨率。
   /// 为 null（尚未生成 / 生成失败 / 无壁纸）时 painter 回退实时模糊老路径。
   final ui.Image? blurred;
 
@@ -153,6 +156,22 @@ class WallpaperBlurCache {
   /// 换壁纸 / 改分辨率 / 改模糊度会得到新指纹，届时自然重试。
   static int? _failedKey;
 
+  /// [_failedKey] 记下失败的时刻（毫秒时间戳）。
+  /// 失败不是**永久**弃用该参数，而是冷却 [kBlurRebuildRetryCooldownMs]
+  /// 之后允许再试一次 —— 理由见 [request]。
+  static int _failedAtMs = 0;
+
+  /// 同一参数指纹失败后的重试冷却时长（毫秒）。
+  ///
+  /// 为什么要有冷却而不是「失败一次就永久放弃」（原实现）：预模糊图一旦
+  /// 生成失败，painter 就会退化成**每帧 × 每张可见玻璃卡**对整屏跑一次
+  /// σ 高斯模糊，每次都要按 3σ 外扩分配离屏纹理、并被 GPU 资源池长期缓存
+  /// —— 代价远高于「暂时没有预模糊图」。而失败原因常常是一次性的
+  /// （显存瞬时紧张、应用从后台切回、窗口正在缩放），永久放弃等于把偶发
+  /// 故障升级成常驻劣化。冷却 3s 兼顾两者：持续失败时每 3s 只重试一次，
+  /// 开销可忽略；偶发失败则自动恢复。
+  static const int kBlurRebuildRetryCooldownMs = 3000;
+
   static int _keyOf(ui.Image src, Size screen, double dpr, double sigma) =>
       Object.hash(identityHashCode(src), screen, dpr, sigma);
 
@@ -181,10 +200,31 @@ class WallpaperBlurCache {
     final geoOk = currentFor(src, screen);
     if (geoOk != null && _dpr == dpr && _sigma == sigma) return geoOk;
     final key = _keyOf(src, screen, dpr, sigma);
-    if (key == _failedKey) return geoOk; // 同参数已失败过，不再重试
-    if (key == _scheduledKey) return geoOk; // 已排队：不要重置计时器
+    // 同参数此前失败过：冷却期内不再重试（否则每帧 build 都会重新排队一次
+    // 离屏渲染）；冷却结束后放行，让它再试一次（见
+    // kBlurRebuildRetryCooldownMs 的说明）。
+    if (key == _failedKey &&
+        DateTime.now().millisecondsSinceEpoch - _failedAtMs <
+            kBlurRebuildRetryCooldownMs) {
+      return geoOk;
+    }
+    if (key == _scheduledKey) return geoOk; // 已排队 / 已在途：不要重复发起
     _scheduledKey = key;
     _debounce?.cancel();
+    // 首次请求立即执行，不防抖：`_src == null` 表示此前从未成功生成过任何图，
+    // 即「开机 → 第一张预模糊图就绪」这段窗口。它是纯实时模糊窗口 —— 每帧 ×
+    // 每张可见玻璃卡都要对整屏跑一次 σ 模糊（Skia 为每次模糊分配 3σ 外扩的
+    // 离屏纹理），正是「刚进主界面内存飙到 500MB」的主因之一。这里白等 120ms
+    // 毫无收益，直接渲染能把这段窗口压到最短。
+    // 注意：**不清 `_scheduledKey`** —— 立即执行是异步的（`toImage` 需 1~3 帧），
+    // 期间每帧 build 都会再调 request，靠它挡掉重复发起（否则会每帧渲染一张）。
+    // 失败时 `_failedKey` 兜底，不会无限重试。
+    // 除此之外的情况（换壁纸 / 窗口缩放 / 拖「模糊度」滑块）仍走防抖，避免
+    // 连续变化时反复离屏渲染。
+    if (_src == null) {
+      unawaited(_rebuild(src, screen, dpr, sigma, key));
+      return geoOk;
+    }
     _debounce = Timer(const Duration(milliseconds: 120), () {
       _debounce = null;
       final k = _scheduledKey!;
@@ -199,16 +239,29 @@ class WallpaperBlurCache {
   static Future<void> _rebuild(
       ui.Image src, Size screen, double dpr, double sigma, int failKey) async {
     final token = ++_token;
-    final int pw = (screen.width * dpr).round().clamp(1, 8192);
-    final int ph = (screen.height * dpr).round().clamp(1, 8192);
+    final int dw = (screen.width * dpr).round().clamp(1, 8192);
+    final int dh = (screen.height * dpr).round().clamp(1, 8192);
+    final double sigmaDev = sigma * dpr;
+    // ── 半分辨率渲染（仅在有真实模糊时）──
+    // 这张图随后只会被**模糊后**贴进玻璃，高频信息已经在模糊里丢掉了，因此
+    // 按 1/2 分辨率渲染再放大回来，肉眼与满分辨率逐像素等价，而纹理内存与
+    // 采样开销都降到 1/4。这是「进主界面时内存飙升」里最容易被忽略的一块：
+    // 满分辨率下它是 (屏宽×DPR + 6σ)×(屏高×DPR + 6σ) 的 RGBA 大图
+    // （2K/DPR1.25 实测约 25MB 常驻），半分辨率后只剩 ~6MB。
+    // 唯一例外是「模糊度 = 0」（用户要的是清晰玻璃）：此时不能降采样，否则
+    // 玻璃里的壁纸会被无谓地糊掉 —— 用 σ_dev 做门槛，σ 越大越安全。
+    final int ds = sigmaDev >= 4.0 ? 2 : 1;
+    // 用整数除法（dw/ds 恒为整数关系：ds 只取 1 或 2），避免 double → int 的 num 报错
+    final int pw = (dw ~/ ds).clamp(1, 8192);
+    final int ph = (dh ~/ ds).clamp(1, 8192);
+    final double sigmaBs = sigmaDev / ds;
     // 模糊在图像边界外取透明（kDecal）并【向内】衰减：若直接渲染一张 pw×ph
     // 的图，屏幕最边缘（贴边的玻璃卡）会明显偏透、露出主题底色。原实现没有
     // 这个问题 —— 它模糊的是整张壁纸、dst 是可能比屏幕更大的 cover，屏幕边缘
     // 落在壁纸内部。这里用「外扩 3σ 画布 → 裁出中间 pw×ph」还原该行为：衰减
     // 落在被裁掉的 padding 上，最终交付给 painter 的仍是屏幕尺寸的图，因此
     // 不额外常驻内存（padding 那两张只是重建瞬间的临时对象）。
-    final double sigmaDev = sigma * dpr;
-    final int pad = (3 * sigmaDev).ceil().clamp(0, 512);
+    final int pad = (3 * sigmaBs).ceil().clamp(0, 512);
     ui.Image? next;
     try {
       final iw = src.width.toDouble();
@@ -216,20 +269,25 @@ class WallpaperBlurCache {
       // 与 BoxFit.cover 一致：等比铺满整屏、居中裁切。与原 painter 的 cover
       // 计算等价，保证卡内壁纸与卡外背景逐像素对齐。
       final scale = math.max(pw / iw, ph / ih);
-      final dw = iw * scale;
-      final dh = ih * scale;
+      final double cw = iw * scale;
+      final double ch = ih * scale;
       final paint = Paint()
         // 预渲染画布已是设备像素，σ 需乘 DPR（painter 里的 σ 是逻辑单位）
-        ..imageFilter =
-            ui.ImageFilter.blur(sigmaX: sigmaDev, sigmaY: sigmaDev)
-        ..filterQuality = FilterQuality.medium;
+        // 再除以降采样系数 ds（画布也同步缩小了 ds 倍，σ 必须同比例缩）
+        // σ 走进程级缓存：改「模糊度」时会连续重建，避免反复新建 native filter。
+        ..imageFilter = cachedGlassBlur(sigmaBs)
+        // 用 low 而非 medium：这里是把源壁纸**放大**到 cover（最差也是 1:1），
+        // mipmap 只在缩小采样时才有意义，而 medium 会让引擎为源图额外生成
+        // 一条 mipmap 链（≈ +1/3 纹理内存）—— 壁纸常是几千万像素的大图，
+        // 这笔开销在「进主界面」这个内存最紧张的时段尤其不值得。
+        ..filterQuality = FilterQuality.low;
 
       final rec = ui.PictureRecorder();
       Canvas(rec).drawImageRect(
         src,
         Rect.fromLTWH(0, 0, iw, ih),
         Rect.fromLTWH(
-            pad + (pw - dw) / 2, pad + (ph - dh) / 2, dw, dh),
+            pad + (pw - cw) / 2, pad + (ph - ch) / 2, cw, ch),
         paint,
       );
       final pic = rec.endRecording();
@@ -246,7 +304,9 @@ class WallpaperBlurCache {
           Rect.fromLTWH(
               pad.toDouble(), pad.toDouble(), pw.toDouble(), ph.toDouble()),
           Rect.fromLTWH(0, 0, pw.toDouble(), ph.toDouble()),
-          Paint()..filterQuality = FilterQuality.high,
+          // 1:1 纯裁剪拷贝（pw×ph → pw×ph）：high（双三次）在这里毫无收益，
+          // 只是每次重建都白做一遍高代价重采样。none = 精确像素拷贝。
+          Paint()..filterQuality = FilterQuality.none,
         );
         final pic2 = rec2.endRecording();
         next = await pic2.toImage(pw, ph);
@@ -262,11 +322,20 @@ class WallpaperBlurCache {
       return;
     }
     if (next == null) {
-      // 生成失败（如显存不足）：保留旧图，painter 仍可回退实时模糊；
-      // 记下参数指纹，避免每次 build 都重新排队重试。
+      // 生成失败（如显存不足）：保留旧图，painter 仍可回退实时模糊。
+      // 记下指纹与失败时刻 → 冷却期内不再重试，冷却后自动再试一次
+      // （见 kBlurRebuildRetryCooldownMs）。
+      //
+      // 同时必须清掉 _scheduledKey：立即执行路径（`_src == null`）正是靠它
+      // 挡掉重复发起的，失败时不清就会让后续每次 build 都命中
+      // `key == _scheduledKey` 直接返回 —— 冷却机制形同虚设，重试永远排不上。
       _failedKey = failKey;
+      _failedAtMs = DateTime.now().millisecondsSinceEpoch;
+      _scheduledKey = null;
       return;
     }
+    // 成功（含参数已变化后的首次成功）：清掉失败标记，让该指纹重新可试。
+    _failedKey = null;
     final old = image.value;
     _src = src;
     _screen = screen;

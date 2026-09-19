@@ -21,6 +21,21 @@
 .zcode/
 .workbuddy/
 
+# ---- 打包暂存目录 ----
+# 根 build/ 是双重身份：既存放已入库的构建脚本（build_all.sh / build_desktop.sh /
+# android/），又是 Inno Setup 与 CI 解压 Flutter bundle 的暂存目录
+# （make/setup.iss 的 SourceRoot = ..\build；CI 里 tar -xzf bundle -C build）。
+# 整目录忽略会误伤脚本，整目录放行又会让 `git add -A` 把整个 bundle（含
+# data/flutter_assets/**）扫进版本库 —— 这里采用「默认忽略 + 显式放行脚本」。
+/build/*
+!/build/README.md
+!/build/build_all.sh
+!/build/build_desktop.sh
+!/build/android/
+
+# 安装包输出目录（Inno Setup 的 OutputDir）
+/dist/
+
 # ---- 编译产物 / 分发目录 ----
 # server.dist/ 曾整体入库（server.exe、python311.dll、*.pyd 等，约 23MB）
 server.dist/
