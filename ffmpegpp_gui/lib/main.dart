@@ -178,6 +178,9 @@ void main() async {
 /// 表面样式一次性切到纯色，写入配置并记录日志；用户可在设置里手动重新开启。
 /// 真实 GPU 环境不受影响。
 ///
+/// 自动降级对每个安装只**主动**执行一次（写入 config.glassAutoTuned）：
+/// 之后用户手动重新开启的玻璃样式不会再被自动降级 —— 详见字段注释。
+///
 /// 各字段的「无模糊」取值（兼容新旧两套样式体系共存期）：
 ///  - glassEffect（GlassPanel 系非卡片表面）：'liquid'/'blur' → 'none'
 ///  - cardStyle（卡片）：→ 'flat'（旧消费者=纯色；加载时自动迁移为 'gray'，
@@ -195,8 +198,15 @@ Future<void> _autoTuneGlass(AppState state) async {
     final needsPill = c.pillStyle == 'liquid' || c.pillStyle == 'blur';
     final needsMenu = c.menuStyle == 'liquid' || c.menuStyle == 'blur';
     if (!needsGlass && !needsCard && !needsNav && !needsPill && !needsMenu) return;
+    // 自动降级只主动执行一次：若上次已降级、而现在玻璃样式又是开启状态，
+    // 说明用户在设置里手动重新开启了 —— 尊重用户选择，不再每次启动都改回去。
+    // （旧行为：每次启动都重新降级，「可在设置中重新开启」的承诺实际不成立。）
+    if (c.glassAutoTuned) {
+      _startupLog('autoTuneGlass: software GPU ($name) but glass re-enabled by user, skip');
+      return;
+    }
     state.addLog(
-        '检测到软件/基础渲染显卡（$name），已自动关闭玻璃模糊效果（改为纯色）以保证流畅，可在「设置」中重新开启',
+        '检测到软件/基础渲染显卡（$name），已自动关闭玻璃模糊效果（改为纯色）以保证流畅，可在「设置」中重新开启（重新开启后不会再被自动关闭）',
         category: 'info');
     await state.updateConfig((c) {
       if (c.glassEffect == 'liquid' || c.glassEffect == 'blur') c.glassEffect = 'none';
@@ -204,6 +214,7 @@ Future<void> _autoTuneGlass(AppState state) async {
       if (c.navStyle == 'liquid' || c.navStyle == 'blur') c.navStyle = 'gray';
       if (c.pillStyle == 'liquid' || c.pillStyle == 'blur') c.pillStyle = 'gray';
       if (c.menuStyle == 'liquid' || c.menuStyle == 'blur') c.menuStyle = 'gray';
+      c.glassAutoTuned = true;
       return c;
     });
     _startupLog('autoTuneGlass: disabled glass for software GPU: $name');

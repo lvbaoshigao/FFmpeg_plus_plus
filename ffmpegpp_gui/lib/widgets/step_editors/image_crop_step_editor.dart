@@ -204,6 +204,28 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
             label: Text(zh ? '打开裁剪工具' : 'Open Crop Tool', style: const TextStyle(fontSize: 13)),
           ),
         ),
+        // 禁用原因提示：按钮置灰时用户「点了没反应」大多是因为不知道门控条件
+        // —— 明确告知缺什么（未连线图片源 / 文件不存在或无法解析）。
+        if (!_canOpenCropTool)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Icon(Icons.info_outline, size: 13, color: cs.outline),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  (widget.sourceImagePath == null || widget.sourceImagePath!.isEmpty)
+                      ? (zh
+                          ? '「打开裁剪工具」不可用：未连接图片源（需上游为「图片」类型的开始节点）'
+                          : 'Disabled: no image source connected (upstream must be an image start node)')
+                      : (zh
+                          ? '「打开裁剪工具」不可用：图片文件不存在或无法解析'
+                          : 'Disabled: image file missing or unreadable'),
+                  style: TextStyle(fontSize: 11, color: cs.outline, height: 1.35),
+                ),
+              ),
+            ]),
+          ),
         const SizedBox(height: 8),
 
         Text(zh ? '裁剪区域' : 'Crop Region',

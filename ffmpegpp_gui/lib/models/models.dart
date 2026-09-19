@@ -1280,6 +1280,13 @@ class AppConfig {
   // 桌面端菜单样式（左侧菜单栏 + 各页顶部菜单栏）：与 cardStyle 同四值。
   // 仅桌面端生效；移动端没有侧边栏/玻璃顶栏。
   String menuStyle;
+  /// 软件渲染自动降级已执行过一次的标记（由 main.dart 的 _autoTuneGlass 写入）。
+  ///
+  /// 语义：自动降级对每个安装只**主动**执行一次。之后用户若在设置里手动把
+  /// 玻璃样式重新开启，重启后不再被静默降级 —— 修复「注释承诺可在设置中
+  /// 重新开启，但每次启动都重新降级回去」的矛盾（用户体感：设置不生效、
+  /// 玻璃背景几秒后自己消失）。
+  bool glassAutoTuned;
   // 遵循主题色：true 时玻璃/卡片底色使用主题色而非 surface 灰
   bool glassFollowTheme;
   /// 设置项以毛玻璃展示（仅「液态玻璃」生效时可开启，提升列表可读性）。
@@ -1461,6 +1468,7 @@ class AppConfig {
     this.navStyle = 'liquid',
     this.pillStyle = 'liquid',
     this.menuStyle = 'liquid',
+    this.glassAutoTuned = false,
     this.glassFollowTheme = false,
     this.sliderParticles = true,
     this.glassBlur = 16.0,
@@ -1605,6 +1613,7 @@ class AppConfig {
         navStyle: _migrateSurfaceStyle(json['nav_style'] as String?),
         pillStyle: _migrateSurfaceStyle(json['pill_style'] as String?),
         menuStyle: _migrateSurfaceStyle(json['menu_style'] as String? ?? 'liquid'),
+        glassAutoTuned: json['glass_auto_tuned'] as bool? ?? false,
         glassFollowTheme: json['glass_follow_theme'] as bool? ?? false,
         settingsGlassMode: _migrateSettingsGlass(json),
         // 玻璃细节参数：均可调，默认值＝引入本项之前的观感（见字段注释）
@@ -1694,6 +1703,7 @@ class AppConfig {
         'glass_effect': glassEffect,
         'card_style': cardStyle, 'nav_style': navStyle, 'pill_style': pillStyle,
         'menu_style': menuStyle,
+        'glass_auto_tuned': glassAutoTuned,
         'glass_follow_theme': glassFollowTheme,
         'settings_glass_mode': settingsGlassMode,
         // 兼容旧读端：两个派生布尔继续写出（读取时由 _migrateSettingsGlass 折算）

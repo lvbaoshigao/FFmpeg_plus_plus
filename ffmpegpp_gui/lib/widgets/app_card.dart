@@ -315,11 +315,7 @@ class _AppCardState extends State<AppCard> {
                     blurred: w.blurred,
                     screen: w.screen,
                     overlay: w.overlayColor,
-                    sigma: sigma,
-                    // 真实 DPR 必须由 MediaQuery 提供：画布变换矩阵里的
-                    // st[0] 是「DPR × 祖先缩放」（onTap 卡的 AnimatedScale、
-                    // 路由转场都会贡献缩放），拿它当 DPR 会把屏幕矩形算错。
-                    devicePixelRatio: MediaQuery.devicePixelRatioOf(context)),
+                    sigma: sigma),
                 child: CustomPaint(
                   painter: LiquidGlassPainter(
                       borderRadius: br,
@@ -513,8 +509,10 @@ class _AppCardState extends State<AppCard> {
 /// 壁纸开窗画笔：把静态壁纸按「当前帧卡片→屏幕的变换」画进卡片本地坐标，
 /// 与背景壁纸逐像素对齐（同一帧、同一变换矩阵光栅化，不存在采样滞后）。
 ///
-/// 对齐方式：把当前画布变换**求逆**后 apply，直接在屏幕设备坐标里作画
-/// （屏幕左上角 = (0,0)，右下角 = 屏宽/高 × 真实 DPR）。随后：
+/// 对齐方式：把当前画布变换**求逆**后 apply，直接在屏幕**逻辑**坐标里作画
+/// （屏幕左上角 = (0,0)，右下角 = 屏宽/高；画布 CTM 不含 DPR —— 根级 DPR
+/// 是 RenderView 挂的 TransformLayer，由引擎在光栅化阶段应用，见 paint 内
+/// [FIX 开窗DPR] 注释）。随后：
 ///  1. drawImageRect 把壁纸画到屏幕对应位置（清晰度见下）；
 ///  2. 叠 withWallpaper 的遮罩色（背景不透明度），保证玻璃里的壁纸亮度
 ///     与卡片外的背景一致。
@@ -546,56 +544,54 @@ class _WallpaperWindowPainter extends CustomPainter {
   final Color overlay;
   final double sigma;
 
-  /// 真实设备像素比（由 MediaQuery 下发，必须与画布变换里的缩放分开）：
-  /// 画布变换的 st[0] 是「DPR × 祖先缩放」，两者混为一谈时，
-  /// 任何带缩放的祖先（onTap 卡片的 AnimatedScale、路由转场）都会让
-  /// 屏幕矩形算错，卡内壁纸与背景错位。
-  final double devicePixelRatio;
+  // [FIX 开窗DPR] 原本还有 devicePixelRatio 字段：paint 误把逆变换后的画布
+  // 空间当设备像素、用它放大矩形与 σ。实际画布 CTM 不含 DPR（根级 DPR 在
+  // TransformLayer，引擎侧应用），绘制空间就是屏幕逻辑坐标 —— 字段随之删除。
 
   const _WallpaperWindowPainter({
     required this.image,
     required this.screen,
     required this.overlay,
     required this.sigma,
-    required this.devicePixelRatio,
     this.blurred,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (devicePixelRatio <= 0) return;
-    // ── 在「屏幕设备坐标」里作画 ──
+    // ── 在「屏幕逻辑坐标」里作画 ──
     // 做法：把当前画布变换**求逆后 apply 上去**，此后所有绘制坐标就等于最终
-    // 设备像素坐标（屏幕左上角 (0,0)，右下角 = 屏宽/高 × DPR），不再需要手算
-    // 「屏幕矩形 → 卡片本地坐标」的映射。
+    // 屏幕**逻辑**坐标（屏幕左上角 (0,0)，右下角 = 屏宽/高）。
     //
-    // 为什么值得这么改（原实现手算 scaleX / scaleY / st[12] / st[13]，并要求
-    // 变换必须是「纯平移 + 等比缩放」，不满足就静默 `return`）：只要某个祖先
-    // 引入了旋转、斜切或非等比缩放（路由转场与按压缩放的组合、InteractiveViewer
-    // 拉伸等），painter 就什么都不画 —— 卡片上只剩外层那一层 tint 纯色，用户看到
-    // 的正是「卡片玻璃背景时有时无」，而且没有任何日志可循。
-    // 逆变换方案对**任意可逆变换**都成立（旋转 / 斜切 / 非等比一并支持），
-    // 从根本上消灭了这条静默失败路径。
+    // [FIX 开窗DPR] 关键事实：`canvas.getTransform()` 返回的 CTM 是
+    // 「卡片本地 → 屏幕逻辑」，**不含 DPR**。根级 DPR 变换是 RenderView 挂的
+    // TransformLayer（flutter/lib/src/rendering/view.dart 的 `_rootTransform`，
+    // 引擎在光栅化阶段应用），不在画布记录的 Picture 里；框架 getTransformTo
+    // 的文档也明确「映射到逻辑像素，取物理像素需再乘 RenderView 的变换」。
+    // 原实现误把求逆后的空间当**设备像素**，把矩形尺寸与回退 σ 全部 ×DPR：
+    // Windows DPR=1.0 时误差恰好为零（桌面端完全看不出），手机 DPR≈3 时
+    // 卡内壁纸被放大 3 倍、回退 σ 放大到 3 倍 —— 卡内背景与卡外完全对不上
+    // （用户看到的「玻璃卡里的壁纸背景没了」）。
+    //
+    // 逆变换对**任意可逆变换**都成立（旋转 / 斜切 / 非等比一并支持），旧版
+    // 手算「设备平移 ÷ 总缩放」只支持纯平移 + 等比缩放、其余情况静默放弃绘制
+    // 的失败路径也被这条方案覆盖。
     final inv = Matrix4.tryInvert(
         Matrix4.fromFloat64List(canvas.getTransform()));
     if (inv == null) return; // 退化变换（行列式为 0）：不存在可绘制区域
     canvas.save();
     canvas.transform(inv.storage);
-    // —— 以下所有坐标都是设备像素 ——
-    final double devW = screen.width * devicePixelRatio;
-    final double devH = screen.height * devicePixelRatio;
-    final Rect screenRect = Rect.fromLTWH(0, 0, devW, devH);
+    // —— 以下所有坐标都是屏幕逻辑坐标 ——
+    final Rect screenRect = Rect.fromLTWH(0, 0, screen.width, screen.height);
 
     final b = blurred;
     if (b != null) {
-      // 预模糊图已按 cover 铺满整屏（见 WallpaperBlurCache._rebuild），
-      // 这里把**整张**铺到屏幕矩形即可 —— 与卡外背景逐像素对齐，且不做模糊。
-      // 注意：该图可能是半分辨率（有真实模糊时为省纹理内存而降采样），所以
-      // 这里必须用「整张 → screenRect」的映射，不能假设 b.width == 屏幕设备宽。
+      // 预模糊图已按 cover 铺满整屏（物理/半分辨率像素，见
+      // WallpaperBlurCache._rebuild），这里把**整张**等比映射到屏幕逻辑矩形
+      // 即可 —— drawImageRect 自动完成像素密度换算，与卡外背景逐像素对齐。
       //
       // filterQuality 用 low（双线性）而非 medium：medium 会在引擎侧为源图
       // 额外生成一条 mipmap 链（≈ +1/3 纹理内存），而 mipmap 只在**缩小**
-      // 采样时才有意义 —— 这里源图 ≤ 屏幕设备像素、目标就是整屏，属于放大
+      // 采样时才有意义 —— 这里源图 ≤ 屏幕设备像素、目标是整屏，属于放大
       // 或 1:1，mipmap 永远用不到，纯粹白占显存。
       canvas.drawImageRect(
         b,
@@ -606,29 +602,28 @@ class _WallpaperWindowPainter extends CustomPainter {
     } else {
       final iw = image.width.toDouble();
       final ih = image.height.toDouble();
-      // 与 BoxFit.cover 一致：等比铺满整屏、居中裁切。长宽比在逻辑空间与设备
-      // 空间相同，所以在哪一侧算都等价。
-      final scale = math.max(devW / iw, devH / ih);
+      // 与 BoxFit.cover 一致：等比铺满整屏、居中裁切（逻辑空间）。
+      final scale = math.max(screen.width / iw, screen.height / ih);
       final cover = Rect.fromLTWH(
-        (devW - iw * scale) / 2,
-        (devH - ih * scale) / 2,
+        (screen.width - iw * scale) / 2,
+        (screen.height - ih * scale) / 2,
         iw * scale,
         ih * scale,
       );
       // 实时模糊回退路径（预模糊图尚未就绪 / 生成失败）：σ 走进程级缓存，
       // 避免滚动时每帧每卡新建一份持有 native handle 的 ImageFilter。
       //
-      // σ 必须乘真实 DPR：ImageFilter 的 σ 作用于**当前画布坐标系**，而改写后
-      // 的画布已处于设备像素空间（逆变换把 CTM 抵消成单位阵），逻辑 σ 不乘 DPR
-      // 会得到「物理像素数少了一个 DPR 倍」的模糊，看起来比设置里选的模糊度浅。
+      // [FIX 开窗DPR] σ 用**逻辑**值、不乘 DPR：ImageFilter 的 σ 作用于当前
+      // 画布坐标系，而这里的坐标系就是逻辑根空间（与 BackdropFilter 拿到的
+      // 采样空间一致），与设置里其它玻璃路径同一语义。
       final p = Paint()
-        ..imageFilter = cachedGlassBlur(sigma * devicePixelRatio)
-        // 同上：此处同样是放大，low 足够且不生成 mipmap。
+        ..imageFilter = cachedGlassBlur(sigma)
+        // 此处是放大采样，low 足够且不生成 mipmap。
         ..filterQuality = FilterQuality.low;
       canvas.drawImageRect(image, Rect.fromLTWH(0, 0, iw, ih), cover, p);
     }
     if (overlay.a > 0) {
-      // 遮罩同样画在设备空间，与卡外背景叠的那层逐像素一致
+      // 遮罩同样画在逻辑空间，与卡外背景叠的那层逐像素一致
       canvas.drawRect(screenRect, Paint()..color = overlay);
     }
     canvas.restore();
@@ -641,6 +636,5 @@ class _WallpaperWindowPainter extends CustomPainter {
       old.blurred != blurred ||
       old.screen != screen ||
       old.overlay != overlay ||
-      old.sigma != sigma ||
-      old.devicePixelRatio != devicePixelRatio;
+      old.sigma != sigma;
 }
