@@ -9,9 +9,14 @@ import '../platform/app_platform.dart';
 /// 窗口的 `preferredRefreshRate` 留空时会把帧率锁在 60Hz —— 于是 120Hz 屏幕上
 /// Flutter 界面仍按 60fps 渲染。原生侧（MainActivity）三条路径一起上：
 ///
-/// * **API 30+**：`View.setFrameRate(rate, FRAME_RATE_COMPATIBILITY_DEFAULT)`
+/// * **API 30+**：`Surface.setFrameRate(rate, FRAME_RATE_COMPATIBILITY_DEFAULT)`
 ///   —— 官方推荐入口，也是唯一能被系统「自适应刷新率（VRR/LTPO）」策略正常
 ///   协商的 API（它会随滚动/静止状态自动升降，而不是死锁 120Hz）。
+///   ⚠️ 这两个成员只存在于 `android.view.Surface`（均为 since API 30）；
+///   `View` / `SurfaceView` / `SurfaceHolder` 上**都没有**同名方法（写成
+///   `view.setFrameRate(...)` 或 `surfaceView.setFrameRate(...)` 都编译不过）。
+///   原生侧唯一入口是 `surfaceView.holder.surface.setFrameRate(...)`；Surface
+///   未就绪（冷启动早期）时该路径跳过，由 `surfaceCreated` 回调补放。
 /// * **全版本兜底**：`WindowManager.LayoutParams.preferredRefreshRate`
 ///   —— 部分 ROM 只认这个字段，必须一并设置。
 /// * **API 23~29**：额外用 `preferredDisplayModeId` 精确选中「**同分辨率**下

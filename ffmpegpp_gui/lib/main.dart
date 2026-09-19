@@ -156,7 +156,8 @@ void main() async {
 
   // 高刷新率：在支持 90 / 120 / 144Hz 的设备上按设置请求屏幕的最高刷新率。
   // 必须等到窗口已 attach 之后再调用（原生侧 setFrameRate 作用于已挂载的
-  // View），所以放在这里而不是 main() 开头。Android 专用，其它平台 no-op。
+  // SurfaceView 的 Surface），所以放在这里而不是 main() 开头。
+  // Android 专用，其它平台 no-op。
   unawaited(RefreshRate.applyEnabled(appState.config.highRefreshRate).then((ok) {
     _startupLog('6a-highRefreshRate: '
         '${appState.config.highRefreshRate ? "max" : "system default"} -> $ok');

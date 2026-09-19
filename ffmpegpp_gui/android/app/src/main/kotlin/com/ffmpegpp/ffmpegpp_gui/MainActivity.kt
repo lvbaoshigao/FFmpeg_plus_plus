@@ -89,9 +89,14 @@ class MainActivity : FlutterActivity() {
     // 大量 ROM（MIUI / ColorOS / HarmonyOS 等）只给「声明了高刷意图」的应用开高帧，
     // 窗口的 preferredRefreshRate 留空时会把帧率锁在 60Hz，于是 120Hz 屏幕上的
     // Flutter 界面仍按 60fps 渲染。这里三条路径一起上：
-    //  1. API 30+ 的 View.setFrameRate(rate, FRAME_RATE_COMPATIBILITY_DEFAULT)
+    //  1. API 30+ 的 Surface.setFrameRate(rate, FRAME_RATE_COMPATIBILITY_DEFAULT)
     //     —— 官方推荐入口，也是唯一能被系统「自适应刷新率」协商的 API
-    //     （它随内容静止/滚动自动升降，而不是死锁 120Hz）；
+    //     （它随内容静止/滚动自动升降，而不是死锁 120Hz）。
+    //     ⚠️ 这两个成员**只存在于 android.view.Surface**（实测 setFrameRate 与
+    //     FRAME_RATE_COMPATIBILITY_DEFAULT 都是 since API 30）——View、SurfaceView、
+    //     SurfaceHolder 上**都没有**同名成员，写成 `view.setFrameRate(...)` 或
+    //     `surfaceView.setFrameRate(...)` 都编不过（CI 上踩过）。唯一入口是
+    //     `surfaceView.holder.surface.setFrameRate(...)`。
     //  2. window.attributes.preferredRefreshRate（全版本，部分 ROM 只认它）；
     //  3. API 23~29 的 preferredDisplayModeId，精确选中「**同分辨率**下刷新率
     //     最高」的显示模式 —— 绝不能跨分辨率选模式（那会把屏幕分辨率改掉）。
@@ -99,11 +104,50 @@ class MainActivity : FlutterActivity() {
     /** 上次请求的刷新率（< 0 = 尚未设置过）；onResume 时重放，见下。 */
     private var lastRefreshRate: Float = -1f
 
+    /** 是否已挂过 SurfaceHolder 回调（只挂一次）。 */
+    private var surfaceCallbackAdded = false
+
     override fun onResume() {
         super.onResume()
         // 系统在 pause/resume 后可能重置帧率偏好（部分 ROM 会退回 60Hz），
         // 这里按上次请求重放一次；从未设置过则什么都不做。
         if (lastRefreshRate >= 0f) applyRefreshRate(lastRefreshRate)
+        // 冷启动时 onResume 早于 SurfaceView 的 surfaceCreated —— 此刻 Surface 尚未
+        // 有效，路径① 无法生效。补挂一次 Holder 回调，等 Surface 就绪后自动重放。
+        scheduleSurfaceCallback()
+    }
+
+    /**
+     * 挂一次 SurfaceHolder 回调：Surface 创建后按上次请求重放（见 [onResume]）。
+     * 走 decorView.post 是因为 FlutterActivity 的顺序为
+     * `onAttach → configureFlutterEngine → setContentView` —— configureFlutterEngine
+     * 阶段视图树里还没有 FlutterView，只有 post 之后才能找到它。
+     */
+    private fun scheduleSurfaceCallback() {
+        if (surfaceCallbackAdded) return
+        window?.decorView?.post { registerSurfaceCallback() }
+    }
+
+    /** 找到承载渲染的 SurfaceView 并挂上 Holder 回调（只挂一次）。 */
+    private fun registerSurfaceCallback() {
+        if (surfaceCallbackAdded) return
+        val sv = window?.decorView?.let { findSurfaceView(it) } ?: return
+        surfaceCallbackAdded = true
+        sv.holder.addCallback(object : android.view.SurfaceHolder.Callback {
+            override fun surfaceCreated(holder: android.view.SurfaceHolder) {
+                if (lastRefreshRate >= 0f) applyRefreshRate(lastRefreshRate)
+            }
+
+            override fun surfaceChanged(
+                holder: android.view.SurfaceHolder,
+                format: Int,
+                width: Int,
+                height: Int
+            ) {
+            }
+
+            override fun surfaceDestroyed(holder: android.view.SurfaceHolder) {}
+        })
     }
 
     /**
@@ -159,12 +203,18 @@ class MainActivity : FlutterActivity() {
         val target = if (rate > 0f) rate else 0f
         return try {
             var ok = false
-            // 路径①：API 30+ 官方接口（作用于已挂载的窗口 Surface）
+            // 路径①：API 30+ 官方接口。setFrameRate 只存在于 android.view.Surface，
+            // 所以必须走 `SurfaceView.holder.surface` —— SurfaceView 自己也没有
+            // 这个方法（`surfaceView.setFrameRate(...)` 编不过）。Surface 未就绪时
+            // 跳过，等 registerSurfaceCallback 在 surfaceCreated 后重放。
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                val v = window?.decorView
-                if (v != null) {
+                val surf = window?.decorView?.let { findSurfaceView(it) }?.holder?.surface
+                if (surf != null && surf.isValid) {
                     try {
-                        v.setFrameRate(target, android.view.View.FRAME_RATE_COMPATIBILITY_DEFAULT)
+                        surf.setFrameRate(
+                            target,
+                            android.view.Surface.FRAME_RATE_COMPATIBILITY_DEFAULT
+                        )
                         ok = true
                     } catch (e: Exception) {
                         Log.w("FFmpegpp", "setFrameRate failed: " + e.message)
@@ -206,6 +256,24 @@ class MainActivity : FlutterActivity() {
             Log.e("FFmpegpp", "applyRefreshRate error", e)
             false
         }
+    }
+
+    /**
+     * 在视图树里深度优先查找承载渲染的 SurfaceView。
+     *
+     * FlutterView 由 FlutterSurfaceView 承载（SurfaceView 子类），但它是被包在容器
+     * 里的，所以不能直接对 decorView 强转。若应用改用 texture 渲染模式
+     * （FlutterTextureView，非 SurfaceView）则返回 null —— 此时只走路径②。
+     */
+    private fun findSurfaceView(v: android.view.View): android.view.SurfaceView? {
+        if (v is android.view.SurfaceView) return v
+        if (v is android.view.ViewGroup) {
+            for (i in 0 until v.childCount) {
+                val found = findSurfaceView(v.getChildAt(i))
+                if (found != null) return found
+            }
+        }
+        return null
     }
 
     /** 用默认应用打开本地文件（目录交给系统文件管理器）。 */
