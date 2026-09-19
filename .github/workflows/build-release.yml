@@ -440,7 +440,7 @@ jobs:
           # Control file
           cat > deb/DEBIAN/control << 'EOF'
           Package: ffmpegpp
-          Version: 5.10.31
+          Version: 5.13.35
           Architecture: amd64
           Maintainer: lvbaoshigao <noreply@github.com>
           Description: FFmpeg++ - Advanced video/image/audio processing tool
@@ -475,13 +475,13 @@ jobs:
           chmod -R 755 deb/opt/ffmpegpp/
 
           # Build deb
-          dpkg-deb --root-owner-group --build deb ffmpegpp_5.10.31_amd64.deb
+          dpkg-deb --root-owner-group --build deb ffmpegpp_5.13.35_amd64.deb
 
       - name: Upload Linux x64 deb
         uses: actions/upload-artifact@v6
         with:
           name: linux-x64-deb
-          path: ffmpegpp_5.10.31_amd64.deb
+          path: ffmpegpp_5.13.35_amd64.deb
 
   # ══════════════════════════════════════════
   # 打包阶段 — Linux ARM64 (.deb)
@@ -508,7 +508,7 @@ jobs:
 
           cat > deb/DEBIAN/control << 'EOF'
           Package: ffmpegpp
-          Version: 5.10.31
+          Version: 5.13.35
           Architecture: arm64
           Maintainer: lvbaoshigao <noreply@github.com>
           Description: FFmpeg++ - Advanced video/image/audio processing tool
@@ -539,13 +539,13 @@ jobs:
           cp "make/FFmpeg++.png" deb/usr/share/icons/hicolor/256x256/apps/ffmpegpp.png
           chmod -R 755 deb/opt/ffmpegpp/
 
-          dpkg-deb --root-owner-group --build deb ffmpegpp_5.10.31_arm64.deb
+          dpkg-deb --root-owner-group --build deb ffmpegpp_5.13.35_arm64.deb
 
       - name: Upload Linux ARM64 deb
         uses: actions/upload-artifact@v6
         with:
           name: linux-arm64-deb
-          path: ffmpegpp_5.10.31_arm64.deb
+          path: ffmpegpp_5.13.35_arm64.deb
 
   # ══════════════════════════════════════════
   # 打包阶段 — macOS (.dmg)
@@ -567,16 +567,16 @@ jobs:
           mkdir -p dmg_staging
           tar -xzf bundle/macos-app.tar.gz -C dmg_staging
           ln -s /Applications dmg_staging/Applications
-          hdiutil create -volname "FFmpeg++" -srcfolder dmg_staging -ov -format UDZO "FFmpeg++_v5.10.31_macOS.dmg"
+          hdiutil create -volname "FFmpeg++" -srcfolder dmg_staging -ov -format UDZO "FFmpeg++_v5.13.35_macOS.dmg"
 
       - name: Upload macOS DMG
         uses: actions/upload-artifact@v6
         with:
           name: macos-dmg
-          path: FFmpeg++_v5.10.31_macOS.dmg
+          path: FFmpeg++_v5.13.35_macOS.dmg
 
   # ══════════════════════════════════════════
-  # 发布阶段 — 创建 Release (v5.10.31)
+  # 发布阶段 — 创建 Release (v5.13.35)
   # ══════════════════════════════════════════
   release:
     needs: [package-windows, package-linux-x64, package-linux-arm64, package-macos, compile-android]
@@ -596,8 +596,8 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: 5.10.31
-          name: "Release 5.10.31"
+          tag_name: 5.13.35
+          name: "Release 5.13.35"
           body: |
             ## Release Notes
 
