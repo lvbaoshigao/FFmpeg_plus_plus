@@ -86,6 +86,14 @@ class AppStrings {
   String get bgNone => lang == 'zh' ? '无' : 'None';
   String get bgOpacity => lang == 'zh' ? '背景不透明度' : 'BG Opacity';
   String get cardOpacity => lang == 'zh' ? '卡片不透明度' : 'Card Opacity';
+  // 「外观 → 背景」卡片的操作文案（见 settings_page 的 _ThemeBackgroundSection）。
+  // 原实现只有一个可点的整行 + 一个小叉号：既没有预览，「更换 / 清空」两个动作
+  // 也没有任何文字说明。这里补齐预览标题与两个明确的操作按钮文案。
+  String get bgCurrent => lang == 'zh' ? '当前背景' : 'Current background';
+  String get bgChoose => lang == 'zh' ? '选择图片' : 'Choose image';
+  String get bgReplace => lang == 'zh' ? '更换图片' : 'Replace image';
+  String get bgEmptyHint =>
+      lang == 'zh' ? '未设置背景，使用主题底色' : 'No background — theme color in use';
   String get canvasBgLabel => lang == 'zh' ? '画布背景' : 'Canvas Background';
   String get glassBlur => lang == 'zh' ? '模糊' : 'Blur';
   // ── 主题设置（模式 / 主题色 / 背景 / 样式） ──

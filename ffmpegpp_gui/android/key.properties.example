@@ -1,0 +1,13 @@
+# 正式签名配置模板。
+#
+# 使用方法：
+#   1. 生成 keystore（一次性，密码自选，务必妥善保管——丢了就无法给已发布应用更新）：
+#      keytool -genkey -v -keystore ffmpegpp-release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias ffmpegpp
+#   2. 复制本文件为 android/key.properties（已被 .gitignore 排除，不会入库），
+#      按实际路径/密码填写以下字段。storeFile 建议写相对 android/app/ 的路径。
+#   3. 有此文件时 release 构建自动用正式签名；没有时回退 debug 签名（仅测试用）。
+#
+# keyAlias=ffmpegpp
+# keyPassword=你的key密码
+# storeFile=../ffmpegpp-release.jks
+# storePassword=你的keystore密码

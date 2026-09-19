@@ -4,6 +4,8 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'image_crop_dialog.dart';
+
 class ImageCropStepEditor extends StatefulWidget {
   final Map<String, dynamic> params;
   final VoidCallback onChanged;
@@ -29,15 +31,6 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
   Size? _imageSize;
   // 图片是否存在（_loadImageSize 异步探测，避免 build 中同步 File.existsSync）
   bool _imageExists = false;
-
-  Offset? _dragStart;
-  Rect? _cropRect;
-  String? _activeHandle;
-  // 拖拽开始时的「快照」：移动/手柄改尺寸一律相对快照按绝对位移计算，
-  // 避免 d.delta（相对上一事件）+ 闭包旧值 在触摸多事件同帧时丢位移。
-  double _dragStartCropX = 0;
-  double _dragStartCropY = 0;
-  Rect? _dragStartDisplayRect;
 
   @override
   void initState() {
@@ -134,6 +127,58 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
     _hCtrl.text = '${(p['crop_h'] as num?)?.toInt() ?? 0}';
   }
 
+  /// 打开专用裁剪窗口，确认后把返回矩形写回参数。
+  ///
+  /// 旧的「内嵌预览直接拖拽」方案在移动端几乎不可用：预览被钳在 ≤300 逻辑像素
+  /// 高、手柄命中半径 12px，手势还要和外层滚动抢事件。裁剪交互整体挪进
+  /// [showImageCropDialog]，面板内只保留只读预览 + 数字输入兜底。
+  Future<void> _openCropTool() async {
+    final size = _imageSize;
+    final path = widget.sourceImagePath;
+    if (size == null || path == null || path.isEmpty || !_imageExists) return;
+
+    final imgW = size.width;
+    final imgH = size.height;
+    final cropX = (p['crop_x'] as num?)?.toDouble() ?? 0;
+    final cropY = (p['crop_y'] as num?)?.toDouble() ?? 0;
+    final cropW = ((p['crop_w'] as num?)?.toDouble() ?? imgW)
+        .clamp(1.0, imgW);
+    final cropH = ((p['crop_h'] as num?)?.toDouble() ?? imgH)
+        .clamp(1.0, imgH);
+    final initial = Rect.fromLTWH(
+      cropX.clamp(0.0, math.max(0.0, imgW - 1)),
+      cropY.clamp(0.0, math.max(0.0, imgH - 1)),
+      cropW,
+      cropH,
+    );
+
+    final result = await showImageCropDialog(
+      context,
+      imagePath: path,
+      imageSize: size,
+      initialRect: initial,
+      isZh: widget.isZh,
+    );
+    if (result == null || !mounted) return;
+
+    final imgWi = imgW.toInt();
+    final imgHi = imgH.toInt();
+    final x = result.left.round().clamp(0, math.max(0, imgWi - 1));
+    final y = result.top.round().clamp(0, math.max(0, imgHi - 1));
+    final w = result.width.round().clamp(1, math.max(1, imgWi - x));
+    final h = result.height.round().clamp(1, math.max(1, imgHi - y));
+    setState(() {
+      p['crop_x'] = x;
+      p['crop_y'] = y;
+      p['crop_w'] = w;
+      p['crop_h'] = h;
+      _syncControllers();
+    });
+    widget.onChanged();
+  }
+
+  bool get _canOpenCropTool =>
+      _imageSize != null && _imageExists && widget.sourceImagePath != null && widget.sourceImagePath!.isNotEmpty;
 
   @override
   Widget build(BuildContext context) {
@@ -148,6 +193,17 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
         const SizedBox(height: 8),
 
         _buildPreviewArea(cs, zh),
+        const SizedBox(height: 8),
+
+        // 专用裁剪窗口入口（与视频裁剪的「打开选择工具」同一交互模式）
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: _canOpenCropTool ? _openCropTool : null,
+            icon: const Icon(Icons.crop_free, size: 18),
+            label: Text(zh ? '打开裁剪工具' : 'Open Crop Tool', style: const TextStyle(fontSize: 13)),
+          ),
+        ),
         const SizedBox(height: 8),
 
         Text(zh ? '裁剪区域' : 'Crop Region',
@@ -221,8 +277,8 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
             Icon(Icons.info_outline, size: 14, color: cs.outline),
             const SizedBox(width: 8),
             Expanded(child: Text(
-              zh ? '输入来自帧提取或其他图片源。\n在预览区域拖拽选择裁剪范围，或在下方手动输入坐标和尺寸。'
-                 : 'Input comes from frame extraction or other image sources.\nDrag on the preview to select crop area, or enter coordinates below.',
+              zh ? '输入来自帧提取或其他图片源。\n点击预览或「打开裁剪工具」进入全屏裁剪，大图上拖拽框选更精准；也可在下方手动输入坐标和尺寸。'
+                 : 'Input comes from frame extraction or other image sources.\nTap the preview or the button above to crop on a full-size canvas, or enter coordinates below.',
               style: TextStyle(fontSize: 11, color: cs.outline, height: 1.4),
             )),
           ]),
@@ -257,22 +313,30 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
       );
     }
 
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: cs.outlineVariant.withAlpha(80)),
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        child: LayoutBuilder(builder: (context, constraints) {
-          return _buildCroppableImage(path, constraints.maxWidth, cs);
-        }),
+    // 只读预览：展示当前裁剪框位置，点击直接打开专用裁剪窗口。
+    // 不再内嵌拖拽手势 —— 这是移动端「裁剪框拖不动」的根源（预览太小 +
+    // 与面板外层滚动手势抢事件）。
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: _canOpenCropTool ? _openCropTool : null,
+      child: Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: cs.outlineVariant.withAlpha(80)),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: LayoutBuilder(builder: (context, constraints) {
+            return _buildPreviewImage(path, constraints.maxWidth, cs);
+          }),
+        ),
       ),
     );
   }
 
-  Widget _buildCroppableImage(String path, double maxWidth, ColorScheme cs) {
+  /// 只读预览图：按当前 crop 参数画出裁剪框位置。
+  Widget _buildPreviewImage(String path, double maxWidth, ColorScheme cs) {
     if (_imageSize == null) {
       return SizedBox(
         height: 160,
@@ -300,134 +364,39 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
       cropH * effectiveScale,
     );
 
-    return GestureDetector(
-      // opaque：图片未解码完成（或边缘区域）时手势区也可靠命中，
-      // 触摸不会穿透到外层 SingleChildScrollView（否则外层滚动、裁剪框像拖不动）
-      behavior: HitTestBehavior.opaque,
-      onPanStart: (d) {
-        final local = d.localPosition;
-        const handleSize = 12.0;
-        final r = displayCropRect;
-
-        if ((local - r.topLeft).distance < handleSize) { _activeHandle = 'tl'; }
-        else if ((local - r.topRight).distance < handleSize) { _activeHandle = 'tr'; }
-        else if ((local - r.bottomLeft).distance < handleSize) { _activeHandle = 'bl'; }
-        else if ((local - r.bottomRight).distance < handleSize) { _activeHandle = 'br'; }
-        else if (r.contains(local)) { _activeHandle = 'move'; }
-        else { _activeHandle = 'new'; }
-
-        // 记录拖拽起始快照：后续所有位移都相对快照按「绝对位移」计算。
-        // 旧实现用 d.delta（相对上一事件的增量）+ 闭包里的 cropX（上次 build 值）：
-        // 安卓触摸一帧内常有多个 move 事件，闭包来不及更新，增量不断套在旧值上
-        // 再取整 → 大部分位移被丢掉，裁剪框跟着手指「拖不动/卡顿」。
-        _dragStart = local;
-        _dragStartCropX = cropX;
-        _dragStartCropY = cropY;
-        _dragStartDisplayRect = r;
-        if (_activeHandle == 'new') {
-          setState(() {
-            _cropRect = Rect.fromLTWH(local.dx, local.dy, 0, 0);
-          });
-        }
-      },
-      onPanUpdate: (d) {
-        if (_dragStart == null) return;
-        final local = d.localPosition;
-        final clampedLocal = Offset(
-          local.dx.clamp(0, effectiveW),
-          local.dy.clamp(0, clampedH),
-        );
-
-        setState(() {
-          if (_activeHandle == 'new') {
-            _cropRect = Rect.fromPoints(_dragStart!, clampedLocal);
-            _applyCropRect(effectiveScale, imgW, imgH);
-          } else if (_activeHandle == 'move') {
-            // 自拖拽起点起的绝对位移（不用 d.delta），跨帧闭包旧值不影响结果
-            var newX = _dragStartCropX + (local.dx - _dragStart!.dx) / effectiveScale;
-            var newY = _dragStartCropY + (local.dy - _dragStart!.dy) / effectiveScale;
-            // 裁剪框大于图片时 imgW-cropW 为负，clamp 下界>上界会抛 ArgumentError
-            newX = newX.clamp(0, math.max(0.0, imgW - cropW));
-            newY = newY.clamp(0, math.max(0.0, imgH - cropH));
-            p['crop_x'] = newX.round();
-            p['crop_y'] = newY.round();
-            _syncControllers();
-            widget.onChanged();
-          } else {
-            // 手柄改尺寸：以拖拽起始时的显示矩形为基准（被拖边取当前绝对位置）
-            final r0 = _dragStartDisplayRect!;
-            var left = r0.left;
-            var top = r0.top;
-            var right = r0.right;
-            var bottom = r0.bottom;
-
-            if (_activeHandle!.contains('l')) left = clampedLocal.dx;
-            if (_activeHandle!.contains('r')) right = clampedLocal.dx;
-            if (_activeHandle!.contains('t')) top = clampedLocal.dy;
-            if (_activeHandle!.contains('b')) bottom = clampedLocal.dy;
-
-            _cropRect = Rect.fromLTRB(
-              math.min(left, right), math.min(top, bottom),
-              math.max(left, right), math.max(top, bottom),
-            );
-            _applyCropRect(effectiveScale, imgW, imgH);
-          }
-        });
-      },
-      onPanEnd: (_) {
-        _dragStart = null;
-        _activeHandle = null;
-        _dragStartDisplayRect = null;
-      },
-      onPanCancel: () {
-        // 手势被系统/其他组件抢占取消时清理状态，避免污染下一次拖拽
-        _dragStart = null;
-        _activeHandle = null;
-        _dragStartDisplayRect = null;
-      },
-      child: SizedBox(
-        width: effectiveW,
-        height: clampedH,
-        child: Stack(children: [
-          Image.file(File(path), width: effectiveW, height: clampedH, fit: BoxFit.fill,
-              // 按**显示**尺寸封顶解码。旧实现不给 cacheWidth，Image.file 会按
-              // 源图**原始分辨率**解码（24MP 照片 = 96MB RGBA）并把它挂进
-              // ImageCache —— 而此处显示区最大只有 effectiveW(≤ maxWidth) ×
-              // clampedH(≤300) 逻辑像素，浪费约两个数量级。且只要该 widget 在
-              // 树上持有 ImageStreamListener，这张图就落在 ImageCache 的
-              // _liveImages 里，**不受 48MB 上限逐出**，等于把全尺寸位图钉死。
-              cacheWidth: (effectiveW * MediaQuery.devicePixelRatioOf(context))
-                  .round()
-                  .clamp(1, 4096)),
-          // dim area outside crop
-          CustomPaint(
-            size: Size(effectiveW, clampedH),
-            painter: _CropOverlayPainter(displayCropRect, cs.primary),
+    return SizedBox(
+      width: effectiveW,
+      height: clampedH,
+      child: Stack(children: [
+        Image.file(File(path), width: effectiveW, height: clampedH, fit: BoxFit.fill,
+            // 按**显示**尺寸封顶解码（旧实现按源图原始分辨率解码 24MP ≈ 96MB）
+            cacheWidth: (effectiveW * MediaQuery.devicePixelRatioOf(context))
+                .round()
+                .clamp(1, 4096)),
+        CustomPaint(
+          size: Size(effectiveW, clampedH),
+          painter: _CropOverlayPainter(displayCropRect, cs.primary),
+        ),
+        // 右下角提示：这是入口，不是编辑区
+        Positioned(
+          right: 6,
+          bottom: 6,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.black.withAlpha(110),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.crop_free, size: 12, color: Colors.white.withAlpha(230)),
+              const SizedBox(width: 4),
+              Text(widget.isZh ? '点击裁剪' : 'Tap to crop',
+                  style: TextStyle(fontSize: 10, color: Colors.white.withAlpha(230))),
+            ]),
           ),
-        ]),
-      ),
+        ),
+      ]),
     );
-  }
-
-  void _applyCropRect(double scale, double imgW, double imgH) {
-    if (_cropRect == null) return;
-    var x = (_cropRect!.left / scale).round();
-    var y = (_cropRect!.top / scale).round();
-    var w = (_cropRect!.width / scale).round();
-    var h = (_cropRect!.height / scale).round();
-
-    // x/y 至多到 imgW-1/imgH-1，保证 w/h 的 clamp 上界 >= 1 不抛 ArgumentError
-    x = x.clamp(0, math.max(0, imgW.toInt() - 1));
-    y = y.clamp(0, math.max(0, imgH.toInt() - 1));
-    w = w.clamp(1, math.max(1, imgW.toInt() - x));
-    h = h.clamp(1, math.max(1, imgH.toInt() - y));
-
-    p['crop_x'] = x;
-    p['crop_y'] = y;
-    p['crop_w'] = w;
-    p['crop_h'] = h;
-    _syncControllers();
-    widget.onChanged();
   }
 }
 
@@ -457,25 +426,12 @@ class _CropOverlayPainter extends CustomPainter {
       ..strokeWidth = 2;
     canvas.drawRect(cropRect, borderPaint);
 
-    // handles
-    const hs = 6.0;
+    // corner handles（只读预览，仅提示位置）
+    const hs = 5.0;
     final handlePaint = Paint()..color = accentColor;
     for (final pt in [cropRect.topLeft, cropRect.topRight, cropRect.bottomLeft, cropRect.bottomRight]) {
       canvas.drawCircle(pt, hs, handlePaint);
       canvas.drawCircle(pt, hs, Paint()..color = Colors.white..style = PaintingStyle.stroke..strokeWidth = 2);
-    }
-
-    // rule of thirds
-    final thirdPaint = Paint()..color = Colors.white.withAlpha(60)..strokeWidth = 0.5;
-    final w3 = cropRect.width / 3;
-    final h3 = cropRect.height / 3;
-    for (var i = 1; i <= 2; i++) {
-      canvas.drawLine(
-        Offset(cropRect.left + w3 * i, cropRect.top),
-        Offset(cropRect.left + w3 * i, cropRect.bottom), thirdPaint);
-      canvas.drawLine(
-        Offset(cropRect.left, cropRect.top + h3 * i),
-        Offset(cropRect.right, cropRect.top + h3 * i), thirdPaint);
     }
   }
 

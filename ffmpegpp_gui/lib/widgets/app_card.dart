@@ -513,12 +513,14 @@ class _AppCardState extends State<AppCard> {
 /// 壁纸开窗画笔：把静态壁纸按「当前帧卡片→屏幕的变换」画进卡片本地坐标，
 /// 与背景壁纸逐像素对齐（同一帧、同一变换矩阵光栅化，不存在采样滞后）。
 ///
-/// 对齐方式：壁纸 cover 铺满整屏且原点在屏幕 (0,0)，卡片本地坐标下屏幕矩形
-/// 的位置与尺寸由画布变换矩阵推得：位置 = 设备平移 ÷ 总缩放，尺寸 =
-/// 逻辑尺寸 × 真实 DPR ÷ 总缩放（总缩放含 DPR 与祖先缩放）。随后：
+/// 对齐方式：把当前画布变换**求逆**后 apply，直接在屏幕设备坐标里作画
+/// （屏幕左上角 = (0,0)，右下角 = 屏宽/高 × 真实 DPR）。随后：
 ///  1. drawImageRect 把壁纸画到屏幕对应位置（清晰度见下）；
 ///  2. 叠 withWallpaper 的遮罩色（背景不透明度），保证玻璃里的壁纸亮度
 ///     与卡片外的背景一致。
+/// 逆变换对**任意可逆变换**都成立，所以祖先带旋转 / 斜切 / 非等比缩放时同样
+/// 逐像素对齐（旧实现手算「设备平移 ÷ 总缩放」，只支持纯平移 + 等比缩放，
+/// 其余情况静默放弃绘制 → 卡片玻璃背景整块消失）。
 ///
 /// 清晰度来源有两条路径，观感一致、开销差一个数量级：
 ///  - **首选**：用 [blurred]（WallpaperWindowScope 预先离屏渲染好的整屏模糊
@@ -561,23 +563,28 @@ class _WallpaperWindowPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final m = Matrix4.fromFloat64List(canvas.getTransform());
-    final st = m.storage;
-    // st[0]/st[5] = 本地→设备的总缩放（DPR × 祖先缩放）；
-    // st[12]/st[13] = 设备单位的平移。
-    // 仅接受「等比缩放 + 平移」的变换：出现旋转 / 斜切 / 非等比缩放
-    // （如 InteractiveViewer 拉伸）时放弃开窗，回退 BackdropFilter。
-    final scaleX = st[0];
-    final scaleY = st[5];
-    if (scaleX <= 0 || st[1] != 0 || st[4] != 0 || scaleY != scaleX) return;
     if (devicePixelRatio <= 0) return;
-    // 屏幕左上角在卡片本地坐标下的位置 = 设备平移取反 ÷ 总缩放。
-    final cardX = st[12] / scaleX;
-    final cardY = st[13] / scaleY;
-    // 屏幕逻辑尺寸换算为本地长度：逻辑 →设备（×DPR）→本地（÷总缩放）。
-    final screenRect = Rect.fromLTWH(-cardX, -cardY,
-        screen.width * devicePixelRatio / scaleX,
-        screen.height * devicePixelRatio / scaleY);
+    // ── 在「屏幕设备坐标」里作画 ──
+    // 做法：把当前画布变换**求逆后 apply 上去**，此后所有绘制坐标就等于最终
+    // 设备像素坐标（屏幕左上角 (0,0)，右下角 = 屏宽/高 × DPR），不再需要手算
+    // 「屏幕矩形 → 卡片本地坐标」的映射。
+    //
+    // 为什么值得这么改（原实现手算 scaleX / scaleY / st[12] / st[13]，并要求
+    // 变换必须是「纯平移 + 等比缩放」，不满足就静默 `return`）：只要某个祖先
+    // 引入了旋转、斜切或非等比缩放（路由转场与按压缩放的组合、InteractiveViewer
+    // 拉伸等），painter 就什么都不画 —— 卡片上只剩外层那一层 tint 纯色，用户看到
+    // 的正是「卡片玻璃背景时有时无」，而且没有任何日志可循。
+    // 逆变换方案对**任意可逆变换**都成立（旋转 / 斜切 / 非等比一并支持），
+    // 从根本上消灭了这条静默失败路径。
+    final inv = Matrix4.tryInvert(
+        Matrix4.fromFloat64List(canvas.getTransform()));
+    if (inv == null) return; // 退化变换（行列式为 0）：不存在可绘制区域
+    canvas.save();
+    canvas.transform(inv.storage);
+    // —— 以下所有坐标都是设备像素 ——
+    final double devW = screen.width * devicePixelRatio;
+    final double devH = screen.height * devicePixelRatio;
+    final Rect screenRect = Rect.fromLTWH(0, 0, devW, devH);
 
     final b = blurred;
     if (b != null) {
@@ -599,24 +606,32 @@ class _WallpaperWindowPainter extends CustomPainter {
     } else {
       final iw = image.width.toDouble();
       final ih = image.height.toDouble();
-      final scale = math.max(screen.width / iw, screen.height / ih);
+      // 与 BoxFit.cover 一致：等比铺满整屏、居中裁切。长宽比在逻辑空间与设备
+      // 空间相同，所以在哪一侧算都等价。
+      final scale = math.max(devW / iw, devH / ih);
       final cover = Rect.fromLTWH(
-        screenRect.left + (screen.width - iw * scale) / 2,
-        screenRect.top + (screen.height - ih * scale) / 2,
+        (devW - iw * scale) / 2,
+        (devH - ih * scale) / 2,
         iw * scale,
         ih * scale,
       );
       // 实时模糊回退路径（预模糊图尚未就绪 / 生成失败）：σ 走进程级缓存，
       // 避免滚动时每帧每卡新建一份持有 native handle 的 ImageFilter。
+      //
+      // σ 必须乘真实 DPR：ImageFilter 的 σ 作用于**当前画布坐标系**，而改写后
+      // 的画布已处于设备像素空间（逆变换把 CTM 抵消成单位阵），逻辑 σ 不乘 DPR
+      // 会得到「物理像素数少了一个 DPR 倍」的模糊，看起来比设置里选的模糊度浅。
       final p = Paint()
-        ..imageFilter = cachedGlassBlur(sigma)
+        ..imageFilter = cachedGlassBlur(sigma * devicePixelRatio)
         // 同上：此处同样是放大，low 足够且不生成 mipmap。
         ..filterQuality = FilterQuality.low;
       canvas.drawImageRect(image, Rect.fromLTWH(0, 0, iw, ih), cover, p);
     }
     if (overlay.a > 0) {
+      // 遮罩同样画在设备空间，与卡外背景叠的那层逐像素一致
       canvas.drawRect(screenRect, Paint()..color = overlay);
     }
+    canvas.restore();
   }
 
   @override

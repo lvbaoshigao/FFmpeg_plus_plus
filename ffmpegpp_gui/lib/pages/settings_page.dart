@@ -28,6 +28,12 @@ import '../services/refresh_rate.dart';
 // 要跟着菜单栏位置走（底部胶囊 96 / 竖排导轨 20）
 import '../widgets/mobile_nav_scope.dart';
 import '../widgets/font_picker.dart';
+// 背景预览缩略图复用主壳那条**唯一**的壁纸解码入口：同参数（屏幕逻辑尺寸 +
+// DPR）构造出的 ResizeImage 与主壳的 `==` 相等 → 命中同一个 ImageCache 条目，
+// 不额外解码一份，也不会出现「缩略图与真实壁纸构图不一致」。
+// settings_page ↔ app.dart 互为循环引用，Dart 允许（wallpaper_background.dart
+// 与 app.dart 早就是同样的情况）。
+import '../app.dart' show wallpaperImageProvider;
 import '../services/ffmpeg_installer.dart';
 import '../services/update_service.dart' as updater;
 import '../services/shell_open.dart';
@@ -2930,8 +2936,18 @@ Future<void> _pickBackground(BuildContext ctx, AppState state) async {
   }
 }
 
-/// 主题→背景：显示当前背景名 + 更换 + 清除；展开的二级菜单里
-/// 可设置背景不透明度与卡片不透明度。
+/// 主题→背景：预览缩略图 + 明确的「选择 / 更换 / 移除」按钮
+/// + 背景不透明度与卡片不透明度两条滑块。
+///
+/// 版式（自上而下）：
+///   ① 预览行 —— 缩略图 + 「当前背景」标签与文件名（未设置时改为一行说明）；
+///   ② 操作行 —— 主按钮「选择图片 / 更换图片」+（有背景时）「移除」；
+///   ③ 两条不透明度滑块。
+///
+/// 为什么重写：原实现只有一个可点的整行 + 一个 16px 的小叉号 —— 看不到当前壁纸
+/// 长什么样，也读不出「点这里能干什么」，两个动作都没有文字（用户反馈「背景的
+/// 更改选项按钮太简单了」）。缩略图走主壳那条唯一的解码 provider，同参数
+/// ⇒ 同一个 ImageCache 条目，缓存命中时零额外开销。
 class _ThemeBackgroundSection extends StatefulWidget {
   const _ThemeBackgroundSection();
   @override
@@ -2939,57 +2955,152 @@ class _ThemeBackgroundSection extends StatefulWidget {
 }
 
 class _ThemeBackgroundSectionState extends State<_ThemeBackgroundSection> {
+  /// 缩略图尺寸（逻辑像素）。
+  static const double _thumbW = 92;
+  static const double _thumbH = 62;
+
+  /// 背景文件存在性的进程级缓存。
+  ///
+  /// 为什么必须缓存：本组件订阅了整个 AppState（见 build 里的 watch），转码
+  /// 进度心跳之类的 notify 也会让它重建 —— 在 build 里直接 `existsSync()`
+  /// 会把同步磁盘 IO 摊到每一次心跳上。与主壳同样策略（app.dart 的
+  /// `_bgFileExists`）：路径 → 结果，同一路径只查一次。
+  static final Map<String, bool> _existsCache = {};
+  static bool _bgExists(String path) =>
+      _existsCache.putIfAbsent(path, () => File(path).existsSync());
+
   @override
   Widget build(BuildContext context) {
+    // 必须 watch 而不是 read：外层 `_glass(...)` 的 children 是 const 列表，
+    // 父级重建时 Flutter 会因「同一 Widget 实例」直接短路，本组件自己的 build
+    // 根本不会被调用 —— 只有自己订阅 AppState 才能保证配置一变就刷新。
     final state = context.watch<AppState>();
     final cfg = state.config;
     final s = AppStrings.of(cfg.language);
     final scheme = Theme.of(context).colorScheme;
     final clr = scheme.onSurface;
-    final name = cfg.backgroundImage.isEmpty
-        ? ''
-        : cfg.backgroundImage.split(RegExp(r'[\\/]')).last;
+    final hasBg = cfg.backgroundImage.isNotEmpty;
+    final name = hasBg ? cfg.backgroundImage.split(RegExp(r'[\\/]')).last : '';
 
-    return Column(children: [
-      ListTile(
-        dense: true,
-        contentPadding: EdgeInsets.zero,
-        leading: Icon(Icons.wallpaper_outlined, size: 20, color: scheme.primary),
-        title: Text(s.bgTitle, style: TextStyle(color: clr, fontSize: 13)),
-        subtitle: Text(cfg.backgroundImage.isEmpty ? s.bgNone : name,
-            maxLines: 1, overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 11, color: scheme.outline)),
-        onTap: () => _pickBackground(context, state),
-        trailing: cfg.backgroundImage.isNotEmpty
-            ? IconButton(icon: Icon(Icons.close, size: 16, color: scheme.error),
-                tooltip: s.remove,
-                onPressed: () => state.updateConfig((c) => c..backgroundImage = ''),
-                padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 24, minHeight: 24))
-            : null,
-      ),
-      // 背景不透明度 / 卡片不透明度：直接平铺展示（原为「折叠 → 展开」的二级菜单，
-      // 用户反馈不必要的折叠：这两个滑块是背景设置的核心项，展开后卡片还会被撑高。
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      // ── ① 预览行 ──
+      Row(children: [
+        _bgThumb(context, scheme, cfg.backgroundImage),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(s.bgCurrent,
+                  style: TextStyle(
+                      fontSize: 10, color: scheme.outline, letterSpacing: 0.3)),
+              const SizedBox(height: 3),
+              Text(
+                hasBg ? name : s.bgEmptyHint,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 12, color: hasBg ? clr : scheme.outline),
+              ),
+            ],
+          ),
+        ),
+      ]),
+      const SizedBox(height: 10),
+      // ── ② 操作行 ──
+      Row(children: [
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: () => _pickBackground(context, state),
+            icon: Icon(
+                hasBg ? Icons.swap_horiz : Icons.add_photo_alternate_outlined,
+                size: 16),
+            label: Text(hasBg ? s.bgReplace : s.bgChoose,
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: scheme.primary,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+              side: BorderSide(color: scheme.primary.withAlpha(90)),
+              shape:
+                  RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              textStyle: const TextStyle(fontSize: 12),
+            ),
+          ),
+        ),
+        if (hasBg) ...[
+          const SizedBox(width: 8),
+          OutlinedButton.icon(
+            onPressed: () => state.updateConfig((c) => c..backgroundImage = ''),
+            icon: const Icon(Icons.delete_outline, size: 16),
+            label: Text(s.remove),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: scheme.error,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+              side: BorderSide(color: scheme.error.withAlpha(80)),
+              shape:
+                  RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              textStyle: const TextStyle(fontSize: 12),
+            ),
+          ),
+        ],
+      ]),
+      Divider(height: 20, color: scheme.outlineVariant.withAlpha(60)),
+      // ── ③ 两条不透明度滑块 ──
+      // 直接平铺展示（原为「折叠 → 展开」的二级菜单，用户反馈不必要的折叠：
+      // 这两个滑块是背景设置的核心项，展开后卡片还会被撑高。
       // 现在卡片高度在一帧内就是最终高度，不再有展开/收起动画）。
-      Padding(
-        padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
-        child: Column(children: [
-          _SettingSlider(
-            value: cfg.backgroundOpacity, min: 0.0, max: 1.0, divisions: 100,
-            label: (v) => '${s.bgOpacity}: ${(v * 100).round()}%',
-            labelStyle: TextStyle(color: clr, fontSize: 11),
-            onCommit: (v) => state.updateConfig((c) => c..backgroundOpacity = v),
-          ),
-          const SizedBox(height: 2),
-          _SettingSlider(
-            value: cfg.cardOpacity, min: 0.0, max: 1.0, divisions: 100,
-            label: (v) => '${s.cardOpacity}: ${(v * 100).round()}%',
-            labelStyle: TextStyle(color: clr, fontSize: 11),
-            onCommit: (v) => state.updateConfig((c) => c..cardOpacity = v),
-          ),
-        ]),
+      _SettingSlider(
+        value: cfg.backgroundOpacity, min: 0.0, max: 1.0, divisions: 100,
+        label: (v) => '${s.bgOpacity}: ${(v * 100).round()}%',
+        labelStyle: TextStyle(color: clr, fontSize: 11),
+        onCommit: (v) => state.updateConfig((c) => c..backgroundOpacity = v),
+      ),
+      const SizedBox(height: 2),
+      _SettingSlider(
+        value: cfg.cardOpacity, min: 0.0, max: 1.0, divisions: 100,
+        label: (v) => '${s.cardOpacity}: ${(v * 100).round()}%',
+        labelStyle: TextStyle(color: clr, fontSize: 11),
+        onCommit: (v) => state.updateConfig((c) => c..cardOpacity = v),
       ),
     ]);
   }
+
+  /// 背景预览缩略图：有背景且文件在 → 真实预览；否则给一个中性占位框
+  /// （不留破图，也避免"未设置"时留一块空白）。
+  Widget _bgThumb(BuildContext context, ColorScheme scheme, String path) {
+    final bool ok = path.isNotEmpty && _bgExists(path);
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: SizedBox(
+        width: _thumbW,
+        height: _thumbH,
+        child: ok
+            ? Image(
+                // 与主壳**同参数**：命中同一 ImageCache 条目，不二次解码
+                image: wallpaperImageProvider(
+                  path,
+                  MediaQuery.sizeOf(context).width,
+                  MediaQuery.sizeOf(context).height,
+                  MediaQuery.devicePixelRatioOf(context),
+                ),
+                fit: BoxFit.cover,
+                // 文件被外部删除 / 解码失败时回落到占位框
+                errorBuilder: (_, _, _) => _bgThumbPlaceholder(scheme),
+              )
+            : _bgThumbPlaceholder(scheme),
+      ),
+    );
+  }
+
+  Widget _bgThumbPlaceholder(ColorScheme scheme) => DecoratedBox(
+        decoration: BoxDecoration(
+          color: scheme.onSurface.withAlpha(10),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: scheme.outlineVariant.withAlpha(70)),
+        ),
+        child: Icon(Icons.wallpaper_outlined, size: 22, color: scheme.outline),
+      );
 }
 
 /// 移动端设置 → 工具 → 命令：进入命令页

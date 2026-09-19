@@ -733,8 +733,8 @@ class _AppShellState extends State<AppShell> with WindowListener {
       // 横纵比自动判定：宽屏（平板 / 横屏，宽 ≥ 高 × 1.25）→ 左侧竖排导轨，
       // 把纵向空间还给内容；手机竖屏仍是原来的悬浮底部胶囊。
       //
-      // 判定必须在**这里**做：形态决定页面树是「Stack 悬浮」还是「Row 并排」，
-      // 导航栏自己改不了外层结构，所以导航栏只接受一个已解析好的 placement。
+      // 判定必须在**这里**做：位置决定内容区让出多少空间、导航栏贴哪条边，
+      // 导航栏自己看不到屏宽，所以它只接受一个已解析好的 placement。
       final size = MediaQuery.sizeOf(context);
       final placement = resolveMobileNavPlacement(
           placementCfg, size.width, size.height);
@@ -746,27 +746,66 @@ class _AppShellState extends State<AppShell> with WindowListener {
         // 遮罩在中途项「停留一拍再跳走」的动画跳跃。
         pageController: _mobilePageController,
       );
-      // 形态二选一：底部悬浮 / 左右并排（body 是 final，只能赋值一次，
-      // 故先算进 mobileBody 再统一套上下发作用域）。
-      final Widget mobileBody;
-      if (placement == MobileNavPlacement.bottom) {
-        // 底部：内容区全屏铺满，底部液态玻璃导航栏悬浮叠加在上方。
-        // 页面区改用 PageView：[0,1,3,4] 四个 Tab 滑动全程跟随手指（拖到一半即
+      // ── 形态恒定：内容区与导航栏始终是同一个 Stack 的两个固定槽位 ──
+      //
+      // 为什么不能用「底部 = Stack / 侧边 = Row」两套父结构（原实现）：
+      // RenderFlex ↔ RenderStack 是两个不同的 RenderObject 类型，切换时
+      // framework 无法复用下面的 Element —— 整个 PageView 连同四个 Tab 页
+      // 被卸载重建。后果有三条，用户看到的正是「横屏切竖屏整个界面变灰」：
+      //   ① 页面 State（滚动位置、多选、展开态）全部丢失；
+      //   ② 重建期间所有 Image/玻璃各走一次「重新 resolve + 回退渲染」；
+      //   ③ 配合 WallpaperWindowScope 的 provider 尺寸变化 → 壁纸按新尺寸
+      //      重新解码，那段时间界面只剩主题底色 + 遮罩 = 一片灰。
+      // 现在 children 的数量与 runtimeType 恒定，形态差异只体现在 Positioned
+      // 的位置参数与 Align 的对齐方向上（都是 parentData / 布局属性，不触发
+      // 子树重建），页面的 Element 与 State 全程保留。
+      final bool onBottom = placement == MobileNavPlacement.bottom;
+      final bool onLeft = placement == MobileNavPlacement.left;
+      // 侧边形态下内容区要让出「导航栏实际占用的宽度」= 外壳内边距 + 胶囊宽度。
+      // 两者都取自同一处定义（shellPadding / kMobileNavRailExtent），避免各写
+      // 一份后漂移成「导轨压住内容」或「内容左边多出一条缝」。
+      final EdgeInsets shellPad = NavGlassShell.shellPadding(
+          MediaQuery.paddingOf(context), placement);
+      final double sideInset =
+          onBottom ? 0.0 : shellPad.horizontal + kMobileNavRailExtent;
+      final Widget mobileBody = Stack(children: [
+        // 槽位 0：内容区。底部形态全屏铺满；侧边形态按方向让出侧向宽度。
+        // 页面区用 PageView：[0,1,3,4] 四个 Tab 滑动全程跟随手指（拖到一半即
         // 「各展示一半」），松手由 PageView 决定回弹或翻页；底部导航点击时同步。
-        mobileBody = Stack(children: [
-          Positioned.fill(child: _mobilePageView()),
-          Positioned(left: 0, right: 0, bottom: 0, child: navBar),
-        ]);
-      } else {
-        // 左 / 右导轨：与内容**并排**（不是悬浮叠加）——宽屏下悬浮导轨会压住
-        // 列表左列内容，且平板用户期待的是「侧向导航 + 完整内容区」。
-        // Row 的默认交叉轴对齐（center）会让导轨在纵向居中，成为一颗悬浮胶囊。
-        mobileBody = Row(children: [
-          if (placement == MobileNavPlacement.left) navBar,
-          Expanded(child: _mobilePageView()),
-          if (placement == MobileNavPlacement.right) navBar,
-        ]);
-      }
+        Positioned.fill(
+          child: Padding(
+            padding: EdgeInsets.only(
+              left: onLeft ? sideInset : 0,
+              right: (!onBottom && !onLeft) ? sideInset : 0,
+            ),
+            child: _mobilePageView(),
+          ),
+        ),
+        // 槽位 1：导航栏。底部形态贴底全宽悬浮叠加；侧边形态贴左 / 贴右，
+        // 宽度固定为 sideInset，并由 Align 在纵轴上居中 —— 复现原 Row 的
+        // 默认交叉轴对齐（center，一颗纵向居中的悬浮胶囊）行为。
+        // 不能直接用 Center 替代：底部形态下导航栏拿到的是「宽 tight、高 loose」
+        // 约束，Center 会把可用高度吃满，胶囊会被摆到屏幕垂直中央。
+        Positioned(
+          left: onBottom ? 0 : (onLeft ? 0 : null),
+          right: onBottom ? 0 : (onLeft ? null : 0),
+          top: onBottom ? null : 0,
+          bottom: 0,
+          // 侧边形态限定宽度；底部形态必须为 null（left+right 已定宽，
+          // Positioned 同时给出 width 会断言失败）。
+          width: onBottom ? null : sideInset,
+          child: Align(
+            alignment: onBottom
+                ? Alignment.bottomCenter
+                : (onLeft ? Alignment.centerLeft : Alignment.centerRight),
+            // SizedBox(width:∞) 是**必需**的：Align 给 child 的是 loose 宽度约束
+            // （`constraints.loosen()`），导航栏内部的横排布局依赖 maxWidth 均分
+            // 药丸宽度，拿 loose 约束会缩成内容宽 —— 底部形态就再也贴不满屏宽了。
+            // 填满上限后：底部 = Stack 宽；侧边 = Positioned 已定死的 sideInset。
+            child: SizedBox(width: double.infinity, child: navBar),
+          ),
+        ),
+      ]);
       // 把生效位置下发给主 Tab 各页：列表底部留白随之在 96 / 20 之间切换
       // （见 MobileUi.mainListPadding）。页面实例被 _pageCache 缓存并原样复用，
       // 上层重建不会触发它们 build —— 只有 InheritedWidget 的依赖关系能保证

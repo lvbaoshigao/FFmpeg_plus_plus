@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- FileProvider 共享路径：用于打开本地文件/APK（Android 7+ 禁止 file:// URI） -->
+<!-- FileProvider 共享路径：用于打开本地文件/APK（Android 7+ 禁止 file:// URI）。
+     使用方：MainActivity.openFile / revealFile —— 对用户指定的**任意**路径调
+     getUriForFile（打开处理结果视频、更新 APK 等，输出目录用户可配到外部存储
+     任何位置），因此 external-path 必须保持全根，收紧会让部分输出文件打不开。
+     风险兜底：provider exported=false + grantUriPermissions，URI 只在用户主动
+     「打开/定位」时临时授予，不存在静默批量暴露。 -->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <cache-path name="cache" path="." />
     <files-path name="files" path="." />

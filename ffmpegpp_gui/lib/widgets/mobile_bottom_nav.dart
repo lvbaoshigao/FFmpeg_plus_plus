@@ -239,6 +239,14 @@ Widget navMaskPill(ColorScheme scheme, bool isDark, String style) {
 /// navStyle 感知的玻璃外壳：把 [child] 按「底部菜单栏样式」四值套上外皮——
 /// theme/gray 直出、blur 高斯模糊、liquid GPU 液态玻璃（无 Impeller 时回退）。
 /// 主底部导航与子页面切换栏共用，保证子页面底栏与全局导航观感一致。
+/// 竖排导轨（左 / 右菜单栏）胶囊的**宽度**。
+///
+/// 公开出来的原因：AppShell 用「恒定 Stack + 位置参数」摆放导航（见 app.dart），
+/// 内容区必须按 [NavGlassShell.shellPadding] + 本宽度让出左侧 / 右侧空间。
+/// 这个值与 `buildRailBar` 里胶囊的实际宽度**必须**是同一个来源 —— 各写一份
+/// 迟早漂移成「导轨压住内容」或「内容区左边多出一条缝」。
+const double kMobileNavRailExtent = 60.0;
+
 class NavGlassShell extends StatelessWidget {
   final NavGlassPal pal;
   /// 胶囊圆角（一般 = 栏高一半）
@@ -555,7 +563,8 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
     // 素系统侧边栏，与现有玻璃语言不符；内容总高由药丸数决定，再由外层 Row 的
     // 交叉轴对齐把它居中。
     Widget buildRailBar() {
-      const barExtent = 60.0;
+      // 宽度取自文件级常量：AppShell 要让出同宽给内容区（见 kMobileNavRailExtent）
+      const barExtent = kMobileNavRailExtent;
       // 圆角直接用外层的 radius（= 栏高 60 / 2），两处同为 30，不重复声明
       const itemExtent = 54.0;
       // 交叉轴可用宽度 = 短边 − 上下各 4px 内边距（与横排的 padding 对称）

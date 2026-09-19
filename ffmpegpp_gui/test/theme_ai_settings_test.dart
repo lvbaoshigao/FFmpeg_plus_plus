@@ -86,6 +86,12 @@ void main() {
   });
 
   testWidgets('提供商详情页（新建 + 编辑）可构建', (tester) async {
+    // 详情页是长 ListView（惰性构建）：必须用竖屏手机视口，
+    // 否则折叠区之下的字段（如「名称」）根本不会被 build，find 会漏。
+    tester.view.physicalSize = const Size(412, 915);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
     final state = AppState();
     state.updateConfig((c) => c
       ..cardStyle = 'theme'
@@ -102,7 +108,8 @@ void main() {
       _harness(state, const MobileAiProviderDetailPage()),
     );
     await tester.pumpAndSettle();
-    expect(find.text('配置名'), findsOneWidget);
+    // 名称字段标签已从「配置名」改为「名称」（ai_settings_mobile.dart 连接卡片）
+    expect(find.text('名称'), findsOneWidget);
     expect(find.text('提供商预设（一键填充）'), findsOneWidget);
 
     // 编辑页
@@ -111,15 +118,25 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('提供商详情'), findsOneWidget);
-    // 名称输入框回显草稿值
-    final nameField = tester.widget<TextField>(find.byType(TextField).first);
-    expect(nameField.controller?.text, '测试提供商');
+    // 名称输入框回显草稿值——与字段顺序无关：详情页有多个 TextField，
+    // 「第一个」会随 UI 演化漂移（曾因此误取到别处的默认值 'OpenAI 兼容'）。
+    final fields = tester.widgetList<TextField>(find.byType(TextField));
+    expect(
+      fields.any((f) => f.controller?.text == '测试提供商'),
+      isTrue,
+      reason: '应存在一个名称输入框回显草稿值「测试提供商」',
+    );
     expect(find.text('设为当前'), findsNothing); // 已是当前，按钮隐藏
     // 让配置落盘防抖定时器跑完，避免 Timer pending 断言
     await tester.pump(const Duration(milliseconds: 600));
   });
 
   testWidgets('高级设置页可构建', (tester) async {
+    // 同上：长 ListView 需要竖屏手机视口才能构建到「自定义系统提示词」卡。
+    tester.view.physicalSize = const Size(412, 915);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
     final state = AppState();
     state.updateConfig((c) => c
       ..cardStyle = 'theme'
@@ -141,7 +158,8 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('图生成模式'), findsOneWidget);
-    expect(find.text('会话模式'), findsOneWidget);
+    // 「会话模式」出现 2 次：卡片标题 + 下拉行标签共用 aiApproveModeLabel
+    expect(find.text('会话模式'), findsNWidgets(2));
     expect(find.text('自定义系统提示词'), findsOneWidget);
     // 让配置落盘防抖定时器跑完，避免 Timer pending 断言
     await tester.pump(const Duration(milliseconds: 600));

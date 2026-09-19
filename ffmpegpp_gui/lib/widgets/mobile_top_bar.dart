@@ -118,7 +118,15 @@ class _MobilePillBarLayoutState extends State<MobilePillBarLayout>
   bool _expanded = false;
 
   /// 0 = 左半可见、操作收在「…」里；1 = 左半已隐藏、全部操作已滑入。
-  late final AnimationController _controller = AnimationController(
+  ///
+  /// ⚠️ 不能写成 `late final AnimationController _controller = AnimationController(...)`
+  /// —— late 字段是惰性初始化：若 widget 在首次使用动画前就被卸载，
+  /// [dispose] 里的访问会在 unmount 阶段触发初始化（`createTicker` → 查询
+  /// TickerMode 祖先），抛 "Looking up a deactivated widget's ancestor is unsafe"
+  /// （widget 测试整包运行时必现，release 则泄漏一个未挂接的 ticker）。
+  AnimationController? _controllerInstance;
+
+  AnimationController get _controller => _controllerInstance ??= AnimationController(
     vsync: this,
     duration: _overflowDuration,
     reverseDuration: _overflowDuration,
@@ -126,8 +134,10 @@ class _MobilePillBarLayoutState extends State<MobilePillBarLayout>
 
   /// 用 drive(CurveTween) 而不是 CurvedAnimation：不需要额外释放，且正反两个
   /// 方向都走同一条 easeOutCubic。
-  late final Animation<double> _progress =
-      _controller.drive(CurveTween(curve: Curves.easeOutCubic));
+  Animation<double>? _progressInstance;
+
+  Animation<double> get _progress =>
+      _progressInstance ??= _controller.drive(CurveTween(curve: Curves.easeOutCubic));
 
   /// Esc 只有在拥有键盘焦点时才会派发到 [Focus.onKeyEvent]，展开时把焦点收过来。
   final FocusNode _focusNode = FocusNode(debugLabel: 'MobilePillBarLayout');
@@ -150,7 +160,8 @@ class _MobilePillBarLayoutState extends State<MobilePillBarLayout>
   @override
   void dispose() {
     _focusNode.dispose();
-    _controller.dispose();
+    // 只释放已创建的实例：未创建过就直接跳过（切勿触发惰性初始化，见上方注释）。
+    _controllerInstance?.dispose();
     super.dispose();
   }
 

@@ -404,42 +404,74 @@ class _WallpaperWindowScopeState extends State<WallpaperWindowScope> {
     _publish();
   }
 
+  /// provider 的「壁纸源」：ResizeImage 只是**[FileImage] + 目标尺寸**的包装，
+  /// 剥掉尺寸后剩下的才是「用哪张图」。
+  ///
+  /// 用来区分两种 provider 变化：同一个文件的目标尺寸变了（横竖屏切换、
+  /// 窗口缩放 —— 尺寸来自屏幕逻辑尺寸 × DPR），与真的换了壁纸文件。
+  /// 前者旧图仍与新背景同源同内容，可以继续用；后者必须立刻作废旧窗口，
+  /// 否则会出现「卡片里是旧壁纸、卡外是新壁纸」的错配。
+  static ImageProvider? _sourceOf(ImageProvider? p) =>
+      p is ResizeImage ? p.imageProvider : p;
+
   @override
   void didUpdateWidget(WallpaperWindowScope old) {
     super.didUpdateWidget(old);
-    if (old.provider != widget.provider) {
-      _resolve();
-      return;
-    }
-    // provider 未变、但 screenSize / overlayColor 变了（窗口缩放、切明暗主题、
-    // 拖「背景不透明度」滑块）时，必须用新值重建当前窗口：
-    // 否则卡内壁纸的铺屏矩形与遮罩 alpha 会停留在旧值，玻璃里的亮度/位置
-    // 与卡外背景对不上（此前只在换壁纸时才会恢复）。
-    // image / blurred 沿用已有 ui.Image，不触发重新解码。
-    final cur = _window.value;
-    if (cur != null &&
-        (cur.screen != widget.screenSize ||
-            cur.overlayColor != widget.overlayColor)) {
-      _window.value = WallpaperWindow(
-        image: cur.image,
-        blurred: cur.blurred,
-        screen: widget.screenSize,
-        overlayColor: widget.overlayColor,
-      );
-    }
+    // ── 第 1 步：几何 / 遮罩先跟上，且**与是否重新解码无关** ──
+    // 原实现在 provider 变化时直接 `_resolve(); return;`，把这一步整个跳过，
+    // 于是横竖屏切换后窗口的 screen 停留在旧尺寸 —— painter 用它算「屏幕矩形
+    // → 卡片本地坐标」的映射，卡内壁纸会与卡外背景错位。
+    _refreshGeometry();
+    if (old.provider == widget.provider) return;
+    // ── 第 2 步：同源换尺寸 vs 换文件，决定要不要作废旧窗口 ──
+    _resolve(
+      clearWindow: _sourceOf(old.provider) != _sourceOf(widget.provider),
+    );
   }
 
-  void _resolve() {
+  /// 用当前 widget 的 screenSize / overlayColor 原地更新已有窗口
+  /// （image 沿用，不重新解码）。
+  ///
+  /// [blurred] 必须向共享缓存**重新取**而不是沿用：预模糊图是按「旧屏幕 cover
+  /// 铺满 + 旧 DPR 换算的 σ」离屏渲染的，直接铺到新长宽比的屏幕矩形上会被拉伸
+  /// 变形。几何不匹配时它自然返回 null，painter 先走实时模糊，等缓存重建完成
+  /// 再由 [_onBlurredChanged] 发布新图。
+  void _refreshGeometry() {
+    final cur = _window.value;
+    if (cur == null) return;
+    if (cur.screen == widget.screenSize &&
+        cur.overlayColor == widget.overlayColor) {
+      return;
+    }
+    _window.value = WallpaperWindow(
+      image: cur.image,
+      blurred: WallpaperBlurCache.currentFor(cur.image, widget.screenSize),
+      screen: widget.screenSize,
+      overlayColor: widget.overlayColor,
+    );
+  }
+
+  /// 解析壁纸为 [ui.Image]。
+  ///
+  /// [clearWindow] 为 true 时先把当前窗口置空（换壁纸文件：旧图与新背景不再是
+  /// 同一张，必须作废）；为 false 时**保留旧窗口**直到新图解码完成 —— 横竖屏
+  /// 切换正是这种情况：目标尺寸变了必须重新解码（不重解码会因 fit 策略拿到
+  /// 偏小的图、放大后发糊），但旧图与新背景是同源同内容的，留着它继续渲染远好过
+  /// 让所有玻璃卡掉回退路径、整屏只剩主题底色（用户看到的「切方向后界面变灰」）。
+  void _resolve({bool clearWindow = true}) {
     final p = widget.provider;
     if (p == null) {
       _unsubscribe();
+      _resolvedFor = null;
       _window.value = null;
       return;
     }
-    if (identical(p, _resolvedFor)) return;
+    // 用 == 而不是 identical：壁纸 provider 每次 build 都是新实例，ResizeImage
+    // 自身实现了值语义的 ==，用它才能挡住「内容相同的重复解析」。
+    if (p == _resolvedFor) return;
     _unsubscribe();
     _resolvedFor = p;
-    _window.value = null; // 旧壁纸窗口立即失效，等新图解码
+    if (clearWindow) _window.value = null; // 旧壁纸窗口立即失效，等新图解码
     final listener = ImageStreamListener(
       (info, _) {
         if (_disposed) return;

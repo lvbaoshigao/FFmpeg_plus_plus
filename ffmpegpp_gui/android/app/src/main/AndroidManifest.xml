@@ -12,9 +12,12 @@
         android:label="FFmpeg++"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
         android:extractNativeLibs="true"
-        android:requestLegacyExternalStorage="true"
         android:enableOnBackInvokedCallback="true">
+        <!-- allowBackup=false：settings.json 含加密 API Key，且 SecureKeyStore 的
+             解密盐写在系统临时目录（不随备份迁移），跨设备恢复必然解密失败。
+             关闭备份可避免「恢复出一堆无法解密的配置」与 adb backup 提取面。 -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
