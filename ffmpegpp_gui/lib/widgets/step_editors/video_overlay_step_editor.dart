@@ -1,6 +1,8 @@
 import 'dart:io';
-import 'package:flutter/material.dart';
+
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+
 import 'editor_kit.dart';
 
 /// 画面叠加：把一张图片（水印 / Logo）叠到画面指定位置。
@@ -32,14 +34,13 @@ class _VideoOverlayStepEditorState extends State<VideoOverlayStepEditor> with St
   }
 
   Future<void> _pickOverlay() async {
-    final result = await FilePicker.platform.pickFiles(
+    final picked = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: ['png', 'jpg', 'jpeg', 'bmp', 'webp', 'gif'],
     );
-    if (result != null && result.files.single.path != null) {
-      if (!mounted) return;
-      update('overlay_path', result.files.single.path!);
-    }
+    if (picked?.path == null) return;
+    if (!mounted) return;
+    update('overlay_path', picked!.path!);
   }
 
   @override

@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
+
 import '../../platform/app_platform.dart';
-import 'editor_kit.dart';
 import '../app_slider.dart';
+import 'editor_kit.dart';
 
 class AvProcessStepEditor extends ParamsStepEditor {
   const AvProcessStepEditor({
@@ -288,10 +289,10 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> with StepEdit
           cs: cs, onChanged: (v) => update('resolution', v)),
         if (p['resolution'] == 'custom')
           Padding(padding: const EdgeInsets.only(top: 12), child: Row(children: [
-            Expanded(child: TextField(controller: _resWCtrl, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: 'W'),
+            Expanded(child: TextField(controller: _resWCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'W'),
               onChanged: (v) { p['resolution_w'] = int.tryParse(v); widget.onChanged(); })),
             Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Text('x', style: TextStyle(color: cs.onSurface))),
-            Expanded(child: TextField(controller: _resHCtrl, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: 'H'),
+            Expanded(child: TextField(controller: _resHCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'H'),
               onChanged: (v) { p['resolution_h'] = int.tryParse(v); widget.onChanged(); })),
           ])),
         const SizedBox(height: 8),

@@ -1,21 +1,23 @@
 import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:window_manager/window_manager.dart';
+
+import '../app.dart';
 import '../models/models.dart';
+import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../services/thumbnail_service.dart';
 import '../theme/app_strings.dart';
-import '../platform/app_platform.dart';
 import '../widgets/app_card.dart';
 import '../widgets/liquid_glass_fallback.dart';
-import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_glass_pill.dart';
+import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_ui.dart';
-import 'pipeline_editor_page.dart';
-import '../app.dart';
 import '../widgets/wallpaper_background.dart';
+import 'pipeline_editor_page.dart';
 
 class ContainerDetailPage extends StatefulWidget {
   final String containerId;
@@ -64,8 +66,10 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
     }
 
     final items = container.sortedItems;
-    final files = container.items.map((item) =>
-        state.videos.where((v) => v.id == item.fileId).firstOrNull).whereType<VideoFile>().toList();
+    final files = container.items
+        .map((item) => state.videoById(item.fileId))
+        .whereType<VideoFile>()
+        .toList();
     final hasParsed = files.any((v) => v.parsed);
 
     final listWidget = items.isEmpty
@@ -85,7 +89,9 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
             itemCount: items.length,
             itemBuilder: (ctx, i) {
               final item = items[i];
-              final video = state.videos.where((v) => v.id == item.fileId).firstOrNull;
+              // O(1) 查表：原先是 itemBuilder 内对 state.videos 的线性扫描，
+              // 列表整体退化为 O(items²)（items 可达数百）。
+              final video = state.videoById(item.fileId);
               if (video == null) return const SizedBox.shrink();
               return _buildItem(state, s, scheme, container, item, video);
             },
@@ -329,8 +335,10 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
   }
 
   void _editPipeline(AppState state, FileContainer container) {
-    final files = container.items.map((item) =>
-        state.videos.where((v) => v.id == item.fileId).firstOrNull).whereType<VideoFile>().toList();
+    final files = container.items
+        .map((item) => state.videoById(item.fileId))
+        .whereType<VideoFile>()
+        .toList();
     final firstParsed = files.where((v) => v.parsed).firstOrNull;
     if (firstParsed == null) return;
     final typeCounts = <MediaType, int>{};
@@ -400,13 +408,13 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
   }
 
   Future<void> _addFiles(AppState state) async {
-    final r = await FilePicker.platform.pickFiles(
-        allowMultiple: true, type: FileType.custom,
+    final r = await FilePicker.pickFiles(
+        type: FileType.custom,
         allowedExtensions: ['mp4', 'mkv', 'mov', 'avi', 'webm', 'flv', 'wmv', 'ts', 'mpg', 'mpeg', 'm4v', '3gp',
           ...kAudioExts,
           'png', 'jpg', 'jpeg', 'bmp', 'webp', 'tiff', 'tif']);
-    if (r != null && r.files.isNotEmpty) {
-      final paths = r.files.where((f) => f.path != null).map((f) => f.path!).toList();
+    if (r.isNotEmpty) {
+      final paths = r.where((f) => f.path != null).map((f) => f.path!).toList();
       if (paths.isNotEmpty) state.addFilesToContainer(widget.containerId, paths);
     }
   }

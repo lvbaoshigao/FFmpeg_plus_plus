@@ -1,4 +1,5 @@
 import 'dart:io' show Platform;
+import 'dart:math' as math;
 import 'package:uuid/uuid.dart';
 import '../services/secure_key_store.dart';
 
@@ -484,7 +485,70 @@ class PipelineConnection {
 // 逻辑块
 // ═══════════════════════════════════════════
 
-enum LogicBlockType { loop, selectiveLoop }
+/// 逻辑块类型。
+///
+/// 逻辑块的执行**全部在 Dart 端展平**（[GraphExecutor] 把块信息打到
+/// `ExecutionStep` 上 → `AppState._expandLoopCalls` 复制迭代 / 生成条件跳过），
+/// 因此新增类型不需要后端配合 —— 只要最终能表达成「对某组节点重复执行 N 次」
+/// 或「跳过某组节点」即可。
+enum LogicBlockType {
+  /// 对框内节点整体重复执行 N 次（每轮产出各自独立的输出）
+  loop,
+
+  /// 每次迭代按模式（随机 / 全部 / 手动勾选）决定执行框内哪些节点
+  selectiveLoop,
+
+  /// 纯组织容器：把相关节点归拢进一个可整体拖动 / 折叠的框，**不重复执行**
+  group,
+
+  /// 条件执行：按输入文件的属性（扩展名 / 文件名 / 大小 / 路径）决定是否执行框内节点
+  condition,
+}
+
+/// 条件块的判断字段。全部是**无需解码媒体**就能拿到的元数据 ——
+/// 宽高时长要起 ffprobe 子进程，放在展平阶段（同步）不可行。
+enum LogicConditionField { extension, filename, fileSize, inputPath, parentDir }
+
+/// 条件块的比较方式。
+enum LogicConditionOp { eq, ne, contains, startsWith, endsWith, gt, lt, ge, le }
+
+/// 逻辑块类型的纯名称（不含后缀），工具箱 / 属性面板标题共用同一份文案。
+String logicBlockTypeLabel(LogicBlockType t, bool zh) => switch (t) {
+  LogicBlockType.loop => zh ? '循环' : 'Loop',
+  LogicBlockType.selectiveLoop => zh ? '选择性循环' : 'Sel.Loop',
+  LogicBlockType.group => zh ? '分组' : 'Group',
+  LogicBlockType.condition => zh ? '条件' : 'Condition',
+};
+
+/// 逻辑块类型的一句话说明，用于工具箱预览与属性面板副标题。
+String logicBlockTypeHint(LogicBlockType t, bool zh) => switch (t) {
+  LogicBlockType.loop => zh ? '框内节点整体重复执行 N 次' : 'Repeat the boxed nodes N times',
+  LogicBlockType.selectiveLoop =>
+    zh ? '每轮按模式决定执行框内哪些节点' : 'Pick which boxed nodes run each round',
+  LogicBlockType.group => zh ? '纯组织容器，不改变执行次数' : 'Organizational container only',
+  LogicBlockType.condition =>
+    zh ? '按输入文件属性决定是否执行' : 'Run only when the input matches',
+};
+
+String logicConditionFieldLabel(LogicConditionField f, bool zh) => switch (f) {
+  LogicConditionField.extension => zh ? '扩展名' : 'Extension',
+  LogicConditionField.filename => zh ? '文件名' : 'File name',
+  LogicConditionField.fileSize => zh ? '文件大小' : 'File size',
+  LogicConditionField.inputPath => zh ? '完整路径' : 'Full path',
+  LogicConditionField.parentDir => zh ? '所在目录' : 'Parent dir',
+};
+
+String logicConditionOpLabel(LogicConditionOp op, bool zh) => switch (op) {
+  LogicConditionOp.eq => zh ? '等于' : '=',
+  LogicConditionOp.ne => zh ? '不等于' : '≠',
+  LogicConditionOp.contains => zh ? '包含' : 'contains',
+  LogicConditionOp.startsWith => zh ? '以…开头' : 'starts with',
+  LogicConditionOp.endsWith => zh ? '以…结尾' : 'ends with',
+  LogicConditionOp.gt => zh ? '大于' : '>',
+  LogicConditionOp.lt => zh ? '小于' : '<',
+  LogicConditionOp.ge => zh ? '不小于' : '≥',
+  LogicConditionOp.le => zh ? '不大于' : '≤',
+};
 
 class LogicBlock {
   final String id;
@@ -536,13 +600,85 @@ class LogicBlock {
     height: (json['height'] as num?)?.toDouble() ?? 100,
   );
 
+  // ── 执行语义（编辑器与 GraphExecutor / AppState 共用同一份解析）──
+
+  /// 是否会重复执行（决定 `params['count']` 是否有意义）。
+  bool get isRepeating =>
+      type == LogicBlockType.loop || type == LogicBlockType.selectiveLoop;
+
+  /// 迭代次数。
+  ///
+  /// - 非重复类型恒为 1；
+  /// - `countMode == 'range'` 时按 `from / to / step` 折算（含首尾，例如
+  ///   3→10 step2 = 4 轮：3,5,7,9）；
+  /// - 其余情况取 `count`。
+  ///
+  /// 上限 10000 与编辑器输入校验一致：展开后每一轮都要真跑一遍，
+  /// 再大就是误操作。
+  int get effectiveCount {
+    if (!isRepeating) return 1;
+    if (params['countMode'] == 'range') {
+      final from = (params['from'] as num?)?.toInt() ?? 1;
+      final to = (params['to'] as num?)?.toInt() ?? 10;
+      final step = math.max(1, (params['step'] as num?)?.toInt() ?? 1);
+      if (to < from) return 1;
+      return ((to - from) ~/ step + 1).clamp(1, 10000);
+    }
+    return ((params['count'] as num?)?.toInt() ?? 10).clamp(1, 10000);
+  }
+
+  /// 迭代序号的首值：固定模式恒为 1，区间模式为 `from`。
+  int get iterationBase =>
+      params['countMode'] == 'range' ? ((params['from'] as num?)?.toInt() ?? 1) : 1;
+
+  /// 迭代序号的步长：固定模式恒为 1，区间模式为 `step`。
+  int get iterationStep =>
+      params['countMode'] == 'range' ? math.max(1, (params['step'] as num?)?.toInt() ?? 1) : 1;
+
+  /// 第 [index]（0-based）轮迭代对应的**迭代序号**，供 `{i}` 占位符替换使用。
+  int iterationNumber(int index) => iterationBase + index * iterationStep;
+
+  /// 链式累积：每轮迭代的输入承接上一轮输出（默认每轮都从原始输入开始）。
+  bool get accumulate => params['accumulate'] == true;
+
+  /// 某轮失败时的策略：`'stop'`（默认，立即中止整个任务）/ `'continue'`（跳过继续）。
+  String get errorPolicy => (params['onError'] as String?) ?? 'stop';
+
+  /// 单轮失败重试次数（0 = 不重试），上限 10。
+  int get retries => ((params['retries'] as num?)?.toInt() ?? 0).clamp(0, 10);
+
+  LogicConditionField get conditionField => LogicConditionField.values.firstWhere(
+        (f) => f.name == (params['condField'] as String?),
+        orElse: () => LogicConditionField.extension,
+      );
+
+  LogicConditionOp get conditionOp => LogicConditionOp.values.firstWhere(
+        (o) => o.name == (params['condOp'] as String?),
+        orElse: () => LogicConditionOp.eq,
+      );
+
+  String get conditionValue => (params['condValue'] as String?) ?? '';
+
+  /// 条件不满足时：true = 跳过框内节点继续后续步骤；false = 直接中止任务。
+  bool get conditionSkipWhenFalse => params['condElse'] != 'stop';
+
+  /// 一行式条件描述（「扩展名 等于 mp4」），供画布标签与属性面板标题使用。
+  String conditionSummary(bool zh) {
+    final v = conditionValue.trim();
+    return '${logicConditionFieldLabel(conditionField, zh)} '
+        '${logicConditionOpLabel(conditionOp, zh)} '
+        '${v.isEmpty ? (zh ? '（空）' : '(empty)') : v}';
+  }
+
   String label(bool isZh) {
-    final typeName = switch (type) {
-      LogicBlockType.loop => isZh ? '循环' : 'Loop',
-      LogicBlockType.selectiveLoop => isZh ? '选择性循环' : 'Sel.Loop',
+    final typeName = logicBlockTypeLabel(type, isZh);
+    final suffix = switch (type) {
+      LogicBlockType.loop || LogicBlockType.selectiveLoop => ' x$effectiveCount',
+      LogicBlockType.condition => ' · ${conditionSummary(isZh)}',
+      LogicBlockType.group => ' · ${childNodeIds.length}${isZh ? ' 项' : ' items'}',
     };
     final nameStr = name.isNotEmpty ? ' · $name' : '';
-    return '$typeName x${params['count'] ?? 1}$nameStr';
+    return '$typeName$suffix$nameStr';
   }
 }
 
@@ -862,13 +998,47 @@ class BackendCall {
   final Map<String, dynamic> params;
   int loopCount;
   String? loopMode;
-  BackendCall({required this.action, required this.params, this.loopCount = 1, this.loopMode});
+
+  /// 链式累积：该轮迭代的输入承接上一轮输出（默认每轮都从原始输入开始）。
+  bool accumulate;
+
+  /// 某轮失败时的策略：`'stop'`（默认，立即中止整个任务）/ `'continue'`（跳过该轮继续）。
+  String errorPolicy;
+
+  /// 单轮失败重试次数（0 = 不重试）。
+  int retries;
+
+  /// 迭代变量占位符替换（`{i}` / `{i0}` / `{n}`）。
+  /// 默认开启 —— 参数里不出现占位符时自然什么都不变。
+  bool useVars;
+
+  /// 迭代序号的首值与步长：第 k 轮（0-based）的序号 = [loopIndexBase] + k × [loopIndexStep]。
+  /// 由 [LogicBlock.iterationBase] / [LogicBlock.iterationStep] 决定 ——
+  /// 固定模式是 (1, 1)，区间模式是 (from, step)。展平阶段据此替换 `{i}` 占位符。
+  int loopIndexBase;
+  int loopIndexStep;
+
+  BackendCall({
+    required this.action,
+    required this.params,
+    this.loopCount = 1,
+    this.loopMode,
+    this.accumulate = false,
+    this.errorPolicy = 'stop',
+    this.retries = 0,
+    this.useVars = true,
+    this.loopIndexBase = 1,
+    this.loopIndexStep = 1,
+  });
 
   Map<String, dynamic> toJson() => {
     'action': action,
     'params': params,
     if (loopCount != 1) 'loop_count': loopCount,
     if (loopMode != null) 'loop_mode': loopMode,
+    if (accumulate) 'accumulate': true,
+    if (errorPolicy != 'stop') 'error_policy': errorPolicy,
+    if (retries > 0) 'retries': retries,
   };
 
   factory BackendCall.fromJson(Map<String, dynamic> json) => BackendCall(
@@ -876,6 +1046,9 @@ class BackendCall {
     params: (json['params'] as Map?)?.cast<String, dynamic>() ?? {},
     loopCount: (json['loop_count'] as num?)?.toInt() ?? 1,
     loopMode: json['loop_mode'] as String?,
+    accumulate: json['accumulate'] == true,
+    errorPolicy: json['error_policy'] as String? ?? 'stop',
+    retries: (json['retries'] as num?)?.toInt() ?? 0,
   );
 }
 
@@ -1350,6 +1523,20 @@ class AppConfig {
   String settingsGlassMode;
   /// 逻辑门符号标准：'ansi' ANSI/IEEE 标准 / 'iec' IEC 标准
   String gateStd;
+  /// 节点编辑器右下角的小地图：显示全图节点分布与当前视口框，点击可跳转。
+  /// 默认开启（大图定位神器）；它压在画布右下角，嫌挡视线可在此关闭。
+  bool nodeMiniMap;
+  /// 拖动节点时对齐到网格（吸附）。默认开启 —— 手工挪到「差不多对齐」的
+  /// 位置在整理大图时很费神；需要像素级精确摆放时可以关掉。
+  bool nodeSnap;
+  /// 工具箱里被收藏（置顶）的节点类型名。存 `PipelineStepType.name`，
+  /// 这样枚举改名后旧配置只会失效一条，不会反序列化失败。
+  List<String> favoriteNodeTypes;
+  /// 最近使用过的节点类型名，最新在前，最多保留 [_kRecentNodeLimit] 条 ——
+  /// 大图编辑时 90% 的操作都集中在少数几种节点上，翻分类太慢。
+  List<String> recentNodeTypes;
+  /// 「最近使用」保留条数（与整份配置一起落盘，不宜过大）。
+  static const int recentNodeLimit = 6;
   bool debugMode;
   bool saveLogs;
   bool enableSystemNotification;
@@ -1479,6 +1666,10 @@ class AppConfig {
     this.themeTone = 0.45,
     this.settingsGlassMode = 'follow',
     this.gateStd = 'ansi',
+    this.nodeMiniMap = true,
+    this.nodeSnap = true,
+    List<String>? favoriteNodeTypes,
+    List<String>? recentNodeTypes,
     this.debugMode = false, this.saveLogs = false, this.enableSystemNotification = false, this.logSavePath = '',
     this.editMode = 0,
     this.useNodeEditorLandscape = false,
@@ -1529,6 +1720,8 @@ class AppConfig {
   }) : fontFamily = fontFamily ?? _defaultFontFamily,
        aiProfiles = aiProfiles ?? <AiProfile>[],
        nodeUsageCount = nodeUsageCount ?? {},
+       favoriteNodeTypes = favoriteNodeTypes ?? <String>[],
+       recentNodeTypes = recentNodeTypes ?? <String>[],
        keyBindings = keyBindings ?? Map.from(defaultKeyBindings);
 
   static bool? _softBool(dynamic v) => v is bool ? v : null;
@@ -1561,6 +1754,13 @@ class AppConfig {
       if (e.value is num) out['${e.key}'] = (e.value as num).toInt();
     }
     return out;
+  }
+
+  /// 宽松解析字符串列表：非 List 或非字符串元素一律丢弃。
+  /// 配置文件是用户可手改的，损坏的键不该让整份配置加载失败。
+  static List<String> _safeStringList(dynamic v) {
+    if (v is! List) return <String>[];
+    return [for (final e in v) if (e is String && e.isNotEmpty) e];
   }
 
   static Map<String, List<String>>? _safeStringListMap(dynamic v) {
@@ -1629,6 +1829,10 @@ class AppConfig {
             json['slider_stars'] as bool? ??
             true,
         gateStd: json['gate_std'] as String? ?? 'ansi',
+        nodeMiniMap: json['node_mini_map'] as bool? ?? true,
+        nodeSnap: json['node_snap'] as bool? ?? true,
+        favoriteNodeTypes: _safeStringList(json['favorite_node_types']),
+        recentNodeTypes: _safeStringList(json['recent_node_types']),
         cardOpacity: _clampDouble(json['card_opacity'], 0.0, 1.0, 0.7), // [FIX H-14] 透明度钳制 0~1
         canvasBg: json['canvas_bg'] as String? ?? 'global',
         debugMode: json['debug_mode'] as bool? ?? false,
@@ -1708,6 +1912,8 @@ class AppConfig {
         'settings_glass_mode': settingsGlassMode,
         // 兼容旧读端：两个派生布尔继续写出（读取时由 _migrateSettingsGlass 折算）
         'settings_frosted_glass': settingsFrostedGlass, 'no_card_glass': noCardGlass, 'gate_std': gateStd,
+        'node_mini_map': nodeMiniMap, 'node_snap': nodeSnap,
+        'favorite_node_types': favoriteNodeTypes, 'recent_node_types': recentNodeTypes,
         // 粒子特效：新键 + 旧键一起写出，回滚到旧版本也读得到同一个开关
         'slider_particles': sliderParticles, 'slider_stars': sliderParticles,
         'glass_blur': glassBlur, 'glass_clarity': glassClarity, 'glass_highlight': glassHighlight,

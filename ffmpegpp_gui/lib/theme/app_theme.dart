@@ -1,6 +1,8 @@
 import 'dart:io' show Platform;
-import 'package:flutter/material.dart';
+
 import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
+import 'package:flutter/material.dart';
+
 import '../widgets/app_slider.dart' show appSliderThemeFor;
 import 'app_semantic_colors.dart';
 
@@ -176,8 +178,8 @@ class AppTheme {
               borderRadius: BorderRadius.circular(22),
               side: BorderSide(color: scheme.outlineVariant.withAlpha(70)))),
           surfaceTintColor: WidgetStatePropertyAll(scheme.surface),
-          elevation: WidgetStatePropertyAll(12),
-          padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(vertical: 8)),
+          elevation: const WidgetStatePropertyAll(12),
+          padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(vertical: 8)),
           backgroundColor: WidgetStatePropertyAll(scheme.surfaceContainerHighest.withAlpha(240)),
           shadowColor: WidgetStatePropertyAll(Colors.black.withAlpha(isDark ? 80 : 30)),
           // 展开面板宽高上限：DropdownMenu 未显式给 width 时会按最长条目

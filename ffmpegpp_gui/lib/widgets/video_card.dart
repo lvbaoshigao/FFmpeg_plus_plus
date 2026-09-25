@@ -1,12 +1,14 @@
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../models/models.dart';
-import '../providers/app_state.dart';
-import '../theme/app_strings.dart';
-import '../pages/pipeline_editor_page.dart';
-import '../services/thumbnail_service.dart';
+
 import '../app.dart';
+import '../models/models.dart';
+import '../pages/pipeline_editor_page.dart';
+import '../providers/app_state.dart';
+import '../services/thumbnail_service.dart';
+import '../theme/app_strings.dart';
 import 'app_card.dart';
 
 class VideoCard extends StatelessWidget {

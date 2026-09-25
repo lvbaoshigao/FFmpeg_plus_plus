@@ -198,7 +198,7 @@ class _VideoCropStepEditorState extends State<VideoCropStepEditor> {
               widget.onChanged();
             }
           },
-          style: ButtonStyle(visualDensity: VisualDensity.compact),
+          style: const ButtonStyle(visualDensity: VisualDensity.compact),
         ),
         const SizedBox(height: 8),
 

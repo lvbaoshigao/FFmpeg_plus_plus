@@ -29,7 +29,7 @@ class _ImageDenoiseStepEditorState extends State<ImageDenoiseStepEditor> with St
         EditorDropdown(
           label: zh ? '降噪算法' : 'Method',
           value: method,
-          items: [('nlmeans', 'NLMeans'), ('hqdn3d', 'HQDN3D')],
+          items: const [('nlmeans', 'NLMeans'), ('hqdn3d', 'HQDN3D')],
           onChanged: (v) => update('denoise_method', v),
         ),
         const SizedBox(height: 8),

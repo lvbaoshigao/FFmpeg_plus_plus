@@ -3,17 +3,19 @@ import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
+
 import '../models/models.dart';
-import '../services/native_process.dart';
+import '../platform/app_platform.dart';
+import '../services/android_platform.dart';
 import '../services/backend_client.dart';
 import '../services/config_service.dart';
-import '../services/graph_executor.dart';
 import '../services/ffmpeg_installer.dart';
-import '../services/android_platform.dart';
-import '../platform/app_platform.dart';
+import '../services/graph_executor.dart';
+import '../services/native_process.dart';
 
 class AppState extends ChangeNotifier {
   /// 共享随机数生成器：避免随机参数生成时每处 new Random()，
@@ -49,6 +51,30 @@ class AppState extends ChangeNotifier {
 
   final List<VideoFile> _videos = [];
   List<VideoFile> get videos => UnmodifiableListView(_videos);
+
+  // ── id → VideoFile 索引（惰性、按通知周期失效）──
+  // 容器卡片与容器详情页原先都靠 `videos.where((v) => v.id == item.fileId)`
+  // 反查：容器卡是 O(items × videos)、详情页 itemBuilder 内更退化成 O(items²)，
+  // 都会随进度心跳（~3.3Hz）反复执行。这里改为 O(1) 查表。
+  //
+  // 失效策略选「notifyListeners 时置空、下次查询时重建」而不是在每个
+  // `_videos` 变更点手工同步：`_videos` 有 10 处变更点（add/removeWhere/
+  // clear/下标替换 × 4 个方法），漏掉任何一处都会得到静默错误的查询结果；
+  // 而所有变更路径后面都必然跟一次 notifyListeners，所以挂在这里是唯一
+  // 不会遗漏的位置。重建是惰性的：一次通知周期内无论多少张卡查询，最多
+  // 只重建一次（O(n)），远小于原先每卡一次的 O(n) 扫描。
+  Map<String, VideoFile>? _videoIndexCache;
+
+  /// 按 id 查视频（容器卡片 / 容器详情页用），找不到返回 null。
+  ///
+  /// 刻意不对外暴露整张 Map：Map 实例会在每次通知后重建，若被塞进
+  /// `context.select` 会因引用变化而次次判定为「已变更」，反而放大重建。
+  VideoFile? videoById(String id) {
+    final cache = _videoIndexCache ??
+        (_videoIndexCache = {for (final v in _videos) v.id: v});
+    return cache[id];
+  }
+
   int _probeCount = 0;
   bool get probingVideos => _probeCount > 0;
   // 媒体库指纹：项目页用 Selector 订阅它，替代「订阅整个 AppState」。
@@ -64,10 +90,18 @@ class AppState extends ChangeNotifier {
         config.language,
       );
   final Map<String, String> _probeErrors = {};
-  Map<String, String> get probeErrors => Map.unmodifiable(_probeErrors);
+  // 零拷贝视图（与 videos / logEntries 同一原则，见下方 logEntries 的注释）。
+  // 这里**必须**是视图而不是 Map.unmodifiable：本 getter 被 video_card 放进
+  // context.select，而 provider 的 selector 在每次 notifyListeners() 都会重跑
+  // ⇒ 每通知 × 每张视频卡 × 整份 Map 拷贝。实测 Map.unmodifiable 比
+  // UnmodifiableMapView 慢 438×（n=100）/ 1860×（n=1000）/ 32101×（n=5000），
+  // 单次 n=1000 约 0.30ms，200 张卡即 60ms/次通知（60fps 预算只有 16.7ms）。
+  Map<String, String> get probeErrors => UnmodifiableMapView(_probeErrors);
 
   final List<TaskInfo> _tasks = [];
-  List<TaskInfo> get tasks => List.unmodifiable(_tasks);
+  // 同上：队列页在单次 build 里会读取 tasks 多次（空态判断、长度、逐项取卡片、
+  // 按钮可用性），List.unmodifiable 会让每次都构造一份新列表（上限 200 项）。
+  List<TaskInfo> get tasks => UnmodifiableListView(_tasks);
   // ── 处理队列结果持久化 ──
   // 结构性变化（增删/进入处理/终态）后防抖落盘；进度心跳不落盘。
   Timer? _taskPersistTimer;
@@ -110,6 +144,15 @@ class AppState extends ChangeNotifier {
   void _safeNotify() {
     if (_disposed) return;
     notifyListeners();
+  }
+
+  /// 每次通知都让视频索引失效，下次 [videoById] 查询时惰性重建。
+  /// 挂在 notifyListeners 上而不是各变更点，理由见 `_videoIndexCache` 的注释。
+  /// 代价为零：置空只是一个字段写入，真正的重建发生在真有查询时（每周期最多一次）。
+  @override
+  void notifyListeners() {
+    _videoIndexCache = null;
+    super.notifyListeners();
   }
 
   // ── 进度心跳节流 ──
@@ -1075,7 +1118,7 @@ class AppState extends ChangeNotifier {
         ? container.items.where((i) => i.index == targetIndex).toList()
         : container.sortedItems;
     for (final item in items) {
-      final video = _videos.where((v) => v.id == item.fileId).firstOrNull;
+      final video = videoById(item.fileId);
       if (video == null || !video.parsed) continue;
       final graphCopy = container.pipelineGraph.copy();
       final tempVideo = video.copyWith(pipelineGraph: graphCopy);
@@ -1099,7 +1142,7 @@ class AppState extends ChangeNotifier {
     }
 
     final files = orderedItems
-        .map((item) => _videos.where((v) => v.id == item.fileId).firstOrNull)
+        .map((item) => videoById(item.fileId))
         .whereType<VideoFile>()
         .where((v) => v.parsed)
         .map((v) => v.filepath)
@@ -1161,7 +1204,7 @@ class AppState extends ChangeNotifier {
     final cfg = video.config;
     final ext = cfg.outputFormat == 'keep' ? video.filepath.split('.').last : cfg.outputFormat;
     final base = video.filename.replaceAll(RegExp(r'\.[^.]+$'), '');
-    String fn = cfg.namingMode == 'keep' ? '$base.$ext' : cfg.namingMode == 'suffix' ? '$base${cfg.namingValue}.$ext' : '${cfg.namingValue}.$ext';
+    final String fn = cfg.namingMode == 'keep' ? '$base.$ext' : cfg.namingMode == 'suffix' ? '$base${cfg.namingValue}.$ext' : '${cfg.namingValue}.$ext';
     String dir = config.defaultOutputDir.isNotEmpty ? config.defaultOutputDir : video.filepath.replaceAll(RegExp(r'[^\\/]+$'), '');
     // filepath 无分隔符时正则返回空串，会导致写入文件系统根目录（M-13）
     if (dir.isEmpty) dir = Directory.current.path;
@@ -1196,8 +1239,12 @@ class AppState extends ChangeNotifier {
       // buildBackendCalls 返回 null 表示执行计划构建失败（如遇到未知/不支持的
       // 节点类型），此时必须终止而不是继续入队一条断裂的链路（H-2）。
       if (calls == null) {
-        addLog('任务 ${i + 1} 执行计划构建失败，已跳过（可能包含不支持的节点类型）',
-            category: 'error');
+        // plan.warnings 里可能是「条件不满足 → 按设置中止」这类明确原因，
+        // 不再统一显示成「可能包含不支持的节点类型」
+        final reason = plan.warnings.isEmpty
+            ? '（可能包含不支持的节点类型）'
+            : '：${plan.warnings.join('；')}';
+        addLog('任务 ${i + 1} 执行计划构建失败，已跳过$reason', category: 'error');
         continue;
       }
       // 计划构建期告警（如非法参数被忽略），写日志便于定位
@@ -1536,6 +1583,13 @@ class AppState extends ChangeNotifier {
     final cleanupCalls = calls.where((c) => c.action == '_cleanup').toList();
 
     // Expand loop calls: duplicate entire consecutive groups with matching loopCount
+    //
+    // 展平之后每一轮都是**普通的 BackendCall**（loopCount=1），执行循环完全不知道
+    // 「循环」这件事存在。逻辑块的新增能力全部在这里落地：
+    //   · 区间循环（序号 = loopIndexBase + k × loopIndexStep）
+    //   · 迭代变量 {i} / {i0} / {n}（含嵌套 Map / List）
+    //   · 链式累积（accumulate：本轮输入 = 上一轮输出）
+    //   · 失败策略与重试（透传给执行层）
     final expandedCalls = <BackendCall>[];
     // 循环中间迭代的产物（_loop_N）需要清理；最后迭代输出保持原路径，
     // 使后续步骤 input / 任务的最终 outputPath 都指向真实存在的文件
@@ -1551,40 +1605,78 @@ class AppState extends ChangeNotifier {
           group.add(realCalls[j]);
           j++;
         }
+        final total = call.loopCount;
+        // 组内是否用了迭代变量：用了就不再叠 `_loop_N` 后缀 ——
+        // 用户已经用 {i} 指定了每轮各自的输出名，再加后缀会得到 `out_1_loop_2.jpg`
+        final usesVars = call.useVars && group.any((gc) => _hasIterationVar(gc.params));
+        // 链式累积：上一轮该组的最终产物，作为本轮第一条 call 的输入
+        String? carryInput;
+
         // Duplicate the entire group N times, rewriting input/output paths
-        for (var li = 0; li < call.loopCount; li++) {
+        for (var li = 0; li < total; li++) {
+          final seq = call.loopIndexBase + li * call.loopIndexStep;
+          final isLastIter = li == total - 1;
           final pathMap = <String, String>{}; // old path -> new loop path
-          final isLastIter = li == call.loopCount - 1;
-          for (final gc in group) {
+          String? iterTailOutput;
+
+          for (var gi = 0; gi < group.length; gi++) {
+            final gc = group[gi];
             final p = gc.params;
-            final loopParams = Map<String, dynamic>.from(p);
+            var loopParams = Map<String, dynamic>.from(p);
+            if (call.useVars) {
+              // 变量替换放在最前面：output / output_dir / input 的统一按替换后的
+              // 值做路径映射，避免「output 含 {i}、下游 input 也含 {i}」时匹配不上
+              loopParams = _substituteIterationVars(loopParams, seq, li, total)
+                  as Map<String, dynamic>;
+            }
+            // 链式累积：本轮首条 call 的输入换成上一轮的最终产物
+            if (call.accumulate && gi == 0 && carryInput != null) {
+              loopParams['input'] = carryInput;
+            }
             // Rewrite output path
-            final output = p['output'] as String? ?? '';
+            final output = loopParams['output'] as String? ?? '';
             if (output.isNotEmpty) {
-              final newOutput = isLastIter ? output : _loopPath(output, li + 1);
+              // 显式写了 {i} 时输出名由用户负责（含末轮），不再自动加后缀
+              final newOutput = (isLastIter || usesVars) ? output : _loopPath(output, li + 1);
               pathMap[output] = newOutput;
               loopParams['output'] = newOutput;
+              iterTailOutput = newOutput;
               if (!isLastIter) loopCleanupPaths.add(newOutput);
             }
             // 帧提取输出目录（range/all）也要随循环迭代改写，避免各迭代写进同一目录
-            final outputDir = p['output_dir'] as String? ?? '';
+            final outputDir = loopParams['output_dir'] as String? ?? '';
             if (outputDir.isNotEmpty) {
-              final newOutputDir = isLastIter ? outputDir : _loopPath(outputDir, li + 1);
+              final newOutputDir =
+                  (isLastIter || usesVars) ? outputDir : _loopPath(outputDir, li + 1);
               loopParams['output_dir'] = newOutputDir;
               if (!isLastIter) loopCleanupPaths.add(newOutputDir);
             }
             // Rewrite input path if it was a previous step's output in this group
-            final input = p['input'] as String? ?? '';
+            final input = loopParams['input'] as String? ?? '';
             if (input.isNotEmpty && pathMap.containsKey(input)) {
               loopParams['input'] = pathMap[input]!;
             }
-            expandedCalls.add(BackendCall(action: gc.action, params: loopParams));
+            expandedCalls.add(BackendCall(
+              action: gc.action,
+              params: loopParams,
+              // 失败的「跳过 / 中止」与重试次数随 call 一起进执行层
+              errorPolicy: gc.errorPolicy,
+              retries: gc.retries,
+            ));
           }
+          if (call.accumulate) carryInput = iterTailOutput;
         }
         ci2 = j;
       } else {
         // 拷贝参数以允许运行时改写（如 extract_audio 改扩展名后修正下游 input），不污染原任务快照
-        expandedCalls.add(BackendCall(action: call.action, params: Map<String, dynamic>.from(call.params), loopCount: call.loopCount, loopMode: call.loopMode));
+        expandedCalls.add(BackendCall(
+          action: call.action,
+          params: Map<String, dynamic>.from(call.params),
+          loopCount: call.loopCount,
+          loopMode: call.loopMode,
+          errorPolicy: call.errorPolicy,
+          retries: call.retries,
+        ));
         ci2++;
       }
     }
@@ -1653,9 +1745,12 @@ class AppState extends ChangeNotifier {
         }
       });
 
-      Map<String, dynamic> resp;
-      final p = call.params;
+      // 失败重试：逻辑块的 retries 参数（attempt 从 0 数到 retries）。
+      // resp 带初值，保证「重试耗尽后 break 出来」也能安全读取。
+      Map<String, dynamic> resp = const <String, dynamic>{};
       try {
+      for (var attempt = 0; ; attempt++) {
+      final p = call.params;
       switch (call.action) {
         case 'transcode':
           // 缺 options 时用空对象兜底：直接 as 转换会抛 TypeError 被外层 catch
@@ -1742,6 +1837,11 @@ class AppState extends ChangeNotifier {
         default:
           resp = {'success': false, 'error': '未知动作: ${call.action}'};
       }
+      // 成功即结束；否则还有重试次数就再跑一遍（参数未变，重跑是安全的）
+      if (resp['success'] == true || attempt >= call.retries) break;
+      addLog('步骤 ${ci + 1} 重试 ${attempt + 1}/${call.retries}: ${call.action}',
+          category: 'warning');
+      }
       } catch (e) {
         // 异常路径也要清理中间文件（原实现被上层 catchError 吞掉后泄漏全部临时文件）
         _cleanupTempFiles(cleanupCalls);
@@ -1752,6 +1852,16 @@ class AppState extends ChangeNotifier {
       }
 
       if (resp['success'] != true) {
+        // 失败策略（逻辑块参数 onError）：
+        //   'continue' → 记一条警告日志后跳过本步，继续后面的步骤；
+        //   'stop'（默认）→ 立即把任务判为失败并中断。
+        // 末步永远不允许跳过 —— 跳过「写最终产物」那一步等于任务没有产物。
+        final isLastStep = ci == expandedCalls.length - 1;
+        if (call.errorPolicy == 'continue' && !isLastStep) {
+          addLog('步骤 ${ci + 1} 失败，已按「跳过继续」策略忽略: ${resp['error']}',
+              category: 'warning');
+          continue;
+        }
         final fi2 = _tasks.indexWhere((t) => t.id == taskId);
         if (fi2 >= 0 && !_cancelRequested && _tasks[fi2].status == TaskStatus.processing) {
           _tasks[fi2] = _tasks[fi2].copyWith(
@@ -2200,7 +2310,7 @@ class AppState extends ChangeNotifier {
   Future<Map<String, dynamic>> _runExtractAudio(String taskId, Map<String, dynamic> p, {int? callIndex}) async {
     final input = p['input'] as String;
     var output = p['output'] as String;
-    var codec = p['audio_codec'] as String? ?? 'copy';
+    final codec = p['audio_codec'] as String? ?? 'copy';
     final startTime = p['start_time'] as num?;
     final endTime = p['end_time'] as num?;
 
@@ -2328,8 +2438,8 @@ class AppState extends ChangeNotifier {
         final (sw, sh) = src;
         final targetW = (p['target_w'] as num?)?.toInt() ?? 0;
         final targetH = (p['target_h'] as num?)?.toInt() ?? 0;
-        double fW = targetW > 0 ? targetW / sw : 0;
-        double fH = targetH > 0 ? targetH / sh : 0;
+        final double fW = targetW > 0 ? targetW / sw : 0;
+        final double fH = targetH > 0 ? targetH / sh : 0;
         factor = switch ((fW > 0, fH > 0)) {
           (true, true) => (fW < fH ? fW : fH), // 两边都给了 → 取小值（contain）
           (true, false) => fW,
@@ -2626,6 +2736,57 @@ class AppState extends ChangeNotifier {
     if (removeLyrics) opts['remove_lyrics'] = true;
     // 即使无元数据改动仍执行 copy 透传，保证输出文件真实存在，下游链路不断链。
     return await backend.transcode(taskId, input: input, output: output, options: opts);
+  }
+
+  /// 参数值里是否含迭代占位符（`{i}` / `{i0}` / `{n}`）。
+  ///
+  /// 递归扫描嵌套 Map / List —— 节点参数里有大量嵌套结构（options、files 等）。
+  static bool _hasIterationVar(dynamic value) {
+    if (value is String) {
+      return value.contains('{i}') ||
+          value.contains('{i0}') ||
+          value.contains('{i:') ||
+          value.contains('{i0:') ||
+          value.contains('{n}');
+    }
+    if (value is Map) return value.values.any(_hasIterationVar);
+    if (value is List) return value.any(_hasIterationVar);
+    return false;
+  }
+
+  /// 迭代变量替换（循环块每轮的参数改写）。
+  ///
+  /// | 占位符 | 含义 |
+  /// |---|---|
+  /// | `{i}` | 当前轮序号（固定模式 1,2,3…；区间模式取 from, from+step…） |
+  /// | `{i0}` | 当前轮次（0-based，做「第几轮」偏移计算时更顺手） |
+  /// | `{n}` | 总轮数 |
+  /// | `{i:03}` / `{i0:02}` | 补零到指定宽度 |
+  ///
+  /// 只改 String（含嵌套 Map / List 中的），数字与布尔原样保留。
+  /// 典型用法：输出名 `frame_{i:03}.jpg`、裁剪偏移 `{i0} * 100`、
+  /// 抽帧时间 `{i0} * 0.5`。
+  static dynamic _substituteIterationVars(dynamic value, int seq, int zeroSeq, int total) {
+    if (value is String) {
+      if (!value.contains('{')) return value;
+      return value
+          .replaceAllMapped(RegExp(r'\{i0:(\d+)\}'),
+              (m) => zeroSeq.toString().padLeft(int.tryParse(m[1]!) ?? 0, '0'))
+          .replaceAllMapped(RegExp(r'\{i:(\d+)\}'),
+              (m) => seq.toString().padLeft(int.tryParse(m[1]!) ?? 0, '0'))
+          .replaceAll('{i0}', '$zeroSeq')
+          .replaceAll('{i}', '$seq')
+          .replaceAll('{n}', '$total');
+    }
+    if (value is Map) {
+      final out = <String, dynamic>{};
+      value.forEach((k, v) => out['$k'] = _substituteIterationVars(v, seq, zeroSeq, total));
+      return out;
+    }
+    if (value is List) {
+      return value.map((e) => _substituteIterationVars(e, seq, zeroSeq, total)).toList();
+    }
+    return value;
   }
 
   static String _loopPath(String path, int iteration) {

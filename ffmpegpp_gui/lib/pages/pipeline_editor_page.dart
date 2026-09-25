@@ -3,68 +3,74 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui';
-import 'package:flutter/material.dart';
-import 'package:flutter/gestures.dart';
-import 'package:flutter/services.dart';
-import 'package:flutter_svg/flutter_svg.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
+
 import 'package:file_picker/file_picker.dart';
+// ValueListenable 只由 foundation.dart 导出：widgets.dart 对 foundation 的再导出
+// 被收窄成 `show Brightness, UniqueKey`（见 flutter/lib/widgets.dart:18），
+// 所以 material.dart 拿不到它 —— 而 _GridPainter.transformCtrl 需要这个类型。
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import 'package:window_manager/window_manager.dart';
+
 import '../models/models.dart';
+import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
+import '../services/ai_chat_history.dart';
 import '../services/fppx2_service.dart';
 import '../services/graph_executor.dart';
-import '../services/thumbnail_service.dart';
-import '../services/ai_chat_history.dart';
 import '../services/pipeline_autosave.dart';
-import '../theme/app_theme.dart';
-import '../theme/app_strings.dart';
+import '../services/thumbnail_service.dart';
 // 控件高度档位令牌：顶栏 AI 药丸、AI 面板的批准/拒绝与发送按钮统一取档位高度，
 // 不再各自写 32 / 36 / 40 这些互不相干的数字
 import '../theme/app_control_size.dart';
 import '../theme/app_semantic_colors.dart';
-import '../widgets/wallpaper_background.dart';
-import '../platform/app_platform.dart';
+import '../theme/app_strings.dart';
+import '../theme/app_theme.dart';
 import '../widgets/animated_popup.dart';
-import '../widgets/step_editors/start_step_editor.dart';
-import '../widgets/step_editors/av_process_step_editor.dart';
-import '../widgets/step_editors/subtitle_step_editor.dart';
-import '../widgets/step_editors/output_step_editor.dart';
-import '../widgets/step_editors/clip_step_editor.dart';
-import '../widgets/step_editors/frame_step_editor.dart';
-import '../widgets/step_editors/speed_step_editor.dart';
-import '../widgets/step_editors/image_convert_step_editor.dart';
+import '../widgets/gate_symbol_painter.dart';
+import '../widgets/glass_panel.dart';
+import '../widgets/liquid_glass_fallback.dart';
+import '../widgets/step_editors/audio_compressor_step_editor.dart';
 import '../widgets/step_editors/audio_convert_step_editor.dart';
-import '../widgets/step_editors/extract_audio_step_editor.dart';
+import '../widgets/step_editors/audio_fade_step_editor.dart';
+import '../widgets/step_editors/audio_metadata_step_editor.dart';
 import '../widgets/step_editors/audio_quality_step_editor.dart';
 import '../widgets/step_editors/audio_speed_step_editor.dart';
 import '../widgets/step_editors/audio_volume_step_editor.dart';
-import '../widgets/step_editors/audio_compressor_step_editor.dart';
-import '../widgets/step_editors/audio_metadata_step_editor.dart';
+import '../widgets/step_editors/av_process_step_editor.dart';
+import '../widgets/step_editors/clip_step_editor.dart';
 import '../widgets/step_editors/concat_media_step_editor.dart';
-import '../widgets/step_editors/image_to_video_step_editor.dart';
+import '../widgets/step_editors/extract_audio_step_editor.dart';
+import '../widgets/step_editors/frame_step_editor.dart';
+import '../widgets/step_editors/image_adjust_step_editor.dart';
+import '../widgets/step_editors/image_brightness_step_editor.dart';
+import '../widgets/step_editors/image_channel_extract_step_editor.dart';
+import '../widgets/step_editors/image_convert_step_editor.dart';
 import '../widgets/step_editors/image_crop_step_editor.dart';
+import '../widgets/step_editors/image_denoise_step_editor.dart';
+import '../widgets/step_editors/image_noise_step_editor.dart';
 import '../widgets/step_editors/image_rotate_step_editor.dart';
 import '../widgets/step_editors/image_scale_step_editor.dart';
-import '../widgets/step_editors/image_brightness_step_editor.dart';
-import '../widgets/step_editors/image_noise_step_editor.dart';
 import '../widgets/step_editors/image_sharpen_step_editor.dart';
-import '../widgets/step_editors/image_denoise_step_editor.dart';
-import '../widgets/step_editors/image_channel_extract_step_editor.dart';
+import '../widgets/step_editors/image_to_video_step_editor.dart';
+import '../widgets/step_editors/logic_block_editor.dart';
+import '../widgets/step_editors/output_step_editor.dart';
+import '../widgets/step_editors/speed_step_editor.dart';
+import '../widgets/step_editors/start_step_editor.dart';
+import '../widgets/step_editors/subtitle_step_editor.dart';
 import '../widgets/step_editors/video_crop_step_editor.dart';
 import '../widgets/step_editors/video_filter_step_editor.dart';
 import '../widgets/step_editors/video_geometry_step_editor.dart';
 import '../widgets/step_editors/video_overlay_step_editor.dart';
-import '../widgets/step_editors/audio_fade_step_editor.dart';
-import '../widgets/step_editors/image_adjust_step_editor.dart';
-import '../widgets/step_editors/logic_block_editor.dart';
-import '../widgets/glass_panel.dart';
-import '../widgets/liquid_glass_fallback.dart';
 import '../widgets/toast.dart';
-import '../widgets/gate_symbol_painter.dart';
+import '../widgets/wallpaper_background.dart';
 
 const _uuid = Uuid();
 
@@ -81,6 +87,9 @@ const _worldExtent = Size(200000, 200000); // 固定世界平面（±10 万像�
 const _portZoneW = 18.0;
 /// 无限画布网格步长（画布坐标，px）
 const _gridStep = 40.0;
+/// 右下角小地图尺寸（逻辑像素）
+const _kMiniMapW = 156.0;
+const _kMiniMapH = 106.0;
 
 double _nodeWFor(PipelineStepType type) =>
     (type == PipelineStepType.start || type == PipelineStepType.output) ? _nodeWNarrow : _nodeW;
@@ -138,6 +147,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   // 当前缩放（驱动节点文字大小等）。用 notifier 避免每次缩放 setState 全页。
   final ValueNotifier<double> _scaleNotifier = ValueNotifier<double>(1.0);
 
+  // ── 拖动吸附（对齐网格）──
+  //
+  // 多选拖动时以「用户真正抓住的那个节点」为锚点做吸附，所有被拖节点共用同一
+  // 修正量 —— 若每个节点各自就近吸附，整排的等距关系会被打乱。
+  // 修正量直接写回 _dragDeltas，因此渲染、连线跟随、松手提交三处都不用改。
+  String? _dragAnchorId;
+  /// 锚点的**未吸附**累计位移。吸附修正必须基于它算，否则会被上一帧
+  /// 已经修正过的值带偏（误差逐帧累积，节点会漂走）。
+  Offset _dragRaw = Offset.zero;
+
   // Box-select state
   Offset? _boxSelectStart;
   Rect? _boxSelectRect;
@@ -156,6 +175,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   /// 移动端顶部工具栏恒显（右下折叠按钮已移除，工具迁移到顶部栏）。
   final bool _mobileTopBarVisible = true;
   double _toolboxFraction = 0.4;
+
+  /// 工具箱搜索：控制器与查询串共用（桌面右面板与移动端弹层同时只会有一个在树里）。
+  final TextEditingController _toolboxSearchCtrl = TextEditingController();
+  String _toolboxQuery = '';
   // 画布 / 右面板 水平分割比例（默认画布占 60%）
   double _canvasFraction = 0.6;
   // 分割比例 notifier：拖动分割线时只重建受影响的两个 SizedBox，
@@ -509,6 +532,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     _scaleNotifier.dispose();
     _canvasFractionNotifier.dispose();
     _toolboxFractionNotifier.dispose();
+    _toolboxSearchCtrl.dispose();
     // 移除 windowManager 监听，避免 window manager 持有本 State 的强引用导致泄漏
     if (!Platform.isWindows && !isMobilePlatform) {
       windowManager.removeListener(this);
@@ -717,6 +741,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     final state = context.read<AppState>();
     state.updateConfig((c) {
       c.nodeUsageCount[type.name] = (c.nodeUsageCount[type.name] ?? 0) + 1;
+      // 「最近使用」记的是**最后用过**的顺序而不是次数：大图编辑时用户脑子里
+      // 想的是「我刚才用了什么」，而不是统计意义上最常用的那几种。
+      c.recentNodeTypes.remove(type.name);
+      c.recentNodeTypes.insert(0, type.name);
+      if (c.recentNodeTypes.length > AppConfig.recentNodeLimit) {
+        c.recentNodeTypes.removeRange(AppConfig.recentNodeLimit, c.recentNodeTypes.length);
+      }
       return c;
     });
   }
@@ -751,6 +782,187 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     _commitChange();
   }
 
+  // ══════ 批量编辑：复制 / 粘贴 / 对齐 / 分布 ══════
+  //
+  // 剪贴板存**快照**而非节点引用：复制之后用户继续拖原节点，粘贴出来的副本
+  // 不应该跟着动。
+  //
+  // 连线只保留选区**内部**的那些：跨选区连线的另一端没被复制，粘回来要么指向
+  // 不存在的节点、要么在导出时被丢成悬空线。
+
+  List<PipelineNode> _clipNodes = const [];
+  List<PipelineConnection> _clipConns = const [];
+  /// 连续粘贴的阶梯代数：第 n 次偏移 n 格，避免每次都叠在同一处。
+  int _pasteRound = 0;
+
+  bool get _hasClipboard => _clipNodes.isNotEmpty;
+
+  void _copySelectedNodes() {
+    if (_selectedNodeIds.isEmpty) return;
+    final s = AppStrings.of(context.read<AppState>().config.language);
+    final ids = _selectedNodeIds;
+    _clipNodes = [
+      for (final n in _nodes)
+        if (ids.contains(n.id)) n.deepCopy(),
+    ];
+    _clipConns = [
+      for (final c in _connections)
+        if (ids.contains(c.fromNodeId) && ids.contains(c.toNodeId)) c.deepCopy(),
+    ];
+    _pasteRound = 0;
+    showToast(context,
+        s.isZh ? '已复制 ${_clipNodes.length} 个元素' : 'Copied ${_clipNodes.length} element(s)',
+        type: ToastType.info);
+  }
+
+  /// 粘贴。[atCanvas] 给出时把选区左上角落到该画布坐标（右键 / 长按菜单里的
+  /// 「粘贴」就是这么用的）；否则相对原位置按格阶梯错开。
+  void _pasteNodes({Offset? atCanvas}) {
+    if (_clipNodes.isEmpty) return;
+    final s = AppStrings.of(context.read<AppState>().config.language);
+    _pushUndo();
+
+    double minX = double.infinity, minY = double.infinity;
+    for (final n in _clipNodes) {
+      minX = math.min(minX, n.x);
+      minY = math.min(minY, n.y);
+    }
+    Offset shift;
+    if (atCanvas != null) {
+      shift = Offset(atCanvas.dx - minX, atCanvas.dy - minY);
+    } else {
+      _pasteRound++;
+      shift = Offset(_gridStep * _pasteRound, _gridStep * _pasteRound);
+    }
+
+    // 新节点必须显式构造（而不是 copy() + 改字段）：copy() 的 params 是浅拷贝，
+    // 嵌套 Map/List 参数会与源节点共享，改副本等于改原件。
+    final idMap = <String, String>{};
+    final pasted = <PipelineNode>[];
+    for (final src in _clipNodes) {
+      final node = PipelineNode(
+        id: _uuid.v4(),
+        type: src.type,
+        params: PipelineNode.deepCopyMap(src.params),
+        x: src.x + shift.dx,
+        y: src.y + shift.dy,
+        gateType: src.gateType,
+        unknownTypeId: src.unknownTypeId,
+      );
+      idMap[src.id] = node.id;
+      pasted.add(node);
+    }
+    final newConns = <PipelineConnection>[];
+    for (final c in _clipConns) {
+      final from = idMap[c.fromNodeId];
+      final to = idMap[c.toNodeId];
+      if (from == null || to == null) continue;
+      newConns.add(PipelineConnection(id: _uuid.v4(), fromNodeId: from, toNodeId: to, kind: c.kind));
+    }
+
+    setState(() {
+      _nodes.addAll(pasted);
+      _connections.addAll(newConns);
+      _selectedNodeIds = {for (final n in pasted) n.id};
+      _lastSelectedId = pasted.isEmpty ? null : pasted.last.id;
+      _selectedLogicBlockId = null;
+    });
+    _commitChange();
+    showToast(context,
+        s.isZh ? '已粘贴 ${pasted.length} 个元素' : 'Pasted ${pasted.length} element(s)',
+        type: ToastType.info);
+  }
+
+  /// 对齐选中节点。[mode] ∈ left / hcenter / right / top / vcenter / bottom。
+  ///
+  /// 用 switch **表达式**而不是 switch 语句：语句的 case 结尾语义在
+  /// 各语言版本里容易踩坑（fallthrough / break），表达式没有这个歧义。
+  void _alignSelectedNodes(String mode) {
+    final ns = _nodes.where((n) => _selectedNodeIds.contains(n.id)).toList();
+    if (ns.length < 2) return;
+    _pushUndo();
+    setState(() {
+      if (mode == 'left' || mode == 'hcenter' || mode == 'right') {
+        final lefts = ns.map((n) => n.x).reduce(math.min);
+        final rights = ns.map((n) => n.x + _totalNodeWidth(n)).reduce(math.max);
+        final center = (lefts + rights) / 2;
+        for (final n in ns) {
+          n.x = switch (mode) {
+            'left' => lefts,
+            'right' => rights - _totalNodeWidth(n),
+            _ => center - _totalNodeWidth(n) / 2,
+          };
+        }
+      } else {
+        final tops = ns.map((n) => n.y).reduce(math.min);
+        final bottoms = ns.map((n) => n.y + _nodeHeight(n)).reduce(math.max);
+        final center = (tops + bottoms) / 2;
+        for (final n in ns) {
+          n.y = switch (mode) {
+            'top' => tops,
+            'bottom' => bottoms - _nodeHeight(n),
+            _ => center - _nodeHeight(n) / 2,
+          };
+        }
+      }
+    });
+    _commitChange();
+  }
+
+  /// 等距分布：首尾不动，中间节点均匀铺开。
+  /// 少于 3 个节点时「分布」没有意义（两个点之间的间距已被锁定）。
+  void _distributeSelectedNodes({required bool horizontal}) {
+    final ns = _nodes.where((n) => _selectedNodeIds.contains(n.id)).toList();
+    if (ns.length < 3) return;
+    _pushUndo();
+    setState(() {
+      if (horizontal) {
+        ns.sort((a, b) => a.x.compareTo(b.x));
+        final start = ns.first.x;
+        final end = ns.last.x + _totalNodeWidth(ns.last);
+        var used = 0.0;
+        for (final n in ns) {
+          used += _totalNodeWidth(n);
+        }
+        final gap = (end - start - used) / (ns.length - 1);
+        var cursor = start;
+        for (final n in ns) {
+          n.x = cursor;
+          cursor += _totalNodeWidth(n) + gap;
+        }
+      } else {
+        ns.sort((a, b) => a.y.compareTo(b.y));
+        final start = ns.first.y;
+        final end = ns.last.y + _nodeHeight(ns.last);
+        var used = 0.0;
+        for (final n in ns) {
+          used += _nodeHeight(n);
+        }
+        final gap = (end - start - used) / (ns.length - 1);
+        var cursor = start;
+        for (final n in ns) {
+          n.y = cursor;
+          cursor += _nodeHeight(n) + gap;
+        }
+      }
+    });
+    _commitChange();
+  }
+
+  void _selectAllNodes() {
+    // 折叠块里被隐藏的节点不参与全选：看不见却被选上，随后一次「删除选中」
+    // 会把它们一起删掉，用户根本无从察觉。
+    final hidden = _collapsedHiddenNodeIds;
+    setState(() {
+      _selectedNodeIds = {
+        for (final n in _nodes)
+          if (!hidden.contains(n.id)) n.id,
+      };
+      _lastSelectedId = _selectedNodeIds.isEmpty ? null : _selectedNodeIds.last;
+      _selectedLogicBlockId = null;
+    });
+  }
+
   /// [FIX H-6] 删除节点后：移除逻辑块对已删节点的悬空引用、删除因此变空的逻辑块、
   /// 清理失效的选择态，并重算剩余逻辑块虚框尺寸。必须在 setState 内调用。
   void _purgeDeletedFromLogicBlocks(Set<String> deletedIds) {
@@ -783,6 +995,47 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       b.width = maxX - minX + padding * 2;
       b.height = maxY - minY + padding * 2 + 20;
     }
+  }
+
+  /// 折叠的逻辑块里被隐藏的节点 id。
+  ///
+  /// 渲染节点 / 渲染连线 / 命中测试**三处都要用**：只过滤渲染的话，折叠后还能
+  /// 点到「看不见的节点」，连线也会画到空白处。
+  Set<String> get _collapsedHiddenNodeIds {
+    final out = <String>{};
+    for (final b in _logicBlocks) {
+      if (b.params['collapsed'] == true) out.addAll(b.childNodeIds);
+    }
+    return out;
+  }
+
+  /// 折叠 / 展开一个逻辑块。
+  void _toggleLogicBlockCollapsed(LogicBlock block) {
+    final collapsing = block.params['collapsed'] != true;
+    setState(() {
+      block.params['collapsed'] = collapsing;
+      if (collapsing) {
+        // 折叠后子节点不可见，继续留在选区里会让「删除选中」误删看不见的节点，
+        // 多选工具条的计数也对不上。
+        _selectedNodeIds.removeAll(block.childNodeIds);
+        if (_lastSelectedId != null && block.childNodeIds.contains(_lastSelectedId)) {
+          _lastSelectedId = _selectedNodeIds.isEmpty ? null : _selectedNodeIds.last;
+        }
+      }
+    });
+    _commitChange();
+  }
+
+  /// 拖动整个逻辑块（批量移动框内节点）。
+  ///
+  /// 复用节点拖动的那套 notifier：位移只写进 `_dragDeltas`，框内节点与逻辑块虚框
+  /// 各自订阅重绘，松手才提交模型。
+  void _beginGroupDrag(LogicBlock block) {
+    if (block.childNodeIds.isEmpty) return;
+    _pushUndo();
+    _dragAnchorId = block.childNodeIds.first;
+    _dragRaw = Offset.zero;
+    _dragDeltas.value = {for (final id in block.childNodeIds) id: Offset.zero};
   }
 
   String _mediaTypeName(MediaType t, bool zh) => switch (t) {
@@ -1190,20 +1443,20 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     final desc = descCtrl.text;
     descCtrl.dispose();
 
-    final result = await FilePicker.platform.saveFile(
-      dialogTitle: zh ? '保存配置文件' : 'Save Config File',
-      fileName: '${widget.video.filename.replaceAll(RegExp(r'\.[^.]+$'), '')}_config.fppx',
-      type: FileType.custom,
-      allowedExtensions: ['fppx'],
-    );
-    if (result == null) return;
+    // v13 起 saveFile 必填 bytes 且返回 Uri（不再返回可写路径）：
+    // 先让 C++ 写到临时文件，读回字节后再交给 saveFile 落盘。
+    final exportName = '${widget.video.filename.replaceAll(RegExp(r'\.[^.]+$'), '')}_config.fppx';
+    final tmpPath = '${Directory.systemTemp.path}${Platform.pathSeparator}export_$exportName';
 
     // 写盘由 C++ 端完成（写前完整校验；失败不落盘并带回 errors）
     final exportRes = await FppxService(appState.backend).exportGraph(
-      graph, result, description: desc, newFormat: widget.configFormat == 'v2',
+      graph, tmpPath, description: desc, newFormat: widget.configFormat == 'v2',
     );
     if (!mounted) return;
     if (!exportRes.success) {
+      // 清理临时文件用 unawaited：本分支紧接 showDialog(context:...)，
+      // 若在这里 await 就形成新的异步间隙，会触发 use_build_context_synchronously。
+      unawaited(File(tmpPath).delete().then((_) {}, onError: (Object _) {}));
       showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -1234,6 +1487,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       appState.addLog('[导出] $w', category: 'info');
     }
 
+    final saved = await FilePicker.saveFile(
+      dialogTitle: zh ? '保存配置文件' : 'Save Config File',
+      fileName: exportName,
+      mimeType: 'application/octet-stream',
+      bytes: await File(tmpPath).readAsBytes(),
+    );
+    try { await File(tmpPath).delete(); } catch (_) {}
+    if (saved == null) return; // 用户取消
+    final result = saved.scheme == 'file' ? saved.toFilePath() : saved.toString();
+
     if (mounted) {
       showToast(context, zh ? '已导出: $result' : 'Exported: $result', type: ToastType.success);
     }
@@ -1246,14 +1509,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     final scheme = Theme.of(context).colorScheme;
     // Android 上 fppx 无 MIME 映射，FileType.custom 会失效（文件选择器不显示
     // 任何文件）。与项目页/配置库一致：FileType.any + Dart 侧校验扩展名。
-    final result = await FilePicker.platform.pickFiles(
+    final picked = await FilePicker.pickFile(
       dialogTitle: zh ? '选择配置文件' : 'Select Config File',
       type: FileType.any,
     );
-    if (result == null || result.files.isEmpty || result.files.first.path == null) return;
+    if (picked?.path == null) return;
     if (!mounted) return;
-    final path = result.files.first.path!;
-    if (!result.files.first.name.endsWith('.fppx')) {
+    final path = picked!.path!;
+    if (!picked.name.endsWith('.fppx')) {
       showToast(context, zh ? '请选择 .fppx 文件' : 'Please select a .fppx file', type: ToastType.warning);
       return;
     }
@@ -1463,6 +1726,121 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       ..translateByDouble(-cx + _world.left, -cy + _world.top, 0, 1);
   }
 
+  // ── 画布导航辅助（小地图 / 缩放读数共用）──
+
+  /// 把某个画布坐标点移到视口正中（保持当前缩放）。
+  void _centerOnCanvasPoint(Offset canvasPoint) {
+    final rb = _canvasKey.currentContext?.findRenderObject() as RenderBox?;
+    if (rb == null) return;
+    final viewCenter = rb.size.center(Offset.zero);
+    _transformCtrl.value = Matrix4.identity()
+      ..translateByDouble(viewCenter.dx, viewCenter.dy, 0, 1)
+      ..scaleByDouble(_currentScale, _currentScale, 1, 1)
+      ..translateByDouble(-canvasPoint.dx + _world.left, -canvasPoint.dy + _world.top, 0, 1);
+  }
+
+  /// 当前视口在画布坐标系里覆盖的矩形。
+  Rect _visibleCanvasRect(Size viewSize) {
+    if (viewSize.isEmpty) return Rect.zero;
+    final inv = _inverseTransform;
+    final tl = MatrixUtils.transformPoint(inv, Offset.zero);
+    final br = MatrixUtils.transformPoint(inv, Offset(viewSize.width, viewSize.height));
+    return Rect.fromPoints(
+      tl + Offset(_world.left, _world.top),
+      br + Offset(_world.left, _world.top),
+    );
+  }
+
+  /// 全图内容包围盒（节点 ∪ 逻辑块，各留 40px 余量）。空图给一个默认视野，
+  /// 否则小地图的投影比例会除到 0 / 无穷。
+  Rect _graphContentBounds() {
+    double minX = double.infinity, minY = double.infinity;
+    double maxX = double.negativeInfinity, maxY = double.negativeInfinity;
+    for (final n in _nodes) {
+      minX = math.min(minX, n.x);
+      minY = math.min(minY, n.y);
+      maxX = math.max(maxX, n.x + _totalNodeWidth(n));
+      maxY = math.max(maxY, n.y + _nodeHeight(n));
+    }
+    for (final b in _logicBlocks) {
+      minX = math.min(minX, b.x);
+      minY = math.min(minY, b.y);
+      maxX = math.max(maxX, b.x + b.width);
+      maxY = math.max(maxY, b.y + b.height);
+    }
+    if (!minX.isFinite || !minY.isFinite || maxX <= minX || maxY <= minY) {
+      return Rect.fromCenter(center: _spawnCenter, width: 1200, height: 800);
+    }
+    return Rect.fromLTRB(minX - 40, minY - 40, maxX + 40, maxY + 40);
+  }
+
+  /// 拖动吸附：把 [value]（画布坐标）就近对齐到 [_gridStep]，返回需要补的修正量。
+  /// 关闭吸附时恒为 0 —— 调用点不必分叉。
+  double _snapAdjust(double value) {
+    if (!context.read<AppState>().config.nodeSnap) return 0;
+    return (value / _gridStep).round() * _gridStep - value;
+  }
+
+  // ── 节点拖动（普通节点 / 逻辑门 / 逻辑门中心）三条路径共用 ──
+  //
+  // 原来三处各自内联 8 行相同逻辑，加吸附时若只改一处就会「有的节点吸、有的不吸」。
+  //
+  // 拖动期间**不写模型**：位移只进 _dragDeltas，由节点的 Positioned 与连线层
+  // 局部订阅重绘；松手才一次性提交 —— 这是本编辑器维持 60fps 的关键前提。
+
+  /// 开始拖动。[anchorId] 是被用户实际抓住的那个节点（吸附基准）。
+  void _beginNodeDrag(String anchorId) {
+    _pushUndo();
+    _dragAnchorId = anchorId;
+    _dragRaw = Offset.zero;
+    _dragDeltas.value = {
+      for (final n in _nodes)
+        if (_selectedNodeIds.contains(anchorId)
+            ? _selectedNodeIds.contains(n.id)
+            : n.id == anchorId)
+          n.id: Offset.zero,
+    };
+  }
+
+  /// 拖动中。[screenDelta] 是屏幕坐标增量，先按当前缩放折回画布坐标。
+  void _onDragMove(Offset screenDelta) {
+    final cur = _dragDeltas.value;
+    if (cur == null || cur.isEmpty) return;
+    final scale = _transformCtrl.value.getMaxScaleOnAxis();
+    _dragRaw += Offset(screenDelta.dx / scale, screenDelta.dy / scale);
+    final anchor =
+        _dragAnchorId == null ? null : _nodes.where((n) => n.id == _dragAnchorId).firstOrNull;
+    // 吸附修正只由锚点算一次，再整体施加给所有被拖节点：多选拖动时相对间距
+    // 得以保持（各吸各的会把等距的一排节点挤到一起）。
+    final target = anchor == null
+        ? _dragRaw
+        : _dragRaw +
+            Offset(_snapAdjust(anchor.x + _dragRaw.dx), _snapAdjust(anchor.y + _dragRaw.dy));
+    _dragDeltas.value = {for (final id in cur.keys) id: target};
+  }
+
+  /// 结束拖动：把累计位移提交到模型，清空吸附基准。
+  void _endNodeDrag() {
+    final deltas = _dragDeltas.value;
+    _dragDeltas.value = null;
+    _dragAnchorId = null;
+    _dragRaw = Offset.zero;
+    if (deltas == null || deltas.isEmpty) return;
+    setState(() {
+      for (final n in _nodes) {
+        final d = deltas[n.id];
+        if (d != null) {
+          n.x += d.dx;
+          n.y += d.dy;
+        }
+      }
+      // 虚框跟着框内节点走：拖动分组时框必须同步平移，否则「框住了什么」
+      // 会与实际位置脱节。
+      _recomputeLogicBlockRects();
+    });
+    _markDirty();
+  }
+
   void _autoLayout() {
     if (_nodes.isEmpty) return;
     _pushUndo();
@@ -1550,6 +1928,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   }
 
   void _finishLogicBoxSelect(AppStrings s) {
+    final type = _pendingLogicType;
+    if (type == null) return;
     final validIds = _selectedNodeIds.where((id) {
       final n = _nodes.firstWhere((n) => n.id == id, orElse: () => PipelineNode(id: '', type: PipelineStepType.start));
       return n.id.isNotEmpty && n.type != PipelineStepType.start && n.type != PipelineStepType.output;
@@ -1580,31 +1960,77 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       maxX = math.max(maxX, n.x + _totalNodeWidth(n));
       maxY = math.max(maxY, n.y + _nodeHeight(n));
     }
-    final padding = 20.0;
+    const padding = 20.0;
+
+    // 只有循环类逻辑块才有「次数」可问。分组 / 条件直接创建 —— 它们的参数
+    // （条件字段、比较方式、目标值）本来就在属性面板里调，弹一个次数框只会误导。
+    final needsCount =
+        type == LogicBlockType.loop || type == LogicBlockType.selectiveLoop;
+    if (!needsCount) {
+      _commitLogicBlock(type, validIds, minX, minY, maxX, maxY, padding, const {});
+      return;
+    }
 
     _showLoopCountDialog(s).then((count) {
       if (count != null && count > 0) {
-        _pushUndo();
-        setState(() {
-          _logicBlocks.add(LogicBlock(
-            id: _uuid.v4(),
-            type: _pendingLogicType!,
-            childNodeIds: validIds,
-            params: {'count': count},
-            x: minX - padding,
-            y: minY - padding - 20,
-            width: maxX - minX + padding * 2,
-            height: maxY - minY + padding * 2 + 20,
-          ));
-          _isLogicBoxSelecting = false;
-          _pendingLogicType = null;
-          _selectedNodeIds.clear();
-        });
+        _commitLogicBlock(type, validIds, minX, minY, maxX, maxY, padding, {'count': count});
       } else {
         setState(() { _isLogicBoxSelecting = false; _pendingLogicType = null; });
       }
     });
   }
+
+  /// 真正落一个逻辑块并结束框选态。[extraParams] 覆盖 [LogicBlockType] 的默认参数。
+  ///
+  /// 必须走 `_commitChange()`：它同步 `_currentPipelineGraph`（MCP 读取）并触发草稿
+  /// 防抖保存 —— 删除逻辑块那条路径早已这么做，新建路径此前漏了，导致刚框出来的
+  /// 逻辑块在 MCP 视角里不存在。
+  void _commitLogicBlock(
+    LogicBlockType type,
+    List<String> childIds,
+    double minX,
+    double minY,
+    double maxX,
+    double maxY,
+    double padding,
+    Map<String, dynamic> extraParams,
+  ) {
+    _pushUndo();
+    setState(() {
+      _logicBlocks.add(LogicBlock(
+        id: _uuid.v4(),
+        type: type,
+        childNodeIds: childIds,
+        params: {..._defaultLogicParams(type), ...extraParams},
+        x: minX - padding,
+        y: minY - padding - 20,
+        width: maxX - minX + padding * 2,
+        height: maxY - minY + padding * 2 + 20,
+      ));
+      _isLogicBoxSelecting = false;
+      _pendingLogicType = null;
+      _selectedNodeIds.clear();
+    });
+    _commitChange();
+  }
+
+  /// 各类逻辑块的初始参数。
+  ///
+  /// 条件块预置「扩展名 = mp4，不满足则跳过」这一最常用形态：条件为空时
+  /// `GraphExecutor._evalCondition` 对任何输入都不成立，整框静默白跑，
+  /// 新建后必须让用户立刻看到一条能改的具体规则。
+  static Map<String, dynamic> _defaultLogicParams(LogicBlockType type) => switch (type) {
+    LogicBlockType.loop => const {'countMode': 'count', 'count': 10},
+    LogicBlockType.selectiveLoop => const {'countMode': 'count', 'count': 10, 'mode': 'random'},
+    LogicBlockType.group => const {'count': 1},
+    LogicBlockType.condition => const {
+      'count': 1,
+      'condField': 'extension',
+      'condOp': 'eq',
+      'condValue': 'mp4',
+      'condElse': 'skip',
+    },
+  };
 
   Future<int?> _showLoopCountDialog(AppStrings s) {
     int count = 10;
@@ -1727,6 +2153,25 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     AnimatedMenuEntry<PipelineStepType> makeItem(PipelineStepType t) =>
         AnimatedMenuEntry<PipelineStepType>(value: t, child: rowFor(t));
 
+    /// 动作行：没有返回值，点完自己干活（先关菜单再执行，否则 setState 会
+    /// 重建出菜单底下的旧画面）。这类行原来只有「全部元素...」一条，
+    /// 现在把全选/粘贴/整理/适配也放进来 —— 空白处右键就是最顺手的入口。
+    AnimatedMenuEntry<PipelineStepType> actionRow(
+        IconData icon, String label, VoidCallback run, {Color? color}) {
+      final c = color ?? scheme.onSurface;
+      return AnimatedMenuEntry<PipelineStepType>(
+        onTap: () {
+          Navigator.pop(context);
+          run();
+        },
+        child: Row(children: [
+          Icon(icon, size: 16, color: c),
+          const SizedBox(width: 8),
+          Text(label, style: TextStyle(fontSize: 13, color: c)),
+        ]),
+      );
+    }
+
     // 两级菜单都走 showAnimatedMenu：带淡入+缩放动画，宽度受约束。
     // 「全部元素...」不再用内嵌 PopupMenuButton（此前 offset: Offset(200,0)
     // 在桌面端会把二级菜单甩到很远且宽度不受控），改为关闭一级菜单后在
@@ -1737,23 +2182,25 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       items: [
         ...top5.map(makeItem),
         const AnimatedMenuEntry<PipelineStepType>.divider(),
-        AnimatedMenuEntry<PipelineStepType>(
-          onTap: () async {
-            Navigator.pop(context);
-            final all = await showAnimatedMenu<PipelineStepType>(
-              context: context,
-              position: screenPos,
-              items: _allNodeTypes.map(makeItem).toList(),
-            );
-            if (all != null) _addNodeAt(all, canvasPos);
-          },
-          child: Row(children: [
-            Icon(Icons.more_horiz, size: 16, color: scheme.outline),
-            const SizedBox(width: 8),
-            Text(s.isZh ? '全部元素...' : 'All elements...',
-                style: TextStyle(fontSize: 13, color: scheme.outline)),
-          ]),
-        ),
+        actionRow(Icons.more_horiz, s.isZh ? '全部元素...' : 'All elements...', () async {
+          final all = await showAnimatedMenu<PipelineStepType>(
+            context: context,
+            position: screenPos,
+            items: _allNodeTypes.map(makeItem).toList(),
+          );
+          if (all != null) _addNodeAt(all, canvasPos);
+        }, color: scheme.outline),
+        const AnimatedMenuEntry<PipelineStepType>.divider(),
+        actionRow(Icons.select_all, s.isZh ? '全选' : 'Select all', _selectAllNodes),
+        if (_hasClipboard)
+          actionRow(
+            Icons.content_paste,
+            s.isZh ? '粘贴 (${_clipNodes.length})' : 'Paste (${_clipNodes.length})',
+            () => _pasteNodes(atCanvas: canvasPos),
+          ),
+        const AnimatedMenuEntry<PipelineStepType>.divider(),
+        actionRow(Icons.auto_fix_high, s.isZh ? '自动整理' : 'Auto arrange', _autoLayout),
+        actionRow(Icons.fit_screen_outlined, s.isZh ? '适应画布' : 'Fit to canvas', _zoomToFit),
       ],
     ).then((type) {
       if (type != null) _addNodeAt(type, canvasPos);
@@ -1762,34 +2209,73 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   void _showNodeMenu(Offset screenPos, String nodeId) {
     final s = AppStrings.of(context.read<AppState>().config.language);
+    final errorColor = Theme.of(context).colorScheme.error;
     final multiSelected = _selectedNodeIds.length > 1 && _selectedNodeIds.contains(nodeId);
+
+    Widget row(IconData icon, String label, {Color? color, bool flexible = false}) {
+      final c = color ?? Theme.of(context).colorScheme.onSurface;
+      final text = Text(label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 13, color: c));
+      return Row(children: [
+        Icon(icon, size: 16, color: c),
+        const SizedBox(width: 6),
+        if (flexible) Flexible(child: text) else text,
+      ]);
+    }
+
     showAnimatedMenu<String>(
       context: context,
       position: screenPos,
       items: [
-        AnimatedMenuEntry<String>(value: 'delete', child: Row(children: [
-          Icon(Icons.delete_outline, size: 16, color: Theme.of(context).colorScheme.error),
-          const SizedBox(width: 6),
-          Text(s.isZh ? '删除节点' : 'Delete Node', style: const TextStyle(fontSize: 13)),
-        ])),
+        // 移动端没有 Ctrl+C/V，长按节点菜单是唯一的复制入口
+        AnimatedMenuEntry<String>(
+          value: 'copy',
+          child: row(Icons.content_copy,
+              multiSelected
+                  ? (s.isZh ? '复制选中 (${_selectedNodeIds.length}个)' : 'Copy Selected (${_selectedNodeIds.length})')
+                  : (s.isZh ? '复制节点' : 'Copy Node'),
+              flexible: true),
+        ),
+        if (_hasClipboard)
+          AnimatedMenuEntry<String>(
+            value: 'paste',
+            child: row(Icons.content_paste,
+                s.isZh ? '粘贴 (${_clipNodes.length})' : 'Paste (${_clipNodes.length})',
+                flexible: true),
+          ),
+        AnimatedMenuEntry<String>(value: 'delete', child: row(Icons.delete_outline, s.isZh ? '删除节点' : 'Delete Node', color: errorColor)),
         if (multiSelected)
-          AnimatedMenuEntry<String>(value: 'delete_selected', child: Row(children: [
-            Icon(Icons.delete_sweep_outlined, size: 16, color: Theme.of(context).colorScheme.error),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                  s.isZh ? '删除选中 (${_selectedNodeIds.length}个)' : 'Delete Selected (${_selectedNodeIds.length})',
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 13)),
-            ),
-          ])),
+          AnimatedMenuEntry<String>(
+            value: 'delete_selected',
+            child: row(Icons.delete_sweep_outlined,
+                s.isZh ? '删除选中 (${_selectedNodeIds.length}个)' : 'Delete Selected (${_selectedNodeIds.length})',
+                color: errorColor, flexible: true),
+          ),
       ],
     ).then((action) {
       if (action == 'delete') {
         _deleteNode(nodeId);
       } else if (action == 'delete_selected') {
         _deleteSelectedNodes();
+      } else if (action == 'copy') {
+        _ensureNodeSelected(nodeId);
+        _copySelectedNodes();
+      } else if (action == 'paste') {
+        _pasteNodes(atCanvas: _screenToCanvas(screenPos));
       }
+    });
+  }
+
+  /// 右键/长按某个节点时，若它不在当前选区里就先把它变成唯一选中。
+  /// 否则「对着 A 点复制」会把别处选中的 B、C 复制走。
+  void _ensureNodeSelected(String nodeId) {
+    if (_selectedNodeIds.contains(nodeId)) return;
+    setState(() {
+      _selectedNodeIds = {nodeId};
+      _lastSelectedId = nodeId;
+      _selectedLogicBlockId = null;
     });
   }
 
@@ -2351,7 +2837,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           controller: ctrl,
           autofocus: true,
           style: const TextStyle(fontSize: 13),
-          decoration: InputDecoration(isDense: true, border: OutlineInputBorder(),
+          decoration: InputDecoration(isDense: true, border: const OutlineInputBorder(),
               hintText: s.isZh ? '输入模型名，如 deepseek-reasoner' : 'e.g. deepseek-reasoner'),
           onSubmitted: (v) => Navigator.pop(dCtx, v.trim()),
         ),
@@ -2620,6 +3106,19 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   // ── 画布 ──
 
+  /// 主焦点是否落在某个文本输入框里。画布级快捷键（Ctrl+C/V）先问这一句：
+  /// 在参数输入框里按 Ctrl+C 应该是复制文字，而不是把画布选区复制成节点。
+  ///
+  /// 文本编辑器的 focus node 挂在 EditableText 内部的 Focus 上，所以它的
+  /// context.widget 是 Focus 而不是 EditableText —— 必须向上找祖先，
+  /// 只看 `ctx.widget is EditableText` 会永远为 false。
+  bool get _editingText {
+    final ctx = FocusManager.instance.primaryFocus?.context;
+    if (ctx == null) return false;
+    if (ctx.widget is EditableText) return true;
+    return ctx.findAncestorWidgetOfExactType<EditableText>() != null;
+  }
+
   bool _isCtrlPressed() {
     final keys = HardwareKeyboard.instance.logicalKeysPressed;
     if (Platform.isMacOS) {
@@ -2650,12 +3149,181 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       'gray' => scheme.outlineVariant.withAlpha(60),
       _ => scheme.outlineVariant.withAlpha(25), // global
     };
+    // 每 4 格一条加重线：小格只提供「密」的手感，加重线才是对齐参照
+    final gridMajorColor = switch (canvasBg) {
+      'black' => const Color(0xFF777777).withAlpha(220),
+      'white' => const Color(0xFF999999).withAlpha(200),
+      'gray' => scheme.outlineVariant.withAlpha(120),
+      _ => scheme.outlineVariant.withAlpha(60),
+    };
     return CustomPaint(
       painter: _GridPainter(
         color: gridColor,
+        majorColor: gridMajorColor,
         fill: canvasFill,
-        transform: _transformCtrl.value,
-        repaintListenable: _transformCtrl,
+        transformCtrl: _transformCtrl,
+      ),
+    );
+  }
+
+  // ── 右下角浮层：小地图 + 缩放读数 ──
+
+  /// 小地图：全图缩略 + 当前视口框。点一下 / 拖一下即把视口移过去。
+  ///
+  /// [viewSize] 是画布视口尺寸，由外层 LayoutBuilder 给出 —— 视口框是在 paint
+  /// 时用**实时**变换矩阵算的，所以平移/缩放期间无需重建本 widget。
+  Widget _buildMiniMap(ColorScheme scheme, AppStrings s, Size viewSize) {
+    final proj = _MiniMapProjection(_graphContentBounds(), const Size(_kMiniMapW, _kMiniMapH));
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (d) => _centerOnCanvasPoint(proj.toCanvas(d.localPosition)),
+      onPanUpdate: (d) => _centerOnCanvasPoint(proj.toCanvas(d.localPosition)),
+      child: Tooltip(
+        message: s.isZh ? '点击或拖动定位视口' : 'Click or drag to move the viewport',
+        child: Container(
+          width: _kMiniMapW,
+          height: _kMiniMapH,
+          decoration: BoxDecoration(
+            color: scheme.surface.withAlpha(224),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: scheme.outlineVariant.withAlpha(90)),
+            boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(36), blurRadius: 10, offset: const Offset(0, 2))],
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: CustomPaint(
+            painter: _MiniMapPainter(
+              proj: proj,
+              viewRect: () => _visibleCanvasRect(viewSize),
+              nodeRects: [
+                for (final n in _nodes)
+                  Rect.fromLTWH(n.x, n.y, _totalNodeWidth(n), _nodeHeight(n)),
+              ],
+              nodeColor: scheme.primary.withAlpha(170),
+              blockRects: [
+                for (final b in _logicBlocks) Rect.fromLTWH(b.x, b.y, b.width, b.height),
+              ],
+              blockColor: context.sem.danger.withAlpha(150),
+              viewColor: scheme.primary,
+              repaint: _transformCtrl,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 缩放读数 + 一键适应画布。
+  ///
+  /// 数字必须订阅 `_scaleNotifier`：IV 缩放只改变换控制器、不会重建本 widget，
+  /// 直读 `_currentScale` 会永远停在进入页面时那个值。
+  Widget _buildZoomPill(ColorScheme scheme, AppStrings s) {
+    return Container(
+      height: 26,
+      decoration: BoxDecoration(
+        color: scheme.surface.withAlpha(224),
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: scheme.outlineVariant.withAlpha(90)),
+        boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(30), blurRadius: 6, offset: const Offset(0, 2))],
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Tooltip(
+          message: s.isZh ? '点击恢复 100%' : 'Click to reset to 100%',
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => _zoomTo(1.0),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+              child: ValueListenableBuilder<double>(
+                valueListenable: _scaleNotifier,
+                builder: (context, scale, _) => Text(
+                  '${(scale * 100).round()}%',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        _mobileBarBtn(Icons.fit_screen_outlined, _zoomToFit, scheme,
+            size: 14, pad: 4, tooltip: s.isZh ? '适应画布' : 'Fit to canvas'),
+        const SizedBox(width: 2),
+      ]),
+    );
+  }
+
+  /// 多选浮动工具条：≥2 个节点被选中时出现在画布顶部中间。
+  /// 对齐 / 分布 / 批量复制只有在多选时才有意义，所以不做常驻，按需出现。
+  Widget _buildSelectionBar(ColorScheme scheme, AppStrings s) {
+    final n = _selectedNodeIds.length;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
+      decoration: BoxDecoration(
+        color: scheme.surface.withAlpha(232),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: scheme.outlineVariant.withAlpha(90)),
+        boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(36), blurRadius: 10, offset: const Offset(0, 2))],
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 7),
+          child: Text('$n',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: scheme.primary)),
+        ),
+        _selBarBtn(scheme, Icons.align_horizontal_left, s.isZh ? '左对齐' : 'Align left',
+            () => _alignSelectedNodes('left')),
+        _selBarBtn(scheme, Icons.align_horizontal_center, s.isZh ? '水平居中' : 'Center horizontally',
+            () => _alignSelectedNodes('hcenter')),
+        _selBarBtn(scheme, Icons.align_horizontal_right, s.isZh ? '右对齐' : 'Align right',
+            () => _alignSelectedNodes('right')),
+        _selBarDivider(scheme),
+        _selBarBtn(scheme, Icons.align_vertical_top, s.isZh ? '顶对齐' : 'Align top',
+            () => _alignSelectedNodes('top')),
+        _selBarBtn(scheme, Icons.align_vertical_center, s.isZh ? '垂直居中' : 'Center vertically',
+            () => _alignSelectedNodes('vcenter')),
+        _selBarBtn(scheme, Icons.align_vertical_bottom, s.isZh ? '底对齐' : 'Align bottom',
+            () => _alignSelectedNodes('bottom')),
+        _selBarDivider(scheme),
+        // 只有 2 个点时间距已被首尾锁定，分布没有可调空间
+        _selBarBtn(scheme, Icons.horizontal_distribute, s.isZh ? '水平等距' : 'Distribute horizontally',
+            () => _distributeSelectedNodes(horizontal: true), enabled: n >= 3),
+        _selBarBtn(scheme, Icons.vertical_distribute, s.isZh ? '垂直等距' : 'Distribute vertically',
+            () => _distributeSelectedNodes(horizontal: false), enabled: n >= 3),
+        _selBarDivider(scheme),
+        _selBarBtn(scheme, Icons.content_copy, s.isZh ? '复制' : 'Copy', _copySelectedNodes),
+        _selBarBtn(scheme, Icons.delete_sweep_outlined, s.isZh ? '删除选中' : 'Delete selected',
+            _deleteSelectedNodes, danger: true),
+        const SizedBox(width: 2),
+      ]),
+    );
+  }
+
+  Widget _selBarDivider(ColorScheme scheme) => Container(
+        width: 1,
+        height: 16,
+        margin: const EdgeInsets.symmetric(horizontal: 3),
+        color: scheme.outlineVariant.withAlpha(90),
+      );
+
+  Widget _selBarBtn(ColorScheme scheme, IconData icon, String tip, VoidCallback onTap,
+      {bool enabled = true, bool danger = false}) {
+    return Tooltip(
+      message: tip,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(7),
+        onTap: enabled ? onTap : null,
+        child: Padding(
+          padding: const EdgeInsets.all(5),
+          child: Icon(icon,
+              size: 15,
+              color: !enabled
+                  ? scheme.outlineVariant
+                  : danger
+                      ? context.sem.danger
+                      : scheme.onSurfaceVariant),
+        ),
       ),
     );
   }
@@ -2666,6 +3334,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     // 重算，画面不再因内容出界而整体跳变；可命中范围见 _worldExtent 注释。
     // 背景（网格/底色）在其下层的屏幕空间绘制，见 _buildGridUnderlay。
     final canvasBg = context.read<AppState>().config.canvasBg;
+    // 被折叠的逻辑块藏起来的节点：渲染、连线、命中测试三处共用同一份集合
+    final hiddenNodeIds = _collapsedHiddenNodeIds;
 
     final canvas = Stack(children: [
       // 无限网格背景（屏幕空间，永远铺满可视区，见 _buildGridUnderlay）
@@ -2821,9 +3491,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               painter: _ConnectionPainter(
                 origin: Offset(-_world.left, -_world.top),
                 nodes: _nodes,
-                connections: _hideLogic
-                    ? _connections.where((c) => c.kind != 'control').toList()
-                    : _connections,
+                connections: [
+                  for (final c in _connections)
+                    if (!(_hideLogic && c.kind == 'control') &&
+                        !hiddenNodeIds.contains(c.fromNodeId) &&
+                        !hiddenNodeIds.contains(c.toNodeId))
+                      c,
+                ],
                 color: scheme.primary.withAlpha(140),
                 controlColor: scheme.tertiary.withAlpha(180),
                 selectedNodeIds: _selectedNodeIds,
@@ -2854,7 +3528,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             // 每个节点：RepaintBoundary 独立光栅缓存 + ValueKey 让 Element 按 id 复用；
             // Positioned 由 _dragDeltas 局部驱动，拖动时只重建被拖动的节点。
             for (final node in _nodes)
-              if (!(_hideLogic && node.isGate))
+              if (!(_hideLogic && node.isGate) && !hiddenNodeIds.contains(node.id))
                 ValueListenableBuilder<Map<String, Offset>?>(
                   key: ValueKey('node-${node.id}'),
                   valueListenable: _dragDeltas,
@@ -2872,11 +3546,21 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                     );
                   },
                 ),
-            // 逻辑块虚线框
+            // 逻辑块虚线框：订阅拖动位移，拖动整块时框同步平移
             for (final block in _logicBlocks)
-              Positioned(
-                left: block.x - _world.left, top: block.y - _world.top,
-                child: _buildLogicBlockOverlay(block, scheme, s),
+              ValueListenableBuilder<Map<String, Offset>?>(
+                key: ValueKey('block-${block.id}'),
+                valueListenable: _dragDeltas,
+                builder: (context, deltas, _) {
+                  final d = block.childNodeIds.isEmpty
+                      ? null
+                      : deltas?[block.childNodeIds.first];
+                  return Positioned(
+                    left: block.x + (d?.dx ?? 0) - _world.left,
+                    top: block.y + (d?.dy ?? 0) - _world.top,
+                    child: _buildLogicBlockOverlay(block, scheme, s),
+                  );
+                },
               ),
             // Box-select overlay：订阅独立 notifier，框选拖动只重绘这一层
             ValueListenableBuilder<Rect?>(
@@ -2917,6 +3601,55 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       ),
       ),
       ),
+      // ── 画布右下角浮层：小地图 + 缩放读数 ──
+      //
+      // 必须是「canvas Stack」的最后一个 child（这个 Stack 的尺寸 = 视口）。
+      // 注意不能放进上面那个 world Stack —— 它的尺寸是 20 万 × 20 万，
+      // Positioned.fill 会跑到世界右下角，离视口十万八千里。
+      // 外层 Stack 只让两块控件自身吃事件，空白处照常落到 InteractiveViewer。
+      Positioned.fill(
+        child: LayoutBuilder(
+          builder: (context, cons) {
+            final viewSize = cons.biggest;
+            // 移动端属性卡片停在右侧（宽 ~296），会把浮层整个盖住 ——
+            // 与其藏在底下，不如让位（编辑单个节点时本来也不看全图）。
+            final sheetOpen = isMobilePlatform &&
+                (_selectedNode != null || _selectedLogicBlockId != null);
+            final showMiniMap =
+                context.read<AppState>().config.nodeMiniMap && !sheetOpen;
+            return Stack(children: [
+              Positioned(
+                right: 10,
+                // 移动端底部还有文件信息条与缩放药丸（各占 8px 起），抬高一层
+                bottom: isMobilePlatform ? 40 : 10,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    if (showMiniMap) ...[
+                      _buildMiniMap(scheme, s, viewSize),
+                      const SizedBox(height: 6),
+                    ],
+                    _buildZoomPill(scheme, s),
+                  ],
+                ),
+              ),
+              // 多选工具条：顶部居中。框选进行中不显示（手指正忙着），
+              // 移动端属性卡片打开时也让位。
+              if (_selectedNodeIds.length >= 2 &&
+                  !_isBoxSelecting &&
+                  !_isLogicBoxSelecting &&
+                  !sheetOpen)
+                Positioned(
+                  top: isMobilePlatform ? 52 : 10,
+                  left: 0,
+                  right: 0,
+                  child: Center(child: _buildSelectionBar(scheme, s)),
+                ),
+            ]);
+          },
+        ),
+      ),
       ],
     );
 
@@ -2946,10 +3679,27 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         final selectAll = bindings['canvas_select_all'] ?? ['Control', 'A'];
         if (selectAll.isNotEmpty && _isCtrlPressed() && event.logicalKey == LogicalKeyboardKey.keyA) {
           if (selectAll.contains('Control') && selectAll.contains('A')) {
-            setState(() {
-              _selectedNodeIds = _nodes.map((n) => n.id).toSet();
-              if (_nodes.isNotEmpty) _lastSelectedId = _nodes.last.id;
-            });
+            _selectAllNodes();
+            return KeyEventResult.handled;
+          }
+        }
+
+        // Copy (Ctrl+C) / Paste (Ctrl+V)
+        //
+        // 必须挡掉「正在文本框里打字」的情况：参数输入框在节点编辑器里遍地都是，
+        // 在输入框里按 Ctrl+C 应该复制文字，而不是把整个选区复制成节点。
+        // 键名沿用可配置的 keyBindings 约定，缺省即 Ctrl+C / Ctrl+V。
+        if (!_editingText) {
+          final copyBinding = bindings['canvas_copy'] ?? ['Control', 'C'];
+          if (copyBinding.contains('Control') && _isCtrlPressed() &&
+              event.logicalKey == LogicalKeyboardKey.keyC && _selectedNodeIds.isNotEmpty) {
+            _copySelectedNodes();
+            return KeyEventResult.handled;
+          }
+          final pasteBinding = bindings['canvas_paste'] ?? ['Control', 'V'];
+          if (pasteBinding.contains('Control') && _isCtrlPressed() &&
+              event.logicalKey == LogicalKeyboardKey.keyV && _hasClipboard) {
+            _pasteNodes();
             return KeyEventResult.handled;
           }
         }
@@ -3871,8 +4621,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     final scheme = Theme.of(context).colorScheme;
     final now = DateTime.now();
     var dateStr = (node.params['tt_date'] as String?) ?? '';
-    var startStr = (node.params['tt_start'] as String?) ?? '09:00';
-    var endStr = (node.params['tt_end'] as String?) ?? '';
+    final startStr = (node.params['tt_start'] as String?) ?? '09:00';
+    final endStr = (node.params['tt_end'] as String?) ?? '';
     final startHM = _parseHM(startStr);
     var startTime = startHM >= 0 ? TimeOfDay(hour: startHM ~/ 60, minute: startHM % 60) : const TimeOfDay(hour: 9, minute: 0);
     final endHM = _parseHM(endStr);
@@ -4297,40 +5047,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               }
             });
           },
-          onPanStart: (_) {
-            _pushUndo();
-            // 拖动期间不改模型：把累计位移放进 notifier，由节点的
-            // Positioned 局部订阅重建；避免每帧 setState 整页重建。
-            _dragDeltas.value = {
-              for (final n in _nodes)
-                if (_selectedNodeIds.contains(node.id)
-                    ? _selectedNodeIds.contains(n.id)
-                    : n.id == node.id)
-                  n.id: Offset.zero,
-            };
-          },
-          onPanUpdate: (d) {
-            final scale = _transformCtrl.value.getMaxScaleOnAxis();
-            final delta = Offset(d.delta.dx / scale, d.delta.dy / scale);
-            final cur = _dragDeltas.value;
-            if (cur == null) return;
-            _dragDeltas.value = {
-              for (final e in cur.entries) e.key: e.value + delta,
-            };
-          },
-          onPanEnd: (_) {
-            final deltas = _dragDeltas.value;
-            _dragDeltas.value = null;
-            if (deltas == null || deltas.isEmpty) return;
-            // 一次性把累计位移提交到模型，随后统一重建一次
-            setState(() {
-              for (final n in _nodes) {
-                final d = deltas[n.id];
-                if (d != null) { n.x += d.dx; n.y += d.dy; }
-              }
-            });
-            _markDirty();
-          },
+          onPanStart: (_) => _beginNodeDrag(node.id),
+          onPanUpdate: (d) => _onDragMove(d.delta),
+          onPanEnd: (_) => _endNodeDrag(),
           onSecondaryTapUp: (d) => _showNodeMenu(d.globalPosition, node.id),
           onLongPressStart: isMobilePlatform
               ? (d) => _showNodeMenu(d.globalPosition, node.id)
@@ -4470,37 +5189,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             }
           });
         },
-        onPanStart: (_) {
-          _pushUndo();
-          _dragDeltas.value = {
-            for (final n in _nodes)
-              if (_selectedNodeIds.contains(node.id)
-                  ? _selectedNodeIds.contains(n.id)
-                  : n.id == node.id)
-                n.id: Offset.zero,
-          };
-        },
-        onPanUpdate: (d) {
-          final scale = _transformCtrl.value.getMaxScaleOnAxis();
-          final delta = Offset(d.delta.dx / scale, d.delta.dy / scale);
-          final cur = _dragDeltas.value;
-          if (cur == null) return;
-          _dragDeltas.value = {
-            for (final e in cur.entries) e.key: e.value + delta,
-          };
-        },
-        onPanEnd: (_) {
-          final deltas = _dragDeltas.value;
-          _dragDeltas.value = null;
-          if (deltas == null || deltas.isEmpty) return;
-          setState(() {
-            for (final n in _nodes) {
-              final d = deltas[n.id];
-              if (d != null) { n.x += d.dx; n.y += d.dy; }
-            }
-          });
-          _markDirty();
-        },
+        onPanStart: (_) => _beginNodeDrag(node.id),
+        onPanUpdate: (d) => _onDragMove(d.delta),
+        onPanEnd: (_) => _endNodeDrag(),
         onSecondaryTapUp: (d) => _showNodeMenu(d.globalPosition, node.id),
           onLongPressStart: isMobilePlatform
               ? (d) => _showNodeMenu(d.globalPosition, node.id)
@@ -4536,37 +5227,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               const SizedBox(width: _portZoneW, height: _gateH),
             // 中心：ANSI 符号
             GestureDetector(
-              onPanStart: (_) {
-                _pushUndo();
-                _dragDeltas.value = {
-                  for (final n in _nodes)
-                    if (_selectedNodeIds.contains(node.id)
-                        ? _selectedNodeIds.contains(n.id)
-                        : n.id == node.id)
-                      n.id: Offset.zero,
-                };
-              },
-              onPanUpdate: (d) {
-                final scale = _transformCtrl.value.getMaxScaleOnAxis();
-                final delta = Offset(d.delta.dx / scale, d.delta.dy / scale);
-                final cur = _dragDeltas.value;
-                if (cur == null) return;
-                _dragDeltas.value = {
-                  for (final e in cur.entries) e.key: e.value + delta,
-                };
-              },
-              onPanEnd: (_) {
-                final deltas = _dragDeltas.value;
-                _dragDeltas.value = null;
-                if (deltas == null || deltas.isEmpty) return;
-                setState(() {
-                  for (final n in _nodes) {
-                    final dlt = deltas[n.id];
-                    if (dlt != null) { n.x += dlt.dx; n.y += dlt.dy; }
-                  }
-                });
-                _markDirty();
-              },
+              onPanStart: (_) => _beginNodeDrag(node.id),
+              onPanUpdate: (d) => _onDragMove(d.delta),
+              onPanEnd: (_) => _endNodeDrag(),
               child: Container(
                 width: _gateW,
                 height: _gateH,
@@ -4625,7 +5288,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   }
 
   PipelineNode? _findNodeAtCanvasPos(Offset pos) {
+    final hidden = _collapsedHiddenNodeIds;
     for (final n in _nodes.reversed) {
+      // 折叠块里的节点不可见，也不应该被点到
+      if (hidden.contains(n.id)) continue;
       if (pos.dx >= n.x && pos.dx <= n.x + _totalNodeWidth(n) && pos.dy >= n.y && pos.dy <= n.y + _nodeHeight(n)) {
         return n;
       }
@@ -4635,62 +5301,99 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   // ── 右侧面板 ──
 
+  /// 逻辑块虚框覆盖层。
+  ///
+  /// 标题栏同时是**批量拖动手柄**：按住它拖 = 框内节点整体平移。这是分组容器
+  /// 一半的价值 —— 否则每次都要先框选再拖。
+  ///
+  /// 折叠后只留标题栏一条，框内节点连同它们的连线一起隐藏
+  /// （隐藏集合见 [_collapsedHiddenNodeIds]）。
   Widget _buildLogicBlockOverlay(LogicBlock block, ColorScheme scheme, AppStrings s) {
     final selected = _selectedLogicBlockId == block.id;
+    final collapsed = block.params['collapsed'] == true;
+    final danger = context.sem.danger;
+    // 折叠态给宽度设上限：逻辑块宽度由子节点包围盒算出，大图里能到上千像素，
+    // 直接拿它当标题栏会横穿整个视口。
+    final w = collapsed ? math.min(block.width, 280.0) : block.width;
+    final h = collapsed ? 30.0 : block.height;
+
+    void selectBlock() {
+      setState(() {
+        _selectedLogicBlockId = block.id;
+        _selectedNodeIds.clear();
+        _lastSelectedId = null;
+        _previewedToolboxType = null;
+      });
+    }
+
     return SizedBox(
-      width: block.width,
-      height: block.height,
+      width: w,
+      height: h,
       child: Stack(clipBehavior: Clip.none, children: [
         // Dashed border — pass hits through
         Positioned.fill(
           child: IgnorePointer(
             child: CustomPaint(
               painter: _LogicBlockPainter(
-                color: selected ? context.sem.danger : context.sem.danger.withAlpha(120),
+                color: selected ? danger : danger.withAlpha(120),
                 strokeWidth: selected ? 2.0 : 1.0,
               ),
             ),
           ),
         ),
-        // Label at top-left — clickable
+        // 标题栏：点选 + 按下即整块拖动
         Positioned(
           left: 8, top: 4,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () {
-              setState(() {
-                _selectedLogicBlockId = block.id;
-                _selectedNodeIds.clear();
-                _lastSelectedId = null;
-                _previewedToolboxType = null;
-              });
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                color: context.sem.danger.withAlpha(selected ? 50 : 30),
-                borderRadius: BorderRadius.circular(4),
+          child: MouseRegion(
+            cursor: SystemMouseCursors.move,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: selectBlock,
+              onPanStart: (_) => _beginGroupDrag(block),
+              onPanUpdate: (d) => _onDragMove(d.delta),
+              onPanEnd: (_) => _endNodeDrag(),
+              // 右键折叠。桌面刻意不挂 onLongPress：长按是拖拽前的自然停顿，
+              // 会误触发；移动端用右上角的折叠按钮。
+              onSecondaryTap: () => _toggleLogicBlockCollapsed(block),
+              child: Tooltip(
+                message: s.isZh ? '拖动可整体移动框内元素' : 'Drag to move every boxed node',
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: danger.withAlpha(selected ? 50 : 30),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(_logicTypeIcon(block.type), size: 12, color: danger),
+                    const SizedBox(width: 4),
+                    ConstrainedBox(
+                      constraints: BoxConstraints(maxWidth: w - 110),
+                      child: Text(block.label(s.isZh),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: danger)),
+                    ),
+                    if (collapsed) ...[
+                      const SizedBox(width: 4),
+                      Text('${block.childNodeIds.length}',
+                          style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: danger)),
+                    ],
+                  ]),
+                ),
               ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(block.type == LogicBlockType.loop ? Icons.repeat : Icons.shuffle, size: 12, color: context.sem.danger),
-                const SizedBox(width: 4),
-                Text(block.label(s.isZh), style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: context.sem.danger)),
-              ]),
             ),
           ),
         ),
-        // Edit + Delete icons at top-right — clickable
+        // 折叠 / 编辑 / 删除
         Positioned(
           right: 8, top: 4,
           child: Row(mainAxisSize: MainAxisSize.min, children: [
-            _logicIconBtn(Icons.edit_outlined, () {
-              setState(() {
-                _selectedLogicBlockId = block.id;
-                _selectedNodeIds.clear();
-                _lastSelectedId = null;
-                _previewedToolboxType = null;
-              });
-            }),
+            _logicIconBtn(
+              collapsed ? Icons.unfold_more : Icons.unfold_less,
+              () => _toggleLogicBlockCollapsed(block),
+            ),
+            const SizedBox(width: 2),
+            _logicIconBtn(Icons.edit_outlined, selectBlock),
             const SizedBox(width: 2),
             _logicIconBtn(Icons.close, () {
               _pushUndo(); // [FIX S-1] 真正删除逻辑块（此前只清选择态，块永久驻留落盘）
@@ -4702,9 +5405,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             }),
           ]),
         ),
-        // Ports — visual only
-        Positioned(left: -6, top: block.height / 2 - 6, child: IgnorePointer(child: _logicPort(scheme))),
-        Positioned(right: -6, top: block.height / 2 - 6, child: IgnorePointer(child: _logicPort(scheme))),
+        // Ports — visual only（折叠时框只剩标题栏，端口没有可对齐的中线）
+        if (!collapsed) ...[
+          Positioned(left: -6, top: h / 2 - 6, child: IgnorePointer(child: _logicPort(scheme))),
+          Positioned(right: -6, top: h / 2 - 6, child: IgnorePointer(child: _logicPort(scheme))),
+        ],
       ]),
     );
   }
@@ -4745,7 +5450,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         ? _logicBlocks.where((b) => b.id == _selectedLogicBlockId).firstOrNull
         : null;
 
-    Widget inner = LayoutBuilder(builder: (ctx, constraints) {
+    final Widget inner = LayoutBuilder(builder: (ctx, constraints) {
       final totalH = constraints.maxHeight;
       const dividerH = 10.0;
       final usable = totalH - dividerH;
@@ -4770,49 +5475,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           if (_toolboxExpanded)
             Expanded(child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+              // 搜索框 + 内容都由 _buildToolboxBody 提供，移动端弹层共用同一份
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Wrap(spacing: 4, runSpacing: 4, children: [
-                  _buildToolboxItem(PipelineStepType.start, scheme, s),
-                  _buildToolboxItem(PipelineStepType.output, scheme, s),
-                ]),
-                const SizedBox(height: 8),
-                _categoryLabel(scheme, Icons.videocam_outlined, s.isZh ? '视频' : 'Video'),
-                const SizedBox(height: 4),
-                Wrap(spacing: 4, runSpacing: 4, children: [
-                  for (final t in _videoTypes) _buildToolboxItem(t, scheme, s),
-                ]),
-                const SizedBox(height: 8),
-                _categoryLabel(scheme, Icons.audiotrack_outlined, s.isZh ? '音频' : 'Audio'),
-                const SizedBox(height: 4),
-                Wrap(spacing: 4, runSpacing: 4, children: [
-                  for (final t in _audioTypes) _buildToolboxItem(t, scheme, s),
-                ]),
-                const SizedBox(height: 8),
-                _categoryLabel(scheme, Icons.image_outlined, s.isZh ? '图片' : 'Image'),
-                const SizedBox(height: 4),
-                Wrap(spacing: 4, runSpacing: 4, children: [
-                  for (final t in _imageTypes) _buildToolboxItem(t, scheme, s),
-                ]),
-                const SizedBox(height: 8),
-                _categoryLabel(scheme, Icons.account_tree_outlined, s.isZh ? '逻辑' : 'Logic'),
-                const SizedBox(height: 4),
-                Wrap(spacing: 4, runSpacing: 4, children: [
-                  _buildLogicToolboxItem(LogicBlockType.loop, scheme, s),
-                  _buildLogicToolboxItem(LogicBlockType.selectiveLoop, scheme, s),
-                ]),
-                // 逻辑门分组
-                const SizedBox(height: 4),
-                Wrap(spacing: 3, runSpacing: 3, children: [
-                  for (final g in LogicGateType.values) _buildGateToolboxItem(g, scheme, s),
-                ]),
-                if (widget.containerInfo != null) ...[
-                  const SizedBox(height: 8),
-                  _categoryLabel(scheme, Icons.folder_special_outlined, s.isZh ? '容器' : 'Container'),
-                  const SizedBox(height: 4),
-                  Wrap(spacing: 4, runSpacing: 4, children: [
-                    for (final t in _containerTypes) _buildToolboxItem(t, scheme, s),
-                  ]),
-                ],
+                _buildToolboxSearch(scheme, s, dense: true),
+                _buildToolboxBody(scheme, s, dense: true),
               ]),
             )),
         ])),
@@ -4845,7 +5511,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           _buildCollapsibleHeader(
             scheme: scheme,
             icon: logicBlock != null
-                ? (logicBlock.type == LogicBlockType.loop ? Icons.repeat : Icons.shuffle)
+                ? (_logicTypeIcon(logicBlock.type))
                 : node != null ? _stepIcon(node.type) : (showPreview ? _stepIcon(previewType) : Icons.tune_outlined),
             title: logicBlock != null
                 ? logicBlock.label(s.isZh)
@@ -4936,6 +5602,202 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     );
   }
 
+  // ══════ 工具箱：搜索 / 收藏 / 最近使用 ══════
+
+  bool _isFavoriteType(PipelineStepType t) =>
+      context.read<AppState>().config.favoriteNodeTypes.contains(t.name);
+
+  /// 把配置里存的类型名还原成枚举（跳过已失效的名字，并去重）。
+  /// 存名字而不是索引：将来增删枚举值时，旧配置只会「少一项」，不会错位。
+  List<PipelineStepType> _typesFromNames(List<String> names) {
+    final out = <PipelineStepType>[];
+    for (final n in names) {
+      final t = _allNodeTypes.where((x) => x.name == n).firstOrNull;
+      if (t != null && !out.contains(t)) out.add(t);
+    }
+    return out;
+  }
+
+  void _toggleFavoriteType(PipelineStepType t) {
+    final state = context.read<AppState>();
+    final s = AppStrings.of(state.config.language);
+    final wasFav = state.config.favoriteNodeTypes.contains(t.name);
+    state.updateConfig((c) {
+      if (wasFav) {
+        c.favoriteNodeTypes.remove(t.name);
+      } else {
+        c.favoriteNodeTypes.add(t.name);
+      }
+      return c;
+    });
+    // 本页用的是 context.read（不订阅 config 变更），手动刷一次树
+    setState(() {});
+    final name = s.isZh ? PipelineNode(id: '', type: t).label : PipelineNode(id: '', type: t).labelEn;
+    showToast(
+      context,
+      wasFav
+          ? (s.isZh ? '已取消收藏：$name' : 'Removed from favourites: $name')
+          : (s.isZh ? '已收藏并置顶：$name' : 'Pinned to favourites: $name'),
+      type: ToastType.info,
+    );
+  }
+
+  /// 搜索命中（匹配中文名 / 英文名 / 枚举名，忽略大小写）。
+  List<PipelineStepType> _toolboxSearchHits(String query, AppStrings s) {
+    final q = query.trim().toLowerCase();
+    if (q.isEmpty) return const [];
+    final out = <PipelineStepType>[];
+    for (final t in _allNodeTypes) {
+      final dummy = PipelineNode(id: '', type: t);
+      final hay = '${dummy.label} ${dummy.labelEn} ${t.name}'.toLowerCase();
+      if (hay.contains(q)) out.add(t);
+    }
+    return out;
+  }
+
+  /// 工具箱搜索框。桌面右面板（dense）与移动端弹层共用一套。
+  Widget _buildToolboxSearch(ColorScheme scheme, AppStrings s, {required bool dense}) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: dense ? 6 : 8),
+      child: TextField(
+        controller: _toolboxSearchCtrl,
+        style: TextStyle(fontSize: dense ? 11.5 : 13, color: scheme.onSurface),
+        decoration: InputDecoration(
+          isDense: true,
+          filled: true,
+          fillColor: scheme.surfaceContainerHighest.withAlpha(90),
+          hintText: s.isZh ? '搜索元素…' : 'Search elements…',
+          hintStyle: TextStyle(fontSize: dense ? 11 : 12.5, color: scheme.outline),
+          prefixIcon: Icon(Icons.search, size: dense ? 14 : 16, color: scheme.outline),
+          // 图标槽位与行高对齐，避免「有眼睛/清除按钮的输入框比同行高几像素」
+          prefixIconConstraints: BoxConstraints(minWidth: dense ? 28 : 32, minHeight: dense ? 28 : 32),
+          suffixIcon: _toolboxQuery.isEmpty
+              ? null
+              : InkWell(
+                  onTap: () {
+                    _toolboxSearchCtrl.clear();
+                    setState(() => _toolboxQuery = '');
+                  },
+                  child: Icon(Icons.close, size: dense ? 14 : 16, color: scheme.outline),
+                ),
+          suffixIconConstraints: BoxConstraints(minWidth: dense ? 28 : 32, minHeight: dense ? 28 : 32),
+          contentPadding: EdgeInsets.symmetric(horizontal: dense ? 4 : 6, vertical: dense ? 7 : 8),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: BorderSide(color: scheme.outlineVariant.withAlpha(110)),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: BorderSide(color: scheme.outlineVariant.withAlpha(110)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: BorderSide(color: scheme.primary.withAlpha(160)),
+          ),
+        ),
+        onChanged: (v) => setState(() => _toolboxQuery = v),
+      ),
+    );
+  }
+
+  /// 工具箱主体：搜索态给平铺结果，否则给「收藏 / 最近使用 / 分类」。
+  ///
+  /// 桌面右面板与移动端弹层原本各写一遍同样的分类列表 —— 加一个区块就得改两处，
+  /// 迟早漏。这里收成一个方法，只用 [dense] 区隔间距。
+  Widget _buildToolboxBody(ColorScheme scheme, AppStrings s, {required bool dense}) {
+    final gap = dense ? 4.0 : 6.0;
+    final sectionGap = dense ? 8.0 : 10.0;
+    final state = context.read<AppState>();
+
+    final hits = _toolboxSearchHits(_toolboxQuery, s);
+    if (_toolboxQuery.trim().isNotEmpty) {
+      if (hits.isEmpty) {
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 18),
+          child: Center(
+            child: Text(
+              s.isZh ? '没有匹配「${_toolboxQuery.trim()}」的元素' : 'No element matches “${_toolboxQuery.trim()}”',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 11, color: scheme.outline),
+            ),
+          ),
+        );
+      }
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _categoryLabel(scheme, Icons.search,
+            s.isZh ? '搜索结果 · ${hits.length}' : '${hits.length} result(s)'),
+        SizedBox(height: gap),
+        Wrap(spacing: gap, runSpacing: gap, children: [
+          for (final t in hits) _buildToolboxItem(t, scheme, s),
+        ]),
+      ]);
+    }
+
+    final favs = _typesFromNames(state.config.favoriteNodeTypes);
+    // 已经置顶在「收藏」里的不再重复出现在「最近使用」里
+    final recents = _typesFromNames(state.config.recentNodeTypes).where((t) => !favs.contains(t)).toList();
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      if (favs.isNotEmpty) ...[
+        _categoryLabel(scheme, Icons.star, s.isZh ? '收藏' : 'Favourites'),
+        SizedBox(height: gap),
+        Wrap(spacing: gap, runSpacing: gap, children: [
+          for (final t in favs) _buildToolboxItem(t, scheme, s),
+        ]),
+        SizedBox(height: sectionGap),
+      ],
+      if (recents.isNotEmpty) ...[
+        _categoryLabel(scheme, Icons.history, s.isZh ? '最近使用' : 'Recent'),
+        SizedBox(height: gap),
+        Wrap(spacing: gap, runSpacing: gap, children: [
+          for (final t in recents) _buildToolboxItem(t, scheme, s),
+        ]),
+        SizedBox(height: sectionGap),
+      ],
+      Wrap(spacing: gap, runSpacing: gap, children: [
+        _buildToolboxItem(PipelineStepType.start, scheme, s),
+        _buildToolboxItem(PipelineStepType.output, scheme, s),
+      ]),
+      SizedBox(height: sectionGap),
+      _categoryLabel(scheme, Icons.videocam_outlined, s.isZh ? '视频' : 'Video'),
+      SizedBox(height: gap),
+      Wrap(spacing: gap, runSpacing: gap, children: [
+        for (final t in _videoTypes) _buildToolboxItem(t, scheme, s),
+      ]),
+      SizedBox(height: sectionGap),
+      _categoryLabel(scheme, Icons.audiotrack_outlined, s.isZh ? '音频' : 'Audio'),
+      SizedBox(height: gap),
+      Wrap(spacing: gap, runSpacing: gap, children: [
+        for (final t in _audioTypes) _buildToolboxItem(t, scheme, s),
+      ]),
+      SizedBox(height: sectionGap),
+      _categoryLabel(scheme, Icons.image_outlined, s.isZh ? '图片' : 'Image'),
+      SizedBox(height: gap),
+      Wrap(spacing: gap, runSpacing: gap, children: [
+        for (final t in _imageTypes) _buildToolboxItem(t, scheme, s),
+      ]),
+      SizedBox(height: sectionGap),
+      _categoryLabel(scheme, Icons.account_tree_outlined, s.isZh ? '逻辑' : 'Logic'),
+      SizedBox(height: gap),
+      Wrap(spacing: gap, runSpacing: gap, children: [
+        for (final t in LogicBlockType.values) _buildLogicToolboxItem(t, scheme, s),
+      ]),
+      // 逻辑门分组：符号小、数量多，间距再紧一档
+      SizedBox(height: gap),
+      Wrap(spacing: dense ? 3 : 4, runSpacing: dense ? 3 : 4, children: [
+        for (final g in LogicGateType.values) _buildGateToolboxItem(g, scheme, s),
+      ]),
+      if (widget.containerInfo != null) ...[
+        SizedBox(height: sectionGap),
+        _categoryLabel(scheme, Icons.folder_special_outlined, s.isZh ? '容器' : 'Container'),
+        SizedBox(height: gap),
+        Wrap(spacing: gap, runSpacing: gap, children: [
+          for (final t in _containerTypes) _buildToolboxItem(t, scheme, s),
+        ]),
+      ],
+    ]);
+  }
+
   Widget _buildToolboxItem(PipelineStepType t, ColorScheme scheme, AppStrings s) {
     final dummy = PipelineNode(id: '', type: t);
     final tag = dummy.mediaTag;
@@ -4944,6 +5806,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     if (isMobilePlatform) {
       return GestureDetector(
         onTap: () => _mobileAddNode(t),
+        // 长按 = 收藏 / 取消收藏。触摸设备没有右键，而「收藏」需要一个入口
+        // —— 长按工具箱元素不会与点按（添加到画布）冲突。
+        onLongPress: () => _toggleFavoriteType(t),
         child: _toolboxChip(t, dummy, tag, scheme, s),
       );
     }
@@ -4979,7 +5844,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           });
         },
         onDoubleTap: () => _addNodeAtCenter(t),
-        child: _toolboxChip(t, dummy, tag, scheme, s, isSelected: _previewedToolboxType == t),
+        // 右键切换收藏。桌面端刻意不挂 onLongPress：长按是拖拽前的自然停顿，
+        // 会误触发收藏。
+        onSecondaryTap: () => _toggleFavoriteType(t),
+        child: _toolboxChip(t, dummy, tag, scheme, s,
+            isSelected: _previewedToolboxType == t, isFav: _isFavoriteType(t)),
       ),
     );
   }
@@ -4992,11 +5861,18 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     ]);
   }
 
+  /// 逻辑块类型图标：画布覆盖层 / 属性面板标题 / 工具箱三处共用。
+  /// 新增类型只需在这里加一行，否则会全部退化成 shuffle 图标。
+  static IconData _logicTypeIcon(LogicBlockType type) => switch (type) {
+    LogicBlockType.loop => Icons.repeat,
+    LogicBlockType.selectiveLoop => Icons.shuffle,
+    LogicBlockType.group => Icons.folder_special_outlined,
+    LogicBlockType.condition => Icons.rule,
+  };
+
   Widget _buildLogicToolboxItem(LogicBlockType type, ColorScheme scheme, AppStrings s) {
-    final label = type == LogicBlockType.loop
-        ? (s.isZh ? '循环' : 'Loop')
-        : (s.isZh ? '选择性循环' : 'Selective Loop');
-    final icon = type == LogicBlockType.loop ? Icons.repeat : Icons.shuffle;
+    final label = logicBlockTypeLabel(type, s.isZh);
+    final icon = _logicTypeIcon(type);
     final isSelected = _previewedLogicType == type;
     // 移动端：逻辑块必须先框选画布上的元素才能创建。旧实现要求「双击」工具项
     // 才进入框选模式，且工具箱弹层仍然盖在画布上方 —— 双击无效、拖动更不可能，
@@ -5018,7 +5894,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           ),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             Icon(icon, size: 12, color: context.sem.danger),
-            SizedBox(width: 3),
+            const SizedBox(width: 3),
             Text(label, style: TextStyle(fontSize: 9, color: scheme.onSurface)),
           ]),
         ),
@@ -5107,7 +5983,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   /// [opacity] 用于拖拽占位（childWhenDragging）时的淡化：把透明度预乘进
   /// 各颜色，而不是外包一层 `Opacity`——后者在非 0/1 值时会触发 saveLayer
   /// 离屏渲染，每个芯片一层，代价明显。
-  Widget _toolboxChip(PipelineStepType t, PipelineNode dummy, String tag, ColorScheme scheme, AppStrings s, {bool isSelected = false, double opacity = 1.0}) {
+  Widget _toolboxChip(PipelineStepType t, PipelineNode dummy, String tag, ColorScheme scheme, AppStrings s, {bool isSelected = false, bool isFav = false, double opacity = 1.0}) {
     final o = opacity.clamp(0.0, 1.0);
     Color fade(Color c) => o >= 1.0 ? c : c.withAlpha((c.a * 255 * o).round());
     return AnimatedContainer(
@@ -5116,7 +5992,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       decoration: BoxDecoration(
         color: fade(isSelected ? scheme.primary.withAlpha(40) : _nodeColor(t, scheme).withAlpha(180)),
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: fade(isSelected ? scheme.primary : scheme.outlineVariant.withAlpha(60)), width: isSelected ? 2 : 1),
+        border: Border.all(
+          color: fade(isSelected
+              ? scheme.primary
+              : isFav
+                  ? scheme.primary.withAlpha(130)
+                  : scheme.outlineVariant.withAlpha(60)),
+          width: isSelected ? 2 : 1,
+        ),
         boxShadow: isSelected ? [BoxShadow(color: fade(scheme.primary.withAlpha(40)), blurRadius: 6)] : null,
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -5126,6 +6009,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         if (tag.isNotEmpty) ...[
           SizedBox(width: isMobilePlatform ? 2 : 4),
           Text(tag, style: TextStyle(fontSize: isMobilePlatform ? 5 : 9, color: fade(scheme.outline), fontWeight: FontWeight.w600)),
+        ],
+        // 收藏标记：只在收藏项上出现，不给所有芯片加宽度
+        if (isFav) ...[
+          SizedBox(width: isMobilePlatform ? 2 : 3),
+          Icon(Icons.star, size: isMobilePlatform ? 8 : 10, color: fade(scheme.primary)),
         ],
       ]),
     );
@@ -5880,47 +6768,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                 Flexible(
                   child: SingleChildScrollView(
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Wrap(spacing: 6, runSpacing: 6, children: [
-                        _buildToolboxItem(PipelineStepType.start, scheme, s),
-                        _buildToolboxItem(PipelineStepType.output, scheme, s),
-                      ]),
-                      const SizedBox(height: 10),
-                      _categoryLabel(scheme, Icons.videocam_outlined, s.isZh ? '视频' : 'Video'),
-                      const SizedBox(height: 6),
-                      Wrap(spacing: 6, runSpacing: 6, children: [
-                        for (final t in _videoTypes) _buildToolboxItem(t, scheme, s),
-                      ]),
-                      const SizedBox(height: 10),
-                      _categoryLabel(scheme, Icons.audiotrack_outlined, s.isZh ? '音频' : 'Audio'),
-                      const SizedBox(height: 6),
-                      Wrap(spacing: 6, runSpacing: 6, children: [
-                        for (final t in _audioTypes) _buildToolboxItem(t, scheme, s),
-                      ]),
-                      const SizedBox(height: 10),
-                      _categoryLabel(scheme, Icons.image_outlined, s.isZh ? '图片' : 'Image'),
-                      const SizedBox(height: 6),
-                      Wrap(spacing: 6, runSpacing: 6, children: [
-                        for (final t in _imageTypes) _buildToolboxItem(t, scheme, s),
-                      ]),
-                      const SizedBox(height: 10),
-                      _categoryLabel(scheme, Icons.account_tree_outlined, s.isZh ? '逻辑' : 'Logic'),
-                      const SizedBox(height: 6),
-                      Wrap(spacing: 6, runSpacing: 6, children: [
-                        _buildLogicToolboxItem(LogicBlockType.loop, scheme, s),
-                        _buildLogicToolboxItem(LogicBlockType.selectiveLoop, scheme, s),
-                      ]),
-                      const SizedBox(height: 6),
-                      Wrap(spacing: 4, runSpacing: 4, children: [
-                        for (final g in LogicGateType.values) _buildGateToolboxItem(g, scheme, s),
-                      ]),
-                      if (widget.containerInfo != null) ...[
-                        const SizedBox(height: 10),
-                        _categoryLabel(scheme, Icons.folder_special_outlined, s.isZh ? '容器' : 'Container'),
-                        const SizedBox(height: 6),
-                        Wrap(spacing: 6, runSpacing: 6, children: [
-                          for (final t in _containerTypes) _buildToolboxItem(t, scheme, s),
-                        ]),
-                      ],
+                      _buildToolboxSearch(scheme, s, dense: false),
+                      _buildToolboxBody(scheme, s, dense: false),
                     ]),
                   ),
                 ),
@@ -5962,7 +6811,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         Row(children: [
           Icon(
             logicBlock != null
-                ? (logicBlock.type == LogicBlockType.loop ? Icons.repeat : Icons.shuffle)
+                ? (_logicTypeIcon(logicBlock.type))
                 : _stepIcon(node!.type),
             size: 15,
             color: scheme.primary,
@@ -6011,13 +6860,27 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 /// 无限画布背景（屏幕空间底层）：底色铺满整个可视区，网格线在画布坐标系
 /// 内按 [_gridStep] 对齐后经同一变换矩阵绘制到视口 —— 背景永远铺满可视区，
 /// 与世界框尺寸彻底无关，平移/缩放到任何位置都不会出现背景边界。
+///
+/// 每 [majorEvery] 格加重一条「大格线」：只有 40px 的小格时，眼睛没有参照物，
+/// 拖动时难以判断对齐了多少格。
 class _GridPainter extends CustomPainter {
   final Color color;
+  final Color majorColor;
   final Color? fill;
-  /// InteractiveViewer 的当前变换（视口坐标 ↔ 画布坐标）
-  final Matrix4 transform;
-  _GridPainter({required this.color, this.fill, required this.transform, Listenable? repaintListenable})
-      : super(repaint: repaintListenable);
+  /// InteractiveViewer 的变换控制器。**必须在 paint 里读 `.value`**：平移/缩放
+  /// 是 IV 直接改控制器，本 widget 不会随之重建（读快照 = 网格冻在原地、只有
+  /// 节点在动）。`repaint` 监听只负责触发重绘 —— 与 _ConnectionPainter 每帧读
+  /// `_dragDeltas.value` 是同一条路子。
+  final ValueListenable<Matrix4> transformCtrl;
+  /// 每 N 格画一条加重线。
+  static const int majorEvery = 4;
+
+  _GridPainter({
+    required this.color,
+    required this.majorColor,
+    this.fill,
+    required this.transformCtrl,
+  }) : super(repaint: transformCtrl);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -6025,12 +6888,14 @@ class _GridPainter extends CustomPainter {
     if (fill != null) {
       canvas.drawRect(Offset.zero & size, Paint()..color = fill!);
     }
+    final transform = transformCtrl.value;
     // 可视区对应的画布坐标范围（只画视口内的网格线，成本与视口成正比）
     final inv = Matrix4.inverted(transform);
     final tl = MatrixUtils.transformPoint(inv, Offset.zero);
     final br = MatrixUtils.transformPoint(inv, Offset(size.width, size.height));
     final area = Rect.fromPoints(tl, br);
-    final paint = Paint()..color = color..strokeWidth = 0.5;
+    final minor = Paint()..color = color..strokeWidth = 0.5;
+    final major = Paint()..color = majorColor..strokeWidth = 1.0;
     final startX = (area.left / _gridStep).floor() * _gridStep;
     final startY = (area.top / _gridStep).floor() * _gridStep;
     // 切到画布坐标系画线（与节点/连线同一变换，天然对齐）；变换后绘制
@@ -6038,17 +6903,125 @@ class _GridPainter extends CustomPainter {
     canvas.save();
     canvas.transform(transform.storage);
     for (var x = startX; x <= area.right; x += _gridStep) {
-      canvas.drawLine(Offset(x, area.top), Offset(x, area.bottom), paint);
+      final isMajor = (x / _gridStep).round() % majorEvery == 0;
+      canvas.drawLine(Offset(x, area.top), Offset(x, area.bottom), isMajor ? major : minor);
     }
     for (var y = startY; y <= area.bottom; y += _gridStep) {
-      canvas.drawLine(Offset(area.left, y), Offset(area.right, y), paint);
+      final isMajor = (y / _gridStep).round() % majorEvery == 0;
+      canvas.drawLine(Offset(area.left, y), Offset(area.right, y), isMajor ? major : minor);
     }
     canvas.restore();
   }
 
-  // 变换变化由 repaintListenable（_transformCtrl）驱动；此处只比对颜色配置
+  // 变换变化由 repaint（transformCtrl）驱动；此处只比对颜色配置
   @override
-  bool shouldRepaint(_GridPainter old) => old.color != color || old.fill != fill;
+  bool shouldRepaint(_GridPainter old) =>
+      old.color != color || old.majorColor != majorColor || old.fill != fill;
+}
+
+// ── 画布小地图 ──
+
+/// 小地图投影：把「内容包围盒（画布坐标）」等比铺进给定尺寸的小地图矩形。
+///
+/// 手势与画笔必须用同一份映射（否则点哪儿跳哪儿对不上），所以抽成一个
+/// 不可变对象，由 [toMini] / [toCanvas] 两个方向共用。
+class _MiniMapProjection {
+  /// 小地图四周留白（像素）。全项目从未传过其它值，故收敛为类级常量：
+  /// 留作可选构造参数会被 analyzer 判为 `UNUSED_ELEMENT_PARAMETER`（死参数），
+  /// 而写成类级常量后调用点写法完全不变。
+  static const double inset = 3;
+  final Rect content;
+  final Size size;
+  late final double k;
+  late final double dx;
+  late final double dy;
+
+  _MiniMapProjection(this.content, this.size) {
+    final w = math.max(1.0, size.width - inset * 2);
+    final h = math.max(1.0, size.height - inset * 2);
+    k = math.min(w / content.width, h / content.height);
+    dx = inset + (w - content.width * k) / 2 - content.left * k;
+    dy = inset + (h - content.height * k) / 2 - content.top * k;
+  }
+
+  Offset toMini(Offset canvasPoint) => Offset(canvasPoint.dx * k + dx, canvasPoint.dy * k + dy);
+
+  Offset toCanvas(Offset miniPoint) => Offset((miniPoint.dx - dx) / k, (miniPoint.dy - dy) / k);
+}
+
+/// 小地图画笔：节点画成实心小圆角块、逻辑块画成描边框，最后叠一个当前视口框。
+class _MiniMapPainter extends CustomPainter {
+  final _MiniMapProjection proj;
+  /// 画布坐标下的可视区（由 paint 时**实时**的变换矩阵算出）
+  final Rect Function() viewRect;
+  final List<Rect> nodeRects;
+  final Color nodeColor;
+  final List<Rect> blockRects;
+  final Color blockColor;
+  final Color viewColor;
+
+  _MiniMapPainter({
+    required this.proj,
+    required this.viewRect,
+    required this.nodeRects,
+    required this.nodeColor,
+    required this.blockRects,
+    required this.blockColor,
+    required this.viewColor,
+    required Listenable repaint,
+  }) : super(repaint: repaint);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final nodePaint = Paint()..color = nodeColor;
+    for (final r in nodeRects) {
+      final a = proj.toMini(r.topLeft);
+      final b = proj.toMini(r.bottomRight);
+      final w = math.max(2.0, b.dx - a.dx);
+      final h = math.max(2.0, b.dy - a.dy);
+      // 节点块最小 2px：缩到 0.3 倍时节点框在小地图里只剩一个点
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(Rect.fromLTWH(a.dx, a.dy, w, h), const Radius.circular(1.5)),
+        nodePaint,
+      );
+    }
+    final blockPaint = Paint()
+      ..color = blockColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+    for (final r in blockRects) {
+      final a = proj.toMini(r.topLeft);
+      final b = proj.toMini(r.bottomRight);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(a.dx, a.dy, math.max(3.0, b.dx - a.dx), math.max(3.0, b.dy - a.dy)),
+          const Radius.circular(2),
+        ),
+        blockPaint,
+      );
+    }
+    // 视口框：用实时变换算，平移/缩放时直接跟着走（无需重建 widget）
+    final vr = viewRect();
+    final va = proj.toMini(vr.topLeft);
+    final vb = proj.toMini(vr.bottomRight);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTRB(va.dx, va.dy, math.max(va.dx + 4, vb.dx), math.max(va.dy + 4, vb.dy)),
+        const Radius.circular(2),
+      ),
+      Paint()
+        ..color = viewColor
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.4,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_MiniMapPainter old) =>
+      old.nodeRects.length != nodeRects.length ||
+      old.blockRects.length != blockRects.length ||
+      old.proj.content != proj.content ||
+      old.proj.size != proj.size;
 }
 
 // ── 连线绘制 ──
@@ -6860,7 +7833,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       context: context,
       builder: (dCtx) => AlertDialog(
         title: Text(s.isZh ? 'AI 请求执行操作' : 'AI requests to run an action',
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
         content: Text(
           s.isZh ? 'AI 想执行: $desc\n\n确定允许吗？' : 'AI wants to: $desc\n\nAllow it?',
           style: const TextStyle(fontSize: 12),
@@ -7002,13 +7975,13 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
           run(() async {
             final purpose = parts.length >= 2 ? parts[1] : '';
             final exts = parts.length >= 3 ? parts[2].split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList() : null;
-            final r = await FilePicker.platform.pickFiles(
+            final picked = await FilePicker.pickFile(
               type: exts == null || exts.isEmpty ? FileType.any : FileType.custom,
               allowedExtensions: exts,
               dialogTitle: purpose.isEmpty ? (widget.strings.isZh ? '请选择一个文件' : 'Pick a file') : purpose,
             );
-            if (r != null && r.files.isNotEmpty && r.files.first.path != null) {
-              _addToolResult('pick_file', 'User picked: ${r.files.first.path}');
+            if (picked?.path != null) {
+              _addToolResult('pick_file', 'User picked: ${picked!.path}');
             } else {
               _addToolResult('pick_file', 'User cancelled file selection');
             }
@@ -7926,7 +8899,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
   /// 而不是盖在整个面板上（盖整个面板会连底部输入行一起遮住，
   /// 侧栏展开时用户连「发送」都点不到）。
   Widget _buildChatBody(ColorScheme scheme, AppStrings s, {Widget? messageOverlay}) {
-    final btn = AppControlSize.comfortable;
+    const btn = AppControlSize.comfortable;
     // 移动端输入框做成多行自适应。桌面端有物理 Enter（onSubmitted 直接发送）更快；
     // 移动端软键盘换行只能靠 ↵ 键，写死单行等于「长描述只能挤成一行横着滚」。
     final int maxInputLines = isMobilePlatform ? 4 : 1;

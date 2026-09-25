@@ -1,22 +1,24 @@
 import 'dart:async';
 import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
 import '../models/models.dart';
+import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
-import '../theme/app_theme.dart';
-import '../theme/app_semantic_colors.dart';
 import '../services/system_monitor.dart';
-import '../theme/app_strings.dart';
 // 控件高度档位令牌：顶栏几颗动作按钮统一按 regular 档取高度与图标尺寸
 import '../theme/app_control_size.dart';
-import '../widgets/task_card.dart';
+import '../theme/app_semantic_colors.dart';
+import '../theme/app_strings.dart';
+import '../theme/app_theme.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_glass_pill.dart';
-import '../widgets/mobile_ui.dart';
-import '../platform/app_platform.dart';
 // 生效的菜单栏位置（底部 ↔ 左右竖排导轨）：列表底部留白随之在 96 / 20 间切换
 import '../widgets/mobile_nav_scope.dart';
+import '../widgets/mobile_ui.dart';
+import '../widgets/task_card.dart';
 
 /// 队列页刷新依赖：任务列表版本号（已含节流）+ 界面语言。
 /// 不再用 Consumer 订阅整个 AppState——日志/探测/配置等无关 notify
@@ -69,6 +71,10 @@ class _QueuePageState extends State<QueuePage> {
       selector: (_, s) => _QueueKey(s.tasksVersion, s.config.language),
       builder: (context, _, _) {
         final state = context.read<AppState>();
+        // 构建期取一次快照：下面「空态判断 / 长度 / 逐项取卡片」共读 4 次。
+        // tasks 已是零拷贝视图（见 AppState.tasks），但显式取一次更直白，
+        // 也避免将来有人把 getter 改回 List.unmodifiable 时又退化成 4 次拷贝。
+        final tasks = state.tasks;
         final s = AppStrings.of(state.config.language);
         return Scaffold(
           backgroundColor: Colors.transparent,
@@ -77,7 +83,7 @@ class _QueuePageState extends State<QueuePage> {
             isMobilePlatform
                 ? Padding(
                     padding: EdgeInsets.only(top: MobileUi.pageTopPadding(context)),
-                    child: state.tasks.isEmpty
+                    child: tasks.isEmpty
                         ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
                             Icon(Icons.inbox_outlined, size: 64, color: scheme.outline),
                             const SizedBox(height: 16),
@@ -91,8 +97,8 @@ class _QueuePageState extends State<QueuePage> {
                             addRepaintBoundaries: false,
                             padding: MobileUi.mainListPadding(
                                 placement: MobileNavPlacementScope.of(context)),
-                            itemCount: state.tasks.length,
-                            itemBuilder: (_, i) => _taskCardFor(state, i),
+                            itemCount: tasks.length,
+                            itemBuilder: (_, i) => _taskCardFor(tasks, i),
                           ),
                   )
                 : Column(children: [
@@ -102,7 +108,7 @@ class _QueuePageState extends State<QueuePage> {
                       actions: _buildActions(scheme, state, s),
                     ),
                     Expanded(
-                      child: state.tasks.isEmpty
+                      child: tasks.isEmpty
                           ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
                               Icon(Icons.inbox_outlined, size: 64, color: scheme.outline),
                               const SizedBox(height: 16),
@@ -116,8 +122,8 @@ class _QueuePageState extends State<QueuePage> {
                                 // _WallpaperWindowPainter）
                                 addRepaintBoundaries: false,
                                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                                itemCount: state.tasks.length,
-                                itemBuilder: (_, i) => _taskCardFor(state, i),
+                                itemCount: tasks.length,
+                                itemBuilder: (_, i) => _taskCardFor(tasks, i),
                               ),
                             ),
                     ),
@@ -139,8 +145,9 @@ class _QueuePageState extends State<QueuePage> {
   /// 取第 i 个任务的卡片 widget：任务实例未变时复用缓存的 widget 实例
   /// （框架对 identical 的 widget 跳过重建），进度心跳下只有真正变化的
   /// 卡片会重建，而不是整列 20~50 张卡片每 300ms 全量重建。
-  TaskCard _taskCardFor(AppState state, int i) {
-    final tasks = state.tasks;
+  ///
+  /// [tasks] 由调用方传入构建期取好的同一份快照（见 build 内注释）。
+  TaskCard _taskCardFor(List<TaskInfo> tasks, int i) {
     // 任务列表缩短时裁掉尾部缓存
     if (_taskCardWidgets.length > tasks.length) {
       _taskCardWidgets.removeRange(tasks.length, _taskCardWidgets.length);
@@ -174,7 +181,7 @@ class _QueuePageState extends State<QueuePage> {
   /// 改造前三颗是主题默认高度、图标 16 / 18 / 16 / 16 三种，「开始处理」还比
   /// 旁边两颗高出一档，并排看像不是一个组的。
   List<Widget> _buildActions(ColorScheme scheme, AppState state, AppStrings s) {
-    final size = AppControlSize.regular;
+    const size = AppControlSize.regular;
     return [
       if (state.processing)
         OutlinedButton.icon(

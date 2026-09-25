@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
-import 'editor_kit.dart';
+
 import '../app_slider.dart';
+import 'editor_kit.dart';
 
 class AudioCompressorStepEditor extends ParamsStepEditor {
   const AudioCompressorStepEditor({super.key, required super.params, required super.onChanged, super.isZh = true});

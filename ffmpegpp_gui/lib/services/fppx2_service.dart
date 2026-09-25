@@ -41,7 +41,7 @@ class FppxService {
       try {
         graph = PipelineGraph.fromJson(graphJson);
       } catch (_) {
-        return FppxImportResult(
+        return const FppxImportResult(
           success: false,
           error: '节点图数据解析失败',
         );

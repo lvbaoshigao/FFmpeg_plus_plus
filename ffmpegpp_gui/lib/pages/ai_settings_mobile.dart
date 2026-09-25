@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
 import '../models/models.dart';
 import '../providers/app_state.dart';
-import '../theme/app_strings.dart';
-import '../theme/app_semantic_colors.dart';
 // 控件高度档位令牌：本页原有 34 / 40 / 42 / 44 四档按钮高度并存，
 // 统一到 comfortable（卡片内表单/行内按钮）与 large（通栏主行动按钮）两档
 import '../theme/app_control_size.dart';
+import '../theme/app_semantic_colors.dart';
+import '../theme/app_strings.dart';
 import '../widgets/app_card.dart';
 import '../widgets/app_slider.dart';
 import '../widgets/mobile_bottom_nav.dart';
@@ -14,13 +15,13 @@ import '../widgets/mobile_glass_pill.dart';
 import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_ui.dart';
 import '../widgets/toast.dart';
+import '../widgets/wallpaper_background.dart';
 import 'settings_page.dart'
     show
         applyProfilePreset,
         fetchAiBalance,
         listAiModels,
         pingAi;
-import '../widgets/wallpaper_background.dart';
 
 /// 询问模式下可选「无需确认」的操作内部 key —— 与桌面端一致。
 ///

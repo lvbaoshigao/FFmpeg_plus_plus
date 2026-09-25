@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
-import 'editor_kit.dart';
+
 import '../app_slider.dart';
+import 'editor_kit.dart';
 
 class AudioSpeedStepEditor extends ParamsStepEditor {
   const AudioSpeedStepEditor({super.key, required super.params, required super.onChanged, super.isZh});

@@ -1,0 +1,77 @@
+name: Quality Gate
+
+# ══════════════════════════════════════════════════════════════════
+# 静态分析 + 单元测试门禁
+#
+# 背景（2026-09-25 代码审查的 P0-3）：此前 CI 只有 build-release /
+# debug-build 两个 workflow，两者都是 `workflow_dispatch` 手动触发，
+# 步骤里只有 `flutter build <platform> --release`。后果：
+#   1) `flutter analyze` 从未在 CI 跑过 —— 编译能过 ≠ 分析器干净。
+#      「未使用导入 / 死参数 / 类型不兼容 / lint 违规」这类问题不会被
+#      `flutter build` 拦下，而 analyzer 的定位信息远比构建报错友好
+#      （历史上 `AppControlSize.buttonStyle` 的 shape 类型、`_StylePreset.apply`
+#      的返回类型都是被 analyzer 抓出来的真编译错误）。
+#   2) `test/` 下的测试文件从未在 CI 执行过。「设置页 Selector 签名漏字段
+#      → 开关点了没反应」已复发三次（字重 / noPreload·debugMode /
+#      mcpEnabled·aiAskSkipTools），这类问题本可被断言测试拦住。
+#   3) 日常 push 不触发任何检查，只能靠用户反馈发现问题。
+#
+# 因此本 workflow 挂在 push / pull_request 上（构建流程仍保持手动触发，
+# 因为它要跑 4 个平台、耗时以十分钟计）。跨 workflow 无法使用 `needs`，
+# 所以这里是独立的门禁而非构建 job 的前置条件。
+# ══════════════════════════════════════════════════════════════════
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - 'ffmpegpp_gui/**'
+      - '.github/workflows/quality.yml'
+  pull_request:
+    paths:
+      - 'ffmpegpp_gui/**'
+  workflow_dispatch:
+
+jobs:
+  analyze-and-test:
+    runs-on: ubuntu-24.04
+
+    # 所有 run 步骤默认在 flutter 包目录下执行（仓库根是 C++ 后端 + 多平台工程）
+    defaults:
+      run:
+        working-directory: ffmpegpp_gui
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+          pub-cache: true
+
+      - name: Cache pub dependencies
+        uses: actions/cache@v5
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-pub-${{ hashFiles('ffmpegpp_gui/pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Static analysis
+        # 底线是 error 必须为 0 —— 这正是「调用点存在、方法定义被静默丢失」
+        # 与「漏 import 导致类型未定义」这类问题的拦截线（2026-09-25 实测：
+        # pipeline_editor_page.dart 缺 foundation 导入使 ValueListenable 未定义，
+        # 4 个测试文件连编译都过不去，而任何 make 工作流都不会发现）。
+        #
+        # info / warning 暂只报告不阻断：仓库当前还有 WIP 遗留的未引用声明，
+        # 门禁若一上线就是红的只会被无视。等这些清理完，把本行收严为
+        # `flutter analyze --no-fatal-infos`（即 warning 也阻断）。
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Unit & widget tests
+        run: flutter test --reporter expanded

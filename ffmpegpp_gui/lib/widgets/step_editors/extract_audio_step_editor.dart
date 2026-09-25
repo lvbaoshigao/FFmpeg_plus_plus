@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
+
 import '../../services/ffmpeg_installer.dart';
-import 'editor_kit.dart';
 import '../app_slider.dart';
+import 'editor_kit.dart';
 
 class ExtractAudioStepEditor extends ParamsStepEditor {
   final String videoPath;
@@ -171,7 +173,7 @@ class _ExtractAudioStepEditorState extends State<ExtractAudioStepEditor> with St
             update('extract_mode', v.first);
             if (v.first == 'full') _stopPreview();
           },
-          style: ButtonStyle(visualDensity: VisualDensity.compact),
+          style: const ButtonStyle(visualDensity: VisualDensity.compact),
         ),
         const SizedBox(height: 8),
 

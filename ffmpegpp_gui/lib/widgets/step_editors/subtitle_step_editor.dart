@@ -1,8 +1,9 @@
-import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+
+import '../app_slider.dart';
 import '../font_picker.dart';
 import 'editor_kit.dart';
-import '../app_slider.dart';
 
 class SubtitleStepEditor extends ParamsStepEditor {
   final List<dynamic> embeddedSubtitles;
@@ -43,14 +44,13 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> with StepEditor
   }
 
   Future<void> _pickSubtitleFile() async {
-    final result = await FilePicker.platform.pickFiles(
+    final picked = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: ['srt', 'ass', 'ssa', 'sub', 'vtt'],
     );
-    if (result != null && result.files.isNotEmpty && result.files.first.path != null) {
-      if (!mounted) return;
-      update('subtitle_file', result.files.first.path!);
-    }
+    if (picked?.path == null) return;
+    if (!mounted) return;
+    update('subtitle_file', picked!.path!);
   }
 
   void _pickColor(String key) {
@@ -281,7 +281,7 @@ class _ColorPickerDialogState extends State<_ColorPickerDialog> {
               controller: _hexCtrl, decoration: const InputDecoration(isDense: true, labelText: 'HEX',
                 border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
               onChanged: (v) {
-                var hex = v.replaceAll('#', '');
+                final hex = v.replaceAll('#', '');
                 if (hex.length == 6) {
                   final c = Color(int.tryParse('FF$hex', radix: 16) ?? 0xFFFFFFFF);
                   final hsv = HSVColor.fromColor(c);

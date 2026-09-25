@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
+import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import '../widgets/app_card.dart';
@@ -7,7 +9,6 @@ import '../widgets/glass_panel.dart';
 import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_ui.dart';
 import '../widgets/wallpaper_background.dart';
-import '../platform/app_platform.dart';
 
 /// 一条广告数据。
 ///

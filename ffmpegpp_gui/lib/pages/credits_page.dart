@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../providers/app_state.dart';
-import '../theme/app_strings.dart';
-import '../widgets/wallpaper_background.dart';
+
 import '../platform/app_platform.dart';
+import '../providers/app_state.dart';
+import '../services/shell_open.dart';
+import '../theme/app_strings.dart';
 import '../widgets/app_card.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_ui.dart';
-import '../services/shell_open.dart';
+import '../widgets/wallpaper_background.dart';
 
 /// 「引用」页：列出本应用使用的第三方开源项目并致谢。
 class CreditsPage extends StatelessWidget {

@@ -1,14 +1,20 @@
 import 'dart:io';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+
 import '../models/models.dart';
 import '../providers/app_state.dart';
-import '../services/thumbnail_service.dart';
 import '../services/shell_open.dart';
-import '../theme/app_strings.dart';
+import '../services/thumbnail_service.dart';
 import '../theme/app_semantic_colors.dart';
+import '../theme/app_strings.dart';
+import '../theme/app_theme.dart';
 import 'app_card.dart';
 import 'app_slider.dart';
+import 'toast.dart';
 
 /// 后端流水线步骤 action → 本地化名称。
 /// 详细进度（节点圆圈、tooltip）不再直接展示英文 action 名。
@@ -56,6 +62,17 @@ String _dashIfNa(String v, bool isZh) {
   return t;
 }
 
+/// 秒 → `MM:SS` / `HH:MM:SS`（媒体时长展示用）。
+String _fmtSeconds(double seconds) {
+  if (seconds <= 0 || !seconds.isFinite) return '—';
+  final total = seconds.round();
+  final h = total ~/ 3600;
+  final m = (total % 3600) ~/ 60;
+  final sec = total % 60;
+  String two(int v) => v.toString().padLeft(2, '0');
+  return h > 0 ? '${two(h)}:${two(m)}:${two(sec)}' : '${two(m)}:${two(sec)}';
+}
+
 /// 队列卡片里进度条的高度。
 ///
 /// 不复用全局的 [kAppTrackHeight]（16）：那是**滑块轨道**的规格 —— 滑块需要一根
@@ -78,6 +95,12 @@ const double kQueueFsLabel = 11;
 const double kQueueFsValue = 12;
 const double kQueueFsSection = 13;
 
+/// 展开详情里相邻区块的垂直间距。
+///
+/// 改造前是「有的地方 16、有的地方 8、靠 Divider 撑」，六个区块的节奏完全不一致；
+/// 统一成一个常量，靠 _SectionTitle 的字号层级而不是间距差来表达分组关系。
+const double kQueuePanelGap = 14;
+
 /// 任务卡片：双进度条 + 可展开的节点微型画布
 class TaskCard extends StatelessWidget {
   final TaskInfo task;
@@ -85,8 +108,7 @@ class TaskCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final scheme = Theme.of(context).colorScheme;
     // 不订阅整个 AppState（context.watch）：进度心跳/日志/探测等 notify 会
     // 让每张卡片高频重建。这里只 select 真正影响渲染的两个稳定值（语言、
     // ffmpeg 路径）；任务数据由父级以不可变 TaskInfo 实例传入，任务变化时
@@ -244,7 +266,7 @@ class TaskCard extends StatelessWidget {
         ),
         AnimatedCrossFade(
           firstChild: const SizedBox(width: double.infinity),
-          secondChild: _expanded(context, s, clr, scheme),
+          secondChild: _expanded(context, s, scheme),
           crossFadeState: task.expanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
           duration: const Duration(milliseconds: 250),
         ),
@@ -288,117 +310,102 @@ class TaskCard extends StatelessWidget {
     );
   }
 
-  Widget _expanded(BuildContext ctx, AppStrings s, Color clr, ColorScheme scheme) => Padding(
-    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Divider(height: 24),
+  // ═══════════════════════════════════════════
+  // 展开详情（2026-09-25 重排）
+  //
+  // 旧版式是「错误框 → 流水线 → 文件信息 → 技术参数 → 折叠的高级信息」竖直堆叠，
+  // 全部用同一种标题（图标 + 13px 文字），区块间距 16/8/靠 Divider 混用，
+  // 内嵌块圆角在 6/8/10 之间跳、底色 alpha 在 30/40/60/80 之间跳。
+  // 新结构：
+  //   ① 概览条（状态 + 进度 + 耗时/时长/速度）—— 点开卡片最先想知道的东西
+  //   ② 错误面板（仅失败）
+  //   ③ 处理流水线（时间轴：圆环进度 + 连接线 + 序号）
+  //   ④ 文件信息（输入/输出，带打开与定位按钮）
+  //   ⑤ 技术参数（FPS / 码率 / 大小 / 帧数，按卡片实际宽度算列数）
+  //   ⑥ 命令与日志（可折叠，带复制）
+  // ═══════════════════════════════════════════
 
-      // 失败任务：完整错误信息直接置顶展示（不再只埋在「高级信息」折叠区里），
-      // 并自动展开含日志的高级信息区，点开卡片即可排查。
-      if (task.status == TaskStatus.failed && task.error != null) ...[
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: scheme.errorContainer.withAlpha(60),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: scheme.error.withAlpha(80)),
-          ),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Icon(Icons.error_outline, size: 16, color: scheme.error),
-              const SizedBox(width: 6),
-              Text(s.qErrorDetails,
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.error)),
-            ]),
-            const SizedBox(height: 8),
-            SelectableText(task.error!,
-                style: TextStyle(fontSize: 12, color: scheme.onErrorContainer, height: 1.4)),
-          ]),
-        ),
-        const SizedBox(height: 16),
-      ],
+  Widget _expanded(BuildContext ctx, AppStrings s, ColorScheme scheme) {
+    final zh = s.language == 'zh';
+    final calls = task.pipelineCalls;
+    final hasPipeline = calls != null && calls.isNotEmpty;
+    final hasLogs = task.command != null || task.logLines.isNotEmpty || task.error != null;
 
-      // 节点流水线区域
-      if (task.pipelineCalls != null && task.pipelineCalls!.isNotEmpty) ...[
-        _SectionTitle(
-          icon: Icons.account_tree,
-          title: s.qPipeline,
-          scheme: scheme,
-        ),
-        const SizedBox(height: 8),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: scheme.surfaceContainerHighest.withAlpha(60),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _NodeMiniCanvas(
-                calls: task.pipelineCalls!,
-                callProgresses: task.callProgresses,
-                currentCallIndex: task.currentCallIndex,
-                status: task.status,
-                zh: s.language == 'zh',
-              ),
-              const SizedBox(height: 8),
-              _PipelineLegend(scheme: scheme, s: s),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-      ],
-      
-      // 文件信息区域
-      _SectionTitle(
-        icon: Icons.folder,
-        title: s.qFileInfo,
-        scheme: scheme,
-      ),
-      const SizedBox(height: 8),
-      _FileInfoCard(
-        input: task.inputPath,
-        output: task.outputPath,
-        scheme: scheme,
-        s: s,
-      ),
-      const SizedBox(height: 16),
-      
-      // 技术参数区域
-      _SectionTitle(
-        icon: Icons.speed,
-        title: s.qTechStats,
-        scheme: scheme,
-      ),
-      const SizedBox(height: 8),
-      _StatsGrid(
-        stats: [
-          (s.qFps, _dashIfNa(task.fps, s.isZh), Icons.videocam),
-          (s.qBitrate, _dashIfNa(task.bitrate, s.isZh), Icons.trending_up),
-          (s.qSize, task.outputSize == null ? s.qNone : task.outputSizeStr, Icons.storage),
+    return Padding(
+      // 12 与卡片自身的内边距对齐。旧实现外层 12、展开区内层 16，
+      // 展开后正文比标题右缩进 4px，整块看着是「歪的」。
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        const Divider(height: 20),
+
+        // ① 概览
+        _SummaryBar(task: task, scheme: scheme, s: s),
+
+        // ② 错误
+        if (task.status == TaskStatus.failed && task.error != null) ...[
+          const SizedBox(height: kQueuePanelGap),
+          _ErrorPanel(message: task.error!, scheme: scheme, s: s),
         ],
-        scheme: scheme,
-      ),
-      
-      // 高级信息区域（可折叠）
-      if (task.command != null || task.logLines.isNotEmpty || task.error != null) ...[
-        const SizedBox(height: 16),
-        _AdvancedInfoSection(
-          command: task.command,
-          logLines: task.logLines,
-          error: task.error,
+
+        // ③ 流水线
+        if (hasPipeline) ...[
+          const SizedBox(height: kQueuePanelGap),
+          _SectionTitle(
+            icon: Icons.account_tree,
+            title: s.qPipeline,
+            scheme: scheme,
+            trailing: _CountBadge(text: '${calls.length} ${s.qSteps}', scheme: scheme),
+          ),
+          const SizedBox(height: 8),
+          _PanelBox(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              _NodeTimeline(
+                calls: calls,
+                progresses: task.callProgresses,
+                currentIndex: task.currentCallIndex,
+                status: task.status,
+                zh: zh,
+              ),
+              const SizedBox(height: 10),
+              _PipelineLegend(scheme: scheme, s: s),
+            ]),
+          ),
+        ],
+
+        // ④ 文件信息
+        const SizedBox(height: kQueuePanelGap),
+        _SectionTitle(icon: Icons.folder_outlined, title: s.qFileInfo, scheme: scheme),
+        const SizedBox(height: 8),
+        _FileInfoPanel(task: task, s: s, scheme: scheme),
+
+        // ⑤ 技术参数
+        const SizedBox(height: kQueuePanelGap),
+        _SectionTitle(icon: Icons.speed, title: s.qTechStats, scheme: scheme),
+        const SizedBox(height: 8),
+        _StatsGrid(
+          stats: [
+            (s.qFps, _dashIfNa(task.fps, s.isZh), Icons.videocam_outlined),
+            (s.qBitrate, _dashIfNa(task.bitrate, s.isZh), Icons.trending_up),
+            (s.qSize, task.outputSize == null ? s.qNone : task.outputSizeStr, Icons.storage),
+            (s.qFrames, task.frame > 0 ? '${task.frame}' : s.qNone, Icons.filter_frames),
+          ],
           scheme: scheme,
-          s: s,
         ),
-      ],
-    ]),
-  );
 
-
+        // ⑥ 命令与日志
+        if (hasLogs) ...[
+          const SizedBox(height: kQueuePanelGap),
+          _LogsPanel(
+            command: task.command,
+            logLines: task.logLines,
+            error: task.error,
+            scheme: scheme,
+            s: s,
+          ),
+        ],
+      ]),
+    );
+  }
 
   Widget _chip(IconData icon, String text, ColorScheme scheme) => Row(mainAxisSize: MainAxisSize.min, children: [
     Icon(icon, size: 12, color: scheme.outline), const SizedBox(width: 3),
@@ -428,16 +435,52 @@ class TaskCard extends StatelessWidget {
   };
 }
 
-/// 章节标题
+/// 详情里所有内嵌块的统一容器。
+///
+/// 改造前四个区块各写一遍 decoration：圆角 6 / 8 / 10 三种、底色
+/// `surfaceContainerHighest.withAlpha(30 / 40 / 60 / 80)` 四种、描边有的有一半没有。
+/// 统一成「10 圆角 + 40 alpha 底 + 70 alpha 细描边」一套语言。
+class _PanelBox extends StatelessWidget {
+  final Widget child;
+  final EdgeInsetsGeometry padding;
+  final Color? color;
+  final Color? borderColor;
+
+  const _PanelBox({
+    required this.child,
+    this.padding = const EdgeInsets.all(12),
+    this.color,
+    this.borderColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: padding,
+      decoration: BoxDecoration(
+        color: color ?? cs.surfaceContainerHighest.withAlpha(40),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: borderColor ?? cs.outlineVariant.withAlpha(70)),
+      ),
+      child: child,
+    );
+  }
+}
+
+/// 章节标题（图标 + 标题 + 右侧可选徽标）。
 class _SectionTitle extends StatelessWidget {
   final IconData icon;
   final String title;
   final ColorScheme scheme;
-  
+  final Widget? trailing;
+
   const _SectionTitle({
     required this.icon,
     required this.title,
     required this.scheme,
+    this.trailing,
   });
 
   @override
@@ -446,16 +489,320 @@ class _SectionTitle extends StatelessWidget {
       children: [
         Icon(icon, size: 16, color: scheme.primary),
         const SizedBox(width: 6),
-        Text(
-          title,
-          style: TextStyle(
-            fontSize: kQueueFsSection,
-            fontWeight: FontWeight.w600,
-            color: scheme.onSurface,
+        Expanded(
+          child: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: kQueueFsLevelTitle,
+              fontWeight: FontWeight.w600,
+              color: scheme.onSurface,
+            ),
           ),
         ),
+        ?trailing,
       ],
     );
+  }
+}
+
+/// 区块标题字号（13）。与 [_SectionTitle] 配套，留成常量方便统一调。
+const double kQueueFsLevelTitle = kQueueFsSection;
+
+/// 小徽标：如「12 步骤」。
+class _CountBadge extends StatelessWidget {
+  final String text;
+  final ColorScheme scheme;
+
+  const _CountBadge({required this.text, required this.scheme});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: scheme.primary.withAlpha(18),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: scheme.primary),
+      ),
+    );
+  }
+}
+
+/// 概览条：状态 + 进度百分比 + 一行关键指标（耗时 / 总时长 / 速度）。
+///
+/// 旧版式里「耗时」根本没展示（`elapsed` 字段一直有值但没人用），
+/// 「总时长」「大小」埋在技术参数网格里和 FPS、码率同级 —— 用户点开卡片最想知道的
+/// 就是「跑了多久、要多长时间」，全部提上来。
+class _SummaryBar extends StatelessWidget {
+  final TaskInfo task;
+  final ColorScheme scheme;
+  final AppStrings s;
+
+  const _SummaryBar({required this.task, required this.scheme, required this.s});
+
+  @override
+  Widget build(BuildContext context) {
+    final zh = s.isZh;
+    final color = switch (task.status) {
+      TaskStatus.pending => scheme.sem.neutral,
+      TaskStatus.processing => scheme.sem.warning,
+      TaskStatus.completed => scheme.sem.success,
+      TaskStatus.failed => scheme.sem.danger,
+      TaskStatus.cancelled => scheme.sem.warning,
+    };
+    final icon = switch (task.status) {
+      TaskStatus.pending => Icons.schedule,
+      TaskStatus.processing => Icons.sync,
+      TaskStatus.completed => Icons.check_circle,
+      TaskStatus.failed => Icons.error,
+      TaskStatus.cancelled => Icons.cancel,
+    };
+    final label = switch (task.status) {
+      TaskStatus.pending => s.pending,
+      TaskStatus.processing => s.processing,
+      TaskStatus.completed => s.completed,
+      TaskStatus.failed => s.failed,
+      TaskStatus.cancelled => s.cancelled,
+    };
+    final String sub = switch (task.status) {
+      TaskStatus.pending => zh ? '等待开始处理' : 'Waiting to start',
+      TaskStatus.processing => '${s.remaining} ${_dashIfNa(task.remaining, zh)}',
+      TaskStatus.completed => zh ? '输出已写入下方路径' : 'Output written to the path below',
+      TaskStatus.failed => zh ? '任务中断，错误详情见下方' : 'Task aborted — see error below',
+      TaskStatus.cancelled => zh ? '已被手动取消' : 'Cancelled manually',
+    };
+
+    final metrics = <Widget>[];
+    if (task.elapsed.trim().isNotEmpty) {
+      metrics.add(_metric(Icons.timer_outlined, s.qElapsed, _dashIfNa(task.elapsed, zh)));
+    }
+    if (task.duration != null && task.duration! > 0) {
+      metrics.add(_metric(Icons.movie_outlined, s.qDuration, _fmtSeconds(task.duration!)));
+    }
+    if (task.speed.trim().isNotEmpty) {
+      metrics.add(_metric(Icons.speed, zh ? '速度' : 'Speed', _dashIfNa(task.speed, zh)));
+    }
+
+    final showPercent = task.status != TaskStatus.pending;
+
+    return _PanelBox(
+      color: color.withAlpha(16),
+      borderColor: color.withAlpha(56),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(icon, size: 18, color: color),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: color),
+            ),
+          ),
+          if (showPercent)
+            Text(
+              '${task.progress.toStringAsFixed(0)}%',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: color),
+            ),
+        ]),
+        const SizedBox(height: 3),
+        Text(sub, style: TextStyle(fontSize: kQueueFsLabel, color: scheme.onSurfaceVariant)),
+        if (metrics.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Wrap(spacing: 14, runSpacing: 6, children: metrics),
+        ],
+      ]),
+    );
+  }
+
+  Widget _metric(IconData icon, String label, String value) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: scheme.outline),
+          const SizedBox(width: 4),
+          Text('$label ', style: TextStyle(fontSize: kQueueFsLabel, color: scheme.outline)),
+          Text(value,
+              style: TextStyle(
+                  fontSize: kQueueFsValue, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+        ],
+      );
+}
+
+/// 失败任务的全量错误面板（原「卡片展开区顶部的红框」，抽出成组件）。
+class _ErrorPanel extends StatelessWidget {
+  final String message;
+  final ColorScheme scheme;
+  final AppStrings s;
+
+  const _ErrorPanel({required this.message, required this.scheme, required this.s});
+
+  @override
+  Widget build(BuildContext context) {
+    return _PanelBox(
+      color: scheme.errorContainer.withAlpha(60),
+      borderColor: scheme.error.withAlpha(80),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(Icons.error_outline, size: 16, color: scheme.error),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(s.qErrorDetails,
+                style: TextStyle(
+                    fontSize: kQueueFsSection, fontWeight: FontWeight.w600, color: scheme.error)),
+          ),
+          _CopyButton(text: message, label: s.qCopy, scheme: scheme),
+        ]),
+        const SizedBox(height: 6),
+        SelectableText(message,
+            style: TextStyle(fontSize: kQueueFsValue, color: scheme.onErrorContainer, height: 1.5)),
+      ]),
+    );
+  }
+}
+
+/// 文件信息面板：输入 / 输出各一行，行首是图标 + 标签 + 右侧快捷操作。
+///
+/// 旧实现是「标签 10px + 路径 11px」两段各写一遍（改一处必漏另一处），而且
+/// 路径用的是 `SelectableText(maxLines: 2)` —— **没给 overflow**，超长路径会被硬裁
+/// 在中途（出现半个字）。现在：标签与图标对齐同一档、路径超出显示省略号、
+/// 完整值挂在 Tooltip 上，并在标签行右侧给出「打开文件夹 / 打开文件」。
+class _FileInfoPanel extends StatelessWidget {
+  final TaskInfo task;
+  final AppStrings s;
+  final ColorScheme scheme;
+
+  const _FileInfoPanel({required this.task, required this.s, required this.scheme});
+
+  Widget _pathRow(IconData icon, String label, String path, {List<Widget> actions = const []}) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(icon, size: 13, color: scheme.outline),
+            const SizedBox(width: 5),
+            Text(label,
+                style: TextStyle(
+                    fontSize: kQueueFsLabel, color: scheme.outline, fontWeight: FontWeight.w600)),
+            const Spacer(),
+            ...actions,
+          ]),
+          const SizedBox(height: 3),
+          Tooltip(
+            message: path,
+            child: Text(path,
+                maxLines: 2, overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: kQueueFsValue, height: 1.4, color: scheme.onSurface)),
+          ),
+        ],
+      );
+
+  Widget _action(IconData icon, String tooltip, VoidCallback onTap, {bool enabled = true}) => IconButton(
+        icon: Icon(icon, size: 16),
+        tooltip: tooltip,
+        color: scheme.primary,
+        visualDensity: VisualDensity.compact,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+        onPressed: enabled ? onTap : null,
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final done = task.status == TaskStatus.completed;
+    return _PanelBox(
+      // 一个 SelectionArea 包住两条路径，替代原先两个 SelectableText：
+      // 少一层 widget，而且两条路径可以跨行一起选中复制。
+      child: SelectionArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _pathRow(Icons.login, s.qInput, task.inputPath, actions: [
+              _action(Icons.folder_open, s.qOpenFolder, () => ShellOpen.reveal(task.inputPath)),
+            ]),
+            const SizedBox(height: 10),
+            Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
+            const SizedBox(height: 10),
+            _pathRow(Icons.logout, s.qOutput, task.outputPath, actions: [
+              _action(Icons.folder_open, s.qOpenFolder, () => ShellOpen.reveal(task.outputPath), enabled: done),
+              _action(Icons.open_in_new, s.qOpenFile, () => ShellOpen.path(task.outputPath), enabled: done),
+            ]),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 技术参数网格。
+///
+/// 列数**按卡片实际宽度**算，不再用 `MediaQuery.sizeOf(context).size.width`：
+/// 那是整屏宽度，窗口侧栏 / 分屏下卡片只有 300~400px 宽却仍被判成「桌面 → 3 列」，
+/// 每列只剩 100px，值全被省略号吃掉（旧实现的实际 bug）。
+class _StatsGrid extends StatelessWidget {
+  final List<(String, String, IconData)> stats;
+  final ColorScheme scheme;
+
+  const _StatsGrid({required this.stats, required this.scheme});
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (context, constraints) {
+      final w = constraints.maxWidth;
+      final cols = w < 300 ? 1 : (w < 520 ? 2 : 4);
+      const gap = 8.0;
+      // -1：Wrap 是按浮点累加判断换行的，正好等于 maxWidth 时会因精度误差多换一行
+      final itemW = math.max(80.0, (w - gap * (cols - 1)) / cols - 1);
+      return Wrap(
+        spacing: gap,
+        runSpacing: gap,
+        children: [
+          for (final (label, value, icon) in stats)
+            SizedBox(
+              width: itemW,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHighest.withAlpha(40),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: scheme.outlineVariant.withAlpha(70)),
+                ),
+                child: Row(children: [
+                  Icon(icon, size: 15, color: scheme.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: kQueueFsLabel, color: scheme.outline)),
+                        const SizedBox(height: 2),
+                        Text(
+                          value.isEmpty ? '—' : value,
+                          style: TextStyle(
+                            fontSize: kQueueFsValue,
+                            fontWeight: FontWeight.w600,
+                            color: scheme.onSurface,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                ]),
+              ),
+            ),
+        ],
+      );
+    });
   }
 }
 
@@ -464,10 +811,7 @@ class _PipelineLegend extends StatelessWidget {
   final ColorScheme scheme;
   final AppStrings s;
 
-  const _PipelineLegend({
-    required this.scheme,
-    required this.s,
-  });
+  const _PipelineLegend({required this.scheme, required this.s});
 
   @override
   Widget build(BuildContext context) {
@@ -475,18 +819,9 @@ class _PipelineLegend extends StatelessWidget {
       spacing: 12,
       runSpacing: 4,
       children: [
-        _LegendItem(
-          color: scheme.sem.neutral,
-          label: s.qLegendPending,
-        ),
-        _LegendItem(
-          color: scheme.sem.warning,
-          label: s.qLegendProcessing,
-        ),
-        _LegendItem(
-          color: scheme.sem.success,
-          label: s.qLegendCompleted,
-        ),
+        _LegendItem(color: scheme.sem.neutral, label: s.qLegendPending),
+        _LegendItem(color: scheme.sem.warning, label: s.qLegendProcessing),
+        _LegendItem(color: scheme.sem.success, label: s.qLegendCompleted),
       ],
     );
   }
@@ -495,11 +830,8 @@ class _PipelineLegend extends StatelessWidget {
 class _LegendItem extends StatelessWidget {
   final Color color;
   final String label;
-  
-  const _LegendItem({
-    required this.color,
-    required this.label,
-  });
+
+  const _LegendItem({required this.color, required this.label});
 
   @override
   Widget build(BuildContext context) {
@@ -507,8 +839,8 @@ class _LegendItem extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 12,
-          height: 12,
+          width: 10,
+          height: 10,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: color.withAlpha(40),
@@ -516,160 +848,25 @@ class _LegendItem extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 4),
-        Text(
-          label,
-          style: TextStyle(fontSize: 10, color: color),
-        ),
+        Text(label, style: TextStyle(fontSize: 10, color: color)),
       ],
     );
   }
 }
 
-/// 文件信息卡片
-class _FileInfoCard extends StatelessWidget {
-  final String input;
-  final String output;
-  final ColorScheme scheme;
-  final AppStrings s;
-
-  const _FileInfoCard({
-    required this.input,
-    required this.output,
-    required this.scheme,
-    required this.s,
-  });
-
-  /// 一行「标签 + 路径」。
-  ///
-  /// 原来输入/输出两段各写一遍（标签 10px + 路径 11px），改一处必漏另一处；
-  /// 而且路径用的是 `SelectableText(maxLines: 2)` —— **没给 overflow**，超长路径
-  /// 会被硬裁在中途（出现半个字），既看不出「被截断了」也复制不到全路径。现在：
-  /// 图标与标签对齐到同一档、路径超出显示省略号、完整值挂在 Tooltip 上。
-  Widget _pathRow(IconData icon, String label, String path) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Row(children: [
-        Icon(icon, size: 13, color: scheme.outline),
-        const SizedBox(width: 5),
-        Text(label,
-            style: TextStyle(
-                fontSize: kQueueFsLabel, color: scheme.outline, fontWeight: FontWeight.w600)),
-      ]),
-      const SizedBox(height: 3),
-      Tooltip(
-        message: path,
-        child: Text(path,
-            maxLines: 2, overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: kQueueFsLabel, height: 1.35, color: scheme.onSurface)),
-      ),
-    ],
-  );
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      // 与流水线容器同规格（surfaceContainerHighest 底 + outlineVariant 细描边）
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withAlpha(40),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
-      ),
-      // 一个 SelectionArea 包住两条路径，替代原先两个 SelectableText：
-      // 少一层 widget，而且两条路径可以跨行一起选中复制。
-      child: SelectionArea(child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _pathRow(Icons.input, s.qInput, input),
-          const SizedBox(height: 10),
-          _pathRow(Icons.output, s.qOutput, output),
-        ],
-      )),
-    );
-  }
-}
-
-/// 技术参数网格
-class _StatsGrid extends StatelessWidget {
-  final List<(String, String, IconData)> stats;
-  final ColorScheme scheme;
-  
-  const _StatsGrid({
-    required this.stats,
-    required this.scheme,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final isMobile = MediaQuery.of(context).size.width < 600;
-    final crossAxisCount = isMobile ? 1 : 3;
-    
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: stats.map((stat) {
-            final (label, value, icon) = stat;
-            return SizedBox(
-              width: constraints.maxWidth / crossAxisCount - (crossAxisCount > 1 ? 8 : 0),
-              child: Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: scheme.surfaceContainerHighest.withAlpha(40),
-                  // 10 与同卡其它内嵌块（文件信息 / 流水线 / 高级信息）一致；
-                  // 原来这里是 6，比它们都更方，一眼看去像另一种控件。
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Row(
-                  children: [
-                    Icon(icon, size: 16, color: scheme.primary),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            label,
-                            // 标签从 10 提到 11：原来标签比同一块里的值（12）小两号，
-                            // 密集网格里看着像没对齐的草稿。
-                            style: TextStyle(fontSize: kQueueFsLabel, color: scheme.outline),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            value.isEmpty ? '-' : value,
-                            style: TextStyle(
-                              fontSize: kQueueFsValue,
-                              fontWeight: FontWeight.w600,
-                              color: scheme.onSurface,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }).toList(),
-        );
-      },
-    );
-  }
-}
-
-/// 高级信息区域（可折叠）
-class _AdvancedInfoSection extends StatefulWidget {
+/// 命令 / 日志区块（可折叠）。
+///
+/// 折叠态标题行右侧显示「N 行」与内容类型徽标，展开后每个代码块都带复制按钮 ——
+/// 旧实现只能全选整段 `SelectableText` 再手动复制，而日志区是独立滚动的，
+/// 在手机上全选一段 200 行的日志几乎做不到。
+class _LogsPanel extends StatefulWidget {
   final List<String>? command;
   final List<String> logLines;
   final String? error;
   final ColorScheme scheme;
   final AppStrings s;
 
-  const _AdvancedInfoSection({
+  const _LogsPanel({
     this.command,
     required this.logLines,
     this.error,
@@ -678,172 +875,187 @@ class _AdvancedInfoSection extends StatefulWidget {
   });
 
   @override
-  State<_AdvancedInfoSection> createState() => _AdvancedInfoSectionState();
+  State<_LogsPanel> createState() => _LogsPanelState();
 }
 
-class _AdvancedInfoSectionState extends State<_AdvancedInfoSection> {
+class _LogsPanelState extends State<_LogsPanel> {
   // 失败任务自动展开：用户点开卡片就能直接看到完整 ffmpeg 日志，
   // 不必再手动展开第二级「高级信息」。
   late bool _expanded = widget.error != null;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: widget.scheme.surfaceContainerHighest.withAlpha(30),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Column(
-        children: [
-          InkWell(
-            onTap: () => setState(() => _expanded = !_expanded),
-            borderRadius: BorderRadius.circular(8),
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Row(
-                children: [
-                  // 16 / 13：与同一个展开区里的三个 _SectionTitle 同档。
-                  // 原来这里是 14 / 12，比它的「下属」区块标题还小 —— 层级看着是反的。
-                  Icon(Icons.code, size: 16, color: widget.scheme.outline),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      widget.s.qAdvanced,
-                      style: TextStyle(
-                        fontSize: kQueueFsSection,
-                        fontWeight: FontWeight.w600,
-                        color: widget.scheme.onSurface,
-                      ),
-                    ),
-                  ),
-                  Icon(
-                    _expanded ? Icons.expand_less : Icons.expand_more,
-                    size: 18,
-                    color: widget.scheme.outline,
-                  ),
-                ],
-              ),
-            ),
-          ),
-          AnimatedCrossFade(
-            firstChild: const SizedBox(width: double.infinity),
-            secondChild: _buildContent(),
-            crossFadeState: _expanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
-            duration: const Duration(milliseconds: 200),
-          ),
-        ],
-      ),
-    );
-  }
+    final scheme = widget.scheme;
+    final commandText = (widget.command ?? const <String>[]).join(' ').trim();
+    final logText = widget.logLines.join('\n').trim();
+    final hasCommand = commandText.isNotEmpty;
+    final hasLogs = logText.isNotEmpty;
 
-  Widget _buildContent() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (widget.command != null) ...[
-            _InfoBlock(
-              icon: Icons.terminal,
-              title: widget.s.qCommand,
-              content: widget.command!.join(' '),
-              scheme: widget.scheme,
-              isMonospace: true,
-            ),
-            const SizedBox(height: 8),
-          ],
-          if (widget.logLines.isNotEmpty) ...[
-            _InfoBlock(
-              icon: Icons.article_outlined,
-              title: widget.s.qLogs,
-              content: widget.logLines.join('\n'),
-              scheme: widget.scheme,
-              isMonospace: true,
-              maxHeight: 160,
-            ),
-          ],
-          // 错误摘要已在卡片展开区顶部展示，这里仅在无日志/命令时兜底显示
-          if (widget.error != null && widget.command == null && widget.logLines.isEmpty) ...[
-            _InfoBlock(
-              icon: Icons.error_outline,
-              title: widget.s.qError,
-              content: widget.error!,
-              scheme: widget.scheme,
-              isError: true,
-            ),
-          ],
-        ],
-      ),
+    return _PanelBox(
+      padding: EdgeInsets.zero,
+      child: Column(children: [
+        InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: () => setState(() => _expanded = !_expanded),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+            child: Row(children: [
+              Icon(Icons.terminal, size: 16, color: scheme.outline),
+              const SizedBox(width: 6),
+              Text(widget.s.qAdvanced,
+                  style: TextStyle(
+                      fontSize: kQueueFsSection,
+                      fontWeight: FontWeight.w600,
+                      color: scheme.onSurface)),
+              const SizedBox(width: 8),
+              if (hasLogs) _CountBadge(text: '${widget.logLines.length} ${widget.s.qLines}', scheme: scheme),
+              const Spacer(),
+              Icon(_expanded ? Icons.expand_less : Icons.expand_more,
+                  size: 18, color: scheme.outline),
+            ]),
+          ),
+        ),
+        AnimatedCrossFade(
+          firstChild: const SizedBox(width: double.infinity),
+          secondChild: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              _CodeBlock(
+                icon: Icons.terminal,
+                title: widget.s.qCommand,
+                content: commandText,
+                emptyHint: widget.s.qNoCommand,
+                scheme: scheme,
+                copyLabel: widget.s.qCopy,
+              ),
+              const SizedBox(height: 10),
+              _CodeBlock(
+                icon: Icons.article_outlined,
+                title: widget.s.qLogs,
+                content: logText,
+                emptyHint: widget.s.qNoLogs,
+                scheme: scheme,
+                copyLabel: widget.s.qCopy,
+                maxHeight: 200,
+              ),
+              // 错误摘要已在上面单独成块（_ErrorPanel），这里仅在无命令/无日志时兜底
+              if (widget.error != null && !hasCommand && !hasLogs) ...[
+                const SizedBox(height: 10),
+                _CodeBlock(
+                  icon: Icons.error_outline,
+                  title: widget.s.qError,
+                  content: widget.error!,
+                  emptyHint: widget.s.qNone,
+                  scheme: scheme,
+                  copyLabel: widget.s.qCopy,
+                  isError: true,
+                ),
+              ],
+            ]),
+          ),
+          crossFadeState: _expanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+          duration: const Duration(milliseconds: 200),
+        ),
+      ]),
     );
   }
 }
 
-class _InfoBlock extends StatelessWidget {
+/// 等宽代码块（命令 / 日志 / 错误兜底）：标题行 + 可选复制按钮 + 可滚动正文。
+class _CodeBlock extends StatelessWidget {
   final IconData icon;
   final String title;
   final String content;
+  final String emptyHint;
+  final String copyLabel;
   final ColorScheme scheme;
   final bool isError;
-  final bool isMonospace;
   final double? maxHeight;
-  
-  const _InfoBlock({
+
+  const _CodeBlock({
     required this.icon,
     required this.title,
     required this.content,
+    required this.emptyHint,
+    required this.copyLabel,
     required this.scheme,
     this.isError = false,
-    this.isMonospace = false,
     this.maxHeight,
   });
 
   @override
   Widget build(BuildContext context) {
+    final empty = content.isEmpty;
+    final accent = isError ? scheme.error : scheme.outline;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Icon(icon, size: 13, color: isError ? scheme.error : scheme.outline),
-            const SizedBox(width: 5),
-            Text(
-              title,
+        Row(children: [
+          Icon(icon, size: 13, color: accent),
+          const SizedBox(width: 5),
+          Text(title,
               style: TextStyle(
-                fontSize: kQueueFsLabel,
-                fontWeight: FontWeight.w600,
-                color: isError ? scheme.error : scheme.outline,
-              ),
-            ),
-          ],
-        ),
+                  fontSize: kQueueFsLabel, fontWeight: FontWeight.w600, color: accent)),
+          const Spacer(),
+          if (!empty) _CopyButton(text: content, label: copyLabel, scheme: scheme),
+        ]),
         const SizedBox(height: 4),
         Container(
           width: double.infinity,
           constraints: maxHeight != null ? BoxConstraints(maxHeight: maxHeight!) : null,
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
-            color: isError 
-                ? scheme.errorContainer.withAlpha(40) 
+            color: isError
+                ? scheme.errorContainer.withAlpha(40)
                 : scheme.surfaceContainerHighest.withAlpha(60),
-            // 8：与卡内其它内嵌块（10）差一档，体现「更内层」；原来的 4 太方，
-            // 和同卡 10 / 12 的圆角语言不像一家人。
             borderRadius: BorderRadius.circular(8),
           ),
-          child: SingleChildScrollView(
-            child: SelectableText(
-              content,
-              style: TextStyle(
-                fontFamily: isMonospace ? 'monospace' : null,
-                // 10 → 11：命令 / 日志是这张卡里最需要逐字读的内容，
-                // 比周围的标签还小一号（10）说不过去。
-                fontSize: kQueueFsLabel,
-                color: isError ? scheme.error : scheme.onSurface,
-                height: 1.45,
-              ),
-            ),
-          ),
+          child: empty
+              ? Text(emptyHint, style: TextStyle(fontSize: kQueueFsLabel, color: scheme.outline))
+              : SingleChildScrollView(
+                  child: SelectableText(
+                    content,
+                    style: TextStyle(
+                      fontFamily: AppTheme.monoFont,
+                      // 11：命令 / 日志是这张卡里最需要逐字读的内容，
+                      // 比周围的标签还小一号（10）说不过去。
+                      fontSize: kQueueFsLabel,
+                      color: isError ? scheme.error : scheme.onSurface,
+                      height: 1.5,
+                    ),
+                  ),
+                ),
         ),
       ],
+    );
+  }
+}
+
+/// 复制到剪贴板 + toast 反馈。
+class _CopyButton extends StatelessWidget {
+  final String text;
+  final String label;
+  final ColorScheme scheme;
+
+  const _CopyButton({required this.text, required this.label, required this.scheme});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = AppStrings.of(context.select<AppState, String>((st) => st.config.language));
+    return TextButton.icon(
+      style: TextButton.styleFrom(
+        foregroundColor: scheme.primary,
+        visualDensity: VisualDensity.compact,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      onPressed: () {
+        Clipboard.setData(ClipboardData(text: text));
+        showToast(context, s.qCopied, type: ToastType.success);
+      },
+      icon: const Icon(Icons.copy_all, size: 13),
+      label: Text(label, style: const TextStyle(fontSize: 11)),
     );
   }
 }
@@ -912,18 +1124,22 @@ class _SegmentedProgressBar extends StatelessWidget {
   }
 }
 
-/// 节点微型画布：横向滚动展示节点圆圈
-class _NodeMiniCanvas extends StatelessWidget {
+/// 节点时间轴：横向滚动展示节点圆环（含进度弧）+ 连接线 + 序号。
+///
+/// 取代旧的 [_NodeMiniCanvas]（一律实心小圆 + 缩写字，看不出「跑到哪了」）：
+/// 每个圆环按该节点的 callProgress 画弧，圆与圆之间用连接线把「上一步已完成」
+/// 表达出来，当前节点加粗描边。
+class _NodeTimeline extends StatelessWidget {
   final List<BackendCall> calls;
-  final List<double> callProgresses;
-  final int currentCallIndex;
+  final List<double> progresses;
+  final int currentIndex;
   final TaskStatus status;
   final bool zh;
 
-  const _NodeMiniCanvas({
+  const _NodeTimeline({
     required this.calls,
-    required this.callProgresses,
-    required this.currentCallIndex,
+    required this.progresses,
+    required this.currentIndex,
     required this.status,
     this.zh = true,
   });
@@ -931,62 +1147,91 @@ class _NodeMiniCanvas extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final isMobile = MediaQuery.of(context).size.width < 600;
-    final circleSize = isMobile ? 32.0 : 40.0;
-    final spacing = isMobile ? 8.0 : 12.0;
+    final compact = MediaQuery.sizeOf(context).width < 600;
+    final size = compact ? 38.0 : 46.0;
+    final linkW = compact ? 20.0 : 30.0;
 
-    return Container(
-      height: circleSize + 20,
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withAlpha(80),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        child: Row(
-          children: [
-            for (int i = 0; i < calls.length; i++) ...[
-              _NodeCircle(
-                call: calls[i],
-                progress: i < callProgresses.length ? callProgresses[i] : 0.0,
-                isCurrent: i == currentCallIndex,
-                status: status,
-                size: circleSize,
-                zh: zh,
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (int i = 0; i < calls.length; i++) ...[
+            _NodeDot(
+              call: calls[i],
+              progress: i < progresses.length ? progresses[i] : 0.0,
+              isCurrent: i == currentIndex,
+              status: status,
+              size: size,
+              index: i,
+              zh: zh,
+            ),
+            if (i < calls.length - 1)
+              _NodeLink(
+                width: linkW,
+                // 连接线对齐圆心：圆本身在 Column 顶部，直接给 top padding
+                topInset: size / 2,
+                done: (i < progresses.length ? progresses[i] : 0.0) >= 1.0,
+                scheme: scheme,
               ),
-              if (i < calls.length - 1) SizedBox(width: spacing),
-            ],
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _NodeLink extends StatelessWidget {
+  final double width;
+  final double topInset;
+  final bool done;
+  final ColorScheme scheme;
+
+  const _NodeLink({
+    required this.width,
+    required this.topInset,
+    required this.done,
+    required this.scheme,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(top: topInset - 1, left: 2, right: 2),
+      child: Container(
+        width: width,
+        height: 2,
+        decoration: BoxDecoration(
+          color: done ? scheme.sem.success.withAlpha(160) : scheme.outlineVariant.withAlpha(150),
+          borderRadius: BorderRadius.circular(1),
         ),
       ),
     );
   }
 }
 
-/// 节点圆圈：显示节点状态和进度
-class _NodeCircle extends StatelessWidget {
+/// 节点圆环：底圆 + 进度弧 + 缩写文字 + 序号。
+class _NodeDot extends StatelessWidget {
   final BackendCall call;
   final double progress;
   final bool isCurrent;
   final TaskStatus status;
   final double size;
+  final int index;
   final bool zh;
 
-  const _NodeCircle({
+  const _NodeDot({
     required this.call,
     required this.progress,
     required this.isCurrent,
     required this.status,
     required this.size,
+    required this.index,
     this.zh = true,
   });
 
-  Color _getStatusColor(ColorScheme scheme) {
-    // 与 _statusColor / _PipelineLegend 同一套语义色（原先是 Colors.green /
-    // Colors.amber / Colors.grey.shade400 三个写死的 Material 原色，
-    // 传进来的 scheme 参数根本没被用到）。
+  Color _color(ColorScheme scheme) {
+    // 与 _statusColor / _PipelineLegend 同一套语义色
     if (status == TaskStatus.completed) return scheme.sem.success;
     if (progress >= 1.0) return scheme.sem.success;
     if (isCurrent && progress > 0.0 && progress < 1.0) return scheme.sem.warning;
@@ -997,34 +1242,110 @@ class _NodeCircle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final color = _getStatusColor(scheme);
+    final color = _color(scheme);
     // 节点名本地化：不再把后端英文 action 名（TRANSCODE 等）直接展示给用户
     final label = taskActionLabel(call.action, zh);
     final abbr = taskActionAbbr(call.action, zh);
 
     return Tooltip(
       message: '$label\n${(zh ? AppStrings.zh : AppStrings.en).qProgress}: ${(progress * 100).toStringAsFixed(0)}%',
-      child: Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: color.withAlpha(40),
-          border: Border.all(color: color, width: 2),
-        ),
-        child: Center(
-          child: Text(
-            abbr,
-            style: TextStyle(
-              fontSize: size * 0.3,
-              fontWeight: FontWeight.bold,
-              color: color,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: size,
+            height: size,
+            child: CustomPaint(
+              painter: _NodeRingPainter(
+                color: color,
+                progress: progress.clamp(0.0, 1.0),
+                emphasise: isCurrent && (status == TaskStatus.processing),
+              ),
+              child: Center(
+                child: Text(
+                  abbr,
+                  style: TextStyle(
+                    fontSize: size * 0.28,
+                    fontWeight: FontWeight.bold,
+                    color: color,
+                  ),
+                ),
+              ),
             ),
           ),
-        ),
+          const SizedBox(height: 4),
+          Text(
+            '${index + 1}',
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: isCurrent ? FontWeight.w700 : FontWeight.w500,
+              color: isCurrent ? color : scheme.outline,
+            ),
+          ),
+        ],
       ),
     );
   }
+}
+
+/// 圆环进度绘制：静态画法，**不做动画** —— 队列里可能同时有几十张卡片，
+/// 每个节点一个 `CircularProgressIndicator` 就是几十条无限动画，整页会持续掉帧。
+class _NodeRingPainter extends CustomPainter {
+  final Color color;
+  final double progress;
+  final bool emphasise;
+
+  _NodeRingPainter({required this.color, required this.progress, required this.emphasise});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2 - 2.5;
+
+    // 底
+    canvas.drawCircle(center, radius, Paint()..color = color.withAlpha(36));
+
+    if (progress > 0) {
+      // 进度弧（从 12 点方向顺时针）
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: radius),
+        -math.pi / 2,
+        2 * math.pi * progress,
+        false,
+        Paint()
+          ..color = color
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 3
+          ..strokeCap = StrokeCap.round,
+      );
+    } else {
+      // 未开始：只有一圈细描边
+      canvas.drawCircle(
+        center,
+        radius,
+        Paint()
+          ..color = color.withAlpha(170)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.6,
+      );
+    }
+
+    // 当前节点：外圈再补一层淡描边，与其它节点拉开层级
+    if (emphasise) {
+      canvas.drawCircle(
+        center,
+        radius + 2.5,
+        Paint()
+          ..color = color.withAlpha(70)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.6,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_NodeRingPainter old) =>
+      old.color != color || old.progress != progress || old.emphasise != emphasise;
 }
 
 // 缩略图（生成逻辑统一走 ThumbnailService）
@@ -1035,6 +1356,7 @@ class _ThumbWidget extends StatefulWidget {
   @override
   State<_ThumbWidget> createState() => _ThumbWidgetState();
 }
+
 class _ThumbWidgetState extends State<_ThumbWidget> {
   String? _path;
   /// 图片（截图等）不走 ffmpeg 抽帧：移动端 fork+exec 起子进程生成缩略图

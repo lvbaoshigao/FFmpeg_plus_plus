@@ -1,27 +1,29 @@
 import 'dart:io';
-import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
-import 'package:provider/provider.dart';
+
 import 'package:desktop_drop/desktop_drop.dart';
-import '../providers/app_state.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../app.dart' show smoothRoute;
 import '../models/models.dart';
+import '../platform/app_platform.dart';
+import '../providers/app_state.dart';
 import '../services/fppx2_service.dart';
-import '../theme/app_strings.dart';
+import '../services/quick_config_pipeline.dart';
+import '../services/quick_config_storage.dart';
 import '../theme/app_semantic_colors.dart';
-import '../widgets/video_card.dart';
+import '../theme/app_strings.dart';
 import '../widgets/container_card.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_glass_pill.dart';
-import '../widgets/mobile_ui.dart';
-import '../widgets/toast.dart';
-import '../platform/app_platform.dart';
 // 生效的菜单栏位置（底部 ↔ 左右竖排导轨）：列表底部留白随之在 96 / 20 间切换
 import '../widgets/mobile_nav_scope.dart';
-import '../services/quick_config_storage.dart';
-import '../services/quick_config_pipeline.dart';
-import '../app.dart' show smoothRoute;
-import 'quick_config_page.dart';
+import '../widgets/mobile_ui.dart';
+import '../widgets/toast.dart';
+import '../widgets/video_card.dart';
 import 'pipeline_editor_page.dart';
+import 'quick_config_page.dart';
 
 /// 快速配置选择器「现场编辑」的哨兵返回值（区别于 QuickConfig 预设与 null 取消）。
 class _QuickPickLiveEdit {
@@ -561,17 +563,17 @@ class ProjectPageState extends State<ProjectPage> {
   Future<void> _importConfig(AppState state, AppStrings s) async {
     final zh = s.isZh;
     // Android 上 fppx 无 MIME 映射，FileType.custom 会失效。
-    final r = await FilePicker.platform.pickFiles(
+    final picked = await FilePicker.pickFile(
       type: FileType.any,
       dialogTitle: zh ? '选择配置文件' : 'Select Config File',
     );
-    if (r == null || r.files.isEmpty || r.files.first.path == null) return;
-    final name = r.files.first.name;
+    if (picked?.path == null) return;
+    final name = picked!.name;
     if (!name.endsWith('.fppx')) {
       if (mounted) showToast(context, zh ? '请选择 .fppx 文件' : 'Please select a .fppx file', type: ToastType.warning);
       return;
     }
-    final path = r.files.first.path!;
+    final path = picked.path!;
 
     // 新旧格式均由 C++ 端解析/校验（第 5 字节 0xFF = 新版）；未知节点需用户确认强制导入
     final svc = FppxService(state.backend);
@@ -828,91 +830,60 @@ class ProjectPageState extends State<ProjectPage> {
   }
 
   Future<void> _pick(AppState state) async {
-    // Android/iOS：用 withReadStream 走流式拷贝——file_picker 把 SAF/UIDocumentPicker
-    // 的文件分块（典型 64KB/chunk）通过 Stream<List<int>> 喂给 IOSink，
-    // IOSink.addStream 自带 back-pressure（sink 缓冲满时暂停 source）。
-    // 整个过程**不会**把整个文件读进 Dart 堆，避免 >100MB 文件直接 OOM 闪退。
+    // v13 起 withReadStream / withData 已被移除，改为拿到 PlatformFile 后
+    // 按需调用 readAsByteStream() / readAsBytes()。
     //
-    // Desktop：withReadStream 在 macOS 不支持，Linux/Windows 仍可用；本分支
-    // 退回到 withData（桌面 4GB+ heap 不会 OOM）。
-    final useStream = isMobilePlatform;
-    final r = await FilePicker.platform.pickFiles(
-      allowMultiple: true,
+    // 判定依据也从「path 是否以 content:// 开头」换成更可靠的 `path == null`：
+    // v13 的 PlatformFile.path 由 uri.scheme 推导（只有 file:// 才给真实路径），
+    // SAF 的 content:// URI 天然为 null，不必再靠字符串前缀猜。
+    final r = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: _exts,
-      withReadStream: useStream,
-      withData: !useStream,
     );
-    if (r != null && r.files.isNotEmpty) {
-      final paths = <String>[];
-      for (final f in r.files) {
-        final ext = f.name.contains('.') ? f.name.substring(f.name.lastIndexOf('.')) : '';
-        final stem = f.name.contains('.') ? f.name.substring(0, f.name.lastIndexOf('.')) : f.name;
-        final isContentUri = f.path != null && f.path!.startsWith('content://');
+    if (r.isEmpty) return;
+    final paths = <String>[];
+    for (final f in r) {
+      final ext = f.name.contains('.') ? f.name.substring(f.name.lastIndexOf('.')) : '';
+      final stem = f.name.contains('.') ? f.name.substring(0, f.name.lastIndexOf('.')) : f.name;
 
-        // Android/iOS 走流式拷贝（避免 f.bytes! 一次性把整文件读进堆）。
-        // Linux/Windows 桌面：优先用流式，没有 readStream 再回退 f.path 或 f.bytes。
-        if (useStream && f.readStream != null && isContentUri) {
+      // 非 file:// 来源（Android SAF 的 content://、iOS 的 UIDocumentPicker 等）
+      // 走流式拷贝：IOSink.addStream 自带 back-pressure（sink 缓冲满时暂停 source），
+      // 每个 chunk 直接写到 file descriptor，**不会**把整个文件读进 Dart 堆，
+      // 避免 >100MB 文件直接 OOM 闪退（即便 1GB 也只占 ~64KB 中间缓冲）。
+      if (f.path == null) {
+        try {
+          final destPath = '${Directory.systemTemp.path}/ffmpegpp_import_${stem}_${DateTime.now().millisecondsSinceEpoch}$ext';
+          final sink = File(destPath).openWrite();
           try {
-            final destPath = '${Directory.systemTemp.path}/ffmpegpp_import_${stem}_${DateTime.now().millisecondsSinceEpoch}$ext';
-            final dest = File(destPath);
-            // IOSink.addStream 把 readStream 的每个 chunk 直接写到 file descriptor，
-            // 不在 Dart 堆累积；即便 1GB 文件也只占 ~64KB 中间缓冲。
-            final sink = dest.openWrite();
-            try {
-              await sink.addStream(f.readStream!);
-            } finally {
-              await sink.close();
-            }
-            paths.add(destPath);
-          } catch (e) {
-            // 流式失败回退到原始 path（content:// URI 在 fork 出的 ffprobe
-            // 子进程里读不到，所以这个回退也只是兜底；详见 AndroidPlatformBridge
-            // 的 ensureReadableImport 兜底逻辑）
-            if (f.path != null) paths.add(f.path!);
+            await sink.addStream(f.readAsByteStream());
+          } finally {
+            await sink.close();
           }
-        } else if (f.path != null && !isContentUri) {
-          // 桌面/非 content URI：直接用路径（FilePicker 已写入临时目录）。
-          //
-          // Android 上这个路径是 file_picker 刚复制出来的副本
-          // （<cacheDir>/file_picker/<时间戳>/<文件名>）—— 同一个大文件被重复导入
-          // （试一次、删掉、再导入，或分多次添加）就会在缓存里留下多份 400MB 的副本，
-          // 应用体积成倍膨胀。这里若缓存里已存在「同名 + 同大小」的旧副本，就复用
-          // 旧副本并删掉刚生成的这份。
-          final reuse = _reuseExistingImportCopy(f.path!, f.name, f.size);
-          if (reuse != null) {
-            paths.add(reuse);
-            try { File(f.path!).deleteSync(); } catch (_) {}
-          } else {
-            paths.add(f.path!);
-          }
-        } else if (f.readStream != null) {
-          // 兜底：有 readStream 但不是 content URI（罕见），也走流式
-          try {
-            final destPath = '${Directory.systemTemp.path}/ffmpegpp_import_${stem}_${DateTime.now().millisecondsSinceEpoch}$ext';
-            final sink = File(destPath).openWrite();
-            try {
-              await sink.addStream(f.readStream!);
-            } finally {
-              await sink.close();
-            }
-            paths.add(destPath);
-          } catch (_) {
-            if (f.bytes != null) {
-              try {
-                await File('${Directory.systemTemp.path}/ffmpegpp_import_${stem}_${DateTime.now().millisecondsSinceEpoch}$ext').writeAsBytes(f.bytes!);
-              } catch (_) {}
-            }
-          }
-        } else if (f.bytes != null) {
-          // 最后兜底：桌面 + withData 路径，小文件可接受
-          try {
-            await File('${Directory.systemTemp.path}/ffmpegpp_import_${stem}_${DateTime.now().millisecondsSinceEpoch}$ext').writeAsBytes(f.bytes!);
-          } catch (_) {}
+          paths.add(destPath);
+        } catch (_) {
+          // 流式失败无处可退：content:// URI 在 fork 出的 ffprobe 子进程里读不到，
+          // 详见 AndroidPlatformBridge 的 ensureReadableImport 兜底逻辑。
+        }
+      } else {
+        // 有真实磁盘路径：直接用（FilePicker 已写入临时目录）。
+        //
+        // Android 上这个路径是 file_picker 刚复制出来的副本
+        // （<cacheDir>/file_picker/<时间戳>/<文件名>）—— 同一个大文件被重复导入
+        // （试一次、删掉、再导入，或分多次添加）就会在缓存里留下多份 400MB 的副本，
+        // 应用体积成倍膨胀。这里若缓存里已存在「同名 + 同大小」的旧副本，就复用
+        // 旧副本并删掉刚生成的这份。
+        //
+        // v13：原来的 int size 字段换成 lengthSync()，无法确定长度时为 null。
+        final reuse = _reuseExistingImportCopy(f.path!, f.name, f.lengthSync() ?? 0);
+        if (reuse != null) {
+          paths.add(reuse);
+          try { File(f.path!).deleteSync(); } catch (_) {}
+        } else {
+          paths.add(f.path!);
         }
       }
-      if (paths.isNotEmpty) state.addVideos(paths);
     }
+    if (paths.isNotEmpty) state.addVideos(paths);
   }
 
   /// 在 file_picker 的插件缓存目录里找一份「同名 + 同大小」的已有副本供复用，
@@ -1044,9 +1015,9 @@ class ProjectPageState extends State<ProjectPage> {
       if (empty) {
         state.addEmptyContainer(name);
       } else {
-        final r = await FilePicker.platform.pickFiles(allowMultiple: true, type: FileType.custom, allowedExtensions: _exts);
-        if (r != null && r.files.isNotEmpty) {
-          final paths = r.files.where((f) => f.path != null).map((f) => f.path!).toList();
+        final r = await FilePicker.pickFiles(type: FileType.custom, allowedExtensions: _exts);
+        if (r.isNotEmpty) {
+          final paths = r.where((f) => f.path != null).map((f) => f.path!).toList();
           if (paths.isNotEmpty) state.addContainer(name, paths);
         }
       }
@@ -1091,7 +1062,7 @@ class ProjectPageState extends State<ProjectPage> {
                   style: const TextStyle(fontSize: 12)),
               onTap: () async {
                 Navigator.pop(ctx);
-                final dir = await FilePicker.platform.getDirectoryPath();
+                final dir = await FilePicker.getDirectoryPath();
                 if (dir != null) state.addContainerFromFolder(dir);
               },
             ),

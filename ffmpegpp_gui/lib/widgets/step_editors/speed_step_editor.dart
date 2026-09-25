@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'editor_kit.dart';
+
 import '../app_slider.dart';
+import 'editor_kit.dart';
 
 class SpeedStepEditor extends ParamsStepEditor {
   const SpeedStepEditor({super.key, required super.params, required super.onChanged, super.isZh = true});

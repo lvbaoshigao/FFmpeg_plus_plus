@@ -1,36 +1,38 @@
 import 'dart:async';
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
-import 'providers/app_state.dart';
+
 import 'models/models.dart';
-import 'theme/app_theme.dart';
+import 'pages/command_page.dart';
+import 'pages/config_library_page.dart';
+import 'pages/log_page.dart';
+import 'pages/project_page.dart';
+import 'pages/queue_page.dart';
+import 'pages/settings_page.dart';
+import 'platform/app_platform.dart';
+import 'providers/app_state.dart';
+import 'services/android_platform.dart';
+import 'services/update_service.dart' as updater;
 import 'theme/app_semantic_colors.dart';
 import 'theme/app_strings.dart';
 import 'theme/app_text_scale.dart';
-import 'services/update_service.dart' as updater;
-import 'pages/project_page.dart';
-import 'pages/queue_page.dart';
-import 'pages/command_page.dart';
-import 'pages/config_library_page.dart';
-import 'pages/settings_page.dart';
-import 'pages/log_page.dart';
-import 'widgets/sidebar.dart';
+import 'theme/app_theme.dart';
 import 'widgets/app_slider.dart';
-import 'widgets/toast.dart';
+// 「玻璃细节 → 生效 σ / tint alpha」的统一换算（见 liquid_glass_fallback）。
+import 'widgets/liquid_glass_fallback.dart';
 import 'widgets/mobile_bottom_nav.dart';
 // 生效的菜单栏位置下发（底部 ↔ 左右竖排导轨时，主 Tab 各页的底部留白随之切换）
 import 'widgets/mobile_nav_scope.dart';
-// 「玻璃细节 → 生效 σ / tint alpha」的统一换算（见 liquid_glass_fallback）。
-import 'widgets/liquid_glass_fallback.dart';
+import 'widgets/sidebar.dart';
+import 'widgets/toast.dart';
 // 与 wallpaper_background.dart 互为循环引用（它用本文件的
 // wallpaperImageProvider，本文件用它的 WallpaperWindowScope），Dart 允许。
 import 'widgets/wallpaper_background.dart';
-import 'platform/app_platform.dart';
-import 'services/android_platform.dart';
 
 /// 构建壁纸解码用的 ImageProvider。
 ///
@@ -545,7 +547,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
 
   void _sendSystemNotification(String filename, TaskStatus status) {
     final isZh = context.read<AppState>().config.language == 'zh';
-    final title = 'FFmpeg++';
+    const title = 'FFmpeg++';
     final body = status == TaskStatus.completed
         ? (isZh ? '$filename 已完成' : '$filename completed')
         : (isZh ? '$filename 处理失败' : '$filename failed');

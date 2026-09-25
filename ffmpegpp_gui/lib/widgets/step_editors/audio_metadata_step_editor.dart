@@ -1,6 +1,8 @@
 import 'dart:io';
-import 'package:flutter/material.dart';
+
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+
 import 'editor_kit.dart';
 
 class AudioMetadataStepEditor extends ParamsStepEditor {
@@ -17,27 +19,25 @@ class _AudioMetadataStepEditorState extends State<AudioMetadataStepEditor> with 
   }
 
   Future<void> _pickCover() async {
-    final result = await FilePicker.platform.pickFiles(
+    final picked = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: ['jpg', 'jpeg', 'png', 'bmp', 'webp'],
     );
-    if (result != null && result.files.single.path != null) {
-      if (!mounted) return;
-      update('cover_path', result.files.single.path!);
-      update('remove_cover', false);
-    }
+    if (picked?.path == null) return;
+    if (!mounted) return;
+    update('cover_path', picked!.path!);
+    update('remove_cover', false);
   }
 
   Future<void> _pickLyrics() async {
-    final result = await FilePicker.platform.pickFiles(
+    final picked = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: ['lrc', 'txt', 'srt'],
     );
-    if (result != null && result.files.single.path != null) {
-      if (!mounted) return;
-      update('lyrics_path', result.files.single.path!);
-      update('remove_lyrics', false);
-    }
+    if (picked?.path == null) return;
+    if (!mounted) return;
+    update('lyrics_path', picked!.path!);
+    update('remove_lyrics', false);
   }
 
   @override

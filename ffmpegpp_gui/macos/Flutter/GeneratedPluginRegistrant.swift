@@ -7,7 +7,7 @@ import Foundation
 
 import audio_session
 import desktop_drop
-import file_picker
+import file_picker_darwin
 import just_audio
 import screen_retriever_macos
 import window_manager

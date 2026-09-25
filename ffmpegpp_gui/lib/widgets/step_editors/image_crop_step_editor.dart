@@ -235,7 +235,7 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
         Row(children: [
           Expanded(child: TextField(
             controller: _xCtrl,
-            decoration: InputDecoration(labelText: 'X'),
+            decoration: const InputDecoration(labelText: 'X'),
             keyboardType: TextInputType.number,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             onChanged: (v) {
@@ -246,7 +246,7 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
           const SizedBox(width: 8),
           Expanded(child: TextField(
             controller: _yCtrl,
-            decoration: InputDecoration(labelText: 'Y'),
+            decoration: const InputDecoration(labelText: 'Y'),
             keyboardType: TextInputType.number,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             onChanged: (v) {

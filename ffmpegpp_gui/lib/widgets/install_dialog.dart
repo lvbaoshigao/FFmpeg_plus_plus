@@ -1,10 +1,12 @@
 import 'dart:io';
-import 'package:flutter/material.dart';
+
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+
 import '../services/ffmpeg_installer.dart';
 import '../services/shell_open.dart';
-import '../theme/app_theme.dart';
 import '../theme/app_semantic_colors.dart';
+import '../theme/app_theme.dart';
 import 'app_slider.dart';
 
 const _ffmpegUrl = 'https://wwbrq.lanzouv.com/iTF9n3sb937c';
@@ -76,12 +78,12 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
 
 
   Future<void> _pickFile(bool isFFmpeg) async {
-    final r = await FilePicker.platform.pickFiles(
+    final picked = await FilePicker.pickFile(
       type: FileType.custom, allowedExtensions: ['zip'],
       dialogTitle: isFFmpeg ? '选择下载好的 ffmpeg.zip' : '选择下载好的 ffprobe.zip',
     );
-    if (r == null || r.files.isEmpty || r.files.first.path == null) return;
-    final path = r.files.first.path!;
+    if (picked?.path == null) return;
+    final path = picked!.path!;
     final size = await File(path).length(); // 异步，避免阻塞 UI
     if (!mounted) return;
     if (size < 1000000) {

@@ -4,56 +4,58 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FontLoader, ByteData;
-import 'package:file_picker/file_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
-import '../models/models.dart';
-import '../providers/app_state.dart';
-import '../theme/app_strings.dart';
-import '../theme/app_text_scale.dart';
-// 控件高度档位令牌：MCP 卡的输入框/按钮、AI 配置详情页的按钮统一按档位取高度，
-// 不再用 `SizedBox(height: 30)` 压高度（会与主题 v12 内边距打架）
-import '../theme/app_control_size.dart';
-import '../theme/app_semantic_colors.dart';
-import '../widgets/masonry_grid.dart';
-import '../widgets/install_dialog.dart';
-import 'keybinding_page.dart';
-import 'command_page.dart';
-import 'log_page.dart';
-import 'credits_page.dart';
-import 'ads_page.dart';
-import '../platform/app_platform.dart';
-// 高刷新率开关的即时生效（Android 专用，见 services/refresh_rate.dart）
-import '../services/refresh_rate.dart';
-// 生效的菜单栏位置：设置页自身也在主 Tab 的 PageView 里，底部让出的高度
-// 要跟着菜单栏位置走（底部胶囊 96 / 竖排导轨 20）
-import '../widgets/mobile_nav_scope.dart';
-import '../widgets/font_picker.dart';
+
 // 背景预览缩略图复用主壳那条**唯一**的壁纸解码入口：同参数（屏幕逻辑尺寸 +
 // DPR）构造出的 ResizeImage 与主壳的 `==` 相等 → 命中同一个 ImageCache 条目，
 // 不额外解码一份，也不会出现「缩略图与真实壁纸构图不一致」。
 // settings_page ↔ app.dart 互为循环引用，Dart 允许（wallpaper_background.dart
 // 与 app.dart 早就是同样的情况）。
 import '../app.dart' show wallpaperImageProvider;
+import '../models/models.dart';
+import '../platform/app_platform.dart';
+import '../providers/app_state.dart';
 import '../services/ffmpeg_installer.dart';
-import '../services/update_service.dart' as updater;
+// 高刷新率开关的即时生效（Android 专用，见 services/refresh_rate.dart）
+import '../services/refresh_rate.dart';
 import '../services/shell_open.dart';
-import '../widgets/toast.dart';
-import '../widgets/glass_panel.dart';
-import '../widgets/mobile_glass_pill.dart';
-import '../widgets/mobile_ui.dart';
-import '../widgets/mobile_top_bar.dart';
-import '../widgets/option_menu_bar.dart';
+import '../services/update_service.dart' as updater;
+// 控件高度档位令牌：MCP 卡的输入框/按钮、AI 配置详情页的按钮统一按档位取高度，
+// 不再用 `SizedBox(height: 30)` 压高度（会与主题 v12 内边距打架）
+import '../theme/app_control_size.dart';
+import '../theme/app_semantic_colors.dart';
+import '../theme/app_strings.dart';
+import '../theme/app_text_scale.dart';
 import '../widgets/app_card.dart';
 import '../widgets/app_slider.dart';
+import '../widgets/font_picker.dart';
+import '../widgets/glass_panel.dart';
+import '../widgets/install_dialog.dart';
 // harmonizedAccent（协调主题色，解决「选主题色太亮」）/ neutralGray（真中性灰，
 // 解决「灰色夹杂主题色」）/ GlassTuning（玻璃细节参数）都在这里。
 import '../widgets/liquid_glass_fallback.dart';
+import '../widgets/masonry_grid.dart';
+import '../widgets/mobile_glass_pill.dart';
+// 生效的菜单栏位置：设置页自身也在主 Tab 的 PageView 里，底部让出的高度
+// 要跟着菜单栏位置走（底部胶囊 96 / 竖排导轨 20）
+import '../widgets/mobile_nav_scope.dart';
+import '../widgets/mobile_top_bar.dart';
+import '../widgets/mobile_ui.dart';
+import '../widgets/option_menu_bar.dart';
+import '../widgets/toast.dart';
 import '../widgets/wallpaper_background.dart';
+import 'ads_page.dart';
 import 'ai_settings_mobile.dart';
+import 'command_page.dart';
+import 'credits_page.dart';
+import 'keybinding_page.dart';
+import 'log_page.dart';
 
 final _s = Platform.pathSeparator;
 
@@ -778,6 +780,10 @@ class _SettingsPageState extends State<SettingsPage> {
         state.config.borderColor,
         state.config.canvasBg,
         state.config.gateStd,
+        // 小地图开关：同样是受控 SwitchListTile 直读 config，漏在签名外
+        // 会「点了没反应」（与 noPreload / mcpEnabled 同根因）
+        state.config.nodeMiniMap,
+        state.config.nodeSnap,
         state.config.editorToolbarScale,
         state.config.editorZoomScale,
         state.config.defaultOutputDir,
@@ -2798,6 +2804,37 @@ Widget _buildNodeEditorStyleCard(BuildContext ctx, AppState state) {
         ),
       ),
     ]),
+    const SizedBox(height: 6),
+    // 小地图开关：右下角缩略图会压在画布上，画布本来就不大时可以关掉。
+    SwitchListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: Text(s.isZh ? '画布小地图' : 'Canvas mini map',
+          style: TextStyle(color: clr, fontSize: 12)),
+      subtitle: Text(
+        s.isZh
+            ? '右下角显示全图缩略图与当前视口框，点击可跳转'
+            : 'Show an overview with the current viewport in the bottom-right corner',
+        style: TextStyle(fontSize: 10, color: scheme.outline),
+      ),
+      value: cfg.nodeMiniMap,
+      onChanged: (v) => state.updateConfig((c) => c..nodeMiniMap = v),
+    ),
+    // 网格吸附：拖动节点时对齐到 40px 网格。关掉后可做像素级摆放。
+    SwitchListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: Text(s.isZh ? '拖动对齐网格' : 'Snap to grid',
+          style: TextStyle(color: clr, fontSize: 12)),
+      subtitle: Text(
+        s.isZh
+            ? '拖动节点时吸附到背景网格，方便对齐成一排'
+            : 'Snap dragged nodes onto the background grid',
+        style: TextStyle(fontSize: 10, color: scheme.outline),
+      ),
+      value: cfg.nodeSnap,
+      onChanged: (v) => state.updateConfig((c) => c..nodeSnap = v),
+    ),
 
     // ── 界面尺寸（仅移动端）──
     //
@@ -3054,20 +3091,19 @@ Future<void> _pickBackground(BuildContext ctx, AppState state) async {
   final logical = view.physicalSize / dpr;
   final maxW = (logical.width * dpr).ceil();
   final maxH = (logical.height * dpr).ceil();
-  final r = await FilePicker.platform.pickFiles(
-      type: FileType.custom, allowedExtensions: ['jpg', 'jpeg', 'png', 'bmp', 'webp'],
-      // 仅 Android 需要内存字节（content:// URI 无法用 File 读取）
-      withData: isAndroidPlatform);
-  if (r == null || r.files.isEmpty) return;
-  final file = r.files.first;
+  final file = await FilePicker.pickFile(
+      type: FileType.custom, allowedExtensions: ['jpg', 'jpeg', 'png', 'bmp', 'webp']);
+  if (file == null) return;
+  // v13 起 path 由 uri.scheme 推导：只有 file:// 才给真实路径，
+  // content:// 这类 SAF URI 天然为 null，不必再比较字符串前缀。
   final path = file.path;
-  final useBytes = (path == null || path.startsWith('content://')) && file.bytes != null;
-  if (useBytes) {
-    final saved = await _saveBackgroundBytes(file.bytes!, file.name, maxW, maxH);
+  if (path == null) {
+    // Android 11+ content:// URI 无法用 File 读取 → 用内存字节落盘
+    final saved = await _saveBackgroundBytes(await file.readAsBytes(), file.name, maxW, maxH);
     if (saved != null) {
       state.updateConfig((c) => c..backgroundImage = saved);
     }
-  } else if (path != null) {
+  } else {
     // 大图自动压缩到屏幕分辨率，避免体积过大导致卡死
     final copied = await _copyBackgroundOptimized(path, maxW, maxH);
     state.updateConfig((c) => c..backgroundImage = copied ?? path);
@@ -3337,7 +3373,7 @@ Widget _buildLanguage(BuildContext ctx, AppState state) {
         leadingIcon: Icons.language,
         items: [
           OptionItem('zh', s.isZh ? '中文' : 'Chinese'),
-          OptionItem('en', 'English'),
+          const OptionItem('en', 'English'),
         ],
         onChanged: (v) => state.updateConfig((c) => c..language = v),
       )),
@@ -3442,11 +3478,11 @@ Widget _buildOutput(BuildContext ctx, AppState state) {
   return _glass(ctx, state, s.output, [
     _pf(ctx, s.outputDir, cfg.defaultOutputDir,
         (v) => state.updateConfig((c) => c..defaultOutputDir = v),
-        () async { final d = await FilePicker.platform.getDirectoryPath(); if (d != null) state.updateConfig((c) => c..defaultOutputDir = d); }),
+        () async { final d = await FilePicker.getDirectoryPath(); if (d != null) state.updateConfig((c) => c..defaultOutputDir = d); }),
     const SizedBox(height: 8),
     _pf(ctx, s.intermediateDir, cfg.intermediateDir,
         (v) => state.updateConfig((c) => c..intermediateDir = v),
-        () async { final d = await FilePicker.platform.getDirectoryPath(); if (d != null) state.updateConfig((c) => c..intermediateDir = d); }),
+        () async { final d = await FilePicker.getDirectoryPath(); if (d != null) state.updateConfig((c) => c..intermediateDir = d); }),
     Padding(padding: const EdgeInsets.only(top: 2),
         child: Text(s.intermediateHint, style: TextStyle(fontSize: 11, color: scheme.outline))),
   ]);
@@ -3689,7 +3725,7 @@ Widget _buildDebug(BuildContext ctx, AppState state) {
     if (cfg.saveLogs)
       _pf(ctx, s.dLogPath, cfg.logSavePath,
           (v) => state.updateConfig((c) => c..logSavePath = v),
-          () async { final d = await FilePicker.platform.getDirectoryPath(); if (d != null) state.updateConfig((c) => c..logSavePath = d); }),
+          () async { final d = await FilePicker.getDirectoryPath(); if (d != null) state.updateConfig((c) => c..logSavePath = d); }),
   ]);
 }
 
@@ -4421,7 +4457,7 @@ Widget _buildProfileDetail(
         value: profile.provider,
         items: [
           OptionItem('openai', zh ? 'OpenAI 兼容' : 'OpenAI'),
-          OptionItem('anthropic', 'Anthropic'),
+          const OptionItem('anthropic', 'Anthropic'),
         ],
         onChanged: (v) { profile.provider = v; setDState(() {}); },
       )),
@@ -4777,11 +4813,9 @@ Future<void> _pickFont(BuildContext ctx, AppState state) async {
   // Android：SAF/content:// URI 常常拿不到真实磁盘路径（path 为 null），
   // 必须同时取内存字节兜底 —— 之前只认 path，HyperOS/MIUI 上会出现
   // 「选了字体却毫无反应」的静默失败。
-  final r = await FilePicker.platform.pickFiles(
-      type: FileType.custom, allowedExtensions: ['ttf', 'otf'],
-      withData: isAndroidPlatform);
-  if (r == null || r.files.isEmpty) return;
-  final picked = r.files.first;
+  final picked = await FilePicker.pickFile(
+      type: FileType.custom, allowedExtensions: ['ttf', 'otf']);
+  if (picked == null) return;
   final fileName = picked.name;
   if (!fileName.toLowerCase().endsWith('.ttf') && !fileName.toLowerCase().endsWith('.otf')) {
     if (ctx.mounted) showToast(ctx, isZh ? '请选择 .ttf 或 .otf 字体文件' : 'Please pick a .ttf/.otf font file', type: ToastType.error);
@@ -4794,19 +4828,14 @@ Future<void> _pickFont(BuildContext ctx, AppState state) async {
   // → 表现为「导入的字体重启后不见了」（用户反馈的「导入后不显示」）。
   await _ensureAndroidAppDir();
   try {
-    // 1) 取得字体字节：优先磁盘路径，content:// 时用内存字节
-    Uint8List? bytes;
+    // 1) 取得字体字节：优先磁盘路径，content:// 等非 file:// 用内存字节
     String? srcPath = picked.path;
-    if (srcPath != null && !srcPath.startsWith('content://') && await File(srcPath).exists()) {
-      bytes = await File(srcPath).readAsBytes();
-    } else if (picked.bytes != null) {
-      bytes = picked.bytes;
-      srcPath = null; // 字节来源，下面改用落盘后的路径
-    }
-    if (bytes == null) {
-      if (ctx.mounted) showToast(ctx, isZh ? '无法读取字体文件' : 'Cannot read font file', type: ToastType.error);
-      return;
-    }
+    if (srcPath != null && !await File(srcPath).exists()) srcPath = null;
+    // v13：content:// 等来源的 path 恒为 null，只能走 readAsBytes()；
+    // 两者都可能抛异常（权限/IO），由外层 catch 统一报「字体加载失败」。
+    final Uint8List bytes = srcPath != null
+        ? await File(srcPath).readAsBytes()
+        : await picked.readAsBytes();
     // 2) 先落盘到应用数据目录 fonts/（重启后由 main.dart 重新加载）
     String? fontFilePath;
     if (srcPath != null) {
@@ -5227,13 +5256,12 @@ class _FfmpegCardState extends State<_FfmpegCard> {
 
   Future<void> _browseFfmpeg() async {
     final isZh = widget.state.config.language == 'zh';
-    final r = await FilePicker.platform.pickFiles(
+    final picked = await FilePicker.pickFile(
       type: Platform.isWindows ? FileType.custom : FileType.any,
       allowedExtensions: Platform.isWindows ? ['exe'] : null,
       dialogTitle: isZh ? '选择 ffmpeg' : 'Select ffmpeg',
     );
-    if (r == null || r.files.isEmpty || r.files.first.path == null) return;
-    final exePath = r.files.first.path;
+    final exePath = picked?.path;
     if (exePath == null) return;
     setState(() => _checking = true);
     try {
@@ -5535,7 +5563,7 @@ class _CPState extends State<_CP> {
                 border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
               ),
               child: Text(_gradEnabled ? (widget.isZh ? '渐变' : 'Gradient') : (widget.isZh ? '纯色' : 'Solid'),
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white)),
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white)),
             ),
             const SizedBox(height: 12),
             // 是否使用渐变色（通俗开关）
@@ -5639,7 +5667,7 @@ class _CPState extends State<_CP> {
   Widget _colorRow(Color swatch, List<Widget> sliders) {
     return Row(children: [
       Container(width: 22, height: 22, decoration: BoxDecoration(
-        color: swatch, shape: BoxShape.circle, border: Border.all(color: Color(0x33000000)))), 
+        color: swatch, shape: BoxShape.circle, border: Border.all(color: const Color(0x33000000)))), 
       const SizedBox(width: 8),
       Expanded(child: Column(children: sliders)),
     ]);
@@ -5648,7 +5676,7 @@ class _CPState extends State<_CP> {
   // 取色面板的 R/G/B 滑杆：同样走 AppSlider（胶囊 + 主题色填充 + 玻璃留空），
   // 不要改回裸 Slider —— 裸 Slider 没有玻璃底那一层。
   Widget _sl(String l, double v, double min, double max, ValueChanged<double> cb) => Row(children: [
-    SizedBox(width: 12, child: Text(l, style: TextStyle(fontSize: 10))),
+    SizedBox(width: 12, child: Text(l, style: const TextStyle(fontSize: 10))),
     Expanded(child: AppSlider(value: v, min: min, max: max, compact: true, onChanged: cb)),
   ]);
 }

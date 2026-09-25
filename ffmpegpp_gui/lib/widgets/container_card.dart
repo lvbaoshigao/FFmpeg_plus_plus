@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
+import '../app.dart';
 import '../models/models.dart';
-import '../providers/app_state.dart';
-import '../theme/app_strings.dart';
 import '../pages/container_detail_page.dart';
 import '../pages/pipeline_editor_page.dart';
-import '../app.dart';
+import '../providers/app_state.dart';
+import '../theme/app_strings.dart';
 
 class ContainerCard extends StatelessWidget {
   final FileContainer container;
@@ -15,12 +16,28 @@ class ContainerCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final clr = scheme.onSurface;
-    final state = context.watch<AppState>();
-    final s = AppStrings.of(state.config.language);
-    final files = container.items.map((item) =>
-        state.videos.where((v) => v.id == item.fileId).firstOrNull).whereType<VideoFile>().toList();
-    final totalSize = files.fold(0.0, (sum, v) => sum + v.sizeMb);
-    final parsedCount = files.where((v) => v.parsed).length;
+    // 细粒度订阅：不 watch 整个 AppState。原先的 context.watch 让每张容器卡在
+    // 每次进度心跳/日志通知（~3.3Hz）时全部重建，而紧邻的 video_card 用的是
+    // 4 个 context.select —— 两者行为不一致，这里对齐。
+    final s = AppStrings.of(context.select<AppState, String>((s) => s.config.language));
+    // 本卡只展示「总大小 / 已解析数」两个聚合值，用记录作为 select 结果：
+    // Dart record 是结构相等，只有这两个数真的变了才重建本卡。
+    // 反查走 AppState.videoById（O(1)），替代原先的 O(items × videos) 嵌套扫描。
+    final stats = context.select<AppState, ({double totalSize, int parsed})>((s) {
+      var sizeSum = 0.0;
+      var parsedSum = 0;
+      for (final item in container.items) {
+        final v = s.videoById(item.fileId);
+        if (v == null) continue;
+        sizeSum += v.sizeMb;
+        if (v.parsed) parsedSum++;
+      }
+      return (totalSize: sizeSum, parsed: parsedSum);
+    });
+    final totalSize = stats.totalSize;
+    final parsedCount = stats.parsed;
+    // 仅供按钮回调使用（read 不建立订阅）
+    final state = context.read<AppState>();
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -67,8 +84,10 @@ class ContainerCard extends StatelessWidget {
   }
 
   void _editPipeline(BuildContext context, AppState state) {
-    final files = container.items.map((item) =>
-        state.videos.where((v) => v.id == item.fileId).firstOrNull).whereType<VideoFile>().toList();
+    final files = container.items
+        .map((item) => state.videoById(item.fileId))
+        .whereType<VideoFile>()
+        .toList();
     final firstParsed = files.where((v) => v.parsed).firstOrNull;
     if (firstParsed == null) return;
     final typeCounts = <MediaType, int>{};

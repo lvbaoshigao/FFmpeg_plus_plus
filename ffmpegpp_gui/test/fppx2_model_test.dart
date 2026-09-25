@@ -1,8 +1,8 @@
 // 新版 FPPX 未知节点（强制导入）在 Dart 模型层的往返测试。
 // C++ 端的格式编解码测试在 server_cpp/tests/fppx_test.cpp。
-import 'package:flutter_test/flutter_test.dart';
 import 'package:ffmpegpp_gui/models/models.dart';
 import 'package:ffmpegpp_gui/services/graph_executor.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test('未知节点 toJson/fromJson 保留 type_id', () {

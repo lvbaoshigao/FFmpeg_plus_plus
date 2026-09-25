@@ -1,7 +1,9 @@
 import 'dart:math' as math;
-import 'package:flutter/material.dart';
+
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
 import '../models/quick_config.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
@@ -380,7 +382,7 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
             const SizedBox(width: 8),
             Container(
               width: 8, height: 8,
-              decoration: BoxDecoration(color: Colors.orangeAccent, shape: BoxShape.circle),
+              decoration: const BoxDecoration(color: Colors.orangeAccent, shape: BoxShape.circle),
             ),
           ],
           const SizedBox(width: 8),
@@ -965,9 +967,9 @@ class _PathFieldState extends State<_PathField> {
   }
 
   Future<void> _pickFile() async {
-    final result = await FilePicker.platform.pickFiles();
-    if (result != null && result.files.isNotEmpty && result.files.first.path != null) {
-      final path = result.files.first.path!;
+    final picked = await FilePicker.pickFile();
+    final path = picked?.path;
+    if (path != null) {
       _controller.text = path;
       widget.onChanged(path);
     }

@@ -2,9 +2,10 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+
 import '../../services/frame_preview.dart';
-import 'editor_kit.dart';
 import '../app_slider.dart';
+import 'editor_kit.dart';
 
 class ClipStepEditor extends ParamsStepEditor {
   final String videoPath;

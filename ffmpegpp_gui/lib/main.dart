@@ -1,23 +1,25 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FontLoader, ByteData;
 import 'package:oc_liquid_glass/oc_liquid_glass.dart';
-import 'package:provider/provider.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
+
+import 'app.dart';
+import 'platform/app_platform.dart';
 import 'providers/app_state.dart';
 import 'services/gpu_info.dart';
+import 'services/integrity.dart';
 // 高刷新率（Android 专用）：在支持 90/120/144Hz 的屏幕上按设置请求最高刷新率
 import 'services/refresh_rate.dart';
-import 'services/integrity.dart';
-import 'platform/app_platform.dart';
 import 'widgets/font_picker.dart';
 // shaderGlassSupported：玻璃 shader 是否被当前后端支持（Skia/Windows 为 false）。
 // 用于门控下面的 shader 预加载，避免在永远走不到 shader 分支的平台上白编译。
 import 'widgets/liquid_glass_fallback.dart';
-import 'app.dart';
 
 final String _sep = Platform.pathSeparator;
 

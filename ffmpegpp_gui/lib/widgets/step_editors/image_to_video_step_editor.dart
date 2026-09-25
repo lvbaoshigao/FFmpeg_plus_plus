@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
-import 'editor_kit.dart';
+
 import '../app_slider.dart';
+import 'editor_kit.dart';
 
 class ImageToVideoStepEditor extends ParamsStepEditor {
   final int containerFileCount;

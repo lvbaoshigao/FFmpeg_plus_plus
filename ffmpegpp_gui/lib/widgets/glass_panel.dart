@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
-import '../providers/app_state.dart';
+
 import '../platform/app_platform.dart';
+import '../providers/app_state.dart';
 import 'app_card.dart' show SurfaceStyle;
 import 'liquid_glass_fallback.dart';
 import 'mobile_glass_pill.dart';

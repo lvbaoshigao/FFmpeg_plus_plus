@@ -1,18 +1,20 @@
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import '../theme/app_theme.dart';
+
+import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
-import '../widgets/toast.dart';
+import '../theme/app_theme.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/liquid_glass_fallback.dart';
-import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_glass_pill.dart';
+import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_ui.dart';
+import '../widgets/toast.dart';
 import '../widgets/wallpaper_background.dart';
-import '../platform/app_platform.dart';
 
 class CommandPage extends StatefulWidget {
   const CommandPage({super.key});
@@ -284,7 +286,7 @@ class _CommandPageState extends State<CommandPage> {
             ]),
           ),
         ),
-        SizedBox(height: kMobileNavClearance),
+        const SizedBox(height: kMobileNavClearance),
       ]),
     ));
   }

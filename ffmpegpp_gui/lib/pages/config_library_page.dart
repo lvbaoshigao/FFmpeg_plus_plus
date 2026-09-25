@@ -1,25 +1,27 @@
 import 'dart:io';
-import 'package:flutter/material.dart';
+
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
+
+import '../app.dart';
 import '../models/models.dart';
+import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../services/fppx2_service.dart';
 import '../services/graph_executor.dart';
 import '../services/quick_config_storage.dart';
-import '../theme/app_strings.dart';
 import '../theme/app_semantic_colors.dart';
-import '../widgets/toast.dart';
+import '../theme/app_strings.dart';
+import '../widgets/app_card.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_glass_pill.dart';
-import '../widgets/mobile_ui.dart';
-import '../widgets/app_card.dart';
-import '../platform/app_platform.dart';
 // 生效的菜单栏位置（底部 ↔ 左右竖排导轨）：列表底部留白随之在 96 / 20 间切换
 import '../widgets/mobile_nav_scope.dart';
-import '../app.dart';
+import '../widgets/mobile_ui.dart';
+import '../widgets/toast.dart';
 import 'pipeline_editor_page.dart';
 import 'quick_config_page.dart';
 
@@ -193,17 +195,17 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     final scheme = Theme.of(context).colorScheme;
     // Android 上 fppx 无 MIME 映射，FileType.custom 会失效（文件选择器不显示任何文件）。
     // 改用 FileType.any 并在 Dart 侧校验扩展名。
-    final r = await FilePicker.platform.pickFiles(
+    final picked = await FilePicker.pickFile(
       type: FileType.any,
       dialogTitle: zh ? '导入配置' : 'Import Config',
     );
-    if (r == null || r.files.isEmpty || r.files.first.path == null) return;
-    final name = r.files.first.name;
+    if (picked?.path == null) return;
+    final name = picked!.name;
     if (!name.endsWith('.fppx')) {
       if (mounted) showToast(context, zh ? '请选择 .fppx 文件' : 'Please select a .fppx file', type: ToastType.warning);
       return;
     }
-    final path = r.files.first.path!;
+    final path = picked.path!;
     final state = context.read<AppState>();
 
     // 新旧格式由 C++ 端解析（第 5 字节 0xFF = 新版），导入与校验行为完全一致
@@ -476,25 +478,18 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     _saveLibrary();
 
     // 写盘由 C++ 端完成（写前完整校验，失败不落盘）。
-    // 桌面端：saveFile 只取目标路径 → C++ 直接写；
-    // 移动端：SAF 只接受字节流 → C++ 先写临时文件 → 读出 bytes 交给插件写入。
+    // v13 起 saveFile 的 bytes 是必填参数且返回 Uri（不再返回可写路径），
+    // 因此桌面端与移动端统一成一条流程：C++ 先写到临时文件 → 读回字节 →
+    // 交给 saveFile 落盘。（移动端 SAF 本来就只接受字节流，桌面端因此也照此走。）
     final state = context.read<AppState>();
     final newFormat = entry.format == 'v2';
     String? result;
     String? tmpPath;
     try {
-      if (!isMobilePlatform) {
-        result = await FilePicker.platform.saveFile(
-          dialogTitle: zh ? '保存配置' : 'Save Config',
-          fileName: '${entry.name}.fppx',
-          type: FileType.custom,
-          allowedExtensions: ['fppx'],
-        );
-        if (result == null) return;
-      }
+      tmpPath = await _tempExportPath('${entry.name}.fppx');
       final exportRes = await FppxService(state.backend).exportGraph(
         entry.graph,
-        result ?? (tmpPath = await _tempExportPath('${entry.name}.fppx')),
+        tmpPath,
         description: entry.description,
         newFormat: newFormat,
       );
@@ -503,17 +498,14 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         _showImportErrors(zh ? '无法导出' : 'Cannot Export', exportRes.errors.isEmpty ? [exportRes.error ?? ''] : exportRes.errors);
         return;
       }
-      if (isMobilePlatform) {
-        final bytes = await File(tmpPath!).readAsBytes();
-        result = await FilePicker.platform.saveFile(
-          dialogTitle: zh ? '保存配置' : 'Save Config',
-          fileName: '${entry.name}.fppx',
-          type: FileType.custom,
-          allowedExtensions: ['fppx'],
-          bytes: bytes,
-        );
-        if (result == null) return;
-      }
+      final saved = await FilePicker.saveFile(
+        dialogTitle: zh ? '保存配置' : 'Save Config',
+        fileName: '${entry.name}.fppx',
+        mimeType: 'application/octet-stream',
+        bytes: await File(tmpPath).readAsBytes(),
+      );
+      if (saved == null) return; // 用户取消
+      result = saved.scheme == 'file' ? saved.toFilePath() : saved.toString();
     } catch (e) {
       if (mounted) {
         showToast(context, zh ? '导出失败: $e' : 'Export failed: $e', type: ToastType.error);
@@ -542,17 +534,11 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     String? result;
     String? tmpPath;
     try {
-      if (!isMobilePlatform) {
-        result = await FilePicker.platform.saveFile(
-          dialogTitle: zh ? '保存配置' : 'Save Config',
-          fileName: '${cfg.name}.fppx',
-          type: FileType.custom,
-          allowedExtensions: ['fppx'],
-        );
-        if (result == null) return;
-      }
+      // 同 _exportConfig：v13 的 saveFile 必填 bytes 且返回 Uri，
+      // 桌面/移动统一为「先写临时文件 → 读回字节 → saveFile 落盘」。
+      tmpPath = await _tempExportPath('${cfg.name}.fppx');
       final exportRes = await FppxService(state.backend).exportQuickItems(
-        result ?? (tmpPath = await _tempExportPath('${cfg.name}.fppx')),
+        tmpPath,
         description: cfg.description,
         items: items,
       );
@@ -561,17 +547,14 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         _showImportErrors(zh ? '无法导出' : 'Cannot Export', exportRes.errors.isEmpty ? [exportRes.error ?? ''] : exportRes.errors);
         return;
       }
-      if (isMobilePlatform) {
-        final bytes = await File(tmpPath!).readAsBytes();
-        result = await FilePicker.platform.saveFile(
-          dialogTitle: zh ? '保存配置' : 'Save Config',
-          fileName: '${cfg.name}.fppx',
-          type: FileType.custom,
-          allowedExtensions: ['fppx'],
-          bytes: bytes,
-        );
-        if (result == null) return;
-      }
+      final saved = await FilePicker.saveFile(
+        dialogTitle: zh ? '保存配置' : 'Save Config',
+        fileName: '${cfg.name}.fppx',
+        mimeType: 'application/octet-stream',
+        bytes: await File(tmpPath).readAsBytes(),
+      );
+      if (saved == null) return; // 用户取消
+      result = saved.scheme == 'file' ? saved.toFilePath() : saved.toString();
     } catch (e) {
       if (mounted) {
         showToast(context, zh ? '导出失败: $e' : 'Export failed: $e', type: ToastType.error);

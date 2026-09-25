@@ -546,8 +546,8 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
     const itemToPage = {0: 0, 1: 1, 2: 3, 3: 4};
     final itemIdx = pageToItem[widget.selectedIndex] ?? 0;
 
-    final barHeight = 60.0;
-    final radius = barHeight / 2;
+    const barHeight = 60.0;
+    const radius = barHeight / 2;
     final selectedColor = look.selectedColor;
     final unselectedColor = look.unselectedColor;
 
@@ -640,7 +640,7 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   for (var i = 0; i < items.length; i++) ...[
-                    if (i > 0) SizedBox(height: pillGap),
+                    if (i > 0) const SizedBox(height: pillGap),
                     SizedBox(
                       height: itemExtent,
                       child: _NavItem(
@@ -774,7 +774,7 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   for (var i = 0; i < items.length; i++) ...[
-                    if (i > 0) SizedBox(width: pillGap),
+                    if (i > 0) const SizedBox(width: pillGap),
                     SizedBox(
                       width: itemW,
                       child: _NavItem(
@@ -1225,7 +1225,7 @@ class _MobileNavStyleTabBarState extends State<MobileNavStyleTabBar> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     for (var i = 0; i < widget.items.length; i++) ...[
-                      if (i > 0) SizedBox(width: pillGap),
+                      if (i > 0) const SizedBox(width: pillGap),
                       SizedBox(
                         width: itemW,
                         child: _NavItem(

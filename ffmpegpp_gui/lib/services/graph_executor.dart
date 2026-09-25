@@ -8,7 +8,45 @@ class ExecutionStep {
   String? loopMode;
   String? innerAction;
   List<String> selection;
-  ExecutionStep(this.action, this.nodes, {this.loopCount = 1, this.loopMode, this.innerAction, this.selection = const []});
+
+  /// 链式累积（逻辑块参数 [`LogicBlock.accumulate`]）：每轮迭代的输入承接上一轮输出。
+  bool accumulate;
+
+  /// 单轮失败策略：`'stop'`（默认）/ `'continue'`。
+  String errorPolicy;
+
+  /// 单轮失败重试次数。
+  int retries;
+
+  /// 条件块（[LogicBlockType.condition]）的判定参数；[condField] 为 null 表示无条件。
+  LogicConditionField? condField;
+  LogicConditionOp? condOp;
+  String condValue;
+
+  /// 条件不满足时是否跳过（false = 中止整个任务）。
+  bool condSkipWhenFalse;
+
+  /// 迭代序号首值 / 步长（`{i}` 占位符用），见 [LogicBlock.iterationBase]。
+  int loopIndexBase;
+  int loopIndexStep;
+
+  ExecutionStep(
+    this.action,
+    this.nodes, {
+    this.loopCount = 1,
+    this.loopMode,
+    this.innerAction,
+    this.selection = const [],
+    this.accumulate = false,
+    this.errorPolicy = 'stop',
+    this.retries = 0,
+    this.condField,
+    this.condOp,
+    this.condValue = '',
+    this.condSkipWhenFalse = true,
+    this.loopIndexBase = 1,
+    this.loopIndexStep = 1,
+  });
 }
 
 class ExecutionPlan {
@@ -443,17 +481,33 @@ class GraphExecutor {
       }
     }
 
-    // Tag steps that belong to logic blocks with loop metadata
+    // Tag steps that belong to logic blocks with loop metadata.
+    //
+    // 逻辑块的全部执行语义都在这里「打标」，由 AppState._expandLoopCalls 在真正
+    // 执行前展平 —— 新增类型（分组 / 条件）与循环参数（区间 / 累积 / 失败策略）
+    // 只需在此处多拷几个字段，后端不需要任何改动。
     for (final step in steps) {
       final firstNode = step.nodes.first;
       final block = graph.logicBlocks.where((b) => b.childNodeIds.contains(firstNode.id)).firstOrNull;
-      if (block != null) {
-        step.loopCount = block.params['count'] as int? ?? 1;
-        step.loopMode = block.params['mode'] as String? ?? 'all';
-        step.innerAction = step.action;
-        step.selection = (block.params['selections'] as List?)
-            ?.map((m) => m is Map ? m['nodeId'] as String? : null)
-            .whereType<String>().toList() ?? const [];
+      if (block == null) continue;
+      // effectiveCount：分组 / 条件块恒为 1；循环块按「固定次数」或「区间」折算。
+      // 原实现直接读 params['count']，区间模式下会永远得到 10（或任何残留值）。
+      step.loopCount = block.effectiveCount;
+      step.loopMode = block.params['mode'] as String? ?? 'all';
+      step.innerAction = step.action;
+      step.selection = (block.params['selections'] as List?)
+          ?.map((m) => m is Map ? m['nodeId'] as String? : null)
+          .whereType<String>().toList() ?? const [];
+      step.accumulate = block.accumulate;
+      step.errorPolicy = block.errorPolicy;
+      step.retries = block.retries;
+      step.loopIndexBase = block.iterationBase;
+      step.loopIndexStep = block.iterationStep;
+      if (block.type == LogicBlockType.condition) {
+        step.condField = block.conditionField;
+        step.condOp = block.conditionOp;
+        step.condValue = block.conditionValue;
+        step.condSkipWhenFalse = block.conditionSkipWhenFalse;
       }
     }
 
@@ -474,6 +528,85 @@ class GraphExecutor {
       }
     }
     return plans;
+  }
+
+  // ── 逻辑块条件判定 ──
+
+  /// 条件块（[LogicBlockType.condition]）的运行时判定。
+  ///
+  /// 只读取**无需解码媒体**的元数据：扩展名 / 文件名 / 文件大小 / 完整路径 /
+  /// 所在目录 —— 宽高与时长要起 ffprobe 子进程，而此处是同步构建阶段。
+  /// 字符串比较一律忽略大小写（`.MP4` 与 `mp4` 应当等价）；
+  /// 数值比较（> < ≥ ≤）在任一操作数不是数字时判为 false。
+  static bool _evalCondition(ExecutionStep step, String inputPath) {
+    final field = step.condField;
+    if (field == null) return true;
+
+    final file = File(inputPath);
+    final exists = file.existsSync();
+    final name = inputPath.replaceAll('\\', '/').split('/').last;
+
+    String actual = '';
+    switch (field) {
+      case LogicConditionField.extension:
+        final dot = name.lastIndexOf('.');
+        actual = dot >= 0 && dot < name.length - 1 ? name.substring(dot + 1) : '';
+      case LogicConditionField.filename:
+        actual = name;
+      case LogicConditionField.fileSize:
+        if (exists) {
+          try {
+            actual = '${file.lengthSync()}';
+          } catch (_) {
+            // 探测失败按 0 处理，绝不让条件判定把整个构建带崩
+            actual = '0';
+          }
+        } else {
+          actual = '0';
+        }
+      case LogicConditionField.inputPath:
+        actual = inputPath;
+      case LogicConditionField.parentDir:
+        final norm = inputPath.replaceAll('\\', '/');
+        final idx = norm.lastIndexOf('/');
+        if (idx <= 0) {
+          actual = '';
+        } else {
+          final parent = norm.substring(0, idx);
+          final pIdx = parent.lastIndexOf('/');
+          actual = pIdx >= 0 ? parent.substring(pIdx + 1) : parent;
+        }
+    }
+
+    final expect = step.condValue.trim();
+    final op = step.condOp ?? LogicConditionOp.eq;
+
+    if (op == LogicConditionOp.gt ||
+        op == LogicConditionOp.lt ||
+        op == LogicConditionOp.ge ||
+        op == LogicConditionOp.le) {
+      final a = num.tryParse(actual);
+      final b = num.tryParse(expect);
+      if (a == null || b == null) return false;
+      return switch (op) {
+        LogicConditionOp.gt => a > b,
+        LogicConditionOp.lt => a < b,
+        LogicConditionOp.ge => a >= b,
+        LogicConditionOp.le => a <= b,
+        _ => false,
+      };
+    }
+
+    final a = actual.toLowerCase();
+    final b = expect.toLowerCase();
+    return switch (op) {
+      LogicConditionOp.eq => a == b,
+      LogicConditionOp.ne => a != b,
+      LogicConditionOp.contains => b.isEmpty || a.contains(b),
+      LogicConditionOp.startsWith => b.isEmpty || a.startsWith(b),
+      LogicConditionOp.endsWith => b.isEmpty || a.endsWith(b),
+      _ => true,
+    };
   }
 
   // ── 将执行计划转为后端调用 ──
@@ -502,6 +635,20 @@ class GraphExecutor {
       if (!isLast && step.loopMode == 'manual' && step.selection.isNotEmpty) {
         final run = step.nodes.any((n) => step.selection.contains(n.id));
         if (!run) continue;
+      }
+      // 条件块：按**进入本步骤时**的输入文件属性判定。
+      // 只使用扩展名 / 文件名 / 大小 / 路径 —— 全部同步可得；宽高与时长需要起
+      // ffprobe 子进程，而这里（以及整个展平阶段）是同步的。
+      // 与 manual 一致地对末步豁免：末步是真正写最终产物的那一步，跳过它等于
+      // 任务没有产物。
+      if (!isLast && step.condField != null) {
+        if (!_evalCondition(step, currentInput)) {
+          if (step.condSkipWhenFalse) {
+            continue; // 跳过框内节点，链路照常往下走
+          }
+          warnings.add('条件不满足（${step.condValue}），已按「中止任务」策略终止: $currentInput');
+          return null;
+        }
       }
       final inputExt = currentInput.split('.').last;
       var currentOutput = isLast ? outputPath : _tempPath(inputPath, i, inputExt, tmpSalt);
@@ -1202,11 +1349,16 @@ class GraphExecutor {
 
     // Tag calls generated by steps with loop metadata
     for (final (start, end, step) in stepCallRanges) {
-      if (step.loopCount > 1) {
-        for (var ci = start; ci < end; ci++) {
-          calls[ci].loopCount = step.loopCount;
-          calls[ci].loopMode = step.loopMode;
-        }
+      if (step.loopCount <= 1) continue;
+      for (var ci = start; ci < end; ci++) {
+        calls[ci].loopCount = step.loopCount;
+        calls[ci].loopMode = step.loopMode;
+        // 展平阶段（AppState._expandLoopCalls）要用的循环参数一并下发
+        calls[ci].accumulate = step.accumulate;
+        calls[ci].errorPolicy = step.errorPolicy;
+        calls[ci].retries = step.retries;
+        calls[ci].loopIndexBase = step.loopIndexBase;
+        calls[ci].loopIndexStep = step.loopIndexStep;
       }
     }
 

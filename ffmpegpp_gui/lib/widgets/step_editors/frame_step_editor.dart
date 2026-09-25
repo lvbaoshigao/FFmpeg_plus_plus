@@ -2,9 +2,10 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+
 import '../../services/frame_preview.dart';
-import 'editor_kit.dart';
 import '../app_slider.dart';
+import 'editor_kit.dart';
 
 class FrameStepEditor extends ParamsStepEditor {
   final String videoPath;
@@ -240,7 +241,7 @@ class _FrameStepEditorState extends State<FrameStepEditor> with StepEditorState<
         Text(zh ? '提取帧率: ' : 'FPS: ', style: TextStyle(fontSize: 13, color: cs.onSurface)),
         SizedBox(width: 80, child: TextFormField(
           controller: _fpsCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: InputDecoration(labelText: 'fps'), style: TextStyle(fontSize: 13, color: cs.onSurface),
+          decoration: const InputDecoration(labelText: 'fps'), style: TextStyle(fontSize: 13, color: cs.onSurface),
           onChanged: (v) { p['fps_rate'] = double.tryParse(v) ?? 1.0; setState(() {}); widget.onChanged(); },
         )),
         const SizedBox(width: 12),
@@ -257,7 +258,7 @@ class _FrameStepEditorState extends State<FrameStepEditor> with StepEditorState<
         Text(zh ? '提取帧率: ' : 'FPS: ', style: TextStyle(fontSize: 13, color: cs.onSurface)),
         SizedBox(width: 80, child: TextFormField(
           controller: _fpsCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: InputDecoration(labelText: 'fps'), style: TextStyle(fontSize: 13, color: cs.onSurface),
+          decoration: const InputDecoration(labelText: 'fps'), style: TextStyle(fontSize: 13, color: cs.onSurface),
           onChanged: (v) { p['fps_rate'] = double.tryParse(v) ?? 1.0; setState(() {}); widget.onChanged(); },
         )),
         const SizedBox(width: 12),

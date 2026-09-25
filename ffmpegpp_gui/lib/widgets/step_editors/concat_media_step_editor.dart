@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
-import 'editor_kit.dart';
+
 import '../../theme/app_semantic_colors.dart';
+import 'editor_kit.dart';
 
 class ConcatMediaStepEditor extends ParamsStepEditor {
   final int containerFileCount;

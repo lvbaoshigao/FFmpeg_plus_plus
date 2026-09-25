@@ -76,6 +76,21 @@ class AppStrings {
   String get qSize => lang == 'zh' ? '大小' : 'Size';
   /// 数值占位符：中文界面用「—」，避免详情里残留英文 / N/A
   String get qNone => lang == 'zh' ? '—' : 'N/A';
+  // ── 队列任务卡展开详情（2026-09-25 重排）──
+  // 概览条：把「耗时 / 输出大小 / 帧数」三项提到最上面 —— 它们原先散落在
+  // 「技术参数」网格里，与 FPS、码率同级，但用户点开卡片最先想知道的就是
+  // 「跑了多久、出来多大」。
+  String get qSummary => lang == 'zh' ? '概览' : 'Summary';
+  String get qElapsed => lang == 'zh' ? '耗时' : 'Elapsed';
+  String get qDuration => lang == 'zh' ? '总时长' : 'Duration';
+  String get qFrames => lang == 'zh' ? '帧数' : 'Frames';
+  String get qSteps => lang == 'zh' ? '步骤' : 'Steps';
+  String get qCopy => lang == 'zh' ? '复制' : 'Copy';
+  String get qCopied => lang == 'zh' ? '已复制到剪贴板' : 'Copied to clipboard';
+  String get qNoLogs => lang == 'zh' ? '暂无日志输出' : 'No log output';
+  String get qNoCommand => lang == 'zh' ? '暂无命令记录' : 'No command recorded';
+  String get qLines => lang == 'zh' ? '行' : 'lines';
+  String get qOutlineTitle => lang == 'zh' ? '任务概览' : 'Task Summary';
   // Debug
   String get dDebug => lang == 'zh' ? '调试' : 'Debug';
   String get dDebugMode => lang == 'zh' ? '调试模式' : 'Debug mode';

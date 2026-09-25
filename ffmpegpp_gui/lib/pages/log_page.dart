@@ -1,17 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import '../theme/app_theme.dart';
-import '../theme/app_semantic_colors.dart';
+
 import '../models/models.dart';
+import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
-import '../widgets/toast.dart';
+import '../theme/app_semantic_colors.dart';
+import '../theme/app_theme.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_glass_pill.dart';
 import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_ui.dart';
+import '../widgets/toast.dart';
 import '../widgets/wallpaper_background.dart';
-import '../platform/app_platform.dart';
 
 class LogPage extends StatefulWidget {
   const LogPage({super.key});
@@ -189,7 +190,7 @@ class _LogPageState extends State<LogPage> {
       tabs: [for (final f in _filters) MobilePillTab(_filterLabel(f, isZh))],
       selectedIndex: _filters.indexOf(_filter),
       onSelected: (i) => setState(() { _filter = _filters[i]; _selectedIndices.clear(); }),
-      margin: EdgeInsets.fromLTRB(MobileUi.subPagePaddingH, 8, MobileUi.subPagePaddingH, 8),
+      margin: const EdgeInsets.fromLTRB(MobileUi.subPagePaddingH, 8, MobileUi.subPagePaddingH, 8),
     );
   }
 

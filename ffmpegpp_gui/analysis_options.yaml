@@ -9,6 +9,39 @@
 # packages, and plugins designed to encourage good coding practices.
 include: package:flutter_lints/flutter.yaml
 
+analyzer:
+  language:
+    # 三个严格模式（strict-casts / strict-raw-types / strict-inference）目前
+    # **刻意保持关闭**，理由是它们各自都会把既有的、与本次改动无关的代码
+    # 一次性升级成 error/warning，必须作为独立的、可单独回归的专项迁移来做。
+    #
+    # 已实测的开启代价（2026-09-25，`dart analyze` 全量 lib）：
+    # * strict-inference → 62 条 WARNING，集中在 4 类：
+    #     - 30 条 showDialog / Future.delayed / MaterialPageRoute 泛型未推断
+    #     - 20 条集合字面量未推断（app_state.dart 的 MCP 工具 schema，
+    #       27 个工具 × 多层嵌套 map，需要逐层写 <String, dynamic>）
+    #     - 11 条构造调用未推断
+    #     -  1 条未标注参数
+    #   其中真正的价值点是「嵌套 JSON 字面量变成 Map<dynamic, dynamic>」
+    #   （C++ 边界风险），但修法要在 80+ 处嵌套 map 上标注类型，
+    #   混在依赖升级里做会让 diff 无法审阅。
+    # * strict-casts / strict-raw-types → 涉及整仓（52k 行、大量 FFI/JSON 边界），
+    #   会把既有隐式 downcast 全部变成编译错误，属于整仓级迁移。
+    #
+    # 计划顺序：先 strict-inference（配合标注嵌套 map）→ 再 strict-raw-types
+    # （分模块）→ 最后 strict-casts。每一步都跑 `flutter analyze` + `flutter test`。
+    strict-inference: false
+    strict-casts: false
+    strict-raw-types: false
+  errors:
+    # 空 catch 一律降级提示用的规则。
+    #
+    # 注意：`empty_catches` **对 `catch (_) {}` 天然豁免**（下划线参数被视为
+    # 显式忽略），所以本仓库 87 处 `catch (_) {}` 不会被它抓到 —— 改这条
+    # 配置不会增加任何诊断。想收敛这批静默吞异常，只能靠人工复查
+    # 「涉及配置持久化」的那批（用户以为生效其实没有）。
+    empty_catches: warning
+
 linter:
   # The lint rules applied to this project can be customized in the
   # section below to disable rules from the `package:flutter_lints/flutter.yaml`
@@ -21,8 +54,21 @@ linter:
   # `// ignore_for_file: name_of_lint` syntax on the line or in the file
   # producing the lint.
   rules:
-    # avoid_print: false  # Uncomment to disable the `avoid_print` rule
-    # prefer_single_quotes: true  # Uncomment to enable the `prefer_single_quotes` rule
-
-# Additional information about this file can be found at
-# https://dart.dev/guides/language/analysis-options
+    # ---- const 优先：构建期常量可被 Flutter 规范化复用，省下大量重建 ----
+    prefer_const_constructors: true
+    prefer_const_constructors_in_immutables: true
+    prefer_const_declarations: true
+    prefer_const_literals_to_create_immutables: true
+    # ---- 明确意图 ----
+    use_super_parameters: true
+    unnecessary_late: true
+    avoid_unnecessary_containers: true
+    sized_box_for_whitespace: true
+    # 局部变量未被重新赋值就标 final：能挡住「意外重赋值」这类隐蔽 bug
+    prefer_final_locals: true
+    # 导入顺序稳定，减少无谓 diff
+    directives_ordering: true
+    # 别在 forEach 里传带副作用的闭包
+    avoid_function_literals_in_foreach_calls: true
+    # int == String 这类必然为 false 的比较直接报出来
+    unrelated_type_equality_checks: true
