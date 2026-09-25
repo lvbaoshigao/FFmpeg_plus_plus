@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'editor_kit.dart';
+import '../../theme/app_semantic_colors.dart';
 
 class ConcatMediaStepEditor extends ParamsStepEditor {
   final int containerFileCount;
@@ -77,8 +78,9 @@ class _ConcatMediaStepEditorState extends State<ConcatMediaStepEditor> with Step
           const SizedBox(height: 4),
           Builder(builder: (_) {
             final err = _validateOrder();
-            if (err != null) return Text(err, style: TextStyle(fontSize: 10, color: cs.error));
-            return Text(zh ? '编号有效' : 'Valid order', style: TextStyle(fontSize: 10, color: Colors.green));
+            if (err != null) return Text(err, style: TextStyle(fontSize: 10, color: cs.sem.danger));
+            // 「编号有效」= 语义成功，走 AppSemantic（原先 Colors.green 不随主题）。
+            return Text(zh ? '编号有效' : 'Valid order', style: TextStyle(fontSize: 10, color: cs.sem.success));
           }),
         ],
       ],

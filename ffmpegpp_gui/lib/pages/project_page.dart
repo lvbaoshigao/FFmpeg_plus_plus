@@ -7,6 +7,7 @@ import '../providers/app_state.dart';
 import '../models/models.dart';
 import '../services/fppx2_service.dart';
 import '../theme/app_strings.dart';
+import '../theme/app_semantic_colors.dart';
 import '../widgets/video_card.dart';
 import '../widgets/container_card.dart';
 import '../widgets/glass_panel.dart';
@@ -582,9 +583,11 @@ class ProjectPageState extends State<ProjectPage> {
       final goOn = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          // 去掉 shape 覆盖：原来写死 radius 16 会把主题 dialogTheme 的
+          // 圆角(22) 和 0.6px 细描边一起盖掉（RoundedRectangleBorder.side 默认 none），
+          // 导致这个对话框比全局其他对话框「方一块、还没边框」。
           title: Row(children: [
-            Icon(Icons.help_outline, size: 20, color: Colors.orange),
+            Icon(Icons.help_outline, size: 20, color: scheme.sem.warning),
             const SizedBox(width: 8),
             Text(zh ? '发现未知节点' : 'Unknown Node Type', style: TextStyle(color: scheme.onSurface)),
           ]),
@@ -667,14 +670,17 @@ class ProjectPageState extends State<ProjectPage> {
                   width: double.infinity,
                   padding: const EdgeInsets.all(10),
                   margin: const EdgeInsets.only(bottom: 12),
-                  decoration: BoxDecoration(color: Colors.orange.withAlpha(30), borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.orange.withAlpha(60))),
+                  // 警告条：底色/描边/文字全部改用语义色 warning 的 container
+                  // 配对。原先 `Colors.orange.withAlpha(30)` 在深色主题下几乎不可见，
+                  // 且这个橙与主题种子色毫无关系。
+                  decoration: BoxDecoration(color: scheme.sem.warningContainer, borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: scheme.sem.warning.withAlpha(60))),
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Row(children: [
-                      const Icon(Icons.warning_amber, size: 16, color: Colors.orange),
+                      Icon(Icons.warning_amber, size: 16, color: scheme.sem.onWarningContainer),
                       const SizedBox(width: 6),
                       Text(zh ? '版本警告' : 'Version Warning',
-                          style: const TextStyle(fontSize: 13, color: Colors.orange, fontWeight: FontWeight.w700)),
+                          style: TextStyle(fontSize: 13, color: scheme.sem.onWarningContainer, fontWeight: FontWeight.w700)),
                     ]),
                     const SizedBox(height: 6),
                     ...fppx.warnings.map((w) => Padding(

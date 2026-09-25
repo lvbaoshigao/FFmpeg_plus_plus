@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../services/frame_preview.dart';
+import '../../theme/app_semantic_colors.dart';
 
 class VideoCropStepEditor extends StatefulWidget {
   final Map<String, dynamic> params;
@@ -402,14 +403,14 @@ class _VideoCropOverlayDialogState extends State<_VideoCropOverlayDialog> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   decoration: BoxDecoration(
-                    color: widget.cropMode == 'keep' ? Colors.green.withAlpha(40) : Colors.red.withAlpha(40),
+                    color: widget.cropMode == 'keep' ? cs.sem.successContainer : cs.sem.dangerContainer,
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
                     widget.cropMode == 'keep' ? (zh ? '保留' : 'KEEP') : (zh ? '移除' : 'REMOVE'),
                     style: TextStyle(
                       fontSize: 11, fontWeight: FontWeight.w600,
-                      color: widget.cropMode == 'keep' ? Colors.green : Colors.red,
+                      color: widget.cropMode == 'keep' ? cs.sem.success : cs.sem.danger,
                     ),
                   ),
                 ),
@@ -530,6 +531,8 @@ class _VideoCropOverlayDialogState extends State<_VideoCropOverlayDialog> {
                         currentDrag: _currentDrag,
                         isRemoveMode: widget.cropMode == 'remove',
                         imgRect: Rect.fromLTWH(offsetX, offsetY, displayW, displayH),
+                        accentKeep: ctx.sem.success,
+                        accentRemove: ctx.sem.danger,
                       ),
                     ),
                   ),
@@ -568,18 +571,25 @@ class _RegionOverlayPainter extends CustomPainter {
   final Rect? currentDrag;
   final bool isRemoveMode;
   final Rect imgRect;
+  /// 裁切框的语义色。CustomPainter 拿不到 ThemeData，所以在构造时由
+  /// 调用方从 `ColorScheme.sem` 传进来（原先这里直接写 Colors.green /
+  /// Colors.red，换了主题色这两个框永远不会变）。
+  final Color accentKeep;
+  final Color accentRemove;
 
   _RegionOverlayPainter({
     required this.regions,
     this.currentDrag,
     required this.isRemoveMode,
     required this.imgRect,
+    required this.accentKeep,
+    required this.accentRemove,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     final allRects = [...regions, ?currentDrag];
-    final accentColor = isRemoveMode ? Colors.red : Colors.green;
+    final accentColor = isRemoveMode ? accentRemove : accentKeep;
 
     if (!isRemoveMode && allRects.isNotEmpty) {
       final dimPaint = Paint()..color = Colors.black.withAlpha(140);
@@ -630,5 +640,8 @@ class _RegionOverlayPainter extends CustomPainter {
       !listEquals(old.regions, regions) || // [FIX H-13] Rect 已实现 ==，逐元素比较避免每次父级重建都强制重绘
       old.currentDrag != currentDrag ||
       old.isRemoveMode != isRemoveMode ||
-      old.imgRect != imgRect;
+      old.imgRect != imgRect ||
+      // 主题切换时语义色会变，必须一起比较，否则换肤后裁切框颜色不刷新
+      old.accentKeep != accentKeep ||
+      old.accentRemove != accentRemove;
 }

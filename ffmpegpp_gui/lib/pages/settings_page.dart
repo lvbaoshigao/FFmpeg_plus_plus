@@ -14,6 +14,10 @@ import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import '../theme/app_text_scale.dart';
+// 控件高度档位令牌：MCP 卡的输入框/按钮、AI 配置详情页的按钮统一按档位取高度，
+// 不再用 `SizedBox(height: 30)` 压高度（会与主题 v12 内边距打架）
+import '../theme/app_control_size.dart';
+import '../theme/app_semantic_colors.dart';
 import '../widgets/masonry_grid.dart';
 import '../widgets/install_dialog.dart';
 import 'keybinding_page.dart';
@@ -791,6 +795,10 @@ class _SettingsPageState extends State<SettingsPage> {
         state.config.saveLogs,
         state.config.logSavePath,
         state.config.autoCheckUpdate,
+        // mcpEnabled 之前漏在签名外 —— MCP 总开关是 SwitchListTile（受控控件，
+        // value 直读 config），点击后配置写盘成功但整页不重建，开关视觉上纹丝不动，
+        // 与 noPreload / 字重 是同一条根因。
+        state.config.mcpEnabled,
         state.config.mcpPort,
         state.config.mcpHost,
         state.config.mcpAllowWrite,
@@ -800,6 +808,10 @@ class _SettingsPageState extends State<SettingsPage> {
         state.config.aiWriteAccess,
         state.config.aiAutoExecute,
         state.config.aiAllowAsk,
+        // aiAskSkipTools 是工具白名单芯片（selected 直读 config 里的列表），
+        // 不在签名里则勾选后芯片不变色。updateConfig 会替换整个 List 实例，
+        // 因此清单身份哈希能正确变化。
+        state.config.aiAskSkipTools,
         state.config.aiGraphMode,
         state.config.aiShowThinking,
         state.config.aiAutoTitle,
@@ -1600,7 +1612,10 @@ Widget _link(String label, String url) => TextButton.icon(
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
     minimumSize: const Size(0, 28),
     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-    foregroundColor: const Color(0xFF5E6AD2),
+    // 这里原本写死 `foregroundColor: Color(0xFF5E6AD2)`（= 默认种子色）。
+    // 后果：换主题色后这些链接仍是紫蓝色（浅色主题下比主题 primary 更亮更艳），
+    // 与旁边所有主题化控件不协调。删掉后走 TextButton 的默认
+    // colorScheme.primary，自动跟随主题 —— 同时这也修掉了「硬件写死不改主题」。
   ),
 );
 
@@ -2244,11 +2259,15 @@ List<Widget> _buildGlassMaterialItems(BuildContext ctx, AppState state) {
   ];
 }
 
-/// 「特效」卡：滑块拖动时的粒子（自 [_buildSurfaceStyleCard] 的 ④ 使用）。
+/// 「特效」卡：滑块拖动时的彗星拖尾（自 [_buildSurfaceStyleCard] 的 ④ 使用）。
 ///
 /// 单独成卡（而不是并进「玻璃与材质」）：它是动画项，跟玻璃材质不是一个主题。
-/// 关闭后粒子层连 Ticker / 绘制层都不建，是低配设备换帧率的开关
+/// 关闭后彗星层连 Ticker / 绘制层都不建，是低配设备换帧率的开关
 /// （见 widgets/app_slider.dart 的性能约定）。
+///
+/// 注意：这一项从 2026-09 起由「离散粒子」改为「连续彗星拖尾」，但**配置字段名与
+/// JSON 键刻意保持不变**（`sliderParticles` / `slider_particles` / 旧键
+/// `slider_stars`），老配置文件零迁移。
 List<Widget> _buildEffectItems(BuildContext ctx, AppState state) {
   final cfg = state.config;
   final scheme = Theme.of(ctx).colorScheme;
@@ -2258,12 +2277,12 @@ List<Widget> _buildEffectItems(BuildContext ctx, AppState state) {
     SwitchListTile(
         dense: true,
         contentPadding: EdgeInsets.zero,
-        title: Text(zh ? '滑块粒子特效' : 'Slider particle trail',
+        title: Text(zh ? '滑块彗星拖尾' : 'Slider comet trail',
             style: TextStyle(color: clr, fontSize: 13)),
         subtitle: Text(
             zh
-                ? '拖动滑块时从把手（填充段最右端）向左喷出的粒子，最多占轨道总长 15%（关闭后零帧开销）'
-                : 'Particles sprayed left from the handle while dragging, up to 15% of the track '
+                ? '拖动滑块时从把手（填充段最右端）向左甩出的彗星尾迹，最多占轨道总长 22%（关闭后零帧开销）'
+                : 'Comet trail pulled left from the handle while dragging, up to 22% of the track '
                     '(off = zero frame cost)',
             style: TextStyle(fontSize: 11, color: scheme.outline)),
         value: cfg.sliderParticles,
@@ -2275,129 +2294,197 @@ List<Widget> _buildEffectItems(BuildContext ctx, AppState state) {
 // 样式预设（样式卡顶部的可视化方案选择）
 // ═══════════════════════════════════════════════════════════════════
 
-/// 一套样式预设：`apply` 一次写入多个外观字段（卡片/底栏/药丸/菜单样式 +
-/// 玻璃细节 + 主题色协调度），`matches` 判断当前配置是否正是这套方案。
+/// 一套样式预设的「外观补丁」值对象。
+///
+/// ## 为什么要有它
+///
+/// 改造前每套预设各写一份 `apply`（级联写 8~11 个外观字段）和一份 `matches`
+/// （只挑 1~4 个字段比对），两边长期不对称，于是「预设芯片高亮」与「实际观感」
+/// 会脱钩：
+///
+/// - `liquid` 写入 11 个字段，`matches` 只看 4 个（卡片族样式、glassEffect、
+///   glassFollowTheme、通透度）；手动把「高光强度」拖到别处，它照样亮着；
+/// - `clear` 写入 11 个字段，`matches` 只看 2 个 → 手动把通透度拖到 82%，
+///   「轻薄通透」就亮起来，但模糊度/高光/边缘光还是上一套的值，看到的并不是它；
+/// - `theme` 写入 `themeTone = 0.55`，而其余四套完全不碰这个字段 → 从「主题色」
+///   切回「液态玻璃」后协调度仍残留 0.55（默认 0.45），观感与新装不一致，
+///   但 `matches` 仍然报「已选中」。这是唯一一处真正会让观感偏离预设名义值的残留。
+///
+/// 现在 `applyTo` 与 `matches` 共用同一份数据，字段不可能再漏；每次套用都写满
+/// 全部字段（幂等），上一套预设的残留值会被彻底覆盖。
+///
+/// ## 数值网格约束
+///
+/// 预设写入的数值必须落在「玻璃细节」滑块的网格上，否则用户一碰滑块数值就被
+/// 吸附走、预设再也不会匹配：模糊度 step 1、通透度/高光位置 step 0.05、
+/// 高光强度/边缘光 step 0.1、主题色协调度 step 0.05。
+/// 原 `clear` 的通透度 0.82 不在 0.05 网格上（滑块只能取到 0.80/0.85），
+/// 已修正为 0.80。
+@immutable
+class _StyleValues {
+  final String cardStyle;
+  final String navStyle;
+  final String pillStyle;
+  final String menuStyle;
+  final String glassEffect;
+  final String settingsGlassMode;
+  final bool glassFollowTheme;
+  final double glassBlur;
+  final double glassClarity;
+  final double glassHighlight;
+  final double glassLightPos;
+  final double glassEdge;
+  final double themeTone;
+
+  const _StyleValues({
+    required this.cardStyle,
+    required this.navStyle,
+    required this.pillStyle,
+    required this.menuStyle,
+    required this.glassEffect,
+    required this.settingsGlassMode,
+    required this.glassFollowTheme,
+    required this.glassBlur,
+    required this.glassClarity,
+    required this.glassHighlight,
+    required this.glassLightPos,
+    required this.glassEdge,
+    required this.themeTone,
+  });
+
+  /// 全部字段一次写齐（幂等）。级联表达式的值就是接收者，可直接喂 `updateConfig`。
+  void applyTo(AppConfig c) {
+    c
+      ..cardStyle = cardStyle
+      ..navStyle = navStyle
+      ..pillStyle = pillStyle
+      ..menuStyle = menuStyle
+      ..glassEffect = glassEffect
+      ..settingsGlassMode = settingsGlassMode
+      ..glassFollowTheme = glassFollowTheme
+      ..glassBlur = glassBlur
+      ..glassClarity = glassClarity
+      ..glassHighlight = glassHighlight
+      ..glassLightPos = glassLightPos
+      ..glassEdge = glassEdge
+      ..themeTone = themeTone;
+  }
+
+  /// 与 [applyTo] 逐字段一一对应。double 留 0.005 容差（JSON 往返的浮点误差）。
+  bool matches(AppConfig c) =>
+      c.cardStyle == cardStyle &&
+      c.navStyle == navStyle &&
+      c.pillStyle == pillStyle &&
+      c.menuStyle == menuStyle &&
+      c.glassEffect == glassEffect &&
+      c.settingsGlassMode == settingsGlassMode &&
+      c.glassFollowTheme == glassFollowTheme &&
+      (c.glassBlur - glassBlur).abs() < 0.005 &&
+      (c.glassClarity - glassClarity).abs() < 0.005 &&
+      (c.glassHighlight - glassHighlight).abs() < 0.005 &&
+      (c.glassLightPos - glassLightPos).abs() < 0.005 &&
+      (c.glassEdge - glassEdge).abs() < 0.005 &&
+      (c.themeTone - themeTone).abs() < 0.005;
+}
+
+/// 一套样式预设：名字/说明/预览类别 + 一份 [_StyleValues]。
 class _StylePreset {
   final String id;
   final String Function(bool zh) name;
   final String Function(bool zh) desc;
   /// 预览卡的样式类别：'liquid' | 'theme' | 'blur' | 'gray' | 'clear'
   final String preview;
-  /// 写入整套外观字段。返回 AppConfig 是为了能直接喂给 `updateConfig` ——
-  /// 各实现的写法都是级联（`c..a = 1..b = 2`），级联表达式的值就是接收者本身。
-  final AppConfig Function(AppConfig c) apply;
-  final bool Function(AppConfig c) matches;
+  final _StyleValues values;
   const _StylePreset({
     required this.id,
     required this.name,
     required this.desc,
     required this.preview,
-    required this.apply,
-    required this.matches,
+    required this.values,
   });
+
+  /// 写入整套外观字段，并回传同一个 [AppConfig] 实例。
+  ///
+  /// 必须返回值：调用点是 `updateConfig((c) => p.apply(c))`，而 `updateConfig`
+  /// 要一个 `AppConfig Function(AppConfig)`。级联写入只改字段、不换引用，
+  /// 所以直接回传接收者即可（改成 `void` 会让调用点报
+  /// RETURN_OF_INVALID_TYPE_FROM_CLOSURE）。
+  AppConfig apply(AppConfig c) {
+    values.applyTo(c);
+    return c;
+  }
+  bool matches(AppConfig c) => values.matches(c);
 }
 
-bool _allStylesAre(AppConfig c, String v) =>
-    c.cardStyle == v && c.navStyle == v && c.pillStyle == v && c.menuStyle == v;
-
-/// 5 套预设。默认值全部有出处（见 AppConfig 里各字段注释）。
+/// 5 套预设。默认值全部有出处（见 AppConfig 里各字段注释）——
+/// `liquid` 的一组数值与 AppConfig 的出厂默认完全一致，所以首次启动
+/// 「液态玻璃」必然处于选中态。
+///
+/// 不拥有玻璃参数的两套（theme / gray，都是 glassEffect = 'none'，玻璃参数
+/// 在该模式下不参与渲染）仍然把玻璃参数写回出厂默认，这样「切过去再切回来」
+/// 的结果是确定的，而不是被动继承上一套预设的残留。
 final List<_StylePreset> _stylePresets = [
   _StylePreset(
     id: 'liquid',
     name: (zh) => zh ? '液态玻璃' : 'Liquid',
     desc: (zh) => zh ? '折射玻璃' : 'Refraction',
     preview: 'liquid',
-    apply: (c) => c
-      ..cardStyle = 'liquid'
-      ..navStyle = 'liquid'
-      ..pillStyle = 'liquid'
-      ..menuStyle = 'liquid'
-      ..glassEffect = 'liquid'
-      ..settingsGlassMode = 'follow'
-      ..glassFollowTheme = false
-      ..glassBlur = 16.0
-      ..glassClarity = 0.45
-      ..glassHighlight = 1.0
-      ..glassLightPos = 0.0
-      ..glassEdge = 1.0,
-    matches: (c) =>
-        _allStylesAre(c, 'liquid') &&
-        c.glassEffect == 'liquid' &&
-        !c.glassFollowTheme &&
-        (c.glassClarity - 0.45).abs() < 0.005,
+    values: const _StyleValues(
+      cardStyle: 'liquid', navStyle: 'liquid', pillStyle: 'liquid', menuStyle: 'liquid',
+      glassEffect: 'liquid', settingsGlassMode: 'follow', glassFollowTheme: false,
+      glassBlur: 16.0, glassClarity: 0.45, glassHighlight: 1.0,
+      glassLightPos: 0.0, glassEdge: 1.0, themeTone: 0.45,
+    ),
   ),
   _StylePreset(
     id: 'clear',
     name: (zh) => zh ? '轻薄通透' : 'Airy',
     desc: (zh) => zh ? '高透光' : 'High clarity',
     preview: 'clear',
-    apply: (c) => c
-      ..cardStyle = 'liquid'
-      ..navStyle = 'liquid'
-      ..pillStyle = 'liquid'
-      ..menuStyle = 'liquid'
-      ..glassEffect = 'liquid'
-      ..settingsGlassMode = 'follow'
-      ..glassFollowTheme = false
-      ..glassBlur = 24.0
-      ..glassClarity = 0.82
-      ..glassHighlight = 1.3
-      ..glassLightPos = 0.25
-      ..glassEdge = 1.4,
-    matches: (c) =>
-        _allStylesAre(c, 'liquid') && (c.glassClarity - 0.82).abs() < 0.005,
+    values: const _StyleValues(
+      cardStyle: 'liquid', navStyle: 'liquid', pillStyle: 'liquid', menuStyle: 'liquid',
+      glassEffect: 'liquid', settingsGlassMode: 'follow', glassFollowTheme: false,
+      // 通透度 0.82 → 0.80：0.82 落在滑块 0.05 网格之外，
+      // 用户一旦碰过通透度滑块，本预设就永远无法再次匹配。
+      glassBlur: 24.0, glassClarity: 0.80, glassHighlight: 1.3,
+      glassLightPos: 0.25, glassEdge: 1.4, themeTone: 0.45,
+    ),
   ),
   _StylePreset(
     id: 'theme',
     name: (zh) => zh ? '主题色' : 'Accent',
     desc: (zh) => zh ? '协调实色' : 'Harmonized',
     preview: 'theme',
-    apply: (c) => c
-      ..cardStyle = 'theme'
-      ..navStyle = 'theme'
-      ..pillStyle = 'theme'
-      ..menuStyle = 'theme'
-      ..glassEffect = 'none'
-      ..settingsGlassMode = 'solid'
-      ..glassFollowTheme = true
-      ..themeTone = 0.55,
-    matches: (c) => _allStylesAre(c, 'theme') && c.settingsGlassMode == 'solid',
+    values: const _StyleValues(
+      cardStyle: 'theme', navStyle: 'theme', pillStyle: 'theme', menuStyle: 'theme',
+      glassEffect: 'none', settingsGlassMode: 'solid', glassFollowTheme: true,
+      glassBlur: 16.0, glassClarity: 0.45, glassHighlight: 1.0,
+      glassLightPos: 0.0, glassEdge: 1.0, themeTone: 0.55,
+    ),
   ),
   _StylePreset(
     id: 'blur',
     name: (zh) => zh ? '扁平模糊' : 'Flat blur',
     desc: (zh) => zh ? '易读' : 'Readable',
     preview: 'blur',
-    apply: (c) => c
-      ..cardStyle = 'blur'
-      ..navStyle = 'blur'
-      ..pillStyle = 'blur'
-      ..menuStyle = 'blur'
-      ..glassEffect = 'blur'
-      ..settingsGlassMode = 'follow'
-      ..glassFollowTheme = false
-      ..glassBlur = 20.0
-      ..glassClarity = 0.55
-      ..glassHighlight = 0.6
-      ..glassLightPos = 0.0
-      ..glassEdge = 0.5,
-    matches: (c) =>
-        _allStylesAre(c, 'blur') && (c.glassClarity - 0.55).abs() < 0.005,
+    values: const _StyleValues(
+      cardStyle: 'blur', navStyle: 'blur', pillStyle: 'blur', menuStyle: 'blur',
+      glassEffect: 'blur', settingsGlassMode: 'follow', glassFollowTheme: false,
+      glassBlur: 20.0, glassClarity: 0.55, glassHighlight: 0.6,
+      glassLightPos: 0.0, glassEdge: 0.5, themeTone: 0.45,
+    ),
   ),
   _StylePreset(
     id: 'gray',
     name: (zh) => zh ? '极简灰' : 'Minimal gray',
     desc: (zh) => zh ? '中性无彩' : 'Neutral',
     preview: 'gray',
-    apply: (c) => c
-      ..cardStyle = 'gray'
-      ..navStyle = 'gray'
-      ..pillStyle = 'gray'
-      ..menuStyle = 'gray'
-      ..glassEffect = 'none'
-      ..settingsGlassMode = 'follow'
-      ..glassFollowTheme = false,
-    matches: (c) => _allStylesAre(c, 'gray'),
+    values: const _StyleValues(
+      cardStyle: 'gray', navStyle: 'gray', pillStyle: 'gray', menuStyle: 'gray',
+      glassEffect: 'none', settingsGlassMode: 'follow', glassFollowTheme: false,
+      glassBlur: 16.0, glassClarity: 0.45, glassHighlight: 1.0,
+      glassLightPos: 0.0, glassEdge: 1.0, themeTone: 0.45,
+    ),
   ),
 ];
 
@@ -2405,7 +2492,11 @@ final List<_StylePreset> _stylePresets = [
 Widget _presetSwatch(BuildContext ctx, _StylePreset p, bool selected) {
   final scheme = Theme.of(ctx).colorScheme;
   final isDark = scheme.brightness == Brightness.dark;
-  final tone = ctx.select<AppState, double>((s) => s.config.themeTone);
+  // 预览用「该预设自己的」协调度，而不是用户当前配置里的实时值：
+  // 点击会写入 values.themeTone，若预览读实时值，就会出现
+  // 「点击前看到的底色」与「点击后的实际底色」不一致（尤其「主题色」预设
+  // 写的是 0.55，而用户当前可能是 0.45）。顺带少一个 AppState 订阅。
+  final tone = p.values.themeTone;
   final accent = harmonizedAccent(scheme, tone);
   final gray = neutralGray(scheme.surfaceContainerHigh);
   // 声明成 BoxDecoration（而非抽象 Decoration）：下面选中态要用 copyWith 加柔光，
@@ -3570,10 +3661,14 @@ Widget _buildPreload(BuildContext ctx, AppState state) {
     SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
         title: Text(s.isZh ? '关闭预加载' : 'Disable Preload',
             style: TextStyle(color: scheme.onSurface, fontSize: 13)),
+        // 文案要与实际被跳过的项目对齐：此前只写了「其他页面切换时才绘制」，
+        // 而实测这条开关同时管着字体列表枚举与壁纸解码（见 main.dart 的
+        // warmupEnabled），说明与实际不符。
+        // 唯一不受它管的是「自定义字体加载」—— 那是功能不是预热，不做就缺字体。
         subtitle: Text(
             s.isZh
-                ? '启动时仅绘制当前页面（如项目页），其他页面切换到时才绘制。\n注意：打开可能会增加 CPU 占用。'
-                : 'Only draw the current page at startup; other pages render on first visit.\nNote: this may increase CPU usage when switching pages.',
+                ? '启动时只绘制当前页面：跳过后台页面构建、字体列表枚举与壁纸解码预热。\n注意：首次切换到某个页面时会现场构建，可能短暂增加 CPU 占用。'
+                : 'At startup only the current page is drawn: background page builds, font-list enumeration and wallpaper decode are skipped.\nNote: the first visit to a page builds it on the spot, which may briefly raise CPU usage.',
             style: TextStyle(fontSize: 10, color: scheme.outline)),
         value: cfg.noPreload,
         onChanged: (v) => state.updateConfig((c) => c..noPreload = v)),
@@ -3642,142 +3737,170 @@ void _openCredits(BuildContext ctx) {
   Navigator.of(ctx).push(MaterialPageRoute(allowSnapshotting: false, builder: (_) => const CreditsPage()));
 }
 
+/// 关于页展示的编译日期（发布时更新）。
+///
+/// 抽成常量：此前移动端与桌面端两个分支里各写一份字面量，改一处必漏另一处。
+const String kAboutBuildDate = '2026-09-19';
+
 Widget _buildAbout(BuildContext ctx, AppState state) {
   final s = AppStrings.of(state.config.language);
   final scheme = Theme.of(ctx).colorScheme;
-  if (isMobilePlatform) {
-    // 移动端：顶部图标 + 软件名 + 版本，下方为版本信息/更新/链接/赞助。
-    // 更新入口嵌在这里（APK 分发，在线更新机制不适用 → 跳发布页）。
-    return _glass(ctx, state, s.aboutTitle, [
-      Center(child: Column(children: [
-        const SizedBox(height: 4),
-        ClipRRect(borderRadius: BorderRadius.circular(16),
-            child: Image.asset('rele/icon.png', width: 72, height: 72, fit: BoxFit.cover,
-                errorBuilder: (_, _, _) => Icon(Icons.play_circle_fill, size: 72, color: scheme.primary))),
-        const SizedBox(height: 10),
-        Text('FFmpeg++', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: scheme.primary)),
-        const SizedBox(height: 2),
-        Text('v${updater.currentVersion}', style: TextStyle(fontSize: 13, color: scheme.outline)),
-        const SizedBox(height: 2),
-        Text('${s.aboutBuildDate} 2026-09-19', style: TextStyle(fontSize: 11, color: scheme.outline)),
-      ])),
-      const SizedBox(height: 14),
-      const Divider(height: 1),
-      const SizedBox(height: 10),
-      ListTile(
-        dense: true, contentPadding: EdgeInsets.zero,
-        leading: Icon(Icons.info_outline, size: 20, color: scheme.primary),
-        title: Text(s.aboutVersion, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
-        trailing: Text('v${updater.currentVersion}',
-            style: TextStyle(fontSize: 13, color: scheme.outline, fontWeight: FontWeight.w500)),
-      ),
-      ListTile(
-        dense: true, contentPadding: EdgeInsets.zero,
-        leading: Icon(Icons.system_update_alt, size: 20, color: scheme.primary),
-        title: Text(s.cardUpdate, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
-        subtitle: Text(
-            s.isZh ? '点按在线检查新版本；长按直达发布页'
-                   : 'Tap to check online; long-press to open the release page',
-            style: TextStyle(fontSize: 11, color: scheme.outline)),
-        trailing: const Icon(Icons.chevron_right, size: 16),
-        // 移动端也走在线检查：发现新版本弹窗展示（APK 分发，下载动作
-        // 自动降级为浏览器打开发布页/下载链接，见 _showUpdateDialog）
-        onTap: () => _checkForUpdate(ctx, s),
-        onLongPress: () => openExternalUrl(
-            'https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases'),
-      ),
-      ListTile(
-        dense: true, contentPadding: EdgeInsets.zero,
-        leading: Icon(Icons.code, size: 20, color: scheme.primary),
-        title: Text(s.aboutGithub, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
-        trailing: const Icon(Icons.open_in_new, size: 16),
-        onTap: () => openExternalUrl('https://github.com/lvbaoshigao/FFmpeg_plus_plus'),
-      ),
-      ListTile(
-        dense: true, contentPadding: EdgeInsets.zero,
-        leading: Icon(Icons.article_outlined, size: 20, color: scheme.primary),
-        title: Text(s.aboutBlog, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
-        trailing: const Icon(Icons.open_in_new, size: 16),
-        onTap: () => openExternalUrl('https://blog-clstone.netlify.app/'),
-      ),
-      ListTile(
-        dense: true, contentPadding: EdgeInsets.zero,
-        leading: Icon(Icons.volunteer_activism, size: 20, color: scheme.primary),
-        title: Text(s.aboutSponsor, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
-        trailing: const Icon(Icons.chevron_right, size: 18),
-        onTap: () => _showSponsor(ctx, scheme, s),
-      ),
-      ListTile(
-        dense: true, contentPadding: EdgeInsets.zero,
-        leading: Icon(Icons.favorite_outline, size: 20, color: scheme.primary),
-        title: Text(s.aboutReferences, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
-        trailing: const Icon(Icons.chevron_right, size: 18),
-        onTap: () => _openCredits(ctx),
-      ),
-      // 广告入口（三级页面）：当前没有广告投放 → 页面显示「哦先生目前并没有放广告」空状态
-      ListTile(
-        dense: true, contentPadding: EdgeInsets.zero,
-        leading: Icon(Icons.campaign_outlined, size: 20, color: scheme.primary),
-        title: Text(s.isZh ? '广告' : 'Ads', style: TextStyle(fontSize: 13, color: scheme.onSurface)),
-        subtitle: Text(s.isZh ? '查看广告内容' : 'View sponsored content',
-            style: TextStyle(fontSize: 11, color: scheme.outline)),
-        trailing: const Icon(Icons.chevron_right, size: 18),
-        onTap: () => _openAds(ctx),
-      ),
-    ]);
-  }
-  return _glass(ctx, state, s.aboutTitle, [
+  final bool mobile = isMobilePlatform;
+  final String version = 'v${updater.currentVersion}';
+  final double iconSize = mobile ? 72 : 48;
+
+  // ── 卡 1：图标 + 软件名 + 版本号 ──
+  // 只放「一眼能认出这是什么软件、什么版本」的身份信息。
+  // 编译日期原先挤在头部，现挪到卡 2 的版本信息里 —— 它是版本细节，放在头部会让
+  // 头部退化成「什么都往上堆」的信息板（用户反馈的正是头图与信息混在一起）。
+  final Widget headerCard = _glass(ctx, state, s.aboutTitle, [
     Center(child: Column(children: [
       const SizedBox(height: 4),
-      ClipRRect(borderRadius: BorderRadius.circular(12),
-          child: Image.asset('rele/icon.png', width: 48, height: 48, fit: BoxFit.cover,
-              errorBuilder: (_, _, _) => Icon(Icons.play_circle_fill, size: 48, color: scheme.primary))),
-      const SizedBox(height: 8),
-      Text('FFmpeg++', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: scheme.primary)),
-      Text('v${updater.currentVersion}', style: TextStyle(fontSize: 12, color: scheme.outline)),
-      const SizedBox(height: 12),
+      ClipRRect(
+          borderRadius: BorderRadius.circular(mobile ? 16 : 12),
+          child: Image.asset('rele/icon.png', width: iconSize, height: iconSize, fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => Icon(Icons.play_circle_fill, size: iconSize, color: scheme.primary))),
+      SizedBox(height: mobile ? 10 : 8),
+      Text('FFmpeg++',
+          style: TextStyle(fontSize: mobile ? 20 : 16, fontWeight: FontWeight.w700, color: scheme.primary)),
+      const SizedBox(height: 2),
+      Text(version, style: TextStyle(fontSize: mobile ? 13 : 12, color: scheme.outline)),
+      const SizedBox(height: 4),
     ])),
-    const SizedBox(height: 4),
-    _infoRow(s.aboutVersion, 'v${updater.currentVersion}', scheme),
-    _infoRow(s.aboutBuildDate, '2026-09-19', scheme),
-    _infoRow(s.aboutBlog, 'blog-clstone.netlify.app', scheme),
-    _infoRow(s.aboutGithub, 'github.com/lvbaoshigao/FFmpeg_plus_plus', scheme),
-    const SizedBox(height: 10),
-    // 「检查更新」入口（原独立「更新」卡片已并入这里）：自动检查开关 + 手动检查按钮
-    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-        title: Text(s.isZh ? '启动时自动检查更新' : 'Auto-check updates on startup',
-            style: TextStyle(color: scheme.onSurface, fontSize: 13)),
-        subtitle: Text(s.isZh ? '静默检查，仅在有新版本时通知'
-                : 'Silent check, notifies only when new version available',
-            style: TextStyle(fontSize: 11, color: scheme.outline)),
-        value: state.config.autoCheckUpdate,
-        onChanged: (v) => state.updateConfig((c) => c..autoCheckUpdate = v)),
-    const SizedBox(height: 4),
-    Row(children: [
-      Expanded(child: _iosButton(icon: Icons.volunteer_activism, label: s.aboutSponsorBtn,
-          color: scheme.primary, bg: scheme.primaryContainer, onTap: () => _showSponsor(ctx, scheme, s))),
-      const SizedBox(width: 8),
-      Expanded(child: _iosButton(icon: Icons.system_update, label: s.checkUpdate,
-          color: scheme.onSecondaryContainer, bg: scheme.secondaryContainer,
-          onTap: () => _checkForUpdate(ctx, s))),
-    ]),
-    const SizedBox(height: 8),
-    SizedBox(width: double.infinity, child: _iosButton(
-        icon: Icons.favorite_outline, label: s.aboutReferences,
-        color: scheme.onSurface, bg: scheme.surfaceContainerHighest.withAlpha(100),
-        onTap: () => _openCredits(ctx))),
-    const SizedBox(height: 8),
-    // 广告入口（三级页面）：与「引用」同一套按钮/页面样式
-    SizedBox(width: double.infinity, child: _iosButton(
-        icon: Icons.campaign_outlined, label: s.isZh ? '广告' : 'Ads',
-        color: scheme.onSurface, bg: scheme.surfaceContainerHighest.withAlpha(100),
-        onTap: () => _openAds(ctx))),
-    const SizedBox(height: 10),
-    Wrap(spacing: 4, runSpacing: 4, children: [
-      _link(s.aboutBlogLink, 'https://blog-clstone.netlify.app/'),
-      _link('GitHub', 'https://github.com/lvbaoshigao/FFmpeg_plus_plus'),
-    ]),
   ]);
+
+  // ── 卡 2：版本与更新 ──
+  // 版本信息 / 更新入口 / 外部链接 / 赞助 / 引用 / 广告。
+  final String infoTitle = s.isZh ? '版本与更新' : 'Version & Updates';
+  final Widget infoCard = mobile
+      // 移动端统一用整行可点的 ListTile 形态（副标题写清作用），
+      // 「编译日期」是纯信息行，同样用 ListTile 但无 onTap，与相邻行对齐。
+      ? _glass(ctx, state, infoTitle, [
+          ListTile(
+            dense: true, contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.info_outline, size: 20, color: scheme.primary),
+            title: Text(s.aboutVersion, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+            trailing: Text(version,
+                style: TextStyle(fontSize: 13, color: scheme.outline, fontWeight: FontWeight.w500)),
+          ),
+          ListTile(
+            dense: true, contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.event_outlined, size: 20, color: scheme.primary),
+            title: Text(s.aboutBuildDate, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+            trailing: Text(kAboutBuildDate,
+                style: TextStyle(fontSize: 13, color: scheme.outline, fontWeight: FontWeight.w500)),
+          ),
+          const Divider(height: 1),
+          const SizedBox(height: 6),
+          ListTile(
+            dense: true, contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.system_update_alt, size: 20, color: scheme.primary),
+            title: Text(s.cardUpdate, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+            subtitle: Text(
+                s.isZh ? '点按在线检查新版本；长按直达发布页'
+                       : 'Tap to check online; long-press to open the release page',
+                style: TextStyle(fontSize: 11, color: scheme.outline)),
+            trailing: const Icon(Icons.chevron_right, size: 16),
+            // 移动端也走在线检查：发现新版本弹窗展示（APK 分发，下载动作
+            // 自动降级为浏览器打开发布页/下载链接，见 _showUpdateDialog）
+            onTap: () => _checkForUpdate(ctx, s),
+            onLongPress: () => openExternalUrl(
+                'https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases'),
+          ),
+          ListTile(
+            dense: true, contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.code, size: 20, color: scheme.primary),
+            title: Text(s.aboutGithub, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+            trailing: const Icon(Icons.open_in_new, size: 16),
+            onTap: () => openExternalUrl('https://github.com/lvbaoshigao/FFmpeg_plus_plus'),
+          ),
+          ListTile(
+            dense: true, contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.article_outlined, size: 20, color: scheme.primary),
+            title: Text(s.aboutBlog, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+            trailing: const Icon(Icons.open_in_new, size: 16),
+            onTap: () => openExternalUrl('https://blog-clstone.netlify.app/'),
+          ),
+          ListTile(
+            dense: true, contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.volunteer_activism, size: 20, color: scheme.primary),
+            title: Text(s.aboutSponsor, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+            trailing: const Icon(Icons.chevron_right, size: 18),
+            onTap: () => _showSponsor(ctx, scheme, s),
+          ),
+          ListTile(
+            dense: true, contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.favorite_outline, size: 20, color: scheme.primary),
+            title: Text(s.aboutReferences, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+            trailing: const Icon(Icons.chevron_right, size: 18),
+            onTap: () => _openCredits(ctx),
+          ),
+          // 广告入口（三级页面）：当前没有广告投放 → 页面显示「哦先生目前并没有放广告」空状态
+          ListTile(
+            dense: true, contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.campaign_outlined, size: 20, color: scheme.primary),
+            title: Text(s.isZh ? '广告' : 'Ads', style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+            subtitle: Text(s.isZh ? '查看广告内容' : 'View sponsored content',
+                style: TextStyle(fontSize: 11, color: scheme.outline)),
+            trailing: const Icon(Icons.chevron_right, size: 18),
+            onTap: () => _openAds(ctx),
+          ),
+        ])
+      : _glass(ctx, state, infoTitle, [
+          _infoRow(s.aboutVersion, version, scheme),
+          _infoRow(s.aboutBuildDate, kAboutBuildDate, scheme),
+          _infoRow(s.aboutBlog, 'blog-clstone.netlify.app', scheme),
+          _infoRow(s.aboutGithub, 'github.com/lvbaoshigao/FFmpeg_plus_plus', scheme),
+          const SizedBox(height: 8),
+          // 「检查更新」入口（原独立「更新」卡片已并入这里）：自动检查开关 + 手动检查按钮
+          SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+              title: Text(s.isZh ? '启动时自动检查更新' : 'Auto-check updates on startup',
+                  style: TextStyle(color: scheme.onSurface, fontSize: 13)),
+              subtitle: Text(s.isZh ? '静默检查，仅在有新版本时通知'
+                      : 'Silent check, notifies only when new version available',
+                  style: TextStyle(fontSize: 11, color: scheme.outline)),
+              value: state.config.autoCheckUpdate,
+              onChanged: (v) => state.updateConfig((c) => c..autoCheckUpdate = v)),
+          const SizedBox(height: 4),
+          Row(children: [
+            Expanded(child: _iosButton(icon: Icons.volunteer_activism, label: s.aboutSponsorBtn,
+                color: scheme.primary, bg: scheme.primaryContainer, onTap: () => _showSponsor(ctx, scheme, s))),
+            const SizedBox(width: 8),
+            Expanded(child: _iosButton(icon: Icons.system_update, label: s.checkUpdate,
+                color: scheme.onSecondaryContainer, bg: scheme.secondaryContainer,
+                onTap: () => _checkForUpdate(ctx, s))),
+          ]),
+          const SizedBox(height: 8),
+          SizedBox(width: double.infinity, child: _iosButton(
+              icon: Icons.favorite_outline, label: s.aboutReferences,
+              color: scheme.onSurface, bg: scheme.surfaceContainerHighest.withAlpha(100),
+              onTap: () => _openCredits(ctx))),
+          const SizedBox(height: 8),
+          // 广告入口（三级页面）：与「引用」同一套按钮/页面样式
+          SizedBox(width: double.infinity, child: _iosButton(
+              icon: Icons.campaign_outlined, label: s.isZh ? '广告' : 'Ads',
+              color: scheme.onSurface, bg: scheme.surfaceContainerHighest.withAlpha(100),
+              onTap: () => _openAds(ctx))),
+          const SizedBox(height: 10),
+          Wrap(spacing: 4, runSpacing: 4, children: [
+            _link(s.aboutBlogLink, 'https://blog-clstone.netlify.app/'),
+            _link('GitHub', 'https://github.com/lvbaoshigao/FFmpeg_plus_plus'),
+          ]),
+        ]);
+
+  // 两张卡纵向排布。**必须** CrossAxisAlignment.stretch：默认的 center 会让
+  // 每张卡各取自身固有宽度 —— 卡 2 内容多、卡 1 内容少，宽度就对不上，
+  // 而「两张卡宽度保持一致」正是本次改造的硬要求。
+  // 两张 _glass 之间自己补 12 的间距：网格的 runSpacing 只作用在网格项之间，
+  // 不会管网格项内部的这两张卡。
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      headerCard,
+      const SizedBox(height: 12),
+      infoCard,
+    ],
+  );
 }
 
 Widget _buildMcpAi(BuildContext ctx, AppState state) {
@@ -3793,39 +3916,41 @@ Widget _buildMcpAi(BuildContext ctx, AppState state) {
                 state.mcpError != null
                     ? state.mcpError!
                     : state.mcpRunning ? (s.isZh ? '运行中' : 'Running') : (s.isZh ? '已停止' : 'Stopped'),
-                style: TextStyle(fontSize: 10, color: state.mcpError != null ? scheme.error : state.mcpRunning ? Colors.green : scheme.outline))
+                style: TextStyle(fontSize: 10, color: state.mcpError != null ? scheme.sem.danger : state.mcpRunning ? scheme.sem.success : scheme.sem.neutral))
             : null,
         value: cfg.mcpEnabled,
         onChanged: (v) => state.toggleMcpServer(v)),
     if (cfg.mcpEnabled) ...[
-      Row(children: [
-        Text('${s.mcpPort}: ', style: TextStyle(color: clr, fontSize: 12)),
-        SizedBox(width: 80, child: _McpTextField(
+      _McpFieldRow(
+        label: Text('${s.mcpPort}:', style: TextStyle(color: clr, fontSize: 12)),
+        field: _McpTextField(
           value: cfg.mcpPort.toString(), label: '', scheme: scheme,
+          size: AppControlSize.regular,
           onChange: (v) {
             final port = int.tryParse(v);
             if (port != null && port > 0 && port < 65536) {
               state.updateConfig((c) => c..mcpPort = port);
             }
           },
-        )),
-        const SizedBox(width: 6),
-        SizedBox(height: 30, child: FilledButton.tonalIcon(
-          icon: const Icon(Icons.refresh, size: 14),
+        ),
+        action: FilledButton.tonalIcon(
+          style: AppControlSize.regular.buttonStyle(filled: true),
+          icon: Icon(Icons.refresh, size: AppControlSize.regular.iconSize),
           label: Text(s.isZh ? '应用' : 'Apply', style: const TextStyle(fontSize: 11)),
           onPressed: () async {
             state.mcpError = null;
             await state.stopMcpServer();
             await state.startMcpServer();
           },
-        )),
-      ]),
-      const SizedBox(height: 4),
-      Row(children: [
-        Text(s.isZh ? '监听地址: ' : 'Bind host: ', style: TextStyle(color: clr, fontSize: 12)),
-        SizedBox(width: 130, child: _McpTextField(
+        ),
+      ),
+      const SizedBox(height: 8),
+      _McpFieldRow(
+        label: Text(s.isZh ? '监听地址:' : 'Bind host:', style: TextStyle(color: clr, fontSize: 12)),
+        field: _McpTextField(
           value: cfg.mcpHost, label: '', scheme: scheme,
           hint: '127.0.0.1',
+          size: AppControlSize.regular,
           onChange: (v) {
             final host = v.trim();
             // 允许留空（回退 127.0.0.1）；其余只做基本字符校验，重启后生效
@@ -3833,13 +3958,12 @@ Widget _buildMcpAi(BuildContext ctx, AppState state) {
               state.updateConfig((c) => c..mcpHost = host);
             }
           },
-        )),
-        const SizedBox(width: 6),
-        Expanded(child: Text(
+        ),
+        note: Text(
           s.isZh ? '改后点「应用」。设为 0.0.0.0 将暴露到局域网并启用访问令牌' : 'Click Apply. 0.0.0.0 exposes to LAN and enables token',
           style: TextStyle(fontSize: 10, color: scheme.outline),
-        )),
-      ]),
+        ),
+      ),
     ],
     if (cfg.mcpEnabled && state.mcpRunning && state.mcpToken != null)
       Padding(
@@ -3870,7 +3994,10 @@ Widget _buildMcpAi(BuildContext ctx, AppState state) {
       Align(
         alignment: Alignment.centerRight,
         child: TextButton.icon(
-          icon: const Icon(Icons.tune, size: 16),
+          // 次级链接动作：走 compact 档（28 高），与卡片里的表单控件（regular 32）
+          // 形成层级差，不再是「一个光秃秃的主题默认按钮贴右下角」
+          style: AppControlSize.compact.buttonStyle(),
+          icon: Icon(Icons.tune, size: AppControlSize.compact.iconSize),
           label: Text(s.aiMoreOptions, style: const TextStyle(fontSize: 12)),
           onPressed: () => _showAiSettingsDialog(ctx, state, s),
         ),
@@ -4335,10 +4462,13 @@ Widget _buildProfileDetail(
         keyboardType: const TextInputType.numberWithOptions(decimal: true),
         onChange: (v) { final t = double.tryParse(v); if (t != null && t >= 0 && t <= 2) profile.temperature = t; },
       )),
-      // 操作按钮
+      // 操作按钮：两个按钮都包 Expanded ⇒ 等宽；高度统一走 comfortable 档。
+      // 改造前「保存」是 Expanded 吃掉剩余宽度，「设为当前」只占内容宽度，
+      // 两个按钮宽度差一倍（宽窗口下尤其明显），看着像两个不同层级的控件并排。
       Row(children: [
         Expanded(child: FilledButton.icon(
-          icon: const Icon(Icons.save_outlined, size: 16),
+          style: AppControlSize.comfortable.buttonStyle(filled: true),
+          icon: Icon(Icons.save_outlined, size: AppControlSize.comfortable.iconSize),
           label: Text(zh ? '保存' : 'Save', style: const TextStyle(fontSize: 12)),
           onPressed: () {
             final name = profile.name.trim();
@@ -4361,17 +4491,18 @@ Widget _buildProfileDetail(
           },
         )),
         const SizedBox(width: 8),
-        OutlinedButton.icon(
+        Expanded(child: OutlinedButton.icon(
+          style: AppControlSize.comfortable.buttonStyle(),
           icon: Icon(
             state.config.activeAiProfileId == profile.id ? Icons.radio_button_checked : Icons.radio_button_off,
-            size: 16,
+            size: AppControlSize.comfortable.iconSize,
           ),
           label: Text(zh ? '设为当前' : 'Use', style: const TextStyle(fontSize: 12)),
           onPressed: () {
             state.updateConfig((c) { c.activeAiProfileId = profile.id; return c; });
             setDState(() {});
           },
-        ),
+        )),
       ]),
       const SizedBox(height: 8),
       Row(children: [
@@ -5209,12 +5340,12 @@ class _FfmpegCardState extends State<_FfmpegCard> {
     if (isMobilePlatform) {
       return _glass(context, widget.state, s.ffmpegSettings, [
         Row(children: [
-          Icon(Icons.check_circle, size: 16, color: _found ? Colors.green : Colors.orange),
+          Icon(Icons.check_circle, size: 16, color: _found ? scheme.sem.success : scheme.sem.warning),
           const SizedBox(width: 8),
           Expanded(child: Text(
               _found ? s.ffmpegFound : (isZh ? '内置 FFmpeg 加载中…' : 'Bundled FFmpeg loading…'),
               style: TextStyle(fontSize: 13,
-                  color: _found ? Colors.green : Colors.orange,
+                  color: _found ? scheme.sem.success : scheme.sem.warning,
                   fontWeight: FontWeight.w600))),
         ]),
         if (_version.isNotEmpty)
@@ -5239,9 +5370,9 @@ class _FfmpegCardState extends State<_FfmpegCard> {
     if (!_found && !_checking) {
       return _glass(context, widget.state, s.ffmpegSettings, [
         Center(child: Column(children: [
-          const Icon(Icons.warning_amber, size: 32, color: Colors.orange),
+          Icon(Icons.warning_amber, size: 32, color: scheme.sem.warning),
           const SizedBox(height: 8),
-          Text(s.ffmpegNotFound, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.orange)),
+          Text(s.ffmpegNotFound, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.sem.warning)),
           const SizedBox(height: 12),
           FilledButton.icon(icon: const Icon(Icons.download, size: 18),
               label: Text(isZh ? '自动安装 FFmpeg' : 'Install FFmpeg', style: const TextStyle(fontSize: 13)),
@@ -5273,9 +5404,9 @@ class _FfmpegCardState extends State<_FfmpegCard> {
         _path.isNotEmpty && _path.startsWith(Directory(Platform.resolvedExecutable).parent.path);
     return _glass(context, widget.state, s.ffmpegSettings, [
       Row(children: [
-        const Icon(Icons.check_circle, size: 16, color: Colors.green),
+        Icon(Icons.check_circle, size: 16, color: scheme.sem.success),
         const SizedBox(width: 8),
-        Expanded(child: Text(s.ffmpegFound, style: const TextStyle(fontSize: 13, color: Colors.green, fontWeight: FontWeight.w600))),
+        Expanded(child: Text(s.ffmpegFound, style: TextStyle(fontSize: 13, color: scheme.sem.success, fontWeight: FontWeight.w600))),
       ]),
       if (_version.isNotEmpty)
         Padding(padding: const EdgeInsets.only(top: 4, bottom: 6),
@@ -5369,7 +5500,9 @@ class _CPState extends State<_CP> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final labelStyle = TextStyle(fontSize: 11, color: scheme.onSurfaceVariant);
-    const sectionHint = TextStyle(fontSize: 10, color: Color(0xFF9AA0A6));
+    // 原先写死 Color(0xFF9AA0A6)：一个冷调灰，既不随主题（浅色/深色）变化，
+    // 也和同页其他次要文字用的 scheme.outline 不是同一个灰 → 同一层级两种灰。
+    final sectionHint = TextStyle(fontSize: 10, color: scheme.outline);
     // 液态玻璃：跟随全局玻璃配置（液态/模糊/无效果），主题着色跟随 glassFollowTheme
     return GlassPanel(
       radius: 18,
@@ -5558,6 +5691,60 @@ class _PathFieldState extends State<_PathField> {
   );
 }
 
+/// MCP 卡里的「标签 + 输入框 + 动作」一行。
+///
+/// 改造前这一行是 `Row([Text('端口: '), SizedBox(width: 80, child: 输入框),
+/// SizedBox(height: 30, child: 按钮)])`，三个问题：
+/// 1. 标签宽度跟着文案变 —— 中英文切换、端口/监听地址两行之间标签宽度不等，
+///    下面的输入框左边缘就错开；
+/// 2. 输入框宽度写死 80 / 130，与右侧按钮的比例随窗口宽度漂移；
+/// 3. 按钮被 `SizedBox(height: 30)` 压过，而主题 `filledButtonTheme` 带 `vertical: 12`
+///    内边距，30 高会把内容顶出/裁掉，与同一张卡里其它控件高度也对不上。
+///
+/// 现在：标签固定 [labelW]、动作固定 [actionW]、输入框 [Expanded] 吃掉剩余宽度，
+/// 高度一律由 [AppControlSize] 档位决定（不压 SizedBox）。[note] 说明文字独立成行
+/// 并对齐到输入框左边缘 —— 塞在 Row 里会被挤成三四行、把行高顶起来。
+class _McpFieldRow extends StatelessWidget {
+  /// 标签列固定宽度：够放「监听地址:」/「Bind host:」，中英文切换不跳动。
+  /// 与移动端 AI 设置页共用 [AppControlSize.labelW]，两端比例一致。
+  static const double labelW = AppControlSize.labelW;
+
+  /// 动作按钮列固定宽度：够放「应用」/「Apply」，语言切换不跳动。
+  /// 与移动端 AI 设置页共用 [AppControlSize.actionW]，两端比例一致。
+  static const double actionW = AppControlSize.actionW;
+
+  final Widget label;
+  final Widget field;
+  final Widget? action;
+  final Widget? note;
+
+  const _McpFieldRow({required this.label, required this.field, this.action, this.note});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            SizedBox(width: labelW, child: label),
+            Expanded(child: field),
+            if (action != null) ...[
+              const SizedBox(width: 8),
+              SizedBox(width: actionW, child: action),
+            ],
+          ],
+        ),
+        if (note != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 4, left: labelW),
+            child: note,
+          ),
+      ],
+    );
+  }
+}
+
 class _McpTextField extends StatefulWidget {
   final String value;
   final String label;
@@ -5567,6 +5754,11 @@ class _McpTextField extends StatefulWidget {
   final int minLines;
   final int maxLines;
   final ValueChanged<String> onChange;
+
+  /// 非空时按该档位对齐控件高度与水平内边距（把主题 `inputDecorationTheme`
+  /// 的 `contentPadding: v12` 压回档位高度）；为空则沿用主题默认外观。
+  final AppControlSize? size;
+
   const _McpTextField({
     required this.value,
     required this.label,
@@ -5575,6 +5767,7 @@ class _McpTextField extends StatefulWidget {
     this.obscure = false,
     this.minLines = 1,
     this.maxLines = 1,
+    this.size,
     required this.onChange,
   });
   @override
@@ -5597,19 +5790,21 @@ class _McpTextFieldState extends State<_McpTextField> {
   @override
   Widget build(BuildContext context) {
     final obscuring = widget.obscure && _hidden;
-    return TextField(
+    final Widget field = TextField(
       controller: _ctrl,
       obscureText: obscuring,
       minLines: obscuring ? 1 : widget.minLines,
       maxLines: obscuring ? 1 : widget.maxLines,
       style: TextStyle(fontSize: 13, color: widget.scheme.onSurface),
-      decoration: InputDecoration(
+      decoration: (widget.size == null ? const InputDecoration() : widget.size!.denseInput())
+          .copyWith(
         labelText: widget.label.isEmpty ? null : widget.label,
         hintText: widget.hint,
         hintStyle: widget.hint == null ? null : TextStyle(fontSize: 11, color: widget.scheme.outline),
         isDense: true,
         alignLabelWithHint: widget.maxLines > 1,
         labelStyle: TextStyle(fontSize: 11, color: widget.scheme.outline),
+        suffixIconConstraints: widget.size == null ? null : AppControlSize.iconSlot,
         suffixIcon: widget.obscure ? IconButton(
           icon: Icon(_hidden ? Icons.visibility_off : Icons.visibility, size: 16, color: widget.scheme.outline),
           onPressed: () => setState(() => _hidden = !_hidden),
@@ -5618,6 +5813,9 @@ class _McpTextFieldState extends State<_McpTextField> {
       ),
       onChanged: widget.onChange,
     );
+    // 钉死到档位高度：不给死高度时，带「眼睛」后缀图标的字段会被 InputDecorator
+    // 默认的 48×48 图标约束顶高（桌面端折算后 40），比同一行不带后缀图标的字段高一截
+    return widget.size == null ? field : widget.size!.fieldBox(field);
   }
 }
 

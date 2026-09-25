@@ -10,6 +10,7 @@ import '../services/fppx2_service.dart';
 import '../services/graph_executor.dart';
 import '../services/quick_config_storage.dart';
 import '../theme/app_strings.dart';
+import '../theme/app_semantic_colors.dart';
 import '../widgets/toast.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_glass_pill.dart';
@@ -220,9 +221,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       final goOn = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          // 同 project_page：不再覆盖 shape（否则会连主题的细描边一起丢掉）
           title: Row(children: [
-            Icon(Icons.help_outline, size: 20, color: Colors.orange),
+            Icon(Icons.help_outline, size: 20, color: scheme.sem.warning),
             const SizedBox(width: 8),
             Text(zh ? '发现未知节点' : 'Unknown Node Type', style: TextStyle(color: scheme.onSurface)),
           ]),
@@ -248,7 +249,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     if (result.warnings.isNotEmpty) {
       final proceed = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
         title: Row(children: [
-          Icon(Icons.warning_amber, size: 20, color: Colors.orange),
+          Icon(Icons.warning_amber, size: 20, color: scheme.sem.warning),
           const SizedBox(width: 8),
           Text(zh ? '版本警告' : 'Version Warning', style: TextStyle(color: scheme.onSurface)),
         ]),

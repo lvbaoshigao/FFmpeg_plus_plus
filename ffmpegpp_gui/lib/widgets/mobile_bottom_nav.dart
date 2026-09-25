@@ -502,7 +502,10 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
     super.initState();
     // 首次进入主界面即预加载 oc_liquid_glass 的 fragment shader，
     // 避免底部导航第一次渲染时的异步加载闪烁。
-    OCLiquidGlassGroup.precacheShader();
+    // 与 main.dart 的 shader 预热走同一条门控：shaderGlassSupported 为 false 时
+    // 玻璃渲染永远走不到 shader 分支（gpuGlassEnabledOf 已 gate），但这次调用
+    // 仍会真的加载并编译一份用不到的 SkSL 运行时效应 —— 白占内存，直接跳过。
+    if (shaderGlassSupported) OCLiquidGlassGroup.precacheShader();
   }
 
   @override
@@ -1155,7 +1158,10 @@ class _MobileNavStyleTabBarState extends State<MobileNavStyleTabBar> {
   void initState() {
     super.initState();
     // 与主导航一致：提前预加载 shader，避免首次渲染异步加载闪烁。
-    OCLiquidGlassGroup.precacheShader();
+    // 与 main.dart 的 shader 预热走同一条门控：shaderGlassSupported 为 false 时
+    // 玻璃渲染永远走不到 shader 分支（gpuGlassEnabledOf 已 gate），但这次调用
+    // 仍会真的加载并编译一份用不到的 SkSL 运行时效应 —— 白占内存，直接跳过。
+    if (shaderGlassSupported) OCLiquidGlassGroup.precacheShader();
   }
 
   @override

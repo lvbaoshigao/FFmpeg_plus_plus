@@ -6,6 +6,7 @@ import '../providers/app_state.dart';
 import '../services/thumbnail_service.dart';
 import '../services/shell_open.dart';
 import '../theme/app_strings.dart';
+import '../theme/app_semantic_colors.dart';
 import 'app_card.dart';
 import 'app_slider.dart';
 
@@ -54,6 +55,28 @@ String _dashIfNa(String v, bool isZh) {
   }
   return t;
 }
+
+/// 队列卡片里进度条的高度。
+///
+/// 不复用全局的 [kAppTrackHeight]（16）：那是**滑块轨道**的规格 —— 滑块需要一根
+/// 手指按得住的粗轨道，而队列卡片里是纯展示的进度条，两条 16px 叠起来光轨道就占掉
+/// 32px + 间距，整张卡被撑得虚胖（用户反馈「进度条过于宽大」）。
+/// 8px 既保住胶囊语义（圆角 = 高度 / 2），又与卡片里 11 / 12px 的文字成比例。
+const double kQueueTrackHeight = 8;
+
+/// 分段进度条与当前步骤进度条之间的垂直间距。
+///
+/// 二者是同一条进度语义的上下两层，3px 的缝隙足矣；用 6~8 会被读成两块互不相干的
+/// 指标（改造前是 4，且中间还夹着一条 16px 的下层条，越看越散）。
+const double kQueueTrackGap = 3;
+
+/// 队列卡片内文字规格：标签 / 值 / 区块标题三级。
+///
+/// 抽出来的原因：改造前同一张卡里字号散成 10 / 11 / 12 / 13 四档，而且**标签普遍
+/// 比同一行的值小 2px**（10 vs 12），密集信息区看着像没对齐的草稿。统一成三级。
+const double kQueueFsLabel = 11;
+const double kQueueFsValue = 12;
+const double kQueueFsSection = 13;
 
 /// 任务卡片：双进度条 + 可展开的节点微型画布
 class TaskCard extends StatelessWidget {
@@ -153,32 +176,43 @@ class TaskCard extends StatelessWidget {
                     padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 28, minHeight: 28)),
                 Icon(task.expanded ? Icons.expand_less : Icons.expand_more, size: 20, color: scheme.outline),
               ]),
-              // 双进度条 + 速度/百分比：仅处理中/已完成显示（等待与终态不占位）
+              // 进度区：仅处理中/已完成显示（等待与终态不占位）
               if (task.status == TaskStatus.processing || task.status == TaskStatus.completed) ...[
                 const SizedBox(height: 10),
-                // 上层：整体进度（分段）
-                _SegmentedProgressBar(
-                  segments: task.pipelineCalls?.length ?? 1,
-                  callProgresses: task.callProgresses,
-                  currentCallIndex: task.currentCallIndex,
-                  // 与下方 AppProgressBar / 全应用滑块同一规格（胶囊高 kAppTrackHeight）
-                  height: kAppTrackHeight,
-                ),
-                const SizedBox(height: 4),
-                // 下层：当前步骤进度。高度由 AppProgressBar 统一为 6（原来是 3，
-                // 与上面 6px 的分段条、与其它页面的进度条都不一致）。
+                // 上层：整体进度（分段）。**只在流水线真的分多段时才画** ——
+                // 单节点任务下它和下面的当前步骤条是同一件事，两条一模一样的长条
+                // 并排只会让人以为是两个不同指标（用户反馈的「宽大又难读」）。
+                if ((task.pipelineCalls?.length ?? 1) > 1) ...[
+                  _SegmentedProgressBar(
+                    segments: task.pipelineCalls!.length,
+                    callProgresses: task.callProgresses,
+                    currentCallIndex: task.currentCallIndex,
+                    // 8px：见 kQueueTrackHeight —— 不再是滑块的 16px 规格
+                    height: kQueueTrackHeight,
+                  ),
+                  const SizedBox(height: kQueueTrackGap),
+                ],
+                // 下层：当前步骤进度
                 AppProgressBar(
+                  height: kQueueTrackHeight,
                   value: task.callProgresses.isNotEmpty && task.currentCallIndex < task.callProgresses.length
                       ? task.callProgresses[task.currentCallIndex]
                       : null,
                 ),
                 const SizedBox(height: 6),
+                // 速度与百分比同一行。速度为空时左侧留白会让这一行只剩一个孤零零的
+                // 百分比飘在右边，所以补上「步骤 i/n」——它恰好是用户在看进度时
+                // 最想知道、而折叠态里原本看不到的信息。
                 Row(children: [
                   if (task.speed.isNotEmpty)
-                    _chip(Icons.speed, _dashIfNa(task.speed, s.isZh), scheme),
+                    _chip(Icons.speed, _dashIfNa(task.speed, s.isZh), scheme)
+                  else if ((task.pipelineCalls?.length ?? 0) > 1)
+                    _chip(Icons.account_tree,
+                        '${s.isZh ? '步骤' : 'Step'} ${task.currentCallIndex + 1}/${task.pipelineCalls!.length}',
+                        scheme),
                   const Spacer(),
                   Text('${task.progress.toStringAsFixed(0)}%',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: clr)),
+                      style: TextStyle(fontSize: kQueueFsValue, fontWeight: FontWeight.w600, color: clr)),
                 ]),
               ],
               // 失败任务：折叠态也直接显示错误摘要，点开卡片可查看完整日志
@@ -369,7 +403,8 @@ class TaskCard extends StatelessWidget {
   Widget _chip(IconData icon, String text, ColorScheme scheme) => Row(mainAxisSize: MainAxisSize.min, children: [
     Icon(icon, size: 12, color: scheme.outline), const SizedBox(width: 3),
     Text(text, maxLines: 1, overflow: TextOverflow.ellipsis,
-        style: TextStyle(fontSize: 10, color: scheme.outline)),
+        // 11：这个 chip 总是紧挨着 11px 的状态文字/数值出现，10 会明显小一号
+        style: TextStyle(fontSize: kQueueFsLabel, color: scheme.outline)),
   ]);
 
   IconData get _statusIcon => switch (task.status) {
@@ -378,10 +413,18 @@ class TaskCard extends StatelessWidget {
     TaskStatus.cancelled => Icons.cancel,
   };
 
+  // 语义色统一走 AppSemantic：
+  // - 原先 `completed => Colors.green`、`cancelled => Colors.orange` 是写死的
+  //   Material 原色，换主题色/开 Monet 动态取色时不会跟着变；
+  // - 原先 `processing => sc.primary`（品牌色）与本文件里另外三处「处理中 = 琥珀」
+  //   （_PipelineLegend 圆点、_SegmentedProgressBar 段、_NodeCircle 圈）自相矛盾，
+  //   同一个状态在队列卡里出现两种颜色。这里统一到 warning，
+  //   与图例/分段进度条/节点圈完全一致；处理中与已取消同为 warning 层级，
+  //   靠图标（sync / cancel）与文案区分。
   Color _statusColor(ColorScheme sc) => switch (task.status) {
-    TaskStatus.pending => sc.outline, TaskStatus.processing => sc.primary,
-    TaskStatus.completed => Colors.green, TaskStatus.failed => sc.error,
-    TaskStatus.cancelled => Colors.orange,
+    TaskStatus.pending => sc.sem.neutral, TaskStatus.processing => sc.sem.warning,
+    TaskStatus.completed => sc.sem.success, TaskStatus.failed => sc.sem.danger,
+    TaskStatus.cancelled => sc.sem.warning,
   };
 }
 
@@ -406,7 +449,7 @@ class _SectionTitle extends StatelessWidget {
         Text(
           title,
           style: TextStyle(
-            fontSize: 13,
+            fontSize: kQueueFsSection,
             fontWeight: FontWeight.w600,
             color: scheme.onSurface,
           ),
@@ -433,15 +476,15 @@ class _PipelineLegend extends StatelessWidget {
       runSpacing: 4,
       children: [
         _LegendItem(
-          color: Colors.grey.shade400,
+          color: scheme.sem.neutral,
           label: s.qLegendPending,
         ),
         _LegendItem(
-          color: Colors.amber,
+          color: scheme.sem.warning,
           label: s.qLegendProcessing,
         ),
         _LegendItem(
-          color: Colors.green,
+          color: scheme.sem.success,
           label: s.qLegendCompleted,
         ),
       ],
@@ -496,6 +539,32 @@ class _FileInfoCard extends StatelessWidget {
     required this.s,
   });
 
+  /// 一行「标签 + 路径」。
+  ///
+  /// 原来输入/输出两段各写一遍（标签 10px + 路径 11px），改一处必漏另一处；
+  /// 而且路径用的是 `SelectableText(maxLines: 2)` —— **没给 overflow**，超长路径
+  /// 会被硬裁在中途（出现半个字），既看不出「被截断了」也复制不到全路径。现在：
+  /// 图标与标签对齐到同一档、路径超出显示省略号、完整值挂在 Tooltip 上。
+  Widget _pathRow(IconData icon, String label, String path) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Row(children: [
+        Icon(icon, size: 13, color: scheme.outline),
+        const SizedBox(width: 5),
+        Text(label,
+            style: TextStyle(
+                fontSize: kQueueFsLabel, color: scheme.outline, fontWeight: FontWeight.w600)),
+      ]),
+      const SizedBox(height: 3),
+      Tooltip(
+        message: path,
+        child: Text(path,
+            maxLines: 2, overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: kQueueFsLabel, height: 1.35, color: scheme.onSurface)),
+      ),
+    ],
+  );
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -507,44 +576,16 @@ class _FileInfoCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
       ),
-      child: Column(
+      // 一个 SelectionArea 包住两条路径，替代原先两个 SelectableText：
+      // 少一层 widget，而且两条路径可以跨行一起选中复制。
+      child: SelectionArea(child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Icon(Icons.input, size: 14, color: scheme.outline),
-              const SizedBox(width: 6),
-              Text(
-                s.qInput,
-                style: TextStyle(fontSize: 10, color: scheme.outline, fontWeight: FontWeight.w600),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          SelectableText(
-            input,
-            style: TextStyle(fontSize: 11, color: scheme.onSurface),
-            maxLines: 2,
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Icon(Icons.output, size: 14, color: scheme.outline),
-              const SizedBox(width: 6),
-              Text(
-                s.qOutput,
-                style: TextStyle(fontSize: 10, color: scheme.outline, fontWeight: FontWeight.w600),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          SelectableText(
-            output,
-            style: TextStyle(fontSize: 11, color: scheme.onSurface),
-            maxLines: 2,
-          ),
+          _pathRow(Icons.input, s.qInput, input),
+          const SizedBox(height: 10),
+          _pathRow(Icons.output, s.qOutput, output),
         ],
-      ),
+      )),
     );
   }
 }
@@ -577,7 +618,9 @@ class _StatsGrid extends StatelessWidget {
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
                   color: scheme.surfaceContainerHighest.withAlpha(40),
-                  borderRadius: BorderRadius.circular(6),
+                  // 10 与同卡其它内嵌块（文件信息 / 流水线 / 高级信息）一致；
+                  // 原来这里是 6，比它们都更方，一眼看去像另一种控件。
+                  borderRadius: BorderRadius.circular(10),
                 ),
                 child: Row(
                   children: [
@@ -589,13 +632,15 @@ class _StatsGrid extends StatelessWidget {
                         children: [
                           Text(
                             label,
-                            style: TextStyle(fontSize: 10, color: scheme.outline),
+                            // 标签从 10 提到 11：原来标签比同一块里的值（12）小两号，
+                            // 密集网格里看着像没对齐的草稿。
+                            style: TextStyle(fontSize: kQueueFsLabel, color: scheme.outline),
                           ),
                           const SizedBox(height: 2),
                           Text(
                             value.isEmpty ? '-' : value,
                             style: TextStyle(
-                              fontSize: 12,
+                              fontSize: kQueueFsValue,
                               fontWeight: FontWeight.w600,
                               color: scheme.onSurface,
                             ),
@@ -657,13 +702,15 @@ class _AdvancedInfoSectionState extends State<_AdvancedInfoSection> {
               padding: const EdgeInsets.all(12),
               child: Row(
                 children: [
-                  Icon(Icons.code, size: 14, color: widget.scheme.outline),
+                  // 16 / 13：与同一个展开区里的三个 _SectionTitle 同档。
+                  // 原来这里是 14 / 12，比它的「下属」区块标题还小 —— 层级看着是反的。
+                  Icon(Icons.code, size: 16, color: widget.scheme.outline),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
                       widget.s.qAdvanced,
                       style: TextStyle(
-                        fontSize: 12,
+                        fontSize: kQueueFsSection,
                         fontWeight: FontWeight.w600,
                         color: widget.scheme.onSurface,
                       ),
@@ -757,12 +804,12 @@ class _InfoBlock extends StatelessWidget {
       children: [
         Row(
           children: [
-            Icon(icon, size: 12, color: isError ? scheme.error : scheme.outline),
-            const SizedBox(width: 4),
+            Icon(icon, size: 13, color: isError ? scheme.error : scheme.outline),
+            const SizedBox(width: 5),
             Text(
               title,
               style: TextStyle(
-                fontSize: 10,
+                fontSize: kQueueFsLabel,
                 fontWeight: FontWeight.w600,
                 color: isError ? scheme.error : scheme.outline,
               ),
@@ -773,21 +820,25 @@ class _InfoBlock extends StatelessWidget {
         Container(
           width: double.infinity,
           constraints: maxHeight != null ? BoxConstraints(maxHeight: maxHeight!) : null,
-          padding: const EdgeInsets.all(8),
+          padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
             color: isError 
                 ? scheme.errorContainer.withAlpha(40) 
                 : scheme.surfaceContainerHighest.withAlpha(60),
-            borderRadius: BorderRadius.circular(4),
+            // 8：与卡内其它内嵌块（10）差一档，体现「更内层」；原来的 4 太方，
+            // 和同卡 10 / 12 的圆角语言不像一家人。
+            borderRadius: BorderRadius.circular(8),
           ),
           child: SingleChildScrollView(
             child: SelectableText(
               content,
               style: TextStyle(
                 fontFamily: isMonospace ? 'monospace' : null,
-                fontSize: 10,
+                // 10 → 11：命令 / 日志是这张卡里最需要逐字读的内容，
+                // 比周围的标签还小一号（10）说不过去。
+                fontSize: kQueueFsLabel,
                 color: isError ? scheme.error : scheme.onSurface,
-                height: 1.4,
+                height: 1.45,
               ),
             ),
           ),
@@ -836,13 +887,17 @@ class _SegmentedProgressBar extends StatelessWidget {
                       // 关键修复：callProgresses 长度可能 < segments（task 刚创建或 pipelineCalls 还没展开），
                       // 直接 callProgresses[i] 会抛 RangeError 把整张 TaskCard 渲染挂掉 → 灰屏。
                       // 越界时按 0.0 处理（pending 灰段）。
+                      //
+                      // 配色与 _PipelineLegend / _statusColor 完全对齐：未开始 = neutral、
+                      // 进行中 = warning、已完成 = success。原先非当前段的兜底色写成
+                      // scheme.primary（品牌色），与图例里的「处理中 = 琥珀」不一致。
                       color: i < callProgresses.length
                           ? (i == currentCallIndex && callProgresses[i] < 1.0
-                              ? Colors.amber
+                              ? scheme.sem.warning
                               : callProgresses[i] >= 1.0
-                                  ? Colors.green
-                                  : scheme.primary)
-                          : scheme.primary,
+                                  ? scheme.sem.success
+                                  : scheme.sem.warning)
+                          : scheme.sem.neutral,
                       // 两端全圆角：与滑块/进度条同一种胶囊语言
                       borderRadius: radius,
                     ),
@@ -929,11 +984,14 @@ class _NodeCircle extends StatelessWidget {
   });
 
   Color _getStatusColor(ColorScheme scheme) {
-    if (status == TaskStatus.completed) return Colors.green;
-    if (progress >= 1.0) return Colors.green;
-    if (isCurrent && progress > 0.0 && progress < 1.0) return Colors.amber;
-    if (status == TaskStatus.processing && isCurrent) return Colors.amber;
-    return Colors.grey.shade400;
+    // 与 _statusColor / _PipelineLegend 同一套语义色（原先是 Colors.green /
+    // Colors.amber / Colors.grey.shade400 三个写死的 Material 原色，
+    // 传进来的 scheme 参数根本没被用到）。
+    if (status == TaskStatus.completed) return scheme.sem.success;
+    if (progress >= 1.0) return scheme.sem.success;
+    if (isCurrent && progress > 0.0 && progress < 1.0) return scheme.sem.warning;
+    if (status == TaskStatus.processing && isCurrent) return scheme.sem.warning;
+    return scheme.sem.neutral;
   }
 
   @override

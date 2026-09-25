@@ -5,8 +5,11 @@ import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
+import '../theme/app_semantic_colors.dart';
 import '../services/system_monitor.dart';
 import '../theme/app_strings.dart';
+// 控件高度档位令牌：顶栏几颗动作按钮统一按 regular 档取高度与图标尺寸
+import '../theme/app_control_size.dart';
 import '../widgets/task_card.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_glass_pill.dart';
@@ -166,27 +169,36 @@ class _QueuePageState extends State<QueuePage> {
   /// 顶栏操作按钮 + 资源占用（桌面端与移动端共用同一份逻辑）。
   /// 按钮文字统一单行省略：顶栏高度固定，字号调大时折行会把整条顶栏撑高
   /// （按钮本身宽度由内容决定，纯文本按钮最容易在窄窗口下折成两行）。
+  ///
+  /// 四颗按钮统一走 [AppControlSize.regular]（高 32 / 图标 16 / 圆角 8）：
+  /// 改造前三颗是主题默认高度、图标 16 / 18 / 16 / 16 三种，「开始处理」还比
+  /// 旁边两颗高出一档，并排看像不是一个组的。
   List<Widget> _buildActions(ColorScheme scheme, AppState state, AppStrings s) {
+    final size = AppControlSize.regular;
     return [
       if (state.processing)
         OutlinedButton.icon(
-            icon: const Icon(Icons.stop, size: 16),
+            style: size.buttonStyle(),
+            icon: Icon(Icons.stop, size: size.iconSize),
             label: Text(s.cancelAll, maxLines: 1, overflow: TextOverflow.ellipsis),
             onPressed: () => state.cancelProcessing())
       else ...[
         if (state.tasks.any((t) => t.status == TaskStatus.pending))
           FilledButton.icon(
-              icon: const Icon(Icons.play_arrow, size: 18),
+              style: size.buttonStyle(filled: true),
+              icon: Icon(Icons.play_arrow, size: size.iconSize),
               label: Text(s.startProcessing, maxLines: 1, overflow: TextOverflow.ellipsis),
               onPressed: () => state.processAllTasks()),
         if (state.tasks.any((t) => t.status == TaskStatus.completed || t.status == TaskStatus.failed || t.status == TaskStatus.cancelled))
           TextButton.icon(
-              icon: const Icon(Icons.cleaning_services_outlined, size: 16),
+              style: size.buttonStyle(),
+              icon: Icon(Icons.cleaning_services_outlined, size: size.iconSize),
               label: Text(s.clearCompleted, maxLines: 1, overflow: TextOverflow.ellipsis),
               onPressed: () => state.clearCompletedTasks()),
         if (state.tasks.isNotEmpty)
           TextButton.icon(
-              icon: const Icon(Icons.delete_sweep, size: 16),
+              style: size.buttonStyle(),
+              icon: Icon(Icons.delete_sweep, size: size.iconSize),
               label: Text(s.clearAll, maxLines: 1, overflow: TextOverflow.ellipsis),
               onPressed: () => state.clearAllTasks()),
       ],
@@ -321,7 +333,13 @@ class _MonitorWidgetState extends State<_MonitorWidget> {
 
   /// 迷你指标：彩色图标 + 等宽数值。
   Widget _mini(IconData icon, String value, double progress, ColorScheme scheme) {
-    final color = progress > 0.8 ? Colors.red : progress > 0.5 ? Colors.orange : scheme.primary;
+    // 占用率三档：>80% 危险、>50% 警告、否则正常。原先写死 Colors.red /
+    // Colors.orange，不随主题色变化（且这两个 tone 50 原色在深色底上过亮）。
+    final color = progress > 0.8
+        ? scheme.sem.danger
+        : progress > 0.5
+            ? scheme.sem.warning
+            : scheme.sem.info;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
       decoration: BoxDecoration(

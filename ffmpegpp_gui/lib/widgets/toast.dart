@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../theme/app_semantic_colors.dart';
 
 enum ToastType { success, error, warning, info }
 
@@ -11,11 +12,16 @@ void showToast(BuildContext context, String message, {ToastType type = ToastType
 
   entry = OverlayEntry(builder: (ctx) {
     final scheme = Theme.of(ctx).colorScheme;
+    // 语义色走 AppSemantic（随主题种子色调和），不再写死 Material 调色板原色：
+    // 原先 Colors.green/#4CAF50、Colors.red/#F44336、Colors.orange/#FF9800 完全不
+    // 跟随主题 —— 换主题色（含 Android Monet 动态取色）后只有 toast 图标纹丝不动，
+    // 且这三个 tone 50 的饱和色是为浅色底设计的，在深色玻璃面上过亮。
+    final sem = scheme.sem;
     final (icon, color) = switch (type) {
-      ToastType.success => (Icons.check_circle_rounded, Colors.green),
-      ToastType.error => (Icons.cancel_rounded, Colors.red),
-      ToastType.warning => (Icons.warning_rounded, Colors.orange),
-      ToastType.info => (Icons.info_rounded, scheme.primary),
+      ToastType.success => (Icons.check_circle_rounded, sem.success),
+      ToastType.error => (Icons.cancel_rounded, sem.danger),
+      ToastType.warning => (Icons.warning_rounded, sem.warning),
+      ToastType.info => (Icons.info_rounded, sem.info),
     };
 
     return Positioned(

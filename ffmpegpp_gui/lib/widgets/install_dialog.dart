@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import '../services/ffmpeg_installer.dart';
 import '../services/shell_open.dart';
 import '../theme/app_theme.dart';
+import '../theme/app_semantic_colors.dart';
 import 'app_slider.dart';
 
 const _ffmpegUrl = 'https://wwbrq.lanzouv.com/iTF9n3sb937c';
@@ -131,7 +132,7 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
   }
 
   IconData get _titleIcon => switch (_step) { 'done' => Icons.check_circle, 'error' => Icons.error, _ => Icons.download };
-  Color _titleColor(ColorScheme s) => switch (_step) { 'done' => Colors.green, 'error' => s.error, _ => s.primary };
+  Color _titleColor(ColorScheme s) => switch (_step) { 'done' => s.sem.success, 'error' => s.sem.danger, _ => s.sem.info };
   String get _title => switch (_step) {
     'choose' => '安装 FFmpeg', 'winget' || 'pkgmgr' => '正在安装...', 'lanzou' => '蓝奏云下载',
     'importing' => '正在导入...', 'done' => '安装完成', 'error' => '安装失败', _ => '',
@@ -285,22 +286,24 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
     required VoidCallback onDownload, required VoidCallback onPick,
   }) {
     final done = selectedPath != null;
+    // 「已选择」态的整卡配色统一到 success（原先底色/描边是 primaryContainer +
+    // primary，图标与文案却是写死的 Colors.green → 同一张卡两种语义色）。
+    final Color accent = done ? scheme.sem.success : scheme.sem.info;
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: done ? scheme.primaryContainer.withAlpha(30) : scheme.surfaceContainerHighest.withAlpha(60),
+        color: done ? scheme.sem.successContainer : scheme.surfaceContainerHighest.withAlpha(60),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: done ? scheme.primary.withAlpha(60) : scheme.outlineVariant.withAlpha(50)),
+        border: Border.all(color: accent.withAlpha(60)),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          Icon(done ? Icons.check_circle : Icons.download, size: 16,
-              color: done ? Colors.green : scheme.primary),
+          Icon(done ? Icons.check_circle : Icons.download, size: 16, color: accent),
           const SizedBox(width: 6),
           Text(name, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface)),
           const Spacer(),
           if (done)
-            Text('已选择', style: TextStyle(fontSize: 10, color: Colors.green, fontWeight: FontWeight.w600)),
+            Text('已选择', style: TextStyle(fontSize: 10, color: accent, fontWeight: FontWeight.w600)),
         ]),
         const SizedBox(height: 4),
         Text(desc, style: TextStyle(fontSize: 11, color: scheme.outline)),
@@ -341,13 +344,17 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
       ]),
       if (_slowWarning) ...[
         const SizedBox(height: 8),
+        // 原先用 `Colors.orange.withAlpha(30)` 底 + `Colors.orange.shade800` 字：
+        // 深色主题下橙色 30/255 的底几乎看不见，shade800 又是暗橙配暗底 → 读不清。
+        // 改为 M3 的 container / on-container 配对，明暗两套 tone 都由
+        // ColorScheme.fromSeed 保证对比度。
         Container(padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(color: Colors.orange.withAlpha(30), borderRadius: BorderRadius.circular(6)),
+          decoration: BoxDecoration(color: scheme.sem.warningContainer, borderRadius: BorderRadius.circular(6)),
           child: Row(children: [
-            const Icon(Icons.warning_amber, size: 14, color: Colors.orange),
+            Icon(Icons.warning_amber, size: 14, color: scheme.sem.onWarningContainer),
             const SizedBox(width: 6),
             Expanded(child: Text('下载速度较慢，建议取消后切换到蓝奏云下载',
-                style: TextStyle(fontSize: 11, color: Colors.orange.shade800))),
+                style: TextStyle(fontSize: 11, color: scheme.sem.onWarningContainer))),
           ])),
       ],
       const SizedBox(height: 12),
@@ -361,7 +368,7 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
 
   Widget _buildDone(ColorScheme scheme) {
     return Column(mainAxisSize: MainAxisSize.min, children: [
-      const Icon(Icons.check_circle, size: 48, color: Colors.green),
+      Icon(Icons.check_circle, size: 48, color: scheme.sem.success),
       const SizedBox(height: 12),
       Text('FFmpeg 安装成功！', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface)),
       const SizedBox(height: 8),
@@ -380,7 +387,7 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
   Widget _pathRow(ColorScheme scheme, String label, String path) {
     final exists = File(path).existsSync();
     return Row(children: [
-      Icon(exists ? Icons.check : Icons.close, size: 14, color: exists ? Colors.green : scheme.error),
+      Icon(exists ? Icons.check : Icons.close, size: 14, color: exists ? scheme.sem.success : scheme.sem.danger),
       const SizedBox(width: 6),
       Text('$label: ', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: scheme.onSurface)),
       Expanded(child: Text(path, style: TextStyle(fontSize: 10, fontFamily: AppTheme.monoFont, color: scheme.outline),

@@ -2,6 +2,7 @@ import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import '../widgets/app_slider.dart' show appSliderThemeFor;
+import 'app_semantic_colors.dart';
 
 class AppTheme {
   static final String monoFont = Platform.isWindows ? 'Consolas' : 'monospace';
@@ -215,6 +216,11 @@ class AppTheme {
           ),
         ),
       ),
+      // 语义色（成功/警告/危险/信息/中性）：见 theme/app_semantic_colors.dart。
+      // 注入到主题层后，所有 `scheme.sem.xxx` 与
+      // `Theme.of(context).extension<AppSemantic>()` 都拿到同一份实例，
+      // 其内部按「主色 + 明暗」做进程级缓存，主题未变时零开销。
+      extensions: <ThemeExtension<dynamic>>[AppSemantic.ofScheme(scheme)],
     );
   }
 

@@ -127,6 +127,12 @@ void main() async {
   // FragmentProgram.fromAsset 仍会真的加载并编译 SkSL 运行时效应 —— 一份
   // 永远用不到的编译产物白占内存。（原注释称「加载即被短路，无开销」是错的：
   // 短路的是渲染路径，不是这次预加载本身。）
+  //
+  // 为什么这一处**不**受「关闭预加载」门控：它必须在 `runApp` 之前发起，而此刻
+  // 配置还没读出来（`AppState.init` 要等首帧之后才 await）；而它编译的是首帧过去
+  // 之后马上就会用到的 shader，推迟到 init 之后再加载会真的闪一下（先走无 shader 的
+  // 回退路径再切换）。代价侧：一次编译、一个程序对象，且在**不支持 shader 玻璃的
+  // 平台整块跳过** —— 而「关闭预加载」主要使用的 Windows 桌面端正是这一类。
   if (shaderGlassSupported) {
     unawaited(OCLiquidGlassGroup.precacheShader().catchError((_) {}));
   }
@@ -138,13 +144,12 @@ void main() async {
   );
   _startupLog('8-runApp done');
 
-  // ── 启动预加载（首帧之后后台并行，不阻塞初始化，压低启动内存峰值） ──
-  // 字体加载 + 字体列表预热都推迟到首帧后：启动瞬间只做窗口 + 后端初始化，
-  // 避免「读 fonts/ 目录全部字节 + 壁纸按物理分辨率解码 + 后端 dlopen + 字
-  // 体枚举」叠加导致 300-400MB 峰值。首帧后摊到空闲期完成。
+  // ── 首帧后的「必需加载」：自定义字体 ──
+  // 只有它是无条件执行的：不做就是缺字体（文字回退到系统字体），属于功能而非预热，
+  // 所以不受「关闭预加载」门控。推迟到首帧后是为了避开「读数 MB 字体字节 +
+  // 后端 dlopen + 壁纸解码」叠加造成的启动内存峰值。
   WidgetsBinding.instance.addPostFrameCallback((_) {
     unawaited(_loadCustomFonts());
-    unawaited(_preloadFonts());
   });
 
   // 后台初始化后端，UI 先显示加载画面。等待首帧完成后才启动：
@@ -154,17 +159,33 @@ void main() async {
   await appState.init(serverPath);
   _startupLog('6-AppState.init OK');
 
+  // ── 纯预热项目的总闸：「关闭预加载」（config.noPreload）──
+  // 门控的是「做与不做都不影响功能、只是首次用到时现场付代价」的动作：
+  //   * 字体列表枚举（FontPicker.preloadFonts，缓存在静态字段里）
+  //   * 壁纸按物理分辨率解码进 ImageCache
+  // 这两处此前无条件执行，于是开关只对外壳的页面预热生效、对启动内存几乎没影响。
+  // 必须等 `appState.init` 之后才判定：配置要读出来才知道开没开。
+  final warmupEnabled = !appState.config.noPreload;
+  if (!warmupEnabled) {
+    _startupLog('6b-warmup: 关闭预加载已开启，跳过字体列表 / 壁纸预热');
+  }
+
   // 高刷新率：在支持 90 / 120 / 144Hz 的设备上按设置请求屏幕的最高刷新率。
   // 必须等到窗口已 attach 之后再调用（原生侧 setFrameRate 作用于已挂载的
   // SurfaceView 的 Surface），所以放在这里而不是 main() 开头。
   // Android 专用，其它平台 no-op。
+  // 注意：这不是预热 —— 不调用就真的跑不到高刷，所以不受 warmupEnabled 门控。
   unawaited(RefreshRate.applyEnabled(appState.config.highRefreshRate).then((ok) {
     _startupLog('6a-highRefreshRate: '
         '${appState.config.highRefreshRate ? "max" : "system default"} -> $ok');
   }));
 
-  // 后端就绪后预热壁纸解码（进主界面不再卡首帧）——仅在配置了壁纸时
-  unawaited(_precacheWallpaper(appState));
+  // 后端就绪后预热：字体列表 + 壁纸解码（进主界面不再卡首帧）。
+  // 壁纸那一项内部还会再判一次「有没有配壁纸」。
+  if (warmupEnabled) {
+    unawaited(_preloadFonts());
+    unawaited(_precacheWallpaper(appState));
+  }
 
   // 低配/软件渲染显卡自动降级玻璃效果（后台探测，不阻塞启动）
   unawaited(_autoTuneGlass(appState));

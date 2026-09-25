@@ -3,6 +3,10 @@ import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
+import '../theme/app_semantic_colors.dart';
+// 控件高度档位令牌：本页原有 34 / 40 / 42 / 44 四档按钮高度并存，
+// 统一到 comfortable（卡片内表单/行内按钮）与 large（通栏主行动按钮）两档
+import '../theme/app_control_size.dart';
 import '../widgets/app_card.dart';
 import '../widgets/app_slider.dart';
 import '../widgets/mobile_bottom_nav.dart';
@@ -205,18 +209,24 @@ Widget mobileAiSettingsContent(BuildContext ctx, AppState state) {
                         style: TextStyle(
                             fontSize: 10,
                             color: state.mcpError != null
-                                ? scheme.error
-                                : state.mcpRunning ? Colors.green : scheme.outline),
+                                ? scheme.sem.danger
+                                : state.mcpRunning ? scheme.sem.success : scheme.sem.neutral),
                       )
                     : null,
                 value: cfg.mcpEnabled,
                 onChanged: (v) => state.toggleMcpServer(v),
               ),
               if (cfg.mcpEnabled) ...[
+                // 与桌面设置页同一套比例：标签固定 76、输入框吃掉剩余宽度、
+                // 动作固定 84、高度一律取 comfortable(36)。
+                // 改造前输入框写死 90 宽、按钮写死 40 高，两个数字互不相干 ——
+                // 按钮比输入框还高，一行的两半各说各话。
                 Row(children: [
-                  Text('${s.mcpPort}: ', style: TextStyle(fontSize: 12, color: clr)),
                   SizedBox(
-                    width: 90,
+                    width: AppControlSize.labelW,
+                    child: Text('${s.mcpPort}:', style: TextStyle(fontSize: 12, color: clr)),
+                  ),
+                  Expanded(
                     child: _AiField(
                       value: cfg.mcpPort.toString(),
                       scheme: scheme,
@@ -230,17 +240,14 @@ Widget mobileAiSettingsContent(BuildContext ctx, AppState state) {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  // 「应用」用描边按钮而非 Material 实心 tonal 按钮：与页面其余
-                  // 玻璃 / 描边控件统一（原先那颗实心按钮是本页第二处割裂元素）。
                   SizedBox(
-                    height: 40,
+                    width: AppControlSize.actionW,
+                    // 「应用」用描边按钮而非 Material 实心 tonal 按钮：与页面其余
+                    // 玻璃 / 描边控件统一（原先那颗实心按钮是本页第二处割裂元素）。
                     child: OutlinedButton.icon(
-                      icon: const Icon(Icons.refresh, size: 14),
+                      style: AppControlSize.comfortable.buttonStyle(),
+                      icon: Icon(Icons.refresh, size: AppControlSize.comfortable.iconSize),
                       label: Text(s.isZh ? '应用' : 'Apply', style: const TextStyle(fontSize: 11)),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
                       onPressed: () async {
                         state.mcpError = null;
                         await state.stopMcpServer();
@@ -249,9 +256,14 @@ Widget mobileAiSettingsContent(BuildContext ctx, AppState state) {
                     ),
                   ),
                 ]),
+                const SizedBox(height: 8),
                 Row(children: [
-                  Text(s.isZh ? '监听地址: ' : 'Bind host: ',
-                      style: TextStyle(fontSize: 12, color: clr)),
+                  SizedBox(
+                    width: AppControlSize.labelW,
+                    child: Text(s.isZh ? '监听地址:' : 'Bind host:',
+                        maxLines: 1, overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 12, color: clr)),
+                  ),
                   Expanded(
                     child: _AiField(
                       value: cfg.mcpHost,
@@ -268,7 +280,8 @@ Widget mobileAiSettingsContent(BuildContext ctx, AppState state) {
                   ),
                 ]),
                 Padding(
-                  padding: const EdgeInsets.only(top: 2),
+                  // 说明文字对齐到输入框左边缘（= 标签列宽），不再和标签挤在一行
+                  padding: const EdgeInsets.only(top: 4, left: AppControlSize.labelW),
                   child: Text(
                     s.isZh ? '改后点「应用」。设为 0.0.0.0 将暴露到局域网并启用访问令牌' : 'Click Apply. 0.0.0.0 exposes to LAN and enables token',
                     style: TextStyle(fontSize: 10, color: scheme.outline),
@@ -843,9 +856,9 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
         if (!_isNew && !isActive)
           SizedBox(
             width: double.infinity,
-            height: 44,
             child: FilledButton.tonalIcon(
-              icon: const Icon(Icons.radio_button_off, size: 17),
+              style: AppControlSize.large.buttonStyle(filled: true),
+              icon: Icon(Icons.radio_button_off, size: AppControlSize.large.iconSize),
               label: Text(s.aiProviderUse, style: const TextStyle(fontSize: 13)),
               onPressed: () {
                 state.updateConfig((c) => c..activeAiProfileId = _draft.id);
@@ -856,11 +869,13 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
           ),
         const SizedBox(height: 8),
         // 测试连接
+        // 通栏主行动按钮统一取 large(44)：改造前这两颗一颗 44 一颗 42、
+        // 图标一颗 17 一颗 15，上下叠着看就是「差一点点」的错位感
         SizedBox(
           width: double.infinity,
-          height: 42,
           child: OutlinedButton.icon(
-            icon: const Icon(Icons.wifi_tethering, size: 15),
+            style: AppControlSize.large.buttonStyle(),
+            icon: Icon(Icons.wifi_tethering, size: AppControlSize.large.iconSize),
             label: Text(s.aiPing, style: const TextStyle(fontSize: 12)),
             onPressed: () {
               _syncToDefaults();
@@ -918,44 +933,57 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
     final itemCount = (hasModels ? models.length : 1) + 1;
 
     // 列表尾部的操作行：获取 / 添加新 / 清空
+    // 三颗统一到 comfortable(36)：改造前两颗按钮虽然都是 42，但图标一颗 15 一颗 16，
+    // 右侧 IconButton 又带着 Material 默认的 48×48 最小点击框（比同排按钮高 6px），
+    // 一行里出现三种高度 / 三种图标尺寸
     Widget buildActions() => Padding(
           padding: const EdgeInsets.only(top: 4),
           child: Row(children: [
             Expanded(
-              child: SizedBox(
-                height: 42,
-                child: OutlinedButton.icon(
-                  icon: _fetchingModels
-                      ? const SizedBox(
-                          width: 14, height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Icon(Icons.cloud_download_outlined, size: 15),
-                  label: Text(isZh ? '获取' : 'Fetch',
-                      style: const TextStyle(fontSize: 12)),
-                  onPressed:
-                      _fetchingModels ? null : () => _fetchModels(context, state, s),
-                ),
+              child: OutlinedButton.icon(
+                style: AppControlSize.comfortable.buttonStyle(),
+                icon: _fetchingModels
+                    ? const SizedBox(
+                        width: 14, height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : Icon(Icons.cloud_download_outlined,
+                        size: AppControlSize.comfortable.iconSize),
+                label: Text(isZh ? '获取' : 'Fetch',
+                    style: const TextStyle(fontSize: 12)),
+                onPressed:
+                    _fetchingModels ? null : () => _fetchModels(context, state, s),
               ),
             ),
             const SizedBox(width: 8),
             Expanded(
-              child: SizedBox(
-                height: 42,
-                child: FilledButton.tonalIcon(
-                  icon: const Icon(Icons.add, size: 16),
-                  label: Text(isZh ? '添加新…' : 'Add new…',
-                      style: const TextStyle(fontSize: 12)),
-                  onPressed: () => _addModel(context, s),
-                ),
+              child: FilledButton.tonalIcon(
+                style: AppControlSize.comfortable.buttonStyle(filled: true),
+                icon: Icon(Icons.add, size: AppControlSize.comfortable.iconSize),
+                label: Text(isZh ? '添加新…' : 'Add new…',
+                    style: const TextStyle(fontSize: 12)),
+                onPressed: () => _addModel(context, s),
               ),
             ),
             if (hasModels) ...[
               const SizedBox(width: 8),
               SizedBox(
-                height: 42,
+                width: AppControlSize.comfortable.height,
+                height: AppControlSize.comfortable.height,
                 child: IconButton(
                   tooltip: isZh ? '清空模型列表' : 'Clear models',
-                  icon: Icon(Icons.delete_outline, size: 19, color: scheme.error),
+                  icon: Icon(Icons.delete_outline,
+                      size: AppControlSize.comfortable.iconSize, color: scheme.error),
+                  // 压掉默认的 48×48 最小点击框，否则整行被它顶高
+                  padding: EdgeInsets.zero,
+                  constraints: BoxConstraints.tightFor(
+                      width: AppControlSize.comfortable.height,
+                      height: AppControlSize.comfortable.height),
+                  // 圆角与同排两个按钮一致（默认是圆形）
+                  style: IconButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                        borderRadius:
+                            BorderRadius.circular(AppControlSize.comfortable.radius)),
+                  ),
                   onPressed: () => _mutateDraft((d) => d.models.clear()),
                 ),
               ),
@@ -2033,6 +2061,19 @@ class _AiField extends StatefulWidget {
   final int minLines;
   final int maxLines;
   final ValueChanged<String> onCommit;
+
+  /// 控件高度档位：全页固定 [AppControlSize.comfortable]（36）。本页改造前
+  /// 输入框纵向内边距写死 `v10`，算出来约 40，且带「眼睛」后缀图标的字段会被
+  /// [InputDecorator] 默认的 48×48 图标约束进一步顶高（移动端 48），于是
+  /// 同一张卡里 API Key 字段比端口字段高出近 10px。
+  ///
+  /// 用「常量 + 同名 getter」而不用可选的构造参数：全页每一处 `_AiField` 都吃
+  /// 同一档，可选参数从未被显式传过，等于「看着能改、其实哪都没改」的死参数
+  /// （analyzer 报 `UNUSED_ELEMENT_PARAMETER`）。保留 getter 是为了不动 build
+  /// 里既有的 `size.xxx` 写法。
+  static const AppControlSize _size = AppControlSize.comfortable;
+  AppControlSize get size => _size;
+
   const _AiField({
     super.key,
     required this.value,
@@ -2087,7 +2128,8 @@ class _AiFieldState extends State<_AiField> {
     final scheme = widget.scheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final clr = scheme.onSurface;
-    return TextField(
+    final size = widget.size;
+    final Widget field = TextField(
       controller: _ctrl,
       focusNode: _focus,
       keyboardType: widget.keyboardType,
@@ -2101,25 +2143,30 @@ class _AiFieldState extends State<_AiField> {
         hintStyle: TextStyle(fontSize: 12, color: scheme.outline),
         filled: true,
         fillColor: scheme.surfaceContainerLow.withAlpha(isDark ? 160 : 190),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        contentPadding: size.fieldPadding,
+        // 压平桌面端的 -8px 密度偏移，否则同一份 contentPadding 在两端高度不同
+        visualDensity: AppControlSize.fieldDensity,
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(size.radius),
           borderSide: BorderSide(color: scheme.outlineVariant.withAlpha(100)),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(size.radius),
           borderSide: BorderSide(color: scheme.outlineVariant.withAlpha(100)),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(size.radius),
           borderSide: BorderSide(color: scheme.primary, width: 1.2),
         ),
+        // 不带这个约束，带「眼睛」后缀图标的字段会被 InputDecorator 默认的
+        // 48×48 图标盒顶高（移动端 48 / 桌面折算后 40），比同卡其它字段高一截
+        suffixIconConstraints: AppControlSize.iconSlot,
         suffixIcon: widget.obscure
             ? IconButton(
                 icon: Icon(_visible ? Icons.visibility : Icons.visibility_off,
                     size: 16, color: scheme.outline),
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
                 onPressed: () => setState(() => _visible = !_visible),
               )
             : null,
@@ -2127,6 +2174,8 @@ class _AiFieldState extends State<_AiField> {
       onSubmitted: widget.onCommit,
       onEditingComplete: () => widget.onCommit(_ctrl.text),
     );
+    // 多行字段（标题提示词 2~4 行、系统提示词 3~6 行）不能钉高度，否则只剩一行高
+    return widget.maxLines > 1 ? field : size.fieldBox(field);
   }
 }
 

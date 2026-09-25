@@ -22,6 +22,10 @@ import '../services/ai_chat_history.dart';
 import '../services/pipeline_autosave.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_strings.dart';
+// 控件高度档位令牌：顶栏 AI 药丸、AI 面板的批准/拒绝与发送按钮统一取档位高度，
+// 不再各自写 32 / 36 / 40 这些互不相干的数字
+import '../theme/app_control_size.dart';
+import '../theme/app_semantic_colors.dart';
 import '../widgets/wallpaper_background.dart';
 import '../platform/app_platform.dart';
 import '../widgets/animated_popup.dart';
@@ -1061,7 +1065,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: Row(children: [
             Icon(Icons.error_outline, color: scheme.error, size: 22),
             const SizedBox(width: 8),
@@ -1106,7 +1109,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: Row(children: [
             Icon(Icons.error_outline, size: 20, color: scheme.error),
             const SizedBox(width: 8),
@@ -1143,7 +1145,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(children: [
           Icon(Icons.file_upload_outlined, size: 20, color: scheme.primary),
           const SizedBox(width: 8),
@@ -1206,7 +1207,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: Row(children: [
             Icon(Icons.error_outline, size: 20, color: scheme.error),
             const SizedBox(width: 8),
@@ -1269,7 +1269,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         showDialog(
           context: context,
           builder: (ctx) => AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             title: Text(zh ? '配置加载失败' : 'Load Failed', style: TextStyle(color: scheme.onSurface)),
             content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text('• $detail', style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
@@ -1285,9 +1284,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         final goOn = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             title: Row(children: [
-              Icon(Icons.help_outline, size: 20, color: Colors.orange),
+              Icon(Icons.help_outline, size: 20, color: context.sem.warning),
               const SizedBox(width: 8),
               Text(zh ? '发现未知节点' : 'Unknown Node Type', style: TextStyle(color: scheme.onSurface)),
             ]),
@@ -1385,13 +1383,32 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     final result = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text(s.isZh ? '放弃更改?' : 'Discard changes?', style: TextStyle(color: scheme.onSurface)),
+        // 不写 shape：继承主题 dialogTheme（圆角 22 + 0.6 描边）。
+        // 原先写死 BorderRadius.circular(16)，两个问题叠在一起：
+        //   1. 比全应用其它对话框少 6px 圆角，同一个应用里两种圆角；
+        //   2. RoundedRectangleBorder 的 side 默认是 none，会**把主题那条细描边
+        //      一并抹掉** —— 半透明玻璃底上没有了描边，边界直接糊进壁纸，
+        //      视觉上就成了「圆角没生效 / 是个方形块」。
+        title: Row(children: [
+          Icon(Icons.warning_amber_rounded, size: 20, color: scheme.error),
+          const SizedBox(width: 8),
+          Expanded(child: Text(s.isZh ? '放弃更改?' : 'Discard changes?',
+              style: TextStyle(color: scheme.onSurface, fontSize: 15, fontWeight: FontWeight.w600))),
+        ]),
+        // 副标题与正文同一档小字（13 + 1.4 行距）：原来靠主题默认字号（22），
+        // 比全应用其它对话框的正文大一截，破窗感明显。
         content: Text(s.isZh ? '你有未保存的更改，确定要退出吗？' : 'You have unsaved changes. Discard?',
-            style: TextStyle(color: scheme.onSurfaceVariant)),
+            style: TextStyle(fontSize: 13, height: 1.4, color: scheme.onSurfaceVariant)),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(s.cancel)),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(s.isZh ? '放弃' : 'Discard')),
+          // 破坏性动作统一 error 色实心（与任务卡「移除」、项目页删除同一约定）；
+          // 原先它是主题主色实心按钮，和「保存」这类正向动作长得一模一样。
+          FilledButton(
+            style: FilledButton.styleFrom(
+                backgroundColor: scheme.error, foregroundColor: scheme.onError),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(s.isZh ? '放弃' : 'Discard'),
+          ),
         ],
       ),
     );
@@ -2176,30 +2193,37 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     final profiles = cfg.aiProfiles.where((p) => p.enabled).toList();
     final activeProfile = profiles.where((p) => p.id == cfg.activeAiProfileId).firstOrNull;
     final showModel = activeProfile?.model ?? cfg.aiModel;
+    // 三颗药丸共用一档度量：高度 32 / 圆角 8 / 水平内边距 12 / 图标 16，全部取自
+    // AppControlSize.regular（与设置页的按钮同档）。
+    // 改造前高度和圆角本来就一致，但水平内边距是 8 / 8 / 10、前置图标是 16 / 13 / 13
+    // —— 并排看左侧那颗明显「胖一圈」、图标明显「大一号」，这就是失衡的来源。
+    const pill = AppControlSize.regular;
+    BoxDecoration pillDeco(Color background) => BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(pill.radius),
+          border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
+        );
     return Row(mainAxisSize: MainAxisSize.min, children: [
       // AI 抽屉开关 + 会话标题（可点击，带展开/折叠动画）
       Tooltip(
         message: s.isZh ? (_aiDrawerOpen ? '收起 AI 面板' : '展开 AI 面板') : (_aiDrawerOpen ? 'Collapse AI panel' : 'Expand AI panel'),
         child: InkWell(
           onTap: () => setState(() => _aiDrawerOpen = !_aiDrawerOpen),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(pill.radius),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 220),
             curve: Curves.easeOutCubic,
-            height: 32,
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            decoration: BoxDecoration(
-              color: _aiDrawerOpen ? scheme.primaryContainer.withAlpha(140) : scheme.surfaceContainerHighest.withAlpha(90),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
-            ),
+            height: pill.height,
+            padding: EdgeInsets.symmetric(horizontal: pill.padH),
+            decoration: pillDeco(
+                _aiDrawerOpen ? scheme.primaryContainer.withAlpha(140) : scheme.surfaceContainerHighest.withAlpha(90)),
             child: Row(mainAxisSize: MainAxisSize.min, children: [
               AnimatedSwitcher(
                 duration: const Duration(milliseconds: 200),
                 child: Icon(
                   _aiDrawerOpen ? Icons.chevron_right : Icons.smart_toy,
                   key: ValueKey(_aiDrawerOpen ? 'open' : 'closed'),
-                  size: 16,
+                  size: pill.iconSize,
                   color: _aiDrawerOpen ? scheme.primary : scheme.onSurfaceVariant,
                 ),
               ),
@@ -2230,13 +2254,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       const SizedBox(width: 6),
       // 配置一键选择（写入全局 activeAiProfileId，AI 面板跟随）
       Container(
-        height: 32,
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        decoration: BoxDecoration(
-          color: scheme.surfaceContainerHighest.withAlpha(90),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
-        ),
+        height: pill.height,
+        padding: EdgeInsets.symmetric(horizontal: pill.padH),
+        decoration: pillDeco(scheme.surfaceContainerHighest.withAlpha(90)),
         child: PopupMenuButton<String>(
           tooltip: s.isZh ? 'AI 配置 / 模型' : 'AI Profile / Model',
           padding: EdgeInsets.zero,
@@ -2284,13 +2304,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                 child: Text(s.isZh ? '自定义模型...' : 'Custom model...', style: const TextStyle(fontSize: 12))),
           ],
           child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.tune, size: 13, color: scheme.primary),
+            Icon(Icons.tune, size: pill.iconSize, color: scheme.primary),
             const SizedBox(width: 4),
             Flexible(child: Text(
               '${activeProfile?.name ?? (s.isZh ? '默认' : 'Default')} · $showModel',
               maxLines: 1, overflow: TextOverflow.ellipsis,
               style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: scheme.onSurface))),
-            Icon(Icons.arrow_drop_down, size: 14, color: scheme.outline),
+            Icon(Icons.arrow_drop_down, size: pill.iconSize, color: scheme.outline),
           ]),
         ),
       ),
@@ -2302,15 +2322,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           return c;
         }),
         child: Container(
-          height: 32,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          decoration: BoxDecoration(
-            color: cfg.aiApproveMode == 'auto' ? scheme.primaryContainer.withAlpha(140) : scheme.secondaryContainer.withAlpha(140),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
-          ),
+          height: pill.height,
+          padding: EdgeInsets.symmetric(horizontal: pill.padH),
+          decoration: pillDeco(cfg.aiApproveMode == 'auto'
+              ? scheme.primaryContainer.withAlpha(140)
+              : scheme.secondaryContainer.withAlpha(140)),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(cfg.aiApproveMode == 'auto' ? Icons.bolt : Icons.help_outline, size: 13, color: scheme.primary),
+            Icon(cfg.aiApproveMode == 'auto' ? Icons.bolt : Icons.help_outline,
+                size: pill.iconSize, color: scheme.primary),
             const SizedBox(width: 4),
             Text(cfg.aiApproveMode == 'auto' ? (s.isZh ? '自动' : 'Auto') : (s.isZh ? '询问' : 'Ask'),
                 style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: scheme.onSurface)),
@@ -2408,16 +2427,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                       decoration: BoxDecoration(
-                        color: Colors.red.withAlpha(40),
+                        color: context.sem.danger.withAlpha(40),
                         borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: Colors.red.withAlpha(90)),
+                        border: Border.all(color: context.sem.danger.withAlpha(90)),
                       ),
                       child: Row(children: [
-                        Icon(Icons.info_outline, size: 15, color: Colors.red),
+                        Icon(Icons.info_outline, size: 15, color: context.sem.danger),
                         const SizedBox(width: 8),
                         Expanded(child: Text(
                           s.isZh ? '请在画布上拖拽框选要包含的元素，松手完成' : 'Drag a box on the canvas to select elements, then release',
-                          style: TextStyle(fontSize: 12, color: Colors.red, fontWeight: FontWeight.w500),
+                          style: TextStyle(fontSize: 12, color: context.sem.danger, fontWeight: FontWeight.w500),
                         )),
                         TextButton(
                           onPressed: () => setState(() { _isLogicBoxSelecting = false; _pendingLogicType = null; }),
@@ -2554,7 +2573,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                   }
                 },
               ),
-              _EditorCsdBtn(icon: Icons.close, color: scheme.onSurface, hoverBg: Colors.red, onTap: () => windowManager.close()),
+              // hoverBg 用 Windows 关闭按钮的系统约定红（#E81123）而不是语义色：
+              // 它属于窗口装饰，不参与主题化 —— 若换成 semantic danger，深色主题下
+              // 会变成浅粉底，与用户对「红叉按钮」的预期不符。
+              _EditorCsdBtn(icon: Icons.close, color: scheme.onSurface, hoverBg: const Color(0xFFE81123), onTap: () => windowManager.close()),
             ])),
           ]),
         ),
@@ -3172,12 +3194,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          color: Colors.red.withAlpha(30),
+          color: context.sem.danger.withAlpha(30),
           child: Row(children: [
-            Icon(Icons.info_outline, size: 14, color: Colors.red),
+            Icon(Icons.info_outline, size: 14, color: context.sem.danger),
             const SizedBox(width: 8),
             Text(s.isZh ? '请在画布中框选要包含的元素，然后松开鼠标' : 'Box-select elements on canvas, then release',
-                style: TextStyle(fontSize: 12, color: Colors.red, fontWeight: FontWeight.w500)),
+                style: TextStyle(fontSize: 12, color: context.sem.danger, fontWeight: FontWeight.w500)),
             const Spacer(),
             TextButton(
               onPressed: () => setState(() { _isLogicBoxSelecting = false; _pendingLogicType = null; }),
@@ -3371,21 +3393,33 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                         : const SizedBox.shrink(),
                   ),
                   // 展开/收起切换按钮（左侧中间）
+                  //
+                  // [UI 统一] 原先 width 18 / height 52 / radius 0，是一个直角窄条：
+                  // 与全局 8~12 圆角语言不一致，且贴边的直角在手柄这种"凸出"形态上
+                  // 观感生硬。这里统一为 20×56 + 右侧 10 圆角（左侧保持直角，因为它
+                  // 始终贴着抽屉右边缘/画布左边缘），图标尺寸走 AppControlSize 令牌，
+                  // 与编辑器内其他控件同源，不再出现 16/17/18 混用。
                   Align(
                     alignment: Alignment.center,
-                    child: GestureDetector(
-                      onTap: () => setState(() => _aiDrawerOpen = !_aiDrawerOpen),
-                      child: Container(
-                        width: 18, height: 52,
-                        decoration: BoxDecoration(
-                          color: scheme.surface.withAlpha(200),
-                          borderRadius: BorderRadius.circular(0),
-                          boxShadow: [BoxShadow(color: Colors.black.withAlpha(40), blurRadius: 6, offset: const Offset(1, 0))],
-                        ),
-                        child: Icon(
-                          _aiDrawerOpen ? Icons.chevron_left : Icons.chevron_right,
-                          size: 16,
-                          color: scheme.primary,
+                    child: MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: GestureDetector(
+                        onTap: () => setState(() => _aiDrawerOpen = !_aiDrawerOpen),
+                        behavior: HitTestBehavior.opaque,
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 160),
+                          curve: Curves.easeOutCubic,
+                          width: 20, height: 56,
+                          decoration: BoxDecoration(
+                            color: scheme.surface.withAlpha(200),
+                            borderRadius: const BorderRadius.horizontal(right: Radius.circular(10)),
+                            boxShadow: [BoxShadow(color: Colors.black.withAlpha(40), blurRadius: 6, offset: const Offset(1, 0))],
+                          ),
+                          child: Icon(
+                            _aiDrawerOpen ? Icons.chevron_left : Icons.chevron_right,
+                            size: AppControlSize.regular.iconSize,
+                            color: scheme.primary,
+                          ),
                         ),
                       ),
                     ),
@@ -4612,7 +4646,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           child: IgnorePointer(
             child: CustomPaint(
               painter: _LogicBlockPainter(
-                color: selected ? Colors.red : Colors.red.withAlpha(120),
+                color: selected ? context.sem.danger : context.sem.danger.withAlpha(120),
                 strokeWidth: selected ? 2.0 : 1.0,
               ),
             ),
@@ -4634,13 +4668,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
               decoration: BoxDecoration(
-                color: Colors.red.withAlpha(selected ? 50 : 30),
+                color: context.sem.danger.withAlpha(selected ? 50 : 30),
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(block.type == LogicBlockType.loop ? Icons.repeat : Icons.shuffle, size: 12, color: Colors.red),
+                Icon(block.type == LogicBlockType.loop ? Icons.repeat : Icons.shuffle, size: 12, color: context.sem.danger),
                 const SizedBox(width: 4),
-                Text(block.label(s.isZh), style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: Colors.red)),
+                Text(block.label(s.isZh), style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: context.sem.danger)),
               ]),
             ),
           ),
@@ -4681,10 +4715,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       child: Container(
         width: 20, height: 20,
         decoration: BoxDecoration(
-          color: Colors.red.withAlpha(30),
+          color: context.sem.danger.withAlpha(30),
           borderRadius: BorderRadius.circular(4),
         ),
-        child: Icon(icon, size: 12, color: Colors.red),
+        child: Icon(icon, size: 12, color: context.sem.danger),
       ),
     );
   }
@@ -4694,7 +4728,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       width: 12, height: 12,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: Colors.red.withAlpha(180),
+        color: context.sem.danger.withAlpha(180),
         border: Border.all(color: scheme.surface, width: 2),
       ),
     );
@@ -4978,12 +5012,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           duration: const Duration(milliseconds: 150),
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
           decoration: BoxDecoration(
-            color: Colors.red.withAlpha(30),
+            color: context.sem.danger.withAlpha(30),
             borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: Colors.red.withAlpha(80)),
+            border: Border.all(color: context.sem.danger.withAlpha(80)),
           ),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(icon, size: 12, color: Colors.red),
+            Icon(icon, size: 12, color: context.sem.danger),
             SizedBox(width: 3),
             Text(label, style: TextStyle(fontSize: 9, color: scheme.onSurface)),
           ]),
@@ -5005,13 +5039,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         duration: const Duration(milliseconds: 150),
         padding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 8 : 10, vertical: isMobilePlatform ? 5 : 5),
         decoration: BoxDecoration(
-          color: isSelected ? Colors.red.withAlpha(60) : Colors.red.withAlpha(30),
+          color: isSelected ? context.sem.danger.withAlpha(60) : context.sem.danger.withAlpha(30),
           borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: isSelected ? Colors.red : Colors.red.withAlpha(80), width: isSelected ? 2 : 1),
-          boxShadow: isSelected ? [BoxShadow(color: Colors.red.withAlpha(40), blurRadius: 6)] : null,
+          border: Border.all(color: isSelected ? context.sem.danger : context.sem.danger.withAlpha(80), width: isSelected ? 2 : 1),
+          boxShadow: isSelected ? [BoxShadow(color: context.sem.danger.withAlpha(40), blurRadius: 6)] : null,
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, size: isMobilePlatform ? 12 : 14, color: Colors.red),
+          Icon(icon, size: isMobilePlatform ? 12 : 14, color: context.sem.danger),
           SizedBox(width: isMobilePlatform ? 3 : 4),
           Text(label, style: TextStyle(fontSize: isMobilePlatform ? 9 : 12, color: scheme.onSurface)),
         ]),
@@ -5256,20 +5290,41 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     );
 
     // 单层统一头部：图标 + 标题 + 历史 + 工具 + 关闭。
+    //
+    // 三个动作按钮收进同一个构造器里，走同一档尺寸（原来盒都是 36，但图标是
+    // 18 / 18 / 20，关闭键明显大一圈；右侧内边距只给 4 而左侧给 16，整行重心偏右）。
+    // 移动端触摸目标 36 已达标（Material 最小 36 的图标按钮 + 4px 外扩热区），
+    // 再往上加会让头部吃掉本来就紧张的弹层高度。
+    const headBtn = AppControlSize.comfortable;
+    Widget headButton(Widget icon, String tip, VoidCallback onTap) => IconButton(
+          icon: icon,
+          tooltip: tip,
+          onPressed: onTap,
+          // 显式定死点击盒：不写的话 Material 会给到 48×48（约束是 min 而非 max，
+          // IconButton 自身默认 constraints 为 null → 取 kMinInteractiveDimension），
+          // 头部行高就被顶到 48，比标题字号大出一大截。
+          constraints: BoxConstraints.tightFor(width: headBtn.height, height: headBtn.height),
+          padding: EdgeInsets.zero,
+          style: IconButton.styleFrom(
+            foregroundColor: scheme.onSurfaceVariant,
+            // 圆角水波纹：默认 splash 是 48 直径的圆，比 36 的盒子还大，
+            // 点按时会溢出行外。半径取档位圆角避免出现「圆角矩形按钮 + 圆形水波」。
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(headBtn.radius)),
+          ),
+        );
     Widget header(BuildContext ctx) => StatefulBuilder(
           builder: (ctx, setH) => Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 4, 4),
+            padding: const EdgeInsets.fromLTRB(16, 8, 8, 6),
             child: Row(children: [
               Icon(Icons.smart_toy, size: 18, color: scheme.primary),
               const SizedBox(width: 8),
               Expanded(child: Text(s.aiChatTitle,
                   style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface))),
               // 历史记录
-              Builder(builder: (btnCtx) => IconButton(
-                icon: const Icon(Icons.history, size: 18),
-                color: scheme.onSurfaceVariant,
-                tooltip: s.isZh ? '历史记录' : 'History',
-                onPressed: () {
+              Builder(builder: (btnCtx) => headButton(
+                Icon(Icons.history, size: headBtn.iconSize),
+                s.isZh ? '历史记录' : 'History',
+                () {
                   final box = btnCtx.findRenderObject() as RenderBox?;
                   final overlay = Overlay.of(btnCtx).context.findRenderObject() as RenderBox?;
                   if (box != null && overlay != null) {
@@ -5277,33 +5332,26 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                     aiKey.currentState?.openHistoryAt(pos + const Offset(24, 8));
                   }
                 },
-                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                padding: EdgeInsets.zero,
               )),
               // 工具面板开关
-              IconButton(
-                icon: AnimatedRotation(
+              headButton(
+                AnimatedRotation(
                   turns: (aiKey.currentState?.toolsOpen ?? false) ? 0.5 : 0,
                   duration: const Duration(milliseconds: 200),
                   curve: Curves.easeOutCubic,
-                  child: const Icon(Icons.extension_outlined, size: 18),
+                  child: Icon(Icons.extension_outlined, size: headBtn.iconSize),
                 ),
-                color: scheme.onSurfaceVariant,
-                tooltip: s.isZh ? '工具' : 'Tools',
-                onPressed: () {
+                s.isZh ? '工具' : 'Tools',
+                () {
                   aiKey.currentState?.toggleTools();
                   setH(() {});
                 },
-                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                padding: EdgeInsets.zero,
               ),
               // 关闭
-              IconButton(
-                icon: const Icon(Icons.close, size: 20),
-                color: scheme.onSurfaceVariant,
-                onPressed: () => Navigator.of(ctx).pop(),
-                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                padding: EdgeInsets.zero,
+              headButton(
+                Icon(Icons.close, size: headBtn.iconSize),
+                s.isZh ? '关闭' : 'Close',
+                () => Navigator.of(ctx).pop(),
               ),
             ]),
           ),
@@ -5335,6 +5383,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                     color: scheme.surface,
                     borderRadius: const BorderRadius.horizontal(right: Radius.circular(20)),
                     border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
+                    // 横屏侧栏与画布同为 surface 系色，不投影的话边界只剩一条
+                    // 0.6px 细线，半屏遮挡会让人误判画布宽度。向右投影即可。
+                    boxShadow: [
+                      BoxShadow(color: scheme.shadow.withAlpha(36), blurRadius: 20, offset: const Offset(8, 0)),
+                    ],
                   ),
                   clipBehavior: Clip.antiAlias,
                   child: Column(children: [
@@ -5361,30 +5414,52 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       barrierColor: Colors.black.withValues(alpha: 0.24),
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(top: MediaQuery.of(ctx).padding.top + 18),
-        child: Container(
-          height: MediaQuery.of(ctx).size.height * 0.86,
-          decoration: BoxDecoration(
-            color: scheme.surface,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-            border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: Column(children: [
-            const SizedBox(height: 8),
-            Container(
-              width: 40, height: 4,
-              decoration: BoxDecoration(color: scheme.outlineVariant.withAlpha(120), borderRadius: BorderRadius.circular(2)),
+      // 关键：软键盘避让必须自己做。
+      // `showModalBottomSheet` 从头到尾没有读过 viewInsets（见 Flutter 的
+      // material/bottom_sheet.dart，全程只动 MediaQuery.padding），而弹层是按
+      // 「屏幕底部对齐 + 固定高度」布局的 —— 键盘一弹出就正好盖住最下面的输入框，
+      // 用户在移动端根本看不到自己打的字。这里把键盘高度当作弹层的底部内边距，
+      // 同时从高度里减去同样的值，于是顶边原地不动、底边抬到键盘之上。
+      builder: (ctx) {
+        final media = MediaQuery.of(ctx);
+        final insets = media.viewInsets.bottom;
+        // 注意：弹层默认 useSafeArea=false，其 buildPage 会对子树做
+        // MediaQuery.removePadding(removeTop: true)，所以这里的 padding.top 恒为 0
+        // （原代码写 `padding.top + 18` 实际就等于 18）。顶部留白直接写常量。
+        const double topGap = 18;
+        // 键盘顶起来后真正可用的高度；下限 120 只为避免 clamp 上下界颠倒抛异常，
+        // 任何真实设备都不可能触到这一档。
+        final double available = (media.size.height - topGap - insets)
+            .clamp(120.0, media.size.height);
+        final double sheetH = (media.size.height * 0.86 - insets).clamp(0.0, available);
+        return Padding(
+          padding: EdgeInsets.only(top: topGap, bottom: insets),
+          child: Container(
+            height: sheetH,
+            decoration: BoxDecoration(
+              color: scheme.surface,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
+              border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
             ),
-            header(ctx),
-            Expanded(child: panelContent),
-            // Android 手势导航：isScrollControlled 的底部弹层不会自动避让系统
-            // 导航条，这里显式预留底部安全区，避免输入框被手势条遮挡。
-            SizedBox(height: MediaQuery.of(ctx).padding.bottom),
-          ]),
-        ),
-      ),
+            clipBehavior: Clip.antiAlias,
+            child: Column(children: [
+              const SizedBox(height: 8),
+              // 拖拽指示条
+              Container(
+                width: 40, height: 4,
+                decoration: BoxDecoration(color: scheme.outlineVariant.withAlpha(120), borderRadius: BorderRadius.circular(2)),
+              ),
+              header(ctx),
+              Expanded(child: panelContent),
+              // Android 手势导航：isScrollControlled 的底部弹层不会自动避让系统
+              // 导航条，这里显式预留底部安全区，避免输入框被手势条遮挡。
+              // 键盘弹起时 viewInsets 已覆盖手势条区域，padding.bottom 会归零，
+              // 两者不会叠加出双倍留白。
+              SizedBox(height: media.padding.bottom),
+            ]),
+          ),
+        );
+      },
     );
   }
 
@@ -5512,7 +5587,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                 ),
                 if (_autosaveIndicator) ...[
                   const SizedBox(width: 8),
-                  Icon(Icons.cloud_done_outlined, size: 13, color: Colors.green.shade400),
+                  Icon(Icons.cloud_done_outlined, size: 13, color: context.sem.success),
                 ],
               ])),
               Flexible(
@@ -5532,10 +5607,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               ),
               if (_autosaveIndicator) ...[
                 const SizedBox(width: 12),
-                Icon(Icons.cloud_done_outlined, size: 14, color: Colors.green.shade400),
+                Icon(Icons.cloud_done_outlined, size: 14, color: context.sem.success),
                 const SizedBox(width: 4),
                 Text(s.isZh ? '已自动保存' : 'Auto-saved',
-                    style: TextStyle(fontSize: 10, color: Colors.green.shade400)),
+                    style: TextStyle(fontSize: 10, color: context.sem.success)),
               ],
               const Spacer(),
               Text(countsText, maxLines: 1, overflow: TextOverflow.ellipsis,
@@ -5553,12 +5628,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     return Transform.scale(
       scale: scale,
       alignment: Alignment.topCenter,
+      // 高 36 / 圆角 18 / 按钮盒 26：与左下缩放条共用 _kMobileBar* 常量（见常量处注释）
       child: Container(
-      height: 34,
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      height: _kMobileBarHeight,
+      padding: const EdgeInsets.symmetric(horizontal: _kMobileBarBtnPad, vertical: 2),
       decoration: BoxDecoration(
         color: scheme.surface.withAlpha(220),
-        borderRadius: BorderRadius.circular(17),
+        borderRadius: BorderRadius.circular(_kMobileBarRadius),
         border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
         boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(30), blurRadius: 6, offset: const Offset(0, 2))],
       ),
@@ -5566,41 +5642,44 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         _mobileBarBtn(Icons.arrow_back, () async {
           final nav = Navigator.of(context);
           if (await _onWillPop()) nav.pop();
-        }, scheme, size: 18, pad: 4),
+        }, scheme),
         const SizedBox(width: 2),
         // 撤销/重做：原画布顶部工具栏在移动端移除后，迁移到顶部浮动菜单栏。
+        // 不用 _mobileBarBtn 是因为要 disabled 态；但按钮盒（26）与图标（18）必须同档
         IconButton(
-          icon: Icon(Icons.undo, size: 17, color: _undoStack.isEmpty ? scheme.outlineVariant : scheme.onSurfaceVariant),
-          constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+          icon: Icon(Icons.undo, size: _kMobileBarBtnIcon, color: _undoStack.isEmpty ? scheme.outlineVariant : scheme.onSurfaceVariant),
+          constraints: const BoxConstraints(minWidth: _kMobileBarBtnBox, minHeight: _kMobileBarBtnBox),
           padding: EdgeInsets.zero,
           onPressed: _undoStack.isEmpty ? null : _undo,
         ),
         IconButton(
-          icon: Icon(Icons.redo, size: 17, color: _redoStack.isEmpty ? scheme.outlineVariant : scheme.onSurfaceVariant),
-          constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+          icon: Icon(Icons.redo, size: _kMobileBarBtnIcon, color: _redoStack.isEmpty ? scheme.outlineVariant : scheme.onSurfaceVariant),
+          constraints: const BoxConstraints(minWidth: _kMobileBarBtnBox, minHeight: _kMobileBarBtnBox),
           padding: EdgeInsets.zero,
           onPressed: _redoStack.isEmpty ? null : _redo,
         ),
         const SizedBox(width: 2),
         // 自右下角工具条迁移：自动整理 + 定位源
-        _mobileBarBtn(Icons.auto_fix_high, _autoLayout, scheme, size: 18, pad: 4),
+        _mobileBarBtn(Icons.auto_fix_high, _autoLayout, scheme),
         const SizedBox(width: 2),
-        _mobileBarBtn(Icons.my_location, () => _goToSource(s), scheme, size: 18, pad: 4),
+        _mobileBarBtn(Icons.my_location, () => _goToSource(s), scheme),
         const SizedBox(width: 2),
+        // 工具箱开关：改造前这颗用 20px 图标（比同排其它都大一号），已回到统一档
         _mobileBarBtn(
           _mobileToolboxOpen ? Icons.close : Icons.add,
           () => setState(() => _mobileToolboxOpen = !_mobileToolboxOpen),
-          scheme, color: scheme.primary, size: 20, pad: 4,
+          scheme, color: scheme.primary,
         ),
         if (cfg.aiEnabled) ...[
           const SizedBox(width: 2),
-          _mobileBarBtn(Icons.smart_toy, () => _openAiSheet(s), scheme, color: scheme.primary, size: 18, pad: 4),
+          _mobileBarBtn(Icons.smart_toy, () => _openAiSheet(s), scheme, color: scheme.primary),
         ],
         const SizedBox(width: 2),
-        _mobileBarBtn(Icons.save_outlined, _save, scheme, size: 18, pad: 4),
+        _mobileBarBtn(Icons.save_outlined, _save, scheme),
         const SizedBox(width: 2),
         SizedBox(
-          width: 28, height: 28,
+          // 盒径与同排按钮一致（改造前是 28，比相邻的 26 大 2px）
+          width: _kMobileBarBtnBox, height: _kMobileBarBtnBox,
           child: PopupMenuButton<String>(
             padding: EdgeInsets.zero,
             icon: Icon(Icons.more_vert, size: 18, color: scheme.onSurfaceVariant),
@@ -5660,31 +5739,51 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     );
   }
 
+  // ── 移动端画布悬浮药丸（顶部工具栏 / 左下缩放条）的统一尺寸 ──
+  //
+  // 两颗药丸共用同一档：高 [_kMobileBarHeight]、圆角 = 高/2、按钮盒
+  // [_kMobileBarBtnIcon] + 2 × [_kMobileBarBtnPad]。
+  //
+  // 改造前：顶部 34 / 圆角 17 / 按钮盒 26（图标 18 + 内边距 4）；左下 40 / 圆角 20 /
+  // 按钮盒 34（图标 20 + 内边距 7）。同一屏里两颗悬浮药丸一大一小、按钮盒差 8px，
+  // 是移动端画布上最明显的一处「不齐」。
+  static const double _kMobileBarHeight = 36;
+  static const double _kMobileBarRadius = _kMobileBarHeight / 2;
+  static const double _kMobileBarBtnIcon = 18;
+  static const double _kMobileBarBtnPad = 4;
+
+  /// 按钮盒边长：两颗药丸里的每个动作按钮（含 IconButton / PopupMenuButton）
+  /// 都按它约束，盒外的间距才由 SizedBox 统一给 2。
+  static const double _kMobileBarBtnBox = _kMobileBarBtnIcon + _kMobileBarBtnPad * 2;
+
   // ── 移动端专用：底部左侧缩放条 ──
 
   Widget _buildMobileBottomLeftBar(ColorScheme scheme, AppStrings s) {
-    // 放大镜药丸大小可在设置中调节（editorZoomScale），且基础尺寸放大：
-    // 原 16px 图标 + 4px 内边距在手机上过小，难以点按。
+    // 放大镜药丸大小可在设置中调节（editorZoomScale）。
+    // 药丸总高 / 圆角 / 按钮盒与顶部工具栏共用 _kMobileBar* 常量（见上）。
+    // 缩放图标刻意比顶部工具栏的 18 大一档（20）：它们是纯图形按钮、没有文字兜底，
+    // 但按钮盒仍压到同一个 26，两颗药丸的节奏才一致。
     final scale = context.read<AppState>().config.editorZoomScale.clamp(0.5, 1.6);
     return Transform.scale(
       scale: scale,
       alignment: Alignment.bottomLeft,
       child: Container(
-        height: 40,
-        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
+        height: _kMobileBarHeight,
+        padding: const EdgeInsets.symmetric(horizontal: _kMobileBarBtnPad, vertical: 2),
         decoration: BoxDecoration(
           color: scheme.surface.withAlpha(220),
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(_kMobileBarRadius),
           border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
           boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(30), blurRadius: 6, offset: const Offset(0, 2))],
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
-          _mobileBarBtn(Icons.zoom_out, () => _zoomTo(_currentScale - 0.15), scheme, size: 20, pad: 7, tooltip: s.isZh ? '缩小' : 'Zoom out'),
+          // 图标 20 + 内边距 3 ⇒ 按钮盒 26，与顶部工具栏对齐
+          _mobileBarBtn(Icons.zoom_out, () => _zoomTo(_currentScale - 0.15), scheme, size: 20, pad: 3, tooltip: s.isZh ? '缩小' : 'Zoom out'),
           const SizedBox(width: 2),
-          _mobileBarBtn(Icons.zoom_in, () => _zoomTo(_currentScale + 0.15), scheme, size: 20, pad: 7, tooltip: s.isZh ? '放大' : 'Zoom in'),
+          _mobileBarBtn(Icons.zoom_in, () => _zoomTo(_currentScale + 0.15), scheme, size: 20, pad: 3, tooltip: s.isZh ? '放大' : 'Zoom in'),
           const SizedBox(width: 2),
           // 一键适应画布（补齐与桌面端一致的缩放能力）
-          _mobileBarBtn(Icons.fit_screen_outlined, _zoomToFit, scheme, size: 20, pad: 7, tooltip: s.isZh ? '适应画布' : 'Fit to canvas'),
+          _mobileBarBtn(Icons.fit_screen_outlined, _zoomToFit, scheme, size: 20, pad: 3, tooltip: s.isZh ? '适应画布' : 'Fit to canvas'),
         ]),
       ),
     );
@@ -5717,7 +5816,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     );
   }
 
-  Widget _mobileBarBtn(IconData icon, VoidCallback onTap, ColorScheme scheme, {Color? color, double size = 20, double pad = 6, String? tooltip}) {
+  Widget _mobileBarBtn(IconData icon, VoidCallback onTap, ColorScheme scheme, {Color? color, double size = _kMobileBarBtnIcon, double pad = _kMobileBarBtnPad, String? tooltip}) {
     final btn = InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
@@ -6458,6 +6557,23 @@ class _AiPanelState extends State<_AiPanel> {
   final _scrollCtrl = ScrollController();
   final List<({String role, String content, int? inputTokens, int? outputTokens, List<Map<String, dynamic>>? blocks})> _messages = [];
   bool _loading = false;
+  /// 正在进行的流式请求。用户点「停止」时直接 close()，`await for` 会以异常结束，
+  /// 再由 catch / 收尾分支按 [_stopRequested] 走「保留部分内容」的路径。
+  http.Client? _activeClient;
+  /// 用户是否主动中断了本次生成。用来区分「中断」与「真的出错」：
+  /// 前者不该在气泡里追加 `Error: ...`，否则停止看起来像失败。
+  bool _stopRequested = false;
+
+  /// 停止当前生成：关闭 HTTP 连接，已经流式收到的内容保留在气泡里。
+  void _stopGeneration() {
+    if (!_loading) return;
+    _stopRequested = true;
+    _activeClient?.close();
+    // 立刻恢复按钮：close() 到 stream 抛错之间还差一拍，先让 UI 可响应，
+    // 收尾分支随后会把状态再收敛一次（重复置 false 无害）。
+    setState(() => _loading = false);
+  }
+
   bool _expanded = false;
   // 工具侧边栏：true=展开显示工具列表，false=折叠成窄条
   bool _toolsOpen = false;
@@ -7304,6 +7420,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       request.body = jsonEncode(reqBody);
       final client = http.Client();
       sendClient = client;
+      _activeClient = client; // 供「停止生成」按钮关闭
       final streamed = await client.send(request);
 
       if (streamed.statusCode != 200) {
@@ -7334,7 +7451,10 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       String lineBuf = '';
 
       await for (final chunk in streamed.stream.transform(utf8.decoder)) {
-        if (!mounted) break;  // 面板已关闭则停止消费，连接交由外层 finally 关闭
+        // 面板已关闭 / 用户点了停止：停止消费，连接交由外层 finally 关闭。
+        // close() 通常会让 stream 直接抛错，这里再兜一层，免得某些平台上
+        // close 之后仍把已在缓冲区里的剩余数据读出来。
+        if (!mounted || _stopRequested) break;
         lineBuf += chunk;
         final lines = lineBuf.split('\n');
         lineBuf = lines.removeLast(); // keep incomplete line
@@ -7403,8 +7523,18 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       }
 
       final content = buf.toString();
-      appState.logAiResponse(content);
       _genStart.stop();
+      // 用户主动中断：气泡里已经是流式累积下来的部分内容（每个 delta 都写过
+      // _messages[msgIdx]），这里只做收尾 —— 不记成完整回复、不解析流程图、
+      // 不执行工具调用（半截 JSON 解出来的图是垃圾，比没有更糟）。
+      if (_stopRequested) {
+        appState.logAiResponse('(stopped by user)');
+        if (!mounted) return;
+        setState(() => _loading = false);
+        _scrollToBottom();
+        return;
+      }
+      appState.logAiResponse(content);
       final elapsedMs = _genStart.elapsedMilliseconds;
       final speed = elapsedMs > 0 ? (content.length * 1000 / elapsedMs) : null;
       if (!mounted) return;
@@ -7425,6 +7555,15 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       // 自动总结：首轮对话后生成会话标题
       _maybeGenerateTitle();
     } catch (e) {
+      // 用户主动停止时 close() 会让 stream 抛 HttpException —— 那不是真错误，
+      // 气泡里已经有部分内容，不再追加 "Error: ..."（否则「停止」看起来像失败）。
+      if (_stopRequested) {
+        appState.logAiResponse('(stopped by user)');
+        if (!mounted) return;
+        setState(() => _loading = false);
+        _scrollToBottom();
+        return;
+      }
       appState.logAiResponse('$e', error: true);
       if (!mounted) return;
       setState(() {
@@ -7434,6 +7573,13 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       _scrollToBottom();
     } finally {
       sendClient?.close();  // 无论成功/异常/面板关闭，都释放 HTTP 连接
+      // 只有当前这次请求仍持有「活跃引用」时才清状态：如果用户点停止后立刻又发了
+      // 一条，_activeClient 已经是新请求的 client，不能被旧请求的 finally 抹掉
+      // （否则新请求的「停止」按钮会失效）。
+      if (identical(_activeClient, sendClient)) {
+        _activeClient = null;
+        _stopRequested = false;
+      }
     }
   }
 
@@ -7591,12 +7737,10 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     // 移动端 AI 是占 86% 屏幕的底部弹层，弹层本身已是纯色 surface；再叠液态玻璃
     // shader 意味着整屏每帧重采样（含切换动画 + 工具侧栏覆盖层），移动端 GPU 过载
     // 严重。移动端直接返回纯色容器，桌面端才保留玻璃。
-    final body = Container(
-      width: double.infinity, height: double.infinity,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(0),
-          border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
-        ),
+    // 这里刻意不再画自身描边：桌面端外面还套着 GlassPanel(radius 16)、移动端套着
+    // radius 22 的底部弹层，而本 Container 的圆角写死 0 —— 一圈直角细线画在圆角
+    // 表面内部，四个角会被外层裁掉一块，属于视觉噪声而非边界。表面边界交给外层。
+    final body = SizedBox.expand(
         child: Column(children: [
           // 移动端底部弹层自带头部（标题+历史+工具+关闭），这里跳过内部头部，
           // 避免出现上下两层菜单栏。
@@ -7654,49 +7798,65 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
               ),
             ]),
           ),
-          // token 用量 / 生成速度统计条
-          if (_totalInputTokens > 0 || _totalOutputTokens > 0)
+          // 状态条：正在生成 / token 用量 / 生成速度。
+          // 原来只在 token>0 时才出现，于是「正在生成」这段最需要反馈的时间里
+          // 整条状态栏是空的 —— 移动端尤其明显：发送键变成停止键后，界面上
+          // 没有任何一处文字说明当前正在等模型返回。
+          if (_loading || _totalInputTokens > 0 || _totalOutputTokens > 0)
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-              child: Row(children: [
-                Icon(Icons.data_usage, size: 11, color: scheme.outline),
-                const SizedBox(width: 4),
-                Text(
-                  s.isZh
-                      ? '输入 $_totalInputTokens / 输出 $_totalOutputTokens token'
-                      : 'In $_totalInputTokens / Out $_totalOutputTokens tokens',
-                  style: TextStyle(fontSize: 10, color: scheme.outline),
-                ),
-                if (_lastGenSpeed != null) ...[
-                  const SizedBox(width: 10),
-                  Icon(Icons.speed, size: 11, color: scheme.outline),
-                  const SizedBox(width: 4),
-                  Text(
-                    s.isZh
-                        ? '${_lastGenSpeed!.toStringAsFixed(0)} 字符/秒'
-                        : '${_lastGenSpeed!.toStringAsFixed(0)} chars/s',
-                    style: TextStyle(fontSize: 10, color: scheme.outline),
-                  ),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+              // 用 Wrap 而不是 Row：三段并排最长约 280px，320dp 的窄屏上
+              // （还要减去左右 32px 内边距）很容易溢出，窄一点就换行更省心。
+              child: Wrap(
+                spacing: 10,
+                runSpacing: 2,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  if (_loading)
+                    Row(mainAxisSize: MainAxisSize.min, children: [
+                      SizedBox(
+                        width: 11, height: 11,
+                        child: CircularProgressIndicator(strokeWidth: 1.6, color: scheme.primary),
+                      ),
+                      const SizedBox(width: 5),
+                      Text(s.isZh ? '生成中…' : 'Generating…',
+                          style: TextStyle(fontSize: 10, color: scheme.primary, fontWeight: FontWeight.w500)),
+                    ]),
+                  if (_totalInputTokens > 0 || _totalOutputTokens > 0)
+                    Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.data_usage, size: 11, color: scheme.outline),
+                      const SizedBox(width: 4),
+                      Text(
+                        s.isZh
+                            ? '输入 $_totalInputTokens / 输出 $_totalOutputTokens token'
+                            : 'In $_totalInputTokens / Out $_totalOutputTokens tokens',
+                        style: TextStyle(fontSize: 10, color: scheme.outline),
+                      ),
+                    ]),
+                  if (_lastGenSpeed != null)
+                    Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.speed, size: 11, color: scheme.outline),
+                      const SizedBox(width: 4),
+                      Text(
+                        s.isZh
+                            ? '${_lastGenSpeed!.toStringAsFixed(0)} 字符/秒'
+                            : '${_lastGenSpeed!.toStringAsFixed(0)} chars/s',
+                        style: TextStyle(fontSize: 10, color: scheme.outline),
+                      ),
+                    ]),
                 ],
-              ]),
+              ),
             ),
-          const Divider(height: 1),
+          // 显式指定颜色：主题若把 dividerColor 定成 onSurface 一类的强色，
+          // 头部与内容之间就会横着一条抢眼的分割线。
+          Divider(height: 1, color: scheme.outlineVariant.withAlpha(70)),
           Expanded(
             // 移动端：工具侧边栏以覆盖层叠在聊天区右侧（窄屏再也不会被 150px
             // 内联侧栏挤压成一条线）；桌面端保持内联侧栏。工具侧栏展开时盖住
             // 聊天区右缘，用户照常可以折叠。
             child: isMobilePlatform
-                ? Stack(children: [
-                    Positioned.fill(child: _buildChatBody(scheme, s)),
-                    if (_toolsOpen)
-                      Positioned(
-                        top: 0, right: 0, bottom: 0, width: 150,
-                        child: ColoredBox(
-                          color: scheme.surface,
-                          child: _buildToolsSidebar(scheme, s),
-                        ),
-                      ),
-                  ])
+                ? _buildChatBody(scheme, s,
+                    messageOverlay: _toolsOpen ? _buildToolsPanel(scheme, s) : null)
                 : Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                     // ── 可折叠工具侧边栏 ──
                     AnimatedContainer(
@@ -7719,83 +7879,200 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     return GlassPanel(radius: 16, blur: 14, child: body);
   }
 
+  /// 移动端工具面板：以浮层形式挂在消息区右侧。
+  ///
+  /// 原来它盖在整个面板上（含底部输入行）—— 侧栏一展开，发送键就被压在下面，
+  /// 用户插完模板还得先收起侧栏才能发送。现在只覆盖消息区。
+  ///
+  /// 视觉上补了左描边 + 向左投影：原实现直接铺一块与面板同色的 `ColoredBox`，
+  /// 边界完全看不见（像消息被切掉半截），而且是从无到有的硬切。
+  /// 滑入 + 淡入只在挂载时播一次（180ms），展开/收起依旧没有常驻开销。
+  Widget _buildToolsPanel(ColorScheme scheme, AppStrings s) {
+    return Positioned(
+      top: 0, right: 0, bottom: 0, width: 168,
+      child: TweenAnimationBuilder<double>(
+        tween: Tween<double>(begin: 0, end: 1),
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutCubic,
+        builder: (_, t, child) => Transform.translate(
+          offset: Offset(24 * (1 - t), 0),
+          child: Opacity(opacity: t, child: child),
+        ),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerLow,
+            border: Border(
+              left: BorderSide(color: scheme.outlineVariant.withAlpha(110)),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: scheme.shadow.withAlpha(34),
+                blurRadius: 18,
+                offset: const Offset(-6, 0),
+              ),
+            ],
+          ),
+          child: _buildToolsSidebar(scheme, s),
+        ),
+      ),
+    );
+  }
+
   /// AI 面板聊天区（消息列表 + 待批准图 + 输入框）。
   /// 独立成方法，便于桌面端「内联工具侧栏 + 聊天区」与移动端
-  /// 「聊天区 + 覆盖层工具侧栏」两种布局复用同一段内容。
-  Widget _buildChatBody(ColorScheme scheme, AppStrings s) {
-    return Column(children: [
-      Expanded(
-        child: _messages.isEmpty
+  /// 「聊天区 + 消息区浮层工具面板」两种布局复用同一段内容。
+  ///
+  /// [messageOverlay] 只在移动端用到：工具面板作为消息区的浮层挂进来，
+  /// 而不是盖在整个面板上（盖整个面板会连底部输入行一起遮住，
+  /// 侧栏展开时用户连「发送」都点不到）。
+  Widget _buildChatBody(ColorScheme scheme, AppStrings s, {Widget? messageOverlay}) {
+    final btn = AppControlSize.comfortable;
+    // 移动端输入框做成多行自适应。桌面端有物理 Enter（onSubmitted 直接发送）更快；
+    // 移动端软键盘换行只能靠 ↵ 键，写死单行等于「长描述只能挤成一行横着滚」。
+    final int maxInputLines = isMobilePlatform ? 4 : 1;
+    final Widget messageArea = _messages.isEmpty
             ? _buildEmptyState(scheme, s)
             : ListView.builder(
                 controller: _scrollCtrl,
-                padding: const EdgeInsets.all(12),
+                padding: EdgeInsets.fromLTRB(
+                    isMobilePlatform ? 14 : 12, 12, isMobilePlatform ? 14 : 12, 12),
                 itemCount: _messages.length,
-                itemBuilder: (_, i) => RepaintBoundary(
-                  // 稳定 key + 独立重绘层：流式更新只重绘当前这一条，
-                  // 其余历史消息（含 Markdown）被隔离，不再整屏重绘抖动。
-                  key: ValueKey('ai-msg-$i'),
-                  child: _buildMessage(_messages[i], scheme),
-                ),
-              ),
+                itemBuilder: (_, i) {
+                  // 连续同一角色的消息不再重复画头像：否则每轮都是
+                  // 「头像 + 气泡」循环出现，移动端窄屏上左侧被头像占掉 36px，
+                  // 观感很吵。缩进仍然保留，气泡左缘才不会左右跳。
+                  final showAvatar =
+                      i == 0 || _messages[i - 1].role != _messages[i].role;
+                  // 下一条仍是同一角色 → 属于同一组，间距收紧，形成视觉分组
+                  final sameGroupNext = i + 1 < _messages.length &&
+                      _messages[i + 1].role == _messages[i].role;
+                  return RepaintBoundary(
+                    // 稳定 key + 独立重绘层：流式更新只重绘当前这一条，
+                    // 其余历史消息（含 Markdown）被隔离，不再整屏重绘抖动。
+                    key: ValueKey('ai-msg-$i'),
+                    child: _buildMessage(_messages[i], scheme,
+                        showAvatar: showAvatar, gapAfter: sameGroupNext ? 4 : 10),
+                  );
+                },
+              );
+    return Column(children: [
+      Expanded(
+        child: messageOverlay == null
+            ? messageArea
+            : Stack(children: [Positioned.fill(child: messageArea), messageOverlay]),
       ),
-      if (_pendingNodes != null) Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        child: Row(children: [
-          Expanded(child: FilledButton.icon(
-            onPressed: () {
-              context.read<AppState>().logAiGraphApplied(_pendingNodes!.length, _pendingConnections!.length);
-              if (_pendingIsModify) {
-                widget.onMergeGraph(_pendingNodes!, _pendingConnections!);
-              } else {
-                widget.onApplyGraph(_pendingNodes!, _pendingConnections!);
-              }
-              setState(() { _pendingNodes = null; _pendingConnections = null; });
-            },
-            icon: const Icon(Icons.check, size: 16),
-            label: Text(s.isZh ? '批准' : 'Approve'),
-          )),
-          const SizedBox(width: 8),
-          OutlinedButton.icon(
-            onPressed: () => setState(() { _pendingNodes = null; _pendingConnections = null; }),
-            icon: const Icon(Icons.close, size: 16),
-            label: Text(s.isZh ? '拒绝' : 'Reject'),
+      // 待批准的图：补一层说明卡。改造前两颗按钮凭空出现在输入框上方，
+      // 没有任何文字说明它们要批准什么 —— 用户刚看完消息流，突然多出两个按钮，
+      // 不知道点下去会改动画布还是只改当前节点（移动端尤其容易误触）。
+      if (_pendingNodes != null)
+        Container(
+          margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+          padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+          decoration: BoxDecoration(
+            color: scheme.primaryContainer.withAlpha(70),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: scheme.primary.withAlpha(70)),
           ),
-        ]),
-      ),
-      const SizedBox(height: 4),
-      Padding(
-        padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-        child: Row(children: [
-          Expanded(child: TextField(
-            controller: _ctrl,
-            style: TextStyle(fontSize: 13, color: scheme.onSurface),
-            decoration: InputDecoration(
-              hintText: s.aiChatHint,
-              hintStyle: TextStyle(fontSize: 12, color: scheme.outline),
-              isDense: true,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Row(children: [
+              Icon(Icons.account_tree_outlined, size: 14, color: scheme.primary),
+              const SizedBox(width: 6),
+              Expanded(child: Text(
+                _pendingIsModify
+                    ? (s.isZh ? 'AI 建议修改现有节点' : 'AI suggests editing existing nodes')
+                    : (s.isZh ? 'AI 生成了新的处理流程' : 'AI generated a new pipeline'),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.onSurface),
+              )),
+            ]),
+            const SizedBox(height: 2),
+            Text(
+              s.isZh
+                  ? '${_pendingNodes!.length} 个节点 · ${_pendingConnections?.length ?? 0} 条连线'
+                  : '${_pendingNodes!.length} nodes · ${_pendingConnections?.length ?? 0} links',
+              style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
             ),
-            onSubmitted: (_) => _send(),
-            maxLines: 1,
+            const SizedBox(height: 8),
+            Row(children: [
+              // 两颗按钮等宽等高：改造前「批准」是 Expanded 吃掉剩余宽度、「拒绝」只占
+              // 内容宽度，两颗宽度差近一倍；高度也各自跟着主题默认走，一高一矮
+              Expanded(child: FilledButton.icon(
+                style: btn.buttonStyle(filled: true),
+                onPressed: () {
+                  context.read<AppState>().logAiGraphApplied(_pendingNodes!.length, _pendingConnections!.length);
+                  if (_pendingIsModify) {
+                    widget.onMergeGraph(_pendingNodes!, _pendingConnections!);
+                  } else {
+                    widget.onApplyGraph(_pendingNodes!, _pendingConnections!);
+                  }
+                  setState(() { _pendingNodes = null; _pendingConnections = null; });
+                },
+                icon: Icon(Icons.check, size: btn.iconSize),
+                label: Text(s.isZh ? '批准' : 'Approve'),
+              )),
+              const SizedBox(width: 8),
+              Expanded(child: OutlinedButton.icon(
+                style: btn.buttonStyle(),
+                onPressed: () => setState(() { _pendingNodes = null; _pendingConnections = null; }),
+                icon: Icon(Icons.close, size: btn.iconSize),
+                label: Text(s.isZh ? '拒绝' : 'Reject'),
+              )),
+            ]),
+          ]),
+        ),
+      Padding(
+        padding: EdgeInsets.fromLTRB(12, 4, 12, isMobilePlatform ? 10 : 12),
+        child: Row(
+          // 输入框多行后行高会长，底对齐才能让发送 / 停止键始终贴在最后一行旁边
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+          // 输入框与右侧发送键同档（comfortable 36）：改造前输入框随主题算出约 32，
+          // 发送键却是写死的 40×40 圆形 —— 一个矮一个高，底部那行看着就歪。
+          // 多行时不能再套 fieldBox 钉死高度（会把第二行裁掉），改用 minHeight 兜底。
+          Expanded(child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: btn.height),
+            child: TextField(
+              controller: _ctrl,
+              style: TextStyle(fontSize: 13, color: scheme.onSurface),
+              decoration: InputDecoration(
+                hintText: s.aiChatHint,
+                hintStyle: TextStyle(fontSize: 12, color: scheme.outline),
+                isDense: true,
+                contentPadding: btn.fieldPadding,
+                // 压平桌面端的 -8px 密度偏移，否则同一份 contentPadding 在两端高度不同
+                visualDensity: AppControlSize.fieldDensity,
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(btn.radius)),
+                suffixIconConstraints: AppControlSize.iconSlot,
+              ),
+              // 桌面端单行：Enter 直接发送；移动端多行：回车即换行，发送靠右侧圆钮
+              onSubmitted: maxInputLines > 1 ? null : (_) => _send(),
+              minLines: 1,
+              maxLines: maxInputLines,
+              textInputAction:
+                  maxInputLines > 1 ? TextInputAction.newline : TextInputAction.send,
+            ),
           )),
           const SizedBox(width: 8),
           SizedBox(
-            width: 40, height: 40,
+            width: btn.height,
+            height: btn.height,
+            // 生成中：圆钮由「禁用加载圈」换成「停止」。原实现 onPressed: null，
+            // 模型返回一慢，用户唯一能做的就是等（移动端还得先关掉弹层才能干别的）。
+            // 点停止会关闭当前 HTTP 连接，并保留已经流式收到的部分内容。
             child: _loading
                 ? FilledButton(
-                    onPressed: null,
+                    onPressed: _stopGeneration,
                     style: FilledButton.styleFrom(
                         padding: EdgeInsets.zero, shape: const CircleBorder()),
-                    child: const SizedBox(width: 18, height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2)),
+                    child: Icon(Icons.stop_rounded, size: btn.iconSize),
                   )
                 : FilledButton(
                     onPressed: _send,
                     style: FilledButton.styleFrom(
                         padding: EdgeInsets.zero, shape: const CircleBorder()),
-                    child: const Icon(Icons.send, size: 18),
+                    child: Icon(Icons.send, size: btn.iconSize),
                   ),
           ),
         ]),
@@ -7810,29 +8087,86 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       s.isZh ? '提取视频里的音频为 MP3' : 'Extract the audio as MP3',
       s.isZh ? '每 2 秒截取一帧图片' : 'Extract a frame every 2 seconds',
     ];
+    // 会话级覆盖优先，其次全局配置 —— 让用户一眼看到这段话会由哪个模型回答。
+    // 「AI 答非所问」里最常见的一类就是模型选错了，而空状态是唯一能提前告知的位置。
+    final provider = _effectiveProvider;
+    final model = _effectiveModel;
+    final modelLabel = model.isEmpty
+        ? (s.isZh ? '未选择模型' : 'No model selected')
+        : '$provider · $model';
     return Center(
       child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Icon(Icons.smart_toy, size: 44, color: scheme.outline.withAlpha(80)),
-          const SizedBox(height: 12),
-          Text(s.aiChatHint, textAlign: TextAlign.center,
-              style: TextStyle(color: scheme.outline, fontSize: 12)),
-          const SizedBox(height: 16),
-          Wrap(
-            alignment: WrapAlignment.center,
-            spacing: 8, runSpacing: 8,
-            children: [
-              for (final h in hints)
-                ActionChip(
-                  avatar: Icon(Icons.bolt, size: 14, color: scheme.primary),
-                  label: Text(h, style: const TextStyle(fontSize: 11)),
-                  visualDensity: VisualDensity.compact,
-                  onPressed: () { _ctrl.text = h; _send(); },
+        padding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 16 : 20, vertical: 16),
+        child: ConstrainedBox(
+          // 面板很宽时（桌面 420 / 平板横屏）不让引导文字被拉成一整行
+          constraints: const BoxConstraints(maxWidth: 380),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: isMobilePlatform ? 60 : 52,
+              height: isMobilePlatform ? 60 : 52,
+              decoration: BoxDecoration(
+                color: scheme.primaryContainer.withAlpha(90),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.smart_toy_outlined,
+                  size: isMobilePlatform ? 28 : 24, color: scheme.primary),
+            ),
+            const SizedBox(height: 12),
+            Text(s.aiChatHint, textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: scheme.outline,
+                  fontSize: isMobilePlatform ? 13 : 12,
+                  height: 1.5,
+                )),
+            const SizedBox(height: 10),
+            // 当前生效模型
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHighest.withAlpha(110),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.memory, size: 12, color: scheme.primary),
+                const SizedBox(width: 5),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 220),
+                  child: Text(modelLabel,
+                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: isMobilePlatform ? 11.5 : 11,
+                        color: scheme.onSurfaceVariant,
+                      )),
                 ),
-            ],
-          ),
-        ]),
+              ]),
+            ),
+            const SizedBox(height: 18),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 8, runSpacing: 8,
+              children: [
+                for (final h in hints)
+                  ActionChip(
+                    avatar: Icon(Icons.bolt, size: isMobilePlatform ? 15 : 14, color: scheme.primary),
+                    label: Text(h, style: TextStyle(fontSize: isMobilePlatform ? 12 : 11)),
+                    // 移动端去掉 compact 密度并改胶囊形：原实现 11px 字 + compact
+                    // 的行高只有约 27px，手指点不准 —— 而这几条示例正是主入口。
+                    shape: const StadiumBorder(),
+                    side: BorderSide(color: scheme.outlineVariant.withAlpha(120)),
+                    backgroundColor: scheme.surfaceContainerHighest.withAlpha(70),
+                    labelPadding: EdgeInsets.symmetric(
+                        horizontal: isMobilePlatform ? 6 : 0,
+                        vertical: isMobilePlatform ? 3 : 0),
+                    visualDensity: isMobilePlatform ? VisualDensity.standard : VisualDensity.compact,
+                    materialTapTargetSize: isMobilePlatform
+                        ? MaterialTapTargetSize.padded
+                        : MaterialTapTargetSize.shrinkWrap,
+                    onPressed: () { _ctrl.text = h; _send(); },
+                  ),
+              ],
+            ),
+          ]),
+        ),
       ),
     );
   }
@@ -7953,15 +8287,22 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
   /// 因此工具始终可点击；若对应权限未开启，仅显示一个小锁标记提示。
   Widget _buildToolsSidebar(ColorScheme scheme, AppStrings s) {
     final cfg = context.read<AppState>().config;
+    // 移动端条目整体放大一档：原实现每行只有 11px 字号 + 上下 7px 内边距 ≈ 27px 高，
+    // 远低于 44px 触摸标准，28 个工具挨在一起很容易点错。
+    final double rowFont = isMobilePlatform ? 12 : 11;
     return Column(children: [
       Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+        padding: EdgeInsets.fromLTRB(isMobilePlatform ? 14 : 12, 10, isMobilePlatform ? 14 : 12, 6),
         child: Row(children: [
           Text(s.isZh ? '工具' : 'Tools',
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: scheme.primary)),
+              style: TextStyle(
+                fontSize: isMobilePlatform ? 12 : 11,
+                fontWeight: FontWeight.w700,
+                color: scheme.primary,
+              )),
           const Spacer(),
           Text('${_toolTemplates.length}',
-              style: TextStyle(fontSize: 9, color: scheme.outline)),
+              style: TextStyle(fontSize: isMobilePlatform ? 10 : 9, color: scheme.outline)),
         ]),
       ),
       Divider(height: 1, color: scheme.outlineVariant.withAlpha(40)),
@@ -7980,15 +8321,22 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                 t.name == 'error_check' || t.name == 'ask_user';
             final permitted = readOnly ? cfg.aiReadAccess : (needsWrite ? cfg.aiWriteAccess : true);
             final isDisabled = _disabledTools.contains(t.name);
+            // 提示文案要跟着输入方式走：移动端没有右键
+            final String enableHint = isMobilePlatform
+                ? (s.isZh ? '长按可启用' : 'long-press to enable')
+                : (s.isZh ? '右键可启用' : 'right-click to enable');
             return Tooltip(
               message: (isDisabled
-                  ? (s.isZh ? '已禁用 - 右键可启用' : 'Disabled - right-click to enable')
+                  ? (s.isZh ? '已禁用 - $enableHint' : 'Disabled - $enableHint')
                   : '${t.desc}\n${t.template}')
                   + (permitted ? '' : '\n⚠ ${s.isZh ? 'AI 自动执行需要开启相应权限' : 'AI auto-execution needs permission'} (设置→AI)'),
               waitDuration: const Duration(milliseconds: 400),
               child: InkWell(
                 // 右键：禁用 / 启用 该工具
                 onSecondaryTap: () => _toggleToolEnabled(t.name, s),
+                // 移动端没有右键 —— 长按是同一个入口。原实现下这个功能在手机上
+                // 完全不可达（工具列表里却会显示「已禁用」的划线与状态图标）。
+                onLongPress: isMobilePlatform ? () => _toggleToolEnabled(t.name, s) : null,
                 onTap: isDisabled
                     ? null
                     : () {
@@ -8003,7 +8351,9 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                         );
                       },
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                  padding: EdgeInsets.symmetric(
+                      horizontal: isMobilePlatform ? 12 : 10,
+                      vertical: isMobilePlatform ? 10 : 7),
                   child: Row(children: [
                     // 每个工具只显示一个状态图标：禁用→block，只读→visibility，可写→build。
                     // （原先这里 if/else 一次又无条件再画一个，导致图标重复叠在一起。）
@@ -8011,7 +8361,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                       isDisabled
                           ? Icons.block
                           : (readOnly ? Icons.visibility_outlined : Icons.build_outlined),
-                      size: 13,
+                      size: isMobilePlatform ? 15 : 13,
                       color: isDisabled ? scheme.error.withAlpha(180) : scheme.primary,
                     ),
                     const SizedBox(width: 7),
@@ -8021,7 +8371,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontSize: 11,
+                          fontSize: rowFont,
                           color: isDisabled ? scheme.outline.withAlpha(90) : scheme.onSurface,
                           fontWeight: FontWeight.w500,
                           decoration: isDisabled ? TextDecoration.lineThrough : null,
@@ -8029,11 +8379,13 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                       ),
                     ),
                     if (isDisabled)
-                      Icon(Icons.block, size: 10, color: scheme.error.withAlpha(160))
+                      Icon(Icons.block,
+                          size: isMobilePlatform ? 12 : 10, color: scheme.error.withAlpha(160))
                     else if (!permitted)
                       Tooltip(
                         message: s.isZh ? 'AI 自动执行需要权限 (设置→AI)' : 'Needs permission (Settings→AI)',
-                        child: Icon(Icons.lock_outline, size: 10, color: scheme.outline.withAlpha(70)),
+                        child: Icon(Icons.lock_outline,
+                            size: isMobilePlatform ? 12 : 10, color: scheme.outline.withAlpha(70)),
                       ),
                   ]),
                 ),
@@ -8043,18 +8395,54 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         ),
       ),
       Padding(
-        padding: const EdgeInsets.all(8),
+        padding: const EdgeInsets.all(10),
         child: Text(
-          s.isZh ? '点击工具插入到输入框' : 'Tap a tool to insert',
-          style: TextStyle(fontSize: 9, color: scheme.outline),
+          // 移动端补一句「长按禁用」：这是个隐藏手势，不写出来没人会发现
+          isMobilePlatform
+              ? (s.isZh ? '点击插入 · 长按禁用' : 'Tap to insert · long-press to disable')
+              : (s.isZh ? '点击工具插入到输入框' : 'Tap a tool to insert'),
+          style: TextStyle(fontSize: isMobilePlatform ? 10 : 9, color: scheme.outline),
           textAlign: TextAlign.center,
         ),
       ),
     ]);
   }
 
-  Widget _buildMessage(({String role, String content, int? inputTokens, int? outputTokens, List<Map<String, dynamic>>? blocks}) msg, ColorScheme scheme) {
+  /// 单条消息气泡。
+  ///
+  /// [showAvatar] 由调用方按「是否与上一条同角色」传入：同角色的后续消息不再
+  /// 重复画头像（改为等宽占位），移动端窄屏上一屏内能少掉一半头像。
+  /// [gapAfter] 同理按「是否还有同角色的下一条」收窄间距，形成消息分组。
+  Widget _buildMessage(
+    ({String role, String content, int? inputTokens, int? outputTokens, List<Map<String, dynamic>>? blocks}) msg,
+    ColorScheme scheme, {
+    bool showAvatar = true,
+    double gapAfter = 10,
+  }) {
     final isUser = msg.role == 'user';
+    // 移动端正文与气泡整体放大一档：12px 正文 + 28px 头像在手机上偏小，
+    // 中文长段落读起来吃力（桌面端维持原尺寸，观感逐像素不变）。
+    final double fs = isMobilePlatform ? 13 : 12;
+    final double avatarR = isMobilePlatform ? 15 : 14;
+    // 头像列宽（直径 + 与气泡的 8px 间隙），同组后续消息用它占位。
+    final double avatarSlot = avatarR * 2 + 8;
+    // 气泡圆角：靠头像那一角收小（聊天气泡的通用语言）。四个角一律 12 时，
+    // 一组对话看上去像几块并列的卡片，方向感全靠头像硬撑。
+    const Radius rTail = Radius.circular(4);
+    final Radius rBig = Radius.circular(isMobilePlatform ? 15 : 14);
+    final BorderRadius bubbleRadius = isUser
+        ? BorderRadius.only(
+            topLeft: rBig,
+            topRight: showAvatar ? rTail : rBig,
+            bottomLeft: rBig,
+            bottomRight: rBig,
+          )
+        : BorderRadius.only(
+            topLeft: showAvatar ? rTail : rBig,
+            topRight: rBig,
+            bottomLeft: rBig,
+            bottomRight: rBig,
+          );
     Widget bodyWidget;
     if (!isUser && msg.content.startsWith('[ASK_USER]')) {
       final raw = msg.content.substring(10);
@@ -8065,12 +8453,19 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          SelectableText(question, style: TextStyle(fontSize: 12, color: scheme.onSurface, height: 1.5)),
+          SelectableText(question, style: TextStyle(fontSize: fs, color: scheme.onSurface, height: 1.5)),
           if (options.isNotEmpty) ...[
             const SizedBox(height: 8),
             Wrap(spacing: 6, runSpacing: 6, children: options.map((opt) =>
               ActionChip(
-                label: Text(opt.trim(), style: const TextStyle(fontSize: 11)),
+                label: Text(opt.trim(), style: TextStyle(fontSize: fs - 1)),
+                // 移动端把选项做成胶囊 + 更大触摸区：这些是 AI 主动提问的
+                // 「快捷回答」，点错一次就要重来，27px 的行高太容易误触。
+                shape: const StadiumBorder(),
+                side: BorderSide(color: scheme.outlineVariant.withAlpha(120)),
+                labelPadding: EdgeInsets.symmetric(horizontal: 4, vertical: isMobilePlatform ? 4 : 0),
+                materialTapTargetSize:
+                    isMobilePlatform ? MaterialTapTargetSize.padded : MaterialTapTargetSize.shrinkWrap,
                 onPressed: () { _ctrl.text = opt.trim(); _send(); },
               ),
             ).toList()),
@@ -8085,42 +8480,69 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       );
     } else {
       bodyWidget = isUser
-        ? SelectableText(msg.content, style: TextStyle(fontSize: 12, color: scheme.onSurface, height: 1.5))
+        ? SelectableText(msg.content, style: TextStyle(fontSize: fs, color: scheme.onSurface, height: 1.5))
         : _buildAssistantContent(msg.content, scheme);
     }
+    // 同角色后续消息的占位：只有 8px 宽的空位，不画头像
+    final Widget avatarGap = SizedBox(width: avatarSlot);
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: EdgeInsets.only(bottom: gapAfter),
       child: Column(
         crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         children: [
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
             children: [
+              // Spacer + Flexible(flex: 4) 按比例限宽：气泡最多占可用宽度的 4/5。
+              // 原来只有 Flexible，用户消息多长就铺多宽 —— 一段长描述会直接顶满整行，
+              // 和紧邻的助手消息宽度一致，一眼分不清谁说的（移动端尤其明显）。
+              if (isUser) const Spacer(),
               if (!isUser) ...[
-                CircleAvatar(radius: 14, backgroundColor: scheme.primaryContainer, child: Icon(Icons.smart_toy, size: 14, color: scheme.primary)),
+                if (showAvatar)
+                  CircleAvatar(
+                    radius: avatarR,
+                    backgroundColor: scheme.primaryContainer,
+                    child: Icon(Icons.smart_toy, size: avatarR, color: scheme.primary),
+                  )
+                else
+                  avatarGap,
                 const SizedBox(width: 8),
               ],
-              Flexible(child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: isUser ? scheme.primaryContainer : scheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(12),
+              Flexible(
+                flex: 4,
+                child: Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isMobilePlatform ? 13 : 12,
+                    vertical: isMobilePlatform ? 9 : 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isUser ? scheme.primaryContainer : scheme.surfaceContainerHighest,
+                    borderRadius: bubbleRadius,
+                  ),
+                  child: bodyWidget,
                 ),
-                child: bodyWidget,
-              )),
+              ),
               if (isUser) ...[
                 const SizedBox(width: 8),
-                CircleAvatar(radius: 14, backgroundColor: scheme.tertiaryContainer, child: Icon(Icons.person, size: 14, color: scheme.tertiary)),
+                if (showAvatar)
+                  CircleAvatar(
+                    radius: avatarR,
+                    backgroundColor: scheme.tertiaryContainer,
+                    child: Icon(Icons.person, size: avatarR, color: scheme.tertiary),
+                  )
+                else
+                  avatarGap,
               ],
+              if (!isUser) const Spacer(),
             ],
           ),
           if (!isUser && msg.inputTokens != null && msg.content.trim().isNotEmpty)
             Padding(
-              padding: const EdgeInsets.only(left: 36, top: 2),
+              // 与气泡左缘对齐：头像列（直径+间隙）+ 8px 气泡内边距
+              padding: EdgeInsets.only(left: avatarSlot, top: 3),
               child: Text(
                 '${msg.inputTokens}+${msg.outputTokens}=${(msg.inputTokens ?? 0) + (msg.outputTokens ?? 0)} tokens',
-                style: TextStyle(fontSize: 9, color: scheme.outline),
+                style: TextStyle(fontSize: isMobilePlatform ? 10 : 9, color: scheme.outline),
               ),
             ),
         ],
@@ -8142,32 +8564,37 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     );
     if (_mdStyleKey != key) {
       _mdStyleKey = key;
+      // 正文基准字号：移动端比桌面端大一档（12 → 13）。助手回复的主体是
+      // Markdown，字号全写死 12 时手机上正文偏小，而标题比它大 2~4px 又显得
+      // 层级过陡。这里改成相对基准，两端层级比例一致。
+      // 该值只依赖 isMobilePlatform（进程内恒定），因此不必进缓存键。
+      final double fs = isMobilePlatform ? 13 : 12;
       _mdStyle = MarkdownStyleSheet(
-        p: TextStyle(fontSize: 12, color: scheme.onSurface, height: 1.5),
-        h1: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: scheme.primary, height: 1.3),
-        h2: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: scheme.primary, height: 1.3),
-        h3: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: scheme.onSurface, height: 1.3),
-        h4: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface, height: 1.3),
-        listBullet: TextStyle(fontSize: 12, color: scheme.primary),
-        blockquote: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant, fontStyle: FontStyle.italic, height: 1.5),
+        p: TextStyle(fontSize: fs, color: scheme.onSurface, height: 1.5),
+        h1: TextStyle(fontSize: fs + 4, fontWeight: FontWeight.w700, color: scheme.primary, height: 1.3),
+        h2: TextStyle(fontSize: fs + 3, fontWeight: FontWeight.w700, color: scheme.primary, height: 1.3),
+        h3: TextStyle(fontSize: fs + 2, fontWeight: FontWeight.w600, color: scheme.onSurface, height: 1.3),
+        h4: TextStyle(fontSize: fs + 1, fontWeight: FontWeight.w600, color: scheme.onSurface, height: 1.3),
+        listBullet: TextStyle(fontSize: fs, color: scheme.primary),
+        blockquote: TextStyle(fontSize: fs, color: scheme.onSurfaceVariant, fontStyle: FontStyle.italic, height: 1.5),
         blockquoteDecoration: BoxDecoration(
           color: scheme.primaryContainer.withAlpha(40),
           border: Border(left: BorderSide(color: scheme.primary.withAlpha(180), width: 3)),
           borderRadius: BorderRadius.circular(4),
         ),
         blockquotePadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        code: TextStyle(fontSize: 11, color: scheme.primary, backgroundColor: scheme.surfaceContainerHighest, fontFamily: AppTheme.monoFont),
+        code: TextStyle(fontSize: fs - 1, color: scheme.primary, backgroundColor: scheme.surfaceContainerHighest, fontFamily: AppTheme.monoFont),
         codeblockPadding: const EdgeInsets.all(10),
         codeblockDecoration: BoxDecoration(
           color: scheme.surfaceContainerHighest.withAlpha(80),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
         ),
-        a: TextStyle(fontSize: 12, color: scheme.primary, decoration: TextDecoration.underline, decorationColor: scheme.primary.withAlpha(120)),
-        strong: TextStyle(fontSize: 12, color: scheme.onSurface, fontWeight: FontWeight.w700),
-        em: TextStyle(fontSize: 12, color: scheme.onSurface, fontStyle: FontStyle.italic),
-        tableHead: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: scheme.onSurface),
-        tableBody: TextStyle(fontSize: 11, color: scheme.onSurface),
+        a: TextStyle(fontSize: fs, color: scheme.primary, decoration: TextDecoration.underline, decorationColor: scheme.primary.withAlpha(120)),
+        strong: TextStyle(fontSize: fs, color: scheme.onSurface, fontWeight: FontWeight.w700),
+        em: TextStyle(fontSize: fs, color: scheme.onSurface, fontStyle: FontStyle.italic),
+        tableHead: TextStyle(fontSize: fs - 1, fontWeight: FontWeight.w700, color: scheme.onSurface),
+        tableBody: TextStyle(fontSize: fs - 1, color: scheme.onSurface),
         tableBorder: TableBorder.all(color: scheme.outlineVariant.withAlpha(80)),
         tableColumnWidth: const FlexColumnWidth(),
         horizontalRuleDecoration: BoxDecoration(border: Border(top: BorderSide(color: scheme.outlineVariant.withAlpha(80)))),
@@ -8187,6 +8614,8 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
           styleSheet: mdStyle,
         );
     if (matches.isEmpty) return markdownBody(content);
+    // 与 _markdownStyle 的正文基准保持一致（移动端大一档）
+    final double bodyFs = isMobilePlatform ? 13 : 12;
     // 有工具调用：拆成 [文本, 工具块, 文本, ...] 交替
     final children = <Widget>[];
     var last = 0;
@@ -8196,7 +8625,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         if (text.isNotEmpty) {
           children.add(Padding(
             padding: const EdgeInsets.only(bottom: 4),
-            child: SelectableText(text, style: TextStyle(fontSize: 12, color: scheme.onSurface, height: 1.5)),
+            child: SelectableText(text, style: TextStyle(fontSize: bodyFs, color: scheme.onSurface, height: 1.5)),
           ));
         }
       }
@@ -8210,7 +8639,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     if (tail.isNotEmpty) {
       children.add(Padding(
         padding: const EdgeInsets.only(bottom: 4),
-        child: SelectableText(tail, style: TextStyle(fontSize: 12, color: scheme.onSurface, height: 1.5)),
+        child: SelectableText(tail, style: TextStyle(fontSize: bodyFs, color: scheme.onSurface, height: 1.5)),
       ));
     }
     return Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: children);
@@ -8218,8 +8647,11 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
 
   Widget _buildBlock(Map<String, dynamic> block, ColorScheme scheme) {
     final type = block['type'] as String? ?? 'text';
+    // 思考 / 工具调用块的基准字号，与正文同源（移动端大一档）：
+    // 这些块在带工具调用的回复里往往占了大半篇幅，字号不跟着正文走会显得断层。
+    final double fs = isMobilePlatform ? 13 : 12;
     if (type == 'text') {
-      return SelectableText(block['text'] as String? ?? '', style: TextStyle(fontSize: 12, color: scheme.onSurface, height: 1.5));
+      return SelectableText(block['text'] as String? ?? '', style: TextStyle(fontSize: fs, color: scheme.onSurface, height: 1.5));
     }
     final label = switch (type) {
       'thinking' => '思考',
@@ -8250,18 +8682,21 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
           borderRadius: BorderRadius.circular(6),
         ),
         child: ExpansionTile(
-          tilePadding: const EdgeInsets.symmetric(horizontal: 8),
-          childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+          // 移动端整块放大一档：折叠标题是可点区域，8px 内边距 + 11px 标题
+          // 只有约 32px 高，低于 44px 触摸标准（此处是常用交互）。
+          tilePadding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 10 : 8),
+          childrenPadding: EdgeInsets.fromLTRB(isMobilePlatform ? 10 : 8, 0, isMobilePlatform ? 10 : 8, 8),
           // 思考默认折叠（紧凑）；工具结果默认展开
           initiallyExpanded: type == 'tool_result',
-          dense: true,
+          dense: !isMobilePlatform,
           title: Row(children: [
-            Icon(icon, size: 13, color: type == 'thinking' ? scheme.primary : scheme.outline),
+            Icon(icon, size: isMobilePlatform ? 15 : 13,
+                color: type == 'thinking' ? scheme.primary : scheme.outline),
             const SizedBox(width: 6),
             Flexible(
               child: Text(label,
                   maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 11, color: type == 'thinking' ? scheme.primary : scheme.outline, fontStyle: FontStyle.italic)),
+                  style: TextStyle(fontSize: fs - 1, color: type == 'thinking' ? scheme.primary : scheme.outline, fontStyle: FontStyle.italic)),
             ),
             if (thinkMs != null) ...[
               const SizedBox(width: 6),
@@ -8273,7 +8708,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                 ),
                 child: Text(
                   thinkMs >= 1000 ? '${(thinkMs / 1000).toStringAsFixed(1)}s' : '${thinkMs}ms',
-                  style: TextStyle(fontSize: 9, color: scheme.outline),
+                  style: TextStyle(fontSize: fs - 3, color: scheme.outline),
                 ),
               ),
             ],
@@ -8281,11 +8716,11 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
           children: [
             // 等宽字体 + 可滚动，长 JSON/日志不会被截断
             ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 160),
+              constraints: BoxConstraints(maxHeight: isMobilePlatform ? 220 : 160),
               child: SingleChildScrollView(
                 child: SelectableText(body,
                     style: TextStyle(
-                        fontSize: 11,
+                        fontSize: fs - 1,
                         color: scheme.onSurface.withAlpha(190),
                         height: 1.45,
                         fontFamily: AppTheme.monoFont)),

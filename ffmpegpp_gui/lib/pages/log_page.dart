@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../theme/app_theme.dart';
+import '../theme/app_semantic_colors.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
 import '../widgets/toast.dart';
@@ -271,6 +272,10 @@ class _LogPageState extends State<LogPage> {
   String _fmt(LogEntry e) => '[${_ts(e.timestamp)}] [${e.category.toUpperCase()}] ${e.message}';
   String _ts(DateTime t) => '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}:${t.second.toString().padLeft(2, '0')}.${t.millisecond.toString().padLeft(3, '0')}';
   Color _catColor(String cat, ColorScheme scheme) => switch (cat) {
-    'info' => scheme.primary, 'ffmpeg' => Colors.teal, 'progress' => Colors.blue, 'error' => scheme.error, _ => scheme.outline,
+    // 日志分类色：原先 'ffmpeg' 用 Colors.teal、'progress' 用 Colors.blue，
+    // 都是与主题种子色无关的调色板原色（蓝色还和 primary 撞车）。
+    // 现在：info = primary、ffmpeg = tertiary（框架按种子色调和过的第三种色相）、
+    // progress = success（绿，读作「正常推进」）、error = danger、其余 = neutral。
+    'info' => scheme.sem.info, 'ffmpeg' => scheme.tertiary, 'progress' => scheme.sem.success, 'error' => scheme.sem.danger, _ => scheme.sem.neutral,
   };
 }

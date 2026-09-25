@@ -8,6 +8,7 @@ import 'package:window_manager/window_manager.dart';
 import 'providers/app_state.dart';
 import 'models/models.dart';
 import 'theme/app_theme.dart';
+import 'theme/app_semantic_colors.dart';
 import 'theme/app_strings.dart';
 import 'theme/app_text_scale.dart';
 import 'services/update_service.dart' as updater;
@@ -516,7 +517,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
       showDialog(
         context: context,
         builder: (_) => AlertDialog(
-          icon: Icon(Icons.check_circle, color: Colors.green, size: 32),
+          icon: Icon(Icons.check_circle, color: scheme.sem.success, size: 32),
           title: Text(s.isZh ? '更新完成' : 'Update Complete', style: TextStyle(color: scheme.onSurface)),
           content: Text(
             s.isZh ? 'FFmpeg++ 已更新到 v${updater.currentVersion}' : 'FFmpeg++ updated to v${updater.currentVersion}',
@@ -937,7 +938,10 @@ class _AppShellState extends State<AppShell> with WindowListener {
                   }
                 },
               ),
-              _csdButton(Icons.close, scheme.onSurface, Colors.red, () => windowManager.close()),
+              // 关闭按钮悬停红：Windows 系统约定色（#E81123），与
+              // pipeline_editor_page / container_detail_page 的 CSD 按钮保持一致。
+              // 它属于窗口装饰，不参与主题化（用语义色在深色主题下会变浅粉）。
+              _csdButton(Icons.close, scheme.onSurface, const Color(0xFFE81123), () => windowManager.close()),
             ])),
           ]),
         ),
@@ -1079,6 +1083,16 @@ class _AppShellState extends State<AppShell> with WindowListener {
     ],
   );
 
+  /// 全部页面数量（与 [_page] 的分支一一对应）。
+  ///
+  /// 预热目标必须落在 `[0, _kPageCount)` 内：[_page] 对越界索引有
+  /// `_ => const ProjectPage()` 兜底，所以越界**不报错**，只会静默预热成项目页
+  /// —— 表现是「日志说预热了 4 个页面，其中两个其实是重复的项目页」。
+  static const int _kPageCount = 6;
+
+  /// 桌面端预热目标：项目 + 处理队列两个主入口页。
+  static const List<int> _kPrewarmDesktop = [0, 1];
+
   /// 后台分帧预热高频页面到缓存（主界面显示后逐帧构建），
   /// 之后首次点击进入不再卡顿（构建成本已摊到空闲帧）。
   /// 桌面端只预热「项目 + 处理队列」两个主入口页；其余页面首次点击时
@@ -1098,32 +1112,39 @@ class _AppShellState extends State<AppShell> with WindowListener {
       state.addLog('关闭预加载已开启：跳过后台页面预热，页面在首次切换时才构建', category: 'info');
       return;
     }
-    final targets = isMobilePlatform
-        ? _kMobileNavOrder
-        : const [0, 1];
+    final targets = (isMobilePlatform ? _kMobileNavOrder : _kPrewarmDesktop)
+        .where((i) => i >= 0 && i < _kPageCount)
+        .toList(growable: false);
     // 页数与页名都按 targets 推导：此前写死「N 个页面（项目/处理队列）」，
     // 而移动端预热的是 项目/处理队列/配置库/设置 四个 Tab，日志与实际不符。
     state.addLog(
         '后台预热 ${targets.length} 个页面（${targets.map(_navLabel).join('/')}）',
         category: 'info');
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      for (final i in targets) {
-        if (!mounted) return;
-        // 每帧只构建一页，避免单帧长任务
-        await Future<void>.delayed(const Duration(milliseconds: 160));
-        if (!mounted) return;
-        // 预热途中用户开启了「关闭预加载」则中止剩余预热
-        if (context.read<AppState>().config.noPreload) {
-          _warming = false;
-          return;
+      // 必须在 finally 里复位 _warming。此前只在「正常跑完」和「途中检测到关闭
+      // 预加载」两条路径复位：任何一次 `_page(i)` 抛异常（某页构建期出错）都会让
+      // _warming 永久停在 true，表现为「设置里把『关闭预加载』关掉、开关显示已
+      // 恢复后台预热，实际再也不会预热」——而这条路径恰恰只在出错时才会走到，
+      // 平时测不出来。
+      try {
+        for (final i in targets) {
+          if (!mounted) return;
+          // 每帧只构建一页，避免单帧长任务
+          await Future<void>.delayed(const Duration(milliseconds: 160));
+          if (!mounted) return;
+          // 预热途中用户开启了「关闭预加载」则中止剩余预热（_warming 由 finally 复位）
+          if (context.read<AppState>().config.noPreload) return;
+          setState(() { _page(i); });
         }
-        setState(() { _page(i); });
+      } catch (e) {
+        // 预热失败不该影响用户：只记日志，该页改为首次切换时现场构建。
+        // 复位交给 finally，绝不能在这里 return 掉。
+        if (mounted) {
+          context.read<AppState>().addLog('后台页面预热中断：$e', category: 'warn');
+        }
+      } finally {
+        _warming = false;
       }
-      // 正常跑完必须复位 _warming：否则用户把「关闭预加载」重新关掉时，
-      // _onNoPreloadChanged 的 else 分支调 _prewarmPages() 会在开头的
-      // `if (_warming) return;` 处直接短路——开关显示已恢复后台预热，
-      // 实际首次切页仍是现场构建。（移动端尤其明显：PageView 懒布局）
-      _warming = false;
     });
   }
 

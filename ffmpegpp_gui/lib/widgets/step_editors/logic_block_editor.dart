@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../models/models.dart';
+import '../../theme/app_semantic_colors.dart';
 
 class LogicBlockEditor extends StatefulWidget {
   final LogicBlock block;
@@ -46,7 +47,10 @@ class _LogicBlockEditorState extends State<LogicBlockEditor> {
       padding: const EdgeInsets.all(16),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          Icon(Icons.repeat, size: 18, color: Colors.red),
+          // 逻辑块（循环 / 选择性循环）的身份色沿用红色，但改为语义色 danger：
+          // 原先 Colors.red 是写死的 Material 原色，换主题色/切深色主题后
+          // 这个图标不会跟着调整明暗（深色底上 #F44336 偏刺眼）。
+          Icon(Icons.repeat, size: 18, color: cs.sem.danger),
           const SizedBox(width: 6),
           Text(
             widget.block.type == LogicBlockType.loop
@@ -183,17 +187,17 @@ class _LogicBlockEditorState extends State<LogicBlockEditor> {
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
-            color: Colors.red.withAlpha(20),
+            color: cs.sem.dangerContainer.withAlpha(120),
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Colors.red.withAlpha(40)),
+            border: Border.all(color: cs.sem.danger.withAlpha(60)),
           ),
           child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Icon(Icons.info_outline, size: 14, color: Colors.red.shade300),
+            Icon(Icons.info_outline, size: 14, color: cs.sem.onDangerContainer),
             const SizedBox(width: 8),
             Expanded(child: Text(
               zh ? '循环 ${p['count'] ?? 10} 次将生成 ${p['count'] ?? 10} 个输出文件。'
                  : 'Loop ${p['count'] ?? 10} times will generate ${p['count'] ?? 10} output files.',
-              style: TextStyle(fontSize: 11, color: Colors.red.shade300, height: 1.4),
+              style: TextStyle(fontSize: 11, color: cs.sem.onDangerContainer, height: 1.4),
             )),
           ]),
         ),

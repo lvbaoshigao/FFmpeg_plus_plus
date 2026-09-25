@@ -390,7 +390,8 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
                   else { windowManager.maximize(); }
                 },
               ),
-              _CsdBtn(icon: Icons.close, color: scheme.onSurface, hoverBg: Colors.red, onTap: () => windowManager.close()),
+              // 同 app.dart / pipeline_editor_page：Windows 关闭按钮系统约定红
+              _CsdBtn(icon: Icons.close, color: scheme.onSurface, hoverBg: const Color(0xFFE81123), onTap: () => windowManager.close()),
             ])),
           ]),
         ),
