@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart';
 import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
 import '../platform/app_platform.dart';
@@ -128,9 +129,11 @@ NavGlassLook navGlassLook(ColorScheme scheme, bool isDark, NavGlassPal pal) {
         ? scheme.outlineVariant.withAlpha((edgeBlur.alpha * 255).round().clamp(0, 255))
         : Colors.white.withValues(alpha: edgeWhite.alpha),
     borderWidth: style == SurfaceStyle.blur ? edgeBlur.width : edgeWhite.width,
-    // blur/theme/gray 时遮罩是实色块/中性底，选中项用 onPrimary 反白；
-    // 其余用主题色。gray 特意用 onSurface：灰色样式下不应再出现主题色。
-    selectedColor: style == SurfaceStyle.blur || style == SurfaceStyle.theme
+    // 遮罩已改为「完全透明 + 中性描边」（见 navMaskPill），选中态由图标/文字
+    // 颜色表达：blur/liquid/gray 用主题色或 onSurface（透明底上需要足够的
+    // 图标对比度，onPrimary 白在无实心底时会看不清）；theme 底栏本身即主题色，
+    // 选中项继续用 onPrimary 反白。
+    selectedColor: style == SurfaceStyle.theme
         ? scheme.onPrimary
         : style == SurfaceStyle.gray
             ? scheme.onSurface
@@ -139,92 +142,25 @@ NavGlassLook navGlassLook(ColorScheme scheme, bool isDark, NavGlassPal pal) {
   );
 }
 
-/// 遮罩胶囊外观：blur=实心主题色；theme=白色高亮（底栏本身即主题色）；
-/// gray=中性白高亮（灰色样式的底栏不应再出现主题色 —— 之前 gray 落到
-/// 「白→主题色渐变」分支，于是选了灰色也「夹杂主题色」，用户已反馈）；
-/// liquid=白→主题色渐变。
+/// 遮罩胶囊外观（用户反馈定稿）：**完全透明**填充 + 中性描边，不引入任何主题色。
+///
+/// 旧实现按样式分化：blur=实心主题色、theme=白色高亮、gray=中性高亮、
+/// liquid=白→主题色渐变 —— 用户反馈「难看、受主题色干扰」；且各样式都带
+/// offset(0,2) 的投影，视觉上胶囊「往下坠」，对称性差。
+/// 现在统一改为：透明填充 + 一条中性（暗色白 / 亮色黑）发丝描边 + 无阴影，
+/// 选中态完全交给图标/文字颜色（[NavGlassLook.selectedColor]）表达。
+/// [style] 参数保留在签名里（调用方语义不变、未来若要按样式微调描边不用改调用点）。
 Widget navMaskPill(ColorScheme scheme, bool isDark, String style) {
-  if (style == SurfaceStyle.blur) {
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(22),
-        color: scheme.primary,
-        border: Border.all(color: Colors.white.withValues(alpha: 0.28), width: 0.8),
-        boxShadow: [
-          BoxShadow(
-            color: scheme.primary.withAlpha(70),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-    );
-  }
-  if (style == SurfaceStyle.gray) {
-    // 灰色样式：中性高亮（暗色 → 提亮、亮色 → 压暗），完全不引入主题色
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(22),
-        color: isDark ? Colors.white.withAlpha(56) : Colors.black.withAlpha(26),
-        border: Border.all(
-          color: isDark
-              ? Colors.white.withValues(alpha: 0.30)
-              : Colors.black.withValues(alpha: 0.10),
-          width: 0.8,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: isDark ? 0.18 : 0.06),
-            blurRadius: 5,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-    );
-  }
-  if (style == SurfaceStyle.theme) {
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(22),
-        color: Colors.white.withAlpha(isDark ? 64 : 84),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: isDark ? 0.35 : 0.55),
-          width: 0.8,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: isDark ? 0.18 : 0.06),
-            blurRadius: 5,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-    );
-  }
-  final indicator = scheme.primary.withValues(alpha: isDark ? 0.28 : 0.20);
   return Container(
     decoration: BoxDecoration(
       borderRadius: BorderRadius.circular(22),
-      gradient: LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [
-          Colors.white.withValues(alpha: isDark ? 0.16 : 0.42),
-          indicator,
-        ],
-        stops: const [0.0, 0.6],
-      ),
+      color: Colors.transparent,
       border: Border.all(
-        color: Colors.white.withValues(alpha: isDark ? 0.22 : 0.50),
-        width: 0.8,
+        color: isDark
+            ? Colors.white.withValues(alpha: 0.30)
+            : Colors.black.withValues(alpha: 0.14),
+        width: 1.0,
       ),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withValues(alpha: isDark ? 0.24 : 0.08),
-          blurRadius: 5,
-          offset: const Offset(0, 2),
-        ),
-      ],
     ),
   );
 }
@@ -429,6 +365,10 @@ class MobileBottomNav extends StatefulWidget {
   /// 跳变 —— 修复从第 1 页快速滑到第 4 页时遮罩在第 3 项短暂停留再跳走的
   /// 「动画跳跃」问题。仅遮罩子树订阅该 Listenable，每帧重建成本极小。
   final PageController? pageController;
+  /// 滑动自动收起：true = 整条菜单栏滑出屏幕下缘（仅底部形态由 app.dart 下发；
+  /// 侧边导轨恒为 false）。动画由 [_MobileBottomNavState] 的弹簧模拟驱动，
+  /// 到位后带一次过冲回弹。
+  final bool hidden;
 
   const MobileBottomNav({
     super.key,
@@ -436,13 +376,19 @@ class MobileBottomNav extends StatefulWidget {
     required this.onSelected,
     this.placement = MobileNavPlacement.bottom,
     this.pageController,
+    this.hidden = false,
   });
 
   @override
   State<MobileBottomNav> createState() => _MobileBottomNavState();
 }
 
-class _MobileBottomNavState extends State<MobileBottomNav> {
+class _MobileBottomNavState extends State<MobileBottomNav>
+    with SingleTickerProviderStateMixin {
+  /// 滑动自动收起动画：0 = 展开、1 = 完全收起（欠阻尼弹簧驱动，过冲量即
+  /// 「到位后回弹」）。Transform.translate 只改绘制不改布局，收起全程不会
+  /// 触发 PageView / 玻璃外壳重新布局。
+  late final AnimationController _hideCtrl;
   /// 是否竖排导轨（左 / 右）：横排与竖排共用同一套「主轴线位置」状态
   /// （[_dragX] = 主轴线上的遮罩中心、[itemExtent] = 每个药丸在主轴上的长度），
   /// 只有轴向映射与手势类型不同。
@@ -500,6 +446,11 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
   @override
   void initState() {
     super.initState();
+    // late 注入必须在 initState 首行完成（项目契约 7）。
+    _hideCtrl = AnimationController(
+      vsync: this,
+      value: widget.hidden ? 1.0 : 0.0,
+    );
     // 首次进入主界面即预加载 oc_liquid_glass 的 fragment shader，
     // 避免底部导航第一次渲染时的异步加载闪烁。
     // 与 main.dart 的 shader 预热走同一条门控：shaderGlassSupported 为 false 时
@@ -509,12 +460,31 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
   }
 
   @override
+  void didUpdateWidget(covariant MobileBottomNav oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.hidden == widget.hidden) return;
+    // 欠阻尼弹簧（ratio < 1）：到达目标值时过冲再回落 = 用户要求的
+    // 「移动到指定位置后回弹」。刚度 260 ≈ 300ms 内完成主行程。
+    _hideCtrl.animateWith(SpringSimulation(
+      SpringDescription.withDampingRatio(mass: 1, stiffness: 260, ratio: 0.55),
+      _hideCtrl.value,
+      widget.hidden ? 1.0 : 0.0,
+      _hideCtrl.velocity,
+    ));
+  }
+
+  @override
   void dispose() {
     _dragX.dispose();
     _pagePosition?.isScrollingNotifier.removeListener(_onPageSideChanged);
     _pagePosition?.removeListener(_onPageSideChanged);
     _pagePosition = null;
     _pageTick.dispose();
+    // 若 initState 之前就抛错，_hideCtrl 可能未被注入（契约 7：dispose 访问
+    // late 字段必须 try/catch）。
+    try {
+      _hideCtrl.dispose();
+    } catch (_) {}
     super.dispose();
   }
 
@@ -799,13 +769,36 @@ class _MobileBottomNavState extends State<MobileBottomNav> {
 
     // 外壳（solid 直出 / blur 高斯模糊 / liquid GPU 玻璃 + 回退）由
     // NavGlassShell 按 navStyle 统一套皮——与子页面切换栏共享同一实现。
-    return NavGlassShell(
+    final Widget shell = NavGlassShell(
       pal: pal,
       radius: radius,
       keyPrefix: 'nav',
       // 竖排导轨时外壳内边距改为让「贴屏那一侧」的安全区（见 shellPadding）
       placement: widget.placement,
       child: buildBarIn(),
+    );
+
+    // 滑动自动收起（仅底部形态生效；侧边导轨 app.dart 恒下发 hidden=false）：
+    // 整条菜单栏下移滑出屏幕，欠阻尼弹簧的过冲即「到位后回弹」。位移量 =
+    // 栏高 + 底部安全区 + 悬浮边距，保证完全离屏。Transform 只改绘制不改
+    // 布局，收起全程 PageView 与玻璃外壳不重排；隐藏过半即拦截点击。
+    if (_hideCtrl.value == 0 && !widget.hidden) return shell;
+    final double hideDistance =
+        barHeight + MediaQuery.paddingOf(context).bottom + 24;
+    return AnimatedBuilder(
+      animation: _hideCtrl,
+      child: shell,
+      builder: (context, child) {
+        final t = _hideCtrl.value;
+        if (t == 0) return child!;
+        return IgnorePointer(
+          ignoring: t > 0.5,
+          child: Transform.translate(
+            offset: Offset(0, t * hideDistance),
+            child: child,
+          ),
+        );
+      },
     );
   }
 

@@ -401,6 +401,28 @@ class _AppShellState extends State<AppShell> with WindowListener {
   /// 移动端 Tab 翻页控制器：PageView 跟随手指（半程滑动即显示「各半张页面」）。
   late final PageController _mobilePageController;
 
+  /// 底部菜单栏是否已被「滑动自动收起」隐藏（内容上滑收起、下滑展开）。
+  /// 只在 config.navAutoHide 开启且菜单栏处于「底部」形态时为 true；
+  /// 关闭开关 / 切到侧边导轨 / 下滑时复位（见 [_handleContentScroll]）。
+  bool _navHiddenByScroll = false;
+
+  /// 内容区滚动监听：上滑（scrollDelta > 0，元素向上移动）收起菜单栏，
+  /// 下滑展开。只认垂直轴 —— 横向 PageView 翻页与横向 chips 列表都不触发。
+  /// 用 ScrollUpdateNotification 而非 UserScrollNotification：fling 惯性
+  /// 滑动期间同样持续产生 update 通知，跟手与惯性阶段行为一致。
+  bool _handleContentScroll(ScrollNotification n, bool enabled) {
+    if (!enabled) return false;
+    if (n.metrics.axis != Axis.vertical) return false;
+    // scrollDelta 只存在于 ScrollUpdateNotification（基类没有该字段）
+    final delta = n is ScrollUpdateNotification ? n.scrollDelta : null;
+    if (delta == null || delta == 0) return false;
+    final bool target = delta > 0; // 内容向上滚 = 收起
+    if (target != _navHiddenByScroll) {
+      setState(() => _navHiddenByScroll = target);
+    }
+    return false;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -712,6 +734,10 @@ class _AppShellState extends State<AppShell> with WindowListener {
     // 布局。select 只在该值变化时触发重建，不引入额外重建开销。
     final placementCfg =
         context.select<AppState, String>((s) => s.config.mobileNavPlacement);
+    // 滑动自动收起开关：必须在这里订阅 —— NotificationListener 的启用判定与
+    // 传给导航栏的 hidden 都依赖它，漏订阅会「开关点了没反应」（契约 11 同根因）。
+    final navAutoHide =
+        context.select<AppState, bool>((s) => s.config.navAutoHide);
     final mobile = isMobilePlatform;
 
     // 桌面端：左侧边栏 + 页面；移动端页面在下方用 _mobilePageView（PageView）。
@@ -748,6 +774,11 @@ class _AppShellState extends State<AppShell> with WindowListener {
         // 让遮罩连续跟随 PageView 实时位置，避免滑动切换时
         // 遮罩在中途项「停留一拍再跳走」的动画跳跃。
         pageController: _mobilePageController,
+        // 滑动自动收起：仅「底部」形态生效，侧边导轨恒展开（弹簧动画在
+        // MobileBottomNav 内部，欠阻尼过冲即到位回弹）。
+        hidden: navAutoHide &&
+            placement == MobileNavPlacement.bottom &&
+            _navHiddenByScroll,
       );
       // ── 形态恒定：内容区与导航栏始终是同一个 Stack 的两个固定槽位 ──
       //
@@ -776,12 +807,18 @@ class _AppShellState extends State<AppShell> with WindowListener {
         // 页面区用 PageView：[0,1,3,4] 四个 Tab 滑动全程跟随手指（拖到一半即
         // 「各展示一半」），松手由 PageView 决定回弹或翻页；底部导航点击时同步。
         Positioned.fill(
-          child: Padding(
-            padding: EdgeInsets.only(
-              left: onLeft ? sideInset : 0,
-              right: (!onBottom && !onLeft) ? sideInset : 0,
+          child: NotificationListener<ScrollNotification>(
+            // 滑动自动收起的信号源：各 Tab 内部所有可滚动组件的通知都会冒泡
+            // 到这里；只认垂直轴（横向 PageView 翻页 / 横向 chips 不触发）。
+            onNotification: (n) =>
+                _handleContentScroll(n, navAutoHide && onBottom),
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: onLeft ? sideInset : 0,
+                right: (!onBottom && !onLeft) ? sideInset : 0,
+              ),
+              child: _mobilePageView(),
             ),
-            child: _mobilePageView(),
           ),
         ),
         // 槽位 1：导航栏。底部形态贴底全宽悬浮叠加；侧边形态贴左 / 贴右，

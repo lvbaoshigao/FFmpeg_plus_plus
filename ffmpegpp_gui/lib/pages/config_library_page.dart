@@ -206,6 +206,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       return;
     }
     final path = picked.path!;
+    if (!mounted) return; // pickFile 异步间隙后的首个 context 使用点
     final state = context.read<AppState>();
 
     // 新旧格式由 C++ 端解析（第 5 字节 0xFF = 新版），导入与校验行为完全一致
@@ -476,6 +477,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     entry.description = descCtrl.text;
     descCtrl.dispose();
     _saveLibrary();
+    if (!mounted) return; // showDialog 异步间隙后的首个 context 使用点
 
     // 写盘由 C++ 端完成（写前完整校验，失败不落盘）。
     // v13 起 saveFile 的 bytes 是必填参数且返回 Uri（不再返回可写路径），

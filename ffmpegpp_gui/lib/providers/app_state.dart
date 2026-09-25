@@ -1504,7 +1504,11 @@ class AppState extends ChangeNotifier {
     if (fi >= 0 && !_cancelRequested && _tasks[fi].status == TaskStatus.processing) {
       if (resp['success'] == true) {
         final d = resp['data'] as Map<String, dynamic>?;
-        _tasks[fi] = _tasks[fi].copyWith(status: TaskStatus.completed, progress: 100, outputSize: d?['output_size'] as int?, duration: (d?['duration'] as num?)?.toDouble(), command: (d?['command'] as List?)?.cast<String>());
+        _tasks[fi] = _tasks[fi].copyWith(status: TaskStatus.completed, progress: 100,
+            // 完成态把每步进度补满 1.0：后端只为流式步骤发进度事件，快速步骤
+            // （清理/移动等）可能停在 0，UI 上会出现「完成了但最后一段是空的」
+            callProgresses: List<double>.filled(_tasks[fi].callProgresses.length, 1.0),
+            outputSize: d?['output_size'] as int?, duration: (d?['duration'] as num?)?.toDouble(), command: (d?['command'] as List?)?.cast<String>());
         addLog('任务完成: ${task.filename} (${d?['duration']}s)', category: 'info');
         final sz = d?['output_size'] as int?;
         if (sz != null) addLog('  输出大小: ${(sz / 1024 / 1024).toStringAsFixed(1)}MB', category: 'info');
@@ -1561,7 +1565,11 @@ class AppState extends ChangeNotifier {
     if (fi >= 0 && !_cancelRequested && _tasks[fi].status == TaskStatus.processing) {
       if (resp['success'] == true) {
         final d = resp['data'] as Map<String, dynamic>?;
-        _tasks[fi] = _tasks[fi].copyWith(status: TaskStatus.completed, progress: 100, outputSize: d?['output_size'] as int?, duration: (d?['duration'] as num?)?.toDouble(), command: (d?['command'] as List?)?.cast<String>());
+        _tasks[fi] = _tasks[fi].copyWith(status: TaskStatus.completed, progress: 100,
+            // 完成态把每步进度补满 1.0：后端只为流式步骤发进度事件，快速步骤
+            // （清理/移动等）可能停在 0，UI 上会出现「完成了但最后一段是空的」
+            callProgresses: List<double>.filled(_tasks[fi].callProgresses.length, 1.0),
+            outputSize: d?['output_size'] as int?, duration: (d?['duration'] as num?)?.toDouble(), command: (d?['command'] as List?)?.cast<String>());
         addLog('任务完成: ${task.filename} (${d?['duration']}s)', category: 'info');
         onTaskFinished?.call(task.filename, TaskStatus.completed);
       } else {
@@ -1914,7 +1922,10 @@ class AppState extends ChangeNotifier {
     final fi3 = _tasks.indexWhere((t) => t.id == taskId);
     if (fi3 >= 0 && !_cancelRequested && _tasks[fi3].status == TaskStatus.processing) {
       final outSize = await _measureOutputSize(task.outputPath);
-      _tasks[fi3] = _tasks[fi3].copyWith(status: TaskStatus.completed, progress: 100, outputSize: outSize);
+      _tasks[fi3] = _tasks[fi3].copyWith(status: TaskStatus.completed, progress: 100,
+          // 完成态补满每步进度（理由同上：快速步骤没有进度事件，会停在 0）
+          callProgresses: List<double>.filled(_tasks[fi3].callProgresses.length, 1.0),
+          outputSize: outSize);
       addLog('任务完成: ${task.filename}', category: 'info');
       onTaskFinished?.call(task.filename, TaskStatus.completed);
       _tasksNotify();

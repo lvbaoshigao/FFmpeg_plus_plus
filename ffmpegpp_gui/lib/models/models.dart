@@ -1448,6 +1448,9 @@ class AppConfig {
   String cardStyle;
   // 移动端底部菜单栏样式：与 cardStyle 同四值
   String navStyle;
+  // 滑动时自动收起底部菜单栏：内容上滑（元素向上移动）收起、下滑展开。
+  // 仅移动端「底部」形态生效；侧边导轨形态与桌面端不受影响。
+  bool navAutoHide;
   // 移动端顶部药丸样式：与 cardStyle 同四值
   String pillStyle;
   // 桌面端菜单样式（左侧菜单栏 + 各页顶部菜单栏）：与 cardStyle 同四值。
@@ -1653,6 +1656,7 @@ class AppConfig {
     this.glassEffect = 'liquid',
     this.cardStyle = 'liquid',
     this.navStyle = 'liquid',
+    this.navAutoHide = false,
     this.pillStyle = 'liquid',
     this.menuStyle = 'liquid',
     this.glassAutoTuned = false,
@@ -1811,6 +1815,7 @@ class AppConfig {
         glassEffect: json['glass_effect'] as String? ?? 'liquid',
         cardStyle: _migrateSurfaceStyle(json['card_style'] as String?),
         navStyle: _migrateSurfaceStyle(json['nav_style'] as String?),
+        navAutoHide: json['nav_auto_hide'] as bool? ?? false,
         pillStyle: _migrateSurfaceStyle(json['pill_style'] as String?),
         menuStyle: _migrateSurfaceStyle(json['menu_style'] as String? ?? 'liquid'),
         glassAutoTuned: json['glass_auto_tuned'] as bool? ?? false,
@@ -1906,6 +1911,7 @@ class AppConfig {
         'background_image': backgroundImage, 'background_opacity': backgroundOpacity,
         'glass_effect': glassEffect,
         'card_style': cardStyle, 'nav_style': navStyle, 'pill_style': pillStyle,
+        'nav_auto_hide': navAutoHide,
         'menu_style': menuStyle,
         'glass_auto_tuned': glassAutoTuned,
         'glass_follow_theme': glassFollowTheme,

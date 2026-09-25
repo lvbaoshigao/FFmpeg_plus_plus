@@ -775,6 +775,9 @@ class _SettingsPageState extends State<SettingsPage> {
         state.config.predictiveBack,
         state.config.useDynamicColor,
         state.config.mobileNavPlacement,
+        // 滑动自动收起底部菜单栏：受控 SwitchListTile 直读 config，
+        // 漏在签名外会「点了没反应」（与 mobileNavPlacement 同根因）。
+        state.config.navAutoHide,
         state.config.borderEnabled,
         state.config.borderWidth,
         state.config.borderColor,
@@ -2000,6 +2003,22 @@ Widget _buildSurfaceStyleCard(BuildContext ctx, AppState state) {
           ],
           onSelected: (v) =>
               state.updateConfig((c) => c..mobileNavPlacement = v)),
+      // 滑动自动收起（仅移动端 + 底部形态生效）：内容上滑收起菜单栏、
+      // 下滑展开，动画为整条菜单栏上/下平移 + 到位回弹（弹簧驱动，
+      // 实现在 MobileBottomNav / app.dart 的内容区滚动监听）。
+      SwitchListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        title: Text(zh ? '滑动时自动收起菜单栏' : 'Auto-hide nav bar on scroll',
+            style: TextStyle(fontSize: 13, color: clr)),
+        subtitle: Text(
+            zh
+                ? '上滑收起、下滑展开；仅作用于底部菜单栏'
+                : 'Swipe up to hide, swipe down to show; bottom nav only',
+            style: TextStyle(fontSize: 11, color: scheme.outline)),
+        value: cfg.navAutoHide,
+        onChanged: (v) => state.updateConfig((c) => c..navAutoHide = v),
+      ),
       _styleRow(ctx,
           icon: Icons.crop_landscape_outlined,
           label: s.pillStyleLabel,

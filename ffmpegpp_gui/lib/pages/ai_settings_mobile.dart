@@ -14,6 +14,7 @@ import '../widgets/mobile_bottom_nav.dart';
 import '../widgets/mobile_glass_pill.dart';
 import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_ui.dart';
+import '../widgets/option_menu_bar.dart';
 import '../widgets/toast.dart';
 import '../widgets/wallpaper_background.dart';
 import 'settings_page.dart'
@@ -472,6 +473,9 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
   /// 「获取账户余额」进行中。
   bool _fetchingBalance = false;
 
+  /// 新建时选中的供应商预设（受控下拉的当前值）。
+  String _selectedPreset = 'openai';
+
   @override
   void didUpdateWidget(MobileAiProviderDetailPage old) {
     super.didUpdateWidget(old);
@@ -481,6 +485,7 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
       _forcedNew = false;
       _draft = AiProfile();
       _tab = 0;
+      _selectedPreset = 'openai';
     }
   }
 
@@ -752,7 +757,7 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
             _AiNavRow(
               label: s.isZh ? '获取账户余额' : 'Account Balance',
               value: _fetchingBalance ? (s.isZh ? '查询中…' : 'Loading…') : '',
-              onTap: _fetchingBalance ? null : () => _fetchBalance(context, s),
+              onTap: _fetchingBalance ? null : () => _fetchBalance(s),
             ),
             const Divider(height: 18),
             // 网络代理
@@ -783,25 +788,18 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
             if (_isNew) ...[
               field(
                 s.aiPreset,
-                DropdownMenu<String>(
-                  initialSelection: 'openai',
-                  requestFocusOnTap: false,
-                  width: double.infinity,
-                  menuHeight: 240,
-                  textStyle: TextStyle(fontSize: 12, color: clr),
-                  // 「本地」标注要跟随语言，整表不能再是 const；
-                  // 各条目本身仍是 const，避免每帧重建。
-                  dropdownMenuEntries: [
-                    const DropdownMenuEntry(value: 'openai', label: 'OpenAI'),
-                    const DropdownMenuEntry(
-                        value: 'anthropic', label: 'Anthropic (Claude)'),
-                    const DropdownMenuEntry(value: 'deepseek', label: 'DeepSeek'),
-                    DropdownMenuEntry(
-                        value: 'ollama',
-                        label: s.isZh ? 'Ollama (本地)' : 'Ollama (Local)'),
+                // 与「设置-样式」同款选择框（OptionMenuBar 胶囊触发钮 + 浮层列表）
+                OptionMenuBar<String>(
+                  value: _selectedPreset,
+                  items: [
+                    const OptionItem<String>('openai', 'OpenAI'),
+                    const OptionItem<String>('anthropic', 'Anthropic (Claude)'),
+                    const OptionItem<String>('deepseek', 'DeepSeek'),
+                    OptionItem<String>(
+                        'ollama', s.isZh ? 'Ollama (本地)' : 'Ollama (Local)'),
                   ],
-                  onSelected: (preset) {
-                    if (preset == null) return;
+                  onChanged: (preset) {
+                    setState(() => _selectedPreset = preset);
                     _mutateDraft((d) => applyProfilePreset(d, preset));
                   },
                 ),
@@ -962,7 +960,7 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
                 icon: Icon(Icons.add, size: AppControlSize.comfortable.iconSize),
                 label: Text(isZh ? '添加新…' : 'Add new…',
                     style: const TextStyle(fontSize: 12)),
-                onPressed: () => _addModel(context, s),
+                onPressed: () => _addModel(s),
               ),
             ),
             if (hasModels) ...[
@@ -1095,8 +1093,9 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
     _mutateDraft((d) => d..customHeaders = map);
   }
 
-  /// 手动添加模型。
-  Future<void> _addModel(BuildContext context, AppStrings s) async {
+  /// 手动添加模型。body 里的 [context] 即 State.context（await 后的
+  /// 使用点均有 mounted 守卫，满足 use_build_context_synchronously）。
+  Future<void> _addModel(AppStrings s) async {
     final v = await _promptText(
       context,
       title: s.isZh ? '添加模型' : 'Add Model',
@@ -1170,7 +1169,7 @@ class _MobileAiProviderDetailPageState extends State<MobileAiProviderDetailPage>
 
   /// 查询账户余额。不同供应商端点差异大，这里按协议尝试常见端点，
   /// 失败时明确告知「该供应商不支持/需手动查询」而不是静默失败。
-  Future<void> _fetchBalance(BuildContext context, AppStrings s) async {
+  Future<void> _fetchBalance(AppStrings s) async {
     setState(() => _fetchingBalance = true);
     try {
       final result = await fetchAiBalance(_draft);
@@ -1978,12 +1977,14 @@ class _AiSectionCard extends StatelessWidget {
 }
 
 /// 移动端 AI 设置下拉菜单宽度上限。
-/// 显式给 DropdownMenu width，避免展开面板按最长条目撑开（窄屏溢出、
-/// 桌面端「宽度极大」）。
+/// 约束 OptionMenuBar 触发钮的最大宽度，避免展开面板按最长条目撑开
+/// （窄屏溢出、桌面端「宽度极大」）。
 const double _kAiMenuWidth = 156;
 
-/// AI 设置用下拉菜单（自带展开/收起动画）。
+/// AI 设置用下拉菜单。
 /// entries 为 (值, 显示文案, 图标) 三元组。
+/// 视觉与「设置-样式」的选择框完全同款：内部直接复用 OptionMenuBar
+/// （胶囊触发钮 + OverlayPortal 浮层，宿主卡片高度不随展开变化）。
 class _AiDropdown extends StatelessWidget {
   final String value;
   final List<(String, String, IconData)> entries;
@@ -1997,28 +1998,16 @@ class _AiDropdown extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: _kAiMenuWidth + 8),
-      child: DropdownMenu<String>(
+      child: OptionMenuBar<String>(
         // key 绑定当前值：配置被外部改动后重建时显示最新选中项
         key: ValueKey('aiDropdown_${entries.length}_$value'),
-        initialSelection: value,
-        requestFocusOnTap: false,
-        width: _kAiMenuWidth,
-        menuHeight: 240,
-        textStyle: TextStyle(fontSize: 12, color: scheme.onSurface),
-        dropdownMenuEntries: [
-          for (final e in entries)
-            DropdownMenuEntry(
-              value: e.$1,
-              label: e.$2,
-              leadingIcon: Icon(e.$3, size: 14),
-            ),
+        value: value,
+        items: [
+          for (final e in entries) OptionItem<String>(e.$1, e.$2, icon: e.$3),
         ],
-        onSelected: (v) {
-          if (v != null) onSelected(v);
-        },
+        onChanged: onSelected,
       ),
     );
   }

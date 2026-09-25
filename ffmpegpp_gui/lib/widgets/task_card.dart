@@ -211,15 +211,20 @@ class TaskCard extends StatelessWidget {
                     currentCallIndex: task.currentCallIndex,
                     // 8px：见 kQueueTrackHeight —— 不再是滑块的 16px 规格
                     height: kQueueTrackHeight,
+                    done: task.status == TaskStatus.completed,
                   ),
                   const SizedBox(height: kQueueTrackGap),
                 ],
-                // 下层：当前步骤进度
+                // 下层：当前步骤进度。完成态固定画满（后端可能没为最后一步
+                // 发过进度事件，callProgresses 停在 0 会显示成空条/不确定条）。
                 AppProgressBar(
                   height: kQueueTrackHeight,
-                  value: task.callProgresses.isNotEmpty && task.currentCallIndex < task.callProgresses.length
-                      ? task.callProgresses[task.currentCallIndex]
-                      : null,
+                  value: task.status == TaskStatus.completed
+                      ? 1.0
+                      : task.callProgresses.isNotEmpty &&
+                              task.currentCallIndex < task.callProgresses.length
+                          ? task.callProgresses[task.currentCallIndex]
+                          : null,
                 ),
                 const SizedBox(height: 6),
                 // 速度与百分比同一行。速度为空时左侧留白会让这一行只剩一个孤零零的
@@ -1071,11 +1076,18 @@ class _SegmentedProgressBar extends StatelessWidget {
   final int currentCallIndex;
   final double height;
 
+  /// 任务已完成：所有段一律画满 + success 色。
+  /// 后端只在「步骤开始」时写 callProgresses，最后一步若没有进度流事件
+  /// （快速步骤 / 清理步骤），完成时该段会停在 0 —— 用户反馈的
+  /// 「处理完成了但进度条没显示完成」就是这条缝。
+  final bool done;
+
   const _SegmentedProgressBar({
     required this.segments,
     required this.callProgresses,
     required this.currentCallIndex,
     required this.height,
+    this.done = false,
   });
 
   @override
@@ -1093,7 +1105,11 @@ class _SegmentedProgressBar extends StatelessWidget {
                 margin: EdgeInsets.only(right: i < segments - 1 ? 2 : 0),
                 child: FractionallySizedBox(
                   alignment: Alignment.centerLeft,
-                  widthFactor: i < callProgresses.length ? callProgresses[i].clamp(0.0, 1.0) : 0.0,
+                  widthFactor: done
+                      ? 1.0
+                      : i < callProgresses.length
+                          ? callProgresses[i].clamp(0.0, 1.0)
+                          : 0.0,
                   child: Container(
                     decoration: BoxDecoration(
                       // 关键修复：callProgresses 长度可能 < segments（task 刚创建或 pipelineCalls 还没展开），
@@ -1103,13 +1119,15 @@ class _SegmentedProgressBar extends StatelessWidget {
                       // 配色与 _PipelineLegend / _statusColor 完全对齐：未开始 = neutral、
                       // 进行中 = warning、已完成 = success。原先非当前段的兜底色写成
                       // scheme.primary（品牌色），与图例里的「处理中 = 琥珀」不一致。
-                      color: i < callProgresses.length
-                          ? (i == currentCallIndex && callProgresses[i] < 1.0
-                              ? scheme.sem.warning
-                              : callProgresses[i] >= 1.0
-                                  ? scheme.sem.success
-                                  : scheme.sem.warning)
-                          : scheme.sem.neutral,
+                      color: done
+                          ? scheme.sem.success
+                          : i < callProgresses.length
+                              ? (i == currentCallIndex && callProgresses[i] < 1.0
+                                  ? scheme.sem.warning
+                                  : callProgresses[i] >= 1.0
+                                      ? scheme.sem.success
+                                      : scheme.sem.warning)
+                              : scheme.sem.neutral,
                       // 两端全圆角：与滑块/进度条同一种胶囊语言
                       borderRadius: radius,
                     ),
