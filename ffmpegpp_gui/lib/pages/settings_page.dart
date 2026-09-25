@@ -3795,7 +3795,7 @@ void _openCredits(BuildContext ctx) {
 /// 关于页展示的编译日期（发布时更新）。
 ///
 /// 抽成常量：此前移动端与桌面端两个分支里各写一份字面量，改一处必漏另一处。
-const String kAboutBuildDate = '2026-09-19';
+const String kAboutBuildDate = '2026-09-25';
 
 Widget _buildAbout(BuildContext ctx, AppState state) {
   final s = AppStrings.of(state.config.language);

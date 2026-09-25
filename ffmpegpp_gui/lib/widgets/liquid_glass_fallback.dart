@@ -111,7 +111,7 @@ double effectiveGlassSigma(double value) =>
 
 /// `ImageFilter.blur` 的进程级实例缓存（所有玻璃表面统一走这里）。
 ///
-/// 为什么必须缓存（2026-09-19 玻璃内存审查）：
+/// 为什么必须缓存（2026-09-25 玻璃内存审查）：
 /// `ui.ImageFilter.blur(...)` 每次调用都会新建一个持有 **native handle** 的
 /// Dart 对象，并向 GC 注册 finalizer。而本项目里所有玻璃件（卡片 / 面板 /
 /// 药丸 / 滑块轨道 / 底栏 / CSD 标题栏）都是在 `build` 里现场构造 filter：

@@ -3196,7 +3196,7 @@ class AppState extends ChangeNotifier {
           'result': {
             'protocolVersion': negotiated,
             'capabilities': {'tools': {}, 'resources': {}},
-            'serverInfo': {'name': 'ffmpegpp', 'version': '5.13.37'},
+            'serverInfo': {'name': 'ffmpegpp', 'version': '5.20.43'},
           },
         };
       // MCP 规范要求的心跳：客户端定期 ping 判定连接存活，
