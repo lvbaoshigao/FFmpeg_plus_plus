@@ -946,31 +946,33 @@ class _SettingsPageState extends State<SettingsPage> {
     final hitCounts = <String, int>{
       for (final (sec, cards) in hitsBySection) sec.id: cards.length,
     };
+    // 整条左栏收进**一个**容器（用户反馈：父选项各占一张小卡时，左栏被切
+    // 成一摞碎片）。条目本身不再各自套卡 —— 选中态仍由 _navItem 的主题色胶囊
+    // 表达；容器材质仍走 _cardShell → AppCard，跟随「主题 → 样式 → 卡片样式」。
     return SizedBox(
       width: 190,
-      child: ListView(
-        // addRepaintBoundaries:false —— 子项是玻璃卡（BackdropFilter），而 Skia 下
-        // BackdropFilter 的输入会被光栅缓存：外层若套 RepaintBoundary，玻璃自身
-        // 内容不变时引擎直接复用上一次的滤波快照，滚动后玻璃里仍是旧背景
-        //（见 LiquidGlassBackdrop 顶部的图层约定）。左栏几乎不滚动，关掉无碍。
-        addRepaintBoundaries: false,
+      child: Padding(
         padding: const EdgeInsets.fromLTRB(10, 12, 6, 16),
-        children: [
-          for (final sec in _sections)
-            Padding(
-              // 每个父选项各占一张卡（原先是裸排在左栏上、未选中态完全透明）：
-              // 用户反馈「通用 / 外观等父选项没有框包裹」。走 _cardShell → AppCard
-              // 后左栏与右侧面板同材质，同样跟随「主题 → 样式 → 卡片样式」。
-              // 圆角 12 与 _navItem 的选中胶囊一致 —— 选中时胶囊正好贴满整张卡。
-              padding: const EdgeInsets.only(bottom: 6),
-              child: _cardShell(
-                context,
-                state,
-                _navItem(sec, searching, hitCounts[sec.id] ?? 0, scheme),
-                radius: 12,
-              ),
-            ),
-        ],
+        child: _cardShell(
+          context,
+          state,
+          ListView(
+            // addRepaintBoundaries:false —— 外层是玻璃卡（BackdropFilter），而 Skia 下
+            // BackdropFilter 的输入会被光栅缓存：套上 RepaintBoundary 后，玻璃自身
+            // 内容不变时引擎直接复用上一次的滤波快照，滚动后玻璃里仍是旧背景
+            //（见 LiquidGlassBackdrop 顶部的图层约定）。左栏几乎不滚动，关掉无碍。
+            addRepaintBoundaries: false,
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+            children: [
+              for (final sec in _sections)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 2),
+                  child: _navItem(sec, searching, hitCounts[sec.id] ?? 0, scheme),
+                ),
+            ],
+          ),
+          radius: 16,
+        ),
       ),
     );
   }
@@ -4393,26 +4395,32 @@ Widget _aiSettingsContent(BuildContext bCtx, AppState state, AppStrings s, {requ
 /// 对 AiProfile 应用供应商预设（一键填充端点/模型/上下文）。
 /// 公开供移动端提供商详情页复用。
 void applyProfilePreset(AiProfile c, String preset) {
+  // 模型取值：配置里已经拉过/填过模型清单时用清单第一条（模型列表一律来自
+  // 供应商配置，不再内置固定的 gpt-4o）；清单为空才落一个可编辑的建议值。
+  void pickModel(String suggested) {
+    c.model = c.models.isNotEmpty ? c.models.first.id : suggested;
+  }
+
   switch (preset) {
     case 'openai':
       c.provider = 'openai';
       c.apiUrl = 'https://api.openai.com/v1/chat/completions';
-      c.model = 'gpt-4o';
+      pickModel('gpt-4o');
       c.contextWindow = 128000;
     case 'anthropic':
       c.provider = 'anthropic';
       c.apiUrl = 'https://api.anthropic.com/v1/messages';
-      c.model = _kDefaultAnthropicModel;
+      pickModel(_kDefaultAnthropicModel);
       c.contextWindow = 200000;
     case 'deepseek':
       c.provider = 'openai';
       c.apiUrl = 'https://api.deepseek.com/v1/chat/completions';
-      c.model = 'deepseek-chat';
+      pickModel('deepseek-chat');
       c.contextWindow = 64000;
     case 'ollama':
       c.provider = 'openai';
       c.apiUrl = 'http://localhost:11434/v1/chat/completions';
-      c.model = 'llama3';
+      pickModel('llama3');
       c.contextWindow = 8192;
   }
 }

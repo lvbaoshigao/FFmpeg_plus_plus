@@ -10,10 +10,14 @@ import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
+// 独立面板窗口（真·第二引擎）：main() 里检测到本进程是面板窗口时，
+// 直接跑这个子应用并早退，绝不创建 AppState / 后端。
+import 'pages/detached_window_page.dart';
 import 'platform/app_platform.dart';
 import 'providers/app_state.dart';
 import 'services/gpu_info.dart';
 import 'services/integrity.dart';
+import 'services/multi_window.dart';
 // 高刷新率（Android 专用）：在支持 90/120/144Hz 的屏幕上按设置请求最高刷新率
 import 'services/refresh_rate.dart';
 import 'widgets/font_picker.dart';
@@ -52,6 +56,23 @@ void _startupLog(String msg) {
 }
 
 void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // ── 本进程是不是「独立面板窗口」？──
+  // 必须在**任何主窗口逻辑之前**判定，三个理由：
+  //  1. `_killOldProcesses()` 的 Linux 分支会按进程名杀掉同名的 ffmpegpp_gui
+  //     —— 那正是主窗口自己，子窗口一启动就会把主窗口干掉；
+  //  2. 下面第一件事是清空 startup.log，子窗口会把主窗口的启动日志抹掉；
+  //  3. 子窗口绝不能创建 AppState（会 dlopen 第二份 C++ 后端 + 再起一个
+  //     Python 进程），它只用镜像状态，数据全部走方法通道。
+  if (!isMobilePlatform) {
+    final panelArgs = await MultiWindowService.currentWindowArgs();
+    if (panelArgs != null) {
+      await runDetachedPanelWindow(panelArgs);
+      return;
+    }
+  }
+
   // 清空旧日志
   try {
     File('$_logDir${_sep}startup.log').writeAsStringSync('');
@@ -64,7 +85,7 @@ void main() async {
     _killOldProcesses();
   }
 
-  WidgetsFlutterBinding.ensureInitialized();
+  // Binding 已在 main() 开头初始化（面板窗口判定需要它）
   _startupLog('1-Binding OK');
 
   // ── 内存优化：限制图片缓存上限，避免大量缩略图撑爆内存 ──
@@ -113,6 +134,10 @@ void main() async {
 
   if (!isMobilePlatform) {
     await _initWindow();
+    // 独立面板窗口的宿主通道：子窗口用它把「改参数 / 改图 / 吸附回主栏」等
+    // 请求发回本进程。必须早于任何子窗口的报到，否则子窗口第一次请求会拿到
+    // CHANNEL_NOT_FOUND（详见 services/multi_window.dart 的协议说明）。
+    await MultiWindowService.installHost();
   }
   _startupLog('4-window OK');
 

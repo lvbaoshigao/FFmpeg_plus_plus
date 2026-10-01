@@ -31,7 +31,7 @@ void JsonWriter::stop() {
 }
 
 void JsonWriter::send(const json& obj) {
-    std::string line = obj.dump() + "\n";
+    std::string line = obj.dump(-1, ' ', false, json::error_handler_t::replace) + "\n";
     pushOutput(line);
 }
 
@@ -97,7 +97,7 @@ void JsonWriter::stop() {
 }
 
 void JsonWriter::send(const json& obj) {
-    std::string line = obj.dump() + "\n";
+    std::string line = obj.dump(-1, ' ', false, json::error_handler_t::replace) + "\n";
     {
         std::lock_guard<std::mutex> lock(_mutex);
         _queue.push(line);

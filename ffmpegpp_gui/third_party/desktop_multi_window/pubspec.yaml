@@ -1,0 +1,36 @@
+name: desktop_multi_window
+description: A flutter plugin that create and manager multi window in desktop.
+version: 0.3.1
+homepage: https://github.com/MixinNetwork/flutter-plugins/tree/main/packages/desktop_multi_window
+
+# ── 本地 vendor 说明（本项目维护）─────────────────────────────────────────
+# 上游 pub.dev 包 desktop_multi_window 0.3.1 的完整源码（仅去掉 example/ 与
+# analysis_options.yaml，其余 lib/ + windows/ + macos/ + linux/ 原样保留）。
+#
+# 为什么不用 hosted 依赖：本机构建环境无法向 pub.dev / pub.flutter-io.cn 发起
+# HTTPS（Dart 的 HttpClient 报 socket error，curl 却能通），hosted 依赖会导致
+# `dart pub get` 直接失败。作为 path 依赖不引入任何第三方传递依赖
+# （上游仅依赖 flutter sdk 本身），因此解析完全离线可完成。
+#
+# 这是唯一对上游 pubspec 的改动：删掉 `resolution: workspace`（本仓库不是
+# workspace 根，留着会让 pub 拒绝解析）与 `dev_dependencies`（path 依赖的 dev
+# 依赖不参与解析）。
+#
+# 升级方式：重新拉 pub.dev 的归档覆盖 lib/ 与三个平台的源码目录即可。
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+  flutter: ">=3.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  plugin:
+    platforms:
+      macos:
+        pluginClass: FlutterMultiWindowPlugin
+      windows:
+        pluginClass: DesktopMultiWindowPlugin
+      linux:
+        pluginClass: DesktopMultiWindowPlugin

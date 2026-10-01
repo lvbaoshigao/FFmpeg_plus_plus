@@ -258,7 +258,14 @@ class GraphExecutor {
             || types.contains(PipelineStepType.videoGeometry)
             || types.contains(PipelineStepType.videoOverlay)
             || types.contains(PipelineStepType.audioFade)
-            || types.contains(PipelineStepType.imageAdjust);
+            || types.contains(PipelineStepType.imageAdjust)
+            || types.any((t) => PipelineNode.genericMediaTypes.contains(t));
+        // 通用节点：媒体类型必选（未选说明属性没配置完，禁止执行）
+        for (final g in step.nodes.where((n) => n.isGenericMedia)) {
+          if (g.mediaKind == null) {
+            errors.add('${g.label}: 请先在属性里选择媒体类型（视频/图片/音频）');
+          }
+        }
         if (hasMergeable && hasSequential) {
           final names = step.nodes.map((n) => n.label).join(', ');
           errors.add('同层级节点冲突: $names (合并节点不能与独立节点在同一层级)');
@@ -474,6 +481,18 @@ class GraphExecutor {
             PipelineStepType.videoOverlay => 'video_overlay',
             PipelineStepType.audioFade => 'audio_fade',
             PipelineStepType.imageAdjust => 'image_adjust',
+            // 通用节点：action 由属性里选的媒体类型决定（复用既有 action，后端零改动）
+            PipelineStepType.mediaConvert => switch (n.mediaKind) {
+              MediaType.image => 'image_convert',
+              MediaType.audio => 'audio_convert',
+              _ => 'single', // video 走 avProcess 同款 transcode；未选时在下方安全失败
+            },
+            PipelineStepType.mediaScale => n.mediaKind == MediaType.video ? 'video_geometry' : 'image_scale',
+            PipelineStepType.mediaCrop => n.mediaKind == MediaType.video ? 'video_crop' : 'image_crop',
+            PipelineStepType.mediaRotate => n.mediaKind == MediaType.video ? 'video_geometry' : 'image_rotate',
+            PipelineStepType.mediaColor => n.mediaKind == MediaType.video ? 'video_filter' : 'image_adjust',
+            PipelineStepType.mediaSharpen => n.mediaKind == MediaType.video ? 'video_filter' : 'image_sharpen',
+            PipelineStepType.mediaOverlay => 'video_overlay',
             _ => 'single',
           };
           steps.add(ExecutionStep(action, [n]));
@@ -769,7 +788,9 @@ class GraphExecutor {
 
         case 'single':
           final node = step.nodes.first;
-          if (node.type == PipelineStepType.avProcess) {
+          if (node.type == PipelineStepType.avProcess ||
+              // 通用「格式转换」选视频时与 avProcess 同参同链路（复用 _avOptions）
+              (node.type == PipelineStepType.mediaConvert && node.mediaKind == MediaType.video)) {
             calls.add(BackendCall(
               action: 'transcode',
               params: {'input': currentInput, 'output': currentOutput, 'options': _avOptions(node)},
@@ -1457,6 +1478,28 @@ class GraphExecutor {
         final descs = <String>[];
         for (final n in step.nodes) {
           switch (n.type) {
+            case PipelineStepType.mediaConvert:
+              final mk = n.mediaKind;
+              descs.add('格式转换(${mk == null ? '未选类型' : mk.name}, ${mk == MediaType.video ? n.params['video_codec'] ?? 'h264' : n.params['output_format'] ?? 'auto'})');
+              break;
+            case PipelineStepType.mediaScale:
+              descs.add('缩放(${n.mediaKind?.name ?? '未选类型'})');
+              break;
+            case PipelineStepType.mediaCrop:
+              descs.add('裁剪(${n.params['crop_w'] ?? '?'}x${n.params['crop_h'] ?? '?'})');
+              break;
+            case PipelineStepType.mediaRotate:
+              descs.add('旋转翻转(${n.mediaKind?.name ?? '未选类型'})');
+              break;
+            case PipelineStepType.mediaColor:
+              descs.add('色彩调整(${n.mediaKind?.name ?? '未选类型'})');
+              break;
+            case PipelineStepType.mediaSharpen:
+              descs.add('锐化降噪(${n.mediaKind?.name ?? '未选类型'})');
+              break;
+            case PipelineStepType.mediaOverlay:
+              descs.add('叠加(${n.params['position'] ?? 'bottom-right'})');
+              break;
             case PipelineStepType.avProcess:
               final p = n.params;
               descs.add('编码(${p['video_codec'] ?? 'h264'}/${p['gpu'] ?? 'CPU'}, ${p['resolution'] ?? '原始'})');

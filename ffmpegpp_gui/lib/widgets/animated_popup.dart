@@ -38,6 +38,12 @@ Future<T?> showAnimatedMenu<T>({
   required Offset position,
   required List<AnimatedMenuEntry<T>> items,
   BoxConstraints? constraints,
+  /// 期望的固定宽度（null = 按内容自适应）。
+  ///
+  /// 条目多（如「全部元素」29 项）时，`IntrinsicWidth` 会对每个子项各做一次
+  /// 固有尺寸测量，弹出前要先等一整趟测量 —— 表现为「点一下卡一下」。
+  /// 调用点已知期望宽度时传进来即跳过该测量。
+  double? width,
 }) {
   final overlay =
       Overlay.of(context).context.findRenderObject() as RenderBox?;
@@ -48,6 +54,7 @@ Future<T?> showAnimatedMenu<T>({
       screenSize: screen,
       items: items,
       constraints: constraints ?? popupConstraints(),
+      width: width,
       capturedThemes:
           InheritedTheme.capture(from: context, to: Navigator.of(context).context),
       barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
@@ -96,6 +103,7 @@ class _AnimatedMenuRoute<T> extends PopupRoute<T> {
     required this.screenSize,
     required this.items,
     required this.constraints,
+    this.width,
     required this.capturedThemes,
     required this.barrierLabel,
   });
@@ -104,6 +112,9 @@ class _AnimatedMenuRoute<T> extends PopupRoute<T> {
   final Size screenSize;
   final List<AnimatedMenuEntry<T>> items;
   final BoxConstraints constraints;
+
+  /// 固定宽度（null = 按内容自适应，见 [showAnimatedMenu]）。
+  final double? width;
   final CapturedThemes capturedThemes;
 
   @override
@@ -127,6 +138,7 @@ class _AnimatedMenuRoute<T> extends PopupRoute<T> {
     final menu = _AnimatedMenuBody<T>(
       items: items,
       constraints: constraints,
+      width: width,
       onSelected: (v) => Navigator.of(context).pop(v),
     );
     return CustomSingleChildLayout(
@@ -193,17 +205,43 @@ class _AnimatedMenuBody<T> extends StatelessWidget {
     required this.items,
     required this.constraints,
     required this.onSelected,
+    this.width,
   });
 
   final List<AnimatedMenuEntry<T>> items;
   final BoxConstraints constraints;
   final ValueChanged<T?> onSelected;
 
+  /// 固定宽度（null = 走 IntrinsicWidth 按内容自适应）。
+  final double? width;
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final popupTheme = Theme.of(context).popupMenuTheme;
     final radius = BorderRadius.circular(18);
+    // 条目列表先单独构造：下面按 width 决定是否再套一层 IntrinsicWidth。
+    final list = SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final item in items)
+            if (item.isDivider)
+              Divider(
+                height: item.height,
+                thickness: 1,
+                color: scheme.outlineVariant.withAlpha(90),
+              )
+            else
+              _MenuRow<T>(
+                item: item,
+                onSelected: onSelected,
+              ),
+        ],
+      ),
+    );
     return ConstrainedBox(
       constraints: constraints,
       child: Material(
@@ -211,30 +249,10 @@ class _AnimatedMenuBody<T> extends StatelessWidget {
         elevation: popupTheme.elevation ?? 8,
         borderRadius: radius,
         clipBehavior: Clip.antiAlias,
-        child: IntrinsicWidth(
-          stepWidth: 1,
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(vertical: 6),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (final item in items)
-                  if (item.isDivider)
-                    Divider(
-                      height: item.height,
-                      thickness: 1,
-                      color: scheme.outlineVariant.withAlpha(90),
-                    )
-                  else
-                    _MenuRow<T>(
-                      item: item,
-                      onSelected: onSelected,
-                    ),
-              ],
-            ),
-          ),
-        ),
+        // 给定宽度时直接用它：省掉 IntrinsicWidth 对整个条目列表的固有尺寸遍历。
+        child: width != null
+            ? SizedBox(width: width, child: list)
+            : IntrinsicWidth(stepWidth: 1, child: list),
       ),
     );
   }

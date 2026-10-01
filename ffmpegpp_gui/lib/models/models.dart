@@ -92,6 +92,14 @@ enum PipelineStepType {
   videoOverlay,
   audioFade,
   imageAdjust,
+  // ── 通用节点：语义跨 音/视频/图片，具体媒体类型由属性 media_type 选择 ──
+  mediaConvert,
+  mediaScale,
+  mediaCrop,
+  mediaRotate,
+  mediaColor,
+  mediaSharpen,
+  mediaOverlay,
   output,
   /// 新版 .fppx 强制导入的未知类型节点：真实类型 ID 存 [PipelineNode.unknownTypeId]，
   /// 仅可编辑/保存/原样导出，不参与转码执行。
@@ -140,6 +148,13 @@ class PipelineStep {
       case PipelineStepType.videoOverlay: return '画面叠加';
       case PipelineStepType.audioFade: return '音频淡入淡出';
       case PipelineStepType.imageAdjust: return '图片调整';
+      case PipelineStepType.mediaConvert: return '格式转换';
+      case PipelineStepType.mediaScale: return '缩放';
+      case PipelineStepType.mediaCrop: return '裁剪';
+      case PipelineStepType.mediaRotate: return '旋转翻转';
+      case PipelineStepType.mediaColor: return '色彩调整';
+      case PipelineStepType.mediaSharpen: return '锐化降噪';
+      case PipelineStepType.mediaOverlay: return '叠加';
       case PipelineStepType.output: return '输出';
       case PipelineStepType.unknown: return '未知节点';
     }
@@ -177,6 +192,13 @@ class PipelineStep {
       case PipelineStepType.videoOverlay: return 'Overlay';
       case PipelineStepType.audioFade: return 'Audio Fade';
       case PipelineStepType.imageAdjust: return 'Image Adjust';
+      case PipelineStepType.mediaConvert: return 'Convert';
+      case PipelineStepType.mediaScale: return 'Scale';
+      case PipelineStepType.mediaCrop: return 'Crop';
+      case PipelineStepType.mediaRotate: return 'Rotate & Flip';
+      case PipelineStepType.mediaColor: return 'Color Adjust';
+      case PipelineStepType.mediaSharpen: return 'Sharpen & Denoise';
+      case PipelineStepType.mediaOverlay: return 'Overlay';
       case PipelineStepType.output: return 'Output';
       case PipelineStepType.unknown: return 'Unknown';
     }
@@ -279,6 +301,97 @@ class PipelineNode {
   /// 逻辑门是否可输出（所有逻辑门都有输出）
   bool get hasGateOutput => isGate;
 
+  // ── 通用节点（跨格式）：媒体类型是必选属性 ──────────────────
+  /// 通用节点集合：语义跨 音/视频/图片。
+  static const Set<PipelineStepType> genericMediaTypes = <PipelineStepType>{
+    PipelineStepType.mediaConvert,
+    PipelineStepType.mediaScale,
+    PipelineStepType.mediaCrop,
+    PipelineStepType.mediaRotate,
+    PipelineStepType.mediaColor,
+    PipelineStepType.mediaSharpen,
+    PipelineStepType.mediaOverlay,
+  };
+
+  /// 通用节点的媒体类型参数键；值为 [MediaType.name]（video / image / audio）。
+  static const String mediaTypeParamKey = 'media_type';
+
+  /// 是否通用节点（媒体类型由属性选择，而非类型自带）。
+  bool get isGenericMedia => genericMediaTypes.contains(type);
+
+  /// 通用节点当前选定的媒体类型；未选或取值非法时返回 null。
+  /// 未选时 [inputTypes] 为空 ⇒ 画布不允许连线，导出校验也会拦。
+  MediaType? get mediaKind {
+    if (!isGenericMedia) return null;
+    final v = params[mediaTypeParamKey] as String?;
+    if (v == null || v.isEmpty) return null;
+    return MediaType.values.asNameMap()[v];
+  }
+
+  /// 通用节点各自支持哪些媒体类型（顺序即选择器展示序）。
+  /// 不在表中的组合在选择器里不出现（如「缩放」没有音频语义）。
+  static const Map<PipelineStepType, List<MediaType>> genericSupportedKinds =
+      <PipelineStepType, List<MediaType>>{
+    PipelineStepType.mediaConvert: <MediaType>[MediaType.video, MediaType.image, MediaType.audio],
+    PipelineStepType.mediaScale: <MediaType>[MediaType.video, MediaType.image],
+    PipelineStepType.mediaCrop: <MediaType>[MediaType.video, MediaType.image],
+    PipelineStepType.mediaRotate: <MediaType>[MediaType.video, MediaType.image],
+    PipelineStepType.mediaColor: <MediaType>[MediaType.video, MediaType.image],
+    PipelineStepType.mediaSharpen: <MediaType>[MediaType.video, MediaType.image],
+    PipelineStepType.mediaOverlay: <MediaType>[MediaType.video],
+  };
+
+  /// 通用节点在每个媒体类型下允许落盘的参数键（必须与 node_registry.cpp
+  /// 中该节点 paramKeys 的登记范围一致）。切换媒体类型时据此清掉不适用键 ——
+  /// 否则残留键已登记在别的旧节点名下，v2 导出会判 PKC_MISMATCH 拒绝写盘。
+  static const Map<PipelineStepType, Map<MediaType, Set<String>>> genericParamKeys =
+      <PipelineStepType, Map<MediaType, Set<String>>>{
+    PipelineStepType.mediaConvert: <MediaType, Set<String>>{
+      MediaType.video: <String>{'video_codec', 'audio_codec', 'preset', 'gpu', 'resolution', 'resolution_w', 'resolution_h', 'rate_mode', 'crf', 'video_bitrate', 'vf_filters', 'af_filters', 'overwrite', 'sample_rate', 'pix_fmt', 'fps', 'fps_value', 'audio_bitrate', 'audio_bitrate_mode', 'audio_channels'},
+      MediaType.image: <String>{'output_format', 'quality'},
+      MediaType.audio: <String>{'audio_codec', 'output_format'},
+    },
+    PipelineStepType.mediaScale: <MediaType, Set<String>>{
+      MediaType.video: <String>{'scale_mode', 'scale_width', 'scale_height', 'scale_percent', 'flip', 'rotate'},
+      MediaType.image: <String>{'scale_mode', 'scale_factor', 'random_min', 'random_max'},
+    },
+    PipelineStepType.mediaCrop: <MediaType, Set<String>>{
+      MediaType.video: <String>{'crop_w', 'crop_h', 'crop_x', 'crop_y'},
+      MediaType.image: <String>{'crop_w', 'crop_h', 'crop_x', 'crop_y'},
+    },
+    PipelineStepType.mediaRotate: <MediaType, Set<String>>{
+      MediaType.video: <String>{'scale_mode', 'scale_width', 'scale_height', 'scale_percent', 'flip', 'rotate'},
+      MediaType.image: <String>{'rotate_mode', 'angle', 'random_min', 'random_max'},
+    },
+    PipelineStepType.mediaColor: <MediaType, Set<String>>{
+      MediaType.video: <String>{'presets', 'eq_brightness', 'eq_contrast', 'eq_saturation', 'eq_gamma', 'hue_degrees', 'vignette_angle', 'denoise_strength', 'unsharp_amount'},
+      MediaType.image: <String>{'saturation', 'gamma', 'contrast'},
+    },
+    PipelineStepType.mediaSharpen: <MediaType, Set<String>>{
+      MediaType.video: <String>{'presets', 'eq_brightness', 'eq_contrast', 'eq_saturation', 'eq_gamma', 'hue_degrees', 'vignette_angle', 'denoise_strength', 'unsharp_amount'},
+      MediaType.image: <String>{'sharpen_mode', 'sharpen_strength', 'random_min', 'random_max'},
+    },
+    PipelineStepType.mediaOverlay: <MediaType, Set<String>>{
+      MediaType.video: <String>{'overlay_path', 'position', 'opacity', 'margin', 'overlay_scale'},
+    },
+  };
+
+  /// 连线时按上游媒体类型自动回填（仅在未选时生效，不覆盖用户显式选择）。
+  void adoptGenericMediaType(MediaType k) {
+    if (isGenericMedia && mediaKind == null) params[mediaTypeParamKey] = k.name;
+  }
+
+  /// 用户显式切换媒体类型：清掉不属于新类型的键（v2 导出 PKC_MISMATCH 防线）。
+  /// `media_type` 自身与节点命名/容器选文件键保留。
+  void setGenericMediaType(MediaType k) {
+    if (!isGenericMedia) return;
+    params[mediaTypeParamKey] = k.name;
+    final allowed = genericParamKeys[type]?[k] ?? const <String>{};
+    const reserved = <String>{'node_name', 'container_file_select', 'container_selected_indices'};
+    params.removeWhere((key, _) =>
+        key != mediaTypeParamKey && !reserved.contains(key) && !allowed.contains(key));
+  }
+
   Map<String, dynamic> toJson() => {
     'id': id, 'type': type.name, 'params': params, 'x': x, 'y': y,
     if (gateType != null) 'gate': gateType,
@@ -327,6 +440,13 @@ class PipelineNode {
       case PipelineStepType.videoOverlay: return '画面叠加';
       case PipelineStepType.audioFade: return '音频淡入淡出';
       case PipelineStepType.imageAdjust: return '图片调整';
+      case PipelineStepType.mediaConvert: return '格式转换';
+      case PipelineStepType.mediaScale: return '缩放';
+      case PipelineStepType.mediaCrop: return '裁剪';
+      case PipelineStepType.mediaRotate: return '旋转翻转';
+      case PipelineStepType.mediaColor: return '色彩调整';
+      case PipelineStepType.mediaSharpen: return '锐化降噪';
+      case PipelineStepType.mediaOverlay: return '叠加';
       case PipelineStepType.output: return '输出';
       case PipelineStepType.unknown:
         return '未知节点${unknownTypeId == null ? '' : ' $unknownTypeId'}';
@@ -365,6 +485,13 @@ class PipelineNode {
       case PipelineStepType.videoOverlay: return 'Overlay';
       case PipelineStepType.audioFade: return 'Audio Fade';
       case PipelineStepType.imageAdjust: return 'Image Adjust';
+      case PipelineStepType.mediaConvert: return 'Convert';
+      case PipelineStepType.mediaScale: return 'Scale';
+      case PipelineStepType.mediaCrop: return 'Crop';
+      case PipelineStepType.mediaRotate: return 'Rotate & Flip';
+      case PipelineStepType.mediaColor: return 'Color Adjust';
+      case PipelineStepType.mediaSharpen: return 'Sharpen & Denoise';
+      case PipelineStepType.mediaOverlay: return 'Overlay';
       case PipelineStepType.output: return 'Output';
       case PipelineStepType.unknown: return 'Unknown';
     }
@@ -373,77 +500,101 @@ class PipelineNode {
   bool get hasInput => type != PipelineStepType.start;
   bool get hasOutput => !isGate && type != PipelineStepType.output;
 
-  Set<MediaType> get inputTypes => switch (type) {
-    PipelineStepType.start => {},
-    PipelineStepType.avProcess => {MediaType.video},
-    PipelineStepType.subtitle => {MediaType.video},
-    PipelineStepType.clip => {MediaType.video},
-    PipelineStepType.frame => {MediaType.video},
-    PipelineStepType.speed => {MediaType.video},
-    PipelineStepType.imageConvert => {MediaType.image},
-    PipelineStepType.audioConvert => {MediaType.audio},
-    PipelineStepType.audioQuality => {MediaType.audio},
-    PipelineStepType.audioSpeed => {MediaType.audio},
-    PipelineStepType.audioVolume => {MediaType.audio},
-    PipelineStepType.audioCompressor => {MediaType.audio},
-    PipelineStepType.audioMetadata => {MediaType.audio},
-    PipelineStepType.extractAudio => {MediaType.video},
-    PipelineStepType.concatMedia => {MediaType.video, MediaType.audio},
-    PipelineStepType.imageToVideo => {MediaType.image},
-    PipelineStepType.imageCrop => {MediaType.image},
-    PipelineStepType.imageRotate => {MediaType.image},
-    PipelineStepType.imageScale => {MediaType.image},
-    PipelineStepType.imageBrightness => {MediaType.image},
-    PipelineStepType.imageNoise => {MediaType.image},
-    PipelineStepType.imageSharpen => {MediaType.image},
-    PipelineStepType.imageDenoise => {MediaType.image},
-    PipelineStepType.imageChannelExtract => {MediaType.image},
-    PipelineStepType.videoCrop => {MediaType.video},
-    PipelineStepType.videoFilter => {MediaType.video},
-    PipelineStepType.videoGeometry => {MediaType.video},
-    PipelineStepType.videoOverlay => {MediaType.video},
-    PipelineStepType.audioFade => {MediaType.audio},
-    PipelineStepType.imageAdjust => {MediaType.image},
-    PipelineStepType.output => {MediaType.video, MediaType.image, MediaType.audio},
-    PipelineStepType.unknown => {},
-  };
+  Set<MediaType> get inputTypes {
+    // 通用节点：类型来自属性选择，未选则空集（画布不允许连线）
+    if (isGenericMedia) {
+      final k = mediaKind;
+      return k == null ? const <MediaType>{} : <MediaType>{k};
+    }
+    return switch (type) {
+      PipelineStepType.start => {},
+      PipelineStepType.avProcess => {MediaType.video},
+      PipelineStepType.subtitle => {MediaType.video},
+      PipelineStepType.clip => {MediaType.video},
+      PipelineStepType.frame => {MediaType.video},
+      PipelineStepType.speed => {MediaType.video},
+      PipelineStepType.imageConvert => {MediaType.image},
+      PipelineStepType.audioConvert => {MediaType.audio},
+      PipelineStepType.audioQuality => {MediaType.audio},
+      PipelineStepType.audioSpeed => {MediaType.audio},
+      PipelineStepType.audioVolume => {MediaType.audio},
+      PipelineStepType.audioCompressor => {MediaType.audio},
+      PipelineStepType.audioMetadata => {MediaType.audio},
+      PipelineStepType.extractAudio => {MediaType.video},
+      PipelineStepType.concatMedia => {MediaType.video, MediaType.audio},
+      PipelineStepType.imageToVideo => {MediaType.image},
+      PipelineStepType.imageCrop => {MediaType.image},
+      PipelineStepType.imageRotate => {MediaType.image},
+      PipelineStepType.imageScale => {MediaType.image},
+      PipelineStepType.imageBrightness => {MediaType.image},
+      PipelineStepType.imageNoise => {MediaType.image},
+      PipelineStepType.imageSharpen => {MediaType.image},
+      PipelineStepType.imageDenoise => {MediaType.image},
+      PipelineStepType.imageChannelExtract => {MediaType.image},
+      PipelineStepType.videoCrop => {MediaType.video},
+      PipelineStepType.videoFilter => {MediaType.video},
+      PipelineStepType.videoGeometry => {MediaType.video},
+      PipelineStepType.videoOverlay => {MediaType.video},
+      PipelineStepType.audioFade => {MediaType.audio},
+      PipelineStepType.imageAdjust => {MediaType.image},
+      PipelineStepType.output => {MediaType.video, MediaType.image, MediaType.audio},
+      PipelineStepType.unknown => {},
+        PipelineStepType.mediaConvert ||
+        PipelineStepType.mediaScale ||
+        PipelineStepType.mediaCrop ||
+        PipelineStepType.mediaRotate ||
+        PipelineStepType.mediaColor ||
+        PipelineStepType.mediaSharpen ||
+        PipelineStepType.mediaOverlay => const <MediaType>{},
+    };
+  }
 
-  MediaType? get outputType => switch (type) {
-    PipelineStepType.start => switch (params['file_media_type'] as String? ?? 'video') {
-      'audio' => MediaType.audio, 'image' => MediaType.image, _ => MediaType.video,
-    },
-    PipelineStepType.avProcess => MediaType.video,
-    PipelineStepType.subtitle => MediaType.video,
-    PipelineStepType.clip => MediaType.video,
-    PipelineStepType.frame => MediaType.image,
-    PipelineStepType.speed => MediaType.video,
-    PipelineStepType.imageConvert => MediaType.image,
-    PipelineStepType.audioConvert => MediaType.audio,
-    PipelineStepType.audioQuality => MediaType.audio,
-    PipelineStepType.audioSpeed => MediaType.audio,
-    PipelineStepType.audioVolume => MediaType.audio,
-    PipelineStepType.audioCompressor => MediaType.audio,
-    PipelineStepType.audioMetadata => MediaType.audio,
-    PipelineStepType.extractAudio => MediaType.audio,
-    PipelineStepType.concatMedia => MediaType.video,
-    PipelineStepType.imageToVideo => MediaType.video,
-    PipelineStepType.imageCrop => MediaType.image,
-    PipelineStepType.imageRotate => MediaType.image,
-    PipelineStepType.imageScale => MediaType.image,
-    PipelineStepType.imageBrightness => MediaType.image,
-    PipelineStepType.imageNoise => MediaType.image,
-    PipelineStepType.imageSharpen => MediaType.image,
-    PipelineStepType.imageDenoise => MediaType.image,
-    PipelineStepType.imageChannelExtract => MediaType.image,
-    PipelineStepType.videoCrop => MediaType.video,
-    PipelineStepType.videoFilter => MediaType.video,
-    PipelineStepType.videoGeometry => MediaType.video,
-    PipelineStepType.videoOverlay => MediaType.video,
-    PipelineStepType.audioFade => MediaType.audio,
-    PipelineStepType.imageAdjust => MediaType.image,
-    PipelineStepType.output => null,
-    PipelineStepType.unknown => null,
-  };
+  MediaType? get outputType {
+    if (isGenericMedia) return mediaKind;
+    return switch (type) {
+      PipelineStepType.start => switch (params['file_media_type'] as String? ?? 'video') {
+        'audio' => MediaType.audio, 'image' => MediaType.image, _ => MediaType.video,
+      },
+      PipelineStepType.avProcess => MediaType.video,
+      PipelineStepType.subtitle => MediaType.video,
+      PipelineStepType.clip => MediaType.video,
+      PipelineStepType.frame => MediaType.image,
+      PipelineStepType.speed => MediaType.video,
+      PipelineStepType.imageConvert => MediaType.image,
+      PipelineStepType.audioConvert => MediaType.audio,
+      PipelineStepType.audioQuality => MediaType.audio,
+      PipelineStepType.audioSpeed => MediaType.audio,
+      PipelineStepType.audioVolume => MediaType.audio,
+      PipelineStepType.audioCompressor => MediaType.audio,
+      PipelineStepType.audioMetadata => MediaType.audio,
+      PipelineStepType.extractAudio => MediaType.audio,
+      PipelineStepType.concatMedia => MediaType.video,
+      PipelineStepType.imageToVideo => MediaType.video,
+      PipelineStepType.imageCrop => MediaType.image,
+      PipelineStepType.imageRotate => MediaType.image,
+      PipelineStepType.imageScale => MediaType.image,
+      PipelineStepType.imageBrightness => MediaType.image,
+      PipelineStepType.imageNoise => MediaType.image,
+      PipelineStepType.imageSharpen => MediaType.image,
+      PipelineStepType.imageDenoise => MediaType.image,
+      PipelineStepType.imageChannelExtract => MediaType.image,
+      PipelineStepType.videoCrop => MediaType.video,
+      PipelineStepType.videoFilter => MediaType.video,
+      PipelineStepType.videoGeometry => MediaType.video,
+      PipelineStepType.videoOverlay => MediaType.video,
+      PipelineStepType.audioFade => MediaType.audio,
+      PipelineStepType.imageAdjust => MediaType.image,
+      PipelineStepType.output => null,
+      PipelineStepType.unknown => null,
+        PipelineStepType.mediaConvert ||
+        PipelineStepType.mediaScale ||
+        PipelineStepType.mediaCrop ||
+        PipelineStepType.mediaRotate ||
+        PipelineStepType.mediaColor ||
+        PipelineStepType.mediaSharpen ||
+        PipelineStepType.mediaOverlay => null,
+    };
+  }
 
   String get mediaTag {
     if (type == PipelineStepType.start) return 'In';
@@ -1292,7 +1443,7 @@ class AiProfile {
     this.provider = 'openai',
     this.apiKey = '',
     this.apiUrl = 'https://api.openai.com/v1/chat/completions',
-    this.model = 'gpt-4o',
+    this.model = '',  // 不再内置固定模型：留空 = 未配置，由供应商配置动态决定
     this.contextWindow = 128000,
     this.maxTokens = 4096,
     this.temperature = 0.3,
@@ -1316,7 +1467,7 @@ class AiProfile {
         provider: json['provider'] as String? ?? 'openai',
         apiKey: SecureKeyStore.decrypt(json['api_key'] as String? ?? ''),
         apiUrl: json['api_url'] as String? ?? 'https://api.openai.com/v1/chat/completions',
-        model: json['model'] as String? ?? 'gpt-4o',
+        model: json['model'] as String? ?? '',
         contextWindow: AppConfig._asInt(json['context_window'], 128000), // [FIX M-7]
         maxTokens: AppConfig._asInt(json['max_tokens'], 4096), // [FIX M-7]
         temperature: (json['temperature'] as num?)?.toDouble() ?? 0.3,
@@ -1694,7 +1845,7 @@ class AppConfig {
     this.aiProvider = 'openai',
     this.aiApiKey = '',
     this.aiApiUrl = 'https://api.openai.com/v1/chat/completions',
-    this.aiModel = 'gpt-4o',
+    this.aiModel = '',  // 同上：模型列表一律来自供应商配置，不再有内置项
     this.aiEnabled = true,
     this.aiReadAccess = false,
     this.aiWriteAccess = false,
@@ -1868,7 +2019,7 @@ class AppConfig {
         aiProvider: json['ai_provider'] as String? ?? 'openai',
         aiApiKey: SecureKeyStore.decrypt(json['ai_api_key'] as String? ?? ''),
         aiApiUrl: json['ai_api_url'] as String? ?? 'https://api.openai.com/v1/chat/completions',
-        aiModel: json['ai_model'] as String? ?? 'gpt-4o',
+        aiModel: json['ai_model'] as String? ?? '',
         aiEnabled: json['ai_enabled'] as bool? ?? true,
         // 旧配置迁移：ai_read_access/ai_auto_apply 存在但类型不对时软回退，避免整份配置加载失败
         aiReadAccess: _softBool(json['ai_read_access']) ?? _softBool(json['ai_auto_apply']) ?? false,

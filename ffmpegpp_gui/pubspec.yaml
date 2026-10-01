@@ -19,6 +19,18 @@ dependencies:
   http: ^1.6.0
   crypto: ^3.0.7
   desktop_drop: ^0.8.4
+  # 真正脱离应用的独立系统窗口（元素/属性面板、AI 面板拖出为独立窗口）。
+  # 注意：每个子窗口是**独立的 Flutter 引擎**，无法共享主窗口内存里的 AppState，
+  # 面板数据必须经 WindowMethodChannel 同步 —— 见 lib/services/multi_window.dart。
+  # 三平台各需一处原生注册（windows/runner/flutter_window.cpp、
+  # macos/Runner/MainFlutterWindow.swift、linux/runner/my_application.cc），
+  # 否则子窗口内调不动 window_manager 等插件。
+  #
+  # 走本地 vendor（third_party/，与 oc_liquid_glass 同一惯例）而非 hosted：
+  # 本机构建环境无法让 Dart 直连 pub.dev，hosted 依赖会让 pub get 直接失败。
+  # 该包零第三方传递依赖，path 引用可完全离线解析。
+  desktop_multi_window:
+    path: third_party/desktop_multi_window
   ffi: ^2.2.0
   archive: ^4.3.0
   # 替换已停维的 flutter_markdown（pub.dev 2025-05-30 标记 discontinued）。

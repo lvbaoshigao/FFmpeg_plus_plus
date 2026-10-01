@@ -25,6 +25,9 @@ import '../providers/app_state.dart';
 import '../services/ai_chat_history.dart';
 import '../services/fppx2_service.dart';
 import '../services/graph_executor.dart';
+// 独立面板系统窗口（desktop_multi_window，另一个 Flutter 引擎）：
+// 编辑器是它的宿主，负责快照生成与请求转发，见该文件顶部的协议说明。
+import '../services/multi_window.dart';
 import '../services/pipeline_autosave.dart';
 import '../services/thumbnail_service.dart';
 // 控件高度档位令牌：顶栏 AI 药丸、AI 面板的批准/拒绝与发送按钮统一取档位高度，
@@ -34,9 +37,12 @@ import '../theme/app_semantic_colors.dart';
 import '../theme/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/animated_popup.dart';
+import '../widgets/fppx_password.dart';
 import '../widgets/gate_symbol_painter.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/liquid_glass_fallback.dart';
+// 节点图标/配色表：与独立面板窗口共用（见该文件顶部说明）
+import '../widgets/node_icons.dart';
 import '../widgets/step_editors/audio_compressor_step_editor.dart';
 import '../widgets/step_editors/audio_convert_step_editor.dart';
 import '../widgets/step_editors/audio_fade_step_editor.dart';
@@ -49,6 +55,7 @@ import '../widgets/step_editors/clip_step_editor.dart';
 import '../widgets/step_editors/concat_media_step_editor.dart';
 import '../widgets/step_editors/extract_audio_step_editor.dart';
 import '../widgets/step_editors/frame_step_editor.dart';
+import '../widgets/step_editors/generic_step_editor.dart';
 import '../widgets/step_editors/image_adjust_step_editor.dart';
 import '../widgets/step_editors/image_brightness_step_editor.dart';
 import '../widgets/step_editors/image_channel_extract_step_editor.dart';
@@ -91,6 +98,17 @@ const _gridStep = 40.0;
 const _kMiniMapW = 156.0;
 const _kMiniMapH = 106.0;
 
+/// 内嵌小窗（元素/属性面板、AI 面板拖出后）的默认尺寸。
+///
+/// 面板「拖出主界面」= 变为应用内自由浮动的小窗（与 PS 的面板拖出同一种交互）：
+/// 自带标题栏、可最小化、可隐藏、可吸附回主栏。真正脱离应用的独立系统窗口需要
+/// 额外引入多窗口插件（独立引擎 + 跨窗口状态同步），见提交说明。
+const double _kFloatPanelW = 320.0;
+const double _kFloatPanelH = 440.0;
+const double _kFloatAiW = 420.0;
+/// 最小化后剩下的高度（标题栏 + 外边距）
+const double _kFloatTitleH = 40.0;
+
 double _nodeWFor(PipelineStepType type) =>
     (type == PipelineStepType.start || type == PipelineStepType.output) ? _nodeWNarrow : _nodeW;
 double _totalNodeWFor(PipelineStepType type) => _portZoneW + _nodeWFor(type) + _portZoneW;
@@ -118,7 +136,9 @@ class PipelineEditorPage extends StatefulWidget {
   State<PipelineEditorPage> createState() => _PipelineEditorPageState();
 }
 
-class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowListener {
+class _PipelineEditorPageState extends State<PipelineEditorPage>
+    with WindowListener
+    implements PanelHostDelegate {
   final List<PipelineNode> _nodes = [];
   final List<PipelineConnection> _connections = [];
   Set<String> _selectedNodeIds = {};
@@ -227,6 +247,67 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   final List<PipelineGraph> _undoStack = [];
   final List<PipelineGraph> _redoStack = [];
 
+  // ── 本次改动新增的状态 ──
+  /// 小地图左上角在画布视口内的自定义位置（null = 停在默认右下角）。
+  /// 仅 PC 端可按住小地图右上角的握把拖动改变。
+  Offset? _miniMapFloat;
+  /// 「元素」选择框：只展示当前文件媒体类型可用（含一跳跨类型产出）的节点。
+  bool _showOnlyAvailable = false;
+  /// 右侧「元素 / 属性」面板：隐藏（菜单栏图标可恢复）。
+  bool _panelHidden = false;
+  /// 面板已被拖出为应用内浮动小窗（吸附回右栏时置回 false）。
+  bool _panelDetached = false;
+  /// 面板最小化：只留标题栏。
+  bool _panelMinimized = false;
+  /// 浮动面板左上角（相对画布视口）；null = 拖出时按默认位置摆放。
+  Offset? _panelFloatPos;
+  /// PC 端 AI 面板：拖出为浮动小窗 / 最小化。
+  bool _aiDetached = false;
+  bool _aiMinimized = false;
+  Offset? _aiFloatPos;
+
+  /// 面板已被拖到**真正的系统窗口**里（desktop_multi_window 另起一个 Flutter
+  /// 引擎）。这是比 [_panelDetached]（应用内浮动小窗）更外面的一层状态：外置
+  /// 期间主窗口里连浮动小窗都不该再画，否则同一份面板会同时出现在两处。
+  bool _panelExternal = false;
+  bool _aiExternal = false;
+
+  /// 上一次推给独立窗口的「结构指纹」。拖动滑块时 `setState` 会高频触发同步，
+  /// 指纹不变就只推选中节点的参数（几十字节），避免每帧整图重发。
+  String? _pushedShape;
+
+  /// 上一次推给独立窗口的「参数指纹」（`节点 id + 参数 JSON`），同上。
+  String? _pushedParams;
+
+  /// AI 面板的窄接口句柄：外置交接会话（导出 / 导入消息）时要用。
+  /// 面板 unmount 后它会被置空，所以另有 [_aiSessionCache] 兜底。
+  AiPanelApi? _aiPanelApi;
+
+  /// 已从 AI 面板导出的会话消息。抽屉 / 浮窗一旦让位给系统窗口，面板就会
+  /// unmount，会话必须提前落在内存里，否则独立窗口里的对话会从空白开始。
+  List<Map<String, dynamic>>? _aiSessionCache;
+  /// 小窗标题栏的拖动累计量：元素/属性面板与 AI 面板共用
+  /// （同一时刻只可能有一个标题栏在被拖）
+  Offset _winDragAccum = Offset.zero;
+  /// 移动端属性卡片被手动关闭时记下「当时选中的对象 id」：
+  /// 换选别的节点时卡片自动回来，选回同一个对象则保持关闭
+  /// （此时顶部菜单栏会出现一枚图标可随时恢复）。
+  String? _mobilePropsHiddenFor;
+  /// 移动端属性卡片是否应当显示。
+  bool get _mobilePropsShown {
+    final id = _selectedNode?.id ?? _selectedLogicBlockId;
+    if (id == null) return false;
+    return _mobilePropsHiddenFor != id;
+  }
+  /// 本次会话的写入格式（覆盖 widget.configFormat，可在编辑器内切换）：
+  /// 'legacy' = 旧版 JSON，'v2' = 新版模块化二进制。
+  late String _writeFormat = widget.configFormat;
+  /// .fppx 体积估算的缓存签名：每次提交（_commitChange / undo / redo）+1。
+  int _sizeTick = 0;
+  int _sizeTickCached = -1;
+  int _sizeBytesCached = 0;
+  String _sizeFormatCached = '';
+
   // 直接对对象做深拷贝，避免节点 params 是活引用导致 undo 快照被后续参数编辑回溯改写。
   // 原先走 jsonEncode→jsonDecode 往返：一次快照需序列化整图 + 反序列化重建全部对象，
   // 在 50 步栈深、大图（数百节点）场景下是明确的卡顿源；改为模型层 deepCopy() 后省去
@@ -259,6 +340,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       _lastSelectedId = null;
       _selectedLogicBlockId = null;
     });
+    _sizeTick++;
   }
 
   void _saveGraph() {
@@ -277,6 +359,20 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     final graph = _currentGraph();
     context.read<AppState>().setCurrentPipeline(graph);
     _scheduleAutosave(graph);
+    // 体积估算的缓存签名：任何一次提交都可能改变配置体积
+    _sizeTick++;
+  }
+
+  /// 每次 `setState` 之后同步一次独立面板窗口。
+  ///
+  /// 独立窗口是另一个引擎，看不到这边的任何内存。选中节点、增删节点、连线、
+  /// 甚至只改了一个参数，都必须显式经方法通道推过去 —— 而 `setState` 是这些
+  /// 变化唯一的共同出口（画布点选、拖拽连线、属性面板编辑最终都会落到它），
+  /// 在这里兜底最不容易漏。没有外置面板时 [_syncOpenPanels] 立刻返回，零开销。
+  @override
+  void setState(VoidCallback fn) {
+    super.setState(fn);
+    _syncOpenPanels();
   }
 
   PipelineGraph _currentGraph() => PipelineGraph(nodes: _nodes, connections: _connections, logicBlocks: _logicBlocks);
@@ -485,6 +581,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     };
     _appState.mcpOnListNodes = () => _nodes.map((n) => n.toJson()).toList();
     _appState.mcpOnListConnections = () => _connections.map((c) => c.toJson()).toList();
+    // 独立面板窗口的宿主：方法通道在 main() 里已注册好，这里补上「谁来处理」。
+    // 不挂委托时子窗口的请求一律返回 null（面板会永远停在「连接中」）。
+    if (!isMobilePlatform) {
+      MultiWindowService.delegate = this;
+    }
   }
 
   /// 移动端横竖屏切换：切换时调用系统 Orientation API，离开页面时恢复竖屏。
@@ -536,6 +637,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     // 移除 windowManager 监听，避免 window manager 持有本 State 的强引用导致泄漏
     if (!Platform.isWindows && !isMobilePlatform) {
       windowManager.removeListener(this);
+    }
+    // 独立面板窗口：编辑器一关宿主就不在了。先摘委托再让子窗口自毁 ——
+    // 反过来的话，子窗口在自毁前发出的请求会打到一个已经销毁的 State 上。
+    if (!isMobilePlatform) {
+      if (identical(MultiWindowService.delegate, this)) {
+        MultiWindowService.delegate = null;
+      }
+      unawaited(MultiWindowService.closeAll());
     }
     // 只取消定时器，不在此清除草稿：草稿改为在「显式保存／确认放弃」时清除。
     // 经窗口关闭按钮、崩溃等未确认路径退出时草稿保留，下次打开可恢复。
@@ -609,51 +718,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     return idx >= 0 ? _nodes[idx] : null;
   }
 
-  IconData _stepIcon(PipelineStepType t) {
-    switch (t) {
-      case PipelineStepType.start: return Icons.movie_outlined;
-      case PipelineStepType.avProcess: return Icons.tune_outlined;
-      case PipelineStepType.subtitle: return Icons.subtitles_outlined;
-      case PipelineStepType.clip: return Icons.content_cut;
-      case PipelineStepType.frame: return Icons.photo_camera_outlined;
-      case PipelineStepType.speed: return Icons.speed;
-      case PipelineStepType.imageConvert: return Icons.image;
-      case PipelineStepType.audioConvert: return Icons.audiotrack;
-      case PipelineStepType.audioQuality: return Icons.equalizer;
-      case PipelineStepType.audioSpeed: return Icons.speed;
-      case PipelineStepType.audioVolume: return Icons.volume_up;
-      case PipelineStepType.audioCompressor: return Icons.compress;
-      case PipelineStepType.audioMetadata: return Icons.library_music;
-      case PipelineStepType.extractAudio: return Icons.music_note;
-      case PipelineStepType.concatMedia: return Icons.merge_type;
-      case PipelineStepType.imageToVideo: return Icons.movie_creation;
-      case PipelineStepType.imageCrop: return Icons.crop;
-      case PipelineStepType.imageRotate: return Icons.rotate_right;
-      case PipelineStepType.imageScale: return Icons.photo_size_select_large;
-      case PipelineStepType.imageBrightness: return Icons.brightness_6;
-      case PipelineStepType.imageNoise: return Icons.grain;
-      case PipelineStepType.imageSharpen: return Icons.deblur;
-      case PipelineStepType.imageDenoise: return Icons.blur_on;
-      case PipelineStepType.imageChannelExtract: return Icons.color_lens_outlined;
-      case PipelineStepType.videoCrop: return Icons.crop_free;
-      case PipelineStepType.videoFilter: return Icons.auto_fix_high;
-      case PipelineStepType.videoGeometry: return Icons.aspect_ratio;
-      case PipelineStepType.videoOverlay: return Icons.layers_outlined;
-      case PipelineStepType.audioFade: return Icons.gradient;
-      case PipelineStepType.imageAdjust: return Icons.tune;
-      case PipelineStepType.output: return Icons.save_alt_outlined;
-      case PipelineStepType.unknown: return Icons.help_outline;
-    }
-  }
+  IconData _stepIcon(PipelineStepType t) => stepIconFor(t);
 
-  Color _nodeColor(PipelineStepType t, ColorScheme scheme, {int? customColor}) {
-    if (customColor != null) return Color(customColor).withAlpha(180);
-    switch (t) {
-      case PipelineStepType.start: return scheme.primaryContainer;
-      case PipelineStepType.output: return scheme.tertiaryContainer;
-      default: return scheme.surfaceContainerHighest;
-    }
-  }
+  Color _nodeColor(PipelineStepType t, ColorScheme scheme, {int? customColor}) =>
+      nodeAccentColor(t, scheme, customColor: customColor);
 
   // ── 节点操作 ──
 
@@ -1166,9 +1234,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     if (outType != null && inTypes.isNotEmpty && !inTypes.contains(outType)) {
       showToast(context, zh
             ? '类型不兼容：${fromNode.label} 输出 ${outType.name}，${toNode.label} 需要 ${inTypes.map((t) => t.name).join("/")}'
-            : 'Incompatible: ${fromNode.labelEn} outputs ${outType.name}, ${toNode.labelEn} needs ${inTypes.map((t) => t.name).join("/")}',
+          : 'Incompatible: ${fromNode.labelEn} outputs ${outType.name}, ${toNode.labelEn} needs ${inTypes.map((t) => t.name).join("/")}',
           type: ToastType.error);
       return;
+    }
+    // 通用节点：按上游输出类型自动回填媒体类型（仅未选时生效，不覆盖用户显式选择）
+    if (toNode.isGenericMedia && toNode.mediaKind == null && !fromNode.isGate) {
+      toNode.adoptGenericMediaType(outType ?? MediaType.video);
     }
     _pushUndo();
     setState(() {
@@ -1309,6 +1381,25 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     });
   }
 
+  /// 保存按钮统一样式：实心主题色底 + 反色图标。
+  ///
+  /// 改造前同一功能在 PC 上出现两种配色（Windows 顶栏走 IconButton.filled 的默认
+  /// primary/onPrimary，非 Windows 工具栏与移动端却是裸 onSurface 图标），深色
+  /// 主题下软盘图标压在半透明底上边界几乎看不出（用户反馈「配色杂乱、对比不足」）。
+  /// 这里收成一份，三处调用点共用。
+  ButtonStyle _saveButtonStyle(
+    ColorScheme scheme, {
+    double radius = 8,
+    EdgeInsetsGeometry? padding,
+  }) =>
+      IconButton.styleFrom(
+        backgroundColor: scheme.primary,
+        foregroundColor: scheme.onPrimary,
+        highlightColor: scheme.onPrimary.withAlpha(40),
+        padding: padding ?? const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(radius)),
+      );
+
   void _save() {
     final graph = PipelineGraph(nodes: _nodes, connections: _connections, logicBlocks: _logicBlocks);
     final errors = GraphExecutor.validateGraph(graph);
@@ -1353,7 +1444,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     final graph = PipelineGraph(nodes: _nodes, connections: _connections, logicBlocks: _logicBlocks);
     // 新版格式由 C++ 端写前校验（允许未知节点原样导出），本地预检会误拦；
     // 旧版沿用本地预检保持历史行为。
-    final errors = widget.configFormat == 'v2'
+    // 格式取**本次会话的写入格式**：以前写死在配置创建时选的 configFormat，
+    // 编辑器内无法改（用户反馈要能在编辑器内切换）。
+    final errors = _writeFormat == 'v2'
         ? <String>[]
         : GraphExecutor.validateGraph(graph);
     if (errors.isNotEmpty) {
@@ -1391,57 +1484,28 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       return;
     }
 
-    final descCtrl = TextEditingController();
     final scheme = Theme.of(context).colorScheme;
     final zh = s.isZh;
 
-    final confirmed = await showDialog<bool>(
+    // 导出选项由一个自管状态的对话框收集：加密开关会动态显隐口令与算法选择，
+    // 内联构建的 AlertDialog 无法重建自己。对话框是独立路由，页面的 setState
+    // 不会重建它，所以格式变化仍要通过 onFormatChanged 同步回页面。
+    final opts = await showDialog<_ExportDialogResult>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Row(children: [
-          Icon(Icons.file_upload_outlined, size: 20, color: scheme.primary),
-          const SizedBox(width: 8),
-          Text(zh ? '导出配置' : 'Export Config', style: TextStyle(color: scheme.onSurface)),
-        ]),
-        content: SizedBox(width: 400, child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text(zh ? '将当前节点配置导出为 .fppx 文件，可应用于其他视频。' : 'Export current node config as .fppx file for reuse.',
-              style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            decoration: BoxDecoration(color: scheme.surfaceContainerHighest.withAlpha(80), borderRadius: BorderRadius.circular(8)),
-            child: Row(children: [
-              Icon(Icons.info_outline, size: 14, color: scheme.outline),
-              const SizedBox(width: 6),
-              Text('${_nodes.length} ${zh ? '节点' : 'nodes'}  •  ${_connections.length} ${zh ? '连线' : 'links'}',
-                  style: TextStyle(fontSize: 12, color: scheme.outline)),
-            ]),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: descCtrl, maxLines: 4,
-            decoration: InputDecoration(
-              labelText: zh ? '配置介绍（可选）' : 'Description (optional)',
-              labelStyle: TextStyle(color: scheme.onSurfaceVariant),
-              hintText: zh ? '描述这个配置的用途...' : 'Describe what this config does...',
-              hintStyle: TextStyle(color: scheme.outline),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-              alignLabelWithHint: true,
-            ),
-            style: TextStyle(fontSize: 13, color: scheme.onSurface),
-          ),
-        ])),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(s.cancel)),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(zh ? '导出' : 'Export')),
-        ],
+      builder: (ctx) => _ExportConfigDialog(
+        initialFormat: _writeFormat,
+        nodeCount: _nodes.length,
+        linkCount: _connections.length,
+        zh: zh,
+        onFormatChanged: (v) {
+          if (mounted) setState(() => _writeFormat = v);
+        },
       ),
     );
 
-    if (confirmed != true) { descCtrl.dispose(); return; }
+    if (opts == null) return;
 
-    final desc = descCtrl.text;
-    descCtrl.dispose();
+    final desc = opts.description;
 
     // v13 起 saveFile 必填 bytes 且返回 Uri（不再返回可写路径）：
     // 先让 C++ 写到临时文件，读回字节后再交给 saveFile 落盘。
@@ -1449,8 +1513,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     final tmpPath = '${Directory.systemTemp.path}${Platform.pathSeparator}export_$exportName';
 
     // 写盘由 C++ 端完成（写前完整校验；失败不落盘并带回 errors）
+    // 这里重新读一次 _writeFormat：上面那个对话框里可以直接改写入格式
     final exportRes = await FppxService(appState.backend).exportGraph(
-      graph, tmpPath, description: desc, newFormat: widget.configFormat == 'v2',
+      graph, tmpPath,
+      description: desc,
+      newFormat: _writeFormat == 'v2',
+      encrypted: opts.encrypted,
+      password: opts.password,
+      encryptAlgo: opts.encryptAlgo,
     );
     if (!mounted) return;
     if (!exportRes.success) {
@@ -1502,6 +1572,28 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     }
   }
 
+  /// 导入 .fppx（含加密口令流程）。返回 null 表示已中止（取消 / 已提示失败）。
+  ///
+  /// 首次调用不带口令：C++ 端若发现文件已加密会返回 need_password（不是错误），
+  /// 这里再弹「输入口令」框。按规范 §6.9，口令错误时对话框**保持打开**并显示
+  /// 统一文案（"口令错误，或文件已损坏 / 被篡改"），允许直接重试；用户取消则给
+  /// 「已取消」提示，不当错误弹。
+  /// 导入 .fppx（含加密口令流程；实现见 widgets/fppx_password.dart）。
+  /// 返回 null 表示已中止（取消 / 已提示失败）。
+  Future<FppxImportResult?> _importWithPassword(
+    String path,
+    AppStrings s, {
+    bool force = false,
+  }) {
+    return importFppxWithPassword(
+      context,
+      FppxService(context.read<AppState>().backend),
+      path,
+      force: force,
+      zh: s.isZh,
+    );
+  }
+
   /// 从 .fppx 文件加载节点配置到画布（覆盖当前画布）。
   /// 新旧格式均由 C++ 端解析；[force]=true 表示用户已确认强制导入未知节点。
   Future<void> _importConfig(AppStrings s, {bool force = false}) async {
@@ -1522,9 +1614,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     }
 
     try {
-      final imported = await FppxService(context.read<AppState>().backend)
-          .importFile(path, force: force);
+      final imported = await _importWithPassword(path, s, force: force);
       if (!mounted) return;
+      if (imported == null) return;
       if (!imported.success) {
         final detail = imported.errors.isNotEmpty
             ? imported.errors.join('\n')
@@ -1611,9 +1703,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   Future<void> _importConfigPath(String path, AppStrings s, {bool force = false}) async {
     final zh = s.isZh;
     try {
-      final imported = await FppxService(context.read<AppState>().backend)
-          .importFile(path, force: force);
+      final imported = await _importWithPassword(path, s, force: force);
       if (!mounted) return;
+      if (imported == null) return;
       if (!imported.success || imported.graph == null) {
         final detail = imported.errors.isNotEmpty
             ? imported.errors.join('\n')
@@ -2059,6 +2151,20 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     );
   }
 
+  // ── 通用节点（跨 音/视频/图片，创建后在属性里选择媒体类型）──
+  static const _genericTypes = [
+    PipelineStepType.mediaConvert,
+    PipelineStepType.mediaScale,
+    PipelineStepType.mediaCrop,
+    PipelineStepType.mediaRotate,
+    PipelineStepType.mediaColor,
+    PipelineStepType.mediaSharpen,
+    PipelineStepType.mediaOverlay,
+  ];
+  // 被通用节点合并的旧单格式节点（imageConvert/audioConvert/imageScale/
+  // videoGeometry/imageCrop/videoCrop/imageRotate/imageAdjust/videoFilter/
+  // imageSharpen/videoOverlay）不再出现在工具箱，但枚举与编辑器保留，
+  // 旧配置文件仍可正常还原、编辑与执行。
   static const _videoTypes = [
     PipelineStepType.avProcess,
     PipelineStepType.subtitle,
@@ -2066,13 +2172,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     PipelineStepType.frame,
     PipelineStepType.speed,
     PipelineStepType.extractAudio,
-    PipelineStepType.videoCrop,
-    PipelineStepType.videoFilter,
-    PipelineStepType.videoGeometry,
-    PipelineStepType.videoOverlay,
   ];
   static const _audioTypes = [
-    PipelineStepType.audioConvert,
     PipelineStepType.audioQuality,
     PipelineStepType.audioSpeed,
     PipelineStepType.audioVolume,
@@ -2081,16 +2182,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     PipelineStepType.audioFade,
   ];
   static const _imageTypes = [
-    PipelineStepType.imageConvert,
-    PipelineStepType.imageCrop,
-    PipelineStepType.imageRotate,
-    PipelineStepType.imageScale,
     PipelineStepType.imageBrightness,
     PipelineStepType.imageNoise,
-    PipelineStepType.imageSharpen,
     PipelineStepType.imageDenoise,
     PipelineStepType.imageChannelExtract,
-    PipelineStepType.imageAdjust,
   ];
   static const _containerTypes = [
     PipelineStepType.concatMedia,
@@ -2098,11 +2193,75 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   ];
   static const _allNodeTypes = [
     PipelineStepType.start,
+    ..._genericTypes,
     ..._videoTypes,
     ..._audioTypes,
     ..._imageTypes,
     PipelineStepType.output,
   ];
+
+  /// 当前画布源文件的媒体类型集合（容器模式取容器内文件的类型并集）。
+  ///
+  /// 单文件模式看扩展名（mp4→video / png→image / mp3→audio）。
+  Set<MediaType> _sourceMediaTypes() {
+    final info = widget.containerInfo;
+    if (info != null && info.typeCounts.isNotEmpty) {
+      final set = <MediaType>{
+        for (final e in info.typeCounts.entries)
+          if (e.value > 0) e.key,
+      };
+      if (set.isNotEmpty) return set;
+    }
+    return {detectMediaType(widget.video.filename)};
+  }
+
+  /// 跨媒体类型的「入口节点」：它们把一种媒体转成另一种，所以源媒体可用时，
+  /// 也要把它们的产出类型一并放开（用户举例：视频源经「提取音频」后应当能用
+  /// 整套音频节点）。
+  ///
+  /// 刻意只登记**提取 / 换链**型节点：「帧提取」虽然也产出图片，但它的语义是
+  /// 导出静帧、而不是继续在同一张图上处理链，放开它会让视频源点亮整组图片节点，
+  /// 正好背离「只显示可用节点」的初衷。
+  static const Map<PipelineStepType, MediaType> _crossTypeEntries = {
+    PipelineStepType.extractAudio: MediaType.audio,
+    PipelineStepType.imageToVideo: MediaType.video,
+  };
+
+  /// 「显示可用」的结果集：源媒体类型 + 一跳跨类型入口的产出之后，所有输入类型
+  /// 能被覆盖的节点。
+  ///
+  /// 视频源 → 视频节点 +（提取音频后的）音频节点；音频源 → 只有音频节点；
+  /// 图片源 → 图片节点 +（合成视频后的）视频节点。
+  Set<PipelineStepType> _availableTypes() {
+    final usable = <MediaType>{..._sourceMediaTypes()};
+    for (final e in _crossTypeEntries.entries) {
+      final step = PipelineNode(id: '', type: e.key);
+      if (step.inputTypes.any(usable.contains)) usable.add(e.value);
+    }
+    final out = <PipelineStepType>{
+      PipelineStepType.start,
+      PipelineStepType.output,
+    };
+    for (final t in _allNodeTypes) {
+      if (t == PipelineStepType.start || t == PipelineStepType.output) continue;
+      // 通用节点的媒体类型由属性选择（未选时 inputTypes 为空集），不受源媒体约束，恒可用
+      if (PipelineNode.genericMediaTypes.contains(t)) {
+        out.add(t);
+        continue;
+      }
+      if (PipelineNode(id: '', type: t).inputTypes.any(usable.contains)) {
+        out.add(t);
+      }
+    }
+    return out;
+  }
+
+  /// 「全部元素」菜单与工具箱要展示的类型（开启「显示可用」时按媒体类型过滤）。
+  List<PipelineStepType> _visibleNodeTypes() {
+    if (!_showOnlyAvailable) return _allNodeTypes;
+    final avail = _availableTypes();
+    return [for (final t in _allNodeTypes) if (avail.contains(t)) t];
+  }
 
   List<PipelineStepType> _top5Types() {
     final counts = context.read<AppState>().config.nodeUsageCount;
@@ -2182,13 +2341,23 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       items: [
         ...top5.map(makeItem),
         const AnimatedMenuEntry<PipelineStepType>.divider(),
-        actionRow(Icons.more_horiz, s.isZh ? '全部元素...' : 'All elements...', () async {
-          final all = await showAnimatedMenu<PipelineStepType>(
-            context: context,
-            position: screenPos,
-            items: _allNodeTypes.map(makeItem).toList(),
-          );
-          if (all != null) _addNodeAt(all, canvasPos);
+        actionRow(Icons.more_horiz, s.isZh ? '全部元素...' : 'All elements...', () {
+          // 二级菜单延后一帧再弹：一级菜单（约 10 项）正在退场的同时把 29 项的
+          // 二级菜单推入，会让同一帧的布局/绘制翻倍 —— 这正是「点一下卡一下」
+          // 的来源。摊到相邻帧后肉眼无感。
+          // 同时给菜单一个固定宽度：29 项若走 IntrinsicWidth，弹出前要先对每一项
+          // 做一遍固有尺寸测量，白白多出一整趟布局。
+          final types = _visibleNodeTypes();
+          WidgetsBinding.instance.addPostFrameCallback((_) async {
+            if (!mounted) return;
+            final all = await showAnimatedMenu<PipelineStepType>(
+              context: context,
+              position: screenPos,
+              width: isMobilePlatform ? 200 : 240,
+              items: [for (final t in types) makeItem(t)],
+            );
+            if (all != null && mounted) _addNodeAt(all, canvasPos);
+          });
         }, color: scheme.outline),
         const AnimatedMenuEntry<PipelineStepType>.divider(),
         actionRow(Icons.select_all, s.isZh ? '全选' : 'Select all', _selectAllNodes),
@@ -2457,6 +2626,26 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         editor = AudioFadeStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
       case PipelineStepType.imageAdjust:
         editor = ImageAdjustStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+      case PipelineStepType.mediaConvert:
+      case PipelineStepType.mediaScale:
+      case PipelineStepType.mediaCrop:
+      case PipelineStepType.mediaRotate:
+      case PipelineStepType.mediaColor:
+      case PipelineStepType.mediaSharpen:
+      case PipelineStepType.mediaOverlay:
+        // 通用节点：媒体类型必选（属性面板顶部选择器），按类型复用既有编辑器
+        editor = GenericMediaStepEditor(
+          key: ValueKey(node.id),
+          node: node,
+          onChanged: onChanged,
+          isZh: isZh,
+          videoPath: v.filepath,
+          videoDuration: v.duration,
+          videoWidth: v.width,
+          videoHeight: v.height,
+          fps: v.fps,
+          sourceImagePath: _resolveSourceImagePath(node),
+        );
       case PipelineStepType.unknown:
         // 新版 .fppx 强制导入的未知节点：不可编辑参数，仅显示类型 ID
         final cs2 = Theme.of(context).colorScheme;
@@ -2659,10 +2848,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                 onPressed: _save,
                 icon: const Icon(Icons.save_outlined, size: 18),
                 tooltip: s.save,
-                style: IconButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                ),
+                style: _saveButtonStyle(scheme),
               ),
             ),
           ],
@@ -2674,11 +2860,60 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   /// 画布顶层的 AI 工具条：配置一键选择 + 自动/询问模式 + AI 抽屉开关。
   /// 操作全局配置（AI 面板自动跟随），避免挤在 AI 面板头部。
+  /// 顶栏「配置 · 模型」药丸的候选模型：全部来自**供应商配置**
+  /// （[AiProfile.models]）。
+  ///
+  /// 当前生效配置的清单优先；它没配模型时汇总其它已启用配置的（去重保序）；
+  /// 仍然为空就返回空表 —— 由 UI 明确提示「未配置模型」，而不是回落到
+  /// 内置的 gpt-4o（用户反馈：列表里以前只有这一个内置模型）。
+  List<String> _modelOptionsFor(AppConfig cfg, AiProfile? active) {
+    final out = <String>[];
+    void addAll(List<AiModelEntry> list) {
+      for (final m in list) {
+        if (m.id.isNotEmpty && !out.contains(m.id)) out.add(m.id);
+      }
+    }
+
+    if (active != null) addAll(active.models);
+    for (final p in cfg.aiProfiles.where((p) => p.enabled)) {
+      if (identical(p, active)) continue;
+      addAll(p.models);
+    }
+    return out;
+  }
+
+  /// 顶栏当前显示的模型：配置里选中的 → 全局选中（设置页选过的）→ 空。
+  String _currentModelLabel(AppConfig cfg, AiProfile? active) {
+    final fromProfile = active?.model ?? '';
+    if (fromProfile.isNotEmpty) return fromProfile;
+    return cfg.aiModel;
+  }
+
+  /// 选择模型后写回哪里：有「当前生效的配置」就写配置，否则写全局字段。
+  ///
+  /// 请求实际用的是生效配置的模型（见 _AiPanelViewState._effectiveModel 的优先级），
+  /// 所以只写全局字段的话，在已有配置时会表现为「点了没反应」。
+  Future<void> _applyModelChoice(String model) async {
+    final appState = context.read<AppState>();
+    final cfg = appState.config;
+    final pid = cfg.activeAiProfileId;
+    final idx = pid.isEmpty
+        ? -1
+        : cfg.aiProfiles.indexWhere((p) => p.id == pid && p.enabled);
+    if (idx >= 0) {
+      await appState.updateConfig((c) => c..aiProfiles[idx].model = model);
+    } else {
+      await appState.updateConfig((c) => c..aiModel = model);
+    }
+  }
+
   Widget _buildTopAiBar(ColorScheme scheme, AppStrings s) {
     final cfg = context.read<AppState>().config;
     final profiles = cfg.aiProfiles.where((p) => p.enabled).toList();
     final activeProfile = profiles.where((p) => p.id == cfg.activeAiProfileId).firstOrNull;
-    final showModel = activeProfile?.model ?? cfg.aiModel;
+    // 模型候选与当前模型都来自供应商配置（见 _modelOptionsFor）
+    final modelOptions = _modelOptionsFor(cfg, activeProfile);
+    final showModel = _currentModelLabel(cfg, activeProfile);
     // 三颗药丸共用一档度量：高度 32 / 圆角 8 / 水平内边距 12 / 图标 16，全部取自
     // AppControlSize.regular（与设置页的按钮同档）。
     // 改造前高度和圆角本来就一致，但水平内边距是 8 / 8 / 10、前置图标是 16 / 13 / 13
@@ -2689,12 +2924,33 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           borderRadius: BorderRadius.circular(pill.radius),
           border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
         );
+    // 三颗药丸的前置图标统一走同一个定宽槽：并排时图标纵向对齐、间距一致
+    //（用户反馈「顶栏这排图标大小/间距不齐」）。
+    Widget pillIcon(IconData icon, {Color? color}) => SizedBox(
+          width: pill.iconSize + 2,
+          height: pill.iconSize + 2,
+          child: Icon(icon, size: pill.iconSize,
+              color: color ?? scheme.onSurfaceVariant),
+        );
     return Row(mainAxisSize: MainAxisSize.min, children: [
       // AI 抽屉开关 + 会话标题（可点击，带展开/折叠动画）
       Tooltip(
-        message: s.isZh ? (_aiDrawerOpen ? '收起 AI 面板' : '展开 AI 面板') : (_aiDrawerOpen ? 'Collapse AI panel' : 'Expand AI panel'),
+        message: _aiDetached
+            ? (s.isZh ? '吸附回主界面' : 'Dock back')
+            : (s.isZh ? (_aiDrawerOpen ? '收起 AI 面板' : '展开 AI 面板') : (_aiDrawerOpen ? 'Collapse AI panel' : 'Expand AI panel')),
         child: InkWell(
-          onTap: () => setState(() => _aiDrawerOpen = !_aiDrawerOpen),
+          // 已拖出为浮动小窗时，这颗药丸负责把面板吸附回左侧抽屉
+          //（否则在浮动状态下点它没有任何可见反馈，用户找不回面板）
+          onTap: () => setState(() {
+            if (_aiDetached) {
+              _aiDetached = false;
+              _aiMinimized = false;
+              _aiFloatPos = null;
+              _aiDrawerOpen = true;
+            } else {
+              _aiDrawerOpen = !_aiDrawerOpen;
+            }
+          }),
           borderRadius: BorderRadius.circular(pill.radius),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 220),
@@ -2706,11 +2962,15 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             child: Row(mainAxisSize: MainAxisSize.min, children: [
               AnimatedSwitcher(
                 duration: const Duration(milliseconds: 200),
-                child: Icon(
-                  _aiDrawerOpen ? Icons.chevron_right : Icons.smart_toy,
+                child: SizedBox(
                   key: ValueKey(_aiDrawerOpen ? 'open' : 'closed'),
-                  size: pill.iconSize,
-                  color: _aiDrawerOpen ? scheme.primary : scheme.onSurfaceVariant,
+                  width: pill.iconSize + 2,
+                  height: pill.iconSize + 2,
+                  child: Icon(
+                    _aiDrawerOpen ? Icons.chevron_right : Icons.smart_toy,
+                    size: pill.iconSize,
+                    color: _aiDrawerOpen ? scheme.primary : scheme.onSurfaceVariant,
+                  ),
                 ),
               ),
               // 会话标题（有则显示，AnimatedSize 展开/折叠）
@@ -2753,7 +3013,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             if (v == '__custom_model__') {
               _promptTopCustomModel(scheme, s);
             } else if (v.startsWith('model:')) {
-              context.read<AppState>().updateConfig((c) => c..aiModel = v.substring(6));
+              _applyModelChoice(v.substring(6));
             } else {
               final id = v.startsWith('profile:') ? v.substring(8) : '';
               context.read<AppState>().updateConfig((c) => c..activeAiProfileId = id);
@@ -2779,23 +3039,43 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             PopupMenuItem<String>(enabled: false,
                 child: Text(s.isZh ? '模型' : 'Model',
                     style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: scheme.outline))),
-            PopupMenuItem(value: 'model:$showModel',
-                child: Row(children: [
-                  Icon(Icons.psychology_outlined, size: 13, color: scheme.primary),
-                  const SizedBox(width: 6),
-                  Flexible(child: Text(showModel, maxLines: 1, overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12))),
-                ])),
+            // 供应商配置里的模型清单（动态）。当前配置没配模型时会汇总其它已启用
+            // 配置的模型；一个都没有就明确提示去设置里添加。
+            for (final m in modelOptions)
+              PopupMenuItem<String>(value: 'model:$m',
+                  child: Row(children: [
+                    Icon(
+                        m == showModel
+                            ? Icons.radio_button_checked
+                            : Icons.radio_button_off,
+                        size: 13,
+                        color: m == showModel ? scheme.primary : scheme.outline),
+                    const SizedBox(width: 6),
+                    Flexible(child: Text(m, maxLines: 1, overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12))),
+                  ])),
+            if (modelOptions.isEmpty)
+              PopupMenuItem<String>(enabled: false,
+                  child: Text(
+                      s.isZh
+                          ? '未配置模型（设置 → AI 中添加）'
+                          : 'No models configured (Settings → AI)',
+                      style: TextStyle(fontSize: 11, color: scheme.outline))),
             PopupMenuItem(value: '__custom_model__',
                 child: Text(s.isZh ? '自定义模型...' : 'Custom model...', style: const TextStyle(fontSize: 12))),
           ],
           child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.tune, size: pill.iconSize, color: scheme.primary),
+            pillIcon(Icons.tune, color: scheme.primary),
             const SizedBox(width: 4),
-            Flexible(child: Text(
-              '${activeProfile?.name ?? (s.isZh ? '默认' : 'Default')} · $showModel',
-              maxLines: 1, overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: scheme.onSurface))),
+            ConstrainedBox(
+              // 文本上限：配置名 + 模型名都很长时不再把顶栏撑开
+              constraints: const BoxConstraints(maxWidth: 220),
+              child: Text(
+                '${activeProfile?.name ?? (s.isZh ? '默认' : 'Default')} · '
+                '${showModel.isEmpty ? (s.isZh ? '未配置模型' : 'No model') : showModel}',
+                maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+            ),
             Icon(Icons.arrow_drop_down, size: pill.iconSize, color: scheme.outline),
           ]),
         ),
@@ -2814,8 +3094,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               ? scheme.primaryContainer.withAlpha(140)
               : scheme.secondaryContainer.withAlpha(140)),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(cfg.aiApproveMode == 'auto' ? Icons.bolt : Icons.help_outline,
-                size: pill.iconSize, color: scheme.primary),
+            pillIcon(cfg.aiApproveMode == 'auto' ? Icons.bolt : Icons.help_outline,
+                color: scheme.primary),
             const SizedBox(width: 4),
             Text(cfg.aiApproveMode == 'auto' ? (s.isZh ? '自动' : 'Auto') : (s.isZh ? '询问' : 'Ask'),
                 style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: scheme.onSurface)),
@@ -2825,10 +3105,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     ]);
   }
 
-  /// 顶层自定义模型弹窗（写全局 aiModel）。
+  /// 顶层自定义模型弹窗（写「当前生效的配置」，没有配置时写全局字段）。
   Future<void> _promptTopCustomModel(ColorScheme scheme, AppStrings s) async {
-    final cfg = context.read<AppState>().config;
-    final ctrl = TextEditingController(text: cfg.aiModel);
+    final appState = context.read<AppState>();
+    final cfg = appState.config;
+    final pid = cfg.activeAiProfileId;
+    final profIdx = pid.isEmpty
+        ? -1
+        : cfg.aiProfiles.indexWhere((p) => p.id == pid && p.enabled);
+    final ctrl = TextEditingController(
+        text: profIdx >= 0 ? cfg.aiProfiles[profIdx].model : cfg.aiModel);
     final result = await showDialog<String>(
       context: context,
       builder: (dCtx) => AlertDialog(
@@ -2848,7 +3134,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       ),
     );
     if (result != null && result.isNotEmpty && mounted) {
-      await context.read<AppState>().updateConfig((c) => c..aiModel = result);
+      if (profIdx >= 0) {
+        await appState.updateConfig(
+            (c) => c..aiProfiles[profIdx].model = result);
+      } else {
+        await appState.updateConfig((c) => c..aiModel = result);
+      }
     }
     ctrl.dispose();
   }
@@ -2938,7 +3229,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                   ),
                 // 属性编辑卡片：停靠右侧的窄卡片，避免整屏宽底部长条的"横屏样式"。
                 // 宽度再收窄一档（330→300 / 0.78→0.72），菜单栏不至于过宽。
-                if (_selectedNode != null || _selectedLogicBlockId != null)
+                if (_mobilePropsShown)
                   Positioned(
                     top: _isLandscape ? 44 : 56,
                     bottom: 12,
@@ -2957,10 +3248,15 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             return ValueListenableBuilder<double>(
               valueListenable: _canvasFractionNotifier,
               builder: (context, fraction, _) {
-                final canvasW = totalW * fraction;
+                // 面板隐藏、拖出为应用内浮窗、或已外置到系统窗口时：画布独占整幅
+                // 宽度，分割线与右侧面板一起让位（面板本体改在别处渲染）。
+                final panelInSidebar =
+                    !_panelHidden && !_panelDetached && !_panelExternal;
+                final canvasW = panelInSidebar ? totalW * fraction : totalW;
                 final rightW = totalW * (1 - fraction);
                 return Row(children: [
                   SizedBox(width: canvasW, child: _buildCanvas(scheme, s)),
+                  if (panelInSidebar) ...[
                   // 可拖动分割线
                   MouseRegion(
                     cursor: SystemMouseCursors.resizeColumn,
@@ -2984,6 +3280,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                     ),
                   ),
                   SizedBox(width: rightW, child: _buildRightPanel(scheme, s)),
+                  ],
                 ]);
               },
             );
@@ -3174,42 +3471,88 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   /// 时用**实时**变换矩阵算的，所以平移/缩放期间无需重建本 widget。
   Widget _buildMiniMap(ColorScheme scheme, AppStrings s, Size viewSize) {
     final proj = _MiniMapProjection(_graphContentBounds(), const Size(_kMiniMapW, _kMiniMapH));
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTapDown: (d) => _centerOnCanvasPoint(proj.toCanvas(d.localPosition)),
-      onPanUpdate: (d) => _centerOnCanvasPoint(proj.toCanvas(d.localPosition)),
-      child: Tooltip(
-        message: s.isZh ? '点击或拖动定位视口' : 'Click or drag to move the viewport',
-        child: Container(
-          width: _kMiniMapW,
-          height: _kMiniMapH,
-          decoration: BoxDecoration(
-            color: scheme.surface.withAlpha(224),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: scheme.outlineVariant.withAlpha(90)),
-            boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(36), blurRadius: 10, offset: const Offset(0, 2))],
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: CustomPaint(
-            painter: _MiniMapPainter(
-              proj: proj,
-              viewRect: () => _visibleCanvasRect(viewSize),
-              nodeRects: [
-                for (final n in _nodes)
-                  Rect.fromLTWH(n.x, n.y, _totalNodeWidth(n), _nodeHeight(n)),
-              ],
-              nodeColor: scheme.primary.withAlpha(170),
-              blockRects: [
-                for (final b in _logicBlocks) Rect.fromLTWH(b.x, b.y, b.width, b.height),
-              ],
-              blockColor: context.sem.danger.withAlpha(150),
-              viewColor: scheme.primary,
-              repaint: _transformCtrl,
+    return Stack(children: [
+      GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (d) => _centerOnCanvasPoint(proj.toCanvas(d.localPosition)),
+        onPanUpdate: (d) => _centerOnCanvasPoint(proj.toCanvas(d.localPosition)),
+        child: Tooltip(
+          message: s.isZh ? '点击或拖动定位视口' : 'Click or drag to move the viewport',
+          child: Container(
+            width: _kMiniMapW,
+            height: _kMiniMapH,
+            decoration: BoxDecoration(
+              color: scheme.surface.withAlpha(224),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: scheme.outlineVariant.withAlpha(90)),
+              boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(36), blurRadius: 10, offset: const Offset(0, 2))],
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: CustomPaint(
+              painter: _MiniMapPainter(
+                proj: proj,
+                viewRect: () => _visibleCanvasRect(viewSize),
+                nodeRects: [
+                  for (final n in _nodes)
+                    Rect.fromLTWH(n.x, n.y, _totalNodeWidth(n), _nodeHeight(n)),
+                ],
+                nodeColor: scheme.primary.withAlpha(170),
+                blockRects: [
+                  for (final b in _logicBlocks) Rect.fromLTWH(b.x, b.y, b.width, b.height),
+                ],
+                blockColor: context.sem.danger.withAlpha(150),
+                viewColor: scheme.primary,
+                repaint: _transformCtrl,
+              ),
             ),
           ),
         ),
       ),
-    );
+      // 右上角握把（仅 PC）：按住它拖动 = 移动**小地图本身**（画布内容多时把小
+      // 地图挪开，不必先关掉它）；在小地图其它位置按拖仍然是平移视口。
+      if (!isMobilePlatform)
+        Positioned(
+          right: 2,
+          top: 2,
+          child: Tooltip(
+            message: s.isZh ? '按住拖动可移动小地图' : 'Hold and drag to move the minimap',
+            child: MouseRegion(
+              cursor: SystemMouseCursors.move,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onPanUpdate: (d) {
+                  final cur = _miniMapFloat ??
+                      Offset(
+                        math.max(0.0, viewSize.width - _kMiniMapW - 10),
+                        math.max(0.0, viewSize.height - _kMiniMapH - 10),
+                      );
+                  setState(() {
+                    _miniMapFloat = Offset(
+                      (cur.dx + d.delta.dx)
+                          .clamp(0.0, math.max(0.0, viewSize.width - _kMiniMapW)),
+                      (cur.dy + d.delta.dy)
+                          .clamp(0.0, math.max(0.0, viewSize.height - _kMiniMapH)),
+                    );
+                  });
+                },
+                child: Container(
+                  width: 22,
+                  height: 18,
+                  decoration: BoxDecoration(
+                    color: scheme.surface.withAlpha(240),
+                    borderRadius: const BorderRadius.only(
+                      topRight: Radius.circular(9),
+                      bottomLeft: Radius.circular(8),
+                    ),
+                    border: Border.all(color: scheme.outlineVariant.withAlpha(120)),
+                  ),
+                  child: Icon(Icons.drag_indicator, size: 13, color: scheme.primary),
+                ),
+              ),
+            ),
+          ),
+        ),
+    ]);
   }
 
   /// 缩放读数 + 一键适应画布。
@@ -3613,27 +3956,92 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             final viewSize = cons.biggest;
             // 移动端属性卡片停在右侧（宽 ~296），会把浮层整个盖住 ——
             // 与其藏在底下，不如让位（编辑单个节点时本来也不看全图）。
-            final sheetOpen = isMobilePlatform &&
-                (_selectedNode != null || _selectedLogicBlockId != null);
+            // 卡片被手动收起时（_mobilePropsHiddenFor）不再让位。
+            final sheetOpen = isMobilePlatform && _mobilePropsShown;
             final showMiniMap =
                 context.read<AppState>().config.nodeMiniMap && !sheetOpen;
+            // 右下角浮层的基线：移动端与左下缩放条、中央信息条**同一行**
+            // （bottom = 8）。原来写死 40，工具条缩放后它仍停在原地，
+            // 表现为「位置固定、不随内容自适应」（用户反馈）。
+            final cornerBottom = isMobilePlatform ? 8.0 : 10.0;
+            final miniFloat = _miniMapFloat;
+            final miniMap = _buildMiniMap(scheme, s, viewSize);
+            final zoomPill = _buildZoomPill(scheme, s);
+            const floatPanelW = _kFloatPanelW;
+            final floatPanelH =
+                math.min(_kFloatPanelH, math.max(160.0, viewSize.height - 60));
+            final floatAiW =
+                math.min(_kFloatAiW, math.max(240.0, viewSize.width - 24));
+            final floatAiH =
+                math.min(520.0, math.max(200.0, viewSize.height - 90));
             return Stack(children: [
-              Positioned(
-                right: 10,
-                // 移动端底部还有文件信息条与缩放药丸（各占 8px 起），抬高一层
-                bottom: isMobilePlatform ? 40 : 10,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    if (showMiniMap) ...[
-                      _buildMiniMap(scheme, s, viewSize),
+              if (showMiniMap && miniFloat == null)
+                Positioned(
+                  right: 10,
+                  bottom: cornerBottom,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      miniMap,
                       const SizedBox(height: 6),
+                      zoomPill,
                     ],
-                    _buildZoomPill(scheme, s),
-                  ],
+                  ),
+                )
+              else
+                // 小地图被拖走（PC）或在让位时：缩放读数单独停在右下角
+                Positioned(right: 10, bottom: cornerBottom, child: zoomPill),
+              // 被拖动过的小地图：停在用户放下的位置（只有 PC 有握把）
+              if (showMiniMap && miniFloat != null)
+                Positioned(
+                  left: miniFloat.dx
+                      .clamp(0.0, math.max(0.0, viewSize.width - _kMiniMapW)),
+                  top: miniFloat.dy
+                      .clamp(0.0, math.max(0.0, viewSize.height - _kMiniMapH)),
+                  child: miniMap,
                 ),
-              ),
+              // 浮动小窗①：元素 / 属性面板（拖出后）。
+              // 已外置到系统窗口时不再画：同一份面板不能同时出现在两处。
+              if (_panelDetached && !_panelHidden && !_panelExternal)
+                _floatingPanelBox(
+                  scheme: scheme,
+                  pos: _clampFloatTo(
+                      _panelFloatPos ?? const Offset(24, 64), viewSize, floatPanelW),
+                  width: floatPanelW,
+                  height: _panelMinimized ? _kFloatTitleH : floatPanelH,
+                  child: _panelMinimized
+                      ? _glassWrap(_panelTitleBar(scheme, s), scheme)
+                      : _buildRightPanel(scheme, s),
+                ),
+              // 浮动小窗②：AI 面板（拖出后）
+              if (_aiDetached && aiEnabled && !_aiExternal)
+                _floatingPanelBox(
+                  scheme: scheme,
+                  pos: _clampFloatTo(
+                      _aiFloatPos ??
+                          Offset(math.max(0.0, viewSize.width - floatAiW - 16), 72),
+                      viewSize,
+                      floatAiW),
+                  width: floatAiW,
+                  height: _aiMinimized ? _kFloatTitleH : floatAiH,
+                  child: _aiMinimized
+                      ? _glassWrap(_aiTitleBar(scheme, s), scheme)
+                      : Column(children: [
+                          _aiTitleBar(scheme, s),
+                          Expanded(
+                            child: _buildAiPanel(
+                              s,
+                              key: const ValueKey('ai-float'),
+                              startExpanded: true,
+                              onTitleGenerated: (t) =>
+                                  setState(() => _aiSessionTitle = t),
+                              onCollapseRequested: () =>
+                                  setState(() => _aiMinimized = true),
+                            ),
+                          ),
+                        ]),
+                ),
               // 多选工具条：顶部居中。框选进行中不显示（手指正忙着），
               // 移动端属性卡片打开时也让位。
               if (_selectedNodeIds.length >= 2 &&
@@ -3747,11 +4155,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       if (!isMobilePlatform) ...[
       Row(children: [
         SizedBox(
-          width: isMobilePlatform ? MediaQuery.of(context).size.width * 0.5 : double.infinity,
+          // 本行只在桌面端构建（外层 if (!isMobilePlatform)），宽度直接拉满
+          width: double.infinity,
           child: Padding(
-            padding: isMobilePlatform
-              ? const EdgeInsets.fromLTRB(6, 6, 6, 2)
-              : const EdgeInsets.fromLTRB(14, 12, 14, 8),
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
             child: Row(children: [
           if (!Platform.isWindows && !isMobilePlatform) ...[
             InkWell(
@@ -3766,92 +4173,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               ),
             ),
             const SizedBox(width: 6),
-          ],
-          if (isMobilePlatform) ...[
-            IconButton(
-              icon: Icon(Icons.undo, size: 14, color: _undoStack.isEmpty ? scheme.outlineVariant : scheme.onSurfaceVariant),
-              tooltip: s.isZh ? '撤销' : 'Undo',
-              constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
-              padding: EdgeInsets.zero,
-              onPressed: _undoStack.isEmpty ? null : _undo,
-            ),
-            IconButton(
-              icon: Icon(Icons.redo, size: 14, color: _redoStack.isEmpty ? scheme.outlineVariant : scheme.onSurfaceVariant),
-              tooltip: s.isZh ? '重做' : 'Redo',
-              constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
-              padding: EdgeInsets.zero,
-              onPressed: _redoStack.isEmpty ? null : _redo,
-            ),
-            IconButton(
-              icon: Icon(Icons.save_outlined, size: 14, color: scheme.onSurface),
-              tooltip: s.save,
-              constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
-              padding: EdgeInsets.zero,
-              onPressed: _save,
-            ),
-            const Spacer(),
-            // 溢出菜单：把 PC 工具栏全部功能（导出/导入配置、探测模式、隐藏逻辑线）
-            // 收进同一入口，保证移动端 1/2 宽菜单栏下功能不缺失。
-            PopupMenuButton<String>(
-              tooltip: s.isZh ? '更多' : 'More',
-              icon: Icon(Icons.more_vert, size: 14, color: scheme.onSurface),
-              padding: EdgeInsets.zero,
-              // 同上：约束菜单宽度上限，避免按最长条目无限撑宽
-              constraints: const BoxConstraints(minWidth: 24, minHeight: 24, maxWidth: 280),
-              onSelected: (v) {
-                switch (v) {
-                  case 'export':
-                    if (_nodes.isNotEmpty) _exportConfig(s);
-                    break;
-                  case 'import':
-                    _importConfig(s);
-                    break;
-                  case 'probe':
-                    setState(() => _probeMode = !_probeMode);
-                    break;
-                  case 'hide':
-                    setState(() => _hideLogic = !_hideLogic);
-                    break;
-                }
-              },
-              itemBuilder: (_) => [
-                PopupMenuItem<String>(
-                  value: 'export',
-                  enabled: _nodes.isNotEmpty,
-                  child: Row(children: [
-                    Icon(Icons.file_upload_outlined, size: 16, color: scheme.onSurfaceVariant),
-                    const SizedBox(width: 6),
-                    Text(s.isZh ? '导出配置' : 'Export Config'),
-                  ]),
-                ),
-                PopupMenuItem<String>(
-                  value: 'import',
-                  child: Row(children: [
-                    Icon(Icons.file_download_outlined, size: 16, color: scheme.onSurfaceVariant),
-                    const SizedBox(width: 6),
-                    Text(s.importConfig),
-                  ]),
-                ),
-                PopupMenuItem<String>(
-                  value: 'probe',
-                  child: Row(children: [
-                    Icon(Icons.search, size: 16, color: _probeMode ? scheme.primary : scheme.onSurfaceVariant),
-                    const SizedBox(width: 6),
-                    Text(s.isZh ? '探测模式' : 'Probe'),
-                    if (_probeMode) ...[const Spacer(), Icon(Icons.check, size: 14, color: scheme.primary)],
-                  ]),
-                ),
-                PopupMenuItem<String>(
-                  value: 'hide',
-                  child: Row(children: [
-                    Icon(Icons.route, size: 16, color: _hideLogic ? scheme.error : scheme.onSurfaceVariant),
-                    const SizedBox(width: 6),
-                    Text(s.isZh ? '隐藏逻辑线' : 'Hide logic'),
-                    if (_hideLogic) ...[const Spacer(), Icon(Icons.check, size: 14, color: scheme.error)],
-                  ]),
-                ),
-              ],
-            ),
           ],
           if (!isMobilePlatform) ...[
           Icon(Icons.account_tree_outlined, size: 16, color: scheme.primary),
@@ -3904,6 +4225,54 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               onPressed: () => setState(() => _hideLogic = !_hideLogic),
             ),
           ),
+          // 面板被隐藏后，在工具栏以图标形式恢复（用户要求：隐藏后在菜单栏
+          // 以图标展示，点击可恢复显示）。
+          if (_panelHidden)
+            Tooltip(
+              message: s.isZh ? '显示元素 / 属性面板' : 'Show elements / properties',
+              waitDuration: const Duration(milliseconds: 300),
+              child: IconButton(
+                icon: Icon(Icons.widgets_outlined, size: 16, color: scheme.primary),
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                padding: EdgeInsets.zero,
+                onPressed: () => setState(() {
+                  _panelHidden = false;
+                  _panelDetached = false;
+                  _panelFloatPos = null;
+                }),
+              ),
+            ),
+          // 写入格式：新版节点配置导出 .fppx 时写哪一套（旧版 JSON / 新版模块化
+          // 二进制）。以前这个选择只在「新建配置」时做一次、之后再也改不了，
+          // 现在画布工具栏上常驻一枚可点的格式标识。
+          Tooltip(
+            message: s.isZh
+                ? '写入格式：${_writeFormat == 'v2' ? '新版 (Beta)' : '旧版'}（点击切换）'
+                : 'Write format: ${_writeFormat == 'v2' ? 'New (Beta)' : 'Legacy'} (click to switch)',
+            waitDuration: const Duration(milliseconds: 300),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(6),
+              onTap: () => setState(
+                  () => _writeFormat = _writeFormat == 'v2' ? 'legacy' : 'v2'),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.save_as_outlined, size: 14,
+                      color: _writeFormat == 'v2'
+                          ? scheme.primary
+                          : scheme.onSurfaceVariant),
+                  const SizedBox(width: 4),
+                  Text(_writeFormat == 'v2' ? 'v2' : 'legacy',
+                      style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: _writeFormat == 'v2'
+                              ? scheme.primary
+                              : scheme.onSurfaceVariant)),
+                ]),
+              ),
+            ),
+          ),
           const Spacer(),
           if (!Platform.isWindows) ...[
             IconButton(
@@ -3921,12 +4290,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               onPressed: _nodes.isEmpty ? null : () => _exportConfig(s),
             ),
             const SizedBox(width: 4),
-            // 保存按钮：仅软盘图标，不显示文字
-            IconButton(
-              icon: Icon(Icons.save_outlined, size: 18, color: scheme.onSurface),
+            // 保存按钮：仅软盘图标，不显示文字；配色与 Windows 顶栏同一份
+            IconButton.filled(
+              icon: const Icon(Icons.save_outlined, size: 18),
               tooltip: s.save,
               constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               padding: EdgeInsets.zero,
+              style: _saveButtonStyle(scheme),
               onPressed: _save,
             ),
           ],
@@ -4004,12 +4374,22 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                   AnimatedContainer(
                     duration: const Duration(milliseconds: 200),
                     curve: Curves.easeOutCubic,
-                    width: _aiDrawerOpen ? 420 : 0,
-                    child: _aiDrawerOpen
-                        ? _AiPanel(
+                    // 拖出为浮动小窗 / 外置到系统窗口时抽屉让位
+                    // （同一面板不能同时出现两份）
+                    width: (_aiDrawerOpen && !_aiDetached && !_aiExternal) ? 420 : 0,
+                    child: (_aiDrawerOpen && !_aiDetached && !_aiExternal)
+                        ? AiPanelView(
                             key: const ValueKey('ai-drawer'),
                             startExpanded: true,
-                            onCollapseRequested: () => setState(() => _aiDrawerOpen = false),
+                            onCollapseRequested: () {
+                              _stashAiSession();
+                              setState(() => _aiDrawerOpen = false);
+                            },
+                            // 拖出为独立系统窗口（PS 式的再往外拖一层）
+                            onFloatOut: () => _openExternalPanel(DetachedPanel.ai),
+                            // 交接会话：外置收回后抽屉会重建，靠这份消息续上对话
+                            initialMessages: _aiSessionCache,
+                            onApiReady: (api) => _aiPanelApi = api,
                             onTitleGenerated: (t) => setState(() => _aiSessionTitle = t),
                             strings: s,
                             existingNodes: _nodes,
@@ -4149,12 +4529,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                   // 观感生硬。这里统一为 20×56 + 右侧 10 圆角（左侧保持直角，因为它
                   // 始终贴着抽屉右边缘/画布左边缘），图标尺寸走 AppControlSize 令牌，
                   // 与编辑器内其他控件同源，不再出现 16/17/18 混用。
+                  // 拖出为浮动小窗 / 外置后，抽屉把手一并隐藏（面板已不在左边缘）
+                  if (!_aiDetached && !_aiExternal)
                   Align(
                     alignment: Alignment.center,
                     child: MouseRegion(
                       cursor: SystemMouseCursors.click,
                       child: GestureDetector(
-                        onTap: () => setState(() => _aiDrawerOpen = !_aiDrawerOpen),
+                        onTap: () {
+                          if (_aiDrawerOpen) _stashAiSession();
+                          setState(() => _aiDrawerOpen = !_aiDrawerOpen);
+                        },
                         behavior: HitTestBehavior.opaque,
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 160),
@@ -5440,6 +5825,226 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   }
 
 
+  // ── 内嵌小窗（元素/属性面板、AI 面板）的窗口件 ──
+  //
+  // 「拖出主界面」= 变成画布内的自由浮动小窗（与 PS 的面板拖出同一种交互），
+  // 标题栏负责拖动 / 最小化 / 隐藏 / 吸附回主栏。
+
+  /// 把浮动窗位置收进视口：纵向至少给标题栏留出可抓取的高度，
+  /// 免得拖出可视区之后再也抓不回来。
+  Offset _clampFloatTo(Offset p, Size view, double width) => Offset(
+        p.dx.clamp(0.0, math.max(0.0, view.width - width)),
+        p.dy.clamp(0.0, math.max(0.0, view.height - _kFloatTitleH - 8)),
+      );
+
+  /// 浮动小窗外壳：定位 + 固定尺寸 + 投影。标题栏由内容自带。
+  Widget _floatingPanelBox({
+    required ColorScheme scheme,
+    required Offset pos,
+    required double width,
+    required double height,
+    required Widget child,
+  }) {
+    return Positioned(
+      left: pos.dx,
+      top: pos.dy,
+      child: SizedBox(
+        width: width,
+        height: height,
+        child: DecoratedBox(
+          // 阴影必须画在裁剪层**外**：ClipRRect 会把 boxShadow 一起裁掉
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: [
+              BoxShadow(
+                color: scheme.shadow.withAlpha(90),
+                blurRadius: 22,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: child,
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _winDragStart() => _winDragAccum = Offset.zero;
+
+  /// 标题栏拖动（两个面板共用）：未拖出时累计位移过阈值即切成浮动小窗，
+  /// 已拖出则跟随鼠标移动。
+  void _winDragUpdate(Offset delta, {required bool ai}) {
+    _winDragAccum += delta;
+    final alreadyDetached = ai ? _aiDetached : _panelDetached;
+    if (!alreadyDetached) {
+      // 24px 阈值：避免点标题栏按钮时手指抖一下就把面板甩出去
+      if (_winDragAccum.dx.abs() < 24 && _winDragAccum.dy.abs() < 24) return;
+      final bound = MediaQuery.of(context).size;
+      setState(() {
+        if (ai) {
+          _aiDetached = true;
+          _aiMinimized = false;
+          _aiFloatPos ??= Offset(math.max(0.0, bound.width - _kFloatAiW - 40), 96);
+        } else {
+          _panelDetached = true;
+          _panelMinimized = false;
+          _panelFloatPos ??= const Offset(24, 64);
+        }
+      });
+      return;
+    }
+    setState(() {
+      if (ai) {
+        _aiFloatPos = (_aiFloatPos ?? Offset.zero) + delta;
+      } else {
+        _panelFloatPos = (_panelFloatPos ?? Offset.zero) + delta;
+      }
+    });
+  }
+
+  Widget _windowWinBtn(
+      ColorScheme scheme, IconData icon, String tooltip, VoidCallback onTap) {
+    return Tooltip(
+      message: tooltip,
+      waitDuration: const Duration(milliseconds: 300),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(6),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(4),
+          child: Icon(icon, size: 14, color: scheme.onSurfaceVariant),
+        ),
+      ),
+    );
+  }
+
+  /// 内嵌小窗的统一标题栏：左侧图标 + 标题，右侧最小化 / 拖出吸附 / 隐藏。
+  Widget _windowTitleBar(
+    ColorScheme scheme, {
+    required bool zh,
+    required IconData icon,
+    required String title,
+    required bool detached,
+    required bool minimized,
+    required VoidCallback onMinimize,
+    required VoidCallback onToggleDetach,
+    required VoidCallback onHide,
+    required void Function(Offset delta) onDrag,
+    /// 拖出为**真正的系统窗口**（再往外一层）。为空时不渲染这个按钮
+    /// （移动端没有多窗口，面板外置也只在桌面端可用）。
+    VoidCallback? onExternal,
+  }) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onPanStart: (_) => _winDragStart(),
+      onPanUpdate: (d) => onDrag(d.delta),
+      child: Container(
+        height: 28,
+        margin: const EdgeInsets.fromLTRB(6, 4, 6, 0),
+        padding: const EdgeInsets.only(left: 8),
+        decoration: BoxDecoration(
+          color: scheme.primaryContainer.withAlpha(70),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: scheme.outlineVariant.withAlpha(70)),
+        ),
+        child: Row(children: [
+          Icon(icon, size: 13, color: scheme.primary),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.onSurface)),
+          ),
+          _windowWinBtn(
+              scheme,
+              minimized ? Icons.expand_more : Icons.remove,
+              minimized
+                  ? (zh ? '展开' : 'Expand')
+                  : (zh ? '最小化' : 'Minimize'),
+              onMinimize),
+          _windowWinBtn(
+              scheme,
+              detached ? Icons.close_fullscreen : Icons.open_in_new,
+              detached
+                  ? (zh ? '吸附回主界面' : 'Dock back')
+                  : (zh ? '拖出为内嵌小窗' : 'Float out'),
+              onToggleDetach),
+          if (onExternal != null)
+            _windowWinBtn(
+                scheme,
+                Icons.desktop_windows_outlined,
+                zh ? '拖出为独立系统窗口' : 'Open in system window',
+                onExternal),
+          _windowWinBtn(scheme, Icons.close, zh ? '隐藏' : 'Hide', onHide),
+        ]),
+      ),
+    );
+  }
+
+  /// 元素 / 属性面板的标题栏。
+  Widget _panelTitleBar(ColorScheme scheme, AppStrings s) => _windowTitleBar(
+        scheme,
+        zh: s.isZh,
+        icon: _panelDetached ? Icons.open_in_new : Icons.widgets_outlined,
+        title: s.isZh ? '元素 / 属性' : 'Elements / Properties',
+        detached: _panelDetached,
+        minimized: _panelMinimized,
+        onMinimize: () => setState(() => _panelMinimized = !_panelMinimized),
+        onToggleDetach: () => setState(() {
+          _panelDetached = !_panelDetached;
+          _panelHidden = false;
+          if (!_panelDetached) {
+            _panelFloatPos = null;
+            _panelMinimized = false;
+          }
+        }),
+        onExternal:
+            _panelExternal ? null : () => _openExternalPanel(DetachedPanel.props),
+        onHide: () => setState(() {
+          _panelHidden = true;
+          _panelDetached = false;
+          _panelFloatPos = null;
+          _panelMinimized = false;
+        }),
+        onDrag: (d) => _winDragUpdate(d, ai: false),
+      );
+
+  /// AI 面板的标题栏（拖出为浮动小窗后使用）。
+  Widget _aiTitleBar(ColorScheme scheme, AppStrings s) => _windowTitleBar(
+        scheme,
+        zh: s.isZh,
+        icon: Icons.smart_toy,
+        title: _aiSessionTitle.isEmpty
+            ? (s.isZh ? 'AI 助手' : 'AI Assistant')
+            : _aiSessionTitle,
+        detached: _aiDetached,
+        minimized: _aiMinimized,
+        onMinimize: () => setState(() => _aiMinimized = !_aiMinimized),
+        onToggleDetach: () => setState(() {
+          _aiDetached = !_aiDetached;
+          if (!_aiDetached) {
+            _aiDrawerOpen = true;
+            _aiFloatPos = null;
+            _aiMinimized = false;
+          }
+        }),
+        onExternal: _aiExternal ? null : () => _openExternalPanel(DetachedPanel.ai),
+        onHide: () => setState(() {
+          _aiDetached = false;
+          _aiMinimized = false;
+          _aiFloatPos = null;
+          _aiDrawerOpen = false;
+        }),
+        onDrag: (d) => _winDragUpdate(d, ai: true),
+      );
+
   Widget _buildRightPanel(ColorScheme scheme, AppStrings s) {
     final node = _selectedNode;
     final previewType = _previewedToolboxType;
@@ -5470,7 +6075,39 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
             title: s.isZh ? '元素' : 'Elements',
             expanded: _toolboxExpanded,
             onToggle: () => setState(() => _toolboxExpanded = !_toolboxExpanded),
-            trailing: Text('${_allNodeTypes.length}', style: TextStyle(fontSize: 10, color: scheme.outline)),
+            trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+              Text(
+                  _showOnlyAvailable
+                      ? '${_visibleNodeTypes().length}'
+                      : '${_allNodeTypes.length}',
+                  style: TextStyle(fontSize: 10, color: scheme.outline)),
+              const SizedBox(width: 4),
+              // 「显示可用」：按当前文件的媒体类型只留下接得上的节点
+              //（视频文件 → 视频节点 + 提取音频后可用的音频节点）
+              Tooltip(
+                message: _showOnlyAvailable
+                    ? (s.isZh ? '显示全部元素' : 'Show all elements')
+                    : (s.isZh
+                        ? '只显示当前文件可用的元素'
+                        : 'Only show elements usable for this file'),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(6),
+                  onTap: () =>
+                      setState(() => _showOnlyAvailable = !_showOnlyAvailable),
+                  child: Padding(
+                    padding: const EdgeInsets.all(2),
+                    child: Icon(
+                      _showOnlyAvailable
+                          ? Icons.filter_alt
+                          : Icons.filter_alt_outlined,
+                      size: 14,
+                      color:
+                          _showOnlyAvailable ? scheme.primary : scheme.outline,
+                    ),
+                  ),
+                ),
+              ),
+            ]),
           ),
           if (_toolboxExpanded)
             Expanded(child: SingleChildScrollView(
@@ -5576,7 +6213,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       );
     });
 
-    return _glassWrap(inner, scheme);
+    return _glassWrap(
+      Column(children: [
+        // 自带标题栏：拖动可拖出成浮动小窗，右侧是最小化 / 吸附 / 隐藏
+        _panelTitleBar(scheme, s),
+        Expanded(child: inner),
+      ]),
+      scheme,
+    );
   }
 
   Widget _buildCollapsibleHeader({
@@ -5733,9 +6377,34 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       ]);
     }
 
-    final favs = _typesFromNames(state.config.favoriteNodeTypes);
+    // 「显示可用」：avail == null 表示不过滤。
+    final Set<PipelineStepType>? avail =
+        _showOnlyAvailable ? _availableTypes() : null;
+    bool vis(PipelineStepType t) => avail == null || avail.contains(t);
+
+    /// 一个分类区块：标题 + 芯片换行排。整组被过滤空后连标题一起不渲染，
+    /// 不会留下一排孤零零的分类标题。
+    List<Widget> section(
+        IconData icon, String label, List<PipelineStepType> types) {
+      final shown = types.where(vis).toList();
+      if (shown.isEmpty) return const <Widget>[];
+      return [
+        _categoryLabel(scheme, icon, label),
+        SizedBox(height: gap),
+        Wrap(spacing: gap, runSpacing: gap, children: [
+          for (final t in shown) _buildToolboxItem(t, scheme, s),
+        ]),
+        SizedBox(height: sectionGap),
+      ];
+    }
+
+    final favs =
+        _typesFromNames(state.config.favoriteNodeTypes).where(vis).toList();
     // 已经置顶在「收藏」里的不再重复出现在「最近使用」里
-    final recents = _typesFromNames(state.config.recentNodeTypes).where((t) => !favs.contains(t)).toList();
+    final recents = _typesFromNames(state.config.recentNodeTypes)
+        .where((t) => !favs.contains(t))
+        .where(vis)
+        .toList();
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       if (favs.isNotEmpty) ...[
@@ -5746,37 +6415,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         ]),
         SizedBox(height: sectionGap),
       ],
-      if (recents.isNotEmpty) ...[
-        _categoryLabel(scheme, Icons.history, s.isZh ? '最近使用' : 'Recent'),
-        SizedBox(height: gap),
-        Wrap(spacing: gap, runSpacing: gap, children: [
-          for (final t in recents) _buildToolboxItem(t, scheme, s),
-        ]),
-        SizedBox(height: sectionGap),
-      ],
+      ...section(Icons.history, s.isZh ? '最近使用' : 'Recent', recents),
+      // start / output 恒定展示：它们不受媒体类型约束。
       Wrap(spacing: gap, runSpacing: gap, children: [
         _buildToolboxItem(PipelineStepType.start, scheme, s),
         _buildToolboxItem(PipelineStepType.output, scheme, s),
       ]),
       SizedBox(height: sectionGap),
-      _categoryLabel(scheme, Icons.videocam_outlined, s.isZh ? '视频' : 'Video'),
-      SizedBox(height: gap),
-      Wrap(spacing: gap, runSpacing: gap, children: [
-        for (final t in _videoTypes) _buildToolboxItem(t, scheme, s),
-      ]),
-      SizedBox(height: sectionGap),
-      _categoryLabel(scheme, Icons.audiotrack_outlined, s.isZh ? '音频' : 'Audio'),
-      SizedBox(height: gap),
-      Wrap(spacing: gap, runSpacing: gap, children: [
-        for (final t in _audioTypes) _buildToolboxItem(t, scheme, s),
-      ]),
-      SizedBox(height: sectionGap),
-      _categoryLabel(scheme, Icons.image_outlined, s.isZh ? '图片' : 'Image'),
-      SizedBox(height: gap),
-      Wrap(spacing: gap, runSpacing: gap, children: [
-        for (final t in _imageTypes) _buildToolboxItem(t, scheme, s),
-      ]),
-      SizedBox(height: sectionGap),
+      ...section(Icons.category_outlined, s.isZh ? '通用' : 'General', _genericTypes),
+      ...section(Icons.videocam_outlined, s.isZh ? '视频' : 'Video', _videoTypes),
+      ...section(Icons.audiotrack_outlined, s.isZh ? '音频' : 'Audio', _audioTypes),
+      ...section(Icons.image_outlined, s.isZh ? '图片' : 'Image', _imageTypes),
       _categoryLabel(scheme, Icons.account_tree_outlined, s.isZh ? '逻辑' : 'Logic'),
       SizedBox(height: gap),
       Wrap(spacing: gap, runSpacing: gap, children: [
@@ -5789,11 +6438,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
       ]),
       if (widget.containerInfo != null) ...[
         SizedBox(height: sectionGap),
-        _categoryLabel(scheme, Icons.folder_special_outlined, s.isZh ? '容器' : 'Container'),
-        SizedBox(height: gap),
-        Wrap(spacing: gap, runSpacing: gap, children: [
-          for (final t in _containerTypes) _buildToolboxItem(t, scheme, s),
-        ]),
+        ...section(Icons.folder_special_outlined,
+            s.isZh ? '容器' : 'Container', _containerTypes),
       ],
     ]);
   }
@@ -6019,26 +6665,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
     );
   }
 
-  // ── AI 面板构建（移动端底部弹层复用同一套回调接线） ──
-
-  Widget _buildAiPanel(
-    AppStrings s, {
-    Key? key,
-    bool startExpanded = false,
-    VoidCallback? onCollapseRequested,
-    ValueChanged<String>? onTitleGenerated,
-    bool hideHeader = false,
-  }) {
-    return _AiPanel(
-      key: key,
-      startExpanded: startExpanded,
-      onCollapseRequested: onCollapseRequested,
-      onTitleGenerated: onTitleGenerated,
-      hideHeader: hideHeader,
-      strings: s,
-      existingNodes: _nodes,
-      existingConnections: _connections,
-      onApplyGraph: (nodes, connections) {
+  /// 构造 AI 面板的图操作回调。
+  ///
+  /// 应用内面板（[_buildAiPanel]）与独立窗口的宿主转发（[_handlePanelRequest]）
+  /// **共用这一份**实现，保证「AI 改图」在两处语义完全一致。
+  AiGraphOps _buildAiGraphOps() => AiGraphOps(
+      apply: (nodes, connections) {
         _pushUndo();
         setState(() {
           _nodes.clear();
@@ -6047,7 +6679,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           _connections.addAll(connections);
         });
       },
-      onMergeGraph: (aiNodes, aiConns) {
+      merge: (aiNodes, aiConns) {
         _pushUndo();
         setState(() {
           final idRemap = <String, String>{};
@@ -6082,8 +6714,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           _connections.addAll(newConns);
         });
       },
-      onModifyNodeParams: (nodeId, params) {
-        // 与另一处 _AiPanel 构造（桌面/移动）共用同一约定：
+      modifyParams: (nodeId, params) {
+        // 与另一处 AiPanelView 构造（桌面/移动）共用同一约定：
         // 找不到节点返回 false，不再静默改写 _nodes.first
         final idx = _nodes.indexWhere((n) => n.id == nodeId);
         if (idx < 0) return false;
@@ -6094,7 +6726,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         _commitChange();
         return true;
       },
-      onClearAll: () {
+      clearAll: () {
         _pushUndo();
         setState(() {
           _nodes.clear();
@@ -6104,10 +6736,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           _commitChange();
         });
       },
-      onUndo: _undo,
-      onRedo: _redo,
-      onSave: _saveGraph,
-      onAddNode: (type, x, y) {
+      undo: _undo,
+      redo: _redo,
+      save: _saveGraph,
+      addNode: (type, x, y) {
         final stepType = PipelineStepType.values.firstWhere((t) => t.name == type, orElse: () => throw ArgumentError('Unknown type: $type'));
         final node = PipelineNode(id: _uuid.v4(), type: stepType, x: x, y: y);
         _pushUndo();
@@ -6115,7 +6747,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         _commitChange();
         return node.id;
       },
-      onAddGate: (gateName, x, y) {
+      addGate: (gateName, x, y) {
         final gate = LogicGateType.values.asNameMap()[gateName];
         if (gate == null) throw ArgumentError('Unknown gate type: $gateName');
         final node = PipelineNode(
@@ -6129,7 +6761,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         _commitChange();
         return node.id;
       },
-      onSetGateParams: (nodeId, params) {
+      setGateParams: (nodeId, params) {
         final idx = _nodes.indexWhere((n) => n.id == nodeId);
         if (idx < 0) return false;
         _pushUndo();
@@ -6139,11 +6771,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         _commitChange();
         return true;
       },
-      onDeleteNode: (nodeId) {
+      deleteNode: (nodeId) {
         _deleteNode(nodeId);
         _commitChange();
       },
-      onConnectNodes: (fromId, toId) {
+      connectNodes: (fromId, toId) {
         if (fromId == toId) return false;
         if (!_nodes.any((n) => n.id == fromId) || !_nodes.any((n) => n.id == toId)) return false;
         if (_connections.any((c) => c.fromNodeId == fromId && c.toNodeId == toId)) return false;
@@ -6152,7 +6784,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         _commitChange();
         return true;
       },
-      onDisconnectNodes: (connId) {
+      disconnectNodes: (connId) {
         final idx = _connections.indexWhere((c) => c.id == connId);
         if (idx < 0) return false;
         _pushUndo();
@@ -6160,16 +6792,629 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         _commitChange();
         return true;
       },
-      onCancelTasks: () => context.read<AppState>().cancelProcessing(),
+      cancelTasks: () => context.read<AppState>().cancelProcessing(),
+    );
+
+  /// 惰性缓存：图操作回调只在第一次需要时构造一次（每次构造 14 个闭包）。
+  AiGraphOps? _aiOpsCache;
+  AiGraphOps get _aiOps => _aiOpsCache ??= _buildAiGraphOps();
+
+  // ══════════════════════════════════════════════════════════════════════
+  // 独立面板窗口（真正的系统窗口）宿主
+  // ══════════════════════════════════════════════════════════════════════
+  //
+  // 子窗口是 `desktop_multi_window` 另起的**一个独立 Flutter 引擎**，看不到这里
+  // 的任何内存。于是职责只有两条：
+  //   * 子窗口要什么 → [panelSnapshot]（首次报到 / 主动刷新）与
+  //     [onPanelRequest]（全部改动请求）；
+  //   * 这边变了什么 → [_syncOpenPanels]（由 [setState] 兜底触发）。
+  // 子窗口侧的对应实现见 pages/detached_window_page.dart。
+
+  /// 把 AI 会话暂存到 [_aiSessionCache]。
+  ///
+  /// 抽屉一旦让位（收起 / 拖出 / 外置），里面的 AiPanelView 就 unmount 了，消息
+  /// 只存在于那个 State 对象里。这里先导出一份，之后无论重新展开抽屉还是交给
+  /// 独立窗口，都能靠 `initialMessages` 把对话续上。
+  void _stashAiSession() {
+    final api = _aiPanelApi;
+    if (api == null) return;
+    final messages = api.exportMessages();
+    if (messages.isNotEmpty) _aiSessionCache = messages;
+  }
+
+  /// 打开（唤起）某个面板的系统窗口。
+  ///
+  /// 打开期间主窗口把该面板**整体让位**（侧栏 / 应用内浮窗 / AI 抽屉都不再画），
+  /// 否则同一份面板会同时出现在两处。起不来（插件未注册 / 平台不支持）时回退到
+  /// 应用内形态 —— 宁可回到旧行为，也不能让面板凭空消失。
+  Future<void> _openExternalPanel(DetachedPanel panel) async {
+    if (isMobilePlatform) return;
+    final isAi = panel == DetachedPanel.ai;
+    // 抽屉 / 浮窗一让位，里面的 AiPanelView 就 unmount 了，会话随之丢失。
+    // 先把消息导出来落在 _aiSessionCache 上，交给子窗口续上。
+    if (isAi) _stashAiSession();
+    final lang = _appState.config.language;
+    setState(() {
+      if (isAi) {
+        _aiExternal = true;
+        _aiDetached = false;
+        _aiMinimized = false;
+        _aiFloatPos = null;
+      } else {
+        _panelExternal = true;
+        _panelDetached = false;
+        _panelMinimized = false;
+        _panelFloatPos = null;
+        _panelHidden = false;
+      }
+    });
+    final id = await MultiWindowService.openPanel(
+      panel,
+      lang: lang,
+      width: isAi ? 420 : 360,
+      height: 780,
+    );
+    if (id == null && mounted) {
+      // 子窗口起不来：退回应用内，别让面板凭空消失。
+      setState(() {
+        if (isAi) {
+          _aiExternal = false;
+          _aiDrawerOpen = true;
+        } else {
+          _panelExternal = false;
+          _panelDetached = true;
+        }
+      });
+    }
+  }
+
+  /// 把外置面板收回应用内。
+  ///
+  /// `fromWindow: true` 表示是子窗口点了「吸附回主窗口」/ 按了系统标题栏的 X：
+  /// 除了收回面板，还得把那个系统窗口关掉（插件只暴露 show/hide，没有「按 id
+  /// 销毁窗口」的 API，只能发指令让子窗口自毁）。关窗指令延后几十毫秒发出：
+  /// 本请求的返回值还要先送回子窗口，立刻销毁会让那次回包没有接收方。
+  void _dockExternalPanel(DetachedPanel? panel, {bool fromWindow = false}) {
+    if (panel == null) return;
+    final isAi = panel == DetachedPanel.ai;
+    final live = isAi ? _aiExternal : _panelExternal;
+    if (live && mounted) {
+      setState(() {
+        if (isAi) {
+          _aiExternal = false;
+          _aiDrawerOpen = true; // 收回后直接展开，用户能立刻看到内容
+        } else {
+          _panelExternal = false;
+          _panelDetached = false; // 一路收回右栏，不留中间态
+          _panelHidden = false;
+        }
+      });
+    }
+    _pushedShape = null;
+    _pushedParams = null;
+    if (fromWindow) {
+      final p = panel;
+      Future.delayed(const Duration(milliseconds: 80),
+          () => MultiWindowService.closePanel(p));
+    }
+  }
+
+  /// 结构指纹：只包含「独立窗口需要重画」的东西，刻意**不含**节点坐标 ——
+  /// 拖动节点不该触发整图重发（独立窗口里根本没有画布）。配置也记进来，
+  /// 但只取几个会影响独立窗口外观 / AI 选路的标量，避免整份 config 序列化。
+  String _graphShape() {
+    final b = StringBuffer();
+    for (final n in _nodes) {
+      b.write(n.id);
+      b.write(':');
+      b.write(n.isGate ? 'gate:${n.gateType}' : n.type.name);
+      b.write(';');
+    }
+    b.write('#');
+    for (final c in _connections) {
+      b.write(c.fromNodeId);
+      b.write('>');
+      b.write(c.toNodeId);
+      b.write(';');
+    }
+    b.write('#');
+    b.write(_lastSelectedId ?? '');
+    b.write('#');
+    b.write(_logicBlocks.length);
+    final cfg = _appState.config;
+    b.write('#');
+    b.write(cfg.language);
+    b.write('|');
+    b.write(cfg.darkMode);
+    b.write('|');
+    b.write(cfg.themeColor.hashCode);
+    b.write('|');
+    b.write(cfg.aiModel);
+    b.write('|');
+    b.write(cfg.aiProfiles.length);
+    return b.toString();
+  }
+
+  /// 把当前状态同步给已打开的外置面板窗口（由 `setState` 兜底调用）。
+  ///
+  /// 分两档，避免高频 `setState`（拖动滑块、AI 流式输出）把整图反复推过去：
+  ///  * 结构指纹变了（选中节点 / 增删节点 / 连线 / 换主题）→ 推整份快照；
+  ///  * 只有参数动了 → 只推选中节点的参数。
+  void _syncOpenPanels() {
+    if (isMobilePlatform) return;
+    final propsOpen =
+        _panelExternal && MultiWindowService.isOpen(DetachedPanel.props);
+    final aiOpen = _aiExternal && MultiWindowService.isOpen(DetachedPanel.ai);
+    if (!propsOpen && !aiOpen) return;
+    final shape = _graphShape();
+    if (shape != _pushedShape) {
+      _pushedShape = shape;
+      _pushedParams = null;
+      if (propsOpen) {
+        unawaited(MultiWindowService.push(DetachedPanel.props,
+            PanelPush.snapshot, panelSnapshot(DetachedPanel.props)));
+      }
+      if (aiOpen) {
+        unawaited(MultiWindowService.push(DetachedPanel.ai,
+            PanelPush.snapshot, panelSnapshot(DetachedPanel.ai)));
+      }
+      return;
+    }
+    final node = _selectedNode;
+    if (node == null) return;
+    final sig = '${node.id}|${jsonEncode(node.params)}';
+    if (sig == _pushedParams) return;
+    _pushedParams = sig;
+    final payload = <String, dynamic>{'nodeId': node.id, 'params': node.params};
+    if (propsOpen) {
+      unawaited(MultiWindowService.push(
+          DetachedPanel.props, PanelPush.nodeParams, payload));
+    }
+    if (aiOpen) {
+      unawaited(
+          MultiWindowService.push(DetachedPanel.ai, PanelPush.nodeParams, payload));
+    }
+  }
+
+  // ── PanelHostDelegate ──────────────────────────────────────────────────
+
+  /// 独立面板要的完整快照（子窗口首次报到与主动刷新时取）。
+  @override
+  Map<String, dynamic> panelSnapshot(DetachedPanel panel) {
+    final cfg = _appState.config;
+    final v = widget.video;
+    final node = _selectedNode;
+    final resolvedExt = node == null ? null : _resolveUpstreamExtension(node);
+    return <String, dynamic>{
+      'panel': panel.id,
+      'config': cfg.toJson(),
+      'graph': <String, dynamic>{
+        'nodes': [for (final n in _nodes) n.toJson()],
+        'connections': [for (final c in _connections) c.toJson()],
+      },
+      'toolbox': _buildToolboxDescriptors(),
+      // VideoFile 没有 toJson：步骤编辑器真正用到的只有下面这些标量，按需挑
+      // 出来即可（subtitles 一类的列表刻意跳过，代价是独立窗口的字幕编辑器
+      // 拿不到「内嵌字幕」快捷项）。
+      'video': <String, dynamic>{
+        'id': v.id,
+        'filepath': v.filepath,
+        'filename': v.filename,
+        'resolution': v.resolution,
+        'duration': v.duration,
+        'durationStr': v.durationStr,
+        'sizeMb': v.sizeMb,
+        'codec': v.codec,
+        'pixFmt': v.pixFmt,
+        'audioCodec': v.audioCodec,
+        'audioChannels': v.audioChannels,
+        'width': v.width,
+        'height': v.height,
+        'fps': v.fps,
+        'fileMediaType': v.fileMediaType.name,
+      },
+      'props': <String, dynamic>{
+        'thumbPath': _thumbPath,
+        'outputName': resolvedExt == null
+            ? v.filename
+            : v.filename.replaceAll(RegExp(r'\.[^.]+$'), '.$resolvedExt'),
+        'sourceImagePath': node == null ? null : _resolveSourceImagePath(node),
+        'containerFileCount': widget.containerInfo?.fileCount ?? 0,
+      },
+      'selection': node?.toJson(),
+      'ai': <String, dynamic>{
+        'session': _aiPanelApi?.exportMessages() ?? _aiSessionCache ?? const [],
+      },
+    };
+  }
+
+  /// 元素工具箱的描述符列表（独立窗口按这份清单渲染芯片）。
+  ///
+  /// 语义与主窗口 `_buildToolbox` 一致：只在「显示可用」时过滤，收藏 / 最近 /
+  /// 输入输出 / 视频 / 音频 / 图片 / 容器的分组与顺序也一样。逻辑块与逻辑门
+  /// 刻意不列：它们的编辑器依赖画布交互（拖端口、命中测试），只能留在主窗口。
+  List<Map<String, dynamic>> _buildToolboxDescriptors() {
+    final avail = _showOnlyAvailable ? _availableTypes() : null;
+    bool vis(PipelineStepType t) => avail == null || avail.contains(t);
+
+    Map<String, dynamic> desc(PipelineStepType t, String group) {
+      final dummy = PipelineNode(id: '', type: t);
+      return <String, dynamic>{
+        'id': t.name,
+        'label': dummy.label,
+        'labelEn': dummy.labelEn,
+        'tag': dummy.mediaTag,
+        'group': group,
+      };
+    }
+
+    final out = <Map<String, dynamic>>[];
+    void addAll(List<PipelineStepType> types, String group) {
+      for (final t in types) {
+        if (vis(t)) out.add(desc(t, group));
+      }
+    }
+
+    final favs =
+        _typesFromNames(_appState.config.favoriteNodeTypes).where(vis).toList();
+    // 已经置顶在「收藏」里的不再重复出现在「最近使用」里（与主窗口同规则）
+    final recents = _typesFromNames(_appState.config.recentNodeTypes)
+        .where((t) => !favs.contains(t))
+        .where(vis)
+        .toList();
+    addAll(favs, 'fav');
+    addAll(recents, 'recent');
+    addAll(const [PipelineStepType.start, PipelineStepType.output], 'io');
+    addAll(_genericTypes, 'generic');
+    addAll(_videoTypes, 'video');
+    addAll(_audioTypes, 'audio');
+    addAll(_imageTypes, 'image');
+    if (widget.containerInfo != null) addAll(_containerTypes, 'container');
+    return out;
+  }
+
+  /// 子窗口的请求总入口。返回值必须是可 JSON 序列化的（会原样回给子窗口）。
+  @override
+  Future<dynamic> onPanelRequest(String method, Map<String, dynamic> args) async {
+    final panel = DetachedPanel.fromId(args['panel'] as String?);
+    switch (method) {
+      case PanelMethod.ready:
+      case PanelMethod.refresh:
+        {
+          if (panel == null) return null;
+          // 子窗口刚起来：记下当前指纹，之后只有真的变了才整图重发。
+          _pushedShape = _graphShape();
+          _pushedParams = null;
+          return panelSnapshot(panel);
+        }
+
+      case PanelMethod.dockBack:
+        {
+          if (panel == DetachedPanel.ai) {
+            final messages = args['messages'];
+            if (messages is List) {
+              _aiSessionCache = [
+                for (final item in messages)
+                  if (item is Map) Map<String, dynamic>.from(item),
+              ];
+            }
+          }
+          _dockExternalPanel(panel, fromWindow: true);
+          return true;
+        }
+
+      case PanelMethod.setParams:
+        {
+          final nodeId = args['nodeId'] as String?;
+          final params = args['params'];
+          if (nodeId == null || params is! Map) return false;
+          final idx = _nodes.indexWhere((n) => n.id == nodeId);
+          if (idx < 0) return false;
+          setState(() {
+            _nodes[idx].params
+              ..clear()
+              ..addAll(Map<String, dynamic>.from(params));
+          });
+          _commitChange();
+          return true;
+        }
+
+      case PanelMethod.addNode:
+        return _addNodeFromPanel(args);
+
+      case PanelMethod.graphAddGate:
+        return _addGateFromPanel(args);
+
+      case PanelMethod.probe:
+        {
+          final path = args['path'] as String? ?? '';
+          if (path.isEmpty) return <String, dynamic>{'success': false};
+          return _appState.probeMedia(path);
+        }
+
+      case PanelMethod.updateConfig:
+        {
+          final json = args['config'];
+          if (json is! Map) return false;
+          await _appState.updateConfig(
+              (_) => AppConfig.fromJson(Map<String, dynamic>.from(json)));
+          return true;
+        }
+
+      case PanelMethod.aiTitle:
+        {
+          final title = args['title'] as String? ?? '';
+          if (mounted) setState(() => _aiSessionTitle = title);
+          return true;
+        }
+
+      case PanelMethod.graphApply:
+        {
+          final nodes = _nodesFromJson(args['nodes']);
+          final conns = _connectionsFromJson(args['connections']);
+          if (args['merge'] == true) {
+            _aiOps.merge(nodes, conns);
+          } else {
+            _aiOps.apply(nodes, conns);
+          }
+          return true;
+        }
+
+      case PanelMethod.graphModify:
+      case PanelMethod.graphSetGateParams:
+        {
+          final nodeId = args['nodeId'] as String? ?? '';
+          final params = args['params'];
+          if (params is! Map) return false;
+          return _aiOps.modifyParams(nodeId, Map<String, dynamic>.from(params));
+        }
+
+      case PanelMethod.graphDeleteNode:
+        _aiOps.deleteNode(args['nodeId'] as String? ?? '');
+        return true;
+
+      case PanelMethod.graphConnect:
+        return _aiOps.connectNodes(
+            args['fromId'] as String? ?? '', args['toId'] as String? ?? '');
+
+      case PanelMethod.graphDisconnect:
+        return _aiOps.disconnectNodes(args['connId'] as String? ?? '');
+
+      case PanelMethod.graphClearAll:
+        _aiOps.clearAll();
+        return true;
+
+      case PanelMethod.graphUndo:
+        _aiOps.undo();
+        return true;
+
+      case PanelMethod.graphRedo:
+        _aiOps.redo();
+        return true;
+
+      case PanelMethod.graphSave:
+        _aiOps.save();
+        return true;
+
+      case PanelMethod.graphCancelTasks:
+        _aiOps.cancelTasks();
+        return true;
+    }
+    return null;
+  }
+
+  /// 子窗口消失：面板必须回到主窗口，否则会进入「两边都不在」的死状态。
+  @override
+  void onPanelWindowGone(DetachedPanel panel) {
+    final isAi = panel == DetachedPanel.ai;
+    final live = isAi ? _aiExternal : _panelExternal;
+    _pushedShape = null;
+    _pushedParams = null;
+    if (!live || !mounted) return;
+    setState(() {
+      if (isAi) {
+        _aiExternal = false;
+        _aiDrawerOpen = true;
+      } else {
+        _panelExternal = false;
+        _panelDetached = false;
+        _panelHidden = false;
+      }
+    });
+  }
+
+  /// 独立窗口请求在画布上加一个节点。
+  ///
+  /// `nodeId` 是子窗口**本地生成**的 id，必须原样采用：子窗口的工具箱 / AI 面板
+  /// 是同步拿到返回值的（方法通道是异步的），主窗口这边换成自己生成的 id 就会
+  /// 与子窗口后续引用的 id 对不上。
+  dynamic _addNodeFromPanel(Map<String, dynamic> args) {
+    final typeId = args['typeId'] as String? ?? '';
+    PipelineStepType? type;
+    for (final t in PipelineStepType.values) {
+      if (t.name == typeId) {
+        type = t;
+        break;
+      }
+    }
+    if (type == null) return false;
+    final node = PipelineNode(
+      id: (args['nodeId'] as String?) ?? _uuid.v4(),
+      type: type,
+      x: (args['x'] as num?)?.toDouble() ?? _spawnCenter.dx,
+      y: (args['y'] as num?)?.toDouble() ?? _spawnCenter.dy,
+    );
+    _pushUndo();
+    setState(() => _nodes.add(node));
+    _commitChange();
+    return node.id;
+  }
+
+  /// 独立窗口请求加一个逻辑门节点（同样采用子窗口给的 id）。
+  dynamic _addGateFromPanel(Map<String, dynamic> args) {
+    final gate = LogicGateType.values.asNameMap()[args['gate'] as String? ?? ''];
+    if (gate == null) return false;
+    final node = PipelineNode(
+      id: (args['nodeId'] as String?) ?? _uuid.v4(),
+      type: PipelineStepType.start,
+      x: (args['x'] as num?)?.toDouble() ?? _spawnCenter.dx,
+      y: (args['y'] as num?)?.toDouble() ?? _spawnCenter.dy,
+      gateType: gate.name,
+    );
+    _pushUndo();
+    setState(() => _nodes.add(node));
+    _commitChange();
+    return node.id;
+  }
+
+  static List<PipelineNode> _nodesFromJson(Object? raw) {
+    if (raw is! List) return const <PipelineNode>[];
+    final out = <PipelineNode>[];
+    for (final item in raw) {
+      if (item is! Map) continue;
+      try {
+        out.add(PipelineNode.fromJson(Map<String, dynamic>.from(item)));
+      } catch (_) {}
+    }
+    return out;
+  }
+
+  static List<PipelineConnection> _connectionsFromJson(Object? raw) {
+    if (raw is! List) return const <PipelineConnection>[];
+    final out = <PipelineConnection>[];
+    for (final item in raw) {
+      if (item is! Map) continue;
+      try {
+        out.add(PipelineConnection.fromJson(Map<String, dynamic>.from(item)));
+      } catch (_) {}
+    }
+    return out;
+  }
+
+  // ── AI 面板构建（移动端底部弹层复用同一套回调接线） ──
+
+  Widget _buildAiPanel(
+    AppStrings s, {
+    Key? key,
+    bool startExpanded = false,
+    VoidCallback? onCollapseRequested,
+    ValueChanged<String>? onTitleGenerated,
+    bool hideHeader = false,
+  }) {
+    final ops = _aiOps;
+    return AiPanelView(
+      key: key,
+      startExpanded: startExpanded,
+      onCollapseRequested: onCollapseRequested,
+      onTitleGenerated: onTitleGenerated,
+      hideHeader: hideHeader,
+      strings: s,
+      existingNodes: _nodes,
+      existingConnections: _connections,
+      onApplyGraph: ops.apply,
+      onMergeGraph: ops.merge,
+      onModifyNodeParams: ops.modifyParams,
+      onClearAll: ops.clearAll,
+      onUndo: ops.undo,
+      onRedo: ops.redo,
+      onSave: ops.save,
+      onAddNode: ops.addNode,
+      onAddGate: ops.addGate,
+      onSetGateParams: ops.setGateParams,
+      onDeleteNode: ops.deleteNode,
+      onConnectNodes: ops.connectNodes,
+      onDisconnectNodes: ops.disconnectNodes,
+      onCancelTasks: ops.cancelTasks,
     );
   }
 
   /// 移动端：打开 AI 助手。竖屏用底部弹层；横屏用从左往右滑入的侧边栏（不满屏）。
+  /// 移动端 AI 弹层头部的「模型」药丸：与 PC 顶栏同一份清单
+  /// （模型一律来自供应商配置，不再内置 gpt-4o），点一下即可切换，
+  /// 不必为了换模型跑去设置页。
+  Widget _aiModelPill(
+    ColorScheme scheme,
+    AppStrings s,
+    GlobalKey<_AiPanelViewState> aiKey,
+    VoidCallback onChanged,
+  ) {
+    final cfg = context.read<AppState>().config;
+    // 直接复用面板里的解析逻辑（同一库内可见），会话级覆盖也一并生效
+    final profile = aiKey.currentState?._effectiveProfile;
+    final options = _modelOptionsFor(cfg, profile);
+    final current = profile?.model.isNotEmpty == true ? profile!.model : cfg.aiModel;
+    return PopupMenuButton<String>(
+      tooltip: s.isZh ? '切换模型' : 'Switch model',
+      padding: EdgeInsets.zero,
+      onSelected: (m) {
+        // 与 PC 顶栏同一份写回逻辑：有生效配置就写配置，否则写全局字段
+        _applyModelChoice(m);
+        // 同步会话级选择，否则已加载的会话仍会沿用旧模型
+        aiKey.currentState?.applySessionModel(m);
+        onChanged();
+      },
+      itemBuilder: (_) => [
+        for (final m in options)
+          PopupMenuItem<String>(
+            value: m,
+            child: Row(children: [
+              Icon(
+                  m == current
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_off,
+                  size: 13,
+                  color: m == current ? scheme.primary : scheme.outline),
+              const SizedBox(width: 6),
+              Flexible(child: Text(m,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12))),
+            ]),
+          ),
+        if (options.isEmpty)
+          PopupMenuItem<String>(
+            enabled: false,
+            child: Text(
+                s.isZh
+                    ? '未配置模型（设置 → AI 中添加）'
+                    : 'No models configured (Settings → AI)',
+                style: TextStyle(fontSize: 11, color: scheme.outline)),
+          ),
+      ],
+      child: Container(
+        height: 28,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest.withAlpha(110),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.psychology_outlined, size: 14, color: scheme.primary),
+          const SizedBox(width: 4),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 132),
+            child: Text(
+              current.isEmpty ? (s.isZh ? '未配置模型' : 'No model') : current,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: scheme.onSurface),
+            ),
+          ),
+          Icon(Icons.arrow_drop_down, size: 16, color: scheme.outline),
+        ]),
+      ),
+    );
+  }
+
   void _openAiSheet(AppStrings s) {
     final scheme = Theme.of(context).colorScheme;
     // 用 GlobalKey 让弹层头部直接驱动面板（历史/工具），
     // 从而隐藏面板内部头部 —— 修复移动端「两层菜单栏」的冗余排版。
-    final aiKey = GlobalKey<_AiPanelState>();
+    final aiKey = GlobalKey<_AiPanelViewState>();
     final panelContent = _buildAiPanel(
       s,
       key: aiKey,
@@ -6208,6 +7453,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               const SizedBox(width: 8),
               Expanded(child: Text(s.aiChatTitle,
                   style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface))),
+              // 模型切换（与 PC 顶栏同源）
+              _aiModelPill(scheme, s, aiKey, () => setH(() {})),
+              const SizedBox(width: 2),
               // 历史记录
               Builder(builder: (btnCtx) => headButton(
                 Icon(Icons.history, size: headBtn.iconSize),
@@ -6398,7 +7646,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         const SizedBox(height: 2),
         _controlBtn(Icons.my_location, s.isZh ? '定位源' : 'Source', scheme, () => _goToSource(s)),
         // 桌面端右侧工具栏补齐（与移动端顶部菜单栏能力对齐）：
-        // 原来只有「整理 + 定位源」，缺少移动端已有的缩放、撤销/重做、探测、隐藏逻辑线。
+        // 原来只有「整理 + 定位源」，缺少移动端已有的缩放、探测、隐藏逻辑线。
+        // 撤销/重做**只保留画布上方工具栏那一处** —— 这里再放一份就是同一个
+        // 功能在 PC 上出现两个撤销按钮（用户反馈），故本列不再渲染。
         if (!isMobilePlatform) ...[
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 4),
@@ -6409,15 +7659,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           _controlBtn(Icons.zoom_in, s.isZh ? '放大' : 'Zoom in', scheme, () => _zoomTo(_currentScale + 0.15)),
           const SizedBox(height: 2),
           _controlBtn(Icons.fit_screen_outlined, s.isZh ? '适应画布' : 'Fit', scheme, _zoomToFit),
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
-          ),
-          _controlBtn(Icons.undo, s.isZh ? '撤销' : 'Undo', scheme, _undoStack.isEmpty ? () {} : _undo,
-              color: _undoStack.isEmpty ? scheme.outlineVariant : null),
-          const SizedBox(height: 2),
-          _controlBtn(Icons.redo, s.isZh ? '重做' : 'Redo', scheme, _redoStack.isEmpty ? () {} : _redo,
-              color: _redoStack.isEmpty ? scheme.outlineVariant : null),
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 4),
             child: Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
@@ -6452,6 +7693,45 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
 
   // ── 底栏 ──
 
+  /// .fppx 配置体积（字节，估算）。
+  ///
+  /// 底栏此前显示的是**源视频**的体积（`video.sizeMb`），放在「配置」的位置上
+  /// 完全对不上（用户反馈「显示的是错误数值」）。这里改为按当前写入格式估算配置
+  /// 体积：旧版是 JSON 文本、新版是模块化二进制（magic + mode + 描述 + 载荷 +
+  /// CRC 等固定头），不落盘即可算出量级，故展示时标注「≈」。
+  ///
+  /// 用 [_sizeTick] 做缓存签名：拖动只改坐标、长度可能不变，每次提交才 +1，
+  /// 避免每帧重跑 jsonEncode。
+  int _fppxSizeBytes() {
+    if (_sizeTickCached == _sizeTick && _sizeFormatCached == _writeFormat) {
+      return _sizeBytesCached;
+    }
+    final payload = utf8.encode(jsonEncode(_currentGraph().toJson())).length;
+    // 容器开销（不含介绍文本自身）：
+    //   新版 v2 = 文件头 6 + 索引模块 67（13 + 9×6）+ 介绍模块头 5
+    //            + 加密信息模块 6 + 载荷模块头 5 + CRC 模块 9 + 结尾模块 5 = 103
+    //     （规范 §9：总长 = 103 + L + D）
+    //   旧版 = 定长头 + gzip 包装，量级仍是 JSON 长度上下
+    // 加密会再多出：索引多一条 9 + 0x02 扩展载荷 44 + MAC 模块 37
+    //             + PKCS#7 填充 1~16（此处按未加密估算，只作量级提示）
+    final bytes = _writeFormat == 'v2' ? payload + 103 : payload + 24;
+    _sizeTickCached = _sizeTick;
+    _sizeFormatCached = _writeFormat;
+    _sizeBytesCached = bytes;
+    return bytes;
+  }
+
+  String _fppxSizeLabel(AppStrings s) {
+    final bytes = _fppxSizeBytes();
+    final kb = bytes / 1024;
+    final text = kb >= 1024
+        ? '${(kb / 1024).toStringAsFixed(2)} MB'
+        : kb >= 0.1
+            ? '${kb.toStringAsFixed(1)} KB'
+            : '$bytes B';
+    return s.isZh ? '.fppx ≈ $text' : '.fppx ≈ $text';
+  }
+
   Widget _buildBottomBar(ColorScheme scheme, AppStrings s) {
     final v = widget.video;
     final srcCount = _nodes.where((n) => n.type == PipelineStepType.start && !n.isGate).length;
@@ -6469,7 +7749,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                 Icon(Icons.info_outline, size: 13, color: scheme.outline),
                 const SizedBox(width: 5),
                 Expanded(
-                  child: Text('${v.resolution}  |  ${v.durationStr}  |  ${formatFileSize(v.sizeMb)}',
+                  child: Text('${v.resolution}  |  ${v.durationStr}  |  ${_fppxSizeLabel(s)}',
                       maxLines: 1, overflow: TextOverflow.ellipsis,
                       style: TextStyle(color: scheme.outline, fontSize: 11)),
                 ),
@@ -6489,7 +7769,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
               Icon(Icons.info_outline, size: 14, color: scheme.outline),
               const SizedBox(width: 6),
               Flexible(
-                child: Text('${v.resolution}  |  ${v.durationStr}  |  ${formatFileSize(v.sizeMb)}',
+                child: Text('${v.resolution}  |  ${v.durationStr}  |  ${_fppxSizeLabel(s)}',
                     maxLines: 1, overflow: TextOverflow.ellipsis,
                     style: TextStyle(color: scheme.outline, fontSize: 12)),
               ),
@@ -6558,12 +7838,37 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           () => setState(() => _mobileToolboxOpen = !_mobileToolboxOpen),
           scheme, color: scheme.primary,
         ),
+        // 属性卡片被收起后，用这枚图标恢复（仅当当前选中的对象正是被收起的那个）
+        if ((_selectedNode?.id ?? _selectedLogicBlockId) != null &&
+            _mobilePropsHiddenFor == (_selectedNode?.id ?? _selectedLogicBlockId)) ...[
+          const SizedBox(width: 2),
+          _mobileBarBtn(
+            Icons.tune,
+            () => setState(() => _mobilePropsHiddenFor = null),
+            scheme,
+            color: scheme.primary,
+            tooltip: s.isZh ? '显示属性面板' : 'Show properties',
+          ),
+        ],
         if (cfg.aiEnabled) ...[
           const SizedBox(width: 2),
           _mobileBarBtn(Icons.smart_toy, () => _openAiSheet(s), scheme, color: scheme.primary),
         ],
         const SizedBox(width: 2),
-        _mobileBarBtn(Icons.save_outlined, _save, scheme),
+        // 保存：与 PC 顶栏同一套配色（实心主题色 + 反色图标），
+        // 移动端不再只是一颗裸图标
+        SizedBox(
+          width: _kMobileBarBtnBox, height: _kMobileBarBtnBox,
+          child: IconButton.filled(
+            onPressed: _save,
+            tooltip: s.save,
+            icon: const Icon(Icons.save_outlined, size: _kMobileBarBtnIcon),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(
+                minWidth: _kMobileBarBtnBox, minHeight: _kMobileBarBtnBox),
+            style: _saveButtonStyle(scheme, radius: 13),
+          ),
+        ),
         const SizedBox(width: 2),
         SizedBox(
           // 盒径与同排按钮一致（改造前是 28，比相邻的 26 大 2px）
@@ -6584,6 +7889,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                   break;
                 case 'hide':
                   setState(() => _hideLogic = !_hideLogic);
+                  break;
+                case 'format':
+                  setState(() =>
+                      _writeFormat = _writeFormat == 'v2' ? 'legacy' : 'v2');
                   break;
                 case 'orientation':
                   _toggleOrientation();
@@ -6612,6 +7921,20 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                 const SizedBox(width: 6),
                 Text(s.isZh ? '隐藏逻辑线' : 'Hide logic', style: const TextStyle(fontSize: 13)),
                 if (_hideLogic) ...[const Spacer(), Icon(Icons.check, size: 14, color: scheme.error)],
+              ])),
+              // 写入格式（与桌面端工具栏那枚标识同一个开关）
+              PopupMenuItem(value: 'format', child: Row(children: [
+                Icon(Icons.save_as_outlined, size: 16,
+                    color: _writeFormat == 'v2' ? scheme.primary : scheme.onSurfaceVariant),
+                const SizedBox(width: 6),
+                Text(s.isZh ? '写入格式' : 'Write format',
+                    style: const TextStyle(fontSize: 13)),
+                const Spacer(),
+                Text(_writeFormat == 'v2' ? 'v2' : 'legacy',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: _writeFormat == 'v2' ? scheme.primary : scheme.outline)),
               ])),
               PopupMenuItem(value: 'orientation', child: Row(children: [
                 Icon(Icons.screen_rotation, size: 16, color: scheme.onSurfaceVariant),
@@ -6682,13 +8005,15 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
   Widget _buildMobileFileInfo(ColorScheme scheme, AppStrings s) {
     final v = widget.video;
     final nodesLabel = s.isZh ? '节点' : 'nodes';
-    // 左下缩放悬浮条放大后约 116px 宽（3 个 20px 图标按钮），
-    // 中央信息条扣除这部分宽度 + 缩放系数，避免窄屏重叠。
+    // 左右两侧都要让位：左下缩放悬浮条放大后约 116px 宽（3 个 20px 图标按钮），
+    // 右下角还有缩放读数药丸（约 70px，含它与屏幕边缘的 10px）。
+    // 改造前只扣左边，窄屏上信息条会直接压到百分比读数上。
     final zoomScale = context.read<AppState>().config.editorZoomScale.clamp(0.5, 1.6);
-    final reserved = 130.0 * zoomScale + 16;
+    final reserved = 130.0 * zoomScale + 16 + 86.0;
     final maxW = math.max(96.0, MediaQuery.of(context).size.width - reserved);
     return Container(
-      height: 24,
+      // 高度跟随缩放设置，与左下缩放条同一档节奏
+      height: 22.0 + 2.0 * zoomScale,
       constraints: BoxConstraints(maxWidth: maxW),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
@@ -6696,7 +8021,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
         borderRadius: BorderRadius.circular(12),
       ),
       child: Text(
-        '${v.resolution} | ${v.durationStr} | ${formatFileSize(v.sizeMb)} | ${_nodes.length} $nodesLabel',
+        '${v.resolution} | ${v.durationStr} | ${_fppxSizeLabel(s)} | ${_nodes.length} $nodesLabel',
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(fontSize: 9, color: scheme.outline),
@@ -6745,6 +8070,31 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
                   Text(s.isZh ? '添加节点' : 'Add Node',
                       style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface)),
                   const Spacer(),
+                  // 「显示可用」：与桌面端「元素」面板同一个开关，移动端也能用
+                  Tooltip(
+                    message: _showOnlyAvailable
+                        ? (s.isZh ? '显示全部元素' : 'Show all elements')
+                        : (s.isZh
+                            ? '只显示当前文件可用的元素'
+                            : 'Only show elements usable for this file'),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(6),
+                      onTap: () => setState(
+                          () => _showOnlyAvailable = !_showOnlyAvailable),
+                      child: Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: Icon(
+                          _showOnlyAvailable
+                              ? Icons.filter_alt
+                              : Icons.filter_alt_outlined,
+                          size: 16,
+                          color: _showOnlyAvailable
+                              ? scheme.primary
+                              : scheme.outline,
+                        ),
+                      ),
+                    ),
+                  ),
                   IconButton(
                     icon: Icon(Icons.close, size: 18, color: scheme.outline),
                     onPressed: () => setState(() => _mobileToolboxOpen = false),
@@ -6823,10 +8173,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage> with WindowList
           ),
           IconButton(
             icon: Icon(Icons.close, size: 16, color: scheme.outline),
+            tooltip: s.isZh ? '收起（可从顶部菜单栏恢复）' : 'Collapse (restore from the top bar)',
+            // 只收起卡片、保留选中：顶部菜单栏会出现一枚图标把它调回来
+            // （改造前这里顺手清空了选中，卡片一关就再也调不出来）
             onPressed: () => setState(() {
-              _selectedNodeIds.clear();
-              _lastSelectedId = null;
-              _selectedLogicBlockId = null;
+              _mobilePropsHiddenFor = node?.id ?? _selectedLogicBlockId;
             }),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
@@ -7004,11 +8355,15 @@ class _MiniMapPainter extends CustomPainter {
     final vr = viewRect();
     final va = proj.toMini(vr.topLeft);
     final vb = proj.toMini(vr.bottomRight);
+    final viewRRect = RRect.fromRectAndRadius(
+      Rect.fromLTRB(va.dx, va.dy, math.max(va.dx + 4, vb.dx), math.max(va.dy + 4, vb.dy)),
+      const Radius.circular(2),
+    );
+    // 视口框加一层半透明填充：只描边时它和节点块混在一起，缩得越小越难看清
+    // 「当前看的是哪一块」，填充后一眼可辨。
+    canvas.drawRRect(viewRRect, Paint()..color = viewColor.withAlpha(46));
     canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTRB(va.dx, va.dy, math.max(va.dx + 4, vb.dx), math.max(va.dy + 4, vb.dy)),
-        const Radius.circular(2),
-      ),
+      viewRRect,
       Paint()
         ..color = viewColor
         ..style = PaintingStyle.stroke
@@ -7016,12 +8371,24 @@ class _MiniMapPainter extends CustomPainter {
     );
   }
 
+  /// 逐项比较两组矩形。
+  ///
+  /// 只比长度是不够的：拖动节点后数量不变，会被判成「无需重绘」，
+  /// 小地图上的方块就停在旧位置 —— 这正是「小地图显示不刷新」的来源。
+  static bool _sameRects(List<Rect> a, List<Rect> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
   @override
   bool shouldRepaint(_MiniMapPainter old) =>
-      old.nodeRects.length != nodeRects.length ||
-      old.blockRects.length != blockRects.length ||
       old.proj.content != proj.content ||
-      old.proj.size != proj.size;
+      old.proj.size != proj.size ||
+      !_sameRects(old.nodeRects, nodeRects) ||
+      !_sameRects(old.blockRects, blockRects);
 }
 
 // ── 连线绘制 ──
@@ -7485,7 +8852,62 @@ class _EditorCsdBtnState extends State<_EditorCsdBtn> {
 // AI Chat Dialog
 // ═══════════════════════════════════════════
 
-class _AiPanel extends StatefulWidget {
+/// AI 面板状态对外暴露的窄接口。
+///
+/// 独立面板窗口是**另一个 Flutter 引擎**，拿不到页面 State，只能通过
+/// widget 的 `GlobalKey.currentState` 取到这个接口来交接会话。
+abstract class AiPanelApi {
+  /// 导出当前会话消息（JSON 可序列化，用于交接给独立窗口）。
+  List<Map<String, dynamic>> exportMessages();
+
+  /// 用主窗口交接过来的会话覆盖当前会话。
+  void importMessages(List<Map<String, dynamic>> messages);
+
+  /// 设置会话级模型覆盖（不改全局配置）。
+  void applySessionModel(String model);
+}
+
+/// AI 面板的全部图操作回调。
+///
+/// 抽成一个对象、而不是散在 `_buildAiPanel` 的实参里，是为了让**应用内面板**
+/// 与**独立窗口（另一个引擎）的宿主转发**共用同一份实现 —— 否则两边的
+/// 「AI 改图」语义迟早漂移（旧实现已经出现过 `orElse: () => _nodes.first`
+/// 这类静默改错节点的 bug）。
+class AiGraphOps {
+  const AiGraphOps({
+    required this.apply,
+    required this.merge,
+    required this.modifyParams,
+    required this.clearAll,
+    required this.undo,
+    required this.redo,
+    required this.save,
+    required this.addNode,
+    required this.addGate,
+    required this.setGateParams,
+    required this.deleteNode,
+    required this.connectNodes,
+    required this.disconnectNodes,
+    required this.cancelTasks,
+  });
+
+  final void Function(List<PipelineNode>, List<PipelineConnection>) apply;
+  final void Function(List<PipelineNode>, List<PipelineConnection>) merge;
+  final bool Function(String nodeId, Map<String, dynamic> params) modifyParams;
+  final VoidCallback clearAll;
+  final VoidCallback undo;
+  final VoidCallback redo;
+  final VoidCallback save;
+  final String Function(String type, double x, double y) addNode;
+  final String Function(String gateName, double x, double y) addGate;
+  final bool Function(String nodeId, Map<String, dynamic> params) setGateParams;
+  final void Function(String nodeId) deleteNode;
+  final bool Function(String fromId, String toId) connectNodes;
+  final bool Function(String connId) disconnectNodes;
+  final VoidCallback cancelTasks;
+}
+
+class AiPanelView extends StatefulWidget {
   final AppStrings strings;
   final List<PipelineNode> existingNodes;
   final List<PipelineConnection> existingConnections;
@@ -7515,15 +8937,77 @@ class _AiPanel extends StatefulWidget {
   /// 移动端底部弹层已自带「标题 + 关闭」头部；此时隐藏面板内部的头部行，
   /// 避免出现上下两层菜单。
   final bool hideHeader;
-  const _AiPanel({super.key, required this.strings, required this.existingNodes, required this.existingConnections, required this.onApplyGraph, required this.onMergeGraph, required this.onModifyNodeParams, required this.onClearAll, required this.onUndo, required this.onRedo, required this.onSave, required this.onAddNode, required this.onAddGate, required this.onSetGateParams, required this.onDeleteNode, required this.onConnectNodes, required this.onDisconnectNodes, required this.onCancelTasks, this.startExpanded = false, this.onCollapseRequested, this.onTitleGenerated, this.hideHeader = false});  @override
-  State<_AiPanel> createState() => _AiPanelState();
+  /// 独立窗口模式：由主窗口交接过来的既有会话。
+  /// 拖出面板时带上，否则独立窗口里的对话会从空白开始。
+  final List<Map<String, dynamic>>? initialMessages;
+  /// 「拖出为独立系统窗口」入口。为空表示当前宿主不支持（移动端底部弹层、
+  /// 以及独立窗口里自己嵌的那一份都不传）——此时不渲染这个按钮。
+  final VoidCallback? onFloatOut;
+  /// 面板就绪后把自己的窄接口交出去，宿主靠它导出 / 导入会话。
+  final void Function(AiPanelApi api)? onApiReady;
+  const AiPanelView({super.key, required this.strings, required this.existingNodes, required this.existingConnections, required this.onApplyGraph, required this.onMergeGraph, required this.onModifyNodeParams, required this.onClearAll, required this.onUndo, required this.onRedo, required this.onSave, required this.onAddNode, required this.onAddGate, required this.onSetGateParams, required this.onDeleteNode, required this.onConnectNodes, required this.onDisconnectNodes, required this.onCancelTasks, this.startExpanded = false, this.onCollapseRequested, this.onTitleGenerated, this.hideHeader = false, this.initialMessages, this.onFloatOut, this.onApiReady});  @override
+  State<AiPanelView> createState() => _AiPanelViewState();
 }
 
-class _AiPanelState extends State<_AiPanel> {
+class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
   @override
   void initState() {
     super.initState();
     _expanded = widget.startExpanded;
+    // 把窄接口交出去（导会话 / 收会话）。放 postFrame：宿主一般在回调里直接
+    // 把 api 存进字段，但也不能排除它顺手 setState —— initState 期间 setState
+    // 会直接抛异常，摊到下一帧最稳。mounted 守卫防止首帧前就被销毁。
+    final ready = widget.onApiReady;
+    if (ready != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) ready(this);
+      });
+    }
+    // 独立窗口：把主窗口交接过来的会话原样接上，避免对话断档。
+    final seed = widget.initialMessages;
+    if (seed != null && seed.isNotEmpty) {
+      for (final m in seed) {
+        _messages.add((
+          role: (m['role'] as String?) ?? 'assistant',
+          content: (m['content'] as String?) ?? '',
+          inputTokens: (m['in'] as num?)?.toInt(),
+          outputTokens: (m['out'] as num?)?.toInt(),
+          blocks: (m['blocks'] as List?)
+              ?.whereType<Map<String, dynamic>>()
+              .toList(),
+        ));
+      }
+    }
+  }
+
+  @override
+  List<Map<String, dynamic>> exportMessages() => [
+        for (final m in _messages)
+          <String, dynamic>{
+            'role': m.role,
+            'content': m.content,
+            if (m.inputTokens != null) 'in': m.inputTokens,
+            if (m.outputTokens != null) 'out': m.outputTokens,
+            if (m.blocks != null) 'blocks': m.blocks,
+          },
+      ];
+
+  @override
+  void importMessages(List<Map<String, dynamic>> messages) {
+    setState(() {
+      _messages.clear();
+      for (final m in messages) {
+        _messages.add((
+          role: (m['role'] as String?) ?? 'assistant',
+          content: (m['content'] as String?) ?? '',
+          inputTokens: (m['in'] as num?)?.toInt(),
+          outputTokens: (m['out'] as num?)?.toInt(),
+          blocks: (m['blocks'] as List?)
+              ?.whereType<Map<String, dynamic>>()
+              .toList(),
+        ));
+      }
+    });
   }
 
   final _ctrl = TextEditingController();
@@ -7602,7 +9086,30 @@ class _AiPanelState extends State<_AiPanel> {
   static const _uuid = Uuid();
 
   String get _effectiveProvider => _sessionProvider ?? context.read<AppState>().config.aiProvider;
-  String get _effectiveModel => _sessionModel ?? context.read<AppState>().config.aiModel;
+  /// 模型解析链：本次会话选中的 → 当前生效配置里选中的模型 → 全局选中的 →
+  /// 生效配置的模型清单第一条。
+  ///
+  /// 后三档都是这次新加的：模型默认值已置空（不再内置 gpt-4o），只回落到
+  /// config.aiModel 的话，用户没在设置里手动选过就会拿到空模型。
+  /// 「配置里选中的模型」必须排在全局字段之前：发送路径用的就是它
+  /// （见 _send 里的 effModel），否则会出现「发出去的是配置的模型、
+  /// 空状态却提示未选择模型」这种自相矛盾。
+  String get _effectiveModel {
+    if (_sessionModel?.isNotEmpty == true) return _sessionModel!;
+    final cfg = context.read<AppState>().config;
+    final fromProfile = _effectiveProfile?.model ?? '';
+    if (fromProfile.isNotEmpty) return fromProfile;
+    if (cfg.aiModel.isNotEmpty) return cfg.aiModel;
+    return _effectiveProfile?.models.firstOrNull?.id ?? '';
+  }
+
+  /// 外部（移动端弹层头部的模型药丸）切换模型时同步会话级选择，
+  /// 否则已加载的会话会继续沿用旧模型，表现为「点了没反应」。
+  @override
+  void applySessionModel(String model) {
+    if (!mounted) return;
+    setState(() => _sessionModel = model);
+  }
   String get _effectiveApproveMode => _sessionApproveMode ?? context.read<AppState>().config.aiApproveMode;
 
   /// 当前生效的配置项（会话级 > 全局 active > 默认字段）。
@@ -8091,7 +9598,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     'denoise_method', 'denoise_mode', 'noise_mode', 'noise_type', 'sharpen_mode',
     'brightness_mode', 'rotate_mode', 'crop_mode',
     // 路径 / 文本
-    'naming_mode', 'naming_value', 'output_dir', 'file_media_type', 'node_name',
+    'naming_mode', 'naming_value', 'output_dir', 'file_media_type', 'media_type', 'node_name',
     'overlay_path', 'cover_path', 'lyrics_path', 'subtitle_file', 'subtitle_path',
     'font_name', 'font_color', 'outline_color', 'container_file_select',
     'container_selected_indices', 'tt_date', 'tt_start', 'tt_end',
@@ -8192,7 +9699,8 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
 
   Future<void> _executeProbeVideo(String path) async {
     try {
-      final resp = await context.read<AppState>().backend.probe(path);
+      // 走可覆写入口：独立面板窗口没有后端，由 MirrorAppState 转发回主窗口执行
+      final resp = await context.read<AppState>().probeMedia(path);
       if (resp['success'] == true) {
         _addToolResult('probe_video', jsonEncode(resp['data'] ?? resp));
       } else {
@@ -8291,7 +9799,9 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     // 优先使用当前选中的配置项（会话级 > 全局 active > 默认字段）
     final profile = _effectiveProfile;
     final effProvider = profile?.provider ?? _effectiveProvider;
-    final effModel = profile?.model ?? _effectiveModel;
+    // 配置里没选模型（默认值已置空）时走解析链，不要带空模型发请求
+    final effModel =
+        profile?.model.isNotEmpty == true ? profile!.model : _effectiveModel;
     final effUrl = profile?.apiUrl.isNotEmpty == true ? profile!.apiUrl : cfg.aiApiUrl;
     // Key 解析：多 Key 模式按 apiKeys 轮换（单 Key 作首位一并参与），
     // 均为空时回退全局默认 Key。
@@ -8319,6 +9829,17 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     final effTemp = modelEntry?.temperature ?? profile?.temperature ?? cfg.aiTemperature;
     if (effKey.isEmpty) {
       showToast(context, widget.strings.aiNotConfigured, type: ToastType.warning);
+      return;
+    }
+    // 模型不再有内置兜底（默认值已置空）：没配置就当场提示，
+    // 不要让请求带着空 model 发出去、由供应商回一个看不懂的 400。
+    if (effModel.trim().isEmpty) {
+      showToast(
+          context,
+          widget.strings.isZh
+              ? '未配置模型，请先在 设置 → AI 中选择'
+              : 'No model configured — pick one in Settings → AI',
+          type: ToastType.warning);
       return;
     }
     // 历史上限：长会话（尤其工具调用密集）裁剪最旧消息，避免请求体积与内存无限增长
@@ -8565,11 +10086,17 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     final profile = _effectiveProfile;
     final key = profile?.apiKey.isNotEmpty == true ? profile!.apiKey : cfg.aiApiKey;
     if (key.isEmpty) return;
+    final isAnthropic = (profile?.provider ?? cfg.aiProvider) == 'anthropic';
+    final url = (profile?.apiUrl.isNotEmpty == true ? profile!.apiUrl : cfg.aiApiUrl);
+    // 模型不再有内置兜底：一个可用模型都没有就别浪费一次请求
+    final model = profile?.model.isNotEmpty == true
+        ? profile!.model
+        : (cfg.aiModel.isNotEmpty
+            ? cfg.aiModel
+            : (profile?.models.firstOrNull?.id ?? ''));
+    if (model.isEmpty) return;
     _titleGenerated = true;
     try {
-      final isAnthropic = (profile?.provider ?? cfg.aiProvider) == 'anthropic';
-      final url = (profile?.apiUrl.isNotEmpty == true ? profile!.apiUrl : cfg.aiApiUrl);
-      final model = profile?.model ?? cfg.aiModel;
       final uri = Uri.parse(_resolveEndpoint(url, isAnthropic));
       // 取最近几轮对话内容用于总结
       final recent = _messages.take(6).map((m) => '${m.role}: ${m.content.substring(0, m.content.length > 120 ? 120 : m.content.length)}').join('\n');
@@ -8724,6 +10251,15 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
               Icon(Icons.smart_toy, size: 18, color: scheme.primary),
               const SizedBox(width: 8),
               const Spacer(),
+              // 拖出为独立系统窗口（只有主窗口的 AI 抽屉会传 onFloatOut）
+              if (widget.onFloatOut != null)
+                IconButton(
+                  icon: const Icon(Icons.desktop_windows_outlined, size: 17),
+                  tooltip: s.isZh ? '拖出为独立窗口' : 'Open in separate window',
+                  onPressed: widget.onFloatOut,
+                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  padding: EdgeInsets.zero,
+                ),
               // 历史记录按钮
               IconButton(
                 icon: const Icon(Icons.history, size: 18),
@@ -9703,5 +11239,324 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         ),
       ),
     );
+  }
+}
+
+/// 「写入格式」选择器：旧版 JSON / 新版模块化二进制。
+///
+/// 自己持有选中态并把结果回调出去 —— 它出现在导出对话框（独立路由）里，
+/// 页面的 setState 不会重建对话框，所以选中高亮必须由它自己维护。
+/// 导出配置对话框的返回值。
+class _ExportDialogResult {
+  const _ExportDialogResult({
+    required this.description,
+    required this.encrypted,
+    required this.password,
+    required this.encryptAlgo,
+  });
+
+  final String description;
+  final bool encrypted;
+  final String password;
+  final int encryptAlgo;
+}
+
+/// 导出配置对话框（写入格式 + 介绍 + 加密）。
+///
+/// 加密仅在「新版 (Beta)」下可开：旧版格式结构上没有任何位置存放加密字段，
+/// 协议层也会拒收"旧版 + 加密"（规范 §10）。导出侧必须二次确认口令 ——
+/// 打错一个字符文件就永久打不开，必须挡在写盘之前。
+class _ExportConfigDialog extends StatefulWidget {
+  const _ExportConfigDialog({
+    required this.initialFormat,
+    required this.nodeCount,
+    required this.linkCount,
+    required this.zh,
+    required this.onFormatChanged,
+  });
+
+  final String initialFormat;
+  final int nodeCount;
+  final int linkCount;
+  final bool zh;
+  final ValueChanged<String> onFormatChanged;
+
+  @override
+  State<_ExportConfigDialog> createState() => _ExportConfigDialogState();
+}
+
+class _ExportConfigDialogState extends State<_ExportConfigDialog> {
+  late String _format = widget.initialFormat;
+  final TextEditingController _descCtrl = TextEditingController();
+  final TextEditingController _pwdCtrl = TextEditingController();
+  final TextEditingController _pwd2Ctrl = TextEditingController();
+  bool _encrypt = false;
+  int _algo = FppxService.algoAes256Cbc;
+  String? _err;
+
+  bool get _isV2 => _format == 'v2';
+  bool get _willEncrypt => _encrypt && _isV2;
+
+  @override
+  void dispose() {
+    _descCtrl.dispose();
+    _pwdCtrl.dispose();
+    _pwd2Ctrl.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final zh = widget.zh;
+    if (_willEncrypt) {
+      if (_pwdCtrl.text.isEmpty) {
+        setState(() => _err = zh ? '口令不能为空' : 'Password cannot be empty');
+        return;
+      }
+      if (_pwdCtrl.text != _pwd2Ctrl.text) {
+        setState(() => _err = zh ? '两次输入的口令不一致' : 'Passwords do not match');
+        return;
+      }
+    }
+    Navigator.pop(
+      context,
+      _ExportDialogResult(
+        description: _descCtrl.text,
+        encrypted: _willEncrypt,
+        password: _willEncrypt ? _pwdCtrl.text : '',
+        encryptAlgo: _algo,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final zh = widget.zh;
+    return AlertDialog(
+      title: Row(children: [
+        Icon(Icons.file_upload_outlined, size: 20, color: scheme.primary),
+        const SizedBox(width: 8),
+        Text(zh ? '导出配置' : 'Export Config', style: TextStyle(color: scheme.onSurface)),
+      ]),
+      content: SizedBox(
+        width: 400,
+        child: SingleChildScrollView(
+          child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                    zh
+                        ? '将当前节点配置导出为 .fppx 文件，可应用于其他视频。'
+                        : 'Export current node config as .fppx file for reuse.',
+                    style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  decoration: BoxDecoration(
+                      color: scheme.surfaceContainerHighest.withAlpha(80),
+                      borderRadius: BorderRadius.circular(8)),
+                  child: Row(children: [
+                    Icon(Icons.info_outline, size: 14, color: scheme.outline),
+                    const SizedBox(width: 6),
+                    Text(
+                        '${widget.nodeCount} ${zh ? '节点' : 'nodes'}  •  ${widget.linkCount} ${zh ? '连线' : 'links'}',
+                        style: TextStyle(fontSize: 12, color: scheme.outline)),
+                  ]),
+                ),
+                const SizedBox(height: 12),
+                _WriteFormatSelector(
+                  value: _format,
+                  zh: zh,
+                  onChanged: (v) {
+                    setState(() {
+                      _format = v;
+                      // 切回旧版时把加密状态收掉，避免"选了旧版却还勾着加密"
+                      if (!_isV2) {
+                        _encrypt = false;
+                        _err = null;
+                      }
+                    });
+                    widget.onFormatChanged(v);
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _descCtrl,
+                  maxLines: 3,
+                  decoration: InputDecoration(
+                    labelText: zh ? '配置介绍（可选）' : 'Description (optional)',
+                    labelStyle: TextStyle(color: scheme.onSurfaceVariant),
+                    hintText: zh ? '描述这个配置的用途...' : 'Describe what this config does...',
+                    hintStyle: TextStyle(color: scheme.outline),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    alignLabelWithHint: true,
+                  ),
+                  style: TextStyle(fontSize: 13, color: scheme.onSurface),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainerHighest.withAlpha(60),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: scheme.outlineVariant.withAlpha(120)),
+                  ),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Row(children: [
+                      Icon(_isV2 ? Icons.lock_outline : Icons.lock_clock,
+                          size: 16, color: _isV2 ? scheme.primary : scheme.outline),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(zh ? '加密配置文件' : 'Encrypt config',
+                                  style: TextStyle(
+                                      fontSize: 13,
+                                      color: _isV2 ? scheme.onSurface : scheme.outline)),
+                              Text(
+                                  _isV2
+                                      ? (zh
+                                          ? '仅数据区被加密；介绍文本与元数据保持明文'
+                                          : 'Only the data region is encrypted; description stays plain')
+                                      : (zh ? '旧版格式不支持加密' : 'Legacy format does not support encryption'),
+                                  style: TextStyle(fontSize: 11, color: scheme.outline)),
+                            ]),
+                      ),
+                      Switch(
+                        value: _willEncrypt,
+                        onChanged: _isV2
+                            ? (v) => setState(() {
+                                  _encrypt = v;
+                                  _err = null;
+                                })
+                            : null,
+                      ),
+                    ]),
+                    if (_willEncrypt) ...[
+                      const SizedBox(height: 4),
+                      SizedBox(
+                        width: double.infinity,
+                        child: SegmentedButton<int>(
+                          segments: const [
+                            ButtonSegment(
+                                value: FppxService.algoAes256Cbc, label: Text('AES-256')),
+                            ButtonSegment(
+                                value: FppxService.algoAes128Cbc, label: Text('AES-128')),
+                          ],
+                          selected: {_algo},
+                          showSelectedIcon: false,
+                          onSelectionChanged: (v) => setState(() => _algo = v.first),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: _pwdCtrl,
+                        obscureText: true,
+                        decoration: InputDecoration(
+                          labelText: zh ? '口令' : 'Password',
+                          labelStyle: TextStyle(color: scheme.onSurfaceVariant),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                          isDense: true,
+                        ),
+                        style: TextStyle(fontSize: 13, color: scheme.onSurface),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: _pwd2Ctrl,
+                        obscureText: true,
+                        onSubmitted: (_) => _submit(),
+                        decoration: InputDecoration(
+                          labelText: zh ? '再次输入口令' : 'Confirm password',
+                          labelStyle: TextStyle(color: scheme.onSurfaceVariant),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                          isDense: true,
+                        ),
+                        style: TextStyle(fontSize: 13, color: scheme.onSurface),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(children: [
+                        Icon(Icons.warning_amber_rounded, size: 13, color: context.sem.warning),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                              zh ? '口令一旦丢失，文件将无法恢复' : 'If the password is lost, the file cannot be recovered',
+                              style: TextStyle(fontSize: 11, color: context.sem.warning)),
+                        ),
+                      ]),
+                    ],
+                    const SizedBox(height: 4),
+                  ]),
+                ),
+                if (_err != null) ...[
+                  const SizedBox(height: 10),
+                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Icon(Icons.error_outline, size: 14, color: scheme.error),
+                    const SizedBox(width: 4),
+                    Expanded(child: Text(_err!, style: TextStyle(fontSize: 12, color: scheme.error))),
+                  ]),
+                ],
+              ]),
+        ),
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(zh ? '取消' : 'Cancel')),
+        FilledButton(onPressed: _submit, child: Text(zh ? '导出' : 'Export')),
+      ],
+    );
+  }
+}
+
+class _WriteFormatSelector extends StatefulWidget {
+  const _WriteFormatSelector({
+    required this.value,
+    required this.zh,
+    required this.onChanged,
+  });
+
+  final String value;
+  final bool zh;
+  final ValueChanged<String> onChanged;
+
+  @override
+  State<_WriteFormatSelector> createState() => _WriteFormatSelectorState();
+}
+
+class _WriteFormatSelectorState extends State<_WriteFormatSelector> {
+  late String _value = widget.value;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Row(children: [
+      Text(widget.zh ? '写入格式' : 'Write format',
+          style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+      const SizedBox(width: 8),
+      Expanded(
+        child: SegmentedButton<String>(
+          segments: [
+            ButtonSegment<String>(
+              value: 'legacy',
+              label: Text(widget.zh ? '旧版 (JSON)' : 'Legacy (JSON)',
+                  style: const TextStyle(fontSize: 12)),
+            ),
+            ButtonSegment<String>(
+              value: 'v2',
+              label: Text(widget.zh ? '新版 (Beta)' : 'New (Beta)',
+                  style: const TextStyle(fontSize: 12)),
+            ),
+          ],
+          selected: {_value},
+          showSelectedIcon: false,
+          onSelectionChanged: (sel) {
+            setState(() => _value = sel.first);
+            widget.onChanged(sel.first);
+          },
+        ),
+      ),
+    ]);
   }
 }

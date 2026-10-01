@@ -12,6 +12,10 @@
 #include <flutter/standard_method_codec.h>
 
 #include "flutter/generated_plugin_registrant.h"
+// 独立面板窗口（desktop_multi_window）：每个子窗口是**独立的 Flutter 引擎**，
+// 插件不会自动注册进去。必须在这个回调里给新引擎再跑一遍 RegisterPlugins，
+// 否则子窗口里 window_manager / desktop_drop 等全部调不动。
+#include "desktop_multi_window/desktop_multi_window_plugin.h"
 
 // ---------- debug log ----------
 static std::string DropLogPath() {
@@ -165,6 +169,12 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+  DesktopMultiWindowSetWindowCreatedCallback([](void* controller) {
+    auto* flutter_view_controller =
+        reinterpret_cast<flutter::FlutterViewController*>(controller);
+    auto* registry = flutter_view_controller->engine();
+    RegisterPlugins(registry);
+  });
 
   HWND child = flutter_controller_->view()->GetNativeWindow();
   SetChildContent(child);

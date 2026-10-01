@@ -15,22 +15,47 @@ class FppxService {
   static const int modeNodeEditor = 0x01;
   static const int modeQuick = 0x02;
 
+  // ── 加密算法族（与 C++ fppx2_format.h 的 FPPX2_ALGO_* 一一对应）──
+  static const int algoAes128Cbc = 0x01; // AES-128-CBC + PKCS#7 + HMAC-SHA256
+  static const int algoAes256Cbc = 0x02; // AES-256-CBC + PKCS#7 + HMAC-SHA256（默认）
+
+  /// 旧版格式结构上没有任何位置放加密字段，故永远不支持加密。
+  static bool supportsEncryption({required bool newFormat}) => newFormat;
+
   /// 导入 .fppx（新旧格式由 C++ 自动路由）。
   ///
   /// 当 [FppxImportResult.unknownTypeIds] 非空且 [FppxImportResult.graph] 为 null 时，
   /// 表示存在未知节点类型 ID 且用户尚未确认强制导入——GUI 应弹确认框后带
   /// force=true 重新调用。
-  Future<FppxImportResult> importFile(String path, {bool force = false}) async {
-    final resp = await backend.fppxImport(path, force: force);
+  /// [password] 仅在文件已加密时需要。首次调用不传口令时，C++ 端若检测到
+  /// 文件已加密会返回 [FppxImportResult.needPassword]=true（不是错误），
+  /// GUI 据此弹出「输入口令」框，用户提交后带 [password] 重新调用本方法。
+  /// 口令错误时 success=false 且 error 为统一文案，可保持对话框打开重试。
+  Future<FppxImportResult> importFile(String path,
+      {bool force = false, String password = ''}) async {
+    final resp =
+        await backend.fppxImport(path, force: force, password: password);
+
+    final respData = resp['data'] as Map<String, dynamic>?;
+
+    // 需要口令：不是错误，交由 GUI 弹框（规范 §6.9）
+    if (resp['success'] != true && respData?['need_password'] == true) {
+      return FppxImportResult(
+        success: false,
+        needPassword: true,
+        encrypted: true,
+        errors: _strList(respData?['errors']),
+        warnings: _strList(respData?['warnings']),
+      );
+    }
 
     if (resp['success'] != true) {
-      final data = resp['data'] as Map<String, dynamic>?;
-      final dataErrors = _strList(data?['errors']);
+      final dataErrors = _strList(respData?['errors']);
       return FppxImportResult(
         success: false,
         error: (resp['error'] as String?) ?? dataErrors.firstOrNull ?? '导入失败',
         errors: dataErrors,
-        warnings: _strList(data?['warnings']),
+        warnings: _strList(respData?['warnings']),
       );
     }
 
@@ -71,16 +96,27 @@ class FppxService {
 
   /// 导出节点图为 .fppx。[newFormat]=true 走新版 v2 二进制，false 走旧版。
   /// C++ 端写盘前完整校验（张冠李戴/连线/环/媒体类型等），失败不落盘。
+  ///
+  /// [encrypted] 仅对 [newFormat]=true 有效；旧版会直接拒收（结构上无位置放）。
+  /// 加密范围只有数据区（模块 0x03），介绍文本与各类元数据保持明文。
   Future<FppxExportResult> exportGraph(
     PipelineGraph graph,
     String path, {
     required String description,
     required bool newFormat,
+    bool encrypted = false,
+    String password = '',
+    int encryptAlgo = algoAes256Cbc,
   }) async {
     final graphJson = graph.toJson();
     final resp = newFormat
         ? await backend.fppx2Export(path,
-            mode: modeNodeEditor, description: description, graph: graphJson)
+            mode: modeNodeEditor,
+            description: description,
+            graph: graphJson,
+            encrypted: encrypted,
+            password: password,
+            encryptAlgo: encryptAlgo)
         : await backend.fppxLegacyExport(path, graph: graphJson, description: description);
 
     return _toExportResult(resp);
@@ -91,9 +127,17 @@ class FppxService {
     String path, {
     required String description,
     required List<Map<String, dynamic>> items,
+    bool encrypted = false,
+    String password = '',
+    int encryptAlgo = algoAes256Cbc,
   }) async {
     final resp = await backend.fppx2Export(path,
-        mode: modeQuick, description: description, quickItems: items);
+        mode: modeQuick,
+        description: description,
+        quickItems: items,
+        encrypted: encrypted,
+        password: password,
+        encryptAlgo: encryptAlgo);
     return _toExportResult(resp);
   }
 
@@ -115,6 +159,9 @@ class FppxService {
 class FppxImportResult {
   final bool success;
   final String? error;
+  /// C++ 端检测到文件已加密且本次未提供口令：GUI 应弹口令框后带口令重调，
+  /// 这不是错误（[error] 为空、[errors] 为空）。
+  final bool needPassword;
   final bool isNewFormat;
   final int mode;
   final String description;
@@ -129,6 +176,7 @@ class FppxImportResult {
   const FppxImportResult({
     required this.success,
     this.error,
+    this.needPassword = false,
     this.isNewFormat = false,
     this.mode = 0,
     this.description = '',
@@ -143,6 +191,9 @@ class FppxImportResult {
 
   /// 是否需要弹"强制导入"确认框（存在未知节点类型且尚未确认）。
   bool get needsForceConfirm => success && graph == null && unknownTypeIds.isNotEmpty;
+
+  /// 是否需要弹「输入口令」框（文件已加密，尚未提供口令）。
+  bool get needsPassword => !success && needPassword;
 }
 
 /// [FppxService.exportGraph] / [FppxService.exportQuickItems] 的返回。

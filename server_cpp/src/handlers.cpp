@@ -862,11 +862,13 @@ void handleFppxImport(const json& req) {
     json params = getParams(req);
     std::string path = params.value("path", "");
     bool force = params.value("force", false);
+    // 口令：仅在本次调用栈内存在，不落盘、不进审计/日志、不回显
+    std::string password = params.value("password", "");
     if (path.empty()) {
         JsonWriter::reply(req.value("id", ""), false, nullptr, "缺少文件路径 path");
         return;
     }
-    Fppx2Result res = fppxAutoImport(path, force);
+    Fppx2Result res = fppxAutoImport(path, force, password);
     std::string first = res.errors.empty() ? "" : res.errors.front();
     JsonWriter::reply(req.value("id", ""), res.success, res.toJson(),
                       first.empty() ? std::string("") : first);
@@ -876,11 +878,12 @@ void handleFppx2Import(const json& req) {
     json params = getParams(req);
     std::string path = params.value("path", "");
     bool force = params.value("force", false);
+    std::string password = params.value("password", "");
     if (path.empty()) {
         JsonWriter::reply(req.value("id", ""), false, nullptr, "缺少文件路径 path");
         return;
     }
-    Fppx2Result res = fppx2Import(path, force);
+    Fppx2Result res = fppx2Import(path, force, password);
     std::string first = res.errors.empty() ? "" : res.errors.front();
     JsonWriter::reply(req.value("id", ""), res.success, res.toJson(),
                       first.empty() ? std::string("") : first);

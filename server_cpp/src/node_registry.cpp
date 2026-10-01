@@ -124,6 +124,44 @@ const NodeTypeSpec kTypes[] = {
     {makeTypeId(0x1D), "imageAdjust", nullptr, "图片调整",
      MK_IMAGE, MK_IMAGE, false, 0,
      {COMMON_KEYS, "saturation", "gamma", "contrast"}},
+
+    // ── 通用节点（ID 自 0x1E 顺延，勿插队以免破坏既有文件往返）──
+    // 语义跨 音/视频/图片，实际媒体类型由 params["media_type"]（video/image/audio）
+    // 决定；paramKeys = 各媒体类型下所用编辑器键的并集（与 GUI models.dart 的
+    // genericParamKeys 保持一致，GUI 切换媒体类型时会清掉不适用键）。
+    {makeTypeId(0x1E), "mediaConvert", nullptr, "格式转换",
+     MK_VIDEO | MK_IMAGE | MK_AUDIO, MK_VIDEO | MK_IMAGE | MK_AUDIO /*实际由 media_type 决定*/, false, 0,
+     {COMMON_KEYS, "media_type",
+      "video_codec", "audio_codec", "preset", "gpu", "resolution",
+      "resolution_w", "resolution_h", "rate_mode", "crf", "video_bitrate",
+      "vf_filters", "af_filters", "overwrite", "sample_rate",
+      "pix_fmt", "fps", "fps_value", "audio_bitrate", "audio_bitrate_mode",
+      "audio_channels", "output_format", "quality"}},
+    {makeTypeId(0x1F), "mediaScale", nullptr, "缩放",
+     MK_VIDEO | MK_IMAGE, MK_VIDEO | MK_IMAGE /*实际由 media_type 决定*/, false, 0,
+     {COMMON_KEYS, "media_type", "scale_mode", "scale_width", "scale_height",
+      "scale_percent", "flip", "rotate", "scale_factor", "random_min", "random_max"}},
+    {makeTypeId(0x20), "mediaCrop", nullptr, "裁剪",
+     MK_VIDEO | MK_IMAGE, MK_VIDEO | MK_IMAGE /*实际由 media_type 决定*/, false, 0,
+     {COMMON_KEYS, "media_type", "crop_w", "crop_h", "crop_x", "crop_y"}},
+    {makeTypeId(0x21), "mediaRotate", nullptr, "旋转翻转",
+     MK_VIDEO | MK_IMAGE, MK_VIDEO | MK_IMAGE /*实际由 media_type 决定*/, false, 0,
+     {COMMON_KEYS, "media_type", "rotate_mode", "angle", "random_min", "random_max",
+      "scale_mode", "scale_width", "scale_height", "scale_percent", "flip", "rotate"}},
+    {makeTypeId(0x22), "mediaColor", nullptr, "色彩调整",
+     MK_VIDEO | MK_IMAGE, MK_VIDEO | MK_IMAGE /*实际由 media_type 决定*/, false, 0,
+     {COMMON_KEYS, "media_type", "saturation", "gamma", "contrast", "presets",
+      "eq_brightness", "eq_contrast", "eq_saturation", "eq_gamma", "hue_degrees",
+      "vignette_angle", "denoise_strength", "unsharp_amount"}},
+    {makeTypeId(0x23), "mediaSharpen", nullptr, "锐化降噪",
+     MK_VIDEO | MK_IMAGE, MK_VIDEO | MK_IMAGE /*实际由 media_type 决定*/, false, 0,
+     {COMMON_KEYS, "media_type", "sharpen_mode", "sharpen_strength", "random_min",
+      "random_max", "presets", "eq_brightness", "eq_contrast", "eq_saturation",
+      "eq_gamma", "hue_degrees", "vignette_angle", "denoise_strength", "unsharp_amount"}},
+    {makeTypeId(0x24), "mediaOverlay", nullptr, "叠加",
+     MK_VIDEO, MK_VIDEO, false, 0,
+     {COMMON_KEYS, "media_type", "overlay_path", "position", "opacity", "margin",
+      "overlay_scale"}},
 };
 
 // ── 结构性节点（源/输出）──────────────────────────────────────

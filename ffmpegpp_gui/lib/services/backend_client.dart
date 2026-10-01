@@ -144,27 +144,39 @@ class BackendClient {
   /// 导入 .fppx（自动路由：C++ 按文件头第 5 字节判别新旧格式后分发，
   /// Dart 不读配置文件的任何字节）。
   /// [force]=true 表示用户确认强制导入未知节点类型。
-  /// 返回 data: {mode, is_new_format, description, encrypted, graph?, quick_items?,
-  ///             errors, warnings, unknown_type_ids, forced}
-  Future<Map<String, dynamic>> fppxImport(String path, {bool force = false}) async {
-    return await _process.requestWithTimeout(
-        'fppx_import', 30, {'path': path, 'force': force});
+  /// [password] 仅用于加密文件；为空且文件已加密时，C++ 端返回
+  /// success=false 且 data.need_password=true（不是错误），GUI 据此弹口令框后重调。
+  /// 返回 data: {mode, is_new_format, description, encrypted, need_password,
+  ///             graph?, quick_items?, errors, warnings, unknown_type_ids, forced}
+  Future<Map<String, dynamic>> fppxImport(String path,
+      {bool force = false, String password = ''}) async {
+    return await _process.requestWithTimeout('fppx_import', 30, {
+      'path': path,
+      'force': force,
+      'password': password,
+    });
   }
 
   /// 导出新版 .fppx。mode: 1=节点编辑器(需 graph) 2=快速模式(需 quickItems)。
   /// C++ 端写盘前完整校验；校验失败时 success=false 且 data.errors 带回原因。
+  /// [encrypted]=true 时 [password] 必须非空（空口令 C++ 端一律拒绝）；
+  /// [encryptAlgo] 见 FppxService.algoAes128Cbc / algoAes256Cbc（默认 AES-256-CBC）。
   Future<Map<String, dynamic>> fppx2Export(String path, {
     required int mode,
     required String description,
     Map<String, dynamic>? graph,
     List<dynamic>? quickItems,
     bool encrypted = false,
+    String password = '',
+    int encryptAlgo = 0x02,
   }) async {
     return await _process.requestWithTimeout('fppx2_export', 30, {
       'path': path,
       'mode': mode,
       'description': description,
       'encrypted': encrypted,
+      'password': password,
+      'encrypt_algo': encryptAlgo,
       'graph': ?graph,
       'quick_items': ?quickItems,
     });

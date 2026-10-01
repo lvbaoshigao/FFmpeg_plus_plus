@@ -150,6 +150,25 @@ NavGlassLook navGlassLook(ColorScheme scheme, bool isDark, NavGlassPal pal) {
 /// 现在统一改为：透明填充 + 一条中性（暗色白 / 亮色黑）发丝描边 + 无阴影，
 /// 选中态完全交给图标/文字颜色（[NavGlassLook.selectedColor]）表达。
 /// [style] 参数保留在签名里（调用方语义不变、未来若要按样式微调描边不用改调用点）。
+/// 选中态遮罩在主轴上两端各让出的内缩量（px）。
+///
+/// 遮罩宽度原本等于整个药丸槽宽，两端各只剩 [pillGap]（4px）与相邻项分隔，
+/// 视觉上「遮罩左右间距过小」（用户反馈）。内缩 3px 后相邻间距约 7px；
+/// 药丸内容自身还有内边距，选中图标不会被挤到。
+const double kMobileNavMaskInset = 3.0;
+
+/// 遮罩内缩后的实际宽度（下限 8，避免极小槽宽算出负值触发断言）。
+double mobileNavMaskWidth(double itemW) {
+  final w = itemW - kMobileNavMaskInset * 2;
+  return w < 8 ? 8 : w;
+}
+
+/// 竖排（导轨）形态下的遮罩长度：主轴变成纵轴，同一条内缩规则。
+double mobileNavMaskExtent(double itemExtent) {
+  final v = itemExtent - kMobileNavMaskInset * 2;
+  return v < 8 ? 8 : v;
+}
+
 Widget navMaskPill(ColorScheme scheme, bool isDark, String style) {
   return Container(
     decoration: BoxDecoration(
@@ -931,10 +950,11 @@ class _MobileBottomNavState extends State<MobileBottomNav>
           ? Duration.zero
           : const Duration(milliseconds: 260),
       curve: Curves.easeOutCubic,
-      left: followLeft ?? _itemLeft(itemIdx, itemW, pillGap),
+      // 左右各内缩 kMobileNavMaskInset：遮罩不再顶到相邻项
+      left: (followLeft ?? _itemLeft(itemIdx, itemW, pillGap)) + kMobileNavMaskInset,
       top: 2,
       bottom: 2,
-      width: itemW,
+      width: mobileNavMaskWidth(itemW),
       child: mask,
     );
   }
@@ -1018,10 +1038,13 @@ class _MobileBottomNavState extends State<MobileBottomNav>
                 ? Duration.zero
                 : const Duration(milliseconds: 260),
             curve: Curves.easeOutCubic,
-            top: followTop ?? _itemLeft(itemIdx, itemExtent, gap),
+            // 上下各内缩 kMobileNavMaskInset：与横排同一条间距规则，
+            // 竖排导轨的遮罩不再顶着相邻药丸
+            top: (followTop ?? _itemLeft(itemIdx, itemExtent, gap)) +
+                kMobileNavMaskInset,
             left: 2,
             right: 2,
-            height: itemExtent,
+            height: mobileNavMaskExtent(itemExtent),
             child: mask,
           );
         },
@@ -1207,10 +1230,12 @@ class _MobileNavStyleTabBarState extends State<MobileNavStyleTabBar> {
                 AnimatedPositioned(
                   duration: const Duration(milliseconds: 260),
                   curve: Curves.easeOutCubic,
-                  left: widget.selectedIndex * (itemW + pillGap),
+                  // 与主导航同一条内缩规则，保持两处遮罩观感一致
+                  left: widget.selectedIndex * (itemW + pillGap) +
+                      kMobileNavMaskInset,
                   top: 2,
                   bottom: 2,
-                  width: itemW,
+                  width: mobileNavMaskWidth(itemW),
                   child: RepaintBoundary(
                       child: navMaskPill(scheme, isDark, style)),
                 ),

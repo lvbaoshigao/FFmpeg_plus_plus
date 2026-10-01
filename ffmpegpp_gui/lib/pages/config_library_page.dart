@@ -16,6 +16,7 @@ import '../services/quick_config_storage.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_strings.dart';
 import '../widgets/app_card.dart';
+import '../widgets/fppx_password.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_glass_pill.dart';
 // 生效的菜单栏位置（底部 ↔ 左右竖排导轨）：列表底部留白随之在 96 / 20 间切换
@@ -209,9 +210,12 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     if (!mounted) return; // pickFile 异步间隙后的首个 context 使用点
     final state = context.read<AppState>();
 
-    // 新旧格式由 C++ 端解析（第 5 字节 0xFF = 新版），导入与校验行为完全一致
-    final result = await FppxService(state.backend).importFile(path, force: force);
+    // 新旧格式由 C++ 端解析（第 5 字节 0xFF = 新版），导入与校验行为完全一致。
+    // 加密文件的口令流程由共享组件处理（首次不带口令 → need_password → 弹框重试）。
+    final result = await importFppxWithPassword(
+        context, FppxService(state.backend), path, force: force, zh: zh);
     if (!mounted) return;
+    if (result == null) return;
 
     if (!result.success) {
       _showImportErrors(zh ? '导入失败' : 'Import Failed', result.errors.isEmpty ? [result.error ?? ''] : result.errors);
@@ -242,9 +246,10 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
           ],
         ),
       );
+      if (!mounted) return;
       if (goOn == true) {
         // 重新选同一个文件强制导入
-        _importFppxPath(path, force: true);
+        await _importFppxPath(path, force: true);
       }
       return;
     }
@@ -320,8 +325,10 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
   Future<void> _importFppxPath(String path, {bool force = false}) async {
     final zh = AppStrings.of(context.read<AppState>().config.language).isZh;
     final state = context.read<AppState>();
-    final result = await FppxService(state.backend).importFile(path, force: force);
+    final result = await importFppxWithPassword(
+        context, FppxService(state.backend), path, force: force, zh: zh);
     if (!mounted) return;
+    if (result == null) return;
     if (!result.success) {
       _showImportErrors(zh ? '导入失败' : 'Import Failed', result.errors.isEmpty ? [result.error ?? ''] : result.errors);
       return;
@@ -944,10 +951,14 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         color: scheme.onSurface,
         onTap: _importFppx,
       ),
+      // 「新建快捷配置」补上与「新建配置」一致的圆形修饰：原来是透明底的裸图标，
+      // 与旁边那颗实心圆并排看不出属于同一组操作。底色取 primaryContainer
+      // （实心 primary 仍留给主 CTA），层级不颠倒。
       MobileGlassPillAction(
         icon: Icons.bolt_outlined,
         tooltip: zh ? '新建快捷配置' : 'New Quick Config',
-        color: scheme.onSurface,
+        color: scheme.onPrimaryContainer,
+        bg: scheme.primaryContainer,
         onTap: _newQuickConfig,
       ),
       // 主题色实心圆"+"按钮（CTA），与项目页"+"完全一致

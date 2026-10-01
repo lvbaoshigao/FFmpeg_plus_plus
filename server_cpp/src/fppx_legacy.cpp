@@ -87,6 +87,12 @@ Fppx2Result fppxLegacyExport(const json& params) {
         r.errors.push_back("缺少保存路径 path");
         return r;
     }
+    // 旧版格式已冻结：结构上没有任何位置存放加密字段，明文拒收
+    // "旧版 + 加密"这种自相矛盾的状态（规范 §10 兼容矩阵）。
+    if (params.value("encrypted", false)) {
+        r.errors.push_back("旧版格式不支持加密，请改用新版 (Beta) 存储格式");
+        return r;
+    }
     std::string description = params.value("description", std::string(""));
     if (!params.contains("graph") || !params["graph"].is_object() ||
         !params["graph"].contains("nodes") || !params["graph"]["nodes"].is_array()) {

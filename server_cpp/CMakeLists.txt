@@ -24,6 +24,7 @@ set(SHARED_SOURCES
     src/audit.cpp
     src/ffmpeg_features.cpp
     src/fppx2.cpp
+    src/fppx_crypto.cpp
     src/fppx_validate.cpp
     src/fppx_legacy.cpp
     src/fppx_gzip.cpp
@@ -52,7 +53,7 @@ target_include_directories(server PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(server PRIVATE kernel32 user32)
+    target_link_libraries(server PRIVATE kernel32 user32 bcrypt)
     set_target_properties(server PROPERTIES WIN32_EXECUTABLE FALSE)
 else()
     target_link_libraries(server PRIVATE pthread)
@@ -117,7 +118,7 @@ target_compile_definitions(ffmpegpp PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(ffmpegpp PRIVATE kernel32 user32)
+    target_link_libraries(ffmpegpp PRIVATE kernel32 user32 bcrypt)
 elseif(APPLE)
     target_link_libraries(ffmpegpp PRIVATE pthread)
     target_compile_options(ffmpegpp PRIVATE -fvisibility=hidden)
@@ -161,6 +162,7 @@ if(FFMPEGPP_BUILD_TESTS)
     add_executable(fppx_test
         tests/fppx_test.cpp
         src/fppx2.cpp
+        src/fppx_crypto.cpp
         src/fppx_validate.cpp
         src/fppx_legacy.cpp
         src/fppx_gzip.cpp
@@ -171,6 +173,9 @@ if(FFMPEGPP_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src
     )
+    if(WIN32)
+        target_link_libraries(fppx_test PRIVATE bcrypt)
+    endif()
     if(MSVC)
         target_compile_options(fppx_test PRIVATE /W3 /utf-8)
     else()

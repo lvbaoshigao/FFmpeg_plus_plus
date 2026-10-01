@@ -3587,6 +3587,14 @@ class AppState extends ChangeNotifier {
     addLog('[AI] 已应用节点图: $nodeCount 个节点, $connectionCount 条连接', category: 'info');
   }
 
+  /// 媒体探测（AI 面板的 `probe_video` 工具用）。
+  ///
+  /// 单独抽成一个**可覆写**的方法，而不是让调用方直接摸 `backend`：
+  /// 独立面板子窗口是另一个 Flutter 引擎，没有后端（`backend` 一访问就会
+  /// 构造 BackendClient），必须改走方法通道转发给主窗口执行。
+  /// 见 services/multi_window.dart 的 MirrorAppState。
+  Future<Map<String, dynamic>> probeMedia(String path) => backend.probe(path);
+
   Future<void> shutdown() async {
     // 配置写盘是防抖的，退出前必须强制落盘，否则最后一次修改会丢失
     await configService.flush();

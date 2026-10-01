@@ -15,6 +15,7 @@ import '../services/quick_config_storage.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_strings.dart';
 import '../widgets/container_card.dart';
+import '../widgets/fppx_password.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_glass_pill.dart';
 // 生效的菜单栏位置（底部 ↔ 左右竖排导轨）：列表底部留白随之在 96 / 20 间切换
@@ -574,11 +575,14 @@ class ProjectPageState extends State<ProjectPage> {
       return;
     }
     final path = picked.path!;
+    if (!mounted) return; // pickFile 异步间隙后 context 的首个使用点
 
     // 新旧格式均由 C++ 端解析/校验（第 5 字节 0xFF = 新版）；未知节点需用户确认强制导入
     final svc = FppxService(state.backend);
-    var imported = await svc.importFile(path);
+    // 加密文件的口令流程交给共享组件（首次不带口令 → need_password → 弹框重试）
+    var imported = await importFppxWithPassword(context, svc, path, zh: zh);
     if (!mounted) return;
+    if (imported == null) return;
     if (imported.needsForceConfirm) {
       final ids = imported.unknownTypeIds.join(', ');
       final scheme = Theme.of(context).colorScheme;
@@ -607,8 +611,10 @@ class ProjectPageState extends State<ProjectPage> {
       );
       if (!mounted) return;
       if (goOn == true) {
-        imported = await svc.importFile(path, force: true);
+        final retry = await importFppxWithPassword(context, svc, path, force: true, zh: zh);
         if (!mounted) return;
+        if (retry == null) return;
+        imported = retry;
       }
     }
 
