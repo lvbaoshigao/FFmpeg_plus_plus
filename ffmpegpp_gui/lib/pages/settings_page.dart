@@ -172,17 +172,28 @@ Future<String?> _copyBackgroundOptimized(String srcPath, int maxW, int maxH) asy
 /// 从内存字节保存背景图（Android 11+ content:// URI 场景：picker 返回 bytes 而非路径）。
 /// 解码后用 [maxW]/[maxH] 限制最大尺寸，重编码为 PNG 存入应用文档目录。
 Future<String?> _saveBackgroundBytes(Uint8List bytes, String fileName, int maxW, int maxH) async {
+  ui.ImmutableBuffer? buffer;
+  ui.ImageDescriptor? descriptor;
+  ui.Codec? codec;
+  ui.Image? decoded;
   try {
-    final codec = await ui.instantiateImageCodec(bytes);
-    final frame = await codec.getNextFrame();
-    final image = frame.image;
-    final srcW = image.width;
-    final srcH = image.height;
-    codec.dispose();
+    // [FIX M5] 先只解析**编码流头部**拿尺寸，再按目标尺寸解码。
+    //
+    // 原实现直接 `instantiateImageCodec(bytes)`（无 targetWidth/Height）——
+    // 一张 4000×3000 的照片在这一步就已经是 48MB RGBA；Android 上很容易直接
+    // 触发本函数末尾那个 catch（注释里写的「如超大图内存不足」正是它）。
+    //
+    // 换成就地缩解码后，峰值由「源图尺寸」变成「屏幕尺寸」，降一个数量级。
+    // 画质上没有退步：主壳**显示**壁纸走的就是 ResizeImage → 同一条
+    // instantiateImageCodec(targetWidth/Height) 路径，存下来的是"显示时本来
+    // 就会解码成的尺寸"；而它正是本函数存在的意义（把大图压到屏幕分辨率）。
+    buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
+    descriptor = await ui.ImageDescriptor.encoded(buffer);
+    final srcW = descriptor.width;
+    final srcH = descriptor.height;
 
     // 原图小于等于屏幕分辨率：直接保存原始字节
     if (srcW <= maxW && srcH <= maxH) {
-      image.dispose();
       return await _saveRawBackground(bytes, fileName);
     }
 
@@ -190,21 +201,21 @@ Future<String?> _saveBackgroundBytes(Uint8List bytes, String fileName, int maxW,
     final scale = math.min(maxW / srcW, maxH / srcH);
     final targetW = math.max(1, (srcW * scale).round());
     final targetH = math.max(1, (srcH * scale).round());
-    final recorder = ui.PictureRecorder();
-    final canvas = ui.Canvas(recorder);
-    canvas.scale(scale, scale);
-    canvas.drawImage(image, ui.Offset.zero, ui.Paint()..filterQuality = ui.FilterQuality.high);
-    final picture = recorder.endRecording();
-    final resized = await picture.toImage(targetW, targetH);
-    picture.dispose();
-    image.dispose();
 
-    final byteData = await resized.toByteData(format: ui.ImageByteFormat.png);
-    resized.dispose();
+    codec = await descriptor.instantiateCodec(targetWidth: targetW, targetHeight: targetH);
+    final frame = await codec.getNextFrame();
+    decoded = frame.image;
+
+    final byteData = await decoded.toByteData(format: ui.ImageByteFormat.png);
     if (byteData == null) return await _saveRawBackground(bytes, fileName);
     return await _saveRawBackground(byteData.buffer.asUint8List(), '${fileName}_opt');
   } catch (_) {
     return await _saveRawBackground(bytes, fileName);
+  } finally {
+    decoded?.dispose();
+    codec?.dispose();
+    descriptor?.dispose();
+    buffer?.dispose();
   }
 }
 
@@ -3774,8 +3785,8 @@ Widget _buildCache(BuildContext ctx, AppState state) {
     // 说明两个子选项各自的代价：图片/字体删掉要重新导入，导入缓存删掉只是回收空间
     Text(
         s.isZh
-            ? '点击后选择：清除「图片 / 字体」，或清除导入缓存（副本、缩略图）'
-            : 'Choose: clear images/fonts, or clear import cache (copies, thumbnails)',
+            ? '点击后选择：清除「图片 / 字体」，或清除缓存（导入副本、缩略图、帧预览）'
+            : 'Choose: clear images/fonts, or clear cache (copies, thumbnails, frame previews)',
         style: TextStyle(fontSize: 10, height: 1.35, color: scheme.outline)),
   ]);
 }
@@ -4891,8 +4902,8 @@ Future<void> _pickFont(BuildContext ctx, AppState state) async {
 ///
 /// 两件事的代价完全不同，混在一起做并不合适：
 /// * [assets] —— 删掉已导入的字体文件与背景图片，**之后要重新导入**；
-/// * [caches] —— 删掉导入副本（file_picker 副本 / ffmpegpp_import_* / 缩略图），
-///   只是回收空间，项目内容不受影响，大文件可能释放几百 MB。
+/// * [caches] —— 删掉导入副本（file_picker 副本 / ffmpegpp_import_* / 缩略图 /
+///   帧预览与整帧临时图），只是回收空间，项目内容不受影响，大文件可能释放几百 MB。
 enum _CacheScope {
   /// 只清除已导入的字体文件与背景图片
   assets,
@@ -4928,8 +4939,9 @@ Future<void> _clearCache(BuildContext ctx, AppState state, ColorScheme scheme, A
           icon: Icons.cleaning_services_outlined,
           title: s.isZh ? '清除缓存' : 'Clear cache',
           desc: s.isZh
-              ? '删除导入副本（大文件可能占几百 MB）与缩略图；\n仍被项目 / 队列引用的副本会保留'
-              : 'Delete import copies (hundreds of MB possible) and thumbnails;\n'
+              ? '删除导入副本（大文件可能占几百 MB）、缩略图与帧预览临时图；\n'
+                '仍被项目 / 队列引用的副本会保留'
+              : 'Delete import copies (hundreds of MB possible), thumbnails and frame previews;\n'
                 'copies still referenced by projects/queue are kept',
         ),
       ]),

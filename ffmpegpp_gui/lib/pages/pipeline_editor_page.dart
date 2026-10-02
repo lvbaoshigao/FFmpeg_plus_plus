@@ -339,9 +339,27 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     nodes: List.of(_nodes), connections: List.of(_connections),
     logicBlocks: List.of(_logicBlocks),
   ).deepCopy();
+  /// 撤销栈深度上限（[FIX M2]）。
+  ///
+  /// 快照是**整图深拷贝**（_snapshot → PipelineGraph.deepCopy → 每个节点递归复制
+  /// 全部 params），所以栈深不能固定 —— 实测（RSS 增量，压满 50 份）：
+  ///   20 节点 1.6MB / 120 节点 10.6MB / **400 节点 23.1MB**，单份 ≈ JSON 行长的 2.8 倍。
+  /// 移动端的 ImageCache 预算只有 24MB（main.dart），固定 50 步的大图会话光撤销
+  /// 历史就能吃掉同等量级。这里按图规模分档：小图维持原体验，大图换取常驻内存。
+  int get _undoDepthLimit {
+    final n = _nodes.length + _connections.length;
+    if (n <= 40) return 50;
+    if (n <= 120) return 24;
+    if (n <= 300) return 12;
+    return 6;
+  }
+
   void _pushUndo() {
     _undoStack.add(_snapshot());
-    if (_undoStack.length > 50) _undoStack.removeAt(0);
+    // 只在栈满后裁剪；图变大时（例如删掉一半节点再来一步）按当前上限收敛
+    if (_undoStack.length > _undoDepthLimit) {
+      _undoStack.removeRange(0, _undoStack.length - _undoDepthLimit);
+    }
     _redoStack.clear();
   }
   void _undo() {

@@ -724,6 +724,16 @@ class AppState extends ChangeNotifier {
       // 任务卡片缩略图（可重建）
       await purge(cacheDir, (n) => n.startsWith('ffmpegpp_thumb_'),
           olderThan: thumbOlderThan);
+      // [FIX M4] 帧预览 / 整帧临时文件（FramePreview 产出）此前**不在任何清理
+      // 路径内**：既不被这里的启动清理覆盖，也不被「设置 → 清除缓存」覆盖，
+      // 只在 FramePreview 内部按「每视频 × 每宽度 × 每前缀保留最近 3 个」做局部
+      // 轮转，且仅在该次生成成功时触发。
+      // 而 generateFullFrame 是**不缩放**抽帧（-q:v 2），4K 源单张 1~3MB ——
+      // 裁剪过 50 个视频就是 150 张全分辨率帧常驻磁盘（150~450MB）。
+      await purge(cacheDir, (n) => n.startsWith('ffmpegpp_preview_'),
+          olderThan: thumbOlderThan);
+      await purge(cacheDir, (n) => n.startsWith('ffmpegpp_full_'),
+          olderThan: thumbOlderThan);
       // 旧版 ensureReadableImport 的兜底复制目录
       try {
         final docsDir = await getApplicationDocumentsDirectory();
@@ -2314,23 +2324,39 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 本地 ffmpeg 进程 stderr 的保留行数上限（[FIX M3]，≈22KB）。
+  /// _ffmpegFailResult 最多用最后 120 行，这里留足余量。
+  static const int _kStderrTailLines = 200;
+
   Future<Map<String, dynamic>> _runFfmpegWithProgress(String taskId, List<String> args, String label, {double? totalDuration, int? callIndex}) async {
     Process? process;
     try {
       process = await Process.start(_ffmpegBin, args);
       _localFfmpegProcesses.add(process);
       _localProcessesByTask.putIfAbsent(taskId, () => []).add(process);
-      final stderrBuf = StringBuffer();
+      // [FIX M3] 只保留 stderr 的**尾部若干行**，不再整段缓冲。
+      //
+      // 原实现用 StringBuffer 累积整个进程的 stderr，而它的唯一用途是失败时交给
+      // _ffmpegFailResult —— 后者只要最后 120 行（前 3 行用于摘要）。于是：
+      //   · 成功路径上这段缓冲被**完全丢弃**，白留一路；
+      //   · 带 -stats 的 ffmpeg 每 ~0.5s 一行、约 110 字节，3 小时任务 ≈ 2.4MB，
+      //     末尾 toString()+trim() 再复制一份，且 maxConcurrentTasks > 1 时成倍叠加。
+      // _kStderrTailLines 取 200 行（≈22KB），对 120 行的上限留足余量。
+      final tailLines = <String>[];
       final lineBuf = StringBuffer();
       process.stderr.transform(utf8.decoder).listen((chunk) {
-        stderrBuf.write(chunk);
         lineBuf.write(chunk);
         final text = lineBuf.toString();
         int start = 0;
         int nl;
         while ((nl = text.indexOf('\n', start)) >= 0) {
-          _parseFfmpegProgressLine(taskId, text.substring(start, nl), totalDuration, callIndex);
+          final line = text.substring(start, nl);
+          _parseFfmpegProgressLine(taskId, line, totalDuration, callIndex);
+          tailLines.add(line);
           start = nl + 1;
+        }
+        if (tailLines.length > _kStderrTailLines) {
+          tailLines.removeRange(0, tailLines.length - _kStderrTailLines);
         }
         // 保留未完成的行（可能跨 chunk）
         lineBuf.clear();
@@ -2338,7 +2364,7 @@ class AppState extends ChangeNotifier {
       });
       process.stdout.drain<void>();
       final exitCode = await process.exitCode;
-      final stderr = stderrBuf.toString().trim();
+      final stderr = tailLines.join('\n').trim();
       final output = args.last;
       if (exitCode == 0 && File(output).existsSync()) {
         addLog('$label完成: $output', category: 'info');

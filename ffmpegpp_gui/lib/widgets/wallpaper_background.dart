@@ -234,6 +234,42 @@ class WallpaperBlurCache {
     return geoOk;
   }
 
+  /// 释放进程级缓存的**全部**图像与几何状态（[FIX M1]）。
+  ///
+  /// 为什么必须有：本类用静态字段持有两张全屏 ui.Image —— 预模糊图（[image]）
+  /// 与源壁纸（[_src]）。在此之前**没有任何释放入口**：唯一的释放是「新图生成
+  /// 完成时替换旧图」（见 [_rebuild] 末尾），于是：
+  ///   1. 用户在设置里清掉壁纸、之后一直用纯色主题时，那张预模糊图会常驻到进程
+  ///      退出（`_resolve` 的 `provider == null` 分支只清了自己的窗口）；
+  ///   2. [_src] 是**静态强引用**，把整屏壁纸的 ui.Image 钉在 ImageCache 管辖
+  ///      之外 —— app.dart 的 didHaveMemoryPressure() 里 `imageCache.clear()`
+  ///      也回收不了它。
+  ///
+  /// 调用时机：WallpaperWindowScope 解析到 `provider == null`（= 当前没有配置
+  /// 壁纸）。provider 由 `config.backgroundImage` 派生，所以这个条件对**所有**
+  /// scope 同时成立，此时全局释放不会影响任何仍在显示壁纸的页面。
+  static void release() {
+    final cur = image.value;
+    // ⚠️ 必须自增 _token：_rebuild 是异步的（toImage 要 1~3 帧），释放后仍可能有
+    // 在途任务回来把新图写进 image —— 不作废就变成「刚释放又泄漏回去」。
+    _token++;
+    _debounce?.cancel();
+    _debounce = null;
+    _scheduledKey = null;
+    _failedKey = null;
+    _failedAtMs = 0;
+    _src = null;
+    _screen = Size.zero;
+    _dpr = -1;
+    _sigma = -1;
+    image.value = null; // 先置空：通知所有 scope 把卡片的 blurred 降级为 null
+    if (cur != null) {
+      // 本帧的绘制可能仍在用旧图，推迟到帧末释放，避免 use-after-dispose
+      //（与 _rebuild 里替换旧图的处理保持一致）。
+      WidgetsBinding.instance.addPostFrameCallback((_) => cur.dispose());
+    }
+  }
+
   /// 离屏渲染「按 cover 铺满整屏 + 高斯模糊」的壁纸（设备像素空间）。
   /// [failKey] 为本次请求的参数指纹，失败时记入 [_failedKey] 以免反复重试。
   static Future<void> _rebuild(
@@ -390,9 +426,29 @@ class _WallpaperWindowScopeState extends State<WallpaperWindowScope> {
   ImageProvider? _resolvedFor;
   bool _disposed = false;
 
+  /// [FIX M1] 当前仍持有壁纸的 scope 数量。
+  ///
+  /// 用来判断「壁纸是否已经彻底不需要了」：provider 由 `config.backgroundImage`
+  /// 派生，所以主壳只在**配置了壁纸**时才会创建本 scope，二级页则始终创建。
+  /// 于是「计数归零」⟺「当前没有任何地方在显示壁纸」⟹ 可以安全释放进程级的
+  /// 预模糊图与源图引用。
+  ///
+  /// 只靠 `_resolve(provider == null)` 是不够的：用户在**主界面**直接移除壁纸时，
+  /// 主壳的 scope 是**整体卸载**（app.dart 在无壁纸时根本不构造 WallpaperWindowScope），
+  /// 走不到 _resolve，要等到用户下次打开任意二级页才会释放。
+  static int _liveWithProvider = 0;
+  bool _counted = false;
+
+  void _track(bool has) {
+    if (has == _counted) return;
+    _counted = has;
+    _liveWithProvider += has ? 1 : -1;
+  }
+
   @override
   void initState() {
     super.initState();
+    _track(widget.provider != null);
     WallpaperBlurCache.image.addListener(_onBlurredChanged);
     _resolve();
   }
@@ -421,6 +477,7 @@ class _WallpaperWindowScopeState extends State<WallpaperWindowScope> {
     // 原实现在 provider 变化时直接 `_resolve(); return;`，把这一步整个跳过，
     // 于是横竖屏切换后窗口的 screen 停留在旧尺寸 —— painter 用它算「屏幕矩形
     // → 卡片本地坐标」的映射，卡内壁纸会与卡外背景错位。
+    _track(widget.provider != null);
     _refreshGeometry();
     if (old.provider == widget.provider) return;
     // ── 第 2 步：同源换尺寸 vs 换文件，决定要不要作废旧窗口 ──
@@ -464,6 +521,10 @@ class _WallpaperWindowScopeState extends State<WallpaperWindowScope> {
       _unsubscribe();
       _resolvedFor = null;
       _window.value = null;
+      // [FIX M1] 没有壁纸 ⇒ 预模糊图与源壁纸引用都不再需要，全局释放掉。
+      // 释放前必须先把本 scope 的窗口置空（上面一行）：否则下面 release() 触发的
+      // image 通知会走 _publish()，用已释放的旧图重建一次窗口。
+      WallpaperBlurCache.release();
       return;
     }
     // 用 == 而不是 identical：壁纸 provider 每次 build 都是新实例，ResizeImage
@@ -547,6 +608,13 @@ class _WallpaperWindowScopeState extends State<WallpaperWindowScope> {
     WallpaperBlurCache.image.removeListener(_onBlurredChanged);
     _unsubscribe();
     _window.dispose();
+    final wasShowing = _counted;
+    _track(false);
+    // [FIX M1] 最后一个「有壁纸」的 scope 消失 ⇒ 壁纸已从配置里移除，释放进程级缓存。
+    // 此时其余 scope 的 _window.value 必为 null（它们本来就没有 provider），
+    // 所以 release() 触发的 image 通知走 _publish() 会立即 return —— 不会在
+    // 卸载阶段去改活动 widget 的状态。
+    if (wasShowing && _liveWithProvider == 0) WallpaperBlurCache.release();
     super.dispose();
   }
 
