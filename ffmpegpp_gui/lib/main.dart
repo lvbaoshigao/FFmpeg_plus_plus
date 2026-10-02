@@ -164,8 +164,13 @@ void main() async {
     unawaited(OCLiquidGlassGroup.precacheShader().catchError((_) {}));
   }
   runApp(
-    ChangeNotifierProvider.value(
-      value: appState,
+    // 必须用 create: 而不是 .value：`.value` 的语义是「借用，不负责释放」，
+    // Provider 不会 dispose 它 —— 而全仓没有任何地方调用 appState.dispose()，
+    // 于是 AppState.dispose() 里的整条收尾链（_disposed 释放守卫、configService
+    // 的最后一次兜底落盘、backend/pythonProcess.dispose、_auditSub.cancel）
+    // 全是死代码。create: 会让 Provider 在根元素卸载时释放这个实例。
+    ChangeNotifierProvider<AppState>(
+      create: (_) => appState,
       child: const FfmpegppApp(),
     ),
   );

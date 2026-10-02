@@ -15,7 +15,7 @@ import 'editor_kit.dart';
 ///
 /// 参数的实际语义在别处落地（本文件只负责读写 `block.params`）：
 /// * 打标：[GraphExecutor] 的 `_buildPlanForOutput`
-/// * 展平：`AppState._expandLoopCalls`
+/// * 展平：`AppState._processPipelineTask` 的展平段
 /// * 判定：`GraphExecutor._evalCondition`（条件块）
 class LogicBlockEditor extends StatefulWidget {
   final LogicBlock block;
@@ -373,7 +373,10 @@ class _LogicBlockEditorState extends State<LogicBlockEditor> {
         label: zh ? '模式' : 'Mode',
         value: mode,
         items: [
-          ('random', zh ? '随机选择' : 'Random'),
+          // [FIX B4] 执行层目前只实现了 'manual'（见 GraphExecutor.buildBackendCalls：
+          // 只有 manual 会跳过未勾选的节点，'random' 按全量执行）。原文案写着
+          // 「随机选择一个或多个框内操作执行」，与实现不符，这里如实标注。
+          ('random', zh ? '随机选择（暂等同全部执行）' : 'Random (= all for now)'),
           ('all', zh ? '全部执行' : 'Execute all'),
           ('manual', zh ? '手动选择' : 'Manual'),
         ],
@@ -382,7 +385,9 @@ class _LogicBlockEditorState extends State<LogicBlockEditor> {
       const SizedBox(height: 6),
       Text(
         switch (mode) {
-          'random' => zh ? '每次循环随机选择一个或多个框内操作执行' : 'Randomly picks operations per iteration',
+          'random' => zh
+              ? '暂未实现：目前每轮都会执行全部框内操作（等同「全部执行」）。需要精确控制请改用「手动选择」。'
+              : 'Not implemented yet — every iteration currently runs all enclosed operations. Use "Manual" for precise control.',
           'all' => zh ? '每轮都执行全部框内操作' : 'Every iteration runs all enclosed operations',
           _ => zh ? '只执行下面勾选的操作' : 'Only the checked operations run',
         },
@@ -531,7 +536,7 @@ class _LogicBlockEditorState extends State<LogicBlockEditor> {
           ? '循环 $count 次将生成 $count 个输出文件（中间产物会在任务结束时清理）'
           : 'Looping $count times produces $count output files (intermediates are cleaned up)',
       LogicBlockType.selectiveLoop => zh
-          ? '共 $count 轮，每轮按「${(p['mode'] as String? ?? 'random')}」模式决定执行哪些操作'
+          ? '共 $count 轮，每轮按「${_modeLabel(p['mode'] as String?)}」模式决定执行哪些操作'
           : '$count rounds, each picking operations per the selected mode',
       LogicBlockType.condition => zh
           ? '条件成立时执行框内 ${widget.childNodes.length} 个操作，否则${b.conditionSkipWhenFalse ? '跳过' : '中止任务'}'
@@ -547,6 +552,15 @@ class _LogicBlockEditorState extends State<LogicBlockEditor> {
       borderColor: cs.sem.danger.withAlpha(60),
     );
   }
+
+  /// 执行模式的中文名（footer 用）。原实现直接把 'random' / 'manual' 原始值
+  /// 拼进中文句子，界面会出现「按『random』模式…」这种半截英文。
+  String _modeLabel(String? mode) => switch (mode) {
+        'random' => '随机选择（暂等同全部执行）',
+        'all' => '全部执行',
+        'manual' => '手动选择',
+        _ => mode ?? '全部执行',
+      };
 
   // ---------- 勾选 ----------
 

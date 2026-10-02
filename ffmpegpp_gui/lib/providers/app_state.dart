@@ -298,7 +298,32 @@ class AppState extends ChangeNotifier {
   bool _initialized = false;
   bool get initialized => _initialized;
 
+  /// 启动初始化。**保证不抛异常、保证 `initialized` 最终为 true**。
+  ///
+  /// 为什么必须有这层兜底（原实现没有）：`app.dart` 用 `initialized` 决定渲染
+  /// AppShell 还是 `_SplashScreen`，而 `_initialized = true` 原本是 init 内部的
+  /// **最后一条语句**。`_setupAndroidBundledTools` / `_autoDetectLocalFfmpeg` 等
+  /// 步骤没有各自的 try/catch，任何一处抛异常都会直接冒泡出 main() 里的
+  /// `await appState.init(...)`：
+  ///   · main() 后续所有预热（字体 / 壁纸 / 高刷 / 玻璃自检）全部不执行；
+  ///   · `_initialized` 永远停在 false → 用户看到的是一块**永久转圈的启动画面**，
+  ///     且没有任何错误提示（异常只被 PlatformDispatcher.onError 吞进 startup.log）。
+  /// 现在无论成功、失败还是异常，外壳都能进入主界面，失败原因进日志面板。
   Future<void> init(String serverScript) async {
+    try {
+      await _initInternal(serverScript);
+    } catch (e, st) {
+      _envOk = false;
+      debugPrint('[init] FAILED: $e\n$st');
+      addLog('初始化失败: $e', category: 'error');
+    } finally {
+      _initialized = true;
+      _safeNotify();
+    }
+  }
+
+  /// [init] 的实际执行体：不含兜底，异常一律交给 [init] 收口。
+  Future<void> _initInternal(String serverScript) async {
     debugPrint('[init] 1-configService.load');
     await configService.load();
     debugPrint('[init] 2-configService.load done');
@@ -312,18 +337,18 @@ class AppState extends ChangeNotifier {
       debugPrint('[init] 4-pythonProcess.start done, isRunning=${pythonProcess.isRunning}');
     } catch (e) {
       debugPrint('[init] 4-ERROR: $e');
-      _envOk = false; _initialized = true; notifyListeners(); return;
+      _envOk = false; return; // 收尾（_initialized / notify）由 init 的 finally 负责
     }
     try {
       debugPrint('[init] 5-waiting for ready...');
       final ready = await pythonProcess.waitForReady(timeout: const Duration(seconds: 30));
       debugPrint('[init] 6-ready result: ${ready['type']}');
       if (ready['type'] != 'ready') {
-        _envOk = false; _initialized = true; notifyListeners(); return;
+        _envOk = false; return;
       }
     } catch (e) {
       debugPrint('[init] 6-ERROR: $e');
-      _envOk = false; _initialized = true; notifyListeners(); return;
+      _envOk = false; return;
     }
     // L-10：此处 env 尚未确知，recheckEnv() 会在结果确定后置真值并通知；
     // 不再抢先置 false 并 notify，避免启动瞬间 UI 闪一下「环境异常」。
@@ -336,8 +361,6 @@ class AppState extends ChangeNotifier {
     }
     recheckEnv();
     if (config.mcpEnabled) startMcpServer();
-    _initialized = true;
-    notifyListeners();
   }
 
   /// Android：ffmpeg/ffprobe 直接内置在 APK 中（jniLibs），
@@ -1590,7 +1613,12 @@ class AppState extends ChangeNotifier {
     final realCalls = calls.where((c) => c.action != '_cleanup').toList();
     final cleanupCalls = calls.where((c) => c.action == '_cleanup').toList();
 
-    // Expand loop calls: duplicate entire consecutive groups with matching loopCount
+    // Expand loop calls: duplicate entire consecutive groups of the SAME logic block
+    //
+    // [FIX B1] 分组条件必须是「同一个逻辑块」而不是「loopCount 相同」：
+    // 原实现只比较 loopCount，两个相邻且次数相同的独立循环块会被并成一个组，
+    // 造成迭代交错 / {i} 基准串用 / 输出互相覆盖（详见 ExecutionStep.blockId）。
+    // 现在按 blockId 分组；blockId 为 null 的（不属于任何块的）call 不参与循环。
     //
     // 展平之后每一轮都是**普通的 BackendCall**（loopCount=1），执行循环完全不知道
     // 「循环」这件事存在。逻辑块的新增能力全部在这里落地：
@@ -1606,10 +1634,12 @@ class AppState extends ChangeNotifier {
     while (ci2 < realCalls.length) {
       final call = realCalls[ci2];
       if (call.loopCount > 1) {
-        // Collect all consecutive calls with the same loopCount
+        // [FIX B1] 收集「同一个逻辑块」的连续 call：loopCount 相同**且** blockId 相同
         final group = <BackendCall>[call];
         var j = ci2 + 1;
-        while (j < realCalls.length && realCalls[j].loopCount == call.loopCount) {
+        while (j < realCalls.length &&
+            realCalls[j].loopCount == call.loopCount &&
+            realCalls[j].blockId == call.blockId) {
           group.add(realCalls[j]);
           j++;
         }
@@ -1667,6 +1697,7 @@ class AppState extends ChangeNotifier {
             expandedCalls.add(BackendCall(
               action: gc.action,
               params: loopParams,
+              blockId: gc.blockId, // 仅用于日志/排查定位所属逻辑块
               // 失败的「跳过 / 中止」与重试次数随 call 一起进执行层
               errorPolicy: gc.errorPolicy,
               retries: gc.retries,
@@ -1922,14 +1953,25 @@ class AppState extends ChangeNotifier {
     final fi3 = _tasks.indexWhere((t) => t.id == taskId);
     if (fi3 >= 0 && !_cancelRequested && _tasks[fi3].status == TaskStatus.processing) {
       final outSize = await _measureOutputSize(task.outputPath);
-      _tasks[fi3] = _tasks[fi3].copyWith(status: TaskStatus.completed, progress: 100,
-          // 完成态补满每步进度（理由同上：快速步骤没有进度事件，会停在 0）
-          callProgresses: List<double>.filled(_tasks[fi3].callProgresses.length, 1.0),
-          outputSize: outSize);
-      addLog('任务完成: ${task.filename}', category: 'info');
-      onTaskFinished?.call(task.filename, TaskStatus.completed);
-      _tasksNotify();
-      _scheduleTaskPersist();
+      // [FIX 收尾下标必须在 await 之后重新解析] _measureOutputSize 是**异步**目录
+      // 遍历 + 逐项 length()（帧提取可能产出上万张 PNG，耗时可达数秒）。这段窗口
+      // 里用户完全可以：① removeTask / clearCompletedTasks / clearAllTasks 让列表
+      // 变短 → 旧下标越界抛 RangeError；② processSingleTask 的
+      // _tasks.removeAt(i) + _tasks.insert(0, t) 把列表重排 → 旧下标指向**另一个
+      // 任务**，把它错标成「已完成 100%」。因此这里按 id 重新定位，并重新确认
+      // 该任务仍在 processing（等待期间可能已被取消或被重跑）。
+      final fiDone = _tasks.indexWhere((t) => t.id == taskId);
+      if (fiDone >= 0 && !_cancelRequested &&
+          _tasks[fiDone].status == TaskStatus.processing) {
+        _tasks[fiDone] = _tasks[fiDone].copyWith(status: TaskStatus.completed, progress: 100,
+            // 完成态补满每步进度（理由同上：快速步骤没有进度事件，会停在 0）
+            callProgresses: List<double>.filled(_tasks[fiDone].callProgresses.length, 1.0),
+            outputSize: outSize);
+        addLog('任务完成: ${task.filename}', category: 'info');
+        onTaskFinished?.call(task.filename, TaskStatus.completed);
+        _tasksNotify();
+        _scheduleTaskPersist();
+      }
     }
 
     _cleanupTempFiles(cleanupCalls);
@@ -3010,16 +3052,16 @@ class AppState extends ChangeNotifier {
         if (!identical(_mcpServer, server)) return;
         addLog('[MCP] 服务已停止', category: 'info');
         _mcpServer = null;
-        notifyListeners();
+        _safeNotify(); // [FIX] dispose 后 HttpServer 收尾仍会走到这里，普通 notifyListeners 会命中「used after being disposed」断言
       });
-      notifyListeners();
+      _safeNotify();
       return true;
     } catch (e) {
       final msg = e is SocketException ? '端口 ${config.mcpPort} 被占用' : '$e';
       mcpError = msg;
       addLog('[MCP] 启动失败: $msg', category: 'error');
       _mcpServer = null;
-      notifyListeners();
+      _safeNotify();
       return false;
     }
   }
@@ -3034,7 +3076,7 @@ class AppState extends ChangeNotifier {
     // 长连接，退出应用时会卡在这里（此前表现为关闭窗口后进程残留）。
     await server.close(force: true);
     addLog('[MCP] 服务已停止', category: 'info');
-    notifyListeners();
+    _safeNotify();
   }
 
   String _generateMcpToken() {
@@ -3610,6 +3652,10 @@ class AppState extends ChangeNotifier {
     _taskPersistTimer?.cancel();
     _progressFlushTimer?.cancel();
     _progressLogNotifyTimer?.cancel();
+    // [FIX] 原实现漏关 MCP HTTP 服务：AppState 释放后端口仍被占住，且
+    // server.listen 的 onDone / 在途请求的收尾回调会打在已释放的
+    // ChangeNotifier 上（见上面把 MCP 回调统一改成 _safeNotify 的原因）。
+    unawaited(stopMcpServer());
     configService.dispose();
     // backend 是 late final：这一次访问有可能才是它的首次构造（连带建立 audit 订阅），
     // 所以必须「先 dispose 再取消订阅」，顺序反了会漏掉这条晚建的订阅。

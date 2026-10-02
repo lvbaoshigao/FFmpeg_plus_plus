@@ -296,8 +296,23 @@ class PipelineNode {
   LogicGateType? get gate =>
       gateType == null ? null : LogicGateType.values.asNameMap()[gateType];
 
-  /// 逻辑门是否可输入（恒1/恒0 无输入）
-  bool get hasGateInput => isGate && gate != null && !gate!.isConstant;
+  /// 逻辑门是否可接收控制输入。
+  ///
+  /// [FIX] 必须与 [LogicGateType.inputCount] **同源**。原实现写成 `!isConstant`，
+  /// 而 `isConstant` 只覆盖恒1/恒0，**不含时间触发器**（它的 inputCount 同样是 0）。
+  /// 于是时间触发器被误判为「有输入端口」，三处症状：
+  ///   1. 属性面板渲染出「输入端口 0 × 红色逻辑端口」（pipeline_editor_page 的
+  ///      _buildGateInfoEditor 用 isConstant 三选一）；
+  ///   2. 画布拖线不报「该逻辑门不支持输入」，而是走 inputCount 分支得到
+  ///      「时间 最多 0 个输入，已满」这种看不懂的提示；
+  ///   3. validateGraph 的输入数校验是 `if (expected > 0 && ...)`，对
+  ///      inputCount==0 完全跳过；而 :154 的 `!dst.hasGateInput` 又因本 getter
+  ///      返回 true 而放行 —— 导入的 .fppx / AI 生成的图可以把控制线接进
+  ///      时间触发器而不被拦下。
+  bool get hasGateInput {
+    final g = gate;
+    return isGate && g != null && g.inputCount > 0;
+  }
   /// 逻辑门是否可输出（所有逻辑门都有输出）
   bool get hasGateOutput => isGate;
 
@@ -639,7 +654,8 @@ class PipelineConnection {
 /// 逻辑块类型。
 ///
 /// 逻辑块的执行**全部在 Dart 端展平**（[GraphExecutor] 把块信息打到
-/// `ExecutionStep` 上 → `AppState._expandLoopCalls` 复制迭代 / 生成条件跳过），
+/// `ExecutionStep` 上 → `AppState._processPipelineTask` 的展平段复制迭代 /
+/// 生成条件跳过），
 /// 因此新增类型不需要后端配合 —— 只要最终能表达成「对某组节点重复执行 N 次」
 /// 或「跳过某组节点」即可。
 enum LogicBlockType {
@@ -1150,6 +1166,10 @@ class BackendCall {
   int loopCount;
   String? loopMode;
 
+  /// 所属逻辑块的 id（null = 不属于任何逻辑块）。
+  /// 展平阶段据此判断「相邻 call 是否属于同一个循环块」，见 ExecutionStep.blockId。
+  String? blockId;
+
   /// 链式累积：该轮迭代的输入承接上一轮输出（默认每轮都从原始输入开始）。
   bool accumulate;
 
@@ -1174,6 +1194,7 @@ class BackendCall {
     required this.params,
     this.loopCount = 1,
     this.loopMode,
+    this.blockId,
     this.accumulate = false,
     this.errorPolicy = 'stop',
     this.retries = 0,
@@ -1187,6 +1208,7 @@ class BackendCall {
     'params': params,
     if (loopCount != 1) 'loop_count': loopCount,
     if (loopMode != null) 'loop_mode': loopMode,
+    if (blockId != null) 'block_id': blockId,
     if (accumulate) 'accumulate': true,
     if (errorPolicy != 'stop') 'error_policy': errorPolicy,
     if (retries > 0) 'retries': retries,
@@ -1197,6 +1219,7 @@ class BackendCall {
     params: (json['params'] as Map?)?.cast<String, dynamic>() ?? {},
     loopCount: (json['loop_count'] as num?)?.toInt() ?? 1,
     loopMode: json['loop_mode'] as String?,
+    blockId: json['block_id'] as String?,
     accumulate: json['accumulate'] == true,
     errorPolicy: json['error_policy'] as String? ?? 'stop',
     retries: (json['retries'] as num?)?.toInt() ?? 0,

@@ -650,7 +650,28 @@ class _AppShellState extends State<AppShell> with WindowListener {
     return eventLabel.isNotEmpty && eventLabel.toLowerCase() == bindingKey.toLowerCase();
   }
 
+  /// 当前键盘焦点是否落在「可编辑文本」内。
+  ///
+  /// 必须有这个判断：本 Shell 的 [Focus] 是页内任何输入框的**祖先**，而真正处理
+  /// Ctrl+A 的 DefaultTextEditingShortcuts 挂在 WidgetsApp 层（位于本 Focus 的
+  /// 更上层）。按键冒泡顺序是「主焦点 → 逐级向上找 onKeyEvent」，所以本 Focus
+  /// 会**先**拿到事件。不判断的后果：
+  ///   · 在搜索框 / 命名框里按 Ctrl+A → 变成「全选所有项目」而不是选中文字；
+  ///   · 一边打字一边误触 Ctrl+Shift+Delete → 一次清空整个项目列表。
+  static bool _isTextEditingFocused() {
+    final ctx = FocusManager.instance.primaryFocus?.context;
+    if (ctx == null) return false;
+    if (ctx.widget is EditableText) return true;
+    // EditableText 的 Focus 是它自己 build 出来的子节点，所以从焦点 context
+    // 向上找才能命中（widget 层与 State 层各查一次，覆盖 TextField/TextFormField
+    // 以及裸用 EditableText 的情况）。
+    return ctx.findAncestorWidgetOfExactType<EditableText>() != null ||
+        ctx.findAncestorStateOfType<EditableTextState>() != null;
+  }
+
   KeyEventResult _handleGlobalKey(FocusNode node, KeyEvent event) {
+    // 焦点在输入框内：一律放行给文本编辑快捷键（见 [_isTextEditingFocused]）
+    if (_isTextEditingFocused()) return KeyEventResult.ignored;
     final state = context.read<AppState>();
     final bindings = state.config.keyBindings;
     final s = AppStrings.of(state.config.language);
@@ -660,31 +681,36 @@ class _AppShellState extends State<AppShell> with WindowListener {
     if (nav == 0) {
       final selectAllBinding = bindings['project_select_all'] ?? ['Control', 'A'];
       if (_matchesBinding(event, selectAllBinding)) {
-        if (state.videos.isNotEmpty) {
-          _projectPageKey.currentState?.selectAll(state.videos);
-        }
+        // 无可操作对象时不吞事件（否则 Ctrl+A 在空列表下也永远到不了输入框）
+        if (state.videos.isEmpty) return KeyEventResult.ignored;
+        _projectPageKey.currentState?.selectAll(state.videos);
         return KeyEventResult.handled;
       }
 
       final addAllBinding = bindings['queue_add_all'] ?? ['Control', 'Shift', 'A'];
       if (_matchesBinding(event, addAllBinding)) {
         final parsed = state.videos.where((v) => v.parsed).toList();
-        if (parsed.isNotEmpty) {
-          for (final v in parsed) {
-            state.addTask(v.id);
-          }
-          showToast(context, s.isZh ? '已添加 ${parsed.length} 个任务到队列' : 'Added ${parsed.length} tasks to queue', type: ToastType.success);
+        if (parsed.isEmpty) return KeyEventResult.ignored;
+        for (final v in parsed) {
+          state.addTask(v.id);
         }
+        showToast(context, s.isZh ? '已添加 ${parsed.length} 个任务到队列' : 'Added ${parsed.length} tasks to queue', type: ToastType.success);
+        return KeyEventResult.handled;
+      }
+
+      // 项目页搜索（默认 Ctrl+F）
+      // [FIX C2] 该绑定此前没有任何消费者（只出现在默认表与快捷键设置页里）。
+      final searchBinding = bindings['project_search'] ?? ['Control', 'F'];
+      if (_matchesBinding(event, searchBinding)) {
+        _projectPageKey.currentState?.openSearch();
         return KeyEventResult.handled;
       }
 
       final clearAllBinding = bindings['project_clear_all'] ?? ['Control', 'Shift', 'Delete'];
       if (_matchesBinding(event, clearAllBinding)) {
-        if (state.videos.isNotEmpty) {
-          state.clearAllVideos();
-          _projectPageKey.currentState?.selectAll([]);
-          showToast(context, s.isZh ? '已删除所有项目' : 'All projects deleted', type: ToastType.info);
-        }
+        if (state.videos.isEmpty) return KeyEventResult.ignored;
+        // 破坏性操作必须先确认：项目页按钮走的是带确认的路径，快捷键不该绕过它
+        _confirmClearAll(state, s);
         return KeyEventResult.handled;
       }
     }
@@ -722,6 +748,43 @@ class _AppShellState extends State<AppShell> with WindowListener {
     }
 
     return KeyEventResult.ignored;
+  }
+
+  /// 快捷键触发「移除所有项目」前的二次确认。
+  ///
+  /// 保持同步签名：[_handleGlobalKey] 必须同步返回 [KeyEventResult]，所以这里
+  /// 只负责弹窗，真正的清空放在 dialog 的回调里。
+  void _confirmClearAll(AppState state, AppStrings s) {
+    final zh = s.isZh;
+    showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final scheme = Theme.of(ctx).colorScheme;
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text(zh ? '移除所有项目？' : 'Remove all projects?',
+              style: TextStyle(color: scheme.onSurface)),
+          content: Text(
+            zh
+                ? '将从项目列表移除全部 ${state.videos.length} 项（磁盘上的源文件不会被删除）。此操作无法撤销。'
+                : 'This removes all ${state.videos.length} items from the project list '
+                    '(source files on disk are kept). This cannot be undone.',
+            style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false), child: Text(s.cancel)),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true), child: Text(s.clearAll)),
+          ],
+        );
+      },
+    ).then((ok) {
+      if (ok != true || !mounted) return;
+      state.clearAllVideos();
+      _projectPageKey.currentState?.selectAll([]);
+      showToast(context, s.isZh ? '已删除所有项目' : 'All projects deleted', type: ToastType.info);
+    });
   }
 
   @override

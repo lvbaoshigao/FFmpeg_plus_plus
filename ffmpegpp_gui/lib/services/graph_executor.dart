@@ -6,8 +6,27 @@ class ExecutionStep {
   final List<PipelineNode> nodes;
   int loopCount;
   String? loopMode;
-  String? innerAction;
   List<String> selection;
+
+  /// 所属逻辑块的 id（null = 不属于任何逻辑块）。
+  ///
+  /// [FIX B1] 展平阶段必须靠它区分「不同逻辑块」。原实现只比较相邻 call 的
+  /// `loopCount`，于是两个相邻且次数相同的**独立**循环块会被并成一个组：
+  ///   · 执行顺序从「A×N 然后 B×N」变成「(A,B)×N」；
+  ///   · `{i}` 的基准取组头（块 A）的 loopIndexBase/Step，块 B 自己的
+  ///     base/step 明明带在 BackendCall 上却被忽略（5,7,9 会变成 1,2,3）；
+  ///   · `usesVars` 取「组内任一成员含 {i}」，于是一块用了变量就会把另一块的
+  ///     `_loop_N` 后缀一起抑制 → 本该产出 N 个文件的循环塌缩成 1 个文件覆盖。
+  String? blockId;
+
+  /// 跨逻辑块冲突的一次性说明（null = 无冲突）。由 buildBackendCalls 写进
+  /// plan.warnings，避免「块参数被静默丢弃」。见 _buildPlanForOutput 的检测逻辑。
+  String? blockConflict;
+
+  /// 使能端求值结果（[FIX A1]）：false = 该步骤被逻辑门禁用，应跳过；
+  /// true / null = 执行（null = 没有使能连线，或门值未知时 fail-open）。
+  /// 由 _buildPlanForOutput 求值、buildBackendCalls 消费。
+  bool? enabled;
 
   /// 链式累积（逻辑块参数 [`LogicBlock.accumulate`]）：每轮迭代的输入承接上一轮输出。
   bool accumulate;
@@ -35,8 +54,8 @@ class ExecutionStep {
     this.nodes, {
     this.loopCount = 1,
     this.loopMode,
-    this.innerAction,
     this.selection = const [],
+    this.blockId,
     this.accumulate = false,
     this.errorPolicy = 'stop',
     this.retries = 0,
@@ -186,12 +205,23 @@ class GraphExecutor {
     if (errors.isNotEmpty) return errors;
 
     // 媒体类型兼容校验
+    //
+    // [FIX 只校验数据连线且跳过逻辑门] 原实现遍历**全部**连线做媒体类型比较，而：
+    //   · 控制连线（kind == 'control'）传的是 0/1 使能信号，本就没有媒体类型；
+    //   · 逻辑门是以 `type: PipelineStepType.start` + gateType 构造的（见
+    //     pipeline_editor_page 的 _addGateAt / _addGateFromPanel），于是
+    //     PipelineNode.outputType 会走 start 分支返回默认的 MediaType.video。
+    // 两者叠加会让「逻辑门 → 图片/音频节点的红色使能端」这种**画布明确允许**的
+    // 连线（见 pipeline_editor_page 的 _connect 控制连线分支）报出
+    // 「输出 video，无法连接到 …（需要 image）」，导致任务被永久拒绝入队。
     for (final conn in graph.connections) {
+      if (conn.kind != 'data') continue;
       final fi = graph.nodes.indexWhere((n) => n.id == conn.fromNodeId);
       final ti = graph.nodes.indexWhere((n) => n.id == conn.toNodeId);
       if (fi < 0 || ti < 0) continue;
       final from = graph.nodes[fi];
       final to = graph.nodes[ti];
+      if (from.isGate || to.isGate) continue;
       final outType = from.outputType;
       final inTypes = to.inputTypes;
       if (outType != null && inTypes.isNotEmpty && !inTypes.contains(outType)) {
@@ -502,18 +532,39 @@ class GraphExecutor {
 
     // Tag steps that belong to logic blocks with loop metadata.
     //
-    // 逻辑块的全部执行语义都在这里「打标」，由 AppState._expandLoopCalls 在真正
-    // 执行前展平 —— 新增类型（分组 / 条件）与循环参数（区间 / 累积 / 失败策略）
-    // 只需在此处多拷几个字段，后端不需要任何改动。
+    // 逻辑块的全部执行语义都在这里「打标」，由 AppState._processPipelineTask 的
+    // 展平段在真正执行前落地 —— 新增类型（分组 / 条件）与循环参数（区间 / 累积 /
+    // 失败策略）只需在此处多拷几个字段，后端不需要任何改动。
+    // [FIX C3] 原注释把展平写成 `AppState._expandLoopCalls`，该方法**并不存在**
+    // （展平逻辑内联在 _processPipelineTask 里），会误导后续维护者。
     for (final step in steps) {
       final firstNode = step.nodes.first;
       final block = graph.logicBlocks.where((b) => b.childNodeIds.contains(firstNode.id)).firstOrNull;
+      // [FIX B6] 一个 ExecutionStep 只能套用**一个**逻辑块的参数。而 merged 步骤会把
+      // 同一层级的多个 avProcess/subtitle/speed 节点合并成一步（见上方 levels→steps），
+      // 若这些节点分属两个不同的逻辑块，validateGraph 是**不会报错**的（它只禁止
+      // 「同一个节点同时属于两个块」）。结果是非首节点所属块的循环次数/条件/失败策略
+      // 被静默丢弃。这里把冲突记下来，由 buildBackendCalls 写进 plan.warnings。
+      final otherBlock = step.nodes
+          .skip(1)
+          .map((n) => graph.logicBlocks
+              .where((b) => b.childNodeIds.contains(n.id))
+              .firstOrNull)
+          .whereType<LogicBlock>()
+          .where((b) => b.id != block?.id)
+          .firstOrNull;
+      if (otherBlock != null) {
+        step.blockConflict = '步骤「${step.action}」的节点分散在逻辑块「'
+            '${otherBlock.label(false)}」和「${block?.label(false) ?? "（无）"}」中，'
+            '该步骤只会套用「${block?.label(false) ?? "（无）"}」的参数；'
+            '请把这一步的节点放进同一个逻辑块';
+      }
       if (block == null) continue;
       // effectiveCount：分组 / 条件块恒为 1；循环块按「固定次数」或「区间」折算。
       // 原实现直接读 params['count']，区间模式下会永远得到 10（或任何残留值）。
       step.loopCount = block.effectiveCount;
       step.loopMode = block.params['mode'] as String? ?? 'all';
-      step.innerAction = step.action;
+      step.blockId = block.id; // [FIX B1] 展平阶段按块身份分组
       step.selection = (block.params['selections'] as List?)
           ?.map((m) => m is Map ? m['nodeId'] as String? : null)
           .whereType<String>().toList() ?? const [];
@@ -530,7 +581,25 @@ class GraphExecutor {
       }
     }
 
-    return ExecutionPlan(startNode: start, steps: steps, outputNode: output);
+    // [FIX A1] 使能端求值：把逻辑门网络算成 0/1，0 的步骤在执行时被跳过。
+    //
+    // 在此之前逻辑门**完全不参与执行**（本文件只沿 data 连线建计划、resolvePlans 用
+    // !isGate 把门整体剔除、AppState 只消费预构建的 pipelineCalls），于是画布上
+    // 「恒 0 常用于禁用下游」「与门做条件」这些承诺全部落空。这里补上执行语义。
+    //
+    // 只影响「有控制线接到使能端」的步骤，且只有**明确算出 0** 才禁用 ——
+    // 环路 / 悬空输入 / 未知门值一律 fail-open 按启用处理，不会因为一个说不清的
+    // 门把用户原本正常的转码静默停掉（即：无门图的既有行为 100% 不变）。
+    final planWarnings = <String>[];
+    for (final step in steps) {
+      if (_stepEnable(graph, step) == false) {
+        step.enabled = false;
+        planWarnings.add('步骤「${step.action}」的使能端被逻辑门判为 0，已按「禁用」跳过该步');
+      }
+    }
+
+    return ExecutionPlan(
+        startNode: start, steps: steps, outputNode: output, warnings: planWarnings);
   }
 
   // ── 解析所有执行计划 ──
@@ -547,6 +616,143 @@ class GraphExecutor {
       }
     }
     return plans;
+  }
+
+  // ── 逻辑门（使能端）求值 ──
+  //
+  // [FIX A1] 三值逻辑：true / false / null(未知)。
+  //   · 恒定门直接得值；时间触发器按当前系统时间判定；
+  //   · 组合门用 Kleene 三值逻辑（AND 有 0 即 0、OR 有 1 即 1，其余含未知则未知）；
+  //   · 普通节点的「状态输出」恒为 1 —— 与画布 tooltip「状态输出: 1 (成功)」一致；
+  //   · 环路 / 悬空输入 / 未知门 → null（**fail-open**：按启用处理）。
+  // 与编辑器 _gateOutputValue 的显示口径保持一致，避免"画布显示 0、执行却照跑"。
+
+  /// 求一个逻辑门的输出值。null = 未知。
+  static bool? _gateValue(PipelineGraph graph, PipelineNode gate, Set<String> stack) {
+    if (stack.contains(gate.id)) return null; // 环路 → 未知
+    stack.add(gate.id);
+    try {
+      final g = gate.gate;
+      if (g == null) return null;
+      switch (g) {
+        case LogicGateType.const1:
+          return true;
+        case LogicGateType.const0:
+          return false;
+        case LogicGateType.timeTrigger:
+          return _evalTimeTrigger(gate);
+        case LogicGateType.and:
+        case LogicGateType.nand:
+        case LogicGateType.or:
+        case LogicGateType.nor:
+        case LogicGateType.not:
+        case LogicGateType.xor:
+        case LogicGateType.xnor:
+          break; // 组合门：走下方按输入求值
+      }
+
+      final inputs = graph.connections
+          .where((c) => c.kind == 'control' && c.toNodeId == gate.id)
+          .toList();
+      if (inputs.isEmpty) return null; // 悬空输入 → 未知
+
+      final values = <bool?>[];
+      for (final c in inputs) {
+        final src = graph.nodes.where((n) => n.id == c.fromNodeId).firstOrNull;
+        values.add(src == null
+            ? null
+            : (src.isGate ? _gateValue(graph, src, stack) : true));
+      }
+      final hasUnknown = values.contains(null);
+
+      switch (g) {
+        case LogicGateType.and:
+          if (values.contains(false)) return false;
+          return hasUnknown ? null : true;
+        case LogicGateType.nand:
+          if (values.contains(false)) return true;
+          return hasUnknown ? null : false;
+        case LogicGateType.or:
+          if (values.contains(true)) return true;
+          return hasUnknown ? null : false;
+        case LogicGateType.nor:
+          if (values.contains(true)) return false;
+          return hasUnknown ? null : true;
+        case LogicGateType.not:
+          final v = values.first;
+          return v == null ? null : !v;
+        case LogicGateType.xor:
+        case LogicGateType.xnor:
+          if (hasUnknown) return null;
+          final odd = values.where((v) => v == true).length.isOdd;
+          return g == LogicGateType.xor ? odd : !odd;
+        case LogicGateType.const1:
+        case LogicGateType.const0:
+        case LogicGateType.timeTrigger:
+          return null; // 已在上方返回，这里仅为穷尽 switch
+      }
+    } finally {
+      stack.remove(gate.id);
+    }
+  }
+
+  /// 时间触发器判定，与编辑器 _timeTriggerValue 同款规则。
+  /// 参数：tt_date(yyyy-MM-dd，空=每天) / tt_start(HH:mm) / tt_end(HH:mm，空=精确时刻)。
+  static bool _evalTimeTrigger(PipelineNode gate) {
+    final now = DateTime.now();
+    final dateStr = (gate.params['tt_date'] as String?) ?? '';
+    if (dateStr.isNotEmpty) {
+      final today = '${now.year.toString().padLeft(4, '0')}-'
+          '${now.month.toString().padLeft(2, '0')}-'
+          '${now.day.toString().padLeft(2, '0')}';
+      if (today != dateStr) return false;
+    }
+    final start = (gate.params['tt_start'] as String?) ?? '';
+    if (start.isEmpty) return false;
+    final s = _parseHM(start);
+    final cur = now.hour * 60 + now.minute;
+    final end = (gate.params['tt_end'] as String?) ?? '';
+    if (end.isEmpty) return cur == s;
+    final e = _parseHM(end);
+    if (s <= e) return cur >= s && cur <= e;
+    return cur >= s || cur <= e; // 跨天范围（如 22:00-06:00）
+  }
+
+  static int _parseHM(String hm) {
+    final parts = hm.split(':');
+    if (parts.length != 2) return -1;
+    return (int.tryParse(parts[0]) ?? 0) * 60 + (int.tryParse(parts[1]) ?? 0);
+  }
+
+  /// 求某一步骤的使能状态（[FIX A1]）。
+  ///
+  /// 返回 false 表示「至少一个节点的使能端被逻辑门明确判为 0」→ 整步跳过；
+  /// 返回 null 表示启用（没有使能连线 / 门值未知 / 有门给 1）。
+  ///
+  /// 为什么是「整步」而不是「单个节点」：执行链是单输入单输出的串行链，一个
+  /// ExecutionStep 内的多个节点（merged）共享同一次 ffmpeg 调用，无法只跑一部分。
+  static bool? _stepEnable(PipelineGraph graph, ExecutionStep step) {
+    var sawDisabled = false;
+    for (final node in step.nodes) {
+      final edges = graph.connections
+          .where((c) => c.kind == 'control' && c.toNodeId == node.id)
+          .toList();
+      if (edges.isEmpty) continue; // 悬空使能端 = 默认启用（与画布提示一致）
+      // 多条控制线接同一个使能端：按「或」合并 —— 任一门给 1 即启用，
+      // 全部为 0 才算禁用，出现未知值不会把已确定的 1 抹掉。
+      var anyTrue = false;
+      var allFalse = true;
+      for (final e in edges) {
+        final src = graph.nodes.where((x) => x.id == e.fromNodeId).firstOrNull;
+        final v = src == null
+            ? null
+            : (src.isGate ? _gateValue(graph, src, <String>{}) : true);
+        if (v == true) anyTrue = true;
+        if (v != false) allFalse = false;
+      }
+      if (!anyTrue && allFalse) sawDisabled = true;
+    }
+    return sawDisabled ? false : null;
   }
 
   // ── 逻辑块条件判定 ──
@@ -638,8 +844,23 @@ class GraphExecutor {
     final calls = <BackendCall>[];
     final tempFiles = <String>[];
     final stepCallRanges = <(int, int, ExecutionStep)>[];
-    // 收集本次构建的非致命告警，调用方可通过 plan.warnings 读取
-    final warnings = <String>[];
+    // 收集本次构建的非致命告警，调用方可通过 plan.warnings 读取。
+    // 起点是 _buildPlanForOutput 已经收集的（逻辑块冲突 / 使能端被禁用等）。
+    final warnings = <String>[...plan.warnings];
+
+    /// 统一的失败出口：**必须**先把告警写回 plan 再返回 null。
+    ///
+    /// [FIX] 原实现只在成功路径上 `plan.warnings..clear()..addAll(warnings)`，
+    /// 而条件「中止任务」与未知节点这两条 return null 之前 add 的告警从未回传 ——
+    /// 调用方 _addTasksFromGraph 读到空列表，只能把原因笼统显示成
+    /// 「（可能包含不支持的节点类型）」，用户永远看不到真正的原因。
+    List<BackendCall>? fail(String reason) {
+      if (reason.isNotEmpty) warnings.add(reason);
+      plan.warnings
+        ..clear()
+        ..addAll(warnings);
+      return null;
+    }
     // 以输出节点 id + 最终输出路径作盐，区分同源多输出计划的中间文件，避免并发时互相覆盖
     // （即便两个输出节点命名相同，id 也保证盐唯一）
     final tmpSalt = _stableHash('${plan.outputNode?.id ?? ''}\u0000$outputPath');
@@ -649,24 +870,61 @@ class GraphExecutor {
     for (var i = 0; i < plan.steps.length; i++) {
       final step = plan.steps[i];
       final isLast = i == plan.steps.length - 1;
-      // selectiveLoop 'manual'：只执行手动勾选的子节点；跳过时保持输入/输出链不变。
-      // 末步（接入最终输出）始终执行，避免最终产物链路断裂。（'random' 暂按全量执行）
-      if (!isLast && step.loopMode == 'manual' && step.selection.isNotEmpty) {
-        final run = step.nodes.any((n) => step.selection.contains(n.id));
-        if (!run) continue;
+
+      // [FIX A1] 使能端：逻辑门判为 0 的步骤整步跳过（见 _stepEnable）。
+      // 末步是写最终产物的那一步，跳过它等于任务没有产物 —— 与其静默产出
+      // 一个"没跑任何处理"的结果，不如直接让构建失败并把原因告诉用户。
+      if (step.enabled == false) {
+        if (isLast) {
+          return fail('最后一个处理步骤「${step.action}」被逻辑门禁用（使能端 = 0），'
+              '任务不会有任何产物。请检查该步骤的使能连线，或断开它');
+        }
+        warnings.add('步骤「${step.action}」被逻辑门禁用（使能端 = 0），已跳过');
+        continue;
       }
-      // 条件块：按**进入本步骤时**的输入文件属性判定。
+      // [FIX B6] 跨逻辑块的合并步骤：块参数只套用了首节点所属的那一个，必须让用户知道
+      if (step.blockConflict != null) warnings.add(step.blockConflict!);
+      // selectiveLoop 'manual'：只执行手动勾选的子节点；跳过时保持输入/输出链不变。
+      // 末步（接入最终输出）始终执行，避免最终产物链路断裂。
+      // 'random' 在编辑器侧已被标注为「暂等同全部执行」——此处不做随机抽样，
+      // 因为随机跳过会打断框内多节点之间的输入/输出链（下游节点拿不到上一节点
+      // 的产物路径）。要真正实现需先让每个节点各自独立成链路，属独立课题。
+      if (step.loopMode == 'manual' && step.selection.isNotEmpty) {
+        final run = step.nodes.any((n) => step.selection.contains(n.id));
+        if (!run) {
+          if (isLast) {
+            warnings.add('选择性循环「手动选择」未勾选最后一个处理步骤，'
+                '但该步骤不会被跳过（末步跳过等于任务没有产物）');
+          } else {
+            continue;
+          }
+        }
+      }
+      // 条件块：按**任务的源输入文件**属性判定。
       // 只使用扩展名 / 文件名 / 大小 / 路径 —— 全部同步可得；宽高与时长需要起
       // ffprobe 子进程，而这里（以及整个展平阶段）是同步的。
+      //
+      // [FIX B2] 判定对象必须是 inputPath（源文件），**不是 currentInput**。
+      // 原实现传 currentInput，而从第 2 个处理步骤起它就是 _tempPath() 产出的
+      // <systemTemp>/ffmpegpp_work_XXXXXX/ffmpegpp_<hash>_<base>_stepN.<ext>：
+      //   · 「所在目录」比的是随机临时目录名   → 永远不成立
+      //   · 「文件名 等于 xxx.mp4」比的是带 hash 前后缀的临时名 → 永远不成立
+      //   · 「完整路径 包含 …」「文件大小」同样落在临时产物上
+      // 也就是说不包住第一个处理步骤的条件块，规则基本恒为 false —— 而
+      // 属性面板写的是「按输入文件的属性决定是否执行框内操作」。
+      // 条件在构建期静态求值一次，源文件是唯一合理的判定对象。
+      //
       // 与 manual 一致地对末步豁免：末步是真正写最终产物的那一步，跳过它等于
-      // 任务没有产物。
-      if (!isLast && step.condField != null) {
-        if (!_evalCondition(step, currentInput)) {
+      // 任务没有产物（该豁免会在下方写入 plan.warnings，避免静默失效）。
+      if (step.condField != null) {
+        if (isLast) {
+          warnings.add('条件块包含了最后一个处理步骤，该步骤不会被跳过'
+              '（末步跳过等于任务没有产物）；条件「${step.condValue}」对它不生效');
+        } else if (!_evalCondition(step, inputPath)) {
           if (step.condSkipWhenFalse) {
             continue; // 跳过框内节点，链路照常往下走
           }
-          warnings.add('条件不满足（${step.condValue}），已按「中止任务」策略终止: $currentInput');
-          return null;
+          return fail('条件不满足（${step.condValue}），已按「中止任务」策略终止: $inputPath');
         }
       }
       final inputExt = currentInput.split('.').last;
@@ -818,7 +1076,7 @@ class GraphExecutor {
             // 节点类型（PipelineStepType.unknown 会被 action 映射降级为 'single'）。
             // 绝不能静默跳过：必须让调用方知道执行计划构建失败，
             // 否则下游会把「预期存在的中间文件」当作已生成继续执行（H-2）。
-            return null;
+            return fail('遇到未知/不支持的节点类型，无法构建执行计划');
           }
           break;
 
@@ -1359,7 +1617,7 @@ class GraphExecutor {
           // _buildPlanForOutput 的 `_ => 'single'` 兜底会把未知类型映射为 'single'，
           // 这里再兜一层：任何未识别的 action 都视为构建失败，
           // 不再静默产出空链路让下游误以为中间文件已生成（H-2）。
-          return null;
+          return fail('无法识别的步骤动作「${step.action}」，请检查该节点类型');
       }
 
       // Record the range of calls generated by this step
@@ -1374,12 +1632,13 @@ class GraphExecutor {
       for (var ci = start; ci < end; ci++) {
         calls[ci].loopCount = step.loopCount;
         calls[ci].loopMode = step.loopMode;
-        // 展平阶段（AppState._expandLoopCalls）要用的循环参数一并下发
+        // 展平阶段（AppState._processPipelineTask 的展平段）要用的循环参数一并下发
         calls[ci].accumulate = step.accumulate;
         calls[ci].errorPolicy = step.errorPolicy;
         calls[ci].retries = step.retries;
         calls[ci].loopIndexBase = step.loopIndexBase;
         calls[ci].loopIndexStep = step.loopIndexStep;
+        calls[ci].blockId = step.blockId; // [FIX B1]
       }
     }
 

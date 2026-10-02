@@ -102,6 +102,16 @@ class ProjectPageState extends State<ProjectPage> {
     });
   }
 
+  /// 打开顶栏搜索框（供全局快捷键 project_search 调用）。
+  ///
+  /// [FIX C2] keyBindings['project_search'] 此前只声明在 defaultKeyBindings 与
+  /// 快捷键设置页里，**没有任何消费者** —— 用户绑了键也毫无反应。这里补上入口，
+  /// 与工具栏那颗放大镜按钮（_searchVisible 的切换）走同一份状态。
+  void openSearch() {
+    if (!mounted || _searchVisible) return;
+    setState(() => _searchVisible = true);
+  }
+
   void selectAll(List videos) {
     setState(() {
       if (_selectedIds.length == videos.length) {

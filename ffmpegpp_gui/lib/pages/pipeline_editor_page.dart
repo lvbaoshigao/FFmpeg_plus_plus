@@ -136,6 +136,29 @@ class PipelineEditorPage extends StatefulWidget {
   State<PipelineEditorPage> createState() => _PipelineEditorPageState();
 }
 
+/// 按 keyBindings 的「修饰键 + 单键」格式匹配一次按键事件。
+///
+/// 空绑定（未配置）一律返回 false —— 不能让未配置项把所有按键都吃掉。
+/// 修饰键必须**精确相等**：绑 Ctrl+A 时按 Ctrl+Shift+A 不算命中。
+/// 放在文件级是因为画布 State 与 AI 面板 State 都要用它。
+bool _matchesKeyBinding(List<String> binding, KeyEvent event) {
+  if (binding.isEmpty) return false;
+  const mods = {'Control', 'Shift', 'Alt', 'Meta'};
+  final nonMods = binding.where((b) => !mods.contains(b)).toList();
+  if (nonMods.length != 1) return false;
+  final want = binding.where(mods.contains).toSet();
+  final held = <String>{};
+  for (final k in HardwareKeyboard.instance.logicalKeysPressed) {
+    if (k == LogicalKeyboardKey.controlLeft || k == LogicalKeyboardKey.controlRight) held.add('Control');
+    if (k == LogicalKeyboardKey.shiftLeft || k == LogicalKeyboardKey.shiftRight) held.add('Shift');
+    if (k == LogicalKeyboardKey.altLeft || k == LogicalKeyboardKey.altRight) held.add('Alt');
+    if (k == LogicalKeyboardKey.metaLeft || k == LogicalKeyboardKey.metaRight) held.add('Meta');
+  }
+  if (held.length != want.length || !held.containsAll(want)) return false;
+  final label = event.logicalKey.keyLabel;
+  return label.isNotEmpty && label.toLowerCase() == nonMods.first.toLowerCase();
+}
+
 class _PipelineEditorPageState extends State<PipelineEditorPage>
     with WindowListener
     implements PanelHostDelegate {
@@ -1918,18 +1941,59 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     _dragAnchorId = null;
     _dragRaw = Offset.zero;
     if (deltas == null || deltas.isEmpty) return;
+
+    // [FIX B5] 拖动落点落在某个逻辑块虚框内的节点，自动加入该块。
+    //
+    // 背景：LogicBlock.childNodeIds 只在建块时一次性算定，之后**只会**因删除节点
+    // 而缩小（见 _purgeDeletedFromLogicBlocks），没有任何"拖进框就加入"的逻辑。
+    // 于是把节点拖进虚线框后：框视觉上包住了它，执行时却不参与该块的重复/条件 ——
+    // 用户完全看不出来。这里按「节点中心落在框内」补齐成员关系，并 toast 告知。
+    //
+    // 已在别的块里的节点不抢（一个节点只能属于一个块）；整块拖动时成员已全部在
+    // 块内，_adopt 自然为空，不会误伤。
+    final moved = <(PipelineNode, Offset)>[
+      for (final n in _nodes)
+        if (deltas[n.id] != null) (n, deltas[n.id]!),
+    ];
+    final adopt = <String, LogicBlock>{};
+    for (final (n, d) in moved) {
+      // 只认「真的被拖动过」的节点：单击节点会产生一个 Offset.zero 的位移项，
+      // 不加这道判断的话「点一下节点」就会把它收编进所在框 —— 点击不该改图。
+      if (d.distance < 0.5) continue;
+      if (_logicBlocks.any((b) => b.childNodeIds.contains(n.id))) continue;
+      final cx = n.x + d.dx + _totalNodeWidth(n) / 2;
+      final cy = n.y + d.dy + _nodeHeight(n) / 2;
+      final target = _logicBlocks
+          .where((b) =>
+              cx >= b.x && cx <= b.x + b.width &&
+              cy >= b.y && cy <= b.y + b.height)
+          .firstOrNull;
+      if (target != null) adopt[n.id] = target;
+    }
+
+    // 先压撤销栈（必须在修改模型之前），再落状态
+    if (adopt.isNotEmpty) _pushUndo();
     setState(() {
-      for (final n in _nodes) {
-        final d = deltas[n.id];
-        if (d != null) {
-          n.x += d.dx;
-          n.y += d.dy;
-        }
+      for (final (n, d) in moved) {
+        n.x += d.dx;
+        n.y += d.dy;
+      }
+      for (final e in adopt.entries) {
+        e.value.childNodeIds.add(e.key);
       }
       // 虚框跟着框内节点走：拖动分组时框必须同步平移，否则「框住了什么」
       // 会与实际位置脱节。
       _recomputeLogicBlockRects();
     });
+    if (adopt.isNotEmpty) {
+      final names = adopt.values
+          .map((b) => b.name.isNotEmpty ? b.name : logicBlockTypeLabel(b.type, true))
+          .toSet()
+          .join('、');
+      showToast(context,
+          '${adopt.length} 个节点已加入逻辑块「$names」（可撤销）',
+          type: ToastType.info);
+    }
     _markDirty();
   }
 
@@ -2113,7 +2177,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// 新建后必须让用户立刻看到一条能改的具体规则。
   static Map<String, dynamic> _defaultLogicParams(LogicBlockType type) => switch (type) {
     LogicBlockType.loop => const {'countMode': 'count', 'count': 10},
-    LogicBlockType.selectiveLoop => const {'countMode': 'count', 'count': 10, 'mode': 'random'},
+    // [FIX B4] 默认模式改 'all'：'random' 尚未实现（执行层按全量跑），
+    // 把它设为默认会让用户以为选了"每轮随机挑几个"，实际是"全部跑 N 遍"。
+    LogicBlockType.selectiveLoop => const {'countMode': 'count', 'count': 10, 'mode': 'all'},
     LogicBlockType.group => const {'count': 1},
     LogicBlockType.condition => const {
       'count': 1,
@@ -4132,14 +4198,36 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           }
         }
 
-        // Undo (Ctrl+Z)
-        if (_isCtrlPressed() && event.logicalKey == LogicalKeyboardKey.keyZ && !HardwareKeyboard.instance.logicalKeysPressed.contains(LogicalKeyboardKey.shiftLeft) && !HardwareKeyboard.instance.logicalKeysPressed.contains(LogicalKeyboardKey.shiftRight)) {
-          _undo();
+        // Undo / Redo
+        //
+        // [FIX C2] 原来这里**硬编码** Ctrl+Z / Ctrl+Shift+Z，从不读
+        // keyBindings['canvas_undo'/'canvas_redo'] —— 用户在「设置 → 快捷键」里
+        // 改了这两项不会有任何反应（画布上仍是 Ctrl+Z）。现在改为按绑定匹配。
+        // 同时补上 !_editingText：在参数输入框里按 Ctrl+Z 应该撤销**文字**，
+        // 而不是撤销整张图（Ctrl+C/V 早就有这个守卫，撤销一直漏了）。
+        if (!_editingText) {
+          if (_matchesKeyBinding(bindings['canvas_undo'] ?? const ['Control', 'Z'], event)) {
+            _undo();
+            return KeyEventResult.handled;
+          }
+          if (_matchesKeyBinding(
+              bindings['canvas_redo'] ?? const ['Control', 'Shift', 'Z'], event)) {
+            _redo();
+            return KeyEventResult.handled;
+          }
+        }
+
+        // 探测模式 / 隐藏逻辑线
+        //
+        // [FIX C2] 这两项同样只声明在 defaultKeyBindings 与快捷键页里，编辑器从不
+        // 读取（默认值是空数组，页面上显示为「（未配置）」），用户即使绑了键也毫无
+        // 反应。这里接上工具栏那两个按钮（_probeMode / _hideLogic）的同一份状态。
+        if (_matchesKeyBinding(bindings['canvas_probe_mode'] ?? const [], event)) {
+          setState(() => _probeMode = !_probeMode);
           return KeyEventResult.handled;
         }
-        // Redo (Ctrl+Shift+Z)
-        if (_isCtrlPressed() && event.logicalKey == LogicalKeyboardKey.keyZ && (HardwareKeyboard.instance.logicalKeysPressed.contains(LogicalKeyboardKey.shiftLeft) || HardwareKeyboard.instance.logicalKeysPressed.contains(LogicalKeyboardKey.shiftRight))) {
-          _redo();
+        if (_matchesKeyBinding(bindings['canvas_hide_logic'] ?? const [], event)) {
+          setState(() => _hideLogic = !_hideLogic);
           return KeyEventResult.handled;
         }
 
@@ -4873,9 +4961,15 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           ['0'],
         ],
       ),
+      // [FIX C1] 时间触发器走的是 _buildTimeTriggerEditor（见 _buildStepEditor 的
+      // 提前 return），这一支实际不可达。但 switch 必须穷尽枚举，所以保留为
+      // **防御性兜底**：真被以别的方式调用到时也应给出可读文案，而不是原来的
+      // 空描述 + 空真值表。真值表由 _buildTimeTriggerEditor 负责展示。
       LogicGateType.timeTrigger => (
         zh ? '时间触发器' : 'Time Trigger',
-        '',
+        zh
+            ? '系统时间命中设定区间时输出 1，否则输出 0'
+            : 'Outputs 1 while the system clock is inside the configured window',
         const [],
       ),
     };
@@ -9660,18 +9754,17 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
   }
 
   void _executeErrorCheck() {
-    final nodes = widget.existingNodes;
-    final conns = widget.existingConnections;
-    final errors = <String>[];
-    if (!nodes.any((n) => n.type == PipelineStepType.start && !n.isGate)) errors.add('Missing start node');
-    if (!nodes.any((n) => n.type == PipelineStepType.output)) errors.add('Missing output node');
-    final connectedIds = <String>{};
-    for (final c in conns) { connectedIds.add(c.fromNodeId); connectedIds.add(c.toNodeId); }
-    for (final n in nodes) {
-      if (!connectedIds.contains(n.id) && nodes.length > 1) {
-        errors.add('Disconnected: ${n.type.name} (${n.id.length > 8 ? n.id.substring(0, 8) : n.id})');
-      }
-    }
+    // [FIX C6] 这里原本是 validateGraph 的一份**弱化拷贝**（只查 start/output/悬空），
+    // 与执行链的真实校验结论相左：AI 被告知「No errors found」，用户一点入队却被拒。
+    // 而且它对逻辑门会打出「Disconnected: start (xxxx)」—— 因为门的 type 恰好是 start。
+    // MCP 侧的 error_check 早已改为委托 GraphExecutor.validateGraph（见 app_state.dart
+    // 里「此前这里是一份只查 start/output/悬空的弱化拷贝」的注释），此处同步对齐。
+    // 逻辑块不在 AI 面板的入参里，故不传（validateGraph 对空列表安全跳过该段校验）。
+    final graph = PipelineGraph(
+      nodes: widget.existingNodes,
+      connections: widget.existingConnections,
+    );
+    final errors = GraphExecutor.validateGraph(graph);
     _addToolResult('error_check', errors.isEmpty ? 'No errors found.' : errors.join('\n'));
   }
 
