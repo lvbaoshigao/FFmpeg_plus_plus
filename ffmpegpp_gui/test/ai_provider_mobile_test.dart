@@ -7,6 +7,8 @@
 // tester.runAsync 里，否则 await 永不完成（测试 10 分钟超时）。
 import 'dart:io';
 
+import 'package:ffmpegpp_gui/models/models.dart';
+import 'package:ffmpegpp_gui/widgets/mobile_glass_pill.dart';
 import 'package:ffmpegpp_gui/pages/ai_settings_mobile.dart';
 import 'package:ffmpegpp_gui/providers/app_state.dart';
 import 'package:ffmpegpp_gui/theme/app_theme.dart';
@@ -15,7 +17,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
-Widget _harness(AppState state, Widget child) => ChangeNotifierProvider<AppState>.value(
+Widget _harness(AppState state, Widget child) =>
+    ChangeNotifierProvider<AppState>.value(
       value: state,
       child: MaterialApp(
         theme: AppTheme.dark(),
@@ -37,26 +40,34 @@ void main() {
 
     // 真实 IO：复制项目里现成的 PNG 作为壁纸文件（唯一文件名避免并行冲突）
     final stamp = DateTime.now().microsecondsSinceEpoch;
-    final File png = await tester.runAsync<File>(() async {
-      final src = File('rele/icon.png');
-      final dst =
-          File('${Directory.systemTemp.path}/ai_wall_$stamp.png');
-      if (await dst.exists()) await dst.delete();
-      return src.copy(dst.path);
-    }) as File;
-    addTearDown(() => tester.runAsync(() async {
-          if (await png.exists()) await png.delete();
-        }));
+    final File png =
+        await tester.runAsync<File>(() async {
+              final src = File('rele/icon.png');
+              final dst = File(
+                '${Directory.systemTemp.path}/ai_wall_$stamp.png',
+              );
+              if (await dst.exists()) await dst.delete();
+              return src.copy(dst.path);
+            })
+            as File;
+    addTearDown(
+      () => tester.runAsync(() async {
+        if (await png.exists()) await png.delete();
+      }),
+    );
 
     final state = AppState();
-    state.updateConfig((c) => c
-      ..backgroundImage = png.path
-      ..backgroundOpacity = 0.5
-      ..cardStyle = 'gray'
-      ..navStyle = 'liquid');
+    state.updateConfig(
+      (c) => c
+        ..backgroundImage = png.path
+        ..backgroundOpacity = 0.5
+        ..cardStyle = 'gray'
+        ..navStyle = 'liquid',
+    );
 
     await tester.pumpWidget(
-        _harness(state, const MobileAiProviderDetailPage()));
+      _harness(state, const MobileAiProviderDetailPage()),
+    );
     // 等真实图片解码完成后重建
     await tester.runAsync(() async {
       await Future<void>.delayed(const Duration(milliseconds: 600));
@@ -91,18 +102,74 @@ void main() {
     await _flushSaveTimers(tester);
   });
 
+  testWidgets('disabling active provider clears the active selection', (tester) async {
+    tester.view.physicalSize = const Size(800, 915);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final state = AppState();
+    final active = AiProfile(id: 'active', name: 'Active', enabled: true);
+    state.updateConfig((c) => c
+      ..aiProfiles = [active]
+      ..activeAiProfileId = active.id);
+    final fallback = AiProfile(id: 'fallback', name: 'Fallback', enabled: true);
+    state.updateConfig((c) => c..aiProfiles.add(fallback));
+    await tester.pumpWidget(_harness(state, const MobileAiProviderDetailPage(profileId: 'active')));
+    await tester.pump();
+    await tester.tap(find.text('配置'));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.byType(Switch).at(0));
+    await tester.pump();
+    expect(state.config.activeAiProfileId, active.id);
+    final saveAction = tester.widget<MobileGlassPillAction>(
+      find.byWidgetPredicate((widget) =>
+          widget is MobileGlassPillAction && widget.icon == Icons.check_rounded),
+    );
+    saveAction.onTap!();
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 3));
+    expect(state.config.activeAiProfileId, fallback.id);
+    expect(state.config.aiProfiles.singleWhere((p) => p.id == active.id).enabled, isFalse);
+    expect(tester.takeException(), isNull);
+    await _flushSaveTimers(tester);
+  });
+
+  testWidgets('narrow AI/MCP settings fit without overflow', (tester) async {
+    tester.view.physicalSize = const Size(320, 780);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final state = AppState();
+    state.updateConfig((c) => c..mcpEnabled = true);
+    await tester.pumpWidget(
+      _harness(
+        state,
+        Builder(
+          builder: (ctx) => SingleChildScrollView(
+            child: mobileAiSettingsContent(ctx, state),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    await _flushSaveTimers(tester);
+  });
+
   testWidgets('移动端 AI 设置内容（提供商列表入口）可构建', (tester) async {
     tester.view.physicalSize = const Size(412, 915);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
     final state = AppState();
     state.updateConfig((c) => c..cardStyle = 'gray');
-    await tester.pumpWidget(_harness(
+    await tester.pumpWidget(
+      _harness(
         state,
         Builder(
-          builder: (ctx) => SingleChildScrollView(
-              child: mobileAiSettingsContent(ctx, state)),
-        )));
+          builder: (ctx) =>
+              SingleChildScrollView(child: mobileAiSettingsContent(ctx, state)),
+        ),
+      ),
+    );
     await tester.pump();
     expect(find.byType(MobileAiProviderDetailPage), findsNothing);
     await _flushSaveTimers(tester);

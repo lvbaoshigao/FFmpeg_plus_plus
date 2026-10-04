@@ -3,6 +3,7 @@ import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
@@ -3028,6 +3029,8 @@ class AppState extends ChangeNotifier {
 
   // ── MCP Server ──
   HttpServer? _mcpServer;
+  static const int _maxConcurrentMcpRequests = 8;
+  int _activeMcpRequests = 0;
   bool get mcpRunning => _mcpServer != null;
   String? mcpError;
   // 非回环监听（暴露到局域网）时要求的访问令牌；回环为 null（无需令牌）
@@ -3069,7 +3072,16 @@ class AppState extends ChangeNotifier {
       }
       final server = _mcpServer!;
       server.listen((req) {
-        _handleMcpRequest(req);
+        if (_activeMcpRequests >= _maxConcurrentMcpRequests) {
+          req.response
+            ..statusCode = HttpStatus.serviceUnavailable
+            ..headers.contentType = ContentType.json
+            ..write('{"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"Server busy"}}');
+          unawaited(req.response.close());
+          return;
+        }
+        _activeMcpRequests++;
+        unawaited(_handleMcpRequest(req).whenComplete(() => _activeMcpRequests--));
       }, onError: (e) {
         addLog('[MCP] 连接错误: $e', category: 'error');
       }, onDone: () {
@@ -3115,7 +3127,7 @@ class AppState extends ChangeNotifier {
     return buf.toString();
   }
 
-  void _handleMcpRequest(HttpRequest req) async {
+  Future<void> _handleMcpRequest(HttpRequest req) async {
     addLog('[MCP] ${req.method} ${req.uri.path}', category: 'info');
     if (req.method != 'POST') {
       req.response
@@ -3161,15 +3173,16 @@ class AppState extends ChangeNotifier {
       }
     }
     try {
-      // M-10：请求体流式累计并限制上限（4MB）。先累计原始字节再一次性解码，避免多字节
-      // UTF-8 跨块截断；超出上限立即断开回 -32600。真正的 JSON 解析错误由下方
-      // FormatException 统一回 -32700。
+      // Request count and per-body limits jointly bound worst-case decode memory.
       const maxBodyBytes = 4 * 1024 * 1024;
-      final all = <int>[]; // 累积原始字节，避免引入 dart:typed_data 依赖
+      final all = BytesBuilder(copy: false);
       var tooBig = false;
       await for (final chunk in req) {
-        all.addAll(chunk);
-        if (all.length > maxBodyBytes) { tooBig = true; break; }
+        if (all.length + chunk.length > maxBodyBytes) {
+          tooBig = true;
+          break;
+        }
+        all.add(chunk);
       }
       if (tooBig) {
         req.response
@@ -3179,7 +3192,7 @@ class AppState extends ChangeNotifier {
         await req.response.close();
         return;
       }
-      final body = utf8.decode(all, allowMalformed: true);
+      final body = utf8.decode(all.takeBytes(), allowMalformed: true);
       final decoded = jsonDecode(body);
 
       // JSON-RPC 2.0 批量请求（MCP 规范允许）：数组中的每个请求各产生一条响应，

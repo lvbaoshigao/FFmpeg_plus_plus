@@ -89,7 +89,8 @@ String _userDataDir() {
   } else if (Platform.isMacOS) {
     return '${Platform.environment['HOME'] ?? '/tmp'}/Library/Application Support/FFmpeg++';
   } else {
-    final base = Platform.environment['XDG_DATA_HOME'] ??
+    final base =
+        Platform.environment['XDG_DATA_HOME'] ??
         '${Platform.environment['HOME'] ?? '/tmp'}$_s.local${_s}share';
     return '$base${_s}FFmpeg++';
   }
@@ -117,7 +118,11 @@ Future<String?> _copyToAppDir(String srcPath, String subDir) async {
 ///
 /// [maxW]/[maxH] 为目标物理像素分辨率，调用方在 async 前从 View 同步取得，
 /// 避免 BuildContext 跨 async gap。
-Future<String?> _copyBackgroundOptimized(String srcPath, int maxW, int maxH) async {
+Future<String?> _copyBackgroundOptimized(
+  String srcPath,
+  int maxW,
+  int maxH,
+) async {
   try {
     final srcFile = File(srcPath);
     if (!srcFile.existsSync()) return null;
@@ -146,7 +151,11 @@ Future<String?> _copyBackgroundOptimized(String srcPath, int maxW, int maxH) asy
     final recorder = ui.PictureRecorder();
     final canvas = ui.Canvas(recorder);
     canvas.scale(scale, scale);
-    canvas.drawImage(image, ui.Offset.zero, ui.Paint()..filterQuality = ui.FilterQuality.high);
+    canvas.drawImage(
+      image,
+      ui.Offset.zero,
+      ui.Paint()..filterQuality = ui.FilterQuality.high,
+    );
     final picture = recorder.endRecording();
     final resized = await picture.toImage(targetW, targetH);
     picture.dispose();
@@ -159,9 +168,14 @@ Future<String?> _copyBackgroundOptimized(String srcPath, int maxW, int maxH) asy
     // 保存为 .png（与原文件名区分，避免覆盖源图）
     final targetDir = Directory('${_userDataDir()}$_s${'background'}');
     if (!targetDir.existsSync()) targetDir.createSync(recursive: true);
-    final baseName = srcPath.split(RegExp(r'[\\/]')).last.replaceAll(RegExp(r'\.[^.]+$'), '');
+    final baseName = srcPath
+        .split(RegExp(r'[\\/]'))
+        .last
+        .replaceAll(RegExp(r'\.[^.]+$'), '');
     final destPath = '${targetDir.path}$_s${baseName}_opt.png';
-    await File(destPath).writeAsBytes(byteData.buffer.asUint8List(), flush: true);
+    await File(
+      destPath,
+    ).writeAsBytes(byteData.buffer.asUint8List(), flush: true);
     return destPath;
   } catch (_) {
     // 解码/缩放失败（如超大图内存不足）：回退普通复制
@@ -171,7 +185,12 @@ Future<String?> _copyBackgroundOptimized(String srcPath, int maxW, int maxH) asy
 
 /// 从内存字节保存背景图（Android 11+ content:// URI 场景：picker 返回 bytes 而非路径）。
 /// 解码后用 [maxW]/[maxH] 限制最大尺寸，重编码为 PNG 存入应用文档目录。
-Future<String?> _saveBackgroundBytes(Uint8List bytes, String fileName, int maxW, int maxH) async {
+Future<String?> _saveBackgroundBytes(
+  Uint8List bytes,
+  String fileName,
+  int maxW,
+  int maxH,
+) async {
   ui.ImmutableBuffer? buffer;
   ui.ImageDescriptor? descriptor;
   ui.Codec? codec;
@@ -202,13 +221,19 @@ Future<String?> _saveBackgroundBytes(Uint8List bytes, String fileName, int maxW,
     final targetW = math.max(1, (srcW * scale).round());
     final targetH = math.max(1, (srcH * scale).round());
 
-    codec = await descriptor.instantiateCodec(targetWidth: targetW, targetHeight: targetH);
+    codec = await descriptor.instantiateCodec(
+      targetWidth: targetW,
+      targetHeight: targetH,
+    );
     final frame = await codec.getNextFrame();
     decoded = frame.image;
 
     final byteData = await decoded.toByteData(format: ui.ImageByteFormat.png);
     if (byteData == null) return await _saveRawBackground(bytes, fileName);
-    return await _saveRawBackground(byteData.buffer.asUint8List(), '${fileName}_opt');
+    return await _saveRawBackground(
+      byteData.buffer.asUint8List(),
+      '${fileName}_opt',
+    );
   } catch (_) {
     return await _saveRawBackground(bytes, fileName);
   } finally {
@@ -265,6 +290,7 @@ Future<void> openExternalUrl(String url) => ShellOpen.url(url);
 class _CardDef {
   final String id;
   final String Function(AppStrings) title;
+
   /// 移动端一级菜单行首图标（MIUI 风格圆角图标块）。
   final IconData icon;
 
@@ -298,7 +324,12 @@ class _SectionDef {
   final String Function(AppStrings) title;
   final IconData icon;
   final List<_CardDef> cards;
-  const _SectionDef({required this.id, required this.title, required this.icon, required this.cards});
+  const _SectionDef({
+    required this.id,
+    required this.title,
+    required this.icon,
+    required this.cards,
+  });
 }
 
 // ═══════════════════════════════════════════
@@ -308,7 +339,11 @@ class _SectionDef {
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
 
-  static void showUpdateDialogStatic(BuildContext ctx, AppStrings s, updater.UpdateResult result) {
+  static void showUpdateDialogStatic(
+    BuildContext ctx,
+    AppStrings s,
+    updater.UpdateResult result,
+  ) {
     _showUpdateDialog(ctx, s, result);
   }
 
@@ -320,6 +355,7 @@ class _SettingsPageState extends State<SettingsPage> {
   final TextEditingController _searchCtrl = TextEditingController();
   final FocusNode _searchFocus = FocusNode();
   String _query = '';
+
   /// 移动端搜索是否展开（内联展开在顶栏下方，而非弹出对话框）。
   bool _searchExpanded = false;
 
@@ -382,10 +418,12 @@ class _SettingsPageState extends State<SettingsPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final ctx = _cardKeys[cardId]?.currentContext;
       if (ctx == null) return;
-      Scrollable.ensureVisible(ctx,
-          duration: const Duration(milliseconds: 260),
-          curve: Curves.easeOutCubic,
-          alignment: 0.15);
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOutCubic,
+        alignment: 0.15,
+      );
     });
   }
 
@@ -399,34 +437,47 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 用户要的是「搜索设置项可以更好的定位到需要的项」（尤其是电脑端）：
   /// 光列出命中的卡片还不够，点「定位」才是真正的跳转 —— 切分区 + 滚动到卡片 + 高亮。
   Widget _resultHeader(
-      _SectionDef sec, _CardDef c, ColorScheme scheme, AppStrings s, BuildContext ctx) {
+    _SectionDef sec,
+    _CardDef c,
+    ColorScheme scheme,
+    AppStrings s,
+    BuildContext ctx,
+  ) {
     final AppStrings ls = AppStrings.of(ctx.read<AppState>().config.language);
     return Padding(
       padding: const EdgeInsets.fromLTRB(2, 0, 2, 4),
-      child: Row(children: [
-        Icon(sec.icon, size: 13, color: scheme.primary),
-        const SizedBox(width: 6),
-        Expanded(
-          child: Text('${sec.title(ls)} · ${c.title(ls)}',
+      child: Row(
+        children: [
+          Icon(sec.icon, size: 13, color: scheme.primary),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              '${sec.title(ls)} · ${c.title(ls)}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: scheme.onSurfaceVariant)),
-        ),
-        TextButton.icon(
-          onPressed: () => _jumpToCard(c.id),
-          icon: const Icon(Icons.my_location, size: 13),
-          label: Text(s.isZh ? '定位' : 'Locate', style: const TextStyle(fontSize: 11)),
-          style: TextButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            minimumSize: const Size(0, 26),
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            visualDensity: VisualDensity.compact,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
           ),
-        ),
-      ]),
+          TextButton.icon(
+            onPressed: () => _jumpToCard(c.id),
+            icon: const Icon(Icons.my_location, size: 13),
+            label: Text(
+              s.isZh ? '定位' : 'Locate',
+              style: const TextStyle(fontSize: 11),
+            ),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              minimumSize: const Size(0, 26),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              visualDensity: VisualDensity.compact,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -447,6 +498,7 @@ class _SettingsPageState extends State<SettingsPage> {
       child: child,
     );
   }
+
   /// 选择左侧主菜单的分区：顺手清空搜索，右侧完整展示该分区。
   void _selectSection(String id) {
     if (_query.isNotEmpty) {
@@ -468,8 +520,17 @@ class _SettingsPageState extends State<SettingsPage> {
           id: 'language',
           title: (s) => s.language,
           icon: Icons.translate,
-          keywords: ['语言', '界面', '中文', 'language', 'english', 'chinese',
-              'interface', 'locale', 'i18n'],
+          keywords: [
+            '语言',
+            '界面',
+            '中文',
+            'language',
+            'english',
+            'chinese',
+            'interface',
+            'locale',
+            'i18n',
+          ],
           build: _buildLanguage,
         ),
       ],
@@ -485,33 +546,62 @@ class _SettingsPageState extends State<SettingsPage> {
           id: 'theme',
           title: (s) => s.cardTheme,
           icon: Icons.brightness_6_outlined,
-          keywords: ['深色', '暗色', '浅色', 'dark', 'light', 'mode', '模式',
-              '主题色', '强调色', '颜色', 'accent', 'color', 'theme',
-              '动态取色', 'monet', 'dynamic', '渐变', 'gradient'],
+          keywords: [
+            '深色',
+            '暗色',
+            '浅色',
+            'dark',
+            'light',
+            'mode',
+            '模式',
+            '主题色',
+            '强调色',
+            '颜色',
+            'accent',
+            'color',
+            'theme',
+            '动态取色',
+            'monet',
+            'dynamic',
+            '渐变',
+            'gradient',
+          ],
           build: _buildTheme,
         ),
         _CardDef(
           id: 'background',
           title: (s) => s.isZh ? '背景' : 'Background',
           icon: Icons.wallpaper_outlined,
-          keywords: ['背景', '壁纸', 'background', 'wallpaper', '图片', 'image',
-              '不透明度', 'opacity', '透明', 'alpha'],
+          keywords: [
+            '背景',
+            '壁纸',
+            'background',
+            'wallpaper',
+            '图片',
+            'image',
+            '不透明度',
+            'opacity',
+            '透明',
+            'alpha',
+          ],
           build: _buildBackgroundCard,
         ),
         _CardDef(
           id: 'surfaceStyle',
           title: (s) => s.styleLabel,
           icon: Icons.style_outlined,
-          keywords: ['样式', 'style', '卡片', 'card', '液态玻璃', 'liquid',
-              '玻璃', 'glass', '模糊', 'blur', '灰色', 'gray',
-              '底部', 'bottom', 'nav', '导航', '药丸', 'pill', '表面', 'surface',
-              '菜单', 'menu', '侧边栏', 'sidebar', '顶栏', 'topbar', '顶部菜单',
-              '毛玻璃', 'frosted', '透明度', '不透明度', 'opacity', 'alpha',
-              '边框', '描边', '线条', 'border', 'outline', 'stroke', '颜色', '宽度',
-              '跟随主题色', 'follow', 'gpu', '实验',
-              // 拆卡后的三张卡标题也要能被搜到（预设 / 玻璃与材质 / 特效）
-              '预设', 'preset', '方案', '材质', 'material',
-              '粒子', 'particle', '特效', 'effect', '动效', '动画'],
+          keywords: [
+            '样式', 'style', '卡片', 'card', '液态玻璃', 'liquid',
+            '玻璃', 'glass', '模糊', 'blur', '灰色', 'gray',
+            '底部', 'bottom', 'nav', '导航', '药丸', 'pill', '表面', 'surface',
+            '菜单', 'menu', '侧边栏', 'sidebar', '顶栏', 'topbar', '顶部菜单',
+            '毛玻璃', 'frosted', '透明度', '不透明度', 'opacity', 'alpha',
+            '边框', '描边', '线条', 'border', 'outline', 'stroke', '颜色', '宽度',
+            '跟随主题色', 'follow', 'gpu', '实验',
+            // 拆卡后的三张卡标题也要能被搜到（预设 / 玻璃与材质 / 特效）
+            '预设', 'preset', '方案', '材质', 'material',
+            '粒子', 'particle', '特效', 'effect', '动效', '动画',
+          ],
           build: _buildSurfaceStyleCard,
         ),
         // 玻璃细节：桌面端独立成卡（右侧面板没有三级页机制，一屏平铺得下）。
@@ -522,33 +612,65 @@ class _SettingsPageState extends State<SettingsPage> {
             id: 'glassDetail',
             title: (s) => s.isZh ? '玻璃细节' : 'Glass details',
             icon: Icons.blur_on_outlined,
-            keywords: ['玻璃', 'glass', '模糊', 'blur', '模糊度', '通透', 'clarity',
-                '透明', '高光', 'highlight', 'specular', '光斑', '位置', 'position',
-                '边缘光', 'edge', 'rim', '描边', '细节', 'detail', '微调'],
+            keywords: [
+              '玻璃',
+              'glass',
+              '模糊',
+              'blur',
+              '模糊度',
+              '通透',
+              'clarity',
+              '透明',
+              '高光',
+              'highlight',
+              'specular',
+              '光斑',
+              '位置',
+              'position',
+              '边缘光',
+              'edge',
+              'rim',
+              '描边',
+              '细节',
+              'detail',
+              '微调',
+            ],
             build: _buildGlassDetailCard,
           ),
         _CardDef(
           id: 'nodeEditorStyle',
           title: (s) => s.nodeEditorStyleLabel,
           icon: Icons.account_tree_outlined,
-          keywords: ['节点编辑器', '画布', 'canvas', '背景', 'grid',
-              '逻辑门', 'gate', 'ansi', 'iec', 'ieee', '符号', 'symbol',
-              // 界面尺寸（药丸大小）也在这张卡里，补上对应搜索词
-              '药丸', 'pill', '大小', 'size', '尺寸', '放大镜', 'zoom',
-              '界面', 'ui', '菜单栏', 'toolbar', '缩放', 'scale',
-              // 三级页（编辑模式 / 自动保存）的搜索词也要挂在这张卡上，
-              // 否则移动端在设置里搜「自动保存」找不到东西。
-              '编辑模式', '快速模式', 'edit', 'mode', 'classic', '蓝图', 'blueprint',
-              '自动保存', '草稿', '保存间隔', 'autosave', 'draft', 'save',
-              '横屏', 'landscape'],
+          keywords: [
+            '节点编辑器', '画布', 'canvas', '背景', 'grid',
+            '逻辑门', 'gate', 'ansi', 'iec', 'ieee', '符号', 'symbol',
+            // 界面尺寸（药丸大小）也在这张卡里，补上对应搜索词
+            '药丸', 'pill', '大小', 'size', '尺寸', '放大镜', 'zoom',
+            '界面', 'ui', '菜单栏', 'toolbar', '缩放', 'scale',
+            // 三级页（编辑模式 / 自动保存）的搜索词也要挂在这张卡上，
+            // 否则移动端在设置里搜「自动保存」找不到东西。
+            '编辑模式', '快速模式', 'edit', 'mode', 'classic', '蓝图', 'blueprint',
+            '自动保存', '草稿', '保存间隔', 'autosave', 'draft', 'save',
+            '横屏', 'landscape',
+          ],
           build: _buildNodeEditorStyleCard,
         ),
         _CardDef(
           id: 'font',
           title: (s) => s.font,
           icon: Icons.text_fields,
-          keywords: ['字体', '字号', '字重', 'font', 'size', 'weight',
-              'typeface', '导入', 'import', '大小'],
+          keywords: [
+            '字体',
+            '字号',
+            '字重',
+            'font',
+            'size',
+            'weight',
+            'typeface',
+            '导入',
+            'import',
+            '大小',
+          ],
           build: _buildFont,
         ),
       ],
@@ -564,25 +686,62 @@ class _SettingsPageState extends State<SettingsPage> {
             id: 'ffmpeg',
             title: (s) => s.ffmpegSettings,
             icon: Icons.memory_outlined,
-            keywords: ['ffmpeg', 'ffprobe', '编码', 'codec', '安装', 'install',
-                '检测', 'detect', '路径', 'path', '下载', 'download'],
+            keywords: [
+              'ffmpeg',
+              'ffprobe',
+              '编码',
+              'codec',
+              '安装',
+              'install',
+              '检测',
+              'detect',
+              '路径',
+              'path',
+              '下载',
+              'download',
+            ],
             build: (ctx, state) => _FfmpegCard(state: state),
           ),
         _CardDef(
           id: 'output',
           title: (s) => s.output,
           icon: Icons.folder_outlined,
-          keywords: ['输出', '目录', '文件夹', 'output', 'directory', 'folder',
-              '中间', 'intermediate', '临时', 'temp', 'path', '路径'],
+          keywords: [
+            '输出',
+            '目录',
+            '文件夹',
+            'output',
+            'directory',
+            'folder',
+            '中间',
+            'intermediate',
+            '临时',
+            'temp',
+            'path',
+            '路径',
+          ],
           build: _buildOutput,
         ),
         _CardDef(
           id: 'tasks',
           title: (s) => s.cardTasks,
           icon: Icons.playlist_play,
-          keywords: ['任务', '并发', '同时', '线程', 'task', 'concurrent',
-              'parallel', 'thread', '解析', 'probe', '通知', 'notification',
-              '队列', 'queue'],
+          keywords: [
+            '任务',
+            '并发',
+            '同时',
+            '线程',
+            'task',
+            'concurrent',
+            'parallel',
+            'thread',
+            '解析',
+            'probe',
+            '通知',
+            'notification',
+            '队列',
+            'queue',
+          ],
           build: _buildTasks,
         ),
       ],
@@ -601,24 +760,53 @@ class _SettingsPageState extends State<SettingsPage> {
             id: 'editorMode',
             title: (s) => s.cardEditorMode,
             icon: Icons.account_tree_outlined,
-            keywords: ['编辑', '编辑器', '节点', '画布', '蓝图',
-                'editor', 'node', 'canvas', 'blueprint', 'classic', 'mode', '模式'],
+            keywords: [
+              '编辑',
+              '编辑器',
+              '节点',
+              '画布',
+              '蓝图',
+              'editor',
+              'node',
+              'canvas',
+              'blueprint',
+              'classic',
+              'mode',
+              '模式',
+            ],
             build: _buildEditorMode,
           ),
           _CardDef(
             id: 'shortcuts',
             title: (s) => s.cardShortcuts,
             icon: Icons.keyboard_outlined,
-            keywords: ['快捷键', '键位', '按键', '热键', 'shortcut', 'keybinding',
-                'keyboard', 'hotkey', 'key'],
+            keywords: [
+              '快捷键',
+              '键位',
+              '按键',
+              '热键',
+              'shortcut',
+              'keybinding',
+              'keyboard',
+              'hotkey',
+              'key',
+            ],
             build: _buildShortcuts,
           ),
           _CardDef(
             id: 'autosave',
             title: (s) => s.cardAutosave,
             icon: Icons.save_outlined,
-            keywords: ['自动保存', '草稿', '恢复', 'autosave', 'draft',
-                'auto', 'save', '恢复'],
+            keywords: [
+              '自动保存',
+              '草稿',
+              '恢复',
+              'autosave',
+              'draft',
+              'auto',
+              'save',
+              '恢复',
+            ],
             build: _buildAutosave,
           ),
         ],
@@ -634,14 +822,34 @@ class _SettingsPageState extends State<SettingsPage> {
             id: 'command',
             title: (s) => s.navCommand,
             icon: Icons.terminal,
-            keywords: ['命令', 'ffmpeg', 'command', 'terminal', '终端', '执行', 'run', '模板', 'template'],
+            keywords: [
+              '命令',
+              'ffmpeg',
+              'command',
+              'terminal',
+              '终端',
+              '执行',
+              'run',
+              '模板',
+              'template',
+            ],
             build: _buildMobileCommandEntry,
           ),
           _CardDef(
             id: 'logs',
             title: (s) => s.qLogs,
             icon: Icons.receipt_long_outlined,
-            keywords: ['日志', 'log', 'logs', '输出', 'output', '进度', 'progress', '调试', 'debug'],
+            keywords: [
+              '日志',
+              'log',
+              'logs',
+              '输出',
+              'output',
+              '进度',
+              'progress',
+              '调试',
+              'debug',
+            ],
             build: _buildMobileLogsEntry,
           ),
         ],
@@ -655,10 +863,32 @@ class _SettingsPageState extends State<SettingsPage> {
           id: 'ai',
           title: (s) => s.mcpTitle,
           icon: Icons.auto_awesome_outlined,
-          keywords: ['ai', 'mcp', '模型', 'model', 'api', 'key', 'token',
-              'openai', 'anthropic', 'claude', 'gpt', '提示词', 'prompt',
-              '权限', 'permission', '助手', 'assistant', '端口', 'port', '服务',
-              '提供商', 'provider', 'deepseek', 'ollama'],
+          keywords: [
+            'ai',
+            'mcp',
+            '模型',
+            'model',
+            'api',
+            'key',
+            'token',
+            'openai',
+            'anthropic',
+            'claude',
+            'gpt',
+            '提示词',
+            'prompt',
+            '权限',
+            'permission',
+            '助手',
+            'assistant',
+            '端口',
+            'port',
+            '服务',
+            '提供商',
+            'provider',
+            'deepseek',
+            'ollama',
+          ],
           // 移动端：提供商列表式设置（二级菜单）；桌面端：原有卡片 + 底部弹窗
           build: (ctx, state) => isMobilePlatform
               ? mobileAiSettingsContent(ctx, state)
@@ -677,8 +907,19 @@ class _SettingsPageState extends State<SettingsPage> {
             id: 'predictiveBack',
             title: (s) => s.predictiveBack,
             icon: Icons.swipe_left_alt_outlined,
-            keywords: ['返回', '手势', '预测', '侧滑', 'back', 'gesture',
-                'predictive', 'swipe', '返回动画', '系统', 'system'],
+            keywords: [
+              '返回',
+              '手势',
+              '预测',
+              '侧滑',
+              'back',
+              'gesture',
+              'predictive',
+              'swipe',
+              '返回动画',
+              '系统',
+              'system',
+            ],
             build: _buildPredictiveBack,
           ),
         // 显示（仅移动端）：高刷新率（90 / 120 / 144Hz）
@@ -687,34 +928,88 @@ class _SettingsPageState extends State<SettingsPage> {
             id: 'display',
             title: (s) => s.displayLabel,
             icon: Icons.screenshot_monitor_outlined,
-            keywords: ['显示', '刷新率', '高刷', '高刷新率', '帧率', '流畅', '顺滑',
-                'display', 'refresh', 'rate', 'hz', 'high', 'smooth', 'fps',
-                '120', '90', '144', '60', '屏幕', 'screen'],
+            keywords: [
+              '显示',
+              '刷新率',
+              '高刷',
+              '高刷新率',
+              '帧率',
+              '流畅',
+              '顺滑',
+              'display',
+              'refresh',
+              'rate',
+              'hz',
+              'high',
+              'smooth',
+              'fps',
+              '120',
+              '90',
+              '144',
+              '60',
+              '屏幕',
+              'screen',
+            ],
             build: _buildDisplay,
           ),
         _CardDef(
           id: 'preload',
           title: (s) => s.isZh ? '预加载' : 'Preload',
           icon: Icons.shutter_speed_outlined,
-          keywords: ['预加载', '预载', 'preload', '启动', 'startup', 'launch',
-              '性能', 'performance', 'CPU', '内存', 'memory', '绘制', '渲染',
-              'render', '加载', 'load'],
+          keywords: [
+            '预加载',
+            '预载',
+            'preload',
+            '启动',
+            'startup',
+            'launch',
+            '性能',
+            'performance',
+            'CPU',
+            '内存',
+            'memory',
+            '绘制',
+            '渲染',
+            'render',
+            '加载',
+            'load',
+          ],
           build: _buildPreload,
         ),
         _CardDef(
           id: 'debug',
           title: (s) => s.dDebug,
           icon: Icons.bug_report_outlined,
-          keywords: ['调试', '日志', '诊断', 'debug', 'log', 'logs',
-              'verbose', 'diagnostic', '保存', 'save'],
+          keywords: [
+            '调试',
+            '日志',
+            '诊断',
+            'debug',
+            'log',
+            'logs',
+            'verbose',
+            'diagnostic',
+            '保存',
+            'save',
+          ],
           build: _buildDebug,
         ),
         _CardDef(
           id: 'cache',
           title: (s) => s.cardCache,
           icon: Icons.cleaning_services_outlined,
-          keywords: ['缓存', '清除', '清理', '删除', 'cache', 'clear',
-              'clean', 'cleanup', 'purge', 'reset'],
+          keywords: [
+            '缓存',
+            '清除',
+            '清理',
+            '删除',
+            'cache',
+            'clear',
+            'clean',
+            'cleanup',
+            'purge',
+            'reset',
+          ],
           build: _buildCache,
         ),
       ],
@@ -730,9 +1025,29 @@ class _SettingsPageState extends State<SettingsPage> {
           id: 'about',
           title: (s) => s.aboutTitle,
           icon: Icons.info_outline,
-          keywords: ['关于', '版本', '赞助', '捐赠', '许可', 'about', 'version',
-              'sponsor', 'donate', 'license', 'github', 'blog', '作者', 'author',
-              '更新', '升级', 'update', 'upgrade', '检查', 'check', '自动'],
+          keywords: [
+            '关于',
+            '版本',
+            '赞助',
+            '捐赠',
+            '许可',
+            'about',
+            'version',
+            'sponsor',
+            'donate',
+            'license',
+            'github',
+            'blog',
+            '作者',
+            'author',
+            '更新',
+            '升级',
+            'update',
+            'upgrade',
+            '检查',
+            'check',
+            '自动',
+          ],
           build: _buildAbout,
         ),
       ],
@@ -858,43 +1173,54 @@ class _SettingsPageState extends State<SettingsPage> {
 
           return Scaffold(
             backgroundColor: Colors.transparent,
-            body: Stack(children: [
-              // 全屏可滚动的设置列表（顶部留出药丸空间）
-              // 不再包 RepaintBoundary：之前的 RepaintBoundary 把 ListView 内容缓存成独立层，
-              // 导致 OCLiquidGlassGroup 的 _onScroll→markNeedsPaint 在该缓存层下被吞掉，
-              // shader 的场景坐标永远停在旧位置 → 玻璃在滚动后消失。
-              // 各玻璃卡片内部已有 OCLiquidGlassGroup→RepaintBoundary→OCLiquidGlass 的
-              // 独立层，隔绝了无关重绘，不再需要外层 RepaintBoundary。
-              if (visible.isEmpty && searching)
-                _emptyState(scheme, s)
-              else
-                ListView(
-                  // addRepaintBoundaries:false：卡片内的壁纸开窗 painter 必须每帧
-                  // 按当前变换重算（若子项被 RepaintBoundary 缓存，滚动时缓存
-                  // 平移会重新引入「玻璃与背景错位」）。
-                  // 左右留白全部交给分区卡自己（见 _buildMobileSection 的 14px 内边距），
-                  // ListView 只负责上下：顶部药丸占位 + 底部导航栏净空。
-                  addRepaintBoundaries: false,
-                  padding: EdgeInsets.fromLTRB(
+            body: Stack(
+              children: [
+                // 全屏可滚动的设置列表（顶部留出药丸空间）
+                // 不再包 RepaintBoundary：之前的 RepaintBoundary 把 ListView 内容缓存成独立层，
+                // 导致 OCLiquidGlassGroup 的 _onScroll→markNeedsPaint 在该缓存层下被吞掉，
+                // shader 的场景坐标永远停在旧位置 → 玻璃在滚动后消失。
+                // 各玻璃卡片内部已有 OCLiquidGlassGroup→RepaintBoundary→OCLiquidGlass 的
+                // 独立层，隔绝了无关重绘，不再需要外层 RepaintBoundary。
+                if (visible.isEmpty && searching)
+                  _emptyState(scheme, s)
+                else
+                  ListView(
+                    // addRepaintBoundaries:false：卡片内的壁纸开窗 painter 必须每帧
+                    // 按当前变换重算（若子项被 RepaintBoundary 缓存，滚动时缓存
+                    // 平移会重新引入「玻璃与背景错位」）。
+                    // 左右留白全部交给分区卡自己（见 _buildMobileSection 的 14px 内边距），
+                    // ListView 只负责上下：顶部药丸占位 + 底部导航栏净空。
+                    addRepaintBoundaries: false,
+                    padding: EdgeInsets.fromLTRB(
                       0,
                       MobileUi.pageTopPadding(context),
                       0,
                       MobileUi.navClearanceFor(
-                          MobileNavPlacementScope.of(context))),
-                  children: [
-                    for (final (sec, cards) in visible)
-                      _buildMobileSection(sec, cards, context, state, scheme, s),
-                    const SizedBox(height: 16),
-                  ],
+                        MobileNavPlacementScope.of(context),
+                      ),
+                    ),
+                    children: [
+                      for (final (sec, cards) in visible)
+                        _buildMobileSection(
+                          sec,
+                          cards,
+                          context,
+                          state,
+                          scheme,
+                          s,
+                        ),
+                      const SizedBox(height: 16),
+                    ],
+                  ),
+                // 顶部药丸浮层（不影响滚动）
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: _buildMobileTopBar(s, scheme),
                 ),
-              // 顶部药丸浮层（不影响滚动）
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: _buildMobileTopBar(s, scheme),
-              ),
-            ]),
+              ],
+            ),
           );
         }
 
@@ -914,31 +1240,47 @@ class _SettingsPageState extends State<SettingsPage> {
         if (_sections.indexWhere((sec) => sec.id == _selectedSection) < 0) {
           _selectedSection = _sections.first.id;
         }
-        final selectedSec =
-            _sections.firstWhere((sec) => sec.id == _selectedSection);
+        final selectedSec = _sections.firstWhere(
+          (sec) => sec.id == _selectedSection,
+        );
 
         return Scaffold(
           backgroundColor: Colors.transparent,
-          body: Column(children: [
-            GlassTopBar(
-              title: Text(s.settingsTitle),
-              center: _searchField(scheme, s),
-            ),
-            Expanded(
-              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                // 左：主菜单（分区导航，搜索时显示命中数徽标）
-                _buildSectionNav(hitsBySection, searching, scheme, state),
-                // 右：子选项面板（搜索时为跨分区命中结果）
-                Expanded(
-                  child: searching
-                      ? (hitsBySection.isEmpty
-                          ? _emptyState(scheme, s)
-                          : _buildSearchResults(hitsBySection, context, state, scheme))
-                      : _buildSectionPane(selectedSec, context, state, scheme),
+          body: Column(
+            children: [
+              GlassTopBar(
+                title: Text(s.settingsTitle),
+                center: _searchField(scheme, s),
+              ),
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // 左：主菜单（分区导航，搜索时显示命中数徽标）
+                    _buildSectionNav(hitsBySection, searching, scheme, state),
+                    // 右：子选项面板（搜索时为跨分区命中结果）
+                    Expanded(
+                      child: searching
+                          ? (hitsBySection.isEmpty
+                                ? _emptyState(scheme, s)
+                                : _buildSearchResults(
+                                    hitsBySection,
+                                    context,
+                                    state,
+                                    scheme,
+                                  ))
+                          : _buildSectionPane(
+                              selectedSec,
+                              context,
+                              state,
+                              scheme,
+                            ),
+                    ),
+                  ],
                 ),
-              ]),
-            ),
-          ]),
+              ),
+            ],
+          ),
         );
       },
     );
@@ -978,7 +1320,12 @@ class _SettingsPageState extends State<SettingsPage> {
               for (final sec in _sections)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 2),
-                  child: _navItem(sec, searching, hitCounts[sec.id] ?? 0, scheme),
+                  child: _navItem(
+                    sec,
+                    searching,
+                    hitCounts[sec.id] ?? 0,
+                    scheme,
+                  ),
                 ),
             ],
           ),
@@ -1007,48 +1354,56 @@ class _SettingsPageState extends State<SettingsPage> {
           borderRadius: BorderRadius.circular(12),
           color: selected ? scheme.primary.withAlpha(34) : Colors.transparent,
           border: Border.all(
-              color: selected ? scheme.primary.withAlpha(90) : Colors.transparent),
-        ),
-        child: Row(children: [
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 180),
-            transitionBuilder: (child, anim) =>
-                FadeTransition(opacity: anim, child: child),
-            child: Icon(
-              sec.icon,
-              key: ValueKey('${sec.id}_$selected'),
-              size: 16,
-              color: selected ? scheme.primary : scheme.onSurfaceVariant,
-            ),
+            color: selected ? scheme.primary.withAlpha(90) : Colors.transparent,
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              sec.title(AppStrings.of(context.read<AppState>().config.language)),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 12.5,
-                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+        ),
+        child: Row(
+          children: [
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 180),
+              transitionBuilder: (child, anim) =>
+                  FadeTransition(opacity: anim, child: child),
+              child: Icon(
+                sec.icon,
+                key: ValueKey('${sec.id}_$selected'),
+                size: 16,
                 color: selected ? scheme.primary : scheme.onSurfaceVariant,
               ),
             ),
-          ),
-          // 搜索时：该分区命中的设置项数量徽标
-          if (searching)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
-              decoration: BoxDecoration(
-                color: scheme.primary.withAlpha(28),
-                borderRadius: BorderRadius.circular(9),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                sec.title(
+                  AppStrings.of(context.read<AppState>().config.language),
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                  color: selected ? scheme.primary : scheme.onSurfaceVariant,
+                ),
               ),
-              child: Text('$hitCount',
-                  style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                      color: scheme.primary)),
             ),
-        ]),
+            // 搜索时：该分区命中的设置项数量徽标
+            if (searching)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+                decoration: BoxDecoration(
+                  color: scheme.primary.withAlpha(28),
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: Text(
+                  '$hitCount',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.primary,
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -1061,70 +1416,83 @@ class _SettingsPageState extends State<SettingsPage> {
     AppState state,
     ColorScheme scheme,
   ) {
-    return LayoutBuilder(builder: (ctx, cons) {
-      // 窄窗口单列，宽窗口最多三列
-      final cols = cons.maxWidth < 640 ? 1 : (cons.maxWidth < 1100 ? 2 : 3);
-      return AnimatedSwitcher(
-        duration: const Duration(milliseconds: 200),
-        switchInCurve: Curves.easeOutCubic,
-        switchOutCurve: Curves.easeIn,
-        transitionBuilder: (child, anim) => FadeTransition(
-          opacity: anim,
-          child: SlideTransition(
-            position: Tween(begin: const Offset(0.02, 0), end: Offset.zero)
-                .animate(anim),
-            child: child,
+    return LayoutBuilder(
+      builder: (ctx, cons) {
+        // 窄窗口单列，宽窗口最多三列
+        final cols = cons.maxWidth < 640 ? 1 : (cons.maxWidth < 1100 ? 2 : 3);
+        return AnimatedSwitcher(
+          duration: const Duration(milliseconds: 200),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeIn,
+          transitionBuilder: (child, anim) => FadeTransition(
+            opacity: anim,
+            child: SlideTransition(
+              position: Tween(
+                begin: const Offset(0.02, 0),
+                end: Offset.zero,
+              ).animate(anim),
+              child: child,
+            ),
           ),
-        ),
-        child: SingleChildScrollView(
+          child: SingleChildScrollView(
             key: ValueKey('pane_${sec.id}'),
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
-          child: Column(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-            // 分区标题行（左侧菜单已高亮当前分区，这里提供上下文）
-            Padding(
-              padding: const EdgeInsets.only(left: 4, bottom: 10),
-              child: Row(children: [
-                Icon(sec.icon, size: 16, color: scheme.primary),
-                const SizedBox(width: 7),
-                Text(
-                    sec.title(
-                        AppStrings.of(ctx.read<AppState>().config.language)),
-                    style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: scheme.onSurface)),
-                const SizedBox(width: 12),
-                Expanded(
-                    child: Divider(
-                        color: scheme.outlineVariant.withAlpha(70), height: 1)),
-              ]),
-            ),
-            MasonryGrid(
-              columns: cols,
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final c in sec.cards)
-                  // GlobalKey：搜索结果「定位」时用 Scrollable.ensureVisible 滚到这里
-                  KeyedSubtree(
-                    key: _cardKey(c.id),
-                    child: _highlightWrap(
-                      c.id,
-                      // 不包 RepaintBoundary：它会光栅缓存玻璃卡的开窗 painter，
-                      // 滚动时直接复用旧图层平移 → 卡内壁纸跟着卡片走
-                      //（见 app_card 的 _WallpaperWindowPainter）。
-                      // 搜索定位依赖外层 KeyedSubtree 的 GlobalKey，与本层无关。
-                      c.build(ctx, state),
-                    ),
+                // 分区标题行（左侧菜单已高亮当前分区，这里提供上下文）
+                Padding(
+                  padding: const EdgeInsets.only(left: 4, bottom: 10),
+                  child: Row(
+                    children: [
+                      Icon(sec.icon, size: 16, color: scheme.primary),
+                      const SizedBox(width: 7),
+                      Text(
+                        sec.title(
+                          AppStrings.of(ctx.read<AppState>().config.language),
+                        ),
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: scheme.onSurface,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Divider(
+                          color: scheme.outlineVariant.withAlpha(70),
+                          height: 1,
+                        ),
+                      ),
+                    ],
                   ),
+                ),
+                MasonryGrid(
+                  columns: cols,
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final c in sec.cards)
+                      // GlobalKey：搜索结果「定位」时用 Scrollable.ensureVisible 滚到这里
+                      KeyedSubtree(
+                        key: _cardKey(c.id),
+                        child: _highlightWrap(
+                          c.id,
+                          // 不包 RepaintBoundary：它会光栅缓存玻璃卡的开窗 painter，
+                          // 滚动时直接复用旧图层平移 → 卡内壁纸跟着卡片走
+                          //（见 app_card 的 _WallpaperWindowPainter）。
+                          // 搜索定位依赖外层 KeyedSubtree 的 GlobalKey，与本层无关。
+                          c.build(ctx, state),
+                        ),
+                      ),
+                  ],
+                ),
               ],
             ),
-          ]),
-        ),
-      );
-    });
+          ),
+        );
+      },
+    );
   }
 
   /// 搜索结果面板：跨分区列出所有命中的设置卡片，按分区分组。
@@ -1134,62 +1502,81 @@ class _SettingsPageState extends State<SettingsPage> {
     AppState state,
     ColorScheme scheme,
   ) {
-    return LayoutBuilder(builder: (ctx, cons) {
-      final cols = cons.maxWidth < 640 ? 1 : (cons.maxWidth < 1100 ? 2 : 3);
-      return SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
-        child: Column(
+    return LayoutBuilder(
+      builder: (ctx, cons) {
+        final cols = cons.maxWidth < 640 ? 1 : (cons.maxWidth < 1100 ? 2 : 3);
+        return SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-          for (final (sec, cards) in hitsBySection) ...[
-            Padding(
-              padding: const EdgeInsets.only(left: 4, bottom: 8),
-              child: Row(children: [
-                Icon(sec.icon, size: 14, color: scheme.primary),
-                const SizedBox(width: 7),
-                Text(
-                    sec.title(
-                        AppStrings.of(ctx.read<AppState>().config.language)),
-                    style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.9,
-                        color: scheme.primary)),
-                const SizedBox(width: 8),
-                Text('${cards.length}',
-                    style: TextStyle(fontSize: 10, color: scheme.outline)),
-                const SizedBox(width: 12),
-                Expanded(
-                    child: Divider(
-                        color: scheme.outlineVariant.withAlpha(70), height: 1)),
-              ]),
-            ),
-            MasonryGrid(
-              columns: cols,
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final c in cards)
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+              for (final (sec, cards) in hitsBySection) ...[
+                Padding(
+                  padding: const EdgeInsets.only(left: 4, bottom: 8),
+                  child: Row(
                     children: [
-                      // 搜索结果头：分区 · 卡片名 + 「定位」按钮 ——
-                      // 点一下即切到该分区、把卡片滚进视野并高亮（设置页搜索的核心动作）。
-                      _resultHeader(sec, c, scheme, AppStrings.of(state.config.language), ctx),
-                      _highlightWrap(
-                        c.id,
-                        // 同上：不包 RepaintBoundary，避免开窗 painter 被缓存。
-                        c.build(ctx, state),
+                      Icon(sec.icon, size: 14, color: scheme.primary),
+                      const SizedBox(width: 7),
+                      Text(
+                        sec.title(
+                          AppStrings.of(ctx.read<AppState>().config.language),
+                        ),
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.9,
+                          color: scheme.primary,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '${cards.length}',
+                        style: TextStyle(fontSize: 10, color: scheme.outline),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Divider(
+                          color: scheme.outlineVariant.withAlpha(70),
+                          height: 1,
+                        ),
                       ),
                     ],
                   ),
+                ),
+                MasonryGrid(
+                  columns: cols,
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final c in cards)
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // 搜索结果头：分区 · 卡片名 + 「定位」按钮 ——
+                          // 点一下即切到该分区、把卡片滚进视野并高亮（设置页搜索的核心动作）。
+                          _resultHeader(
+                            sec,
+                            c,
+                            scheme,
+                            AppStrings.of(state.config.language),
+                            ctx,
+                          ),
+                          _highlightWrap(
+                            c.id,
+                            // 同上：不包 RepaintBoundary，避免开窗 painter 被缓存。
+                            c.build(ctx, state),
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 16),
               ],
-            ),
-            const SizedBox(height: 16),
-          ],
-        ]),
-      );
-    });
+            ],
+          ),
+        );
+      },
+    );
   }
 
   // ── 移动端专用 ──
@@ -1262,46 +1649,63 @@ class _SettingsPageState extends State<SettingsPage> {
     final rows = <Widget>[];
     for (var i = 0; i < cards.length; i++) {
       // 全局搜索跳转过来时高亮命中的设置行（见 _highlightWrap）
-      rows.add(KeyedSubtree(
-        key: _cardKey(cards[i].id),
-        child: _highlightWrap(
-            cards[i].id, _buildMobileRow(cards[i], context, state, scheme, s)),
-      ));
+      rows.add(
+        KeyedSubtree(
+          key: _cardKey(cards[i].id),
+          child: _highlightWrap(
+            cards[i].id,
+            _buildMobileRow(cards[i], context, state, scheme, s),
+          ),
+        ),
+      );
       if (i < cards.length - 1) {
-        rows.add(Divider(
-          height: 0.5,
-          thickness: 0.5,
-          indent: 16,
-          endIndent: 16,
-          color: scheme.outlineVariant.withAlpha(60),
-        ));
+        rows.add(
+          Divider(
+            height: 0.5,
+            thickness: 0.5,
+            indent: 16,
+            endIndent: 16,
+            color: scheme.outlineVariant.withAlpha(60),
+          ),
+        );
       }
     }
 
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
-        child: Text(sec.title(s), style: TextStyle(
-          fontSize: 12.5,
-          fontWeight: FontWeight.w600,
-          color: scheme.primary,
-          letterSpacing: 0.3,
-        )),
-      ),
-      Padding(
-        // 卡片左右内边距 14（原 8）：用户反馈「设置的卡片宽度过宽，再缩小」。
-        // 二级页为 subListPadding 12 + _glass 12 = 24，比一级菜单更窄一点，
-        // 刻意保留这个两级层次差别。底部 7 = 相邻两张卡之间的间距。
-        padding: const EdgeInsets.fromLTRB(14, 0, 14, 7),
-        // 分区卡统一走 _cardShell → AppCard，遵循「主题→样式→卡片样式」。
-        child: _cardShell(context, state, Column(children: rows)),
-      ),
-    ]);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
+          child: Text(
+            sec.title(s),
+            style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+              color: scheme.primary,
+              letterSpacing: 0.3,
+            ),
+          ),
+        ),
+        Padding(
+          // 卡片左右内边距 14（原 8）：用户反馈「设置的卡片宽度过宽，再缩小」。
+          // 二级页为 subListPadding 12 + _glass 12 = 24，比一级菜单更窄一点，
+          // 刻意保留这个两级层次差别。底部 7 = 相邻两张卡之间的间距。
+          padding: const EdgeInsets.fromLTRB(14, 0, 14, 7),
+          // 分区卡统一走 _cardShell → AppCard，遵循「主题→样式→卡片样式」。
+          child: _cardShell(context, state, Column(children: rows)),
+        ),
+      ],
+    );
   }
 
   /// 一条设置行：左标题，右侧开关 / 分段切换 / 箭头（进入二级菜单）。
   Widget _buildMobileRow(
-    _CardDef c, BuildContext context, AppState state, ColorScheme scheme, AppStrings s) {
+    _CardDef c,
+    BuildContext context,
+    AppState state,
+    ColorScheme scheme,
+    AppStrings s,
+  ) {
     final title = c.title(s);
 
     // 纯开关：直接在一级菜单右侧放 Switch
@@ -1311,9 +1715,14 @@ class _SettingsPageState extends State<SettingsPage> {
         value: cfg.predictiveBack,
         onChanged: (v) => state.updateConfig((cc) => cc..predictiveBack = v),
         secondary: _miIcon(scheme, c.icon),
-        title: Text(title, style: TextStyle(fontSize: 14, color: scheme.onSurface)),
-        subtitle: Text(s.predictiveBackHint,
-            style: TextStyle(fontSize: 11, color: scheme.outline)),
+        title: Text(
+          title,
+          style: TextStyle(fontSize: 14, color: scheme.onSurface),
+        ),
+        subtitle: Text(
+          s.predictiveBackHint,
+          style: TextStyle(fontSize: 11, color: scheme.outline),
+        ),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       );
     }
@@ -1326,7 +1735,10 @@ class _SettingsPageState extends State<SettingsPage> {
     // 命令 / 日志：直接进入对应页面（它们的「内容」本身就是入口，不套二级页）
     return ListTile(
       leading: _miIcon(scheme, c.icon),
-      title: Text(title, style: TextStyle(fontSize: 14, color: scheme.onSurface)),
+      title: Text(
+        title,
+        style: TextStyle(fontSize: 14, color: scheme.onSurface),
+      ),
       trailing: Icon(Icons.chevron_right, size: 20, color: scheme.outline),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       onTap: () {
@@ -1336,10 +1748,18 @@ class _SettingsPageState extends State<SettingsPage> {
           //   1) 双层壁纸多解码一次并多一层遮罩；
           //   2) SafeArea 会把子树的 MediaQuery.padding.top 清零 → 顶栏被状态栏压住。
           Navigator.of(context).push(
-              MaterialPageRoute(allowSnapshotting: false, builder: (_) => const CommandPage()));
+            MaterialPageRoute(
+              allowSnapshotting: false,
+              builder: (_) => const CommandPage(),
+            ),
+          );
         } else if (c.id == 'logs') {
           Navigator.of(context).push(
-              MaterialPageRoute(allowSnapshotting: false, builder: (_) => const LogPage()));
+            MaterialPageRoute(
+              allowSnapshotting: false,
+              builder: (_) => const LogPage(),
+            ),
+          );
         } else if (c.id == 'cache') {
           // 缓存：直接弹出确认框，不进入二级页
           _clearCache(context, state, scheme, s);
@@ -1355,8 +1775,10 @@ class _SettingsPageState extends State<SettingsPage> {
     final cfg = state.config;
     return ListTile(
       leading: _miIcon(scheme, icon),
-      title: Text(AppStrings.of(cfg.language).language,
-          style: TextStyle(fontSize: 14, color: scheme.onSurface)),
+      title: Text(
+        AppStrings.of(cfg.language).language,
+        style: TextStyle(fontSize: 14, color: scheme.onSurface),
+      ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       // 统一「菜单栏选项」控件：行内分段药丸（选中主题色药丸 + 图标淡入动画）
       //
@@ -1367,10 +1789,7 @@ class _SettingsPageState extends State<SettingsPage> {
         child: OptionMenuBar<String>(
           expandable: false,
           value: cfg.language,
-          items: const [
-            OptionItem('zh', '中文'),
-            OptionItem('en', 'EN'),
-          ],
+          items: const [OptionItem('zh', '中文'), OptionItem('en', 'EN')],
           onChanged: (v) => state.updateConfig((c) => c..language = v),
         ),
       ),
@@ -1383,74 +1802,99 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 「外观 → 样式 → 玻璃细节」这类**三级**页的入口写在顶层的卡片构建函数
   /// （[_buildSurfaceStyleCard]）里，那里拿不到 State 实例。
   void _pushMobileSubPage(
-    BuildContext context, String title, Widget Function(BuildContext, AppState) contentBuilder) {
+    BuildContext context,
+    String title,
+    Widget Function(BuildContext, AppState) contentBuilder,
+  ) {
     _pushSettingsSubPage(context, title, contentBuilder);
   }
 
   Widget _searchField(ColorScheme scheme, AppStrings s) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        child: LayoutBuilder(builder: (ctx, cons) => SizedBox(
-          width: math.min(260.0, cons.maxWidth * 0.62),
-          height: 38,
-          child: TextField(
-            controller: _searchCtrl,
-            focusNode: _searchFocus,
-            style: TextStyle(fontSize: 13, color: scheme.onSurface),
-            textAlignVertical: TextAlignVertical.center,
-            onChanged: (v) => setState(() => _query = v),
-            decoration: InputDecoration(
-              hintText: s.setSearchHint,
-              hintStyle: TextStyle(fontSize: 13, color: scheme.outline),
-              isDense: true,
-              filled: true,
-              fillColor: scheme.surfaceContainerHighest.withAlpha(90),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-              prefixIcon: Icon(Icons.search, size: 17, color: scheme.outline),
-              prefixIconConstraints: const BoxConstraints(minWidth: 34, minHeight: 34),
-              suffixIcon: _query.isEmpty
-                  ? null
-                  : IconButton(
-                      icon: Icon(Icons.close, size: 15, color: scheme.outline),
-                      tooltip: s.setClearSearch,
-                      onPressed: _clearSearch,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+    padding: const EdgeInsets.symmetric(horizontal: 8),
+    child: LayoutBuilder(
+      builder: (ctx, cons) => SizedBox(
+        width: math.min(260.0, cons.maxWidth * 0.62),
+        height: 38,
+        child: TextField(
+          controller: _searchCtrl,
+          focusNode: _searchFocus,
+          style: TextStyle(fontSize: 13, color: scheme.onSurface),
+          textAlignVertical: TextAlignVertical.center,
+          onChanged: (v) => setState(() => _query = v),
+          decoration: InputDecoration(
+            hintText: s.setSearchHint,
+            hintStyle: TextStyle(fontSize: 13, color: scheme.outline),
+            isDense: true,
+            filled: true,
+            fillColor: scheme.surfaceContainerHighest.withAlpha(90),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+            prefixIcon: Icon(Icons.search, size: 17, color: scheme.outline),
+            prefixIconConstraints: const BoxConstraints(
+              minWidth: 34,
+              minHeight: 34,
+            ),
+            suffixIcon: _query.isEmpty
+                ? null
+                : IconButton(
+                    icon: Icon(Icons.close, size: 15, color: scheme.outline),
+                    tooltip: s.setClearSearch,
+                    onPressed: _clearSearch,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 30,
+                      minHeight: 30,
                     ),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(19),
-                borderSide: BorderSide(color: scheme.outlineVariant.withAlpha(70)),
+                  ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(19),
+              borderSide: BorderSide(
+                color: scheme.outlineVariant.withAlpha(70),
               ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(19),
-                borderSide: BorderSide(color: scheme.outlineVariant.withAlpha(70)),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(19),
+              borderSide: BorderSide(
+                color: scheme.outlineVariant.withAlpha(70),
               ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(19),
-                borderSide: BorderSide(color: scheme.primary.withAlpha(160), width: 1.4),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(19),
+              borderSide: BorderSide(
+                color: scheme.primary.withAlpha(160),
+                width: 1.4,
               ),
             ),
           ),
         ),
-        ),
-      );
+      ),
+    ),
+  );
 
   Widget _emptyState(ColorScheme scheme, AppStrings s) => Center(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Icon(Icons.search_off, size: 44, color: scheme.outline.withAlpha(140)),
-          const SizedBox(height: 12),
-          Text(s.setNoMatch, style: TextStyle(fontSize: 14, color: scheme.onSurface)),
-          const SizedBox(height: 4),
-          Text(s.setNoMatchHint, style: TextStyle(fontSize: 11, color: scheme.outline)),
-          const SizedBox(height: 14),
-          TextButton.icon(
-            icon: const Icon(Icons.close, size: 15),
-            label: Text(s.setClearSearch, style: const TextStyle(fontSize: 12)),
-            onPressed: _clearSearch,
-          ),
-        ]),
-      );
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.search_off, size: 44, color: scheme.outline.withAlpha(140)),
+        const SizedBox(height: 12),
+        Text(
+          s.setNoMatch,
+          style: TextStyle(fontSize: 14, color: scheme.onSurface),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          s.setNoMatchHint,
+          style: TextStyle(fontSize: 11, color: scheme.outline),
+        ),
+        const SizedBox(height: 14),
+        TextButton.icon(
+          icon: const Icon(Icons.close, size: 15),
+          label: Text(s.setClearSearch, style: const TextStyle(fontSize: 12)),
+          onPressed: _clearSearch,
+        ),
+      ],
+    ),
+  );
 }
-
 
 /// 带标签的滑块，拖动时对写入全局配置做节流。
 ///
@@ -1508,46 +1952,67 @@ void _pushSettingsSubPage(
   String title,
   Widget Function(BuildContext, AppState) contentBuilder,
 ) {
-  Navigator.of(context).push(MaterialPageRoute(allowSnapshotting: false,
-    builder: (ctx) => Consumer<AppState>(
-      builder: (ctx2, state, _) => withWallpaper(
-        ctx2,
-        Scaffold(
-          backgroundColor: Colors.transparent,
-          body: Column(children: [
-            MobileSubPageTopBar(
-              title: Text(title),
-              onBack: () => Navigator.of(ctx2).maybePop(),
+  Navigator.of(context).push(
+    MaterialPageRoute(
+      allowSnapshotting: false,
+      builder: (ctx) => Consumer<AppState>(
+        builder: (ctx2, state, _) => withWallpaper(
+          ctx2,
+          Scaffold(
+            backgroundColor: Colors.transparent,
+            body: Column(
+              children: [
+                MobileSubPageTopBar(
+                  title: Text(title),
+                  onBack: () => Navigator.of(ctx2).maybePop(),
+                ),
+                Expanded(
+                  child: ListView(
+                    // addRepaintBoundaries:false —— 见移动端主列表同款注释：
+                    // 壁纸开窗 painter 必须每帧按当前变换重算，不能被子项缓存平移。
+                    // 左右间距与设置主界面卡片对齐（主界面 = ListView + 分区卡内边距 14）。
+                    // 此前为 0：MCP/AI 等二级页卡片通顶通底，比主界面卡片明显更宽。
+                    addRepaintBoundaries: false,
+                    padding: MobileUi.subListPadding(top: 12, bottom: 48),
+                    children: [contentBuilder(ctx2, state)],
+                  ),
+                ),
+              ],
             ),
-            Expanded(
-              child: ListView(
-                // addRepaintBoundaries:false —— 见移动端主列表同款注释：
-                // 壁纸开窗 painter 必须每帧按当前变换重算，不能被子项缓存平移。
-                // 左右间距与设置主界面卡片对齐（主界面 = ListView + 分区卡内边距 14）。
-                // 此前为 0：MCP/AI 等二级页卡片通顶通底，比主界面卡片明显更宽。
-                addRepaintBoundaries: false,
-                padding: MobileUi.subListPadding(top: 12, bottom: 48),
-                children: [contentBuilder(ctx2, state)],
-              ),
-            ),
-          ]),
+          ),
         ),
       ),
-    )));
+    ),
+  );
 }
 
-Widget _glass(BuildContext ctx, AppState state, String title, List<Widget> children) {
+Widget _glass(
+  BuildContext ctx,
+  AppState state,
+  String title,
+  List<Widget> children,
+) {
   const radius = 20.0;
   const pad = EdgeInsets.fromLTRB(16, 12, 16, 12);
   final onSurfaceVariant = Theme.of(ctx).colorScheme.onSurfaceVariant;
 
   final titleRow = Padding(
     padding: pad,
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(title, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: onSurfaceVariant)),
-      const SizedBox(height: 8),
-      ...children,
-    ]),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 8),
+        ...children,
+      ],
+    ),
   );
 
   return Padding(
@@ -1578,49 +2043,79 @@ Widget _subPageEntry(
     onTap: onTap,
     child: Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(children: [
-        Icon(icon, size: 15, color: scheme.primary),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Column(
+      child: Row(
+        children: [
+          Icon(icon, size: 15, color: scheme.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: clr, fontSize: 12)),
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: clr, fontSize: 12),
+                ),
                 const SizedBox(height: 2),
-                Text(scope,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 10, color: scheme.outline)),
-              ]),
-        ),
-        Icon(Icons.chevron_right, size: 18, color: scheme.outline),
-      ]),
+                Text(
+                  scope,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 10, color: scheme.outline),
+                ),
+              ],
+            ),
+          ),
+          Icon(Icons.chevron_right, size: 18, color: scheme.outline),
+        ],
+      ),
     ),
   );
 }
 
 /// 路径字段（标签 + 输入框 + 浏览按钮）
-Widget _pf(BuildContext ctx, String label, String value, ValueChanged<String> onChange, VoidCallback onBrowse) {
+Widget _pf(
+  BuildContext ctx,
+  String label,
+  String value,
+  ValueChanged<String> onChange,
+  VoidCallback onBrowse,
+) {
   final scheme = Theme.of(ctx).colorScheme;
   final clr = scheme.onSurface;
   return Padding(
     padding: const EdgeInsets.only(bottom: 8),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(label, style: TextStyle(fontSize: 12, color: clr)),
-      const SizedBox(height: 4),
-      Row(children: [
-        Expanded(child: _PathField(value: value, label: '', scheme: scheme, onChange: onChange)),
-        const SizedBox(width: 6),
-        OutlinedButton(
-          onPressed: onBrowse,
-          style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
-          child: const Icon(Icons.folder_open, size: 16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: TextStyle(fontSize: 12, color: clr)),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            Expanded(
+              child: _PathField(
+                value: value,
+                label: '',
+                scheme: scheme,
+                onChange: onChange,
+              ),
+            ),
+            const SizedBox(width: 6),
+            OutlinedButton(
+              onPressed: onBrowse,
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+              ),
+              child: const Icon(Icons.folder_open, size: 16),
+            ),
+          ],
         ),
-      ]),
-    ]),
+      ],
+    ),
   );
 }
 
@@ -1642,23 +2137,48 @@ Widget _link(String label, String url) => TextButton.icon(
 );
 
 /// 信息行（关于页）
-Widget _infoRow(String label, String value, ColorScheme scheme, {Widget? trailing}) => Padding(
+Widget _infoRow(
+  String label,
+  String value,
+  ColorScheme scheme, {
+  Widget? trailing,
+}) => Padding(
   padding: const EdgeInsets.only(bottom: 6),
-  child: Row(children: [
-    Expanded(child: Text(label, style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant))),
-    ?trailing,
-    Flexible(
-      child: Tooltip(message: value, child: Text(value, maxLines: 1, overflow: TextOverflow.ellipsis,
-          style: TextStyle(fontSize: 12, color: scheme.onSurface, fontWeight: FontWeight.w500)),
+  child: Row(
+    children: [
+      Expanded(
+        child: Text(
+          label,
+          style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+        ),
       ),
-    ),
-  ]),
+      ?trailing,
+      Flexible(
+        child: Tooltip(
+          message: value,
+          child: Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 12,
+              color: scheme.onSurface,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+      ),
+    ],
+  ),
 );
 
 /// iOS 风格按钮
 Widget _iosButton({
-  required IconData icon, required String label,
-  required Color color, required Color bg, required VoidCallback onTap,
+  required IconData icon,
+  required String label,
+  required Color color,
+  required Color bg,
+  required VoidCallback onTap,
 }) => Material(
   color: bg,
   borderRadius: BorderRadius.circular(14),
@@ -1667,39 +2187,70 @@ Widget _iosButton({
     borderRadius: BorderRadius.circular(14),
     child: Padding(
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
-      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-        Icon(icon, size: 18, color: color),
-        const SizedBox(width: 6),
-        Flexible(child: Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color),
-            overflow: TextOverflow.ellipsis)),
-      ]),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 18, color: color),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
     ),
   ),
 );
 
 /// 主题色圆点
-Widget _dot(ColorScheme sc, bool sel, Color c, String tip, VoidCallback onTap) => Tooltip(
+Widget _dot(
+  ColorScheme sc,
+  bool sel,
+  Color c,
+  String tip,
+  VoidCallback onTap,
+) => Tooltip(
   message: tip,
-  child: GestureDetector(
-    onTap: onTap,
-    child: AnimatedContainer(
-      duration: const Duration(milliseconds: 150),
-      width: 28, height: 28,
-      decoration: BoxDecoration(
-        color: c,
-        shape: BoxShape.circle,
-        border: Border.all(
-          color: sel ? sc.primary : Colors.transparent,
-          width: 3,
+  child: Semantics(
+    button: true,
+    selected: sel,
+    label: tip,
+    child: InkResponse(
+      onTap: onTap,
+      radius: 24,
+      child: SizedBox.square(
+        dimension: 44,
+        child: Center(
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: c,
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: sel ? sc.primary : Colors.transparent,
+                width: 3,
+              ),
+            ),
+            child: sel
+                ? const Icon(Icons.check, size: 14, color: Colors.white)
+                : null,
+          ),
         ),
       ),
-      child: sel ? const Icon(Icons.check, size: 14, color: Colors.white) : null,
     ),
   ),
 );
 
 /// 自定义取色入口按钮（内联于 _buildTheme，见其 Wrap 实现）
-
 
 class _SettingSlider extends StatefulWidget {
   final double value;
@@ -1774,24 +2325,29 @@ class _SettingSliderState extends State<_SettingSlider> {
       // **下面**才是滑块本体，且滑块独占一整行（不再与标签左右分栏）。
       // 旧实现是 `Row(label, Expanded(slider))`：标签与滑块挤在一行，长标签
       // （如「边框宽度」）会把滑块压窄，滑动手感与可读性都差。
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(widget.label(_current),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            widget.label(_current),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: widget.labelStyle),
-        const SizedBox(height: 2),
-        // 统一走 AppSlider（全应用唯一滑块实现）：胶囊轨道 + 主题色填充 +
-        // 玻璃留空 + 拖动粒子。裸 Slider 拿不到玻璃底（那需要一层 widget），
-        // 所以这里改为显式使用 AppSlider，不要再改回 `Slider(`。
-        AppSlider(
-          value: _current.clamp(widget.min, widget.max),
-          min: widget.min,
-          max: widget.max,
-          divisions: widget.divisions,
-          onChanged: _onChanged,
-          onChangeEnd: _onChangeEnd,
-        ),
-      ]),
+            style: widget.labelStyle,
+          ),
+          const SizedBox(height: 2),
+          // 统一走 AppSlider（全应用唯一滑块实现）：胶囊轨道 + 主题色填充 +
+          // 玻璃留空 + 拖动粒子。裸 Slider 拿不到玻璃底（那需要一层 widget），
+          // 所以这里改为显式使用 AppSlider，不要再改回 `Slider(`。
+          AppSlider(
+            value: _current.clamp(widget.min, widget.max),
+            min: widget.min,
+            max: widget.max,
+            divisions: widget.divisions,
+            onChanged: _onChanged,
+            onChangeEnd: _onChangeEnd,
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1801,9 +2357,13 @@ class _SettingSliderState extends State<_SettingSlider> {
 // ═══════════════════════════════════════════
 
 const _presets = [
-  ('Linear Purple', 0xFF5E6AD2), ('Ocean Blue', 0xFF3B82F6),
-  ('Emerald', 0xFF10B981), ('Amber', 0xFFF59E0B),
-  ('Rose', 0xFFEF4444), ('Cyan', 0xFF06B6D4), ('Violet', 0xFF8B5CF6),
+  ('Linear Purple', 0xFF5E6AD2),
+  ('Ocean Blue', 0xFF3B82F6),
+  ('Emerald', 0xFF10B981),
+  ('Amber', 0xFFF59E0B),
+  ('Rose', 0xFFEF4444),
+  ('Cyan', 0xFF06B6D4),
+  ('Violet', 0xFF8B5CF6),
 ];
 
 const _kDefaultAnthropicModel = 'claude-3-5-sonnet-20241022';
@@ -1812,16 +2372,22 @@ const _kDefaultAnthropicModel = 'claude-3-5-sonnet-20241022';
 ///
 /// 只存 key、显示名由 [_askSkipLabel] 按语言给出：原先这里把中文显示名写进常量，
 /// 英文界面下这 5 个 chip 恒为中文（与 ai_settings_mobile.dart 里同款 bug 一并修掉）。
-const _askSkipKeys = <String>['save', 'undo_redo', 'error_check', 'clear_all', 'tools'];
+const _askSkipKeys = <String>[
+  'save',
+  'undo_redo',
+  'error_check',
+  'clear_all',
+  'tools',
+];
 
 String _askSkipLabel(String key, bool isZh) => switch (key) {
-      'save' => isZh ? '保存' : 'Save',
-      'undo_redo' => isZh ? '撤销/重做' : 'Undo/Redo',
-      'error_check' => isZh ? '错误检查' : 'Error check',
-      'clear_all' => isZh ? '清空画布' : 'Clear canvas',
-      'tools' => isZh ? '工具执行' : 'Run tools',
-      _ => key,
-    };
+  'save' => isZh ? '保存' : 'Save',
+  'undo_redo' => isZh ? '撤销/重做' : 'Undo/Redo',
+  'error_check' => isZh ? '错误检查' : 'Error check',
+  'clear_all' => isZh ? '清空画布' : 'Clear canvas',
+  'tools' => isZh ? '工具执行' : 'Run tools',
+  _ => key,
+};
 
 /// 主题卡：模式 / 主题色 / 背景 / 样式（卡片样式、底部菜单栏样式、
 /// 顶部药丸样式、节点编辑器）。桌面端内联在「外观」分区，移动端作为
@@ -1841,87 +2407,167 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
 
   // 二级页「按主题分开、不要集中在一个卡片内」（用户要求）：本页拆成两张卡 ——
   // ① 模式（亮 / 暗）② 主题色（预设 / 自定义取色 / 动态取色 / 协调度）。
-  return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-    _glass(ctx, state, s.isZh ? '模式' : 'Appearance mode', [
-      // 亮 / 暗色切换
-      SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      _glass(ctx, state, s.isZh ? '模式' : 'Appearance mode', [
+        // 亮 / 暗色切换
+        SwitchListTile(
+          dense: true,
+          contentPadding: EdgeInsets.zero,
           title: Text(s.themeMode, style: TextStyle(color: clr)),
-          subtitle: Text(state.darkMode ? s.darkMode : (s.isZh ? '浅色模式' : 'Light Mode'),
-              style: TextStyle(fontSize: 11, color: scheme.outline)),
+          subtitle: Text(
+            state.darkMode ? s.darkMode : (s.isZh ? '浅色模式' : 'Light Mode'),
+            style: TextStyle(fontSize: 11, color: scheme.outline),
+          ),
           value: state.darkMode,
-          onChanged: (v) => state.toggleDarkMode(v)),
-    ]),
-    const SizedBox(height: 8),
-    _glass(ctx, state, s.isZh ? '主题色' : 'Accent color', [
-    // ── 主题色（预设 / 自定义 / 动态取色） ──
-    Row(children: [
-      Expanded(child: Text(s.accentColor, maxLines: 1, overflow: TextOverflow.ellipsis,
-          style: TextStyle(color: clr, fontSize: 12))),
-      if (dynamicOn) ...[
-        Icon(Icons.auto_awesome, size: 12, color: scheme.primary),
-        const SizedBox(width: 4),
-        Flexible(child: Text(s.themeDynamicOn,
-            maxLines: 1, overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 10, color: scheme.primary))),
-      ],
-    ]),
-    // Android Monet 动态取色（跟随系统壁纸）；开启后自定义主题色不生效
-    if (isMobilePlatform)
-      SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-          title: Text(s.themeDynamicColor, style: TextStyle(color: clr, fontSize: 12)),
-          subtitle: Text(s.themeDynamicColorHint,
-              style: TextStyle(fontSize: 10, color: scheme.outline)),
-          value: cfg.useDynamicColor,
-          onChanged: (v) => state.updateConfig((c) => c..useDynamicColor = v)),
-    const SizedBox(height: 8),
-    // 预设色 + 自定义取色：动态取色开启时置灰禁用
-    Opacity(
-      opacity: dynamicOn ? 0.35 : 1.0,
-      child: IgnorePointer(
-        ignoring: dynamicOn,
-        child: Wrap(spacing: 8, runSpacing: 8, children: [
-      ..._presets.map((p) => _dot(scheme, cfg.themeColor == p.$2 && cfg.themeColor2 < 0, Color(p.$2), p.$1,
-          () => state.updateConfig((c) => c..themeColor = p.$2..themeColor2 = -1))),
-      // 自定义取色：若已设渐变色则显示渐变圆点，点击进入渐变/纯色设置
-      GestureDetector(
-        onTap: () => _pickColor(ctx, state),
-        child: Tooltip(
-          message: cfg.themeColor2 >= 0 ? (state.config.language == 'zh' ? '当前渐变色' : 'Current gradient') : (state.config.language == 'zh' ? '自定义（支持渐变）' : 'Custom (gradient)'),
-          child: Container(
-            width: 28, height: 28,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: cfg.themeColor2 >= 0
-                  ? LinearGradient(colors: [Color(cfg.themeColor), Color(cfg.themeColor2)], begin: Alignment.topLeft, end: Alignment.bottomRight)
-                  : const LinearGradient(colors: [Color(0xFFFF5F6D), Color(0xFFFFC371), Color(0xFF36D1DC), Color(0xFF5B86E5)]),
-              border: Border.all(color: cfg.themeColor2 >= 0 ? scheme.primary : scheme.outlineVariant.withAlpha(80), width: cfg.themeColor2 >= 0 ? 2 : 1),
+          onChanged: (v) => state.toggleDarkMode(v),
+        ),
+      ]),
+      const SizedBox(height: 8),
+      _glass(ctx, state, s.isZh ? '主题色' : 'Accent color', [
+        // ── 主题色（预设 / 自定义 / 动态取色） ──
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                s.accentColor,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: clr, fontSize: 12),
+              ),
             ),
-            child: const Icon(Icons.add, size: 14, color: Colors.white),
+            if (dynamicOn) ...[
+              Icon(Icons.auto_awesome, size: 12, color: scheme.primary),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  s.themeDynamicOn,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 10, color: scheme.primary),
+                ),
+              ),
+            ],
+          ],
+        ),
+        // Android Monet 动态取色（跟随系统壁纸）；开启后自定义主题色不生效
+        if (isMobilePlatform)
+          SwitchListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            title: Text(
+              s.themeDynamicColor,
+              style: TextStyle(color: clr, fontSize: 12),
+            ),
+            subtitle: Text(
+              s.themeDynamicColorHint,
+              style: TextStyle(fontSize: 10, color: scheme.outline),
+            ),
+            value: cfg.useDynamicColor,
+            onChanged: (v) => state.updateConfig((c) => c..useDynamicColor = v),
+          ),
+        const SizedBox(height: 8),
+        // 预设色 + 自定义取色：动态取色开启时置灰禁用
+        Opacity(
+          opacity: dynamicOn ? 0.35 : 1.0,
+          child: IgnorePointer(
+            ignoring: dynamicOn,
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ..._presets.map(
+                  (p) => _dot(
+                    scheme,
+                    cfg.themeColor == p.$2 && cfg.themeColor2 < 0,
+                    Color(p.$2),
+                    p.$1,
+                    () => state.updateConfig(
+                      (c) => c
+                        ..themeColor = p.$2
+                        ..themeColor2 = -1,
+                    ),
+                  ),
+                ),
+                // 自定义取色：若已设渐变色则显示渐变圆点，点击进入渐变/纯色设置
+                GestureDetector(
+                  onTap: () => _pickColor(ctx, state),
+                  child: Tooltip(
+                    message: cfg.themeColor2 >= 0
+                        ? (state.config.language == 'zh'
+                              ? '当前渐变色'
+                              : 'Current gradient')
+                        : (state.config.language == 'zh'
+                              ? '自定义（支持渐变）'
+                              : 'Custom (gradient)'),
+                    child: Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: cfg.themeColor2 >= 0
+                            ? LinearGradient(
+                                colors: [
+                                  Color(cfg.themeColor),
+                                  Color(cfg.themeColor2),
+                                ],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              )
+                            : const LinearGradient(
+                                colors: [
+                                  Color(0xFFFF5F6D),
+                                  Color(0xFFFFC371),
+                                  Color(0xFF36D1DC),
+                                  Color(0xFF5B86E5),
+                                ],
+                              ),
+                        border: Border.all(
+                          color: cfg.themeColor2 >= 0
+                              ? scheme.primary
+                              : scheme.outlineVariant.withAlpha(80),
+                          width: cfg.themeColor2 >= 0 ? 2 : 1,
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.add,
+                        size: 14,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
-      ),
-          ]),
+        const SizedBox(height: 6),
+        // ── 主题色协调度 ──
+        // 「跟随主题色」大面积铺底时若直接用 scheme.primary（暗色下是 tone 80 的
+        // 高亮色）非常刺眼 —— 用户反馈「选择主题色又很亮」。这里给一个 0~0.8 的
+        // 混合系数：0% = 原色（与改动前一致），越大越并入表面色。由
+        // liquid_glass_fallback.harmonizedAccent 统一应用到所有「跟随主题色」的
+        // 玻璃/实色表面（AppCard / MobileGlassPill / MobileBottomNav / GlassPanel）。
+        _SettingSlider(
+          value: cfg.themeTone,
+          min: 0,
+          max: 0.8,
+          divisions: 16,
+          label: (v) =>
+              '${s.isZh ? '主题色协调度' : 'Accent harmony'}: ${(v * 100).round()}%',
+          labelStyle: TextStyle(color: clr, fontSize: 12),
+          onCommit: (v) => state.updateConfig((c) => c..themeTone = v),
         ),
-      ),
-    const SizedBox(height: 6),
-    // ── 主题色协调度 ──
-    // 「跟随主题色」大面积铺底时若直接用 scheme.primary（暗色下是 tone 80 的
-    // 高亮色）非常刺眼 —— 用户反馈「选择主题色又很亮」。这里给一个 0~0.8 的
-    // 混合系数：0% = 原色（与改动前一致），越大越并入表面色。由
-    // liquid_glass_fallback.harmonizedAccent 统一应用到所有「跟随主题色」的
-    // 玻璃/实色表面（AppCard / MobileGlassPill / MobileBottomNav / GlassPanel）。
-    _SettingSlider(
-      value: cfg.themeTone, min: 0, max: 0.8, divisions: 16,
-      label: (v) => '${s.isZh ? '主题色协调度' : 'Accent harmony'}: ${(v * 100).round()}%',
-      labelStyle: TextStyle(color: clr, fontSize: 12),
-      onCommit: (v) => state.updateConfig((c) => c..themeTone = v),
-    ),
-    Text(s.isZh
-            ? '仅作用于「跟随主题色」的卡片 / 底栏 / 药丸底色，0% 即原主题色'
-            : 'Only affects accent-tinted cards, nav bar and pills; 0% = raw accent',
-        style: TextStyle(fontSize: 10, color: scheme.outline)),
-    ]),
-  ]);
+        Text(
+          s.isZh
+              ? '仅作用于「跟随主题色」的卡片 / 底栏 / 药丸底色，0% 即原主题色'
+              : 'Only affects accent-tinted cards, nav bar and pills; 0% = raw accent',
+          style: TextStyle(fontSize: 10, color: scheme.outline),
+        ),
+      ]),
+    ],
+  );
 }
 
 /// 「外观 → 背景」卡片：壁纸选择 + 不透明度（原 _ThemeBackgroundSection）。
@@ -1953,7 +2599,8 @@ Widget _buildSurfaceStyleCard(BuildContext ctx, AppState state) {
   final clr = scheme.onSurface;
 
   // 只有真的有表面样式选了「模糊」，才需要那颗模糊度滑块（见下）。
-  final bool anyBlur = cfg.cardStyle == SurfaceStyle.blur ||
+  final bool anyBlur =
+      cfg.cardStyle == SurfaceStyle.blur ||
       cfg.navStyle == SurfaceStyle.blur ||
       cfg.pillStyle == SurfaceStyle.blur ||
       (!isMobilePlatform && cfg.menuStyle == SurfaceStyle.blur);
@@ -1965,136 +2612,173 @@ Widget _buildSurfaceStyleCard(BuildContext ctx, AppState state) {
   // (样式预设与表面样式等等)没有进行分开，而是集中在一个卡片内」。所以本页返回
   // **4 张独立卡**：样式预设 / 表面样式 / 玻璃与材质 / 特效，各自带自己的卡标题。
   // 桌面端这个返回值被放进 MasonryGrid 单元格，所以**绝不能在外面再包 AppCard**。
-  return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-    // ① 样式预设
-    _glass(ctx, state, zh ? '样式预设' : 'Style presets',
-        _buildStylePresets(ctx, state)),
-    const SizedBox(height: 8),
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      // ① 样式预设
+      _glass(
+        ctx,
+        state,
+        zh ? '样式预设' : 'Style presets',
+        _buildStylePresets(ctx, state),
+      ),
+      const SizedBox(height: 8),
 
-    // ② 表面样式
-    _glass(ctx, state, zh ? '表面样式' : 'Surface style', [
-    // 布局统一：左 = 图标 + 文字（含作用范围说明），右 = 下拉菜单（展开动画）
-    _styleRow(ctx,
-        icon: Icons.view_carousel_outlined,
-        label: s.cardStyleLabel,
-        scope: s.cardStyleScope,
-        value: cfg.cardStyle,
-        onSelected: (v) => state.updateConfig((c) => c..cardStyle = v)),
-    // 桌面端：左侧菜单栏 + 各页顶部菜单栏的表面样式（原来固定液态玻璃）
-    if (!isMobilePlatform)
-      _styleRow(ctx,
-          icon: Icons.view_sidebar_outlined,
-          label: s.isZh ? '菜单样式' : 'Menu Style',
-          scope: s.isZh
-              ? '作用于 左侧菜单栏 和 各页顶部菜单栏（仅桌面端）'
-              : 'Applies to the sidebar and page top bars (desktop only)',
-          value: cfg.menuStyle,
-          onSelected: (v) => state.updateConfig((c) => c..menuStyle = v)),
-    if (isMobilePlatform) ...[
-      _styleRow(ctx,
-          icon: Icons.menu,
-          label: s.navStyleLabel,
-          value: cfg.navStyle,
-          onSelected: (v) => state.updateConfig((c) => c..navStyle = v)),
-      // 菜单栏位置（仅移动端）：自动（宽屏 → 左侧竖排导轨）/ 底部 / 左侧 / 右侧。
-      // 「自动」按屏幕横纵比判定，判定逻辑全应用只有一份
-      // （platform/app_platform.dart 的 resolveMobileNavPlacement），
-      // 这里只负责把用户的选择写进配置。
-      _optionRow(ctx,
-          icon: Icons.vertical_split_outlined,
-          label: s.navPlacementLabel,
-          scope: s.navPlacementScope,
-          value: cfg.mobileNavPlacement,
-          items: [
-            OptionItem('auto', s.navPlacementAuto, icon: Icons.auto_mode),
-            OptionItem('bottom', s.navPlacementBottom,
-                icon: Icons.align_vertical_bottom),
-            OptionItem('left', s.navPlacementLeft,
-                icon: Icons.align_horizontal_left),
-            OptionItem('right', s.navPlacementRight,
-                icon: Icons.align_horizontal_right),
-          ],
-          onSelected: (v) =>
-              state.updateConfig((c) => c..mobileNavPlacement = v)),
-      // 滑动自动收起（仅移动端 + 底部形态生效）：内容上滑收起菜单栏、
-      // 下滑展开，动画为整条菜单栏上/下平移 + 到位回弹（弹簧驱动，
-      // 实现在 MobileBottomNav / app.dart 的内容区滚动监听）。
-      SwitchListTile(
-        dense: true,
-        contentPadding: EdgeInsets.zero,
-        title: Text(zh ? '滑动时自动收起菜单栏' : 'Auto-hide nav bar on scroll',
-            style: TextStyle(fontSize: 13, color: clr)),
-        subtitle: Text(
+      // ② 表面样式
+      _glass(ctx, state, zh ? '表面样式' : 'Surface style', [
+        // 布局统一：左 = 图标 + 文字（含作用范围说明），右 = 下拉菜单（展开动画）
+        _styleRow(
+          ctx,
+          icon: Icons.view_carousel_outlined,
+          label: s.cardStyleLabel,
+          scope: s.cardStyleScope,
+          value: cfg.cardStyle,
+          onSelected: (v) => state.updateConfig((c) => c..cardStyle = v),
+        ),
+        // 桌面端：左侧菜单栏 + 各页顶部菜单栏的表面样式（原来固定液态玻璃）
+        if (!isMobilePlatform)
+          _styleRow(
+            ctx,
+            icon: Icons.view_sidebar_outlined,
+            label: s.isZh ? '菜单样式' : 'Menu Style',
+            scope: s.isZh
+                ? '作用于 左侧菜单栏 和 各页顶部菜单栏（仅桌面端）'
+                : 'Applies to the sidebar and page top bars (desktop only)',
+            value: cfg.menuStyle,
+            onSelected: (v) => state.updateConfig((c) => c..menuStyle = v),
+          ),
+        if (isMobilePlatform) ...[
+          _styleRow(
+            ctx,
+            icon: Icons.menu,
+            label: s.navStyleLabel,
+            value: cfg.navStyle,
+            onSelected: (v) => state.updateConfig((c) => c..navStyle = v),
+          ),
+          // 菜单栏位置（仅移动端）：自动（宽屏 → 左侧竖排导轨）/ 底部 / 左侧 / 右侧。
+          // 「自动」按屏幕横纵比判定，判定逻辑全应用只有一份
+          // （platform/app_platform.dart 的 resolveMobileNavPlacement），
+          // 这里只负责把用户的选择写进配置。
+          _optionRow(
+            ctx,
+            icon: Icons.vertical_split_outlined,
+            label: s.navPlacementLabel,
+            scope: s.navPlacementScope,
+            value: cfg.mobileNavPlacement,
+            items: [
+              OptionItem('auto', s.navPlacementAuto, icon: Icons.auto_mode),
+              OptionItem(
+                'bottom',
+                s.navPlacementBottom,
+                icon: Icons.align_vertical_bottom,
+              ),
+              OptionItem(
+                'left',
+                s.navPlacementLeft,
+                icon: Icons.align_horizontal_left,
+              ),
+              OptionItem(
+                'right',
+                s.navPlacementRight,
+                icon: Icons.align_horizontal_right,
+              ),
+            ],
+            onSelected: (v) =>
+                state.updateConfig((c) => c..mobileNavPlacement = v),
+          ),
+          // 滑动自动收起（仅移动端 + 底部形态生效）：内容上滑收起菜单栏、
+          // 下滑展开，动画为整条菜单栏上/下平移 + 到位回弹（弹簧驱动，
+          // 实现在 MobileBottomNav / app.dart 的内容区滚动监听）。
+          SwitchListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            title: Text(
+              zh ? '滑动时自动收起菜单栏' : 'Auto-hide nav bar on scroll',
+              style: TextStyle(fontSize: 13, color: clr),
+            ),
+            subtitle: Text(
+              zh
+                  ? '上滑收起、下滑展开；仅作用于底部菜单栏'
+                  : 'Swipe up to hide, swipe down to show; bottom nav only',
+              style: TextStyle(fontSize: 11, color: scheme.outline),
+            ),
+            value: cfg.navAutoHide,
+            onChanged: (v) => state.updateConfig((c) => c..navAutoHide = v),
+          ),
+          _styleRow(
+            ctx,
+            icon: Icons.crop_landscape_outlined,
+            label: s.pillStyleLabel,
+            value: cfg.pillStyle,
+            onSelected: (v) => state.updateConfig((c) => c..pillStyle = v),
+          ),
+        ],
+        // ── 「模糊」样式的模糊度 ──
+        //
+        // 用户要求：「如果样式选了模糊，那么下面的滑块就要能调节它的模糊度」。
+        // 四个表面样式（卡片 / 菜单 / 底部菜单栏 / 顶部药丸）的 blur 分支都从同一个
+        // `glassBlur` 取 σ（AppCard / MobileBottomNav / MobileGlassPill / GlassPanel），
+        // 所以这颗滑块直接绑 `glassBlur` 就对全部「模糊」表面生效。它与「玻璃细节 →
+        // 玻璃模糊度」是**同一个参数**，这里只是把它放到真正需要它的地方：
+        // 仅当确实有表面选了「模糊」时才出现，因此不会多出一个常年可见的重复项。
+        if (anyBlur) ...[
+          const SizedBox(height: 6),
+          _SettingSlider(
+            value: cfg.glassBlur,
+            min: 0,
+            max: 30,
+            divisions: 30,
+            // 拖动过程中就写回配置：模糊度改的是整块卡片的模糊程度，若松手才生效，
+            // 拖动时看着毫无变化，会被判定成「滑块坏了」（与字号滑块同一个坑）。
+            liveCommit: true,
+            label: (v) => '${zh ? '模糊度' : 'Blur'}: ${v.round()}',
+            labelStyle: TextStyle(color: clr, fontSize: 12),
+            onCommit: (v) => state.updateConfig((c) => c..glassBlur = v),
+          ),
+          Text(
             zh
-                ? '上滑收起、下滑展开；仅作用于底部菜单栏'
-                : 'Swipe up to hide, swipe down to show; bottom nav only',
-            style: TextStyle(fontSize: 11, color: scheme.outline)),
-        value: cfg.navAutoHide,
-        onChanged: (v) => state.updateConfig((c) => c..navAutoHide = v),
-      ),
-      _styleRow(ctx,
-          icon: Icons.crop_landscape_outlined,
-          label: s.pillStyleLabel,
-          value: cfg.pillStyle,
-          onSelected: (v) => state.updateConfig((c) => c..pillStyle = v)),
-    ],
-    // ── 「模糊」样式的模糊度 ──
-    //
-    // 用户要求：「如果样式选了模糊，那么下面的滑块就要能调节它的模糊度」。
-    // 四个表面样式（卡片 / 菜单 / 底部菜单栏 / 顶部药丸）的 blur 分支都从同一个
-    // `glassBlur` 取 σ（AppCard / MobileBottomNav / MobileGlassPill / GlassPanel），
-    // 所以这颗滑块直接绑 `glassBlur` 就对全部「模糊」表面生效。它与「玻璃细节 →
-    // 玻璃模糊度」是**同一个参数**，这里只是把它放到真正需要它的地方：
-    // 仅当确实有表面选了「模糊」时才出现，因此不会多出一个常年可见的重复项。
-    if (anyBlur) ...[
-      const SizedBox(height: 6),
-      _SettingSlider(
-        value: cfg.glassBlur,
-        min: 0,
-        max: 30,
-        divisions: 30,
-        // 拖动过程中就写回配置：模糊度改的是整块卡片的模糊程度，若松手才生效，
-        // 拖动时看着毫无变化，会被判定成「滑块坏了」（与字号滑块同一个坑）。
-        liveCommit: true,
-        label: (v) => '${zh ? '模糊度' : 'Blur'}: ${v.round()}',
-        labelStyle: TextStyle(color: clr, fontSize: 12),
-        onCommit: (v) => state.updateConfig((c) => c..glassBlur = v),
-      ),
-      Text(
-          zh
-              ? '即时作用于所有「模糊」表面（卡片 / 菜单 / 底部菜单栏 / 药丸）；'
-                  '与「玻璃细节 → 玻璃模糊度」是同一个参数'
-              : 'Applies live to every "Blur" surface; same value as '
-                  'Glass details → Blur',
-          style: TextStyle(fontSize: 10, color: scheme.outline)),
-    ],
-    ]),
-    const SizedBox(height: 8),
+                ? '即时作用于所有「模糊」表面（卡片 / 菜单 / 底部菜单栏 / 药丸）；'
+                      '与「玻璃细节 → 玻璃模糊度」是同一个参数'
+                : 'Applies live to every "Blur" surface; same value as '
+                      'Glass details → Blur',
+            style: TextStyle(fontSize: 10, color: scheme.outline),
+          ),
+        ],
+      ]),
+      const SizedBox(height: 8),
 
-    // ③ 玻璃与材质
-    _glass(ctx, state, zh ? '玻璃与材质' : 'Glass & material', [
-    // ── 玻璃与材质各项（面板玻璃 / 玻璃底色 / 设置卡片玻璃 / GPU / 边框）──
-    ..._buildGlassMaterialItems(ctx, state),
+      // ③ 玻璃与材质
+      _glass(ctx, state, zh ? '玻璃与材质' : 'Glass & material', [
+        // ── 玻璃与材质各项（面板玻璃 / 玻璃底色 / 设置卡片玻璃 / GPU / 边框）──
+        ..._buildGlassMaterialItems(ctx, state),
 
-    // ── 玻璃细节入口（放在卡末：下行导航行按惯例排最后）──
-    if (isMobilePlatform) ...[
-      const SizedBox(height: 6),
-      Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
-      _subPageEntry(ctx, scheme, clr,
-          icon: Icons.blur_on_outlined,
-          label: zh ? '玻璃细节' : 'Glass details',
-          scope: zh
-              ? '模糊度 / 通透度 / 高光强度与位置 / 边缘光'
-              : 'Blur, clarity, highlight position, edge light',
-          onTap: () => _pushSettingsSubPage(
-              ctx, zh ? '玻璃细节' : 'Glass details', _buildGlassDetailCard)),
+        // ── 玻璃细节入口（放在卡末：下行导航行按惯例排最后）──
+        if (isMobilePlatform) ...[
+          const SizedBox(height: 6),
+          Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
+          _subPageEntry(
+            ctx,
+            scheme,
+            clr,
+            icon: Icons.blur_on_outlined,
+            label: zh ? '玻璃细节' : 'Glass details',
+            scope: zh
+                ? '模糊度 / 通透度 / 高光强度与位置 / 边缘光'
+                : 'Blur, clarity, highlight position, edge light',
+            onTap: () => _pushSettingsSubPage(
+              ctx,
+              zh ? '玻璃细节' : 'Glass details',
+              _buildGlassDetailCard,
+            ),
+          ),
+        ],
+      ]),
+      const SizedBox(height: 8),
+
+      // ④ 特效
+      _glass(ctx, state, zh ? '特效' : 'Effects', _buildEffectItems(ctx, state)),
     ],
-    ]),
-    const SizedBox(height: 8),
-
-    // ④ 特效
-    _glass(ctx, state, zh ? '特效' : 'Effects', _buildEffectItems(ctx, state)),
-  ]);
+  );
 }
 
 /// 「玻璃与材质」卡的内容：面板玻璃效果 + 玻璃底色遵循主题色 + 设置卡片玻璃 +
@@ -2139,101 +2823,145 @@ List<Widget> _buildGlassMaterialItems(BuildContext ctx, AppState state) {
     // 当前值在框内完整显示，展开列表里三个选项也都带完整文字。
     Padding(
       padding: const EdgeInsets.only(bottom: 10),
-      child: Row(children: [
-        Icon(Icons.blur_on_outlined, size: 15, color: scheme.primary),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(zh ? '面板玻璃效果' : 'Panel glass effect',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: clr, fontSize: 12)),
-            const SizedBox(height: 2),
-            Text(
-                zh
-                    ? (isMobilePlatform
-                        ? '作用于 弹窗 / 面板'
-                        : '作用于 顶栏 / 侧边栏 / 弹窗菜单')
-                    : (isMobilePlatform
-                        ? 'Applies to popups & panels'
-                        : 'Applies to bars, sidebar and menus'),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 10, color: scheme.outline)),
-          ]),
-        ),
-        const SizedBox(width: 8),
-        SizedBox(
-          width: _kMenuWidth,
-          child: OptionMenuBar<String>(
-            expandable: true,
-            value: (cfg.glassEffect == 'blur' || cfg.glassEffect == 'none')
-                ? cfg.glassEffect
-                : 'liquid',
-            items: [
-              OptionItem('liquid', s.surfaceStyleLiquid, icon: Icons.water_drop_outlined),
-              OptionItem('blur', s.glassBlur, icon: Icons.blur_on_outlined),
-              OptionItem('none', s.surfaceStyleTheme, icon: Icons.format_color_fill),
-            ],
-            onChanged: (v) => state.updateConfig((c) => c..glassEffect = v),
+      child: Row(
+        children: [
+          Icon(Icons.blur_on_outlined, size: 15, color: scheme.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  zh ? '面板玻璃效果' : 'Panel glass effect',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: clr, fontSize: 12),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  zh
+                      ? (isMobilePlatform
+                            ? '作用于 弹窗 / 面板'
+                            : '作用于 顶栏 / 侧边栏 / 弹窗菜单')
+                      : (isMobilePlatform
+                            ? 'Applies to popups & panels'
+                            : 'Applies to bars, sidebar and menus'),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 10, color: scheme.outline),
+                ),
+              ],
+            ),
           ),
-        ),
-      ]),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: _kMenuWidth,
+            child: OptionMenuBar<String>(
+              expandable: true,
+              value: (cfg.glassEffect == 'blur' || cfg.glassEffect == 'none')
+                  ? cfg.glassEffect
+                  : 'liquid',
+              items: [
+                OptionItem(
+                  'liquid',
+                  s.surfaceStyleLiquid,
+                  icon: Icons.water_drop_outlined,
+                ),
+                OptionItem('blur', s.glassBlur, icon: Icons.blur_on_outlined),
+                OptionItem(
+                  'none',
+                  s.surfaceStyleTheme,
+                  icon: Icons.format_color_fill,
+                ),
+              ],
+              onChanged: (v) => state.updateConfig((c) => c..glassEffect = v),
+            ),
+          ),
+        ],
+      ),
     ),
-    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-        title: Text(zh ? '玻璃底色遵循主题色' : 'Tint glass with theme color',
-            style: TextStyle(color: clr, fontSize: 13)),
-        subtitle: Text(zh ? '开启后玻璃/卡片底色使用协调后的主题色而不是表面灰'
-                : 'Use the harmonized accent color instead of surface gray',
-            style: TextStyle(fontSize: 11, color: scheme.outline)),
-        value: cfg.glassFollowTheme,
-        onChanged: (v) => state.updateConfig((c) => c..glassFollowTheme = v)),
+    SwitchListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: Text(
+        zh ? '玻璃底色遵循主题色' : 'Tint glass with theme color',
+        style: TextStyle(color: clr, fontSize: 13),
+      ),
+      subtitle: Text(
+        zh
+            ? '开启后玻璃/卡片底色使用协调后的主题色而不是表面灰'
+            : 'Use the harmonized accent color instead of surface gray',
+        style: TextStyle(fontSize: 11, color: scheme.outline),
+      ),
+      value: cfg.glassFollowTheme,
+      onChanged: (v) => state.updateConfig((c) => c..glassFollowTheme = v),
+    ),
     // ── 设置卡片玻璃（三选一）──
     // 去重：原先这里是「设置项以毛玻璃展示」+「不使用卡片玻璃效果」两个独立
     // 开关，语义互斥又重复（用户反馈「下方选项中有重复项」）。现在合并为一个
     // 三选一下拉，唯一数据源是 AppConfig.settingsGlassMode。
     Padding(
       padding: const EdgeInsets.only(top: 6, bottom: 10),
-      child: Row(children: [
-        Icon(Icons.dashboard_customize_outlined, size: 15, color: scheme.primary),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(zh ? '设置卡片玻璃' : 'Settings card glass',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: clr, fontSize: 12)),
-            const SizedBox(height: 2),
-            Text(zh ? '仅作用于设置页的卡片' : 'Applies to settings cards only',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 10, color: scheme.outline)),
-          ]),
-        ),
-        const SizedBox(width: 8),
-        SizedBox(
-          width: _kMenuWidth,
-          child: OptionMenuBar<String>(
-            expandable: true,
-            value: cfg.settingsGlassMode,
-            items: [
-              OptionItem('follow',
+      child: Row(
+        children: [
+          Icon(
+            Icons.dashboard_customize_outlined,
+            size: 15,
+            color: scheme.primary,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  zh ? '设置卡片玻璃' : 'Settings card glass',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: clr, fontSize: 12),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  zh ? '仅作用于设置页的卡片' : 'Applies to settings cards only',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 10, color: scheme.outline),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: _kMenuWidth,
+            child: OptionMenuBar<String>(
+              expandable: true,
+              value: cfg.settingsGlassMode,
+              items: [
+                OptionItem(
+                  'follow',
                   zh ? '跟随样式' : 'Follow',
                   icon: Icons.link,
-                  subtitle: zh ? '与卡片样式一致' : 'Same as card style'),
-              OptionItem('frosted',
+                  subtitle: zh ? '与卡片样式一致' : 'Same as card style',
+                ),
+                OptionItem(
+                  'frosted',
                   zh ? '毛玻璃' : 'Frosted',
                   icon: Icons.blur_on_outlined,
-                  subtitle: zh ? '扁平模糊，长列表更易读' : 'Flat blur, easier to read'),
-              OptionItem('solid',
+                  subtitle: zh ? '扁平模糊，长列表更易读' : 'Flat blur, easier to read',
+                ),
+                OptionItem(
+                  'solid',
                   zh ? '主题色实心' : 'Solid',
                   icon: Icons.format_color_fill,
-                  subtitle: zh ? '不透明，低配更流畅' : 'Opaque, smoother on low-end'),
-            ],
-            onChanged: (v) => state.updateConfig((c) => c..settingsGlassMode = v),
+                  subtitle: zh ? '不透明，低配更流畅' : 'Opaque, smoother on low-end',
+                ),
+              ],
+              onChanged: (v) =>
+                  state.updateConfig((c) => c..settingsGlassMode = v),
+            ),
           ),
-        ),
-      ]),
+        ],
+      ),
     ),
     // PC 专属：桌面端的 shader backdrop 坐标系不成立（见 gpuGlassEnabledOf 注释），
     // 开启后顶栏/侧栏/页签栏的玻璃里会出现被放大错位的壁纸片段，且内存最贵。
@@ -2241,55 +2969,80 @@ List<Widget> _buildGlassMaterialItems(BuildContext ctx, AppState state) {
     // 因此这里改为不可交互的说明行 —— 留一个拨不动的开关等于骗用户。
     // （配置字段 glassGpuOnDesktop 仍保留：JSON 兼容，且将来若修好坐标系可直接复用。）
     if (!isMobilePlatform)
-      ListTile(dense: true, contentPadding: EdgeInsets.zero,
-          title: Text(zh ? 'GPU 液态玻璃（桌面端不可用）' : 'GPU liquid glass (unavailable on desktop)',
-              style: TextStyle(color: scheme.outline, fontSize: 13)),
-          subtitle: Text(zh
-                  ? '桌面图形后端的 backdrop 坐标系与 shader 假设不一致，开启会导致玻璃里出现放大的壁纸碎片，已停用；当前使用「模糊 + 倒角高光」回退（背景即真实壁纸）'
-                  : 'Shader backdrop coordinates are not reliable on desktop backends; disabled. Using blur + bevel highlight fallback instead.',
-              style: TextStyle(fontSize: 11, color: scheme.outline)),
-          trailing: Icon(Icons.block, size: 18, color: scheme.outline)),
+      ListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        title: Text(
+          zh ? 'GPU 液态玻璃（桌面端不可用）' : 'GPU liquid glass (unavailable on desktop)',
+          style: TextStyle(color: scheme.outline, fontSize: 13),
+        ),
+        subtitle: Text(
+          zh
+              ? '桌面图形后端的 backdrop 坐标系与 shader 假设不一致，开启会导致玻璃里出现放大的壁纸碎片，已停用；当前使用「模糊 + 倒角高光」回退（背景即真实壁纸）'
+              : 'Shader backdrop coordinates are not reliable on desktop backends; disabled. Using blur + bevel highlight fallback instead.',
+          style: TextStyle(fontSize: 11, color: scheme.outline),
+        ),
+        trailing: Icon(Icons.block, size: 18, color: scheme.outline),
+      ),
     const SizedBox(height: 4),
     // ── 添加边框：所有卡片与药丸的实线描边 ──
-    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-        title: Text(zh ? '添加边框' : 'Add borders',
-            style: TextStyle(color: clr, fontSize: 13)),
-        subtitle: Text(
-            zh ? '为所有卡片与药丸添加实线边框，可自定义颜色与宽度'
-               : 'Draw a solid border around all cards and pills (custom color & width)',
-            style: TextStyle(fontSize: 11, color: scheme.outline)),
-        value: cfg.borderEnabled,
-        onChanged: (v) => state.updateConfig((c) => c..borderEnabled = v)),
+    SwitchListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: Text(
+        zh ? '添加边框' : 'Add borders',
+        style: TextStyle(color: clr, fontSize: 13),
+      ),
+      subtitle: Text(
+        zh
+            ? '为所有卡片与药丸添加实线边框，可自定义颜色与宽度'
+            : 'Draw a solid border around all cards and pills (custom color & width)',
+        style: TextStyle(fontSize: 11, color: scheme.outline),
+      ),
+      value: cfg.borderEnabled,
+      onChanged: (v) => state.updateConfig((c) => c..borderEnabled = v),
+    ),
     if (cfg.borderEnabled) ...[
-      Row(children: [
-        Expanded(
-          child: Text(zh ? '边框颜色' : 'Border color',
-              maxLines: 1, overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: clr, fontSize: 12)),
-        ),
-        const SizedBox(width: 8),
-        // 色块即按钮：点开复用主题色取色面板（只取单色，渐变开关被忽略），样式一致
-        InkWell(
-          borderRadius: BorderRadius.circular(8),
-          onTap: () => _pickBorderColor(ctx, state),
-          child: Container(
-            width: 44,
-            height: 26,
-            decoration: BoxDecoration(
-              color: Color(cfg.borderColor),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: scheme.outlineVariant.withAlpha(120)),
+      Row(
+        children: [
+          Expanded(
+            child: Text(
+              zh ? '边框颜色' : 'Border color',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: clr, fontSize: 12),
             ),
           ),
-        ),
-        const SizedBox(width: 8),
-        Text('#${(cfg.borderColor & 0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase()}',
-            style: TextStyle(fontSize: 11, color: scheme.outline)),
-      ]),
+          const SizedBox(width: 8),
+          // 色块即按钮：点开复用主题色取色面板（只取单色，渐变开关被忽略），样式一致
+          InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => _pickBorderColor(ctx, state),
+            child: Container(
+              width: 44,
+              height: 26,
+              decoration: BoxDecoration(
+                color: Color(cfg.borderColor),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: scheme.outlineVariant.withAlpha(120)),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '#${(cfg.borderColor & 0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase()}',
+            style: TextStyle(fontSize: 11, color: scheme.outline),
+          ),
+        ],
+      ),
       const SizedBox(height: 6),
       _SettingSlider(
-        value: cfg.borderWidth, min: 0.5, max: 4.0, divisions: 7,
-        label: (v) => '${zh ? '边框宽度' : 'Border width'}: ${v.toStringAsFixed(1)}',
+        value: cfg.borderWidth,
+        min: 0.5,
+        max: 4.0,
+        divisions: 7,
+        label: (v) =>
+            '${zh ? '边框宽度' : 'Border width'}: ${v.toStringAsFixed(1)}',
         labelStyle: TextStyle(color: clr, fontSize: 12),
         onCommit: (v) => state.updateConfig((c) => c..borderWidth = v),
       ),
@@ -2313,18 +3066,22 @@ List<Widget> _buildEffectItems(BuildContext ctx, AppState state) {
   final zh = cfg.language == 'zh';
   return [
     SwitchListTile(
-        dense: true,
-        contentPadding: EdgeInsets.zero,
-        title: Text(zh ? '滑块彗星拖尾' : 'Slider comet trail',
-            style: TextStyle(color: clr, fontSize: 13)),
-        subtitle: Text(
-            zh
-                ? '拖动滑块时从把手（填充段最右端）向左甩出的彗星尾迹，最多占轨道总长 22%（关闭后零帧开销）'
-                : 'Comet trail pulled left from the handle while dragging, up to 22% of the track '
-                    '(off = zero frame cost)',
-            style: TextStyle(fontSize: 11, color: scheme.outline)),
-        value: cfg.sliderParticles,
-        onChanged: (v) => state.updateConfig((c) => c..sliderParticles = v)),
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: Text(
+        zh ? '滑块彗星拖尾' : 'Slider comet trail',
+        style: TextStyle(color: clr, fontSize: 13),
+      ),
+      subtitle: Text(
+        zh
+            ? '拖动滑块时从把手（填充段最右端）向左甩出的彗星尾迹，最多占轨道总长 22%（关闭后零帧开销）'
+            : 'Comet trail pulled left from the handle while dragging, up to 22% of the track '
+                  '(off = zero frame cost)',
+        style: TextStyle(fontSize: 11, color: scheme.outline),
+      ),
+      value: cfg.sliderParticles,
+      onChanged: (v) => state.updateConfig((c) => c..sliderParticles = v),
+    ),
   ];
 }
 
@@ -2430,6 +3187,7 @@ class _StylePreset {
   final String id;
   final String Function(bool zh) name;
   final String Function(bool zh) desc;
+
   /// 预览卡的样式类别：'liquid' | 'theme' | 'blur' | 'gray' | 'clear'
   final String preview;
   final _StyleValues values;
@@ -2451,6 +3209,7 @@ class _StylePreset {
     values.applyTo(c);
     return c;
   }
+
   bool matches(AppConfig c) => values.matches(c);
 }
 
@@ -2468,10 +3227,19 @@ final List<_StylePreset> _stylePresets = [
     desc: (zh) => zh ? '折射玻璃' : 'Refraction',
     preview: 'liquid',
     values: const _StyleValues(
-      cardStyle: 'liquid', navStyle: 'liquid', pillStyle: 'liquid', menuStyle: 'liquid',
-      glassEffect: 'liquid', settingsGlassMode: 'follow', glassFollowTheme: false,
-      glassBlur: 16.0, glassClarity: 0.45, glassHighlight: 1.0,
-      glassLightPos: 0.0, glassEdge: 1.0, themeTone: 0.45,
+      cardStyle: 'liquid',
+      navStyle: 'liquid',
+      pillStyle: 'liquid',
+      menuStyle: 'liquid',
+      glassEffect: 'liquid',
+      settingsGlassMode: 'follow',
+      glassFollowTheme: false,
+      glassBlur: 16.0,
+      glassClarity: 0.45,
+      glassHighlight: 1.0,
+      glassLightPos: 0.0,
+      glassEdge: 1.0,
+      themeTone: 0.45,
     ),
   ),
   _StylePreset(
@@ -2480,12 +3248,21 @@ final List<_StylePreset> _stylePresets = [
     desc: (zh) => zh ? '高透光' : 'High clarity',
     preview: 'clear',
     values: const _StyleValues(
-      cardStyle: 'liquid', navStyle: 'liquid', pillStyle: 'liquid', menuStyle: 'liquid',
-      glassEffect: 'liquid', settingsGlassMode: 'follow', glassFollowTheme: false,
+      cardStyle: 'liquid',
+      navStyle: 'liquid',
+      pillStyle: 'liquid',
+      menuStyle: 'liquid',
+      glassEffect: 'liquid',
+      settingsGlassMode: 'follow',
+      glassFollowTheme: false,
       // 通透度 0.82 → 0.80：0.82 落在滑块 0.05 网格之外，
       // 用户一旦碰过通透度滑块，本预设就永远无法再次匹配。
-      glassBlur: 24.0, glassClarity: 0.80, glassHighlight: 1.3,
-      glassLightPos: 0.25, glassEdge: 1.4, themeTone: 0.45,
+      glassBlur: 24.0,
+      glassClarity: 0.80,
+      glassHighlight: 1.3,
+      glassLightPos: 0.25,
+      glassEdge: 1.4,
+      themeTone: 0.45,
     ),
   ),
   _StylePreset(
@@ -2494,10 +3271,19 @@ final List<_StylePreset> _stylePresets = [
     desc: (zh) => zh ? '协调实色' : 'Harmonized',
     preview: 'theme',
     values: const _StyleValues(
-      cardStyle: 'theme', navStyle: 'theme', pillStyle: 'theme', menuStyle: 'theme',
-      glassEffect: 'none', settingsGlassMode: 'solid', glassFollowTheme: true,
-      glassBlur: 16.0, glassClarity: 0.45, glassHighlight: 1.0,
-      glassLightPos: 0.0, glassEdge: 1.0, themeTone: 0.55,
+      cardStyle: 'theme',
+      navStyle: 'theme',
+      pillStyle: 'theme',
+      menuStyle: 'theme',
+      glassEffect: 'none',
+      settingsGlassMode: 'solid',
+      glassFollowTheme: true,
+      glassBlur: 16.0,
+      glassClarity: 0.45,
+      glassHighlight: 1.0,
+      glassLightPos: 0.0,
+      glassEdge: 1.0,
+      themeTone: 0.55,
     ),
   ),
   _StylePreset(
@@ -2506,10 +3292,19 @@ final List<_StylePreset> _stylePresets = [
     desc: (zh) => zh ? '易读' : 'Readable',
     preview: 'blur',
     values: const _StyleValues(
-      cardStyle: 'blur', navStyle: 'blur', pillStyle: 'blur', menuStyle: 'blur',
-      glassEffect: 'blur', settingsGlassMode: 'follow', glassFollowTheme: false,
-      glassBlur: 20.0, glassClarity: 0.55, glassHighlight: 0.6,
-      glassLightPos: 0.0, glassEdge: 0.5, themeTone: 0.45,
+      cardStyle: 'blur',
+      navStyle: 'blur',
+      pillStyle: 'blur',
+      menuStyle: 'blur',
+      glassEffect: 'blur',
+      settingsGlassMode: 'follow',
+      glassFollowTheme: false,
+      glassBlur: 20.0,
+      glassClarity: 0.55,
+      glassHighlight: 0.6,
+      glassLightPos: 0.0,
+      glassEdge: 0.5,
+      themeTone: 0.45,
     ),
   ),
   _StylePreset(
@@ -2518,10 +3313,19 @@ final List<_StylePreset> _stylePresets = [
     desc: (zh) => zh ? '中性无彩' : 'Neutral',
     preview: 'gray',
     values: const _StyleValues(
-      cardStyle: 'gray', navStyle: 'gray', pillStyle: 'gray', menuStyle: 'gray',
-      glassEffect: 'none', settingsGlassMode: 'follow', glassFollowTheme: false,
-      glassBlur: 16.0, glassClarity: 0.45, glassHighlight: 1.0,
-      glassLightPos: 0.0, glassEdge: 1.0, themeTone: 0.45,
+      cardStyle: 'gray',
+      navStyle: 'gray',
+      pillStyle: 'gray',
+      menuStyle: 'gray',
+      glassEffect: 'none',
+      settingsGlassMode: 'follow',
+      glassFollowTheme: false,
+      glassBlur: 16.0,
+      glassClarity: 0.45,
+      glassHighlight: 1.0,
+      glassLightPos: 0.0,
+      glassEdge: 1.0,
+      themeTone: 0.45,
     ),
   ),
 ];
@@ -2564,7 +3368,11 @@ Widget _presetSwatch(BuildContext ctx, _StylePreset p, bool selected) {
         borderRadius: BorderRadius.circular(9),
         border: Border.all(color: Colors.white.withValues(alpha: 0.35)),
         boxShadow: [
-          BoxShadow(color: Colors.black.withAlpha(isDark ? 40 : 14), blurRadius: 6, offset: const Offset(0, 2)),
+          BoxShadow(
+            color: Colors.black.withAlpha(isDark ? 40 : 14),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
         ],
       );
       break;
@@ -2579,7 +3387,10 @@ Widget _presetSwatch(BuildContext ctx, _StylePreset p, bool selected) {
             scheme.surface.withAlpha(isDark ? 30 : 40),
           ],
         ),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.55), width: 1.2),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.55),
+          width: 1.2,
+        ),
       );
       break;
     default: // liquid
@@ -2595,42 +3406,53 @@ Widget _presetSwatch(BuildContext ctx, _StylePreset p, bool selected) {
         ),
         border: Border.all(color: Colors.white.withValues(alpha: 0.45)),
         boxShadow: [
-          BoxShadow(color: Colors.black.withAlpha(isDark ? 45 : 16), blurRadius: 7, offset: const Offset(0, 2)),
+          BoxShadow(
+            color: Colors.black.withAlpha(isDark ? 45 : 16),
+            blurRadius: 7,
+            offset: const Offset(0, 2),
+          ),
         ],
       );
   }
-  return Stack(children: [
-    // 预览块：选中态额外加一层主题色柔光，让「当前正在用哪套」一眼可见
-    //（外框的高亮见 _buildStylePresets 的 AnimatedContainer）。
-    Container(
-      width: 58,
-      height: 30,
-      decoration: selected
-          ? deco.copyWith(boxShadow: [
-              BoxShadow(
-                color: scheme.primary.withAlpha(isDark ? 90 : 60),
-                blurRadius: 8,
-                spreadRadius: 0.5,
-              ),
-            ])
-          : deco,
-    ),
-    // 左上角高光：所有玻璃方案的共同特征
-    Positioned(
-      left: 6, top: 3,
-      child: Container(
-        width: p.preview == 'gray' ? 0 : (selected ? 26 : 22),
-        height: 6,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(3),
-          gradient: LinearGradient(colors: [
-            Colors.white.withValues(alpha: 0.45),
-            Colors.white.withValues(alpha: 0.0),
-          ]),
+  return Stack(
+    children: [
+      // 预览块：选中态额外加一层主题色柔光，让「当前正在用哪套」一眼可见
+      //（外框的高亮见 _buildStylePresets 的 AnimatedContainer）。
+      Container(
+        width: 72,
+        height: 38,
+        decoration: selected
+            ? deco.copyWith(
+                boxShadow: [
+                  BoxShadow(
+                    color: scheme.primary.withAlpha(isDark ? 90 : 60),
+                    blurRadius: 8,
+                    spreadRadius: 0.5,
+                  ),
+                ],
+              )
+            : deco,
+      ),
+      // 左上角高光：所有玻璃方案的共同特征
+      Positioned(
+        left: 6,
+        top: 3,
+        child: Container(
+          width: p.preview == 'gray' ? 0 : (selected ? 26 : 22),
+          height: 6,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(3),
+            gradient: LinearGradient(
+              colors: [
+                Colors.white.withValues(alpha: 0.45),
+                Colors.white.withValues(alpha: 0.0),
+              ],
+            ),
+          ),
         ),
       ),
-    ),
-  ]);
+    ],
+  );
 }
 
 /// 样式预设选择行（样式卡顶部）。点一下即套用整套外观。
@@ -2643,43 +3465,59 @@ List<Widget> _buildStylePresets(BuildContext ctx, AppState state) {
   Widget entry(_StylePreset p) {
     final selected = p.matches(cfg);
     return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: () => state.updateConfig((c) => p.apply(c)),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          padding: const EdgeInsets.fromLTRB(8, 8, 8, 6),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            color: selected
-                ? scheme.primary.withAlpha(30)
-                : scheme.surfaceContainerHighest.withAlpha(60),
-            border: Border.all(
+      padding: const EdgeInsets.only(right: 8, bottom: 4),
+      child: Semantics(
+        button: true,
+        selected: selected,
+        label: '${p.name(zh)}, ${p.desc(zh)}',
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => state.updateConfig((c) => p.apply(c)),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
               color: selected
-                  ? scheme.primary
-                  : scheme.outlineVariant.withAlpha(80),
-              width: selected ? 1.5 : 0.8,
+                  ? scheme.primary.withAlpha(30)
+                  : scheme.surfaceContainerHighest.withAlpha(60),
+              border: Border.all(
+                color: selected
+                    ? scheme.primary
+                    : scheme.outlineVariant.withAlpha(80),
+                width: selected ? 1.5 : 0.8,
+              ),
+            ),
+            child: Column(
+              children: [
+                _presetSwatch(ctx, p, selected),
+                const SizedBox(height: 5),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (selected) ...[
+                      Icon(Icons.check_circle, size: 14, color: scheme.primary),
+                      const SizedBox(width: 4),
+                    ],
+                    Text(
+                      p.name(zh),
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: selected
+                            ? FontWeight.w600
+                            : FontWeight.w400,
+                        color: selected ? scheme.primary : clr,
+                      ),
+                    ),
+                  ],
+                ),
+                Text(
+                  p.desc(zh),
+                  style: TextStyle(fontSize: 11, color: scheme.outline),
+                ),
+              ],
             ),
           ),
-          child: Column(children: [
-            _presetSwatch(ctx, p, selected),
-            const SizedBox(height: 5),
-            Row(mainAxisSize: MainAxisSize.min, children: [
-              if (selected) ...[
-                Icon(Icons.check_circle, size: 11, color: scheme.primary),
-                const SizedBox(width: 3),
-              ],
-              Text(p.name(zh),
-                  style: TextStyle(
-                      fontSize: 10.5,
-                      fontWeight:
-                          selected ? FontWeight.w600 : FontWeight.w400,
-                      color: selected ? scheme.primary : clr)),
-            ]),
-            Text(p.desc(zh),
-                style: TextStyle(fontSize: 9, color: scheme.outline)),
-          ]),
         ),
       ),
     );
@@ -2707,13 +3545,17 @@ Widget _buildGlassDetailCard(BuildContext ctx, AppState state) {
   final zh = cfg.language == 'zh';
   return _glass(ctx, state, zh ? '玻璃细节' : 'Glass details', [
     Text(
-        zh
-            ? '作用于所有玻璃表面：卡片 / 底部菜单栏 / 顶部药丸 / 弹窗与面板'
-            : 'Applies to every glass surface: cards, bottom nav, pills, popups, panels',
-        style: TextStyle(fontSize: 10, color: scheme.outline)),
+      zh
+          ? '作用于所有玻璃表面：卡片 / 底部菜单栏 / 顶部药丸 / 弹窗与面板'
+          : 'Applies to every glass surface: cards, bottom nav, pills, popups, panels',
+      style: TextStyle(fontSize: 10, color: scheme.outline),
+    ),
     const SizedBox(height: 10),
     _SettingSlider(
-      value: cfg.glassBlur, min: 0, max: 30, divisions: 30,
+      value: cfg.glassBlur,
+      min: 0,
+      max: 30,
+      divisions: 30,
       // 拖动中就写回配置：模糊度的效果是「整块玻璃变糊/变清」，松手才生效时
       // 拖动过程中看不出差别，会被判定成「滑块不管用」（与字号滑块同一个坑）。
       liveCommit: true,
@@ -2722,26 +3564,42 @@ Widget _buildGlassDetailCard(BuildContext ctx, AppState state) {
       onCommit: (v) => state.updateConfig((c) => c..glassBlur = v),
     ),
     _SettingSlider(
-      value: cfg.glassClarity, min: 0, max: 1, divisions: 20,
+      value: cfg.glassClarity,
+      min: 0,
+      max: 1,
+      divisions: 20,
       label: (v) => '${zh ? '通透度' : 'Clarity'}: ${(v * 100).round()}%',
       labelStyle: TextStyle(color: clr, fontSize: 12),
       onCommit: (v) => state.updateConfig((c) => c..glassClarity = v),
     ),
     _SettingSlider(
-      value: cfg.glassHighlight, min: 0, max: 1.6, divisions: 16,
+      value: cfg.glassHighlight,
+      min: 0,
+      max: 1.6,
+      divisions: 16,
       label: (v) => '${zh ? '高光强度' : 'Highlight'}: ${v.toStringAsFixed(1)}',
       labelStyle: TextStyle(color: clr, fontSize: 12),
       onCommit: (v) => state.updateConfig((c) => c..glassHighlight = v),
     ),
     _SettingSlider(
-      value: cfg.glassLightPos, min: 0, max: 1, divisions: 20,
+      value: cfg.glassLightPos,
+      min: 0,
+      max: 1,
+      divisions: 20,
       label: (v) =>
-          '${zh ? '高光位置' : 'Light position'}: ${zh ? (v <= 0.05 ? '左上' : v >= 0.95 ? '右下' : '${(v * 100).round()}%') : '${(v * 100).round()}%'}',
+          '${zh ? '高光位置' : 'Light position'}: ${zh ? (v <= 0.05
+                    ? '左上'
+                    : v >= 0.95
+                    ? '右下'
+                    : '${(v * 100).round()}%') : '${(v * 100).round()}%'}',
       labelStyle: TextStyle(color: clr, fontSize: 12),
       onCommit: (v) => state.updateConfig((c) => c..glassLightPos = v),
     ),
     _SettingSlider(
-      value: cfg.glassEdge, min: 0, max: 2, divisions: 20,
+      value: cfg.glassEdge,
+      min: 0,
+      max: 2,
+      divisions: 20,
       label: (v) => '${zh ? '边缘光' : 'Edge light'}: ${v.toStringAsFixed(1)}',
       labelStyle: TextStyle(color: clr, fontSize: 12),
       onCommit: (v) => state.updateConfig((c) => c..glassEdge = v),
@@ -2750,18 +3608,24 @@ Widget _buildGlassDetailCard(BuildContext ctx, AppState state) {
     Align(
       alignment: Alignment.centerRight,
       child: TextButton.icon(
-        onPressed: () => state.updateConfig((c) => c
-          ..glassBlur = 16.0
-          ..glassClarity = 0.45
-          ..glassHighlight = 1.0
-          ..glassLightPos = 0.0
-          ..glassEdge = 1.0),
+        onPressed: () => state.updateConfig(
+          (c) => c
+            ..glassBlur = 16.0
+            ..glassClarity = 0.45
+            ..glassHighlight = 1.0
+            ..glassLightPos = 0.0
+            ..glassEdge = 1.0,
+        ),
         icon: const Icon(Icons.restart_alt, size: 15),
-        label: Text(zh ? '恢复默认' : 'Reset', style: const TextStyle(fontSize: 12)),
+        label: Text(
+          zh ? '恢复默认' : 'Reset',
+          style: const TextStyle(fontSize: 12),
+        ),
         style: TextButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            minimumSize: const Size(0, 30),
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          minimumSize: const Size(0, 30),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
       ),
     ),
   ]);
@@ -2795,54 +3659,84 @@ Widget _buildNodeEditorStyleCard(BuildContext ctx, AppState state) {
 
   return _glass(ctx, state, s.nodeEditorStyleLabel, [
     // 画布背景：下拉菜单样式（跟随全局 / 灰色 / 黑色 / 白色）
-    Row(children: [
-      Expanded(child: Text(s.canvasBgLabel, maxLines: 1, overflow: TextOverflow.ellipsis,
-          style: TextStyle(color: clr, fontSize: 12))),
-      SizedBox(width: _kMenuWidth, child: OptionMenuBar<String>(
-        expandable: true,
-        value: cfg.canvasBg,
-        items: [
-          OptionItem('global', s.canvasFollowGlobal, icon: Icons.public_outlined),
-          OptionItem('gray', s.canvasGray, icon: Icons.grid_4x4),
-          OptionItem('black', s.canvasBlack, icon: Icons.dark_mode_outlined),
-          OptionItem('white', s.canvasWhite, icon: Icons.light_mode_outlined),
-        ],
-        onChanged: (v) => state.updateConfig((c) => c..canvasBg = v),
-      )),
-    ]),
+    Row(
+      children: [
+        Expanded(
+          child: Text(
+            s.canvasBgLabel,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: clr, fontSize: 12),
+          ),
+        ),
+        SizedBox(
+          width: _kMenuWidth,
+          child: OptionMenuBar<String>(
+            expandable: true,
+            value: cfg.canvasBg,
+            items: [
+              OptionItem(
+                'global',
+                s.canvasFollowGlobal,
+                icon: Icons.public_outlined,
+              ),
+              OptionItem('gray', s.canvasGray, icon: Icons.grid_4x4),
+              OptionItem(
+                'black',
+                s.canvasBlack,
+                icon: Icons.dark_mode_outlined,
+              ),
+              OptionItem(
+                'white',
+                s.canvasWhite,
+                icon: Icons.light_mode_outlined,
+              ),
+            ],
+            onChanged: (v) => state.updateConfig((c) => c..canvasBg = v),
+          ),
+        ),
+      ],
+    ),
     const SizedBox(height: 10),
     // 逻辑门符号标准：ANSI/IEEE 或 IEC
     // 统一「左 = 图标+文字描述，右 = 调节选项」：标签在左、分段药丸在右，
     // 不再让标签独占一行把控件挤到下一行。
-    Row(children: [
-      Expanded(
-        child: Text(s.gateStdLabel,
-            maxLines: 1, overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: clr, fontSize: 12)),
-      ),
-      SizedBox(
-        width: _kMenuWidth,
-        // 下拉菜单（expandable: true）：用户要求「逻辑门符号标准改为下拉菜单样式，
-        // 跟上面画布背景选项一样」—— 两个选项的短列表用行内分段药丸会让触控目标
-        // 只有 ~58px 宽，且与上方「画布背景」的控件形态不一致。
-        child: OptionMenuBar<String>(
-          expandable: true,
-          value: cfg.gateStd,
-          items: const [
-            OptionItem('ansi', 'ANSI/IEEE'),
-            OptionItem('iec', 'IEC'),
-          ],
-          onChanged: (v) => state.updateConfig((c) => c..gateStd = v),
+    Row(
+      children: [
+        Expanded(
+          child: Text(
+            s.gateStdLabel,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: clr, fontSize: 12),
+          ),
         ),
-      ),
-    ]),
+        SizedBox(
+          width: _kMenuWidth,
+          // 下拉菜单（expandable: true）：用户要求「逻辑门符号标准改为下拉菜单样式，
+          // 跟上面画布背景选项一样」—— 两个选项的短列表用行内分段药丸会让触控目标
+          // 只有 ~58px 宽，且与上方「画布背景」的控件形态不一致。
+          child: OptionMenuBar<String>(
+            expandable: true,
+            value: cfg.gateStd,
+            items: const [
+              OptionItem('ansi', 'ANSI/IEEE'),
+              OptionItem('iec', 'IEC'),
+            ],
+            onChanged: (v) => state.updateConfig((c) => c..gateStd = v),
+          ),
+        ),
+      ],
+    ),
     const SizedBox(height: 6),
     // 小地图开关：右下角缩略图会压在画布上，画布本来就不大时可以关掉。
     SwitchListTile(
       dense: true,
       contentPadding: EdgeInsets.zero,
-      title: Text(s.isZh ? '画布小地图' : 'Canvas mini map',
-          style: TextStyle(color: clr, fontSize: 12)),
+      title: Text(
+        s.isZh ? '画布小地图' : 'Canvas mini map',
+        style: TextStyle(color: clr, fontSize: 12),
+      ),
       subtitle: Text(
         s.isZh
             ? '右下角显示全图缩略图与当前视口框，点击可跳转'
@@ -2856,8 +3750,10 @@ Widget _buildNodeEditorStyleCard(BuildContext ctx, AppState state) {
     SwitchListTile(
       dense: true,
       contentPadding: EdgeInsets.zero,
-      title: Text(s.isZh ? '拖动对齐网格' : 'Snap to grid',
-          style: TextStyle(color: clr, fontSize: 12)),
+      title: Text(
+        s.isZh ? '拖动对齐网格' : 'Snap to grid',
+        style: TextStyle(color: clr, fontSize: 12),
+      ),
       subtitle: Text(
         s.isZh
             ? '拖动节点时吸附到背景网格，方便对齐成一排'
@@ -2882,32 +3778,46 @@ Widget _buildNodeEditorStyleCard(BuildContext ctx, AppState state) {
     if (isMobilePlatform) ...[
       Padding(
         padding: const EdgeInsets.only(top: 14, bottom: 8),
-        child: Row(children: [
-          Text(s.isZh ? '界面尺寸' : 'UI size',
+        child: Row(
+          children: [
+            Text(
+              s.isZh ? '界面尺寸' : 'UI size',
               style: TextStyle(
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w600,
-                  color: scheme.primary,
-                  letterSpacing: 0.2)),
-          const SizedBox(width: 8),
-          Expanded(
-              child:
-                  Divider(height: 1, color: scheme.outlineVariant.withAlpha(70))),
-        ]),
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                color: scheme.primary,
+                letterSpacing: 0.2,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Divider(
+                height: 1,
+                color: scheme.outlineVariant.withAlpha(70),
+              ),
+            ),
+          ],
+        ),
       ),
       _SettingSlider(
         value: cfg.editorToolbarScale.clamp(0.5, 1.6),
-        min: 0.5, max: 1.6, divisions: 11,
+        min: 0.5,
+        max: 1.6,
+        divisions: 11,
         liveCommit: true,
-        label: (v) => '${s.isZh ? '顶部菜单栏大小' : 'Top toolbar size'}: ${(v * 100).round()}%',
+        label: (v) =>
+            '${s.isZh ? '顶部菜单栏大小' : 'Top toolbar size'}: ${(v * 100).round()}%',
         labelStyle: TextStyle(color: clr, fontSize: 12),
         onCommit: (v) => state.updateConfig((c) => c..editorToolbarScale = v),
       ),
       _SettingSlider(
         value: cfg.editorZoomScale.clamp(0.5, 1.6),
-        min: 0.5, max: 1.6, divisions: 11,
+        min: 0.5,
+        max: 1.6,
+        divisions: 11,
         liveCommit: true,
-        label: (v) => '${s.isZh ? '放大镜（缩放药丸）大小' : 'Zoom pill size'}: ${(v * 100).round()}%',
+        label: (v) =>
+            '${s.isZh ? '放大镜（缩放药丸）大小' : 'Zoom pill size'}: ${(v * 100).round()}%',
         labelStyle: TextStyle(color: clr, fontSize: 12),
         onCommit: (v) => state.updateConfig((c) => c..editorZoomScale = v),
       ),
@@ -2923,20 +3833,25 @@ Widget _buildNodeEditorStyleCard(BuildContext ctx, AppState state) {
     if (isMobilePlatform) ...[
       const SizedBox(height: 6),
       Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
-      _subPageEntry(ctx, scheme, clr,
-          icon: Icons.account_tree_outlined,
-          label: s.cardEditorMode,
-          scope: s.isZh ? '节点编辑器 / 快速模式' : 'Node editor / Quick mode',
-          onTap: () =>
-              _pushSettingsSubPage(ctx, s.cardEditorMode, _buildEditorMode)),
-      _subPageEntry(ctx, scheme, clr,
-          icon: Icons.save_outlined,
-          label: s.cardAutosave,
-          scope: s.isZh
-              ? '草稿自动保存与保存间隔'
-              : 'Draft autosave and save interval',
-          onTap: () =>
-              _pushSettingsSubPage(ctx, s.cardAutosave, _buildAutosave)),
+      _subPageEntry(
+        ctx,
+        scheme,
+        clr,
+        icon: Icons.account_tree_outlined,
+        label: s.cardEditorMode,
+        scope: s.isZh ? '节点编辑器 / 快速模式' : 'Node editor / Quick mode',
+        onTap: () =>
+            _pushSettingsSubPage(ctx, s.cardEditorMode, _buildEditorMode),
+      ),
+      _subPageEntry(
+        ctx,
+        scheme,
+        clr,
+        icon: Icons.save_outlined,
+        label: s.cardAutosave,
+        scope: s.isZh ? '草稿自动保存与保存间隔' : 'Draft autosave and save interval',
+        onTap: () => _pushSettingsSubPage(ctx, s.cardAutosave, _buildAutosave),
+      ),
     ],
   ]);
 }
@@ -2978,61 +3893,74 @@ Widget _fontWeightPicker(
       ? const ['细体', '常规', '中等', '半粗', '粗体']
       : const ['Light', 'Regular', 'Medium', 'SemiBold', 'Bold'];
   final family = cfg.fontFamily.isEmpty ? null : cfg.fontFamily;
-  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-    Text(s.qWeight, style: TextStyle(color: clr, fontSize: 12)),
-    const SizedBox(height: 6),
-    Row(children: [
-      for (var i = 0; i < _kFontWeights.length; i++) ...[
-        if (i > 0) const SizedBox(width: 6),
-        Expanded(
-          child: Tooltip(
-            message: '${labels[i]} · ${AppConfig.fontWeightValues[i]}',
-            child: InkWell(
-              borderRadius: BorderRadius.circular(10),
-              onTap: () => state.updateConfig((c) => c..fontWeightIndex = i),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                height: 48,
-                decoration: BoxDecoration(
-                  color: cfg.fontWeightIndex == i
-                      ? scheme.primary.withAlpha(38)
-                      : scheme.surfaceContainerHighest.withAlpha(70),
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(s.qWeight, style: TextStyle(color: clr, fontSize: 12)),
+      const SizedBox(height: 6),
+      Row(
+        children: [
+          for (var i = 0; i < _kFontWeights.length; i++) ...[
+            if (i > 0) const SizedBox(width: 6),
+            Expanded(
+              child: Tooltip(
+                message: '${labels[i]} · ${AppConfig.fontWeightValues[i]}',
+                child: InkWell(
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: cfg.fontWeightIndex == i
-                        ? scheme.primary
-                        : scheme.outlineVariant.withAlpha(90),
-                    width: cfg.fontWeightIndex == i ? 1.4 : 0.8,
-                  ),
-                ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text('Aa',
-                        style: TextStyle(
-                          fontSize: 15,
-                          height: 1.1,
-                          fontFamily: family,
-                          fontWeight: _kFontWeights[i],
-                          color: cfg.fontWeightIndex == i ? scheme.primary : clr,
-                        )),
-                    Text(labels[i],
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
+                  onTap: () =>
+                      state.updateConfig((c) => c..fontWeightIndex = i),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: cfg.fontWeightIndex == i
+                          ? scheme.primary.withAlpha(38)
+                          : scheme.surfaceContainerHighest.withAlpha(70),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: cfg.fontWeightIndex == i
+                            ? scheme.primary
+                            : scheme.outlineVariant.withAlpha(90),
+                        width: cfg.fontWeightIndex == i ? 1.4 : 0.8,
+                      ),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          'Aa',
+                          style: TextStyle(
+                            fontSize: 15,
+                            height: 1.1,
+                            fontFamily: family,
+                            fontWeight: _kFontWeights[i],
+                            color: cfg.fontWeightIndex == i
+                                ? scheme.primary
+                                : clr,
+                          ),
+                        ),
+                        Text(
+                          labels[i],
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
                             fontSize: 9,
                             height: 1.2,
                             fontFamily: family,
-                            color: scheme.outline)),
-                  ],
+                            color: scheme.outline,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
-        ),
-      ],
-    ]),
-  ]);
+          ],
+        ],
+      ),
+    ],
+  );
 }
 
 /// 表面样式设置行：左 = 图标 + 文字（可选作用范围说明），右 = 四值
@@ -3056,36 +3984,51 @@ Widget _optionRow(
   final clr = scheme.onSurface;
   return Padding(
     padding: const EdgeInsets.only(bottom: 10),
-    child: Row(children: [
-      Icon(icon, size: 15, color: scheme.primary),
-      const SizedBox(width: 8),
-      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // 大字号下固定宽度控件旁的标签不换行（只省略），避免行高变化导致
-        // 「标签与选择框不对称」的观感（见设置页各类设置行）。
-        Text(label, maxLines: 1, overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: clr, fontSize: 12)),
-        if (scope != null) ...[
-          const SizedBox(height: 2),
-          Text(scope, style: TextStyle(fontSize: 10, color: scheme.outline),
-              maxLines: 2, overflow: TextOverflow.ellipsis),
-        ],
-      ])),
-      const SizedBox(width: 8),
-      SizedBox(
-        width: _kMenuWidth,
-        child: OptionMenuBar<String>(
-          // 这里刻意不再给 OptionMenuBar 绑「随 value 变化」的 key。
-          // 当前值由 value 参数直接下发，State 不缓存它，所以外部改动
-          // （如低配自动降级）本就能正确刷新；而带 value 的 key 会在每次
-          // 选值后把 State 整个重建 —— State 一换，收起动画刚开始就被卸载，
-          // 浮层「啪」地消失（用户反馈「展开/收起没有动画」）。
-          expandable: true,
-          value: value,
-          items: items,
-          onChanged: onSelected,
+    child: Row(
+      children: [
+        Icon(icon, size: 15, color: scheme.primary),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 大字号下固定宽度控件旁的标签不换行（只省略），避免行高变化导致
+              // 「标签与选择框不对称」的观感（见设置页各类设置行）。
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: clr, fontSize: 12),
+              ),
+              if (scope != null) ...[
+                const SizedBox(height: 2),
+                Text(
+                  scope,
+                  style: TextStyle(fontSize: 10, color: scheme.outline),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ],
+          ),
         ),
-      ),
-    ]),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: _kMenuWidth,
+          child: OptionMenuBar<String>(
+            // 这里刻意不再给 OptionMenuBar 绑「随 value 变化」的 key。
+            // 当前值由 value 参数直接下发，State 不缓存它，所以外部改动
+            // （如低配自动降级）本就能正确刷新；而带 value 的 key 会在每次
+            // 选值后把 State 整个重建 —— State 一换，收起动画刚开始就被卸载，
+            // 浮层「啪」地消失（用户反馈「展开/收起没有动画」）。
+            expandable: true,
+            value: value,
+            items: items,
+            onChanged: onSelected,
+          ),
+        ),
+      ],
+    ),
   );
 }
 
@@ -3107,7 +4050,11 @@ Widget _styleRow(
     value: value,
     items: [
       OptionItem('theme', s.surfaceStyleTheme, icon: Icons.format_color_fill),
-      OptionItem('liquid', s.surfaceStyleLiquid, icon: Icons.water_drop_outlined),
+      OptionItem(
+        'liquid',
+        s.surfaceStyleLiquid,
+        icon: Icons.water_drop_outlined,
+      ),
       OptionItem('blur', s.glassBlur, icon: Icons.blur_on_outlined),
       OptionItem('gray', s.surfaceStyleGray, icon: Icons.grid_4x4),
     ],
@@ -3124,14 +4071,21 @@ Future<void> _pickBackground(BuildContext ctx, AppState state) async {
   final maxW = (logical.width * dpr).ceil();
   final maxH = (logical.height * dpr).ceil();
   final file = await FilePicker.pickFile(
-      type: FileType.custom, allowedExtensions: ['jpg', 'jpeg', 'png', 'bmp', 'webp']);
+    type: FileType.custom,
+    allowedExtensions: ['jpg', 'jpeg', 'png', 'bmp', 'webp'],
+  );
   if (file == null) return;
   // v13 起 path 由 uri.scheme 推导：只有 file:// 才给真实路径，
   // content:// 这类 SAF URI 天然为 null，不必再比较字符串前缀。
   final path = file.path;
   if (path == null) {
     // Android 11+ content:// URI 无法用 File 读取 → 用内存字节落盘
-    final saved = await _saveBackgroundBytes(await file.readAsBytes(), file.name, maxW, maxH);
+    final saved = await _saveBackgroundBytes(
+      await file.readAsBytes(),
+      file.name,
+      maxW,
+      maxH,
+    );
     if (saved != null) {
       state.updateConfig((c) => c..backgroundImage = saved);
     }
@@ -3157,7 +4111,8 @@ Future<void> _pickBackground(BuildContext ctx, AppState state) async {
 class _ThemeBackgroundSection extends StatefulWidget {
   const _ThemeBackgroundSection();
   @override
-  State<_ThemeBackgroundSection> createState() => _ThemeBackgroundSectionState();
+  State<_ThemeBackgroundSection> createState() =>
+      _ThemeBackgroundSectionState();
 }
 
 class _ThemeBackgroundSectionState extends State<_ThemeBackgroundSection> {
@@ -3188,88 +4143,121 @@ class _ThemeBackgroundSectionState extends State<_ThemeBackgroundSection> {
     final hasBg = cfg.backgroundImage.isNotEmpty;
     final name = hasBg ? cfg.backgroundImage.split(RegExp(r'[\\/]')).last : '';
 
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      // ── ① 预览行 ──
-      Row(children: [
-        _bgThumb(context, scheme, cfg.backgroundImage),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(s.bgCurrent,
-                  style: TextStyle(
-                      fontSize: 10, color: scheme.outline, letterSpacing: 0.3)),
-              const SizedBox(height: 3),
-              Text(
-                hasBg ? name : s.bgEmptyHint,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                    fontSize: 12, color: hasBg ? clr : scheme.outline),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // ── ① 预览行 ──
+        Row(
+          children: [
+            _bgThumb(context, scheme, cfg.backgroundImage),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    s.bgCurrent,
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: scheme.outline,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    hasBg ? name : s.bgEmptyHint,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: hasBg ? clr : scheme.outline,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        // ── ② 操作行 ──
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () => _pickBackground(context, state),
+                icon: Icon(
+                  hasBg ? Icons.swap_horiz : Icons.add_photo_alternate_outlined,
+                  size: 16,
+                ),
+                label: Text(
+                  hasBg ? s.bgReplace : s.bgChoose,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: scheme.primary,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 10,
+                  ),
+                  side: BorderSide(color: scheme.primary.withAlpha(90)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  textStyle: const TextStyle(fontSize: 12),
+                ),
+              ),
+            ),
+            if (hasBg) ...[
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                onPressed: () =>
+                    state.updateConfig((c) => c..backgroundImage = ''),
+                icon: const Icon(Icons.delete_outline, size: 16),
+                label: Text(s.remove),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: scheme.error,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 10,
+                  ),
+                  side: BorderSide(color: scheme.error.withAlpha(80)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  textStyle: const TextStyle(fontSize: 12),
+                ),
               ),
             ],
-          ),
+          ],
         ),
-      ]),
-      const SizedBox(height: 10),
-      // ── ② 操作行 ──
-      Row(children: [
-        Expanded(
-          child: OutlinedButton.icon(
-            onPressed: () => _pickBackground(context, state),
-            icon: Icon(
-                hasBg ? Icons.swap_horiz : Icons.add_photo_alternate_outlined,
-                size: 16),
-            label: Text(hasBg ? s.bgReplace : s.bgChoose,
-                maxLines: 1, overflow: TextOverflow.ellipsis),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: scheme.primary,
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-              side: BorderSide(color: scheme.primary.withAlpha(90)),
-              shape:
-                  RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              textStyle: const TextStyle(fontSize: 12),
-            ),
-          ),
+        Divider(height: 20, color: scheme.outlineVariant.withAlpha(60)),
+        // ── ③ 两条不透明度滑块 ──
+        // 直接平铺展示（原为「折叠 → 展开」的二级菜单，用户反馈不必要的折叠：
+        // 这两个滑块是背景设置的核心项，展开后卡片还会被撑高。
+        // 现在卡片高度在一帧内就是最终高度，不再有展开/收起动画）。
+        _SettingSlider(
+          value: cfg.backgroundOpacity,
+          min: 0.0,
+          max: 1.0,
+          divisions: 100,
+          label: (v) => '${s.bgOpacity}: ${(v * 100).round()}%',
+          labelStyle: TextStyle(color: clr, fontSize: 11),
+          onCommit: (v) => state.updateConfig((c) => c..backgroundOpacity = v),
         ),
-        if (hasBg) ...[
-          const SizedBox(width: 8),
-          OutlinedButton.icon(
-            onPressed: () => state.updateConfig((c) => c..backgroundImage = ''),
-            icon: const Icon(Icons.delete_outline, size: 16),
-            label: Text(s.remove),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: scheme.error,
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-              side: BorderSide(color: scheme.error.withAlpha(80)),
-              shape:
-                  RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              textStyle: const TextStyle(fontSize: 12),
-            ),
-          ),
-        ],
-      ]),
-      Divider(height: 20, color: scheme.outlineVariant.withAlpha(60)),
-      // ── ③ 两条不透明度滑块 ──
-      // 直接平铺展示（原为「折叠 → 展开」的二级菜单，用户反馈不必要的折叠：
-      // 这两个滑块是背景设置的核心项，展开后卡片还会被撑高。
-      // 现在卡片高度在一帧内就是最终高度，不再有展开/收起动画）。
-      _SettingSlider(
-        value: cfg.backgroundOpacity, min: 0.0, max: 1.0, divisions: 100,
-        label: (v) => '${s.bgOpacity}: ${(v * 100).round()}%',
-        labelStyle: TextStyle(color: clr, fontSize: 11),
-        onCommit: (v) => state.updateConfig((c) => c..backgroundOpacity = v),
-      ),
-      const SizedBox(height: 2),
-      _SettingSlider(
-        value: cfg.cardOpacity, min: 0.0, max: 1.0, divisions: 100,
-        label: (v) => '${s.cardOpacity}: ${(v * 100).round()}%',
-        labelStyle: TextStyle(color: clr, fontSize: 11),
-        onCommit: (v) => state.updateConfig((c) => c..cardOpacity = v),
-      ),
-    ]);
+        const SizedBox(height: 2),
+        _SettingSlider(
+          value: cfg.cardOpacity,
+          min: 0.0,
+          max: 1.0,
+          divisions: 100,
+          label: (v) => '${s.cardOpacity}: ${(v * 100).round()}%',
+          labelStyle: TextStyle(color: clr, fontSize: 11),
+          onCommit: (v) => state.updateConfig((c) => c..cardOpacity = v),
+        ),
+      ],
+    );
   }
 
   /// 背景预览缩略图：有背景且文件在 → 真实预览；否则给一个中性占位框
@@ -3300,13 +4288,13 @@ class _ThemeBackgroundSectionState extends State<_ThemeBackgroundSection> {
   }
 
   Widget _bgThumbPlaceholder(ColorScheme scheme) => DecoratedBox(
-        decoration: BoxDecoration(
-          color: scheme.onSurface.withAlpha(10),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: scheme.outlineVariant.withAlpha(70)),
-        ),
-        child: Icon(Icons.wallpaper_outlined, size: 22, color: scheme.outline),
-      );
+    decoration: BoxDecoration(
+      color: scheme.onSurface.withAlpha(10),
+      borderRadius: BorderRadius.circular(10),
+      border: Border.all(color: scheme.outlineVariant.withAlpha(70)),
+    ),
+    child: Icon(Icons.wallpaper_outlined, size: 22, color: scheme.outline),
+  );
 }
 
 /// 移动端设置 → 工具 → 命令：进入命令页
@@ -3315,17 +4303,27 @@ Widget _buildMobileCommandEntry(BuildContext ctx, AppState state) {
   final s = AppStrings.of(state.config.language);
   return _glass(ctx, state, s.navCommand, [
     ListTile(
-      dense: true, contentPadding: EdgeInsets.zero,
+      dense: true,
+      contentPadding: EdgeInsets.zero,
       leading: Icon(Icons.terminal_outlined, color: scheme.primary, size: 22),
-      title: Text(s.isZh ? '手动执行 FFmpeg 命令' : 'Run custom FFmpeg commands',
-          style: TextStyle(fontSize: 13, color: scheme.onSurface)),
-      subtitle: Text(s.isZh ? '命令输入 + 快捷模板 + 参数参考'
-          : 'Manual input + quick templates + parameter reference',
-          style: TextStyle(fontSize: 11, color: scheme.outline)),
+      title: Text(
+        s.isZh ? '手动执行 FFmpeg 命令' : 'Run custom FFmpeg commands',
+        style: TextStyle(fontSize: 13, color: scheme.onSurface),
+      ),
+      subtitle: Text(
+        s.isZh
+            ? '命令输入 + 快捷模板 + 参数参考'
+            : 'Manual input + quick templates + parameter reference',
+        style: TextStyle(fontSize: 11, color: scheme.outline),
+      ),
       trailing: Icon(Icons.chevron_right, color: scheme.outline),
       // CommandPage 自带壁纸与安全区顶栏，不再外层重复包装（见 _mobileToolRow 注释）
       onTap: () => Navigator.of(ctx).push(
-          MaterialPageRoute(allowSnapshotting: false, builder: (_) => const CommandPage())),
+        MaterialPageRoute(
+          allowSnapshotting: false,
+          builder: (_) => const CommandPage(),
+        ),
+      ),
     ),
   ]);
 }
@@ -3336,17 +4334,27 @@ Widget _buildMobileLogsEntry(BuildContext ctx, AppState state) {
   final s = AppStrings.of(state.config.language);
   return _glass(ctx, state, s.qLogs, [
     ListTile(
-      dense: true, contentPadding: EdgeInsets.zero,
+      dense: true,
+      contentPadding: EdgeInsets.zero,
       leading: Icon(Icons.terminal, color: scheme.primary, size: 22),
-      title: Text(s.isZh ? '查看运行日志' : 'View runtime logs',
-          style: TextStyle(fontSize: 13, color: scheme.onSurface)),
-      subtitle: Text(s.isZh ? '后端输出、FFmpeg 进度与错误信息'
-          : 'Backend output, FFmpeg progress and errors',
-          style: TextStyle(fontSize: 11, color: scheme.outline)),
+      title: Text(
+        s.isZh ? '查看运行日志' : 'View runtime logs',
+        style: TextStyle(fontSize: 13, color: scheme.onSurface),
+      ),
+      subtitle: Text(
+        s.isZh
+            ? '后端输出、FFmpeg 进度与错误信息'
+            : 'Backend output, FFmpeg progress and errors',
+        style: TextStyle(fontSize: 11, color: scheme.outline),
+      ),
       trailing: Icon(Icons.chevron_right, color: scheme.outline),
       // LogPage 自带壁纸与安全区顶栏，不再外层重复包装（见 _mobileToolRow 注释）
       onTap: () => Navigator.of(ctx).push(
-          MaterialPageRoute(allowSnapshotting: false, builder: (_) => const LogPage())),
+        MaterialPageRoute(
+          allowSnapshotting: false,
+          builder: (_) => const LogPage(),
+        ),
+      ),
     ),
   ]);
 }
@@ -3361,10 +4369,14 @@ Widget _buildPredictiveBack(BuildContext ctx, AppState state) {
     SwitchListTile(
       dense: true,
       contentPadding: EdgeInsets.zero,
-      title: Text(s.isZh ? '启用预测式返回手势' : 'Enable predictive back gesture',
-          style: TextStyle(color: clr, fontSize: 13)),
-      subtitle: Text(s.predictiveBackHint,
-          style: TextStyle(fontSize: 11, color: scheme.outline)),
+      title: Text(
+        s.isZh ? '启用预测式返回手势' : 'Enable predictive back gesture',
+        style: TextStyle(color: clr, fontSize: 13),
+      ),
+      subtitle: Text(
+        s.predictiveBackHint,
+        style: TextStyle(fontSize: 11, color: scheme.outline),
+      ),
       value: cfg.predictiveBack,
       onChanged: (v) => state.updateConfig((c) => c..predictiveBack = v),
     ),
@@ -3394,22 +4406,33 @@ Widget _buildLanguage(BuildContext ctx, AppState state) {
 
   return _glass(ctx, state, s.language, [
     // 左右布局：标签在左、下拉在右（固定宽度，不再整行拉满）
-    Row(children: [
-      Expanded(child: Text(s.languageInterface, maxLines: 1, overflow: TextOverflow.ellipsis,
-          style: TextStyle(color: clr, fontSize: 12))),
-      // 宽度统一取 _kMenuWidth（含前置图标后留给文字约 54px）：标签用
-      // 「中文 / English」而不是「中文 (简体)」，保证框内文字完整不被截断。
-      SizedBox(width: _kMenuWidth, child: OptionMenuBar<String>(
-        expandable: true,
-        value: cfg.language,
-        leadingIcon: Icons.language,
-        items: [
-          OptionItem('zh', s.isZh ? '中文' : 'Chinese'),
-          const OptionItem('en', 'English'),
-        ],
-        onChanged: (v) => state.updateConfig((c) => c..language = v),
-      )),
-    ]),
+    Row(
+      children: [
+        Expanded(
+          child: Text(
+            s.languageInterface,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: clr, fontSize: 12),
+          ),
+        ),
+        // 宽度统一取 _kMenuWidth（含前置图标后留给文字约 54px）：标签用
+        // 「中文 / English」而不是「中文 (简体)」，保证框内文字完整不被截断。
+        SizedBox(
+          width: _kMenuWidth,
+          child: OptionMenuBar<String>(
+            expandable: true,
+            value: cfg.language,
+            leadingIcon: Icons.language,
+            items: [
+              OptionItem('zh', s.isZh ? '中文' : 'Chinese'),
+              const OptionItem('en', 'English'),
+            ],
+            onChanged: (v) => state.updateConfig((c) => c..language = v),
+          ),
+        ),
+      ],
+    ),
   ]);
 }
 
@@ -3425,9 +4448,15 @@ Widget _buildFont(BuildContext ctx, AppState state) {
       ListTile(
         dense: true,
         contentPadding: EdgeInsets.zero,
-        leading: Icon(Icons.text_fields, size: 20, color: scheme.onSurfaceVariant),
-        title: Text(s.isZh ? '系统字体（默认）' : 'System font (default)',
-            style: TextStyle(fontSize: 13, color: clr)),
+        leading: Icon(
+          Icons.text_fields,
+          size: 20,
+          color: scheme.onSurfaceVariant,
+        ),
+        title: Text(
+          s.isZh ? '系统字体（默认）' : 'System font (default)',
+          style: TextStyle(fontSize: 13, color: clr),
+        ),
         trailing: cfg.fontFamily.isEmpty
             ? Icon(Icons.check_circle, size: 19, color: scheme.primary)
             : const SizedBox(width: 19),
@@ -3436,15 +4465,23 @@ Widget _buildFont(BuildContext ctx, AppState state) {
       ListTile(
         dense: true,
         contentPadding: EdgeInsets.zero,
-        leading: Icon(Icons.upload_file_outlined, size: 20, color: scheme.onSurfaceVariant),
-        title: Text(s.isZh ? '导入字体' : 'Import font',
-            style: TextStyle(fontSize: 13, color: clr)),
+        leading: Icon(
+          Icons.upload_file_outlined,
+          size: 20,
+          color: scheme.onSurfaceVariant,
+        ),
+        title: Text(
+          s.isZh ? '导入字体' : 'Import font',
+          style: TextStyle(fontSize: 13, color: clr),
+        ),
         subtitle: cfg.fontFamily.isEmpty
             ? null
-            : Text(cfg.fontFamily,
+            : Text(
+                cfg.fontFamily,
                 style: TextStyle(fontSize: 11, color: scheme.outline),
                 maxLines: 1,
-                overflow: TextOverflow.ellipsis),
+                overflow: TextOverflow.ellipsis,
+              ),
         trailing: cfg.fontFamily.isNotEmpty
             ? Icon(Icons.check_circle, size: 19, color: scheme.primary)
             : Icon(Icons.chevron_right, size: 19, color: scheme.outline),
@@ -3464,16 +4501,24 @@ Widget _buildFont(BuildContext ctx, AppState state) {
               borderRadius: BorderRadius.circular(10),
               border: Border.all(color: scheme.outlineVariant.withAlpha(90)),
             ),
-            child: Text('字体预览 Font Preview 123',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                    fontSize: 15, fontFamily: cfg.fontFamily, color: clr)),
+            child: Text(
+              '字体预览 Font Preview 123',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 15,
+                fontFamily: cfg.fontFamily,
+                color: clr,
+              ),
+            ),
           ),
         ),
       const Divider(height: 12, color: Colors.transparent),
       _SettingSlider(
-        value: cfg.fontSize, min: 10, max: 21, divisions: 11,
+        value: cfg.fontSize,
+        min: 10,
+        max: 21,
+        divisions: 11,
         // liveCommit：拖动过程中整页字号就跟着变（见 _SettingSlider.liveCommit）。
         // 松手才生效时，12~13px 的文字只差 1~2px，用户会以为「滑块没作用」。
         liveCommit: true,
@@ -3487,12 +4532,19 @@ Widget _buildFont(BuildContext ctx, AppState state) {
   }
 
   return _glass(ctx, state, s.font, [
-    FontPicker(currentFont: cfg.fontFamily, language: cfg.language, showImport: true,
-        onImport: () => _pickFont(ctx, state),
-        onSelected: (v) => state.updateConfig((c) => c..fontFamily = v)),
+    FontPicker(
+      currentFont: cfg.fontFamily,
+      language: cfg.language,
+      showImport: true,
+      onImport: () => _pickFont(ctx, state),
+      onSelected: (v) => state.updateConfig((c) => c..fontFamily = v),
+    ),
     const SizedBox(height: 10),
     _SettingSlider(
-      value: cfg.fontSize, min: 10, max: 21, divisions: 11,
+      value: cfg.fontSize,
+      min: 10,
+      max: 21,
+      divisions: 11,
       liveCommit: true, // 拖动即生效，理由同移动端分支
       label: (v) => '${s.fontSize}: ${v.round()}',
       labelStyle: TextStyle(color: clr, fontSize: 12),
@@ -3508,15 +4560,34 @@ Widget _buildOutput(BuildContext ctx, AppState state) {
   final s = AppStrings.of(cfg.language);
   final scheme = Theme.of(ctx).colorScheme;
   return _glass(ctx, state, s.output, [
-    _pf(ctx, s.outputDir, cfg.defaultOutputDir,
-        (v) => state.updateConfig((c) => c..defaultOutputDir = v),
-        () async { final d = await FilePicker.getDirectoryPath(); if (d != null) state.updateConfig((c) => c..defaultOutputDir = d); }),
+    _pf(
+      ctx,
+      s.outputDir,
+      cfg.defaultOutputDir,
+      (v) => state.updateConfig((c) => c..defaultOutputDir = v),
+      () async {
+        final d = await FilePicker.getDirectoryPath();
+        if (d != null) state.updateConfig((c) => c..defaultOutputDir = d);
+      },
+    ),
     const SizedBox(height: 8),
-    _pf(ctx, s.intermediateDir, cfg.intermediateDir,
-        (v) => state.updateConfig((c) => c..intermediateDir = v),
-        () async { final d = await FilePicker.getDirectoryPath(); if (d != null) state.updateConfig((c) => c..intermediateDir = d); }),
-    Padding(padding: const EdgeInsets.only(top: 2),
-        child: Text(s.intermediateHint, style: TextStyle(fontSize: 11, color: scheme.outline))),
+    _pf(
+      ctx,
+      s.intermediateDir,
+      cfg.intermediateDir,
+      (v) => state.updateConfig((c) => c..intermediateDir = v),
+      () async {
+        final d = await FilePicker.getDirectoryPath();
+        if (d != null) state.updateConfig((c) => c..intermediateDir = d);
+      },
+    ),
+    Padding(
+      padding: const EdgeInsets.only(top: 2),
+      child: Text(
+        s.intermediateHint,
+        style: TextStyle(fontSize: 11, color: scheme.outline),
+      ),
+    ),
   ]);
 }
 
@@ -3528,14 +4599,22 @@ Widget _buildEditorMode(BuildContext ctx, AppState state) {
     OptionMenuBar<int>(
       value: cfg.editMode,
       items: [
-        OptionItem(0, s.isZh ? '节点编辑器' : 'Node Editor',
-            icon: Icons.account_tree_outlined,
-            subtitle: s.isZh ? '蓝图式节点画布，可处理复杂的多步骤逻辑'
-                             : 'Blueprint-style canvas for complex multi-step logic'),
-        OptionItem(1, s.isZh ? '快速模式' : 'Quick Mode',
-            icon: Icons.bolt_outlined,
-            subtitle: s.isZh ? '选择文件后快速配置处理参数，适配视频/图片/音频'
-                             : 'Quickly configure processing per file type (video/image/audio)'),
+        OptionItem(
+          0,
+          s.isZh ? '节点编辑器' : 'Node Editor',
+          icon: Icons.account_tree_outlined,
+          subtitle: s.isZh
+              ? '蓝图式节点画布，可处理复杂的多步骤逻辑'
+              : 'Blueprint-style canvas for complex multi-step logic',
+        ),
+        OptionItem(
+          1,
+          s.isZh ? '快速模式' : 'Quick Mode',
+          icon: Icons.bolt_outlined,
+          subtitle: s.isZh
+              ? '选择文件后快速配置处理参数，适配视频/图片/音频'
+              : 'Quickly configure processing per file type (video/image/audio)',
+        ),
       ],
       onChanged: (v) => state.updateConfig((c) => c..editMode = v),
     ),
@@ -3549,42 +4628,102 @@ Widget _buildAutosave(BuildContext ctx, AppState state) {
   final clr = scheme.onSurface;
   return _glass(ctx, state, s.cardAutosave, [
     if (isMobilePlatform) ...[
-      SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-          title: Text(s.isZh ? '节点编辑器横屏' : 'Landscape node editor', style: TextStyle(color: clr, fontSize: 13)),
-          subtitle: Text(s.isZh ? '进入节点编辑器时默认横屏显示，画布更宽（移动端）' : 'Open the node editor in landscape by default for a wider canvas (mobile)',
-              style: TextStyle(fontSize: 11, color: scheme.outline)),
-          value: cfg.useNodeEditorLandscape,
-          onChanged: (v) => state.updateConfig((c) => c..useNodeEditorLandscape = v)),
+      SwitchListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        title: Text(
+          s.isZh ? '节点编辑器横屏' : 'Landscape node editor',
+          style: TextStyle(color: clr, fontSize: 13),
+        ),
+        subtitle: Text(
+          s.isZh
+              ? '进入节点编辑器时默认横屏显示，画布更宽（移动端）'
+              : 'Open the node editor in landscape by default for a wider canvas (mobile)',
+          style: TextStyle(fontSize: 11, color: scheme.outline),
+        ),
+        value: cfg.useNodeEditorLandscape,
+        onChanged: (v) =>
+            state.updateConfig((c) => c..useNodeEditorLandscape = v),
+      ),
       const Divider(height: 4, color: Colors.transparent),
     ],
-    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-        title: Text(s.isZh ? '启用节点编辑器自动保存' : 'Enable editor autosave', style: TextStyle(color: clr, fontSize: 13)),
-        subtitle: Text(s.isZh ? '编辑节点画布时定期保存草稿，异常退出后可恢复' : 'Periodically save drafts while editing; restore after abnormal exit',
-            style: TextStyle(fontSize: 11, color: scheme.outline)),
-        value: cfg.autosaveEnabled,
-        onChanged: (v) => state.updateConfig((c) => c..autosaveEnabled = v)),
+    SwitchListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: Text(
+        s.isZh ? '启用节点编辑器自动保存' : 'Enable editor autosave',
+        style: TextStyle(color: clr, fontSize: 13),
+      ),
+      subtitle: Text(
+        s.isZh
+            ? '编辑节点画布时定期保存草稿，异常退出后可恢复'
+            : 'Periodically save drafts while editing; restore after abnormal exit',
+        style: TextStyle(fontSize: 11, color: scheme.outline),
+      ),
+      value: cfg.autosaveEnabled,
+      onChanged: (v) => state.updateConfig((c) => c..autosaveEnabled = v),
+    ),
     const SizedBox(height: 6),
     // 左右布局：标签左、下拉右（固定宽度，不再整行拉满）
-    Row(children: [
-      Expanded(child: Text(s.isZh ? '保存间隔' : 'Save Interval', maxLines: 1,
-          overflow: TextOverflow.ellipsis, style: TextStyle(color: clr, fontSize: 12))),
-      // 「选项文字不跟随应用内字号」（用户要求）：下拉是固定宽度(104)的选项控件，
-      // 字号一大，「30 秒 / 不限制」这类文字就被省略号截断。系统字号仍然生效，
-      // 见 theme/app_text_scale.dart 的 withoutAppTextScale。
-      withoutAppTextScale(ctx, SizedBox(width: 104, child: DropdownButtonFormField<int>(borderRadius: BorderRadius.circular(12), initialValue: cfg.autosaveIntervalSec, isDense: true, isExpanded: true,
-          style: TextStyle(fontSize: 12, color: clr), dropdownColor: scheme.surface,
-          decoration: InputDecoration(isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
-          items: [
-            for (final sec in [10, 30, 60, 120, 300])
-              DropdownMenuItem(value: sec, child: Text(sec < 60
-                  ? (s.isZh ? '$sec 秒' : '$sec s')
-                  : (s.isZh ? '${sec ~/ 60} 分钟' : '${sec ~/ 60} min'))),
-          ],
-          onChanged: (v) { if (v != null) state.updateConfig((c) => c..autosaveIntervalSec = v); }))),
-    ]),
+    Row(
+      children: [
+        Expanded(
+          child: Text(
+            s.isZh ? '保存间隔' : 'Save Interval',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: clr, fontSize: 12),
+          ),
+        ),
+        // 「选项文字不跟随应用内字号」（用户要求）：下拉是固定宽度(104)的选项控件，
+        // 字号一大，「30 秒 / 不限制」这类文字就被省略号截断。系统字号仍然生效，
+        // 见 theme/app_text_scale.dart 的 withoutAppTextScale。
+        withoutAppTextScale(
+          ctx,
+          SizedBox(
+            width: 104,
+            child: DropdownButtonFormField<int>(
+              borderRadius: BorderRadius.circular(12),
+              initialValue: cfg.autosaveIntervalSec,
+              isDense: true,
+              isExpanded: true,
+              style: TextStyle(fontSize: 12, color: clr),
+              dropdownColor: scheme.surface,
+              decoration: InputDecoration(
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              items: [
+                for (final sec in [10, 30, 60, 120, 300])
+                  DropdownMenuItem(
+                    value: sec,
+                    child: Text(
+                      sec < 60
+                          ? (s.isZh ? '$sec 秒' : '$sec s')
+                          : (s.isZh ? '${sec ~/ 60} 分钟' : '${sec ~/ 60} min'),
+                    ),
+                  ),
+              ],
+              onChanged: (v) {
+                if (v != null)
+                  state.updateConfig((c) => c..autosaveIntervalSec = v);
+              },
+            ),
+          ),
+        ),
+      ],
+    ),
     const SizedBox(height: 4),
-    Text(s.isZh ? '停止操作后多久自动保存一次' : 'How long after edits stop before autosaving', style: TextStyle(fontSize: 10, color: scheme.outline)),
+    Text(
+      s.isZh ? '停止操作后多久自动保存一次' : 'How long after edits stop before autosaving',
+      style: TextStyle(fontSize: 10, color: scheme.outline),
+    ),
   ]);
 }
 
@@ -3593,12 +4732,21 @@ Widget _buildShortcuts(BuildContext ctx, AppState state) {
   final scheme = Theme.of(ctx).colorScheme;
   final clr = scheme.onSurface;
   return _glass(ctx, state, s.cardShortcuts, [
-    ListTile(dense: true, contentPadding: EdgeInsets.zero,
-        leading: Icon(Icons.keyboard, size: 20, color: scheme.primary),
-        title: Text(s.isZh ? '快捷键配置' : 'Keyboard Shortcuts', style: TextStyle(color: clr, fontSize: 13)),
-        subtitle: Text(s.isZh ? '配置画布和基本操作快捷键' : 'Configure canvas and basic shortcuts', style: TextStyle(fontSize: 11, color: scheme.outline)),
-        trailing: Icon(Icons.chevron_right, size: 18, color: scheme.outline),
-        onTap: () => showKeybindingDialog(ctx, isZh: s.isZh)),
+    ListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(Icons.keyboard, size: 20, color: scheme.primary),
+      title: Text(
+        s.isZh ? '快捷键配置' : 'Keyboard Shortcuts',
+        style: TextStyle(color: clr, fontSize: 13),
+      ),
+      subtitle: Text(
+        s.isZh ? '配置画布和基本操作快捷键' : 'Configure canvas and basic shortcuts',
+        style: TextStyle(fontSize: 11, color: scheme.outline),
+      ),
+      trailing: Icon(Icons.chevron_right, size: 18, color: scheme.outline),
+      onTap: () => showKeybindingDialog(ctx, isZh: s.isZh),
+    ),
   ]);
 }
 
@@ -3608,47 +4756,145 @@ Widget _buildTasks(BuildContext ctx, AppState state) {
   final scheme = Theme.of(ctx).colorScheme;
   final clr = scheme.onSurface;
   // 二级页「按主题分开」：拆成 ① 并发与解析（性能）② 通知。
-  return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-    _glass(ctx, state, s.isZh ? '并发与解析' : 'Concurrency & probing', [
-    // 左右布局：标签左、下拉右（固定宽度，不再整行拉满）
-    Row(children: [
-      Expanded(child: Text(s.isZh ? '同时启用任务数' : 'Concurrent Tasks', maxLines: 1,
-          overflow: TextOverflow.ellipsis, style: TextStyle(color: clr, fontSize: 12))),
-      withoutAppTextScale(ctx, SizedBox(width: 104, child: DropdownButtonFormField<int>(borderRadius: BorderRadius.circular(12), initialValue: cfg.maxConcurrentTasks, isDense: true, isExpanded: true,
-          style: TextStyle(fontSize: 12, color: clr), dropdownColor: scheme.surface,
-          decoration: InputDecoration(isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
-          items: [
-            ...List.generate(8, (i) => DropdownMenuItem(value: i + 1, child: Text('${i + 1}'))),
-            DropdownMenuItem(value: 0, child: Text(s.isZh ? '不限制' : 'Unlimited')),
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      _glass(ctx, state, s.isZh ? '并发与解析' : 'Concurrency & probing', [
+        // 左右布局：标签左、下拉右（固定宽度，不再整行拉满）
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                s.isZh ? '同时启用任务数' : 'Concurrent Tasks',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: clr, fontSize: 12),
+              ),
+            ),
+            withoutAppTextScale(
+              ctx,
+              SizedBox(
+                width: 104,
+                child: DropdownButtonFormField<int>(
+                  borderRadius: BorderRadius.circular(12),
+                  initialValue: cfg.maxConcurrentTasks,
+                  isDense: true,
+                  isExpanded: true,
+                  style: TextStyle(fontSize: 12, color: clr),
+                  dropdownColor: scheme.surface,
+                  decoration: InputDecoration(
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  items: [
+                    ...List.generate(
+                      8,
+                      (i) => DropdownMenuItem(
+                        value: i + 1,
+                        child: Text('${i + 1}'),
+                      ),
+                    ),
+                    DropdownMenuItem(
+                      value: 0,
+                      child: Text(s.isZh ? '不限制' : 'Unlimited'),
+                    ),
+                  ],
+                  onChanged: (v) {
+                    if (v != null)
+                      state.updateConfig((c) => c..maxConcurrentTasks = v);
+                  },
+                ),
+              ),
+            ),
           ],
-          onChanged: (v) { if (v != null) state.updateConfig((c) => c..maxConcurrentTasks = v); }))),
-    ]),
-    const SizedBox(height: 4),
-    Text(s.isZh ? '控制队列中同时处理的任务数量' : 'Controls how many tasks run in parallel', style: TextStyle(fontSize: 10, color: scheme.outline)),
-    const SizedBox(height: 12),
-    Row(children: [
-      Expanded(child: Text(s.isZh ? '解析线程数' : 'Probe Threads', maxLines: 1,
-          overflow: TextOverflow.ellipsis, style: TextStyle(color: clr, fontSize: 12))),
-      withoutAppTextScale(ctx, SizedBox(width: 104, child: DropdownButtonFormField<int>(borderRadius: BorderRadius.circular(12), initialValue: cfg.probeThreads, isDense: true, isExpanded: true,
-          style: TextStyle(fontSize: 12, color: clr), dropdownColor: scheme.surface,
-          decoration: InputDecoration(isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
-          items: List.generate(8, (i) => DropdownMenuItem(value: i + 1, child: Text('${i + 1}'))),
-          onChanged: (v) { if (v != null) state.updateConfig((c) => c..probeThreads = v); }))),
-    ]),
-    const SizedBox(height: 4),
-    Text(s.isZh ? '添加文件时同时解析的线程数，增大可加快批量导入速度' : 'Number of concurrent probe threads when importing files', style: TextStyle(fontSize: 10, color: scheme.outline)),
-    ]),
-    const SizedBox(height: 8),
-    _glass(ctx, state, s.isZh ? '通知' : 'Notifications', [
-      SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-          title: Text(s.isZh ? '任务完成系统通知' : 'Task completion notification', style: TextStyle(color: clr, fontSize: 13)),
-          subtitle: Text(s.isZh ? '每个任务完成时发送系统通知' : 'Send system notification when each task finishes', style: TextStyle(fontSize: 11, color: scheme.outline)),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          s.isZh ? '控制队列中同时处理的任务数量' : 'Controls how many tasks run in parallel',
+          style: TextStyle(fontSize: 10, color: scheme.outline),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                s.isZh ? '解析线程数' : 'Probe Threads',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: clr, fontSize: 12),
+              ),
+            ),
+            withoutAppTextScale(
+              ctx,
+              SizedBox(
+                width: 104,
+                child: DropdownButtonFormField<int>(
+                  borderRadius: BorderRadius.circular(12),
+                  initialValue: cfg.probeThreads,
+                  isDense: true,
+                  isExpanded: true,
+                  style: TextStyle(fontSize: 12, color: clr),
+                  dropdownColor: scheme.surface,
+                  decoration: InputDecoration(
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  items: List.generate(
+                    8,
+                    (i) =>
+                        DropdownMenuItem(value: i + 1, child: Text('${i + 1}')),
+                  ),
+                  onChanged: (v) {
+                    if (v != null)
+                      state.updateConfig((c) => c..probeThreads = v);
+                  },
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          s.isZh
+              ? '添加文件时同时解析的线程数，增大可加快批量导入速度'
+              : 'Number of concurrent probe threads when importing files',
+          style: TextStyle(fontSize: 10, color: scheme.outline),
+        ),
+      ]),
+      const SizedBox(height: 8),
+      _glass(ctx, state, s.isZh ? '通知' : 'Notifications', [
+        SwitchListTile(
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          title: Text(
+            s.isZh ? '任务完成系统通知' : 'Task completion notification',
+            style: TextStyle(color: clr, fontSize: 13),
+          ),
+          subtitle: Text(
+            s.isZh
+                ? '每个任务完成时发送系统通知'
+                : 'Send system notification when each task finishes',
+            style: TextStyle(fontSize: 11, color: scheme.outline),
+          ),
           value: cfg.enableSystemNotification,
-          onChanged: (v) => state.updateConfig((c) => c..enableSystemNotification = v)),
-    ]),
-  ]);
+          onChanged: (v) =>
+              state.updateConfig((c) => c..enableSystemNotification = v),
+        ),
+      ]),
+    ],
+  );
 }
 
 /// 「高级 → 预加载」卡片：关闭预加载开关。
@@ -3678,10 +4924,14 @@ Widget _buildDisplay(BuildContext ctx, AppState state) {
     SwitchListTile(
       dense: true,
       contentPadding: EdgeInsets.zero,
-      title: Text(s.highRefreshRateLabel,
-          style: TextStyle(color: clr, fontSize: 13)),
-      subtitle: Text(s.highRefreshRateHint,
-          style: TextStyle(fontSize: 10, color: scheme.outline)),
+      title: Text(
+        s.highRefreshRateLabel,
+        style: TextStyle(color: clr, fontSize: 13),
+      ),
+      subtitle: Text(
+        s.highRefreshRateHint,
+        style: TextStyle(fontSize: 10, color: scheme.outline),
+      ),
       value: cfg.highRefreshRate,
       onChanged: (v) {
         state.updateConfig((c) => c..highRefreshRate = v);
@@ -3695,20 +4945,25 @@ Widget _buildDisplay(BuildContext ctx, AppState state) {
         final max = snap.data;
         final text = max == null
             ? (s.isZh
-                ? '未能读取屏幕刷新率（非 Android 或系统限制）'
-                : 'Display refresh rate unavailable')
+                  ? '未能读取屏幕刷新率（非 Android 或系统限制）'
+                  : 'Display refresh rate unavailable')
             : (s.isZh
-                ? '屏幕当前分辨率最高刷新率：${_fmtHz(max)}'
-                : 'Display max refresh rate: ${_fmtHz(max)}');
+                  ? '屏幕当前分辨率最高刷新率：${_fmtHz(max)}'
+                  : 'Display max refresh rate: ${_fmtHz(max)}');
         return Padding(
           padding: const EdgeInsets.only(top: 6),
-          child: Row(children: [
-            Icon(Icons.speed_outlined, size: 14, color: scheme.primary),
-            const SizedBox(width: 6),
-            Expanded(
-                child: Text(text,
-                    style: TextStyle(fontSize: 10.5, color: scheme.outline))),
-          ]),
+          child: Row(
+            children: [
+              Icon(Icons.speed_outlined, size: 14, color: scheme.primary),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  text,
+                  style: TextStyle(fontSize: 10.5, color: scheme.outline),
+                ),
+              ),
+            ],
+          ),
         );
       },
     ),
@@ -3726,20 +4981,26 @@ Widget _buildPreload(BuildContext ctx, AppState state) {
   final s = AppStrings.of(cfg.language);
   final scheme = Theme.of(ctx).colorScheme;
   return _glass(ctx, state, s.isZh ? '预加载' : 'Preload', [
-    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-        title: Text(s.isZh ? '关闭预加载' : 'Disable Preload',
-            style: TextStyle(color: scheme.onSurface, fontSize: 13)),
-        // 文案要与实际被跳过的项目对齐：此前只写了「其他页面切换时才绘制」，
-        // 而实测这条开关同时管着字体列表枚举与壁纸解码（见 main.dart 的
-        // warmupEnabled），说明与实际不符。
-        // 唯一不受它管的是「自定义字体加载」—— 那是功能不是预热，不做就缺字体。
-        subtitle: Text(
-            s.isZh
-                ? '启动时只绘制当前页面：跳过后台页面构建、字体列表枚举与壁纸解码预热。\n注意：首次切换到某个页面时会现场构建，可能短暂增加 CPU 占用。'
-                : 'At startup only the current page is drawn: background page builds, font-list enumeration and wallpaper decode are skipped.\nNote: the first visit to a page builds it on the spot, which may briefly raise CPU usage.',
-            style: TextStyle(fontSize: 10, color: scheme.outline)),
-        value: cfg.noPreload,
-        onChanged: (v) => state.updateConfig((c) => c..noPreload = v)),
+    SwitchListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: Text(
+        s.isZh ? '关闭预加载' : 'Disable Preload',
+        style: TextStyle(color: scheme.onSurface, fontSize: 13),
+      ),
+      // 文案要与实际被跳过的项目对齐：此前只写了「其他页面切换时才绘制」，
+      // 而实测这条开关同时管着字体列表枚举与壁纸解码（见 main.dart 的
+      // warmupEnabled），说明与实际不符。
+      // 唯一不受它管的是「自定义字体加载」—— 那是功能不是预热，不做就缺字体。
+      subtitle: Text(
+        s.isZh
+            ? '启动时只绘制当前页面：跳过后台页面构建、字体列表枚举与壁纸解码预热。\n注意：首次切换到某个页面时会现场构建，可能短暂增加 CPU 占用。'
+            : 'At startup only the current page is drawn: background page builds, font-list enumeration and wallpaper decode are skipped.\nNote: the first visit to a page builds it on the spot, which may briefly raise CPU usage.',
+        style: TextStyle(fontSize: 10, color: scheme.outline),
+      ),
+      value: cfg.noPreload,
+      onChanged: (v) => state.updateConfig((c) => c..noPreload = v),
+    ),
   ]);
 }
 
@@ -3748,16 +5009,31 @@ Widget _buildDebug(BuildContext ctx, AppState state) {
   final s = AppStrings.of(cfg.language);
   final clr = Theme.of(ctx).colorScheme.onSurface;
   return _glass(ctx, state, s.dDebug, [
-    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-        title: Text(s.dDebugMode, style: TextStyle(color: clr, fontSize: 13)),
-        value: cfg.debugMode, onChanged: (v) => state.updateConfig((c) => c..debugMode = v)),
-    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-        title: Text(s.dSaveLogs, style: TextStyle(color: clr, fontSize: 13)),
-        value: cfg.saveLogs, onChanged: (v) => state.updateConfig((c) => c..saveLogs = v)),
+    SwitchListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: Text(s.dDebugMode, style: TextStyle(color: clr, fontSize: 13)),
+      value: cfg.debugMode,
+      onChanged: (v) => state.updateConfig((c) => c..debugMode = v),
+    ),
+    SwitchListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: Text(s.dSaveLogs, style: TextStyle(color: clr, fontSize: 13)),
+      value: cfg.saveLogs,
+      onChanged: (v) => state.updateConfig((c) => c..saveLogs = v),
+    ),
     if (cfg.saveLogs)
-      _pf(ctx, s.dLogPath, cfg.logSavePath,
-          (v) => state.updateConfig((c) => c..logSavePath = v),
-          () async { final d = await FilePicker.getDirectoryPath(); if (d != null) state.updateConfig((c) => c..logSavePath = d); }),
+      _pf(
+        ctx,
+        s.dLogPath,
+        cfg.logSavePath,
+        (v) => state.updateConfig((c) => c..logSavePath = v),
+        () async {
+          final d = await FilePicker.getDirectoryPath();
+          if (d != null) state.updateConfig((c) => c..logSavePath = d);
+        },
+      ),
   ]);
 }
 
@@ -3765,29 +5041,43 @@ Widget _buildCache(BuildContext ctx, AppState state) {
   final s = AppStrings.of(state.config.language);
   final scheme = Theme.of(ctx).colorScheme;
   return _glass(ctx, state, s.cardCache, [
-    SizedBox(width: double.infinity, child: Material(
-      color: scheme.errorContainer.withAlpha(100),
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        onTap: () => _clearCache(ctx, state, scheme, s),
+    SizedBox(
+      width: double.infinity,
+      child: Material(
+        color: scheme.errorContainer.withAlpha(100),
         borderRadius: BorderRadius.circular(14),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
-          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Icon(Icons.delete_sweep_rounded, size: 20, color: scheme.error),
-            const SizedBox(width: 8),
-            Text(s.isZh ? '清除缓存' : 'Clear Cache', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.error)),
-          ]),
+        child: InkWell(
+          onTap: () => _clearCache(ctx, state, scheme, s),
+          borderRadius: BorderRadius.circular(14),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.delete_sweep_rounded, size: 20, color: scheme.error),
+                const SizedBox(width: 8),
+                Text(
+                  s.isZh ? '清除缓存' : 'Clear Cache',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.error,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
-    )),
+    ),
     const SizedBox(height: 6),
     // 说明两个子选项各自的代价：图片/字体删掉要重新导入，导入缓存删掉只是回收空间
     Text(
-        s.isZh
-            ? '点击后选择：清除「图片 / 字体」，或清除缓存（导入副本、缩略图、帧预览）'
-            : 'Choose: clear images/fonts, or clear cache (copies, thumbnails, frame previews)',
-        style: TextStyle(fontSize: 10, height: 1.35, color: scheme.outline)),
+      s.isZh
+          ? '点击后选择：清除「图片 / 字体」，或清除缓存（导入副本、缩略图、帧预览）'
+          : 'Choose: clear images/fonts, or clear cache (copies, thumbnails, frame previews)',
+      style: TextStyle(fontSize: 10, height: 1.35, color: scheme.outline),
+    ),
   ]);
 }
 
@@ -3795,14 +5085,24 @@ Widget _buildCache(BuildContext ctx, AppState state) {
 /// AdsPage 与 CreditsPage 一样自带壁纸与安全区顶栏，这里不再包 SafeArea
 /// （外层 SafeArea 会把 MediaQuery.padding.top 清零，顶栏会被状态栏压住）。
 void _openAds(BuildContext ctx) {
-  Navigator.of(ctx).push(MaterialPageRoute(allowSnapshotting: false, builder: (_) => const AdsPage()));
+  Navigator.of(ctx).push(
+    MaterialPageRoute(
+      allowSnapshotting: false,
+      builder: (_) => const AdsPage(),
+    ),
+  );
 }
 
 void _openCredits(BuildContext ctx) {
   // CreditsPage 自带壁纸与安全区顶栏（MobileSubPageTopBar 读取 padding.top），
   // 外层再套 SafeArea 会把 padding.top 清零 → 顶栏被状态栏压住。
   // 桌面端 padding 恒为 0，去掉 SafeArea 无影响。
-  Navigator.of(ctx).push(MaterialPageRoute(allowSnapshotting: false, builder: (_) => const CreditsPage()));
+  Navigator.of(ctx).push(
+    MaterialPageRoute(
+      allowSnapshotting: false,
+      builder: (_) => const CreditsPage(),
+    ),
+  );
 }
 
 /// 关于页展示的编译日期（发布时更新）。
@@ -3822,19 +5122,42 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
   // 编译日期原先挤在头部，现挪到卡 2 的版本信息里 —— 它是版本细节，放在头部会让
   // 头部退化成「什么都往上堆」的信息板（用户反馈的正是头图与信息混在一起）。
   final Widget headerCard = _glass(ctx, state, s.aboutTitle, [
-    Center(child: Column(children: [
-      const SizedBox(height: 4),
-      ClipRRect(
-          borderRadius: BorderRadius.circular(mobile ? 16 : 12),
-          child: Image.asset('rele/icon.png', width: iconSize, height: iconSize, fit: BoxFit.cover,
-              errorBuilder: (_, _, _) => Icon(Icons.play_circle_fill, size: iconSize, color: scheme.primary))),
-      SizedBox(height: mobile ? 10 : 8),
-      Text('FFmpeg++',
-          style: TextStyle(fontSize: mobile ? 20 : 16, fontWeight: FontWeight.w700, color: scheme.primary)),
-      const SizedBox(height: 2),
-      Text(version, style: TextStyle(fontSize: mobile ? 13 : 12, color: scheme.outline)),
-      const SizedBox(height: 4),
-    ])),
+    Center(
+      child: Column(
+        children: [
+          const SizedBox(height: 4),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(mobile ? 16 : 12),
+            child: Image.asset(
+              'rele/icon.png',
+              width: iconSize,
+              height: iconSize,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => Icon(
+                Icons.play_circle_fill,
+                size: iconSize,
+                color: scheme.primary,
+              ),
+            ),
+          ),
+          SizedBox(height: mobile ? 10 : 8),
+          Text(
+            'FFmpeg++',
+            style: TextStyle(
+              fontSize: mobile ? 20 : 16,
+              fontWeight: FontWeight.w700,
+              color: scheme.primary,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            version,
+            style: TextStyle(fontSize: mobile ? 13 : 12, color: scheme.outline),
+          ),
+          const SizedBox(height: 4),
+        ],
+      ),
+    ),
   ]);
 
   // ── 卡 2：版本与更新 ──
@@ -3845,71 +5168,146 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
       // 「编译日期」是纯信息行，同样用 ListTile 但无 onTap，与相邻行对齐。
       ? _glass(ctx, state, infoTitle, [
           ListTile(
-            dense: true, contentPadding: EdgeInsets.zero,
+            dense: true,
+            contentPadding: EdgeInsets.zero,
             leading: Icon(Icons.info_outline, size: 20, color: scheme.primary),
-            title: Text(s.aboutVersion, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
-            trailing: Text(version,
-                style: TextStyle(fontSize: 13, color: scheme.outline, fontWeight: FontWeight.w500)),
+            title: Text(
+              s.aboutVersion,
+              style: TextStyle(fontSize: 13, color: scheme.onSurface),
+            ),
+            trailing: Text(
+              version,
+              style: TextStyle(
+                fontSize: 13,
+                color: scheme.outline,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
           ),
           ListTile(
-            dense: true, contentPadding: EdgeInsets.zero,
-            leading: Icon(Icons.event_outlined, size: 20, color: scheme.primary),
-            title: Text(s.aboutBuildDate, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
-            trailing: Text(kAboutBuildDate,
-                style: TextStyle(fontSize: 13, color: scheme.outline, fontWeight: FontWeight.w500)),
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(
+              Icons.event_outlined,
+              size: 20,
+              color: scheme.primary,
+            ),
+            title: Text(
+              s.aboutBuildDate,
+              style: TextStyle(fontSize: 13, color: scheme.onSurface),
+            ),
+            trailing: Text(
+              kAboutBuildDate,
+              style: TextStyle(
+                fontSize: 13,
+                color: scheme.outline,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
           ),
           const Divider(height: 1),
           const SizedBox(height: 6),
           ListTile(
-            dense: true, contentPadding: EdgeInsets.zero,
-            leading: Icon(Icons.system_update_alt, size: 20, color: scheme.primary),
-            title: Text(s.cardUpdate, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(
+              Icons.system_update_alt,
+              size: 20,
+              color: scheme.primary,
+            ),
+            title: Text(
+              s.cardUpdate,
+              style: TextStyle(fontSize: 13, color: scheme.onSurface),
+            ),
             subtitle: Text(
-                s.isZh ? '点按在线检查新版本；长按直达发布页'
-                       : 'Tap to check online; long-press to open the release page',
-                style: TextStyle(fontSize: 11, color: scheme.outline)),
+              s.isZh
+                  ? '点按在线检查新版本；长按直达发布页'
+                  : 'Tap to check online; long-press to open the release page',
+              style: TextStyle(fontSize: 11, color: scheme.outline),
+            ),
             trailing: const Icon(Icons.chevron_right, size: 16),
             // 移动端也走在线检查：发现新版本弹窗展示（APK 分发，下载动作
             // 自动降级为浏览器打开发布页/下载链接，见 _showUpdateDialog）
             onTap: () => _checkForUpdate(ctx, s),
             onLongPress: () => openExternalUrl(
-                'https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases'),
+              'https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases',
+            ),
           ),
           ListTile(
-            dense: true, contentPadding: EdgeInsets.zero,
+            dense: true,
+            contentPadding: EdgeInsets.zero,
             leading: Icon(Icons.code, size: 20, color: scheme.primary),
-            title: Text(s.aboutGithub, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+            title: Text(
+              s.aboutGithub,
+              style: TextStyle(fontSize: 13, color: scheme.onSurface),
+            ),
             trailing: const Icon(Icons.open_in_new, size: 16),
-            onTap: () => openExternalUrl('https://github.com/lvbaoshigao/FFmpeg_plus_plus'),
+            onTap: () => openExternalUrl(
+              'https://github.com/lvbaoshigao/FFmpeg_plus_plus',
+            ),
           ),
           ListTile(
-            dense: true, contentPadding: EdgeInsets.zero,
-            leading: Icon(Icons.article_outlined, size: 20, color: scheme.primary),
-            title: Text(s.aboutBlog, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(
+              Icons.article_outlined,
+              size: 20,
+              color: scheme.primary,
+            ),
+            title: Text(
+              s.aboutBlog,
+              style: TextStyle(fontSize: 13, color: scheme.onSurface),
+            ),
             trailing: const Icon(Icons.open_in_new, size: 16),
             onTap: () => openExternalUrl('https://blog-clstone.netlify.app/'),
           ),
           ListTile(
-            dense: true, contentPadding: EdgeInsets.zero,
-            leading: Icon(Icons.volunteer_activism, size: 20, color: scheme.primary),
-            title: Text(s.aboutSponsor, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(
+              Icons.volunteer_activism,
+              size: 20,
+              color: scheme.primary,
+            ),
+            title: Text(
+              s.aboutSponsor,
+              style: TextStyle(fontSize: 13, color: scheme.onSurface),
+            ),
             trailing: const Icon(Icons.chevron_right, size: 18),
             onTap: () => _showSponsor(ctx, scheme, s),
           ),
           ListTile(
-            dense: true, contentPadding: EdgeInsets.zero,
-            leading: Icon(Icons.favorite_outline, size: 20, color: scheme.primary),
-            title: Text(s.aboutReferences, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(
+              Icons.favorite_outline,
+              size: 20,
+              color: scheme.primary,
+            ),
+            title: Text(
+              s.aboutReferences,
+              style: TextStyle(fontSize: 13, color: scheme.onSurface),
+            ),
             trailing: const Icon(Icons.chevron_right, size: 18),
             onTap: () => _openCredits(ctx),
           ),
           // 广告入口（三级页面）：当前没有广告投放 → 页面显示「哦先生目前并没有放广告」空状态
           ListTile(
-            dense: true, contentPadding: EdgeInsets.zero,
-            leading: Icon(Icons.campaign_outlined, size: 20, color: scheme.primary),
-            title: Text(s.isZh ? '广告' : 'Ads', style: TextStyle(fontSize: 13, color: scheme.onSurface)),
-            subtitle: Text(s.isZh ? '查看广告内容' : 'View sponsored content',
-                style: TextStyle(fontSize: 11, color: scheme.outline)),
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(
+              Icons.campaign_outlined,
+              size: 20,
+              color: scheme.primary,
+            ),
+            title: Text(
+              s.isZh ? '广告' : 'Ads',
+              style: TextStyle(fontSize: 13, color: scheme.onSurface),
+            ),
+            subtitle: Text(
+              s.isZh ? '查看广告内容' : 'View sponsored content',
+              style: TextStyle(fontSize: 11, color: scheme.outline),
+            ),
             trailing: const Icon(Icons.chevron_right, size: 18),
             onTap: () => _openAds(ctx),
           ),
@@ -3918,42 +5316,88 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
           _infoRow(s.aboutVersion, version, scheme),
           _infoRow(s.aboutBuildDate, kAboutBuildDate, scheme),
           _infoRow(s.aboutBlog, 'blog-clstone.netlify.app', scheme),
-          _infoRow(s.aboutGithub, 'github.com/lvbaoshigao/FFmpeg_plus_plus', scheme),
+          _infoRow(
+            s.aboutGithub,
+            'github.com/lvbaoshigao/FFmpeg_plus_plus',
+            scheme,
+          ),
           const SizedBox(height: 8),
           // 「检查更新」入口（原独立「更新」卡片已并入这里）：自动检查开关 + 手动检查按钮
-          SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-              title: Text(s.isZh ? '启动时自动检查更新' : 'Auto-check updates on startup',
-                  style: TextStyle(color: scheme.onSurface, fontSize: 13)),
-              subtitle: Text(s.isZh ? '静默检查，仅在有新版本时通知'
-                      : 'Silent check, notifies only when new version available',
-                  style: TextStyle(fontSize: 11, color: scheme.outline)),
-              value: state.config.autoCheckUpdate,
-              onChanged: (v) => state.updateConfig((c) => c..autoCheckUpdate = v)),
+          SwitchListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            title: Text(
+              s.isZh ? '启动时自动检查更新' : 'Auto-check updates on startup',
+              style: TextStyle(color: scheme.onSurface, fontSize: 13),
+            ),
+            subtitle: Text(
+              s.isZh
+                  ? '静默检查，仅在有新版本时通知'
+                  : 'Silent check, notifies only when new version available',
+              style: TextStyle(fontSize: 11, color: scheme.outline),
+            ),
+            value: state.config.autoCheckUpdate,
+            onChanged: (v) => state.updateConfig((c) => c..autoCheckUpdate = v),
+          ),
           const SizedBox(height: 4),
-          Row(children: [
-            Expanded(child: _iosButton(icon: Icons.volunteer_activism, label: s.aboutSponsorBtn,
-                color: scheme.primary, bg: scheme.primaryContainer, onTap: () => _showSponsor(ctx, scheme, s))),
-            const SizedBox(width: 8),
-            Expanded(child: _iosButton(icon: Icons.system_update, label: s.checkUpdate,
-                color: scheme.onSecondaryContainer, bg: scheme.secondaryContainer,
-                onTap: () => _checkForUpdate(ctx, s))),
-          ]),
+          Row(
+            children: [
+              Expanded(
+                child: _iosButton(
+                  icon: Icons.volunteer_activism,
+                  label: s.aboutSponsorBtn,
+                  color: scheme.primary,
+                  bg: scheme.primaryContainer,
+                  onTap: () => _showSponsor(ctx, scheme, s),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _iosButton(
+                  icon: Icons.system_update,
+                  label: s.checkUpdate,
+                  color: scheme.onSecondaryContainer,
+                  bg: scheme.secondaryContainer,
+                  onTap: () => _checkForUpdate(ctx, s),
+                ),
+              ),
+            ],
+          ),
           const SizedBox(height: 8),
-          SizedBox(width: double.infinity, child: _iosButton(
-              icon: Icons.favorite_outline, label: s.aboutReferences,
-              color: scheme.onSurface, bg: scheme.surfaceContainerHighest.withAlpha(100),
-              onTap: () => _openCredits(ctx))),
+          SizedBox(
+            width: double.infinity,
+            child: _iosButton(
+              icon: Icons.favorite_outline,
+              label: s.aboutReferences,
+              color: scheme.onSurface,
+              bg: scheme.surfaceContainerHighest.withAlpha(100),
+              onTap: () => _openCredits(ctx),
+            ),
+          ),
           const SizedBox(height: 8),
           // 广告入口（三级页面）：与「引用」同一套按钮/页面样式
-          SizedBox(width: double.infinity, child: _iosButton(
-              icon: Icons.campaign_outlined, label: s.isZh ? '广告' : 'Ads',
-              color: scheme.onSurface, bg: scheme.surfaceContainerHighest.withAlpha(100),
-              onTap: () => _openAds(ctx))),
+          SizedBox(
+            width: double.infinity,
+            child: _iosButton(
+              icon: Icons.campaign_outlined,
+              label: s.isZh ? '广告' : 'Ads',
+              color: scheme.onSurface,
+              bg: scheme.surfaceContainerHighest.withAlpha(100),
+              onTap: () => _openAds(ctx),
+            ),
+          ),
           const SizedBox(height: 10),
-          Wrap(spacing: 4, runSpacing: 4, children: [
-            _link(s.aboutBlogLink, 'https://blog-clstone.netlify.app/'),
-            _link('GitHub', 'https://github.com/lvbaoshigao/FFmpeg_plus_plus'),
-          ]),
+          Wrap(
+            spacing: 4,
+            runSpacing: 4,
+            children: [
+              _link(s.aboutBlogLink, 'https://blog-clstone.netlify.app/'),
+              _link(
+                'GitHub',
+                'https://github.com/lvbaoshigao/FFmpeg_plus_plus',
+              ),
+            ],
+          ),
         ]);
 
   // 两张卡纵向排布。**必须** CrossAxisAlignment.stretch：默认的 center 会让
@@ -3963,11 +5407,7 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
   // 不会管网格项内部的这两张卡。
   return Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      headerCard,
-      const SizedBox(height: 12),
-      infoCard,
-    ],
+    children: [headerCard, const SizedBox(height: 12), infoCard],
   );
 }
 
@@ -3977,22 +5417,40 @@ Widget _buildMcpAi(BuildContext ctx, AppState state) {
   final scheme = Theme.of(ctx).colorScheme;
   final clr = scheme.onSurface;
   return _glass(ctx, state, s.mcpTitle, [
-    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-        title: Text(s.mcpEnable, style: TextStyle(color: clr)),
-        subtitle: cfg.mcpEnabled
-            ? Text(
-                state.mcpError != null
-                    ? state.mcpError!
-                    : state.mcpRunning ? (s.isZh ? '运行中' : 'Running') : (s.isZh ? '已停止' : 'Stopped'),
-                style: TextStyle(fontSize: 10, color: state.mcpError != null ? scheme.sem.danger : state.mcpRunning ? scheme.sem.success : scheme.sem.neutral))
-            : null,
-        value: cfg.mcpEnabled,
-        onChanged: (v) => state.toggleMcpServer(v)),
+    SwitchListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: Text(s.mcpEnable, style: TextStyle(color: clr)),
+      subtitle: cfg.mcpEnabled
+          ? Text(
+              state.mcpError != null
+                  ? state.mcpError!
+                  : state.mcpRunning
+                  ? (s.isZh ? '运行中' : 'Running')
+                  : (s.isZh ? '已停止' : 'Stopped'),
+              style: TextStyle(
+                fontSize: 10,
+                color: state.mcpError != null
+                    ? scheme.sem.danger
+                    : state.mcpRunning
+                    ? scheme.sem.success
+                    : scheme.sem.neutral,
+              ),
+            )
+          : null,
+      value: cfg.mcpEnabled,
+      onChanged: (v) => state.toggleMcpServer(v),
+    ),
     if (cfg.mcpEnabled) ...[
       _McpFieldRow(
-        label: Text('${s.mcpPort}:', style: TextStyle(color: clr, fontSize: 12)),
+        label: Text(
+          '${s.mcpPort}:',
+          style: TextStyle(color: clr, fontSize: 12),
+        ),
         field: _McpTextField(
-          value: cfg.mcpPort.toString(), label: '', scheme: scheme,
+          value: cfg.mcpPort.toString(),
+          label: '',
+          scheme: scheme,
           size: AppControlSize.regular,
           onChange: (v) {
             final port = int.tryParse(v);
@@ -4004,7 +5462,10 @@ Widget _buildMcpAi(BuildContext ctx, AppState state) {
         action: FilledButton.tonalIcon(
           style: AppControlSize.regular.buttonStyle(filled: true),
           icon: Icon(Icons.refresh, size: AppControlSize.regular.iconSize),
-          label: Text(s.isZh ? '应用' : 'Apply', style: const TextStyle(fontSize: 11)),
+          label: Text(
+            s.isZh ? '应用' : 'Apply',
+            style: const TextStyle(fontSize: 11),
+          ),
           onPressed: () async {
             state.mcpError = null;
             await state.stopMcpServer();
@@ -4014,9 +5475,14 @@ Widget _buildMcpAi(BuildContext ctx, AppState state) {
       ),
       const SizedBox(height: 8),
       _McpFieldRow(
-        label: Text(s.isZh ? '监听地址:' : 'Bind host:', style: TextStyle(color: clr, fontSize: 12)),
+        label: Text(
+          s.isZh ? '监听地址:' : 'Bind host:',
+          style: TextStyle(color: clr, fontSize: 12),
+        ),
         field: _McpTextField(
-          value: cfg.mcpHost, label: '', scheme: scheme,
+          value: cfg.mcpHost,
+          label: '',
+          scheme: scheme,
           hint: '127.0.0.1',
           size: AppControlSize.regular,
           onChange: (v) {
@@ -4028,7 +5494,9 @@ Widget _buildMcpAi(BuildContext ctx, AppState state) {
           },
         ),
         note: Text(
-          s.isZh ? '改后点「应用」。设为 0.0.0.0 将暴露到局域网并启用访问令牌' : 'Click Apply. 0.0.0.0 exposes to LAN and enables token',
+          s.isZh
+              ? '改后点「应用」。设为 0.0.0.0 将暴露到局域网并启用访问令牌'
+              : 'Click Apply. 0.0.0.0 exposes to LAN and enables token',
           style: TextStyle(fontSize: 10, color: scheme.outline),
         ),
       ),
@@ -4038,26 +5506,53 @@ Widget _buildMcpAi(BuildContext ctx, AppState state) {
         padding: const EdgeInsets.only(top: 4),
         child: SelectableText(
           '${s.isZh ? '局域网访问令牌' : 'LAN access token'}: ${state.mcpToken}',
-          style: TextStyle(fontSize: 11, color: scheme.primary, fontWeight: FontWeight.w600),
+          style: TextStyle(
+            fontSize: 11,
+            color: scheme.primary,
+            fontWeight: FontWeight.w600,
+          ),
         ),
       ),
-    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-        title: Text(s.isZh ? '允许 MCP 写入' : 'Allow MCP Write', style: TextStyle(color: clr, fontSize: 12)),
-        subtitle: Text(s.isZh ? '关闭时 MCP 只能读取画布/文件，所有修改操作会被拒绝' : 'When off, MCP can only read the canvas/files; all write actions are rejected',
-            style: TextStyle(fontSize: 10, color: scheme.outline)),
-        value: cfg.mcpAllowWrite,
-        onChanged: (v) => state.updateConfig((c) => c..mcpAllowWrite = v)),
-    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-        title: Text(s.isZh ? '允许 MCP 访问文件系统' : 'Allow MCP File Access', style: TextStyle(color: clr, fontSize: 12)),
-        subtitle: Text(s.isZh ? '控制列目录/文件信息/媒体探测三个工具；本机任何程序都能调用 MCP，不依赖时可关闭' : 'Gates list_directory / read_file_info / probe_video; any local program can call MCP — turn off when unused',
-            style: TextStyle(fontSize: 10, color: scheme.outline)),
-        value: cfg.mcpAllowFsAccess,
-        onChanged: (v) => state.updateConfig((c) => c..mcpAllowFsAccess = v)),
+    SwitchListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: Text(
+        s.isZh ? '允许 MCP 写入' : 'Allow MCP Write',
+        style: TextStyle(color: clr, fontSize: 12),
+      ),
+      subtitle: Text(
+        s.isZh
+            ? '关闭时 MCP 只能读取画布/文件，所有修改操作会被拒绝'
+            : 'When off, MCP can only read the canvas/files; all write actions are rejected',
+        style: TextStyle(fontSize: 10, color: scheme.outline),
+      ),
+      value: cfg.mcpAllowWrite,
+      onChanged: (v) => state.updateConfig((c) => c..mcpAllowWrite = v),
+    ),
+    SwitchListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: Text(
+        s.isZh ? '允许 MCP 访问文件系统' : 'Allow MCP File Access',
+        style: TextStyle(color: clr, fontSize: 12),
+      ),
+      subtitle: Text(
+        s.isZh
+            ? '控制列目录/文件信息/媒体探测三个工具；本机任何程序都能调用 MCP，不依赖时可关闭'
+            : 'Gates list_directory / read_file_info / probe_video; any local program can call MCP — turn off when unused',
+        style: TextStyle(fontSize: 10, color: scheme.outline),
+      ),
+      value: cfg.mcpAllowFsAccess,
+      onChanged: (v) => state.updateConfig((c) => c..mcpAllowFsAccess = v),
+    ),
     const SizedBox(height: 8),
-    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-        title: Text(s.aiEnable, style: TextStyle(color: clr)),
-        value: cfg.aiEnabled,
-        onChanged: (v) => state.updateConfig((c) => c..aiEnabled = v)),
+    SwitchListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: Text(s.aiEnable, style: TextStyle(color: clr)),
+      value: cfg.aiEnabled,
+      onChanged: (v) => state.updateConfig((c) => c..aiEnabled = v),
+    ),
     if (cfg.aiEnabled)
       Align(
         alignment: Alignment.centerRight,
@@ -4076,11 +5571,16 @@ Widget _buildMcpAi(BuildContext ctx, AppState state) {
 void _showAiSettingsDialog(BuildContext ctx, AppState state, AppStrings s) {
   if (isMobilePlatform) {
     // 移动端：AI「更多选项」改为二级页面（全屏 + 返回按钮），而非 PC 式底部弹窗
-    Navigator.of(ctx).push(MaterialPageRoute<void>(allowSnapshotting: false, 
-      builder: (bCtx) => Scaffold(
-        body: SafeArea(child: _aiSettingsContent(bCtx, state, s, asSheet: false)),
+    Navigator.of(ctx).push(
+      MaterialPageRoute<void>(
+        allowSnapshotting: false,
+        builder: (bCtx) => Scaffold(
+          body: SafeArea(
+            child: _aiSettingsContent(bCtx, state, s, asSheet: false),
+          ),
+        ),
       ),
-    ));
+    );
     return;
   }
   showModalBottomSheet(
@@ -4095,57 +5595,79 @@ void _showAiSettingsDialog(BuildContext ctx, AppState state, AppStrings s) {
 
 /// AI 设置内容主体。asSheet=true 以底部弹层呈现（桌面），asSheet=false 以全屏
 /// 二级页面呈现（移动端，带返回按钮）。两种形态复用同一段配置表单。
-Widget _aiSettingsContent(BuildContext bCtx, AppState state, AppStrings s, {required bool asSheet}) {
+Widget _aiSettingsContent(
+  BuildContext bCtx,
+  AppState state,
+  AppStrings s, {
+  required bool asSheet,
+}) {
   final zh = s.isZh;
   // 持久状态（闭包捕获，StatefulBuilder 重建时保留）：
   // 当前选中的配置 id + 正在编辑的草稿（null=尚未开始编辑）
   String selProfileId = state.config.aiProfiles.isNotEmpty
       ? (state.config.activeAiProfileId.isNotEmpty
-          ? state.config.activeAiProfileId
-          : state.config.aiProfiles.first.id)
+            ? state.config.activeAiProfileId
+            : state.config.aiProfiles.first.id)
       : '';
   AiProfile? draft;
   bool showPreset = false;
-  return StatefulBuilder(builder: (ctx2, setDState) {
-        final cfg = state.config;
-        final scheme = Theme.of(ctx2).colorScheme;
-        final clr = scheme.onSurface;
-        final cardColor = scheme.surface.withAlpha((cfg.cardOpacity * 255).round().clamp(0, 255));
+  return StatefulBuilder(
+    builder: (ctx2, setDState) {
+      final cfg = state.config;
+      final scheme = Theme.of(ctx2).colorScheme;
+      final clr = scheme.onSurface;
+      final cardColor = scheme.surface.withAlpha(
+        (cfg.cardOpacity * 255).round().clamp(0, 255),
+      );
 
-        // 当前编辑对象：优先草稿，其次从列表取
-        AiProfile? selected() {
-          if (draft != null) return draft;
-          for (final pr in cfg.aiProfiles) {
-            if (pr.id == selProfileId) return pr;
-          }
-          return null;
+      // 当前编辑对象：优先草稿，其次从列表取
+      AiProfile? selected() {
+        if (draft != null) return draft;
+        for (final pr in cfg.aiProfiles) {
+          if (pr.id == selProfileId) return pr;
         }
+        return null;
+      }
 
-        Widget section(String title, IconData icon, List<Widget> children) => Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          decoration: BoxDecoration(
-            color: cardColor,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
-          ),
-          child: Padding(padding: const EdgeInsets.all(14), child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(children: [
-                Icon(icon, size: 16, color: scheme.primary),
-                const SizedBox(width: 6),
-                Text(title, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.primary)),
-              ]),
-              const SizedBox(height: 10),
-              ...children,
-            ],
-          )),
-        );
+      Widget section(String title, IconData icon, List<Widget> children) =>
+          Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            decoration: BoxDecoration(
+              color: cardColor,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(icon, size: 16, color: scheme.primary),
+                      const SizedBox(width: 6),
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: scheme.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  ...children,
+                ],
+              ),
+            ),
+          );
 
-        // 标题行：移动端二级页面带返回按钮；桌面弹层只有标题 + 完成
-        Widget headerRow({required bool withBack}) => Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(children: [
+      // 标题行：移动端二级页面带返回按钮；桌面弹层只有标题 + 完成
+      Widget headerRow({required bool withBack}) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
             if (withBack) ...[
               IconButton(
                 icon: Icon(Icons.arrow_back_ios_new, size: 16, color: clr),
@@ -4155,252 +5677,484 @@ Widget _aiSettingsContent(BuildContext bCtx, AppState state, AppStrings s, {requ
               ),
               const SizedBox(width: 4),
             ],
-            Text(s.aiSettings, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: clr)),
+            Text(
+              s.aiSettings,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: clr,
+              ),
+            ),
             const Spacer(),
-            TextButton(onPressed: () => Navigator.pop(bCtx), child: Text(zh ? '完成' : 'Done')),
-          ]),
-        );
+            TextButton(
+              onPressed: () => Navigator.pop(bCtx),
+              child: Text(zh ? '完成' : 'Done'),
+            ),
+          ],
+        ),
+      );
 
-        // 内容列表（AI 配置 / 权限 / 行为 / 提示词等分区），两种形态共用
-        Widget listBody(ScrollController? ctrl) => ListView(
-          controller: ctrl,
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-          children: [
-                  // ── AI 配置（左右分区：左列表 / 右详情） ──
-                  section(zh ? 'AI 配置' : 'AI Profiles', Icons.folder_shared_outlined, [
-                    SizedBox(
-                      height: 300,
-                      child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                        // ══ 左：配置列表 ══
-                        Container(
-                          width: 170,
-                          decoration: BoxDecoration(
-                            color: scheme.surfaceContainerHighest.withAlpha(50),
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: scheme.outlineVariant.withAlpha(50)),
-                          ),
-                          child: Column(children: [
-                            Expanded(
-                              child: cfg.aiProfiles.isEmpty
-                                  ? Center(child: Text(zh ? '暂无配置' : 'No profiles',
-                                      style: TextStyle(fontSize: 11, color: scheme.outline)))
-                                  : ListView.builder(
-                                      padding: const EdgeInsets.symmetric(vertical: 4),
-                                      itemCount: cfg.aiProfiles.length,
-                                      itemBuilder: (_, i) {
-                                        final pr = cfg.aiProfiles[i];
-                                        final isSel = pr.id == selProfileId;
-                                        return InkWell(
-                                          onTap: () { selProfileId = pr.id; draft = null; showPreset = false; setDState(() {}); },
-                                          child: Container(
-                                            margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                                            decoration: BoxDecoration(
-                                              color: isSel ? scheme.primaryContainer.withAlpha(120) : Colors.transparent,
-                                              borderRadius: BorderRadius.circular(8),
-                                            ),
-                                            child: Row(children: [
-                                              Icon(
-                                                pr.enabled
-                                                    ? (isSel ? Icons.radio_button_checked : Icons.cloud_outlined)
-                                                    : Icons.cloud_off_outlined,
-                                                size: 13,
-                                                color: isSel ? scheme.primary : (pr.enabled ? scheme.outline : scheme.outline.withAlpha(60)),
-                                              ),
-                                              const SizedBox(width: 6),
-                                              Expanded(child: Text(pr.name, maxLines: 1, overflow: TextOverflow.ellipsis,
-                                                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
-                                                      color: isSel ? scheme.primary : (pr.enabled ? clr : scheme.outline)))),
-                                            ]),
-                                          ),
-                                        );
-                                      },
-                                    ),
-                            ),
-                            Divider(height: 1, color: scheme.outlineVariant.withAlpha(40)),
-                            // 新建配置
-                            InkWell(
-                              onTap: () {
-                                final np = AiProfile(name: zh ? '新配置' : 'New Profile');
-                                // 只建本地草稿，点"保存"才落库。
-                                // 原实现立即 updateConfig 持久化，不保存就关闭对话框会留下幽灵配置。
-                                selProfileId = np.id; draft = np; showPreset = true;
-                                setDState(() {});
-                              },
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(vertical: 8),
-                                child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                                  Icon(Icons.add, size: 14, color: scheme.primary),
-                                  const SizedBox(width: 4),
-                                  Text(zh ? '新建配置' : 'New Profile',
-                                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: scheme.primary)),
-                                ]),
-                              ),
-                            ),
-                          ]),
-                        ),
-                        const SizedBox(width: 12),
-                        // ══ 右：配置详情 ══
-                        Expanded(
-                          child: selected() == null
-                              ? Center(child: Text(zh ? '选择或新建一个配置' : 'Select or create a profile',
-                                  style: TextStyle(fontSize: 11, color: scheme.outline)))
-                              : _buildProfileDetail(ctx2, state, setDState, scheme, clr, s, zh, selected()!, selProfileId, draft, showPreset, () {
-                                  selProfileId = cfg.aiProfiles.isNotEmpty ? cfg.aiProfiles.first.id : '';
-                                  draft = null;
-                                  setDState(() {});
-                                }),
-                        ),
-                      ]),
-                    ),
-                    const SizedBox(height: 8),
-                  ]),
-
-                  // ── Permissions ──
-                  section(s.aiPermissions, Icons.security_outlined, [
-                    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-                        title: Text(s.aiReadAccess, style: TextStyle(color: clr, fontSize: 12)),
-                        subtitle: Text(s.aiReadAccessDesc, style: TextStyle(color: scheme.outline, fontSize: 10)),
-                        value: cfg.aiReadAccess,
-                        onChanged: (v) { state.updateConfig((c) => c..aiReadAccess = v); setDState(() {}); }),
-                    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-                        title: Text(s.aiWriteAccess, style: TextStyle(color: clr, fontSize: 12)),
-                        subtitle: Text(s.aiWriteAccessDesc, style: TextStyle(color: scheme.outline, fontSize: 10)),
-                        value: cfg.aiWriteAccess,
-                        onChanged: (v) { state.updateConfig((c) => c..aiWriteAccess = v); setDState(() {}); }),
-                    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-                        title: Text(s.aiAutoExecute, style: TextStyle(color: clr, fontSize: 12)),
-                        subtitle: Text(s.aiAutoExecuteDesc, style: TextStyle(color: scheme.outline, fontSize: 10)),
-                        value: cfg.aiAutoExecute,
-                        onChanged: (v) { state.updateConfig((c) => c..aiAutoExecute = v); setDState(() {}); }),
-                    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-                        title: Text(s.aiAllowAsk, style: TextStyle(color: clr, fontSize: 12)),
-                        subtitle: Text(s.aiAllowAskDesc, style: TextStyle(color: scheme.outline, fontSize: 10)),
-                        value: cfg.aiAllowAsk,
-                        onChanged: (v) { state.updateConfig((c) => c..aiAllowAsk = v); setDState(() {}); }),
-                  ]),
-                  // ── Advanced ──
-                  section(s.aiAdvanced, Icons.tune_outlined, [
-                    // 图生成模式：下拉菜单（原分段按钮在窄栏里两个长标签会挤压换行）
-                    Row(children: [
-                      Expanded(child: Text(s.aiGraphModeLabel,
-                          style: TextStyle(color: clr, fontSize: 12))),
-                      SizedBox(width: _kMenuWidth, child: OptionMenuBar<String>(
-                        key: ValueKey('aiGraphMode_${cfg.aiGraphMode}'),
-                        expandable: true,
-                        value: cfg.aiGraphMode,
-                        items: [
-                          OptionItem('redo', s.aiGraphModeRedo, icon: Icons.refresh),
-                          OptionItem('modify', s.aiGraphModeModify, icon: Icons.edit_outlined),
-                        ],
-                        onChanged: (v) {
-                          state.updateConfig((c) => c..aiGraphMode = v);
-                          setDState(() {});
-                        },
-                      )),
-                    ]),
-                    const SizedBox(height: 8),
-                    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-                        title: Text(s.aiShowThinking, style: TextStyle(color: clr, fontSize: 12)),
-                        subtitle: Text(s.aiShowThinkingDesc, style: TextStyle(color: scheme.outline, fontSize: 10)),
-                        value: cfg.aiShowThinking,
-                        onChanged: (v) { state.updateConfig((c) => c..aiShowThinking = v); setDState(() {}); }),
-                    SwitchListTile(dense: true, contentPadding: EdgeInsets.zero,
-                        title: Text(s.aiAutoTitleLabel, style: TextStyle(color: clr, fontSize: 12)),
-                        subtitle: Text(s.aiAutoTitleDesc, style: TextStyle(color: scheme.outline, fontSize: 10)),
-                        value: cfg.aiAutoTitle,
-                        onChanged: (v) { state.updateConfig((c) => c..aiAutoTitle = v); setDState(() {}); }),
-                    if (cfg.aiAutoTitle) ...[
-                      const SizedBox(height: 4),
-                      Text(s.aiTitlePromptLabel, style: TextStyle(color: clr, fontSize: 12)),
-                      const SizedBox(height: 6),
-                      _McpTextField(
-                        value: cfg.aiTitlePrompt,
-                        label: '',
-                        hint: s.isZh ? '标题生成提示词（可改写）' : 'Title prompt (editable)',
-                        scheme: scheme,
-                        minLines: 2,
-                        maxLines: 4,
-                        onChange: (v) => state.updateConfig((c) => c..aiTitlePrompt = v),
+      // 内容列表（AI 配置 / 权限 / 行为 / 提示词等分区），两种形态共用
+      Widget listBody(ScrollController? ctrl) => ListView(
+        controller: ctrl,
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+        children: [
+          // ── AI 配置（左右分区：左列表 / 右详情） ──
+          section(zh ? 'AI 配置' : 'AI Profiles', Icons.folder_shared_outlined, [
+            SizedBox(
+              height: 300,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // ══ 左：配置列表 ══
+                  Container(
+                    width: 170,
+                    decoration: BoxDecoration(
+                      color: scheme.surfaceContainerHighest.withAlpha(50),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: scheme.outlineVariant.withAlpha(50),
                       ),
-                    ],
-                    const SizedBox(height: 4),
-                    // 会话模式：自动批准 / 询问
-                    Text(s.aiApproveModeLabel, style: TextStyle(color: clr, fontSize: 12)),
-                    const SizedBox(height: 6),
-                    OptionMenuBar<String>(
-                      expandable: false,
-                      value: cfg.aiApproveMode,
-                      items: [
-                        OptionItem('ask', s.aiApproveModeAsk),
-                        OptionItem('auto', s.aiApproveModeAuto),
-                      ],
-                      onChanged: (v) { state.updateConfig((c) => c..aiApproveMode = v); setDState(() {}); },
                     ),
-                    const SizedBox(height: 6),
-                    Text(s.aiApproveModeDesc, style: TextStyle(color: scheme.outline, fontSize: 10)),
-                    const SizedBox(height: 12),
-                    // 询问模式下无需确认的操作
-                    Text(s.aiAskSkipLabel, style: TextStyle(color: clr, fontSize: 12)),
-                    const SizedBox(height: 6),
-                    Wrap(spacing: 6, runSpacing: 6, children: [
-                      for (final key in _askSkipKeys)
-                        FilterChip(
-                          label: Text(_askSkipLabel(key, s.isZh),
-                              style: const TextStyle(fontSize: 11)),
-                          selected: cfg.aiAskSkipTools.contains(key),
-                          visualDensity: VisualDensity.compact,
-                          onSelected: (sel) {
-                            state.updateConfig((c) {
-                              final set = c.aiAskSkipTools.toSet();
-                              if (sel) { set.add(key); } else { set.remove(key); }
-                              c.aiAskSkipTools = set.toList();
-                              return c;
-                            });
+                    child: Column(
+                      children: [
+                        Expanded(
+                          child: cfg.aiProfiles.isEmpty
+                              ? Center(
+                                  child: Text(
+                                    zh ? '暂无配置' : 'No profiles',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: scheme.outline,
+                                    ),
+                                  ),
+                                )
+                              : ListView.builder(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 4,
+                                  ),
+                                  itemCount: cfg.aiProfiles.length,
+                                  itemBuilder: (_, i) {
+                                    final pr = cfg.aiProfiles[i];
+                                    final isSel = pr.id == selProfileId;
+                                    return InkWell(
+                                      onTap: () {
+                                        selProfileId = pr.id;
+                                        draft = null;
+                                        showPreset = false;
+                                        setDState(() {});
+                                      },
+                                      child: Container(
+                                        margin: const EdgeInsets.symmetric(
+                                          horizontal: 4,
+                                          vertical: 2,
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 6,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: isSel
+                                              ? scheme.primaryContainer
+                                                    .withAlpha(120)
+                                              : Colors.transparent,
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            Icon(
+                                              pr.enabled
+                                                  ? (isSel
+                                                        ? Icons
+                                                              .radio_button_checked
+                                                        : Icons.cloud_outlined)
+                                                  : Icons.cloud_off_outlined,
+                                              size: 13,
+                                              color: isSel
+                                                  ? scheme.primary
+                                                  : (pr.enabled
+                                                        ? scheme.outline
+                                                        : scheme.outline
+                                                              .withAlpha(60)),
+                                            ),
+                                            const SizedBox(width: 6),
+                                            Expanded(
+                                              child: Text(
+                                                pr.name,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.w600,
+                                                  color: isSel
+                                                      ? scheme.primary
+                                                      : (pr.enabled
+                                                            ? clr
+                                                            : scheme.outline),
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                        ),
+                        Divider(
+                          height: 1,
+                          color: scheme.outlineVariant.withAlpha(40),
+                        ),
+                        // 新建配置
+                        InkWell(
+                          onTap: () {
+                            final np = AiProfile(
+                              name: zh ? '新配置' : 'New Profile',
+                            );
+                            // 只建本地草稿，点"保存"才落库。
+                            // 原实现立即 updateConfig 持久化，不保存就关闭对话框会留下幽灵配置。
+                            selProfileId = np.id;
+                            draft = np;
+                            showPreset = true;
                             setDState(() {});
                           },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.add,
+                                  size: 14,
+                                  color: scheme.primary,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  zh ? '新建配置' : 'New Profile',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: scheme.primary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
-                    ]),
-                    const SizedBox(height: 12),
-                    Text(s.aiCustomPrompt, style: TextStyle(color: clr, fontSize: 12)),
-                    const SizedBox(height: 6),
-                    // 用有状态的字段持有 controller：这里原先每次 setDState 都会新建一个
-                    // TextEditingController，导致光标跳回开头、根本没法连续输入。
-                    _McpTextField(
-                      value: cfg.aiSystemPrompt,
-                      label: '',
-                      hint: s.aiCustomPromptHint,
-                      scheme: scheme,
-                      minLines: 3,
-                      maxLines: 5,
-                      onChange: (v) => state.updateConfig((c) => c..aiSystemPrompt = v),
+                      ],
                     ),
-                  ]),
+                  ),
+                  const SizedBox(width: 12),
+                  // ══ 右：配置详情 ══
+                  Expanded(
+                    child: selected() == null
+                        ? Center(
+                            child: Text(
+                              zh ? '选择或新建一个配置' : 'Select or create a profile',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: scheme.outline,
+                              ),
+                            ),
+                          )
+                        : _buildProfileDetail(
+                            ctx2,
+                            state,
+                            setDState,
+                            scheme,
+                            clr,
+                            s,
+                            zh,
+                            selected()!,
+                            selProfileId,
+                            draft,
+                            showPreset,
+                            () {
+                              selProfileId = cfg.aiProfiles.isNotEmpty
+                                  ? cfg.aiProfiles.first.id
+                                  : '';
+                              draft = null;
+                              setDState(() {});
+                            },
+                          ),
+                  ),
                 ],
-        );
+              ),
+            ),
+            const SizedBox(height: 8),
+          ]),
 
-        if (asSheet) {
-          return DraggableScrollableSheet(
-            initialChildSize: 0.85,
-            minChildSize: 0.5,
-            maxChildSize: 0.95,
-            builder: (_, scrollCtrl) => GlassPanel(
-              radius: 20,
-              child: Column(children: [
+          // ── Permissions ──
+          section(s.aiPermissions, Icons.security_outlined, [
+            SwitchListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                s.aiReadAccess,
+                style: TextStyle(color: clr, fontSize: 12),
+              ),
+              subtitle: Text(
+                s.aiReadAccessDesc,
+                style: TextStyle(color: scheme.outline, fontSize: 10),
+              ),
+              value: cfg.aiReadAccess,
+              onChanged: (v) {
+                state.updateConfig((c) => c..aiReadAccess = v);
+                setDState(() {});
+              },
+            ),
+            SwitchListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                s.aiWriteAccess,
+                style: TextStyle(color: clr, fontSize: 12),
+              ),
+              subtitle: Text(
+                s.aiWriteAccessDesc,
+                style: TextStyle(color: scheme.outline, fontSize: 10),
+              ),
+              value: cfg.aiWriteAccess,
+              onChanged: (v) {
+                state.updateConfig((c) => c..aiWriteAccess = v);
+                setDState(() {});
+              },
+            ),
+            SwitchListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                s.aiAutoExecute,
+                style: TextStyle(color: clr, fontSize: 12),
+              ),
+              subtitle: Text(
+                s.aiAutoExecuteDesc,
+                style: TextStyle(color: scheme.outline, fontSize: 10),
+              ),
+              value: cfg.aiAutoExecute,
+              onChanged: (v) {
+                state.updateConfig((c) => c..aiAutoExecute = v);
+                setDState(() {});
+              },
+            ),
+            SwitchListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                s.aiAllowAsk,
+                style: TextStyle(color: clr, fontSize: 12),
+              ),
+              subtitle: Text(
+                s.aiAllowAskDesc,
+                style: TextStyle(color: scheme.outline, fontSize: 10),
+              ),
+              value: cfg.aiAllowAsk,
+              onChanged: (v) {
+                state.updateConfig((c) => c..aiAllowAsk = v);
+                setDState(() {});
+              },
+            ),
+          ]),
+          // ── Advanced ──
+          section(s.aiAdvanced, Icons.tune_outlined, [
+            // 图生成模式：下拉菜单（原分段按钮在窄栏里两个长标签会挤压换行）
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    s.aiGraphModeLabel,
+                    style: TextStyle(color: clr, fontSize: 12),
+                  ),
+                ),
+                SizedBox(
+                  width: _kMenuWidth,
+                  child: OptionMenuBar<String>(
+                    key: ValueKey('aiGraphMode_${cfg.aiGraphMode}'),
+                    expandable: true,
+                    value: cfg.aiGraphMode,
+                    items: [
+                      OptionItem(
+                        'redo',
+                        s.aiGraphModeRedo,
+                        icon: Icons.refresh,
+                      ),
+                      OptionItem(
+                        'modify',
+                        s.aiGraphModeModify,
+                        icon: Icons.edit_outlined,
+                      ),
+                    ],
+                    onChanged: (v) {
+                      state.updateConfig((c) => c..aiGraphMode = v);
+                      setDState(() {});
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                s.aiShowThinking,
+                style: TextStyle(color: clr, fontSize: 12),
+              ),
+              subtitle: Text(
+                s.aiShowThinkingDesc,
+                style: TextStyle(color: scheme.outline, fontSize: 10),
+              ),
+              value: cfg.aiShowThinking,
+              onChanged: (v) {
+                state.updateConfig((c) => c..aiShowThinking = v);
+                setDState(() {});
+              },
+            ),
+            SwitchListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                s.aiAutoTitleLabel,
+                style: TextStyle(color: clr, fontSize: 12),
+              ),
+              subtitle: Text(
+                s.aiAutoTitleDesc,
+                style: TextStyle(color: scheme.outline, fontSize: 10),
+              ),
+              value: cfg.aiAutoTitle,
+              onChanged: (v) {
+                state.updateConfig((c) => c..aiAutoTitle = v);
+                setDState(() {});
+              },
+            ),
+            if (cfg.aiAutoTitle) ...[
+              const SizedBox(height: 4),
+              Text(
+                s.aiTitlePromptLabel,
+                style: TextStyle(color: clr, fontSize: 12),
+              ),
+              const SizedBox(height: 6),
+              _McpTextField(
+                value: cfg.aiTitlePrompt,
+                label: '',
+                hint: s.isZh ? '标题生成提示词（可改写）' : 'Title prompt (editable)',
+                scheme: scheme,
+                minLines: 2,
+                maxLines: 4,
+                onChange: (v) =>
+                    state.updateConfig((c) => c..aiTitlePrompt = v),
+              ),
+            ],
+            const SizedBox(height: 4),
+            // 会话模式：自动批准 / 询问
+            Text(
+              s.aiApproveModeLabel,
+              style: TextStyle(color: clr, fontSize: 12),
+            ),
+            const SizedBox(height: 6),
+            OptionMenuBar<String>(
+              expandable: false,
+              value: cfg.aiApproveMode,
+              items: [
+                OptionItem('ask', s.aiApproveModeAsk),
+                OptionItem('auto', s.aiApproveModeAuto),
+              ],
+              onChanged: (v) {
+                state.updateConfig((c) => c..aiApproveMode = v);
+                setDState(() {});
+              },
+            ),
+            const SizedBox(height: 6),
+            Text(
+              s.aiApproveModeDesc,
+              style: TextStyle(color: scheme.outline, fontSize: 10),
+            ),
+            const SizedBox(height: 12),
+            // 询问模式下无需确认的操作
+            Text(s.aiAskSkipLabel, style: TextStyle(color: clr, fontSize: 12)),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final key in _askSkipKeys)
+                  FilterChip(
+                    label: Text(
+                      _askSkipLabel(key, s.isZh),
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                    selected: cfg.aiAskSkipTools.contains(key),
+                    visualDensity: VisualDensity.compact,
+                    onSelected: (sel) {
+                      state.updateConfig((c) {
+                        final set = c.aiAskSkipTools.toSet();
+                        if (sel) {
+                          set.add(key);
+                        } else {
+                          set.remove(key);
+                        }
+                        c.aiAskSkipTools = set.toList();
+                        return c;
+                      });
+                      setDState(() {});
+                    },
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(s.aiCustomPrompt, style: TextStyle(color: clr, fontSize: 12)),
+            const SizedBox(height: 6),
+            // 用有状态的字段持有 controller：这里原先每次 setDState 都会新建一个
+            // TextEditingController，导致光标跳回开头、根本没法连续输入。
+            _McpTextField(
+              value: cfg.aiSystemPrompt,
+              label: '',
+              hint: s.aiCustomPromptHint,
+              scheme: scheme,
+              minLines: 3,
+              maxLines: 5,
+              onChange: (v) => state.updateConfig((c) => c..aiSystemPrompt = v),
+            ),
+          ]),
+        ],
+      );
+
+      if (asSheet) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.85,
+          minChildSize: 0.5,
+          maxChildSize: 0.95,
+          builder: (_, scrollCtrl) => GlassPanel(
+            radius: 20,
+            child: Column(
+              children: [
                 const SizedBox(height: 8),
-                Container(width: 36, height: 4, decoration: BoxDecoration(color: scheme.outlineVariant, borderRadius: BorderRadius.circular(2))),
+                Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: scheme.outlineVariant,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
                 headerRow(withBack: false),
                 Expanded(child: listBody(scrollCtrl)),
-              ]),
+              ],
             ),
-          );
-        }
-        // 移动端二级页面：标题行（带返回）+ 内容列表
-        return Column(children: [
+          ),
+        );
+      }
+      // 移动端二级页面：标题行（带返回）+ 内容列表
+      return Column(
+        children: [
           headerRow(withBack: true),
           Expanded(child: listBody(null)),
-        ]);
-      });
+        ],
+      );
+    },
+  );
 }
 
 /// 对 AiProfile 应用供应商预设（一键填充端点/模型/上下文）。
@@ -4454,178 +6208,292 @@ Widget _buildProfileDetail(
   // 用 Key 保持编辑中草稿的 controller 稳定
   Widget field(String label, Widget child) => Padding(
     padding: const EdgeInsets.only(bottom: 10),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(label, style: TextStyle(fontSize: 12, color: clr)),
-      const SizedBox(height: 4),
-      child,
-    ]),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: TextStyle(fontSize: 12, color: clr)),
+        const SizedBox(height: 4),
+        child,
+      ],
+    ),
   );
 
   return SingleChildScrollView(
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      // 供应商预设（新建/编辑都可一键填充）
-      if (showPreset) ...[
-        field(zh ? '供应商预设（一键填充）' : 'Provider Preset', OptionMenuBar<String>(
-          expandable: true,
-          value: profile.provider == 'anthropic' ? 'anthropic'
-              : profile.apiUrl.contains('deepseek') ? 'deepseek'
-              : profile.apiUrl.contains('localhost') || profile.apiUrl.contains('11434') ? 'ollama'
-              : 'openai',
-          items: const [
-            OptionItem('openai', 'OpenAI'),
-            OptionItem('anthropic', 'Anthropic (Claude)'),
-            OptionItem('deepseek', 'DeepSeek'),
-            OptionItem('ollama', 'Ollama (本地)'),
-          ],
-          onChanged: (preset) {
-            applyProfilePreset(profile, preset);
-            setDState(() {});
-          },
-        )),
-        const SizedBox(height: 8),
-      ],
-      // 配置名
-      field(zh ? '配置名' : 'Name', _ProfileTextField(
-        value: profile.name,
-        onChange: (v) { profile.name = v; },
-      )),
-      // 协议
-      field(zh ? '请求方式 / 协议' : 'Protocol', OptionMenuBar<String>(
-        expandable: false,
-        value: profile.provider,
-        items: [
-          OptionItem('openai', zh ? 'OpenAI 兼容' : 'OpenAI'),
-          const OptionItem('anthropic', 'Anthropic'),
-        ],
-        onChanged: (v) { profile.provider = v; setDState(() {}); },
-      )),
-      const SizedBox(height: 10),
-      // API Key（可切换显示/隐藏）
-      field(s.aiApiKey, _McpTextField(
-        value: profile.apiKey,
-        label: '',
-        scheme: scheme,
-        obscure: true,
-        onChange: (v) { profile.apiKey = v; },
-      )),
-      // Base URL
-      field(s.aiApiUrl, _ProfileTextField(
-        value: profile.apiUrl,
-        onChange: (v) { profile.apiUrl = v; },
-      )),
-      // 模型
-      field(s.aiModel, _ProfileTextField(
-        value: profile.model,
-        onChange: (v) { profile.model = v; },
-      )),
-      // 上下文窗口
-      field(zh ? '上下文窗口 (token)' : 'Context Window (tokens)', _ProfileTextField(
-        value: profile.contextWindow.toString(),
-        keyboardType: TextInputType.number,
-        onChange: (v) { final n = int.tryParse(v); if (n != null && n >= 1000) profile.contextWindow = n; },
-      )),
-      // 最大输出
-      field(zh ? '最大输出 token' : 'Max Output Tokens', _ProfileTextField(
-        value: profile.maxTokens.toString(),
-        keyboardType: TextInputType.number,
-        onChange: (v) { final n = int.tryParse(v); if (n != null && n > 0) profile.maxTokens = n; },
-      )),
-      // 温度
-      field(zh ? '温度 (0-2)' : 'Temperature (0-2)', _ProfileTextField(
-        value: profile.temperature.toStringAsFixed(1),
-        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-        onChange: (v) { final t = double.tryParse(v); if (t != null && t >= 0 && t <= 2) profile.temperature = t; },
-      )),
-      // 操作按钮：两个按钮都包 Expanded ⇒ 等宽；高度统一走 comfortable 档。
-      // 改造前「保存」是 Expanded 吃掉剩余宽度，「设为当前」只占内容宽度，
-      // 两个按钮宽度差一倍（宽窗口下尤其明显），看着像两个不同层级的控件并排。
-      Row(children: [
-        Expanded(child: FilledButton.icon(
-          style: AppControlSize.comfortable.buttonStyle(filled: true),
-          icon: Icon(Icons.save_outlined, size: AppControlSize.comfortable.iconSize),
-          label: Text(zh ? '保存' : 'Save', style: const TextStyle(fontSize: 12)),
-          onPressed: () {
-            final name = profile.name.trim();
-            if (name.isEmpty) {
-              showToast(ctx, zh ? '配置名不能为空' : 'Name is required', type: ToastType.error);
-              return;
-            }
-            // 落库（编辑已有项或新项）
-            state.updateConfig((c) {
-              final i = c.aiProfiles.indexWhere((e) => e.id == profile.id);
-              if (i >= 0) {
-                c.aiProfiles[i] = profile;
-              } else {
-                c.aiProfiles.add(profile);
-              }
-              if (c.activeAiProfileId.isEmpty) c.activeAiProfileId = profile.id;
-              return c;
-            });
-            showToast(ctx, zh ? '配置已保存' : 'Profile saved', type: ToastType.success);
-          },
-        )),
-        const SizedBox(width: 8),
-        Expanded(child: OutlinedButton.icon(
-          style: AppControlSize.comfortable.buttonStyle(),
-          icon: Icon(
-            state.config.activeAiProfileId == profile.id ? Icons.radio_button_checked : Icons.radio_button_off,
-            size: AppControlSize.comfortable.iconSize,
-          ),
-          label: Text(zh ? '设为当前' : 'Use', style: const TextStyle(fontSize: 12)),
-          onPressed: () {
-            state.updateConfig((c) { c.activeAiProfileId = profile.id; return c; });
-            setDState(() {});
-          },
-        )),
-      ]),
-      const SizedBox(height: 8),
-      Row(children: [
-        Expanded(child: _iosButton(icon: Icons.wifi_tethering, label: s.aiPing,
-            color: scheme.primary, bg: scheme.primaryContainer,
-            onTap: () {
-              // 把当前配置临时同步到默认字段，供测试函数使用
-              state.updateConfig((c) {
-                c.aiApiKey = profile.apiKey;
-                c.aiApiUrl = profile.apiUrl;
-                c.aiProvider = profile.provider;
-                return c;
-              }).ignore();
-              pingAi(ctx, state, s);
-            })),
-        const SizedBox(width: 8),
-        Expanded(child: _iosButton(icon: Icons.list, label: s.aiListModels,
-            color: scheme.onSecondaryContainer, bg: scheme.secondaryContainer,
-            onTap: () {
-              state.updateConfig((c) {
-                c.aiApiKey = profile.apiKey;
-                c.aiApiUrl = profile.apiUrl;
-                c.aiProvider = profile.provider;
-                return c;
-              }).ignore();
-              // 选中的模型写回当前正在编辑的 profile（而非全局默认字段）
-              listAiModels(ctx, state, s, onPicked: (m) {
-                profile.model = m;
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 供应商预设（新建/编辑都可一键填充）
+        if (showPreset) ...[
+          field(
+            zh ? '供应商预设（一键填充）' : 'Provider Preset',
+            OptionMenuBar<String>(
+              expandable: true,
+              value: profile.provider == 'anthropic'
+                  ? 'anthropic'
+                  : profile.apiUrl.contains('deepseek')
+                  ? 'deepseek'
+                  : profile.apiUrl.contains('localhost') ||
+                        profile.apiUrl.contains('11434')
+                  ? 'ollama'
+                  : 'openai',
+              items: const [
+                OptionItem('openai', 'OpenAI'),
+                OptionItem('anthropic', 'Anthropic (Claude)'),
+                OptionItem('deepseek', 'DeepSeek'),
+                OptionItem('ollama', 'Ollama (本地)'),
+              ],
+              onChanged: (preset) {
+                applyProfilePreset(profile, preset);
                 setDState(() {});
-              });
-            })),
-      ]),
-      if (draft != null) ...[
+              },
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
+        // 配置名
+        field(
+          zh ? '配置名' : 'Name',
+          _ProfileTextField(
+            value: profile.name,
+            onChange: (v) {
+              profile.name = v;
+            },
+          ),
+        ),
+        // 协议
+        field(
+          zh ? '请求方式 / 协议' : 'Protocol',
+          OptionMenuBar<String>(
+            expandable: false,
+            value: profile.provider,
+            items: [
+              OptionItem('openai', zh ? 'OpenAI 兼容' : 'OpenAI'),
+              const OptionItem('anthropic', 'Anthropic'),
+            ],
+            onChanged: (v) {
+              profile.provider = v;
+              setDState(() {});
+            },
+          ),
+        ),
+        const SizedBox(height: 10),
+        // API Key（可切换显示/隐藏）
+        field(
+          s.aiApiKey,
+          _McpTextField(
+            value: profile.apiKey,
+            label: '',
+            scheme: scheme,
+            obscure: true,
+            onChange: (v) {
+              profile.apiKey = v;
+            },
+          ),
+        ),
+        // Base URL
+        field(
+          s.aiApiUrl,
+          _ProfileTextField(
+            value: profile.apiUrl,
+            onChange: (v) {
+              profile.apiUrl = v;
+            },
+          ),
+        ),
+        // 模型
+        field(
+          s.aiModel,
+          _ProfileTextField(
+            value: profile.model,
+            onChange: (v) {
+              profile.model = v;
+            },
+          ),
+        ),
+        // 上下文窗口
+        field(
+          zh ? '上下文窗口 (token)' : 'Context Window (tokens)',
+          _ProfileTextField(
+            value: profile.contextWindow.toString(),
+            keyboardType: TextInputType.number,
+            onChange: (v) {
+              final n = int.tryParse(v);
+              if (n != null && n >= 1000) profile.contextWindow = n;
+            },
+          ),
+        ),
+        // 最大输出
+        field(
+          zh ? '最大输出 token' : 'Max Output Tokens',
+          _ProfileTextField(
+            value: profile.maxTokens.toString(),
+            keyboardType: TextInputType.number,
+            onChange: (v) {
+              final n = int.tryParse(v);
+              if (n != null && n > 0) profile.maxTokens = n;
+            },
+          ),
+        ),
+        // 温度
+        field(
+          zh ? '温度 (0-2)' : 'Temperature (0-2)',
+          _ProfileTextField(
+            value: profile.temperature.toStringAsFixed(1),
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            onChange: (v) {
+              final t = double.tryParse(v);
+              if (t != null && t >= 0 && t <= 2) profile.temperature = t;
+            },
+          ),
+        ),
+        // 操作按钮：两个按钮都包 Expanded ⇒ 等宽；高度统一走 comfortable 档。
+        // 改造前「保存」是 Expanded 吃掉剩余宽度，「设为当前」只占内容宽度，
+        // 两个按钮宽度差一倍（宽窗口下尤其明显），看着像两个不同层级的控件并排。
+        Row(
+          children: [
+            Expanded(
+              child: FilledButton.icon(
+                style: AppControlSize.comfortable.buttonStyle(filled: true),
+                icon: Icon(
+                  Icons.save_outlined,
+                  size: AppControlSize.comfortable.iconSize,
+                ),
+                label: Text(
+                  zh ? '保存' : 'Save',
+                  style: const TextStyle(fontSize: 12),
+                ),
+                onPressed: () {
+                  final name = profile.name.trim();
+                  if (name.isEmpty) {
+                    showToast(
+                      ctx,
+                      zh ? '配置名不能为空' : 'Name is required',
+                      type: ToastType.error,
+                    );
+                    return;
+                  }
+                  // 落库（编辑已有项或新项）
+                  state.updateConfig((c) {
+                    final i = c.aiProfiles.indexWhere(
+                      (e) => e.id == profile.id,
+                    );
+                    if (i >= 0) {
+                      c.aiProfiles[i] = profile;
+                    } else {
+                      c.aiProfiles.add(profile);
+                    }
+                    if (c.activeAiProfileId.isEmpty)
+                      c.activeAiProfileId = profile.id;
+                    return c;
+                  });
+                  showToast(
+                    ctx,
+                    zh ? '配置已保存' : 'Profile saved',
+                    type: ToastType.success,
+                  );
+                },
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton.icon(
+                style: AppControlSize.comfortable.buttonStyle(),
+                icon: Icon(
+                  state.config.activeAiProfileId == profile.id
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_off,
+                  size: AppControlSize.comfortable.iconSize,
+                ),
+                label: Text(
+                  zh ? '设为当前' : 'Use',
+                  style: const TextStyle(fontSize: 12),
+                ),
+                onPressed: () {
+                  state.updateConfig((c) {
+                    c.activeAiProfileId = profile.id;
+                    return c;
+                  });
+                  setDState(() {});
+                },
+              ),
+            ),
+          ],
+        ),
         const SizedBox(height: 8),
-        SizedBox(width: double.infinity, child: OutlinedButton.icon(
-          icon: const Icon(Icons.delete_outline, size: 16),
-          label: Text(zh ? '删除此配置' : 'Delete this profile', style: const TextStyle(fontSize: 12)),
-          style: OutlinedButton.styleFrom(foregroundColor: scheme.error),
-          onPressed: () {
-            state.updateConfig((c) {
-              c.aiProfiles.removeWhere((e) => e.id == profile.id);
-              if (c.activeAiProfileId == profile.id) c.activeAiProfileId = '';
-              return c;
-            });
-            onDeleted();
-          },
-        )),
+        Row(
+          children: [
+            Expanded(
+              child: _iosButton(
+                icon: Icons.wifi_tethering,
+                label: s.aiPing,
+                color: scheme.primary,
+                bg: scheme.primaryContainer,
+                onTap: () {
+                  // 把当前配置临时同步到默认字段，供测试函数使用
+                  state.updateConfig((c) {
+                    c.aiApiKey = profile.apiKey;
+                    c.aiApiUrl = profile.apiUrl;
+                    c.aiProvider = profile.provider;
+                    return c;
+                  }).ignore();
+                  pingAi(ctx, state, s);
+                },
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _iosButton(
+                icon: Icons.list,
+                label: s.aiListModels,
+                color: scheme.onSecondaryContainer,
+                bg: scheme.secondaryContainer,
+                onTap: () {
+                  state.updateConfig((c) {
+                    c.aiApiKey = profile.apiKey;
+                    c.aiApiUrl = profile.apiUrl;
+                    c.aiProvider = profile.provider;
+                    return c;
+                  }).ignore();
+                  // 选中的模型写回当前正在编辑的 profile（而非全局默认字段）
+                  listAiModels(
+                    ctx,
+                    state,
+                    s,
+                    onPicked: (m) {
+                      profile.model = m;
+                      setDState(() {});
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+        if (draft != null) ...[
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              icon: const Icon(Icons.delete_outline, size: 16),
+              label: Text(
+                zh ? '删除此配置' : 'Delete this profile',
+                style: const TextStyle(fontSize: 12),
+              ),
+              style: OutlinedButton.styleFrom(foregroundColor: scheme.error),
+              onPressed: () {
+                state.updateConfig((c) {
+                  c.aiProfiles.removeWhere((e) => e.id == profile.id);
+                  if (c.activeAiProfileId == profile.id)
+                    c.activeAiProfileId = '';
+                  return c;
+                });
+                onDeleted();
+              },
+            ),
+          ),
+        ],
       ],
-    ]),
+    ),
   );
 }
 
@@ -4656,8 +6524,13 @@ Future<void> pingAi(BuildContext ctx, AppState state, AppStrings s) async {
     if (ctx.mounted) showToast(ctx, s.aiNotConfigured, type: ToastType.warning);
     return;
   }
-  final baseUrl = cfg.aiApiUrl.replaceAll(RegExp(r'/chat/completions$|/messages$'), '');
-  final modelsUrl = baseUrl.endsWith('/v1') ? '$baseUrl/models' : '$baseUrl/v1/models';
+  final baseUrl = cfg.aiApiUrl.replaceAll(
+    RegExp(r'/chat/completions$|/messages$'),
+    '',
+  );
+  final modelsUrl = baseUrl.endsWith('/v1')
+      ? '$baseUrl/models'
+      : '$baseUrl/v1/models';
   state.addLog('[AI] Ping $modelsUrl ...', category: 'info');
   try {
     final uri = Uri.parse(modelsUrl);
@@ -4669,12 +6542,24 @@ Future<void> pingAi(BuildContext ctx, AppState state, AppStrings s) async {
       headers['Authorization'] = 'Bearer ${cfg.aiApiKey}';
     }
     final sw = Stopwatch()..start();
-    final resp = await http.get(uri, headers: headers).timeout(const Duration(seconds: 10));
+    final resp = await http
+        .get(uri, headers: headers)
+        .timeout(const Duration(seconds: 10));
     sw.stop();
     final ms = sw.elapsedMilliseconds;
     final ok = resp.statusCode >= 200 && resp.statusCode < 400;
-    state.addLog('[AI] Ping ${ok ? "OK" : "FAIL"}: ${resp.statusCode}, ${ms}ms', category: ok ? 'info' : 'error');
-    if (ctx.mounted) showToast(ctx, ok ? '${resp.statusCode} OK — ${ms}ms' : 'HTTP ${resp.statusCode} ${_httpReason(resp.statusCode)}', type: ok ? ToastType.success : ToastType.error);
+    state.addLog(
+      '[AI] Ping ${ok ? "OK" : "FAIL"}: ${resp.statusCode}, ${ms}ms',
+      category: ok ? 'info' : 'error',
+    );
+    if (ctx.mounted)
+      showToast(
+        ctx,
+        ok
+            ? '${resp.statusCode} OK — ${ms}ms'
+            : 'HTTP ${resp.statusCode} ${_httpReason(resp.statusCode)}',
+        type: ok ? ToastType.success : ToastType.error,
+      );
   } catch (e) {
     state.addLog('[AI] Ping failed: $e', category: 'error');
     if (ctx.mounted) showToast(ctx, 'Error: $e', type: ToastType.error);
@@ -4688,9 +6573,13 @@ Future<void> pingAi(BuildContext ctx, AppState state, AppStrings s) async {
 /// [onPicked] 用户在选择器里点选某个模型时回调。
 /// [onListed] 拉取成功后回调完整列表 —— 供「提供商设置 → 模型」页把结果
 /// 落进 AiProfile.models（带能力标记），而不只是选一个当前模型。
-Future<void> listAiModels(BuildContext ctx, AppState state, AppStrings s,
-    {required ValueChanged<String> onPicked,
-    ValueChanged<List<String>>? onListed}) async {
+Future<void> listAiModels(
+  BuildContext ctx,
+  AppState state,
+  AppStrings s, {
+  required ValueChanged<String> onPicked,
+  ValueChanged<List<String>>? onListed,
+}) async {
   final cfg = state.config;
   if (cfg.aiApiKey.isEmpty) {
     if (ctx.mounted) showToast(ctx, s.aiNotConfigured, type: ToastType.warning);
@@ -4701,19 +6590,31 @@ Future<void> listAiModels(BuildContext ctx, AppState state, AppStrings s,
     final headers = <String, String>{};
     if (cfg.aiProvider == 'anthropic') {
       final baseUrl = cfg.aiApiUrl.replaceAll(RegExp(r'/messages$'), '');
-      final modelsUrl = baseUrl.endsWith('/v1') ? '$baseUrl/models' : '$baseUrl/v1/models';
+      final modelsUrl = baseUrl.endsWith('/v1')
+          ? '$baseUrl/models'
+          : '$baseUrl/v1/models';
       headers['x-api-key'] = cfg.aiApiKey;
       headers['anthropic-version'] = '2023-06-01';
-      final resp = await http.get(Uri.parse(modelsUrl), headers: headers).timeout(const Duration(seconds: 10));
+      final resp = await http
+          .get(Uri.parse(modelsUrl), headers: headers)
+          .timeout(const Duration(seconds: 10));
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
-        final models = (data['data'] as List?)?.map((m) => m['id'] as String).toList() ?? [];
+        final models =
+            (data['data'] as List?)?.map((m) => m['id'] as String).toList() ??
+            [];
         models.sort();
-        state.addLog('[AI] Anthropic 获取到 ${models.length} 个模型', category: 'info');
+        state.addLog(
+          '[AI] Anthropic 获取到 ${models.length} 个模型',
+          category: 'info',
+        );
         onListed?.call(models);
         if (ctx.mounted) _showModelPicker(ctx, state, models, s, onPicked);
       } else {
-        state.addLog('[AI] Anthropic models endpoint unavailable (${resp.statusCode}), using known models', category: 'info');
+        state.addLog(
+          '[AI] Anthropic models endpoint unavailable (${resp.statusCode}), using known models',
+          category: 'info',
+        );
         final known = List.of(_kKnownAnthropicModels);
         onListed?.call(known);
         if (ctx.mounted) _showModelPicker(ctx, state, known, s, onPicked);
@@ -4723,17 +6624,21 @@ Future<void> listAiModels(BuildContext ctx, AppState state, AppStrings s,
     // OpenAI-compatible: GET /v1/models
     final baseUrl = cfg.aiApiUrl.replaceAll(RegExp(r'/chat/completions$'), '');
     headers['Authorization'] = 'Bearer ${cfg.aiApiKey}';
-    final resp = await http.get(Uri.parse('$baseUrl/models'), headers: headers).timeout(const Duration(seconds: 10));
+    final resp = await http
+        .get(Uri.parse('$baseUrl/models'), headers: headers)
+        .timeout(const Duration(seconds: 10));
     if (resp.statusCode == 200) {
       final data = jsonDecode(resp.body);
-      final models = (data['data'] as List?)?.map((m) => m['id'] as String).toList() ?? [];
+      final models =
+          (data['data'] as List?)?.map((m) => m['id'] as String).toList() ?? [];
       models.sort();
       state.addLog('[AI] 获取到 ${models.length} 个模型', category: 'info');
       onListed?.call(models);
       if (ctx.mounted) _showModelPicker(ctx, state, models, s, onPicked);
     } else {
       state.addLog('[AI] 获取模型失败: ${resp.statusCode}', category: 'error');
-      if (ctx.mounted) showToast(ctx, 'HTTP ${resp.statusCode}', type: ToastType.error);
+      if (ctx.mounted)
+        showToast(ctx, 'HTTP ${resp.statusCode}', type: ToastType.error);
     }
   } catch (e) {
     state.addLog('[AI] 获取模型失败: $e', category: 'error');
@@ -4767,7 +6672,10 @@ Future<String?> fetchAiBalance(AiProfile profile) async {
   // 1) credit_grants（余额 + 已用）
   try {
     final resp = await http
-        .get(Uri.parse('$base/dashboard/billing/credit_grants'), headers: headers)
+        .get(
+          Uri.parse('$base/dashboard/billing/credit_grants'),
+          headers: headers,
+        )
         .timeout(timeout);
     if (resp.statusCode == 200) {
       final data = jsonDecode(resp.body) as Map<String, dynamic>;
@@ -4776,7 +6684,8 @@ Future<String?> fetchAiBalance(AiProfile profile) async {
       final available = (data['total_available'] as num?)?.toDouble();
       if (available != null || total != null) {
         final parts = <String>[];
-        if (available != null) parts.add('可用 \$${available.toStringAsFixed(2)}');
+        if (available != null)
+          parts.add('可用 \$${available.toStringAsFixed(2)}');
         if (used != null) parts.add('已用 \$${used.toStringAsFixed(2)}');
         if (total != null) parts.add('总额 \$${total.toStringAsFixed(2)}');
         return parts.join(' · ');
@@ -4814,36 +6723,65 @@ Future<String?> fetchAiBalance(AiProfile profile) async {
   return null;
 }
 
-void _showModelPicker(BuildContext ctx, AppState state, List<String> models, AppStrings s, ValueChanged<String> onPicked) {
+void _showModelPicker(
+  BuildContext ctx,
+  AppState state,
+  List<String> models,
+  AppStrings s,
+  ValueChanged<String> onPicked,
+) {
   if (models.isEmpty) {
-    showToast(ctx, s.isZh ? '未找到模型' : 'No models found', type: ToastType.warning);
+    showToast(
+      ctx,
+      s.isZh ? '未找到模型' : 'No models found',
+      type: ToastType.warning,
+    );
     return;
   }
-  showDialog(context: ctx, builder: (dCtx) {
-    final scheme = Theme.of(dCtx).colorScheme;
-    return AlertDialog(
-      title: Text(s.aiListModels, style: TextStyle(color: scheme.onSurface, fontSize: 15)),
-      content: SizedBox(
-        width: 300, height: 400,
-        child: ListView.builder(
-          itemCount: models.length,
-          itemBuilder: (_, i) => ListTile(
-            dense: true,
-            title: Text(models[i], style: TextStyle(fontSize: 12, color: scheme.onSurface)),
-            selected: models[i] == state.config.aiModel,
-            selectedTileColor: scheme.primaryContainer.withAlpha(60),
-            onTap: () {
-              state.addLog('[AI] 已选择模型: ${models[i]}', category: 'info');
-              Navigator.pop(dCtx);
-              onPicked(models[i]);
-              showToast(ctx, '${s.isZh ? "已选择" : "Selected"}: ${models[i]}', type: ToastType.success);
-            },
+  showDialog(
+    context: ctx,
+    builder: (dCtx) {
+      final scheme = Theme.of(dCtx).colorScheme;
+      return AlertDialog(
+        title: Text(
+          s.aiListModels,
+          style: TextStyle(color: scheme.onSurface, fontSize: 15),
+        ),
+        content: SizedBox(
+          width: 300,
+          height: 400,
+          child: ListView.builder(
+            itemCount: models.length,
+            itemBuilder: (_, i) => ListTile(
+              dense: true,
+              title: Text(
+                models[i],
+                style: TextStyle(fontSize: 12, color: scheme.onSurface),
+              ),
+              selected: models[i] == state.config.aiModel,
+              selectedTileColor: scheme.primaryContainer.withAlpha(60),
+              onTap: () {
+                state.addLog('[AI] 已选择模型: ${models[i]}', category: 'info');
+                Navigator.pop(dCtx);
+                onPicked(models[i]);
+                showToast(
+                  ctx,
+                  '${s.isZh ? "已选择" : "Selected"}: ${models[i]}',
+                  type: ToastType.success,
+                );
+              },
+            ),
           ),
         ),
-      ),
-      actions: [TextButton(onPressed: () => Navigator.pop(dCtx), child: Text(s.close))],
-    );
-  });
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx),
+            child: Text(s.close),
+          ),
+        ],
+      );
+    },
+  );
 }
 
 Future<void> _pickFont(BuildContext ctx, AppState state) async {
@@ -4852,11 +6790,19 @@ Future<void> _pickFont(BuildContext ctx, AppState state) async {
   // 必须同时取内存字节兜底 —— 之前只认 path，HyperOS/MIUI 上会出现
   // 「选了字体却毫无反应」的静默失败。
   final picked = await FilePicker.pickFile(
-      type: FileType.custom, allowedExtensions: ['ttf', 'otf']);
+    type: FileType.custom,
+    allowedExtensions: ['ttf', 'otf'],
+  );
   if (picked == null) return;
   final fileName = picked.name;
-  if (!fileName.toLowerCase().endsWith('.ttf') && !fileName.toLowerCase().endsWith('.otf')) {
-    if (ctx.mounted) showToast(ctx, isZh ? '请选择 .ttf 或 .otf 字体文件' : 'Please pick a .ttf/.otf font file', type: ToastType.error);
+  if (!fileName.toLowerCase().endsWith('.ttf') &&
+      !fileName.toLowerCase().endsWith('.otf')) {
+    if (ctx.mounted)
+      showToast(
+        ctx,
+        isZh ? '请选择 .ttf 或 .otf 字体文件' : 'Please pick a .ttf/.otf font file',
+        type: ToastType.error,
+      );
     return;
   }
   final fontName = fileName.replaceAll(RegExp(r'\.[^.]+$'), '');
@@ -4881,7 +6827,10 @@ Future<void> _pickFont(BuildContext ctx, AppState state) async {
     }
     if (fontFilePath == null) {
       // 字节来源或复制失败：手动写入
-      final dir = Directory('${_userDataDir()}$_s' 'fonts');
+      final dir = Directory(
+        '${_userDataDir()}$_s'
+        'fonts',
+      );
       if (!dir.existsSync()) dir.createSync(recursive: true);
       fontFilePath = '${dir.path}$_s$fileName';
       await File(fontFilePath).writeAsBytes(bytes, flush: true);
@@ -4891,10 +6840,20 @@ Future<void> _pickFont(BuildContext ctx, AppState state) async {
     fontLoader.addFont(Future.value(ByteData.sublistView(bytes)));
     await fontLoader.load();
     state.updateConfig((c) => c..fontFamily = fontName);
-    if (ctx.mounted) showToast(ctx, isZh ? '字体 "$fontName" 已加载并应用' : 'Font "$fontName" loaded and applied', type: ToastType.success);
+    if (ctx.mounted)
+      showToast(
+        ctx,
+        isZh ? '字体 "$fontName" 已加载并应用' : 'Font "$fontName" loaded and applied',
+        type: ToastType.success,
+      );
   } catch (e) {
     // 加载失败不设置 fontFamily（否则全局文本回退到坏字体）
-    if (ctx.mounted) showToast(ctx, isZh ? '字体加载失败: $e' : 'Font load failed: $e', type: ToastType.error);
+    if (ctx.mounted)
+      showToast(
+        ctx,
+        isZh ? '字体加载失败: $e' : 'Font load failed: $e',
+        type: ToastType.error,
+      );
   }
 }
 
@@ -4913,42 +6872,53 @@ enum _CacheScope {
 }
 
 /// 「清除缓存」入口：先弹出两个子选项，再执行对应清理。
-Future<void> _clearCache(BuildContext ctx, AppState state, ColorScheme scheme, AppStrings s) async {
+Future<void> _clearCache(
+  BuildContext ctx,
+  AppState state,
+  ColorScheme scheme,
+  AppStrings s,
+) async {
   final scope = await showDialog<_CacheScope>(
     context: ctx,
     builder: (dCtx) => AlertDialog(
-      title: Text(s.isZh ? '清除缓存' : 'Clear Cache',
-          style: TextStyle(color: scheme.onSurface)),
+      title: Text(
+        s.isZh ? '清除缓存' : 'Clear Cache',
+        style: TextStyle(color: scheme.onSurface),
+      ),
       contentPadding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
-      content: Column(mainAxisSize: MainAxisSize.min, children: [
-        _cacheOption(
-          dCtx,
-          scheme,
-          scope: _CacheScope.assets,
-          icon: Icons.image_outlined,
-          title: s.isZh ? '清除图片 / 字体' : 'Clear images / fonts',
-          desc: s.isZh
-              ? '删除已导入的字体文件和背景图片，之后需要重新选择'
-              : 'Delete imported fonts and background image; re-select afterwards',
-        ),
-        const SizedBox(height: 6),
-        _cacheOption(
-          dCtx,
-          scheme,
-          scope: _CacheScope.caches,
-          icon: Icons.cleaning_services_outlined,
-          title: s.isZh ? '清除缓存' : 'Clear cache',
-          desc: s.isZh
-              ? '删除导入副本（大文件可能占几百 MB）、缩略图与帧预览临时图；\n'
-                '仍被项目 / 队列引用的副本会保留'
-              : 'Delete import copies (hundreds of MB possible), thumbnails and frame previews;\n'
-                'copies still referenced by projects/queue are kept',
-        ),
-      ]),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _cacheOption(
+            dCtx,
+            scheme,
+            scope: _CacheScope.assets,
+            icon: Icons.image_outlined,
+            title: s.isZh ? '清除图片 / 字体' : 'Clear images / fonts',
+            desc: s.isZh
+                ? '删除已导入的字体文件和背景图片，之后需要重新选择'
+                : 'Delete imported fonts and background image; re-select afterwards',
+          ),
+          const SizedBox(height: 6),
+          _cacheOption(
+            dCtx,
+            scheme,
+            scope: _CacheScope.caches,
+            icon: Icons.cleaning_services_outlined,
+            title: s.isZh ? '清除缓存' : 'Clear cache',
+            desc: s.isZh
+                ? '删除导入副本（大文件可能占几百 MB）、缩略图与帧预览临时图；\n'
+                      '仍被项目 / 队列引用的副本会保留'
+                : 'Delete import copies (hundreds of MB possible), thumbnails and frame previews;\n'
+                      'copies still referenced by projects/queue are kept',
+          ),
+        ],
+      ),
       actions: [
         TextButton(
-            onPressed: () => Navigator.pop(dCtx),
-            child: Text(s.isZh ? '取消' : 'Cancel')),
+          onPressed: () => Navigator.pop(dCtx),
+          child: Text(s.isZh ? '取消' : 'Cancel'),
+        ),
       ],
     ),
   );
@@ -4960,9 +6930,13 @@ Future<void> _clearCache(BuildContext ctx, AppState state, ColorScheme scheme, A
       final freed = await _clearImportedAssets(state);
       if (ctx.mounted) {
         final freedText = freed > 0 ? '（释放 ${_humanSize(freed)}）' : '';
-        showToast(ctx,
-            s.isZh ? '已清除导入的图片和字体$freedText' : 'Images and fonts cleared$freedText',
-            type: ToastType.success);
+        showToast(
+          ctx,
+          s.isZh
+              ? '已清除导入的图片和字体$freedText'
+              : 'Images and fonts cleared$freedText',
+          type: ToastType.success,
+        );
       }
       return;
     }
@@ -4971,12 +6945,19 @@ Future<void> _clearCache(BuildContext ctx, AppState state, ColorScheme scheme, A
     final freed = await state.purgeImportCachesNow();
     if (ctx.mounted) {
       final freedText = freed > 0 ? '（释放 ${_humanSize(freed)}）' : '';
-      showToast(ctx,
-          s.isZh ? '缓存已清除$freedText' : 'Cache cleared$freedText',
-          type: ToastType.success);
+      showToast(
+        ctx,
+        s.isZh ? '缓存已清除$freedText' : 'Cache cleared$freedText',
+        type: ToastType.success,
+      );
     }
   } catch (e) {
-    if (ctx.mounted) showToast(ctx, s.isZh ? '清除失败: $e' : 'Clear failed: $e', type: ToastType.error);
+    if (ctx.mounted)
+      showToast(
+        ctx,
+        s.isZh ? '清除失败: $e' : 'Clear failed: $e',
+        type: ToastType.error,
+      );
   }
 }
 
@@ -4997,20 +6978,37 @@ Widget _cacheOption(
       onTap: () => Navigator.pop(dCtx, scope),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Icon(icon, size: 20, color: scheme.primary),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(title,
-                  style: TextStyle(
-                      fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-              const SizedBox(height: 2),
-              Text(desc,
-                  style: TextStyle(fontSize: 10.5, height: 1.35, color: scheme.outline)),
-            ]),
-          ),
-        ]),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, size: 20, color: scheme.primary),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: scheme.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    desc,
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      height: 1.35,
+                      color: scheme.outline,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     ),
   );
@@ -5031,7 +7029,12 @@ Future<int> _clearImportedAssets(AppState state) async {
     if (!dir.existsSync()) continue;
     for (final f in dir.listSync().whereType<File>()) {
       if (sub == 'fonts') {
-        removedFonts.add(f.path.split(RegExp(r'[\\/]')).last.replaceAll(RegExp(r'\.[^.]+$'), ''));
+        removedFonts.add(
+          f.path
+              .split(RegExp(r'[\\/]'))
+              .last
+              .replaceAll(RegExp(r'\.[^.]+$'), ''),
+        );
       }
       try {
         freed += f.lengthSync();
@@ -5041,7 +7044,8 @@ Future<int> _clearImportedAssets(AppState state) async {
   }
   state.updateConfig((c) {
     c.backgroundImage = '';
-    if (removedFonts.contains(c.fontFamily)) c.fontFamily = AppConfig.defaultFontFamily;
+    if (removedFonts.contains(c.fontFamily))
+      c.fontFamily = AppConfig.defaultFontFamily;
     return c;
   });
   return freed;
@@ -5070,17 +7074,26 @@ Future<void> _checkForUpdate(BuildContext ctx, AppStrings s) async {
     return;
   }
   if (!result.hasUpdate) {
-    showToast(ctx, '${s.alreadyLatest} (v${updater.currentVersion})', type: ToastType.success);
+    showToast(
+      ctx,
+      '${s.alreadyLatest} (v${updater.currentVersion})',
+      type: ToastType.success,
+    );
     return;
   }
   _showUpdateDialog(ctx, s, result);
 }
 
-void _showUpdateDialog(BuildContext ctx, AppStrings s, updater.UpdateResult result) {
+void _showUpdateDialog(
+  BuildContext ctx,
+  AppStrings s,
+  updater.UpdateResult result,
+) {
   final scheme = Theme.of(ctx).colorScheme;
   // 移动端为 APK 分发：桌面那套「下载 exe + 替换重启」不适用，
   // 一律走「前往下载」（浏览器打开发布页/下载链接）。
-  final allowAutoUpdate = !isMobilePlatform &&
+  final allowAutoUpdate =
+      !isMobilePlatform &&
       result.source == updater.UpdateSource.github &&
       result.downloadUrl != null;
   showDialog(
@@ -5089,79 +7102,178 @@ void _showUpdateDialog(BuildContext ctx, AppStrings s, updater.UpdateResult resu
       icon: Icon(Icons.system_update, color: scheme.primary, size: 32),
       title: Text(s.updateAvailable, style: TextStyle(color: scheme.onSurface)),
       content: SizedBox(
-          // 窄屏（手机）下固定 420 宽会溢出：移动端撑满对话框宽度
-          width: isMobilePlatform ? double.maxFinite : 420,
-          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(s.isZh ? '新版本: v${result.remoteVersion}\n当前版本: v${updater.currentVersion}'
-            : 'New: v${result.remoteVersion}\nCurrent: v${updater.currentVersion}', style: TextStyle(fontSize: 13, color: scheme.onSurface)),
-        if (result.password != null && result.password!.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Row(children: [
-            Icon(Icons.key, size: 14, color: scheme.primary),
-            const SizedBox(width: 4),
-            Text(s.isZh ? '提取密码: ' : 'Password: ', style: TextStyle(fontSize: 12, color: scheme.primary, fontWeight: FontWeight.w600)),
-            SelectableText(result.password!, style: TextStyle(fontSize: 13, color: scheme.onSurface, fontWeight: FontWeight.bold)),
-          ]),
-        ],
-        const SizedBox(height: 12),
-        Text(s.isZh ? '更新日志:' : 'Release Notes:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.primary)),
-        const SizedBox(height: 4),
-        if (result.releaseNotes != null && result.releaseNotes!.isNotEmpty)
-          ConstrainedBox(constraints: const BoxConstraints(maxHeight: 200),
-              child: SingleChildScrollView(child: Text(result.releaseNotes!, style: TextStyle(fontSize: 11, color: scheme.onSurface))))
-        else
-          Text(result.releaseNotesError
-              ? (s.isZh ? '无法获取更新日志 (GitHub 连接失败)' : 'Failed to get release notes (GitHub connection failed)')
-              : (s.isZh ? '暂无更新日志' : 'No release notes available'),
-              style: TextStyle(fontSize: 11, color: scheme.outline, fontStyle: FontStyle.italic)),
-      ])),
+        // 窄屏（手机）下固定 420 宽会溢出：移动端撑满对话框宽度
+        width: isMobilePlatform ? double.maxFinite : 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              s.isZh
+                  ? '新版本: v${result.remoteVersion}\n当前版本: v${updater.currentVersion}'
+                  : 'New: v${result.remoteVersion}\nCurrent: v${updater.currentVersion}',
+              style: TextStyle(fontSize: 13, color: scheme.onSurface),
+            ),
+            if (result.password != null && result.password!.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Icon(Icons.key, size: 14, color: scheme.primary),
+                  const SizedBox(width: 4),
+                  Text(
+                    s.isZh ? '提取密码: ' : 'Password: ',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: scheme.primary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  SelectableText(
+                    result.password!,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: scheme.onSurface,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 12),
+            Text(
+              s.isZh ? '更新日志:' : 'Release Notes:',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: scheme.primary,
+              ),
+            ),
+            const SizedBox(height: 4),
+            if (result.releaseNotes != null && result.releaseNotes!.isNotEmpty)
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 200),
+                child: SingleChildScrollView(
+                  child: Text(
+                    result.releaseNotes!,
+                    style: TextStyle(fontSize: 11, color: scheme.onSurface),
+                  ),
+                ),
+              )
+            else
+              Text(
+                result.releaseNotesError
+                    ? (s.isZh
+                          ? '无法获取更新日志 (GitHub 连接失败)'
+                          : 'Failed to get release notes (GitHub connection failed)')
+                    : (s.isZh ? '暂无更新日志' : 'No release notes available'),
+                style: TextStyle(
+                  fontSize: 11,
+                  color: scheme.outline,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+          ],
+        ),
+      ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(dCtx), child: Text(s.aboutClose)),
+        TextButton(
+          onPressed: () => Navigator.pop(dCtx),
+          child: Text(s.aboutClose),
+        ),
         if (allowAutoUpdate)
-          FilledButton(onPressed: () { Navigator.pop(dCtx); _downloadAndInstall(ctx, s, result.downloadUrl!, result.downloadSha256); },
-              child: Text(s.isZh ? '自动更新' : 'Auto Update'))
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(dCtx);
+              _downloadAndInstall(
+                ctx,
+                s,
+                result.downloadUrl!,
+                result.downloadSha256,
+              );
+            },
+            child: Text(s.isZh ? '自动更新' : 'Auto Update'),
+          )
         else
-          FilledButton(onPressed: () {
-            Navigator.pop(dCtx);
-            openExternalUrl(result.downloadUrl ?? 'https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases/latest');
-          }, child: Text(s.goDownload)),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(dCtx);
+              openExternalUrl(
+                result.downloadUrl ??
+                    'https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases/latest',
+              );
+            },
+            child: Text(s.goDownload),
+          ),
       ],
     ),
   );
 }
 
-Future<void> _downloadAndInstall(BuildContext ctx, AppStrings s, String url, [String? expectedSha256]) async {
+Future<void> _downloadAndInstall(
+  BuildContext ctx,
+  AppStrings s,
+  String url, [
+  String? expectedSha256,
+]) async {
   final scheme = Theme.of(ctx).colorScheme;
   final progressNotifier = ValueNotifier<double>(0);
-  final statusNotifier = ValueNotifier<String>(s.isZh ? '准备下载...' : 'Preparing...');
+  final statusNotifier = ValueNotifier<String>(
+    s.isZh ? '准备下载...' : 'Preparing...',
+  );
   var dialogOpen = true;
-  showDialog(context: ctx, barrierDismissible: false,
-    builder: (_) => PopScope(canPop: false, child: AlertDialog(
-      title: Text(s.isZh ? '下载更新' : 'Downloading Update', style: TextStyle(color: scheme.onSurface)),
-      content: Column(mainAxisSize: MainAxisSize.min, children: [
-        ValueListenableBuilder<double>(valueListenable: progressNotifier,
-            // 统一进度条：与全应用滑动条同一规格（圆角轨道 + 主题色）
-            builder: (_, v, _) => AppProgressBar(value: v > 0 ? v : null)),
-        const SizedBox(height: 8),
-        ValueListenableBuilder<String>(valueListenable: statusNotifier,
-            builder: (_, v, _) => Text(v, style: TextStyle(fontSize: 11, color: scheme.outline))),
-      ]),
-    )),
+  showDialog(
+    context: ctx,
+    barrierDismissible: false,
+    builder: (_) => PopScope(
+      canPop: false,
+      child: AlertDialog(
+        title: Text(
+          s.isZh ? '下载更新' : 'Downloading Update',
+          style: TextStyle(color: scheme.onSurface),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ValueListenableBuilder<double>(
+              valueListenable: progressNotifier,
+              // 统一进度条：与全应用滑动条同一规格（圆角轨道 + 主题色）
+              builder: (_, v, _) => AppProgressBar(value: v > 0 ? v : null),
+            ),
+            const SizedBox(height: 8),
+            ValueListenableBuilder<String>(
+              valueListenable: statusNotifier,
+              builder: (_, v, _) => Text(
+                v,
+                style: TextStyle(fontSize: 11, color: scheme.outline),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
   ).whenComplete(() => dialogOpen = false);
   try {
-    final filePath = await updater.downloadUpdate(url, onProgress: (received, total) {
-      if (total > 0) {
-        progressNotifier.value = received / total;
-        statusNotifier.value = '${(received / 1024 / 1024).toStringAsFixed(1)} / ${(total / 1024 / 1024).toStringAsFixed(1)} MB';
-      }
-    }, expectedSha256: expectedSha256);
+    final filePath = await updater.downloadUpdate(
+      url,
+      onProgress: (received, total) {
+        if (total > 0) {
+          progressNotifier.value = received / total;
+          statusNotifier.value =
+              '${(received / 1024 / 1024).toStringAsFixed(1)} / ${(total / 1024 / 1024).toStringAsFixed(1)} MB';
+        }
+      },
+      expectedSha256: expectedSha256,
+    );
     if (!ctx.mounted) return;
     // 未提供校验文件时给出明确警示，避免用户误以为已做过完整性校验（H-4）
     if (expectedSha256 == null || expectedSha256.isEmpty) {
-      showToast(ctx, s.isZh
-          ? '提示：发布方未提供 SHA-256，安装包未做完整性校验'
-          : 'Note: publisher provided no SHA-256; package integrity was not verified',
-          type: ToastType.warning);
+      showToast(
+        ctx,
+        s.isZh
+            ? '提示：发布方未提供 SHA-256，安装包未做完整性校验'
+            : 'Note: publisher provided no SHA-256; package integrity was not verified',
+        type: ToastType.warning,
+      );
     }
     if (dialogOpen) Navigator.pop(ctx);
     await updater.installAndRestart(filePath);
@@ -5180,7 +7292,9 @@ Future<void> _pickColor(BuildContext ctx, AppState state) async {
   final isZh = state.config.language == 'zh';
   final cp = _CP(
     initial: Color(state.config.themeColor),
-    initial2: state.config.themeColor2 >= 0 ? Color(state.config.themeColor2) : null,
+    initial2: state.config.themeColor2 >= 0
+        ? Color(state.config.themeColor2)
+        : null,
     isZh: isZh,
   );
   // 移动端：底部弹层（全宽、自滚动），避免固定 320px 弹窗在窄屏上挤压出下划线/裁切伪影
@@ -5191,61 +7305,135 @@ Future<void> _pickColor(BuildContext ctx, AppState state) async {
           backgroundColor: Colors.transparent,
           builder: (_) => SafeArea(top: false, child: cp),
         )
-      : await showDialog<_GradResult>(context: ctx, builder: (_) => Center(
-          child: SizedBox(width: 320, child: cp),
-        ));
+      : await showDialog<_GradResult>(
+          context: ctx,
+          builder: (_) => Center(child: SizedBox(width: 320, child: cp)),
+        );
   if (res == null) return;
-  state.updateConfig((c) => c..themeColor = res.c1..themeColor2 = res.c2 ?? -1);
+  state.updateConfig(
+    (c) => c
+      ..themeColor = res.c1
+      ..themeColor2 = res.c2 ?? -1,
+  );
 }
 
 void _showSponsor(BuildContext ctx, ColorScheme scheme, AppStrings s) {
-  showDialog(context: ctx, builder: (dCtx) => AlertDialog(
-    title: Text(s.aboutSponsor, style: TextStyle(color: scheme.onSurface, fontWeight: FontWeight.w700, fontSize: 18)),
-    content: SizedBox(width: 480, child: Column(mainAxisSize: MainAxisSize.min, children: [
-      Text(s.aboutThanks, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
-      const SizedBox(height: 12),
-      Text(s.aboutZoomHint, style: TextStyle(fontSize: 10, color: scheme.outline)),
-      const SizedBox(height: 12),
-      Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-        Expanded(child: _qrImage(ctx, 'rele/wx.png', s.aboutWxTitle, scheme)),
-        const SizedBox(width: 16),
-        Expanded(child: _qrImage(ctx, 'rele/zfb.jpg', s.aboutZfbTitle, scheme)),
-      ]),
-    ])),
-    actions: [TextButton(onPressed: () => Navigator.pop(dCtx), child: Text(s.aboutClose))],
-  ));
+  showDialog(
+    context: ctx,
+    builder: (dCtx) => AlertDialog(
+      title: Text(
+        s.aboutSponsor,
+        style: TextStyle(
+          color: scheme.onSurface,
+          fontWeight: FontWeight.w700,
+          fontSize: 18,
+        ),
+      ),
+      content: SizedBox(
+        width: 480,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              s.aboutThanks,
+              style: TextStyle(fontSize: 13, color: scheme.onSurface),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              s.aboutZoomHint,
+              style: TextStyle(fontSize: 10, color: scheme.outline),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Expanded(
+                  child: _qrImage(ctx, 'rele/wx.png', s.aboutWxTitle, scheme),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: _qrImage(ctx, 'rele/zfb.jpg', s.aboutZfbTitle, scheme),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dCtx),
+          child: Text(s.aboutClose),
+        ),
+      ],
+    ),
+  );
 }
 
-Widget _qrImage(BuildContext ctx, String asset, String label, ColorScheme scheme) => GestureDetector(
+Widget _qrImage(
+  BuildContext ctx,
+  String asset,
+  String label,
+  ColorScheme scheme,
+) => GestureDetector(
   onTap: () => _showFullImage(ctx, asset, scheme),
-  child: Column(children: [
-    Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.primary)),
-    const SizedBox(height: 8),
-    ClipRRect(borderRadius: BorderRadius.circular(8),
+  child: Column(
+    children: [
+      Text(
+        label,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: scheme.primary,
+        ),
+      ),
+      const SizedBox(height: 8),
+      ClipRRect(
+        borderRadius: BorderRadius.circular(8),
         // 缩略图固定高 160 逻辑像素，而 wx.png / zfb.jpg 是 1220x1563 / 1170x1755
         // 的原图 —— 不设 cacheHeight 会按原始分辨率解码（单张约 7~8MB RGBA，
         // 且 Image.asset 不会自动套 ResizeImage）。全屏查看走 _showFullImage，
         // 那条路径刻意不设 cap，以保留 InteractiveViewer 4x 缩放的清晰度。
-        child: Image.asset(asset,
+        child: Image.asset(
+          asset,
+          height: 160,
+          cacheHeight: (160 * MediaQuery.devicePixelRatioOf(ctx)).round(),
+          fit: BoxFit.contain,
+          errorBuilder: (_, _, _) => Container(
             height: 160,
-            cacheHeight: (160 * MediaQuery.devicePixelRatioOf(ctx)).round(),
-            fit: BoxFit.contain,
-            errorBuilder: (_, _, _) => Container(height: 160, alignment: Alignment.center,
-                child: Text('加载失败', style: TextStyle(color: scheme.outline))))),
-  ]),
+            alignment: Alignment.center,
+            child: Text('加载失败', style: TextStyle(color: scheme.outline)),
+          ),
+        ),
+      ),
+    ],
+  ),
 );
 
 void _showFullImage(BuildContext ctx, String asset, ColorScheme scheme) {
-  showDialog(context: ctx, builder: (dCtx) => Dialog(
-    backgroundColor: Colors.transparent,
-    child: GestureDetector(onTap: () => Navigator.pop(dCtx),
-      child: InteractiveViewer(minScale: 0.5, maxScale: 4.0,
-        child: ClipRRect(borderRadius: BorderRadius.circular(12),
-            child: Image.asset(asset, fit: BoxFit.contain,
-                errorBuilder: (_, _, _) => Container(padding: const EdgeInsets.all(32),
-                    child: Text('加载失败', style: TextStyle(color: scheme.outline)))))),
+  showDialog(
+    context: ctx,
+    builder: (dCtx) => Dialog(
+      backgroundColor: Colors.transparent,
+      child: GestureDetector(
+        onTap: () => Navigator.pop(dCtx),
+        child: InteractiveViewer(
+          minScale: 0.5,
+          maxScale: 4.0,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Image.asset(
+              asset,
+              fit: BoxFit.contain,
+              errorBuilder: (_, _, _) => Container(
+                padding: const EdgeInsets.all(32),
+                child: Text('加载失败', style: TextStyle(color: scheme.outline)),
+              ),
+            ),
+          ),
+        ),
+      ),
     ),
-  ));
+  );
 }
 
 // ═══════════════════════════════════════════
@@ -5266,7 +7454,10 @@ class _FfmpegCardState extends State<_FfmpegCard> {
   String _path = '';
 
   @override
-  void initState() { super.initState(); _syncState(); }
+  void initState() {
+    super.initState();
+    _syncState();
+  }
 
   @override
   void didUpdateWidget(_FfmpegCard old) {
@@ -5290,7 +7481,10 @@ class _FfmpegCardState extends State<_FfmpegCard> {
       _version = widget.state.ffmpegVersion;
       _path = widget.state.config.ffmpegPath;
     });
-    widget.state.addLog(_found ? 'FFmpeg detected: $_version' : 'FFmpeg not found', category: _found ? 'ffmpeg' : 'error');
+    widget.state.addLog(
+      _found ? 'FFmpeg detected: $_version' : 'FFmpeg not found',
+      category: _found ? 'ffmpeg' : 'error',
+    );
   }
 
   Future<void> _browseFfmpeg() async {
@@ -5304,27 +7498,51 @@ class _FfmpegCardState extends State<_FfmpegCard> {
     if (exePath == null) return;
     setState(() => _checking = true);
     try {
-      final result = await Process.run(exePath, ['-version'], runInShell: false);
-      if (result.exitCode == 0 && result.stdout.toString().contains('ffmpeg version')) {
+      final result = await Process.run(exePath, [
+        '-version',
+      ], runInShell: false);
+      if (result.exitCode == 0 &&
+          result.stdout.toString().contains('ffmpeg version')) {
         final versionLine = result.stdout.toString().split('\n').first;
         final dir = exePath.replaceAll(RegExp(r'[\\/][^\\/]+$'), '');
         final ffprobeName = Platform.isWindows ? 'ffprobe.exe' : 'ffprobe';
         if (!mounted) return;
-        setState(() { _found = true; _version = versionLine; _path = exePath; _checking = false; });
-        widget.state.updateConfig((c) => c..ffmpegPath = exePath..ffprobePath = '$dir${Platform.pathSeparator}$ffprobeName');
-        widget.state.backend.setPaths(ffmpeg: exePath, ffprobe: '$dir${Platform.pathSeparator}$ffprobeName');
+        setState(() {
+          _found = true;
+          _version = versionLine;
+          _path = exePath;
+          _checking = false;
+        });
+        widget.state.updateConfig(
+          (c) => c
+            ..ffmpegPath = exePath
+            ..ffprobePath = '$dir${Platform.pathSeparator}$ffprobeName',
+        );
+        widget.state.backend.setPaths(
+          ffmpeg: exePath,
+          ffprobe: '$dir${Platform.pathSeparator}$ffprobeName',
+        );
         if (Platform.isWindows) await _addToPath(dir);
         widget.state.addLog('FFmpeg configured: $_version', category: 'ffmpeg');
-        if (mounted) showToast(context, 'FFmpeg found at: $dir', type: ToastType.success);
+        if (mounted)
+          showToast(context, 'FFmpeg found at: $dir', type: ToastType.success);
       } else {
         if (!mounted) return;
         setState(() => _checking = false);
-        showToast(context, isZh ? '所选文件不是有效的 ffmpeg' : 'Selected file is not a valid ffmpeg', type: ToastType.error);
+        showToast(
+          context,
+          isZh ? '所选文件不是有效的 ffmpeg' : 'Selected file is not a valid ffmpeg',
+          type: ToastType.error,
+        );
       }
     } catch (e) {
       if (!mounted) return;
       setState(() => _checking = false);
-      showToast(context, isZh ? '检测失败: $e' : 'Detection failed: $e', type: ToastType.error);
+      showToast(
+        context,
+        isZh ? '检测失败: $e' : 'Detection failed: $e',
+        type: ToastType.error,
+      );
     }
   }
 
@@ -5334,12 +7552,21 @@ class _FfmpegCardState extends State<_FfmpegCard> {
     try {
       final regResult = await Process.run('cmd', ['/c', 'echo %PATH%']);
       if (regResult.stdout.toString().contains(dir)) return;
-      final regResult2 = await Process.run('reg', ['query', r'HKCU\Environment', '/v', 'Path']);
+      final regResult2 = await Process.run('reg', [
+        'query',
+        r'HKCU\Environment',
+        '/v',
+        'Path',
+      ]);
       var existingPath = '';
       if (regResult2.exitCode == 0) {
         for (final line in regResult2.stdout.toString().split('\n')) {
           if (line.contains('Path') && line.contains('REG_')) {
-            existingPath = line.split('REG_').last.trim().replaceFirst(RegExp(r'^\w+\s+'), '');
+            existingPath = line
+                .split('REG_')
+                .last
+                .trim()
+                .replaceFirst(RegExp(r'^\w+\s+'), '');
             break;
           }
         }
@@ -5348,7 +7575,14 @@ class _FfmpegCardState extends State<_FfmpegCard> {
       if (existingPath.contains(dir)) return;
       // 只有 reg 查询成功且现有 PATH 非空时才追加；否则跳过，避免覆盖用户 PATH
       if (regResult2.exitCode != 0 || existingPath.isEmpty) {
-        if (mounted) showToast(context, isZh ? '读取 PATH 失败，已跳过添加到系统 PATH' : 'Failed to read PATH, skipped adding', type: ToastType.error);
+        if (mounted)
+          showToast(
+            context,
+            isZh
+                ? '读取 PATH 失败，已跳过添加到系统 PATH'
+                : 'Failed to read PATH, skipped adding',
+            type: ToastType.error,
+          );
         return;
       }
       final newPath = '$existingPath;$dir';
@@ -5359,14 +7593,21 @@ class _FfmpegCardState extends State<_FfmpegCard> {
       // 无长度截断、保留原有值类型，且只影响当前用户。
       final escaped = newPath.replaceAll("'", "''");
       final ps = await Process.run('powershell', [
-        '-NoProfile', '-NonInteractive', '-Command',
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
         "[Environment]::SetEnvironmentVariable('Path','$escaped','User')",
       ]);
       if (ps.exitCode != 0) {
         throw Exception('设置用户 PATH 失败: ${ps.stderr}');
       }
     } catch (e) {
-      if (mounted) showToast(context, isZh ? '添加到系统 PATH 失败: $e' : 'Failed to add to PATH: $e', type: ToastType.error);
+      if (mounted)
+        showToast(
+          context,
+          isZh ? '添加到系统 PATH 失败: $e' : 'Failed to add to PATH: $e',
+          type: ToastType.error,
+        );
     }
   }
 
@@ -5378,22 +7619,45 @@ class _FfmpegCardState extends State<_FfmpegCard> {
         return AlertDialog(
           icon: Icon(Icons.delete_forever, color: s.error, size: 32),
           title: Text(isZh ? '删除 FFmpeg' : 'Delete FFmpeg'),
-          content: Text(isZh ? '将删除程序目录下的 ffmpeg.exe 和 ffprobe.exe，确定？'
-              : 'Delete ffmpeg.exe and ffprobe.exe from the app directory?', style: TextStyle(fontSize: 13, color: s.onSurface)),
+          content: Text(
+            isZh
+                ? '将删除程序目录下的 ffmpeg.exe 和 ffprobe.exe，确定？'
+                : 'Delete ffmpeg.exe and ffprobe.exe from the app directory?',
+            style: TextStyle(fontSize: 13, color: s.onSurface),
+          ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(isZh ? '取消' : 'Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), style: FilledButton.styleFrom(backgroundColor: s.error),
-                child: Text(isZh ? '删除' : 'Delete')),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(isZh ? '取消' : 'Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: FilledButton.styleFrom(backgroundColor: s.error),
+              child: Text(isZh ? '删除' : 'Delete'),
+            ),
           ],
         );
       },
     );
     if (confirmed != true || !mounted) return;
     FfmpegInstaller.uninstall();
-    widget.state.updateConfig((c) => c..ffmpegPath = ''..ffprobePath = '');
-    setState(() { _found = false; _version = ''; _path = ''; });
+    widget.state.updateConfig(
+      (c) => c
+        ..ffmpegPath = ''
+        ..ffprobePath = '',
+    );
+    setState(() {
+      _found = false;
+      _version = '';
+      _path = '';
+    });
     widget.state.addLog('已删除程序目录下的 FFmpeg', category: 'info');
-    if (mounted) showToast(context, isZh ? 'FFmpeg 已删除' : 'FFmpeg deleted', type: ToastType.info);
+    if (mounted)
+      showToast(
+        context,
+        isZh ? 'FFmpeg 已删除' : 'FFmpeg deleted',
+        type: ToastType.info,
+      );
   }
 
   @override
@@ -5406,55 +7670,132 @@ class _FfmpegCardState extends State<_FfmpegCard> {
     // 移动端：FFmpeg 已内置在 APK 中（jniLibs），无需安装/选择/删除
     if (isMobilePlatform) {
       return _glass(context, widget.state, s.ffmpegSettings, [
-        Row(children: [
-          Icon(Icons.check_circle, size: 16, color: _found ? scheme.sem.success : scheme.sem.warning),
-          const SizedBox(width: 8),
-          Expanded(child: Text(
-              _found ? s.ffmpegFound : (isZh ? '内置 FFmpeg 加载中…' : 'Bundled FFmpeg loading…'),
-              style: TextStyle(fontSize: 13,
+        Row(
+          children: [
+            Icon(
+              Icons.check_circle,
+              size: 16,
+              color: _found ? scheme.sem.success : scheme.sem.warning,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _found
+                    ? s.ffmpegFound
+                    : (isZh ? '内置 FFmpeg 加载中…' : 'Bundled FFmpeg loading…'),
+                style: TextStyle(
+                  fontSize: 13,
                   color: _found ? scheme.sem.success : scheme.sem.warning,
-                  fontWeight: FontWeight.w600))),
-        ]),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
         if (_version.isNotEmpty)
-          Padding(padding: const EdgeInsets.only(top: 4, bottom: 6),
-              child: Text(_version, style: TextStyle(fontSize: 10, color: scheme.outline),
-                  maxLines: 2, overflow: TextOverflow.ellipsis)),
+          Padding(
+            padding: const EdgeInsets.only(top: 4, bottom: 6),
+            child: Text(
+              _version,
+              style: TextStyle(fontSize: 10, color: scheme.outline),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         if (_path.isNotEmpty)
-          Padding(padding: const EdgeInsets.only(bottom: 6),
-              child: Text(_path, style: TextStyle(fontSize: 9, color: scheme.outline.withAlpha(150)),
-                  maxLines: 2, overflow: TextOverflow.ellipsis)),
-        Row(children: [
-          Expanded(child: OutlinedButton.icon(icon: const Icon(Icons.refresh, size: 14),
-              label: Text(s.recheck, style: const TextStyle(fontSize: 11)), onPressed: _detect)),
-        ]),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text(
+              _path,
+              style: TextStyle(
+                fontSize: 9,
+                color: scheme.outline.withAlpha(150),
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                icon: const Icon(Icons.refresh, size: 14),
+                label: Text(s.recheck, style: const TextStyle(fontSize: 11)),
+                onPressed: _detect,
+              ),
+            ),
+          ],
+        ),
         const SizedBox(height: 4),
-        Text(isZh ? '移动端已内置 FFmpeg 库，无需额外安装'
-            : 'FFmpeg is bundled with the app on mobile — no installation needed',
-            style: TextStyle(fontSize: 10, color: scheme.outline)),
+        Text(
+          isZh
+              ? '移动端已内置 FFmpeg 库，无需额外安装'
+              : 'FFmpeg is bundled with the app on mobile — no installation needed',
+          style: TextStyle(fontSize: 10, color: scheme.outline),
+        ),
       ]);
     }
 
     if (!_found && !_checking) {
       return _glass(context, widget.state, s.ffmpegSettings, [
-        Center(child: Column(children: [
-          Icon(Icons.warning_amber, size: 32, color: scheme.sem.warning),
-          const SizedBox(height: 8),
-          Text(s.ffmpegNotFound, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.sem.warning)),
-          const SizedBox(height: 12),
-          FilledButton.icon(icon: const Icon(Icons.download, size: 18),
-              label: Text(isZh ? '自动安装 FFmpeg' : 'Install FFmpeg', style: const TextStyle(fontSize: 13)),
-              onPressed: () async { final ok = await FfmpegInstallDialog.show(context); if (ok == true) _detect(); }),
-          const SizedBox(height: 8),
-          Row(mainAxisSize: MainAxisSize.min, children: [
-            FilledButton.tonalIcon(icon: const Icon(Icons.search, size: 16),
-                label: Text(isZh ? '检测' : 'Detect', style: const TextStyle(fontSize: 11)), onPressed: _detect),
-            const SizedBox(width: 8),
-            TextButton.icon(icon: const Icon(Icons.folder_open, size: 14),
-                label: Text(isZh ? '手动选择' : 'Manual', style: const TextStyle(fontSize: 11)), onPressed: _browseFfmpeg),
-          ]),
-        ])),
+        Center(
+          child: Column(
+            children: [
+              Icon(Icons.warning_amber, size: 32, color: scheme.sem.warning),
+              const SizedBox(height: 8),
+              Text(
+                s.ffmpegNotFound,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: scheme.sem.warning,
+                ),
+              ),
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                icon: const Icon(Icons.download, size: 18),
+                label: Text(
+                  isZh ? '自动安装 FFmpeg' : 'Install FFmpeg',
+                  style: const TextStyle(fontSize: 13),
+                ),
+                onPressed: () async {
+                  final ok = await FfmpegInstallDialog.show(context);
+                  if (ok == true) _detect();
+                },
+              ),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  FilledButton.tonalIcon(
+                    icon: const Icon(Icons.search, size: 16),
+                    label: Text(
+                      isZh ? '检测' : 'Detect',
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                    onPressed: _detect,
+                  ),
+                  const SizedBox(width: 8),
+                  TextButton.icon(
+                    icon: const Icon(Icons.folder_open, size: 14),
+                    label: Text(
+                      isZh ? '手动选择' : 'Manual',
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                    onPressed: _browseFfmpeg,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
         const SizedBox(height: 4),
-        Wrap(spacing: 4, runSpacing: 4, alignment: WrapAlignment.center, children: _ffmpegLinks),
+        Wrap(
+          spacing: 4,
+          runSpacing: 4,
+          alignment: WrapAlignment.center,
+          children: _ffmpegLinks,
+        ),
       ]);
     }
 
@@ -5463,35 +7804,81 @@ class _FfmpegCardState extends State<_FfmpegCard> {
         const SizedBox(height: 12),
         const Center(child: CircularProgressIndicator()),
         const SizedBox(height: 8),
-        Center(child: Text(isZh ? '正在检测...' : 'Detecting...', style: TextStyle(fontSize: 12, color: scheme.outline))),
+        Center(
+          child: Text(
+            isZh ? '正在检测...' : 'Detecting...',
+            style: TextStyle(fontSize: 12, color: scheme.outline),
+          ),
+        ),
       ]);
     }
 
-    final isBundled = FfmpegInstaller.isInstalled &&
-        _path.isNotEmpty && _path.startsWith(Directory(Platform.resolvedExecutable).parent.path);
+    final isBundled =
+        FfmpegInstaller.isInstalled &&
+        _path.isNotEmpty &&
+        _path.startsWith(Directory(Platform.resolvedExecutable).parent.path);
     return _glass(context, widget.state, s.ffmpegSettings, [
-      Row(children: [
-        Icon(Icons.check_circle, size: 16, color: scheme.sem.success),
-        const SizedBox(width: 8),
-        Expanded(child: Text(s.ffmpegFound, style: TextStyle(fontSize: 13, color: scheme.sem.success, fontWeight: FontWeight.w600))),
-      ]),
-      if (_version.isNotEmpty)
-        Padding(padding: const EdgeInsets.only(top: 4, bottom: 6),
-            child: Text(_version, style: TextStyle(fontSize: 10, color: scheme.outline), maxLines: 2, overflow: TextOverflow.ellipsis)),
-      if (_path.isNotEmpty)
-        Padding(padding: const EdgeInsets.only(bottom: 6),
-            child: Text(_path, style: TextStyle(fontSize: 9, color: scheme.outline.withAlpha(150)), maxLines: 2, overflow: TextOverflow.ellipsis)),
-      Row(children: [
-        Expanded(child: OutlinedButton.icon(icon: const Icon(Icons.refresh, size: 14),
-            label: Text(s.recheck, style: const TextStyle(fontSize: 11)), onPressed: _detect)),
-        if (isBundled) ...[
+      Row(
+        children: [
+          Icon(Icons.check_circle, size: 16, color: scheme.sem.success),
           const SizedBox(width: 8),
-          OutlinedButton.icon(icon: Icon(Icons.delete_outline, size: 14, color: scheme.error),
-              label: Text(isZh ? '删除' : 'Delete', style: TextStyle(fontSize: 11, color: scheme.error)),
-              style: OutlinedButton.styleFrom(side: BorderSide(color: scheme.error.withAlpha(120))),
-              onPressed: () => _confirmDelete(isZh)),
+          Expanded(
+            child: Text(
+              s.ffmpegFound,
+              style: TextStyle(
+                fontSize: 13,
+                color: scheme.sem.success,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
         ],
-      ]),
+      ),
+      if (_version.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(top: 4, bottom: 6),
+          child: Text(
+            _version,
+            style: TextStyle(fontSize: 10, color: scheme.outline),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      if (_path.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: Text(
+            _path,
+            style: TextStyle(fontSize: 9, color: scheme.outline.withAlpha(150)),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      Row(
+        children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              icon: const Icon(Icons.refresh, size: 14),
+              label: Text(s.recheck, style: const TextStyle(fontSize: 11)),
+              onPressed: _detect,
+            ),
+          ),
+          if (isBundled) ...[
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              icon: Icon(Icons.delete_outline, size: 14, color: scheme.error),
+              label: Text(
+                isZh ? '删除' : 'Delete',
+                style: TextStyle(fontSize: 11, color: scheme.error),
+              ),
+              style: OutlinedButton.styleFrom(
+                side: BorderSide(color: scheme.error.withAlpha(120)),
+              ),
+              onPressed: () => _confirmDelete(isZh),
+            ),
+          ],
+        ],
+      ),
       const SizedBox(height: 4),
       Wrap(spacing: 4, runSpacing: 4, children: _ffmpegLinks),
     ]);
@@ -5548,15 +7935,21 @@ class _CPState extends State<_CP> {
   void initState() {
     super.initState();
     final h1 = HSVColor.fromColor(widget.initial);
-    _h1 = h1.hue; _s1 = h1.saturation; _v1 = h1.value;
+    _h1 = h1.hue;
+    _s1 = h1.saturation;
+    _v1 = h1.value;
     if (widget.initial2 != null) {
       _gradEnabled = true;
       final h2 = HSVColor.fromColor(widget.initial2!);
-      _h2 = h2.hue; _s2 = h2.saturation; _v2 = h2.value;
+      _h2 = h2.hue;
+      _s2 = h2.saturation;
+      _v2 = h2.value;
     } else {
       _gradEnabled = false;
       final h2 = HSVColor.fromColor(widget.initial);
-      _h2 = h2.hue + 20; _s2 = h2.saturation; _v2 = h2.value;
+      _h2 = h2.hue + 20;
+      _s2 = h2.saturation;
+      _v2 = h2.value;
     }
   }
 
@@ -5578,146 +7971,288 @@ class _CPState extends State<_CP> {
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxHeight: 560),
         child: SingleChildScrollView(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Row(children: [
-              Icon(Icons.palette_outlined, size: 18, color: scheme.primary),
-              const SizedBox(width: 8),
-              Text(widget.isZh ? '主题颜色' : 'Theme Color',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-              const Spacer(),
-              GestureDetector(
-                onTap: () => Navigator.pop(context),
-                child: Icon(Icons.close, size: 18, color: scheme.outline),
-              ),
-            ]),
-            const SizedBox(height: 12),
-            // 预览：纯色或渐变
-            Container(height: 44, width: double.infinity, alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: _gradEnabled ? null : c1,
-                gradient: _gradEnabled
-                    ? LinearGradient(colors: [c1, c2], begin: Alignment.topLeft, end: Alignment.bottomRight)
-                    : null,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
-              ),
-              child: Text(_gradEnabled ? (widget.isZh ? '渐变' : 'Gradient') : (widget.isZh ? '纯色' : 'Solid'),
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white)),
-            ),
-            const SizedBox(height: 12),
-            // 是否使用渐变色（通俗开关）
-            Row(children: [
-              Icon(Icons.auto_awesome, size: 16, color: scheme.primary),
-              const SizedBox(width: 8),
-              Expanded(child: Text(widget.isZh ? '使用渐变色' : 'Use gradient',
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface))),
-              Switch(
-                value: _gradEnabled,
-                onChanged: (v) => setState(() => _gradEnabled = v),
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-            ]),
-            const SizedBox(height: 12),
-            // 常用色板（单色 / 渐变通用）
-            Text(widget.isZh ? '常用颜色' : 'Common colors', style: labelStyle),
-            const SizedBox(height: 8),
-            if (_gradEnabled)
-              Wrap(spacing: 8, runSpacing: 8, children: _gradPresets.map((g) {
-                final selected = g.$1 == c1.toARGB32() && g.$2 == c2.toARGB32();
-                return GestureDetector(
-                  onTap: () {
-                    final h1 = HSVColor.fromColor(Color(g.$1));
-                    final h2 = HSVColor.fromColor(Color(g.$2));
-                    setState(() { _h1 = h1.hue; _s1 = h1.saturation; _v1 = h1.value; _h2 = h2.hue; _s2 = h2.saturation; _v2 = h2.value; _gradEnabled = true; });
-                  },
-                  child: Container(
-                    width: 36, height: 36,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(colors: [Color(g.$1), Color(g.$2)], begin: Alignment.topLeft, end: Alignment.bottomRight),
-                      shape: BoxShape.circle,
-                      border: Border.all(color: selected ? scheme.primary : scheme.outlineVariant.withAlpha(90), width: selected ? 3 : 1),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.palette_outlined, size: 18, color: scheme.primary),
+                  const SizedBox(width: 8),
+                  Text(
+                    widget.isZh ? '主题颜色' : 'Theme Color',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: scheme.onSurface,
                     ),
                   ),
-                );
-              }).toList())
-            else
-              Wrap(spacing: 6, runSpacing: 6, children: [
-                for (final preset in const [
-                  0xFF5E6AD2, 0xFF3B82F6, 0xFF06B6D4, 0xFF10B981, 0xFF84CC16,
-                  0xFFF59E0B, 0xFFF97316, 0xFFEF4444, 0xFFEC4899, 0xFF8B5CF6,
-                  0xFF64748B, 0xFF000000, 0xFFFFFFFF, 0xFFF8FAFC,
-                ])
+                  const Spacer(),
                   GestureDetector(
-                    onTap: () {
-                      final hsv = HSVColor.fromColor(Color(preset));
-                      setState(() { _h1 = hsv.hue; _s1 = hsv.saturation; _v1 = hsv.value; });
-                    },
-                    child: Container(
-                      width: 28, height: 28,
-                      decoration: BoxDecoration(
-                        color: Color(preset),
-                        shape: BoxShape.circle,
-                        border: Border.all(color: scheme.outlineVariant.withAlpha(120)),
+                    onTap: () => Navigator.pop(context),
+                    child: Icon(Icons.close, size: 18, color: scheme.outline),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              // 预览：纯色或渐变
+              Container(
+                height: 44,
+                width: double.infinity,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: _gradEnabled ? null : c1,
+                  gradient: _gradEnabled
+                      ? LinearGradient(
+                          colors: [c1, c2],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        )
+                      : null,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: scheme.outlineVariant.withAlpha(80),
+                  ),
+                ),
+                child: Text(
+                  _gradEnabled
+                      ? (widget.isZh ? '渐变' : 'Gradient')
+                      : (widget.isZh ? '纯色' : 'Solid'),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              // 是否使用渐变色（通俗开关）
+              Row(
+                children: [
+                  Icon(Icons.auto_awesome, size: 16, color: scheme.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      widget.isZh ? '使用渐变色' : 'Use gradient',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: scheme.onSurface,
                       ),
-                      child: preset == c1.toARGB32() ? const Icon(Icons.check, size: 13, color: Colors.white) : null,
                     ),
                   ),
-              ]),
-            const SizedBox(height: 12),
-            // 自定义微调
-            Text(widget.isZh ? '自定义微调' : 'Fine-tune', style: labelStyle),
-            Text(widget.isZh ? '用色相 / 饱和度 / 明度精确调整颜色' : 'Adjust hue / saturation / value precisely',
-                style: sectionHint),
-            const SizedBox(height: 4),
-            _colorRow(c1, [
-              _sl('H', _h1, 0, 360, (v) => setState(() => _h1 = v)),
-              _sl('S', _s1, 0, 1, (v) => setState(() => _s1 = v)),
-              _sl('V', _v1, 0, 1, (v) => setState(() => _v1 = v)),
-            ]),
-            if (_gradEnabled) ...[
-              const SizedBox(height: 6),
-              Text(widget.isZh ? '第二种颜色（渐变终点）' : 'Second color (end of gradient)', style: labelStyle),
-              const SizedBox(height: 4),
-              _colorRow(c2, [
-                _sl('H', _h2, 0, 360, (v) => setState(() => _h2 = v)),
-                _sl('S', _s2, 0, 1, (v) => setState(() => _s2 = v)),
-                _sl('V', _v2, 0, 1, (v) => setState(() => _v2 = v)),
-              ]),
-            ],
-            const SizedBox(height: 10),
-            Row(children: [
-              Expanded(child: Text('#${_hex(c1)}${_gradEnabled ? ' → #${_hex(c2)}' : ''}',
-                  style: TextStyle(fontFamily: 'monospace', fontSize: 11, color: scheme.onSurfaceVariant))),
-              TextButton(onPressed: () => Navigator.pop(context), child: Text(widget.isZh ? '取消' : 'Cancel')),
-              FilledButton(
-                onPressed: () => Navigator.pop(context,
-                    _GradResult(c1.toARGB32(), _gradEnabled ? c2.toARGB32() : null)),
-                child: Text(widget.isZh ? '选择' : 'Select'),
+                  Switch(
+                    value: _gradEnabled,
+                    onChanged: (v) => setState(() => _gradEnabled = v),
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ],
               ),
-            ]),
-          ]),
+              const SizedBox(height: 12),
+              // 常用色板（单色 / 渐变通用）
+              Text(widget.isZh ? '常用颜色' : 'Common colors', style: labelStyle),
+              const SizedBox(height: 8),
+              if (_gradEnabled)
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _gradPresets.map((g) {
+                    final selected =
+                        g.$1 == c1.toARGB32() && g.$2 == c2.toARGB32();
+                    return GestureDetector(
+                      onTap: () {
+                        final h1 = HSVColor.fromColor(Color(g.$1));
+                        final h2 = HSVColor.fromColor(Color(g.$2));
+                        setState(() {
+                          _h1 = h1.hue;
+                          _s1 = h1.saturation;
+                          _v1 = h1.value;
+                          _h2 = h2.hue;
+                          _s2 = h2.saturation;
+                          _v2 = h2.value;
+                          _gradEnabled = true;
+                        });
+                      },
+                      child: Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [Color(g.$1), Color(g.$2)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: selected
+                                ? scheme.primary
+                                : scheme.outlineVariant.withAlpha(90),
+                            width: selected ? 3 : 1,
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                )
+              else
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final preset in const [
+                      0xFF5E6AD2,
+                      0xFF3B82F6,
+                      0xFF06B6D4,
+                      0xFF10B981,
+                      0xFF84CC16,
+                      0xFFF59E0B,
+                      0xFFF97316,
+                      0xFFEF4444,
+                      0xFFEC4899,
+                      0xFF8B5CF6,
+                      0xFF64748B,
+                      0xFF000000,
+                      0xFFFFFFFF,
+                      0xFFF8FAFC,
+                    ])
+                      GestureDetector(
+                        onTap: () {
+                          final hsv = HSVColor.fromColor(Color(preset));
+                          setState(() {
+                            _h1 = hsv.hue;
+                            _s1 = hsv.saturation;
+                            _v1 = hsv.value;
+                          });
+                        },
+                        child: Container(
+                          width: 28,
+                          height: 28,
+                          decoration: BoxDecoration(
+                            color: Color(preset),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: scheme.outlineVariant.withAlpha(120),
+                            ),
+                          ),
+                          child: preset == c1.toARGB32()
+                              ? const Icon(
+                                  Icons.check,
+                                  size: 13,
+                                  color: Colors.white,
+                                )
+                              : null,
+                        ),
+                      ),
+                  ],
+                ),
+              const SizedBox(height: 12),
+              // 自定义微调
+              Text(widget.isZh ? '自定义微调' : 'Fine-tune', style: labelStyle),
+              Text(
+                widget.isZh
+                    ? '用色相 / 饱和度 / 明度精确调整颜色'
+                    : 'Adjust hue / saturation / value precisely',
+                style: sectionHint,
+              ),
+              const SizedBox(height: 4),
+              _colorRow(c1, [
+                _sl('H', _h1, 0, 360, (v) => setState(() => _h1 = v)),
+                _sl('S', _s1, 0, 1, (v) => setState(() => _s1 = v)),
+                _sl('V', _v1, 0, 1, (v) => setState(() => _v1 = v)),
+              ]),
+              if (_gradEnabled) ...[
+                const SizedBox(height: 6),
+                Text(
+                  widget.isZh
+                      ? '第二种颜色（渐变终点）'
+                      : 'Second color (end of gradient)',
+                  style: labelStyle,
+                ),
+                const SizedBox(height: 4),
+                _colorRow(c2, [
+                  _sl('H', _h2, 0, 360, (v) => setState(() => _h2 = v)),
+                  _sl('S', _s2, 0, 1, (v) => setState(() => _s2 = v)),
+                  _sl('V', _v2, 0, 1, (v) => setState(() => _v2 = v)),
+                ]),
+              ],
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '#${_hex(c1)}${_gradEnabled ? ' → #${_hex(c2)}' : ''}',
+                      style: TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 11,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: Text(widget.isZh ? '取消' : 'Cancel'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(
+                      context,
+                      _GradResult(
+                        c1.toARGB32(),
+                        _gradEnabled ? c2.toARGB32() : null,
+                      ),
+                    ),
+                    child: Text(widget.isZh ? '选择' : 'Select'),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  String _hex(Color c) => c.toARGB32().toRadixString(16).padLeft(8, '0').substring(2).toUpperCase();
+  String _hex(Color c) =>
+      c.toARGB32().toRadixString(16).padLeft(8, '0').substring(2).toUpperCase();
 
   Widget _colorRow(Color swatch, List<Widget> sliders) {
-    return Row(children: [
-      Container(width: 22, height: 22, decoration: BoxDecoration(
-        color: swatch, shape: BoxShape.circle, border: Border.all(color: const Color(0x33000000)))), 
-      const SizedBox(width: 8),
-      Expanded(child: Column(children: sliders)),
-    ]);
+    return Row(
+      children: [
+        Container(
+          width: 22,
+          height: 22,
+          decoration: BoxDecoration(
+            color: swatch,
+            shape: BoxShape.circle,
+            border: Border.all(color: const Color(0x33000000)),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(child: Column(children: sliders)),
+      ],
+    );
   }
 
   // 取色面板的 R/G/B 滑杆：同样走 AppSlider（胶囊 + 主题色填充 + 玻璃留空），
   // 不要改回裸 Slider —— 裸 Slider 没有玻璃底那一层。
-  Widget _sl(String l, double v, double min, double max, ValueChanged<double> cb) => Row(children: [
-    SizedBox(width: 12, child: Text(l, style: const TextStyle(fontSize: 10))),
-    Expanded(child: AppSlider(value: v, min: min, max: max, compact: true, onChanged: cb)),
-  ]);
+  Widget _sl(
+    String l,
+    double v,
+    double min,
+    double max,
+    ValueChanged<double> cb,
+  ) => Row(
+    children: [
+      SizedBox(width: 12, child: Text(l, style: const TextStyle(fontSize: 10))),
+      Expanded(
+        child: AppSlider(
+          value: v,
+          min: min,
+          max: max,
+          compact: true,
+          onChanged: cb,
+        ),
+      ),
+    ],
+  );
 }
 
 class _PathField extends StatefulWidget {
@@ -5725,13 +8260,20 @@ class _PathField extends StatefulWidget {
   final String label;
   final ColorScheme scheme;
   final ValueChanged<String> onChange;
-  const _PathField({required this.value, required this.label, required this.scheme, required this.onChange});
+  const _PathField({
+    required this.value,
+    required this.label,
+    required this.scheme,
+    required this.onChange,
+  });
   @override
   State<_PathField> createState() => _PathFieldState();
 }
 
 class _PathFieldState extends State<_PathField> {
-  late final TextEditingController _ctrl = TextEditingController(text: widget.value);
+  late final TextEditingController _ctrl = TextEditingController(
+    text: widget.value,
+  );
 
   @override
   void didUpdateWidget(_PathField old) {
@@ -5742,7 +8284,10 @@ class _PathFieldState extends State<_PathField> {
   }
 
   @override
-  void dispose() { _ctrl.dispose(); super.dispose(); }
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => TextField(
@@ -5785,7 +8330,12 @@ class _McpFieldRow extends StatelessWidget {
   final Widget? action;
   final Widget? note;
 
-  const _McpFieldRow({required this.label, required this.field, this.action, this.note});
+  const _McpFieldRow({
+    required this.label,
+    required this.field,
+    this.action,
+    this.note,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -5842,17 +8392,23 @@ class _McpTextField extends StatefulWidget {
 }
 
 class _McpTextFieldState extends State<_McpTextField> {
-  late final TextEditingController _ctrl = TextEditingController(text: widget.value);
+  late final TextEditingController _ctrl = TextEditingController(
+    text: widget.value,
+  );
   bool _hidden = true;
 
   @override
   void didUpdateWidget(_McpTextField old) {
     super.didUpdateWidget(old);
-    if (old.value != widget.value && _ctrl.text != widget.value) _ctrl.text = widget.value;
+    if (old.value != widget.value && _ctrl.text != widget.value)
+      _ctrl.text = widget.value;
   }
 
   @override
-  void dispose() { _ctrl.dispose(); super.dispose(); }
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -5863,21 +8419,41 @@ class _McpTextFieldState extends State<_McpTextField> {
       minLines: obscuring ? 1 : widget.minLines,
       maxLines: obscuring ? 1 : widget.maxLines,
       style: TextStyle(fontSize: 13, color: widget.scheme.onSurface),
-      decoration: (widget.size == null ? const InputDecoration() : widget.size!.denseInput())
-          .copyWith(
-        labelText: widget.label.isEmpty ? null : widget.label,
-        hintText: widget.hint,
-        hintStyle: widget.hint == null ? null : TextStyle(fontSize: 11, color: widget.scheme.outline),
-        isDense: true,
-        alignLabelWithHint: widget.maxLines > 1,
-        labelStyle: TextStyle(fontSize: 11, color: widget.scheme.outline),
-        suffixIconConstraints: widget.size == null ? null : AppControlSize.iconSlot,
-        suffixIcon: widget.obscure ? IconButton(
-          icon: Icon(_hidden ? Icons.visibility_off : Icons.visibility, size: 16, color: widget.scheme.outline),
-          onPressed: () => setState(() => _hidden = !_hidden),
-          padding: EdgeInsets.zero, constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
-        ) : null,
-      ),
+      decoration:
+          (widget.size == null
+                  ? const InputDecoration()
+                  : widget.size!.denseInput())
+              .copyWith(
+                labelText: widget.label.isEmpty ? null : widget.label,
+                hintText: widget.hint,
+                hintStyle: widget.hint == null
+                    ? null
+                    : TextStyle(fontSize: 11, color: widget.scheme.outline),
+                isDense: true,
+                alignLabelWithHint: widget.maxLines > 1,
+                labelStyle: TextStyle(
+                  fontSize: 11,
+                  color: widget.scheme.outline,
+                ),
+                suffixIconConstraints: widget.size == null
+                    ? null
+                    : AppControlSize.iconSlot,
+                suffixIcon: widget.obscure
+                    ? IconButton(
+                        icon: Icon(
+                          _hidden ? Icons.visibility_off : Icons.visibility,
+                          size: 16,
+                          color: widget.scheme.outline,
+                        ),
+                        onPressed: () => setState(() => _hidden = !_hidden),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 24,
+                          minHeight: 24,
+                        ),
+                      )
+                    : null,
+              ),
       onChanged: widget.onChange,
     );
     // 钉死到档位高度：不给死高度时，带「眼睛」后缀图标的字段会被 InputDecorator
@@ -5890,29 +8466,42 @@ class _ProfileTextField extends StatefulWidget {
   final String value;
   final TextInputType? keyboardType;
   final ValueChanged<String> onChange;
-  const _ProfileTextField({required this.value, this.keyboardType, required this.onChange});
+  const _ProfileTextField({
+    required this.value,
+    this.keyboardType,
+    required this.onChange,
+  });
   @override
   State<_ProfileTextField> createState() => _ProfileTextFieldState();
 }
 
 class _ProfileTextFieldState extends State<_ProfileTextField> {
-  late final TextEditingController _ctrl = TextEditingController(text: widget.value);
+  late final TextEditingController _ctrl = TextEditingController(
+    text: widget.value,
+  );
 
   @override
   void didUpdateWidget(_ProfileTextField old) {
     super.didUpdateWidget(old);
-    if (old.value != widget.value && _ctrl.text != widget.value) _ctrl.text = widget.value;
+    if (old.value != widget.value && _ctrl.text != widget.value)
+      _ctrl.text = widget.value;
   }
 
   @override
-  void dispose() { _ctrl.dispose(); super.dispose(); }
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => TextField(
     controller: _ctrl,
     keyboardType: widget.keyboardType,
     style: const TextStyle(fontSize: 12),
-    decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
+    decoration: const InputDecoration(
+      isDense: true,
+      border: OutlineInputBorder(),
+    ),
     onChanged: widget.onChange,
   );
 }

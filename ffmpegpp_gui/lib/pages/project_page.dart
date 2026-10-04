@@ -123,15 +123,20 @@ class ProjectPageState extends State<ProjectPage> {
   }
 
   void _onDrop(DropDoneDetails details) {
-    setState(() => _dragging = false);
+    if (mounted && _dragging) setState(() => _dragging = false);
+    // Use the basename's final extension: paths may contain dots in parent
+    // directories, and extension-less paths must not be mistaken for media.
     final paths = details.files
-        .map((f) => f.path)
-        .where((p) {
-          final ext = p.split('.').last.toLowerCase();
-          return _exts.contains(ext);
+        .map((file) => file.path)
+        .where((path) {
+          final normalizedPath = path.replaceAll('\\', '/');
+          final name = normalizedPath.substring(normalizedPath.lastIndexOf('/') + 1);
+          final dot = name.lastIndexOf('.');
+          if (dot <= 0 || dot == name.length - 1) return false;
+          return _exts.contains(name.substring(dot + 1).toLowerCase());
         })
         .toList();
-    if (paths.isNotEmpty) {
+    if (paths.isNotEmpty && mounted) {
       context.read<AppState>().addVideos(paths);
     }
   }
@@ -151,10 +156,10 @@ class ProjectPageState extends State<ProjectPage> {
         final s = AppStrings.of(state.config.language);
 
         // 搜索过滤（查询串小写化一次，避免每项重复 toLowerCase）
-        final q = _searchQuery.trim().toLowerCase();
-        final videos = q.isEmpty
+        final query = _searchQuery.trim().toLowerCase();
+        final videos = query.isEmpty
             ? state.videos
-            : state.videos.where((v) => v.filename.toLowerCase().contains(q)).toList();
+            : state.videos.where((v) => v.filename.toLowerCase().contains(query)).toList();
 
         return Scaffold(
           backgroundColor: Colors.transparent,
@@ -421,17 +426,45 @@ class ProjectPageState extends State<ProjectPage> {
     }
 
     if (state.videos.isEmpty && state.containers.isEmpty) {
-      return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Icon(Icons.video_library_outlined, size: 64, color: clr),
-        const SizedBox(height: 16),
-        Text(s.noVideos, style: TextStyle(fontSize: 16, color: clr)),
-        const SizedBox(height: 8),
-        Text(s.clickAdd, style: TextStyle(fontSize: 13, color: clr)),
-        if (!isMobilePlatform) ...[
-          const SizedBox(height: 8),
-          Text(s.dragDropHint, style: TextStyle(fontSize: 12, color: clr.withAlpha(150))),
-        ],
-      ]));
+      return Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Padding(
+            padding: const EdgeInsets.all(28),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: scheme.primaryContainer.withAlpha(100),
+                  borderRadius: BorderRadius.circular(22),
+                  border: Border.all(color: scheme.primary.withAlpha(45)),
+                ),
+                child: SizedBox(
+                  width: 88,
+                  height: 88,
+                  child: Icon(Icons.movie_creation_outlined, size: 42, color: scheme.primary),
+                ),
+              ),
+              const SizedBox(height: 24),
+              Text(s.noVideos, textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              Text(s.clickAdd, textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: clr)),
+              if (!isMobilePlatform) ...[
+                const SizedBox(height: 8),
+                Text(s.dragDropHint, textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: clr.withAlpha(170))),
+              ],
+              const SizedBox(height: 22),
+              FilledButton.icon(
+                onPressed: () => _pick(state),
+                icon: const Icon(Icons.add),
+                label: Text(s.addVideo),
+              ),
+            ]),
+          ),
+        ),
+      );
     }
 
     final standalone = state.standaloneVideos;

@@ -84,6 +84,7 @@ const _uuid = Uuid();
 const _nodeW = 200.0;
 const _nodeWNarrow = 150.0;
 const _nodeH = 68.0;
+
 /// 真无限画布：世界框是固定超大平面（不再随内容包围盒扩张/平移），
 /// 节点在任何坐标都不会引起画面跳变；网格铺满可视区随缩放/平移重绘。
 /// InteractiveViewer 本身 boundaryMargin=∞ 可无限平移；
@@ -92,8 +93,10 @@ const _nodeH = 68.0;
 const _spawnCenter = Offset(3000, 3000); // 新节点默认落点（= 固定世界框中心）
 const _worldExtent = Size(200000, 200000); // 固定世界平面（±10 万像素）
 const _portZoneW = 18.0;
+
 /// 无限画布网格步长（画布坐标，px）
 const _gridStep = 40.0;
+
 /// 右下角小地图尺寸（逻辑像素）
 const _kMiniMapW = 156.0;
 const _kMiniMapH = 106.0;
@@ -106,19 +109,24 @@ const _kMiniMapH = 106.0;
 const double _kFloatPanelW = 320.0;
 const double _kFloatPanelH = 440.0;
 const double _kFloatAiW = 420.0;
+
 /// 最小化后剩下的高度（标题栏 + 外边距）
 const double _kFloatTitleH = 40.0;
 
 double _nodeWFor(PipelineStepType type) =>
-    (type == PipelineStepType.start || type == PipelineStepType.output) ? _nodeWNarrow : _nodeW;
-double _totalNodeWFor(PipelineStepType type) => _portZoneW + _nodeWFor(type) + _portZoneW;
+    (type == PipelineStepType.start || type == PipelineStepType.output)
+    ? _nodeWNarrow
+    : _nodeW;
+double _totalNodeWFor(PipelineStepType type) =>
+    _portZoneW + _nodeWFor(type) + _portZoneW;
 
 /// 逻辑门固定尺寸（正方形，标准逻辑符号比例）
 const _gateW = 64.0;
 const _gateH = 64.0;
 
 /// 单个节点的总宽度（含端口），逻辑门使用固定小尺寸
-double _totalNodeWidth(PipelineNode n) => n.isGate ? _gateW + _portZoneW * 2 : _totalNodeWFor(n.type);
+double _totalNodeWidth(PipelineNode n) =>
+    n.isGate ? _gateW + _portZoneW * 2 : _totalNodeWFor(n.type);
 
 /// 单个节点的总高度，逻辑门使用固定小尺寸
 double _nodeHeight(PipelineNode n) => n.isGate ? _gateH : _nodeH;
@@ -127,11 +135,25 @@ class PipelineEditorPage extends StatefulWidget {
   final VideoFile video;
   final void Function(PipelineGraph graph) onSave;
   final PipelineGraph? initialGraph;
-  final ({String name, int fileCount, Map<MediaType, int> typeCounts, List<String> fileIds})? containerInfo;
+  final ({
+    String name,
+    int fileCount,
+    Map<MediaType, int> typeCounts,
+    List<String> fileIds,
+  })?
+  containerInfo;
+
   /// 配置库模式下该配置的导出格式：'legacy'（默认）| 'v2'（新版模块化二进制）。
   /// 仅影响导出 .fppx 时走哪条路径（均由 C++ 端写盘）。
   final String configFormat;
-  const PipelineEditorPage({super.key, required this.video, required this.onSave, this.initialGraph, this.containerInfo, this.configFormat = 'legacy'});
+  const PipelineEditorPage({
+    super.key,
+    required this.video,
+    required this.onSave,
+    this.initialGraph,
+    this.containerInfo,
+    this.configFormat = 'legacy',
+  });
   @override
   State<PipelineEditorPage> createState() => _PipelineEditorPageState();
 }
@@ -149,10 +171,15 @@ bool _matchesKeyBinding(List<String> binding, KeyEvent event) {
   final want = binding.where(mods.contains).toSet();
   final held = <String>{};
   for (final k in HardwareKeyboard.instance.logicalKeysPressed) {
-    if (k == LogicalKeyboardKey.controlLeft || k == LogicalKeyboardKey.controlRight) held.add('Control');
-    if (k == LogicalKeyboardKey.shiftLeft || k == LogicalKeyboardKey.shiftRight) held.add('Shift');
-    if (k == LogicalKeyboardKey.altLeft || k == LogicalKeyboardKey.altRight) held.add('Alt');
-    if (k == LogicalKeyboardKey.metaLeft || k == LogicalKeyboardKey.metaRight) held.add('Meta');
+    if (k == LogicalKeyboardKey.controlLeft ||
+        k == LogicalKeyboardKey.controlRight)
+      held.add('Control');
+    if (k == LogicalKeyboardKey.shiftLeft || k == LogicalKeyboardKey.shiftRight)
+      held.add('Shift');
+    if (k == LogicalKeyboardKey.altLeft || k == LogicalKeyboardKey.altRight)
+      held.add('Alt');
+    if (k == LogicalKeyboardKey.metaLeft || k == LogicalKeyboardKey.metaRight)
+      held.add('Meta');
   }
   if (held.length != want.length || !held.containsAll(want)) return false;
   final label = event.logicalKey.keyLabel;
@@ -168,6 +195,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   String? _lastSelectedId;
 
   String? _dragFromNodeId;
+
   /// 拖拽的起点端口类型：'dataIn'/'dataOut' 数据端口，
   /// 'enableIn' 使能输入端(顶部)，'statusOut' 状态输出端(底部)，
   /// 'gateIn'/'gateOut' 逻辑门输入/输出端口。
@@ -184,9 +212,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   final ValueNotifier<Map<String, Offset>?> _dragDeltas =
       ValueNotifier<Map<String, Offset>?>(null);
   // 临时拖拽连线的终点（画布坐标），null = 未在连线。
-  final ValueNotifier<Offset?> _dragLineEndNotifier = ValueNotifier<Offset?>(null);
+  final ValueNotifier<Offset?> _dragLineEndNotifier = ValueNotifier<Offset?>(
+    null,
+  );
   // 框选矩形（画布坐标），null = 未在框选。
-  final ValueNotifier<Rect?> _boxSelectRectNotifier = ValueNotifier<Rect?>(null);
+  final ValueNotifier<Rect?> _boxSelectRectNotifier = ValueNotifier<Rect?>(
+    null,
+  );
   // 当前缩放（驱动节点文字大小等）。用 notifier 避免每次缩放 setState 全页。
   final ValueNotifier<double> _scaleNotifier = ValueNotifier<double>(1.0);
 
@@ -196,6 +228,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   // 修正量 —— 若每个节点各自就近吸附，整排的等距关系会被打乱。
   // 修正量直接写回 _dragDeltas，因此渲染、连线跟随、松手提交三处都不用改。
   String? _dragAnchorId;
+
   /// 锚点的**未吸附**累计位移。吸附修正必须基于它算，否则会被上一帧
   /// 已经修正过的值带偏（误差逐帧累积，节点会漂走）。
   Offset _dragRaw = Offset.zero;
@@ -215,6 +248,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   bool _toolboxExpanded = true;
   bool _editorExpanded = true;
   bool _mobileToolboxOpen = false;
+
   /// 移动端顶部工具栏恒显（右下折叠按钮已移除，工具迁移到顶部栏）。
   final bool _mobileTopBarVisible = true;
   double _toolboxFraction = 0.4;
@@ -226,8 +260,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   double _canvasFraction = 0.6;
   // 分割比例 notifier：拖动分割线时只重建受影响的两个 SizedBox，
   // 不重建画布与右侧面板内容。
-  final ValueNotifier<double> _canvasFractionNotifier = ValueNotifier<double>(0.6);
-  final ValueNotifier<double> _toolboxFractionNotifier = ValueNotifier<double>(0.4);
+  final ValueNotifier<double> _canvasFractionNotifier = ValueNotifier<double>(
+    0.6,
+  );
+  final ValueNotifier<double> _toolboxFractionNotifier = ValueNotifier<double>(
+    0.4,
+  );
   // 移动端横竖屏切换（默认竖屏）
   bool _isLandscape = false;
   // AI 侧边面板是否展开（左侧 ">" 按钮）
@@ -257,7 +295,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// 世界框（承载节点的可命中平面）—— 固定超大尺寸、永不重算：
   /// 节点拖到任何位置都不会再触发世界框扩张/平移（此前随内容包围盒
   /// 重算会导致整幅画面跳变）。节点坐标不受其影响（画布坐标原点固定）。
-  final Rect _world = Rect.fromCenter(center: _spawnCenter, width: _worldExtent.width, height: _worldExtent.height);
+  final Rect _world = Rect.fromCenter(
+    center: _spawnCenter,
+    width: _worldExtent.width,
+    height: _worldExtent.height,
+  );
 
   // 探测模式：悬停端口显示信号值提示
   bool _probeMode = false;
@@ -274,16 +316,22 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// 小地图左上角在画布视口内的自定义位置（null = 停在默认右下角）。
   /// 仅 PC 端可按住小地图右上角的握把拖动改变。
   Offset? _miniMapFloat;
+
   /// 「元素」选择框：只展示当前文件媒体类型可用（含一跳跨类型产出）的节点。
   bool _showOnlyAvailable = false;
+
   /// 右侧「元素 / 属性」面板：隐藏（菜单栏图标可恢复）。
   bool _panelHidden = false;
+
   /// 面板已被拖出为应用内浮动小窗（吸附回右栏时置回 false）。
   bool _panelDetached = false;
+
   /// 面板最小化：只留标题栏。
   bool _panelMinimized = false;
+
   /// 浮动面板左上角（相对画布视口）；null = 拖出时按默认位置摆放。
   Offset? _panelFloatPos;
+
   /// PC 端 AI 面板：拖出为浮动小窗 / 最小化。
   bool _aiDetached = false;
   bool _aiMinimized = false;
@@ -309,22 +357,27 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// 已从 AI 面板导出的会话消息。抽屉 / 浮窗一旦让位给系统窗口，面板就会
   /// unmount，会话必须提前落在内存里，否则独立窗口里的对话会从空白开始。
   List<Map<String, dynamic>>? _aiSessionCache;
+
   /// 小窗标题栏的拖动累计量：元素/属性面板与 AI 面板共用
   /// （同一时刻只可能有一个标题栏在被拖）
   Offset _winDragAccum = Offset.zero;
+
   /// 移动端属性卡片被手动关闭时记下「当时选中的对象 id」：
   /// 换选别的节点时卡片自动回来，选回同一个对象则保持关闭
   /// （此时顶部菜单栏会出现一枚图标可随时恢复）。
   String? _mobilePropsHiddenFor;
+
   /// 移动端属性卡片是否应当显示。
   bool get _mobilePropsShown {
     final id = _selectedNode?.id ?? _selectedLogicBlockId;
     if (id == null) return false;
     return _mobilePropsHiddenFor != id;
   }
+
   /// 本次会话的写入格式（覆盖 widget.configFormat，可在编辑器内切换）：
   /// 'legacy' = 旧版 JSON，'v2' = 新版模块化二进制。
   late String _writeFormat = widget.configFormat;
+
   /// .fppx 体积估算的缓存签名：每次提交（_commitChange / undo / redo）+1。
   int _sizeTick = 0;
   int _sizeTickCached = -1;
@@ -336,9 +389,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   // 在 50 步栈深、大图（数百节点）场景下是明确的卡顿源；改为模型层 deepCopy() 后省去
   // 字符串编解码、字段名 hash 查找与 num/String 装箱转换，同时保住 id（含未知类型节点）。
   PipelineGraph _snapshot() => PipelineGraph(
-    nodes: List.of(_nodes), connections: List.of(_connections),
+    nodes: List.of(_nodes),
+    connections: List.of(_connections),
     logicBlocks: List.of(_logicBlocks),
   ).deepCopy();
+
   /// 撤销栈深度上限（[FIX M2]）。
   ///
   /// 快照是**整图深拷贝**（_snapshot → PipelineGraph.deepCopy → 每个节点递归复制
@@ -362,21 +417,27 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     }
     _redoStack.clear();
   }
+
   void _undo() {
     if (_undoStack.isEmpty) return;
     _redoStack.add(_snapshot());
     _restoreSnapshot(_undoStack.removeLast());
   }
+
   void _redo() {
     if (_redoStack.isEmpty) return;
     _undoStack.add(_snapshot());
     _restoreSnapshot(_redoStack.removeLast());
   }
+
   void _restoreSnapshot(PipelineGraph g) {
     setState(() {
-      _nodes.clear(); _nodes.addAll(g.nodes);
-      _connections.clear(); _connections.addAll(g.connections);
-      _logicBlocks.clear(); _logicBlocks.addAll(g.logicBlocks);
+      _nodes.clear();
+      _nodes.addAll(g.nodes);
+      _connections.clear();
+      _connections.addAll(g.connections);
+      _logicBlocks.clear();
+      _logicBlocks.addAll(g.logicBlocks);
       _selectedNodeIds.clear();
       _lastSelectedId = null;
       _selectedLogicBlockId = null;
@@ -416,7 +477,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     _syncOpenPanels();
   }
 
-  PipelineGraph _currentGraph() => PipelineGraph(nodes: _nodes, connections: _connections, logicBlocks: _logicBlocks);
+  PipelineGraph _currentGraph() => PipelineGraph(
+    nodes: _nodes,
+    connections: _connections,
+    logicBlocks: _logicBlocks,
+  );
 
   void _scheduleAutosave(PipelineGraph graph) {
     _autosaveTimer?.cancel();
@@ -429,7 +494,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       if (!mounted) return;
       // 调试模式：记录自动保存事件
       if (context.read<AppState>().config.debugMode) {
-        context.read<AppState>().addLog('[自动保存] 草稿已保存, key: $_autosaveKey', category: 'info');
+        context.read<AppState>().addLog(
+          '[自动保存] 草稿已保存, key: $_autosaveKey',
+          category: 'info',
+        );
       }
       setState(() => _autosaveIndicator = true);
       Future.delayed(const Duration(milliseconds: 1500), () {
@@ -479,13 +547,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       // 只有草稿确实记录了内容时才恢复，避免把空白草稿盖上正式图。
       if (restored.nodes.isEmpty && restored.connections.isEmpty) return;
       setState(() {
-        _nodes.clear(); _nodes.addAll(restored.nodes);
-        _connections.clear(); _connections.addAll(restored.connections);
-        _logicBlocks.clear(); _logicBlocks.addAll(restored.logicBlocks);
+        _nodes.clear();
+        _nodes.addAll(restored.nodes);
+        _connections.clear();
+        _connections.addAll(restored.connections);
+        _logicBlocks.clear();
+        _logicBlocks.addAll(restored.logicBlocks);
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('检测到未保存的草稿，已自动恢复')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('检测到未保存的草稿，已自动恢复')));
     } catch (_) {
       // 草稿损坏则忽略
     }
@@ -520,18 +591,28 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       final cx = _spawnCenter.dx;
       final cy = _spawnCenter.dy;
       final startNode = PipelineNode(
-        id: _uuid.v4(), type: PipelineStepType.start,
-        x: cx - 100, y: cy,
-        params: isConfigMode ? {} : {'file_media_type': widget.video.fileMediaType.name},
+        id: _uuid.v4(),
+        type: PipelineStepType.start,
+        x: cx - 100,
+        y: cy,
+        params: isConfigMode
+            ? {}
+            : {'file_media_type': widget.video.fileMediaType.name},
       );
       final outputNode = PipelineNode(
-        id: _uuid.v4(), type: PipelineStepType.output,
-        x: cx + 200, y: cy,
+        id: _uuid.v4(),
+        type: PipelineStepType.output,
+        x: cx + 200,
+        y: cy,
       );
       _nodes.addAll([startNode, outputNode]);
-      _connections.add(PipelineConnection(
-        id: _uuid.v4(), fromNodeId: startNode.id, toNodeId: outputNode.id,
-      ));
+      _connections.add(
+        PipelineConnection(
+          id: _uuid.v4(),
+          fromNodeId: startNode.id,
+          toNodeId: outputNode.id,
+        ),
+      );
     }
     if (!isConfigMode) {
       for (final n in _nodes) {
@@ -548,7 +629,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     _transformCtrl.addListener(_onScaleChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       // 世界框本地坐标 = 画布坐标 - 世界偏移；目标：把 spawn 中心放到屏幕 (300,200)
-      _transformCtrl.value = Matrix4.identity()..translateByDouble(-_spawnCenter.dx + 300 + _world.left, -_spawnCenter.dy + 200 + _world.top, 0, 1);
+      _transformCtrl.value = Matrix4.identity()
+        ..translateByDouble(
+          -_spawnCenter.dx + 300 + _world.left,
+          -_spawnCenter.dy + 200 + _world.top,
+          0,
+          1,
+        );
     });
     // _appState 已在 initState 开头赋值（见上方注释）。
     // 初始化横竖屏偏好
@@ -563,7 +650,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
       }
     }
-    _appState.mcpOnClearAll = () { _pushUndo(); setState(() { _nodes.clear(); _connections.clear(); _logicBlocks.clear(); _selectedNodeIds.clear(); _commitChange(); }); };
+    _appState.mcpOnClearAll = () {
+      _pushUndo();
+      setState(() {
+        _nodes.clear();
+        _connections.clear();
+        _logicBlocks.clear();
+        _selectedNodeIds.clear();
+        _commitChange();
+      });
+    };
     _appState.mcpOnUndo = _undo;
     _appState.mcpOnRedo = _redo;
     _appState.mcpOnSave = _saveGraph;
@@ -573,13 +669,18 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       if (idx < 0) return false;
       _pushUndo();
       setState(() {
-        params.forEach((k, v) { _nodes[idx].params[k] = v; });
+        params.forEach((k, v) {
+          _nodes[idx].params[k] = v;
+        });
       });
       _commitChange();
       return true;
     };
     _appState.mcpOnAddNode = (typeName, x, y) {
-      final type = PipelineStepType.values.firstWhere((t) => t.name == typeName, orElse: () => throw ArgumentError('Unknown type: $typeName'));
+      final type = PipelineStepType.values.firstWhere(
+        (t) => t.name == typeName,
+        orElse: () => throw ArgumentError('Unknown type: $typeName'),
+      );
       final node = PipelineNode(id: _uuid.v4(), type: type, x: x, y: y);
       _pushUndo();
       setState(() => _nodes.add(node));
@@ -589,26 +690,47 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     _appState.mcpOnAddGate = (gateName, x, y) {
       LogicGateType? gate;
       for (final t in LogicGateType.values) {
-        if (t.name == gateName) { gate = t; break; }
+        if (t.name == gateName) {
+          gate = t;
+          break;
+        }
       }
       if (gate == null) throw ArgumentError('Unknown gate type: $gateName');
-      final node = PipelineNode(id: _uuid.v4(), type: PipelineStepType.start, gateType: gate.name, x: x, y: y);
+      final node = PipelineNode(
+        id: _uuid.v4(),
+        type: PipelineStepType.start,
+        gateType: gate.name,
+        x: x,
+        y: y,
+      );
       _pushUndo();
       setState(() => _nodes.add(node));
       _commitChange();
       return node.id;
     };
     _appState.mcpOnDeleteNode = (nodeId) {
-      if (!_nodes.any((n) => n.id == nodeId)) throw ArgumentError('Node not found: $nodeId');
+      if (!_nodes.any((n) => n.id == nodeId))
+        throw ArgumentError('Node not found: $nodeId');
       _deleteNode(nodeId);
       _commitChange();
     };
     _appState.mcpOnConnect = (fromId, toId) {
       if (fromId == toId) return false;
-      if (!_nodes.any((n) => n.id == fromId) || !_nodes.any((n) => n.id == toId)) return false;
-      if (_connections.any((c) => c.fromNodeId == fromId && c.toNodeId == toId)) return false;
+      if (!_nodes.any((n) => n.id == fromId) ||
+          !_nodes.any((n) => n.id == toId))
+        return false;
+      if (_connections.any((c) => c.fromNodeId == fromId && c.toNodeId == toId))
+        return false;
       _pushUndo();
-      setState(() => _connections.add(PipelineConnection(id: _uuid.v4(), fromNodeId: fromId, toNodeId: toId)));
+      setState(
+        () => _connections.add(
+          PipelineConnection(
+            id: _uuid.v4(),
+            fromNodeId: fromId,
+            toNodeId: toId,
+          ),
+        ),
+      );
       _commitChange();
       return true;
     };
@@ -621,7 +743,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       return true;
     };
     _appState.mcpOnListNodes = () => _nodes.map((n) => n.toJson()).toList();
-    _appState.mcpOnListConnections = () => _connections.map((c) => c.toJson()).toList();
+    _appState.mcpOnListConnections = () =>
+        _connections.map((c) => c.toJson()).toList();
     // 独立面板窗口的宿主：方法通道在 main() 里已注册好，这里补上「谁来处理」。
     // 不挂委托时子窗口的请求一律返回 null（面板会永远停在「连接中」）。
     if (!isMobilePlatform) {
@@ -727,27 +850,40 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// 变换/逆变换缓存：`_screenToCanvas` 等热路径（指针事件、悬停每帧）原本
   /// 每次调用都做一次 4×4 `Matrix4.inverted`。现在仅在变换变化时重算一次。
   Matrix4? _cachedInverse;
+
   /// 缓存的逆矩阵；按需重算（变换未变时零成本）。
   Matrix4 get _inverseTransform {
     final cached = _cachedInverse;
     if (cached != null) return cached;
     return _cachedInverse = Matrix4.inverted(_transformCtrl.value);
   }
+
   void _invalidateTransformCache() => _cachedInverse = null;
 
   @override
-  void onWindowMaximize() { if (mounted) setState(() => _isMaximized = true); }
+  void onWindowMaximize() {
+    if (mounted) setState(() => _isMaximized = true);
+  }
+
   @override
-  void onWindowUnmaximize() { if (mounted) setState(() => _isMaximized = false); }
+  void onWindowUnmaximize() {
+    if (mounted) setState(() => _isMaximized = false);
+  }
 
   Future<void> _genThumb() async {
     final fp = widget.video.filepath;
     final isAudio = widget.video.fileMediaType == MediaType.audio;
-    final p = await ThumbnailService.ensureThumbnail(fp,
-        ffmpeg: _appState.config.ffmpegPath, isAudio: isAudio);
+    final p = await ThumbnailService.ensureThumbnail(
+      fp,
+      ffmpeg: _appState.config.ffmpegPath,
+      isAudio: isAudio,
+    );
     if (!mounted) return;
     if (p != null) {
-      setState(() { _thumbPath = p; _isAudioNoCover = false; });
+      setState(() {
+        _thumbPath = p;
+        _isAudioNoCover = false;
+      });
     } else if (isAudio) {
       setState(() => _isAudioNoCover = true);
     }
@@ -761,16 +897,21 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   IconData _stepIcon(PipelineStepType t) => stepIconFor(t);
 
-  Color _nodeColor(PipelineStepType t, ColorScheme scheme, {int? customColor}) =>
-      nodeAccentColor(t, scheme, customColor: customColor);
+  Color _nodeColor(
+    PipelineStepType t,
+    ColorScheme scheme, {
+    int? customColor,
+  }) => nodeAccentColor(t, scheme, customColor: customColor);
 
   // ── 节点操作 ──
 
   String _addNodeAt(PipelineStepType type, Offset canvasPos) {
     _pushUndo();
     final node = PipelineNode(
-      id: _uuid.v4(), type: type,
-      x: canvasPos.dx, y: canvasPos.dy,
+      id: _uuid.v4(),
+      type: type,
+      x: canvasPos.dx,
+      y: canvasPos.dy,
     );
     if (type == PipelineStepType.start && widget.video.filepath.isNotEmpty) {
       node.params['file_media_type'] = widget.video.fileMediaType.name;
@@ -779,7 +920,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     _commitChange();
     _trackUsage(type);
     if (context.read<AppState>().config.debugMode) {
-      context.read<AppState>().addLog('[节点] 添加 ${type.name} @ (${canvasPos.dx.toStringAsFixed(0)}, ${canvasPos.dy.toStringAsFixed(0)}) id=${node.id.substring(0, 8)}', category: 'info');
+      context.read<AppState>().addLog(
+        '[节点] 添加 ${type.name} @ (${canvasPos.dx.toStringAsFixed(0)}, ${canvasPos.dy.toStringAsFixed(0)}) id=${node.id.substring(0, 8)}',
+        category: 'info',
+      );
     }
     return node.id;
   }
@@ -789,13 +933,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final node = PipelineNode(
       id: _uuid.v4(),
       type: PipelineStepType.start, // 使用 start 作为占位类型，gateType 标识逻辑门
-      x: canvasPos.dx, y: canvasPos.dy,
+      x: canvasPos.dx,
+      y: canvasPos.dy,
       gateType: gate.name,
     );
     setState(() => _nodes.add(node));
     _commitChange();
     if (context.read<AppState>().config.debugMode) {
-      context.read<AppState>().addLog('[逻辑门] 添加 ${gate.name} @ (${canvasPos.dx.toStringAsFixed(0)}, ${canvasPos.dy.toStringAsFixed(0)}) id=${node.id.substring(0, 8)}', category: 'info');
+      context.read<AppState>().addLog(
+        '[逻辑门] 添加 ${gate.name} @ (${canvasPos.dx.toStringAsFixed(0)}, ${canvasPos.dy.toStringAsFixed(0)}) id=${node.id.substring(0, 8)}',
+        category: 'info',
+      );
     }
     return node.id;
   }
@@ -855,7 +1003,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       c.recentNodeTypes.remove(type.name);
       c.recentNodeTypes.insert(0, type.name);
       if (c.recentNodeTypes.length > AppConfig.recentNodeLimit) {
-        c.recentNodeTypes.removeRange(AppConfig.recentNodeLimit, c.recentNodeTypes.length);
+        c.recentNodeTypes.removeRange(
+          AppConfig.recentNodeLimit,
+          c.recentNodeTypes.length,
+        );
       }
       return c;
     });
@@ -865,10 +1016,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     _pushUndo();
     setState(() {
       _nodes.removeWhere((n) => n.id == nodeId);
-      _connections.removeWhere((c) => c.fromNodeId == nodeId || c.toNodeId == nodeId);
+      _connections.removeWhere(
+        (c) => c.fromNodeId == nodeId || c.toNodeId == nodeId,
+      );
       _selectedNodeIds.remove(nodeId);
       if (_lastSelectedId == nodeId) {
-        _lastSelectedId = _selectedNodeIds.isEmpty ? null : _selectedNodeIds.last;
+        _lastSelectedId = _selectedNodeIds.isEmpty
+            ? null
+            : _selectedNodeIds.last;
       }
       _purgeDeletedFromLogicBlocks({nodeId}); // [FIX H-6] 清理悬空的逻辑块引用
     });
@@ -901,6 +1056,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   List<PipelineNode> _clipNodes = const [];
   List<PipelineConnection> _clipConns = const [];
+
   /// 连续粘贴的阶梯代数：第 n 次偏移 n 格，避免每次都叠在同一处。
   int _pasteRound = 0;
 
@@ -916,12 +1072,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     ];
     _clipConns = [
       for (final c in _connections)
-        if (ids.contains(c.fromNodeId) && ids.contains(c.toNodeId)) c.deepCopy(),
+        if (ids.contains(c.fromNodeId) && ids.contains(c.toNodeId))
+          c.deepCopy(),
     ];
     _pasteRound = 0;
-    showToast(context,
-        s.isZh ? '已复制 ${_clipNodes.length} 个元素' : 'Copied ${_clipNodes.length} element(s)',
-        type: ToastType.info);
+    showToast(
+      context,
+      s.isZh
+          ? '已复制 ${_clipNodes.length} 个元素'
+          : 'Copied ${_clipNodes.length} element(s)',
+      type: ToastType.info,
+    );
   }
 
   /// 粘贴。[atCanvas] 给出时把选区左上角落到该画布坐标（右键 / 长按菜单里的
@@ -966,7 +1127,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       final from = idMap[c.fromNodeId];
       final to = idMap[c.toNodeId];
       if (from == null || to == null) continue;
-      newConns.add(PipelineConnection(id: _uuid.v4(), fromNodeId: from, toNodeId: to, kind: c.kind));
+      newConns.add(
+        PipelineConnection(
+          id: _uuid.v4(),
+          fromNodeId: from,
+          toNodeId: to,
+          kind: c.kind,
+        ),
+      );
     }
 
     setState(() {
@@ -977,9 +1145,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       _selectedLogicBlockId = null;
     });
     _commitChange();
-    showToast(context,
-        s.isZh ? '已粘贴 ${pasted.length} 个元素' : 'Pasted ${pasted.length} element(s)',
-        type: ToastType.info);
+    showToast(
+      context,
+      s.isZh
+          ? '已粘贴 ${pasted.length} 个元素'
+          : 'Pasted ${pasted.length} element(s)',
+      type: ToastType.info,
+    );
   }
 
   /// 对齐选中节点。[mode] ∈ left / hcenter / right / top / vcenter / bottom。
@@ -1079,7 +1251,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       b.childNodeIds.removeWhere(deletedIds.contains);
     }
     _logicBlocks.removeWhere((b) => b.childNodeIds.isEmpty);
-    if (_selectedLogicBlockId != null && !_logicBlocks.any((b) => b.id == _selectedLogicBlockId)) {
+    if (_selectedLogicBlockId != null &&
+        !_logicBlocks.any((b) => b.id == _selectedLogicBlockId)) {
       _selectedLogicBlockId = null; // [FIX H-6] 避免 UI 引用已不存在的逻辑块
     }
     _recomputeLogicBlockRects();
@@ -1127,8 +1300,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         // 折叠后子节点不可见，继续留在选区里会让「删除选中」误删看不见的节点，
         // 多选工具条的计数也对不上。
         _selectedNodeIds.removeAll(block.childNodeIds);
-        if (_lastSelectedId != null && block.childNodeIds.contains(_lastSelectedId)) {
-          _lastSelectedId = _selectedNodeIds.isEmpty ? null : _selectedNodeIds.last;
+        if (_lastSelectedId != null &&
+            block.childNodeIds.contains(_lastSelectedId)) {
+          _lastSelectedId = _selectedNodeIds.isEmpty
+              ? null
+              : _selectedNodeIds.last;
         }
       }
     });
@@ -1160,7 +1336,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     if (fromIdx < 0 || toIdx < 0) return;
     final fromNode = _nodes[fromIdx];
     final toNode = _nodes[toIdx];
-    if (_connections.any((c) => c.fromNodeId == fromId && c.toNodeId == toId)) return;
+    if (_connections.any((c) => c.fromNodeId == fromId && c.toNodeId == toId))
+      return;
     final zh = context.read<AppState>().config.language == 'zh';
 
     if (kind == 'control') {
@@ -1168,9 +1345,15 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       // 非逻辑节点不能直接接收逻辑门连线（只能连到使能端口，由端口拖拽保证）
 
       // 源端：必须有控制输出能力（逻辑门输出 / 非起始节点的状态输出）
-      final fromOk = fromNode.isGate ? fromNode.hasGateOutput : (fromNode.type != PipelineStepType.start);
+      final fromOk = fromNode.isGate
+          ? fromNode.hasGateOutput
+          : (fromNode.type != PipelineStepType.start);
       if (!fromOk) {
-        showToast(context, zh ? '该节点没有控制输出端口' : 'Node has no control output', type: ToastType.error);
+        showToast(
+          context,
+          zh ? '该节点没有控制输出端口' : 'Node has no control output',
+          type: ToastType.error,
+        );
         return;
       }
 
@@ -1178,30 +1361,50 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       if (toNode.isGate) {
         final gate = toNode.gate;
         if (gate == null || !toNode.hasGateInput) {
-          showToast(context, zh ? '该逻辑门不支持输入' : 'Gate does not accept input', type: ToastType.error);
+          showToast(
+            context,
+            zh ? '该逻辑门不支持输入' : 'Gate does not accept input',
+            type: ToastType.error,
+          );
           return;
         }
         // 检查已有的控制连线数是否达到上限
-        final existingInputs = _connections.where((c) => c.toNodeId == toNode.id && c.kind == 'control').length;
+        final existingInputs = _connections
+            .where((c) => c.toNodeId == toNode.id && c.kind == 'control')
+            .length;
         if (existingInputs >= gate.inputCount) {
-          showToast(context, zh
-              ? '${gate.symbol(true)} 最多 ${gate.inputCount} 个输入，已满'
-              : '${gate.symbol(false)} allows max ${gate.inputCount} input(s)',
-              type: ToastType.error);
+          showToast(
+            context,
+            zh
+                ? '${gate.symbol(true)} 最多 ${gate.inputCount} 个输入，已满'
+                : '${gate.symbol(false)} allows max ${gate.inputCount} input(s)',
+            type: ToastType.error,
+          );
           return;
         }
       } else {
         // 非逻辑节点的红色逻辑输入端（使能端）：接受逻辑门输出或上游节点的状态输出（状态端 → 使能端）。
         // 语义与顶部注释一致：红色端口只传播 1/0，普通节点的状态输出可级联控制下游节点。
         if (toNode.type == PipelineStepType.start) {
-          showToast(context, zh ? '源节点没有使能输入端' : 'Source node has no enable input', type: ToastType.error);
+          showToast(
+            context,
+            zh ? '源节点没有使能输入端' : 'Source node has no enable input',
+            type: ToastType.error,
+          );
           return;
         }
       }
 
       _pushUndo();
       setState(() {
-        _connections.add(PipelineConnection(id: _uuid.v4(), fromNodeId: fromId, toNodeId: toId, kind: 'control'));
+        _connections.add(
+          PipelineConnection(
+            id: _uuid.v4(),
+            fromNodeId: fromId,
+            toNodeId: toId,
+            kind: 'control',
+          ),
+        );
       });
       _commitChange();
       return;
@@ -1211,15 +1414,22 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     if (!fromNode.hasOutput || !toNode.hasInput) return;
 
     // Container-aware connection check
-    if (fromNode.type == PipelineStepType.start && toNode.inputTypes.isNotEmpty && widget.containerInfo != null) {
+    if (fromNode.type == PipelineStepType.start &&
+        toNode.inputTypes.isNotEmpty &&
+        widget.containerInfo != null) {
       final tc = widget.containerInfo!.typeCounts;
       final neededTypes = toNode.inputTypes;
-      final matchCount = neededTypes.map((t) => tc[t] ?? 0).fold<int>(0, (a, b) => a + b);
+      final matchCount = neededTypes
+          .map((t) => tc[t] ?? 0)
+          .fold<int>(0, (a, b) => a + b);
       if (matchCount == 0) {
-        showToast(context, zh
-            ? '容器内没有${neededTypes.map((t) => _mediaTypeName(t, zh)).join("/")}类型的文件'
-            : 'Container has no ${neededTypes.map((t) => t.name).join("/")} files',
-            type: ToastType.error);
+        showToast(
+          context,
+          zh
+              ? '容器内没有${neededTypes.map((t) => _mediaTypeName(t, zh)).join("/")}类型的文件'
+              : 'Container has no ${neededTypes.map((t) => t.name).join("/")} files',
+          type: ToastType.error,
+        );
         return;
       }
       if (matchCount >= 2) {
@@ -1228,20 +1438,29 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     }
 
     // Source node connecting to a processing node: auto-detect and lock media type
-    if (fromNode.type == PipelineStepType.start && toNode.inputTypes.isNotEmpty) {
+    if (fromNode.type == PipelineStepType.start &&
+        toNode.inputTypes.isNotEmpty) {
       final currentMediaType = fromNode.params['file_media_type'] as String?;
       final neededTypes = toNode.inputTypes;
 
       if (currentMediaType != null && currentMediaType.isNotEmpty) {
-        final currentType = MediaType.values.firstWhere((t) => t.name == currentMediaType, orElse: () => MediaType.video);
+        final currentType = MediaType.values.firstWhere(
+          (t) => t.name == currentMediaType,
+          orElse: () => MediaType.video,
+        );
         if (!neededTypes.contains(currentType)) {
           // Source already locked to a different type
-          final existingConns = _connections.where((c) => c.fromNodeId == fromId).toList();
+          final existingConns = _connections
+              .where((c) => c.fromNodeId == fromId)
+              .toList();
           if (existingConns.isNotEmpty) {
-            showToast(context, zh
-                ? '源文件已连接${_mediaTypeName(currentType, zh)}类型节点，不能同时连接${_mediaTypeName(neededTypes.first, zh)}类型节点'
-                : 'Source is connected to ${currentType.name} nodes, cannot also connect to ${neededTypes.first.name} nodes',
-                type: ToastType.error);
+            showToast(
+              context,
+              zh
+                  ? '源文件已连接${_mediaTypeName(currentType, zh)}类型节点，不能同时连接${_mediaTypeName(neededTypes.first, zh)}类型节点'
+                  : 'Source is connected to ${currentType.name} nodes, cannot also connect to ${neededTypes.first.name} nodes',
+              type: ToastType.error,
+            );
             return;
           }
         }
@@ -1253,17 +1472,28 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
     // Check existing connections from same source node to prevent mixed types
     if (fromNode.type == PipelineStepType.start) {
-      final existingConns = _connections.where((c) => c.fromNodeId == fromId).toList();
+      final existingConns = _connections
+          .where((c) => c.fromNodeId == fromId)
+          .toList();
       for (final ec in existingConns) {
-        final existingTarget = _nodes.firstWhere((n) => n.id == ec.toNodeId, orElse: () => PipelineNode(id: '', type: PipelineStepType.output));
-        if (existingTarget.inputTypes.isNotEmpty && toNode.inputTypes.isNotEmpty) {
+        final existingTarget = _nodes.firstWhere(
+          (n) => n.id == ec.toNodeId,
+          orElse: () => PipelineNode(id: '', type: PipelineStepType.output),
+        );
+        if (existingTarget.inputTypes.isNotEmpty &&
+            toNode.inputTypes.isNotEmpty) {
           final existingNeeds = existingTarget.inputTypes;
           final newNeeds = toNode.inputTypes;
-          if (existingNeeds.intersection(newNeeds).isEmpty && existingTarget.type != PipelineStepType.output && toNode.type != PipelineStepType.output) {
-            showToast(context, zh
-                ? '源文件不能同时连接不同媒体类型的处理节点'
-                : 'Source cannot connect to different media type nodes',
-                type: ToastType.error);
+          if (existingNeeds.intersection(newNeeds).isEmpty &&
+              existingTarget.type != PipelineStepType.output &&
+              toNode.type != PipelineStepType.output) {
+            showToast(
+              context,
+              zh
+                  ? '源文件不能同时连接不同媒体类型的处理节点'
+                  : 'Source cannot connect to different media type nodes',
+              type: ToastType.error,
+            );
             return;
           }
         }
@@ -1273,10 +1503,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final outType = fromNode.outputType;
     final inTypes = toNode.inputTypes;
     if (outType != null && inTypes.isNotEmpty && !inTypes.contains(outType)) {
-      showToast(context, zh
+      showToast(
+        context,
+        zh
             ? '类型不兼容：${fromNode.label} 输出 ${outType.name}，${toNode.label} 需要 ${inTypes.map((t) => t.name).join("/")}'
-          : 'Incompatible: ${fromNode.labelEn} outputs ${outType.name}, ${toNode.labelEn} needs ${inTypes.map((t) => t.name).join("/")}',
-          type: ToastType.error);
+            : 'Incompatible: ${fromNode.labelEn} outputs ${outType.name}, ${toNode.labelEn} needs ${inTypes.map((t) => t.name).join("/")}',
+        type: ToastType.error,
+      );
       return;
     }
     // 通用节点：按上游输出类型自动回填媒体类型（仅未选时生效，不覆盖用户显式选择）
@@ -1285,7 +1518,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     }
     _pushUndo();
     setState(() {
-      _connections.add(PipelineConnection(id: _uuid.v4(), fromNodeId: fromId, toNodeId: toId, kind: kind));
+      _connections.add(
+        PipelineConnection(
+          id: _uuid.v4(),
+          fromNodeId: fromId,
+          toNodeId: toId,
+          kind: kind,
+        ),
+      );
     });
     _commitChange();
   }
@@ -1300,8 +1540,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     });
     if (widget.video.filepath.isEmpty && conn.fromNodeId.isNotEmpty) {
       final fromNode = _nodes.where((n) => n.id == conn.fromNodeId).firstOrNull;
-      if (fromNode != null && fromNode.type == PipelineStepType.start && !fromNode.isGate) {
-        final remaining = _connections.where((c) => c.fromNodeId == conn.fromNodeId).toList();
+      if (fromNode != null &&
+          fromNode.type == PipelineStepType.start &&
+          !fromNode.isGate) {
+        final remaining = _connections
+            .where((c) => c.fromNodeId == conn.fromNodeId)
+            .toList();
         final hasProcessingConn = remaining.any((c) {
           final target = _nodes.where((n) => n.id == c.toNodeId).firstOrNull;
           return target != null && target.type != PipelineStepType.output;
@@ -1337,7 +1581,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           : 0;
       if (inputIdx < 0) continue;
       final p1 = _hitPortPos(from, isOutput: true, isControl: isControl);
-      final p2 = _hitPortPos(to, isOutput: false, isControl: isControl, gateInputIndex: inputIdx);
+      final p2 = _hitPortPos(
+        to,
+        isOutput: false,
+        isControl: isControl,
+        gateInputIndex: inputIdx,
+      );
       final dist = _distToWire(pos, p1, p2, orthogonal: isControl);
       if (dist < threshold) return conn;
     }
@@ -1345,26 +1594,48 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   }
 
   /// 端口坐标（与 _ConnectionPainter._portPos 保持一致；改动端口布局时需同步两处）。
-  Offset _hitPortPos(PipelineNode n, {required bool isOutput, required bool isControl, int gateInputIndex = 0}) {
+  Offset _hitPortPos(
+    PipelineNode n, {
+    required bool isOutput,
+    required bool isControl,
+    int gateInputIndex = 0,
+  }) {
     if (n.isGate) {
       final g = n.gate;
       final inputCount = g?.inputCount ?? 0;
-      if (isOutput) return Offset(n.x + _portZoneW + _gateW + _portZoneW / 2, n.y + _gateH / 2);
-      if (inputCount == 0) return Offset(n.x + _portZoneW / 2, n.y + _gateH / 2);
+      if (isOutput)
+        return Offset(
+          n.x + _portZoneW + _gateW + _portZoneW / 2,
+          n.y + _gateH / 2,
+        );
+      if (inputCount == 0)
+        return Offset(n.x + _portZoneW / 2, n.y + _gateH / 2);
       final idx = gateInputIndex.clamp(0, inputCount - 1);
-      return Offset(n.x + _portZoneW / 2, n.y + _gateH * (idx + 1) / (inputCount + 1));
+      return Offset(
+        n.x + _portZoneW / 2,
+        n.y + _gateH * (idx + 1) / (inputCount + 1),
+      );
     }
     final colTop = n.y + (_nodeH - 38) / 2;
     final dot1Y = colTop + 8;
     final dot2Y = colTop + 30;
     if (isControl) {
-      return isOutput ? Offset(n.x + 16 + _nodeWFor(n.type) + 8, dot2Y) : Offset(n.x + 8, dot2Y);
+      return isOutput
+          ? Offset(n.x + 16 + _nodeWFor(n.type) + 8, dot2Y)
+          : Offset(n.x + 8, dot2Y);
     }
-    return isOutput ? Offset(n.x + 16 + _nodeWFor(n.type) + 8, dot1Y) : Offset(n.x + 8, dot1Y);
+    return isOutput
+        ? Offset(n.x + 16 + _nodeWFor(n.type) + 8, dot1Y)
+        : Offset(n.x + 8, dot1Y);
   }
 
   /// 点到连线的距离：数据连线为贝塞尔曲线，控制连线为正交折线（与 _ConnectionPainter 一致）。
-  double _distToWire(Offset pt, Offset p1, Offset p2, {required bool orthogonal}) {
+  double _distToWire(
+    Offset pt,
+    Offset p1,
+    Offset p2, {
+    required bool orthogonal,
+  }) {
     if (orthogonal) {
       const lead = 20.0;
       final dx = p2.dx - p1.dx;
@@ -1385,8 +1656,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     var minDist = double.infinity;
     for (var t = 0.0; t <= 1.0; t += 0.05) {
       final u = 1 - t;
-      final x = u * u * u * p1.dx + 3 * u * u * t * c1.dx + 3 * u * t * t * c2.dx + t * t * t * p2.dx;
-      final y = u * u * u * p1.dy + 3 * u * u * t * c1.dy + 3 * u * t * t * c2.dy + t * t * t * p2.dy;
+      final x =
+          u * u * u * p1.dx +
+          3 * u * u * t * c1.dx +
+          3 * u * t * t * c2.dx +
+          t * t * t * p2.dx;
+      final y =
+          u * u * u * p1.dy +
+          3 * u * u * t * c1.dy +
+          3 * u * t * t * c2.dy +
+          t * t * t * p2.dy;
       final d = (Offset(x, y) - pt).distance;
       if (d < minDist) minDist = d;
     }
@@ -1397,7 +1676,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final ab = b - a;
     final len2 = ab.dx * ab.dx + ab.dy * ab.dy;
     if (len2 == 0) return (pt - a).distance;
-    final t = (((pt.dx - a.dx) * ab.dx + (pt.dy - a.dy) * ab.dy) / len2).clamp(0.0, 1.0).toDouble();
+    final t = (((pt.dx - a.dx) * ab.dx + (pt.dy - a.dy) * ab.dy) / len2)
+        .clamp(0.0, 1.0)
+        .toDouble();
     return (pt - (a + ab * t)).distance;
   }
 
@@ -1405,17 +1686,34 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final s = AppStrings.of(context.read<AppState>().config.language);
     showMenu<String>(
       context: context,
-      position: RelativeRect.fromLTRB(screenPos.dx, screenPos.dy, screenPos.dx + 1, screenPos.dy + 1),
+      position: RelativeRect.fromLTRB(
+        screenPos.dx,
+        screenPos.dy,
+        screenPos.dx + 1,
+        screenPos.dy + 1,
+      ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       constraints: isMobilePlatform
           ? const BoxConstraints(minWidth: 120, maxWidth: 160)
           : const BoxConstraints(minWidth: 160, maxWidth: 240),
       items: [
-        PopupMenuItem(value: 'delete', child: Row(children: [
-          Icon(Icons.link_off, size: 16, color: Theme.of(context).colorScheme.error),
-          const SizedBox(width: 6),
-          Text(s.isZh ? '删除连线' : 'Delete Link', style: const TextStyle(fontSize: 13)),
-        ])),
+        PopupMenuItem(
+          value: 'delete',
+          child: Row(
+            children: [
+              Icon(
+                Icons.link_off,
+                size: 16,
+                color: Theme.of(context).colorScheme.error,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                s.isZh ? '删除连线' : 'Delete Link',
+                style: const TextStyle(fontSize: 13),
+              ),
+            ],
+          ),
+        ),
       ],
     ).then((action) {
       if (action == 'delete') _deleteConnection(conn.id);
@@ -1432,17 +1730,20 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     ColorScheme scheme, {
     double radius = 8,
     EdgeInsetsGeometry? padding,
-  }) =>
-      IconButton.styleFrom(
-        backgroundColor: scheme.primary,
-        foregroundColor: scheme.onPrimary,
-        highlightColor: scheme.onPrimary.withAlpha(40),
-        padding: padding ?? const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(radius)),
-      );
+  }) => IconButton.styleFrom(
+    backgroundColor: scheme.primary,
+    foregroundColor: scheme.onPrimary,
+    highlightColor: scheme.onPrimary.withAlpha(40),
+    padding: padding ?? const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(radius)),
+  );
 
   void _save() {
-    final graph = PipelineGraph(nodes: _nodes, connections: _connections, logicBlocks: _logicBlocks);
+    final graph = PipelineGraph(
+      nodes: _nodes,
+      connections: _connections,
+      logicBlocks: _logicBlocks,
+    );
     final errors = GraphExecutor.validateGraph(graph);
     if (errors.isNotEmpty) {
       final scheme = Theme.of(context).colorScheme;
@@ -1450,26 +1751,53 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: Row(children: [
-            Icon(Icons.error_outline, color: scheme.error, size: 22),
-            const SizedBox(width: 8),
-            Text(s.isZh ? '节点逻辑错误' : 'Node Logic Error',
-                style: TextStyle(color: scheme.onSurface, fontSize: 16)),
-          ]),
+          title: Row(
+            children: [
+              Icon(Icons.error_outline, color: scheme.error, size: 22),
+              const SizedBox(width: 8),
+              Text(
+                s.isZh ? '节点逻辑错误' : 'Node Logic Error',
+                style: TextStyle(color: scheme.onSurface, fontSize: 16),
+              ),
+            ],
+          ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: errors.map((e) => Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('• ', style: TextStyle(color: scheme.error, fontWeight: FontWeight.bold)),
-                Expanded(child: Text(e, style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13))),
-              ]),
-            )).toList(),
+            children: errors
+                .map(
+                  (e) => Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '• ',
+                          style: TextStyle(
+                            color: scheme.error,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Expanded(
+                          child: Text(
+                            e,
+                            style: TextStyle(
+                              color: scheme.onSurfaceVariant,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+                .toList(),
           ),
           actions: [
-            FilledButton(onPressed: () => Navigator.pop(ctx),
-                child: Text(s.isZh ? '知道了' : 'OK')),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(s.isZh ? '知道了' : 'OK'),
+            ),
           ],
         ),
       );
@@ -1482,7 +1810,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   Future<void> _exportConfig(AppStrings s) async {
     final appState = context.read<AppState>();
-    final graph = PipelineGraph(nodes: _nodes, connections: _connections, logicBlocks: _logicBlocks);
+    final graph = PipelineGraph(
+      nodes: _nodes,
+      connections: _connections,
+      logicBlocks: _logicBlocks,
+    );
     // 新版格式由 C++ 端写前校验（允许未知节点原样导出），本地预检会误拦；
     // 旧版沿用本地预检保持历史行为。
     // 格式取**本次会话的写入格式**：以前写死在配置创建时选的 configFormat，
@@ -1496,29 +1828,60 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: Row(children: [
-            Icon(Icons.error_outline, size: 20, color: scheme.error),
-            const SizedBox(width: 8),
-            Text(zh ? '无法导出' : 'Cannot Export', style: TextStyle(color: scheme.onSurface)),
-          ]),
+          title: Row(
+            children: [
+              Icon(Icons.error_outline, size: 20, color: scheme.error),
+              const SizedBox(width: 8),
+              Text(
+                zh ? '无法导出' : 'Cannot Export',
+                style: TextStyle(color: scheme.onSurface),
+              ),
+            ],
+          ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(zh ? '配置存在逻辑错误，请先修复：' : 'Config has logic errors. Fix them first:',
-                  style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
+              Text(
+                zh
+                    ? '配置存在逻辑错误，请先修复：'
+                    : 'Config has logic errors. Fix them first:',
+                style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+              ),
               const SizedBox(height: 8),
-              ...errors.map((e) => Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('• ', style: TextStyle(color: scheme.error, fontWeight: FontWeight.bold)),
-                  Expanded(child: Text(e, style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13))),
-                ]),
-              )),
+              ...errors.map(
+                (e) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '• ',
+                        style: TextStyle(
+                          color: scheme.error,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          e,
+                          style: TextStyle(
+                            color: scheme.onSurfaceVariant,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ],
           ),
           actions: [
-            FilledButton(onPressed: () => Navigator.pop(ctx), child: Text(zh ? '知道了' : 'OK')),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(zh ? '知道了' : 'OK'),
+            ),
           ],
         ),
       );
@@ -1550,13 +1913,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
     // v13 起 saveFile 必填 bytes 且返回 Uri（不再返回可写路径）：
     // 先让 C++ 写到临时文件，读回字节后再交给 saveFile 落盘。
-    final exportName = '${widget.video.filename.replaceAll(RegExp(r'\.[^.]+$'), '')}_config.fppx';
-    final tmpPath = '${Directory.systemTemp.path}${Platform.pathSeparator}export_$exportName';
+    final exportName =
+        '${widget.video.filename.replaceAll(RegExp(r'\.[^.]+$'), '')}_config.fppx';
+    final tmpPath =
+        '${Directory.systemTemp.path}${Platform.pathSeparator}export_$exportName';
 
     // 写盘由 C++ 端完成（写前完整校验；失败不落盘并带回 errors）
     // 这里重新读一次 _writeFormat：上面那个对话框里可以直接改写入格式
     final exportRes = await FppxService(appState.backend).exportGraph(
-      graph, tmpPath,
+      graph,
+      tmpPath,
       description: desc,
       newFormat: _writeFormat == 'v2',
       encrypted: opts.encrypted,
@@ -1571,25 +1937,54 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: Row(children: [
-            Icon(Icons.error_outline, size: 20, color: scheme.error),
-            const SizedBox(width: 8),
-            Text(zh ? '无法导出' : 'Cannot Export', style: TextStyle(color: scheme.onSurface)),
-          ]),
+          title: Row(
+            children: [
+              Icon(Icons.error_outline, size: 20, color: scheme.error),
+              const SizedBox(width: 8),
+              Text(
+                zh ? '无法导出' : 'Cannot Export',
+                style: TextStyle(color: scheme.onSurface),
+              ),
+            ],
+          ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              ...exportRes.errors.map((e) => Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('• ', style: TextStyle(color: scheme.error, fontWeight: FontWeight.bold)),
-                  Expanded(child: Text(e, style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13))),
-                ]),
-              )),
+              ...exportRes.errors.map(
+                (e) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '• ',
+                        style: TextStyle(
+                          color: scheme.error,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          e,
+                          style: TextStyle(
+                            color: scheme.onSurfaceVariant,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ],
           ),
-          actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: Text(zh ? '知道了' : 'OK'))],
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(zh ? '知道了' : 'OK'),
+            ),
+          ],
         ),
       );
       return;
@@ -1604,12 +1999,20 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       mimeType: 'application/octet-stream',
       bytes: await File(tmpPath).readAsBytes(),
     );
-    try { await File(tmpPath).delete(); } catch (_) {}
+    try {
+      await File(tmpPath).delete();
+    } catch (_) {}
     if (saved == null) return; // 用户取消
-    final result = saved.scheme == 'file' ? saved.toFilePath() : saved.toString();
+    final result = saved.scheme == 'file'
+        ? saved.toFilePath()
+        : saved.toString();
 
     if (mounted) {
-      showToast(context, zh ? '已导出: $result' : 'Exported: $result', type: ToastType.success);
+      showToast(
+        context,
+        zh ? '已导出: $result' : 'Exported: $result',
+        type: ToastType.success,
+      );
     }
   }
 
@@ -1650,7 +2053,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     if (!mounted) return;
     final path = picked!.path!;
     if (!picked.name.endsWith('.fppx')) {
-      showToast(context, zh ? '请选择 .fppx 文件' : 'Please select a .fppx file', type: ToastType.warning);
+      showToast(
+        context,
+        zh ? '请选择 .fppx 文件' : 'Please select a .fppx file',
+        type: ToastType.warning,
+      );
       return;
     }
 
@@ -1665,11 +2072,29 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         showDialog(
           context: context,
           builder: (ctx) => AlertDialog(
-            title: Text(zh ? '配置加载失败' : 'Load Failed', style: TextStyle(color: scheme.onSurface)),
-            content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('• $detail', style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
-            ]),
-            actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: Text(s.isZh ? '知道了' : 'OK'))],
+            title: Text(
+              zh ? '配置加载失败' : 'Load Failed',
+              style: TextStyle(color: scheme.onSurface),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '• $detail',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(s.isZh ? '知道了' : 'OK'),
+              ),
+            ],
           ),
         );
         return;
@@ -1680,11 +2105,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         final goOn = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
-            title: Row(children: [
-              Icon(Icons.help_outline, size: 20, color: context.sem.warning),
-              const SizedBox(width: 8),
-              Text(zh ? '发现未知节点' : 'Unknown Node Type', style: TextStyle(color: scheme.onSurface)),
-            ]),
+            title: Row(
+              children: [
+                Icon(Icons.help_outline, size: 20, color: context.sem.warning),
+                const SizedBox(width: 8),
+                Text(
+                  zh ? '发现未知节点' : 'Unknown Node Type',
+                  style: TextStyle(color: scheme.onSurface),
+                ),
+              ],
+            ),
             content: Text(
               zh
                   ? '程序找不到ID为$ids节点的具体含义，可能是因为版本太旧，你可以尝试强制导入，但这可能会发生意料之外的事情'
@@ -1692,8 +2122,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
               style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
             ),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(s.cancel)),
-              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(zh ? '强制导入' : 'Force Import')),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text(s.cancel),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: Text(zh ? '强制导入' : 'Force Import'),
+              ),
             ],
           ),
         );
@@ -1704,21 +2140,30 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         return;
       }
       if (imported.mode == FppxService.modeQuick) {
-        showToast(context,
-            zh ? '这是快速模式配置，请在配置库导入（会存为快捷配置）'
-               : 'This is a quick-mode config; import it from the config library',
-            type: ToastType.warning);
+        showToast(
+          context,
+          zh
+              ? '这是快速模式配置，请在配置库导入（会存为快捷配置）'
+              : 'This is a quick-mode config; import it from the config library',
+          type: ToastType.warning,
+        );
         return;
       }
       final graph = imported.graph;
       if (graph == null) {
-        showToast(context,
-            zh ? '配置里没有节点图' : 'No node graph in this config',
-            type: ToastType.warning);
+        showToast(
+          context,
+          zh ? '配置里没有节点图' : 'No node graph in this config',
+          type: ToastType.warning,
+        );
         return;
       }
       if (imported.warnings.isNotEmpty) {
-        showToast(context, imported.warnings.join('\n'), type: ToastType.warning);
+        showToast(
+          context,
+          imported.warnings.join('\n'),
+          type: ToastType.warning,
+        );
       }
       // 覆盖当前画布
       _pushUndo();
@@ -1733,15 +2178,28 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         _lastSelectedId = null;
       });
       if (mounted) {
-        showToast(context, zh ? '已加载 ${_nodes.length} 个节点' : 'Loaded ${_nodes.length} nodes', type: ToastType.success);
+        showToast(
+          context,
+          zh ? '已加载 ${_nodes.length} 个节点' : 'Loaded ${_nodes.length} nodes',
+          type: ToastType.success,
+        );
       }
     } catch (e) {
-      if (mounted) showToast(context, zh ? '加载失败: $e' : 'Load failed: $e', type: ToastType.error);
+      if (mounted)
+        showToast(
+          context,
+          zh ? '加载失败: $e' : 'Load failed: $e',
+          type: ToastType.error,
+        );
     }
   }
 
   /// 强制导入确认后对同一文件重试（免得让用户再选一次文件）
-  Future<void> _importConfigPath(String path, AppStrings s, {bool force = false}) async {
+  Future<void> _importConfigPath(
+    String path,
+    AppStrings s, {
+    bool force = false,
+  }) async {
     final zh = s.isZh;
     try {
       final imported = await _importWithPassword(path, s, force: force);
@@ -1751,7 +2209,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         final detail = imported.errors.isNotEmpty
             ? imported.errors.join('\n')
             : (imported.error ?? '');
-        showToast(context, zh ? '配置加载失败: $detail' : 'Load failed: $detail', type: ToastType.error);
+        showToast(
+          context,
+          zh ? '配置加载失败: $detail' : 'Load failed: $detail',
+          type: ToastType.error,
+        );
         return;
       }
       final graph = imported.graph!;
@@ -1766,9 +2228,18 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         _selectedNodeIds.clear();
         _lastSelectedId = null;
       });
-      showToast(context, zh ? '已加载 ${_nodes.length} 个节点' : 'Loaded ${_nodes.length} nodes', type: ToastType.success);
+      showToast(
+        context,
+        zh ? '已加载 ${_nodes.length} 个节点' : 'Loaded ${_nodes.length} nodes',
+        type: ToastType.success,
+      );
     } catch (e) {
-      if (mounted) showToast(context, zh ? '加载失败: $e' : 'Load failed: $e', type: ToastType.error);
+      if (mounted)
+        showToast(
+          context,
+          zh ? '加载失败: $e' : 'Load failed: $e',
+          type: ToastType.error,
+        );
     }
   }
 
@@ -1785,23 +2256,44 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         //   2. RoundedRectangleBorder 的 side 默认是 none，会**把主题那条细描边
         //      一并抹掉** —— 半透明玻璃底上没有了描边，边界直接糊进壁纸，
         //      视觉上就成了「圆角没生效 / 是个方形块」。
-        title: Row(children: [
-          Icon(Icons.warning_amber_rounded, size: 20, color: scheme.error),
-          const SizedBox(width: 8),
-          Expanded(child: Text(s.isZh ? '放弃更改?' : 'Discard changes?',
-              style: TextStyle(color: scheme.onSurface, fontSize: 15, fontWeight: FontWeight.w600))),
-        ]),
+        title: Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, size: 20, color: scheme.error),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                s.isZh ? '放弃更改?' : 'Discard changes?',
+                style: TextStyle(
+                  color: scheme.onSurface,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
         // 副标题与正文同一档小字（13 + 1.4 行距）：原来靠主题默认字号（22），
         // 比全应用其它对话框的正文大一截，破窗感明显。
-        content: Text(s.isZh ? '你有未保存的更改，确定要退出吗？' : 'You have unsaved changes. Discard?',
-            style: TextStyle(fontSize: 13, height: 1.4, color: scheme.onSurfaceVariant)),
+        content: Text(
+          s.isZh ? '你有未保存的更改，确定要退出吗？' : 'You have unsaved changes. Discard?',
+          style: TextStyle(
+            fontSize: 13,
+            height: 1.4,
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(s.cancel)),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(s.cancel),
+          ),
           // 破坏性动作统一 error 色实心（与任务卡「移除」、项目页删除同一约定）；
           // 原先它是主题主色实心按钮，和「保存」这类正向动作长得一模一样。
           FilledButton(
             style: FilledButton.styleFrom(
-                backgroundColor: scheme.error, foregroundColor: scheme.onError),
+              backgroundColor: scheme.error,
+              foregroundColor: scheme.onError,
+            ),
             onPressed: () => Navigator.pop(ctx, true),
             child: Text(s.isZh ? '放弃' : 'Discard'),
           ),
@@ -1814,8 +2306,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   Offset _screenToCanvas(Offset screen) {
     final inv = _inverseTransform; // 缓存的逆矩阵，避免每次调用重复求逆
-    final x = inv.storage[0] * screen.dx + inv.storage[4] * screen.dy + inv.storage[12];
-    final y = inv.storage[1] * screen.dx + inv.storage[5] * screen.dy + inv.storage[13];
+    final x =
+        inv.storage[0] * screen.dx +
+        inv.storage[4] * screen.dy +
+        inv.storage[12];
+    final y =
+        inv.storage[1] * screen.dx +
+        inv.storage[5] * screen.dy +
+        inv.storage[13];
     // 逆变换给出的是世界框（IV 子空间）坐标；画布坐标原点固定在世界(0,0)，
     // 需加回世界框左上角偏移
     return Offset(x + _world.left, y + _world.top);
@@ -1832,7 +2330,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     _transformCtrl.value = Matrix4.identity()
       ..translateByDouble(viewCenter.dx, viewCenter.dy, 0, 1)
       ..scaleByDouble(clamped, clamped, 1, 1)
-      ..translateByDouble(-canvasCenter.dx + _world.left, -canvasCenter.dy + _world.top, 0, 1);
+      ..translateByDouble(
+        -canvasCenter.dx + _world.left,
+        -canvasCenter.dy + _world.top,
+        0,
+        1,
+      );
   }
 
   void _zoomToFit() {
@@ -1850,7 +2353,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     }
     final contentW = maxX - minX + 80;
     final contentH = maxY - minY + 80;
-    final scale = math.min(viewSize.width / contentW, viewSize.height / contentH).clamp(0.3, 2.0);
+    final scale = math
+        .min(viewSize.width / contentW, viewSize.height / contentH)
+        .clamp(0.3, 2.0);
     final cx = (minX + maxX) / 2;
     final cy = (minY + maxY) / 2;
     _transformCtrl.value = Matrix4.identity()
@@ -1869,7 +2374,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     _transformCtrl.value = Matrix4.identity()
       ..translateByDouble(viewCenter.dx, viewCenter.dy, 0, 1)
       ..scaleByDouble(_currentScale, _currentScale, 1, 1)
-      ..translateByDouble(-canvasPoint.dx + _world.left, -canvasPoint.dy + _world.top, 0, 1);
+      ..translateByDouble(
+        -canvasPoint.dx + _world.left,
+        -canvasPoint.dy + _world.top,
+        0,
+        1,
+      );
   }
 
   /// 当前视口在画布坐标系里覆盖的矩形。
@@ -1877,7 +2387,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     if (viewSize.isEmpty) return Rect.zero;
     final inv = _inverseTransform;
     final tl = MatrixUtils.transformPoint(inv, Offset.zero);
-    final br = MatrixUtils.transformPoint(inv, Offset(viewSize.width, viewSize.height));
+    final br = MatrixUtils.transformPoint(
+      inv,
+      Offset(viewSize.width, viewSize.height),
+    );
     return Rect.fromPoints(
       tl + Offset(_world.left, _world.top),
       br + Offset(_world.left, _world.top),
@@ -1941,14 +2454,18 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     if (cur == null || cur.isEmpty) return;
     final scale = _transformCtrl.value.getMaxScaleOnAxis();
     _dragRaw += Offset(screenDelta.dx / scale, screenDelta.dy / scale);
-    final anchor =
-        _dragAnchorId == null ? null : _nodes.where((n) => n.id == _dragAnchorId).firstOrNull;
+    final anchor = _dragAnchorId == null
+        ? null
+        : _nodes.where((n) => n.id == _dragAnchorId).firstOrNull;
     // 吸附修正只由锚点算一次，再整体施加给所有被拖节点：多选拖动时相对间距
     // 得以保持（各吸各的会把等距的一排节点挤到一起）。
     final target = anchor == null
         ? _dragRaw
         : _dragRaw +
-            Offset(_snapAdjust(anchor.x + _dragRaw.dx), _snapAdjust(anchor.y + _dragRaw.dy));
+              Offset(
+                _snapAdjust(anchor.x + _dragRaw.dx),
+                _snapAdjust(anchor.y + _dragRaw.dy),
+              );
     _dragDeltas.value = {for (final id in cur.keys) id: target};
   }
 
@@ -1982,9 +2499,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       final cx = n.x + d.dx + _totalNodeWidth(n) / 2;
       final cy = n.y + d.dy + _nodeHeight(n) / 2;
       final target = _logicBlocks
-          .where((b) =>
-              cx >= b.x && cx <= b.x + b.width &&
-              cy >= b.y && cy <= b.y + b.height)
+          .where(
+            (b) =>
+                cx >= b.x &&
+                cx <= b.x + b.width &&
+                cy >= b.y &&
+                cy <= b.y + b.height,
+          )
           .firstOrNull;
       if (target != null) adopt[n.id] = target;
     }
@@ -2005,12 +2526,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     });
     if (adopt.isNotEmpty) {
       final names = adopt.values
-          .map((b) => b.name.isNotEmpty ? b.name : logicBlockTypeLabel(b.type, true))
+          .map(
+            (b) =>
+                b.name.isNotEmpty ? b.name : logicBlockTypeLabel(b.type, true),
+          )
           .toSet()
           .join('、');
-      showToast(context,
-          '${adopt.length} 个节点已加入逻辑块「$names」（可撤销）',
-          type: ToastType.info);
+      showToast(
+        context,
+        '${adopt.length} 个节点已加入逻辑块「$names」（可撤销）',
+        type: ToastType.info,
+      );
     }
     _markDirty();
   }
@@ -2030,7 +2556,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     }
     // BFS topo layers
     final layers = <List<String>>[];
-    var queue = [for (final n in _nodes) if (inDeg[n.id] == 0) n.id];
+    var queue = [
+      for (final n in _nodes)
+        if (inDeg[n.id] == 0) n.id,
+    ];
     final visited = <String>{};
     while (queue.isNotEmpty) {
       layers.add(queue);
@@ -2045,7 +2574,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       queue = next;
     }
     // Append any unvisited nodes (cycles/disconnected)
-    final remaining = _nodes.where((n) => !visited.contains(n.id)).map((n) => n.id).toList();
+    final remaining = _nodes
+        .where((n) => !visited.contains(n.id))
+        .map((n) => n.id)
+        .toList();
     if (remaining.isNotEmpty) layers.add(remaining);
 
     const gapX = 300.0;
@@ -2067,9 +2599,15 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   }
 
   void _goToSource(AppStrings s) {
-    final startNodes = _nodes.where((n) => n.type == PipelineStepType.start && !n.isGate).toList();
+    final startNodes = _nodes
+        .where((n) => n.type == PipelineStepType.start && !n.isGate)
+        .toList();
     if (startNodes.isEmpty) {
-      showToast(context, s.isZh ? '没有源文件节点' : 'No source nodes', type: ToastType.info);
+      showToast(
+        context,
+        s.isZh ? '没有源文件节点' : 'No source nodes',
+        type: ToastType.info,
+      );
       return;
     }
     final target = startNodes[_sourceAnchorIndex % startNodes.length];
@@ -2082,7 +2620,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     _transformCtrl.value = Matrix4.identity()
       ..translateByDouble(viewCenter.dx, viewCenter.dy, 0, 1)
       ..scaleByDouble(_currentScale, _currentScale, 1, 1)
-      ..translateByDouble(-nodeCenterX + _world.left, -nodeCenterY + _world.top, 0, 1);
+      ..translateByDouble(
+        -nodeCenterX + _world.left,
+        -nodeCenterY + _world.top,
+        0,
+        1,
+      );
     setState(() {
       _selectedNodeIds = {target.id};
       _lastSelectedId = target.id;
@@ -2098,28 +2641,53 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       _selectedNodeIds.clear();
       _lastSelectedId = null;
     });
-    showToast(context, s.isZh ? '请在画布中框选要包含的元素' : 'Box-select elements on canvas to include', type: ToastType.info);
+    showToast(
+      context,
+      s.isZh ? '请在画布中框选要包含的元素' : 'Box-select elements on canvas to include',
+      type: ToastType.info,
+    );
   }
 
   void _finishLogicBoxSelect(AppStrings s) {
     final type = _pendingLogicType;
     if (type == null) return;
     final validIds = _selectedNodeIds.where((id) {
-      final n = _nodes.firstWhere((n) => n.id == id, orElse: () => PipelineNode(id: '', type: PipelineStepType.start));
-      return n.id.isNotEmpty && n.type != PipelineStepType.start && n.type != PipelineStepType.output;
+      final n = _nodes.firstWhere(
+        (n) => n.id == id,
+        orElse: () => PipelineNode(id: '', type: PipelineStepType.start),
+      );
+      return n.id.isNotEmpty &&
+          n.type != PipelineStepType.start &&
+          n.type != PipelineStepType.output;
     }).toList();
 
     if (validIds.isEmpty) {
-      setState(() { _isLogicBoxSelecting = false; _pendingLogicType = null; });
-      showToast(context, s.isZh ? '未选中有效的处理元素' : 'No valid processing elements selected', type: ToastType.warning);
+      setState(() {
+        _isLogicBoxSelecting = false;
+        _pendingLogicType = null;
+      });
+      showToast(
+        context,
+        s.isZh ? '未选中有效的处理元素' : 'No valid processing elements selected',
+        type: ToastType.warning,
+      );
       return;
     }
 
     // Check if any selected node is already in a logic block
     for (final block in _logicBlocks) {
       if (validIds.any((id) => block.childNodeIds.contains(id))) {
-        setState(() { _isLogicBoxSelecting = false; _pendingLogicType = null; });
-        showToast(context, s.isZh ? '选中的元素已在其他逻辑块中' : 'Selected elements are already in another logic block', type: ToastType.warning);
+        setState(() {
+          _isLogicBoxSelecting = false;
+          _pendingLogicType = null;
+        });
+        showToast(
+          context,
+          s.isZh
+              ? '选中的元素已在其他逻辑块中'
+              : 'Selected elements are already in another logic block',
+          type: ToastType.warning,
+        );
         return;
       }
     }
@@ -2141,15 +2709,29 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final needsCount =
         type == LogicBlockType.loop || type == LogicBlockType.selectiveLoop;
     if (!needsCount) {
-      _commitLogicBlock(type, validIds, minX, minY, maxX, maxY, padding, const {});
+      _commitLogicBlock(
+        type,
+        validIds,
+        minX,
+        minY,
+        maxX,
+        maxY,
+        padding,
+        const {},
+      );
       return;
     }
 
     _showLoopCountDialog(s).then((count) {
       if (count != null && count > 0) {
-        _commitLogicBlock(type, validIds, minX, minY, maxX, maxY, padding, {'count': count});
+        _commitLogicBlock(type, validIds, minX, minY, maxX, maxY, padding, {
+          'count': count,
+        });
       } else {
-        setState(() { _isLogicBoxSelecting = false; _pendingLogicType = null; });
+        setState(() {
+          _isLogicBoxSelecting = false;
+          _pendingLogicType = null;
+        });
       }
     });
   }
@@ -2171,16 +2753,18 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   ) {
     _pushUndo();
     setState(() {
-      _logicBlocks.add(LogicBlock(
-        id: _uuid.v4(),
-        type: type,
-        childNodeIds: childIds,
-        params: {..._defaultLogicParams(type), ...extraParams},
-        x: minX - padding,
-        y: minY - padding - 20,
-        width: maxX - minX + padding * 2,
-        height: maxY - minY + padding * 2 + 20,
-      ));
+      _logicBlocks.add(
+        LogicBlock(
+          id: _uuid.v4(),
+          type: type,
+          childNodeIds: childIds,
+          params: {..._defaultLogicParams(type), ...extraParams},
+          x: minX - padding,
+          y: minY - padding - 20,
+          width: maxX - minX + padding * 2,
+          height: maxY - minY + padding * 2 + 20,
+        ),
+      );
       _isLogicBoxSelecting = false;
       _pendingLogicType = null;
       _selectedNodeIds.clear();
@@ -2193,20 +2777,25 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// 条件块预置「扩展名 = mp4，不满足则跳过」这一最常用形态：条件为空时
   /// `GraphExecutor._evalCondition` 对任何输入都不成立，整框静默白跑，
   /// 新建后必须让用户立刻看到一条能改的具体规则。
-  static Map<String, dynamic> _defaultLogicParams(LogicBlockType type) => switch (type) {
-    LogicBlockType.loop => const {'countMode': 'count', 'count': 10},
-    // [FIX B4] 默认模式改 'all'：'random' 尚未实现（执行层按全量跑），
-    // 把它设为默认会让用户以为选了"每轮随机挑几个"，实际是"全部跑 N 遍"。
-    LogicBlockType.selectiveLoop => const {'countMode': 'count', 'count': 10, 'mode': 'all'},
-    LogicBlockType.group => const {'count': 1},
-    LogicBlockType.condition => const {
-      'count': 1,
-      'condField': 'extension',
-      'condOp': 'eq',
-      'condValue': 'mp4',
-      'condElse': 'skip',
-    },
-  };
+  static Map<String, dynamic> _defaultLogicParams(LogicBlockType type) =>
+      switch (type) {
+        LogicBlockType.loop => const {'countMode': 'count', 'count': 10},
+        // [FIX B4] 默认模式改 'all'：'random' 尚未实现（执行层按全量跑），
+        // 把它设为默认会让用户以为选了"每轮随机挑几个"，实际是"全部跑 N 遍"。
+        LogicBlockType.selectiveLoop => const {
+          'countMode': 'count',
+          'count': 10,
+          'mode': 'all',
+        },
+        LogicBlockType.group => const {'count': 1},
+        LogicBlockType.condition => const {
+          'count': 1,
+          'condField': 'extension',
+          'condOp': 'eq',
+          'condValue': 'mp4',
+          'condElse': 'skip',
+        },
+      };
 
   Future<int?> _showLoopCountDialog(AppStrings s) {
     int count = 10;
@@ -2214,7 +2803,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     return showDialog<int>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(s.isZh ? '设置循环次数' : 'Set Loop Count', style: TextStyle(fontSize: 16, color: scheme.onSurface)),
+        title: Text(
+          s.isZh ? '设置循环次数' : 'Set Loop Count',
+          style: TextStyle(fontSize: 16, color: scheme.onSurface),
+        ),
         content: TextFormField(
           initialValue: '10',
           autofocus: true,
@@ -2225,11 +2817,19 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
           ),
           keyboardType: TextInputType.number,
-          onChanged: (v) { count = int.tryParse(v) ?? 10; },
+          onChanged: (v) {
+            count = int.tryParse(v) ?? 10;
+          },
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(s.isZh ? '取消' : 'Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, count), child: Text(s.isZh ? '确定' : 'OK')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(s.isZh ? '取消' : 'Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, count),
+            child: Text(s.isZh ? '确定' : 'OK'),
+          ),
         ],
       ),
     );
@@ -2344,7 +2944,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   List<PipelineStepType> _visibleNodeTypes() {
     if (!_showOnlyAvailable) return _allNodeTypes;
     final avail = _availableTypes();
-    return [for (final t in _allNodeTypes) if (avail.contains(t)) t];
+    return [
+      for (final t in _allNodeTypes)
+        if (avail.contains(t)) t,
+    ];
   }
 
   List<PipelineStepType> _top5Types() {
@@ -2354,7 +2957,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final top = sorted.take(5).toList();
     if (!top.contains(PipelineStepType.start)) top[4] = PipelineStepType.start;
     if (!top.contains(PipelineStepType.output)) {
-      final idx = top.indexWhere((t) => t != PipelineStepType.start && (counts[t.name] ?? 0) == 0);
+      final idx = top.indexWhere(
+        (t) => t != PipelineStepType.start && (counts[t.name] ?? 0) == 0,
+      );
       if (idx >= 0) {
         top[idx] = PipelineStepType.output;
       } else {
@@ -2374,23 +2979,35 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     // 配合菜单宽度约束避免长标签把菜单撑得极宽（PC 端曾出现该问题）。
     Widget rowFor(PipelineStepType t) {
       final dummy = PipelineNode(id: '', type: t);
-      return Row(children: [
-        Container(
-          width: 22, height: 22,
-          decoration: BoxDecoration(color: _nodeColor(t, scheme), borderRadius: BorderRadius.circular(5)),
-          child: Icon(_stepIcon(t), size: 13, color: scheme.onSurface),
-        ),
-        const SizedBox(width: 8),
-        Flexible(
-          child: Text(s.isZh ? dummy.label : dummy.labelEn,
-              maxLines: 1, overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 13)),
-        ),
-        if (dummy.mediaTag.isNotEmpty) ...[
-          const SizedBox(width: 6),
-          Text(dummy.mediaTag, style: TextStyle(fontSize: 9, color: scheme.outline)),
+      return Row(
+        children: [
+          Container(
+            width: 22,
+            height: 22,
+            decoration: BoxDecoration(
+              color: _nodeColor(t, scheme),
+              borderRadius: BorderRadius.circular(5),
+            ),
+            child: Icon(_stepIcon(t), size: 13, color: scheme.onSurface),
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              s.isZh ? dummy.label : dummy.labelEn,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 13),
+            ),
+          ),
+          if (dummy.mediaTag.isNotEmpty) ...[
+            const SizedBox(width: 6),
+            Text(
+              dummy.mediaTag,
+              style: TextStyle(fontSize: 9, color: scheme.outline),
+            ),
+          ],
         ],
-      ]);
+      );
     }
 
     AnimatedMenuEntry<PipelineStepType> makeItem(PipelineStepType t) =>
@@ -2400,18 +3017,24 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     /// 重建出菜单底下的旧画面）。这类行原来只有「全部元素...」一条，
     /// 现在把全选/粘贴/整理/适配也放进来 —— 空白处右键就是最顺手的入口。
     AnimatedMenuEntry<PipelineStepType> actionRow(
-        IconData icon, String label, VoidCallback run, {Color? color}) {
+      IconData icon,
+      String label,
+      VoidCallback run, {
+      Color? color,
+    }) {
       final c = color ?? scheme.onSurface;
       return AnimatedMenuEntry<PipelineStepType>(
         onTap: () {
           Navigator.pop(context);
           run();
         },
-        child: Row(children: [
-          Icon(icon, size: 16, color: c),
-          const SizedBox(width: 8),
-          Text(label, style: TextStyle(fontSize: 13, color: c)),
-        ]),
+        child: Row(
+          children: [
+            Icon(icon, size: 16, color: c),
+            const SizedBox(width: 8),
+            Text(label, style: TextStyle(fontSize: 13, color: c)),
+          ],
+        ),
       );
     }
 
@@ -2425,35 +3048,54 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       items: [
         ...top5.map(makeItem),
         const AnimatedMenuEntry<PipelineStepType>.divider(),
-        actionRow(Icons.more_horiz, s.isZh ? '全部元素...' : 'All elements...', () {
-          // 二级菜单延后一帧再弹：一级菜单（约 10 项）正在退场的同时把 29 项的
-          // 二级菜单推入，会让同一帧的布局/绘制翻倍 —— 这正是「点一下卡一下」
-          // 的来源。摊到相邻帧后肉眼无感。
-          // 同时给菜单一个固定宽度：29 项若走 IntrinsicWidth，弹出前要先对每一项
-          // 做一遍固有尺寸测量，白白多出一整趟布局。
-          final types = _visibleNodeTypes();
-          WidgetsBinding.instance.addPostFrameCallback((_) async {
-            if (!mounted) return;
-            final all = await showAnimatedMenu<PipelineStepType>(
-              context: context,
-              position: screenPos,
-              width: isMobilePlatform ? 200 : 240,
-              items: [for (final t in types) makeItem(t)],
-            );
-            if (all != null && mounted) _addNodeAt(all, canvasPos);
-          });
-        }, color: scheme.outline),
+        actionRow(
+          Icons.more_horiz,
+          s.isZh ? '全部元素...' : 'All elements...',
+          () {
+            // 二级菜单延后一帧再弹：一级菜单（约 10 项）正在退场的同时把 29 项的
+            // 二级菜单推入，会让同一帧的布局/绘制翻倍 —— 这正是「点一下卡一下」
+            // 的来源。摊到相邻帧后肉眼无感。
+            // 同时给菜单一个固定宽度：29 项若走 IntrinsicWidth，弹出前要先对每一项
+            // 做一遍固有尺寸测量，白白多出一整趟布局。
+            final types = _visibleNodeTypes();
+            WidgetsBinding.instance.addPostFrameCallback((_) async {
+              if (!mounted) return;
+              final all = await showAnimatedMenu<PipelineStepType>(
+                context: context,
+                position: screenPos,
+                width: isMobilePlatform ? 200 : 240,
+                items: [for (final t in types) makeItem(t)],
+              );
+              if (all != null && mounted) _addNodeAt(all, canvasPos);
+            });
+          },
+          color: scheme.outline,
+        ),
         const AnimatedMenuEntry<PipelineStepType>.divider(),
-        actionRow(Icons.select_all, s.isZh ? '全选' : 'Select all', _selectAllNodes),
+        actionRow(
+          Icons.select_all,
+          s.isZh ? '全选' : 'Select all',
+          _selectAllNodes,
+        ),
         if (_hasClipboard)
           actionRow(
             Icons.content_paste,
-            s.isZh ? '粘贴 (${_clipNodes.length})' : 'Paste (${_clipNodes.length})',
+            s.isZh
+                ? '粘贴 (${_clipNodes.length})'
+                : 'Paste (${_clipNodes.length})',
             () => _pasteNodes(atCanvas: canvasPos),
           ),
         const AnimatedMenuEntry<PipelineStepType>.divider(),
-        actionRow(Icons.auto_fix_high, s.isZh ? '自动整理' : 'Auto arrange', _autoLayout),
-        actionRow(Icons.fit_screen_outlined, s.isZh ? '适应画布' : 'Fit to canvas', _zoomToFit),
+        actionRow(
+          Icons.auto_fix_high,
+          s.isZh ? '自动整理' : 'Auto arrange',
+          _autoLayout,
+        ),
+        actionRow(
+          Icons.fit_screen_outlined,
+          s.isZh ? '适应画布' : 'Fit to canvas',
+          _zoomToFit,
+        ),
       ],
     ).then((type) {
       if (type != null) _addNodeAt(type, canvasPos);
@@ -2463,19 +3105,29 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   void _showNodeMenu(Offset screenPos, String nodeId) {
     final s = AppStrings.of(context.read<AppState>().config.language);
     final errorColor = Theme.of(context).colorScheme.error;
-    final multiSelected = _selectedNodeIds.length > 1 && _selectedNodeIds.contains(nodeId);
+    final multiSelected =
+        _selectedNodeIds.length > 1 && _selectedNodeIds.contains(nodeId);
 
-    Widget row(IconData icon, String label, {Color? color, bool flexible = false}) {
+    Widget row(
+      IconData icon,
+      String label, {
+      Color? color,
+      bool flexible = false,
+    }) {
       final c = color ?? Theme.of(context).colorScheme.onSurface;
-      final text = Text(label,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(fontSize: 13, color: c));
-      return Row(children: [
-        Icon(icon, size: 16, color: c),
-        const SizedBox(width: 6),
-        if (flexible) Flexible(child: text) else text,
-      ]);
+      final text = Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(fontSize: 13, color: c),
+      );
+      return Row(
+        children: [
+          Icon(icon, size: 16, color: c),
+          const SizedBox(width: 6),
+          if (flexible) Flexible(child: text) else text,
+        ],
+      );
     }
 
     showAnimatedMenu<String>(
@@ -2485,26 +3137,46 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         // 移动端没有 Ctrl+C/V，长按节点菜单是唯一的复制入口
         AnimatedMenuEntry<String>(
           value: 'copy',
-          child: row(Icons.content_copy,
-              multiSelected
-                  ? (s.isZh ? '复制选中 (${_selectedNodeIds.length}个)' : 'Copy Selected (${_selectedNodeIds.length})')
-                  : (s.isZh ? '复制节点' : 'Copy Node'),
-              flexible: true),
+          child: row(
+            Icons.content_copy,
+            multiSelected
+                ? (s.isZh
+                      ? '复制选中 (${_selectedNodeIds.length}个)'
+                      : 'Copy Selected (${_selectedNodeIds.length})')
+                : (s.isZh ? '复制节点' : 'Copy Node'),
+            flexible: true,
+          ),
         ),
         if (_hasClipboard)
           AnimatedMenuEntry<String>(
             value: 'paste',
-            child: row(Icons.content_paste,
-                s.isZh ? '粘贴 (${_clipNodes.length})' : 'Paste (${_clipNodes.length})',
-                flexible: true),
+            child: row(
+              Icons.content_paste,
+              s.isZh
+                  ? '粘贴 (${_clipNodes.length})'
+                  : 'Paste (${_clipNodes.length})',
+              flexible: true,
+            ),
           ),
-        AnimatedMenuEntry<String>(value: 'delete', child: row(Icons.delete_outline, s.isZh ? '删除节点' : 'Delete Node', color: errorColor)),
+        AnimatedMenuEntry<String>(
+          value: 'delete',
+          child: row(
+            Icons.delete_outline,
+            s.isZh ? '删除节点' : 'Delete Node',
+            color: errorColor,
+          ),
+        ),
         if (multiSelected)
           AnimatedMenuEntry<String>(
             value: 'delete_selected',
-            child: row(Icons.delete_sweep_outlined,
-                s.isZh ? '删除选中 (${_selectedNodeIds.length}个)' : 'Delete Selected (${_selectedNodeIds.length})',
-                color: errorColor, flexible: true),
+            child: row(
+              Icons.delete_sweep_outlined,
+              s.isZh
+                  ? '删除选中 (${_selectedNodeIds.length}个)'
+                  : 'Delete Selected (${_selectedNodeIds.length})',
+              color: errorColor,
+              flexible: true,
+            ),
           ),
       ],
     ).then((action) {
@@ -2543,7 +3215,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         final srcIdx = _nodes.indexWhere((n) => n.id == conn.fromNodeId);
         if (srcIdx < 0) continue;
         final src = _nodes[srcIdx];
-        if (src.type == PipelineStepType.start && src.outputType == MediaType.image) {
+        if (src.type == PipelineStepType.start &&
+            src.outputType == MediaType.image) {
           return widget.video.filepath;
         }
         final result = trace(src.id);
@@ -2551,6 +3224,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       }
       return null;
     }
+
     return trace(node.id);
   }
 
@@ -2574,12 +3248,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       }
       return null;
     }
+
     return trace(node.id);
   }
 
   Widget _buildStepEditor(PipelineNode node, bool isZh) {
     // 任何参数编辑变化都会触发自动保存草稿（不持久化到父组件）
-    void onChanged() { setState(() {}); _markDirty(); }
+    void onChanged() {
+      setState(() {});
+      _markDirty();
+    }
+
     final v = widget.video;
 
     // 逻辑门节点：显示门信息编辑器（符号、说明、输入输出）
@@ -2597,119 +3276,323 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           final cName = widget.containerInfo!.name;
           final cCount = widget.containerInfo!.fileCount;
           final cs = Theme.of(context).colorScheme;
-          return Column(mainAxisSize: MainAxisSize.min, children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-              child: Container(
-                width: double.infinity, height: 80,
-                decoration: BoxDecoration(color: cs.primaryContainer.withAlpha(60), borderRadius: BorderRadius.circular(8)),
-                child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  Icon(Icons.folder_special, size: 32, color: cs.primary),
-                  const SizedBox(height: 4),
-                  Text(cName, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.onSurface)),
-                  Text('$cCount ${isZh ? "个文件" : "files"}', style: TextStyle(fontSize: 11, color: cs.outline)),
-                ]),
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                child: Container(
+                  width: double.infinity,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: cs.primaryContainer.withAlpha(60),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.folder_special, size: 32, color: cs.primary),
+                      const SizedBox(height: 4),
+                      Text(
+                        cName,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: cs.onSurface,
+                        ),
+                      ),
+                      Text(
+                        '$cCount ${isZh ? "个文件" : "files"}',
+                        style: TextStyle(fontSize: 11, color: cs.outline),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-            ),
-          ]);
+            ],
+          );
         }
-        return Column(mainAxisSize: MainAxisSize.min, children: [
-          if (_thumbPath != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Image.file(File(_thumbPath!), width: double.infinity, height: 140,
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_thumbPath != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.file(
+                    File(_thumbPath!),
+                    width: double.infinity,
+                    height: 140,
                     // 缩略图按显示高度 3x 封顶解码（1080p 源 ~8MB/张）
                     cacheWidth: 720,
-                    fit: widget.video.fileMediaType == MediaType.audio ? BoxFit.contain : BoxFit.cover),
-              ),
-            )
-          else if (_isAudioNoCover)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-              child: Container(
-                width: double.infinity, height: 100,
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest.withAlpha(80),
-                  borderRadius: BorderRadius.circular(8),
+                    fit: widget.video.fileMediaType == MediaType.audio
+                        ? BoxFit.contain
+                        : BoxFit.cover,
+                  ),
                 ),
-                child: Icon(Icons.music_note, size: 48, color: Theme.of(context).colorScheme.primary),
+              )
+            else if (_isAudioNoCover)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                child: Container(
+                  width: double.infinity,
+                  height: 100,
+                  decoration: BoxDecoration(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.surfaceContainerHighest.withAlpha(80),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    Icons.music_note,
+                    size: 48,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                ),
               ),
+            StartStepEditor(
+              filename: v.filename,
+              resolution: v.resolution,
+              durationStr: v.durationStr,
+              sizeMb: v.sizeMb,
+              codec: v.codec,
+              pixFmt: v.pixFmt,
+              audioCodec: v.audioCodec,
+              audioChannels: v.audioChannels,
+              isZh: isZh,
             ),
-          StartStepEditor(filename: v.filename, resolution: v.resolution, durationStr: v.durationStr,
-              sizeMb: v.sizeMb, codec: v.codec, pixFmt: v.pixFmt, audioCodec: v.audioCodec, audioChannels: v.audioChannels, isZh: isZh),
-        ]);
+          ],
+        );
       case PipelineStepType.output:
         final resolvedExt = _resolveUpstreamExtension(node);
-        return OutputStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh,
-            sourceFilename: resolvedExt != null ? v.filename.replaceAll(RegExp(r'\.[^.]+$'), '.$resolvedExt') : v.filename,
-            defaultOutputDir: context.read<AppState>().config.defaultOutputDir);
+        return OutputStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+          sourceFilename: resolvedExt != null
+              ? v.filename.replaceAll(RegExp(r'\.[^.]+$'), '.$resolvedExt')
+              : v.filename,
+          defaultOutputDir: context.read<AppState>().config.defaultOutputDir,
+        );
       case PipelineStepType.avProcess:
-        editor = AvProcessStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = AvProcessStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
       case PipelineStepType.subtitle:
-        editor = SubtitleStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh, embeddedSubtitles: v.subtitles);
+        editor = SubtitleStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+          embeddedSubtitles: v.subtitles,
+        );
       case PipelineStepType.clip:
-        editor = ClipStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, videoPath: v.filepath, videoDuration: v.duration, isZh: isZh);
+        editor = ClipStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          videoPath: v.filepath,
+          videoDuration: v.duration,
+          isZh: isZh,
+        );
       case PipelineStepType.frame:
-        editor = FrameStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, videoPath: v.filepath, videoDuration: v.duration, isZh: isZh);
+        editor = FrameStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          videoPath: v.filepath,
+          videoDuration: v.duration,
+          isZh: isZh,
+        );
       case PipelineStepType.speed:
-        editor = SpeedStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = SpeedStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
       case PipelineStepType.imageConvert:
-        editor = ImageConvertStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = ImageConvertStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
       case PipelineStepType.audioConvert:
-        editor = AudioConvertStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = AudioConvertStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
       case PipelineStepType.audioQuality:
-        editor = AudioQualityStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = AudioQualityStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
       case PipelineStepType.audioSpeed:
-        editor = AudioSpeedStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = AudioSpeedStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
       case PipelineStepType.audioVolume:
-        editor = AudioVolumeStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = AudioVolumeStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
       case PipelineStepType.audioCompressor:
-        editor = AudioCompressorStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = AudioCompressorStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
       case PipelineStepType.audioMetadata:
-        editor = AudioMetadataStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = AudioMetadataStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
       case PipelineStepType.extractAudio:
-        editor = ExtractAudioStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh,
-            videoPath: v.filepath, videoDuration: v.duration);
+        editor = ExtractAudioStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+          videoPath: v.filepath,
+          videoDuration: v.duration,
+        );
       case PipelineStepType.concatMedia:
-        editor = ConcatMediaStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh,
-            containerFileCount: widget.containerInfo?.fileCount ?? 0);
+        editor = ConcatMediaStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+          containerFileCount: widget.containerInfo?.fileCount ?? 0,
+        );
       case PipelineStepType.imageToVideo:
-        editor = ImageToVideoStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh,
-            containerFileCount: widget.containerInfo?.fileCount ?? 0);
+        editor = ImageToVideoStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+          containerFileCount: widget.containerInfo?.fileCount ?? 0,
+        );
       case PipelineStepType.imageCrop:
         editor = ImageCropStepEditor(
-          key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh,
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
           sourceImagePath: _resolveSourceImagePath(node),
         );
       case PipelineStepType.imageRotate:
-        editor = ImageRotateStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = ImageRotateStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
       case PipelineStepType.imageScale:
-        editor = ImageScaleStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = ImageScaleStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
       case PipelineStepType.imageBrightness:
-        editor = ImageBrightnessStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = ImageBrightnessStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
       case PipelineStepType.imageNoise:
-        editor = ImageNoiseStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = ImageNoiseStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
       case PipelineStepType.imageSharpen:
-        editor = ImageSharpenStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = ImageSharpenStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
       case PipelineStepType.imageDenoise:
-        editor = ImageDenoiseStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = ImageDenoiseStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
       case PipelineStepType.imageChannelExtract:
-        editor = ImageChannelExtractStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = ImageChannelExtractStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
       case PipelineStepType.videoCrop:
-        editor = VideoCropStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh,
-            videoPath: v.filepath, videoWidth: v.width, videoHeight: v.height, fps: v.fps);
+        editor = VideoCropStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+          videoPath: v.filepath,
+          videoWidth: v.width,
+          videoHeight: v.height,
+          fps: v.fps,
+        );
       case PipelineStepType.videoFilter:
-        editor = VideoFilterStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = VideoFilterStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
       case PipelineStepType.videoGeometry:
-        editor = VideoGeometryStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = VideoGeometryStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
       case PipelineStepType.videoOverlay:
-        editor = VideoOverlayStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = VideoOverlayStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
       case PipelineStepType.audioFade:
-        editor = AudioFadeStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = AudioFadeStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
       case PipelineStepType.imageAdjust:
-        editor = ImageAdjustStepEditor(key: ValueKey(node.id), params: node.params, onChanged: onChanged, isZh: isZh);
+        editor = ImageAdjustStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
       case PipelineStepType.mediaConvert:
       case PipelineStepType.mediaScale:
       case PipelineStepType.mediaCrop:
@@ -2740,41 +3623,71 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             color: cs2.surfaceContainerHighest.withAlpha(60),
             borderRadius: BorderRadius.circular(8),
           ),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Icon(Icons.help_outline, size: 16, color: cs2.outline),
-              const SizedBox(width: 6),
-              Text(isZh ? '未知节点类型' : 'Unknown node type',
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs2.onSurface)),
-            ]),
-            const SizedBox(height: 4),
-            Text(isZh ? '节点类型 ID: ${node.unknownTypeId ?? '?'}'
-                      : 'Node type ID: ${node.unknownTypeId ?? '?'}',
-                style: TextStyle(fontSize: 12, color: cs2.outline)),
-            const SizedBox(height: 4),
-            Text(isZh ? '可编辑/保存/导出此配置，但不能用于转码任务'
-                      : 'Editable/savable/exportable, but cannot run tasks',
-                style: TextStyle(fontSize: 11, color: cs2.outline.withAlpha(180))),
-          ]),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.help_outline, size: 16, color: cs2.outline),
+                  const SizedBox(width: 6),
+                  Text(
+                    isZh ? '未知节点类型' : 'Unknown node type',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: cs2.onSurface,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                isZh
+                    ? '节点类型 ID: ${node.unknownTypeId ?? '?'}'
+                    : 'Node type ID: ${node.unknownTypeId ?? '?'}',
+                style: TextStyle(fontSize: 12, color: cs2.outline),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                isZh
+                    ? '可编辑/保存/导出此配置，但不能用于转码任务'
+                    : 'Editable/savable/exportable, but cannot run tasks',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: cs2.outline.withAlpha(180),
+                ),
+              ),
+            ],
+          ),
         );
     }
 
     // Wrap with container file-selection header + node naming/coloring footer
     final cs = Theme.of(context).colorScheme;
-    return Column(mainAxisSize: MainAxisSize.min, children: [
-      // Container file selection (only in container mode with >= 2 matching files)
-      if (widget.containerInfo != null && node.params.containsKey('container_file_select'))
-        _buildFileSelectHeader(node, isZh, cs, onChanged),
-      editor,
-      // Node naming & color (not for preview)
-      if (node.id != '__preview__')
-        _buildNodeCustomSection(node, isZh, cs, onChanged),
-    ]);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Container file selection (only in container mode with >= 2 matching files)
+        if (widget.containerInfo != null &&
+            node.params.containsKey('container_file_select'))
+          _buildFileSelectHeader(node, isZh, cs, onChanged),
+        editor,
+        // Node naming & color (not for preview)
+        if (node.id != '__preview__')
+          _buildNodeCustomSection(node, isZh, cs, onChanged),
+      ],
+    );
   }
 
-  Widget _buildFileSelectHeader(PipelineNode node, bool isZh, ColorScheme cs, VoidCallback onChanged) {
+  Widget _buildFileSelectHeader(
+    PipelineNode node,
+    bool isZh,
+    ColorScheme cs,
+    VoidCallback onChanged,
+  ) {
     final mode = node.params['container_file_select'] as String? ?? 'all';
-    final selectedIndices = node.params['container_selected_indices'] as String? ?? '';
+    final selectedIndices =
+        node.params['container_selected_indices'] as String? ?? '';
     final fileCount = widget.containerInfo!.fileCount;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
@@ -2785,44 +3698,85 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: cs.primary.withAlpha(60)),
         ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Icon(Icons.filter_list, size: 14, color: cs.primary),
-            const SizedBox(width: 6),
-            Text(isZh ? '文件选择 ($fileCount 个可用)' : 'File Selection ($fileCount available)',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: cs.onSurface)),
-          ]),
-          const SizedBox(height: 8),
-          SegmentedButton<String>(
-            segments: [
-              ButtonSegment(value: 'all', label: Text(isZh ? '全部处理' : 'All', style: const TextStyle(fontSize: 11))),
-              ButtonSegment(value: 'select', label: Text(isZh ? '指定文件' : 'Select', style: const TextStyle(fontSize: 11))),
-            ],
-            selected: {mode},
-            onSelectionChanged: (s) { setState(() => node.params['container_file_select'] = s.first); onChanged(); },
-          ),
-          if (mode == 'select') ...[
-            const SizedBox(height: 8),
-            TextFormField(
-              key: ValueKey('${node.id}_selected_indices'),
-              initialValue: selectedIndices,
-              decoration: InputDecoration(
-                hintText: isZh ? '输入编号，如: 1,3,5' : 'e.g. 1,3,5',
-                hintStyle: TextStyle(color: cs.outline, fontSize: 11),
-                isDense: true,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
-              ),
-              style: TextStyle(fontSize: 12, color: cs.onSurface),
-              onChanged: (v) { node.params['container_selected_indices'] = v; onChanged(); },
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.filter_list, size: 14, color: cs.primary),
+                const SizedBox(width: 6),
+                Text(
+                  isZh
+                      ? '文件选择 ($fileCount 个可用)'
+                      : 'File Selection ($fileCount available)',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: cs.onSurface,
+                  ),
+                ),
+              ],
             ),
+            const SizedBox(height: 8),
+            SegmentedButton<String>(
+              segments: [
+                ButtonSegment(
+                  value: 'all',
+                  label: Text(
+                    isZh ? '全部处理' : 'All',
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                ),
+                ButtonSegment(
+                  value: 'select',
+                  label: Text(
+                    isZh ? '指定文件' : 'Select',
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                ),
+              ],
+              selected: {mode},
+              onSelectionChanged: (s) {
+                setState(() => node.params['container_file_select'] = s.first);
+                onChanged();
+              },
+            ),
+            if (mode == 'select') ...[
+              const SizedBox(height: 8),
+              TextFormField(
+                key: ValueKey('${node.id}_selected_indices'),
+                initialValue: selectedIndices,
+                decoration: InputDecoration(
+                  hintText: isZh ? '输入编号，如: 1,3,5' : 'e.g. 1,3,5',
+                  hintStyle: TextStyle(color: cs.outline, fontSize: 11),
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                ),
+                style: TextStyle(fontSize: 12, color: cs.onSurface),
+                onChanged: (v) {
+                  node.params['container_selected_indices'] = v;
+                  onChanged();
+                },
+              ),
+            ],
           ],
-        ]),
+        ),
       ),
     );
   }
 
-  Widget _buildNodeCustomSection(PipelineNode node, bool isZh, ColorScheme cs, VoidCallback onChanged) {
+  Widget _buildNodeCustomSection(
+    PipelineNode node,
+    bool isZh,
+    ColorScheme cs,
+    VoidCallback onChanged,
+  ) {
     final nodeName = node.params['node_name'] as String? ?? '';
     final nodeColorVal = node.params['node_color'] as int?;
     return Padding(
@@ -2833,58 +3787,97 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           color: cs.surfaceContainerHighest.withAlpha(40),
           borderRadius: BorderRadius.circular(8),
         ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(isZh ? '自定义' : 'Custom', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cs.outline)),
-          const SizedBox(height: 6),
-          TextFormField(
-            key: ValueKey('${node.id}_node_name'),
-            initialValue: nodeName,
-            decoration: InputDecoration(
-              labelText: isZh ? '节点名称' : 'Node Name',
-              labelStyle: TextStyle(fontSize: 11, color: cs.outline),
-              hintText: isZh ? '可选，显示在节点右下角' : 'Optional, shown bottom-right',
-              hintStyle: TextStyle(fontSize: 10, color: cs.outline),
-              isDense: true,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              isZh ? '自定义' : 'Custom',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: cs.outline,
+              ),
             ),
-            style: TextStyle(fontSize: 12, color: cs.onSurface),
-            onChanged: (v) { setState(() => node.params['node_name'] = v); onChanged(); },
-          ),
-          const SizedBox(height: 8),
-          Row(children: [
-            Text(isZh ? '颜色: ' : 'Color: ', style: TextStyle(fontSize: 11, color: cs.outline)),
-            const SizedBox(width: 4),
-            for (final c in [null, 0xFFEF4444, 0xFF3B82F6, 0xFF10B981, 0xFFF59E0B, 0xFF8B5CF6])
-              Padding(
-                padding: const EdgeInsets.only(right: 4),
-                child: GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      if (c == null) {
-                        node.params.remove('node_color');
-                      } else {
-                        node.params['node_color'] = c;
-                      }
-                    });
-                    onChanged();
-                  },
-                  child: Container(
-                    width: 18, height: 18,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: c != null ? Color(c) : cs.surfaceContainerHighest,
-                      border: Border.all(
-                        color: nodeColorVal == c || (c == null && nodeColorVal == null) ? cs.onSurface : Colors.transparent,
-                        width: 2,
-                      ),
-                    ),
-                    child: c == null ? Icon(Icons.block, size: 10, color: cs.outline) : null,
-                  ),
+            const SizedBox(height: 6),
+            TextFormField(
+              key: ValueKey('${node.id}_node_name'),
+              initialValue: nodeName,
+              decoration: InputDecoration(
+                labelText: isZh ? '节点名称' : 'Node Name',
+                labelStyle: TextStyle(fontSize: 11, color: cs.outline),
+                hintText: isZh ? '可选，显示在节点右下角' : 'Optional, shown bottom-right',
+                hintStyle: TextStyle(fontSize: 10, color: cs.outline),
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
                 ),
               ),
-          ]),
-        ]),
+              style: TextStyle(fontSize: 12, color: cs.onSurface),
+              onChanged: (v) {
+                setState(() => node.params['node_name'] = v);
+                onChanged();
+              },
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Text(
+                  isZh ? '颜色: ' : 'Color: ',
+                  style: TextStyle(fontSize: 11, color: cs.outline),
+                ),
+                const SizedBox(width: 4),
+                for (final c in [
+                  null,
+                  0xFFEF4444,
+                  0xFF3B82F6,
+                  0xFF10B981,
+                  0xFFF59E0B,
+                  0xFF8B5CF6,
+                ])
+                  Padding(
+                    padding: const EdgeInsets.only(right: 4),
+                    child: GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          if (c == null) {
+                            node.params.remove('node_color');
+                          } else {
+                            node.params['node_color'] = c;
+                          }
+                        });
+                        onChanged();
+                      },
+                      child: Container(
+                        width: 18,
+                        height: 18,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: c != null
+                              ? Color(c)
+                              : cs.surfaceContainerHighest,
+                          border: Border.all(
+                            color:
+                                nodeColorVal == c ||
+                                    (c == null && nodeColorVal == null)
+                                ? cs.onSurface
+                                : Colors.transparent,
+                            width: 2,
+                          ),
+                        ),
+                        child: c == null
+                            ? Icon(Icons.block, size: 10, color: cs.outline)
+                            : null,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2895,7 +3888,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final s = AppStrings.of(context.select<AppState, String>((st) => st.config.language));
+    final s = AppStrings.of(
+      context.select<AppState, String>((st) => st.config.language),
+    );
 
     return PopScope(
       canPop: false,
@@ -2904,41 +3899,54 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         final nav = Navigator.of(context);
         if (await _onWillPop()) nav.pop();
       },
-      child: _withWallpaper(context, Scaffold(
-        backgroundColor: Colors.transparent,
-        appBar: Platform.isWindows ? AppBar(
-          leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () async {
-            final nav = Navigator.of(context);
-            if (await _onWillPop()) nav.pop();
-          }),
-          title: Text(
-            s.isZh ? '编辑: ${widget.video.filename}' : 'Edit: ${widget.video.filename}',
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-          ),
-          actions: [
-            if (context.read<AppState>().config.aiEnabled) ...[
-              _buildTopAiBar(scheme, s),
-              const SizedBox(width: 4),
-            ],
-            IconButton(
-              icon: const Icon(Icons.file_upload_outlined, size: 20),
-              tooltip: s.isZh ? '导出配置' : 'Export Config',
-              onPressed: _nodes.isEmpty ? null : () => _exportConfig(s),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(right: 12),
-              // 保存按钮：仅软盘图标，不显示文字
-              child: IconButton.filled(
-                onPressed: _save,
-                icon: const Icon(Icons.save_outlined, size: 18),
-                tooltip: s.save,
-                style: _saveButtonStyle(scheme),
-              ),
-            ),
-          ],
-        ) : null,
-        body: _buildBody(scheme, s),
-      )),
+      child: _withWallpaper(
+        context,
+        Scaffold(
+          backgroundColor: Colors.transparent,
+          appBar: Platform.isWindows
+              ? AppBar(
+                  leading: IconButton(
+                    icon: const Icon(Icons.arrow_back),
+                    onPressed: () async {
+                      final nav = Navigator.of(context);
+                      if (await _onWillPop()) nav.pop();
+                    },
+                  ),
+                  title: Text(
+                    s.isZh
+                        ? '编辑: ${widget.video.filename}'
+                        : 'Edit: ${widget.video.filename}',
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  actions: [
+                    if (context.read<AppState>().config.aiEnabled) ...[
+                      _buildTopAiBar(scheme, s),
+                      const SizedBox(width: 4),
+                    ],
+                    IconButton(
+                      icon: const Icon(Icons.file_upload_outlined, size: 20),
+                      tooltip: s.isZh ? '导出配置' : 'Export Config',
+                      onPressed: _nodes.isEmpty ? null : () => _exportConfig(s),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      // 保存按钮：仅软盘图标，不显示文字
+                      child: IconButton.filled(
+                        onPressed: _save,
+                        icon: const Icon(Icons.save_outlined, size: 18),
+                        tooltip: s.save,
+                        style: _saveButtonStyle(scheme),
+                      ),
+                    ),
+                  ],
+                )
+              : null,
+          body: _buildBody(scheme, s),
+        ),
+      ),
     );
   }
 
@@ -2994,7 +4002,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   Widget _buildTopAiBar(ColorScheme scheme, AppStrings s) {
     final cfg = context.read<AppState>().config;
     final profiles = cfg.aiProfiles.where((p) => p.enabled).toList();
-    final activeProfile = profiles.where((p) => p.id == cfg.activeAiProfileId).firstOrNull;
+    final activeProfile = profiles
+        .where((p) => p.id == cfg.activeAiProfileId)
+        .firstOrNull;
     // 模型候选与当前模型都来自供应商配置（见 _modelOptionsFor）
     final modelOptions = _modelOptionsFor(cfg, activeProfile);
     final showModel = _currentModelLabel(cfg, activeProfile);
@@ -3004,189 +4014,298 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     // —— 并排看左侧那颗明显「胖一圈」、图标明显「大一号」，这就是失衡的来源。
     const pill = AppControlSize.regular;
     BoxDecoration pillDeco(Color background) => BoxDecoration(
-          color: background,
-          borderRadius: BorderRadius.circular(pill.radius),
-          border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
-        );
+      color: background,
+      borderRadius: BorderRadius.circular(pill.radius),
+      border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
+    );
     // 三颗药丸的前置图标统一走同一个定宽槽：并排时图标纵向对齐、间距一致
     //（用户反馈「顶栏这排图标大小/间距不齐」）。
     Widget pillIcon(IconData icon, {Color? color}) => SizedBox(
-          width: pill.iconSize + 2,
-          height: pill.iconSize + 2,
-          child: Icon(icon, size: pill.iconSize,
-              color: color ?? scheme.onSurfaceVariant),
-        );
-    return Row(mainAxisSize: MainAxisSize.min, children: [
-      // AI 抽屉开关 + 会话标题（可点击，带展开/折叠动画）
-      Tooltip(
-        message: _aiDetached
-            ? (s.isZh ? '吸附回主界面' : 'Dock back')
-            : (s.isZh ? (_aiDrawerOpen ? '收起 AI 面板' : '展开 AI 面板') : (_aiDrawerOpen ? 'Collapse AI panel' : 'Expand AI panel')),
-        child: InkWell(
-          // 已拖出为浮动小窗时，这颗药丸负责把面板吸附回左侧抽屉
-          //（否则在浮动状态下点它没有任何可见反馈，用户找不回面板）
-          onTap: () => setState(() {
-            if (_aiDetached) {
-              _aiDetached = false;
-              _aiMinimized = false;
-              _aiFloatPos = null;
-              _aiDrawerOpen = true;
-            } else {
-              _aiDrawerOpen = !_aiDrawerOpen;
-            }
-          }),
-          borderRadius: BorderRadius.circular(pill.radius),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeOutCubic,
-            height: pill.height,
-            padding: EdgeInsets.symmetric(horizontal: pill.padH),
-            decoration: pillDeco(
-                _aiDrawerOpen ? scheme.primaryContainer.withAlpha(140) : scheme.surfaceContainerHighest.withAlpha(90)),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 200),
-                child: SizedBox(
-                  key: ValueKey(_aiDrawerOpen ? 'open' : 'closed'),
-                  width: pill.iconSize + 2,
-                  height: pill.iconSize + 2,
-                  child: Icon(
-                    _aiDrawerOpen ? Icons.chevron_right : Icons.smart_toy,
-                    size: pill.iconSize,
-                    color: _aiDrawerOpen ? scheme.primary : scheme.onSurfaceVariant,
+      width: pill.iconSize + 2,
+      height: pill.iconSize + 2,
+      child: Icon(
+        icon,
+        size: pill.iconSize,
+        color: color ?? scheme.onSurfaceVariant,
+      ),
+    );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // AI 抽屉开关 + 会话标题（可点击，带展开/折叠动画）
+        Tooltip(
+          message: _aiDetached
+              ? (s.isZh ? '吸附回主界面' : 'Dock back')
+              : (s.isZh
+                    ? (_aiDrawerOpen ? '收起 AI 面板' : '展开 AI 面板')
+                    : (_aiDrawerOpen
+                          ? 'Collapse AI panel'
+                          : 'Expand AI panel')),
+          child: InkWell(
+            // 已拖出为浮动小窗时，这颗药丸负责把面板吸附回左侧抽屉
+            //（否则在浮动状态下点它没有任何可见反馈，用户找不回面板）
+            onTap: () => setState(() {
+              if (_aiDetached) {
+                _aiDetached = false;
+                _aiMinimized = false;
+                _aiFloatPos = null;
+                _aiDrawerOpen = true;
+              } else {
+                _aiDrawerOpen = !_aiDrawerOpen;
+              }
+            }),
+            borderRadius: BorderRadius.circular(pill.radius),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOutCubic,
+              height: pill.height,
+              padding: EdgeInsets.symmetric(horizontal: pill.padH),
+              decoration: pillDeco(
+                _aiDrawerOpen
+                    ? scheme.primaryContainer.withAlpha(140)
+                    : scheme.surfaceContainerHighest.withAlpha(90),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 200),
+                    child: SizedBox(
+                      key: ValueKey(_aiDrawerOpen ? 'open' : 'closed'),
+                      width: pill.iconSize + 2,
+                      height: pill.iconSize + 2,
+                      child: Icon(
+                        _aiDrawerOpen ? Icons.chevron_right : Icons.smart_toy,
+                        size: pill.iconSize,
+                        color: _aiDrawerOpen
+                            ? scheme.primary
+                            : scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                  // 会话标题（有则显示，AnimatedSize 展开/折叠）
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOutCubic,
+                    alignment: Alignment.centerLeft,
+                    child: _aiSessionTitle.isEmpty
+                        ? const SizedBox(width: 0)
+                        : Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 160),
+                              child: Text(
+                                _aiSessionTitle,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: scheme.primary,
+                                ),
+                              ),
+                            ),
+                          ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        // 配置一键选择（写入全局 activeAiProfileId，AI 面板跟随）
+        Container(
+          height: pill.height,
+          padding: EdgeInsets.symmetric(horizontal: pill.padH),
+          decoration: pillDeco(scheme.surfaceContainerHighest.withAlpha(90)),
+          child: PopupMenuButton<String>(
+            tooltip: s.isZh ? 'AI 配置 / 模型' : 'AI Profile / Model',
+            padding: EdgeInsets.zero,
+            // constraints 作用于弹出的菜单而非按钮本身：给按钮最小宽度，
+            // 同时必须带 maxWidth，否则会覆盖默认 280 上限导致菜单过宽
+            constraints: const BoxConstraints(minWidth: 140, maxWidth: 280),
+            onSelected: (v) {
+              if (v == '__custom_model__') {
+                _promptTopCustomModel(scheme, s);
+              } else if (v.startsWith('model:')) {
+                _applyModelChoice(v.substring(6));
+              } else {
+                final id = v.startsWith('profile:') ? v.substring(8) : '';
+                context.read<AppState>().updateConfig(
+                  (c) => c..activeAiProfileId = id,
+                );
+              }
+            },
+            itemBuilder: (_) => [
+              PopupMenuItem<String>(
+                enabled: false,
+                child: Text(
+                  s.isZh ? '配置' : 'Profiles',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: scheme.outline,
                   ),
                 ),
               ),
-              // 会话标题（有则显示，AnimatedSize 展开/折叠）
-              AnimatedSize(
-                duration: const Duration(milliseconds: 220),
-                curve: Curves.easeOutCubic,
-                alignment: Alignment.centerLeft,
-                child: _aiSessionTitle.isEmpty
-                    ? const SizedBox(width: 0)
-                    : Padding(
-                        padding: const EdgeInsets.only(left: 6),
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 160),
-                          child: Text(
-                            _aiSessionTitle,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.primary),
-                          ),
+              for (final p in profiles)
+                PopupMenuItem(
+                  value: 'profile:${p.id}',
+                  child: Row(
+                    children: [
+                      Icon(
+                        cfg.activeAiProfileId == p.id
+                            ? Icons.radio_button_checked
+                            : Icons.radio_button_off,
+                        size: 13,
+                        color: cfg.activeAiProfileId == p.id
+                            ? scheme.primary
+                            : scheme.outline,
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          p.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 12),
                         ),
                       ),
+                    ],
+                  ),
+                ),
+              if (profiles.isNotEmpty) const PopupMenuDivider(),
+              PopupMenuItem(
+                value: 'profile:',
+                child: Text(
+                  s.isZh ? '默认配置' : 'Default',
+                  style: const TextStyle(fontSize: 12),
+                ),
               ),
-            ]),
-          ),
-        ),
-      ),
-      const SizedBox(width: 6),
-      // 配置一键选择（写入全局 activeAiProfileId，AI 面板跟随）
-      Container(
-        height: pill.height,
-        padding: EdgeInsets.symmetric(horizontal: pill.padH),
-        decoration: pillDeco(scheme.surfaceContainerHighest.withAlpha(90)),
-        child: PopupMenuButton<String>(
-          tooltip: s.isZh ? 'AI 配置 / 模型' : 'AI Profile / Model',
-          padding: EdgeInsets.zero,
-          // constraints 作用于弹出的菜单而非按钮本身：给按钮最小宽度，
-          // 同时必须带 maxWidth，否则会覆盖默认 280 上限导致菜单过宽
-          constraints: const BoxConstraints(minWidth: 140, maxWidth: 280),
-          onSelected: (v) {
-            if (v == '__custom_model__') {
-              _promptTopCustomModel(scheme, s);
-            } else if (v.startsWith('model:')) {
-              _applyModelChoice(v.substring(6));
-            } else {
-              final id = v.startsWith('profile:') ? v.substring(8) : '';
-              context.read<AppState>().updateConfig((c) => c..activeAiProfileId = id);
-            }
-          },
-          itemBuilder: (_) => [
-            PopupMenuItem<String>(enabled: false,
-                child: Text(s.isZh ? '配置' : 'Profiles',
-                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: scheme.outline))),
-            for (final p in profiles)
-              PopupMenuItem(value: 'profile:${p.id}',
-                  child: Row(children: [
-                    Icon(cfg.activeAiProfileId == p.id ? Icons.radio_button_checked : Icons.radio_button_off,
-                        size: 13, color: cfg.activeAiProfileId == p.id ? scheme.primary : scheme.outline),
-                    const SizedBox(width: 6),
-                    Flexible(child: Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 12))),
-                  ])),
-            if (profiles.isNotEmpty) const PopupMenuDivider(),
-            PopupMenuItem(value: 'profile:',
-                child: Text(s.isZh ? '默认配置' : 'Default', style: const TextStyle(fontSize: 12))),
-            const PopupMenuDivider(),
-            PopupMenuItem<String>(enabled: false,
-                child: Text(s.isZh ? '模型' : 'Model',
-                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: scheme.outline))),
-            // 供应商配置里的模型清单（动态）。当前配置没配模型时会汇总其它已启用
-            // 配置的模型；一个都没有就明确提示去设置里添加。
-            for (final m in modelOptions)
-              PopupMenuItem<String>(value: 'model:$m',
-                  child: Row(children: [
-                    Icon(
+              const PopupMenuDivider(),
+              PopupMenuItem<String>(
+                enabled: false,
+                child: Text(
+                  s.isZh ? '模型' : 'Model',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: scheme.outline,
+                  ),
+                ),
+              ),
+              // 供应商配置里的模型清单（动态）。当前配置没配模型时会汇总其它已启用
+              // 配置的模型；一个都没有就明确提示去设置里添加。
+              for (final m in modelOptions)
+                PopupMenuItem<String>(
+                  value: 'model:$m',
+                  child: Row(
+                    children: [
+                      Icon(
                         m == showModel
                             ? Icons.radio_button_checked
                             : Icons.radio_button_off,
                         size: 13,
-                        color: m == showModel ? scheme.primary : scheme.outline),
-                    const SizedBox(width: 6),
-                    Flexible(child: Text(m, maxLines: 1, overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 12))),
-                  ])),
-            if (modelOptions.isEmpty)
-              PopupMenuItem<String>(enabled: false,
+                        color: m == showModel ? scheme.primary : scheme.outline,
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          m,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              if (modelOptions.isEmpty)
+                PopupMenuItem<String>(
+                  enabled: false,
                   child: Text(
-                      s.isZh
-                          ? '未配置模型（设置 → AI 中添加）'
-                          : 'No models configured (Settings → AI)',
-                      style: TextStyle(fontSize: 11, color: scheme.outline))),
-            PopupMenuItem(value: '__custom_model__',
-                child: Text(s.isZh ? '自定义模型...' : 'Custom model...', style: const TextStyle(fontSize: 12))),
-          ],
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            pillIcon(Icons.tune, color: scheme.primary),
-            const SizedBox(width: 4),
-            ConstrainedBox(
-              // 文本上限：配置名 + 模型名都很长时不再把顶栏撑开
-              constraints: const BoxConstraints(maxWidth: 220),
-              child: Text(
-                '${activeProfile?.name ?? (s.isZh ? '默认' : 'Default')} · '
-                '${showModel.isEmpty ? (s.isZh ? '未配置模型' : 'No model') : showModel}',
-                maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+                    s.isZh
+                        ? '未配置模型（设置 → AI 中添加）'
+                        : 'No models configured (Settings → AI)',
+                    style: TextStyle(fontSize: 11, color: scheme.outline),
+                  ),
+                ),
+              PopupMenuItem(
+                value: '__custom_model__',
+                child: Text(
+                  s.isZh ? '自定义模型...' : 'Custom model...',
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
+            ],
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                pillIcon(Icons.tune, color: scheme.primary),
+                const SizedBox(width: 4),
+                ConstrainedBox(
+                  // 文本上限：配置名 + 模型名都很长时不再把顶栏撑开
+                  constraints: const BoxConstraints(maxWidth: 220),
+                  child: Text(
+                    '${activeProfile?.name ?? (s.isZh ? '默认' : 'Default')} · '
+                    '${showModel.isEmpty ? (s.isZh ? '未配置模型' : 'No model') : showModel}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: scheme.onSurface,
+                    ),
+                  ),
+                ),
+                Icon(
+                  Icons.arrow_drop_down,
+                  size: pill.iconSize,
+                  color: scheme.outline,
+                ),
+              ],
             ),
-            Icon(Icons.arrow_drop_down, size: pill.iconSize, color: scheme.outline),
-          ]),
+          ),
         ),
-      ),
-      const SizedBox(width: 6),
-      // 自动 / 询问 模式切换（写入全局 aiApproveMode）
-      GestureDetector(
-        onTap: () => context.read<AppState>().updateConfig((c) {
-          c.aiApproveMode = (c.aiApproveMode == 'auto') ? 'ask' : 'auto';
-          return c;
-        }),
-        child: Container(
-          height: pill.height,
-          padding: EdgeInsets.symmetric(horizontal: pill.padH),
-          decoration: pillDeco(cfg.aiApproveMode == 'auto'
-              ? scheme.primaryContainer.withAlpha(140)
-              : scheme.secondaryContainer.withAlpha(140)),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            pillIcon(cfg.aiApproveMode == 'auto' ? Icons.bolt : Icons.help_outline,
-                color: scheme.primary),
-            const SizedBox(width: 4),
-            Text(cfg.aiApproveMode == 'auto' ? (s.isZh ? '自动' : 'Auto') : (s.isZh ? '询问' : 'Ask'),
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-          ]),
+        const SizedBox(width: 6),
+        // 自动 / 询问 模式切换（写入全局 aiApproveMode）
+        GestureDetector(
+          onTap: () => context.read<AppState>().updateConfig((c) {
+            c.aiApproveMode = (c.aiApproveMode == 'auto') ? 'ask' : 'auto';
+            return c;
+          }),
+          child: Container(
+            height: pill.height,
+            padding: EdgeInsets.symmetric(horizontal: pill.padH),
+            decoration: pillDeco(
+              cfg.aiApproveMode == 'auto'
+                  ? scheme.primaryContainer.withAlpha(140)
+                  : scheme.secondaryContainer.withAlpha(140),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                pillIcon(
+                  cfg.aiApproveMode == 'auto' ? Icons.bolt : Icons.help_outline,
+                  color: scheme.primary,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  cfg.aiApproveMode == 'auto'
+                      ? (s.isZh ? '自动' : 'Auto')
+                      : (s.isZh ? '询问' : 'Ask'),
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.onSurface,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
-      ),
-    ]);
+      ],
+    );
   }
 
   /// 顶层自定义模型弹窗（写「当前生效的配置」，没有配置时写全局字段）。
@@ -3198,29 +4317,45 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         ? -1
         : cfg.aiProfiles.indexWhere((p) => p.id == pid && p.enabled);
     final ctrl = TextEditingController(
-        text: profIdx >= 0 ? cfg.aiProfiles[profIdx].model : cfg.aiModel);
+      text: profIdx >= 0 ? cfg.aiProfiles[profIdx].model : cfg.aiModel,
+    );
     final result = await showDialog<String>(
       context: context,
       builder: (dCtx) => AlertDialog(
-        title: Text(s.isZh ? '自定义模型' : 'Custom Model', style: const TextStyle(fontSize: 14)),
+        title: Text(
+          s.isZh ? '自定义模型' : 'Custom Model',
+          style: const TextStyle(fontSize: 14),
+        ),
         content: TextField(
           controller: ctrl,
           autofocus: true,
           style: const TextStyle(fontSize: 13),
-          decoration: InputDecoration(isDense: true, border: const OutlineInputBorder(),
-              hintText: s.isZh ? '输入模型名，如 deepseek-reasoner' : 'e.g. deepseek-reasoner'),
+          decoration: InputDecoration(
+            isDense: true,
+            border: const OutlineInputBorder(),
+            hintText: s.isZh
+                ? '输入模型名，如 deepseek-reasoner'
+                : 'e.g. deepseek-reasoner',
+          ),
           onSubmitted: (v) => Navigator.pop(dCtx, v.trim()),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(dCtx), child: Text(s.isZh ? '取消' : 'Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(dCtx, ctrl.text.trim()), child: Text(s.isZh ? '确定' : 'OK')),
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx),
+            child: Text(s.isZh ? '取消' : 'Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dCtx, ctrl.text.trim()),
+            child: Text(s.isZh ? '确定' : 'OK'),
+          ),
         ],
       ),
     );
     if (result != null && result.isNotEmpty && mounted) {
       if (profIdx >= 0) {
         await appState.updateConfig(
-            (c) => c..aiProfiles[profIdx].model = result);
+          (c) => c..aiProfiles[profIdx].model = result,
+        );
       } else {
         await appState.updateConfig((c) => c..aiModel = result);
       }
@@ -3235,151 +4370,232 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final topPad = Platform.isWindows
         ? 0.0
         : (isMobilePlatform
-            ? (_isLandscape ? 0.0 : MediaQuery.of(context).padding.top)
-            : 36.0);
+              ? (_isLandscape ? 0.0 : MediaQuery.of(context).padding.top)
+              : 36.0);
     final content = Padding(
       padding: EdgeInsets.only(top: topPad),
-      child: Column(children: [
-        // 移动端：顶部栏已移除（舍弃最顶层菜单栏），系统返回手势/实体 back 键
-        // 由 PopScope 拦截处理；横竖屏切换与返回按钮已移至画布浮动控件。
-        Expanded(child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
-          child: LayoutBuilder(builder: (ctx, cons) {
-            // 移动端（横竖屏通用）：画布 + 贴右边界的窄竖直 sidebar，
-            // 元素工具箱与属性面板收纳为右侧边栏，宽度约屏幕 1/2。
-            if (isMobilePlatform) {
-              // 移动端全画布布局：顶部/底部浮动菜单栏，工具箱/属性为弹出层
-              return Stack(children: [
-                _buildCanvas(scheme, s),
-                // 顶部浮动菜单栏（默认收起 → 上滑出屏 + 透明；右下角"≡"按钮展开）
-                Positioned(
-                  top: 0, left: 0, right: 0,
-                  child: AnimatedSlide(
-                    duration: const Duration(milliseconds: 240),
-                    curve: Curves.easeOutCubic,
-                    offset: _mobileTopBarVisible ? Offset.zero : const Offset(0, -1.4),
-                    child: AnimatedOpacity(
-                      duration: const Duration(milliseconds: 180),
-                      opacity: _mobileTopBarVisible ? 1.0 : 0.0,
-                      child: IgnorePointer(
-                        ignoring: !_mobileTopBarVisible,
-                        child: Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: Center(child: _buildMobileTopBar(scheme, s)),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                // 底部浮动菜单栏 - 左侧缩放（右下角工具条已移除，工具迁移到顶部栏）
-                Positioned(
-                  bottom: 8, left: 8,
-                  child: _buildMobileBottomLeftBar(scheme, s),
-                ),
-                // 底部中央文件信息条
-                Positioned(
-                  bottom: 8, left: 0, right: 0,
-                  child: Center(child: _buildMobileFileInfo(scheme, s)),
-                ),
-                // 逻辑块框选提示条（用具箱点按「循环」后出现，引导用户手指框选）
-                if (_isLogicBoxSelecting)
-                  Positioned(
-                    top: 52, left: 8, right: 8,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: context.sem.danger.withAlpha(40),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: context.sem.danger.withAlpha(90)),
-                      ),
-                      child: Row(children: [
-                        Icon(Icons.info_outline, size: 15, color: context.sem.danger),
-                        const SizedBox(width: 8),
-                        Expanded(child: Text(
-                          s.isZh ? '请在画布上拖拽框选要包含的元素，松手完成' : 'Drag a box on the canvas to select elements, then release',
-                          style: TextStyle(fontSize: 12, color: context.sem.danger, fontWeight: FontWeight.w500),
-                        )),
-                        TextButton(
-                          onPressed: () => setState(() { _isLogicBoxSelecting = false; _pendingLogicType = null; }),
-                          child: Text(s.isZh ? '取消' : 'Cancel', style: const TextStyle(fontSize: 12)),
-                        ),
-                      ]),
-                    ),
-                  ),
-                // 工具箱弹出层（点击顶部"+"按钮展开）
-                if (_mobileToolboxOpen)
-                  Positioned.fill(
-                    child: _buildMobileToolboxSheet(scheme, s),
-                  ),
-                // 属性编辑卡片：停靠右侧的窄卡片，避免整屏宽底部长条的"横屏样式"。
-                // 宽度再收窄一档（330→300 / 0.78→0.72），菜单栏不至于过宽。
-                if (_mobilePropsShown)
-                  Positioned(
-                    top: _isLandscape ? 44 : 56,
-                    bottom: 12,
-                    right: 8,
-                    width: math.min(_isLandscape ? 300.0 : 296.0,
-                        MediaQuery.of(context).size.width * (_isLandscape ? 0.40 : 0.72)),
-                    child: _buildMobilePropertiesSheet(scheme, s),
-                  ),
-              ]);
-            }
-            // 横屏/桌面模式：原有的水平并排布局
-            const dividerW = 6.0;
-            final totalW = cons.maxWidth - dividerW;
-            // 拖动分割线只重建两个 SizedBox 的宽度；画布与右面板作为 child
-            // 传入（Element 复用），不随拖动重建。
-            return ValueListenableBuilder<double>(
-              valueListenable: _canvasFractionNotifier,
-              builder: (context, fraction, _) {
-                // 面板隐藏、拖出为应用内浮窗、或已外置到系统窗口时：画布独占整幅
-                // 宽度，分割线与右侧面板一起让位（面板本体改在别处渲染）。
-                final panelInSidebar =
-                    !_panelHidden && !_panelDetached && !_panelExternal;
-                final canvasW = panelInSidebar ? totalW * fraction : totalW;
-                final rightW = totalW * (1 - fraction);
-                return Row(children: [
-                  SizedBox(width: canvasW, child: _buildCanvas(scheme, s)),
-                  if (panelInSidebar) ...[
-                  // 可拖动分割线
-                  MouseRegion(
-                    cursor: SystemMouseCursors.resizeColumn,
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onHorizontalDragUpdate: (d) {
-                        _canvasFraction = ((_canvasFraction * totalW + d.delta.dx) / totalW).clamp(0.15, 0.85);
-                        _canvasFractionNotifier.value = _canvasFraction;
-                      },
-                      child: Container(
-                        width: dividerW,
-                        color: Colors.transparent,
-                        child: Center(child: Container(
-                          width: 3, height: 36,
-                          decoration: BoxDecoration(
-                            color: scheme.outlineVariant.withAlpha(90),
-                            borderRadius: BorderRadius.circular(2),
+      child: Column(
+        children: [
+          // 移动端：顶部栏已移除（舍弃最顶层菜单栏），系统返回手势/实体 back 键
+          // 由 PopScope 拦截处理；横竖屏切换与返回按钮已移至画布浮动控件。
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+              child: LayoutBuilder(
+                builder: (ctx, cons) {
+                  // 移动端（横竖屏通用）：画布 + 贴右边界的窄竖直 sidebar，
+                  // 元素工具箱与属性面板收纳为右侧边栏，宽度约屏幕 1/2。
+                  if (isMobilePlatform) {
+                    // 移动端全画布布局：顶部/底部浮动菜单栏，工具箱/属性为弹出层
+                    return Stack(
+                      children: [
+                        _buildCanvas(scheme, s),
+                        // 顶部浮动菜单栏（默认收起 → 上滑出屏 + 透明；右下角"≡"按钮展开）
+                        Positioned(
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          child: AnimatedSlide(
+                            duration: const Duration(milliseconds: 240),
+                            curve: Curves.easeOutCubic,
+                            offset: _mobileTopBarVisible
+                                ? Offset.zero
+                                : const Offset(0, -1.4),
+                            child: AnimatedOpacity(
+                              duration: const Duration(milliseconds: 180),
+                              opacity: _mobileTopBarVisible ? 1.0 : 0.0,
+                              child: IgnorePointer(
+                                ignoring: !_mobileTopBarVisible,
+                                child: Padding(
+                                  padding: const EdgeInsets.only(top: 8),
+                                  child: Center(
+                                    child: ConstrainedBox(
+                                      constraints: BoxConstraints(
+                                        maxWidth:
+                                            MediaQuery.sizeOf(context).width -
+                                            16,
+                                      ),
+                                      child: _buildMobileTopBar(scheme, s),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
                           ),
-                        )),
-                      ),
-                    ),
-                  ),
-                  SizedBox(width: rightW, child: _buildRightPanel(scheme, s)),
-                  ],
-                ]);
-              },
-            );
-          }),
-        )),
-        if (!isMobilePlatform) _buildBottomBar(scheme, s),
-      ]),
+                        ),
+                        // 底部浮动菜单栏 - 左侧缩放（右下角工具条已移除，工具迁移到顶部栏）
+                        Positioned(
+                          bottom: 8,
+                          left: 8,
+                          child: _buildMobileBottomLeftBar(scheme, s),
+                        ),
+                        // 底部中央文件信息条
+                        Positioned(
+                          bottom: 8,
+                          left: 0,
+                          right: 0,
+                          child: Center(child: _buildMobileFileInfo(scheme, s)),
+                        ),
+                        // 逻辑块框选提示条（用具箱点按「循环」后出现，引导用户手指框选）
+                        if (_isLogicBoxSelecting)
+                          Positioned(
+                            top: 52,
+                            left: 8,
+                            right: 8,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: context.sem.danger.withAlpha(40),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: context.sem.danger.withAlpha(90),
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.info_outline,
+                                    size: 15,
+                                    color: context.sem.danger,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      s.isZh
+                                          ? '请在画布上拖拽框选要包含的元素，松手完成'
+                                          : 'Drag a box on the canvas to select elements, then release',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: context.sem.danger,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                  TextButton(
+                                    onPressed: () => setState(() {
+                                      _isLogicBoxSelecting = false;
+                                      _pendingLogicType = null;
+                                    }),
+                                    child: Text(
+                                      s.isZh ? '取消' : 'Cancel',
+                                      style: const TextStyle(fontSize: 12),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        // 工具箱弹出层（点击顶部"+"按钮展开）
+                        if (_mobileToolboxOpen)
+                          Positioned.fill(
+                            child: _buildMobileToolboxSheet(scheme, s),
+                          ),
+                        // 属性编辑卡片：停靠右侧的窄卡片，避免整屏宽底部长条的"横屏样式"。
+                        // 宽度再收窄一档（330→300 / 0.78→0.72），菜单栏不至于过宽。
+                        if (_mobilePropsShown)
+                          Positioned(
+                            top: _isLandscape ? 44 : 56,
+                            bottom: 12,
+                            right: 8,
+                            width: math.min(
+                              _isLandscape ? 300.0 : 296.0,
+                              MediaQuery.of(context).size.width *
+                                  (_isLandscape ? 0.40 : 0.72),
+                            ),
+                            child: _buildMobilePropertiesSheet(scheme, s),
+                          ),
+                      ],
+                    );
+                  }
+                  // 横屏/桌面模式：原有的水平并排布局
+                  const dividerW = 6.0;
+                  final totalW = cons.maxWidth - dividerW;
+                  // 拖动分割线只重建两个 SizedBox 的宽度；画布与右面板作为 child
+                  // 传入（Element 复用），不随拖动重建。
+                  return ValueListenableBuilder<double>(
+                    valueListenable: _canvasFractionNotifier,
+                    builder: (context, fraction, _) {
+                      // 面板隐藏、拖出为应用内浮窗、或已外置到系统窗口时：画布独占整幅
+                      // 宽度，分割线与右侧面板一起让位（面板本体改在别处渲染）。
+                      final panelInSidebar =
+                          !_panelHidden && !_panelDetached && !_panelExternal;
+                      final canvasW = panelInSidebar
+                          ? totalW * fraction
+                          : totalW;
+                      final rightW = totalW * (1 - fraction);
+                      return Row(
+                        children: [
+                          SizedBox(
+                            width: canvasW,
+                            child: _buildCanvas(scheme, s),
+                          ),
+                          if (panelInSidebar) ...[
+                            // 可拖动分割线
+                            MouseRegion(
+                              cursor: SystemMouseCursors.resizeColumn,
+                              child: GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onHorizontalDragUpdate: (d) {
+                                  _canvasFraction =
+                                      ((_canvasFraction * totalW + d.delta.dx) /
+                                              totalW)
+                                          .clamp(0.15, 0.85);
+                                  _canvasFractionNotifier.value =
+                                      _canvasFraction;
+                                },
+                                child: Container(
+                                  width: dividerW,
+                                  color: Colors.transparent,
+                                  child: Center(
+                                    child: Container(
+                                      width: 3,
+                                      height: 36,
+                                      decoration: BoxDecoration(
+                                        color: scheme.outlineVariant.withAlpha(
+                                          90,
+                                        ),
+                                        borderRadius: BorderRadius.circular(2),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            SizedBox(
+                              width: rightW,
+                              child: _buildRightPanel(scheme, s),
+                            ),
+                          ],
+                        ],
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ),
+          if (!isMobilePlatform) _buildBottomBar(scheme, s),
+        ],
+      ),
     );
     // 仅 Linux 使用自绘标题栏（CSD）；Windows/macOS 用系统默认标题栏，
     // 避免「双标题栏 + 重复窗口按钮」
-    if (Platform.isWindows || Platform.isMacOS || isMobilePlatform) return content;
-    return Stack(children: [
-      content,
-      Positioned(left: 0, right: 0, top: 0, child: _buildEditorCsdTitleBar(scheme)),
-    ]);
+    if (Platform.isWindows || Platform.isMacOS || isMobilePlatform)
+      return content;
+    return Stack(
+      children: [
+        content,
+        Positioned(
+          left: 0,
+          right: 0,
+          top: 0,
+          child: _buildEditorCsdTitleBar(scheme),
+        ),
+      ],
+    );
   }
 
   /// Linux 专用自绘标题栏（CSD）；Windows/macOS/移动端用系统标题栏，见调用点。
@@ -3401,51 +4617,92 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
               colors: [
-                scheme.surface.withAlpha(tunedGlassAlpha(isDark ? 160 : 180, tuning)),
-                scheme.surface.withAlpha(tunedGlassAlpha(isDark ? 120 : 140, tuning)),
+                scheme.surface.withAlpha(
+                  tunedGlassAlpha(isDark ? 160 : 180, tuning),
+                ),
+                scheme.surface.withAlpha(
+                  tunedGlassAlpha(isDark ? 120 : 140, tuning),
+                ),
               ],
             ),
-            border: Border(bottom: BorderSide(
-              color: scheme.outlineVariant.withAlpha(isDark ? 60 : 80),
-              width: 0.5,
-            )),
-          ),
-          child: Stack(children: [
-            DragToMoveArea(child: GestureDetector(
-              onDoubleTap: () async {
-                if (await windowManager.isMaximized()) {
-                  windowManager.unmaximize();
-                } else {
-                  windowManager.maximize();
-                }
-              },
-              child: Container(color: Colors.transparent),
-            )),
-            Positioned(left: 8, top: 0, bottom: 0, child: Row(mainAxisSize: MainAxisSize.min, children: [
-              _EditorCsdBtn(icon: Icons.arrow_back, color: scheme.onSurfaceVariant, onTap: () async {
-                final nav = Navigator.of(context);
-                if (await _onWillPop()) nav.pop();
-              }),
-            ])),
-            Positioned(right: 0, top: 0, bottom: 0, child: Row(mainAxisSize: MainAxisSize.min, children: [
-              _EditorCsdBtn(icon: Icons.remove, color: scheme.onSurfaceVariant, onTap: () => windowManager.minimize()),
-              _EditorCsdBtn(
-                icon: _isMaximized ? Icons.filter_none : Icons.crop_square,
-                color: scheme.onSurfaceVariant,
-                onTap: () async {
-                  if (await windowManager.isMaximized()) {
-                    windowManager.unmaximize();
-                  } else {
-                    windowManager.maximize();
-                  }
-                },
+            border: Border(
+              bottom: BorderSide(
+                color: scheme.outlineVariant.withAlpha(isDark ? 60 : 80),
+                width: 0.5,
               ),
-              // hoverBg 用 Windows 关闭按钮的系统约定红（#E81123）而不是语义色：
-              // 它属于窗口装饰，不参与主题化 —— 若换成 semantic danger，深色主题下
-              // 会变成浅粉底，与用户对「红叉按钮」的预期不符。
-              _EditorCsdBtn(icon: Icons.close, color: scheme.onSurface, hoverBg: const Color(0xFFE81123), onTap: () => windowManager.close()),
-            ])),
-          ]),
+            ),
+          ),
+          child: Stack(
+            children: [
+              DragToMoveArea(
+                child: GestureDetector(
+                  onDoubleTap: () async {
+                    if (await windowManager.isMaximized()) {
+                      windowManager.unmaximize();
+                    } else {
+                      windowManager.maximize();
+                    }
+                  },
+                  child: Container(color: Colors.transparent),
+                ),
+              ),
+              Positioned(
+                left: 8,
+                top: 0,
+                bottom: 0,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _EditorCsdBtn(
+                      icon: Icons.arrow_back,
+                      color: scheme.onSurfaceVariant,
+                      onTap: () async {
+                        final nav = Navigator.of(context);
+                        if (await _onWillPop()) nav.pop();
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              Positioned(
+                right: 0,
+                top: 0,
+                bottom: 0,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _EditorCsdBtn(
+                      icon: Icons.remove,
+                      color: scheme.onSurfaceVariant,
+                      onTap: () => windowManager.minimize(),
+                    ),
+                    _EditorCsdBtn(
+                      icon: _isMaximized
+                          ? Icons.filter_none
+                          : Icons.crop_square,
+                      color: scheme.onSurfaceVariant,
+                      onTap: () async {
+                        if (await windowManager.isMaximized()) {
+                          windowManager.unmaximize();
+                        } else {
+                          windowManager.maximize();
+                        }
+                      },
+                    ),
+                    // hoverBg 用 Windows 关闭按钮的系统约定红（#E81123）而不是语义色：
+                    // 它属于窗口装饰，不参与主题化 —— 若换成 semantic danger，深色主题下
+                    // 会变成浅粉底，与用户对「红叉按钮」的预期不符。
+                    _EditorCsdBtn(
+                      icon: Icons.close,
+                      color: scheme.onSurface,
+                      hoverBg: const Color(0xFFE81123),
+                      onTap: () => windowManager.close(),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -3504,9 +4761,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final keys = HardwareKeyboard.instance.logicalKeysPressed;
     if (Platform.isMacOS) {
       // macOS 惯例用 Cmd（meta）而不是 Ctrl
-      return keys.contains(LogicalKeyboardKey.metaLeft) || keys.contains(LogicalKeyboardKey.metaRight);
+      return keys.contains(LogicalKeyboardKey.metaLeft) ||
+          keys.contains(LogicalKeyboardKey.metaRight);
     }
-    return keys.contains(LogicalKeyboardKey.controlLeft) || keys.contains(LogicalKeyboardKey.controlRight);
+    return keys.contains(LogicalKeyboardKey.controlLeft) ||
+        keys.contains(LogicalKeyboardKey.controlRight);
   }
 
   // ── 无限画布背景：屏幕空间底层 ──
@@ -3554,89 +4813,123 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// [viewSize] 是画布视口尺寸，由外层 LayoutBuilder 给出 —— 视口框是在 paint
   /// 时用**实时**变换矩阵算的，所以平移/缩放期间无需重建本 widget。
   Widget _buildMiniMap(ColorScheme scheme, AppStrings s, Size viewSize) {
-    final proj = _MiniMapProjection(_graphContentBounds(), const Size(_kMiniMapW, _kMiniMapH));
-    return Stack(children: [
-      GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTapDown: (d) => _centerOnCanvasPoint(proj.toCanvas(d.localPosition)),
-        onPanUpdate: (d) => _centerOnCanvasPoint(proj.toCanvas(d.localPosition)),
-        child: Tooltip(
-          message: s.isZh ? '点击或拖动定位视口' : 'Click or drag to move the viewport',
-          child: Container(
-            width: _kMiniMapW,
-            height: _kMiniMapH,
-            decoration: BoxDecoration(
-              color: scheme.surface.withAlpha(224),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: scheme.outlineVariant.withAlpha(90)),
-              boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(36), blurRadius: 10, offset: const Offset(0, 2))],
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: CustomPaint(
-              painter: _MiniMapPainter(
-                proj: proj,
-                viewRect: () => _visibleCanvasRect(viewSize),
-                nodeRects: [
-                  for (final n in _nodes)
-                    Rect.fromLTWH(n.x, n.y, _totalNodeWidth(n), _nodeHeight(n)),
-                ],
-                nodeColor: scheme.primary.withAlpha(170),
-                blockRects: [
-                  for (final b in _logicBlocks) Rect.fromLTWH(b.x, b.y, b.width, b.height),
-                ],
-                blockColor: context.sem.danger.withAlpha(150),
-                viewColor: scheme.primary,
-                repaint: _transformCtrl,
-              ),
-            ),
-          ),
-        ),
-      ),
-      // 右上角握把（仅 PC）：按住它拖动 = 移动**小地图本身**（画布内容多时把小
-      // 地图挪开，不必先关掉它）；在小地图其它位置按拖仍然是平移视口。
-      if (!isMobilePlatform)
-        Positioned(
-          right: 2,
-          top: 2,
+    final proj = _MiniMapProjection(
+      _graphContentBounds(),
+      const Size(_kMiniMapW, _kMiniMapH),
+    );
+    return Stack(
+      children: [
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapDown: (d) =>
+              _centerOnCanvasPoint(proj.toCanvas(d.localPosition)),
+          onPanUpdate: (d) =>
+              _centerOnCanvasPoint(proj.toCanvas(d.localPosition)),
           child: Tooltip(
-            message: s.isZh ? '按住拖动可移动小地图' : 'Hold and drag to move the minimap',
-            child: MouseRegion(
-              cursor: SystemMouseCursors.move,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onPanUpdate: (d) {
-                  final cur = _miniMapFloat ??
-                      Offset(
-                        math.max(0.0, viewSize.width - _kMiniMapW - 10),
-                        math.max(0.0, viewSize.height - _kMiniMapH - 10),
-                      );
-                  setState(() {
-                    _miniMapFloat = Offset(
-                      (cur.dx + d.delta.dx)
-                          .clamp(0.0, math.max(0.0, viewSize.width - _kMiniMapW)),
-                      (cur.dy + d.delta.dy)
-                          .clamp(0.0, math.max(0.0, viewSize.height - _kMiniMapH)),
-                    );
-                  });
-                },
-                child: Container(
-                  width: 22,
-                  height: 18,
-                  decoration: BoxDecoration(
-                    color: scheme.surface.withAlpha(240),
-                    borderRadius: const BorderRadius.only(
-                      topRight: Radius.circular(9),
-                      bottomLeft: Radius.circular(8),
-                    ),
-                    border: Border.all(color: scheme.outlineVariant.withAlpha(120)),
+            message: s.isZh
+                ? '点击或拖动定位视口'
+                : 'Click or drag to move the viewport',
+            child: Container(
+              width: _kMiniMapW,
+              height: _kMiniMapH,
+              decoration: BoxDecoration(
+                color: scheme.surface.withAlpha(224),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: scheme.outlineVariant.withAlpha(90)),
+                boxShadow: [
+                  BoxShadow(
+                    color: scheme.shadow.withAlpha(36),
+                    blurRadius: 10,
+                    offset: const Offset(0, 2),
                   ),
-                  child: Icon(Icons.drag_indicator, size: 13, color: scheme.primary),
+                ],
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: CustomPaint(
+                painter: _MiniMapPainter(
+                  proj: proj,
+                  viewRect: () => _visibleCanvasRect(viewSize),
+                  nodeRects: [
+                    for (final n in _nodes)
+                      Rect.fromLTWH(
+                        n.x,
+                        n.y,
+                        _totalNodeWidth(n),
+                        _nodeHeight(n),
+                      ),
+                  ],
+                  nodeColor: scheme.primary.withAlpha(170),
+                  blockRects: [
+                    for (final b in _logicBlocks)
+                      Rect.fromLTWH(b.x, b.y, b.width, b.height),
+                  ],
+                  blockColor: context.sem.danger.withAlpha(150),
+                  viewColor: scheme.primary,
+                  repaint: _transformCtrl,
                 ),
               ),
             ),
           ),
         ),
-    ]);
+        // 右上角握把（仅 PC）：按住它拖动 = 移动**小地图本身**（画布内容多时把小
+        // 地图挪开，不必先关掉它）；在小地图其它位置按拖仍然是平移视口。
+        if (!isMobilePlatform)
+          Positioned(
+            right: 2,
+            top: 2,
+            child: Tooltip(
+              message: s.isZh
+                  ? '按住拖动可移动小地图'
+                  : 'Hold and drag to move the minimap',
+              child: MouseRegion(
+                cursor: SystemMouseCursors.move,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onPanUpdate: (d) {
+                    final cur =
+                        _miniMapFloat ??
+                        Offset(
+                          math.max(0.0, viewSize.width - _kMiniMapW - 10),
+                          math.max(0.0, viewSize.height - _kMiniMapH - 10),
+                        );
+                    setState(() {
+                      _miniMapFloat = Offset(
+                        (cur.dx + d.delta.dx).clamp(
+                          0.0,
+                          math.max(0.0, viewSize.width - _kMiniMapW),
+                        ),
+                        (cur.dy + d.delta.dy).clamp(
+                          0.0,
+                          math.max(0.0, viewSize.height - _kMiniMapH),
+                        ),
+                      );
+                    });
+                  },
+                  child: Container(
+                    width: 22,
+                    height: 18,
+                    decoration: BoxDecoration(
+                      color: scheme.surface.withAlpha(240),
+                      borderRadius: const BorderRadius.only(
+                        topRight: Radius.circular(9),
+                        bottomLeft: Radius.circular(8),
+                      ),
+                      border: Border.all(
+                        color: scheme.outlineVariant.withAlpha(120),
+                      ),
+                    ),
+                    child: Icon(
+                      Icons.drag_indicator,
+                      size: 13,
+                      color: scheme.primary,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
   }
 
   /// 缩放读数 + 一键适应画布。
@@ -3650,34 +4943,48 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         color: scheme.surface.withAlpha(224),
         borderRadius: BorderRadius.circular(13),
         border: Border.all(color: scheme.outlineVariant.withAlpha(90)),
-        boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(30), blurRadius: 6, offset: const Offset(0, 2))],
+        boxShadow: [
+          BoxShadow(
+            color: scheme.shadow.withAlpha(30),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Tooltip(
-          message: s.isZh ? '点击恢复 100%' : 'Click to reset to 100%',
-          child: InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: () => _zoomTo(1.0),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-              child: ValueListenableBuilder<double>(
-                valueListenable: _scaleNotifier,
-                builder: (context, scale, _) => Text(
-                  '${(scale * 100).round()}%',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                    color: scheme.onSurfaceVariant,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Tooltip(
+            message: s.isZh ? '点击恢复 100%' : 'Click to reset to 100%',
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () => _zoomTo(1.0),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                child: ValueListenableBuilder<double>(
+                  valueListenable: _scaleNotifier,
+                  builder: (context, scale, _) => Text(
+                    '${(scale * 100).round()}%',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
               ),
             ),
           ),
-        ),
-        _mobileBarBtn(Icons.fit_screen_outlined, _zoomToFit, scheme,
-            size: 14, pad: 4, tooltip: s.isZh ? '适应画布' : 'Fit to canvas'),
-        const SizedBox(width: 2),
-      ]),
+          _mobileBarBtn(
+            Icons.fit_screen_outlined,
+            _zoomToFit,
+            scheme,
+            size: 14,
+            tooltip: s.isZh ? '适应画布' : 'Fit to canvas',
+          ),
+          const SizedBox(width: 2),
+        ],
+      ),
     );
   }
 
@@ -3691,51 +4998,116 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         color: scheme.surface.withAlpha(232),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: scheme.outlineVariant.withAlpha(90)),
-        boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(36), blurRadius: 10, offset: const Offset(0, 2))],
+        boxShadow: [
+          BoxShadow(
+            color: scheme.shadow.withAlpha(36),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 7),
-          child: Text('$n',
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: scheme.primary)),
-        ),
-        _selBarBtn(scheme, Icons.align_horizontal_left, s.isZh ? '左对齐' : 'Align left',
-            () => _alignSelectedNodes('left')),
-        _selBarBtn(scheme, Icons.align_horizontal_center, s.isZh ? '水平居中' : 'Center horizontally',
-            () => _alignSelectedNodes('hcenter')),
-        _selBarBtn(scheme, Icons.align_horizontal_right, s.isZh ? '右对齐' : 'Align right',
-            () => _alignSelectedNodes('right')),
-        _selBarDivider(scheme),
-        _selBarBtn(scheme, Icons.align_vertical_top, s.isZh ? '顶对齐' : 'Align top',
-            () => _alignSelectedNodes('top')),
-        _selBarBtn(scheme, Icons.align_vertical_center, s.isZh ? '垂直居中' : 'Center vertically',
-            () => _alignSelectedNodes('vcenter')),
-        _selBarBtn(scheme, Icons.align_vertical_bottom, s.isZh ? '底对齐' : 'Align bottom',
-            () => _alignSelectedNodes('bottom')),
-        _selBarDivider(scheme),
-        // 只有 2 个点时间距已被首尾锁定，分布没有可调空间
-        _selBarBtn(scheme, Icons.horizontal_distribute, s.isZh ? '水平等距' : 'Distribute horizontally',
-            () => _distributeSelectedNodes(horizontal: true), enabled: n >= 3),
-        _selBarBtn(scheme, Icons.vertical_distribute, s.isZh ? '垂直等距' : 'Distribute vertically',
-            () => _distributeSelectedNodes(horizontal: false), enabled: n >= 3),
-        _selBarDivider(scheme),
-        _selBarBtn(scheme, Icons.content_copy, s.isZh ? '复制' : 'Copy', _copySelectedNodes),
-        _selBarBtn(scheme, Icons.delete_sweep_outlined, s.isZh ? '删除选中' : 'Delete selected',
-            _deleteSelectedNodes, danger: true),
-        const SizedBox(width: 2),
-      ]),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 7),
+            child: Text(
+              '$n',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: scheme.primary,
+              ),
+            ),
+          ),
+          _selBarBtn(
+            scheme,
+            Icons.align_horizontal_left,
+            s.isZh ? '左对齐' : 'Align left',
+            () => _alignSelectedNodes('left'),
+          ),
+          _selBarBtn(
+            scheme,
+            Icons.align_horizontal_center,
+            s.isZh ? '水平居中' : 'Center horizontally',
+            () => _alignSelectedNodes('hcenter'),
+          ),
+          _selBarBtn(
+            scheme,
+            Icons.align_horizontal_right,
+            s.isZh ? '右对齐' : 'Align right',
+            () => _alignSelectedNodes('right'),
+          ),
+          _selBarDivider(scheme),
+          _selBarBtn(
+            scheme,
+            Icons.align_vertical_top,
+            s.isZh ? '顶对齐' : 'Align top',
+            () => _alignSelectedNodes('top'),
+          ),
+          _selBarBtn(
+            scheme,
+            Icons.align_vertical_center,
+            s.isZh ? '垂直居中' : 'Center vertically',
+            () => _alignSelectedNodes('vcenter'),
+          ),
+          _selBarBtn(
+            scheme,
+            Icons.align_vertical_bottom,
+            s.isZh ? '底对齐' : 'Align bottom',
+            () => _alignSelectedNodes('bottom'),
+          ),
+          _selBarDivider(scheme),
+          // 只有 2 个点时间距已被首尾锁定，分布没有可调空间
+          _selBarBtn(
+            scheme,
+            Icons.horizontal_distribute,
+            s.isZh ? '水平等距' : 'Distribute horizontally',
+            () => _distributeSelectedNodes(horizontal: true),
+            enabled: n >= 3,
+          ),
+          _selBarBtn(
+            scheme,
+            Icons.vertical_distribute,
+            s.isZh ? '垂直等距' : 'Distribute vertically',
+            () => _distributeSelectedNodes(horizontal: false),
+            enabled: n >= 3,
+          ),
+          _selBarDivider(scheme),
+          _selBarBtn(
+            scheme,
+            Icons.content_copy,
+            s.isZh ? '复制' : 'Copy',
+            _copySelectedNodes,
+          ),
+          _selBarBtn(
+            scheme,
+            Icons.delete_sweep_outlined,
+            s.isZh ? '删除选中' : 'Delete selected',
+            _deleteSelectedNodes,
+            danger: true,
+          ),
+          const SizedBox(width: 2),
+        ],
+      ),
     );
   }
 
   Widget _selBarDivider(ColorScheme scheme) => Container(
-        width: 1,
-        height: 16,
-        margin: const EdgeInsets.symmetric(horizontal: 3),
-        color: scheme.outlineVariant.withAlpha(90),
-      );
+    width: 1,
+    height: 16,
+    margin: const EdgeInsets.symmetric(horizontal: 3),
+    color: scheme.outlineVariant.withAlpha(90),
+  );
 
-  Widget _selBarBtn(ColorScheme scheme, IconData icon, String tip, VoidCallback onTap,
-      {bool enabled = true, bool danger = false}) {
+  Widget _selBarBtn(
+    ColorScheme scheme,
+    IconData icon,
+    String tip,
+    VoidCallback onTap, {
+    bool enabled = true,
+    bool danger = false,
+  }) {
     return Tooltip(
       message: tip,
       child: InkWell(
@@ -3743,13 +5115,15 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         onTap: enabled ? onTap : null,
         child: Padding(
           padding: const EdgeInsets.all(5),
-          child: Icon(icon,
-              size: 15,
-              color: !enabled
-                  ? scheme.outlineVariant
-                  : danger
-                      ? context.sem.danger
-                      : scheme.onSurfaceVariant),
+          child: Icon(
+            icon,
+            size: 15,
+            color: !enabled
+                ? scheme.outlineVariant
+                : danger
+                ? context.sem.danger
+                : scheme.onSurfaceVariant,
+          ),
         ),
       ),
     );
@@ -3764,384 +5138,445 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     // 被折叠的逻辑块藏起来的节点：渲染、连线、命中测试三处共用同一份集合
     final hiddenNodeIds = _collapsedHiddenNodeIds;
 
-    final canvas = Stack(children: [
-      // 无限网格背景（屏幕空间，永远铺满可视区，见 _buildGridUnderlay）
-      Positioned.fill(child: _buildGridUnderlay(scheme, canvasBg)),
-      Positioned.fill(
-        child: Listener(
-      onPointerDown: (e) {
-        if (e.kind == PointerDeviceKind.mouse && e.buttons == kSecondaryMouseButton) {
-          // Right-click: record start for drag-to-pan vs menu detection
-          _rightClickStart = e.position;
-          _rightClickGlobal = e.position;
-          _isRightDragging = false;
-        } else if ((e.kind == PointerDeviceKind.mouse && e.buttons == kPrimaryMouseButton) ||
-            (_isLogicBoxSelecting && e.kind == PointerDeviceKind.touch)) {
-          // Left-click on empty canvas: start box-select or deselect
-          // 移动端：逻辑块框选模式下触摸空白处也可框选（onPointerDown 原来只认
-          // 鼠标左键，导致手机上进入框选模式后根本无法画框）。
-          final canvasPos = _screenToCanvas(e.localPosition);
-          final hitNode = _findNodeAtCanvasPos(canvasPos);
-          if (hitNode == null) {
-            final hitConn = _hitTestConnection(canvasPos);
-            if (hitConn == null) {
-              // No node or connection hit: start box-select
-              setState(() {
-                _boxSelectStart = canvasPos;
-                _boxSelectRect = null;
-                // 覆盖层订阅的是 notifier 而非 State 字段：起点同步清空，
-                // 否则上次残留的矩形会先闪现一帧。
-                _boxSelectRectNotifier.value = null;
-                _isBoxSelecting = true;
-                if (!_isCtrlPressed()) {
-                  _selectedNodeIds.clear();
-                  _lastSelectedId = null;
-                }
-              });
-            }
-          }
-        }
-      },
-      onPointerMove: (e) {
-        // Right-click drag-to-pan
-        if (e.kind == PointerDeviceKind.mouse && (e.buttons & kSecondaryMouseButton) != 0 && _rightClickStart != null) {
-          if (!_isRightDragging) {
-            if ((_rightClickStart! - e.position).distance > 8) {
-              _isRightDragging = true;
-            }
-          }
-          if (_isRightDragging) {
-            final delta = e.position - _rightClickGlobal!;
-            _rightClickGlobal = e.position;
-            _transformCtrl.value = _transformCtrl.value.clone()..translateByDouble(delta.dx, delta.dy, 0, 1);
-          }
-        }
-        // Left-click box-select drag：只更新矩形 notifier，避免每帧整页重建
-        if (_isBoxSelecting && _boxSelectStart != null && (e.buttons & kPrimaryMouseButton) != 0) {
-          final canvasPos = _screenToCanvas(e.localPosition);
-          _boxSelectRect = Rect.fromPoints(_boxSelectStart!, canvasPos);
-          _boxSelectRectNotifier.value = _boxSelectRect;
-        }
-        // 探测模式：按下移动时也更新
-        if (_probeMode) _updateProbe(e.localPosition);
-      },
-      // 悬停探测：无按键时鼠标移动触发
-      onPointerHover: (e) {
-        if (_probeMode) _updateProbe(e.localPosition);
-      },
-      onPointerUp: (e) {
-        // Right-click release
-        if (e.kind == PointerDeviceKind.mouse && _rightClickStart != null) {
-          if (!_isRightDragging) {
-            // Was a click, not a drag → show context menu
-            final canvasPos = _screenToCanvas(e.localPosition);
-            final hitNode = _findNodeAtCanvasPos(canvasPos);
-            if (hitNode != null) {
-              // handled by node's onSecondaryTapUp
-            } else {
-              final hitConn = _hitTestConnection(canvasPos);
-              if (hitConn != null) {
-                _showConnectionMenu(e.position, hitConn);
-              } else {
-                _showCanvasMenu(e.position);
-              }
-            }
-          }
-          _rightClickStart = null;
-          _rightClickGlobal = null;
-          _isRightDragging = false;
-        }
-        // Box-select release
-        if (_isBoxSelecting) {
-          if (_boxSelectRect != null) {
-            final rect = _boxSelectRect!;
-            setState(() {
-              for (final n in _nodes) {
-                final nodeRect = Rect.fromLTWH(n.x, n.y, _totalNodeWidth(n), _nodeHeight(n));
-                if (rect.overlaps(nodeRect)) {
-                  _selectedNodeIds.add(n.id);
-                  _lastSelectedId = n.id;
+    final canvas = Stack(
+      children: [
+        // 无限网格背景（屏幕空间，永远铺满可视区，见 _buildGridUnderlay）
+        Positioned.fill(child: _buildGridUnderlay(scheme, canvasBg)),
+        Positioned.fill(
+          child: Listener(
+            onPointerDown: (e) {
+              if (e.kind == PointerDeviceKind.mouse &&
+                  e.buttons == kSecondaryMouseButton) {
+                // Right-click: record start for drag-to-pan vs menu detection
+                _rightClickStart = e.position;
+                _rightClickGlobal = e.position;
+                _isRightDragging = false;
+              } else if ((e.kind == PointerDeviceKind.mouse &&
+                      e.buttons == kPrimaryMouseButton) ||
+                  (_isLogicBoxSelecting && e.kind == PointerDeviceKind.touch)) {
+                // Left-click on empty canvas: start box-select or deselect
+                // 移动端：逻辑块框选模式下触摸空白处也可框选（onPointerDown 原来只认
+                // 鼠标左键，导致手机上进入框选模式后根本无法画框）。
+                final canvasPos = _screenToCanvas(e.localPosition);
+                final hitNode = _findNodeAtCanvasPos(canvasPos);
+                if (hitNode == null) {
+                  final hitConn = _hitTestConnection(canvasPos);
+                  if (hitConn == null) {
+                    // No node or connection hit: start box-select
+                    setState(() {
+                      _boxSelectStart = canvasPos;
+                      _boxSelectRect = null;
+                      // 覆盖层订阅的是 notifier 而非 State 字段：起点同步清空，
+                      // 否则上次残留的矩形会先闪现一帧。
+                      _boxSelectRectNotifier.value = null;
+                      _isBoxSelecting = true;
+                      if (!_isCtrlPressed()) {
+                        _selectedNodeIds.clear();
+                        _lastSelectedId = null;
+                      }
+                    });
+                  }
                 }
               }
-            });
-          } else {
-            // Click on empty canvas without drag: deselect all
-            if (!_isCtrlPressed()) {
-              setState(() {
-                _selectedNodeIds.clear();
-                _lastSelectedId = null;
-              });
-            }
-          }
-          setState(() {
-            _boxSelectStart = null;
-            _boxSelectRect = null;
-            // [FIX] 覆盖层订阅的是 _boxSelectRectNotifier：只清 State 字段不清
-            // notifier，松手后最后一个框选矩形会永久留在画布上（PC 端用户报障）。
-            _boxSelectRectNotifier.value = null;
-            _isBoxSelecting = false;
-          });
-          if (_isLogicBoxSelecting && _selectedNodeIds.isNotEmpty) {
-            _finishLogicBoxSelect(s);
-          }
-        }
-      },
-      onPointerCancel: (e) {
-        // 指针被系统抢占（拖出窗口 / 系统手势 / 模态弹出）时 onPointerUp 不会来，
-        // 必须做同样的清理，否则框选状态悬挂、矩形残留。
-        if (_isBoxSelecting) {
-          setState(() {
-            _boxSelectStart = null;
-            _boxSelectRect = null;
-            _boxSelectRectNotifier.value = null;
-            _isBoxSelecting = false;
-          });
-        }
-      },
-      child: InteractiveViewer(
-        transformationController: _transformCtrl,
-        constrained: false,
-        panEnabled: !_isBoxSelecting,
-        boundaryMargin: const EdgeInsets.all(double.infinity),
-        minScale: 0.3,
-        maxScale: 2.0,
-        child: SizedBox(
-          width: _world.width,
-          height: _world.height,
-          child: Stack(clipBehavior: Clip.none, children: [
-            // 连线
-            // 拖动节点时不 setState，节点位置由 _dragDeltas 局部驱动；
-            // 连线层把该 notifier 作为 repaint 监听（每帧重绘），painter
-            // 内部每帧读 .value 做位置补偿，使连线端点实时跟随拖动节点。
-            CustomPaint(
-              size: Size(_world.width, _world.height),
-              painter: _ConnectionPainter(
-                origin: Offset(-_world.left, -_world.top),
-                nodes: _nodes,
-                connections: [
-                  for (final c in _connections)
-                    if (!(_hideLogic && c.kind == 'control') &&
-                        !hiddenNodeIds.contains(c.fromNodeId) &&
-                        !hiddenNodeIds.contains(c.toNodeId))
-                      c,
-                ],
-                color: scheme.primary.withAlpha(140),
-                controlColor: scheme.tertiary.withAlpha(180),
-                selectedNodeIds: _selectedNodeIds,
-                dragDeltas: _dragDeltas,
-                repaint: _dragDeltas,
-              ),
-            ),
-            // 临时拖拽连线：终点由 notifier 局部驱动，拖动时只重绘这一层
-            if (_dragFromNodeId != null)
-              ValueListenableBuilder<Offset?>(
-                valueListenable: _dragLineEndNotifier,
-                builder: (context, dragEnd, _) {
-                  if (dragEnd == null) return const SizedBox.shrink();
-                  final isCtrl = _dragPort.contains('gate') || _dragPort.contains('status') || _dragPort.contains('enable');
-                  return CustomPaint(
-                    size: Size(_world.width, _world.height),
-                    painter: _TempLinePainter(
-                      origin: Offset(-_world.left, -_world.top),
-                      from: _dragLineStart(),
-                      to: dragEnd,
-                      color: isCtrl ? scheme.tertiary.withAlpha(120) : scheme.primary.withAlpha(100),
-                      isControl: isCtrl,
+            },
+            onPointerMove: (e) {
+              // Right-click drag-to-pan
+              if (e.kind == PointerDeviceKind.mouse &&
+                  (e.buttons & kSecondaryMouseButton) != 0 &&
+                  _rightClickStart != null) {
+                if (!_isRightDragging) {
+                  if ((_rightClickStart! - e.position).distance > 8) {
+                    _isRightDragging = true;
+                  }
+                }
+                if (_isRightDragging) {
+                  final delta = e.position - _rightClickGlobal!;
+                  _rightClickGlobal = e.position;
+                  _transformCtrl.value = _transformCtrl.value.clone()
+                    ..translateByDouble(delta.dx, delta.dy, 0, 1);
+                }
+              }
+              // Left-click box-select drag：只更新矩形 notifier，避免每帧整页重建
+              if (_isBoxSelecting &&
+                  _boxSelectStart != null &&
+                  (e.buttons & kPrimaryMouseButton) != 0) {
+                final canvasPos = _screenToCanvas(e.localPosition);
+                _boxSelectRect = Rect.fromPoints(_boxSelectStart!, canvasPos);
+                _boxSelectRectNotifier.value = _boxSelectRect;
+              }
+              // 探测模式：按下移动时也更新
+              if (_probeMode) _updateProbe(e.localPosition);
+            },
+            // 悬停探测：无按键时鼠标移动触发
+            onPointerHover: (e) {
+              if (_probeMode) _updateProbe(e.localPosition);
+            },
+            onPointerUp: (e) {
+              // Right-click release
+              if (e.kind == PointerDeviceKind.mouse &&
+                  _rightClickStart != null) {
+                if (!_isRightDragging) {
+                  // Was a click, not a drag → show context menu
+                  final canvasPos = _screenToCanvas(e.localPosition);
+                  final hitNode = _findNodeAtCanvasPos(canvasPos);
+                  if (hitNode != null) {
+                    // handled by node's onSecondaryTapUp
+                  } else {
+                    final hitConn = _hitTestConnection(canvasPos);
+                    if (hitConn != null) {
+                      _showConnectionMenu(e.position, hitConn);
+                    } else {
+                      _showCanvasMenu(e.position);
+                    }
+                  }
+                }
+                _rightClickStart = null;
+                _rightClickGlobal = null;
+                _isRightDragging = false;
+              }
+              // Box-select release
+              if (_isBoxSelecting) {
+                if (_boxSelectRect != null) {
+                  final rect = _boxSelectRect!;
+                  setState(() {
+                    for (final n in _nodes) {
+                      final nodeRect = Rect.fromLTWH(
+                        n.x,
+                        n.y,
+                        _totalNodeWidth(n),
+                        _nodeHeight(n),
+                      );
+                      if (rect.overlaps(nodeRect)) {
+                        _selectedNodeIds.add(n.id);
+                        _lastSelectedId = n.id;
+                      }
+                    }
+                  });
+                } else {
+                  // Click on empty canvas without drag: deselect all
+                  if (!_isCtrlPressed()) {
+                    setState(() {
+                      _selectedNodeIds.clear();
+                      _lastSelectedId = null;
+                    });
+                  }
+                }
+                setState(() {
+                  _boxSelectStart = null;
+                  _boxSelectRect = null;
+                  // [FIX] 覆盖层订阅的是 _boxSelectRectNotifier：只清 State 字段不清
+                  // notifier，松手后最后一个框选矩形会永久留在画布上（PC 端用户报障）。
+                  _boxSelectRectNotifier.value = null;
+                  _isBoxSelecting = false;
+                });
+                if (_isLogicBoxSelecting && _selectedNodeIds.isNotEmpty) {
+                  _finishLogicBoxSelect(s);
+                }
+              }
+            },
+            onPointerCancel: (e) {
+              // 指针被系统抢占（拖出窗口 / 系统手势 / 模态弹出）时 onPointerUp 不会来，
+              // 必须做同样的清理，否则框选状态悬挂、矩形残留。
+              if (_isBoxSelecting) {
+                setState(() {
+                  _boxSelectStart = null;
+                  _boxSelectRect = null;
+                  _boxSelectRectNotifier.value = null;
+                  _isBoxSelecting = false;
+                });
+              }
+            },
+            child: InteractiveViewer(
+              transformationController: _transformCtrl,
+              constrained: false,
+              panEnabled: !_isBoxSelecting,
+              boundaryMargin: const EdgeInsets.all(double.infinity),
+              minScale: 0.3,
+              maxScale: 2.0,
+              child: SizedBox(
+                width: _world.width,
+                height: _world.height,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    // 连线
+                    // 拖动节点时不 setState，节点位置由 _dragDeltas 局部驱动；
+                    // 连线层把该 notifier 作为 repaint 监听（每帧重绘），painter
+                    // 内部每帧读 .value 做位置补偿，使连线端点实时跟随拖动节点。
+                    CustomPaint(
+                      size: Size(_world.width, _world.height),
+                      painter: _ConnectionPainter(
+                        origin: Offset(-_world.left, -_world.top),
+                        nodes: _nodes,
+                        connections: [
+                          for (final c in _connections)
+                            if (!(_hideLogic && c.kind == 'control') &&
+                                !hiddenNodeIds.contains(c.fromNodeId) &&
+                                !hiddenNodeIds.contains(c.toNodeId))
+                              c,
+                        ],
+                        color: scheme.primary.withAlpha(140),
+                        controlColor: scheme.tertiary.withAlpha(180),
+                        selectedNodeIds: _selectedNodeIds,
+                        dragDeltas: _dragDeltas,
+                        repaint: _dragDeltas,
+                      ),
                     ),
-                  );
-                },
-              ),
-            // 节点（画布坐标 → 世界框本地坐标）
-            // 每个节点：RepaintBoundary 独立光栅缓存 + ValueKey 让 Element 按 id 复用；
-            // Positioned 由 _dragDeltas 局部驱动，拖动时只重建被拖动的节点。
-            for (final node in _nodes)
-              if (!(_hideLogic && node.isGate) && !hiddenNodeIds.contains(node.id))
-                ValueListenableBuilder<Map<String, Offset>?>(
-                  key: ValueKey('node-${node.id}'),
-                  valueListenable: _dragDeltas,
-                  child: RepaintBoundary(child: _buildNodeWidget(node, scheme, s)),
-                  builder: (context, deltas, child) {
-                    final d = deltas?[node.id];
-                    final dx = d?.dx ?? 0.0;
-                    final dy = d?.dy ?? 0.0;
-                    // 连接线也要跟着动：拖动期间节点 widget 位置立即变化，
-                    // 但模型坐标未变，见 _ConnectionPainter 的 dragDeltas 补偿。
-                    return Positioned(
-                      left: node.x + dx - _world.left,
-                      top: node.y + dy - _world.top,
-                      child: child!,
-                    );
-                  },
-                ),
-            // 逻辑块虚线框：订阅拖动位移，拖动整块时框同步平移
-            for (final block in _logicBlocks)
-              ValueListenableBuilder<Map<String, Offset>?>(
-                key: ValueKey('block-${block.id}'),
-                valueListenable: _dragDeltas,
-                builder: (context, deltas, _) {
-                  final d = block.childNodeIds.isEmpty
-                      ? null
-                      : deltas?[block.childNodeIds.first];
-                  return Positioned(
-                    left: block.x + (d?.dx ?? 0) - _world.left,
-                    top: block.y + (d?.dy ?? 0) - _world.top,
-                    child: _buildLogicBlockOverlay(block, scheme, s),
-                  );
-                },
-              ),
-            // Box-select overlay：订阅独立 notifier，框选拖动只重绘这一层
-            ValueListenableBuilder<Rect?>(
-              valueListenable: _boxSelectRectNotifier,
-              builder: (context, rect, _) {
-                if (rect == null) return const SizedBox.shrink();
-                return CustomPaint(
-                  size: Size(_world.width, _world.height),
-                  painter: _BoxSelectPainter(
-                    origin: Offset(-_world.left, -_world.top),
-                    rect: rect, color: scheme.primary,
-                  ),
-                );
-              },
-            ),
-            // 探测模式：在端口位置显示信号提示（画布坐标系，随缩放平移）
-            if (_probeMode && _probeTooltip != null && _probeTooltipPos != null)
-              Positioned(
-                left: _probeTooltipPos!.dx - _world.left + 10,
-                top: _probeTooltipPos!.dy - _world.top - 12,
-                child: IgnorePointer(child: Material(
-                  color: Colors.transparent,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: scheme.inverseSurface.withAlpha(230),
-                      borderRadius: BorderRadius.circular(6),
+                    // 临时拖拽连线：终点由 notifier 局部驱动，拖动时只重绘这一层
+                    if (_dragFromNodeId != null)
+                      ValueListenableBuilder<Offset?>(
+                        valueListenable: _dragLineEndNotifier,
+                        builder: (context, dragEnd, _) {
+                          if (dragEnd == null) return const SizedBox.shrink();
+                          final isCtrl =
+                              _dragPort.contains('gate') ||
+                              _dragPort.contains('status') ||
+                              _dragPort.contains('enable');
+                          return CustomPaint(
+                            size: Size(_world.width, _world.height),
+                            painter: _TempLinePainter(
+                              origin: Offset(-_world.left, -_world.top),
+                              from: _dragLineStart(),
+                              to: dragEnd,
+                              color: isCtrl
+                                  ? scheme.tertiary.withAlpha(120)
+                                  : scheme.primary.withAlpha(100),
+                              isControl: isCtrl,
+                            ),
+                          );
+                        },
+                      ),
+                    // 节点（画布坐标 → 世界框本地坐标）
+                    // 每个节点：RepaintBoundary 独立光栅缓存 + ValueKey 让 Element 按 id 复用；
+                    // Positioned 由 _dragDeltas 局部驱动，拖动时只重建被拖动的节点。
+                    for (final node in _nodes)
+                      if (!(_hideLogic && node.isGate) &&
+                          !hiddenNodeIds.contains(node.id))
+                        ValueListenableBuilder<Map<String, Offset>?>(
+                          key: ValueKey('node-${node.id}'),
+                          valueListenable: _dragDeltas,
+                          child: RepaintBoundary(
+                            child: _buildNodeWidget(node, scheme, s),
+                          ),
+                          builder: (context, deltas, child) {
+                            final d = deltas?[node.id];
+                            final dx = d?.dx ?? 0.0;
+                            final dy = d?.dy ?? 0.0;
+                            // 连接线也要跟着动：拖动期间节点 widget 位置立即变化，
+                            // 但模型坐标未变，见 _ConnectionPainter 的 dragDeltas 补偿。
+                            return Positioned(
+                              left: node.x + dx - _world.left,
+                              top: node.y + dy - _world.top,
+                              child: child!,
+                            );
+                          },
+                        ),
+                    // 逻辑块虚线框：订阅拖动位移，拖动整块时框同步平移
+                    for (final block in _logicBlocks)
+                      ValueListenableBuilder<Map<String, Offset>?>(
+                        key: ValueKey('block-${block.id}'),
+                        valueListenable: _dragDeltas,
+                        builder: (context, deltas, _) {
+                          final d = block.childNodeIds.isEmpty
+                              ? null
+                              : deltas?[block.childNodeIds.first];
+                          return Positioned(
+                            left: block.x + (d?.dx ?? 0) - _world.left,
+                            top: block.y + (d?.dy ?? 0) - _world.top,
+                            child: _buildLogicBlockOverlay(block, scheme, s),
+                          );
+                        },
+                      ),
+                    // Box-select overlay：订阅独立 notifier，框选拖动只重绘这一层
+                    ValueListenableBuilder<Rect?>(
+                      valueListenable: _boxSelectRectNotifier,
+                      builder: (context, rect, _) {
+                        if (rect == null) return const SizedBox.shrink();
+                        return CustomPaint(
+                          size: Size(_world.width, _world.height),
+                          painter: _BoxSelectPainter(
+                            origin: Offset(-_world.left, -_world.top),
+                            rect: rect,
+                            color: scheme.primary,
+                          ),
+                        );
+                      },
                     ),
-                    child: Text(
-                      _probeTooltip!,
-                      style: TextStyle(fontSize: 11, color: scheme.onInverseSurface),
-                    ),
-                  ),
-                )),
-              ),
-          ]),
-        ),
-      ),
-      ),
-      ),
-      // ── 画布右下角浮层：小地图 + 缩放读数 ──
-      //
-      // 必须是「canvas Stack」的最后一个 child（这个 Stack 的尺寸 = 视口）。
-      // 注意不能放进上面那个 world Stack —— 它的尺寸是 20 万 × 20 万，
-      // Positioned.fill 会跑到世界右下角，离视口十万八千里。
-      // 外层 Stack 只让两块控件自身吃事件，空白处照常落到 InteractiveViewer。
-      Positioned.fill(
-        child: LayoutBuilder(
-          builder: (context, cons) {
-            final viewSize = cons.biggest;
-            // 移动端属性卡片停在右侧（宽 ~296），会把浮层整个盖住 ——
-            // 与其藏在底下，不如让位（编辑单个节点时本来也不看全图）。
-            // 卡片被手动收起时（_mobilePropsHiddenFor）不再让位。
-            final sheetOpen = isMobilePlatform && _mobilePropsShown;
-            final showMiniMap =
-                context.read<AppState>().config.nodeMiniMap && !sheetOpen;
-            // 右下角浮层的基线：移动端与左下缩放条、中央信息条**同一行**
-            // （bottom = 8）。原来写死 40，工具条缩放后它仍停在原地，
-            // 表现为「位置固定、不随内容自适应」（用户反馈）。
-            final cornerBottom = isMobilePlatform ? 8.0 : 10.0;
-            final miniFloat = _miniMapFloat;
-            final miniMap = _buildMiniMap(scheme, s, viewSize);
-            final zoomPill = _buildZoomPill(scheme, s);
-            const floatPanelW = _kFloatPanelW;
-            final floatPanelH =
-                math.min(_kFloatPanelH, math.max(160.0, viewSize.height - 60));
-            final floatAiW =
-                math.min(_kFloatAiW, math.max(240.0, viewSize.width - 24));
-            final floatAiH =
-                math.min(520.0, math.max(200.0, viewSize.height - 90));
-            return Stack(children: [
-              if (showMiniMap && miniFloat == null)
-                Positioned(
-                  right: 10,
-                  bottom: cornerBottom,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      miniMap,
-                      const SizedBox(height: 6),
-                      zoomPill,
-                    ],
-                  ),
-                )
-              else
-                // 小地图被拖走（PC）或在让位时：缩放读数单独停在右下角
-                Positioned(right: 10, bottom: cornerBottom, child: zoomPill),
-              // 被拖动过的小地图：停在用户放下的位置（只有 PC 有握把）
-              if (showMiniMap && miniFloat != null)
-                Positioned(
-                  left: miniFloat.dx
-                      .clamp(0.0, math.max(0.0, viewSize.width - _kMiniMapW)),
-                  top: miniFloat.dy
-                      .clamp(0.0, math.max(0.0, viewSize.height - _kMiniMapH)),
-                  child: miniMap,
-                ),
-              // 浮动小窗①：元素 / 属性面板（拖出后）。
-              // 已外置到系统窗口时不再画：同一份面板不能同时出现在两处。
-              if (_panelDetached && !_panelHidden && !_panelExternal)
-                _floatingPanelBox(
-                  scheme: scheme,
-                  pos: _clampFloatTo(
-                      _panelFloatPos ?? const Offset(24, 64), viewSize, floatPanelW),
-                  width: floatPanelW,
-                  height: _panelMinimized ? _kFloatTitleH : floatPanelH,
-                  child: _panelMinimized
-                      ? _glassWrap(_panelTitleBar(scheme, s), scheme)
-                      : _buildRightPanel(scheme, s),
-                ),
-              // 浮动小窗②：AI 面板（拖出后）
-              if (_aiDetached && aiEnabled && !_aiExternal)
-                _floatingPanelBox(
-                  scheme: scheme,
-                  pos: _clampFloatTo(
-                      _aiFloatPos ??
-                          Offset(math.max(0.0, viewSize.width - floatAiW - 16), 72),
-                      viewSize,
-                      floatAiW),
-                  width: floatAiW,
-                  height: _aiMinimized ? _kFloatTitleH : floatAiH,
-                  child: _aiMinimized
-                      ? _glassWrap(_aiTitleBar(scheme, s), scheme)
-                      : Column(children: [
-                          _aiTitleBar(scheme, s),
-                          Expanded(
-                            child: _buildAiPanel(
-                              s,
-                              key: const ValueKey('ai-float'),
-                              startExpanded: true,
-                              onTitleGenerated: (t) =>
-                                  setState(() => _aiSessionTitle = t),
-                              onCollapseRequested: () =>
-                                  setState(() => _aiMinimized = true),
+                    // 探测模式：在端口位置显示信号提示（画布坐标系，随缩放平移）
+                    if (_probeMode &&
+                        _probeTooltip != null &&
+                        _probeTooltipPos != null)
+                      Positioned(
+                        left: _probeTooltipPos!.dx - _world.left + 10,
+                        top: _probeTooltipPos!.dy - _world.top - 12,
+                        child: IgnorePointer(
+                          child: Material(
+                            color: Colors.transparent,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: scheme.inverseSurface.withAlpha(230),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                _probeTooltip!,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: scheme.onInverseSurface,
+                                ),
+                              ),
                             ),
                           ),
-                        ]),
+                        ),
+                      ),
+                  ],
                 ),
-              // 多选工具条：顶部居中。框选进行中不显示（手指正忙着），
-              // 移动端属性卡片打开时也让位。
-              if (_selectedNodeIds.length >= 2 &&
-                  !_isBoxSelecting &&
-                  !_isLogicBoxSelecting &&
-                  !sheetOpen)
-                Positioned(
-                  top: isMobilePlatform ? 52 : 10,
-                  left: 0,
-                  right: 0,
-                  child: Center(child: _buildSelectionBar(scheme, s)),
-                ),
-            ]);
-          },
+              ),
+            ),
+          ),
         ),
-      ),
+        // ── 画布右下角浮层：小地图 + 缩放读数 ──
+        //
+        // 必须是「canvas Stack」的最后一个 child（这个 Stack 的尺寸 = 视口）。
+        // 注意不能放进上面那个 world Stack —— 它的尺寸是 20 万 × 20 万，
+        // Positioned.fill 会跑到世界右下角，离视口十万八千里。
+        // 外层 Stack 只让两块控件自身吃事件，空白处照常落到 InteractiveViewer。
+        Positioned.fill(
+          child: LayoutBuilder(
+            builder: (context, cons) {
+              final viewSize = cons.biggest;
+              // 移动端属性卡片停在右侧（宽 ~296），会把浮层整个盖住 ——
+              // 与其藏在底下，不如让位（编辑单个节点时本来也不看全图）。
+              // 卡片被手动收起时（_mobilePropsHiddenFor）不再让位。
+              final sheetOpen = isMobilePlatform && _mobilePropsShown;
+              final showMiniMap =
+                  context.read<AppState>().config.nodeMiniMap && !sheetOpen;
+              // 右下角浮层的基线：移动端与左下缩放条、中央信息条**同一行**
+              // （bottom = 8）。原来写死 40，工具条缩放后它仍停在原地，
+              // 表现为「位置固定、不随内容自适应」（用户反馈）。
+              final cornerBottom = isMobilePlatform ? 8.0 : 10.0;
+              final miniFloat = _miniMapFloat;
+              final miniMap = _buildMiniMap(scheme, s, viewSize);
+              final zoomPill = _buildZoomPill(scheme, s);
+              const floatPanelW = _kFloatPanelW;
+              final floatPanelH = math.min(
+                _kFloatPanelH,
+                math.max(160.0, viewSize.height - 60),
+              );
+              final floatAiW = math.min(
+                _kFloatAiW,
+                math.max(240.0, viewSize.width - 24),
+              );
+              final floatAiH = math.min(
+                520.0,
+                math.max(200.0, viewSize.height - 90),
+              );
+              return Stack(
+                children: [
+                  if (showMiniMap && miniFloat == null)
+                    Positioned(
+                      right: 10,
+                      bottom: cornerBottom,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          miniMap,
+                          const SizedBox(height: 6),
+                          zoomPill,
+                        ],
+                      ),
+                    )
+                  else
+                    // 小地图被拖走（PC）或在让位时：缩放读数单独停在右下角
+                    Positioned(
+                      right: 10,
+                      bottom: cornerBottom,
+                      child: zoomPill,
+                    ),
+                  // 被拖动过的小地图：停在用户放下的位置（只有 PC 有握把）
+                  if (showMiniMap && miniFloat != null)
+                    Positioned(
+                      left: miniFloat.dx.clamp(
+                        0.0,
+                        math.max(0.0, viewSize.width - _kMiniMapW),
+                      ),
+                      top: miniFloat.dy.clamp(
+                        0.0,
+                        math.max(0.0, viewSize.height - _kMiniMapH),
+                      ),
+                      child: miniMap,
+                    ),
+                  // 浮动小窗①：元素 / 属性面板（拖出后）。
+                  // 已外置到系统窗口时不再画：同一份面板不能同时出现在两处。
+                  if (_panelDetached && !_panelHidden && !_panelExternal)
+                    _floatingPanelBox(
+                      scheme: scheme,
+                      pos: _clampFloatTo(
+                        _panelFloatPos ?? const Offset(24, 64),
+                        viewSize,
+                        floatPanelW,
+                      ),
+                      width: floatPanelW,
+                      height: _panelMinimized ? _kFloatTitleH : floatPanelH,
+                      child: _panelMinimized
+                          ? _glassWrap(_panelTitleBar(scheme, s), scheme)
+                          : _buildRightPanel(scheme, s),
+                    ),
+                  // 浮动小窗②：AI 面板（拖出后）
+                  if (_aiDetached && aiEnabled && !_aiExternal)
+                    _floatingPanelBox(
+                      scheme: scheme,
+                      pos: _clampFloatTo(
+                        _aiFloatPos ??
+                            Offset(
+                              math.max(0.0, viewSize.width - floatAiW - 16),
+                              72,
+                            ),
+                        viewSize,
+                        floatAiW,
+                      ),
+                      width: floatAiW,
+                      height: _aiMinimized ? _kFloatTitleH : floatAiH,
+                      child: _aiMinimized
+                          ? _glassWrap(_aiTitleBar(scheme, s), scheme)
+                          : Column(
+                              children: [
+                                _aiTitleBar(scheme, s),
+                                Expanded(
+                                  child: _buildAiPanel(
+                                    s,
+                                    key: const ValueKey('ai-float'),
+                                    startExpanded: true,
+                                    onTitleGenerated: (t) =>
+                                        setState(() => _aiSessionTitle = t),
+                                    onCollapseRequested: () =>
+                                        setState(() => _aiMinimized = true),
+                                  ),
+                                ),
+                              ],
+                            ),
+                    ),
+                  // 多选工具条：顶部居中。框选进行中不显示（手指正忙着），
+                  // 移动端属性卡片打开时也让位。
+                  if (_selectedNodeIds.length >= 2 &&
+                      !_isBoxSelecting &&
+                      !_isLogicBoxSelecting &&
+                      !sheetOpen)
+                    Positioned(
+                      top: isMobilePlatform ? 52 : 10,
+                      left: 0,
+                      right: 0,
+                      child: Center(child: _buildSelectionBar(scheme, s)),
+                    ),
+                ],
+              );
+            },
+          ),
+        ),
       ],
     );
 
@@ -4162,515 +5597,817 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             }
           : null,
       child: Focus(
-      autofocus: true,
-      onKeyEvent: (node, event) {
-        if (event is! KeyDownEvent) return KeyEventResult.ignored;
-        final bindings = context.read<AppState>().config.keyBindings;
+        autofocus: true,
+        onKeyEvent: (node, event) {
+          if (event is! KeyDownEvent) return KeyEventResult.ignored;
+          final bindings = context.read<AppState>().config.keyBindings;
 
-        // Select all (Ctrl+A)
-        final selectAll = bindings['canvas_select_all'] ?? ['Control', 'A'];
-        if (selectAll.isNotEmpty && _isCtrlPressed() && event.logicalKey == LogicalKeyboardKey.keyA) {
-          if (selectAll.contains('Control') && selectAll.contains('A')) {
-            _selectAllNodes();
-            return KeyEventResult.handled;
+          // Select all (Ctrl+A)
+          final selectAll = bindings['canvas_select_all'] ?? ['Control', 'A'];
+          if (selectAll.isNotEmpty &&
+              _isCtrlPressed() &&
+              event.logicalKey == LogicalKeyboardKey.keyA) {
+            if (selectAll.contains('Control') && selectAll.contains('A')) {
+              _selectAllNodes();
+              return KeyEventResult.handled;
+            }
           }
-        }
 
-        // Copy (Ctrl+C) / Paste (Ctrl+V)
-        //
-        // 必须挡掉「正在文本框里打字」的情况：参数输入框在节点编辑器里遍地都是，
-        // 在输入框里按 Ctrl+C 应该复制文字，而不是把整个选区复制成节点。
-        // 键名沿用可配置的 keyBindings 约定，缺省即 Ctrl+C / Ctrl+V。
-        if (!_editingText) {
-          final copyBinding = bindings['canvas_copy'] ?? ['Control', 'C'];
-          if (copyBinding.contains('Control') && _isCtrlPressed() &&
-              event.logicalKey == LogicalKeyboardKey.keyC && _selectedNodeIds.isNotEmpty) {
-            _copySelectedNodes();
-            return KeyEventResult.handled;
+          // Copy (Ctrl+C) / Paste (Ctrl+V)
+          //
+          // 必须挡掉「正在文本框里打字」的情况：参数输入框在节点编辑器里遍地都是，
+          // 在输入框里按 Ctrl+C 应该复制文字，而不是把整个选区复制成节点。
+          // 键名沿用可配置的 keyBindings 约定，缺省即 Ctrl+C / Ctrl+V。
+          if (!_editingText) {
+            final copyBinding = bindings['canvas_copy'] ?? ['Control', 'C'];
+            if (copyBinding.contains('Control') &&
+                _isCtrlPressed() &&
+                event.logicalKey == LogicalKeyboardKey.keyC &&
+                _selectedNodeIds.isNotEmpty) {
+              _copySelectedNodes();
+              return KeyEventResult.handled;
+            }
+            final pasteBinding = bindings['canvas_paste'] ?? ['Control', 'V'];
+            if (pasteBinding.contains('Control') &&
+                _isCtrlPressed() &&
+                event.logicalKey == LogicalKeyboardKey.keyV &&
+                _hasClipboard) {
+              _pasteNodes();
+              return KeyEventResult.handled;
+            }
           }
-          final pasteBinding = bindings['canvas_paste'] ?? ['Control', 'V'];
-          if (pasteBinding.contains('Control') && _isCtrlPressed() &&
-              event.logicalKey == LogicalKeyboardKey.keyV && _hasClipboard) {
-            _pasteNodes();
-            return KeyEventResult.handled;
-          }
-        }
 
-        // Delete selected (Delete key by default)
-        final delBinding = bindings['canvas_delete_selected'] ?? ['Delete'];
-        if (delBinding.isNotEmpty && _selectedNodeIds.isNotEmpty) {
-          final keyLabel = event.logicalKey.keyLabel;
-          final nonModifiers = delBinding.where((b) => !const {'Control', 'Shift', 'Alt', 'Meta'}.contains(b)).toList();
-          final modifiers = delBinding.where((b) => const {'Control', 'Shift', 'Alt', 'Meta'}.contains(b)).toSet();
-          final pressed = HardwareKeyboard.instance.logicalKeysPressed;
-          final heldMods = <String>{};
-          for (final k in pressed) {
-            if (k == LogicalKeyboardKey.controlLeft || k == LogicalKeyboardKey.controlRight) heldMods.add('Control');
-            if (k == LogicalKeyboardKey.shiftLeft || k == LogicalKeyboardKey.shiftRight) heldMods.add('Shift');
-            if (k == LogicalKeyboardKey.altLeft || k == LogicalKeyboardKey.altRight) heldMods.add('Alt');
+          // Delete selected (Delete key by default)
+          final delBinding = bindings['canvas_delete_selected'] ?? ['Delete'];
+          if (delBinding.isNotEmpty && _selectedNodeIds.isNotEmpty) {
+            final keyLabel = event.logicalKey.keyLabel;
+            final nonModifiers = delBinding
+                .where(
+                  (b) => !const {'Control', 'Shift', 'Alt', 'Meta'}.contains(b),
+                )
+                .toList();
+            final modifiers = delBinding
+                .where(
+                  (b) => const {'Control', 'Shift', 'Alt', 'Meta'}.contains(b),
+                )
+                .toSet();
+            final pressed = HardwareKeyboard.instance.logicalKeysPressed;
+            final heldMods = <String>{};
+            for (final k in pressed) {
+              if (k == LogicalKeyboardKey.controlLeft ||
+                  k == LogicalKeyboardKey.controlRight)
+                heldMods.add('Control');
+              if (k == LogicalKeyboardKey.shiftLeft ||
+                  k == LogicalKeyboardKey.shiftRight)
+                heldMods.add('Shift');
+              if (k == LogicalKeyboardKey.altLeft ||
+                  k == LogicalKeyboardKey.altRight)
+                heldMods.add('Alt');
+            }
+            if (heldMods.length == modifiers.length &&
+                heldMods.containsAll(modifiers) &&
+                nonModifiers.length == 1 &&
+                keyLabel.toLowerCase() == nonModifiers.first.toLowerCase()) {
+              _deleteSelectedNodes();
+              return KeyEventResult.handled;
+            }
           }
-          if (heldMods.length == modifiers.length && heldMods.containsAll(modifiers) &&
-              nonModifiers.length == 1 && keyLabel.toLowerCase() == nonModifiers.first.toLowerCase()) {
-            _deleteSelectedNodes();
-            return KeyEventResult.handled;
-          }
-        }
 
-        // Undo / Redo
-        //
-        // [FIX C2] 原来这里**硬编码** Ctrl+Z / Ctrl+Shift+Z，从不读
-        // keyBindings['canvas_undo'/'canvas_redo'] —— 用户在「设置 → 快捷键」里
-        // 改了这两项不会有任何反应（画布上仍是 Ctrl+Z）。现在改为按绑定匹配。
-        // 同时补上 !_editingText：在参数输入框里按 Ctrl+Z 应该撤销**文字**，
-        // 而不是撤销整张图（Ctrl+C/V 早就有这个守卫，撤销一直漏了）。
-        if (!_editingText) {
-          if (_matchesKeyBinding(bindings['canvas_undo'] ?? const ['Control', 'Z'], event)) {
-            _undo();
+          // Undo / Redo
+          //
+          // [FIX C2] 原来这里**硬编码** Ctrl+Z / Ctrl+Shift+Z，从不读
+          // keyBindings['canvas_undo'/'canvas_redo'] —— 用户在「设置 → 快捷键」里
+          // 改了这两项不会有任何反应（画布上仍是 Ctrl+Z）。现在改为按绑定匹配。
+          // 同时补上 !_editingText：在参数输入框里按 Ctrl+Z 应该撤销**文字**，
+          // 而不是撤销整张图（Ctrl+C/V 早就有这个守卫，撤销一直漏了）。
+          if (!_editingText) {
+            if (_matchesKeyBinding(
+              bindings['canvas_undo'] ?? const ['Control', 'Z'],
+              event,
+            )) {
+              _undo();
+              return KeyEventResult.handled;
+            }
+            if (_matchesKeyBinding(
+              bindings['canvas_redo'] ?? const ['Control', 'Shift', 'Z'],
+              event,
+            )) {
+              _redo();
+              return KeyEventResult.handled;
+            }
+          }
+
+          // 探测模式 / 隐藏逻辑线
+          //
+          // [FIX C2] 这两项同样只声明在 defaultKeyBindings 与快捷键页里，编辑器从不
+          // 读取（默认值是空数组，页面上显示为「（未配置）」），用户即使绑了键也毫无
+          // 反应。这里接上工具栏那两个按钮（_probeMode / _hideLogic）的同一份状态。
+          if (_matchesKeyBinding(
+            bindings['canvas_probe_mode'] ?? const [],
+            event,
+          )) {
+            setState(() => _probeMode = !_probeMode);
             return KeyEventResult.handled;
           }
           if (_matchesKeyBinding(
-              bindings['canvas_redo'] ?? const ['Control', 'Shift', 'Z'], event)) {
-            _redo();
+            bindings['canvas_hide_logic'] ?? const [],
+            event,
+          )) {
+            setState(() => _hideLogic = !_hideLogic);
             return KeyEventResult.handled;
           }
-        }
 
-        // 探测模式 / 隐藏逻辑线
-        //
-        // [FIX C2] 这两项同样只声明在 defaultKeyBindings 与快捷键页里，编辑器从不
-        // 读取（默认值是空数组，页面上显示为「（未配置）」），用户即使绑了键也毫无
-        // 反应。这里接上工具栏那两个按钮（_probeMode / _hideLogic）的同一份状态。
-        if (_matchesKeyBinding(bindings['canvas_probe_mode'] ?? const [], event)) {
-          setState(() => _probeMode = !_probeMode);
-          return KeyEventResult.handled;
-        }
-        if (_matchesKeyBinding(bindings['canvas_hide_logic'] ?? const [], event)) {
-          setState(() => _hideLogic = !_hideLogic);
-          return KeyEventResult.handled;
-        }
-
-        return KeyEventResult.ignored;
-      },
-      child: canvas,
+          return KeyEventResult.ignored;
+        },
+        child: canvas,
       ),
     );
 
-    final inner = Column(children: [
-      // 移动端顶部工具栏/分隔线移除：改由浮动菜单栏承载（见 _buildBody 的
-      // _buildMobileTopBar），避免新旧两套工具栏在画布顶部互相重叠。
-      if (!isMobilePlatform) ...[
-      Row(children: [
-        SizedBox(
-          // 本行只在桌面端构建（外层 if (!isMobilePlatform)），宽度直接拉满
-          width: double.infinity,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
-            child: Row(children: [
-          if (!Platform.isWindows && !isMobilePlatform) ...[
-            InkWell(
-              borderRadius: BorderRadius.circular(6),
-              onTap: () async {
-                final nav = Navigator.of(context);
-                if (await _onWillPop()) nav.pop();
-              },
-              child: Padding(
-                padding: const EdgeInsets.all(4),
-                child: Icon(Icons.arrow_back, size: 18, color: scheme.onSurface),
-              ),
-            ),
-            const SizedBox(width: 6),
-          ],
-          if (!isMobilePlatform) ...[
-          Icon(Icons.account_tree_outlined, size: 16, color: scheme.primary),
-          const SizedBox(width: 6),
-          Text(s.isZh ? '节点编辑器' : 'Node Editor',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-          const SizedBox(width: 8),
-          IconButton(
-            icon: Icon(Icons.undo, size: 16, color: _undoStack.isEmpty ? scheme.outlineVariant : scheme.onSurfaceVariant),
-            tooltip: s.isZh ? '撤销' : 'Undo',
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-            padding: EdgeInsets.zero,
-            onPressed: _undoStack.isEmpty ? null : _undo,
-          ),
-          IconButton(
-            icon: Icon(Icons.redo, size: 16, color: _redoStack.isEmpty ? scheme.outlineVariant : scheme.onSurfaceVariant),
-            tooltip: s.isZh ? '重做' : 'Redo',
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-            padding: EdgeInsets.zero,
-            onPressed: _redoStack.isEmpty ? null : _redo,
-          ),
-          const SizedBox(width: 6),
-          // 探测模式按钮：悬停端口显示信号提示
-          Tooltip(
-            message: s.isZh ? '探测模式：悬停端口显示信号' : 'Probe: hover ports to inspect signals',
-            waitDuration: const Duration(milliseconds: 300),
-            child: IconButton(
-              icon: Icon(Icons.search, size: 16, color: _probeMode ? scheme.primary : scheme.onSurfaceVariant),
-              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-              padding: EdgeInsets.zero,
-              style: IconButton.styleFrom(
-                backgroundColor: _probeMode ? scheme.primary.withAlpha(40) : null,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-              ),
-              onPressed: () => setState(() => _probeMode = !_probeMode),
-            ),
-          ),
-          // 隐藏逻辑线按钮：隐藏/显示控制连线+逻辑门+红色逻辑端口
-          Tooltip(
-            message: s.isZh ? '隐藏逻辑线（控制连线、逻辑门、逻辑端口）' : 'Hide logic (control wires, gates, logic ports)',
-            waitDuration: const Duration(milliseconds: 300),
-            child: IconButton(
-              icon: Icon(Icons.route, size: 16, color: _hideLogic ? scheme.error : scheme.onSurfaceVariant),
-              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-              padding: EdgeInsets.zero,
-              style: IconButton.styleFrom(
-                backgroundColor: _hideLogic ? scheme.error.withAlpha(40) : null,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-              ),
-              onPressed: () => setState(() => _hideLogic = !_hideLogic),
-            ),
-          ),
-          // 面板被隐藏后，在工具栏以图标形式恢复（用户要求：隐藏后在菜单栏
-          // 以图标展示，点击可恢复显示）。
-          if (_panelHidden)
-            Tooltip(
-              message: s.isZh ? '显示元素 / 属性面板' : 'Show elements / properties',
-              waitDuration: const Duration(milliseconds: 300),
-              child: IconButton(
-                icon: Icon(Icons.widgets_outlined, size: 16, color: scheme.primary),
-                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                padding: EdgeInsets.zero,
-                onPressed: () => setState(() {
-                  _panelHidden = false;
-                  _panelDetached = false;
-                  _panelFloatPos = null;
-                }),
-              ),
-            ),
-          // 写入格式：新版节点配置导出 .fppx 时写哪一套（旧版 JSON / 新版模块化
-          // 二进制）。以前这个选择只在「新建配置」时做一次、之后再也改不了，
-          // 现在画布工具栏上常驻一枚可点的格式标识。
-          Tooltip(
-            message: s.isZh
-                ? '写入格式：${_writeFormat == 'v2' ? '新版 (Beta)' : '旧版'}（点击切换）'
-                : 'Write format: ${_writeFormat == 'v2' ? 'New (Beta)' : 'Legacy'} (click to switch)',
-            waitDuration: const Duration(milliseconds: 300),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(6),
-              onTap: () => setState(
-                  () => _writeFormat = _writeFormat == 'v2' ? 'legacy' : 'v2'),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(Icons.save_as_outlined, size: 14,
-                      color: _writeFormat == 'v2'
-                          ? scheme.primary
-                          : scheme.onSurfaceVariant),
-                  const SizedBox(width: 4),
-                  Text(_writeFormat == 'v2' ? 'v2' : 'legacy',
-                      style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: _writeFormat == 'v2'
-                              ? scheme.primary
-                              : scheme.onSurfaceVariant)),
-                ]),
-              ),
-            ),
-          ),
-          const Spacer(),
-          if (!Platform.isWindows) ...[
-            IconButton(
-              icon: Icon(Icons.file_download_outlined, size: 18, color: scheme.onSurface),
-              tooltip: s.importConfig,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-              padding: EdgeInsets.zero,
-              onPressed: () => _importConfig(s),
-            ),
-            IconButton(
-              icon: Icon(Icons.file_upload_outlined, size: 18, color: scheme.onSurface),
-              tooltip: s.isZh ? '导出配置' : 'Export Config',
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-              padding: EdgeInsets.zero,
-              onPressed: _nodes.isEmpty ? null : () => _exportConfig(s),
-            ),
-            const SizedBox(width: 4),
-            // 保存按钮：仅软盘图标，不显示文字；配色与 Windows 顶栏同一份
-            IconButton.filled(
-              icon: const Icon(Icons.save_outlined, size: 18),
-              tooltip: s.save,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-              padding: EdgeInsets.zero,
-              style: _saveButtonStyle(scheme),
-              onPressed: _save,
-            ),
-          ],
-          if (Platform.isWindows)
-            Text(s.isZh ? '右键添加节点' : 'Right-click to add',
-                style: TextStyle(fontSize: 10, color: scheme.outline)),
-          ],
-        ]),
-          ),
-        ),
-      ]),
-      const Divider(height: 1, indent: 12, endIndent: 12),
-      ],
-      if (_isLogicBoxSelecting)
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          color: context.sem.danger.withAlpha(30),
-          child: Row(children: [
-            Icon(Icons.info_outline, size: 14, color: context.sem.danger),
-            const SizedBox(width: 8),
-            Text(s.isZh ? '请在画布中框选要包含的元素，然后松开鼠标' : 'Box-select elements on canvas, then release',
-                style: TextStyle(fontSize: 12, color: context.sem.danger, fontWeight: FontWeight.w500)),
-            const Spacer(),
-            TextButton(
-              onPressed: () => setState(() { _isLogicBoxSelecting = false; _pendingLogicType = null; }),
-              child: Text(s.isZh ? '取消' : 'Cancel', style: const TextStyle(fontSize: 12)),
-            ),
-          ]),
-        ),
-      Expanded(child: ClipRRect(
-        key: _canvasKey,
-        borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(12), bottomRight: Radius.circular(12)),
-        child: DragTarget<Object>(
-          onAcceptWithDetails: (details) {
-            // [FIX H-5] 改用画布自身的 RenderBox，避免页面级 context 引入顶栏偏移
-            final rb = _canvasKey.currentContext?.findRenderObject() as RenderBox?;
-            final local = rb == null ? details.offset : rb.globalToLocal(details.offset);
-            final canvasPos = _screenToCanvas(local);
-            final data = details.data;
-            if (data is PipelineStepType) {
-              _addNodeAt(data, canvasPos);
-            } else if (data is LogicGateType) {
-              _addGateAt(data, canvasPos);
-            }
-          },
-          builder: (ctx, candidateData, rejectedData) => Stack(children: [
-            focusedCanvas,
-            if (context.read<AppState>().config.debugMode)
-              Positioned(
-                left: 8, bottom: 8, right: 80,
-                child: IgnorePointer(child: Text(
-                  GraphExecutor.describeGraph(PipelineGraph(nodes: _nodes, connections: _connections, logicBlocks: _logicBlocks)),
-                  // 移动端：调试(探测)状态描述不换行，单行省略；桌面端保持原样。
-                  maxLines: isMobilePlatform ? 1 : null,
-                  overflow: isMobilePlatform ? TextOverflow.ellipsis : null,
-                  style: TextStyle(fontSize: 10, color: scheme.onSurface.withAlpha(128), height: 1.4),
-                )),
-              ),
-            // 移动端：右侧浮动工具列已删除（返回 / AI / 横竖屏 / 整理 / 定位源
-            // 等功能均已迁移到顶部浮动菜单栏与底部工具条，此处不再重复渲染，
-            // 避免与底部/顶部控件重叠。桌面端仍保留右侧浮动控件。
-            if (!isMobilePlatform)
-              Positioned(
-                right: 10, bottom: aiEnabled ? 60 : 10,
-                child: _buildCanvasControls(scheme, s),
-              ),
-            // 左侧中间 ">" 按钮：展开/收起 AI 侧边面板（仅桌面端内嵌抽屉；
-            // 移动端改为浮动按钮触发的底部弹层，见 _openAiSheet）
-            if (aiEnabled && !isMobilePlatform)
-              Positioned(
-                left: 0, top: 0, bottom: 0,
-                child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                  // AI 侧边抽屉（收起时宽度 0）
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeOutCubic,
-                    // 拖出为浮动小窗 / 外置到系统窗口时抽屉让位
-                    // （同一面板不能同时出现两份）
-                    width: (_aiDrawerOpen && !_aiDetached && !_aiExternal) ? 420 : 0,
-                    child: (_aiDrawerOpen && !_aiDetached && !_aiExternal)
-                        ? AiPanelView(
-                            key: const ValueKey('ai-drawer'),
-                            startExpanded: true,
-                            onCollapseRequested: () {
-                              _stashAiSession();
-                              setState(() => _aiDrawerOpen = false);
-                            },
-                            // 拖出为独立系统窗口（PS 式的再往外拖一层）
-                            onFloatOut: () => _openExternalPanel(DetachedPanel.ai),
-                            // 交接会话：外置收回后抽屉会重建，靠这份消息续上对话
-                            initialMessages: _aiSessionCache,
-                            onApiReady: (api) => _aiPanelApi = api,
-                            onTitleGenerated: (t) => setState(() => _aiSessionTitle = t),
-                            strings: s,
-                            existingNodes: _nodes,
-                            existingConnections: _connections,
-                  onApplyGraph: (nodes, connections) {
-                    _pushUndo();
-                    setState(() {
-                      _nodes.clear();
-                      _connections.clear();
-                      _nodes.addAll(nodes);
-                      _connections.addAll(connections);
-                    });
-                  },
-                  onMergeGraph: (aiNodes, aiConns) {
-                    _pushUndo();
-                    setState(() {
-                      final idRemap = <String, String>{};
-                      for (final n in aiNodes) {
-                        final existing = _nodes.indexWhere((e) => e.type == n.type && !idRemap.containsValue(e.id));
-                        if (existing >= 0) {
-                          _nodes[existing].params.addAll(n.params);
-                          idRemap[n.id] = _nodes[existing].id;
-                        } else {
-                          _nodes.add(n);
-                          idRemap[n.id] = n.id;
-                        }
-                      }
-                      final newConns = <PipelineConnection>[];
-                      for (final c in aiConns) {
-                        final fromId = idRemap[c.fromNodeId] ?? c.fromNodeId;
-                        final toId = idRemap[c.toNodeId] ?? c.toNodeId;
-                        if (!_connections.any((e) => e.fromNodeId == fromId && e.toNodeId == toId)) {
-                          newConns.add(PipelineConnection(id: _uuid.v4(), fromNodeId: fromId, toNodeId: toId));
-                        }
-                      }
-                      // Remove old connections superseded by new path
-                      final remappedConns = aiConns.map((c) => (
-                        from: idRemap[c.fromNodeId] ?? c.fromNodeId,
-                        to: idRemap[c.toNodeId] ?? c.toNodeId,
-                      )).toSet();
-                      final aiNodeIds = remappedConns.expand((c) => [c.from, c.to]).toSet();
-                      _connections.removeWhere((c) {
-                        if (!aiNodeIds.contains(c.fromNodeId) || !aiNodeIds.contains(c.toNodeId)) return false;
-                        if (remappedConns.any((r) => r.from == c.fromNodeId && r.to == c.toNodeId)) return false;
-                        // Old connection between two AI-touched nodes not in AI graph → remove
-                        return true;
-                      });
-                      _connections.addAll(newConns);
-                    });
-                  },
-                  onModifyNodeParams: (nodeId, params) {
-                    // 找不到节点直接返回 false，让 AI 面板把失败回填给模型；
-                    // 原实现用 orElse: () => _nodes.first，nodeId 打错就静默改写画布首节点
-                    final idx = _nodes.indexWhere((n) => n.id == nodeId);
-                    if (idx < 0) return false;
-                    _pushUndo();
-                    setState(() {
-                      params.forEach((k, v) { _nodes[idx].params[k] = v; });
-                    });
-                    _commitChange();
-                    return true;
-                  },
-                  onClearAll: () {
-                    _pushUndo();
-                    setState(() {
-                      _nodes.clear();
-                      _connections.clear();
-                      _logicBlocks.clear();
-                      _selectedNodeIds.clear();
-                      _commitChange();
-                    });
-                  },
-                  onUndo: _undo,
-                  onRedo: _redo,
-                  onSave: _saveGraph,
-                  onAddNode: (type, x, y) {
-                    final stepType = PipelineStepType.values.firstWhere((t) => t.name == type, orElse: () => throw ArgumentError('Unknown type: $type'));
-                    final node = PipelineNode(id: _uuid.v4(), type: stepType, x: x, y: y);
-                    _pushUndo();
-                    setState(() => _nodes.add(node));
-                    _commitChange();
-                    return node.id;
-                  },
-                  onAddGate: (gateName, x, y) {
-                    final gate = LogicGateType.values.asNameMap()[gateName];
-                    if (gate == null) throw ArgumentError('Unknown gate type: $gateName');
-                    final node = PipelineNode(
-                      id: _uuid.v4(),
-                      type: PipelineStepType.start,
-                      x: x, y: y,
-                      gateType: gate.name,
-                    );
-                    _pushUndo();
-                    setState(() => _nodes.add(node));
-                    _commitChange();
-                    return node.id;
-                  },
-                  onSetGateParams: (nodeId, params) {
-                    final idx = _nodes.indexWhere((n) => n.id == nodeId);
-                    if (idx < 0) return false;
-                    _pushUndo();
-                    setState(() {
-                      params.forEach((k, v) { _nodes[idx].params[k] = v; });
-                    });
-                    _commitChange();
-                    return true;
-                  },
-                  onDeleteNode: (nodeId) {
-                    _deleteNode(nodeId);
-                    _commitChange();
-                  },
-                  onConnectNodes: (fromId, toId) {
-                    if (fromId == toId) return false;
-                    if (!_nodes.any((n) => n.id == fromId) || !_nodes.any((n) => n.id == toId)) return false;
-                    if (_connections.any((c) => c.fromNodeId == fromId && c.toNodeId == toId)) return false;
-                    _pushUndo();
-                    setState(() => _connections.add(PipelineConnection(id: _uuid.v4(), fromNodeId: fromId, toNodeId: toId)));
-                    _commitChange();
-                    return true;
-                  },
-                  onDisconnectNodes: (connId) {
-                    final idx = _connections.indexWhere((c) => c.id == connId);
-                    if (idx < 0) return false;
-                    _pushUndo();
-                    setState(() => _connections.removeAt(idx));
-                    _commitChange();
-                    return true;
-                  },
-                    onCancelTasks: () => context.read<AppState>().cancelProcessing(),
-                          )
-                        : const SizedBox.shrink(),
-                  ),
-                  // 展开/收起切换按钮（左侧中间）
-                  //
-                  // [UI 统一] 原先 width 18 / height 52 / radius 0，是一个直角窄条：
-                  // 与全局 8~12 圆角语言不一致，且贴边的直角在手柄这种"凸出"形态上
-                  // 观感生硬。这里统一为 20×56 + 右侧 10 圆角（左侧保持直角，因为它
-                  // 始终贴着抽屉右边缘/画布左边缘），图标尺寸走 AppControlSize 令牌，
-                  // 与编辑器内其他控件同源，不再出现 16/17/18 混用。
-                  // 拖出为浮动小窗 / 外置后，抽屉把手一并隐藏（面板已不在左边缘）
-                  if (!_aiDetached && !_aiExternal)
-                  Align(
-                    alignment: Alignment.center,
-                    child: MouseRegion(
-                      cursor: SystemMouseCursors.click,
-                      child: GestureDetector(
-                        onTap: () {
-                          if (_aiDrawerOpen) _stashAiSession();
-                          setState(() => _aiDrawerOpen = !_aiDrawerOpen);
-                        },
-                        behavior: HitTestBehavior.opaque,
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 160),
-                          curve: Curves.easeOutCubic,
-                          width: 20, height: 56,
-                          decoration: BoxDecoration(
-                            color: scheme.surface.withAlpha(200),
-                            borderRadius: const BorderRadius.horizontal(right: Radius.circular(10)),
-                            boxShadow: [BoxShadow(color: Colors.black.withAlpha(40), blurRadius: 6, offset: const Offset(1, 0))],
+    final inner = Column(
+      children: [
+        // 移动端顶部工具栏/分隔线移除：改由浮动菜单栏承载（见 _buildBody 的
+        // _buildMobileTopBar），避免新旧两套工具栏在画布顶部互相重叠。
+        if (!isMobilePlatform) ...[
+          Row(
+            children: [
+              SizedBox(
+                // 本行只在桌面端构建（外层 if (!isMobilePlatform)），宽度直接拉满
+                width: double.infinity,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+                  child: Row(
+                    children: [
+                      if (!Platform.isWindows && !isMobilePlatform) ...[
+                        InkWell(
+                          borderRadius: BorderRadius.circular(6),
+                          onTap: () async {
+                            final nav = Navigator.of(context);
+                            if (await _onWillPop()) nav.pop();
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.all(4),
+                            child: Icon(
+                              Icons.arrow_back,
+                              size: 18,
+                              color: scheme.onSurface,
+                            ),
                           ),
-                          child: Icon(
-                            _aiDrawerOpen ? Icons.chevron_left : Icons.chevron_right,
-                            size: AppControlSize.regular.iconSize,
-                            color: scheme.primary,
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                      if (!isMobilePlatform) ...[
+                        Icon(
+                          Icons.account_tree_outlined,
+                          size: 16,
+                          color: scheme.primary,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          s.isZh ? '节点编辑器' : 'Node Editor',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: scheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: Icon(
+                            Icons.undo,
+                            size: 16,
+                            color: _undoStack.isEmpty
+                                ? scheme.outlineVariant
+                                : scheme.onSurfaceVariant,
+                          ),
+                          tooltip: s.isZh ? '撤销' : 'Undo',
+                          constraints: const BoxConstraints(
+                            minWidth: 28,
+                            minHeight: 28,
+                          ),
+                          padding: EdgeInsets.zero,
+                          onPressed: _undoStack.isEmpty ? null : _undo,
+                        ),
+                        IconButton(
+                          icon: Icon(
+                            Icons.redo,
+                            size: 16,
+                            color: _redoStack.isEmpty
+                                ? scheme.outlineVariant
+                                : scheme.onSurfaceVariant,
+                          ),
+                          tooltip: s.isZh ? '重做' : 'Redo',
+                          constraints: const BoxConstraints(
+                            minWidth: 28,
+                            minHeight: 28,
+                          ),
+                          padding: EdgeInsets.zero,
+                          onPressed: _redoStack.isEmpty ? null : _redo,
+                        ),
+                        const SizedBox(width: 6),
+                        // 探测模式按钮：悬停端口显示信号提示
+                        Tooltip(
+                          message: s.isZh
+                              ? '探测模式：悬停端口显示信号'
+                              : 'Probe: hover ports to inspect signals',
+                          waitDuration: const Duration(milliseconds: 300),
+                          child: IconButton(
+                            icon: Icon(
+                              Icons.search,
+                              size: 16,
+                              color: _probeMode
+                                  ? scheme.primary
+                                  : scheme.onSurfaceVariant,
+                            ),
+                            constraints: const BoxConstraints(
+                              minWidth: 28,
+                              minHeight: 28,
+                            ),
+                            padding: EdgeInsets.zero,
+                            style: IconButton.styleFrom(
+                              backgroundColor: _probeMode
+                                  ? scheme.primary.withAlpha(40)
+                                  : null,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                            ),
+                            onPressed: () =>
+                                setState(() => _probeMode = !_probeMode),
+                          ),
+                        ),
+                        // 隐藏逻辑线按钮：隐藏/显示控制连线+逻辑门+红色逻辑端口
+                        Tooltip(
+                          message: s.isZh
+                              ? '隐藏逻辑线（控制连线、逻辑门、逻辑端口）'
+                              : 'Hide logic (control wires, gates, logic ports)',
+                          waitDuration: const Duration(milliseconds: 300),
+                          child: IconButton(
+                            icon: Icon(
+                              Icons.route,
+                              size: 16,
+                              color: _hideLogic
+                                  ? scheme.error
+                                  : scheme.onSurfaceVariant,
+                            ),
+                            constraints: const BoxConstraints(
+                              minWidth: 28,
+                              minHeight: 28,
+                            ),
+                            padding: EdgeInsets.zero,
+                            style: IconButton.styleFrom(
+                              backgroundColor: _hideLogic
+                                  ? scheme.error.withAlpha(40)
+                                  : null,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                            ),
+                            onPressed: () =>
+                                setState(() => _hideLogic = !_hideLogic),
+                          ),
+                        ),
+                        // 面板被隐藏后，在工具栏以图标形式恢复（用户要求：隐藏后在菜单栏
+                        // 以图标展示，点击可恢复显示）。
+                        if (_panelHidden)
+                          Tooltip(
+                            message: s.isZh
+                                ? '显示元素 / 属性面板'
+                                : 'Show elements / properties',
+                            waitDuration: const Duration(milliseconds: 300),
+                            child: IconButton(
+                              icon: Icon(
+                                Icons.widgets_outlined,
+                                size: 16,
+                                color: scheme.primary,
+                              ),
+                              constraints: const BoxConstraints(
+                                minWidth: 28,
+                                minHeight: 28,
+                              ),
+                              padding: EdgeInsets.zero,
+                              onPressed: () => setState(() {
+                                _panelHidden = false;
+                                _panelDetached = false;
+                                _panelFloatPos = null;
+                              }),
+                            ),
+                          ),
+                        // 写入格式：新版节点配置导出 .fppx 时写哪一套（旧版 JSON / 新版模块化
+                        // 二进制）。以前这个选择只在「新建配置」时做一次、之后再也改不了，
+                        // 现在画布工具栏上常驻一枚可点的格式标识。
+                        Tooltip(
+                          message: s.isZh
+                              ? '写入格式：${_writeFormat == 'v2' ? '新版 (Beta)' : '旧版'}（点击切换）'
+                              : 'Write format: ${_writeFormat == 'v2' ? 'New (Beta)' : 'Legacy'} (click to switch)',
+                          waitDuration: const Duration(milliseconds: 300),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(6),
+                            onTap: () => setState(
+                              () => _writeFormat = _writeFormat == 'v2'
+                                  ? 'legacy'
+                                  : 'v2',
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 4,
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.save_as_outlined,
+                                    size: 14,
+                                    color: _writeFormat == 'v2'
+                                        ? scheme.primary
+                                        : scheme.onSurfaceVariant,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    _writeFormat == 'v2' ? 'v2' : 'legacy',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: _writeFormat == 'v2'
+                                          ? scheme.primary
+                                          : scheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        const Spacer(),
+                        if (!Platform.isWindows) ...[
+                          IconButton(
+                            icon: Icon(
+                              Icons.file_download_outlined,
+                              size: 18,
+                              color: scheme.onSurface,
+                            ),
+                            tooltip: s.importConfig,
+                            constraints: const BoxConstraints(
+                              minWidth: 32,
+                              minHeight: 32,
+                            ),
+                            padding: EdgeInsets.zero,
+                            onPressed: () => _importConfig(s),
+                          ),
+                          IconButton(
+                            icon: Icon(
+                              Icons.file_upload_outlined,
+                              size: 18,
+                              color: scheme.onSurface,
+                            ),
+                            tooltip: s.isZh ? '导出配置' : 'Export Config',
+                            constraints: const BoxConstraints(
+                              minWidth: 32,
+                              minHeight: 32,
+                            ),
+                            padding: EdgeInsets.zero,
+                            onPressed: _nodes.isEmpty
+                                ? null
+                                : () => _exportConfig(s),
+                          ),
+                          const SizedBox(width: 4),
+                          // 保存按钮：仅软盘图标，不显示文字；配色与 Windows 顶栏同一份
+                          IconButton.filled(
+                            icon: const Icon(Icons.save_outlined, size: 18),
+                            tooltip: s.save,
+                            constraints: const BoxConstraints(
+                              minWidth: 32,
+                              minHeight: 32,
+                            ),
+                            padding: EdgeInsets.zero,
+                            style: _saveButtonStyle(scheme),
+                            onPressed: _save,
+                          ),
+                        ],
+                        if (Platform.isWindows)
+                          Text(
+                            s.isZh ? '右键添加节点' : 'Right-click to add',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: scheme.outline,
+                            ),
+                          ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const Divider(height: 1, indent: 12, endIndent: 12),
+        ],
+        if (_isLogicBoxSelecting)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            color: context.sem.danger.withAlpha(30),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline, size: 14, color: context.sem.danger),
+                const SizedBox(width: 8),
+                Text(
+                  s.isZh
+                      ? '请在画布中框选要包含的元素，然后松开鼠标'
+                      : 'Box-select elements on canvas, then release',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: context.sem.danger,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const Spacer(),
+                TextButton(
+                  onPressed: () => setState(() {
+                    _isLogicBoxSelecting = false;
+                    _pendingLogicType = null;
+                  }),
+                  child: Text(
+                    s.isZh ? '取消' : 'Cancel',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        Expanded(
+          child: ClipRRect(
+            key: _canvasKey,
+            borderRadius: const BorderRadius.only(
+              bottomLeft: Radius.circular(12),
+              bottomRight: Radius.circular(12),
+            ),
+            child: DragTarget<Object>(
+              onAcceptWithDetails: (details) {
+                // [FIX H-5] 改用画布自身的 RenderBox，避免页面级 context 引入顶栏偏移
+                final rb =
+                    _canvasKey.currentContext?.findRenderObject() as RenderBox?;
+                final local = rb == null
+                    ? details.offset
+                    : rb.globalToLocal(details.offset);
+                final canvasPos = _screenToCanvas(local);
+                final data = details.data;
+                if (data is PipelineStepType) {
+                  _addNodeAt(data, canvasPos);
+                } else if (data is LogicGateType) {
+                  _addGateAt(data, canvasPos);
+                }
+              },
+              builder: (ctx, candidateData, rejectedData) => Stack(
+                children: [
+                  focusedCanvas,
+                  if (context.read<AppState>().config.debugMode)
+                    Positioned(
+                      left: 8,
+                      bottom: 8,
+                      right: 80,
+                      child: IgnorePointer(
+                        child: Text(
+                          GraphExecutor.describeGraph(
+                            PipelineGraph(
+                              nodes: _nodes,
+                              connections: _connections,
+                              logicBlocks: _logicBlocks,
+                            ),
+                          ),
+                          // 移动端：调试(探测)状态描述不换行，单行省略；桌面端保持原样。
+                          maxLines: isMobilePlatform ? 1 : null,
+                          overflow: isMobilePlatform
+                              ? TextOverflow.ellipsis
+                              : null,
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: scheme.onSurface.withAlpha(128),
+                            height: 1.4,
                           ),
                         ),
                       ),
                     ),
-                  ),
-                ]),
+                  // 移动端：右侧浮动工具列已删除（返回 / AI / 横竖屏 / 整理 / 定位源
+                  // 等功能均已迁移到顶部浮动菜单栏与底部工具条，此处不再重复渲染，
+                  // 避免与底部/顶部控件重叠。桌面端仍保留右侧浮动控件。
+                  if (!isMobilePlatform)
+                    Positioned(
+                      right: 10,
+                      bottom: aiEnabled ? 60 : 10,
+                      child: _buildCanvasControls(scheme, s),
+                    ),
+                  // 左侧中间 ">" 按钮：展开/收起 AI 侧边面板（仅桌面端内嵌抽屉；
+                  // 移动端改为浮动按钮触发的底部弹层，见 _openAiSheet）
+                  if (aiEnabled && !isMobilePlatform)
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      bottom: 0,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          // AI 侧边抽屉（收起时宽度 0）
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            curve: Curves.easeOutCubic,
+                            // 拖出为浮动小窗 / 外置到系统窗口时抽屉让位
+                            // （同一面板不能同时出现两份）
+                            width:
+                                (_aiDrawerOpen && !_aiDetached && !_aiExternal)
+                                ? 420
+                                : 0,
+                            child:
+                                (_aiDrawerOpen && !_aiDetached && !_aiExternal)
+                                ? AiPanelView(
+                                    key: const ValueKey('ai-drawer'),
+                                    startExpanded: true,
+                                    onCollapseRequested: () {
+                                      _stashAiSession();
+                                      setState(() => _aiDrawerOpen = false);
+                                    },
+                                    // 拖出为独立系统窗口（PS 式的再往外拖一层）
+                                    onFloatOut: () =>
+                                        _openExternalPanel(DetachedPanel.ai),
+                                    // 交接会话：外置收回后抽屉会重建，靠这份消息续上对话
+                                    initialMessages: _aiSessionCache,
+                                    onApiReady: (api) => _aiPanelApi = api,
+                                    onTitleGenerated: (t) =>
+                                        setState(() => _aiSessionTitle = t),
+                                    strings: s,
+                                    existingNodes: _nodes,
+                                    existingConnections: _connections,
+                                    onApplyGraph: (nodes, connections) {
+                                      _pushUndo();
+                                      setState(() {
+                                        _nodes.clear();
+                                        _connections.clear();
+                                        _nodes.addAll(nodes);
+                                        _connections.addAll(connections);
+                                      });
+                                    },
+                                    onMergeGraph: (aiNodes, aiConns) {
+                                      _pushUndo();
+                                      setState(() {
+                                        final idRemap = <String, String>{};
+                                        for (final n in aiNodes) {
+                                          final existing = _nodes.indexWhere(
+                                            (e) =>
+                                                e.type == n.type &&
+                                                !idRemap.containsValue(e.id),
+                                          );
+                                          if (existing >= 0) {
+                                            _nodes[existing].params.addAll(
+                                              n.params,
+                                            );
+                                            idRemap[n.id] = _nodes[existing].id;
+                                          } else {
+                                            _nodes.add(n);
+                                            idRemap[n.id] = n.id;
+                                          }
+                                        }
+                                        final newConns = <PipelineConnection>[];
+                                        for (final c in aiConns) {
+                                          final fromId =
+                                              idRemap[c.fromNodeId] ??
+                                              c.fromNodeId;
+                                          final toId =
+                                              idRemap[c.toNodeId] ?? c.toNodeId;
+                                          if (!_connections.any(
+                                            (e) =>
+                                                e.fromNodeId == fromId &&
+                                                e.toNodeId == toId,
+                                          )) {
+                                            newConns.add(
+                                              PipelineConnection(
+                                                id: _uuid.v4(),
+                                                fromNodeId: fromId,
+                                                toNodeId: toId,
+                                              ),
+                                            );
+                                          }
+                                        }
+                                        // Remove old connections superseded by new path
+                                        final remappedConns = aiConns
+                                            .map(
+                                              (c) => (
+                                                from:
+                                                    idRemap[c.fromNodeId] ??
+                                                    c.fromNodeId,
+                                                to:
+                                                    idRemap[c.toNodeId] ??
+                                                    c.toNodeId,
+                                              ),
+                                            )
+                                            .toSet();
+                                        final aiNodeIds = remappedConns
+                                            .expand((c) => [c.from, c.to])
+                                            .toSet();
+                                        _connections.removeWhere((c) {
+                                          if (!aiNodeIds.contains(
+                                                c.fromNodeId,
+                                              ) ||
+                                              !aiNodeIds.contains(c.toNodeId))
+                                            return false;
+                                          if (remappedConns.any(
+                                            (r) =>
+                                                r.from == c.fromNodeId &&
+                                                r.to == c.toNodeId,
+                                          ))
+                                            return false;
+                                          // Old connection between two AI-touched nodes not in AI graph → remove
+                                          return true;
+                                        });
+                                        _connections.addAll(newConns);
+                                      });
+                                    },
+                                    onModifyNodeParams: (nodeId, params) {
+                                      // 找不到节点直接返回 false，让 AI 面板把失败回填给模型；
+                                      // 原实现用 orElse: () => _nodes.first，nodeId 打错就静默改写画布首节点
+                                      final idx = _nodes.indexWhere(
+                                        (n) => n.id == nodeId,
+                                      );
+                                      if (idx < 0) return false;
+                                      _pushUndo();
+                                      setState(() {
+                                        params.forEach((k, v) {
+                                          _nodes[idx].params[k] = v;
+                                        });
+                                      });
+                                      _commitChange();
+                                      return true;
+                                    },
+                                    onClearAll: () {
+                                      _pushUndo();
+                                      setState(() {
+                                        _nodes.clear();
+                                        _connections.clear();
+                                        _logicBlocks.clear();
+                                        _selectedNodeIds.clear();
+                                        _commitChange();
+                                      });
+                                    },
+                                    onUndo: _undo,
+                                    onRedo: _redo,
+                                    onSave: _saveGraph,
+                                    onAddNode: (type, x, y) {
+                                      final stepType = PipelineStepType.values
+                                          .firstWhere(
+                                            (t) => t.name == type,
+                                            orElse: () => throw ArgumentError(
+                                              'Unknown type: $type',
+                                            ),
+                                          );
+                                      final node = PipelineNode(
+                                        id: _uuid.v4(),
+                                        type: stepType,
+                                        x: x,
+                                        y: y,
+                                      );
+                                      _pushUndo();
+                                      setState(() => _nodes.add(node));
+                                      _commitChange();
+                                      return node.id;
+                                    },
+                                    onAddGate: (gateName, x, y) {
+                                      final gate = LogicGateType.values
+                                          .asNameMap()[gateName];
+                                      if (gate == null)
+                                        throw ArgumentError(
+                                          'Unknown gate type: $gateName',
+                                        );
+                                      final node = PipelineNode(
+                                        id: _uuid.v4(),
+                                        type: PipelineStepType.start,
+                                        x: x,
+                                        y: y,
+                                        gateType: gate.name,
+                                      );
+                                      _pushUndo();
+                                      setState(() => _nodes.add(node));
+                                      _commitChange();
+                                      return node.id;
+                                    },
+                                    onSetGateParams: (nodeId, params) {
+                                      final idx = _nodes.indexWhere(
+                                        (n) => n.id == nodeId,
+                                      );
+                                      if (idx < 0) return false;
+                                      _pushUndo();
+                                      setState(() {
+                                        params.forEach((k, v) {
+                                          _nodes[idx].params[k] = v;
+                                        });
+                                      });
+                                      _commitChange();
+                                      return true;
+                                    },
+                                    onDeleteNode: (nodeId) {
+                                      _deleteNode(nodeId);
+                                      _commitChange();
+                                    },
+                                    onConnectNodes: (fromId, toId) {
+                                      if (fromId == toId) return false;
+                                      if (!_nodes.any((n) => n.id == fromId) ||
+                                          !_nodes.any((n) => n.id == toId))
+                                        return false;
+                                      if (_connections.any(
+                                        (c) =>
+                                            c.fromNodeId == fromId &&
+                                            c.toNodeId == toId,
+                                      ))
+                                        return false;
+                                      _pushUndo();
+                                      setState(
+                                        () => _connections.add(
+                                          PipelineConnection(
+                                            id: _uuid.v4(),
+                                            fromNodeId: fromId,
+                                            toNodeId: toId,
+                                          ),
+                                        ),
+                                      );
+                                      _commitChange();
+                                      return true;
+                                    },
+                                    onDisconnectNodes: (connId) {
+                                      final idx = _connections.indexWhere(
+                                        (c) => c.id == connId,
+                                      );
+                                      if (idx < 0) return false;
+                                      _pushUndo();
+                                      setState(
+                                        () => _connections.removeAt(idx),
+                                      );
+                                      _commitChange();
+                                      return true;
+                                    },
+                                    onCancelTasks: () => context
+                                        .read<AppState>()
+                                        .cancelProcessing(),
+                                  )
+                                : const SizedBox.shrink(),
+                          ),
+                          // 展开/收起切换按钮（左侧中间）
+                          //
+                          // [UI 统一] 原先 width 18 / height 52 / radius 0，是一个直角窄条：
+                          // 与全局 8~12 圆角语言不一致，且贴边的直角在手柄这种"凸出"形态上
+                          // 观感生硬。这里统一为 20×56 + 右侧 10 圆角（左侧保持直角，因为它
+                          // 始终贴着抽屉右边缘/画布左边缘），图标尺寸走 AppControlSize 令牌，
+                          // 与编辑器内其他控件同源，不再出现 16/17/18 混用。
+                          // 拖出为浮动小窗 / 外置后，抽屉把手一并隐藏（面板已不在左边缘）
+                          if (!_aiDetached && !_aiExternal)
+                            Align(
+                              alignment: Alignment.center,
+                              child: MouseRegion(
+                                cursor: SystemMouseCursors.click,
+                                child: GestureDetector(
+                                  onTap: () {
+                                    if (_aiDrawerOpen) _stashAiSession();
+                                    setState(
+                                      () => _aiDrawerOpen = !_aiDrawerOpen,
+                                    );
+                                  },
+                                  behavior: HitTestBehavior.opaque,
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 160),
+                                    curve: Curves.easeOutCubic,
+                                    width: 20,
+                                    height: 56,
+                                    decoration: BoxDecoration(
+                                      color: scheme.surface.withAlpha(200),
+                                      borderRadius:
+                                          const BorderRadius.horizontal(
+                                            right: Radius.circular(10),
+                                          ),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withAlpha(40),
+                                          blurRadius: 6,
+                                          offset: const Offset(1, 0),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Icon(
+                                      _aiDrawerOpen
+                                          ? Icons.chevron_left
+                                          : Icons.chevron_right,
+                                      size: AppControlSize.regular.iconSize,
+                                      color: scheme.primary,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                ],
               ),
-          ]),
+            ),
+          ),
         ),
-      )),
-      ]);
+      ],
+    );
 
     return _glassWrap(inner, scheme);
   }
@@ -4707,7 +6444,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     } catch (_) {
       // 探测异常不影响渲染，避免灰屏
       if (mounted && (_probeTooltip != null || _probeTooltipPos != null)) {
-        setState(() { _probeTooltip = null; _probeTooltipPos = null; });
+        setState(() {
+          _probeTooltip = null;
+          _probeTooltipPos = null;
+        });
       }
     }
   }
@@ -4722,11 +6462,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         final g = n.gate;
         if (g == null) continue;
         // 逻辑门输出端口（右侧端口区中心）
-        final go = Offset(n.x + _portZoneW + _gateW + _portZoneW / 2, n.y + _gateH / 2);
+        final go = Offset(
+          n.x + _portZoneW + _gateW + _portZoneW / 2,
+          n.y + _gateH / 2,
+        );
         if ((canvasPos - go).distance <= hitR) {
           final outVal = _gateOutputValue(n);
           setState(() {
-            _probeTooltip = zh ? '输出: ${g.symbol(true)} = $outVal' : 'Output: ${g.symbol(false)} = $outVal';
+            _probeTooltip = zh
+                ? '输出: ${g.symbol(true)} = $outVal'
+                : 'Output: ${g.symbol(false)} = $outVal';
             _probeTooltipPos = go;
           });
           return;
@@ -4758,13 +6503,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         final dataOut = Offset(rx, dot1Y);
         if ((canvasPos - dataOut).distance <= hitR && n.hasOutput) {
           setState(() {
-            _probeTooltip = zh ? '数据输出: ${n.outputType?.name ?? '?'}' : 'Data out: ${n.outputType?.name ?? '?'}';
+            _probeTooltip = zh
+                ? '数据输出: ${n.outputType?.name ?? '?'}'
+                : 'Data out: ${n.outputType?.name ?? '?'}';
             _probeTooltipPos = dataOut;
           });
           return;
         }
         final statusOut = Offset(rx, dot2Y);
-        if ((canvasPos - statusOut).distance <= hitR && n.type != PipelineStepType.start) {
+        if ((canvasPos - statusOut).distance <= hitR &&
+            n.type != PipelineStepType.start) {
           setState(() {
             _probeTooltip = zh ? '状态输出: 1 (成功)' : 'Status out: 1 (success)';
             _probeTooltipPos = statusOut;
@@ -4775,13 +6523,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         final dataIn = Offset(lx, dot1Y);
         if ((canvasPos - dataIn).distance <= hitR && n.hasInput) {
           setState(() {
-            _probeTooltip = zh ? '数据输入: ${n.inputTypes.isNotEmpty ? n.inputTypes.first.name : '?'}' : 'Data in: ${n.inputTypes.isNotEmpty ? n.inputTypes.first.name : '?'}';
+            _probeTooltip = zh
+                ? '数据输入: ${n.inputTypes.isNotEmpty ? n.inputTypes.first.name : '?'}'
+                : 'Data in: ${n.inputTypes.isNotEmpty ? n.inputTypes.first.name : '?'}';
             _probeTooltipPos = dataIn;
           });
           return;
         }
         final enableIn = Offset(lx, dot2Y);
-        if ((canvasPos - enableIn).distance <= hitR && n.type != PipelineStepType.start) {
+        if ((canvasPos - enableIn).distance <= hitR &&
+            n.type != PipelineStepType.start) {
           setState(() {
             _probeTooltip = zh ? '使能输入: 1 (悬空默认)' : 'Enable in: 1 (default)';
             _probeTooltipPos = enableIn;
@@ -4792,15 +6543,22 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     }
     // 没有悬停在端口上
     if (_probeTooltip != null || _probeTooltipPos != null) {
-      setState(() { _probeTooltip = null; _probeTooltipPos = null; });
+      setState(() {
+        _probeTooltip = null;
+        _probeTooltipPos = null;
+      });
     }
   }
 
   /// 计算逻辑门输入信号值（带防环）
   String _gateInputValue(PipelineNode n, int index) {
-    final conns = _connections.where((c) => c.toNodeId == n.id && c.kind == 'control').toList();
+    final conns = _connections
+        .where((c) => c.toNodeId == n.id && c.kind == 'control')
+        .toList();
     if (index < conns.length) {
-      final src = _nodes.where((s) => s.id == conns[index].fromNodeId).firstOrNull;
+      final src = _nodes
+          .where((s) => s.id == conns[index].fromNodeId)
+          .firstOrNull;
       if (src != null && src.isGate) {
         return _gateOutputValue(src, <String>{n.id});
       }
@@ -4820,7 +6578,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       if (g.isConstant) {
         return g == LogicGateType.const1 ? '1' : '0';
       }
-      final inputs = _connections.where((c) => c.toNodeId == n.id && c.kind == 'control').toList();
+      final inputs = _connections
+          .where((c) => c.toNodeId == n.id && c.kind == 'control')
+          .toList();
       final values = inputs.map((c) {
         final src = _nodes.where((s) => s.id == c.fromNodeId).firstOrNull;
         if (src != null && src.isGate) {
@@ -4833,15 +6593,24 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       final all1 = values.every((x) => x == 1);
       final any1 = values.any((x) => x == 1);
       switch (g) {
-        case LogicGateType.and: return all1 ? '1' : '0';
-        case LogicGateType.or: return any1 ? '1' : '0';
-        case LogicGateType.nand: return all1 ? '0' : '1';
-        case LogicGateType.nor: return any1 ? '0' : '1';
-        case LogicGateType.not: return values.first == 1 ? '0' : '1';
-        case LogicGateType.xor: return values.where((x) => x == 1).length % 2 == 1 ? '1' : '0';
-        case LogicGateType.xnor: return values.where((x) => x == 1).length % 2 == 1 ? '0' : '1';
-        case LogicGateType.timeTrigger: return _timeTriggerValue(n);
-        default: return '?';
+        case LogicGateType.and:
+          return all1 ? '1' : '0';
+        case LogicGateType.or:
+          return any1 ? '1' : '0';
+        case LogicGateType.nand:
+          return all1 ? '0' : '1';
+        case LogicGateType.nor:
+          return any1 ? '0' : '1';
+        case LogicGateType.not:
+          return values.first == 1 ? '0' : '1';
+        case LogicGateType.xor:
+          return values.where((x) => x == 1).length % 2 == 1 ? '1' : '0';
+        case LogicGateType.xnor:
+          return values.where((x) => x == 1).length % 2 == 1 ? '0' : '1';
+        case LogicGateType.timeTrigger:
+          return _timeTriggerValue(n);
+        default:
+          return '?';
       }
     } finally {
       v.remove(n.id);
@@ -4854,7 +6623,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final now = DateTime.now();
     final dateStr = (n.params['tt_date'] as String?) ?? '';
     if (dateStr.isNotEmpty) {
-      final today = '${now.year.toString().padLeft(4, '0')}-'
+      final today =
+          '${now.year.toString().padLeft(4, '0')}-'
           '${now.month.toString().padLeft(2, '0')}-'
           '${now.day.toString().padLeft(2, '0')}';
       if (today != dateStr) return '0';
@@ -4887,7 +6657,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final iec = context.read<AppState>().config.gateStd == 'iec';
     final zh = isZh;
 
-    final (String name, String desc, List<List<String>> truthTable) = switch (gate) {
+    final (
+      String name,
+      String desc,
+      List<List<String>> truthTable,
+    ) = switch (gate) {
       LogicGateType.and => (
         zh ? '与门 (AND)' : 'AND Gate',
         zh ? '所有输入为 1 时输出 1，否则输出 0' : 'Outputs 1 only when ALL inputs are 1',
@@ -4921,7 +6695,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       ),
       LogicGateType.nand => (
         zh ? '与非门 (NAND)' : 'NAND Gate',
-        zh ? '与门的取反：所有输入为 1 时输出 0，否则输出 1' : 'AND then inverted: outputs 0 only when ALL inputs are 1',
+        zh
+            ? '与门的取反：所有输入为 1 时输出 0，否则输出 1'
+            : 'AND then inverted: outputs 0 only when ALL inputs are 1',
         [
           [zh ? '输入' : 'IN', zh ? '输出' : 'OUT'],
           ['0 · 0', '1'],
@@ -4932,7 +6708,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       ),
       LogicGateType.nor => (
         zh ? '或非门 (NOR)' : 'NOR Gate',
-        zh ? '或门的取反：任一输入为 1 时输出 0，否则输出 1' : 'OR then inverted: outputs 0 when ANY input is 1',
+        zh
+            ? '或门的取反：任一输入为 1 时输出 0，否则输出 1'
+            : 'OR then inverted: outputs 0 when ANY input is 1',
         [
           [zh ? '输入' : 'IN', zh ? '输出' : 'OUT'],
           ['0 · 0', '1'],
@@ -4943,7 +6721,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       ),
       LogicGateType.xor => (
         zh ? '异或门 (XOR)' : 'XOR Gate',
-        zh ? '输入不同时输出 1，相同时输出 0' : 'Outputs 1 when inputs differ, 0 when they match',
+        zh
+            ? '输入不同时输出 1，相同时输出 0'
+            : 'Outputs 1 when inputs differ, 0 when they match',
         [
           [zh ? '输入' : 'IN', zh ? '输出' : 'OUT'],
           ['0 · 0', '0'],
@@ -4954,7 +6734,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       ),
       LogicGateType.xnor => (
         zh ? '同或门 (XNOR)' : 'XNOR Gate',
-        zh ? '输入相同时输出 1，不同时输出 0' : 'Outputs 1 when inputs match, 0 when they differ',
+        zh
+            ? '输入相同时输出 1，不同时输出 0'
+            : 'Outputs 1 when inputs match, 0 when they differ',
         [
           [zh ? '输入' : 'IN', zh ? '输出' : 'OUT'],
           ['0 · 0', '1'],
@@ -4994,61 +6776,115 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // 标题 + 符号
-        Row(children: [
-          Container(
-            width: 44, height: 44,
-            decoration: BoxDecoration(
-              color: scheme.tertiaryContainer.withAlpha(160),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: scheme.tertiary.withAlpha(100)),
-            ),
-            child: _gateIcon(gate, iec, scheme, width: 44, height: 44),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 标题 + 符号
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: scheme.tertiaryContainer.withAlpha(160),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: scheme.tertiary.withAlpha(100)),
+                ),
+                child: _gateIcon(gate, iec, scheme, width: 44, height: 44),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: scheme.onSurface,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      desc,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: scheme.outline,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 10),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(name, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-            const SizedBox(height: 2),
-            Text(desc, style: TextStyle(fontSize: 11, color: scheme.outline, height: 1.4)),
-          ])),
-        ]),
-        const SizedBox(height: 14),
-        const Divider(height: 1),
-        const SizedBox(height: 12),
-
-        // 端口信息
-        _infoRow(scheme, Icons.login, zh ? '输入端口' : 'Inputs',
-            gate.isConstant
-                ? (zh ? '无（恒值输出）' : 'None (constant output)')
-                : '${gate.inputCount} × ${zh ? '红色逻辑端口' : 'red logic port'}'),
-        const SizedBox(height: 8),
-        _infoRow(scheme, Icons.logout, zh ? '输出端口' : 'Output',
-            zh ? '1 × 右侧红色逻辑端口' : '1 × red logic port on the right'),
-
-        // 真值表
-        if (truthTable.length > 1) ...[
           const SizedBox(height: 14),
           const Divider(height: 1),
-          const SizedBox(height: 10),
-          Text(zh ? '真值表' : 'Truth Table',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+          const SizedBox(height: 12),
+
+          // 端口信息
+          _infoRow(
+            scheme,
+            Icons.login,
+            zh ? '输入端口' : 'Inputs',
+            gate.isConstant
+                ? (zh ? '无（恒值输出）' : 'None (constant output)')
+                : '${gate.inputCount} × ${zh ? '红色逻辑端口' : 'red logic port'}',
+          ),
           const SizedBox(height: 8),
-          Center(child: _truthTable(scheme, truthTable)),
+          _infoRow(
+            scheme,
+            Icons.logout,
+            zh ? '输出端口' : 'Output',
+            zh ? '1 × 右侧红色逻辑端口' : '1 × red logic port on the right',
+          ),
+
+          // 真值表
+          if (truthTable.length > 1) ...[
+            const SizedBox(height: 14),
+            const Divider(height: 1),
+            const SizedBox(height: 10),
+            Text(
+              zh ? '真值表' : 'Truth Table',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: scheme.onSurface,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Center(child: _truthTable(scheme, truthTable)),
+          ],
         ],
-      ]),
+      ),
     );
   }
 
-  Widget _infoRow(ColorScheme scheme, IconData icon, String label, String value) {
-    return Row(children: [
-      Icon(icon, size: 14, color: scheme.primary),
-      const SizedBox(width: 6),
-      Text(label, style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
-      const Spacer(),
-      Flexible(child: Text(value, textAlign: TextAlign.right,
-          style: TextStyle(fontSize: 12, color: scheme.onSurface))),
-    ]);
+  Widget _infoRow(
+    ColorScheme scheme,
+    IconData icon,
+    String label,
+    String value,
+  ) {
+    return Row(
+      children: [
+        Icon(icon, size: 14, color: scheme.primary),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+        ),
+        const Spacer(),
+        Flexible(
+          child: Text(
+            value,
+            textAlign: TextAlign.right,
+            style: TextStyle(fontSize: 12, color: scheme.onSurface),
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _truthTable(ColorScheme scheme, List<List<String>> rows) {
@@ -5062,23 +6898,40 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       child: Table(
         columnWidths: const {0: FlexColumnWidth(), 1: FlexColumnWidth()},
         defaultVerticalAlignment: TableCellVerticalAlignment.middle,
-        border: TableBorder.all(color: scheme.outlineVariant.withAlpha(80), width: 0.8),
+        border: TableBorder.all(
+          color: scheme.outlineVariant.withAlpha(80),
+          width: 0.8,
+        ),
         children: [
           for (var i = 0; i < rows.length; i++)
             TableRow(
               decoration: BoxDecoration(
                 color: i == 0 ? scheme.primaryContainer.withAlpha(120) : null,
               ),
-              children: rows[i].map((cell) => Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                child: Text(cell, textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: i == 0 ? scheme.onPrimaryContainer : scheme.onSurface,
-                      fontWeight: i == 0 ? FontWeight.w700 : FontWeight.w400,
-                      fontFamily: AppTheme.monoFont,
-                    )),
-              )).toList(),
+              children: rows[i]
+                  .map(
+                    (cell) => Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 5,
+                      ),
+                      child: Text(
+                        cell,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: i == 0
+                              ? scheme.onPrimaryContainer
+                              : scheme.onSurface,
+                          fontWeight: i == 0
+                              ? FontWeight.w700
+                              : FontWeight.w400,
+                          fontFamily: AppTheme.monoFont,
+                        ),
+                      ),
+                    ),
+                  )
+                  .toList(),
             ),
         ],
       ),
@@ -5121,17 +6974,23 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final startStr = (node.params['tt_start'] as String?) ?? '09:00';
     final endStr = (node.params['tt_end'] as String?) ?? '';
     final startHM = _parseHM(startStr);
-    var startTime = startHM >= 0 ? TimeOfDay(hour: startHM ~/ 60, minute: startHM % 60) : const TimeOfDay(hour: 9, minute: 0);
+    var startTime = startHM >= 0
+        ? TimeOfDay(hour: startHM ~/ 60, minute: startHM % 60)
+        : const TimeOfDay(hour: 9, minute: 0);
     final endHM = _parseHM(endStr);
-    var endTime = endHM >= 0 ? TimeOfDay(hour: endHM ~/ 60, minute: endHM % 60) : null;
+    var endTime = endHM >= 0
+        ? TimeOfDay(hour: endHM ~/ 60, minute: endHM % 60)
+        : null;
 
     void doSave() {
       _pushUndo();
       setState(() {
         node.params['tt_date'] = dateStr;
-        node.params['tt_start'] = '${startTime.hour.toString().padLeft(2, '0')}:${startTime.minute.toString().padLeft(2, '0')}';
+        node.params['tt_start'] =
+            '${startTime.hour.toString().padLeft(2, '0')}:${startTime.minute.toString().padLeft(2, '0')}';
         if (endTime != null) {
-          node.params['tt_end'] = '${endTime!.hour.toString().padLeft(2, '0')}:${endTime!.minute.toString().padLeft(2, '0')}';
+          node.params['tt_end'] =
+              '${endTime!.hour.toString().padLeft(2, '0')}:${endTime!.minute.toString().padLeft(2, '0')}';
         } else {
           node.params.remove('tt_end');
         }
@@ -5142,188 +7001,332 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     return StatefulBuilder(
       builder: (ctx, setDlg) => SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          // 日期卡片
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: scheme.primaryContainer.withAlpha(50),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: scheme.primary.withAlpha(60)),
-            ),
-            child: Row(children: [
-              Icon(Icons.calendar_today_outlined, size: 18, color: scheme.primary),
-              const SizedBox(width: 10),
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(isZh ? '日期' : 'Date', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-                const SizedBox(height: 2),
-                GestureDetector(
-                  onTap: () async {
-                    final picked = await showDatePicker(
-                      context: ctx,
-                      initialDate: _parseDate(dateStr) ?? now,
-                      firstDate: DateTime(now.year - 1),
-                      lastDate: DateTime(now.year + 2),
-                    );
-                    if (picked != null) {
-                      setDlg(() => dateStr = '${picked.year.toString().padLeft(4, '0')}-'
-                          '${picked.month.toString().padLeft(2, '0')}-'
-                          '${picked.day.toString().padLeft(2, '0')}');
-                      doSave();
-                    }
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: scheme.surface.withAlpha(160),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      dateStr.isEmpty ? (isZh ? '每天（不限日期）' : 'Every day (no date)') : dateStr,
-                      style: TextStyle(fontSize: 12, color: dateStr.isEmpty ? scheme.outline : scheme.primary),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 日期卡片
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: scheme.primaryContainer.withAlpha(50),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: scheme.primary.withAlpha(60)),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.calendar_today_outlined,
+                    size: 18,
+                    color: scheme.primary,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          isZh ? '日期' : 'Date',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: scheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        GestureDetector(
+                          onTap: () async {
+                            final picked = await showDatePicker(
+                              context: ctx,
+                              initialDate: _parseDate(dateStr) ?? now,
+                              firstDate: DateTime(now.year - 1),
+                              lastDate: DateTime(now.year + 2),
+                            );
+                            if (picked != null) {
+                              setDlg(
+                                () => dateStr =
+                                    '${picked.year.toString().padLeft(4, '0')}-'
+                                    '${picked.month.toString().padLeft(2, '0')}-'
+                                    '${picked.day.toString().padLeft(2, '0')}',
+                              );
+                              doSave();
+                            }
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: scheme.surface.withAlpha(160),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              dateStr.isEmpty
+                                  ? (isZh ? '每天（不限日期）' : 'Every day (no date)')
+                                  : dateStr,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: dateStr.isEmpty
+                                    ? scheme.outline
+                                    : scheme.primary,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ),
-              ])),
-              if (dateStr.isNotEmpty)
-                IconButton(
-                  icon: const Icon(Icons.close, size: 16),
-                  visualDensity: VisualDensity.compact,
-                  onPressed: () { setDlg(() => dateStr = ''); doSave(); },
-                  tooltip: isZh ? '清除日期' : 'Clear',
-                ),
-            ]),
-          ),
-          const SizedBox(height: 10),
-
-          // 起始时间卡片
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: scheme.secondaryContainer.withAlpha(50),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: scheme.secondary.withAlpha(60)),
-            ),
-            child: Row(children: [
-              Icon(Icons.play_arrow, size: 18, color: scheme.secondary),
-              const SizedBox(width: 10),
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(isZh ? '起始时间' : 'Start Time', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-                const SizedBox(height: 2),
-                GestureDetector(
-                  onTap: () async {
-                    final t = await showTimePicker(context: ctx, initialTime: startTime, initialEntryMode: TimePickerEntryMode.input);
-                    if (t != null) { setDlg(() => startTime = t); doSave(); }
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: scheme.surface.withAlpha(160),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      const Icon(Icons.schedule, size: 14),
-                      const SizedBox(width: 4),
-                      Text('${startTime.hour.toString().padLeft(2, '0')}:${startTime.minute.toString().padLeft(2, '0')}',
-                          style: const TextStyle(fontSize: 13)),
-                    ]),
-                  ),
-                ),
-              ])),
-            ]),
-          ),
-          const SizedBox(height: 10),
-
-          // 结束时间卡片
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: endTime != null ? scheme.tertiaryContainer.withAlpha(50) : scheme.surfaceContainerHighest.withAlpha(30),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: endTime != null ? scheme.tertiary.withAlpha(60) : scheme.outlineVariant.withAlpha(60)),
-            ),
-            child: Row(children: [
-              Icon(Icons.stop, size: 18, color: endTime != null ? scheme.tertiary : scheme.outline),
-              const SizedBox(width: 10),
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(isZh ? '结束时间' : 'End Time', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-                const SizedBox(height: 2),
-                if (endTime == null)
-                  GestureDetector(
-                    onTap: () { setDlg(() => endTime = TimeOfDay(hour: startTime.hour, minute: (startTime.minute + 1) % 60)); doSave(); },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: scheme.surface.withAlpha(160),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(isZh ? '精确时刻（无结束时间）' : 'Exact moment (no end)',
-                          style: TextStyle(fontSize: 11, color: scheme.outline)),
-                    ),
-                  )
-                else
-                  Row(children: [
-                    GestureDetector(
-                      onTap: () async {
-                        final t = await showTimePicker(context: ctx, initialTime: endTime!, initialEntryMode: TimePickerEntryMode.input);
-                        if (t != null) { setDlg(() => endTime = t); doSave(); }
+                  if (dateStr.isNotEmpty)
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 16),
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () {
+                        setDlg(() => dateStr = '');
+                        doSave();
                       },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: scheme.surface.withAlpha(160),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Row(mainAxisSize: MainAxisSize.min, children: [
-                          const Icon(Icons.schedule, size: 14),
-                          const SizedBox(width: 4),
-                          Text('${endTime!.hour.toString().padLeft(2, '0')}:${endTime!.minute.toString().padLeft(2, '0')}',
-                              style: const TextStyle(fontSize: 13)),
-                        ]),
-                      ),
+                      tooltip: isZh ? '清除日期' : 'Clear',
                     ),
-                    const SizedBox(width: 6),
-                    GestureDetector(
-                      onTap: () { setDlg(() => endTime = null); doSave(); },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: scheme.error.withAlpha(30),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Icon(Icons.close, size: 14, color: scheme.error),
-                      ),
-                    ),
-                  ]),
-              ])),
-            ]),
-          ),
-          const SizedBox(height: 12),
-
-          // 说明
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: scheme.surfaceContainerHighest.withAlpha(60),
-              borderRadius: BorderRadius.circular(8),
+                ],
+              ),
             ),
-            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Icon(Icons.info_outline, size: 14, color: scheme.primary),
-              const SizedBox(width: 8),
-              Expanded(child: Text(
-                isZh ? '当系统时间匹配日期和起始时间范围时，输出 1（控制信号高电平），否则输出 0。'
-                    '无结束时间时，仅在起始时精确时刻输出 1。'
-                  : 'Outputs 1 (control signal HIGH) when system time matches the date and time range. '
-                    'Without end time, outputs 1 at the exact start time.',
-                style: TextStyle(fontSize: 11, color: scheme.outline, height: 1.4),
-              )),
-            ]),
-          ),
-        ]),
+            const SizedBox(height: 10),
+
+            // 起始时间卡片
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: scheme.secondaryContainer.withAlpha(50),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: scheme.secondary.withAlpha(60)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.play_arrow, size: 18, color: scheme.secondary),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          isZh ? '起始时间' : 'Start Time',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: scheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        GestureDetector(
+                          onTap: () async {
+                            final t = await showTimePicker(
+                              context: ctx,
+                              initialTime: startTime,
+                              initialEntryMode: TimePickerEntryMode.input,
+                            );
+                            if (t != null) {
+                              setDlg(() => startTime = t);
+                              doSave();
+                            }
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: scheme.surface.withAlpha(160),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.schedule, size: 14),
+                                const SizedBox(width: 4),
+                                Text(
+                                  '${startTime.hour.toString().padLeft(2, '0')}:${startTime.minute.toString().padLeft(2, '0')}',
+                                  style: const TextStyle(fontSize: 13),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            // 结束时间卡片
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: endTime != null
+                    ? scheme.tertiaryContainer.withAlpha(50)
+                    : scheme.surfaceContainerHighest.withAlpha(30),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: endTime != null
+                      ? scheme.tertiary.withAlpha(60)
+                      : scheme.outlineVariant.withAlpha(60),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.stop,
+                    size: 18,
+                    color: endTime != null ? scheme.tertiary : scheme.outline,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          isZh ? '结束时间' : 'End Time',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: scheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        if (endTime == null)
+                          GestureDetector(
+                            onTap: () {
+                              setDlg(
+                                () => endTime = TimeOfDay(
+                                  hour: startTime.hour,
+                                  minute: (startTime.minute + 1) % 60,
+                                ),
+                              );
+                              doSave();
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: scheme.surface.withAlpha(160),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                isZh ? '精确时刻（无结束时间）' : 'Exact moment (no end)',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: scheme.outline,
+                                ),
+                              ),
+                            ),
+                          )
+                        else
+                          Row(
+                            children: [
+                              GestureDetector(
+                                onTap: () async {
+                                  final t = await showTimePicker(
+                                    context: ctx,
+                                    initialTime: endTime!,
+                                    initialEntryMode: TimePickerEntryMode.input,
+                                  );
+                                  if (t != null) {
+                                    setDlg(() => endTime = t);
+                                    doSave();
+                                  }
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: scheme.surface.withAlpha(160),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Icon(Icons.schedule, size: 14),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        '${endTime!.hour.toString().padLeft(2, '0')}:${endTime!.minute.toString().padLeft(2, '0')}',
+                                        style: const TextStyle(fontSize: 13),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              GestureDetector(
+                                onTap: () {
+                                  setDlg(() => endTime = null);
+                                  doSave();
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: scheme.error.withAlpha(30),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Icon(
+                                    Icons.close,
+                                    size: 14,
+                                    color: scheme.error,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // 说明
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHighest.withAlpha(60),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.info_outline, size: 14, color: scheme.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      isZh
+                          ? '当系统时间匹配日期和起始时间范围时，输出 1（控制信号高电平），否则输出 0。'
+                                '无结束时间时，仅在起始时精确时刻输出 1。'
+                          : 'Outputs 1 (control signal HIGH) when system time matches the date and time range. '
+                                'Without end time, outputs 1 at the exact start time.',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: scheme.outline,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -5333,18 +7336,27 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// 右侧上方=数据输出，右侧下方=状态输出（红）
   Offset _dragLineStart() {
     if (_dragFromNodeId == null) return Offset.zero;
-    final node = _nodes.firstWhere((n) => n.id == _dragFromNodeId, orElse: () => PipelineNode(id: '', type: PipelineStepType.start));
+    final node = _nodes.firstWhere(
+      (n) => n.id == _dragFromNodeId,
+      orElse: () => PipelineNode(id: '', type: PipelineStepType.start),
+    );
 
     // 逻辑门节点
     if (node.isGate) {
       final g = node.gate;
       final inputCount = g?.inputCount ?? 0;
       if (_dragPort == 'gateOut') {
-        return Offset(node.x + _portZoneW + _gateW + _portZoneW / 2, node.y + _gateH / 2);
+        return Offset(
+          node.x + _portZoneW + _gateW + _portZoneW / 2,
+          node.y + _gateH / 2,
+        );
       }
       // gateIn：第一个输入圆圈位置（spaceEvenly）
       if (inputCount > 0) {
-        return Offset(node.x + _portZoneW / 2, node.y + _gateH / (inputCount + 1));
+        return Offset(
+          node.x + _portZoneW / 2,
+          node.y + _gateH / (inputCount + 1),
+        );
       }
       return Offset(node.x + _portZoneW / 2, node.y + _gateH / 2);
     }
@@ -5353,8 +7365,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final colTop = node.y + (_nodeH - 38) / 2;
     const dotR = 8.0;
     const gap = 6.0;
-    final dot1Y = colTop + dotR;              // 上方圆点（数据）
-    final dot2Y = colTop + 16 + gap + dotR;   // 下方圆点（控制）
+    final dot1Y = colTop + dotR; // 上方圆点（数据）
+    final dot2Y = colTop + 16 + gap + dotR; // 下方圆点（控制）
     switch (_dragPort) {
       case 'dataOut':
         return Offset(node.x + 16 + _nodeWFor(node.type) + 8, dot1Y);
@@ -5369,14 +7381,20 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     }
   }
 
-  void _onPortDragEnd() {    if (_dragFromNodeId != null && _dragLineEnd != null) {
+  void _onPortDragEnd() {
+    if (_dragFromNodeId != null && _dragLineEnd != null) {
       final target = _findNodeAtCanvasPos(_dragLineEnd!);
       if (target != null && target.id != _dragFromNodeId) {
         // [FIX M-20] 命中目标端口，由「源端口类型 + 目标端口类型」共同决定连线 kind，
         // 不再仅按源端口类型用整节点包围盒判定；无法命中任何端口则取消建连。
         final tgtPort = _hitPortOnNode(target, _dragLineEnd!);
         if (tgtPort != null) {
-          final resolved = _resolveConnectionKind(_dragPort, tgtPort, _dragFromNodeId!, target.id);
+          final resolved = _resolveConnectionKind(
+            _dragPort,
+            tgtPort,
+            _dragFromNodeId!,
+            target.id,
+          );
           if (resolved != null) {
             _addConnection(resolved.$1, resolved.$2, resolved.$3);
           }
@@ -5395,31 +7413,62 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final candidates = <(String, Offset)>[];
     if (node.isGate) {
       if (node.hasGateOutput) {
-        candidates.add(('gateOut', _hitPortPos(node, isOutput: true, isControl: true)));
+        candidates.add((
+          'gateOut',
+          _hitPortPos(node, isOutput: true, isControl: true),
+        ));
       }
       if (node.hasGateInput) {
         final inputCount = node.gate?.inputCount ?? 0;
         if (inputCount <= 0) {
-          candidates.add(('gateIn', _hitPortPos(node, isOutput: false, isControl: true)));
+          candidates.add((
+            'gateIn',
+            _hitPortPos(node, isOutput: false, isControl: true),
+          ));
         } else {
           for (var i = 0; i < inputCount; i++) {
-            candidates.add(('gateIn', _hitPortPos(node, isOutput: false, isControl: true, gateInputIndex: i)));
+            candidates.add((
+              'gateIn',
+              _hitPortPos(
+                node,
+                isOutput: false,
+                isControl: true,
+                gateInputIndex: i,
+              ),
+            ));
           }
         }
       }
     } else {
-      if (node.hasOutput) candidates.add(('dataOut', _hitPortPos(node, isOutput: true, isControl: false)));
-      if (node.hasInput) candidates.add(('dataIn', _hitPortPos(node, isOutput: false, isControl: false)));
+      if (node.hasOutput)
+        candidates.add((
+          'dataOut',
+          _hitPortPos(node, isOutput: true, isControl: false),
+        ));
+      if (node.hasInput)
+        candidates.add((
+          'dataIn',
+          _hitPortPos(node, isOutput: false, isControl: false),
+        ));
       if (node.type != PipelineStepType.start) {
-        candidates.add(('statusOut', _hitPortPos(node, isOutput: true, isControl: true)));
-        candidates.add(('enableIn', _hitPortPos(node, isOutput: false, isControl: true)));
+        candidates.add((
+          'statusOut',
+          _hitPortPos(node, isOutput: true, isControl: true),
+        ));
+        candidates.add((
+          'enableIn',
+          _hitPortPos(node, isOutput: false, isControl: true),
+        ));
       }
     }
     var best = '';
     var bestDist = double.infinity;
     for (final c in candidates) {
       final d = (c.$2 - pos).distance;
-      if (d < bestDist) { bestDist = d; best = c.$1; }
+      if (d < bestDist) {
+        bestDist = d;
+        best = c.$1;
+      }
     }
     const portThreshold = 14.0;
     return bestDist <= portThreshold ? best : null;
@@ -5427,15 +7476,22 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   /// [FIX M-20] 由源端口与目标端口类型共同决定连线方向与 kind，复用 _addConnection 的建连校验语义。
   /// 仅「控制输出→控制输入」「数据输出→数据输入」合法；其余组合（如状态端口→数据输入）返回 null 取消建连。
-  (String, String, String)? _resolveConnectionKind(String srcPort, String tgtPort, String srcId, String tgtId) {
+  (String, String, String)? _resolveConnectionKind(
+    String srcPort,
+    String tgtPort,
+    String srcId,
+    String tgtId,
+  ) {
     final isControlOut = srcPort == 'statusOut' || srcPort == 'gateOut';
     final isControlIn = srcPort == 'enableIn' || srcPort == 'gateIn';
     final tgtControlOut = tgtPort == 'statusOut' || tgtPort == 'gateOut';
     final tgtControlIn = tgtPort == 'enableIn' || tgtPort == 'gateIn';
     if (isControlOut && tgtControlIn) return (srcId, tgtId, 'control');
     if (isControlIn && tgtControlOut) return (tgtId, srcId, 'control');
-    if (srcPort == 'dataOut' && tgtPort == 'dataIn') return (srcId, tgtId, 'data');
-    if (srcPort == 'dataIn' && tgtPort == 'dataOut') return (tgtId, srcId, 'data');
+    if (srcPort == 'dataOut' && tgtPort == 'dataIn')
+      return (srcId, tgtId, 'data');
+    if (srcPort == 'dataIn' && tgtPort == 'dataOut')
+      return (tgtId, srcId, 'data');
     return null;
   }
 
@@ -5451,8 +7507,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       if (_hideLogic && isControl) return const SizedBox(width: 16, height: 16);
       final hasPort = isControl
           ? (isOutput
-              ? node.type != PipelineStepType.start // 状态输出：非起始节点
-              : node.type != PipelineStepType.start) // 使能输入：非起始节点
+                ? node.type !=
+                      PipelineStepType
+                          .start // 状态输出：非起始节点
+                : node.type != PipelineStepType.start) // 使能输入：非起始节点
           : (isOutput ? node.hasOutput : node.hasInput);
       final portKind = isControl
           ? (isOutput ? 'statusOut' : 'enableIn')
@@ -5462,17 +7520,24 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           : (isOutput ? scheme.primary : scheme.secondary);
       return GestureDetector(
         onPanStart: hasPort ? (_) => _onPortDragStart(node.id, portKind) : null,
-        onPanUpdate: hasPort ? (d) => _onPortDragUpdate(d.globalPosition) : null,
+        onPanUpdate: hasPort
+            ? (d) => _onPortDragUpdate(d.globalPosition)
+            : null,
         onPanEnd: hasPort ? (_) => _onPortDragEnd() : null,
         child: MouseRegion(
           cursor: hasPort ? SystemMouseCursors.click : SystemMouseCursors.basic,
           child: Container(
-            width: 16, height: 16,
+            width: 16,
+            height: 16,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: hasPort ? portColor : Colors.transparent,
-              border: hasPort ? Border.all(color: scheme.surface, width: 2) : null,
-              boxShadow: hasPort && isControl ? [BoxShadow(color: portColor.withAlpha(60), blurRadius: 4)] : null,
+              border: hasPort
+                  ? Border.all(color: scheme.surface, width: 2)
+                  : null,
+              boxShadow: hasPort && isControl
+                  ? [BoxShadow(color: portColor.withAlpha(60), blurRadius: 4)]
+                  : null,
             ),
           ),
         ),
@@ -5486,7 +7551,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       children: [
         portCircle(false, false), // 数据输入
         const SizedBox(height: 6),
-        portCircle(false, true),  // 使能输入（红）
+        portCircle(false, true), // 使能输入（红）
       ],
     );
 
@@ -5495,27 +7560,34 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       mainAxisSize: MainAxisSize.min,
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        portCircle(true, false),  // 数据输出
+        portCircle(true, false), // 数据输出
         const SizedBox(height: 6),
-        portCircle(true, true),   // 状态输出（红）
+        portCircle(true, true), // 状态输出（红）
       ],
     );
 
     // 源节点特殊处理：左侧无端口（无数据输入、无使能输入）
     if (node.type == PipelineStepType.start) {
-      leftPorts = Column(mainAxisSize: MainAxisSize.min, children: [
-        portCircle(false, false), // 数据输入（隐藏）
-        const SizedBox(height: 6),
-        portCircle(false, true),  // 使能输入（隐藏）
-      ]);
+      leftPorts = Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          portCircle(false, false), // 数据输入（隐藏）
+          const SizedBox(height: 6),
+          portCircle(false, true), // 使能输入（隐藏）
+        ],
+      );
     }
     // 输出节点特殊处理：右侧无端口（无数据输出），但有状态输出
     if (node.type == PipelineStepType.output) {
-      rightPorts = Column(mainAxisSize: MainAxisSize.min, mainAxisAlignment: MainAxisAlignment.center, children: [
-        portCircle(true, false),  // 数据输出（隐藏）
-        const SizedBox(height: 6),
-        portCircle(true, true),   // 状态输出（红）
-      ]);
+      rightPorts = Column(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          portCircle(true, false), // 数据输出（隐藏）
+          const SizedBox(height: 6),
+          portCircle(true, true), // 状态输出（红）
+        ],
+      );
     }
 
     Widget centerZone() {
@@ -5532,7 +7604,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
               if (_isCtrlPressed()) {
                 if (_selectedNodeIds.contains(node.id)) {
                   _selectedNodeIds.remove(node.id);
-                  _lastSelectedId = _selectedNodeIds.isEmpty ? null : _selectedNodeIds.last;
+                  _lastSelectedId = _selectedNodeIds.isEmpty
+                      ? null
+                      : _selectedNodeIds.last;
                 } else {
                   _selectedNodeIds.add(node.id);
                   _lastSelectedId = node.id;
@@ -5555,13 +7629,25 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             width: _nodeWFor(node.type),
             height: _nodeH,
             decoration: BoxDecoration(
-              color: _nodeColor(node.type, scheme, customColor: node.params['node_color'] as int?),
+              color: _nodeColor(
+                node.type,
+                scheme,
+                customColor: node.params['node_color'] as int?,
+              ),
               borderRadius: BorderRadius.circular(10),
               border: Border.all(
-                color: selected ? scheme.primary : scheme.outlineVariant.withAlpha(100),
+                color: selected
+                    ? scheme.primary
+                    : scheme.outlineVariant.withAlpha(100),
                 width: selected ? 2 : 1,
               ),
-              boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(30), blurRadius: 6, offset: const Offset(0, 2))],
+              boxShadow: [
+                BoxShadow(
+                  color: scheme.shadow.withAlpha(30),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
+                ),
+              ],
             ),
             padding: const EdgeInsets.symmetric(horizontal: 8),
             // 文字大小随缩放变化：订阅 _scaleNotifier，缩放时只重建节点内容，
@@ -5569,48 +7655,93 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             child: ValueListenableBuilder<double>(
               valueListenable: _scaleNotifier,
               builder: (context, scale, _) => scale >= 0.6
-                ? Stack(children: [
-                    Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Row(children: [
-                        Icon(_stepIcon(node.type), size: 17, color: selected ? scheme.primary : scheme.onSurface),
-                        const SizedBox(width: 5),
-                        Expanded(child: Text(
-                          s.isZh ? node.label : node.labelEn,
-                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: scheme.onSurface),
-                          overflow: TextOverflow.ellipsis,
-                        )),
-                      ]),
-                      if (node.mediaTag.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(left: 22, top: 2),
-                          child: Text(node.mediaTag, style: TextStyle(fontSize: 10, color: scheme.outline, fontWeight: FontWeight.w600)),
+                  ? Stack(
+                      children: [
+                        Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  _stepIcon(node.type),
+                                  size: 17,
+                                  color: selected
+                                      ? scheme.primary
+                                      : scheme.onSurface,
+                                ),
+                                const SizedBox(width: 5),
+                                Expanded(
+                                  child: Text(
+                                    s.isZh ? node.label : node.labelEn,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
+                                      color: scheme.onSurface,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (node.mediaTag.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(
+                                  left: 22,
+                                  top: 2,
+                                ),
+                                child: Text(
+                                  node.mediaTag,
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: scheme.outline,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
-                    ]),
-                    if ((node.params['node_name'] as String? ?? '').isNotEmpty)
-                      Positioned(
-                        right: 0, bottom: 2,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                          decoration: BoxDecoration(
-                            color: scheme.primary.withAlpha(30),
-                            borderRadius: BorderRadius.circular(3),
+                        if ((node.params['node_name'] as String? ?? '')
+                            .isNotEmpty)
+                          Positioned(
+                            right: 0,
+                            bottom: 2,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                                vertical: 1,
+                              ),
+                              decoration: BoxDecoration(
+                                color: scheme.primary.withAlpha(30),
+                                borderRadius: BorderRadius.circular(3),
+                              ),
+                              child: Text(
+                                node.params['node_name'] as String,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: scheme.primary,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
                           ),
-                          child: Text(
-                            node.params['node_name'] as String,
-                            style: TextStyle(fontSize: 11, color: scheme.primary, fontWeight: FontWeight.w600),
-                            overflow: TextOverflow.ellipsis,
-                          ),
+                      ],
+                    )
+                  : Center(
+                      child: Text(
+                        s.isZh ? node.label : node.labelEn,
+                        style: TextStyle(
+                          fontSize: scale < 0.4
+                              ? (13 / scale * 0.5).clamp(13.0, 40.0)
+                              : (13 / scale * 0.7).clamp(13.0, 28.0),
+                          fontWeight: FontWeight.w600,
+                          color: scheme.onSurface,
                         ),
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
                       ),
-                  ])
-                : Center(child: Text(
-                    s.isZh ? node.label : node.labelEn,
-                    style: TextStyle(
-                      fontSize: scale < 0.4 ? (13 / scale * 0.5).clamp(13.0, 40.0) : (13 / scale * 0.7).clamp(13.0, 28.0),
-                      fontWeight: FontWeight.w600, color: scheme.onSurface,
                     ),
-                    overflow: TextOverflow.ellipsis, textAlign: TextAlign.center,
-                  )),
             ),
           ),
         ),
@@ -5625,7 +7756,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   /// 逻辑门图标：ANSI/IEEE 使用 tabler-icons 的 outline 矢量图（MIT 许可，出处见「关于 → 引用」），
   /// IEC 及恒1/恒0/时间触发器沿用程序化绘制。
-  Widget _gateIcon(LogicGateType gate, bool iec, ColorScheme scheme, {required double width, required double height}) {
+  Widget _gateIcon(
+    LogicGateType gate,
+    bool iec,
+    ColorScheme scheme, {
+    required double width,
+    required double height,
+  }) {
     if (!iec) {
       final name = switch (gate) {
         LogicGateType.and => 'and',
@@ -5642,21 +7779,31 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           'rele/logic_gates/$name.svg',
           width: width,
           height: height,
-          colorFilter: ColorFilter.mode(scheme.onTertiaryContainer, BlendMode.srcIn),
+          colorFilter: ColorFilter.mode(
+            scheme.onTertiaryContainer,
+            BlendMode.srcIn,
+          ),
         );
       }
     }
     return CustomPaint(
       size: Size(width, height),
       painter: GateSymbolPainter(
-        gate: gate, iec: iec,
+        gate: gate,
+        iec: iec,
         color: scheme.onTertiaryContainer,
       ),
     );
   }
 
   /// 构建逻辑门节点 widget（比常规节点小，ANSI 符号绘制）
-  Widget _buildGateWidget(PipelineNode node, LogicGateType gate, bool selected, ColorScheme scheme, AppStrings s) {
+  Widget _buildGateWidget(
+    PipelineNode node,
+    LogicGateType gate,
+    bool selected,
+    ColorScheme scheme,
+    AppStrings s,
+  ) {
     final inputCount = gate.inputCount;
     // 符号标准：ANSI/IEEE（特色形状）或 IEC（矩形框）
     final iec = context.read<AppState>().config.gateStd == 'iec';
@@ -5674,7 +7821,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             if (_isCtrlPressed()) {
               if (_selectedNodeIds.contains(node.id)) {
                 _selectedNodeIds.remove(node.id);
-                _lastSelectedId = _selectedNodeIds.isEmpty ? null : _selectedNodeIds.last;
+                _lastSelectedId = _selectedNodeIds.isEmpty
+                    ? null
+                    : _selectedNodeIds.last;
               } else {
                 _selectedNodeIds.add(node.id);
                 _lastSelectedId = node.id;
@@ -5690,9 +7839,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         onPanUpdate: (d) => _onDragMove(d.delta),
         onPanEnd: (_) => _endNodeDrag(),
         onSecondaryTapUp: (d) => _showNodeMenu(d.globalPosition, node.id),
-          onLongPressStart: isMobilePlatform
-              ? (d) => _showNodeMenu(d.globalPosition, node.id)
-              : null,
+        onLongPressStart: isMobilePlatform
+            ? (d) => _showNodeMenu(d.globalPosition, node.id)
+            : null,
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -5709,7 +7858,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                       onPanUpdate: (d) => _onPortDragUpdate(d.globalPosition),
                       onPanEnd: (_) => _onPortDragEnd(),
                       child: Container(
-                        width: 14, height: 14,
+                        width: 14,
+                        height: 14,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           color: const Color(0xFFD32F2F), // 红色逻辑端口
@@ -5731,30 +7881,55 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                 width: _gateW,
                 height: _gateH,
                 decoration: BoxDecoration(
-                  color: scheme.tertiaryContainer.withAlpha(selected ? 220 : 160),
+                  color: scheme.tertiaryContainer.withAlpha(
+                    selected ? 220 : 160,
+                  ),
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(
-                    color: selected ? scheme.tertiary : scheme.tertiary.withAlpha(80),
+                    color: selected
+                        ? scheme.tertiary
+                        : scheme.tertiary.withAlpha(80),
                     width: selected ? 2 : 1,
                   ),
                 ),
                 child: gate == LogicGateType.timeTrigger
-                    ? Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                        _gateIcon(gate, iec, scheme, width: _gateW, height: _gateH - 18),
-                        const SizedBox(height: 1),
-                        // FittedBox.scaleDown：字号被全局放大后仍能等比缩回，避免文字被 64px 容器裁切
-                        Flexible(
-                          fit: FlexFit.loose,
-                          child: FittedBox(
-                            fit: BoxFit.scaleDown,
-                            child: Text(s.isZh ? '时间触发' : 'Time Trigger',
-                                maxLines: 1,
-                                style: TextStyle(fontSize: 10, color: scheme.onTertiaryContainer, fontWeight: FontWeight.w600)),
+                    ? Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          _gateIcon(
+                            gate,
+                            iec,
+                            scheme,
+                            width: _gateW,
+                            height: _gateH - 18,
                           ),
-                        ),
-                      ])
+                          const SizedBox(height: 1),
+                          // FittedBox.scaleDown：字号被全局放大后仍能等比缩回，避免文字被 64px 容器裁切
+                          Flexible(
+                            fit: FlexFit.loose,
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                s.isZh ? '时间触发' : 'Time Trigger',
+                                maxLines: 1,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: scheme.onTertiaryContainer,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      )
                     : Center(
-                        child: _gateIcon(gate, iec, scheme, width: _gateW, height: _gateH),
+                        child: _gateIcon(
+                          gate,
+                          iec,
+                          scheme,
+                          width: _gateW,
+                          height: _gateH,
+                        ),
                       ),
               ),
             ),
@@ -5768,7 +7943,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                   onPanUpdate: (d) => _onPortDragUpdate(d.globalPosition),
                   onPanEnd: (_) => _onPortDragEnd(),
                   child: Container(
-                    width: 16, height: 16,
+                    width: 16,
+                    height: 16,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: const Color(0xFFD32F2F), // 红色逻辑端口
@@ -5789,7 +7965,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     for (final n in _nodes.reversed) {
       // 折叠块里的节点不可见，也不应该被点到
       if (hidden.contains(n.id)) continue;
-      if (pos.dx >= n.x && pos.dx <= n.x + _totalNodeWidth(n) && pos.dy >= n.y && pos.dy <= n.y + _nodeHeight(n)) {
+      if (pos.dx >= n.x &&
+          pos.dx <= n.x + _totalNodeWidth(n) &&
+          pos.dy >= n.y &&
+          pos.dy <= n.y + _nodeHeight(n)) {
         return n;
       }
     }
@@ -5805,7 +7984,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   ///
   /// 折叠后只留标题栏一条，框内节点连同它们的连线一起隐藏
   /// （隐藏集合见 [_collapsedHiddenNodeIds]）。
-  Widget _buildLogicBlockOverlay(LogicBlock block, ColorScheme scheme, AppStrings s) {
+  Widget _buildLogicBlockOverlay(
+    LogicBlock block,
+    ColorScheme scheme,
+    AppStrings s,
+  ) {
     final selected = _selectedLogicBlockId == block.id;
     final collapsed = block.params['collapsed'] == true;
     final danger = context.sem.danger;
@@ -5826,88 +8009,129 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     return SizedBox(
       width: w,
       height: h,
-      child: Stack(clipBehavior: Clip.none, children: [
-        // Dashed border — pass hits through
-        Positioned.fill(
-          child: IgnorePointer(
-            child: CustomPaint(
-              painter: _LogicBlockPainter(
-                color: selected ? danger : danger.withAlpha(120),
-                strokeWidth: selected ? 2.0 : 1.0,
-              ),
-            ),
-          ),
-        ),
-        // 标题栏：点选 + 按下即整块拖动
-        Positioned(
-          left: 8, top: 4,
-          child: MouseRegion(
-            cursor: SystemMouseCursors.move,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: selectBlock,
-              onPanStart: (_) => _beginGroupDrag(block),
-              onPanUpdate: (d) => _onDragMove(d.delta),
-              onPanEnd: (_) => _endNodeDrag(),
-              // 右键折叠。桌面刻意不挂 onLongPress：长按是拖拽前的自然停顿，
-              // 会误触发；移动端用右上角的折叠按钮。
-              onSecondaryTap: () => _toggleLogicBlockCollapsed(block),
-              child: Tooltip(
-                message: s.isZh ? '拖动可整体移动框内元素' : 'Drag to move every boxed node',
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: danger.withAlpha(selected ? 50 : 30),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(_logicTypeIcon(block.type), size: 12, color: danger),
-                    const SizedBox(width: 4),
-                    ConstrainedBox(
-                      constraints: BoxConstraints(maxWidth: w - 110),
-                      child: Text(block.label(s.isZh),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: danger)),
-                    ),
-                    if (collapsed) ...[
-                      const SizedBox(width: 4),
-                      Text('${block.childNodeIds.length}',
-                          style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: danger)),
-                    ],
-                  ]),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          // Dashed border — pass hits through
+          Positioned.fill(
+            child: IgnorePointer(
+              child: CustomPaint(
+                painter: _LogicBlockPainter(
+                  color: selected ? danger : danger.withAlpha(120),
+                  strokeWidth: selected ? 2.0 : 1.0,
                 ),
               ),
             ),
           ),
-        ),
-        // 折叠 / 编辑 / 删除
-        Positioned(
-          right: 8, top: 4,
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            _logicIconBtn(
-              collapsed ? Icons.unfold_more : Icons.unfold_less,
-              () => _toggleLogicBlockCollapsed(block),
+          // 标题栏：点选 + 按下即整块拖动
+          Positioned(
+            left: 8,
+            top: 4,
+            child: MouseRegion(
+              cursor: SystemMouseCursors.move,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: selectBlock,
+                onPanStart: (_) => _beginGroupDrag(block),
+                onPanUpdate: (d) => _onDragMove(d.delta),
+                onPanEnd: (_) => _endNodeDrag(),
+                // 右键折叠。桌面刻意不挂 onLongPress：长按是拖拽前的自然停顿，
+                // 会误触发；移动端用右上角的折叠按钮。
+                onSecondaryTap: () => _toggleLogicBlockCollapsed(block),
+                child: Tooltip(
+                  message: s.isZh
+                      ? '拖动可整体移动框内元素'
+                      : 'Drag to move every boxed node',
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: danger.withAlpha(selected ? 50 : 30),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _logicTypeIcon(block.type),
+                          size: 12,
+                          color: danger,
+                        ),
+                        const SizedBox(width: 4),
+                        ConstrainedBox(
+                          constraints: BoxConstraints(maxWidth: w - 110),
+                          child: Text(
+                            block.label(s.isZh),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                              color: danger,
+                            ),
+                          ),
+                        ),
+                        if (collapsed) ...[
+                          const SizedBox(width: 4),
+                          Text(
+                            '${block.childNodeIds.length}',
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                              color: danger,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             ),
-            const SizedBox(width: 2),
-            _logicIconBtn(Icons.edit_outlined, selectBlock),
-            const SizedBox(width: 2),
-            _logicIconBtn(Icons.close, () {
-              _pushUndo(); // [FIX S-1] 真正删除逻辑块（此前只清选择态，块永久驻留落盘）
-              setState(() {
-                _logicBlocks.removeWhere((b) => b.id == block.id);
-                if (_selectedLogicBlockId == block.id) _selectedLogicBlockId = null;
-              });
-              _commitChange(); // [FIX S-1] 与其它结构变更一致地落盘
-            }),
-          ]),
-        ),
-        // Ports — visual only（折叠时框只剩标题栏，端口没有可对齐的中线）
-        if (!collapsed) ...[
-          Positioned(left: -6, top: h / 2 - 6, child: IgnorePointer(child: _logicPort(scheme))),
-          Positioned(right: -6, top: h / 2 - 6, child: IgnorePointer(child: _logicPort(scheme))),
+          ),
+          // 折叠 / 编辑 / 删除
+          Positioned(
+            right: 8,
+            top: 4,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _logicIconBtn(
+                  collapsed ? Icons.unfold_more : Icons.unfold_less,
+                  () => _toggleLogicBlockCollapsed(block),
+                ),
+                const SizedBox(width: 2),
+                _logicIconBtn(Icons.edit_outlined, selectBlock),
+                const SizedBox(width: 2),
+                _logicIconBtn(Icons.close, () {
+                  _pushUndo(); // [FIX S-1] 真正删除逻辑块（此前只清选择态，块永久驻留落盘）
+                  setState(() {
+                    _logicBlocks.removeWhere((b) => b.id == block.id);
+                    if (_selectedLogicBlockId == block.id)
+                      _selectedLogicBlockId = null;
+                  });
+                  _commitChange(); // [FIX S-1] 与其它结构变更一致地落盘
+                }),
+              ],
+            ),
+          ),
+          // Ports — visual only（折叠时框只剩标题栏，端口没有可对齐的中线）
+          if (!collapsed) ...[
+            Positioned(
+              left: -6,
+              top: h / 2 - 6,
+              child: IgnorePointer(child: _logicPort(scheme)),
+            ),
+            Positioned(
+              right: -6,
+              top: h / 2 - 6,
+              child: IgnorePointer(child: _logicPort(scheme)),
+            ),
+          ],
         ],
-      ]),
+      ),
     );
   }
 
@@ -5915,7 +8139,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 20, height: 20,
+        width: 20,
+        height: 20,
         decoration: BoxDecoration(
           color: context.sem.danger.withAlpha(30),
           borderRadius: BorderRadius.circular(4),
@@ -5927,7 +8152,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   Widget _logicPort(ColorScheme scheme) {
     return Container(
-      width: 12, height: 12,
+      width: 12,
+      height: 12,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: context.sem.danger.withAlpha(180),
@@ -5935,7 +8161,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       ),
     );
   }
-
 
   // ── 内嵌小窗（元素/属性面板、AI 面板）的窗口件 ──
   //
@@ -5945,9 +8170,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// 把浮动窗位置收进视口：纵向至少给标题栏留出可抓取的高度，
   /// 免得拖出可视区之后再也抓不回来。
   Offset _clampFloatTo(Offset p, Size view, double width) => Offset(
-        p.dx.clamp(0.0, math.max(0.0, view.width - width)),
-        p.dy.clamp(0.0, math.max(0.0, view.height - _kFloatTitleH - 8)),
-      );
+    p.dx.clamp(0.0, math.max(0.0, view.width - width)),
+    p.dy.clamp(0.0, math.max(0.0, view.height - _kFloatTitleH - 8)),
+  );
 
   /// 浮动小窗外壳：定位 + 固定尺寸 + 投影。标题栏由内容自带。
   Widget _floatingPanelBox({
@@ -5999,7 +8224,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         if (ai) {
           _aiDetached = true;
           _aiMinimized = false;
-          _aiFloatPos ??= Offset(math.max(0.0, bound.width - _kFloatAiW - 40), 96);
+          _aiFloatPos ??= Offset(
+            math.max(0.0, bound.width - _kFloatAiW - 40),
+            96,
+          );
         } else {
           _panelDetached = true;
           _panelMinimized = false;
@@ -6018,7 +8246,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   }
 
   Widget _windowWinBtn(
-      ColorScheme scheme, IconData icon, String tooltip, VoidCallback onTap) {
+    ColorScheme scheme,
+    IconData icon,
+    String tooltip,
+    VoidCallback onTap,
+  ) {
     return Tooltip(
       message: tooltip,
       waitDuration: const Duration(milliseconds: 300),
@@ -6045,6 +8277,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     required VoidCallback onToggleDetach,
     required VoidCallback onHide,
     required void Function(Offset delta) onDrag,
+
     /// 拖出为**真正的系统窗口**（再往外一层）。为空时不渲染这个按钮
     /// （移动端没有多窗口，面板外置也只在桌面端可用）。
     VoidCallback? onExternal,
@@ -6062,100 +8295,107 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: scheme.outlineVariant.withAlpha(70)),
         ),
-        child: Row(children: [
-          Icon(icon, size: 13, color: scheme.primary),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(title,
+        child: Row(
+          children: [
+            Icon(icon, size: 13, color: scheme.primary),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: scheme.onSurface)),
-          ),
-          _windowWinBtn(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: scheme.onSurface,
+                ),
+              ),
+            ),
+            _windowWinBtn(
               scheme,
               minimized ? Icons.expand_more : Icons.remove,
-              minimized
-                  ? (zh ? '展开' : 'Expand')
-                  : (zh ? '最小化' : 'Minimize'),
-              onMinimize),
-          _windowWinBtn(
+              minimized ? (zh ? '展开' : 'Expand') : (zh ? '最小化' : 'Minimize'),
+              onMinimize,
+            ),
+            _windowWinBtn(
               scheme,
               detached ? Icons.close_fullscreen : Icons.open_in_new,
               detached
                   ? (zh ? '吸附回主界面' : 'Dock back')
                   : (zh ? '拖出为内嵌小窗' : 'Float out'),
-              onToggleDetach),
-          if (onExternal != null)
-            _windowWinBtn(
+              onToggleDetach,
+            ),
+            if (onExternal != null)
+              _windowWinBtn(
                 scheme,
                 Icons.desktop_windows_outlined,
                 zh ? '拖出为独立系统窗口' : 'Open in system window',
-                onExternal),
-          _windowWinBtn(scheme, Icons.close, zh ? '隐藏' : 'Hide', onHide),
-        ]),
+                onExternal,
+              ),
+            _windowWinBtn(scheme, Icons.close, zh ? '隐藏' : 'Hide', onHide),
+          ],
+        ),
       ),
     );
   }
 
   /// 元素 / 属性面板的标题栏。
   Widget _panelTitleBar(ColorScheme scheme, AppStrings s) => _windowTitleBar(
-        scheme,
-        zh: s.isZh,
-        icon: _panelDetached ? Icons.open_in_new : Icons.widgets_outlined,
-        title: s.isZh ? '元素 / 属性' : 'Elements / Properties',
-        detached: _panelDetached,
-        minimized: _panelMinimized,
-        onMinimize: () => setState(() => _panelMinimized = !_panelMinimized),
-        onToggleDetach: () => setState(() {
-          _panelDetached = !_panelDetached;
-          _panelHidden = false;
-          if (!_panelDetached) {
-            _panelFloatPos = null;
-            _panelMinimized = false;
-          }
-        }),
-        onExternal:
-            _panelExternal ? null : () => _openExternalPanel(DetachedPanel.props),
-        onHide: () => setState(() {
-          _panelHidden = true;
-          _panelDetached = false;
-          _panelFloatPos = null;
-          _panelMinimized = false;
-        }),
-        onDrag: (d) => _winDragUpdate(d, ai: false),
-      );
+    scheme,
+    zh: s.isZh,
+    icon: _panelDetached ? Icons.open_in_new : Icons.widgets_outlined,
+    title: s.isZh ? '元素 / 属性' : 'Elements / Properties',
+    detached: _panelDetached,
+    minimized: _panelMinimized,
+    onMinimize: () => setState(() => _panelMinimized = !_panelMinimized),
+    onToggleDetach: () => setState(() {
+      _panelDetached = !_panelDetached;
+      _panelHidden = false;
+      if (!_panelDetached) {
+        _panelFloatPos = null;
+        _panelMinimized = false;
+      }
+    }),
+    onExternal: _panelExternal
+        ? null
+        : () => _openExternalPanel(DetachedPanel.props),
+    onHide: () => setState(() {
+      _panelHidden = true;
+      _panelDetached = false;
+      _panelFloatPos = null;
+      _panelMinimized = false;
+    }),
+    onDrag: (d) => _winDragUpdate(d, ai: false),
+  );
 
   /// AI 面板的标题栏（拖出为浮动小窗后使用）。
   Widget _aiTitleBar(ColorScheme scheme, AppStrings s) => _windowTitleBar(
-        scheme,
-        zh: s.isZh,
-        icon: Icons.smart_toy,
-        title: _aiSessionTitle.isEmpty
-            ? (s.isZh ? 'AI 助手' : 'AI Assistant')
-            : _aiSessionTitle,
-        detached: _aiDetached,
-        minimized: _aiMinimized,
-        onMinimize: () => setState(() => _aiMinimized = !_aiMinimized),
-        onToggleDetach: () => setState(() {
-          _aiDetached = !_aiDetached;
-          if (!_aiDetached) {
-            _aiDrawerOpen = true;
-            _aiFloatPos = null;
-            _aiMinimized = false;
-          }
-        }),
-        onExternal: _aiExternal ? null : () => _openExternalPanel(DetachedPanel.ai),
-        onHide: () => setState(() {
-          _aiDetached = false;
-          _aiMinimized = false;
-          _aiFloatPos = null;
-          _aiDrawerOpen = false;
-        }),
-        onDrag: (d) => _winDragUpdate(d, ai: true),
-      );
+    scheme,
+    zh: s.isZh,
+    icon: Icons.smart_toy,
+    title: _aiSessionTitle.isEmpty
+        ? (s.isZh ? 'AI 助手' : 'AI Assistant')
+        : _aiSessionTitle,
+    detached: _aiDetached,
+    minimized: _aiMinimized,
+    onMinimize: () => setState(() => _aiMinimized = !_aiMinimized),
+    onToggleDetach: () => setState(() {
+      _aiDetached = !_aiDetached;
+      if (!_aiDetached) {
+        _aiDrawerOpen = true;
+        _aiFloatPos = null;
+        _aiMinimized = false;
+      }
+    }),
+    onExternal: _aiExternal ? null : () => _openExternalPanel(DetachedPanel.ai),
+    onHide: () => setState(() {
+      _aiDetached = false;
+      _aiMinimized = false;
+      _aiFloatPos = null;
+      _aiDrawerOpen = false;
+    }),
+    onDrag: (d) => _winDragUpdate(d, ai: true),
+  );
 
   Widget _buildRightPanel(ColorScheme scheme, AppStrings s) {
     final node = _selectedNode;
@@ -6167,193 +8407,317 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         ? _logicBlocks.where((b) => b.id == _selectedLogicBlockId).firstOrNull
         : null;
 
-    final Widget inner = LayoutBuilder(builder: (ctx, constraints) {
-      final totalH = constraints.maxHeight;
-      const dividerH = 10.0;
-      final usable = totalH - dividerH;
-      // 拖动分割线时只重建两个高度值（见下方 ValueListenableBuilder），
-      // 不再整页 setState 重建工具箱与属性编辑器。
-      return ValueListenableBuilder<double>(
-        valueListenable: _toolboxFractionNotifier,
-        builder: (ctx, fraction, _) {
-          final toolboxH = usable * fraction;
-          final editorH = usable * (1 - fraction);
-          return Column(children: [
-        // ── 元素工具栏 ──
-        SizedBox(height: toolboxH, child: Column(children: [
-          _buildCollapsibleHeader(
-            scheme: scheme,
-            icon: Icons.widgets_outlined,
-            title: s.isZh ? '元素' : 'Elements',
-            expanded: _toolboxExpanded,
-            onToggle: () => setState(() => _toolboxExpanded = !_toolboxExpanded),
-            trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-              Text(
-                  _showOnlyAvailable
-                      ? '${_visibleNodeTypes().length}'
-                      : '${_allNodeTypes.length}',
-                  style: TextStyle(fontSize: 10, color: scheme.outline)),
-              const SizedBox(width: 4),
-              // 「显示可用」：按当前文件的媒体类型只留下接得上的节点
-              //（视频文件 → 视频节点 + 提取音频后可用的音频节点）
-              Tooltip(
-                message: _showOnlyAvailable
-                    ? (s.isZh ? '显示全部元素' : 'Show all elements')
-                    : (s.isZh
-                        ? '只显示当前文件可用的元素'
-                        : 'Only show elements usable for this file'),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(6),
-                  onTap: () =>
-                      setState(() => _showOnlyAvailable = !_showOnlyAvailable),
-                  child: Padding(
-                    padding: const EdgeInsets.all(2),
-                    child: Icon(
-                      _showOnlyAvailable
-                          ? Icons.filter_alt
-                          : Icons.filter_alt_outlined,
-                      size: 14,
-                      color:
-                          _showOnlyAvailable ? scheme.primary : scheme.outline,
+    final Widget inner = LayoutBuilder(
+      builder: (ctx, constraints) {
+        final totalH = constraints.maxHeight;
+        const dividerH = 10.0;
+        final usable = totalH - dividerH;
+        // 拖动分割线时只重建两个高度值（见下方 ValueListenableBuilder），
+        // 不再整页 setState 重建工具箱与属性编辑器。
+        return ValueListenableBuilder<double>(
+          valueListenable: _toolboxFractionNotifier,
+          builder: (ctx, fraction, _) {
+            final toolboxH = usable * fraction;
+            final editorH = usable * (1 - fraction);
+            return Column(
+              children: [
+                // ── 元素工具栏 ──
+                SizedBox(
+                  height: toolboxH,
+                  child: Column(
+                    children: [
+                      _buildCollapsibleHeader(
+                        scheme: scheme,
+                        icon: Icons.widgets_outlined,
+                        title: s.isZh ? '元素' : 'Elements',
+                        expanded: _toolboxExpanded,
+                        onToggle: () => setState(
+                          () => _toolboxExpanded = !_toolboxExpanded,
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              _showOnlyAvailable
+                                  ? '${_visibleNodeTypes().length}'
+                                  : '${_allNodeTypes.length}',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: scheme.outline,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            // 「显示可用」：按当前文件的媒体类型只留下接得上的节点
+                            //（视频文件 → 视频节点 + 提取音频后可用的音频节点）
+                            Tooltip(
+                              message: _showOnlyAvailable
+                                  ? (s.isZh ? '显示全部元素' : 'Show all elements')
+                                  : (s.isZh
+                                        ? '只显示当前文件可用的元素'
+                                        : 'Only show elements usable for this file'),
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(6),
+                                onTap: () => setState(
+                                  () =>
+                                      _showOnlyAvailable = !_showOnlyAvailable,
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(2),
+                                  child: Icon(
+                                    _showOnlyAvailable
+                                        ? Icons.filter_alt
+                                        : Icons.filter_alt_outlined,
+                                    size: 14,
+                                    color: _showOnlyAvailable
+                                        ? scheme.primary
+                                        : scheme.outline,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (_toolboxExpanded)
+                        Expanded(
+                          child: SingleChildScrollView(
+                            padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                            // 搜索框 + 内容都由 _buildToolboxBody 提供，移动端弹层共用同一份
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _buildToolboxSearch(scheme, s, dense: true),
+                                _buildToolboxBody(scheme, s, dense: true),
+                              ],
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+
+                // ── 可拖动分割线（元素 / 属性之间调整大小） ──
+                MouseRegion(
+                  cursor: SystemMouseCursors.resizeRow,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onVerticalDragUpdate: (d) {
+                      _toolboxFraction =
+                          ((_toolboxFraction * usable + d.delta.dy) / usable)
+                              .clamp(0.15, 0.85);
+                      _toolboxFractionNotifier.value = _toolboxFraction;
+                    },
+                    child: Container(
+                      height: 10,
+                      color: Colors.transparent,
+                      child: Center(
+                        child: Container(
+                          width: 44,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: scheme.primary.withAlpha(90),
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ]),
-          ),
-          if (_toolboxExpanded)
-            Expanded(child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-              // 搜索框 + 内容都由 _buildToolboxBody 提供，移动端弹层共用同一份
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                _buildToolboxSearch(scheme, s, dense: true),
-                _buildToolboxBody(scheme, s, dense: true),
-              ]),
-            )),
-        ])),
 
-        // ── 可拖动分割线（元素 / 属性之间调整大小） ──
-        MouseRegion(
-          cursor: SystemMouseCursors.resizeRow,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onVerticalDragUpdate: (d) {
-              _toolboxFraction = ((_toolboxFraction * usable + d.delta.dy) / usable).clamp(0.15, 0.85);
-              _toolboxFractionNotifier.value = _toolboxFraction;
-            },
-            child: Container(
-              height: 10,
-              color: Colors.transparent,
-              child: Center(child: Container(
-                width: 44, height: 4,
-                decoration: BoxDecoration(
-                  color: scheme.primary.withAlpha(90),
-                  borderRadius: BorderRadius.circular(2),
+                // ── 属性编辑器 ──
+                SizedBox(
+                  height: editorH,
+                  child: Column(
+                    children: [
+                      _buildCollapsibleHeader(
+                        scheme: scheme,
+                        icon: logicBlock != null
+                            ? (_logicTypeIcon(logicBlock.type))
+                            : node != null
+                            ? _stepIcon(node.type)
+                            : (showPreview
+                                  ? _stepIcon(previewType)
+                                  : Icons.tune_outlined),
+                        title: logicBlock != null
+                            ? logicBlock.label(s.isZh)
+                            : node != null
+                            ? (node.isGate && node.gate != null
+                                  ? _gatePropertyTitle(node, s)
+                                  : (s.isZh ? node.label : node.labelEn))
+                            : showPreview
+                            ? (s.isZh
+                                  ? PipelineNode(
+                                      id: '',
+                                      type: previewType,
+                                    ).label
+                                  : PipelineNode(
+                                      id: '',
+                                      type: previewType,
+                                    ).labelEn)
+                            : (s.isZh ? '属性' : 'Properties'),
+                        expanded: _editorExpanded,
+                        onToggle: () =>
+                            setState(() => _editorExpanded = !_editorExpanded),
+                      ),
+                      if (_editorExpanded)
+                        Expanded(
+                          child: logicBlock != null
+                              ? SingleChildScrollView(
+                                  padding: const EdgeInsets.all(4),
+                                  child: LogicBlockEditor(
+                                    key: ValueKey(logicBlock.id),
+                                    block: logicBlock,
+                                    childNodes: _nodes
+                                        .where(
+                                          (n) => logicBlock.childNodeIds
+                                              .contains(n.id),
+                                        )
+                                        .toList(),
+                                    onChanged: () {
+                                      setState(() {});
+                                      _markDirty();
+                                    },
+                                    isZh: s.isZh,
+                                  ),
+                                )
+                              : node != null
+                              ? SingleChildScrollView(
+                                  padding: const EdgeInsets.all(4),
+                                  child: _buildStepEditor(node, s.isZh),
+                                )
+                              : showPreview
+                              ? SingleChildScrollView(
+                                  padding: const EdgeInsets.all(4),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 12,
+                                          vertical: 6,
+                                        ),
+                                        margin: const EdgeInsets.only(
+                                          bottom: 8,
+                                          left: 16,
+                                          right: 16,
+                                          top: 8,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: scheme.primaryContainer
+                                              .withAlpha(60),
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            Icon(
+                                              Icons.preview_outlined,
+                                              size: 14,
+                                              color: scheme.primary,
+                                            ),
+                                            const SizedBox(width: 6),
+                                            Text(
+                                              s.isZh
+                                                  ? '预览 · 双击添加到画布'
+                                                  : 'Preview · double-click to add',
+                                              style: TextStyle(
+                                                fontSize: 11,
+                                                color: scheme.primary,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      _buildStepEditor(
+                                        PipelineNode(
+                                          id: '__preview__',
+                                          type: previewType,
+                                        ),
+                                        s.isZh,
+                                      ),
+                                    ],
+                                  ),
+                                )
+                              : Center(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.touch_app_outlined,
+                                        size: 32,
+                                        color: scheme.outline.withAlpha(80),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        s.isZh
+                                            ? '选择节点开始编辑'
+                                            : 'Select a node to edit',
+                                        style: TextStyle(
+                                          color: scheme.outline,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                        ),
+                    ],
+                  ),
                 ),
-              )),
-            ),
-          ),
-        ),
-
-        // ── 属性编辑器 ──
-        SizedBox(height: editorH, child: Column(children: [
-          _buildCollapsibleHeader(
-            scheme: scheme,
-            icon: logicBlock != null
-                ? (_logicTypeIcon(logicBlock.type))
-                : node != null ? _stepIcon(node.type) : (showPreview ? _stepIcon(previewType) : Icons.tune_outlined),
-            title: logicBlock != null
-                ? logicBlock.label(s.isZh)
-                : node != null
-                    ? (node.isGate && node.gate != null
-                        ? _gatePropertyTitle(node, s)
-                        : (s.isZh ? node.label : node.labelEn))
-                    : showPreview
-                        ? (s.isZh ? PipelineNode(id: '', type: previewType).label : PipelineNode(id: '', type: previewType).labelEn)
-                        : (s.isZh ? '属性' : 'Properties'),
-            expanded: _editorExpanded,
-            onToggle: () => setState(() => _editorExpanded = !_editorExpanded),
-          ),
-          if (_editorExpanded)
-            Expanded(child: logicBlock != null
-                ? SingleChildScrollView(
-                    padding: const EdgeInsets.all(4),
-                    child: LogicBlockEditor(
-                      key: ValueKey(logicBlock.id),
-                      block: logicBlock,
-                      childNodes: _nodes.where((n) => logicBlock.childNodeIds.contains(n.id)).toList(),
-                      onChanged: () { setState(() {}); _markDirty(); },
-                      isZh: s.isZh,
-                    ),
-                  )
-                : node != null
-                ? SingleChildScrollView(
-                    padding: const EdgeInsets.all(4),
-                    child: _buildStepEditor(node, s.isZh),
-                  )
-                : showPreview
-                    ? SingleChildScrollView(
-                        padding: const EdgeInsets.all(4),
-                        child: Column(mainAxisSize: MainAxisSize.min, children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                            margin: const EdgeInsets.only(bottom: 8, left: 16, right: 16, top: 8),
-                            decoration: BoxDecoration(
-                              color: scheme.primaryContainer.withAlpha(60),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Row(children: [
-                              Icon(Icons.preview_outlined, size: 14, color: scheme.primary),
-                              const SizedBox(width: 6),
-                              Text(s.isZh ? '预览 · 双击添加到画布' : 'Preview · double-click to add',
-                                  style: TextStyle(fontSize: 11, color: scheme.primary)),
-                            ]),
-                          ),
-                          _buildStepEditor(PipelineNode(id: '__preview__', type: previewType), s.isZh),
-                        ]),
-                      )
-                    : Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-                        Icon(Icons.touch_app_outlined, size: 32, color: scheme.outline.withAlpha(80)),
-                        const SizedBox(height: 8),
-                        Text(s.isZh ? '选择节点开始编辑' : 'Select a node to edit',
-                            style: TextStyle(color: scheme.outline, fontSize: 12)),
-                      ])),
-            ),
-        ])),
-      ]);
-        },
-      );
-    });
+              ],
+            );
+          },
+        );
+      },
+    );
 
     return _glassWrap(
-      Column(children: [
-        // 自带标题栏：拖动可拖出成浮动小窗，右侧是最小化 / 吸附 / 隐藏
-        _panelTitleBar(scheme, s),
-        Expanded(child: inner),
-      ]),
+      Column(
+        children: [
+          // 自带标题栏：拖动可拖出成浮动小窗，右侧是最小化 / 吸附 / 隐藏
+          _panelTitleBar(scheme, s),
+          Expanded(child: inner),
+        ],
+      ),
       scheme,
     );
   }
 
   Widget _buildCollapsibleHeader({
-    required ColorScheme scheme, required IconData icon, required String title,
-    required bool expanded, required VoidCallback onToggle, Widget? trailing,
+    required ColorScheme scheme,
+    required IconData icon,
+    required String title,
+    required bool expanded,
+    required VoidCallback onToggle,
+    Widget? trailing,
   }) {
     return InkWell(
       onTap: onToggle,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(children: [
-          Icon(icon, size: 15, color: scheme.primary),
-          const SizedBox(width: 6),
-          Expanded(child: Text(title, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.onSurface))),
-          if (trailing != null) ...[trailing, const SizedBox(width: 6)],
-          AnimatedRotation(
-            turns: expanded ? 0.0 : 0.5,
-            duration: const Duration(milliseconds: 200),
-            child: Icon(Icons.expand_less, size: 16, color: scheme.outline),
-          ),
-        ]),
+        child: Row(
+          children: [
+            Icon(icon, size: 15, color: scheme.primary),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                title,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: scheme.onSurface,
+                ),
+              ),
+            ),
+            if (trailing != null) ...[trailing, const SizedBox(width: 6)],
+            AnimatedRotation(
+              turns: expanded ? 0.0 : 0.5,
+              duration: const Duration(milliseconds: 200),
+              child: Icon(Icons.expand_less, size: 16, color: scheme.outline),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -6388,7 +8752,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     });
     // 本页用的是 context.read（不订阅 config 变更），手动刷一次树
     setState(() {});
-    final name = s.isZh ? PipelineNode(id: '', type: t).label : PipelineNode(id: '', type: t).labelEn;
+    final name = s.isZh
+        ? PipelineNode(id: '', type: t).label
+        : PipelineNode(id: '', type: t).labelEn;
     showToast(
       context,
       wasFav
@@ -6412,7 +8778,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   }
 
   /// 工具箱搜索框。桌面右面板（dense）与移动端弹层共用一套。
-  Widget _buildToolboxSearch(ColorScheme scheme, AppStrings s, {required bool dense}) {
+  Widget _buildToolboxSearch(
+    ColorScheme scheme,
+    AppStrings s, {
+    required bool dense,
+  }) {
     return Padding(
       padding: EdgeInsets.only(bottom: dense ? 6 : 8),
       child: TextField(
@@ -6423,10 +8793,20 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           filled: true,
           fillColor: scheme.surfaceContainerHighest.withAlpha(90),
           hintText: s.isZh ? '搜索元素…' : 'Search elements…',
-          hintStyle: TextStyle(fontSize: dense ? 11 : 12.5, color: scheme.outline),
-          prefixIcon: Icon(Icons.search, size: dense ? 14 : 16, color: scheme.outline),
+          hintStyle: TextStyle(
+            fontSize: dense ? 11 : 12.5,
+            color: scheme.outline,
+          ),
+          prefixIcon: Icon(
+            Icons.search,
+            size: dense ? 14 : 16,
+            color: scheme.outline,
+          ),
           // 图标槽位与行高对齐，避免「有眼睛/清除按钮的输入框比同行高几像素」
-          prefixIconConstraints: BoxConstraints(minWidth: dense ? 28 : 32, minHeight: dense ? 28 : 32),
+          prefixIconConstraints: BoxConstraints(
+            minWidth: dense ? 28 : 32,
+            minHeight: dense ? 28 : 32,
+          ),
           suffixIcon: _toolboxQuery.isEmpty
               ? null
               : InkWell(
@@ -6434,10 +8814,20 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                     _toolboxSearchCtrl.clear();
                     setState(() => _toolboxQuery = '');
                   },
-                  child: Icon(Icons.close, size: dense ? 14 : 16, color: scheme.outline),
+                  child: Icon(
+                    Icons.close,
+                    size: dense ? 14 : 16,
+                    color: scheme.outline,
+                  ),
                 ),
-          suffixIconConstraints: BoxConstraints(minWidth: dense ? 28 : 32, minHeight: dense ? 28 : 32),
-          contentPadding: EdgeInsets.symmetric(horizontal: dense ? 4 : 6, vertical: dense ? 7 : 8),
+          suffixIconConstraints: BoxConstraints(
+            minWidth: dense ? 28 : 32,
+            minHeight: dense ? 28 : 32,
+          ),
+          contentPadding: EdgeInsets.symmetric(
+            horizontal: dense ? 4 : 6,
+            vertical: dense ? 7 : 8,
+          ),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
             borderSide: BorderSide(color: scheme.outlineVariant.withAlpha(110)),
@@ -6460,7 +8850,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   ///
   /// 桌面右面板与移动端弹层原本各写一遍同样的分类列表 —— 加一个区块就得改两处，
   /// 迟早漏。这里收成一个方法，只用 [dense] 区隔间距。
-  Widget _buildToolboxBody(ColorScheme scheme, AppStrings s, {required bool dense}) {
+  Widget _buildToolboxBody(
+    ColorScheme scheme,
+    AppStrings s, {
+    required bool dense,
+  }) {
     final gap = dense ? 4.0 : 6.0;
     final sectionGap = dense ? 8.0 : 10.0;
     final state = context.read<AppState>();
@@ -6472,91 +8866,149 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           padding: const EdgeInsets.symmetric(vertical: 18),
           child: Center(
             child: Text(
-              s.isZh ? '没有匹配「${_toolboxQuery.trim()}」的元素' : 'No element matches “${_toolboxQuery.trim()}”',
+              s.isZh
+                  ? '没有匹配「${_toolboxQuery.trim()}」的元素'
+                  : 'No element matches “${_toolboxQuery.trim()}”',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 11, color: scheme.outline),
             ),
           ),
         );
       }
-      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        _categoryLabel(scheme, Icons.search,
-            s.isZh ? '搜索结果 · ${hits.length}' : '${hits.length} result(s)'),
-        SizedBox(height: gap),
-        Wrap(spacing: gap, runSpacing: gap, children: [
-          for (final t in hits) _buildToolboxItem(t, scheme, s),
-        ]),
-      ]);
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _categoryLabel(
+            scheme,
+            Icons.search,
+            s.isZh ? '搜索结果 · ${hits.length}' : '${hits.length} result(s)',
+          ),
+          SizedBox(height: gap),
+          Wrap(
+            spacing: gap,
+            runSpacing: gap,
+            children: [for (final t in hits) _buildToolboxItem(t, scheme, s)],
+          ),
+        ],
+      );
     }
 
     // 「显示可用」：avail == null 表示不过滤。
-    final Set<PipelineStepType>? avail =
-        _showOnlyAvailable ? _availableTypes() : null;
+    final Set<PipelineStepType>? avail = _showOnlyAvailable
+        ? _availableTypes()
+        : null;
     bool vis(PipelineStepType t) => avail == null || avail.contains(t);
 
     /// 一个分类区块：标题 + 芯片换行排。整组被过滤空后连标题一起不渲染，
     /// 不会留下一排孤零零的分类标题。
     List<Widget> section(
-        IconData icon, String label, List<PipelineStepType> types) {
+      IconData icon,
+      String label,
+      List<PipelineStepType> types,
+    ) {
       final shown = types.where(vis).toList();
       if (shown.isEmpty) return const <Widget>[];
       return [
         _categoryLabel(scheme, icon, label),
         SizedBox(height: gap),
-        Wrap(spacing: gap, runSpacing: gap, children: [
-          for (final t in shown) _buildToolboxItem(t, scheme, s),
-        ]),
+        Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [for (final t in shown) _buildToolboxItem(t, scheme, s)],
+        ),
         SizedBox(height: sectionGap),
       ];
     }
 
-    final favs =
-        _typesFromNames(state.config.favoriteNodeTypes).where(vis).toList();
+    final favs = _typesFromNames(
+      state.config.favoriteNodeTypes,
+    ).where(vis).toList();
     // 已经置顶在「收藏」里的不再重复出现在「最近使用」里
-    final recents = _typesFromNames(state.config.recentNodeTypes)
-        .where((t) => !favs.contains(t))
-        .where(vis)
-        .toList();
+    final recents = _typesFromNames(
+      state.config.recentNodeTypes,
+    ).where((t) => !favs.contains(t)).where(vis).toList();
 
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      if (favs.isNotEmpty) ...[
-        _categoryLabel(scheme, Icons.star, s.isZh ? '收藏' : 'Favourites'),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (favs.isNotEmpty) ...[
+          _categoryLabel(scheme, Icons.star, s.isZh ? '收藏' : 'Favourites'),
+          SizedBox(height: gap),
+          Wrap(
+            spacing: gap,
+            runSpacing: gap,
+            children: [for (final t in favs) _buildToolboxItem(t, scheme, s)],
+          ),
+          SizedBox(height: sectionGap),
+        ],
+        ...section(Icons.history, s.isZh ? '最近使用' : 'Recent', recents),
+        // start / output 恒定展示：它们不受媒体类型约束。
+        Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            _buildToolboxItem(PipelineStepType.start, scheme, s),
+            _buildToolboxItem(PipelineStepType.output, scheme, s),
+          ],
+        ),
+        SizedBox(height: sectionGap),
+        ...section(
+          Icons.category_outlined,
+          s.isZh ? '通用' : 'General',
+          _genericTypes,
+        ),
+        ...section(
+          Icons.videocam_outlined,
+          s.isZh ? '视频' : 'Video',
+          _videoTypes,
+        ),
+        ...section(
+          Icons.audiotrack_outlined,
+          s.isZh ? '音频' : 'Audio',
+          _audioTypes,
+        ),
+        ...section(Icons.image_outlined, s.isZh ? '图片' : 'Image', _imageTypes),
+        _categoryLabel(
+          scheme,
+          Icons.account_tree_outlined,
+          s.isZh ? '逻辑' : 'Logic',
+        ),
         SizedBox(height: gap),
-        Wrap(spacing: gap, runSpacing: gap, children: [
-          for (final t in favs) _buildToolboxItem(t, scheme, s),
-        ]),
-        SizedBox(height: sectionGap),
+        Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            for (final t in LogicBlockType.values)
+              _buildLogicToolboxItem(t, scheme, s),
+          ],
+        ),
+        // 逻辑门分组：符号小、数量多，间距再紧一档
+        SizedBox(height: gap),
+        Wrap(
+          spacing: dense ? 3 : 4,
+          runSpacing: dense ? 3 : 4,
+          children: [
+            for (final g in LogicGateType.values)
+              _buildGateToolboxItem(g, scheme, s),
+          ],
+        ),
+        if (widget.containerInfo != null) ...[
+          SizedBox(height: sectionGap),
+          ...section(
+            Icons.folder_special_outlined,
+            s.isZh ? '容器' : 'Container',
+            _containerTypes,
+          ),
+        ],
       ],
-      ...section(Icons.history, s.isZh ? '最近使用' : 'Recent', recents),
-      // start / output 恒定展示：它们不受媒体类型约束。
-      Wrap(spacing: gap, runSpacing: gap, children: [
-        _buildToolboxItem(PipelineStepType.start, scheme, s),
-        _buildToolboxItem(PipelineStepType.output, scheme, s),
-      ]),
-      SizedBox(height: sectionGap),
-      ...section(Icons.category_outlined, s.isZh ? '通用' : 'General', _genericTypes),
-      ...section(Icons.videocam_outlined, s.isZh ? '视频' : 'Video', _videoTypes),
-      ...section(Icons.audiotrack_outlined, s.isZh ? '音频' : 'Audio', _audioTypes),
-      ...section(Icons.image_outlined, s.isZh ? '图片' : 'Image', _imageTypes),
-      _categoryLabel(scheme, Icons.account_tree_outlined, s.isZh ? '逻辑' : 'Logic'),
-      SizedBox(height: gap),
-      Wrap(spacing: gap, runSpacing: gap, children: [
-        for (final t in LogicBlockType.values) _buildLogicToolboxItem(t, scheme, s),
-      ]),
-      // 逻辑门分组：符号小、数量多，间距再紧一档
-      SizedBox(height: gap),
-      Wrap(spacing: dense ? 3 : 4, runSpacing: dense ? 3 : 4, children: [
-        for (final g in LogicGateType.values) _buildGateToolboxItem(g, scheme, s),
-      ]),
-      if (widget.containerInfo != null) ...[
-        SizedBox(height: sectionGap),
-        ...section(Icons.folder_special_outlined,
-            s.isZh ? '容器' : 'Container', _containerTypes),
-      ],
-    ]);
+    );
   }
 
-  Widget _buildToolboxItem(PipelineStepType t, ColorScheme scheme, AppStrings s) {
+  Widget _buildToolboxItem(
+    PipelineStepType t,
+    ColorScheme scheme,
+    AppStrings s,
+  ) {
     final dummy = PipelineNode(id: '', type: t);
     final tag = dummy.mediaTag;
     // 移动端：工具箱是全屏弹层盖在画布上，拖拽落点被弹层拦截、竖向拖拽又被
@@ -6577,13 +9029,33 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         borderRadius: BorderRadius.circular(8),
         child: Container(
           // 移动端：芯片保持比例（方正胶囊，不压扁），字号/内边距仍可读。
-          padding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 8 : 10, vertical: isMobilePlatform ? 6 : 6),
-          decoration: BoxDecoration(color: _nodeColor(t, scheme), borderRadius: BorderRadius.circular(8)),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(_stepIcon(t), size: isMobilePlatform ? 12 : 14, color: scheme.onSurface),
-            SizedBox(width: isMobilePlatform ? 3 : 4),
-            Text(s.isZh ? dummy.label : dummy.labelEn, style: TextStyle(fontSize: isMobilePlatform ? 9 : 11, color: scheme.onSurface, decoration: TextDecoration.none)),
-          ]),
+          padding: EdgeInsets.symmetric(
+            horizontal: isMobilePlatform ? 8 : 10,
+            vertical: isMobilePlatform ? 6 : 6,
+          ),
+          decoration: BoxDecoration(
+            color: _nodeColor(t, scheme),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                _stepIcon(t),
+                size: isMobilePlatform ? 12 : 14,
+                color: scheme.onSurface,
+              ),
+              SizedBox(width: isMobilePlatform ? 3 : 4),
+              Text(
+                s.isZh ? dummy.label : dummy.labelEn,
+                style: TextStyle(
+                  fontSize: isMobilePlatform ? 9 : 11,
+                  color: scheme.onSurface,
+                  decoration: TextDecoration.none,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
       childWhenDragging: _toolboxChip(t, dummy, tag, scheme, s, opacity: 0.3),
@@ -6605,18 +9077,34 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         // 右键切换收藏。桌面端刻意不挂 onLongPress：长按是拖拽前的自然停顿，
         // 会误触发收藏。
         onSecondaryTap: () => _toggleFavoriteType(t),
-        child: _toolboxChip(t, dummy, tag, scheme, s,
-            isSelected: _previewedToolboxType == t, isFav: _isFavoriteType(t)),
+        child: _toolboxChip(
+          t,
+          dummy,
+          tag,
+          scheme,
+          s,
+          isSelected: _previewedToolboxType == t,
+          isFav: _isFavoriteType(t),
+        ),
       ),
     );
   }
 
   Widget _categoryLabel(ColorScheme scheme, IconData icon, String label) {
-    return Row(children: [
-      Icon(icon, size: 12, color: scheme.outline),
-      const SizedBox(width: 4),
-      Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: scheme.outline)),
-    ]);
+    return Row(
+      children: [
+        Icon(icon, size: 12, color: scheme.outline),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+            color: scheme.outline,
+          ),
+        ),
+      ],
+    );
   }
 
   /// 逻辑块类型图标：画布覆盖层 / 属性面板标题 / 工具箱三处共用。
@@ -6628,7 +9116,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     LogicBlockType.condition => Icons.rule,
   };
 
-  Widget _buildLogicToolboxItem(LogicBlockType type, ColorScheme scheme, AppStrings s) {
+  Widget _buildLogicToolboxItem(
+    LogicBlockType type,
+    ColorScheme scheme,
+    AppStrings s,
+  ) {
     final label = logicBlockTypeLabel(type, s.isZh);
     final icon = _logicTypeIcon(type);
     final isSelected = _previewedLogicType == type;
@@ -6650,11 +9142,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             borderRadius: BorderRadius.circular(6),
             border: Border.all(color: context.sem.danger.withAlpha(80)),
           ),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(icon, size: 12, color: context.sem.danger),
-            const SizedBox(width: 3),
-            Text(label, style: TextStyle(fontSize: 9, color: scheme.onSurface)),
-          ]),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 12, color: context.sem.danger),
+              const SizedBox(width: 3),
+              Text(
+                label,
+                style: TextStyle(fontSize: 9, color: scheme.onSurface),
+              ),
+            ],
+          ),
         ),
       );
     }
@@ -6671,24 +9169,58 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       onDoubleTap: () => _startLogicBoxSelect(type, s),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
-        padding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 8 : 10, vertical: isMobilePlatform ? 5 : 5),
-        decoration: BoxDecoration(
-          color: isSelected ? context.sem.danger.withAlpha(60) : context.sem.danger.withAlpha(30),
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: isSelected ? context.sem.danger : context.sem.danger.withAlpha(80), width: isSelected ? 2 : 1),
-          boxShadow: isSelected ? [BoxShadow(color: context.sem.danger.withAlpha(40), blurRadius: 6)] : null,
+        padding: EdgeInsets.symmetric(
+          horizontal: isMobilePlatform ? 8 : 10,
+          vertical: isMobilePlatform ? 5 : 5,
         ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, size: isMobilePlatform ? 12 : 14, color: context.sem.danger),
-          SizedBox(width: isMobilePlatform ? 3 : 4),
-          Text(label, style: TextStyle(fontSize: isMobilePlatform ? 9 : 12, color: scheme.onSurface)),
-        ]),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? context.sem.danger.withAlpha(60)
+              : context.sem.danger.withAlpha(30),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: isSelected
+                ? context.sem.danger
+                : context.sem.danger.withAlpha(80),
+            width: isSelected ? 2 : 1,
+          ),
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: context.sem.danger.withAlpha(40),
+                    blurRadius: 6,
+                  ),
+                ]
+              : null,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: isMobilePlatform ? 12 : 14,
+              color: context.sem.danger,
+            ),
+            SizedBox(width: isMobilePlatform ? 3 : 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: isMobilePlatform ? 9 : 12,
+                color: scheme.onSurface,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   /// 构建逻辑门工具箱项（桌面端可拖拽到画布；移动端点按即添加）
-  Widget _buildGateToolboxItem(LogicGateType gate, ColorScheme scheme, AppStrings s) {
+  Widget _buildGateToolboxItem(
+    LogicGateType gate,
+    ColorScheme scheme,
+    AppStrings s,
+  ) {
     final sym = gate.symbol(s.isZh);
     if (isMobilePlatform) {
       // 与 _buildToolboxItem 同理：弹层遮挡画布，拖拽不可用 → 点按即添加。
@@ -6703,13 +9235,24 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         elevation: 6,
         borderRadius: BorderRadius.circular(6),
         child: Container(
-          padding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 7 : 8, vertical: isMobilePlatform ? 4 : 4),
+          padding: EdgeInsets.symmetric(
+            horizontal: isMobilePlatform ? 7 : 8,
+            vertical: isMobilePlatform ? 4 : 4,
+          ),
           decoration: BoxDecoration(
             color: scheme.tertiaryContainer.withAlpha(180),
             borderRadius: BorderRadius.circular(6),
             border: Border.all(color: scheme.tertiary.withAlpha(120)),
           ),
-          child: Text(sym, style: TextStyle(fontSize: isMobilePlatform ? 10 : 11, fontWeight: FontWeight.w700, color: scheme.onTertiaryContainer, decoration: TextDecoration.none)),
+          child: Text(
+            sym,
+            style: TextStyle(
+              fontSize: isMobilePlatform ? 10 : 11,
+              fontWeight: FontWeight.w700,
+              color: scheme.onTertiaryContainer,
+              decoration: TextDecoration.none,
+            ),
+          ),
         ),
       ),
       childWhenDragging: _gateChip(gate, scheme, s, opacity: 0.3),
@@ -6717,7 +9260,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     );
   }
 
-  Widget _gateChip(LogicGateType gate, ColorScheme scheme, AppStrings s, {double opacity = 1.0}) {
+  Widget _gateChip(
+    LogicGateType gate,
+    ColorScheme scheme,
+    AppStrings s, {
+    double opacity = 1.0,
+  }) {
     final sym = gate.symbol(s.isZh);
     final name = gate.name.toUpperCase();
     // 透明度预乘进颜色，避免 childWhenDragging 外包 Opacity 触发 saveLayer。
@@ -6727,13 +9275,25 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       message: name,
       waitDuration: const Duration(milliseconds: 500),
       child: Container(
-        padding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 6 : 7, vertical: isMobilePlatform ? 3 : 3),
+        padding: EdgeInsets.symmetric(
+          horizontal: isMobilePlatform ? 6 : 7,
+          vertical: isMobilePlatform ? 3 : 3,
+        ),
         decoration: BoxDecoration(
-          color: fade(scheme.tertiaryContainer.withAlpha(gate.isConstant ? 120 : 80)),
+          color: fade(
+            scheme.tertiaryContainer.withAlpha(gate.isConstant ? 120 : 80),
+          ),
           borderRadius: BorderRadius.circular(5),
           border: Border.all(color: fade(scheme.tertiary.withAlpha(60))),
         ),
-        child: Text(sym, style: TextStyle(fontSize: isMobilePlatform ? 9 : 10, fontWeight: FontWeight.w700, color: fade(scheme.onTertiaryContainer))),
+        child: Text(
+          sym,
+          style: TextStyle(
+            fontSize: isMobilePlatform ? 9 : 10,
+            fontWeight: FontWeight.w700,
+            color: fade(scheme.onTertiaryContainer),
+          ),
+        ),
       ),
     );
   }
@@ -6741,39 +9301,88 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// [opacity] 用于拖拽占位（childWhenDragging）时的淡化：把透明度预乘进
   /// 各颜色，而不是外包一层 `Opacity`——后者在非 0/1 值时会触发 saveLayer
   /// 离屏渲染，每个芯片一层，代价明显。
-  Widget _toolboxChip(PipelineStepType t, PipelineNode dummy, String tag, ColorScheme scheme, AppStrings s, {bool isSelected = false, bool isFav = false, double opacity = 1.0}) {
+  Widget _toolboxChip(
+    PipelineStepType t,
+    PipelineNode dummy,
+    String tag,
+    ColorScheme scheme,
+    AppStrings s, {
+    bool isSelected = false,
+    bool isFav = false,
+    double opacity = 1.0,
+  }) {
     final o = opacity.clamp(0.0, 1.0);
     Color fade(Color c) => o >= 1.0 ? c : c.withAlpha((c.a * 255 * o).round());
     return AnimatedContainer(
       duration: const Duration(milliseconds: 150),
-      padding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 8 : 10, vertical: isMobilePlatform ? 5 : 5),
+      padding: EdgeInsets.symmetric(
+        horizontal: isMobilePlatform ? 8 : 10,
+        vertical: isMobilePlatform ? 5 : 5,
+      ),
       decoration: BoxDecoration(
-        color: fade(isSelected ? scheme.primary.withAlpha(40) : _nodeColor(t, scheme).withAlpha(180)),
+        color: fade(
+          isSelected
+              ? scheme.primary.withAlpha(40)
+              : _nodeColor(t, scheme).withAlpha(180),
+        ),
         borderRadius: BorderRadius.circular(6),
         border: Border.all(
-          color: fade(isSelected
-              ? scheme.primary
-              : isFav
-                  ? scheme.primary.withAlpha(130)
-                  : scheme.outlineVariant.withAlpha(60)),
+          color: fade(
+            isSelected
+                ? scheme.primary
+                : isFav
+                ? scheme.primary.withAlpha(130)
+                : scheme.outlineVariant.withAlpha(60),
+          ),
           width: isSelected ? 2 : 1,
         ),
-        boxShadow: isSelected ? [BoxShadow(color: fade(scheme.primary.withAlpha(40)), blurRadius: 6)] : null,
+        boxShadow: isSelected
+            ? [
+                BoxShadow(
+                  color: fade(scheme.primary.withAlpha(40)),
+                  blurRadius: 6,
+                ),
+              ]
+            : null,
       ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(_stepIcon(t), size: isMobilePlatform ? 12 : 14, color: fade(scheme.onSurface)),
-        SizedBox(width: isMobilePlatform ? 3 : 4),
-        Text(s.isZh ? dummy.label : dummy.labelEn, style: TextStyle(fontSize: isMobilePlatform ? 9 : 12, color: fade(scheme.onSurface))),
-        if (tag.isNotEmpty) ...[
-          SizedBox(width: isMobilePlatform ? 2 : 4),
-          Text(tag, style: TextStyle(fontSize: isMobilePlatform ? 5 : 9, color: fade(scheme.outline), fontWeight: FontWeight.w600)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            _stepIcon(t),
+            size: isMobilePlatform ? 12 : 14,
+            color: fade(scheme.onSurface),
+          ),
+          SizedBox(width: isMobilePlatform ? 3 : 4),
+          Text(
+            s.isZh ? dummy.label : dummy.labelEn,
+            style: TextStyle(
+              fontSize: isMobilePlatform ? 9 : 12,
+              color: fade(scheme.onSurface),
+            ),
+          ),
+          if (tag.isNotEmpty) ...[
+            SizedBox(width: isMobilePlatform ? 2 : 4),
+            Text(
+              tag,
+              style: TextStyle(
+                fontSize: isMobilePlatform ? 5 : 9,
+                color: fade(scheme.outline),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+          // 收藏标记：只在收藏项上出现，不给所有芯片加宽度
+          if (isFav) ...[
+            SizedBox(width: isMobilePlatform ? 2 : 3),
+            Icon(
+              Icons.star,
+              size: isMobilePlatform ? 8 : 10,
+              color: fade(scheme.primary),
+            ),
+          ],
         ],
-        // 收藏标记：只在收藏项上出现，不给所有芯片加宽度
-        if (isFav) ...[
-          SizedBox(width: isMobilePlatform ? 2 : 3),
-          Icon(Icons.star, size: isMobilePlatform ? 8 : 10, color: fade(scheme.primary)),
-        ],
-      ]),
+      ),
     );
   }
 
@@ -6782,130 +9391,168 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// 应用内面板（[_buildAiPanel]）与独立窗口的宿主转发（[_handlePanelRequest]）
   /// **共用这一份**实现，保证「AI 改图」在两处语义完全一致。
   AiGraphOps _buildAiGraphOps() => AiGraphOps(
-      apply: (nodes, connections) {
-        _pushUndo();
-        setState(() {
-          _nodes.clear();
-          _connections.clear();
-          _nodes.addAll(nodes);
-          _connections.addAll(connections);
-        });
-      },
-      merge: (aiNodes, aiConns) {
-        _pushUndo();
-        setState(() {
-          final idRemap = <String, String>{};
-          for (final n in aiNodes) {
-            final existing = _nodes.indexWhere((e) => e.type == n.type && !idRemap.containsValue(e.id));
-            if (existing >= 0) {
-              _nodes[existing].params.addAll(n.params);
-              idRemap[n.id] = _nodes[existing].id;
-            } else {
-              _nodes.add(n);
-              idRemap[n.id] = n.id;
-            }
+    apply: (nodes, connections) {
+      _pushUndo();
+      setState(() {
+        _nodes.clear();
+        _connections.clear();
+        _nodes.addAll(nodes);
+        _connections.addAll(connections);
+      });
+    },
+    merge: (aiNodes, aiConns) {
+      _pushUndo();
+      setState(() {
+        final idRemap = <String, String>{};
+        for (final n in aiNodes) {
+          final existing = _nodes.indexWhere(
+            (e) => e.type == n.type && !idRemap.containsValue(e.id),
+          );
+          if (existing >= 0) {
+            _nodes[existing].params.addAll(n.params);
+            idRemap[n.id] = _nodes[existing].id;
+          } else {
+            _nodes.add(n);
+            idRemap[n.id] = n.id;
           }
-          final newConns = <PipelineConnection>[];
-          for (final c in aiConns) {
-            final fromId = idRemap[c.fromNodeId] ?? c.fromNodeId;
-            final toId = idRemap[c.toNodeId] ?? c.toNodeId;
-            if (!_connections.any((e) => e.fromNodeId == fromId && e.toNodeId == toId)) {
-              newConns.add(PipelineConnection(id: _uuid.v4(), fromNodeId: fromId, toNodeId: toId));
-            }
+        }
+        final newConns = <PipelineConnection>[];
+        for (final c in aiConns) {
+          final fromId = idRemap[c.fromNodeId] ?? c.fromNodeId;
+          final toId = idRemap[c.toNodeId] ?? c.toNodeId;
+          if (!_connections.any(
+            (e) => e.fromNodeId == fromId && e.toNodeId == toId,
+          )) {
+            newConns.add(
+              PipelineConnection(
+                id: _uuid.v4(),
+                fromNodeId: fromId,
+                toNodeId: toId,
+              ),
+            );
           }
-          final remappedConns = aiConns.map((c) => (
-            from: idRemap[c.fromNodeId] ?? c.fromNodeId,
-            to: idRemap[c.toNodeId] ?? c.toNodeId,
-          )).toSet();
-          final aiNodeIds = remappedConns.expand((c) => [c.from, c.to]).toSet();
-          _connections.removeWhere((c) {
-            if (!aiNodeIds.contains(c.fromNodeId) || !aiNodeIds.contains(c.toNodeId)) return false;
-            if (remappedConns.any((r) => r.from == c.fromNodeId && r.to == c.toNodeId)) return false;
-            return true;
-          });
-          _connections.addAll(newConns);
+        }
+        final remappedConns = aiConns
+            .map(
+              (c) => (
+                from: idRemap[c.fromNodeId] ?? c.fromNodeId,
+                to: idRemap[c.toNodeId] ?? c.toNodeId,
+              ),
+            )
+            .toSet();
+        final aiNodeIds = remappedConns.expand((c) => [c.from, c.to]).toSet();
+        _connections.removeWhere((c) {
+          if (!aiNodeIds.contains(c.fromNodeId) ||
+              !aiNodeIds.contains(c.toNodeId))
+            return false;
+          if (remappedConns.any(
+            (r) => r.from == c.fromNodeId && r.to == c.toNodeId,
+          ))
+            return false;
+          return true;
         });
-      },
-      modifyParams: (nodeId, params) {
-        // 与另一处 AiPanelView 构造（桌面/移动）共用同一约定：
-        // 找不到节点返回 false，不再静默改写 _nodes.first
-        final idx = _nodes.indexWhere((n) => n.id == nodeId);
-        if (idx < 0) return false;
-        _pushUndo();
-        setState(() {
-          params.forEach((k, v) { _nodes[idx].params[k] = v; });
+        _connections.addAll(newConns);
+      });
+    },
+    modifyParams: (nodeId, params) {
+      // 与另一处 AiPanelView 构造（桌面/移动）共用同一约定：
+      // 找不到节点返回 false，不再静默改写 _nodes.first
+      final idx = _nodes.indexWhere((n) => n.id == nodeId);
+      if (idx < 0) return false;
+      _pushUndo();
+      setState(() {
+        params.forEach((k, v) {
+          _nodes[idx].params[k] = v;
         });
+      });
+      _commitChange();
+      return true;
+    },
+    clearAll: () {
+      _pushUndo();
+      setState(() {
+        _nodes.clear();
+        _connections.clear();
+        _logicBlocks.clear();
+        _selectedNodeIds.clear();
         _commitChange();
-        return true;
-      },
-      clearAll: () {
-        _pushUndo();
-        setState(() {
-          _nodes.clear();
-          _connections.clear();
-          _logicBlocks.clear();
-          _selectedNodeIds.clear();
-          _commitChange();
+      });
+    },
+    undo: _undo,
+    redo: _redo,
+    save: _saveGraph,
+    addNode: (type, x, y) {
+      final stepType = PipelineStepType.values.firstWhere(
+        (t) => t.name == type,
+        orElse: () => throw ArgumentError('Unknown type: $type'),
+      );
+      final node = PipelineNode(id: _uuid.v4(), type: stepType, x: x, y: y);
+      _pushUndo();
+      setState(() => _nodes.add(node));
+      _commitChange();
+      return node.id;
+    },
+    addGate: (gateName, x, y) {
+      final gate = LogicGateType.values.asNameMap()[gateName];
+      if (gate == null) throw ArgumentError('Unknown gate type: $gateName');
+      final node = PipelineNode(
+        id: _uuid.v4(),
+        type: PipelineStepType.start,
+        x: x,
+        y: y,
+        gateType: gate.name,
+      );
+      _pushUndo();
+      setState(() => _nodes.add(node));
+      _commitChange();
+      return node.id;
+    },
+    setGateParams: (nodeId, params) {
+      final idx = _nodes.indexWhere((n) => n.id == nodeId);
+      if (idx < 0) return false;
+      _pushUndo();
+      setState(() {
+        params.forEach((k, v) {
+          _nodes[idx].params[k] = v;
         });
-      },
-      undo: _undo,
-      redo: _redo,
-      save: _saveGraph,
-      addNode: (type, x, y) {
-        final stepType = PipelineStepType.values.firstWhere((t) => t.name == type, orElse: () => throw ArgumentError('Unknown type: $type'));
-        final node = PipelineNode(id: _uuid.v4(), type: stepType, x: x, y: y);
-        _pushUndo();
-        setState(() => _nodes.add(node));
-        _commitChange();
-        return node.id;
-      },
-      addGate: (gateName, x, y) {
-        final gate = LogicGateType.values.asNameMap()[gateName];
-        if (gate == null) throw ArgumentError('Unknown gate type: $gateName');
-        final node = PipelineNode(
-          id: _uuid.v4(),
-          type: PipelineStepType.start,
-          x: x, y: y,
-          gateType: gate.name,
-        );
-        _pushUndo();
-        setState(() => _nodes.add(node));
-        _commitChange();
-        return node.id;
-      },
-      setGateParams: (nodeId, params) {
-        final idx = _nodes.indexWhere((n) => n.id == nodeId);
-        if (idx < 0) return false;
-        _pushUndo();
-        setState(() {
-          params.forEach((k, v) { _nodes[idx].params[k] = v; });
-        });
-        _commitChange();
-        return true;
-      },
-      deleteNode: (nodeId) {
-        _deleteNode(nodeId);
-        _commitChange();
-      },
-      connectNodes: (fromId, toId) {
-        if (fromId == toId) return false;
-        if (!_nodes.any((n) => n.id == fromId) || !_nodes.any((n) => n.id == toId)) return false;
-        if (_connections.any((c) => c.fromNodeId == fromId && c.toNodeId == toId)) return false;
-        _pushUndo();
-        setState(() => _connections.add(PipelineConnection(id: _uuid.v4(), fromNodeId: fromId, toNodeId: toId)));
-        _commitChange();
-        return true;
-      },
-      disconnectNodes: (connId) {
-        final idx = _connections.indexWhere((c) => c.id == connId);
-        if (idx < 0) return false;
-        _pushUndo();
-        setState(() => _connections.removeAt(idx));
-        _commitChange();
-        return true;
-      },
-      cancelTasks: () => context.read<AppState>().cancelProcessing(),
-    );
+      });
+      _commitChange();
+      return true;
+    },
+    deleteNode: (nodeId) {
+      _deleteNode(nodeId);
+      _commitChange();
+    },
+    connectNodes: (fromId, toId) {
+      if (fromId == toId) return false;
+      if (!_nodes.any((n) => n.id == fromId) ||
+          !_nodes.any((n) => n.id == toId))
+        return false;
+      if (_connections.any((c) => c.fromNodeId == fromId && c.toNodeId == toId))
+        return false;
+      _pushUndo();
+      setState(
+        () => _connections.add(
+          PipelineConnection(
+            id: _uuid.v4(),
+            fromNodeId: fromId,
+            toNodeId: toId,
+          ),
+        ),
+      );
+      _commitChange();
+      return true;
+    },
+    disconnectNodes: (connId) {
+      final idx = _connections.indexWhere((c) => c.id == connId);
+      if (idx < 0) return false;
+      _pushUndo();
+      setState(() => _connections.removeAt(idx));
+      _commitChange();
+      return true;
+    },
+    cancelTasks: () => context.read<AppState>().cancelProcessing(),
+  );
 
   /// 惰性缓存：图操作回调只在第一次需要时构造一次（每次构造 14 个闭包）。
   AiGraphOps? _aiOpsCache;
@@ -7006,8 +9653,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     _pushedParams = null;
     if (fromWindow) {
       final p = panel;
-      Future.delayed(const Duration(milliseconds: 80),
-          () => MultiWindowService.closePanel(p));
+      Future.delayed(
+        const Duration(milliseconds: 80),
+        () => MultiWindowService.closePanel(p),
+      );
     }
   }
 
@@ -7063,12 +9712,22 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       _pushedShape = shape;
       _pushedParams = null;
       if (propsOpen) {
-        unawaited(MultiWindowService.push(DetachedPanel.props,
-            PanelPush.snapshot, panelSnapshot(DetachedPanel.props)));
+        unawaited(
+          MultiWindowService.push(
+            DetachedPanel.props,
+            PanelPush.snapshot,
+            panelSnapshot(DetachedPanel.props),
+          ),
+        );
       }
       if (aiOpen) {
-        unawaited(MultiWindowService.push(DetachedPanel.ai,
-            PanelPush.snapshot, panelSnapshot(DetachedPanel.ai)));
+        unawaited(
+          MultiWindowService.push(
+            DetachedPanel.ai,
+            PanelPush.snapshot,
+            panelSnapshot(DetachedPanel.ai),
+          ),
+        );
       }
       return;
     }
@@ -7079,12 +9738,22 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     _pushedParams = sig;
     final payload = <String, dynamic>{'nodeId': node.id, 'params': node.params};
     if (propsOpen) {
-      unawaited(MultiWindowService.push(
-          DetachedPanel.props, PanelPush.nodeParams, payload));
+      unawaited(
+        MultiWindowService.push(
+          DetachedPanel.props,
+          PanelPush.nodeParams,
+          payload,
+        ),
+      );
     }
     if (aiOpen) {
       unawaited(
-          MultiWindowService.push(DetachedPanel.ai, PanelPush.nodeParams, payload));
+        MultiWindowService.push(
+          DetachedPanel.ai,
+          PanelPush.nodeParams,
+          payload,
+        ),
+      );
     }
   }
 
@@ -7167,13 +9836,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       }
     }
 
-    final favs =
-        _typesFromNames(_appState.config.favoriteNodeTypes).where(vis).toList();
+    final favs = _typesFromNames(
+      _appState.config.favoriteNodeTypes,
+    ).where(vis).toList();
     // 已经置顶在「收藏」里的不再重复出现在「最近使用」里（与主窗口同规则）
-    final recents = _typesFromNames(_appState.config.recentNodeTypes)
-        .where((t) => !favs.contains(t))
-        .where(vis)
-        .toList();
+    final recents = _typesFromNames(
+      _appState.config.recentNodeTypes,
+    ).where((t) => !favs.contains(t)).where(vis).toList();
     addAll(favs, 'fav');
     addAll(recents, 'recent');
     addAll(const [PipelineStepType.start, PipelineStepType.output], 'io');
@@ -7187,7 +9856,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   /// 子窗口的请求总入口。返回值必须是可 JSON 序列化的（会原样回给子窗口）。
   @override
-  Future<dynamic> onPanelRequest(String method, Map<String, dynamic> args) async {
+  Future<dynamic> onPanelRequest(
+    String method,
+    Map<String, dynamic> args,
+  ) async {
     final panel = DetachedPanel.fromId(args['panel'] as String?);
     switch (method) {
       case PanelMethod.ready:
@@ -7249,7 +9921,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           final json = args['config'];
           if (json is! Map) return false;
           await _appState.updateConfig(
-              (_) => AppConfig.fromJson(Map<String, dynamic>.from(json)));
+            (_) => AppConfig.fromJson(Map<String, dynamic>.from(json)),
+          );
           return true;
         }
 
@@ -7287,7 +9960,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
       case PanelMethod.graphConnect:
         return _aiOps.connectNodes(
-            args['fromId'] as String? ?? '', args['toId'] as String? ?? '');
+          args['fromId'] as String? ?? '',
+          args['toId'] as String? ?? '',
+        );
 
       case PanelMethod.graphDisconnect:
         return _aiOps.disconnectNodes(args['connId'] as String? ?? '');
@@ -7364,7 +10039,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   /// 独立窗口请求加一个逻辑门节点（同样采用子窗口给的 id）。
   dynamic _addGateFromPanel(Map<String, dynamic> args) {
-    final gate = LogicGateType.values.asNameMap()[args['gate'] as String? ?? ''];
+    final gate = LogicGateType.values
+        .asNameMap()[args['gate'] as String? ?? ''];
     if (gate == null) return false;
     final node = PipelineNode(
       id: (args['nodeId'] as String?) ?? _uuid.v4(),
@@ -7454,7 +10130,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     // 直接复用面板里的解析逻辑（同一库内可见），会话级覆盖也一并生效
     final profile = aiKey.currentState?._effectiveProfile;
     final options = _modelOptionsFor(cfg, profile);
-    final current = profile?.model.isNotEmpty == true ? profile!.model : cfg.aiModel;
+    final current = profile?.model.isNotEmpty == true
+        ? profile!.model
+        : cfg.aiModel;
     return PopupMenuButton<String>(
       tooltip: s.isZh ? '切换模型' : 'Switch model',
       padding: EdgeInsets.zero,
@@ -7469,28 +10147,36 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         for (final m in options)
           PopupMenuItem<String>(
             value: m,
-            child: Row(children: [
-              Icon(
+            child: Row(
+              children: [
+                Icon(
                   m == current
                       ? Icons.radio_button_checked
                       : Icons.radio_button_off,
                   size: 13,
-                  color: m == current ? scheme.primary : scheme.outline),
-              const SizedBox(width: 6),
-              Flexible(child: Text(m,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12))),
-            ]),
+                  color: m == current ? scheme.primary : scheme.outline,
+                ),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    m,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
           ),
         if (options.isEmpty)
           PopupMenuItem<String>(
             enabled: false,
             child: Text(
-                s.isZh
-                    ? '未配置模型（设置 → AI 中添加）'
-                    : 'No models configured (Settings → AI)',
-                style: TextStyle(fontSize: 11, color: scheme.outline)),
+              s.isZh
+                  ? '未配置模型（设置 → AI 中添加）'
+                  : 'No models configured (Settings → AI)',
+              style: TextStyle(fontSize: 11, color: scheme.outline),
+            ),
           ),
       ],
       child: Container(
@@ -7501,23 +10187,27 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
         ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(Icons.psychology_outlined, size: 14, color: scheme.primary),
-          const SizedBox(width: 4),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 132),
-            child: Text(
-              current.isEmpty ? (s.isZh ? '未配置模型' : 'No model') : current,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.psychology_outlined, size: 14, color: scheme.primary),
+            const SizedBox(width: 4),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 132),
+              child: Text(
+                current.isEmpty ? (s.isZh ? '未配置模型' : 'No model') : current,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
-                  color: scheme.onSurface),
+                  color: scheme.onSurface,
+                ),
+              ),
             ),
-          ),
-          Icon(Icons.arrow_drop_down, size: 16, color: scheme.outline),
-        ]),
+            Icon(Icons.arrow_drop_down, size: 16, color: scheme.outline),
+          ],
+        ),
       ),
     );
   }
@@ -7541,76 +10231,103 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     // 移动端触摸目标 36 已达标（Material 最小 36 的图标按钮 + 4px 外扩热区），
     // 再往上加会让头部吃掉本来就紧张的弹层高度。
     const headBtn = AppControlSize.comfortable;
-    Widget headButton(Widget icon, String tip, VoidCallback onTap) => IconButton(
+    Widget headButton(Widget icon, String tip, VoidCallback onTap) =>
+        IconButton(
           icon: icon,
           tooltip: tip,
           onPressed: onTap,
           // 显式定死点击盒：不写的话 Material 会给到 48×48（约束是 min 而非 max，
           // IconButton 自身默认 constraints 为 null → 取 kMinInteractiveDimension），
           // 头部行高就被顶到 48，比标题字号大出一大截。
-          constraints: BoxConstraints.tightFor(width: headBtn.height, height: headBtn.height),
+          constraints: BoxConstraints.tightFor(
+            width: headBtn.height,
+            height: headBtn.height,
+          ),
           padding: EdgeInsets.zero,
           style: IconButton.styleFrom(
             foregroundColor: scheme.onSurfaceVariant,
             // 圆角水波纹：默认 splash 是 48 直径的圆，比 36 的盒子还大，
             // 点按时会溢出行外。半径取档位圆角避免出现「圆角矩形按钮 + 圆形水波」。
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(headBtn.radius)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(headBtn.radius),
+            ),
           ),
         );
     Widget header(BuildContext ctx) => StatefulBuilder(
-          builder: (ctx, setH) => Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 8, 6),
-            child: Row(children: [
-              Icon(Icons.smart_toy, size: 18, color: scheme.primary),
-              const SizedBox(width: 8),
-              Expanded(child: Text(s.aiChatTitle,
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface))),
-              // 模型切换（与 PC 顶栏同源）
-              _aiModelPill(scheme, s, aiKey, () => setH(() {})),
-              const SizedBox(width: 2),
-              // 历史记录
-              Builder(builder: (btnCtx) => headButton(
+      builder: (ctx, setH) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 8, 6),
+        child: Row(
+          children: [
+            Icon(Icons.smart_toy, size: 18, color: scheme.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                s.aiChatTitle,
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: scheme.onSurface,
+                ),
+              ),
+            ),
+            // 模型切换（与 PC 顶栏同源）
+            _aiModelPill(scheme, s, aiKey, () => setH(() {})),
+            const SizedBox(width: 2),
+            // 历史记录
+            Builder(
+              builder: (btnCtx) => headButton(
                 Icon(Icons.history, size: headBtn.iconSize),
                 s.isZh ? '历史记录' : 'History',
                 () {
                   final box = btnCtx.findRenderObject() as RenderBox?;
-                  final overlay = Overlay.of(btnCtx).context.findRenderObject() as RenderBox?;
+                  final overlay =
+                      Overlay.of(btnCtx).context.findRenderObject()
+                          as RenderBox?;
                   if (box != null && overlay != null) {
-                    final pos = box.localToGlobal(Offset.zero, ancestor: overlay);
-                    aiKey.currentState?.openHistoryAt(pos + const Offset(24, 8));
+                    final pos = box.localToGlobal(
+                      Offset.zero,
+                      ancestor: overlay,
+                    );
+                    aiKey.currentState?.openHistoryAt(
+                      pos + const Offset(24, 8),
+                    );
                   }
                 },
-              )),
-              // 工具面板开关
-              headButton(
-                AnimatedRotation(
-                  turns: (aiKey.currentState?.toolsOpen ?? false) ? 0.5 : 0,
-                  duration: const Duration(milliseconds: 200),
-                  curve: Curves.easeOutCubic,
-                  child: Icon(Icons.extension_outlined, size: headBtn.iconSize),
-                ),
-                s.isZh ? '工具' : 'Tools',
-                () {
-                  aiKey.currentState?.toggleTools();
-                  setH(() {});
-                },
               ),
-              // 关闭
-              headButton(
-                Icon(Icons.close, size: headBtn.iconSize),
-                s.isZh ? '关闭' : 'Close',
-                () => Navigator.of(ctx).pop(),
+            ),
+            // 工具面板开关
+            headButton(
+              AnimatedRotation(
+                turns: (aiKey.currentState?.toolsOpen ?? false) ? 0.5 : 0,
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOutCubic,
+                child: Icon(Icons.extension_outlined, size: headBtn.iconSize),
               ),
-            ]),
-          ),
-        );
+              s.isZh ? '工具' : 'Tools',
+              () {
+                aiKey.currentState?.toggleTools();
+                setH(() {});
+              },
+            ),
+            // 关闭
+            headButton(
+              Icon(Icons.close, size: headBtn.iconSize),
+              s.isZh ? '关闭' : 'Close',
+              () => Navigator.of(ctx).pop(),
+            ),
+          ],
+        ),
+      ),
+    );
 
     if (_isLandscape) {
       // 横屏：左侧滑入面板，不占满整个屏幕
       showGeneralDialog<void>(
         context: context,
         barrierDismissible: true,
-        barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
+        barrierLabel: MaterialLocalizations.of(
+          context,
+        ).modalBarrierDismissLabel,
         barrierColor: Colors.black.withValues(alpha: 0.24),
         transitionDuration: const Duration(milliseconds: 240),
         pageBuilder: (ctx, anim, anim2) {
@@ -7623,33 +10340,47 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
               color: Colors.transparent,
               child: Padding(
                 // 横屏软键盘弹出时整体上移，避免输入框被键盘遮挡
-                padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
+                padding: EdgeInsets.only(
+                  bottom: MediaQuery.viewInsetsOf(ctx).bottom,
+                ),
                 child: Container(
                   width: panelW,
                   height: double.infinity,
                   decoration: BoxDecoration(
                     color: scheme.surface,
-                    borderRadius: const BorderRadius.horizontal(right: Radius.circular(20)),
-                    border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
+                    borderRadius: const BorderRadius.horizontal(
+                      right: Radius.circular(20),
+                    ),
+                    border: Border.all(
+                      color: scheme.outlineVariant.withAlpha(60),
+                    ),
                     // 横屏侧栏与画布同为 surface 系色，不投影的话边界只剩一条
                     // 0.6px 细线，半屏遮挡会让人误判画布宽度。向右投影即可。
                     boxShadow: [
-                      BoxShadow(color: scheme.shadow.withAlpha(36), blurRadius: 20, offset: const Offset(8, 0)),
+                      BoxShadow(
+                        color: scheme.shadow.withAlpha(36),
+                        blurRadius: 20,
+                        offset: const Offset(8, 0),
+                      ),
                     ],
                   ),
                   clipBehavior: Clip.antiAlias,
-                  child: Column(children: [
-                    header(ctx),
-                    Expanded(child: panelContent),
-                  ]),
+                  child: Column(
+                    children: [
+                      header(ctx),
+                      Expanded(child: panelContent),
+                    ],
+                  ),
                 ),
               ),
             ),
           );
         },
         transitionBuilder: (ctx, anim, anim2, child) {
-          final offset = Tween<Offset>(begin: const Offset(-1, 0), end: Offset.zero)
-              .animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic));
+          final offset = Tween<Offset>(
+            begin: const Offset(-1, 0),
+            end: Offset.zero,
+          ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic));
           return SlideTransition(position: offset, child: child);
         },
       );
@@ -7677,34 +10408,47 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         const double topGap = 18;
         // 键盘顶起来后真正可用的高度；下限 120 只为避免 clamp 上下界颠倒抛异常，
         // 任何真实设备都不可能触到这一档。
-        final double available = (media.size.height - topGap - insets)
-            .clamp(120.0, media.size.height);
-        final double sheetH = (media.size.height * 0.86 - insets).clamp(0.0, available);
+        final double available = (media.size.height - topGap - insets).clamp(
+          120.0,
+          media.size.height,
+        );
+        final double sheetH = (media.size.height * 0.86 - insets).clamp(
+          0.0,
+          available,
+        );
         return Padding(
           padding: EdgeInsets.only(top: topGap, bottom: insets),
           child: Container(
             height: sheetH,
             decoration: BoxDecoration(
               color: scheme.surface,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(22),
+              ),
               border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
             ),
             clipBehavior: Clip.antiAlias,
-            child: Column(children: [
-              const SizedBox(height: 8),
-              // 拖拽指示条
-              Container(
-                width: 40, height: 4,
-                decoration: BoxDecoration(color: scheme.outlineVariant.withAlpha(120), borderRadius: BorderRadius.circular(2)),
-              ),
-              header(ctx),
-              Expanded(child: panelContent),
-              // Android 手势导航：isScrollControlled 的底部弹层不会自动避让系统
-              // 导航条，这里显式预留底部安全区，避免输入框被手势条遮挡。
-              // 键盘弹起时 viewInsets 已覆盖手势条区域，padding.bottom 会归零，
-              // 两者不会叠加出双倍留白。
-              SizedBox(height: media.padding.bottom),
-            ]),
+            child: Column(
+              children: [
+                const SizedBox(height: 8),
+                // 拖拽指示条
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: scheme.outlineVariant.withAlpha(120),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                header(ctx),
+                Expanded(child: panelContent),
+                // Android 手势导航：isScrollControlled 的底部弹层不会自动避让系统
+                // 导航条，这里显式预留底部安全区，避免输入框被手势条遮挡。
+                // 键盘弹起时 viewInsets 已覆盖手势条区域，padding.bottom 会归零，
+                // 两者不会叠加出双倍留白。
+                SizedBox(height: media.padding.bottom),
+              ],
+            ),
           ),
         );
       },
@@ -7720,74 +10464,152 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         color: scheme.surface.withAlpha(200),
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
-        boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(20), blurRadius: 8, offset: const Offset(0, 2))],
+        boxShadow: [
+          BoxShadow(
+            color: scheme.shadow.withAlpha(20),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: ConstrainedBox(
         // 移动端屏幕矮/横屏时，整列工具可能溢出被裁掉（"右侧小工具显示不全"），
         // 用大量高约束 + 可滚动包裹，保证所有按钮始终可达。
         // 移动端横屏可用高度更小，进一步下调系数，避免右侧工具列被裁掉。
-        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * (isMobilePlatform ? (_isLandscape ? 0.48 : 0.62) : 0.86)),
+        constraints: BoxConstraints(
+          maxHeight:
+              MediaQuery.of(context).size.height *
+              (isMobilePlatform ? (_isLandscape ? 0.48 : 0.62) : 0.86),
+        ),
         child: SingleChildScrollView(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-        // 移动端：返回按钮（舍弃顶部栏后以浮动按钮替代）
-        if (isMobilePlatform) ...[
-          _controlBtn(Icons.arrow_back, s.isZh ? '返回' : 'Back', scheme, () async {
-            final nav = Navigator.of(context);
-            if (await _onWillPop()) nav.pop();
-          }),
-          const SizedBox(height: 2),
-          // AI 助手（按钮触发底部弹层，可预览节点编辑器状态）
-          if (context.read<AppState>().config.aiEnabled) ...[
-            _controlBtn(Icons.smart_toy, s.isZh ? 'AI 助手' : 'AI Assistant', scheme,
-                () => _openAiSheet(s), color: scheme.primary),
-            const SizedBox(height: 2),
-          ],
-          // 横竖屏切换（移动端专属）
-          _controlBtn(
-            _isLandscape ? Icons.phone_android_outlined : Icons.screen_rotation_alt_outlined,
-            _isLandscape ? (s.isZh ? '切换到竖屏' : 'Switch to portrait') : (s.isZh ? '切换到横屏' : 'Switch to landscape'),
-            scheme, _toggleOrientation,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 移动端：返回按钮（舍弃顶部栏后以浮动按钮替代）
+              if (isMobilePlatform) ...[
+                _controlBtn(
+                  Icons.arrow_back,
+                  s.isZh ? '返回' : 'Back',
+                  scheme,
+                  () async {
+                    final nav = Navigator.of(context);
+                    if (await _onWillPop()) nav.pop();
+                  },
+                ),
+                const SizedBox(height: 2),
+                // AI 助手（按钮触发底部弹层，可预览节点编辑器状态）
+                if (context.read<AppState>().config.aiEnabled) ...[
+                  _controlBtn(
+                    Icons.smart_toy,
+                    s.isZh ? 'AI 助手' : 'AI Assistant',
+                    scheme,
+                    () => _openAiSheet(s),
+                    color: scheme.primary,
+                  ),
+                  const SizedBox(height: 2),
+                ],
+                // 横竖屏切换（移动端专属）
+                _controlBtn(
+                  _isLandscape
+                      ? Icons.phone_android_outlined
+                      : Icons.screen_rotation_alt_outlined,
+                  _isLandscape
+                      ? (s.isZh ? '切换到竖屏' : 'Switch to portrait')
+                      : (s.isZh ? '切换到横屏' : 'Switch to landscape'),
+                  scheme,
+                  _toggleOrientation,
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Divider(
+                    height: 1,
+                    color: scheme.outlineVariant.withAlpha(60),
+                  ),
+                ),
+              ],
+              // 放大缩小改在画布左下角浮动按钮；移动端右侧工具列不再重复（避免误触）。
+              _controlBtn(
+                Icons.auto_fix_high,
+                s.isZh ? '整理' : 'Arrange',
+                scheme,
+                _autoLayout,
+              ),
+              const SizedBox(height: 2),
+              _controlBtn(
+                Icons.my_location,
+                s.isZh ? '定位源' : 'Source',
+                scheme,
+                () => _goToSource(s),
+              ),
+              // 桌面端右侧工具栏补齐（与移动端顶部菜单栏能力对齐）：
+              // 原来只有「整理 + 定位源」，缺少移动端已有的缩放、探测、隐藏逻辑线。
+              // 撤销/重做**只保留画布上方工具栏那一处** —— 这里再放一份就是同一个
+              // 功能在 PC 上出现两个撤销按钮（用户反馈），故本列不再渲染。
+              if (!isMobilePlatform) ...[
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Divider(
+                    height: 1,
+                    color: scheme.outlineVariant.withAlpha(60),
+                  ),
+                ),
+                _controlBtn(
+                  Icons.zoom_out,
+                  s.isZh ? '缩小' : 'Zoom out',
+                  scheme,
+                  () => _zoomTo(_currentScale - 0.15),
+                ),
+                const SizedBox(height: 2),
+                _controlBtn(
+                  Icons.zoom_in,
+                  s.isZh ? '放大' : 'Zoom in',
+                  scheme,
+                  () => _zoomTo(_currentScale + 0.15),
+                ),
+                const SizedBox(height: 2),
+                _controlBtn(
+                  Icons.fit_screen_outlined,
+                  s.isZh ? '适应画布' : 'Fit',
+                  scheme,
+                  _zoomToFit,
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Divider(
+                    height: 1,
+                    color: scheme.outlineVariant.withAlpha(60),
+                  ),
+                ),
+                _controlBtn(
+                  Icons.search,
+                  s.isZh ? '探测模式' : 'Probe',
+                  scheme,
+                  () => setState(() => _probeMode = !_probeMode),
+                  color: _probeMode ? scheme.primary : null,
+                ),
+                const SizedBox(height: 2),
+                _controlBtn(
+                  Icons.route,
+                  s.isZh ? '隐藏逻辑线' : 'Hide logic',
+                  scheme,
+                  () => setState(() => _hideLogic = !_hideLogic),
+                  color: _hideLogic ? scheme.error : null,
+                ),
+              ],
+            ],
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
-          ),
-        ],
-        // 放大缩小改在画布左下角浮动按钮；移动端右侧工具列不再重复（避免误触）。
-        _controlBtn(Icons.auto_fix_high, s.isZh ? '整理' : 'Arrange', scheme, _autoLayout),
-        const SizedBox(height: 2),
-        _controlBtn(Icons.my_location, s.isZh ? '定位源' : 'Source', scheme, () => _goToSource(s)),
-        // 桌面端右侧工具栏补齐（与移动端顶部菜单栏能力对齐）：
-        // 原来只有「整理 + 定位源」，缺少移动端已有的缩放、探测、隐藏逻辑线。
-        // 撤销/重做**只保留画布上方工具栏那一处** —— 这里再放一份就是同一个
-        // 功能在 PC 上出现两个撤销按钮（用户反馈），故本列不再渲染。
-        if (!isMobilePlatform) ...[
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
-          ),
-          _controlBtn(Icons.zoom_out, s.isZh ? '缩小' : 'Zoom out', scheme, () => _zoomTo(_currentScale - 0.15)),
-          const SizedBox(height: 2),
-          _controlBtn(Icons.zoom_in, s.isZh ? '放大' : 'Zoom in', scheme, () => _zoomTo(_currentScale + 0.15)),
-          const SizedBox(height: 2),
-          _controlBtn(Icons.fit_screen_outlined, s.isZh ? '适应画布' : 'Fit', scheme, _zoomToFit),
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
-          ),
-          _controlBtn(Icons.search, s.isZh ? '探测模式' : 'Probe', scheme, () => setState(() => _probeMode = !_probeMode),
-              color: _probeMode ? scheme.primary : null),
-          const SizedBox(height: 2),
-          _controlBtn(Icons.route, s.isZh ? '隐藏逻辑线' : 'Hide logic', scheme, () => setState(() => _hideLogic = !_hideLogic),
-              color: _hideLogic ? scheme.error : null),
-        ],
-          ]),
         ),
       ),
     );
   }
 
-  Widget _controlBtn(IconData icon, String tooltip, ColorScheme scheme, VoidCallback onTap, {Color? color}) {
+  Widget _controlBtn(
+    IconData icon,
+    String tooltip,
+    ColorScheme scheme,
+    VoidCallback onTap, {
+    Color? color,
+  }) {
     // 移动端横屏：缩小按钮 padding 与图标，降低整列高度，防止溢出。
     final compact = isMobilePlatform && _isLandscape;
     return Tooltip(
@@ -7797,7 +10619,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         onTap: onTap,
         child: Padding(
           padding: EdgeInsets.all(compact ? 3 : 6),
-          child: Icon(icon, size: compact ? 14 : 18, color: color ?? scheme.onSurfaceVariant),
+          child: Icon(
+            icon,
+            size: compact ? 14 : 18,
+            color: color ?? scheme.onSurfaceVariant,
+          ),
         ),
       ),
     );
@@ -7839,63 +10665,102 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final text = kb >= 1024
         ? '${(kb / 1024).toStringAsFixed(2)} MB'
         : kb >= 0.1
-            ? '${kb.toStringAsFixed(1)} KB'
-            : '$bytes B';
+        ? '${kb.toStringAsFixed(1)} KB'
+        : '$bytes B';
     return s.isZh ? '.fppx ≈ $text' : '.fppx ≈ $text';
   }
 
   Widget _buildBottomBar(ColorScheme scheme, AppStrings s) {
     final v = widget.video;
-    final srcCount = _nodes.where((n) => n.type == PipelineStepType.start && !n.isGate).length;
-    final outCount = _nodes.where((n) => n.type == PipelineStepType.output).length;
+    final srcCount = _nodes
+        .where((n) => n.type == PipelineStepType.start && !n.isGate)
+        .length;
+    final outCount = _nodes
+        .where((n) => n.type == PipelineStepType.output)
+        .length;
     final countsText = s.isZh
         ? '${_nodes.length} 节点  |  $srcCount 源  |  $outCount 输出  |  ${_connections.length} 连线'
         : '${_nodes.length} nodes  |  $srcCount src  |  $outCount out  |  ${_connections.length} links';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: BoxDecoration(border: Border(top: BorderSide(color: scheme.outlineVariant.withAlpha(50)))),
+      decoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(color: scheme.outlineVariant.withAlpha(50)),
+        ),
+      ),
       // 移动端：左半文件信息条 + 右半最右为节点/源/输出/连线数据（底部信息条约 1/2 + 数据右置）。
       child: isMobilePlatform
-          ? Row(children: [
-              Expanded(child: Row(children: [
-                Icon(Icons.info_outline, size: 13, color: scheme.outline),
-                const SizedBox(width: 5),
+          ? Row(
+              children: [
                 Expanded(
-                  child: Text('${v.resolution}  |  ${v.durationStr}  |  ${_fppxSizeLabel(s)}',
-                      maxLines: 1, overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: scheme.outline, fontSize: 11)),
+                  child: Row(
+                    children: [
+                      Icon(Icons.info_outline, size: 13, color: scheme.outline),
+                      const SizedBox(width: 5),
+                      Expanded(
+                        child: Text(
+                          '${v.resolution}  |  ${v.durationStr}  |  ${_fppxSizeLabel(s)}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: scheme.outline, fontSize: 11),
+                        ),
+                      ),
+                      if (_autosaveIndicator) ...[
+                        const SizedBox(width: 8),
+                        Icon(
+                          Icons.cloud_done_outlined,
+                          size: 13,
+                          color: context.sem.success,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                Flexible(
+                  child: Text(
+                    countsText,
+                    textAlign: TextAlign.right,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: scheme.outline, fontSize: 11),
+                  ),
+                ),
+              ],
+            )
+          : Row(
+              children: [
+                Icon(Icons.info_outline, size: 14, color: scheme.outline),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    '${v.resolution}  |  ${v.durationStr}  |  ${_fppxSizeLabel(s)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: scheme.outline, fontSize: 12),
+                  ),
                 ),
                 if (_autosaveIndicator) ...[
-                  const SizedBox(width: 8),
-                  Icon(Icons.cloud_done_outlined, size: 13, color: context.sem.success),
+                  const SizedBox(width: 12),
+                  Icon(
+                    Icons.cloud_done_outlined,
+                    size: 14,
+                    color: context.sem.success,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    s.isZh ? '已自动保存' : 'Auto-saved',
+                    style: TextStyle(fontSize: 10, color: context.sem.success),
+                  ),
                 ],
-              ])),
-              Flexible(
-                child: Text(countsText,
-                    textAlign: TextAlign.right,
-                    maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: scheme.outline, fontSize: 11)),
-              ),
-            ])
-          : Row(children: [
-              Icon(Icons.info_outline, size: 14, color: scheme.outline),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text('${v.resolution}  |  ${v.durationStr}  |  ${_fppxSizeLabel(s)}',
-                    maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: scheme.outline, fontSize: 12)),
-              ),
-              if (_autosaveIndicator) ...[
-                const SizedBox(width: 12),
-                Icon(Icons.cloud_done_outlined, size: 14, color: context.sem.success),
-                const SizedBox(width: 4),
-                Text(s.isZh ? '已自动保存' : 'Auto-saved',
-                    style: TextStyle(fontSize: 10, color: context.sem.success)),
+                const Spacer(),
+                Text(
+                  countsText,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: scheme.outline, fontSize: 11),
+                ),
               ],
-              const Spacer(),
-              Text(countsText, maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: scheme.outline, fontSize: 11)),
-            ]),
+            ),
     );
   }
 
@@ -7903,162 +10768,296 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   Widget _buildMobileTopBar(ColorScheme scheme, AppStrings s) {
     final cfg = context.read<AppState>().config;
-    // 顶部菜单栏药丸大小可在设置中调节（editorToolbarScale）
-    final scale = cfg.editorToolbarScale.clamp(0.5, 1.6);
-    return Transform.scale(
-      scale: scale,
-      alignment: Alignment.topCenter,
-      // 高 36 / 圆角 18 / 按钮盒 26：与左下缩放条共用 _kMobileBar* 常量（见常量处注释）
-      child: Container(
-      height: _kMobileBarHeight,
-      padding: const EdgeInsets.symmetric(horizontal: _kMobileBarBtnPad, vertical: 2),
-      decoration: BoxDecoration(
-        color: scheme.surface.withAlpha(220),
-        borderRadius: BorderRadius.circular(_kMobileBarRadius),
-        border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
-        boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(30), blurRadius: 6, offset: const Offset(0, 2))],
-      ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        _mobileBarBtn(Icons.arrow_back, () async {
-          final nav = Navigator.of(context);
-          if (await _onWillPop()) nav.pop();
-        }, scheme),
-        const SizedBox(width: 2),
-        // 撤销/重做：原画布顶部工具栏在移动端移除后，迁移到顶部浮动菜单栏。
-        // 不用 _mobileBarBtn 是因为要 disabled 态；但按钮盒（26）与图标（18）必须同档
-        IconButton(
-          icon: Icon(Icons.undo, size: _kMobileBarBtnIcon, color: _undoStack.isEmpty ? scheme.outlineVariant : scheme.onSurfaceVariant),
-          constraints: const BoxConstraints(minWidth: _kMobileBarBtnBox, minHeight: _kMobileBarBtnBox),
-          padding: EdgeInsets.zero,
-          onPressed: _undoStack.isEmpty ? null : _undo,
-        ),
-        IconButton(
-          icon: Icon(Icons.redo, size: _kMobileBarBtnIcon, color: _redoStack.isEmpty ? scheme.outlineVariant : scheme.onSurfaceVariant),
-          constraints: const BoxConstraints(minWidth: _kMobileBarBtnBox, minHeight: _kMobileBarBtnBox),
-          padding: EdgeInsets.zero,
-          onPressed: _redoStack.isEmpty ? null : _redo,
-        ),
-        const SizedBox(width: 2),
-        // 自右下角工具条迁移：自动整理 + 定位源
-        _mobileBarBtn(Icons.auto_fix_high, _autoLayout, scheme),
-        const SizedBox(width: 2),
-        _mobileBarBtn(Icons.my_location, () => _goToSource(s), scheme),
-        const SizedBox(width: 2),
-        // 工具箱开关：改造前这颗用 20px 图标（比同排其它都大一号），已回到统一档
-        _mobileBarBtn(
-          _mobileToolboxOpen ? Icons.close : Icons.add,
-          () => setState(() => _mobileToolboxOpen = !_mobileToolboxOpen),
-          scheme, color: scheme.primary,
-        ),
-        // 属性卡片被收起后，用这枚图标恢复（仅当当前选中的对象正是被收起的那个）
-        if ((_selectedNode?.id ?? _selectedLogicBlockId) != null &&
-            _mobilePropsHiddenFor == (_selectedNode?.id ?? _selectedLogicBlockId)) ...[
-          const SizedBox(width: 2),
-          _mobileBarBtn(
-            Icons.tune,
-            () => setState(() => _mobilePropsHiddenFor = null),
-            scheme,
-            color: scheme.primary,
-            tooltip: s.isZh ? '显示属性面板' : 'Show properties',
+    // Respect the user scale without allowing the toolbar to exceed its viewport.
+    final requestedScale = cfg.editorToolbarScale.clamp(0.5, 1.6);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final scale = math
+            .min(requestedScale, constraints.maxWidth / 410)
+            .clamp(0.25, 1.0);
+        return Transform.scale(
+          scale: scale,
+          alignment: Alignment.topCenter,
+          // 高 36 / 圆角 18 / 按钮盒 26：与左下缩放条共用 _kMobileBar* 常量（见常量处注释）
+          child: Container(
+            height: _kMobileBarHeight,
+            padding: const EdgeInsets.symmetric(
+              horizontal: _kMobileBarBtnPad,
+              vertical: 2,
+            ),
+            decoration: BoxDecoration(
+              color: scheme.surface.withAlpha(220),
+              borderRadius: BorderRadius.circular(_kMobileBarRadius),
+              border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
+              boxShadow: [
+                BoxShadow(
+                  color: scheme.shadow.withAlpha(30),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _mobileBarBtn(Icons.arrow_back, () async {
+                  final nav = Navigator.of(context);
+                  if (await _onWillPop()) nav.pop();
+                }, scheme),
+                const SizedBox(width: 2),
+                // 撤销/重做：原画布顶部工具栏在移动端移除后，迁移到顶部浮动菜单栏。
+                // 不用 _mobileBarBtn 是因为要 disabled 态；但按钮盒（26）与图标（18）必须同档
+                _mobileBarBtn(
+                  Icons.undo,
+                  _undoStack.isEmpty ? null : _undo,
+                  scheme,
+                  color: _undoStack.isEmpty
+                      ? scheme.outlineVariant
+                      : scheme.onSurfaceVariant,
+                  tooltip: s.isZh ? '撤销' : 'Undo',
+                ),
+                _mobileBarBtn(
+                  Icons.redo,
+                  _redoStack.isEmpty ? null : _redo,
+                  scheme,
+                  color: _redoStack.isEmpty
+                      ? scheme.outlineVariant
+                      : scheme.onSurfaceVariant,
+                  tooltip: s.isZh ? '重做' : 'Redo',
+                ),
+                const SizedBox(width: 2),
+                // 自右下角工具条迁移：自动整理 + 定位源
+                _mobileBarBtn(Icons.auto_fix_high, _autoLayout, scheme),
+                const SizedBox(width: 2),
+                _mobileBarBtn(Icons.my_location, () => _goToSource(s), scheme),
+                const SizedBox(width: 2),
+                // 工具箱开关：改造前这颗用 20px 图标（比同排其它都大一号），已回到统一档
+                _mobileBarBtn(
+                  _mobileToolboxOpen ? Icons.close : Icons.add,
+                  () =>
+                      setState(() => _mobileToolboxOpen = !_mobileToolboxOpen),
+                  scheme,
+                  color: scheme.primary,
+                ),
+                // 属性卡片被收起后，用这枚图标恢复（仅当当前选中的对象正是被收起的那个）
+                if ((_selectedNode?.id ?? _selectedLogicBlockId) != null &&
+                    _mobilePropsHiddenFor ==
+                        (_selectedNode?.id ?? _selectedLogicBlockId)) ...[
+                  const SizedBox(width: 2),
+                  _mobileBarBtn(
+                    Icons.tune,
+                    () => setState(() => _mobilePropsHiddenFor = null),
+                    scheme,
+                    color: scheme.primary,
+                    tooltip: s.isZh ? '显示属性面板' : 'Show properties',
+                  ),
+                ],
+                if (cfg.aiEnabled) ...[
+                  const SizedBox(width: 2),
+                  _mobileBarBtn(
+                    Icons.smart_toy,
+                    () => _openAiSheet(s),
+                    scheme,
+                    color: scheme.primary,
+                  ),
+                ],
+                const SizedBox(width: 2),
+                // 保存：与 PC 顶栏同一套配色（实心主题色 + 反色图标），
+                // 移动端不再只是一颗裸图标
+                _mobileBarBtn(
+                  Icons.save_outlined,
+                  _save,
+                  scheme,
+                  color: scheme.onPrimary,
+                  bg: scheme.primary,
+                  tooltip: s.save,
+                ),
+                const SizedBox(width: 2),
+                SizedBox(
+                  // 盒径与同排按钮一致（改造前是 28，比相邻的 26 大 2px）
+                  width: _kMobileBarBtnBox,
+                  height: _kMobileBarBtnBox,
+                  child: PopupMenuButton<String>(
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: _kMobileBarBtnBox,
+                      minHeight: _kMobileBarBtnBox,
+                    ),
+                    icon: Icon(
+                      Icons.more_vert,
+                      size: 18,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                    onSelected: (v) {
+                      switch (v) {
+                        case 'export':
+                          if (_nodes.isNotEmpty) _exportConfig(s);
+                          break;
+                        case 'import':
+                          _importConfig(s);
+                          break;
+                        case 'probe':
+                          setState(() => _probeMode = !_probeMode);
+                          break;
+                        case 'hide':
+                          setState(() => _hideLogic = !_hideLogic);
+                          break;
+                        case 'format':
+                          setState(
+                            () => _writeFormat = _writeFormat == 'v2'
+                                ? 'legacy'
+                                : 'v2',
+                          );
+                          break;
+                        case 'orientation':
+                          _toggleOrientation();
+                          break;
+                      }
+                    },
+                    itemBuilder: (_) => [
+                      PopupMenuItem(
+                        value: 'export',
+                        enabled: _nodes.isNotEmpty,
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.file_upload_outlined,
+                              size: 16,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              s.isZh ? '导出配置' : 'Export Config',
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'import',
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.file_download_outlined,
+                              size: 16,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              s.importConfig,
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'probe',
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.search,
+                              size: 16,
+                              color: _probeMode
+                                  ? scheme.primary
+                                  : scheme.onSurfaceVariant,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              s.isZh ? '探测模式' : 'Probe',
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                            if (_probeMode) ...[
+                              const Spacer(),
+                              Icon(
+                                Icons.check,
+                                size: 14,
+                                color: scheme.primary,
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'hide',
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.route,
+                              size: 16,
+                              color: _hideLogic
+                                  ? scheme.error
+                                  : scheme.onSurfaceVariant,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              s.isZh ? '隐藏逻辑线' : 'Hide logic',
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                            if (_hideLogic) ...[
+                              const Spacer(),
+                              Icon(Icons.check, size: 14, color: scheme.error),
+                            ],
+                          ],
+                        ),
+                      ),
+                      // 写入格式（与桌面端工具栏那枚标识同一个开关）
+                      PopupMenuItem(
+                        value: 'format',
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.save_as_outlined,
+                              size: 16,
+                              color: _writeFormat == 'v2'
+                                  ? scheme.primary
+                                  : scheme.onSurfaceVariant,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              s.isZh ? '写入格式' : 'Write format',
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                            const Spacer(),
+                            Text(
+                              _writeFormat == 'v2' ? 'v2' : 'legacy',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: _writeFormat == 'v2'
+                                    ? scheme.primary
+                                    : scheme.outline,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'orientation',
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.screen_rotation,
+                              size: 16,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              _isLandscape
+                                  ? (s.isZh ? '切换到竖屏' : 'Switch to portrait')
+                                  : (s.isZh ? '切换到横屏' : 'Switch to landscape'),
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
-        ],
-        if (cfg.aiEnabled) ...[
-          const SizedBox(width: 2),
-          _mobileBarBtn(Icons.smart_toy, () => _openAiSheet(s), scheme, color: scheme.primary),
-        ],
-        const SizedBox(width: 2),
-        // 保存：与 PC 顶栏同一套配色（实心主题色 + 反色图标），
-        // 移动端不再只是一颗裸图标
-        SizedBox(
-          width: _kMobileBarBtnBox, height: _kMobileBarBtnBox,
-          child: IconButton.filled(
-            onPressed: _save,
-            tooltip: s.save,
-            icon: const Icon(Icons.save_outlined, size: _kMobileBarBtnIcon),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(
-                minWidth: _kMobileBarBtnBox, minHeight: _kMobileBarBtnBox),
-            style: _saveButtonStyle(scheme, radius: 13),
-          ),
-        ),
-        const SizedBox(width: 2),
-        SizedBox(
-          // 盒径与同排按钮一致（改造前是 28，比相邻的 26 大 2px）
-          width: _kMobileBarBtnBox, height: _kMobileBarBtnBox,
-          child: PopupMenuButton<String>(
-            padding: EdgeInsets.zero,
-            icon: Icon(Icons.more_vert, size: 18, color: scheme.onSurfaceVariant),
-            onSelected: (v) {
-              switch (v) {
-                case 'export':
-                  if (_nodes.isNotEmpty) _exportConfig(s);
-                  break;
-                case 'import':
-                  _importConfig(s);
-                  break;
-                case 'probe':
-                  setState(() => _probeMode = !_probeMode);
-                  break;
-                case 'hide':
-                  setState(() => _hideLogic = !_hideLogic);
-                  break;
-                case 'format':
-                  setState(() =>
-                      _writeFormat = _writeFormat == 'v2' ? 'legacy' : 'v2');
-                  break;
-                case 'orientation':
-                  _toggleOrientation();
-                  break;
-              }
-            },
-            itemBuilder: (_) => [
-              PopupMenuItem(value: 'export', enabled: _nodes.isNotEmpty, child: Row(children: [
-                Icon(Icons.file_upload_outlined, size: 16, color: scheme.onSurfaceVariant),
-                const SizedBox(width: 6),
-                Text(s.isZh ? '导出配置' : 'Export Config', style: const TextStyle(fontSize: 13)),
-              ])),
-              PopupMenuItem(value: 'import', child: Row(children: [
-                Icon(Icons.file_download_outlined, size: 16, color: scheme.onSurfaceVariant),
-                const SizedBox(width: 6),
-                Text(s.importConfig, style: const TextStyle(fontSize: 13)),
-              ])),
-              PopupMenuItem(value: 'probe', child: Row(children: [
-                Icon(Icons.search, size: 16, color: _probeMode ? scheme.primary : scheme.onSurfaceVariant),
-                const SizedBox(width: 6),
-                Text(s.isZh ? '探测模式' : 'Probe', style: const TextStyle(fontSize: 13)),
-                if (_probeMode) ...[const Spacer(), Icon(Icons.check, size: 14, color: scheme.primary)],
-              ])),
-              PopupMenuItem(value: 'hide', child: Row(children: [
-                Icon(Icons.route, size: 16, color: _hideLogic ? scheme.error : scheme.onSurfaceVariant),
-                const SizedBox(width: 6),
-                Text(s.isZh ? '隐藏逻辑线' : 'Hide logic', style: const TextStyle(fontSize: 13)),
-                if (_hideLogic) ...[const Spacer(), Icon(Icons.check, size: 14, color: scheme.error)],
-              ])),
-              // 写入格式（与桌面端工具栏那枚标识同一个开关）
-              PopupMenuItem(value: 'format', child: Row(children: [
-                Icon(Icons.save_as_outlined, size: 16,
-                    color: _writeFormat == 'v2' ? scheme.primary : scheme.onSurfaceVariant),
-                const SizedBox(width: 6),
-                Text(s.isZh ? '写入格式' : 'Write format',
-                    style: const TextStyle(fontSize: 13)),
-                const Spacer(),
-                Text(_writeFormat == 'v2' ? 'v2' : 'legacy',
-                    style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: _writeFormat == 'v2' ? scheme.primary : scheme.outline)),
-              ])),
-              PopupMenuItem(value: 'orientation', child: Row(children: [
-                Icon(Icons.screen_rotation, size: 16, color: scheme.onSurfaceVariant),
-                const SizedBox(width: 6),
-                Text(_isLandscape ? (s.isZh ? '切换到竖屏' : 'Switch to portrait') : (s.isZh ? '切换到横屏' : 'Switch to landscape'),
-                    style: const TextStyle(fontSize: 13)),
-              ])),
-            ],
-          ),
-        ),
-      ]),
-      ),
+        );
+      },
     );
   }
 
@@ -8077,7 +11076,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   /// 按钮盒边长：两颗药丸里的每个动作按钮（含 IconButton / PopupMenuButton）
   /// 都按它约束，盒外的间距才由 SizedBox 统一给 2。
-  static const double _kMobileBarBtnBox = _kMobileBarBtnIcon + _kMobileBarBtnPad * 2;
+  static const double _kMobileBarBtnBox =
+      _kMobileBarBtnIcon + _kMobileBarBtnPad * 2;
 
   // ── 移动端专用：底部左侧缩放条 ──
 
@@ -8086,28 +11086,61 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     // 药丸总高 / 圆角 / 按钮盒与顶部工具栏共用 _kMobileBar* 常量（见上）。
     // 缩放图标刻意比顶部工具栏的 18 大一档（20）：它们是纯图形按钮、没有文字兜底，
     // 但按钮盒仍压到同一个 26，两颗药丸的节奏才一致。
-    final scale = context.read<AppState>().config.editorZoomScale.clamp(0.5, 1.6);
+    final scale = context.read<AppState>().config.editorZoomScale.clamp(
+      0.5,
+      1.6,
+    );
     return Transform.scale(
       scale: scale,
       alignment: Alignment.bottomLeft,
       child: Container(
         height: _kMobileBarHeight,
-        padding: const EdgeInsets.symmetric(horizontal: _kMobileBarBtnPad, vertical: 2),
+        padding: const EdgeInsets.symmetric(
+          horizontal: _kMobileBarBtnPad,
+          vertical: 2,
+        ),
         decoration: BoxDecoration(
           color: scheme.surface.withAlpha(220),
           borderRadius: BorderRadius.circular(_kMobileBarRadius),
           border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
-          boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(30), blurRadius: 6, offset: const Offset(0, 2))],
+          boxShadow: [
+            BoxShadow(
+              color: scheme.shadow.withAlpha(30),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
+            ),
+          ],
         ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          // 图标 20 + 内边距 3 ⇒ 按钮盒 26，与顶部工具栏对齐
-          _mobileBarBtn(Icons.zoom_out, () => _zoomTo(_currentScale - 0.15), scheme, size: 20, pad: 3, tooltip: s.isZh ? '缩小' : 'Zoom out'),
-          const SizedBox(width: 2),
-          _mobileBarBtn(Icons.zoom_in, () => _zoomTo(_currentScale + 0.15), scheme, size: 20, pad: 3, tooltip: s.isZh ? '放大' : 'Zoom in'),
-          const SizedBox(width: 2),
-          // 一键适应画布（补齐与桌面端一致的缩放能力）
-          _mobileBarBtn(Icons.fit_screen_outlined, _zoomToFit, scheme, size: 20, pad: 3, tooltip: s.isZh ? '适应画布' : 'Fit to canvas'),
-        ]),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 图标 20 + 内边距 3 ⇒ 按钮盒 26，与顶部工具栏对齐
+            _mobileBarBtn(
+              Icons.zoom_out,
+              () => _zoomTo(_currentScale - 0.15),
+              scheme,
+              size: 20,
+              tooltip: s.isZh ? '缩小' : 'Zoom out',
+            ),
+            const SizedBox(width: 2),
+            _mobileBarBtn(
+              Icons.zoom_in,
+              () => _zoomTo(_currentScale + 0.15),
+              scheme,
+              size: 20,
+              tooltip: s.isZh ? '放大' : 'Zoom in',
+            ),
+            const SizedBox(width: 2),
+            // 一键适应画布（补齐与桌面端一致的缩放能力）
+            _mobileBarBtn(
+              Icons.fit_screen_outlined,
+              _zoomToFit,
+              scheme,
+              size: 20,
+              tooltip: s.isZh ? '适应画布' : 'Fit to canvas',
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -8120,7 +11153,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     // 左右两侧都要让位：左下缩放悬浮条放大后约 116px 宽（3 个 20px 图标按钮），
     // 右下角还有缩放读数药丸（约 70px，含它与屏幕边缘的 10px）。
     // 改造前只扣左边，窄屏上信息条会直接压到百分比读数上。
-    final zoomScale = context.read<AppState>().config.editorZoomScale.clamp(0.5, 1.6);
+    final zoomScale = context.read<AppState>().config.editorZoomScale.clamp(
+      0.5,
+      1.6,
+    );
     final reserved = 130.0 * zoomScale + 16 + 86.0;
     final maxW = math.max(96.0, MediaQuery.of(context).size.width - reserved);
     return Container(
@@ -8141,17 +11177,42 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     );
   }
 
-  Widget _mobileBarBtn(IconData icon, VoidCallback onTap, ColorScheme scheme, {Color? color, double size = _kMobileBarBtnIcon, double pad = _kMobileBarBtnPad, String? tooltip}) {
-    final btn = InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: EdgeInsets.all(pad),
-        child: Icon(icon, size: size, color: color ?? scheme.onSurfaceVariant),
+  Widget _mobileBarBtn(
+    IconData icon,
+    VoidCallback? onTap,
+    ColorScheme scheme, {
+    Color? color,
+    Color? bg,
+    double size = _kMobileBarBtnIcon,
+    String? tooltip,
+  }) {
+    final button = SizedBox.square(
+      dimension: _kMobileBarBtnBox,
+      child: Material(
+        color: bg ?? Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(10),
+          child: Center(
+            child: Icon(
+              icon,
+              size: size,
+              color: color ?? scheme.onSurfaceVariant,
+            ),
+          ),
+        ),
       ),
     );
-    if (tooltip == null) return btn;
-    return Tooltip(message: tooltip, child: btn);
+    final labeled = tooltip == null
+        ? button
+        : Tooltip(message: tooltip, child: button);
+    return Semantics(
+      button: true,
+      enabled: onTap != null,
+      label: tooltip,
+      child: labeled,
+    );
   }
 
   // ── 移动端专用：工具箱弹出层 ──
@@ -8165,77 +11226,125 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           onTap: () {},
           child: Center(
             child: Container(
-              width: 320,
-              constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.7),
+              width: math.min(320, MediaQuery.sizeOf(context).width - 32),
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.7,
+              ),
               margin: const EdgeInsets.all(16),
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: scheme.surface.withAlpha(240),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: scheme.outlineVariant.withAlpha(120)),
-                boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(60), blurRadius: 16, offset: const Offset(0, 4))],
+                boxShadow: [
+                  BoxShadow(
+                    color: scheme.shadow.withAlpha(60),
+                    blurRadius: 16,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
               ),
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                Row(children: [
-                  Icon(Icons.widgets_outlined, size: 16, color: scheme.primary),
-                  const SizedBox(width: 6),
-                  Text(s.isZh ? '添加节点' : 'Add Node',
-                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-                  const Spacer(),
-                  // 「显示可用」：与桌面端「元素」面板同一个开关，移动端也能用
-                  Tooltip(
-                    message: _showOnlyAvailable
-                        ? (s.isZh ? '显示全部元素' : 'Show all elements')
-                        : (s.isZh
-                            ? '只显示当前文件可用的元素'
-                            : 'Only show elements usable for this file'),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(6),
-                      onTap: () => setState(
-                          () => _showOnlyAvailable = !_showOnlyAvailable),
-                      child: Padding(
-                        padding: const EdgeInsets.all(4),
-                        child: Icon(
-                          _showOnlyAvailable
-                              ? Icons.filter_alt
-                              : Icons.filter_alt_outlined,
-                          size: 16,
-                          color: _showOnlyAvailable
-                              ? scheme.primary
-                              : scheme.outline,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.widgets_outlined,
+                        size: 16,
+                        color: scheme.primary,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        s.isZh ? '添加节点' : 'Add Node',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: scheme.onSurface,
                         ),
+                      ),
+                      const Spacer(),
+                      // 「显示可用」：与桌面端「元素」面板同一个开关，移动端也能用
+                      Tooltip(
+                        message: _showOnlyAvailable
+                            ? (s.isZh ? '显示全部元素' : 'Show all elements')
+                            : (s.isZh
+                                  ? '只显示当前文件可用的元素'
+                                  : 'Only show elements usable for this file'),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(6),
+                          onTap: () => setState(
+                            () => _showOnlyAvailable = !_showOnlyAvailable,
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(4),
+                            child: Icon(
+                              _showOnlyAvailable
+                                  ? Icons.filter_alt
+                                  : Icons.filter_alt_outlined,
+                              size: 16,
+                              color: _showOnlyAvailable
+                                  ? scheme.primary
+                                  : scheme.outline,
+                            ),
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: Icon(
+                          Icons.close,
+                          size: 18,
+                          color: scheme.outline,
+                        ),
+                        onPressed: () =>
+                            setState(() => _mobileToolboxOpen = false),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 28,
+                          minHeight: 28,
+                        ),
+                      ),
+                    ],
+                  ),
+                  // 移动端操作说明：点击=添加到画布中心；逻辑块需要先在画布框选元素
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2, bottom: 6),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.touch_app_outlined,
+                          size: 11,
+                          color: scheme.outline,
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            s.isZh
+                                ? '点击节点即添加到画布中心；循环/选择循环需在画布框选元素'
+                                : 'Tap a node to add it at canvas center; loops require box-selecting elements',
+                            style: TextStyle(
+                              fontSize: 9.5,
+                              color: scheme.outline,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildToolboxSearch(scheme, s, dense: false),
+                          _buildToolboxBody(scheme, s, dense: false),
+                        ],
                       ),
                     ),
                   ),
-                  IconButton(
-                    icon: Icon(Icons.close, size: 18, color: scheme.outline),
-                    onPressed: () => setState(() => _mobileToolboxOpen = false),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                  ),
-                ]),
-                // 移动端操作说明：点击=添加到画布中心；逻辑块需要先在画布框选元素
-                Padding(
-                  padding: const EdgeInsets.only(top: 2, bottom: 6),
-                  child: Row(children: [
-                    Icon(Icons.touch_app_outlined, size: 11, color: scheme.outline),
-                    const SizedBox(width: 4),
-                    Expanded(child: Text(
-                      s.isZh ? '点击节点即添加到画布中心；循环/选择循环需在画布框选元素' : 'Tap a node to add it at canvas center; loops require box-selecting elements',
-                      style: TextStyle(fontSize: 9.5, color: scheme.outline),
-                    )),
-                  ]),
-                ),
-                const SizedBox(height: 8),
-                Flexible(
-                  child: SingleChildScrollView(
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      _buildToolboxSearch(scheme, s, dense: false),
-                      _buildToolboxBody(scheme, s, dense: false),
-                    ]),
-                  ),
-                ),
-              ]),
+                ],
+              ),
             ),
           ),
         ),
@@ -8255,8 +11364,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final title = logicBlock != null
         ? logicBlock.label(s.isZh)
         : node!.isGate && node.gate != null
-            ? _gatePropertyTitle(node, s)
-            : (s.isZh ? node.label : node.labelEn);
+        ? _gatePropertyTitle(node, s)
+        : (s.isZh ? node.label : node.labelEn);
 
     // 右侧停靠窄卡片：填满 Positioned 给出的高度（top..bottom），内容单列滚动。
     // chrome 全面收紧：内边距 12/10→8/6，头部图标/文字/按钮缩小一档，
@@ -8267,53 +11376,80 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         color: scheme.surface.withAlpha(244),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: scheme.outlineVariant.withAlpha(120)),
-        boxShadow: [BoxShadow(color: scheme.shadow.withAlpha(70), blurRadius: 18, offset: const Offset(-2, 2))],
+        boxShadow: [
+          BoxShadow(
+            color: scheme.shadow.withAlpha(70),
+            blurRadius: 18,
+            offset: const Offset(-2, 2),
+          ),
+        ],
       ),
-      child: Column(mainAxisSize: MainAxisSize.max, crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Icon(
-            logicBlock != null
-                ? (_logicTypeIcon(logicBlock.type))
-                : _stepIcon(node!.type),
-            size: 15,
-            color: scheme.primary,
+      child: Column(
+        mainAxisSize: MainAxisSize.max,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                logicBlock != null
+                    ? (_logicTypeIcon(logicBlock.type))
+                    : _stepIcon(node!.type),
+                size: 15,
+                color: scheme.primary,
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.onSurface,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              IconButton(
+                icon: Icon(Icons.close, size: 16, color: scheme.outline),
+                tooltip: s.isZh
+                    ? '收起（可从顶部菜单栏恢复）'
+                    : 'Collapse (restore from the top bar)',
+                // 只收起卡片、保留选中：顶部菜单栏会出现一枚图标把它调回来
+                // （改造前这里顺手清空了选中，卡片一关就再也调不出来）
+                onPressed: () => setState(() {
+                  _mobilePropsHiddenFor = node?.id ?? _selectedLogicBlockId;
+                }),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+                visualDensity: VisualDensity.compact,
+              ),
+            ],
           ),
-          const SizedBox(width: 4),
+          const SizedBox(height: 2),
+          Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
+          const SizedBox(height: 4),
           Expanded(
-            child: Text(title, style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: scheme.onSurface),
-                maxLines: 1, overflow: TextOverflow.ellipsis),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(2),
+              child: logicBlock != null
+                  ? LogicBlockEditor(
+                      key: ValueKey(logicBlock.id),
+                      block: logicBlock,
+                      childNodes: _nodes
+                          .where((n) => logicBlock.childNodeIds.contains(n.id))
+                          .toList(),
+                      onChanged: () {
+                        setState(() {});
+                        _markDirty();
+                      },
+                      isZh: s.isZh,
+                    )
+                  : _buildStepEditor(node!, s.isZh),
+            ),
           ),
-          IconButton(
-            icon: Icon(Icons.close, size: 16, color: scheme.outline),
-            tooltip: s.isZh ? '收起（可从顶部菜单栏恢复）' : 'Collapse (restore from the top bar)',
-            // 只收起卡片、保留选中：顶部菜单栏会出现一枚图标把它调回来
-            // （改造前这里顺手清空了选中，卡片一关就再也调不出来）
-            onPressed: () => setState(() {
-              _mobilePropsHiddenFor = node?.id ?? _selectedLogicBlockId;
-            }),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
-            visualDensity: VisualDensity.compact,
-          ),
-        ]),
-        const SizedBox(height: 2),
-        Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
-        const SizedBox(height: 4),
-        Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(2),
-            child: logicBlock != null
-                ? LogicBlockEditor(
-                    key: ValueKey(logicBlock.id),
-                    block: logicBlock,
-                    childNodes: _nodes.where((n) => logicBlock.childNodeIds.contains(n.id)).toList(),
-                    onChanged: () { setState(() {}); _markDirty(); },
-                    isZh: s.isZh,
-                  )
-                : _buildStepEditor(node!, s.isZh),
-          ),
-        ),
-      ]),
+        ],
+      ),
     );
   }
 }
@@ -8330,11 +11466,13 @@ class _GridPainter extends CustomPainter {
   final Color color;
   final Color majorColor;
   final Color? fill;
+
   /// InteractiveViewer 的变换控制器。**必须在 paint 里读 `.value`**：平移/缩放
   /// 是 IV 直接改控制器，本 widget 不会随之重建（读快照 = 网格冻在原地、只有
   /// 节点在动）。`repaint` 监听只负责触发重绘 —— 与 _ConnectionPainter 每帧读
   /// `_dragDeltas.value` 是同一条路子。
   final ValueListenable<Matrix4> transformCtrl;
+
   /// 每 N 格画一条加重线。
   static const int majorEvery = 4;
 
@@ -8357,8 +11495,12 @@ class _GridPainter extends CustomPainter {
     final tl = MatrixUtils.transformPoint(inv, Offset.zero);
     final br = MatrixUtils.transformPoint(inv, Offset(size.width, size.height));
     final area = Rect.fromPoints(tl, br);
-    final minor = Paint()..color = color..strokeWidth = 0.5;
-    final major = Paint()..color = majorColor..strokeWidth = 1.0;
+    final minor = Paint()
+      ..color = color
+      ..strokeWidth = 0.5;
+    final major = Paint()
+      ..color = majorColor
+      ..strokeWidth = 1.0;
     final startX = (area.left / _gridStep).floor() * _gridStep;
     final startY = (area.top / _gridStep).floor() * _gridStep;
     // 切到画布坐标系画线（与节点/连线同一变换，天然对齐）；变换后绘制
@@ -8367,11 +11509,19 @@ class _GridPainter extends CustomPainter {
     canvas.transform(transform.storage);
     for (var x = startX; x <= area.right; x += _gridStep) {
       final isMajor = (x / _gridStep).round() % majorEvery == 0;
-      canvas.drawLine(Offset(x, area.top), Offset(x, area.bottom), isMajor ? major : minor);
+      canvas.drawLine(
+        Offset(x, area.top),
+        Offset(x, area.bottom),
+        isMajor ? major : minor,
+      );
     }
     for (var y = startY; y <= area.bottom; y += _gridStep) {
       final isMajor = (y / _gridStep).round() % majorEvery == 0;
-      canvas.drawLine(Offset(area.left, y), Offset(area.right, y), isMajor ? major : minor);
+      canvas.drawLine(
+        Offset(area.left, y),
+        Offset(area.right, y),
+        isMajor ? major : minor,
+      );
     }
     canvas.restore();
   }
@@ -8407,14 +11557,17 @@ class _MiniMapProjection {
     dy = inset + (h - content.height * k) / 2 - content.top * k;
   }
 
-  Offset toMini(Offset canvasPoint) => Offset(canvasPoint.dx * k + dx, canvasPoint.dy * k + dy);
+  Offset toMini(Offset canvasPoint) =>
+      Offset(canvasPoint.dx * k + dx, canvasPoint.dy * k + dy);
 
-  Offset toCanvas(Offset miniPoint) => Offset((miniPoint.dx - dx) / k, (miniPoint.dy - dy) / k);
+  Offset toCanvas(Offset miniPoint) =>
+      Offset((miniPoint.dx - dx) / k, (miniPoint.dy - dy) / k);
 }
 
 /// 小地图画笔：节点画成实心小圆角块、逻辑块画成描边框，最后叠一个当前视口框。
 class _MiniMapPainter extends CustomPainter {
   final _MiniMapProjection proj;
+
   /// 画布坐标下的可视区（由 paint 时**实时**的变换矩阵算出）
   final Rect Function() viewRect;
   final List<Rect> nodeRects;
@@ -8444,7 +11597,10 @@ class _MiniMapPainter extends CustomPainter {
       final h = math.max(2.0, b.dy - a.dy);
       // 节点块最小 2px：缩到 0.3 倍时节点框在小地图里只剩一个点
       canvas.drawRRect(
-        RRect.fromRectAndRadius(Rect.fromLTWH(a.dx, a.dy, w, h), const Radius.circular(1.5)),
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(a.dx, a.dy, w, h),
+          const Radius.circular(1.5),
+        ),
         nodePaint,
       );
     }
@@ -8457,7 +11613,12 @@ class _MiniMapPainter extends CustomPainter {
       final b = proj.toMini(r.bottomRight);
       canvas.drawRRect(
         RRect.fromRectAndRadius(
-          Rect.fromLTWH(a.dx, a.dy, math.max(3.0, b.dx - a.dx), math.max(3.0, b.dy - a.dy)),
+          Rect.fromLTWH(
+            a.dx,
+            a.dy,
+            math.max(3.0, b.dx - a.dx),
+            math.max(3.0, b.dy - a.dy),
+          ),
           const Radius.circular(2),
         ),
         blockPaint,
@@ -8468,7 +11629,12 @@ class _MiniMapPainter extends CustomPainter {
     final va = proj.toMini(vr.topLeft);
     final vb = proj.toMini(vr.bottomRight);
     final viewRRect = RRect.fromRectAndRadius(
-      Rect.fromLTRB(va.dx, va.dy, math.max(va.dx + 4, vb.dx), math.max(va.dy + 4, vb.dy)),
+      Rect.fromLTRB(
+        va.dx,
+        va.dy,
+        math.max(va.dx + 4, vb.dx),
+        math.max(va.dy + 4, vb.dy),
+      ),
       const Radius.circular(2),
     );
     // 视口框加一层半透明填充：只描边时它和节点块混在一起，缩得越小越难看清
@@ -8513,6 +11679,7 @@ class _ConnectionPainter extends CustomPainter {
   final Color color;
   final Color controlColor;
   final Set<String> selectedNodeIds;
+
   /// 拖动中节点的累计位移（画布坐标）。拖动期间模型坐标未更新，
   /// 这里做位置补偿，使连线端点跟随拖动中的节点。
   /// 必须持有 notifier 本体（而非 `.value` 快照）：repaint 只触发 paint
@@ -8570,9 +11737,13 @@ class _ConnectionPainter extends CustomPainter {
     final d = dragDeltas?.value?[n.id];
     if (d == null || (d.dx == 0 && d.dy == 0)) return n;
     return PipelineNode(
-      id: n.id, type: n.type, params: n.params,
-      x: n.x + d.dx, y: n.y + d.dy,
-      gateType: n.gateType, unknownTypeId: n.unknownTypeId,
+      id: n.id,
+      type: n.type,
+      params: n.params,
+      x: n.x + d.dx,
+      y: n.y + d.dy,
+      gateType: n.gateType,
+      unknownTypeId: n.unknownTypeId,
     );
   }
 
@@ -8590,13 +11761,22 @@ class _ConnectionPainter extends CustomPainter {
       final to = _shifted(toFlat);
       final isControl = conn.kind == 'control';
       // 到逻辑门目标时，计算该连线是第几个输入（用于对准圆圈）
-      final inputIdx = (isControl && to.isGate) ? (_gateInputIndex[conn.id] ?? 0) : 0;
+      final inputIdx = (isControl && to.isGate)
+          ? (_gateInputIndex[conn.id] ?? 0)
+          : 0;
       if (inputIdx < 0) continue;
 
       final p1 = _portPos(from, isOutput: true, isControl: isControl);
-      final p2 = _portPos(to, isOutput: false, isControl: isControl, gateInputIndex: inputIdx);
+      final p2 = _portPos(
+        to,
+        isOutput: false,
+        isControl: isControl,
+        gateInputIndex: inputIdx,
+      );
 
-      final highlighted = selectedNodeIds.contains(conn.fromNodeId) || selectedNodeIds.contains(conn.toNodeId);
+      final highlighted =
+          selectedNodeIds.contains(conn.fromNodeId) ||
+          selectedNodeIds.contains(conn.toNodeId);
       final connColor = isControl
           ? (highlighted ? controlColor : controlColor.withAlpha(120))
           : (highlighted ? color : color.withAlpha(80));
@@ -8629,10 +11809,25 @@ class _ConnectionPainter extends CustomPainter {
         final sign = dx >= 0 ? 1.0 : -1.0;
         arrowDir = math.atan2(0.0, ctrlOffset * sign);
       }
-      final arrowPaint = Paint()..color = connColor..style = PaintingStyle.fill;
-      final a1 = Offset(p2.dx - 8 * math.cos(arrowDir - 0.4), p2.dy - 8 * math.sin(arrowDir - 0.4));
-      final a2 = Offset(p2.dx - 8 * math.cos(arrowDir + 0.4), p2.dy - 8 * math.sin(arrowDir + 0.4));
-      canvas.drawPath(Path()..moveTo(p2.dx, p2.dy)..lineTo(a1.dx, a1.dy)..lineTo(a2.dx, a2.dy)..close(), arrowPaint);
+      final arrowPaint = Paint()
+        ..color = connColor
+        ..style = PaintingStyle.fill;
+      final a1 = Offset(
+        p2.dx - 8 * math.cos(arrowDir - 0.4),
+        p2.dy - 8 * math.sin(arrowDir - 0.4),
+      );
+      final a2 = Offset(
+        p2.dx - 8 * math.cos(arrowDir + 0.4),
+        p2.dy - 8 * math.sin(arrowDir + 0.4),
+      );
+      canvas.drawPath(
+        Path()
+          ..moveTo(p2.dx, p2.dy)
+          ..lineTo(a1.dx, a1.dy)
+          ..lineTo(a2.dx, a2.dy)
+          ..close(),
+        arrowPaint,
+      );
     }
   }
 
@@ -8644,14 +11839,22 @@ class _ConnectionPainter extends CustomPainter {
   ///   右侧上方=数据输出，右侧下方=状态输出（红）
   ///   逻辑门：左侧端口区宽 _portZoneW（恒1/恒0 为 4px 占位），多个输入
   ///   用 spaceEvenly 排布；右侧输出端口区宽 _portZoneW。
-  Offset _portPos(PipelineNode n, {required bool isOutput, required bool isControl, int gateInputIndex = 0}) {
+  Offset _portPos(
+    PipelineNode n, {
+    required bool isOutput,
+    required bool isControl,
+    int gateInputIndex = 0,
+  }) {
     // 逻辑门节点
     if (n.isGate) {
       final g = n.gate;
       final inputCount = g?.inputCount ?? 0;
       if (isOutput) {
         // 输出：右侧端口区（恒门左侧占位不同，但右侧端口区相同）
-        return Offset(n.x + _portZoneW + _gateW + _portZoneW / 2, n.y + _gateH / 2);
+        return Offset(
+          n.x + _portZoneW + _gateW + _portZoneW / 2,
+          n.y + _gateH / 2,
+        );
       }
       // 输入：左侧端口区，spaceEvenly 布局的第 gateInputIndex 个圆圈
       if (inputCount == 0) {
@@ -8696,9 +11899,14 @@ class _ConnectionPainter extends CustomPainter {
     final sign = dx >= 0 ? 1.0 : -1.0;
     return Path()
       ..moveTo(p1.dx, p1.dy)
-      ..cubicTo(p1.dx + ctrlOffset * sign, p1.dy,
-               p2.dx - ctrlOffset * sign, p2.dy,
-               p2.dx, p2.dy);
+      ..cubicTo(
+        p1.dx + ctrlOffset * sign,
+        p1.dy,
+        p2.dx - ctrlOffset * sign,
+        p2.dy,
+        p2.dx,
+        p2.dy,
+      );
   }
 
   /// PCB 式正交布线：从 p1 到 p2 的曼哈顿折线（先水平后垂直，转角圆角）。
@@ -8721,9 +11929,19 @@ class _ConnectionPainter extends CustomPainter {
       if (vLen > r * 2) {
         // 两段都够长：完整圆角
         if (dx >= 0) {
-          path.quadraticBezierTo(midX, p1.dy, midX, p1.dy + (p2.dy >= p1.dy ? r : -r));
+          path.quadraticBezierTo(
+            midX,
+            p1.dy,
+            midX,
+            p1.dy + (p2.dy >= p1.dy ? r : -r),
+          );
         } else {
-          path.quadraticBezierTo(midX, p1.dy, midX, p1.dy + (p2.dy >= p1.dy ? r : -r));
+          path.quadraticBezierTo(
+            midX,
+            p1.dy,
+            midX,
+            p1.dy + (p2.dy >= p1.dy ? r : -r),
+          );
         }
       } else {
         // 垂直段太短：不做圆角（直接方角）
@@ -8790,19 +12008,29 @@ class _TempLinePainter extends CustomPainter {
   final Offset from, to;
   final Color color;
   final bool isControl;
-  _TempLinePainter({required this.origin, required this.from, required this.to, required this.color, this.isControl = false});
+  _TempLinePainter({
+    required this.origin,
+    required this.from,
+    required this.to,
+    required this.color,
+    this.isControl = false,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
     canvas.translate(origin.dx, origin.dy);
-    final paint = Paint()..color = color..strokeWidth = 2..style = PaintingStyle.stroke
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round;
     if (isControl) {
       // 控制连线：正交折线 + 虚线拖拽预览
       const lead = 20.0;
       final dx = to.dx - from.dx;
       final midX = to.dx - (dx >= 0 ? lead : -lead);
-      final path = Path()..moveTo(from.dx, from.dy)
+      final path = Path()
+        ..moveTo(from.dx, from.dy)
         ..lineTo(midX, from.dy)
         ..lineTo(midX, to.dy)
         ..lineTo(to.dx, to.dy);
@@ -8823,15 +12051,21 @@ class _TempLinePainter extends CustomPainter {
       final sign = dx >= 0 ? 1.0 : -1.0;
       final path = Path()
         ..moveTo(from.dx, from.dy)
-        ..cubicTo(from.dx + ctrlOffset * sign, from.dy,
-                 to.dx - ctrlOffset * sign, to.dy,
-                 to.dx, to.dy);
+        ..cubicTo(
+          from.dx + ctrlOffset * sign,
+          from.dy,
+          to.dx - ctrlOffset * sign,
+          to.dy,
+          to.dx,
+          to.dy,
+        );
       canvas.drawPath(path, paint);
     }
   }
 
   @override
-  bool shouldRepaint(_TempLinePainter old) => old.from != from || old.to != to || old.isControl != isControl;
+  bool shouldRepaint(_TempLinePainter old) =>
+      old.from != from || old.to != to || old.isControl != isControl;
 }
 
 // ── 框选绘制 ──
@@ -8869,14 +12103,19 @@ class _LogicBlockPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_LogicBlockPainter old) => old.color != color || old.strokeWidth != strokeWidth;
+  bool shouldRepaint(_LogicBlockPainter old) =>
+      old.color != color || old.strokeWidth != strokeWidth;
 }
 
 class _BoxSelectPainter extends CustomPainter {
   final Offset origin;
   final Rect rect;
   final Color color;
-  _BoxSelectPainter({required this.origin, required this.rect, required this.color});
+  _BoxSelectPainter({
+    required this.origin,
+    required this.rect,
+    required this.color,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -8904,11 +12143,7 @@ class _BoxSelectPainter extends CustomPainter {
       var drawn = 0.0;
       while (drawn < len) {
         final segEnd = (drawn + dashLen).clamp(0.0, len);
-        canvas.drawLine(
-          start + dir * drawn,
-          start + dir * segEnd,
-          borderPaint,
-        );
+        canvas.drawLine(start + dir * drawn, start + dir * segEnd, borderPaint);
         drawn += dashLen + gapLen;
       }
     }
@@ -8920,7 +12155,8 @@ class _BoxSelectPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_BoxSelectPainter old) => old.rect != rect || old.color != color;
+  bool shouldRepaint(_BoxSelectPainter old) =>
+      old.rect != rect || old.color != color;
 }
 
 class _EditorCsdBtn extends StatefulWidget {
@@ -8928,7 +12164,12 @@ class _EditorCsdBtn extends StatefulWidget {
   final Color color;
   final Color? hoverBg;
   final VoidCallback onTap;
-  const _EditorCsdBtn({required this.icon, required this.color, this.hoverBg, required this.onTap});
+  const _EditorCsdBtn({
+    required this.icon,
+    required this.color,
+    this.hoverBg,
+    required this.onTap,
+  });
   @override
   State<_EditorCsdBtn> createState() => _EditorCsdBtnState();
 }
@@ -8952,7 +12193,9 @@ class _EditorCsdBtnState extends State<_EditorCsdBtn> {
           child: Icon(
             widget.icon,
             size: 18,
-            color: _hovering && widget.hoverBg != null ? Colors.white : widget.color,
+            color: _hovering && widget.hoverBg != null
+                ? Colors.white
+                : widget.color,
           ),
         ),
       ),
@@ -9023,22 +12266,27 @@ class AiPanelView extends StatefulWidget {
   final AppStrings strings;
   final List<PipelineNode> existingNodes;
   final List<PipelineConnection> existingConnections;
-  final void Function(List<PipelineNode>, List<PipelineConnection>) onApplyGraph;
-  final void Function(List<PipelineNode>, List<PipelineConnection>) onMergeGraph;
+  final void Function(List<PipelineNode>, List<PipelineConnection>)
+  onApplyGraph;
+  final void Function(List<PipelineNode>, List<PipelineConnection>)
+  onMergeGraph;
+
   /// 修改节点参数。返回 false 表示目标节点不存在——调用方必须把失败回填给 AI，
   /// 不允许静默改写其它节点（原实现用 orElse: () => _nodes.first，
   /// nodeId 打错就会污染画布首节点且毫无提示）。
   /// 值类型是 dynamic：AI 面板走文本协议，_parseToolParams 负责把 "k=v" 还原成
   /// num / bool / String，MCP 路径本来就是 JSON。此前声明为 `Map<String, String>`
   /// 逼着文本面板把所有值塞成字符串，数字参数在下游 `as num?` 全部取到 null。
-  final bool Function(String nodeId, Map<String, dynamic> params) onModifyNodeParams;
+  final bool Function(String nodeId, Map<String, dynamic> params)
+  onModifyNodeParams;
   final VoidCallback onClearAll;
   final VoidCallback onUndo;
   final VoidCallback onRedo;
   final VoidCallback onSave;
   final String Function(String type, double x, double y) onAddNode;
   final String Function(String gateName, double x, double y) onAddGate;
-  final bool Function(String nodeId, Map<String, dynamic> params) onSetGateParams;
+  final bool Function(String nodeId, Map<String, dynamic> params)
+  onSetGateParams;
   final void Function(String nodeId) onDeleteNode;
   final bool Function(String fromId, String toId) onConnectNodes;
   final bool Function(String connId) onDisconnectNodes;
@@ -9046,18 +12294,49 @@ class AiPanelView extends StatefulWidget {
   final bool startExpanded;
   final VoidCallback? onCollapseRequested;
   final ValueChanged<String>? onTitleGenerated;
+
   /// 移动端底部弹层已自带「标题 + 关闭」头部；此时隐藏面板内部的头部行，
   /// 避免出现上下两层菜单。
   final bool hideHeader;
+
   /// 独立窗口模式：由主窗口交接过来的既有会话。
   /// 拖出面板时带上，否则独立窗口里的对话会从空白开始。
   final List<Map<String, dynamic>>? initialMessages;
+
   /// 「拖出为独立系统窗口」入口。为空表示当前宿主不支持（移动端底部弹层、
   /// 以及独立窗口里自己嵌的那一份都不传）——此时不渲染这个按钮。
   final VoidCallback? onFloatOut;
+
   /// 面板就绪后把自己的窄接口交出去，宿主靠它导出 / 导入会话。
   final void Function(AiPanelApi api)? onApiReady;
-  const AiPanelView({super.key, required this.strings, required this.existingNodes, required this.existingConnections, required this.onApplyGraph, required this.onMergeGraph, required this.onModifyNodeParams, required this.onClearAll, required this.onUndo, required this.onRedo, required this.onSave, required this.onAddNode, required this.onAddGate, required this.onSetGateParams, required this.onDeleteNode, required this.onConnectNodes, required this.onDisconnectNodes, required this.onCancelTasks, this.startExpanded = false, this.onCollapseRequested, this.onTitleGenerated, this.hideHeader = false, this.initialMessages, this.onFloatOut, this.onApiReady});  @override
+  const AiPanelView({
+    super.key,
+    required this.strings,
+    required this.existingNodes,
+    required this.existingConnections,
+    required this.onApplyGraph,
+    required this.onMergeGraph,
+    required this.onModifyNodeParams,
+    required this.onClearAll,
+    required this.onUndo,
+    required this.onRedo,
+    required this.onSave,
+    required this.onAddNode,
+    required this.onAddGate,
+    required this.onSetGateParams,
+    required this.onDeleteNode,
+    required this.onConnectNodes,
+    required this.onDisconnectNodes,
+    required this.onCancelTasks,
+    this.startExpanded = false,
+    this.onCollapseRequested,
+    this.onTitleGenerated,
+    this.hideHeader = false,
+    this.initialMessages,
+    this.onFloatOut,
+    this.onApiReady,
+  });
+  @override
   State<AiPanelView> createState() => _AiPanelViewState();
 }
 
@@ -9094,15 +12373,15 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
 
   @override
   List<Map<String, dynamic>> exportMessages() => [
-        for (final m in _messages)
-          <String, dynamic>{
-            'role': m.role,
-            'content': m.content,
-            if (m.inputTokens != null) 'in': m.inputTokens,
-            if (m.outputTokens != null) 'out': m.outputTokens,
-            if (m.blocks != null) 'blocks': m.blocks,
-          },
-      ];
+    for (final m in _messages)
+      <String, dynamic>{
+        'role': m.role,
+        'content': m.content,
+        if (m.inputTokens != null) 'in': m.inputTokens,
+        if (m.outputTokens != null) 'out': m.outputTokens,
+        if (m.blocks != null) 'blocks': m.blocks,
+      },
+  ];
 
   @override
   void importMessages(List<Map<String, dynamic>> messages) {
@@ -9124,11 +12403,22 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
 
   final _ctrl = TextEditingController();
   final _scrollCtrl = ScrollController();
-  final List<({String role, String content, int? inputTokens, int? outputTokens, List<Map<String, dynamic>>? blocks})> _messages = [];
+  final List<
+    ({
+      String role,
+      String content,
+      int? inputTokens,
+      int? outputTokens,
+      List<Map<String, dynamic>>? blocks,
+    })
+  >
+  _messages = [];
   bool _loading = false;
+
   /// 正在进行的流式请求。用户点「停止」时直接 close()，`await for` 会以异常结束，
   /// 再由 catch / 收尾分支按 [_stopRequested] 走「保留部分内容」的路径。
   http.Client? _activeClient;
+
   /// 用户是否主动中断了本次生成。用来区分「中断」与「真的出错」：
   /// 前者不该在气泡里追加 `Error: ...`，否则停止看起来像失败。
   bool _stopRequested = false;
@@ -9192,12 +12482,14 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
     Color surfaceContainerHighest,
     Color outline,
     Color outlineVariant,
-  })? _mdStyleKey;
-
+  })?
+  _mdStyleKey;
 
   static const _uuid = Uuid();
 
-  String get _effectiveProvider => _sessionProvider ?? context.read<AppState>().config.aiProvider;
+  String get _effectiveProvider =>
+      _sessionProvider ?? context.read<AppState>().config.aiProvider;
+
   /// 模型解析链：本次会话选中的 → 当前生效配置里选中的模型 → 全局选中的 →
   /// 生效配置的模型清单第一条。
   ///
@@ -9222,7 +12514,9 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
     if (!mounted) return;
     setState(() => _sessionModel = model);
   }
-  String get _effectiveApproveMode => _sessionApproveMode ?? context.read<AppState>().config.aiApproveMode;
+
+  String get _effectiveApproveMode =>
+      _sessionApproveMode ?? context.read<AppState>().config.aiApproveMode;
 
   /// 当前生效的配置项（会话级 > 全局 active > 默认字段）。
   AiProfile? get _effectiveProfile {
@@ -9236,42 +12530,178 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
   }
 
   /// 询问模式下，某操作是否在"无需确认"白名单里。
-  bool _shouldSkipAsk(String key) => context.read<AppState>().config.aiAskSkipTools.contains(key);
+  bool _shouldSkipAsk(String key) =>
+      context.read<AppState>().config.aiAskSkipTools.contains(key);
 
   /// 可插入的工具模板（供工具侧边栏展示/一键插入）
-  static const List<({String name, String desc, String template, bool needsPath})> _toolTemplates = [
-    (name: 'clear_all', desc: '清空画布', template: '[TOOL_CALL:clear_all]', needsPath: false),
+  static const List<
+    ({String name, String desc, String template, bool needsPath})
+  >
+  _toolTemplates = [
+    (
+      name: 'clear_all',
+      desc: '清空画布',
+      template: '[TOOL_CALL:clear_all]',
+      needsPath: false,
+    ),
     (name: 'undo', desc: '撤销', template: '[TOOL_CALL:undo]', needsPath: false),
     (name: 'redo', desc: '重做', template: '[TOOL_CALL:redo]', needsPath: false),
     (name: 'save', desc: '保存', template: '[TOOL_CALL:save]', needsPath: false),
-    (name: 'error_check', desc: '画布错误检查', template: '[TOOL_CALL:error_check]', needsPath: false),
-    (name: 'ask_user', desc: '向用户提问', template: '[TOOL_CALL:ask_user|问题|选项1,选项2]', needsPath: false),
-    (name: 'list_directory', desc: '列出目录文件（只读）', template: '[TOOL_CALL:list_directory|路径]', needsPath: true),
-    (name: 'read_file_info', desc: '读取文件信息（只读）', template: '[TOOL_CALL:read_file_info|路径]', needsPath: true),
-    (name: 'probe_video', desc: '探测媒体文件', template: '[TOOL_CALL:probe_video|路径]', needsPath: true),
-    (name: 'pick_file', desc: '让用户选择文件（如字幕、封面）', template: '[TOOL_CALL:pick_file|用途|扩展名1,扩展名2]', needsPath: true),
-    (name: 'modify_node', desc: '修改节点参数', template: '[TOOL_CALL:modify_node|节点ID|key=val]', needsPath: false),
-    (name: 'add_node', desc: '添加节点', template: '[TOOL_CALL:add_node|类型|x|y]', needsPath: false),
-    (name: 'add_gate', desc: '添加逻辑门(and/or/not/nand/nor/const1/const0/time_trigger)', template: '[TOOL_CALL:add_gate|门类型|x|y]', needsPath: false),
-    (name: 'set_gate_params', desc: '修改逻辑门参数(如时间触发器 tt_date/tt_start/tt_end)', template: '[TOOL_CALL:set_gate_params|节点ID|key=val]', needsPath: false),
-    (name: 'get_gate_types', desc: '列出逻辑门类型', template: '[TOOL_CALL:get_gate_types]', needsPath: false),
-    (name: 'delete_node', desc: '删除节点', template: '[TOOL_CALL:delete_node|节点ID]', needsPath: false),
-    (name: 'connect_nodes', desc: '连接节点', template: '[TOOL_CALL:connect_nodes|from|to]', needsPath: false),
-    (name: 'disconnect_nodes', desc: '断开连线', template: '[TOOL_CALL:disconnect_nodes|连线ID]', needsPath: false),
-    (name: 'list_nodes', desc: '列出画布节点', template: '[TOOL_CALL:list_nodes]', needsPath: false),
-    (name: 'list_connections', desc: '列出画布连线', template: '[TOOL_CALL:list_connections]', needsPath: false),
-    (name: 'get_node_types', desc: '列出节点类型', template: '[TOOL_CALL:get_node_types]', needsPath: false),
-    (name: 'list_tasks', desc: '查看任务队列', template: '[TOOL_CALL:list_tasks]', needsPath: false),
-    (name: 'cancel_tasks', desc: '取消所有任务', template: '[TOOL_CALL:cancel_tasks]', needsPath: false),
-    (name: 'get_graph_stats', desc: '画布统计信息', template: '[TOOL_CALL:get_graph_stats]', needsPath: false),
-    (name: 'list_containers', desc: '列出所有容器', template: '[TOOL_CALL:list_containers]', needsPath: false),
-    (name: 'list_videos', desc: '列出已加载的视频文件', template: '[TOOL_CALL:list_videos]', needsPath: false),
-    (name: 'read_logs', desc: '读取最近日志', template: '[TOOL_CALL:read_logs]', needsPath: false),
-    (name: 'get_task_info', desc: '查看任务详情', template: '[TOOL_CALL:get_task_info|任务ID]', needsPath: false),
-    (name: 'rename_node', desc: '重命名节点', template: '[TOOL_CALL:rename_node|节点ID|新名称]', needsPath: false),
+    (
+      name: 'error_check',
+      desc: '画布错误检查',
+      template: '[TOOL_CALL:error_check]',
+      needsPath: false,
+    ),
+    (
+      name: 'ask_user',
+      desc: '向用户提问',
+      template: '[TOOL_CALL:ask_user|问题|选项1,选项2]',
+      needsPath: false,
+    ),
+    (
+      name: 'list_directory',
+      desc: '列出目录文件（只读）',
+      template: '[TOOL_CALL:list_directory|路径]',
+      needsPath: true,
+    ),
+    (
+      name: 'read_file_info',
+      desc: '读取文件信息（只读）',
+      template: '[TOOL_CALL:read_file_info|路径]',
+      needsPath: true,
+    ),
+    (
+      name: 'probe_video',
+      desc: '探测媒体文件',
+      template: '[TOOL_CALL:probe_video|路径]',
+      needsPath: true,
+    ),
+    (
+      name: 'pick_file',
+      desc: '让用户选择文件（如字幕、封面）',
+      template: '[TOOL_CALL:pick_file|用途|扩展名1,扩展名2]',
+      needsPath: true,
+    ),
+    (
+      name: 'modify_node',
+      desc: '修改节点参数',
+      template: '[TOOL_CALL:modify_node|节点ID|key=val]',
+      needsPath: false,
+    ),
+    (
+      name: 'add_node',
+      desc: '添加节点',
+      template: '[TOOL_CALL:add_node|类型|x|y]',
+      needsPath: false,
+    ),
+    (
+      name: 'add_gate',
+      desc: '添加逻辑门(and/or/not/nand/nor/const1/const0/time_trigger)',
+      template: '[TOOL_CALL:add_gate|门类型|x|y]',
+      needsPath: false,
+    ),
+    (
+      name: 'set_gate_params',
+      desc: '修改逻辑门参数(如时间触发器 tt_date/tt_start/tt_end)',
+      template: '[TOOL_CALL:set_gate_params|节点ID|key=val]',
+      needsPath: false,
+    ),
+    (
+      name: 'get_gate_types',
+      desc: '列出逻辑门类型',
+      template: '[TOOL_CALL:get_gate_types]',
+      needsPath: false,
+    ),
+    (
+      name: 'delete_node',
+      desc: '删除节点',
+      template: '[TOOL_CALL:delete_node|节点ID]',
+      needsPath: false,
+    ),
+    (
+      name: 'connect_nodes',
+      desc: '连接节点',
+      template: '[TOOL_CALL:connect_nodes|from|to]',
+      needsPath: false,
+    ),
+    (
+      name: 'disconnect_nodes',
+      desc: '断开连线',
+      template: '[TOOL_CALL:disconnect_nodes|连线ID]',
+      needsPath: false,
+    ),
+    (
+      name: 'list_nodes',
+      desc: '列出画布节点',
+      template: '[TOOL_CALL:list_nodes]',
+      needsPath: false,
+    ),
+    (
+      name: 'list_connections',
+      desc: '列出画布连线',
+      template: '[TOOL_CALL:list_connections]',
+      needsPath: false,
+    ),
+    (
+      name: 'get_node_types',
+      desc: '列出节点类型',
+      template: '[TOOL_CALL:get_node_types]',
+      needsPath: false,
+    ),
+    (
+      name: 'list_tasks',
+      desc: '查看任务队列',
+      template: '[TOOL_CALL:list_tasks]',
+      needsPath: false,
+    ),
+    (
+      name: 'cancel_tasks',
+      desc: '取消所有任务',
+      template: '[TOOL_CALL:cancel_tasks]',
+      needsPath: false,
+    ),
+    (
+      name: 'get_graph_stats',
+      desc: '画布统计信息',
+      template: '[TOOL_CALL:get_graph_stats]',
+      needsPath: false,
+    ),
+    (
+      name: 'list_containers',
+      desc: '列出所有容器',
+      template: '[TOOL_CALL:list_containers]',
+      needsPath: false,
+    ),
+    (
+      name: 'list_videos',
+      desc: '列出已加载的视频文件',
+      template: '[TOOL_CALL:list_videos]',
+      needsPath: false,
+    ),
+    (
+      name: 'read_logs',
+      desc: '读取最近日志',
+      template: '[TOOL_CALL:read_logs]',
+      needsPath: false,
+    ),
+    (
+      name: 'get_task_info',
+      desc: '查看任务详情',
+      template: '[TOOL_CALL:get_task_info|任务ID]',
+      needsPath: false,
+    ),
+    (
+      name: 'rename_node',
+      desc: '重命名节点',
+      template: '[TOOL_CALL:rename_node|节点ID|新名称]',
+      needsPath: false,
+    ),
   ];
+
   /// 系统提示词固定头部。
-  static const _promptHead = '''You are FFmpeg++ Graph Assistant, an expert FFmpeg pipeline designer for a node-based video/audio/image editor. The user describes media-processing goals in their own language; ALWAYS reply in the SAME language the user used.
+  static const _promptHead =
+      '''You are FFmpeg++ Graph Assistant, an expert FFmpeg pipeline designer for a node-based video/audio/image editor. The user describes media-processing goals in their own language; ALWAYS reply in the SAME language the user used.
 
 ## Output protocol (strict)
 1. First write 1-3 short sentences explaining your plan (plain text, in the user's language).
@@ -9376,29 +12806,52 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
 
   /// 每行对应的工具名。
   static const Map<String, List<String>> _toolLineTools = {
-    '[TOOL_CALL:clear_all] [TOOL_CALL:undo] [TOOL_CALL:redo] [TOOL_CALL:save]': ['clear_all', 'undo', 'redo', 'save'],
+    '[TOOL_CALL:clear_all] [TOOL_CALL:undo] [TOOL_CALL:redo] [TOOL_CALL:save]':
+        ['clear_all', 'undo', 'redo', 'save'],
     '[TOOL_CALL:error_check] — validate current canvas': ['error_check'],
-    '[TOOL_CALL:ask_user|question|opt1,opt2,opt3] — ask the user (needs Allow-AI-to-ask enabled in Settings)': ['ask_user'],
-    '[TOOL_CALL:list_directory|path] — list files (read-only)': ['list_directory'],
-    '[TOOL_CALL:read_file_info|path] — file metadata (read-only)': ['read_file_info'],
-    '[TOOL_CALL:probe_video|path] — probe media metadata (read-only)': ['probe_video'],
-    '[TOOL_CALL:pick_file|purpose|ext1,ext2] — ask the user to pick a file (e.g. subtitle, cover); user must approve': ['pick_file'],
-    '[TOOL_CALL:modify_node|nodeId|key=val,key2=val2] — edit node params': ['modify_node'],
+    '[TOOL_CALL:ask_user|question|opt1,opt2,opt3] — ask the user (needs Allow-AI-to-ask enabled in Settings)':
+        ['ask_user'],
+    '[TOOL_CALL:list_directory|path] — list files (read-only)': [
+      'list_directory',
+    ],
+    '[TOOL_CALL:read_file_info|path] — file metadata (read-only)': [
+      'read_file_info',
+    ],
+    '[TOOL_CALL:probe_video|path] — probe media metadata (read-only)': [
+      'probe_video',
+    ],
+    '[TOOL_CALL:pick_file|purpose|ext1,ext2] — ask the user to pick a file (e.g. subtitle, cover); user must approve':
+        ['pick_file'],
+    '[TOOL_CALL:modify_node|nodeId|key=val,key2=val2] — edit node params': [
+      'modify_node',
+    ],
     '[TOOL_CALL:add_node|type|x|y] — add a node, returns its ID': ['add_node'],
-    '[TOOL_CALL:delete_node|nodeId] — delete a node + its connections': ['delete_node'],
-    '[TOOL_CALL:connect_nodes|fromId|toId] — connect two nodes': ['connect_nodes'],
-    '[TOOL_CALL:disconnect_nodes|connId] — remove a connection': ['disconnect_nodes'],
-    '[TOOL_CALL:list_nodes] [TOOL_CALL:list_connections] [TOOL_CALL:get_node_types]': ['list_nodes', 'list_connections', 'get_node_types'],
-    '[TOOL_CALL:add_gate|type|x|y] — add logic gate (and/or/not/nand/nor/const1/const0/time_trigger)': ['add_gate'],
-    '[TOOL_CALL:set_gate_params|nodeId|key=val,key2=val2] — modify gate params (e.g. tt_date/tt_start/tt_end)': ['set_gate_params'],
+    '[TOOL_CALL:delete_node|nodeId] — delete a node + its connections': [
+      'delete_node',
+    ],
+    '[TOOL_CALL:connect_nodes|fromId|toId] — connect two nodes': [
+      'connect_nodes',
+    ],
+    '[TOOL_CALL:disconnect_nodes|connId] — remove a connection': [
+      'disconnect_nodes',
+    ],
+    '[TOOL_CALL:list_nodes] [TOOL_CALL:list_connections] [TOOL_CALL:get_node_types]':
+        ['list_nodes', 'list_connections', 'get_node_types'],
+    '[TOOL_CALL:add_gate|type|x|y] — add logic gate (and/or/not/nand/nor/const1/const0/time_trigger)':
+        ['add_gate'],
+    '[TOOL_CALL:set_gate_params|nodeId|key=val,key2=val2] — modify gate params (e.g. tt_date/tt_start/tt_end)':
+        ['set_gate_params'],
     '[TOOL_CALL:get_gate_types] — list logic gate types': ['get_gate_types'],
     '[TOOL_CALL:list_tasks] — task queue status': ['list_tasks'],
     '[TOOL_CALL:cancel_tasks] — cancel running tasks': ['cancel_tasks'],
     '[TOOL_CALL:get_task_info|taskId] — task detail': ['get_task_info'],
     '[TOOL_CALL:get_graph_stats] — canvas statistics': ['get_graph_stats'],
-    '[TOOL_CALL:list_videos] [TOOL_CALL:list_containers] — loaded media/containers (read-only)': ['list_videos', 'list_containers'],
+    '[TOOL_CALL:list_videos] [TOOL_CALL:list_containers] — loaded media/containers (read-only)':
+        ['list_videos', 'list_containers'],
     '[TOOL_CALL:read_logs] — recent app logs': ['read_logs'],
-    '[TOOL_CALL:rename_node|nodeId|name] — rename a node (write)': ['rename_node'],
+    '[TOOL_CALL:rename_node|nodeId|name] — rename a node (write)': [
+      'rename_node',
+    ],
   };
 
   /// 动态系统提示词：过滤掉被禁用的工具行。
@@ -9412,7 +12865,6 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     return _promptHead.replaceAll('__TOOLS__', lines.join('\n'));
   }
 
-
   /// 右键工具项：禁用 / 启用。禁用后该工具从系统提示词移除，且调用被拦截。
   void _toggleToolEnabled(String tool, AppStrings s) {
     setState(() {
@@ -9422,17 +12874,38 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         _disabledTools.add(tool);
       }
     });
-    showToast(context, _disabledTools.contains(tool)
-        ? s.isZh ? '已禁用工具: $tool' : 'Tool disabled: $tool'
-        : s.isZh ? '已启用工具: $tool' : 'Tool enabled: $tool',
-        type: ToastType.info);
+    showToast(
+      context,
+      _disabledTools.contains(tool)
+          ? s.isZh
+                ? '已禁用工具: $tool'
+                : 'Tool disabled: $tool'
+          : s.isZh
+          ? '已启用工具: $tool'
+          : 'Tool enabled: $tool',
+      type: ToastType.info,
+    );
   }
 
   /// 询问模式下是否需要确认该工具。auto 模式或命中白名单则直接执行。
   bool _shouldConfirmTool(String tool) {
     if (_effectiveApproveMode == 'auto') return false;
     // 只读工具从不询问
-    const readOnly = {'list_directory', 'read_file_info', 'probe_video', 'list_nodes', 'list_connections', 'get_node_types', 'list_tasks', 'get_gate_types', 'get_graph_stats', 'list_videos', 'list_containers', 'read_logs', 'get_task_info'};
+    const readOnly = {
+      'list_directory',
+      'read_file_info',
+      'probe_video',
+      'list_nodes',
+      'list_connections',
+      'get_node_types',
+      'list_tasks',
+      'get_gate_types',
+      'get_graph_stats',
+      'list_videos',
+      'list_containers',
+      'read_logs',
+      'get_task_info',
+    };
     if (readOnly.contains(tool)) return false;
     // 白名单 key 映射
     final key = switch (tool) {
@@ -9446,20 +12919,34 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
   }
 
   /// 弹确认框；用户同意后执行 [action]，拒绝则记录结果。
-  Future<void> _confirmThen(String tool, String desc, VoidCallback action) async {
+  Future<void> _confirmThen(
+    String tool,
+    String desc,
+    VoidCallback action,
+  ) async {
     final s = widget.strings;
     final ok = await showDialog<bool>(
       context: context,
       builder: (dCtx) => AlertDialog(
-        title: Text(s.isZh ? 'AI 请求执行操作' : 'AI requests to run an action',
-            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+        title: Text(
+          s.isZh ? 'AI 请求执行操作' : 'AI requests to run an action',
+          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+        ),
         content: Text(
-          s.isZh ? 'AI 想执行: $desc\n\n确定允许吗？' : 'AI wants to: $desc\n\nAllow it?',
+          s.isZh
+              ? 'AI 想执行: $desc\n\n确定允许吗？'
+              : 'AI wants to: $desc\n\nAllow it?',
           style: const TextStyle(fontSize: 12),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(dCtx, false), child: Text(s.isZh ? '拒绝' : 'Deny')),
-          FilledButton(onPressed: () => Navigator.pop(dCtx, true), child: Text(s.isZh ? '允许' : 'Allow')),
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx, false),
+            child: Text(s.isZh ? '拒绝' : 'Deny'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dCtx, true),
+            child: Text(s.isZh ? '允许' : 'Allow'),
+          ),
         ],
       ),
     );
@@ -9478,8 +12965,13 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       final tool = parts[0];
       // 调试模式：记录 AI 工具调用
       if (cfg.debugMode) {
-        final argPreview = parts.length > 1 ? parts.sublist(1).join('|').replaceAll(RegExp(r'\s+'), ' ') : '';
-        context.read<AppState>().addLog('[AI工具] $tool${argPreview.isNotEmpty ? ' args: $argPreview' : ''}', category: 'info');
+        final argPreview = parts.length > 1
+            ? parts.sublist(1).join('|').replaceAll(RegExp(r'\s+'), ' ')
+            : '';
+        context.read<AppState>().addLog(
+          '[AI工具] $tool${argPreview.isNotEmpty ? ' args: $argPreview' : ''}',
+          category: 'info',
+        );
       }
       // 被禁用的工具：即使 AI 调用了也不执行（也不告诉 AI 结果）
       if (_disabledTools.contains(tool)) {
@@ -9492,9 +12984,22 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         // action 工具（clear_all/undo/redo/save/error_check/ask_user/cancel_tasks）在
         // auto 模式下需开启 "Auto-execute Tools" 权限（与系统提示词声明一致）；
         // ask 模式仍走确认框。权限不足时跳过并回填结果，避免 AI 误以为已执行。
-        const actionTools = {'clear_all', 'undo', 'redo', 'save', 'error_check', 'ask_user', 'cancel_tasks'};
-        if (actionTools.contains(tool) && _effectiveApproveMode == 'auto' && !cfg.aiAutoExecute) {
-          _addToolResult(tool, 'Blocked: action tools require "Auto-execute Tools" permission');
+        const actionTools = {
+          'clear_all',
+          'undo',
+          'redo',
+          'save',
+          'error_check',
+          'ask_user',
+          'cancel_tasks',
+        };
+        if (actionTools.contains(tool) &&
+            _effectiveApproveMode == 'auto' &&
+            !cfg.aiAutoExecute) {
+          _addToolResult(
+            tool,
+            'Blocked: action tools require "Auto-execute Tools" permission',
+          );
           return;
         }
         if (confirm) {
@@ -9503,6 +13008,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
           action();
         }
       }
+
       switch (tool) {
         case 'clear_all':
           run(() => widget.onClearAll());
@@ -9516,11 +13022,13 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
           run(() => _executeErrorCheck());
         case 'ask_user':
           // 需在设置→AI→权限 开启"允许 AI 询问用户"才执行
-          if (cfg.aiAllowAsk && parts.length >= 3) run(() => _showAskUser(parts[1], parts[2].split(',')));
+          if (cfg.aiAllowAsk && parts.length >= 3)
+            run(() => _showAskUser(parts[1], parts[2].split(',')));
         case 'list_directory':
           if (cfg.aiReadAccess && parts.length >= 2) _executeListDir(parts[1]);
         case 'read_file_info':
-          if (cfg.aiReadAccess && parts.length >= 2) _executeReadFileInfo(parts[1]);
+          if (cfg.aiReadAccess && parts.length >= 2)
+            _executeReadFileInfo(parts[1]);
         case 'modify_node':
           if (cfg.aiWriteAccess && parts.length >= 3) {
             // 文本协议 → 带类型参数：数字/布尔不再被塞成 String（见 _parseToolParams）
@@ -9528,15 +13036,18 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
             if (params.isEmpty) {
               // 旧实现解析不出键值时静默调用空 Map，AI 会以为改成功了
               _addToolResult(
-                  'modify_node', 'Error: no key=value pair parsed from "${parts[2]}"');
+                'modify_node',
+                'Error: no key=value pair parsed from "${parts[2]}"',
+              );
             } else {
               run(() {
                 final ok = widget.onModifyNodeParams(parts[1], params);
                 _addToolResult(
-                    'modify_node',
-                    ok
-                        ? 'Updated ${parts[1]}: ${params.entries.map((e) => '${e.key}=${e.value}').join(', ')}'
-                        : 'Error: node not found: ${parts[1]}');
+                  'modify_node',
+                  ok
+                      ? 'Updated ${parts[1]}: ${params.entries.map((e) => '${e.key}=${e.value}').join(', ')}'
+                      : 'Error: node not found: ${parts[1]}',
+                );
               });
             }
           }
@@ -9544,60 +13055,108 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
           if (cfg.aiWriteAccess && parts.length >= 2) {
             run(() {
               try {
-                final x = parts.length >= 3 ? double.tryParse(parts[2]) ?? 200 : 200.0;
-                final y = parts.length >= 4 ? double.tryParse(parts[3]) ?? 200 : 200.0;
+                final x = parts.length >= 3
+                    ? double.tryParse(parts[2]) ?? 200
+                    : 200.0;
+                final y = parts.length >= 4
+                    ? double.tryParse(parts[3]) ?? 200
+                    : 200.0;
                 final nodeId = widget.onAddNode(parts[1], x, y);
-                _addToolResult('add_node', 'Created node $nodeId (type: ${parts[1]})');
-              } catch (e) { _addToolResult('add_node', 'Error: $e'); }
+                _addToolResult(
+                  'add_node',
+                  'Created node $nodeId (type: ${parts[1]})',
+                );
+              } catch (e) {
+                _addToolResult('add_node', 'Error: $e');
+              }
             });
           }
         case 'delete_node':
           if (cfg.aiWriteAccess && parts.length >= 2) {
             run(() {
-              try { widget.onDeleteNode(parts[1]); _addToolResult('delete_node', 'Deleted node ${parts[1]}'); }
-              catch (e) { _addToolResult('delete_node', 'Error: $e'); }
+              try {
+                widget.onDeleteNode(parts[1]);
+                _addToolResult('delete_node', 'Deleted node ${parts[1]}');
+              } catch (e) {
+                _addToolResult('delete_node', 'Error: $e');
+              }
             });
           }
         case 'connect_nodes':
           if (cfg.aiWriteAccess && parts.length >= 3) {
             run(() {
               final ok = widget.onConnectNodes(parts[1], parts[2]);
-              _addToolResult('connect_nodes', ok ? 'Connected ${parts[1]} → ${parts[2]}' : 'Failed to connect');
+              _addToolResult(
+                'connect_nodes',
+                ok
+                    ? 'Connected ${parts[1]} → ${parts[2]}'
+                    : 'Failed to connect',
+              );
             });
           }
         case 'disconnect_nodes':
           if (cfg.aiWriteAccess && parts.length >= 2) {
             run(() {
               final ok = widget.onDisconnectNodes(parts[1]);
-              _addToolResult('disconnect_nodes', ok ? 'Disconnected ${parts[1]}' : 'Connection not found');
+              _addToolResult(
+                'disconnect_nodes',
+                ok ? 'Disconnected ${parts[1]}' : 'Connection not found',
+              );
             });
           }
         case 'list_nodes':
-          final nodesJson = widget.existingNodes.map((n) => n.toJson()).toList();
+          final nodesJson = widget.existingNodes
+              .map((n) => n.toJson())
+              .toList();
           _addToolResult('list_nodes', jsonEncode(nodesJson));
         case 'list_connections':
-          final connsJson = widget.existingConnections.map((c) => c.toJson()).toList();
+          final connsJson = widget.existingConnections
+              .map((c) => c.toJson())
+              .toList();
           _addToolResult('list_connections', jsonEncode(connsJson));
         case 'get_node_types':
           final types = PipelineStepType.values.map((t) => t.name).toList();
           _addToolResult('get_node_types', types.join(', '));
         case 'list_tasks':
           final tasks = context.read<AppState>().tasks;
-          final taskList = tasks.map((t) => {'id': t.id, 'filename': t.filename, 'status': t.status.name, 'progress': '${t.progress.toStringAsFixed(1)}%'}).toList();
+          final taskList = tasks
+              .map(
+                (t) => {
+                  'id': t.id,
+                  'filename': t.filename,
+                  'status': t.status.name,
+                  'progress': '${t.progress.toStringAsFixed(1)}%',
+                },
+              )
+              .toList();
           _addToolResult('list_tasks', jsonEncode(taskList));
         case 'cancel_tasks':
-          run(() { widget.onCancelTasks(); _addToolResult('cancel_tasks', 'All tasks cancelled'); });
+          run(() {
+            widget.onCancelTasks();
+            _addToolResult('cancel_tasks', 'All tasks cancelled');
+          });
         case 'probe_video':
-          if (cfg.aiReadAccess && parts.length >= 2) _executeProbeVideo(parts[1]);
+          if (cfg.aiReadAccess && parts.length >= 2)
+            _executeProbeVideo(parts[1]);
         case 'pick_file':
           // 让用户选择文件（如字幕/封面），需用户同意；弹文件选择框并返回路径
           run(() async {
             final purpose = parts.length >= 2 ? parts[1] : '';
-            final exts = parts.length >= 3 ? parts[2].split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList() : null;
+            final exts = parts.length >= 3
+                ? parts[2]
+                      .split(',')
+                      .map((e) => e.trim())
+                      .where((e) => e.isNotEmpty)
+                      .toList()
+                : null;
             final picked = await FilePicker.pickFile(
-              type: exts == null || exts.isEmpty ? FileType.any : FileType.custom,
+              type: exts == null || exts.isEmpty
+                  ? FileType.any
+                  : FileType.custom,
               allowedExtensions: exts,
-              dialogTitle: purpose.isEmpty ? (widget.strings.isZh ? '请选择一个文件' : 'Pick a file') : purpose,
+              dialogTitle: purpose.isEmpty
+                  ? (widget.strings.isZh ? '请选择一个文件' : 'Pick a file')
+                  : purpose,
             );
             if (picked?.path != null) {
               _addToolResult('pick_file', 'User picked: ${picked!.path}');
@@ -9611,14 +13170,26 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
               try {
                 final gateType = _parseGateType(parts[1]);
                 if (gateType == null) {
-                  _addToolResult('add_gate', 'Error: unknown gate type "${parts[1]}". Valid: and, or, not, nand, nor, const1, const0, time_trigger');
+                  _addToolResult(
+                    'add_gate',
+                    'Error: unknown gate type "${parts[1]}". Valid: and, or, not, nand, nor, const1, const0, time_trigger',
+                  );
                   return;
                 }
-                final x = parts.length >= 3 ? double.tryParse(parts[2]) ?? 200 : 200.0;
-                final y = parts.length >= 4 ? double.tryParse(parts[3]) ?? 200 : 200.0;
+                final x = parts.length >= 3
+                    ? double.tryParse(parts[2]) ?? 200
+                    : 200.0;
+                final y = parts.length >= 4
+                    ? double.tryParse(parts[3]) ?? 200
+                    : 200.0;
                 final nodeId = widget.onAddGate(gateType.name, x, y);
-                _addToolResult('add_gate', 'Created gate $nodeId (type: ${parts[1]})');
-              } catch (e) { _addToolResult('add_gate', 'Error: $e'); }
+                _addToolResult(
+                  'add_gate',
+                  'Created gate $nodeId (type: ${parts[1]})',
+                );
+              } catch (e) {
+                _addToolResult('add_gate', 'Error: $e');
+              }
             });
           }
         case 'set_gate_params':
@@ -9626,14 +13197,20 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
             final params = _parseToolParams(parts[1], parts[2]);
             if (params.isEmpty) {
               _addToolResult(
-                  'set_gate_params', 'Error: no key=value pair parsed from "${parts[2]}"');
+                'set_gate_params',
+                'Error: no key=value pair parsed from "${parts[2]}"',
+              );
             } else {
               run(() {
                 // 门参数走 onSetGateParams：该回调此前从未被调用，set_gate_params
                 // 一直误用 onModifyNodeParams，改失败时无从回填给 AI
                 final ok = widget.onSetGateParams(parts[1], params);
-                _addToolResult('set_gate_params',
-                    ok ? 'Gate ${parts[1]} params updated' : 'Error: gate not found: ${parts[1]}');
+                _addToolResult(
+                  'set_gate_params',
+                  ok
+                      ? 'Gate ${parts[1]} params updated'
+                      : 'Error: gate not found: ${parts[1]}',
+                );
               });
             }
           }
@@ -9643,22 +13220,49 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         case 'get_graph_stats':
           final nodes = widget.existingNodes;
           final conns = widget.existingConnections;
-          final srcCount = nodes.where((n) => n.type == PipelineStepType.start && !n.isGate).length;
-          final outCount = nodes.where((n) => n.type == PipelineStepType.output).length;
+          final srcCount = nodes
+              .where((n) => n.type == PipelineStepType.start && !n.isGate)
+              .length;
+          final outCount = nodes
+              .where((n) => n.type == PipelineStepType.output)
+              .length;
           final gateCount = nodes.where((n) => n.isGate).length;
-          _addToolResult('get_graph_stats', 'nodes: ${nodes.length}, gates: $gateCount, connections: ${conns.length}, start: $srcCount, output: $outCount');
+          _addToolResult(
+            'get_graph_stats',
+            'nodes: ${nodes.length}, gates: $gateCount, connections: ${conns.length}, start: $srcCount, output: $outCount',
+          );
         case 'list_containers':
           final containers = context.read<AppState>().containers;
-          final containerList = containers.map((c) => {'id': c.id, 'name': c.name, 'fileCount': c.fileCount}).toList();
+          final containerList = containers
+              .map(
+                (c) => {'id': c.id, 'name': c.name, 'fileCount': c.fileCount},
+              )
+              .toList();
           _addToolResult('list_containers', jsonEncode(containerList));
         case 'list_videos':
           final videos = context.read<AppState>().videos;
-          final videoList = videos.map((v) => {'id': v.id, 'filename': v.filename, 'sizeMb': v.sizeMb, 'parsed': v.parsed}).toList();
+          final videoList = videos
+              .map(
+                (v) => {
+                  'id': v.id,
+                  'filename': v.filename,
+                  'sizeMb': v.sizeMb,
+                  'parsed': v.parsed,
+                },
+              )
+              .toList();
           _addToolResult('list_videos', jsonEncode(videoList));
         case 'read_logs':
           final logs = context.read<AppState>().logEntries;
-          final recent = logs.length > 30 ? logs.sublist(logs.length - 30) : logs;
-          final logText = recent.map((l) => '[${l.timestamp.hour.toString().padLeft(2, '0')}:${l.timestamp.minute.toString().padLeft(2, '0')}] ${l.message}').join('\n');
+          final recent = logs.length > 30
+              ? logs.sublist(logs.length - 30)
+              : logs;
+          final logText = recent
+              .map(
+                (l) =>
+                    '[${l.timestamp.hour.toString().padLeft(2, '0')}:${l.timestamp.minute.toString().padLeft(2, '0')}] ${l.message}',
+              )
+              .join('\n');
           _addToolResult('read_logs', logText.isEmpty ? '(no logs)' : logText);
         case 'get_task_info':
           if (parts.length >= 2) {
@@ -9666,11 +13270,17 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
             final tasks = context.read<AppState>().tasks;
             final task = tasks.where((t) => t.id == taskId).firstOrNull;
             if (task != null) {
-              _addToolResult('get_task_info', jsonEncode({
-                'id': task.id, 'filename': task.filename, 'status': task.status.name,
-                'progress': '${task.progress.toStringAsFixed(1)}%',
-                'inputPath': task.inputPath, 'outputPath': task.outputPath,
-              }));
+              _addToolResult(
+                'get_task_info',
+                jsonEncode({
+                  'id': task.id,
+                  'filename': task.filename,
+                  'status': task.status.name,
+                  'progress': '${task.progress.toStringAsFixed(1)}%',
+                  'inputPath': task.inputPath,
+                  'outputPath': task.outputPath,
+                }),
+              );
             } else {
               _addToolResult('get_task_info', 'Task not found: $taskId');
             }
@@ -9680,10 +13290,15 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
             final nodeId = parts[1];
             final name = parts[2];
             run(() {
-              final ok = widget
-                  .onModifyNodeParams(nodeId, <String, dynamic>{'node_name': name});
-              _addToolResult('rename_node',
-                  ok ? 'Node $nodeId renamed to "$name"' : 'Error: node not found: $nodeId');
+              final ok = widget.onModifyNodeParams(nodeId, <String, dynamic>{
+                'node_name': name,
+              });
+              _addToolResult(
+                'rename_node',
+                ok
+                    ? 'Node $nodeId renamed to "$name"'
+                    : 'Error: node not found: $nodeId',
+              );
             });
           }
       }
@@ -9701,17 +13316,34 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
   /// graph_executor / app_state / 本文件）。
   static const Set<String> _stringParamKeys = {
     // 编码与容器
-    'format', 'output_format', 'video_codec', 'audio_codec', 'audio_bitrate_mode',
+    'format',
+    'output_format',
+    'video_codec',
+    'audio_codec',
+    'audio_bitrate_mode',
     'bitrate_mode', 'preset', 'pix_fmt', 'resolution', 'rate_mode', 'fps',
     'sample_rate', 'audio_channels',
     // 模式 / 枚举
     'mode', 'order_mode', 'manual_order', 'extract_mode', 'scale_mode', 'flip',
     'rotate', 'curve', 'position', 'channel', 'extract_method',
-    'denoise_method', 'denoise_mode', 'noise_mode', 'noise_type', 'sharpen_mode',
+    'denoise_method',
+    'denoise_mode',
+    'noise_mode',
+    'noise_type',
+    'sharpen_mode',
     'brightness_mode', 'rotate_mode', 'crop_mode',
     // 路径 / 文本
-    'naming_mode', 'naming_value', 'output_dir', 'file_media_type', 'media_type', 'node_name',
-    'overlay_path', 'cover_path', 'lyrics_path', 'subtitle_file', 'subtitle_path',
+    'naming_mode',
+    'naming_value',
+    'output_dir',
+    'file_media_type',
+    'media_type',
+    'node_name',
+    'overlay_path',
+    'cover_path',
+    'lyrics_path',
+    'subtitle_file',
+    'subtitle_path',
     'font_name', 'font_color', 'outline_color', 'container_file_select',
     'container_selected_indices', 'tt_date', 'tt_start', 'tt_end',
   };
@@ -9727,7 +13359,10 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
   Map<String, dynamic> _parseToolParams(String nodeId, String spec) {
     PipelineNode? target;
     for (final n in widget.existingNodes) {
-      if (n.id == nodeId) { target = n; break; }
+      if (n.id == nodeId) {
+        target = n;
+        break;
+      }
     }
     final out = <String, dynamic>{};
     for (final part in spec.split(',')) {
@@ -9737,7 +13372,11 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       if (cut <= 0) continue;
       final key = part.substring(0, cut).trim();
       if (key.isEmpty) continue;
-      out[key] = _coerceToolParam(key, part.substring(cut + 1).trim(), target?.params[key]);
+      out[key] = _coerceToolParam(
+        key,
+        part.substring(cut + 1).trim(),
+        target?.params[key],
+      );
     }
     return out;
   }
@@ -9764,9 +13403,15 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
 
   void _addToolResult(String toolName, String result) {
     setState(() {
-      _messages.add((role: 'assistant', content: '[$toolName] $result',
-        inputTokens: null, outputTokens: null,
-        blocks: [{'type': 'tool_result', 'name': toolName, 'content': result}]));
+      _messages.add((
+        role: 'assistant',
+        content: '[$toolName] $result',
+        inputTokens: null,
+        outputTokens: null,
+        blocks: [
+          {'type': 'tool_result', 'name': toolName, 'content': result},
+        ],
+      ));
     });
     _scrollToBottom();
   }
@@ -9783,29 +13428,49 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       connections: widget.existingConnections,
     );
     final errors = GraphExecutor.validateGraph(graph);
-    _addToolResult('error_check', errors.isEmpty ? 'No errors found.' : errors.join('\n'));
+    _addToolResult(
+      'error_check',
+      errors.isEmpty ? 'No errors found.' : errors.join('\n'),
+    );
   }
 
   void _executeListDir(String path) {
     try {
       final dir = Directory(path);
-      if (!dir.existsSync()) { _addToolResult('list_directory', 'Directory not found: $path'); return; }
-      final entries = dir.listSync().take(50).map((e) {
-        final stat = e.statSync();
-        final isDir = stat.type == FileSystemEntityType.directory;
-        return '${isDir ? "[DIR] " : ""}${e.path.split('/').last}  ${isDir ? "" : "${(stat.size / 1024).toStringAsFixed(1)}KB"}';
-      }).join('\n');
+      if (!dir.existsSync()) {
+        _addToolResult('list_directory', 'Directory not found: $path');
+        return;
+      }
+      final entries = dir
+          .listSync()
+          .take(50)
+          .map((e) {
+            final stat = e.statSync();
+            final isDir = stat.type == FileSystemEntityType.directory;
+            return '${isDir ? "[DIR] " : ""}${e.path.split('/').last}  ${isDir ? "" : "${(stat.size / 1024).toStringAsFixed(1)}KB"}';
+          })
+          .join('\n');
       _addToolResult('list_directory', entries.isEmpty ? '(empty)' : entries);
-    } catch (e) { _addToolResult('list_directory', 'Error: $e'); }
+    } catch (e) {
+      _addToolResult('list_directory', 'Error: $e');
+    }
   }
 
   void _executeReadFileInfo(String path) {
     try {
       final file = File(path);
-      if (!file.existsSync()) { _addToolResult('read_file_info', 'File not found: $path'); return; }
+      if (!file.existsSync()) {
+        _addToolResult('read_file_info', 'File not found: $path');
+        return;
+      }
       final stat = file.statSync();
-      _addToolResult('read_file_info', 'Path: $path\nSize: ${(stat.size / (1024 * 1024)).toStringAsFixed(2)} MB\nModified: ${stat.modified}\nType: ${path.split('.').last}');
-    } catch (e) { _addToolResult('read_file_info', 'Error: $e'); }
+      _addToolResult(
+        'read_file_info',
+        'Path: $path\nSize: ${(stat.size / (1024 * 1024)).toStringAsFixed(2)} MB\nModified: ${stat.modified}\nType: ${path.split('.').last}',
+      );
+    } catch (e) {
+      _addToolResult('read_file_info', 'Error: $e');
+    }
   }
 
   Future<void> _executeProbeVideo(String path) async {
@@ -9815,15 +13480,25 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       if (resp['success'] == true) {
         _addToolResult('probe_video', jsonEncode(resp['data'] ?? resp));
       } else {
-        _addToolResult('probe_video', 'Error: ${resp['error'] ?? 'probe failed'}');
+        _addToolResult(
+          'probe_video',
+          'Error: ${resp['error'] ?? 'probe failed'}',
+        );
       }
-    } catch (e) { _addToolResult('probe_video', 'Error: $e'); }
+    } catch (e) {
+      _addToolResult('probe_video', 'Error: $e');
+    }
   }
 
   void _showAskUser(String question, List<String> options) {
     setState(() {
-      _messages.add((role: 'assistant', content: '[ASK_USER]$question|${options.join(",")}',
-        inputTokens: null, outputTokens: null, blocks: null));
+      _messages.add((
+        role: 'assistant',
+        content: '[ASK_USER]$question|${options.join(",")}',
+        inputTokens: null,
+        outputTokens: null,
+        blocks: null,
+      ));
     });
     _scrollToBottom();
   }
@@ -9836,16 +13511,35 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     }
     // 别名
     switch (s) {
-      case 'and': return LogicGateType.and;
-      case 'or': return LogicGateType.or;
-      case 'not': return LogicGateType.not;
-      case 'nand': return LogicGateType.nand;
-      case 'nor': return LogicGateType.nor;
-      case 'xor': case 'exclusive_or': return LogicGateType.xor;
-      case 'xnor': case 'exclusive_nor': return LogicGateType.xnor;
-      case 'const1': case 'const_1': case 'constant_1': case 'high': return LogicGateType.const1;
-      case 'const0': case 'const_0': case 'constant_0': case 'low': return LogicGateType.const0;
-      case 'time_trigger': case 'timer': return LogicGateType.timeTrigger;
+      case 'and':
+        return LogicGateType.and;
+      case 'or':
+        return LogicGateType.or;
+      case 'not':
+        return LogicGateType.not;
+      case 'nand':
+        return LogicGateType.nand;
+      case 'nor':
+        return LogicGateType.nor;
+      case 'xor':
+      case 'exclusive_or':
+        return LogicGateType.xor;
+      case 'xnor':
+      case 'exclusive_nor':
+        return LogicGateType.xnor;
+      case 'const1':
+      case 'const_1':
+      case 'constant_1':
+      case 'high':
+        return LogicGateType.const1;
+      case 'const0':
+      case 'const_0':
+      case 'constant_0':
+      case 'low':
+        return LogicGateType.const0;
+      case 'time_trigger':
+      case 'timer':
+        return LogicGateType.timeTrigger;
     }
     return null;
   }
@@ -9855,18 +13549,24 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     // 面板关闭时自动把当前会话存入历史，方便下次继续
     final userMsgs = _messages.where((m) => m.role == 'user').toList();
     if (userMsgs.isNotEmpty) {
-      final title = userMsgs.first.content.replaceAll(RegExp(r'\s+'), ' ').trim();
+      final title = userMsgs.first.content
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
       final t = title.length > 24 ? '${title.substring(0, 24)}…' : title;
       AiChatHistory.saveSession(
         title: t,
         provider: _effectiveProvider,
         model: _effectiveModel,
-        messages: _messages.map((m) => {
-          'role': m.role,
-          'content': m.content,
-          'inputTokens': m.inputTokens,
-          'outputTokens': m.outputTokens,
-        }).toList(),
+        messages: _messages
+            .map(
+              (m) => {
+                'role': m.role,
+                'content': m.content,
+                'inputTokens': m.inputTokens,
+                'outputTokens': m.outputTokens,
+              },
+            )
+            .toList(),
       );
     }
     _ctrl.dispose();
@@ -9879,7 +13579,11 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     if (!mounted) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollCtrl.hasClients) return;
-      _scrollCtrl.animateTo(_scrollCtrl.position.maxScrollExtent, duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
+      _scrollCtrl.animateTo(
+        _scrollCtrl.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+      );
     });
   }
 
@@ -9911,9 +13615,12 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     final profile = _effectiveProfile;
     final effProvider = profile?.provider ?? _effectiveProvider;
     // 配置里没选模型（默认值已置空）时走解析链，不要带空模型发请求
-    final effModel =
-        profile?.model.isNotEmpty == true ? profile!.model : _effectiveModel;
-    final effUrl = profile?.apiUrl.isNotEmpty == true ? profile!.apiUrl : cfg.aiApiUrl;
+    final effModel = profile?.model.isNotEmpty == true
+        ? profile!.model
+        : _effectiveModel;
+    final effUrl = profile?.apiUrl.isNotEmpty == true
+        ? profile!.apiUrl
+        : cfg.aiApiUrl;
     // Key 解析：多 Key 模式按 apiKeys 轮换（单 Key 作首位一并参与），
     // 均为空时回退全局默认 Key。
     String effKey;
@@ -9936,21 +13643,28 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         break;
       }
     }
-    final effMaxTokens = modelEntry?.maxTokens ?? profile?.maxTokens ?? cfg.aiMaxTokens;
-    final effTemp = modelEntry?.temperature ?? profile?.temperature ?? cfg.aiTemperature;
+    final effMaxTokens =
+        modelEntry?.maxTokens ?? profile?.maxTokens ?? cfg.aiMaxTokens;
+    final effTemp =
+        modelEntry?.temperature ?? profile?.temperature ?? cfg.aiTemperature;
     if (effKey.isEmpty) {
-      showToast(context, widget.strings.aiNotConfigured, type: ToastType.warning);
+      showToast(
+        context,
+        widget.strings.aiNotConfigured,
+        type: ToastType.warning,
+      );
       return;
     }
     // 模型不再有内置兜底（默认值已置空）：没配置就当场提示，
     // 不要让请求带着空 model 发出去、由供应商回一个看不懂的 400。
     if (effModel.trim().isEmpty) {
       showToast(
-          context,
-          widget.strings.isZh
-              ? '未配置模型，请先在 设置 → AI 中选择'
-              : 'No model configured — pick one in Settings → AI',
-          type: ToastType.warning);
+        context,
+        widget.strings.isZh
+            ? '未配置模型，请先在 设置 → AI 中选择'
+            : 'No model configured — pick one in Settings → AI',
+        type: ToastType.warning,
+      );
       return;
     }
     // 历史上限：长会话（尤其工具调用密集）裁剪最旧消息，避免请求体积与内存无限增长
@@ -9961,14 +13675,22 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     appState.logAiRequest(text);
 
     setState(() {
-      _messages.add((role: 'user', content: text, inputTokens: null, outputTokens: null, blocks: null));
+      _messages.add((
+        role: 'user',
+        content: text,
+        inputTokens: null,
+        outputTokens: null,
+        blocks: null,
+      ));
       _ctrl.clear();
       _loading = true;
       _pendingNodes = null;
       _pendingConnections = null;
     });
     _scrollToBottom();
-    _genStart..reset()..start();
+    _genStart
+      ..reset()
+      ..start();
     // 在 async 前读取配置，避免 async gap 后使用 context
     final showThinking = context.read<AppState>().config.aiShowThinking;
 
@@ -9978,10 +13700,14 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       final uri = Uri.parse(_resolveEndpoint(effUrl, isAnthropic));
       final canvasJson = jsonEncode({
         'nodes': widget.existingNodes.map((n) => n.toJson()).toList(),
-        'connections': widget.existingConnections.map((c) => c.toJson()).toList(),
+        'connections': widget.existingConnections
+            .map((c) => c.toJson())
+            .toList(),
       });
       final customPrompt = cfg.aiSystemPrompt;
-      final basePrompt = customPrompt.isNotEmpty ? '$customPrompt\n\n$_systemPrompt' : _systemPrompt;
+      final basePrompt = customPrompt.isNotEmpty
+          ? '$customPrompt\n\n$_systemPrompt'
+          : _systemPrompt;
       final fullPrompt = '$basePrompt\n\nCurrent canvas state:\n$canvasJson';
 
       final headers = <String, String>{'Content-Type': 'application/json'};
@@ -9997,8 +13723,10 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         // Ensure alternating user/assistant for Anthropic API
         final mergedMessages = <Map<String, dynamic>>[];
         for (final msg in userMessages) {
-          if (mergedMessages.isNotEmpty && mergedMessages.last['role'] == msg['role']) {
-            mergedMessages.last['content'] = '${mergedMessages.last['content']}\n${msg['content']}';
+          if (mergedMessages.isNotEmpty &&
+              mergedMessages.last['role'] == msg['role']) {
+            mergedMessages.last['content'] =
+                '${mergedMessages.last['content']}\n${msg['content']}';
           } else {
             mergedMessages.add(Map.of(msg));
           }
@@ -10017,7 +13745,14 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
           {'role': 'system', 'content': fullPrompt},
           ..._messages.map((m) => {'role': m.role, 'content': m.content}),
         ];
-        reqBody = {'model': effModel, 'messages': apiMessages, 'temperature': effTemp, 'max_tokens': effMaxTokens, 'stream': true, 'stream_options': {'include_usage': true}};
+        reqBody = {
+          'model': effModel,
+          'messages': apiMessages,
+          'temperature': effTemp,
+          'max_tokens': effMaxTokens,
+          'stream': true,
+          'stream_options': {'include_usage': true},
+        };
       }
 
       final request = http.Request('POST', uri);
@@ -10030,22 +13765,35 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
 
       if (streamed.statusCode != 200) {
         final respBody = await streamed.stream.bytesToString();
-        final errMsg = 'Error: ${streamed.statusCode} ${respBody.length > 200 ? respBody.substring(0, 200) : respBody}';
+        final errMsg =
+            'Error: ${streamed.statusCode} ${respBody.length > 200 ? respBody.substring(0, 200) : respBody}';
         appState.logAiResponse(errMsg, error: true);
         if (mounted) {
           setState(() {
-            _messages.add((role: 'assistant', content: errMsg, inputTokens: null, outputTokens: null, blocks: null));
+            _messages.add((
+              role: 'assistant',
+              content: errMsg,
+              inputTokens: null,
+              outputTokens: null,
+              blocks: null,
+            ));
             _loading = false;
           });
         }
         _scrollToBottom();
-        return;  // sendClient 由外层 finally 统一关闭
+        return; // sendClient 由外层 finally 统一关闭
       }
 
       // Add placeholder assistant message for streaming
-      if (!mounted) return;  // sendClient 由外层 finally 统一关闭
+      if (!mounted) return; // sendClient 由外层 finally 统一关闭
       setState(() {
-        _messages.add((role: 'assistant', content: '', inputTokens: null, outputTokens: null, blocks: null));
+        _messages.add((
+          role: 'assistant',
+          content: '',
+          inputTokens: null,
+          outputTokens: null,
+          blocks: null,
+        ));
       });
       final msgIdx = _messages.length - 1;
       final buf = StringBuffer();
@@ -10098,11 +13846,16 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
               // OpenAI-compatible
               final choices = json['choices'] as List? ?? [];
               if (choices.isNotEmpty) {
-                final delta = choices[0]['delta'] as Map<String, dynamic>? ?? {};
-                if (delta.containsKey('content') && delta['content'] != null) buf.write(delta['content']);
+                final delta =
+                    choices[0]['delta'] as Map<String, dynamic>? ?? {};
+                if (delta.containsKey('content') && delta['content'] != null)
+                  buf.write(delta['content']);
                 // 思考过程：DeepSeek-R1 用 reasoning_content，OpenAI o1 用 reasoning
-                final reasoning = delta['reasoning_content'] ?? delta['reasoning'];
-                if (showThinking && reasoning != null && reasoning.toString().isNotEmpty) {
+                final reasoning =
+                    delta['reasoning_content'] ?? delta['reasoning'];
+                if (showThinking &&
+                    reasoning != null &&
+                    reasoning.toString().isNotEmpty) {
                   if (thinkBuf.isEmpty) thinkWatch.start();
                   thinkBuf.write(reasoning);
                 }
@@ -10115,12 +13868,24 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
             }
             if (mounted) {
               setState(() {
-                _messages[msgIdx] = (role: 'assistant', content: buf.toString(), inputTokens: inTok, outputTokens: outTok,
-                    blocks: thinkBuf.isEmpty ? null : [
-                      {'type': 'thinking', 'thinking': thinkBuf.toString(), 'durationMs': thinkWatch.elapsedMilliseconds},
-                    if (buf.isNotEmpty) {'type': 'text', 'text': buf.toString()},
-                  ]);
-            });
+                _messages[msgIdx] = (
+                  role: 'assistant',
+                  content: buf.toString(),
+                  inputTokens: inTok,
+                  outputTokens: outTok,
+                  blocks: thinkBuf.isEmpty
+                      ? null
+                      : [
+                          {
+                            'type': 'thinking',
+                            'thinking': thinkBuf.toString(),
+                            'durationMs': thinkWatch.elapsedMilliseconds,
+                          },
+                          if (buf.isNotEmpty)
+                            {'type': 'text', 'text': buf.toString()},
+                        ],
+                );
+              });
             }
             _scrollToBottom();
           } catch (_) {}
@@ -10144,11 +13909,22 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       final speed = elapsedMs > 0 ? (content.length * 1000 / elapsedMs) : null;
       if (!mounted) return;
       setState(() {
-        _messages[msgIdx] = (role: 'assistant', content: content, inputTokens: inTok, outputTokens: outTok,
-            blocks: thinkBuf.isEmpty ? null : [
-              {'type': 'thinking', 'thinking': thinkBuf.toString(), 'durationMs': thinkWatch.elapsedMilliseconds},
-              if (content.isNotEmpty) {'type': 'text', 'text': content},
-            ]);
+        _messages[msgIdx] = (
+          role: 'assistant',
+          content: content,
+          inputTokens: inTok,
+          outputTokens: outTok,
+          blocks: thinkBuf.isEmpty
+              ? null
+              : [
+                  {
+                    'type': 'thinking',
+                    'thinking': thinkBuf.toString(),
+                    'durationMs': thinkWatch.elapsedMilliseconds,
+                  },
+                  if (content.isNotEmpty) {'type': 'text', 'text': content},
+                ],
+        );
         _loading = false;
         _lastGenSpeed = speed;
         if (inTok != null) _totalInputTokens += inTok;
@@ -10172,12 +13948,18 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       appState.logAiResponse('$e', error: true);
       if (!mounted) return;
       setState(() {
-        _messages.add((role: 'assistant', content: 'Error: $e', inputTokens: null, outputTokens: null, blocks: null));
+        _messages.add((
+          role: 'assistant',
+          content: 'Error: $e',
+          inputTokens: null,
+          outputTokens: null,
+          blocks: null,
+        ));
         _loading = false;
       });
       _scrollToBottom();
     } finally {
-      sendClient?.close();  // 无论成功/异常/面板关闭，都释放 HTTP 连接
+      sendClient?.close(); // 无论成功/异常/面板关闭，都释放 HTTP 连接
       // 只有当前这次请求仍持有「活跃引用」时才清状态：如果用户点停止后立刻又发了
       // 一条，_activeClient 已经是新请求的 client，不能被旧请求的 finally 抹掉
       // （否则新请求的「停止」按钮会失效）。
@@ -10195,26 +13977,56 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     final cfg = appState.config;
     if (!cfg.aiAutoTitle || _messages.isEmpty) return;
     final profile = _effectiveProfile;
-    final key = profile?.apiKey.isNotEmpty == true ? profile!.apiKey : cfg.aiApiKey;
+    final key = profile?.apiKey.isNotEmpty == true
+        ? profile!.apiKey
+        : cfg.aiApiKey;
     if (key.isEmpty) return;
     final isAnthropic = (profile?.provider ?? cfg.aiProvider) == 'anthropic';
-    final url = (profile?.apiUrl.isNotEmpty == true ? profile!.apiUrl : cfg.aiApiUrl);
+    final url = (profile?.apiUrl.isNotEmpty == true
+        ? profile!.apiUrl
+        : cfg.aiApiUrl);
     // 模型不再有内置兜底：一个可用模型都没有就别浪费一次请求
     final model = profile?.model.isNotEmpty == true
         ? profile!.model
         : (cfg.aiModel.isNotEmpty
-            ? cfg.aiModel
-            : (profile?.models.firstOrNull?.id ?? ''));
+              ? cfg.aiModel
+              : (profile?.models.firstOrNull?.id ?? ''));
     if (model.isEmpty) return;
     _titleGenerated = true;
     try {
       final uri = Uri.parse(_resolveEndpoint(url, isAnthropic));
       // 取最近几轮对话内容用于总结
-      final recent = _messages.take(6).map((m) => '${m.role}: ${m.content.substring(0, m.content.length > 120 ? 120 : m.content.length)}').join('\n');
+      final recent = _messages
+          .take(6)
+          .map(
+            (m) =>
+                '${m.role}: ${m.content.substring(0, m.content.length > 120 ? 120 : m.content.length)}',
+          )
+          .join('\n');
       final prompt = cfg.aiTitlePrompt;
       final body = isAnthropic
-          ? {'model': model, 'max_tokens': 32, 'system': prompt, 'messages': [{'role': 'user', 'content': 'Summarize this conversation:\n$recent'}]}
-          : {'model': model, 'max_tokens': 32, 'messages': [{'role': 'system', 'content': prompt}, {'role': 'user', 'content': 'Summarize this conversation:\n$recent'}]};
+          ? {
+              'model': model,
+              'max_tokens': 32,
+              'system': prompt,
+              'messages': [
+                {
+                  'role': 'user',
+                  'content': 'Summarize this conversation:\n$recent',
+                },
+              ],
+            }
+          : {
+              'model': model,
+              'max_tokens': 32,
+              'messages': [
+                {'role': 'system', 'content': prompt},
+                {
+                  'role': 'user',
+                  'content': 'Summarize this conversation:\n$recent',
+                },
+              ],
+            };
       final req = http.Request('POST', uri);
       if (isAnthropic) {
         req.headers['x-api-key'] = key;
@@ -10226,7 +14038,9 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       req.body = jsonEncode(body);
       final client = http.Client();
       try {
-        final resp = await client.send(req).timeout(const Duration(seconds: 15));
+        final resp = await client
+            .send(req)
+            .timeout(const Duration(seconds: 15));
         final respBody = await resp.stream.bytesToString();
         if (resp.statusCode != 200) return;
         final json = jsonDecode(respBody) as Map<String, dynamic>;
@@ -10236,10 +14050,16 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
           if (blocks.isNotEmpty) title = (blocks[0]['text'] as String?) ?? '';
         } else {
           final choices = (json['choices'] as List?) ?? [];
-          if (choices.isNotEmpty) title = ((choices[0]['message'] as Map<String, dynamic>?)?['content'] as String?) ?? '';
+          if (choices.isNotEmpty)
+            title =
+                ((choices[0]['message'] as Map<String, dynamic>?)?['content']
+                    as String?) ??
+                '';
         }
         if (title != null && title.trim().isNotEmpty && mounted) {
-          widget.onTitleGenerated?.call(title.trim().replaceAll(RegExp(r'[\n"]+'), ''));
+          widget.onTitleGenerated?.call(
+            title.trim().replaceAll(RegExp(r'[\n"]+'), ''),
+          );
         }
       } finally {
         client.close();
@@ -10264,35 +14084,61 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         final newId = _uuid.v4();
         idMap[n['id'] as String] = newId;
         final typeStr = n['type'] as String;
-        final type = PipelineStepType.values.firstWhere((t) => t.name == typeStr, orElse: () => PipelineStepType.avProcess);
+        final type = PipelineStepType.values.firstWhere(
+          (t) => t.name == typeStr,
+          orElse: () => PipelineStepType.avProcess,
+        );
         final params = <String, dynamic>{};
-        if (n['params'] != null) params.addAll(Map<String, dynamic>.from(n['params']));
-        nodes.add(PipelineNode(id: newId, type: type, x: (n['x'] as num).toDouble(), y: (n['y'] as num).toDouble(), params: params));
+        if (n['params'] != null)
+          params.addAll(Map<String, dynamic>.from(n['params']));
+        nodes.add(
+          PipelineNode(
+            id: newId,
+            type: type,
+            x: (n['x'] as num).toDouble(),
+            y: (n['y'] as num).toDouble(),
+            params: params,
+          ),
+        );
       }
 
       for (final c in connsList) {
         final fromId = idMap[c['from'] as String];
         final toId = idMap[c['to'] as String];
         if (fromId != null && toId != null) {
-          connections.add(PipelineConnection(id: _uuid.v4(), fromNodeId: fromId, toNodeId: toId));
+          connections.add(
+            PipelineConnection(
+              id: _uuid.v4(),
+              fromNodeId: fromId,
+              toNodeId: toId,
+            ),
+          );
         }
       }
 
       if (nodes.isNotEmpty) {
         final cfg = context.read<AppState>().config;
-        final isModify = content.contains('[MODE:modify]') || cfg.aiGraphMode == 'modify';
+        final isModify =
+            content.contains('[MODE:modify]') || cfg.aiGraphMode == 'modify';
         // 会话模式：auto = 直接应用；ask = 生成后询问确认（图应用默认询问，
         // 白名单只影响工具类操作）。
         final autoApply = _effectiveApproveMode == 'auto' || cfg.aiAutoExecute;
         if (autoApply) {
-          context.read<AppState>().logAiGraphApplied(nodes.length, connections.length);
+          context.read<AppState>().logAiGraphApplied(
+            nodes.length,
+            connections.length,
+          );
           if (isModify) {
             widget.onMergeGraph(nodes, connections);
           } else {
             widget.onApplyGraph(nodes, connections);
           }
         } else {
-          setState(() { _pendingNodes = nodes; _pendingConnections = connections; _pendingIsModify = isModify; });
+          setState(() {
+            _pendingNodes = nodes;
+            _pendingConnections = connections;
+            _pendingIsModify = isModify;
+          });
         }
       }
     } catch (_) {}
@@ -10318,8 +14164,14 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         ),
       ),
       child: _expanded
-          ? KeyedSubtree(key: const ValueKey('ai-expanded'), child: _buildExpanded(scheme))
-          : KeyedSubtree(key: const ValueKey('ai-collapsed'), child: _buildCollapsed(scheme)),
+          ? KeyedSubtree(
+              key: const ValueKey('ai-expanded'),
+              child: _buildExpanded(scheme),
+            )
+          : KeyedSubtree(
+              key: const ValueKey('ai-collapsed'),
+              child: _buildCollapsed(scheme),
+            ),
     );
   }
 
@@ -10332,11 +14184,21 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         onTap: () => setState(() => _expanded = true),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.smart_toy, size: 18, color: scheme.primary),
-            const SizedBox(width: 6),
-            Text('AI', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.primary)),
-          ]),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.smart_toy, size: 18, color: scheme.primary),
+              const SizedBox(width: 6),
+              Text(
+                'AI',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: scheme.primary,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -10352,72 +14214,97 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     // radius 22 的底部弹层，而本 Container 的圆角写死 0 —— 一圈直角细线画在圆角
     // 表面内部，四个角会被外层裁掉一块，属于视觉噪声而非边界。表面边界交给外层。
     final body = SizedBox.expand(
-        child: Column(children: [
+      child: Column(
+        children: [
           // 移动端底部弹层自带头部（标题+历史+工具+关闭），这里跳过内部头部，
           // 避免出现上下两层菜单栏。
           if (!widget.hideHeader)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 6, 4),
-            child: Row(children: [
-              Icon(Icons.smart_toy, size: 18, color: scheme.primary),
-              const SizedBox(width: 8),
-              const Spacer(),
-              // 拖出为独立系统窗口（只有主窗口的 AI 抽屉会传 onFloatOut）
-              if (widget.onFloatOut != null)
-                IconButton(
-                  icon: const Icon(Icons.desktop_windows_outlined, size: 17),
-                  tooltip: s.isZh ? '拖出为独立窗口' : 'Open in separate window',
-                  onPressed: widget.onFloatOut,
-                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                  padding: EdgeInsets.zero,
-                ),
-              // 历史记录按钮
-              IconButton(
-                icon: const Icon(Icons.history, size: 18),
-                tooltip: s.isZh ? '历史记录' : 'History',
-                onPressed: () {
-                  // 用按钮自身位置作为菜单锚点，避免偏移
-                  final box = context.findRenderObject() as RenderBox?;
-                  final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
-                  if (box != null && overlay != null) {
-                    final pos = box.localToGlobal(Offset.zero, ancestor: overlay);
-                    _toggleHistoryAt(scheme, s, pos + const Offset(24, 8));
-                  }
-                },
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                padding: EdgeInsets.zero,
-              ),
-              // 工具侧边栏开关
-              Tooltip(
-                message: s.isZh ? (_toolsOpen ? '收起工具面板' : '展开工具面板') : (_toolsOpen ? 'Collapse tools' : 'Expand tools'),
-                child: IconButton(
-                  icon: AnimatedRotation(
-                    turns: _toolsOpen ? 0.5 : 0,
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeOutCubic,
-                    child: const Icon(Icons.extension_outlined, size: 18),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 6, 4),
+              child: Row(
+                children: [
+                  Icon(Icons.smart_toy, size: 18, color: scheme.primary),
+                  const SizedBox(width: 8),
+                  const Spacer(),
+                  // 拖出为独立系统窗口（只有主窗口的 AI 抽屉会传 onFloatOut）
+                  if (widget.onFloatOut != null)
+                    IconButton(
+                      icon: const Icon(
+                        Icons.desktop_windows_outlined,
+                        size: 17,
+                      ),
+                      tooltip: s.isZh ? '拖出为独立窗口' : 'Open in separate window',
+                      onPressed: widget.onFloatOut,
+                      constraints: const BoxConstraints(
+                        minWidth: 32,
+                        minHeight: 32,
+                      ),
+                      padding: EdgeInsets.zero,
+                    ),
+                  // 历史记录按钮
+                  IconButton(
+                    icon: const Icon(Icons.history, size: 18),
+                    tooltip: s.isZh ? '历史记录' : 'History',
+                    onPressed: () {
+                      // 用按钮自身位置作为菜单锚点，避免偏移
+                      final box = context.findRenderObject() as RenderBox?;
+                      final overlay =
+                          Overlay.of(context).context.findRenderObject()
+                              as RenderBox?;
+                      if (box != null && overlay != null) {
+                        final pos = box.localToGlobal(
+                          Offset.zero,
+                          ancestor: overlay,
+                        );
+                        _toggleHistoryAt(scheme, s, pos + const Offset(24, 8));
+                      }
+                    },
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                    padding: EdgeInsets.zero,
                   ),
-                  tooltip: s.isZh ? '工具' : 'Tools',
-                  onPressed: () => setState(() => _toolsOpen = !_toolsOpen),
-                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                  padding: EdgeInsets.zero,
-                ),
+                  // 工具侧边栏开关
+                  Tooltip(
+                    message: s.isZh
+                        ? (_toolsOpen ? '收起工具面板' : '展开工具面板')
+                        : (_toolsOpen ? 'Collapse tools' : 'Expand tools'),
+                    child: IconButton(
+                      icon: AnimatedRotation(
+                        turns: _toolsOpen ? 0.5 : 0,
+                        duration: const Duration(milliseconds: 200),
+                        curve: Curves.easeOutCubic,
+                        child: const Icon(Icons.extension_outlined, size: 18),
+                      ),
+                      tooltip: s.isZh ? '工具' : 'Tools',
+                      onPressed: () => setState(() => _toolsOpen = !_toolsOpen),
+                      constraints: const BoxConstraints(
+                        minWidth: 32,
+                        minHeight: 32,
+                      ),
+                      padding: EdgeInsets.zero,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.remove, size: 18),
+                    tooltip: s.isZh ? '收起' : 'Collapse',
+                    onPressed: () {
+                      if (widget.onCollapseRequested != null) {
+                        widget.onCollapseRequested!();
+                      } else {
+                        setState(() => _expanded = false);
+                      }
+                    },
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                    padding: EdgeInsets.zero,
+                  ),
+                ],
               ),
-              IconButton(
-                icon: const Icon(Icons.remove, size: 18),
-                tooltip: s.isZh ? '收起' : 'Collapse',
-                onPressed: () {
-                  if (widget.onCollapseRequested != null) {
-                    widget.onCollapseRequested!();
-                  } else {
-                    setState(() => _expanded = false);
-                  }
-                },
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                padding: EdgeInsets.zero,
-              ),
-            ]),
-          ),
+            ),
           // 状态条：正在生成 / token 用量 / 生成速度。
           // 原来只在 token>0 时才出现，于是「正在生成」这段最需要反馈的时间里
           // 整条状态栏是空的 —— 移动端尤其明显：发送键变成停止键后，界面上
@@ -10433,37 +14320,56 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   if (_loading)
-                    Row(mainAxisSize: MainAxisSize.min, children: [
-                      SizedBox(
-                        width: 11, height: 11,
-                        child: CircularProgressIndicator(strokeWidth: 1.6, color: scheme.primary),
-                      ),
-                      const SizedBox(width: 5),
-                      Text(s.isZh ? '生成中…' : 'Generating…',
-                          style: TextStyle(fontSize: 10, color: scheme.primary, fontWeight: FontWeight.w500)),
-                    ]),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          width: 11,
+                          height: 11,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 1.6,
+                            color: scheme.primary,
+                          ),
+                        ),
+                        const SizedBox(width: 5),
+                        Text(
+                          s.isZh ? '生成中…' : 'Generating…',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: scheme.primary,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
                   if (_totalInputTokens > 0 || _totalOutputTokens > 0)
-                    Row(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(Icons.data_usage, size: 11, color: scheme.outline),
-                      const SizedBox(width: 4),
-                      Text(
-                        s.isZh
-                            ? '输入 $_totalInputTokens / 输出 $_totalOutputTokens token'
-                            : 'In $_totalInputTokens / Out $_totalOutputTokens tokens',
-                        style: TextStyle(fontSize: 10, color: scheme.outline),
-                      ),
-                    ]),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.data_usage, size: 11, color: scheme.outline),
+                        const SizedBox(width: 4),
+                        Text(
+                          s.isZh
+                              ? '输入 $_totalInputTokens / 输出 $_totalOutputTokens token'
+                              : 'In $_totalInputTokens / Out $_totalOutputTokens tokens',
+                          style: TextStyle(fontSize: 10, color: scheme.outline),
+                        ),
+                      ],
+                    ),
                   if (_lastGenSpeed != null)
-                    Row(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(Icons.speed, size: 11, color: scheme.outline),
-                      const SizedBox(width: 4),
-                      Text(
-                        s.isZh
-                            ? '${_lastGenSpeed!.toStringAsFixed(0)} 字符/秒'
-                            : '${_lastGenSpeed!.toStringAsFixed(0)} chars/s',
-                        style: TextStyle(fontSize: 10, color: scheme.outline),
-                      ),
-                    ]),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.speed, size: 11, color: scheme.outline),
+                        const SizedBox(width: 4),
+                        Text(
+                          s.isZh
+                              ? '${_lastGenSpeed!.toStringAsFixed(0)} 字符/秒'
+                              : '${_lastGenSpeed!.toStringAsFixed(0)} chars/s',
+                          style: TextStyle(fontSize: 10, color: scheme.outline),
+                        ),
+                      ],
+                    ),
                 ],
               ),
             ),
@@ -10475,26 +14381,41 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
             // 内联侧栏挤压成一条线）；桌面端保持内联侧栏。工具侧栏展开时盖住
             // 聊天区右缘，用户照常可以折叠。
             child: isMobilePlatform
-                ? _buildChatBody(scheme, s,
-                    messageOverlay: _toolsOpen ? _buildToolsPanel(scheme, s) : null)
-                : Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                    // ── 可折叠工具侧边栏 ──
-                    AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      curve: Curves.easeOutCubic,
-                      width: _toolsOpen ? 150 : 0,
-                      decoration: BoxDecoration(
-                        border: Border(right: BorderSide(color: scheme.outlineVariant.withAlpha(60))),
+                ? _buildChatBody(
+                    scheme,
+                    s,
+                    messageOverlay: _toolsOpen
+                        ? _buildToolsPanel(scheme, s)
+                        : null,
+                  )
+                : Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // ── 可折叠工具侧边栏 ──
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        curve: Curves.easeOutCubic,
+                        width: _toolsOpen ? 150 : 0,
+                        decoration: BoxDecoration(
+                          border: Border(
+                            right: BorderSide(
+                              color: scheme.outlineVariant.withAlpha(60),
+                            ),
+                          ),
+                        ),
+                        clipBehavior: Clip.hardEdge,
+                        child: _toolsOpen
+                            ? _buildToolsSidebar(scheme, s)
+                            : const SizedBox.shrink(),
                       ),
-                      clipBehavior: Clip.hardEdge,
-                      child: _toolsOpen ? _buildToolsSidebar(scheme, s) : const SizedBox.shrink(),
-                    ),
-                    // ── 聊天主区 ──
-                    Expanded(child: _buildChatBody(scheme, s)),
-                  ]),
+                      // ── 聊天主区 ──
+                      Expanded(child: _buildChatBody(scheme, s)),
+                    ],
+                  ),
           ),
-        ]),
-      );
+        ],
+      ),
+    );
     if (isMobilePlatform) return body;
     return GlassPanel(radius: 16, blur: 14, child: body);
   }
@@ -10509,7 +14430,10 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
   /// 滑入 + 淡入只在挂载时播一次（180ms），展开/收起依旧没有常驻开销。
   Widget _buildToolsPanel(ColorScheme scheme, AppStrings s) {
     return Positioned(
-      top: 0, right: 0, bottom: 0, width: 168,
+      top: 0,
+      right: 0,
+      bottom: 0,
+      width: 168,
       child: TweenAnimationBuilder<double>(
         tween: Tween<double>(begin: 0, end: 1),
         duration: const Duration(milliseconds: 180),
@@ -10545,165 +14469,239 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
   /// [messageOverlay] 只在移动端用到：工具面板作为消息区的浮层挂进来，
   /// 而不是盖在整个面板上（盖整个面板会连底部输入行一起遮住，
   /// 侧栏展开时用户连「发送」都点不到）。
-  Widget _buildChatBody(ColorScheme scheme, AppStrings s, {Widget? messageOverlay}) {
+  Widget _buildChatBody(
+    ColorScheme scheme,
+    AppStrings s, {
+    Widget? messageOverlay,
+  }) {
     const btn = AppControlSize.comfortable;
     // 移动端输入框做成多行自适应。桌面端有物理 Enter（onSubmitted 直接发送）更快；
     // 移动端软键盘换行只能靠 ↵ 键，写死单行等于「长描述只能挤成一行横着滚」。
     final int maxInputLines = isMobilePlatform ? 4 : 1;
     final Widget messageArea = _messages.isEmpty
-            ? _buildEmptyState(scheme, s)
-            : ListView.builder(
-                controller: _scrollCtrl,
-                padding: EdgeInsets.fromLTRB(
-                    isMobilePlatform ? 14 : 12, 12, isMobilePlatform ? 14 : 12, 12),
-                itemCount: _messages.length,
-                itemBuilder: (_, i) {
-                  // 连续同一角色的消息不再重复画头像：否则每轮都是
-                  // 「头像 + 气泡」循环出现，移动端窄屏上左侧被头像占掉 36px，
-                  // 观感很吵。缩进仍然保留，气泡左缘才不会左右跳。
-                  final showAvatar =
-                      i == 0 || _messages[i - 1].role != _messages[i].role;
-                  // 下一条仍是同一角色 → 属于同一组，间距收紧，形成视觉分组
-                  final sameGroupNext = i + 1 < _messages.length &&
-                      _messages[i + 1].role == _messages[i].role;
-                  return RepaintBoundary(
-                    // 稳定 key + 独立重绘层：流式更新只重绘当前这一条，
-                    // 其余历史消息（含 Markdown）被隔离，不再整屏重绘抖动。
-                    key: ValueKey('ai-msg-$i'),
-                    child: _buildMessage(_messages[i], scheme,
-                        showAvatar: showAvatar, gapAfter: sameGroupNext ? 4 : 10),
-                  );
-                },
+        ? _buildEmptyState(scheme, s)
+        : ListView.builder(
+            controller: _scrollCtrl,
+            padding: EdgeInsets.fromLTRB(
+              isMobilePlatform ? 14 : 12,
+              12,
+              isMobilePlatform ? 14 : 12,
+              12,
+            ),
+            itemCount: _messages.length,
+            itemBuilder: (_, i) {
+              // 连续同一角色的消息不再重复画头像：否则每轮都是
+              // 「头像 + 气泡」循环出现，移动端窄屏上左侧被头像占掉 36px，
+              // 观感很吵。缩进仍然保留，气泡左缘才不会左右跳。
+              final showAvatar =
+                  i == 0 || _messages[i - 1].role != _messages[i].role;
+              // 下一条仍是同一角色 → 属于同一组，间距收紧，形成视觉分组
+              final sameGroupNext =
+                  i + 1 < _messages.length &&
+                  _messages[i + 1].role == _messages[i].role;
+              return RepaintBoundary(
+                // 稳定 key + 独立重绘层：流式更新只重绘当前这一条，
+                // 其余历史消息（含 Markdown）被隔离，不再整屏重绘抖动。
+                key: ValueKey('ai-msg-$i'),
+                child: _buildMessage(
+                  _messages[i],
+                  scheme,
+                  showAvatar: showAvatar,
+                  gapAfter: sameGroupNext ? 4 : 10,
+                ),
               );
-    return Column(children: [
-      Expanded(
-        child: messageOverlay == null
-            ? messageArea
-            : Stack(children: [Positioned.fill(child: messageArea), messageOverlay]),
-      ),
-      // 待批准的图：补一层说明卡。改造前两颗按钮凭空出现在输入框上方，
-      // 没有任何文字说明它们要批准什么 —— 用户刚看完消息流，突然多出两个按钮，
-      // 不知道点下去会改动画布还是只改当前节点（移动端尤其容易误触）。
-      if (_pendingNodes != null)
-        Container(
-          margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-          padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
-          decoration: BoxDecoration(
-            color: scheme.primaryContainer.withAlpha(70),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: scheme.primary.withAlpha(70)),
-          ),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            Row(children: [
-              Icon(Icons.account_tree_outlined, size: 14, color: scheme.primary),
-              const SizedBox(width: 6),
-              Expanded(child: Text(
-                _pendingIsModify
-                    ? (s.isZh ? 'AI 建议修改现有节点' : 'AI suggests editing existing nodes')
-                    : (s.isZh ? 'AI 生成了新的处理流程' : 'AI generated a new pipeline'),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.onSurface),
-              )),
-            ]),
-            const SizedBox(height: 2),
-            Text(
-              s.isZh
-                  ? '${_pendingNodes!.length} 个节点 · ${_pendingConnections?.length ?? 0} 条连线'
-                  : '${_pendingNodes!.length} nodes · ${_pendingConnections?.length ?? 0} links',
-              style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 8),
-            Row(children: [
-              // 两颗按钮等宽等高：改造前「批准」是 Expanded 吃掉剩余宽度、「拒绝」只占
-              // 内容宽度，两颗宽度差近一倍；高度也各自跟着主题默认走，一高一矮
-              Expanded(child: FilledButton.icon(
-                style: btn.buttonStyle(filled: true),
-                onPressed: () {
-                  context.read<AppState>().logAiGraphApplied(_pendingNodes!.length, _pendingConnections!.length);
-                  if (_pendingIsModify) {
-                    widget.onMergeGraph(_pendingNodes!, _pendingConnections!);
-                  } else {
-                    widget.onApplyGraph(_pendingNodes!, _pendingConnections!);
-                  }
-                  setState(() { _pendingNodes = null; _pendingConnections = null; });
-                },
-                icon: Icon(Icons.check, size: btn.iconSize),
-                label: Text(s.isZh ? '批准' : 'Approve'),
-              )),
-              const SizedBox(width: 8),
-              Expanded(child: OutlinedButton.icon(
-                style: btn.buttonStyle(),
-                onPressed: () => setState(() { _pendingNodes = null; _pendingConnections = null; }),
-                icon: Icon(Icons.close, size: btn.iconSize),
-                label: Text(s.isZh ? '拒绝' : 'Reject'),
-              )),
-            ]),
-          ]),
+            },
+          );
+    return Column(
+      children: [
+        Expanded(
+          child: messageOverlay == null
+              ? messageArea
+              : Stack(
+                  children: [
+                    Positioned.fill(child: messageArea),
+                    messageOverlay,
+                  ],
+                ),
         ),
-      Padding(
-        padding: EdgeInsets.fromLTRB(12, 4, 12, isMobilePlatform ? 10 : 12),
-        child: Row(
-          // 输入框多行后行高会长，底对齐才能让发送 / 停止键始终贴在最后一行旁边
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-          // 输入框与右侧发送键同档（comfortable 36）：改造前输入框随主题算出约 32，
-          // 发送键却是写死的 40×40 圆形 —— 一个矮一个高，底部那行看着就歪。
-          // 多行时不能再套 fieldBox 钉死高度（会把第二行裁掉），改用 minHeight 兜底。
-          Expanded(child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: btn.height),
-            child: TextField(
-              controller: _ctrl,
-              style: TextStyle(fontSize: 13, color: scheme.onSurface),
-              decoration: InputDecoration(
-                hintText: s.aiChatHint,
-                hintStyle: TextStyle(fontSize: 12, color: scheme.outline),
-                isDense: true,
-                contentPadding: btn.fieldPadding,
-                // 压平桌面端的 -8px 密度偏移，否则同一份 contentPadding 在两端高度不同
-                visualDensity: AppControlSize.fieldDensity,
-                border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(btn.radius)),
-                suffixIconConstraints: AppControlSize.iconSlot,
-              ),
-              // 桌面端单行：Enter 直接发送；移动端多行：回车即换行，发送靠右侧圆钮
-              onSubmitted: maxInputLines > 1 ? null : (_) => _send(),
-              minLines: 1,
-              maxLines: maxInputLines,
-              textInputAction:
-                  maxInputLines > 1 ? TextInputAction.newline : TextInputAction.send,
+        // 待批准的图：补一层说明卡。改造前两颗按钮凭空出现在输入框上方，
+        // 没有任何文字说明它们要批准什么 —— 用户刚看完消息流，突然多出两个按钮，
+        // 不知道点下去会改动画布还是只改当前节点（移动端尤其容易误触）。
+        if (_pendingNodes != null)
+          Container(
+            margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+            decoration: BoxDecoration(
+              color: scheme.primaryContainer.withAlpha(70),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: scheme.primary.withAlpha(70)),
             ),
-          )),
-          const SizedBox(width: 8),
-          SizedBox(
-            width: btn.height,
-            height: btn.height,
-            // 生成中：圆钮由「禁用加载圈」换成「停止」。原实现 onPressed: null，
-            // 模型返回一慢，用户唯一能做的就是等（移动端还得先关掉弹层才能干别的）。
-            // 点停止会关闭当前 HTTP 连接，并保留已经流式收到的部分内容。
-            child: _loading
-                ? FilledButton(
-                    onPressed: _stopGeneration,
-                    style: FilledButton.styleFrom(
-                        padding: EdgeInsets.zero, shape: const CircleBorder()),
-                    child: Icon(Icons.stop_rounded, size: btn.iconSize),
-                  )
-                : FilledButton(
-                    onPressed: _send,
-                    style: FilledButton.styleFrom(
-                        padding: EdgeInsets.zero, shape: const CircleBorder()),
-                    child: Icon(Icons.send, size: btn.iconSize),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.account_tree_outlined,
+                      size: 14,
+                      color: scheme.primary,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        _pendingIsModify
+                            ? (s.isZh
+                                  ? 'AI 建议修改现有节点'
+                                  : 'AI suggests editing existing nodes')
+                            : (s.isZh
+                                  ? 'AI 生成了新的处理流程'
+                                  : 'AI generated a new pipeline'),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: scheme.onSurface,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  s.isZh
+                      ? '${_pendingNodes!.length} 个节点 · ${_pendingConnections?.length ?? 0} 条连线'
+                      : '${_pendingNodes!.length} nodes · ${_pendingConnections?.length ?? 0} links',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: scheme.onSurfaceVariant,
                   ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    // 两颗按钮等宽等高：改造前「批准」是 Expanded 吃掉剩余宽度、「拒绝」只占
+                    // 内容宽度，两颗宽度差近一倍；高度也各自跟着主题默认走，一高一矮
+                    Expanded(
+                      child: FilledButton.icon(
+                        style: btn.buttonStyle(filled: true),
+                        onPressed: () {
+                          context.read<AppState>().logAiGraphApplied(
+                            _pendingNodes!.length,
+                            _pendingConnections!.length,
+                          );
+                          if (_pendingIsModify) {
+                            widget.onMergeGraph(
+                              _pendingNodes!,
+                              _pendingConnections!,
+                            );
+                          } else {
+                            widget.onApplyGraph(
+                              _pendingNodes!,
+                              _pendingConnections!,
+                            );
+                          }
+                          setState(() {
+                            _pendingNodes = null;
+                            _pendingConnections = null;
+                          });
+                        },
+                        icon: Icon(Icons.check, size: btn.iconSize),
+                        label: Text(s.isZh ? '批准' : 'Approve'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        style: btn.buttonStyle(),
+                        onPressed: () => setState(() {
+                          _pendingNodes = null;
+                          _pendingConnections = null;
+                        }),
+                        icon: Icon(Icons.close, size: btn.iconSize),
+                        label: Text(s.isZh ? '拒绝' : 'Reject'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
-        ]),
-      ),
-    ]);
+        Padding(
+          padding: EdgeInsets.fromLTRB(12, 4, 12, isMobilePlatform ? 10 : 12),
+          child: Row(
+            // 输入框多行后行高会长，底对齐才能让发送 / 停止键始终贴在最后一行旁边
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              // 输入框与右侧发送键同档（comfortable 36）：改造前输入框随主题算出约 32，
+              // 发送键却是写死的 40×40 圆形 —— 一个矮一个高，底部那行看着就歪。
+              // 多行时不能再套 fieldBox 钉死高度（会把第二行裁掉），改用 minHeight 兜底。
+              Expanded(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: btn.height),
+                  child: TextField(
+                    controller: _ctrl,
+                    style: TextStyle(fontSize: 13, color: scheme.onSurface),
+                    decoration: InputDecoration(
+                      hintText: s.aiChatHint,
+                      hintStyle: TextStyle(fontSize: 12, color: scheme.outline),
+                      isDense: true,
+                      contentPadding: btn.fieldPadding,
+                      // 压平桌面端的 -8px 密度偏移，否则同一份 contentPadding 在两端高度不同
+                      visualDensity: AppControlSize.fieldDensity,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(btn.radius),
+                      ),
+                      suffixIconConstraints: AppControlSize.iconSlot,
+                    ),
+                    // 桌面端单行：Enter 直接发送；移动端多行：回车即换行，发送靠右侧圆钮
+                    onSubmitted: maxInputLines > 1 ? null : (_) => _send(),
+                    minLines: 1,
+                    maxLines: maxInputLines,
+                    textInputAction: maxInputLines > 1
+                        ? TextInputAction.newline
+                        : TextInputAction.send,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: btn.height,
+                height: btn.height,
+                // 生成中：圆钮由「禁用加载圈」换成「停止」。原实现 onPressed: null，
+                // 模型返回一慢，用户唯一能做的就是等（移动端还得先关掉弹层才能干别的）。
+                // 点停止会关闭当前 HTTP 连接，并保留已经流式收到的部分内容。
+                child: _loading
+                    ? FilledButton(
+                        onPressed: _stopGeneration,
+                        style: FilledButton.styleFrom(
+                          padding: EdgeInsets.zero,
+                          shape: const CircleBorder(),
+                        ),
+                        child: Icon(Icons.stop_rounded, size: btn.iconSize),
+                      )
+                    : FilledButton(
+                        onPressed: _send,
+                        style: FilledButton.styleFrom(
+                          padding: EdgeInsets.zero,
+                          shape: const CircleBorder(),
+                        ),
+                        child: Icon(Icons.send, size: btn.iconSize),
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
   /// 空对话时的引导：说明文字 + 几个可一键发送的示例提示（点击直接发起请求）。
   Widget _buildEmptyState(ColorScheme scheme, AppStrings s) {
     final hints = <String>[
-      s.isZh ? '把这个视频转成 H.265 减小体积' : 'Transcode this video to H.265 to shrink it',
+      s.isZh
+          ? '把这个视频转成 H.265 减小体积'
+          : 'Transcode this video to H.265 to shrink it',
       s.isZh ? '提取视频里的音频为 MP3' : 'Extract the audio as MP3',
       s.isZh ? '每 2 秒截取一帧图片' : 'Extract a frame every 2 seconds',
     ];
@@ -10716,87 +14714,131 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         : '$provider · $model';
     return Center(
       child: SingleChildScrollView(
-        padding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 16 : 20, vertical: 16),
+        padding: EdgeInsets.symmetric(
+          horizontal: isMobilePlatform ? 16 : 20,
+          vertical: 16,
+        ),
         child: ConstrainedBox(
           // 面板很宽时（桌面 420 / 平板横屏）不让引导文字被拉成一整行
           constraints: const BoxConstraints(maxWidth: 380),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Container(
-              width: isMobilePlatform ? 60 : 52,
-              height: isMobilePlatform ? 60 : 52,
-              decoration: BoxDecoration(
-                color: scheme.primaryContainer.withAlpha(90),
-                shape: BoxShape.circle,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: isMobilePlatform ? 60 : 52,
+                height: isMobilePlatform ? 60 : 52,
+                decoration: BoxDecoration(
+                  color: scheme.primaryContainer.withAlpha(90),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.smart_toy_outlined,
+                  size: isMobilePlatform ? 28 : 24,
+                  color: scheme.primary,
+                ),
               ),
-              child: Icon(Icons.smart_toy_outlined,
-                  size: isMobilePlatform ? 28 : 24, color: scheme.primary),
-            ),
-            const SizedBox(height: 12),
-            Text(s.aiChatHint, textAlign: TextAlign.center,
+              const SizedBox(height: 12),
+              Text(
+                s.aiChatHint,
+                textAlign: TextAlign.center,
                 style: TextStyle(
                   color: scheme.outline,
                   fontSize: isMobilePlatform ? 13 : 12,
                   height: 1.5,
-                )),
-            const SizedBox(height: 10),
-            // 当前生效模型
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: scheme.surfaceContainerHighest.withAlpha(110),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.memory, size: 12, color: scheme.primary),
-                const SizedBox(width: 5),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 220),
-                  child: Text(modelLabel,
-                      maxLines: 1, overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: isMobilePlatform ? 11.5 : 11,
-                        color: scheme.onSurfaceVariant,
-                      )),
                 ),
-              ]),
-            ),
-            const SizedBox(height: 18),
-            Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 8, runSpacing: 8,
-              children: [
-                for (final h in hints)
-                  ActionChip(
-                    avatar: Icon(Icons.bolt, size: isMobilePlatform ? 15 : 14, color: scheme.primary),
-                    label: Text(h, style: TextStyle(fontSize: isMobilePlatform ? 12 : 11)),
-                    // 移动端去掉 compact 密度并改胶囊形：原实现 11px 字 + compact
-                    // 的行高只有约 27px，手指点不准 —— 而这几条示例正是主入口。
-                    shape: const StadiumBorder(),
-                    side: BorderSide(color: scheme.outlineVariant.withAlpha(120)),
-                    backgroundColor: scheme.surfaceContainerHighest.withAlpha(70),
-                    labelPadding: EdgeInsets.symmetric(
+              ),
+              const SizedBox(height: 10),
+              // 当前生效模型
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHighest.withAlpha(110),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.memory, size: 12, color: scheme.primary),
+                    const SizedBox(width: 5),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 220),
+                      child: Text(
+                        modelLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: isMobilePlatform ? 11.5 : 11,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 18),
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final h in hints)
+                    ActionChip(
+                      avatar: Icon(
+                        Icons.bolt,
+                        size: isMobilePlatform ? 15 : 14,
+                        color: scheme.primary,
+                      ),
+                      label: Text(
+                        h,
+                        style: TextStyle(fontSize: isMobilePlatform ? 12 : 11),
+                      ),
+                      // 移动端去掉 compact 密度并改胶囊形：原实现 11px 字 + compact
+                      // 的行高只有约 27px，手指点不准 —— 而这几条示例正是主入口。
+                      shape: const StadiumBorder(),
+                      side: BorderSide(
+                        color: scheme.outlineVariant.withAlpha(120),
+                      ),
+                      backgroundColor: scheme.surfaceContainerHighest.withAlpha(
+                        70,
+                      ),
+                      labelPadding: EdgeInsets.symmetric(
                         horizontal: isMobilePlatform ? 6 : 0,
-                        vertical: isMobilePlatform ? 3 : 0),
-                    visualDensity: isMobilePlatform ? VisualDensity.standard : VisualDensity.compact,
-                    materialTapTargetSize: isMobilePlatform
-                        ? MaterialTapTargetSize.padded
-                        : MaterialTapTargetSize.shrinkWrap,
-                    onPressed: () { _ctrl.text = h; _send(); },
-                  ),
-              ],
-            ),
-          ]),
+                        vertical: isMobilePlatform ? 3 : 0,
+                      ),
+                      visualDensity: isMobilePlatform
+                          ? VisualDensity.standard
+                          : VisualDensity.compact,
+                      materialTapTargetSize: isMobilePlatform
+                          ? MaterialTapTargetSize.padded
+                          : MaterialTapTargetSize.shrinkWrap,
+                      onPressed: () {
+                        _ctrl.text = h;
+                        _send();
+                      },
+                    ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
   /// 历史记录：以弹出菜单形式展示（锚定历史按钮位置）。
-  Future<void> _toggleHistoryAt(ColorScheme scheme, AppStrings s, Offset anchor) async {
+  Future<void> _toggleHistoryAt(
+    ColorScheme scheme,
+    AppStrings s,
+    Offset anchor,
+  ) async {
     final list = await AiChatHistory.listSessions();
     if (!mounted) return;
     final box = context.findRenderObject() as RenderBox?;
-    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
     if (box == null || overlay == null) return;
     final ovSize = overlay.size;
     final rect = RelativeRect.fromLTRB(
@@ -10812,40 +14854,78 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       constraints: const BoxConstraints(minWidth: 220, maxWidth: 280),
       items: [
         if (list.isEmpty)
-          const PopupMenuItem<String>(enabled: false,
-              child: Padding(padding: EdgeInsets.symmetric(vertical: 2), child: Text('暂无历史记录', style: TextStyle(fontSize: 12))))
+          const PopupMenuItem<String>(
+            enabled: false,
+            child: Padding(
+              padding: EdgeInsets.symmetric(vertical: 2),
+              child: Text('暂无历史记录', style: TextStyle(fontSize: 12)),
+            ),
+          )
         else
           for (final e in list.take(12))
             PopupMenuItem<String>(
               value: '_load_${e['_file']}',
-              child: Padding(padding: const EdgeInsets.symmetric(vertical: 2), child: Row(children: [
-                const Icon(Icons.forum_outlined, size: 14),
-                const SizedBox(width: 8),
-                Flexible(child: Text(
-                  (e['title'] as String?) ?? (s.isZh ? '未命名会话' : 'Untitled'),
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12),
-                )),
-              ]),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  children: [
+                    const Icon(Icons.forum_outlined, size: 14),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        (e['title'] as String?) ??
+                            (s.isZh ? '未命名会话' : 'Untitled'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
         if (list.isNotEmpty) const PopupMenuDivider(),
-        PopupMenuItem<String>(value: '_save',
-            child: Padding(padding: const EdgeInsets.symmetric(vertical: 2), child: Text(s.isZh ? '保存当前会话' : 'Save session', style: const TextStyle(fontSize: 12)))),
+        PopupMenuItem<String>(
+          value: '_save',
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Text(
+              s.isZh ? '保存当前会话' : 'Save session',
+              style: const TextStyle(fontSize: 12),
+            ),
+          ),
+        ),
         if (list.isNotEmpty)
-          PopupMenuItem<String>(value: '_clear',
-              child: Padding(padding: const EdgeInsets.symmetric(vertical: 2), child: Text(s.isZh ? '清空历史' : 'Clear history', style: const TextStyle(fontSize: 12)))),
+          PopupMenuItem<String>(
+            value: '_clear',
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Text(
+                s.isZh ? '清空历史' : 'Clear history',
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+          ),
       ],
     ).then((v) async {
       if (v == null) return;
       if (v == '_save') {
         final saved = await _saveCurrentSession();
         if (mounted && saved != null) {
-          showToast(context, s.isZh ? '已保存当前会话' : 'Session saved', type: ToastType.success);
+          showToast(
+            context,
+            s.isZh ? '已保存当前会话' : 'Session saved',
+            type: ToastType.success,
+          );
         }
       } else if (v == '_clear') {
         await AiChatHistory.clearAll();
-        if (mounted) showToast(context, s.isZh ? '历史已清空' : 'History cleared', type: ToastType.success);
+        if (mounted)
+          showToast(
+            context,
+            s.isZh ? '历史已清空' : 'History cleared',
+            type: ToastType.success,
+          );
       } else if (v.startsWith('_load_')) {
         final file = v.substring(6);
         final sessions = await AiChatHistory.listSessions();
@@ -10860,16 +14940,18 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     final msgs = (entry['messages'] as List?) ?? [];
     setState(() {
       _messages.clear();
-      _messages.addAll(msgs.map((m) {
-        final mm = m as Map<String, dynamic>;
-        return (
-          role: (mm['role'] as String?) ?? 'assistant',
-          content: (mm['content'] as String?) ?? '',
-          inputTokens: (mm['inputTokens'] as num?)?.toInt(),
-          outputTokens: (mm['outputTokens'] as num?)?.toInt(),
-          blocks: null,
-        );
-      }));
+      _messages.addAll(
+        msgs.map((m) {
+          final mm = m as Map<String, dynamic>;
+          return (
+            role: (mm['role'] as String?) ?? 'assistant',
+            content: (mm['content'] as String?) ?? '',
+            inputTokens: (mm['inputTokens'] as num?)?.toInt(),
+            outputTokens: (mm['outputTokens'] as num?)?.toInt(),
+            blocks: null,
+          );
+        }),
+      );
       _sessionProvider = (entry['provider'] as String?) ?? _sessionProvider;
       _sessionModel = (entry['model'] as String?) ?? _sessionModel;
       // 恢复 token 统计
@@ -10893,12 +14975,16 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       title: t,
       provider: _effectiveProvider,
       model: _effectiveModel,
-      messages: _messages.map((m) => {
-        'role': m.role,
-        'content': m.content,
-        'inputTokens': m.inputTokens,
-        'outputTokens': m.outputTokens,
-      }).toList(),
+      messages: _messages
+          .map(
+            (m) => {
+              'role': m.role,
+              'content': m.content,
+              'inputTokens': m.inputTokens,
+              'outputTokens': m.outputTokens,
+            },
+          )
+          .toList(),
     );
   }
 
@@ -10910,122 +14996,192 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     // 移动端条目整体放大一档：原实现每行只有 11px 字号 + 上下 7px 内边距 ≈ 27px 高，
     // 远低于 44px 触摸标准，28 个工具挨在一起很容易点错。
     final double rowFont = isMobilePlatform ? 12 : 11;
-    return Column(children: [
-      Padding(
-        padding: EdgeInsets.fromLTRB(isMobilePlatform ? 14 : 12, 10, isMobilePlatform ? 14 : 12, 6),
-        child: Row(children: [
-          Text(s.isZh ? '工具' : 'Tools',
-              style: TextStyle(
-                fontSize: isMobilePlatform ? 12 : 11,
-                fontWeight: FontWeight.w700,
-                color: scheme.primary,
-              )),
-          const Spacer(),
-          Text('${_toolTemplates.length}',
-              style: TextStyle(fontSize: isMobilePlatform ? 10 : 9, color: scheme.outline)),
-        ]),
-      ),
-      Divider(height: 1, color: scheme.outlineVariant.withAlpha(40)),
-      Expanded(
-        child: ListView.builder(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          itemCount: _toolTemplates.length,
-          itemBuilder: (_, i) {
-            final t = _toolTemplates[i];
-            // 该工具是否属于只读/写操作（仅用于权限提示，不阻断插入）
-            final readOnly = t.name == 'list_directory' || t.name == 'read_file_info' || t.name == 'probe_video' || t.name == 'pick_file' ||
-                t.name == 'list_nodes' || t.name == 'list_connections' || t.name == 'get_node_types' || t.name == 'list_tasks';
-            final needsWrite = t.name == 'clear_all' || t.name == 'undo' || t.name == 'redo' || t.name == 'save' ||
-                t.name == 'modify_node' || t.name == 'add_node' || t.name == 'delete_node' ||
-                t.name == 'connect_nodes' || t.name == 'disconnect_nodes' || t.name == 'cancel_tasks' ||
-                t.name == 'error_check' || t.name == 'ask_user';
-            final permitted = readOnly ? cfg.aiReadAccess : (needsWrite ? cfg.aiWriteAccess : true);
-            final isDisabled = _disabledTools.contains(t.name);
-            // 提示文案要跟着输入方式走：移动端没有右键
-            final String enableHint = isMobilePlatform
-                ? (s.isZh ? '长按可启用' : 'long-press to enable')
-                : (s.isZh ? '右键可启用' : 'right-click to enable');
-            return Tooltip(
-              message: (isDisabled
-                  ? (s.isZh ? '已禁用 - $enableHint' : 'Disabled - $enableHint')
-                  : '${t.desc}\n${t.template}')
-                  + (permitted ? '' : '\n⚠ ${s.isZh ? 'AI 自动执行需要开启相应权限' : 'AI auto-execution needs permission'} (设置→AI)'),
-              waitDuration: const Duration(milliseconds: 400),
-              child: InkWell(
-                // 右键：禁用 / 启用 该工具
-                onSecondaryTap: () => _toggleToolEnabled(t.name, s),
-                // 移动端没有右键 —— 长按是同一个入口。原实现下这个功能在手机上
-                // 完全不可达（工具列表里却会显示「已禁用」的划线与状态图标）。
-                onLongPress: isMobilePlatform ? () => _toggleToolEnabled(t.name, s) : null,
-                onTap: isDisabled
-                    ? null
-                    : () {
-                        // 点击插入模板到输入框并聚焦
-                        final cur = _ctrl.selection;
-                        final text = _ctrl.text;
-                        final start = cur.isValid ? cur.start : text.length;
-                        final next = text.substring(0, start) + t.template + text.substring(start);
-                        _ctrl.value = TextEditingValue(
-                          text: next,
-                          selection: TextSelection.collapsed(offset: start + t.template.length),
-                        );
-                      },
-                child: Container(
-                  padding: EdgeInsets.symmetric(
-                      horizontal: isMobilePlatform ? 12 : 10,
-                      vertical: isMobilePlatform ? 10 : 7),
-                  child: Row(children: [
-                    // 每个工具只显示一个状态图标：禁用→block，只读→visibility，可写→build。
-                    // （原先这里 if/else 一次又无条件再画一个，导致图标重复叠在一起。）
-                    Icon(
-                      isDisabled
-                          ? Icons.block
-                          : (readOnly ? Icons.visibility_outlined : Icons.build_outlined),
-                      size: isMobilePlatform ? 15 : 13,
-                      color: isDisabled ? scheme.error.withAlpha(180) : scheme.primary,
-                    ),
-                    const SizedBox(width: 7),
-                    Expanded(
-                      child: Text(
-                        t.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: rowFont,
-                          color: isDisabled ? scheme.outline.withAlpha(90) : scheme.onSurface,
-                          fontWeight: FontWeight.w500,
-                          decoration: isDisabled ? TextDecoration.lineThrough : null,
-                        ),
-                      ),
-                    ),
-                    if (isDisabled)
-                      Icon(Icons.block,
-                          size: isMobilePlatform ? 12 : 10, color: scheme.error.withAlpha(160))
-                    else if (!permitted)
-                      Tooltip(
-                        message: s.isZh ? 'AI 自动执行需要权限 (设置→AI)' : 'Needs permission (Settings→AI)',
-                        child: Icon(Icons.lock_outline,
-                            size: isMobilePlatform ? 12 : 10, color: scheme.outline.withAlpha(70)),
-                      ),
-                  ]),
+    return Column(
+      children: [
+        Padding(
+          padding: EdgeInsets.fromLTRB(
+            isMobilePlatform ? 14 : 12,
+            10,
+            isMobilePlatform ? 14 : 12,
+            6,
+          ),
+          child: Row(
+            children: [
+              Text(
+                s.isZh ? '工具' : 'Tools',
+                style: TextStyle(
+                  fontSize: isMobilePlatform ? 12 : 11,
+                  fontWeight: FontWeight.w700,
+                  color: scheme.primary,
                 ),
               ),
-            );
-          },
+              const Spacer(),
+              Text(
+                '${_toolTemplates.length}',
+                style: TextStyle(
+                  fontSize: isMobilePlatform ? 10 : 9,
+                  color: scheme.outline,
+                ),
+              ),
+            ],
+          ),
         ),
-      ),
-      Padding(
-        padding: const EdgeInsets.all(10),
-        child: Text(
-          // 移动端补一句「长按禁用」：这是个隐藏手势，不写出来没人会发现
-          isMobilePlatform
-              ? (s.isZh ? '点击插入 · 长按禁用' : 'Tap to insert · long-press to disable')
-              : (s.isZh ? '点击工具插入到输入框' : 'Tap a tool to insert'),
-          style: TextStyle(fontSize: isMobilePlatform ? 10 : 9, color: scheme.outline),
-          textAlign: TextAlign.center,
+        Divider(height: 1, color: scheme.outlineVariant.withAlpha(40)),
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            itemCount: _toolTemplates.length,
+            itemBuilder: (_, i) {
+              final t = _toolTemplates[i];
+              // 该工具是否属于只读/写操作（仅用于权限提示，不阻断插入）
+              final readOnly =
+                  t.name == 'list_directory' ||
+                  t.name == 'read_file_info' ||
+                  t.name == 'probe_video' ||
+                  t.name == 'pick_file' ||
+                  t.name == 'list_nodes' ||
+                  t.name == 'list_connections' ||
+                  t.name == 'get_node_types' ||
+                  t.name == 'list_tasks';
+              final needsWrite =
+                  t.name == 'clear_all' ||
+                  t.name == 'undo' ||
+                  t.name == 'redo' ||
+                  t.name == 'save' ||
+                  t.name == 'modify_node' ||
+                  t.name == 'add_node' ||
+                  t.name == 'delete_node' ||
+                  t.name == 'connect_nodes' ||
+                  t.name == 'disconnect_nodes' ||
+                  t.name == 'cancel_tasks' ||
+                  t.name == 'error_check' ||
+                  t.name == 'ask_user';
+              final permitted = readOnly
+                  ? cfg.aiReadAccess
+                  : (needsWrite ? cfg.aiWriteAccess : true);
+              final isDisabled = _disabledTools.contains(t.name);
+              // 提示文案要跟着输入方式走：移动端没有右键
+              final String enableHint = isMobilePlatform
+                  ? (s.isZh ? '长按可启用' : 'long-press to enable')
+                  : (s.isZh ? '右键可启用' : 'right-click to enable');
+              return Tooltip(
+                message:
+                    (isDisabled
+                        ? (s.isZh
+                              ? '已禁用 - $enableHint'
+                              : 'Disabled - $enableHint')
+                        : '${t.desc}\n${t.template}') +
+                    (permitted
+                        ? ''
+                        : '\n⚠ ${s.isZh ? 'AI 自动执行需要开启相应权限' : 'AI auto-execution needs permission'} (设置→AI)'),
+                waitDuration: const Duration(milliseconds: 400),
+                child: InkWell(
+                  // 右键：禁用 / 启用 该工具
+                  onSecondaryTap: () => _toggleToolEnabled(t.name, s),
+                  // 移动端没有右键 —— 长按是同一个入口。原实现下这个功能在手机上
+                  // 完全不可达（工具列表里却会显示「已禁用」的划线与状态图标）。
+                  onLongPress: isMobilePlatform
+                      ? () => _toggleToolEnabled(t.name, s)
+                      : null,
+                  onTap: isDisabled
+                      ? null
+                      : () {
+                          // 点击插入模板到输入框并聚焦
+                          final cur = _ctrl.selection;
+                          final text = _ctrl.text;
+                          final start = cur.isValid ? cur.start : text.length;
+                          final next =
+                              text.substring(0, start) +
+                              t.template +
+                              text.substring(start);
+                          _ctrl.value = TextEditingValue(
+                            text: next,
+                            selection: TextSelection.collapsed(
+                              offset: start + t.template.length,
+                            ),
+                          );
+                        },
+                  child: Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: isMobilePlatform ? 12 : 10,
+                      vertical: isMobilePlatform ? 10 : 7,
+                    ),
+                    child: Row(
+                      children: [
+                        // 每个工具只显示一个状态图标：禁用→block，只读→visibility，可写→build。
+                        // （原先这里 if/else 一次又无条件再画一个，导致图标重复叠在一起。）
+                        Icon(
+                          isDisabled
+                              ? Icons.block
+                              : (readOnly
+                                    ? Icons.visibility_outlined
+                                    : Icons.build_outlined),
+                          size: isMobilePlatform ? 15 : 13,
+                          color: isDisabled
+                              ? scheme.error.withAlpha(180)
+                              : scheme.primary,
+                        ),
+                        const SizedBox(width: 7),
+                        Expanded(
+                          child: Text(
+                            t.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: rowFont,
+                              color: isDisabled
+                                  ? scheme.outline.withAlpha(90)
+                                  : scheme.onSurface,
+                              fontWeight: FontWeight.w500,
+                              decoration: isDisabled
+                                  ? TextDecoration.lineThrough
+                                  : null,
+                            ),
+                          ),
+                        ),
+                        if (isDisabled)
+                          Icon(
+                            Icons.block,
+                            size: isMobilePlatform ? 12 : 10,
+                            color: scheme.error.withAlpha(160),
+                          )
+                        else if (!permitted)
+                          Tooltip(
+                            message: s.isZh
+                                ? 'AI 自动执行需要权限 (设置→AI)'
+                                : 'Needs permission (Settings→AI)',
+                            child: Icon(
+                              Icons.lock_outline,
+                              size: isMobilePlatform ? 12 : 10,
+                              color: scheme.outline.withAlpha(70),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
         ),
-      ),
-    ]);
+        Padding(
+          padding: const EdgeInsets.all(10),
+          child: Text(
+            // 移动端补一句「长按禁用」：这是个隐藏手势，不写出来没人会发现
+            isMobilePlatform
+                ? (s.isZh
+                      ? '点击插入 · 长按禁用'
+                      : 'Tap to insert · long-press to disable')
+                : (s.isZh ? '点击工具插入到输入框' : 'Tap a tool to insert'),
+            style: TextStyle(
+              fontSize: isMobilePlatform ? 10 : 9,
+              color: scheme.outline,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ],
+    );
   }
 
   /// 单条消息气泡。
@@ -11034,7 +15190,14 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
   /// 重复画头像（改为等宽占位），移动端窄屏上一屏内能少掉一半头像。
   /// [gapAfter] 同理按「是否还有同角色的下一条」收窄间距，形成消息分组。
   Widget _buildMessage(
-    ({String role, String content, int? inputTokens, int? outputTokens, List<Map<String, dynamic>>? blocks}) msg,
+    ({
+      String role,
+      String content,
+      int? inputTokens,
+      int? outputTokens,
+      List<Map<String, dynamic>>? blocks,
+    })
+    msg,
     ColorScheme scheme, {
     bool showAvatar = true,
     double gapAfter = 10,
@@ -11068,27 +15231,54 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       final raw = msg.content.substring(10);
       final pipe = raw.indexOf('|');
       final question = pipe >= 0 ? raw.substring(0, pipe) : raw;
-      final options = pipe >= 0 ? raw.substring(pipe + 1).split(',') : <String>[];
+      final options = pipe >= 0
+          ? raw.substring(pipe + 1).split(',')
+          : <String>[];
       bodyWidget = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          SelectableText(question, style: TextStyle(fontSize: fs, color: scheme.onSurface, height: 1.5)),
+          SelectableText(
+            question,
+            style: TextStyle(
+              fontSize: fs,
+              color: scheme.onSurface,
+              height: 1.5,
+            ),
+          ),
           if (options.isNotEmpty) ...[
             const SizedBox(height: 8),
-            Wrap(spacing: 6, runSpacing: 6, children: options.map((opt) =>
-              ActionChip(
-                label: Text(opt.trim(), style: TextStyle(fontSize: fs - 1)),
-                // 移动端把选项做成胶囊 + 更大触摸区：这些是 AI 主动提问的
-                // 「快捷回答」，点错一次就要重来，27px 的行高太容易误触。
-                shape: const StadiumBorder(),
-                side: BorderSide(color: scheme.outlineVariant.withAlpha(120)),
-                labelPadding: EdgeInsets.symmetric(horizontal: 4, vertical: isMobilePlatform ? 4 : 0),
-                materialTapTargetSize:
-                    isMobilePlatform ? MaterialTapTargetSize.padded : MaterialTapTargetSize.shrinkWrap,
-                onPressed: () { _ctrl.text = opt.trim(); _send(); },
-              ),
-            ).toList()),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: options
+                  .map(
+                    (opt) => ActionChip(
+                      label: Text(
+                        opt.trim(),
+                        style: TextStyle(fontSize: fs - 1),
+                      ),
+                      // 移动端把选项做成胶囊 + 更大触摸区：这些是 AI 主动提问的
+                      // 「快捷回答」，点错一次就要重来，27px 的行高太容易误触。
+                      shape: const StadiumBorder(),
+                      side: BorderSide(
+                        color: scheme.outlineVariant.withAlpha(120),
+                      ),
+                      labelPadding: EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: isMobilePlatform ? 4 : 0,
+                      ),
+                      materialTapTargetSize: isMobilePlatform
+                          ? MaterialTapTargetSize.padded
+                          : MaterialTapTargetSize.shrinkWrap,
+                      onPressed: () {
+                        _ctrl.text = opt.trim();
+                        _send();
+                      },
+                    ),
+                  )
+                  .toList(),
+            ),
           ],
         ],
       );
@@ -11100,15 +15290,24 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       );
     } else {
       bodyWidget = isUser
-        ? SelectableText(msg.content, style: TextStyle(fontSize: fs, color: scheme.onSurface, height: 1.5))
-        : _buildAssistantContent(msg.content, scheme);
+          ? SelectableText(
+              msg.content,
+              style: TextStyle(
+                fontSize: fs,
+                color: scheme.onSurface,
+                height: 1.5,
+              ),
+            )
+          : _buildAssistantContent(msg.content, scheme);
     }
     // 同角色后续消息的占位：只有 8px 宽的空位，不画头像
     final Widget avatarGap = SizedBox(width: avatarSlot);
     return Padding(
       padding: EdgeInsets.only(bottom: gapAfter),
       child: Column(
-        crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        crossAxisAlignment: isUser
+            ? CrossAxisAlignment.end
+            : CrossAxisAlignment.start,
         children: [
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -11122,7 +15321,11 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                   CircleAvatar(
                     radius: avatarR,
                     backgroundColor: scheme.primaryContainer,
-                    child: Icon(Icons.smart_toy, size: avatarR, color: scheme.primary),
+                    child: Icon(
+                      Icons.smart_toy,
+                      size: avatarR,
+                      color: scheme.primary,
+                    ),
                   )
                 else
                   avatarGap,
@@ -11136,7 +15339,9 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                     vertical: isMobilePlatform ? 9 : 8,
                   ),
                   decoration: BoxDecoration(
-                    color: isUser ? scheme.primaryContainer : scheme.surfaceContainerHighest,
+                    color: isUser
+                        ? scheme.primaryContainer
+                        : scheme.surfaceContainerHighest,
                     borderRadius: bubbleRadius,
                   ),
                   child: bodyWidget,
@@ -11148,7 +15353,11 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                   CircleAvatar(
                     radius: avatarR,
                     backgroundColor: scheme.tertiaryContainer,
-                    child: Icon(Icons.person, size: avatarR, color: scheme.tertiary),
+                    child: Icon(
+                      Icons.person,
+                      size: avatarR,
+                      color: scheme.tertiary,
+                    ),
                   )
                 else
                   avatarGap,
@@ -11156,13 +15365,18 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
               if (!isUser) const Spacer(),
             ],
           ),
-          if (!isUser && msg.inputTokens != null && msg.content.trim().isNotEmpty)
+          if (!isUser &&
+              msg.inputTokens != null &&
+              msg.content.trim().isNotEmpty)
             Padding(
               // 与气泡左缘对齐：头像列（直径+间隙）+ 8px 气泡内边距
               padding: EdgeInsets.only(left: avatarSlot, top: 3),
               child: Text(
                 '${msg.inputTokens}+${msg.outputTokens}=${(msg.inputTokens ?? 0) + (msg.outputTokens ?? 0)} tokens',
-                style: TextStyle(fontSize: isMobilePlatform ? 10 : 9, color: scheme.outline),
+                style: TextStyle(
+                  fontSize: isMobilePlatform ? 10 : 9,
+                  color: scheme.outline,
+                ),
               ),
             ),
         ],
@@ -11191,33 +15405,91 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       final double fs = isMobilePlatform ? 13 : 12;
       _mdStyle = MarkdownStyleSheet(
         p: TextStyle(fontSize: fs, color: scheme.onSurface, height: 1.5),
-        h1: TextStyle(fontSize: fs + 4, fontWeight: FontWeight.w700, color: scheme.primary, height: 1.3),
-        h2: TextStyle(fontSize: fs + 3, fontWeight: FontWeight.w700, color: scheme.primary, height: 1.3),
-        h3: TextStyle(fontSize: fs + 2, fontWeight: FontWeight.w600, color: scheme.onSurface, height: 1.3),
-        h4: TextStyle(fontSize: fs + 1, fontWeight: FontWeight.w600, color: scheme.onSurface, height: 1.3),
+        h1: TextStyle(
+          fontSize: fs + 4,
+          fontWeight: FontWeight.w700,
+          color: scheme.primary,
+          height: 1.3,
+        ),
+        h2: TextStyle(
+          fontSize: fs + 3,
+          fontWeight: FontWeight.w700,
+          color: scheme.primary,
+          height: 1.3,
+        ),
+        h3: TextStyle(
+          fontSize: fs + 2,
+          fontWeight: FontWeight.w600,
+          color: scheme.onSurface,
+          height: 1.3,
+        ),
+        h4: TextStyle(
+          fontSize: fs + 1,
+          fontWeight: FontWeight.w600,
+          color: scheme.onSurface,
+          height: 1.3,
+        ),
         listBullet: TextStyle(fontSize: fs, color: scheme.primary),
-        blockquote: TextStyle(fontSize: fs, color: scheme.onSurfaceVariant, fontStyle: FontStyle.italic, height: 1.5),
+        blockquote: TextStyle(
+          fontSize: fs,
+          color: scheme.onSurfaceVariant,
+          fontStyle: FontStyle.italic,
+          height: 1.5,
+        ),
         blockquoteDecoration: BoxDecoration(
           color: scheme.primaryContainer.withAlpha(40),
-          border: Border(left: BorderSide(color: scheme.primary.withAlpha(180), width: 3)),
+          border: Border(
+            left: BorderSide(color: scheme.primary.withAlpha(180), width: 3),
+          ),
           borderRadius: BorderRadius.circular(4),
         ),
-        blockquotePadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        code: TextStyle(fontSize: fs - 1, color: scheme.primary, backgroundColor: scheme.surfaceContainerHighest, fontFamily: AppTheme.monoFont),
+        blockquotePadding: const EdgeInsets.symmetric(
+          horizontal: 10,
+          vertical: 4,
+        ),
+        code: TextStyle(
+          fontSize: fs - 1,
+          color: scheme.primary,
+          backgroundColor: scheme.surfaceContainerHighest,
+          fontFamily: AppTheme.monoFont,
+        ),
         codeblockPadding: const EdgeInsets.all(10),
         codeblockDecoration: BoxDecoration(
           color: scheme.surfaceContainerHighest.withAlpha(80),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
         ),
-        a: TextStyle(fontSize: fs, color: scheme.primary, decoration: TextDecoration.underline, decorationColor: scheme.primary.withAlpha(120)),
-        strong: TextStyle(fontSize: fs, color: scheme.onSurface, fontWeight: FontWeight.w700),
-        em: TextStyle(fontSize: fs, color: scheme.onSurface, fontStyle: FontStyle.italic),
-        tableHead: TextStyle(fontSize: fs - 1, fontWeight: FontWeight.w700, color: scheme.onSurface),
+        a: TextStyle(
+          fontSize: fs,
+          color: scheme.primary,
+          decoration: TextDecoration.underline,
+          decorationColor: scheme.primary.withAlpha(120),
+        ),
+        strong: TextStyle(
+          fontSize: fs,
+          color: scheme.onSurface,
+          fontWeight: FontWeight.w700,
+        ),
+        em: TextStyle(
+          fontSize: fs,
+          color: scheme.onSurface,
+          fontStyle: FontStyle.italic,
+        ),
+        tableHead: TextStyle(
+          fontSize: fs - 1,
+          fontWeight: FontWeight.w700,
+          color: scheme.onSurface,
+        ),
         tableBody: TextStyle(fontSize: fs - 1, color: scheme.onSurface),
-        tableBorder: TableBorder.all(color: scheme.outlineVariant.withAlpha(80)),
+        tableBorder: TableBorder.all(
+          color: scheme.outlineVariant.withAlpha(80),
+        ),
         tableColumnWidth: const FlexColumnWidth(),
-        horizontalRuleDecoration: BoxDecoration(border: Border(top: BorderSide(color: scheme.outlineVariant.withAlpha(80)))),
+        horizontalRuleDecoration: BoxDecoration(
+          border: Border(
+            top: BorderSide(color: scheme.outlineVariant.withAlpha(80)),
+          ),
+        ),
       );
     }
     return _mdStyle!;
@@ -11228,11 +15500,8 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     final toolRe = RegExp(r'\[TOOL_CALL:([^\]]+)\]');
     final matches = toolRe.allMatches(content).toList();
     final mdStyle = _markdownStyle(scheme);
-    Widget markdownBody(String data) => MarkdownBody(
-          data: data,
-          selectable: true,
-          styleSheet: mdStyle,
-        );
+    Widget markdownBody(String data) =>
+        MarkdownBody(data: data, selectable: true, styleSheet: mdStyle);
     if (matches.isEmpty) return markdownBody(content);
     // 与 _markdownStyle 的正文基准保持一致（移动端大一档）
     final double bodyFs = isMobilePlatform ? 13 : 12;
@@ -11243,26 +15512,54 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       if (m.start > last) {
         final text = content.substring(last, m.start).trim();
         if (text.isNotEmpty) {
-          children.add(Padding(
-            padding: const EdgeInsets.only(bottom: 4),
-            child: SelectableText(text, style: TextStyle(fontSize: bodyFs, color: scheme.onSurface, height: 1.5)),
-          ));
+          children.add(
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: SelectableText(
+                text,
+                style: TextStyle(
+                  fontSize: bodyFs,
+                  color: scheme.onSurface,
+                  height: 1.5,
+                ),
+              ),
+            ),
+          );
         }
       }
       final parts = m.group(1)!.split('|');
       final tool = parts[0];
       final argsText = parts.length > 1 ? parts.sublist(1).join(' | ') : '';
-      children.add(_buildBlock({'type': 'tool_use', 'name': tool, 'input': {'args': argsText}}, scheme));
+      children.add(
+        _buildBlock({
+          'type': 'tool_use',
+          'name': tool,
+          'input': {'args': argsText},
+        }, scheme),
+      );
       last = m.end;
     }
     final tail = content.substring(last).trim();
     if (tail.isNotEmpty) {
-      children.add(Padding(
-        padding: const EdgeInsets.only(bottom: 4),
-        child: SelectableText(tail, style: TextStyle(fontSize: bodyFs, color: scheme.onSurface, height: 1.5)),
-      ));
+      children.add(
+        Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: SelectableText(
+            tail,
+            style: TextStyle(
+              fontSize: bodyFs,
+              color: scheme.onSurface,
+              height: 1.5,
+            ),
+          ),
+        ),
+      );
     }
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: children);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: children,
+    );
   }
 
   Widget _buildBlock(Map<String, dynamic> block, ColorScheme scheme) {
@@ -11271,7 +15568,10 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     // 这些块在带工具调用的回复里往往占了大半篇幅，字号不跟着正文走会显得断层。
     final double fs = isMobilePlatform ? 13 : 12;
     if (type == 'text') {
-      return SelectableText(block['text'] as String? ?? '', style: TextStyle(fontSize: fs, color: scheme.onSurface, height: 1.5));
+      return SelectableText(
+        block['text'] as String? ?? '',
+        style: TextStyle(fontSize: fs, color: scheme.onSurface, height: 1.5),
+      );
     }
     final label = switch (type) {
       'thinking' => '思考',
@@ -11287,7 +15587,9 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     };
     final body = switch (type) {
       'thinking' => block['thinking'] as String? ?? '',
-      'tool_use' => const JsonEncoder.withIndent('  ').convert(block['input'] ?? {}),
+      'tool_use' => const JsonEncoder.withIndent(
+        '  ',
+      ).convert(block['input'] ?? {}),
       'tool_result' => block['content']?.toString() ?? '',
       _ => block.toString(),
     };
@@ -11304,46 +15606,75 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         child: ExpansionTile(
           // 移动端整块放大一档：折叠标题是可点区域，8px 内边距 + 11px 标题
           // 只有约 32px 高，低于 44px 触摸标准（此处是常用交互）。
-          tilePadding: EdgeInsets.symmetric(horizontal: isMobilePlatform ? 10 : 8),
-          childrenPadding: EdgeInsets.fromLTRB(isMobilePlatform ? 10 : 8, 0, isMobilePlatform ? 10 : 8, 8),
+          tilePadding: EdgeInsets.symmetric(
+            horizontal: isMobilePlatform ? 10 : 8,
+          ),
+          childrenPadding: EdgeInsets.fromLTRB(
+            isMobilePlatform ? 10 : 8,
+            0,
+            isMobilePlatform ? 10 : 8,
+            8,
+          ),
           // 思考默认折叠（紧凑）；工具结果默认展开
           initiallyExpanded: type == 'tool_result',
           dense: !isMobilePlatform,
-          title: Row(children: [
-            Icon(icon, size: isMobilePlatform ? 15 : 13,
-                color: type == 'thinking' ? scheme.primary : scheme.outline),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(label,
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: fs - 1, color: type == 'thinking' ? scheme.primary : scheme.outline, fontStyle: FontStyle.italic)),
-            ),
-            if (thinkMs != null) ...[
+          title: Row(
+            children: [
+              Icon(
+                icon,
+                size: isMobilePlatform ? 15 : 13,
+                color: type == 'thinking' ? scheme.primary : scheme.outline,
+              ),
               const SizedBox(width: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                decoration: BoxDecoration(
-                  color: scheme.surfaceContainerHighest.withAlpha(120),
-                  borderRadius: BorderRadius.circular(4),
-                ),
+              Flexible(
                 child: Text(
-                  thinkMs >= 1000 ? '${(thinkMs / 1000).toStringAsFixed(1)}s' : '${thinkMs}ms',
-                  style: TextStyle(fontSize: fs - 3, color: scheme.outline),
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: fs - 1,
+                    color: type == 'thinking' ? scheme.primary : scheme.outline,
+                    fontStyle: FontStyle.italic,
+                  ),
                 ),
               ),
+              if (thinkMs != null) ...[
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 5,
+                    vertical: 1,
+                  ),
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainerHighest.withAlpha(120),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    thinkMs >= 1000
+                        ? '${(thinkMs / 1000).toStringAsFixed(1)}s'
+                        : '${thinkMs}ms',
+                    style: TextStyle(fontSize: fs - 3, color: scheme.outline),
+                  ),
+                ),
+              ],
             ],
-          ]),
+          ),
           children: [
             // 等宽字体 + 可滚动，长 JSON/日志不会被截断
             ConstrainedBox(
-              constraints: BoxConstraints(maxHeight: isMobilePlatform ? 220 : 160),
+              constraints: BoxConstraints(
+                maxHeight: isMobilePlatform ? 220 : 160,
+              ),
               child: SingleChildScrollView(
-                child: SelectableText(body,
-                    style: TextStyle(
-                        fontSize: fs - 1,
-                        color: scheme.onSurface.withAlpha(190),
-                        height: 1.45,
-                        fontFamily: AppTheme.monoFont)),
+                child: SelectableText(
+                  body,
+                  style: TextStyle(
+                    fontSize: fs - 1,
+                    color: scheme.onSurface.withAlpha(190),
+                    height: 1.45,
+                    fontFamily: AppTheme.monoFont,
+                  ),
+                ),
               ),
             ),
           ],
@@ -11444,107 +15775,148 @@ class _ExportConfigDialogState extends State<_ExportConfigDialog> {
     final scheme = Theme.of(context).colorScheme;
     final zh = widget.zh;
     return AlertDialog(
-      title: Row(children: [
-        Icon(Icons.file_upload_outlined, size: 20, color: scheme.primary),
-        const SizedBox(width: 8),
-        Text(zh ? '导出配置' : 'Export Config', style: TextStyle(color: scheme.onSurface)),
-      ]),
+      title: Row(
+        children: [
+          Icon(Icons.file_upload_outlined, size: 20, color: scheme.primary),
+          const SizedBox(width: 8),
+          Text(
+            zh ? '导出配置' : 'Export Config',
+            style: TextStyle(color: scheme.onSurface),
+          ),
+        ],
+      ),
       content: SizedBox(
         width: 400,
         child: SingleChildScrollView(
           child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                    zh
-                        ? '将当前节点配置导出为 .fppx 文件，可应用于其他视频。'
-                        : 'Export current node config as .fppx file for reuse.',
-                    style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                  decoration: BoxDecoration(
-                      color: scheme.surfaceContainerHighest.withAlpha(80),
-                      borderRadius: BorderRadius.circular(8)),
-                  child: Row(children: [
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                zh
+                    ? '将当前节点配置导出为 .fppx 文件，可应用于其他视频。'
+                    : 'Export current node config as .fppx file for reuse.',
+                style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHighest.withAlpha(80),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
                     Icon(Icons.info_outline, size: 14, color: scheme.outline),
                     const SizedBox(width: 6),
                     Text(
-                        '${widget.nodeCount} ${zh ? '节点' : 'nodes'}  •  ${widget.linkCount} ${zh ? '连线' : 'links'}',
-                        style: TextStyle(fontSize: 12, color: scheme.outline)),
-                  ]),
+                      '${widget.nodeCount} ${zh ? '节点' : 'nodes'}  •  ${widget.linkCount} ${zh ? '连线' : 'links'}',
+                      style: TextStyle(fontSize: 12, color: scheme.outline),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 12),
-                _WriteFormatSelector(
-                  value: _format,
-                  zh: zh,
-                  onChanged: (v) {
-                    setState(() {
-                      _format = v;
-                      // 切回旧版时把加密状态收掉，避免"选了旧版却还勾着加密"
-                      if (!_isV2) {
-                        _encrypt = false;
-                        _err = null;
-                      }
-                    });
-                    widget.onFormatChanged(v);
-                  },
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _descCtrl,
-                  maxLines: 3,
-                  decoration: InputDecoration(
-                    labelText: zh ? '配置介绍（可选）' : 'Description (optional)',
-                    labelStyle: TextStyle(color: scheme.onSurfaceVariant),
-                    hintText: zh ? '描述这个配置的用途...' : 'Describe what this config does...',
-                    hintStyle: TextStyle(color: scheme.outline),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                    alignLabelWithHint: true,
-                  ),
-                  style: TextStyle(fontSize: 13, color: scheme.onSurface),
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: scheme.surfaceContainerHighest.withAlpha(60),
+              ),
+              const SizedBox(height: 12),
+              _WriteFormatSelector(
+                value: _format,
+                zh: zh,
+                onChanged: (v) {
+                  setState(() {
+                    _format = v;
+                    // 切回旧版时把加密状态收掉，避免"选了旧版却还勾着加密"
+                    if (!_isV2) {
+                      _encrypt = false;
+                      _err = null;
+                    }
+                  });
+                  widget.onFormatChanged(v);
+                },
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _descCtrl,
+                maxLines: 3,
+                decoration: InputDecoration(
+                  labelText: zh ? '配置介绍（可选）' : 'Description (optional)',
+                  labelStyle: TextStyle(color: scheme.onSurfaceVariant),
+                  hintText: zh
+                      ? '描述这个配置的用途...'
+                      : 'Describe what this config does...',
+                  hintStyle: TextStyle(color: scheme.outline),
+                  border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: scheme.outlineVariant.withAlpha(120)),
                   ),
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    Row(children: [
-                      Icon(_isV2 ? Icons.lock_outline : Icons.lock_clock,
-                          size: 16, color: _isV2 ? scheme.primary : scheme.outline),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Column(
+                  alignLabelWithHint: true,
+                ),
+                style: TextStyle(fontSize: 13, color: scheme.onSurface),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 2,
+                ),
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHighest.withAlpha(60),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: scheme.outlineVariant.withAlpha(120),
+                  ),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          _isV2 ? Icons.lock_outline : Icons.lock_clock,
+                          size: 16,
+                          color: _isV2 ? scheme.primary : scheme.outline,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(zh ? '加密配置文件' : 'Encrypt config',
-                                  style: TextStyle(
-                                      fontSize: 13,
-                                      color: _isV2 ? scheme.onSurface : scheme.outline)),
                               Text(
-                                  _isV2
-                                      ? (zh
+                                zh ? '加密配置文件' : 'Encrypt config',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: _isV2
+                                      ? scheme.onSurface
+                                      : scheme.outline,
+                                ),
+                              ),
+                              Text(
+                                _isV2
+                                    ? (zh
                                           ? '仅数据区被加密；介绍文本与元数据保持明文'
                                           : 'Only the data region is encrypted; description stays plain')
-                                      : (zh ? '旧版格式不支持加密' : 'Legacy format does not support encryption'),
-                                  style: TextStyle(fontSize: 11, color: scheme.outline)),
-                            ]),
-                      ),
-                      Switch(
-                        value: _willEncrypt,
-                        onChanged: _isV2
-                            ? (v) => setState(() {
+                                    : (zh
+                                          ? '旧版格式不支持加密'
+                                          : 'Legacy format does not support encryption'),
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: scheme.outline,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Switch(
+                          value: _willEncrypt,
+                          onChanged: _isV2
+                              ? (v) => setState(() {
                                   _encrypt = v;
                                   _err = null;
                                 })
-                            : null,
-                      ),
-                    ]),
+                              : null,
+                        ),
+                      ],
+                    ),
                     if (_willEncrypt) ...[
                       const SizedBox(height: 4),
                       SizedBox(
@@ -11552,13 +15924,18 @@ class _ExportConfigDialogState extends State<_ExportConfigDialog> {
                         child: SegmentedButton<int>(
                           segments: const [
                             ButtonSegment(
-                                value: FppxService.algoAes256Cbc, label: Text('AES-256')),
+                              value: FppxService.algoAes256Cbc,
+                              label: Text('AES-256'),
+                            ),
                             ButtonSegment(
-                                value: FppxService.algoAes128Cbc, label: Text('AES-128')),
+                              value: FppxService.algoAes128Cbc,
+                              label: Text('AES-128'),
+                            ),
                           ],
                           selected: {_algo},
                           showSelectedIcon: false,
-                          onSelectionChanged: (v) => setState(() => _algo = v.first),
+                          onSelectionChanged: (v) =>
+                              setState(() => _algo = v.first),
                         ),
                       ),
                       const SizedBox(height: 10),
@@ -11568,7 +15945,9 @@ class _ExportConfigDialogState extends State<_ExportConfigDialog> {
                         decoration: InputDecoration(
                           labelText: zh ? '口令' : 'Password',
                           labelStyle: TextStyle(color: scheme.onSurfaceVariant),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
                           isDense: true,
                         ),
                         style: TextStyle(fontSize: 13, color: scheme.onSurface),
@@ -11581,40 +15960,65 @@ class _ExportConfigDialogState extends State<_ExportConfigDialog> {
                         decoration: InputDecoration(
                           labelText: zh ? '再次输入口令' : 'Confirm password',
                           labelStyle: TextStyle(color: scheme.onSurfaceVariant),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
                           isDense: true,
                         ),
                         style: TextStyle(fontSize: 13, color: scheme.onSurface),
                       ),
                       const SizedBox(height: 6),
-                      Row(children: [
-                        Icon(Icons.warning_amber_rounded, size: 13, color: context.sem.warning),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: Text(
-                              zh ? '口令一旦丢失，文件将无法恢复' : 'If the password is lost, the file cannot be recovered',
-                              style: TextStyle(fontSize: 11, color: context.sem.warning)),
-                        ),
-                      ]),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.warning_amber_rounded,
+                            size: 13,
+                            color: context.sem.warning,
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              zh
+                                  ? '口令一旦丢失，文件将无法恢复'
+                                  : 'If the password is lost, the file cannot be recovered',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: context.sem.warning,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ],
                     const SizedBox(height: 4),
-                  ]),
+                  ],
                 ),
-                if (_err != null) ...[
-                  const SizedBox(height: 10),
-                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              ),
+              if (_err != null) ...[
+                const SizedBox(height: 10),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Icon(Icons.error_outline, size: 14, color: scheme.error),
                     const SizedBox(width: 4),
-                    Expanded(child: Text(_err!, style: TextStyle(fontSize: 12, color: scheme.error))),
-                  ]),
-                ],
-              ]),
+                    Expanded(
+                      child: Text(
+                        _err!,
+                        style: TextStyle(fontSize: 12, color: scheme.error),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
         ),
       ),
       actions: [
         TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(zh ? '取消' : 'Cancel')),
+          onPressed: () => Navigator.pop(context),
+          child: Text(zh ? '取消' : 'Cancel'),
+        ),
         FilledButton(onPressed: _submit, child: Text(zh ? '导出' : 'Export')),
       ],
     );
@@ -11642,32 +16046,40 @@ class _WriteFormatSelectorState extends State<_WriteFormatSelector> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Row(children: [
-      Text(widget.zh ? '写入格式' : 'Write format',
-          style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
-      const SizedBox(width: 8),
-      Expanded(
-        child: SegmentedButton<String>(
-          segments: [
-            ButtonSegment<String>(
-              value: 'legacy',
-              label: Text(widget.zh ? '旧版 (JSON)' : 'Legacy (JSON)',
-                  style: const TextStyle(fontSize: 12)),
-            ),
-            ButtonSegment<String>(
-              value: 'v2',
-              label: Text(widget.zh ? '新版 (Beta)' : 'New (Beta)',
-                  style: const TextStyle(fontSize: 12)),
-            ),
-          ],
-          selected: {_value},
-          showSelectedIcon: false,
-          onSelectionChanged: (sel) {
-            setState(() => _value = sel.first);
-            widget.onChanged(sel.first);
-          },
+    return Row(
+      children: [
+        Text(
+          widget.zh ? '写入格式' : 'Write format',
+          style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
         ),
-      ),
-    ]);
+        const SizedBox(width: 8),
+        Expanded(
+          child: SegmentedButton<String>(
+            segments: [
+              ButtonSegment<String>(
+                value: 'legacy',
+                label: Text(
+                  widget.zh ? '旧版 (JSON)' : 'Legacy (JSON)',
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
+              ButtonSegment<String>(
+                value: 'v2',
+                label: Text(
+                  widget.zh ? '新版 (Beta)' : 'New (Beta)',
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
+            ],
+            selected: {_value},
+            showSelectedIcon: false,
+            onSelectionChanged: (sel) {
+              setState(() => _value = sel.first);
+              widget.onChanged(sel.first);
+            },
+          ),
+        ),
+      ],
+    );
   }
 }

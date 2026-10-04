@@ -9,8 +9,7 @@ import '../providers/app_state.dart';
 // cachedGlassBlur：轨道玻璃的 σ 走进程级实例缓存（避免设置页里几十个滑块
 // 各自在每帧 build 时新建一份持有 native handle 的 ImageFilter）；
 // effectiveGlassSigma：Windows 的 σ 上限钳制。
-import 'liquid_glass_fallback.dart'
-    show cachedGlassBlur, effectiveGlassSigma;
+import 'liquid_glass_fallback.dart' show cachedGlassBlur, effectiveGlassSigma;
 
 // ═══════════════════════════════════════════
 // 统一滑块 / 进度条（全应用唯一来源）
@@ -89,9 +88,9 @@ const int _kIndeterminateDurationMs = 1800;
 //
 // 用户要求（2026-09 二次改版）：「把滑动粒子特效改为彗星拖尾特效」—— 保留原有
 // 全部约束，只把「离散小圆点」换成「连续衰减拖尾」：
-// * 发射点 = 填充段**最右端**（= 把手，也就是用户说的「滑块最右端」），拖尾向
-//   **左**甩出并逐渐耗散：`===(彗星头)>·····`；
-// * 亮度语义相对旧版**反转**：头部（发射端）最亮、越往左越暗、尾尖干净收尾
+// * 发射点 = 填充段**最右端**（= 把手），彗星向**左**移动，亮头在左、尾迹向
+//   右侧发射点渐隐：`<彗星头)·····`；
+// * 亮度按空间年龄递减：左侧运动尖端最亮，越靠右发射点越暗、尾尖干净收尾
 //   （旧版是「出生很暗、越走越亮」）—— 这才是彗星 / 尾焰的观感；
 // * 线宽同时呈锥形：头部 [_kParticleHeadW] → 尾部 [_kParticleTailW]；
 // * 密度适中、有颗粒感但不过于密集 —— 池子上限 [_kParticlePool] 条，实际同时
@@ -108,7 +107,7 @@ const int _kIndeterminateDurationMs = 1800;
 //   按**固定时间间隔** [_kParticleTrailSampleDt] 采样 —— 按时间而不是按帧，才能
 //   保证 60 / 120 / 144Hz 下拖尾长度一致；
 // * 缓冲点同时存了写入时的寿命进度 u，绘制时用 u 反查亮度 / 线宽，于是
-//   「发射端亮 → 远端渐隐」自动成立，无需额外参数；
+//   「运动尖端亮 → 发射端渐隐」自动成立，无需额外参数；
 // * [_ParticleField._respawn] 与 [_ParticleField.reset] 都必须调 `_resetTrail()`：
 //   否则复用池子时旧轨迹会残留成一条横跨整条带的直线（最重要的一条正确性约束）。
 //
@@ -122,6 +121,20 @@ const int _kIndeterminateDurationMs = 1800;
 // * 彗星层单独包 RepaintBoundary：每帧只脏自己这一层，不牵连 Slider 与卡片；
 // * 只在已填充段内绘制，彗星永远落在主题色块上，对比度足够；
 // * 设置里可关闭（`AppConfig.sliderParticles`），系统开启「减弱动态效果」时也自动关闭。
+
+/// For verifying the non-public comet particle integration behavior in tests.
+@visibleForTesting
+class CometTrailTestProbe {
+  const CometTrailTestProbe._();
+
+  static List<double> sampleAges({
+    required int samples,
+    required double life,
+  }) => _seedSampleAges(samples, life);
+
+  static double sampledElapsed(double dt, double interval) =>
+      _sampleRemainder(dt, interval);
+}
 
 /// 池容量（上限）。实际同时存活的条数由拖尾带宽度折算，见 [_particleActiveCount]。
 const int _kParticlePool = 32;
@@ -159,8 +172,16 @@ const double _kParticleJitter = 3;
 /// 轨迹环形缓冲的点数上限（每条彗星预分配这么长）。
 ///
 /// 配合 [_kParticleTrailSampleDt] 决定单条拖尾覆盖的时间跨度
-/// （12 × 22ms ≈ 0.27s），进而决定拖尾的像素长度：长度 = 该条彗星的速度 × 0.27s。
-const int _kParticleTrailCap = 12;
+/// （42 × 22ms ≈ 0.93s），覆盖最长粒子寿命且抽样绘制仍受 [_kParticleSegs] 限制。
+const int _kParticleTrailCap = 42;
+
+List<double> _seedSampleAges(int samples, double life) =>
+    List<double>.generate(samples, (index) {
+      final fraction = samples <= 1 ? 1.0 : index / (samples - 1);
+      return 1 - life * fraction;
+    });
+
+double _sampleRemainder(double elapsed, double interval) => elapsed % interval;
 
 /// 轨迹采样间隔（秒）。**按时间采样而不是按帧**：否则 144Hz 屏上的拖尾只有
 /// 60Hz 的 41% 长（同样的点数被更短的时间填满）。
@@ -170,11 +191,11 @@ const double _kParticleTrailSampleDt = 1 / 45;
 /// （32 × 8 = 256，且仅拖动期间）。
 const int _kParticleSegs = 8;
 
-/// 头部（发射端）线宽 / 尾部线宽（px）—— 共同定义拖尾的锥形收窄。
+/// 运动尖端的线宽 / 发射端的线宽（px）—— 共同定义拖尾的锥形收窄。
 const double _kParticleHeadW = 1.8;
 const double _kParticleTailW = 0.5;
 
-/// 头部（发射端）最高亮度 / 将断处最低亮度（0~1）。
+/// 运动尖端最高亮度 / 尾迹最低亮度（0~1）。
 /// 与旧版的「出生 0.10 → 越走越亮」相反：彗星是**头最亮、尾渐隐**。
 const double _kParticleHeadAlpha = 0.92;
 const double _kParticleTailAlpha = 0.07;
@@ -211,7 +232,11 @@ class _TrackCfg {
   /// 「样式 → 滑块彗星拖尾」：拖动时是否出现彗星拖尾。
   final bool particles;
 
-  const _TrackCfg({required this.noGlass, required this.follow, required this.particles});
+  const _TrackCfg({
+    required this.noGlass,
+    required this.follow,
+    required this.particles,
+  });
 
   @override
   bool operator ==(Object other) =>
@@ -224,7 +249,8 @@ class _TrackCfg {
   int get hashCode => Object.hash(noGlass, follow, particles);
 }
 
-_TrackCfg _trackCfgOf(BuildContext context) => context.select<AppState, _TrackCfg>(
+_TrackCfg _trackCfgOf(BuildContext context) =>
+    context.select<AppState, _TrackCfg>(
       (s) => _TrackCfg(
         noGlass: s.config.noCardGlass,
         follow: s.config.glassFollowTheme,
@@ -421,7 +447,10 @@ void _paintCapsuleTrack(
   // glass = true 时不画：留空段由 AppTrackGlass 提供（含真实高斯模糊），
   // 这里再画一层会把玻璃盖住。
   if (!glass) {
-    canvas.drawRRect(RRect.fromRectAndRadius(trackRect, radius), Paint()..color = inactiveColor);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(trackRect, radius),
+      Paint()..color = inactiveColor,
+    );
     canvas.drawRRect(
       RRect.fromRectAndRadius(trackRect.deflate(0.35), radius),
       Paint()
@@ -467,12 +496,11 @@ class _CapsuleTrackShape extends SliderTrackShape with BaseSliderTrackShape {
     required SliderThemeData sliderTheme,
     bool isEnabled = false,
     bool isDiscrete = false,
-  }) =>
-      _capsuleRect(
-        parentBox: parentBox,
-        offset: offset,
-        trackHeight: sliderTheme.trackHeight ?? kAppTrackHeight,
-      );
+  }) => _capsuleRect(
+    parentBox: parentBox,
+    offset: offset,
+    trackHeight: sliderTheme.trackHeight ?? kAppTrackHeight,
+  );
 
   /// 必须 false。`isRounded = true` 时 framework 会把 thumb 中心按
   /// `trackRect.height` 内缩（见 RenderSlider._calcThumbCenter 的 padding），
@@ -494,7 +522,8 @@ class _CapsuleTrackShape extends SliderTrackShape with BaseSliderTrackShape {
     bool isEnabled = false,
     double additionalActiveTrackHeight = 2,
   }) {
-    if (sliderTheme.trackHeight == null || sliderTheme.trackHeight! <= 0) return;
+    if (sliderTheme.trackHeight == null || sliderTheme.trackHeight! <= 0)
+      return;
     final Rect trackRect = getPreferredRect(
       parentBox: parentBox,
       offset: offset,
@@ -502,12 +531,14 @@ class _CapsuleTrackShape extends SliderTrackShape with BaseSliderTrackShape {
       isEnabled: isEnabled,
       isDiscrete: isDiscrete,
     );
-    final Color inactive = ColorTween(
+    final Color inactive =
+        ColorTween(
           begin: sliderTheme.disabledInactiveTrackColor,
           end: sliderTheme.inactiveTrackColor,
         ).evaluate(enableAnimation) ??
         Colors.transparent;
-    final Color active = ColorTween(
+    final Color active =
+        ColorTween(
           begin: sliderTheme.disabledActiveTrackColor,
           end: sliderTheme.activeTrackColor,
         ).evaluate(enableAnimation) ??
@@ -533,8 +564,12 @@ class _CapsuleTrackShape extends SliderTrackShape with BaseSliderTrackShape {
 ///
 /// 注意基类是 [RangeSliderTrackShape]（与 [SliderTrackShape] 不通用）：
 /// 它的 paint 多出 endThumbCenter、且**没有** additionalActiveTrackHeight。
-class _CapsuleRangeTrackShape extends RangeSliderTrackShape with BaseSliderTrackShape {
-  const _CapsuleRangeTrackShape({required this.glass, required this.borderColor});
+class _CapsuleRangeTrackShape extends RangeSliderTrackShape
+    with BaseSliderTrackShape {
+  const _CapsuleRangeTrackShape({
+    required this.glass,
+    required this.borderColor,
+  });
 
   final bool glass;
   final Color borderColor;
@@ -546,12 +581,11 @@ class _CapsuleRangeTrackShape extends RangeSliderTrackShape with BaseSliderTrack
     required SliderThemeData sliderTheme,
     bool isEnabled = false,
     bool isDiscrete = false,
-  }) =>
-      _capsuleRect(
-        parentBox: parentBox,
-        offset: offset,
-        trackHeight: sliderTheme.trackHeight ?? kAppTrackHeight,
-      );
+  }) => _capsuleRect(
+    parentBox: parentBox,
+    offset: offset,
+    trackHeight: sliderTheme.trackHeight ?? kAppTrackHeight,
+  );
 
   /// 同 [_CapsuleTrackShape.isRounded]：区间滑块有同一套内缩逻辑。
   @override
@@ -570,7 +604,8 @@ class _CapsuleRangeTrackShape extends RangeSliderTrackShape with BaseSliderTrack
     bool isDiscrete = false,
     required TextDirection textDirection,
   }) {
-    if (sliderTheme.trackHeight == null || sliderTheme.trackHeight! <= 0) return;
+    if (sliderTheme.trackHeight == null || sliderTheme.trackHeight! <= 0)
+      return;
     final Rect trackRect = getPreferredRect(
       parentBox: parentBox,
       offset: offset,
@@ -578,12 +613,14 @@ class _CapsuleRangeTrackShape extends RangeSliderTrackShape with BaseSliderTrack
       isEnabled: isEnabled,
       isDiscrete: isDiscrete,
     );
-    final Color inactive = ColorTween(
+    final Color inactive =
+        ColorTween(
           begin: sliderTheme.disabledInactiveTrackColor,
           end: sliderTheme.inactiveTrackColor,
         ).evaluate(enableAnimation) ??
         Colors.transparent;
-    final Color active = ColorTween(
+    final Color active =
+        ColorTween(
           begin: sliderTheme.disabledActiveTrackColor,
           end: sliderTheme.activeTrackColor,
         ).evaluate(enableAnimation) ??
@@ -615,13 +652,12 @@ SliderThemeData appSliderThemeFor(
   bool compact = false,
   Color? accent,
   bool glassTrack = false,
-}) =>
-    _appSliderTheme(
-      scheme: scheme,
-      accent: accent ?? scheme.primary,
-      trackHeight: compact ? kAppCompactTrackHeight : kAppTrackHeight,
-      glassTrack: glassTrack,
-    );
+}) => _appSliderTheme(
+  scheme: scheme,
+  accent: accent ?? scheme.primary,
+  trackHeight: compact ? kAppCompactTrackHeight : kAppTrackHeight,
+  glassTrack: glassTrack,
+);
 
 /// 构造整套滑块主题（单值 / 区间共用）。
 ///
@@ -642,16 +678,19 @@ SliderThemeData _appSliderTheme({
     activeTrackColor: accent,
     // 玻璃模式下必须是**透明**：未填充段由 AppTrackGlass 画（含真实模糊），
     // 这里再填一块实色就把玻璃盖住了。
-    inactiveTrackColor:
-        glassTrack ? Colors.transparent : Colors.white.withAlpha(isDark ? 28 : 104),
+    inactiveTrackColor: glassTrack
+        ? Colors.transparent
+        : Colors.white.withAlpha(isDark ? 28 : 104),
     thumbColor: accent,
     overlayColor: accent.withAlpha(_kOverlayAlpha),
     // 没有圆点把手：填充段的边缘就是把手（参考图如此）。
     thumbShape: const _HiddenThumbShape(),
     trackShape: _CapsuleTrackShape(glass: glassTrack, borderColor: borderColor),
     rangeThumbShape: const _HiddenRangeThumbShape(),
-    rangeTrackShape:
-        _CapsuleRangeTrackShape(glass: glassTrack, borderColor: borderColor),
+    rangeTrackShape: _CapsuleRangeTrackShape(
+      glass: glassTrack,
+      borderColor: borderColor,
+    ),
     // 不要按下时的圆形光晕，但也不能用 SliderComponentShape.noOverlay：
     // overlay 的尺寸参与 framework 的固有高度计算（见 _kSliderPlaceholder）。
     overlayShape: const _InvisibleOverlayShape(_kSliderPlaceholder),
@@ -725,7 +764,8 @@ class AppSlider extends StatefulWidget {
   State<AppSlider> createState() => _AppSliderState();
 }
 
-class _AppSliderState extends State<AppSlider> with SingleTickerProviderStateMixin {
+class _AppSliderState extends State<AppSlider>
+    with SingleTickerProviderStateMixin {
   /// 拖动中的本地值。非 null 表示用户正在拖动 —— 此时直接跟手、不做数值动画，
   /// 既避免填充边缘落后手指，也避免和上层回传的 value 互相打架
   /// （上层可能只在 onChangeEnd 才写全局配置，拖动期间 value 根本不变）。
@@ -740,7 +780,8 @@ class _AppSliderState extends State<AppSlider> with SingleTickerProviderStateMix
 
   Animation<double>? _valueTween;
 
-  double _clamp(double v) => v < widget.min ? widget.min : (v > widget.max ? widget.max : v);
+  double _clamp(double v) =>
+      v < widget.min ? widget.min : (v > widget.max ? widget.max : v);
 
   /// 填充比例 0..1（= 参考图里黑色部分的占比）。
   double get _fillFraction {
@@ -752,7 +793,10 @@ class _AppSliderState extends State<AppSlider> with SingleTickerProviderStateMix
   @override
   void initState() {
     super.initState();
-    _valueController = AnimationController(vsync: this, duration: _kValueAnimationDuration);
+    _valueController = AnimationController(
+      vsync: this,
+      duration: _kValueAnimationDuration,
+    );
     _valueController.addListener(_handleValueTick);
   }
 
@@ -780,8 +824,9 @@ class _AppSliderState extends State<AppSlider> with SingleTickerProviderStateMix
       _shown = to;
       return;
     }
-    _valueTween = Tween<double>(begin: _shown, end: to)
-        .animate(CurvedAnimation(parent: _valueController, curve: Curves.easeOutCubic));
+    _valueTween = Tween<double>(begin: _shown, end: to).animate(
+      CurvedAnimation(parent: _valueController, curve: Curves.easeOutCubic),
+    );
     _valueController.forward(from: 0);
   }
 
@@ -795,16 +840,24 @@ class _AppSliderState extends State<AppSlider> with SingleTickerProviderStateMix
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final Color accent = widget.color ?? scheme.primary;
-    final double trackHeight = widget.compact ? kAppCompactTrackHeight : kAppTrackHeight;
+    final double trackHeight = widget.compact
+        ? kAppCompactTrackHeight
+        : kAppTrackHeight;
     final _TrackCfg cfg = _trackCfgOf(context);
     // 彗星颜色跟填充段的明暗走：浅色填充配深色彗星，否则白彗星在浅色块上不可见。
     // 系统开启「减弱动态效果」时完全不做特效（无障碍 + 省电）。
-    final bool particlesOn = widget.particles &&
+    final bool particlesOn =
+        widget.particles &&
         cfg.particles &&
         !MediaQuery.disableAnimationsOf(context);
 
     return SliderTheme(
-      data: appSliderThemeFor(scheme, compact: widget.compact, accent: accent, glassTrack: true),
+      data: appSliderThemeFor(
+        scheme,
+        compact: widget.compact,
+        accent: accent,
+        glassTrack: true,
+      ),
       child: Stack(
         // 只让 Slider 决定尺寸；玻璃层与粒子层都是 Positioned.fill 的纯装饰层。
         children: [
@@ -814,7 +867,9 @@ class _AppSliderState extends State<AppSlider> with SingleTickerProviderStateMix
               child: Align(
                 alignment: Alignment.center,
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: _kTrackInsetX),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: _kTrackInsetX,
+                  ),
                   child: AppTrackGlass(height: trackHeight),
                 ),
               ),
@@ -856,7 +911,9 @@ class _AppSliderState extends State<AppSlider> with SingleTickerProviderStateMix
                   fillStart: 0,
                   fillEnd: _fillFraction.clamp(0.0, 1.0),
                   trackHeight: trackHeight,
-                  color: accent.computeLuminance() > 0.55 ? Colors.black : Colors.white,
+                  color: accent.computeLuminance() > 0.55
+                      ? Colors.black
+                      : Colors.white,
                 ),
               ),
             ),
@@ -936,16 +993,22 @@ class _AppRangeSliderState extends State<AppRangeSlider> {
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final Color accent = widget.color ?? scheme.primary;
-    final double trackHeight =
-        widget.compact ? kAppCompactTrackHeight : kAppTrackHeight;
+    final double trackHeight = widget.compact
+        ? kAppCompactTrackHeight
+        : kAppTrackHeight;
     final _TrackCfg cfg = _trackCfgOf(context);
-    final bool particlesOn = widget.particles &&
+    final bool particlesOn =
+        widget.particles &&
         cfg.particles &&
         !MediaQuery.disableAnimationsOf(context);
 
     return SliderTheme(
-      data: appSliderThemeFor(scheme,
-          compact: widget.compact, accent: accent, glassTrack: true),
+      data: appSliderThemeFor(
+        scheme,
+        compact: widget.compact,
+        accent: accent,
+        glassTrack: true,
+      ),
       child: Stack(
         children: [
           Positioned.fill(
@@ -953,7 +1016,9 @@ class _AppRangeSliderState extends State<AppRangeSlider> {
               child: Align(
                 alignment: Alignment.center,
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: _kTrackInsetX),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: _kTrackInsetX,
+                  ),
                   child: AppTrackGlass(height: trackHeight),
                 ),
               ),
@@ -981,7 +1046,9 @@ class _AppRangeSliderState extends State<AppRangeSlider> {
                   fillStart: _fractionOf(widget.values.start),
                   fillEnd: _fractionOf(widget.values.end),
                   trackHeight: trackHeight,
-                  color: accent.computeLuminance() > 0.55 ? Colors.black : Colors.white,
+                  color: accent.computeLuminance() > 0.55
+                      ? Colors.black
+                      : Colors.white,
                 ),
               ),
             ),
@@ -1025,10 +1092,13 @@ class _Particle {
   final Float32List _tx = Float32List(_kParticleTrailCap);
   final Float32List _ty = Float32List(_kParticleTrailCap);
   final Float32List _tu = Float32List(_kParticleTrailCap);
+
   /// 下一个写入槽位。
   int _head = 0;
+
   /// 有效点数（≤ [_kParticleTrailCap]）。
   int _count = 0;
+
   /// 采样时间累加器（把帧间隔攒够 [_kParticleTrailSampleDt] 才推一个点）。
   double _acc = 0;
 
@@ -1049,11 +1119,12 @@ class _Particle {
     _count = 0;
     _head = 0;
     _acc = 0;
-    _push(px, py, 0);
+    _push(px, py, 1);
   }
 
-  /// 环形缓冲的物理下标：i = 0 最旧（发射端），i = [_count] - 1 最新（尾尖）。
-  int _slot(int i) => (_head - _count + i + _kParticleTrailCap) % _kParticleTrailCap;
+  /// 环形缓冲的物理下标：i = 0 最旧（发射端），i = [_count] - 1 最新（运动尖端）。
+  int _slot(int i) =>
+      (_head - _count + i + _kParticleTrailCap) % _kParticleTrailCap;
   double txAt(int i) => _tx[_slot(i)];
   double tyAt(int i) => _ty[_slot(i)];
   double tuAt(int i) => _tu[_slot(i)];
@@ -1064,12 +1135,13 @@ class _Particle {
 /// 带越宽能放越多，但**不能线性放大**：条数一旦超过带内像素数，拖尾就会连成一片
 /// 实色，也就没有颗粒感了（用户要求「有颗粒感但不过于密集」）。因此按
 /// [_kParticleSpacing] 折算密度，再夹在 [_kParticleMinActive] 与池容量之间。
-int _particleActiveCount(double bandWidth) =>
-    (bandWidth / _kParticleSpacing).round().clamp(_kParticleMinActive, _kParticlePool);
+int _particleActiveCount(double bandWidth) => (bandWidth / _kParticleSpacing)
+    .round()
+    .clamp(_kParticleMinActive, _kParticlePool);
 
 /// 彗星亮度曲线（0~1），入参是寿命进度 u。
 ///
-/// **u = 0（发射端）最亮**，随 u 增大单调衰减到 [_kParticleTailAlpha]，
+/// **u = 0（运动尖端）最亮**，随 u 增大单调衰减到 [_kParticleTailAlpha]，
 /// 最后 [_kParticleTail] 一小段再快速收尾（否则尾尖会在最暗处硬切）。
 /// 与旧版「出生很暗、越走越亮」正好相反 —— 这就是「彗星」该有的方向。
 ///
@@ -1078,12 +1150,13 @@ int _particleActiveCount(double bandWidth) =>
 double _particleAlphaOf(double u) {
   final double k = (u.clamp(0.0, 1.0) / _kParticleHoldU).clamp(0.0, 1.0);
   final double fall = Curves.easeOutCubic.transform(k);
-  final double a = _kParticleHeadAlpha + (_kParticleTailAlpha - _kParticleHeadAlpha) * fall;
+  final double a =
+      _kParticleHeadAlpha + (_kParticleTailAlpha - _kParticleHeadAlpha) * fall;
   if (u <= 1 - _kParticleTail) return a;
   return a * ((1 - u) / _kParticleTail).clamp(0.0, 1.0);
 }
 
-/// 彗星线宽曲线（px），入参同上：头部 [_kParticleHeadW] → 尾部 [_kParticleTailW]，
+/// 彗星线宽曲线（px），入参同上：运动尖端 [_kParticleHeadW] → 发射端 [_kParticleTailW]，
 /// 与亮度同步衰减，于是拖尾整体呈锥形。
 double _particleWidthOf(double u) {
   final double k = (u.clamp(0.0, 1.0) / _kParticleHoldU).clamp(0.0, 1.0);
@@ -1102,7 +1175,10 @@ class _ParticleField {
   final math.Random _rnd;
 
   /// 池子按上限分配；实际同时存活的只有前 [activeCount] 条。
-  final List<_Particle> all = List<_Particle>.generate(_kParticlePool, (_) => _Particle());
+  final List<_Particle> all = List<_Particle>.generate(
+    _kParticlePool,
+    (_) => _Particle(),
+  );
 
   /// 上一次积分的时间戳（秒）。
   double lastT = 0;
@@ -1129,13 +1205,22 @@ class _ParticleField {
   /// [emitterX] = 填充段最右端（= 把手），[trackWidth] = 轨道总长（px）。
   /// 消亡距离取 `trackWidth × 8%~22%` 且**逐条独立随机** —— 这正是用户要的
   /// 「每个彗星消失位置不统一」。
-  void _respawn(_Particle p, double emitterX, double halfHeight, double trackWidth) {
-    final double span = trackWidth *
-        (_kParticleSpanMin + _rnd.nextDouble() * (_kParticleSpanMax - _kParticleSpanMin));
+  void _respawn(
+    _Particle p,
+    double emitterX,
+    double halfHeight,
+    double trackWidth,
+  ) {
+    final double span =
+        trackWidth *
+        (_kParticleSpanMin +
+            _rnd.nextDouble() * (_kParticleSpanMax - _kParticleSpanMin));
     // 发射点抖动要从消亡距离里扣掉，否则「最远不超过 22%」会被撑大一点点。
     final double jitter = _rnd.nextDouble() * _kParticleJitter;
     final double travel = math.max(0.6, span - jitter);
-    p.lifeMax = _kParticleLifeMin + _rnd.nextDouble() * (_kParticleLifeMax - _kParticleLifeMin);
+    p.lifeMax =
+        _kParticleLifeMin +
+        _rnd.nextDouble() * (_kParticleLifeMax - _kParticleLifeMin);
     // 速度由「距离 ÷ 寿命」反推：走得远的彗星更快，于是整条带是同步向前流的，
     // 不会出现「近处慢慢爬、远处已经飞出去」的割裂感。
     p.vx = travel / p.lifeMax;
@@ -1167,27 +1252,53 @@ class _ParticleField {
       final double u1 = (p.life / p.lifeMax).clamp(0.0, 1.0);
       final double ax = p.x + p.vx * p.life;
       final double ay = p.y - p.vy * p.life;
-      final int n = math.min(_kParticleTrailCap,
-          (p.life / _kParticleTrailSampleDt).ceil() + 1);
+      final int n = math.min(
+        _kParticleTrailCap,
+        (p.life / _kParticleTrailSampleDt).ceil() + 1,
+      );
       p._count = 0;
       p._head = 0;
       p._acc = 0;
+      final ages = _seedSampleAges(n, u1);
       for (int k = 0; k < n; k++) {
+        // Seed chronological history from emitter (dim) to current tip (bright).
         final double f = n <= 1 ? 1.0 : k / (n - 1);
-        p._push(ax + (p.x - ax) * f, ay + (p.y - ay) * f, u1 * f);
+        p._push(ax + (p.x - ax) * f, ay + (p.y - ay) * f, ages[k]);
       }
     }
     _seeded = true;
   }
 
   /// 推进 [dt] 秒。[emitterX] 是当前发射点（轨道局部坐标）。
-  void advance(double dt, double emitterX, double halfHeight, double trackWidth) {
+  /// Large frame gaps are integrated in bounded substeps to avoid lost travel
+  /// while keeping an individual integration step below [_kParticleMaxStep].
+  void advance(
+    double dt,
+    double emitterX,
+    double halfHeight,
+    double trackWidth,
+  ) {
     // 拖尾带宽度 = 最远消亡距离（轨道总长 × 22%），密度按它折算。
     activeCount = _particleActiveCount(trackWidth * _kParticleSpanMax);
     if (!_seeded) {
       _seed(emitterX, halfHeight, trackWidth);
       return;
     }
+    if (dt <= 0) return;
+    var remaining = dt;
+    while (remaining > 0) {
+      final step = math.min(remaining, _kParticleMaxStep);
+      _advanceStep(step, emitterX, halfHeight, trackWidth);
+      remaining -= step;
+    }
+  }
+
+  void _advanceStep(
+    double dt,
+    double emitterX,
+    double halfHeight,
+    double trackWidth,
+  ) {
     final double yLimit = halfHeight * 0.62;
     for (int i = 0; i < all.length; i++) {
       final _Particle p = all[i];
@@ -1205,12 +1316,12 @@ class _ParticleField {
       // 轻推回带内：竖直漂移不设边界的话，长寿命彗星会被胶囊的圆角裁掉一半。
       if (p.y > yLimit || p.y < -yLimit) p.vy = -p.vy;
       // 按固定**时间**间隔采样（不是每帧），帧率越高尾越长的问题由此消除。
-      // 单次 advance 最多推一个点：[dt] 已被 [_kParticleMaxStep] 钳制，
-      // 卡顿 / 后台回来不会一下子灌进多个点把尾拉成直线。
       p._acc += dt;
       if (p._acc >= _kParticleTrailSampleDt) {
-        p._acc = 0;
-        p._push(p.x, p.y, (p.life / p.lifeMax).clamp(0.0, 1.0));
+        // Retain fractional remainder so sample cadence stays consistent at
+        // variable frame rates; chronological age makes the moving tip brightest.
+        p._acc = _sampleRemainder(p._acc, _kParticleTrailSampleDt);
+        p._push(p.x, p.y, p.life / p.lifeMax);
       }
       // 回收条件有两个：
       // ① 走完自己的寿命（= 走完自己的消亡距离）—— 这就是「消失位置不统一」的来源；
@@ -1255,7 +1366,7 @@ class _ParticlePainter extends CustomPainter {
     if (size.isEmpty) return;
     final double t =
         (controller.lastElapsedDuration ?? Duration.zero).inMicroseconds / 1e6;
-    final double dt = (t - field.lastT).clamp(0.0, _kParticleMaxStep);
+    final double dt = math.max(0.0, t - field.lastT);
     field.lastT = t;
 
     // RTL：值 0 在右侧，填充段从右往左长；发射点统一取填充段「值更大」的那一端，
@@ -1298,19 +1409,27 @@ class _ParticlePainter extends CustomPainter {
 
       // 很短 / 刚发射的尾：退化为单点，避免画 0 长线段（圆头帽在极短段上会跳）。
       if (count < 2 || (headX - tailX).abs() < _kParticleMinTailPx) {
-        final double a = _particleAlphaOf(p.tuAt(count - 1)) * p.tone * baseAlpha;
+        final double a =
+            _particleAlphaOf(p.tuAt(count - 1)) * p.tone * baseAlpha;
         if (a <= 0.012) continue;
         paint
           ..style = PaintingStyle.fill
           ..color = color.withAlpha((a * 255).round().clamp(0, 255));
-        canvas.drawCircle(Offset(headX, cy + p.tyAt(count - 1)), _kParticleHeadW * 0.5, paint);
+        canvas.drawCircle(
+          Offset(headX, cy + p.tyAt(count - 1)),
+          _kParticleHeadW * 0.5,
+          paint,
+        );
         continue;
       }
 
-      // 逐段绘制：i = 0 最旧（发射端，最亮）→ i = count-1 最新（尾尖，最暗）。
+      // 逐段绘制：i = 0 为发射端（最暗）→ i = count-1 为运动尖端（最亮）。
       // 用 stride 抽样把段数压到 ≤ [_kParticleSegs]；抽样点仍首尾相连，不会断线。
       paint.style = PaintingStyle.stroke;
-      final int stride = (count / _kParticleSegs).ceil().clamp(1, _kParticleTrailCap);
+      final int stride = (count / _kParticleSegs).ceil().clamp(
+        1,
+        _kParticleTrailCap,
+      );
       double x0 = tailX;
       double y0 = p.tyAt(0);
       double u0 = p.tuAt(0);
@@ -1322,22 +1441,45 @@ class _ParticlePainter extends CustomPainter {
       }
       // 抽样可能刚好绕过最后一个点：补画到 count-1，保证尾尖到位。
       if (headX != x0 || p.tyAt(count - 1) != y0) {
-        _drawCometSegment(canvas, paint, p, count - 1, x0, y0, u0, cy, baseAlpha);
+        _drawCometSegment(
+          canvas,
+          paint,
+          p,
+          count - 1,
+          x0,
+          y0,
+          u0,
+          cy,
+          baseAlpha,
+        );
       }
     }
   }
 
   /// 画某条彗星的一段：从 (x0, y0) 到轨迹点 [i]。
-  /// 亮度 / 线宽取两端 u 的中点，于是整条尾是连续的锥形衰减。
-  void _drawCometSegment(Canvas canvas, Paint paint, _Particle p, int i,
-      double x0, double y0, double u0, double cy, double baseAlpha) {
+  /// 亮度 / 线宽取两端 u 的中点，于是从左侧尖端到右侧发射端逐渐变暗变细。
+  void _drawCometSegment(
+    Canvas canvas,
+    Paint paint,
+    _Particle p,
+    int i,
+    double x0,
+    double y0,
+    double u0,
+    double cy,
+    double baseAlpha,
+  ) {
     final double u = (u0 + p.tuAt(i)) * 0.5;
     final double a = _particleAlphaOf(u) * p.tone * baseAlpha;
     if (a <= 0.012) return;
     paint
       ..color = color.withAlpha((a * 255).round().clamp(0, 255))
       ..strokeWidth = _particleWidthOf(u);
-    canvas.drawLine(Offset(x0, cy + y0), Offset(p.txAt(i), cy + p.tyAt(i)), paint);
+    canvas.drawLine(
+      Offset(x0, cy + y0),
+      Offset(p.txAt(i), cy + p.tyAt(i)),
+      paint,
+    );
   }
 
   @override
@@ -1372,7 +1514,8 @@ class _ParticleLayer extends StatefulWidget {
   State<_ParticleLayer> createState() => _ParticleLayerState();
 }
 
-class _ParticleLayerState extends State<_ParticleLayer> with TickerProviderStateMixin {
+class _ParticleLayerState extends State<_ParticleLayer>
+    with TickerProviderStateMixin {
   // 在 initState 里显式创建（不要用 `late final X = ...` 的惰性初始化器：那样
   // 组件若在首次 build 前就被移除，dispose() 反而会去创建一个已失效的 Ticker）。
   late final AnimationController _tick;
@@ -1382,7 +1525,10 @@ class _ParticleLayerState extends State<_ParticleLayer> with TickerProviderState
   @override
   void initState() {
     super.initState();
-    _tick = AnimationController(vsync: this, duration: const Duration(seconds: 1));
+    _tick = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 1),
+    );
     _fade = AnimationController(vsync: this, duration: _kParticleFadeOut);
     _fade.addStatusListener((AnimationStatus st) {
       if (st != AnimationStatus.completed) return;
@@ -1537,10 +1683,14 @@ class AppProgressBar extends StatelessWidget {
                 tween: Tween<double>(end: v.clamp(0.0, 1.0)),
                 duration: animationDuration,
                 curve: Curves.easeOutCubic,
-                builder: (BuildContext context, double animated, Widget? child) =>
-                    CustomPaint(
-                  painter: _AppProgressBarPainter(valueColor: barColor, value: animated),
-                ),
+                builder:
+                    (BuildContext context, double animated, Widget? child) =>
+                        CustomPaint(
+                          painter: _AppProgressBarPainter(
+                            valueColor: barColor,
+                            value: animated,
+                          ),
+                        ),
               ),
           ],
         ),
@@ -1637,17 +1787,26 @@ class _IndeterminateBarPainter extends CustomPainter {
   final TextDirection textDirection;
 
   // 与 framework 完全相同的四条曲线（周期 1800ms）。
-  static const Curve _line1Head =
-      Interval(0.0, 750.0 / _kIndeterminateDurationMs, curve: Cubic(0.2, 0.0, 0.8, 1.0));
+  static const Curve _line1Head = Interval(
+    0.0,
+    750.0 / _kIndeterminateDurationMs,
+    curve: Cubic(0.2, 0.0, 0.8, 1.0),
+  );
   static const Curve _line1Tail = Interval(
-      333.0 / _kIndeterminateDurationMs, (333.0 + 750.0) / _kIndeterminateDurationMs,
-      curve: Cubic(0.4, 0.0, 1.0, 1.0));
+    333.0 / _kIndeterminateDurationMs,
+    (333.0 + 750.0) / _kIndeterminateDurationMs,
+    curve: Cubic(0.4, 0.0, 1.0, 1.0),
+  );
   static const Curve _line2Head = Interval(
-      1000.0 / _kIndeterminateDurationMs, (1000.0 + 567.0) / _kIndeterminateDurationMs,
-      curve: Cubic(0.0, 0.0, 0.65, 1.0));
+    1000.0 / _kIndeterminateDurationMs,
+    (1000.0 + 567.0) / _kIndeterminateDurationMs,
+    curve: Cubic(0.0, 0.0, 0.65, 1.0),
+  );
   static const Curve _line2Tail = Interval(
-      1267.0 / _kIndeterminateDurationMs, (1267.0 + 533.0) / _kIndeterminateDurationMs,
-      curve: Cubic(0.10, 0.0, 0.45, 1.0));
+    1267.0 / _kIndeterminateDurationMs,
+    (1267.0 + 533.0) / _kIndeterminateDurationMs,
+    curve: Cubic(0.10, 0.0, 0.45, 1.0),
+  );
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1658,10 +1817,15 @@ class _IndeterminateBarPainter extends CustomPainter {
     final bool isLtr = textDirection == TextDirection.ltr;
     void drawLine(double startFraction, double endFraction) {
       if (endFraction - startFraction <= 0) return;
-      final double left = (isLtr ? startFraction : 1 - endFraction) * size.width;
-      final double right = (isLtr ? endFraction : 1 - startFraction) * size.width;
+      final double left =
+          (isLtr ? startFraction : 1 - endFraction) * size.width;
+      final double right =
+          (isLtr ? endFraction : 1 - startFraction) * size.width;
       canvas.drawRRect(
-        RRect.fromRectAndRadius(Rect.fromLTRB(left, 0, right, size.height), radius),
+        RRect.fromRectAndRadius(
+          Rect.fromLTRB(left, 0, right, size.height),
+          radius,
+        ),
         Paint()..color = valueColor,
       );
     }
@@ -1673,5 +1837,6 @@ class _IndeterminateBarPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_IndeterminateBarPainter oldDelegate) =>
-      oldDelegate.valueColor != valueColor || oldDelegate.textDirection != textDirection;
+      oldDelegate.valueColor != valueColor ||
+      oldDelegate.textDirection != textDirection;
 }
