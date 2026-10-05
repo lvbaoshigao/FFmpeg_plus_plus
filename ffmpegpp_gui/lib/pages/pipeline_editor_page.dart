@@ -3976,9 +3976,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   /// 顶栏当前显示的模型：配置里选中的 → 全局选中（设置页选过的）→ 空。
   String _currentModelLabel(AppConfig cfg, AiProfile? active) {
-    final fromProfile = active?.model ?? '';
-    if (fromProfile.isNotEmpty) return fromProfile;
-    // A model label without a configured global endpoint/key is stale legacy state.
+    if (active != null) {
+      if (active.model.isNotEmpty) return active.model;
+      return active.models.firstOrNull?.id ?? '';
+    }
+    if (cfg.aiProfiles.any((p) => p.enabled)) return '';
     if (cfg.aiApiKey.trim().isEmpty || cfg.aiApiUrl.trim().isEmpty) return '';
     return cfg.aiModel;
   }
@@ -12511,13 +12513,14 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
   String get _effectiveModel {
     if (_sessionModel?.isNotEmpty == true) return _sessionModel!;
     final cfg = context.read<AppState>().config;
-    final fromProfile = _effectiveProfile?.model ?? '';
-    if (fromProfile.isNotEmpty) return fromProfile;
     final profile = _effectiveProfile;
-    if (profile != null) return profile.models.firstOrNull?.id ?? '';
+    if (profile != null) {
+      if (profile.model.isNotEmpty) return profile.model;
+      return profile.models.firstOrNull?.id ?? '';
+    }
+    if (cfg.aiProfiles.any((p) => p.enabled)) return '';
     if (cfg.aiApiKey.trim().isEmpty || cfg.aiApiUrl.trim().isEmpty) return '';
-    if (cfg.aiModel.isNotEmpty) return cfg.aiModel;
-    return '';
+    return cfg.aiModel;
   }
 
   /// 外部（移动端弹层头部的模型药丸）切换模型时同步会话级选择，

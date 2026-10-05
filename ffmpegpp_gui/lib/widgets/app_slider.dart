@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/app_state.dart';
@@ -134,6 +135,8 @@ class CometTrailTestProbe {
 
   static double sampledElapsed(double dt, double interval) =>
       _sampleRemainder(dt, interval);
+
+  static double speedEnvelope(double speed) => cometSpeedEnvelope(speed);
 }
 
 /// 池容量（上限）。实际同时存活的条数由拖尾带宽度折算，见 [_particleActiveCount]。
@@ -770,6 +773,26 @@ class _AppSliderState extends State<AppSlider>
   /// 既避免填充边缘落后手指，也避免和上层回传的 value 互相打架
   /// （上层可能只在 onChangeEnd 才写全局配置，拖动期间 value 根本不变）。
   double? _dragValue;
+  double _lastDragValue = 0;
+  Duration? _lastDragAt;
+  double _dragSpeed = 0;
+
+  void _handleDragValue(double value) {
+    final now = SchedulerBinding.instance.currentSystemFrameTimeStamp;
+    final last = _lastDragAt;
+    if (last != null) {
+      final seconds =
+          (now - last).inMicroseconds / Duration.microsecondsPerSecond;
+      if (seconds > 0) {
+        final instant =
+            ((value - _lastDragValue).abs() / seconds) /
+            (widget.max - widget.min).abs().clamp(0.001, double.infinity);
+        _dragSpeed = math.max(_dragSpeed * 0.72, instant);
+      }
+    }
+    _lastDragValue = value;
+    _lastDragAt = now;
+  }
 
   /// 实际绘制出来的值：拖动时 = 手指值，其余时候 = 数值动画的当前帧。
   late double _shown = _clamp(widget.value);
@@ -779,6 +802,8 @@ class _AppSliderState extends State<AppSlider>
   late final AnimationController _valueController;
 
   Animation<double>? _valueTween;
+
+  double get _cometIntensity => cometSpeedEnvelope(_dragSpeed);
 
   double _clamp(double v) =>
       v < widget.min ? widget.min : (v > widget.max ? widget.max : v);
@@ -885,6 +910,7 @@ class _AppSliderState extends State<AppSlider>
             onChanged: widget.onChanged == null
                 ? null
                 : (double nv) {
+                    _handleDragValue(nv);
                     setState(() {
                       _dragValue = nv;
                       _shown = _clamp(nv);
@@ -894,6 +920,8 @@ class _AppSliderState extends State<AppSlider>
                     widget.onChanged!(nv);
                   },
             onChangeEnd: (double nv) {
+              _dragSpeed = 0;
+              _lastDragAt = null;
               setState(() {
                 _dragValue = null;
                 _shown = _clamp(nv);
@@ -914,6 +942,7 @@ class _AppSliderState extends State<AppSlider>
                   color: accent.computeLuminance() > 0.55
                       ? Colors.black
                       : Colors.white,
+                  intensity: _cometIntensity,
                 ),
               ),
             ),
@@ -1150,13 +1179,15 @@ int _particleActiveCount(double bandWidth) => (bandWidth / _kParticleSpacing)
 ///
 /// 注意它**不决定**消失位置：位置由每条彗星自己的消亡距离决定
 /// （[_Particle.vx] × [_Particle.lifeMax]），见 [_ParticleField._respawn]。
-double _particleAlphaOf(double u) {
+double _particleAlphaOf(double u, double intensity) {
+  final double speedGlow = 0.85 + intensity * 0.45;
   final double k = (u.clamp(0.0, 1.0) / _kParticleHoldU).clamp(0.0, 1.0);
   final double fall = Curves.easeOutCubic.transform(k);
   final double a =
       _kParticleHeadAlpha + (_kParticleTailAlpha - _kParticleHeadAlpha) * fall;
-  if (u <= 1 - _kParticleTail) return a;
-  return a * ((1 - u) / _kParticleTail).clamp(0.0, 1.0);
+  final double glow = (a * speedGlow).clamp(0.0, 1.0);
+  if (u <= 1 - _kParticleTail) return glow;
+  return glow * ((1 - u) / _kParticleTail).clamp(0.0, 1.0);
 }
 
 /// 彗星线宽曲线（px），入参同上：运动尖端 [_kParticleHeadW] → 发射端 [_kParticleTailW]，
@@ -1166,6 +1197,10 @@ double _particleWidthOf(double u) {
   return _kParticleHeadW +
       (_kParticleTailW - _kParticleHeadW) * Curves.easeOutCubic.transform(k);
 }
+
+/// Speed curve for the comet tail: fast drags stretch and brighten it.
+@visibleForTesting
+double cometSpeedEnvelope(double speed) => (speed / 900).clamp(0.0, 1.0);
 
 /// 彗星池：按时间步长积分推进所有彗星，走完自己的消亡距离就回到发射点重新发射，
 /// 同时按固定时间间隔把位置写进各自的轨迹环形缓冲。
@@ -1364,6 +1399,7 @@ class _ParticlePainter extends CustomPainter {
     required this.fillStart,
     required this.fillEnd,
     required this.color,
+    required this.intensity,
     required this.textDirection,
     required Listenable repaint,
   }) : super(repaint: repaint);
@@ -1374,6 +1410,7 @@ class _ParticlePainter extends CustomPainter {
   final double fillStart;
   final double fillEnd;
   final Color color;
+  final double intensity;
   final TextDirection textDirection;
 
   @override
@@ -1425,7 +1462,7 @@ class _ParticlePainter extends CustomPainter {
       // 很短 / 刚发射的尾：退化为单点，避免画 0 长线段（圆头帽在极短段上会跳）。
       if (count < 2 || (headX - tailX).abs() < _kParticleMinTailPx) {
         final double a =
-            _particleAlphaOf(p.tuAt(count - 1)) * p.tone * baseAlpha;
+            _particleAlphaOf(p.tuAt(count - 1), intensity) * p.tone * baseAlpha;
         if (a <= 0.012) continue;
         paint
           ..style = PaintingStyle.fill
@@ -1441,10 +1478,11 @@ class _ParticlePainter extends CustomPainter {
       // 逐段绘制：i = 0 为发射端（最暗）→ i = count-1 为运动尖端（最亮）。
       // 用 stride 抽样把段数压到 ≤ [_kParticleSegs]；抽样点仍首尾相连，不会断线。
       paint.style = PaintingStyle.stroke;
-      final int stride = (count / _kParticleSegs).ceil().clamp(
+      final int segs = (_kParticleSegs + (intensity * 8).round()).clamp(
         1,
         _kParticleTrailCap,
       );
+      final int stride = (count / segs).ceil().clamp(1, _kParticleTrailCap);
       double x0 = tailX;
       double y0 = p.tyAt(0);
       double u0 = p.tuAt(0);
@@ -1485,7 +1523,7 @@ class _ParticlePainter extends CustomPainter {
     double baseAlpha,
   ) {
     final double u = (u0 + p.tuAt(i)) * 0.5;
-    final double a = _particleAlphaOf(u) * p.tone * baseAlpha;
+    final double a = _particleAlphaOf(u, intensity) * p.tone * baseAlpha;
     if (a <= 0.012) return;
     paint
       ..color = color.withAlpha((a * 255).round().clamp(0, 255))
@@ -1503,6 +1541,7 @@ class _ParticlePainter extends CustomPainter {
       oldDelegate.fillStart != fillStart ||
       oldDelegate.fillEnd != fillEnd ||
       oldDelegate.color != color ||
+      oldDelegate.intensity != intensity ||
       oldDelegate.textDirection != textDirection;
 }
 
@@ -1517,6 +1556,7 @@ class _ParticleLayer extends StatefulWidget {
     required this.fillEnd,
     required this.trackHeight,
     required this.color,
+    this.intensity = 0,
   });
 
   final bool active;
@@ -1524,6 +1564,7 @@ class _ParticleLayer extends StatefulWidget {
   final double fillEnd;
   final double trackHeight;
   final Color color;
+  final double intensity;
 
   @override
   State<_ParticleLayer> createState() => _ParticleLayerState();
@@ -1604,6 +1645,7 @@ class _ParticleLayerState extends State<_ParticleLayer>
                   fillStart: widget.fillStart,
                   fillEnd: widget.fillEnd,
                   color: widget.color,
+                  intensity: widget.intensity,
                   textDirection: Directionality.of(context),
                   repaint: Listenable.merge(<Listenable>[_tick, _fade]),
                 ),

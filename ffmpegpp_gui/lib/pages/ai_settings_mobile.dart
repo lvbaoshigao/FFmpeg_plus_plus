@@ -43,22 +43,19 @@ String _askSkipLabel(String key, bool isZh) => switch (key) {
   _ => key,
 };
 
-Widget _mcpHostField(
-  String value,
-  ColorScheme scheme,
-  AppState state,
-) => _AiField(
-  key: const ValueKey('mcp_host_field'),
-  value: value,
-  scheme: scheme,
-  hint: '127.0.0.1',
-  onCommit: (v) {
-    final host = v.trim();
-    if (host.isEmpty || RegExp(r'^[A-Za-z0-9.:_-]+$').hasMatch(host)) {
-      state.updateConfig((c) => c..mcpHost = host);
-    }
-  },
-);
+Widget _mcpHostField(String value, ColorScheme scheme, AppState state) =>
+    _AiField(
+      key: const ValueKey('mcp_host_field'),
+      value: value,
+      scheme: scheme,
+      hint: '127.0.0.1',
+      onCommit: (v) {
+        final host = v.trim();
+        if (host.isEmpty || RegExp(r'^[A-Za-z0-9.:_-]+$').hasMatch(host)) {
+          state.updateConfig((c) => c..mcpHost = host);
+        }
+      },
+    );
 
 Widget _mcpApplyButton(AppState state, AppStrings s) => OutlinedButton.icon(
   style: AppControlSize.comfortable.buttonStyle(),
@@ -723,7 +720,8 @@ class _MobileAiProviderDetailPageState
               context.read<AppState>().updateConfig((c) {
                 c.aiProfiles.removeWhere((e) => e.id == _draft.id);
                 if (c.activeAiProfileId == _draft.id) {
-                  c.activeAiProfileId = c.aiProfiles
+                  c.activeAiProfileId =
+                      c.aiProfiles
                           .where((profile) => profile.enabled)
                           .firstOrNull
                           ?.id ??
@@ -1359,7 +1357,7 @@ class _MobileAiProviderDetailPageState
       context,
       title: s.isZh ? '添加模型' : 'Add Model',
       initial: '',
-      hint: 'gpt-4o / claude-sonnet-4 / kimi-k2',
+      hint: s.isZh ? '输入供应商提供的模型 ID' : 'Enter a model ID from your provider',
       s: s,
     );
     final id = v?.trim() ?? '';

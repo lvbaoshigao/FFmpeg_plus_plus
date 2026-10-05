@@ -23,6 +23,13 @@ void main() {
       );
     });
 
+    test('should intensify only after drag speed rises', () {
+      expect(CometTrailTestProbe.speedEnvelope(0), 0);
+      expect(CometTrailTestProbe.speedEnvelope(450), closeTo(0.5, 1e-12));
+      expect(CometTrailTestProbe.speedEnvelope(900), 1);
+      expect(CometTrailTestProbe.speedEnvelope(1800), 1);
+    });
+
     test('should keep emitter-only first sample dim', () {
       expect(
         CometTrailTestProbe.sampleAges(samples: 1, life: 0.8).single,

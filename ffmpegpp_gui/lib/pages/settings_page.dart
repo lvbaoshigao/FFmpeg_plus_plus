@@ -2366,8 +2366,6 @@ const _presets = [
   ('Violet', 0xFF8B5CF6),
 ];
 
-const _kDefaultAnthropicModel = 'claude-3-5-sonnet-20241022';
-
 /// 询问模式下可选「无需确认」的操作 key。
 ///
 /// 只存 key、显示名由 [_askSkipLabel] 按语言给出：原先这里把中文显示名写进常量，
@@ -2476,10 +2474,10 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
             child: LayoutBuilder(
               builder: (context, constraints) {
                 final columns = ((constraints.maxWidth + 8) / 52).floor().clamp(
-                  1,
+                  2,
                   8,
                 );
-                final rows = (_presets.length + 1 + columns - 1) ~/ columns;
+                final rows = (_presets.length + columns - 1) ~/ columns;
                 return SizedBox(
                   height: rows * 48 + (rows - 1) * 4,
                   child: GridView.builder(
@@ -2491,74 +2489,19 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
                       crossAxisSpacing: 8,
                       mainAxisSpacing: 4,
                     ),
-                    itemCount: _presets.length + 1,
+                    itemCount: _presets.length,
                     itemBuilder: (context, index) {
-                      if (index < _presets.length) {
-                        final p = _presets[index];
-                        return Center(
-                          child: _dot(
-                            scheme,
-                            cfg.themeColor == p.$2 && cfg.themeColor2 < 0,
-                            Color(p.$2),
-                            p.$1,
-                            () => state.updateConfig(
-                              (c) => c
-                                ..themeColor = p.$2
-                                ..themeColor2 = -1,
-                            ),
-                          ),
-                        );
-                      }
-                      final isGradient = cfg.themeColor2 >= 0;
+                      final p = _presets[index];
                       return Center(
-                        child: Tooltip(
-                          message: isGradient
-                              ? (s.isZh ? '当前渐变色' : 'Current gradient')
-                              : (s.isZh ? '自定义（支持渐变）' : 'Custom (gradient)'),
-                          child: SizedBox.square(
-                            dimension: 44,
-                            child: Material(
-                              color: Colors.transparent,
-                              shape: const CircleBorder(),
-                              clipBehavior: Clip.antiAlias,
-                              child: InkWell(
-                                customBorder: const CircleBorder(),
-                                onTap: () => _pickColor(ctx, state),
-                                child: Ink(
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    gradient: isGradient
-                                        ? LinearGradient(
-                                            colors: [
-                                              Color(cfg.themeColor),
-                                              Color(cfg.themeColor2),
-                                            ],
-                                          )
-                                        : const LinearGradient(
-                                            colors: [
-                                              Color(0xFFFF5F6D),
-                                              Color(0xFFFFC371),
-                                              Color(0xFF36D1DC),
-                                              Color(0xFF5B86E5),
-                                            ],
-                                          ),
-                                    border: Border.all(
-                                      color: isGradient
-                                          ? scheme.primary
-                                          : scheme.outlineVariant.withAlpha(
-                                              100,
-                                            ),
-                                      width: isGradient ? 2 : 1,
-                                    ),
-                                  ),
-                                  child: const Icon(
-                                    Icons.add,
-                                    size: 17,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ),
-                            ),
+                        child: _dot(
+                          scheme,
+                          cfg.themeColor == p.$2 && cfg.themeColor2 < 0,
+                          Color(p.$2),
+                          p.$1,
+                          () => state.updateConfig(
+                            (c) => c
+                              ..themeColor = p.$2
+                              ..themeColor2 = -1,
                           ),
                         ),
                       );
@@ -2569,7 +2512,21 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
             ),
           ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            onPressed: dynamicOn ? null : () => _pickColor(ctx, state),
+            icon: const Icon(Icons.add, size: 18),
+            label: Text(s.isZh ? '自定义颜色 / 渐变' : 'Custom color / gradient'),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(0, 42),
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              side: BorderSide(color: scheme.outlineVariant),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
         // ── 主题色协调度 ──
         // 「跟随主题色」大面积铺底时若直接用 scheme.primary（暗色下是 tone 80 的
         // 高亮色）非常刺眼 —— 用户反馈「选择主题色又很亮」。这里给一个 0~0.8 的
@@ -3332,6 +3289,27 @@ final List<_StylePreset> _stylePresets = [
       glassLightPos: 0.0,
       glassEdge: 0.5,
       themeTone: 0.45,
+    ),
+  ),
+  _StylePreset(
+    id: 'clear',
+    name: (zh) => zh ? '晨雾' : 'Daybreak',
+    desc: (zh) => zh ? '轻盈低对比' : 'Soft & quiet',
+    preview: 'clear',
+    values: const _StyleValues(
+      cardStyle: 'clear',
+      navStyle: 'clear',
+      pillStyle: 'clear',
+      menuStyle: 'clear',
+      glassEffect: 'clear',
+      settingsGlassMode: 'follow',
+      glassFollowTheme: true,
+      glassBlur: 14.0,
+      glassClarity: 0.75,
+      glassHighlight: 0.4,
+      glassLightPos: 0.25,
+      glassEdge: 0.3,
+      themeTone: 0.5,
     ),
   ),
   _StylePreset(
@@ -4514,6 +4492,8 @@ Widget _buildFont(BuildContext ctx, AppState state) {
             : Icon(Icons.chevron_right, size: 19, color: scheme.outline),
         onTap: () => _pickFont(ctx, state),
       ),
+      const SizedBox(height: 10),
+      _fontWeightPicker(ctx, state, s, scheme),
       // 导入后给一行「用该字体真实渲染」的预览：此前移动端导入完只有一行文件名，
       // 且那行字本身还是系统字体渲染的，用户完全无法判断字体有没有生效
       // （用户反馈的「字体能否导入后显示」）。这一行同时也是字号滑块的直观反馈。
@@ -6192,32 +6172,31 @@ Widget _aiSettingsContent(
 /// 对 AiProfile 应用供应商预设（一键填充端点/模型/上下文）。
 /// 公开供移动端提供商详情页复用。
 void applyProfilePreset(AiProfile c, String preset) {
-  // 模型取值：配置里已经拉过/填过模型清单时用清单第一条（模型列表一律来自
-  // 供应商配置，不再内置固定的 gpt-4o）；清单为空才落一个可编辑的建议值。
-  void pickModel(String suggested) {
-    c.model = c.models.isNotEmpty ? c.models.first.id : suggested;
+  // Presets configure endpoints only. Model IDs must be explicitly fetched or entered by the user.
+  void pickModel() {
+    c.model = c.models.isNotEmpty ? c.models.first.id : '';
   }
 
   switch (preset) {
     case 'openai':
       c.provider = 'openai';
       c.apiUrl = 'https://api.openai.com/v1/chat/completions';
-      pickModel('gpt-4o');
+      pickModel();
       c.contextWindow = 128000;
     case 'anthropic':
       c.provider = 'anthropic';
       c.apiUrl = 'https://api.anthropic.com/v1/messages';
-      pickModel(_kDefaultAnthropicModel);
+      pickModel();
       c.contextWindow = 200000;
     case 'deepseek':
       c.provider = 'openai';
       c.apiUrl = 'https://api.deepseek.com/v1/chat/completions';
-      pickModel('deepseek-chat');
+      pickModel();
       c.contextWindow = 64000;
     case 'ollama':
       c.provider = 'openai';
       c.apiUrl = 'http://localhost:11434/v1/chat/completions';
-      pickModel('llama3');
+      pickModel();
       c.contextWindow = 8192;
   }
 }
