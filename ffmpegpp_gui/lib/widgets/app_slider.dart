@@ -1078,6 +1078,9 @@ class _Particle {
   /// 竖直漂移（px/s）：让拖尾带看起来是「甩」出来的，而不是整齐平移的一条线。
   double vy = 0;
 
+  /// Weak cross-axis acceleration, gives the trajectory a soft curved arc.
+  double ay = 0;
+
   /// 已存活 / 总寿命（秒）。`寿命 × 速度` 就是这条彗星的消亡距离。
   double life = 0;
   double lifeMax = 0.7;
@@ -1228,6 +1231,7 @@ class _ParticleField {
     // 竖直方向限制在胶囊内部（±0.5 半高），避免彗星被圆角裁掉一半。
     p.y = (_rnd.nextDouble() * 2 - 1) * halfHeight * 0.5;
     p.vy = (_rnd.nextDouble() * 2 - 1) * 8;
+    p.ay = (_rnd.nextDouble() * 2 - 1) * 34;
     p.tone = 0.72 + _rnd.nextDouble() * 0.28;
     p.life = 0;
     p.alive = true;
@@ -1312,9 +1316,20 @@ class _ParticleField {
       }
       p.life += dt;
       p.x -= p.vx * dt;
+      // Integrate a restrained ballistic arc; damp acceleration near the capsule edge.
+      final edgeFactor = (1 - (p.y.abs() / yLimit).clamp(0.0, 1.0));
+      p.vy += p.ay * edgeFactor * dt;
       p.y += p.vy * dt;
-      // 轻推回带内：竖直漂移不设边界的话，长寿命彗星会被胶囊的圆角裁掉一半。
-      if (p.y > yLimit || p.y < -yLimit) p.vy = -p.vy;
+      // Softly reverse and damp at the capsule boundary instead of clipping a hard line.
+      if (p.y > yLimit) {
+        p.y = yLimit;
+        p.vy = -p.vy.abs() * 0.62;
+        p.ay = -p.ay.abs();
+      } else if (p.y < -yLimit) {
+        p.y = -yLimit;
+        p.vy = p.vy.abs() * 0.62;
+        p.ay = p.ay.abs();
+      }
       // 按固定**时间**间隔采样（不是每帧），帧率越高尾越长的问题由此消除。
       p._acc += dt;
       if (p._acc >= _kParticleTrailSampleDt) {

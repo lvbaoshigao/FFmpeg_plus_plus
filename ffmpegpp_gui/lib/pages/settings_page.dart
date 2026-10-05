@@ -2473,72 +2473,99 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
           opacity: dynamicOn ? 0.35 : 1.0,
           child: IgnorePointer(
             ignoring: dynamicOn,
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                ..._presets.map(
-                  (p) => _dot(
-                    scheme,
-                    cfg.themeColor == p.$2 && cfg.themeColor2 < 0,
-                    Color(p.$2),
-                    p.$1,
-                    () => state.updateConfig(
-                      (c) => c
-                        ..themeColor = p.$2
-                        ..themeColor2 = -1,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final columns = ((constraints.maxWidth + 8) / 52).floor().clamp(
+                  1,
+                  8,
+                );
+                final rows = (_presets.length + 1 + columns - 1) ~/ columns;
+                return SizedBox(
+                  height: rows * 48 + (rows - 1) * 4,
+                  child: GridView.builder(
+                    physics: const NeverScrollableScrollPhysics(),
+                    padding: EdgeInsets.zero,
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: columns,
+                      mainAxisExtent: 48,
+                      crossAxisSpacing: 8,
+                      mainAxisSpacing: 4,
                     ),
-                  ),
-                ),
-                // 自定义取色：若已设渐变色则显示渐变圆点，点击进入渐变/纯色设置
-                GestureDetector(
-                  onTap: () => _pickColor(ctx, state),
-                  child: Tooltip(
-                    message: cfg.themeColor2 >= 0
-                        ? (state.config.language == 'zh'
-                              ? '当前渐变色'
-                              : 'Current gradient')
-                        : (state.config.language == 'zh'
-                              ? '自定义（支持渐变）'
-                              : 'Custom (gradient)'),
-                    child: Container(
-                      width: 28,
-                      height: 28,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: cfg.themeColor2 >= 0
-                            ? LinearGradient(
-                                colors: [
-                                  Color(cfg.themeColor),
-                                  Color(cfg.themeColor2),
-                                ],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              )
-                            : const LinearGradient(
-                                colors: [
-                                  Color(0xFFFF5F6D),
-                                  Color(0xFFFFC371),
-                                  Color(0xFF36D1DC),
-                                  Color(0xFF5B86E5),
-                                ],
+                    itemCount: _presets.length + 1,
+                    itemBuilder: (context, index) {
+                      if (index < _presets.length) {
+                        final p = _presets[index];
+                        return Center(
+                          child: _dot(
+                            scheme,
+                            cfg.themeColor == p.$2 && cfg.themeColor2 < 0,
+                            Color(p.$2),
+                            p.$1,
+                            () => state.updateConfig(
+                              (c) => c
+                                ..themeColor = p.$2
+                                ..themeColor2 = -1,
+                            ),
+                          ),
+                        );
+                      }
+                      final isGradient = cfg.themeColor2 >= 0;
+                      return Center(
+                        child: Tooltip(
+                          message: isGradient
+                              ? (s.isZh ? '当前渐变色' : 'Current gradient')
+                              : (s.isZh ? '自定义（支持渐变）' : 'Custom (gradient)'),
+                          child: SizedBox.square(
+                            dimension: 44,
+                            child: Material(
+                              color: Colors.transparent,
+                              shape: const CircleBorder(),
+                              clipBehavior: Clip.antiAlias,
+                              child: InkWell(
+                                customBorder: const CircleBorder(),
+                                onTap: () => _pickColor(ctx, state),
+                                child: Ink(
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    gradient: isGradient
+                                        ? LinearGradient(
+                                            colors: [
+                                              Color(cfg.themeColor),
+                                              Color(cfg.themeColor2),
+                                            ],
+                                          )
+                                        : const LinearGradient(
+                                            colors: [
+                                              Color(0xFFFF5F6D),
+                                              Color(0xFFFFC371),
+                                              Color(0xFF36D1DC),
+                                              Color(0xFF5B86E5),
+                                            ],
+                                          ),
+                                    border: Border.all(
+                                      color: isGradient
+                                          ? scheme.primary
+                                          : scheme.outlineVariant.withAlpha(
+                                              100,
+                                            ),
+                                      width: isGradient ? 2 : 1,
+                                    ),
+                                  ),
+                                  child: const Icon(
+                                    Icons.add,
+                                    size: 17,
+                                    color: Colors.white,
+                                  ),
+                                ),
                               ),
-                        border: Border.all(
-                          color: cfg.themeColor2 >= 0
-                              ? scheme.primary
-                              : scheme.outlineVariant.withAlpha(80),
-                          width: cfg.themeColor2 >= 0 ? 2 : 1,
+                            ),
+                          ),
                         ),
-                      ),
-                      child: const Icon(
-                        Icons.add,
-                        size: 14,
-                        color: Colors.white,
-                      ),
-                    ),
+                      );
+                    },
                   ),
-                ),
-              ],
+                );
+              },
             ),
           ),
         ),
@@ -4508,6 +4535,11 @@ Widget _buildFont(BuildContext ctx, AppState state) {
               style: TextStyle(
                 fontSize: 15,
                 fontFamily: cfg.fontFamily,
+                fontWeight:
+                    _kFontWeights[cfg.fontWeightIndex.clamp(
+                      0,
+                      _kFontWeights.length - 1,
+                    )],
                 color: clr,
               ),
             ),

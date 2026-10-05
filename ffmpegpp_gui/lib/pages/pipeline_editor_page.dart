@@ -910,8 +910,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final node = PipelineNode(
       id: _uuid.v4(),
       type: type,
-      x: canvasPos.dx,
-      y: canvasPos.dy,
+      x: canvasPos.dx - _totalNodeWFor(type) / 2,
+      y: canvasPos.dy - _nodeH / 2,
     );
     if (type == PipelineStepType.start && widget.video.filepath.isNotEmpty) {
       node.params['file_media_type'] = widget.video.fileMediaType.name;
@@ -933,8 +933,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final node = PipelineNode(
       id: _uuid.v4(),
       type: PipelineStepType.start, // 使用 start 作为占位类型，gateType 标识逻辑门
-      x: canvasPos.dx,
-      y: canvasPos.dy,
+      x: canvasPos.dx - (_gateW + _portZoneW * 2) / 2,
+      y: canvasPos.dy - _gateH / 2,
       gateType: gate.name,
     );
     setState(() => _nodes.add(node));
@@ -3978,6 +3978,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   String _currentModelLabel(AppConfig cfg, AiProfile? active) {
     final fromProfile = active?.model ?? '';
     if (fromProfile.isNotEmpty) return fromProfile;
+    // A model label without a configured global endpoint/key is stale legacy state.
+    if (cfg.aiApiKey.trim().isEmpty || cfg.aiApiUrl.trim().isEmpty) return '';
     return cfg.aiModel;
   }
 
@@ -4317,7 +4319,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         ? -1
         : cfg.aiProfiles.indexWhere((p) => p.id == pid && p.enabled);
     final ctrl = TextEditingController(
-      text: profIdx >= 0 ? cfg.aiProfiles[profIdx].model : cfg.aiModel,
+      text: profIdx >= 0
+          ? cfg.aiProfiles[profIdx].model
+          : (cfg.aiApiKey.trim().isNotEmpty && cfg.aiApiUrl.trim().isNotEmpty
+                ? cfg.aiModel
+                : ''),
     );
     final result = await showDialog<String>(
       context: context,
@@ -7470,7 +7476,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         best = c.$1;
       }
     }
-    const portThreshold = 14.0;
+    // 触屏手指遮挡端口且坐标转换后更难精确命中，扩大有效热区。
+    final portThreshold = isMobilePlatform ? 56.0 : 14.0;
     return bestDist <= portThreshold ? best : null;
   }
 
@@ -7601,6 +7608,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
               _previewedToolboxType = null;
               _previewedLogicType = null;
               _selectedLogicBlockId = null;
+              if (isMobilePlatform) _mobilePropsHiddenFor = null;
               if (_isCtrlPressed()) {
                 if (_selectedNodeIds.contains(node.id)) {
                   _selectedNodeIds.remove(node.id);
@@ -10132,7 +10140,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final options = _modelOptionsFor(cfg, profile);
     final current = profile?.model.isNotEmpty == true
         ? profile!.model
-        : cfg.aiModel;
+        : (cfg.aiApiKey.trim().isNotEmpty && cfg.aiApiUrl.trim().isNotEmpty
+              ? cfg.aiModel
+              : '');
     return PopupMenuButton<String>(
       tooltip: s.isZh ? '切换模型' : 'Switch model',
       padding: EdgeInsets.zero,
@@ -12503,8 +12513,11 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
     final cfg = context.read<AppState>().config;
     final fromProfile = _effectiveProfile?.model ?? '';
     if (fromProfile.isNotEmpty) return fromProfile;
+    final profile = _effectiveProfile;
+    if (profile != null) return profile.models.firstOrNull?.id ?? '';
+    if (cfg.aiApiKey.trim().isEmpty || cfg.aiApiUrl.trim().isEmpty) return '';
     if (cfg.aiModel.isNotEmpty) return cfg.aiModel;
-    return _effectiveProfile?.models.firstOrNull?.id ?? '';
+    return '';
   }
 
   /// 外部（移动端弹层头部的模型药丸）切换模型时同步会话级选择，
@@ -13988,9 +14001,10 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     // 模型不再有内置兜底：一个可用模型都没有就别浪费一次请求
     final model = profile?.model.isNotEmpty == true
         ? profile!.model
-        : (cfg.aiModel.isNotEmpty
-              ? cfg.aiModel
-              : (profile?.models.firstOrNull?.id ?? ''));
+        : (profile?.models.firstOrNull?.id ??
+              (cfg.aiApiKey.trim().isNotEmpty && cfg.aiApiUrl.trim().isNotEmpty
+                  ? cfg.aiModel
+                  : ''));
     if (model.isEmpty) return;
     _titleGenerated = true;
     try {
@@ -14629,67 +14643,80 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
           ),
         Padding(
           padding: EdgeInsets.fromLTRB(12, 4, 12, isMobilePlatform ? 10 : 12),
-          child: Row(
-            // 输入框多行后行高会长，底对齐才能让发送 / 停止键始终贴在最后一行旁边
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              // 输入框与右侧发送键同档（comfortable 36）：改造前输入框随主题算出约 32，
-              // 发送键却是写死的 40×40 圆形 —— 一个矮一个高，底部那行看着就歪。
-              // 多行时不能再套 fieldBox 钉死高度（会把第二行裁掉），改用 minHeight 兜底。
-              Expanded(
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(minHeight: btn.height),
-                  child: TextField(
-                    controller: _ctrl,
-                    style: TextStyle(fontSize: 13, color: scheme.onSurface),
-                    decoration: InputDecoration(
-                      hintText: s.aiChatHint,
-                      hintStyle: TextStyle(fontSize: 12, color: scheme.outline),
-                      isDense: true,
-                      contentPadding: btn.fieldPadding,
-                      // 压平桌面端的 -8px 密度偏移，否则同一份 contentPadding 在两端高度不同
-                      visualDensity: AppControlSize.fieldDensity,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(btn.radius),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerLow.withAlpha(220),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: scheme.outlineVariant.withAlpha(90)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(5),
+              child: Row(
+                // 输入框多行后行高会长，底对齐才能让发送 / 停止键始终贴在最后一行旁边
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  // 输入框与右侧发送键同档（comfortable 36）：改造前输入框随主题算出约 32，
+                  // 发送键却是写死的 40×40 圆形 —— 一个矮一个高，底部那行看着就歪。
+                  // 多行时不能再套 fieldBox 钉死高度（会把第二行裁掉），改用 minHeight 兜底。
+                  Expanded(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(minHeight: btn.height),
+                      child: TextField(
+                        controller: _ctrl,
+                        style: TextStyle(fontSize: 13, color: scheme.onSurface),
+                        decoration: InputDecoration(
+                          hintText: s.aiChatHint,
+                          hintStyle: TextStyle(
+                            fontSize: 12,
+                            color: scheme.outline,
+                          ),
+                          isDense: true,
+                          contentPadding: btn.fieldPadding,
+                          // 压平桌面端的 -8px 密度偏移，否则同一份 contentPadding 在两端高度不同
+                          visualDensity: AppControlSize.fieldDensity,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(btn.radius),
+                          ),
+                          suffixIconConstraints: AppControlSize.iconSlot,
+                        ),
+                        // 桌面端单行：Enter 直接发送；移动端多行：回车即换行，发送靠右侧圆钮
+                        onSubmitted: maxInputLines > 1 ? null : (_) => _send(),
+                        minLines: 1,
+                        maxLines: maxInputLines,
+                        textInputAction: maxInputLines > 1
+                            ? TextInputAction.newline
+                            : TextInputAction.send,
                       ),
-                      suffixIconConstraints: AppControlSize.iconSlot,
                     ),
-                    // 桌面端单行：Enter 直接发送；移动端多行：回车即换行，发送靠右侧圆钮
-                    onSubmitted: maxInputLines > 1 ? null : (_) => _send(),
-                    minLines: 1,
-                    maxLines: maxInputLines,
-                    textInputAction: maxInputLines > 1
-                        ? TextInputAction.newline
-                        : TextInputAction.send,
                   ),
-                ),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: btn.height,
+                    height: btn.height,
+                    // 生成中：圆钮由「禁用加载圈」换成「停止」。原实现 onPressed: null，
+                    // 模型返回一慢，用户唯一能做的就是等（移动端还得先关掉弹层才能干别的）。
+                    // 点停止会关闭当前 HTTP 连接，并保留已经流式收到的部分内容。
+                    child: _loading
+                        ? FilledButton(
+                            onPressed: _stopGeneration,
+                            style: FilledButton.styleFrom(
+                              padding: EdgeInsets.zero,
+                              shape: const CircleBorder(),
+                            ),
+                            child: Icon(Icons.stop_rounded, size: btn.iconSize),
+                          )
+                        : FilledButton(
+                            onPressed: _send,
+                            style: FilledButton.styleFrom(
+                              padding: EdgeInsets.zero,
+                              shape: const CircleBorder(),
+                            ),
+                            child: Icon(Icons.send, size: btn.iconSize),
+                          ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 8),
-              SizedBox(
-                width: btn.height,
-                height: btn.height,
-                // 生成中：圆钮由「禁用加载圈」换成「停止」。原实现 onPressed: null，
-                // 模型返回一慢，用户唯一能做的就是等（移动端还得先关掉弹层才能干别的）。
-                // 点停止会关闭当前 HTTP 连接，并保留已经流式收到的部分内容。
-                child: _loading
-                    ? FilledButton(
-                        onPressed: _stopGeneration,
-                        style: FilledButton.styleFrom(
-                          padding: EdgeInsets.zero,
-                          shape: const CircleBorder(),
-                        ),
-                        child: Icon(Icons.stop_rounded, size: btn.iconSize),
-                      )
-                    : FilledButton(
-                        onPressed: _send,
-                        style: FilledButton.styleFrom(
-                          padding: EdgeInsets.zero,
-                          shape: const CircleBorder(),
-                        ),
-                        child: Icon(Icons.send, size: btn.iconSize),
-                      ),
-              ),
-            ],
+            ),
           ),
         ),
       ],

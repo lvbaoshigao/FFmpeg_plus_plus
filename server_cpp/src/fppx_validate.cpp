@@ -186,40 +186,46 @@ void validateGraphSemantics(const std::vector<VNode>& nodes, const std::vector<V
         }
     }
 
-    // start → output 可达性（沿数据连线）
+    // 构造一次邻接表，复用于起点可达性和环检测。
+    std::vector<std::vector<int>> dataAdj(n), allAdj(n);
+    for (const auto& e : edges) {
+        if (e.from < 0 || e.from >= n || e.to < 0 || e.to >= n) continue;
+        allAdj[e.from].push_back(e.to);
+        if (!e.control) dataAdj[e.from].push_back(e.to);
+    }
+
+    // start → output 可达性（沿数据连线）。反向遍历从输出标记可达集，
+    // 避免每个源节点都重新分配 visited 并重复扫描整张图。
     {
-        std::vector<std::vector<int>> adj(n);
-        for (const auto& e : edges)
-            if (!e.control && e.from >= 0 && e.from < n && e.to >= 0 && e.to < n)
-                adj[e.from].push_back(e.to);
-        for (int s = 0; s < n; ++s) {
-            if (!nodes[s].isStart) continue;
-            std::vector<bool> vis(n, false);
-            std::vector<int> stack{s};
-            vis[s] = true;
-            bool reach = false;
-            while (!stack.empty() && !reach) {
-                int cur = stack.back();
-                stack.pop_back();
-                for (int nxt : adj[cur]) {
-                    if (vis[nxt]) continue;
-                    vis[nxt] = true;
-                    if (nodes[nxt].isOutput) { reach = true; break; }
-                    stack.push_back(nxt);
-                }
+        std::vector<bool> reachesOutput(n, false);
+        std::vector<int> stack;
+        for (int i = 0; i < n; ++i) {
+            if (nodes[i].isOutput) {
+                reachesOutput[i] = true;
+                stack.push_back(i);
             }
-            if (!reach) {
-                errors.push_back("源文件节点「" + labelOf(s) + "」没有连到任何输出节点");
+        }
+        std::vector<std::vector<int>> reverseDataAdj(n);
+        for (int from = 0; from < n; ++from)
+            for (int to : dataAdj[from]) reverseDataAdj[to].push_back(from);
+        while (!stack.empty()) {
+            const int cur = stack.back();
+            stack.pop_back();
+            for (int prev : reverseDataAdj[cur]) {
+                if (reachesOutput[prev]) continue;
+                reachesOutput[prev] = true;
+                stack.push_back(prev);
             }
+        }
+        for (int i = 0; i < n; ++i) {
+            if (nodes[i].isStart && !reachesOutput[i])
+                errors.push_back("源文件节点「" + labelOf(i) + "」没有连到任何输出节点");
         }
     }
 
     // 环检测（数据 + 控制连线，DFS 三色标记）
     {
-        std::vector<std::vector<int>> adj(n);
-        for (const auto& e : edges)
-            if (e.from >= 0 && e.from < n && e.to >= 0 && e.to < n)
-                adj[e.from].push_back(e.to);
+        auto& adj = allAdj;
         std::vector<int> color(n, 0); // 0 未访问 1 栈内 2 完成
         std::vector<int> path;
         std::vector<std::string> cycleNodes;

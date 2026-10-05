@@ -22,12 +22,15 @@ class NavGlassPal {
   final double op;
   final int primary;
   final int second;
+
   /// 「设置 → 样式 → 玻璃底色遵循主题色」：玻璃 tint 用主题色而非 surface 灰。
   /// 此前只有桌面端 GlassPanel 读它，移动端底栏/药丸完全不读 → 该开关在移动端
   /// 表现为「无效」。这里纳入指纹并落到 tint 上（默认 false，观感不变）。
   final bool follow;
+
   /// 玻璃细节（模糊度 / 通透度 / 高光强度与位置 / 边缘光）
   final GlassTuning tuning;
+
   /// 主题色协调度（避免直接铺 scheme.primary 过亮）
   final double tone;
   const NavGlassPal({
@@ -80,8 +83,10 @@ NavGlassPal navGlassPalOf(BuildContext context) =>
 /// 由 navStyle + 透明度 + 主题派生的即时视觉值。
 class NavGlassLook {
   final String style;
+
   /// theme/gray 为纯色实心（不透明）
   final bool solid;
+
   /// 容器染色（liquid 模式作为 OCLiquidGlass 的 color，其余作 Container 底色）
   final Color tint;
   final Color borderColor;
@@ -116,8 +121,8 @@ NavGlassLook navGlassLook(ColorScheme scheme, bool isDark, NavGlassPal pal) {
   final baseColor = style == SurfaceStyle.theme
       ? accent
       : style == SurfaceStyle.gray
-          ? neutralGray(scheme.surfaceContainerHigh)
-          : (pal.follow ? accent : scheme.surface);
+      ? neutralGray(scheme.surfaceContainerHigh)
+      : (pal.follow ? accent : scheme.surface);
   // 边缘光 → 描边的透明度/线宽缩放（基准 1.0 = 与改动前一致）
   final edgeBlur = edgeBorder(70 / 255, 0.5, pal.tuning.edge);
   final edgeWhite = edgeBorder(isDark ? 0.16 : 0.32, 0.7, pal.tuning.edge);
@@ -126,7 +131,9 @@ NavGlassLook navGlassLook(ColorScheme scheme, bool isDark, NavGlassPal pal) {
     solid: solid,
     tint: baseColor.withAlpha(baseAlpha),
     borderColor: style == SurfaceStyle.blur
-        ? scheme.outlineVariant.withAlpha((edgeBlur.alpha * 255).round().clamp(0, 255))
+        ? scheme.outlineVariant.withAlpha(
+            (edgeBlur.alpha * 255).round().clamp(0, 255),
+          )
         : Colors.white.withValues(alpha: edgeWhite.alpha),
     borderWidth: style == SurfaceStyle.blur ? edgeBlur.width : edgeWhite.width,
     // 遮罩已改为「完全透明 + 中性描边」（见 navMaskPill），选中态由图标/文字
@@ -136,8 +143,8 @@ NavGlassLook navGlassLook(ColorScheme scheme, bool isDark, NavGlassPal pal) {
     selectedColor: style == SurfaceStyle.theme
         ? scheme.onPrimary
         : style == SurfaceStyle.gray
-            ? scheme.onSurface
-            : scheme.primary,
+        ? scheme.onSurface
+        : scheme.primary,
     unselectedColor: scheme.onSurfaceVariant,
   );
 }
@@ -204,10 +211,13 @@ const double kMobileNavRailExtent = 60.0;
 
 class NavGlassShell extends StatelessWidget {
   final NavGlassPal pal;
+
   /// 胶囊圆角（一般 = 栏高一半）
   final double radius;
+
   /// OCLiquidGlass 的 key 前缀：同屏多实例（如主导航 + 弹层内切换栏）时防 key 冲突
   final String keyPrefix;
+
   /// 菜单栏摆放位置：决定外壳四周「让出哪一边的安全区」。子页面切换栏
   /// （MobileNavStyleTabBar）恒在底部，故默认值即其原有行为。
   final MobileNavPlacement placement;
@@ -255,8 +265,10 @@ class NavGlassShell extends StatelessWidget {
     // gpuGlassEnabledOf 统一判定（PC 端默认关闭）。
     final GlassTuning tuning = pal.tuning;
     final double shellSigma = effectiveGlassSigma(tuning.blur);
-    final EdgeInsets shellPad =
-        shellPadding(MediaQuery.of(context).padding, placement);
+    final EdgeInsets shellPad = shellPadding(
+      MediaQuery.of(context).padding,
+      placement,
+    );
     final op = pal.op.clamp(0.0, 1.0);
     // 「样式 → 添加边框」：给导航/切换栏胶囊叠一条同圆角描边。
     // 只包 child 而不是整个 build：外壳外面还有一层「栏内边距」（底部形态是
@@ -271,10 +283,7 @@ class NavGlassShell extends StatelessWidget {
 
     // theme/gray：纯色药丸（无玻璃光效）
     if (look.solid) {
-      return Padding(
-        padding: shellPad,
-        child: borderedChild,
-      );
+      return Padding(padding: shellPad, child: borderedChild);
     }
 
     // blur：扁平高斯模糊（无 3D 液态光效），遮罩为实心主题色
@@ -375,15 +384,18 @@ class NavGlassShell extends StatelessWidget {
 class MobileBottomNav extends StatefulWidget {
   final int selectedIndex;
   final ValueChanged<int> onSelected;
+
   /// 菜单栏摆放位置。由 app.dart 用
   /// `resolveMobileNavPlacement(config.mobileNavPlacement, 屏宽, 屏高)` 解析后下发
   /// —— 判定逻辑只此一份，导航栏本身不做平台/尺寸判定。
   final MobileNavPlacement placement;
+
   /// 可选：主界面 PageView 的控制器。传入后遮罩在「页面滑动中」会连续跟随
   /// PageView 的实时位置（0.0~3.0 的小数页），而不是等 onPageChanged 按整页
   /// 跳变 —— 修复从第 1 页快速滑到第 4 页时遮罩在第 3 项短暂停留再跳走的
   /// 「动画跳跃」问题。仅遮罩子树订阅该 Listenable，每帧重建成本极小。
   final PageController? pageController;
+
   /// 滑动自动收起：true = 整条菜单栏滑出屏幕下缘（仅底部形态由 app.dart 下发；
   /// 侧边导轨恒为 false）。动画由 [_MobileBottomNavState] 的弹簧模拟驱动，
   /// 到位后带一次过冲回弹。
@@ -408,6 +420,7 @@ class _MobileBottomNavState extends State<MobileBottomNav>
   /// 「到位后回弹」）。Transform.translate 只改绘制不改布局，收起全程不会
   /// 触发 PageView / 玻璃外壳重新布局。
   late final AnimationController _hideCtrl;
+
   /// 是否竖排导轨（左 / 右）：横排与竖排共用同一套「主轴线位置」状态
   /// （[_dragX] = 主轴线上的遮罩中心、[itemExtent] = 每个药丸在主轴上的长度），
   /// 只有轴向映射与手势类型不同。
@@ -421,8 +434,10 @@ class _MobileBottomNavState extends State<MobileBottomNav>
   /// 导航栏（含 OCLiquidGlassGroup / OCLiquidGlass 的 GPU shader 组件），
   /// 造成 shader uniform 重置与移动端掉帧。改为只让遮罩定位子树订阅。
   final ValueNotifier<double?> _dragX = ValueNotifier<double?>(null);
+
   /// 拖动开始时手指相对遮罩中心的偏移：抓取点不跳变。
   double _dragGrabOffset = 0;
+
   /// 长按手势是否已接管拖动（接管后 horizontalDrag 的 cancel 不得复位遮罩，
   /// 否则遮罩会先跳回旧选中项、再被长按移动拉回，出现可见的双吸附抖动）。
   bool _longPressActive = false;
@@ -441,7 +456,8 @@ class _MobileBottomNavState extends State<MobileBottomNav>
   /// 弹回旧页面位置再跟着页面走（用户反馈的「弹一下才移动」）。页面停稳后自动清除。
   bool _releasedFromDrag = false;
 
-  bool get _pageIsScrolling => _pagePosition?.isScrollingNotifier.value ?? false;
+  bool get _pageIsScrolling =>
+      _pagePosition?.isScrollingNotifier.value ?? false;
 
   /// 绑定 / 解绑 pageController 的 ScrollPosition（幂等，可在 build 中安全调用）。
   /// 之所以要拿 position：需要 isScrollingNotifier 判断「PageView 是否真的在滑动」，
@@ -484,12 +500,18 @@ class _MobileBottomNavState extends State<MobileBottomNav>
     if (oldWidget.hidden == widget.hidden) return;
     // 欠阻尼弹簧（ratio < 1）：到达目标值时过冲再回落 = 用户要求的
     // 「移动到指定位置后回弹」。刚度 260 ≈ 300ms 内完成主行程。
-    _hideCtrl.animateWith(SpringSimulation(
-      SpringDescription.withDampingRatio(mass: 1, stiffness: 260, ratio: 0.55),
-      _hideCtrl.value,
-      widget.hidden ? 1.0 : 0.0,
-      _hideCtrl.velocity,
-    ));
+    _hideCtrl.animateWith(
+      SpringSimulation(
+        SpringDescription.withDampingRatio(
+          mass: 1,
+          stiffness: 260,
+          ratio: 0.55,
+        ),
+        _hideCtrl.value,
+        widget.hidden ? 1.0 : 0.0,
+        _hideCtrl.velocity,
+      ),
+    );
   }
 
   @override
@@ -526,7 +548,11 @@ class _MobileBottomNavState extends State<MobileBottomNav>
     final items = <(IconData, IconData, String)>[
       (Icons.movie_outlined, Icons.movie, s.navProjects),
       (Icons.list_alt_outlined, Icons.list_alt, s.navQueue),
-      (Icons.folder_copy_outlined, Icons.folder_copy, lang == 'zh' ? '配置库' : 'Configs'),
+      (
+        Icons.folder_copy_outlined,
+        Icons.folder_copy,
+        lang == 'zh' ? '配置库' : 'Configs',
+      ),
       (Icons.settings_outlined, Icons.settings, s.navSettings),
     ];
 
@@ -578,21 +604,33 @@ class _MobileBottomNavState extends State<MobileBottomNav>
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             // ── 点按：切到纵轴上最近的药丸（与横排同一套「最近中心」判定） ──
-            onTapUp: (d) => widget.onSelected(itemToPage[_nearestIndex(
-                    d.localPosition.dy, itemExtent, pillGap, items.length)] ??
-                0),
+            onTapUp: (d) => widget.onSelected(
+              itemToPage[_nearestIndex(
+                    d.localPosition.dy,
+                    itemExtent,
+                    pillGap,
+                    items.length,
+                  )] ??
+                  0,
+            ),
             // ── 长按：遮罩放大反馈 + 抓取，随后跟随手指 ──
             onLongPressStart: (d) => setState(() {
               _longPressActive = true;
               final nearest = _nearestIndex(
-                  d.localPosition.dy, itemExtent, pillGap, items.length);
+                d.localPosition.dy,
+                itemExtent,
+                pillGap,
+                items.length,
+              );
               final grabCenter = _itemCenter(nearest, itemExtent, pillGap);
               _dragGrabOffset = d.localPosition.dy - grabCenter;
               _dragX.value = grabCenter;
             }),
             onLongPressMoveUpdate: (d) {
-              _dragX.value = (d.localPosition.dy - _dragGrabOffset)
-                  .clamp(itemExtent / 2, totalMain - itemExtent / 2);
+              _dragX.value = (d.localPosition.dy - _dragGrabOffset).clamp(
+                itemExtent / 2,
+                totalMain - itemExtent / 2,
+              );
             },
             onLongPressEnd: (_) {
               _longPressActive = false;
@@ -605,14 +643,20 @@ class _MobileBottomNavState extends State<MobileBottomNav>
             // ── 纵向快速滑动：同样走拖动跟随（轴向换成 dy） ──
             onVerticalDragStart: (d) {
               final nearest = _nearestIndex(
-                  d.localPosition.dy, itemExtent, pillGap, items.length);
+                d.localPosition.dy,
+                itemExtent,
+                pillGap,
+                items.length,
+              );
               final grabCenter = _itemCenter(nearest, itemExtent, pillGap);
               _dragGrabOffset = d.localPosition.dy - grabCenter;
               _dragX.value = grabCenter;
             },
             onVerticalDragUpdate: (d) {
-              _dragX.value = (d.localPosition.dy - _dragGrabOffset)
-                  .clamp(itemExtent / 2, totalMain - itemExtent / 2);
+              _dragX.value = (d.localPosition.dy - _dragGrabOffset).clamp(
+                itemExtent / 2,
+                totalMain - itemExtent / 2,
+              );
             },
             onVerticalDragEnd: (_) =>
                 _endDrag(itemExtent, items.length, pillGap, itemToPage),
@@ -621,31 +665,40 @@ class _MobileBottomNavState extends State<MobileBottomNav>
               if (_longPressActive) return;
               _dragX.value = null;
             },
-            child: Stack(children: [
-              _buildRailMask(itemIdx, itemExtent, pillGap, items.length,
-                  scheme: scheme, isDark: isDark, style: style),
-              // 药丸列：主轴按固定 54 依次排布，交叉轴 stretch 撑满 52
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  for (var i = 0; i < items.length; i++) ...[
-                    if (i > 0) const SizedBox(height: pillGap),
-                    SizedBox(
-                      height: itemExtent,
-                      child: _NavItem(
-                        icon: items[i].$1,
-                        activeIcon: items[i].$2,
-                        label: items[i].$3,
-                        selected: i == itemIdx,
-                        selectedColor: selectedColor,
-                        unselectedColor: unselectedColor,
-                        maxWidth: crossExtent,
+            child: Stack(
+              children: [
+                _buildRailMask(
+                  itemIdx,
+                  itemExtent,
+                  pillGap,
+                  items.length,
+                  scheme: scheme,
+                  isDark: isDark,
+                  style: style,
+                ),
+                // 药丸列：主轴按固定 54 依次排布，交叉轴 stretch 撑满 52
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (var i = 0; i < items.length; i++) ...[
+                      if (i > 0) const SizedBox(height: pillGap),
+                      SizedBox(
+                        height: itemExtent,
+                        child: _NavItem(
+                          icon: items[i].$1,
+                          activeIcon: items[i].$2,
+                          label: items[i].$3,
+                          selected: i == itemIdx,
+                          selectedColor: selectedColor,
+                          unselectedColor: unselectedColor,
+                          maxWidth: crossExtent,
+                        ),
                       ),
-                    ),
+                    ],
                   ],
-                ],
-              ),
-            ]),
+                ),
+              ],
+            ),
           ),
         ),
       );
@@ -665,124 +718,135 @@ class _MobileBottomNavState extends State<MobileBottomNav>
         decoration: BoxDecoration(
           color: style == SurfaceStyle.liquid ? Colors.transparent : look.tint,
           borderRadius: BorderRadius.circular(radius),
-          border: Border.all(
-            color: look.borderColor,
-            width: look.borderWidth,
-          ),
+          border: Border.all(color: look.borderColor, width: look.borderWidth),
         ),
         clipBehavior: Clip.antiAlias,
-        child: LayoutBuilder(builder: (ctx, cons) {
-          // 计算每个药丸的宽度（减去间距）
-          final totalGap = pillGap * (items.length - 1);
-          final itemW = (cons.maxWidth - totalGap) / items.length;
-          return GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            // ── 点按：直接切换到手指位置最近的药丸（遮罩 + PageView 滑动动画） ──
-            onTapUp: (d) {
-              final dx = d.localPosition.dx;
-              int nearest = 0;
-              var bestDist = double.infinity;
-              for (var i = 0; i < items.length; i++) {
-                final dist = (dx - _itemCenter(i, itemW, pillGap)).abs();
-                if (dist < bestDist) {
-                  bestDist = dist;
-                  nearest = i;
+        child: LayoutBuilder(
+          builder: (ctx, cons) {
+            // 计算每个药丸的宽度（减去间距）
+            final totalGap = pillGap * (items.length - 1);
+            final itemW = (cons.maxWidth - totalGap) / items.length;
+            return GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              // ── 点按：直接切换到手指位置最近的药丸（遮罩 + PageView 滑动动画） ──
+              onTapUp: (d) {
+                final dx = d.localPosition.dx;
+                int nearest = 0;
+                var bestDist = double.infinity;
+                for (var i = 0; i < items.length; i++) {
+                  final dist = (dx - _itemCenter(i, itemW, pillGap)).abs();
+                  if (dist < bestDist) {
+                    bestDist = dist;
+                    nearest = i;
+                  }
                 }
-              }
-              widget.onSelected(itemToPage[nearest] ?? 0);
-            },
-            // ── 长按（按住）：遮罩放大反馈 + 开始抓取，后续移动跟随手指 ──
-            onLongPressStart: (d) => setState(() {
-              _longPressActive = true;
-              // 按在哪个药丸上，遮罩就从哪个药丸中心开始抓取
-              final dx = d.localPosition.dx;
-              int nearest = 0;
-              var bestDist = double.infinity;
-              for (var i = 0; i < items.length; i++) {
-                final dist = (dx - _itemCenter(i, itemW, pillGap)).abs();
-                if (dist < bestDist) {
-                  bestDist = dist;
-                  nearest = i;
+                widget.onSelected(itemToPage[nearest] ?? 0);
+              },
+              // ── 长按（按住）：遮罩放大反馈 + 开始抓取，后续移动跟随手指 ──
+              onLongPressStart: (d) => setState(() {
+                _longPressActive = true;
+                // 按在哪个药丸上，遮罩就从哪个药丸中心开始抓取
+                final dx = d.localPosition.dx;
+                int nearest = 0;
+                var bestDist = double.infinity;
+                for (var i = 0; i < items.length; i++) {
+                  final dist = (dx - _itemCenter(i, itemW, pillGap)).abs();
+                  if (dist < bestDist) {
+                    bestDist = dist;
+                    nearest = i;
+                  }
                 }
-              }
-              final grabCenter = _itemCenter(nearest, itemW, pillGap);
-              _dragGrabOffset = d.localPosition.dx - grabCenter;
-              _dragX.value = grabCenter;
-            }),
-            onLongPressMoveUpdate: (d) {
-              _dragX.value = (d.localPosition.dx - _dragGrabOffset)
-                  .clamp(itemW / 2, cons.maxWidth - itemW / 2);
-            },
-            onLongPressEnd: (_) {
-              _longPressActive = false;
-              _endDrag(itemW, items.length, pillGap, itemToPage);
-            },
-            onLongPressCancel: () {
-              _longPressActive = false;
-              _dragX.value = null;
-            },
-            // ── 快速水平滑动（<500ms）：同样走拖动跟随 ──
-            onHorizontalDragStart: (d) {
-              final dx = d.localPosition.dx;
-              int nearest = 0;
-              var bestDist = double.infinity;
-              for (var i = 0; i < items.length; i++) {
-                final dist = (dx - _itemCenter(i, itemW, pillGap)).abs();
-                if (dist < bestDist) {
-                  bestDist = dist;
-                  nearest = i;
+                final grabCenter = _itemCenter(nearest, itemW, pillGap);
+                _dragGrabOffset = d.localPosition.dx - grabCenter;
+                _dragX.value = grabCenter;
+              }),
+              onLongPressMoveUpdate: (d) {
+                _dragX.value = (d.localPosition.dx - _dragGrabOffset).clamp(
+                  itemW / 2,
+                  cons.maxWidth - itemW / 2,
+                );
+              },
+              onLongPressEnd: (_) {
+                _longPressActive = false;
+                _endDrag(itemW, items.length, pillGap, itemToPage);
+              },
+              onLongPressCancel: () {
+                _longPressActive = false;
+                _dragX.value = null;
+              },
+              // ── 快速水平滑动（<500ms）：同样走拖动跟随 ──
+              onHorizontalDragStart: (d) {
+                final dx = d.localPosition.dx;
+                int nearest = 0;
+                var bestDist = double.infinity;
+                for (var i = 0; i < items.length; i++) {
+                  final dist = (dx - _itemCenter(i, itemW, pillGap)).abs();
+                  if (dist < bestDist) {
+                    bestDist = dist;
+                    nearest = i;
+                  }
                 }
-              }
-              final grabCenter = _itemCenter(nearest, itemW, pillGap);
-              _dragGrabOffset = d.localPosition.dx - grabCenter;
-              _dragX.value = grabCenter;
-            },
-            onHorizontalDragUpdate: (d) {
-              _dragX.value = (d.localPosition.dx - _dragGrabOffset)
-                  .clamp(itemW / 2, cons.maxWidth - itemW / 2);
-            },
-            onHorizontalDragEnd: (_) => _endDrag(itemW, items.length, pillGap, itemToPage),
-            onHorizontalDragCancel: () {
-              // 长按已接管时由长按流程收尾，这里不要复位遮罩（否则先跳回旧项）。
-              if (_longPressActive) return;
-              _dragX.value = null;
-            },
-            child: SizedBox(
-              width: cons.maxWidth,
-              height: cons.maxHeight,
-              child: Stack(children: [
-              // 滑动遮罩胶囊：切换菜单时在条目间平滑滑动；拖动时跟随手指；
-              // 页面滑动（PageView）中连续跟随页面位置（见 pageController），
-              // 不再「途经项停留后跳变」。
-              _buildMaskPositioned(
-                itemIdx, itemW, pillGap, items.length,
-                scheme: scheme, isDark: isDark, style: style,
-              ),
-              // 药丸行：每个药丸之间有间距，crossAxisAlignment.stretch 让药丸填满高度
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  for (var i = 0; i < items.length; i++) ...[
-                    if (i > 0) const SizedBox(width: pillGap),
-                    SizedBox(
-                      width: itemW,
-                      child: _NavItem(
-                        icon: items[i].$1,
-                        activeIcon: items[i].$2,
-                        label: items[i].$3,
-                        selected: i == itemIdx,
-                        selectedColor: selectedColor,
-                        unselectedColor: unselectedColor,
-                        maxWidth: itemW,
-                      ),
+                final grabCenter = _itemCenter(nearest, itemW, pillGap);
+                _dragGrabOffset = d.localPosition.dx - grabCenter;
+                _dragX.value = grabCenter;
+              },
+              onHorizontalDragUpdate: (d) {
+                _dragX.value = (d.localPosition.dx - _dragGrabOffset).clamp(
+                  itemW / 2,
+                  cons.maxWidth - itemW / 2,
+                );
+              },
+              onHorizontalDragEnd: (_) =>
+                  _endDrag(itemW, items.length, pillGap, itemToPage),
+              onHorizontalDragCancel: () {
+                // 长按已接管时由长按流程收尾，这里不要复位遮罩（否则先跳回旧项）。
+                if (_longPressActive) return;
+                _dragX.value = null;
+              },
+              child: SizedBox(
+                width: cons.maxWidth,
+                height: cons.maxHeight,
+                child: Stack(
+                  children: [
+                    // 滑动遮罩胶囊：切换菜单时在条目间平滑滑动；拖动时跟随手指；
+                    // 页面滑动（PageView）中连续跟随页面位置（见 pageController），
+                    // 不再「途经项停留后跳变」。
+                    _buildMaskPositioned(
+                      itemIdx,
+                      itemW,
+                      pillGap,
+                      items.length,
+                      scheme: scheme,
+                      isDark: isDark,
+                      style: style,
+                    ),
+                    // 药丸行：每个药丸之间有间距，crossAxisAlignment.stretch 让药丸填满高度
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        for (var i = 0; i < items.length; i++) ...[
+                          if (i > 0) const SizedBox(width: pillGap),
+                          SizedBox(
+                            width: itemW,
+                            child: _NavItem(
+                              icon: items[i].$1,
+                              activeIcon: items[i].$2,
+                              label: items[i].$3,
+                              selected: i == itemIdx,
+                              selectedColor: selectedColor,
+                              unselectedColor: unselectedColor,
+                              maxWidth: itemW,
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ],
-                ],
+                ),
               ),
-            ]),
-            ),
-          );
-        }),
+            );
+          },
+        ),
       );
     }
 
@@ -829,7 +893,12 @@ class _MobileBottomNavState extends State<MobileBottomNav>
   /// 死区内全部不命中 → target 默认为 0（误跳回首页）。
   /// 现在：先切页（父组件同帧更新 selectedIndex），再复位拖动态；
   /// 目标用最近中心选取，无缝隙死区。
-  void _endDrag(double itemW, int itemCount, double gap, Map<int, int> pageMap) {
+  void _endDrag(
+    double itemW,
+    int itemCount,
+    double gap,
+    Map<int, int> pageMap,
+  ) {
     // 进入「吸附窗口」：app.dart 的 _selectMobileNav 会紧接着对该 PageView 调用
     // animateToPage，此时遮罩必须继续用 260ms 从松手点吸附到目标药丸，而不能切到
     // 「跟随页面」（否则会先弹回旧页面位置 —— 见 _buildMaskFor 的注释）。
@@ -856,7 +925,8 @@ class _MobileBottomNavState extends State<MobileBottomNav>
   double _itemLeft(int i, double itemW, double gap) => i * (itemW + gap);
 
   /// 第 i 个药丸的中心位置（考虑间距）。
-  double _itemCenter(int i, double itemW, double gap) => i * (itemW + gap) + itemW / 2;
+  double _itemCenter(int i, double itemW, double gap) =>
+      i * (itemW + gap) + itemW / 2;
 
   /// 构建遮罩胶囊的定位子树。
   ///
@@ -890,8 +960,14 @@ class _MobileBottomNavState extends State<MobileBottomNav>
       builder: (context, dragX, _) => ValueListenableBuilder<int>(
         valueListenable: _pageTick,
         builder: (context, _, _) => _buildMaskFor(
-          dragX, itemIdx, itemW, pillGap, itemCount,
-          scheme: scheme, isDark: isDark, style: style,
+          dragX,
+          itemIdx,
+          itemW,
+          pillGap,
+          itemCount,
+          scheme: scheme,
+          isDark: isDark,
+          style: style,
         ),
       ),
     );
@@ -909,10 +985,10 @@ class _MobileBottomNavState extends State<MobileBottomNav>
   }) {
     final dragging = dragX != null;
     final mask = AnimatedScale(
-      // 长按/拖动时放大，明确标识「已抓取/被选中」
+      // Deliberate tactile feedback while the user presses or drags the mask.
       scale: dragging ? 1.25 : 1.0,
       duration: const Duration(milliseconds: 150),
-      curve: Curves.easeOut,
+      curve: Curves.easeOutBack,
       child: RepaintBoundary(child: navMaskPill(scheme, isDark, style)),
     );
 
@@ -951,7 +1027,9 @@ class _MobileBottomNavState extends State<MobileBottomNav>
           : const Duration(milliseconds: 260),
       curve: Curves.easeOutCubic,
       // 左右各内缩 kMobileNavMaskInset：遮罩不再顶到相邻项
-      left: (followLeft ?? _itemLeft(itemIdx, itemW, pillGap)) + kMobileNavMaskInset,
+      left:
+          (followLeft ?? _itemLeft(itemIdx, itemW, pillGap)) +
+          kMobileNavMaskInset,
       top: 2,
       bottom: 2,
       width: mobileNavMaskWidth(itemW),
@@ -997,10 +1075,10 @@ class _MobileBottomNavState extends State<MobileBottomNav>
         builder: (context, _, _) {
           final dragging = dragPos != null;
           final mask = AnimatedScale(
-            // 与横排同规则：长按/拖动时放大，明确标识「已抓取/被选中」
+            // Keep tactile feedback consistent in the vertical rail layout.
             scale: dragging ? 1.25 : 1.0,
             duration: const Duration(milliseconds: 150),
-            curve: Curves.easeOut,
+            curve: Curves.easeOutBack,
             child: RepaintBoundary(child: navMaskPill(scheme, isDark, style)),
           );
 
@@ -1040,7 +1118,8 @@ class _MobileBottomNavState extends State<MobileBottomNav>
             curve: Curves.easeOutCubic,
             // 上下各内缩 kMobileNavMaskInset：与横排同一条间距规则，
             // 竖排导轨的遮罩不再顶着相邻药丸
-            top: (followTop ?? _itemLeft(itemIdx, itemExtent, gap)) +
+            top:
+                (followTop ?? _itemLeft(itemIdx, itemExtent, gap)) +
                 kMobileNavMaskInset,
             left: 2,
             right: 2,
@@ -1060,9 +1139,11 @@ class _NavItem extends StatelessWidget {
   final bool selected;
   final Color selectedColor;
   final Color unselectedColor;
+
   /// 图标/文字尺寸：主导航 60px 高用默认值，较矮的子页面切换栏可调小。
   final double iconSize;
   final double labelSize;
+
   /// 可用宽度（= 父级 SizedBox 给出的 itemW）。
   /// [FIX UI-文字缩放溢出] 把内容宽度钉死为 itemW，使 FittedBox(scaleDown)
   /// 只做**纵向**缩放；否则 FittedBox 会以无界宽度测量子节点，长标签会从
@@ -1154,6 +1235,7 @@ class MobileNavStyleTabBar extends StatefulWidget {
   final List<(IconData, String)> items;
   final int selectedIndex;
   final ValueChanged<int> onSelected;
+
   /// 栏高（含 4px 内边距），默认 54——比主导航 60 略矮，适合子页面
   final double height;
 
@@ -1203,68 +1285,74 @@ class _MobileNavStyleTabBarState extends State<MobileNavStyleTabBar> {
           border: Border.all(color: look.borderColor, width: look.borderWidth),
         ),
         clipBehavior: Clip.antiAlias,
-        child: LayoutBuilder(builder: (ctx, cons) {
-          final totalGap = pillGap * (widget.items.length - 1);
-          final itemW = (cons.maxWidth - totalGap) / widget.items.length;
-          return GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            // 点按最近项：与主导航一致的「就近吸附」手感
-            onTapUp: (d) {
-              final dx = d.localPosition.dx;
-              int nearest = 0;
-              var bestDist = double.infinity;
-              for (var i = 0; i < widget.items.length; i++) {
-                final dist = (dx - (i * (itemW + pillGap) + itemW / 2)).abs();
-                if (dist < bestDist) {
-                  bestDist = dist;
-                  nearest = i;
+        child: LayoutBuilder(
+          builder: (ctx, cons) {
+            final totalGap = pillGap * (widget.items.length - 1);
+            final itemW = (cons.maxWidth - totalGap) / widget.items.length;
+            return GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              // 点按最近项：与主导航一致的「就近吸附」手感
+              onTapUp: (d) {
+                final dx = d.localPosition.dx;
+                int nearest = 0;
+                var bestDist = double.infinity;
+                for (var i = 0; i < widget.items.length; i++) {
+                  final dist = (dx - (i * (itemW + pillGap) + itemW / 2)).abs();
+                  if (dist < bestDist) {
+                    bestDist = dist;
+                    nearest = i;
+                  }
                 }
-              }
-              if (nearest != widget.selectedIndex) widget.onSelected(nearest);
-            },
-            child: SizedBox(
-              width: cons.maxWidth,
-              height: cons.maxHeight,
-              child: Stack(children: [
-                // 药丸遮罩：切换时 260ms easeOutCubic 滑动吸附（与主导航一致）
-                AnimatedPositioned(
-                  duration: const Duration(milliseconds: 260),
-                  curve: Curves.easeOutCubic,
-                  // 与主导航同一条内缩规则，保持两处遮罩观感一致
-                  left: widget.selectedIndex * (itemW + pillGap) +
-                      kMobileNavMaskInset,
-                  top: 2,
-                  bottom: 2,
-                  width: mobileNavMaskWidth(itemW),
-                  child: RepaintBoundary(
-                      child: navMaskPill(scheme, isDark, style)),
-                ),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                if (nearest != widget.selectedIndex) widget.onSelected(nearest);
+              },
+              child: SizedBox(
+                width: cons.maxWidth,
+                height: cons.maxHeight,
+                child: Stack(
                   children: [
-                    for (var i = 0; i < widget.items.length; i++) ...[
-                      if (i > 0) const SizedBox(width: pillGap),
-                      SizedBox(
-                        width: itemW,
-                        child: _NavItem(
-                          icon: widget.items[i].$1,
-                          activeIcon: widget.items[i].$1,
-                          label: widget.items[i].$2,
-                          selected: i == widget.selectedIndex,
-                          selectedColor: look.selectedColor,
-                          unselectedColor: look.unselectedColor,
-                          maxWidth: itemW,
-                          iconSize: 21,
-                          labelSize: 10,
-                        ),
+                    // 药丸遮罩：切换时 260ms easeOutCubic 滑动吸附（与主导航一致）
+                    AnimatedPositioned(
+                      duration: const Duration(milliseconds: 260),
+                      curve: Curves.easeOutCubic,
+                      // 与主导航同一条内缩规则，保持两处遮罩观感一致
+                      left:
+                          widget.selectedIndex * (itemW + pillGap) +
+                          kMobileNavMaskInset,
+                      top: 2,
+                      bottom: 2,
+                      width: mobileNavMaskWidth(itemW),
+                      child: RepaintBoundary(
+                        child: navMaskPill(scheme, isDark, style),
                       ),
-                    ],
+                    ),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        for (var i = 0; i < widget.items.length; i++) ...[
+                          if (i > 0) const SizedBox(width: pillGap),
+                          SizedBox(
+                            width: itemW,
+                            child: _NavItem(
+                              icon: widget.items[i].$1,
+                              activeIcon: widget.items[i].$1,
+                              label: widget.items[i].$2,
+                              selected: i == widget.selectedIndex,
+                              selectedColor: look.selectedColor,
+                              unselectedColor: look.unselectedColor,
+                              maxWidth: itemW,
+                              iconSize: 21,
+                              labelSize: 10,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
                   ],
                 ),
-              ]),
-            ),
-          );
-        }),
+              ),
+            );
+          },
+        ),
       );
     }
 
