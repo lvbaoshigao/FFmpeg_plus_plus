@@ -10891,7 +10891,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   Widget _buildMobileTopBar(ColorScheme scheme, AppStrings s) {
     final cfg = context.read<AppState>().config;
     // Keep touch targets intact; narrow screens scroll the complete action row.
-    final requestedScale = cfg.editorToolbarScale.clamp(1.0, 1.6);
+    // Keep the pill compact on phones; large scaling covered the canvas.
+    final requestedScale = cfg.editorToolbarScale.clamp(1.0, 1.1);
     return LayoutBuilder(
       builder: (context, constraints) {
         return SizedBox(
@@ -11209,10 +11210,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   // ── 移动端画布悬浮药丸（顶部工具栏 / 左下缩放条）的统一尺寸 ──
   //
   // Both bars retain 48px touch targets; narrow toolbars scroll horizontally.
-  static const double _kMobileBarHeight = 52;
+  static const double _kMobileBarHeight = 48;
   static const double _kMobileBarRadius = _kMobileBarHeight / 2;
-  static const double _kMobileBarBtnIcon = 20;
-  static const double _kMobileBarBtnPad = 4;
+  static const double _kMobileBarBtnIcon = 18;
+  static const double _kMobileBarBtnPad = 2;
 
   /// Minimum touch target for mobile action buttons, including overflow menus.
   static const double _kMobileBarBtnBox = 48;
@@ -11256,7 +11257,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
               Icons.zoom_out,
               () => _zoomTo(_currentScale - 0.15),
               scheme,
-              size: 20,
+              size: _kMobileBarBtnIcon,
               tooltip: s.isZh ? '缩小' : 'Zoom out',
             ),
             const SizedBox(width: 2),
@@ -11264,7 +11265,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
               Icons.zoom_in,
               () => _zoomTo(_currentScale + 0.15),
               scheme,
-              size: 20,
+              size: _kMobileBarBtnIcon,
               tooltip: s.isZh ? '放大' : 'Zoom in',
             ),
             const SizedBox(width: 2),
@@ -11273,7 +11274,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
               Icons.fit_screen_outlined,
               _zoomToFit,
               scheme,
-              size: 20,
+              size: _kMobileBarBtnIcon,
               tooltip: s.isZh ? '适应画布' : 'Fit to canvas',
             ),
           ],
