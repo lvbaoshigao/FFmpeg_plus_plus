@@ -99,6 +99,7 @@ class IntegrityCheck {
       final exeDir = Directory(Platform.resolvedExecutable).parent;
       dirs
         ..add(exeDir.path)
+        ..add('${exeDir.path}${_s}lib')
         ..add('${exeDir.path}${_s}data');
 
       final manifest = await _loadManifest(exeDir.path);

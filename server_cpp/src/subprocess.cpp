@@ -496,6 +496,11 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
     ProcessResult result;
     if (cmd.empty()) { result.exit_code = -1; return result; }
 
+    // No allocation after fork in a multithreaded host, or after opening fds.
+    std::vector<char*> argv;
+    argv.reserve(cmd.size() + 1);
+    for (const auto& s : cmd) argv.push_back(const_cast<char*>(s.c_str()));
+    argv.push_back(nullptr);
     int stdout_pipe[2], stderr_pipe[2];
     if (createCloexecPipe(stdout_pipe) != 0) {
         result.exit_code = -1;
@@ -532,9 +537,6 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
             close(devnull);
         }
 
-        std::vector<char*> argv;
-        for (const auto& s : cmd) argv.push_back(const_cast<char*>(s.c_str()));
-        argv.push_back(nullptr);
         execvp(argv[0], argv.data());
         _exit(127);
     }
@@ -645,6 +647,11 @@ ProcessResult Subprocess::runWithProgress(
     ProcessResult result;
     if (cmd.empty()) { result.exit_code = -1; return result; }
 
+    // No allocation after fork in a multithreaded host, or after opening fds.
+    std::vector<char*> argv;
+    argv.reserve(cmd.size() + 1);
+    for (const auto& s : cmd) argv.push_back(const_cast<char*>(s.c_str()));
+    argv.push_back(nullptr);
     int stdout_pipe[2], stderr_pipe[2];
     // O_CLOEXEC：修复与 Subprocess::run 相同的 fd 泄漏问题 ——
     // ffmpeg 长转码期间并发的无关子进程（缩略图/探测）若继承这些管道写端，
@@ -684,9 +691,6 @@ ProcessResult Subprocess::runWithProgress(
             close(devnull);
         }
 
-        std::vector<char*> argv;
-        for (const auto& s : cmd) argv.push_back(const_cast<char*>(s.c_str()));
-        argv.push_back(nullptr);
         execvp(argv[0], argv.data());
         _exit(127);
     }
@@ -695,102 +699,83 @@ ProcessResult Subprocess::runWithProgress(
     close(stdout_pipe[1]);
     close(stderr_pipe[1]);
 
-    // stderr 读取线程：缓冲读取（避免逐字节系统调用 + 每字节加锁），按 \r 和 \n 分割行
-    std::mutex stderr_mutex;
-    std::string stderr_line_buf;
-    int stderr_fd = stderr_pipe[0];
-    std::thread stderr_thread([stderr_fd, &on_stderr_line, &stderr_mutex, &stderr_line_buf]() {
-        char buf[4096];
-        ssize_t n;
-        while ((n = read(stderr_fd, buf, sizeof(buf))) > 0) {
-            size_t seg_start = 0;
-            for (ssize_t i = 0; i < n; ++i) {
-                if (buf[i] == '\r' || buf[i] == '\n') {
-                    if (i > (ssize_t)seg_start) {
-                        std::lock_guard<std::mutex> lock(stderr_mutex);
-                        stderr_line_buf.append(buf + seg_start, (size_t)i - seg_start);
-                    }
-                    seg_start = (size_t)i + 1;
-                    std::string line;
-                    {
-                        std::lock_guard<std::mutex> lock(stderr_mutex);
-                        line.swap(stderr_line_buf);  // 移动而非拷贝
-                    }
-                    if (!line.empty() && line.back() == '\r') line.pop_back();
-                    if (!line.empty()) {
-                        try { on_stderr_line(line); } catch (...) {}
-                    }
+    // One nonblocking reader loop avoids two extra threads per task and lets
+    // cancellation/exit bound the drain even when descendants retain pipe writers.
+    fcntl(stdout_pipe[0], F_SETFL, fcntl(stdout_pipe[0], F_GETFL) | O_NONBLOCK);
+    fcntl(stderr_pipe[0], F_SETFL, fcntl(stderr_pipe[0], F_GETFL) | O_NONBLOCK);
+    std::string stderr_line;
+    bool open[2] = {true, true};
+    bool exited = false;
+    bool truncated = false;
+    const auto start = std::chrono::steady_clock::now();
+    auto drainDeadline = start;
+    auto emit = [&]() {
+        if (!stderr_line.empty()) {
+            try { if (on_stderr_line) on_stderr_line(stderr_line); } catch (...) {}
+            stderr_line.clear();
+        }
+    };
+    auto reap = [&]() {
+        kill(pid, SIGKILL);
+        while (waitpid(pid, nullptr, 0) < 0 && errno == EINTR) {}
+        result.exit_code = -1;
+        exited = true;
+        drainDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+    };
+    while (true) {
+        if (!exited) {
+            bool cancelled = false;
+            try { cancelled = isCancelled && isCancelled(); } catch (...) { cancelled = true; }
+            if (cancelled || truncated || (timeout_sec > 0 &&
+                std::chrono::steady_clock::now() - start >= std::chrono::seconds(timeout_sec))) {
+                reap();
+            } else {
+                int status = 0;
+                pid_t w = waitpid(pid, &status, WNOHANG);
+                if (w == pid || (w < 0 && errno != EINTR)) {
+                    if (w == pid && WIFEXITED(status)) result.exit_code = WEXITSTATUS(status);
+                    else if (w == pid && WIFSIGNALED(status)) result.exit_code = -WTERMSIG(status);
+                    exited = true;
+                    drainDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
                 }
             }
-            if ((size_t)n > seg_start) {
-                std::lock_guard<std::mutex> lock(stderr_mutex);
-                stderr_line_buf.append(buf + seg_start, (size_t)n - seg_start);
+        }
+        if (exited && ((!open[0] && !open[1]) ||
+            std::chrono::steady_clock::now() >= drainDeadline)) break;
+        struct pollfd fds[2] = {
+            {open[0] ? stdout_pipe[0] : -1, POLLIN, 0},
+            {open[1] ? stderr_pipe[0] : -1, POLLIN, 0}
+        };
+        poll(fds, 2, 25);
+        // Read one chunk per stream per iteration: continuous output must not
+        // starve cancellation checks or the other stream.
+        for (int i = 0; i < 2; ++i) {
+            if (!open[i] || !fds[i].revents) continue;
+            char buf[4096];
+            ssize_t n = read(fds[i].fd, buf, sizeof(buf));
+            if (n == 0 || (n < 0 && errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK)) {
+                open[i] = false;
+                continue;
+            }
+            if (n <= 0) continue;
+            if (i == 0) {
+                size_t room = kMaxOutputBytes - result.stdout_output.size();
+                result.stdout_output.append(buf, std::min<size_t>(room, n));
+                if (static_cast<size_t>(n) > room) truncated = true;
+            } else {
+                for (ssize_t j = 0; j < n; ++j) {
+                    if (buf[j] == '\r' || buf[j] == '\n') emit();
+                    else if (stderr_line.size() < kMaxOutputBytes) stderr_line.push_back(buf[j]);
+                    else truncated = true;
+                }
             }
         }
-    });
-
-    // stdout 读取线程
-    std::string stdout_data;
-    int stdout_fd = stdout_pipe[0];
-    std::thread stdout_thread([stdout_fd, &stdout_data]() {
-        char buf[4096];
-        ssize_t n;
-        while ((n = read(stdout_fd, buf, sizeof(buf) - 1)) > 0) {
-            stdout_data.append(buf, n);
-        }
-    });
-
-    // 主线程：等待进程退出或取消
-    auto start = std::chrono::steady_clock::now();
-    while (true) {
-        if (isCancelled && isCancelled()) {
-            kill(pid, SIGKILL);
-            waitpid(pid, nullptr, 0);
-            result.exit_code = -1;
-            break;
-        }
-
-        int status;
-        pid_t w = waitpid(pid, &status, WNOHANG);
-        if (w > 0) {
-            if (WIFEXITED(status)) result.exit_code = WEXITSTATUS(status);
-            // 与 Subprocess::run 保持一致：用负信号编号传递信号终止语义。
-            else if (WIFSIGNALED(status)) result.exit_code = -WTERMSIG(status);
-            break;
-        }
-
-        if (timeout_sec > 0) {
-            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-                std::chrono::steady_clock::now() - start).count();
-            if (elapsed >= timeout_sec) {
-                kill(pid, SIGKILL);
-                waitpid(pid, nullptr, 0);
-                result.exit_code = -1;
-                break;
-            }
-        }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-
-    // 子进程已被 waitpid 回收（上面所有 break 路径均已 kill+waitpid 或 waitpid 成功），
-    // 写端随子进程退出而关闭，读取线程的 read() 会返回 0 自然退出。
-    // 因此先 join，等线程退出后再关闭读端 fd，避免「线程仍阻塞在读端、
-    // 另一线程关闭同一 fd」导致的 fd 复用竞态。
-    if (stderr_thread.joinable()) stderr_thread.join();
-    if (stdout_thread.joinable()) stdout_thread.join();
-    
-    // 线程已退出，安全关闭读端
-    closeFd(stderr_pipe[0]);
     closeFd(stdout_pipe[0]);
-
-    result.stdout_output = stdout_data;
-    {
-        std::lock_guard<std::mutex> lock(stderr_mutex);
-        if (!stderr_line_buf.empty()) {
-            on_stderr_line(stderr_line_buf);
-        }
-    }
+    closeFd(stderr_pipe[0]);
+    emit();
+    result.output_truncated = truncated;
+    if (truncated) result.exit_code = -1;
 
     return result;
 }

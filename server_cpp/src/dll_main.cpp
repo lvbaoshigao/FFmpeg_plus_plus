@@ -71,8 +71,11 @@ static void spawnAuxThread(std::function<void()> fn) {
 
     std::lock_guard<std::mutex> lock(g_auxThreadsMutex);
     auto done = std::make_shared<std::atomic<bool>>(false);
-    g_auxThreads.push_back(AuxThread{std::thread([fn, done]() {
-        fn();
+    // Allocate vector storage before starting a joinable thread: allocation
+    // failure during push_back would otherwise terminate the process.
+    g_auxThreads.reserve(g_auxThreads.size() + 1);
+    g_auxThreads.push_back(AuxThread{std::thread([fn = std::move(fn), done]() {
+        try { fn(); } catch (...) { slog("aux thread: unhandled exception"); }
         done->store(true);
     }), done});
 }
@@ -181,6 +184,12 @@ FFMPEGPP_API int ffmpegpp_init() {
     slog_init();
     slog("=== DLL INIT v%s ===", SERVER_VERSION);
 
+    resetMessageQueues();
+    {
+        std::lock_guard<std::mutex> cancelLock(g_cancelMutex);
+        g_cancelledTaskIds.clear();
+        g_cancelledTaskTimes.clear();
+    }
     JsonWriter::start();
 
     JsonWriter::send({{"type", "ready"}, {"version", SERVER_VERSION}});
@@ -198,7 +207,8 @@ FFMPEGPP_API int ffmpegpp_init() {
 }
 
 FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
-    if (!g_running.load() || json_utf8 == nullptr) return -1;
+    std::lock_guard<std::mutex> lifecycleLock(g_initMutex);
+    if (!g_running.load() || g_shutdownFlag.load() || json_utf8 == nullptr) return -1;
 
     // [FIX S-5] 长度上限 4MB，防止超大输入导致 json::parse 申请巨量内存；
     // 手写扫描避免依赖 strnlen 的平台可用性差异（部分老 libc 可能缺失）。
@@ -212,6 +222,11 @@ FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
     // cancel/ping/shutdown 内联处理（不进工作线程队列）
     try {
         json req = json::parse(line);
+        if (!req.is_object() || (req.contains("action") && !req["action"].is_string()) ||
+            (req.contains("id") && !req["id"].is_string())) {
+            JsonWriter::reply("unknown", false, nullptr, "请求 action/id 必须是字符串");
+            return -1;
+        }
         std::string action = req.value("action", "");
 
         if (action == "cancel") {
@@ -323,6 +338,7 @@ FFMPEGPP_API void ffmpegpp_free(char* ptr) {
 }
 
 FFMPEGPP_API void ffmpegpp_shutdown() {
+    std::lock_guard<std::mutex> lifecycleLock(g_initMutex);
     if (!g_running.load()) return;
 
     slog("dll shutdown: starting");

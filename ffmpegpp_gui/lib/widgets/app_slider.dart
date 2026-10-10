@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 // Float32List：彗星拖尾的轨迹环形缓冲（预分配、零每帧分配，见 [_Particle]）。
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -87,41 +88,11 @@ const int _kIndeterminateDurationMs = 1800;
 
 // ── 拖动彗星拖尾 ──
 //
-// 用户要求（2026-09 二次改版）：「把滑动粒子特效改为彗星拖尾特效」—— 保留原有
-// 全部约束，只把「离散小圆点」换成「连续衰减拖尾」：
-// * 发射点 = 填充段**最右端**（= 把手），彗星向**左**移动，亮头在左、尾迹向
-//   右侧发射点渐隐：`<彗星头)·····`；
-// * 亮度按空间年龄递减：左侧运动尖端最亮，越靠右发射点越暗、尾尖干净收尾
-//   （旧版是「出生很暗、越走越亮」）—— 这才是彗星 / 尾焰的观感；
-// * 线宽同时呈锥形：头部 [_kParticleHeadW] → 尾部 [_kParticleTailW]；
-// * 密度适中、有颗粒感但不过于密集 —— 池子上限 [_kParticlePool] 条，实际同时
-//   存活的条数按「拖尾带」宽度折算（[_kParticleSpacing]）：窄轨道少发、宽轨道
-//   多发，任何宽度都不会连成一坨实色；
-// * 「占据滑块的空间不超过总长」—— 每条彗星的消亡距离取 [_kParticleSpanMin] ~
-//   [_kParticleSpanMax] 个轨道总长（上限由旧版的 15% 放宽到 22%，因为拖尾比圆点
-//   长得多）；整条带宽恒等于消亡距离，因此**不会越界**；
-// * 「每个彗星消失位置不统一」—— 消亡距离逐条独立随机（8%~22%），于是消失点
-//   参差不齐，不会切出一条整齐的直线。
-//
-// 轨迹记录（改这里前先读）：
-// * 每条彗星持有一段**预分配**的轨迹环形缓冲（[_Particle._tx] 等，Float32List），
-//   按**固定时间间隔** [_kParticleTrailSampleDt] 采样 —— 按时间而不是按帧，才能
-//   保证 60 / 120 / 144Hz 下拖尾长度一致；
-// * 缓冲点同时存了写入时的寿命进度 u，绘制时用 u 反查亮度 / 线宽，于是
-//   「运动尖端亮 → 发射端渐隐」自动成立，无需额外参数；
-// * [_ParticleField._respawn] 与 [_ParticleField.reset] 都必须调 `_resetTrail()`：
-//   否则复用池子时旧轨迹会残留成一条横跨整条带的直线（最重要的一条正确性约束）。
-//
-// 性能约定（改这里前先读）：
-// * 只在拖动期间 `repeat()`，松手后 [_kParticleFadeOut] 内淡出并 `stop()` ——
-//   静止时**不建绘制层、不起 Ticker**，零帧开销；
-// * 固定池子 + 构造期一次性分配的环形缓冲：没有逐条 new、没有逐帧 setState、
-//   不用 Path / PathMetrics（它们每帧都要重建并产生分配）；
-// * 每帧绘制 = 逐段 `drawLine`（复用单份 Paint，段数 ≤ [_kParticleSegs] × 池容量
-//   = 256 次，且仅拖动期间），无 saveLayer；
-// * 彗星层单独包 RepaintBoundary：每帧只脏自己这一层，不牵连 Slider 与卡片；
-// * 只在已填充段内绘制，彗星永远落在主题色块上，对比度足够；
-// * 设置里可关闭（`AppConfig.sliderParticles`），系统开启「减弱动态效果」时也自动关闭。
+// 连续方向光线：平滑轨迹共用亮核心、窄光带、宽柔光三层方向渐变。
+// 固定池最多 12 条，每帧最多 36 次 drawPath；复用 Path/Paint，不用
+// PathMetrics、模糊或 saveLayer。渐变着色器按当前几何更新。
+// 使用实时尖端与时间采样，避免高刷新率下头部跳动；松手淡出后停止 Ticker。
+// RepaintBoundary 隔离动画，减少动画或配置关闭时不建动画层。
 
 /// For verifying the non-public comet particle integration behavior in tests.
 @visibleForTesting
@@ -140,17 +111,17 @@ class CometTrailTestProbe {
 }
 
 /// 池容量（上限）。实际同时存活的条数由拖尾带宽度折算，见 [_particleActiveCount]。
-const int _kParticlePool = 32;
+const int _kParticlePool = 12;
 
 /// 拖尾带里两条彗星平均占用的横向像素。
 ///
 /// 旧版（小圆点）取 2.3px 就够；改成拖尾后每条彗星本身就很长，密度必须放疏，
 /// 否则 32 条最长 22% 轨道长的拖尾会叠成一坨实色、完全看不出「一条一条」。
 /// 想整体调密 / 调疏只改这一个值（越小越密）。
-const double _kParticleSpacing = 4.2;
+const double _kParticleSpacing = 12;
 
-/// 池子里至少同时存活的条数（很窄的轨道也别只剩两三条）。
-const int _kParticleMinActive = 9;
+/// 窄轨道维持三条错开的光线。
+const int _kParticleMinActive = 3;
 
 /// 彗星横向寿命（秒）：一条彗星从发射到消失要走多久。
 /// 速度由「消亡距离 ÷ 寿命」反推（见 [_ParticleField._respawn]），所以改这里只影响
@@ -175,7 +146,7 @@ const double _kParticleJitter = 3;
 /// 轨迹环形缓冲的点数上限（每条彗星预分配这么长）。
 ///
 /// 配合 [_kParticleTrailSampleDt] 决定单条拖尾覆盖的时间跨度
-/// （42 × 22ms ≈ 0.93s），覆盖最长粒子寿命且抽样绘制仍受 [_kParticleSegs] 限制。
+/// （42 × 22ms ≈ 0.93s），覆盖最长粒子寿命。
 const int _kParticleTrailCap = 42;
 
 List<double> _seedSampleAges(int samples, double life) =>
@@ -189,28 +160,6 @@ double _sampleRemainder(double elapsed, double interval) => elapsed % interval;
 /// 轨迹采样间隔（秒）。**按时间采样而不是按帧**：否则 144Hz 屏上的拖尾只有
 /// 60Hz 的 41% 长（同样的点数被更短的时间填满）。
 const double _kParticleTrailSampleDt = 1 / 45;
-
-/// 单条拖尾最多绘制成几段。段数与池容量相乘就是每帧的 `drawLine` 上限
-/// （32 × 8 = 256，且仅拖动期间）。
-const int _kParticleSegs = 8;
-
-/// 运动尖端的线宽 / 发射端的线宽（px）—— 共同定义拖尾的锥形收窄。
-const double _kParticleHeadW = 1.8;
-const double _kParticleTailW = 0.5;
-
-/// 运动尖端最高亮度 / 尾迹最低亮度（0~1）。
-/// 与旧版的「出生 0.10 → 越走越亮」相反：彗星是**头最亮、尾渐隐**。
-const double _kParticleHeadAlpha = 0.92;
-const double _kParticleTailAlpha = 0.07;
-
-/// 亮度 / 线宽衰减到最小值时的寿命进度（0.82 = 走完 82% 寿命时已衰减到尾部值）。
-const double _kParticleHoldU = 0.82;
-
-/// 最后一小段生命用来的收尾比例（0.14 = 最后 14% 快速淡出，避免尾尖硬切）。
-const double _kParticleTail = 0.14;
-
-/// 拖尾短于这个像素长度时退化为单点绘制（避免 0 长线段与首帧抖动）。
-const double _kParticleMinTailPx = 2.0;
 
 /// 松手后整条拖尾带的淡出时长。
 const Duration _kParticleFadeOut = Duration(milliseconds: 240);
@@ -1159,7 +1108,6 @@ class _Particle {
       (_head - _count + i + _kParticleTrailCap) % _kParticleTrailCap;
   double txAt(int i) => _tx[_slot(i)];
   double tyAt(int i) => _ty[_slot(i)];
-  double tuAt(int i) => _tu[_slot(i)];
 }
 
 /// 当前「拖尾带」宽度下应当同时存活的彗星条数。
@@ -1170,33 +1118,6 @@ class _Particle {
 int _particleActiveCount(double bandWidth) => (bandWidth / _kParticleSpacing)
     .round()
     .clamp(_kParticleMinActive, _kParticlePool);
-
-/// 彗星亮度曲线（0~1），入参是寿命进度 u。
-///
-/// **u = 0（运动尖端）最亮**，随 u 增大单调衰减到 [_kParticleTailAlpha]，
-/// 最后 [_kParticleTail] 一小段再快速收尾（否则尾尖会在最暗处硬切）。
-/// 与旧版「出生很暗、越走越亮」正好相反 —— 这就是「彗星」该有的方向。
-///
-/// 注意它**不决定**消失位置：位置由每条彗星自己的消亡距离决定
-/// （[_Particle.vx] × [_Particle.lifeMax]），见 [_ParticleField._respawn]。
-double _particleAlphaOf(double u, double intensity) {
-  final double speedGlow = 0.85 + intensity * 0.45;
-  final double k = (u.clamp(0.0, 1.0) / _kParticleHoldU).clamp(0.0, 1.0);
-  final double fall = Curves.easeOutCubic.transform(k);
-  final double a =
-      _kParticleHeadAlpha + (_kParticleTailAlpha - _kParticleHeadAlpha) * fall;
-  final double glow = (a * speedGlow).clamp(0.0, 1.0);
-  if (u <= 1 - _kParticleTail) return glow;
-  return glow * ((1 - u) / _kParticleTail).clamp(0.0, 1.0);
-}
-
-/// 彗星线宽曲线（px），入参同上：运动尖端 [_kParticleHeadW] → 发射端 [_kParticleTailW]，
-/// 与亮度同步衰减，于是拖尾整体呈锥形。
-double _particleWidthOf(double u) {
-  final double k = (u.clamp(0.0, 1.0) / _kParticleHoldU).clamp(0.0, 1.0);
-  return _kParticleHeadW +
-      (_kParticleTailW - _kParticleHeadW) * Curves.easeOutCubic.transform(k);
-}
 
 /// Speed curve for the comet tail: fast drags stretch and brighten it.
 @visibleForTesting
@@ -1384,13 +1305,7 @@ class _ParticleField {
   }
 }
 
-/// 彗星画笔：每帧只做「积分推进 + 逐段 drawLine」，无分配、无 saveLayer。
-///
-/// 为什么不用 `Path` + `PathMetrics`（或带渐变的 `drawPath`）：那需要每帧重建 Path、
-/// 取一次 metrics 再 extractPath，全是分配；而「沿路径衰减」还得配一个依赖几何的
-/// 渐变 shader —— 每帧新建着色器，直接违反「painter 内不做每帧分配」的红线。
-/// 逐段 `drawLine` + 逐段写 color/strokeWidth 复用同一份 Paint，既便宜又能同时表达
-/// 「亮度渐隐」和「线宽锥形」。
+/// Paints continuous gradient ribbons with a bright core and soft outer bands.
 class _ParticlePainter extends CustomPainter {
   _ParticlePainter({
     required this.field,
@@ -1418,7 +1333,7 @@ class _ParticlePainter extends CustomPainter {
     if (size.isEmpty) return;
     final double t =
         (controller.lastElapsedDuration ?? Duration.zero).inMicroseconds / 1e6;
-    final double dt = math.max(0.0, t - field.lastT);
+    final double dt = (t - field.lastT).clamp(0.0, 0.1);
     field.lastT = t;
 
     // RTL：值 0 在右侧，填充段从右往左长；发射点统一取填充段「值更大」的那一端，
@@ -1435,104 +1350,74 @@ class _ParticlePainter extends CustomPainter {
     // 22%（[_kParticleSpanMax]），单条彗星落在 8%~22% 之间。
     final double trackWidth = size.width;
 
-    if (dt > 0) field.advance(dt, emitterX, size.height / 2, trackWidth);
+    field.advance(dt, emitterX, size.height / 2, trackWidth);
 
     final double baseAlpha = (1 - fade.value).clamp(0.0, 1.0);
     if (baseAlpha <= 0.001) return;
     final double cy = size.height / 2;
-    // 单份 Paint 复用（无 per-frame new）。strokeCap round 让相邻段首尾相接，
-    // 于是「一条尾 = 若干段直线」看起来仍是一条连续的带，而不是虚线。
-    final Paint paint = Paint()
-      ..isAntiAlias = true
-      ..strokeCap = StrokeCap.round;
-
-    for (final _Particle p in field.all) {
-      if (!p.alive) continue;
-      final int count = p._count;
-      if (count == 0) continue;
-
-      final double headX = p.txAt(count - 1);
-      final double tailX = p.txAt(0);
-      // 整条轨迹都落在填充段之外（另一端 / 未填充区）就跳过：彗星永远落在主题色块
-      // 上，对比度足够；也顺带避免了飘到玻璃留空段上「看不清」。
-      final double lo = math.min(tailX, headX);
-      final double hi = math.max(tailX, headX);
-      if (hi < fillLeft - 2 || lo > fillRight + 2) continue;
-
-      // 很短 / 刚发射的尾：退化为单点，避免画 0 长线段（圆头帽在极短段上会跳）。
-      if (count < 2 || (headX - tailX).abs() < _kParticleMinTailPx) {
-        final double a =
-            _particleAlphaOf(p.tuAt(count - 1), intensity) * p.tone * baseAlpha;
-        if (a <= 0.012) continue;
-        paint
-          ..style = PaintingStyle.fill
-          ..color = color.withAlpha((a * 255).round().clamp(0, 255));
-        canvas.drawCircle(
-          Offset(headX, cy + p.tyAt(count - 1)),
-          _kParticleHeadW * 0.5,
-          paint,
-        );
-        continue;
-      }
-
-      // 逐段绘制：i = 0 为发射端（最暗）→ i = count-1 为运动尖端（最亮）。
-      // 用 stride 抽样把段数压到 ≤ [_kParticleSegs]；抽样点仍首尾相连，不会断线。
-      paint.style = PaintingStyle.stroke;
-      final int segs = (_kParticleSegs + (intensity * 8).round()).clamp(
-        1,
-        _kParticleTrailCap,
+    canvas.save();
+    canvas.clipRect(Rect.fromLTRB(fillLeft, 0, fillRight, size.height));
+    for (final p in field.all) {
+      if (!p.alive || p._count < 2) continue;
+      final progress = (p.life / p.lifeMax).clamp(0.0, 1.0);
+      final birth = Curves.easeOut.transform((progress / 0.12).clamp(0.0, 1.0));
+      final death = Curves.easeInOut.transform(
+        ((1 - progress) / 0.32).clamp(0.0, 1.0),
       );
-      final int stride = (count / segs).ceil().clamp(1, _kParticleTrailCap);
-      double x0 = tailX;
-      double y0 = p.tyAt(0);
-      double u0 = p.tuAt(0);
-      for (int i = stride; i < count; i += stride) {
-        _drawCometSegment(canvas, paint, p, i, x0, y0, u0, cy, baseAlpha);
-        x0 = p.txAt(i);
-        y0 = p.tyAt(i);
-        u0 = p.tuAt(i);
-      }
-      // 抽样可能刚好绕过最后一个点：补画到 count-1，保证尾尖到位。
-      if (headX != x0 || p.tyAt(count - 1) != y0) {
-        _drawCometSegment(
-          canvas,
-          paint,
-          p,
-          count - 1,
-          x0,
-          y0,
-          u0,
-          cy,
-          baseAlpha,
+      final alpha = baseAlpha * p.tone * birth * death;
+      final head = Offset(p.x, cy + p.y);
+      final tail = Offset(p.txAt(0), cy + p.tyAt(0));
+      if ((head.dx - tail.dx).abs() < 0.8 || alpha < 0.008) continue;
+      _trail
+        ..reset()
+        ..moveTo(head.dx, head.dy);
+      for (var i = p._count - 1; i > 0; i--) {
+        final x = p.txAt(i);
+        final y = cy + p.tyAt(i);
+        _trail.quadraticBezierTo(
+          x,
+          y,
+          (x + p.txAt(i - 1)) * 0.5,
+          (y + cy + p.tyAt(i - 1)) * 0.5,
         );
       }
+      _trail.lineTo(tail.dx, tail.dy);
+      final width = 0.75 + intensity * 0.35;
+      _drawRibbon(canvas, tail, head, width * 5, alpha * 0.10);
+      _drawRibbon(canvas, tail, head, width * 2.4, alpha * 0.28);
+      _drawRibbon(canvas, tail, head, width, alpha * 0.96);
     }
+    canvas.restore();
   }
 
-  /// 画某条彗星的一段：从 (x0, y0) 到轨迹点 [i]。
-  /// 亮度 / 线宽取两端 u 的中点，于是从左侧尖端到右侧发射端逐渐变暗变细。
-  void _drawCometSegment(
+  final Path _trail = Path();
+  final Paint _paint = Paint()
+    ..isAntiAlias = true
+    ..style = PaintingStyle.stroke
+    ..strokeCap = StrokeCap.round
+    ..strokeJoin = StrokeJoin.round;
+
+  void _drawRibbon(
     Canvas canvas,
-    Paint paint,
-    _Particle p,
-    int i,
-    double x0,
-    double y0,
-    double u0,
-    double cy,
-    double baseAlpha,
+    Offset tail,
+    Offset head,
+    double width,
+    double alpha,
   ) {
-    final double u = (u0 + p.tuAt(i)) * 0.5;
-    final double a = _particleAlphaOf(u, intensity) * p.tone * baseAlpha;
-    if (a <= 0.012) return;
-    paint
-      ..color = color.withAlpha((a * 255).round().clamp(0, 255))
-      ..strokeWidth = _particleWidthOf(u);
-    canvas.drawLine(
-      Offset(x0, cy + y0),
-      Offset(p.txAt(i), cy + p.tyAt(i)),
-      paint,
-    );
+    _paint
+      ..strokeWidth = width
+      ..shader = ui.Gradient.linear(
+        tail,
+        head,
+        <Color>[
+          color.withValues(alpha: 0),
+          color.withValues(alpha: alpha * 0.10),
+          color.withValues(alpha: alpha * 0.40),
+          color.withValues(alpha: alpha),
+        ],
+        const <double>[0, 0.30, 0.72, 1],
+      );
+    canvas.drawPath(_trail, _paint);
   }
 
   @override

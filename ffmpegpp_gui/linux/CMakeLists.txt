@@ -54,8 +54,13 @@ add_subdirectory(${FLUTTER_MANAGED_DIR})
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTK REQUIRED IMPORTED_TARGET gtk+-3.0)
 
+# Build the FFI backend with every Flutter build, including debug/flutter run.
+add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../server_cpp"
+  "${CMAKE_BINARY_DIR}/server_cpp")
+
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
+add_dependencies(${BINARY_NAME} ffmpegpp)
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
@@ -98,6 +103,10 @@ install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}
   COMPONENT Runtime)
 
 install(FILES "${FLUTTER_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+  COMPONENT Runtime)
+
+# Install after the bundle cleanup so rebuilding never removes the backend.
+install(TARGETS ffmpegpp LIBRARY DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
   COMPONENT Runtime)
 
 foreach(bundled_library ${PLUGIN_BUNDLED_LIBRARIES})

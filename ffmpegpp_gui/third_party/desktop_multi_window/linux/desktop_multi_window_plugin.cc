@@ -16,7 +16,10 @@
 
 struct _DesktopMultiWindowPlugin {
   GObject parent_instance;
-  FlutterWindow* window;
+  // Copy immutable metadata: the manager may remove FlutterWindow before this
+  // engine has finished responding to its last platform message.
+  gchar* window_id;
+  gchar* window_argument;
 };
 
 G_DEFINE_TYPE(DesktopMultiWindowPlugin,
@@ -63,14 +66,14 @@ static void desktop_multi_window_plugin_handle_method_call(
     response = FL_METHOD_RESPONSE(
         fl_method_success_response_new(fl_value_new_string(window_id.c_str())));
   } else if (strcmp(method, "getWindowDefinition") == 0) {
-    auto window_id = self->window->GetWindowId();
-    auto window_argument = self->window->GetWindowArgument();
+    const gchar* window_id = self->window_id;
+    const gchar* window_argument = self->window_argument;
 
     g_autoptr(FlValue) definition = fl_value_new_map();
     fl_value_set_string_take(definition, "windowId",
-                             fl_value_new_string(window_id.c_str()));
+                             fl_value_new_string(window_id));
     fl_value_set_string_take(definition, "windowArgument",
-                             fl_value_new_string(window_argument.c_str()));
+                             fl_value_new_string(window_argument));
 
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(definition));
   } else if (strcmp(method, "getAllWindows") == 0) {
@@ -84,6 +87,9 @@ static void desktop_multi_window_plugin_handle_method_call(
 }
 
 static void desktop_multi_window_plugin_dispose(GObject* object) {
+  auto* self = DESKTOP_MULTI_WINDOW_PLUGIN(object);
+  g_clear_pointer(&self->window_id, g_free);
+  g_clear_pointer(&self->window_argument, g_free);
   G_OBJECT_CLASS(desktop_multi_window_plugin_parent_class)->dispose(object);
 }
 
@@ -107,10 +113,11 @@ void desktop_multi_window_plugin_register_with_registrar_internal(
     FlutterWindow* window) {
   DesktopMultiWindowPlugin* plugin = DESKTOP_MULTI_WINDOW_PLUGIN(
       g_object_new(desktop_multi_window_plugin_get_type(), nullptr));
-  plugin->window = window;
+  plugin->window_id = g_strdup(window->GetWindowId().c_str());
+  plugin->window_argument = g_strdup(window->GetWindowArgument().c_str());
 
   g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();
-  FlMethodChannel* channel = fl_method_channel_new(
+  g_autoptr(FlMethodChannel) channel = fl_method_channel_new(
       fl_plugin_registrar_get_messenger(registrar),
       "mixin.one/desktop_multi_window", FL_METHOD_CODEC(codec));
   fl_method_channel_set_method_call_handler(

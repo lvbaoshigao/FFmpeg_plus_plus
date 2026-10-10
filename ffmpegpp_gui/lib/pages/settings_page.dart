@@ -1257,25 +1257,57 @@ class _SettingsPageState extends State<SettingsPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // 左：主菜单（分区导航，搜索时显示命中数徽标）
-                    _buildSectionNav(hitsBySection, searching, scheme, state),
-                    // 右：子选项面板（搜索时为跨分区命中结果）
-                    Expanded(
-                      child: searching
-                          ? (hitsBySection.isEmpty
-                                ? _emptyState(scheme, s)
-                                : _buildSearchResults(
-                                    hitsBySection,
-                                    context,
-                                    state,
-                                    scheme,
-                                  ))
-                          : _buildSectionPane(
-                              selectedSec,
-                              context,
-                              state,
+                    if (MediaQuery.sizeOf(context).width < 700)
+                      Expanded(
+                        child: Column(
+                          children: [
+                            _buildCompactSectionNav(
+                              hitsBySection,
+                              searching,
                               scheme,
+                              state,
                             ),
-                    ),
+                            Expanded(
+                              child: searching
+                                  ? (hitsBySection.isEmpty
+                                        ? _emptyState(scheme, s)
+                                        : _buildSearchResults(
+                                            hitsBySection,
+                                            context,
+                                            state,
+                                            scheme,
+                                          ))
+                                  : _buildSectionPane(
+                                      selectedSec,
+                                      context,
+                                      state,
+                                      scheme,
+                                    ),
+                            ),
+                          ],
+                        ),
+                      )
+                    else ...[
+                      _buildSectionNav(hitsBySection, searching, scheme, state),
+                      // 右：子选项面板（搜索时为跨分区命中结果）
+                      Expanded(
+                        child: searching
+                            ? (hitsBySection.isEmpty
+                                  ? _emptyState(scheme, s)
+                                  : _buildSearchResults(
+                                      hitsBySection,
+                                      context,
+                                      state,
+                                      scheme,
+                                    ))
+                            : _buildSectionPane(
+                                selectedSec,
+                                context,
+                                state,
+                                scheme,
+                              ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -1380,7 +1412,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 12.5,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                  fontWeight: selected ? FontWeight.w600 : null,
                   color: selected ? scheme.primary : scheme.onSurfaceVariant,
                 ),
               ),
@@ -1404,6 +1436,34 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildCompactSectionNav(
+    List<(_SectionDef, List<_CardDef>)> hitsBySection,
+    bool searching,
+    ColorScheme scheme,
+    AppState state,
+  ) {
+    final counts = <String, int>{
+      for (final (sec, cards) in hitsBySection) sec.id: cards.length,
+    };
+    return SizedBox(
+      height: 52,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+        children: [
+          for (final sec in _sections)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: SizedBox(
+                width: 112,
+                child: _navItem(sec, searching, counts[sec.id] ?? 0, scheme),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -1993,7 +2053,7 @@ Widget _glass(
   List<Widget> children,
 ) {
   const radius = 20.0;
-  const pad = EdgeInsets.fromLTRB(16, 12, 16, 12);
+  const pad = EdgeInsets.fromLTRB(20, 18, 20, 20);
   final onSurfaceVariant = Theme.of(ctx).colorScheme.onSurfaceVariant;
 
   final titleRow = Padding(
@@ -2004,12 +2064,12 @@ Widget _glass(
         Text(
           title,
           style: TextStyle(
-            fontSize: 12,
+            fontSize: 15,
             fontWeight: FontWeight.w600,
             color: onSurfaceVariant,
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 16),
         ...children,
       ],
     ),
@@ -2226,7 +2286,7 @@ Widget _dot(
       onTap: onTap,
       radius: 24,
       child: SizedBox.square(
-        dimension: 44,
+        dimension: 48,
         child: Center(
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 150),
@@ -2236,12 +2296,18 @@ Widget _dot(
               color: c,
               shape: BoxShape.circle,
               border: Border.all(
-                color: sel ? sc.primary : Colors.transparent,
+                color: sel ? sc.onSurface : sc.outlineVariant,
                 width: 3,
               ),
             ),
             child: sel
-                ? const Icon(Icons.check, size: 14, color: Colors.white)
+                ? Icon(
+                    Icons.check,
+                    size: 16,
+                    color: c.computeLuminance() > 0.45
+                        ? Colors.black
+                        : Colors.white,
+                  )
                 : null,
           ),
         ),
@@ -3197,7 +3263,7 @@ class _StylePreset {
   bool matches(AppConfig c) => values.matches(c);
 }
 
-/// 5 套预设。默认值全部有出处（见 AppConfig 里各字段注释）——
+/// 6 套预设。默认值全部有出处（见 AppConfig 里各字段注释）——
 /// `liquid` 的一组数值与 AppConfig 的出厂默认完全一致，所以首次启动
 /// 「液态玻璃」必然处于选中态。
 ///
@@ -3227,7 +3293,7 @@ final List<_StylePreset> _stylePresets = [
     ),
   ),
   _StylePreset(
-    id: 'clear',
+    id: 'airy',
     name: (zh) => zh ? '轻薄通透' : 'Airy',
     desc: (zh) => zh ? '高透光' : 'High clarity',
     preview: 'clear',
@@ -3297,11 +3363,11 @@ final List<_StylePreset> _stylePresets = [
     desc: (zh) => zh ? '轻盈低对比' : 'Soft & quiet',
     preview: 'clear',
     values: const _StyleValues(
-      cardStyle: 'clear',
-      navStyle: 'clear',
-      pillStyle: 'clear',
-      menuStyle: 'clear',
-      glassEffect: 'clear',
+      cardStyle: 'liquid',
+      navStyle: 'liquid',
+      pillStyle: 'liquid',
+      menuStyle: 'liquid',
+      glassEffect: 'liquid',
       settingsGlassMode: 'follow',
       glassFollowTheme: true,
       glassBlur: 14.0,
@@ -3335,128 +3401,127 @@ final List<_StylePreset> _stylePresets = [
   ),
 ];
 
-/// 预设预览的小块玻璃：用当前主题色/协调度画出该方案的大致观感。
+/// 使用真实模糊滤镜及液态玻璃画笔预览每套参数，不改动全局配置。
 Widget _presetSwatch(BuildContext ctx, _StylePreset p, bool selected) {
   final scheme = Theme.of(ctx).colorScheme;
-  final isDark = scheme.brightness == Brightness.dark;
-  // 预览用「该预设自己的」协调度，而不是用户当前配置里的实时值：
-  // 点击会写入 values.themeTone，若预览读实时值，就会出现
-  // 「点击前看到的底色」与「点击后的实际底色」不一致（尤其「主题色」预设
-  // 写的是 0.55，而用户当前可能是 0.45）。顺带少一个 AppState 订阅。
-  final tone = p.values.themeTone;
-  final accent = harmonizedAccent(scheme, tone);
-  final gray = neutralGray(scheme.surfaceContainerHigh);
-  // 声明成 BoxDecoration（而非抽象 Decoration）：下面选中态要用 copyWith 加柔光，
-  // copyWith 只存在于 BoxDecoration 上。
-  BoxDecoration deco;
-  switch (p.preview) {
-    case 'theme':
-      deco = BoxDecoration(
-        borderRadius: BorderRadius.circular(9),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [accent, Color.lerp(accent, scheme.surface, 0.35)!],
-        ),
-      );
-      break;
-    case 'gray':
-      deco = BoxDecoration(
-        color: gray,
-        borderRadius: BorderRadius.circular(9),
-        border: Border.all(color: scheme.outlineVariant.withAlpha(120)),
-      );
-      break;
-    case 'blur':
-      deco = BoxDecoration(
-        color: scheme.surface.withAlpha(isDark ? 200 : 220),
-        borderRadius: BorderRadius.circular(9),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.35)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withAlpha(isDark ? 40 : 14),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
+  final cfg = ctx.read<AppState>().config;
+  final v = p.values;
+  final tuning = GlassTuning(
+    blur: v.glassBlur,
+    clarity: v.glassClarity,
+    highlight: v.glassHighlight,
+    lightPos: v.glassLightPos,
+    edge: v.glassEdge,
+  );
+  final dark = scheme.brightness == Brightness.dark;
+  final solid = v.cardStyle == 'theme' || v.cardStyle == 'gray';
+  final base = v.cardStyle == 'gray'
+      ? neutralGray(scheme.surfaceContainerHigh)
+      : v.glassFollowTheme || v.cardStyle == 'theme'
+      ? harmonizedAccent(scheme, v.themeTone)
+      : scheme.surface;
+  final radius = BorderRadius.circular(12);
+  final opacity = cfg.cardOpacity.clamp(0.0, 1.0);
+  Widget surface = DecoratedBox(
+    decoration: BoxDecoration(
+      color: solid
+          ? base
+          : base.withAlpha(
+              (tunedGlassAlpha(dark ? 110 : 130, tuning) * opacity).round(),
+            ),
+      borderRadius: radius,
+    ),
+    child: Padding(
+      padding: const EdgeInsets.all(8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            Icons.tune,
+            size: 16,
+            applyTextScaling: false,
+            color: scheme.onSurface,
           ),
-        ],
-      );
-      break;
-    case 'clear':
-      deco = BoxDecoration(
-        borderRadius: BorderRadius.circular(9),
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            scheme.surface.withAlpha(isDark ? 90 : 120),
-            scheme.surface.withAlpha(isDark ? 30 : 40),
-          ],
-        ),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: 0.55),
-          width: 1.2,
-        ),
-      );
-      break;
-    default: // liquid
-      deco = BoxDecoration(
-        borderRadius: BorderRadius.circular(9),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            scheme.surface.withAlpha(isDark ? 210 : 225),
-            scheme.surface.withAlpha(isDark ? 120 : 150),
-          ],
-        ),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.45)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withAlpha(isDark ? 45 : 16),
-            blurRadius: 7,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      );
-  }
-  return Stack(
-    children: [
-      // 预览块：选中态额外加一层主题色柔光，让「当前正在用哪套」一眼可见
-      //（外框的高亮见 _buildStylePresets 的 AnimatedContainer）。
-      Container(
-        width: 72,
-        height: 38,
-        decoration: selected
-            ? deco.copyWith(
-                boxShadow: [
-                  BoxShadow(
-                    color: scheme.primary.withAlpha(isDark ? 90 : 60),
-                    blurRadius: 8,
-                    spreadRadius: 0.5,
-                  ),
-                ],
-              )
-            : deco,
-      ),
-      // 左上角高光：所有玻璃方案的共同特征
-      Positioned(
-        left: 6,
-        top: 3,
-        child: Container(
-          width: p.preview == 'gray' ? 0 : (selected ? 26 : 22),
-          height: 6,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(3),
-            gradient: LinearGradient(
-              colors: [
-                Colors.white.withValues(alpha: 0.45),
-                Colors.white.withValues(alpha: 0.0),
-              ],
+          const Spacer(),
+          Text(
+            'Aa 123',
+            // This miniature is decorative; the font card previews actual sizing.
+            textScaler: TextScaler.noScaling,
+            style: TextStyle(
+              fontSize: 12,
+              height: 1.2,
+              color: scheme.onSurface,
             ),
           ),
+          const SizedBox(height: 4),
+          Container(
+            height: 3,
+            width: 38,
+            color: scheme.onSurface.withAlpha(90),
+          ),
+        ],
+      ),
+    ),
+  );
+  if (!solid) {
+    surface = ClipRRect(
+      borderRadius: radius,
+      child: BackdropFilter(
+        filter: cachedGlassBlur(tunedGlassSigma(16, tuning)),
+        child: CustomPaint(
+          foregroundPainter: v.cardStyle == 'blur'
+              ? null
+              : LiquidGlassPainter(
+                  borderRadius: radius,
+                  opacity: opacity,
+                  highlight: tuning.highlight,
+                  lightPos: tuning.lightPos,
+                  edge: tuning.edge,
+                ),
+          child: surface,
         ),
       ),
-    ],
+    );
+  }
+  return ExcludeSemantics(
+    child: SizedBox(
+      width: 88,
+      height: 72,
+      child: ClipRRect(
+        borderRadius: radius,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            ColoredBox(color: scheme.surfaceContainerHighest),
+            Positioned(
+              left: -12,
+              top: -10,
+              child: Container(
+                width: 66,
+                height: 66,
+                decoration: BoxDecoration(
+                  color: scheme.primary.withAlpha(150),
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+            Positioned(
+              right: -8,
+              bottom: -20,
+              child: Container(
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(
+                  color: scheme.tertiary.withAlpha(130),
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+            Padding(padding: const EdgeInsets.all(6), child: surface),
+          ],
+        ),
+      ),
+    ),
   );
 }
 
@@ -3501,16 +3566,19 @@ List<Widget> _buildStylePresets(BuildContext ctx, AppState state) {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (selected) ...[
-                      Icon(Icons.check_circle, size: 14, color: scheme.primary),
+                      Icon(
+                        Icons.check_circle,
+                        size: 12,
+                        applyTextScaling: false,
+                        color: scheme.primary,
+                      ),
                       const SizedBox(width: 4),
                     ],
                     Text(
                       p.name(zh),
                       style: TextStyle(
                         fontSize: 12,
-                        fontWeight: selected
-                            ? FontWeight.w600
-                            : FontWeight.w400,
+                        fontWeight: selected ? FontWeight.w600 : null,
                         color: selected ? scheme.primary : clr,
                       ),
                     ),
@@ -3531,9 +3599,10 @@ List<Widget> _buildStylePresets(BuildContext ctx, AppState state) {
   return [
     // 不再自带「预设方案」小标题：拆卡之后它就是「样式预设」这张卡的正文，
     // 再加一层小标题会与卡片标题重复（用户对重复项敏感）。
-    SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(children: [for (final p in _stylePresets) entry(p)]),
+    Wrap(
+      spacing: 4,
+      runSpacing: 8,
+      children: [for (final p in _stylePresets) entry(p)],
     ),
   ];
 }
@@ -3901,67 +3970,59 @@ Widget _fontWeightPicker(
   return Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Text(s.qWeight, style: TextStyle(color: clr, fontSize: 12)),
-      const SizedBox(height: 6),
-      Row(
+      Text(s.qWeight, style: TextStyle(color: clr, fontSize: 13)),
+      const SizedBox(height: 10),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
         children: [
-          for (var i = 0; i < _kFontWeights.length; i++) ...[
-            if (i > 0) const SizedBox(width: 6),
-            Expanded(
-              child: Tooltip(
-                message: '${labels[i]} · ${AppConfig.fontWeightValues[i]}',
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(10),
-                  onTap: () =>
-                      state.updateConfig((c) => c..fontWeightIndex = i),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 150),
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: cfg.fontWeightIndex == i
-                          ? scheme.primary.withAlpha(38)
-                          : scheme.surfaceContainerHighest.withAlpha(70),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: cfg.fontWeightIndex == i
-                            ? scheme.primary
-                            : scheme.outlineVariant.withAlpha(90),
-                        width: cfg.fontWeightIndex == i ? 1.4 : 0.8,
+          for (var i = 0; i < _kFontWeights.length; i++)
+            Semantics(
+              selected: cfg.fontWeightIndex == i,
+              button: true,
+              label: '${labels[i]} ${AppConfig.fontWeightValues[i]}',
+              child: OutlinedButton(
+                onPressed: () =>
+                    state.updateConfig((c) => c..fontWeightIndex = i),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(100, 72),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  backgroundColor: cfg.fontWeightIndex == i
+                      ? scheme.primaryContainer
+                      : null,
+                  foregroundColor: cfg.fontWeightIndex == i
+                      ? scheme.onPrimaryContainer
+                      : clr,
+                  side: BorderSide(
+                    color: cfg.fontWeightIndex == i
+                        ? scheme.primary
+                        : scheme.outlineVariant,
+                  ),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      s.isZh ? '字 Aa' : 'Aa',
+                      style: TextStyle(
+                        fontSize: 18,
+                        height: 1.25,
+                        fontFamily: family,
+                        fontWeight: _kFontWeights[i],
                       ),
                     ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          'Aa',
-                          style: TextStyle(
-                            fontSize: 15,
-                            height: 1.1,
-                            fontFamily: family,
-                            fontWeight: _kFontWeights[i],
-                            color: cfg.fontWeightIndex == i
-                                ? scheme.primary
-                                : clr,
-                          ),
-                        ),
-                        Text(
-                          labels[i],
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 9,
-                            height: 1.2,
-                            fontFamily: family,
-                            color: scheme.outline,
-                          ),
-                        ),
-                      ],
+                    const SizedBox(height: 4),
+                    Text(
+                      '${labels[i]} · ${AppConfig.fontWeightValues[i]}',
+                      style: const TextStyle(fontSize: 11),
                     ),
-                  ),
+                  ],
                 ),
               ),
             ),
-          ],
         ],
       ),
     ],
@@ -4452,10 +4513,12 @@ Widget _buildFont(BuildContext ctx, AppState state) {
     return _glass(ctx, state, s.font, [
       ListTile(
         dense: true,
+        minTileHeight: 48,
         contentPadding: EdgeInsets.zero,
         leading: Icon(
           Icons.text_fields,
-          size: 20,
+          size: 18,
+          applyTextScaling: false,
           color: scheme.onSurfaceVariant,
         ),
         title: Text(
@@ -4463,16 +4526,23 @@ Widget _buildFont(BuildContext ctx, AppState state) {
           style: TextStyle(fontSize: 13, color: clr),
         ),
         trailing: cfg.fontFamily.isEmpty
-            ? Icon(Icons.check_circle, size: 19, color: scheme.primary)
-            : const SizedBox(width: 19),
+            ? Icon(
+                Icons.check_circle,
+                size: 16,
+                applyTextScaling: false,
+                color: scheme.primary,
+              )
+            : const SizedBox(width: 16),
         onTap: () => state.updateConfig((c) => c..fontFamily = ''),
       ),
       ListTile(
         dense: true,
+        minTileHeight: 48,
         contentPadding: EdgeInsets.zero,
         leading: Icon(
           Icons.upload_file_outlined,
-          size: 20,
+          size: 18,
+          applyTextScaling: false,
           color: scheme.onSurfaceVariant,
         ),
         title: Text(
@@ -4488,43 +4558,23 @@ Widget _buildFont(BuildContext ctx, AppState state) {
                 overflow: TextOverflow.ellipsis,
               ),
         trailing: cfg.fontFamily.isNotEmpty
-            ? Icon(Icons.check_circle, size: 19, color: scheme.primary)
-            : Icon(Icons.chevron_right, size: 19, color: scheme.outline),
+            ? Icon(
+                Icons.check_circle,
+                size: 16,
+                applyTextScaling: false,
+                color: scheme.primary,
+              )
+            : Icon(
+                Icons.chevron_right,
+                size: 16,
+                applyTextScaling: false,
+                color: scheme.outline,
+              ),
         onTap: () => _pickFont(ctx, state),
       ),
       const SizedBox(height: 10),
       _fontWeightPicker(ctx, state, s, scheme),
-      // 导入后给一行「用该字体真实渲染」的预览：此前移动端导入完只有一行文件名，
-      // 且那行字本身还是系统字体渲染的，用户完全无法判断字体有没有生效
-      // （用户反馈的「字体能否导入后显示」）。这一行同时也是字号滑块的直观反馈。
-      if (cfg.fontFamily.isNotEmpty)
-        Padding(
-          padding: const EdgeInsets.only(top: 8),
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: scheme.surfaceContainerHighest.withAlpha(90),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: scheme.outlineVariant.withAlpha(90)),
-            ),
-            child: Text(
-              '字体预览 Font Preview 123',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 15,
-                fontFamily: cfg.fontFamily,
-                fontWeight:
-                    _kFontWeights[cfg.fontWeightIndex.clamp(
-                      0,
-                      _kFontWeights.length - 1,
-                    )],
-                color: clr,
-              ),
-            ),
-          ),
-        ),
+      _fontPreview(ctx, state),
       const Divider(height: 12, color: Colors.transparent),
       _SettingSlider(
         value: cfg.fontSize,
@@ -4538,18 +4588,38 @@ Widget _buildFont(BuildContext ctx, AppState state) {
         labelStyle: TextStyle(color: clr, fontSize: 12),
         onCommit: (v) => state.updateConfig((c) => c..fontSize = v),
       ),
-      // 字重：可视化样本（每个「Aa」用对应字重渲染，点选即生效）
-      _fontWeightPicker(ctx, state, s, scheme),
     ]);
   }
 
   return _glass(ctx, state, s.font, [
-    FontPicker(
-      currentFont: cfg.fontFamily,
-      language: cfg.language,
-      showImport: true,
-      onImport: () => _pickFont(ctx, state),
-      onSelected: (v) => state.updateConfig((c) => c..fontFamily = v),
+    Row(
+      children: [
+        Expanded(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 48),
+            child: IconTheme.merge(
+              data: const IconThemeData(applyTextScaling: false),
+              child: FontPicker(
+                currentFont: cfg.fontFamily,
+                language: cfg.language,
+                onSelected: (v) => state.updateConfig((c) => c..fontFamily = v),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 4),
+        IconButton(
+          tooltip: s.isZh ? '导入字体' : 'Import font',
+          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+          onPressed: () => _pickFont(ctx, state),
+          icon: Icon(
+            Icons.upload_file_outlined,
+            size: 18,
+            applyTextScaling: false,
+            color: scheme.primary,
+          ),
+        ),
+      ],
     ),
     const SizedBox(height: 10),
     _SettingSlider(
@@ -4564,7 +4634,30 @@ Widget _buildFont(BuildContext ctx, AppState state) {
     ),
     // 字重：可视化样本（每个「Aa」用对应字重渲染，点选即生效）
     _fontWeightPicker(ctx, state, s, scheme),
+    _fontPreview(ctx, state),
   ]);
+}
+
+Widget _fontPreview(BuildContext ctx, AppState state) {
+  final cfg = state.config;
+  return Padding(
+    padding: const EdgeInsets.only(top: 16),
+    child: Text(
+      cfg.language == 'zh'
+          ? '字体预览 · 视频与音频\nFont preview 0123456789'
+          : 'Font preview · Video & audio\n0123456789',
+      style: TextStyle(
+        fontSize: 16,
+        height: 1.4,
+        fontFamily: cfg.fontFamily.isEmpty ? null : cfg.fontFamily,
+        fontWeight:
+            _kFontWeights[cfg.fontWeightIndex.clamp(
+              0,
+              _kFontWeights.length - 1,
+            )],
+      ),
+    ),
+  );
 }
 
 Widget _buildOutput(BuildContext ctx, AppState state) {

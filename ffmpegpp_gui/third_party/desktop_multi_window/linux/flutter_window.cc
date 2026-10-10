@@ -5,12 +5,21 @@
 FlutterWindow::FlutterWindow(const std::string& id,
                              const std::string& argument,
                              GtkWidget* window)
-    : id_(id), window_argument_(argument), window_(window) {}
+    : id_(id), window_argument_(argument), window_(window) {
+  g_object_add_weak_pointer(G_OBJECT(window_),
+                            reinterpret_cast<gpointer*>(&window_));
+}
 
-FlutterWindow::~FlutterWindow() = default;
+FlutterWindow::~FlutterWindow() {
+  if (window_) {
+    g_object_remove_weak_pointer(G_OBJECT(window_),
+                                reinterpret_cast<gpointer*>(&window_));
+  }
+  g_clear_object(&channel_);
+}
 
 void FlutterWindow::SetChannel(FlMethodChannel* channel) {
-  channel_ = channel;
+  g_set_object(&channel_, channel);
 }
 
 void FlutterWindow::NotifyWindowEvent(const gchar* event, FlValue* data) {

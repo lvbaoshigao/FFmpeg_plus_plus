@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 
@@ -73,12 +74,12 @@ class DetachedWindowArgs {
   static const String _kind = 'ffmpegpp.panel.v1';
 
   String encode() => jsonEncode({
-        'kind': _kind,
-        'panel': panel.id,
-        'lang': lang,
-        'w': width,
-        'h': height,
-      });
+    'kind': _kind,
+    'panel': panel.id,
+    'lang': lang,
+    'w': width,
+    'h': height,
+  });
 
   /// 解析子窗口参数；不是本应用的面板窗口时返回 null。
   static DetachedWindowArgs? tryParse(String? raw) {
@@ -149,6 +150,8 @@ abstract final class PanelPush {
 
   /// 让子窗口执行关窗动作（主窗口无法从外部销毁子窗口的原生窗口）。
   static const String closeWindow = 'closeWindow';
+  static const String suspend = 'suspendWindow';
+  static const String reactivate = 'reactivateWindow';
 }
 
 /// 主窗口侧的「面板宿主」。
@@ -176,8 +179,10 @@ class MultiWindowService {
   /// 主窗口侧注册的委托；未注册时子窗口的请求一律返回 null。
   static PanelHostDelegate? delegate;
 
-  static const WindowMethodChannel _hostChannel =
-      WindowMethodChannel(kPanelHostChannel, mode: ChannelMode.unidirectional);
+  static const WindowMethodChannel _hostChannel = WindowMethodChannel(
+    kPanelHostChannel,
+    mode: ChannelMode.unidirectional,
+  );
 
   static bool _hostInstalled = false;
 
@@ -232,8 +237,8 @@ class MultiWindowService {
   ///
   /// 返回值是主窗口用来推消息的 `WindowController`；子窗口自己一般不需要它。
   static Future<WindowController?> installGuest(
-      Future<dynamic> Function(String method, Map<String, dynamic> args)
-          onPush) async {
+    Future<dynamic> Function(String method, Map<String, dynamic> args) onPush,
+  ) async {
     if (!supported) return null;
     try {
       final controller = await WindowController.fromCurrentEngine();
@@ -251,11 +256,15 @@ class MultiWindowService {
   }
 
   /// 子窗口调用：向主窗口发请求。
-  static Future<dynamic> invokeHost(String method,
-      [Map<String, dynamic>? args]) async {
+  static Future<dynamic> invokeHost(
+    String method, [
+    Map<String, dynamic>? args,
+  ]) async {
     if (!supported) return null;
     try {
-      return await _hostChannel.invokeMethod(method, args ?? const {});
+      return await _hostChannel
+          .invokeMethod(method, args ?? const {})
+          .timeout(const Duration(seconds: 15));
     } catch (_) {
       // 主窗口不在（例如主窗口已退出）时静默失败：子窗口不该因此崩溃。
       return null;
@@ -277,6 +286,14 @@ class MultiWindowService {
     if (existing != null) {
       final controller = WindowController.fromWindowId(existing);
       try {
+        if (Platform.isLinux) {
+          await controller
+              .invokeMethod(
+                PanelPush.reactivate,
+                delegate?.panelSnapshot(panel) ?? const {},
+              )
+              .timeout(const Duration(seconds: 5));
+        }
         await controller.show();
       } catch (_) {
         _openWindows.remove(panel);
@@ -284,20 +301,37 @@ class MultiWindowService {
       return _openWindows[panel];
     }
     try {
-      final controller = await WindowController.create(WindowConfiguration(
-        arguments: DetachedWindowArgs(
-          panel: panel,
-          lang: lang,
-          width: width,
-          height: height,
-        ).encode(),
-        hiddenAtLaunch: true,
-      ));
+      final controller = await WindowController.create(
+        WindowConfiguration(
+          arguments: DetachedWindowArgs(
+            panel: panel,
+            lang: lang,
+            width: width,
+            height: height,
+          ).encode(),
+          hiddenAtLaunch: true,
+        ),
+      );
       _openWindows[panel] = controller.windowId;
       await controller.show();
       return controller.windowId;
     } catch (_) {
       return null;
+    }
+  }
+
+  /// Reuse Linux engines while releasing hidden panel resources.
+  static Future<void> parkPanel(DetachedPanel panel) async {
+    final id = _openWindows[panel];
+    if (id == null) return;
+    final controller = WindowController.fromWindowId(id);
+    try {
+      await controller
+          .invokeMethod(PanelPush.suspend)
+          .timeout(const Duration(seconds: 5));
+      await controller.hide().timeout(const Duration(seconds: 5));
+    } catch (_) {
+      await closePanel(panel);
     }
   }
 
@@ -310,8 +344,9 @@ class MultiWindowService {
     final id = _openWindows.remove(panel);
     if (id == null) return;
     try {
-      await WindowController.fromWindowId(id)
-          .invokeMethod(PanelPush.closeWindow);
+      await WindowController.fromWindowId(
+        id,
+      ).invokeMethod(PanelPush.closeWindow).timeout(const Duration(seconds: 5));
     } catch (_) {}
   }
 
@@ -328,13 +363,18 @@ class MultiWindowService {
   }
 
   /// 主窗口调用：把消息推给某个面板窗口。
-  static Future<void> push(DetachedPanel panel, String method,
-      [Map<String, dynamic>? args]) async {
+  static Future<void> push(
+    DetachedPanel panel,
+    String method, [
+    Map<String, dynamic>? args,
+  ]) async {
     if (!supported) return;
     final id = _openWindows[panel];
     if (id == null) return;
     try {
-      await WindowController.fromWindowId(id).invokeMethod(method, args);
+      await WindowController.fromWindowId(
+        id,
+      ).invokeMethod(method, args).timeout(const Duration(seconds: 5));
     } catch (_) {}
   }
 
@@ -364,7 +404,7 @@ class MirrorAppState extends AppState {
 
   /// 向主窗口发请求（一般是 [MultiWindowService.invokeHost]）。
   final Future<dynamic> Function(String method, [Map<String, dynamic>? args])
-      send;
+  send;
 
   AppConfig _config = AppConfig();
   List<VideoFile> _videos = const <VideoFile>[];
@@ -445,7 +485,8 @@ class MirrorAppState extends AppState {
             if (item is Map)
               LogEntry(
                 timestamp: DateTime.fromMillisecondsSinceEpoch(
-                    (item['ts'] as num?)?.toInt() ?? 0),
+                  (item['ts'] as num?)?.toInt() ?? 0,
+                ),
                 message: (item['msg'] as String?) ?? '',
                 category: (item['cat'] as String?) ?? 'general',
               ),
@@ -474,10 +515,7 @@ class MirrorAppState extends AppState {
   Future<Map<String, dynamic>> probeMedia(String path) async {
     final resp = await send(PanelMethod.probe, {'path': path});
     if (resp is Map) return Map<String, dynamic>.from(resp);
-    return <String, dynamic>{
-      'success': false,
-      'error': 'host unavailable',
-    };
+    return <String, dynamic>{'success': false, 'error': 'host unavailable'};
   }
 
   @override
@@ -494,10 +532,7 @@ class MirrorAppState extends AppState {
 
   @override
   void logAiGraphApplied(int nodeCount, int connectionCount) {
-    addLog(
-      '[AI] 图已应用：$nodeCount 个节点 / $connectionCount 条连线',
-      category: 'info',
-    );
+    addLog('[AI] 图已应用：$nodeCount 个节点 / $connectionCount 条连线', category: 'info');
   }
 
   @override

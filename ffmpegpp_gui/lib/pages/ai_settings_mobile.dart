@@ -85,7 +85,9 @@ Widget mobileAiSettingsContent(BuildContext ctx, AppState state) {
 
       return LayoutBuilder(
         builder: (context, constraints) {
-          final narrow = constraints.maxWidth < 360;
+          final narrow =
+              constraints.maxWidth < 440 ||
+              MediaQuery.textScalerOf(context).scale(13) > 16;
           return Column(
             children: [
               // ── AI 助手（提供商列表） ──
@@ -101,7 +103,11 @@ Widget mobileAiSettingsContent(BuildContext ctx, AppState state) {
                   if (cfg.aiEnabled) ...[
                     Text(
                       s.aiProviders,
-                      style: TextStyle(fontSize: 11, color: scheme.outline),
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.45,
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
                     const SizedBox(height: 2),
                     if (cfg.aiProfiles.isEmpty)
@@ -378,7 +384,11 @@ Widget mobileAiSettingsContent(BuildContext ctx, AppState state) {
                         s.isZh
                             ? '改后点「应用」。设为 0.0.0.0 将暴露到局域网并启用访问令牌'
                             : 'Click Apply. 0.0.0.0 exposes to LAN and enables token',
-                        style: TextStyle(fontSize: 10, color: scheme.outline),
+                        style: TextStyle(
+                          fontSize: 12,
+                          height: 1.45,
+                          color: scheme.onSurfaceVariant,
+                        ),
                       ),
                     ),
                     if (state.mcpRunning && state.mcpToken != null)
@@ -539,7 +549,11 @@ class _MobileProviderRow extends StatelessWidget {
                               : 'Disabled · ${profile.model}'),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 11, color: scheme.outline),
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.45,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                 ],
               ),
@@ -582,7 +596,11 @@ class _PermRow extends StatelessWidget {
       title: Text(title, style: TextStyle(fontSize: 12, color: clr)),
       subtitle: Text(
         desc,
-        style: TextStyle(fontSize: 10, color: scheme.outline),
+        style: TextStyle(
+          fontSize: 12,
+          height: 1.45,
+          color: scheme.onSurfaceVariant,
+        ),
       ),
       value: value,
       onChanged: onChanged,
@@ -858,11 +876,11 @@ class _MobileAiProviderDetailPageState
         !_isNew && _draft.enabled && cfg.activeAiProfileId == _draft.id;
 
     Widget field(String label, Widget child) => Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(bottom: 18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: TextStyle(fontSize: 12, color: clr)),
+          Text(label, style: TextStyle(fontSize: 13, color: clr)),
           const SizedBox(height: 5),
           child,
         ],
@@ -1059,7 +1077,11 @@ class _MobileAiProviderDetailPageState
             // 实际请求地址预览：Base + 路径拼接结果，避免用户猜
             Text(
               '${s.isZh ? '实际请求' : 'Effective'}: ${_draft.effectiveUrl}',
-              style: TextStyle(fontSize: 10, color: scheme.outline),
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.45,
+                color: scheme.onSurfaceVariant,
+              ),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
@@ -1586,7 +1608,11 @@ class _AiSwitchRow extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     desc!,
-                    style: TextStyle(fontSize: 10, color: scheme.outline),
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.45,
+                      color: scheme.onSurfaceVariant,
+                    ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -1817,7 +1843,11 @@ class _MobileMultiKeyPageState extends State<MobileMultiKeyPage> {
                           s.isZh
                               ? '请求时按顺序轮换使用这些 Key。清空输入框再返回即删除该 Key。'
                               : 'Keys are rotated in order. Clear a field to remove it.',
-                          style: TextStyle(fontSize: 11, color: scheme.outline),
+                          style: TextStyle(
+                            fontSize: 12,
+                            height: 1.45,
+                            color: scheme.onSurfaceVariant,
+                          ),
                         ),
                         const SizedBox(height: 8),
                         for (var i = 0; i < _keys.length; i++)
@@ -1921,14 +1951,21 @@ class _MobileModelSettingsPageState extends State<MobileModelSettingsPage> {
     final customTemp = _entry.temperature != null;
 
     Widget field(String label, Widget child, {String? hint}) => Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(bottom: 18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: TextStyle(fontSize: 12, color: clr)),
+          Text(label, style: TextStyle(fontSize: 13, color: clr)),
           if (hint != null) ...[
             const SizedBox(height: 2),
-            Text(hint, style: TextStyle(fontSize: 10, color: scheme.outline)),
+            Text(
+              hint,
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.45,
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
           ],
           const SizedBox(height: 5),
           child,
@@ -2080,7 +2117,11 @@ class _MobileModelSettingsPageState extends State<MobileModelSettingsPage> {
                       zh
                           ? '留空的项沿用提供商默认值；设置的值仅对当前选中的这个模型生效。'
                           : 'Empty fields inherit provider defaults; overrides apply only to this model.',
-                      style: TextStyle(fontSize: 11, color: scheme.outline),
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.45,
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
                   ],
                 ),
@@ -2376,7 +2417,7 @@ class _AiSectionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     Widget body = Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2390,9 +2431,9 @@ class _AiSectionCard extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: 15,
                     fontWeight: FontWeight.w600,
-                    color: scheme.onSurfaceVariant,
+                    color: scheme.onSurface,
                   ),
                 ),
               ),
@@ -2406,10 +2447,14 @@ class _AiSectionCard extends StatelessWidget {
               subtitle!,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 10, color: scheme.outline),
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.45,
+                color: scheme.onSurfaceVariant,
+              ),
             ),
           ],
-          if (children.isNotEmpty) ...[const SizedBox(height: 8), ...children],
+          if (children.isNotEmpty) ...[const SizedBox(height: 16), ...children],
         ],
       ),
     );
@@ -2482,17 +2527,39 @@ class _AiDropdownRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            label,
-            style: TextStyle(fontSize: 12, color: scheme.onSurface),
-          ),
-        ),
-        const SizedBox(width: 8),
-        _AiDropdown(value: value, entries: entries, onSelected: onSelected),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 380;
+        final dropdown = _AiDropdown(
+          value: value,
+          entries: entries,
+          onSelected: onSelected,
+        );
+        return compact
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(fontSize: 13, color: scheme.onSurface),
+                  ),
+                  const SizedBox(height: 8),
+                  dropdown,
+                ],
+              )
+            : Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      label,
+                      style: TextStyle(fontSize: 13, color: scheme.onSurface),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  dropdown,
+                ],
+              );
+      },
     );
   }
 }
@@ -2517,7 +2584,7 @@ class _AiField extends StatefulWidget {
   /// 同一档，可选参数从未被显式传过，等于「看着能改、其实哪都没改」的死参数
   /// （analyzer 报 `UNUSED_ELEMENT_PARAMETER`）。保留 getter 是为了不动 build
   /// 里既有的 `size.xxx` 写法。
-  static const AppControlSize _size = AppControlSize.comfortable;
+  static const AppControlSize _size = AppControlSize.large;
   AppControlSize get size => _size;
 
   const _AiField({
@@ -2610,7 +2677,10 @@ class _AiFieldState extends State<_AiField> {
         ),
         // 不带这个约束，带「眼睛」后缀图标的字段会被 InputDecorator 默认的
         // 48×48 图标盒顶高（移动端 48 / 桌面折算后 40），比同卡其它字段高一截
-        suffixIconConstraints: AppControlSize.iconSlot,
+        suffixIconConstraints: const BoxConstraints(
+          minWidth: 48,
+          minHeight: 48,
+        ),
         suffixIcon: widget.obscure
             ? IconButton(
                 icon: Icon(
@@ -2619,7 +2689,7 @@ class _AiFieldState extends State<_AiField> {
                   color: scheme.outline,
                 ),
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
                 onPressed: () => setState(() => _visible = !_visible),
               )
             : null,
@@ -2628,7 +2698,10 @@ class _AiFieldState extends State<_AiField> {
       onEditingComplete: () => widget.onCommit(_ctrl.text),
     );
     // 多行字段（标题提示词 2~4 行、系统提示词 3~6 行）不能钉高度，否则只剩一行高
-    return widget.maxLines > 1 ? field : size.fieldBox(field);
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 48),
+      child: field,
+    );
   }
 }
 

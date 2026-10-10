@@ -21,12 +21,15 @@ import 'mobile_glass_pill.dart';
 class GlassPanel extends StatelessWidget {
   final Widget child;
   final double radius;
+
   /// 模糊半径（σ）。默认 12：Windows 上 σ16/18 的模糊会额外占用大半径
   /// 的离屏纹理，12 在视觉上几乎无差别但内存明显更低（见 build 内 clamp）。
   final double blur;
   final EdgeInsetsGeometry? padding;
+
   /// 顶部渐变的不透明度 (0-255)。为空时使用主题默认值。
   final int? tintAlpha;
+
   /// 表面样式覆盖（SurfaceStyle 四值或遗留 'none'）。null = 跟随全局 glassEffect。
   final String? style;
 
@@ -63,13 +66,27 @@ class GlassPanel extends StatelessWidget {
     // 读取玻璃效果配置 + 透明度（cardOpacity 控制玻璃不透明度）。
     // 细粒度 select 而非 watch 整个 AppState：转码进度/日志的 notifyListeners
     // 不再触发全应用玻璃面板重建。
-    final globalEffect = context.select<AppState, String>((s) => s.config.glassEffect);
-    final cardOpacity = context.select<AppState, double>((s) => s.config.cardOpacity);
-    final follow = context.select<AppState, bool>((s) => s.config.glassFollowTheme);
-    final themeColor = context.select<AppState, int>((s) => s.config.themeColor);
-    final themeColor2 = context.select<AppState, int>((s) => s.config.themeColor2);
-    final noCardGlass = context.select<AppState, bool>((s) => s.config.noCardGlass);
-    final settingsFrostedGlass = context.select<AppState, bool>((s) => s.config.settingsFrostedGlass);
+    final globalEffect = context.select<AppState, String>(
+      (s) => s.config.glassEffect,
+    );
+    final cardOpacity = context.select<AppState, double>(
+      (s) => s.config.cardOpacity,
+    );
+    final follow = context.select<AppState, bool>(
+      (s) => s.config.glassFollowTheme,
+    );
+    final themeColor = context.select<AppState, int>(
+      (s) => s.config.themeColor,
+    );
+    final themeColor2 = context.select<AppState, int>(
+      (s) => s.config.themeColor2,
+    );
+    final noCardGlass = context.select<AppState, bool>(
+      (s) => s.config.noCardGlass,
+    );
+    final settingsFrostedGlass = context.select<AppState, bool>(
+      (s) => s.config.settingsFrostedGlass,
+    );
     // 玻璃细节（模糊度 / 通透度 / 高光强度与位置 / 边缘光）+ 主题色协调度。
     // 高光/边缘光由 [LiquidGlassBackdrop] 内部读同一份配置，这里只取模糊与通透。
     final tuning = glassTuningOf(context);
@@ -89,17 +106,27 @@ class GlassPanel extends StatelessWidget {
     // 铺开非常刺眼（用户反馈「选择主题色又很亮」）。
     final solidTheme = effect == 'none' || effect == SurfaceStyle.theme;
     final accent = harmonizedAccent(scheme, tone);
-    final accentAlt =
-        Color.lerp(scheme.tertiary, scheme.surface, tone.clamp(0.0, 0.9))!;
-    final baseColor = (follow || solidTheme) ? accent : scheme.surface;
+    final accentAlt = Color.lerp(
+      scheme.tertiary,
+      scheme.surface,
+      tone.clamp(0.0, 0.9),
+    )!;
+    final baseColor = solidTheme
+        ? accent
+        : themedGlassBase(scheme, tone, follow, second: themeColor2);
     final baseAlt = (follow || solidTheme) ? accentAlt : scheme.surface;
-    final borderColor = (follow || solidTheme) ? accent.withAlpha(isDark ? 110 : 150) : scheme.outlineVariant;
+    final borderColor = (follow || solidTheme)
+        ? accent.withAlpha(isDark ? 110 : 150)
+        : scheme.outlineVariant;
     // 主题渐变色：设置了 themeColor2（>=0）时，主题色在 themeColor→themeColor2 之间渐变
-    final grad = (themeColor2 >= 0)
+    final grad = (themeColor2 >= 0 && (follow || solidTheme))
         ? LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(themeColor), Color(themeColor2)],
+            colors: harmonizedAccentGradient(scheme, [
+              Color(themeColor),
+              Color(themeColor2),
+            ], tone),
           )
         : null;
 
@@ -115,14 +142,14 @@ class GlassPanel extends StatelessWidget {
           child: Container(
             padding: padding,
             decoration: BoxDecoration(
-              color: grad == null
-                  ? baseColor.withAlpha(solidAlpha)
-                  : null,
+              color: grad == null ? baseColor.withAlpha(solidAlpha) : null,
               gradient: grad != null
                   ? LinearGradient(
                       begin: grad.begin,
                       end: grad.end,
-                      colors: grad.colors.map((c) => c.withAlpha(solidAlpha)).toList(),
+                      colors: grad.colors
+                          .map((c) => c.withAlpha(solidAlpha))
+                          .toList(),
                     )
                   : null,
               borderRadius: br,
@@ -142,8 +169,9 @@ class GlassPanel extends StatelessWidget {
       if (settingsFrostedGlass && effect == 'liquid') {
         // 压低 alpha：alpha 过高时玻璃层的 tint 会盖住背景模糊（观感偏实心）。
         // 与 mobile_glass_pill 一致的 120/105 上限。
-        final frostedAlpha =
-            (((isDark ? 105 : 120) * op) * tuning.tintScale).round().clamp(0, 255);
+        final frostedAlpha = (((isDark ? 105 : 120) * op) * tuning.tintScale)
+            .round()
+            .clamp(0, 255);
         // [FIX UI-玻璃脱节] 此处**不能**包 RepaintBoundary。
         // 历史代码在这里包了一层 RepaintBoundary，直接违反了本文件 241 / 368 行
         // 已明确写下的规则：「含 BackdropFilter 的图层一旦成为光栅缓存候选，
@@ -171,8 +199,10 @@ class GlassPanel extends StatelessWidget {
         );
       }
       return MobileGlassPill(
+        style: effect,
         radius: radius,
-        padding: padding ?? const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        padding:
+            padding ?? const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         child: child,
       );
     }
@@ -190,7 +220,9 @@ class GlassPanel extends StatelessWidget {
                 ? LinearGradient(
                     begin: grad.begin,
                     end: grad.end,
-                    colors: grad.colors.map((c) => c.withAlpha(solidAlpha)).toList(),
+                    colors: grad.colors
+                        .map((c) => c.withAlpha(solidAlpha))
+                        .toList(),
                   )
                 : null,
             borderRadius: br,
@@ -211,7 +243,9 @@ class GlassPanel extends StatelessWidget {
     // 纯色分支：theme（跟随主题色）/ gray（灰色）/ none（遗留「无效果」）。
     // 纯色语义即实心：完全不透明，不跟随 cardOpacity；主题渐变（themeColor2）
     // 时 theme/none 用渐变底色，gray 恒为纯灰。
-    if (effect == 'none' || effect == SurfaceStyle.theme || effect == SurfaceStyle.gray) {
+    if (effect == 'none' ||
+        effect == SurfaceStyle.theme ||
+        effect == SurfaceStyle.gray) {
       const noneAlpha = 255;
       final Color base = effect == SurfaceStyle.gray
           // 灰色恒为**中性**灰：fromSeed 生成的容器灰带种子色偏，会让人误以为
@@ -228,7 +262,9 @@ class GlassPanel extends StatelessWidget {
                 ? LinearGradient(
                     begin: grad.begin,
                     end: grad.end,
-                    colors: grad.colors.map((c) => c.withAlpha(noneAlpha)).toList(),
+                    colors: grad.colors
+                        .map((c) => c.withAlpha(noneAlpha))
+                        .toList(),
                   )
                 : null,
             borderRadius: br,
@@ -261,12 +297,20 @@ class GlassPanel extends StatelessWidget {
             padding: padding,
             decoration: BoxDecoration(
               borderRadius: br,
-              color: grad == null ? baseColor.withAlpha(((isDark ? 165 : 185) * op).round()) : null,
+              color: grad == null
+                  ? baseColor.withAlpha(((isDark ? 165 : 185) * op).round())
+                  : null,
               gradient: grad != null
                   ? LinearGradient(
                       begin: grad.begin,
                       end: grad.end,
-                      colors: grad.colors.map((c) => c.withAlpha(((isDark ? 165 : 185) * op).round())).toList(),
+                      colors: grad.colors
+                          .map(
+                            (c) => c.withAlpha(
+                              ((isDark ? 165 : 185) * op).round(),
+                            ),
+                          )
+                          .toList(),
                     )
                   : null,
               border: Border.all(
@@ -287,12 +331,13 @@ class GlassPanel extends StatelessWidget {
     //    果冻壁内阴影等冗余光效）
     final liqTop =
         (((tintAlpha ?? (isDark ? 96 : 118)) * op) * tuning.tintScale).round();
-    final liqBot = ((tintAlpha != null
-                ? (tintAlpha! - 60).clamp(8, 255)
-                : (isDark ? 46 : 62)) *
-            op *
-            tuning.tintScale)
-        .round();
+    final liqBot =
+        ((tintAlpha != null
+                    ? (tintAlpha! - 60).clamp(8, 255)
+                    : (isDark ? 46 : 62)) *
+                op *
+                tuning.tintScale)
+            .round();
     // 背景完全透明（op==0）时仍保留果冻边缘描边与折射扭曲，
     // 仅去掉玻璃体感的底色渐变 —— 达到"仅边缘扭曲"的全透明液态玻璃
     final fullyTransparent = op <= 0.001;
@@ -300,25 +345,33 @@ class GlassPanel extends StatelessWidget {
     final bodyGradient = fullyTransparent
         ? null
         : (grad != null
-            ? LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Color.lerp(grad.colors.first, Colors.black, 0)!.withAlpha(liqTop),
-                  Color.lerp(grad.colors.last, Colors.black, 0.15)!.withAlpha(liqBot),
-                ],
-                stops: const [0.0, 1.0],
-              )
-            : LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  baseColor.withAlpha(liqTop),
-                  baseColor.withAlpha((liqTop + liqBot) ~/ 2),
-                  baseAlt.withAlpha(liqBot),
-                ],
-                stops: const [0.0, 0.55, 1.0],
-              ));
+              ? LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Color.lerp(
+                      grad.colors.first,
+                      Colors.black,
+                      0,
+                    )!.withAlpha(liqTop),
+                    Color.lerp(
+                      grad.colors.last,
+                      Colors.black,
+                      0.15,
+                    )!.withAlpha(liqBot),
+                  ],
+                  stops: const [0.0, 1.0],
+                )
+              : LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    baseColor.withAlpha(liqTop),
+                    baseColor.withAlpha((liqTop + liqBot) ~/ 2),
+                    baseAlt.withAlpha(liqBot),
+                  ],
+                  stops: const [0.0, 0.55, 1.0],
+                ));
     final glassBody = Container(
       padding: padding,
       decoration: BoxDecoration(
@@ -331,8 +384,8 @@ class GlassPanel extends StatelessWidget {
           color: fullyTransparent
               ? Colors.transparent
               : (follow
-                  ? accent.withValues(alpha: isDark ? 0.30 : 0.45)
-                  : Colors.white.withValues(alpha: isDark ? 0.14 : 0.28)),
+                    ? accent.withValues(alpha: isDark ? 0.30 : 0.45)
+                    : Colors.white.withValues(alpha: isDark ? 0.14 : 0.28)),
           width: 1,
         ),
       ),
@@ -369,8 +422,10 @@ class GlassPanel extends StatelessWidget {
                   color: fullyTransparent
                       ? Colors.transparent
                       : (follow
-                          ? accent.withValues(alpha: isDark ? 0.30 : 0.45)
-                          : Colors.white.withValues(alpha: isDark ? 0.14 : 0.28)),
+                            ? accent.withValues(alpha: isDark ? 0.30 : 0.45)
+                            : Colors.white.withValues(
+                                alpha: isDark ? 0.14 : 0.28,
+                              )),
                   width: 1,
                 ),
               ),
@@ -409,6 +464,7 @@ class GlassPanel extends StatelessWidget {
 class GlassTopBar extends StatelessWidget {
   final Widget title;
   final List<Widget> actions;
+
   /// 绝对居中的内容（如设置页搜索框）
   final Widget? center;
   final double height;
@@ -425,7 +481,9 @@ class GlassTopBar extends StatelessWidget {
   Widget build(BuildContext context) {
     // 桌面端：浮动玻璃圆角框（样式跟随「菜单样式」menuStyle）
     final scheme = Theme.of(context).colorScheme;
-    final menuStyle = context.select<AppState, String>((s) => s.config.menuStyle);
+    final menuStyle = context.select<AppState, String>(
+      (s) => s.config.menuStyle,
+    );
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
       child: GlassPanel(
@@ -433,36 +491,40 @@ class GlassTopBar extends StatelessWidget {
         style: menuStyle,
         child: SizedBox(
           height: height,
-          child: Stack(children: [
-            // 标题（左）与操作按钮（右）保持原布局
-            Positioned.fill(
-              child: Row(children: [
-                const SizedBox(width: 12),
-                Expanded(
-                  child: DefaultTextStyle.merge(
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: scheme.onSurface,
+          child: Stack(
+            children: [
+              // 标题（左）与操作按钮（右）保持原布局
+              Positioned.fill(
+                child: Row(
+                  children: [
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: DefaultTextStyle.merge(
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: scheme.onSurface,
+                        ),
+                        child: title,
+                      ),
                     ),
-                    child: title,
-                  ),
-                ),
-                ...actions,
-                const SizedBox(width: 4),
-              ]),
-            ),
-            // 居中内容（如搜索框）：水平垂直都绝对居中；
-            // Align 不拦截子项外区域的点击（两侧可点到 title/actions）
-            if (center != null)
-              Positioned(
-                left: 0, right: 0, top: 0, bottom: 0,
-                child: Align(
-                  alignment: Alignment.center,
-                  child: center,
+                    ...actions,
+                    const SizedBox(width: 4),
+                  ],
                 ),
               ),
-          ]),
+              // 居中内容（如搜索框）：水平垂直都绝对居中；
+              // Align 不拦截子项外区域的点击（两侧可点到 title/actions）
+              if (center != null)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  bottom: 0,
+                  child: Align(alignment: Alignment.center, child: center),
+                ),
+            ],
+          ),
         ),
       ),
     );

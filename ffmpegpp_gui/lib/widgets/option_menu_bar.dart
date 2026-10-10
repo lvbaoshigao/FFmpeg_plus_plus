@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show KeyDownEvent, KeyRepeatEvent, LogicalKeyboardKey;
+import 'package:flutter/services.dart'
+    show KeyDownEvent, KeyRepeatEvent, LogicalKeyboardKey;
 
 import '../theme/app_text_scale.dart';
 
@@ -57,14 +58,19 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
 
   /// 浮层控制器：展开的选项列表挂在 Overlay 上（不参与宿主卡的布局）。
   final OverlayPortalController _portal = OverlayPortalController();
+
   /// 触发按钮与浮层之间的定位链接（滚动时浮层自动跟随按钮）。
   final LayerLink _link = LayerLink();
+
   /// 触发按钮宽度：浮层与按钮等宽（由 LayoutBuilder 写入）。
   double _triggerWidth = 200;
+
   /// 下方空间不足时改为向上弹出。
   bool _openUp = false;
+
   /// 键盘高亮项下标（null = 还没开始键盘导航，例如纯鼠标打开）。
   int? _highlightIndex;
+
   /// 每一行一个 GlobalKey：键盘高亮行滚出可视区时用 Scrollable.ensureVisible
   /// 把它滚回来（浮层高度上限 300，条目多时确实会滚）。
   List<GlobalKey> _rowKeys = const [];
@@ -110,7 +116,9 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
 
   void _syncRowKeys() {
     _rowKeys = List<GlobalKey>.generate(
-        widget.items.length, (i) => GlobalKey(debugLabel: 'OptionMenuBar.row$i'));
+      widget.items.length,
+      (i) => GlobalKey(debugLabel: 'OptionMenuBar.row$i'),
+    );
   }
 
   /// 当前选中项下标（没有匹配项时为 -1）。
@@ -273,12 +281,15 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
       return Container(
         decoration: trigger.copyWith(borderRadius: BorderRadius.circular(12)),
         padding: const EdgeInsets.all(3),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          for (var i = 0; i < widget.items.length; i++) ...[
-            if (i > 0) const SizedBox(width: 2),
-            Expanded(child: _pill(context, widget.items[i], compact: true)),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var i = 0; i < widget.items.length; i++) ...[
+              if (i > 0) const SizedBox(width: 2),
+              Expanded(child: _pill(context, widget.items[i], compact: true)),
+            ],
           ],
-        ]),
+        ),
       );
     }
 
@@ -289,60 +300,86 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
     // 而是用 OverlayPortal 弹出一层浮层 —— 宿主卡片高度在展开/收起时完全不变。
     // 浮层用 CompositedTransformFollower 绑定触发按钮：滚动时自动跟随，
     // 点浮层外 / Esc / 选中某项都会关闭；下方空间不足时自动向上弹出。
-    return LayoutBuilder(builder: (context, cons) {
-      _triggerWidth = cons.maxWidth.isFinite ? cons.maxWidth : 200;
-      return CompositedTransformTarget(
-        link: _link,
-        child: OverlayPortal(
-          controller: _portal,
-          overlayChildBuilder: _buildOverlay,
-          child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: _toggle,
-          child: Container(
-            height: widget.triggerHeight,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            decoration: trigger,
-            child: Row(children: [
-              if (widget.leadingIcon != null) ...[
-                Icon(widget.leadingIcon, size: 15, color: scheme.primary),
-                const SizedBox(width: 7),
-              ],
-              if (widget.label != null) ...[
-                Flexible(child: Text(widget.label!,
-                    maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 12, color: scheme.onSurface))),
-                const SizedBox(width: 8),
-              ],
-              // 当前值：独占全部剩余宽度（Expanded），不与任何 Spacer 平分。
-              //
-              // 旧写法是 [const Spacer(), Flexible(Text)]，两者 flex 都是 1，
-              // 剩余宽度被平分成两半 —— 文字只拿到一半，于是 132px 的框里
-              // 「跟随主题色（纯色）」被截成「跟随 ...」，就是用户反馈的
-              // 「右侧选项框内的文字显示不全」。这里没有 label 时只有一个
-              // 弹性子项，文字自然占满整行；箭头固定在右端。
-              Expanded(
-                child: Text(current?.label ?? '',
-                    maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500,
-                        color: scheme.onSurface)),
+    return LayoutBuilder(
+      builder: (context, cons) {
+        _triggerWidth = cons.maxWidth.isFinite ? cons.maxWidth : 200;
+        return CompositedTransformTarget(
+          link: _link,
+          child: OverlayPortal(
+            controller: _portal,
+            overlayChildBuilder: _buildOverlay,
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: _toggle,
+                child: Container(
+                  height: widget.triggerHeight,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: trigger,
+                  child: Row(
+                    children: [
+                      if (widget.leadingIcon != null) ...[
+                        Icon(
+                          widget.leadingIcon,
+                          size: 15,
+                          color: scheme.primary,
+                        ),
+                        const SizedBox(width: 7),
+                      ],
+                      if (widget.label != null) ...[
+                        Flexible(
+                          child: Text(
+                            widget.label!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: scheme.onSurface,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      // 当前值：独占全部剩余宽度（Expanded），不与任何 Spacer 平分。
+                      //
+                      // 旧写法是 [const Spacer(), Flexible(Text)]，两者 flex 都是 1，
+                      // 剩余宽度被平分成两半 —— 文字只拿到一半，于是 132px 的框里
+                      // 「跟随主题色（纯色）」被截成「跟随 ...」，就是用户反馈的
+                      // 「右侧选项框内的文字显示不全」。这里没有 label 时只有一个
+                      // 弹性子项，文字自然占满整行；箭头固定在右端。
+                      Expanded(
+                        child: Text(
+                          current?.label ?? '',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: scheme.onSurface,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      // 展开时箭头旋转 180°，与设置页二级菜单同一动画语言
+                      AnimatedRotation(
+                        turns: _expanded ? 0.5 : 0,
+                        duration: const Duration(milliseconds: 180),
+                        child: Icon(
+                          Icons.expand_more,
+                          size: 16,
+                          color: scheme.outline,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-              const SizedBox(width: 4),
-              // 展开时箭头旋转 180°，与设置页二级菜单同一动画语言
-              AnimatedRotation(
-                turns: _expanded ? 0.5 : 0,
-                duration: const Duration(milliseconds: 180),
-                child: Icon(Icons.expand_more, size: 16, color: scheme.outline),
-              ),
-            ]),
+            ),
           ),
-        ),
-      ),
-        ),
-      );
-    });
+        );
+      },
+    );
   }
 
   /// 浮层选项列表：挂在 Overlay 上，因此**不会**撑高宿主卡片。
@@ -359,14 +396,20 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
         constraints: const BoxConstraints(maxHeight: 300),
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            for (var i = 0; i < widget.items.length; i++)
-              KeyedSubtree(
-                key: i < _rowKeys.length ? _rowKeys[i] : null,
-                child: _menuRow(overlayContext, widget.items[i],
-                    highlighted: _highlightIndex == i),
-              ),
-          ]),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < widget.items.length; i++)
+                KeyedSubtree(
+                  key: i < _rowKeys.length ? _rowKeys[i] : null,
+                  child: _menuRow(
+                    overlayContext,
+                    widget.items[i],
+                    highlighted: _highlightIndex == i,
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -377,163 +420,228 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
       // 那个 Stack 的直接子节点，中间夹一层会触发 ParentDataWidget 报错。
       child: withoutAppTextScale(
         overlayContext,
-        Stack(children: [
-        // 全屏透明遮罩：点浮层以外任意位置关闭。用 opaque 命中，
-        // 避免误触到底层控件（与系统下拉菜单的行为一致）。
-        Positioned.fill(
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: _close,
-            child: const SizedBox.expand(),
-          ),
-        ),
-        CompositedTransformFollower(
-          link: _link,
-          showWhenUnlinked: false,
-          targetAnchor: _openUp ? Alignment.topLeft : Alignment.bottomLeft,
-          followerAnchor: _openUp ? Alignment.bottomLeft : Alignment.topLeft,
-          offset: Offset(0, _openUp ? -4 : 4),
-          child: Align(
-            alignment: _openUp ? Alignment.bottomLeft : Alignment.topLeft,
-            child: SizedBox(
-              width: _triggerWidth.clamp(140.0, 320.0),
-              child: Focus(
-                autofocus: true,
-                // PC 键盘：↑/↓ 移动高亮、Enter/Space 选中、Esc 关闭
-                onKeyEvent: _onPanelKey,
-                // 展开 / 收起动画：淡入 + 从锚点角缩放（170ms）。
-                // 旧实现是 `_portal.show()` 后直接出现，没有任何过渡，
-                // 用户反馈「展开没有动画」。
-                child: FadeTransition(
-                  opacity:
-                      CurvedAnimation(parent: _ovCtrl, curve: Curves.easeOut),
-                  child: ScaleTransition(
-                    scale: Tween<double>(begin: 0.94, end: 1.0).animate(
-                        CurvedAnimation(
-                            parent: _ovCtrl, curve: Curves.easeOutCubic)),
-                    // 锚点与弹出方向一致：向下弹从左上角放大，向上弹从左下角放大
-                    alignment:
-                        _openUp ? Alignment.bottomLeft : Alignment.topLeft,
-                    child: panel,
+        Stack(
+          children: [
+            // 全屏透明遮罩：点浮层以外任意位置关闭。用 opaque 命中，
+            // 避免误触到底层控件（与系统下拉菜单的行为一致）。
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _close,
+                child: const SizedBox.expand(),
+              ),
+            ),
+            CompositedTransformFollower(
+              link: _link,
+              showWhenUnlinked: false,
+              targetAnchor: _openUp ? Alignment.topLeft : Alignment.bottomLeft,
+              followerAnchor: _openUp
+                  ? Alignment.bottomLeft
+                  : Alignment.topLeft,
+              offset: Offset(0, _openUp ? -4 : 4),
+              child: Align(
+                alignment: _openUp ? Alignment.bottomLeft : Alignment.topLeft,
+                child: SizedBox(
+                  width: _triggerWidth.clamp(140.0, 320.0),
+                  child: Focus(
+                    autofocus: true,
+                    // PC 键盘：↑/↓ 移动高亮、Enter/Space 选中、Esc 关闭
+                    onKeyEvent: _onPanelKey,
+                    // 展开 / 收起动画：淡入 + 从锚点角缩放（170ms）。
+                    // 旧实现是 `_portal.show()` 后直接出现，没有任何过渡，
+                    // 用户反馈「展开没有动画」。
+                    child: FadeTransition(
+                      opacity: CurvedAnimation(
+                        parent: _ovCtrl,
+                        curve: Curves.easeOut,
+                      ),
+                      child: ScaleTransition(
+                        scale: Tween<double>(begin: 0.94, end: 1.0).animate(
+                          CurvedAnimation(
+                            parent: _ovCtrl,
+                            curve: Curves.easeOutCubic,
+                          ),
+                        ),
+                        // 锚点与弹出方向一致：向下弹从左上角放大，向上弹从左下角放大
+                        alignment: _openUp
+                            ? Alignment.bottomLeft
+                            : Alignment.topLeft,
+                        child: panel,
+                      ),
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
+          ],
         ),
-        ]),
       ),
     );
   }
+
   /// 行内药丸（bar 模式条目）
   Widget _pill(BuildContext context, OptionItem<T> it, {bool compact = false}) {
     final scheme = Theme.of(context).colorScheme;
     final sel = _selected(it);
-    return InkWell(
-      borderRadius: BorderRadius.circular(10),
-      onTap: () => _pick(it),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOut,
-        padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 10, vertical: compact ? 5 : 7),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(10),
-          color: sel ? scheme.primary.withAlpha(34) : Colors.transparent,
-          border: Border.all(
-              color: sel ? scheme.primary.withAlpha(90) : Colors.transparent),
-        ),
-        child: Row(mainAxisSize: MainAxisSize.min, mainAxisAlignment: MainAxisAlignment.center,
+    final weight =
+        Theme.of(context).textTheme.bodyMedium?.fontWeight ?? FontWeight.w400;
+    return Semantics(
+      selected: sel,
+      button: true,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: () => _pick(it),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+          padding: EdgeInsets.symmetric(
+            horizontal: compact ? 6 : 10,
+            vertical: compact ? 5 : 7,
+          ),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            color: sel ? scheme.primary.withAlpha(34) : Colors.transparent,
+            border: Border.all(
+              color: sel ? scheme.primary.withAlpha(90) : Colors.transparent,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 180),
-            transitionBuilder: (child, anim) =>
-                FadeTransition(opacity: anim, child: child),
-            child: it.icon == null
-                ? const SizedBox.shrink()
-                : Icon(it.icon,
-                    key: ValueKey('${it.value}_$sel'),
-                    size: 14,
-                    color: sel ? scheme.primary : scheme.onSurfaceVariant),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                transitionBuilder: (child, anim) =>
+                    FadeTransition(opacity: anim, child: child),
+                child: it.icon == null
+                    ? const SizedBox.shrink()
+                    : Icon(
+                        it.icon,
+                        key: ValueKey('${it.value}_$sel'),
+                        size: 14,
+                        color: sel ? scheme.primary : scheme.onSurfaceVariant,
+                      ),
+              ),
+              if (it.icon != null) const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  it.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: sel
+                        ? FontWeight.values[(weight.value ~/ 100).clamp(0, 8)]
+                        : weight,
+                    color: sel ? scheme.primary : scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ],
           ),
-          if (it.icon != null) const SizedBox(width: 4),
-          Flexible(
-            child: Text(it.label,
-                maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: sel ? FontWeight.w600 : FontWeight.w400,
-                  color: sel ? scheme.primary : scheme.onSurfaceVariant,
-                )),
-          ),
-        ]),
+        ),
       ),
     );
   }
 
   /// 展开列表行（menu 模式条目）—— 设置页左侧主菜单条目的同款动画。
   /// [highlighted] 只在键盘导航时生效（鼠标用户看到的样式与以前完全一致）。
-  Widget _menuRow(BuildContext context, OptionItem<T> it, {bool highlighted = false}) {
+  Widget _menuRow(
+    BuildContext context,
+    OptionItem<T> it, {
+    bool highlighted = false,
+  }) {
     final scheme = Theme.of(context).colorScheme;
     final sel = _selected(it);
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: () => _pick(it),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOut,
-        margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          // 选中 = 主题色药丸；键盘高亮 = 同色更淡的一档（弱于选中，避免混淆）
-          color: sel
-              ? scheme.primary.withAlpha(34)
-              : (highlighted ? scheme.primary.withAlpha(16) : Colors.transparent),
-          border: Border.all(
+    final weight =
+        Theme.of(context).textTheme.bodyMedium?.fontWeight ?? FontWeight.w400;
+    return Semantics(
+      selected: sel,
+      button: true,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => _pick(it),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+          margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            // 选中 = 主题色药丸；键盘高亮 = 同色更淡的一档（弱于选中，避免混淆）
+            color: sel
+                ? scheme.primary.withAlpha(34)
+                : (highlighted
+                      ? scheme.primary.withAlpha(16)
+                      : Colors.transparent),
+            border: Border.all(
               color: sel
                   ? scheme.primary.withAlpha(90)
-                  : (highlighted ? scheme.primary.withAlpha(44) : Colors.transparent)),
-        ),
-        child: Row(children: [
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 180),
-            transitionBuilder: (child, anim) =>
-                FadeTransition(opacity: anim, child: child),
-            child: Icon(
-              it.icon ?? Icons.circle_outlined,
-              key: ValueKey('${it.value}_$sel'),
-              size: 15,
-              color: sel ? scheme.primary : scheme.onSurfaceVariant,
+                  : (highlighted
+                        ? scheme.primary.withAlpha(44)
+                        : Colors.transparent),
             ),
           ),
-          const SizedBox(width: 10),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-            Text(it.label,
-                maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: sel ? FontWeight.w600 : FontWeight.w400,
+          child: Row(
+            children: [
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                transitionBuilder: (child, anim) =>
+                    FadeTransition(opacity: anim, child: child),
+                child: Icon(
+                  it.icon ?? Icons.circle_outlined,
+                  key: ValueKey('${it.value}_$sel'),
+                  size: 15,
                   color: sel ? scheme.primary : scheme.onSurfaceVariant,
-                )),
-            if (it.subtitle != null) ...[
-              const SizedBox(height: 2),
-              Text(it.subtitle!,
-                  style: TextStyle(fontSize: 10, color: scheme.outline)),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      it.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: sel
+                            ? FontWeight.values[(weight.value ~/ 100).clamp(
+                                0,
+                                8,
+                              )]
+                            : weight,
+                        color: sel ? scheme.primary : scheme.onSurfaceVariant,
+                      ),
+                    ),
+                    if (it.subtitle != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        it.subtitle!,
+                        style: TextStyle(fontSize: 10, color: scheme.outline),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              // 选中标记：淡入淡出（与图标同一动画语言）
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                transitionBuilder: (child, anim) =>
+                    FadeTransition(opacity: anim, child: child),
+                child: sel
+                    ? Icon(
+                        Icons.check_rounded,
+                        key: const ValueKey('check'),
+                        size: 16,
+                        color: scheme.primary,
+                      )
+                    : const SizedBox.shrink(key: ValueKey('none')),
+              ),
             ],
-          ])),
-          // 选中标记：淡入淡出（与图标同一动画语言）
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 180),
-            transitionBuilder: (child, anim) =>
-                FadeTransition(opacity: anim, child: child),
-            child: sel
-                ? Icon(Icons.check_rounded,
-                    key: const ValueKey('check'),
-                    size: 16, color: scheme.primary)
-                : const SizedBox.shrink(key: ValueKey('none')),
           ),
-        ]),
+        ),
       ),
     );
   }

@@ -146,11 +146,13 @@ void slog_init() {
         snprintf(logPath, sizeof(logPath), "%s/FFmpeg++/server_debug.log", dataHome);
         char dirPath[PATH_MAX];
         snprintf(dirPath, sizeof(dirPath), "%s/FFmpeg++", dataHome);
-        std::filesystem::create_directories(dirPath);
+        std::error_code logDirectoryError;
+        std::filesystem::create_directories(dirPath, logDirectoryError);
     } else if (home && home[0]) {
         char dirPath[PATH_MAX];
         snprintf(dirPath, sizeof(dirPath), "%s/.local/share/FFmpeg++", home);
-        std::filesystem::create_directories(dirPath);
+        std::error_code logDirectoryError;
+        std::filesystem::create_directories(dirPath, logDirectoryError);
         snprintf(logPath, sizeof(logPath), "%s/server_debug.log", dirPath);
     } else {
         snprintf(logPath, sizeof(logPath), "/tmp/FFmpeg++_server_debug.log");
@@ -384,6 +386,8 @@ void runFFmpegProcess(const std::string& task_id,
     auto start = std::chrono::steady_clock::now();
     // 只保留最近 200 行 stderr（原实现无界累积，长转码会存几十万行只为取最后 100 行）
     std::deque<std::string> stderr_lines;
+    size_t stderr_bytes = 0;
+    constexpr size_t kDiagnosticBytes = 1024 * 1024;
     int progress_count = 0;
     bool has_real_progress = false;
     double last_sent_progress = -1.0;
@@ -391,8 +395,15 @@ void runFFmpegProcess(const std::string& task_id,
 
     auto result = Subprocess::runWithProgress(cmd,
         [&](const std::string& line) {
-            stderr_lines.push_back(line);
-            if (stderr_lines.size() > 200) stderr_lines.pop_front();
+            // Bound bytes as well as line count: 200 huge lines can otherwise
+            // retain gigabytes. Keep the tail, where FFmpeg reports errors.
+            stderr_lines.push_back(line.substr(line.size() > kDiagnosticBytes ?
+                line.size() - kDiagnosticBytes : 0));
+            stderr_bytes += stderr_lines.back().size();
+            while (stderr_lines.size() > 200 || stderr_bytes > kDiagnosticBytes) {
+                stderr_bytes -= stderr_lines.front().size();
+                stderr_lines.pop_front();
+            }
             parser.feed(line);
             progress_count++;
             if (line.find("time=") != std::string::npos) has_real_progress = true;

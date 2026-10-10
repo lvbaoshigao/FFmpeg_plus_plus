@@ -27,6 +27,7 @@ import 'liquid_glass_fallback.dart';
 Widget withWallpaper(
   BuildContext context,
   Widget child, {
+
   /// 同时把 AppBar 背景置透明（管线编辑器等自带顶栏的页面需要）
   bool transparentAppBar = false,
 }) {
@@ -42,44 +43,57 @@ Widget withWallpaper(
         .clamp(0.0, 1.0);
     final a = ((1.0 - op) * 220).round().clamp(20, 240);
     children.addAll([
-      Positioned.fill(child: Image(
-        image: wallpaperImageProvider(
+      Positioned.fill(
+        child: Image(
+          image: wallpaperImageProvider(
             bg,
             MediaQuery.sizeOf(context).width,
             MediaQuery.sizeOf(context).height,
-            MediaQuery.devicePixelRatioOf(context)),
-        fit: BoxFit.cover,
-        errorBuilder: (_, _, _) => const SizedBox.shrink(),
-      )),
+            MediaQuery.devicePixelRatioOf(context),
+          ),
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => const SizedBox.shrink(),
+        ),
+      ),
       Positioned.fill(child: ColoredBox(color: scheme.surface.withAlpha(a))),
     ]);
   }
-  children.add(Theme(
-    data: theme.copyWith(
-      scaffoldBackgroundColor: Colors.transparent,
-      appBarTheme: transparentAppBar
-          ? theme.appBarTheme.copyWith(backgroundColor: Colors.transparent)
-          : null,
+  children.add(
+    Theme(
+      data: theme.copyWith(
+        scaffoldBackgroundColor: Colors.transparent,
+        appBarTheme: transparentAppBar
+            ? theme.appBarTheme.copyWith(backgroundColor: Colors.transparent)
+            : null,
+      ),
+      child: child,
     ),
-    child: child,
-  ));
+  );
   // 壁纸窗口作用域：把当前壁纸解析为 ui.Image 下发给页内玻璃卡，
   // 供「滚动中的玻璃卡开窗」绑定渲染（见 WallpaperWindowScope 注释）。
   // 无壁纸（纯色/底色）时 provider 为 null，玻璃卡走原 BackdropFilter 路径
   // —— 纯色背景的模糊采样恒定，本就不存在图层分离。
   final provider = (bg.isNotEmpty && File(bg).existsSync())
-      ? wallpaperImageProvider(bg, MediaQuery.sizeOf(context).width,
-          MediaQuery.sizeOf(context).height, MediaQuery.devicePixelRatioOf(context))
+      ? wallpaperImageProvider(
+          bg,
+          MediaQuery.sizeOf(context).width,
+          MediaQuery.sizeOf(context).height,
+          MediaQuery.devicePixelRatioOf(context),
+        )
       : null;
   return WallpaperWindowScope(
     provider: provider,
     screenSize: MediaQuery.sizeOf(context),
     overlayColor: scheme.surface.withAlpha(
-        ((1.0 - context.select<AppState, double>((s) => s.config.backgroundOpacity))
-                    .clamp(0.0, 1.0) *
-                220)
-            .round()
-            .clamp(20, 240)),
+      ((1.0 -
+                      context.select<AppState, double>(
+                        (s) => s.config.backgroundOpacity,
+                      ))
+                  .clamp(0.0, 1.0) *
+              220)
+          .round()
+          .clamp(20, 240),
+    ),
     child: Stack(children: children),
   );
 }
@@ -144,14 +158,19 @@ class WallpaperBlurCache {
   static Size _screen = Size.zero;
   static double _dpr = -1;
   static double _sigma = -1;
+
   /// 自增令牌：作废在途的离屏渲染结果，避免旧任务覆盖新图。
   static int _token = 0;
   static Timer? _debounce;
+  static ui.Image? _pendingSource;
+  static ui.Image? _requestedSource;
+
   /// 已排队的参数指纹。**防抖计时器只在参数真的变化时重置**：滚动 / 动画时
   /// 玻璃卡每帧都会走 build 并调用 [request]，若无条件 `cancel + 新建`，
   /// 计时器会被无限推迟、重建永不发生，预模糊优化等于没做（painter 会一直
   /// 走每帧实时模糊的回退路径）。
   static int? _scheduledKey;
+
   /// 已失败的参数指纹：同一参数不再反复排队重试（如显存不足导致的持续失败），
   /// 换壁纸 / 改分辨率 / 改模糊度会得到新指纹，届时自然重试。
   static int? _failedKey;
@@ -180,7 +199,7 @@ class WallpaperBlurCache {
   static ui.Image? currentFor(ui.Image src, Size screen) {
     final cur = image.value;
     if (cur == null) return null;
-    if (!identical(_src, src) || _screen != screen) return null;
+    if (_src == null || !_src!.isCloneOf(src) || _screen != screen) return null;
     return cur;
   }
 
@@ -199,7 +218,11 @@ class WallpaperBlurCache {
   }) {
     final geoOk = currentFor(src, screen);
     if (geoOk != null && _dpr == dpr && _sigma == sigma) return geoOk;
-    final key = _keyOf(src, screen, dpr, sigma);
+    if (_requestedSource == null || !_requestedSource!.isCloneOf(src)) {
+      _requestedSource?.dispose();
+      _requestedSource = src.clone();
+    }
+    final key = _keyOf(_requestedSource!, screen, dpr, sigma);
     // 同参数此前失败过：冷却期内不再重试（否则每帧 build 都会重新排队一次
     // 离屏渲染）；冷却结束后放行，让它再试一次（见
     // kBlurRebuildRetryCooldownMs 的说明）。
@@ -210,7 +233,10 @@ class WallpaperBlurCache {
     }
     if (key == _scheduledKey) return geoOk; // 已排队 / 已在途：不要重复发起
     _scheduledKey = key;
+    final token = ++_token;
     _debounce?.cancel();
+    _pendingSource?.dispose();
+    _pendingSource = null;
     // 首次请求立即执行，不防抖：`_src == null` 表示此前从未成功生成过任何图，
     // 即「开机 → 第一张预模糊图就绪」这段窗口。它是纯实时模糊窗口 —— 每帧 ×
     // 每张可见玻璃卡都要对整屏跑一次 σ 模糊（Skia 为每次模糊分配 3σ 外扩的
@@ -222,14 +248,16 @@ class WallpaperBlurCache {
     // 除此之外的情况（换壁纸 / 窗口缩放 / 拖「模糊度」滑块）仍走防抖，避免
     // 连续变化时反复离屏渲染。
     if (_src == null) {
-      unawaited(_rebuild(src, screen, dpr, sigma, key));
+      unawaited(_rebuild(src, screen, dpr, sigma, key, token));
       return geoOk;
     }
+    final pending = src.clone();
+    _pendingSource = pending;
     _debounce = Timer(const Duration(milliseconds: 120), () {
       _debounce = null;
-      final k = _scheduledKey!;
-      _scheduledKey = null;
-      unawaited(_rebuild(src, screen, dpr, sigma, k));
+      _pendingSource = null;
+      unawaited(_rebuild(pending, screen, dpr, sigma, key, token));
+      pending.dispose();
     });
     return geoOk;
   }
@@ -254,11 +282,17 @@ class WallpaperBlurCache {
     // 在途任务回来把新图写进 image —— 不作废就变成「刚释放又泄漏回去」。
     _token++;
     _debounce?.cancel();
+    _pendingSource?.dispose();
+    _pendingSource = null;
     _debounce = null;
     _scheduledKey = null;
     _failedKey = null;
     _failedAtMs = 0;
+    _requestedSource?.dispose();
+    _requestedSource = null;
+    final oldSource = _src;
     _src = null;
+    if (oldSource != null) _disposeAfterFrame(oldSource);
     _screen = Size.zero;
     _dpr = -1;
     _sigma = -1;
@@ -266,15 +300,28 @@ class WallpaperBlurCache {
     if (cur != null) {
       // 本帧的绘制可能仍在用旧图，推迟到帧末释放，避免 use-after-dispose
       //（与 _rebuild 里替换旧图的处理保持一致）。
-      WidgetsBinding.instance.addPostFrameCallback((_) => cur.dispose());
+      _disposeAfterFrame(cur);
     }
+  }
+
+  static void _disposeAfterFrame(ui.Image image) {
+    WidgetsBinding.instance.addPostFrameCallback((_) => image.dispose());
+    // addPostFrameCallback alone does not request a frame when the app is idle.
+    WidgetsBinding.instance.ensureVisualUpdate();
   }
 
   /// 离屏渲染「按 cover 铺满整屏 + 高斯模糊」的壁纸（设备像素空间）。
   /// [failKey] 为本次请求的参数指纹，失败时记入 [_failedKey] 以免反复重试。
   static Future<void> _rebuild(
-      ui.Image src, Size screen, double dpr, double sigma, int failKey) async {
-    final token = ++_token;
+    ui.Image src,
+    Size screen,
+    double dpr,
+    double sigma,
+    int failKey,
+    int token,
+  ) async {
+    // Keep an owned handle while the scope may replace or release its ImageInfo.
+    final source = src.clone();
     final int dw = (screen.width * dpr).round().clamp(1, 8192);
     final int dh = (screen.height * dpr).round().clamp(1, 8192);
     final double sigmaDev = sigma * dpr;
@@ -299,9 +346,13 @@ class WallpaperBlurCache {
     // 不额外常驻内存（padding 那两张只是重建瞬间的临时对象）。
     final int pad = (3 * sigmaBs).ceil().clamp(0, 512);
     ui.Image? next;
+    ui.Image? resultSource;
+    ui.Image? padded;
+    ui.Picture? picture;
+    ui.Picture? cropPicture;
     try {
-      final iw = src.width.toDouble();
-      final ih = src.height.toDouble();
+      final iw = source.width.toDouble();
+      final ih = source.height.toDouble();
       // 与 BoxFit.cover 一致：等比铺满整屏、居中裁切。与原 painter 的 cover
       // 计算等价，保证卡内壁纸与卡外背景逐像素对齐。
       final scale = math.max(pw / iw, ph / ih);
@@ -320,37 +371,46 @@ class WallpaperBlurCache {
 
       final rec = ui.PictureRecorder();
       Canvas(rec).drawImageRect(
-        src,
+        source,
         Rect.fromLTWH(0, 0, iw, ih),
-        Rect.fromLTWH(
-            pad + (pw - cw) / 2, pad + (ph - ch) / 2, cw, ch),
+        Rect.fromLTWH(pad + (pw - cw) / 2, pad + (ph - ch) / 2, cw, ch),
         paint,
       );
-      final pic = rec.endRecording();
-      final padded = await pic.toImage(pw + 2 * pad, ph + 2 * pad);
-      pic.dispose();
+      picture = rec.endRecording();
+      padded = await picture.toImage(pw + 2 * pad, ph + 2 * pad);
+      if (token != _token) return;
 
       if (pad == 0) {
         next = padded;
+        padded = null; // Ownership transfers to the published image.
       } else {
         // 裁出 padding 内的屏幕区域作为最终图
         final rec2 = ui.PictureRecorder();
         Canvas(rec2).drawImageRect(
           padded,
           Rect.fromLTWH(
-              pad.toDouble(), pad.toDouble(), pw.toDouble(), ph.toDouble()),
+            pad.toDouble(),
+            pad.toDouble(),
+            pw.toDouble(),
+            ph.toDouble(),
+          ),
           Rect.fromLTWH(0, 0, pw.toDouble(), ph.toDouble()),
           // 1:1 纯裁剪拷贝（pw×ph → pw×ph）：high（双三次）在这里毫无收益，
           // 只是每次重建都白做一遍高代价重采样。none = 精确像素拷贝。
           Paint()..filterQuality = FilterQuality.none,
         );
-        final pic2 = rec2.endRecording();
-        next = await pic2.toImage(pw, ph);
-        pic2.dispose();
-        padded.dispose();
+        cropPicture = rec2.endRecording();
+        next = await cropPicture.toImage(pw, ph);
       }
     } catch (_) {
+      next?.dispose();
       next = null;
+    } finally {
+      cropPicture?.dispose();
+      picture?.dispose();
+      padded?.dispose();
+      if (next != null && token == _token) resultSource = source.clone();
+      source.dispose();
     }
     // 已被更新的任务取代 → 丢弃本次结果
     if (token != _token) {
@@ -373,14 +433,17 @@ class WallpaperBlurCache {
     // 成功（含参数已变化后的首次成功）：清掉失败标记，让该指纹重新可试。
     _failedKey = null;
     final old = image.value;
-    _src = src;
+    final oldSource = _src;
+    _src = resultSource;
+    if (oldSource != null) _disposeAfterFrame(oldSource);
+    _scheduledKey = null;
     _screen = screen;
     _dpr = dpr;
     _sigma = sigma;
     image.value = next; // 通知所有 scope 重新发布给页内玻璃卡
     if (old != null) {
       // 本帧的绘制可能仍在用旧图，推迟到帧末再释放，避免 use-after-dispose
-      WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
+      _disposeAfterFrame(old);
     }
   }
 }
@@ -421,6 +484,7 @@ class WallpaperWindowScope extends StatefulWidget {
 
 class _WallpaperWindowScopeState extends State<WallpaperWindowScope> {
   final ValueNotifier<WallpaperWindow?> _window = ValueNotifier(null);
+  ImageInfo? _imageInfo;
   ImageStream? _stream;
   ImageStreamListener? _listener;
   ImageProvider? _resolvedFor;
@@ -521,6 +585,7 @@ class _WallpaperWindowScopeState extends State<WallpaperWindowScope> {
       _unsubscribe();
       _resolvedFor = null;
       _window.value = null;
+      _releaseImageInfo();
       // [FIX M1] 没有壁纸 ⇒ 预模糊图与源壁纸引用都不再需要，全局释放掉。
       // 释放前必须先把本 scope 的窗口置空（上面一行）：否则下面 release() 触发的
       // image 通知会走 _publish()，用已释放的旧图重建一次窗口。
@@ -532,10 +597,18 @@ class _WallpaperWindowScopeState extends State<WallpaperWindowScope> {
     if (p == _resolvedFor) return;
     _unsubscribe();
     _resolvedFor = p;
-    if (clearWindow) _window.value = null; // 旧壁纸窗口立即失效，等新图解码
+    if (clearWindow) {
+      _window.value = null;
+      _releaseImageInfo();
+    }
     final listener = ImageStreamListener(
       (info, _) {
-        if (_disposed) return;
+        if (_disposed) {
+          info.dispose();
+          return;
+        }
+        _releaseImageInfo();
+        _imageInfo = info;
         _window.value = WallpaperWindow(
           image: info.image,
           blurred: WallpaperBlurCache.currentFor(info.image, widget.screenSize),
@@ -555,12 +628,24 @@ class _WallpaperWindowScopeState extends State<WallpaperWindowScope> {
       // 解码失败（文件被删/损坏）时清空窗口，玻璃卡回退到
       // BackdropFilter 路径；不传 onError 会把异常抛到全局错误处理。
       onError: (_, _) {
-        if (!_disposed) _window.value = null;
+        if (!_disposed) {
+          _window.value = null;
+          _releaseImageInfo();
+        }
       },
     );
     _listener = listener;
     _stream = p.resolve(ImageConfiguration.empty);
     _stream!.addListener(listener);
+  }
+
+  void _releaseImageInfo() {
+    final old = _imageInfo;
+    _imageInfo = null;
+    if (old != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
+      WidgetsBinding.instance.ensureVisualUpdate();
+    }
   }
 
   void _unsubscribe() {
@@ -608,6 +693,7 @@ class _WallpaperWindowScopeState extends State<WallpaperWindowScope> {
     WallpaperBlurCache.image.removeListener(_onBlurredChanged);
     _unsubscribe();
     _window.dispose();
+    _releaseImageInfo();
     final wasShowing = _counted;
     _track(false);
     // [FIX M1] 最后一个「有壁纸」的 scope 消失 ⇒ 壁纸已从配置里移除，释放进程级缓存。
@@ -630,5 +716,6 @@ class _WallpaperWindowInherited extends InheritedWidget {
   const _WallpaperWindowInherited({required this.window, required super.child});
 
   @override
-  bool updateShouldNotify(_WallpaperWindowInherited old) => window != old.window;
+  bool updateShouldNotify(_WallpaperWindowInherited old) =>
+      window != old.window;
 }

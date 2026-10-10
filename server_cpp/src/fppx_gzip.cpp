@@ -1,6 +1,7 @@
 #include "fppx_gzip.h"
 
 #include <cstdio>
+#include <array>
 
 #include "miniz/miniz_tdef.h"
 #include "miniz/miniz_tinfl.h"
@@ -11,17 +12,18 @@ namespace {
 
 // CRC32（IEEE 802.3，gzip 与 FPPX v2 的完整性校验共用同一种）
 uint32_t crc32Bytes(const uint8_t* data, size_t len) {
-    static uint32_t table[256];
-    static bool inited = false;
-    if (!inited) {
-        for (uint32_t i = 0; i < 256; ++i) {
+    // Imports/exports run concurrently on auxiliary FFI threads. Function-local
+    // static initialization publishes a complete immutable table exactly once.
+    static const auto table = [] {
+        std::array<uint32_t, 256> values{};
+        for (uint32_t i = 0; i < values.size(); ++i) {
             uint32_t c = i;
             for (int k = 0; k < 8; ++k)
                 c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
-            table[i] = c;
+            values[i] = c;
         }
-        inited = true;
-    }
+        return values;
+    }();
     uint32_t crc = 0xFFFFFFFFu;
     for (size_t i = 0; i < len; ++i)
         crc = table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);

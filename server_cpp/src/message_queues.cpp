@@ -64,4 +64,11 @@ void resetInputWake() {
     g_inputWake = false;
 }
 
+void resetMessageQueues() {
+    std::scoped_lock lock(g_inputMutex, g_outputMutex);
+    std::queue<std::string>().swap(g_inputQueue);
+    std::queue<std::string>().swap(g_outputQueue);
+    g_inputWake = false;
+}
+
 } // namespace ffmpegpp

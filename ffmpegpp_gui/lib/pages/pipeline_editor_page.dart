@@ -349,6 +349,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   /// 上一次推给独立窗口的「参数指纹」（`节点 id + 参数 JSON`），同上。
   String? _pushedParams;
+  Timer? _panelSyncTimer;
+  int _panelConfigRevision = 0;
+
+  void _onPanelAppStateChanged() {
+    _panelConfigRevision++;
+    _syncOpenPanels();
+  }
 
   /// AI 面板的窄接口句柄：外置交接会话（导出 / 导入消息）时要用。
   /// 面板 unmount 后它会被置空，所以另有 [_aiSessionCache] 兜底。
@@ -574,6 +581,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     // 整页子树（玻璃图层、RenderObject、图片引用）就此泄漏 —— 反复进出编辑器
     // 即反复泄漏，这是「用一段时间后内存涨到几百 MB」的来源之一。
     _appState = context.read<AppState>();
+    _appState.addListener(_onPanelAppStateChanged);
     if (!Platform.isWindows && !isMobilePlatform) {
       windowManager.addListener(this);
       windowManager.isMaximized().then((v) {
@@ -779,6 +787,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   @override
   void dispose() {
+    _panelSyncTimer?.cancel();
+    _appState.removeListener(_onPanelAppStateChanged);
     // 离开页面时恢复竖屏 + 恢复系统栏
     if (isMobilePlatform) {
       SystemChrome.setPreferredOrientations([
@@ -4437,9 +4447,23 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                           left: 8,
                           child: _buildMobileBottomLeftBar(scheme, s),
                         ),
-                        // 底部中央文件信息条
+                        // File details sit above the zoom controls, leaving taps unobstructed.
                         Positioned(
-                          bottom: 8,
+                          bottom:
+                              16 +
+                              _kMobileBarHeight *
+                                  math.min(
+                                    context
+                                        .read<AppState>()
+                                        .config
+                                        .editorZoomScale
+                                        .clamp(1.0, 1.6),
+                                    math.max(
+                                      1.0,
+                                      (MediaQuery.sizeOf(context).width - 106) /
+                                          156,
+                                    ),
+                                  ),
                           left: 0,
                           right: 0,
                           child: Center(child: _buildMobileFileInfo(scheme, s)),
@@ -4447,7 +4471,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                         // 逻辑块框选提示条（用具箱点按「循环」后出现，引导用户手指框选）
                         if (_isLogicBoxSelecting)
                           Positioned(
-                            top: 52,
+                            top:
+                                _kMobileBarHeight *
+                                    context
+                                        .read<AppState>()
+                                        .config
+                                        .editorToolbarScale
+                                        .clamp(1.0, 1.6) +
+                                16,
                             left: 8,
                             right: 8,
                             child: Container(
@@ -4728,27 +4759,29 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// 「模糊度 / 通透度」滑块，Windows 上也不做 σ 上限钳制。σ 与 tint alpha
   /// 改走 [tunedGlassSigma] / [tunedGlassAlpha] —— 6 与 255×op 是本面板的
   /// 历史基准，默认参数下逐像素不变（见 liquid_glass_fallback 的换算说明）。
-  Widget _glassWrap(Widget child, ColorScheme scheme) {
-    final op = context.select<AppState, double>((s) => s.config.cardOpacity);
-    final tuning = glassTuningOf(context);
-    final double sigma = tunedGlassSigma(6, tuning);
-    final ca = tunedGlassAlpha((op * 255).round(), tuning);
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: BackdropFilter(
-        // σ 走进程级缓存（见 cachedGlassBlur 说明）。
-        filter: cachedGlassBlur(sigma),
-        child: Container(
-          decoration: BoxDecoration(
-            color: scheme.surface.withAlpha(ca),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
+  Widget _glassWrap(Widget child, ColorScheme scheme) => Builder(
+    builder: (context) {
+      final op = context.select<AppState, double>((s) => s.config.cardOpacity);
+      final tuning = glassTuningOf(context);
+      final double sigma = tunedGlassSigma(6, tuning);
+      final ca = tunedGlassAlpha((op * 255).round(), tuning);
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: BackdropFilter(
+          // σ 走进程级缓存（见 cachedGlassBlur 说明）。
+          filter: cachedGlassBlur(sigma),
+          child: Container(
+            decoration: BoxDecoration(
+              color: scheme.surface.withAlpha(ca),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
+            ),
+            child: child,
           ),
-          child: child,
         ),
-      ),
-    );
-  }
+      );
+    },
+  );
 
   // ── 画布 ──
 
@@ -4820,7 +4853,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   ///
   /// [viewSize] 是画布视口尺寸，由外层 LayoutBuilder 给出 —— 视口框是在 paint
   /// 时用**实时**变换矩阵算的，所以平移/缩放期间无需重建本 widget。
-  Widget _buildMiniMap(ColorScheme scheme, AppStrings s, Size viewSize) {
+  Widget _buildMiniMap(ColorScheme scheme, AppStrings s, Size viewSize) =>
+      ValueListenableBuilder<Map<String, Offset>?>(
+        valueListenable: _dragDeltas,
+        builder: (_, _, _) => _buildMiniMapContents(scheme, s, viewSize),
+      );
+
+  Widget _buildMiniMapContents(
+    ColorScheme scheme,
+    AppStrings s,
+    Size viewSize,
+  ) {
     final proj = _MiniMapProjection(
       _graphContentBounds(),
       const Size(_kMiniMapW, _kMiniMapH),
@@ -4840,10 +4883,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             child: Container(
               width: _kMiniMapW,
               height: _kMiniMapH,
-              decoration: BoxDecoration(
-                color: scheme.surface.withAlpha(224),
+              foregroundDecoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: scheme.outlineVariant.withAlpha(90)),
+                border: Border.all(color: scheme.outlineVariant),
+              ),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerLow,
+                borderRadius: BorderRadius.circular(10),
                 boxShadow: [
                   BoxShadow(
                     color: scheme.shadow.withAlpha(36),
@@ -4860,13 +4906,28 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                   nodeRects: [
                     for (final n in _nodes)
                       Rect.fromLTWH(
-                        n.x,
-                        n.y,
+                        n.x + (_dragDeltas.value?[n.id]?.dx ?? 0),
+                        n.y + (_dragDeltas.value?[n.id]?.dy ?? 0),
                         _totalNodeWidth(n),
                         _nodeHeight(n),
                       ),
                   ],
-                  nodeColor: scheme.primary.withAlpha(170),
+                  nodeColors: [
+                    for (final n in _nodes)
+                      _nodeColor(
+                        n.type,
+                        scheme,
+                        customColor: n.params['node_color'] as int?,
+                      ),
+                  ],
+                  selectedNodes: [
+                    for (final n in _nodes) _selectedNodeIds.contains(n.id),
+                  ],
+                  selectedBlocks: [
+                    for (final b in _logicBlocks) b.id == _selectedLogicBlockId,
+                  ],
+                  selectionColor: scheme.onSurface,
+                  selectionHalo: scheme.surface,
                   blockRects: [
                     for (final b in _logicBlocks)
                       Rect.fromLTWH(b.x, b.y, b.width, b.height),
@@ -5738,9 +5799,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         if (!isMobilePlatform) ...[
           Row(
             children: [
-              SizedBox(
-                // 本行只在桌面端构建（外层 if (!isMobilePlatform)），宽度直接拉满
-                width: double.infinity,
+              Expanded(
+                // Claim the bounded width supplied by the parent Row.
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
                   child: Row(
@@ -9665,7 +9725,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       final p = panel;
       Future.delayed(
         const Duration(milliseconds: 80),
-        () => MultiWindowService.closePanel(p),
+        () => Platform.isLinux
+            ? MultiWindowService.parkPanel(p)
+            : MultiWindowService.closePanel(p),
       );
     }
   }
@@ -9703,6 +9765,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     b.write(cfg.aiModel);
     b.write('|');
     b.write(cfg.aiProfiles.length);
+    b.write('|$_panelConfigRevision');
     return b.toString();
   }
 
@@ -9712,6 +9775,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   ///  * 结构指纹变了（选中节点 / 增删节点 / 连线 / 换主题）→ 推整份快照；
   ///  * 只有参数动了 → 只推选中节点的参数。
   void _syncOpenPanels() {
+    if (isMobilePlatform || (!_panelExternal && !_aiExternal)) return;
+    _panelSyncTimer ??= Timer(const Duration(milliseconds: 50), () {
+      _panelSyncTimer = null;
+      if (mounted) _flushOpenPanels();
+    });
+  }
+
+  void _flushOpenPanels() {
     if (isMobilePlatform) return;
     final propsOpen =
         _panelExternal && MultiWindowService.isOpen(DetachedPanel.props);
@@ -9769,6 +9840,18 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   // ── PanelHostDelegate ──────────────────────────────────────────────────
 
+  String get _detachedAppDataDir {
+    final sep = Platform.pathSeparator;
+    final env = Platform.environment;
+    final base = Platform.isWindows
+        ? (env['APPDATA'] ?? Directory.systemTemp.path)
+        : Platform.isMacOS
+        ? "${env['HOME'] ?? '/tmp'}/Library/Application Support"
+        : (env['XDG_DATA_HOME'] ??
+              "${env['HOME'] ?? '/tmp'}${sep}.local${sep}share");
+    return '${base}${sep}FFmpeg++';
+  }
+
   /// 独立面板要的完整快照（子窗口首次报到与主动刷新时取）。
   @override
   Map<String, dynamic> panelSnapshot(DetachedPanel panel) {
@@ -9779,14 +9862,28 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     return <String, dynamic>{
       'panel': panel.id,
       'config': cfg.toJson(),
+      'appDataDir': _detachedAppDataDir,
+      'appData': {
+        'videos': [
+          for (final video in _appState.videos)
+            {
+              'id': video.id,
+              'filename': video.filename,
+              'sizeMb': video.sizeMb,
+              'parsed': video.parsed,
+            },
+        ],
+        'containers': [
+          for (final container in _appState.containers) container.toJson(),
+        ],
+        'tasks': [for (final task in _appState.tasks) task.toJson()],
+      },
       'graph': <String, dynamic>{
         'nodes': [for (final n in _nodes) n.toJson()],
         'connections': [for (final c in _connections) c.toJson()],
       },
       'toolbox': _buildToolboxDescriptors(),
-      // VideoFile 没有 toJson：步骤编辑器真正用到的只有下面这些标量，按需挑
-      // 出来即可（subtitles 一类的列表刻意跳过，代价是独立窗口的字幕编辑器
-      // 拿不到「内嵌字幕」快捷项）。
+      // Include media tracks as well as display metadata for detached editors.
       'video': <String, dynamic>{
         'id': v.id,
         'filepath': v.filepath,
@@ -9803,6 +9900,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         'height': v.height,
         'fps': v.fps,
         'fileMediaType': v.fileMediaType.name,
+        'subtitles': [
+          for (final track in v.subtitles)
+            {
+              'index': track.index,
+              'codec': track.codec,
+              'language': track.language,
+              'title': track.title,
+              'forced': track.forced,
+              'default': track.isDefault,
+            },
+        ],
       },
       'props': <String, dynamic>{
         'thumbPath': _thumbPath,
@@ -9811,6 +9919,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             : v.filename.replaceAll(RegExp(r'\.[^.]+$'), '.$resolvedExt'),
         'sourceImagePath': node == null ? null : _resolveSourceImagePath(node),
         'containerFileCount': widget.containerInfo?.fileCount ?? 0,
+        'containerName': widget.containerInfo?.name,
+        'isAudioNoCover': _isAudioNoCover,
       },
       'selection': node?.toJson(),
       'ai': <String, dynamic>{
@@ -10140,11 +10250,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     // 直接复用面板里的解析逻辑（同一库内可见），会话级覆盖也一并生效
     final profile = aiKey.currentState?._effectiveProfile;
     final options = _modelOptionsFor(cfg, profile);
-    final current = profile?.model.isNotEmpty == true
-        ? profile!.model
-        : (cfg.aiApiKey.trim().isNotEmpty && cfg.aiApiUrl.trim().isNotEmpty
-              ? cfg.aiModel
-              : '');
+    final current =
+        aiKey.currentState?._effectiveModel ??
+        (profile?.model.isNotEmpty == true
+            ? profile!.model
+            : (cfg.aiApiKey.trim().isNotEmpty && cfg.aiApiUrl.trim().isNotEmpty
+                  ? cfg.aiModel
+                  : ''));
     return PopupMenuButton<String>(
       tooltip: s.isZh ? '切换模型' : 'Switch model',
       padding: EdgeInsets.zero,
@@ -10192,7 +10304,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           ),
       ],
       child: Container(
-        height: 28,
+        height: 48,
         padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
           color: scheme.surfaceContainerHighest.withAlpha(110),
@@ -10204,16 +10316,18 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           children: [
             Icon(Icons.psychology_outlined, size: 14, color: scheme.primary),
             const SizedBox(width: 4),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 132),
-              child: Text(
-                current.isEmpty ? (s.isZh ? '未配置模型' : 'No model') : current,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: scheme.onSurface,
+            Flexible(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 132),
+                child: Text(
+                  current.isEmpty ? (s.isZh ? '未配置模型' : 'No model') : current,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.onSurface,
+                  ),
                 ),
               ),
             ),
@@ -10240,21 +10354,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     //
     // 三个动作按钮收进同一个构造器里，走同一档尺寸（原来盒都是 36，但图标是
     // 18 / 18 / 20，关闭键明显大一圈；右侧内边距只给 4 而左侧给 16，整行重心偏右）。
-    // 移动端触摸目标 36 已达标（Material 最小 36 的图标按钮 + 4px 外扩热区），
-    // 再往上加会让头部吃掉本来就紧张的弹层高度。
+    // Keep every header action at a 48px touch target.
     const headBtn = AppControlSize.comfortable;
     Widget headButton(Widget icon, String tip, VoidCallback onTap) =>
         IconButton(
           icon: icon,
           tooltip: tip,
           onPressed: onTap,
-          // 显式定死点击盒：不写的话 Material 会给到 48×48（约束是 min 而非 max，
-          // IconButton 自身默认 constraints 为 null → 取 kMinInteractiveDimension），
-          // 头部行高就被顶到 48，比标题字号大出一大截。
-          constraints: BoxConstraints.tightFor(
-            width: headBtn.height,
-            height: headBtn.height,
-          ),
+          constraints: const BoxConstraints.tightFor(width: 48, height: 48),
           padding: EdgeInsets.zero,
           style: IconButton.styleFrom(
             foregroundColor: scheme.onSurfaceVariant,
@@ -10275,6 +10382,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             Expanded(
               child: Text(
                 s.aiChatTitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w600,
@@ -10283,7 +10392,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
               ),
             ),
             // 模型切换（与 PC 顶栏同源）
-            _aiModelPill(scheme, s, aiKey, () => setH(() {})),
+            Flexible(
+              flex: 2,
+              child: _aiModelPill(scheme, s, aiKey, () => setH(() {})),
+            ),
             const SizedBox(width: 2),
             // 历史记录
             Builder(
@@ -10345,7 +10457,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         pageBuilder: (ctx, anim, anim2) {
           final w = MediaQuery.of(ctx).size.width;
           // 横屏侧栏收窄：0.55→0.5、上限 460→420，避免遮挡过多画布
-          final panelW = (w * 0.5).clamp(280.0, 420.0);
+          final panelW = math.min(w, (w * 0.5).clamp(280.0, 420.0));
           return Align(
             alignment: Alignment.centerLeft,
             child: Material(
@@ -10377,11 +10489,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                     ],
                   ),
                   clipBehavior: Clip.antiAlias,
-                  child: Column(
-                    children: [
-                      header(ctx),
-                      Expanded(child: panelContent),
-                    ],
+                  child: SafeArea(
+                    child: Column(
+                      children: [
+                        header(ctx),
+                        Expanded(child: panelContent),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -10403,6 +10517,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       barrierColor: Colors.black.withValues(alpha: 0.24),
       // 关键：软键盘避让必须自己做。
@@ -10414,20 +10529,15 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       builder: (ctx) {
         final media = MediaQuery.of(ctx);
         final insets = media.viewInsets.bottom;
-        // 注意：弹层默认 useSafeArea=false，其 buildPage 会对子树做
-        // MediaQuery.removePadding(removeTop: true)，所以这里的 padding.top 恒为 0
-        // （原代码写 `padding.top + 18` 实际就等于 18）。顶部留白直接写常量。
-        const double topGap = 18;
-        // 键盘顶起来后真正可用的高度；下限 120 只为避免 clamp 上下界颠倒抛异常，
-        // 任何真实设备都不可能触到这一档。
-        final double available = (media.size.height - topGap - insets).clamp(
-          120.0,
-          media.size.height,
-        );
-        final double sheetH = (media.size.height * 0.86 - insets).clamp(
+        // Preserve the safe top edge while letting the keyboard expand the sheet.
+        const double topGap = 12;
+        final available = math.max(
           0.0,
-          available,
+          media.size.height - media.viewPadding.top - topGap - insets,
         );
+        final sheetH = insets > 0
+            ? available
+            : math.min(media.size.height * 0.88, available);
         return Padding(
           padding: EdgeInsets.only(top: topGap, bottom: insets),
           child: Container(
@@ -10780,19 +10890,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   Widget _buildMobileTopBar(ColorScheme scheme, AppStrings s) {
     final cfg = context.read<AppState>().config;
-    // Respect the user scale without allowing the toolbar to exceed its viewport.
-    final requestedScale = cfg.editorToolbarScale.clamp(0.5, 1.6);
+    // Keep touch targets intact; narrow screens scroll the complete action row.
+    final requestedScale = cfg.editorToolbarScale.clamp(1.0, 1.6);
     return LayoutBuilder(
       builder: (context, constraints) {
-        final scale = math
-            .min(requestedScale, constraints.maxWidth / 410)
-            .clamp(0.25, 1.0);
-        return Transform.scale(
-          scale: scale,
-          alignment: Alignment.topCenter,
-          // 高 36 / 圆角 18 / 按钮盒 26：与左下缩放条共用 _kMobileBar* 常量（见常量处注释）
+        return SizedBox(
+          width: constraints.maxWidth,
           child: Container(
-            height: _kMobileBarHeight,
+            height: _kMobileBarHeight * requestedScale,
             padding: const EdgeInsets.symmetric(
               horizontal: _kMobileBarBtnPad,
               vertical: 2,
@@ -10809,263 +10914,291 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                 ),
               ],
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _mobileBarBtn(Icons.arrow_back, () async {
-                  final nav = Navigator.of(context);
-                  if (await _onWillPop()) nav.pop();
-                }, scheme),
-                const SizedBox(width: 2),
-                // 撤销/重做：原画布顶部工具栏在移动端移除后，迁移到顶部浮动菜单栏。
-                // 不用 _mobileBarBtn 是因为要 disabled 态；但按钮盒（26）与图标（18）必须同档
-                _mobileBarBtn(
-                  Icons.undo,
-                  _undoStack.isEmpty ? null : _undo,
-                  scheme,
-                  color: _undoStack.isEmpty
-                      ? scheme.outlineVariant
-                      : scheme.onSurfaceVariant,
-                  tooltip: s.isZh ? '撤销' : 'Undo',
-                ),
-                _mobileBarBtn(
-                  Icons.redo,
-                  _redoStack.isEmpty ? null : _redo,
-                  scheme,
-                  color: _redoStack.isEmpty
-                      ? scheme.outlineVariant
-                      : scheme.onSurfaceVariant,
-                  tooltip: s.isZh ? '重做' : 'Redo',
-                ),
-                const SizedBox(width: 2),
-                // 自右下角工具条迁移：自动整理 + 定位源
-                _mobileBarBtn(Icons.auto_fix_high, _autoLayout, scheme),
-                const SizedBox(width: 2),
-                _mobileBarBtn(Icons.my_location, () => _goToSource(s), scheme),
-                const SizedBox(width: 2),
-                // 工具箱开关：改造前这颗用 20px 图标（比同排其它都大一号），已回到统一档
-                _mobileBarBtn(
-                  _mobileToolboxOpen ? Icons.close : Icons.add,
-                  () =>
-                      setState(() => _mobileToolboxOpen = !_mobileToolboxOpen),
-                  scheme,
-                  color: scheme.primary,
-                ),
-                // 属性卡片被收起后，用这枚图标恢复（仅当当前选中的对象正是被收起的那个）
-                if ((_selectedNode?.id ?? _selectedLogicBlockId) != null &&
-                    _mobilePropsHiddenFor ==
-                        (_selectedNode?.id ?? _selectedLogicBlockId)) ...[
-                  const SizedBox(width: 2),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
                   _mobileBarBtn(
-                    Icons.tune,
-                    () => setState(() => _mobilePropsHiddenFor = null),
-                    scheme,
-                    color: scheme.primary,
-                    tooltip: s.isZh ? '显示属性面板' : 'Show properties',
-                  ),
-                ],
-                if (cfg.aiEnabled) ...[
-                  const SizedBox(width: 2),
-                  _mobileBarBtn(
-                    Icons.smart_toy,
-                    () => _openAiSheet(s),
-                    scheme,
-                    color: scheme.primary,
-                  ),
-                ],
-                const SizedBox(width: 2),
-                // 保存：与 PC 顶栏同一套配色（实心主题色 + 反色图标），
-                // 移动端不再只是一颗裸图标
-                _mobileBarBtn(
-                  Icons.save_outlined,
-                  _save,
-                  scheme,
-                  color: scheme.onPrimary,
-                  bg: scheme.primary,
-                  tooltip: s.save,
-                ),
-                const SizedBox(width: 2),
-                SizedBox(
-                  // 盒径与同排按钮一致（改造前是 28，比相邻的 26 大 2px）
-                  width: _kMobileBarBtnBox,
-                  height: _kMobileBarBtnBox,
-                  child: PopupMenuButton<String>(
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(
-                      minWidth: _kMobileBarBtnBox,
-                      minHeight: _kMobileBarBtnBox,
-                    ),
-                    icon: Icon(
-                      Icons.more_vert,
-                      size: 18,
-                      color: scheme.onSurfaceVariant,
-                    ),
-                    onSelected: (v) {
-                      switch (v) {
-                        case 'export':
-                          if (_nodes.isNotEmpty) _exportConfig(s);
-                          break;
-                        case 'import':
-                          _importConfig(s);
-                          break;
-                        case 'probe':
-                          setState(() => _probeMode = !_probeMode);
-                          break;
-                        case 'hide':
-                          setState(() => _hideLogic = !_hideLogic);
-                          break;
-                        case 'format':
-                          setState(
-                            () => _writeFormat = _writeFormat == 'v2'
-                                ? 'legacy'
-                                : 'v2',
-                          );
-                          break;
-                        case 'orientation':
-                          _toggleOrientation();
-                          break;
-                      }
+                    Icons.arrow_back,
+                    () async {
+                      final nav = Navigator.of(context);
+                      if (await _onWillPop()) nav.pop();
                     },
-                    itemBuilder: (_) => [
-                      PopupMenuItem(
-                        value: 'export',
-                        enabled: _nodes.isNotEmpty,
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.file_upload_outlined,
-                              size: 16,
-                              color: scheme.onSurfaceVariant,
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              s.isZh ? '导出配置' : 'Export Config',
-                              style: const TextStyle(fontSize: 13),
-                            ),
-                          ],
-                        ),
+                    scheme,
+                    tooltip: s.isZh ? '返回' : 'Back',
+                  ),
+                  const SizedBox(width: 4),
+                  // 撤销/重做：原画布顶部工具栏在移动端移除后，迁移到顶部浮动菜单栏。
+                  // 不用 _mobileBarBtn 是因为要 disabled 态；但按钮盒（26）与图标（18）必须同档
+                  _mobileBarBtn(
+                    Icons.undo,
+                    _undoStack.isEmpty ? null : _undo,
+                    scheme,
+                    color: _undoStack.isEmpty
+                        ? scheme.outlineVariant
+                        : scheme.onSurfaceVariant,
+                    tooltip: s.isZh ? '撤销' : 'Undo',
+                  ),
+                  _mobileBarBtn(
+                    Icons.redo,
+                    _redoStack.isEmpty ? null : _redo,
+                    scheme,
+                    color: _redoStack.isEmpty
+                        ? scheme.outlineVariant
+                        : scheme.onSurfaceVariant,
+                    tooltip: s.isZh ? '重做' : 'Redo',
+                  ),
+                  const SizedBox(width: 2),
+                  // 自右下角工具条迁移：自动整理 + 定位源
+                  _mobileBarBtn(
+                    Icons.auto_fix_high,
+                    _autoLayout,
+                    scheme,
+                    tooltip: s.isZh ? '整理' : 'Arrange',
+                  ),
+                  const SizedBox(width: 2),
+                  _mobileBarBtn(
+                    Icons.my_location,
+                    () => _goToSource(s),
+                    scheme,
+                    tooltip: s.isZh ? '定位源' : 'Source',
+                  ),
+                  const SizedBox(width: 2),
+                  // 工具箱开关：改造前这颗用 20px 图标（比同排其它都大一号），已回到统一档
+                  _mobileBarBtn(
+                    _mobileToolboxOpen ? Icons.close : Icons.add,
+                    () => setState(
+                      () => _mobileToolboxOpen = !_mobileToolboxOpen,
+                    ),
+                    scheme,
+                    color: scheme.primary,
+                    tooltip: s.isZh ? '工具箱' : 'Toolbox',
+                  ),
+                  // 属性卡片被收起后，用这枚图标恢复（仅当当前选中的对象正是被收起的那个）
+                  if ((_selectedNode?.id ?? _selectedLogicBlockId) != null &&
+                      _mobilePropsHiddenFor ==
+                          (_selectedNode?.id ?? _selectedLogicBlockId)) ...[
+                    const SizedBox(width: 2),
+                    _mobileBarBtn(
+                      Icons.tune,
+                      () => setState(() => _mobilePropsHiddenFor = null),
+                      scheme,
+                      color: scheme.primary,
+                      tooltip: s.isZh ? '显示属性面板' : 'Show properties',
+                    ),
+                  ],
+                  if (cfg.aiEnabled) ...[
+                    const SizedBox(width: 2),
+                    _mobileBarBtn(
+                      Icons.smart_toy,
+                      () => _openAiSheet(s),
+                      scheme,
+                      tooltip: s.isZh ? 'AI 助手' : 'AI Assistant',
+                      color: scheme.primary,
+                    ),
+                  ],
+                  const SizedBox(width: 2),
+                  // 保存：与 PC 顶栏同一套配色（实心主题色 + 反色图标），
+                  // 移动端不再只是一颗裸图标
+                  _mobileBarBtn(
+                    Icons.save_outlined,
+                    _save,
+                    scheme,
+                    color: scheme.onPrimary,
+                    bg: scheme.primary,
+                    tooltip: s.save,
+                  ),
+                  const SizedBox(width: 2),
+                  SizedBox(
+                    // 盒径与同排按钮一致（改造前是 28，比相邻的 26 大 2px）
+                    width: _kMobileBarBtnBox,
+                    height: _kMobileBarBtnBox,
+                    child: PopupMenuButton<String>(
+                      tooltip: s.isZh ? '更多操作' : 'More actions',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: _kMobileBarBtnBox,
+                        minHeight: _kMobileBarBtnBox,
                       ),
-                      PopupMenuItem(
-                        value: 'import',
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.file_download_outlined,
-                              size: 16,
-                              color: scheme.onSurfaceVariant,
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              s.importConfig,
-                              style: const TextStyle(fontSize: 13),
-                            ),
-                          ],
-                        ),
+                      icon: Icon(
+                        Icons.more_vert,
+                        size: 18,
+                        color: scheme.onSurfaceVariant,
                       ),
-                      PopupMenuItem(
-                        value: 'probe',
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.search,
-                              size: 16,
-                              color: _probeMode
-                                  ? scheme.primary
-                                  : scheme.onSurfaceVariant,
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              s.isZh ? '探测模式' : 'Probe',
-                              style: const TextStyle(fontSize: 13),
-                            ),
-                            if (_probeMode) ...[
-                              const Spacer(),
+                      onSelected: (v) {
+                        switch (v) {
+                          case 'export':
+                            if (_nodes.isNotEmpty) _exportConfig(s);
+                            break;
+                          case 'import':
+                            _importConfig(s);
+                            break;
+                          case 'probe':
+                            setState(() => _probeMode = !_probeMode);
+                            break;
+                          case 'hide':
+                            setState(() => _hideLogic = !_hideLogic);
+                            break;
+                          case 'format':
+                            setState(
+                              () => _writeFormat = _writeFormat == 'v2'
+                                  ? 'legacy'
+                                  : 'v2',
+                            );
+                            break;
+                          case 'orientation':
+                            _toggleOrientation();
+                            break;
+                        }
+                      },
+                      itemBuilder: (_) => [
+                        PopupMenuItem(
+                          value: 'export',
+                          enabled: _nodes.isNotEmpty,
+                          child: Row(
+                            children: [
                               Icon(
-                                Icons.check,
-                                size: 14,
-                                color: scheme.primary,
+                                Icons.file_upload_outlined,
+                                size: 16,
+                                color: scheme.onSurfaceVariant,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                s.isZh ? '导出配置' : 'Export Config',
+                                style: const TextStyle(fontSize: 13),
                               ),
                             ],
-                          ],
+                          ),
                         ),
-                      ),
-                      PopupMenuItem(
-                        value: 'hide',
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.route,
-                              size: 16,
-                              color: _hideLogic
-                                  ? scheme.error
-                                  : scheme.onSurfaceVariant,
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              s.isZh ? '隐藏逻辑线' : 'Hide logic',
-                              style: const TextStyle(fontSize: 13),
-                            ),
-                            if (_hideLogic) ...[
-                              const Spacer(),
-                              Icon(Icons.check, size: 14, color: scheme.error),
+                        PopupMenuItem(
+                          value: 'import',
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.file_download_outlined,
+                                size: 16,
+                                color: scheme.onSurfaceVariant,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                s.importConfig,
+                                style: const TextStyle(fontSize: 13),
+                              ),
                             ],
-                          ],
+                          ),
                         ),
-                      ),
-                      // 写入格式（与桌面端工具栏那枚标识同一个开关）
-                      PopupMenuItem(
-                        value: 'format',
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.save_as_outlined,
-                              size: 16,
-                              color: _writeFormat == 'v2'
-                                  ? scheme.primary
-                                  : scheme.onSurfaceVariant,
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              s.isZh ? '写入格式' : 'Write format',
-                              style: const TextStyle(fontSize: 13),
-                            ),
-                            const Spacer(),
-                            Text(
-                              _writeFormat == 'v2' ? 'v2' : 'legacy',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
+                        PopupMenuItem(
+                          value: 'probe',
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.search,
+                                size: 16,
+                                color: _probeMode
+                                    ? scheme.primary
+                                    : scheme.onSurfaceVariant,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                s.isZh ? '探测模式' : 'Probe',
+                                style: const TextStyle(fontSize: 13),
+                              ),
+                              if (_probeMode) ...[
+                                const Spacer(),
+                                Icon(
+                                  Icons.check,
+                                  size: 14,
+                                  color: scheme.primary,
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                        PopupMenuItem(
+                          value: 'hide',
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.route,
+                                size: 16,
+                                color: _hideLogic
+                                    ? scheme.error
+                                    : scheme.onSurfaceVariant,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                s.isZh ? '隐藏逻辑线' : 'Hide logic',
+                                style: const TextStyle(fontSize: 13),
+                              ),
+                              if (_hideLogic) ...[
+                                const Spacer(),
+                                Icon(
+                                  Icons.check,
+                                  size: 14,
+                                  color: scheme.error,
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                        // 写入格式（与桌面端工具栏那枚标识同一个开关）
+                        PopupMenuItem(
+                          value: 'format',
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.save_as_outlined,
+                                size: 16,
                                 color: _writeFormat == 'v2'
                                     ? scheme.primary
-                                    : scheme.outline,
+                                    : scheme.onSurfaceVariant,
                               ),
-                            ),
-                          ],
+                              const SizedBox(width: 6),
+                              Text(
+                                s.isZh ? '写入格式' : 'Write format',
+                                style: const TextStyle(fontSize: 13),
+                              ),
+                              const Spacer(),
+                              Text(
+                                _writeFormat == 'v2' ? 'v2' : 'legacy',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: _writeFormat == 'v2'
+                                      ? scheme.primary
+                                      : scheme.outline,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                      PopupMenuItem(
-                        value: 'orientation',
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.screen_rotation,
-                              size: 16,
-                              color: scheme.onSurfaceVariant,
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              _isLandscape
-                                  ? (s.isZh ? '切换到竖屏' : 'Switch to portrait')
-                                  : (s.isZh ? '切换到横屏' : 'Switch to landscape'),
-                              style: const TextStyle(fontSize: 13),
-                            ),
-                          ],
+                        PopupMenuItem(
+                          value: 'orientation',
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.screen_rotation,
+                                size: 16,
+                                color: scheme.onSurfaceVariant,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                _isLandscape
+                                    ? (s.isZh ? '切换到竖屏' : 'Switch to portrait')
+                                    : (s.isZh
+                                          ? '切换到横屏'
+                                          : 'Switch to landscape'),
+                                style: const TextStyle(fontSize: 13),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         );
@@ -11075,32 +11208,24 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   // ── 移动端画布悬浮药丸（顶部工具栏 / 左下缩放条）的统一尺寸 ──
   //
-  // 两颗药丸共用同一档：高 [_kMobileBarHeight]、圆角 = 高/2、按钮盒
-  // [_kMobileBarBtnIcon] + 2 × [_kMobileBarBtnPad]。
-  //
-  // 改造前：顶部 34 / 圆角 17 / 按钮盒 26（图标 18 + 内边距 4）；左下 40 / 圆角 20 /
-  // 按钮盒 34（图标 20 + 内边距 7）。同一屏里两颗悬浮药丸一大一小、按钮盒差 8px，
-  // 是移动端画布上最明显的一处「不齐」。
-  static const double _kMobileBarHeight = 36;
+  // Both bars retain 48px touch targets; narrow toolbars scroll horizontally.
+  static const double _kMobileBarHeight = 52;
   static const double _kMobileBarRadius = _kMobileBarHeight / 2;
-  static const double _kMobileBarBtnIcon = 18;
+  static const double _kMobileBarBtnIcon = 20;
   static const double _kMobileBarBtnPad = 4;
 
-  /// 按钮盒边长：两颗药丸里的每个动作按钮（含 IconButton / PopupMenuButton）
-  /// 都按它约束，盒外的间距才由 SizedBox 统一给 2。
-  static const double _kMobileBarBtnBox =
-      _kMobileBarBtnIcon + _kMobileBarBtnPad * 2;
+  /// Minimum touch target for mobile action buttons, including overflow menus.
+  static const double _kMobileBarBtnBox = 48;
 
   // ── 移动端专用：底部左侧缩放条 ──
 
   Widget _buildMobileBottomLeftBar(ColorScheme scheme, AppStrings s) {
     // 放大镜药丸大小可在设置中调节（editorZoomScale）。
     // 药丸总高 / 圆角 / 按钮盒与顶部工具栏共用 _kMobileBar* 常量（见上）。
-    // 缩放图标刻意比顶部工具栏的 18 大一档（20）：它们是纯图形按钮、没有文字兜底，
-    // 但按钮盒仍压到同一个 26，两颗药丸的节奏才一致。
-    final scale = context.read<AppState>().config.editorZoomScale.clamp(
-      0.5,
-      1.6,
+    // Clamp visual scaling so controls stay clear of the right corner.
+    final scale = math.min(
+      context.read<AppState>().config.editorZoomScale.clamp(1.0, 1.6),
+      math.max(1.0, (MediaQuery.sizeOf(context).width - 106) / 156),
     );
     return Transform.scale(
       scale: scale,
@@ -11162,15 +11287,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   Widget _buildMobileFileInfo(ColorScheme scheme, AppStrings s) {
     final v = widget.video;
     final nodesLabel = s.isZh ? '节点' : 'nodes';
-    // 左右两侧都要让位：左下缩放悬浮条放大后约 116px 宽（3 个 20px 图标按钮），
-    // 右下角还有缩放读数药丸（约 70px，含它与屏幕边缘的 10px）。
-    // 改造前只扣左边，窄屏上信息条会直接压到百分比读数上。
+    // The information strip sits above the controls and can use the page width.
     final zoomScale = context.read<AppState>().config.editorZoomScale.clamp(
       0.5,
       1.6,
     );
-    final reserved = 130.0 * zoomScale + 16 + 86.0;
-    final maxW = math.max(96.0, MediaQuery.of(context).size.width - reserved);
+    final maxW = math.max(96.0, MediaQuery.of(context).size.width - 48);
     return Container(
       // 高度跟随缩放设置，与左下缩放条同一档节奏
       height: 22.0 + 2.0 * zoomScale,
@@ -11554,7 +11676,7 @@ class _MiniMapProjection {
   /// 小地图四周留白（像素）。全项目从未传过其它值，故收敛为类级常量：
   /// 留作可选构造参数会被 analyzer 判为 `UNUSED_ELEMENT_PARAMETER`（死参数），
   /// 而写成类级常量后调用点写法完全不变。
-  static const double inset = 3;
+  static const double inset = 8;
   final Rect content;
   final Size size;
   late final double k;
@@ -11583,7 +11705,11 @@ class _MiniMapPainter extends CustomPainter {
   /// 画布坐标下的可视区（由 paint 时**实时**的变换矩阵算出）
   final Rect Function() viewRect;
   final List<Rect> nodeRects;
-  final Color nodeColor;
+  final List<Color> nodeColors;
+  final List<bool> selectedNodes;
+  final List<bool> selectedBlocks;
+  final Color selectionColor;
+  final Color selectionHalo;
   final List<Rect> blockRects;
   final Color blockColor;
   final Color viewColor;
@@ -11592,7 +11718,11 @@ class _MiniMapPainter extends CustomPainter {
     required this.proj,
     required this.viewRect,
     required this.nodeRects,
-    required this.nodeColor,
+    required this.nodeColors,
+    required this.selectedNodes,
+    required this.selectedBlocks,
+    required this.selectionColor,
+    required this.selectionHalo,
     required this.blockRects,
     required this.blockColor,
     required this.viewColor,
@@ -11601,8 +11731,12 @@ class _MiniMapPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final nodePaint = Paint()..color = nodeColor;
-    for (final r in nodeRects) {
+    canvas.save();
+    canvas.clipRect(Offset.zero & size);
+    final nodePaint = Paint();
+    for (var i = 0; i < nodeRects.length; i++) {
+      final r = nodeRects[i];
+      nodePaint.color = nodeColors[i];
       final a = proj.toMini(r.topLeft);
       final b = proj.toMini(r.bottomRight);
       final w = math.max(2.0, b.dx - a.dx);
@@ -11610,17 +11744,37 @@ class _MiniMapPainter extends CustomPainter {
       // 节点块最小 2px：缩到 0.3 倍时节点框在小地图里只剩一个点
       canvas.drawRRect(
         RRect.fromRectAndRadius(
-          Rect.fromLTWH(a.dx, a.dy, w, h),
+          Rect.fromCenter(center: (a + b) / 2, width: w, height: h),
           const Radius.circular(1.5),
         ),
         nodePaint,
       );
+      if (selectedNodes[i]) {
+        final rect = Rect.fromCenter(center: (a + b) / 2, width: w, height: h);
+        canvas.drawRect(
+          rect.inflate(1.5),
+          Paint()
+            ..color = selectionHalo
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 3,
+        );
+        canvas.drawRect(
+          rect.inflate(1.5),
+          Paint()
+            ..color = selectionColor
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1,
+        );
+      }
     }
     final blockPaint = Paint()
       ..color = blockColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.0;
-    for (final r in blockRects) {
+    for (var i = 0; i < blockRects.length; i++) {
+      final r = blockRects[i];
+      blockPaint.color = selectedBlocks[i] ? selectionColor : blockColor;
+      blockPaint.strokeWidth = selectedBlocks[i] ? 2 : 1;
       final a = proj.toMini(r.topLeft);
       final b = proj.toMini(r.bottomRight);
       canvas.drawRRect(
@@ -11659,6 +11813,7 @@ class _MiniMapPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.4,
     );
+    canvas.restore();
   }
 
   /// 逐项比较两组矩形。
@@ -11678,7 +11833,14 @@ class _MiniMapPainter extends CustomPainter {
       old.proj.content != proj.content ||
       old.proj.size != proj.size ||
       !_sameRects(old.nodeRects, nodeRects) ||
-      !_sameRects(old.blockRects, blockRects);
+      !_sameRects(old.blockRects, blockRects) ||
+      !listEquals(old.nodeColors, nodeColors) ||
+      !listEquals(old.selectedNodes, selectedNodes) ||
+      !listEquals(old.selectedBlocks, selectedBlocks) ||
+      old.selectionColor != selectionColor ||
+      old.selectionHalo != selectionHalo ||
+      old.blockColor != blockColor ||
+      old.viewColor != viewColor;
 }
 
 // ── 连线绘制 ──
@@ -12415,6 +12577,8 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
 
   final _ctrl = TextEditingController();
   final _scrollCtrl = ScrollController();
+  bool _followLatest = true;
+  bool _scrollScheduled = false;
   final List<
     ({
       String role,
@@ -12430,6 +12594,7 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
   /// 正在进行的流式请求。用户点「停止」时直接 close()，`await for` 会以异常结束，
   /// 再由 catch / 收尾分支按 [_stopRequested] 走「保留部分内容」的路径。
   http.Client? _activeClient;
+  http.Client? _titleClient;
 
   /// 用户是否主动中断了本次生成。用来区分「中断」与「真的出错」：
   /// 前者不该在气泡里追加 `Error: ...`，否则停止看起来像失败。
@@ -13562,6 +13727,13 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
 
   @override
   void dispose() {
+    // Abort stalled streams immediately so the request cannot retain this
+    // panel and its message history until the remote server sends more data.
+    _stopRequested = true;
+    _activeClient?.close();
+    _activeClient = null;
+    _titleClient?.close();
+    _titleClient = null;
     // 面板关闭时自动把当前会话存入历史，方便下次继续
     final userMsgs = _messages.where((m) => m.role == 'user').toList();
     if (userMsgs.isNotEmpty) {
@@ -13591,15 +13763,13 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
   }
 
   void _scrollToBottom() {
-    // 面板可能在流式响应中途被关闭（_scrollCtrl 已 dispose），避免触碰已销毁的控制器
-    if (!mounted) return;
+    // Stream updates and keyboard resizing share one post-layout scroll.
+    if (!mounted || !_followLatest || _scrollScheduled) return;
+    _scrollScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scrollCtrl.hasClients) return;
-      _scrollCtrl.animateTo(
-        _scrollCtrl.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOut,
-      );
+      _scrollScheduled = false;
+      if (!mounted || !_scrollCtrl.hasClients || !_followLatest) return;
+      _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
     });
   }
 
@@ -13623,7 +13793,10 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
 
   Future<void> _send() async {
     final text = _ctrl.text.trim();
-    if (text.isEmpty || _loading) return;
+    // A stopped request must finish unwinding before shared buffers/state
+    // can be reused by the next generation.
+    if (text.isEmpty || _loading || _activeClient != null) return;
+    _followLatest = true;
 
     final appState = context.read<AppState>();
     final cfg = appState.config;
@@ -14054,11 +14227,14 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       req.headers['Content-Type'] = 'application/json';
       req.body = jsonEncode(body);
       final client = http.Client();
+      _titleClient = client;
       try {
         final resp = await client
             .send(req)
             .timeout(const Duration(seconds: 15));
-        final respBody = await resp.stream.bytesToString();
+        final respBody = await resp.stream.bytesToString().timeout(
+          const Duration(seconds: 15),
+        );
         if (resp.statusCode != 200) return;
         final json = jsonDecode(respBody) as Map<String, dynamic>;
         String? title;
@@ -14080,6 +14256,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         }
       } finally {
         client.close();
+        if (identical(_titleClient, client)) _titleClient = null;
       }
     } catch (_) {
       // 标题生成失败不影响主对话
@@ -14494,235 +14671,295 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     const btn = AppControlSize.comfortable;
     // 移动端输入框做成多行自适应。桌面端有物理 Enter（onSubmitted 直接发送）更快；
     // 移动端软键盘换行只能靠 ↵ 键，写死单行等于「长描述只能挤成一行横着滚」。
-    final int maxInputLines = isMobilePlatform ? 4 : 1;
-    final Widget messageArea = _messages.isEmpty
-        ? _buildEmptyState(scheme, s)
-        : ListView.builder(
-            controller: _scrollCtrl,
-            padding: EdgeInsets.fromLTRB(
-              isMobilePlatform ? 14 : 12,
-              12,
-              isMobilePlatform ? 14 : 12,
-              12,
-            ),
-            itemCount: _messages.length,
-            itemBuilder: (_, i) {
-              // 连续同一角色的消息不再重复画头像：否则每轮都是
-              // 「头像 + 气泡」循环出现，移动端窄屏上左侧被头像占掉 36px，
-              // 观感很吵。缩进仍然保留，气泡左缘才不会左右跳。
-              final showAvatar =
-                  i == 0 || _messages[i - 1].role != _messages[i].role;
-              // 下一条仍是同一角色 → 属于同一组，间距收紧，形成视觉分组
-              final sameGroupNext =
-                  i + 1 < _messages.length &&
-                  _messages[i + 1].role == _messages[i].role;
-              return RepaintBoundary(
-                // 稳定 key + 独立重绘层：流式更新只重绘当前这一条，
-                // 其余历史消息（含 Markdown）被隔离，不再整屏重绘抖动。
-                key: ValueKey('ai-msg-$i'),
-                child: _buildMessage(
-                  _messages[i],
-                  scheme,
-                  showAvatar: showAvatar,
-                  gapAfter: sameGroupNext ? 4 : 10,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxHeight < 320;
+        final touchSize = isMobilePlatform ? 48.0 : btn.height;
+        final int maxInputLines = isMobilePlatform ? (compact ? 2 : 4) : 1;
+        final Widget messageArea = _messages.isEmpty
+            ? _buildEmptyState(scheme, s)
+            : ListView.builder(
+                controller: _scrollCtrl,
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
+                padding: EdgeInsets.fromLTRB(
+                  isMobilePlatform ? 14 : 12,
+                  12,
+                  isMobilePlatform ? 14 : 12,
+                  12,
                 ),
+                itemCount: _messages.length,
+                itemBuilder: (_, i) {
+                  // 连续同一角色的消息不再重复画头像：否则每轮都是
+                  // 「头像 + 气泡」循环出现，移动端窄屏上左侧被头像占掉 36px，
+                  // 观感很吵。缩进仍然保留，气泡左缘才不会左右跳。
+                  final showAvatar =
+                      i == 0 || _messages[i - 1].role != _messages[i].role;
+                  // 下一条仍是同一角色 → 属于同一组，间距收紧，形成视觉分组
+                  final sameGroupNext =
+                      i + 1 < _messages.length &&
+                      _messages[i + 1].role == _messages[i].role;
+                  return RepaintBoundary(
+                    // 稳定 key + 独立重绘层：流式更新只重绘当前这一条，
+                    // 其余历史消息（含 Markdown）被隔离，不再整屏重绘抖动。
+                    key: ValueKey('ai-msg-$i'),
+                    child: _buildMessage(
+                      _messages[i],
+                      scheme,
+                      showAvatar: showAvatar,
+                      gapAfter: sameGroupNext ? 4 : 10,
+                    ),
+                  );
+                },
               );
-            },
-          );
-    return Column(
-      children: [
-        Expanded(
-          child: messageOverlay == null
-              ? messageArea
-              : Stack(
-                  children: [
-                    Positioned.fill(child: messageArea),
-                    messageOverlay,
-                  ],
-                ),
-        ),
-        // 待批准的图：补一层说明卡。改造前两颗按钮凭空出现在输入框上方，
-        // 没有任何文字说明它们要批准什么 —— 用户刚看完消息流，突然多出两个按钮，
-        // 不知道点下去会改动画布还是只改当前节点（移动端尤其容易误触）。
-        if (_pendingNodes != null)
-          Container(
-            margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-            padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
-            decoration: BoxDecoration(
-              color: scheme.primaryContainer.withAlpha(70),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: scheme.primary.withAlpha(70)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      Icons.account_tree_outlined,
-                      size: 14,
-                      color: scheme.primary,
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        _pendingIsModify
-                            ? (s.isZh
-                                  ? 'AI 建议修改现有节点'
-                                  : 'AI suggests editing existing nodes')
-                            : (s.isZh
-                                  ? 'AI 生成了新的处理流程'
-                                  : 'AI generated a new pipeline'),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: scheme.onSurface,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  s.isZh
-                      ? '${_pendingNodes!.length} 个节点 · ${_pendingConnections?.length ?? 0} 条连线'
-                      : '${_pendingNodes!.length} nodes · ${_pendingConnections?.length ?? 0} links',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    // 两颗按钮等宽等高：改造前「批准」是 Expanded 吃掉剩余宽度、「拒绝」只占
-                    // 内容宽度，两颗宽度差近一倍；高度也各自跟着主题默认走，一高一矮
-                    Expanded(
-                      child: FilledButton.icon(
-                        style: btn.buttonStyle(filled: true),
-                        onPressed: () {
-                          context.read<AppState>().logAiGraphApplied(
-                            _pendingNodes!.length,
-                            _pendingConnections!.length,
-                          );
-                          if (_pendingIsModify) {
-                            widget.onMergeGraph(
-                              _pendingNodes!,
-                              _pendingConnections!,
-                            );
-                          } else {
-                            widget.onApplyGraph(
-                              _pendingNodes!,
-                              _pendingConnections!,
-                            );
+        return Column(
+          children: [
+            Expanded(
+              child: messageOverlay == null
+                  ? NotificationListener<ScrollMetricsNotification>(
+                      onNotification: (_) {
+                        _scrollToBottom();
+                        return false;
+                      },
+                      child: NotificationListener<ScrollNotification>(
+                        onNotification: (notification) {
+                          if (notification is UserScrollNotification ||
+                              notification is ScrollUpdateNotification &&
+                                  notification.dragDetails != null) {
+                            _followLatest =
+                                notification.metrics.extentAfter < 80;
                           }
-                          setState(() {
-                            _pendingNodes = null;
-                            _pendingConnections = null;
-                          });
+                          return false;
                         },
-                        icon: Icon(Icons.check, size: btn.iconSize),
-                        label: Text(s.isZh ? '批准' : 'Approve'),
+                        child: messageArea,
                       ),
+                    )
+                  : Stack(
+                      children: [
+                        Positioned.fill(child: messageArea),
+                        messageOverlay,
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        style: btn.buttonStyle(),
-                        onPressed: () => setState(() {
-                          _pendingNodes = null;
-                          _pendingConnections = null;
-                        }),
-                        icon: Icon(Icons.close, size: btn.iconSize),
-                        label: Text(s.isZh ? '拒绝' : 'Reject'),
-                      ),
-                    ),
-                  ],
+            ),
+            // 待批准的图：补一层说明卡。改造前两颗按钮凭空出现在输入框上方，
+            // 没有任何文字说明它们要批准什么 —— 用户刚看完消息流，突然多出两个按钮，
+            // 不知道点下去会改动画布还是只改当前节点（移动端尤其容易误触）。
+            if (_pendingNodes != null)
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: math.max(0, constraints.maxHeight * 0.35),
                 ),
-              ],
-            ),
-          ),
-        Padding(
-          padding: EdgeInsets.fromLTRB(12, 4, 12, isMobilePlatform ? 10 : 12),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: scheme.surfaceContainerLow.withAlpha(220),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: scheme.outlineVariant.withAlpha(90)),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(5),
-              child: Row(
-                // 输入框多行后行高会长，底对齐才能让发送 / 停止键始终贴在最后一行旁边
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  // 输入框与右侧发送键同档（comfortable 36）：改造前输入框随主题算出约 32，
-                  // 发送键却是写死的 40×40 圆形 —— 一个矮一个高，底部那行看着就歪。
-                  // 多行时不能再套 fieldBox 钉死高度（会把第二行裁掉），改用 minHeight 兜底。
-                  Expanded(
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(minHeight: btn.height),
-                      child: TextField(
-                        controller: _ctrl,
-                        style: TextStyle(fontSize: 13, color: scheme.onSurface),
-                        decoration: InputDecoration(
-                          hintText: s.aiChatHint,
-                          hintStyle: TextStyle(
-                            fontSize: 12,
-                            color: scheme.outline,
-                          ),
-                          isDense: true,
-                          contentPadding: btn.fieldPadding,
-                          // 压平桌面端的 -8px 密度偏移，否则同一份 contentPadding 在两端高度不同
-                          visualDensity: AppControlSize.fieldDensity,
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(btn.radius),
-                          ),
-                          suffixIconConstraints: AppControlSize.iconSlot,
+                child: SingleChildScrollView(
+                  child: Container(
+                    margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                    padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                    decoration: BoxDecoration(
+                      color: scheme.primaryContainer.withAlpha(70),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: scheme.primary.withAlpha(70)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.account_tree_outlined,
+                              size: 14,
+                              color: scheme.primary,
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                _pendingIsModify
+                                    ? (s.isZh
+                                          ? 'AI 建议修改现有节点'
+                                          : 'AI suggests editing existing nodes')
+                                    : (s.isZh
+                                          ? 'AI 生成了新的处理流程'
+                                          : 'AI generated a new pipeline'),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: scheme.onSurface,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                        // 桌面端单行：Enter 直接发送；移动端多行：回车即换行，发送靠右侧圆钮
-                        onSubmitted: maxInputLines > 1 ? null : (_) => _send(),
-                        minLines: 1,
-                        maxLines: maxInputLines,
-                        textInputAction: maxInputLines > 1
-                            ? TextInputAction.newline
-                            : TextInputAction.send,
-                      ),
+                        const SizedBox(height: 2),
+                        Text(
+                          s.isZh
+                              ? '${_pendingNodes!.length} 个节点 · ${_pendingConnections?.length ?? 0} 条连线'
+                              : '${_pendingNodes!.length} nodes · ${_pendingConnections?.length ?? 0} links',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            // 两颗按钮等宽等高：改造前「批准」是 Expanded 吃掉剩余宽度、「拒绝」只占
+                            // 内容宽度，两颗宽度差近一倍；高度也各自跟着主题默认走，一高一矮
+                            Expanded(
+                              child: FilledButton.icon(
+                                style: btn.buttonStyle(filled: true),
+                                onPressed: () {
+                                  context.read<AppState>().logAiGraphApplied(
+                                    _pendingNodes!.length,
+                                    _pendingConnections!.length,
+                                  );
+                                  if (_pendingIsModify) {
+                                    widget.onMergeGraph(
+                                      _pendingNodes!,
+                                      _pendingConnections!,
+                                    );
+                                  } else {
+                                    widget.onApplyGraph(
+                                      _pendingNodes!,
+                                      _pendingConnections!,
+                                    );
+                                  }
+                                  setState(() {
+                                    _pendingNodes = null;
+                                    _pendingConnections = null;
+                                  });
+                                },
+                                icon: Icon(Icons.check, size: btn.iconSize),
+                                label: Text(s.isZh ? '批准' : 'Approve'),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                style: btn.buttonStyle(),
+                                onPressed: () => setState(() {
+                                  _pendingNodes = null;
+                                  _pendingConnections = null;
+                                }),
+                                icon: Icon(Icons.close, size: btn.iconSize),
+                                label: Text(s.isZh ? '拒绝' : 'Reject'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  SizedBox(
-                    width: btn.height,
-                    height: btn.height,
-                    // 生成中：圆钮由「禁用加载圈」换成「停止」。原实现 onPressed: null，
-                    // 模型返回一慢，用户唯一能做的就是等（移动端还得先关掉弹层才能干别的）。
-                    // 点停止会关闭当前 HTTP 连接，并保留已经流式收到的部分内容。
-                    child: _loading
-                        ? FilledButton(
-                            onPressed: _stopGeneration,
-                            style: FilledButton.styleFrom(
-                              padding: EdgeInsets.zero,
-                              shape: const CircleBorder(),
-                            ),
-                            child: Icon(Icons.stop_rounded, size: btn.iconSize),
-                          )
-                        : FilledButton(
-                            onPressed: _send,
-                            style: FilledButton.styleFrom(
-                              padding: EdgeInsets.zero,
-                              shape: const CircleBorder(),
-                            ),
-                            child: Icon(Icons.send, size: btn.iconSize),
-                          ),
+                ),
+              ),
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                12,
+                4,
+                12,
+                isMobilePlatform ? 10 : 12,
+              ),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerLow.withAlpha(220),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: scheme.outlineVariant.withAlpha(90),
                   ),
-                ],
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(5),
+                  child: Row(
+                    // 输入框多行后行高会长，底对齐才能让发送 / 停止键始终贴在最后一行旁边
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      // 输入框与右侧发送键同档（comfortable 36）：改造前输入框随主题算出约 32，
+                      // 发送键却是写死的 40×40 圆形 —— 一个矮一个高，底部那行看着就歪。
+                      // 多行时不能再套 fieldBox 钉死高度（会把第二行裁掉），改用 minHeight 兜底。
+                      Expanded(
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(minHeight: touchSize),
+                          child: TextField(
+                            controller: _ctrl,
+                            scrollPadding: const EdgeInsets.all(24),
+                            onTap: () {
+                              _followLatest = true;
+                              _scrollToBottom();
+                            },
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: scheme.onSurface,
+                            ),
+                            decoration: InputDecoration(
+                              hintText: s.aiChatHint,
+                              labelText: s.isZh ? '消息' : 'Message',
+                              floatingLabelBehavior:
+                                  FloatingLabelBehavior.never,
+                              hintStyle: TextStyle(
+                                fontSize: 12,
+                                color: scheme.outline,
+                              ),
+                              isDense: true,
+                              contentPadding: btn.fieldPadding,
+                              // 压平桌面端的 -8px 密度偏移，否则同一份 contentPadding 在两端高度不同
+                              visualDensity: AppControlSize.fieldDensity,
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(btn.radius),
+                              ),
+                              suffixIconConstraints: AppControlSize.iconSlot,
+                            ),
+                            // 桌面端单行：Enter 直接发送；移动端多行：回车即换行，发送靠右侧圆钮
+                            onSubmitted: maxInputLines > 1
+                                ? null
+                                : (_) => _send(),
+                            minLines: 1,
+                            maxLines: maxInputLines,
+                            textInputAction: maxInputLines > 1
+                                ? TextInputAction.newline
+                                : TextInputAction.send,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        width: touchSize,
+                        height: touchSize,
+                        // 生成中：圆钮由「禁用加载圈」换成「停止」。原实现 onPressed: null，
+                        // 模型返回一慢，用户唯一能做的就是等（移动端还得先关掉弹层才能干别的）。
+                        // 点停止会关闭当前 HTTP 连接，并保留已经流式收到的部分内容。
+                        child: Tooltip(
+                          message: _loading
+                              ? (s.isZh ? '停止生成' : 'Stop generating')
+                              : (s.isZh ? '发送消息' : 'Send message'),
+                          child: _loading
+                              ? FilledButton(
+                                  onPressed: _stopGeneration,
+                                  style: FilledButton.styleFrom(
+                                    padding: EdgeInsets.zero,
+                                    shape: const CircleBorder(),
+                                  ),
+                                  child: Icon(
+                                    Icons.stop_rounded,
+                                    size: btn.iconSize,
+                                  ),
+                                )
+                              : FilledButton(
+                                  onPressed: _send,
+                                  style: FilledButton.styleFrom(
+                                    padding: EdgeInsets.zero,
+                                    shape: const CircleBorder(),
+                                  ),
+                                  child: Icon(Icons.send, size: btn.iconSize),
+                                ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
-          ),
-        ),
-      ],
+          ],
+        );
+      },
     );
   }
 

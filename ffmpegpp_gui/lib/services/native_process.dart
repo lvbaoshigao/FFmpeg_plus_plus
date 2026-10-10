@@ -3,13 +3,13 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'native_bridge.dart';
 
-
 class NativeProcessManager {
   // DLL 模式
   NativeBridge? _bridge;
   Timer? _pollTimer;
 
-  final _responseController = StreamController<Map<String, dynamic>>.broadcast();
+  final _responseController =
+      StreamController<Map<String, dynamic>>.broadcast();
   final _errorController = StreamController<String>.broadcast();
   final _pendingCompleters = <String, Completer<Map<String, dynamic>>>{};
   int _reqCounter = 0;
@@ -24,15 +24,23 @@ class NativeProcessManager {
   Stream<String> get errors => _errorController.stream;
   bool get isRunning => _bridge != null;
 
-  Future<Map<String, dynamic>> waitForReady({Duration timeout = const Duration(seconds: 30)}) async {
+  Future<Map<String, dynamic>> waitForReady({
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
     if (_cachedReady != null) return _cachedReady!;
     if (_readyCompleter == null) return {'type': 'timeout'};
-    return _readyCompleter!.future.timeout(timeout, onTimeout: () {
-      return {'type': 'timeout'};
-    });
+    return _readyCompleter!.future.timeout(
+      timeout,
+      onTimeout: () {
+        return {'type': 'timeout'};
+      },
+    );
   }
 
   Future<void> start(String serverPath) async {
+    if (_disposed) throw StateError('后端已销毁');
+    if (_bridge != null) return;
+    _cachedReady = null;
     _readyCompleter = Completer<Map<String, dynamic>>();
     await _startDll(serverPath);
   }
@@ -45,13 +53,23 @@ class NativeProcessManager {
       _bridge = NativeBridge(dllPath);
       final result = _bridge!.init();
       debugPrint('[DLL] init returned: $result');
+      if (result != 0) {
+        throw StateError('后端初始化失败 (code=$result)');
+      }
 
       _startPolling();
     } catch (e) {
       debugPrint('[DLL] LOAD ERROR: $e');
       // [FIX M-2] 析构后不要对已关闭的 Controller 调 add
-      if (!_errorController.isClosed) _errorController.add('DLL load error: $e');
+      if (!_errorController.isClosed) {
+        _errorController.add('DLL load error: $e');
+      }
       _bridge = null;
+      _cachedReady = {'type': 'error', 'error': 'DLL load error: $e'};
+      if (!_readyCompleter!.isCompleted) {
+        _readyCompleter!.complete(_cachedReady!);
+      }
+      rethrow;
     }
   }
 
@@ -108,15 +126,26 @@ class NativeProcessManager {
     _bridge!.request(jsonEncode(req));
   }
 
-  Future<Map<String, dynamic>> request(String action, [Map<String, dynamic>? params]) async {
+  Future<Map<String, dynamic>> request(
+    String action, [
+    Map<String, dynamic>? params,
+  ]) async {
     return _doRequest(action, params, 120);
   }
 
-  Future<Map<String, dynamic>> requestWithTimeout(String action, int timeoutSec, [Map<String, dynamic>? params]) async {
+  Future<Map<String, dynamic>> requestWithTimeout(
+    String action,
+    int timeoutSec, [
+    Map<String, dynamic>? params,
+  ]) async {
     return _doRequest(action, params, timeoutSec);
   }
 
-  Future<Map<String, dynamic>> requestWithId(String id, String action, [Map<String, dynamic>? params]) async {
+  Future<Map<String, dynamic>> requestWithId(
+    String id,
+    String action, [
+    Map<String, dynamic>? params,
+  ]) async {
     if (!isRunning) {
       return {'id': id, 'success': false, 'error': '后端未启动'};
     }
@@ -133,7 +162,11 @@ class NativeProcessManager {
     return completer.future;
   }
 
-  Future<Map<String, dynamic>> _doRequest(String action, Map<String, dynamic>? params, int timeoutSec) async {
+  Future<Map<String, dynamic>> _doRequest(
+    String action,
+    Map<String, dynamic>? params,
+    int timeoutSec,
+  ) async {
     if (!isRunning) {
       return {'success': false, 'error': '后端未启动'};
     }
@@ -158,7 +191,10 @@ class NativeProcessManager {
   /// [taskIds] 非空时同时让后端跳过队列中这些尚未开始的任务
   void cancel([List<String>? taskIds]) {
     if (!isRunning) return;
-    final Map<String, dynamic> req = {'id': 'cancel_${++_reqCounter}', 'action': 'cancel'};
+    final Map<String, dynamic> req = {
+      'id': 'cancel_${++_reqCounter}',
+      'action': 'cancel',
+    };
     if (taskIds != null && taskIds.isNotEmpty) {
       req['params'] = {'task_ids': taskIds};
     }
@@ -169,7 +205,9 @@ class NativeProcessManager {
   /// （transcode 等长任务请求无超时，若后端崩溃且无人 complete，会一直悬着）。
   // [FIX M-1] 失败所有挂起请求时把 id 一并写进响应，调用方可用 resp['id'] 关联任务
   void _failAllPending(String error) {
-    final pending = Map<String, Completer<Map<String, dynamic>>>.from(_pendingCompleters);
+    final pending = Map<String, Completer<Map<String, dynamic>>>.from(
+      _pendingCompleters,
+    );
     _pendingCompleters.clear();
     pending.forEach((id, c) {
       if (!c.isCompleted) {

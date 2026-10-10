@@ -26,9 +26,13 @@ class MobileGlassPill extends StatefulWidget {
   final EdgeInsetsGeometry? margin;
   final bool pressable;
   final VoidCallback? onTap;
+
   /// 固定药丸总高度（内容垂直居中）。顶栏里左右药丸高度不同（标题药丸因
   /// 字体行高约 38px、操作药丸约 44~50px）会造成视觉不一致；传 44 统一。
   final double? height;
+
+  /// Optional surface override for panels that reuse this renderer.
+  final String? style;
 
   const MobileGlassPill({
     super.key,
@@ -39,6 +43,7 @@ class MobileGlassPill extends StatefulWidget {
     this.pressable = false,
     this.onTap,
     this.height,
+    this.style,
   });
 
   @override
@@ -66,8 +71,10 @@ class MobileGlassPillAction extends StatelessWidget {
 
   /// 按钮直径（默认 [MobileUi.actionButtonSize]）
   final double size;
+
   /// 图标尺寸（默认 [MobileUi.actionIconSize]）
   final double iconSize;
+
   /// 覆盖默认内边距（默认移动端 h1/v2，桌面端 h2/v2）
   final EdgeInsetsGeometry? padding;
 
@@ -85,11 +92,9 @@ class MobileGlassPillAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final pad = padding ??
-        EdgeInsets.symmetric(
-          horizontal: isMobilePlatform ? 1 : 2,
-          vertical: 2,
-        );
+    final pad =
+        padding ??
+        EdgeInsets.symmetric(horizontal: isMobilePlatform ? 1 : 2, vertical: 2);
     return Tooltip(
       message: tooltip,
       child: InkWell(
@@ -102,10 +107,7 @@ class MobileGlassPillAction extends StatelessWidget {
           child: Container(
             width: size,
             height: size,
-            decoration: BoxDecoration(
-              color: bg,
-              shape: BoxShape.circle,
-            ),
+            decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
             child: Icon(icon, size: iconSize, color: color),
           ),
         ),
@@ -122,11 +124,14 @@ class _PillGlassKey {
   final double op;
   final int primary;
   final int second;
+
   /// 「设置 → 样式 → 玻璃底色遵循主题色」：玻璃 tint 用主题色而非 surface 灰
   /// （此前只有桌面端 GlassPanel 读它，移动端药丸不读 → 开关表现为「无效」）。
   final bool follow;
+
   /// 玻璃细节（模糊度 / 通透度 / 高光强度与位置 / 边缘光）
   final GlassTuning tuning;
+
   /// 主题色协调度（避免直接铺 scheme.primary 过亮）
   final double tone;
   const _PillGlassKey({
@@ -206,22 +211,23 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
     final GlassTuning tuning = key.tuning;
     final double pillSigma = effectiveGlassSigma(tuning.blur);
     final double tScale = tuning.tintScale;
-    final style = key.style;
+    final style = widget.style ?? key.style;
     final op = key.op.clamp(0.0, 1.0);
     // 玻璃样式（liquid/blur）的 tint 与底部导航栏对齐：* 255 无截断，
     // 让玻璃质感与底部栏一致；纯色样式（theme/gray）强制完全不透明（255）
     // ——纯色语义即实心，不再跟随 cardOpacity（此前 ~88% 保底仍透底）。
     final solid = style == SurfaceStyle.theme || style == SurfaceStyle.gray;
-    final baseAlpha =
-        solid ? 255 : ((op * 255) * tScale).round().clamp(0, 255);
+    final baseAlpha = solid
+        ? 255
+        : ((op * (isDark ? 100 : 128)) * tScale).round().clamp(0, 255);
     final baseColor = style == SurfaceStyle.theme
         // 跟随主题色：用与表面色混合后的协调色（原 scheme.primary 过亮）
         ? harmonizedAccent(scheme, key.tone)
         : style == SurfaceStyle.gray
-            // 灰色：去饱和，避免 fromSeed 的种子色偏（「灰色夹杂主题色」）
-            ? neutralGray(scheme.surfaceContainerHigh)
-            // 「玻璃底色遵循主题色」：玻璃样式（liquid/blur）的 tint 用主题色
-            : (key.follow ? harmonizedAccent(scheme, key.tone) : scheme.surface);
+        // 灰色：去饱和，避免 fromSeed 的种子色偏（「灰色夹杂主题色」）
+        ? neutralGray(scheme.surfaceContainerHigh)
+        // 「玻璃底色遵循主题色」：玻璃样式（liquid/blur）的 tint 用主题色
+        : themedGlassBase(scheme, key.tone, key.follow, second: key.second);
     final tint = baseColor.withAlpha(baseAlpha);
 
     // 关键修复：liquid 模式下 OCLiquidGlass 自身已经接收 color=tint 作为
@@ -235,12 +241,15 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
     final inner = Container(
       padding: widget.padding,
       decoration: BoxDecoration(
-        color: style == SurfaceStyle.liquid ? Colors.transparent : tint,
+        color: style == SurfaceStyle.liquid && gpuGlassEnabledOf(context)
+            ? Colors.transparent
+            : tint,
         borderRadius: BorderRadius.circular(widget.radius),
         border: Border.all(
           color: style == SurfaceStyle.blur
               ? scheme.outlineVariant.withAlpha(
-                  (edgeBlur.alpha * 255).round().clamp(0, 255))
+                  (edgeBlur.alpha * 255).round().clamp(0, 255),
+                )
               : Colors.white.withValues(alpha: edgeWhite.alpha),
           width: style == SurfaceStyle.blur ? edgeBlur.width : edgeWhite.width,
         ),
@@ -256,9 +265,12 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
       child: widget.height == null
           ? widget.child
           : SizedBox(
-              height: (widget.height! -
-                      widget.padding.resolve(Directionality.of(context)).vertical)
-                  .clamp(0.0, double.infinity),
+              height:
+                  (widget.height! -
+                          widget.padding
+                              .resolve(Directionality.of(context))
+                              .vertical)
+                      .clamp(0.0, double.infinity),
               child: Center(widthFactor: 1.0, child: widget.child),
             ),
     );

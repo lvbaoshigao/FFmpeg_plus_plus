@@ -93,7 +93,10 @@ OCLiquidGlassSettings liquidGlassSettingsFor(GlassTuning t) {
   return _cachedGlassSettings = OCLiquidGlassSettings(
     refractStrength: kLiquidGlassSettings.refractStrength,
     blurRadiusPx: t.shaderExtraBlur,
-    specStrength: (kLiquidGlassSettings.specStrength * t.highlight).clamp(0.0, 2.0),
+    specStrength: (kLiquidGlassSettings.specStrength * t.highlight).clamp(
+      0.0,
+      2.0,
+    ),
     specPower: kLiquidGlassSettings.specPower,
     specWidth: kLiquidGlassSettings.specWidth,
     specAngle: 4 + t.lightPos * 180,
@@ -142,8 +145,10 @@ ImageFilter cachedGlassBlur(double sigma) {
   if (_glassBlurCache.length >= kGlassBlurCacheMax) {
     _glassBlurCache.clear();
   }
-  return _glassBlurCache[sigma] =
-      ImageFilter.blur(sigmaX: sigma, sigmaY: sigma);
+  return _glassBlurCache[sigma] = ImageFilter.blur(
+    sigmaX: sigma,
+    sigmaY: sigma,
+  );
 }
 
 final ImageFilter _kGlassZeroBlur = ImageFilter.blur(sigmaX: 0, sigmaY: 0);
@@ -184,7 +189,10 @@ const double kGlassClarityBaseline = 0.45;
 /// 边缘光缩放：把「基准描边」按 edge 参数放大 / 缩小。
 /// edge = 1（默认）时返回原值，保证默认观感不变。
 ({double alpha, double width}) edgeBorder(
-    double baseAlpha, double baseWidth, double edge) {
+  double baseAlpha,
+  double baseWidth,
+  double edge,
+) {
   final e = edge.clamp(0.0, 2.0);
   return (
     alpha: (baseAlpha * e).clamp(0.0, 1.0),
@@ -202,12 +210,16 @@ const double kGlassClarityBaseline = 0.45;
 class GlassTuning {
   /// 模糊度（σ，0~30）
   final double blur;
+
   /// 通透度（0~1）：越大越通透（底色越淡）
   final double clarity;
+
   /// 高光强度（0~1.6，1 = 基准）
   final double highlight;
+
   /// 高光位置（0~1）：0 = 左上受光（基准），1 = 右下受光
   final double lightPos;
+
   /// 边缘光强度（0~2，1 = 基准）
   final double edge;
 
@@ -232,8 +244,7 @@ class GlassTuning {
       (tintFactor / (1.0 - kGlassClarityBaseline)).clamp(0.0, 4.0);
 
   /// 走 GPU shader 时的额外模糊 σ（见 [kGlassBlurBaseline]）。
-  double get shaderExtraBlur =>
-      (blur - kGlassBlurBaseline).clamp(0.0, 30.0);
+  double get shaderExtraBlur => (blur - kGlassBlurBaseline).clamp(0.0, 30.0);
 
   @override
   bool operator ==(Object other) =>
@@ -281,14 +292,33 @@ Color harmonizedAccent(ColorScheme scheme, double tone) {
   return Color.lerp(scheme.primary, scheme.surface, t)!;
 }
 
+/// Resolve a readable glass tint from the active theme, including Monet.
+/// Neutral glass retains a subtle accent; followTheme strengthens the tint.
+Color themedGlassBase(
+  ColorScheme scheme,
+  double tone,
+  bool followTheme, {
+  int second = -1,
+}) {
+  final accent = harmonizedAccent(scheme, tone);
+  final blended = followTheme && second >= 0
+      ? Color.lerp(
+          accent,
+          harmonizedAccentGradient(scheme, [Color(second)], tone).first,
+          0.35,
+        )!
+      : accent;
+  return Color.lerp(scheme.surface, blended, followTheme ? 0.42 : 0.12)!;
+}
+
 /// 协调主题色的渐变版（主题渐变 themeColor2 生效时用）。
 List<Color> harmonizedAccentGradient(
-        ColorScheme scheme, List<Color> grad, double tone) =>
-    [
-      for (final c in grad)
-        Color.lerp(c, scheme.surface, tone.clamp(0.0, 0.9))!
-    ];
-
+  ColorScheme scheme,
+  List<Color> grad,
+  double tone,
+) => [
+  for (final c in grad) Color.lerp(c, scheme.surface, tone.clamp(0.0, 0.9))!,
+];
 
 /// 「设置 → 样式 → 添加边框」的配置指纹（供 `context.select` 细粒度订阅）。
 ///
@@ -299,7 +329,11 @@ class BorderStyleCfg {
   final bool enabled;
   final int color;
   final double width;
-  const BorderStyleCfg({required this.enabled, required this.color, required this.width});
+  const BorderStyleCfg({
+    required this.enabled,
+    required this.color,
+    required this.width,
+  });
 
   @override
   bool operator ==(Object other) =>
@@ -435,7 +469,9 @@ class LiquidGlassPainter extends CustomPainter {
         Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = (0.8 * e).clamp(0.3, 2.0)
-          ..color = Colors.white.withValues(alpha: (0.10 * e).clamp(0.0, 1.0) * o),
+          ..color = Colors.white.withValues(
+            alpha: (0.10 * e).clamp(0.0, 1.0) * o,
+          ),
       );
     }
 
@@ -458,8 +494,10 @@ class LiquidGlassPainter extends CustomPainter {
       }
 
       Offset along(double fromX, double fromY, double toX, double toY) =>
-          Offset(size.width * (fromX + (toX - fromX) * p),
-              size.height * (fromY + (toY - fromY) * p));
+          Offset(
+            size.width * (fromX + (toX - fromX) * p),
+            size.height * (fromY + (toY - fromY) * p),
+          );
 
       spot(along(0.14, 0.10, 0.86, 0.90), 0.10 * o);
       spot(along(0.88, 0.92, 0.12, 0.08), 0.06 * o);
@@ -482,6 +520,7 @@ class LiquidGlassPainter extends CustomPainter {
 /// 视觉上保留「通透 + 模糊 + 玻璃棱边光泽」的液态玻璃体感，仅没有 GPU 折射。
 class LiquidGlassBackdrop extends StatelessWidget {
   final BorderRadius borderRadius;
+
   /// 背景模糊 σ。调用方自行处理平台 clamp（如 Windows 限 12）。
   /// 传 null 时取自「设置 → 样式 → 玻璃细节」的模糊度。
   final double? sigma;

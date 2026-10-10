@@ -113,7 +113,10 @@ NavGlassLook navGlassLook(ColorScheme scheme, bool isDark, NavGlassPal pal) {
   // 通透度 → 基准 alpha 的等比缩放（默认 1.0，观感不变）
   final baseAlpha = solid
       ? 255
-      : ((op * 255) * pal.tuning.tintScale).round().clamp(0, 255);
+      : ((op * (isDark ? 100 : 128)) * pal.tuning.tintScale).round().clamp(
+          0,
+          255,
+        );
   // 主题色基底：跟随主题色 / 玻璃遵循主题色时都用「与表面色混合后的协调色」，
   // 避免 scheme.primary（暗色下 tone 80）大面积铺开过亮；
   // 灰色样式额外去饱和，保证是真正的中性灰（原有 fromSeed 种子色偏）。
@@ -122,7 +125,7 @@ NavGlassLook navGlassLook(ColorScheme scheme, bool isDark, NavGlassPal pal) {
       ? accent
       : style == SurfaceStyle.gray
       ? neutralGray(scheme.surfaceContainerHigh)
-      : (pal.follow ? accent : scheme.surface);
+      : themedGlassBase(scheme, pal.tone, pal.follow, second: pal.second);
   // 边缘光 → 描边的透明度/线宽缩放（基准 1.0 = 与改动前一致）
   final edgeBlur = edgeBorder(70 / 255, 0.5, pal.tuning.edge);
   final edgeWhite = edgeBorder(isDark ? 0.16 : 0.32, 0.7, pal.tuning.edge);

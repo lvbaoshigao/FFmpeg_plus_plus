@@ -18,4 +18,7 @@ void wakeInput(); // 唤醒阻塞中的 popInput
 // 清除 wake 标志：DLL 重新初始化时避免 worker 因历史 wake 立即退出
 void resetInputWake();
 
+// Called only after workers have stopped, before a new FFI session starts.
+void resetMessageQueues();
+
 } // namespace ffmpegpp

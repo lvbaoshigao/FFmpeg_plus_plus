@@ -8,11 +8,14 @@
 #include "flutter_window.h"
 #include "include/desktop_multi_window/desktop_multi_window_plugin.h"
 #include "window_configuration.h"
-#ifdef GDK_WINDOWING_X11
-#include <gdk/gdkx.h>
-#endif
 
 namespace {
+
+struct DeferredViewDestroy {
+  GtkWidget* window;
+  GtkWidget* view;
+  GApplication* application;
+};
 
 std::string GenerateWindowId() {
   std::random_device rd;
@@ -57,25 +60,13 @@ std::string MultiWindowManager::Create(FlValue* args) {
   GtkWindow* window = GTK_WINDOW(gtk_application_window_new(app));
   gtk_application_add_window(app, window);
 
-  gboolean use_header_bar = TRUE;
-#ifdef GDK_WINDOWING_X11
-  GdkScreen* screen = gtk_window_get_screen(window);
-  if (GDK_IS_X11_SCREEN(screen)) {
-    const gchar* wm_name = gdk_x11_screen_get_window_manager_name(screen);
-    if (g_strcmp0(wm_name, "GNOME Shell") != 0) {
-      use_header_bar = FALSE;
-    }
-  }
-#endif
-  if (use_header_bar) {
-    GtkHeaderBar* header_bar = GTK_HEADER_BAR(gtk_header_bar_new());
-    gtk_widget_show(GTK_WIDGET(header_bar));
-    gtk_header_bar_set_title(header_bar, "");
-    gtk_header_bar_set_show_close_button(header_bar, TRUE);
-    gtk_window_set_titlebar(window, GTK_WIDGET(header_bar));
-  } else {
-    gtk_window_set_title(window, "");
-  }
+  // Always use CSD for detached windows, including non-GNOME X11 desktops.
+  // window_manager can still hide/show this titlebar for Dart-drawn chrome.
+  GtkHeaderBar* header_bar = GTK_HEADER_BAR(gtk_header_bar_new());
+  gtk_widget_show(GTK_WIDGET(header_bar));
+  gtk_header_bar_set_title(header_bar, "");
+  gtk_header_bar_set_show_close_button(header_bar, TRUE);
+  gtk_window_set_titlebar(window, GTK_WIDGET(header_bar));
 
   gtk_window_set_default_size(window, 1280, 720);
 
@@ -162,17 +153,50 @@ void MultiWindowManager::ObserveWindowClose(const std::string& window_id,
                                             GtkWindow* window) {
   g_signal_connect(
       GTK_WIDGET(window), "destroy",
-      G_CALLBACK(+[](GtkWidget* widget, gpointer arg) {
+      G_CALLBACK((+[](GtkWidget* widget, gpointer arg) {
         auto* window_id_ptr = static_cast<std::string*>(arg);
 
         GtkWidget* child = gtk_bin_get_child(GTK_BIN(widget));
         if (child && FL_IS_VIEW(child)) {
+          // destroy is RUN_CLEANUP: detach before GTK recursively destroys its
+          // children. A reference alone does not prevent gtk_widget_destroy
+          // from running FlView.dispose synchronously inside a method callback.
+          auto* deferred = new DeferredViewDestroy{
+              GTK_WIDGET(g_object_ref(widget)),
+              GTK_WIDGET(g_object_ref(child)),
+              g_application_get_default()};
+          if (deferred->application) {
+            g_object_ref(deferred->application);
+            // Keep the main loop alive when this was the last application window.
+            g_application_hold(deferred->application);
+          }
+          // The embedder's toplevel delete-event handler carries a bare FlView*.
+          // Remove every matching closure before that view can be disposed.
+          g_signal_handlers_disconnect_by_data(widget, child);
           gtk_container_remove(GTK_CONTAINER(widget), child);
+          g_idle_add_full(
+              G_PRIORITY_DEFAULT_IDLE,
+              +[](gpointer data) -> gboolean {
+                auto* deferred = static_cast<DeferredViewDestroy*>(data);
+                gtk_widget_destroy(deferred->view);
+                return G_SOURCE_REMOVE;
+              },
+              deferred,
+              +[](gpointer data) {
+                auto* deferred = static_cast<DeferredViewDestroy*>(data);
+                g_object_unref(deferred->view);
+                g_object_unref(deferred->window);
+                if (deferred->application) {
+                  g_application_release(deferred->application);
+                  g_object_unref(deferred->application);
+                }
+                delete deferred;
+              });
         }
 
         MultiWindowManager::Instance()->RemoveWindow(*window_id_ptr);
         delete window_id_ptr;
-      }),
+      })),
       new std::string(window_id));
 }
 

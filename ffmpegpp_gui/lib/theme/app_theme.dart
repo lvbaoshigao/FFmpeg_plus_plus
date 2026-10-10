@@ -12,45 +12,111 @@ class AppTheme {
   /// seedColor 为用户自定义主题色；dynamicSeed 非空时（Android Monet
   /// 动态取色）覆盖它作为种子色，使用与系统 Material You 一致的
   /// tonalSpot 方案生成整套配色。
-  static ThemeData dark({int seedColor = 0xFF5E6AD2, String fontFamily = '', double fontSize = 14.0, int fontWeight = 400, int? dynamicSeed, bool predictiveBack = true, String glassEffect = 'liquid'}) {
+  static ThemeData dark({
+    int seedColor = 0xFF5E6AD2,
+    String fontFamily = '',
+    double fontSize = 14.0,
+    int fontWeight = 400,
+    int? dynamicSeed,
+    bool predictiveBack = true,
+    String glassEffect = 'liquid',
+  }) {
     final scheme = ColorScheme.fromSeed(
       seedColor: Color(dynamicSeed ?? seedColor),
       brightness: Brightness.dark,
     );
-    return _build(scheme, fontFamily, fontSize, fontWeight, predictiveBack: predictiveBack, glassEffect: glassEffect);
+    return _build(
+      scheme,
+      fontFamily,
+      fontSize,
+      fontWeight,
+      predictiveBack: predictiveBack,
+      glassEffect: glassEffect,
+    );
   }
 
-  static ThemeData light({int seedColor = 0xFF5E6AD2, String fontFamily = '', double fontSize = 14.0, int fontWeight = 400, int? dynamicSeed, bool predictiveBack = true, String glassEffect = 'liquid'}) {
+  static ThemeData light({
+    int seedColor = 0xFF5E6AD2,
+    String fontFamily = '',
+    double fontSize = 14.0,
+    int fontWeight = 400,
+    int? dynamicSeed,
+    bool predictiveBack = true,
+    String glassEffect = 'liquid',
+  }) {
     final scheme = ColorScheme.fromSeed(
       seedColor: Color(dynamicSeed ?? seedColor),
       brightness: Brightness.light,
     );
-    return _build(scheme, fontFamily, fontSize, fontWeight, predictiveBack: predictiveBack, glassEffect: glassEffect);
+    return _build(
+      scheme,
+      fontFamily,
+      fontSize,
+      fontWeight,
+      predictiveBack: predictiveBack,
+      glassEffect: glassEffect,
+    );
   }
 
-  static ThemeData _build(ColorScheme scheme, String fontFamily, double fontSize, int fontWeight, {bool predictiveBack = true, String glassEffect = 'liquid'}) {
+  static ThemeData _build(
+    ColorScheme scheme,
+    String fontFamily,
+    double fontSize,
+    int fontWeight, {
+    bool predictiveBack = true,
+    String glassEffect = 'liquid',
+  }) {
     final isDark = scheme.brightness == Brightness.dark;
     // 字号缩放统一交给 app.dart 里的 MediaQuery.textScaler（TextScaler.linear(fontSize/14)），
     // 这里不能再 `sz * scale`，否则字号会被乘两次（默认 17 号会渲染成约 20.6px）。
     final w = _fw(fontWeight);
     final base = ThemeData.fallback().textTheme;
-    TextStyle s(TextStyle? b, double sz) => (b ?? const TextStyle()).copyWith(fontSize: sz, fontWeight: w, color: scheme.onSurface);
+    TextStyle s(TextStyle? b, double sz) => (b ?? const TextStyle()).copyWith(
+      fontSize: sz,
+      fontWeight: w,
+      height: 1.45,
+      color: scheme.onSurface,
+    );
 
     final tt = base.copyWith(
-      displayLarge: s(base.displayLarge, 57), displayMedium: s(base.displayMedium, 45), displaySmall: s(base.displaySmall, 36),
-      headlineLarge: s(base.headlineLarge, 32), headlineMedium: s(base.headlineMedium, 28), headlineSmall: s(base.headlineSmall, 24),
-      titleLarge: s(base.titleLarge, 22), titleMedium: s(base.titleMedium, 16), titleSmall: s(base.titleSmall, 14),
-      bodyLarge: s(base.bodyLarge, 16), bodyMedium: s(base.bodyMedium, 14), bodySmall: s(base.bodySmall, 12),
-      labelLarge: s(base.labelLarge, 14), labelMedium: s(base.labelMedium, 12), labelSmall: s(base.labelSmall, 11),
+      displayLarge: s(base.displayLarge, 57),
+      displayMedium: s(base.displayMedium, 45),
+      displaySmall: s(base.displaySmall, 36),
+      headlineLarge: s(base.headlineLarge, 32),
+      headlineMedium: s(base.headlineMedium, 28),
+      headlineSmall: s(base.headlineSmall, 24),
+      titleLarge: s(base.titleLarge, 22),
+      titleMedium: s(base.titleMedium, 16),
+      titleSmall: s(base.titleSmall, 14),
+      bodyLarge: s(base.bodyLarge, 16),
+      bodyMedium: s(base.bodyMedium, 14),
+      bodySmall: s(base.bodySmall, 12),
+      labelLarge: s(base.labelLarge, 14),
+      labelMedium: s(base.labelMedium, 12),
+      labelSmall: s(base.labelSmall, 11),
     );
 
     final fallback = Platform.isWindows
         ? const ['Microsoft YaHei', 'SimHei', 'SimSun', 'KaiTi', 'sans-serif']
         : Platform.isMacOS
-            ? const ['PingFang SC', 'Hiragino Sans GB', 'SF Pro Text', 'Menlo', 'sans-serif']
-            : const ['Noto Sans CJK SC', 'WenQuanYi Micro Hei', 'DejaVu Sans', 'sans-serif'];
+        ? const [
+            'PingFang SC',
+            'Hiragino Sans GB',
+            'SF Pro Text',
+            'Menlo',
+            'sans-serif',
+          ]
+        : const [
+            'Noto Sans CJK SC',
+            'WenQuanYi Micro Hei',
+            'DejaVu Sans',
+            'sans-serif',
+          ];
 
-    final appliedTt = fontFamily.isNotEmpty && !fontFamily.contains('\\') && !fontFamily.contains('/')
+    final appliedTt =
+        fontFamily.isNotEmpty &&
+            !fontFamily.contains('\\') &&
+            !fontFamily.contains('/')
         ? tt.apply(fontFamily: fontFamily, fontFamilyFallback: fallback)
         : tt.apply(fontFamilyFallback: fallback);
 
@@ -82,6 +148,55 @@ class AppTheme {
       ),
       fontFamilyFallback: fallback,
       textTheme: appliedTt,
+      // Material controls can resolve primaryTextTheme instead of textTheme.
+      primaryTextTheme: appliedTt,
+      fontFamily:
+          fontFamily.isNotEmpty &&
+              !fontFamily.contains('/') &&
+              !fontFamily.contains('\\')
+          ? fontFamily
+          : null,
+      checkboxTheme: CheckboxThemeData(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
+        side: BorderSide(color: scheme.outline, width: 1.5),
+      ),
+      radioTheme: RadioThemeData(
+        fillColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.disabled)
+              ? scheme.onSurface.withAlpha(90)
+              : states.contains(WidgetState.selected)
+              ? scheme.primary
+              : scheme.outline,
+        ),
+      ),
+      switchTheme: SwitchThemeData(
+        trackOutlineColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? Colors.transparent
+              : scheme.outlineVariant,
+        ),
+      ),
+      segmentedButtonTheme: SegmentedButtonThemeData(
+        style: ButtonStyle(
+          padding: const WidgetStatePropertyAll(
+            EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          ),
+          shape: WidgetStatePropertyAll(
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+          side: WidgetStatePropertyAll(
+            BorderSide(color: scheme.outlineVariant),
+          ),
+        ),
+      ),
+      listTileTheme: ListTileThemeData(
+        horizontalTitleGap: 12,
+        minVerticalPadding: 10,
+        titleTextStyle: appliedTt.bodyMedium,
+        subtitleTextStyle: appliedTt.bodySmall?.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
+      ),
       scaffoldBackgroundColor: scheme.surface,
       cardTheme: CardThemeData(
         elevation: 0,
@@ -96,40 +211,57 @@ class AppTheme {
         fillColor: scheme.surfaceContainerHighest.withAlpha(80),
         hintStyle: TextStyle(color: scheme.outline, fontSize: 13),
         labelStyle: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13),
-        floatingLabelStyle: TextStyle(color: scheme.primary, fontWeight: FontWeight.w500),
+        floatingLabelStyle: TextStyle(
+          color: scheme.primary,
+          fontWeight: FontWeight.w500,
+        ),
         border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide(color: scheme.outlineVariant, width: 1)),
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: scheme.outlineVariant, width: 1),
+        ),
         enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide(color: scheme.outlineVariant.withAlpha(160), width: 1)),
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(
+            color: scheme.outlineVariant.withAlpha(160),
+            width: 1,
+          ),
+        ),
         focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide(color: scheme.primary, width: 1.5)),
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: scheme.primary, width: 1.5),
+        ),
         errorBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide(color: scheme.error, width: 1)),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: scheme.error, width: 1),
+        ),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 12,
+        ),
         isDense: true,
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
-        style: ElevatedButton.styleFrom(elevation: 0,
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+        style: ElevatedButton.styleFrom(
+          elevation: 0,
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
       ),
       // 必须和 filledButtonTheme 保持同样的圆角/内边距：否则 OutlinedButton 会退回
       // Material 3 默认值（胶囊形 + 更小的内边距），和旁边的 FilledButton 并排时
       // 高度和圆角都对不上（例如「容器」与「添加文件」）。
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-            side: BorderSide(color: scheme.outlineVariant.withAlpha(160)),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          side: BorderSide(color: scheme.outlineVariant.withAlpha(160)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
       ),
       // ── 统一的滑动条 / 进度条样式 ──
       // 用户要求：所有进度条（滑动条）样式统一 —— 两边大圆角的矩形轨道、内部可滑动、
@@ -159,14 +291,20 @@ class AppTheme {
           filled: true,
           fillColor: scheme.surfaceContainerHighest.withAlpha(90),
           isDense: true,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 10,
+          ),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
             borderSide: BorderSide(color: scheme.outlineVariant, width: 1),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide(color: scheme.outlineVariant.withAlpha(160), width: 1),
+            borderSide: BorderSide(
+              color: scheme.outlineVariant.withAlpha(160),
+              width: 1,
+            ),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
@@ -174,14 +312,23 @@ class AppTheme {
           ),
         ),
         menuStyle: MenuStyle(
-          shape: WidgetStatePropertyAll(RoundedRectangleBorder(
+          shape: WidgetStatePropertyAll(
+            RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(22),
-              side: BorderSide(color: scheme.outlineVariant.withAlpha(70)))),
+              side: BorderSide(color: scheme.outlineVariant.withAlpha(70)),
+            ),
+          ),
           surfaceTintColor: WidgetStatePropertyAll(scheme.surface),
           elevation: const WidgetStatePropertyAll(12),
-          padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(vertical: 8)),
-          backgroundColor: WidgetStatePropertyAll(scheme.surfaceContainerHighest.withAlpha(240)),
-          shadowColor: WidgetStatePropertyAll(Colors.black.withAlpha(isDark ? 80 : 30)),
+          padding: const WidgetStatePropertyAll(
+            EdgeInsets.symmetric(vertical: 8),
+          ),
+          backgroundColor: WidgetStatePropertyAll(
+            scheme.surfaceContainerHighest.withAlpha(240),
+          ),
+          shadowColor: WidgetStatePropertyAll(
+            Colors.black.withAlpha(isDark ? 80 : 30),
+          ),
           // 展开面板宽高上限：DropdownMenu 未显式给 width 时会按最长条目
           // （含 leadingIcon）撑开，桌面端表现为「菜单栏过大 / 宽度极大」。
           // 这里兜底约束，个别下拉再用自身 width/menuHeight 精确控制。
@@ -227,8 +374,17 @@ class AppTheme {
   }
 
   static FontWeight _fw(int w) {
-    const m = {100: FontWeight.w100, 200: FontWeight.w200, 300: FontWeight.w300, 400: FontWeight.w400,
-        500: FontWeight.w500, 600: FontWeight.w600, 700: FontWeight.w700, 800: FontWeight.w800, 900: FontWeight.w900};
+    const m = {
+      100: FontWeight.w100,
+      200: FontWeight.w200,
+      300: FontWeight.w300,
+      400: FontWeight.w400,
+      500: FontWeight.w500,
+      600: FontWeight.w600,
+      700: FontWeight.w700,
+      800: FontWeight.w800,
+      900: FontWeight.w900,
+    };
     return m[w] ?? FontWeight.w400;
   }
 }

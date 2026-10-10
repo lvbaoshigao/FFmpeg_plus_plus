@@ -30,13 +30,17 @@ class _CardGlassKey {
   final double op;
   final int primary;
   final int second;
+
   /// 「样式 → 设置卡片玻璃」：'solid' 退回主题色实心、'frosted' 改走扁平模糊
   /// （见 AppConfig.settingsGlassMode；历史上是两个互斥布尔，现已合并为单值）
   final String settingsGlass;
+
   /// 「样式 → 玻璃底色遵循主题色」（玻璃 tint 用主题色而非 surface 灰）
   final bool follow;
+
   /// 玻璃细节（模糊度 / 通透度 / 高光强度 / 高光位置 / 边缘光）
   final GlassTuning tuning;
+
   /// 主题色协调度（「跟随主题色」的底色与表面色混合比例）
   final double tone;
 
@@ -68,7 +72,15 @@ class _CardGlassKey {
 
   @override
   int get hashCode => Object.hash(
-      style, op, primary, second, settingsGlass, follow, tuning, tone);
+    style,
+    op,
+    primary,
+    second,
+    settingsGlass,
+    follow,
+    tuning,
+    tone,
+  );
 }
 
 /// 应用统一卡片容器 —— 接管「设置 / 项目 / 处理队列 / 配置库」的卡片样式。
@@ -83,11 +95,13 @@ class _CardGlassKey {
 /// 不透明度统一由全局 `cardOpacity` 控制。
 class AppCard extends StatefulWidget {
   final Widget child;
+
   /// 表面样式（SurfaceStyle 四值之一）
   final String style;
   final double radius;
   final EdgeInsetsGeometry? padding;
   final EdgeInsetsGeometry? margin;
+
   /// 可选点击回调（卡片整体可点，如配置库条目）
   final VoidCallback? onTap;
 
@@ -146,7 +160,9 @@ class _AppCardState extends State<AppCard> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final style = widget.style;
     // 仅订阅玻璃渲染相关字段，进度/日志等高频 notify 不会重建卡片。
-    final key = context.select<AppState, _CardGlassKey>((s) => _keyOf(s, style));
+    final key = context.select<AppState, _CardGlassKey>(
+      (s) => _keyOf(s, style),
+    );
     // 模糊 σ 与「是否走 shader」统一来自 liquid_glass_fallback（各调用点固定 σ +
     // Windows ≤12 钳制；PC 端默认不走 shader，见 gpuGlassEnabledOf）。
     final op = key.op.clamp(0.0, 1.0);
@@ -172,7 +188,8 @@ class _AppCardState extends State<AppCard> {
     final bool solidStyle = !glassStyle || key.noGlass;
     // GPU shader 判定无条件调用（内部是 context.select，不能写进 || 短路里，
     // 见 gpuGlassEnabledOf 注释）。
-    final bool gpuGlass = style == SurfaceStyle.liquid && gpuGlassEnabledOf(context);
+    final bool gpuGlass =
+        style == SurfaceStyle.liquid && gpuGlassEnabledOf(context);
     // 「跟随主题色」的底色：直接铺 scheme.primary 在暗色主题下是 tone 80 的
     // 高亮色，非常刺眼（用户反馈「选择主题色又很亮」）。改为按 themeTone 与
     // 表面色混合后的协调色（默认 0.45）。
@@ -183,25 +200,40 @@ class _AppCardState extends State<AppCard> {
         ? neutralGray(scheme.surfaceContainerHigh)
         : accent;
     // 纯色分支的渐变：仅主题色纯色卡（含关玻璃后的卡）才带主题渐变，灰色恒纯灰。
-    final grad = solidStyle && style != SurfaceStyle.gray && themeGrad != null
+    final grad =
+        style != SurfaceStyle.gray &&
+            (solidStyle || key.follow) &&
+            themeGrad != null
         ? harmonizedAccentGradient(scheme, themeGrad, key.tone)
         : null;
     // 玻璃 tint 的基色（follow 时用协调主题色）。
-    final Color glassBase = key.follow ? accent : scheme.surface;
+    final Color glassBase = themedGlassBase(
+      scheme,
+      key.tone,
+      key.follow,
+      second: key.second,
+    );
     // 通透度 → 各处基准 alpha 的等比缩放（默认 1.0，即观感不变）。
     final double tScale = key.tuning.tintScale;
     final GlassTuning tuning = key.tuning;
     final double sigma = effectiveGlassSigma(tuning.blur);
     // 边缘光 → 描边的透明度/线宽（基准 1.0 时与改动前一致）。
     final edgeWhite = edgeBorder(isDark ? 0.12 : 0.18, 0.7, tuning.edge);
-    final edgeOutline = edgeBorder(isDark ? 60 / 255 : 80 / 255, 0.6, tuning.edge);
+    final edgeOutline = edgeBorder(
+      isDark ? 60 / 255 : 80 / 255,
+      0.6,
+      tuning.edge,
+    );
     // 液态玻璃回退分支的描边基准（alpha 0.14/0.28、宽 1）与之不同，单独算。
     final edgeLiquid = edgeBorder(isDark ? 0.14 : 0.28, 1.0, tuning.edge);
     // 卡片内放一层透明 Material 作为 ink 宿主：纯色/模糊表面有背景色，
     // 内部 ListTile/SwitchListTile 的水波纹与选中底色必须画在「卡片之上」
     // 才会可见（否则画在页面 Material 上被卡片背景遮住，并触发
     // Flutter「ListTile background may be invisible」错误）。
-    final inner = Material(type: MaterialType.transparency, child: widget.child);
+    final inner = Material(
+      type: MaterialType.transparency,
+      child: widget.child,
+    );
 
     Widget core;
     if (solidStyle) {
@@ -223,14 +255,19 @@ class _AppCardState extends State<AppCard> {
                 : null,
             borderRadius: br,
             border: Border.all(
-              color: (style == SurfaceStyle.gray
-                      ? neutralGray(scheme.outlineVariant)
-                      : scheme.outlineVariant)
-                  .withAlpha(isDark ? 45 : 70),
+              color:
+                  (style == SurfaceStyle.gray
+                          ? neutralGray(scheme.outlineVariant)
+                          : scheme.outlineVariant)
+                      .withAlpha(isDark ? 45 : 70),
               width: 0.6,
             ),
             boxShadow: [
-              BoxShadow(color: Colors.black.withAlpha(isDark ? 30 : 12), blurRadius: 12, offset: const Offset(0, 3)),
+              BoxShadow(
+                color: Colors.black.withAlpha(isDark ? 30 : 12),
+                blurRadius: 12,
+                offset: const Offset(0, 3),
+              ),
             ],
           ),
           child: inner,
@@ -258,16 +295,24 @@ class _AppCardState extends State<AppCard> {
             final BoxShadow? shadow;
             if (blurLike) {
               tint = glassBase.withAlpha(
-                  (((isDark ? 110.0 : 130.0) * op * tScale).round()).clamp(0, 255));
+                (((isDark ? 110.0 : 130.0) * op * tScale).round()).clamp(
+                  0,
+                  255,
+                ),
+              );
               tintGrad = null;
               // 扁平模糊路径本身无阴影（与回退分支一致）。
               shadow = null;
               border = Border.all(
-                  color: scheme.outlineVariant
-                      .withAlpha((edgeOutline.alpha * 255).round().clamp(0, 255)),
-                  width: edgeOutline.width);
+                color: scheme.outlineVariant.withAlpha(
+                  (edgeOutline.alpha * 255).round().clamp(0, 255),
+                ),
+                width: edgeOutline.width,
+              );
             } else if (gpuGlass) {
-              tint = glassBase.withAlpha(((op * 255) * tScale).round().clamp(0, 255));
+              tint = glassBase.withAlpha(
+                ((op * (isDark ? 100 : 128)) * tScale).round().clamp(0, 255),
+              );
               tintGrad = null;
               // 与 OCLiquidGlass(shadow:) 同参数。
               shadow = BoxShadow(
@@ -276,8 +321,9 @@ class _AppCardState extends State<AppCard> {
                 offset: const Offset(0, 5),
               );
               border = Border.all(
-                  color: Colors.white.withValues(alpha: edgeWhite.alpha),
-                  width: edgeWhite.width);
+                color: Colors.white.withValues(alpha: edgeWhite.alpha),
+                width: edgeWhite.width,
+              );
             } else {
               tint = null;
               final alphaTop = ((isDark ? 96.0 : 118.0) * op * tScale).round();
@@ -286,7 +332,10 @@ class _AppCardState extends State<AppCard> {
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
                 colors: grad != null
-                    ? [grad.first.withAlpha(alphaTop), grad.last.withAlpha(alphaBot)]
+                    ? [
+                        grad.first.withAlpha(alphaTop),
+                        grad.last.withAlpha(alphaBot),
+                      ]
                     : [
                         glassBase.withAlpha(alphaTop),
                         glassBase.withAlpha((alphaTop + alphaBot) ~/ 2),
@@ -301,28 +350,31 @@ class _AppCardState extends State<AppCard> {
                 offset: const Offset(0, 6),
               );
               border = Border.all(
-                  color: Colors.white.withValues(alpha: edgeLiquid.alpha),
-                  width: edgeLiquid.width);
+                color: Colors.white.withValues(alpha: edgeLiquid.alpha),
+                width: edgeLiquid.width,
+              );
             }
             final Widget glassSurface = ClipRRect(
               borderRadius: br,
               child: CustomPaint(
                 painter: _WallpaperWindowPainter(
-                    image: w.image,
-                    // 预模糊整屏壁纸（所有玻璃卡共享一张）：非 null 时 painter
-                    // 只做普通贴图，不再每帧每卡跑高斯模糊。为 null 时回退实时
-                    // 模糊（见 painter 注释）。
-                    blurred: w.blurred,
-                    screen: w.screen,
-                    overlay: w.overlayColor,
-                    sigma: sigma),
+                  image: w.image,
+                  // 预模糊整屏壁纸（所有玻璃卡共享一张）：非 null 时 painter
+                  // 只做普通贴图，不再每帧每卡跑高斯模糊。为 null 时回退实时
+                  // 模糊（见 painter 注释）。
+                  blurred: w.blurred,
+                  screen: w.screen,
+                  overlay: w.overlayColor,
+                  sigma: sigma,
+                ),
                 child: CustomPaint(
                   painter: LiquidGlassPainter(
-                      borderRadius: br,
-                      opacity: op,
-                      highlight: tuning.highlight,
-                      lightPos: tuning.lightPos,
-                      edge: tuning.edge),
+                    borderRadius: br,
+                    opacity: op,
+                    highlight: tuning.highlight,
+                    lightPos: tuning.lightPos,
+                    edge: tuning.edge,
+                  ),
                   child: Container(
                     padding: widget.padding,
                     decoration: BoxDecoration(
@@ -347,131 +399,138 @@ class _AppCardState extends State<AppCard> {
           }
           // ── 回退：无壁纸源时沿用原玻璃路径 ──
           if (style == SurfaceStyle.blur || key.frosted) {
-      // 扁平高斯模糊：卡片样式为「模糊」，或「设置卡片以毛玻璃展示」
-      // （后者把「液态玻璃」也改成扁平模糊，长列表更易读）。
-      // σ 与 tint 分别由「玻璃细节」的模糊度 / 通透度控制（默认观感不变）。
-      final alpha = (((isDark ? 110.0 : 130.0) * op * tScale).round()).clamp(0, 255);
-      // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
-      return ClipRRect(
-        borderRadius: br,
-        child: BackdropFilter(
-          // σ 已由 effectiveGlassSigma 按平台钳制；走缓存避免每帧每卡新建
-          // 一份持有 native handle 的 ImageFilter（见 cachedGlassBlur 注释）。
-          filter: cachedGlassBlur(sigma),
-          child: CustomPaint(
-            // 高光 / 边缘光：与液态玻璃回退同一支画笔，扁平模糊同样有玻璃光泽
-            painter: LiquidGlassPainter(
+            // 扁平高斯模糊：卡片样式为「模糊」，或「设置卡片以毛玻璃展示」
+            // （后者把「液态玻璃」也改成扁平模糊，长列表更易读）。
+            // σ 与 tint 分别由「玻璃细节」的模糊度 / 通透度控制（默认观感不变）。
+            final alpha = (((isDark ? 110.0 : 130.0) * op * tScale).round())
+                .clamp(0, 255);
+            // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
+            return ClipRRect(
               borderRadius: br,
+              child: BackdropFilter(
+                // σ 已由 effectiveGlassSigma 按平台钳制；走缓存避免每帧每卡新建
+                // 一份持有 native handle 的 ImageFilter（见 cachedGlassBlur 注释）。
+                filter: cachedGlassBlur(sigma),
+                child: CustomPaint(
+                  // 高光 / 边缘光：与液态玻璃回退同一支画笔，扁平模糊同样有玻璃光泽
+                  painter: LiquidGlassPainter(
+                    borderRadius: br,
+                    opacity: op,
+                    highlight: tuning.highlight,
+                    lightPos: tuning.lightPos,
+                    edge: tuning.edge,
+                  ),
+                  child: Container(
+                    padding: widget.padding,
+                    decoration: BoxDecoration(
+                      borderRadius: br,
+                      color: glassBase.withAlpha(alpha),
+                      border: Border.all(
+                        color: scheme.outlineVariant.withAlpha(
+                          (edgeOutline.alpha * 255).round().clamp(0, 255),
+                        ),
+                        width: edgeOutline.width,
+                      ),
+                    ),
+                    child: inner,
+                  ),
+                ),
+              ),
+            );
+          } else if (gpuGlass) {
+            // 液态玻璃：oc_liquid_glass GPU shader（与底部导航/药丸一致）。
+            // 走 shader 的条件 = 引擎支持（Impeller）且（移动端 || 设置里显式开启 PC GPU
+            // 玻璃）；桌面默认关闭：shader backdrop 的纹理取向/坐标空间在桌面后端不一致
+            // （用户反馈「PC 玻璃背景倒置且不是壁纸」），关闭后落到下方统一回退。
+            // Impeller 不可用时（Windows 默认 Skia，部分安卓低端机也回退 Skia）同样
+            // 落入回退，避免 shader backdrop 被整体跳过、玻璃整块消失。
+            // OCLiquidGlass 自身接收 color=tint；inner 只保留边框，避免双重染色。
+            // tint 基色随「玻璃底色遵循主题色」切换（glassBase）；透明度随通透度缩放。
+            final tint = glassBase.withAlpha(
+              ((op * (isDark ? 100 : 128)) * tScale).round().clamp(0, 255),
+            );
+            final glassKey = ValueKey<_CardGlassKey>(key);
+            final innerKey = ValueKey<String>('${key.hashCode}_appcard_inner');
+            return RepaintBoundary(
+              child: OCLiquidGlassGroup(
+                key: glassKey,
+                // 参数化的 settings（带实例缓存，参数不变时复用同一对象，
+                // 避免每次 build 重新下发 uniform 造成液态玻璃「来回跳跃」）。
+                settings: liquidGlassSettingsFor(tuning),
+                child: OCLiquidGlass(
+                  key: innerKey,
+                  borderRadius: radius,
+                  color: tint,
+                  shadow: BoxShadow(
+                    color: Colors.black.withAlpha(isDark ? 60 : 22),
+                    blurRadius: 16,
+                    offset: const Offset(0, 5),
+                  ),
+                  child: Container(
+                    padding: widget.padding,
+                    decoration: BoxDecoration(
+                      color: Colors.transparent,
+                      borderRadius: br,
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: edgeWhite.alpha),
+                        width: edgeWhite.width,
+                      ),
+                    ),
+                    child: inner,
+                  ),
+                ),
+              ),
+            );
+          } else {
+            // 液态玻璃回退（无 Impeller）：高斯模糊 + 液态玻璃倒角高光（与
+            // GlassPanel liquid 回退一致，不再依赖全局 glassEffect）。
+            final alphaTop = ((isDark ? 96.0 : 118.0) * op * tScale).round();
+            final alphaBot = ((isDark ? 46.0 : 62.0) * op * tScale).round();
+            // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
+            return LiquidGlassBackdrop(
+              borderRadius: br,
+              // σ 由「玻璃细节 → 模糊度」控制（Windows 上被 effectiveGlassSigma 钳制）
+              sigma: sigma,
               opacity: op,
-              highlight: tuning.highlight,
-              lightPos: tuning.lightPos,
-              edge: tuning.edge,
-            ),
-            child: Container(
+              shadow: BoxShadow(
+                color: Colors.black.withAlpha(isDark ? 60 : 26),
+                blurRadius: 18,
+                offset: const Offset(0, 6),
+              ),
+              child: Container(
                 padding: widget.padding,
                 decoration: BoxDecoration(
                   borderRadius: br,
-                  color: glassBase.withAlpha(alpha),
+                  color: op <= 0.001 ? Colors.transparent : null,
+                  gradient: op > 0.001
+                      ? LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: grad != null
+                              ? [
+                                  grad.first.withAlpha(alphaTop),
+                                  grad.last.withAlpha(alphaBot),
+                                ]
+                              : [
+                                  glassBase.withAlpha(alphaTop),
+                                  glassBase.withAlpha(
+                                    (alphaTop + alphaBot) ~/ 2,
+                                  ),
+                                  glassBase.withAlpha(alphaBot),
+                                ],
+                          stops: grad == null ? const [0.0, 0.55, 1.0] : null,
+                        )
+                      : null,
                   border: Border.all(
-                      color: scheme.outlineVariant
-                          .withAlpha((edgeOutline.alpha * 255).round().clamp(0, 255)),
-                      width: edgeOutline.width),
+                    color: op <= 0.001
+                        ? Colors.transparent
+                        : Colors.white.withValues(alpha: edgeLiquid.alpha),
+                    width: edgeLiquid.width,
+                  ),
                 ),
-              child: inner,
-            ),
-          ),
-        ),
-      );
-          } else if (gpuGlass) {
-      // 液态玻璃：oc_liquid_glass GPU shader（与底部导航/药丸一致）。
-      // 走 shader 的条件 = 引擎支持（Impeller）且（移动端 || 设置里显式开启 PC GPU
-      // 玻璃）；桌面默认关闭：shader backdrop 的纹理取向/坐标空间在桌面后端不一致
-      // （用户反馈「PC 玻璃背景倒置且不是壁纸」），关闭后落到下方统一回退。
-      // Impeller 不可用时（Windows 默认 Skia，部分安卓低端机也回退 Skia）同样
-      // 落入回退，避免 shader backdrop 被整体跳过、玻璃整块消失。
-      // OCLiquidGlass 自身接收 color=tint；inner 只保留边框，避免双重染色。
-      // tint 基色随「玻璃底色遵循主题色」切换（glassBase）；透明度随通透度缩放。
-      final tint = glassBase.withAlpha(((op * 255) * tScale).round().clamp(0, 255));
-      final glassKey = ValueKey<_CardGlassKey>(key);
-      final innerKey = ValueKey<String>('${key.hashCode}_appcard_inner');
-      return RepaintBoundary(
-        child: OCLiquidGlassGroup(
-          key: glassKey,
-          // 参数化的 settings（带实例缓存，参数不变时复用同一对象，
-          // 避免每次 build 重新下发 uniform 造成液态玻璃「来回跳跃」）。
-          settings: liquidGlassSettingsFor(tuning),
-          child: OCLiquidGlass(
-            key: innerKey,
-            borderRadius: radius,
-            color: tint,
-            shadow: BoxShadow(
-              color: Colors.black.withAlpha(isDark ? 60 : 22),
-              blurRadius: 16,
-              offset: const Offset(0, 5),
-            ),
-            child: Container(
-              padding: widget.padding,
-              decoration: BoxDecoration(
-                color: Colors.transparent,
-                borderRadius: br,
-                border: Border.all(
-                  color: Colors.white.withValues(alpha: edgeWhite.alpha),
-                  width: edgeWhite.width,
-                ),
+                child: inner,
               ),
-              child: inner,
-            ),
-          ),
-        ),
-      );
-          } else {
-      // 液态玻璃回退（无 Impeller）：高斯模糊 + 液态玻璃倒角高光（与
-      // GlassPanel liquid 回退一致，不再依赖全局 glassEffect）。
-      final alphaTop = ((isDark ? 96.0 : 118.0) * op * tScale).round();
-      final alphaBot = ((isDark ? 46.0 : 62.0) * op * tScale).round();
-      // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
-      return LiquidGlassBackdrop(
-        borderRadius: br,
-        // σ 由「玻璃细节 → 模糊度」控制（Windows 上被 effectiveGlassSigma 钳制）
-        sigma: sigma,
-        opacity: op,
-        shadow: BoxShadow(
-          color: Colors.black.withAlpha(isDark ? 60 : 26),
-          blurRadius: 18,
-          offset: const Offset(0, 6),
-        ),
-        child: Container(
-          padding: widget.padding,
-          decoration: BoxDecoration(
-            borderRadius: br,
-            color: op <= 0.001 ? Colors.transparent : null,
-            gradient: op > 0.001
-                ? LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: grad != null
-                        ? [
-                            grad.first.withAlpha(alphaTop),
-                            grad.last.withAlpha(alphaBot),
-                          ]
-                        : [
-                            glassBase.withAlpha(alphaTop),
-                            glassBase.withAlpha((alphaTop + alphaBot) ~/ 2),
-                            glassBase.withAlpha(alphaBot),
-                          ],
-                    stops: grad == null ? const [0.0, 0.55, 1.0] : null,
-                  )
-                : null,
-            border: Border.all(
-              color: op <= 0.001
-                  ? Colors.transparent
-                  : Colors.white.withValues(alpha: edgeLiquid.alpha),
-              width: edgeLiquid.width,
-            ),
-          ),
-          child: inner,
-        ),
-      );
+            );
           }
         },
       );
@@ -576,7 +635,8 @@ class _WallpaperWindowPainter extends CustomPainter {
     // 手算「设备平移 ÷ 总缩放」只支持纯平移 + 等比缩放、其余情况静默放弃绘制
     // 的失败路径也被这条方案覆盖。
     final inv = Matrix4.tryInvert(
-        Matrix4.fromFloat64List(canvas.getTransform()));
+      Matrix4.fromFloat64List(canvas.getTransform()),
+    );
     if (inv == null) return; // 退化变换（行列式为 0）：不存在可绘制区域
     canvas.save();
     canvas.transform(inv.storage);
