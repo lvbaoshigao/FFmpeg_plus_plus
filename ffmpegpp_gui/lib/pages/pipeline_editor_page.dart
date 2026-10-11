@@ -172,14 +172,19 @@ bool _matchesKeyBinding(List<String> binding, KeyEvent event) {
   final held = <String>{};
   for (final k in HardwareKeyboard.instance.logicalKeysPressed) {
     if (k == LogicalKeyboardKey.controlLeft ||
-        k == LogicalKeyboardKey.controlRight)
+        k == LogicalKeyboardKey.controlRight) {
       held.add('Control');
-    if (k == LogicalKeyboardKey.shiftLeft || k == LogicalKeyboardKey.shiftRight)
+    }
+    if (k == LogicalKeyboardKey.shiftLeft ||
+        k == LogicalKeyboardKey.shiftRight) {
       held.add('Shift');
-    if (k == LogicalKeyboardKey.altLeft || k == LogicalKeyboardKey.altRight)
+    }
+    if (k == LogicalKeyboardKey.altLeft || k == LogicalKeyboardKey.altRight) {
       held.add('Alt');
-    if (k == LogicalKeyboardKey.metaLeft || k == LogicalKeyboardKey.metaRight)
+    }
+    if (k == LogicalKeyboardKey.metaLeft || k == LogicalKeyboardKey.metaRight) {
       held.add('Meta');
+    }
   }
   if (held.length != want.length || !held.containsAll(want)) return false;
   final label = event.logicalKey.keyLabel;
@@ -717,18 +722,23 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       return node.id;
     };
     _appState.mcpOnDeleteNode = (nodeId) {
-      if (!_nodes.any((n) => n.id == nodeId))
+      if (!_nodes.any((n) => n.id == nodeId)) {
         throw ArgumentError('Node not found: $nodeId');
+      }
       _deleteNode(nodeId);
       _commitChange();
     };
     _appState.mcpOnConnect = (fromId, toId) {
       if (fromId == toId) return false;
       if (!_nodes.any((n) => n.id == fromId) ||
-          !_nodes.any((n) => n.id == toId))
+          !_nodes.any((n) => n.id == toId)) {
         return false;
-      if (_connections.any((c) => c.fromNodeId == fromId && c.toNodeId == toId))
+      }
+      if (_connections.any(
+        (c) => c.fromNodeId == fromId && c.toNodeId == toId,
+      )) {
         return false;
+      }
       _pushUndo();
       setState(
         () => _connections.add(
@@ -1346,8 +1356,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     if (fromIdx < 0 || toIdx < 0) return;
     final fromNode = _nodes[fromIdx];
     final toNode = _nodes[toIdx];
-    if (_connections.any((c) => c.fromNodeId == fromId && c.toNodeId == toId))
+    if (_connections.any((c) => c.fromNodeId == fromId && c.toNodeId == toId)) {
       return;
+    }
     final zh = context.read<AppState>().config.language == 'zh';
 
     if (kind == 'control') {
@@ -1613,13 +1624,15 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     if (n.isGate) {
       final g = n.gate;
       final inputCount = g?.inputCount ?? 0;
-      if (isOutput)
+      if (isOutput) {
         return Offset(
           n.x + _portZoneW + _gateW + _portZoneW / 2,
           n.y + _gateH / 2,
         );
-      if (inputCount == 0)
+      }
+      if (inputCount == 0) {
         return Offset(n.x + _portZoneW / 2, n.y + _gateH / 2);
+      }
       final idx = gateInputIndex.clamp(0, inputCount - 1);
       return Offset(
         n.x + _portZoneW / 2,
@@ -2195,12 +2208,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         );
       }
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         showToast(
           context,
           zh ? '加载失败: $e' : 'Load failed: $e',
           type: ToastType.error,
         );
+      }
     }
   }
 
@@ -2244,12 +2258,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         type: ToastType.success,
       );
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         showToast(
           context,
           zh ? '加载失败: $e' : 'Load failed: $e',
           type: ToastType.error,
         );
+      }
     }
   }
 
@@ -4622,8 +4637,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     );
     // 仅 Linux 使用自绘标题栏（CSD）；Windows/macOS 用系统默认标题栏，
     // 避免「双标题栏 + 重复窗口按钮」
-    if (Platform.isWindows || Platform.isMacOS || isMobilePlatform)
+    if (Platform.isWindows || Platform.isMacOS || isMobilePlatform) {
       return content;
+    }
     return Stack(
       children: [
         content,
@@ -5724,14 +5740,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             final heldMods = <String>{};
             for (final k in pressed) {
               if (k == LogicalKeyboardKey.controlLeft ||
-                  k == LogicalKeyboardKey.controlRight)
+                  k == LogicalKeyboardKey.controlRight) {
                 heldMods.add('Control');
+              }
               if (k == LogicalKeyboardKey.shiftLeft ||
-                  k == LogicalKeyboardKey.shiftRight)
+                  k == LogicalKeyboardKey.shiftRight) {
                 heldMods.add('Shift');
+              }
               if (k == LogicalKeyboardKey.altLeft ||
-                  k == LogicalKeyboardKey.altRight)
+                  k == LogicalKeyboardKey.altRight) {
                 heldMods.add('Alt');
+              }
             }
             if (heldMods.length == modifiers.length &&
                 heldMods.containsAll(modifiers) &&
@@ -6274,14 +6293,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                                           if (!aiNodeIds.contains(
                                                 c.fromNodeId,
                                               ) ||
-                                              !aiNodeIds.contains(c.toNodeId))
+                                              !aiNodeIds.contains(c.toNodeId)) {
                                             return false;
+                                          }
                                           if (remappedConns.any(
                                             (r) =>
                                                 r.from == c.fromNodeId &&
                                                 r.to == c.toNodeId,
-                                          ))
+                                          )) {
                                             return false;
+                                          }
                                           // Old connection between two AI-touched nodes not in AI graph → remove
                                           return true;
                                         });
@@ -6339,10 +6360,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                                     onAddGate: (gateName, x, y) {
                                       final gate = LogicGateType.values
                                           .asNameMap()[gateName];
-                                      if (gate == null)
+                                      if (gate == null) {
                                         throw ArgumentError(
                                           'Unknown gate type: $gateName',
                                         );
+                                      }
                                       final node = PipelineNode(
                                         id: _uuid.v4(),
                                         type: PipelineStepType.start,
@@ -6376,14 +6398,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                                     onConnectNodes: (fromId, toId) {
                                       if (fromId == toId) return false;
                                       if (!_nodes.any((n) => n.id == fromId) ||
-                                          !_nodes.any((n) => n.id == toId))
+                                          !_nodes.any((n) => n.id == toId)) {
                                         return false;
+                                      }
                                       if (_connections.any(
                                         (c) =>
                                             c.fromNodeId == fromId &&
                                             c.toNodeId == toId,
-                                      ))
+                                      )) {
                                         return false;
+                                      }
                                       _pushUndo();
                                       setState(
                                         () => _connections.add(
@@ -7508,16 +7532,18 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         }
       }
     } else {
-      if (node.hasOutput)
+      if (node.hasOutput) {
         candidates.add((
           'dataOut',
           _hitPortPos(node, isOutput: true, isControl: false),
         ));
-      if (node.hasInput)
+      }
+      if (node.hasInput) {
         candidates.add((
           'dataIn',
           _hitPortPos(node, isOutput: false, isControl: false),
         ));
+      }
       if (node.type != PipelineStepType.start) {
         candidates.add((
           'statusOut',
@@ -7557,10 +7583,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final tgtControlIn = tgtPort == 'enableIn' || tgtPort == 'gateIn';
     if (isControlOut && tgtControlIn) return (srcId, tgtId, 'control');
     if (isControlIn && tgtControlOut) return (tgtId, srcId, 'control');
-    if (srcPort == 'dataOut' && tgtPort == 'dataIn')
+    if (srcPort == 'dataOut' && tgtPort == 'dataIn') {
       return (srcId, tgtId, 'data');
-    if (srcPort == 'dataIn' && tgtPort == 'dataOut')
+    }
+    if (srcPort == 'dataIn' && tgtPort == 'dataOut') {
       return (tgtId, srcId, 'data');
+    }
     return null;
   }
 
@@ -8179,8 +8207,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                   _pushUndo(); // [FIX S-1] 真正删除逻辑块（此前只清选择态，块永久驻留落盘）
                   setState(() {
                     _logicBlocks.removeWhere((b) => b.id == block.id);
-                    if (_selectedLogicBlockId == block.id)
+                    if (_selectedLogicBlockId == block.id) {
                       _selectedLogicBlockId = null;
+                    }
                   });
                   _commitChange(); // [FIX S-1] 与其它结构变更一致地落盘
                 }),
@@ -9513,12 +9542,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         final aiNodeIds = remappedConns.expand((c) => [c.from, c.to]).toSet();
         _connections.removeWhere((c) {
           if (!aiNodeIds.contains(c.fromNodeId) ||
-              !aiNodeIds.contains(c.toNodeId))
+              !aiNodeIds.contains(c.toNodeId)) {
             return false;
+          }
           if (remappedConns.any(
             (r) => r.from == c.fromNodeId && r.to == c.toNodeId,
-          ))
+          )) {
             return false;
+          }
           return true;
         });
         _connections.addAll(newConns);
@@ -9596,10 +9627,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     connectNodes: (fromId, toId) {
       if (fromId == toId) return false;
       if (!_nodes.any((n) => n.id == fromId) ||
-          !_nodes.any((n) => n.id == toId))
+          !_nodes.any((n) => n.id == toId)) {
         return false;
-      if (_connections.any((c) => c.fromNodeId == fromId && c.toNodeId == toId))
+      }
+      if (_connections.any(
+        (c) => c.fromNodeId == fromId && c.toNodeId == toId,
+      )) {
         return false;
+      }
       _pushUndo();
       setState(
         () => _connections.add(
@@ -9848,8 +9883,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         : Platform.isMacOS
         ? "${env['HOME'] ?? '/tmp'}/Library/Application Support"
         : (env['XDG_DATA_HOME'] ??
-              "${env['HOME'] ?? '/tmp'}${sep}.local${sep}share");
-    return '${base}${sep}FFmpeg++';
+              "${env['HOME'] ?? '/tmp'}$sep.local${sep}share");
+    return '$base${sep}FFmpeg++';
   }
 
   /// 独立面板要的完整快照（子窗口首次报到与主动刷新时取）。
@@ -13204,13 +13239,15 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
           run(() => _executeErrorCheck());
         case 'ask_user':
           // 需在设置→AI→权限 开启"允许 AI 询问用户"才执行
-          if (cfg.aiAllowAsk && parts.length >= 3)
+          if (cfg.aiAllowAsk && parts.length >= 3) {
             run(() => _showAskUser(parts[1], parts[2].split(',')));
+          }
         case 'list_directory':
           if (cfg.aiReadAccess && parts.length >= 2) _executeListDir(parts[1]);
         case 'read_file_info':
-          if (cfg.aiReadAccess && parts.length >= 2)
+          if (cfg.aiReadAccess && parts.length >= 2) {
             _executeReadFileInfo(parts[1]);
+          }
         case 'modify_node':
           if (cfg.aiWriteAccess && parts.length >= 3) {
             // 文本协议 → 带类型参数：数字/布尔不再被塞成 String（见 _parseToolParams）
@@ -13318,8 +13355,9 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
             _addToolResult('cancel_tasks', 'All tasks cancelled');
           });
         case 'probe_video':
-          if (cfg.aiReadAccess && parts.length >= 2)
+          if (cfg.aiReadAccess && parts.length >= 2) {
             _executeProbeVideo(parts[1]);
+          }
         case 'pick_file':
           // 让用户选择文件（如字幕/封面），需用户同意；弹文件选择框并返回路径
           run(() async {
@@ -14038,8 +14076,9 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
               if (choices.isNotEmpty) {
                 final delta =
                     choices[0]['delta'] as Map<String, dynamic>? ?? {};
-                if (delta.containsKey('content') && delta['content'] != null)
+                if (delta.containsKey('content') && delta['content'] != null) {
                   buf.write(delta['content']);
+                }
                 // 思考过程：DeepSeek-R1 用 reasoning_content，OpenAI o1 用 reasoning
                 final reasoning =
                     delta['reasoning_content'] ?? delta['reasoning'];
@@ -14244,11 +14283,12 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
           if (blocks.isNotEmpty) title = (blocks[0]['text'] as String?) ?? '';
         } else {
           final choices = (json['choices'] as List?) ?? [];
-          if (choices.isNotEmpty)
+          if (choices.isNotEmpty) {
             title =
                 ((choices[0]['message'] as Map<String, dynamic>?)?['content']
                     as String?) ??
                 '';
+          }
         }
         if (title != null && title.trim().isNotEmpty && mounted) {
           widget.onTitleGenerated?.call(
@@ -14284,8 +14324,9 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
           orElse: () => PipelineStepType.avProcess,
         );
         final params = <String, dynamic>{};
-        if (n['params'] != null)
+        if (n['params'] != null) {
           params.addAll(Map<String, dynamic>.from(n['params']));
+        }
         nodes.add(
           PipelineNode(
             id: newId,
@@ -15188,12 +15229,13 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         }
       } else if (v == '_clear') {
         await AiChatHistory.clearAll();
-        if (mounted)
+        if (mounted) {
           showToast(
             context,
             s.isZh ? '历史已清空' : 'History cleared',
             type: ToastType.success,
           );
+        }
       } else if (v.startsWith('_load_')) {
         final file = v.substring(6);
         final sessions = await AiChatHistory.listSessions();

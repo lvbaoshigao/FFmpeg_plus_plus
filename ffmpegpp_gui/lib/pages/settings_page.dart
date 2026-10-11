@@ -2490,6 +2490,22 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
       ]),
       const SizedBox(height: 8),
       _glass(ctx, state, s.isZh ? '主题色' : 'Accent color', [
+        SwitchListTile(
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          title: Text(
+            s.isZh ? '启用全局主题色' : 'Enable global accent color',
+            style: TextStyle(color: clr),
+          ),
+          subtitle: Text(
+            s.isZh
+                ? '关闭后使用中性灰配色，已选颜色会保留'
+                : 'Use neutral colors; your selected colors are preserved',
+            style: TextStyle(fontSize: 11, color: scheme.outline),
+          ),
+          value: cfg.useThemeColor,
+          onChanged: (v) => state.updateConfig((c) => c..useThemeColor = v),
+        ),
         // ── 主题色（预设 / 自定义 / 动态取色） ──
         Row(
           children: [
@@ -2539,35 +2555,28 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
             ignoring: dynamicOn,
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final columns = ((constraints.maxWidth + 8) / 52).floor().clamp(
-                  2,
-                  8,
-                );
-                final rows = (_presets.length + columns - 1) ~/ columns;
                 return SizedBox(
-                  height: rows * 48 + (rows - 1) * 4,
-                  child: GridView.builder(
-                    physics: const NeverScrollableScrollPhysics(),
+                  height: 48,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
                     padding: EdgeInsets.zero,
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: columns,
-                      mainAxisExtent: 48,
-                      crossAxisSpacing: 8,
-                      mainAxisSpacing: 4,
-                    ),
                     itemCount: _presets.length,
+                    separatorBuilder: (_, _) => const SizedBox(width: 4),
                     itemBuilder: (context, index) {
                       final p = _presets[index];
-                      return Center(
-                        child: _dot(
-                          scheme,
-                          cfg.themeColor == p.$2 && cfg.themeColor2 < 0,
-                          Color(p.$2),
-                          p.$1,
-                          () => state.updateConfig(
-                            (c) => c
-                              ..themeColor = p.$2
-                              ..themeColor2 = -1,
+                      return SizedBox(
+                        width: 44,
+                        child: Center(
+                          child: _dot(
+                            scheme,
+                            cfg.themeColor == p.$2 && cfg.themeColor2 < 0,
+                            Color(p.$2),
+                            p.$1,
+                            () => state.updateConfig(
+                              (c) => c
+                                ..themeColor = p.$2
+                                ..themeColor2 = -1,
+                            ),
                           ),
                         ),
                       );
@@ -3535,7 +3544,7 @@ List<Widget> _buildStylePresets(BuildContext ctx, AppState state) {
   Widget entry(_StylePreset p) {
     final selected = p.matches(cfg);
     return Padding(
-      padding: const EdgeInsets.only(right: 8, bottom: 4),
+      padding: const EdgeInsets.only(right: 8),
       child: Semantics(
         button: true,
         selected: selected,
@@ -3599,10 +3608,15 @@ List<Widget> _buildStylePresets(BuildContext ctx, AppState state) {
   return [
     // 不再自带「预设方案」小标题：拆卡之后它就是「样式预设」这张卡的正文，
     // 再加一层小标题会与卡片标题重复（用户对重复项敏感）。
-    Wrap(
-      spacing: 4,
-      runSpacing: 8,
-      children: [for (final p in _stylePresets) entry(p)],
+    SizedBox(
+      height: 142,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: EdgeInsets.zero,
+        itemCount: _stylePresets.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 4),
+        itemBuilder: (context, index) => entry(_stylePresets[index]),
+      ),
     ),
   ];
 }
@@ -3972,58 +3986,64 @@ Widget _fontWeightPicker(
     children: [
       Text(s.qWeight, style: TextStyle(color: clr, fontSize: 13)),
       const SizedBox(height: 10),
-      Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          for (var i = 0; i < _kFontWeights.length; i++)
-            Semantics(
-              selected: cfg.fontWeightIndex == i,
-              button: true,
-              label: '${labels[i]} ${AppConfig.fontWeightValues[i]}',
-              child: OutlinedButton(
-                onPressed: () =>
-                    state.updateConfig((c) => c..fontWeightIndex = i),
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size(100, 72),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
-                  ),
-                  backgroundColor: cfg.fontWeightIndex == i
-                      ? scheme.primaryContainer
-                      : null,
-                  foregroundColor: cfg.fontWeightIndex == i
-                      ? scheme.onPrimaryContainer
-                      : clr,
-                  side: BorderSide(
-                    color: cfg.fontWeightIndex == i
-                        ? scheme.primary
-                        : scheme.outlineVariant,
-                  ),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      s.isZh ? '字 Aa' : 'Aa',
-                      style: TextStyle(
-                        fontSize: 18,
-                        height: 1.25,
-                        fontFamily: family,
-                        fontWeight: _kFontWeights[i],
+      SizedBox(
+        height: 72,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (var i = 0; i < _kFontWeights.length; i++) ...[
+                if (i > 0) const SizedBox(width: 6),
+                Semantics(
+                  selected: cfg.fontWeightIndex == i,
+                  button: true,
+                  label: '${labels[i]} ${AppConfig.fontWeightValues[i]}',
+                  child: OutlinedButton(
+                    onPressed: () =>
+                        state.updateConfig((c) => c..fontWeightIndex = i),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(100, 72),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      backgroundColor: cfg.fontWeightIndex == i
+                          ? scheme.primaryContainer
+                          : null,
+                      foregroundColor: cfg.fontWeightIndex == i
+                          ? scheme.onPrimaryContainer
+                          : clr,
+                      side: BorderSide(
+                        color: cfg.fontWeightIndex == i
+                            ? scheme.primary
+                            : scheme.outlineVariant,
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${labels[i]} · ${AppConfig.fontWeightValues[i]}',
-                      style: const TextStyle(fontSize: 11),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          s.isZh ? '字 Aa' : 'Aa',
+                          style: TextStyle(
+                            fontSize: 18,
+                            height: 1.25,
+                            fontFamily: family,
+                            fontWeight: _kFontWeights[i],
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${labels[i]} · ${AppConfig.fontWeightValues[i]}',
+                          style: const TextStyle(fontSize: 11),
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
-              ),
-            ),
-        ],
+              ],
+            ],
+          ),
+        ),
       ),
     ],
   );
@@ -4816,8 +4836,9 @@ Widget _buildAutosave(BuildContext ctx, AppState state) {
                   ),
               ],
               onChanged: (v) {
-                if (v != null)
+                if (v != null) {
                   state.updateConfig((c) => c..autosaveIntervalSec = v);
+                }
               },
             ),
           ),
@@ -4911,8 +4932,9 @@ Widget _buildTasks(BuildContext ctx, AppState state) {
                     ),
                   ],
                   onChanged: (v) {
-                    if (v != null)
+                    if (v != null) {
                       state.updateConfig((c) => c..maxConcurrentTasks = v);
+                    }
                   },
                 ),
               ),
@@ -4962,8 +4984,9 @@ Widget _buildTasks(BuildContext ctx, AppState state) {
                         DropdownMenuItem(value: i + 1, child: Text('${i + 1}')),
                   ),
                   onChanged: (v) {
-                    if (v != null)
+                    if (v != null) {
                       state.updateConfig((c) => c..probeThreads = v);
+                    }
                   },
                 ),
               ),
@@ -6486,8 +6509,9 @@ Widget _buildProfileDetail(
                     } else {
                       c.aiProfiles.add(profile);
                     }
-                    if (c.activeAiProfileId.isEmpty)
+                    if (c.activeAiProfileId.isEmpty) {
                       c.activeAiProfileId = profile.id;
+                    }
                     return c;
                   });
                   showToast(
@@ -6587,8 +6611,9 @@ Widget _buildProfileDetail(
               onPressed: () {
                 state.updateConfig((c) {
                   c.aiProfiles.removeWhere((e) => e.id == profile.id);
-                  if (c.activeAiProfileId == profile.id)
+                  if (c.activeAiProfileId == profile.id) {
                     c.activeAiProfileId = '';
+                  }
                   return c;
                 });
                 onDeleted();
@@ -6656,7 +6681,7 @@ Future<void> pingAi(BuildContext ctx, AppState state, AppStrings s) async {
       '[AI] Ping ${ok ? "OK" : "FAIL"}: ${resp.statusCode}, ${ms}ms',
       category: ok ? 'info' : 'error',
     );
-    if (ctx.mounted)
+    if (ctx.mounted) {
       showToast(
         ctx,
         ok
@@ -6664,6 +6689,7 @@ Future<void> pingAi(BuildContext ctx, AppState state, AppStrings s) async {
             : 'HTTP ${resp.statusCode} ${_httpReason(resp.statusCode)}',
         type: ok ? ToastType.success : ToastType.error,
       );
+    }
   } catch (e) {
     state.addLog('[AI] Ping failed: $e', category: 'error');
     if (ctx.mounted) showToast(ctx, 'Error: $e', type: ToastType.error);
@@ -6741,8 +6767,9 @@ Future<void> listAiModels(
       if (ctx.mounted) _showModelPicker(ctx, state, models, s, onPicked);
     } else {
       state.addLog('[AI] 获取模型失败: ${resp.statusCode}', category: 'error');
-      if (ctx.mounted)
+      if (ctx.mounted) {
         showToast(ctx, 'HTTP ${resp.statusCode}', type: ToastType.error);
+      }
     }
   } catch (e) {
     state.addLog('[AI] 获取模型失败: $e', category: 'error');
@@ -6788,8 +6815,9 @@ Future<String?> fetchAiBalance(AiProfile profile) async {
       final available = (data['total_available'] as num?)?.toDouble();
       if (available != null || total != null) {
         final parts = <String>[];
-        if (available != null)
+        if (available != null) {
           parts.add('可用 \$${available.toStringAsFixed(2)}');
+        }
         if (used != null) parts.add('已用 \$${used.toStringAsFixed(2)}');
         if (total != null) parts.add('总额 \$${total.toStringAsFixed(2)}');
         return parts.join(' · ');
@@ -6901,12 +6929,13 @@ Future<void> _pickFont(BuildContext ctx, AppState state) async {
   final fileName = picked.name;
   if (!fileName.toLowerCase().endsWith('.ttf') &&
       !fileName.toLowerCase().endsWith('.otf')) {
-    if (ctx.mounted)
+    if (ctx.mounted) {
       showToast(
         ctx,
         isZh ? '请选择 .ttf 或 .otf 字体文件' : 'Please pick a .ttf/.otf font file',
         type: ToastType.error,
       );
+    }
     return;
   }
   final fontName = fileName.replaceAll(RegExp(r'\.[^.]+$'), '');
@@ -6944,20 +6973,22 @@ Future<void> _pickFont(BuildContext ctx, AppState state) async {
     fontLoader.addFont(Future.value(ByteData.sublistView(bytes)));
     await fontLoader.load();
     state.updateConfig((c) => c..fontFamily = fontName);
-    if (ctx.mounted)
+    if (ctx.mounted) {
       showToast(
         ctx,
         isZh ? '字体 "$fontName" 已加载并应用' : 'Font "$fontName" loaded and applied',
         type: ToastType.success,
       );
+    }
   } catch (e) {
     // 加载失败不设置 fontFamily（否则全局文本回退到坏字体）
-    if (ctx.mounted)
+    if (ctx.mounted) {
       showToast(
         ctx,
         isZh ? '字体加载失败: $e' : 'Font load failed: $e',
         type: ToastType.error,
       );
+    }
   }
 }
 
@@ -7056,12 +7087,13 @@ Future<void> _clearCache(
       );
     }
   } catch (e) {
-    if (ctx.mounted)
+    if (ctx.mounted) {
       showToast(
         ctx,
         s.isZh ? '清除失败: $e' : 'Clear failed: $e',
         type: ToastType.error,
       );
+    }
   }
 }
 
@@ -7148,8 +7180,9 @@ Future<int> _clearImportedAssets(AppState state) async {
   }
   state.updateConfig((c) {
     c.backgroundImage = '';
-    if (removedFonts.contains(c.fontFamily))
+    if (removedFonts.contains(c.fontFamily)) {
       c.fontFamily = AppConfig.defaultFontFamily;
+    }
     return c;
   });
   return freed;
@@ -7628,8 +7661,9 @@ class _FfmpegCardState extends State<_FfmpegCard> {
         );
         if (Platform.isWindows) await _addToPath(dir);
         widget.state.addLog('FFmpeg configured: $_version', category: 'ffmpeg');
-        if (mounted)
+        if (mounted) {
           showToast(context, 'FFmpeg found at: $dir', type: ToastType.success);
+        }
       } else {
         if (!mounted) return;
         setState(() => _checking = false);
@@ -7679,7 +7713,7 @@ class _FfmpegCardState extends State<_FfmpegCard> {
       if (existingPath.contains(dir)) return;
       // 只有 reg 查询成功且现有 PATH 非空时才追加；否则跳过，避免覆盖用户 PATH
       if (regResult2.exitCode != 0 || existingPath.isEmpty) {
-        if (mounted)
+        if (mounted) {
           showToast(
             context,
             isZh
@@ -7687,6 +7721,7 @@ class _FfmpegCardState extends State<_FfmpegCard> {
                 : 'Failed to read PATH, skipped adding',
             type: ToastType.error,
           );
+        }
         return;
       }
       final newPath = '$existingPath;$dir';
@@ -7706,12 +7741,13 @@ class _FfmpegCardState extends State<_FfmpegCard> {
         throw Exception('设置用户 PATH 失败: ${ps.stderr}');
       }
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         showToast(
           context,
           isZh ? '添加到系统 PATH 失败: $e' : 'Failed to add to PATH: $e',
           type: ToastType.error,
         );
+      }
     }
   }
 
@@ -7756,12 +7792,13 @@ class _FfmpegCardState extends State<_FfmpegCard> {
       _path = '';
     });
     widget.state.addLog('已删除程序目录下的 FFmpeg', category: 'info');
-    if (mounted)
+    if (mounted) {
       showToast(
         context,
         isZh ? 'FFmpeg 已删除' : 'FFmpeg deleted',
         type: ToastType.info,
       );
+    }
   }
 
   @override
@@ -8504,8 +8541,9 @@ class _McpTextFieldState extends State<_McpTextField> {
   @override
   void didUpdateWidget(_McpTextField old) {
     super.didUpdateWidget(old);
-    if (old.value != widget.value && _ctrl.text != widget.value)
+    if (old.value != widget.value && _ctrl.text != widget.value) {
       _ctrl.text = widget.value;
+    }
   }
 
   @override
@@ -8587,8 +8625,9 @@ class _ProfileTextFieldState extends State<_ProfileTextField> {
   @override
   void didUpdateWidget(_ProfileTextField old) {
     super.didUpdateWidget(old);
-    if (old.value != widget.value && _ctrl.text != widget.value)
+    if (old.value != widget.value && _ctrl.text != widget.value) {
       _ctrl.text = widget.value;
+    }
   }
 
   @override

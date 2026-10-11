@@ -123,6 +123,7 @@ class _PillGlassKey {
   final String style;
   final double op;
   final int primary;
+  final bool useThemeColor;
   final int second;
 
   /// 「设置 → 样式 → 玻璃底色遵循主题色」：玻璃 tint 用主题色而非 surface 灰
@@ -138,6 +139,7 @@ class _PillGlassKey {
     required this.style,
     required this.op,
     required this.primary,
+    required this.useThemeColor,
     required this.second,
     required this.follow,
     required this.tuning,
@@ -150,18 +152,55 @@ class _PillGlassKey {
       other.style == style &&
       other.op == op &&
       other.primary == primary &&
+      other.useThemeColor == useThemeColor &&
       other.second == second &&
       other.follow == follow &&
       other.tuning == tuning &&
       other.tone == tone;
 
   @override
-  int get hashCode =>
-      Object.hash(style, op, primary, second, follow, tuning, tone);
+  int get hashCode => Object.hash(
+    style,
+    op,
+    primary,
+    useThemeColor,
+    second,
+    follow,
+    tuning,
+    tone,
+  );
 }
 
-class _MobileGlassPillState extends State<MobileGlassPill> {
-  bool _pressed = false;
+class _MobileGlassPillState extends State<MobileGlassPill>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _dragController;
+  late final Animation<double> _dragScale;
+
+  @override
+  void initState() {
+    super.initState();
+    _dragController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 360),
+    );
+    _dragScale = Tween<double>(begin: 1, end: 0.975).animate(
+      CurvedAnimation(parent: _dragController, curve: Curves.easeOutCubic),
+    );
+  }
+
+  @override
+  void dispose() {
+    _dragController.dispose();
+    super.dispose();
+  }
+
+  void _setPressed(bool pressed) {
+    if (pressed) {
+      _dragController.forward();
+    } else {
+      _dragController.reverse();
+    }
+  }
 
   // 仅当这些字段变化时才重建 OCLiquidGlass 节点；
   // 关键修复：原代码用 context.watch<AppState>() 订阅整个 AppState，
@@ -173,11 +212,6 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
   // 实例恒定，就不会因为 build 重新下发 shader uniform（这是移动端
   //「玻璃来回跳跃」闪烁的根因）。
 
-  void _set(bool v) {
-    if (_pressed == v) return;
-    setState(() => _pressed = v);
-  }
-
   /// 把玻璃渲染所需的所有字段打包成一个值。
   /// 只有这些字段变化时 Selector 才会重新构建 builder，避免 OCLiquidGlass
   /// 被无关的 notifyListeners()（日志/进度/任务状态等）反复销毁重建。
@@ -187,6 +221,7 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
       style: cfg.pillStyle,
       op: cfg.cardOpacity,
       primary: cfg.themeColor,
+      useThemeColor: cfg.useThemeColor,
       second: cfg.themeColor2,
       follow: cfg.glassFollowTheme,
       tuning: GlassTuning(
@@ -221,13 +256,20 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
         ? 255
         : ((op * (isDark ? 100 : 128)) * tScale).round().clamp(0, 255);
     final baseColor = style == SurfaceStyle.theme
-        // 跟随主题色：用与表面色混合后的协调色（原 scheme.primary 过亮）
-        ? harmonizedAccent(scheme, key.tone)
+        // Neutral mode retains a monochrome solid surface.
+        ? (key.useThemeColor
+              ? harmonizedAccent(scheme, key.tone)
+              : neutralGray(scheme.surfaceContainerHigh))
         : style == SurfaceStyle.gray
         // 灰色：去饱和，避免 fromSeed 的种子色偏（「灰色夹杂主题色」）
         ? neutralGray(scheme.surfaceContainerHigh)
         // 「玻璃底色遵循主题色」：玻璃样式（liquid/blur）的 tint 用主题色
-        : themedGlassBase(scheme, key.tone, key.follow, second: key.second);
+        : themedGlassBase(
+            scheme,
+            key.tone,
+            key.follow && key.useThemeColor,
+            second: key.useThemeColor ? key.second : -1,
+          );
     final tint = baseColor.withAlpha(baseAlpha);
 
     // 关键修复：liquid 模式下 OCLiquidGlass 自身已经接收 color=tint 作为
@@ -365,17 +407,17 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
       // 按下放大、按住保持、松手回弹。
       result = GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTapDown: (_) => _set(true),
+        onTapDown: (_) => _setPressed(true),
         onTapUp: (_) {
-          _set(false);
+          _setPressed(false);
           widget.onTap?.call();
         },
-        onTapCancel: () => _set(false),
-        child: AnimatedScale(
-          scale: _pressed ? 1.05 : 1.0,
-          duration: const Duration(milliseconds: 110),
-          curve: Curves.easeOut,
+        onTapCancel: () => _setPressed(false),
+        child: AnimatedBuilder(
+          animation: _dragScale,
           child: result,
+          builder: (context, child) =>
+              Transform.scale(scale: _dragScale.value, child: child),
         ),
       );
     }

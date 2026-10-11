@@ -44,9 +44,19 @@ import 'widgets/wallpaper_background.dart';
 /// - 小图不放大（allowUpscaling 默认 false），不浪费内存、不产生伪清晰；
 /// - 等比缩放，绝不拉伸变形。
 ImageProvider<Object> wallpaperImageProvider(
-  String path, double logicalWidth, double logicalHeight, double devicePixelRatio) {
-  final int maxW = (logicalWidth * devicePixelRatio).round().clamp(1, 16384).toInt();
-  final int maxH = (logicalHeight * devicePixelRatio).round().clamp(1, 16384).toInt();
+  String path,
+  double logicalWidth,
+  double logicalHeight,
+  double devicePixelRatio,
+) {
+  final int maxW = (logicalWidth * devicePixelRatio)
+      .round()
+      .clamp(1, 16384)
+      .toInt();
+  final int maxH = (logicalHeight * devicePixelRatio)
+      .round()
+      .clamp(1, 16384)
+      .toInt();
   return ResizeImage(
     FileImage(File(path)),
     width: maxW,
@@ -72,7 +82,10 @@ class _AppScrollBehavior extends MaterialScrollBehavior {
 
   @override
   Widget buildOverscrollIndicator(
-      BuildContext context, Widget child, ScrollableDetails details) {
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) {
     return child;
   }
 }
@@ -98,7 +111,9 @@ class _SwipeGatePagePhysics extends PageScrollPhysics {
 
   @override
   Simulation? createBallisticSimulation(
-      ScrollMetrics position, double velocity) {
+    ScrollMetrics position,
+    double velocity,
+  ) {
     if ((velocity <= 0.0 && position.pixels <= position.minScrollExtent) ||
         (velocity >= 0.0 && position.pixels >= position.maxScrollExtent)) {
       return super.createBallisticSimulation(position, velocity);
@@ -111,20 +126,26 @@ class _SwipeGatePagePhysics extends PageScrollPhysics {
     double targetPage;
     if (velocity.abs() > tol) {
       // 明确甩动：按方向翻一页
-      targetPage = (velocity < 0 ? originPage - 1 : originPage + 1).roundToDouble();
+      targetPage = (velocity < 0 ? originPage - 1 : originPage + 1)
+          .roundToDouble();
     } else if (dragged.abs() >= gateFraction) {
       // 拖拽距离超过门限 → 翻页
-      targetPage = (dragged > 0 ? originPage + 1 : originPage - 1).roundToDouble();
+      targetPage = (dragged > 0 ? originPage + 1 : originPage - 1)
+          .roundToDouble();
     } else {
       // 不足门限 → 回弹到当前页
       targetPage = originPage;
     }
-    final maxPage = (position.maxScrollExtent / position.viewportDimension).clamp(0.0, 1e9);
+    final maxPage = (position.maxScrollExtent / position.viewportDimension)
+        .clamp(0.0, 1e9);
     targetPage = targetPage.clamp(0.0, maxPage);
     final target = targetPage * position.viewportDimension;
     if (target == position.pixels) return null;
     return ScrollSpringSimulation(
-      spring, position.pixels, target, velocity,
+      spring,
+      position.pixels,
+      target,
+      velocity,
       tolerance: tolerance,
     );
   }
@@ -141,7 +162,9 @@ class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
     _loadMonetSeed();
     // 启动时申请必要媒体权限（读取视频/音频/图片），首帧后再请求，
     // 确保 Activity 已 resumed，权限对话框能正常弹出。
-    WidgetsBinding.instance.addPostFrameCallback((_) => _requestMediaPermissions());
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _requestMediaPermissions(),
+    );
     // ── 内存自检 ──
     // 每 60 秒把进程 RSS 与图片缓存占用记一条日志（debug 模式开启时可见，
     // 关闭 debug 模式则整类 info 日志不记录，零成本）。用途是**区分**两种
@@ -202,6 +225,7 @@ class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
       selector: (_, s) => _ThemeKey(
         lang: s.config.language,
         themeColor: s.config.themeColor,
+        useThemeColor: s.config.useThemeColor,
         fontFamily: s.config.fontFamily,
         fontSize: s.config.fontSize,
         fontWeight: s.config.fontWeightValue,
@@ -214,10 +238,13 @@ class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
       ),
       builder: (context, k, _) {
         // Monet 生效时用壁纸种子色覆盖用户主题色（tonalSpot 方案）
-        final dynamicSeed = k.useDynamicColor ? (k.monetSeed ?? k.themeColor) : null;
+        final dynamicSeed = k.useDynamicColor
+            ? (k.monetSeed ?? k.themeColor)
+            : null;
         return MaterialApp(
           key: const ValueKey('app'),
-          title: 'FFmpeg++', debugShowCheckedModeBanner: false,
+          title: 'FFmpeg++',
+          debugShowCheckedModeBanner: false,
           // 本地化支持：让 showDatePicker/showTimePicker 等系统组件跟随语言
           locale: Locale(k.lang == 'zh' ? 'zh' : 'en'),
           supportedLocales: const [Locale('zh'), Locale('en')],
@@ -226,12 +253,26 @@ class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
             GlobalWidgetsLocalizations.delegate,
             GlobalCupertinoLocalizations.delegate,
           ],
-          theme: AppTheme.light(seedColor: k.themeColor, fontFamily: k.fontFamily,
-              fontSize: k.fontSize, fontWeight: k.fontWeight, dynamicSeed: dynamicSeed,
-              predictiveBack: k.predictiveBack, glassEffect: k.glassEffect),
-          darkTheme: AppTheme.dark(seedColor: k.themeColor, fontFamily: k.fontFamily,
-              fontSize: k.fontSize, fontWeight: k.fontWeight, dynamicSeed: dynamicSeed,
-              predictiveBack: k.predictiveBack, glassEffect: k.glassEffect),
+          theme: AppTheme.light(
+            seedColor: k.themeColor,
+            useThemeColor: k.useThemeColor,
+            fontFamily: k.fontFamily,
+            fontSize: k.fontSize,
+            fontWeight: k.fontWeight,
+            dynamicSeed: dynamicSeed,
+            predictiveBack: k.predictiveBack,
+            glassEffect: k.glassEffect,
+          ),
+          darkTheme: AppTheme.dark(
+            seedColor: k.themeColor,
+            useThemeColor: k.useThemeColor,
+            fontFamily: k.fontFamily,
+            fontSize: k.fontSize,
+            fontWeight: k.fontWeight,
+            dynamicSeed: dynamicSeed,
+            predictiveBack: k.predictiveBack,
+            glassEffect: k.glassEffect,
+          ),
           themeMode: k.darkMode ? ThemeMode.dark : ThemeMode.light,
           // 禁用 Android 12+ 的「拉伸过滚动」效果：它在 Impeller 下用
           // ImageFiltered(shader) 把整页内容截进离屏纹理再做形变——液态玻璃
@@ -254,8 +295,10 @@ class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
             final appScale = k.fontSize / 14.0;
             // 再钳到 0.5~2.6：系统 2.0 叠应用内 1.5 会到 3.0，移动端顶栏药丸/卡片
             // 的固定高度（MobileUi.pillHeight 等）撑不住，反而会溢出。
-            final scale = (sysScale * appScale)
-                .clamp(AppTextScale.minScale, AppTextScale.maxScale);
+            final scale = (sysScale * appScale).clamp(
+              AppTextScale.minScale,
+              AppTextScale.maxScale,
+            );
             // AppTextScale 把两个倍率**分别**暴露出去（不是只给乘积）：
             // 选项控件（OptionMenuBar）要「只跟系统、不跟应用内设置」的字号，
             // 见 theme/app_text_scale.dart 的 withoutAppTextScale。
@@ -278,10 +321,7 @@ class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
               appScale: appScale,
               child: MediaQuery(
                 data: mq.copyWith(textScaler: TextScaler.linear(scale)),
-                child: ColoredBox(
-                  color: baseSurface,
-                  child: child!,
-                ),
+                child: ColoredBox(color: baseSurface, child: child!),
               ),
             );
           },
@@ -296,6 +336,7 @@ class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
 class _ThemeKey {
   final String lang;
   final int themeColor;
+  final bool useThemeColor;
   final String fontFamily;
   final double fontSize;
   final int fontWeight;
@@ -308,6 +349,7 @@ class _ThemeKey {
   const _ThemeKey({
     required this.lang,
     required this.themeColor,
+    required this.useThemeColor,
     required this.fontFamily,
     required this.fontSize,
     required this.fontWeight,
@@ -324,6 +366,7 @@ class _ThemeKey {
       other is _ThemeKey &&
       other.lang == lang &&
       other.themeColor == themeColor &&
+      other.useThemeColor == useThemeColor &&
       other.fontFamily == fontFamily &&
       other.fontSize == fontSize &&
       other.fontWeight == fontWeight &&
@@ -335,7 +378,20 @@ class _ThemeKey {
       other.monetSeed == monetSeed;
 
   @override
-  int get hashCode => Object.hash(lang, themeColor, fontFamily, fontSize, fontWeight, darkMode, initialized, useDynamicColor, predictiveBack, glassEffect, monetSeed);
+  int get hashCode => Object.hash(
+    lang,
+    themeColor,
+    useThemeColor,
+    fontFamily,
+    fontSize,
+    fontWeight,
+    darkMode,
+    initialized,
+    useDynamicColor,
+    predictiveBack,
+    glassEffect,
+    monetSeed,
+  );
 }
 
 /// 启动加载画面：旋转光晕 + 品牌图标 + 进度提示。
@@ -354,33 +410,46 @@ class _SplashScreenState extends State<_SplashScreen> {
       backgroundColor: scheme.surface,
       body: Center(
         // 初始化界面：仅保留软件图标 + 软件名字 + 加载进度条
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          // 品牌图标
-          ClipRRect(
-            borderRadius: BorderRadius.circular(18),
-            child: Container(
-              width: 72,
-              height: 72,
-              color: scheme.surfaceContainerHighest,
-              child: Image.asset('rele/icon.png', width: 72, height: 72,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 品牌图标
+            ClipRRect(
+              borderRadius: BorderRadius.circular(18),
+              child: Container(
+                width: 72,
+                height: 72,
+                color: scheme.surfaceContainerHighest,
+                child: Image.asset(
+                  'rele/icon.png',
+                  width: 72,
+                  height: 72,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) => Icon(Icons.play_circle_fill,
-                      size: 60, color: scheme.primary)),
+                  errorBuilder: (_, _, _) => Icon(
+                    Icons.play_circle_fill,
+                    size: 60,
+                    color: scheme.primary,
+                  ),
+                ),
+              ),
             ),
-          ),
-          const SizedBox(height: 20),
-          Text('FFmpeg++',
+            const SizedBox(height: 20),
+            Text(
+              'FFmpeg++',
               style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w700,
-                  color: scheme.primary,
-                  letterSpacing: 0.5)),
-          const SizedBox(height: 26),
-          // 进度条：不确定进度（真实进度由初始化状态驱动）
-          // 统一走 AppProgressBar —— 与全应用滑动条同一规格
-          //（胶囊高 kAppTrackHeight、两端半圆、主题色填充 + 玻璃留空）
-          const SizedBox(width: 140, child: AppProgressBar()),
-        ]),
+                fontSize: 22,
+                fontWeight: FontWeight.w700,
+                color: scheme.primary,
+                letterSpacing: 0.5,
+              ),
+            ),
+            const SizedBox(height: 26),
+            // 进度条：不确定进度（真实进度由初始化状态驱动）
+            // 统一走 AppProgressBar —— 与全应用滑动条同一规格
+            //（胶囊高 kAppTrackHeight、两端半圆、主题色填充 + 玻璃留空）
+            const SizedBox(width: 140, child: AppProgressBar()),
+          ],
+        ),
       ),
     );
   }
@@ -391,6 +460,7 @@ class AppShell extends StatefulWidget {
   @override
   State<AppShell> createState() => _AppShellState();
 }
+
 class _AppShellState extends State<AppShell> with WindowListener {
   final _projectPageKey = GlobalKey<ProjectPageState>();
   bool _isMaximized = false;
@@ -411,6 +481,21 @@ class _AppShellState extends State<AppShell> with WindowListener {
   /// 用 ScrollUpdateNotification 而非 UserScrollNotification：fling 惯性
   /// 滑动期间同样持续产生 update 通知，跟手与惯性阶段行为一致。
   bool _handleContentScroll(ScrollNotification n, bool enabled) {
+    if (n.metrics.axis == Axis.horizontal && n is ScrollEndNotification) {
+      final page = n.metrics is PageMetrics
+          ? (n.metrics as PageMetrics).page
+          : null;
+      if (page != null) {
+        final index = page.round();
+        if (index >= 0 && index < _kMobileNavOrder.length) {
+          final target = _kMobileNavOrder[index];
+          if (context.read<AppState>().selectedNav != target) {
+            context.read<AppState>().selectNav(target);
+          }
+        }
+      }
+      return false;
+    }
     if (!enabled) return false;
     if (n.metrics.axis != Axis.vertical) return false;
     // scrollDelta 只存在于 ScrollUpdateNotification（基类没有该字段）
@@ -462,6 +547,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
   /// dispose 时用引用移除监听（dispose 里不能再走 context.lookup）。
   AppState? _listenedState;
   bool _lastNoPreload = false;
+
   /// 上一次已知的导航索引（用于识别「外部调用 selectNav」并同步 PageView）。
   int _lastNav = 0;
 
@@ -542,12 +628,22 @@ class _AppShellState extends State<AppShell> with WindowListener {
         context: context,
         builder: (_) => AlertDialog(
           icon: Icon(Icons.check_circle, color: scheme.sem.success, size: 32),
-          title: Text(s.isZh ? '更新完成' : 'Update Complete', style: TextStyle(color: scheme.onSurface)),
+          title: Text(
+            s.isZh ? '更新完成' : 'Update Complete',
+            style: TextStyle(color: scheme.onSurface),
+          ),
           content: Text(
-            s.isZh ? 'FFmpeg++ 已更新到 v${updater.currentVersion}' : 'FFmpeg++ updated to v${updater.currentVersion}',
+            s.isZh
+                ? 'FFmpeg++ 已更新到 v${updater.currentVersion}'
+                : 'FFmpeg++ updated to v${updater.currentVersion}',
             style: TextStyle(fontSize: 13, color: scheme.onSurface),
           ),
-          actions: [FilledButton(onPressed: () => Navigator.pop(context), child: Text(s.isZh ? '好的' : 'OK'))],
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(s.isZh ? '好的' : 'OK'),
+            ),
+          ],
         ),
       );
     }
@@ -558,9 +654,17 @@ class _AppShellState extends State<AppShell> with WindowListener {
     if (!mounted) return;
     final s = AppStrings.of(context.read<AppState>().config.language);
     if (status == TaskStatus.completed) {
-      showToast(context, s.isZh ? '$filename 已完成' : '$filename completed', type: ToastType.success);
+      showToast(
+        context,
+        s.isZh ? '$filename 已完成' : '$filename completed',
+        type: ToastType.success,
+      );
     } else if (status == TaskStatus.failed) {
-      showToast(context, s.isZh ? '$filename 处理失败' : '$filename failed', type: ToastType.error);
+      showToast(
+        context,
+        s.isZh ? '$filename 处理失败' : '$filename failed',
+        type: ToastType.error,
+      );
     }
     if (context.read<AppState>().config.enableSystemNotification) {
       _sendSystemNotification(filename, status);
@@ -580,7 +684,8 @@ class _AppShellState extends State<AppShell> with WindowListener {
       // 用单引号内替换 '' 的方式转义：PowerShell 单引号字符串转义单引号需写成两个。
       final escTitle = title.replaceAll("'", "''");
       final escBody = body.replaceAll("'", "''");
-      final ps = "Add-Type -AssemblyName System.Windows.Forms;"
+      final ps =
+          "Add-Type -AssemblyName System.Windows.Forms;"
           "Add-Type -AssemblyName System.Drawing;"
           "\$n=New-Object System.Windows.Forms.NotifyIcon;"
           "\$n.Icon=[System.Drawing.SystemIcons]::Information;"
@@ -591,7 +696,12 @@ class _AppShellState extends State<AppShell> with WindowListener {
           "\$n.ShowBalloonTip(3000);"
           "Start-Sleep -Milliseconds 3500;"
           "\$n.Dispose()";
-      Process.run('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps]).ignore();
+      Process.run('powershell', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        ps,
+      ]).ignore();
     } else if (Platform.isMacOS) {
       // macOS 没有 notify-send，用 osascript 发系统通知。
       // 文件名里的 " 或 \ 会破坏 AppleScript 字符串并可能注入，先转义。
@@ -614,6 +724,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
     _listenedState?.removeListener(_onNavChanged);
     super.dispose();
   }
+
   @override
   void onWindowClose() async {
     final state = context.read<AppState>();
@@ -622,15 +733,30 @@ class _AppShellState extends State<AppShell> with WindowListener {
   }
 
   @override
-  void onWindowMaximize() { if (mounted) setState(() => _isMaximized = true); }
+  void onWindowMaximize() {
+    if (mounted) setState(() => _isMaximized = true);
+  }
+
   @override
-  void onWindowUnmaximize() { if (mounted) setState(() => _isMaximized = false); }
+  void onWindowUnmaximize() {
+    if (mounted) setState(() => _isMaximized = false);
+  }
 
   static String? _modifierLabel(LogicalKeyboardKey k) {
-    if (k == LogicalKeyboardKey.controlLeft || k == LogicalKeyboardKey.controlRight) return 'Control';
-    if (k == LogicalKeyboardKey.shiftLeft || k == LogicalKeyboardKey.shiftRight) return 'Shift';
-    if (k == LogicalKeyboardKey.altLeft || k == LogicalKeyboardKey.altRight) return 'Alt';
-    if (k == LogicalKeyboardKey.metaLeft || k == LogicalKeyboardKey.metaRight) return 'Meta';
+    if (k == LogicalKeyboardKey.controlLeft ||
+        k == LogicalKeyboardKey.controlRight) {
+      return 'Control';
+    }
+    if (k == LogicalKeyboardKey.shiftLeft ||
+        k == LogicalKeyboardKey.shiftRight) {
+      return 'Shift';
+    }
+    if (k == LogicalKeyboardKey.altLeft || k == LogicalKeyboardKey.altRight) {
+      return 'Alt';
+    }
+    if (k == LogicalKeyboardKey.metaLeft || k == LogicalKeyboardKey.metaRight) {
+      return 'Meta';
+    }
     return null;
   }
 
@@ -642,12 +768,17 @@ class _AppShellState extends State<AppShell> with WindowListener {
       final m = _modifierLabel(k);
       if (m != null) heldModifiers.add(m);
     }
-    final bindingModifiers = binding.where((b) => const {'Control', 'Shift', 'Alt', 'Meta'}.contains(b)).toSet();
-    final bindingKey = binding.where((b) => !const {'Control', 'Shift', 'Alt', 'Meta'}.contains(b)).join();
+    final bindingModifiers = binding
+        .where((b) => const {'Control', 'Shift', 'Alt', 'Meta'}.contains(b))
+        .toSet();
+    final bindingKey = binding
+        .where((b) => !const {'Control', 'Shift', 'Alt', 'Meta'}.contains(b))
+        .join();
     if (heldModifiers.length != bindingModifiers.length) return false;
     if (!heldModifiers.containsAll(bindingModifiers)) return false;
     final eventLabel = event.logicalKey.keyLabel;
-    return eventLabel.isNotEmpty && eventLabel.toLowerCase() == bindingKey.toLowerCase();
+    return eventLabel.isNotEmpty &&
+        eventLabel.toLowerCase() == bindingKey.toLowerCase();
   }
 
   /// 当前键盘焦点是否落在「可编辑文本」内。
@@ -679,7 +810,8 @@ class _AppShellState extends State<AppShell> with WindowListener {
 
     // Project page shortcuts (nav == 0)
     if (nav == 0) {
-      final selectAllBinding = bindings['project_select_all'] ?? ['Control', 'A'];
+      final selectAllBinding =
+          bindings['project_select_all'] ?? ['Control', 'A'];
       if (_matchesBinding(event, selectAllBinding)) {
         // 无可操作对象时不吞事件（否则 Ctrl+A 在空列表下也永远到不了输入框）
         if (state.videos.isEmpty) return KeyEventResult.ignored;
@@ -687,14 +819,21 @@ class _AppShellState extends State<AppShell> with WindowListener {
         return KeyEventResult.handled;
       }
 
-      final addAllBinding = bindings['queue_add_all'] ?? ['Control', 'Shift', 'A'];
+      final addAllBinding =
+          bindings['queue_add_all'] ?? ['Control', 'Shift', 'A'];
       if (_matchesBinding(event, addAllBinding)) {
         final parsed = state.videos.where((v) => v.parsed).toList();
         if (parsed.isEmpty) return KeyEventResult.ignored;
         for (final v in parsed) {
           state.addTask(v.id);
         }
-        showToast(context, s.isZh ? '已添加 ${parsed.length} 个任务到队列' : 'Added ${parsed.length} tasks to queue', type: ToastType.success);
+        showToast(
+          context,
+          s.isZh
+              ? '已添加 ${parsed.length} 个任务到队列'
+              : 'Added ${parsed.length} tasks to queue',
+          type: ToastType.success,
+        );
         return KeyEventResult.handled;
       }
 
@@ -706,7 +845,8 @@ class _AppShellState extends State<AppShell> with WindowListener {
         return KeyEventResult.handled;
       }
 
-      final clearAllBinding = bindings['project_clear_all'] ?? ['Control', 'Shift', 'Delete'];
+      final clearAllBinding =
+          bindings['project_clear_all'] ?? ['Control', 'Shift', 'Delete'];
       if (_matchesBinding(event, clearAllBinding)) {
         if (state.videos.isEmpty) return KeyEventResult.ignored;
         // 破坏性操作必须先确认：项目页按钮走的是带确认的路径，快捷键不该绕过它
@@ -717,31 +857,55 @@ class _AppShellState extends State<AppShell> with WindowListener {
 
     // 全局导航快捷键（任意页面可用）
     final navProjects = bindings['nav_projects'] ?? ['Control', '1'];
-    if (_matchesBinding(event, navProjects)) { state.selectNav(0); return KeyEventResult.handled; }
+    if (_matchesBinding(event, navProjects)) {
+      state.selectNav(0);
+      return KeyEventResult.handled;
+    }
     final navQueue = bindings['nav_queue'] ?? ['Control', '2'];
-    if (_matchesBinding(event, navQueue)) { state.selectNav(1); return KeyEventResult.handled; }
+    if (_matchesBinding(event, navQueue)) {
+      state.selectNav(1);
+      return KeyEventResult.handled;
+    }
     final navCommand = bindings['nav_command'] ?? ['Control', '3'];
-    if (_matchesBinding(event, navCommand)) { state.selectNav(2); return KeyEventResult.handled; }
+    if (_matchesBinding(event, navCommand)) {
+      state.selectNav(2);
+      return KeyEventResult.handled;
+    }
     final navSettings = bindings['nav_settings'] ?? ['Control', '4'];
-    if (_matchesBinding(event, navSettings)) { state.selectNav(4); return KeyEventResult.handled; }
+    if (_matchesBinding(event, navSettings)) {
+      state.selectNav(4);
+      return KeyEventResult.handled;
+    }
 
     // Queue page shortcuts (nav == 1)
     if (nav == 1) {
-      final startAllBinding = bindings['queue_start_all'] ?? ['Control', 'Shift', 'S'];
+      final startAllBinding =
+          bindings['queue_start_all'] ?? ['Control', 'Shift', 'S'];
       if (_matchesBinding(event, startAllBinding)) {
-        final pendingCount = state.tasks.where((t) => t.status == TaskStatus.pending).length;
+        final pendingCount = state.tasks
+            .where((t) => t.status == TaskStatus.pending)
+            .length;
         if (pendingCount > 0) {
           state.processAllTasks();
-          showToast(context, s.isZh ? '已开始 $pendingCount 个任务' : 'Started $pendingCount tasks', type: ToastType.success);
+          showToast(
+            context,
+            s.isZh ? '已开始 $pendingCount 个任务' : 'Started $pendingCount tasks',
+            type: ToastType.success,
+          );
         }
         return KeyEventResult.handled;
       }
 
-      final stopAllBinding = bindings['queue_stop_all'] ?? ['Control', 'Shift', 'X'];
+      final stopAllBinding =
+          bindings['queue_stop_all'] ?? ['Control', 'Shift', 'X'];
       if (_matchesBinding(event, stopAllBinding)) {
         if (state.processing) {
           state.cancelProcessing();
-          showToast(context, s.isZh ? '已停止所有任务' : 'All tasks stopped', type: ToastType.warning);
+          showToast(
+            context,
+            s.isZh ? '已停止所有任务' : 'All tasks stopped',
+            type: ToastType.warning,
+          );
         }
         return KeyEventResult.handled;
       }
@@ -761,21 +925,29 @@ class _AppShellState extends State<AppShell> with WindowListener {
       builder: (ctx) {
         final scheme = Theme.of(ctx).colorScheme;
         return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Text(zh ? '移除所有项目？' : 'Remove all projects?',
-              style: TextStyle(color: scheme.onSurface)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Text(
+            zh ? '移除所有项目？' : 'Remove all projects?',
+            style: TextStyle(color: scheme.onSurface),
+          ),
           content: Text(
             zh
                 ? '将从项目列表移除全部 ${state.videos.length} 项（磁盘上的源文件不会被删除）。此操作无法撤销。'
                 : 'This removes all ${state.videos.length} items from the project list '
-                    '(source files on disk are kept). This cannot be undone.',
+                      '(source files on disk are kept). This cannot be undone.',
             style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
           ),
           actions: [
             TextButton(
-                onPressed: () => Navigator.pop(ctx, false), child: Text(s.cancel)),
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(s.cancel),
+            ),
             FilledButton(
-                onPressed: () => Navigator.pop(ctx, true), child: Text(s.clearAll)),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(s.clearAll),
+            ),
           ],
         );
       },
@@ -783,7 +955,11 @@ class _AppShellState extends State<AppShell> with WindowListener {
       if (ok != true || !mounted) return;
       state.clearAllVideos();
       _projectPageKey.currentState?.selectAll([]);
-      showToast(context, s.isZh ? '已删除所有项目' : 'All projects deleted', type: ToastType.info);
+      showToast(
+        context,
+        s.isZh ? '已删除所有项目' : 'All projects deleted',
+        type: ToastType.info,
+      );
     });
   }
 
@@ -795,26 +971,32 @@ class _AppShellState extends State<AppShell> with WindowListener {
     // 菜单栏位置设置（'auto' / 'bottom' / 'left' / 'right'）。必须在这里订阅：
     // 主壳原本只 select 了 selectedNav，不订阅本字段的话在设置里改方向不会重排
     // 布局。select 只在该值变化时触发重建，不引入额外重建开销。
-    final placementCfg =
-        context.select<AppState, String>((s) => s.config.mobileNavPlacement);
+    final placementCfg = context.select<AppState, String>(
+      (s) => s.config.mobileNavPlacement,
+    );
     // 滑动自动收起开关：必须在这里订阅 —— NotificationListener 的启用判定与
     // 传给导航栏的 hidden 都依赖它，漏订阅会「开关点了没反应」（契约 11 同根因）。
-    final navAutoHide =
-        context.select<AppState, bool>((s) => s.config.navAutoHide);
+    final navAutoHide = context.select<AppState, bool>(
+      (s) => s.config.navAutoHide,
+    );
     final mobile = isMobilePlatform;
 
     // 桌面端：左侧边栏 + 页面；移动端页面在下方用 _mobilePageView（PageView）。
     final Widget page = Focus(
       autofocus: true,
       onKeyEvent: _handleGlobalKey,
-      child: Row(children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 0, 12),
-          child: Sidebar(selectedIndex: nav,
-              onSelected: (i) => context.read<AppState>().selectNav(i)),
-        ),
-        Expanded(child: _pageStack(nav)),
-      ]),
+      child: Row(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 0, 12),
+            child: Sidebar(
+              selectedIndex: nav,
+              onSelected: (i) => context.read<AppState>().selectNav(i),
+            ),
+          ),
+          Expanded(child: _pageStack(nav)),
+        ],
+      ),
     );
 
     final Widget body;
@@ -829,7 +1011,10 @@ class _AppShellState extends State<AppShell> with WindowListener {
       // 导航栏自己看不到屏宽，所以它只接受一个已解析好的 placement。
       final size = MediaQuery.sizeOf(context);
       final placement = resolveMobileNavPlacement(
-          placementCfg, size.width, size.height);
+        placementCfg,
+        size.width,
+        size.height,
+      );
       final navBar = MobileBottomNav(
         placement: placement,
         selectedIndex: nav,
@@ -839,7 +1024,8 @@ class _AppShellState extends State<AppShell> with WindowListener {
         pageController: _mobilePageController,
         // 滑动自动收起：仅「底部」形态生效，侧边导轨恒展开（弹簧动画在
         // MobileBottomNav 内部，欠阻尼过冲即到位回弹）。
-        hidden: navAutoHide &&
+        hidden:
+            navAutoHide &&
             placement == MobileNavPlacement.bottom &&
             _navHiddenByScroll,
       );
@@ -862,53 +1048,58 @@ class _AppShellState extends State<AppShell> with WindowListener {
       // 两者都取自同一处定义（shellPadding / kMobileNavRailExtent），避免各写
       // 一份后漂移成「导轨压住内容」或「内容左边多出一条缝」。
       final EdgeInsets shellPad = NavGlassShell.shellPadding(
-          MediaQuery.paddingOf(context), placement);
-      final double sideInset =
-          onBottom ? 0.0 : shellPad.horizontal + kMobileNavRailExtent;
-      final Widget mobileBody = Stack(children: [
-        // 槽位 0：内容区。底部形态全屏铺满；侧边形态按方向让出侧向宽度。
-        // 页面区用 PageView：[0,1,3,4] 四个 Tab 滑动全程跟随手指（拖到一半即
-        // 「各展示一半」），松手由 PageView 决定回弹或翻页；底部导航点击时同步。
-        Positioned.fill(
-          child: NotificationListener<ScrollNotification>(
-            // 滑动自动收起的信号源：各 Tab 内部所有可滚动组件的通知都会冒泡
-            // 到这里；只认垂直轴（横向 PageView 翻页 / 横向 chips 不触发）。
-            onNotification: (n) =>
-                _handleContentScroll(n, navAutoHide && onBottom),
-            child: Padding(
-              padding: EdgeInsets.only(
-                left: onLeft ? sideInset : 0,
-                right: (!onBottom && !onLeft) ? sideInset : 0,
+        MediaQuery.paddingOf(context),
+        placement,
+      );
+      final double sideInset = onBottom
+          ? 0.0
+          : shellPad.horizontal + kMobileNavRailExtent;
+      final Widget mobileBody = Stack(
+        children: [
+          // 槽位 0：内容区。底部形态全屏铺满；侧边形态按方向让出侧向宽度。
+          // 页面区用 PageView：[0,1,3,4] 四个 Tab 滑动全程跟随手指（拖到一半即
+          // 「各展示一半」），松手由 PageView 决定回弹或翻页；底部导航点击时同步。
+          Positioned.fill(
+            child: NotificationListener<ScrollNotification>(
+              // 滑动自动收起的信号源：各 Tab 内部所有可滚动组件的通知都会冒泡
+              // 到这里；只认垂直轴（横向 PageView 翻页 / 横向 chips 不触发）。
+              onNotification: (n) =>
+                  _handleContentScroll(n, navAutoHide && onBottom),
+              child: Padding(
+                padding: EdgeInsets.only(
+                  left: onLeft ? sideInset : 0,
+                  right: (!onBottom && !onLeft) ? sideInset : 0,
+                ),
+                child: _mobilePageView(),
               ),
-              child: _mobilePageView(),
             ),
           ),
-        ),
-        // 槽位 1：导航栏。底部形态贴底全宽悬浮叠加；侧边形态贴左 / 贴右，
-        // 宽度固定为 sideInset，并由 Align 在纵轴上居中 —— 复现原 Row 的
-        // 默认交叉轴对齐（center，一颗纵向居中的悬浮胶囊）行为。
-        // 不能直接用 Center 替代：底部形态下导航栏拿到的是「宽 tight、高 loose」
-        // 约束，Center 会把可用高度吃满，胶囊会被摆到屏幕垂直中央。
-        Positioned(
-          left: onBottom ? 0 : (onLeft ? 0 : null),
-          right: onBottom ? 0 : (onLeft ? null : 0),
-          top: onBottom ? null : 0,
-          bottom: 0,
-          // 侧边形态限定宽度；底部形态必须为 null（left+right 已定宽，
-          // Positioned 同时给出 width 会断言失败）。
-          width: onBottom ? null : sideInset,
-          child: Align(
-            alignment: onBottom
-                ? Alignment.bottomCenter
-                : (onLeft ? Alignment.centerLeft : Alignment.centerRight),
-            // SizedBox(width:∞) 是**必需**的：Align 给 child 的是 loose 宽度约束
-            // （`constraints.loosen()`），导航栏内部的横排布局依赖 maxWidth 均分
-            // 药丸宽度，拿 loose 约束会缩成内容宽 —— 底部形态就再也贴不满屏宽了。
-            // 填满上限后：底部 = Stack 宽；侧边 = Positioned 已定死的 sideInset。
-            child: SizedBox(width: double.infinity, child: navBar),
+          // 槽位 1：导航栏。底部形态贴底全宽悬浮叠加；侧边形态贴左 / 贴右，
+          // 宽度固定为 sideInset，并由 Align 在纵轴上居中 —— 复现原 Row 的
+          // 默认交叉轴对齐（center，一颗纵向居中的悬浮胶囊）行为。
+          // 不能直接用 Center 替代：底部形态下导航栏拿到的是「宽 tight、高 loose」
+          // 约束，Center 会把可用高度吃满，胶囊会被摆到屏幕垂直中央。
+          Positioned(
+            left: onBottom ? 0 : (onLeft ? 0 : null),
+            right: onBottom ? 0 : (onLeft ? null : 0),
+            top: onBottom ? null : 0,
+            bottom: 0,
+            // 侧边形态限定宽度；底部形态必须为 null（left+right 已定宽，
+            // Positioned 同时给出 width 会断言失败）。
+            width: onBottom ? null : sideInset,
+            child: Align(
+              alignment: onBottom
+                  ? Alignment.bottomCenter
+                  : (onLeft ? Alignment.centerLeft : Alignment.centerRight),
+              // SizedBox(width:∞) 是**必需**的：Align 给 child 的是 loose 宽度约束
+              // （`constraints.loosen()`），导航栏内部的横排布局依赖 maxWidth 均分
+              // 药丸宽度，拿 loose 约束会缩成内容宽 —— 底部形态就再也贴不满屏宽了。
+              // 填满上限后：底部 = Stack 宽；侧边 = Positioned 已定死的 sideInset。
+              child: SizedBox(width: double.infinity, child: navBar),
+            ),
           ),
-        ),
-      ]);
+        ],
+      );
       // 把生效位置下发给主 Tab 各页：列表底部留白随之在 96 / 20 之间切换
       // （见 MobileUi.mainListPadding）。页面实例被 _pageCache 缓存并原样复用，
       // 上层重建不会触发它们 build —— 只有 InheritedWidget 的依赖关系能保证
@@ -923,20 +1114,25 @@ class _AppShellState extends State<AppShell> with WindowListener {
           // 鼠标移到边缘即可拖动调整窗口大小。
           : DragToResizeArea(
               resizeEdgeSize: 6,
-              child: Stack(children: [
-                Padding(
-                  padding: const EdgeInsets.only(top: 36),
-                  child: page,
-                ),
-                Positioned(left: 0, right: 0, top: 0, child: _buildCsdTitleBar(scheme)),
-              ]),
+              child: Stack(
+                children: [
+                  Padding(padding: const EdgeInsets.only(top: 36), child: page),
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 0,
+                    child: _buildCsdTitleBar(scheme),
+                  ),
+                ],
+              ),
             );
     }
 
     // 壁纸：独立 Selector，只监听 backgroundImage/backgroundOpacity，
     // 进度 tick 之类的 notify 不会重建这棵子树。
     return Selector<AppState, (String, double)>(
-      selector: (_, s) => (s.config.backgroundImage, s.config.backgroundOpacity),
+      selector: (_, s) =>
+          (s.config.backgroundImage, s.config.backgroundOpacity),
       builder: (context, bgTuple, _) {
         final bg = bgTuple.$1;
         final hasBg = bg.isNotEmpty && _bgFileExists(bg);
@@ -947,23 +1143,32 @@ class _AppShellState extends State<AppShell> with WindowListener {
         // （而不是按逻辑尺寸 cacheWidth/cacheHeight 强扯成矩形去解码）。
         final size = MediaQuery.sizeOf(context);
         final dpr = MediaQuery.devicePixelRatioOf(context);
-        final Widget stacked = Stack(children: [
-          // 不透明主题底色铺底：避免子页面返回过渡首帧露出系统窗口黑底
-          Positioned.fill(child: Container(color: scheme.surface)),
-          Positioned.fill(child: Image(
-              image: wallpaperImageProvider(bg, size.width, size.height, dpr),
-              fit: BoxFit.cover,
-              errorBuilder: (_, a, b) {
-                clearBgCache();
-                return const SizedBox.shrink();
-              })),
-          Positioned.fill(child: Container(color: scheme.surface.withAlpha(a))),
-          // 用 Theme 覆盖 scaffoldBackgroundColor 为透明，让子页面 Scaffold 不遮壁纸
-          Theme(
-            data: Theme.of(context).copyWith(scaffoldBackgroundColor: Colors.transparent),
-            child: Scaffold(backgroundColor: Colors.transparent, body: body),
-          ),
-        ]);
+        final Widget stacked = Stack(
+          children: [
+            // 不透明主题底色铺底：避免子页面返回过渡首帧露出系统窗口黑底
+            Positioned.fill(child: Container(color: scheme.surface)),
+            Positioned.fill(
+              child: Image(
+                image: wallpaperImageProvider(bg, size.width, size.height, dpr),
+                fit: BoxFit.cover,
+                errorBuilder: (_, a, b) {
+                  clearBgCache();
+                  return const SizedBox.shrink();
+                },
+              ),
+            ),
+            Positioned.fill(
+              child: Container(color: scheme.surface.withAlpha(a)),
+            ),
+            // 用 Theme 覆盖 scaffoldBackgroundColor 为透明，让子页面 Scaffold 不遮壁纸
+            Theme(
+              data: Theme.of(
+                context,
+              ).copyWith(scaffoldBackgroundColor: Colors.transparent),
+              child: Scaffold(backgroundColor: Colors.transparent, body: body),
+            ),
+          ],
+        );
         // 壁纸窗口作用域：把壁纸解析为 ui.Image 下发给主 Tab 各页的玻璃卡，
         // 让它们走「开窗绑定渲染」（同帧、同变换光栅化 → 滚动零滞后）。
         // 此前主壳自己手写壁纸 Stack、未提供 scope，主 Tab 的玻璃卡只能走
@@ -987,6 +1192,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
   static bool _bgFileExists(String path) {
     return _bgCache.putIfAbsent(path, () => File(path).existsSync());
   }
+
   static void clearBgCache() => _bgCache.clear();
 
   /// Linux 专用自绘标题栏（CSD）；Windows/macOS 走系统标题栏，见 body 的分支。
@@ -1007,52 +1213,91 @@ class _AppShellState extends State<AppShell> with WindowListener {
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
               colors: [
-                scheme.surface.withAlpha(tunedGlassAlpha(isDark ? 160 : 180, tuning)),
-                scheme.surface.withAlpha(tunedGlassAlpha(isDark ? 120 : 140, tuning)),
+                scheme.surface.withAlpha(
+                  tunedGlassAlpha(isDark ? 160 : 180, tuning),
+                ),
+                scheme.surface.withAlpha(
+                  tunedGlassAlpha(isDark ? 120 : 140, tuning),
+                ),
               ],
             ),
-            border: Border(bottom: BorderSide(
-              color: scheme.outlineVariant.withAlpha(isDark ? 60 : 80),
-              width: 0.5,
-            )),
-          ),
-          child: Stack(children: [
-            DragToMoveArea(child: GestureDetector(
-              onDoubleTap: () async {
-                if (await windowManager.isMaximized()) {
-                  windowManager.unmaximize();
-                } else {
-                  windowManager.maximize();
-                }
-              },
-              child: Container(color: Colors.transparent),
-            )),
-            Positioned(right: 0, top: 0, bottom: 0, child: Row(mainAxisSize: MainAxisSize.min, children: [
-              _csdButton(Icons.remove, scheme.onSurfaceVariant, null, () => windowManager.minimize()),
-              _csdButton(
-                _isMaximized ? Icons.filter_none : Icons.crop_square,
-                scheme.onSurfaceVariant, null,
-                () async {
-                  if (await windowManager.isMaximized()) {
-                    windowManager.unmaximize();
-                  } else {
-                    windowManager.maximize();
-                  }
-                },
+            border: Border(
+              bottom: BorderSide(
+                color: scheme.outlineVariant.withAlpha(isDark ? 60 : 80),
+                width: 0.5,
               ),
-              // 关闭按钮悬停红：Windows 系统约定色（#E81123），与
-              // pipeline_editor_page / container_detail_page 的 CSD 按钮保持一致。
-              // 它属于窗口装饰，不参与主题化（用语义色在深色主题下会变浅粉）。
-              _csdButton(Icons.close, scheme.onSurface, const Color(0xFFE81123), () => windowManager.close()),
-            ])),
-          ]),
+            ),
+          ),
+          child: Stack(
+            children: [
+              DragToMoveArea(
+                child: GestureDetector(
+                  onDoubleTap: () async {
+                    if (await windowManager.isMaximized()) {
+                      windowManager.unmaximize();
+                    } else {
+                      windowManager.maximize();
+                    }
+                  },
+                  child: Container(color: Colors.transparent),
+                ),
+              ),
+              Positioned(
+                right: 0,
+                top: 0,
+                bottom: 0,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _csdButton(
+                      Icons.remove,
+                      scheme.onSurfaceVariant,
+                      null,
+                      () => windowManager.minimize(),
+                    ),
+                    _csdButton(
+                      _isMaximized ? Icons.filter_none : Icons.crop_square,
+                      scheme.onSurfaceVariant,
+                      null,
+                      () async {
+                        if (await windowManager.isMaximized()) {
+                          windowManager.unmaximize();
+                        } else {
+                          windowManager.maximize();
+                        }
+                      },
+                    ),
+                    // 关闭按钮悬停红：Windows 系统约定色（#E81123），与
+                    // pipeline_editor_page / container_detail_page 的 CSD 按钮保持一致。
+                    // 它属于窗口装饰，不参与主题化（用语义色在深色主题下会变浅粉）。
+                    _csdButton(
+                      Icons.close,
+                      scheme.onSurface,
+                      const Color(0xFFE81123),
+                      () => windowManager.close(),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _csdButton(IconData icon, Color color, Color? hoverBg, VoidCallback onTap) {
-    return _CsdWindowButton(icon: icon, color: color, hoverBg: hoverBg, onTap: onTap);
+  Widget _csdButton(
+    IconData icon,
+    Color color,
+    Color? hoverBg,
+    VoidCallback onTap,
+  ) {
+    return _CsdWindowButton(
+      icon: icon,
+      color: color,
+      hoverBg: hoverBg,
+      onTap: onTap,
+    );
   }
 
   /// 底部导航点击：切换选中页，并让 PageView 滑动到对应位置（带滑动动画）。
@@ -1076,16 +1321,15 @@ class _AppShellState extends State<AppShell> with WindowListener {
     final idx = _kMobileNavOrder.indexOf(nav);
     return PageView(
       controller: _mobilePageController,
-      physics: _SwipeGatePagePhysics(originPage: idx.toDouble(), gateFraction: 0.28),
-      onPageChanged: (idx) {
-        if (idx < 0 || idx >= _kMobileNavOrder.length) return;
-        final target = _kMobileNavOrder[idx];
-        if (context.read<AppState>().selectedNav != target) {
-          context.read<AppState>().selectNav(target);
-        }
-      },
+      physics: _SwipeGatePagePhysics(
+        originPage: idx.toDouble(),
+        gateFraction: 0.28,
+      ),
+      // Root selection is committed at settle, not at intermediate pages.
+      onPageChanged: (_) {},
       children: [
-        for (final i in _kMobileNavOrder) _KeepAlive(key: ValueKey<int>(i), child: _page(i)),
+        for (final i in _kMobileNavOrder)
+          _KeepAlive(key: ValueKey<int>(i), child: _page(i)),
       ],
     );
   }
@@ -1093,6 +1337,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
   /// 页面懒加载缓存：首次访问才构建，切换时保留状态（IndexedStack），
   /// 避免 AnimatedSwitcher 每次切换重建整页导致的卡顿。
   final List<Widget?> _pageCache = List.filled(6, null);
+
   /// 页面访问顺序（LRU，最久未访问在前），常驻数超限时按此逐出。
   final List<int> _pageLru = [];
   bool _evictScheduled = false;
@@ -1112,9 +1357,12 @@ class _AppShellState extends State<AppShell> with WindowListener {
     if (cached != null) return cached;
     // 首次访问：构建页面并缓存
     final page = switch (i) {
-      0 => ProjectPage(key: _projectPageKey), 1 => const QueuePage(),
-      2 => const CommandPage(), 3 => const ConfigLibraryPage(),
-      4 => const SettingsPage(), 5 => const LogPage(),
+      0 => ProjectPage(key: _projectPageKey),
+      1 => const QueuePage(),
+      2 => const CommandPage(),
+      3 => const ConfigLibraryPage(),
+      4 => const SettingsPage(),
+      5 => const LogPage(),
       _ => const ProjectPage(),
     };
     _pageCache[i] = page;
@@ -1180,7 +1428,9 @@ class _AppShellState extends State<AppShell> with WindowListener {
         KeyedSubtree(
           key: ValueKey<int>(i),
           // 当前页走 _page(i)（顺带刷新 LRU）；非当前页直接取缓存，未访问则为空占位
-          child: i == current ? _page(i) : (_pageCache[i] ?? const SizedBox.shrink()),
+          child: i == current
+              ? _page(i)
+              : (_pageCache[i] ?? const SizedBox.shrink()),
         ),
     ],
   );
@@ -1220,8 +1470,9 @@ class _AppShellState extends State<AppShell> with WindowListener {
     // 页数与页名都按 targets 推导：此前写死「N 个页面（项目/处理队列）」，
     // 而移动端预热的是 项目/处理队列/配置库/设置 四个 Tab，日志与实际不符。
     state.addLog(
-        '后台预热 ${targets.length} 个页面（${targets.map(_navLabel).join('/')}）',
-        category: 'info');
+      '后台预热 ${targets.length} 个页面（${targets.map(_navLabel).join('/')}）',
+      category: 'info',
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       // 必须在 finally 里复位 _warming。此前只在「正常跑完」和「途中检测到关闭
       // 预加载」两条路径复位：任何一次 `_page(i)` 抛异常（某页构建期出错）都会让
@@ -1236,7 +1487,9 @@ class _AppShellState extends State<AppShell> with WindowListener {
           if (!mounted) return;
           // 预热途中用户开启了「关闭预加载」则中止剩余预热（_warming 由 finally 复位）
           if (context.read<AppState>().config.noPreload) return;
-          setState(() { _page(i); });
+          setState(() {
+            _page(i);
+          });
         }
       } catch (e) {
         // 预热失败不该影响用户：只记日志，该页改为首次切换时现场构建。
@@ -1268,7 +1521,12 @@ class _CsdWindowButton extends StatefulWidget {
   final Color color;
   final Color? hoverBg;
   final VoidCallback onTap;
-  const _CsdWindowButton({required this.icon, required this.color, this.hoverBg, required this.onTap});
+  const _CsdWindowButton({
+    required this.icon,
+    required this.color,
+    this.hoverBg,
+    required this.onTap,
+  });
   @override
   State<_CsdWindowButton> createState() => _CsdWindowButtonState();
 }
@@ -1292,7 +1550,9 @@ class _CsdWindowButtonState extends State<_CsdWindowButton> {
           child: Icon(
             widget.icon,
             size: 18,
-            color: _hovering && widget.hoverBg != null ? Colors.white : widget.color,
+            color: _hovering && widget.hoverBg != null
+                ? Colors.white
+                : widget.color,
           ),
         ),
       ),
@@ -1309,13 +1569,14 @@ class _KeepAlive extends StatefulWidget {
   State<_KeepAlive> createState() => _KeepAliveState();
 }
 
-class _KeepAliveState extends State<_KeepAlive> with AutomaticKeepAliveClientMixin {
+class _KeepAliveState extends State<_KeepAlive>
+    with AutomaticKeepAliveClientMixin {
   /// 「关闭预加载」开启时不再永久保活：划走的 Tab 状态被释放，
   /// 内存随用随还（回到该 Tab 时现场重建，可能短暂卡顿——用户已明确
   /// 选择低内存优先）。默认仍保活，保证翻页流畅。
   @override
-  bool get wantKeepAlive => !context.select<AppState, bool>(
-      (s) => s.config.noPreload);
+  bool get wantKeepAlive =>
+      !context.select<AppState, bool>((s) => s.config.noPreload);
   @override
   Widget build(BuildContext context) {
     super.build(context); // 注册 keep-alive
@@ -1344,7 +1605,10 @@ Route<T> smoothRoute<T>(Widget page) => PageRouteBuilder<T>(
       reverseCurve: Curves.easeInCubic,
     );
     return SlideTransition(
-      position: Tween(begin: const Offset(0.06, 0), end: Offset.zero).animate(curve),
+      position: Tween(
+        begin: const Offset(0.06, 0),
+        end: Offset.zero,
+      ).animate(curve),
       child: FadeTransition(
         // 淡入只做辅助：不完全透明起步，避免第一帧「空屏」
         opacity: Tween<double>(begin: 0.55, end: 1.0).animate(curve),

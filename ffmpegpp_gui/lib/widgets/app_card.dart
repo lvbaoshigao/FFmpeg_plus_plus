@@ -29,6 +29,7 @@ class _CardGlassKey {
   final String style;
   final double op;
   final int primary;
+  final bool useThemeColor;
   final int second;
 
   /// 「样式 → 设置卡片玻璃」：'solid' 退回主题色实心、'frosted' 改走扁平模糊
@@ -48,6 +49,7 @@ class _CardGlassKey {
     required this.style,
     required this.op,
     required this.primary,
+    required this.useThemeColor,
     required this.second,
     required this.settingsGlass,
     required this.follow,
@@ -64,6 +66,7 @@ class _CardGlassKey {
       other.style == style &&
       other.op == op &&
       other.primary == primary &&
+      other.useThemeColor == useThemeColor &&
       other.second == second &&
       other.settingsGlass == settingsGlass &&
       other.follow == follow &&
@@ -75,6 +78,7 @@ class _CardGlassKey {
     style,
     op,
     primary,
+    useThemeColor,
     second,
     settingsGlass,
     follow,
@@ -135,6 +139,7 @@ class _AppCardState extends State<AppCard> {
       style: style,
       op: c.cardOpacity,
       primary: c.themeColor,
+      useThemeColor: c.useThemeColor,
       second: c.themeColor2,
       settingsGlass: c.settingsGlassMode,
       follow: c.glassFollowTheme,
@@ -174,7 +179,7 @@ class _AppCardState extends State<AppCard> {
     // 关键修复：此前渐变与样式无关——渐变主题（themeColor2 >= 0）下选
     // 「灰色」，卡片被渲染成 alpha 255 的主题渐变色，亮度极高、非常刺眼，
     // 且与「灰色 = 纯灰容器色」的语义冲突。灰色卡现在永远纯灰。
-    final themeGrad = key.second >= 0
+    final themeGrad = key.useThemeColor && key.second >= 0
         ? <Color>[Color(key.primary), Color(key.second)]
         : null;
     // ── 「设置 → 样式」里各开关在本组件内的落地（见下方分支）──
@@ -193,7 +198,9 @@ class _AppCardState extends State<AppCard> {
     // 「跟随主题色」的底色：直接铺 scheme.primary 在暗色主题下是 tone 80 的
     // 高亮色，非常刺眼（用户反馈「选择主题色又很亮」）。改为按 themeTone 与
     // 表面色混合后的协调色（默认 0.45）。
-    final Color accent = harmonizedAccent(scheme, key.tone);
+    final Color accent = key.useThemeColor
+        ? harmonizedAccent(scheme, key.tone)
+        : neutralGray(scheme.surfaceContainerHigh);
     // 纯色分支的底色：gray 恒为中性灰（去饱和，避免 fromSeed 的种子色偏造成
     // 「灰色夹杂主题色」）；theme 与「关了玻璃的玻璃卡」用协调后的主题色。
     final Color solidBase = style == SurfaceStyle.gray
@@ -201,7 +208,8 @@ class _AppCardState extends State<AppCard> {
         : accent;
     // 纯色分支的渐变：仅主题色纯色卡（含关玻璃后的卡）才带主题渐变，灰色恒纯灰。
     final grad =
-        style != SurfaceStyle.gray &&
+        key.useThemeColor &&
+            style != SurfaceStyle.gray &&
             (solidStyle || key.follow) &&
             themeGrad != null
         ? harmonizedAccentGradient(scheme, themeGrad, key.tone)
@@ -210,8 +218,8 @@ class _AppCardState extends State<AppCard> {
     final Color glassBase = themedGlassBase(
       scheme,
       key.tone,
-      key.follow,
-      second: key.second,
+      key.useThemeColor && key.follow,
+      second: key.useThemeColor ? key.second : -1,
     );
     // 通透度 → 各处基准 alpha 的等比缩放（默认 1.0，即观感不变）。
     final double tScale = key.tuning.tintScale;

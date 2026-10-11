@@ -18,11 +18,12 @@ class AppTheme {
     double fontSize = 14.0,
     int fontWeight = 400,
     int? dynamicSeed,
+    bool useThemeColor = true,
     bool predictiveBack = true,
     String glassEffect = 'liquid',
   }) {
     final scheme = ColorScheme.fromSeed(
-      seedColor: Color(dynamicSeed ?? seedColor),
+      seedColor: Color(useThemeColor ? (dynamicSeed ?? seedColor) : 0xFF777777),
       brightness: Brightness.dark,
     );
     return _build(
@@ -41,11 +42,12 @@ class AppTheme {
     double fontSize = 14.0,
     int fontWeight = 400,
     int? dynamicSeed,
+    bool useThemeColor = true,
     bool predictiveBack = true,
     String glassEffect = 'liquid',
   }) {
     final scheme = ColorScheme.fromSeed(
-      seedColor: Color(dynamicSeed ?? seedColor),
+      seedColor: Color(useThemeColor ? (dynamicSeed ?? seedColor) : 0xFF777777),
       brightness: Brightness.light,
     );
     return _build(

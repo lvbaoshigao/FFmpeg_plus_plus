@@ -21,6 +21,7 @@ class NavGlassPal {
   final String style;
   final double op;
   final int primary;
+  final bool useThemeColor;
   final int second;
 
   /// 「设置 → 样式 → 玻璃底色遵循主题色」：玻璃 tint 用主题色而非 surface 灰。
@@ -37,6 +38,7 @@ class NavGlassPal {
     required this.style,
     required this.op,
     required this.primary,
+    required this.useThemeColor,
     required this.second,
     required this.follow,
     required this.tuning,
@@ -49,14 +51,23 @@ class NavGlassPal {
       other.style == style &&
       other.op == op &&
       other.primary == primary &&
+      other.useThemeColor == useThemeColor &&
       other.second == second &&
       other.follow == follow &&
       other.tuning == tuning &&
       other.tone == tone;
 
   @override
-  int get hashCode =>
-      Object.hash(style, op, primary, second, follow, tuning, tone);
+  int get hashCode => Object.hash(
+    style,
+    op,
+    primary,
+    useThemeColor,
+    second,
+    follow,
+    tuning,
+    tone,
+  );
 }
 
 /// 订阅玻璃渲染 + 主题色相关字段（不订阅日志/进度/任务等高频 notify）。
@@ -67,6 +78,7 @@ NavGlassPal navGlassPalOf(BuildContext context) =>
         style: c.navStyle,
         op: c.cardOpacity,
         primary: c.themeColor,
+        useThemeColor: c.useThemeColor,
         second: c.themeColor2,
         follow: c.glassFollowTheme,
         tuning: GlassTuning(
@@ -120,12 +132,19 @@ NavGlassLook navGlassLook(ColorScheme scheme, bool isDark, NavGlassPal pal) {
   // 主题色基底：跟随主题色 / 玻璃遵循主题色时都用「与表面色混合后的协调色」，
   // 避免 scheme.primary（暗色下 tone 80）大面积铺开过亮；
   // 灰色样式额外去饱和，保证是真正的中性灰（原有 fromSeed 种子色偏）。
-  final accent = harmonizedAccent(scheme, pal.tone);
+  final accent = pal.useThemeColor
+      ? harmonizedAccent(scheme, pal.tone)
+      : neutralGray(scheme.surfaceContainerHigh);
   final baseColor = style == SurfaceStyle.theme
       ? accent
       : style == SurfaceStyle.gray
       ? neutralGray(scheme.surfaceContainerHigh)
-      : themedGlassBase(scheme, pal.tone, pal.follow, second: pal.second);
+      : themedGlassBase(
+          scheme,
+          pal.tone,
+          pal.follow && pal.useThemeColor,
+          second: pal.useThemeColor ? pal.second : -1,
+        );
   // 边缘光 → 描边的透明度/线宽缩放（基准 1.0 = 与改动前一致）
   final edgeBlur = edgeBorder(70 / 255, 0.5, pal.tuning.edge);
   final edgeWhite = edgeBorder(isDark ? 0.16 : 0.32, 0.7, pal.tuning.edge);

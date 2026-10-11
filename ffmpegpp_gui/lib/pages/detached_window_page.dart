@@ -461,6 +461,7 @@ class _DetachedPanelAppState extends State<DetachedPanelApp>
       // 与主窗口同一套主题工厂：玻璃/配色/字体设置跟随主窗口。
       theme: AppTheme.light(
         seedColor: cfg.themeColor,
+        useThemeColor: cfg.useThemeColor,
         fontFamily: cfg.fontFamily,
         fontSize: cfg.fontSize,
         fontWeight: cfg.fontWeightValue,
@@ -469,6 +470,7 @@ class _DetachedPanelAppState extends State<DetachedPanelApp>
       ),
       darkTheme: AppTheme.dark(
         seedColor: cfg.themeColor,
+        useThemeColor: cfg.useThemeColor,
         fontFamily: cfg.fontFamily,
         fontSize: cfg.fontSize,
         fontWeight: cfg.fontWeightValue,

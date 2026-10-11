@@ -16,8 +16,10 @@ const _uuid = Uuid();
 ///   * AppTheme 对空串走 `fontFamilyFallback`（其中第一个就是 'Noto Sans CJK SC'），
 ///     效果与直接写 'Noto Sans CJK SC' 相同，但不会去应用一个安卓上并不存在的
 ///     字体族名（安卓系统字体的族名由 fonts.xml 决定，SDK 版本间并不统一）。
-final String _defaultFontFamily = Platform.isWindows ? 'Microsoft YaHei'
-    : Platform.isMacOS ? 'PingFang SC'
+final String _defaultFontFamily = Platform.isWindows
+    ? 'Microsoft YaHei'
+    : Platform.isMacOS
+    ? 'PingFang SC'
     : '';
 
 /// Android 上早期的默认字体族（见 [_defaultFontFamily] 的说明）。
@@ -39,7 +41,17 @@ enum MediaType { video, image, audio }
 
 const kImageExts = {'png', 'jpg', 'jpeg', 'bmp', 'webp', 'tiff', 'tif'};
 
-const kAudioExts = {'mp3', 'wav', 'flac', 'aac', 'm4a', 'ogg', 'opus', 'wma', 'ac3'};
+const kAudioExts = {
+  'mp3',
+  'wav',
+  'flac',
+  'aac',
+  'm4a',
+  'ogg',
+  'opus',
+  'wma',
+  'ac3',
+};
 
 MediaType detectMediaType(String filepath) {
   final ext = filepath.split('.').last.toLowerCase();
@@ -101,6 +113,7 @@ enum PipelineStepType {
   mediaSharpen,
   mediaOverlay,
   output,
+
   /// 新版 .fppx 强制导入的未知类型节点：真实类型 ID 存 [PipelineNode.unknownTypeId]，
   /// 仅可编辑/保存/原样导出，不参与转码执行。
   unknown,
@@ -111,96 +124,178 @@ class PipelineStep {
   PipelineStepType type;
   Map<String, dynamic> params;
 
-  PipelineStep({required this.id, required this.type, Map<String, dynamic>? params})
-      : params = params ?? {};
+  PipelineStep({
+    required this.id,
+    required this.type,
+    Map<String, dynamic>? params,
+  }) : params = params ?? {};
 
-  PipelineStep copy() => PipelineStep(id: _uuid.v4(), type: type, params: Map.of(params));
+  PipelineStep copy() =>
+      PipelineStep(id: _uuid.v4(), type: type, params: Map.of(params));
 
   String get label {
     switch (type) {
-      case PipelineStepType.start: return '开始';
-      case PipelineStepType.avProcess: return '音视频处理';
-      case PipelineStepType.subtitle: return '字幕烧录';
-      case PipelineStepType.clip: return '片段截取';
-      case PipelineStepType.frame: return '帧提取';
-      case PipelineStepType.speed: return '变速';
-      case PipelineStepType.imageConvert: return '图片转换';
-      case PipelineStepType.audioConvert: return '音频转换';
-      case PipelineStepType.audioQuality: return '音质调整';
-      case PipelineStepType.audioSpeed: return '调整速度';
-      case PipelineStepType.audioVolume: return '调整音量';
-      case PipelineStepType.audioCompressor: return '压缩动态范围';
-      case PipelineStepType.audioMetadata: return '元信息编辑';
-      case PipelineStepType.extractAudio: return '提取音频';
-      case PipelineStepType.concatMedia: return '合并媒体';
-      case PipelineStepType.imageToVideo: return '图片合成视频';
-      case PipelineStepType.imageCrop: return '图片裁剪';
-      case PipelineStepType.imageRotate: return '图片旋转';
-      case PipelineStepType.imageScale: return '图片缩放';
-      case PipelineStepType.imageBrightness: return '亮度调节';
-      case PipelineStepType.imageNoise: return '添加噪点';
-      case PipelineStepType.imageSharpen: return '图片锐化';
-      case PipelineStepType.imageDenoise: return '图片降噪';
-      case PipelineStepType.imageChannelExtract: return '通道提取';
-      case PipelineStepType.videoCrop: return '视频裁剪';
-      case PipelineStepType.videoFilter: return '视频滤镜';
-      case PipelineStepType.videoGeometry: return '画面变换';
-      case PipelineStepType.videoOverlay: return '画面叠加';
-      case PipelineStepType.audioFade: return '音频淡入淡出';
-      case PipelineStepType.imageAdjust: return '图片调整';
-      case PipelineStepType.mediaConvert: return '格式转换';
-      case PipelineStepType.mediaScale: return '缩放';
-      case PipelineStepType.mediaCrop: return '裁剪';
-      case PipelineStepType.mediaRotate: return '旋转翻转';
-      case PipelineStepType.mediaColor: return '色彩调整';
-      case PipelineStepType.mediaSharpen: return '锐化降噪';
-      case PipelineStepType.mediaOverlay: return '叠加';
-      case PipelineStepType.output: return '输出';
-      case PipelineStepType.unknown: return '未知节点';
+      case PipelineStepType.start:
+        return '开始';
+      case PipelineStepType.avProcess:
+        return '音视频处理';
+      case PipelineStepType.subtitle:
+        return '字幕烧录';
+      case PipelineStepType.clip:
+        return '片段截取';
+      case PipelineStepType.frame:
+        return '帧提取';
+      case PipelineStepType.speed:
+        return '变速';
+      case PipelineStepType.imageConvert:
+        return '图片转换';
+      case PipelineStepType.audioConvert:
+        return '音频转换';
+      case PipelineStepType.audioQuality:
+        return '音质调整';
+      case PipelineStepType.audioSpeed:
+        return '调整速度';
+      case PipelineStepType.audioVolume:
+        return '调整音量';
+      case PipelineStepType.audioCompressor:
+        return '压缩动态范围';
+      case PipelineStepType.audioMetadata:
+        return '元信息编辑';
+      case PipelineStepType.extractAudio:
+        return '提取音频';
+      case PipelineStepType.concatMedia:
+        return '合并媒体';
+      case PipelineStepType.imageToVideo:
+        return '图片合成视频';
+      case PipelineStepType.imageCrop:
+        return '图片裁剪';
+      case PipelineStepType.imageRotate:
+        return '图片旋转';
+      case PipelineStepType.imageScale:
+        return '图片缩放';
+      case PipelineStepType.imageBrightness:
+        return '亮度调节';
+      case PipelineStepType.imageNoise:
+        return '添加噪点';
+      case PipelineStepType.imageSharpen:
+        return '图片锐化';
+      case PipelineStepType.imageDenoise:
+        return '图片降噪';
+      case PipelineStepType.imageChannelExtract:
+        return '通道提取';
+      case PipelineStepType.videoCrop:
+        return '视频裁剪';
+      case PipelineStepType.videoFilter:
+        return '视频滤镜';
+      case PipelineStepType.videoGeometry:
+        return '画面变换';
+      case PipelineStepType.videoOverlay:
+        return '画面叠加';
+      case PipelineStepType.audioFade:
+        return '音频淡入淡出';
+      case PipelineStepType.imageAdjust:
+        return '图片调整';
+      case PipelineStepType.mediaConvert:
+        return '格式转换';
+      case PipelineStepType.mediaScale:
+        return '缩放';
+      case PipelineStepType.mediaCrop:
+        return '裁剪';
+      case PipelineStepType.mediaRotate:
+        return '旋转翻转';
+      case PipelineStepType.mediaColor:
+        return '色彩调整';
+      case PipelineStepType.mediaSharpen:
+        return '锐化降噪';
+      case PipelineStepType.mediaOverlay:
+        return '叠加';
+      case PipelineStepType.output:
+        return '输出';
+      case PipelineStepType.unknown:
+        return '未知节点';
     }
   }
 
   String get labelEn {
     switch (type) {
-      case PipelineStepType.start: return 'Start';
-      case PipelineStepType.avProcess: return 'AV Process';
-      case PipelineStepType.subtitle: return 'Subtitle';
-      case PipelineStepType.clip: return 'Clip';
-      case PipelineStepType.frame: return 'Frame';
-      case PipelineStepType.speed: return 'Speed';
-      case PipelineStepType.imageConvert: return 'Image Convert';
-      case PipelineStepType.audioConvert: return 'Audio Convert';
-      case PipelineStepType.audioQuality: return 'Audio Quality';
-      case PipelineStepType.audioSpeed: return 'Audio Speed';
-      case PipelineStepType.audioVolume: return 'Audio Volume';
-      case PipelineStepType.audioCompressor: return 'Dynamic Range';
-      case PipelineStepType.audioMetadata: return 'Metadata';
-      case PipelineStepType.extractAudio: return 'Extract Audio';
-      case PipelineStepType.concatMedia: return 'Concat Media';
-      case PipelineStepType.imageToVideo: return 'Image to Video';
-      case PipelineStepType.imageCrop: return 'Image Crop';
-      case PipelineStepType.imageRotate: return 'Image Rotate';
-      case PipelineStepType.imageScale: return 'Image Scale';
-      case PipelineStepType.imageBrightness: return 'Brightness';
-      case PipelineStepType.imageNoise: return 'Add Noise';
-      case PipelineStepType.imageSharpen: return 'Sharpen';
-      case PipelineStepType.imageDenoise: return 'Denoise';
-      case PipelineStepType.imageChannelExtract: return 'Channel Extract';
-      case PipelineStepType.videoCrop: return 'Video Crop';
-      case PipelineStepType.videoFilter: return 'Video Filter';
-      case PipelineStepType.videoGeometry: return 'Geometry';
-      case PipelineStepType.videoOverlay: return 'Overlay';
-      case PipelineStepType.audioFade: return 'Audio Fade';
-      case PipelineStepType.imageAdjust: return 'Image Adjust';
-      case PipelineStepType.mediaConvert: return 'Convert';
-      case PipelineStepType.mediaScale: return 'Scale';
-      case PipelineStepType.mediaCrop: return 'Crop';
-      case PipelineStepType.mediaRotate: return 'Rotate & Flip';
-      case PipelineStepType.mediaColor: return 'Color Adjust';
-      case PipelineStepType.mediaSharpen: return 'Sharpen & Denoise';
-      case PipelineStepType.mediaOverlay: return 'Overlay';
-      case PipelineStepType.output: return 'Output';
-      case PipelineStepType.unknown: return 'Unknown';
+      case PipelineStepType.start:
+        return 'Start';
+      case PipelineStepType.avProcess:
+        return 'AV Process';
+      case PipelineStepType.subtitle:
+        return 'Subtitle';
+      case PipelineStepType.clip:
+        return 'Clip';
+      case PipelineStepType.frame:
+        return 'Frame';
+      case PipelineStepType.speed:
+        return 'Speed';
+      case PipelineStepType.imageConvert:
+        return 'Image Convert';
+      case PipelineStepType.audioConvert:
+        return 'Audio Convert';
+      case PipelineStepType.audioQuality:
+        return 'Audio Quality';
+      case PipelineStepType.audioSpeed:
+        return 'Audio Speed';
+      case PipelineStepType.audioVolume:
+        return 'Audio Volume';
+      case PipelineStepType.audioCompressor:
+        return 'Dynamic Range';
+      case PipelineStepType.audioMetadata:
+        return 'Metadata';
+      case PipelineStepType.extractAudio:
+        return 'Extract Audio';
+      case PipelineStepType.concatMedia:
+        return 'Concat Media';
+      case PipelineStepType.imageToVideo:
+        return 'Image to Video';
+      case PipelineStepType.imageCrop:
+        return 'Image Crop';
+      case PipelineStepType.imageRotate:
+        return 'Image Rotate';
+      case PipelineStepType.imageScale:
+        return 'Image Scale';
+      case PipelineStepType.imageBrightness:
+        return 'Brightness';
+      case PipelineStepType.imageNoise:
+        return 'Add Noise';
+      case PipelineStepType.imageSharpen:
+        return 'Sharpen';
+      case PipelineStepType.imageDenoise:
+        return 'Denoise';
+      case PipelineStepType.imageChannelExtract:
+        return 'Channel Extract';
+      case PipelineStepType.videoCrop:
+        return 'Video Crop';
+      case PipelineStepType.videoFilter:
+        return 'Video Filter';
+      case PipelineStepType.videoGeometry:
+        return 'Geometry';
+      case PipelineStepType.videoOverlay:
+        return 'Overlay';
+      case PipelineStepType.audioFade:
+        return 'Audio Fade';
+      case PipelineStepType.imageAdjust:
+        return 'Image Adjust';
+      case PipelineStepType.mediaConvert:
+        return 'Convert';
+      case PipelineStepType.mediaScale:
+        return 'Scale';
+      case PipelineStepType.mediaCrop:
+        return 'Crop';
+      case PipelineStepType.mediaRotate:
+        return 'Rotate & Flip';
+      case PipelineStepType.mediaColor:
+        return 'Color Adjust';
+      case PipelineStepType.mediaSharpen:
+        return 'Sharpen & Denoise';
+      case PipelineStepType.mediaOverlay:
+        return 'Overlay';
+      case PipelineStepType.output:
+        return 'Output';
+      case PipelineStepType.unknown:
+        return 'Unknown';
     }
   }
 }
@@ -212,13 +307,13 @@ class PipelineStep {
 // ═══════════════════════════════════════════
 
 enum LogicGateType {
-  and,    // 与门：所有输入为 1 时输出 1
-  or,     // 或门：任一输入为 1 时输出 1
-  not,    // 非门：单输入取反
-  nand,   // 与非门：与门的非
-  nor,    // 或非门：或门的非
-  xor,    // 异或门：输入不同时输出 1
-  xnor,   // 同或门：输入相同时输出 1
+  and, // 与门：所有输入为 1 时输出 1
+  or, // 或门：任一输入为 1 时输出 1
+  not, // 非门：单输入取反
+  nand, // 与非门：与门的非
+  nor, // 或非门：或门的非
+  xor, // 异或门：输入不同时输出 1
+  xnor, // 同或门：输入相同时输出 1
   const1, // 恒 1：恒定输出 1（无输入）
   const0, // 恒 0：恒定输出 0（无输入）
   timeTrigger; // 时间触发器：系统时间匹配时输出 1，否则 0（无输入，需配置时间/日期）
@@ -226,11 +321,14 @@ enum LogicGateType {
   /// 该逻辑门的常规输入数（恒1/恒0/时间触发器 为 0，非门为 1，其余为 2）
   int get inputCount => switch (this) {
     LogicGateType.not => 1,
-    LogicGateType.const1 || LogicGateType.const0 || LogicGateType.timeTrigger => 0,
+    LogicGateType.const1 ||
+    LogicGateType.const0 ||
+    LogicGateType.timeTrigger => 0,
     _ => 2,
   };
 
-  bool get isConstant => this == LogicGateType.const1 || this == LogicGateType.const0;
+  bool get isConstant =>
+      this == LogicGateType.const1 || this == LogicGateType.const0;
 
   /// ANSI/IEEE 标准符号文本（无输入端的恒1/恒0 直接用数字）
   String symbol(bool isZh) => switch (this) {
@@ -252,29 +350,46 @@ class PipelineNode {
   PipelineStepType type;
   Map<String, dynamic> params;
   double x, y;
+
   /// 逻辑门类型名（null 表示普通媒体处理节点）。逻辑门是控制流节点，
   /// 只通过控制连线连接"使能端/状态端"，不参与媒体数据流。
   String? gateType;
+
   /// 新版 .fppx 强制导入时保留的原始 16B 节点类型 ID（十进制）。
   /// 仅 [PipelineStepType.unknown] 节点携带；原样导出以保住往返。
   int? unknownTypeId;
 
   PipelineNode({
-    required this.id, required this.type, Map<String, dynamic>? params,
-    this.x = 0, this.y = 0, this.gateType, this.unknownTypeId,
+    required this.id,
+    required this.type,
+    Map<String, dynamic>? params,
+    this.x = 0,
+    this.y = 0,
+    this.gateType,
+    this.unknownTypeId,
   }) : params = params ?? {};
 
   PipelineNode copy() => PipelineNode(
-    id: _uuid.v4(), type: type, params: Map.of(params),
-    x: x, y: y, gateType: gateType, unknownTypeId: unknownTypeId,
+    id: _uuid.v4(),
+    type: type,
+    params: Map.of(params),
+    x: x,
+    y: y,
+    gateType: gateType,
+    unknownTypeId: unknownTypeId,
   );
 
   /// 保留 id 的深拷贝，用于 undo/redo 快照。
   /// params 递归复制，确保快照不被后续参数编辑回溯改写；
   /// 相比 jsonEncode→jsonDecode 往返，省去字符串编解码与类型转换开销。
   PipelineNode deepCopy() => PipelineNode(
-    id: id, type: type, params: deepCopyMap(params),
-    x: x, y: y, gateType: gateType, unknownTypeId: unknownTypeId,
+    id: id,
+    type: type,
+    params: deepCopyMap(params),
+    x: x,
+    y: y,
+    gateType: gateType,
+    unknownTypeId: unknownTypeId,
   );
 
   /// 递归深拷贝一个 params Map（供 PipelineNode / LogicBlock 快照共用）。
@@ -313,6 +428,7 @@ class PipelineNode {
     final g = gate;
     return isGate && g != null && g.inputCount > 0;
   }
+
   /// 逻辑门是否可输出（所有逻辑门都有输出）
   bool get hasGateOutput => isGate;
 
@@ -345,49 +461,132 @@ class PipelineNode {
 
   /// 通用节点各自支持哪些媒体类型（顺序即选择器展示序）。
   /// 不在表中的组合在选择器里不出现（如「缩放」没有音频语义）。
-  static const Map<PipelineStepType, List<MediaType>> genericSupportedKinds =
-      <PipelineStepType, List<MediaType>>{
-    PipelineStepType.mediaConvert: <MediaType>[MediaType.video, MediaType.image, MediaType.audio],
+  static const Map<PipelineStepType, List<MediaType>>
+  genericSupportedKinds = <PipelineStepType, List<MediaType>>{
+    PipelineStepType.mediaConvert: <MediaType>[
+      MediaType.video,
+      MediaType.image,
+      MediaType.audio,
+    ],
     PipelineStepType.mediaScale: <MediaType>[MediaType.video, MediaType.image],
     PipelineStepType.mediaCrop: <MediaType>[MediaType.video, MediaType.image],
     PipelineStepType.mediaRotate: <MediaType>[MediaType.video, MediaType.image],
     PipelineStepType.mediaColor: <MediaType>[MediaType.video, MediaType.image],
-    PipelineStepType.mediaSharpen: <MediaType>[MediaType.video, MediaType.image],
+    PipelineStepType.mediaSharpen: <MediaType>[
+      MediaType.video,
+      MediaType.image,
+    ],
     PipelineStepType.mediaOverlay: <MediaType>[MediaType.video],
   };
 
   /// 通用节点在每个媒体类型下允许落盘的参数键（必须与 node_registry.cpp
   /// 中该节点 paramKeys 的登记范围一致）。切换媒体类型时据此清掉不适用键 ——
   /// 否则残留键已登记在别的旧节点名下，v2 导出会判 PKC_MISMATCH 拒绝写盘。
-  static const Map<PipelineStepType, Map<MediaType, Set<String>>> genericParamKeys =
-      <PipelineStepType, Map<MediaType, Set<String>>>{
+  static const Map<PipelineStepType, Map<MediaType, Set<String>>>
+  genericParamKeys = <PipelineStepType, Map<MediaType, Set<String>>>{
     PipelineStepType.mediaConvert: <MediaType, Set<String>>{
-      MediaType.video: <String>{'video_codec', 'audio_codec', 'preset', 'gpu', 'resolution', 'resolution_w', 'resolution_h', 'rate_mode', 'crf', 'video_bitrate', 'vf_filters', 'af_filters', 'overwrite', 'sample_rate', 'pix_fmt', 'fps', 'fps_value', 'audio_bitrate', 'audio_bitrate_mode', 'audio_channels'},
+      MediaType.video: <String>{
+        'video_codec',
+        'audio_codec',
+        'preset',
+        'gpu',
+        'resolution',
+        'resolution_w',
+        'resolution_h',
+        'rate_mode',
+        'crf',
+        'video_bitrate',
+        'vf_filters',
+        'af_filters',
+        'overwrite',
+        'sample_rate',
+        'pix_fmt',
+        'fps',
+        'fps_value',
+        'audio_bitrate',
+        'audio_bitrate_mode',
+        'audio_channels',
+      },
       MediaType.image: <String>{'output_format', 'quality'},
       MediaType.audio: <String>{'audio_codec', 'output_format'},
     },
     PipelineStepType.mediaScale: <MediaType, Set<String>>{
-      MediaType.video: <String>{'scale_mode', 'scale_width', 'scale_height', 'scale_percent', 'flip', 'rotate'},
-      MediaType.image: <String>{'scale_mode', 'scale_factor', 'random_min', 'random_max'},
+      MediaType.video: <String>{
+        'scale_mode',
+        'scale_width',
+        'scale_height',
+        'scale_percent',
+        'flip',
+        'rotate',
+      },
+      MediaType.image: <String>{
+        'scale_mode',
+        'scale_factor',
+        'random_min',
+        'random_max',
+      },
     },
     PipelineStepType.mediaCrop: <MediaType, Set<String>>{
       MediaType.video: <String>{'crop_w', 'crop_h', 'crop_x', 'crop_y'},
       MediaType.image: <String>{'crop_w', 'crop_h', 'crop_x', 'crop_y'},
     },
     PipelineStepType.mediaRotate: <MediaType, Set<String>>{
-      MediaType.video: <String>{'scale_mode', 'scale_width', 'scale_height', 'scale_percent', 'flip', 'rotate'},
-      MediaType.image: <String>{'rotate_mode', 'angle', 'random_min', 'random_max'},
+      MediaType.video: <String>{
+        'scale_mode',
+        'scale_width',
+        'scale_height',
+        'scale_percent',
+        'flip',
+        'rotate',
+      },
+      MediaType.image: <String>{
+        'rotate_mode',
+        'angle',
+        'random_min',
+        'random_max',
+      },
     },
     PipelineStepType.mediaColor: <MediaType, Set<String>>{
-      MediaType.video: <String>{'presets', 'eq_brightness', 'eq_contrast', 'eq_saturation', 'eq_gamma', 'hue_degrees', 'vignette_angle', 'denoise_strength', 'unsharp_amount'},
+      MediaType.video: <String>{
+        'presets',
+        'eq_brightness',
+        'eq_contrast',
+        'eq_saturation',
+        'eq_gamma',
+        'hue_degrees',
+        'vignette_angle',
+        'denoise_strength',
+        'unsharp_amount',
+      },
       MediaType.image: <String>{'saturation', 'gamma', 'contrast'},
     },
     PipelineStepType.mediaSharpen: <MediaType, Set<String>>{
-      MediaType.video: <String>{'presets', 'eq_brightness', 'eq_contrast', 'eq_saturation', 'eq_gamma', 'hue_degrees', 'vignette_angle', 'denoise_strength', 'unsharp_amount'},
-      MediaType.image: <String>{'sharpen_mode', 'sharpen_strength', 'random_min', 'random_max'},
+      MediaType.video: <String>{
+        'presets',
+        'eq_brightness',
+        'eq_contrast',
+        'eq_saturation',
+        'eq_gamma',
+        'hue_degrees',
+        'vignette_angle',
+        'denoise_strength',
+        'unsharp_amount',
+      },
+      MediaType.image: <String>{
+        'sharpen_mode',
+        'sharpen_strength',
+        'random_min',
+        'random_max',
+      },
     },
     PipelineStepType.mediaOverlay: <MediaType, Set<String>>{
-      MediaType.video: <String>{'overlay_path', 'position', 'opacity', 'margin', 'overlay_scale'},
+      MediaType.video: <String>{
+        'overlay_path',
+        'position',
+        'opacity',
+        'margin',
+        'overlay_scale',
+      },
     },
   };
 
@@ -402,20 +601,35 @@ class PipelineNode {
     if (!isGenericMedia) return;
     params[mediaTypeParamKey] = k.name;
     final allowed = genericParamKeys[type]?[k] ?? const <String>{};
-    const reserved = <String>{'node_name', 'container_file_select', 'container_selected_indices'};
-    params.removeWhere((key, _) =>
-        key != mediaTypeParamKey && !reserved.contains(key) && !allowed.contains(key));
+    const reserved = <String>{
+      'node_name',
+      'container_file_select',
+      'container_selected_indices',
+    };
+    params.removeWhere(
+      (key, _) =>
+          key != mediaTypeParamKey &&
+          !reserved.contains(key) &&
+          !allowed.contains(key),
+    );
   }
 
   Map<String, dynamic> toJson() => {
-    'id': id, 'type': type.name, 'params': params, 'x': x, 'y': y,
+    'id': id,
+    'type': type.name,
+    'params': params,
+    'x': x,
+    'y': y,
     if (gateType != null) 'gate': gateType,
     if (unknownTypeId != null) 'type_id': unknownTypeId,
   };
 
   factory PipelineNode.fromJson(Map<String, dynamic> json) => PipelineNode(
     id: json['id'] as String? ?? _uuid.v4(),
-    type: PipelineStepType.values.firstWhere((t) => t.name == json['type'], orElse: () => PipelineStepType.unknown),
+    type: PipelineStepType.values.firstWhere(
+      (t) => t.name == json['type'],
+      orElse: () => PipelineStepType.unknown,
+    ),
     params: (json['params'] as Map<String, dynamic>?) ?? {},
     x: (json['x'] as num?)?.toDouble() ?? 0,
     y: (json['y'] as num?)?.toDouble() ?? 0,
@@ -425,44 +639,82 @@ class PipelineNode {
 
   String get label {
     switch (type) {
-      case PipelineStepType.start: return '源文件';
-      case PipelineStepType.avProcess: return '音视频处理';
-      case PipelineStepType.subtitle: return '字幕烧录';
-      case PipelineStepType.clip: return '片段截取';
-      case PipelineStepType.frame: return '帧提取';
-      case PipelineStepType.speed: return '变速';
-      case PipelineStepType.imageConvert: return '图片转换';
-      case PipelineStepType.audioConvert: return '音频转换';
-      case PipelineStepType.audioQuality: return '音质调整';
-      case PipelineStepType.audioSpeed: return '调整速度';
-      case PipelineStepType.audioVolume: return '调整音量';
-      case PipelineStepType.audioCompressor: return '压缩动态范围';
-      case PipelineStepType.audioMetadata: return '元信息编辑';
-      case PipelineStepType.extractAudio: return '提取音频';
-      case PipelineStepType.concatMedia: return '合并媒体';
-      case PipelineStepType.imageToVideo: return '图片合成视频';
-      case PipelineStepType.imageCrop: return '图片裁剪';
-      case PipelineStepType.imageRotate: return '图片旋转';
-      case PipelineStepType.imageScale: return '图片缩放';
-      case PipelineStepType.imageBrightness: return '亮度调节';
-      case PipelineStepType.imageNoise: return '添加噪点';
-      case PipelineStepType.imageSharpen: return '图片锐化';
-      case PipelineStepType.imageDenoise: return '图片降噪';
-      case PipelineStepType.imageChannelExtract: return '通道提取';
-      case PipelineStepType.videoCrop: return '视频裁剪';
-      case PipelineStepType.videoFilter: return '视频滤镜';
-      case PipelineStepType.videoGeometry: return '画面变换';
-      case PipelineStepType.videoOverlay: return '画面叠加';
-      case PipelineStepType.audioFade: return '音频淡入淡出';
-      case PipelineStepType.imageAdjust: return '图片调整';
-      case PipelineStepType.mediaConvert: return '格式转换';
-      case PipelineStepType.mediaScale: return '缩放';
-      case PipelineStepType.mediaCrop: return '裁剪';
-      case PipelineStepType.mediaRotate: return '旋转翻转';
-      case PipelineStepType.mediaColor: return '色彩调整';
-      case PipelineStepType.mediaSharpen: return '锐化降噪';
-      case PipelineStepType.mediaOverlay: return '叠加';
-      case PipelineStepType.output: return '输出';
+      case PipelineStepType.start:
+        return '源文件';
+      case PipelineStepType.avProcess:
+        return '音视频处理';
+      case PipelineStepType.subtitle:
+        return '字幕烧录';
+      case PipelineStepType.clip:
+        return '片段截取';
+      case PipelineStepType.frame:
+        return '帧提取';
+      case PipelineStepType.speed:
+        return '变速';
+      case PipelineStepType.imageConvert:
+        return '图片转换';
+      case PipelineStepType.audioConvert:
+        return '音频转换';
+      case PipelineStepType.audioQuality:
+        return '音质调整';
+      case PipelineStepType.audioSpeed:
+        return '调整速度';
+      case PipelineStepType.audioVolume:
+        return '调整音量';
+      case PipelineStepType.audioCompressor:
+        return '压缩动态范围';
+      case PipelineStepType.audioMetadata:
+        return '元信息编辑';
+      case PipelineStepType.extractAudio:
+        return '提取音频';
+      case PipelineStepType.concatMedia:
+        return '合并媒体';
+      case PipelineStepType.imageToVideo:
+        return '图片合成视频';
+      case PipelineStepType.imageCrop:
+        return '图片裁剪';
+      case PipelineStepType.imageRotate:
+        return '图片旋转';
+      case PipelineStepType.imageScale:
+        return '图片缩放';
+      case PipelineStepType.imageBrightness:
+        return '亮度调节';
+      case PipelineStepType.imageNoise:
+        return '添加噪点';
+      case PipelineStepType.imageSharpen:
+        return '图片锐化';
+      case PipelineStepType.imageDenoise:
+        return '图片降噪';
+      case PipelineStepType.imageChannelExtract:
+        return '通道提取';
+      case PipelineStepType.videoCrop:
+        return '视频裁剪';
+      case PipelineStepType.videoFilter:
+        return '视频滤镜';
+      case PipelineStepType.videoGeometry:
+        return '画面变换';
+      case PipelineStepType.videoOverlay:
+        return '画面叠加';
+      case PipelineStepType.audioFade:
+        return '音频淡入淡出';
+      case PipelineStepType.imageAdjust:
+        return '图片调整';
+      case PipelineStepType.mediaConvert:
+        return '格式转换';
+      case PipelineStepType.mediaScale:
+        return '缩放';
+      case PipelineStepType.mediaCrop:
+        return '裁剪';
+      case PipelineStepType.mediaRotate:
+        return '旋转翻转';
+      case PipelineStepType.mediaColor:
+        return '色彩调整';
+      case PipelineStepType.mediaSharpen:
+        return '锐化降噪';
+      case PipelineStepType.mediaOverlay:
+        return '叠加';
+      case PipelineStepType.output:
+        return '输出';
       case PipelineStepType.unknown:
         return '未知节点${unknownTypeId == null ? '' : ' $unknownTypeId'}';
     }
@@ -470,45 +722,84 @@ class PipelineNode {
 
   String get labelEn {
     switch (type) {
-      case PipelineStepType.start: return 'Source';
-      case PipelineStepType.avProcess: return 'AV Process';
-      case PipelineStepType.subtitle: return 'Subtitle';
-      case PipelineStepType.clip: return 'Clip';
-      case PipelineStepType.frame: return 'Frame';
-      case PipelineStepType.speed: return 'Speed';
-      case PipelineStepType.imageConvert: return 'Image Convert';
-      case PipelineStepType.audioConvert: return 'Audio Convert';
-      case PipelineStepType.audioQuality: return 'Audio Quality';
-      case PipelineStepType.audioSpeed: return 'Audio Speed';
-      case PipelineStepType.audioVolume: return 'Audio Volume';
-      case PipelineStepType.audioCompressor: return 'Dynamic Range';
-      case PipelineStepType.audioMetadata: return 'Metadata';
-      case PipelineStepType.extractAudio: return 'Extract Audio';
-      case PipelineStepType.concatMedia: return 'Concat Media';
-      case PipelineStepType.imageToVideo: return 'Image to Video';
-      case PipelineStepType.imageCrop: return 'Image Crop';
-      case PipelineStepType.imageRotate: return 'Image Rotate';
-      case PipelineStepType.imageScale: return 'Image Scale';
-      case PipelineStepType.imageBrightness: return 'Brightness';
-      case PipelineStepType.imageNoise: return 'Add Noise';
-      case PipelineStepType.imageSharpen: return 'Sharpen';
-      case PipelineStepType.imageDenoise: return 'Denoise';
-      case PipelineStepType.imageChannelExtract: return 'Channel Extract';
-      case PipelineStepType.videoCrop: return 'Video Crop';
-      case PipelineStepType.videoFilter: return 'Video Filter';
-      case PipelineStepType.videoGeometry: return 'Geometry';
-      case PipelineStepType.videoOverlay: return 'Overlay';
-      case PipelineStepType.audioFade: return 'Audio Fade';
-      case PipelineStepType.imageAdjust: return 'Image Adjust';
-      case PipelineStepType.mediaConvert: return 'Convert';
-      case PipelineStepType.mediaScale: return 'Scale';
-      case PipelineStepType.mediaCrop: return 'Crop';
-      case PipelineStepType.mediaRotate: return 'Rotate & Flip';
-      case PipelineStepType.mediaColor: return 'Color Adjust';
-      case PipelineStepType.mediaSharpen: return 'Sharpen & Denoise';
-      case PipelineStepType.mediaOverlay: return 'Overlay';
-      case PipelineStepType.output: return 'Output';
-      case PipelineStepType.unknown: return 'Unknown';
+      case PipelineStepType.start:
+        return 'Source';
+      case PipelineStepType.avProcess:
+        return 'AV Process';
+      case PipelineStepType.subtitle:
+        return 'Subtitle';
+      case PipelineStepType.clip:
+        return 'Clip';
+      case PipelineStepType.frame:
+        return 'Frame';
+      case PipelineStepType.speed:
+        return 'Speed';
+      case PipelineStepType.imageConvert:
+        return 'Image Convert';
+      case PipelineStepType.audioConvert:
+        return 'Audio Convert';
+      case PipelineStepType.audioQuality:
+        return 'Audio Quality';
+      case PipelineStepType.audioSpeed:
+        return 'Audio Speed';
+      case PipelineStepType.audioVolume:
+        return 'Audio Volume';
+      case PipelineStepType.audioCompressor:
+        return 'Dynamic Range';
+      case PipelineStepType.audioMetadata:
+        return 'Metadata';
+      case PipelineStepType.extractAudio:
+        return 'Extract Audio';
+      case PipelineStepType.concatMedia:
+        return 'Concat Media';
+      case PipelineStepType.imageToVideo:
+        return 'Image to Video';
+      case PipelineStepType.imageCrop:
+        return 'Image Crop';
+      case PipelineStepType.imageRotate:
+        return 'Image Rotate';
+      case PipelineStepType.imageScale:
+        return 'Image Scale';
+      case PipelineStepType.imageBrightness:
+        return 'Brightness';
+      case PipelineStepType.imageNoise:
+        return 'Add Noise';
+      case PipelineStepType.imageSharpen:
+        return 'Sharpen';
+      case PipelineStepType.imageDenoise:
+        return 'Denoise';
+      case PipelineStepType.imageChannelExtract:
+        return 'Channel Extract';
+      case PipelineStepType.videoCrop:
+        return 'Video Crop';
+      case PipelineStepType.videoFilter:
+        return 'Video Filter';
+      case PipelineStepType.videoGeometry:
+        return 'Geometry';
+      case PipelineStepType.videoOverlay:
+        return 'Overlay';
+      case PipelineStepType.audioFade:
+        return 'Audio Fade';
+      case PipelineStepType.imageAdjust:
+        return 'Image Adjust';
+      case PipelineStepType.mediaConvert:
+        return 'Convert';
+      case PipelineStepType.mediaScale:
+        return 'Scale';
+      case PipelineStepType.mediaCrop:
+        return 'Crop';
+      case PipelineStepType.mediaRotate:
+        return 'Rotate & Flip';
+      case PipelineStepType.mediaColor:
+        return 'Color Adjust';
+      case PipelineStepType.mediaSharpen:
+        return 'Sharpen & Denoise';
+      case PipelineStepType.mediaOverlay:
+        return 'Overlay';
+      case PipelineStepType.output:
+        return 'Output';
+      case PipelineStepType.unknown:
+        return 'Unknown';
     }
   }
 
@@ -552,23 +843,30 @@ class PipelineNode {
       PipelineStepType.videoOverlay => {MediaType.video},
       PipelineStepType.audioFade => {MediaType.audio},
       PipelineStepType.imageAdjust => {MediaType.image},
-      PipelineStepType.output => {MediaType.video, MediaType.image, MediaType.audio},
+      PipelineStepType.output => {
+        MediaType.video,
+        MediaType.image,
+        MediaType.audio,
+      },
       PipelineStepType.unknown => {},
-        PipelineStepType.mediaConvert ||
-        PipelineStepType.mediaScale ||
-        PipelineStepType.mediaCrop ||
-        PipelineStepType.mediaRotate ||
-        PipelineStepType.mediaColor ||
-        PipelineStepType.mediaSharpen ||
-        PipelineStepType.mediaOverlay => const <MediaType>{},
+      PipelineStepType.mediaConvert ||
+      PipelineStepType.mediaScale ||
+      PipelineStepType.mediaCrop ||
+      PipelineStepType.mediaRotate ||
+      PipelineStepType.mediaColor ||
+      PipelineStepType.mediaSharpen ||
+      PipelineStepType.mediaOverlay => const <MediaType>{},
     };
   }
 
   MediaType? get outputType {
     if (isGenericMedia) return mediaKind;
     return switch (type) {
-      PipelineStepType.start => switch (params['file_media_type'] as String? ?? 'video') {
-        'audio' => MediaType.audio, 'image' => MediaType.image, _ => MediaType.video,
+      PipelineStepType.start => switch (params['file_media_type'] as String? ??
+          'video') {
+        'audio' => MediaType.audio,
+        'image' => MediaType.image,
+        _ => MediaType.video,
       },
       PipelineStepType.avProcess => MediaType.video,
       PipelineStepType.subtitle => MediaType.video,
@@ -601,13 +899,13 @@ class PipelineNode {
       PipelineStepType.imageAdjust => MediaType.image,
       PipelineStepType.output => null,
       PipelineStepType.unknown => null,
-        PipelineStepType.mediaConvert ||
-        PipelineStepType.mediaScale ||
-        PipelineStepType.mediaCrop ||
-        PipelineStepType.mediaRotate ||
-        PipelineStepType.mediaColor ||
-        PipelineStepType.mediaSharpen ||
-        PipelineStepType.mediaOverlay => null,
+      PipelineStepType.mediaConvert ||
+      PipelineStepType.mediaScale ||
+      PipelineStepType.mediaCrop ||
+      PipelineStepType.mediaRotate ||
+      PipelineStepType.mediaColor ||
+      PipelineStepType.mediaSharpen ||
+      PipelineStepType.mediaOverlay => null,
     };
   }
 
@@ -627,24 +925,46 @@ class PipelineConnection {
   final String id;
   final String fromNodeId;
   final String toNodeId;
+
   /// 连线类型：'data' 数据流（媒体载荷） / 'control' 控制流（使能/状态/逻辑信号）
   String kind;
 
-  PipelineConnection({required this.id, required this.fromNodeId, required this.toNodeId, this.kind = 'data'});
+  PipelineConnection({
+    required this.id,
+    required this.fromNodeId,
+    required this.toNodeId,
+    this.kind = 'data',
+  });
 
-  PipelineConnection copy() => PipelineConnection(id: _uuid.v4(), fromNodeId: fromNodeId, toNodeId: toNodeId, kind: kind);
+  PipelineConnection copy() => PipelineConnection(
+    id: _uuid.v4(),
+    fromNodeId: fromNodeId,
+    toNodeId: toNodeId,
+    kind: kind,
+  );
 
   /// 保留 id 的拷贝（字段全为不可变标量，无需递归深拷贝），用于 undo/redo 快照。
-  PipelineConnection deepCopy() => PipelineConnection(id: id, fromNodeId: fromNodeId, toNodeId: toNodeId, kind: kind);
-
-  Map<String, dynamic> toJson() => {'id': id, 'from': fromNodeId, 'to': toNodeId, if (kind != 'data') 'kind': kind};
-
-  factory PipelineConnection.fromJson(Map<String, dynamic> json) => PipelineConnection(
-    id: json['id'] as String? ?? _uuid.v4(),
-    fromNodeId: json['from'] as String? ?? '',
-    toNodeId: json['to'] as String? ?? '',
-    kind: (json['kind'] as String?) ?? 'data',
+  PipelineConnection deepCopy() => PipelineConnection(
+    id: id,
+    fromNodeId: fromNodeId,
+    toNodeId: toNodeId,
+    kind: kind,
   );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'from': fromNodeId,
+    'to': toNodeId,
+    if (kind != 'data') 'kind': kind,
+  };
+
+  factory PipelineConnection.fromJson(Map<String, dynamic> json) =>
+      PipelineConnection(
+        id: json['id'] as String? ?? _uuid.v4(),
+        fromNodeId: json['from'] as String? ?? '',
+        toNodeId: json['to'] as String? ?? '',
+        kind: (json['kind'] as String?) ?? 'data',
+      );
 }
 
 // ═══════════════════════════════════════════
@@ -689,10 +1009,12 @@ String logicBlockTypeLabel(LogicBlockType t, bool zh) => switch (t) {
 
 /// 逻辑块类型的一句话说明，用于工具箱预览与属性面板副标题。
 String logicBlockTypeHint(LogicBlockType t, bool zh) => switch (t) {
-  LogicBlockType.loop => zh ? '框内节点整体重复执行 N 次' : 'Repeat the boxed nodes N times',
+  LogicBlockType.loop =>
+    zh ? '框内节点整体重复执行 N 次' : 'Repeat the boxed nodes N times',
   LogicBlockType.selectiveLoop =>
     zh ? '每轮按模式决定执行框内哪些节点' : 'Pick which boxed nodes run each round',
-  LogicBlockType.group => zh ? '纯组织容器，不改变执行次数' : 'Organizational container only',
+  LogicBlockType.group =>
+    zh ? '纯组织容器，不改变执行次数' : 'Organizational container only',
   LogicBlockType.condition =>
     zh ? '按输入文件属性决定是否执行' : 'Run only when the input matches',
 };
@@ -726,38 +1048,61 @@ class LogicBlock {
   double x, y, width, height;
 
   LogicBlock({
-    required this.id, required this.type, this.name = '',
-    List<String>? childNodeIds, Map<String, dynamic>? params,
-    this.x = 0, this.y = 0, this.width = 200, this.height = 100,
+    required this.id,
+    required this.type,
+    this.name = '',
+    List<String>? childNodeIds,
+    Map<String, dynamic>? params,
+    this.x = 0,
+    this.y = 0,
+    this.width = 200,
+    this.height = 100,
   }) : childNodeIds = childNodeIds ?? [],
        params = params ?? {};
 
   LogicBlock copy() => LogicBlock(
-    id: _uuid.v4(), type: type, name: name,
+    id: _uuid.v4(),
+    type: type,
+    name: name,
     childNodeIds: List.of(childNodeIds),
     params: Map.of(params),
-    x: x, y: y, width: width, height: height,
+    x: x,
+    y: y,
+    width: width,
+    height: height,
   );
 
   /// 保留 id 的深拷贝，用于 undo/redo 快照（params 递归复制、childNodeIds 复制）。
   LogicBlock deepCopy() => LogicBlock(
-    id: id, type: type, name: name,
+    id: id,
+    type: type,
+    name: name,
     childNodeIds: List.of(childNodeIds),
     params: PipelineNode.deepCopyMap(params),
-    x: x, y: y, width: width, height: height,
+    x: x,
+    y: y,
+    width: width,
+    height: height,
   );
 
   Map<String, dynamic> toJson() => {
-    'id': id, 'type': type.name, 'name': name,
+    'id': id,
+    'type': type.name,
+    'name': name,
     'childNodeIds': childNodeIds,
     'params': params,
-    'x': x, 'y': y, 'width': width, 'height': height,
+    'x': x,
+    'y': y,
+    'width': width,
+    'height': height,
   };
 
   factory LogicBlock.fromJson(Map<String, dynamic> json) => LogicBlock(
     id: json['id'] as String? ?? _uuid.v4(),
     type: LogicBlockType.values.firstWhere(
-      (t) => t.name == json['type'], orElse: () => LogicBlockType.loop),
+      (t) => t.name == json['type'],
+      orElse: () => LogicBlockType.loop,
+    ),
     name: json['name'] as String? ?? '',
     childNodeIds: (json['childNodeIds'] as List?)?.cast<String>() ?? [],
     params: (json['params'] as Map<String, dynamic>?) ?? {},
@@ -795,12 +1140,14 @@ class LogicBlock {
   }
 
   /// 迭代序号的首值：固定模式恒为 1，区间模式为 `from`。
-  int get iterationBase =>
-      params['countMode'] == 'range' ? ((params['from'] as num?)?.toInt() ?? 1) : 1;
+  int get iterationBase => params['countMode'] == 'range'
+      ? ((params['from'] as num?)?.toInt() ?? 1)
+      : 1;
 
   /// 迭代序号的步长：固定模式恒为 1，区间模式为 `step`。
-  int get iterationStep =>
-      params['countMode'] == 'range' ? math.max(1, (params['step'] as num?)?.toInt() ?? 1) : 1;
+  int get iterationStep => params['countMode'] == 'range'
+      ? math.max(1, (params['step'] as num?)?.toInt() ?? 1)
+      : 1;
 
   /// 第 [index]（0-based）轮迭代对应的**迭代序号**，供 `{i}` 占位符替换使用。
   int iterationNumber(int index) => iterationBase + index * iterationStep;
@@ -814,15 +1161,16 @@ class LogicBlock {
   /// 单轮失败重试次数（0 = 不重试），上限 10。
   int get retries => ((params['retries'] as num?)?.toInt() ?? 0).clamp(0, 10);
 
-  LogicConditionField get conditionField => LogicConditionField.values.firstWhere(
+  LogicConditionField get conditionField =>
+      LogicConditionField.values.firstWhere(
         (f) => f.name == (params['condField'] as String?),
         orElse: () => LogicConditionField.extension,
       );
 
   LogicConditionOp get conditionOp => LogicConditionOp.values.firstWhere(
-        (o) => o.name == (params['condOp'] as String?),
-        orElse: () => LogicConditionOp.eq,
-      );
+    (o) => o.name == (params['condOp'] as String?),
+    orElse: () => LogicConditionOp.eq,
+  );
 
   String get conditionValue => (params['condValue'] as String?) ?? '';
 
@@ -840,9 +1188,11 @@ class LogicBlock {
   String label(bool isZh) {
     final typeName = logicBlockTypeLabel(type, isZh);
     final suffix = switch (type) {
-      LogicBlockType.loop || LogicBlockType.selectiveLoop => ' x$effectiveCount',
+      LogicBlockType.loop ||
+      LogicBlockType.selectiveLoop => ' x$effectiveCount',
       LogicBlockType.condition => ' · ${conditionSummary(isZh)}',
-      LogicBlockType.group => ' · ${childNodeIds.length}${isZh ? ' 项' : ' items'}',
+      LogicBlockType.group =>
+        ' · ${childNodeIds.length}${isZh ? ' 项' : ' items'}',
     };
     final nameStr = name.isNotEmpty ? ' · $name' : '';
     return '$typeName$suffix$nameStr';
@@ -854,10 +1204,13 @@ class PipelineGraph {
   final List<PipelineConnection> connections;
   final List<LogicBlock> logicBlocks;
 
-  PipelineGraph({List<PipelineNode>? nodes, List<PipelineConnection>? connections, List<LogicBlock>? logicBlocks})
-      : nodes = nodes ?? [],
-        connections = connections ?? [],
-        logicBlocks = logicBlocks ?? [];
+  PipelineGraph({
+    List<PipelineNode>? nodes,
+    List<PipelineConnection>? connections,
+    List<LogicBlock>? logicBlocks,
+  }) : nodes = nodes ?? [],
+       connections = connections ?? [],
+       logicBlocks = logicBlocks ?? [];
 
   PipelineGraph copy() {
     final idMap = <String, String>{};
@@ -867,21 +1220,36 @@ class PipelineGraph {
       // unknownTypeId 必须一并复制：含未知节点的图被复制（撤销/重做、模板复用、
       // 容器复制）后若丢失该字段，再次导出时 type_id 变为 null，
       // 原本「原样保留、可重新导入」的未知节点会破坏 .fppx 往返契约（M-2）。
-      return PipelineNode(id: newId, type: n.type, params: Map.of(n.params),
-          x: n.x, y: n.y, gateType: n.gateType, unknownTypeId: n.unknownTypeId);
+      return PipelineNode(
+        id: newId,
+        type: n.type,
+        params: Map.of(n.params),
+        x: n.x,
+        y: n.y,
+        gateType: n.gateType,
+        unknownTypeId: n.unknownTypeId,
+      );
     }).toList();
-    final newConns = connections.map((c) => PipelineConnection(
-      id: _uuid.v4(),
-      fromNodeId: idMap[c.fromNodeId] ?? c.fromNodeId,
-      toNodeId: idMap[c.toNodeId] ?? c.toNodeId,
-      kind: c.kind,
-    )).toList();
+    final newConns = connections
+        .map(
+          (c) => PipelineConnection(
+            id: _uuid.v4(),
+            fromNodeId: idMap[c.fromNodeId] ?? c.fromNodeId,
+            toNodeId: idMap[c.toNodeId] ?? c.toNodeId,
+            kind: c.kind,
+          ),
+        )
+        .toList();
     final newBlocks = logicBlocks.map((b) {
       final nb = b.copy();
       nb.childNodeIds = b.childNodeIds.map((cid) => idMap[cid] ?? cid).toList();
       return nb;
     }).toList();
-    return PipelineGraph(nodes: newNodes, connections: newConns, logicBlocks: newBlocks);
+    return PipelineGraph(
+      nodes: newNodes,
+      connections: newConns,
+      logicBlocks: newBlocks,
+    );
   }
 
   /// 保留 id 的整体深拷贝，用于 undo/redo 快照与节点复制以外的场景。
@@ -895,13 +1263,20 @@ class PipelineGraph {
   Map<String, dynamic> toJson() => {
     'nodes': nodes.map((n) => n.toJson()).toList(),
     'connections': connections.map((c) => c.toJson()).toList(),
-    if (logicBlocks.isNotEmpty) 'logicBlocks': logicBlocks.map((b) => b.toJson()).toList(),
+    if (logicBlocks.isNotEmpty)
+      'logicBlocks': logicBlocks.map((b) => b.toJson()).toList(),
   };
 
   factory PipelineGraph.fromJson(Map<String, dynamic> json) => PipelineGraph(
-    nodes: (json['nodes'] as List?)?.map((n) => PipelineNode.fromJson(n as Map<String, dynamic>)).toList(),
-    connections: (json['connections'] as List?)?.map((c) => PipelineConnection.fromJson(c as Map<String, dynamic>)).toList(),
-    logicBlocks: (json['logicBlocks'] as List?)?.map((b) => LogicBlock.fromJson(b as Map<String, dynamic>)).toList(),
+    nodes: (json['nodes'] as List?)
+        ?.map((n) => PipelineNode.fromJson(n as Map<String, dynamic>))
+        .toList(),
+    connections: (json['connections'] as List?)
+        ?.map((c) => PipelineConnection.fromJson(c as Map<String, dynamic>))
+        .toList(),
+    logicBlocks: (json['logicBlocks'] as List?)
+        ?.map((b) => LogicBlock.fromJson(b as Map<String, dynamic>))
+        .toList(),
   );
 }
 
@@ -919,23 +1294,28 @@ class ProgressUpdate {
   final String remaining;
 
   ProgressUpdate({
-    required this.taskId, required this.progress,
-    required this.currentTime, required this.totalTime,
-    required this.speed, required this.fps,
-    required this.bitrate, required this.frame, required this.remaining,
+    required this.taskId,
+    required this.progress,
+    required this.currentTime,
+    required this.totalTime,
+    required this.speed,
+    required this.fps,
+    required this.bitrate,
+    required this.frame,
+    required this.remaining,
   });
 
   factory ProgressUpdate.fromJson(Map<String, dynamic> json) => ProgressUpdate(
-        taskId: json['task_id'] as String? ?? '',
-        progress: (json['progress'] as num?)?.toDouble() ?? 0,
-        currentTime: json['current_time'] as String? ?? '00:00:00',
-        totalTime: json['total_time'] as String? ?? '00:00:00',
-        speed: json['speed'] as String? ?? 'N/A',
-        fps: json['fps'] as String? ?? '0',
-        bitrate: json['bitrate'] as String? ?? '0 kb/s',
-        frame: (json['frame'] as num?)?.toInt() ?? 0,
-        remaining: json['remaining'] as String? ?? 'N/A',
-      );
+    taskId: json['task_id'] as String? ?? '',
+    progress: (json['progress'] as num?)?.toDouble() ?? 0,
+    currentTime: json['current_time'] as String? ?? '00:00:00',
+    totalTime: json['total_time'] as String? ?? '00:00:00',
+    speed: json['speed'] as String? ?? 'N/A',
+    fps: json['fps'] as String? ?? '0',
+    bitrate: json['bitrate'] as String? ?? '0 kb/s',
+    frame: (json['frame'] as num?)?.toInt() ?? 0,
+    remaining: json['remaining'] as String? ?? 'N/A',
+  );
 }
 
 // ═══════════════════════════════════════════
@@ -972,55 +1352,108 @@ class VideoFile {
   final MediaType fileMediaType;
 
   VideoFile({
-    required this.id, this.filepath = '', this.filename = '',
-    this.format = '', this.sizeMb = 0, this.duration = 0, this.durationStr = '',
-    this.bitRateKbps = 0, this.codec = '', this.codecLongName = '',
-    this.width = 0, this.height = 0, this.resolution = '', this.fps = 0,
-    this.pixFmt = '', this.isHdr = false, this.audioCodec = '',
-    this.audioChannels = 0, this.audioSampleRate = '',
-    this.hasSubtitles = false, this.subtitleCount = 0, this.subtitles = const [],
-    TranscodeConfig? config, PipelineGraph? pipelineGraph,
-    this.pipelineMode = PipelineMode.merged, this.parsed = false,
+    required this.id,
+    this.filepath = '',
+    this.filename = '',
+    this.format = '',
+    this.sizeMb = 0,
+    this.duration = 0,
+    this.durationStr = '',
+    this.bitRateKbps = 0,
+    this.codec = '',
+    this.codecLongName = '',
+    this.width = 0,
+    this.height = 0,
+    this.resolution = '',
+    this.fps = 0,
+    this.pixFmt = '',
+    this.isHdr = false,
+    this.audioCodec = '',
+    this.audioChannels = 0,
+    this.audioSampleRate = '',
+    this.hasSubtitles = false,
+    this.subtitleCount = 0,
+    this.subtitles = const [],
+    TranscodeConfig? config,
+    PipelineGraph? pipelineGraph,
+    this.pipelineMode = PipelineMode.merged,
+    this.parsed = false,
     this.fileMediaType = MediaType.video,
   }) : config = config ?? TranscodeConfig(),
        pipelineGraph = pipelineGraph ?? PipelineGraph();
 
   VideoFile copyWith({
-    String? filepath, String? filename, String? format, double? sizeMb,
-    double? duration, String? durationStr, double? bitRateKbps,
-    String? codec, String? codecLongName, int? width, int? height,
-    String? resolution, double? fps, String? pixFmt, bool? isHdr,
-    String? audioCodec, int? audioChannels, String? audioSampleRate,
-    bool? hasSubtitles, int? subtitleCount, List<SubtitleStream>? subtitles,
-    TranscodeConfig? config, PipelineGraph? pipelineGraph,
-    PipelineMode? pipelineMode, bool? parsed, MediaType? fileMediaType,
+    String? filepath,
+    String? filename,
+    String? format,
+    double? sizeMb,
+    double? duration,
+    String? durationStr,
+    double? bitRateKbps,
+    String? codec,
+    String? codecLongName,
+    int? width,
+    int? height,
+    String? resolution,
+    double? fps,
+    String? pixFmt,
+    bool? isHdr,
+    String? audioCodec,
+    int? audioChannels,
+    String? audioSampleRate,
+    bool? hasSubtitles,
+    int? subtitleCount,
+    List<SubtitleStream>? subtitles,
+    TranscodeConfig? config,
+    PipelineGraph? pipelineGraph,
+    PipelineMode? pipelineMode,
+    bool? parsed,
+    MediaType? fileMediaType,
   }) => VideoFile(
-        id: id, filepath: filepath ?? this.filepath,
-        filename: filename ?? this.filename, format: format ?? this.format,
-        sizeMb: sizeMb ?? this.sizeMb, duration: duration ?? this.duration,
-        durationStr: durationStr ?? this.durationStr, bitRateKbps: bitRateKbps ?? this.bitRateKbps,
-        codec: codec ?? this.codec, codecLongName: codecLongName ?? this.codecLongName,
-        width: width ?? this.width, height: height ?? this.height,
-        resolution: resolution ?? this.resolution, fps: fps ?? this.fps,
-        pixFmt: pixFmt ?? this.pixFmt, isHdr: isHdr ?? this.isHdr,
-        audioCodec: audioCodec ?? this.audioCodec, audioChannels: audioChannels ?? this.audioChannels,
-        audioSampleRate: audioSampleRate ?? this.audioSampleRate,
-        hasSubtitles: hasSubtitles ?? this.hasSubtitles, subtitleCount: subtitleCount ?? this.subtitleCount,
-        subtitles: subtitles ?? this.subtitles, config: config ?? this.config,
-        pipelineGraph: pipelineGraph ?? this.pipelineGraph,
-        pipelineMode: pipelineMode ?? this.pipelineMode, parsed: parsed ?? this.parsed,
-        fileMediaType: fileMediaType ?? this.fileMediaType,
-      );
+    id: id,
+    filepath: filepath ?? this.filepath,
+    filename: filename ?? this.filename,
+    format: format ?? this.format,
+    sizeMb: sizeMb ?? this.sizeMb,
+    duration: duration ?? this.duration,
+    durationStr: durationStr ?? this.durationStr,
+    bitRateKbps: bitRateKbps ?? this.bitRateKbps,
+    codec: codec ?? this.codec,
+    codecLongName: codecLongName ?? this.codecLongName,
+    width: width ?? this.width,
+    height: height ?? this.height,
+    resolution: resolution ?? this.resolution,
+    fps: fps ?? this.fps,
+    pixFmt: pixFmt ?? this.pixFmt,
+    isHdr: isHdr ?? this.isHdr,
+    audioCodec: audioCodec ?? this.audioCodec,
+    audioChannels: audioChannels ?? this.audioChannels,
+    audioSampleRate: audioSampleRate ?? this.audioSampleRate,
+    hasSubtitles: hasSubtitles ?? this.hasSubtitles,
+    subtitleCount: subtitleCount ?? this.subtitleCount,
+    subtitles: subtitles ?? this.subtitles,
+    config: config ?? this.config,
+    pipelineGraph: pipelineGraph ?? this.pipelineGraph,
+    pipelineMode: pipelineMode ?? this.pipelineMode,
+    parsed: parsed ?? this.parsed,
+    fileMediaType: fileMediaType ?? this.fileMediaType,
+  );
 
-  static MediaType _detectMediaType(String filepath) => detectMediaType(filepath);
+  static MediaType _detectMediaType(String filepath) =>
+      detectMediaType(filepath);
 
   factory VideoFile.fromFilepath(String filepath, {String? id}) => VideoFile(
-        id: id ?? _uuid.v4(), filepath: filepath,
-        filename: filepath.split('\\').last.split('/').last,
-        fileMediaType: _detectMediaType(filepath),
-      );
+    id: id ?? _uuid.v4(),
+    filepath: filepath,
+    filename: filepath.split('\\').last.split('/').last,
+    fileMediaType: _detectMediaType(filepath),
+  );
 
-  factory VideoFile.fromProbeResult(String filepath, Map<String, dynamic> info, {String? id}) {
+  factory VideoFile.fromProbeResult(
+    String filepath,
+    Map<String, dynamic> info, {
+    String? id,
+  }) {
     id ??= _uuid.v4();
     final mt = switch (info['media_type'] as String? ?? '') {
       'audio' => MediaType.audio,
@@ -1028,7 +1461,8 @@ class VideoFile {
       _ => _detectMediaType(filepath),
     };
     return VideoFile(
-      id: id, filepath: filepath,
+      id: id,
+      filepath: filepath,
       filename: info['filename'] as String? ?? '',
       format: info['format_long_name'] as String? ?? '',
       sizeMb: (info['size_mb'] as num?)?.toDouble() ?? 0,
@@ -1037,7 +1471,8 @@ class VideoFile {
       bitRateKbps: (info['bit_rate_kbps'] as num?)?.toDouble() ?? 0,
       codec: info['codec'] as String? ?? '',
       codecLongName: info['codec_long_name'] as String? ?? '',
-      width: AppConfig._asInt(info['width'], 0), height: AppConfig._asInt(info['height'], 0), // [FIX M-7]
+      width: AppConfig._asInt(info['width'], 0),
+      height: AppConfig._asInt(info['height'], 0), // [FIX M-7]
       resolution: info['resolution'] as String? ?? '',
       fps: (info['fps'] as num?)?.toDouble() ?? 0,
       pixFmt: info['pix_fmt'] as String? ?? '',
@@ -1047,9 +1482,13 @@ class VideoFile {
       audioSampleRate: '${info['audio_sample_rate'] ?? 'N/A'}',
       hasSubtitles: info['has_subtitles'] as bool? ?? false,
       subtitleCount: AppConfig._asInt(info['subtitle_count'], 0), // [FIX M-7]
-      subtitles: (info['subtitles'] as List<dynamic>?)
-              ?.map((s) => SubtitleStream.fromJson(s as Map<String, dynamic>)).toList() ?? [],
-      config: TranscodeConfig(), parsed: true,
+      subtitles:
+          (info['subtitles'] as List<dynamic>?)
+              ?.map((s) => SubtitleStream.fromJson(s as Map<String, dynamic>))
+              .toList() ??
+          [],
+      config: TranscodeConfig(),
+      parsed: true,
       fileMediaType: mt,
     );
   }
@@ -1062,13 +1501,23 @@ class SubtitleStream {
   final String title;
   final bool forced;
   final bool isDefault;
-  SubtitleStream({required this.index, this.codec = '', this.language = '', this.title = '', this.forced = false, this.isDefault = false});
+  SubtitleStream({
+    required this.index,
+    this.codec = '',
+    this.language = '',
+    this.title = '',
+    this.forced = false,
+    this.isDefault = false,
+  });
 
   factory SubtitleStream.fromJson(Map<String, dynamic> json) => SubtitleStream(
-        index: (json['index'] as num?)?.toInt() ?? 0, codec: json['codec'] as String? ?? '',
-        language: json['language'] as String? ?? '', title: json['title'] as String? ?? '',
-        forced: json['forced'] as bool? ?? false, isDefault: json['default'] as bool? ?? false,
-      );
+    index: (json['index'] as num?)?.toInt() ?? 0,
+    codec: json['codec'] as String? ?? '',
+    language: json['language'] as String? ?? '',
+    title: json['title'] as String? ?? '',
+    forced: json['forced'] as bool? ?? false,
+    isDefault: json['default'] as bool? ?? false,
+  );
 }
 
 // ═══════════════════════════════════════════
@@ -1078,66 +1527,94 @@ class SubtitleStream {
 class TranscodeConfig {
   String videoCodec, gpu, preset;
   int? crf;
-  int? videoBitrate;       // null = keep original
+  int? videoBitrate; // null = keep original
   double? framerate;
   int? resolutionW, resolutionH;
   String audioCodec;
-  int? audioBitrate;       // null = keep original
+  int? audioBitrate; // null = keep original
   int? audioChannels;
   bool subtitleEnabled;
   String subtitleSource;
   String? subtitleFile;
   int subtitleIndex;
-  int? subtitleIndex2;     // 第二字幕轨道（可选）
+  int? subtitleIndex2; // 第二字幕轨道（可选）
   // 字幕样式
   String subtitleFontName;
   int subtitleFontSize;
-  String subtitleFontColor;     // hex: #FFFFFF
+  String subtitleFontColor; // hex: #FFFFFF
   int subtitleOutlineWidth;
-  String subtitleOutlineColor;  // hex: #000000
+  String subtitleOutlineColor; // hex: #000000
   String outputFormat, namingMode, namingValue;
   double? startTime, endTime;
   // ── 扩展处理选项 ──
-  double? speed;                    // 变速倍率，null=不变速
-  String frameExtractMode;          // 'none'/'single'/'range'/'all'
-  double? frameTime;                // 单帧时间
+  double? speed; // 变速倍率，null=不变速
+  String frameExtractMode; // 'none'/'single'/'range'/'all'
+  double? frameTime; // 单帧时间
   double? frameRangeStart;
   double? frameRangeEnd;
   double? frameFps;
-  String frameFormat;               // png/jpg...
-  String? imageOutputFormat;        // 图片转换输出格式
-  int imageQuality;                 // 图片质量
-  int? cropX, cropY, cropW, cropH;  // 图片裁剪
-  String? audioConvertCodec;        // 音频格式转换
+  String frameFormat; // png/jpg...
+  String? imageOutputFormat; // 图片转换输出格式
+  int imageQuality; // 图片质量
+  int? cropX, cropY, cropW, cropH; // 图片裁剪
+  String? audioConvertCodec; // 音频格式转换
   String? audioConvertFormat;
   int? audioConvertBitrate;
   String? audioConvertSampleRate;
 
   TranscodeConfig({
-    this.videoCodec = 'h264', this.gpu = 'CPU', this.preset = 'medium', this.crf,
-    this.videoBitrate, this.framerate, this.resolutionW, this.resolutionH,
-    this.audioCodec = 'aac', this.audioBitrate = 128, this.audioChannels,
-    this.subtitleEnabled = false, this.subtitleSource = 'external', this.subtitleFile,
-    this.subtitleIndex = 0, this.subtitleIndex2,
-    this.subtitleFontName = 'Arial', this.subtitleFontSize = 24,
-    this.subtitleFontColor = '#FFFFFF', this.subtitleOutlineWidth = 2,
+    this.videoCodec = 'h264',
+    this.gpu = 'CPU',
+    this.preset = 'medium',
+    this.crf,
+    this.videoBitrate,
+    this.framerate,
+    this.resolutionW,
+    this.resolutionH,
+    this.audioCodec = 'aac',
+    this.audioBitrate = 128,
+    this.audioChannels,
+    this.subtitleEnabled = false,
+    this.subtitleSource = 'external',
+    this.subtitleFile,
+    this.subtitleIndex = 0,
+    this.subtitleIndex2,
+    this.subtitleFontName = 'Arial',
+    this.subtitleFontSize = 24,
+    this.subtitleFontColor = '#FFFFFF',
+    this.subtitleOutlineWidth = 2,
     this.subtitleOutlineColor = '#000000',
-    this.outputFormat = 'keep', this.namingMode = 'keep',
+    this.outputFormat = 'keep',
+    this.namingMode = 'keep',
     this.namingValue = '_processed',
-    this.startTime, this.endTime,
+    this.startTime,
+    this.endTime,
     this.speed,
-    this.frameExtractMode = 'none', this.frameTime, this.frameRangeStart,
-    this.frameRangeEnd, this.frameFps, this.frameFormat = 'png',
-    this.imageOutputFormat, this.imageQuality = 95,
-    this.cropX, this.cropY, this.cropW, this.cropH,
-    this.audioConvertCodec, this.audioConvertFormat,
-    this.audioConvertBitrate, this.audioConvertSampleRate,
+    this.frameExtractMode = 'none',
+    this.frameTime,
+    this.frameRangeStart,
+    this.frameRangeEnd,
+    this.frameFps,
+    this.frameFormat = 'png',
+    this.imageOutputFormat,
+    this.imageQuality = 95,
+    this.cropX,
+    this.cropY,
+    this.cropW,
+    this.cropH,
+    this.audioConvertCodec,
+    this.audioConvertFormat,
+    this.audioConvertBitrate,
+    this.audioConvertSampleRate,
   });
 
   Map<String, dynamic> toBackendOptions() {
     final opts = <String, dynamic>{
-      'video_codec': videoCodec, 'gpu': gpu, 'preset': preset,
-      'audio_codec': audioCodec, 'overwrite': true,
+      'video_codec': videoCodec,
+      'gpu': gpu,
+      'preset': preset,
+      'audio_codec': audioCodec,
+      'overwrite': true,
     };
     if (crf != null) {
       opts['crf'] = crf;
@@ -1145,7 +1622,9 @@ class TranscodeConfig {
       opts['video_bitrate'] = videoBitrate;
     }
     if (framerate != null) opts['framerate'] = framerate;
-    if (resolutionW != null && resolutionH != null) opts['resolution'] = [resolutionW, resolutionH];
+    if (resolutionW != null && resolutionH != null) {
+      opts['resolution'] = [resolutionW, resolutionH];
+    }
     if (audioBitrate != null) opts['audio_bitrate'] = audioBitrate;
     if (audioChannels != null) opts['audio_channels'] = audioChannels;
     if (startTime != null) opts['start_time'] = startTime;
@@ -1244,53 +1723,100 @@ class TaskInfo {
   final List<double> callProgresses;
 
   TaskInfo({
-    required this.id, required this.videoId, required this.filename,
-    required this.inputPath, required this.outputPath,
-    this.status = TaskStatus.pending, this.progress = 0,
-    this.elapsed = '', this.remaining = '', this.speed = '', this.fps = '', this.bitrate = '',
-    this.frame = 0, this.error, this.logLines = const [],
-    required this.config, this.expanded = false, this.outputSize, this.duration, this.command,
-    this.pipelineCalls, this.currentCallIndex = 0, this.callProgresses = const [],
+    required this.id,
+    required this.videoId,
+    required this.filename,
+    required this.inputPath,
+    required this.outputPath,
+    this.status = TaskStatus.pending,
+    this.progress = 0,
+    this.elapsed = '',
+    this.remaining = '',
+    this.speed = '',
+    this.fps = '',
+    this.bitrate = '',
+    this.frame = 0,
+    this.error,
+    this.logLines = const [],
+    required this.config,
+    this.expanded = false,
+    this.outputSize,
+    this.duration,
+    this.command,
+    this.pipelineCalls,
+    this.currentCallIndex = 0,
+    this.callProgresses = const [],
   });
 
   // [FIX S-3] copyWith 为所有「语义上可清空」的可空字段增加显式清除开关（clearXxx）。
   // 现有调用点全部使用命名参数，且新参数均有默认值，向后兼容、编译不受影响。
   TaskInfo copyWith({
-    TaskStatus? status, double? progress, String? elapsed, String? remaining,
-    String? speed, String? fps, String? bitrate, int? frame, String? error,
+    TaskStatus? status,
+    double? progress,
+    String? elapsed,
+    String? remaining,
+    String? speed,
+    String? fps,
+    String? bitrate,
+    int? frame,
+    String? error,
     bool clearError = false,
-    List<String>? logLines, bool? expanded, int? outputSize,
+    List<String>? logLines,
+    bool? expanded,
+    int? outputSize,
     bool clearOutputSize = false,
-    double? duration, bool clearDuration = false,
-    List<String>? command, bool clearCommand = false,
-    List<BackendCall>? pipelineCalls, bool clearPipelineCalls = false,
-    int? currentCallIndex, List<double>? callProgresses,
+    double? duration,
+    bool clearDuration = false,
+    List<String>? command,
+    bool clearCommand = false,
+    List<BackendCall>? pipelineCalls,
+    bool clearPipelineCalls = false,
+    int? currentCallIndex,
+    List<double>? callProgresses,
     bool clearCallProgresses = false,
   }) => TaskInfo(
-        id: id, videoId: videoId, filename: filename, inputPath: inputPath, outputPath: outputPath,
-        status: status ?? this.status, progress: progress ?? this.progress,
-        elapsed: elapsed ?? this.elapsed, remaining: remaining ?? this.remaining,
-        speed: speed ?? this.speed, fps: fps ?? this.fps, bitrate: bitrate ?? this.bitrate,
-        frame: frame ?? this.frame,
-        // [FIX S-3] clearError 优先：失败→重跑时先清掉旧错误，避免「处理中」与旧错误横幅并存
-        error: clearError ? null : (error ?? this.error),
-        logLines: logLines ?? this.logLines, config: config,
-        expanded: expanded ?? this.expanded,
-        outputSize: clearOutputSize ? null : (outputSize ?? this.outputSize),
-        duration: clearDuration ? null : (duration ?? this.duration),
-        command: clearCommand ? null : (command ?? this.command),
-        pipelineCalls: clearPipelineCalls ? null : (pipelineCalls ?? this.pipelineCalls),
-        currentCallIndex: currentCallIndex ?? this.currentCallIndex,
-        callProgresses: clearCallProgresses ? const [] : (callProgresses ?? this.callProgresses),
-      );
+    id: id,
+    videoId: videoId,
+    filename: filename,
+    inputPath: inputPath,
+    outputPath: outputPath,
+    status: status ?? this.status,
+    progress: progress ?? this.progress,
+    elapsed: elapsed ?? this.elapsed,
+    remaining: remaining ?? this.remaining,
+    speed: speed ?? this.speed,
+    fps: fps ?? this.fps,
+    bitrate: bitrate ?? this.bitrate,
+    frame: frame ?? this.frame,
+    // [FIX S-3] clearError 优先：失败→重跑时先清掉旧错误，避免「处理中」与旧错误横幅并存
+    error: clearError ? null : (error ?? this.error),
+    logLines: logLines ?? this.logLines,
+    config: config,
+    expanded: expanded ?? this.expanded,
+    outputSize: clearOutputSize ? null : (outputSize ?? this.outputSize),
+    duration: clearDuration ? null : (duration ?? this.duration),
+    command: clearCommand ? null : (command ?? this.command),
+    pipelineCalls: clearPipelineCalls
+        ? null
+        : (pipelineCalls ?? this.pipelineCalls),
+    currentCallIndex: currentCallIndex ?? this.currentCallIndex,
+    callProgresses: clearCallProgresses
+        ? const []
+        : (callProgresses ?? this.callProgresses),
+  );
 
   String get statusLabel {
     switch (status) {
-      case TaskStatus.pending: return 'Pending';
-      case TaskStatus.processing: return 'Processing';
-      case TaskStatus.completed: return 'Done';
-      case TaskStatus.failed: return 'Failed';
-      case TaskStatus.cancelled: return 'Cancelled';
+      case TaskStatus.pending:
+        return 'Pending';
+      case TaskStatus.processing:
+        return 'Processing';
+      case TaskStatus.completed:
+        return 'Done';
+      case TaskStatus.failed:
+        return 'Failed';
+      case TaskStatus.cancelled:
+        return 'Cancelled';
     }
   }
 
@@ -1298,12 +1824,18 @@ class TaskInfo {
   /// 易变的实时字段（elapsed/speed 等进度心跳）不持久化；
   /// logLines 只保留最后 50 条，避免历史文件无限膨胀。
   Map<String, dynamic> toJson() => {
-    'id': id, 'video_id': videoId, 'filename': filename,
-    'input_path': inputPath, 'output_path': outputPath,
-    'status': status.index, 'progress': progress,
+    'id': id,
+    'video_id': videoId,
+    'filename': filename,
+    'input_path': inputPath,
+    'output_path': outputPath,
+    'status': status.index,
+    'progress': progress,
     if (error != null) 'error': error,
     if (logLines.isNotEmpty)
-      'log_lines': logLines.length > 50 ? logLines.sublist(logLines.length - 50) : logLines,
+      'log_lines': logLines.length > 50
+          ? logLines.sublist(logLines.length - 50)
+          : logLines,
     if (outputSize != null) 'output_size': outputSize,
     if (duration != null) 'duration': duration,
     if (command != null) 'command': command,
@@ -1319,11 +1851,16 @@ class TaskInfo {
     filename: json['filename'] as String? ?? '',
     inputPath: json['input_path'] as String? ?? '',
     outputPath: json['output_path'] as String? ?? '',
-    status: TaskStatus.values[
-        ((json['status'] as num?)?.toInt() ?? 0).clamp(0, TaskStatus.values.length - 1)],
+    status:
+        TaskStatus.values[((json['status'] as num?)?.toInt() ?? 0).clamp(
+          0,
+          TaskStatus.values.length - 1,
+        )],
     progress: (json['progress'] as num?)?.toDouble() ?? 0,
     error: json['error'] as String?,
-    logLines: (json['log_lines'] as List?)?.map((e) => e.toString()).toList() ?? const [],
+    logLines:
+        (json['log_lines'] as List?)?.map((e) => e.toString()).toList() ??
+        const [],
     config: TranscodeConfig(),
     outputSize: (json['output_size'] as num?)?.toInt(),
     duration: (json['duration'] as num?)?.toDouble(),
@@ -1335,17 +1872,23 @@ class TaskInfo {
     currentCallIndex: (json['current_call_index'] as num?)?.toInt() ?? 0,
     // [FIX M-8] 逐元素容错：单个元素为 null/字符串/非数字时不再抛错，
     // 避免整条任务记录被外层 catch 静默丢弃。
-    callProgresses: (json['call_progresses'] as List?)
-        ?.map((e) =>
-            e is num ? e.toDouble() : (e is String ? double.tryParse(e) ?? 0.0 : 0.0))
-        .toList() ??
+    callProgresses:
+        (json['call_progresses'] as List?)
+            ?.map(
+              (e) => e is num
+                  ? e.toDouble()
+                  : (e is String ? double.tryParse(e) ?? 0.0 : 0.0),
+            )
+            .toList() ??
         const [],
   );
 
   String get outputSizeStr {
     if (outputSize == null) return '-';
     final mb = outputSize! / (1024 * 1024);
-    return mb >= 1 ? '${mb.toStringAsFixed(1)} MB' : '${(outputSize! / 1024).toStringAsFixed(0)} KB';
+    return mb >= 1
+        ? '${mb.toStringAsFixed(1)} MB'
+        : '${(outputSize! / 1024).toStringAsFixed(0)} KB';
   }
 }
 
@@ -1390,41 +1933,42 @@ class AiModelEntry {
   }) : capabilities = capabilities ?? [AiModelCapability.chat];
 
   factory AiModelEntry.fromJson(Map<String, dynamic> json) => AiModelEntry(
-        id: json['id'] as String? ?? '',
-        capabilities: (json['capabilities'] as List?)
-                ?.whereType<String>()
-                .where(AiModelCapability.all.contains)
-                .toList() ??
-            [AiModelCapability.chat],
-        contextWindow: (json['context_window'] as num?)?.toInt(),
-        maxTokens: (json['max_tokens'] as num?)?.toInt(),
-        temperature: (json['temperature'] as num?)?.toDouble(),
-      );
+    id: json['id'] as String? ?? '',
+    capabilities:
+        (json['capabilities'] as List?)
+            ?.whereType<String>()
+            .where(AiModelCapability.all.contains)
+            .toList() ??
+        [AiModelCapability.chat],
+    contextWindow: (json['context_window'] as num?)?.toInt(),
+    maxTokens: (json['max_tokens'] as num?)?.toInt(),
+    temperature: (json['temperature'] as num?)?.toDouble(),
+  );
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'capabilities': capabilities,
-        if (contextWindow != null) 'context_window': contextWindow,
-        if (maxTokens != null) 'max_tokens': maxTokens,
-        if (temperature != null) 'temperature': temperature,
-      };
+    'id': id,
+    'capabilities': capabilities,
+    if (contextWindow != null) 'context_window': contextWindow,
+    if (maxTokens != null) 'max_tokens': maxTokens,
+    if (temperature != null) 'temperature': temperature,
+  };
 
   AiModelEntry copy() => AiModelEntry(
-        id: id,
-        capabilities: [...capabilities],
-        contextWindow: contextWindow,
-        maxTokens: maxTokens,
-        temperature: temperature,
-      );
+    id: id,
+    capabilities: [...capabilities],
+    contextWindow: contextWindow,
+    maxTokens: maxTokens,
+    temperature: temperature,
+  );
 }
 
 /// AI 供应商配置项：一组可复用的 API 配置（配置名/Key/BaseURL/请求方式/模型等）。
 /// 画布 AI 面板可一键切换；配置可在设置里新建、编辑、启用、删除。
 class AiProfile {
-  String id;          // 唯一标识（uuid）
-  String name;        // 配置名（显示用）
-  bool enabled;       // 是否启用（停用后不可在面板选择）
-  String provider;    // 'openai' | 'anthropic'（请求协议）
+  String id; // 唯一标识（uuid）
+  String name; // 配置名（显示用）
+  bool enabled; // 是否启用（停用后不可在面板选择）
+  String provider; // 'openai' | 'anthropic'（请求协议）
   String apiKey;
   String apiUrl;
   String model;
@@ -1466,7 +2010,7 @@ class AiProfile {
     this.provider = 'openai',
     this.apiKey = '',
     this.apiUrl = 'https://api.openai.com/v1/chat/completions',
-    this.model = '',  // 不再内置固定模型：留空 = 未配置，由供应商配置动态决定
+    this.model = '', // 不再内置固定模型：留空 = 未配置，由供应商配置动态决定
     this.contextWindow = 128000,
     this.maxTokens = 4096,
     this.temperature = 0.3,
@@ -1478,66 +2022,72 @@ class AiProfile {
     this.proxyUrl = '',
     Map<String, String>? customHeaders,
     List<AiModelEntry>? models,
-  })  : id = id ?? _uuid.v4(),
-        apiKeys = apiKeys ?? <String>[],
-        customHeaders = customHeaders ?? <String, String>{},
-        models = models ?? <AiModelEntry>[];
+  }) : id = id ?? _uuid.v4(),
+       apiKeys = apiKeys ?? <String>[],
+       customHeaders = customHeaders ?? <String, String>{},
+       models = models ?? <AiModelEntry>[];
 
   factory AiProfile.fromJson(Map<String, dynamic> json) => AiProfile(
-        id: json['id'] as String?,
-        name: json['name'] as String? ?? 'New Profile',
-        enabled: json['enabled'] as bool? ?? true,
-        provider: json['provider'] as String? ?? 'openai',
-        apiKey: SecureKeyStore.decrypt(json['api_key'] as String? ?? ''),
-        apiUrl: json['api_url'] as String? ?? 'https://api.openai.com/v1/chat/completions',
-        model: json['model'] as String? ?? '',
-        contextWindow: AppConfig._asInt(json['context_window'], 128000), // [FIX M-7]
-        maxTokens: AppConfig._asInt(json['max_tokens'], 4096), // [FIX M-7]
-        temperature: (json['temperature'] as num?)?.toDouble() ?? 0.3,
-        group: json['group'] as String? ?? '',
-        multiKeyEnabled: json['multi_key_enabled'] as bool? ?? false,
-        // 多 Key 与主 Key 同样加密存储
-        apiKeys: (json['api_keys'] as List?)
-                ?.whereType<String>()
-                .map(SecureKeyStore.decrypt)
-                .where((k) => k.isNotEmpty)
-                .toList() ??
-            <String>[],
-        useResponsesApi: json['use_responses_api'] as bool? ?? false,
-        apiPath: json['api_path'] as String? ?? '',
-        proxyUrl: json['proxy_url'] as String? ?? '',
-        customHeaders: (json['custom_headers'] as Map?)?.map(
-              (k, v) => MapEntry('$k', '$v'),
-            ) ??
-            <String, String>{},
-        models: (json['models'] as List?)
-                ?.whereType<Map>()
-                .map((m) => AiModelEntry.fromJson(m.cast<String, dynamic>()))
-                .where((m) => m.id.isNotEmpty)
-                .toList() ??
-            <AiModelEntry>[],
-      );
+    id: json['id'] as String?,
+    name: json['name'] as String? ?? 'New Profile',
+    enabled: json['enabled'] as bool? ?? true,
+    provider: json['provider'] as String? ?? 'openai',
+    apiKey: SecureKeyStore.decrypt(json['api_key'] as String? ?? ''),
+    apiUrl:
+        json['api_url'] as String? ??
+        'https://api.openai.com/v1/chat/completions',
+    model: json['model'] as String? ?? '',
+    contextWindow: AppConfig._asInt(
+      json['context_window'],
+      128000,
+    ), // [FIX M-7]
+    maxTokens: AppConfig._asInt(json['max_tokens'], 4096), // [FIX M-7]
+    temperature: (json['temperature'] as num?)?.toDouble() ?? 0.3,
+    group: json['group'] as String? ?? '',
+    multiKeyEnabled: json['multi_key_enabled'] as bool? ?? false,
+    // 多 Key 与主 Key 同样加密存储
+    apiKeys:
+        (json['api_keys'] as List?)
+            ?.whereType<String>()
+            .map(SecureKeyStore.decrypt)
+            .where((k) => k.isNotEmpty)
+            .toList() ??
+        <String>[],
+    useResponsesApi: json['use_responses_api'] as bool? ?? false,
+    apiPath: json['api_path'] as String? ?? '',
+    proxyUrl: json['proxy_url'] as String? ?? '',
+    customHeaders:
+        (json['custom_headers'] as Map?)?.map((k, v) => MapEntry('$k', '$v')) ??
+        <String, String>{},
+    models:
+        (json['models'] as List?)
+            ?.whereType<Map>()
+            .map((m) => AiModelEntry.fromJson(m.cast<String, dynamic>()))
+            .where((m) => m.id.isNotEmpty)
+            .toList() ??
+        <AiModelEntry>[],
+  );
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'enabled': enabled,
-        'provider': provider,
-        'api_key': SecureKeyStore.encrypt(apiKey),
-        'api_url': apiUrl,
-        'model': model,
-        'context_window': contextWindow,
-        'max_tokens': maxTokens,
-        'temperature': temperature,
-        'group': group,
-        'multi_key_enabled': multiKeyEnabled,
-        'api_keys': apiKeys.map(SecureKeyStore.encrypt).toList(),
-        'use_responses_api': useResponsesApi,
-        'api_path': apiPath,
-        'proxy_url': proxyUrl,
-        'custom_headers': customHeaders,
-        'models': models.map((m) => m.toJson()).toList(),
-      };
+    'id': id,
+    'name': name,
+    'enabled': enabled,
+    'provider': provider,
+    'api_key': SecureKeyStore.encrypt(apiKey),
+    'api_url': apiUrl,
+    'model': model,
+    'context_window': contextWindow,
+    'max_tokens': maxTokens,
+    'temperature': temperature,
+    'group': group,
+    'multi_key_enabled': multiKeyEnabled,
+    'api_keys': apiKeys.map(SecureKeyStore.encrypt).toList(),
+    'use_responses_api': useResponsesApi,
+    'api_path': apiPath,
+    'proxy_url': proxyUrl,
+    'custom_headers': customHeaders,
+    'models': models.map((m) => m.toJson()).toList(),
+  };
 
   /// 生效的请求 URL：apiPath 非空时由 Base URL + 路径拼接，否则用 apiUrl 原值。
   /// 兼容旧配置（apiUrl 里已含完整路径、apiPath 为空）。
@@ -1577,33 +2127,41 @@ class AiProfile {
     String? proxyUrl,
     Map<String, String>? customHeaders,
     List<AiModelEntry>? models,
-  }) =>
-      AiProfile(
-        id: id,
-        name: name ?? this.name,
-        enabled: enabled ?? this.enabled,
-        provider: provider ?? this.provider,
-        apiKey: apiKey ?? this.apiKey,
-        apiUrl: apiUrl ?? this.apiUrl,
-        model: model ?? this.model,
-        contextWindow: contextWindow ?? this.contextWindow,
-        maxTokens: maxTokens ?? this.maxTokens,
-        temperature: temperature ?? this.temperature,
-        group: group ?? this.group,
-        multiKeyEnabled: multiKeyEnabled ?? this.multiKeyEnabled,
-        apiKeys: apiKeys ?? [...this.apiKeys],
-        useResponsesApi: useResponsesApi ?? this.useResponsesApi,
-        apiPath: apiPath ?? this.apiPath,
-        proxyUrl: proxyUrl ?? this.proxyUrl,
-        customHeaders: customHeaders ?? {...this.customHeaders},
-        models: models ?? this.models.map((m) => m.copy()).toList(),
-      );
+  }) => AiProfile(
+    id: id,
+    name: name ?? this.name,
+    enabled: enabled ?? this.enabled,
+    provider: provider ?? this.provider,
+    apiKey: apiKey ?? this.apiKey,
+    apiUrl: apiUrl ?? this.apiUrl,
+    model: model ?? this.model,
+    contextWindow: contextWindow ?? this.contextWindow,
+    maxTokens: maxTokens ?? this.maxTokens,
+    temperature: temperature ?? this.temperature,
+    group: group ?? this.group,
+    multiKeyEnabled: multiKeyEnabled ?? this.multiKeyEnabled,
+    apiKeys: apiKeys ?? [...this.apiKeys],
+    useResponsesApi: useResponsesApi ?? this.useResponsesApi,
+    apiPath: apiPath ?? this.apiPath,
+    proxyUrl: proxyUrl ?? this.proxyUrl,
+    customHeaders: customHeaders ?? {...this.customHeaders},
+    models: models ?? this.models.map((m) => m.copy()).toList(),
+  );
 }
 
 class AppConfig {
-  String language, ffmpegPath, ffprobePath, defaultOutputDir, intermediateDir, fontFamily;
+  String language,
+      ffmpegPath,
+      ffprobePath,
+      defaultOutputDir,
+      intermediateDir,
+      fontFamily;
   bool darkMode;
   int themeColor;
+
+  /// Whether custom accent colors are used by the application theme.
+  bool useThemeColor;
+
   /// 渐变主题终点色（ARGB int）。为空＝纯色主题；非空＝主题色在
   /// themeColor → themeColor2 之间渐变（作用于跟随主题色的玻璃/卡片）。
   int themeColor2;
@@ -1630,6 +2188,7 @@ class AppConfig {
   // 桌面端菜单样式（左侧菜单栏 + 各页顶部菜单栏）：与 cardStyle 同四值。
   // 仅桌面端生效；移动端没有侧边栏/玻璃顶栏。
   String menuStyle;
+
   /// 软件渲染自动降级已执行过一次的标记（由 main.dart 的 _autoTuneGlass 写入）。
   ///
   /// 语义：自动降级对每个安装只**主动**执行一次。之后用户若在设置里手动把
@@ -1639,6 +2198,7 @@ class AppConfig {
   bool glassAutoTuned;
   // 遵循主题色：true 时玻璃/卡片底色使用主题色而非 surface 灰
   bool glassFollowTheme;
+
   /// 设置项以毛玻璃展示（仅「液态玻璃」生效时可开启，提升列表可读性）。
   ///
   /// 兼容视图：历史上这是与 [noCardGlass] 互相冲突的两个独立开关，
@@ -1646,9 +2206,11 @@ class AppConfig {
   /// 现在唯一的数据源是 [settingsGlassMode]，这里降级为派生属性，
   /// 所有既有读取点（GlassPanel / AppCard / AppSlider）无需改动。
   bool get settingsFrostedGlass => settingsGlassMode == 'frosted';
+
   /// 设置项不使用卡片玻璃效果：设置卡片跳过液态玻璃渲染，退回主题色样式。
   /// 同样是 [settingsGlassMode] 的派生视图（见上）。
   bool get noCardGlass => settingsGlassMode == 'solid';
+
   /// 拖动滑块时的粒子特效（默认开）。
   ///
   /// 2026-09-14 由「星点」改为「粒子」（用户要求）：粒子从填充段最右端（把手）
@@ -1698,47 +2260,58 @@ class AppConfig {
   /// 取代历史上互斥且语义重复的两个开关（settingsFrostedGlass / noCardGlass），
   /// 旧配置在 [_migrateSettingsGlass] 里自动迁移进来。
   String settingsGlassMode;
+
   /// 逻辑门符号标准：'ansi' ANSI/IEEE 标准 / 'iec' IEC 标准
   String gateStd;
+
   /// 节点编辑器右下角的小地图：显示全图节点分布与当前视口框，点击可跳转。
   /// 默认开启（大图定位神器）；它压在画布右下角，嫌挡视线可在此关闭。
   bool nodeMiniMap;
+
   /// 拖动节点时对齐到网格（吸附）。默认开启 —— 手工挪到「差不多对齐」的
   /// 位置在整理大图时很费神；需要像素级精确摆放时可以关掉。
   bool nodeSnap;
+
   /// 工具箱里被收藏（置顶）的节点类型名。存 `PipelineStepType.name`，
   /// 这样枚举改名后旧配置只会失效一条，不会反序列化失败。
   List<String> favoriteNodeTypes;
+
   /// 最近使用过的节点类型名，最新在前，最多保留 [_kRecentNodeLimit] 条 ——
   /// 大图编辑时 90% 的操作都集中在少数几种节点上，翻分类太慢。
   List<String> recentNodeTypes;
+
   /// 「最近使用」保留条数（与整份配置一起落盘，不宜过大）。
   static const int recentNodeLimit = 6;
   bool debugMode;
   bool saveLogs;
   bool enableSystemNotification;
   String logSavePath;
+
   /// 默认编辑方式：0 = 节点编辑器，1 = 快速模式。
   /// （传统表单模式已彻底移除；旧配置中的 2 在 fromJson 迁移为 0）
   int editMode = 0;
+
   /// 移动端节点编辑器默认横屏（竖屏 = false，横屏 = true）
   bool useNodeEditorLandscape;
+
   /// 移动端画布编辑器：顶部菜单栏(药丸)缩放系数（0.7~1.6，默认 1.0）
   double editorToolbarScale;
+
   /// 移动端画布编辑器：左下放大镜(缩放药丸)缩放系数（0.7~1.6，默认 1.0）
   double editorZoomScale;
   Map<String, int> nodeUsageCount;
   int maxConcurrentTasks;
   int probeThreads;
   Map<String, List<String>> keyBindings;
-  bool autosaveEnabled;        // 节点编辑器自动保存草稿开关（默认开）
-  int autosaveIntervalSec;     // 自动保存间隔（秒，默认 30）
+  bool autosaveEnabled; // 节点编辑器自动保存草稿开关（默认开）
+  int autosaveIntervalSec; // 自动保存间隔（秒，默认 30）
   bool autoCheckUpdate;
   bool mcpEnabled;
   int mcpPort;
-  String mcpHost;          // MCP 绑定地址（默认 127.0.0.1）
+  String mcpHost; // MCP 绑定地址（默认 127.0.0.1）
   bool mcpAllowWrite; // MCP 是否允许写操作（默认只读）
-  bool mcpAllowFsAccess; // MCP 是否允许 list_directory/read_file_info/probe_video 访问文件系统（默认允许）
+  bool
+  mcpAllowFsAccess; // MCP 是否允许 list_directory/read_file_info/probe_video 访问文件系统（默认允许）
   String aiProvider; // 'openai' or 'anthropic' or 'custom'
   String aiApiKey;
   String aiApiUrl;
@@ -1749,7 +2322,7 @@ class AppConfig {
   bool aiAutoExecute;
   bool aiAllowAsk; // 是否允许 AI 主动向用户提问（ask_user 工具）
   bool aiShowThinking; // 是否显示模型思考过程
-  bool aiAutoTitle;    // 对话后自动总结生成会话标题
+  bool aiAutoTitle; // 对话后自动总结生成会话标题
   String aiTitlePrompt; // 标题生成的系统提示词（内置，可改写）
   String aiGraphMode;
   String aiSystemPrompt;
@@ -1759,7 +2332,7 @@ class AppConfig {
   String aiApproveMode; // 'auto' = 自动批准图应用; 'ask' = 每次询问
   List<String> aiAskSkipTools; // 询问模式下无需确认的操作白名单（如 'clear_all','undo','save'）
   List<AiProfile> aiProfiles; // 可复用的 AI 配置项（配置管理）
-  String activeAiProfileId;   // 当前选中的配置 id（空 = 使用下方默认字段）
+  String activeAiProfileId; // 当前选中的配置 id（空 = 使用下方默认字段）
   // Android Monet 动态取色（跟随系统壁纸；桌面端始终关闭）
   bool useDynamicColor;
   // Android 预测式返回手势（Android 14+；仅安卓端生效，桌面/iOS 忽略）
@@ -1768,6 +2341,7 @@ class AppConfig {
   // （处理队列、设置等）切换到时才构建。代价是首次切换页面有构建耗时
   // （可能瞬间增加 CPU 占用），收益是启动更快、启动内存更低。
   bool noPreload;
+
   /// PC 端是否启用 GPU 液态玻璃（oc_liquid_glass shader 折射）。
   /// 默认关闭：桌面端 ImageFilter.shader 作为 backdrop 时，纹理/坐标取向在
   /// 不同后端（Skia / Impeller-GLES / Metal / D3D）并不一致——用户反馈 PC 上
@@ -1775,6 +2349,7 @@ class AppConfig {
   /// （高斯模糊 + 倒角高光），背景即真实壁纸；想要 shader 玻璃可在
   /// 设置→外观→液态玻璃效果里手动开启。
   bool glassGpuOnDesktop;
+
   /// 移动端主导航位置：'auto' / 'bottom' / 'left' / 'right'（默认 'auto'）。
   ///
   /// 'auto' 按屏幕横纵比自动判定 —— 宽屏（平板 / 横屏，宽 ≥ 高 × 1.25）把菜单栏
@@ -1782,15 +2357,19 @@ class AppConfig {
   /// 用户可在「设置 → 外观 → 样式 → 菜单栏位置」强制指定三个方向之一。
   /// 仅移动端生效（桌面端是左侧边栏 + 顶栏，与本项无关）。
   String mobileNavPlacement;
+
   /// 移动端高刷新率：在支持 90 / 120 / 144Hz 的屏幕上请求该屏幕的最高刷新率
   /// （Android 专用，见 services/refresh_rate.dart + MainActivity 的原生实现）。
   /// 默认开启；关闭 = 交还系统默认刷新率（不干预），用于省电。
   bool highRefreshRate;
+
   /// 「样式 → 添加边框」：为所有卡片与药丸画一条用户可配置的实线描边。
   /// 默认关闭（关闭时必须与现状像素一致）；颜色/宽度由用户在设置里自己改。
   bool borderEnabled;
+
   /// 边框颜色（ARGB int）
   int borderColor;
+
   /// 边框宽度（逻辑像素，0.5 ~ 4.0）
   double borderWidth;
 
@@ -1822,10 +2401,21 @@ class AppConfig {
   };
 
   AppConfig({
-    this.language = 'zh', this.ffmpegPath = '', this.ffprobePath = '',
-    this.defaultOutputDir = '', this.intermediateDir = '', this.darkMode = true, this.themeColor = 0xFF5E6AD2, this.themeColor2 = -1,
-    String? fontFamily, this.fontSize = 17.0, this.fontWeightIndex = 1,
-    this.backgroundImage = '', this.backgroundOpacity = 0.8, this.cardOpacity = 0.7,
+    this.language = 'zh',
+    this.ffmpegPath = '',
+    this.ffprobePath = '',
+    this.defaultOutputDir = '',
+    this.intermediateDir = '',
+    this.darkMode = true,
+    this.themeColor = 0xFF5E6AD2,
+    this.themeColor2 = -1,
+    this.useThemeColor = true,
+    String? fontFamily,
+    this.fontSize = 17.0,
+    this.fontWeightIndex = 1,
+    this.backgroundImage = '',
+    this.backgroundOpacity = 0.8,
+    this.cardOpacity = 0.7,
     this.canvasBg = 'global',
     this.glassEffect = 'liquid',
     this.cardStyle = 'liquid',
@@ -1848,7 +2438,10 @@ class AppConfig {
     this.nodeSnap = true,
     List<String>? favoriteNodeTypes,
     List<String>? recentNodeTypes,
-    this.debugMode = false, this.saveLogs = false, this.enableSystemNotification = false, this.logSavePath = '',
+    this.debugMode = false,
+    this.saveLogs = false,
+    this.enableSystemNotification = false,
+    this.logSavePath = '',
     this.editMode = 0,
     this.useNodeEditorLandscape = false,
     this.editorToolbarScale = 1.0,
@@ -1868,7 +2461,7 @@ class AppConfig {
     this.aiProvider = 'openai',
     this.aiApiKey = '',
     this.aiApiUrl = 'https://api.openai.com/v1/chat/completions',
-    this.aiModel = '',  // 同上：模型列表一律来自供应商配置，不再有内置项
+    this.aiModel = '', // 同上：模型列表一律来自供应商配置，不再有内置项
     this.aiEnabled = true,
     this.aiReadAccess = false,
     this.aiWriteAccess = false,
@@ -1876,7 +2469,8 @@ class AppConfig {
     this.aiAllowAsk = false,
     this.aiShowThinking = true,
     this.aiAutoTitle = true,
-    this.aiTitlePrompt = 'You are a title generator. Reply with ONLY a short title (max 20 chars) summarizing the conversation topic. No quotes, no punctuation.',
+    this.aiTitlePrompt =
+        'You are a title generator. Reply with ONLY a short title (max 20 chars) summarizing the conversation topic. No quotes, no punctuation.',
     this.aiGraphMode = 'redo',
     this.aiSystemPrompt = '',
     this.aiTemperature = 0.3,
@@ -1920,13 +2514,14 @@ class AppConfig {
   /// 旧版 cardStyle 的 'glass' → 'liquid'、'flat' → 'gray'；新四值直接通过；
   /// 缺失/未知值回退 'liquid'（与旧默认 'glass' 观感一致）。
   static String _migrateSurfaceStyle(String? v) => switch (v) {
-        'theme' || 'liquid' || 'blur' || 'gray' => v!,
-        'glass' => 'liquid',
-        'flat' => 'gray',
-        _ => 'liquid',
-      };
+    'theme' || 'liquid' || 'blur' || 'gray' => v!,
+    'glass' => 'liquid',
+    'flat' => 'gray',
+    _ => 'liquid',
+  };
 
-  static Map<String, int> _safeIntMap(dynamic v) {    if (v is! Map) return {};
+  static Map<String, int> _safeIntMap(dynamic v) {
+    if (v is! Map) return {};
     final out = <String, int>{};
     for (final e in v.entries) {
       if (e.value is num) out['${e.key}'] = (e.value as num).toInt();
@@ -1938,7 +2533,10 @@ class AppConfig {
   /// 配置文件是用户可手改的，损坏的键不该让整份配置加载失败。
   static List<String> _safeStringList(dynamic v) {
     if (v is! List) return <String>[];
-    return [for (final e in v) if (e is String && e.isNotEmpty) e];
+    return [
+      for (final e in v)
+        if (e is String && e.isNotEmpty) e,
+    ];
   }
 
   static Map<String, List<String>>? _safeStringListMap(dynamic v) {
@@ -1959,7 +2557,9 @@ class AppConfig {
   static double _clampDouble(dynamic raw, double lo, double hi, double fb) {
     assert(lo <= hi, 'clamp 区间必须满足 lo <= hi');
     final v = (raw as num?)?.toDouble();
-    if (v == null || !v.isFinite) return fb; // 缺失 / NaN / Infinity / -Infinity 均回退默认值
+    if (v == null || !v.isFinite) {
+      return fb; // 缺失 / NaN / Infinity / -Infinity 均回退默认值
+    }
     return v.clamp(lo, hi).toDouble();
   }
 
@@ -1973,182 +2573,251 @@ class AppConfig {
   }
 
   factory AppConfig.fromJson(Map<String, dynamic> json) => AppConfig(
-        language: json['language'] as String? ?? 'zh',
-        ffmpegPath: json['ffmpeg_path'] as String? ?? '',
-        ffprobePath: json['ffprobe_path'] as String? ?? '',
-        defaultOutputDir: json['default_output_dir'] as String? ?? '',
-        intermediateDir: json['intermediate_dir'] as String? ?? '',
-        darkMode: json['dark_mode'] as bool? ?? true,
-        themeColor: _asInt(json['theme_color'], 0xFF5E6AD2), // [FIX M-7]
-        themeColor2: _asInt(json['theme_color2'], -1), // [FIX M-7]
-        fontFamily: _parseFontFamily(json['font_family']),
-        fontSize: _clampDouble(json['font_size'], 8.0, 64.0, 17.0), // [FIX H-14] 字号缩放钳制 8~64
-        fontWeightIndex: _asInt(json['font_weight'], 1), // [FIX M-7]
-        backgroundImage: json['background_image'] as String? ?? '',
-        backgroundOpacity: _clampDouble(json['background_opacity'], 0.0, 1.0, 0.8), // [FIX H-14] 透明度钳制 0~1
-        glassEffect: json['glass_effect'] as String? ?? 'liquid',
-        cardStyle: _migrateSurfaceStyle(json['card_style'] as String?),
-        navStyle: _migrateSurfaceStyle(json['nav_style'] as String?),
-        navAutoHide: json['nav_auto_hide'] as bool? ?? false,
-        pillStyle: _migrateSurfaceStyle(json['pill_style'] as String?),
-        menuStyle: _migrateSurfaceStyle(json['menu_style'] as String? ?? 'liquid'),
-        glassAutoTuned: json['glass_auto_tuned'] as bool? ?? false,
-        glassFollowTheme: json['glass_follow_theme'] as bool? ?? false,
-        settingsGlassMode: _migrateSettingsGlass(json),
-        // 玻璃细节参数：均可调，默认值＝引入本项之前的观感（见字段注释）
-        glassBlur: _clampDouble(json['glass_blur'], 0.0, 30.0, 16.0),
-        glassClarity: _clampDouble(json['glass_clarity'], 0.0, 1.0, 0.45),
-        glassHighlight: _clampDouble(json['glass_highlight'], 0.0, 1.6, 1.0),
-        glassLightPos: _clampDouble(json['glass_light_pos'], 0.0, 1.0, 0.0),
-        glassEdge: _clampDouble(json['glass_edge'], 0.0, 2.0, 1.0),
-        themeTone: _clampDouble(json['theme_tone'], 0.0, 0.8, 0.45),
-        // 拖动粒子特效：新键 slider_particles，旧键 slider_stars 继续读
-        //（老配置文件里写的是 slider_stars，语义完全相同）。
-        sliderParticles: json['slider_particles'] as bool? ??
-            json['slider_stars'] as bool? ??
-            true,
-        gateStd: json['gate_std'] as String? ?? 'ansi',
-        nodeMiniMap: json['node_mini_map'] as bool? ?? true,
-        nodeSnap: json['node_snap'] as bool? ?? true,
-        favoriteNodeTypes: _safeStringList(json['favorite_node_types']),
-        recentNodeTypes: _safeStringList(json['recent_node_types']),
-        cardOpacity: _clampDouble(json['card_opacity'], 0.0, 1.0, 0.7), // [FIX H-14] 透明度钳制 0~1
-        canvasBg: json['canvas_bg'] as String? ?? 'global',
-        debugMode: json['debug_mode'] as bool? ?? false,
-        saveLogs: json['save_logs'] as bool? ?? false,
-        enableSystemNotification: json['enable_system_notification'] as bool? ?? false,
-        logSavePath: json['log_save_path'] as String? ?? '',
-        // 传统模式（旧值 2）已移除：自动迁移为节点编辑器
-        // [FIX M-7] 旧值 2（传统模式）已移除→迁移为 0；用 _asInt 容错解析避免浮点 JSON 抛错
-        editMode: (() {
-          final v = _asInt(json['edit_mode'], 0);
-          return v == 2 ? 0 : v;
-        })(),
-        useNodeEditorLandscape: json['use_node_editor_landscape'] as bool? ?? false,
-        editorToolbarScale: _clampDouble(json['editor_toolbar_scale'], 0.5, 3.0, 1.0), // [FIX H-14] 缩放钳制 0.5~3.0
-        editorZoomScale: _clampDouble(json['editor_zoom_scale'], 0.5, 3.0, 1.0), // [FIX H-14] 缩放钳制 0.5~3.0
-        autosaveEnabled: json['autosave_enabled'] as bool? ?? true,
-        autosaveIntervalSec: _asInt(json['autosave_interval_sec'], 30), // [FIX M-7]
-        maxConcurrentTasks: _asInt(json['max_concurrent_tasks'], 1), // [FIX M-7]
-        probeThreads: _asInt(json['probe_threads'], 1), // [FIX M-7]
-        nodeUsageCount: _safeIntMap(json['node_usage_count']),
-        keyBindings: _safeStringListMap(json['key_bindings']) ?? Map.from(defaultKeyBindings),
-        autoCheckUpdate: json['auto_check_update'] as bool? ?? true,
-        mcpEnabled: json['mcp_enabled'] as bool? ?? false,
-        mcpPort: _asInt(json['mcp_port'], 3000), // [FIX M-7]
-        mcpHost: json['mcp_host'] as String? ?? '127.0.0.1',
-        mcpAllowWrite: json['mcp_allow_write'] as bool? ?? false,
-        mcpAllowFsAccess: json['mcp_allow_fs'] as bool? ?? true,
-        aiProvider: json['ai_provider'] as String? ?? 'openai',
-        aiApiKey: SecureKeyStore.decrypt(json['ai_api_key'] as String? ?? ''),
-        aiApiUrl: json['ai_api_url'] as String? ?? 'https://api.openai.com/v1/chat/completions',
-        aiModel: json['ai_model'] as String? ?? '',
-        aiEnabled: json['ai_enabled'] as bool? ?? true,
-        // 旧配置迁移：ai_read_access/ai_auto_apply 存在但类型不对时软回退，避免整份配置加载失败
-        aiReadAccess: _softBool(json['ai_read_access']) ?? _softBool(json['ai_auto_apply']) ?? false,
-        aiWriteAccess: json['ai_write_access'] as bool? ?? false,
-        aiAutoExecute: _softBool(json['ai_auto_execute']) ?? _softBool(json['ai_auto_apply']) ?? false,
-        aiAllowAsk: json['ai_allow_ask'] as bool? ?? false,
-        aiShowThinking: json['ai_show_thinking'] as bool? ?? true,
-        aiAutoTitle: json['ai_auto_title'] as bool? ?? true,
-        aiTitlePrompt: json['ai_title_prompt'] as String? ?? 'You are a title generator. Reply with ONLY a short title (max 20 chars) summarizing the conversation topic. No quotes, no punctuation.',
-        aiGraphMode: json['ai_graph_mode'] as String? ?? 'redo',
-        aiSystemPrompt: json['ai_system_prompt'] as String? ?? '',
-        aiTemperature: (json['ai_temperature'] as num?)?.toDouble() ?? 0.3,
-        aiMaxTokens: _asInt(json['ai_max_tokens'], 4096), // [FIX M-7]
-        aiContextWindow: _asInt(json['ai_context_window'], 128000), // [FIX M-7]
-        aiApproveMode: json['ai_approve_mode'] as String? ?? 'ask',
-        aiAskSkipTools: (json['ai_ask_skip_tools'] as List<dynamic>?)?.cast<String>() ?? const ['save', 'undo', 'redo', 'error_check'],
-        aiProfiles: (json['ai_profiles'] as List<dynamic>?)?.map((e) => AiProfile.fromJson(e as Map<String, dynamic>)).toList() ?? <AiProfile>[],
-        activeAiProfileId: json['active_ai_profile_id'] as String? ?? '',
-        useDynamicColor: json['use_dynamic_color'] as bool? ?? false,
-        predictiveBack: json['predictive_back'] as bool? ?? true,
-        noPreload: json['no_preload'] as bool? ?? false,
-        glassGpuOnDesktop: json['glass_gpu_on_desktop'] as bool? ?? false,
-        // 移动端导航位置：非法/缺失值一律回退 'auto'（自动按横纵比判定），
-        // 这样老配置文件升级后不需要迁移步骤。
-        mobileNavPlacement: () {
-          final v = json['mobile_nav_placement'] as String?;
-          return const ['auto', 'bottom', 'left', 'right'].contains(v) ? v! : 'auto';
-        }(),
-        highRefreshRate: json['high_refresh_rate'] as bool? ?? true,
-        borderEnabled: json['border_enabled'] as bool? ?? false,
-        borderColor: _asInt(json['border_color'], 0xFF9E9E9E), // [FIX M-7]
-        borderWidth: ((json['border_width'] as num?)?.toDouble() ?? 1.0).clamp(0.5, 4.0),
-      );
+    language: json['language'] as String? ?? 'zh',
+    ffmpegPath: json['ffmpeg_path'] as String? ?? '',
+    ffprobePath: json['ffprobe_path'] as String? ?? '',
+    defaultOutputDir: json['default_output_dir'] as String? ?? '',
+    intermediateDir: json['intermediate_dir'] as String? ?? '',
+    darkMode: json['dark_mode'] as bool? ?? true,
+    themeColor: _asInt(json['theme_color'], 0xFF5E6AD2), // [FIX M-7]
+    themeColor2: _asInt(json['theme_color2'], -1), // [FIX M-7]
+    useThemeColor: json['use_theme_color'] as bool? ?? true,
+    fontFamily: _parseFontFamily(json['font_family']),
+    fontSize: _clampDouble(
+      json['font_size'],
+      8.0,
+      64.0,
+      17.0,
+    ), // [FIX H-14] 字号缩放钳制 8~64
+    fontWeightIndex: _asInt(json['font_weight'], 1), // [FIX M-7]
+    backgroundImage: json['background_image'] as String? ?? '',
+    backgroundOpacity: _clampDouble(
+      json['background_opacity'],
+      0.0,
+      1.0,
+      0.8,
+    ), // [FIX H-14] 透明度钳制 0~1
+    glassEffect: json['glass_effect'] as String? ?? 'liquid',
+    cardStyle: _migrateSurfaceStyle(json['card_style'] as String?),
+    navStyle: _migrateSurfaceStyle(json['nav_style'] as String?),
+    navAutoHide: json['nav_auto_hide'] as bool? ?? false,
+    pillStyle: _migrateSurfaceStyle(json['pill_style'] as String?),
+    menuStyle: _migrateSurfaceStyle(json['menu_style'] as String? ?? 'liquid'),
+    glassAutoTuned: json['glass_auto_tuned'] as bool? ?? false,
+    glassFollowTheme: json['glass_follow_theme'] as bool? ?? false,
+    settingsGlassMode: _migrateSettingsGlass(json),
+    // 玻璃细节参数：均可调，默认值＝引入本项之前的观感（见字段注释）
+    glassBlur: _clampDouble(json['glass_blur'], 0.0, 30.0, 16.0),
+    glassClarity: _clampDouble(json['glass_clarity'], 0.0, 1.0, 0.45),
+    glassHighlight: _clampDouble(json['glass_highlight'], 0.0, 1.6, 1.0),
+    glassLightPos: _clampDouble(json['glass_light_pos'], 0.0, 1.0, 0.0),
+    glassEdge: _clampDouble(json['glass_edge'], 0.0, 2.0, 1.0),
+    themeTone: _clampDouble(json['theme_tone'], 0.0, 0.8, 0.45),
+    // 拖动粒子特效：新键 slider_particles，旧键 slider_stars 继续读
+    //（老配置文件里写的是 slider_stars，语义完全相同）。
+    sliderParticles:
+        json['slider_particles'] as bool? ??
+        json['slider_stars'] as bool? ??
+        true,
+    gateStd: json['gate_std'] as String? ?? 'ansi',
+    nodeMiniMap: json['node_mini_map'] as bool? ?? true,
+    nodeSnap: json['node_snap'] as bool? ?? true,
+    favoriteNodeTypes: _safeStringList(json['favorite_node_types']),
+    recentNodeTypes: _safeStringList(json['recent_node_types']),
+    cardOpacity: _clampDouble(
+      json['card_opacity'],
+      0.0,
+      1.0,
+      0.7,
+    ), // [FIX H-14] 透明度钳制 0~1
+    canvasBg: json['canvas_bg'] as String? ?? 'global',
+    debugMode: json['debug_mode'] as bool? ?? false,
+    saveLogs: json['save_logs'] as bool? ?? false,
+    enableSystemNotification:
+        json['enable_system_notification'] as bool? ?? false,
+    logSavePath: json['log_save_path'] as String? ?? '',
+    // 传统模式（旧值 2）已移除：自动迁移为节点编辑器
+    // [FIX M-7] 旧值 2（传统模式）已移除→迁移为 0；用 _asInt 容错解析避免浮点 JSON 抛错
+    editMode: (() {
+      final v = _asInt(json['edit_mode'], 0);
+      return v == 2 ? 0 : v;
+    })(),
+    useNodeEditorLandscape: json['use_node_editor_landscape'] as bool? ?? false,
+    editorToolbarScale: _clampDouble(
+      json['editor_toolbar_scale'],
+      0.5,
+      3.0,
+      1.0,
+    ), // [FIX H-14] 缩放钳制 0.5~3.0
+    editorZoomScale: _clampDouble(
+      json['editor_zoom_scale'],
+      0.5,
+      3.0,
+      1.0,
+    ), // [FIX H-14] 缩放钳制 0.5~3.0
+    autosaveEnabled: json['autosave_enabled'] as bool? ?? true,
+    autosaveIntervalSec: _asInt(json['autosave_interval_sec'], 30), // [FIX M-7]
+    maxConcurrentTasks: _asInt(json['max_concurrent_tasks'], 1), // [FIX M-7]
+    probeThreads: _asInt(json['probe_threads'], 1), // [FIX M-7]
+    nodeUsageCount: _safeIntMap(json['node_usage_count']),
+    keyBindings:
+        _safeStringListMap(json['key_bindings']) ??
+        Map.from(defaultKeyBindings),
+    autoCheckUpdate: json['auto_check_update'] as bool? ?? true,
+    mcpEnabled: json['mcp_enabled'] as bool? ?? false,
+    mcpPort: _asInt(json['mcp_port'], 3000), // [FIX M-7]
+    mcpHost: json['mcp_host'] as String? ?? '127.0.0.1',
+    mcpAllowWrite: json['mcp_allow_write'] as bool? ?? false,
+    mcpAllowFsAccess: json['mcp_allow_fs'] as bool? ?? true,
+    aiProvider: json['ai_provider'] as String? ?? 'openai',
+    aiApiKey: SecureKeyStore.decrypt(json['ai_api_key'] as String? ?? ''),
+    aiApiUrl:
+        json['ai_api_url'] as String? ??
+        'https://api.openai.com/v1/chat/completions',
+    aiModel: json['ai_model'] as String? ?? '',
+    aiEnabled: json['ai_enabled'] as bool? ?? true,
+    // 旧配置迁移：ai_read_access/ai_auto_apply 存在但类型不对时软回退，避免整份配置加载失败
+    aiReadAccess:
+        _softBool(json['ai_read_access']) ??
+        _softBool(json['ai_auto_apply']) ??
+        false,
+    aiWriteAccess: json['ai_write_access'] as bool? ?? false,
+    aiAutoExecute:
+        _softBool(json['ai_auto_execute']) ??
+        _softBool(json['ai_auto_apply']) ??
+        false,
+    aiAllowAsk: json['ai_allow_ask'] as bool? ?? false,
+    aiShowThinking: json['ai_show_thinking'] as bool? ?? true,
+    aiAutoTitle: json['ai_auto_title'] as bool? ?? true,
+    aiTitlePrompt:
+        json['ai_title_prompt'] as String? ??
+        'You are a title generator. Reply with ONLY a short title (max 20 chars) summarizing the conversation topic. No quotes, no punctuation.',
+    aiGraphMode: json['ai_graph_mode'] as String? ?? 'redo',
+    aiSystemPrompt: json['ai_system_prompt'] as String? ?? '',
+    aiTemperature: (json['ai_temperature'] as num?)?.toDouble() ?? 0.3,
+    aiMaxTokens: _asInt(json['ai_max_tokens'], 4096), // [FIX M-7]
+    aiContextWindow: _asInt(json['ai_context_window'], 128000), // [FIX M-7]
+    aiApproveMode: json['ai_approve_mode'] as String? ?? 'ask',
+    aiAskSkipTools:
+        (json['ai_ask_skip_tools'] as List<dynamic>?)?.cast<String>() ??
+        const ['save', 'undo', 'redo', 'error_check'],
+    aiProfiles:
+        (json['ai_profiles'] as List<dynamic>?)
+            ?.map((e) => AiProfile.fromJson(e as Map<String, dynamic>))
+            .toList() ??
+        <AiProfile>[],
+    activeAiProfileId: json['active_ai_profile_id'] as String? ?? '',
+    useDynamicColor: json['use_dynamic_color'] as bool? ?? false,
+    predictiveBack: json['predictive_back'] as bool? ?? true,
+    noPreload: json['no_preload'] as bool? ?? false,
+    glassGpuOnDesktop: json['glass_gpu_on_desktop'] as bool? ?? false,
+    // 移动端导航位置：非法/缺失值一律回退 'auto'（自动按横纵比判定），
+    // 这样老配置文件升级后不需要迁移步骤。
+    mobileNavPlacement: () {
+      final v = json['mobile_nav_placement'] as String?;
+      return const ['auto', 'bottom', 'left', 'right'].contains(v)
+          ? v!
+          : 'auto';
+    }(),
+    highRefreshRate: json['high_refresh_rate'] as bool? ?? true,
+    borderEnabled: json['border_enabled'] as bool? ?? false,
+    borderColor: _asInt(json['border_color'], 0xFF9E9E9E), // [FIX M-7]
+    borderWidth: ((json['border_width'] as num?)?.toDouble() ?? 1.0).clamp(
+      0.5,
+      4.0,
+    ),
+  );
 
   Map<String, dynamic> toJson() => {
-        'language': language, 'ffmpeg_path': ffmpegPath, 'ffprobe_path': ffprobePath,
-        'default_output_dir': defaultOutputDir, 'intermediate_dir': intermediateDir, 'dark_mode': darkMode,
-        'theme_color': themeColor, 'theme_color2': themeColor2, 'font_family': fontFamily, 'font_size': fontSize,
-        'font_weight': fontWeightIndex,
-        'background_image': backgroundImage, 'background_opacity': backgroundOpacity,
-        'glass_effect': glassEffect,
-        'card_style': cardStyle, 'nav_style': navStyle, 'pill_style': pillStyle,
-        'nav_auto_hide': navAutoHide,
-        'menu_style': menuStyle,
-        'glass_auto_tuned': glassAutoTuned,
-        'glass_follow_theme': glassFollowTheme,
-        'settings_glass_mode': settingsGlassMode,
-        // 兼容旧读端：两个派生布尔继续写出（读取时由 _migrateSettingsGlass 折算）
-        'settings_frosted_glass': settingsFrostedGlass, 'no_card_glass': noCardGlass, 'gate_std': gateStd,
-        'node_mini_map': nodeMiniMap, 'node_snap': nodeSnap,
-        'favorite_node_types': favoriteNodeTypes, 'recent_node_types': recentNodeTypes,
-        // 粒子特效：新键 + 旧键一起写出，回滚到旧版本也读得到同一个开关
-        'slider_particles': sliderParticles, 'slider_stars': sliderParticles,
-        'glass_blur': glassBlur, 'glass_clarity': glassClarity, 'glass_highlight': glassHighlight,
-        'glass_light_pos': glassLightPos, 'glass_edge': glassEdge, 'theme_tone': themeTone,
-        'card_opacity': cardOpacity,
-        'canvas_bg': canvasBg,
-        'debug_mode': debugMode,
-        'save_logs': saveLogs, 'enable_system_notification': enableSystemNotification, 'log_save_path': logSavePath,
-        'edit_mode': editMode,
-        'use_node_editor_landscape': useNodeEditorLandscape,
-        'editor_toolbar_scale': editorToolbarScale,
-        'editor_zoom_scale': editorZoomScale,
-        'autosave_enabled': autosaveEnabled,
-        'autosave_interval_sec': autosaveIntervalSec,
-        'max_concurrent_tasks': maxConcurrentTasks,
-        'probe_threads': probeThreads,
-        'node_usage_count': nodeUsageCount,
-        'key_bindings': keyBindings,
-        'auto_check_update': autoCheckUpdate,
-        'mcp_enabled': mcpEnabled,
-        'mcp_port': mcpPort,
-        'mcp_host': mcpHost,
-        'mcp_allow_write': mcpAllowWrite,
-        'mcp_allow_fs': mcpAllowFsAccess,
-        'ai_provider': aiProvider,
-        'ai_api_key': SecureKeyStore.encrypt(aiApiKey),
-        'ai_api_url': aiApiUrl,
-        'ai_model': aiModel,
-        'ai_enabled': aiEnabled,
-        'ai_read_access': aiReadAccess,
-        'ai_write_access': aiWriteAccess,
-        'ai_auto_execute': aiAutoExecute,
-        'ai_allow_ask': aiAllowAsk,
-        'ai_show_thinking': aiShowThinking,
-        'ai_auto_title': aiAutoTitle,
-        'ai_title_prompt': aiTitlePrompt,
-        'ai_graph_mode': aiGraphMode,
-        'ai_system_prompt': aiSystemPrompt,
-        'ai_temperature': aiTemperature,
-        'ai_max_tokens': aiMaxTokens,
-        'ai_context_window': aiContextWindow,
-        'ai_approve_mode': aiApproveMode,
-        'ai_ask_skip_tools': aiAskSkipTools,
-        'ai_profiles': aiProfiles.map((e) => e.toJson()).toList(),
-        'active_ai_profile_id': activeAiProfileId,
-        'use_dynamic_color': useDynamicColor,
-        'predictive_back': predictiveBack,
-        'no_preload': noPreload,
-        'glass_gpu_on_desktop': glassGpuOnDesktop,
-        'mobile_nav_placement': mobileNavPlacement,
-        'high_refresh_rate': highRefreshRate,
-        'border_enabled': borderEnabled,
-        'border_color': borderColor,
-        'border_width': borderWidth,
-      };
+    'language': language,
+    'ffmpeg_path': ffmpegPath,
+    'ffprobe_path': ffprobePath,
+    'default_output_dir': defaultOutputDir,
+    'intermediate_dir': intermediateDir,
+    'dark_mode': darkMode,
+    'theme_color': themeColor,
+    'theme_color2': themeColor2,
+    'use_theme_color': useThemeColor,
+    'font_family': fontFamily,
+    'font_size': fontSize,
+    'font_weight': fontWeightIndex,
+    'background_image': backgroundImage,
+    'background_opacity': backgroundOpacity,
+    'glass_effect': glassEffect,
+    'card_style': cardStyle, 'nav_style': navStyle, 'pill_style': pillStyle,
+    'nav_auto_hide': navAutoHide,
+    'menu_style': menuStyle,
+    'glass_auto_tuned': glassAutoTuned,
+    'glass_follow_theme': glassFollowTheme,
+    'settings_glass_mode': settingsGlassMode,
+    // 兼容旧读端：两个派生布尔继续写出（读取时由 _migrateSettingsGlass 折算）
+    'settings_frosted_glass': settingsFrostedGlass,
+    'no_card_glass': noCardGlass,
+    'gate_std': gateStd,
+    'node_mini_map': nodeMiniMap, 'node_snap': nodeSnap,
+    'favorite_node_types': favoriteNodeTypes,
+    'recent_node_types': recentNodeTypes,
+    // 粒子特效：新键 + 旧键一起写出，回滚到旧版本也读得到同一个开关
+    'slider_particles': sliderParticles, 'slider_stars': sliderParticles,
+    'glass_blur': glassBlur,
+    'glass_clarity': glassClarity,
+    'glass_highlight': glassHighlight,
+    'glass_light_pos': glassLightPos,
+    'glass_edge': glassEdge,
+    'theme_tone': themeTone,
+    'card_opacity': cardOpacity,
+    'canvas_bg': canvasBg,
+    'debug_mode': debugMode,
+    'save_logs': saveLogs,
+    'enable_system_notification': enableSystemNotification,
+    'log_save_path': logSavePath,
+    'edit_mode': editMode,
+    'use_node_editor_landscape': useNodeEditorLandscape,
+    'editor_toolbar_scale': editorToolbarScale,
+    'editor_zoom_scale': editorZoomScale,
+    'autosave_enabled': autosaveEnabled,
+    'autosave_interval_sec': autosaveIntervalSec,
+    'max_concurrent_tasks': maxConcurrentTasks,
+    'probe_threads': probeThreads,
+    'node_usage_count': nodeUsageCount,
+    'key_bindings': keyBindings,
+    'auto_check_update': autoCheckUpdate,
+    'mcp_enabled': mcpEnabled,
+    'mcp_port': mcpPort,
+    'mcp_host': mcpHost,
+    'mcp_allow_write': mcpAllowWrite,
+    'mcp_allow_fs': mcpAllowFsAccess,
+    'ai_provider': aiProvider,
+    'ai_api_key': SecureKeyStore.encrypt(aiApiKey),
+    'ai_api_url': aiApiUrl,
+    'ai_model': aiModel,
+    'ai_enabled': aiEnabled,
+    'ai_read_access': aiReadAccess,
+    'ai_write_access': aiWriteAccess,
+    'ai_auto_execute': aiAutoExecute,
+    'ai_allow_ask': aiAllowAsk,
+    'ai_show_thinking': aiShowThinking,
+    'ai_auto_title': aiAutoTitle,
+    'ai_title_prompt': aiTitlePrompt,
+    'ai_graph_mode': aiGraphMode,
+    'ai_system_prompt': aiSystemPrompt,
+    'ai_temperature': aiTemperature,
+    'ai_max_tokens': aiMaxTokens,
+    'ai_context_window': aiContextWindow,
+    'ai_approve_mode': aiApproveMode,
+    'ai_ask_skip_tools': aiAskSkipTools,
+    'ai_profiles': aiProfiles.map((e) => e.toJson()).toList(),
+    'active_ai_profile_id': activeAiProfileId,
+    'use_dynamic_color': useDynamicColor,
+    'predictive_back': predictiveBack,
+    'no_preload': noPreload,
+    'glass_gpu_on_desktop': glassGpuOnDesktop,
+    'mobile_nav_placement': mobileNavPlacement,
+    'high_refresh_rate': highRefreshRate,
+    'border_enabled': borderEnabled,
+    'border_color': borderColor,
+    'border_width': borderWidth,
+  };
 }
 
 // ═══════════════════════════════════════════
@@ -2160,7 +2829,11 @@ class LogEntry {
   final String message;
   final String category; // 'info', 'ffmpeg', 'progress', 'error', 'general'
 
-  LogEntry({required this.timestamp, required this.message, this.category = 'general'});
+  LogEntry({
+    required this.timestamp,
+    required this.message,
+    this.category = 'general',
+  });
 }
 
 // ═══════════════════════════════════════════
@@ -2226,7 +2899,8 @@ class FileContainer {
   }
 
   Map<String, dynamic> toJson() => {
-    'id': id, 'name': name,
+    'id': id,
+    'name': name,
     'items': items.map((i) => i.toJson()).toList(),
     'pipelineGraph': pipelineGraph.toJson(),
   };
@@ -2234,7 +2908,11 @@ class FileContainer {
   factory FileContainer.fromJson(Map<String, dynamic> json) => FileContainer(
     id: json['id'] as String,
     name: json['name'] as String? ?? '',
-    items: (json['items'] as List?)?.map((i) => ContainerItem.fromJson(i)).toList(),
-    pipelineGraph: json['pipelineGraph'] != null ? PipelineGraph.fromJson(json['pipelineGraph']) : null,
+    items: (json['items'] as List?)
+        ?.map((i) => ContainerItem.fromJson(i))
+        .toList(),
+    pipelineGraph: json['pipelineGraph'] != null
+        ? PipelineGraph.fromJson(json['pipelineGraph'])
+        : null,
   );
 }

@@ -73,7 +73,7 @@ class GlassPanel extends StatelessWidget {
       (s) => s.config.cardOpacity,
     );
     final follow = context.select<AppState, bool>(
-      (s) => s.config.glassFollowTheme,
+      (s) => s.config.glassFollowTheme && s.config.useThemeColor,
     );
     final themeColor = context.select<AppState, int>(
       (s) => s.config.themeColor,
@@ -104,22 +104,30 @@ class GlassPanel extends StatelessWidget {
     // 「透明」(none) 与纯色 theme 效果同样退回主题色显示。
     // 用 harmonizedAccent：直接铺 scheme.primary 在暗色下是 tone 80，大面积
     // 铺开非常刺眼（用户反馈「选择主题色又很亮」）。
+    final useThemeColor = context.select<AppState, bool>(
+      (s) => s.config.useThemeColor,
+    );
     final solidTheme = effect == 'none' || effect == SurfaceStyle.theme;
-    final accent = harmonizedAccent(scheme, tone);
-    final accentAlt = Color.lerp(
-      scheme.tertiary,
-      scheme.surface,
-      tone.clamp(0.0, 0.9),
-    )!;
+    final accent = useThemeColor
+        ? harmonizedAccent(scheme, tone)
+        : neutralGray(scheme.surfaceContainerHigh);
+    final accentAlt = useThemeColor
+        ? Color.lerp(scheme.tertiary, scheme.surface, tone.clamp(0.0, 0.9))!
+        : neutralGray(scheme.surfaceContainer);
     final baseColor = solidTheme
         ? accent
-        : themedGlassBase(scheme, tone, follow, second: themeColor2);
+        : themedGlassBase(
+            scheme,
+            tone,
+            follow && useThemeColor,
+            second: useThemeColor ? themeColor2 : -1,
+          );
     final baseAlt = (follow || solidTheme) ? accentAlt : scheme.surface;
     final borderColor = (follow || solidTheme)
         ? accent.withAlpha(isDark ? 110 : 150)
         : scheme.outlineVariant;
     // 主题渐变色：设置了 themeColor2（>=0）时，主题色在 themeColor→themeColor2 之间渐变
-    final grad = (themeColor2 >= 0 && (follow || solidTheme))
+    final grad = (useThemeColor && themeColor2 >= 0 && (follow || solidTheme))
         ? LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,

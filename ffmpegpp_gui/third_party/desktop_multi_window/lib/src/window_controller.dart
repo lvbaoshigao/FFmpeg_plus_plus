@@ -122,7 +122,7 @@ class WindowController {
   }
 }
 
-final _channel = MethodChannel('mixin.one/desktop_multi_window');
+const _channel = MethodChannel('mixin.one/desktop_multi_window');
 
 Stream<MethodCall> _windowEventAsStream() {
   late StreamController<MethodCall> controller;

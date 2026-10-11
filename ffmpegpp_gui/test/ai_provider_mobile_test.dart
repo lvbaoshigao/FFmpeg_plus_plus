@@ -8,11 +8,11 @@
 import 'dart:io';
 
 import 'package:ffmpegpp_gui/models/models.dart';
-import 'package:ffmpegpp_gui/widgets/mobile_glass_pill.dart';
 import 'package:ffmpegpp_gui/pages/ai_settings_mobile.dart';
 import 'package:ffmpegpp_gui/providers/app_state.dart';
 import 'package:ffmpegpp_gui/theme/app_theme.dart';
 import 'package:ffmpegpp_gui/widgets/mobile_bottom_nav.dart';
+import 'package:ffmpegpp_gui/widgets/mobile_glass_pill.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -102,18 +102,24 @@ void main() {
     await _flushSaveTimers(tester);
   });
 
-  testWidgets('disabling active provider clears the active selection', (tester) async {
+  testWidgets('disabling active provider clears the active selection', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(800, 915);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
     final state = AppState();
     final active = AiProfile(id: 'active', name: 'Active', enabled: true);
-    state.updateConfig((c) => c
-      ..aiProfiles = [active]
-      ..activeAiProfileId = active.id);
+    state.updateConfig(
+      (c) => c
+        ..aiProfiles = [active]
+        ..activeAiProfileId = active.id,
+    );
     final fallback = AiProfile(id: 'fallback', name: 'Fallback', enabled: true);
     state.updateConfig((c) => c..aiProfiles.add(fallback));
-    await tester.pumpWidget(_harness(state, const MobileAiProviderDetailPage(profileId: 'active')));
+    await tester.pumpWidget(
+      _harness(state, const MobileAiProviderDetailPage(profileId: 'active')),
+    );
     await tester.pump();
     await tester.tap(find.text('配置'));
     await tester.pump(const Duration(milliseconds: 300));
@@ -121,15 +127,21 @@ void main() {
     await tester.pump();
     expect(state.config.activeAiProfileId, active.id);
     final saveAction = tester.widget<MobileGlassPillAction>(
-      find.byWidgetPredicate((widget) =>
-          widget is MobileGlassPillAction && widget.icon == Icons.check_rounded),
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is MobileGlassPillAction &&
+            widget.icon == Icons.check_rounded,
+      ),
     );
     saveAction.onTap!();
     await tester.pump();
     await tester.pump();
     await tester.pump(const Duration(seconds: 3));
     expect(state.config.activeAiProfileId, fallback.id);
-    expect(state.config.aiProfiles.singleWhere((p) => p.id == active.id).enabled, isFalse);
+    expect(
+      state.config.aiProfiles.singleWhere((p) => p.id == active.id).enabled,
+      isFalse,
+    );
     expect(tester.takeException(), isNull);
     await _flushSaveTimers(tester);
   });
@@ -144,9 +156,8 @@ void main() {
       _harness(
         state,
         Builder(
-          builder: (ctx) => SingleChildScrollView(
-            child: mobileAiSettingsContent(ctx, state),
-          ),
+          builder: (ctx) =>
+              SingleChildScrollView(child: mobileAiSettingsContent(ctx, state)),
         ),
       ),
     );

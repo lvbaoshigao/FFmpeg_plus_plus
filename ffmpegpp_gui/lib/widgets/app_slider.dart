@@ -474,8 +474,9 @@ class _CapsuleTrackShape extends SliderTrackShape with BaseSliderTrackShape {
     bool isEnabled = false,
     double additionalActiveTrackHeight = 2,
   }) {
-    if (sliderTheme.trackHeight == null || sliderTheme.trackHeight! <= 0)
+    if (sliderTheme.trackHeight == null || sliderTheme.trackHeight! <= 0) {
       return;
+    }
     final Rect trackRect = getPreferredRect(
       parentBox: parentBox,
       offset: offset,
@@ -556,8 +557,9 @@ class _CapsuleRangeTrackShape extends RangeSliderTrackShape
     bool isDiscrete = false,
     required TextDirection textDirection,
   }) {
-    if (sliderTheme.trackHeight == null || sliderTheme.trackHeight! <= 0)
+    if (sliderTheme.trackHeight == null || sliderTheme.trackHeight! <= 0) {
       return;
+    }
     final Rect trackRect = getPreferredRect(
       parentBox: parentBox,
       offset: offset,
