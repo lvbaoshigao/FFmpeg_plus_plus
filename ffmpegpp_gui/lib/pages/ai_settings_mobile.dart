@@ -3,8 +3,6 @@ import 'package:provider/provider.dart';
 
 import '../models/models.dart';
 import '../providers/app_state.dart';
-// 控件高度档位令牌：本页原有 34 / 40 / 42 / 44 四档按钮高度并存，
-// 统一到 comfortable（卡片内表单/行内按钮）与 large（通栏主行动按钮）两档
 import '../theme/app_control_size.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_strings.dart';
@@ -876,12 +874,12 @@ class _MobileAiProviderDetailPageState
         !_isNew && _draft.enabled && cfg.activeAiProfileId == _draft.id;
 
     Widget field(String label, Widget child) => Padding(
-      padding: const EdgeInsets.only(bottom: 18),
+      padding: const EdgeInsets.only(bottom: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(label, style: TextStyle(fontSize: 13, color: clr)),
-          const SizedBox(height: 5),
+          const SizedBox(height: 8),
           child,
         ],
       ),
@@ -996,7 +994,7 @@ class _MobileAiProviderDetailPageState
             ),
           ],
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         // ── 连接：名称 / API Key / Base URL / API 路径 ──
         _AiSectionCard(
           cardStyle: cfg.cardStyle,
@@ -1009,6 +1007,7 @@ class _MobileAiProviderDetailPageState
                 s.aiPreset,
                 // 与「设置-样式」同款选择框（OptionMenuBar 胶囊触发钮 + 浮层列表）
                 OptionMenuBar<String>(
+                  triggerHeight: AppControlSize.large.height,
                   value: _selectedPreset,
                   items: [
                     const OptionItem<String>('openai', 'OpenAI'),
@@ -1544,31 +1543,38 @@ class _AiNavRow extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                label,
-                style: TextStyle(fontSize: 12, color: scheme.onSurface),
-              ),
-            ),
-            if (value.isNotEmpty)
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 150),
+      borderRadius: BorderRadius.circular(AppControlSize.large.radius),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minHeight: AppControlSize.large.height),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Row(
+            children: [
+              Expanded(
                 child: Text(
-                  value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.right,
-                  style: TextStyle(fontSize: 12, color: scheme.outline),
+                  label,
+                  style: TextStyle(fontSize: 12, color: scheme.onSurface),
                 ),
               ),
-            const SizedBox(width: 2),
-            Icon(Icons.chevron_right, size: 18, color: scheme.outline),
-          ],
+              if (value.isNotEmpty)
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 150),
+                  child: Text(
+                    value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.right,
+                    style: TextStyle(fontSize: 12, color: scheme.outline),
+                  ),
+                ),
+              const SizedBox(width: 2),
+              Icon(
+                Icons.chevron_right,
+                size: AppControlSize.large.iconSize,
+                color: scheme.outline,
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1592,37 +1598,44 @@ class _AiSwitchRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: TextStyle(fontSize: 12, color: scheme.onSurface),
-                ),
-                if (desc != null) ...[
-                  const SizedBox(height: 2),
+    return ConstrainedBox(
+      constraints: BoxConstraints(minHeight: AppControlSize.large.height),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Text(
-                    desc!,
-                    style: TextStyle(
-                      fontSize: 12,
-                      height: 1.45,
-                      color: scheme.onSurfaceVariant,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+                    label,
+                    style: TextStyle(fontSize: 12, color: scheme.onSurface),
                   ),
+                  if (desc != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      desc!,
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.45,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
-          ),
-          const SizedBox(width: 8),
-          Switch(value: value, onChanged: onChanged),
-        ],
+            const SizedBox(width: 8),
+            Switch(
+              value: value,
+              onChanged: onChanged,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2500,6 +2513,7 @@ class _AiDropdown extends StatelessWidget {
       child: OptionMenuBar<String>(
         // key 绑定当前值：配置被外部改动后重建时显示最新选中项
         key: ValueKey('aiDropdown_${entries.length}_$value'),
+        triggerHeight: AppControlSize.large.height,
         value: value,
         items: [
           for (final e in entries) OptionItem<String>(e.$1, e.$2, icon: e.$3),
@@ -2575,7 +2589,7 @@ class _AiField extends StatefulWidget {
   final int maxLines;
   final ValueChanged<String> onCommit;
 
-  /// 控件高度档位：全页固定 [AppControlSize.comfortable]（36）。本页改造前
+  /// 控件高度档位：与下拉、导航行和通栏按钮共用 [AppControlSize.large]。本页改造前
   /// 输入框纵向内边距写死 `v10`，算出来约 40，且带「眼睛」后缀图标的字段会被
   /// [InputDecorator] 默认的 48×48 图标约束进一步顶高（移动端 48），于是
   /// 同一张卡里 API Key 字段比端口字段高出近 10px。
@@ -2677,9 +2691,9 @@ class _AiFieldState extends State<_AiField> {
         ),
         // 不带这个约束，带「眼睛」后缀图标的字段会被 InputDecorator 默认的
         // 48×48 图标盒顶高（移动端 48 / 桌面折算后 40），比同卡其它字段高一截
-        suffixIconConstraints: const BoxConstraints(
-          minWidth: 48,
-          minHeight: 48,
+        suffixIconConstraints: BoxConstraints.tightFor(
+          width: size.height,
+          height: size.height,
         ),
         suffixIcon: widget.obscure
             ? IconButton(
@@ -2689,7 +2703,10 @@ class _AiFieldState extends State<_AiField> {
                   color: scheme.outline,
                 ),
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                constraints: BoxConstraints.tightFor(
+                  width: size.height,
+                  height: size.height,
+                ),
                 onPressed: () => setState(() => _visible = !_visible),
               )
             : null,
@@ -2699,7 +2716,7 @@ class _AiFieldState extends State<_AiField> {
     );
     // 多行字段（标题提示词 2~4 行、系统提示词 3~6 行）不能钉高度，否则只剩一行高
     return ConstrainedBox(
-      constraints: const BoxConstraints(minHeight: 48),
+      constraints: BoxConstraints(minHeight: size.height),
       child: field,
     );
   }

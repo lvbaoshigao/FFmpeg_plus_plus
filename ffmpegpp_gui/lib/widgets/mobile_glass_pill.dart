@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart';
 import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
 import '../platform/app_platform.dart';
@@ -18,7 +19,7 @@ import 'liquid_glass_fallback.dart';
 /// 供顶栏标题药丸、顶栏操作长药丸、搜索框药丸等复用。
 ///
 /// [pressable] 为 true 时（用于「内部无可点击元素」的药丸，如左上角标题药丸），
-/// 手指按下放大、按住保持、松手回弹，提供触觉反馈。
+/// 按下轻微压缩，拖动时限幅形变，松手用弹簧回弹；不改变布局尺寸。
 class MobileGlassPill extends StatefulWidget {
   final Widget child;
   final double radius;
@@ -173,33 +174,101 @@ class _PillGlassKey {
 
 class _MobileGlassPillState extends State<MobileGlassPill>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _dragController;
-  late final Animation<double> _dragScale;
+  late final AnimationController _pressController;
+  int? _pointer;
+  Offset? _origin;
+  final ValueNotifier<Offset> _drag = ValueNotifier(Offset.zero);
 
   @override
   void initState() {
     super.initState();
-    _dragController = AnimationController(
+    _pressController = AnimationController.unbounded(
       vsync: this,
-      duration: const Duration(milliseconds: 360),
-    );
-    _dragScale = Tween<double>(begin: 1, end: 0.975).animate(
-      CurvedAnimation(parent: _dragController, curve: Curves.easeOutCubic),
+      duration: const Duration(milliseconds: 150),
     );
   }
 
   @override
   void dispose() {
-    _dragController.dispose();
+    _pressController.dispose();
+    _drag.dispose();
     super.dispose();
   }
 
   void _setPressed(bool pressed) {
-    if (pressed) {
-      _dragController.forward();
-    } else {
-      _dragController.reverse();
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _pressController.value = 0;
+      return;
     }
+    if (pressed) {
+      // Keep the response immediate, while the release below uses a real
+      // under-damped spring instead of a linear/timed snap-back.
+      _pressController.animateTo(
+        1,
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.easeOutCubic,
+      );
+      return;
+    }
+
+    final simulation = SpringSimulation(
+      const SpringDescription(mass: 1, stiffness: 420, damping: 28),
+      _pressController.value,
+      0,
+      _pressController.velocity,
+    );
+    _pressController.animateWith(simulation);
+  }
+
+  void _pointerDown(PointerDownEvent event) {
+    if (_pointer != null) return;
+    _pointer = event.pointer;
+    _origin = event.position;
+    _drag.value = Offset.zero;
+    _setPressed(true);
+  }
+
+  void _pointerMove(PointerMoveEvent event) {
+    if (event.pointer != _pointer || _origin == null) return;
+    final delta = event.position - _origin!;
+    _drag.value = Offset(
+      (delta.dx * 0.12).clamp(-6.0, 6.0),
+      (delta.dy * 0.12).clamp(-4.0, 4.0),
+    );
+    // Pointer updates only notify the paint transform.
+  }
+
+  void _pointerEnd(PointerEvent event) {
+    if (event.pointer != _pointer) return;
+    _pointer = null;
+    _origin = null;
+    _setPressed(false);
+  }
+
+  Widget _pressedTransform(Widget child) {
+    return AnimatedBuilder(
+      animation: Listenable.merge([_pressController, _drag]),
+      child: child,
+      builder: (context, child) {
+        final amount = _pressController.value.clamp(-0.2, 1.0);
+        // Compress vertically while allowing the sides to bulge slightly.
+        // This remains a paint-only transform: the glass subtree (and its
+        // shader uniforms/backdrop) is kept as AnimatedBuilder's child.
+        final scale = 1 - (amount * 0.025);
+        final horizontal = scale * (1 + (amount * 0.012));
+        final vertical = scale * (1 - (amount * 0.012));
+        return Transform(
+          alignment: Alignment.center,
+          transform: Matrix4.diagonal3Values(horizontal, vertical, 1)
+            ..setTranslationRaw(
+              _drag.value.dx * amount,
+              _drag.value.dy * amount,
+              0,
+            ),
+          child: child,
+        );
+      },
+    );
   }
 
   // 仅当这些字段变化时才重建 OCLiquidGlass 节点；
@@ -280,12 +349,28 @@ class _MobileGlassPillState extends State<MobileGlassPill>
     // 边框（=「边缘光」）随玻璃细节缩放：基准 1.0 时与改动前逐像素一致。
     final edgeBlur = edgeBorder(80 / 255, 0.5, tuning.edge);
     final edgeWhite = edgeBorder(isDark ? 0.12 : 0.18, 0.7, tuning.edge);
+    final gpuGlass = gpuGlassEnabledOf(context);
     final inner = Container(
       padding: widget.padding,
       decoration: BoxDecoration(
-        color: style == SurfaceStyle.liquid && gpuGlassEnabledOf(context)
+        color: style == SurfaceStyle.liquid && gpuGlass
             ? Colors.transparent
             : tint,
+        // A shallow reflection adds volume without another backdrop layer.
+        gradient: style == SurfaceStyle.liquid
+            ? LinearGradient(
+                begin: Alignment(-1 + tuning.lightPos * 2, -1),
+                end: Alignment(1 - tuning.lightPos * 2, 1),
+                colors: [
+                  Colors.white.withValues(
+                    alpha: (0.065 * tuning.highlight * op).clamp(0.0, 0.16),
+                  ),
+                  Colors.transparent,
+                  Colors.black.withValues(alpha: 0.035 * op),
+                ],
+                stops: const [0, 0.48, 1],
+              )
+            : null,
         borderRadius: BorderRadius.circular(widget.radius),
         border: Border.all(
           color: style == SurfaceStyle.blur
@@ -339,7 +424,7 @@ class _MobileGlassPillState extends State<MobileGlassPill>
           ),
         ),
       );
-    } else if (gpuGlassEnabledOf(context)) {
+    } else if (gpuGlass) {
       // liquid：液态玻璃 shader（Impeller 可用时）
       // 关闭高光带（lightband）与压低镜面高光：高光带按固定像素偏移绘制，
       // 在较「高」的内容（如设置项卡片）上会变成一条横向"分界线"，
@@ -404,20 +489,17 @@ class _MobileGlassPillState extends State<MobileGlassPill>
     );
 
     if (widget.pressable || widget.onTap != null) {
-      // 按下放大、按住保持、松手回弹。
-      result = GestureDetector(
+      // Raw pointer feedback preserves child gestures and cancels cleanly.
+      result = Listener(
         behavior: HitTestBehavior.opaque,
-        onTapDown: (_) => _setPressed(true),
-        onTapUp: (_) {
-          _setPressed(false);
-          widget.onTap?.call();
-        },
-        onTapCancel: () => _setPressed(false),
-        child: AnimatedBuilder(
-          animation: _dragScale,
-          child: result,
-          builder: (context, child) =>
-              Transform.scale(scale: _dragScale.value, child: child),
+        onPointerDown: _pointerDown,
+        onPointerMove: _pointerMove,
+        onPointerUp: _pointerEnd,
+        onPointerCancel: _pointerEnd,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          child: _pressedTransform(result),
         ),
       );
     }

@@ -6334,12 +6334,12 @@ Widget _buildProfileDetail(
 ) {
   // 用 Key 保持编辑中草稿的 controller 稳定
   Widget field(String label, Widget child) => Padding(
-    padding: const EdgeInsets.only(bottom: 10),
+    padding: const EdgeInsets.only(bottom: 12),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label, style: TextStyle(fontSize: 12, color: clr)),
-        const SizedBox(height: 4),
+        const SizedBox(height: 8),
         child,
       ],
     ),
@@ -6355,6 +6355,7 @@ Widget _buildProfileDetail(
             zh ? '供应商预设（一键填充）' : 'Provider Preset',
             OptionMenuBar<String>(
               expandable: true,
+              triggerHeight: AppControlSize.comfortable.height,
               value: profile.provider == 'anthropic'
                   ? 'anthropic'
                   : profile.apiUrl.contains('deepseek')
@@ -6392,6 +6393,7 @@ Widget _buildProfileDetail(
           zh ? '请求方式 / 协议' : 'Protocol',
           OptionMenuBar<String>(
             expandable: false,
+            triggerHeight: AppControlSize.comfortable.height,
             value: profile.provider,
             items: [
               OptionItem('openai', zh ? 'OpenAI 兼容' : 'OpenAI'),
@@ -6409,6 +6411,7 @@ Widget _buildProfileDetail(
           s.aiApiKey,
           _McpTextField(
             value: profile.apiKey,
+            size: AppControlSize.comfortable,
             label: '',
             scheme: scheme,
             obscure: true,
@@ -8637,14 +8640,13 @@ class _ProfileTextFieldState extends State<_ProfileTextField> {
   }
 
   @override
-  Widget build(BuildContext context) => TextField(
-    controller: _ctrl,
-    keyboardType: widget.keyboardType,
-    style: const TextStyle(fontSize: 12),
-    decoration: const InputDecoration(
-      isDense: true,
-      border: OutlineInputBorder(),
+  Widget build(BuildContext context) => AppControlSize.comfortable.fieldBox(
+    TextField(
+      controller: _ctrl,
+      keyboardType: widget.keyboardType,
+      style: const TextStyle(fontSize: 12),
+      decoration: AppControlSize.comfortable.denseInput(),
+      onChanged: widget.onChange,
     ),
-    onChanged: widget.onChange,
   );
 }

@@ -10,9 +10,11 @@ import 'dart:io';
 import 'package:ffmpegpp_gui/models/models.dart';
 import 'package:ffmpegpp_gui/pages/ai_settings_mobile.dart';
 import 'package:ffmpegpp_gui/providers/app_state.dart';
+import 'package:ffmpegpp_gui/theme/app_control_size.dart';
 import 'package:ffmpegpp_gui/theme/app_theme.dart';
 import 'package:ffmpegpp_gui/widgets/mobile_bottom_nav.dart';
 import 'package:ffmpegpp_gui/widgets/mobile_glass_pill.dart';
+import 'package:ffmpegpp_gui/widgets/option_menu_bar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -21,7 +23,7 @@ Widget _harness(AppState state, Widget child) =>
     ChangeNotifierProvider<AppState>.value(
       value: state,
       child: MaterialApp(
-        theme: AppTheme.dark(),
+        theme: AppTheme.dark(useThemeColor: state.config.useThemeColor),
         home: Scaffold(body: child),
       ),
     );
@@ -33,6 +35,119 @@ Future<void> _flushSaveTimers(WidgetTester tester) async {
 }
 
 void main() {
+  group('MobileAiProviderDetailPage narrow form', () {
+    for (final isNew in [true, false]) {
+      testWidgets(
+        'should size controls and save ${isNew ? "new" : "existing"} provider at 320px',
+        (tester) async {
+          tester.view.physicalSize = const Size(320, 780);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+          final state = AppState();
+          final profile = AiProfile(id: 'narrow', name: 'Original');
+          state.updateConfig(
+            (c) => c
+              ..language = 'en'
+              ..useThemeColor = false
+              ..aiProfiles = isNew ? [] : [profile],
+          );
+          await tester.pumpWidget(
+            _harness(
+              state,
+              MobileAiProviderDetailPage(profileId: isNew ? null : profile.id),
+            ),
+          );
+          await tester.pumpAndSettle();
+
+          final menu = find.byType(OptionMenuBar<String>).first;
+          expect(tester.getSize(menu).height, AppControlSize.large.height);
+          final groupRow = find.ancestor(
+            of: find.text('Group'),
+            matching: find.byType(InkWell),
+          );
+          expect(
+            tester.getSize(groupRow.first).height,
+            greaterThanOrEqualTo(AppControlSize.large.height),
+          );
+          await tester.tap(find.byType(Switch).first);
+          await tester.pumpAndSettle();
+          expect(
+            tester.widget<Switch>(find.byType(Switch).first).value,
+            isFalse,
+          );
+          expect(tester.takeException(), isNull);
+
+          final scrollable = find
+              .descendant(
+                of: find.byKey(const ValueKey('ai_provider_config')),
+                matching: find.byType(Scrollable),
+              )
+              .first;
+          await tester.scrollUntilVisible(
+            find.text('Name'),
+            180,
+            scrollable: scrollable,
+          );
+          final name = find.byType(TextField).first;
+          await tester.ensureVisible(name);
+          await tester.enterText(name, 'Narrow provider');
+          await tester.testTextInput.receiveAction(TextInputAction.done);
+          FocusManager.instance.primaryFocus?.unfocus();
+          await tester.pumpAndSettle();
+          final fields = find.byType(TextField);
+          final inputColor = tester
+              .widget<TextField>(fields.first)
+              .style!
+              .color!;
+          expect(inputColor.r, closeTo(inputColor.g, 1 / 255));
+          expect(inputColor.g, closeTo(inputColor.b, 1 / 255));
+          final nameHeight = tester.getSize(fields.at(0)).height;
+          final keyHeight = tester.getSize(fields.at(1)).height;
+          expect(nameHeight, greaterThanOrEqualTo(AppControlSize.large.height));
+          expect(keyHeight, closeTo(nameHeight, 0.1));
+          for (final field in fields.evaluate()) {
+            final rect = tester.getRect(find.byWidget(field.widget));
+            expect(rect.left, greaterThanOrEqualTo(0));
+            expect(rect.right, lessThanOrEqualTo(320));
+          }
+          await tester.scrollUntilVisible(
+            find.byType(OutlinedButton).last,
+            180,
+            scrollable: scrollable,
+          );
+          expect(
+            tester.getSize(find.byType(OutlinedButton).last).height,
+            AppControlSize.large.height,
+          );
+          expect(tester.takeException(), isNull);
+
+          await tester.tap(find.text('Models'));
+          await tester.pumpAndSettle();
+          expect(
+            find.byKey(const ValueKey('ai_provider_models')),
+            findsOneWidget,
+          );
+          expect(tester.takeException(), isNull);
+          await tester.tap(find.text('Config'));
+          await tester.pumpAndSettle();
+          final save = tester.widget<MobileGlassPillAction>(
+            find.byWidgetPredicate(
+              (widget) =>
+                  widget is MobileGlassPillAction &&
+                  widget.icon == Icons.check_rounded,
+            ),
+          );
+          save.onTap!();
+          await tester.pump();
+          await tester.pump(const Duration(seconds: 3));
+          expect(state.config.aiProfiles.single.name, 'Narrow provider');
+          expect(state.config.aiProfiles.single.enabled, isFalse);
+          expect(tester.takeException(), isNull);
+          await _flushSaveTimers(tester);
+        },
+      );
+    }
+  });
   testWidgets('提供商详情页带壁纸 + 主题化选项卡', (tester) async {
     tester.view.physicalSize = const Size(412, 915);
     tester.view.devicePixelRatio = 1.0;

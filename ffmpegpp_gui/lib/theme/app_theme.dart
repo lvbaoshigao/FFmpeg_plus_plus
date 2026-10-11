@@ -25,6 +25,9 @@ class AppTheme {
     final scheme = ColorScheme.fromSeed(
       seedColor: Color(useThemeColor ? (dynamicSeed ?? seedColor) : 0xFF777777),
       brightness: Brightness.dark,
+      dynamicSchemeVariant: useThemeColor
+          ? DynamicSchemeVariant.tonalSpot
+          : DynamicSchemeVariant.monochrome,
     );
     return _build(
       scheme,
@@ -49,6 +52,9 @@ class AppTheme {
     final scheme = ColorScheme.fromSeed(
       seedColor: Color(useThemeColor ? (dynamicSeed ?? seedColor) : 0xFF777777),
       brightness: Brightness.light,
+      dynamicSchemeVariant: useThemeColor
+          ? DynamicSchemeVariant.tonalSpot
+          : DynamicSchemeVariant.monochrome,
     );
     return _build(
       scheme,
