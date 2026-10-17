@@ -80,7 +80,6 @@ class AppStrings {
   // 概览条：把「耗时 / 输出大小 / 帧数」三项提到最上面 —— 它们原先散落在
   // 「技术参数」网格里，与 FPS、码率同级，但用户点开卡片最先想知道的就是
   // 「跑了多久、出来多大」。
-  String get qSummary => lang == 'zh' ? '概览' : 'Summary';
   String get qElapsed => lang == 'zh' ? '耗时' : 'Elapsed';
   String get qDuration => lang == 'zh' ? '总时长' : 'Duration';
   String get qFrames => lang == 'zh' ? '帧数' : 'Frames';
@@ -90,15 +89,12 @@ class AppStrings {
   String get qNoLogs => lang == 'zh' ? '暂无日志输出' : 'No log output';
   String get qNoCommand => lang == 'zh' ? '暂无命令记录' : 'No command recorded';
   String get qLines => lang == 'zh' ? '行' : 'lines';
-  String get qOutlineTitle => lang == 'zh' ? '任务概览' : 'Task Summary';
   // Debug
   String get dDebug => lang == 'zh' ? '调试' : 'Debug';
   String get dDebugMode => lang == 'zh' ? '调试模式' : 'Debug mode';
   String get dSaveLogs => lang == 'zh' ? '保存日志' : 'Save logs';
   String get dLogPath => lang == 'zh' ? '日志路径' : 'Log path';
   // Background
-  String get bgTitle => lang == 'zh' ? '背景' : 'Background';
-  String get bgNone => lang == 'zh' ? '无' : 'None';
   String get bgOpacity => lang == 'zh' ? '背景不透明度' : 'BG Opacity';
   String get cardOpacity => lang == 'zh' ? '卡片不透明度' : 'Card Opacity';
   // 「外观 → 背景」卡片的操作文案（见 settings_page 的 _ThemeBackgroundSection）。
@@ -268,7 +264,7 @@ class AppStrings {
   String get aiAskSkipLabel => lang == 'zh' ? '询问模式下无需确认的操作' : 'Operations that skip confirmation in Ask mode';
   // ── 移动端 AI 提供商 ──
   String get aiProviders => lang == 'zh' ? '提供商' : 'Providers';
-  String get aiNewProvider => lang == 'zh' ? '新建提供商' : 'New Provider';
+  String get aiNewProvider => lang == 'zh' ? '添加提供商' : 'Add Provider';
   String get aiProviderCurrent => lang == 'zh' ? '当前' : 'Current';
   String get aiProviderDetail => lang == 'zh' ? '提供商详情' : 'Provider Details';
   String get aiProviderUse => lang == 'zh' ? '设为当前' : 'Set as current';
@@ -280,7 +276,91 @@ class AppStrings {
   String get aiContextWindow => lang == 'zh' ? '上下文窗口 (token)' : 'Context Window (tokens)';
   String get aiMaxTokens => lang == 'zh' ? '最大输出 token' : 'Max Output Tokens';
   String get aiTemperature => lang == 'zh' ? '温度 (0-2)' : 'Temperature (0-2)';
-  String get aiNoProviders => lang == 'zh' ? '暂无提供商，点击「新建提供商」添加' : 'No providers yet — tap "New Provider" to add one';
+  String get aiNoProviders =>
+      lang == 'zh' ? '还没有提供商' : 'No providers yet';
+
+  // ── 移动端 AI 提供商列表 / 搜索（2026-10 重构）──
+  String get aiProvidersSubtitle =>
+      lang == 'zh' ? '管理你的 AI 提供商' : 'Manage your AI providers';
+  String get aiProvidersSearchHint => lang == 'zh'
+      ? '搜索模型或提供商...'
+      : 'Search models or providers...';
+  String aiSearchResultsCount(int n) =>
+      lang == 'zh' ? '搜索结果 ($n)' : 'Search results ($n)';
+  String get aiSearching => lang == 'zh' ? '正在搜索中...' : 'Searching...';
+  String aiSearchingHint(String q) => lang == 'zh'
+      ? '正在为您查找包含 $q 的模型\n请稍候...'
+      : 'Looking for models matching "$q"\nPlease wait...';
+  String get aiNoSearchResults =>
+      lang == 'zh' ? '未找到相关结果' : 'No results found';
+  String aiNoSearchResultsHint(String q) => lang == 'zh'
+      ? '没有找到包含 “$q” 的模型\n请尝试其他关键词'
+      : 'No models match "$q"\nTry another keyword';
+  String get aiClearSearch => lang == 'zh' ? '清空搜索' : 'Clear search';
+  String get aiEnabledOnly => lang == 'zh' ? '仅显示已启用' : 'Enabled only';
+  String get aiFilter => lang == 'zh' ? '筛选' : 'Filter';
+  String get aiEnabledStatus => lang == 'zh' ? '已启用' : 'Enabled';
+  String get aiDisabledStatus => lang == 'zh' ? '已停用' : 'Disabled';
+  String aiModelCount(int n) =>
+      lang == 'zh' ? '$n 个模型' : '$n ${n == 1 ? 'model' : 'models'}';
+  String aiProviderCount(int n) =>
+      lang == 'zh' ? '$n 个提供商' : '$n ${n == 1 ? 'provider' : 'providers'}';
+  String get aiShowAll => lang == 'zh' ? '查看全部' : 'Show all';
+  String get aiNoModels => lang == 'zh' ? '未添加模型' : 'No models yet';
+  String get aiNoProvidersHint => lang == 'zh'
+      ? '还没有提供商，添加一个开始使用 AI 助手'
+      : 'No providers yet — add one to start using the AI assistant';
+  String get aiNoEnabledProviders =>
+      lang == 'zh' ? '没有已启用的提供商' : 'No enabled providers';
+  String get aiNoEnabledProvidersHint => lang == 'zh'
+      ? '关闭「仅显示已启用」筛选，或启用一个提供商'
+      : 'Turn off the enabled-only filter or enable a provider';
+  String get aiAiDisabledHint => lang == 'zh'
+      ? 'AI 助手已停用，提供商不会参与对话'
+      : 'AI assistant is off — providers are not used in chats';
+
+  // ── 移动端 AI 提供商详情（2026-10 重构）──
+  String get aiBasic => lang == 'zh' ? '基本' : 'Basic';
+  String get aiModelsTab => lang == 'zh' ? '模型' : 'Models';
+  String get aiBasicInfo => lang == 'zh' ? '基本信息' : 'Basic Info';
+  String get aiConnection => lang == 'zh' ? '连接' : 'Connection';
+  String get aiManagement => lang == 'zh' ? '管理' : 'Management';
+  String get aiProviderName => lang == 'zh' ? '名称' : 'Name';
+  String get aiProviderEnabled => lang == 'zh' ? '是否启用' : 'Enabled';
+  String get aiProviderEnabledDesc => lang == 'zh'
+      ? '停用后不会用于 AI 请求'
+      : 'Disabled providers are excluded from AI requests';
+  String get aiProviderFormat => lang == 'zh' ? '请求格式' : 'Request format';
+  String get aiResponseApiDesc => lang == 'zh'
+      ? '使用 /responses 端点而非 /chat/completions'
+      : 'Use /responses instead of /chat/completions';
+  String get aiActivePath => lang == 'zh' ? '请求路径' : 'Request path';
+  String get aiEffectiveRequest =>
+      lang == 'zh' ? '实际请求' : 'Effective request';
+
+  // ── MCP 服务（2026-10 重构）──
+  String get mcpService => lang == 'zh' ? 'MCP 服务' : 'MCP Server';
+  String get mcpRunning => lang == 'zh' ? '运行中' : 'Running';
+  String get mcpStopped => lang == 'zh' ? '已停止' : 'Stopped';
+  String get mcpApply => lang == 'zh' ? '应用' : 'Apply';
+  String get mcpBindHost => lang == 'zh' ? '监听地址' : 'Bind host';
+  String get mcpLanToken => lang == 'zh' ? '局域网访问令牌' : 'LAN access token';
+  String get mcpAllowWrite => lang == 'zh' ? '允许 MCP 写入' : 'Allow MCP Write';
+  String get mcpAllowWriteDesc => lang == 'zh'
+      ? '关闭时仅可读取，修改操作会被拒绝'
+      : 'When off, MCP is read-only';
+  String get mcpAllowFs => lang == 'zh'
+      ? '允许 MCP 访问文件系统'
+      : 'Allow MCP File Access';
+  String get mcpAllowFsDesc => lang == 'zh'
+      ? '允许列目录、读取文件信息和媒体探测；不需要时建议关闭'
+      : 'Allows directory listing, file info and media probing';
+  String get mcpEnableDesc => lang == 'zh'
+      ? '启用后外部 AI 工具可通过 MCP 协议访问项目、队列与画布'
+      : 'Let external AI tools access projects, queue and canvas over MCP';
+  String get mcpApplyHint => lang == 'zh'
+      ? '改后点「应用」。设为 0.0.0.0 将暴露到局域网并启用访问令牌'
+      : 'Click Apply. 0.0.0.0 exposes to LAN and enables token';
 
   // ── 设置页分区与搜索 ──
   String get setSearchHint => lang == 'zh' ? '搜索设置...' : 'Search settings...';

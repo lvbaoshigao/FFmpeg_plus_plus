@@ -18,6 +18,7 @@ import 'platform/app_platform.dart';
 import 'providers/app_state.dart';
 import 'services/android_platform.dart';
 import 'services/update_service.dart' as updater;
+import 'theme/app_neutral_surface.dart';
 import 'theme/app_semantic_colors.dart';
 import 'theme/app_strings.dart';
 import 'theme/app_text_scale.dart';
@@ -29,6 +30,7 @@ import 'widgets/mobile_bottom_nav.dart';
 // 生效的菜单栏位置下发（底部 ↔ 左右竖排导轨时，主 Tab 各页的底部留白随之切换）
 import 'widgets/mobile_nav_scope.dart';
 import 'widgets/sidebar.dart';
+import 'widgets/task_float_layer.dart';
 import 'widgets/toast.dart';
 // 与 wallpaper_background.dart 互为循环引用（它用本文件的
 // wallpaperImageProvider，本文件用它的 WallpaperWindowScope），Dart 允许。
@@ -315,7 +317,9 @@ class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
             // 取色用 Theme.of —— MaterialApp 内部专门用 Builder 包了 builder，
             // 保证此处 context 能解析到上面设置的 theme（见 _materialBuilder）。
             // 该图层只在「无路由绘制」时可见，有路由时被完全覆盖，不影响任何观感。
-            final Color baseSurface = Theme.of(context).colorScheme.surface;
+            final Color baseSurface = AppNeutralSurface.background(
+              Theme.of(context).brightness,
+            );
             return AppTextScale(
               systemScale: sysScale,
               appScale: appScale,
@@ -407,7 +411,9 @@ class _SplashScreenState extends State<_SplashScreen> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: scheme.surface,
+      backgroundColor: AppNeutralSurface.background(
+        Theme.of(context).brightness,
+      ),
       body: Center(
         // 初始化界面：仅保留软件图标 + 软件名字 + 加载进度条
         child: Column(
@@ -994,7 +1000,15 @@ class _AppShellState extends State<AppShell> with WindowListener {
               onSelected: (i) => context.read<AppState>().selectNav(i),
             ),
           ),
-          Expanded(child: _pageStack(nav)),
+          Expanded(
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                _pageStack(nav),
+                const Positioned.fill(child: TaskFloatLayer()),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -1136,7 +1150,8 @@ class _AppShellState extends State<AppShell> with WindowListener {
       builder: (context, bgTuple, _) {
         final bg = bgTuple.$1;
         final hasBg = bg.isNotEmpty && _bgFileExists(bg);
-        if (!hasBg) return Scaffold(body: body);
+        final base = AppNeutralSurface.background(scheme.brightness);
+        if (!hasBg) return Scaffold(backgroundColor: base, body: body);
         // 有壁纸时：壁纸铺底 + 半透明遮罩 + 透明 Scaffold（让子页面也能看到壁纸）
         final a = ((1.0 - bgTuple.$2) * 220).round().clamp(20, 240);
         // 内存优化 + 防拉伸防模糊：按「屏幕物理分辨率」等比缩放解码壁纸
@@ -1145,8 +1160,8 @@ class _AppShellState extends State<AppShell> with WindowListener {
         final dpr = MediaQuery.devicePixelRatioOf(context);
         final Widget stacked = Stack(
           children: [
-            // 不透明主题底色铺底：避免子页面返回过渡首帧露出系统窗口黑底
-            Positioned.fill(child: Container(color: scheme.surface)),
+            // 不透明中性底色铺底：避免子页面返回过渡首帧露出系统窗口黑底
+            Positioned.fill(child: Container(color: base)),
             Positioned.fill(
               child: Image(
                 image: wallpaperImageProvider(bg, size.width, size.height, dpr),
@@ -1157,9 +1172,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
                 },
               ),
             ),
-            Positioned.fill(
-              child: Container(color: scheme.surface.withAlpha(a)),
-            ),
+            Positioned.fill(child: Container(color: base.withAlpha(a))),
             // 用 Theme 覆盖 scaffoldBackgroundColor 为透明，让子页面 Scaffold 不遮壁纸
             Theme(
               data: Theme.of(
@@ -1181,7 +1194,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
           screenSize: size,
           // 遮罩色必须与叠在壁纸上那层完全一致，否则卡内壁纸亮度与
           // 卡外背景对不上。
-          overlayColor: scheme.surface.withAlpha(a),
+          overlayColor: base.withAlpha(a),
           child: stacked,
         );
       },

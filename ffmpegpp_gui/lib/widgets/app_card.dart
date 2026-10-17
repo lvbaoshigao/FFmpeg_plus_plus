@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
+import '../theme/app_neutral_surface.dart';
 import 'liquid_glass_fallback.dart';
 import 'wallpaper_background.dart';
 
@@ -200,11 +201,11 @@ class _AppCardState extends State<AppCard> {
     // 表面色混合后的协调色（默认 0.45）。
     final Color accent = key.useThemeColor
         ? harmonizedAccent(scheme, key.tone)
-        : neutralGray(scheme.surfaceContainerHigh);
+        : AppNeutralSurface.card(scheme.brightness);
     // 纯色分支的底色：gray 恒为中性灰（去饱和，避免 fromSeed 的种子色偏造成
     // 「灰色夹杂主题色」）；theme 与「关了玻璃的玻璃卡」用协调后的主题色。
     final Color solidBase = style == SurfaceStyle.gray
-        ? neutralGray(scheme.surfaceContainerHigh)
+        ? AppNeutralSurface.card(scheme.brightness)
         : accent;
     // 纯色分支的渐变：仅主题色纯色卡（含关玻璃后的卡）才带主题渐变，灰色恒纯灰。
     final grad =

@@ -4,6 +4,7 @@ import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
 import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
+import '../theme/app_neutral_surface.dart';
 import '../theme/app_strings.dart';
 import 'app_card.dart' show SurfaceStyle;
 import 'liquid_glass_fallback.dart';
@@ -134,11 +135,11 @@ NavGlassLook navGlassLook(ColorScheme scheme, bool isDark, NavGlassPal pal) {
   // 灰色样式额外去饱和，保证是真正的中性灰（原有 fromSeed 种子色偏）。
   final accent = pal.useThemeColor
       ? harmonizedAccent(scheme, pal.tone)
-      : neutralGray(scheme.surfaceContainerHigh);
+      : AppNeutralSurface.card(scheme.brightness);
   final baseColor = style == SurfaceStyle.theme
       ? accent
       : style == SurfaceStyle.gray
-      ? neutralGray(scheme.surfaceContainerHigh)
+      ? AppNeutralSurface.card(scheme.brightness)
       : themedGlassBase(
           scheme,
           pal.tone,
@@ -1162,9 +1163,6 @@ class _NavItem extends StatelessWidget {
   final Color selectedColor;
   final Color unselectedColor;
 
-  /// 图标/文字尺寸：主导航 60px 高用默认值，较矮的子页面切换栏可调小。
-  final double iconSize;
-  final double labelSize;
 
   /// 可用宽度（= 父级 SizedBox 给出的 itemW）。
   /// [FIX UI-文字缩放溢出] 把内容宽度钉死为 itemW，使 FittedBox(scaleDown)
@@ -1180,8 +1178,6 @@ class _NavItem extends StatelessWidget {
     required this.selectedColor,
     required this.unselectedColor,
     required this.maxWidth,
-    this.iconSize = 27,
-    this.labelSize = 9.0,
   });
 
   @override
@@ -1190,11 +1186,10 @@ class _NavItem extends StatelessWidget {
     // 纯展示：点按/拖动统一由父级 GestureDetector 处理，避免手势竞争。
     //
     // [FIX UI-文字缩放溢出] 原实现把 Column 直接放进 Row(crossAxisAlignment:
-    // stretch) 的**紧高度**约束里：图标 27 + 间距 1 + 文字 (labelSize ×
+    // stretch) 的**紧高度**约束里：图标 27 + 间距 1 + 文字 (9.0 ×
     // textScale × height 1.1)。textScale 上限是 AppTextScale.maxScale = 2.6
     // （系统字号 × 应用内字号，见 app.dart），此时内容高约 53.7px，而栏内可用
-    // 高度只有 60 - 上下 padding 8 = 52px（子页面切换栏更矮：54 - 8 = 46px，
-    // 溢出更早更明显）→ 必然抛「A RenderFlex overflowed by N pixels」并在
+    // 高度只有 60 - 上下 padding 8 = 52px → 必然抛「A RenderFlex overflowed by N pixels」并在
     // debug 下画黄黑溢出条纹。现在外面套一层 FittedBox(scaleDown)：内容超高时
     // 整体等比缩小到刚好放下；正常字号不会触发缩放（像素与改动前一致）。
     // 宽度用 maxWidth 钉死为 itemW，保证 Text 仍在 itemW 内做 ellipsis，
@@ -1216,7 +1211,7 @@ class _NavItem extends StatelessWidget {
                 duration: const Duration(milliseconds: 220),
                 builder: (ctx, c, child) => Icon(
                   selected ? activeIcon : icon,
-                  size: iconSize,
+                  size: 27,
                   color: c,
                 ),
               ),
@@ -1229,7 +1224,7 @@ class _NavItem extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: labelSize,
+                    fontSize: 9.0,
                     fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
                     color: c,
                     height: 1.1,
@@ -1240,149 +1235,6 @@ class _NavItem extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-/// 子页面级底部玻璃切换栏 —— 与主底部导航（MobileBottomNav）同一套
-/// 「底部菜单栏样式」（navStyle 四值 + cardOpacity + 主题色 + 药丸遮罩）。
-///
-/// 供移动端二级页面使用（如 AI「新建供应商」的 配置/模型 切换），
-/// 替代此前各页自绘的 AppCard 底栏——那些底栏只跟随卡片样式，
-/// 用户切换全局导航样式时会出现「这里不一样」的割裂感。
-///
-/// 与主导航的区别：不绑 PageView、无拖拽手势，点按切换（遮罩 260ms 滑动吸附）。
-class MobileNavStyleTabBar extends StatefulWidget {
-  /// (图标, 文字) 列表，2~4 项为宜
-  final List<(IconData, String)> items;
-  final int selectedIndex;
-  final ValueChanged<int> onSelected;
-
-  /// 栏高（含 4px 内边距），默认 54——比主导航 60 略矮，适合子页面
-  final double height;
-
-  const MobileNavStyleTabBar({
-    super.key,
-    required this.items,
-    required this.selectedIndex,
-    required this.onSelected,
-    this.height = 54,
-  });
-
-  @override
-  State<MobileNavStyleTabBar> createState() => _MobileNavStyleTabBarState();
-}
-
-class _MobileNavStyleTabBarState extends State<MobileNavStyleTabBar> {
-  @override
-  void initState() {
-    super.initState();
-    // 与主导航一致：提前预加载 shader，避免首次渲染异步加载闪烁。
-    // 与 main.dart 的 shader 预热走同一条门控：shaderGlassSupported 为 false 时
-    // 玻璃渲染永远走不到 shader 分支（gpuGlassEnabledOf 已 gate），但这次调用
-    // 仍会真的加载并编译一份用不到的 SkSL 运行时效应 —— 白占内存，直接跳过。
-    if (shaderGlassSupported) OCLiquidGlassGroup.precacheShader();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final pal = navGlassPalOf(context);
-    final look = navGlassLook(scheme, isDark, pal);
-    final style = look.style;
-
-    final barHeight = widget.height;
-    final radius = barHeight / 2;
-    const pillGap = 4.0;
-
-    Widget buildBarIn() {
-      // 与主底部导航同一规则：liquid 透明（tint 交给 shader），其余用 tint。
-      return Container(
-        height: barHeight,
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-        decoration: BoxDecoration(
-          color: style == SurfaceStyle.liquid ? Colors.transparent : look.tint,
-          borderRadius: BorderRadius.circular(radius),
-          border: Border.all(color: look.borderColor, width: look.borderWidth),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: LayoutBuilder(
-          builder: (ctx, cons) {
-            final totalGap = pillGap * (widget.items.length - 1);
-            final itemW = (cons.maxWidth - totalGap) / widget.items.length;
-            return GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              // 点按最近项：与主导航一致的「就近吸附」手感
-              onTapUp: (d) {
-                final dx = d.localPosition.dx;
-                int nearest = 0;
-                var bestDist = double.infinity;
-                for (var i = 0; i < widget.items.length; i++) {
-                  final dist = (dx - (i * (itemW + pillGap) + itemW / 2)).abs();
-                  if (dist < bestDist) {
-                    bestDist = dist;
-                    nearest = i;
-                  }
-                }
-                if (nearest != widget.selectedIndex) widget.onSelected(nearest);
-              },
-              child: SizedBox(
-                width: cons.maxWidth,
-                height: cons.maxHeight,
-                child: Stack(
-                  children: [
-                    // 药丸遮罩：切换时 260ms easeOutCubic 滑动吸附（与主导航一致）
-                    AnimatedPositioned(
-                      duration: const Duration(milliseconds: 260),
-                      curve: Curves.easeOutCubic,
-                      // 与主导航同一条内缩规则，保持两处遮罩观感一致
-                      left:
-                          widget.selectedIndex * (itemW + pillGap) +
-                          kMobileNavMaskInset,
-                      top: 2,
-                      bottom: 2,
-                      width: mobileNavMaskWidth(itemW),
-                      child: RepaintBoundary(
-                        child: navMaskPill(scheme, isDark, style),
-                      ),
-                    ),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        for (var i = 0; i < widget.items.length; i++) ...[
-                          if (i > 0) const SizedBox(width: pillGap),
-                          SizedBox(
-                            width: itemW,
-                            child: _NavItem(
-                              icon: widget.items[i].$1,
-                              activeIcon: widget.items[i].$1,
-                              label: widget.items[i].$2,
-                              selected: i == widget.selectedIndex,
-                              selectedColor: look.selectedColor,
-                              unselectedColor: look.unselectedColor,
-                              maxWidth: itemW,
-                              iconSize: 21,
-                              labelSize: 10,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
-      );
-    }
-
-    return NavGlassShell(
-      pal: pal,
-      radius: radius,
-      keyPrefix: 'tabbar',
-      child: buildBarIn(),
     );
   }
 }

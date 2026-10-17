@@ -1007,17 +1007,6 @@ String logicBlockTypeLabel(LogicBlockType t, bool zh) => switch (t) {
   LogicBlockType.condition => zh ? '条件' : 'Condition',
 };
 
-/// 逻辑块类型的一句话说明，用于工具箱预览与属性面板副标题。
-String logicBlockTypeHint(LogicBlockType t, bool zh) => switch (t) {
-  LogicBlockType.loop =>
-    zh ? '框内节点整体重复执行 N 次' : 'Repeat the boxed nodes N times',
-  LogicBlockType.selectiveLoop =>
-    zh ? '每轮按模式决定执行框内哪些节点' : 'Pick which boxed nodes run each round',
-  LogicBlockType.group =>
-    zh ? '纯组织容器，不改变执行次数' : 'Organizational container only',
-  LogicBlockType.condition =>
-    zh ? '按输入文件属性决定是否执行' : 'Run only when the input matches',
-};
 
 String logicConditionFieldLabel(LogicConditionField f, bool zh) => switch (f) {
   LogicConditionField.extension => zh ? '扩展名' : 'Extension',

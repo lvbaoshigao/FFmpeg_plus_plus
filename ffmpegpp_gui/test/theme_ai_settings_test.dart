@@ -7,6 +7,7 @@ import 'package:ffmpegpp_gui/pages/ai_settings_mobile.dart';
 import 'package:ffmpegpp_gui/providers/app_state.dart';
 import 'package:ffmpegpp_gui/theme/app_theme.dart';
 import 'package:ffmpegpp_gui/widgets/app_card.dart';
+import 'package:ffmpegpp_gui/widgets/mobile_top_bar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -78,7 +79,7 @@ void main() {
     expect(find.text('Claude'), findsOneWidget);
     // 当前提供商徽标
     expect(find.text('当前'), findsOneWidget);
-    expect(find.text('新建提供商'), findsOneWidget);
+    expect(find.text('添加提供商'), findsOneWidget);
     expect(find.text('权限'), findsOneWidget);
     expect(find.text('高级'), findsOneWidget);
     // 让配置落盘防抖定时器跑完，避免 Timer pending 断言
@@ -117,7 +118,15 @@ void main() {
       _harness(state, MobileAiProviderDetailPage(profileId: p.id)),
     );
     await tester.pumpAndSettle();
-    expect(find.text('提供商详情'), findsOneWidget);
+    // 详情页顶栏显示提供商名称（沿用设计稿「Name 居中」的结构）。
+    // 注意输入框的 EditableText 也会命中 find.text，这里限定在顶栏内。
+    expect(
+      find.descendant(
+        of: find.byType(MobileSubPageTopBar),
+        matching: find.text('测试提供商'),
+      ),
+      findsOneWidget,
+    );
     // 名称输入框回显草稿值——与字段顺序无关：详情页有多个 TextField，
     // 「第一个」会随 UI 演化漂移（曾因此误取到别处的默认值 'OpenAI 兼容'）。
     final fields = tester.widgetList<TextField>(find.byType(TextField));

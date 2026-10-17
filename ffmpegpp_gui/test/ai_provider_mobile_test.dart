@@ -1,6 +1,6 @@
 // 移动端 AI/MCP 提供商界面冒烟测试：
 // 1. 提供商详情页带壁纸背景（修复「提供商界面没有壁纸」）
-// 2. 底部「配置/模型」选项卡跟随全局导航样式（主题绑定）
+// 2. 顶部「基本/模型」选项卡使用顶部药丸样式（主题绑定）
 // 3. AI 高级设置页 / 移动端 AI 设置内容可构建
 //
 // 注意：testWidgets 是 FakeAsync 环境，真实文件 IO 与图片解码必须包在
@@ -12,7 +12,6 @@ import 'package:ffmpegpp_gui/pages/ai_settings_mobile.dart';
 import 'package:ffmpegpp_gui/providers/app_state.dart';
 import 'package:ffmpegpp_gui/theme/app_control_size.dart';
 import 'package:ffmpegpp_gui/theme/app_theme.dart';
-import 'package:ffmpegpp_gui/widgets/mobile_bottom_nav.dart';
 import 'package:ffmpegpp_gui/widgets/mobile_glass_pill.dart';
 import 'package:ffmpegpp_gui/widgets/option_menu_bar.dart';
 import 'package:flutter/material.dart';
@@ -61,14 +60,14 @@ void main() {
 
           final menu = find.byType(OptionMenuBar<String>).first;
           expect(tester.getSize(menu).height, AppControlSize.large.height);
-          final groupRow = find.ancestor(
-            of: find.text('Group'),
-            matching: find.byType(InkWell),
-          );
-          expect(
-            tester.getSize(groupRow.first).height,
-            greaterThanOrEqualTo(AppControlSize.large.height),
-          );
+          final scrollable = find
+              .descendant(
+                of: find.byKey(const ValueKey('ai_provider_config')),
+                matching: find.byType(Scrollable),
+              )
+              .first;
+
+          // 「是否启用」是基本页第一颗开关：先在页首切掉。
           await tester.tap(find.byType(Switch).first);
           await tester.pumpAndSettle();
           expect(
@@ -77,12 +76,6 @@ void main() {
           );
           expect(tester.takeException(), isNull);
 
-          final scrollable = find
-              .descendant(
-                of: find.byKey(const ValueKey('ai_provider_config')),
-                matching: find.byType(Scrollable),
-              )
-              .first;
           await tester.scrollUntilVisible(
             find.text('Name'),
             180,
@@ -110,6 +103,20 @@ void main() {
             expect(rect.left, greaterThanOrEqualTo(0));
             expect(rect.right, lessThanOrEqualTo(320));
           }
+          // 「管理」卡在首屏之外，ListView 惰性构建：继续向下滚到 Group 再量行高。
+          await tester.scrollUntilVisible(
+            find.text('Group'),
+            180,
+            scrollable: scrollable,
+          );
+          final groupRow = find.ancestor(
+            of: find.text('Group'),
+            matching: find.byType(InkWell),
+          );
+          expect(
+            tester.getSize(groupRow.first).height,
+            greaterThanOrEqualTo(AppControlSize.large.height),
+          );
           await tester.scrollUntilVisible(
             find.byType(OutlinedButton).last,
             180,
@@ -128,7 +135,7 @@ void main() {
             findsOneWidget,
           );
           expect(tester.takeException(), isNull);
-          await tester.tap(find.text('Config'));
+          await tester.tap(find.text('Basic'));
           await tester.pumpAndSettle();
           final save = tester.widget<MobileGlassPillAction>(
             find.byWidgetPredicate(
@@ -192,9 +199,15 @@ void main() {
 
     // 壁纸：withWallpaper 里铺的壁纸 Image 应存在
     expect(find.byType(Image), findsWidgets);
-    // 底部「配置 / 模型」选项卡跟随全局导航样式渲染
-    expect(find.byType(MobileNavStyleTabBar), findsOneWidget);
-    expect(find.text('配置'), findsOneWidget);
+    // 顶部「基本 / 模型」选项卡使用顶部药丸样式渲染，且位于内容区上方
+    expect(find.byKey(const ValueKey('ai_provider_top_tabs')), findsOneWidget);
+    expect(
+      tester.getBottomLeft(find.byKey(const ValueKey('ai_provider_top_tabs'))).dy,
+      lessThanOrEqualTo(
+        tester.getTopLeft(find.byKey(const ValueKey('ai_provider_config'))).dy,
+      ),
+    );
+    expect(find.text('基本'), findsOneWidget);
     expect(find.text('模型'), findsOneWidget);
 
     // 切到「模型」选项卡可构建（内容区标题与选项卡标签都含「模型」二字）
@@ -236,7 +249,7 @@ void main() {
       _harness(state, const MobileAiProviderDetailPage(profileId: 'active')),
     );
     await tester.pump();
-    await tester.tap(find.text('配置'));
+    await tester.tap(find.text('基本'));
     await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.byType(Switch).at(0));
     await tester.pump();
@@ -298,6 +311,95 @@ void main() {
     );
     await tester.pump();
     expect(find.byType(MobileAiProviderDetailPage), findsNothing);
+    await _flushSaveTimers(tester);
+  });
+
+  testWidgets('提供商搜索：模型 / 名称 / 加载 / 无结果 / 清空', (tester) async {
+    tester.view.physicalSize = const Size(412, 915);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final state = AppState();
+    final openAi = AiProfile(
+      name: 'OpenAI',
+      provider: 'openai',
+      model: 'gpt-4o',
+    );
+    openAi.models.addAll([
+      AiModelEntry(id: 'gpt-4o'),
+      AiModelEntry(id: 'gpt-4o-mini'),
+      AiModelEntry(id: 'o3'),
+    ]);
+    final claude = AiProfile(
+      name: 'Claude',
+      provider: 'anthropic',
+      model: 'claude-3.5-sonnet',
+    );
+    claude.models.addAll([
+      AiModelEntry(id: 'claude-3.5-sonnet'),
+      AiModelEntry(id: 'claude-3-opus'),
+    ]);
+    final custom = AiProfile(name: '自定义提供商', provider: 'openai');
+    custom.models.add(AiModelEntry(id: 'my-model'));
+    state.updateConfig((c) {
+      c.aiProfiles.addAll([openAi, claude, custom]);
+      c.activeAiProfileId = openAi.id;
+      c.cardStyle = 'gray';
+      c.pillStyle = 'gray';
+      return c;
+    });
+
+    await tester.pumpWidget(
+      _harness(
+        state,
+        Builder(
+          builder: (ctx) =>
+              SingleChildScrollView(child: mobileAiSettingsContent(ctx, state)),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('OpenAI'), findsOneWidget);
+    expect(find.text('Claude'), findsOneWidget);
+    expect(find.text('自定义提供商'), findsOneWidget);
+    // 非搜索态不展示模型 chips，保持列表紧凑（对应设计稿的提供商列表页）。
+    expect(find.text('gpt-4o'), findsNothing);
+
+    final search = find.byKey(const ValueKey('ai_provider_search'));
+    expect(search, findsOneWidget);
+
+    // 模型搜索：输入 gpt4 应命中 gpt-4o（忽略连字符）
+    await tester.enterText(search, 'gpt4');
+    await tester.pump(const Duration(milliseconds: 60));
+    expect(find.text('正在搜索中...'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    expect(find.text('搜索结果 (1)'), findsOneWidget);
+    expect(find.text('OpenAI'), findsOneWidget);
+    expect(find.text('Claude'), findsNothing);
+    expect(find.text('gpt-4o'), findsWidgets);
+    expect(find.text('gpt-4o-mini'), findsOneWidget);
+
+    // 名称搜索：模型不匹配但提供商名匹配时仍展示该提供商
+    await tester.enterText(search, 'claude');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    expect(find.text('Claude'), findsOneWidget);
+    expect(find.text('OpenAI'), findsNothing);
+    expect(find.text('claude-3.5-sonnet'), findsOneWidget);
+
+    // 无结果态 + 清空恢复完整列表
+    await tester.enterText(search, 'xyz123');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    expect(find.text('未找到相关结果'), findsOneWidget);
+    expect(find.text('清空搜索'), findsOneWidget);
+    await tester.tap(find.text('清空搜索'));
+    await tester.pumpAndSettle();
+    expect(find.text('OpenAI'), findsOneWidget);
+    expect(find.text('Claude'), findsOneWidget);
+    expect(find.text('自定义提供商'), findsOneWidget);
+
     await _flushSaveTimers(tester);
   });
 }

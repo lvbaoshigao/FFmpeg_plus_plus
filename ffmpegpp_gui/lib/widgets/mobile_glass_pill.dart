@@ -4,6 +4,7 @@ import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
 import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
+import '../theme/app_neutral_surface.dart';
 import '../theme/mobile_ui.dart';
 import 'app_card.dart' show SurfaceStyle;
 import 'liquid_glass_fallback.dart';
@@ -328,10 +329,10 @@ class _MobileGlassPillState extends State<MobileGlassPill>
         // Neutral mode retains a monochrome solid surface.
         ? (key.useThemeColor
               ? harmonizedAccent(scheme, key.tone)
-              : neutralGray(scheme.surfaceContainerHigh))
+              : AppNeutralSurface.card(scheme.brightness))
         : style == SurfaceStyle.gray
         // 灰色：去饱和，避免 fromSeed 的种子色偏（「灰色夹杂主题色」）
-        ? neutralGray(scheme.surfaceContainerHigh)
+        ? AppNeutralSurface.card(scheme.brightness)
         // 「玻璃底色遵循主题色」：玻璃样式（liquid/blur）的 tint 用主题色
         : themedGlassBase(
             scheme,

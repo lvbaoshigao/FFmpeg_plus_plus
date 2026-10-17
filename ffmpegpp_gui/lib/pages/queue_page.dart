@@ -78,65 +78,124 @@ class _QueuePageState extends State<QueuePage> {
         final s = AppStrings.of(state.config.language);
         return Scaffold(
           backgroundColor: Colors.transparent,
-          body: Stack(children: [
-            // 全屏可滚动的内容（移动端顶部留出药丸空间）
-            isMobilePlatform
-                ? Padding(
-                    padding: EdgeInsets.only(top: MobileUi.pageTopPadding(context)),
-                    child: tasks.isEmpty
-                        ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-                            Icon(Icons.inbox_outlined, size: 64, color: scheme.outline),
-                            const SizedBox(height: 16),
-                            Text(s.emptyQueue, style: TextStyle(fontSize: 16, color: scheme.outline)),
-                            const SizedBox(height: 8),
-                            Text(s.emptyQueueHint, style: TextStyle(fontSize: 13, color: scheme.outline)),
-                          ]))
-                        : ListView.builder(
-                            // 开窗卡所在列表必须关（见 app_card 的
-                            // _WallpaperWindowPainter）
-                            addRepaintBoundaries: false,
-                            padding: MobileUi.mainListPadding(
-                                placement: MobileNavPlacementScope.of(context)),
-                            itemCount: tasks.length,
-                            itemBuilder: (_, i) => _taskCardFor(tasks, i),
-                          ),
-                  )
-                : Column(children: [
-                    GlassTopBar(
-                      // 桌面顶栏高度固定 56：标题单行省略，大字号下不会折行顶出栏外
-                      title: Text(s.navQueue, maxLines: 1, overflow: TextOverflow.ellipsis),
-                      actions: _buildActions(scheme, state, s),
-                    ),
-                    Expanded(
+          body: Stack(
+            children: [
+              // 全屏可滚动的内容（移动端顶部留出药丸空间）
+              isMobilePlatform
+                  ? Padding(
+                      padding: EdgeInsets.only(
+                        top: MobileUi.pageTopPadding(context),
+                      ),
                       child: tasks.isEmpty
-                          ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-                              Icon(Icons.inbox_outlined, size: 64, color: scheme.outline),
-                              const SizedBox(height: 16),
-                              Text(s.emptyQueue, style: TextStyle(fontSize: 16, color: scheme.outline)),
-                              const SizedBox(height: 8),
-                              Text(s.emptyQueueHint, style: TextStyle(fontSize: 13, color: scheme.outline)),
-                            ]))
-                          : RepaintBoundary(
-                              child: ListView.builder(
-                                // 开窗卡所在列表必须关（见 app_card 的
-                                // _WallpaperWindowPainter）
-                                addRepaintBoundaries: false,
-                                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                                itemCount: tasks.length,
-                                itemBuilder: (_, i) => _taskCardFor(tasks, i),
+                          ? Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.inbox_outlined,
+                                    size: 64,
+                                    color: scheme.outline,
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    s.emptyQueue,
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      color: scheme.outline,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    s.emptyQueueHint,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: scheme.outline,
+                                    ),
+                                  ),
+                                ],
                               ),
+                            )
+                          : ListView.builder(
+                              // 开窗卡所在列表必须关（见 app_card 的
+                              // _WallpaperWindowPainter）
+                              addRepaintBoundaries: false,
+                              padding: MobileUi.mainListPadding(
+                                placement: MobileNavPlacementScope.of(context),
+                              ),
+                              itemCount: tasks.length,
+                              itemBuilder: (_, i) => _taskCardFor(tasks, i),
                             ),
+                    )
+                  : Column(
+                      children: [
+                        GlassTopBar(
+                          // 桌面顶栏高度固定 56：标题单行省略，大字号下不会折行顶出栏外
+                          title: Text(
+                            s.navQueue,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          actions: _buildActions(scheme, state, s),
+                        ),
+                        Expanded(
+                          child: tasks.isEmpty
+                              ? Center(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.inbox_outlined,
+                                        size: 64,
+                                        color: scheme.outline,
+                                      ),
+                                      const SizedBox(height: 16),
+                                      Text(
+                                        s.emptyQueue,
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          color: scheme.outline,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        s.emptyQueueHint,
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          color: scheme.outline,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                )
+                              : RepaintBoundary(
+                                  child: ListView.builder(
+                                    // 开窗卡所在列表必须关（见 app_card 的
+                                    // _WallpaperWindowPainter）
+                                    addRepaintBoundaries: false,
+                                    padding: const EdgeInsets.fromLTRB(
+                                      16,
+                                      8,
+                                      16,
+                                      8,
+                                    ),
+                                    itemCount: tasks.length,
+                                    itemBuilder: (_, i) =>
+                                        _taskCardFor(tasks, i),
+                                  ),
+                                ),
+                        ),
+                      ],
                     ),
-                  ]),
-            // 移动端顶栏浮层（不影响滚动）
-            if (isMobilePlatform)
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: _buildMobileTopBar(scheme, state, s),
-              ),
-          ]),
+              // 移动端顶栏浮层（不影响滚动）
+              if (isMobilePlatform)
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: _buildMobileTopBar(scheme, state, s),
+                ),
+            ],
+          ),
         );
       },
     );
@@ -153,10 +212,15 @@ class _QueuePageState extends State<QueuePage> {
       _taskCardWidgets.removeRange(tasks.length, _taskCardWidgets.length);
     }
     final task = tasks[i];
-    if (i < _taskCardWidgets.length && identical(_taskCardWidgets[i].task, task)) {
+    if (i < _taskCardWidgets.length &&
+        identical(_taskCardWidgets[i].task, task)) {
       return _taskCardWidgets[i];
     }
-    final card = TaskCard(key: ValueKey(task.id), task: task);
+    final card = TaskCard(
+      key: ValueKey(task.id),
+      task: task,
+      detailsInSheet: isMobilePlatform,
+    );
     // 关键修复：不能用 `_taskCardWidgets.length = i + 1` 扩容——非空类型
     // List 的 length= 会以 null 填充新槽位，运行时抛
     // 「type 'Null' is not a subtype of type 'TaskCard'」，队列页只要有任务
@@ -185,29 +249,54 @@ class _QueuePageState extends State<QueuePage> {
     return [
       if (state.processing)
         OutlinedButton.icon(
-            style: size.buttonStyle(),
-            icon: Icon(Icons.stop, size: size.iconSize),
-            label: Text(s.cancelAll, maxLines: 1, overflow: TextOverflow.ellipsis),
-            onPressed: () => state.cancelProcessing())
+          style: size.buttonStyle(),
+          icon: Icon(Icons.stop, size: size.iconSize),
+          label: Text(
+            s.cancelAll,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          onPressed: () => state.cancelProcessing(),
+        )
       else ...[
         if (state.tasks.any((t) => t.status == TaskStatus.pending))
           FilledButton.icon(
-              style: size.buttonStyle(filled: true),
-              icon: Icon(Icons.play_arrow, size: size.iconSize),
-              label: Text(s.startProcessing, maxLines: 1, overflow: TextOverflow.ellipsis),
-              onPressed: () => state.processAllTasks()),
-        if (state.tasks.any((t) => t.status == TaskStatus.completed || t.status == TaskStatus.failed || t.status == TaskStatus.cancelled))
+            style: size.buttonStyle(filled: true),
+            icon: Icon(Icons.play_arrow, size: size.iconSize),
+            label: Text(
+              s.startProcessing,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            onPressed: () => state.processAllTasks(),
+          ),
+        if (state.tasks.any(
+          (t) =>
+              t.status == TaskStatus.completed ||
+              t.status == TaskStatus.failed ||
+              t.status == TaskStatus.cancelled,
+        ))
           TextButton.icon(
-              style: size.buttonStyle(),
-              icon: Icon(Icons.cleaning_services_outlined, size: size.iconSize),
-              label: Text(s.clearCompleted, maxLines: 1, overflow: TextOverflow.ellipsis),
-              onPressed: () => state.clearCompletedTasks()),
+            style: size.buttonStyle(),
+            icon: Icon(Icons.cleaning_services_outlined, size: size.iconSize),
+            label: Text(
+              s.clearCompleted,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            onPressed: () => state.clearCompletedTasks(),
+          ),
         if (state.tasks.isNotEmpty)
           TextButton.icon(
-              style: size.buttonStyle(),
-              icon: Icon(Icons.delete_sweep, size: size.iconSize),
-              label: Text(s.clearAll, maxLines: 1, overflow: TextOverflow.ellipsis),
-              onPressed: () => state.clearAllTasks()),
+            style: size.buttonStyle(),
+            icon: Icon(Icons.delete_sweep, size: size.iconSize),
+            label: Text(
+              s.clearAll,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            onPressed: () => state.clearAllTasks(),
+          ),
       ],
       // 紧凑资源占用（顶栏右侧，小尺寸）
       const SizedBox(width: 8),
@@ -221,7 +310,11 @@ class _QueuePageState extends State<QueuePage> {
   /// 移动端顶栏操作（紧凑圆形图标按钮，无文字）：与项目页/配置库页共用
   /// [MobileGlassPillAction]（34×34、图标 19、透明涟漪），不再本页自绘一份。
   /// 「停止」用 error 色，与项目页删除按钮一致。
-  List<Widget> _buildMobileActions(ColorScheme scheme, AppState state, AppStrings s) {
+  List<Widget> _buildMobileActions(
+    ColorScheme scheme,
+    AppState state,
+    AppStrings s,
+  ) {
     return [
       if (state.processing)
         MobileGlassPillAction(
@@ -230,14 +323,20 @@ class _QueuePageState extends State<QueuePage> {
           color: scheme.error,
           onTap: () => state.cancelProcessing(),
         ),
-      if (!state.processing && state.tasks.any((t) => t.status == TaskStatus.pending))
+      if (!state.processing &&
+          state.tasks.any((t) => t.status == TaskStatus.pending))
         MobileGlassPillAction(
           icon: Icons.play_arrow,
           tooltip: s.startProcessing,
           color: scheme.onSurface,
           onTap: () => state.processAllTasks(),
         ),
-      if (state.tasks.any((t) => t.status == TaskStatus.completed || t.status == TaskStatus.failed || t.status == TaskStatus.cancelled))
+      if (state.tasks.any(
+        (t) =>
+            t.status == TaskStatus.completed ||
+            t.status == TaskStatus.failed ||
+            t.status == TaskStatus.cancelled,
+      ))
         MobileGlassPillAction(
           icon: Icons.cleaning_services_outlined,
           tooltip: s.clearCompleted,
@@ -321,43 +420,77 @@ class _MonitorWidgetState extends State<_MonitorWidget> {
     final sc = widget.scheme;
     // 紧凑小尺寸：仅图标 + 数值，适合放在顶栏右侧
     // -1 表示读取失败（Android SELinux 拦截 /proc），显示 "--" 避免误导为 0%
-    return Row(mainAxisSize: MainAxisSize.min, children: [
-      _mini(Icons.memory, m.cpuPercent < 0 ? '--' : '${m.cpuPercent.toStringAsFixed(0)}%', m.cpuPercent < 0 ? 0 : m.cpuPercent / 100, sc),
-      const SizedBox(width: 8),
-      _mini(Icons.storage, m.ramUsedGb < 0 ? '--' : '${m.ramUsedGb.toStringAsFixed(1)}G', m.ramPercent < 0 ? 0 : m.ramPercent / 100, sc),
-      // GPU：始终显示（修复：Android 上部分机型拿不到占用率时整块不渲染，
-      // 用户以为队列界面缺少 GPU 信息；现在统一显示，读不到时为 "--"，
-      // 长按可看探测到的 GPU 型号）。
-      const SizedBox(width: 8),
-      Tooltip(
-        message: m.gpuName.isEmpty
-            ? (Platform.isAndroid ? 'GPU 占用率不可用' : 'GPU')
-            : '${m.gpuName} ${m.gpuPercent < 0 ? '' : '· ${m.gpuPercent.toStringAsFixed(0)}%'}',
-        child: _mini(Icons.videocam, m.gpuPercent < 0 ? '--' : '${m.gpuPercent.toStringAsFixed(0)}%', m.gpuPercent < 0 ? 0 : m.gpuPercent / 100, sc),
-      ),
-    ]);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _mini(
+          Icons.memory,
+          m.cpuPercent < 0 ? '--' : '${m.cpuPercent.toStringAsFixed(0)}%',
+          m.cpuPercent < 0 ? 0 : m.cpuPercent / 100,
+          sc,
+        ),
+        const SizedBox(width: 8),
+        _mini(
+          Icons.storage,
+          m.ramUsedGb < 0 ? '--' : '${m.ramUsedGb.toStringAsFixed(1)}G',
+          m.ramPercent < 0 ? 0 : m.ramPercent / 100,
+          sc,
+        ),
+        // GPU：始终显示（修复：Android 上部分机型拿不到占用率时整块不渲染，
+        // 用户以为队列界面缺少 GPU 信息；现在统一显示，读不到时为 "--"，
+        // 长按可看探测到的 GPU 型号）。
+        const SizedBox(width: 8),
+        Tooltip(
+          message: m.gpuName.isEmpty
+              ? (Platform.isAndroid ? 'GPU 占用率不可用' : 'GPU')
+              : '${m.gpuName} ${m.gpuPercent < 0 ? '' : '· ${m.gpuPercent.toStringAsFixed(0)}%'}',
+          child: _mini(
+            Icons.videocam,
+            m.gpuPercent < 0 ? '--' : '${m.gpuPercent.toStringAsFixed(0)}%',
+            m.gpuPercent < 0 ? 0 : m.gpuPercent / 100,
+            sc,
+          ),
+        ),
+      ],
+    );
   }
 
   /// 迷你指标：彩色图标 + 等宽数值。
-  Widget _mini(IconData icon, String value, double progress, ColorScheme scheme) {
+  Widget _mini(
+    IconData icon,
+    String value,
+    double progress,
+    ColorScheme scheme,
+  ) {
     // 占用率三档：>80% 危险、>50% 警告、否则正常。原先写死 Colors.red /
     // Colors.orange，不随主题色变化（且这两个 tone 50 原色在深色底上过亮）。
     final color = progress > 0.8
         ? scheme.sem.danger
         : progress > 0.5
-            ? scheme.sem.warning
-            : scheme.sem.info;
+        ? scheme.sem.warning
+        : scheme.sem.info;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
       decoration: BoxDecoration(
         color: color.withAlpha(14),
         borderRadius: BorderRadius.circular(6),
       ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(icon, size: 12, color: color),
-        const SizedBox(width: 3),
-        Text(value, style: TextStyle(fontSize: 10, color: scheme.onSurface, fontFamily: AppTheme.monoFont, fontWeight: FontWeight.w600)),
-      ]),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 3),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 10,
+              color: scheme.onSurface,
+              fontFamily: AppTheme.monoFont,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

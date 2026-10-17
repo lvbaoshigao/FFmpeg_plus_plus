@@ -22,6 +22,7 @@ import 'package:window_manager/window_manager.dart';
 import '../models/models.dart';
 import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
+import '../services/ai_chat_attachments.dart';
 import '../services/ai_chat_history.dart';
 import '../services/fppx2_service.dart';
 import '../services/graph_executor.dart';
@@ -36,11 +37,14 @@ import '../theme/app_control_size.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_strings.dart';
 import '../theme/app_theme.dart';
+import '../widgets/ai_workflow_card.dart';
 import '../widgets/animated_popup.dart';
+import '../widgets/app_card.dart';
 import '../widgets/fppx_password.dart';
 import '../widgets/gate_symbol_painter.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/liquid_glass_fallback.dart';
+import '../widgets/mobile_glass_pill.dart';
 // 节点图标/配色表：与独立面板窗口共用（见该文件顶部说明）
 import '../widgets/node_icons.dart';
 import '../widgets/step_editors/audio_compressor_step_editor.dart';
@@ -10412,6 +10416,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         padding: const EdgeInsets.fromLTRB(16, 8, 8, 6),
         child: Row(
           children: [
+            // 菜单 / 历史侧栏（设计稿左上角汉堡按钮）
+            headButton(
+              Icon(Icons.menu, size: headBtn.iconSize),
+              s.isZh ? '历史记录' : 'History',
+              () => aiKey.currentState?.openHistoryAt(Offset.zero),
+            ),
             Icon(Icons.smart_toy, size: 18, color: scheme.primary),
             const SizedBox(width: 8),
             Expanded(
@@ -10432,28 +10442,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
               child: _aiModelPill(scheme, s, aiKey, () => setH(() {})),
             ),
             const SizedBox(width: 2),
-            // 历史记录
-            Builder(
-              builder: (btnCtx) => headButton(
-                Icon(Icons.history, size: headBtn.iconSize),
-                s.isZh ? '历史记录' : 'History',
-                () {
-                  final box = btnCtx.findRenderObject() as RenderBox?;
-                  final overlay =
-                      Overlay.of(btnCtx).context.findRenderObject()
-                          as RenderBox?;
-                  if (box != null && overlay != null) {
-                    final pos = box.localToGlobal(
-                      Offset.zero,
-                      ancestor: overlay,
-                    );
-                    aiKey.currentState?.openHistoryAt(
-                      pos + const Offset(24, 8),
-                    );
-                  }
-                },
-              ),
-            ),
             // 工具面板开关
             headButton(
               AnimatedRotation(
@@ -12626,6 +12614,74 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
   >
   _messages = [];
   bool _loading = false;
+  bool _pickingAttachments = false;
+  final List<AiChatAttachment> _attachments = [];
+  bool _historyOpen = false;
+  List<Map<String, dynamic>> _historySessions = [];
+
+  Future<void> _pickAttachments() async {
+    if (_pickingAttachments || _loading) return;
+    setState(() => _pickingAttachments = true);
+    try {
+      final picked = await FilePicker.pickFiles();
+      for (final file in picked) {
+        if (_attachments.length >= AiChatAttachments.maxCount) break;
+        final attachment = await AiChatAttachments.prepare(file);
+        if (!mounted) {
+          await AiChatAttachments.discard(attachment);
+          return;
+        }
+        setState(() => _attachments.add(attachment));
+      }
+    } catch (_) {
+      if (mounted) {
+        showToast(
+          context,
+          widget.strings.isZh
+              ? '无法添加附件（无路径文件最大 64 MiB）'
+              : 'Could not attach file (pathless files: 64 MiB maximum)',
+          type: ToastType.warning,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _pickingAttachments = false);
+    }
+  }
+
+  Widget _attachmentChips(
+    List<AiChatAttachment> items, {
+    bool removable = false,
+  }) => Wrap(
+    spacing: 6,
+    runSpacing: 4,
+    children: [
+      for (final item in items)
+        InputChip(
+          label: Text(item.name, overflow: TextOverflow.ellipsis),
+          avatar: item.isImage && item.size <= AiChatAttachments.maxImageBytes
+              ? ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: Image.file(
+                    File(item.path),
+                    width: 28,
+                    height: 28,
+                    fit: BoxFit.cover,
+                    cacheWidth: 56,
+                    errorBuilder: (_, error, stack) =>
+                        const Icon(Icons.image_outlined),
+                  ),
+                )
+              : const Icon(Icons.attach_file, size: 18),
+          tooltip: '${item.name} · ${item.size} bytes · ${item.path}',
+          onDeleted: removable
+              ? () {
+                  setState(() => _attachments.remove(item));
+                  unawaited(AiChatAttachments.discard(item));
+                }
+              : null,
+        ),
+    ],
+  );
 
   /// 正在进行的流式请求。用户点「停止」时直接 close()，`await for` 会以异常结束，
   /// 再由 catch / 收尾分支按 [_stopRequested] 走「保留部分内容」的路径。
@@ -13766,6 +13822,9 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
 
   @override
   void dispose() {
+    for (final attachment in _attachments) {
+      unawaited(AiChatAttachments.discard(attachment));
+    }
     // Abort stalled streams immediately so the request cannot retain this
     // panel and its message history until the remote server sends more data.
     _stopRequested = true;
@@ -13779,7 +13838,10 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       final title = userMsgs.first.content
           .replaceAll(RegExp(r'\s+'), ' ')
           .trim();
-      final t = title.length > 24 ? '${title.substring(0, 24)}…' : title;
+      final t = title.isEmpty
+          ? (userMsgs.first.blocks?.firstOrNull?['name'] as String? ??
+                'Attachments')
+          : (title.length > 24 ? '${title.substring(0, 24)}…' : title);
       AiChatHistory.saveSession(
         title: t,
         provider: _effectiveProvider,
@@ -13791,6 +13853,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                 'content': m.content,
                 'inputTokens': m.inputTokens,
                 'outputTokens': m.outputTokens,
+                'blocks': m.blocks,
               },
             )
             .toList(),
@@ -13834,7 +13897,12 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     final text = _ctrl.text.trim();
     // A stopped request must finish unwinding before shared buffers/state
     // can be reused by the next generation.
-    if (text.isEmpty || _loading || _activeClient != null) return;
+    if ((text.isEmpty && _attachments.isEmpty) ||
+        _loading ||
+        _activeClient != null ||
+        _pickingAttachments) {
+      return;
+    }
     _followLatest = true;
 
     final appState = context.read<AppState>();
@@ -13843,9 +13911,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     final profile = _effectiveProfile;
     final effProvider = profile?.provider ?? _effectiveProvider;
     // 配置里没选模型（默认值已置空）时走解析链，不要带空模型发请求
-    final effModel = profile?.model.isNotEmpty == true
-        ? profile!.model
-        : _effectiveModel;
+    final effModel = _effectiveModel;
     final effUrl = profile?.apiUrl.isNotEmpty == true
         ? profile!.apiUrl
         : cfg.aiApiUrl;
@@ -13908,9 +13974,18 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         content: text,
         inputTokens: null,
         outputTokens: null,
+        blocks: _attachments.map((a) => a.toJson()).toList(),
+      ));
+      _messages.add((
+        role: 'assistant',
+        content: '',
+        inputTokens: null,
+        outputTokens: null,
         blocks: null,
       ));
+      _attachments.clear();
       _ctrl.clear();
+      _stopRequested = false;
       _loading = true;
       _pendingNodes = null;
       _pendingConnections = null;
@@ -13922,7 +13997,8 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     // 在 async 前读取配置，避免 async gap 后使用 context
     final showThinking = context.read<AppState>().config.aiShowThinking;
 
-    http.Client? sendClient;
+    final sendClient = http.Client();
+    _activeClient = sendClient;
     try {
       final isAnthropic = effProvider == 'anthropic';
       final uri = Uri.parse(_resolveEndpoint(effUrl, isAnthropic));
@@ -13940,21 +14016,44 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
 
       final headers = <String, String>{'Content-Type': 'application/json'};
       Map<String, dynamic> reqBody;
+      final vision =
+          modelEntry?.capabilities.contains(AiModelCapability.vision) ?? false;
+      final conversation = <Map<String, dynamic>>[];
+      final imageBudget = AiAttachmentBudget();
+      for (final message in _messages) {
+        if (message.role == 'assistant' && message.content.isEmpty) continue;
+        final attachments = AiChatAttachments.fromBlocks(message.blocks);
+        conversation.add({
+          'role': message.role,
+          'content': attachments.isEmpty
+              ? (isAnthropic
+                    ? [
+                        {'type': 'text', 'text': message.content},
+                      ]
+                    : message.content)
+              : await AiChatAttachments.content(
+                  message.content,
+                  attachments,
+                  vision: vision,
+                  anthropic: isAnthropic,
+                  budget: imageBudget,
+                ),
+        });
+      }
+      if (!mounted || _stopRequested) return;
 
       if (isAnthropic) {
         headers['x-api-key'] = effKey;
         headers['anthropic-version'] = '2023-06-01';
-        final userMessages = _messages
-            .where((m) => m.role == 'user' || m.role == 'assistant')
-            .map((m) => {'role': m.role, 'content': m.content})
-            .toList();
+        final userMessages = conversation;
         // Ensure alternating user/assistant for Anthropic API
         final mergedMessages = <Map<String, dynamic>>[];
         for (final msg in userMessages) {
           if (mergedMessages.isNotEmpty &&
               mergedMessages.last['role'] == msg['role']) {
-            mergedMessages.last['content'] =
-                '${mergedMessages.last['content']}\n${msg['content']}';
+            (mergedMessages.last['content'] as List).addAll(
+              msg['content'] as List,
+            );
           } else {
             mergedMessages.add(Map.of(msg));
           }
@@ -13971,7 +14070,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         headers['Authorization'] = 'Bearer $effKey';
         final apiMessages = [
           {'role': 'system', 'content': fullPrompt},
-          ..._messages.map((m) => {'role': m.role, 'content': m.content}),
+          ...conversation,
         ];
         reqBody = {
           'model': effModel,
@@ -13986,15 +14085,12 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       final request = http.Request('POST', uri);
       request.headers.addAll(headers);
       request.body = jsonEncode(reqBody);
-      final client = http.Client();
-      sendClient = client;
-      _activeClient = client; // 供「停止生成」按钮关闭
-      final streamed = await client.send(request);
+      final streamed = await sendClient.send(request);
 
       if (streamed.statusCode != 200) {
-        final respBody = await streamed.stream.bytesToString();
-        final errMsg =
-            'Error: ${streamed.statusCode} ${respBody.length > 200 ? respBody.substring(0, 200) : respBody}';
+        await streamed.stream.drain<void>();
+        // Providers can echo request content or credentials in error bodies.
+        final errMsg = 'Request failed (HTTP ${streamed.statusCode}).';
         appState.logAiResponse(errMsg, error: true);
         if (mounted) {
           setState(() {
@@ -14012,17 +14108,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         return; // sendClient 由外层 finally 统一关闭
       }
 
-      // Add placeholder assistant message for streaming
-      if (!mounted) return; // sendClient 由外层 finally 统一关闭
-      setState(() {
-        _messages.add((
-          role: 'assistant',
-          content: '',
-          inputTokens: null,
-          outputTokens: null,
-          blocks: null,
-        ));
-      });
+      if (!mounted) return;
       final msgIdx = _messages.length - 1;
       final buf = StringBuffer();
       // 思考过程缓冲（DeepSeek-R1 / o1 的 reasoning_content，或 Claude 的 thinking）
@@ -14174,12 +14260,14 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         _scrollToBottom();
         return;
       }
-      appState.logAiResponse('$e', error: true);
+      appState.logAiResponse('AI request failed', error: true);
       if (!mounted) return;
       setState(() {
         _messages.add((
           role: 'assistant',
-          content: 'Error: $e',
+          content: widget.strings.isZh
+              ? '请求失败，请检查连接与模型设置。'
+              : 'Request failed. Check connection and model settings.',
           inputTokens: null,
           outputTokens: null,
           blocks: null,
@@ -14188,7 +14276,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       });
       _scrollToBottom();
     } finally {
-      sendClient?.close(); // 无论成功/异常/面板关闭，都释放 HTTP 连接
+      sendClient.close(); // 无论成功/异常/面板关闭，都释放 HTTP 连接
       // 只有当前这次请求仍持有「活跃引用」时才清状态：如果用户点停止后立刻又发了
       // 一条，_activeClient 已经是新请求的 client，不能被旧请求的 finally 抹掉
       // （否则新请求的「停止」按钮会失效）。
@@ -14459,9 +14547,31 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
               padding: const EdgeInsets.fromLTRB(16, 8, 6, 4),
               child: Row(
                 children: [
+                  // 菜单 / 历史侧栏（设计稿左上角汉堡按钮）
+                  IconButton(
+                    icon: const Icon(Icons.menu, size: 18),
+                    tooltip: s.isZh ? '历史记录' : 'History',
+                    onPressed: () => _toggleHistoryAt(scheme, s, Offset.zero),
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                    padding: EdgeInsets.zero,
+                  ),
                   Icon(Icons.smart_toy, size: 18, color: scheme.primary),
                   const SizedBox(width: 8),
-                  const Spacer(),
+                  Expanded(
+                    child: Text(
+                      s.aiChatTitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: scheme.onSurface,
+                      ),
+                    ),
+                  ),
                   // 拖出为独立系统窗口（只有主窗口的 AI 抽屉会传 onFloatOut）
                   if (widget.onFloatOut != null)
                     IconButton(
@@ -14477,30 +14587,6 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                       ),
                       padding: EdgeInsets.zero,
                     ),
-                  // 历史记录按钮
-                  IconButton(
-                    icon: const Icon(Icons.history, size: 18),
-                    tooltip: s.isZh ? '历史记录' : 'History',
-                    onPressed: () {
-                      // 用按钮自身位置作为菜单锚点，避免偏移
-                      final box = context.findRenderObject() as RenderBox?;
-                      final overlay =
-                          Overlay.of(context).context.findRenderObject()
-                              as RenderBox?;
-                      if (box != null && overlay != null) {
-                        final pos = box.localToGlobal(
-                          Offset.zero,
-                          ancestor: overlay,
-                        );
-                        _toggleHistoryAt(scheme, s, pos + const Offset(24, 8));
-                      }
-                    },
-                    constraints: const BoxConstraints(
-                      minWidth: 32,
-                      minHeight: 32,
-                    ),
-                    padding: EdgeInsets.zero,
-                  ),
                   // 工具侧边栏开关
                   Tooltip(
                     message: s.isZh
@@ -14732,25 +14818,122 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                 ),
                 itemCount: _messages.length,
                 itemBuilder: (_, i) {
-                  // 连续同一角色的消息不再重复画头像：否则每轮都是
-                  // 「头像 + 气泡」循环出现，移动端窄屏上左侧被头像占掉 36px，
-                  // 观感很吵。缩进仍然保留，气泡左缘才不会左右跳。
-                  final showAvatar =
-                      i == 0 || _messages[i - 1].role != _messages[i].role;
-                  // 下一条仍是同一角色 → 属于同一组，间距收紧，形成视觉分组
-                  final sameGroupNext =
-                      i + 1 < _messages.length &&
-                      _messages[i + 1].role == _messages[i].role;
+                  final message = _messages[i];
+                  if (message.role == 'assistant') {
+                    if (i > 0 && _messages[i - 1].role == 'assistant') {
+                      return const SizedBox.shrink();
+                    }
+                    var end = i + 1;
+                    while (end < _messages.length &&
+                        _messages[end].role == 'assistant') {
+                      end++;
+                    }
+                    final process = <Widget>[];
+                    final answers = <Widget>[];
+                    for (var j = i; j < end; j++) {
+                      final current = _messages[j];
+                      final blocks = current.blocks ?? <Map<String, dynamic>>[];
+                      final resultOnly =
+                          blocks.isNotEmpty &&
+                          blocks.every((b) => b['type'] == 'tool_result');
+                      for (final block in blocks) {
+                        if (block['type'] != 'text' &&
+                            block['type'] != 'attachment') {
+                          process.add(_buildBlock(block, scheme));
+                        }
+                      }
+                      final calls = RegExp(
+                        r'\[TOOL_CALL:([^\]]+)\]',
+                      ).allMatches(current.content);
+                      for (final call in calls) {
+                        final parts = call.group(1)!.split('|');
+                        process.add(
+                          _buildBlock({
+                            'type': 'tool_use',
+                            'name': parts.first,
+                            'input': {'args': parts.skip(1).join(' | ')},
+                          }, scheme),
+                        );
+                      }
+                      if (!resultOnly) {
+                        final answer = current.content
+                            .replaceAll(RegExp(r'\[TOOL_CALL:[^\]]+\]'), '')
+                            .trim();
+                        if (answer.isNotEmpty) {
+                          answers.add(
+                            current.content.startsWith('[ASK_USER]')
+                                ? _buildMessage(
+                                    current,
+                                    scheme,
+                                    showAvatar: false,
+                                  )
+                                : _buildAssistantContent(answer, scheme),
+                          );
+                        } else if (current.content.isEmpty) {
+                          for (final block in blocks.where(
+                            (b) => b['type'] == 'text',
+                          )) {
+                            answers.add(_buildBlock(block, scheme));
+                          }
+                        }
+                      }
+                    }
+                    final active = _loading && end == _messages.length;
+                    // 没有思考/工具过程的普通回答不套「处理记录 0 项」的空壳，
+                    // 保持历史消息、错误消息和寒暄回复的原生气泡。
+                    if (process.isEmpty && !active) {
+                      if (end == i + 1) {
+                        return RepaintBoundary(
+                          key: ValueKey('ai-msg-$i'),
+                          child: _buildMessage(_messages[i], scheme),
+                        );
+                      }
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: _assistantEnvelope(
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: answers,
+                          ),
+                          scheme,
+                        ),
+                      );
+                    }
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _assistantEnvelope(
+                        AiWorkflowCard(
+                          key: ValueKey('workflow-$i'),
+                          active: active,
+                          style: context.read<AppState>().config.cardStyle,
+                          summary: active
+                              ? (s.isZh ? '正在处理' : 'Working')
+                              : (s.isZh
+                                    ? '已完成 · ${process.length} 步'
+                                    : 'Completed · ${process.length} steps'),
+                          process: process.isEmpty
+                              ? Text(
+                                  s.isZh
+                                      ? '等待模型响应'
+                                      : 'Waiting for model response',
+                                )
+                              : Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: process,
+                                ),
+                          answer: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: answers,
+                          ),
+                        ),
+                        scheme,
+                      ),
+                    );
+                  }
                   return RepaintBoundary(
-                    // 稳定 key + 独立重绘层：流式更新只重绘当前这一条，
-                    // 其余历史消息（含 Markdown）被隔离，不再整屏重绘抖动。
                     key: ValueKey('ai-msg-$i'),
-                    child: _buildMessage(
-                      _messages[i],
-                      scheme,
-                      showAvatar: showAvatar,
-                      gapAfter: sameGroupNext ? 4 : 10,
-                    ),
+                    child: _buildMessage(message, scheme),
                   );
                 },
               );
@@ -14773,16 +14956,32 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                           }
                           return false;
                         },
-                        child: messageArea,
+                        child: Stack(
+                          children: [
+                            Positioned.fill(child: messageArea),
+                            Positioned.fill(child: _buildHistorySidebar(s)),
+                          ],
+                        ),
                       ),
                     )
                   : Stack(
                       children: [
                         Positioned.fill(child: messageArea),
                         messageOverlay,
+                        Positioned.fill(child: _buildHistorySidebar(s)),
                       ],
                     ),
             ),
+            if (_attachments.isNotEmpty)
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: constraints.maxHeight * 0.22,
+                ),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: _attachmentChips(_attachments, removable: true),
+                ),
+              ),
             // 待批准的图：补一层说明卡。改造前两颗按钮凭空出现在输入框上方，
             // 没有任何文字说明它们要批准什么 —— 用户刚看完消息流，突然多出两个按钮，
             // 不知道点下去会改动画布还是只改当前节点（移动端尤其容易误触）。
@@ -14914,6 +15113,13 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                     // 输入框多行后行高会长，底对齐才能让发送 / 停止键始终贴在最后一行旁边
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
+                      IconButton(
+                        tooltip: s.isZh ? '添加附件' : 'Add attachments',
+                        onPressed: _loading || _pickingAttachments
+                            ? null
+                            : _pickAttachments,
+                        icon: const Icon(Icons.add),
+                      ),
                       // 输入框与右侧发送键同档（comfortable 36）：改造前输入框随主题算出约 32，
                       // 发送键却是写死的 40×40 圆形 —— 一个矮一个高，底部那行看着就歪。
                       // 多行时不能再套 fieldBox 钉死高度（会把第二行裁掉），改用 minHeight 兜底。
@@ -15137,113 +15343,123 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     );
   }
 
-  /// 历史记录：以弹出菜单形式展示（锚定历史按钮位置）。
+  /// Both embedded and external mobile headers toggle this same sidebar.
   Future<void> _toggleHistoryAt(
     ColorScheme scheme,
     AppStrings s,
     Offset anchor,
   ) async {
-    final list = await AiChatHistory.listSessions();
-    if (!mounted) return;
-    final box = context.findRenderObject() as RenderBox?;
-    final overlay =
-        Overlay.of(context).context.findRenderObject() as RenderBox?;
-    if (box == null || overlay == null) return;
-    final ovSize = overlay.size;
-    final rect = RelativeRect.fromLTRB(
-      anchor.dx.clamp(0, ovSize.width - 20),
-      anchor.dy.clamp(0, ovSize.height - 20),
-      ovSize.width - anchor.dx.clamp(0, ovSize.width - 20),
-      ovSize.height - anchor.dy.clamp(0, ovSize.height - 20),
-    );
-    await showMenu<String>(
-      context: context,
-      position: rect,
-      // 紧凑间距
-      constraints: const BoxConstraints(minWidth: 220, maxWidth: 280),
-      items: [
-        if (list.isEmpty)
-          const PopupMenuItem<String>(
-            enabled: false,
-            child: Padding(
-              padding: EdgeInsets.symmetric(vertical: 2),
-              child: Text('暂无历史记录', style: TextStyle(fontSize: 12)),
-            ),
-          )
-        else
-          for (final e in list.take(12))
-            PopupMenuItem<String>(
-              value: '_load_${e['_file']}',
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
-                child: Row(
-                  children: [
-                    const Icon(Icons.forum_outlined, size: 14),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        (e['title'] as String?) ??
-                            (s.isZh ? '未命名会话' : 'Untitled'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                    ),
-                  ],
-                ),
+    setState(() => _historyOpen = !_historyOpen);
+    if (!_historyOpen) return;
+    final sessions = await AiChatHistory.listSessions();
+    if (mounted) setState(() => _historySessions = sessions);
+  }
+
+  Widget _buildHistorySidebar(AppStrings s) => LayoutBuilder(
+    builder: (context, constraints) => Stack(
+      children: [
+        if (_historyOpen)
+          Positioned.fill(
+            child: GestureDetector(
+              onTap: () => setState(() => _historyOpen = false),
+              child: ColoredBox(
+                color: Theme.of(context).colorScheme.scrim.withAlpha(60),
               ),
             ),
-        if (list.isNotEmpty) const PopupMenuDivider(),
-        PopupMenuItem<String>(
-          value: '_save',
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 2),
-            child: Text(
-              s.isZh ? '保存当前会话' : 'Save session',
-              style: const TextStyle(fontSize: 12),
+          ),
+        AnimatedPositioned(
+          duration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          top: 0,
+          bottom: 0,
+          left: _historyOpen ? 0 : -constraints.maxWidth,
+          width: math.min(300, constraints.maxWidth),
+          child: IgnorePointer(
+            ignoring: !_historyOpen,
+            child: AppCard(
+              style: context.read<AppState>().config.cardStyle,
+              radius: 14,
+              padding: const EdgeInsets.all(10),
+              child: Column(
+                children: [
+                  MobileGlassPill(
+                    child: Row(
+                      children: [
+                        Expanded(child: Text(s.isZh ? '历史会话' : 'History')),
+                        IconButton(
+                          tooltip: s.isZh ? '关闭历史' : 'Close history',
+                          onPressed: () => setState(() => _historyOpen = false),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: _historySessions.isEmpty
+                        ? Center(
+                            child: Text(s.isZh ? '暂无历史记录' : 'No history yet'),
+                          )
+                        : ListView(
+                            children: [
+                              for (final session in _historySessions)
+                                ListTile(
+                                  leading: const Icon(Icons.forum_outlined),
+                                  title: Text(
+                                    session['title'] as String? ?? 'Untitled',
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  subtitle: Text(
+                                    session['model'] as String? ?? '',
+                                    maxLines: 1,
+                                  ),
+                                  enabled: !_loading && _activeClient == null,
+                                  onTap: () {
+                                    _loadHistorySession(session, s);
+                                    setState(() => _historyOpen = false);
+                                  },
+                                ),
+                            ],
+                          ),
+                  ),
+                  TextButton.icon(
+                    onPressed: _loading
+                        ? null
+                        : () async {
+                            final saved = await _saveCurrentSession();
+                            final sessions = await AiChatHistory.listSessions();
+                            if (!mounted || !context.mounted) return;
+                            setState(() => _historySessions = sessions);
+                            showToast(
+                              context,
+                              saved == null
+                                  ? (s.isZh
+                                        ? '无法保存会话'
+                                        : 'Could not save session')
+                                  : (s.isZh ? '会话已保存' : 'Session saved'),
+                            );
+                          },
+                    icon: const Icon(Icons.save_outlined),
+                    label: Text(s.isZh ? '保存当前会话' : 'Save session'),
+                  ),
+                  TextButton.icon(
+                    onPressed: () async {
+                      await AiChatHistory.clearAll();
+                      if (mounted) setState(() => _historySessions = []);
+                    },
+                    icon: const Icon(Icons.delete_outline),
+                    label: Text(s.isZh ? '清空历史' : 'Clear history'),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
-        if (list.isNotEmpty)
-          PopupMenuItem<String>(
-            value: '_clear',
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 2),
-              child: Text(
-                s.isZh ? '清空历史' : 'Clear history',
-                style: const TextStyle(fontSize: 12),
-              ),
-            ),
-          ),
       ],
-    ).then((v) async {
-      if (v == null) return;
-      if (v == '_save') {
-        final saved = await _saveCurrentSession();
-        if (mounted && saved != null) {
-          showToast(
-            context,
-            s.isZh ? '已保存当前会话' : 'Session saved',
-            type: ToastType.success,
-          );
-        }
-      } else if (v == '_clear') {
-        await AiChatHistory.clearAll();
-        if (mounted) {
-          showToast(
-            context,
-            s.isZh ? '历史已清空' : 'History cleared',
-            type: ToastType.success,
-          );
-        }
-      } else if (v.startsWith('_load_')) {
-        final file = v.substring(6);
-        final sessions = await AiChatHistory.listSessions();
-        final entry = sessions.where((e) => e['_file'] == file).firstOrNull;
-        if (entry != null) _loadHistorySession(entry, s);
-      }
-    });
-  }
+    ),
+  );
 
   /// 加载一条历史会话到当前面板。
   void _loadHistorySession(Map<String, dynamic> entry, AppStrings s) {
@@ -15258,7 +15474,9 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
             content: (mm['content'] as String?) ?? '',
             inputTokens: (mm['inputTokens'] as num?)?.toInt(),
             outputTokens: (mm['outputTokens'] as num?)?.toInt(),
-            blocks: null,
+            blocks: (mm['blocks'] as List?)
+                ?.whereType<Map<String, dynamic>>()
+                .toList(),
           );
         }),
       );
@@ -15280,7 +15498,10 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     final userMsgs = _messages.where((m) => m.role == 'user').toList();
     if (userMsgs.isEmpty) return null;
     final title = userMsgs.first.content.replaceAll(RegExp(r'\s+'), ' ').trim();
-    final t = title.length > 24 ? '${title.substring(0, 24)}…' : title;
+    final t = title.isEmpty
+        ? (userMsgs.first.blocks?.firstOrNull?['name'] as String? ??
+              'Attachments')
+        : (title.length > 24 ? '${title.substring(0, 24)}…' : title);
     return AiChatHistory.saveSession(
       title: t,
       provider: _effectiveProvider,
@@ -15292,6 +15513,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
               'content': m.content,
               'inputTokens': m.inputTokens,
               'outputTokens': m.outputTokens,
+              'blocks': m.blocks,
             },
           )
           .toList(),
@@ -15499,6 +15721,25 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
   /// [showAvatar] 由调用方按「是否与上一条同角色」传入：同角色的后续消息不再
   /// 重复画头像（改为等宽占位），移动端窄屏上一屏内能少掉一半头像。
   /// [gapAfter] 同理按「是否还有同角色的下一条」收窄间距，形成消息分组。
+  /// 助手消息统一左对齐，并留出与普通气泡相同的头像列；工作流卡片不再
+  /// 独占整行。用户消息靠右、助手消息靠左，形成稳定的非对称对话节奏。
+  Widget _assistantEnvelope(Widget child, ColorScheme scheme) {
+    final double avatarR = isMobilePlatform ? 15 : 14;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        CircleAvatar(
+          radius: avatarR,
+          backgroundColor: scheme.primaryContainer,
+          child: Icon(Icons.smart_toy, size: avatarR, color: scheme.primary),
+        ),
+        const SizedBox(width: 8),
+        Flexible(flex: 4, child: child),
+        const Spacer(),
+      ],
+    );
+  }
+
   Widget _buildMessage(
     ({
       String role,
@@ -15609,6 +15850,16 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
               ),
             )
           : _buildAssistantContent(msg.content, scheme);
+    }
+    if (isUser && AiChatAttachments.fromBlocks(msg.blocks).isNotEmpty) {
+      bodyWidget = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          bodyWidget,
+          _attachmentChips(AiChatAttachments.fromBlocks(msg.blocks)),
+        ],
+      );
     }
     // 同角色后续消息的占位：只有 8px 宽的空位，不画头像
     final Widget avatarGap = SizedBox(width: avatarSlot);
@@ -15909,11 +16160,11 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
       data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
       child: Container(
         margin: const EdgeInsets.only(bottom: 4),
-        decoration: BoxDecoration(
-          color: scheme.surfaceContainerHighest.withAlpha(50),
-          borderRadius: BorderRadius.circular(6),
-        ),
         child: ExpansionTile(
+          backgroundColor: scheme.surfaceContainerHighest.withAlpha(50),
+          collapsedBackgroundColor: scheme.surfaceContainerHighest.withAlpha(
+            50,
+          ),
           // 移动端整块放大一档：折叠标题是可点区域，8px 内边距 + 11px 标题
           // 只有约 32px 高，低于 44px 触摸标准（此处是常用交互）。
           tilePadding: EdgeInsets.symmetric(
@@ -15926,7 +16177,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
             8,
           ),
           // 思考默认折叠（紧凑）；工具结果默认展开
-          initiallyExpanded: type == 'tool_result',
+          initiallyExpanded: _loading || type == 'tool_result',
           dense: !isMobilePlatform,
           title: Row(
             children: [

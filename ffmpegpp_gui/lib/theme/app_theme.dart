@@ -4,6 +4,7 @@ import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
 
 import '../widgets/app_slider.dart' show appSliderThemeFor;
+import 'app_neutral_surface.dart';
 import 'app_semantic_colors.dart';
 
 class AppTheme {
@@ -205,7 +206,7 @@ class AppTheme {
           color: scheme.onSurfaceVariant,
         ),
       ),
-      scaffoldBackgroundColor: scheme.surface,
+      scaffoldBackgroundColor: AppNeutralSurface.background(scheme.brightness),
       cardTheme: CardThemeData(
         elevation: 0,
         color: scheme.surface.withAlpha(180),

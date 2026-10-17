@@ -7,12 +7,13 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../app.dart';
 import '../providers/app_state.dart';
+import '../theme/app_neutral_surface.dart';
 // effectiveGlassSigma / glassTuningOf：开窗预模糊的 σ 必须与 AppCard 开窗
 // painter 用的完全一致，否则玻璃里的清晰度会与「模糊度」设置脱节。
 import 'liquid_glass_fallback.dart';
 
-/// 二级页面统一的壁纸背景（与主界面一致）：主题底色 + 壁纸 +
-/// 「背景不透明度」控制的遮罩。无壁纸时也铺一层不透明主题底色，
+/// 二级页面统一的壁纸背景（与主界面一致）：固定中性底色 + 壁纸 +
+/// 「背景不透明度」控制的遮罩。无壁纸时也铺一层不透明中性底色，
 /// 避免移动端 push 出的新路由在返回过渡首帧露出系统窗口黑底。
 ///
 /// 子级 Scaffold 需要透明底色才能透出壁纸，本组件已统一包一层
@@ -33,10 +34,8 @@ Widget withWallpaper(
 }) {
   final bg = context.select<AppState, String>((s) => s.config.backgroundImage);
   final theme = Theme.of(context);
-  final scheme = theme.colorScheme;
-  final children = <Widget>[
-    Positioned.fill(child: ColoredBox(color: scheme.surface)),
-  ];
+  final base = AppNeutralSurface.background(theme.brightness);
+  final children = <Widget>[Positioned.fill(child: ColoredBox(color: base))];
   if (bg.isNotEmpty && File(bg).existsSync()) {
     final op = context
         .select<AppState, double>((s) => s.config.backgroundOpacity)
@@ -55,7 +54,7 @@ Widget withWallpaper(
           errorBuilder: (_, _, _) => const SizedBox.shrink(),
         ),
       ),
-      Positioned.fill(child: ColoredBox(color: scheme.surface.withAlpha(a))),
+      Positioned.fill(child: ColoredBox(color: base.withAlpha(a))),
     ]);
   }
   children.add(
@@ -84,7 +83,7 @@ Widget withWallpaper(
   return WallpaperWindowScope(
     provider: provider,
     screenSize: MediaQuery.sizeOf(context),
-    overlayColor: scheme.surface.withAlpha(
+    overlayColor: base.withAlpha(
       ((1.0 -
                       context.select<AppState, double>(
                         (s) => s.config.backgroundOpacity,

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
+import '../theme/app_neutral_surface.dart';
 import 'app_card.dart' show SurfaceStyle;
 import 'liquid_glass_fallback.dart';
 import 'mobile_glass_pill.dart';
@@ -110,7 +111,7 @@ class GlassPanel extends StatelessWidget {
     final solidTheme = effect == 'none' || effect == SurfaceStyle.theme;
     final accent = useThemeColor
         ? harmonizedAccent(scheme, tone)
-        : neutralGray(scheme.surfaceContainerHigh);
+        : AppNeutralSurface.card(scheme.brightness);
     final accentAlt = useThemeColor
         ? Color.lerp(scheme.tertiary, scheme.surface, tone.clamp(0.0, 0.9))!
         : neutralGray(scheme.surfaceContainer);
@@ -258,7 +259,7 @@ class GlassPanel extends StatelessWidget {
       final Color base = effect == SurfaceStyle.gray
           // 灰色恒为**中性**灰：fromSeed 生成的容器灰带种子色偏，会让人误以为
           // 「选了灰色却夹杂主题色」（用户反馈），这里统一去饱和。
-          ? neutralGray(scheme.surfaceContainerHigh)
+          ? AppNeutralSurface.card(scheme.brightness)
           : baseColor;
       final useGrad = effect != SurfaceStyle.gray && grad != null;
       return RepaintBoundary(

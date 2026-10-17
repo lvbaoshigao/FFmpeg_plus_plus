@@ -29,9 +29,11 @@ import '../services/update_service.dart' as updater;
 // 控件高度档位令牌：MCP 卡的输入框/按钮、AI 配置详情页的按钮统一按档位取高度，
 // 不再用 `SizedBox(height: 30)` 压高度（会与主题 v12 内边距打架）
 import '../theme/app_control_size.dart';
+import '../theme/app_neutral_surface.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_strings.dart';
 import '../theme/app_text_scale.dart';
+import '../theme/settings_typography.dart';
 import '../widgets/app_card.dart';
 import '../widgets/app_slider.dart';
 import '../widgets/font_picker.dart';
@@ -1591,7 +1593,9 @@ class _SettingsPageState extends State<SettingsPage> {
                       const SizedBox(width: 8),
                       Text(
                         '${cards.length}',
-                        style: TextStyle(fontSize: 10, color: scheme.outline),
+                        style: SettingsTypography.description.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -1738,11 +1742,8 @@ class _SettingsPageState extends State<SettingsPage> {
           padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
           child: Text(
             sec.title(s),
-            style: TextStyle(
-              fontSize: 12.5,
-              fontWeight: FontWeight.w600,
-              color: scheme.primary,
-              letterSpacing: 0.3,
+            style: SettingsTypography.sectionTitle.copyWith(
+              color: scheme.onSurfaceVariant,
             ),
           ),
         ),
@@ -1781,7 +1782,9 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         subtitle: Text(
           s.predictiveBackHint,
-          style: TextStyle(fontSize: 11, color: scheme.outline),
+          style: SettingsTypography.description.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
         ),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       );
@@ -1943,7 +1946,9 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 4),
         Text(
           s.setNoMatchHint,
-          style: TextStyle(fontSize: 11, color: scheme.outline),
+          style: SettingsTypography.description.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
         ),
         const SizedBox(height: 14),
         TextButton.icon(
@@ -2052,35 +2057,26 @@ Widget _glass(
   String title,
   List<Widget> children,
 ) {
-  const radius = 20.0;
-  const pad = EdgeInsets.fromLTRB(20, 18, 20, 20);
-  final onSurfaceVariant = Theme.of(ctx).colorScheme.onSurfaceVariant;
-
-  final titleRow = Padding(
-    padding: pad,
+  return Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 12),
     child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          title,
-          style: TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w600,
-            color: onSurfaceVariant,
+        SettingsSectionHeading(title: title),
+        _cardShell(
+          ctx,
+          state,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: children,
+            ),
           ),
+          radius: 20,
         ),
-        const SizedBox(height: 16),
-        ...children,
       ],
     ),
-  );
-
-  return Padding(
-    // 卡片相对内容区的左右留白（10 → 12）：用户反馈「设置的卡片宽度过宽，再缩小」。
-    // 主界面列表行另有 14px 分区内边距（见 _buildMobileSection），两级合计 26；
-    // 二级页为 subListPadding 12 + 这里 12 = 24，与主界面基本对齐。
-    padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
-    child: _cardShell(ctx, state, titleRow, radius: radius),
   );
 }
 
@@ -2122,7 +2118,9 @@ Widget _subPageEntry(
                   scope,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 10, color: scheme.outline),
+                  style: SettingsTypography.description.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),
@@ -2209,7 +2207,9 @@ Widget _infoRow(
       Expanded(
         child: Text(
           label,
-          style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+          style: SettingsTypography.description.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
         ),
       ),
       ?trailing,
@@ -2482,7 +2482,9 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
           title: Text(s.themeMode, style: TextStyle(color: clr)),
           subtitle: Text(
             state.darkMode ? s.darkMode : (s.isZh ? '浅色模式' : 'Light Mode'),
-            style: TextStyle(fontSize: 11, color: scheme.outline),
+            style: SettingsTypography.description.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
           ),
           value: state.darkMode,
           onChanged: (v) => state.toggleDarkMode(v),
@@ -2501,7 +2503,9 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
             s.isZh
                 ? '关闭后使用中性灰配色，已选颜色会保留'
                 : 'Use neutral colors; your selected colors are preserved',
-            style: TextStyle(fontSize: 11, color: scheme.outline),
+            style: SettingsTypography.description.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
           ),
           value: cfg.useThemeColor,
           onChanged: (v) => state.updateConfig((c) => c..useThemeColor = v),
@@ -2542,7 +2546,9 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
             ),
             subtitle: Text(
               s.themeDynamicColorHint,
-              style: TextStyle(fontSize: 10, color: scheme.outline),
+              style: SettingsTypography.description.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
             ),
             value: cfg.useDynamicColor,
             onChanged: (v) => state.updateConfig((c) => c..useDynamicColor = v),
@@ -2622,7 +2628,9 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
           s.isZh
               ? '仅作用于「跟随主题色」的卡片 / 底栏 / 药丸底色，0% 即原主题色'
               : 'Only affects accent-tinted cards, nav bar and pills; 0% = raw accent',
-          style: TextStyle(fontSize: 10, color: scheme.outline),
+          style: SettingsTypography.description.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
         ),
       ]),
     ],
@@ -2759,7 +2767,9 @@ Widget _buildSurfaceStyleCard(BuildContext ctx, AppState state) {
               zh
                   ? '上滑收起、下滑展开；仅作用于底部菜单栏'
                   : 'Swipe up to hide, swipe down to show; bottom nav only',
-              style: TextStyle(fontSize: 11, color: scheme.outline),
+              style: SettingsTypography.description.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
             ),
             value: cfg.navAutoHide,
             onChanged: (v) => state.updateConfig((c) => c..navAutoHide = v),
@@ -2800,7 +2810,9 @@ Widget _buildSurfaceStyleCard(BuildContext ctx, AppState state) {
                       '与「玻璃细节 → 玻璃模糊度」是同一个参数'
                 : 'Applies live to every "Blur" surface; same value as '
                       'Glass details → Blur',
-            style: TextStyle(fontSize: 10, color: scheme.outline),
+            style: SettingsTypography.description.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
           ),
         ],
       ]),
@@ -2907,7 +2919,9 @@ List<Widget> _buildGlassMaterialItems(BuildContext ctx, AppState state) {
                             : 'Applies to bars, sidebar and menus'),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 10, color: scheme.outline),
+                  style: SettingsTypography.description.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),
@@ -2950,7 +2964,9 @@ List<Widget> _buildGlassMaterialItems(BuildContext ctx, AppState state) {
         zh
             ? '开启后玻璃/卡片底色使用协调后的主题色而不是表面灰'
             : 'Use the harmonized accent color instead of surface gray',
-        style: TextStyle(fontSize: 11, color: scheme.outline),
+        style: SettingsTypography.description.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
       ),
       value: cfg.glassFollowTheme,
       onChanged: (v) => state.updateConfig((c) => c..glassFollowTheme = v),
@@ -2984,7 +3000,9 @@ List<Widget> _buildGlassMaterialItems(BuildContext ctx, AppState state) {
                   zh ? '仅作用于设置页的卡片' : 'Applies to settings cards only',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 10, color: scheme.outline),
+                  style: SettingsTypography.description.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),
@@ -3039,7 +3057,9 @@ List<Widget> _buildGlassMaterialItems(BuildContext ctx, AppState state) {
           zh
               ? '桌面图形后端的 backdrop 坐标系与 shader 假设不一致，开启会导致玻璃里出现放大的壁纸碎片，已停用；当前使用「模糊 + 倒角高光」回退（背景即真实壁纸）'
               : 'Shader backdrop coordinates are not reliable on desktop backends; disabled. Using blur + bevel highlight fallback instead.',
-          style: TextStyle(fontSize: 11, color: scheme.outline),
+          style: SettingsTypography.description.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
         ),
         trailing: Icon(Icons.block, size: 18, color: scheme.outline),
       ),
@@ -3056,7 +3076,9 @@ List<Widget> _buildGlassMaterialItems(BuildContext ctx, AppState state) {
         zh
             ? '为所有卡片与药丸添加实线边框，可自定义颜色与宽度'
             : 'Draw a solid border around all cards and pills (custom color & width)',
-        style: TextStyle(fontSize: 11, color: scheme.outline),
+        style: SettingsTypography.description.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
       ),
       value: cfg.borderEnabled,
       onChanged: (v) => state.updateConfig((c) => c..borderEnabled = v),
@@ -3090,7 +3112,9 @@ List<Widget> _buildGlassMaterialItems(BuildContext ctx, AppState state) {
           const SizedBox(width: 8),
           Text(
             '#${(cfg.borderColor & 0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase()}',
-            style: TextStyle(fontSize: 11, color: scheme.outline),
+            style: SettingsTypography.description.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
           ),
         ],
       ),
@@ -3136,7 +3160,9 @@ List<Widget> _buildEffectItems(BuildContext ctx, AppState state) {
             ? '拖动滑块时从把手（填充段最右端）向左甩出的彗星尾迹，最多占轨道总长 22%（关闭后零帧开销）'
             : 'Comet trail pulled left from the handle while dragging, up to 22% of the track '
                   '(off = zero frame cost)',
-        style: TextStyle(fontSize: 11, color: scheme.outline),
+        style: SettingsTypography.description.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
       ),
       value: cfg.sliderParticles,
       onChanged: (v) => state.updateConfig((c) => c..sliderParticles = v),
@@ -3425,7 +3451,7 @@ Widget _presetSwatch(BuildContext ctx, _StylePreset p, bool selected) {
   final dark = scheme.brightness == Brightness.dark;
   final solid = v.cardStyle == 'theme' || v.cardStyle == 'gray';
   final base = v.cardStyle == 'gray'
-      ? neutralGray(scheme.surfaceContainerHigh)
+      ? AppNeutralSurface.card(scheme.brightness)
       : v.glassFollowTheme || v.cardStyle == 'theme'
       ? harmonizedAccent(scheme, v.themeTone)
       : scheme.surface;
@@ -3595,7 +3621,9 @@ List<Widget> _buildStylePresets(BuildContext ctx, AppState state) {
                 ),
                 Text(
                   p.desc(zh),
-                  style: TextStyle(fontSize: 11, color: scheme.outline),
+                  style: SettingsTypography.description.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),
@@ -3636,7 +3664,9 @@ Widget _buildGlassDetailCard(BuildContext ctx, AppState state) {
       zh
           ? '作用于所有玻璃表面：卡片 / 底部菜单栏 / 顶部药丸 / 弹窗与面板'
           : 'Applies to every glass surface: cards, bottom nav, pills, popups, panels',
-      style: TextStyle(fontSize: 10, color: scheme.outline),
+      style: SettingsTypography.description.copyWith(
+        color: scheme.onSurfaceVariant,
+      ),
     ),
     const SizedBox(height: 10),
     _SettingSlider(
@@ -3829,7 +3859,9 @@ Widget _buildNodeEditorStyleCard(BuildContext ctx, AppState state) {
         s.isZh
             ? '右下角显示全图缩略图与当前视口框，点击可跳转'
             : 'Show an overview with the current viewport in the bottom-right corner',
-        style: TextStyle(fontSize: 10, color: scheme.outline),
+        style: SettingsTypography.description.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
       ),
       value: cfg.nodeMiniMap,
       onChanged: (v) => state.updateConfig((c) => c..nodeMiniMap = v),
@@ -3846,7 +3878,9 @@ Widget _buildNodeEditorStyleCard(BuildContext ctx, AppState state) {
         s.isZh
             ? '拖动节点时吸附到背景网格，方便对齐成一排'
             : 'Snap dragged nodes onto the background grid',
-        style: TextStyle(fontSize: 10, color: scheme.outline),
+        style: SettingsTypography.description.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
       ),
       value: cfg.nodeSnap,
       onChanged: (v) => state.updateConfig((c) => c..nodeSnap = v),
@@ -4090,7 +4124,9 @@ Widget _optionRow(
                 const SizedBox(height: 2),
                 Text(
                   scope,
-                  style: TextStyle(fontSize: 10, color: scheme.outline),
+                  style: SettingsTypography.description.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -4400,7 +4436,9 @@ Widget _buildMobileCommandEntry(BuildContext ctx, AppState state) {
         s.isZh
             ? '命令输入 + 快捷模板 + 参数参考'
             : 'Manual input + quick templates + parameter reference',
-        style: TextStyle(fontSize: 11, color: scheme.outline),
+        style: SettingsTypography.description.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
       ),
       trailing: Icon(Icons.chevron_right, color: scheme.outline),
       // CommandPage 自带壁纸与安全区顶栏，不再外层重复包装（见 _mobileToolRow 注释）
@@ -4431,7 +4469,9 @@ Widget _buildMobileLogsEntry(BuildContext ctx, AppState state) {
         s.isZh
             ? '后端输出、FFmpeg 进度与错误信息'
             : 'Backend output, FFmpeg progress and errors',
-        style: TextStyle(fontSize: 11, color: scheme.outline),
+        style: SettingsTypography.description.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
       ),
       trailing: Icon(Icons.chevron_right, color: scheme.outline),
       // LogPage 自带壁纸与安全区顶栏，不再外层重复包装（见 _mobileToolRow 注释）
@@ -4461,7 +4501,9 @@ Widget _buildPredictiveBack(BuildContext ctx, AppState state) {
       ),
       subtitle: Text(
         s.predictiveBackHint,
-        style: TextStyle(fontSize: 11, color: scheme.outline),
+        style: SettingsTypography.description.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
       ),
       value: cfg.predictiveBack,
       onChanged: (v) => state.updateConfig((c) => c..predictiveBack = v),
@@ -4573,7 +4615,9 @@ Widget _buildFont(BuildContext ctx, AppState state) {
             ? null
             : Text(
                 cfg.fontFamily,
-                style: TextStyle(fontSize: 11, color: scheme.outline),
+                style: SettingsTypography.description.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -4710,7 +4754,9 @@ Widget _buildOutput(BuildContext ctx, AppState state) {
       padding: const EdgeInsets.only(top: 2),
       child: Text(
         s.intermediateHint,
-        style: TextStyle(fontSize: 11, color: scheme.outline),
+        style: SettingsTypography.description.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
       ),
     ),
   ]);
@@ -4764,7 +4810,9 @@ Widget _buildAutosave(BuildContext ctx, AppState state) {
           s.isZh
               ? '进入节点编辑器时默认横屏显示，画布更宽（移动端）'
               : 'Open the node editor in landscape by default for a wider canvas (mobile)',
-          style: TextStyle(fontSize: 11, color: scheme.outline),
+          style: SettingsTypography.description.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
         ),
         value: cfg.useNodeEditorLandscape,
         onChanged: (v) =>
@@ -4783,7 +4831,9 @@ Widget _buildAutosave(BuildContext ctx, AppState state) {
         s.isZh
             ? '编辑节点画布时定期保存草稿，异常退出后可恢复'
             : 'Periodically save drafts while editing; restore after abnormal exit',
-        style: TextStyle(fontSize: 11, color: scheme.outline),
+        style: SettingsTypography.description.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
       ),
       value: cfg.autosaveEnabled,
       onChanged: (v) => state.updateConfig((c) => c..autosaveEnabled = v),
@@ -4848,7 +4898,9 @@ Widget _buildAutosave(BuildContext ctx, AppState state) {
     const SizedBox(height: 4),
     Text(
       s.isZh ? '停止操作后多久自动保存一次' : 'How long after edits stop before autosaving',
-      style: TextStyle(fontSize: 10, color: scheme.outline),
+      style: SettingsTypography.description.copyWith(
+        color: scheme.onSurfaceVariant,
+      ),
     ),
   ]);
 }
@@ -4868,7 +4920,9 @@ Widget _buildShortcuts(BuildContext ctx, AppState state) {
       ),
       subtitle: Text(
         s.isZh ? '配置画布和基本操作快捷键' : 'Configure canvas and basic shortcuts',
-        style: TextStyle(fontSize: 11, color: scheme.outline),
+        style: SettingsTypography.description.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
       ),
       trailing: Icon(Icons.chevron_right, size: 18, color: scheme.outline),
       onTap: () => showKeybindingDialog(ctx, isZh: s.isZh),
@@ -4944,7 +4998,9 @@ Widget _buildTasks(BuildContext ctx, AppState state) {
         const SizedBox(height: 4),
         Text(
           s.isZh ? '控制队列中同时处理的任务数量' : 'Controls how many tasks run in parallel',
-          style: TextStyle(fontSize: 10, color: scheme.outline),
+          style: SettingsTypography.description.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
         ),
         const SizedBox(height: 12),
         Row(
@@ -4998,7 +5054,9 @@ Widget _buildTasks(BuildContext ctx, AppState state) {
           s.isZh
               ? '添加文件时同时解析的线程数，增大可加快批量导入速度'
               : 'Number of concurrent probe threads when importing files',
-          style: TextStyle(fontSize: 10, color: scheme.outline),
+          style: SettingsTypography.description.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
         ),
       ]),
       const SizedBox(height: 8),
@@ -5014,7 +5072,9 @@ Widget _buildTasks(BuildContext ctx, AppState state) {
             s.isZh
                 ? '每个任务完成时发送系统通知'
                 : 'Send system notification when each task finishes',
-            style: TextStyle(fontSize: 11, color: scheme.outline),
+            style: SettingsTypography.description.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
           ),
           value: cfg.enableSystemNotification,
           onChanged: (v) =>
@@ -5058,7 +5118,9 @@ Widget _buildDisplay(BuildContext ctx, AppState state) {
       ),
       subtitle: Text(
         s.highRefreshRateHint,
-        style: TextStyle(fontSize: 10, color: scheme.outline),
+        style: SettingsTypography.description.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
       ),
       value: cfg.highRefreshRate,
       onChanged: (v) {
@@ -5087,7 +5149,9 @@ Widget _buildDisplay(BuildContext ctx, AppState state) {
               Expanded(
                 child: Text(
                   text,
-                  style: TextStyle(fontSize: 10.5, color: scheme.outline),
+                  style: SettingsTypography.description.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
               ),
             ],
@@ -5124,7 +5188,9 @@ Widget _buildPreload(BuildContext ctx, AppState state) {
         s.isZh
             ? '启动时只绘制当前页面：跳过后台页面构建、字体列表枚举与壁纸解码预热。\n注意：首次切换到某个页面时会现场构建，可能短暂增加 CPU 占用。'
             : 'At startup only the current page is drawn: background page builds, font-list enumeration and wallpaper decode are skipped.\nNote: the first visit to a page builds it on the spot, which may briefly raise CPU usage.',
-        style: TextStyle(fontSize: 10, color: scheme.outline),
+        style: SettingsTypography.description.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
       ),
       value: cfg.noPreload,
       onChanged: (v) => state.updateConfig((c) => c..noPreload = v),
@@ -5351,7 +5417,9 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
               s.isZh
                   ? '点按在线检查新版本；长按直达发布页'
                   : 'Tap to check online; long-press to open the release page',
-              style: TextStyle(fontSize: 11, color: scheme.outline),
+              style: SettingsTypography.description.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
             ),
             trailing: const Icon(Icons.chevron_right, size: 16),
             // 移动端也走在线检查：发现新版本弹窗展示（APK 分发，下载动作
@@ -5434,7 +5502,9 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
             ),
             subtitle: Text(
               s.isZh ? '查看广告内容' : 'View sponsored content',
-              style: TextStyle(fontSize: 11, color: scheme.outline),
+              style: SettingsTypography.description.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
             ),
             trailing: const Icon(Icons.chevron_right, size: 18),
             onTap: () => _openAds(ctx),
@@ -5462,7 +5532,9 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
               s.isZh
                   ? '静默检查，仅在有新版本时通知'
                   : 'Silent check, notifies only when new version available',
-              style: TextStyle(fontSize: 11, color: scheme.outline),
+              style: SettingsTypography.description.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
             ),
             value: state.config.autoCheckUpdate,
             onChanged: (v) => state.updateConfig((c) => c..autoCheckUpdate = v),
@@ -5625,7 +5697,9 @@ Widget _buildMcpAi(BuildContext ctx, AppState state) {
           s.isZh
               ? '改后点「应用」。设为 0.0.0.0 将暴露到局域网并启用访问令牌'
               : 'Click Apply. 0.0.0.0 exposes to LAN and enables token',
-          style: TextStyle(fontSize: 10, color: scheme.outline),
+          style: SettingsTypography.description.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
         ),
       ),
     ],
@@ -5652,7 +5726,9 @@ Widget _buildMcpAi(BuildContext ctx, AppState state) {
         s.isZh
             ? '关闭时 MCP 只能读取画布/文件，所有修改操作会被拒绝'
             : 'When off, MCP can only read the canvas/files; all write actions are rejected',
-        style: TextStyle(fontSize: 10, color: scheme.outline),
+        style: SettingsTypography.description.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
       ),
       value: cfg.mcpAllowWrite,
       onChanged: (v) => state.updateConfig((c) => c..mcpAllowWrite = v),
@@ -5668,7 +5744,9 @@ Widget _buildMcpAi(BuildContext ctx, AppState state) {
         s.isZh
             ? '控制列目录/文件信息/媒体探测三个工具；本机任何程序都能调用 MCP，不依赖时可关闭'
             : 'Gates list_directory / read_file_info / probe_video; any local program can call MCP — turn off when unused',
-        style: TextStyle(fontSize: 10, color: scheme.outline),
+        style: SettingsTypography.description.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
       ),
       value: cfg.mcpAllowFsAccess,
       onChanged: (v) => state.updateConfig((c) => c..mcpAllowFsAccess = v),
@@ -5758,36 +5836,29 @@ Widget _aiSettingsContent(
       }
 
       Widget section(String title, IconData icon, List<Widget> children) =>
-          Container(
-            margin: const EdgeInsets.only(bottom: 12),
-            decoration: BoxDecoration(
-              color: cardColor,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(icon, size: 16, color: scheme.primary),
-                      const SizedBox(width: 6),
-                      Text(
-                        title,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: scheme.primary,
-                        ),
-                      ),
-                    ],
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SettingsSectionHeading(title: title, icon: icon),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: cardColor,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: scheme.outlineVariant.withAlpha(60),
+                    ),
                   ),
-                  const SizedBox(height: 10),
-                  ...children,
-                ],
-              ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: children,
+                    ),
+                  ),
+                ),
+              ],
             ),
           );
 
@@ -5981,9 +6052,8 @@ Widget _aiSettingsContent(
                         ? Center(
                             child: Text(
                               zh ? '选择或新建一个配置' : 'Select or create a profile',
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: scheme.outline,
+                              style: SettingsTypography.description.copyWith(
+                                color: scheme.onSurfaceVariant,
                               ),
                             ),
                           )
@@ -7384,7 +7454,9 @@ Future<void> _downloadAndInstall(
               valueListenable: statusNotifier,
               builder: (_, v, _) => Text(
                 v,
-                style: TextStyle(fontSize: 11, color: scheme.outline),
+                style: SettingsTypography.description.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
               ),
             ),
           ],
@@ -7481,7 +7553,9 @@ void _showSponsor(BuildContext ctx, ColorScheme scheme, AppStrings s) {
             const SizedBox(height: 12),
             Text(
               s.aboutZoomHint,
-              style: TextStyle(fontSize: 10, color: scheme.outline),
+              style: SettingsTypography.description.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
             ),
             const SizedBox(height: 12),
             Row(
@@ -7841,7 +7915,9 @@ class _FfmpegCardState extends State<_FfmpegCard> {
             padding: const EdgeInsets.only(top: 4, bottom: 6),
             child: Text(
               _version,
-              style: TextStyle(fontSize: 10, color: scheme.outline),
+              style: SettingsTypography.description.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
@@ -7875,7 +7951,9 @@ class _FfmpegCardState extends State<_FfmpegCard> {
           isZh
               ? '移动端已内置 FFmpeg 库，无需额外安装'
               : 'FFmpeg is bundled with the app on mobile — no installation needed',
-          style: TextStyle(fontSize: 10, color: scheme.outline),
+          style: SettingsTypography.description.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
         ),
       ]);
     }
@@ -7951,7 +8029,9 @@ class _FfmpegCardState extends State<_FfmpegCard> {
         Center(
           child: Text(
             isZh ? '正在检测...' : 'Detecting...',
-            style: TextStyle(fontSize: 12, color: scheme.outline),
+            style: SettingsTypography.description.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
           ),
         ),
       ]);
@@ -7983,7 +8063,9 @@ class _FfmpegCardState extends State<_FfmpegCard> {
           padding: const EdgeInsets.only(top: 4, bottom: 6),
           child: Text(
             _version,
-            style: TextStyle(fontSize: 10, color: scheme.outline),
+            style: SettingsTypography.description.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
@@ -8103,10 +8185,14 @@ class _CPState extends State<_CP> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final labelStyle = TextStyle(fontSize: 11, color: scheme.onSurfaceVariant);
+    final labelStyle = SettingsTypography.description.copyWith(
+      color: scheme.onSurfaceVariant,
+    );
     // 原先写死 Color(0xFF9AA0A6)：一个冷调灰，既不随主题（浅色/深色）变化，
     // 也和同页其他次要文字用的 scheme.outline 不是同一个灰 → 同一层级两种灰。
-    final sectionHint = TextStyle(fontSize: 10, color: scheme.outline);
+    final sectionHint = SettingsTypography.description.copyWith(
+      color: scheme.onSurfaceVariant,
+    );
     // 液态玻璃：跟随全局玻璃配置（液态/模糊/无效果），主题着色跟随 glassFollowTheme
     return GlassPanel(
       radius: 18,
