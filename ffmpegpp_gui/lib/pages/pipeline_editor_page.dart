@@ -10464,52 +10464,65 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              children: [
-                // 菜单 / 历史侧栏（设计稿左上角汉堡按钮）
-                headButton(
-                  Icon(Icons.menu, size: headBtn.iconSize),
-                  s.isZh ? '历史记录' : 'History',
-                  () => aiKey.currentState?.openHistoryAt(Offset.zero),
-                ),
-                Icon(Icons.smart_toy, size: 18, color: scheme.primary),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    s.aiChatTitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: scheme.onSurface,
+            // 标题栏本身做成一颗紧凑玻璃药丸：不再用 Expanded 撑满整行，
+            // 避免移动端出现「一条很宽的标题栏 + 大段空白」。
+            Align(
+              alignment: Alignment.centerLeft,
+              child: MobileGlassPill(
+                style: context.read<AppState>().config.pillStyle,
+                radius: 22,
+                padding: EdgeInsets.zero,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // 菜单 / 历史侧栏（设计稿左上角汉堡按钮）
+                    headButton(
+                      Icon(Icons.menu, size: headBtn.iconSize),
+                      s.isZh ? '历史记录' : 'History',
+                      () => aiKey.currentState?.openHistoryAt(Offset.zero),
                     ),
-                  ),
-                ),
-                // 工具面板开关
-                headButton(
-                  AnimatedRotation(
-                    turns: (aiKey.currentState?.toolsOpen ?? false) ? 0.5 : 0,
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeOutCubic,
-                    child: Icon(
-                      Icons.extension_outlined,
-                      size: headBtn.iconSize,
+                    Icon(Icons.smart_toy, size: 18, color: scheme.primary),
+                    const SizedBox(width: 8),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 120),
+                      child: Text(
+                        s.aiChatTitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: scheme.onSurface,
+                        ),
+                      ),
                     ),
-                  ),
-                  s.isZh ? '工具' : 'Tools',
-                  () {
-                    aiKey.currentState?.toggleTools();
-                    setH(() {});
-                  },
+                    // 工具面板开关
+                    headButton(
+                      AnimatedRotation(
+                        turns:
+                            (aiKey.currentState?.toolsOpen ?? false) ? 0.5 : 0,
+                        duration: const Duration(milliseconds: 200),
+                        curve: Curves.easeOutCubic,
+                        child: Icon(
+                          Icons.extension_outlined,
+                          size: headBtn.iconSize,
+                        ),
+                      ),
+                      s.isZh ? '工具' : 'Tools',
+                      () {
+                        aiKey.currentState?.toggleTools();
+                        setH(() {});
+                      },
+                    ),
+                    // 关闭
+                    headButton(
+                      Icon(Icons.close, size: headBtn.iconSize),
+                      s.isZh ? '关闭' : 'Close',
+                      () => Navigator.of(ctx).pop(),
+                    ),
+                  ],
                 ),
-                // 关闭
-                headButton(
-                  Icon(Icons.close, size: headBtn.iconSize),
-                  s.isZh ? '关闭' : 'Close',
-                  () => Navigator.of(ctx).pop(),
-                ),
-              ],
+              ),
             ),
             // 模型选择器独立成行：不再和标题/工具挤在 48px 头部行里，
             // 宽度按内容收缩、文本最多 190px，避免“只剩 1/3 宽”。
@@ -10977,7 +10990,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     return LayoutBuilder(
       builder: (context, constraints) {
         return SizedBox(
-          width: math.min(constraints.maxWidth, 360),
+          // 按实际按钮数收缩，避免药丸右端留出一块空白；
+          // 属性恢复按钮出现时内容超出则横向滚动。
+          width: math.min(constraints.maxWidth, 330),
           child: Container(
             height: _kMobileBarHeight * requestedScale,
             padding: const EdgeInsets.symmetric(
