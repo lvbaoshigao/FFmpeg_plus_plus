@@ -123,8 +123,8 @@ class _SwipeGatePagePhysics extends PageScrollPhysics {
     final tolerance = toleranceFor(position);
     final page = position.pixels / position.viewportDimension;
     final dragged = page - originPage;
-    // 需要约 2.5 倍默认甩动速度才触发「甩动翻页」，避免轻划误翻
-    final tol = tolerance.velocity * 2.5;
+    // 需要约 3.5 倍默认甩动速度才触发「甩动翻页」，避免轻划误翻
+    final tol = tolerance.velocity * 3.5;
     double targetPage;
     if (velocity.abs() > tol) {
       // 明确甩动：按方向翻一页
@@ -1336,7 +1336,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
       controller: _mobilePageController,
       physics: _SwipeGatePagePhysics(
         originPage: idx.toDouble(),
-        gateFraction: 0.28,
+        gateFraction: 0.42,
       ),
       // Root selection is committed at settle, not at intermediate pages.
       onPageChanged: (_) {},

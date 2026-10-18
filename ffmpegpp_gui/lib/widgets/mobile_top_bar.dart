@@ -399,12 +399,14 @@ class MobileSubPageTopBar extends StatelessWidget {
   final Widget title;
   final List<Widget> actions;
   final VoidCallback? onBack;
+  final int inlineActionLimit;
 
   const MobileSubPageTopBar({
     super.key,
     required this.title,
     this.actions = const [],
     this.onBack,
+    this.inlineActionLimit = 1,
   });
 
   @override
@@ -419,8 +421,8 @@ class MobileSubPageTopBar extends StatelessWidget {
         MobileUi.barInsetBottom,
       ),
       child: MobilePillBarLayout(
-        // 返回键占掉「两个」里的一个（见类文档），故操作上限为 1。
-        inlineActionLimit: 1,
+        // 默认返回键占掉「两个」里的一个；需要把删除/搜索/保存都放右上角时可传 3。
+        inlineActionLimit: inlineActionLimit,
         // 左：圆形玻璃返回按钮（44×44、radius 22 = 正圆）
         leading: MobileGlassPill(
           radius: MobileUi.pillRadius,

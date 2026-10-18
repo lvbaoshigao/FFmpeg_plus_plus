@@ -308,17 +308,43 @@ class _CardDef {
     required this.build,
   });
 
-  /// 中英文标题 + 关键字都参与匹配，这样无论界面当前是哪种语言，
-  /// 输入 "font" 或 "字体" 都能命中同一张卡片。
-  bool matches(String query) {
-    if (query.isEmpty) return true;
-    if (title(AppStrings.zh).toLowerCase().contains(query)) return true;
-    if (title(AppStrings.en).toLowerCase().contains(query)) return true;
-    for (final k in keywords) {
-      if (k.contains(query)) return true;
+  /// 中英文标题 + 关键字都参与匹配，关键字支持多词（空格分隔，AND）。
+  /// 例如 "字体 大小" / "font size" 会同时要求两个词都命中。
+  int matchScore(String query) {
+    final tokens = query
+        .trim()
+        .toLowerCase()
+        .split(RegExp(r'\s+'))
+        .where((t) => t.isNotEmpty)
+        .toList(growable: false);
+    if (tokens.isEmpty) return 0;
+    final zh = title(AppStrings.zh).toLowerCase();
+    final en = title(AppStrings.en).toLowerCase();
+    var score = 0;
+    for (final token in tokens) {
+      if (zh == token || en == token) {
+        score += 10;
+        continue;
+      }
+      if (zh.startsWith(token) || en.startsWith(token)) {
+        score += 6;
+        continue;
+      }
+      if (zh.contains(token) || en.contains(token)) {
+        score += 4;
+        continue;
+      }
+      final kw = keywords.where((k) => k.contains(token)).toList();
+      if (kw.isNotEmpty) {
+        score += kw.any((k) => k == token) ? 3 : 1;
+        continue;
+      }
+      return -1;
     }
-    return false;
+    return score;
   }
+
+  bool matches(String query) => matchScore(query) >= 0;
 }
 
 class _SectionDef {
@@ -332,6 +358,19 @@ class _SectionDef {
     required this.icon,
     required this.cards,
   });
+
+  /// 分区标题也参与搜索：输入「外观」时整组卡片都应出现在结果里。
+  bool matches(String query) {
+    final tokens = query
+        .trim()
+        .toLowerCase()
+        .split(RegExp(r'\s+'))
+        .where((t) => t.isNotEmpty);
+    if (tokens.isEmpty) return true;
+    final zh = title(AppStrings.zh).toLowerCase();
+    final en = title(AppStrings.en).toLowerCase();
+    return tokens.every((t) => zh.contains(t) || en.contains(t));
+  }
 }
 
 // ═══════════════════════════════════════════
@@ -1169,7 +1208,17 @@ class _SettingsPageState extends State<SettingsPage> {
           final searching = query.isNotEmpty;
           final visible = <(_SectionDef, List<_CardDef>)>[];
           for (final sec in _sections) {
-            final hits = sec.cards.where((c) => c.matches(query)).toList();
+            final sectionHit = sec.matches(query);
+            final hits = sec.cards
+                .where((c) => sectionHit || c.matches(query))
+                .toList();
+            if (query.isNotEmpty) {
+              hits.sort((a, b) {
+                final byScore = b.matchScore(query).compareTo(a.matchScore(query));
+                if (byScore != 0) return byScore;
+                return a.id.compareTo(b.id);
+              });
+            }
             if (hits.isNotEmpty) visible.add((sec, hits));
           }
 
@@ -1235,7 +1284,17 @@ class _SettingsPageState extends State<SettingsPage> {
         // 搜索时跨分区收集命中卡片（右侧分组展示）；未搜索时只看选中分区
         final hitsBySection = <(_SectionDef, List<_CardDef>)>[];
         for (final sec in _sections) {
-          final hits = sec.cards.where((c) => c.matches(query)).toList();
+          final sectionHit = sec.matches(query);
+          final hits = sec.cards
+              .where((c) => sectionHit || c.matches(query))
+              .toList();
+          if (query.isNotEmpty) {
+            hits.sort((a, b) {
+              final byScore = b.matchScore(query).compareTo(a.matchScore(query));
+              if (byScore != 0) return byScore;
+              return a.id.compareTo(b.id);
+            });
+          }
           if (hits.isNotEmpty) hitsBySection.add((sec, hits));
         }
         // 选中分区兜底（分区增删后不悬空）
@@ -2038,7 +2097,11 @@ void _pushSettingsSubPage(
                     // 左右间距与设置主界面卡片对齐（主界面 = ListView + 分区卡内边距 14）。
                     // 此前为 0：MCP/AI 等二级页卡片通顶通底，比主界面卡片明显更宽。
                     addRepaintBoundaries: false,
-                    padding: MobileUi.subListPadding(top: 12, bottom: 48),
+                    // Cards in this page already own the shared 12px inset via
+                    // _glass/_AiSectionCard. Do not add another 12px here: that
+                    // made every secondary-page card narrower than the provider
+                    // card on the MCP/AI page.
+                    padding: const EdgeInsets.only(top: 12, bottom: 48),
                     children: [contentBuilder(ctx2, state)],
                   ),
                 ),

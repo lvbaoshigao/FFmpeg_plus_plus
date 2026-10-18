@@ -7,7 +7,7 @@ import 'package:provider/provider.dart';
 import '../models/quick_config.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
-import '../widgets/glass_panel.dart';
+import '../widgets/app_card.dart';
 
 /// 预设选项：值 + 显示标签。
 typedef _Preset = ({Object value, String label});
@@ -265,18 +265,20 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final isZh = AppStrings.of(context.watch<AppState>().config.language).isZh;
+    final app = context.watch<AppState>();
+    final isZh = AppStrings.of(app.config.language).isZh;
     final media = MediaQuery.of(context);
     final narrow = media.size.width < 760;
     // 移动端适配（修复：布局拥挤/偏移）：
     // - 宽度按屏宽减去小边距，不再 16px 起铺（刘海/圆角屏贴边怪异）；
     // - 高度避开状态栏与手势条（viewPadding），内容套 SafeArea；
     // - 键盘弹出时（viewInsets.bottom>0）压缩窗口高度，避免输入框被遮。
-    final phoneLayout = media.size.width < 600;
-    final winW = narrow ? media.size.width - (phoneLayout ? 8 : 16) : math.min(960.0, media.size.width * 0.92);
+    final winW = narrow
+        ? media.size.width
+        : math.min(960.0, media.size.width * 0.92);
     final keyboardInset = media.viewInsets.bottom > 0 ? media.viewInsets.bottom : 0.0;
     final winH = narrow
-        ? media.size.height - 24 - keyboardInset.clamp(0, media.size.height * 0.5)
+        ? media.size.height - keyboardInset.clamp(0, media.size.height * 0.5)
         : math.min(700.0, media.size.height * 0.86);
 
     return PopScope(
@@ -293,8 +295,9 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
         child: SizedBox(
           width: winW,
           height: winH,
-          child: GlassPanel(
-            radius: 22,
+          child: AppCard(
+            style: app.config.cardStyle,
+            radius: narrow ? 0 : 22,
             padding: EdgeInsets.zero,
             child: SafeArea(
               top: false,

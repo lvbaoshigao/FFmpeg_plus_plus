@@ -199,12 +199,12 @@ void main() {
 
     // 壁纸：withWallpaper 里铺的壁纸 Image 应存在
     expect(find.byType(Image), findsWidgets);
-    // 顶部「基本 / 模型」选项卡使用顶部药丸样式渲染，且位于内容区上方
+    // 设计稿改为底部小药丸：分段控件位于内容区下方，不再占用顶部。
     expect(find.byKey(const ValueKey('ai_provider_top_tabs')), findsOneWidget);
     expect(
-      tester.getBottomLeft(find.byKey(const ValueKey('ai_provider_top_tabs'))).dy,
-      lessThanOrEqualTo(
-        tester.getTopLeft(find.byKey(const ValueKey('ai_provider_config'))).dy,
+      tester.getTopLeft(find.byKey(const ValueKey('ai_provider_top_tabs'))).dy,
+      greaterThanOrEqualTo(
+        tester.getBottomLeft(find.byKey(const ValueKey('ai_provider_config'))).dy,
       ),
     );
     expect(find.text('基本'), findsOneWidget);
@@ -227,6 +227,43 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
     expect(find.text('高级'), findsOneWidget);
+    await _flushSaveTimers(tester);
+  });
+
+  testWidgets('request URL preview follows the path while typing', (
+    tester,
+  ) async {
+    final state = AppState();
+    final profile = AiProfile(
+      name: 'OpenAI',
+      provider: 'openai',
+      apiKey: 'sk-test',
+      apiUrl: 'https://api.openai.com/v1',
+      apiPath: '/chat/completions',
+    );
+    profile.models.add(AiModelEntry(id: 'gpt-6'));
+    state.updateConfig((c) {
+      c.aiProfiles.add(profile);
+      c.activeAiProfileId = profile.id;
+      return c;
+    });
+    await tester.pumpWidget(
+      _harness(state, MobileAiProviderDetailPage(profileId: profile.id)),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('https://api.openai.com/v1/chat/completions'),
+      findsWidgets,
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('ai_request_path')),
+      '/custom',
+    );
+    await tester.pump();
+    expect(
+      find.textContaining('https://api.openai.com/v1/custom'),
+      findsWidgets,
+    );
     await _flushSaveTimers(tester);
   });
 

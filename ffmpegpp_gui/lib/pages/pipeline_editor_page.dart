@@ -10349,11 +10349,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           ),
       ],
       child: Container(
-        height: 40,
-        padding: const EdgeInsets.symmetric(horizontal: 10),
+        height: 36,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
           color: scheme.surfaceContainerHighest.withAlpha(110),
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(18),
           border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
         ),
         child: Row(
@@ -10363,7 +10363,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             const SizedBox(width: 4),
             Flexible(
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 190),
+                constraints: const BoxConstraints(maxWidth: 150),
                 child: Text(
                   current.isEmpty ? (s.isZh ? '未配置模型' : 'No model') : current,
                   maxLines: 1,
@@ -10473,7 +10473,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             // 模型选择器独立成行：不再和标题/工具挤在 48px 头部行里，
             // 宽度按内容收缩、文本最多 190px，避免“只剩 1/3 宽”。
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: _aiModelPill(scheme, s, aiKey, () => setH(() {})),
@@ -10936,7 +10936,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     return LayoutBuilder(
       builder: (context, constraints) {
         return SizedBox(
-          width: math.min(constraints.maxWidth, 560),
+          width: math.min(constraints.maxWidth, 440),
           child: Container(
             height: _kMobileBarHeight * requestedScale,
             padding: const EdgeInsets.symmetric(
@@ -15411,7 +15411,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
           top: 0,
           bottom: 0,
           left: _historyOpen ? 0 : -constraints.maxWidth,
-          width: math.min(300, constraints.maxWidth),
+          width: math.min(360, constraints.maxWidth * 0.88),
           child: IgnorePointer(
             ignoring: !_historyOpen,
             child: AppCard(
@@ -15441,15 +15441,25 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                             children: [
                               for (final session in _historySessions)
                                 ListTile(
-                                  leading: const Icon(Icons.forum_outlined),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 2,
+                                  ),
+                                  leading: const Icon(
+                                    Icons.forum_outlined,
+                                    size: 19,
+                                  ),
                                   title: Text(
                                     session['title'] as String? ?? 'Untitled',
                                     maxLines: 2,
+                                    style: const TextStyle(fontSize: 12.5),
                                     overflow: TextOverflow.ellipsis,
                                   ),
                                   subtitle: Text(
                                     session['model'] as String? ?? '',
                                     maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 11),
                                   ),
                                   enabled: !_loading && _activeClient == null,
                                   onTap: () {

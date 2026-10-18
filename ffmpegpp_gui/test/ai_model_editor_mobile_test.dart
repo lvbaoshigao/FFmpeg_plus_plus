@@ -248,6 +248,34 @@ void main() {
       expect(find.text('Claude-opus'), findsOneWidget);
       expect(find.text('添加自定义模型'), findsOneWidget);
       expect(find.byKey(const ValueKey('add_custom_model')), findsOneWidget);
+      // 模型页底部的两个圆形动作药丸（云端获取 / 添加自定义模型）。
+      expect(
+        find.byKey(const ValueKey('provider_models_fetch_round')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('provider_models_add_round')),
+        findsOneWidget,
+      );
+
+      // 右上角搜索：输入即过滤，不再整页扫视上百个模型。
+      await tester.tap(find.byKey(const ValueKey('provider_model_search')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('provider_model_search_field')),
+        'claude',
+      );
+      await tester.pump();
+      expect(find.byKey(const ValueKey('model_row_gpt-6')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('model_row_claude-opus')),
+        findsOneWidget,
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('provider_model_search_field')),
+        '',
+      );
+      await tester.pump();
 
       await tester.tap(find.byKey(const ValueKey('model_menu_claude-opus')));
       await tester.pumpAndSettle();

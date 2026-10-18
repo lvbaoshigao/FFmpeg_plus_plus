@@ -8,6 +8,7 @@ import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_card.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/liquid_glass_fallback.dart';
 import '../widgets/mobile_glass_pill.dart';
@@ -286,14 +287,16 @@ class _CommandPageState extends State<CommandPage> {
             ]),
           ),
         ),
-        const SizedBox(height: kMobileNavClearance),
+        SizedBox(height: MediaQuery.paddingOf(context).bottom),
       ]),
     ));
   }
 
 
   Widget _buildMobileInputArea(ColorScheme scheme, AppStrings s, bool zh) {
-    return GlassPanel(
+    return AppCard(
+      style: context.read<AppState>().config.cardStyle,
+      radius: 12,
       padding: const EdgeInsets.all(12),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
@@ -351,7 +354,9 @@ class _CommandPageState extends State<CommandPage> {
 
 
   Widget _buildMobileOutputArea(ColorScheme scheme, AppStrings s, bool zh) {
-    return GlassPanel(
+    return AppCard(
+      style: context.read<AppState>().config.cardStyle,
+      radius: 12,
       padding: const EdgeInsets.all(12),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [

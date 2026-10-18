@@ -222,20 +222,14 @@ class _MobileAiSettingsOverview extends StatelessWidget {
           child: _AiProviderEntry(cfg: cfg, state: state, s: s, scheme: scheme),
         ),
         const SizedBox(height: 16),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: _McpSection(cfg: cfg, s: s, state: state, scheme: scheme),
-        ),
+        // _AiSectionCard already applies the shared 12px horizontal inset.
+        // Do not wrap these in another Padding: that made MCP/permissions/
+        // advanced cards narrower than the provider entry above.
+        _McpSection(cfg: cfg, s: s, state: state, scheme: scheme),
         const SizedBox(height: 12),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: _PermissionsSection(cfg: cfg, s: s, state: state),
-        ),
+        _PermissionsSection(cfg: cfg, s: s, state: state),
         const SizedBox(height: 12),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: _AdvancedSection(cfg: cfg, s: s, scheme: scheme),
-        ),
+        _AdvancedSection(cfg: cfg, s: s, scheme: scheme),
         const SizedBox(height: 24),
       ],
     );
@@ -2155,6 +2149,10 @@ class _MobileAiProviderDetailPageState
   /// 「获取模型列表」进行中。
   bool _fetchingModels = false;
 
+  /// 模型搜索：右上角搜索图标切换，输入即过滤列表。
+  bool _showModelSearch = false;
+  final TextEditingController _modelSearchCtrl = TextEditingController();
+
   /// 「获取账户余额」进行中。
   bool _fetchingBalance = false;
 
@@ -2170,8 +2168,16 @@ class _MobileAiProviderDetailPageState
       _forcedNew = false;
       _draft = AiProfile();
       _tab = 0;
+      _showModelSearch = false;
+      _modelSearchCtrl.clear();
       _selectedPreset = 'openai';
     }
+  }
+
+  @override
+  void dispose() {
+    _modelSearchCtrl.dispose();
+    super.dispose();
   }
 
   void _ensureLoaded(BuildContext context) {
@@ -2326,9 +2332,29 @@ class _MobileAiProviderDetailPageState
                   overflow: TextOverflow.ellipsis,
                 ),
                 onBack: () => Navigator.of(context).maybePop(),
+                // 用户要求：删除、搜索、保存都在右上角。这里显式允许
+                // 三个操作平铺（返回键 + 3 个操作），不再折叠进「…」。
+                inlineActionLimit: 3,
                 actions: [
-                  // 只保留「保存」一颗：返回 + 保存 = 两个，正好平铺；
-                  // 删除放进「基本」页底部，避免 2 个操作被折叠进「…」。
+                  if (!_isNew)
+                    MobileGlassPillAction(
+                      key: const ValueKey('provider_delete'),
+                      icon: Icons.delete_outline,
+                      tooltip: s.remove,
+                      color: scheme.error,
+                      onTap: _delete,
+                    ),
+                  if (_tab == 1)
+                    MobileGlassPillAction(
+                      key: const ValueKey('provider_model_search'),
+                      icon: Icons.search,
+                      tooltip: s.isZh ? '搜索模型' : 'Search models',
+                      color: scheme.onSurface,
+                      onTap: () => setState(() {
+                        _showModelSearch = !_showModelSearch;
+                        if (!_showModelSearch) _modelSearchCtrl.clear();
+                      }),
+                    ),
                   MobileGlassPillAction(
                     icon: Icons.check_rounded,
                     tooltip: s.save,
@@ -2337,9 +2363,6 @@ class _MobileAiProviderDetailPageState
                   ),
                 ],
               ),
-              // 顶部「基本 / 模型」药丸切换：与页面顶栏同一套 pillStyle，
-              // 不再使用底部导航条，避免二级页出现两套导航语言。
-              _buildTopTabPill(state.config, scheme, s),
               Expanded(
                 child: AnimatedSwitcher(
                   duration: reduceMotion
@@ -2373,6 +2396,7 @@ class _MobileAiProviderDetailPageState
                       : _buildModelsTab(context, state, s, scheme),
                 ),
               ),
+              _buildBottomTabBar(context, state, scheme, s),
             ],
           ),
         ),
@@ -2380,32 +2404,122 @@ class _MobileAiProviderDetailPageState
     );
   }
 
-  /// 顶部「基本 / 模型」药丸切换。
+  /// 底部「基本 / 模型」小药丸。
   ///
-  /// 使用顶部药丸样式（AppConfig.pillStyle），而不是底部导航样式：二级页的
-  /// 顶部返回栏、标题和页内切换现在共享同一套玻璃语言，避免同一页面上下
-  /// 出现两种导航层级。选中态只叠加一层主题色薄底，药丸本体仍由 pillStyle
-  /// 决定（液态玻璃 / 模糊 / 主题色 / 灰色）。
-  Widget _buildTopTabPill(AppConfig cfg, ColorScheme scheme, AppStrings s) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-      child: LiquidStretchTabs(
-        key: const ValueKey('ai_provider_top_tabs'),
-        style: cfg.pillStyle,
-        height: 42,
-        radius: 21,
-        semanticsLabel: '${s.aiBasic} / ${s.aiModelsTab}',
-        selectedIndex: _tab,
-        onChanged: (index) {
-          if (_tab != index) setState(() => _tab = index);
-        },
-        tabs: [
-          LiquidStretchTab(icon: Icons.tune_rounded, label: s.aiBasic),
-          LiquidStretchTab(
-            icon: Icons.widgets_outlined,
-            label: s.aiModelsTab,
-          ),
-        ],
+  /// 设计稿要求：两个分段本身只占一颗小药丸的宽度；切到模型页时，左右各
+  /// 长出一颗圆形动作药丸（云端获取 / 添加自定义模型），而不是把整条底栏
+  /// 拉满。基本页只保留中间的分段药丸。
+  Widget _buildBottomTabBar(
+    BuildContext context,
+    AppState state,
+    ColorScheme scheme,
+    AppStrings s,
+  ) {
+    final cfg = state.config;
+    Widget round({
+      required Key key,
+      required IconData icon,
+      required String tooltip,
+      required VoidCallback? onTap,
+      Color? color,
+    }) {
+      return MobileGlassPill(
+        radius: 22,
+        padding: EdgeInsets.zero,
+        child: MobileGlassPillAction(
+          key: key,
+          icon: icon,
+          tooltip: tooltip,
+          color: color ?? scheme.onSurface,
+          size: 44,
+          iconSize: 20,
+          padding: EdgeInsets.zero,
+          onTap: onTap,
+        ),
+      );
+    }
+
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // 切到模型页时，左右两颗圆形动作药丸从 0 宽度「长出来」，
+            // 与中间小药丸的非线性拉伸同拍；不是瞬间出现。
+            AnimatedSize(
+              duration: const Duration(milliseconds: 240),
+              curve: Curves.easeOutBack,
+              alignment: Alignment.centerRight,
+              child: _tab == 1
+                  ? round(
+                      key: const ValueKey('provider_models_fetch_round'),
+                      icon: _fetchingModels
+                          ? Icons.cloud_sync_outlined
+                          : Icons.cloud_download_outlined,
+                      tooltip: s.isZh
+                          ? '从云端获取模型列表'
+                          : 'Fetch models',
+                      onTap: _fetchingModels
+                          ? null
+                          : () => _fetchModels(context, state, s),
+                    )
+                  : const SizedBox(width: 0, height: 44),
+            ),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 240),
+              curve: Curves.easeOutCubic,
+              width: _tab == 1 ? 6 : 0,
+              height: 1,
+            ),
+            SizedBox(
+              width: 164,
+              child: LiquidStretchTabs(
+                key: const ValueKey('ai_provider_top_tabs'),
+                style: cfg.pillStyle,
+                height: 40,
+                radius: 20,
+                semanticsLabel: '${s.aiBasic} / ${s.aiModelsTab}',
+                selectedIndex: _tab,
+                onChanged: (index) {
+                  if (_tab != index) setState(() => _tab = index);
+                },
+                tabs: [
+                  LiquidStretchTab(
+                    icon: Icons.tune_rounded,
+                    label: s.aiBasic,
+                  ),
+                  LiquidStretchTab(
+                    icon: Icons.widgets_outlined,
+                    label: s.aiModelsTab,
+                  ),
+                ],
+              ),
+            ),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 240),
+              curve: Curves.easeOutCubic,
+              width: _tab == 1 ? 6 : 0,
+              height: 1,
+            ),
+            AnimatedSize(
+              duration: const Duration(milliseconds: 240),
+              curve: Curves.easeOutBack,
+              alignment: Alignment.centerLeft,
+              child: _tab == 1
+                  ? round(
+                      key: const ValueKey('provider_models_add_round'),
+                      icon: Icons.add,
+                      tooltip: s.isZh ? '添加自定义模型' : 'Add custom model',
+                      color: scheme.primary,
+                      onTap: () =>
+                          _openModelSheet(context, s, 0, isNew: true),
+                    )
+                  : const SizedBox(width: 0, height: 44),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2436,30 +2550,6 @@ class _MobileAiProviderDetailPageState
             cardStyle: cfg.cardStyle,
             icon: Icons.badge_outlined,
             title: s.aiBasicInfo,
-            // 删除放在首卡标题右侧（设计稿的「右上角垃圾桶」）：
-            // 顶栏同时保留保存，且不会触发「返回 + 2 操作 → …」的折叠规则。
-            trailing: _isNew
-                ? null
-                : IconButton(
-                    tooltip: s.remove,
-                    icon: Icon(
-                      Icons.delete_outline,
-                      size: 18,
-                      color: scheme.error,
-                    ),
-                    padding: EdgeInsets.zero,
-                    visualDensity: VisualDensity.compact,
-                    constraints: const BoxConstraints.tightFor(
-                      width: 44,
-                      height: 44,
-                    ),
-                    style: IconButton.styleFrom(
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                    onPressed: _delete,
-                  ),
             children: [
               if (_isNew)
                 _AiLabeledField(
@@ -2569,6 +2659,7 @@ class _MobileAiProviderDetailPageState
               _AiLabeledField(
                 label: s.aiActivePath,
                 child: _AiField(
+                  key: const ValueKey('ai_request_path'),
                   value: _draft.apiPath,
                   scheme: scheme,
                   hint: '/chat/completions',
@@ -2821,10 +2912,18 @@ class _MobileAiProviderDetailPageState
     final models = _draft.models;
     final isZh = s.isZh;
     final hasModels = models.isNotEmpty;
+    final query = _modelSearchCtrl.text.trim().toLowerCase();
+    final visibleModels = query.isEmpty
+        ? models
+        : models.where((m) {
+            final label = m.label.toLowerCase();
+            return label.contains(query) || m.id.toLowerCase().contains(query);
+          }).toList(growable: false);
     // 头部（统计 + 云端获取） + 每个模型一行 + 「添加自定义模型 →」。
     // 模型可能上百条（例如从 OpenRouter 拉取）：仍用 builder 惰性构建，
     // 每帧只为视口内的行创建 widget。
-    final itemCount = models.length + 2;
+    // 0 = header / 1 = 顶部「添加自定义模型」/ 2.. = 过滤后的模型行。
+    final itemCount = visibleModels.length + 2;
     return ListView.builder(
       key: const ValueKey('ai_provider_models'),
       // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
@@ -2863,6 +2962,47 @@ class _MobileAiProviderDetailPageState
                             color: scheme.onSurfaceVariant,
                           ),
                         ),
+                        if (_showModelSearch) ...[
+                          const SizedBox(height: 10),
+                          TextField(
+                            key: const ValueKey('provider_model_search_field'),
+                            controller: _modelSearchCtrl,
+                            autofocus: true,
+                            onChanged: (_) => setState(() {}),
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: scheme.onSurface,
+                            ),
+                            decoration: InputDecoration(
+                              isDense: true,
+                              hintText: isZh ? '搜索模型名称或 ID' : 'Search model or ID',
+                              prefixIcon: const Icon(Icons.search, size: 18),
+                              suffixIcon: _modelSearchCtrl.text.isEmpty
+                                  ? null
+                                  : IconButton(
+                                      tooltip: isZh ? '清空' : 'Clear',
+                                      icon: const Icon(Icons.close, size: 16),
+                                      onPressed: () => setState(
+                                        _modelSearchCtrl.clear,
+                                      ),
+                                    ),
+                              filled: true,
+                              fillColor: scheme.surfaceContainerHighest.withAlpha(50),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                                borderSide: BorderSide(
+                                  color: scheme.outlineVariant.withAlpha(70),
+                                ),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                                borderSide: BorderSide(
+                                  color: scheme.outlineVariant.withAlpha(70),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 10),
                         Row(
                           children: [
@@ -2925,9 +3065,19 @@ class _MobileAiProviderDetailPageState
             ),
           );
         }
-        if (index <= models.length) {
-          final int i = index - 1;
-          final AiModelEntry entry = models[i];
+        if (index == 1) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: _AddCustomModelRow(
+              cardStyle: cfg.cardStyle,
+              isZh: isZh,
+              onTap: () => _openModelSheet(context, s, 0, isNew: true),
+            ),
+          );
+        }
+        if (index <= visibleModels.length + 1) {
+          final int i = index - 2;
+          final AiModelEntry entry = visibleModels[i];
           return Padding(
             padding: const EdgeInsets.only(bottom: 6),
             child: _AiModelRow(
@@ -2941,11 +3091,7 @@ class _MobileAiProviderDetailPageState
             ),
           );
         }
-        return _AddCustomModelRow(
-          cardStyle: cfg.cardStyle,
-          isZh: isZh,
-          onTap: () => _openModelSheet(context, s, 0, isNew: true),
-        );
+        return const SizedBox.shrink();
       },
     );
   }
@@ -4221,6 +4367,8 @@ class _AiFieldState extends State<_AiField> {
     final Widget field = TextField(
       controller: _ctrl,
       focusNode: _focus,
+      // 输入即同步草稿：实际请求 URL = Base URL + 请求路径，不能等失焦才更新。
+      onChanged: widget.onCommit,
       keyboardType: widget.keyboardType,
       minLines: widget.minLines,
       maxLines: widget.maxLines,
