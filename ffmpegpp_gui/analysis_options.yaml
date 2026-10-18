@@ -15,7 +15,7 @@ analyzer:
     # **刻意保持关闭**，理由是它们各自都会把既有的、与本次改动无关的代码
     # 一次性升级成 error/warning，必须作为独立的、可单独回归的专项迁移来做。
     #
-    # 已实测的开启代价（2026-09-25，`dart analyze` 全量 lib）：
+    # 已实测的开启代价（2026-10-18，`dart analyze` 全量 lib）：
     # * strict-inference → 62 条 WARNING，集中在 4 类：
     #     - 30 条 showDialog / Future.delayed / MaterialPageRoute 泛型未推断
     #     - 20 条集合字面量未推断（app_state.dart 的 MCP 工具 schema，

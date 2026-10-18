@@ -3,7 +3,7 @@ name: Quality Gate
 # ══════════════════════════════════════════════════════════════════
 # 静态分析 + 单元测试门禁
 #
-# 背景（2026-09-25 代码审查的 P0-3）：此前 CI 只有 build-release /
+# 背景（2026-10-18 代码审查的 P0-3）：此前 CI 只有 build-release /
 # debug-build 两个 workflow，两者都是 `workflow_dispatch` 手动触发，
 # 步骤里只有 `flutter build <platform> --release`。后果：
 #   1) `flutter analyze` 从未在 CI 跑过 —— 编译能过 ≠ 分析器干净。
@@ -64,7 +64,7 @@ jobs:
 
       - name: Static analysis
         # 底线是 error 必须为 0 —— 这正是「调用点存在、方法定义被静默丢失」
-        # 与「漏 import 导致类型未定义」这类问题的拦截线（2026-09-25 实测：
+        # 与「漏 import 导致类型未定义」这类问题的拦截线（2026-10-18 实测：
         # pipeline_editor_page.dart 缺 foundation 导入使 ValueListenable 未定义，
         # 4 个测试文件连编译都过不去，而任何 make 工作流都不会发现）。
         #
