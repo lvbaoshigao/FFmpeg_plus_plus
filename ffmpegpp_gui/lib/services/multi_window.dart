@@ -189,7 +189,10 @@ class MultiWindowService {
   /// 已打开的面板窗口：panel → windowId。
   static final Map<DetachedPanel, String> _openWindows = {};
 
-  static bool get supported => !isMobilePlatform;
+  // Linux 的 desktop_multi_window 在创建第二个 GTK/Flutter 引擎时会阻塞
+  // 主窗口平台线程（表现为点「独立窗口」后整个应用卡死）。在插件修好前，
+  // Linux 一律回退到应用内浮动面板；Windows/macOS 仍使用系统窗口。
+  static bool get supported => !isMobilePlatform && !Platform.isLinux;
 
   /// 当前进程是不是「独立面板子窗口」；是则返回它的启动参数。
   ///

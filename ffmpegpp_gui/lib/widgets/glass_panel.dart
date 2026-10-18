@@ -188,21 +188,43 @@ class GlassPanel extends StatelessWidget {
         // 滚动后玻璃里仍是旧画面，与当前位置的背景错位（玻璃与背景脱节）」。
         // 当时的处理是「把 alpha 压低到 105/120 让脱节不易被察觉」，属于掩盖症状；
         // 根因就是这层 RepaintBoundary。移除后与 blur / 液态回退分支写法一致。
-        return ClipRRect(
-          borderRadius: br,
-          child: BackdropFilter(
-            filter: cachedGlassBlur(sigma),
-            child: Container(
-              padding: padding,
-              decoration: BoxDecoration(
-                borderRadius: br,
-                color: baseColor.withAlpha(frostedAlpha),
-                border: Border.all(
-                  color: borderColor.withAlpha(isDark ? 60 : 80),
-                  width: 0.6,
-                ),
+        final int topAlpha = (frostedAlpha * 1.08).round().clamp(0, 255);
+        final int bottomAlpha = (frostedAlpha * 0.72).round().clamp(0, 255);
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: br,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withAlpha(isDark ? 64 : 26),
+                blurRadius: 20,
+                offset: const Offset(0, 7),
               ),
-              child: child,
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: br,
+            child: BackdropFilter(
+              filter: cachedGlassBlur(sigma),
+              child: Container(
+                padding: padding,
+                decoration: BoxDecoration(
+                  borderRadius: br,
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      baseColor.withAlpha(topAlpha),
+                      baseColor.withAlpha(frostedAlpha),
+                      baseColor.withAlpha(bottomAlpha),
+                    ],
+                  ),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: isDark ? 0.16 : 0.28),
+                    width: 0.7,
+                  ),
+                ),
+                child: child,
+              ),
             ),
           ),
         );

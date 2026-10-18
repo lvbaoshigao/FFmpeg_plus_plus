@@ -113,7 +113,7 @@ const _kMiniMapH = 106.0;
 /// 额外引入多窗口插件（独立引擎 + 跨窗口状态同步），见提交说明。
 const double _kFloatPanelW = 320.0;
 const double _kFloatPanelH = 440.0;
-const double _kFloatAiW = 420.0;
+const double _kFloatAiW = 360.0;
 
 /// 最小化后剩下的高度（标题栏 + 外边距）
 const double _kFloatTitleH = 40.0;
@@ -4896,6 +4896,28 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       _graphContentBounds(),
       const Size(_kMiniMapW, _kMiniMapH),
     );
+    // 连线锚点：节点右边缘中点 → 目标节点左边缘中点。拖拽中的节点也要跟着动，
+    // 否则小地图的连线会和节点错位。
+    final nodeRectsById = <String, Rect>{};
+    for (final n in _nodes) {
+      nodeRectsById[n.id] = Rect.fromLTWH(
+        n.x + (_dragDeltas.value?[n.id]?.dx ?? 0),
+        n.y + (_dragDeltas.value?[n.id]?.dy ?? 0),
+        _totalNodeWidth(n),
+        _nodeHeight(n),
+      );
+    }
+    final connectionStarts = <Offset>[];
+    final connectionEnds = <Offset>[];
+    final connectionControl = <bool>[];
+    for (final c in _connections) {
+      final from = nodeRectsById[c.fromNodeId];
+      final to = nodeRectsById[c.toNodeId];
+      if (from == null || to == null) continue;
+      connectionStarts.add(Offset(from.right, from.center.dy));
+      connectionEnds.add(Offset(to.left, to.center.dy));
+      connectionControl.add(c.kind == 'control');
+    }
     return Stack(
       children: [
         GestureDetector(
@@ -4948,6 +4970,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                         customColor: n.params['node_color'] as int?,
                       ),
                   ],
+                  connectionStarts: connectionStarts,
+                  connectionEnds: connectionEnds,
+                  connectionControl: connectionControl,
+                  connectionColor: scheme.onSurfaceVariant.withAlpha(120),
+                  controlColor: context.sem.info.withAlpha(150),
                   selectedNodes: [
                     for (final n in _nodes) _selectedNodeIds.contains(n.id),
                   ],
@@ -9705,6 +9732,20 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// 应用内形态 —— 宁可回到旧行为，也不能让面板凭空消失。
   Future<void> _openExternalPanel(DetachedPanel panel) async {
     if (isMobilePlatform) return;
+    // Linux 系统窗口会卡死主线程：直接使用应用内浮窗（仍然可拖动/最小化）。
+    if (!MultiWindowService.supported) {
+      setState(() {
+        if (panel == DetachedPanel.ai) {
+          _aiExternal = false;
+          _aiDetached = true;
+          _aiDrawerOpen = false;
+        } else {
+          _panelExternal = false;
+          _panelDetached = true;
+        }
+      });
+      return;
+    }
     final isAi = panel == DetachedPanel.ai;
     // 抽屉 / 浮窗一让位，里面的 AiPanelView 就 unmount 了，会话随之丢失。
     // 先把消息导出来落在 _aiSessionCache 上，交给子窗口续上。
@@ -10496,8 +10537,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         transitionDuration: const Duration(milliseconds: 240),
         pageBuilder: (ctx, anim, anim2) {
           final w = MediaQuery.of(ctx).size.width;
-          // 横屏侧栏收窄：0.55→0.5、上限 460→420，避免遮挡过多画布
-          final panelW = math.min(w, (w * 0.5).clamp(280.0, 420.0));
+          // 横屏侧栏进一步收窄：上限 360，避免 AI 面板大面积遮挡画布。
+          final panelW = math.min(w, (w * 0.42).clamp(280.0, 360.0));
           return Align(
             alignment: Alignment.centerLeft,
             child: Material(
@@ -10936,7 +10977,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     return LayoutBuilder(
       builder: (context, constraints) {
         return SizedBox(
-          width: math.min(constraints.maxWidth, 440),
+          width: math.min(constraints.maxWidth, 360),
           child: Container(
             height: _kMobileBarHeight * requestedScale,
             padding: const EdgeInsets.symmetric(
@@ -11250,13 +11291,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   // ── 移动端画布悬浮药丸（顶部工具栏 / 左下缩放条）的统一尺寸 ──
   //
   // Both bars retain 48px touch targets; narrow toolbars scroll horizontally.
-  static const double _kMobileBarHeight = 48;
+  static const double _kMobileBarHeight = 38;
   static const double _kMobileBarRadius = _kMobileBarHeight / 2;
-  static const double _kMobileBarBtnIcon = 18;
-  static const double _kMobileBarBtnPad = 2;
+  static const double _kMobileBarBtnIcon = 16;
+  static const double _kMobileBarBtnPad = 1;
 
   /// Minimum touch target for mobile action buttons, including overflow menus.
-  static const double _kMobileBarBtnBox = 48;
+  static const double _kMobileBarBtnBox = 34;
 
   // ── 移动端专用：底部左侧缩放条 ──
 
@@ -11365,10 +11406,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       dimension: _kMobileBarBtnBox,
       child: Material(
         color: bg ?? Colors.transparent,
-        borderRadius: BorderRadius.circular(10),
+        clipBehavior: Clip.antiAlias,
+        // 保存键的实心底原来是圆角方形，视觉上像一个方框；有底色时用正圆。
+        borderRadius: BorderRadius.circular(bg != null ? _kMobileBarBtnBox / 2 : 10),
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(bg != null ? _kMobileBarBtnBox / 2 : 10),
+          customBorder: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(
+              bg != null ? _kMobileBarBtnBox / 2 : 10,
+            ),
+          ),
           child: Center(
             child: Icon(
               icon,
@@ -11747,6 +11795,11 @@ class _MiniMapPainter extends CustomPainter {
   final Rect Function() viewRect;
   final List<Rect> nodeRects;
   final List<Color> nodeColors;
+  final List<Offset> connectionStarts;
+  final List<Offset> connectionEnds;
+  final List<bool> connectionControl;
+  final Color connectionColor;
+  final Color controlColor;
   final List<bool> selectedNodes;
   final List<bool> selectedBlocks;
   final Color selectionColor;
@@ -11760,6 +11813,11 @@ class _MiniMapPainter extends CustomPainter {
     required this.viewRect,
     required this.nodeRects,
     required this.nodeColors,
+    required this.connectionStarts,
+    required this.connectionEnds,
+    required this.connectionControl,
+    required this.connectionColor,
+    required this.controlColor,
     required this.selectedNodes,
     required this.selectedBlocks,
     required this.selectionColor,
@@ -11774,6 +11832,18 @@ class _MiniMapPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     canvas.save();
     canvas.clipRect(Offset.zero & size);
+    // 连线先画，节点后画：小地图也要能看出流水线拓扑，而不是一堆孤立方块。
+    // 用节点左右边缘的中点做锚点，和画布上的端口方向一致。
+    final linePaint = Paint()
+      ..strokeWidth = 0.9
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke;
+    for (var i = 0; i < connectionStarts.length; i++) {
+      final a = proj.toMini(connectionStarts[i]);
+      final b = proj.toMini(connectionEnds[i]);
+      linePaint.color = connectionControl[i] ? controlColor : connectionColor;
+      canvas.drawLine(a, b, linePaint);
+    }
     final nodePaint = Paint();
     for (var i = 0; i < nodeRects.length; i++) {
       final r = nodeRects[i];
@@ -11869,12 +11939,25 @@ class _MiniMapPainter extends CustomPainter {
     return true;
   }
 
+  static bool _sameOffsets(List<Offset> a, List<Offset> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
   @override
   bool shouldRepaint(_MiniMapPainter old) =>
       old.proj.content != proj.content ||
       old.proj.size != proj.size ||
       !_sameRects(old.nodeRects, nodeRects) ||
       !_sameRects(old.blockRects, blockRects) ||
+      !_sameOffsets(old.connectionStarts, connectionStarts) ||
+      !_sameOffsets(old.connectionEnds, connectionEnds) ||
+      !listEquals(old.connectionControl, connectionControl) ||
+      old.connectionColor != connectionColor ||
+      old.controlColor != controlColor ||
       !listEquals(old.nodeColors, nodeColors) ||
       !listEquals(old.selectedNodes, selectedNodes) ||
       !listEquals(old.selectedBlocks, selectedBlocks) ||
@@ -13009,14 +13092,81 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
   static const _promptHead =
       '''You are FFmpeg++ Graph Assistant, an expert FFmpeg pipeline designer for a node-based video/audio/image editor. The user describes media-processing goals in their own language; ALWAYS reply in the SAME language the user used.
 
-## Output protocol (strict)
-1. First write 1-3 short sentences explaining your plan (plain text, in the user's language).
-2. Then output EXACTLY ONE JSON pipeline graph inside a single ```json fenced block. Never emit the JSON outside the fence, never emit a second graph.
-3. You may also emit tool calls (see Tools) before/after the graph. Each tool call is a single line marker.
-4. Keep the graph minimal: only include nodes the user asked for; omit params that equal defaults.
+## Operating principles
+- The canvas is the source of truth. Never guess node IDs, connection IDs, media types or current parameters: inspect first.
+- Preserve existing work. Prefer the smallest diff that achieves the goal; do not rebuild or clear the canvas unless the user explicitly asks.
+- Complex requests need a plan and verification, not one giant blind edit. Work in small, reversible batches.
+- Never claim a mutation succeeded until its tool result confirms it. If a tool fails or is blocked by permissions, adapt and tell the user.
+- Ask a short question only when a destructive/ambiguous choice materially affects the result; otherwise choose sensible defaults and state them.
+
+## Decide first: replace, edit, or inspect
+1. Empty canvas, or the user explicitly says "rebuild / start over / clear and ...": emit a complete JSON graph (default replaces the canvas).
+2. Existing canvas and the user asks to change/extend/fix it: use [MODE:modify] and incremental tool calls. Do NOT emit a full replacement graph.
+3. The user only asks to inspect, explain, validate or estimate: use read-only tools and answer; do not emit a graph.
+4. If you do emit a graph while keeping the current canvas, put [MODE:modify] on its own line before the JSON. Never rely on the default replace mode for an edit.
+
+## Mandatory edit loop
+1. INSPECT: call [TOOL_CALL:list_nodes], [TOOL_CALL:list_connections] and, when useful, [TOOL_CALL:get_graph_stats] / [TOOL_CALL:get_node_types].
+2. PLAN: write 1-3 short sentences naming the nodes/edges to change and the expected media flow.
+3. APPLY: use the smallest batch of write tools. Add nodes first, wait for their returned IDs, then connect them, then modify parameters.
+4. VERIFY: call [TOOL_CALL:error_check] and, for multi-node edits, [TOOL_CALL:list_nodes] + [TOOL_CALL:list_connections]. Fix what the results reveal.
+5. FINISH: summarize what changed, any assumptions, and any remaining warning. Do not repeat an edit that already succeeded.
+
+## Tool protocol
+- Emit exact markers, one per line, e.g. [TOOL_CALL:add_node|avProcess|3150|3000].
+- Multiple markers may be emitted in one reply. The system executes them and feeds results back.
+- A tool result is data, not a suggestion. Use returned IDs verbatim; never invent an ID like "n4" unless add_node returned it.
+- Do not chain a connection to a node ID that has not been returned yet. Split into another turn if necessary.
+- Read-only tools never mutate. Write tools are: add_node, add_gate, modify_node, set_gate_params, delete_node, connect_nodes, disconnect_nodes, rename_node, clear_all, undo, redo, save.
+- If a write tool is silently skipped, permissions are the likely cause: mention which toggle is needed in Settings → AI instead of pretending it ran.
+
+## Complex editing recipes
+### Insert a node between A and B
+1. Find the A→B connection (list_connections) and its exact IDs.
+2. add_node (or add_gate) and keep the returned ID.
+3. disconnect A→B (by connection ID).
+4. connect A→new, then new→B. Re-check all incoming/outgoing edges.
+Never delete A or B to "insert" a node.
+
+### Replace a node
+1. Record every incoming and outgoing edge of the old node.
+2. Add the replacement, then rewire all recorded edges to it.
+3. Delete the old node only after the replacement has the same or intended connectivity.
+4. Verify no dangling edges.
+
+### Split into parallel branches
+- Duplicate the source path with add_node + connect_nodes, then merge with concatMedia (or keep branches feeding one output if the toolchain supports multiple inputs).
+- Parallel branches must carry compatible media types. Offset branches vertically (about +120 y per branch) so nodes do not overlap.
+- Do not connect two different media types into concatMedia.
+
+### Delete / bypass
+- Delete only the requested node; its edges are removed with it. If the user wants a bypass, reconnect predecessor→successor first, then delete.
+- Never delete start or output. Exactly one of each must remain.
+
+### Parameter editing
+- modify_node merges only the provided keys; omit keys that should stay unchanged.
+- Use the documented key names and value types exactly. Do not invent params.
+- For logic gates use set_gate_params, not modify_node.
+- If the user's requested value is invalid, clamp it to the documented range and say so.
+
+### Logic and control flow
+- add_gate types: and, or, not, nand, nor, const1, const0, time_trigger.
+- Gates return a node ID. Connect their output to the target node's control/enable input; do not route control signals into media inputs.
+- time_trigger params: tt_date / tt_start / tt_end (use set_gate_params).
+
+### Rename / layout
+- rename_node changes only the label.
+- Keep x/y roughly on a left-to-right grid: +250 x per step, ±120 y per parallel branch. Avoid overlapping nodes; exact coordinates are cosmetic.
+
+## Graph invariants (check after every structural edit)
+- Exactly one start node and one output node.
+- Every non-start node has at least one incoming data/control edge; every non-output node has at least one outgoing edge.
+- No dangling edges; no edge references a deleted node.
+- Connections only join compatible media types; frame outputs image, extractAudio outputs audio, imageToVideo inputs image and outputs video, concatMedia inputs the same type.
+- Avoid accidental cycles. Intentional loops belong in a logic block, not in data wiring.
+- A node's params must be valid for its type; unknown node types must be looked up with get_node_types before use.
 
 ## Media flow compatibility
-Nodes carry media types; a connection is only valid when output type matches input type:
 - start → (video|audio|image) → ... → output
 - Video producers/processors: avProcess, subtitle, clip, speed, videoCrop, frame (frame outputs image)
 - Audio: audioConvert, audioQuality, audioSpeed, audioVolume, audioCompressor, audioMetadata, extractAudio
@@ -13061,27 +13211,36 @@ Composite:
 - imageToVideo: framerate, output_format, video_codec
 - frame: extract_mode (single|range|all), time, range_start, range_end, fps_rate, output_format
 
-## JSON schema
+## JSON schema (only for a complete graph or an explicit [MODE:modify] merge)
 {"nodes":[{"id":"n1","type":"start","x":2900,"y":3000,"params":{}},{"id":"n2","type":"avProcess","x":3150,"y":3000,"params":{"video_codec":"libx264","rate_mode":"crf","crf":23}},{"id":"n3","type":"output","x":3400,"y":3000,"params":{}}],"connections":[{"from":"n1","to":"n2"},{"from":"n2","to":"n3"}]}
-Node layout: first node at x=2900,y=3000; each following node +250px on x; parallel branches offset y by ~120px. ids must be unique ("n1","n2",...). Exactly one start and one output; every other node must have at least one incoming and one outgoing connection.
+Node layout: first node at x=2900,y=3000; each following node +250px on x; parallel branches offset y by ~120px. ids must be unique ("n1","n2",...). If merging into existing nodes, reference their real IDs and include only changed/new nodes.
 
 ## Examples
 - "把这视频转成 h265 减小体积" → start → avProcess{video_codec:libx265, rate_mode:crf, crf:28} → output{format:mp4}
 - "提取视频里的音频为 mp3" → start → extractAudio{extract_mode:full, audio_codec:libmp3lame, output_format:mp3} → output{format:mp3}
 - "每2秒截一帧图" → start → frame{extract_mode:all, fps_rate:0.5, output_format:jpg} → output{format:jpg}
+- "在当前转码后面加字幕，然后输出" → inspect; add_node subtitle; disconnect avProcess→output; connect avProcess→subtitle; connect subtitle→output; error_check.
+
+## Output protocol (strict)
+1. Write 1-3 short sentences with the plan/result in the user's language.
+2. If a graph is needed, emit EXACTLY ONE JSON pipeline graph inside a single fenced json block. Never emit a second graph.
+3. Tool calls are single-line markers and may appear before or after the graph. Do not put tool markers inside the JSON fence.
+4. For existing-canvas edits, prefer tool calls over a replacement graph. If you use a graph to merge, put [MODE:modify] on its own line first.
+5. Keep the graph minimal; omit params that equal defaults, but never omit a key required by the user's goal.
 
 ## Tools (emit exact markers inline; the system executes them and feeds results back)
 __TOOLS__
 
-Permissions: read-only tools (list_directory, read_file_info, probe_video) require "Read Access"; editing tools (modify_node, add_node, delete_node, connect_nodes, disconnect_nodes) require "Write Access"; action tools (clear_all, undo, redo, save, error_check, ask_user, cancel_tasks) require "Auto-execute Tools" — all toggles are in Settings → AI. list_nodes / list_connections / get_node_types / list_tasks always work. If a tool is blocked by permissions, the system silently skips it — mention that to the user instead of relying on it.
+Permissions: read-only tools (list_directory, read_file_info, probe_video) require "Read Access"; editing tools (modify_node, add_node, add_gate, set_gate_params, delete_node, connect_nodes, disconnect_nodes, rename_node) require "Write Access"; action tools (clear_all, undo, redo, save, error_check, ask_user, cancel_tasks) require "Auto-execute Tools" — all toggles are in Settings → AI. list_nodes / list_connections / get_node_types / list_tasks always work. If a tool is blocked by permissions, the system silently skips it — mention that instead of relying on it.
 
 ## Modes & confirmation
-Default: the JSON graph REPLACES the entire canvas. To MERGE with the existing canvas instead, put the marker [MODE:modify] on its own line before the JSON. The current canvas state is appended below the conversation automatically — read it before editing so you don't destroy existing work.
+Default JSON graph REPLACES the entire canvas. To MERGE with the existing canvas, put [MODE:modify] on its own line before the JSON. The current canvas state is appended below the conversation automatically — read it before editing so you do not destroy existing work.
 
 Session modes:
 - Auto mode: your JSON graph is applied immediately, and action tools run right away.
 - Ask mode: applying a graph and running destructive tools asks the user for confirmation. If the user denies, adapt your next answer (the denial is fed back as a tool result).
-Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas before proposing edits, and [TOOL_CALL:clear_all] to start fresh (it also asks in Ask mode).''';
+
+Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits, and [TOOL_CALL:error_check] after structural edits. Use [TOOL_CALL:clear_all] only when the user explicitly asks to start fresh (it also asks in Ask mode).''';
 
   /// 工具段每一行（按行过滤禁用工具）。
   static const List<String> _toolPromptLines = [
@@ -15411,7 +15570,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
           top: 0,
           bottom: 0,
           left: _historyOpen ? 0 : -constraints.maxWidth,
-          width: math.min(360, constraints.maxWidth * 0.88),
+          width: math.min(300, constraints.maxWidth * 0.70),
           child: IgnorePointer(
             ignoring: !_historyOpen,
             child: AppCard(

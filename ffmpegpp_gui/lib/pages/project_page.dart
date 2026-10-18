@@ -432,17 +432,11 @@ class ProjectPageState extends State<ProjectPage> {
           child: Padding(
             padding: const EdgeInsets.all(28),
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  color: scheme.primaryContainer.withAlpha(100),
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(color: scheme.primary.withAlpha(45)),
-                ),
-                child: SizedBox(
-                  width: 88,
-                  height: 88,
-                  child: Icon(Icons.movie_creation_outlined, size: 42, color: scheme.primary),
-                ),
+              // 用户要求：空状态只保留媒体图标，不要主题色矩形底/描边。
+              Icon(
+                Icons.movie_creation_outlined,
+                size: 56,
+                color: scheme.primary,
               ),
               const SizedBox(height: 24),
               Text(s.noVideos, textAlign: TextAlign.center,
@@ -840,7 +834,7 @@ class ProjectPageState extends State<ProjectPage> {
                     // 快速模式：命令参数 → 生成节点图 → 应用
                     final qc = QuickConfig(
                       id: 'fppx_quick_import',
-                      fileType: _inferQuickFileType(fppx.quickItems),
+                      fileType: inferQuickFileTypeFromMaps(fppx.quickItems),
                       name: '',
                       items: [for (final item in fppx.quickItems)
                         QuickConfigItem(
@@ -1361,14 +1355,4 @@ class _FppxView {
       MediaType.audio => isZh ? '音频' : 'Audio',
     }).join(' / ');
   }
-}
-
-/// 根据快速参数 key 推断媒体类型（0x02 文件不存文件类型）
-QuickFileType _inferQuickFileType(List<Map<String, dynamic>> items) {
-  final keys = items.map((e) => e['key'] as String? ?? '').toSet();
-  if (keys.contains('resize')) return QuickFileType.image;
-  if (keys.intersection({'channels', 'normalize', 'sample_rate'}).isNotEmpty) {
-    return QuickFileType.audio;
-  }
-  return QuickFileType.video;
 }

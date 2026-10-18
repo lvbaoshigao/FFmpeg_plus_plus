@@ -36,7 +36,7 @@ const OCLiquidGlassSettings kLiquidGlassSettings = OCLiquidGlassSettings(
   // blurRadiusPx/lightbandStrength 关闭（光带在较高内容上是横向分界线）。
   refractStrength: -0.10,
   blurRadiusPx: 0.0,
-  specStrength: 0.5,
+  specStrength: 0.62,
   specPower: 48,
   specWidth: 10,
   lightbandStrength: 0.0,
@@ -455,7 +455,7 @@ class LiquidGlassPainter extends CustomPainter {
           begin: begin,
           end: end,
           colors: [
-            Colors.white.withValues(alpha: (0.50 * e).clamp(0.0, 1.0) * o),
+            Colors.white.withValues(alpha: (0.62 * e).clamp(0.0, 1.0) * o),
             Colors.white.withValues(alpha: (0.06 * e).clamp(0.0, 1.0) * o),
             Colors.black.withValues(alpha: (0.18 * e).clamp(0.0, 1.0) * o),
           ],
@@ -470,7 +470,7 @@ class LiquidGlassPainter extends CustomPainter {
           ..style = PaintingStyle.stroke
           ..strokeWidth = (0.8 * e).clamp(0.3, 2.0)
           ..color = Colors.white.withValues(
-            alpha: (0.10 * e).clamp(0.0, 1.0) * o,
+            alpha: (0.16 * e).clamp(0.0, 1.0) * o,
           ),
       );
     }
@@ -499,8 +499,8 @@ class LiquidGlassPainter extends CustomPainter {
             size.height * (fromY + (toY - fromY) * p),
           );
 
-      spot(along(0.14, 0.10, 0.86, 0.90), 0.10 * o);
-      spot(along(0.88, 0.92, 0.12, 0.08), 0.06 * o);
+      spot(along(0.14, 0.10, 0.86, 0.90), 0.17 * o);
+      spot(along(0.88, 0.92, 0.12, 0.08), 0.10 * o);
     }
 
     canvas.restore();

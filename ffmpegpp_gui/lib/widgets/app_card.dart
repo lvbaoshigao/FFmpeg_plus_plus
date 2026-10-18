@@ -228,11 +228,6 @@ class _AppCardState extends State<AppCard> {
     final double sigma = effectiveGlassSigma(tuning.blur);
     // 边缘光 → 描边的透明度/线宽（基准 1.0 时与改动前一致）。
     final edgeWhite = edgeBorder(isDark ? 0.12 : 0.18, 0.7, tuning.edge);
-    final edgeOutline = edgeBorder(
-      isDark ? 60 / 255 : 80 / 255,
-      0.6,
-      tuning.edge,
-    );
     // 液态玻璃回退分支的描边基准（alpha 0.14/0.28、宽 1）与之不同，单独算。
     final edgeLiquid = edgeBorder(isDark ? 0.14 : 0.28, 1.0, tuning.edge);
     // 卡片内放一层透明 Material 作为 ink 宿主：纯色/模糊表面有背景色，
@@ -303,20 +298,38 @@ class _AppCardState extends State<AppCard> {
             // 液态玻璃卡比无壁纸时扁平一块（两条路径观感不一致）。
             final BoxShadow? shadow;
             if (blurLike) {
-              tint = glassBase.withAlpha(
-                (((isDark ? 110.0 : 130.0) * op * tScale).round()).clamp(
-                  0,
-                  255,
-                ),
+              final int topAlpha =
+                  (((isDark ? 124.0 : 146.0) * op * tScale).round()).clamp(
+                    0,
+                    255,
+                  );
+              final int bottomAlpha =
+                  (((isDark ? 70.0 : 92.0) * op * tScale).round()).clamp(
+                    0,
+                    255,
+                  );
+              tint = null;
+              // 上下不同透明度 + 外阴影 + 白色边缘光：扁平模糊也需要体积感，
+              // 否则整张卡就是一块半透明纸片。
+              tintGrad = LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  glassBase.withAlpha(topAlpha),
+                  glassBase.withAlpha((topAlpha + bottomAlpha) ~/ 2),
+                  glassBase.withAlpha(bottomAlpha),
+                ],
               );
-              tintGrad = null;
-              // 扁平模糊路径本身无阴影（与回退分支一致）。
-              shadow = null;
+              shadow = BoxShadow(
+                color: Colors.black.withAlpha(isDark ? 72 : 30),
+                blurRadius: 22,
+                offset: const Offset(0, 8),
+              );
               border = Border.all(
-                color: scheme.outlineVariant.withAlpha(
-                  (edgeOutline.alpha * 255).round().clamp(0, 255),
+                color: Colors.white.withValues(
+                  alpha: isDark ? 0.16 : 0.28,
                 ),
-                width: edgeOutline.width,
+                width: 0.7,
               );
             } else if (gpuGlass) {
               tint = glassBase.withAlpha(
@@ -325,9 +338,9 @@ class _AppCardState extends State<AppCard> {
               tintGrad = null;
               // 与 OCLiquidGlass(shadow:) 同参数。
               shadow = BoxShadow(
-                color: Colors.black.withAlpha(isDark ? 60 : 22),
-                blurRadius: 16,
-                offset: const Offset(0, 5),
+                color: Colors.black.withAlpha(isDark ? 80 : 34),
+                blurRadius: 24,
+                offset: const Offset(0, 8),
               );
               border = Border.all(
                 color: Colors.white.withValues(alpha: edgeWhite.alpha),
@@ -354,9 +367,9 @@ class _AppCardState extends State<AppCard> {
               );
               // 与 LiquidGlassBackdrop(shadow:) 同参数。
               shadow = BoxShadow(
-                color: Colors.black.withAlpha(isDark ? 60 : 26),
-                blurRadius: 18,
-                offset: const Offset(0, 6),
+                color: Colors.black.withAlpha(isDark ? 80 : 34),
+                blurRadius: 24,
+                offset: const Offset(0, 8),
               );
               border = Border.all(
                 color: Colors.white.withValues(alpha: edgeLiquid.alpha),
@@ -400,7 +413,6 @@ class _AppCardState extends State<AppCard> {
             // 阴影必须在 ClipRRect 之外绘制（裁剪层会把 boxShadow 一并裁掉），
             // 且不能包 RepaintBoundary（会把开窗 painter 光栅缓存掉，
             // 滚动时表现为卡内壁纸跟着卡平移）。
-            if (shadow == null) return glassSurface;
             return DecoratedBox(
               decoration: BoxDecoration(borderRadius: br, boxShadow: [shadow]),
               child: glassSurface,
@@ -411,37 +423,59 @@ class _AppCardState extends State<AppCard> {
             // 扁平高斯模糊：卡片样式为「模糊」，或「设置卡片以毛玻璃展示」
             // （后者把「液态玻璃」也改成扁平模糊，长列表更易读）。
             // σ 与 tint 分别由「玻璃细节」的模糊度 / 通透度控制（默认观感不变）。
-            final alpha = (((isDark ? 110.0 : 130.0) * op * tScale).round())
-                .clamp(0, 255);
             // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
-            return ClipRRect(
-              borderRadius: br,
-              child: BackdropFilter(
-                // σ 已由 effectiveGlassSigma 按平台钳制；走缓存避免每帧每卡新建
-                // 一份持有 native handle 的 ImageFilter（见 cachedGlassBlur 注释）。
-                filter: cachedGlassBlur(sigma),
-                child: CustomPaint(
-                  // 高光 / 边缘光：与液态玻璃回退同一支画笔，扁平模糊同样有玻璃光泽
-                  painter: LiquidGlassPainter(
-                    borderRadius: br,
-                    opacity: op,
-                    highlight: tuning.highlight,
-                    lightPos: tuning.lightPos,
-                    edge: tuning.edge,
+            final int topAlpha =
+                (((isDark ? 124.0 : 146.0) * op * tScale).round()).clamp(0, 255);
+            final int bottomAlpha =
+                (((isDark ? 70.0 : 92.0) * op * tScale).round()).clamp(0, 255);
+            return DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: br,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withAlpha(isDark ? 72 : 30),
+                    blurRadius: 22,
+                    offset: const Offset(0, 8),
                   ),
-                  child: Container(
-                    padding: widget.padding,
-                    decoration: BoxDecoration(
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: br,
+                child: BackdropFilter(
+                  // σ 已由 effectiveGlassSigma 按平台钳制；走缓存避免每帧每卡新建
+                  // 一份持有 native handle 的 ImageFilter（见 cachedGlassBlur 注释）。
+                  filter: cachedGlassBlur(sigma),
+                  child: CustomPaint(
+                    // 高光 / 边缘光：与液态玻璃回退同一支画笔，扁平模糊同样有玻璃光泽
+                    painter: LiquidGlassPainter(
                       borderRadius: br,
-                      color: glassBase.withAlpha(alpha),
-                      border: Border.all(
-                        color: scheme.outlineVariant.withAlpha(
-                          (edgeOutline.alpha * 255).round().clamp(0, 255),
-                        ),
-                        width: edgeOutline.width,
-                      ),
+                      opacity: op,
+                      highlight: tuning.highlight,
+                      lightPos: tuning.lightPos,
+                      edge: tuning.edge,
                     ),
-                    child: inner,
+                    child: Container(
+                      padding: widget.padding,
+                      decoration: BoxDecoration(
+                        borderRadius: br,
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            glassBase.withAlpha(topAlpha),
+                            glassBase.withAlpha((topAlpha + bottomAlpha) ~/ 2),
+                            glassBase.withAlpha(bottomAlpha),
+                          ],
+                        ),
+                        border: Border.all(
+                          color: Colors.white.withValues(
+                            alpha: isDark ? 0.16 : 0.28,
+                          ),
+                          width: 0.7,
+                        ),
+                      ),
+                      child: inner,
+                    ),
                   ),
                 ),
               ),
@@ -471,9 +505,9 @@ class _AppCardState extends State<AppCard> {
                   borderRadius: radius,
                   color: tint,
                   shadow: BoxShadow(
-                    color: Colors.black.withAlpha(isDark ? 60 : 22),
-                    blurRadius: 16,
-                    offset: const Offset(0, 5),
+                    color: Colors.black.withAlpha(isDark ? 80 : 34),
+                blurRadius: 24,
+                offset: const Offset(0, 8),
                   ),
                   child: Container(
                     padding: widget.padding,
@@ -502,9 +536,9 @@ class _AppCardState extends State<AppCard> {
               sigma: sigma,
               opacity: op,
               shadow: BoxShadow(
-                color: Colors.black.withAlpha(isDark ? 60 : 26),
-                blurRadius: 18,
-                offset: const Offset(0, 6),
+                color: Colors.black.withAlpha(isDark ? 80 : 34),
+                blurRadius: 24,
+                offset: const Offset(0, 8),
               ),
               child: Container(
                 padding: widget.padding,

@@ -11,7 +11,6 @@ import '../models/models.dart';
 import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../services/fppx2_service.dart';
-import '../services/graph_executor.dart';
 import '../services/quick_config_storage.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_strings.dart';
@@ -127,7 +126,11 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
             const SizedBox(width: 8),
             Text(zh ? '新建配置' : 'New Config', style: TextStyle(color: scheme.onSurface)),
           ]),
-          content: SizedBox(width: 360, child: Column(mainAxisSize: MainAxisSize.min, children: [
+          content: SizedBox(
+            width: MediaQuery.sizeOf(ctx).width < 440
+                ? MediaQuery.sizeOf(ctx).width - 64
+                : 360,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
             TextField(
               controller: nameCtrl, autofocus: true,
               decoration: InputDecoration(
@@ -282,7 +285,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       final now = DateTime.now();
       final cfg = QuickConfig(
         id: _uuid.v4(),
-        fileType: QuickFileType.video,
+        // 旧 0x02 文件没有 file_type；按 quick_items 的参数签名推断，
+        // 不能像以前那样一律当视频（图片/音频配置会被贴错标签）。
+        fileType: inferQuickFileTypeFromMaps(result.quickItems),
         name: baseName,
         description: result.description,
         createdAt: now,
@@ -433,65 +438,24 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
 
   Future<void> _exportEntry(_ConfigEntry entry) async {
     final zh = AppStrings.of(context.read<AppState>().config.language).isZh;
-    final scheme = Theme.of(context).colorScheme;
+    final newFormat = entry.format == 'v2';
+    final opts = await _askExportOptions(
+      zh: zh,
+      title: zh ? '导出配置' : 'Export Config',
+      initialDescription: entry.description,
+      allowEncryption: newFormat,
+    );
+    if (opts == null || !mounted) return;
 
-    // 旧版沿用本地 GraphExecutor 预检；新版由 C++ 端写前校验（其允许未知节点，
-    // 本地预检会把强制导入的未知节点误判为不可执行）
-    final errors = entry.format == 'v2'
-        ? <String>[]
-        : GraphExecutor.validateGraph(entry.graph);
-    if (errors.isNotEmpty) {
-      showDialog(context: context, builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(children: [
-          Icon(Icons.error_outline, size: 20, color: scheme.error),
-          const SizedBox(width: 8),
-          Text(zh ? '无法导出' : 'Cannot Export'),
-        ]),
-        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(zh ? '配置存在逻辑错误：' : 'Config has errors:', style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
-          const SizedBox(height: 8),
-          ...errors.map((e) => Padding(padding: const EdgeInsets.only(bottom: 3), child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('• ', style: TextStyle(color: scheme.error)),
-              Expanded(child: Text(e, style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant))),
-            ],
-          ))),
-        ]),
-        actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: Text(zh ? '知道了' : 'OK'))],
-      ));
-      return;
-    }
-
-    final descCtrl = TextEditingController(text: entry.description);
-    final confirmed = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: Text(zh ? '导出配置' : 'Export Config'),
-      content: SizedBox(width: 380, child: TextField(
-        controller: descCtrl, maxLines: 3,
-        decoration: InputDecoration(
-          labelText: zh ? '介绍（可选）' : 'Description',
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-        ),
-      )),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(zh ? '取消' : 'Cancel')),
-        FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(zh ? '导出' : 'Export')),
-      ],
-    ));
-    if (confirmed != true) { descCtrl.dispose(); return; }
-
-    entry.description = descCtrl.text;
-    descCtrl.dispose();
+    entry.description = opts.description;
     _saveLibrary();
-    if (!mounted) return; // showDialog 异步间隙后的首个 context 使用点
+    if (!mounted) return;
 
     // 写盘由 C++ 端完成（写前完整校验，失败不落盘）。
     // v13 起 saveFile 的 bytes 是必填参数且返回 Uri（不再返回可写路径），
     // 因此桌面端与移动端统一成一条流程：C++ 先写到临时文件 → 读回字节 →
     // 交给 saveFile 落盘。（移动端 SAF 本来就只接受字节流，桌面端因此也照此走。）
     final state = context.read<AppState>();
-    final newFormat = entry.format == 'v2';
     String? result;
     String? tmpPath;
     try {
@@ -501,6 +465,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         tmpPath,
         description: entry.description,
         newFormat: newFormat,
+        encrypted: opts.encrypted,
+        password: opts.password,
+        encryptAlgo: opts.algo,
       );
       if (!mounted) return;
       if (!exportRes.success) {
@@ -528,6 +495,181 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     if (mounted) showToast(context, zh ? '已导出: $result' : 'Exported: $result', type: ToastType.success);
   }
 
+  /// 导出选项：介绍、是否加密、口令、算法。
+  ///
+  /// 加密只在 v2 格式可用；旧版 v1 结构上没有加密字段。口令必须二次确认，
+  /// 打错一个字符文件就永久打不开。
+  Future<_ExportOptions?> _askExportOptions({
+    required bool zh,
+    required String title,
+    required String initialDescription,
+    required bool allowEncryption,
+  }) async {
+    final scheme = Theme.of(context).colorScheme;
+    final descCtrl = TextEditingController(text: initialDescription);
+    final pwdCtrl = TextEditingController();
+    final pwd2Ctrl = TextEditingController();
+    var encrypt = false;
+    var algo = FppxService.algoAes256Cbc;
+    String? err;
+
+    final result = await showDialog<_ExportOptions>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          final width = MediaQuery.sizeOf(ctx).width;
+          return AlertDialog(
+            title: Row(children: [
+              Icon(Icons.file_upload_outlined, size: 20, color: scheme.primary),
+              const SizedBox(width: 8),
+              Text(title, style: TextStyle(color: scheme.onSurface)),
+            ]),
+            content: SizedBox(
+              width: width < 480 ? width - 64 : 400,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: descCtrl,
+                      maxLines: 3,
+                      decoration: InputDecoration(
+                        labelText: zh ? '介绍（可选）' : 'Description',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    if (!allowEncryption)
+                      Text(
+                        zh
+                            ? '旧版格式不支持加密；切换到新版后可启用。'
+                            : 'Legacy format cannot be encrypted. Switch to v2 to enable it.',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      )
+                    else ...[
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        value: encrypt,
+                        title: Text(
+                          zh ? '加密导出（AES）' : 'Encrypt export (AES)',
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                        subtitle: Text(
+                          zh
+                              ? '仅加密数据区；介绍文本保持明文'
+                              : 'Only the data section is encrypted; description stays plain',
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                        onChanged: (v) => setDialogState(() {
+                          encrypt = v;
+                          err = null;
+                        }),
+                      ),
+                      if (encrypt) ...[
+                        TextField(
+                          controller: pwdCtrl,
+                          obscureText: true,
+                          decoration: InputDecoration(
+                            labelText: zh ? '口令' : 'Password',
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: pwd2Ctrl,
+                          obscureText: true,
+                          decoration: InputDecoration(
+                            labelText: zh ? '再次输入口令' : 'Confirm password',
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        DropdownButtonFormField<int>(
+                          initialValue: algo,
+                          decoration: InputDecoration(
+                            labelText: zh ? '加密算法' : 'Cipher',
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          items: [
+                            DropdownMenuItem(
+                              value: FppxService.algoAes256Cbc,
+                              child: Text(zh ? 'AES-256（推荐）' : 'AES-256 (recommended)'),
+                            ),
+                            const DropdownMenuItem(
+                              value: FppxService.algoAes128Cbc,
+                              child: Text('AES-128'),
+                            ),
+                          ],
+                          onChanged: (v) {
+                            if (v != null) setDialogState(() => algo = v);
+                          },
+                        ),
+                      ],
+                    ],
+                    if (err != null) ...[
+                      const SizedBox(height: 8),
+                      Text(err!, style: TextStyle(fontSize: 11, color: scheme.error)),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(zh ? '取消' : 'Cancel'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  if (allowEncryption && encrypt) {
+                    if (pwdCtrl.text.isEmpty) {
+                      setDialogState(() => err = zh ? '口令不能为空' : 'Password cannot be empty');
+                      return;
+                    }
+                    if (pwdCtrl.text != pwd2Ctrl.text) {
+                      setDialogState(() => err = zh ? '两次输入的口令不一致' : 'Passwords do not match');
+                      return;
+                    }
+                  }
+                  Navigator.pop(
+                    ctx,
+                    _ExportOptions(
+                      description: descCtrl.text,
+                      encrypted: allowEncryption && encrypt,
+                      password: allowEncryption && encrypt ? pwdCtrl.text : '',
+                      algo: algo,
+                    ),
+                  );
+                },
+                child: Text(zh ? '导出' : 'Export'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    descCtrl.dispose();
+    pwdCtrl.dispose();
+    pwd2Ctrl.dispose();
+    return result;
+  }
+
   /// 移动端导出用的临时文件路径（应用缓存目录，C++ 可直接写）
   Future<String> _tempExportPath(String name) async {
     final dir = await getTemporaryDirectory();
@@ -537,6 +679,14 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
   /// 快捷配置导出为新版 .fppx（0x02：逻辑块无节点 ID，只存命令参数）
   Future<void> _exportQuickConfig(QuickConfig cfg) async {
     final zh = AppStrings.of(context.read<AppState>().config.language).isZh;
+    final opts = await _askExportOptions(
+      zh: zh,
+      title: zh ? '导出快捷配置' : 'Export Quick Config',
+      initialDescription: cfg.description,
+      allowEncryption: true,
+    );
+    if (opts == null || !mounted) return;
+    cfg.description = opts.description;
     final state = context.read<AppState>();
     final items = [for (final i in cfg.items)
       {'key': i.key, 'params': i.params, 'enabled': i.enabled}];
@@ -550,6 +700,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         tmpPath,
         description: cfg.description,
         items: items,
+        encrypted: opts.encrypted,
+        password: opts.password,
+        encryptAlgo: opts.algo,
       );
       if (!mounted) return;
       if (!exportRes.success) {
@@ -621,7 +774,11 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
             const SizedBox(width: 8),
             Text(zh ? '新建快捷配置' : 'New Quick Config', style: TextStyle(color: scheme.onSurface)),
           ]),
-          content: SizedBox(width: 360, child: Column(mainAxisSize: MainAxisSize.min, children: [
+          content: SizedBox(
+            width: MediaQuery.sizeOf(ctx).width < 440
+                ? MediaQuery.sizeOf(ctx).width - 64
+                : 360,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
             TextField(
               controller: nameCtrl, autofocus: true,
               decoration: InputDecoration(
@@ -652,6 +809,13 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
           ])),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx), child: Text(zh ? '取消' : 'Cancel')),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _createQuickConfig(nameCtrl.text, selected, zh, openEditor: true);
+              },
+              child: Text(zh ? '创建并编辑' : 'Create & Edit'),
+            ),
             FilledButton(
               onPressed: () {
                 Navigator.pop(ctx);
@@ -665,7 +829,12 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     ).whenComplete(nameCtrl.dispose);
   }
 
-  Future<void> _createQuickConfig(String rawName, QuickFileType type, bool zh) async {
+  Future<void> _createQuickConfig(
+    String rawName,
+    QuickFileType type,
+    bool zh, {
+    bool openEditor = false,
+  }) async {
     final name = rawName.trim().isEmpty
         ? (zh ? '未命名快捷配置' : 'Quick Config')
         : rawName.trim();
@@ -683,6 +852,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     if (!mounted) return;
     setState(() => _quickConfigs.insert(0, cfg));
     showToast(context, zh ? '已创建快捷配置' : 'Quick config created', type: ToastType.success);
+    if (openEditor && mounted) _openQuickEditor(cfg);
   }
 
   void _openQuickEditor(QuickConfig cfg) {
@@ -753,6 +923,12 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         // _buildQuickEmptyState 完全同款的文案指路，不再单开一个异类按钮。
         Text(zh ? '或点上栏「⬇」导入 .fppx 文件' : 'Or use ⬇ in the top bar to import a .fppx',
             style: TextStyle(color: scheme.outline.withAlpha(120), fontSize: 12)),
+        const SizedBox(height: 16),
+        FilledButton.icon(
+          onPressed: _newConfig,
+          icon: const Icon(Icons.add, size: 18),
+          label: Text(zh ? '新建配置' : 'New Config'),
+        ),
       ])),
     );
   }
@@ -768,6 +944,12 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         const SizedBox(height: 6),
         Text(zh ? '点击顶栏「⚡」新建快捷配置' : 'Click the bolt icon to create one',
             style: TextStyle(color: scheme.outline.withAlpha(120), fontSize: 12)),
+        const SizedBox(height: 16),
+        FilledButton.icon(
+          onPressed: _newQuickConfig,
+          icon: const Icon(Icons.bolt, size: 18),
+          label: Text(zh ? '新建快捷配置' : 'New Quick Config'),
+        ),
       ])),
     );
   }
@@ -1097,4 +1279,19 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       child: content,
     );
   }
+}
+
+
+class _ExportOptions {
+  const _ExportOptions({
+    required this.description,
+    required this.encrypted,
+    required this.password,
+    required this.algo,
+  });
+
+  final String description;
+  final bool encrypted;
+  final String password;
+  final int algo;
 }
