@@ -73,6 +73,7 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> with StepEdit
     super.initState();
     p.putIfAbsent('video_codec', () => 'libx264');
     p.putIfAbsent('gpu', () => 'CPU');
+    p['gpu'] ??= 'CPU';
     // iOS 无 MediaCodec/NVENC 等硬编，回退 CPU；Android 保留 MediaCodec 选项。
     if (isMobilePlatform && !isAndroidPlatform && p['gpu'] != 'CPU') {
       p['gpu'] = 'CPU';
@@ -88,7 +89,8 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> with StepEdit
     p.putIfAbsent('audio_channels', () => 'keep');
     p.putIfAbsent('pix_fmt', () => 'auto');
     // 验证 video_codec 是否有效，无效则重置为默认值
-    if (!_allCodecs.contains(p['video_codec'])) {
+    if (p['video_codec'] == null ||
+        !_allCodecs.contains(p['video_codec'])) {
       p['video_codec'] = 'libx264';
     }
     _bitrateCtrl = TextEditingController(text: '${p['video_bitrate'] ?? ''}');
@@ -135,9 +137,9 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> with StepEdit
   }
 
   Widget _codecDropdown(ColorScheme cs, bool zh) {
-    final gpu = p['gpu'] as String;
+    final gpu = p['gpu'] as String? ?? 'CPU';
     final accel = _gpuAccelerated;
-    final current = p['video_codec'] as String;
+    final current = p['video_codec'] as String? ?? 'libx264';
     final safe = _allCodecs.contains(current) ? current : _allCodecs.first;
 
     return DropdownButtonFormField<String>(
@@ -193,7 +195,10 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> with StepEdit
         const SizedBox(height: 10),
         // GPU 厂商选择：Android 保留 MediaCodec 硬编选项（内置 ffmpeg 已启用
         // --enable-mediacodec 编码器）；iOS 无硬编方案，仅保留 CPU。
-        _dropdown(label: 'GPU', value: isMobilePlatform && !isAndroidPlatform ? 'CPU' : p['gpu'] as String,
+        _dropdown(label: 'GPU',
+          value: isMobilePlatform && !isAndroidPlatform
+              ? 'CPU'
+              : p['gpu'] as String? ?? 'CPU',
           items: isMobilePlatform ? (isAndroidPlatform ? const ['CPU', 'Android'] : const ['CPU']) : const ['CPU', 'NVIDIA', 'AMD', 'Intel'], cs: cs,
           onChanged: (v) {
             p['gpu'] = v;
@@ -249,7 +254,8 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> with StepEdit
             ]),
           )),
         const SizedBox(height: 8),
-        _dropdown(label: zh ? '码率模式' : 'Rate Mode', value: p['rate_mode'] as String,
+        _dropdown(label: zh ? '码率模式' : 'Rate Mode',
+          value: p['rate_mode'] as String? ?? 'keep',
           items: const ['bitrate', 'crf', 'keep'],
           itemLabels: zh ? const ['码率', 'CRF', '保持'] : const ['Bitrate', 'CRF', 'Keep'], cs: cs,
           onChanged: (v) {
@@ -284,7 +290,8 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> with StepEdit
           itemLabels: [zh ? '自动' : 'Auto', 'YUV 4:2:0 8bit', 'YUV 4:2:2 8bit', 'YUV 4:4:4 8bit', 'YUV 4:2:0 10bit', 'YUV 4:2:2 10bit', 'NV12', 'P010LE (10bit)', 'RGB 24bit'],
           cs: cs, onChanged: (v) => update('pix_fmt', v)),
         const SizedBox(height: 8),
-        _dropdown(label: zh ? '分辨率' : 'Resolution', value: p['resolution'] as String, items: _resolutions,
+        _dropdown(label: zh ? '分辨率' : 'Resolution',
+          value: p['resolution'] as String? ?? 'original', items: _resolutions,
           itemLabels: zh ? const ['原始', '4K (2160p)', '1080p', '720p', '480p', '360p', '自定义'] : const ['Original', '4K (2160p)', '1080p', '720p', '480p', '360p', 'Custom'],
           cs: cs, onChanged: (v) => update('resolution', v)),
         if (p['resolution'] == 'custom')
@@ -296,7 +303,8 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> with StepEdit
               onChanged: (v) { p['resolution_h'] = int.tryParse(v); widget.onChanged(); })),
           ])),
         const SizedBox(height: 8),
-        _dropdown(label: zh ? '帧率' : 'FPS', value: p['fps'] as String, items: _fpsOptions,
+        _dropdown(label: zh ? '帧率' : 'FPS',
+          value: p['fps'] as String? ?? 'keep', items: _fpsOptions,
           itemLabels: zh ? const ['保持', '24', '25', '30', '48', '50', '60', '120', '自定义'] : const ['Keep', '24', '25', '30', '48', '50', '60', '120', 'Custom'],
           cs: cs, onChanged: (v) => update('fps', v)),
         if (p['fps'] == 'custom')

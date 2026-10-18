@@ -29,6 +29,36 @@ class BackendClient {
   Stream<ProgressUpdate> get progressStream => _progressController.stream;
   Stream<List<String>> get auditStream => _auditController.stream;
 
+  // ── 后端正在执行的任务 id ──────────────────────────────────────────────
+  // 暂停只允许作用在「确实有一个可冻结的进程」的任务上。仅凭 TaskInfo.status
+  // == processing 判断是不够的：流水线任务的当前步骤可能是 Dart 侧短命的
+  // Process.run（图片转换等），也可能正处于两步之间的空档；此时如果照样给
+  // 后端记一个暂停标记并改 UI 状态，就是「假暂停」。这里记录哪些 task id 的
+  // 请求真的还在后端里跑，AppState 据此决定暂停能否真正生效。
+  final Set<String> _activeTaskIds = <String>{};
+
+  /// 该任务的请求当前是否仍在后端执行（暂停可真正冻结它的 ffmpeg 子进程）。
+  bool isTaskRunning(String taskId) => _activeTaskIds.contains(taskId);
+
+  Future<Map<String, dynamic>> _runTracked(
+    String taskId,
+    Future<Map<String, dynamic>> Function() start,
+  ) async {
+    _activeTaskIds.add(taskId);
+    try {
+      return await start();
+    } finally {
+      _activeTaskIds.remove(taskId);
+    }
+  }
+
+  /// 冻结 / 解冻后端里该任务的 ffmpeg 子进程（真实进程级暂停）。
+  Future<Map<String, dynamic>> pause(String taskId) =>
+      _process.pause([taskId]);
+
+  Future<Map<String, dynamic>> resume(String taskId) =>
+      _process.resume([taskId]);
+
   /// 检查 ffmpeg 环境
   Future<Map<String, dynamic>> checkEnv() async {
     final resp = await _process.request('check_env');
@@ -61,13 +91,15 @@ class BackendClient {
     required String input,
     required String output,
     required Map<String, dynamic> options,
-  }) async {
-    final resp = await _process.requestWithId(taskId, 'transcode', {
-      'input': input,
-      'output': output,
-      'options': options,
-    });
-    return resp;
+  }) {
+    return _runTracked(
+      taskId,
+      () => _process.requestWithId(taskId, 'transcode', {
+        'input': input,
+        'output': output,
+        'options': options,
+      }),
+    );
   }
 
   /// 字幕烧录
@@ -76,14 +108,16 @@ class BackendClient {
     required String output,
     required Map<String, dynamic> subtitleOptions,
     Map<String, dynamic>? videoOptions,
-  }) async {
-    final resp = await _process.requestWithId(taskId, 'subtitle', {
-      'input': input,
-      'output': output,
-      'subtitle_options': subtitleOptions,
-      'video_options': ?videoOptions,
-    });
-    return resp;
+  }) {
+    return _runTracked(
+      taskId,
+      () => _process.requestWithId(taskId, 'subtitle', {
+        'input': input,
+        'output': output,
+        'subtitle_options': subtitleOptions,
+        'video_options': ?videoOptions,
+      }),
+    );
   }
 
   /// 取消当前任务；[taskIds] 非空时同时取消队列中未开始的任务
@@ -94,13 +128,15 @@ class BackendClient {
     required String command,
     required String input,
     required String output,
-  }) async {
-    final resp = await _process.requestWithId(taskId, 'custom_command', {
-      'command': command,
-      'input': input,
-      'output': output,
-    });
-    return resp;
+  }) {
+    return _runTracked(
+      taskId,
+      () => _process.requestWithId(taskId, 'custom_command', {
+        'command': command,
+        'input': input,
+        'output': output,
+      }),
+    );
   }
 
   /// 帧提取
@@ -108,13 +144,15 @@ class BackendClient {
     required String input,
     required String output,
     required double time,
-  }) async {
-    final resp = await _process.requestWithId(taskId, 'extract_frame', {
-      'input': input,
-      'output': output,
-      'time': time,
-    });
-    return resp;
+  }) {
+    return _runTracked(
+      taskId,
+      () => _process.requestWithId(taskId, 'extract_frame', {
+        'input': input,
+        'output': output,
+        'time': time,
+      }),
+    );
   }
 
   /// 合并音频/视频
@@ -122,10 +160,13 @@ class BackendClient {
     required List<String> files, required String output,
     String mode = 'copy', Map<String, dynamic>? options,
   }) async {
-    return await _process.requestWithId(taskId, 'concat', {
-      'files': files, 'output': output, 'mode': mode,
-      'options': ?options,
-    });
+    return _runTracked(
+      taskId,
+      () => _process.requestWithId(taskId, 'concat', {
+        'files': files, 'output': output, 'mode': mode,
+        'options': ?options,
+      }),
+    );
   }
 
   /// 图片序列→视频
@@ -133,10 +174,13 @@ class BackendClient {
     required List<String> files, required String output,
     required double framerate, Map<String, dynamic>? options,
   }) async {
-    return await _process.requestWithId(taskId, 'image_sequence', {
-      'files': files, 'output': output, 'framerate': framerate,
-      'options': ?options,
-    });
+    return _runTracked(
+      taskId,
+      () => _process.requestWithId(taskId, 'image_sequence', {
+        'files': files, 'output': output, 'framerate': framerate,
+        'options': ?options,
+      }),
+    );
   }
 
   // ── FPPX 配置文件（新版 v2 / 旧版迁移），由 C++ 端直接读写文件 ──

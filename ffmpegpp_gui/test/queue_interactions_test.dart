@@ -30,6 +30,23 @@ class QueueState extends AppState {
   void cancelTask(String id) {
     stopped.add(id);
   }
+
+  final List<String> pausedCalls = [];
+  final List<String> resumedCalls = [];
+  bool pauseResult = true;
+  bool resumeResult = true;
+
+  @override
+  Future<bool> pauseTask(String id) async {
+    pausedCalls.add(id);
+    return pauseResult;
+  }
+
+  @override
+  Future<bool> resumeTask(String id) async {
+    resumedCalls.add(id);
+    return resumeResult;
+  }
 }
 
 TaskInfo task(String id, {TaskStatus status = TaskStatus.pending}) => TaskInfo(
@@ -202,6 +219,76 @@ void main() {
       await tester.pump();
       expect(state.stopped, ['one']);
       expect(find.byType(BottomSheet), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('移动端运行卡片同时提供「暂停」和「停止」', (tester) async {
+      final state = QueueState()
+        ..replace([task('one', status: TaskStatus.processing)]);
+      addTearDown(state.dispose);
+      await tester.pumpWidget(
+        harness(state, TaskCard(task: state.tasks.first, detailsInSheet: true)),
+      );
+      // 两个按钮都在，且点击不会误开详情面板
+      expect(find.text('暂停'), findsOneWidget);
+      expect(find.text('停止'), findsOneWidget);
+      await tester.tap(find.text('暂停'));
+      await tester.pump();
+      expect(state.pausedCalls, ['one']);
+      expect(state.stopped, isEmpty);
+      expect(find.byType(BottomSheet), findsNothing);
+      await tester.tap(find.text('停止'));
+      await tester.pump();
+      expect(state.stopped, ['one']);
+      expect(find.byType(BottomSheet), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('已暂停任务显示「继续」+「停止」，状态文案与图标不再是处理中', (
+      tester,
+    ) async {
+      final state = QueueState()..replace([
+        task('one', status: TaskStatus.paused).copyWith(progress: 55),
+      ]);
+      addTearDown(state.dispose);
+      await tester.pumpWidget(
+        harness(state, TaskCard(task: state.tasks.first, detailsInSheet: false)),
+      );
+      // 折叠卡的展开区也被 AnimatedCrossFade 预先构建，所以状态文案会在
+      // 卡片头部 / 概览条 / 图例里各出现一次 —— 用 findsWidgets 断言存在性。
+      expect(find.text('已暂停'), findsWidgets);
+      expect(find.byIcon(Icons.pause_circle_outline), findsWidgets);
+      expect(find.byIcon(Icons.sync), findsNothing);
+      expect(find.text('继续'), findsOneWidget);
+      // 暂停卡片仍然显示进度条与百分比（冻结在 55%），而不是空进度
+      expect(find.text('55%'), findsWidgets);
+      await tester.tap(find.text('继续'));
+      await tester.pump();
+      expect(state.resumedCalls, ['one']);
+      expect(find.text('继续'), findsOneWidget); // 真实状态未变（测试替身不改列表）
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+  });
+
+  group('TaskFloatLayer paused', () {
+    testWidgets('已暂停任务不会从悬浮层消失，并可在此继续', (tester) async {
+      final state = QueueState()..replace([
+        task('one', status: TaskStatus.paused).copyWith(progress: 33),
+      ]);
+      addTearDown(state.dispose);
+      await tester.pumpWidget(
+        harness(
+          state,
+          const Stack(children: [Positioned.fill(child: TaskFloatLayer())]),
+        ),
+      );
+      expect(find.byKey(const ValueKey('task-hide-one')), findsOneWidget);
+      expect(find.byKey(const ValueKey('task-pause-one')), findsOneWidget);
+      expect(find.textContaining('已暂停'), findsWidgets);
+      await tester.tap(find.byKey(const ValueKey('task-pause-one')));
+      await tester.pump();
+      expect(state.resumedCalls, ['one']);
       await tester.pumpWidget(const SizedBox.shrink());
     });
   });

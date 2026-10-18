@@ -246,7 +246,22 @@ class _QueuePageState extends State<QueuePage> {
   /// 旁边两颗高出一档，并排看像不是一个组的。
   List<Widget> _buildActions(ColorScheme scheme, AppState state, AppStrings s) {
     const size = AppControlSize.regular;
+    // 有暂停任务时给出「继续全部」：暂停中的任务仍算 processing（占着并发槽位），
+    // 若不提供入口，用户停掉全部卡片后只能逐张点开恢复。
+    final pausedCount =
+        state.tasks.where((t) => t.status == TaskStatus.paused).length;
     return [
+      if (pausedCount > 0)
+        FilledButton.icon(
+          style: size.buttonStyle(filled: true),
+          icon: Icon(Icons.play_arrow, size: size.iconSize),
+          label: Text(
+            s.isZh ? '继续全部 ($pausedCount)' : 'Resume all ($pausedCount)',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          onPressed: () => state.resumeAllPausedTasks(),
+        ),
       if (state.processing)
         OutlinedButton.icon(
           style: size.buttonStyle(),
@@ -315,7 +330,18 @@ class _QueuePageState extends State<QueuePage> {
     AppState state,
     AppStrings s,
   ) {
+    final pausedCount =
+        state.tasks.where((t) => t.status == TaskStatus.paused).length;
     return [
+      // 暂停中的任务仍算「处理中」：此时顶栏是「停止全部 + 继续全部」，
+      // 不会出现「开始处理」把暂停任务再拉一遍的按钮。
+      if (pausedCount > 0)
+        MobileGlassPillAction(
+          icon: Icons.play_arrow,
+          tooltip: s.isZh ? '继续全部 ($pausedCount)' : 'Resume all ($pausedCount)',
+          color: scheme.sem.success,
+          onTap: () => state.resumeAllPausedTasks(),
+        ),
       if (state.processing)
         MobileGlassPillAction(
           icon: Icons.stop,

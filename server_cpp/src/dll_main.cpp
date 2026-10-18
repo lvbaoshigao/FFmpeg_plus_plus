@@ -13,6 +13,7 @@
 #include "nlohmann/json.hpp"
 #include "json_io.h"
 #include "handlers.h"
+#include "subprocess.h"
 #include "installer.h"
 #include "message_queues.h"
 #include <set>
@@ -112,9 +113,8 @@ static void workerLoop() {
         std::string action = req.value("action", "");
         slog("dll worker: processing action=%s", action.c_str());
 
+        const std::string reqId = req.value("id", "");
         try {
-            const std::string reqId = req.value("id", "");
-
             // 队列中已被取消的任务直接跳过（cancel 携带 task_ids 时），
             // 避免「停止所有」后后端仍继续执行排队任务
             {
@@ -147,6 +147,24 @@ static void workerLoop() {
                 std::lock_guard<std::mutex> lock(g_cancelMutex);
                 return g_cancelledTaskIds.count(reqId) > 0;
             };
+
+            // 把「当前任务 id」绑定到 worker 线程（暂停状态按 id 查询），
+            // 请求结束时必须两件事都收回：
+            //   1) 清空 thread-local id，避免下一次请求（或 probe 辅助线程）误用；
+            //   2) 清掉该 id 的暂停标记 —— 否则同一个任务 id 重跑时会带着
+            //      「已暂停」启动，ffmpeg 一 exec 就被 SIGSTOP，表现为启动即卡死。
+            struct TaskIdScope {
+                std::string id;
+                explicit TaskIdScope(const std::string& taskId) : id(taskId) {
+                    Subprocess::setCurrentTaskId(id);
+                }
+                ~TaskIdScope() {
+                    Subprocess::setCurrentTaskId("");
+                    Subprocess::setTaskPaused(id, false);
+                }
+                TaskIdScope(const TaskIdScope&) = delete;
+                TaskIdScope& operator=(const TaskIdScope&) = delete;
+            } taskScope(reqId);
 
             if (action == "transcode") {
                 handleTranscode(req, isCancelled);
@@ -190,6 +208,8 @@ FFMPEGPP_API int ffmpegpp_init() {
         g_cancelledTaskIds.clear();
         g_cancelledTaskTimes.clear();
     }
+    // 重新初始化：上一个「会话」遗留的暂停标记不能带到本次运行。
+    Subprocess::clearAllPaused();
     JsonWriter::start();
 
     JsonWriter::send({{"type", "ready"}, {"version", SERVER_VERSION}});
@@ -229,6 +249,39 @@ FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
         }
         std::string action = req.value("action", "");
 
+        if (action == "pause" || action == "resume") {
+            // 暂停 / 恢复是**真实进程控制**（POSIX SIGSTOP/SIGCONT、
+            // Windows NtSuspendProcess/NtResumeProcess），因此必须内联处理：
+            // worker 线程此刻正阻塞在 runWithProgress 里等待这个信号，
+            // 若把 pause 也塞进输入队列，它要等任务结束才会被处理 → 永远停不下来。
+            auto params = req.value("params", json::object());
+            const bool pause = action == "pause";
+            std::vector<std::string> ids;
+            if (params.contains("task_ids") && params["task_ids"].is_array()) {
+                for (auto& tid : params["task_ids"]) {
+                    if (tid.is_string()) {
+                        const std::string id = tid.get<std::string>();
+                        if (!id.empty()) ids.push_back(id);
+                    }
+                }
+            }
+            if (params.contains("task_id") && params["task_id"].is_string()) {
+                const std::string id = params["task_id"].get<std::string>();
+                if (!id.empty()) ids.push_back(id);
+            }
+            if (ids.empty()) {
+                // 空 id 不做任何事，也绝不回 success —— 前端据此显示真实失败，
+                // 而不是一个没有实际效果却显示「已暂停」的假状态。
+                JsonWriter::reply(req.value("id", ""), false, nullptr,
+                                  pause ? "pause 缺少 task_ids" : "resume 缺少 task_ids");
+                return -1;
+            }
+            for (const auto& id : ids) Subprocess::setTaskPaused(id, pause);
+            JsonWriter::reply(req.value("id", ""), true,
+                              {{"message", pause ? "暂停信号已发送" : "恢复信号已发送"},
+                               {"task_ids", ids}});
+            return 0;
+        }
         if (action == "cancel") {
             // 注意：不再无条件设置全局 g_cancelFlag。全局标志只在「停止所有」
             // （未携带 task_ids）时置位；精确取消由 g_cancelledTaskIds 按 id 判定。
@@ -344,6 +397,9 @@ FFMPEGPP_API void ffmpegpp_shutdown() {
     slog("dll shutdown: starting");
     g_shutdownFlag.store(true);
     g_cancelFlag.store(true);
+    // 挂起的子进程收不到「停止」信号；先清暂停标记，让 worker 的
+    // runWithProgress 恢复并走正常终止路径，避免卸载时卡在 join 上。
+    Subprocess::clearAllPaused();
     wakeInput();
 
     // 先等 probe/check_env/query_features 辅助线程退出，再停止输出与线程

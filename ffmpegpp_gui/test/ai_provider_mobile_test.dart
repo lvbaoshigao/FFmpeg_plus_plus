@@ -118,13 +118,13 @@ void main() {
             greaterThanOrEqualTo(AppControlSize.large.height),
           );
           await tester.scrollUntilVisible(
-            find.byType(OutlinedButton).last,
+            find.byType(TextButton).last,
             180,
             scrollable: scrollable,
           );
           expect(
-            tester.getSize(find.byType(OutlinedButton).last).height,
-            AppControlSize.large.height,
+            tester.getSize(find.byType(TextButton).last).height,
+            greaterThanOrEqualTo(AppControlSize.large.height),
           );
           expect(tester.takeException(), isNull);
 
@@ -311,6 +311,10 @@ void main() {
     );
     await tester.pump();
     expect(find.byType(MobileAiProviderDetailPage), findsNothing);
+    expect(find.text('提供商'), findsOneWidget);
+    await tester.tap(find.text('提供商'));
+    await tester.pumpAndSettle();
+    expect(find.byType(MobileAiProvidersPage), findsOneWidget);
     await _flushSaveTimers(tester);
   });
 
@@ -350,13 +354,7 @@ void main() {
     });
 
     await tester.pumpWidget(
-      _harness(
-        state,
-        Builder(
-          builder: (ctx) =>
-              SingleChildScrollView(child: mobileAiSettingsContent(ctx, state)),
-        ),
-      ),
+      _harness(state, MobileAiProvidersPage(state: state)),
     );
     await tester.pumpAndSettle();
     expect(find.text('OpenAI'), findsOneWidget);

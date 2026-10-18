@@ -26,14 +26,22 @@ class AiChatHistory {
     final home = Platform.environment['HOME'] ?? '/tmp';
     if (Platform.isWindows) {
       return '${Platform.environment['APPDATA'] ?? Directory.systemTemp.path}'
-          '$_sep' 'FFmpeg++';
+          '$_sep'
+          'FFmpeg++';
     }
     if (Platform.isMacOS) {
-      return '$home$_sep' 'Library$_sep' 'Application Support$_sep' 'FFmpeg++';
+      return '$home$_sep'
+          'Library$_sep'
+          'Application Support$_sep'
+          'FFmpeg++';
     }
-    final base = Platform.environment['XDG_DATA_HOME'] ?? '$home$_sep'
-        '.local$_sep' 'share';
-    return '$base$_sep' 'FFmpeg++';
+    final base =
+        Platform.environment['XDG_DATA_HOME'] ??
+        '$home$_sep'
+            '.local$_sep'
+            'share';
+    return '$base$_sep'
+        'FFmpeg++';
   }
 
   /// 确保历史目录存在。
@@ -50,12 +58,15 @@ class AiChatHistory {
     required String provider,
     required String model,
     required List<Map<String, dynamic>> messages,
+    String? filePath,
   }) async {
     try {
       await _ensureDir();
       final ts = DateTime.now().millisecondsSinceEpoch;
       final dir = await _historyDir();
-      final file = File('$dir${_sep}session_$ts.json');
+      final file = filePath != null && filePath.isNotEmpty
+          ? File(filePath)
+          : File('$dir${_sep}session_$ts.json');
       final data = {
         'title': title,
         'provider': provider,
@@ -63,7 +74,9 @@ class AiChatHistory {
         'saved_at': DateTime.now().toIso8601String(),
         'messages': messages,
       };
-      await file.writeAsString(const JsonEncoder.withIndent('  ').convert(data));
+      await file.writeAsString(
+        const JsonEncoder.withIndent('  ').convert(data),
+      );
       return file.path;
     } catch (_) {
       return null;
@@ -84,7 +97,8 @@ class AiChatHistory {
       final result = <Map<String, dynamic>>[];
       for (final f in files) {
         try {
-          final json = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
+          final json =
+              jsonDecode(await f.readAsString()) as Map<String, dynamic>;
           json['_file'] = f.path;
           result.add(json);
         } catch (_) {}
@@ -113,7 +127,9 @@ class AiChatHistory {
       if (!await dir.exists()) return;
       await for (final e in dir.list()) {
         if (e is File) {
-          try { await e.delete(); } catch (_) {}
+          try {
+            await e.delete();
+          } catch (_) {}
         }
       }
     } catch (_) {}

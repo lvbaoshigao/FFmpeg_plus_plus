@@ -75,11 +75,28 @@ void main() {
       status: TaskStatus.failed,
       error: '步骤 1 失败: Error opening output',
     ));
+    // 暂停中的任务：卡片必须仍可构建（状态色/图标/进度条都是 paused 分支），
+    // 并且进度是「确定值」，不能出现不确定进度条的无限动画。
+    state.addTaskForTest(TaskInfo(
+      id: 'task_t3',
+      videoId: 'v3',
+      filename: '暂停任务.mp4',
+      inputPath: '/tmp/e.mp4',
+      outputPath: '/tmp/f.mp4',
+      config: TranscodeConfig(),
+      status: TaskStatus.paused,
+      progress: 37,
+      pipelineCalls: calls,
+    ));
     await tester.pumpWidget(_harness(state));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('测试视频.mp4'), findsOneWidget);
     expect(find.text('失败任务.mp4'), findsOneWidget);
+    expect(find.text('暂停任务.mp4'), findsOneWidget);
+    // 折叠卡片的展开区同样被 AnimatedCrossFade 构建，'已暂停' 会出现多次
+    expect(find.text('已暂停'), findsWidgets);
+    expect(find.text('37%'), findsWidgets);
     await unmountPage(tester);
   });
 }

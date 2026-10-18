@@ -5,10 +5,12 @@
 #include <algorithm>
 #include <thread>
 #include <mutex>
+#include <set>
 #include <atomic>
 
 #ifdef _WIN32
 #include <windows.h>
+#include <tlhelp32.h>
 #else
 #include <unistd.h>
 #include <sys/types.h>
@@ -20,6 +22,34 @@
 #endif
 
 namespace ffmpegpp {
+
+namespace {
+thread_local std::string tls_task_id;
+std::mutex g_pause_mutex;
+std::set<std::string> g_paused_tasks;
+} // namespace
+
+void Subprocess::setCurrentTaskId(const std::string& id) {
+    tls_task_id = id;
+}
+
+void Subprocess::setTaskPaused(const std::string& id, bool paused) {
+    if (id.empty()) return;
+    std::lock_guard<std::mutex> lock(g_pause_mutex);
+    if (paused) g_paused_tasks.insert(id);
+    else g_paused_tasks.erase(id);
+}
+
+void Subprocess::clearAllPaused() {
+    std::lock_guard<std::mutex> lock(g_pause_mutex);
+    g_paused_tasks.clear();
+}
+
+static bool currentTaskPaused() {
+    if (tls_task_id.empty()) return false;
+    std::lock_guard<std::mutex> lock(g_pause_mutex);
+    return g_paused_tasks.count(tls_task_id) > 0;
+}
 
 #ifdef _WIN32
 
@@ -103,6 +133,51 @@ std::string Subprocess::vectorToCommandLine(const std::vector<std::string>& cmd)
     }
     return oss.str();
 }
+
+// ── 进程级挂起 / 恢复（Windows）────────────────────────────────────────────
+// ffmpeg 本身不派生进程，挂起它就等于真正停住编码：CPU 归零、不再产出，
+// 恢复后从同一时刻继续。优先用 ntdll 的 NtSuspendProcess / NtResumeProcess
+// （一次挂起整个进程，含运行期间新建的线程）；这两个函数自 Windows XP 起
+// 就存在，只是未在 SDK 头文件里声明，故动态解析。解析失败时退回 Toolhelp32
+// 逐线程 SuspendThread / ResumeThread。
+namespace {
+using NtProcessControlFn = LONG(NTAPI*)(HANDLE);
+
+NtProcessControlFn resolveNtProcessControl(const char* name) {
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    if (!ntdll) return nullptr;
+    return reinterpret_cast<NtProcessControlFn>(GetProcAddress(ntdll, name));
+}
+
+// 失败返回 false：调用方据此保持「未挂起」状态，绝不向用户谎报暂停成功。
+bool setProcessSuspended(HANDLE process, bool suspend) {
+    static NtProcessControlFn suspendFn = resolveNtProcessControl("NtSuspendProcess");
+    static NtProcessControlFn resumeFn = resolveNtProcessControl("NtResumeProcess");
+    NtProcessControlFn fn = suspend ? suspendFn : resumeFn;
+    if (fn && fn(process) == 0) return true;
+
+    // 兜底：逐线程挂起 / 恢复。
+    const DWORD pid = GetProcessId(process);
+    if (pid == 0) return false;
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return false;
+    bool any = false;
+    THREADENTRY32 entry = {};
+    entry.dwSize = sizeof(entry);
+    if (Thread32First(snapshot, &entry)) {
+        do {
+            if (entry.th32OwnerProcessID != pid) continue;
+            HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME, FALSE, entry.th32ThreadID);
+            if (!thread) continue;
+            const DWORD r = suspend ? SuspendThread(thread) : ResumeThread(thread);
+            if (r != (DWORD)-1) any = true;
+            CloseHandle(thread);
+        } while (Thread32Next(snapshot, &entry));
+    }
+    CloseHandle(snapshot);
+    return any;
+}
+} // namespace
 
 ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_sec) {
     ProcessResult result;
@@ -373,32 +448,53 @@ ProcessResult Subprocess::runWithProgress(
         }
     });
 
-    // 主线程：等待进程退出或取消
+    // 主线程：等待进程退出、取消，或在暂停/恢复之间切换挂起状态
     auto start = std::chrono::steady_clock::now();
+    bool suspended = false;
     while (true) {
         if (isCancelled && isCancelled()) {
+            // 终止前先恢复：避免留下被挂起、无法被系统回收的线程状态。
+            if (suspended) { setProcessSuspended(pi.hProcess, false); suspended = false; }
             TerminateProcess(pi.hProcess, 1);
             result.exit_code = -1;
             break;
         }
 
-        DWORD exit_code;
-        if (GetExitCodeProcess(pi.hProcess, &exit_code) && exit_code != STILL_ACTIVE) {
+        DWORD exit_code = STILL_ACTIVE;
+        if (!GetExitCodeProcess(pi.hProcess, &exit_code)) {
+            result.exit_code = -1;
+            break;
+        }
+        if (exit_code != STILL_ACTIVE) {
             result.exit_code = (int)exit_code;
             break;
         }
 
-        if (timeout_sec > 0) {
-            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-                std::chrono::steady_clock::now() - start).count();
-            if (elapsed >= timeout_sec) {
+        // 真实暂停：挂起整个 ffmpeg 进程（CPU 归零、不再产出），恢复时解挂。
+        const bool wantPaused = currentTaskPaused();
+        if (wantPaused != suspended) {
+            if (setProcessSuspended(pi.hProcess, wantPaused)) {
+                suspended = wantPaused;
+            } else {
+                // 挂起/恢复失败：终止并如实报错，而不是让任务卡在「已暂停」。
                 TerminateProcess(pi.hProcess, 1);
                 result.exit_code = -1;
                 break;
             }
         }
 
-        Sleep(100);
+        if (timeout_sec > 0) {
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now() - start).count();
+            if (elapsed >= timeout_sec) {
+                if (suspended) { setProcessSuspended(pi.hProcess, false); suspended = false; }
+                TerminateProcess(pi.hProcess, 1);
+                result.exit_code = -1;
+                break;
+            }
+        }
+
+        Sleep(suspended ? 50 : 100);
     }
 
     // 确保进程已退出：写端随子进程退出而关闭，读取线程会读到 EOF 自然退出。
@@ -707,6 +803,11 @@ ProcessResult Subprocess::runWithProgress(
     bool open[2] = {true, true};
     bool exited = false;
     bool truncated = false;
+    // 当前子进程是否真的处于 SIGSTOP 停止态。用布尔量而不是记住 pid：
+    // 原实现用 paused_pid/resumed_pid 两个 pid 标记，第二次「暂停」时
+    // paused_pid 仍等于 pid，于是不会再发 SIGSTOP —— 暂停→恢复→再暂停
+    // 会静默失效（假暂停）。
+    bool child_stopped = false;
     const auto start = std::chrono::steady_clock::now();
     auto drainDeadline = start;
     auto emit = [&]() {
@@ -716,6 +817,12 @@ ProcessResult Subprocess::runWithProgress(
         }
     };
     auto reap = [&]() {
+        // 停止态进程收到 SIGKILL 会终止，但先 SIGCONT 能让内核立刻回收它，
+        // 避免在内核已停止调度的情况下等待信号投递。
+        if (child_stopped) {
+            kill(pid, SIGCONT);
+            child_stopped = false;
+        }
         kill(pid, SIGKILL);
         while (waitpid(pid, nullptr, 0) < 0 && errno == EINTR) {}
         result.exit_code = -1;
@@ -729,7 +836,37 @@ ProcessResult Subprocess::runWithProgress(
             if (cancelled || truncated || (timeout_sec > 0 &&
                 std::chrono::steady_clock::now() - start >= std::chrono::seconds(timeout_sec))) {
                 reap();
+            } else if (currentTaskPaused()) {
+                // Freeze only this task's ffmpeg child. Keep the worker in the
+                // loop so cancellation can still kill the stopped process.
+                if (!child_stopped) {
+                    if (kill(pid, SIGSTOP) != 0) {
+                        // 无法暂停：如实失败，而不是让前端显示一个假的「已暂停」。
+                        reap();
+                        continue;
+                    }
+                    child_stopped = true;
+                    // 收到 SIGSTOP 后立刻再查一次 waitpid：若 ffmpeg 在暂停信号
+                    // 到达前已退出，这里能及时收割，否则会永久空转在僵尸进程上。
+                }
+                int status = 0;
+                pid_t w = waitpid(pid, &status, WNOHANG);
+                if (w == pid || (w < 0 && errno != EINTR)) {
+                    if (w == pid && WIFEXITED(status)) result.exit_code = WEXITSTATUS(status);
+                    else if (w == pid && WIFSIGNALED(status)) result.exit_code = -WTERMSIG(status);
+                    exited = true;
+                    drainDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                continue;
             } else {
+                if (child_stopped) {
+                    if (kill(pid, SIGCONT) != 0) {
+                        reap();
+                        continue;
+                    }
+                    child_stopped = false;
+                }
                 int status = 0;
                 pid_t w = waitpid(pid, &status, WNOHANG);
                 if (w == pid || (w < 0 && errno != EINTR)) {

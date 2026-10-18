@@ -7,14 +7,19 @@ import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
+import '../theme/app_semantic_colors.dart';
 import '../theme/app_strings.dart';
 import 'glass_panel.dart';
+import 'toast.dart';
 
 /// The first Unicode letter or number in a filename, ignoring symbols.
 String taskDockInitial(String filename) {
   final match = RegExp(r'[\p{L}\p{N}]', unicode: true).firstMatch(filename);
   return match?.group(0)?.toUpperCase() ?? '?';
 }
+
+/// 暂停文案（与队列卡片同词；主题文案层不在本次改动范围）。
+String _pausedLabel(bool zh) => zh ? '已暂停' : 'Paused';
 
 /// Global desktop task overlays, mounted last in a bounded shell [Stack].
 ///
@@ -53,8 +58,11 @@ class _TaskFloatLayerState extends State<TaskFloatLayer> {
         final state = context.read<AppState>();
         final tasks = {
           for (final task in state.tasks)
+            // paused 也必须留在这里：暂停只是冻结进程，任务仍然活着。
+            // 漏掉它会让悬浮卡在暂停瞬间消失（下面 removeWhere 还会清掉位置）。
             if (task.status == TaskStatus.pending ||
-                task.status == TaskStatus.processing)
+                task.status == TaskStatus.processing ||
+                task.status == TaskStatus.paused)
               task.id: task,
         };
         // Terminal tasks leave immediately; a later retry starts a fresh overlay.
@@ -161,6 +169,12 @@ class _TaskFloatLayerState extends State<TaskFloatLayer> {
       _raise(task.id);
     });
     final pending = task.status == TaskStatus.pending;
+    final paused = task.status == TaskStatus.paused;
+    final statusText = pending
+        ? s.pending
+        : paused
+        ? _pausedLabel(s.isZh)
+        : s.processing;
     final progress = task.progress.isFinite
         ? (task.progress / 100).clamp(0.0, 1.0)
         : 0.0;
@@ -270,7 +284,7 @@ class _TaskFloatLayerState extends State<TaskFloatLayer> {
                       ],
                     ),
                     Text(
-                      '${pending ? s.pending : s.processing} · ${s.qElapsed}: ${task.elapsed.isEmpty ? '—' : task.elapsed}',
+                      '$statusText · ${s.qElapsed}: ${task.elapsed.isEmpty ? '—' : task.elapsed}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -292,13 +306,44 @@ class _TaskFloatLayerState extends State<TaskFloatLayer> {
                           child: Text(
                             calls > 0
                                 ? '${s.isZh ? '步骤' : 'Step'} ${(task.currentCallIndex + 1).clamp(1, calls)}/$calls'
-                                : (pending ? s.pending : s.processing),
+                                : statusText,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontSize: 12),
                           ),
                         ),
                         Text('${(progress * 100).round()}%'),
+                        IconButton(
+                          key: ValueKey('task-pause-${task.id}'),
+                          tooltip: paused
+                              ? (s.isZh ? '继续任务' : 'Resume task')
+                              : (s.isZh ? '暂停任务' : 'Pause task'),
+                          onPressed: () async {
+                            final state = context.read<AppState>();
+                            final ok = paused
+                                ? await state.resumeTask(task.id)
+                                : await state.pauseTask(task.id);
+                            // State.context：用 State.mounted 做异步后的守卫。
+                            if (ok || !mounted) return;
+                            showToast(
+                              context,
+                              paused
+                                  ? (s.isZh
+                                        ? '继续失败：任务进程已结束'
+                                        : 'Resume failed: process is gone')
+                                  : (s.isZh
+                                        ? '当前无法暂停（没有可冻结的进程）'
+                                        : 'Cannot pause: no freezable process'),
+                              type: ToastType.warning,
+                            );
+                          },
+                          icon: Icon(
+                            paused
+                                ? Icons.play_circle_outline
+                                : Icons.pause_circle_outline,
+                            color: paused ? scheme.sem.success : scheme.sem.info,
+                          ),
+                        ),
                         IconButton(
                           tooltip: s.isZh ? '停止任务' : 'Stop task',
                           onPressed: () =>

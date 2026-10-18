@@ -188,6 +188,31 @@ class NativeProcessManager {
     );
   }
 
+  /// 真正冻结 / 解冻后端正在执行的 ffmpeg 子进程（按任务 id）。
+  ///
+  /// C++ 端对 task id 记录暂停标记：runWithProgress 在 POSIX 上发 SIGSTOP /
+  /// SIGCONT，在 Windows 上调用 NtSuspendProcess / NtResumeProcess。因此
+  /// 冻结的是**那个 ffmpeg 进程本身**（CPU 归零、不再产出），恢复后从同一
+  /// 时刻继续，不重启、不丢进度。
+  ///
+  /// 注意 pause/resume 在 C++ 里是**内联**处理的（不进 worker 队列）：
+  /// 否则 worker 正阻塞在 runWithProgress 里等这个信号，永远轮不到执行它。
+  /// 返回后端回执；后端未启动或 id 为空时返回 success=false，调用方必须据此
+  /// 显示真实失败，绝不能只改 UI 状态。
+  Future<Map<String, dynamic>> pause(List<String> taskIds) async {
+    if (taskIds.isEmpty) {
+      return {'success': false, 'error': 'pause 缺少 task_id'};
+    }
+    return _doRequest('pause', {'task_ids': taskIds}, 10);
+  }
+
+  Future<Map<String, dynamic>> resume(List<String> taskIds) async {
+    if (taskIds.isEmpty) {
+      return {'success': false, 'error': 'resume 缺少 task_id'};
+    }
+    return _doRequest('resume', {'task_ids': taskIds}, 10);
+  }
+
   /// [taskIds] 非空时同时让后端跳过队列中这些尚未开始的任务
   void cancel([List<String>? taskIds]) {
     if (!isRunning) return;

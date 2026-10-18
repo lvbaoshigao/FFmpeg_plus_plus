@@ -37,6 +37,20 @@ public:
         std::function<bool()> isCancelled,
         int timeout_sec = 0);
 
+    /// Per-task cooperative pause state. The worker records the task id it is
+    /// executing; pause/resume actions only flip entries in this set.
+    ///
+    /// Pausing is real: the OS process of the running ffmpeg is stopped
+    /// (POSIX SIGSTOP / Windows NtSuspendProcess), so it stops consuming CPU and
+    /// stops producing output. Resuming continues the very same process — no
+    /// restart, no progress loss, no re-encode.
+    static void setCurrentTaskId(const std::string& id);
+    static void setTaskPaused(const std::string& id, bool paused);
+
+    /// Drop every pause flag (global cancel / shutdown). Kept as a separate call
+    /// because callers cannot enumerate the internal set.
+    static void clearAllPaused();
+
 #ifdef _WIN32
     static std::wstring utf8ToWide(const std::string& s);
     static std::string wideToUtf8(const std::wstring& ws);

@@ -6366,22 +6366,30 @@ void applyProfilePreset(AiProfile c, String preset) {
   switch (preset) {
     case 'openai':
       c.provider = 'openai';
-      c.apiUrl = 'https://api.openai.com/v1/chat/completions';
+      c.apiUrl = 'https://api.openai.com/v1';
+      c.apiPath = '/chat/completions';
+      c.useResponsesApi = false;
       pickModel();
       c.contextWindow = 128000;
     case 'anthropic':
       c.provider = 'anthropic';
-      c.apiUrl = 'https://api.anthropic.com/v1/messages';
+      c.apiUrl = 'https://api.anthropic.com/v1';
+      c.apiPath = '/messages';
+      c.useResponsesApi = false;
       pickModel();
       c.contextWindow = 200000;
     case 'deepseek':
       c.provider = 'openai';
-      c.apiUrl = 'https://api.deepseek.com/v1/chat/completions';
+      c.apiUrl = 'https://api.deepseek.com/v1';
+      c.apiPath = '/chat/completions';
+      c.useResponsesApi = false;
       pickModel();
       c.contextWindow = 64000;
     case 'ollama':
       c.provider = 'openai';
-      c.apiUrl = 'http://localhost:11434/v1/chat/completions';
+      c.apiUrl = 'http://localhost:11434/v1';
+      c.apiPath = '/chat/completions';
+      c.useResponsesApi = false;
       pickModel();
       c.contextWindow = 8192;
   }

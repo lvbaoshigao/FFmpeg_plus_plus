@@ -66,7 +66,7 @@ class _OutputStepEditorState extends State<OutputStepEditor> with StepEditorStat
   String _previewFullPath() {
     final dir = (p['output_dir'] as String? ?? '').isEmpty
         ? (widget.defaultOutputDir.isEmpty ? '(${widget.isZh ? "源文件目录" : "source dir"})' : widget.defaultOutputDir)
-        : p['output_dir'] as String;
+        : (p['output_dir'] as String? ?? '');
     final sep = Platform.pathSeparator;
     return '$dir$sep${_previewFilename()}';
   }
@@ -90,11 +90,11 @@ class _OutputStepEditorState extends State<OutputStepEditor> with StepEditorStat
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        _buildDropdown(label: zh ? '输出格式' : 'Format', value: p['format'] as String, items: _formats,
+        _buildDropdown(label: zh ? '输出格式' : 'Format', value: p['format'] as String? ?? 'keep', items: _formats,
           itemLabels: zh ? const ['保持原格式', 'MP4', 'MKV', 'MOV', 'AVI', 'WEBM'] : const ['Keep Original', 'MP4', 'MKV', 'MOV', 'AVI', 'WEBM'],
           cs: cs, onChanged: (v) { setState(() => p['format'] = v); widget.onChanged(); }),
         const SizedBox(height: 8),
-        _buildDropdown(label: zh ? '命名方式' : 'Naming', value: p['naming_mode'] as String, items: _namingModes,
+        _buildDropdown(label: zh ? '命名方式' : 'Naming', value: p['naming_mode'] as String? ?? 'keep', items: _namingModes,
           itemLabels: zh ? const ['保持原名', '添加后缀', '自定义名称'] : const ['Keep Original', 'Add Suffix', 'Custom Name'],
           cs: cs, onChanged: (v) {
             setState(() => p['naming_mode'] = v);

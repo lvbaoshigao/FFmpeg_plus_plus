@@ -11,10 +11,12 @@ import '../theme/app_semantic_colors.dart';
 import '../theme/app_strings.dart';
 import '../theme/settings_typography.dart';
 import '../widgets/app_card.dart';
-import '../widgets/app_slider.dart';
+import '../widgets/liquid_modality_pills.dart';
+import '../widgets/liquid_stretch_tabs.dart';
 import '../widgets/mobile_glass_pill.dart';
 import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_ui.dart';
+import '../widgets/model_editor_sheet.dart';
 import '../widgets/option_menu_bar.dart';
 import '../widgets/toast.dart';
 import '../widgets/wallpaper_background.dart';
@@ -144,13 +146,173 @@ List<String> _chipModels(AiProfile p, String query) {
 /// - MCP 服务 / 权限 / 高级（搜索态下自动收起，专注结果）。
 Widget mobileAiSettingsContent(BuildContext ctx, AppState state) {
   return Consumer<AppState>(
-    builder: (context, state, _) => _MobileAiSettingsView(state: state),
+    builder: (context, state, _) => _MobileAiSettingsOverview(state: state),
   );
+}
+
+/// 「MCP / AI」一级页：提供商只保留一个入口，点进去才是提供商列表二级页。
+class MobileAiProvidersPage extends StatelessWidget {
+  final AppState state;
+
+  const MobileAiProvidersPage({super.key, required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = AppStrings.of(state.config.language);
+    return withWallpaper(
+      context,
+      Scaffold(
+        backgroundColor: Colors.transparent,
+        body: SafeArea(
+          bottom: false,
+          child: Column(
+            children: [
+              MobileSubPageTopBar(
+                title: Text(s.aiProviders),
+                onBack: () => Navigator.of(context).maybePop(),
+              ),
+              Expanded(
+                child: SingleChildScrollView(
+                  child: _MobileAiSettingsView(
+                    state: state,
+                    showHeroTitle: false,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MobileAiSettingsOverview extends StatelessWidget {
+  final AppState state;
+
+  const _MobileAiSettingsOverview({required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final cfg = state.config;
+    final s = AppStrings.of(cfg.language);
+    final scheme = Theme.of(context).colorScheme;
+    final totalModels = cfg.aiProfiles.fold<int>(
+      0,
+      (n, p) => n + _modelCount(p),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+          child: _AiProvidersHero(
+            showTitle: false,
+            cfg: cfg,
+            s: s,
+            scheme: scheme,
+            providerCount: cfg.aiProfiles.length,
+            modelCount: totalModels,
+            onAiEnabledChanged: (v) =>
+                state.updateConfig((c) => c..aiEnabled = v),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: _AiProviderEntry(cfg: cfg, state: state, s: s, scheme: scheme),
+        ),
+        const SizedBox(height: 16),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: _McpSection(cfg: cfg, s: s, state: state, scheme: scheme),
+        ),
+        const SizedBox(height: 12),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: _PermissionsSection(cfg: cfg, s: s, state: state),
+        ),
+        const SizedBox(height: 12),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: _AdvancedSection(cfg: cfg, s: s, scheme: scheme),
+        ),
+        const SizedBox(height: 24),
+      ],
+    );
+  }
+}
+
+/// 一级页的「提供商」入口；列表、搜索、添加全部在二级页。
+class _AiProviderEntry extends StatelessWidget {
+  final AppConfig cfg;
+  final AppState state;
+  final AppStrings s;
+  final ColorScheme scheme;
+
+  const _AiProviderEntry({
+    required this.cfg,
+    required this.state,
+    required this.s,
+    required this.scheme,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final active = cfg.aiProfiles
+        .where((p) => p.id == cfg.activeAiProfileId)
+        .firstOrNull;
+    final look = active == null
+        ? _ProviderLook(Icons.auto_awesome_outlined, scheme.primary)
+        : _providerLook(active, scheme);
+    return AppCard(
+      style: cfg.cardStyle,
+      child: ListTile(
+        contentPadding: const EdgeInsets.fromLTRB(14, 2, 8, 2),
+        leading: Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: look.color.withAlpha(28),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(look.icon, size: 19, color: look.color),
+        ),
+        title: Text(
+          s.aiProviders,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: scheme.onSurface,
+          ),
+        ),
+        subtitle: Text(
+          active == null
+              ? s.aiNoProviders
+              : '${active.name} · ${s.aiModelCount(_modelCount(active))}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: SettingsTypography.description.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        trailing: Icon(Icons.chevron_right, size: 20, color: scheme.outline),
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              allowSnapshotting: false,
+              builder: (_) => MobileAiProvidersPage(state: state),
+            ),
+          );
+        },
+      ),
+    );
+  }
 }
 
 class _MobileAiSettingsView extends StatefulWidget {
   final AppState state;
-  const _MobileAiSettingsView({required this.state});
+  final bool showHeroTitle;
+  const _MobileAiSettingsView({required this.state, this.showHeroTitle = true});
 
   @override
   State<_MobileAiSettingsView> createState() => _MobileAiSettingsViewState();
@@ -279,6 +441,7 @@ class _MobileAiSettingsViewState extends State<_MobileAiSettingsView> {
               : Padding(
                   padding: const EdgeInsets.fromLTRB(12, 6, 12, 14),
                   child: _AiProvidersHero(
+                    showTitle: widget.showHeroTitle,
                     cfg: cfg,
                     s: s,
                     scheme: scheme,
@@ -399,15 +562,6 @@ class _MobileAiSettingsViewState extends State<_MobileAiSettingsView> {
             onTap: _openNewProvider,
           ),
         ),
-        if (!searchingMode) ...[
-          const SizedBox(height: 16),
-          // MCP 是本页的另一个核心：放在提供商之后，避免用户滚动很久才看到。
-          _McpSection(cfg: cfg, s: s, state: state, scheme: scheme),
-          const SizedBox(height: 12),
-          _PermissionsSection(cfg: cfg, s: s, state: state),
-          const SizedBox(height: 12),
-          _AdvancedSection(cfg: cfg, s: s, scheme: scheme),
-        ],
         const SizedBox(height: 28),
       ],
     );
@@ -425,8 +579,10 @@ class _AiProvidersHero extends StatelessWidget {
   final int providerCount;
   final int modelCount;
   final ValueChanged<bool> onAiEnabledChanged;
+  final bool showTitle;
 
   const _AiProvidersHero({
+    this.showTitle = true,
     required this.cfg,
     required this.s,
     required this.scheme,
@@ -445,26 +601,28 @@ class _AiProvidersHero extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                s.aiProviders,
-                style: TextStyle(
-                  fontSize: 26,
-                  height: 1.12,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.3,
-                  color: scheme.onSurface,
+              if (showTitle) ...[
+                Text(
+                  s.aiProviders,
+                  style: TextStyle(
+                    fontSize: 26,
+                    height: 1.12,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.3,
+                    color: scheme.onSurface,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                s.aiProvidersSubtitle,
-                style: TextStyle(
-                  fontSize: 13,
-                  height: 1.4,
-                  color: scheme.onSurfaceVariant,
+                const SizedBox(height: 6),
+                Text(
+                  s.aiProvidersSubtitle,
+                  style: TextStyle(
+                    fontSize: 13,
+                    height: 1.4,
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
+                const SizedBox(height: 12),
+              ],
               Wrap(
                 spacing: 7,
                 runSpacing: 6,
@@ -1061,7 +1219,6 @@ class _CurrentBadge extends StatelessWidget {
 /// 与本页其余自定义胶囊（模型 chip、状态胶囊）是两套视觉语言。
 class _AiToggleChip extends StatelessWidget {
   final String label;
-  final IconData? icon;
   final bool selected;
   final ColorScheme scheme;
   final bool isDark;
@@ -1073,7 +1230,6 @@ class _AiToggleChip extends StatelessWidget {
     required this.scheme,
     required this.isDark,
     required this.onTap,
-    this.icon,
   });
 
   @override
@@ -1105,10 +1261,6 @@ class _AiToggleChip extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (icon != null) ...[
-                Icon(icon, size: 12, color: color),
-                const SizedBox(width: 4),
-              ],
               Text(
                 label,
                 style: TextStyle(
@@ -2037,7 +2189,11 @@ class _MobileAiProviderDetailPageState
       } else {
         _draft = AiProfile();
         _forcedNew = true;
+        applyProfilePreset(_draft, _selectedPreset);
       }
+    } else if (_draft.apiUrl.isEmpty) {
+      // 新建提供商时直接带出常用端点和自动请求路径；用户仍可修改。
+      applyProfilePreset(_draft, _selectedPreset);
     }
   }
 
@@ -2231,79 +2387,25 @@ class _MobileAiProviderDetailPageState
   /// 出现两种导航层级。选中态只叠加一层主题色薄底，药丸本体仍由 pillStyle
   /// 决定（液态玻璃 / 模糊 / 主题色 / 灰色）。
   Widget _buildTopTabPill(AppConfig cfg, ColorScheme scheme, AppStrings s) {
-    final tabs = [
-      (Icons.tune_rounded, s.aiBasic),
-      (Icons.widgets_outlined, s.aiModelsTab),
-    ];
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-      child: SizedBox(
+      child: LiquidStretchTabs(
+        key: const ValueKey('ai_provider_top_tabs'),
+        style: cfg.pillStyle,
         height: 42,
-        child: MobileGlassPill(
-          key: const ValueKey('ai_provider_top_tabs'),
-          style: cfg.pillStyle,
-          radius: 21,
-          height: 42,
-          padding: const EdgeInsets.all(3),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              for (var i = 0; i < tabs.length; i++)
-                Expanded(
-                  child: Semantics(
-                    button: true,
-                    selected: _tab == i,
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(18),
-                      onTap: () {
-                        if (_tab != i) setState(() => _tab = i);
-                      },
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 180),
-                        curve: Curves.easeOutCubic,
-                        decoration: BoxDecoration(
-                          color: _tab == i
-                              ? scheme.primary.withAlpha(isDark ? 54 : 34)
-                              : Colors.transparent,
-                          borderRadius: BorderRadius.circular(18),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              tabs[i].$1,
-                              size: 15,
-                              color: _tab == i
-                                  ? scheme.primary
-                                  : scheme.onSurfaceVariant,
-                            ),
-                            const SizedBox(width: 5),
-                            Flexible(
-                              child: Text(
-                                tabs[i].$2,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 12.5,
-                                  fontWeight: _tab == i
-                                      ? FontWeight.w600
-                                      : FontWeight.w500,
-                                  color: _tab == i
-                                      ? scheme.primary
-                                      : scheme.onSurfaceVariant,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-            ],
+        radius: 21,
+        semanticsLabel: '${s.aiBasic} / ${s.aiModelsTab}',
+        selectedIndex: _tab,
+        onChanged: (index) {
+          if (_tab != index) setState(() => _tab = index);
+        },
+        tabs: [
+          LiquidStretchTab(icon: Icons.tune_rounded, label: s.aiBasic),
+          LiquidStretchTab(
+            icon: Icons.widgets_outlined,
+            label: s.aiModelsTab,
           ),
-        ),
+        ],
       ),
     );
   }
@@ -2408,7 +2510,24 @@ class _MobileAiProviderDetailPageState
                   ('openai', isZh ? 'OpenAI 兼容' : 'OpenAI', Icons.hub_outlined),
                   ('anthropic', 'Anthropic', Icons.psychology_outlined),
                 ],
-                onSelected: (v) => _mutateDraft((d) => d..provider = v),
+                onSelected: (v) => _mutateDraft((d) {
+                  d.provider = v;
+                  // 请求路径通常由供应商格式自动决定；只有用户手工填过特殊
+                  // 路径时才保留，不覆盖自定义值。
+                  const known = {
+                    '',
+                    '/chat/completions',
+                    '/messages',
+                    '/responses',
+                  };
+                  if (known.contains(d.apiPath.trim())) {
+                    d.apiPath = v == 'anthropic'
+                        ? '/messages'
+                        : (d.useResponsesApi
+                              ? '/responses'
+                              : '/chat/completions');
+                  }
+                }),
               ),
               const _AiDivider(),
               // Response API（/responses）
@@ -2461,6 +2580,26 @@ class _MobileAiProviderDetailPageState
                 s: s,
                 scheme: scheme,
                 url: _draft.effectiveUrl,
+              ),
+              // 测试连接属于辅助操作，收成一行小文字按钮，不再用整行
+              // 主按钮压在页面底部；请求路径此时已经由预设自动填好。
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
+                    minimumSize: const Size(0, 44),
+                  ),
+                  icon: const Icon(Icons.wifi_tethering, size: 14),
+                  label: Text(s.aiPing, style: const TextStyle(fontSize: 11)),
+                  onPressed: () {
+                    _syncToDefaults();
+                    pingAi(context, state, s);
+                  },
+                ),
               ),
               _AiLabeledField(
                 label: 'API Key',
@@ -2570,21 +2709,6 @@ class _MobileAiProviderDetailPageState
             ),
             const SizedBox(height: 10),
           ],
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              style: AppControlSize.large.buttonStyle(),
-              icon: Icon(
-                Icons.wifi_tethering,
-                size: AppControlSize.large.iconSize,
-              ),
-              label: Text(s.aiPing, style: const TextStyle(fontSize: 12)),
-              onPressed: () {
-                _syncToDefaults();
-                pingAi(context, state, s);
-              },
-            ),
-          ),
         ],
       ),
     );
@@ -2604,29 +2728,85 @@ class _MobileAiProviderDetailPageState
     );
   }
 
-  /// 打开单个模型的生成参数设置（二级菜单）。
-  Future<void> _openModelSettings(
+  /// 打开单个模型的底部编辑面板（替代旧的全屏二级页）。
+  Future<void> _openModelSheet(
     BuildContext context,
     AppStrings s,
-    int index,
-  ) async {
-    final defaults = (
-      contextWindow: _draft.contextWindow,
-      maxTokens: _draft.maxTokens,
-      temperature: _draft.temperature,
-    );
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        allowSnapshotting: false,
-        builder: (_) => MobileModelSettingsPage(
-          entry: _draft.models[index],
-          defaultContextWindow: defaults.contextWindow,
-          defaultMaxTokens: defaults.maxTokens,
-          defaultTemperature: defaults.temperature,
-          onChanged: (e) => _mutateDraft((d) => d.models[index] = e),
+    int index, {
+    bool isNew = false,
+  }) async {
+    final AiModelEntry original = isNew
+        ? AiModelEntry(id: '')
+        : _draft.models[index];
+    final AppState state = context.read<AppState>();
+    final AiModelEntry? result = await showModalBottomSheet<AiModelEntry>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Theme.of(context).colorScheme.scrim.withValues(alpha: 0.45),
+      builder: (_) => ChangeNotifierProvider<AppState>.value(
+        value: state,
+        child: ModelEditorSheet(
+          entry: original.copy(),
+          isNew: isNew,
+          defaultContextWindow: _draft.contextWindow,
+          defaultMaxTokens: _draft.maxTokens,
+          defaultTemperature: _draft.temperature,
+          isZh: s.isZh,
+          cardStyle: state.config.cardStyle,
+          pillStyle: state.config.pillStyle,
+          takenIds: _draft.models
+              .where((m) => isNew || m.id != original.id)
+              .map((m) => m.id)
+              .toSet(),
         ),
       ),
     );
+    if (result == null || !mounted) return;
+    final String oldId = original.id;
+    _mutateDraft((d) {
+      final int target = isNew
+          ? -1
+          : d.models.indexWhere((m) => m.id == oldId);
+      if (isNew || target < 0) {
+        d.models.add(result);
+      } else {
+        d.models[target] = result;
+        if (d.model == oldId) d.model = result.id;
+      }
+    });
+  }
+
+  /// 删除单个模型（行尾菜单触发；先确认再写入草稿）。
+  Future<void> _removeModel(AppStrings s, AiModelEntry entry) async {
+    final scheme = Theme.of(context).colorScheme;
+    final bool? ok = await showDialog<bool>(
+      context: context,
+      builder: (dCtx) => AlertDialog(
+        title: Text(
+          s.isZh ? '删除模型？' : 'Delete model?',
+          style: TextStyle(color: scheme.onSurface, fontSize: 15),
+        ),
+        content: Text(entry.label, style: const TextStyle(fontSize: 13)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx, false),
+            child: Text(s.cancel),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx, true),
+            child: Text(s.remove, style: TextStyle(color: scheme.error)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final String id = entry.id;
+    _mutateDraft((d) {
+      d.models.removeWhere((m) => m.id == id);
+      if (d.model == id) d.model = d.models.firstOrNull?.id ?? '';
+    });
   }
 
   // ── Tab 2：模型 ──
@@ -2640,82 +2820,11 @@ class _MobileAiProviderDetailPageState
     final cfg = state.config;
     final models = _draft.models;
     final isZh = s.isZh;
-    // 模型可能上百条（例如从 OpenRouter 拉取）：改用 builder 惰性构建，
-    // 每帧只为视口内的卡片创建 widget。
     final hasModels = models.isNotEmpty;
-    // 空列表时 index 0 是占位卡；末位固定是操作行。
-    final itemCount = (hasModels ? models.length : 1) + 1;
-
-    Widget buildActions() => Padding(
-      padding: const EdgeInsets.only(top: 4),
-      child: Row(
-        children: [
-          Expanded(
-            child: OutlinedButton.icon(
-              style: AppControlSize.comfortable.buttonStyle(),
-              icon: _fetchingModels
-                  ? const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Icon(
-                      Icons.cloud_download_outlined,
-                      size: AppControlSize.comfortable.iconSize,
-                    ),
-              label: Text(
-                isZh ? '获取' : 'Fetch',
-                style: const TextStyle(fontSize: 12),
-              ),
-              onPressed: _fetchingModels
-                  ? null
-                  : () => _fetchModels(context, state, s),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: FilledButton.tonalIcon(
-              style: AppControlSize.comfortable.buttonStyle(filled: true),
-              icon: Icon(Icons.add, size: AppControlSize.comfortable.iconSize),
-              label: Text(
-                isZh ? '添加新…' : 'Add new…',
-                style: const TextStyle(fontSize: 12),
-              ),
-              onPressed: () => _addModel(s),
-            ),
-          ),
-          if (hasModels) ...[
-            const SizedBox(width: 8),
-            SizedBox(
-              width: AppControlSize.comfortable.height,
-              height: AppControlSize.comfortable.height,
-              child: IconButton(
-                tooltip: isZh ? '清空模型列表' : 'Clear models',
-                icon: Icon(
-                  Icons.delete_outline,
-                  size: AppControlSize.comfortable.iconSize,
-                  color: scheme.error,
-                ),
-                padding: EdgeInsets.zero,
-                constraints: BoxConstraints.tightFor(
-                  width: AppControlSize.comfortable.height,
-                  height: AppControlSize.comfortable.height,
-                ),
-                style: IconButton.styleFrom(
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(
-                      AppControlSize.comfortable.radius,
-                    ),
-                  ),
-                ),
-                onPressed: () => _mutateDraft((d) => d.models.clear()),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-
+    // 头部（统计 + 云端获取） + 每个模型一行 + 「添加自定义模型 →」。
+    // 模型可能上百条（例如从 OpenRouter 拉取）：仍用 builder 惰性构建，
+    // 每帧只为视口内的行创建 widget。
+    final itemCount = models.length + 2;
     return ListView.builder(
       key: const ValueKey('ai_provider_models'),
       // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
@@ -2724,47 +2833,154 @@ class _MobileAiProviderDetailPageState
       itemCount: itemCount,
       addAutomaticKeepAlives: false,
       itemBuilder: (_, index) {
-        if (!hasModels && index == 0) {
-          return _AiSectionCard(
-            cardStyle: cfg.cardStyle,
-            icon: Icons.widgets_outlined,
-            title: isZh ? '模型' : 'Models',
-            children: [
-              Text(
-                isZh
-                    ? '还没有模型。点下方「获取」从供应商拉取列表，或「添加新…」手动填写。'
-                    : 'No models yet. Use "Fetch" to load from the provider, or "Add new…".',
-                style: SettingsTypography.description.copyWith(
-                  color: scheme.onSurfaceVariant,
+        if (index == 0) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SettingsSectionHeading(
+                  title: isZh ? '模型' : 'Models',
+                  icon: Icons.widgets_outlined,
                 ),
-              ),
-            ],
+                AppCard(
+                  style: cfg.cardStyle,
+                  radius: 20,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          hasModels
+                              ? (isZh
+                                    ? '共 ${models.length} 个模型'
+                                    : '${models.length} ${models.length == 1 ? 'model' : 'models'}')
+                              : (isZh
+                                    ? '还没有模型。从云端获取，或手动添加一个。'
+                                    : 'No models yet. Fetch from the cloud or add one.'),
+                          style: SettingsTypography.description.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                style: AppControlSize.comfortable.buttonStyle(),
+                                icon: _fetchingModels
+                                    ? const SizedBox(
+                                        width: 14,
+                                        height: 14,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : Icon(
+                                        Icons.cloud_download_outlined,
+                                        size:
+                                            AppControlSize.comfortable.iconSize,
+                                      ),
+                                label: Text(
+                                  isZh ? '从云端获取模型列表' : 'Fetch models',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                                onPressed: _fetchingModels
+                                    ? null
+                                    : () => _fetchModels(context, state, s),
+                              ),
+                            ),
+                            if (hasModels) ...[
+                              const SizedBox(width: 8),
+                              SizedBox(
+                                width: AppControlSize.comfortable.height,
+                                height: AppControlSize.comfortable.height,
+                                child: IconButton(
+                                  tooltip: isZh ? '清空模型列表' : 'Clear models',
+                                  icon: Icon(
+                                    Icons.delete_sweep_outlined,
+                                    size:
+                                        AppControlSize.comfortable.iconSize,
+                                    color: scheme.error,
+                                  ),
+                                  padding: EdgeInsets.zero,
+                                  constraints: BoxConstraints.tightFor(
+                                    width: AppControlSize.comfortable.height,
+                                    height: AppControlSize.comfortable.height,
+                                  ),
+                                  onPressed: () => _clearModels(s),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
           );
         }
-        if (index == itemCount - 1) return buildActions();
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: _AiModelCard(
-            cardStyle: cfg.cardStyle,
-            entry: models[index],
-            isActive: models[index].id == _draft.model,
-            isZh: isZh,
-            onUse: () => _mutateDraft((d) => d..model = models[index].id),
-            // 点击模型卡片 → 进入该模型的生成参数设置（二级菜单）
-            onOpen: () => _openModelSettings(context, s, index),
-            onToggleCapability: (cap, on) => _mutateDraft((d) {
-              final caps = d.models[index].capabilities;
-              if (on) {
-                if (!caps.contains(cap)) caps.add(cap);
-              } else {
-                caps.remove(cap);
-              }
-            }),
-            onRemove: () => _mutateDraft((d) => d.models.removeAt(index)),
-          ),
+        if (index <= models.length) {
+          final int i = index - 1;
+          final AiModelEntry entry = models[i];
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: _AiModelRow(
+              cardStyle: cfg.cardStyle,
+              entry: entry,
+              isActive: entry.id == _draft.model,
+              isZh: isZh,
+              onOpen: () => _openModelSheet(context, s, i),
+              onUse: () => _mutateDraft((d) => d..model = entry.id),
+              onDelete: () => _removeModel(s, entry),
+            ),
+          );
+        }
+        return _AddCustomModelRow(
+          cardStyle: cfg.cardStyle,
+          isZh: isZh,
+          onTap: () => _openModelSheet(context, s, 0, isNew: true),
         );
       },
     );
+  }
+
+  /// 清空模型列表（先确认，避免误触把云端拉取的数百条一次清掉）。
+  Future<void> _clearModels(AppStrings s) async {
+    final scheme = Theme.of(context).colorScheme;
+    final bool? ok = await showDialog<bool>(
+      context: context,
+      builder: (dCtx) => AlertDialog(
+        title: Text(
+          s.isZh ? '清空模型列表？' : 'Clear all models?',
+          style: TextStyle(color: scheme.onSurface, fontSize: 15),
+        ),
+        content: Text(
+          s.aiModelCount(_draft.models.length),
+          style: const TextStyle(fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx, false),
+            child: Text(s.cancel),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx, true),
+            child: Text(s.remove, style: TextStyle(color: scheme.error)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    _mutateDraft((d) {
+      d.models.clear();
+      d.model = '';
+    });
   }
 
   // ── 编辑动作 ──
@@ -2818,30 +3034,6 @@ class _MobileAiProviderDetailPageState
     _mutateDraft((d) => d..customHeaders = map);
   }
 
-  /// 手动添加模型。body 里的 [context] 即 State.context（await 后的
-  /// 使用点均有 mounted 守卫，满足 use_build_context_synchronously）。
-  Future<void> _addModel(AppStrings s) async {
-    final v = await _promptText(
-      context,
-      title: s.isZh ? '添加模型' : 'Add Model',
-      initial: '',
-      hint: s.isZh ? '输入供应商提供的模型 ID' : 'Enter a model ID from your provider',
-      s: s,
-    );
-    final id = v?.trim() ?? '';
-    if (id.isEmpty) return;
-    if (_draft.models.any((m) => m.id == id)) {
-      if (!mounted) return;
-      showToast(
-        context,
-        s.isZh ? '该模型已存在' : 'Model already exists',
-        type: ToastType.warning,
-      );
-      return;
-    }
-    _mutateDraft((d) => d.models.add(AiModelEntry(id: id)));
-  }
-
   /// 从供应商拉取模型列表，合并进草稿（保留已有能力标记）。
   Future<void> _fetchModels(
     BuildContext context,
@@ -2868,11 +3060,17 @@ class _MobileAiProviderDetailPageState
               if (id.trim().isEmpty) continue;
               // add 返回 false 表示已有，顺带过滤 ids 自身的重复项
               if (!existing.add(id)) continue;
+              // 依据模型名推断能力，作为初值；模态与能力保持兼容
+              // （vision 能力同时把 image 放进输入模态）。
+              final List<String> caps = _guessCapabilities(id);
               d.models.add(
                 AiModelEntry(
                   id: id,
-                  // 依据模型名推断能力，用户可再手动勾选
-                  capabilities: _guessCapabilities(id),
+                  capabilities: caps,
+                  inputModalities: caps.contains(AiModelCapability.vision)
+                      ? const [LiquidModalities.text, LiquidModalities.image]
+                      : const [LiquidModalities.text],
+                  outputModalities: const [LiquidModalities.text],
                 ),
               );
             }
@@ -3124,138 +3322,218 @@ class _AiSwitchRow extends StatelessWidget {
   }
 }
 
-/// 模型条目卡：模型名 + 能力 chips + 「设为当前 / 移除」。
-class _AiModelCard extends StatelessWidget {
+/// 模态 → (显示名, 图标)。模型行摘要与底部编辑面板共用。
+(String, IconData) _modalityLabel(String modality, bool isZh) =>
+    switch (modality) {
+      LiquidModalities.text => (
+        isZh ? '文本' : 'Text',
+        Icons.text_fields_rounded,
+      ),
+      LiquidModalities.image => (isZh ? '图像' : 'Image', Icons.image_outlined),
+      LiquidModalities.voice => (isZh ? '语音' : 'Voice', Icons.graphic_eq_rounded),
+      _ => (modality, Icons.label_outline),
+    };
+
+String _modalitySummary(AiModelEntry entry, bool isZh) {
+  String join(List<String> values) => values
+      .map((value) => _modalityLabel(value, isZh).$1)
+      .join(isZh ? ' · ' : ' · ');
+  return '${join(entry.inputModalities)} → ${join(entry.outputModalities)}';
+}
+
+enum _ModelRowAction { use, edit, delete }
+
+/// 模型行（设计稿的 GPT-6 / Claude-opus 样式）：
+/// 显示名称（空则回退 id；两者都有时 id 作为副标题）+ 模态摘要 + kebab 菜单。
+///
+/// 不做成固定高度：显示名称、副标题、模态摘要都可缺省，行高由内容自然撑开，
+/// 也兼容大字号 / 窄屏换行。
+class _AiModelRow extends StatelessWidget {
   final String cardStyle;
   final AiModelEntry entry;
   final bool isActive;
   final bool isZh;
-  final VoidCallback onUse;
-
-  /// 点击卡片主体 → 打开该模型的生成参数设置（二级菜单）。
   final VoidCallback onOpen;
-  final void Function(String capability, bool enabled) onToggleCapability;
-  final VoidCallback onRemove;
+  final VoidCallback onUse;
+  final VoidCallback onDelete;
 
-  const _AiModelCard({
+  const _AiModelRow({
     required this.cardStyle,
     required this.entry,
     required this.isActive,
     required this.isZh,
-    required this.onUse,
     required this.onOpen,
-    required this.onToggleCapability,
-    required this.onRemove,
+    required this.onUse,
+    required this.onDelete,
   });
-
-  /// 能力 → (显示名, 图标)。
-  static (String, IconData) _capLabel(String cap, bool isZh) => switch (cap) {
-    AiModelCapability.chat => (isZh ? '聊天' : 'Chat', Icons.chat_bubble_outline),
-    AiModelCapability.vision => (isZh ? '视觉' : 'Vision', Icons.image_outlined),
-    AiModelCapability.tools => (isZh ? '工具' : 'Tools', Icons.handyman_outlined),
-    AiModelCapability.embedding => (
-      isZh ? '嵌入' : 'Embed',
-      Icons.scatter_plot_outlined,
-    ),
-    AiModelCapability.reasoning => (
-      isZh ? '推理' : 'Reason',
-      Icons.psychology_outlined,
-    ),
-    _ => (cap, Icons.label_outline),
-  };
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final hasParams =
-        entry.contextWindow != null ||
-        entry.maxTokens != null ||
-        entry.temperature != null;
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final bool hasIdSubtitle = entry.displayName.trim().isNotEmpty;
     return AppCard(
+      key: ValueKey('model_row_${entry.id}'),
       style: cardStyle,
       radius: 16,
       onTap: onOpen,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+        child: Row(
           children: [
-            Row(
-              children: [
-                Icon(
-                  isActive
-                      ? Icons.radio_button_checked
-                      : Icons.radio_button_off,
-                  size: 16,
-                  color: isActive ? scheme.primary : scheme.outline,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    entry.id,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
-                      color: scheme.onSurface,
-                    ),
-                  ),
-                ),
-                if (isActive) ...[
-                  const SizedBox(width: 4),
-                  _CurrentBadge(label: isZh ? '当前' : 'Current', scheme: scheme),
-                ],
-                if (hasParams)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 4),
-                    child: Tooltip(
-                      message: isZh
-                          ? '该模型已单独设置生成参数'
-                          : 'Per-model generation params set',
-                      child: Icon(Icons.tune, size: 14, color: scheme.primary),
-                    ),
-                  ),
-                if (!isActive) ...[
-                  TextButton(
-                    onPressed: onUse,
-                    style: TextButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      minimumSize: const Size(0, 32),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    child: Text(
-                      isZh ? '使用' : 'Use',
-                      style: const TextStyle(fontSize: 11),
-                    ),
-                  ),
-                  const SizedBox(width: 2),
-                ],
-                SizedBox.square(
-                  dimension: 34,
-                  child: IconButton(
-                    icon: Icon(Icons.close, size: 15, color: scheme.outline),
-                    tooltip: isZh ? '移除' : 'Remove',
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints.tightFor(
-                      width: 34,
-                      height: 34,
-                    ),
-                    onPressed: onRemove,
-                  ),
-                ),
-              ],
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: scheme.primary.withAlpha(isDark ? 26 : 16),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(
+                isActive ? Icons.smart_toy : Icons.smart_toy_outlined,
+                size: 17,
+                color: isActive ? scheme.primary : scheme.onSurfaceVariant,
+              ),
             ),
-            const SizedBox(height: 5),
-            // 能力标记：可点选，反映该模型支持的调用方式
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: [
-                for (final cap in AiModelCapability.all)
-                  _capChip(cap, scheme, isDark),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Opacity(
+                opacity: entry.enabled ? 1 : 0.6,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            entry.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w600,
+                              color: scheme.onSurface,
+                            ),
+                          ),
+                        ),
+                        if (isActive) ...[
+                          const SizedBox(width: 5),
+                          _CurrentBadge(
+                            label: isZh ? '当前' : 'Current',
+                            scheme: scheme,
+                          ),
+                        ],
+                        if (!entry.enabled) ...[
+                          const SizedBox(width: 5),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 5,
+                              vertical: 1,
+                            ),
+                            decoration: BoxDecoration(
+                              color: scheme.surfaceContainerHighest,
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                color: scheme.outlineVariant.withAlpha(90),
+                                width: 0.6,
+                              ),
+                            ),
+                            child: Text(
+                              isZh ? '已停用' : 'Off',
+                              style: TextStyle(
+                                fontSize: 9,
+                                height: 1.1,
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    if (hasIdSubtitle) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        entry.id,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 3),
+                    Text(
+                      _modalitySummary(entry, isZh),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 10.5, color: scheme.outline),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            PopupMenuButton<_ModelRowAction>(
+              key: ValueKey('model_menu_${entry.id}'),
+              tooltip: isZh ? '更多操作' : 'More actions',
+              icon: Icon(
+                Icons.more_vert,
+                size: 18,
+                color: scheme.onSurfaceVariant,
+              ),
+              padding: EdgeInsets.zero,
+              onSelected: (action) {
+                switch (action) {
+                  case _ModelRowAction.use:
+                    onUse();
+                  case _ModelRowAction.edit:
+                    onOpen();
+                  case _ModelRowAction.delete:
+                    onDelete();
+                }
+              },
+              itemBuilder: (context) => [
+                if (!isActive)
+                  PopupMenuItem<_ModelRowAction>(
+                    value: _ModelRowAction.use,
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.check_circle_outline,
+                          size: 17,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(isZh ? '设为当前模型' : 'Use as current'),
+                      ],
+                    ),
+                  ),
+                PopupMenuItem<_ModelRowAction>(
+                  value: _ModelRowAction.edit,
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.tune,
+                        size: 17,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(isZh ? '编辑模型' : 'Edit model'),
+                    ],
+                  ),
+                ),
+                PopupMenuItem<_ModelRowAction>(
+                  value: _ModelRowAction.delete,
+                  child: Row(
+                    children: [
+                      Icon(Icons.delete_outline, size: 17, color: scheme.error),
+                      const SizedBox(width: 8),
+                      Text(
+                        isZh ? '删除模型' : 'Delete model',
+                        style: TextStyle(color: scheme.error),
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
           ],
@@ -3263,17 +3541,48 @@ class _AiModelCard extends StatelessWidget {
       ),
     );
   }
+}
 
-  Widget _capChip(String cap, ColorScheme scheme, bool isDark) {
-    final (label, icon) = _capLabel(cap, isZh);
-    final selected = entry.capabilities.contains(cap);
-    return _AiToggleChip(
-      label: label,
-      icon: icon,
-      selected: selected,
-      scheme: scheme,
-      isDark: isDark,
-      onTap: () => onToggleCapability(cap, !selected),
+/// 「添加自定义模型 →」行：打开空条目的底部编辑面板。
+class _AddCustomModelRow extends StatelessWidget {
+  final String cardStyle;
+  final bool isZh;
+  final VoidCallback onTap;
+
+  const _AddCustomModelRow({
+    required this.cardStyle,
+    required this.isZh,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return AppCard(
+      key: const ValueKey('add_custom_model'),
+      style: cardStyle,
+      radius: 16,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+        child: Row(
+          children: [
+            Icon(Icons.add_circle_outline, size: 18, color: scheme.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                isZh ? '添加自定义模型' : 'Add custom model',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w500,
+                  color: scheme.primary,
+                ),
+              ),
+            ),
+            Icon(Icons.arrow_forward_rounded, size: 16, color: scheme.primary),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -3391,226 +3700,6 @@ class _MobileMultiKeyPageState extends State<MobileMultiKeyPage> {
                           ),
                         ),
                       ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// 单模型生成参数设置（点击模型卡片进入）。
-/// 留空 = 继承提供商默认值；填写后覆盖（请求时按当前模型取用）。
-class MobileModelSettingsPage extends StatefulWidget {
-  final AiModelEntry entry;
-  final int defaultContextWindow;
-  final int defaultMaxTokens;
-  final double defaultTemperature;
-  final ValueChanged<AiModelEntry> onChanged;
-
-  const MobileModelSettingsPage({
-    super.key,
-    required this.entry,
-    required this.defaultContextWindow,
-    required this.defaultMaxTokens,
-    required this.defaultTemperature,
-    required this.onChanged,
-  });
-
-  @override
-  State<MobileModelSettingsPage> createState() =>
-      _MobileModelSettingsPageState();
-}
-
-class _MobileModelSettingsPageState extends State<MobileModelSettingsPage> {
-  late final AiModelEntry _entry = widget.entry.copy();
-
-  void _commit() => widget.onChanged(_entry.copy());
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final cfg = context.read<AppState>().config;
-    // 语言用 select 订阅：read 只在本次 build 取快照，切语言后本页不重建。
-    final s = AppStrings.of(
-      context.select<AppState, String>((st) => st.config.language),
-    );
-    final clr = scheme.onSurface;
-    final zh = s.isZh;
-    final customTemp = _entry.temperature != null;
-
-    Widget field(String label, Widget child, {String? hint}) => Padding(
-      padding: const EdgeInsets.only(bottom: 18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: TextStyle(fontSize: 13, color: clr)),
-          if (hint != null) ...[
-            const SizedBox(height: 2),
-            Text(
-              hint,
-              style: SettingsTypography.description.copyWith(
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-          const SizedBox(height: 5),
-          child,
-        ],
-      ),
-    );
-
-    return withWallpaper(
-      context,
-      Scaffold(
-        backgroundColor: Colors.transparent,
-        body: SafeArea(
-          child: Column(
-            children: [
-              MobileSubPageTopBar(
-                title: Text(zh ? '模型设置' : 'Model Settings'),
-                onBack: () => Navigator.of(context).maybePop(),
-                actions: [
-                  // 恢复继承提供商默认
-                  if (customTemp ||
-                      _entry.contextWindow != null ||
-                      _entry.maxTokens != null)
-                    MobileGlassPillAction(
-                      icon: Icons.restart_alt,
-                      tooltip: zh ? '恢复继承默认' : 'Inherit defaults',
-                      color: scheme.onSurface,
-                      onTap: () => setState(() {
-                        _entry
-                          ..contextWindow = null
-                          ..maxTokens = null
-                          ..temperature = null;
-                        _commit();
-                      }),
-                    ),
-                ],
-              ),
-              Expanded(
-                child: ListView(
-                  // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
-                  addRepaintBoundaries: false,
-                  padding: MobileUi.subListPadding(top: 4, bottom: 16),
-                  children: [
-                    _AiSectionCard(
-                      cardStyle: cfg.cardStyle,
-                      icon: Icons.widgets_outlined,
-                      title: _entry.id,
-                      children: [
-                        field(
-                          zh ? '模型 ID' : 'Model ID',
-                          _AiField(
-                            value: _entry.id,
-                            scheme: scheme,
-                            onCommit: (v) {
-                              if (v.trim().isNotEmpty) {
-                                _entry.id = v.trim();
-                                _commit();
-                              }
-                            },
-                          ),
-                        ),
-                        field(
-                          s.aiContextWindow,
-                          _AiField(
-                            value: _entry.contextWindow?.toString() ?? '',
-                            scheme: scheme,
-                            keyboardType: TextInputType.number,
-                            hint: '${widget.defaultContextWindow}',
-                            onCommit: (v) {
-                              final n = int.tryParse(v);
-                              _entry.contextWindow = (n != null && n > 0)
-                                  ? n
-                                  : null;
-                              _commit();
-                            },
-                          ),
-                        ),
-                        field(
-                          s.aiMaxTokens,
-                          _AiField(
-                            value: _entry.maxTokens?.toString() ?? '',
-                            scheme: scheme,
-                            keyboardType: TextInputType.number,
-                            hint: '${widget.defaultMaxTokens}',
-                            onCommit: (v) {
-                              final n = int.tryParse(v);
-                              _entry.maxTokens = (n != null && n > 0)
-                                  ? n
-                                  : null;
-                              _commit();
-                            },
-                          ),
-                        ),
-                        field(
-                          s.aiTemperature,
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      customTemp
-                                          ? '${s.aiTemperature}: ${_entry.temperature!.toStringAsFixed(1)}'
-                                          : '${s.aiTemperature}: ${zh ? '继承默认' : 'Inherit'} (${widget.defaultTemperature.toStringAsFixed(1)})',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: clr,
-                                      ),
-                                    ),
-                                  ),
-                                  // 有自定义值时给一个快捷「回到继承默认」
-                                  if (customTemp)
-                                    TextButton(
-                                      onPressed: () => setState(() {
-                                        _entry.temperature = null;
-                                        _commit();
-                                      }),
-                                      style: TextButton.styleFrom(
-                                        visualDensity: VisualDensity.compact,
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 6,
-                                        ),
-                                      ),
-                                      child: Text(
-                                        zh ? '默认' : 'Default',
-                                        style: const TextStyle(fontSize: 11),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                              _TemperatureSlider(
-                                // 显示有效值；拖动即产生该模型的自定义温度
-                                value:
-                                    _entry.temperature ??
-                                    widget.defaultTemperature,
-                                scheme: scheme,
-                                onCommit: (v) {
-                                  setState(() => _entry.temperature = v);
-                                  _commit();
-                                },
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      zh
-                          ? '留空的项沿用提供商默认值；设置的值仅对当前选中的这个模型生效。'
-                          : 'Empty fields inherit provider defaults; overrides apply only to this model.',
-                      style: SettingsTypography.description.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
                     ),
                   ],
                 ),
@@ -4202,61 +4291,6 @@ class _AiFieldState extends State<_AiField> {
     return ConstrainedBox(
       constraints: BoxConstraints(minHeight: size.height),
       child: field,
-    );
-  }
-}
-
-/// 温度滑块（0-2，0.1 步进），提交式更新。
-class _TemperatureSlider extends StatefulWidget {
-  final double value;
-  final ColorScheme scheme;
-  final ValueChanged<double> onCommit;
-  const _TemperatureSlider({
-    required this.value,
-    required this.scheme,
-    required this.onCommit,
-  });
-
-  @override
-  State<_TemperatureSlider> createState() => _TemperatureSliderState();
-}
-
-class _TemperatureSliderState extends State<_TemperatureSlider> {
-  double? _drag;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = widget.scheme;
-    final v = (_drag ?? widget.value).clamp(0.0, 2.0);
-    return Row(
-      children: [
-        SizedBox(
-          width: 42,
-          child: Text(
-            v.toStringAsFixed(1),
-            style: TextStyle(
-              fontSize: 12,
-              color: scheme.onSurface,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-        Expanded(
-          // 统一滑杆样式；「拖动只改本地 _drag、松手 onChangeEnd 才提交」的节流语义
-          // 保持不变（这正是 AppSlider 推荐的用法）。
-          child: AppSlider(
-            value: v,
-            min: 0,
-            max: 2,
-            divisions: 20,
-            onChanged: (nv) => setState(() => _drag = nv),
-            onChangeEnd: (nv) {
-              widget.onCommit(nv);
-              setState(() => _drag = null);
-            },
-          ),
-        ),
-      ],
     );
   }
 }

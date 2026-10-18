@@ -10,6 +10,7 @@ import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../services/shell_open.dart';
 import '../services/thumbnail_service.dart';
+import '../theme/app_neutral_surface.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_strings.dart';
 import '../theme/app_theme.dart';
@@ -44,8 +45,18 @@ String taskActionLabel(String action, bool zh) => switch (action) {
   _ => zh ? '处理' : 'Process',
 };
 
+/// 暂停状态文案。
+///
+/// 为什么不在 AppStrings 里加 paused 词条：主题/文案层不在本次队列改造的
+/// 改动范围，而 TaskStatus.paused 必须立刻在所有 switch 里有文案。这里给出
+/// 一份共享词条，队列卡片、悬浮卡、详情面板统一引用，避免三处各写一遍中英文。
+String taskPausedLabel(bool zh) => zh ? '已暂停' : 'Paused';
+
 /// 迷你节点圆圈里的短标签：中文取前 2 字，英文取 action 前 3 字母大写。
 String taskActionAbbr(String action, bool zh) {
+  // 无流水线的单步任务在「运行节点视口」里会用一个合成节点（action 为空），
+  // 这里兜底文案，避免空字符串 sub- 越界/显示空白圆环。
+  if (action.isEmpty) return zh ? '处理' : 'RUN';
   if (zh) {
     final label = taskActionLabel(action, true);
     return label.substring(0, label.length >= 2 ? 2 : label.length);
@@ -131,6 +142,8 @@ class TaskCard extends StatelessWidget {
     String statusLabel() => switch (task.status) {
       TaskStatus.pending => s.pending,
       TaskStatus.processing => s.processing,
+      // AppStrings 里没有 paused（主题文件不在本次改动范围），用共享助手取词。
+      TaskStatus.paused => taskPausedLabel(s.isZh),
       TaskStatus.completed => s.completed,
       TaskStatus.failed => s.failed,
       TaskStatus.cancelled => s.cancelled,
@@ -211,8 +224,10 @@ class TaskCard extends StatelessWidget {
                                     '${s.qElapsed}: ${task.elapsed}',
                                     scheme,
                                   ),
-                                // 剩余时间紧跟状态：仅处理中有意义，等待/终态不占位
-                                if (task.status == TaskStatus.processing) ...[
+                                // 剩余时间紧跟状态：处理中/暂停中有意义（暂停时是
+                                // 冻结的预计剩余），等待/终态不占位
+                                if (task.status == TaskStatus.processing ||
+                                    task.status == TaskStatus.paused) ...[
                                   const SizedBox(width: 8),
                                   _chip(
                                     Icons.timer_outlined,
@@ -237,7 +252,38 @@ class TaskCard extends StatelessWidget {
                               .read<AppState>()
                               .processSingleTask(task.id),
                         ),
+                      // 运行中的任务：暂停 + 停止。两个都是紧凑文字按钮，
+                      // 移动端卡片宽度有限，放在状态行右侧（不会挤掉文件名）。
+                      // 暂停走真实的进程冻结（见 AppState.pauseTask）：如果当前
+                      // 没有可冻结的进程，按钮会给出失败提示而不是假装暂停。
                       if (task.status == TaskStatus.processing)
+                        TextButton.icon(
+                          icon: const Icon(Icons.pause, size: 14),
+                          label: Text(
+                            s.isZh ? '暂停' : 'Pause',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                          onPressed: () => _togglePause(context),
+                          style: TextButton.styleFrom(
+                            foregroundColor: scheme.sem.info,
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                          ),
+                        ),
+                      if (task.status == TaskStatus.paused)
+                        TextButton.icon(
+                          icon: const Icon(Icons.play_arrow, size: 14),
+                          label: Text(
+                            s.isZh ? '继续' : 'Resume',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                          onPressed: () => _togglePause(context),
+                          style: TextButton.styleFrom(
+                            foregroundColor: scheme.sem.success,
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                          ),
+                        ),
+                      if (task.status == TaskStatus.processing ||
+                          task.status == TaskStatus.paused)
                         TextButton.icon(
                           icon: const Icon(Icons.stop, size: 14),
                           label: Text(
@@ -301,8 +347,11 @@ class TaskCard extends StatelessWidget {
                       ),
                     ],
                   ),
-                  // 进度区：仅处理中/已完成显示（等待与终态不占位）
+                  // 进度区：处理中/已暂停/已完成显示（等待与终态不占位）。
+                  // 暂停也要显示：进度条冻结在暂停那一刻的位置，正是用户
+                  // 判断「该不该继续」的依据。
                   if (task.status == TaskStatus.processing ||
+                      task.status == TaskStatus.paused ||
                       task.status == TaskStatus.completed) ...[
                     const SizedBox(height: 10),
                     // 上层：整体进度（分段）。**只在流水线真的分多段时才画** ——
@@ -316,6 +365,7 @@ class TaskCard extends StatelessWidget {
                         // 8px：见 kQueueTrackHeight —— 不再是滑块的 16px 规格
                         height: kQueueTrackHeight,
                         done: task.status == TaskStatus.completed,
+                        paused: task.status == TaskStatus.paused,
                       ),
                       const SizedBox(height: kQueueTrackGap),
                     ],
@@ -323,8 +373,16 @@ class TaskCard extends StatelessWidget {
                     // 发过进度事件，callProgresses 停在 0 会显示成空条/不确定条）。
                     AppProgressBar(
                       height: kQueueTrackHeight,
+                      // 暂停时必须是**确定值**：null 会走不确定（无限滚动）动画，
+                      // 看起来像还在干活，与「已冻结」直接矛盾。
                       value: task.status == TaskStatus.completed
                           ? 1.0
+                          : task.status == TaskStatus.paused
+                          ? (task.callProgresses.isNotEmpty &&
+                                    task.currentCallIndex <
+                                        task.callProgresses.length
+                                ? task.callProgresses[task.currentCallIndex]
+                                : (task.progress / 100).clamp(0.0, 1.0))
                           : task.callProgresses.isNotEmpty &&
                                 task.currentCallIndex <
                                     task.callProgresses.length
@@ -425,6 +483,29 @@ class TaskCard extends StatelessWidget {
       task.status == TaskStatus.failed ||
       task.status == TaskStatus.cancelled;
 
+  /// 暂停 / 继续按钮的入口：调用真实的进程冻结 / 解冻。
+  ///
+  /// 失败（当前没有可冻结的进程）时给出 toast，而不是把状态改成 paused ——
+  /// 队列不允许出现「UI 显示已暂停、ffmpeg 还在跑」的假暂停。
+  Future<void> _togglePause(BuildContext context) async {
+    final state = context.read<AppState>();
+    final s = AppStrings.of(state.config.language);
+    final wasPaused = task.status == TaskStatus.paused;
+    final ok = wasPaused
+        ? await state.resumeTask(task.id)
+        : await state.pauseTask(task.id);
+    if (ok || !context.mounted) return;
+    showToast(
+      context,
+      wasPaused
+          ? (s.isZh ? '继续失败：任务进程已结束' : 'Resume failed: process is gone')
+          : (s.isZh
+                ? '当前无法暂停（没有可冻结的进程）'
+                : 'Cannot pause: no freezable process'),
+      type: ToastType.warning,
+    );
+  }
+
   /// 长按删除确认：只移除列表记录，不删除输出文件。
   void _confirmRemove(BuildContext context) {
     final s = AppStrings.of(context.read<AppState>().config.language);
@@ -475,12 +556,30 @@ class TaskCard extends StatelessWidget {
   //   ⑥ 命令与日志（可折叠，带复制）
   // ═══════════════════════════════════════════
 
-  Widget _expanded(BuildContext ctx, AppStrings s, ColorScheme scheme) {
+  Widget _expanded(
+    BuildContext ctx,
+    AppStrings s,
+    ColorScheme scheme, {
+    bool mobile = false,
+  }) {
     final zh = s.language == 'zh';
     final calls = task.pipelineCalls;
     final hasPipeline = calls != null && calls.isNotEmpty;
     final hasLogs =
         task.command != null || task.logLines.isNotEmpty || task.error != null;
+
+    // 移动端（底部详情面板）走另一套排布：顶部是「运行节点视口」，
+    // 下面把原有全部字段拆进「基本信息 / 高级」两栏，一个字段都不少。
+    // 桌面端保持原来的单列内联展开。
+    if (mobile) {
+      return _expandedMobile(
+        s,
+        scheme,
+        calls: calls ?? const <BackendCall>[],
+        hasPipeline: hasPipeline,
+        hasLogs: hasLogs,
+      );
+    }
 
     return Padding(
       // 12 与卡片自身的内边距对齐。旧实现外层 12、展开区内层 16，
@@ -579,6 +678,177 @@ class TaskCard extends StatelessWidget {
     );
   }
 
+  /// 移动端详情：顶部「运行节点视口」+ 基本信息 / 高级 两栏。
+  ///
+  /// 字段与桌面端完全一致（概览、错误、文件信息、技术参数、流水线、命令/日志），
+  /// 只是重新分组：左栏 = 基本信息（概览 / 文件 / 技术参数），
+  /// 右栏 = 高级（流水线全量节点 / 命令与日志）。
+  Widget _expandedMobile(
+    AppStrings s,
+    ColorScheme scheme, {
+    required List<BackendCall> calls,
+    required bool hasPipeline,
+    required bool hasLogs,
+  }) {
+    final zh = s.isZh;
+    final stats = <(String, String, IconData)>[
+      (s.qFps, _dashIfNa(task.fps, zh), Icons.videocam_outlined),
+      (s.qBitrate, _dashIfNa(task.bitrate, zh), Icons.trending_up),
+      (s.qSize, task.outputSize == null ? s.qNone : task.outputSizeStr, Icons.storage),
+      (s.qFrames, task.frame > 0 ? '${task.frame}' : s.qNone, Icons.filter_frames),
+    ];
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SizedBox(height: 4),
+          // ① 运行节点视口：类似地图，放大到正在处理的节点，
+          //    且视野必须包含所有运行中的节点（见 RunningNodeViewport）。
+          RunningNodeViewport(
+            calls: calls,
+            progresses: task.callProgresses,
+            currentIndex: task.currentCallIndex,
+            status: task.status,
+            progress: task.progress,
+            zh: zh,
+          ),
+          // ② 错误（仅失败）
+          if (task.status == TaskStatus.failed && task.error != null) ...[
+            const SizedBox(height: kQueuePanelGap),
+            _ErrorPanel(message: task.error!, scheme: scheme, s: s),
+          ],
+          const SizedBox(height: kQueuePanelGap),
+          // ③ 两栏：基本信息 / 高级
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: _detailColumn(
+                  title: zh ? '基本信息' : 'Basic info',
+                  icon: Icons.info_outline,
+                  scheme: scheme,
+                  children: [
+                    _SummaryBar(task: task, scheme: scheme, s: s),
+                    const SizedBox(height: 10),
+                    _SectionTitle(
+                      icon: Icons.folder_outlined,
+                      title: s.qFileInfo,
+                      scheme: scheme,
+                    ),
+                    const SizedBox(height: 6),
+                    _FileInfoPanel(task: task, s: s, scheme: scheme),
+                    const SizedBox(height: 10),
+                    _SectionTitle(
+                      icon: Icons.speed,
+                      title: s.qTechStats,
+                      scheme: scheme,
+                    ),
+                    const SizedBox(height: 6),
+                    _StatsGrid(stats: stats, scheme: scheme),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _detailColumn(
+                  title: zh ? '高级' : 'Advanced',
+                  icon: Icons.tune,
+                  scheme: scheme,
+                  children: [
+                    if (hasPipeline) ...[
+                      _SectionTitle(
+                        icon: Icons.account_tree,
+                        title: s.qPipeline,
+                        scheme: scheme,
+                        trailing: _CountBadge(
+                          text: '${calls.length} ${s.qSteps}',
+                          scheme: scheme,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      _PanelBox(
+                        padding: const EdgeInsets.all(10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _NodeTimeline(
+                              calls: calls,
+                              progresses: task.callProgresses,
+                              currentIndex: task.currentCallIndex,
+                              status: task.status,
+                              zh: zh,
+                            ),
+                            const SizedBox(height: 8),
+                            _PipelineLegend(scheme: scheme, s: s),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+                    if (hasLogs)
+                      _LogsPanel(
+                        command: task.command,
+                        logLines: task.logLines,
+                        error: task.error,
+                        scheme: scheme,
+                        s: s,
+                      )
+                    else
+                      _PanelBox(
+                        padding: const EdgeInsets.all(10),
+                        child: Text(
+                          zh ? '暂无命令或日志' : 'No command or logs',
+                          style: TextStyle(
+                            fontSize: kQueueFsLabel,
+                            color: scheme.outline,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 两栏布局里的单栏：栏标题 + 内容（宽度由外层 Expanded 决定）。
+  Widget _detailColumn({
+    required String title,
+    required IconData icon,
+    required ColorScheme scheme,
+    required List<Widget> children,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Icon(icon, size: 14, color: scheme.primary),
+            const SizedBox(width: 5),
+            Expanded(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: kQueueFsSection,
+                  fontWeight: FontWeight.w700,
+                  color: scheme.onSurface,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        ...children,
+      ],
+    );
+  }
+
   Widget _chip(IconData icon, String text, ColorScheme scheme) => Row(
     mainAxisSize: MainAxisSize.min,
     children: [
@@ -597,6 +867,7 @@ class TaskCard extends StatelessWidget {
   IconData get _statusIcon => switch (task.status) {
     TaskStatus.pending => Icons.schedule,
     TaskStatus.processing => Icons.sync,
+    TaskStatus.paused => Icons.pause_circle_outline,
     TaskStatus.completed => Icons.check_circle,
     TaskStatus.failed => Icons.error,
     TaskStatus.cancelled => Icons.cancel,
@@ -613,6 +884,8 @@ class TaskCard extends StatelessWidget {
   Color _statusColor(ColorScheme sc) => switch (task.status) {
     TaskStatus.pending => sc.sem.neutral,
     TaskStatus.processing => sc.sem.warning,
+    // 暂停用「信息」色而非警告色：它不是异常，只是用户主动摁下的暂停键。
+    TaskStatus.paused => sc.sem.info,
     TaskStatus.completed => sc.sem.success,
     TaskStatus.failed => sc.sem.danger,
     TaskStatus.cancelled => sc.sem.warning,
@@ -679,18 +952,28 @@ Future<void> showTaskDetailsSheet(BuildContext context, String taskId) {
 
 /// The complete details shared by desktop cards and the mobile sheet.
 class TaskDetails extends StatelessWidget {
-  const TaskDetails({super.key, required this.task});
+  const TaskDetails({super.key, required this.task, this.mobile});
+
   final TaskInfo task;
+
+  /// 强制移动端排布（顶部运行节点视口 + 基本信息/高级两栏）。
+  /// null = 自动判定：移动平台或窄窗口（< 700dp）走两栏，桌面宽窗口保持单列。
+  /// 显式参数让 widget 测试不必伪造平台。
+  final bool? mobile;
 
   @override
   Widget build(BuildContext context) {
     final language = context.select<AppState, String>(
       (state) => state.config.language,
     );
+    final useMobile =
+        mobile ??
+        (isMobilePlatform || MediaQuery.sizeOf(context).width < 700);
     return TaskCard(task: task)._expanded(
       context,
       AppStrings.of(language),
       Theme.of(context).colorScheme,
+      mobile: useMobile,
     );
   }
 }
@@ -720,7 +1003,8 @@ class _PanelBox extends StatelessWidget {
       width: double.infinity,
       padding: padding,
       decoration: BoxDecoration(
-        color: color ?? cs.surfaceContainerHighest.withAlpha(40),
+        color:
+            color ?? AppNeutralSurface.card(cs.brightness).withAlpha(40),
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
           color: borderColor ?? cs.outlineVariant.withAlpha(70),
@@ -821,6 +1105,7 @@ class _SummaryBar extends StatelessWidget {
     final color = switch (task.status) {
       TaskStatus.pending => scheme.sem.neutral,
       TaskStatus.processing => scheme.sem.warning,
+      TaskStatus.paused => scheme.sem.info,
       TaskStatus.completed => scheme.sem.success,
       TaskStatus.failed => scheme.sem.danger,
       TaskStatus.cancelled => scheme.sem.warning,
@@ -828,6 +1113,7 @@ class _SummaryBar extends StatelessWidget {
     final icon = switch (task.status) {
       TaskStatus.pending => Icons.schedule,
       TaskStatus.processing => Icons.sync,
+      TaskStatus.paused => Icons.pause_circle_outline,
       TaskStatus.completed => Icons.check_circle,
       TaskStatus.failed => Icons.error,
       TaskStatus.cancelled => Icons.cancel,
@@ -835,6 +1121,7 @@ class _SummaryBar extends StatelessWidget {
     final label = switch (task.status) {
       TaskStatus.pending => s.pending,
       TaskStatus.processing => s.processing,
+      TaskStatus.paused => taskPausedLabel(zh),
       TaskStatus.completed => s.completed,
       TaskStatus.failed => s.failed,
       TaskStatus.cancelled => s.cancelled,
@@ -843,6 +1130,9 @@ class _SummaryBar extends StatelessWidget {
       TaskStatus.pending => zh ? '等待开始处理' : 'Waiting to start',
       TaskStatus.processing =>
         '${s.remaining} ${_dashIfNa(task.remaining, zh)}',
+      TaskStatus.paused => zh
+          ? '进程已冻结（CPU 已释放），进度与已编码数据均保留'
+          : 'Process frozen (CPU released); progress is preserved',
       TaskStatus.completed =>
         zh ? '输出已写入下方路径' : 'Output written to the path below',
       TaskStatus.failed =>
@@ -1149,7 +1439,9 @@ class _StatsGrid extends StatelessWidget {
                     vertical: 9,
                   ),
                   decoration: BoxDecoration(
-                    color: scheme.surfaceContainerHighest.withAlpha(40),
+                    color: AppNeutralSurface.card(
+                      scheme.brightness,
+                    ).withAlpha(40),
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(
                       color: scheme.outlineVariant.withAlpha(70),
@@ -1213,6 +1505,8 @@ class _PipelineLegend extends StatelessWidget {
       children: [
         _LegendItem(color: scheme.sem.neutral, label: s.qLegendPending),
         _LegendItem(color: scheme.sem.warning, label: s.qLegendProcessing),
+        // 暂停用信息色（与卡片状态色/视口节点色一致）
+        _LegendItem(color: scheme.sem.info, label: taskPausedLabel(s.isZh)),
         _LegendItem(color: scheme.sem.success, label: s.qLegendCompleted),
       ],
     );
@@ -1296,12 +1590,18 @@ class _LogsPanelState extends State<_LogsPanel> {
                 children: [
                   Icon(Icons.terminal, size: 16, color: scheme.outline),
                   const SizedBox(width: 6),
-                  Text(
-                    widget.s.qAdvanced,
-                    style: TextStyle(
-                      fontSize: kQueueFsSection,
-                      fontWeight: FontWeight.w600,
-                      color: scheme.onSurface,
+                  // 移动端两栏里这一行只有 ~139dp：标题必须可收缩（省略号），
+                  // 否则 图标+标题+行数徽标+箭头 会横向溢出（实测 360dp 溢出 4.8px）。
+                  Flexible(
+                    child: Text(
+                      widget.s.qAdvanced,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: kQueueFsSection,
+                        fontWeight: FontWeight.w600,
+                        color: scheme.onSurface,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -1428,7 +1728,7 @@ class _CodeBlock extends StatelessWidget {
           decoration: BoxDecoration(
             color: isError
                 ? scheme.errorContainer.withAlpha(40)
-                : scheme.surfaceContainerHighest.withAlpha(60),
+                : AppNeutralSurface.card(scheme.brightness).withAlpha(60),
             borderRadius: BorderRadius.circular(8),
           ),
           child: empty
@@ -1510,12 +1810,17 @@ class _SegmentedProgressBar extends StatelessWidget {
   /// 「处理完成了但进度条没显示完成」就是这条缝。
   final bool done;
 
+  /// 任务被暂停：未完成段用 info 色而不是「正在跑」的 warning，
+  /// 让分段条和卡片状态色说的是同一件事。
+  final bool paused;
+
   const _SegmentedProgressBar({
     required this.segments,
     required this.callProgresses,
     required this.currentCallIndex,
     required this.height,
     this.done = false,
+    this.paused = false,
   });
 
   @override
@@ -1554,10 +1859,14 @@ class _SegmentedProgressBar extends StatelessWidget {
                             ? scheme.sem.success
                             : i < callProgresses.length
                             ? (i == currentCallIndex && callProgresses[i] < 1.0
-                                  ? scheme.sem.warning
+                                  ? (paused
+                                        ? scheme.sem.info
+                                        : scheme.sem.warning)
                                   : callProgresses[i] >= 1.0
                                   ? scheme.sem.success
-                                  : scheme.sem.warning)
+                                  : (paused
+                                        ? scheme.sem.info
+                                        : scheme.sem.warning))
                             : scheme.sem.neutral,
                         // 两端全圆角：与滑块/进度条同一种胶囊语言
                         borderRadius: radius,
@@ -1570,6 +1879,300 @@ class _SegmentedProgressBar extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+/// 详情顶部「运行节点视口」。
+///
+/// 交互隐喻来自地图（用户草图：「类似地图：放大至正在处理节点，视野须包括所有
+/// 运行节点」）：
+///   · 只有一个运行节点时 → 放大（最多 1.25×）并居中到它；
+///   · 多个节点同时运行（进度在 0~1 之间 / 当前节点）→ 自动缩小，保证
+///     **所有运行节点** 都落在视野内；
+///   · 节点很多时按比例继续缩小（不裁剪活动节点），非活动节点自然移出视野。
+///
+/// 每个节点下方是一条**动态进度条**，随 callProgresses 实时变化；暂停时冻结在
+/// 暂停那一刻。视口本身不做常驻动画（队列里可能同时有多张详情），
+/// 只在数据变化时重绘。
+class RunningNodeViewport extends StatelessWidget {
+  const RunningNodeViewport({
+    super.key,
+    required this.calls,
+    required this.progresses,
+    required this.currentIndex,
+    required this.status,
+    this.progress = 0,
+    this.zh = true,
+    this.height = 104,
+  });
+
+  /// 任务的流水线节点；为空表示单步任务（用一个合成节点 + 整体进度展示）。
+  final List<BackendCall> calls;
+  final List<double> progresses;
+  final int currentIndex;
+  final TaskStatus status;
+
+  /// 单步 / 非流水线任务的整体进度（0~100）。
+  final double progress;
+  final bool zh;
+  final double height;
+
+  /// 世界坐标：相邻节点中心距 / 节点直径。缩放只作用在这两个量上。
+  static const double _worldStep = 82;
+  static const double _worldNode = 46;
+  static const double _maxScale = 1.25;
+  static const double _minScale = 0.12;
+
+  bool get _synthetic => calls.isEmpty;
+
+  double _progressAt(int i) {
+    if (_synthetic) return (progress / 100).clamp(0.0, 1.0);
+    if (i < progresses.length) return progresses[i].clamp(0.0, 1.0);
+    return 0.0;
+  }
+
+  /// 需要收进视野的节点下标（升序）。
+  List<int> get activeIndices {
+    if (calls.isEmpty) return const [0];
+    final cur = currentIndex.clamp(0, calls.length - 1);
+    final running = <int>[];
+    for (int i = 0; i < calls.length; i++) {
+      final p = i < progresses.length ? progresses[i] : 0.0;
+      if (p > 0 && p < 1) running.add(i);
+    }
+    if ((status == TaskStatus.processing || status == TaskStatus.paused) &&
+        !running.contains(cur)) {
+      running.add(cur);
+    }
+    if (running.isEmpty) {
+      // 已完成：所有节点都算「可见」；未开始/已取消：只看当前节点。
+      if (status == TaskStatus.completed) {
+        return [for (int i = 0; i < calls.length; i++) i];
+      }
+      return [cur];
+    }
+    running.sort();
+    return running;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final active = activeIndices;
+    final count = _synthetic ? 1 : calls.length;
+    final cur = _synthetic ? 0 : currentIndex.clamp(0, count - 1);
+    final first = active.first;
+    final last = active.last;
+    return _PanelBox(
+      padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.radar, size: 14, color: scheme.sem.info),
+              const SizedBox(width: 5),
+              Expanded(
+                child: Text(
+                  zh ? '运行节点' : 'Running nodes',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: kQueueFsSection,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.onSurface,
+                  ),
+                ),
+              ),
+              if (status == TaskStatus.paused) ...[
+                Icon(
+                  Icons.pause_circle_outline,
+                  size: 13,
+                  color: scheme.sem.info,
+                ),
+                const SizedBox(width: 3),
+                Text(
+                  taskPausedLabel(zh),
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.sem.info,
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+              _CountBadge(text: '${cur + 1}/$count', scheme: scheme),
+            ],
+          ),
+          const SizedBox(height: 6),
+          SizedBox(
+            height: height,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final available = math.max(32.0, constraints.maxWidth);
+                // 先把所有活动节点收进视野（比例 = 视野宽 / 活动跨度），
+                // 再对「放大」设上限，避免单个节点被放大到失真。
+                final spanWorld = (last - first) * _worldStep + _worldNode;
+                final scale = (available / spanWorld).clamp(
+                  _minScale,
+                  _maxScale,
+                );
+                final nodeSize = math.max(_worldNode * scale, 10.0);
+                final step = _worldStep * scale;
+                final contentWidth = (count - 1) * step + nodeSize;
+                // 活动节点整体的中心（内容坐标系）。视口把这一点映射到视野中心，
+                // 再对左右边界做钳制：内容比视野窄时整体居中，比视野宽时
+                // 不允许把活动节点推出视野。
+                final activeCenter = ((first + last) / 2) * step + nodeSize / 2;
+                final double leftOrigin;
+                if (contentWidth <= available) {
+                  leftOrigin = -(available - contentWidth) / 2;
+                } else {
+                  leftOrigin = (activeCenter - available / 2).clamp(
+                    0.0,
+                    contentWidth - available,
+                  );
+                }
+                return ClipRect(
+                  child: Stack(
+                    clipBehavior: Clip.hardEdge,
+                    children: [
+                      for (int i = 0; i < count; i++)
+                        Positioned(
+                          // 内容坐标 i*step 减去视野左边界在内容里的位置
+                          left: i * step - leftOrigin,
+                          top: 0,
+                          width: nodeSize,
+                          child: _ViewportNode(
+                            key: ValueKey('viewport-node-$i'),
+                            call: _synthetic
+                                ? BackendCall(action: '', params: const {})
+                                : calls[i],
+                            progress: _progressAt(i),
+                            isCurrent: i == cur,
+                            status: status,
+                            size: nodeSize,
+                            index: i,
+                            zh: zh,
+                          ),
+                        ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 视口里的单个节点：圆环（弧长 = 该节点进度）+ 动态进度条 + 序号。
+class _ViewportNode extends StatelessWidget {
+  final BackendCall call;
+  final double progress;
+  final bool isCurrent;
+  final TaskStatus status;
+  final double size;
+  final int index;
+  final bool zh;
+
+  const _ViewportNode({
+    super.key,
+    required this.call,
+    required this.progress,
+    required this.isCurrent,
+    required this.status,
+    required this.size,
+    required this.index,
+    this.zh = true,
+  });
+
+  Color _color(ColorScheme scheme) {
+    if (status == TaskStatus.completed) return scheme.sem.success;
+    if (progress >= 1.0) return scheme.sem.success;
+    if (status == TaskStatus.paused && isCurrent) return scheme.sem.info;
+    if (status == TaskStatus.cancelled) return scheme.sem.warning;
+    if (isCurrent && progress > 0.0 && progress < 1.0) {
+      return scheme.sem.warning;
+    }
+    if (status == TaskStatus.processing && isCurrent) {
+      return scheme.sem.warning;
+    }
+    return scheme.sem.neutral;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = _color(scheme);
+    final label = taskActionLabel(call.action, zh);
+    final abbr = taskActionAbbr(call.action, zh);
+    final running = status == TaskStatus.processing || status == TaskStatus.paused;
+    return Tooltip(
+      message:
+          '$label\n${zh ? '进度' : 'Progress'}: ${(progress * 100).toStringAsFixed(0)}%',
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            width: size,
+            height: size,
+            child: CustomPaint(
+              painter: _NodeRingPainter(
+                color: color,
+                progress: progress.clamp(0.0, 1.0),
+                emphasise: isCurrent && running,
+              ),
+              child: Center(
+                child: Text(
+                  abbr,
+                  maxLines: 1,
+                  overflow: TextOverflow.clip,
+                  style: TextStyle(
+                    fontSize: (size * 0.28).clamp(6.0, 16.0),
+                    fontWeight: FontWeight.bold,
+                    color: color,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 5),
+          // 动态进度条：值直接来自 callProgresses（暂停时冻结原位）。
+          ClipRRect(
+            borderRadius: BorderRadius.circular(2),
+            child: SizedBox(
+              height: 4,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  ColoredBox(color: color.withAlpha(30)),
+                  FractionallySizedBox(
+                    alignment: Alignment.centerLeft,
+                    widthFactor: progress.clamp(0.0, 1.0),
+                    child: ColoredBox(color: color),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            '${index + 1}',
+            maxLines: 1,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: (size * 0.24).clamp(6.0, 11.0),
+              fontWeight: isCurrent ? FontWeight.w700 : FontWeight.w500,
+              color: isCurrent ? color : scheme.outline,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1683,9 +2286,12 @@ class _NodeDot extends StatelessWidget {
   });
 
   Color _color(ColorScheme scheme) {
-    // 与 _statusColor / _PipelineLegend 同一套语义色
+    // 与 _statusColor / _PipelineLegend / _ViewportNode 同一套语义色
     if (status == TaskStatus.completed) return scheme.sem.success;
     if (progress >= 1.0) return scheme.sem.success;
+    // 暂停中的当前节点用信息色：进度是冻结的，不是正在跑
+    if (status == TaskStatus.paused && isCurrent) return scheme.sem.info;
+    if (status == TaskStatus.cancelled) return scheme.sem.warning;
     if (isCurrent && progress > 0.0 && progress < 1.0) {
       return scheme.sem.warning;
     }
@@ -1714,7 +2320,10 @@ class _NodeDot extends StatelessWidget {
               painter: _NodeRingPainter(
                 color: color,
                 progress: progress.clamp(0.0, 1.0),
-                emphasise: isCurrent && (status == TaskStatus.processing),
+                emphasise:
+                    isCurrent &&
+                    (status == TaskStatus.processing ||
+                        status == TaskStatus.paused),
               ),
               child: Center(
                 child: Text(
@@ -1759,7 +2368,8 @@ class _NodeRingPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
-    final radius = size.width / 2 - 2.5;
+    // 视口缩放到很小（节点可能只有 10px）时半径会变成负数，钳到 1 保证可绘制。
+    final radius = math.max(1.0, size.width / 2 - 2.5);
 
     // 底
     canvas.drawCircle(center, radius, Paint()..color = color.withAlpha(36));

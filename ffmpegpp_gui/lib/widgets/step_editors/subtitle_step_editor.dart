@@ -71,7 +71,7 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> with StepEditor
     return StepEditorScaffold(
       scrollable: true,
       children: [
-        _buildDropdown(label: zh ? '字幕来源' : 'Source', value: p['source'] as String,
+        _buildDropdown(label: zh ? '字幕来源' : 'Source', value: p['source'] as String? ?? 'external',
           items: const ['external', 'embedded'],
           itemLabels: zh ? const ['外挂字幕', '内嵌字幕'] : const ['External', 'Embedded'],
           cs: cs, onChanged: (v) {

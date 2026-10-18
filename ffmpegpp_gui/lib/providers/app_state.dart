@@ -604,9 +604,12 @@ class AppState extends ChangeNotifier {
             t.status == TaskStatus.completed ||
             t.status == TaskStatus.failed ||
             t.status == TaskStatus.cancelled).toList();
+        // 暂停中的任务仍是「活动任务」：它占着运行槽位、ffmpeg 进程还活着，
+        // 落盘时不能被当成可丢弃的终态记录裁掉。
         final active = _tasks.where((t) =>
             t.status == TaskStatus.pending ||
-            t.status == TaskStatus.processing).toList();
+            t.status == TaskStatus.processing ||
+            t.status == TaskStatus.paused).toList();
         final terminalBudget = (_maxPersistedTasks - active.length)
             .clamp(0, terminal.length);
         final keptTerminal = terminal.sublist(terminal.length - terminalBudget);
@@ -636,23 +639,16 @@ class AppState extends ChangeNotifier {
           var t = TaskInfo.fromJson(e);
           if (t.id.isEmpty) continue;
           if (_tasks.any((x) => x.id == t.id)) continue;
-          if (t.status == TaskStatus.processing) {
-            // [FIX S-3 落地] 上次退出时被中断的任务：除了改状态，还要清掉「上一次
-            // 运行」残留的实时心跳（进度百分比 / 已用剩余时间 / 速度 / fps / 码率 /
-            // 帧号 / 分步进度）。此前只改 status，卡片会显示「已取消」却挂着冻结在
-            // 中断那一刻的进度条与速度数值（例如 87% + 12.5x），看起来像还在跑。
-            t = t.copyWith(
-              status: TaskStatus.cancelled,
-              progress: 0,
-              frame: 0,
-              elapsed: '',
-              remaining: '',
-              speed: '',
-              fps: '',
-              bitrate: '',
-              callProgresses: const [],
-              currentCallIndex: 0,
-              error: t.error ?? (zh ? '应用退出，处理中断' : 'Interrupted: app exited'),
+          // 恢复时的状态修正抽成纯函数 normalizeRestoredTask，便于单测覆盖
+          // 「处理中 / 已暂停」两条最危险的路径（见文件末尾）。
+          final wasPaused = t.status == TaskStatus.paused;
+          t = normalizeRestoredTask(t, zh: zh);
+          if (wasPaused && t.status == TaskStatus.pending) {
+            addLog(
+              zh
+                  ? '任务「${t.filename}」上次退出时处于暂停，已重置为等待（可重新开始）'
+                  : 'Task "${t.filename}" was paused when the app exited; reset to Pending',
+              category: 'info',
             );
           }
           _tasks.add(t);
@@ -1404,6 +1400,14 @@ class AppState extends ChangeNotifier {
     _tasksNotify();
   }
 
+  /// 仅测试用：把任务登记进运行槽位（模拟 processNextTask 已拉起它）。
+  /// 用于验证「暂停中的任务仍然占着并发槽位，顺序队列不得再开新任务」。
+  @visibleForTesting
+  void markTaskRunningForTest(String id) {
+    _runningTaskIds.add(id);
+    _currentTaskId = id;
+  }
+
   Future<void> processNextTask({int? generation}) async {
     final gen = generation ?? _runGeneration;
     if (_cancelRequested) return;
@@ -1439,7 +1443,7 @@ class AppState extends ChangeNotifier {
         if (_currentTaskId == task.id) _currentTaskId = null;
         final fi = _tasks.indexWhere((t) => t.id == task.id);
         // 已取消的任务保持 cancelled，不被异常覆盖为 failed
-        if (fi >= 0 && !_cancelRequested && _tasks[fi].status == TaskStatus.processing) {
+        if (fi >= 0 && !_cancelRequested && _isLiveStatus(_tasks[fi].status)) {
           _tasks[fi] = _tasks[fi].copyWith(status: TaskStatus.failed, error: '处理异常: $e');
           _tasksNotify();
           _scheduleTaskPersist();
@@ -1535,7 +1539,7 @@ class AppState extends ChangeNotifier {
 
     final fi = _tasks.indexWhere((t) => t.id == taskId);
     // 取消后若用户重新开始（_cancelRequested 复位），旧任务在途响应不得把 cancelled 改回终态
-    if (fi >= 0 && !_cancelRequested && _tasks[fi].status == TaskStatus.processing) {
+    if (fi >= 0 && !_cancelRequested && _isLiveStatus(_tasks[fi].status)) {
       if (resp['success'] == true) {
         final d = resp['data'] as Map<String, dynamic>?;
         _tasks[fi] = _tasks[fi].copyWith(status: TaskStatus.completed, progress: 100,
@@ -1596,7 +1600,7 @@ class AppState extends ChangeNotifier {
 
     final fi = _tasks.indexWhere((t) => t.id == taskId);
     // 取消后若用户重新开始（_cancelRequested 复位），旧任务在途响应不得把 cancelled 改回终态
-    if (fi >= 0 && !_cancelRequested && _tasks[fi].status == TaskStatus.processing) {
+    if (fi >= 0 && !_cancelRequested && _isLiveStatus(_tasks[fi].status)) {
       if (resp['success'] == true) {
         final d = resp['data'] as Map<String, dynamic>?;
         _tasks[fi] = _tasks[fi].copyWith(status: TaskStatus.completed, progress: 100,
@@ -1913,7 +1917,7 @@ class AppState extends ChangeNotifier {
           continue;
         }
         final fi2 = _tasks.indexWhere((t) => t.id == taskId);
-        if (fi2 >= 0 && !_cancelRequested && _tasks[fi2].status == TaskStatus.processing) {
+        if (fi2 >= 0 && !_cancelRequested && _isLiveStatus(_tasks[fi2].status)) {
           _tasks[fi2] = _tasks[fi2].copyWith(
             status: TaskStatus.failed,
             error: '步骤 ${ci + 1} 失败: ${resp['error']}',
@@ -1962,7 +1966,7 @@ class AppState extends ChangeNotifier {
     }
 
     final fi3 = _tasks.indexWhere((t) => t.id == taskId);
-    if (fi3 >= 0 && !_cancelRequested && _tasks[fi3].status == TaskStatus.processing) {
+    if (fi3 >= 0 && !_cancelRequested && _isLiveStatus(_tasks[fi3].status)) {
       final outSize = await _measureOutputSize(task.outputPath);
       // [FIX 收尾下标必须在 await 之后重新解析] _measureOutputSize 是**异步**目录
       // 遍历 + 逐项 length()（帧提取可能产出上万张 PNG，耗时可达数秒）。这段窗口
@@ -1973,7 +1977,7 @@ class AppState extends ChangeNotifier {
       // 该任务仍在 processing（等待期间可能已被取消或被重跑）。
       final fiDone = _tasks.indexWhere((t) => t.id == taskId);
       if (fiDone >= 0 && !_cancelRequested &&
-          _tasks[fiDone].status == TaskStatus.processing) {
+          _isLiveStatus(_tasks[fiDone].status)) {
         _tasks[fiDone] = _tasks[fiDone].copyWith(status: TaskStatus.completed, progress: 100,
             // 完成态补满每步进度（理由同上：快速步骤没有进度事件，会停在 0）
             callProgresses: List<double>.filled(_tasks[fiDone].callProgresses.length, 1.0),
@@ -2908,6 +2912,128 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 「仍在运行」= 处理中或已暂停。
+  ///
+  /// 暂停只是冻结了进程，任务本身还活着：完成 / 失败回执到达时必须照常收尾
+  /// （否则任务会永远停在 paused），取消也必须能作用于它。
+  static bool _isLiveStatus(TaskStatus st) =>
+      st == TaskStatus.processing || st == TaskStatus.paused;
+
+  /// 本地 ffmpeg 进程若处于 SIGSTOP 停止态，SIGTERM 只会在恢复后才被投递。
+  /// 因此所有「杀掉本地进程」的路径都必须先 SIGCONT，否则会出现
+  /// 「已取消但 ffmpeg 还在」的假取消。
+  void _resumeLocalProcesses(String taskId) {
+    if (Platform.isWindows) return; // Windows 的本地进程不支持信号暂停
+    for (final p in (_localProcessesByTask[taskId] ?? const <Process>[]).toList()) {
+      try { Process.killPid(p.pid, ProcessSignal.sigcont); } catch (_) {}
+    }
+  }
+
+  void _resumeAllLocalProcesses() {
+    if (Platform.isWindows) return;
+    for (final p in _localFfmpegProcesses.toList()) {
+      try { Process.killPid(p.pid, ProcessSignal.sigcont); } catch (_) {}
+    }
+  }
+
+  /// 同步解冻某任务名下的真实进程（删除记录 / 取消前调用）。
+  void _unpauseTaskProcessesNow(String taskId) {
+    _resumeLocalProcesses(taskId);
+    if (pythonProcess.isRunning && backend.isTaskRunning(taskId)) {
+      unawaited(backend.resume(taskId));
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // 真实暂停 / 继续（不是只改 UI 状态）
+  // ══════════════════════════════════════════════════════════════
+
+  /// 测试注入点：替换真实进程信号（生产路径保持 null，走 [_signalTaskProcesses]）。
+  @visibleForTesting
+  Future<bool> Function(String taskId, bool pause)? pauseSignalForTest;
+
+  /// 暂停一个正在处理的任务：冻结它的 ffmpeg 进程。
+  ///
+  /// 返回 false 表示**没有可冻结的真实进程**（流水线正处在两步之间的空档，
+  /// 或当前步骤是 Dart 侧不可暂停的短命令）。此时不改 UI 状态 ——
+  /// 宁可提示「当前无法暂停」，也不做假暂停。
+  Future<bool> pauseTask(String taskId) => _setTaskPausedState(taskId, true);
+
+  /// 继续一个已暂停的任务：解冻同一个 ffmpeg 进程，从暂停处继续编码。
+  Future<bool> resumeTask(String taskId) => _setTaskPausedState(taskId, false);
+
+  /// 顶栏「继续全部」：恢复所有被暂停的任务（逐条走真实解冻）。
+  Future<void> resumeAllPausedTasks() async {
+    final ids = _tasks
+        .where((t) => t.status == TaskStatus.paused)
+        .map((t) => t.id)
+        .toList();
+    for (final id in ids) {
+      await resumeTask(id);
+    }
+  }
+
+  Future<bool> _setTaskPausedState(String taskId, bool pause) async {
+    final i = _tasks.indexWhere((t) => t.id == taskId);
+    if (i < 0) return false;
+    final before = _tasks[i].status;
+    if (pause) {
+      if (before != TaskStatus.processing) return false;
+    } else {
+      if (before != TaskStatus.paused) return false;
+    }
+    final signaled = await _signalTaskProcesses(taskId, pause: pause);
+    if (pause && !signaled) {
+      addLog('无法暂停：当前没有可冻结的进程（可能正处在步骤切换的空档）',
+          category: 'warn');
+      return false;
+    }
+    // 恢复时即便 signaled == false 也继续下面的状态回写：后端暂停标记必须被
+    // 清掉（进程可能刚好在暂停后结束），否则同一 id 重跑会「启动即冻结」。
+    final j = _tasks.indexWhere((t) => t.id == taskId);
+    if (j < 0) return false;
+    final now = _tasks[j].status;
+    if (pause ? now != TaskStatus.processing : now != TaskStatus.paused) {
+      // 等待进程信号期间任务已被取消 / 完成 / 重跑：不要再覆盖新状态。
+      return false;
+    }
+    final filename = _tasks[j].filename;
+    _tasks[j] = _tasks[j].copyWith(
+      status: pause ? TaskStatus.paused : TaskStatus.processing,
+    );
+    _tasksNotify();
+    _scheduleTaskPersist();
+    addLog(pause ? '已暂停: $filename（进程已冻结）' : '已继续: $filename',
+        category: 'info');
+    return true;
+  }
+
+  /// 向该任务名下的真实进程发暂停 / 恢复信号，返回是否至少命中一个进程。
+  Future<bool> _signalTaskProcesses(String taskId, {required bool pause}) async {
+    final override = pauseSignalForTest;
+    if (override != null) return override(taskId, pause);
+    var signaled = false;
+    // 1) Dart 侧直接启动的 ffmpeg（提音频 / 视频裁剪 / 帧提取等走 dart:io Process）
+    final procs = _localProcessesByTask[taskId];
+    if (procs != null && procs.isNotEmpty && !Platform.isWindows) {
+      for (final p in procs.toList()) {
+        try {
+          Process.killPid(p.pid, pause ? ProcessSignal.sigstop : ProcessSignal.sigcont);
+          signaled = true;
+        } catch (_) {}
+      }
+    }
+    // 2) C++ 后端里的 ffmpeg 子进程。只有该任务的请求确实还在后端执行时才发信号：
+    //    否则后端只是给一个空 id 记个暂停标记，UI 却显示「已暂停」—— 假暂停。
+    if (backend.isTaskRunning(taskId) && pythonProcess.isRunning) {
+      try {
+        final resp = pause ? await backend.pause(taskId) : await backend.resume(taskId);
+        if (resp['success'] == true) signaled = true;
+      } catch (_) {}
+    }
+    return signaled;
+  }
+
   void cancelProcessing() {
     // 设置取消标记，阻止 processNextTask 继续拉取队列里剩余的 pending 任务；
     // 否则正在跑的 .then 回调回来后看到还有 pending 任务就会立刻重启队列，
@@ -2917,18 +3043,25 @@ class AppState extends ChangeNotifier {
     _runGeneration++;
     // 携带任务 id 集合：后端 worker 处理这些任务前会直接跳过
     // （否则「停止所有」后，C++ 单线程 worker 仍会执行队列中剩余任务）
+    // 暂停中的任务也在这份名单里：它仍占着并发槽位、进程还活着，
+    // 「停止所有」必须能连它一起取消。
     final ids = _tasks
-        .where((t) => t.status == TaskStatus.processing || t.status == TaskStatus.pending)
+        .where((t) => _isLiveStatus(t.status) || t.status == TaskStatus.pending)
         .map((t) => t.id)
         .toList();
     backend.cancel(ids);
-    // 终止本地直接启动的 ffmpeg 进程（video_crop/extract_audio 等不走 C++ 后端）
+    // 本地 ffmpeg 若被 SIGSTOP，SIGTERM 会一直挂起到恢复后才生效 → 先解冻再 kill
+    _resumeAllLocalProcesses();
     for (final p in _localFfmpegProcesses.toList()) {
       try { p.kill(); } catch (_) {}
     }
+    // 后端暂停标记一并清掉，避免同名 id 重跑时「启动即冻结」
+    for (final id in ids) {
+      if (pythonProcess.isRunning) unawaited(backend.resume(id));
+    }
     for (int i = 0; i < _tasks.length; i++) {
       final st = _tasks[i].status;
-      if (st == TaskStatus.processing || st == TaskStatus.pending) {
+      if (_isLiveStatus(st) || st == TaskStatus.pending) {
         _tasks[i] = _tasks[i].copyWith(status: TaskStatus.cancelled);
       }
     }
@@ -2937,18 +3070,21 @@ class AppState extends ChangeNotifier {
   }
 
   /// 只取消单个任务：其余 pending/processing 任务继续，不影响全局取消标记。
+  /// 暂停中的任务同样可取消（SIGKILL 对停止态进程有效，但先解冻更稳）。
   void cancelTask(String taskId) {
     final i = _tasks.indexWhere((t) => t.id == taskId);
     if (i < 0) return;
     final st = _tasks[i].status;
-    if (st != TaskStatus.processing && st != TaskStatus.pending) return;
+    if (!_isLiveStatus(st) && st != TaskStatus.pending) return;
     // [FIX H-3] 先置状态（copyWith cancelled），再写取消标记：避免「置 processing」与
     // 「写 cancelledTaskIds」之间的竞态窗口丢失取消意图。
     _tasks[i] = _tasks[i].copyWith(status: TaskStatus.cancelled);
     _cancelledTaskIds.add(taskId);
+    // 先解冻再发取消：暂停中的进程必须先 SIGCONT，否则 SIGTERM 会一直挂起
+    //（假取消）。顺序反了也不会死锁（C++ 的 reap 会补 SIGCONT），但这样最直观。
+    _unpauseTaskProcessesNow(taskId);
     // 通知后端跳过该任务（若仍在队列/未开始）
     backend.cancel([taskId]);
-    // 终止该任务名下本地直接启动的 ffmpeg 进程（帧提取/音频提取/裁剪等）
     final procs = _localProcessesByTask[taskId];
     if (procs != null) {
       for (final p in procs.toList()) {
@@ -2980,6 +3116,23 @@ class AppState extends ChangeNotifier {
   }
 
   void removeTask(String id) {
+    final ri = _tasks.indexWhere((t) => t.id == id);
+    if (ri >= 0 && _tasks[ri].status == TaskStatus.paused) {
+      // 直接删记录会让被冻结的 ffmpeg 永远停在 SIGSTOP（占着进程却无人回收）：
+      // 先解冻、按取消杀掉，再移出列表。
+      _resumeLocalProcesses(id);
+      _cancelledTaskIds.add(id);
+      _unpauseTaskProcessesNow(id);
+      backend.cancel([id]);
+      final procs = _localProcessesByTask[id];
+      if (procs != null) {
+        for (final p in procs.toList()) {
+          try { p.kill(); } catch (_) {}
+        }
+      }
+      _runningTaskIds.remove(id);
+      if (_currentTaskId == id) _currentTaskId = null;
+    }
     String? removedInput;
     _tasks.removeWhere((t) {
       if (t.id == id) { removedInput = t.inputPath; return true; }
@@ -3703,5 +3856,49 @@ class AppState extends ChangeNotifier {
     _auditSub = null;
     pythonProcess.dispose();
     super.dispose();
+  }
+}
+
+
+/// 恢复持久化任务时的状态修正（纯函数，便于单测）。
+///
+/// 上次退出时仍在跑的进程已经不存在了，所以：
+/// - processing → cancelled：注明「应用退出，处理中断」，并清掉冻结在中断那一刻
+///   的进度心跳（进度 / 耗时 / 剩余 / 速度 / fps / 码率 / 帧号 / 分步进度），
+///   否则卡片会显示「已取消」却挂着 87% + 12.5x，看起来像还在跑；
+/// - paused → pending：**绝不能原样恢复成 paused**。那个状态下没有任何进程可
+///   解冻（resumeTask 找不到目标），会成为永远醒不过来的假暂停；而且 paused
+///   计为活动任务，会一直占着并发槽位，队列再也拉不起新任务。改成 pending 后
+///   用户可以重新开始（ffmpeg 无法从半截文件续跑，所以进度归零，不保留误导值）；
+/// - 其它状态原样返回（历史记录不丢）。
+TaskInfo normalizeRestoredTask(TaskInfo t, {required bool zh}) {
+  TaskInfo clearRuntime(TaskInfo src, TaskStatus status, String? error) =>
+      src.copyWith(
+        status: status,
+        progress: 0,
+        frame: 0,
+        elapsed: '',
+        remaining: '',
+        speed: '',
+        fps: '',
+        bitrate: '',
+        callProgresses: const [],
+        currentCallIndex: 0,
+        error: error,
+      );
+  switch (t.status) {
+    case TaskStatus.processing:
+      return clearRuntime(
+        t,
+        TaskStatus.cancelled,
+        t.error ?? (zh ? '应用退出，处理中断' : 'Interrupted: app exited'),
+      );
+    case TaskStatus.paused:
+      return clearRuntime(t, TaskStatus.pending, t.error);
+    case TaskStatus.pending:
+    case TaskStatus.completed:
+    case TaskStatus.failed:
+    case TaskStatus.cancelled:
+      return t;
   }
 }

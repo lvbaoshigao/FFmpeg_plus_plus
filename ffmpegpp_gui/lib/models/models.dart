@@ -1626,7 +1626,7 @@ class TranscodeConfig {
 // 任务状态
 // ═══════════════════════════════════════════
 
-enum TaskStatus { pending, processing, completed, failed, cancelled }
+enum TaskStatus { pending, processing, completed, failed, cancelled, paused }
 
 class BackendCall {
   final String action;
@@ -1800,6 +1800,8 @@ class TaskInfo {
         return 'Pending';
       case TaskStatus.processing:
         return 'Processing';
+      case TaskStatus.paused:
+        return 'Paused';
       case TaskStatus.completed:
         return 'Done';
       case TaskStatus.failed:
@@ -1906,48 +1908,92 @@ class AiModelCapability {
 /// 提供商下的一个模型条目：模型 id + 能力标记 + 每模型生成参数。
 class AiModelEntry {
   String id;
+
+  /// 用户可编辑的显示名称；为空时 UI 回退到 [id]。
+  String displayName;
+
+  /// 模型是否出现在可选列表中。旧配置没有该字段时默认启用。
+  bool enabled;
+
+  /// 现有通用能力标记（chat / vision / tools / embedding / reasoning）。
   List<String> capabilities;
+
+  /// 输入 / 输出模态：text / image / voice。与 capabilities 分开保存，
+  /// 便于 Page2.1 的两组药丸分别编辑。
+  List<String> inputModalities;
+  List<String> outputModalities;
 
   /// 每模型生成参数（null = 继承提供商级别的默认值）。
   int? contextWindow;
   int? maxTokens;
   double? temperature;
 
+  /// Top-P（与 temperature 同级，null = 继承）。
+  double? topP;
+
   AiModelEntry({
     required this.id,
+    this.displayName = '',
+    this.enabled = true,
     List<String>? capabilities,
+    List<String>? inputModalities,
+    List<String>? outputModalities,
     this.contextWindow,
     this.maxTokens,
     this.temperature,
-  }) : capabilities = capabilities ?? [AiModelCapability.chat];
+    this.topP,
+  }) : capabilities = capabilities ?? [AiModelCapability.chat],
+       inputModalities = inputModalities ?? ['text'],
+       outputModalities = outputModalities ?? ['text'];
+
+  String get label => displayName.trim().isEmpty ? id : displayName.trim();
 
   factory AiModelEntry.fromJson(Map<String, dynamic> json) => AiModelEntry(
     id: json['id'] as String? ?? '',
+    displayName: json['display_name'] as String? ?? '',
+    enabled: json['enabled'] as bool? ?? true,
     capabilities:
         (json['capabilities'] as List?)
             ?.whereType<String>()
             .where(AiModelCapability.all.contains)
             .toList() ??
         [AiModelCapability.chat],
+    inputModalities:
+        (json['input_modalities'] as List?)?.whereType<String>().toList() ??
+        ['text'],
+    outputModalities:
+        (json['output_modalities'] as List?)?.whereType<String>().toList() ??
+        ['text'],
     contextWindow: (json['context_window'] as num?)?.toInt(),
     maxTokens: (json['max_tokens'] as num?)?.toInt(),
     temperature: (json['temperature'] as num?)?.toDouble(),
+    topP: (json['top_p'] as num?)?.toDouble(),
   );
 
   Map<String, dynamic> toJson() => {
     'id': id,
+    if (displayName.trim().isNotEmpty) 'display_name': displayName,
+    if (!enabled) 'enabled': enabled,
     'capabilities': capabilities,
+    'input_modalities': inputModalities,
+    'output_modalities': outputModalities,
     if (contextWindow != null) 'context_window': contextWindow,
     if (maxTokens != null) 'max_tokens': maxTokens,
     if (temperature != null) 'temperature': temperature,
+    if (topP != null) 'top_p': topP,
   };
 
   AiModelEntry copy() => AiModelEntry(
     id: id,
+    displayName: displayName,
+    enabled: enabled,
     capabilities: [...capabilities],
+    inputModalities: [...inputModalities],
+    outputModalities: [...outputModalities],
     contextWindow: contextWindow,
     maxTokens: maxTokens,
     temperature: temperature,
+    topP: topP,
   );
 }
 

@@ -11,6 +11,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -3991,7 +3992,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final out = <String>[];
     void addAll(List<AiModelEntry> list) {
       for (final m in list) {
-        if (m.id.isNotEmpty && !out.contains(m.id)) out.add(m.id);
+        if (m.enabled && m.id.isNotEmpty && !out.contains(m.id)) out.add(m.id);
       }
     }
 
@@ -4006,10 +4007,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// 顶栏当前显示的模型：配置里选中的 → 全局选中（设置页选过的）→ 空。
   String _currentModelLabel(AppConfig cfg, AiProfile? active) {
     if (active != null) {
-      if (active.model.isNotEmpty) return active.model;
-      return active.models.firstOrNull?.id ?? '';
+      final ids = active.models
+          .where((m) => m.enabled)
+          .map((m) => m.id.trim())
+          .where((id) => id.isNotEmpty)
+          .toList();
+      if (active.model.isNotEmpty && ids.contains(active.model)) {
+        return active.model;
+      }
+      return ids.firstOrNull ?? '';
     }
-    if (cfg.aiProfiles.any((p) => p.enabled)) return '';
+    if (cfg.aiProfiles.isNotEmpty) return '';
     if (cfg.aiApiKey.trim().isEmpty || cfg.aiApiUrl.trim().isEmpty) return '';
     return cfg.aiModel;
   }
@@ -10289,16 +10297,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     // 直接复用面板里的解析逻辑（同一库内可见），会话级覆盖也一并生效
     final profile = aiKey.currentState?._effectiveProfile;
     final options = _modelOptionsFor(cfg, profile);
-    final current =
-        aiKey.currentState?._effectiveModel ??
-        (profile?.model.isNotEmpty == true
-            ? profile!.model
-            : (cfg.aiApiKey.trim().isNotEmpty && cfg.aiApiUrl.trim().isNotEmpty
-                  ? cfg.aiModel
-                  : ''));
+    final raw = aiKey.currentState?._effectiveModel ?? '';
+    final current = options.contains(raw)
+        ? raw
+        : (options.isNotEmpty ? options.first : '');
     return PopupMenuButton<String>(
       tooltip: s.isZh ? '切换模型' : 'Switch model',
       padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 220, maxWidth: 320),
       onSelected: (m) {
         // 与 PC 顶栏同一份写回逻辑：有生效配置就写配置，否则写全局字段
         _applyModelChoice(m);
@@ -10343,8 +10349,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           ),
       ],
       child: Container(
-        height: 48,
-        padding: const EdgeInsets.symmetric(horizontal: 8),
+        height: 40,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
         decoration: BoxDecoration(
           color: scheme.surfaceContainerHighest.withAlpha(110),
           borderRadius: BorderRadius.circular(14),
@@ -10357,13 +10363,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             const SizedBox(width: 4),
             Flexible(
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 132),
+                constraints: const BoxConstraints(maxWidth: 190),
                 child: Text(
                   current.isEmpty ? (s.isZh ? '未配置模型' : 'No model') : current,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 12,
                     fontWeight: FontWeight.w600,
                     color: scheme.onSurface,
                   ),
@@ -10414,53 +10420,64 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     Widget header(BuildContext ctx) => StatefulBuilder(
       builder: (ctx, setH) => Padding(
         padding: const EdgeInsets.fromLTRB(16, 8, 8, 6),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // 菜单 / 历史侧栏（设计稿左上角汉堡按钮）
-            headButton(
-              Icon(Icons.menu, size: headBtn.iconSize),
-              s.isZh ? '历史记录' : 'History',
-              () => aiKey.currentState?.openHistoryAt(Offset.zero),
-            ),
-            Icon(Icons.smart_toy, size: 18, color: scheme.primary),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                s.aiChatTitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: scheme.onSurface,
+            Row(
+              children: [
+                // 菜单 / 历史侧栏（设计稿左上角汉堡按钮）
+                headButton(
+                  Icon(Icons.menu, size: headBtn.iconSize),
+                  s.isZh ? '历史记录' : 'History',
+                  () => aiKey.currentState?.openHistoryAt(Offset.zero),
                 ),
+                Icon(Icons.smart_toy, size: 18, color: scheme.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    s.aiChatTitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: scheme.onSurface,
+                    ),
+                  ),
+                ),
+                // 工具面板开关
+                headButton(
+                  AnimatedRotation(
+                    turns: (aiKey.currentState?.toolsOpen ?? false) ? 0.5 : 0,
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOutCubic,
+                    child: Icon(
+                      Icons.extension_outlined,
+                      size: headBtn.iconSize,
+                    ),
+                  ),
+                  s.isZh ? '工具' : 'Tools',
+                  () {
+                    aiKey.currentState?.toggleTools();
+                    setH(() {});
+                  },
+                ),
+                // 关闭
+                headButton(
+                  Icon(Icons.close, size: headBtn.iconSize),
+                  s.isZh ? '关闭' : 'Close',
+                  () => Navigator.of(ctx).pop(),
+                ),
+              ],
+            ),
+            // 模型选择器独立成行：不再和标题/工具挤在 48px 头部行里，
+            // 宽度按内容收缩、文本最多 190px，避免“只剩 1/3 宽”。
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: _aiModelPill(scheme, s, aiKey, () => setH(() {})),
               ),
-            ),
-            // 模型切换（与 PC 顶栏同源）
-            Flexible(
-              flex: 2,
-              child: _aiModelPill(scheme, s, aiKey, () => setH(() {})),
-            ),
-            const SizedBox(width: 2),
-            // 工具面板开关
-            headButton(
-              AnimatedRotation(
-                turns: (aiKey.currentState?.toolsOpen ?? false) ? 0.5 : 0,
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeOutCubic,
-                child: Icon(Icons.extension_outlined, size: headBtn.iconSize),
-              ),
-              s.isZh ? '工具' : 'Tools',
-              () {
-                aiKey.currentState?.toggleTools();
-                setH(() {});
-              },
-            ),
-            // 关闭
-            headButton(
-              Icon(Icons.close, size: headBtn.iconSize),
-              s.isZh ? '关闭' : 'Close',
-              () => Navigator.of(ctx).pop(),
             ),
           ],
         ),
@@ -10919,7 +10936,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     return LayoutBuilder(
       builder: (context, constraints) {
         return SizedBox(
-          width: constraints.maxWidth,
+          width: math.min(constraints.maxWidth, 560),
           child: Container(
             height: _kMobileBarHeight * requestedScale,
             padding: const EdgeInsets.symmetric(
@@ -12583,6 +12600,7 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
 
   @override
   void importMessages(List<Map<String, dynamic>> messages) {
+    _historyFilePath = null;
     setState(() {
       _messages.clear();
       for (final m in messages) {
@@ -12618,6 +12636,11 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
   final List<AiChatAttachment> _attachments = [];
   bool _historyOpen = false;
   List<Map<String, dynamic>> _historySessions = [];
+
+  /// File backing the current session. Reused so auto-saves overwrite instead of
+  /// creating a new history entry after every assistant turn.
+  String? _historyFilePath;
+  bool _savingHistory = false;
 
   Future<void> _pickAttachments() async {
     if (_pickingAttachments || _loading) return;
@@ -12772,10 +12795,20 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
     final cfg = context.read<AppState>().config;
     final profile = _effectiveProfile;
     if (profile != null) {
-      if (profile.model.isNotEmpty) return profile.model;
-      return profile.models.firstOrNull?.id ?? '';
+      // Never surface a stale model id (the old built-in default was gpt-4o)
+      // that is not in this provider's actual model list. Prefer the first
+      // configured model, otherwise report "not configured".
+      final ids = profile.models
+          .where((m) => m.enabled)
+          .map((m) => m.id.trim())
+          .where((id) => id.isNotEmpty)
+          .toList();
+      if (profile.model.isNotEmpty && ids.contains(profile.model)) {
+        return profile.model;
+      }
+      return ids.firstOrNull ?? '';
     }
-    if (cfg.aiProfiles.any((p) => p.enabled)) return '';
+    if (cfg.aiProfiles.isNotEmpty) return '';
     if (cfg.aiApiKey.trim().isEmpty || cfg.aiApiUrl.trim().isEmpty) return '';
     return cfg.aiModel;
   }
@@ -13832,33 +13865,6 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     _activeClient = null;
     _titleClient?.close();
     _titleClient = null;
-    // 面板关闭时自动把当前会话存入历史，方便下次继续
-    final userMsgs = _messages.where((m) => m.role == 'user').toList();
-    if (userMsgs.isNotEmpty) {
-      final title = userMsgs.first.content
-          .replaceAll(RegExp(r'\s+'), ' ')
-          .trim();
-      final t = title.isEmpty
-          ? (userMsgs.first.blocks?.firstOrNull?['name'] as String? ??
-                'Attachments')
-          : (title.length > 24 ? '${title.substring(0, 24)}…' : title);
-      AiChatHistory.saveSession(
-        title: t,
-        provider: _effectiveProvider,
-        model: _effectiveModel,
-        messages: _messages
-            .map(
-              (m) => {
-                'role': m.role,
-                'content': m.content,
-                'inputTokens': m.inputTokens,
-                'outputTokens': m.outputTokens,
-                'blocks': m.blocks,
-              },
-            )
-            .toList(),
-      );
-    }
     _ctrl.dispose();
     _scrollCtrl.dispose();
     super.dispose();
@@ -13932,7 +13938,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     // 生成参数：当前模型的单独设置（模型页）优先，未设置的项继承提供商默认
     AiModelEntry? modelEntry;
     for (final m in profile?.models ?? const <AiModelEntry>[]) {
-      if (m.id == effModel) {
+      if (m.enabled && m.id == effModel) {
         modelEntry = m;
         break;
       }
@@ -13941,6 +13947,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         modelEntry?.maxTokens ?? profile?.maxTokens ?? cfg.aiMaxTokens;
     final effTemp =
         modelEntry?.temperature ?? profile?.temperature ?? cfg.aiTemperature;
+    final effTopP = modelEntry?.topP;
     if (effKey.isEmpty) {
       showToast(
         context,
@@ -14064,6 +14071,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
           'messages': mergedMessages,
           'temperature': effTemp,
           'max_tokens': effMaxTokens,
+          'top_p': ?effTopP,
           'stream': true,
         };
       } else {
@@ -14077,6 +14085,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
           'messages': apiMessages,
           'temperature': effTemp,
           'max_tokens': effMaxTokens,
+          'top_p': ?effTopP,
           'stream': true,
           'stream_options': {'include_usage': true},
         };
@@ -14284,6 +14293,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         _activeClient = null;
         _stopRequested = false;
       }
+      if (mounted) unawaited(_saveCurrentSession());
     }
   }
 
@@ -14802,7 +14812,9 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     return LayoutBuilder(
       builder: (context, constraints) {
         final compact = constraints.maxHeight < 320;
-        final touchSize = isMobilePlatform ? 48.0 : btn.height;
+        // Mobile composer uses 44px controls: the old 48px send circle looked
+        // oversized and forced the input/send baseline to disagree.
+        final touchSize = isMobilePlatform ? 44.0 : btn.height;
         final int maxInputLines = isMobilePlatform ? (compact ? 2 : 4) : 1;
         final Widget messageArea = _messages.isEmpty
             ? _buildEmptyState(scheme, s)
@@ -14943,16 +14955,24 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
               child: messageOverlay == null
                   ? NotificationListener<ScrollMetricsNotification>(
                       onNotification: (_) {
-                        _scrollToBottom();
+                        // Only follow new content when the user is already at the
+                        // bottom. A content-size change while the user is reading
+                        // older messages must never yank the viewport back down.
+                        if (_followLatest) _scrollToBottom();
                         return false;
                       },
                       child: NotificationListener<ScrollNotification>(
                         onNotification: (notification) {
-                          if (notification is UserScrollNotification ||
-                              notification is ScrollUpdateNotification &&
-                                  notification.dragDetails != null) {
+                          if (notification is ScrollUpdateNotification &&
+                              notification.dragDetails != null) {
                             _followLatest =
-                                notification.metrics.extentAfter < 80;
+                                notification.metrics.extentAfter < 40;
+                          } else if (notification is UserScrollNotification &&
+                              notification.direction != ScrollDirection.idle) {
+                            _followLatest = false;
+                          } else if (notification is ScrollEndNotification) {
+                            _followLatest =
+                                notification.metrics.extentAfter < 40;
                           }
                           return false;
                         },
@@ -15094,9 +15114,9 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
               ),
             Padding(
               padding: EdgeInsets.fromLTRB(
-                12,
+                isMobilePlatform ? 10 : 12,
                 4,
-                12,
+                isMobilePlatform ? 10 : 12,
                 isMobilePlatform ? 10 : 12,
               ),
               child: DecoratedBox(
@@ -15108,7 +15128,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                   ),
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.all(5),
+                  padding: const EdgeInsets.all(4),
                   child: Row(
                     // 输入框多行后行高会长，底对齐才能让发送 / 停止键始终贴在最后一行旁边
                     crossAxisAlignment: CrossAxisAlignment.end,
@@ -15118,7 +15138,12 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                         onPressed: _loading || _pickingAttachments
                             ? null
                             : _pickAttachments,
-                        icon: const Icon(Icons.add),
+                        constraints: BoxConstraints.tightFor(
+                          width: touchSize,
+                          height: touchSize,
+                        ),
+                        padding: EdgeInsets.zero,
+                        icon: Icon(Icons.add, size: isMobilePlatform ? 20 : 22),
                       ),
                       // 输入框与右侧发送键同档（comfortable 36）：改造前输入框随主题算出约 32，
                       // 发送键却是写死的 40×40 圆形 —— 一个矮一个高，底部那行看着就歪。
@@ -15183,6 +15208,10 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                                   onPressed: _stopGeneration,
                                   style: FilledButton.styleFrom(
                                     padding: EdgeInsets.zero,
+                                    minimumSize: Size.square(touchSize),
+                                    fixedSize: Size.square(touchSize),
+                                    tapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
                                     shape: const CircleBorder(),
                                   ),
                                   child: Icon(
@@ -15194,9 +15223,16 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                                   onPressed: _send,
                                   style: FilledButton.styleFrom(
                                     padding: EdgeInsets.zero,
+                                    minimumSize: Size.square(touchSize),
+                                    fixedSize: Size.square(touchSize),
+                                    tapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
                                     shape: const CircleBorder(),
                                   ),
-                                  child: Icon(Icons.send, size: btn.iconSize),
+                                  child: Icon(
+                                    Icons.send,
+                                    size: isMobilePlatform ? 19 : btn.iconSize,
+                                  ),
                                 ),
                         ),
                       ),
@@ -15447,6 +15483,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
                   TextButton.icon(
                     onPressed: () async {
                       await AiChatHistory.clearAll();
+                      _historyFilePath = null;
                       if (mounted) setState(() => _historySessions = []);
                     },
                     icon: const Icon(Icons.delete_outline),
@@ -15464,6 +15501,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
   /// 加载一条历史会话到当前面板。
   void _loadHistorySession(Map<String, dynamic> entry, AppStrings s) {
     final msgs = (entry['messages'] as List?) ?? [];
+    _historyFilePath = entry['_file'] as String?;
     setState(() {
       _messages.clear();
       _messages.addAll(
@@ -15493,8 +15531,9 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
     _scrollToBottom();
   }
 
-  /// 保存当前会话到历史。
+  /// 保存当前会话到历史。已有文件时原地覆盖，避免每轮自动保存都新建一份。
   Future<String?> _saveCurrentSession() async {
+    if (_savingHistory) return _historyFilePath;
     final userMsgs = _messages.where((m) => m.role == 'user').toList();
     if (userMsgs.isEmpty) return null;
     final title = userMsgs.first.content.replaceAll(RegExp(r'\s+'), ' ').trim();
@@ -15502,23 +15541,32 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] to inspect the canvas 
         ? (userMsgs.first.blocks?.firstOrNull?['name'] as String? ??
               'Attachments')
         : (title.length > 24 ? '${title.substring(0, 24)}…' : title);
-    return AiChatHistory.saveSession(
-      title: t,
-      provider: _effectiveProvider,
-      model: _effectiveModel,
-      messages: _messages
-          .map(
-            (m) => {
-              'role': m.role,
-              'content': m.content,
-              'inputTokens': m.inputTokens,
-              'outputTokens': m.outputTokens,
-              'blocks': m.blocks,
-            },
-          )
-          .toList(),
-    );
+    _savingHistory = true;
+    try {
+      final path = await AiChatHistory.saveSession(
+        title: t,
+        provider: _effectiveProvider,
+        model: _effectiveModel,
+        messages: _messages
+            .map(
+              (m) => {
+                'role': m.role,
+                'content': m.content,
+                'inputTokens': m.inputTokens,
+                'outputTokens': m.outputTokens,
+                'blocks': m.blocks,
+              },
+            )
+            .toList(),
+        filePath: _historyFilePath,
+      );
+      if (path != null) _historyFilePath = path;
+      return path;
+    } finally {
+      _savingHistory = false;
+    }
   }
+
 
   /// 工具侧边栏：列出全部工具，点击插入模板到输入框。
   /// 插入模板本身不需要任何权限（权限只约束 AI 自动执行时是否放行），

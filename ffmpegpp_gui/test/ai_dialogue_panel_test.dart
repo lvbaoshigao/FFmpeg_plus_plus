@@ -1,3 +1,4 @@
+import 'package:ffmpegpp_gui/models/models.dart';
 import 'package:ffmpegpp_gui/pages/pipeline_editor_page.dart';
 import 'package:ffmpegpp_gui/providers/app_state.dart';
 import 'package:ffmpegpp_gui/theme/app_strings.dart';
@@ -101,6 +102,109 @@ void main() {
       api!.importMessages([]);
       await tester.pump();
       await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('should not force-scroll while the user reads older messages', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(412, 600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final state = AppState();
+      final panel = AiPanelView(
+        strings: AppStrings.en,
+        existingNodes: const [],
+        existingConnections: const [],
+        startExpanded: true,
+        hideHeader: true,
+        initialMessages: [
+          for (var i = 0; i < 30; i++) ...[
+            {'role': 'user', 'content': 'Question $i-abcdefghijklmnopqrstuvwxyz'},
+            {'role': 'assistant', 'content': 'Answer $i-abcdefghijklmnopqrstuvwxyz'},
+          ],
+        ],
+        onApplyGraph: (_, connections) {},
+        onMergeGraph: (_, connections) {},
+        onModifyNodeParams: (_, params) => true,
+        onClearAll: () {},
+        onUndo: () {},
+        onRedo: () {},
+        onSave: () {},
+        onAddNode: (_, x, y) => 'node',
+        onAddGate: (_, x, y) => 'gate',
+        onSetGateParams: (_, params) => true,
+        onDeleteNode: (_) {},
+        onConnectNodes: (_, to) => true,
+        onDisconnectNodes: (_) => true,
+        onCancelTasks: () {},
+      );
+      await tester.pumpWidget(
+        ChangeNotifierProvider<AppState>.value(
+          value: state,
+          child: MaterialApp(home: Scaffold(body: panel)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final scrollable = tester.state<ScrollableState>(
+        find.byType(Scrollable).first,
+      );
+      final initial = scrollable.position.pixels;
+      await tester.drag(find.byType(ListView).first, const Offset(0, 260));
+      await tester.pump();
+      final afterDrag = scrollable.position.pixels;
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(afterDrag, lessThan(initial));
+      expect(scrollable.position.pixels, closeTo(afterDrag, 1));
+    });
+
+    testWidgets('should not show a stale model id that is absent from the provider', (
+      tester,
+    ) async {
+      final state = AppState();
+      final stale = AiProfile(
+        name: 'OpenAI',
+        provider: 'openai',
+        model: 'gpt-4o',
+      );
+      stale.models.add(AiModelEntry(id: 'actual-model'));
+      stale.enabled = true;
+      state.updateConfig((c) {
+        c.aiProfiles.add(stale);
+        c.activeAiProfileId = stale.id;
+        return c;
+      });
+      final panel = AiPanelView(
+        strings: AppStrings.en,
+        existingNodes: const [],
+        existingConnections: const [],
+        startExpanded: true,
+        hideHeader: true,
+        onApplyGraph: (_, connections) {},
+        onMergeGraph: (_, connections) {},
+        onModifyNodeParams: (_, params) => true,
+        onClearAll: () {},
+        onUndo: () {},
+        onRedo: () {},
+        onSave: () {},
+        onAddNode: (_, x, y) => 'node',
+        onAddGate: (_, x, y) => 'gate',
+        onSetGateParams: (_, params) => true,
+        onDeleteNode: (_) {},
+        onConnectNodes: (_, to) => true,
+        onDisconnectNodes: (_) => true,
+        onCancelTasks: () {},
+      );
+      await tester.pumpWidget(
+        ChangeNotifierProvider<AppState>.value(
+          value: state,
+          child: MaterialApp(home: Scaffold(body: panel)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('gpt-4o'), findsNothing);
+      expect(find.textContaining('actual-model'), findsWidgets);
+      // Flush ConfigService's 400ms debounce before the test binding disposes.
+      await tester.pump(const Duration(milliseconds: 600));
     });
   });
 }

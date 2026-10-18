@@ -75,13 +75,15 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('OpenAI 默认'), findsOneWidget);
-    expect(find.text('Claude'), findsOneWidget);
-    // 当前提供商徽标
-    expect(find.text('当前'), findsOneWidget);
-    expect(find.text('添加提供商'), findsOneWidget);
+    // 一级页只保留「提供商」一个入口，具体列表在二级页。
+    expect(find.text('提供商'), findsOneWidget);
     expect(find.text('权限'), findsOneWidget);
     expect(find.text('高级'), findsOneWidget);
+    await tester.tap(find.text('提供商'));
+    await tester.pumpAndSettle();
+    expect(find.text('OpenAI 默认'), findsOneWidget);
+    expect(find.text('Claude'), findsOneWidget);
+    expect(find.text('添加提供商'), findsOneWidget);
     // 让配置落盘防抖定时器跑完，避免 Timer pending 断言
     await tester.pump(const Duration(milliseconds: 600));
   });
