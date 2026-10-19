@@ -46,6 +46,7 @@ import '../widgets/gate_symbol_painter.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/liquid_glass_fallback.dart';
 import '../widgets/mobile_glass_pill.dart';
+import '../widgets/mobile_ui.dart';
 // 节点图标/配色表：与独立面板窗口共用（见该文件顶部说明）
 import '../widgets/node_icons.dart';
 import '../widgets/step_editors/audio_compressor_step_editor.dart';
@@ -1734,7 +1735,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                 size: 16,
                 color: Theme.of(context).colorScheme.error,
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 8),
               Text(
                 s.isZh ? '删除连线' : 'Delete Link',
                 style: const TextStyle(fontSize: 13),
@@ -10447,12 +10448,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           icon: icon,
           tooltip: tip,
           onPressed: onTap,
-          constraints: const BoxConstraints.tightFor(width: 48, height: 48),
+          constraints: const BoxConstraints.tightFor(
+            width: MobileUi.pillHeight,
+            height: MobileUi.pillHeight,
+          ),
           padding: EdgeInsets.zero,
           style: IconButton.styleFrom(
             foregroundColor: scheme.onSurfaceVariant,
-            // 圆角水波纹：默认 splash 是 48 直径的圆，比 36 的盒子还大，
-            // 点按时会溢出行外。半径取档位圆角避免出现「圆角矩形按钮 + 圆形水波」。
+            // Keep the splash within the shared mobile pill-button radius.
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(headBtn.radius),
             ),
@@ -10460,7 +10463,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         );
     Widget header(BuildContext ctx) => StatefulBuilder(
       builder: (ctx, setH) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 8, 6),
+        padding: const EdgeInsets.fromLTRB(12, 4, 12, 2),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -10470,16 +10473,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
               alignment: Alignment.centerLeft,
               child: MobileGlassPill(
                 style: context.read<AppState>().config.pillStyle,
-                radius: 22,
+                radius: MobileUi.pillRadius,
+                height: MobileUi.pillHeight,
                 padding: EdgeInsets.zero,
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // 菜单 / 历史侧栏（设计稿左上角汉堡按钮）
+                    // Open the mobile AI navigation drawer.
                     headButton(
                       Icon(Icons.menu, size: headBtn.iconSize),
                       s.isZh ? '历史记录' : 'History',
-                      () => aiKey.currentState?.openHistoryAt(Offset.zero),
+                      () => aiKey.currentState?.openHistoryAt(),
                     ),
                     Icon(Icons.smart_toy, size: 18, color: scheme.primary),
                     const SizedBox(width: 8),
@@ -10499,8 +10503,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                     // 工具面板开关
                     headButton(
                       AnimatedRotation(
-                        turns:
-                            (aiKey.currentState?.toolsOpen ?? false) ? 0.5 : 0,
+                        turns: (aiKey.currentState?.toolsOpen ?? false)
+                            ? 0.5
+                            : 0,
                         duration: const Duration(milliseconds: 200),
                         curve: Curves.easeOutCubic,
                         child: Icon(
@@ -10510,7 +10515,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                       ),
                       s.isZh ? '工具' : 'Tools',
                       () {
-                        aiKey.currentState?.toggleTools();
+                        unawaited(
+                          aiKey.currentState?.openMobileSidebarPage(
+                                _AiMobileSidebarPage.tools,
+                              ) ??
+                              Future<void>.value(),
+                        );
                         setH(() {});
                       },
                     ),
@@ -10527,7 +10537,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             // 模型选择器独立成行：不再和标题/工具挤在 48px 头部行里，
             // 宽度按内容收缩、文本最多 190px，避免“只剩 1/3 宽”。
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: _aiModelPill(scheme, s, aiKey, () => setH(() {})),
@@ -12653,6 +12663,8 @@ class AiPanelView extends StatefulWidget {
   State<AiPanelView> createState() => _AiPanelViewState();
 }
 
+enum _AiMobileSidebarPage { conversation, history, tools }
+
 class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
   @override
   void initState() {
@@ -12734,6 +12746,7 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
   final List<AiChatAttachment> _attachments = [];
   bool _historyOpen = false;
   List<Map<String, dynamic>> _historySessions = [];
+  _AiMobileSidebarPage _mobileSidebarPage = _AiMobileSidebarPage.history;
 
   /// File backing the current session. Reused so auto-saves overwrite instead of
   /// creating a new history entry after every assistant turn.
@@ -12829,11 +12842,11 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
   // 多 Key 轮换计数（会话内递增，按 Key 池长度取模）
   int _aiKeyRotation = 0;
 
-  /// 供外部（移动端底部弹层的头部）切换工具侧栏 / 读取状态 / 打开历史菜单
-  void toggleTools() => setState(() => _toolsOpen = !_toolsOpen);
-  bool get toolsOpen => _toolsOpen;
-  Future<void> openHistoryAt(Offset anchor) =>
-      _toggleHistoryAt(Theme.of(context).colorScheme, widget.strings, anchor);
+  bool get toolsOpen =>
+      _toolsOpen ||
+      (_historyOpen && _mobileSidebarPage == _AiMobileSidebarPage.tools);
+  Future<void> openHistoryAt() => _toggleHistoryAt();
+
   // 被禁用的工具（右键工具项 → 禁用）。禁用 = 从系统提示词移除 + 调用被拦截。
   final Set<String> _disabledTools = {};
   List<PipelineNode>? _pendingNodes;
@@ -14734,8 +14747,10 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
                   // 菜单 / 历史侧栏（设计稿左上角汉堡按钮）
                   IconButton(
                     icon: const Icon(Icons.menu, size: 18),
-                    tooltip: s.isZh ? '历史记录' : 'History',
-                    onPressed: () => _toggleHistoryAt(scheme, s, Offset.zero),
+                    tooltip: s.isZh ? '聊天菜单' : 'Chat menu',
+                    onPressed: () => isMobilePlatform
+                        ? openMobileSidebarPage(_AiMobileSidebarPage.history)
+                        : _toggleHistoryAt(),
                     constraints: const BoxConstraints(
                       minWidth: 32,
                       minHeight: 32,
@@ -14774,17 +14789,19 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
                   // 工具侧边栏开关
                   Tooltip(
                     message: s.isZh
-                        ? (_toolsOpen ? '收起工具面板' : '展开工具面板')
-                        : (_toolsOpen ? 'Collapse tools' : 'Expand tools'),
+                        ? (toolsOpen ? '收起工具面板' : '展开工具面板')
+                        : (toolsOpen ? 'Collapse tools' : 'Expand tools'),
                     child: IconButton(
                       icon: AnimatedRotation(
-                        turns: _toolsOpen ? 0.5 : 0,
+                        turns: toolsOpen ? 0.5 : 0,
                         duration: const Duration(milliseconds: 200),
                         curve: Curves.easeOutCubic,
                         child: const Icon(Icons.extension_outlined, size: 18),
                       ),
                       tooltip: s.isZh ? '工具' : 'Tools',
-                      onPressed: () => setState(() => _toolsOpen = !_toolsOpen),
+                      onPressed: () => isMobilePlatform
+                          ? openMobileSidebarPage(_AiMobileSidebarPage.tools)
+                          : setState(() => _toolsOpen = !_toolsOpen),
                       constraints: const BoxConstraints(
                         minWidth: 32,
                         minHeight: 32,
@@ -14887,13 +14904,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
             // 内联侧栏挤压成一条线）；桌面端保持内联侧栏。工具侧栏展开时盖住
             // 聊天区右缘，用户照常可以折叠。
             child: isMobilePlatform
-                ? _buildChatBody(
-                    scheme,
-                    s,
-                    messageOverlay: _toolsOpen
-                        ? _buildToolsPanel(scheme, s)
-                        : null,
-                  )
+                ? _buildChatBody(scheme, s)
                 : Row(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -14926,60 +14937,10 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
     return GlassPanel(radius: 16, blur: 14, child: body);
   }
 
-  /// 移动端工具面板：以浮层形式挂在消息区右侧。
-  ///
-  /// 原来它盖在整个面板上（含底部输入行）—— 侧栏一展开，发送键就被压在下面，
-  /// 用户插完模板还得先收起侧栏才能发送。现在只覆盖消息区。
-  ///
-  /// 视觉上补了左描边 + 向左投影：原实现直接铺一块与面板同色的 `ColoredBox`，
-  /// 边界完全看不见（像消息被切掉半截），而且是从无到有的硬切。
-  /// 滑入 + 淡入只在挂载时播一次（180ms），展开/收起依旧没有常驻开销。
-  Widget _buildToolsPanel(ColorScheme scheme, AppStrings s) {
-    return Positioned(
-      top: 0,
-      right: 0,
-      bottom: 0,
-      width: 168,
-      child: TweenAnimationBuilder<double>(
-        tween: Tween<double>(begin: 0, end: 1),
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOutCubic,
-        builder: (_, t, child) => Transform.translate(
-          offset: Offset(24 * (1 - t), 0),
-          child: Opacity(opacity: t, child: child),
-        ),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: scheme.surfaceContainerLow,
-            border: Border(
-              left: BorderSide(color: scheme.outlineVariant.withAlpha(110)),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: scheme.shadow.withAlpha(34),
-                blurRadius: 18,
-                offset: const Offset(-6, 0),
-              ),
-            ],
-          ),
-          child: _buildToolsSidebar(scheme, s),
-        ),
-      ),
-    );
-  }
-
   /// AI 面板聊天区（消息列表 + 待批准图 + 输入框）。
   /// 独立成方法，便于桌面端「内联工具侧栏 + 聊天区」与移动端
-  /// 「聊天区 + 消息区浮层工具面板」两种布局复用同一段内容。
-  ///
-  /// [messageOverlay] 只在移动端用到：工具面板作为消息区的浮层挂进来，
-  /// 而不是盖在整个面板上（盖整个面板会连底部输入行一起遮住，
-  /// 侧栏展开时用户连「发送」都点不到）。
-  Widget _buildChatBody(
-    ColorScheme scheme,
-    AppStrings s, {
-    Widget? messageOverlay,
-  }) {
+  /// 「聊天区 + 侧栏页面」两种布局复用同一段内容。
+  Widget _buildChatBody(ColorScheme scheme, AppStrings s) {
     const btn = AppControlSize.comfortable;
     // 移动端输入框做成多行自适应。桌面端有物理 Enter（onSubmitted 直接发送）更快；
     // 移动端软键盘换行只能靠 ↵ 键，写死单行等于「长描述只能挤成一行横着滚」。
@@ -15126,45 +15087,39 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
         return Column(
           children: [
             Expanded(
-              child: messageOverlay == null
-                  ? NotificationListener<ScrollMetricsNotification>(
-                      onNotification: (_) {
-                        // Only follow new content when the user is already at the
-                        // bottom. A content-size change while the user is reading
-                        // older messages must never yank the viewport back down.
-                        if (_followLatest) _scrollToBottom();
-                        return false;
-                      },
-                      child: NotificationListener<ScrollNotification>(
-                        onNotification: (notification) {
-                          if (notification is ScrollUpdateNotification &&
-                              notification.dragDetails != null) {
-                            _followLatest =
-                                notification.metrics.extentAfter < 40;
-                          } else if (notification is UserScrollNotification &&
-                              notification.direction != ScrollDirection.idle) {
-                            _followLatest = false;
-                          } else if (notification is ScrollEndNotification) {
-                            _followLatest =
-                                notification.metrics.extentAfter < 40;
-                          }
-                          return false;
-                        },
-                        child: Stack(
-                          children: [
-                            Positioned.fill(child: messageArea),
-                            Positioned.fill(child: _buildHistorySidebar(s)),
-                          ],
-                        ),
+              child: NotificationListener<ScrollMetricsNotification>(
+                onNotification: (_) {
+                  // Only follow new content when the user is already at the
+                  // bottom. A content-size change while the user is reading
+                  // older messages must never yank the viewport back down.
+                  if (_followLatest) _scrollToBottom();
+                  return false;
+                },
+                child: NotificationListener<ScrollNotification>(
+                  onNotification: (notification) {
+                    if (notification is ScrollUpdateNotification &&
+                        notification.dragDetails != null) {
+                      _followLatest = notification.metrics.extentAfter < 40;
+                    } else if (notification is UserScrollNotification &&
+                        notification.direction != ScrollDirection.idle) {
+                      _followLatest = false;
+                    } else if (notification is ScrollEndNotification) {
+                      _followLatest = notification.metrics.extentAfter < 40;
+                    }
+                    return false;
+                  },
+                  child: Stack(
+                    children: [
+                      Positioned.fill(child: messageArea),
+                      Positioned.fill(
+                        child: isMobilePlatform
+                            ? _buildMobileSidebar(scheme, s)
+                            : _buildHistorySidebar(s),
                       ),
-                    )
-                  : Stack(
-                      children: [
-                        Positioned.fill(child: messageArea),
-                        messageOverlay,
-                        Positioned.fill(child: _buildHistorySidebar(s)),
-                      ],
-                    ),
+                    ],
+                  ),
+                ),
+              ),
             ),
             if (_attachments.isNotEmpty)
               ConstrainedBox(
@@ -15289,9 +15244,9 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
             Padding(
               padding: EdgeInsets.fromLTRB(
                 isMobilePlatform ? 10 : 12,
-                4,
+                isMobilePlatform ? 8 : 12,
                 isMobilePlatform ? 10 : 12,
-                isMobilePlatform ? 10 : 12,
+                isMobilePlatform ? 8 : 12,
               ),
               child: DecoratedBox(
                 decoration: BoxDecoration(
@@ -15554,16 +15509,260 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
   }
 
   /// Both embedded and external mobile headers toggle this same sidebar.
-  Future<void> _toggleHistoryAt(
-    ColorScheme scheme,
-    AppStrings s,
-    Offset anchor,
-  ) async {
-    setState(() => _historyOpen = !_historyOpen);
-    if (!_historyOpen) return;
+  Future<void> _toggleHistoryAt() async {
+    if (_historyOpen) {
+      setState(() => _historyOpen = false);
+      return;
+    }
+    await openMobileSidebarPage(_AiMobileSidebarPage.history);
+  }
+
+  Future<void> _loadHistorySessions() async {
     final sessions = await AiChatHistory.listSessions();
     if (mounted) setState(() => _historySessions = sessions);
   }
+
+  Future<void> openMobileSidebarPage(_AiMobileSidebarPage page) async {
+    setState(() {
+      _mobileSidebarPage = page;
+      _historyOpen = true;
+    });
+    if (page == _AiMobileSidebarPage.history) {
+      await _loadHistorySessions();
+    }
+  }
+
+  Widget _buildMobileSidebar(ColorScheme scheme, AppStrings s) => LayoutBuilder(
+    builder: (context, constraints) => Stack(
+      children: [
+        if (_historyOpen)
+          Positioned.fill(
+            child: GestureDetector(
+              onTap: () => setState(() => _historyOpen = false),
+              child: ColoredBox(color: scheme.scrim.withAlpha(60)),
+            ),
+          ),
+        AnimatedPositioned(
+          duration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          top: 0,
+          bottom: 0,
+          left: _historyOpen ? 0 : -constraints.maxWidth,
+          width: math.min(340, constraints.maxWidth * 0.86),
+          child: IgnorePointer(
+            ignoring: !_historyOpen,
+            child: AppCard(
+              style: context.read<AppState>().config.cardStyle,
+              radius: 16,
+              padding: const EdgeInsets.all(10),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.smart_toy_outlined,
+                        size: 18,
+                        color: scheme.primary,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          s.aiChatTitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: s.isZh ? '关闭侧栏' : 'Close sidebar',
+                        onPressed: () => setState(() => _historyOpen = false),
+                        icon: const Icon(Icons.close),
+                        constraints: const BoxConstraints.tightFor(
+                          width: 40,
+                          height: 40,
+                        ),
+                        padding: EdgeInsets.zero,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  MobileSegmentedPills(
+                    margin: EdgeInsets.zero,
+                    tabs: [
+                      MobilePillTab(
+                        s.isZh ? '对话' : 'Chat',
+                        icon: Icons.chat_bubble_outline,
+                      ),
+                      MobilePillTab(
+                        s.isZh ? '历史' : 'History',
+                        icon: Icons.history,
+                      ),
+                      MobilePillTab(
+                        s.isZh ? '工具' : 'Tools',
+                        icon: Icons.extension_outlined,
+                      ),
+                    ],
+                    selectedIndex: _mobileSidebarPage.index,
+                    onSelected: (index) {
+                      final page = _AiMobileSidebarPage.values[index];
+                      unawaited(openMobileSidebarPage(page));
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: switch (_mobileSidebarPage) {
+                      _AiMobileSidebarPage.conversation =>
+                        _buildCurrentConversationSidebar(scheme, s),
+                      _AiMobileSidebarPage.history =>
+                        _buildMobileHistorySidebar(s),
+                      _AiMobileSidebarPage.tools => _buildToolsSidebar(
+                        scheme,
+                        s,
+                      ),
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _buildCurrentConversationSidebar(ColorScheme scheme, AppStrings s) {
+    String? latestPrompt;
+    for (final message in _messages.reversed) {
+      if (message.role == 'user') {
+        latestPrompt = message.content;
+        break;
+      }
+    }
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Icon(Icons.forum_outlined, size: 36, color: scheme.primary),
+          const SizedBox(height: 12),
+          Text(
+            s.isZh ? '当前对话' : 'Current conversation',
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _messages.isEmpty
+                ? (s.isZh ? '尚未开始对话' : 'No messages yet')
+                : (s.isZh
+                      ? '${_messages.length} 条消息 · $_effectiveModel'
+                      : '${_messages.length} messages · $_effectiveModel'),
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+          ),
+          if (latestPrompt != null && latestPrompt.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Text(
+              s.isZh ? '最近提问' : 'Latest prompt',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: scheme.primary,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              latestPrompt,
+              maxLines: 5,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+            ),
+          ],
+          const SizedBox(height: 18),
+          FilledButton.icon(
+            onPressed: () => setState(() => _historyOpen = false),
+            icon: const Icon(Icons.chat_bubble_outline),
+            label: Text(s.isZh ? '返回当前对话' : 'Return to conversation'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMobileHistorySidebar(AppStrings s) => Column(
+    children: [
+      Expanded(
+        child: _historySessions.isEmpty
+            ? Center(child: Text(s.isZh ? '暂无历史记录' : 'No history yet'))
+            : ListView(
+                children: [
+                  for (final session in _historySessions)
+                    ListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2,
+                      ),
+                      leading: const Icon(Icons.forum_outlined, size: 19),
+                      title: Text(
+                        session['title'] as String? ?? 'Untitled',
+                        maxLines: 2,
+                        style: const TextStyle(fontSize: 12.5),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        session['model'] as String? ?? '',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                      enabled: !_loading && _activeClient == null,
+                      onTap: () {
+                        _loadHistorySession(session, s);
+                        setState(() => _historyOpen = false);
+                      },
+                    ),
+                ],
+              ),
+      ),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          onPressed: _loading
+              ? null
+              : () async {
+                  final saved = await _saveCurrentSession();
+                  await _loadHistorySessions();
+                  if (!mounted) return;
+                  showToast(
+                    context,
+                    saved == null
+                        ? (s.isZh ? '无法保存会话' : 'Could not save session')
+                        : (s.isZh ? '会话已保存' : 'Session saved'),
+                  );
+                },
+          icon: const Icon(Icons.save_outlined),
+          label: Text(s.isZh ? '保存当前会话' : 'Save current chat'),
+        ),
+      ),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          onPressed: () async {
+            await AiChatHistory.clearAll();
+            _historyFilePath = null;
+            if (mounted) setState(() => _historySessions = []);
+          },
+          icon: const Icon(Icons.delete_outline),
+          label: Text(s.isZh ? '清空历史' : 'Clear history'),
+        ),
+      ),
+    ],
+  );
 
   Widget _buildHistorySidebar(AppStrings s) => LayoutBuilder(
     builder: (context, constraints) => Stack(
@@ -15751,7 +15950,6 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
     }
   }
 
-
   /// 工具侧边栏：列出全部工具，点击插入模板到输入框。
   /// 插入模板本身不需要任何权限（权限只约束 AI 自动执行时是否放行），
   /// 因此工具始终可点击；若对应权限未开启，仅显示一个小锁标记提示。
@@ -15864,6 +16062,9 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
                               offset: start + t.template.length,
                             ),
                           );
+                          if (isMobilePlatform) {
+                            setState(() => _historyOpen = false);
+                          }
                         },
                   child: Container(
                     padding: EdgeInsets.symmetric(
