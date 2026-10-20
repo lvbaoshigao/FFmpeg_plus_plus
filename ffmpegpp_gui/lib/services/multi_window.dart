@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
+import 'package:flutter/foundation.dart';
 
 import '../models/models.dart';
 import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
+import 'panel_process_ipc.dart';
 
 /// ════════════════════════════════════════════════════════════════════════
 /// 独立面板子窗口（真正脱离应用主窗口的系统窗口）
@@ -15,10 +18,11 @@ import '../providers/app_state.dart';
 /// 背景：`desktop_multi_window` 创建的每个子窗口都是一个**独立的 Flutter
 /// 引擎**。它与主窗口不共享任何 Dart 内存 —— 主窗口里的 `AppState`、画布
 /// 节点图、选中态，在子窗口里一概看不到。因此所有数据都必须显式经方法通道
-/// 同步，这是本文件存在的唯一理由。
+/// 或 Linux 本机 Unix socket 同步，这是本文件存在的唯一理由。
 ///
 /// 两条链路：
-///  * **子 → 主**：共用一条单向 [WindowMethodChannel]（[kPanelHostChannel]）。
+///  * **子 → 主**：Windows/macOS 共用一条单向 [WindowMethodChannel]
+///    （[kPanelHostChannel]）；Linux 独立进程使用受限 Unix socket。
 ///    单向模式「一个 handler、任意多个调用方」，正好对应「一个主窗口 + N 个
 ///    面板窗口」。主窗口在 `main()` 里调 [MultiWindowService.installHost]
 ///    注册唯一 handler。
@@ -60,6 +64,7 @@ class DetachedWindowArgs {
     this.lang = 'zh',
     this.width = 0,
     this.height = 0,
+    this.ipcSocketPath,
   });
 
   final DetachedPanel panel;
@@ -68,6 +73,7 @@ class DetachedWindowArgs {
   /// 期望的逻辑尺寸；0 表示由子窗口自己决定。
   final double width;
   final double height;
+  final String? ipcSocketPath;
 
   /// 参数信封的标识，用来区分「本应用的面板窗口」与普通窗口/主窗口
   /// （主窗口的 windowArgument 是空串）。
@@ -79,6 +85,7 @@ class DetachedWindowArgs {
     'lang': lang,
     'w': width,
     'h': height,
+    if (ipcSocketPath != null) 'ipc': ipcSocketPath,
   });
 
   /// 解析子窗口参数；不是本应用的面板窗口时返回 null。
@@ -90,11 +97,17 @@ class DetachedWindowArgs {
       if (decoded['kind'] != _kind) return null;
       final panel = DetachedPanel.fromId(decoded['panel'] as String?);
       if (panel == null) return null;
+      final socketPath = decoded['ipc'] as String?;
+      if (socketPath != null &&
+          (!socketPath.startsWith('/') || socketPath.length > 100)) {
+        return null;
+      }
       return DetachedWindowArgs(
         panel: panel,
         lang: (decoded['lang'] as String?) ?? 'zh',
         width: (decoded['w'] as num?)?.toDouble() ?? 0,
         height: (decoded['h'] as num?)?.toDouble() ?? 0,
+        ipcSocketPath: socketPath,
       );
     } catch (_) {
       return null;
@@ -152,6 +165,7 @@ abstract final class PanelPush {
   static const String closeWindow = 'closeWindow';
   static const String suspend = 'suspendWindow';
   static const String reactivate = 'reactivateWindow';
+  static const String showWindow = 'showWindow';
 }
 
 /// 主窗口侧的「面板宿主」。
@@ -188,11 +202,54 @@ class MultiWindowService {
 
   /// 已打开的面板窗口：panel → windowId。
   static final Map<DetachedPanel, String> _openWindows = {};
+  static final Map<DetachedPanel, _LinuxPanelProcess> _linuxPanels = {};
+  static ServerSocket? _linuxServer;
+  static Directory? _linuxIpcDirectory;
+  static Future<void>? _startingLinuxServer;
+  static int _linuxConnections = 0;
+  static String? _linuxSocketPath;
+  static PanelProcessIpc? _linuxGuestConnection;
+  static String? _linuxGuestSocketPath;
+  static String? _linuxGuestToken;
+  static const String linuxProcessArgument = 'ffmpegpp-panel-v1';
+  static const String _linuxHandshakeMethod = 'ipc.handshake';
 
-  // Linux 的 desktop_multi_window 在创建第二个 GTK/Flutter 引擎时会阻塞
-  // 主窗口平台线程（表现为点「独立窗口」后整个应用卡死）。在插件修好前，
-  // Linux 一律回退到应用内浮动面板；Windows/macOS 仍使用系统窗口。
-  static bool get supported => !isMobilePlatform && !Platform.isLinux;
+  static bool get supported => !isMobilePlatform;
+
+  /// Linux runner 独立面板进程读取 stdin 后调用；认证 token 不放在 argv 中。
+  static void configureLinuxGuest({
+    required String socketPath,
+    required String token,
+  }) {
+    if (!Platform.isLinux ||
+        !socketPath.startsWith('/') ||
+        socketPath.length > 100 ||
+        !RegExp(r'^[A-Za-z0-9_-]{40,50}$').hasMatch(token)) {
+      throw const FormatException('Invalid Linux panel process arguments');
+    }
+    _linuxGuestSocketPath = socketPath;
+    _linuxGuestToken = token;
+  }
+
+  static Future<void> disconnectLinuxGuest() async {
+    final connection = _linuxGuestConnection;
+    _linuxGuestConnection = null;
+    _linuxGuestSocketPath = null;
+    _linuxGuestToken = null;
+    await connection?.close();
+  }
+
+  static Future<String> readLinuxGuestToken() async {
+    final token = await stdin
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .first
+        .timeout(const Duration(seconds: 10));
+    if (!RegExp(r'^[A-Za-z0-9_-]{40,50}$').hasMatch(token)) {
+      throw const FormatException('Invalid Linux panel IPC token');
+    }
+    return token;
+  }
 
   /// 当前进程是不是「独立面板子窗口」；是则返回它的启动参数。
   ///
@@ -211,6 +268,15 @@ class MultiWindowService {
   /// 主窗口调用一次：注册子窗口请求的唯一 handler。
   static Future<void> installHost() async {
     if (!supported || _hostInstalled) return;
+    if (Platform.isLinux) {
+      try {
+        await _ensureLinuxHost();
+        _hostInstalled = true;
+      } catch (error, stack) {
+        debugPrint('Could not start Linux panel IPC server: $error\n$stack');
+      }
+      return;
+    }
     _hostInstalled = true;
     try {
       await _hostChannel.setMethodCallHandler((call) async {
@@ -243,6 +309,29 @@ class MultiWindowService {
     Future<dynamic> Function(String method, Map<String, dynamic> args) onPush,
   ) async {
     if (!supported) return null;
+    if (Platform.isLinux) {
+      final path = _linuxGuestSocketPath;
+      final token = _linuxGuestToken;
+      if (path == null || token == null) return null;
+      final socket = await Socket.connect(
+        InternetAddress(path, type: InternetAddressType.unix),
+        0,
+        timeout: const Duration(seconds: 10),
+      );
+      final connection = PanelProcessIpc(socket);
+      connection.onRequest = (method, args) => onPush(method, args);
+      final authenticated = await connection.invoke(
+        _linuxHandshakeMethod,
+        <String, dynamic>{'token': token},
+        const Duration(seconds: 10),
+      );
+      if (authenticated != true) {
+        await connection.close();
+        throw StateError('Linux panel IPC authentication failed');
+      }
+      _linuxGuestConnection = connection;
+      return null;
+    }
     try {
       final controller = await WindowController.fromCurrentEngine();
       await controller.setWindowMethodHandler((call) async {
@@ -264,6 +353,16 @@ class MultiWindowService {
     Map<String, dynamic>? args,
   ]) async {
     if (!supported) return null;
+    if (Platform.isLinux) {
+      final connection = _linuxGuestConnection;
+      if (connection == null) return null;
+      try {
+        return await connection.invoke(method, args);
+      } catch (error) {
+        debugPrint('Linux panel IPC request failed ($method): $error');
+        return null;
+      }
+    }
     try {
       return await _hostChannel
           .invokeMethod(method, args ?? const {})
@@ -276,8 +375,8 @@ class MultiWindowService {
 
   /// 打开（或唤起）某个面板的系统窗口。
   ///
-  /// 子窗口启动后会用 [PanelMethod.ready] 回来要快照，所以这里不需要等待它
-  /// 起来，也不需要在返回前推数据。
+  /// 子窗口启动后通过 [PanelMethod.ready] 请求快照。Linux 使用独立进程与本机
+  /// Unix socket；Windows/macOS 继续使用 desktop_multi_window 的第二引擎。
   static Future<String?> openPanel(
     DetachedPanel panel, {
     required String lang,
@@ -285,6 +384,9 @@ class MultiWindowService {
     double height = 0,
   }) async {
     if (!supported) return null;
+    if (Platform.isLinux) {
+      return _openLinuxPanel(panel, lang: lang, width: width, height: height);
+    }
     final existing = _openWindows[panel];
     if (existing != null) {
       final controller = WindowController.fromWindowId(existing);
@@ -323,8 +425,12 @@ class MultiWindowService {
     }
   }
 
-  /// Reuse Linux engines while releasing hidden panel resources.
+  /// Linux 子进程在收回面板时关闭，避免保留无界面 Flutter 进程。
   static Future<void> parkPanel(DetachedPanel panel) async {
+    if (Platform.isLinux) {
+      await closePanel(panel);
+      return;
+    }
     final id = _openWindows[panel];
     if (id == null) return;
     final controller = WindowController.fromWindowId(id);
@@ -340,10 +446,37 @@ class MultiWindowService {
 
   /// 关闭某个面板的系统窗口。
   ///
-  /// 插件在 0.3.1 只暴露 `show()` / `hide()`，没有「按 id 销毁窗口」的 API，
-  /// 所以真正的关闭动作必须由子窗口自己执行 —— 这里只负责发指令。
+  /// Linux 向独立面板进程发关闭指令；Windows/macOS 由子引擎关闭自己的窗口。
   static Future<void> closePanel(DetachedPanel panel) async {
     if (!supported) return;
+    if (Platform.isLinux) {
+      final entry = _linuxPanels.remove(panel);
+      if (entry == null) return;
+      entry.expectedExit = true;
+      final connection = entry.connection;
+      if (connection != null) {
+        try {
+          await connection
+              .invoke(PanelPush.closeWindow, const {})
+              .timeout(const Duration(seconds: 3));
+        } catch (_) {}
+      } else {
+        if (!entry.connectionReady.isCompleted) {
+          entry.connectionReady.complete(null);
+        }
+      }
+      final process = entry.process;
+      if (process != null) {
+        try {
+          await process.exitCode.timeout(const Duration(seconds: 5));
+        } on TimeoutException {
+          process.kill();
+          await process.exitCode.timeout(const Duration(seconds: 2));
+        }
+      }
+      await connection?.close();
+      return;
+    }
     final id = _openWindows.remove(panel);
     if (id == null) return;
     try {
@@ -360,6 +493,12 @@ class MultiWindowService {
   /// 死掉的 State 发请求。
   static Future<void> closeAll() async {
     if (!supported) return;
+    if (Platform.isLinux) {
+      for (final panel in List<DetachedPanel>.from(_linuxPanels.keys)) {
+        await closePanel(panel);
+      }
+      await _closeLinuxHost();
+    }
     for (final panel in List<DetachedPanel>.from(_openWindows.keys)) {
       await closePanel(panel);
     }
@@ -372,6 +511,18 @@ class MultiWindowService {
     Map<String, dynamic>? args,
   ]) async {
     if (!supported) return;
+    if (Platform.isLinux) {
+      final connection = _linuxPanels[panel]?.connection;
+      if (connection == null) return;
+      try {
+        await connection
+            .invoke(method, args)
+            .timeout(const Duration(seconds: 5));
+      } catch (error) {
+        debugPrint('Linux panel push failed ($method): $error');
+      }
+      return;
+    }
     final id = _openWindows[panel];
     if (id == null) return;
     try {
@@ -382,10 +533,307 @@ class MultiWindowService {
   }
 
   /// 某个面板窗口是否已经打开。
-  static bool isOpen(DetachedPanel panel) => _openWindows.containsKey(panel);
+  static bool isOpen(DetachedPanel panel) =>
+      _openWindows.containsKey(panel) || _linuxPanels.containsKey(panel);
 
   /// 忘掉一个面板窗口（主窗口自己决定不再使用时调用）。
-  static void forget(DetachedPanel panel) => _openWindows.remove(panel);
+  static void forget(DetachedPanel panel) {
+    _openWindows.remove(panel);
+    _linuxPanels.remove(panel);
+  }
+
+  static Future<void> _ensureLinuxHost() async {
+    if (_linuxServer != null) return;
+    final pending = _startingLinuxServer;
+    if (pending != null) {
+      await pending;
+      return;
+    }
+    final start = _startLinuxHost();
+    _startingLinuxServer = start;
+    try {
+      await start;
+    } finally {
+      _startingLinuxServer = null;
+    }
+  }
+
+  static Future<void> _startLinuxHost() async {
+    final directory = await Directory.systemTemp.createTemp('ffmpegpp-panel-');
+    final path = '${directory.path}/p.sock';
+    if (utf8.encode(path).length >= 100) {
+      await directory.delete(recursive: true);
+      throw StateError('Linux panel IPC socket path is too long');
+    }
+    try {
+      final server = await ServerSocket.bind(
+        InternetAddress(path, type: InternetAddressType.unix),
+        0,
+      );
+      _linuxIpcDirectory = directory;
+      _linuxSocketPath = path;
+      _linuxServer = server;
+      server.listen(
+        _acceptLinuxPanel,
+        onError: (Object error) {
+          debugPrint('Linux panel IPC server failed: $error');
+        },
+      );
+    } catch (_) {
+      await directory.delete(recursive: true);
+      rethrow;
+    }
+  }
+
+  static void _acceptLinuxPanel(Socket socket) {
+    if (_linuxConnections >= DetachedPanel.values.length) {
+      socket.destroy();
+      return;
+    }
+    _linuxConnections++;
+    final connection = PanelProcessIpc(socket);
+    _LinuxPanelProcess? entry;
+    var authenticated = false;
+    connection.onRequest = (method, args) async {
+      if (!authenticated) {
+        final token = args['token'];
+        if (method != _linuxHandshakeMethod ||
+            token is! String ||
+            token.length > 50) {
+          unawaited(Future<void>.delayed(Duration.zero, connection.close));
+          return false;
+        }
+        entry = _linuxPanels.values
+            .where((candidate) => _constantTimeEquals(candidate.token, token))
+            .firstOrNull;
+        final matched = entry;
+        if (matched == null || matched.expectedExit) {
+          unawaited(Future<void>.delayed(Duration.zero, connection.close));
+          return false;
+        }
+        authenticated = true;
+        matched.connection = connection;
+        if (!matched.connectionReady.isCompleted) {
+          matched.connectionReady.complete(connection);
+        }
+        return true;
+      }
+
+      final current = entry;
+      if (current == null || current.expectedExit) {
+        throw StateError('Linux panel process is no longer active');
+      }
+      if (!_linuxHostMethods.contains(method)) {
+        throw StateError('Unsupported Linux panel method');
+      }
+      final requestPanel = args['panel'];
+      if (requestPanel != null && requestPanel != current.panel.id) {
+        throw StateError('Linux panel id mismatch');
+      }
+      final host = delegate;
+      if (host == null) return null;
+      final result = await host.onPanelRequest(method, args);
+      if (method == PanelMethod.ready && !current.ready.isCompleted) {
+        current.ready.complete(true);
+      }
+      if (method == PanelMethod.closed) {
+        _linuxPanels.remove(current.panel);
+        host.onPanelWindowGone(current.panel);
+      }
+      return result;
+    };
+    connection.onClosed = () {
+      _linuxConnections = math.max(0, _linuxConnections - 1);
+      final current = entry;
+      if (current != null && identical(current.connection, connection)) {
+        current.connection = null;
+        if (!current.expectedExit) current.process?.kill();
+      }
+    };
+  }
+
+  static const Set<String> _linuxHostMethods = {
+    _linuxHandshakeMethod,
+    PanelMethod.ready,
+    PanelMethod.refresh,
+    PanelMethod.dockBack,
+    PanelMethod.closed,
+    PanelMethod.setParams,
+    PanelMethod.addNode,
+    PanelMethod.probe,
+    PanelMethod.updateConfig,
+    PanelMethod.graphApply,
+    PanelMethod.graphModify,
+    PanelMethod.graphAddGate,
+    PanelMethod.graphSetGateParams,
+    PanelMethod.graphDeleteNode,
+    PanelMethod.graphConnect,
+    PanelMethod.graphDisconnect,
+    PanelMethod.graphClearAll,
+    PanelMethod.graphUndo,
+    PanelMethod.graphRedo,
+    PanelMethod.graphSave,
+    PanelMethod.graphCancelTasks,
+    PanelMethod.aiTitle,
+  };
+
+  static bool _constantTimeEquals(String a, String b) {
+    final aa = utf8.encode(a);
+    final bb = utf8.encode(b);
+    var difference = aa.length ^ bb.length;
+    final length = math.max(aa.length, bb.length);
+    for (var i = 0; i < length; i++) {
+      difference |= (i < aa.length ? aa[i] : 0) ^ (i < bb.length ? bb[i] : 0);
+    }
+    return difference == 0;
+  }
+
+  static Future<String?> _openLinuxPanel(
+    DetachedPanel panel, {
+    required String lang,
+    required double width,
+    required double height,
+  }) async {
+    try {
+      await _ensureLinuxHost();
+      final existing = _linuxPanels[panel];
+      if (existing != null && !existing.expectedExit) {
+        final connection =
+            existing.connection ??
+            await existing.connectionReady.future.timeout(
+              const Duration(seconds: 20),
+            );
+        if (connection == null ||
+            !await existing.ready.future.timeout(const Duration(seconds: 25))) {
+          await _abortLinuxPanelStart(panel, existing);
+          return null;
+        }
+        await connection.invoke(
+          PanelPush.reactivate,
+          delegate?.panelSnapshot(panel) ?? const <String, dynamic>{},
+        );
+        await connection.invoke(PanelPush.showWindow);
+        return panel.id;
+      }
+
+      final socketPath = _linuxSocketPath;
+      if (socketPath == null) return null;
+      final random = math.Random.secure();
+      final token = base64Url
+          .encode(List<int>.generate(32, (_) => random.nextInt(256)))
+          .replaceAll('=', '');
+      final entry = _LinuxPanelProcess(panel, token);
+      _linuxPanels[panel] = entry;
+      final args = DetachedWindowArgs(
+        panel: panel,
+        lang: lang,
+        width: width,
+        height: height,
+        ipcSocketPath: socketPath,
+      );
+      final process = await Process.start(Platform.resolvedExecutable, [
+        linuxProcessArgument,
+        args.encode(),
+      ], mode: ProcessStartMode.normal);
+      if (entry.expectedExit || !identical(_linuxPanels[panel], entry)) {
+        process.kill();
+        return null;
+      }
+      entry.process = process;
+      process.stdout
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .listen((line) => debugPrint('[panel:${panel.id}] $line'));
+      process.stderr
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .listen((line) => debugPrint('[panel:${panel.id}] $line'));
+      process.exitCode.then((code) {
+        entry.exited = true;
+        unawaited(entry.connection?.close());
+        if (identical(_linuxPanels[panel], entry)) {
+          _linuxPanels.remove(panel);
+          if (!entry.expectedExit) delegate?.onPanelWindowGone(panel);
+        }
+        if (!entry.connectionReady.isCompleted) {
+          entry.connectionReady.complete(null);
+        }
+        if (!entry.ready.isCompleted) {
+          entry.ready.complete(false);
+        }
+      });
+      process.stdin.writeln(token);
+      await process.stdin.flush();
+      await process.stdin.close();
+      final connected = await entry.connectionReady.future.timeout(
+        const Duration(seconds: 20),
+      );
+      if (connected == null ||
+          !await entry.ready.future.timeout(const Duration(seconds: 25))) {
+        await _abortLinuxPanelStart(panel, entry);
+        return null;
+      }
+      return panel.id;
+    } catch (error, stack) {
+      debugPrint('Could not open Linux detached panel: $error\n$stack');
+      final entry = _linuxPanels[panel];
+      if (entry != null) await _abortLinuxPanelStart(panel, entry);
+      return null;
+    }
+  }
+
+  static Future<void> _abortLinuxPanelStart(
+    DetachedPanel panel,
+    _LinuxPanelProcess entry,
+  ) async {
+    if (identical(_linuxPanels[panel], entry)) {
+      _linuxPanels.remove(panel);
+    }
+    entry.expectedExit = true;
+    if (!entry.connectionReady.isCompleted) {
+      entry.connectionReady.complete(null);
+    }
+    if (!entry.ready.isCompleted) {
+      entry.ready.complete(false);
+    }
+
+    final process = entry.process;
+    if (process != null && !entry.exited) {
+      process.kill();
+      try {
+        await process.exitCode.timeout(const Duration(seconds: 2));
+      } on TimeoutException {
+        debugPrint('Linux detached panel did not exit after being killed');
+      }
+    }
+    await entry.connection?.close();
+  }
+
+  static Future<void> _closeLinuxHost() async {
+    final server = _linuxServer;
+    _linuxServer = null;
+    _linuxSocketPath = null;
+    if (server != null) await server.close();
+    final directory = _linuxIpcDirectory;
+    _linuxIpcDirectory = null;
+    if (directory != null && await directory.exists()) {
+      await directory.delete(recursive: true);
+    }
+  }
+}
+
+class _LinuxPanelProcess {
+  _LinuxPanelProcess(this.panel, this.token);
+
+  final DetachedPanel panel;
+  final String token;
+  final Completer<PanelProcessIpc?> connectionReady =
+      Completer<PanelProcessIpc?>();
+  final Completer<bool> ready = Completer<bool>();
+  Process? process;
+  PanelProcessIpc? connection;
+  bool expectedExit = false;
+  bool exited = false;
 }
 
 /// ════════════════════════════════════════════════════════════════════════

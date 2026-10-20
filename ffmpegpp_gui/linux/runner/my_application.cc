@@ -5,6 +5,9 @@
 #include <gdk/gdkx.h>
 #endif
 
+#include <string>
+#include <unistd.h>
+
 #include "flutter/generated_plugin_registrant.h"
 // 独立面板窗口（desktop_multi_window）：子窗口是独立引擎，插件不会自动
 // 注册进去，必须在这里给新注册表再跑一遍 fl_register_plugins。
@@ -87,9 +90,13 @@ static void my_application_class_init(MyApplicationClass* klass) {
 
 static void my_application_init(MyApplication* self) {}
 
-MyApplication* my_application_new() {
+MyApplication* my_application_new(bool is_panel_process) {
+  std::string application_id = APPLICATION_ID;
+  if (is_panel_process) {
+    application_id += ".panel.p" + std::to_string(getpid());
+  }
   return MY_APPLICATION(g_object_new(my_application_get_type(),
-                                     "application-id", APPLICATION_ID,
+                                     "application-id", application_id.c_str(),
                                      "flags", G_APPLICATION_HANDLES_COMMAND_LINE,
                                      nullptr));
 }

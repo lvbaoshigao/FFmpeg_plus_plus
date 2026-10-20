@@ -56,8 +56,9 @@ import 'pipeline_editor_page.dart' show AiPanelApi, AiPanelView;
 /// 独立面板窗口（真正脱离主窗口的系统窗口）的 UI
 /// ════════════════════════════════════════════════════════════════════════
 ///
-/// 本进程是**独立的 Flutter 引擎**：没有 AppState、没有画布、没有后端。
-/// 一切数据都来自主窗口的推送（见 services/multi_window.dart 的协议说明），
+/// 本面板没有自己的 AppState、画布或后端；Linux 由独立进程承载，Windows/macOS
+/// 由独立 Flutter 引擎承载。一切数据都来自主窗口推送
+/// （见 services/multi_window.dart 的协议说明），
 /// 一切修改都回推给主窗口执行。
 ///
 /// 能复用的就复用：
@@ -181,6 +182,11 @@ class PanelWindowStore extends ChangeNotifier {
             await closeRequested?.call();
           }),
         );
+        break;
+      case PanelPush.showWindow:
+        await windowManager.show();
+        await windowManager.focus();
+        break;
     }
     return null;
   }
@@ -359,6 +365,9 @@ class _DetachedPanelAppState extends State<DetachedPanelApp>
     windowManager.removeListener(this);
     _store.removeListener(_onChanged);
     _store.dispose();
+    if (Platform.isLinux) {
+      unawaited(MultiWindowService.disconnectLinuxGuest());
+    }
     super.dispose();
   }
 
@@ -435,7 +444,10 @@ class _DetachedPanelAppState extends State<DetachedPanelApp>
     // （AI 会话一并交还），本窗口随即关闭。绝不允许出现「面板既不在主窗口、
     // 窗口也没了」的死状态。
     await _store.dockBack();
-    if (Platform.isLinux) return;
+    if (Platform.isLinux) {
+      await _closeSelf();
+      return;
+    }
     // 再通知一次「窗口已消失」，让主窗口清掉 _openWindows 里的登记 ——
     // 否则下次拖出会去 show() 一个已经不存在的窗口。
     await MultiWindowService.invokeHost(PanelMethod.closed, <String, dynamic>{

@@ -1,18 +1,22 @@
 // 冒烟测试：
 // 1. AppCard 四种表面样式（桌面分支）可构建
-// 2. 移动端 AI 设置内容 / 提供商详情页 / 高级页可构建
+// 2. 共享 AI 设置内容 / 提供商详情页 / 高级页可构建
 // 3. 卡片/底部菜单栏/顶部药丸样式的旧值迁移与 JSON 往返
 import 'package:ffmpegpp_gui/models/models.dart';
+import 'package:ffmpegpp_gui/pages/ads_page.dart';
 import 'package:ffmpegpp_gui/pages/ai_settings_mobile.dart';
+import 'package:ffmpegpp_gui/pages/credits_page.dart';
 import 'package:ffmpegpp_gui/providers/app_state.dart';
 import 'package:ffmpegpp_gui/theme/app_theme.dart';
 import 'package:ffmpegpp_gui/widgets/app_card.dart';
+import 'package:ffmpegpp_gui/widgets/glass_panel.dart';
 import 'package:ffmpegpp_gui/widgets/mobile_top_bar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
-Widget _harness(AppState state, Widget child) => ChangeNotifierProvider<AppState>.value(
+Widget _harness(AppState state, Widget child) =>
+    ChangeNotifierProvider<AppState>.value(
       value: state,
       child: MaterialApp(
         theme: AppTheme.dark(),
@@ -21,6 +25,27 @@ Widget _harness(AppState state, Widget child) => ChangeNotifierProvider<AppState
     );
 
 void main() {
+  testWidgets('desktop AI submenu and info pages use the shared glass header', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final state = AppState();
+    state.updateConfig((c) => c..cardStyle = 'gray');
+
+    for (final page in [
+      const MobileAiAdvancedPage(),
+      const CreditsPage(),
+      const AdsPage(),
+    ]) {
+      await tester.pumpWidget(_harness(state, page));
+      await tester.pumpAndSettle();
+      expect(find.byType(GlassTopBar), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    }
+  });
+
   testWidgets('AppCard 四种样式可构建', (tester) async {
     final state = AppState();
     await tester.pumpWidget(
@@ -28,16 +53,18 @@ void main() {
         state,
         SingleChildScrollView(
           padding: const EdgeInsets.all(12),
-          child: Column(children: [
-            for (final style in SurfaceStyle.all)
-              AppCard(
-                style: style,
-                radius: 16,
-                margin: const EdgeInsets.only(bottom: 8),
-                padding: const EdgeInsets.all(12),
-                child: const Text('card'),
-              ),
-          ]),
+          child: Column(
+            children: [
+              for (final style in SurfaceStyle.all)
+                AppCard(
+                  style: style,
+                  radius: 16,
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(12),
+                  child: const Text('card'),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -45,17 +72,30 @@ void main() {
     expect(find.text('card'), findsNWidgets(SurfaceStyle.all.length));
   });
 
-  testWidgets('移动端 AI 设置内容可构建', (tester) async {
+  testWidgets('共享 AI 设置内容可构建', (tester) async {
+    tester.view.physicalSize = const Size(412, 915);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     final state = AppState();
     // 用纯色样式避免测试环境里的 GPU shader
-    state.updateConfig((c) => c
-      ..cardStyle = 'gray'
-      ..pillStyle = 'gray'
-      ..navStyle = 'gray'
-      ..aiEnabled = true
-      ..mcpEnabled = false);
-    final p1 = AiProfile(name: 'OpenAI 默认', provider: 'openai', model: 'gpt-4o');
-    final p2 = AiProfile(name: 'Claude', provider: 'anthropic', model: 'claude-sonnet-5');
+    state.updateConfig(
+      (c) => c
+        ..cardStyle = 'gray'
+        ..pillStyle = 'gray'
+        ..navStyle = 'gray'
+        ..aiEnabled = true
+        ..mcpEnabled = false,
+    );
+    final p1 = AiProfile(
+      name: 'OpenAI 默认',
+      provider: 'openai',
+      model: 'gpt-4o',
+    );
+    final p2 = AiProfile(
+      name: 'Claude',
+      provider: 'anthropic',
+      model: 'claude-sonnet-5',
+    );
     state.updateConfig((c) {
       c.aiProfiles.addAll([p1, p2]);
       c.activeAiProfileId = p2.id;
@@ -67,9 +107,7 @@ void main() {
         state,
         SingleChildScrollView(
           padding: const EdgeInsets.all(12),
-          child: Builder(
-            builder: (ctx) => mobileAiSettingsContent(ctx, state),
-          ),
+          child: Builder(builder: (ctx) => aiSettingsContent(ctx, state)),
         ),
       ),
     );
@@ -96,9 +134,11 @@ void main() {
     addTearDown(tester.view.reset);
 
     final state = AppState();
-    state.updateConfig((c) => c
-      ..cardStyle = 'theme'
-      ..pillStyle = 'gray');
+    state.updateConfig(
+      (c) => c
+        ..cardStyle = 'theme'
+        ..pillStyle = 'gray',
+    );
     final p = AiProfile(name: '测试提供商', provider: 'openai', model: 'gpt-4o');
     state.updateConfig((c) {
       c.aiProfiles.add(p);
@@ -149,11 +189,13 @@ void main() {
     addTearDown(tester.view.reset);
 
     final state = AppState();
-    state.updateConfig((c) => c
-      ..cardStyle = 'theme'
-      ..pillStyle = 'gray'
-      ..aiAutoTitle = true
-      ..aiApproveMode = 'ask');
+    state.updateConfig(
+      (c) => c
+        ..cardStyle = 'theme'
+        ..pillStyle = 'gray'
+        ..aiAutoTitle = true
+        ..aiApproveMode = 'ask',
+    );
     await tester.pumpWidget(
       _harness(
         state,

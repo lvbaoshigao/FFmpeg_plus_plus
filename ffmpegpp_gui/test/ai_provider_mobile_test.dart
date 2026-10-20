@@ -34,6 +34,30 @@ Future<void> _flushSaveTimers(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('desktop provider detail uses a collapsible navigation sidebar', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final state = AppState();
+    await tester.pumpWidget(
+      _harness(state, const MobileAiProviderDetailPage()),
+    );
+    await tester.pumpAndSettle();
+
+    final sidebar = find.byKey(const ValueKey('provider_desktop_sidebar'));
+    expect(sidebar, findsOneWidget);
+    expect(find.byKey(const ValueKey('ai_provider_top_tabs')), findsNothing);
+    final expandedWidth = tester.getSize(sidebar).width;
+    await tester.tap(
+      find.byKey(const ValueKey('provider_desktop_sidebar_toggle')),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.getSize(sidebar).width, lessThan(expandedWidth));
+    expect(tester.takeException(), isNull);
+  });
+
   group('MobileAiProviderDetailPage narrow form', () {
     for (final isNew in [true, false]) {
       testWidgets(
@@ -204,7 +228,9 @@ void main() {
     expect(
       tester.getTopLeft(find.byKey(const ValueKey('ai_provider_top_tabs'))).dy,
       greaterThanOrEqualTo(
-        tester.getBottomLeft(find.byKey(const ValueKey('ai_provider_config'))).dy,
+        tester
+            .getBottomLeft(find.byKey(const ValueKey('ai_provider_config')))
+            .dy,
       ),
     );
     expect(find.text('基本'), findsOneWidget);
@@ -270,7 +296,7 @@ void main() {
   testWidgets('disabling active provider clears the active selection', (
     tester,
   ) async {
-    tester.view.physicalSize = const Size(800, 915);
+    tester.view.physicalSize = const Size(412, 915);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
     final state = AppState();
@@ -322,11 +348,14 @@ void main() {
         state,
         Builder(
           builder: (ctx) =>
-              SingleChildScrollView(child: mobileAiSettingsContent(ctx, state)),
+              SingleChildScrollView(child: aiSettingsContent(ctx, state)),
         ),
       ),
     );
     await tester.pump();
+    final aiToggle = find.byKey(const ValueKey('ai_enabled_toggle'));
+    final mcpToggle = find.byKey(const ValueKey('mcp_enabled_toggle'));
+    expect(tester.getSize(aiToggle).width, tester.getSize(mcpToggle).width);
     expect(tester.takeException(), isNull);
     await _flushSaveTimers(tester);
   });
@@ -342,7 +371,7 @@ void main() {
         state,
         Builder(
           builder: (ctx) =>
-              SingleChildScrollView(child: mobileAiSettingsContent(ctx, state)),
+              SingleChildScrollView(child: aiSettingsContent(ctx, state)),
         ),
       ),
     );

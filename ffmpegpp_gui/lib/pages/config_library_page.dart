@@ -153,7 +153,11 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                 ),
                 ButtonSegment(
                   value: true,
-                  label: Text(zh ? '新版 (Beta，不稳定)' : 'New (Beta)'),
+                  label: Text(
+                    zh ? '新版 Beta' : 'New Beta',
+                    maxLines: 1,
+                    softWrap: false,
+                  ),
                   icon: const Icon(Icons.auto_awesome, size: 16),
                 ),
               ],

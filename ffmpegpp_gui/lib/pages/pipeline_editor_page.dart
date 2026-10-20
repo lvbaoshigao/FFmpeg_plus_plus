@@ -49,6 +49,7 @@ import '../widgets/mobile_glass_pill.dart';
 import '../widgets/mobile_ui.dart';
 // 节点图标/配色表：与独立面板窗口共用（见该文件顶部说明）
 import '../widgets/node_icons.dart';
+import '../widgets/option_menu_bar.dart';
 import '../widgets/step_editors/audio_compressor_step_editor.dart';
 import '../widgets/step_editors/audio_convert_step_editor.dart';
 import '../widgets/step_editors/audio_fade_step_editor.dart';
@@ -10343,6 +10344,43 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final current = options.contains(raw)
         ? raw
         : (options.isNotEmpty ? options.first : '');
+    if (!isMobilePlatform) {
+      if (options.isEmpty) {
+        return Container(
+          constraints: const BoxConstraints(maxWidth: 190),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: scheme.surface.withAlpha(60),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: scheme.outlineVariant.withAlpha(90)),
+          ),
+          child: Text(
+            s.isZh ? '请先配置模型' : 'Configure a model first',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+          ),
+        );
+      }
+      return SizedBox(
+        width: 190,
+        child: OptionMenuBar<String>(
+          expandable: true,
+          value: current,
+          leadingIcon: Icons.memory,
+          triggerHeight: 34,
+          items: [
+            for (final model in options) OptionItem<String>(model, model),
+          ],
+          onChanged: (model) {
+            _applyModelChoice(model);
+            aiKey.currentState?.applySessionModel(model);
+            onChanged();
+          },
+        ),
+      );
+    }
+
     return PopupMenuButton<String>(
       tooltip: s.isZh ? '切换模型' : 'Switch model',
       padding: EdgeInsets.zero,
@@ -13416,7 +13454,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
   Future<void> _confirmThen(
     String tool,
     String desc,
-    VoidCallback action,
+    FutureOr<void> Function() action,
   ) async {
     final s = widget.strings;
     final ok = await showDialog<bool>(
@@ -13444,15 +13482,17 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
         ],
       ),
     );
+    if (!mounted) return;
     if (ok == true) {
-      action();
+      await action();
     } else {
       _addToolResult('confirm', s.isZh ? '用户拒绝执行 $desc' : 'User denied: $desc');
     }
   }
 
-  void _handleToolCalls(String content) {
-    final cfg = context.read<AppState>().config;
+  Future<bool> _handleToolCalls(String content) async {
+    final appState = context.read<AppState>();
+    final cfg = appState.config;
     final calls = RegExp(r'\[TOOL_CALL:([^\]]+)\]').allMatches(content);
     for (final m in calls) {
       final parts = m.group(1)!.split('|');
@@ -13462,7 +13502,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
         final argPreview = parts.length > 1
             ? parts.sublist(1).join('|').replaceAll(RegExp(r'\s+'), ' ')
             : '';
-        context.read<AppState>().addLog(
+        appState.addLog(
           '[AI工具] $tool${argPreview.isNotEmpty ? ' args: $argPreview' : ''}',
           category: 'info',
         );
@@ -13474,7 +13514,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
       }
       // 询问确认：破坏性工具在 ask 模式且不在白名单时需用户确认
       final confirm = _shouldConfirmTool(tool);
-      void run(VoidCallback action) {
+      Future<void> run(FutureOr<void> Function() action) async {
         // action 工具（clear_all/undo/redo/save/error_check/ask_user/cancel_tasks）在
         // auto 模式下需开启 "Auto-execute Tools" 权限（与系统提示词声明一致）；
         // ask 模式仍走确认框。权限不足时跳过并回填结果，避免 AI 误以为已执行。
@@ -13497,27 +13537,27 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
           return;
         }
         if (confirm) {
-          _confirmThen(tool, tool, action);
+          await _confirmThen(tool, tool, action);
         } else {
-          action();
+          await action();
         }
       }
 
       switch (tool) {
         case 'clear_all':
-          run(() => widget.onClearAll());
+          await run(() => widget.onClearAll());
         case 'undo':
-          run(() => widget.onUndo());
+          await run(() => widget.onUndo());
         case 'redo':
-          run(() => widget.onRedo());
+          await run(() => widget.onRedo());
         case 'save':
-          run(() => widget.onSave());
+          await run(() => widget.onSave());
         case 'error_check':
-          run(() => _executeErrorCheck());
+          await run(() => _executeErrorCheck());
         case 'ask_user':
           // 需在设置→AI→权限 开启"允许 AI 询问用户"才执行
           if (cfg.aiAllowAsk && parts.length >= 3) {
-            run(() => _showAskUser(parts[1], parts[2].split(',')));
+            await run(() => _showAskUser(parts[1], parts[2].split(',')));
           }
         case 'list_directory':
           if (cfg.aiReadAccess && parts.length >= 2) _executeListDir(parts[1]);
@@ -13536,7 +13576,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
                 'Error: no key=value pair parsed from "${parts[2]}"',
               );
             } else {
-              run(() {
+              await run(() {
                 final ok = widget.onModifyNodeParams(parts[1], params);
                 _addToolResult(
                   'modify_node',
@@ -13549,7 +13589,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
           }
         case 'add_node':
           if (cfg.aiWriteAccess && parts.length >= 2) {
-            run(() {
+            await run(() {
               try {
                 final x = parts.length >= 3
                     ? double.tryParse(parts[2]) ?? 200
@@ -13569,7 +13609,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
           }
         case 'delete_node':
           if (cfg.aiWriteAccess && parts.length >= 2) {
-            run(() {
+            await run(() {
               try {
                 widget.onDeleteNode(parts[1]);
                 _addToolResult('delete_node', 'Deleted node ${parts[1]}');
@@ -13580,7 +13620,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
           }
         case 'connect_nodes':
           if (cfg.aiWriteAccess && parts.length >= 3) {
-            run(() {
+            await run(() {
               final ok = widget.onConnectNodes(parts[1], parts[2]);
               _addToolResult(
                 'connect_nodes',
@@ -13592,7 +13632,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
           }
         case 'disconnect_nodes':
           if (cfg.aiWriteAccess && parts.length >= 2) {
-            run(() {
+            await run(() {
               final ok = widget.onDisconnectNodes(parts[1]);
               _addToolResult(
                 'disconnect_nodes',
@@ -13614,7 +13654,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
           final types = PipelineStepType.values.map((t) => t.name).toList();
           _addToolResult('get_node_types', types.join(', '));
         case 'list_tasks':
-          final tasks = context.read<AppState>().tasks;
+          final tasks = appState.tasks;
           final taskList = tasks
               .map(
                 (t) => {
@@ -13627,17 +13667,17 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
               .toList();
           _addToolResult('list_tasks', jsonEncode(taskList));
         case 'cancel_tasks':
-          run(() {
+          await run(() {
             widget.onCancelTasks();
             _addToolResult('cancel_tasks', 'All tasks cancelled');
           });
         case 'probe_video':
           if (cfg.aiReadAccess && parts.length >= 2) {
-            _executeProbeVideo(parts[1]);
+            await _executeProbeVideo(parts[1]);
           }
         case 'pick_file':
           // 让用户选择文件（如字幕/封面），需用户同意；弹文件选择框并返回路径
-          run(() async {
+          await run(() async {
             final purpose = parts.length >= 2 ? parts[1] : '';
             final exts = parts.length >= 3
                 ? parts[2]
@@ -13663,7 +13703,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
           });
         case 'add_gate':
           if (cfg.aiWriteAccess && parts.length >= 2) {
-            run(() {
+            await run(() {
               try {
                 final gateType = _parseGateType(parts[1]);
                 if (gateType == null) {
@@ -13698,7 +13738,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
                 'Error: no key=value pair parsed from "${parts[2]}"',
               );
             } else {
-              run(() {
+              await run(() {
                 // 门参数走 onSetGateParams：该回调此前从未被调用，set_gate_params
                 // 一直误用 onModifyNodeParams，改失败时无从回填给 AI
                 final ok = widget.onSetGateParams(parts[1], params);
@@ -13786,7 +13826,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
           if (cfg.aiWriteAccess && parts.length >= 3) {
             final nodeId = parts[1];
             final name = parts[2];
-            run(() {
+            await run(() {
               final ok = widget.onModifyNodeParams(nodeId, <String, dynamic>{
                 'node_name': name,
               });
@@ -13800,6 +13840,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
           }
       }
     }
+    return calls.isNotEmpty;
   }
 
   // ══════════ AI 文本协议 → 带类型参数的适配 ══════════
@@ -14087,11 +14128,11 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
     return '$u/chat/completions';
   }
 
-  Future<void> _send() async {
+  Future<void> _send({bool continuation = false}) async {
     final text = _ctrl.text.trim();
     // A stopped request must finish unwinding before shared buffers/state
     // can be reused by the next generation.
-    if ((text.isEmpty && _attachments.isEmpty) ||
+    if ((!continuation && text.isEmpty && _attachments.isEmpty) ||
         _loading ||
         _activeClient != null ||
         _pickingAttachments) {
@@ -14161,16 +14202,28 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
     if (_messages.length > maxHistory) {
       _messages.removeRange(0, _messages.length - maxHistory);
     }
-    appState.logAiRequest(text);
+    if (!continuation) appState.logAiRequest(text);
 
     setState(() {
-      _messages.add((
-        role: 'user',
-        content: text,
-        inputTokens: null,
-        outputTokens: null,
-        blocks: _attachments.map((a) => a.toJson()).toList(),
-      ));
+      if (!continuation) {
+        _messages.add((
+          role: 'user',
+          content: text,
+          inputTokens: null,
+          outputTokens: null,
+          blocks: _attachments.map((a) => a.toJson()).toList(),
+        ));
+      } else {
+        _messages.add((
+          role: 'user',
+          content:
+              'The tool results above are available. Continue the original request using them. '
+              'If another tool is needed, call it; otherwise provide the final answer.',
+          inputTokens: null,
+          outputTokens: null,
+          blocks: null,
+        ));
+      }
       _messages.add((
         role: 'assistant',
         content: '',
@@ -14178,8 +14231,10 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
         outputTokens: null,
         blocks: null,
       ));
-      _attachments.clear();
-      _ctrl.clear();
+      if (!continuation) {
+        _attachments.clear();
+        _ctrl.clear();
+      }
       _stopRequested = false;
       _loading = true;
       _pendingNodes = null;
@@ -14194,6 +14249,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
 
     final sendClient = http.Client();
     _activeClient = sendClient;
+    var shouldContinueAfterTools = false;
     try {
       final isAnthropic = effProvider == 'anthropic';
       final uri = Uri.parse(_resolveEndpoint(effUrl, isAnthropic));
@@ -14218,8 +14274,13 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
       for (final message in _messages) {
         if (message.role == 'assistant' && message.content.isEmpty) continue;
         final attachments = AiChatAttachments.fromBlocks(message.blocks);
+        final isToolResult =
+            message.blocks?.isNotEmpty == true &&
+            message.blocks!.every((block) => block['type'] == 'tool_result');
         conversation.add({
-          'role': message.role,
+          // Keep the UI's tool result card as an assistant message, but send it
+          // back as user-provided tool output so the model can continue.
+          'role': isToolResult ? 'user' : message.role,
           'content': attachments.isEmpty
               ? (isAnthropic
                     ? [
@@ -14444,7 +14505,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
       });
       _scrollToBottom();
       _tryParseGraph(content);
-      _handleToolCalls(content);
+      shouldContinueAfterTools = await _handleToolCalls(content);
       // 自动总结：首轮对话后生成会话标题
       _maybeGenerateTitle();
     } catch (e) {
@@ -14481,7 +14542,11 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
         _activeClient = null;
         _stopRequested = false;
       }
-      if (mounted) unawaited(_saveCurrentSession());
+      if (mounted && shouldContinueAfterTools && !_stopRequested) {
+        unawaited(_send(continuation: true));
+      } else if (mounted) {
+        unawaited(_saveCurrentSession());
+      }
     }
   }
 
@@ -14772,6 +14837,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
                       ),
                     ),
                   ),
+                  _buildModelSelector(scheme, s),
                   // 拖出为独立系统窗口（只有主窗口的 AI 抽屉会传 onFloatOut）
                   if (widget.onFloatOut != null)
                     IconButton(
@@ -14802,7 +14868,10 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
                       tooltip: s.isZh ? '工具' : 'Tools',
                       onPressed: () => isMobilePlatform
                           ? openMobileSidebarPage(_AiMobileSidebarPage.tools)
-                          : setState(() => _toolsOpen = !_toolsOpen),
+                          : setState(() {
+                              _toolsOpen = !_toolsOpen;
+                              if (_toolsOpen) _historyOpen = false;
+                            }),
                       constraints: const BoxConstraints(
                         minWidth: 32,
                         minHeight: 32,
@@ -14935,7 +15004,64 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
       ),
     );
     if (isMobilePlatform) return body;
-    return GlassPanel(radius: 16, blur: 14, child: body);
+    return GlassPanel(
+      radius: 16,
+      blur: 14,
+      style: SurfaceStyle.gray,
+      child: body,
+    );
+  }
+
+  Widget _buildModelSelector(ColorScheme scheme, AppStrings s) {
+    final profile = _effectiveProfile;
+    final cfg = context.read<AppState>().config;
+    final models = <String>[];
+    void addModels(List<AiModelEntry> entries) {
+      for (final model in entries) {
+        final id = model.id.trim();
+        if (model.enabled && id.isNotEmpty && !models.contains(id)) {
+          models.add(id);
+        }
+      }
+    }
+
+    if (profile != null) addModels(profile.models);
+    for (final candidate in cfg.aiProfiles.where((p) => p.enabled)) {
+      if (candidate.id != profile?.id) addModels(candidate.models);
+    }
+    if (cfg.aiProfiles.isEmpty && cfg.aiModel.trim().isNotEmpty) {
+      models.add(cfg.aiModel.trim());
+    }
+    final selected = _effectiveModel;
+    if (models.isEmpty) {
+      return Container(
+        constraints: const BoxConstraints(maxWidth: 190),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: scheme.surface.withAlpha(60),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: scheme.outlineVariant.withAlpha(90)),
+        ),
+        child: Text(
+          s.isZh ? '请先配置模型' : 'Configure a model first',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+        ),
+      );
+    }
+    final selectedModel = models.contains(selected) ? selected : models.first;
+    return SizedBox(
+      width: 190,
+      child: OptionMenuBar<String>(
+        expandable: true,
+        value: selectedModel,
+        leadingIcon: Icons.memory,
+        triggerHeight: 34,
+        items: [for (final model in models) OptionItem(model, model)],
+        onChanged: (model) => setState(() => _sessionModel = model),
+      ),
+    );
   }
 
   /// AI 面板聊天区（消息列表 + 待批准图 + 输入框）。
@@ -15515,6 +15641,15 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
       setState(() => _historyOpen = false);
       return;
     }
+    if (!isMobilePlatform) {
+      setState(() {
+        _toolsOpen = false;
+        _mobileSidebarPage = _AiMobileSidebarPage.history;
+        _historyOpen = true;
+      });
+      await _loadHistorySessions();
+      return;
+    }
     await openMobileSidebarPage(_AiMobileSidebarPage.history);
   }
 
@@ -15785,7 +15920,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
           top: 0,
           bottom: 0,
           left: _historyOpen ? 0 : -constraints.maxWidth,
-          width: math.min(300, constraints.maxWidth * 0.70),
+          width: math.min(260, constraints.maxWidth * 0.62),
           child: IgnorePointer(
             ignoring: !_historyOpen,
             child: AppCard(
@@ -15798,6 +15933,38 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
                     child: Row(
                       children: [
                         Expanded(child: Text(s.isZh ? '历史会话' : 'History')),
+                        IconButton(
+                          tooltip: s.isZh ? '保存当前会话' : 'Save session',
+                          onPressed: _loading
+                              ? null
+                              : () async {
+                                  final saved = await _saveCurrentSession();
+                                  final sessions =
+                                      await AiChatHistory.listSessions();
+                                  if (!mounted || !context.mounted) return;
+                                  setState(() => _historySessions = sessions);
+                                  showToast(
+                                    context,
+                                    saved == null
+                                        ? (s.isZh
+                                              ? '无法保存会话'
+                                              : 'Could not save session')
+                                        : (s.isZh ? '会话已保存' : 'Session saved'),
+                                  );
+                                },
+                          icon: const Icon(Icons.save_outlined, size: 18),
+                        ),
+                        IconButton(
+                          tooltip: s.isZh ? '清空历史' : 'Clear history',
+                          onPressed: () async {
+                            await AiChatHistory.clearAll();
+                            _historyFilePath = null;
+                            if (mounted) {
+                              setState(() => _historySessions = []);
+                            }
+                          },
+                          icon: const Icon(Icons.delete_outline, size: 18),
+                        ),
                         IconButton(
                           tooltip: s.isZh ? '关闭历史' : 'Close history',
                           onPressed: () => setState(() => _historyOpen = false),
@@ -15843,35 +16010,6 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
                                 ),
                             ],
                           ),
-                  ),
-                  TextButton.icon(
-                    onPressed: _loading
-                        ? null
-                        : () async {
-                            final saved = await _saveCurrentSession();
-                            final sessions = await AiChatHistory.listSessions();
-                            if (!mounted || !context.mounted) return;
-                            setState(() => _historySessions = sessions);
-                            showToast(
-                              context,
-                              saved == null
-                                  ? (s.isZh
-                                        ? '无法保存会话'
-                                        : 'Could not save session')
-                                  : (s.isZh ? '会话已保存' : 'Session saved'),
-                            );
-                          },
-                    icon: const Icon(Icons.save_outlined),
-                    label: Text(s.isZh ? '保存当前会话' : 'Save session'),
-                  ),
-                  TextButton.icon(
-                    onPressed: () async {
-                      await AiChatHistory.clearAll();
-                      _historyFilePath = null;
-                      if (mounted) setState(() => _historySessions = []);
-                    },
-                    icon: const Icon(Icons.delete_outline),
-                    label: Text(s.isZh ? '清空历史' : 'Clear history'),
                   ),
                 ],
               ),
@@ -16295,8 +16433,8 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
         ],
       );
     }
-    // 同角色后续消息的占位：只有 8px 宽的空位，不画头像
-    final Widget avatarGap = SizedBox(width: avatarSlot);
+    // 占位只替代头像本身；下面仍会统一添加头像与气泡间距。
+    final Widget avatarGap = SizedBox(width: avatarR * 2);
     return Padding(
       padding: EdgeInsets.only(bottom: gapAfter),
       child: Column(

@@ -18,8 +18,10 @@ import '../widgets/wallpaper_background.dart';
 class AdItem {
   /// 标题
   final String title;
+
   /// 简介正文
   final String body;
+
   /// 可选：点击后打开的链接（空 = 卡片不可点击）
   final String url;
 
@@ -40,76 +42,121 @@ class AdsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final s = AppStrings.of(context.select<AppState, String>((st) => st.config.language));
-    final cardStyle = context.select<AppState, String>((st) => st.config.cardStyle);
+    final s = AppStrings.of(
+      context.select<AppState, String>((st) => st.config.language),
+    );
+    final cardStyle = context.select<AppState, String>(
+      (st) => st.config.cardStyle,
+    );
 
-    final title = Row(mainAxisSize: MainAxisSize.min, children: [
-      Icon(Icons.campaign_outlined, size: 20, color: scheme.primary),
-      const SizedBox(width: 8),
-      Text(s.isZh ? '广告' : 'Ads'),
-    ]);
+    final title = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.campaign_outlined, size: 20, color: scheme.primary),
+        const SizedBox(width: 8),
+        Text(s.isZh ? '广告' : 'Ads'),
+      ],
+    );
 
-    return withWallpaper(context, Scaffold(
-      backgroundColor: Colors.transparent,
-      body: Column(children: [
-        isMobilePlatform
-            ? MobileSubPageTopBar(title: title, onBack: () => Navigator.of(context).maybePop())
-            : GlassTopBar(
-                title: title,
-                actions: [
-                  IconButton(
-                    tooltip: s.aboutClose,
-                    icon: Icon(Icons.close, size: 18, color: scheme.onSurfaceVariant),
-                    onPressed: () => Navigator.of(context).maybePop(),
+    return withWallpaper(
+      context,
+      Scaffold(
+        backgroundColor: Colors.transparent,
+        body: Column(
+          children: [
+            isMobilePlatform
+                ? MobileSubPageTopBar(
+                    title: title,
+                    onBack: () => Navigator.of(context).maybePop(),
+                  )
+                : GlassTopBar(
+                    title: title,
+                    actions: [
+                      IconButton(
+                        tooltip: s.aboutClose,
+                        icon: Icon(
+                          Icons.close,
+                          size: 18,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                        onPressed: () => Navigator.of(context).maybePop(),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-        Expanded(
-          child: kAds.isEmpty
-              ? _emptyState(context, scheme, s)
-              : ListView.separated(
-                  // 开窗卡所在列表必须关：子项若被自动套上 RepaintBoundary，
-                  // 滚动时会直接复用旧图层平移，卡内壁纸跟着卡走（见 app_card 的
-                  // _WallpaperWindowPainter）。
-                  addRepaintBoundaries: false,
-                  padding: isMobilePlatform
-                      ? MobileUi.subListPadding(top: 10, bottom: 24)
-                      : const EdgeInsets.fromLTRB(16, 10, 16, 24),
-                  itemCount: kAds.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 10),
-                  itemBuilder: (ctx, i) => AppCard(
-                    style: cardStyle,
-                    radius: 14,
-                    padding: const EdgeInsets.all(14),
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text(kAds[i].title,
-                          style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                              color: scheme.onSurface)),
-                      const SizedBox(height: 6),
-                      Text(kAds[i].body,
-                          style: TextStyle(
-                              fontSize: 12, color: scheme.onSurfaceVariant, height: 1.4)),
-                      if (kAds[i].url.isNotEmpty) ...[
-                        const SizedBox(height: 6),
-                        Text(kAds[i].url,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontSize: 11, color: scheme.primary)),
-                      ],
-                    ]),
+            Expanded(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: isMobilePlatform ? double.infinity : 960,
                   ),
+                  child: kAds.isEmpty
+                      ? _emptyState(context, scheme, s)
+                      : ListView.separated(
+                          // 开窗卡所在列表必须关：子项若被自动套上 RepaintBoundary，
+                          // 滚动时会直接复用旧图层平移，卡内壁纸跟着卡走（见 app_card 的
+                          // _WallpaperWindowPainter）。
+                          addRepaintBoundaries: false,
+                          padding: isMobilePlatform
+                              ? MobileUi.subListPadding(top: 10, bottom: 24)
+                              : const EdgeInsets.fromLTRB(16, 10, 16, 24),
+                          itemCount: kAds.length,
+                          separatorBuilder: (_, _) =>
+                              const SizedBox(height: 10),
+                          itemBuilder: (ctx, i) => AppCard(
+                            style: cardStyle,
+                            radius: 14,
+                            padding: const EdgeInsets.all(14),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  kAds[i].title,
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w700,
+                                    color: scheme.onSurface,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  kAds[i].body,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: scheme.onSurfaceVariant,
+                                    height: 1.4,
+                                  ),
+                                ),
+                                if (kAds[i].url.isNotEmpty) ...[
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    kAds[i].url,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: scheme.primary,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ),
                 ),
+              ),
+            ),
+          ],
         ),
-      ]),
-    ));
+      ),
+    );
   }
 
   /// 空状态：暂无广告内容（用户要求「没有广告显示哦先生目前并没有放广告」）。
   /// 用 AppCard 承载，样式与其它三级页的卡片完全一致。
   Widget _emptyState(BuildContext context, ColorScheme scheme, AppStrings s) {
-    final cardStyle = context.select<AppState, String>((st) => st.config.cardStyle);
+    final cardStyle = context.select<AppState, String>(
+      (st) => st.config.cardStyle,
+    );
     return Center(
       child: Padding(
         padding: isMobilePlatform
@@ -119,22 +166,33 @@ class AdsPage extends StatelessWidget {
           style: cardStyle,
           radius: 18,
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 34),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.inbox_outlined, size: 46, color: scheme.outline.withAlpha(140)),
-            const SizedBox(height: 14),
-            Text(s.isZh ? '哦先生目前并没有放广告' : 'Nothing here yet',
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.inbox_outlined,
+                size: 46,
+                color: scheme.outline.withAlpha(140),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                s.isZh ? '哦先生目前并没有放广告' : 'Nothing here yet',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: scheme.onSurface)),
-            const SizedBox(height: 6),
-            Text(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: scheme.onSurface,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
                 s.isZh ? '暂时没有广告内容' : 'No ads available for now',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 12, color: scheme.outline)),
-          ]),
+                style: TextStyle(fontSize: 12, color: scheme.outline),
+              ),
+            ],
+          ),
         ),
       ),
     );

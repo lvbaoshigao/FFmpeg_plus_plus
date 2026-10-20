@@ -111,7 +111,7 @@ void main() {
           state,
           SingleChildScrollView(
             child: Builder(
-              builder: (context) => mobileAiSettingsContent(context, state),
+              builder: (context) => aiSettingsContent(context, state),
             ),
           ),
         ),

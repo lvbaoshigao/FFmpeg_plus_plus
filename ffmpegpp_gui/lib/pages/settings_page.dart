@@ -28,7 +28,6 @@ import '../services/shell_open.dart';
 import '../services/update_service.dart' as updater;
 // 控件高度档位令牌：MCP 卡的输入框/按钮、AI 配置详情页的按钮统一按档位取高度，
 // 不再用 `SizedBox(height: 30)` 压高度（会与主题 v12 内边距打架）
-import '../theme/app_control_size.dart';
 import '../theme/app_neutral_surface.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_strings.dart';
@@ -402,6 +401,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   /// 桌面端左侧主菜单当前选中的分区 id。
   String _selectedSection = 'general';
+  bool _sectionNavCollapsed = false;
 
   @override
   void initState() {
@@ -930,10 +930,8 @@ class _SettingsPageState extends State<SettingsPage> {
             'deepseek',
             'ollama',
           ],
-          // 移动端：提供商列表式设置（二级菜单）；桌面端：原有卡片 + 底部弹窗
-          build: (ctx, state) => isMobilePlatform
-              ? mobileAiSettingsContent(ctx, state)
-              : _buildMcpAi(ctx, state),
+          // PC 与移动端复用同一套 AI / MCP 设置与提供商详情页面。
+          build: aiSettingsContent,
         ),
       ],
     ),
@@ -1399,21 +1397,80 @@ class _SettingsPageState extends State<SettingsPage> {
     // 整条左栏收进**一个**容器（用户反馈：父选项各占一张小卡时，左栏被切
     // 成一摞碎片）。条目本身不再各自套卡 —— 选中态仍由 _navItem 的主题色胶囊
     // 表达；容器材质仍走 _cardShell → AppCard，跟随「主题 → 样式 → 卡片样式」。
-    return SizedBox(
-      width: 190,
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+      width: _sectionNavCollapsed ? 64 : 190,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(10, 12, 6, 16),
         child: _cardShell(
           context,
           state,
           ListView(
-            // addRepaintBoundaries:false —— 外层是玻璃卡（BackdropFilter），而 Skia 下
-            // BackdropFilter 的输入会被光栅缓存：套上 RepaintBoundary 后，玻璃自身
-            // 内容不变时引擎直接复用上一次的滤波快照，滚动后玻璃里仍是旧背景
-            //（见 LiquidGlassBackdrop 顶部的图层约定）。左栏几乎不滚动，关掉无碍。
             addRepaintBoundaries: false,
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+            padding: EdgeInsets.symmetric(
+              horizontal: _sectionNavCollapsed ? 4 : 6,
+              vertical: 6,
+            ),
             children: [
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Tooltip(
+                  message: _sectionNavCollapsed
+                      ? (AppStrings.of(state.config.language).isZh
+                            ? '展开设置导航'
+                            : 'Expand settings navigation')
+                      : (AppStrings.of(state.config.language).isZh
+                            ? '收起设置导航'
+                            : 'Collapse settings navigation'),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () => setState(
+                      () => _sectionNavCollapsed = !_sectionNavCollapsed,
+                    ),
+                    child: Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: _sectionNavCollapsed ? 6 : 12,
+                        vertical: 9,
+                      ),
+                      decoration: BoxDecoration(
+                        color: scheme.surfaceContainerHighest.withAlpha(45),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: _sectionNavCollapsed
+                            ? MainAxisAlignment.center
+                            : MainAxisAlignment.start,
+                        children: [
+                          Icon(
+                            _sectionNavCollapsed
+                                ? Icons.chevron_right
+                                : Icons.chevron_left,
+                            size: 17,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                          if (!_sectionNavCollapsed) ...[
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                AppStrings.of(state.config.language).isZh
+                                    ? '收起导航'
+                                    : 'Collapse navigation',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
               for (final sec in _sections)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 2),
@@ -1422,6 +1479,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     searching,
                     hitCounts[sec.id] ?? 0,
                     scheme,
+                    collapsed: _sectionNavCollapsed,
                   ),
                 ),
             ],
@@ -1437,69 +1495,94 @@ class _SettingsPageState extends State<SettingsPage> {
     _SectionDef sec,
     bool searching,
     int hitCount,
-    ColorScheme scheme,
-  ) {
+    ColorScheme scheme, {
+    bool collapsed = false,
+  }) {
     final selected = sec.id == _selectedSection;
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: () => _selectSection(sec.id),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOut,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          color: selected ? scheme.primary.withAlpha(34) : Colors.transparent,
-          border: Border.all(
-            color: selected ? scheme.primary.withAlpha(90) : Colors.transparent,
+    final title = sec.title(
+      AppStrings.of(context.read<AppState>().config.language),
+    );
+    return Tooltip(
+      message: collapsed ? title : '',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => _selectSection(sec.id),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+          padding: EdgeInsets.symmetric(
+            horizontal: collapsed ? 6 : 12,
+            vertical: 9,
           ),
-        ),
-        child: Row(
-          children: [
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 180),
-              transitionBuilder: (child, anim) =>
-                  FadeTransition(opacity: anim, child: child),
-              child: Icon(
-                sec.icon,
-                key: ValueKey('${sec.id}_$selected'),
-                size: 16,
-                color: selected ? scheme.primary : scheme.onSurfaceVariant,
-              ),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            color: selected ? scheme.primary.withAlpha(34) : Colors.transparent,
+            border: Border.all(
+              color: selected
+                  ? scheme.primary.withAlpha(90)
+                  : Colors.transparent,
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                sec.title(
-                  AppStrings.of(context.read<AppState>().config.language),
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: selected ? FontWeight.w600 : null,
-                  color: selected ? scheme.primary : scheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-            // 搜索时：该分区命中的设置项数量徽标
-            if (searching)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
-                decoration: BoxDecoration(
-                  color: scheme.primary.withAlpha(28),
-                  borderRadius: BorderRadius.circular(9),
-                ),
-                child: Text(
-                  '$hitCount',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                    color: scheme.primary,
+          ),
+          child: collapsed
+              ? Center(
+                  child: Icon(
+                    sec.icon,
+                    size: 17,
+                    color: selected ? scheme.primary : scheme.onSurfaceVariant,
                   ),
+                )
+              : Row(
+                  children: [
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 180),
+                      transitionBuilder: (child, anim) =>
+                          FadeTransition(opacity: anim, child: child),
+                      child: Icon(
+                        sec.icon,
+                        key: ValueKey('${sec.id}_$selected'),
+                        size: 16,
+                        color: selected
+                            ? scheme.primary
+                            : scheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: selected ? FontWeight.w600 : null,
+                          color: selected
+                              ? scheme.primary
+                              : scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                    // 搜索时：该分区命中的设置项数量徽标
+                    if (searching)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: scheme.primary.withAlpha(28),
+                          borderRadius: BorderRadius.circular(9),
+                        ),
+                        child: Text(
+                          '$hitCount',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            color: scheme.primary,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
-              ),
-          ],
         ),
       ),
     );
@@ -2497,27 +2580,6 @@ const _presets = [
   ('Violet', 0xFF8B5CF6),
 ];
 
-/// 询问模式下可选「无需确认」的操作 key。
-///
-/// 只存 key、显示名由 [_askSkipLabel] 按语言给出：原先这里把中文显示名写进常量，
-/// 英文界面下这 5 个 chip 恒为中文（与 ai_settings_mobile.dart 里同款 bug 一并修掉）。
-const _askSkipKeys = <String>[
-  'save',
-  'undo_redo',
-  'error_check',
-  'clear_all',
-  'tools',
-];
-
-String _askSkipLabel(String key, bool isZh) => switch (key) {
-  'save' => isZh ? '保存' : 'Save',
-  'undo_redo' => isZh ? '撤销/重做' : 'Undo/Redo',
-  'error_check' => isZh ? '错误检查' : 'Error check',
-  'clear_all' => isZh ? '清空画布' : 'Clear canvas',
-  'tools' => isZh ? '工具执行' : 'Run tools',
-  _ => key,
-};
-
 /// 主题卡：模式 / 主题色 / 背景 / 样式（卡片样式、底部菜单栏样式、
 /// 顶部药丸样式、节点编辑器）。桌面端内联在「外观」分区，移动端作为
 /// 一级菜单「主题」行的二级菜单内容。
@@ -2624,51 +2686,56 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
           opacity: dynamicOn ? 0.35 : 1.0,
           child: IgnorePointer(
             ignoring: dynamicOn,
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return SizedBox(
-                  height: 48,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    padding: EdgeInsets.zero,
-                    itemCount: _presets.length,
-                    separatorBuilder: (_, _) => const SizedBox(width: 4),
-                    itemBuilder: (context, index) {
-                      final p = _presets[index];
-                      return SizedBox(
-                        width: 44,
-                        child: Center(
-                          child: _dot(
-                            scheme,
-                            cfg.themeColor == p.$2 && cfg.themeColor2 < 0,
-                            Color(p.$2),
-                            p.$1,
-                            () => state.updateConfig(
-                              (c) => c
-                                ..themeColor = p.$2
-                                ..themeColor2 = -1,
+            child: SizedBox(
+              height: 48,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      padding: EdgeInsets.zero,
+                      itemCount: _presets.length,
+                      separatorBuilder: (_, _) => const SizedBox(width: 4),
+                      itemBuilder: (context, index) {
+                        final p = _presets[index];
+                        return SizedBox(
+                          width: 44,
+                          child: Center(
+                            child: _dot(
+                              scheme,
+                              cfg.themeColor == p.$2 && cfg.themeColor2 < 0,
+                              Color(p.$2),
+                              p.$1,
+                              () => state.updateConfig(
+                                (c) => c
+                                  ..themeColor = p.$2
+                                  ..themeColor2 = -1,
+                              ),
                             ),
                           ),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   ),
-                );
-              },
-            ),
-          ),
-        ),
-        const SizedBox(height: 8),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: OutlinedButton.icon(
-            onPressed: dynamicOn ? null : () => _pickColor(ctx, state),
-            icon: const Icon(Icons.add, size: 18),
-            label: Text(s.isZh ? '自定义颜色 / 渐变' : 'Custom color / gradient'),
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size(0, 42),
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              side: BorderSide(color: scheme.outlineVariant),
+                  const SizedBox(width: 6),
+                  Tooltip(
+                    message: s.isZh ? '自定义颜色 / 渐变' : 'Custom color / gradient',
+                    child: OutlinedButton(
+                      onPressed: () => _pickColor(ctx, state),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(42, 42),
+                        maximumSize: const Size(42, 42),
+                        padding: EdgeInsets.zero,
+                        side: BorderSide(color: scheme.outlineVariant),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Icon(Icons.add, size: 18),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -5676,750 +5743,6 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
   );
 }
 
-Widget _buildMcpAi(BuildContext ctx, AppState state) {
-  final cfg = state.config;
-  final s = AppStrings.of(cfg.language);
-  final scheme = Theme.of(ctx).colorScheme;
-  final clr = scheme.onSurface;
-  return _glass(ctx, state, s.mcpTitle, [
-    SwitchListTile(
-      dense: true,
-      contentPadding: EdgeInsets.zero,
-      title: Text(s.mcpEnable, style: TextStyle(color: clr)),
-      subtitle: cfg.mcpEnabled
-          ? Text(
-              state.mcpError != null
-                  ? state.mcpError!
-                  : state.mcpRunning
-                  ? (s.isZh ? '运行中' : 'Running')
-                  : (s.isZh ? '已停止' : 'Stopped'),
-              style: TextStyle(
-                fontSize: 10,
-                color: state.mcpError != null
-                    ? scheme.sem.danger
-                    : state.mcpRunning
-                    ? scheme.sem.success
-                    : scheme.sem.neutral,
-              ),
-            )
-          : null,
-      value: cfg.mcpEnabled,
-      onChanged: (v) => state.toggleMcpServer(v),
-    ),
-    if (cfg.mcpEnabled) ...[
-      _McpFieldRow(
-        label: Text(
-          '${s.mcpPort}:',
-          style: TextStyle(color: clr, fontSize: 12),
-        ),
-        field: _McpTextField(
-          value: cfg.mcpPort.toString(),
-          label: '',
-          scheme: scheme,
-          size: AppControlSize.regular,
-          onChange: (v) {
-            final port = int.tryParse(v);
-            if (port != null && port > 0 && port < 65536) {
-              state.updateConfig((c) => c..mcpPort = port);
-            }
-          },
-        ),
-        action: FilledButton.tonalIcon(
-          style: AppControlSize.regular.buttonStyle(filled: true),
-          icon: Icon(Icons.refresh, size: AppControlSize.regular.iconSize),
-          label: Text(
-            s.isZh ? '应用' : 'Apply',
-            style: const TextStyle(fontSize: 11),
-          ),
-          onPressed: () async {
-            state.mcpError = null;
-            await state.stopMcpServer();
-            await state.startMcpServer();
-          },
-        ),
-      ),
-      const SizedBox(height: 8),
-      _McpFieldRow(
-        label: Text(
-          s.isZh ? '监听地址:' : 'Bind host:',
-          style: TextStyle(color: clr, fontSize: 12),
-        ),
-        field: _McpTextField(
-          value: cfg.mcpHost,
-          label: '',
-          scheme: scheme,
-          hint: '127.0.0.1',
-          size: AppControlSize.regular,
-          onChange: (v) {
-            final host = v.trim();
-            // 允许留空（回退 127.0.0.1）；其余只做基本字符校验，重启后生效
-            if (host.isEmpty || RegExp(r'^[A-Za-z0-9.:_-]+$').hasMatch(host)) {
-              state.updateConfig((c) => c..mcpHost = host);
-            }
-          },
-        ),
-        note: Text(
-          s.isZh
-              ? '改后点「应用」。设为 0.0.0.0 将暴露到局域网并启用访问令牌'
-              : 'Click Apply. 0.0.0.0 exposes to LAN and enables token',
-          style: SettingsTypography.description.copyWith(
-            color: scheme.onSurfaceVariant,
-          ),
-        ),
-      ),
-    ],
-    if (cfg.mcpEnabled && state.mcpRunning && state.mcpToken != null)
-      Padding(
-        padding: const EdgeInsets.only(top: 4),
-        child: SelectableText(
-          '${s.isZh ? '局域网访问令牌' : 'LAN access token'}: ${state.mcpToken}',
-          style: TextStyle(
-            fontSize: 11,
-            color: scheme.primary,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ),
-    SwitchListTile(
-      dense: true,
-      contentPadding: EdgeInsets.zero,
-      title: Text(
-        s.isZh ? '允许 MCP 写入' : 'Allow MCP Write',
-        style: TextStyle(color: clr, fontSize: 12),
-      ),
-      subtitle: Text(
-        s.isZh
-            ? '关闭时 MCP 只能读取画布/文件，所有修改操作会被拒绝'
-            : 'When off, MCP can only read the canvas/files; all write actions are rejected',
-        style: SettingsTypography.description.copyWith(
-          color: scheme.onSurfaceVariant,
-        ),
-      ),
-      value: cfg.mcpAllowWrite,
-      onChanged: (v) => state.updateConfig((c) => c..mcpAllowWrite = v),
-    ),
-    SwitchListTile(
-      dense: true,
-      contentPadding: EdgeInsets.zero,
-      title: Text(
-        s.isZh ? '允许 MCP 访问文件系统' : 'Allow MCP File Access',
-        style: TextStyle(color: clr, fontSize: 12),
-      ),
-      subtitle: Text(
-        s.isZh
-            ? '控制列目录/文件信息/媒体探测三个工具；本机任何程序都能调用 MCP，不依赖时可关闭'
-            : 'Gates list_directory / read_file_info / probe_video; any local program can call MCP — turn off when unused',
-        style: SettingsTypography.description.copyWith(
-          color: scheme.onSurfaceVariant,
-        ),
-      ),
-      value: cfg.mcpAllowFsAccess,
-      onChanged: (v) => state.updateConfig((c) => c..mcpAllowFsAccess = v),
-    ),
-    const SizedBox(height: 8),
-    SwitchListTile(
-      dense: true,
-      contentPadding: EdgeInsets.zero,
-      title: Text(s.aiEnable, style: TextStyle(color: clr)),
-      value: cfg.aiEnabled,
-      onChanged: (v) => state.updateConfig((c) => c..aiEnabled = v),
-    ),
-    if (cfg.aiEnabled)
-      Align(
-        alignment: Alignment.centerRight,
-        child: TextButton.icon(
-          // 次级链接动作：走 compact 档（28 高），与卡片里的表单控件（regular 32）
-          // 形成层级差，不再是「一个光秃秃的主题默认按钮贴右下角」
-          style: AppControlSize.compact.buttonStyle(),
-          icon: Icon(Icons.tune, size: AppControlSize.compact.iconSize),
-          label: Text(s.aiMoreOptions, style: const TextStyle(fontSize: 12)),
-          onPressed: () => _showAiSettingsDialog(ctx, state, s),
-        ),
-      ),
-  ]);
-}
-
-void _showAiSettingsDialog(BuildContext ctx, AppState state, AppStrings s) {
-  if (isMobilePlatform) {
-    // 移动端：AI「更多选项」改为二级页面（全屏 + 返回按钮），而非 PC 式底部弹窗
-    Navigator.of(ctx).push(
-      MaterialPageRoute<void>(
-        allowSnapshotting: false,
-        builder: (bCtx) => Scaffold(
-          body: SafeArea(
-            child: _aiSettingsContent(bCtx, state, s, asSheet: false),
-          ),
-        ),
-      ),
-    );
-    return;
-  }
-  showModalBottomSheet(
-    context: ctx,
-    isScrollControlled: true,
-    backgroundColor: Colors.transparent,
-    // 限制最大宽度并居中：宽屏下 AI 设置面板不再拉满整屏
-    constraints: const BoxConstraints(maxWidth: 880),
-    builder: (bCtx) => _aiSettingsContent(bCtx, state, s, asSheet: true),
-  );
-}
-
-/// AI 设置内容主体。asSheet=true 以底部弹层呈现（桌面），asSheet=false 以全屏
-/// 二级页面呈现（移动端，带返回按钮）。两种形态复用同一段配置表单。
-Widget _aiSettingsContent(
-  BuildContext bCtx,
-  AppState state,
-  AppStrings s, {
-  required bool asSheet,
-}) {
-  final zh = s.isZh;
-  // 持久状态（闭包捕获，StatefulBuilder 重建时保留）：
-  // 当前选中的配置 id + 正在编辑的草稿（null=尚未开始编辑）
-  String selProfileId = state.config.aiProfiles.isNotEmpty
-      ? (state.config.activeAiProfileId.isNotEmpty
-            ? state.config.activeAiProfileId
-            : state.config.aiProfiles.first.id)
-      : '';
-  AiProfile? draft;
-  bool showPreset = false;
-  return StatefulBuilder(
-    builder: (ctx2, setDState) {
-      final cfg = state.config;
-      final scheme = Theme.of(ctx2).colorScheme;
-      final clr = scheme.onSurface;
-      final cardColor = scheme.surface.withAlpha(
-        (cfg.cardOpacity * 255).round().clamp(0, 255),
-      );
-
-      // 当前编辑对象：优先草稿，其次从列表取
-      AiProfile? selected() {
-        if (draft != null) return draft;
-        for (final pr in cfg.aiProfiles) {
-          if (pr.id == selProfileId) return pr;
-        }
-        return null;
-      }
-
-      Widget section(String title, IconData icon, List<Widget> children) =>
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                SettingsSectionHeading(title: title, icon: icon),
-                DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: cardColor,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: scheme.outlineVariant.withAlpha(60),
-                    ),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(14),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: children,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          );
-
-      // 标题行：移动端二级页面带返回按钮；桌面弹层只有标题 + 完成
-      Widget headerRow({required bool withBack}) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          children: [
-            if (withBack) ...[
-              IconButton(
-                icon: Icon(Icons.arrow_back_ios_new, size: 16, color: clr),
-                onPressed: () => Navigator.pop(bCtx),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-              ),
-              const SizedBox(width: 4),
-            ],
-            Text(
-              s.aiSettings,
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: clr,
-              ),
-            ),
-            const Spacer(),
-            TextButton(
-              onPressed: () => Navigator.pop(bCtx),
-              child: Text(zh ? '完成' : 'Done'),
-            ),
-          ],
-        ),
-      );
-
-      // 内容列表（AI 配置 / 权限 / 行为 / 提示词等分区），两种形态共用
-      Widget listBody(ScrollController? ctrl) => ListView(
-        controller: ctrl,
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-        children: [
-          // ── AI 配置（左右分区：左列表 / 右详情） ──
-          section(zh ? 'AI 配置' : 'AI Profiles', Icons.folder_shared_outlined, [
-            SizedBox(
-              height: 300,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // ══ 左：配置列表 ══
-                  Container(
-                    width: 170,
-                    decoration: BoxDecoration(
-                      color: scheme.surfaceContainerHighest.withAlpha(50),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: scheme.outlineVariant.withAlpha(50),
-                      ),
-                    ),
-                    child: Column(
-                      children: [
-                        Expanded(
-                          child: cfg.aiProfiles.isEmpty
-                              ? Center(
-                                  child: Text(
-                                    zh ? '暂无配置' : 'No profiles',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: scheme.outline,
-                                    ),
-                                  ),
-                                )
-                              : ListView.builder(
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 4,
-                                  ),
-                                  itemCount: cfg.aiProfiles.length,
-                                  itemBuilder: (_, i) {
-                                    final pr = cfg.aiProfiles[i];
-                                    final isSel = pr.id == selProfileId;
-                                    return InkWell(
-                                      onTap: () {
-                                        selProfileId = pr.id;
-                                        draft = null;
-                                        showPreset = false;
-                                        setDState(() {});
-                                      },
-                                      child: Container(
-                                        margin: const EdgeInsets.symmetric(
-                                          horizontal: 4,
-                                          vertical: 2,
-                                        ),
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 6,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: isSel
-                                              ? scheme.primaryContainer
-                                                    .withAlpha(120)
-                                              : Colors.transparent,
-                                          borderRadius: BorderRadius.circular(
-                                            8,
-                                          ),
-                                        ),
-                                        child: Row(
-                                          children: [
-                                            Icon(
-                                              pr.enabled
-                                                  ? (isSel
-                                                        ? Icons
-                                                              .radio_button_checked
-                                                        : Icons.cloud_outlined)
-                                                  : Icons.cloud_off_outlined,
-                                              size: 13,
-                                              color: isSel
-                                                  ? scheme.primary
-                                                  : (pr.enabled
-                                                        ? scheme.outline
-                                                        : scheme.outline
-                                                              .withAlpha(60)),
-                                            ),
-                                            const SizedBox(width: 6),
-                                            Expanded(
-                                              child: Text(
-                                                pr.name,
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: TextStyle(
-                                                  fontSize: 11,
-                                                  fontWeight: FontWeight.w600,
-                                                  color: isSel
-                                                      ? scheme.primary
-                                                      : (pr.enabled
-                                                            ? clr
-                                                            : scheme.outline),
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                ),
-                        ),
-                        Divider(
-                          height: 1,
-                          color: scheme.outlineVariant.withAlpha(40),
-                        ),
-                        // 新建配置
-                        InkWell(
-                          onTap: () {
-                            final np = AiProfile(
-                              name: zh ? '新配置' : 'New Profile',
-                            );
-                            // 只建本地草稿，点"保存"才落库。
-                            // 原实现立即 updateConfig 持久化，不保存就关闭对话框会留下幽灵配置。
-                            selProfileId = np.id;
-                            draft = np;
-                            showPreset = true;
-                            setDState(() {});
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.add,
-                                  size: 14,
-                                  color: scheme.primary,
-                                ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  zh ? '新建配置' : 'New Profile',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600,
-                                    color: scheme.primary,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  // ══ 右：配置详情 ══
-                  Expanded(
-                    child: selected() == null
-                        ? Center(
-                            child: Text(
-                              zh ? '选择或新建一个配置' : 'Select or create a profile',
-                              style: SettingsTypography.description.copyWith(
-                                color: scheme.onSurfaceVariant,
-                              ),
-                            ),
-                          )
-                        : _buildProfileDetail(
-                            ctx2,
-                            state,
-                            setDState,
-                            scheme,
-                            clr,
-                            s,
-                            zh,
-                            selected()!,
-                            selProfileId,
-                            draft,
-                            showPreset,
-                            () {
-                              selProfileId = cfg.aiProfiles.isNotEmpty
-                                  ? cfg.aiProfiles.first.id
-                                  : '';
-                              draft = null;
-                              setDState(() {});
-                            },
-                          ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
-          ]),
-
-          // ── Permissions ──
-          section(s.aiPermissions, Icons.security_outlined, [
-            SwitchListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: Text(
-                s.aiReadAccess,
-                style: TextStyle(color: clr, fontSize: 12),
-              ),
-              subtitle: Text(
-                s.aiReadAccessDesc,
-                style: TextStyle(color: scheme.outline, fontSize: 10),
-              ),
-              value: cfg.aiReadAccess,
-              onChanged: (v) {
-                state.updateConfig((c) => c..aiReadAccess = v);
-                setDState(() {});
-              },
-            ),
-            SwitchListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: Text(
-                s.aiWriteAccess,
-                style: TextStyle(color: clr, fontSize: 12),
-              ),
-              subtitle: Text(
-                s.aiWriteAccessDesc,
-                style: TextStyle(color: scheme.outline, fontSize: 10),
-              ),
-              value: cfg.aiWriteAccess,
-              onChanged: (v) {
-                state.updateConfig((c) => c..aiWriteAccess = v);
-                setDState(() {});
-              },
-            ),
-            SwitchListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: Text(
-                s.aiAutoExecute,
-                style: TextStyle(color: clr, fontSize: 12),
-              ),
-              subtitle: Text(
-                s.aiAutoExecuteDesc,
-                style: TextStyle(color: scheme.outline, fontSize: 10),
-              ),
-              value: cfg.aiAutoExecute,
-              onChanged: (v) {
-                state.updateConfig((c) => c..aiAutoExecute = v);
-                setDState(() {});
-              },
-            ),
-            SwitchListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: Text(
-                s.aiAllowAsk,
-                style: TextStyle(color: clr, fontSize: 12),
-              ),
-              subtitle: Text(
-                s.aiAllowAskDesc,
-                style: TextStyle(color: scheme.outline, fontSize: 10),
-              ),
-              value: cfg.aiAllowAsk,
-              onChanged: (v) {
-                state.updateConfig((c) => c..aiAllowAsk = v);
-                setDState(() {});
-              },
-            ),
-          ]),
-          // ── Advanced ──
-          section(s.aiAdvanced, Icons.tune_outlined, [
-            // 图生成模式：下拉菜单（原分段按钮在窄栏里两个长标签会挤压换行）
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    s.aiGraphModeLabel,
-                    style: TextStyle(color: clr, fontSize: 12),
-                  ),
-                ),
-                SizedBox(
-                  width: _kMenuWidth,
-                  child: OptionMenuBar<String>(
-                    key: ValueKey('aiGraphMode_${cfg.aiGraphMode}'),
-                    expandable: true,
-                    value: cfg.aiGraphMode,
-                    items: [
-                      OptionItem(
-                        'redo',
-                        s.aiGraphModeRedo,
-                        icon: Icons.refresh,
-                      ),
-                      OptionItem(
-                        'modify',
-                        s.aiGraphModeModify,
-                        icon: Icons.edit_outlined,
-                      ),
-                    ],
-                    onChanged: (v) {
-                      state.updateConfig((c) => c..aiGraphMode = v);
-                      setDState(() {});
-                    },
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            SwitchListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: Text(
-                s.aiShowThinking,
-                style: TextStyle(color: clr, fontSize: 12),
-              ),
-              subtitle: Text(
-                s.aiShowThinkingDesc,
-                style: TextStyle(color: scheme.outline, fontSize: 10),
-              ),
-              value: cfg.aiShowThinking,
-              onChanged: (v) {
-                state.updateConfig((c) => c..aiShowThinking = v);
-                setDState(() {});
-              },
-            ),
-            SwitchListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: Text(
-                s.aiAutoTitleLabel,
-                style: TextStyle(color: clr, fontSize: 12),
-              ),
-              subtitle: Text(
-                s.aiAutoTitleDesc,
-                style: TextStyle(color: scheme.outline, fontSize: 10),
-              ),
-              value: cfg.aiAutoTitle,
-              onChanged: (v) {
-                state.updateConfig((c) => c..aiAutoTitle = v);
-                setDState(() {});
-              },
-            ),
-            if (cfg.aiAutoTitle) ...[
-              const SizedBox(height: 4),
-              Text(
-                s.aiTitlePromptLabel,
-                style: TextStyle(color: clr, fontSize: 12),
-              ),
-              const SizedBox(height: 6),
-              _McpTextField(
-                value: cfg.aiTitlePrompt,
-                label: '',
-                hint: s.isZh ? '标题生成提示词（可改写）' : 'Title prompt (editable)',
-                scheme: scheme,
-                minLines: 2,
-                maxLines: 4,
-                onChange: (v) =>
-                    state.updateConfig((c) => c..aiTitlePrompt = v),
-              ),
-            ],
-            const SizedBox(height: 4),
-            // 会话模式：自动批准 / 询问
-            Text(
-              s.aiApproveModeLabel,
-              style: TextStyle(color: clr, fontSize: 12),
-            ),
-            const SizedBox(height: 6),
-            OptionMenuBar<String>(
-              expandable: false,
-              value: cfg.aiApproveMode,
-              items: [
-                OptionItem('ask', s.aiApproveModeAsk),
-                OptionItem('auto', s.aiApproveModeAuto),
-              ],
-              onChanged: (v) {
-                state.updateConfig((c) => c..aiApproveMode = v);
-                setDState(() {});
-              },
-            ),
-            const SizedBox(height: 6),
-            Text(
-              s.aiApproveModeDesc,
-              style: TextStyle(color: scheme.outline, fontSize: 10),
-            ),
-            const SizedBox(height: 12),
-            // 询问模式下无需确认的操作
-            Text(s.aiAskSkipLabel, style: TextStyle(color: clr, fontSize: 12)),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: [
-                for (final key in _askSkipKeys)
-                  FilterChip(
-                    label: Text(
-                      _askSkipLabel(key, s.isZh),
-                      style: const TextStyle(fontSize: 11),
-                    ),
-                    selected: cfg.aiAskSkipTools.contains(key),
-                    visualDensity: VisualDensity.compact,
-                    onSelected: (sel) {
-                      state.updateConfig((c) {
-                        final set = c.aiAskSkipTools.toSet();
-                        if (sel) {
-                          set.add(key);
-                        } else {
-                          set.remove(key);
-                        }
-                        c.aiAskSkipTools = set.toList();
-                        return c;
-                      });
-                      setDState(() {});
-                    },
-                  ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Text(s.aiCustomPrompt, style: TextStyle(color: clr, fontSize: 12)),
-            const SizedBox(height: 6),
-            // 用有状态的字段持有 controller：这里原先每次 setDState 都会新建一个
-            // TextEditingController，导致光标跳回开头、根本没法连续输入。
-            _McpTextField(
-              value: cfg.aiSystemPrompt,
-              label: '',
-              hint: s.aiCustomPromptHint,
-              scheme: scheme,
-              minLines: 3,
-              maxLines: 5,
-              onChange: (v) => state.updateConfig((c) => c..aiSystemPrompt = v),
-            ),
-          ]),
-        ],
-      );
-
-      if (asSheet) {
-        return DraggableScrollableSheet(
-          initialChildSize: 0.85,
-          minChildSize: 0.5,
-          maxChildSize: 0.95,
-          builder: (_, scrollCtrl) => GlassPanel(
-            radius: 20,
-            child: Column(
-              children: [
-                const SizedBox(height: 8),
-                Container(
-                  width: 36,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: scheme.outlineVariant,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                headerRow(withBack: false),
-                Expanded(child: listBody(scrollCtrl)),
-              ],
-            ),
-          ),
-        );
-      }
-      // 移动端二级页面：标题行（带返回）+ 内容列表
-      return Column(
-        children: [
-          headerRow(withBack: true),
-          Expanded(child: listBody(null)),
-        ],
-      );
-    },
-  );
-}
-
 /// 对 AiProfile 应用供应商预设（一键填充端点/模型/上下文）。
 /// 公开供移动端提供商详情页复用。
 void applyProfilePreset(AiProfile c, String preset) {
@@ -6461,317 +5784,6 @@ void applyProfilePreset(AiProfile c, String preset) {
 }
 
 /// 右侧配置详情：编辑选中配置的全部字段（含供应商预设）。
-Widget _buildProfileDetail(
-  BuildContext ctx,
-  AppState state,
-  StateSetter setDState,
-  ColorScheme scheme,
-  Color clr,
-  AppStrings s,
-  bool zh,
-  AiProfile profile,
-  String selProfileId,
-  AiProfile? draft,
-  bool showPreset,
-  VoidCallback onDeleted,
-) {
-  // 用 Key 保持编辑中草稿的 controller 稳定
-  Widget field(String label, Widget child) => Padding(
-    padding: const EdgeInsets.only(bottom: 12),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: TextStyle(fontSize: 12, color: clr)),
-        const SizedBox(height: 8),
-        child,
-      ],
-    ),
-  );
-
-  return SingleChildScrollView(
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // 供应商预设（新建/编辑都可一键填充）
-        if (showPreset) ...[
-          field(
-            zh ? '供应商预设（一键填充）' : 'Provider Preset',
-            OptionMenuBar<String>(
-              expandable: true,
-              triggerHeight: AppControlSize.comfortable.height,
-              value: profile.provider == 'anthropic'
-                  ? 'anthropic'
-                  : profile.apiUrl.contains('deepseek')
-                  ? 'deepseek'
-                  : profile.apiUrl.contains('localhost') ||
-                        profile.apiUrl.contains('11434')
-                  ? 'ollama'
-                  : 'openai',
-              items: const [
-                OptionItem('openai', 'OpenAI'),
-                OptionItem('anthropic', 'Anthropic (Claude)'),
-                OptionItem('deepseek', 'DeepSeek'),
-                OptionItem('ollama', 'Ollama (本地)'),
-              ],
-              onChanged: (preset) {
-                applyProfilePreset(profile, preset);
-                setDState(() {});
-              },
-            ),
-          ),
-          const SizedBox(height: 8),
-        ],
-        // 配置名
-        field(
-          zh ? '配置名' : 'Name',
-          _ProfileTextField(
-            value: profile.name,
-            onChange: (v) {
-              profile.name = v;
-            },
-          ),
-        ),
-        // 协议
-        field(
-          zh ? '请求方式 / 协议' : 'Protocol',
-          OptionMenuBar<String>(
-            expandable: false,
-            triggerHeight: AppControlSize.comfortable.height,
-            value: profile.provider,
-            items: [
-              OptionItem('openai', zh ? 'OpenAI 兼容' : 'OpenAI'),
-              const OptionItem('anthropic', 'Anthropic'),
-            ],
-            onChanged: (v) {
-              profile.provider = v;
-              setDState(() {});
-            },
-          ),
-        ),
-        const SizedBox(height: 10),
-        // API Key（可切换显示/隐藏）
-        field(
-          s.aiApiKey,
-          _McpTextField(
-            value: profile.apiKey,
-            size: AppControlSize.comfortable,
-            label: '',
-            scheme: scheme,
-            obscure: true,
-            onChange: (v) {
-              profile.apiKey = v;
-            },
-          ),
-        ),
-        // Base URL
-        field(
-          s.aiApiUrl,
-          _ProfileTextField(
-            value: profile.apiUrl,
-            onChange: (v) {
-              profile.apiUrl = v;
-            },
-          ),
-        ),
-        // 模型
-        field(
-          s.aiModel,
-          _ProfileTextField(
-            value: profile.model,
-            onChange: (v) {
-              profile.model = v;
-            },
-          ),
-        ),
-        // 上下文窗口
-        field(
-          zh ? '上下文窗口 (token)' : 'Context Window (tokens)',
-          _ProfileTextField(
-            value: profile.contextWindow.toString(),
-            keyboardType: TextInputType.number,
-            onChange: (v) {
-              final n = int.tryParse(v);
-              if (n != null && n >= 1000) profile.contextWindow = n;
-            },
-          ),
-        ),
-        // 最大输出
-        field(
-          zh ? '最大输出 token' : 'Max Output Tokens',
-          _ProfileTextField(
-            value: profile.maxTokens.toString(),
-            keyboardType: TextInputType.number,
-            onChange: (v) {
-              final n = int.tryParse(v);
-              if (n != null && n > 0) profile.maxTokens = n;
-            },
-          ),
-        ),
-        // 温度
-        field(
-          zh ? '温度 (0-2)' : 'Temperature (0-2)',
-          _ProfileTextField(
-            value: profile.temperature.toStringAsFixed(1),
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            onChange: (v) {
-              final t = double.tryParse(v);
-              if (t != null && t >= 0 && t <= 2) profile.temperature = t;
-            },
-          ),
-        ),
-        // 操作按钮：两个按钮都包 Expanded ⇒ 等宽；高度统一走 comfortable 档。
-        // 改造前「保存」是 Expanded 吃掉剩余宽度，「设为当前」只占内容宽度，
-        // 两个按钮宽度差一倍（宽窗口下尤其明显），看着像两个不同层级的控件并排。
-        Row(
-          children: [
-            Expanded(
-              child: FilledButton.icon(
-                style: AppControlSize.comfortable.buttonStyle(filled: true),
-                icon: Icon(
-                  Icons.save_outlined,
-                  size: AppControlSize.comfortable.iconSize,
-                ),
-                label: Text(
-                  zh ? '保存' : 'Save',
-                  style: const TextStyle(fontSize: 12),
-                ),
-                onPressed: () {
-                  final name = profile.name.trim();
-                  if (name.isEmpty) {
-                    showToast(
-                      ctx,
-                      zh ? '配置名不能为空' : 'Name is required',
-                      type: ToastType.error,
-                    );
-                    return;
-                  }
-                  // 落库（编辑已有项或新项）
-                  state.updateConfig((c) {
-                    final i = c.aiProfiles.indexWhere(
-                      (e) => e.id == profile.id,
-                    );
-                    if (i >= 0) {
-                      c.aiProfiles[i] = profile;
-                    } else {
-                      c.aiProfiles.add(profile);
-                    }
-                    if (c.activeAiProfileId.isEmpty) {
-                      c.activeAiProfileId = profile.id;
-                    }
-                    return c;
-                  });
-                  showToast(
-                    ctx,
-                    zh ? '配置已保存' : 'Profile saved',
-                    type: ToastType.success,
-                  );
-                },
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: OutlinedButton.icon(
-                style: AppControlSize.comfortable.buttonStyle(),
-                icon: Icon(
-                  state.config.activeAiProfileId == profile.id
-                      ? Icons.radio_button_checked
-                      : Icons.radio_button_off,
-                  size: AppControlSize.comfortable.iconSize,
-                ),
-                label: Text(
-                  zh ? '设为当前' : 'Use',
-                  style: const TextStyle(fontSize: 12),
-                ),
-                onPressed: () {
-                  state.updateConfig((c) {
-                    c.activeAiProfileId = profile.id;
-                    return c;
-                  });
-                  setDState(() {});
-                },
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: _iosButton(
-                icon: Icons.wifi_tethering,
-                label: s.aiPing,
-                color: scheme.primary,
-                bg: scheme.primaryContainer,
-                onTap: () {
-                  // 把当前配置临时同步到默认字段，供测试函数使用
-                  state.updateConfig((c) {
-                    c.aiApiKey = profile.apiKey;
-                    c.aiApiUrl = profile.apiUrl;
-                    c.aiProvider = profile.provider;
-                    return c;
-                  }).ignore();
-                  pingAi(ctx, state, s);
-                },
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: _iosButton(
-                icon: Icons.list,
-                label: s.aiListModels,
-                color: scheme.onSecondaryContainer,
-                bg: scheme.secondaryContainer,
-                onTap: () {
-                  state.updateConfig((c) {
-                    c.aiApiKey = profile.apiKey;
-                    c.aiApiUrl = profile.apiUrl;
-                    c.aiProvider = profile.provider;
-                    return c;
-                  }).ignore();
-                  // 选中的模型写回当前正在编辑的 profile（而非全局默认字段）
-                  listAiModels(
-                    ctx,
-                    state,
-                    s,
-                    onPicked: (m) {
-                      profile.model = m;
-                      setDState(() {});
-                    },
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-        if (draft != null) ...[
-          const SizedBox(height: 8),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              icon: const Icon(Icons.delete_outline, size: 16),
-              label: Text(
-                zh ? '删除此配置' : 'Delete this profile',
-                style: const TextStyle(fontSize: 12),
-              ),
-              style: OutlinedButton.styleFrom(foregroundColor: scheme.error),
-              onPressed: () {
-                state.updateConfig((c) {
-                  c.aiProfiles.removeWhere((e) => e.id == profile.id);
-                  if (c.activeAiProfileId == profile.id) {
-                    c.activeAiProfileId = '';
-                  }
-                  return c;
-                });
-                onDeleted();
-              },
-            ),
-          ),
-        ],
-      ],
-    ),
-  );
-}
-
 /// Anthropic 的 /v1/models 拿不到时的兜底列表。
 const _kKnownAnthropicModels = [
   'claude-opus-5',
@@ -8603,209 +7615,5 @@ class _PathFieldState extends State<_PathField> {
       labelStyle: TextStyle(fontSize: 11, color: widget.scheme.outline),
     ),
     onChanged: widget.onChange,
-  );
-}
-
-/// MCP 卡里的「标签 + 输入框 + 动作」一行。
-///
-/// 改造前这一行是 `Row([Text('端口: '), SizedBox(width: 80, child: 输入框),
-/// SizedBox(height: 30, child: 按钮)])`，三个问题：
-/// 1. 标签宽度跟着文案变 —— 中英文切换、端口/监听地址两行之间标签宽度不等，
-///    下面的输入框左边缘就错开；
-/// 2. 输入框宽度写死 80 / 130，与右侧按钮的比例随窗口宽度漂移；
-/// 3. 按钮被 `SizedBox(height: 30)` 压过，而主题 `filledButtonTheme` 带 `vertical: 12`
-///    内边距，30 高会把内容顶出/裁掉，与同一张卡里其它控件高度也对不上。
-///
-/// 现在：标签固定 [labelW]、动作固定 [actionW]、输入框 [Expanded] 吃掉剩余宽度，
-/// 高度一律由 [AppControlSize] 档位决定（不压 SizedBox）。[note] 说明文字独立成行
-/// 并对齐到输入框左边缘 —— 塞在 Row 里会被挤成三四行、把行高顶起来。
-class _McpFieldRow extends StatelessWidget {
-  /// 标签列固定宽度：够放「监听地址:」/「Bind host:」，中英文切换不跳动。
-  /// 与移动端 AI 设置页共用 [AppControlSize.labelW]，两端比例一致。
-  static const double labelW = AppControlSize.labelW;
-
-  /// 动作按钮列固定宽度：够放「应用」/「Apply」，语言切换不跳动。
-  /// 与移动端 AI 设置页共用 [AppControlSize.actionW]，两端比例一致。
-  static const double actionW = AppControlSize.actionW;
-
-  final Widget label;
-  final Widget field;
-  final Widget? action;
-  final Widget? note;
-
-  const _McpFieldRow({
-    required this.label,
-    required this.field,
-    this.action,
-    this.note,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            SizedBox(width: labelW, child: label),
-            Expanded(child: field),
-            if (action != null) ...[
-              const SizedBox(width: 8),
-              SizedBox(width: actionW, child: action),
-            ],
-          ],
-        ),
-        if (note != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 4, left: labelW),
-            child: note,
-          ),
-      ],
-    );
-  }
-}
-
-class _McpTextField extends StatefulWidget {
-  final String value;
-  final String label;
-  final String? hint;
-  final ColorScheme scheme;
-  final bool obscure;
-  final int minLines;
-  final int maxLines;
-  final ValueChanged<String> onChange;
-
-  /// 非空时按该档位对齐控件高度与水平内边距（把主题 `inputDecorationTheme`
-  /// 的 `contentPadding: v12` 压回档位高度）；为空则沿用主题默认外观。
-  final AppControlSize? size;
-
-  const _McpTextField({
-    required this.value,
-    required this.label,
-    required this.scheme,
-    this.hint,
-    this.obscure = false,
-    this.minLines = 1,
-    this.maxLines = 1,
-    this.size,
-    required this.onChange,
-  });
-  @override
-  State<_McpTextField> createState() => _McpTextFieldState();
-}
-
-class _McpTextFieldState extends State<_McpTextField> {
-  late final TextEditingController _ctrl = TextEditingController(
-    text: widget.value,
-  );
-  bool _hidden = true;
-
-  @override
-  void didUpdateWidget(_McpTextField old) {
-    super.didUpdateWidget(old);
-    if (old.value != widget.value && _ctrl.text != widget.value) {
-      _ctrl.text = widget.value;
-    }
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final obscuring = widget.obscure && _hidden;
-    final Widget field = TextField(
-      controller: _ctrl,
-      obscureText: obscuring,
-      minLines: obscuring ? 1 : widget.minLines,
-      maxLines: obscuring ? 1 : widget.maxLines,
-      style: TextStyle(fontSize: 13, color: widget.scheme.onSurface),
-      decoration:
-          (widget.size == null
-                  ? const InputDecoration()
-                  : widget.size!.denseInput())
-              .copyWith(
-                labelText: widget.label.isEmpty ? null : widget.label,
-                hintText: widget.hint,
-                hintStyle: widget.hint == null
-                    ? null
-                    : TextStyle(fontSize: 11, color: widget.scheme.outline),
-                isDense: true,
-                alignLabelWithHint: widget.maxLines > 1,
-                labelStyle: TextStyle(
-                  fontSize: 11,
-                  color: widget.scheme.outline,
-                ),
-                suffixIconConstraints: widget.size == null
-                    ? null
-                    : AppControlSize.iconSlot,
-                suffixIcon: widget.obscure
-                    ? IconButton(
-                        icon: Icon(
-                          _hidden ? Icons.visibility_off : Icons.visibility,
-                          size: 16,
-                          color: widget.scheme.outline,
-                        ),
-                        onPressed: () => setState(() => _hidden = !_hidden),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(
-                          minWidth: 24,
-                          minHeight: 24,
-                        ),
-                      )
-                    : null,
-              ),
-      onChanged: widget.onChange,
-    );
-    // 钉死到档位高度：不给死高度时，带「眼睛」后缀图标的字段会被 InputDecorator
-    // 默认的 48×48 图标约束顶高（桌面端折算后 40），比同一行不带后缀图标的字段高一截
-    return widget.size == null ? field : widget.size!.fieldBox(field);
-  }
-}
-
-class _ProfileTextField extends StatefulWidget {
-  final String value;
-  final TextInputType? keyboardType;
-  final ValueChanged<String> onChange;
-  const _ProfileTextField({
-    required this.value,
-    this.keyboardType,
-    required this.onChange,
-  });
-  @override
-  State<_ProfileTextField> createState() => _ProfileTextFieldState();
-}
-
-class _ProfileTextFieldState extends State<_ProfileTextField> {
-  late final TextEditingController _ctrl = TextEditingController(
-    text: widget.value,
-  );
-
-  @override
-  void didUpdateWidget(_ProfileTextField old) {
-    super.didUpdateWidget(old);
-    if (old.value != widget.value && _ctrl.text != widget.value) {
-      _ctrl.text = widget.value;
-    }
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => AppControlSize.comfortable.fieldBox(
-    TextField(
-      controller: _ctrl,
-      keyboardType: widget.keyboardType,
-      style: const TextStyle(fontSize: 12),
-      decoration: AppControlSize.comfortable.denseInput(),
-      onChanged: widget.onChange,
-    ),
   );
 }

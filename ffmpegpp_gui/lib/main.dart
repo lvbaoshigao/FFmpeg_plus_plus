@@ -36,9 +36,11 @@ final String _logDir = () {
   } else if (Platform.isWindows) {
     base = Platform.environment['APPDATA'] ?? Directory.systemTemp.path;
   } else if (Platform.isMacOS) {
-    base = '${Platform.environment['HOME'] ?? '/tmp'}/Library/Application Support';
+    base =
+        '${Platform.environment['HOME'] ?? '/tmp'}/Library/Application Support';
   } else {
-    base = Platform.environment['XDG_DATA_HOME'] ??
+    base =
+        Platform.environment['XDG_DATA_HOME'] ??
         '${Platform.environment['HOME'] ?? '/tmp'}$_sep.local${_sep}share';
   }
   final dir = '$base${_sep}FFmpeg++';
@@ -55,7 +57,7 @@ void _startupLog(String msg) {
   } catch (_) {}
 }
 
-void main() async {
+void main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // ── 本进程是不是「独立面板窗口」？──
@@ -64,8 +66,25 @@ void main() async {
   //     —— 那正是主窗口自己，子窗口一启动就会把主窗口干掉；
   //  2. 下面第一件事是清空 startup.log，子窗口会把主窗口的启动日志抹掉；
   //  3. 子窗口绝不能创建 AppState（会 dlopen 第二份 C++ 后端 + 再起一个
-  //     Python 进程），它只用镜像状态，数据全部走方法通道。
+  //     Python 进程），它只用镜像状态，数据全部通过受限 IPC 转发。
   if (!isMobilePlatform) {
+    if (Platform.isLinux &&
+        arguments.firstOrNull == MultiWindowService.linuxProcessArgument) {
+      final panelArgs = arguments.length > 1
+          ? DetachedWindowArgs.tryParse(arguments[1])
+          : null;
+      if (panelArgs == null || panelArgs.ipcSocketPath == null) {
+        stderr.writeln('Invalid Linux detached panel launch arguments');
+        return;
+      }
+      final token = await MultiWindowService.readLinuxGuestToken();
+      MultiWindowService.configureLinuxGuest(
+        socketPath: panelArgs.ipcSocketPath!,
+        token: token,
+      );
+      await runDetachedPanelWindow(panelArgs);
+      return;
+    }
     final panelArgs = await MultiWindowService.currentWindowArgs();
     if (panelArgs != null) {
       await runDetachedPanelWindow(panelArgs);
@@ -104,12 +123,16 @@ void main() async {
 
   // 完整性校验 — 后台执行，失败不退出（策略：写日志 + 记录原因，不阻断启动）
   IntegrityCheck.verify().then((ok) {
-    _startupLog('IntegrityCheck(assets): ${ok ? "PASS" : "FAIL"}'
-        '${ok ? "" : " - ${IntegrityCheck.lastFailure}"}');
+    _startupLog(
+      'IntegrityCheck(assets): ${ok ? "PASS" : "FAIL"}'
+      '${ok ? "" : " - ${IntegrityCheck.lastFailure}"}',
+    );
   });
   IntegrityCheck.verifyCritical().then((ok) {
-    _startupLog('IntegrityCheck(critical): ${ok ? "PASS" : "FAIL"}'
-        '${ok ? "" : " - ${IntegrityCheck.lastFailure}"}');
+    _startupLog(
+      'IntegrityCheck(critical): ${ok ? "PASS" : "FAIL"}'
+      '${ok ? "" : " - ${IntegrityCheck.lastFailure}"}',
+    );
   });
 
   FlutterError.onError = (details) {
@@ -207,10 +230,14 @@ void main() async {
   // SurfaceView 的 Surface），所以放在这里而不是 main() 开头。
   // Android 专用，其它平台 no-op。
   // 注意：这不是预热 —— 不调用就真的跑不到高刷，所以不受 warmupEnabled 门控。
-  unawaited(RefreshRate.applyEnabled(appState.config.highRefreshRate).then((ok) {
-    _startupLog('6a-highRefreshRate: '
-        '${appState.config.highRefreshRate ? "max" : "system default"} -> $ok');
-  }));
+  unawaited(
+    RefreshRate.applyEnabled(appState.config.highRefreshRate).then((ok) {
+      _startupLog(
+        '6a-highRefreshRate: '
+        '${appState.config.highRefreshRate ? "max" : "system default"} -> $ok',
+      );
+    }),
+  );
 
   // 后端就绪后预热：字体列表 + 壁纸解码（进主界面不再卡首帧）。
   // 壁纸那一项内部还会再判一次「有没有配壁纸」。
@@ -250,23 +277,36 @@ Future<void> _autoTuneGlass(AppState state) async {
     final needsNav = c.navStyle == 'liquid' || c.navStyle == 'blur';
     final needsPill = c.pillStyle == 'liquid' || c.pillStyle == 'blur';
     final needsMenu = c.menuStyle == 'liquid' || c.menuStyle == 'blur';
-    if (!needsGlass && !needsCard && !needsNav && !needsPill && !needsMenu) return;
+    if (!needsGlass && !needsCard && !needsNav && !needsPill && !needsMenu) {
+      return;
+    }
     // 自动降级只主动执行一次：若上次已降级、而现在玻璃样式又是开启状态，
     // 说明用户在设置里手动重新开启了 —— 尊重用户选择，不再每次启动都改回去。
     // （旧行为：每次启动都重新降级，「可在设置中重新开启」的承诺实际不成立。）
     if (c.glassAutoTuned) {
-      _startupLog('autoTuneGlass: software GPU ($name) but glass re-enabled by user, skip');
+      _startupLog(
+        'autoTuneGlass: software GPU ($name) but glass re-enabled by user, skip',
+      );
       return;
     }
     state.addLog(
-        '检测到软件/基础渲染显卡（$name），已自动关闭玻璃模糊效果（改为纯色）以保证流畅，可在「设置」中重新开启（重新开启后不会再被自动关闭）',
-        category: 'info');
+      '检测到软件/基础渲染显卡（$name），已自动关闭玻璃模糊效果（改为纯色）以保证流畅，可在「设置」中重新开启（重新开启后不会再被自动关闭）',
+      category: 'info',
+    );
     await state.updateConfig((c) {
-      if (c.glassEffect == 'liquid' || c.glassEffect == 'blur') c.glassEffect = 'none';
+      if (c.glassEffect == 'liquid' || c.glassEffect == 'blur') {
+        c.glassEffect = 'none';
+      }
       c.cardStyle = 'flat';
-      if (c.navStyle == 'liquid' || c.navStyle == 'blur') c.navStyle = 'gray';
-      if (c.pillStyle == 'liquid' || c.pillStyle == 'blur') c.pillStyle = 'gray';
-      if (c.menuStyle == 'liquid' || c.menuStyle == 'blur') c.menuStyle = 'gray';
+      if (c.navStyle == 'liquid' || c.navStyle == 'blur') {
+        c.navStyle = 'gray';
+      }
+      if (c.pillStyle == 'liquid' || c.pillStyle == 'blur') {
+        c.pillStyle = 'gray';
+      }
+      if (c.menuStyle == 'liquid' || c.menuStyle == 'blur') {
+        c.menuStyle = 'gray';
+      }
       c.glassAutoTuned = true;
       return c;
     });
@@ -296,16 +336,24 @@ Future<void> _precacheWallpaper(AppState state) async {
     if (views.isEmpty) return;
     final view = views.first;
     final size = view.physicalSize / view.devicePixelRatio;
-    final provider = wallpaperImageProvider(bg, size.width, size.height, view.devicePixelRatio);
+    final provider = wallpaperImageProvider(
+      bg,
+      size.width,
+      size.height,
+      view.devicePixelRatio,
+    );
     // 触发解码并等待完成，使图片进入 ImageCache（后续同参数请求直接命中）
     final stream = provider.resolve(ImageConfiguration.empty);
     final done = Completer<void>();
     late ImageStreamListener listener;
-    listener = ImageStreamListener((_, _) {
-      if (!done.isCompleted) done.complete();
-    }, onError: (_, _) {
-      if (!done.isCompleted) done.complete();
-    });
+    listener = ImageStreamListener(
+      (_, _) {
+        if (!done.isCompleted) done.complete();
+      },
+      onError: (_, _) {
+        if (!done.isCompleted) done.complete();
+      },
+    );
     stream.addListener(listener);
     await done.future.timeout(const Duration(seconds: 10), onTimeout: () {});
     stream.removeListener(listener);
@@ -326,11 +374,13 @@ Future<void> _initWindow() async {
     // DwmExtendFrameIntoClientArea/SetWindowPos 可能发生在窗口尚未就绪时）。
     // 真双保险在原生侧 win32_window.cpp 的 EnsureCaptionPresent（WM_ACTIVATE/
     // WM_STYLECHANGED 时强制补回 WS_CAPTION），这里只是尽早把插件状态拉齐。
-    unawaited(Future.delayed(const Duration(milliseconds: 400), () async {
-      try {
-        await windowManager.setTitleBarStyle(TitleBarStyle.normal);
-      } catch (_) {}
-    }));
+    unawaited(
+      Future.delayed(const Duration(milliseconds: 400), () async {
+        try {
+          await windowManager.setTitleBarStyle(TitleBarStyle.normal);
+        } catch (_) {}
+      }),
+    );
   } else {
     // Linux：自定义标题栏（Flutter 自绘 CSD，见 app.dart _buildCsdTitleBar）
     await windowManager.setTitleBarStyle(TitleBarStyle.hidden);
@@ -354,8 +404,10 @@ String _findServer() {
 
   // 仅搜索 exe 目录和上一级目录（防止 DLL 劫持）
   const maxSearchDepth = 2;
-  final libName = Platform.isWindows ? 'ffmpegpp.dll'
-      : Platform.isMacOS ? 'libffmpegpp.dylib'
+  final libName = Platform.isWindows
+      ? 'ffmpegpp.dll'
+      : Platform.isMacOS
+      ? 'libffmpegpp.dylib'
       : 'libffmpegpp.so';
 
   var dir = exeDir;
@@ -366,7 +418,9 @@ String _findServer() {
       return candidate.absolute.path;
     }
     // Also check lib/ subdirectory (Linux bundle structure)
-    final libSubdir = File('${dir.path}${Platform.pathSeparator}lib${Platform.pathSeparator}$libName');
+    final libSubdir = File(
+      '${dir.path}${Platform.pathSeparator}lib${Platform.pathSeparator}$libName',
+    );
     if (libSubdir.existsSync()) {
       _startupLog('5b-FOUND LIB: ${libSubdir.absolute.path}');
       return libSubdir.absolute.path;
@@ -391,15 +445,17 @@ void _killOldProcesses() {
     // 策略：先用 pgrep -f 取候选 PID，再逐个用 ps -o comm= 二次确认其可执行名 basename
     // 确为 ffmpegpp_gui（或 .exe）才 kill；命令里无用户输入，仅常量，无注入风险。
     // 这样既不会误杀 comm 为 vim 的编辑器进程，也无需依赖 grep -v $$ 排除 bash 自身。
-    Process.run('bash', ['-c',
+    Process.run('bash', [
+      '-c',
       'for p in \$(pgrep -f "ffmpegpp_gui" 2>/dev/null); do '
-      '[ "\$p" = "$myPid" ] && continue; '
-      'comm=\$(ps -o comm= -p "\$p" 2>/dev/null | tr -d " \\n"); '
-      'base=\$(basename "\$comm"); '
-      'case "\$base" in '
-      'ffmpegpp_gui|ffmpegpp_gui.exe) kill -9 "\$p" 2>/dev/null ;; '
-      'esac; '
-      'done']).ignore();
+          '[ "\$p" = "$myPid" ] && continue; '
+          'comm=\$(ps -o comm= -p "\$p" 2>/dev/null | tr -d " \\n"); '
+          'base=\$(basename "\$comm"); '
+          'case "\$base" in '
+          'ffmpegpp_gui|ffmpegpp_gui.exe) kill -9 "\$p" 2>/dev/null ;; '
+          'esac; '
+          'done',
+    ]).ignore();
   }
 }
 
@@ -445,6 +501,8 @@ Future<void> _loadFontsFromDir(Directory dir) async {
 
 void _logCrash(String error, String stack) {
   try {
-    File('$_logDir${_sep}crash.log').writeAsStringSync('Error: $error\n\nStack:\n$stack');
+    File(
+      '$_logDir${_sep}crash.log',
+    ).writeAsStringSync('Error: $error\n\nStack:\n$stack');
   } catch (_) {}
 }

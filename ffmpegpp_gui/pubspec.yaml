@@ -20,8 +20,8 @@ dependencies:
   crypto: ^3.0.7
   desktop_drop: ^0.8.4
   # 真正脱离应用的独立系统窗口（元素/属性面板、AI 面板拖出为独立窗口）。
-  # 注意：每个子窗口是**独立的 Flutter 引擎**，无法共享主窗口内存里的 AppState，
-  # 面板数据必须经 WindowMethodChannel 同步 —— 见 lib/services/multi_window.dart。
+  # Windows/macOS 使用独立 Flutter 引擎，Linux 使用独立进程；
+  # 面板数据通过方法通道或受限 Unix socket 同步，见 lib/services/multi_window.dart。
   # 三平台各需一处原生注册（windows/runner/flutter_window.cpp、
   # macos/Runner/MainFlutterWindow.swift、linux/runner/my_application.cc），
   # 否则子窗口内调不动 window_manager 等插件。
