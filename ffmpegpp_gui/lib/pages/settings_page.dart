@@ -1214,7 +1214,9 @@ class _SettingsPageState extends State<SettingsPage> {
                 .toList();
             if (query.isNotEmpty) {
               hits.sort((a, b) {
-                final byScore = b.matchScore(query).compareTo(a.matchScore(query));
+                final byScore = b
+                    .matchScore(query)
+                    .compareTo(a.matchScore(query));
                 if (byScore != 0) return byScore;
                 return a.id.compareTo(b.id);
               });
@@ -1290,7 +1292,9 @@ class _SettingsPageState extends State<SettingsPage> {
               .toList();
           if (query.isNotEmpty) {
             hits.sort((a, b) {
-              final byScore = b.matchScore(query).compareTo(a.matchScore(query));
+              final byScore = b
+                  .matchScore(query)
+                  .compareTo(a.matchScore(query));
               if (byScore != 0) return byScore;
               return a.id.compareTo(b.id);
             });
@@ -1530,7 +1534,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   /// 右侧面板：当前分区的全部设置卡片。
-  /// 切换分区时淡入 + 轻微位移动画；列数随窗口宽度自适应。
+  /// 切换分区时淡入 + 轻微位移动画。
   Widget _buildSectionPane(
     _SectionDef sec,
     BuildContext ctx,
@@ -1538,9 +1542,7 @@ class _SettingsPageState extends State<SettingsPage> {
     ColorScheme scheme,
   ) {
     return LayoutBuilder(
-      builder: (ctx, cons) {
-        // 窄窗口单列，宽窗口最多三列
-        final cols = cons.maxWidth < 640 ? 1 : (cons.maxWidth < 1100 ? 2 : 3);
+      builder: (ctx, _) {
         return AnimatedSwitcher(
           duration: const Duration(milliseconds: 200),
           switchInCurve: Curves.easeOutCubic,
@@ -1589,7 +1591,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 ),
                 MasonryGrid(
-                  columns: cols,
+                  // 桌面设置使用一致的单列列表，避免多列卡片高度错位和扫描负担。
+                  columns: 1,
                   spacing: 8,
                   runSpacing: 8,
                   children: [
@@ -1624,8 +1627,7 @@ class _SettingsPageState extends State<SettingsPage> {
     ColorScheme scheme,
   ) {
     return LayoutBuilder(
-      builder: (ctx, cons) {
-        final cols = cons.maxWidth < 640 ? 1 : (cons.maxWidth < 1100 ? 2 : 3);
+      builder: (ctx, _) {
         return SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
           child: Column(
@@ -1667,7 +1669,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 ),
                 MasonryGrid(
-                  columns: cols,
+                  columns: 1,
                   spacing: 8,
                   runSpacing: 8,
                   children: [

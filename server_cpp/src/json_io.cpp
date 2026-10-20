@@ -1,4 +1,5 @@
 #include "json_io.h"
+#include <algorithm>
 #include <string>
 #ifdef _WIN32
 #include <windows.h>
@@ -16,7 +17,9 @@ namespace ffmpegpp {
 std::queue<std::string> JsonWriter::_queue;
 std::mutex JsonWriter::_mutex;
 std::condition_variable JsonWriter::_cv;
+std::condition_variable JsonWriter::_spaceAvailable;
 std::atomic<bool> JsonWriter::_running{false};
+std::size_t JsonWriter::_activeSenders = 0;
 std::thread JsonWriter::_writerThread;
 
 #ifdef FFMPEGPP_DLL_MODE
@@ -37,26 +40,39 @@ void JsonWriter::send(const json& obj) {
 
 #else
 
-// EXE 模式：通过写入线程写 stdout（原有逻辑）
+// Bound queued lines while allowing the writer to finish its current blocking write.
+static constexpr std::size_t kMaxQueuedLines = 256;
+
+// EXE 模式：通过写入线程写 stdout。
 void JsonWriter::start() {
 #ifdef _WIN32
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
     _running.store(true);
     _writerThread = std::thread([hOut]() {
-        while (_running.load()) {
+        while (true) {
             std::string line;
             {
                 std::unique_lock<std::mutex> lock(_mutex);
-                _cv.wait_for(lock, std::chrono::milliseconds(100), []() {
-                    return !_queue.empty() || !_running.load();
+                _cv.wait(lock, []() {
+                    return !_queue.empty() || (!_running.load() && _activeSenders == 0);
                 });
-                if (_queue.empty()) continue;
+                if (_queue.empty()) break;
                 line = _queue.front();
                 _queue.pop();
             }
+            _spaceAvailable.notify_one();
             if (hOut != INVALID_HANDLE_VALUE && hOut != nullptr) {
-                DWORD written;
-                WriteFile(hOut, line.c_str(), (DWORD)line.size(), &written, nullptr);
+                size_t offset = 0;
+                while (offset < line.size()) {
+                    const DWORD chunk = static_cast<DWORD>(
+                        std::min<size_t>(line.size() - offset, MAXDWORD));
+                    DWORD written = 0;
+                    if (!WriteFile(hOut, line.data() + offset, chunk, &written, nullptr) ||
+                        written == 0) {
+                        break;
+                    }
+                    offset += written;
+                }
                 // 注意：不要 FlushFileBuffers —— 对管道/控制台是无操作（或拖慢性能），
                 // 数据量小时系统自会刷出，FlushFileBuffers 只对磁盘文件有意义。
             }
@@ -65,17 +81,18 @@ void JsonWriter::start() {
 #else
     _running.store(true);
     _writerThread = std::thread([]() {
-        while (_running.load()) {
+        while (true) {
             std::string line;
             {
                 std::unique_lock<std::mutex> lock(_mutex);
-                _cv.wait_for(lock, std::chrono::milliseconds(100), []() {
-                    return !_queue.empty() || !_running.load();
+                _cv.wait(lock, []() {
+                    return !_queue.empty() || (!_running.load() && _activeSenders == 0);
                 });
-                if (_queue.empty()) continue;
+                if (_queue.empty()) break;
                 line = _queue.front();
                 _queue.pop();
             }
+            _spaceAvailable.notify_one();
             const char* p = line.c_str();
             size_t remaining = line.size();
             while (remaining > 0) {
@@ -93,14 +110,25 @@ void JsonWriter::start() {
 void JsonWriter::stop() {
     _running.store(false);
     _cv.notify_all();
+    _spaceAvailable.notify_all();
     if (_writerThread.joinable()) _writerThread.join();
 }
 
 void JsonWriter::send(const json& obj) {
     std::string line = obj.dump(-1, ' ', false, json::error_handler_t::replace) + "\n";
     {
-        std::lock_guard<std::mutex> lock(_mutex);
-        _queue.push(line);
+        std::unique_lock<std::mutex> lock(_mutex);
+        ++_activeSenders;
+        _spaceAvailable.wait(lock, []() { return _queue.size() < kMaxQueuedLines; });
+        try {
+            _queue.push(std::move(line));
+        } catch (...) {
+            --_activeSenders;
+            lock.unlock();
+            _cv.notify_all();
+            throw;
+        }
+        --_activeSenders;
     }
     _cv.notify_one();
 }

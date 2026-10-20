@@ -93,7 +93,7 @@ class GlassPanel extends StatelessWidget {
     final tuning = glassTuningOf(context);
     final tone = context.select<AppState, double>((s) => s.config.themeTone);
     // 本 widget 的 blur 参数是**基准 σ**（默认 12），缩放与平台钳制统一在
-    // tunedGlassSigma 里（默认模糊度 → 系数 1.0，观感不变；Windows 钳到 ≤12）。
+    // tunedGlassSigma 里（默认模糊度 → 系数 1.0，观感不变；桌面端钳到 ≤8）。
     final double sigma = tunedGlassSigma(blur, tuning);
     // 模糊 σ 取本 widget 的 blur 参数（见下方 sigma）；是否走 shader 由
     // liquid_glass_fallback.gpuGlassEnabledOf 统一判定（PC 端默认关闭）。
@@ -442,7 +442,7 @@ class GlassPanel extends StatelessWidget {
             color: baseColor.withAlpha(liqTop),
             shadow: BoxShadow(
               color: Colors.black.withAlpha(isDark ? 60 : 26),
-              blurRadius: 18,
+              blurRadius: 12,
               offset: const Offset(0, 6),
             ),
             child: Container(

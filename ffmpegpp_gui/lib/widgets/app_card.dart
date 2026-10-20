@@ -170,7 +170,7 @@ class _AppCardState extends State<AppCard> {
       (s) => _keyOf(s, style),
     );
     // 模糊 σ 与「是否走 shader」统一来自 liquid_glass_fallback（各调用点固定 σ +
-    // Windows ≤12 钳制；PC 端默认不走 shader，见 gpuGlassEnabledOf）。
+    // 桌面端 ≤8 钳制；PC 端默认不走 shader，见 gpuGlassEnabledOf）。
     final op = key.op.clamp(0.0, 1.0);
     final radius = widget.radius;
     final br = BorderRadius.circular(radius);
@@ -532,7 +532,7 @@ class _AppCardState extends State<AppCard> {
             // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
             return LiquidGlassBackdrop(
               borderRadius: br,
-              // σ 由「玻璃细节 → 模糊度」控制（Windows 上被 effectiveGlassSigma 钳制）
+              // σ 由「玻璃细节 → 模糊度」控制（桌面端由 effectiveGlassSigma 钳制）
               sigma: sigma,
               opacity: op,
               shadow: BoxShadow(

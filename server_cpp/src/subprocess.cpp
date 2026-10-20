@@ -57,6 +57,11 @@ static bool currentTaskPaused() {
 // Windows 实现
 // ═══════════════════════════════════════════════
 
+static void closePipeHandle(HANDLE& handle) {
+    if (handle != nullptr && handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+    handle = nullptr;
+}
+
 // UTF-8 → UTF-16 宽字符串转换
 std::wstring Subprocess::utf8ToWide(const std::string& s) {
     if (s.empty()) return L"";
@@ -187,9 +192,14 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
     std::wstring wcmdline = utf8ToWide(cmdline);
 
     SECURITY_ATTRIBUTES sa = {sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
-    HANDLE hStdoutRead, hStdoutWrite, hStderrRead, hStderrWrite;
+    HANDLE hStdoutRead = nullptr, hStdoutWrite = nullptr;
+    HANDLE hStderrRead = nullptr, hStderrWrite = nullptr;
     if (!CreatePipe(&hStdoutRead, &hStdoutWrite, &sa, 0) ||
         !CreatePipe(&hStderrRead, &hStderrWrite, &sa, 0)) {
+        closePipeHandle(hStdoutRead);
+        closePipeHandle(hStdoutWrite);
+        closePipeHandle(hStderrRead);
+        closePipeHandle(hStderrWrite);
         result.exit_code = -1;
         return result;
     }
@@ -348,9 +358,14 @@ ProcessResult Subprocess::runWithProgress(
     std::wstring wcmdline = utf8ToWide(cmdline);
 
     SECURITY_ATTRIBUTES sa = {sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
-    HANDLE hStdoutRead, hStdoutWrite, hStderrRead, hStderrWrite;
+    HANDLE hStdoutRead = nullptr, hStdoutWrite = nullptr;
+    HANDLE hStderrRead = nullptr, hStderrWrite = nullptr;
     if (!CreatePipe(&hStdoutRead, &hStdoutWrite, &sa, 0) ||
         !CreatePipe(&hStderrRead, &hStderrWrite, &sa, 0)) {
+        closePipeHandle(hStdoutRead);
+        closePipeHandle(hStdoutWrite);
+        closePipeHandle(hStderrRead);
+        closePipeHandle(hStderrWrite);
         result.exit_code = -1;
         return result;
     }

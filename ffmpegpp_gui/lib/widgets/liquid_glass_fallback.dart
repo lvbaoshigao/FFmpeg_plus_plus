@@ -105,12 +105,12 @@ OCLiquidGlassSettings liquidGlassSettingsFor(GlassTuning t) {
   );
 }
 
-/// 玻璃高斯模糊 σ：Windows 沿用既有上限。
+/// 玻璃高斯模糊 σ：桌面端统一限制离屏纹理尺寸，优先保证低配设备帧率与显存占用。
 ///
-/// σ16/18 的高斯模糊要在面板尺寸之外再多分配约 3σ 的离屏纹理；降到 12 视觉几乎
-/// 无差别但内存明显更低（见 glass_panel 的注释）。
+/// σ16/18 的高斯模糊要在面板尺寸之外再多分配约 3σ 的离屏纹理；限制到 8 能
+/// 减少每个 BackdropFilter 的采样与纹理面积，同时仍保留桌面液态玻璃的层次感。
 double effectiveGlassSigma(double value) =>
-    isWindowsPlatform ? value.clamp(0.0, 12.0) : value.clamp(0.0, 24.0);
+    isMobilePlatform ? value.clamp(0.0, 24.0) : value.clamp(0.0, 8.0);
 
 /// `ImageFilter.blur` 的进程级实例缓存（所有玻璃表面统一走这里）。
 ///
@@ -123,7 +123,7 @@ double effectiveGlassSigma(double value) =>
 /// 高频滚动时表现为「打开玻璃后内存持续上涨、停下来也不立刻回落」。
 ///
 /// σ 的取值集合是有限的（各表面基准 σ 固定、只随「模糊度」滑块等比缩放，
-/// Windows 还统一钳到 ≤12），所以按 σ 缓存后这些分配可以降到零，且
+/// 桌面端还统一钳到 ≤8），所以按 σ 缓存后这些分配可以降到零，且
 /// `BackdropFilter` 内部用 `==` 比较 filter —— 命中同一实例还能顺带省掉
 /// 一次无谓的 `markNeedsPaint`。
 ///
@@ -169,7 +169,7 @@ const double kGlassBlurBaseline = 16.0;
 /// 标题栏 18），直接取绝对值会把默认观感统一改成 16。等比换算保证
 /// **默认参数（glassBlur = 16）= 各表面 σ 与改动前逐像素一致**，只有用户真的
 /// 拖动「模糊度」滑块时全部同步增减；Windows 上再由 [effectiveGlassSigma]
-/// 钳到 ≤12（离屏纹理内存，见其注释）。
+/// 钳到 ≤8（离屏纹理内存，见其注释）。
 ///
 /// 凡是不想被「模糊度」滑块牵动的固定玻璃，请显式写常量并注明理由。
 double tunedGlassSigma(double base, GlassTuning tuning) =>
@@ -521,7 +521,7 @@ class LiquidGlassPainter extends CustomPainter {
 class LiquidGlassBackdrop extends StatelessWidget {
   final BorderRadius borderRadius;
 
-  /// 背景模糊 σ。调用方自行处理平台 clamp（如 Windows 限 12）。
+  /// 背景模糊 σ。调用方自行处理平台 clamp（桌面端限 8）。
   /// 传 null 时取自「设置 → 样式 → 玻璃细节」的模糊度。
   final double? sigma;
   final double opacity;

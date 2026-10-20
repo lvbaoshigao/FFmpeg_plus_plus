@@ -5,6 +5,7 @@
 #include <thread>
 #include <atomic>
 #include <condition_variable>
+#include <cstddef>
 #include "nlohmann/json.hpp"
 
 namespace ffmpegpp {
@@ -26,7 +27,9 @@ private:
     static std::queue<std::string> _queue;
     static std::mutex _mutex;
     static std::condition_variable _cv;
+    static std::condition_variable _spaceAvailable;
     static std::atomic<bool> _running;
+    static std::size_t _activeSenders;
     static std::thread _writerThread;
 };
 

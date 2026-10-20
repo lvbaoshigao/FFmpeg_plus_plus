@@ -2264,7 +2264,7 @@ class AppConfig {
   // MobileBottomNav / LiquidGlassBackdrop / GlassPanel）都读同一份，避免各画各的。
   //
   // 默认值刻意取「与引入本项之前的像素观感一致」：
-  // * glassBlur 16 = 各调用点此前的固定基准 σ（Windows 由 effectiveGlassSigma 钳到 12）；
+  // * glassBlur 16 = 各调用点此前的固定基准 σ（桌面端由 effectiveGlassSigma 钳到 8）；
   // * glassClarity 0.45 → tint alpha ≈ 140（原卡片 130、药丸/底栏 178，取中间值统一）；
   // * glassHighlight/glassLightPos/glassEdge 的默认值＝「不做任何改变」。
   /// 玻璃高斯模糊 σ（0~30）。0 = 完全不模糊；液态玻璃（GPU）路径只额外模糊

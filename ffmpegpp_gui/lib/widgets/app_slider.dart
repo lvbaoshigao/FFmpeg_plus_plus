@@ -10,7 +10,7 @@ import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 // cachedGlassBlur：轨道玻璃的 σ 走进程级实例缓存（避免设置页里几十个滑块
 // 各自在每帧 build 时新建一份持有 native handle 的 ImageFilter）；
-// effectiveGlassSigma：Windows 的 σ 上限钳制。
+// effectiveGlassSigma：桌面端的 σ 上限钳制。
 import 'liquid_glass_fallback.dart' show cachedGlassBlur, effectiveGlassSigma;
 
 // ═══════════════════════════════════════════

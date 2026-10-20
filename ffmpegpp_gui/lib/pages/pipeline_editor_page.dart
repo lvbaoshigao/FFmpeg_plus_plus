@@ -10463,7 +10463,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         );
     Widget header(BuildContext ctx) => StatefulBuilder(
       builder: (ctx, setH) => Padding(
-        padding: const EdgeInsets.fromLTRB(12, 4, 12, 2),
+        padding: const EdgeInsets.fromLTRB(8, 2, 8, 0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -10536,12 +10536,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             ),
             // 模型选择器独立成行：不再和标题/工具挤在 48px 头部行里，
             // 宽度按内容收缩、文本最多 190px，避免“只剩 1/3 宽”。
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: _aiModelPill(scheme, s, aiKey, () => setH(() {})),
-              ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: _aiModelPill(scheme, s, aiKey, () => setH(() {})),
             ),
           ],
         ),
@@ -11433,10 +11430,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         color: bg ?? Colors.transparent,
         clipBehavior: Clip.antiAlias,
         // 保存键的实心底原来是圆角方形，视觉上像一个方框；有底色时用正圆。
-        borderRadius: BorderRadius.circular(bg != null ? _kMobileBarBtnBox / 2 : 10),
+        borderRadius: BorderRadius.circular(
+          bg != null ? _kMobileBarBtnBox / 2 : 10,
+        ),
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(bg != null ? _kMobileBarBtnBox / 2 : 10),
+          borderRadius: BorderRadius.circular(
+            bg != null ? _kMobileBarBtnBox / 2 : 10,
+          ),
           customBorder: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(
               bg != null ? _kMobileBarBtnBox / 2 : 10,

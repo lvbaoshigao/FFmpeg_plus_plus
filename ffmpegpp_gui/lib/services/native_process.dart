@@ -149,13 +149,21 @@ class NativeProcessManager {
     if (!isRunning) {
       return {'id': id, 'success': false, 'error': '后端未启动'};
     }
+    if (_pendingCompleters.containsKey(id)) {
+      return {'id': id, 'success': false, 'error': '请求 ID 已在使用中'};
+    }
     final completer = Completer<Map<String, dynamic>>();
     _pendingCompleters[id] = completer;
 
     final Map<String, dynamic> req = {'id': id, 'action': action};
     if (params != null) req['params'] = params;
 
-    _sendRequest(req);
+    try {
+      _sendRequest(req);
+    } catch (e) {
+      _pendingCompleters.remove(id);
+      return {'id': id, 'success': false, 'error': '请求发送失败: $e'};
+    }
 
     // 长任务（transcode/subtitle/自定义命令/抽帧/合并/图片序列）不设超时：
     // 后端关闭或崩溃时由 _failAllPending 统一 complete，避免长时间编码被 600s 硬超时误判失败。
@@ -177,7 +185,12 @@ class NativeProcessManager {
     final Map<String, dynamic> req = {'id': id, 'action': action};
     if (params != null) req['params'] = params;
 
-    _sendRequest(req);
+    try {
+      _sendRequest(req);
+    } catch (e) {
+      _pendingCompleters.remove(id);
+      return {'id': id, 'success': false, 'error': '请求发送失败: $e'};
+    }
 
     return completer.future.timeout(
       Duration(seconds: timeoutSec),

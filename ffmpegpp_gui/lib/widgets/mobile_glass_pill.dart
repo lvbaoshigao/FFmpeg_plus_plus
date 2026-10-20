@@ -311,7 +311,7 @@ class _MobileGlassPillState extends State<MobileGlassPill>
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final key = context.select<AppState, _PillGlassKey>(_keyOf);
     // 模糊 σ 来自「设置 → 样式 → 玻璃细节 → 模糊度」（默认 16，与改动前一致），
-    // Windows 上由 effectiveGlassSigma 钳到 ≤12；是否走 shader 由
+    // 桌面端由 effectiveGlassSigma 钳到 ≤8；是否走 shader 由
     // gpuGlassEnabledOf 统一判定（PC 端默认关闭）。
     final GlassTuning tuning = key.tuning;
     final double pillSigma = effectiveGlassSigma(tuning.blur);
@@ -468,7 +468,7 @@ class _MobileGlassPillState extends State<MobileGlassPill>
       // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
       pill = LiquidGlassBackdrop(
         borderRadius: BorderRadius.circular(widget.radius),
-        // σ = 14（固定基准值，Windows 上已由 effectiveGlassSigma 钳到 ≤12）
+        // σ = 14（固定基准值，桌面端已由 effectiveGlassSigma 钳到 ≤8）
         sigma: pillSigma,
         opacity: op,
         shadow: BoxShadow(

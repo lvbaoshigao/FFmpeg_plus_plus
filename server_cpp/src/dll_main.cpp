@@ -21,6 +21,7 @@
 #include <vector>
 #include <memory>
 #include <functional>
+#include <condition_variable>
 
 using json = nlohmann::json;
 using namespace ffmpegpp;
@@ -36,12 +37,52 @@ static std::atomic<bool> g_shutdownFlag{false};
 static std::set<std::string> g_cancelledTaskIds;
 static std::mutex g_cancelMutex;
 
-// 与 g_cancelledTaskIds 对应的入队时间戳，用于清理长期不被消费的陈旧条目（L-1）
-static std::map<std::string, std::chrono::steady_clock::time_point> g_cancelledTaskTimes;
+// Expiry index keeps cleanup work proportional to expired records.
+using CancelExpiryMap = std::multimap<std::chrono::steady_clock::time_point, std::string>;
+static CancelExpiryMap g_cancelledTaskExpirations;
+static std::map<std::string, CancelExpiryMap::iterator> g_cancelledTaskExpiryById;
 static constexpr int kCancelledIdTtlSeconds = 600;
+static std::thread g_cancelCleanupThread;
+static std::condition_variable g_cancelCleanupCv;
+static bool g_cancelCleanupStop = false;
 
 // 一次性 init 保护：并发 init 会对 joinable 的 g_workerThread 重新赋值导致 std::terminate
 static std::mutex g_initMutex;
+
+static void cleanupCancelledTaskIdsLocked(std::chrono::steady_clock::time_point now) {
+    while (!g_cancelledTaskExpirations.empty() &&
+           g_cancelledTaskExpirations.begin()->first <= now) {
+        auto expiry = g_cancelledTaskExpirations.begin();
+        g_cancelledTaskIds.erase(expiry->second);
+        g_cancelledTaskExpiryById.erase(expiry->second);
+        g_cancelledTaskExpirations.erase(expiry);
+    }
+}
+
+static void cancelledTaskCleanupLoop() {
+    std::unique_lock<std::mutex> lock(g_cancelMutex);
+    while (!g_cancelCleanupStop) {
+        g_cancelCleanupCv.wait_for(lock, std::chrono::seconds(30),
+                                   [] { return g_cancelCleanupStop; });
+        if (g_cancelCleanupStop) break;
+        cleanupCancelledTaskIdsLocked(std::chrono::steady_clock::now());
+    }
+}
+
+static void startCancelledTaskCleanup() {
+    std::lock_guard<std::mutex> lock(g_cancelMutex);
+    g_cancelCleanupStop = false;
+    g_cancelCleanupThread = std::thread(cancelledTaskCleanupLoop);
+}
+
+static void stopCancelledTaskCleanup() {
+    {
+        std::lock_guard<std::mutex> lock(g_cancelMutex);
+        g_cancelCleanupStop = true;
+    }
+    g_cancelCleanupCv.notify_all();
+    if (g_cancelCleanupThread.joinable()) g_cancelCleanupThread.join();
+}
 
 // probe / check_env / query_ffmpeg_features 跑在辅助线程上；追踪并统一 join，
 // 避免库卸载（dlclose / DLL_PROCESS_DETACH）时这些线程仍在库代码内执行而崩溃。
@@ -122,21 +163,15 @@ static void workerLoop() {
                 auto it = g_cancelledTaskIds.find(reqId);
                 if (it != g_cancelledTaskIds.end()) {
                     g_cancelledTaskIds.erase(it);
-                    g_cancelledTaskTimes.erase(reqId);
+                    auto expiry = g_cancelledTaskExpiryById.find(reqId);
+                    if (expiry != g_cancelledTaskExpiryById.end()) {
+                        g_cancelledTaskExpirations.erase(expiry->second);
+                        g_cancelledTaskExpiryById.erase(expiry);
+                    }
                     JsonWriter::reply(reqId, false, nullptr, "任务已取消");
                     continue;
                 }
-                // 清理陈旧的取消记录（任务可能从未入队/早已完成），避免无界增长
-                auto now = std::chrono::steady_clock::now();
-                for (auto sit = g_cancelledTaskTimes.begin(); sit != g_cancelledTaskTimes.end();) {
-                    if (std::chrono::duration_cast<std::chrono::seconds>(now - sit->second).count()
-                            > kCancelledIdTtlSeconds) {
-                        g_cancelledTaskIds.erase(sit->first);
-                        sit = g_cancelledTaskTimes.erase(sit);
-                    } else {
-                        ++sit;
-                    }
-                }
+                cleanupCancelledTaskIdsLocked(std::chrono::steady_clock::now());
             }
 
             // 任务级取消标志：仅当本次请求的 id 已被取消才为 true。
@@ -206,8 +241,10 @@ FFMPEGPP_API int ffmpegpp_init() {
     {
         std::lock_guard<std::mutex> cancelLock(g_cancelMutex);
         g_cancelledTaskIds.clear();
-        g_cancelledTaskTimes.clear();
+        g_cancelledTaskExpirations.clear();
+        g_cancelledTaskExpiryById.clear();
     }
+    startCancelledTaskCleanup();
     // 重新初始化：上一个「会话」遗留的暂停标记不能带到本次运行。
     Subprocess::clearAllPaused();
     JsonWriter::start();
@@ -297,7 +334,13 @@ FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
                     if (tid.is_string()) {
                         std::string id = tid.get<std::string>();
                         g_cancelledTaskIds.insert(id);
-                        g_cancelledTaskTimes[id] = now;
+                        auto existing = g_cancelledTaskExpiryById.find(id);
+                        if (existing != g_cancelledTaskExpiryById.end()) {
+                            g_cancelledTaskExpirations.erase(existing->second);
+                        }
+                        auto expiry = g_cancelledTaskExpirations.emplace(
+                            now + std::chrono::seconds(kCancelledIdTtlSeconds + 1), id);
+                        g_cancelledTaskExpiryById[id] = expiry;
                     }
                 }
             }
@@ -409,6 +452,7 @@ FFMPEGPP_API void ffmpegpp_shutdown() {
         g_workerThread.join();
     }
 
+    stopCancelledTaskCleanup();
     JsonWriter::stop();
     g_running.store(false);
     slog("dll shutdown: done");
@@ -439,6 +483,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
             wakeInput();                       // 唤醒阻塞在 popInput 的 worker
             if (g_workerThread.joinable()) g_workerThread.join();
             joinAuxThreads();                  // 回收仍在运行的辅助线程（与 shutdown 一致）
+            stopCancelledTaskCleanup();
             g_running.store(false);
         }
         break;
@@ -454,6 +499,7 @@ static void onUnload() {
         wakeInput();
         joinAuxThreads();
         if (g_workerThread.joinable()) g_workerThread.join();
+        stopCancelledTaskCleanup();
         g_running.store(false);
     }
 }
