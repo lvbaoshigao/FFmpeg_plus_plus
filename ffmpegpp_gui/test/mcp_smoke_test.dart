@@ -127,8 +127,11 @@ void main() {
       expect(tool['description'], isNotEmpty, reason: '${tool['name']} 缺少描述');
       final schema = tool['inputSchema'] as Map<String, dynamic>;
       expect(schema['type'], 'object');
-      expect(schema['additionalProperties'], isFalse,
-          reason: '${tool['name']} 的 schema 应拒绝未定义字段');
+      expect(
+        schema['additionalProperties'],
+        isFalse,
+        reason: '${tool['name']} 的 schema 应拒绝未定义字段',
+      );
     }
   });
 
@@ -140,8 +143,10 @@ void main() {
     });
     expect(code, 200);
     final resources = (body!['result'] as Map)['resources'] as List;
-    expect(resources.map((r) => (r as Map)['uri']),
-        containsAll(['pipeline://current', 'tasks://all']));
+    expect(
+      resources.map((r) => (r as Map)['uri']),
+      containsAll(['pipeline://current', 'tasks://all']),
+    );
   });
 
   test('未知方法返回 -32601', () async {
@@ -241,7 +246,10 @@ void main() {
         'jsonrpc': '2.0',
         'id': 12,
         'method': 'tools/call',
-        'params': {'name': 'list_directory', 'arguments': {'path': '.'}},
+        'params': {
+          'name': 'list_directory',
+          'arguments': {'path': '.'},
+        },
       });
       expect(code, 200);
       final result = body!['result'] as Map<String, dynamic>;
@@ -250,6 +258,30 @@ void main() {
       expect(text, contains('file system access is disabled'));
     } finally {
       state.config.mcpAllowFsAccess = true;
+    }
+  });
+
+  test('文件元数据和媒体探测拒绝允许根目录以外的路径', () async {
+    final outsidePath = Directory.systemTemp.parent.path;
+    for (final (name, argument) in [
+      ('read_file_info', {'path': outsidePath}),
+      ('probe_video', {'filepath': outsidePath}),
+    ]) {
+      final (code, body) = await rpc({
+        'jsonrpc': '2.0',
+        'id': 13,
+        'method': 'tools/call',
+        'params': {'name': name, 'arguments': argument},
+      });
+      expect(code, 200);
+      final result = body!['result'] as Map<String, dynamic>;
+      expect(
+        result['isError'],
+        isTrue,
+        reason: '$name should reject outside paths',
+      );
+      final text = ((result['content'] as List).first as Map)['text'] as String;
+      expect(text, contains('path not allowed'));
     }
   });
 }

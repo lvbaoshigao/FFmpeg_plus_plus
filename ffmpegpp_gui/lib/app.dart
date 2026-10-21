@@ -26,6 +26,7 @@ import 'theme/app_theme.dart';
 import 'widgets/app_slider.dart';
 // 「玻璃细节 → 生效 σ / tint alpha」的统一换算（见 liquid_glass_fallback）。
 import 'widgets/liquid_glass_fallback.dart';
+import 'widgets/liquid_glass_mobile_nav.dart';
 import 'widgets/mobile_bottom_nav.dart';
 // 生效的菜单栏位置下发（底部 ↔ 左右竖排导轨时，主 Tab 各页的底部留白随之切换）
 import 'widgets/mobile_nav_scope.dart';
@@ -1029,20 +1030,24 @@ class _AppShellState extends State<AppShell> with WindowListener {
         size.width,
         size.height,
       );
-      final navBar = MobileBottomNav(
-        placement: placement,
-        selectedIndex: nav,
-        onSelected: _selectMobileNav,
-        // 让遮罩连续跟随 PageView 实时位置，避免滑动切换时
-        // 遮罩在中途项「停留一拍再跳走」的动画跳跃。
-        pageController: _mobilePageController,
-        // 滑动自动收起：仅「底部」形态生效，侧边导轨恒展开（弹簧动画在
-        // MobileBottomNav 内部，欠阻尼过冲即到位回弹）。
-        hidden:
-            navAutoHide &&
-            placement == MobileNavPlacement.bottom &&
-            _navHiddenByScroll,
-      );
+      final navHidden =
+          navAutoHide &&
+          placement == MobileNavPlacement.bottom &&
+          _navHiddenByScroll;
+      // The package supplies the floating liquid-glass bar at the bottom;
+      // keep the existing glass rail for the optional left/right placements.
+      final navBar = placement == MobileNavPlacement.bottom
+          ? LiquidGlassMobileNav(
+              selectedIndex: nav,
+              onSelected: _selectMobileNav,
+              hidden: navHidden,
+            )
+          : MobileNavRail(
+              placement: placement,
+              selectedIndex: nav,
+              onSelected: _selectMobileNav,
+              pageController: _mobilePageController,
+            );
       // ── 形态恒定：内容区与导航栏始终是同一个 Stack 的两个固定槽位 ──
       //
       // 为什么不能用「底部 = Stack / 侧边 = Row」两套父结构（原实现）：

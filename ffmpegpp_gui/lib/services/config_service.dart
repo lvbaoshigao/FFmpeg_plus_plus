@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/models.dart';
+import 'ai_credential_store.dart';
 
 final _s = Platform.pathSeparator;
 
@@ -22,20 +24,30 @@ class ConfigService {
   bool _dirty = false;
 
   Future<void> load() async {
+    final dir = await _configDir();
+    final file = File('$dir$_s$_filename');
+    Map<String, dynamic> json = {};
     try {
-      final dir = await _configDir();
-      final file = File('$dir$_s$_filename');
       if (await file.exists()) {
-        final json = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
-        _config = AppConfig.fromJson(json);
-        // Android 首次安装默认开启 Monet 动态取色（桌面端不受影响）
-        if (!json.containsKey('use_dynamic_color') && Platform.isAndroid) {
-          _config.useDynamicColor = true;
+        final decoded = jsonDecode(await file.readAsString());
+        if (decoded is! Map<String, dynamic>) {
+          throw const FormatException(
+            'Settings file must contain a JSON object.',
+          );
         }
+        json = decoded;
       }
-    } catch (_) {
+    } on FormatException catch (error) {
+      debugPrint('[ConfigService] Invalid settings file: $error');
       _config = AppConfig();
+      return;
     }
+    _config = AppConfig.fromJson(json);
+    if (!json.containsKey('use_dynamic_color') && Platform.isAndroid) {
+      _config.useDynamicColor = true;
+    }
+    await AiCredentialStore.restore(_config);
+    if (_containsLegacyAiKeys(json)) await save();
   }
 
   Future<void> save() async {
@@ -46,15 +58,14 @@ class ConfigService {
     final prev = _saveInFlight;
     final next = () async {
       if (prev != null) {
-        try { await prev; } catch (_) {}
+        await prev;
       }
-      try {
-        final dir = await _configDir();
-        final file = File('$dir$_s$_filename');
-        await file.writeAsString(
-          const JsonEncoder.withIndent('  ').convert(_config.toJson()),
-        );
-      } catch (_) {}
+      await AiCredentialStore.save(_config);
+      final dir = await _configDir();
+      final file = File('$dir$_s$_filename');
+      await file.writeAsString(
+        const JsonEncoder.withIndent('  ').convert(_config.toJson()),
+      );
     }();
     _saveInFlight = next;
     return next;
@@ -66,7 +77,9 @@ class ConfigService {
     _config = transform(_config);
     _dirty = true;
     _saveTimer?.cancel();
-    _saveTimer = Timer(_saveDebounce, () { if (_dirty) save(); });
+    _saveTimer = Timer(_saveDebounce, () {
+      if (_dirty) save();
+    });
   }
 
   /// 立即写入尚未落盘的修改（退出应用前调用）。
@@ -76,7 +89,9 @@ class ConfigService {
     } else {
       final inFlight = _saveInFlight;
       if (inFlight != null) {
-        try { await inFlight; } catch (_) {}
+        try {
+          await inFlight;
+        } catch (_) {}
       }
     }
   }
@@ -121,7 +136,9 @@ class ConfigService {
     try {
       final dir = await _configDir();
       final file = File('$dir$_s$_libraryFilename');
-      await file.writeAsString(const JsonEncoder.withIndent('  ').convert(entries));
+      await file.writeAsString(
+        const JsonEncoder.withIndent('  ').convert(entries),
+      );
     } catch (_) {}
   }
 
@@ -159,5 +176,16 @@ class ConfigService {
     final dir = Directory('${appDir.path}${_s}ffmpegpp_gui');
     if (!await dir.exists()) await dir.create(recursive: true);
     return dir.path;
+  }
+
+  bool _containsLegacyAiKeys(Map<String, dynamic> json) {
+    if ((json['ai_api_key'] as String? ?? '').isNotEmpty) return true;
+    final profiles = json['ai_profiles'];
+    if (profiles is! List) return false;
+    return profiles.whereType<Map>().any(
+      (profile) =>
+          (profile['api_key'] as String? ?? '').isNotEmpty ||
+          (profile['api_keys'] as List?)?.isNotEmpty == true,
+    );
   }
 }

@@ -2745,7 +2745,7 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
         // 高亮色）非常刺眼 —— 用户反馈「选择主题色又很亮」。这里给一个 0~0.8 的
         // 混合系数：0% = 原色（与改动前一致），越大越并入表面色。由
         // liquid_glass_fallback.harmonizedAccent 统一应用到所有「跟随主题色」的
-        // 玻璃/实色表面（AppCard / MobileGlassPill / MobileBottomNav / GlassPanel）。
+        // 玻璃/实色表面（AppCard / MobileGlassPill / MobileNavRail / GlassPanel）。
         _SettingSlider(
           value: cfg.themeTone,
           min: 0,
@@ -2886,8 +2886,8 @@ Widget _buildSurfaceStyleCard(BuildContext ctx, AppState state) {
                 state.updateConfig((c) => c..mobileNavPlacement = v),
           ),
           // 滑动自动收起（仅移动端 + 底部形态生效）：内容上滑收起菜单栏、
-          // 下滑展开，动画为整条菜单栏上/下平移 + 到位回弹（弹簧驱动，
-          // 实现在 MobileBottomNav / app.dart 的内容区滚动监听）。
+          // 下滑展开；底部液态玻璃栏由 LiquidGlassMobileNav 动画收起，
+          // 内容区滚动监听仍由 app.dart 提供。
           SwitchListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
@@ -2917,8 +2917,8 @@ Widget _buildSurfaceStyleCard(BuildContext ctx, AppState state) {
         // ── 「模糊」样式的模糊度 ──
         //
         // 用户要求：「如果样式选了模糊，那么下面的滑块就要能调节它的模糊度」。
-        // 四个表面样式（卡片 / 菜单 / 底部菜单栏 / 顶部药丸）的 blur 分支都从同一个
-        // `glassBlur` 取 σ（AppCard / MobileBottomNav / MobileGlassPill / GlassPanel），
+        // 四个表面样式（卡片 / 侧边导轨 / 顶部药丸 / 面板）的 blur 分支都从同一个
+        // `glassBlur` 取 σ（AppCard / MobileNavRail / MobileGlassPill / GlassPanel），
         // 所以这颗滑块直接绑 `glassBlur` 就对全部「模糊」表面生效。它与「玻璃细节 →
         // 玻璃模糊度」是**同一个参数**，这里只是把它放到真正需要它的地方：
         // 仅当确实有表面选了「模糊」时才出现，因此不会多出一个常年可见的重复项。
@@ -3002,12 +3002,13 @@ Widget _buildSurfaceStyleCard(BuildContext ctx, AppState state) {
 ///
 /// 移动端可用性修复（用户反馈「设置-样式 里的玻璃效果与下面三个开关无效」）：
 /// 这三个开关与「玻璃效果」此前只被桌面端的 [GlassPanel] 读取，而移动端的
-/// 卡片 / 药丸 / 底部菜单栏走的是 AppCard、MobileGlassPill、MobileBottomNav，
+/// 卡片 / 药丸 / 侧边导轨走的是 AppCard、MobileGlassPill、MobileNavRail，
 /// 它们完全不读这些字段 —— 于是开关拨动后界面毫无变化。现在语义已经接通：
-/// * glassFollowTheme → AppCard / MobileGlassPill / MobileBottomNav 的玻璃 tint；
+/// * glassFollowTheme → AppCard / MobileGlassPill / MobileNavRail 的玻璃 tint；
 /// * settingsFrostedGlass → AppCard 的「液态玻璃改走扁平模糊」分支；
 /// * noCardGlass → AppCard 退回主题色实心；
 /// * glassEffect → GlassPanel 系面板（弹窗 / 命令页 / 日志页 / 节点编辑器等）。
+/// 底部栏使用 liquid_glass_tab_bar 模块的固定液态玻璃外观，不受上述细节参数控制。
 /// 三者默认均为 false，默认观感与修复前保持一致。
 List<Widget> _buildGlassMaterialItems(BuildContext ctx, AppState state) {
   final cfg = state.config;

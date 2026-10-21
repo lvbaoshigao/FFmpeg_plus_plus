@@ -17,6 +17,7 @@ dependencies:
   window_manager: ^0.5.2
   uuid: ^4.6.0
   http: ^1.6.0
+  dio: ^5.11.1
   crypto: ^3.0.7
   desktop_drop: ^0.8.4
   # 真正脱离应用的独立系统窗口（元素/属性面板、AI 面板拖出为独立窗口）。
@@ -39,6 +40,9 @@ dependencies:
   just_audio: ^0.10.6
   oc_liquid_glass: ^0.3.0
   flutter_svg: ^2.3.0
+  flutter_ai_sdk: ^1.9.0
+  liquid_glass_tab_bar: ^0.1.0-dev.10
+  flutter_secure_storage: ^11.2.0
 
 dependency_overrides:
   # Flutter SDK 将 vector_math 精确钉在 2.2.0，但上游传递依赖要求 ^2.4.x，

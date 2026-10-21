@@ -203,7 +203,7 @@ const double kGlassClarityBaseline = 0.45;
 /// 「设置 → 样式 → 玻璃细节」的参数包（也是 `context.select` 的配置指纹）。
 ///
 /// 为什么打包成一个值对象：玻璃的所有渲染路径（AppCard / MobileGlassPill /
-/// MobileBottomNav / LiquidGlassBackdrop / GlassPanel）都要读同一份参数，
+/// MobileNavRail / LiquidGlassBackdrop / GlassPanel）都要读同一份参数，
 /// 逐字段 select 会让每处都写 5 个 select；打包后只订阅一次，且只有真的
 /// 影响渲染的字段变化才重建（进度/日志等高频 notify 不会重建玻璃）。
 @immutable

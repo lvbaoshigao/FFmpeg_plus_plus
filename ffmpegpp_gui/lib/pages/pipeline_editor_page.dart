@@ -13,9 +13,9 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_ai_sdk/flutter_ai_sdk.dart' as ai;
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import 'package:window_manager/window_manager.dart';
@@ -12856,22 +12856,21 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
     ],
   );
 
-  /// 正在进行的流式请求。用户点「停止」时直接 close()，`await for` 会以异常结束，
-  /// 再由 catch / 收尾分支按 [_stopRequested] 走「保留部分内容」的路径。
-  http.Client? _activeClient;
-  http.Client? _titleClient;
+  Completer<void>? _activeRequestStop;
+  StreamSubscription<ai.StreamChunk>? _activeRequestSubscription;
 
   /// 用户是否主动中断了本次生成。用来区分「中断」与「真的出错」：
   /// 前者不该在气泡里追加 `Error: ...`，否则停止看起来像失败。
   bool _stopRequested = false;
 
-  /// 停止当前生成：关闭 HTTP 连接，已经流式收到的内容保留在气泡里。
+  /// Stops waiting for the current structured SDK response.
   void _stopGeneration() {
     if (!_loading) return;
     _stopRequested = true;
-    _activeClient?.close();
-    // 立刻恢复按钮：close() 到 stream 抛错之间还差一拍，先让 UI 可响应，
-    // 收尾分支随后会把状态再收敛一次（重复置 false 无害）。
+    unawaited(_activeRequestSubscription?.cancel());
+    final stop = _activeRequestStop;
+    if (stop != null && !stop.isCompleted) stop.complete();
+    // Restore the button immediately while the request future unwinds.
     setState(() => _loading = false);
   }
 
@@ -12888,6 +12887,7 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
 
   // 被禁用的工具（右键工具项 → 禁用）。禁用 = 从系统提示词移除 + 调用被拦截。
   final Set<String> _disabledTools = {};
+  String? _activeToolCallId;
   List<PipelineNode>? _pendingNodes;
   List<PipelineConnection>? _pendingConnections;
   bool _pendingIsModify = false;
@@ -13173,19 +13173,18 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
 4. If you do emit a graph while keeping the current canvas, put [MODE:modify] on its own line before the JSON. Never rely on the default replace mode for an edit.
 
 ## Mandatory edit loop
-1. INSPECT: call [TOOL_CALL:list_nodes], [TOOL_CALL:list_connections] and, when useful, [TOOL_CALL:get_graph_stats] / [TOOL_CALL:get_node_types].
+1. INSPECT: use list_nodes, list_connections and, when useful, get_graph_stats / get_node_types.
 2. PLAN: write 1-3 short sentences naming the nodes/edges to change and the expected media flow.
 3. APPLY: use the smallest batch of write tools. Add nodes first, wait for their returned IDs, then connect them, then modify parameters.
 4. VERIFY: call [TOOL_CALL:error_check] and, for multi-node edits, [TOOL_CALL:list_nodes] + [TOOL_CALL:list_connections]. Fix what the results reveal.
 5. FINISH: summarize what changed, any assumptions, and any remaining warning. Do not repeat an edit that already succeeded.
 
-## Tool protocol
-- Emit exact markers, one per line, e.g. [TOOL_CALL:add_node|avProcess|3150|3000].
-- Multiple markers may be emitted in one reply. The system executes them and feeds results back.
-- A tool result is data, not a suggestion. Use returned IDs verbatim; never invent an ID like "n4" unless add_node returned it.
-- Do not chain a connection to a node ID that has not been returned yet. Split into another turn if necessary.
-- Read-only tools never mutate. Write tools are: add_node, add_gate, modify_node, set_gate_params, delete_node, connect_nodes, disconnect_nodes, rename_node, clear_all, undo, redo, save.
-- If a write tool is silently skipped, permissions are the likely cause: mention which toggle is needed in Settings → AI instead of pretending it ran.
+## Native tools
+- Use the provided pipeline_tool function for actions. Its action argument names the operation and its arguments array contains ordered string arguments.
+- Tool results are returned to you automatically. Use returned IDs verbatim; never invent an ID like "n4" unless add_node returned it.
+- Do not chain a connection to a node ID that has not been returned yet. Wait for the tool result first.
+- Read-only tools never mutate. Write tools are add_node, add_gate, modify_node, set_gate_params, delete_node, connect_nodes, disconnect_nodes, rename_node, clear_all, undo, redo and save.
+- If an action is blocked by permissions, adapt and tell the user instead of claiming it succeeded.
 
 ## Complex editing recipes
 ### Insert a node between A and B
@@ -13298,7 +13297,7 @@ Node layout: first node at x=2900,y=3000; each following node +250px on x; paral
 ## Tools (emit exact markers inline; the system executes them and feeds results back)
 __TOOLS__
 
-Permissions: read-only tools (list_directory, read_file_info, probe_video) require "Read Access"; editing tools (modify_node, add_node, add_gate, set_gate_params, delete_node, connect_nodes, disconnect_nodes, rename_node) require "Write Access"; action tools (clear_all, undo, redo, save, error_check, ask_user, cancel_tasks) require "Auto-execute Tools" — all toggles are in Settings → AI. list_nodes / list_connections / get_node_types / list_tasks always work. If a tool is blocked by permissions, the system silently skips it — mention that instead of relying on it.
+Permissions: read-only tools (list_directory, read_file_info, probe_video) require "Read Access"; editing tools (modify_node, add_node, add_gate, set_gate_params, delete_node, connect_nodes, disconnect_nodes, rename_node) require "Write Access"; action tools (clear_all, undo, redo, save, error_check, ask_user, cancel_tasks) require "Auto-execute Tools" — all toggles are in Settings → AI. list_nodes / list_connections / get_node_types / list_tasks always work. If a tool is blocked by permissions, the system returns that result — mention it instead of relying on it.
 
 ## Modes & confirmation
 Default JSON graph REPLACES the entire canvas. To MERGE with the existing canvas, put [MODE:modify] on its own line before the JSON. The current canvas state is appended below the conversation automatically — read it before editing so you do not destroy existing work.
@@ -13307,94 +13306,47 @@ Session modes:
 - Auto mode: your JSON graph is applied immediately, and action tools run right away.
 - Ask mode: applying a graph and running destructive tools asks the user for confirmation. If the user denies, adapt your next answer (the denial is fed back as a tool result).
 
-Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits, and [TOOL_CALL:error_check] after structural edits. Use [TOOL_CALL:clear_all] only when the user explicitly asks to start fresh (it also asks in Ask mode).''';
+Use list_nodes / list_connections before proposing edits, and error_check after structural edits. Use clear_all only when the user explicitly asks to start fresh (it also asks in Ask mode).
 
-  /// 工具段每一行（按行过滤禁用工具）。
-  static const List<String> _toolPromptLines = [
-    '[TOOL_CALL:clear_all] [TOOL_CALL:undo] [TOOL_CALL:redo] [TOOL_CALL:save]',
-    '[TOOL_CALL:error_check] — validate current canvas',
-    '[TOOL_CALL:ask_user|question|opt1,opt2,opt3] — ask the user (needs Allow-AI-to-ask enabled in Settings)',
-    '[TOOL_CALL:list_directory|path] — list files (read-only)',
-    '[TOOL_CALL:read_file_info|path] — file metadata (read-only)',
-    '[TOOL_CALL:probe_video|path] — probe media metadata (read-only)',
-    '[TOOL_CALL:pick_file|purpose|ext1,ext2] — ask the user to pick a file (e.g. subtitle, cover); user must approve',
-    '[TOOL_CALL:modify_node|nodeId|key=val,key2=val2] — edit node params',
-    '[TOOL_CALL:add_node|type|x|y] — add a node, returns its ID',
-    '[TOOL_CALL:delete_node|nodeId] — delete a node + its connections',
-    '[TOOL_CALL:connect_nodes|fromId|toId] — connect two nodes',
-    '[TOOL_CALL:disconnect_nodes|connId] — remove a connection',
-    '[TOOL_CALL:list_nodes] [TOOL_CALL:list_connections] [TOOL_CALL:get_node_types]',
-    '[TOOL_CALL:add_gate|type|x|y] — add logic gate (and/or/not/nand/nor/const1/const0/time_trigger)',
-    '[TOOL_CALL:set_gate_params|nodeId|key=val,key2=val2] — modify gate params (e.g. tt_date/tt_start/tt_end)',
-    '[TOOL_CALL:get_gate_types] — list logic gate types',
-    '[TOOL_CALL:list_tasks] — task queue status',
-    '[TOOL_CALL:cancel_tasks] — cancel running tasks',
-    '[TOOL_CALL:get_task_info|taskId] — task detail',
-    '[TOOL_CALL:get_graph_stats] — canvas statistics',
-    '[TOOL_CALL:list_videos] [TOOL_CALL:list_containers] — loaded media/containers (read-only)',
-    '[TOOL_CALL:read_logs] — recent app logs',
-    '[TOOL_CALL:rename_node|nodeId|name] — rename a node (write)',
+Available actions: __TOOLS__''';
+
+  static const List<String> _toolActions = [
+    'clear_all',
+    'undo',
+    'redo',
+    'save',
+    'error_check',
+    'ask_user',
+    'list_directory',
+    'read_file_info',
+    'probe_video',
+    'pick_file',
+    'modify_node',
+    'add_node',
+    'delete_node',
+    'connect_nodes',
+    'disconnect_nodes',
+    'list_nodes',
+    'list_connections',
+    'get_node_types',
+    'add_gate',
+    'set_gate_params',
+    'get_gate_types',
+    'list_tasks',
+    'cancel_tasks',
+    'get_task_info',
+    'get_graph_stats',
+    'list_videos',
+    'list_containers',
+    'read_logs',
+    'rename_node',
   ];
 
-  /// 每行对应的工具名。
-  static const Map<String, List<String>> _toolLineTools = {
-    '[TOOL_CALL:clear_all] [TOOL_CALL:undo] [TOOL_CALL:redo] [TOOL_CALL:save]':
-        ['clear_all', 'undo', 'redo', 'save'],
-    '[TOOL_CALL:error_check] — validate current canvas': ['error_check'],
-    '[TOOL_CALL:ask_user|question|opt1,opt2,opt3] — ask the user (needs Allow-AI-to-ask enabled in Settings)':
-        ['ask_user'],
-    '[TOOL_CALL:list_directory|path] — list files (read-only)': [
-      'list_directory',
-    ],
-    '[TOOL_CALL:read_file_info|path] — file metadata (read-only)': [
-      'read_file_info',
-    ],
-    '[TOOL_CALL:probe_video|path] — probe media metadata (read-only)': [
-      'probe_video',
-    ],
-    '[TOOL_CALL:pick_file|purpose|ext1,ext2] — ask the user to pick a file (e.g. subtitle, cover); user must approve':
-        ['pick_file'],
-    '[TOOL_CALL:modify_node|nodeId|key=val,key2=val2] — edit node params': [
-      'modify_node',
-    ],
-    '[TOOL_CALL:add_node|type|x|y] — add a node, returns its ID': ['add_node'],
-    '[TOOL_CALL:delete_node|nodeId] — delete a node + its connections': [
-      'delete_node',
-    ],
-    '[TOOL_CALL:connect_nodes|fromId|toId] — connect two nodes': [
-      'connect_nodes',
-    ],
-    '[TOOL_CALL:disconnect_nodes|connId] — remove a connection': [
-      'disconnect_nodes',
-    ],
-    '[TOOL_CALL:list_nodes] [TOOL_CALL:list_connections] [TOOL_CALL:get_node_types]':
-        ['list_nodes', 'list_connections', 'get_node_types'],
-    '[TOOL_CALL:add_gate|type|x|y] — add logic gate (and/or/not/nand/nor/const1/const0/time_trigger)':
-        ['add_gate'],
-    '[TOOL_CALL:set_gate_params|nodeId|key=val,key2=val2] — modify gate params (e.g. tt_date/tt_start/tt_end)':
-        ['set_gate_params'],
-    '[TOOL_CALL:get_gate_types] — list logic gate types': ['get_gate_types'],
-    '[TOOL_CALL:list_tasks] — task queue status': ['list_tasks'],
-    '[TOOL_CALL:cancel_tasks] — cancel running tasks': ['cancel_tasks'],
-    '[TOOL_CALL:get_task_info|taskId] — task detail': ['get_task_info'],
-    '[TOOL_CALL:get_graph_stats] — canvas statistics': ['get_graph_stats'],
-    '[TOOL_CALL:list_videos] [TOOL_CALL:list_containers] — loaded media/containers (read-only)':
-        ['list_videos', 'list_containers'],
-    '[TOOL_CALL:read_logs] — recent app logs': ['read_logs'],
-    '[TOOL_CALL:rename_node|nodeId|name] — rename a node (write)': [
-      'rename_node',
-    ],
-  };
-
-  /// 动态系统提示词：过滤掉被禁用的工具行。
   String get _systemPrompt {
-    final lines = <String>[];
-    for (final line in _toolPromptLines) {
-      final tools = _toolLineTools[line] ?? const <String>[];
-      final disabled = tools.any((t) => _disabledTools.contains(t));
-      if (!disabled) lines.add(line);
-    }
-    return _promptHead.replaceAll('__TOOLS__', lines.join('\n'));
+    final actions = _toolActions.where(
+      (tool) => !_disabledTools.contains(tool),
+    );
+    return _promptHead.replaceAll('__TOOLS__', actions.join(', '));
   }
 
   /// 右键工具项：禁用 / 启用。禁用后该工具从系统提示词移除，且调用被拦截。
@@ -13490,13 +13442,34 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
     }
   }
 
-  Future<bool> _handleToolCalls(String content) async {
+  Future<List<ai.Message>> _handleToolCalls(
+    List<ai.ToolCallContent> calls,
+  ) async {
     final appState = context.read<AppState>();
     final cfg = appState.config;
-    final calls = RegExp(r'\[TOOL_CALL:([^\]]+)\]').allMatches(content);
-    for (final m in calls) {
-      final parts = m.group(1)!.split('|');
-      final tool = parts[0];
+    final results = <ai.Message>[];
+    for (final call in calls) {
+      final action = call.arguments['action'];
+      final arguments = call.arguments['arguments'];
+      final tool = action is String ? action : '';
+      final parts = <String>[
+        tool,
+        if (arguments is List) ...arguments.map((value) => value.toString()),
+      ];
+      _activeToolCallId = call.id;
+      final messagesBeforeExecution = _messages.length;
+      if (!_toolActions.contains(tool)) {
+        _addToolResult('blocked', 'Unknown or unavailable action.');
+        results.add(
+          ai.Message.toolResult(
+            toolCallId: call.id,
+            name: call.name,
+            result: 'Unknown or unavailable action.',
+            isError: true,
+          ),
+        );
+        continue;
+      }
       // 调试模式：记录 AI 工具调用
       if (cfg.debugMode) {
         final argPreview = parts.length > 1
@@ -13510,6 +13483,14 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
       // 被禁用的工具：即使 AI 调用了也不执行（也不告诉 AI 结果）
       if (_disabledTools.contains(tool)) {
         _addToolResult('blocked', 'Tool $tool is disabled by user');
+        results.add(
+          ai.Message.toolResult(
+            toolCallId: call.id,
+            name: call.name,
+            result: 'Tool $tool is disabled by user',
+            isError: true,
+          ),
+        );
         continue;
       }
       // 询问确认：破坏性工具在 ask 模式且不在白名单时需用户确认
@@ -13839,8 +13820,25 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
             });
           }
       }
+
+      if (_messages.length == messagesBeforeExecution) {
+        _addToolResult(
+          'blocked',
+          'Blocked: $tool is not enabled or lacks permission.',
+        );
+      }
+      final result = _messages.last.content;
+      results.add(
+        ai.Message.toolResult(
+          toolCallId: call.id,
+          name: call.name,
+          result: result,
+          isError: result.startsWith('Error:') || result.startsWith('Blocked:'),
+        ),
+      );
     }
-    return calls.isNotEmpty;
+    _activeToolCallId = null;
+    return results;
   }
 
   // ══════════ AI 文本协议 → 带类型参数的适配 ══════════
@@ -13947,7 +13945,12 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
         inputTokens: null,
         outputTokens: null,
         blocks: [
-          {'type': 'tool_result', 'name': toolName, 'content': result},
+          {
+            'type': 'tool_result',
+            'name': toolName,
+            'content': result,
+            if (_activeToolCallId != null) 'toolCallId': _activeToolCallId,
+          },
         ],
       ));
     });
@@ -14087,20 +14090,17 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
     for (final attachment in _attachments) {
       unawaited(AiChatAttachments.discard(attachment));
     }
-    // Abort stalled streams immediately so the request cannot retain this
-    // panel and its message history until the remote server sends more data.
     _stopRequested = true;
-    _activeClient?.close();
-    _activeClient = null;
-    _titleClient?.close();
-    _titleClient = null;
+    unawaited(_activeRequestSubscription?.cancel());
+    final stop = _activeRequestStop;
+    if (stop != null && !stop.isCompleted) stop.complete();
     _ctrl.dispose();
     _scrollCtrl.dispose();
     super.dispose();
   }
 
   void _scrollToBottom() {
-    // Stream updates and keyboard resizing share one post-layout scroll.
+    // Response updates and keyboard resizing share one post-layout scroll.
     if (!mounted || !_followLatest || _scrollScheduled) return;
     _scrollScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -14110,31 +14110,103 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
     });
   }
 
-  /// Resolve the actual chat endpoint from a user-entered URL.
-  /// Accepts bare base URLs and appends the correct path per provider.
-  static String _resolveEndpoint(String url, bool isAnthropic) {
-    var u = url.trim();
-    while (u.endsWith('/')) {
-      u = u.substring(0, u.length - 1);
+  static ai.AIProvider _sdkProvider(String provider) => switch (provider
+      .toLowerCase()) {
+    'anthropic' => ai.AIProvider.anthropic,
+    'google' || 'google_ai' || 'googleai' || 'gemini' => ai.AIProvider.googleAI,
+    'ollama' => ai.AIProvider.ollama,
+    'mistral' => ai.AIProvider.mistral,
+    'xai' || 'grok' => ai.AIProvider.xai,
+    'deepseek' => ai.AIProvider.deepseek,
+    'openrouter' => ai.AIProvider.openrouter,
+    _ => ai.AIProvider.openai,
+  };
+
+  static String? _sdkBaseUrl(String url, {required bool anthropic}) {
+    var base = url.trim().replaceFirst(
+      RegExp(r'/(chat/completions|messages|responses)/?$'),
+      '',
+    );
+    while (base.endsWith('/')) {
+      base = base.substring(0, base.length - 1);
     }
-    // Already a full endpoint — use as-is.
-    if (u.endsWith('/chat/completions') || u.endsWith('/messages')) return u;
-    if (isAnthropic) {
-      // Anthropic Messages API: POST <base>/v1/messages
-      return u.endsWith('/v1') ? '$u/messages' : '$u/v1/messages';
+    if (base.isEmpty) return null;
+    if (anthropic && !RegExp(r'/v\d+$').hasMatch(base)) {
+      base = '$base/v1';
     }
-    // OpenAI-compatible: POST <base>/chat/completions
-    // (works for OpenAI's .../v1 base and DeepSeek's bare base)
-    return '$u/chat/completions';
+    return base;
   }
 
-  Future<void> _send({bool continuation = false}) async {
+  ai.Tool _pipelineToolDefinition() => ai.Tool(
+    name: 'pipeline_tool',
+    description:
+        'Perform one pipeline editor action. Supply the action name and its ordered string arguments.',
+    parameters: ai.ToolParameters(
+      properties: {
+        'action': ai.ToolProperty.enumeration(
+          values: _toolActions
+              .where((tool) => !_disabledTools.contains(tool))
+              .toList(),
+          description: 'The pipeline editor action to perform.',
+        ),
+        'arguments': ai.ToolProperty.array(
+          items: ai.ToolProperty.string(),
+          description:
+              'Ordered arguments for the selected action. Use an empty array when none are required.',
+        ),
+      },
+      required: const ['action', 'arguments'],
+    ),
+  );
+
+  ai.FlutterAI _createAiClient({
+    required String provider,
+    required String apiKey,
+    required String apiUrl,
+    required String model,
+    required int maxTokens,
+    required int contextWindow,
+    required double temperature,
+    required String systemPrompt,
+    double? topP,
+    Map<String, String>? customHeaders,
+    bool exposePipelineTools = true,
+  }) {
+    final anthropic = provider.toLowerCase() == 'anthropic';
+    return ai.FlutterAI(
+      provider: _sdkProvider(provider),
+      config: ai.AIConfig(
+        apiKey: apiKey,
+        model: model,
+        maxTokens: maxTokens,
+        temperature: temperature,
+        topP: topP,
+        systemPrompt: systemPrompt,
+        tools:
+            exposePipelineTools &&
+                _toolActions.any((tool) => !_disabledTools.contains(tool))
+            ? [_pipelineToolDefinition()]
+            : null,
+        baseUrl: _sdkBaseUrl(apiUrl, anthropic: anthropic),
+        timeout: const Duration(seconds: 60),
+        headers: {
+          if (anthropic) 'anthropic-version': '2023-06-01',
+          ...?customHeaders,
+        },
+      ),
+      contextManager: ai.ContextManager(
+        maxTokens: contextWindow,
+        reservedTokens: maxTokens,
+        systemPrompt: systemPrompt,
+      ),
+    );
+  }
+
+  Future<void> _send() async {
     final text = _ctrl.text.trim();
-    // A stopped request must finish unwinding before shared buffers/state
-    // can be reused by the next generation.
-    if ((!continuation && text.isEmpty && _attachments.isEmpty) ||
+    if ((text.isEmpty && _attachments.isEmpty) ||
         _loading ||
-        _activeClient != null ||
+        _activeRequestStop != null ||
         _pickingAttachments) {
       return;
     }
@@ -14148,8 +14220,23 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
     // 配置里没选模型（默认值已置空）时走解析链，不要带空模型发请求
     final effModel = _effectiveModel;
     final effUrl = profile?.apiUrl.isNotEmpty == true
-        ? profile!.apiUrl
+        ? profile!.effectiveUrl
         : cfg.aiApiUrl;
+    if (profile?.useResponsesApi == true ||
+        RegExp(r'/responses/?$').hasMatch(effUrl.trim())) {
+      appState.addLog(
+        '[AI] The Responses API is not supported by the unified SDK client.',
+        category: 'error',
+      );
+      showToast(
+        context,
+        widget.strings.isZh
+            ? '当前统一 AI SDK 不支持 Responses API，请切换到 Chat Completions'
+            : 'The unified AI SDK does not support the Responses API. Select Chat Completions.',
+        type: ToastType.error,
+      );
+      return;
+    }
     // Key 解析：多 Key 模式按 apiKeys 轮换（单 Key 作首位一并参与），
     // 均为空时回退全局默认 Key。
     String effKey;
@@ -14202,28 +14289,16 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
     if (_messages.length > maxHistory) {
       _messages.removeRange(0, _messages.length - maxHistory);
     }
-    if (!continuation) appState.logAiRequest(text);
+    appState.logAiRequest(text);
 
     setState(() {
-      if (!continuation) {
-        _messages.add((
-          role: 'user',
-          content: text,
-          inputTokens: null,
-          outputTokens: null,
-          blocks: _attachments.map((a) => a.toJson()).toList(),
-        ));
-      } else {
-        _messages.add((
-          role: 'user',
-          content:
-              'The tool results above are available. Continue the original request using them. '
-              'If another tool is needed, call it; otherwise provide the final answer.',
-          inputTokens: null,
-          outputTokens: null,
-          blocks: null,
-        ));
-      }
+      _messages.add((
+        role: 'user',
+        content: text,
+        inputTokens: null,
+        outputTokens: null,
+        blocks: _attachments.map((a) => a.toJson()).toList(),
+      ));
       _messages.add((
         role: 'assistant',
         content: '',
@@ -14231,10 +14306,8 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
         outputTokens: null,
         blocks: null,
       ));
-      if (!continuation) {
-        _attachments.clear();
-        _ctrl.clear();
-      }
+      _attachments.clear();
+      _ctrl.clear();
       _stopRequested = false;
       _loading = true;
       _pendingNodes = null;
@@ -14247,12 +14320,10 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
     // 在 async 前读取配置，避免 async gap 后使用 context
     final showThinking = context.read<AppState>().config.aiShowThinking;
 
-    final sendClient = http.Client();
-    _activeClient = sendClient;
-    var shouldContinueAfterTools = false;
+    ai.FlutterAI? sdkClient;
+    final stopSignal = Completer<void>();
+    _activeRequestStop = stopSignal;
     try {
-      final isAnthropic = effProvider == 'anthropic';
-      final uri = Uri.parse(_resolveEndpoint(effUrl, isAnthropic));
       final canvasJson = jsonEncode({
         'nodes': widget.existingNodes.map((n) => n.toJson()).toList(),
         'connections': widget.existingConnections
@@ -14265,211 +14336,223 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
           : _systemPrompt;
       final fullPrompt = '$basePrompt\n\nCurrent canvas state:\n$canvasJson';
 
-      final headers = <String, String>{'Content-Type': 'application/json'};
-      Map<String, dynamic> reqBody;
       final vision =
           modelEntry?.capabilities.contains(AiModelCapability.vision) ?? false;
-      final conversation = <Map<String, dynamic>>[];
       final imageBudget = AiAttachmentBudget();
-      for (final message in _messages) {
+      final msgIdx = _messages.length - 1;
+      final currentUser = _messages[msgIdx - 1];
+      for (var i = 0; i < msgIdx - 1; i++) {
+        final message = _messages[i];
         if (message.role == 'assistant' && message.content.isEmpty) continue;
         final attachments = AiChatAttachments.fromBlocks(message.blocks);
         final isToolResult =
             message.blocks?.isNotEmpty == true &&
             message.blocks!.every((block) => block['type'] == 'tool_result');
-        conversation.add({
-          // Keep the UI's tool result card as an assistant message, but send it
-          // back as user-provided tool output so the model can continue.
-          'role': isToolResult ? 'user' : message.role,
-          'content': attachments.isEmpty
-              ? (isAnthropic
-                    ? [
-                        {'type': 'text', 'text': message.content},
-                      ]
-                    : message.content)
-              : await AiChatAttachments.content(
-                  message.content,
-                  attachments,
-                  vision: vision,
-                  anthropic: isAnthropic,
-                  budget: imageBudget,
-                ),
-        });
+        final content = attachments.isEmpty
+            ? <ai.Content>[ai.TextContent(message.content)]
+            : await AiChatAttachments.sdkContent(
+                message.content,
+                attachments,
+                vision: vision,
+                budget: imageBudget,
+              );
+        sdkClient ??= _createAiClient(
+          provider: effProvider,
+          apiKey: effKey,
+          apiUrl: effUrl,
+          model: effModel,
+          maxTokens: effMaxTokens,
+          contextWindow: profile?.contextWindow ?? cfg.aiContextWindow,
+          temperature: effTemp,
+          topP: effTopP,
+          systemPrompt: fullPrompt,
+          customHeaders: profile?.customHeaders,
+        );
+        sdkClient.context.addMessage(
+          ai.Message(
+            role: isToolResult || message.role == 'user'
+                ? ai.MessageRole.user
+                : ai.MessageRole.assistant,
+            content: content,
+          ),
+        );
       }
       if (!mounted || _stopRequested) return;
 
-      if (isAnthropic) {
-        headers['x-api-key'] = effKey;
-        headers['anthropic-version'] = '2023-06-01';
-        final userMessages = conversation;
-        // Ensure alternating user/assistant for Anthropic API
-        final mergedMessages = <Map<String, dynamic>>[];
-        for (final msg in userMessages) {
-          if (mergedMessages.isNotEmpty &&
-              mergedMessages.last['role'] == msg['role']) {
-            (mergedMessages.last['content'] as List).addAll(
-              msg['content'] as List,
+      final attachments = AiChatAttachments.fromBlocks(currentUser.blocks);
+      final currentContent = await AiChatAttachments.sdkContent(
+        currentUser.content,
+        attachments,
+        vision: vision,
+        budget: imageBudget,
+      );
+      if (!mounted || _stopRequested) return;
+      sdkClient ??= _createAiClient(
+        provider: effProvider,
+        apiKey: effKey,
+        apiUrl: effUrl,
+        model: effModel,
+        maxTokens: effMaxTokens,
+        contextWindow: profile?.contextWindow ?? cfg.aiContextWindow,
+        temperature: effTemp,
+        topP: effTopP,
+        systemPrompt: fullPrompt,
+        customHeaders: profile?.customHeaders,
+      );
+      sdkClient.context.addMessage(
+        ai.Message(role: ai.MessageRole.user, content: currentContent),
+      );
+      var activeAssistantIdx = msgIdx;
+      var totalInputTokens = 0;
+      var totalOutputTokens = 0;
+      String? finalContent;
+      while (!_stopRequested) {
+        final responseText = StringBuffer();
+        final thinkingText = StringBuffer();
+        final requestDone = Completer<void>();
+        Object? streamError;
+        ai.Usage? usage;
+        var receivedToolCall = false;
+        late final StreamSubscription<ai.StreamChunk> subscription;
+        subscription = sdkClient
+            .streamChat('', addToContext: false)
+            .listen(
+              (chunk) {
+                if (chunk.isError) {
+                  streamError = chunk.error ?? StateError('AI stream failed.');
+                  if (!requestDone.isCompleted) requestDone.complete();
+                  return;
+                }
+                if (chunk.isDelta) responseText.write(chunk.delta ?? '');
+                if (showThinking && chunk.isThinkingDelta) {
+                  thinkingText.write(chunk.delta ?? '');
+                }
+                if (chunk.type == ai.StreamEventType.toolCallDelta ||
+                    chunk.finishReason == ai.FinishReason.toolCalls) {
+                  receivedToolCall = true;
+                }
+                usage = chunk.usage ?? usage;
+                if (chunk.isDelta || (showThinking && chunk.isThinkingDelta)) {
+                  if (!mounted || _stopRequested) return;
+                  setState(() {
+                    _messages[activeAssistantIdx] = (
+                      role: 'assistant',
+                      content: responseText.toString(),
+                      inputTokens: usage?.promptTokens,
+                      outputTokens: usage?.completionTokens,
+                      blocks: thinkingText.isEmpty
+                          ? null
+                          : [
+                              {
+                                'type': 'thinking',
+                                'thinking': thinkingText.toString(),
+                                'durationMs': _genStart.elapsedMilliseconds,
+                              },
+                              if (responseText.isNotEmpty)
+                                {
+                                  'type': 'text',
+                                  'text': responseText.toString(),
+                                },
+                            ],
+                    );
+                  });
+                  _scrollToBottom();
+                }
+              },
+              onError: (Object error, StackTrace stackTrace) {
+                streamError = error;
+                if (!requestDone.isCompleted) requestDone.complete();
+              },
+              onDone: () {
+                if (!requestDone.isCompleted) requestDone.complete();
+              },
             );
-          } else {
-            mergedMessages.add(Map.of(msg));
-          }
+        _activeRequestSubscription = subscription;
+        await Future.any<void>([requestDone.future, stopSignal.future]);
+        if (_stopRequested) {
+          await subscription.cancel();
+          break;
         }
-        reqBody = {
-          'model': effModel,
-          'system': fullPrompt,
-          'messages': mergedMessages,
-          'temperature': effTemp,
-          'max_tokens': effMaxTokens,
-          'top_p': ?effTopP,
-          'stream': true,
-        };
-      } else {
-        headers['Authorization'] = 'Bearer $effKey';
-        final apiMessages = [
-          {'role': 'system', 'content': fullPrompt},
-          ...conversation,
-        ];
-        reqBody = {
-          'model': effModel,
-          'messages': apiMessages,
-          'temperature': effTemp,
-          'max_tokens': effMaxTokens,
-          'top_p': ?effTopP,
-          'stream': true,
-          'stream_options': {'include_usage': true},
-        };
-      }
-
-      final request = http.Request('POST', uri);
-      request.headers.addAll(headers);
-      request.body = jsonEncode(reqBody);
-      final streamed = await sendClient.send(request);
-
-      if (streamed.statusCode != 200) {
-        await streamed.stream.drain<void>();
-        // Providers can echo request content or credentials in error bodies.
-        final errMsg = 'Request failed (HTTP ${streamed.statusCode}).';
-        appState.logAiResponse(errMsg, error: true);
-        if (mounted) {
-          setState(() {
-            _messages.add((
-              role: 'assistant',
-              content: errMsg,
-              inputTokens: null,
-              outputTokens: null,
-              blocks: null,
-            ));
-            _loading = false;
-          });
+        await subscription.cancel();
+        if (identical(_activeRequestSubscription, subscription)) {
+          _activeRequestSubscription = null;
         }
-        _scrollToBottom();
-        return; // sendClient 由外层 finally 统一关闭
-      }
+        if (streamError != null) {
+          Error.throwWithStackTrace(streamError!, StackTrace.current);
+        }
 
-      if (!mounted) return;
-      final msgIdx = _messages.length - 1;
-      final buf = StringBuffer();
-      // 思考过程缓冲（DeepSeek-R1 / o1 的 reasoning_content，或 Claude 的 thinking）
-      final thinkBuf = StringBuffer();
-      final thinkWatch = Stopwatch();
-      int? inTok, outTok;
-      String lineBuf = '';
+        ai.AIResponse? response;
+        if (receivedToolCall) {
+          // The SDK's provider stream exposes partial tool-call deltas, while
+          // its non-stream response contains the complete IDs and arguments.
+          response = await Future.any<ai.AIResponse?>([
+            sdkClient.chatWithContent(const [], addToContext: false),
+            stopSignal.future.then<ai.AIResponse?>((_) => null),
+          ]);
+          if (response == null || _stopRequested) break;
+        }
 
-      await for (final chunk in streamed.stream.transform(utf8.decoder)) {
-        // 面板已关闭 / 用户点了停止：停止消费，连接交由外层 finally 关闭。
-        // close() 通常会让 stream 直接抛错，这里再兜一层，免得某些平台上
-        // close 之后仍把已在缓冲区里的剩余数据读出来。
+        final content = response?.text ?? responseText.toString();
+        final toolCalls = response?.toolCalls ?? const <ai.ToolCallContent>[];
+        final inTok = response?.usage?.promptTokens ?? usage?.promptTokens;
+        final outTok =
+            response?.usage?.completionTokens ?? usage?.completionTokens;
+        totalInputTokens += inTok ?? 0;
+        totalOutputTokens += outTok ?? 0;
+        sdkClient.context.addMessage(
+          ai.Message.assistant(
+            response?.content ?? content,
+            toolCalls: toolCalls.isEmpty ? null : toolCalls,
+          ),
+        );
+
+        final thinking = showThinking
+            ? response?.thinking ?? thinkingText.toString()
+            : '';
         if (!mounted || _stopRequested) break;
-        lineBuf += chunk;
-        final lines = lineBuf.split('\n');
-        lineBuf = lines.removeLast(); // keep incomplete line
+        setState(() {
+          _messages[activeAssistantIdx] = (
+            role: 'assistant',
+            content: content,
+            inputTokens: inTok,
+            outputTokens: outTok,
+            blocks: thinking.isEmpty
+                ? null
+                : [
+                    {
+                      'type': 'thinking',
+                      'thinking': thinking,
+                      'durationMs': _genStart.elapsedMilliseconds,
+                    },
+                    if (content.isNotEmpty) {'type': 'text', 'text': content},
+                  ],
+          );
+        });
+        _scrollToBottom();
 
-        for (final line in lines) {
-          if (!line.startsWith('data: ')) continue;
-          final data = line.substring(6).trim();
-          if (data == '[DONE]') continue;
-          try {
-            final json = jsonDecode(data) as Map<String, dynamic>;
-            if (isAnthropic) {
-              final type = json['type'] as String? ?? '';
-              if (type == 'content_block_start') {
-                final cb = json['content_block'] as Map<String, dynamic>? ?? {};
-                if (showThinking && cb['type'] == 'thinking') {
-                  if (thinkBuf.isEmpty) thinkWatch.start();
-                  thinkBuf.write(cb['thinking'] ?? '');
-                }
-              } else if (type == 'content_block_delta') {
-                final delta = json['delta'] as Map<String, dynamic>? ?? {};
-                if (delta['type'] == 'text_delta') {
-                  buf.write(delta['text'] ?? '');
-                } else if (showThinking && delta['type'] == 'thinking_delta') {
-                  if (thinkBuf.isEmpty) thinkWatch.start();
-                  thinkBuf.write(delta['thinking'] ?? '');
-                }
-              } else if (type == 'message_delta') {
-                final usage = json['usage'] as Map<String, dynamic>? ?? {};
-                outTok = usage['output_tokens'] as int?;
-              } else if (type == 'message_start') {
-                final msg = json['message'] as Map<String, dynamic>? ?? {};
-                final usage = msg['usage'] as Map<String, dynamic>? ?? {};
-                inTok = usage['input_tokens'] as int?;
-              }
-            } else {
-              // OpenAI-compatible
-              final choices = json['choices'] as List? ?? [];
-              if (choices.isNotEmpty) {
-                final delta =
-                    choices[0]['delta'] as Map<String, dynamic>? ?? {};
-                if (delta.containsKey('content') && delta['content'] != null) {
-                  buf.write(delta['content']);
-                }
-                // 思考过程：DeepSeek-R1 用 reasoning_content，OpenAI o1 用 reasoning
-                final reasoning =
-                    delta['reasoning_content'] ?? delta['reasoning'];
-                if (showThinking &&
-                    reasoning != null &&
-                    reasoning.toString().isNotEmpty) {
-                  if (thinkBuf.isEmpty) thinkWatch.start();
-                  thinkBuf.write(reasoning);
-                }
-              }
-              final usage = json['usage'] as Map<String, dynamic>?;
-              if (usage != null) {
-                inTok = usage['prompt_tokens'] as int? ?? inTok;
-                outTok = usage['completion_tokens'] as int? ?? outTok;
-              }
-            }
-            if (mounted) {
-              setState(() {
-                _messages[msgIdx] = (
-                  role: 'assistant',
-                  content: buf.toString(),
-                  inputTokens: inTok,
-                  outputTokens: outTok,
-                  blocks: thinkBuf.isEmpty
-                      ? null
-                      : [
-                          {
-                            'type': 'thinking',
-                            'thinking': thinkBuf.toString(),
-                            'durationMs': thinkWatch.elapsedMilliseconds,
-                          },
-                          if (buf.isNotEmpty)
-                            {'type': 'text', 'text': buf.toString()},
-                        ],
-                );
-              });
-            }
-            _scrollToBottom();
-          } catch (_) {}
+        if (toolCalls.isEmpty) {
+          finalContent = content;
+          break;
         }
+
+        final toolResults = await _handleToolCalls(toolCalls);
+        for (final result in toolResults) {
+          sdkClient.context.addMessage(result);
+        }
+        if (!mounted || _stopRequested) break;
+        setState(() {
+          _messages.add((
+            role: 'assistant',
+            content: '',
+            inputTokens: null,
+            outputTokens: null,
+            blocks: null,
+          ));
+          activeAssistantIdx = _messages.length - 1;
+        });
       }
 
-      final content = buf.toString();
       _genStart.stop();
-      // 用户主动中断：气泡里已经是流式累积下来的部分内容（每个 delta 都写过
-      // _messages[msgIdx]），这里只做收尾 —— 不记成完整回复、不解析流程图、
-      // 不执行工具调用（半截 JSON 解出来的图是垃圾，比没有更糟）。
       if (_stopRequested) {
         appState.logAiResponse('(stopped by user)');
         if (!mounted) return;
@@ -14477,35 +14560,26 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
         _scrollToBottom();
         return;
       }
+      final content = finalContent ?? '';
       appState.logAiResponse(content);
       final elapsedMs = _genStart.elapsedMilliseconds;
       final speed = elapsedMs > 0 ? (content.length * 1000 / elapsedMs) : null;
       if (!mounted) return;
       setState(() {
-        _messages[msgIdx] = (
+        _messages[activeAssistantIdx] = (
           role: 'assistant',
           content: content,
-          inputTokens: inTok,
-          outputTokens: outTok,
-          blocks: thinkBuf.isEmpty
-              ? null
-              : [
-                  {
-                    'type': 'thinking',
-                    'thinking': thinkBuf.toString(),
-                    'durationMs': thinkWatch.elapsedMilliseconds,
-                  },
-                  if (content.isNotEmpty) {'type': 'text', 'text': content},
-                ],
+          inputTokens: _messages[activeAssistantIdx].inputTokens,
+          outputTokens: _messages[activeAssistantIdx].outputTokens,
+          blocks: _messages[activeAssistantIdx].blocks,
         );
         _loading = false;
         _lastGenSpeed = speed;
-        if (inTok != null) _totalInputTokens += inTok;
-        if (outTok != null) _totalOutputTokens += outTok;
+        _totalInputTokens += totalInputTokens;
+        _totalOutputTokens += totalOutputTokens;
       });
       _scrollToBottom();
       _tryParseGraph(content);
-      shouldContinueAfterTools = await _handleToolCalls(content);
       // 自动总结：首轮对话后生成会话标题
       _maybeGenerateTitle();
     } catch (e) {
@@ -14534,19 +14608,13 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
       });
       _scrollToBottom();
     } finally {
-      sendClient.close(); // 无论成功/异常/面板关闭，都释放 HTTP 连接
-      // 只有当前这次请求仍持有「活跃引用」时才清状态：如果用户点停止后立刻又发了
-      // 一条，_activeClient 已经是新请求的 client，不能被旧请求的 finally 抹掉
-      // （否则新请求的「停止」按钮会失效）。
-      if (identical(_activeClient, sendClient)) {
-        _activeClient = null;
+      sdkClient?.dispose();
+      _activeRequestSubscription = null;
+      if (identical(_activeRequestStop, stopSignal)) {
+        _activeRequestStop = null;
         _stopRequested = false;
       }
-      if (mounted && shouldContinueAfterTools && !_stopRequested) {
-        unawaited(_send(continuation: true));
-      } else if (mounted) {
-        unawaited(_saveCurrentSession());
-      }
+      if (mounted) unawaited(_saveCurrentSession());
     }
   }
 
@@ -14557,14 +14625,12 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
     final cfg = appState.config;
     if (!cfg.aiAutoTitle || _messages.isEmpty) return;
     final profile = _effectiveProfile;
-    final key = profile?.apiKey.isNotEmpty == true
-        ? profile!.apiKey
-        : cfg.aiApiKey;
+    final key = profile?.effectiveKeys.firstOrNull ?? cfg.aiApiKey;
     if (key.isEmpty) return;
-    final isAnthropic = (profile?.provider ?? cfg.aiProvider) == 'anthropic';
-    final url = (profile?.apiUrl.isNotEmpty == true
-        ? profile!.apiUrl
-        : cfg.aiApiUrl);
+    final provider = profile?.provider ?? cfg.aiProvider;
+    final url = profile?.apiUrl.isNotEmpty == true
+        ? profile!.effectiveUrl
+        : cfg.aiApiUrl;
     // 模型不再有内置兜底：一个可用模型都没有就别浪费一次请求
     final model = profile?.model.isNotEmpty == true
         ? profile!.model
@@ -14574,84 +14640,39 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
                   : ''));
     if (model.isEmpty) return;
     _titleGenerated = true;
+    final recent = _messages
+        .take(6)
+        .map(
+          (m) =>
+              '${m.role}: ${m.content.substring(0, m.content.length > 120 ? 120 : m.content.length)}',
+        )
+        .join('\n');
+    final client = _createAiClient(
+      provider: provider,
+      apiKey: key,
+      apiUrl: url,
+      model: model,
+      maxTokens: 32,
+      contextWindow: profile?.contextWindow ?? cfg.aiContextWindow,
+      temperature: 0,
+      systemPrompt: cfg.aiTitlePrompt,
+      customHeaders: profile?.customHeaders,
+      exposePipelineTools: false,
+    );
     try {
-      final uri = Uri.parse(_resolveEndpoint(url, isAnthropic));
-      // 取最近几轮对话内容用于总结
-      final recent = _messages
-          .take(6)
-          .map(
-            (m) =>
-                '${m.role}: ${m.content.substring(0, m.content.length > 120 ? 120 : m.content.length)}',
-          )
-          .join('\n');
-      final prompt = cfg.aiTitlePrompt;
-      final body = isAnthropic
-          ? {
-              'model': model,
-              'max_tokens': 32,
-              'system': prompt,
-              'messages': [
-                {
-                  'role': 'user',
-                  'content': 'Summarize this conversation:\n$recent',
-                },
-              ],
-            }
-          : {
-              'model': model,
-              'max_tokens': 32,
-              'messages': [
-                {'role': 'system', 'content': prompt},
-                {
-                  'role': 'user',
-                  'content': 'Summarize this conversation:\n$recent',
-                },
-              ],
-            };
-      final req = http.Request('POST', uri);
-      if (isAnthropic) {
-        req.headers['x-api-key'] = key;
-        req.headers['anthropic-version'] = '2023-06-01';
-      } else {
-        req.headers['Authorization'] = 'Bearer $key';
-      }
-      req.headers['Content-Type'] = 'application/json';
-      req.body = jsonEncode(body);
-      final client = http.Client();
-      _titleClient = client;
-      try {
-        final resp = await client
-            .send(req)
-            .timeout(const Duration(seconds: 15));
-        final respBody = await resp.stream.bytesToString().timeout(
-          const Duration(seconds: 15),
+      final response = await client
+          .chat('Summarize this conversation:\n$recent')
+          .timeout(const Duration(seconds: 15));
+      final title = response.text;
+      if (title.trim().isNotEmpty && mounted) {
+        widget.onTitleGenerated?.call(
+          title.trim().replaceAll(RegExp(r'[\n"]+'), ''),
         );
-        if (resp.statusCode != 200) return;
-        final json = jsonDecode(respBody) as Map<String, dynamic>;
-        String? title;
-        if (isAnthropic) {
-          final blocks = (json['content'] as List?) ?? [];
-          if (blocks.isNotEmpty) title = (blocks[0]['text'] as String?) ?? '';
-        } else {
-          final choices = (json['choices'] as List?) ?? [];
-          if (choices.isNotEmpty) {
-            title =
-                ((choices[0]['message'] as Map<String, dynamic>?)?['content']
-                    as String?) ??
-                '';
-          }
-        }
-        if (title != null && title.trim().isNotEmpty && mounted) {
-          widget.onTitleGenerated?.call(
-            title.trim().replaceAll(RegExp(r'[\n"]+'), ''),
-          );
-        }
-      } finally {
-        client.close();
-        if (identical(_titleClient, client)) _titleClient = null;
       }
-    } catch (_) {
-      // 标题生成失败不影响主对话
+    } catch (error) {
+      appState.addLog('[AI] Title generation failed: $error', category: 'warn');
+    } finally {
+      client.dispose();
     }
   }
 
@@ -15856,7 +15877,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(fontSize: 11),
                       ),
-                      enabled: !_loading && _activeClient == null,
+                      enabled: !_loading && _activeRequestStop == null,
                       onTap: () {
                         _loadHistorySession(session, s);
                         setState(() => _historyOpen = false);
@@ -16002,7 +16023,8 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
                                     overflow: TextOverflow.ellipsis,
                                     style: const TextStyle(fontSize: 11),
                                   ),
-                                  enabled: !_loading && _activeClient == null,
+                                  enabled:
+                                      !_loading && _activeRequestStop == null,
                                   onTap: () {
                                     _loadHistorySession(session, s);
                                     setState(() => _historyOpen = false);
@@ -16417,7 +16439,7 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
               msg.content,
               style: TextStyle(
                 fontSize: fs,
-                color: scheme.onSurface,
+                color: scheme.onPrimaryContainer,
                 height: 1.5,
               ),
             )
@@ -16438,65 +16460,75 @@ Use [TOOL_CALL:list_nodes] / [TOOL_CALL:list_connections] before proposing edits
     return Padding(
       padding: EdgeInsets.only(bottom: gapAfter),
       child: Column(
-        crossAxisAlignment: isUser
-            ? CrossAxisAlignment.end
-            : CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Spacer + Flexible(flex: 4) 按比例限宽：气泡最多占可用宽度的 4/5。
-              // 原来只有 Flexible，用户消息多长就铺多宽 —— 一段长描述会直接顶满整行，
-              // 和紧邻的助手消息宽度一致，一眼分不清谁说的（移动端尤其明显）。
-              if (isUser) const Spacer(),
-              if (!isUser) ...[
-                if (showAvatar)
-                  CircleAvatar(
-                    radius: avatarR,
-                    backgroundColor: scheme.primaryContainer,
-                    child: Icon(
-                      Icons.smart_toy,
-                      size: avatarR,
-                      color: scheme.primary,
+          SizedBox(
+            width: double.infinity,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final maxBubbleWidth =
+                    (constraints.maxWidth - avatarSlot) * 0.8;
+                final bubble = ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: maxBubbleWidth),
+                  child: Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: isMobilePlatform ? 13 : 12,
+                      vertical: isMobilePlatform ? 9 : 8,
                     ),
-                  )
-                else
-                  avatarGap,
-                const SizedBox(width: 8),
-              ],
-              Flexible(
-                flex: 4,
-                child: Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: isMobilePlatform ? 13 : 12,
-                    vertical: isMobilePlatform ? 9 : 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: isUser
-                        ? scheme.primaryContainer
-                        : scheme.surfaceContainerHighest,
-                    borderRadius: bubbleRadius,
-                  ),
-                  child: bodyWidget,
-                ),
-              ),
-              if (isUser) ...[
-                const SizedBox(width: 8),
-                if (showAvatar)
-                  CircleAvatar(
-                    radius: avatarR,
-                    backgroundColor: scheme.tertiaryContainer,
-                    child: Icon(
-                      Icons.person,
-                      size: avatarR,
-                      color: scheme.tertiary,
+                    decoration: BoxDecoration(
+                      color: isUser
+                          ? scheme.primaryContainer
+                          : scheme.surfaceContainerHigh,
+                      borderRadius: bubbleRadius,
                     ),
-                  )
-                else
-                  avatarGap,
-              ],
-              if (!isUser) const Spacer(),
-            ],
+                    child: bodyWidget,
+                  ),
+                );
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (!isUser) ...[
+                      if (showAvatar)
+                        CircleAvatar(
+                          radius: avatarR,
+                          backgroundColor: scheme.surfaceContainerHighest,
+                          child: Icon(
+                            Icons.smart_toy,
+                            size: avatarR,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        )
+                      else
+                        avatarGap,
+                      const SizedBox(width: 8),
+                    ],
+                    Expanded(
+                      child: Align(
+                        alignment: isUser
+                            ? Alignment.centerRight
+                            : Alignment.centerLeft,
+                        child: bubble,
+                      ),
+                    ),
+                    if (isUser) ...[
+                      const SizedBox(width: 8),
+                      if (showAvatar)
+                        CircleAvatar(
+                          radius: avatarR,
+                          backgroundColor: scheme.primary,
+                          child: Icon(
+                            Icons.person,
+                            size: avatarR,
+                            color: scheme.onPrimary,
+                          ),
+                        )
+                      else
+                        avatarGap,
+                    ],
+                  ],
+                );
+              },
+            ),
           ),
           if (!isUser &&
               msg.inputTokens != null &&

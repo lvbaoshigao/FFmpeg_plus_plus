@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/physics.dart';
 import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
 import '../platform/app_platform.dart';
@@ -10,7 +9,7 @@ import 'app_card.dart' show SurfaceStyle;
 import 'liquid_glass_fallback.dart';
 
 // ═══════════════════════════════════════════════════════════════
-// 主底部导航（MobileBottomNav）与子页面玻璃切换栏（MobileNavStyleTabBar）
+// 侧边导轨（MobileNavRail）与子页面玻璃切换栏（MobileNavStyleTabBar）
 // 共享的样式实现：navStyle 四值取值、tint/边框/遮罩胶囊、玻璃外壳。
 // ═══════════════════════════════════════════════════════════════
 
@@ -18,7 +17,7 @@ import 'liquid_glass_fallback.dart';
 /// OCLiquidGlassGroup/OCLiquidGlass 节点，避免无关 notify 引起的 shader 重置。
 @immutable
 class NavGlassPal {
-  /// 底部菜单栏样式（navStyle 四值：theme/liquid/blur/gray）
+  /// 侧边导轨样式（navStyle 四值：theme/liquid/blur/gray）
   final String style;
   final double op;
   final int primary;
@@ -221,9 +220,9 @@ Widget navMaskPill(ColorScheme scheme, bool isDark, String style) {
 // const 基准实例，与顶部药丸 / 卡片同源，避免多份重复常量漂移）：实例恒定，就不会因为
 // build 重新下发 shader uniform（这是液态玻璃「来回跳跃」闪烁的根因）。
 
-/// navStyle 感知的玻璃外壳：把 [child] 按「底部菜单栏样式」四值套上外皮——
+/// navStyle 感知的玻璃外壳：把 [child] 按「菜单栏样式」四值套上外皮——
 /// theme/gray 直出、blur 高斯模糊、liquid GPU 液态玻璃（无 Impeller 时回退）。
-/// 主底部导航与子页面切换栏共用，保证子页面底栏与全局导航观感一致。
+/// 侧边导轨与子页面切换栏共用。
 /// 竖排导轨（左 / 右菜单栏）胶囊的**宽度**。
 ///
 /// 公开出来的原因：AppShell 用「恒定 Stack + 位置参数」摆放导航（见 app.dart），
@@ -390,25 +389,13 @@ class NavGlassShell extends StatelessWidget {
   }
 }
 
-/// 移动端主导航栏 —— 样式由「底部菜单栏样式」（AppConfig.navStyle）接管，
-/// **位置**由 [MobileBottomNav.placement] 接管（底部胶囊 / 左右竖排导轨）。
-///
-/// - 整体是一颗悬浮「药丸」（胶囊）；四种样式：
-///   liquid 液态玻璃（oc_liquid_glass GPU shader）、blur 扁平高斯模糊
-///   （BackdropFilter）、theme 跟随主题色（纯色）、gray 灰色（纯色）；
-/// - 选中项使用胶囊「药丸」指示器；按下拖动（无需长按）遮罩即跟随手指，
-///   松手吸附到最近药丸并切换页面；点按直接切换（带滑动动画）；
-/// - 位置：默认 [MobileNavPlacement.bottom]（悬浮底部，与改动前逐像素一致）。
-///   宽屏移动端（平板 / 横屏）或用户在设置里强制指定时，变为
-///   [MobileNavPlacement.left] / [MobileNavPlacement.right] 的**竖排导轨**：
-///   药丸行改竖排、拖动轴换成纵轴、遮罩按纵轴定位、外壳让出「贴屏那一侧」的
-///   安全区（见 NavGlassShell.shellPadding）。
-/// - 遵循设置→主题→样式→底部菜单栏样式（navStyle 四值）。
-class MobileBottomNav extends StatefulWidget {
+/// Optional vertical navigation rail for wide mobile layouts. The bottom bar
+/// is provided by `liquid_glass_tab_bar`.
+class MobileNavRail extends StatefulWidget {
   final int selectedIndex;
   final ValueChanged<int> onSelected;
 
-  /// 菜单栏摆放位置。由 app.dart 用
+  /// 导轨摆放位置。由 app.dart 用
   /// `resolveMobileNavPlacement(config.mobileNavPlacement, 屏宽, 屏高)` 解析后下发
   /// —— 判定逻辑只此一份，导航栏本身不做平台/尺寸判定。
   final MobileNavPlacement placement;
@@ -419,31 +406,19 @@ class MobileBottomNav extends StatefulWidget {
   /// 「动画跳跃」问题。仅遮罩子树订阅该 Listenable，每帧重建成本极小。
   final PageController? pageController;
 
-  /// 滑动自动收起：true = 整条菜单栏滑出屏幕下缘（仅底部形态由 app.dart 下发；
-  /// 侧边导轨恒为 false）。动画由 [_MobileBottomNavState] 的弹簧模拟驱动，
-  /// 到位后带一次过冲回弹。
-  final bool hidden;
-
-  const MobileBottomNav({
+  const MobileNavRail({
     super.key,
     required this.selectedIndex,
     required this.onSelected,
-    this.placement = MobileNavPlacement.bottom,
+    required this.placement,
     this.pageController,
-    this.hidden = false,
-  });
+  }) : assert(placement != MobileNavPlacement.bottom);
 
   @override
-  State<MobileBottomNav> createState() => _MobileBottomNavState();
+  State<MobileNavRail> createState() => _MobileNavRailState();
 }
 
-class _MobileBottomNavState extends State<MobileBottomNav>
-    with SingleTickerProviderStateMixin {
-  /// 滑动自动收起动画：0 = 展开、1 = 完全收起（欠阻尼弹簧驱动，过冲量即
-  /// 「到位后回弹」）。Transform.translate 只改绘制不改布局，收起全程不会
-  /// 触发 PageView / 玻璃外壳重新布局。
-  late final AnimationController _hideCtrl;
-
+class _MobileNavRailState extends State<MobileNavRail> {
   /// 是否竖排导轨（左 / 右）：横排与竖排共用同一套「主轴线位置」状态
   /// （[_dragX] = 主轴线上的遮罩中心、[itemExtent] = 每个药丸在主轴上的长度），
   /// 只有轴向映射与手势类型不同。
@@ -504,11 +479,6 @@ class _MobileBottomNavState extends State<MobileBottomNav>
   @override
   void initState() {
     super.initState();
-    // late 注入必须在 initState 首行完成（项目契约 7）。
-    _hideCtrl = AnimationController(
-      vsync: this,
-      value: widget.hidden ? 1.0 : 0.0,
-    );
     // 首次进入主界面即预加载 oc_liquid_glass 的 fragment shader，
     // 避免底部导航第一次渲染时的异步加载闪烁。
     // 与 main.dart 的 shader 预热走同一条门控：shaderGlassSupported 为 false 时
@@ -518,37 +488,12 @@ class _MobileBottomNavState extends State<MobileBottomNav>
   }
 
   @override
-  void didUpdateWidget(covariant MobileBottomNav oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.hidden == widget.hidden) return;
-    // 欠阻尼弹簧（ratio < 1）：到达目标值时过冲再回落 = 用户要求的
-    // 「移动到指定位置后回弹」。刚度 260 ≈ 300ms 内完成主行程。
-    _hideCtrl.animateWith(
-      SpringSimulation(
-        SpringDescription.withDampingRatio(
-          mass: 1,
-          stiffness: 260,
-          ratio: 0.55,
-        ),
-        _hideCtrl.value,
-        widget.hidden ? 1.0 : 0.0,
-        _hideCtrl.velocity,
-      ),
-    );
-  }
-
-  @override
   void dispose() {
     _dragX.dispose();
     _pagePosition?.isScrollingNotifier.removeListener(_onPageSideChanged);
     _pagePosition?.removeListener(_onPageSideChanged);
     _pagePosition = null;
     _pageTick.dispose();
-    // 若 initState 之前就抛错，_hideCtrl 可能未被注入（契约 7：dispose 访问
-    // late 字段必须 try/catch）。
-    try {
-      _hideCtrl.dispose();
-    } catch (_) {}
     super.dispose();
   }
 
@@ -884,28 +829,7 @@ class _MobileBottomNavState extends State<MobileBottomNav>
       child: buildBarIn(),
     );
 
-    // 滑动自动收起（仅底部形态生效；侧边导轨 app.dart 恒下发 hidden=false）：
-    // 整条菜单栏下移滑出屏幕，欠阻尼弹簧的过冲即「到位后回弹」。位移量 =
-    // 栏高 + 底部安全区 + 悬浮边距，保证完全离屏。Transform 只改绘制不改
-    // 布局，收起全程 PageView 与玻璃外壳不重排；隐藏过半即拦截点击。
-    if (_hideCtrl.value == 0 && !widget.hidden) return shell;
-    final double hideDistance =
-        barHeight + MediaQuery.paddingOf(context).bottom + 24;
-    return AnimatedBuilder(
-      animation: _hideCtrl,
-      child: shell,
-      builder: (context, child) {
-        final t = _hideCtrl.value;
-        if (t == 0) return child!;
-        return IgnorePointer(
-          ignoring: t > 0.5,
-          child: Transform.translate(
-            offset: Offset(0, t * hideDistance),
-            child: child,
-          ),
-        );
-      },
-    );
+    return shell;
   }
 
   /// 松手：吸附到「离遮罩中心最近」的药丸并切换页面。

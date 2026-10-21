@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter_ai_sdk/flutter_ai_sdk.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
@@ -205,5 +206,35 @@ final class AiChatAttachments {
       }
     }
     return blocks;
+  }
+
+  static Future<List<Content>> sdkContent(
+    String text,
+    List<AiChatAttachment> attachments, {
+    required bool vision,
+    AiAttachmentBudget? budget,
+  }) async {
+    final wireContent = await content(
+      text,
+      attachments,
+      vision: vision,
+      anthropic: false,
+      budget: budget,
+    );
+    return wireContent.map((block) {
+      if (block['type'] == 'text') {
+        return TextContent(block['text'] as String);
+      }
+      final url =
+          (block['image_url'] as Map<String, dynamic>)['url'] as String;
+      final match = RegExp(r'^data:(.+?);base64,(.+)$').firstMatch(url);
+      if (match != null) {
+        return ImageContent.fromBase64(
+          match.group(2)!,
+          mimeType: match.group(1)!,
+        );
+      }
+      return ImageContent.fromUrl(url);
+    }).toList();
   }
 }

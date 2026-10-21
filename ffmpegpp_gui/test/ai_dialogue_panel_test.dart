@@ -54,6 +54,7 @@ void main() {
               },
             ],
           },
+          {'role': 'user', 'content': 'OK'},
         ],
         onApplyGraph: (_, connections) {},
         onMergeGraph: (_, connections) {},
@@ -86,6 +87,20 @@ void main() {
       expect(userName.center.dx, greaterThan(answer.center.dx));
       expect(cardRect.left, greaterThan(0));
       expect(cardRect.width, lessThan(800 * 0.85));
+      final shortUserText = tester.getRect(find.text('OK'));
+      expect(shortUserText.right, closeTo(userName.right, 1));
+      final userAvatars = find.byIcon(Icons.person);
+      expect(userAvatars, findsNWidgets(2));
+      expect(
+        tester.getRect(userAvatars.first).center.dx,
+        closeTo(tester.getRect(userAvatars.last).center.dx, 1),
+      );
+      final shortUserLabel = find.byWidgetPredicate(
+        (widget) => widget is SelectableText && widget.data == 'OK',
+      );
+      final userTextWidget = tester.widget<SelectableText>(shortUserLabel);
+      final scheme = Theme.of(tester.element(shortUserLabel)).colorScheme;
+      expect(userTextWidget.style?.color, scheme.onPrimaryContainer);
       expect(find.text('Final answer'), findsOneWidget);
       expect(find.text('Probe metadata'), findsNothing);
       expect(find.text('clip.mp4'), findsOneWidget);
@@ -119,8 +134,14 @@ void main() {
         hideHeader: true,
         initialMessages: [
           for (var i = 0; i < 30; i++) ...[
-            {'role': 'user', 'content': 'Question $i-abcdefghijklmnopqrstuvwxyz'},
-            {'role': 'assistant', 'content': 'Answer $i-abcdefghijklmnopqrstuvwxyz'},
+            {
+              'role': 'user',
+              'content': 'Question $i-abcdefghijklmnopqrstuvwxyz',
+            },
+            {
+              'role': 'assistant',
+              'content': 'Answer $i-abcdefghijklmnopqrstuvwxyz',
+            },
           ],
         ],
         onApplyGraph: (_, connections) {},
@@ -157,54 +178,55 @@ void main() {
       expect(scrollable.position.pixels, closeTo(afterDrag, 1));
     });
 
-    testWidgets('should not show a stale model id that is absent from the provider', (
-      tester,
-    ) async {
-      final state = AppState();
-      final stale = AiProfile(
-        name: 'OpenAI',
-        provider: 'openai',
-        model: 'gpt-4o',
-      );
-      stale.models.add(AiModelEntry(id: 'actual-model'));
-      stale.enabled = true;
-      state.updateConfig((c) {
-        c.aiProfiles.add(stale);
-        c.activeAiProfileId = stale.id;
-        return c;
-      });
-      final panel = AiPanelView(
-        strings: AppStrings.en,
-        existingNodes: const [],
-        existingConnections: const [],
-        startExpanded: true,
-        hideHeader: true,
-        onApplyGraph: (_, connections) {},
-        onMergeGraph: (_, connections) {},
-        onModifyNodeParams: (_, params) => true,
-        onClearAll: () {},
-        onUndo: () {},
-        onRedo: () {},
-        onSave: () {},
-        onAddNode: (_, x, y) => 'node',
-        onAddGate: (_, x, y) => 'gate',
-        onSetGateParams: (_, params) => true,
-        onDeleteNode: (_) {},
-        onConnectNodes: (_, to) => true,
-        onDisconnectNodes: (_) => true,
-        onCancelTasks: () {},
-      );
-      await tester.pumpWidget(
-        ChangeNotifierProvider<AppState>.value(
-          value: state,
-          child: MaterialApp(home: Scaffold(body: panel)),
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('gpt-4o'), findsNothing);
-      expect(find.textContaining('actual-model'), findsWidgets);
-      // Flush ConfigService's 400ms debounce before the test binding disposes.
-      await tester.pump(const Duration(milliseconds: 600));
-    });
+    testWidgets(
+      'should not show a stale model id that is absent from the provider',
+      (tester) async {
+        final state = AppState();
+        final stale = AiProfile(
+          name: 'OpenAI',
+          provider: 'openai',
+          model: 'gpt-4o',
+        );
+        stale.models.add(AiModelEntry(id: 'actual-model'));
+        stale.enabled = true;
+        state.updateConfig((c) {
+          c.aiProfiles.add(stale);
+          c.activeAiProfileId = stale.id;
+          return c;
+        });
+        final panel = AiPanelView(
+          strings: AppStrings.en,
+          existingNodes: const [],
+          existingConnections: const [],
+          startExpanded: true,
+          hideHeader: true,
+          onApplyGraph: (_, connections) {},
+          onMergeGraph: (_, connections) {},
+          onModifyNodeParams: (_, params) => true,
+          onClearAll: () {},
+          onUndo: () {},
+          onRedo: () {},
+          onSave: () {},
+          onAddNode: (_, x, y) => 'node',
+          onAddGate: (_, x, y) => 'gate',
+          onSetGateParams: (_, params) => true,
+          onDeleteNode: (_) {},
+          onConnectNodes: (_, to) => true,
+          onDisconnectNodes: (_) => true,
+          onCancelTasks: () {},
+        );
+        await tester.pumpWidget(
+          ChangeNotifierProvider<AppState>.value(
+            value: state,
+            child: MaterialApp(home: Scaffold(body: panel)),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('gpt-4o'), findsNothing);
+        expect(find.textContaining('actual-model'), findsWidgets);
+        // Flush ConfigService's 400ms debounce before the test binding disposes.
+        await tester.pump(const Duration(milliseconds: 600));
+      },
+    );
   });
 }

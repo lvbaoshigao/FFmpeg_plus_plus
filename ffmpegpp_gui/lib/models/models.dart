@@ -1,7 +1,7 @@
 import 'dart:io' show Platform;
 import 'dart:math' as math;
 import 'package:uuid/uuid.dart';
-import '../services/secure_key_store.dart';
+import '../services/legacy_ai_key_decoder.dart';
 
 export 'quick_config.dart';
 
@@ -1006,7 +1006,6 @@ String logicBlockTypeLabel(LogicBlockType t, bool zh) => switch (t) {
   LogicBlockType.group => zh ? '分组' : 'Group',
   LogicBlockType.condition => zh ? '条件' : 'Condition',
 };
-
 
 String logicConditionFieldLabel(LogicConditionField f, bool zh) => switch (f) {
   LogicConditionField.extension => zh ? '扩展名' : 'Extension',
@@ -2067,7 +2066,7 @@ class AiProfile {
     name: json['name'] as String? ?? 'New Profile',
     enabled: json['enabled'] as bool? ?? true,
     provider: json['provider'] as String? ?? 'openai',
-    apiKey: SecureKeyStore.decrypt(json['api_key'] as String? ?? ''),
+    apiKey: LegacyAiKeyDecoder.decode(json['api_key'] as String? ?? ''),
     apiUrl:
         json['api_url'] as String? ??
         'https://api.openai.com/v1/chat/completions',
@@ -2084,7 +2083,7 @@ class AiProfile {
     apiKeys:
         (json['api_keys'] as List?)
             ?.whereType<String>()
-            .map(SecureKeyStore.decrypt)
+            .map(LegacyAiKeyDecoder.decode)
             .where((k) => k.isNotEmpty)
             .toList() ??
         <String>[],
@@ -2108,7 +2107,6 @@ class AiProfile {
     'name': name,
     'enabled': enabled,
     'provider': provider,
-    'api_key': SecureKeyStore.encrypt(apiKey),
     'api_url': apiUrl,
     'model': model,
     'context_window': contextWindow,
@@ -2116,7 +2114,6 @@ class AiProfile {
     'temperature': temperature,
     'group': group,
     'multi_key_enabled': multiKeyEnabled,
-    'api_keys': apiKeys.map(SecureKeyStore.encrypt).toList(),
     'use_responses_api': useResponsesApi,
     'api_path': apiPath,
     'proxy_url': proxyUrl,
@@ -2261,7 +2258,7 @@ class AppConfig {
   // 用户要求：玻璃效果要能逐项调节（模糊度 / 通透度 / 高光强度与位置 / 边缘光），
   // 而不是只给一个「有 / 无」的总开关。五项统一由 widgets/liquid_glass_fallback.dart
   // 的 GlassTuning 打包，所有玻璃渲染路径（AppCard / MobileGlassPill /
-  // MobileBottomNav / LiquidGlassBackdrop / GlassPanel）都读同一份，避免各画各的。
+  // MobileNavRail / LiquidGlassBackdrop / GlassPanel）都读同一份，避免各画各的。
   //
   // 默认值刻意取「与引入本项之前的像素观感一致」：
   // * glassBlur 16 = 各调用点此前的固定基准 σ（桌面端由 effectiveGlassSigma 钳到 8）；
@@ -2705,7 +2702,7 @@ class AppConfig {
     mcpAllowWrite: json['mcp_allow_write'] as bool? ?? false,
     mcpAllowFsAccess: json['mcp_allow_fs'] as bool? ?? true,
     aiProvider: json['ai_provider'] as String? ?? 'openai',
-    aiApiKey: SecureKeyStore.decrypt(json['ai_api_key'] as String? ?? ''),
+    aiApiKey: LegacyAiKeyDecoder.decode(json['ai_api_key'] as String? ?? ''),
     aiApiUrl:
         json['ai_api_url'] as String? ??
         'https://api.openai.com/v1/chat/completions',
@@ -2823,7 +2820,6 @@ class AppConfig {
     'mcp_allow_write': mcpAllowWrite,
     'mcp_allow_fs': mcpAllowFsAccess,
     'ai_provider': aiProvider,
-    'ai_api_key': SecureKeyStore.encrypt(aiApiKey),
     'ai_api_url': aiApiUrl,
     'ai_model': aiModel,
     'ai_enabled': aiEnabled,
