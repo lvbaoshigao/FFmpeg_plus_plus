@@ -10,6 +10,8 @@ import '../widgets/glass_panel.dart';
 import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_ui.dart';
 import '../widgets/wallpaper_background.dart';
+// Linux 自绘窗口修饰（CSD）：全屏路由页统一套 WindowChrome。
+import '../widgets/window_chrome.dart';
 
 /// 「引用」页：列出本应用使用的第三方开源项目并致谢。
 class CreditsPage extends StatelessWidget {
@@ -38,66 +40,72 @@ class CreditsPage extends StatelessWidget {
       ],
     );
 
+    // Linux 客户端修饰（CSD）：二级 / 三级全屏路由统一套 WindowChrome。
+    // 顺序：WindowChrome 必须在 _withWallpaper（壁纸 Stack）的**内层** —— 标题栏
+    // 玻璃用 BackdropFilter 采样同一棵树里更早绘制的像素；套在外面只会透出窗口
+    // 底色。不传 title / onBack：本页自带顶栏与返回键。
     return _withWallpaper(
       context,
-      Scaffold(
-        backgroundColor: Colors.transparent,
-        body: Column(
-          children: [
-            isMobilePlatform
-                ? MobileSubPageTopBar(
-                    title: title,
-                    onBack: () => Navigator.of(context).maybePop(),
-                  )
-                : GlassTopBar(
-                    title: title,
-                    actions: [
-                      IconButton(
-                        tooltip: s.aboutClose,
-                        icon: Icon(
-                          Icons.close,
-                          size: 18,
-                          color: scheme.onSurfaceVariant,
+      WindowChrome(
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          body: Column(
+            children: [
+              isMobilePlatform
+                  ? MobileSubPageTopBar(
+                      title: title,
+                      onBack: () => Navigator.of(context).maybePop(),
+                    )
+                  : GlassTopBar(
+                      title: title,
+                      actions: [
+                        IconButton(
+                          tooltip: s.aboutClose,
+                          icon: Icon(
+                            Icons.close,
+                            size: 18,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                          onPressed: () => Navigator.of(context).maybePop(),
                         ),
-                        onPressed: () => Navigator.of(context).maybePop(),
-                      ),
-                    ],
-                  ),
-            Expanded(
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: isMobilePlatform ? double.infinity : 960,
-                  ),
-                  child: ListView(
-                    // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
-                    addRepaintBoundaries: false,
-                    padding: isMobilePlatform
-                        ? MobileUi.subListPadding(top: 8, bottom: 24)
-                        : const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                    children: [
-                      Text(
-                        s.aboutReferencesIntro,
-                        style: TextStyle(fontSize: 13, color: scheme.outline),
-                      ),
-                      const SizedBox(height: 14),
-                      _projectCard(
-                        context,
-                        scheme,
-                        s,
-                        name: 'tabler-icons',
-                        license: 'MIT License',
-                        desc: s.isZh
-                            ? '逻辑门矢量图标（节点编辑器 IEEE 逻辑门符号）'
-                            : 'Vector logic-gate icons (IEEE gate symbols in the node editor)',
-                        url: 'https://github.com/tabler/tabler-icons',
-                      ),
-                    ],
+                      ],
+                    ),
+              Expanded(
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: isMobilePlatform ? double.infinity : 960,
+                    ),
+                    child: ListView(
+                      // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
+                      addRepaintBoundaries: false,
+                      padding: isMobilePlatform
+                          ? MobileUi.subListPadding(top: 8, bottom: 24)
+                          : const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                      children: [
+                        Text(
+                          s.aboutReferencesIntro,
+                          style: TextStyle(fontSize: 13, color: scheme.outline),
+                        ),
+                        const SizedBox(height: 14),
+                        _projectCard(
+                          context,
+                          scheme,
+                          s,
+                          name: 'tabler-icons',
+                          license: 'MIT License',
+                          desc: s.isZh
+                              ? '逻辑门矢量图标（节点编辑器 IEEE 逻辑门符号）'
+                              : 'Vector logic-gate icons (IEEE gate symbols in the node editor)',
+                          url: 'https://github.com/tabler/tabler-icons',
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

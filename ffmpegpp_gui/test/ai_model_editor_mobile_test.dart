@@ -2,6 +2,7 @@ import 'package:ffmpegpp_gui/models/models.dart';
 import 'package:ffmpegpp_gui/pages/ai_settings_mobile.dart';
 import 'package:ffmpegpp_gui/providers/app_state.dart';
 import 'package:ffmpegpp_gui/theme/app_theme.dart';
+import 'package:ffmpegpp_gui/widgets/liquid_glass_mobile_nav.dart';
 import 'package:ffmpegpp_gui/widgets/liquid_modality_pills.dart';
 import 'package:ffmpegpp_gui/widgets/liquid_stretch_tabs.dart';
 import 'package:ffmpegpp_gui/widgets/model_editor_sheet.dart';
@@ -21,6 +22,15 @@ Widget _harness(AppState state, Widget child) =>
 Future<void> _flushSaveTimers(WidgetTester tester) async {
   await tester.pump(const Duration(seconds: 1));
 }
+
+/// 底栏标签的点击目标。
+///
+/// AppLiquidTabBar（liquid_glass_tab_bar）会把每个 item 绘制两次（未选中色
+/// 与选中色两层，由滑动玻璃胶囊裁剪），所以 find.text 会命中 2 个 Text；
+/// 这里限定在底栏内并取第一层，避免 tap 报 "ambiguously found"。
+Finder _tabLabel(String label) => find
+    .descendant(of: find.byType(AppLiquidTabBar), matching: find.text(label))
+    .first;
 
 void main() {
   group('LiquidStretchTabs', () {
@@ -229,13 +239,15 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.byType(LiquidStretchTabs), findsOneWidget);
+      // 底栏已统一为主界面同模块的 AppLiquidTabBar（liquid_glass_tab_bar），
+      // 不再使用自绘的 LiquidStretchTabs；Key 保持不变以免其它用例漂移。
+      expect(find.byType(AppLiquidTabBar), findsOneWidget);
       expect(
         find.byKey(const ValueKey('ai_provider_top_tabs')),
         findsOneWidget,
       );
 
-      await tester.tap(find.text('模型'));
+      await tester.tap(_tabLabel('模型'));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('ai_provider_models')), findsOneWidget);
       expect(find.byKey(const ValueKey('model_row_gpt-6')), findsOneWidget);
@@ -319,7 +331,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('模型'));
+      await tester.tap(_tabLabel('模型'));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('add_custom_model')));
       await tester.pumpAndSettle();

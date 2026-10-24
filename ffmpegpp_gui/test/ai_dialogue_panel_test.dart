@@ -4,8 +4,56 @@ import 'package:ffmpegpp_gui/providers/app_state.dart';
 import 'package:ffmpegpp_gui/theme/app_strings.dart';
 import 'package:ffmpegpp_gui/widgets/ai_workflow_card.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_ai_sdk/flutter_ai_sdk.dart' as ai;
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
+
+AiPanelView _testPanel({
+  List<Map<String, dynamic>>? initialMessages,
+  void Function(AiPanelApi api)? onApiReady,
+}) => AiPanelView(
+  strings: AppStrings.en,
+  existingNodes: const [],
+  existingConnections: const [],
+  startExpanded: true,
+  hideHeader: true,
+  initialMessages: initialMessages,
+  onApiReady: onApiReady,
+  onApplyGraph: (_, connections) {},
+  onMergeGraph: (_, connections) {},
+  onModifyNodeParams: (_, params) => true,
+  onClearAll: () {},
+  onUndo: () {},
+  onRedo: () {},
+  onSave: () {},
+  onAddNode: (_, x, y) => 'node',
+  onAddGate: (_, x, y) => 'gate',
+  onSetGateParams: (_, params) => true,
+  onDeleteNode: (_) {},
+  onConnectNodes: (_, to) => true,
+  onDisconnectNodes: (_) => true,
+  onCancelTasks: () {},
+);
+
+Future<void> _pumpPanel(WidgetTester tester, AiPanelView panel) async {
+  final state = AppState();
+  addTearDown(state.dispose);
+  await tester.pumpWidget(
+    ChangeNotifierProvider<AppState>.value(
+      value: state,
+      child: MaterialApp(home: Scaffold(body: panel)),
+    ),
+  );
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 20));
+}
+
+/// 冲掉 ConfigService 的 400ms 防抖，避免测试结束时报 pending timer。
+Future<void> _teardownPanel(WidgetTester tester) async {
+  await tester.pumpWidget(const SizedBox.shrink());
+  await tester.pump(const Duration(milliseconds: 600));
+}
 
 void main() {
   group('AiPanelView', () {
@@ -228,5 +276,413 @@ void main() {
         await tester.pump(const Duration(milliseconds: 600));
       },
     );
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // AI 对话机制：纯逻辑（离线，不联网）
+  // ──────────────────────────────────────────────────────────────────────
+  group('AI dialogue mechanics (pure)', () {
+    test('request history window never mutates the UI list', () {
+      final roles = List<String>.generate(
+        150,
+        (i) => i.isEven ? 'user' : 'assistant',
+      );
+      final copy = List<String>.of(roles);
+      final start = requestHistoryStartIndex(roles);
+      // 只读：构造请求窗口不能像旧实现那样 removeRange 掉 UI 历史。
+      expect(roles, copy);
+      expect(start, greaterThan(0));
+      expect(150 - start, lessThanOrEqualTo(100));
+      // 窗口起点对齐到 user，避免 assistant tool_calls 与 tool_result 被拆散。
+      expect(roles[start], 'user');
+      expect(requestHistoryStartIndex(roles, maxMessages: 1000), 0);
+      // 窗口内没有 user 时向更早回退，避免请求以 assistant 开头。
+      final assistantOnlyTail = List<String>.filled(120, 'assistant')
+        ..[0] = 'user';
+      expect(requestHistoryStartIndex(assistantOnlyTail), 0);
+    });
+
+    test('auto-continue policy is bounded and ignores empty/stopped turns', () {
+      final policy = AiAutoContinuePolicy();
+      expect(
+        policy.shouldContinue(
+          finishReason: ai.FinishReason.maxTokens,
+          content: 'partial answer',
+          stopRequested: false,
+        ),
+        isTrue,
+      );
+      expect(policy.rounds, 1);
+      // 空响应绝不续写，否则会无限请求。
+      final empty = AiAutoContinuePolicy();
+      expect(
+        empty.shouldContinue(
+          finishReason: ai.FinishReason.maxTokens,
+          content: '   ',
+          stopRequested: false,
+        ),
+        isFalse,
+      );
+      // 用户按停止后不续写。
+      expect(
+        policy.shouldContinue(
+          finishReason: ai.FinishReason.maxTokens,
+          content: 'partial answer',
+          stopRequested: true,
+        ),
+        isFalse,
+      );
+      // 正常 stop 不续写。
+      expect(
+        policy.shouldContinue(
+          finishReason: ai.FinishReason.stop,
+          content: 'partial answer',
+          stopRequested: false,
+        ),
+        isFalse,
+      );
+      // 最多 3 轮，之后永远 false（不会无限续写）。
+      final bounded = AiAutoContinuePolicy(maxRounds: 3);
+      for (var i = 0; i < 3; i++) {
+        expect(
+          bounded.shouldContinue(
+            finishReason: ai.FinishReason.maxTokens,
+            content: 'partial',
+            stopRequested: false,
+          ),
+          isTrue,
+        );
+      }
+      expect(bounded.exhausted, isTrue);
+      expect(
+        bounded.shouldContinue(
+          finishReason: ai.FinishReason.maxTokens,
+          content: 'partial',
+          stopRequested: false,
+        ),
+        isFalse,
+      );
+    });
+
+    test('continuation text merges without losing characters', () {
+      expect(mergeContinuationText('', 'abc'), 'abc');
+      expect(mergeContinuationText('abc', ''), 'abc');
+      // 半句截断：直接拼回去。
+      expect(mergeContinuationText('The quick brown f', 'ox'), 'The quick brown fox');
+      // 句末 + 下一段无前导空白：补一个空格，避免英文粘字。
+      expect(mergeContinuationText('End.', 'Next'), 'End. Next');
+      expect(mergeContinuationText('End.', ' Next'), 'End. Next');
+    });
+
+    test('tool-round text never shrinks the streamed answer', () {
+      expect(mergeToolRoundText(streamed: 'Hello', nonStream: null), 'Hello');
+      expect(mergeToolRoundText(streamed: '', nonStream: 'Hello'), 'Hello');
+      // 非流式更短：保留已经展示给用户的流式文本。
+      expect(
+        mergeToolRoundText(streamed: 'Hello world', nonStream: 'Hello'),
+        'Hello world',
+      );
+      // 非流式是流式的超集：采用更完整的文本。
+      expect(
+        mergeToolRoundText(streamed: 'Hello', nonStream: 'Hello world'),
+        'Hello world',
+      );
+      // 内容分叉：不替换已展示文本。
+      expect(
+        mergeToolRoundText(streamed: 'Hello world', nonStream: 'Goodbye world'),
+        'Hello world',
+      );
+    });
+
+    test('history token keys are read both ways', () {
+      expect(
+        historyMessageInputTokens({'in': 11, 'out': 12}),
+        11,
+      );
+      expect(
+        historyMessageInputTokens({'inputTokens': 21, 'outputTokens': 22}),
+        21,
+      );
+      expect(historyMessageOutputTokens({'inputTokens': 21}), isNull);
+      expect(
+        historyMessageOutputTokens({'inputTokens': 21, 'outputTokens': 22}),
+        22,
+      );
+      expect(historyMessageInputTokens({'content': 'x'}), isNull);
+    });
+
+    test('assistant blocks keep plain replies on the markdown path', () {
+      // 普通回复必须返回 null blocks，否则 _buildMessage 会走纯文本分支，
+      // 标题 / 列表 / 代码块 / 表格样式全部丢失。
+      expect(
+        assistantBlocksForUi(
+          thinking: '',
+          text: 'plain answer',
+          toolCalls: const [],
+          elapsedMs: 1,
+        ),
+        isNull,
+      );
+      final thinking = assistantBlocksForUi(
+        thinking: 'plan',
+        text: 'answer',
+        toolCalls: const [],
+        elapsedMs: 12,
+      )!;
+      expect(
+        thinking.map((block) => block['type']).toList(),
+        containsAll(<String>['thinking', 'text']),
+      );
+      const call = ai.ToolCallContent(
+        id: 'call_1',
+        name: 'pipeline_tool',
+        arguments: {'action': 'undo', 'arguments': <String>[]},
+      );
+      final tool = assistantBlocksForUi(
+        thinking: '',
+        text: '',
+        toolCalls: [call],
+        elapsedMs: 1,
+      )!;
+      expect(tool.single['type'], 'tool_use');
+      expect(tool.single['id'], 'call_1');
+      // 跨轮重建：tool_use 块能还原 id / name / args。
+      final restored = assistantToolCallsFromBlocks(tool).single;
+      expect(restored.id, 'call_1');
+      expect(restored.name, 'pipeline_tool');
+      expect(restored.arguments['action'], 'undo');
+    });
+
+    test('history persistence skips empty streaming placeholders', () {
+      // 生成中/停止后残留的空 assistant 占位不能落盘。
+      expect(
+        shouldPersistHistoryMessage(
+          role: 'assistant',
+          content: '   ',
+          blocks: null,
+        ),
+        isFalse,
+      );
+      // 有正文的 assistant / 用户消息保留。
+      expect(
+        shouldPersistHistoryMessage(
+          role: 'assistant',
+          content: 'answer',
+          blocks: null,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldPersistHistoryMessage(
+          role: 'user',
+          content: '',
+          blocks: null,
+        ),
+        isTrue,
+      );
+      // 工具结果消息正文可能为空，但 blocks 非空，必须保留。
+      expect(
+        shouldPersistHistoryMessage(
+          role: 'assistant',
+          content: '',
+          blocks: [
+            {'type': 'tool_result', 'name': 'undo', 'content': 'ok'},
+          ],
+        ),
+        isTrue,
+      );
+    });
+
+    test('tool result blocks restore only when a toolCallId exists', () {
+      final restored = toolResultMessageFromBlock({
+        'type': 'tool_result',
+        'name': 'undo',
+        'content': 'ok',
+        'toolCallId': 'call_9',
+      });
+      expect(restored, isNotNull);
+      expect(restored!.role, ai.MessageRole.tool);
+      // 老历史没有 id：必须回退普通文本，不能发孤立 tool 消息（OpenAI 400）。
+      expect(
+        toolResultMessageFromBlock({
+          'type': 'tool_result',
+          'name': 'undo',
+          'content': 'ok',
+        }),
+        isNull,
+      );
+      // 只有 pending 集合里出现过同 id 的 assistant tool_call 才能结构化发回。
+      const block = {
+        'type': 'tool_result',
+        'name': 'undo',
+        'content': 'ok',
+        'toolCallId': 'call_9',
+      };
+      expect(
+        canRestoreStructuredToolResult(
+          pendingToolCallIds: {'call_9'},
+          block: block,
+        ),
+        isTrue,
+      );
+      expect(
+        canRestoreStructuredToolResult(
+          pendingToolCallIds: {'call_other'},
+          block: block,
+        ),
+        isFalse,
+      );
+      expect(
+        canRestoreStructuredToolResult(
+          pendingToolCallIds: {'call_9'},
+          block: const {'type': 'tool_result', 'content': 'ok'},
+        ),
+        isFalse,
+      );
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // 对话 UI：历史 / Markdown（离线，不联网）
+  // ──────────────────────────────────────────────────────────────────────
+  group('AiPanelView history and markdown', () {
+    testWidgets('keeps the whole handoff history instead of trimming it', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(800, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      AiPanelApi? api;
+      final history = <Map<String, dynamic>>[
+        for (var i = 0; i < 120; i++)
+          {
+            'role': i.isEven ? 'user' : 'assistant',
+            'content': 'message $i',
+          },
+      ];
+      await _pumpPanel(
+        tester,
+        _testPanel(
+          initialMessages: history,
+          onApiReady: (value) => api = value,
+        ),
+      );
+      expect(api, isNotNull);
+      expect(api!.exportMessages().length, 120);
+      // 模拟发送时计算请求窗口：只取最近 100 条，但 UI 历史仍是完整的 120。
+      final start = requestHistoryStartIndex(
+        api!.exportMessages().map((m) => m['role'] as String).toList(),
+      );
+      expect(start, greaterThan(0));
+      expect(api!.exportMessages().length, 120);
+      api!.importMessages(api!.exportMessages());
+      await tester.pump();
+      expect(api!.exportMessages().length, 120);
+      api!.importMessages([]);
+      await _teardownPanel(tester);
+    });
+
+    testWidgets('imports legacy and canonical token keys, exports canonical', (
+      tester,
+    ) async {
+      AiPanelApi? api;
+      await _pumpPanel(
+        tester,
+        _testPanel(
+          initialMessages: const [
+            {'role': 'user', 'content': 'a', 'in': 3, 'out': 4},
+            {
+              'role': 'assistant',
+              'content': 'b',
+              'inputTokens': 5,
+              'outputTokens': 6,
+            },
+          ],
+          onApiReady: (value) => api = value,
+        ),
+      );
+      var exported = api!.exportMessages();
+      expect(exported[0]['in'], 3);
+      expect(exported[0]['out'], 4);
+      // 旧键（inputTokens/outputTokens）也必须读出来。
+      expect(exported[1]['in'], 5);
+      expect(exported[1]['out'], 6);
+      // 导出统一使用 in/out，不再写旧键。
+      expect(exported[1].containsKey('inputTokens'), isFalse);
+      // 交接导入同样双向兼容。
+      api!.importMessages([
+        {'role': 'user', 'content': 'c', 'inputTokens': 7, 'outputTokens': 8},
+      ]);
+      await tester.pump();
+      exported = api!.exportMessages();
+      expect(exported.single['in'], 7);
+      expect(exported.single['out'], 8);
+      api!.importMessages([]);
+      await _teardownPanel(tester);
+    });
+
+    testWidgets('wide markdown tables get a horizontal scroll view', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(500, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await _pumpPanel(
+        tester,
+        _testPanel(
+          initialMessages: const [
+            {'role': 'user', 'content': 'show me a table'},
+            {
+              'role': 'assistant',
+              'content':
+                  '| Column A | Column B | Column C |\n'
+                  '| --- | --- | --- |\n'
+                  '| a very long value that cannot fit | another long value | third |',
+            },
+          ],
+        ),
+      );
+      await tester.pump();
+      // flutter_markdown_plus 只在 IntrinsicColumnWidth/FixedColumnWidth 时
+      // 给表格套横向 SingleChildScrollView；这是「宽表格不被裁切」的实现依据。
+      final horizontalScrolls = find.byWidgetPredicate(
+        (widget) =>
+            widget is SingleChildScrollView &&
+            widget.scrollDirection == Axis.horizontal,
+      );
+      expect(horizontalScrolls, findsWidgets);
+      expect(find.byType(MarkdownBody), findsWidgets);
+      await _teardownPanel(tester);
+    });
+
+    testWidgets('plain replies and text blocks both render markdown', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(600, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await _pumpPanel(
+        tester,
+        _testPanel(
+          initialMessages: const [
+            {'role': 'user', 'content': 'plain markdown?'},
+            {'role': 'assistant', 'content': '# Heading\n\n- item one'},
+            {'role': 'user', 'content': 'block markdown?'},
+            {
+              'role': 'assistant',
+              'content': '# Block Heading',
+              'blocks': [
+                {'type': 'text', 'text': '# Block Heading'},
+              ],
+            },
+          ],
+        ),
+      );
+      await tester.pump();
+      // blocks 为 null 的普通回复 + 带 text 块的回复（老历史）都必须走
+      // MarkdownBody，不能退化成 SelectableText 纯文本。
+      expect(find.byType(MarkdownBody), findsWidgets);
+      await _teardownPanel(tester);
+    });
   });
 }

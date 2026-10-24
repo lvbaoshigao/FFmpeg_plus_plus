@@ -2390,6 +2390,14 @@ class AppConfig {
   /// 仅移动端生效（桌面端是左侧边栏 + 顶栏，与本项无关）。
   String mobileNavPlacement;
 
+  /// 移动端子页面底部「悬浮动作按钮」所在侧：'right'（默认）/ 'left'。
+  ///
+  /// 典型场景是 AI 提供商详情页：底部胶囊切换栏（liquid_glass_tab_bar）
+  /// 与「获取模型 / 添加模型」两颗圆形动作按钮**分开**摆放，按钮整体
+  /// 靠向其中一侧。左撇子用户可切到左侧，右手拇指操作时可保持右侧。
+  /// 与 [mobileNavPlacement] 解耦：只影响动作按钮，不改菜单栏位置。
+  String mobileBottomActionSide;
+
   /// 移动端高刷新率：在支持 90 / 120 / 144Hz 的屏幕上请求该屏幕的最高刷新率
   /// （Android 专用，见 services/refresh_rate.dart + MainActivity 的原生实现）。
   /// 默认开启；关闭 = 交还系统默认刷新率（不干预），用于省电。
@@ -2517,6 +2525,7 @@ class AppConfig {
     this.noPreload = false,
     this.glassGpuOnDesktop = false,
     this.mobileNavPlacement = 'auto',
+    this.mobileBottomActionSide = 'right',
     this.highRefreshRate = true,
     this.borderEnabled = false,
     this.borderColor = 0xFF9E9E9E,
@@ -2751,6 +2760,13 @@ class AppConfig {
           ? v!
           : 'auto';
     }(),
+    // 底部动作按钮所在侧：非法/缺失值回退右侧（老配置升级无需迁移步骤）。
+    mobileBottomActionSide: () {
+      // 不用 as String?：用户手改配置文件时写成数字/布尔会抛 TypeError，
+      // ConfigService 的 catch 会把整份配置回退默认值（设置全丢）。
+      final v = json['mobile_bottom_action_side'];
+      return v == 'left' ? 'left' : 'right';
+    }(),
     highRefreshRate: json['high_refresh_rate'] as bool? ?? true,
     borderEnabled: json['border_enabled'] as bool? ?? false,
     borderColor: _asInt(json['border_color'], 0xFF9E9E9E), // [FIX M-7]
@@ -2844,6 +2860,7 @@ class AppConfig {
     'no_preload': noPreload,
     'glass_gpu_on_desktop': glassGpuOnDesktop,
     'mobile_nav_placement': mobileNavPlacement,
+    'mobile_bottom_action_side': mobileBottomActionSide,
     'high_refresh_rate': highRefreshRate,
     'border_enabled': borderEnabled,
     'border_color': borderColor,

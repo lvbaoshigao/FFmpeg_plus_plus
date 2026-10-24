@@ -126,6 +126,76 @@ void main() {
     await tester.pump(const Duration(milliseconds: 600));
   });
 
+  testWidgets('PC 端 AI 总览：仪表盘布局（状态带 + 提供商管理 + 权限/MCP/高级）', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(900, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final state = AppState();
+    state.updateConfig(
+      (c) => c
+        ..cardStyle = 'gray'
+        ..pillStyle = 'gray'
+        ..aiEnabled = true
+        ..mcpEnabled = false,
+    );
+    final p1 = AiProfile(
+      name: 'OpenAI 默认',
+      provider: 'openai',
+      model: 'gpt-4o',
+    );
+    final p2 = AiProfile(
+      name: 'Claude',
+      provider: 'anthropic',
+      model: 'claude-sonnet-5',
+    );
+    state.updateConfig((c) {
+      c.aiProfiles.addAll([p1, p2]);
+      c.activeAiProfileId = p1.id;
+      return c;
+    });
+
+    Future<void> pumpAt(Size size) async {
+      tester.view.physicalSize = size;
+      await tester.pumpWidget(
+        _harness(
+          state,
+          SingleChildScrollView(
+            padding: const EdgeInsets.all(12),
+            child: Builder(builder: (ctx) => aiSettingsContent(ctx, state)),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    // 900 是两列布局的下边界：此时提供商面板退化为单列，不能溢出。
+    await pumpAt(const Size(900, 900));
+    expect(tester.takeException(), isNull);
+
+    await pumpAt(const Size(1280, 900));
+    // 顶部状态带：AI / MCP 开关（沿用移动端同一批 Key）。
+    expect(find.byKey(const ValueKey('ai_enabled_toggle')), findsOneWidget);
+    expect(find.byKey(const ValueKey('mcp_enabled_toggle')), findsOneWidget);
+    // 提供商管理区：标题 + 管理入口 + 两张提供商卡（名称 / 当前徽标）。
+    expect(find.text('提供商'), findsOneWidget);
+    expect(find.text('管理'), findsOneWidget);
+    expect(find.text('OpenAI 默认'), findsOneWidget);
+    expect(find.text('Claude'), findsOneWidget);
+    expect(find.text('当前'), findsOneWidget);
+    // 右栏三个分组：MCP 服务 / 权限 / 高级。
+    expect(find.text('MCP 服务'), findsOneWidget);
+    expect(find.text('权限'), findsOneWidget);
+    expect(find.text('高级'), findsOneWidget);
+
+    // 快捷入口：点提供商卡直达详情页（不再是「只能进二级列表」）。
+    await tester.tap(find.text('Claude'));
+    await tester.pumpAndSettle();
+    expect(find.byType(MobileAiProviderDetailPage), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 600));
+  });
+
   testWidgets('提供商详情页（新建 + 编辑）可构建', (tester) async {
     // 详情页是长 ListView（惰性构建）：必须用竖屏手机视口，
     // 否则折叠区之下的字段（如「名称」）根本不会被 build，find 会漏。

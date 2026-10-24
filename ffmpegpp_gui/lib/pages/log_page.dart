@@ -13,6 +13,8 @@ import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_ui.dart';
 import '../widgets/toast.dart';
 import '../widgets/wallpaper_background.dart';
+// Linux 自绘窗口修饰（CSD）：全屏路由页统一套 WindowChrome。
+import '../widgets/window_chrome.dart';
 
 class LogPage extends StatefulWidget {
   const LogPage({super.key});
@@ -65,17 +67,24 @@ class _LogPageState extends State<LogPage> {
         // 日志页是通过 Navigator.push 推到根 Navigator 的新路由，不在 _buildRootStack
         // 的壁纸 Stack 里。统一交给 withWallpaper 铺「主题底色 + 壁纸 + 遮罩」，
         // 与其它二级页保持一致（内部只细粒度 select 壁纸路径/透明度）。
-        return withWallpaper(context, Scaffold(
-          backgroundColor: Colors.transparent,
-          body: Column(children: [
-            _toolbar(scheme, cfg, entries, filtered, isZh),
-            _filterBar(scheme, isZh),
-            Expanded(child: filtered.isEmpty
-                ? Center(child: Text(isZh ? '暂无日志' : 'No logs yet',
-                    style: TextStyle(color: scheme.outline, fontSize: 13)))
-                : _buildList(filtered, scheme, cfg, isZh)),
-          ]),
-        ));
+        // Linux 客户端修饰（CSD）：路由页统一套 WindowChrome，且必须放在
+        // withWallpaper 的**内层**（标题栏玻璃要采样壁纸，见 window_chrome.dart）。
+        return withWallpaper(
+          context,
+          WindowChrome(
+            child: Scaffold(
+              backgroundColor: Colors.transparent,
+              body: Column(children: [
+                _toolbar(scheme, cfg, entries, filtered, isZh),
+                _filterBar(scheme, isZh),
+                Expanded(child: filtered.isEmpty
+                    ? Center(child: Text(isZh ? '暂无日志' : 'No logs yet',
+                        style: TextStyle(color: scheme.outline, fontSize: 13)))
+                    : _buildList(filtered, scheme, cfg, isZh)),
+              ]),
+            ),
+          ),
+        );
       },
     );
   }

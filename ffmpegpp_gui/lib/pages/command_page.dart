@@ -16,6 +16,8 @@ import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_ui.dart';
 import '../widgets/toast.dart';
 import '../widgets/wallpaper_background.dart';
+// Linux 自绘窗口修饰（CSD）：全屏路由页统一套 WindowChrome。
+import '../widgets/window_chrome.dart';
 
 class CommandPage extends StatefulWidget {
   const CommandPage({super.key});
@@ -256,40 +258,47 @@ class _CommandPageState extends State<CommandPage> {
   Widget _buildMobile(BuildContext context, ColorScheme scheme, AppStrings s, bool zh) {
     // 命令页经 Navigator.push 单独路由，不在根壁纸 Stack 内；统一交给
     // withWallpaper 铺「主题底色 + 壁纸 + 遮罩」，与其它二级页保持一致。
-    return withWallpaper(context, Scaffold(
-      backgroundColor: Colors.transparent,
-      body: Column(children: [
-        MobileSubPageTopBar(
-          title: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.terminal_outlined, size: 20, color: scheme.primary),
-            const SizedBox(width: 8),
-            Text(s.navCommand),
-          ]),
-          actions: [
-            // 与主界面动作药丸一致的 34×34 紧凑圆形按钮（替换原 36×36 的 Material IconButton）
-            MobileGlassPillAction(
-              icon: Icons.delete_outline,
-              tooltip: s.cmdClearOutput,
-              color: scheme.error,
-              onTap: _clearOutput,
+    // Linux 客户端修饰（CSD）：路由页统一套 WindowChrome，且必须放在
+    // withWallpaper 的**内层**（标题栏玻璃要采样壁纸，见 window_chrome.dart）。
+    return withWallpaper(
+      context,
+      WindowChrome(
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          body: Column(children: [
+            MobileSubPageTopBar(
+              title: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.terminal_outlined, size: 20, color: scheme.primary),
+                const SizedBox(width: 8),
+                Text(s.navCommand),
+              ]),
+              actions: [
+                // 与主界面动作药丸一致的 34×34 紧凑圆形按钮（替换原 36×36 的 Material IconButton）
+                MobileGlassPillAction(
+                  icon: Icons.delete_outline,
+                  tooltip: s.cmdClearOutput,
+                  color: scheme.error,
+                  onTap: _clearOutput,
+                ),
+              ],
+              onBack: () => Navigator.of(context).maybePop(),
             ),
-          ],
-          onBack: () => Navigator.of(context).maybePop(),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: MobileUi.subPagePaddingH, vertical: 8),
+                child: Column(children: [
+                  _buildMobileInputArea(scheme, s, zh),
+                  const SizedBox(height: 10),
+                  Expanded(child: _buildMobileOutputArea(scheme, s, zh)),
+                ]),
+              ),
+            ),
+            SizedBox(height: MediaQuery.paddingOf(context).bottom),
+          ]),
         ),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(
-                horizontal: MobileUi.subPagePaddingH, vertical: 8),
-            child: Column(children: [
-              _buildMobileInputArea(scheme, s, zh),
-              const SizedBox(height: 10),
-              Expanded(child: _buildMobileOutputArea(scheme, s, zh)),
-            ]),
-          ),
-        ),
-        SizedBox(height: MediaQuery.paddingOf(context).bottom),
-      ]),
-    ));
+      ),
+    );
   }
 
 

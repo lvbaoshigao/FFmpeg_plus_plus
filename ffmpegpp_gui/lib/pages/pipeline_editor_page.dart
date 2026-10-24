@@ -18,8 +18,6 @@ import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
-import 'package:window_manager/window_manager.dart';
-
 import '../models/models.dart';
 import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
@@ -85,6 +83,9 @@ import '../widgets/step_editors/video_geometry_step_editor.dart';
 import '../widgets/step_editors/video_overlay_step_editor.dart';
 import '../widgets/toast.dart';
 import '../widgets/wallpaper_background.dart';
+// 全应用统一的 Linux 自绘窗口修饰（CSD）：编辑器不再自己画 36px 标题栏，
+// 否则 AI 抽屉 / 右侧面板会与窗口按钮重叠，且二级路由页会叠出两条标题栏。
+import '../widgets/window_chrome.dart';
 
 const _uuid = Uuid();
 
@@ -199,7 +200,6 @@ bool _matchesKeyBinding(List<String> binding, KeyEvent event) {
 }
 
 class _PipelineEditorPageState extends State<PipelineEditorPage>
-    with WindowListener
     implements PanelHostDelegate {
   final List<PipelineNode> _nodes = [];
   final List<PipelineConnection> _connections = [];
@@ -296,7 +296,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   late final AppState _appState;
   double _currentScale = 1.0;
   int _sourceAnchorIndex = 0;
-  bool _isMaximized = false;
   PipelineStepType? _previewedToolboxType;
   LogicBlockType? _previewedLogicType;
   final List<LogicBlock> _logicBlocks = [];
@@ -594,12 +593,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     // 即反复泄漏，这是「用一段时间后内存涨到几百 MB」的来源之一。
     _appState = context.read<AppState>();
     _appState.addListener(_onPanelAppStateChanged);
-    if (!Platform.isWindows && !isMobilePlatform) {
-      windowManager.addListener(this);
-      windowManager.isMaximized().then((v) {
-        if (mounted) setState(() => _isMaximized = v);
-      });
-    }
+    // 编辑器不再监听 window_manager 的 maximize 状态：窗口按钮与最大化图标
+    // 统一由 widgets/window_chrome.dart 维护（见本文件 build() 的 WindowChrome
+    // 包裹）。这样也去掉了 windowManager 对本 State 的强引用。
     final g = widget.initialGraph ?? widget.video.pipelineGraph;
     final isConfigMode = widget.video.filepath.isEmpty;
     if (g.nodes.isNotEmpty) {
@@ -825,10 +821,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     _canvasFractionNotifier.dispose();
     _toolboxFractionNotifier.dispose();
     _toolboxSearchCtrl.dispose();
-    // 移除 windowManager 监听，避免 window manager 持有本 State 的强引用导致泄漏
-    if (!Platform.isWindows && !isMobilePlatform) {
-      windowManager.removeListener(this);
-    }
     // 独立面板窗口：编辑器一关宿主就不在了。先摘委托再让子窗口自毁 ——
     // 反过来的话，子窗口在自毁前发出的请求会打到一个已经销毁的 State 上。
     if (!isMobilePlatform) {
@@ -886,16 +878,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   }
 
   void _invalidateTransformCache() => _cachedInverse = null;
-
-  @override
-  void onWindowMaximize() {
-    if (mounted) setState(() => _isMaximized = true);
-  }
-
-  @override
-  void onWindowUnmaximize() {
-    if (mounted) setState(() => _isMaximized = false);
-  }
 
   Future<void> _genThumb() async {
     final fp = widget.video.filepath;
@@ -3924,6 +3906,15 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       context.select<AppState, String>((st) => st.config.language),
     );
 
+    // 自绘 CSD 统一走 WindowChrome：Linux 上它给内容整体下移 36px 并补窗口
+    // 按钮 / 四边缩放热区，非 Linux 是 no-op。必须放在 _withWallpaper **里面**：
+    // 壁纸铺满整窗（含标题栏区域），而 WindowChrome 的玻璃标题栏要能采样到壁纸。
+    //
+    // 旧实现是本页自己 Stack 一条 36px 标题栏盖在内容上，再在 _buildBody 里手工
+    // 垫 36px —— 两处各自维护高度，AI 抽屉 / 右侧面板就可能被标题栏压住；而且
+    // 二级路由页（本页）会与主窗口标题栏叠出两条。现在高度只有 WindowChrome
+    // 一个来源（见 _buildBody 的 topPad 归零）。
+    final nav = Navigator.of(context);
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
@@ -3933,7 +3924,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       },
       child: _withWallpaper(
         context,
-        Scaffold(
+        WindowChrome(
+          // 返回键与旧 CSD 左键行为一致：先走 _onWillPop 的未保存确认。
+          onBack: () async {
+            if (await _onWillPop()) nav.pop();
+          },
+          child: Scaffold(
           backgroundColor: Colors.transparent,
           appBar: Platform.isWindows
               ? AppBar(
@@ -3977,6 +3973,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                 )
               : null,
           body: _buildBody(scheme, s),
+          ),
         ),
       ),
     );
@@ -4410,15 +4407,21 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     ctrl.dispose();
   }
 
-  // ── Body with CSD title bar ──
+  // ── Body ──
+  //
+  // 注意：Linux 的 36px 标题栏已由 build() 外层的 WindowChrome 统一垫高，
+  // 本方法内的 topPad 对桌面端必须保持 0（否则双 36px，会压掉 AI 抽屉高度）。
 
   Widget _buildBody(ColorScheme scheme, AppStrings s) {
-    // 横屏沉浸式（状态栏已隐藏）时不再预留顶部安全区，画布铺满整个屏幕
-    final topPad = Platform.isWindows
-        ? 0.0
-        : (isMobilePlatform
-              ? (_isLandscape ? 0.0 : MediaQuery.of(context).padding.top)
-              : 36.0);
+    // 顶部留白只由两处来源：
+    //  * 移动端：系统状态栏安全区（横屏沉浸时状态栏已隐藏 → 0）；
+    //  * 桌面端：0！Linux 的 36px 已由外层 WindowChrome 统一垫高，这里再垫
+    //    一次就会出现「双重 36px」顶部空白，并把 AI 抽屉/右侧面板的可视高度
+    //    压掉 36px。Windows/macOS 用系统标题栏，同样不需要内边距 ——
+    //    旧实现里 macOS 也误垫了 36px，这里一并修正。
+    final topPad = isMobilePlatform
+        ? (_isLandscape ? 0.0 : MediaQuery.of(context).padding.top)
+        : 0.0;
     final content = Padding(
       padding: EdgeInsets.only(top: topPad),
       child: Column(
@@ -4649,132 +4652,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         ],
       ),
     );
-    // 仅 Linux 使用自绘标题栏（CSD）；Windows/macOS 用系统默认标题栏，
-    // 避免「双标题栏 + 重复窗口按钮」
-    if (Platform.isWindows || Platform.isMacOS || isMobilePlatform) {
-      return content;
-    }
-    return Stack(
-      children: [
-        content,
-        Positioned(
-          left: 0,
-          right: 0,
-          top: 0,
-          child: _buildEditorCsdTitleBar(scheme),
-        ),
-      ],
-    );
-  }
-
-  /// Linux 专用自绘标题栏（CSD）；Windows/macOS/移动端用系统标题栏，见调用点。
-  ///
-  /// 它同样是玻璃表面，因此也吃「玻璃细节」：σ18 与 alpha 160/180 是历史基准，
-  /// 默认参数下观感不变（Linux 不钳制 σ，18 × 1.0 = 18）。
-  Widget _buildEditorCsdTitleBar(ColorScheme scheme) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final tuning = glassTuningOf(context);
-    final double sigma = tunedGlassSigma(18, tuning);
-    return ClipRect(
-      child: BackdropFilter(
-        // σ 走进程级缓存（见 cachedGlassBlur 说明）。
-        filter: cachedGlassBlur(sigma),
-        child: Container(
-          height: 36,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                scheme.surface.withAlpha(
-                  tunedGlassAlpha(isDark ? 160 : 180, tuning),
-                ),
-                scheme.surface.withAlpha(
-                  tunedGlassAlpha(isDark ? 120 : 140, tuning),
-                ),
-              ],
-            ),
-            border: Border(
-              bottom: BorderSide(
-                color: scheme.outlineVariant.withAlpha(isDark ? 60 : 80),
-                width: 0.5,
-              ),
-            ),
-          ),
-          child: Stack(
-            children: [
-              DragToMoveArea(
-                child: GestureDetector(
-                  onDoubleTap: () async {
-                    if (await windowManager.isMaximized()) {
-                      windowManager.unmaximize();
-                    } else {
-                      windowManager.maximize();
-                    }
-                  },
-                  child: Container(color: Colors.transparent),
-                ),
-              ),
-              Positioned(
-                left: 8,
-                top: 0,
-                bottom: 0,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _EditorCsdBtn(
-                      icon: Icons.arrow_back,
-                      color: scheme.onSurfaceVariant,
-                      onTap: () async {
-                        final nav = Navigator.of(context);
-                        if (await _onWillPop()) nav.pop();
-                      },
-                    ),
-                  ],
-                ),
-              ),
-              Positioned(
-                right: 0,
-                top: 0,
-                bottom: 0,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _EditorCsdBtn(
-                      icon: Icons.remove,
-                      color: scheme.onSurfaceVariant,
-                      onTap: () => windowManager.minimize(),
-                    ),
-                    _EditorCsdBtn(
-                      icon: _isMaximized
-                          ? Icons.filter_none
-                          : Icons.crop_square,
-                      color: scheme.onSurfaceVariant,
-                      onTap: () async {
-                        if (await windowManager.isMaximized()) {
-                          windowManager.unmaximize();
-                        } else {
-                          windowManager.maximize();
-                        }
-                      },
-                    ),
-                    // hoverBg 用 Windows 关闭按钮的系统约定红（#E81123）而不是语义色：
-                    // 它属于窗口装饰，不参与主题化 —— 若换成 semantic danger，深色主题下
-                    // 会变成浅粉底，与用户对「红叉按钮」的预期不符。
-                    _EditorCsdBtn(
-                      icon: Icons.close,
-                      color: scheme.onSurface,
-                      hoverBg: const Color(0xFFE81123),
-                      onTap: () => windowManager.close(),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+    // Linux 的 36px 标题栏占位由外层 WindowChrome 统一提供（非 Linux no-op），
+    // 这里直接返回内容；不再自绘标题栏，也就不会出现「双标题栏 / 重复窗口按钮」。
+    return content;
   }
 
   // ── 壁纸 ──
@@ -6234,7 +6114,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          // AI 侧边抽屉（收起时宽度 0）
+                          // AI 侧边抽屉（收起时宽度 0）。
+                          //
+                          // 高度裁切审计（task-2）：抽屉的 top/bottom 由画布
+                          // 视口决定，而画布已在 WindowChrome 之内（顶部整体
+                          // 下移 36px），所以抽屉头部不会再被 Linux CSD 压住；
+                          // 视口高度扣除了底部工具条，输入框也不会被底栏裁掉。
+                          // 桌面端无软键盘 viewInsets，无需额外避让。
                           AnimatedContainer(
                             duration: const Duration(milliseconds: 200),
                             curve: Curves.easeOutCubic,
@@ -10653,6 +10539,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     }
 
     // 竖屏：底部弹层（顶部留白，可见半透明遮罩后的画布）
+    //
+    // 键盘 / 高度裁切审计（task-2）：useSafeArea: true 只包
+    // SafeArea(bottom: false)，它会把容器内 MediaQuery.padding.top 归零、
+    // 但 viewPadding.top 保持原值；因此下面的 available 用 viewPadding.top
+    // 扣减、外层再补 topGap + insets，总和恰好等于屏幕高度，不会出现
+    // 「头部被顶出屏幕」或「输入框被键盘盖住」。底部安全区（手势条）在
+    // 键盘收起时由 media.padding.bottom 预留，键盘弹起时 padding.bottom 为 0，
+    // 与 insets 不叠加。
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -12521,50 +12415,6 @@ class _BoxSelectPainter extends CustomPainter {
       old.rect != rect || old.color != color;
 }
 
-class _EditorCsdBtn extends StatefulWidget {
-  final IconData icon;
-  final Color color;
-  final Color? hoverBg;
-  final VoidCallback onTap;
-  const _EditorCsdBtn({
-    required this.icon,
-    required this.color,
-    this.hoverBg,
-    required this.onTap,
-  });
-  @override
-  State<_EditorCsdBtn> createState() => _EditorCsdBtnState();
-}
-
-class _EditorCsdBtnState extends State<_EditorCsdBtn> {
-  bool _hovering = false;
-
-  @override
-  Widget build(BuildContext context) {
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovering = true),
-      onExit: (_) => setState(() => _hovering = false),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: Container(
-          width: 46,
-          height: 36,
-          color: _hovering
-              ? (widget.hoverBg ?? widget.color.withAlpha(30))
-              : Colors.transparent,
-          child: Icon(
-            widget.icon,
-            size: 18,
-            color: _hovering && widget.hoverBg != null
-                ? Colors.white
-                : widget.color,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 // ═══════════════════════════════════════════
 // AI Chat Dialog
 // ═══════════════════════════════════════════
@@ -12704,6 +12554,264 @@ class AiPanelView extends StatefulWidget {
 
 enum _AiMobileSidebarPage { conversation, history, tools }
 
+// ══════════════════════════════════════════════════════════════════════════
+// AI 对话机制：可离线单测的纯逻辑
+// ══════════════════════════════════════════════════════════════════════════
+//
+// 这些函数刻意放在 State 之外。续写 / 文本合并 / 历史字段兼容都是「对话机制」
+// 的核心规则，一旦和网络、setState 搅在一起，就只能靠真机碰运气验证。抽出来后
+// test/ai_dialogue_panel_test.dart 可以完全离线覆盖边界（task-2 的要求）；
+// 页面里的调用点只负责把状态喂进来、把结果写回 UI。
+
+/// 合并 maxTokens 自动续写的两段正文。
+///
+/// 续写语义是「从被截断的位置接着写」，所以默认直接拼接：模型返回的
+/// continuation 往往就是半句的剩余部分，多插一个换行反而把单词劈开。
+/// 唯一例外是上一段已经以句末标点结束、下一段又没有前导空白 —— 这时补一个
+/// 空格，避免 "end.Next" 这种英文粘字。
+///
+/// 纯函数，流式期间也用它（每次都以「本轮基线 + 当前 buffer」重算），
+/// 因此实现必须幂等、无副作用。
+String mergeContinuationText(String previous, String next) {
+  if (previous.isEmpty || next.isEmpty) return previous + next;
+  final endsSentence = RegExp(r'[.!?。！？:：;；)\]}"”]$').hasMatch(previous);
+  final startsWithSpace = RegExp(r'^\s').hasMatch(next);
+  return endsSentence && !startsWithSpace ? '$previous $next' : '$previous$next';
+}
+
+/// 工具调用轮里「流式正文」与「非流式完整响应正文」的取舍。
+///
+/// 根因：OpenAI / Anthropic 的流式工具调用只给 partial args（没有 id/name），
+/// 必须再发一次非流式请求才能拿到完整 toolCalls；但那次请求是**重新生成**，
+/// 正文可能与已经展示给用户的流式文本不同（更短 / 措辞不同）。旧实现直接
+/// content = response.text，于是流式已经显示的内容会被覆盖甚至变短 ——
+/// 用户看到的就是「回答被截断」。
+///
+/// 定规则：
+///  * 流式为空 → 用非流式（兜底，正常不会发生）；
+///  * 非流式更短 → 保留流式，用户已经看到的内容绝不回退；
+///  * 非流式以流式文本为前缀且不短 → 采用非流式（通常只是补全了最后半句）；
+///  * 其余（长度不短但内容分叉）→ 保留流式，避免展示文本突然换一套。
+String mergeToolRoundText({required String streamed, String? nonStream}) {
+  if (nonStream == null || nonStream.isEmpty) return streamed;
+  if (streamed.isEmpty) return nonStream;
+  if (nonStream.length < streamed.length) return streamed;
+  if (nonStream.startsWith(streamed)) return nonStream;
+  return streamed;
+}
+
+/// maxTokens 自动续写的轮次上限与决策（纯状态机）。
+///
+/// 用类而不是散落的 bool 是为了让「最多 2-3 轮、空响应不续写、用户停止不续写」
+/// 这三条硬约束能被离线测试直接驱动。调用方在每轮明确收到
+/// [ai.FinishReason.maxTokens] 且正文非空时才继续；达到上限后本函数永远返回
+/// false，因此不可能出现无限续写。
+class AiAutoContinuePolicy {
+  AiAutoContinuePolicy({this.maxRounds = 3}) : assert(maxRounds > 0);
+
+  /// 同一 assistant 气泡最多续写几轮（不含首轮）。
+  final int maxRounds;
+
+  int _rounds = 0;
+  bool get exhausted => _rounds >= maxRounds;
+  int get rounds => _rounds;
+
+  /// 续写指令只进请求上下文，**不会**作为用户气泡出现在 UI 里。
+  static const String continuationPrompt =
+      'Your previous response was cut off by the max_tokens limit. Continue it '
+      'from exactly where it stopped. Do not repeat any text you already wrote, '
+      'do not add a preamble, and do not restart the answer.';
+
+  /// 是否应发起下一轮续写；返回 true 时内部轮次 +1。
+  ///
+  /// 必须同时满足：模型明确因 maxTokens 停止、已有非空正文、用户没有按停止、
+  /// 未超过 [maxRounds]。空响应不续写 —— 否则模型只回了一个 finishReason 时
+  /// 会反复请求同一件事。
+  bool shouldContinue({
+    required ai.FinishReason? finishReason,
+    required String content,
+    required bool stopRequested,
+  }) {
+    if (stopRequested || exhausted) return false;
+    if (finishReason != ai.FinishReason.maxTokens) return false;
+    if (content.trim().isEmpty) return false;
+    _rounds++;
+    return true;
+  }
+
+  void reset() => _rounds = 0;
+}
+
+/// 构建请求上下文时「从 UI 历史里的哪一条开始」装进 context（只读）。
+///
+/// 根因：旧实现发送时直接 _messages.removeRange(0, ...)，把用户刚看过的
+/// 历史从**界面**里删掉。现在 UI 永远保留完整对话；请求侧只取最近
+/// [maxMessages] 条，真正的 token 裁剪交给 [ai.ContextManager]
+/// （它按 maxTokens - reservedTokens 滑窗删除最旧消息，同样只发生在请求上下文，
+/// 不动 UI 列表）。
+///
+/// 窗口起点会向后对齐到最近的 user 消息：避免窗口正好切在 assistant
+/// tool_calls 与紧随其后的 tool_result 之间，否则 OpenAI 会因
+/// 「tool 消息前没有对应 tool_calls」直接 400。
+int requestHistoryStartIndex(List<String> roles, {int maxMessages = 100}) {
+  if (maxMessages <= 0 || roles.length <= maxMessages) return 0;
+  final start = roles.length - maxMessages;
+  final aligned = roles.indexOf('user', start);
+  if (aligned >= 0) return aligned;
+  // 窗口内没有 user（极短 maxMessages / 异常历史）：向更早找最近一条 user，
+  // 避免请求以 assistant 开头。
+  final nearestUser = roles.lastIndexOf('user', start);
+  return nearestUser >= 0 ? nearestUser : start;
+}
+
+/// 组装 assistant 消息的 UI blocks（思考 / 正文 / 工具调用）。
+///
+/// 关键规则：**只有存在思考或工具调用时才写 text 块**；普通回复返回 null。
+/// 根因（Lead 复查发现的回归风险）：_buildMessage 对 assistant 的渲染分支是
+/// 「blocks 非空 → Column(逐块渲染)」，只有 blocks 为 null 才走
+/// _buildAssistantContent → MarkdownBody。若普通回复也塞一个 text 块，标题 /
+/// 列表 / 代码块 / 表格样式会全部退化成纯文本（而且最终 setState 会保留流式
+/// 期间的 blocks，不是一闪而过）。
+///
+/// tool_use 块必须写入并保留 id / name / input（跨轮重建上下文要用，见
+/// assistantToolCallsFromBlocks）；thinking 块的 durationMs 用于 UI 展示耗时。
+List<Map<String, dynamic>>? assistantBlocksForUi({
+  required String thinking,
+  required String text,
+  required List<ai.ToolCallContent> toolCalls,
+  required int elapsedMs,
+}) {
+  if (thinking.isEmpty && toolCalls.isEmpty) return null;
+  final blocks = <Map<String, dynamic>>[];
+  if (thinking.isNotEmpty) {
+    blocks.add({
+      'type': 'thinking',
+      'thinking': thinking,
+      'durationMs': elapsedMs,
+    });
+  }
+  if (text.isNotEmpty) blocks.add({'type': 'text', 'text': text});
+  for (final call in toolCalls) {
+    blocks.add({
+      'type': 'tool_use',
+      'id': call.id,
+      'name': call.name,
+      'input': call.arguments,
+    });
+  }
+  return blocks.isEmpty ? null : blocks;
+}
+
+/// 从 UI blocks 还原 assistant 的 tool_calls（跨轮重建上下文用）。
+///
+/// 根因：旧实现重建上下文时把所有非 user 消息都塞成 assistant 文本、
+/// tool_result 块以 user 文本发回，assistant tool_calls 结构完全丢失。模型
+/// 于是看到「用户凭空说了一段工具结果」，可能重复调用同一工具。现在发送时把
+/// tool_use 块写进 UI 消息的 blocks（见 _assistantBlocks），重建时还原成
+/// ai.Message.assistant(toolCalls: ...) + ai.Message.toolResult(...)。
+List<ai.ToolCallContent> assistantToolCallsFromBlocks(
+  List<Map<String, dynamic>>? blocks,
+) {
+  if (blocks == null) return const <ai.ToolCallContent>[];
+  final out = <ai.ToolCallContent>[];
+  for (final block in blocks) {
+    if (block['type'] != 'tool_use') continue;
+    final id = block['id'] as String?;
+    final name = block['name'] as String?;
+    if (id == null || id.isEmpty || name == null || name.isEmpty) continue;
+    final rawInput = block['input'];
+    final args = rawInput is Map
+        ? Map<String, dynamic>.from(rawInput)
+        : <String, dynamic>{};
+    out.add(ai.ToolCallContent(id: id, name: name, arguments: args));
+  }
+  return out;
+}
+
+/// 把 UI 的 tool_result 块还原成 SDK tool 消息；缺少 toolCallId 时返回 null。
+///
+/// 老历史 / 文本协议产生的块没有 id，必须回退成普通文本：OpenAI 会拒绝
+/// 「前面没有 assistant tool_calls 的孤立 tool 消息」（400），不能在重建时
+/// 想当然地发 tool 角色。
+ai.Message? toolResultMessageFromBlock(Map<String, dynamic> block) {
+  if (block['type'] != 'tool_result') return null;
+  final id = block['toolCallId'] as String?;
+  final name = block['name'] as String? ?? 'tool';
+  if (id == null || id.isEmpty) return null;
+  final content = block['content']?.toString() ?? '';
+  final isError =
+      content.startsWith('Error:') || content.startsWith('Blocked:');
+  return ai.Message.toolResult(
+    toolCallId: id,
+    name: name,
+    result: content,
+    isError: isError,
+  );
+}
+
+/// 历史重建时，某个 tool_result 块能否以结构化 tool 消息发回。
+///
+/// 只有「前面出现过同 id 的 assistant tool_call」才可以：老版本历史只存了
+/// toolResult 的 toolCallId、没存 assistant tool_use（或文本协议生成的块根本
+/// 没有 id），此时发孤立 tool 角色会被 OpenAI / Anthropic 400 拒绝。
+bool canRestoreStructuredToolResult({
+  required Set<String> pendingToolCallIds,
+  required Map<String, dynamic> block,
+}) {
+  if (block['type'] != 'tool_result') return false;
+  final id = block['toolCallId'] as String?;
+  return id != null && id.isNotEmpty && pendingToolCallIds.contains(id);
+}
+
+/// 历史 / 独立窗口交接消息的 token 字段读取，双向兼容。
+///
+/// 根因：_saveCurrentSession 写的是 inputTokens / outputTokens，而
+/// exportMessages / importMessages 用 in / out —— 两套键互不相认，
+/// 结果历史会话重新加载或交接给独立窗口后 token 统计归零。现在持久化统一写
+/// in / out，读取侧同时接受两套键，旧文件无需迁移。
+int? historyMessageInputTokens(Map<String, dynamic> message) {
+  final value = message['in'] ?? message['inputTokens'];
+  return value is num ? value.toInt() : null;
+}
+
+int? historyMessageOutputTokens(Map<String, dynamic> message) {
+  final value = message['out'] ?? message['outputTokens'];
+  return value is num ? value.toInt() : null;
+}
+
+/// 历史落盘过滤：空的 assistant 占位（停止/异常路径留下的流式半成品）
+/// 不写进历史文件。有 blocks 的工具结果消息即使正文为空也必须保留。
+/// 抽成纯函数是为了能离线验证「保存不写半截流式占位」。
+bool shouldPersistHistoryMessage({
+  required String role,
+  required String content,
+  required List<Map<String, dynamic>>? blocks,
+}) {
+  if (role != 'assistant') return true;
+  return content.trim().isNotEmpty || (blocks != null && blocks.isNotEmpty);
+}
+
+/// 单次流式请求的私有状态。
+///
+/// 根因（停止 / 重发竞态）：旧实现把 _stopRequested 放在面板级，停止后
+/// _activeRequestStop 直到 finally 才清空，于是「停止 → 立刻再发」会被
+/// _send 的守卫静默拒绝；若提前清空，旧请求的 finally 又会把**新请求**的
+/// 订阅置 null、把 _loading 改来改去。改成每请求实例 + 身份判断
+/// （identical(_activeRequest, request)）后，旧请求的回调只影响它自己。
+class _AiStreamRequest {
+  final Completer<void> stopSignal = Completer<void>();
+  StreamSubscription<ai.StreamChunk>? subscription;
+  bool stopRequested = false;
+  bool finished = false;
+
+  void requestStop() {
+    if (stopRequested) return;
+    stopRequested = true;
+    if (!stopSignal.isCompleted) stopSignal.complete();
+    unawaited(subscription?.cancel());
+  }
+}
+
 class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
   @override
   void initState() {
@@ -12725,8 +12833,9 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
         _messages.add((
           role: (m['role'] as String?) ?? 'assistant',
           content: (m['content'] as String?) ?? '',
-          inputTokens: (m['in'] as num?)?.toInt(),
-          outputTokens: (m['out'] as num?)?.toInt(),
+          // 交接消息的 token 键双向兼容（见 historyMessageInputTokens）。
+          inputTokens: historyMessageInputTokens(m),
+          outputTokens: historyMessageOutputTokens(m),
           blocks: (m['blocks'] as List?)
               ?.whereType<Map<String, dynamic>>()
               .toList(),
@@ -12756,8 +12865,9 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
         _messages.add((
           role: (m['role'] as String?) ?? 'assistant',
           content: (m['content'] as String?) ?? '',
-          inputTokens: (m['in'] as num?)?.toInt(),
-          outputTokens: (m['out'] as num?)?.toInt(),
+          // 兼容独立窗口/旧版本交接过来的两套 token 键。
+          inputTokens: historyMessageInputTokens(m),
+          outputTokens: historyMessageOutputTokens(m),
           blocks: (m['blocks'] as List?)
               ?.whereType<Map<String, dynamic>>()
               .toList(),
@@ -12856,23 +12966,66 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
     ],
   );
 
-  Completer<void>? _activeRequestStop;
-  StreamSubscription<ai.StreamChunk>? _activeRequestSubscription;
+  /// 当前正在进行的流式请求（null = 空闲）。
+  ///
+  /// 每个请求有独立的 stopSignal / subscription / stopRequested，停止与重发
+  /// 不再共用面板级布尔值 —— 旧实现停止后 `_activeRequestStop` 要到 finally
+  /// 才清空，下一次发送会被守卫静默吞掉；提前清空又会让旧请求的 finally
+  /// 把新请求的订阅/null 和 loading 改乱。见 [_AiStreamRequest] 的根因说明。
+  _AiStreamRequest? _activeRequest;
 
-  /// 用户是否主动中断了本次生成。用来区分「中断」与「真的出错」：
-  /// 前者不该在气泡里追加 `Error: ...`，否则停止看起来像失败。
-  bool _stopRequested = false;
+  /// 是否正在为 maxTokens 截断做自动续写（状态条显示「继续生成…」）。
+  bool _continuing = false;
 
-  /// Stops waiting for the current structured SDK response.
+  /// 识别「当前请求」：旧请求的异步回调只允许改自己的状态。
+  bool _isCurrentRequest(_AiStreamRequest request) =>
+      identical(_activeRequest, request);
+
+  /// 停止当前生成。
+  ///
+  /// 只标记 / 取消**当前请求**，不直接清 `_activeRequest`：旧请求的 finally
+  /// 会通过 identical 判断自己已不是当前请求，从而不会碰新请求的状态。
+  /// `_loading` 立即归 false，让发送键（以及「停止后立刻重发」）可用。
   void _stopGeneration() {
-    if (!_loading) return;
-    _stopRequested = true;
-    unawaited(_activeRequestSubscription?.cancel());
-    final stop = _activeRequestStop;
-    if (stop != null && !stop.isCompleted) stop.complete();
-    // Restore the button immediately while the request future unwinds.
-    setState(() => _loading = false);
+    final request = _activeRequest;
+    if (request == null) return;
+    request.requestStop();
+    if (mounted) setState(() => _loading = false);
   }
+
+  /// 停止 / 出错后清理尾部空 assistant 占位气泡。
+  ///
+  /// 旧实现只看 `_loading`，停止时一个空占位会永远留在消息列表里 ——
+  /// 用户会看到一条空白气泡。这里只在气泡确实为空（无正文、无 blocks）
+  /// 时移除，绝不碰有内容的已流式部分。
+  void _removeTrailingEmptyAssistant() {
+    if (_messages.isEmpty) return;
+    final last = _messages.last;
+    final isEmptyPlaceholder =
+        last.role == 'assistant' &&
+        last.content.trim().isEmpty &&
+        (last.blocks == null || last.blocks!.isEmpty);
+    if (!isEmptyPlaceholder) return;
+    setState(() => _messages.removeLast());
+  }
+
+  /// 组装 assistant 消息的 blocks（思考 / 正文 / 工具调用）。
+  ///
+  /// 工具块**写进 UI 消息**（type: tool_use，带 id / name / input），跨轮重建
+  /// 请求上下文时才能还原 assistant tool_calls；tool_result 块由 _addToolResult
+  /// 追加在后续消息里（带 toolCallId）。旧实现完全不存 tool_use，重建时只能
+  /// 把结果当 user 文本发回去。普通回复返回 null，保证 Markdown 渲染不退化 ——
+  /// 具体规则与根因见顶层 assistantBlocksForUi。
+  List<Map<String, dynamic>>? _assistantBlocks({
+    required String thinking,
+    required String text,
+    required List<ai.ToolCallContent> toolCalls,
+  }) => assistantBlocksForUi(
+    thinking: thinking,
+    text: text,
+    toolCalls: toolCalls,
+    elapsedMs: _genStart.elapsedMilliseconds,
+  );
 
   bool _expanded = false;
   // 工具侧边栏：true=展开显示工具列表，false=折叠成窄条
@@ -12888,6 +13041,14 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
   // 被禁用的工具（右键工具项 → 禁用）。禁用 = 从系统提示词移除 + 调用被拦截。
   final Set<String> _disabledTools = {};
   String? _activeToolCallId;
+
+  /// 当前工具批次所属的请求。停止 / 重发时用它判断「迟到的工具结果」是否
+  /// 还应该写进 UI（见 _addToolResult 的竞态说明）。
+  _AiStreamRequest? _toolCallOwner;
+
+  /// 最近一次工具执行结果文本。_handleToolCalls 用它回填给模型，而不再依赖
+  /// `_messages.last.content` —— 停止时 UI 追加会被抑制，但模型结果不能丢。
+  String _lastToolResultText = '';
   List<PipelineNode>? _pendingNodes;
   List<PipelineConnection>? _pendingConnections;
   bool _pendingIsModify = false;
@@ -12902,6 +13063,9 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
   String? _sessionProfileId;
   // 是否已生成过会话标题（避免每轮都生成）
   bool _titleGenerated = false;
+  // 标题请求是否在途：标题请求与主请求是两个独立 client，可能并发；
+  // 防重入避免同一次对话发出多次标题请求（task-2 的竞态检查项）。
+  bool _titleRequestInFlight = false;
 
   // ── token / 速度统计 ──
   int _totalInputTokens = 0;
@@ -13448,6 +13612,9 @@ Available actions: __TOOLS__''';
     final appState = context.read<AppState>();
     final cfg = appState.config;
     final results = <ai.Message>[];
+    // 记录本批工具属于哪个请求：停止后迟到的结果不再写 UI。
+    _toolCallOwner = _activeRequest;
+    _activeToolCallId = null;
     for (final call in calls) {
       final action = call.arguments['action'];
       final arguments = call.arguments['arguments'];
@@ -13457,7 +13624,7 @@ Available actions: __TOOLS__''';
         if (arguments is List) ...arguments.map((value) => value.toString()),
       ];
       _activeToolCallId = call.id;
-      final messagesBeforeExecution = _messages.length;
+      _lastToolResultText = '';
       if (!_toolActions.contains(tool)) {
         _addToolResult('blocked', 'Unknown or unavailable action.');
         results.add(
@@ -13821,13 +13988,16 @@ Available actions: __TOOLS__''';
           }
       }
 
-      if (_messages.length == messagesBeforeExecution) {
+      if (_lastToolResultText.isEmpty) {
+        // 工具未执行（权限关闭 / 参数不足）：显式回填 blocked，避免模型
+        // 以为调用成功。「是否执行」用结果文本判断，停止时 UI 追加被抑制
+        // 也不会误判。
         _addToolResult(
           'blocked',
           'Blocked: $tool is not enabled or lacks permission.',
         );
       }
-      final result = _messages.last.content;
+      final result = _lastToolResultText;
       results.add(
         ai.Message.toolResult(
           toolCallId: call.id,
@@ -13838,6 +14008,7 @@ Available actions: __TOOLS__''';
       );
     }
     _activeToolCallId = null;
+    _toolCallOwner = null;
     return results;
   }
 
@@ -13938,6 +14109,12 @@ Available actions: __TOOLS__''';
   }
 
   void _addToolResult(String toolName, String result) {
+    // 结果文本始终记录：_handleToolCalls 需要把它回填给模型。
+    _lastToolResultText = result;
+    // 停止 / 重发竞态：工具执行（确认弹窗 / 文件选择）返回时用户可能已经
+    // 停止，甚至已经发出新请求。此时把迟到气泡追加到列表尾部会排在新消息
+    // 之后（错序），所以只回填模型结果、不写 UI。
+    if (_toolCallOwner?.stopRequested ?? false) return;
     setState(() {
       _messages.add((
         role: 'assistant',
@@ -14032,6 +14209,11 @@ Available actions: __TOOLS__''';
   }
 
   void _showAskUser(String question, List<String> options) {
+    // ask_user 没有走 _addToolResult：这里同样记录回填给模型的结果文本，
+    // 并受停止竞态抑制（不再用 _messages.last 推断结果）。
+    _lastToolResultText =
+        'Asked user: $question (options: ${options.join(", ")})';
+    if (_toolCallOwner?.stopRequested ?? false) return;
     setState(() {
       _messages.add((
         role: 'assistant',
@@ -14090,10 +14272,9 @@ Available actions: __TOOLS__''';
     for (final attachment in _attachments) {
       unawaited(AiChatAttachments.discard(attachment));
     }
-    _stopRequested = true;
-    unawaited(_activeRequestSubscription?.cancel());
-    final stop = _activeRequestStop;
-    if (stop != null && !stop.isCompleted) stop.complete();
+    // 只停当前请求；旧请求 finally 里的身份判断会阻止它再 setState。
+    _activeRequest?.requestStop();
+    _activeRequest = null;
     _ctrl.dispose();
     _scrollCtrl.dispose();
     super.dispose();
@@ -14206,8 +14387,9 @@ Available actions: __TOOLS__''';
     final text = _ctrl.text.trim();
     if ((text.isEmpty && _attachments.isEmpty) ||
         _loading ||
-        _activeRequestStop != null ||
         _pickingAttachments) {
+      // 这里**不再**检查 _activeRequestStop：请求级状态让新旧请求互不干扰，
+      // 所以「停止后立刻重发」不会被静默吞掉（见 _AiStreamRequest 注释）。
       return;
     }
     _followLatest = true;
@@ -14284,13 +14466,14 @@ Available actions: __TOOLS__''';
       );
       return;
     }
-    // 历史上限：长会话（尤其工具调用密集）裁剪最旧消息，避免请求体积与内存无限增长
-    const maxHistory = 100;
-    if (_messages.length > maxHistory) {
-      _messages.removeRange(0, _messages.length - maxHistory);
-    }
+    // 历史不再在发送时裁剪！旧实现从这里 _messages.removeRange 掉最旧消息，
+    // 用户往上滚就发现对话被删了。现在 UI 永远保留完整历史；请求侧窗口由
+    // requestHistoryStartIndex 只读截取，token 级裁剪交给 ai.ContextManager
+    //（maxTokens - reservedTokens 滑窗，只动请求上下文）。
     appState.logAiRequest(text);
 
+    final request = _AiStreamRequest();
+    _activeRequest = request;
     setState(() {
       _messages.add((
         role: 'user',
@@ -14308,8 +14491,8 @@ Available actions: __TOOLS__''';
       ));
       _attachments.clear();
       _ctrl.clear();
-      _stopRequested = false;
       _loading = true;
+      _continuing = false;
       _pendingNodes = null;
       _pendingConnections = null;
     });
@@ -14321,8 +14504,8 @@ Available actions: __TOOLS__''';
     final showThinking = context.read<AppState>().config.aiShowThinking;
 
     ai.FlutterAI? sdkClient;
-    final stopSignal = Completer<void>();
-    _activeRequestStop = stopSignal;
+    // 每个请求独立一份续写预算（最多 3 轮），换气泡时 reset。
+    final autoContinue = AiAutoContinuePolicy();
     try {
       final canvasJson = jsonEncode({
         'nodes': widget.existingNodes.map((n) => n.toJson()).toList(),
@@ -14341,13 +14524,31 @@ Available actions: __TOOLS__''';
       final imageBudget = AiAttachmentBudget();
       final msgIdx = _messages.length - 1;
       final currentUser = _messages[msgIdx - 1];
-      for (var i = 0; i < msgIdx - 1; i++) {
+      // 请求侧历史窗口：UI 列表不动。起点向最近 user 消息对齐，避免把
+      // assistant tool_calls 和紧随其后的 tool_result 拆散。
+      final windowStart = requestHistoryStartIndex(
+        _messages.map((message) => message.role).toList(),
+      );
+      // 已知的 assistant tool_call id：只有它出现过，后面的 tool_result 才能
+      // 以 tool 角色发回。老版本历史存了 toolCallId 但没存 tool_use 块，直接
+      // 发孤立 tool 消息会被 OpenAI / Anthropic 400 拒绝。
+      final pendingToolCallIds = <String>{};
+      for (var i = windowStart; i < msgIdx - 1; i++) {
         final message = _messages[i];
-        if (message.role == 'assistant' && message.content.isEmpty) continue;
+        final blocks = message.blocks ?? const <Map<String, dynamic>>[];
+        final toolCalls = assistantToolCallsFromBlocks(blocks);
+        final toolResultBlocks = blocks
+            .where((block) => block['type'] == 'tool_result')
+            .toList();
         final attachments = AiChatAttachments.fromBlocks(message.blocks);
-        final isToolResult =
-            message.blocks?.isNotEmpty == true &&
-            message.blocks!.every((block) => block['type'] == 'tool_result');
+        // 空占位（流式中途停止/出错留下的空 assistant）不进请求；但带
+        // tool_use / tool_result 的空正文消息必须保留，否则跨轮工具结构丢失。
+        if (message.content.trim().isEmpty &&
+            toolCalls.isEmpty &&
+            toolResultBlocks.isEmpty &&
+            attachments.isEmpty) {
+          continue;
+        }
         final content = attachments.isEmpty
             ? <ai.Content>[ai.TextContent(message.content)]
             : await AiChatAttachments.sdkContent(
@@ -14368,16 +14569,61 @@ Available actions: __TOOLS__''';
           systemPrompt: fullPrompt,
           customHeaders: profile?.customHeaders,
         );
-        sdkClient.context.addMessage(
-          ai.Message(
-            role: isToolResult || message.role == 'user'
-                ? ai.MessageRole.user
-                : ai.MessageRole.assistant,
-            content: content,
-          ),
-        );
+        if (toolCalls.isNotEmpty) {
+          // 还原 assistant tool_calls 结构（旧实现完全丢失，导致模型把工具
+          // 结果当成用户发言、可能重复调用同一工具）。
+          for (final call in toolCalls) {
+            pendingToolCallIds.add(call.id);
+          }
+          sdkClient.context.addMessage(
+            ai.Message(
+              role: ai.MessageRole.assistant,
+              content: content,
+              toolCalls: toolCalls,
+            ),
+          );
+        } else if (toolResultBlocks.isNotEmpty) {
+          var structured = 0;
+          for (final block in toolResultBlocks) {
+            // 只有前面确实出现过对应 assistant tool_call 才发 tool 角色；
+            // 老历史 / 文本协议没有 tool_use 块时只能退回 user 文本。
+            if (!canRestoreStructuredToolResult(
+              pendingToolCallIds: pendingToolCallIds,
+              block: block,
+            )) {
+              continue;
+            }
+            final toolMessage = toolResultMessageFromBlock(block);
+            if (toolMessage == null) continue;
+            sdkClient.context.addMessage(toolMessage);
+            pendingToolCallIds.remove(block['toolCallId'] as String);
+            structured++;
+          }
+          if (structured < toolResultBlocks.length) {
+            // 缺少可配对的 tool_call：孤立 tool 消息会被 OpenAI 400 拒绝，
+            // 只能退回 user 文本，至少不丢内容。
+            sdkClient.context.addMessage(
+              ai.Message(
+                role: ai.MessageRole.user,
+                content: [ai.TextContent(message.content)],
+              ),
+            );
+          }
+        } else {
+          // 普通消息意味着上一轮工具调用已经收尾，清空待配对集合，避免后续
+          // 历史里同 id 的旧 tool_result 被误判成结构化结果。
+          pendingToolCallIds.clear();
+          sdkClient.context.addMessage(
+            ai.Message(
+              role: message.role == 'user'
+                  ? ai.MessageRole.user
+                  : ai.MessageRole.assistant,
+              content: content,
+            ),
+          );
+        }
       }
-      if (!mounted || _stopRequested) return;
+      if (!mounted || request.stopRequested) return;
 
       final attachments = AiChatAttachments.fromBlocks(currentUser.blocks);
       final currentContent = await AiChatAttachments.sdkContent(
@@ -14386,7 +14632,7 @@ Available actions: __TOOLS__''';
         vision: vision,
         budget: imageBudget,
       );
-      if (!mounted || _stopRequested) return;
+      if (!mounted || request.stopRequested) return;
       sdkClient ??= _createAiClient(
         provider: effProvider,
         apiKey: effKey,
@@ -14406,13 +14652,24 @@ Available actions: __TOOLS__''';
       var totalInputTokens = 0;
       var totalOutputTokens = 0;
       String? finalContent;
-      while (!_stopRequested) {
+      // 当前 assistant 气泡的累计正文：maxTokens 续写会把它和下一轮文本合并，
+      // 而不是新建气泡 / 重复用户气泡。
+      var bubbleContent = '';
+      // 本轮之前是否已把「被截断的部分」作为 assistant 消息放进 context。
+      // 续写轮只把**新增**文本加进 context，避免 [assistant A, user 继续,
+      // assistant A+B] 这种把 A 重复两遍的上下文（浪费 token 且容易让模型
+      // 误以为自己重复过）。UI 仍然是合并后的 A+B 一个气泡。
+      var addedPartialAssistant = false;
+      while (!request.stopRequested) {
+        final roundBase = bubbleContent;
         final responseText = StringBuffer();
         final thinkingText = StringBuffer();
         final requestDone = Completer<void>();
         Object? streamError;
         ai.Usage? usage;
         var receivedToolCall = false;
+        ai.FinishReason? streamFinishReason;
+        final completeToolCalls = <ai.ToolCallContent>[];
         late final StreamSubscription<ai.StreamChunk> subscription;
         subscription = sdkClient
             .streamChat('', addToContext: false)
@@ -14427,33 +14684,40 @@ Available actions: __TOOLS__''';
                 if (showThinking && chunk.isThinkingDelta) {
                   thinkingText.write(chunk.delta ?? '');
                 }
-                if (chunk.type == ai.StreamEventType.toolCallDelta ||
-                    chunk.finishReason == ai.FinishReason.toolCalls) {
+                if (chunk.type == ai.StreamEventType.toolCallDelta) {
                   receivedToolCall = true;
+                  final complete = chunk.toolCallDelta;
+                  // Google / Ollama 的流式工具调用可能已经带完整 ToolCallContent；
+                  // OpenAI / Anthropic 只有 metadata['partial_args']，此时
+                  // chunk.toolCallDelta == null，需要非流式补齐（见下方）。
+                  if (complete != null) completeToolCalls.add(complete);
+                }
+                if (chunk.finishReason != null) {
+                  streamFinishReason = chunk.finishReason;
+                  if (chunk.finishReason == ai.FinishReason.toolCalls) {
+                    receivedToolCall = true;
+                  }
                 }
                 usage = chunk.usage ?? usage;
                 if (chunk.isDelta || (showThinking && chunk.isThinkingDelta)) {
-                  if (!mounted || _stopRequested) return;
+                  if (!mounted || request.stopRequested) return;
+                  // 续写期间必须以「本轮基线 + 当前 buffer」重建，否则气泡会
+                  // 瞬间只剩新一段文字（用户看到内容变短）。
+                  final liveContent = mergeContinuationText(
+                    roundBase,
+                    responseText.toString(),
+                  );
                   setState(() {
                     _messages[activeAssistantIdx] = (
                       role: 'assistant',
-                      content: responseText.toString(),
+                      content: liveContent,
                       inputTokens: usage?.promptTokens,
                       outputTokens: usage?.completionTokens,
-                      blocks: thinkingText.isEmpty
-                          ? null
-                          : [
-                              {
-                                'type': 'thinking',
-                                'thinking': thinkingText.toString(),
-                                'durationMs': _genStart.elapsedMilliseconds,
-                              },
-                              if (responseText.isNotEmpty)
-                                {
-                                  'type': 'text',
-                                  'text': responseText.toString(),
-                                },
-                            ],
+                      blocks: _assistantBlocks(
+                        thinking: thinkingText.toString(),
+                        text: liveContent,
+                        toolCalls: const <ai.ToolCallContent>[],
+                      ),
                     );
                   });
                   _scrollToBottom();
@@ -14467,80 +14731,130 @@ Available actions: __TOOLS__''';
                 if (!requestDone.isCompleted) requestDone.complete();
               },
             );
-        _activeRequestSubscription = subscription;
-        await Future.any<void>([requestDone.future, stopSignal.future]);
-        if (_stopRequested) {
+        request.subscription = subscription;
+        await Future.any<void>([requestDone.future, request.stopSignal.future]);
+        if (request.stopRequested) {
           await subscription.cancel();
           break;
         }
         await subscription.cancel();
-        if (identical(_activeRequestSubscription, subscription)) {
-          _activeRequestSubscription = null;
+        if (identical(request.subscription, subscription)) {
+          request.subscription = null;
         }
         if (streamError != null) {
           Error.throwWithStackTrace(streamError!, StackTrace.current);
         }
 
         ai.AIResponse? response;
-        if (receivedToolCall) {
-          // The SDK's provider stream exposes partial tool-call deltas, while
-          // its non-stream response contains the complete IDs and arguments.
+        var toolCalls = List<ai.ToolCallContent>.of(completeToolCalls);
+        if (receivedToolCall && toolCalls.isEmpty) {
+          // 根因：SDK 1.9 的 OpenAI / Anthropic 流式工具调用只给 partial args
+          //（没有 id / name），无法构造合法的 ToolCallContent；旧实现拿到
+          // toolCallDelta 后一定再发一次非流式请求，并用 response.text 覆盖
+          // 已经流式展示的正文 —— 既双重生成，又可能把显示内容变短。
+          //
+          // 现在：只有在「流式确实没给完整 ToolCallContent」时才补这一枪
+          //（Google / Ollama 走 chunk.toolCallDelta，不会走到这里）。这次非
+          // 流式请求仍是同一轮的完整快照（SDK 没有只补 tool_calls 的接口），
+          // 成本上多一次生成，但正文用 mergeToolRoundText 定规则：
+          // 非流式更短/内容分叉时保留已展示的流式文本，绝不回退丢字。
           response = await Future.any<ai.AIResponse?>([
             sdkClient.chatWithContent(const [], addToContext: false),
-            stopSignal.future.then<ai.AIResponse?>((_) => null),
+            request.stopSignal.future.then<ai.AIResponse?>((_) => null),
           ]);
-          if (response == null || _stopRequested) break;
+          if (response == null || request.stopRequested) break;
+          toolCalls = response.toolCalls ?? const <ai.ToolCallContent>[];
         }
 
-        final content = response?.text ?? responseText.toString();
-        final toolCalls = response?.toolCalls ?? const <ai.ToolCallContent>[];
+        final roundText = mergeToolRoundText(
+          streamed: responseText.toString(),
+          nonStream: response?.text,
+        );
+        bubbleContent = mergeContinuationText(roundBase, roundText);
         final inTok = response?.usage?.promptTokens ?? usage?.promptTokens;
         final outTok =
             response?.usage?.completionTokens ?? usage?.completionTokens;
         totalInputTokens += inTok ?? 0;
         totalOutputTokens += outTok ?? 0;
+        // 续写轮只追加新增文本（见 addedPartialAssistant 注释）。
+        final contextAssistantText = addedPartialAssistant
+            ? roundText
+            : bubbleContent;
         sdkClient.context.addMessage(
           ai.Message.assistant(
-            response?.content ?? content,
+            contextAssistantText,
             toolCalls: toolCalls.isEmpty ? null : toolCalls,
           ),
         );
+        addedPartialAssistant = false;
 
         final thinking = showThinking
             ? response?.thinking ?? thinkingText.toString()
             : '';
-        if (!mounted || _stopRequested) break;
+        if (!mounted || request.stopRequested) break;
         setState(() {
           _messages[activeAssistantIdx] = (
             role: 'assistant',
-            content: content,
+            content: bubbleContent,
             inputTokens: inTok,
             outputTokens: outTok,
-            blocks: thinking.isEmpty
-                ? null
-                : [
-                    {
-                      'type': 'thinking',
-                      'thinking': thinking,
-                      'durationMs': _genStart.elapsedMilliseconds,
-                    },
-                    if (content.isNotEmpty) {'type': 'text', 'text': content},
-                  ],
+            blocks: _assistantBlocks(
+              thinking: thinking,
+              text: bubbleContent,
+              toolCalls: toolCalls,
+            ),
           );
         });
         _scrollToBottom();
 
         if (toolCalls.isEmpty) {
-          finalContent = content;
+          // 关键修复（输出被 maxTokens 截断）：done chunk 的 finishReason 会
+          // 明确给出 maxTokens；此时把「继续」指令只放进请求上下文，下一轮
+          // 合并进同一个气泡。空正文 / 用户停止 / 达到 3 轮上限都不续写，
+          // 因此不会无限循环。
+          final finishReason = response?.finishReason ?? streamFinishReason;
+          if (autoContinue.shouldContinue(
+            finishReason: finishReason,
+            content: bubbleContent,
+            stopRequested: request.stopRequested,
+          )) {
+            if (!mounted || request.stopRequested) break;
+            // 已被截断的部分留在 context 里作为 assistant 回合，下一轮只说
+            // 「继续」；但 UI 不新增用户气泡。
+            addedPartialAssistant = true;
+            setState(() => _continuing = true);
+            sdkClient.context.addMessage(
+              ai.Message.user(AiAutoContinuePolicy.continuationPrompt),
+            );
+            continue;
+          }
+          finalContent = bubbleContent;
           break;
         }
 
+        // 工具轮：本轮正文 + tool_use 已写进当前气泡；工具结果各自成为
+        // 独立 UI 消息（blocks 带 toolCallId），下一轮回答换新气泡。
+        final messageCountBeforeTools = _messages.length;
         final toolResults = await _handleToolCalls(toolCalls);
+        if (request.stopRequested) {
+          // 停止 / 重发竞态：工具可能含确认弹窗 / 文件选择，await 期间用户
+          // 完全可能按了停止并立刻重发。此时迟到的工具结果不能追加到对话
+          // 尾部（新请求的消息已经排在后面）；仅当仍是同一请求时，把本次
+          // 工具执行产生的 UI 消息回滚掉，保证画面收敛、不出现错序气泡。
+          if (_isCurrentRequest(request) &&
+              _messages.length > messageCountBeforeTools) {
+            setState(() {
+              _messages.removeRange(messageCountBeforeTools, _messages.length);
+            });
+          }
+          break;
+        }
         for (final result in toolResults) {
           sdkClient.context.addMessage(result);
         }
-        if (!mounted || _stopRequested) break;
+        if (!mounted) break;
         setState(() {
+          _continuing = false;
           _messages.add((
             role: 'assistant',
             content: '',
@@ -14550,13 +14864,23 @@ Available actions: __TOOLS__''';
           ));
           activeAssistantIdx = _messages.length - 1;
         });
+        bubbleContent = '';
+        addedPartialAssistant = false;
+        autoContinue.reset();
       }
 
+      // 已被新请求取代（停止后立刻重发）：不要再碰共享的 _genStart，
+      // 否则会把新请求的速度计时停掉。
+      if (!_isCurrentRequest(request)) return;
       _genStart.stop();
-      if (_stopRequested) {
+      if (request.stopRequested) {
         appState.logAiResponse('(stopped by user)');
-        if (!mounted) return;
-        setState(() => _loading = false);
+        if (!mounted || !_isCurrentRequest(request)) return;
+        _removeTrailingEmptyAssistant();
+        setState(() {
+          _loading = false;
+          _continuing = false;
+        });
         _scrollToBottom();
         return;
       }
@@ -14564,36 +14888,53 @@ Available actions: __TOOLS__''';
       appState.logAiResponse(content);
       final elapsedMs = _genStart.elapsedMilliseconds;
       final speed = elapsedMs > 0 ? (content.length * 1000 / elapsedMs) : null;
-      if (!mounted) return;
+      if (!mounted || !_isCurrentRequest(request)) return;
+      // 空响应兜底：模型什么都没回时不要留下一个空白 assistant 气泡
+      // （停止/异常路径同样会清占位，见 _removeTrailingEmptyAssistant）。
+      final isEmptyResponse =
+          content.trim().isEmpty &&
+          (_messages[activeAssistantIdx].blocks == null ||
+              _messages[activeAssistantIdx].blocks!.isEmpty);
+      if (isEmptyResponse) _removeTrailingEmptyAssistant();
       setState(() {
-        _messages[activeAssistantIdx] = (
-          role: 'assistant',
-          content: content,
-          inputTokens: _messages[activeAssistantIdx].inputTokens,
-          outputTokens: _messages[activeAssistantIdx].outputTokens,
-          blocks: _messages[activeAssistantIdx].blocks,
-        );
+        if (!isEmptyResponse) {
+          _messages[activeAssistantIdx] = (
+            role: 'assistant',
+            content: content,
+            inputTokens: _messages[activeAssistantIdx].inputTokens,
+            outputTokens: _messages[activeAssistantIdx].outputTokens,
+            blocks: _messages[activeAssistantIdx].blocks,
+          );
+        }
         _loading = false;
+        _continuing = false;
         _lastGenSpeed = speed;
         _totalInputTokens += totalInputTokens;
         _totalOutputTokens += totalOutputTokens;
       });
       _scrollToBottom();
       _tryParseGraph(content);
-      // 自动总结：首轮对话后生成会话标题
-      _maybeGenerateTitle();
+      // 自动总结：首轮对话后生成会话标题。_maybeGenerateTitle 内部有
+      // _titleRequestInFlight 防重入，避免和下一轮主请求并发时重复发标题请求。
+      unawaited(_maybeGenerateTitle());
     } catch (e) {
       // 用户主动停止时 close() 会让 stream 抛 HttpException —— 那不是真错误，
       // 气泡里已经有部分内容，不再追加 "Error: ..."（否则「停止」看起来像失败）。
-      if (_stopRequested) {
+      if (request.stopRequested) {
         appState.logAiResponse('(stopped by user)');
-        if (!mounted) return;
-        setState(() => _loading = false);
+        if (!mounted || !_isCurrentRequest(request)) return;
+        _removeTrailingEmptyAssistant();
+        setState(() {
+          _loading = false;
+          _continuing = false;
+        });
         _scrollToBottom();
         return;
       }
       appState.logAiResponse('AI request failed', error: true);
-      if (!mounted) return;
+      if (!mounted || !_isCurrentRequest(request)) return;
+      // 失败时同样清掉空占位，避免「空白气泡 + 错误气泡」两个并排。
+      _removeTrailingEmptyAssistant();
       setState(() {
         _messages.add((
           role: 'assistant',
@@ -14605,22 +14946,45 @@ Available actions: __TOOLS__''';
           blocks: null,
         ));
         _loading = false;
+        _continuing = false;
       });
       _scrollToBottom();
     } finally {
       sdkClient?.dispose();
-      _activeRequestSubscription = null;
-      if (identical(_activeRequestStop, stopSignal)) {
-        _activeRequestStop = null;
-        _stopRequested = false;
+      unawaited(request.subscription?.cancel());
+      // 工具批次若因异常/停止没走到正常收尾，这里兜底释放归属，避免后续
+      // 工具结果被错误抑制。
+      if (identical(_toolCallOwner, request)) {
+        _toolCallOwner = null;
+        _activeToolCallId = null;
       }
-      if (mounted) unawaited(_saveCurrentSession());
+      // 只有「仍是当前请求」才允许收尾：旧请求（被停止后用户已重发）的
+      // finally 不得把新请求的 _loading / 订阅 / 保存时机改乱。
+      if (identical(_activeRequest, request)) {
+        request.finished = true;
+        _activeRequest = null;
+        if (mounted) {
+          setState(() {
+            _loading = false;
+            _continuing = false;
+          });
+        }
+        // 生成结束才保存；半截流式占位由 _saveCurrentSession 内部过滤。
+        if (mounted) unawaited(_saveCurrentSession());
+      }
     }
   }
 
   /// 对话后自动生成会话标题（开启 aiAutoTitle 时，首轮对话触发一次）。
+  ///
+  /// 修复两处：
+  ///  * 旧实现取 `_messages.take(6)` —— 取的是**最早** 6 条，长会话里生成的
+  ///    标题概括的是开头的寒暄而不是当前话题；改为「最近 6 条有正文的消息」。
+  ///  * 标题请求是独立 client，会和下一轮主请求 / 用户停止并发。加
+  ///    [_titleRequestInFlight] 防重入，并在 await 之后重新检查 mounted，
+  ///    避免面板已收起/销毁后仍回调 onTitleGenerated。
   Future<void> _maybeGenerateTitle() async {
-    if (_titleGenerated) return;
+    if (_titleGenerated || _titleRequestInFlight || !mounted) return;
     final appState = context.read<AppState>();
     final cfg = appState.config;
     if (!cfg.aiAutoTitle || _messages.isEmpty) return;
@@ -14639,14 +15003,25 @@ Available actions: __TOOLS__''';
                   ? cfg.aiModel
                   : ''));
     if (model.isEmpty) return;
-    _titleGenerated = true;
-    final recent = _messages
+    // 最近的 6 条正文（按时间正序）。跳过空占位 / 纯工具消息，避免标题
+    // 被 "[tool] ..." 这类内容主导。
+    final recentMessages = _messages.reversed
+        .where((m) => m.content.trim().isNotEmpty)
         .take(6)
-        .map(
-          (m) =>
-              '${m.role}: ${m.content.substring(0, m.content.length > 120 ? 120 : m.content.length)}',
-        )
+        .toList()
+        .reversed;
+    final recent = recentMessages
+        .map((m) {
+          final content = m.content;
+          final clipped = content.length > 120
+              ? content.substring(0, 120)
+              : content;
+          return '${m.role}: $clipped';
+        })
         .join('\n');
+    if (recent.isEmpty) return;
+    _titleGenerated = true;
+    _titleRequestInFlight = true;
     final client = _createAiClient(
       provider: provider,
       apiKey: key,
@@ -14663,15 +15038,18 @@ Available actions: __TOOLS__''';
       final response = await client
           .chat('Summarize this conversation:\n$recent')
           .timeout(const Duration(seconds: 15));
-      final title = response.text;
-      if (title.trim().isNotEmpty && mounted) {
-        widget.onTitleGenerated?.call(
-          title.trim().replaceAll(RegExp(r'[\n"]+'), ''),
+      if (!mounted) return;
+      final title = response.text.trim().replaceAll(RegExp(r'[\n"]+'), '');
+      if (title.isNotEmpty) widget.onTitleGenerated?.call(title);
+    } catch (error) {
+      if (mounted) {
+        appState.addLog(
+          '[AI] Title generation failed: $error',
+          category: 'warn',
         );
       }
-    } catch (error) {
-      appState.addLog('[AI] Title generation failed: $error', category: 'warn');
     } finally {
+      _titleRequestInFlight = false;
       client.dispose();
     }
   }
@@ -14947,7 +15325,11 @@ Available actions: __TOOLS__''';
                         ),
                         const SizedBox(width: 5),
                         Text(
-                          s.isZh ? '生成中…' : 'Generating…',
+                          // maxTokens 自动续写时给出明确反馈：用户会看到
+                          // 「继续生成…」而不是一段看似卡住的空白。
+                          _continuing
+                              ? (s.isZh ? '继续生成…' : 'Continuing…')
+                              : (s.isZh ? '生成中…' : 'Generating…'),
                           style: TextStyle(
                             fontSize: 10,
                             color: scheme.primary,
@@ -15877,7 +16259,7 @@ Available actions: __TOOLS__''';
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(fontSize: 11),
                       ),
-                      enabled: !_loading && _activeRequestStop == null,
+                      enabled: !_loading && _activeRequest == null,
                       onTap: () {
                         _loadHistorySession(session, s);
                         setState(() => _historyOpen = false);
@@ -16024,7 +16406,7 @@ Available actions: __TOOLS__''';
                                     style: const TextStyle(fontSize: 11),
                                   ),
                                   enabled:
-                                      !_loading && _activeRequestStop == null,
+                                      !_loading && _activeRequest == null,
                                   onTap: () {
                                     _loadHistorySession(session, s);
                                     setState(() => _historyOpen = false);
@@ -16043,6 +16425,10 @@ Available actions: __TOOLS__''';
   );
 
   /// 加载一条历史会话到当前面板。
+  ///
+  /// token 字段用 historyMessage*Tokens 读取：本文件此前保存写
+  /// inputTokens/outputTokens、导出用 in/out，两套键互不相认，加载后 token
+  /// 统计会归零。现在读取侧同时兼容两套（旧历史文件无需迁移）。
   void _loadHistorySession(Map<String, dynamic> entry, AppStrings s) {
     final msgs = (entry['messages'] as List?) ?? [];
     _historyFilePath = entry['_file'] as String?;
@@ -16054,8 +16440,8 @@ Available actions: __TOOLS__''';
           return (
             role: (mm['role'] as String?) ?? 'assistant',
             content: (mm['content'] as String?) ?? '',
-            inputTokens: (mm['inputTokens'] as num?)?.toInt(),
-            outputTokens: (mm['outputTokens'] as num?)?.toInt(),
+            inputTokens: historyMessageInputTokens(mm),
+            outputTokens: historyMessageOutputTokens(mm),
             blocks: (mm['blocks'] as List?)
                 ?.whereType<Map<String, dynamic>>()
                 .toList(),
@@ -16076,9 +16462,38 @@ Available actions: __TOOLS__''';
   }
 
   /// 保存当前会话到历史。已有文件时原地覆盖，避免每轮自动保存都新建一份。
+  ///
+  /// 修复：
+  ///  * token 键统一为 `in`/`out`（与 exportMessages / importMessages 一致，
+  ///    读取侧 historyMessage*Tokens 兼容旧键），避免独立窗口交接丢 token；
+  ///  * 生成中不落盘（避免把半截流式占位写进历史），并过滤空 assistant 占位；
+  ///  * 保存动作发生在 _send 的 finally（生成已结束）以及用户手动保存时。
   Future<String?> _saveCurrentSession() async {
     if (_savingHistory) return _historyFilePath;
-    final userMsgs = _messages.where((m) => m.role == 'user').toList();
+    // 生成还在进行时不保存：此时 assistant 气泡是流式中的半成品。
+    if (_loading) return _historyFilePath;
+    // 过滤空 assistant 占位（停止/异常路径可能残留），但保留有 blocks 的
+    // 工具结果消息（content 可能为空，blocks 不为空）。
+    final persistable = <
+      ({
+        String role,
+        String content,
+        int? inputTokens,
+        int? outputTokens,
+        List<Map<String, dynamic>>? blocks,
+      })
+    >[];
+    for (final m in _messages) {
+      if (!shouldPersistHistoryMessage(
+        role: m.role,
+        content: m.content,
+        blocks: m.blocks,
+      )) {
+        continue;
+      }
+      persistable.add(m);
+    }
+    final userMsgs = persistable.where((m) => m.role == 'user').toList();
     if (userMsgs.isEmpty) return null;
     final title = userMsgs.first.content.replaceAll(RegExp(r'\s+'), ' ').trim();
     final t = title.isEmpty
@@ -16091,13 +16506,14 @@ Available actions: __TOOLS__''';
         title: t,
         provider: _effectiveProvider,
         model: _effectiveModel,
-        messages: _messages
+        messages: persistable
             .map(
               (m) => {
                 'role': m.role,
                 'content': m.content,
-                'inputTokens': m.inputTokens,
-                'outputTokens': m.outputTokens,
+                // 统一新键；_loadHistorySession / importMessages 读取时兼容旧键。
+                'in': m.inputTokens,
+                'out': m.outputTokens,
                 'blocks': m.blocks,
               },
             )
@@ -16649,7 +17065,16 @@ Available actions: __TOOLS__''';
         tableBorder: TableBorder.all(
           color: scheme.outlineVariant.withAlpha(80),
         ),
-        tableColumnWidth: const FlexColumnWidth(),
+        // 根因（宽表格被裁切）：FlexColumnWidth 会把表格强行压进气泡宽度，
+        // 列一多/单元格里是 URL 这类长 token 时，Table 没有横向滚动、内容只能
+        // 溢出被裁。flutter_markdown_plus 的 builder 只在 columnWidth 是
+        // FixedColumnWidth / IntrinsicColumnWidth 时才给 <table> 套横向
+        // SingleChildScrollView（见其 builder.dart 的 table 分支）；
+        // IntrinsicColumnWidth 让列按内容定宽，宽表格因此**只在表格局部**可
+        // 横向滚动，普通段落仍正常换行（不会把整条消息变成横向滚动）。
+        // 代码块（pre）在 flutter_markdown_plus 1.0.12 里本来就是横向滚动 +
+        // Scrollbar，无需再包一层。
+        tableColumnWidth: const IntrinsicColumnWidth(),
         horizontalRuleDecoration: BoxDecoration(
           border: Border(
             top: BorderSide(color: scheme.outlineVariant.withAlpha(80)),
@@ -16733,10 +17158,11 @@ Available actions: __TOOLS__''';
     // 这些块在带工具调用的回复里往往占了大半篇幅，字号不跟着正文走会显得断层。
     final double fs = isMobilePlatform ? 13 : 12;
     if (type == 'text') {
-      return SelectableText(
-        block['text'] as String? ?? '',
-        style: TextStyle(fontSize: fs, color: scheme.onSurface, height: 1.5),
-      );
+      // 正文块也必须走 Markdown 渲染：现在 assistant 消息为了跨轮保留 tool_use
+      // 结构会带 blocks（thinking / text / tool_use），若这里退回 SelectableText，
+      // 带 blocks 的回复就会丢掉标题/列表/表格/代码块，宽表格的横向滚动修复
+      // 也会失效。
+      return _buildAssistantContent(block['text'] as String? ?? '', scheme);
     }
     final label = switch (type) {
       'thinking' => '思考',

@@ -24,8 +24,6 @@ import 'theme/app_strings.dart';
 import 'theme/app_text_scale.dart';
 import 'theme/app_theme.dart';
 import 'widgets/app_slider.dart';
-// 「玻璃细节 → 生效 σ / tint alpha」的统一换算（见 liquid_glass_fallback）。
-import 'widgets/liquid_glass_fallback.dart';
 import 'widgets/liquid_glass_mobile_nav.dart';
 import 'widgets/mobile_bottom_nav.dart';
 // 生效的菜单栏位置下发（底部 ↔ 左右竖排导轨时，主 Tab 各页的底部留白随之切换）
@@ -36,6 +34,7 @@ import 'widgets/toast.dart';
 // 与 wallpaper_background.dart 互为循环引用（它用本文件的
 // wallpaperImageProvider，本文件用它的 WallpaperWindowScope），Dart 允许。
 import 'widgets/wallpaper_background.dart';
+import 'widgets/window_chrome.dart';
 
 /// 构建壁纸解码用的 ImageProvider。
 ///
@@ -470,7 +469,6 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> with WindowListener {
   final _projectPageKey = GlobalKey<ProjectPageState>();
-  bool _isMaximized = false;
 
   /// 底部导航可见的页面索引，横向滑动按此顺序循环切换。
   static const List<int> _kMobileNavOrder = [0, 1, 3, 4];
@@ -519,14 +517,11 @@ class _AppShellState extends State<AppShell> with WindowListener {
   void initState() {
     super.initState();
     _mobilePageController = PageController(initialPage: 0);
-    // 移动端没有窗口管理器，跳过窗口相关初始化
+    // 移动端没有窗口管理器，跳过窗口相关初始化。
+    // 监听器只用于 onWindowClose（优雅关闭后端 / 子进程）；标题栏的
+    // 最大化图标状态由 widgets/window_chrome.dart 自己维护。
     if (!isMobilePlatform) {
       windowManager.addListener(this);
-      if (!Platform.isWindows) {
-        windowManager.isMaximized().then((v) {
-          if (mounted) setState(() => _isMaximized = v);
-        });
-      }
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final state = context.read<AppState>();
@@ -737,16 +732,6 @@ class _AppShellState extends State<AppShell> with WindowListener {
     final state = context.read<AppState>();
     await state.shutdown();
     await windowManager.destroy();
-  }
-
-  @override
-  void onWindowMaximize() {
-    if (mounted) setState(() => _isMaximized = true);
-  }
-
-  @override
-  void onWindowUnmaximize() {
-    if (mounted) setState(() => _isMaximized = false);
   }
 
   static String? _modifierLabel(LogicalKeyboardKey k) {
@@ -1125,26 +1110,9 @@ class _AppShellState extends State<AppShell> with WindowListener {
       // 「位置一变，依赖它的页面下一帧就重建」。
       body = MobileNavPlacementScope(placement: placement, child: mobileBody);
     } else {
-      body = (Platform.isWindows || Platform.isMacOS)
-          // Windows / macOS 使用系统默认标题栏，内容直接铺满（无自绘 CSD）
-          ? page
-          // Linux：自定义标题栏。无边框窗口会失去原生边框的拖拽缩放能力，
-          // 用 DragToResizeArea 在四边补上透明的 resize 热区（宽 6px），
-          // 鼠标移到边缘即可拖动调整窗口大小。
-          : DragToResizeArea(
-              resizeEdgeSize: 6,
-              child: Stack(
-                children: [
-                  Padding(padding: const EdgeInsets.only(top: 36), child: page),
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    top: 0,
-                    child: _buildCsdTitleBar(scheme),
-                  ),
-                ],
-              ),
-            );
+      // Windows / macOS 用系统标题栏（WindowChrome 内部自动 no-op）；
+      // Linux 套上全应用统一的 36px 玻璃 CSD + 四边缩放热区。
+      body = WindowChrome(child: page);
     }
 
     // 壁纸：独立 Selector，只监听 backgroundImage/backgroundOpacity，
@@ -1212,111 +1180,6 @@ class _AppShellState extends State<AppShell> with WindowListener {
   }
 
   static void clearBgCache() => _bgCache.clear();
-
-  /// Linux 专用自绘标题栏（CSD）；Windows/macOS 走系统标题栏，见 body 的分支。
-  ///
-  /// 作为玻璃表面同样吃「玻璃细节」：σ18 与 alpha 160/180 是历史基准值，
-  /// 默认参数下观感不变（Linux 不钳制 σ，18 × 1.0 = 18）。
-  Widget _buildCsdTitleBar(ColorScheme scheme) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final tuning = glassTuningOf(context);
-    final double sigma = tunedGlassSigma(18, tuning);
-    return ClipRect(
-      child: BackdropFilter(
-        filter: cachedGlassBlur(sigma),
-        child: Container(
-          height: 36,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                scheme.surface.withAlpha(
-                  tunedGlassAlpha(isDark ? 160 : 180, tuning),
-                ),
-                scheme.surface.withAlpha(
-                  tunedGlassAlpha(isDark ? 120 : 140, tuning),
-                ),
-              ],
-            ),
-            border: Border(
-              bottom: BorderSide(
-                color: scheme.outlineVariant.withAlpha(isDark ? 60 : 80),
-                width: 0.5,
-              ),
-            ),
-          ),
-          child: Stack(
-            children: [
-              DragToMoveArea(
-                child: GestureDetector(
-                  onDoubleTap: () async {
-                    if (await windowManager.isMaximized()) {
-                      windowManager.unmaximize();
-                    } else {
-                      windowManager.maximize();
-                    }
-                  },
-                  child: Container(color: Colors.transparent),
-                ),
-              ),
-              Positioned(
-                right: 0,
-                top: 0,
-                bottom: 0,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _csdButton(
-                      Icons.remove,
-                      scheme.onSurfaceVariant,
-                      null,
-                      () => windowManager.minimize(),
-                    ),
-                    _csdButton(
-                      _isMaximized ? Icons.filter_none : Icons.crop_square,
-                      scheme.onSurfaceVariant,
-                      null,
-                      () async {
-                        if (await windowManager.isMaximized()) {
-                          windowManager.unmaximize();
-                        } else {
-                          windowManager.maximize();
-                        }
-                      },
-                    ),
-                    // 关闭按钮悬停红：Windows 系统约定色（#E81123），与
-                    // pipeline_editor_page / container_detail_page 的 CSD 按钮保持一致。
-                    // 它属于窗口装饰，不参与主题化（用语义色在深色主题下会变浅粉）。
-                    _csdButton(
-                      Icons.close,
-                      scheme.onSurface,
-                      const Color(0xFFE81123),
-                      () => windowManager.close(),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _csdButton(
-    IconData icon,
-    Color color,
-    Color? hoverBg,
-    VoidCallback onTap,
-  ) {
-    return _CsdWindowButton(
-      icon: icon,
-      color: color,
-      hoverBg: hoverBg,
-      onTap: onTap,
-    );
-  }
 
   /// 底部导航点击：切换选中页，并让 PageView 滑动到对应位置（带滑动动画）。
   void _selectMobileNav(int i) {
@@ -1532,50 +1395,6 @@ class _AppShellState extends State<AppShell> with WindowListener {
     _ => '页$i',
   };
   bool _warming = false;
-}
-
-class _CsdWindowButton extends StatefulWidget {
-  final IconData icon;
-  final Color color;
-  final Color? hoverBg;
-  final VoidCallback onTap;
-  const _CsdWindowButton({
-    required this.icon,
-    required this.color,
-    this.hoverBg,
-    required this.onTap,
-  });
-  @override
-  State<_CsdWindowButton> createState() => _CsdWindowButtonState();
-}
-
-class _CsdWindowButtonState extends State<_CsdWindowButton> {
-  bool _hovering = false;
-
-  @override
-  Widget build(BuildContext context) {
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovering = true),
-      onExit: (_) => setState(() => _hovering = false),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: Container(
-          width: 46,
-          height: 36,
-          color: _hovering
-              ? (widget.hoverBg ?? widget.color.withAlpha(30))
-              : Colors.transparent,
-          child: Icon(
-            widget.icon,
-            size: 18,
-            color: _hovering && widget.hoverBg != null
-                ? Colors.white
-                : widget.color,
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 /// 让 PageView 子页在滑出视口后保持状态（AutomaticKeepAlive）。

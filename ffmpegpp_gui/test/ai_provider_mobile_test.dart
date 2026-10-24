@@ -12,6 +12,7 @@ import 'package:ffmpegpp_gui/pages/ai_settings_mobile.dart';
 import 'package:ffmpegpp_gui/providers/app_state.dart';
 import 'package:ffmpegpp_gui/theme/app_control_size.dart';
 import 'package:ffmpegpp_gui/theme/app_theme.dart';
+import 'package:ffmpegpp_gui/widgets/liquid_glass_mobile_nav.dart';
 import 'package:ffmpegpp_gui/widgets/mobile_glass_pill.dart';
 import 'package:ffmpegpp_gui/widgets/option_menu_bar.dart';
 import 'package:flutter/material.dart';
@@ -32,6 +33,13 @@ Widget _harness(AppState state, Widget child) =>
 Future<void> _flushSaveTimers(WidgetTester tester) async {
   await tester.pump(const Duration(seconds: 1));
 }
+
+/// 底栏标签的点击目标：AppLiquidTabBar 每个 item 会绘制两层（未选中色 +
+/// 选中色，由滑动胶囊裁剪），find.text 会命中 2 个 Text，直接 tap 会报
+/// "ambiguously found multiple matching widgets"，因此限定在底栏内取第一层。
+Finder _tabLabel(String label) => find
+    .descendant(of: find.byType(AppLiquidTabBar), matching: find.text(label))
+    .first;
 
 void main() {
   testWidgets('desktop provider detail uses a collapsible navigation sidebar', (
@@ -152,14 +160,14 @@ void main() {
           );
           expect(tester.takeException(), isNull);
 
-          await tester.tap(find.text('Models'));
+          await tester.tap(_tabLabel('Models'));
           await tester.pumpAndSettle();
           expect(
             find.byKey(const ValueKey('ai_provider_models')),
             findsOneWidget,
           );
           expect(tester.takeException(), isNull);
-          await tester.tap(find.text('Basic'));
+          await tester.tap(_tabLabel('Basic'));
           await tester.pumpAndSettle();
           final save = tester.widget<MobileGlassPillAction>(
             find.byWidgetPredicate(
@@ -233,11 +241,26 @@ void main() {
             .dy,
       ),
     );
-    expect(find.text('基本'), findsOneWidget);
-    expect(find.text('模型'), findsOneWidget);
+    // 底栏 = AppLiquidTabBar：每项会绘制「未选中色 + 选中色」两层，
+    // 因此标签文本命中 2 个（这是 liquid_glass_tab_bar 的滑动胶囊实现，
+    // 两层叠在同一命中区域，不影响点按）。
+    expect(
+      find.descendant(
+        of: find.byType(AppLiquidTabBar),
+        matching: find.text('基本'),
+      ),
+      findsNWidgets(2),
+    );
+    expect(
+      find.descendant(
+        of: find.byType(AppLiquidTabBar),
+        matching: find.text('模型'),
+      ),
+      findsNWidgets(2),
+    );
 
     // 切到「模型」选项卡可构建（内容区标题与选项卡标签都含「模型」二字）
-    await tester.tap(find.text('模型'));
+    await tester.tap(_tabLabel('模型'));
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('模型'), findsWidgets);
     await _flushSaveTimers(tester);
@@ -312,7 +335,7 @@ void main() {
       _harness(state, const MobileAiProviderDetailPage(profileId: 'active')),
     );
     await tester.pump();
-    await tester.tap(find.text('基本'));
+    await tester.tap(_tabLabel('基本'));
     await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.byType(Switch).at(0));
     await tester.pump();
@@ -357,6 +380,112 @@ void main() {
     final mcpToggle = find.byKey(const ValueKey('mcp_enabled_toggle'));
     expect(tester.getSize(aiToggle).width, tester.getSize(mcpToggle).width);
     expect(tester.takeException(), isNull);
+    await _flushSaveTimers(tester);
+  });
+
+  testWidgets('底部动作按钮簇：同侧成簇、位于菜单栏上方、随配置左右切换', (tester) async {
+    tester.view.physicalSize = const Size(412, 915);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final state = AppState();
+    final profile = AiProfile(name: 'OpenAI', provider: 'openai');
+    state.updateConfig((c) {
+      c.aiProfiles.add(profile);
+      c.activeAiProfileId = profile.id;
+      return c;
+    });
+    await tester.pumpWidget(
+      _harness(state, MobileAiProviderDetailPage(profileId: profile.id)),
+    );
+    await tester.pumpAndSettle();
+
+    // 动作按钮簇只在「模型」页出现（旧行为保持一致；基本页时它被
+    // AnimatedSize 压到 0 高度 + 透明 + IgnorePointer，仍在树里但不可见）。
+    await tester.tap(_tabLabel('模型'));
+    await tester.pumpAndSettle();
+
+    final fetch = find.byKey(const ValueKey('provider_models_fetch_round'));
+    final add = find.byKey(const ValueKey('provider_models_add_round'));
+    expect(fetch, findsOneWidget);
+    expect(add, findsOneWidget);
+    // 圆形 44×44。
+    expect(tester.getSize(fetch).width, 44);
+    expect(tester.getSize(fetch).height, 44);
+
+    // 默认 mobileBottomActionSide == 'right'：两按钮都在屏幕右半区。
+    const double mid = 412 / 2;
+    expect(tester.getCenter(fetch).dx, greaterThan(mid));
+    expect(tester.getCenter(add).dx, greaterThan(mid));
+    // 两颗按钮同侧成簇：add 在 fetch 右边，间距 ~10（另含玻璃描边 0.7×2）。
+    expect(
+      tester.getCenter(add).dx - tester.getCenter(fetch).dx,
+      closeTo(55.4, 2),
+    );
+    // 按钮簇在菜单栏上方，不重叠。
+    final tabs = find.byKey(const ValueKey('ai_provider_top_tabs'));
+    expect(
+      tester.getBottomLeft(add).dy,
+      lessThanOrEqualTo(tester.getTopLeft(tabs).dy),
+    );
+
+    // select 订阅：配置改到左侧后本页立即重建（无需重新进入页面）。
+    state.updateConfig((c) => c..mobileBottomActionSide = 'left');
+    await tester.pumpAndSettle();
+    expect(tester.getCenter(fetch).dx, lessThan(mid));
+    expect(tester.getCenter(add).dx, lessThan(mid));
+    expect(
+      tester.getCenter(add).dx - tester.getCenter(fetch).dx,
+      closeTo(55.4, 2),
+    );
+    expect(tester.takeException(), isNull);
+    await _flushSaveTimers(tester);
+  });
+
+  testWidgets('PC 提供商列表：工具栏 + 多列网格（宽 1280）', (tester) async {
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final state = AppState();
+    final openAi = AiProfile(name: 'OpenAI', provider: 'openai');
+    openAi.models.add(AiModelEntry(id: 'gpt-4o'));
+    final claude = AiProfile(name: 'Claude', provider: 'anthropic');
+    claude.models.add(AiModelEntry(id: 'claude-sonnet'));
+    final deepseek = AiProfile(name: 'DeepSeek', provider: 'deepseek');
+    state.updateConfig((c) {
+      c.aiProfiles.addAll([openAi, claude, deepseek]);
+      c.activeAiProfileId = openAi.id;
+      c.cardStyle = 'gray';
+      c.pillStyle = 'gray';
+      return c;
+    });
+
+    await tester.pumpWidget(
+      _harness(state, MobileAiProvidersPage(state: state)),
+    );
+    await tester.pumpAndSettle();
+
+    // 工具栏：搜索框 + 仅启用筛选 + 添加提供商。
+    expect(find.byKey(const ValueKey('ai_provider_search')), findsOneWidget);
+    expect(find.text('仅显示已启用'), findsOneWidget);
+    expect(find.text('添加提供商'), findsWidgets);
+    expect(tester.takeException(), isNull);
+
+    // 3 列网格：三张卡首行齐平、横向递增。
+    final openAiPos = tester.getTopLeft(find.text('OpenAI'));
+    final claudePos = tester.getTopLeft(find.text('Claude'));
+    final deepseekPos = tester.getTopLeft(find.text('DeepSeek'));
+    expect(claudePos.dy, closeTo(openAiPos.dy, 0.5));
+    expect(deepseekPos.dy, closeTo(openAiPos.dy, 0.5));
+    expect(claudePos.dx, greaterThan(openAiPos.dx + 100));
+    expect(deepseekPos.dx, greaterThan(claudePos.dx + 100));
+
+    // 搜索仍是本地过滤（桌面端复用同一状态机）。
+    final search = find.byKey(const ValueKey('ai_provider_search'));
+    await tester.enterText(search, 'claude');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    expect(find.text('Claude'), findsWidgets);
+    expect(find.text('OpenAI'), findsNothing);
     await _flushSaveTimers(tester);
   });
 

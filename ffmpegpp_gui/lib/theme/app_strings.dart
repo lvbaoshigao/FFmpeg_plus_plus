@@ -131,6 +131,15 @@ class AppStrings {
   String get navPlacementScope => lang == 'zh'
       ? '宽屏（平板 / 横屏）自动改为左侧竖排（仅移动端）'
       : 'Wide screens switch to a left rail (mobile only)';
+  // ── 底部悬浮动作按钮所在侧（仅移动端）──
+  // 例：AI 提供商详情页底部的「获取模型 / 添加模型」两颗圆形按钮。
+  // 菜单栏与按钮分开摆放，按钮整体靠左或靠右，左撇子可改左侧。
+  String get bottomActionSideLabel => lang == 'zh' ? '底部动作按钮位置' : 'Bottom action buttons';
+  String get bottomActionSideScope => lang == 'zh'
+      ? 'AI 配置等子页面底部的圆形动作按钮统一放在该侧（左撇子可改左侧）'
+      : 'Circular action buttons on sub-page bottoms (e.g. AI config) sit on this side';
+  String get bottomActionSideLeft => lang == 'zh' ? '左侧' : 'Left';
+  String get bottomActionSideRight => lang == 'zh' ? '右侧' : 'Right';
   // ── 显示（仅移动端）──
   String get displayLabel => lang == 'zh' ? '显示' : 'Display';
   String get highRefreshRateLabel => lang == 'zh' ? '高刷新率' : 'High refresh rate';

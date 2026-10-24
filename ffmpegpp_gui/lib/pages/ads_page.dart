@@ -9,6 +9,8 @@ import '../widgets/glass_panel.dart';
 import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_ui.dart';
 import '../widgets/wallpaper_background.dart';
+// Linux 自绘窗口修饰（CSD）：全屏路由页统一套 WindowChrome。
+import '../widgets/window_chrome.dart';
 
 /// 一条广告数据。
 ///
@@ -58,94 +60,101 @@ class AdsPage extends StatelessWidget {
       ],
     );
 
+    // Linux 客户端修饰（CSD）：二级 / 三级全屏路由统一套 WindowChrome。
+    // 顺序：WindowChrome 必须在 withWallpaper 的**内层** —— 标题栏玻璃用
+    // BackdropFilter 采样同一棵树里更早绘制的像素，若套在壁纸外层，标题栏
+    // 下方没有任何已绘制内容，只会透出窗口底色。
+    // 不传 title / onBack：本页自带 GlassTopBar / MobileSubPageTopBar。
     return withWallpaper(
       context,
-      Scaffold(
-        backgroundColor: Colors.transparent,
-        body: Column(
-          children: [
-            isMobilePlatform
-                ? MobileSubPageTopBar(
-                    title: title,
-                    onBack: () => Navigator.of(context).maybePop(),
-                  )
-                : GlassTopBar(
-                    title: title,
-                    actions: [
-                      IconButton(
-                        tooltip: s.aboutClose,
-                        icon: Icon(
-                          Icons.close,
-                          size: 18,
-                          color: scheme.onSurfaceVariant,
+      WindowChrome(
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          body: Column(
+            children: [
+              isMobilePlatform
+                  ? MobileSubPageTopBar(
+                      title: title,
+                      onBack: () => Navigator.of(context).maybePop(),
+                    )
+                  : GlassTopBar(
+                      title: title,
+                      actions: [
+                        IconButton(
+                          tooltip: s.aboutClose,
+                          icon: Icon(
+                            Icons.close,
+                            size: 18,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                          onPressed: () => Navigator.of(context).maybePop(),
                         ),
-                        onPressed: () => Navigator.of(context).maybePop(),
-                      ),
-                    ],
-                  ),
-            Expanded(
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: isMobilePlatform ? double.infinity : 960,
-                  ),
-                  child: kAds.isEmpty
-                      ? _emptyState(context, scheme, s)
-                      : ListView.separated(
-                          // 开窗卡所在列表必须关：子项若被自动套上 RepaintBoundary，
-                          // 滚动时会直接复用旧图层平移，卡内壁纸跟着卡走（见 app_card 的
-                          // _WallpaperWindowPainter）。
-                          addRepaintBoundaries: false,
-                          padding: isMobilePlatform
-                              ? MobileUi.subListPadding(top: 10, bottom: 24)
-                              : const EdgeInsets.fromLTRB(16, 10, 16, 24),
-                          itemCount: kAds.length,
-                          separatorBuilder: (_, _) =>
-                              const SizedBox(height: 10),
-                          itemBuilder: (ctx, i) => AppCard(
-                            style: cardStyle,
-                            radius: 14,
-                            padding: const EdgeInsets.all(14),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  kAds[i].title,
-                                  style: TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w700,
-                                    color: scheme.onSurface,
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  kAds[i].body,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: scheme.onSurfaceVariant,
-                                    height: 1.4,
-                                  ),
-                                ),
-                                if (kAds[i].url.isNotEmpty) ...[
-                                  const SizedBox(height: 6),
+                      ],
+                    ),
+              Expanded(
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: isMobilePlatform ? double.infinity : 960,
+                    ),
+                    child: kAds.isEmpty
+                        ? _emptyState(context, scheme, s)
+                        : ListView.separated(
+                            // 开窗卡所在列表必须关：子项若被自动套上 RepaintBoundary，
+                            // 滚动时会直接复用旧图层平移，卡内壁纸跟着卡走（见 app_card 的
+                            // _WallpaperWindowPainter）。
+                            addRepaintBoundaries: false,
+                            padding: isMobilePlatform
+                                ? MobileUi.subListPadding(top: 10, bottom: 24)
+                                : const EdgeInsets.fromLTRB(16, 10, 16, 24),
+                            itemCount: kAds.length,
+                            separatorBuilder: (_, _) =>
+                                const SizedBox(height: 10),
+                            itemBuilder: (ctx, i) => AppCard(
+                              style: cardStyle,
+                              radius: 14,
+                              padding: const EdgeInsets.all(14),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
                                   Text(
-                                    kAds[i].url,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
+                                    kAds[i].title,
                                     style: TextStyle(
-                                      fontSize: 11,
-                                      color: scheme.primary,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w700,
+                                      color: scheme.onSurface,
                                     ),
                                   ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    kAds[i].body,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: scheme.onSurfaceVariant,
+                                      height: 1.4,
+                                    ),
+                                  ),
+                                  if (kAds[i].url.isNotEmpty) ...[
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      kAds[i].url,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: scheme.primary,
+                                      ),
+                                    ),
+                                  ],
                                 ],
-                              ],
+                              ),
                             ),
                           ),
-                        ),
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

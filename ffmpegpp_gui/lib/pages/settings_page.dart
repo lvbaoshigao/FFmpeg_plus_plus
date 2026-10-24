@@ -51,6 +51,9 @@ import '../widgets/mobile_ui.dart';
 import '../widgets/option_menu_bar.dart';
 import '../widgets/toast.dart';
 import '../widgets/wallpaper_background.dart';
+// Linux CSD（自绘窗口修饰）：二级 / 三级全屏路由页统一套 WindowChrome，
+// 否则路由盖住主窗口标题栏后既不能拖动也没有窗口按钮。
+import '../widgets/window_chrome.dart';
 import 'ads_page.dart';
 import 'ai_settings_mobile.dart';
 import 'command_page.dart';
@@ -1140,6 +1143,10 @@ class _SettingsPageState extends State<SettingsPage> {
         state.config.predictiveBack,
         state.config.useDynamicColor,
         state.config.mobileNavPlacement,
+        // 底部动作按钮所在侧（仅移动端）：受控 _optionRow 直读 config，
+        // 漏在签名外会「选了左侧但页面不重建、下拉仍显示旧值」
+        // （与 mobileNavPlacement / 字重改不了同一条根因）。
+        state.config.mobileBottomActionSide,
         // 滑动自动收起底部菜单栏：受控 SwitchListTile 直读 config，
         // 漏在签名外会「点了没反应」（与 mobileNavPlacement 同根因）。
         state.config.navAutoHide,
@@ -2165,32 +2172,41 @@ void _pushSettingsSubPage(
     MaterialPageRoute(
       allowSnapshotting: false,
       builder: (ctx) => Consumer<AppState>(
+        // 包裹顺序：WindowChrome 必须在 withWallpaper 的**内层**。
+        // 标题栏玻璃用 BackdropFilter 采样「同一棵树里更早绘制的内容」；若写成
+        // WindowChrome(child: withWallpaper(...))，标题栏下方没有任何已绘制的
+        // 像素（本路由不透明、旧路由不再绘制），玻璃只会透出窗口底色。
+        //
+        // WindowChrome 不传 title / onBack：页面自己的 MobileSubPageTopBar
+        // 已经承担返回与标题，避免出现「两层标题 / 两个返回」。
         builder: (ctx2, state, _) => withWallpaper(
           ctx2,
-          Scaffold(
-            backgroundColor: Colors.transparent,
-            body: Column(
-              children: [
-                MobileSubPageTopBar(
-                  title: Text(title),
-                  onBack: () => Navigator.of(ctx2).maybePop(),
-                ),
-                Expanded(
-                  child: ListView(
-                    // addRepaintBoundaries:false —— 见移动端主列表同款注释：
-                    // 壁纸开窗 painter 必须每帧按当前变换重算，不能被子项缓存平移。
-                    // 左右间距与设置主界面卡片对齐（主界面 = ListView + 分区卡内边距 14）。
-                    // 此前为 0：MCP/AI 等二级页卡片通顶通底，比主界面卡片明显更宽。
-                    addRepaintBoundaries: false,
-                    // Cards in this page already own the shared 12px inset via
-                    // _glass/_AiSectionCard. Do not add another 12px here: that
-                    // made every secondary-page card narrower than the provider
-                    // card on the MCP/AI page.
-                    padding: const EdgeInsets.only(top: 12, bottom: 48),
-                    children: [contentBuilder(ctx2, state)],
+          WindowChrome(
+            child: Scaffold(
+              backgroundColor: Colors.transparent,
+              body: Column(
+                children: [
+                  MobileSubPageTopBar(
+                    title: Text(title),
+                    onBack: () => Navigator.of(ctx2).maybePop(),
                   ),
-                ),
-              ],
+                  Expanded(
+                    child: ListView(
+                      // addRepaintBoundaries:false —— 见移动端主列表同款注释：
+                      // 壁纸开窗 painter 必须每帧按当前变换重算，不能被子项缓存平移。
+                      // 左右间距与设置主界面卡片对齐（主界面 = ListView + 分区卡内边距 14）。
+                      // 此前为 0：MCP/AI 等二级页卡片通顶通底，比主界面卡片明显更宽。
+                      addRepaintBoundaries: false,
+                      // Cards in this page already own the shared 12px inset via
+                      // _glass/_AiSectionCard. Do not add another 12px here: that
+                      // made every secondary-page card narrower than the provider
+                      // card on the MCP/AI page.
+                      padding: const EdgeInsets.only(top: 12, bottom: 48),
+                      children: [contentBuilder(ctx2, state)],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -2884,6 +2900,30 @@ Widget _buildSurfaceStyleCard(BuildContext ctx, AppState state) {
             ],
             onSelected: (v) =>
                 state.updateConfig((c) => c..mobileNavPlacement = v),
+          ),
+          // 底部动作按钮所在侧（仅移动端）：与菜单栏位置解耦 —— 典型场景
+          // 「AI 提供商详情页」底部胶囊切换栏与「获取模型 / 添加模型」两颗
+          // 圆形动作按钮分开摆放，本项只决定这两颗按钮靠左还是靠右。
+          _optionRow(
+            ctx,
+            icon: Icons.swap_horiz,
+            label: s.bottomActionSideLabel,
+            scope: s.bottomActionSideScope,
+            value: cfg.mobileBottomActionSide,
+            items: [
+              OptionItem(
+                'left',
+                s.bottomActionSideLeft,
+                icon: Icons.align_horizontal_left,
+              ),
+              OptionItem(
+                'right',
+                s.bottomActionSideRight,
+                icon: Icons.align_horizontal_right,
+              ),
+            ],
+            onSelected: (v) =>
+                state.updateConfig((c) => c..mobileBottomActionSide = v),
           ),
           // 滑动自动收起（仅移动端 + 底部形态生效）：内容上滑收起菜单栏、
           // 下滑展开；底部液态玻璃栏由 LiquidGlassMobileNav 动画收起，

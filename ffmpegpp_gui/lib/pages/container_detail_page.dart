@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:window_manager/window_manager.dart';
 
 import '../app.dart';
 import '../models/models.dart';
@@ -12,11 +11,12 @@ import '../providers/app_state.dart';
 import '../services/thumbnail_service.dart';
 import '../theme/app_strings.dart';
 import '../widgets/app_card.dart';
-import '../widgets/liquid_glass_fallback.dart';
 import '../widgets/mobile_glass_pill.dart';
 import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_ui.dart';
 import '../widgets/wallpaper_background.dart';
+// Linux 客户端修饰（CSD）：统一使用全应用唯一的 window_chrome.dart 实现。
+import '../widgets/window_chrome.dart';
 import 'pipeline_editor_page.dart';
 
 class ContainerDetailPage extends StatefulWidget {
@@ -26,31 +26,17 @@ class ContainerDetailPage extends StatefulWidget {
   State<ContainerDetailPage> createState() => _ContainerDetailPageState();
 }
 
-class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowListener {
+class _ContainerDetailPageState extends State<ContainerDetailPage> {
   int? _editingIndex;
   final _indexCtrl = TextEditingController();
-  bool _isMaximized = false;
 
-  @override
-  void initState() {
-    super.initState();
-    if (!isMobilePlatform) {
-      windowManager.addListener(this);
-      windowManager.isMaximized().then((v) { if (mounted) setState(() => _isMaximized = v); });
-    }
-  }
-
+  // 最大化图标状态 / 窗口拖动 / 最小化 / 关闭全部由 widgets/window_chrome.dart
+  // 的 WindowChrome 自己维护，本页不再需要 WindowListener 与 _isMaximized。
   @override
   void dispose() {
     _indexCtrl.dispose();
-    if (!isMobilePlatform) windowManager.removeListener(this);
     super.dispose();
   }
-
-  @override
-  void onWindowMaximize() { if (mounted) setState(() => _isMaximized = true); }
-  @override
-  void onWindowUnmaximize() { if (mounted) setState(() => _isMaximized = false); }
 
   FileContainer? _container(AppState state) =>
       state.containers.where((c) => c.id == widget.containerId).firstOrNull;
@@ -62,7 +48,17 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
     final scheme = Theme.of(context).colorScheme;
     final container = _container(state);
     if (container == null) {
-      return Scaffold(body: Center(child: Text(s.isZh ? '容器不存在' : 'Container not found')));
+      // 空态同样要走 WindowChrome：本页是 pushed 全屏路由，Linux 上路由会
+      // 盖住主窗口的 CSD 标题栏，不套的话这一页既不能拖动也无法关闭。
+      return withWallpaper(
+        context,
+        WindowChrome(
+          child: Scaffold(
+            backgroundColor: Colors.transparent,
+            body: Center(child: Text(s.isZh ? '容器不存在' : 'Container not found')),
+          ),
+        ),
+      );
     }
 
     final items = container.sortedItems;
@@ -177,9 +173,10 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
         )
       else
       Padding(
-        // 垂直内边距上下相等（Windows 上 4/4）：原先下边距只有 2，工具栏整体偏上。
-        // Linux 顶部 40 是给自绘标题栏让位，底部同样保持 4。
-        padding: EdgeInsets.fromLTRB(8, Platform.isWindows ? 4 : 40, 8, 4),
+        // 垂直内边距上下相等：原先下边距只有 2，工具栏整体偏上。
+        // Linux 的 36px 自绘标题栏已统一由 WindowChrome 让位（内容整体下移），
+        // 这里不再额外留 40；macOS 走系统标题栏，保留历史上的 40 视觉间距。
+        padding: EdgeInsets.fromLTRB(8, Platform.isMacOS ? 40 : 4, 8, 4),
         child: Row(children: [
           IconButton(icon: const Icon(Icons.arrow_back, size: 20), onPressed: () => Navigator.pop(context)),
           const SizedBox(width: 4),
@@ -206,20 +203,25 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
       Expanded(child: listWidget),
     ]);
 
-    Widget page = _withWallpaper(context, Scaffold(
-      backgroundColor: Colors.transparent,
-      body: content,
-    ));
-
-    // 仅 Linux 使用自绘标题栏（CSD）；macOS/Windows 用系统默认标题栏，
-    // 若再叠一层自绘会出现「双标题栏 + 重复窗口按钮」
-    if (isLinuxPlatform) {
-      page = Stack(children: [
-        page,
-        Positioned(left: 0, right: 0, top: 0, child: _buildCsdTitleBar(scheme)),
-      ]);
-    }
-    return page;
+    // Linux 客户端修饰（CSD）：统一使用 widgets/window_chrome.dart。
+    //  * WindowChrome 必须放在 withWallpaper 的**内层**：标题栏玻璃用
+    //    BackdropFilter 采样同一棵树里更早绘制的像素，套在壁纸外层只会透出
+    //    窗口底色；
+    //  * 不传 title / onBack：本页已自带工具栏（桌面）与药丸顶栏（移动端），
+    //    避免出现「两层标题 / 两个返回」；
+    //  * macOS/Windows 走系统标题栏，WindowChrome 内部自动 no-op，
+    //    不会出现「双标题栏 + 重复窗口按钮」。
+    // 历史上本页自绘过一份 _buildCsdTitleBar + _CsdBtn，现已删除（与主窗口、
+    // 节点编辑器、独立面板统一到同一份实现，避免四处漂移）。
+    return _withWallpaper(
+      context,
+      WindowChrome(
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          body: content,
+        ),
+      ),
+    );
   }
 
   Widget _buildItem(AppState state, AppStrings s, ColorScheme scheme,
@@ -358,55 +360,6 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
   Widget _withWallpaper(BuildContext context, Widget child) =>
       withWallpaper(context, child);
 
-  /// Linux 专用自绘标题栏（CSD，仅 `isLinuxPlatform` 时挂载，见调用点）。
-  ///
-  /// 作为玻璃表面同样吃「玻璃细节」：σ18 与 alpha 160/180 是历史基准值，
-  /// 默认参数下观感不变（Linux 不钳制 σ，18 × 1.0 = 18）。
-  Widget _buildCsdTitleBar(ColorScheme scheme) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final tuning = glassTuningOf(context);
-    final double sigma = tunedGlassSigma(18, tuning);
-    return ClipRect(
-      child: BackdropFilter(
-        // σ 走进程级缓存，避免每次 build 新建持有 native handle 的 filter
-        // （见 cachedGlassBlur 说明）。σ 值域有限，命中率高。
-        filter: cachedGlassBlur(sigma),
-        child: Container(
-          height: 36,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [
-              scheme.surface.withAlpha(tunedGlassAlpha(isDark ? 160 : 180, tuning)),
-              scheme.surface.withAlpha(tunedGlassAlpha(isDark ? 120 : 140, tuning)),
-            ]),
-            border: Border(bottom: BorderSide(color: scheme.outlineVariant.withAlpha(isDark ? 60 : 80), width: 0.5)),
-          ),
-          child: Stack(children: [
-            DragToMoveArea(child: GestureDetector(
-              onDoubleTap: () async {
-                if (await windowManager.isMaximized()) { windowManager.unmaximize(); }
-                else { windowManager.maximize(); }
-              },
-              child: Container(color: Colors.transparent),
-            )),
-            Positioned(right: 0, top: 0, bottom: 0, child: Row(mainAxisSize: MainAxisSize.min, children: [
-              _CsdBtn(icon: Icons.remove, color: scheme.onSurfaceVariant, onTap: () => windowManager.minimize()),
-              _CsdBtn(
-                icon: _isMaximized ? Icons.filter_none : Icons.crop_square,
-                color: scheme.onSurfaceVariant,
-                onTap: () async {
-                  if (await windowManager.isMaximized()) { windowManager.unmaximize(); }
-                  else { windowManager.maximize(); }
-                },
-              ),
-              // 同 app.dart / pipeline_editor_page：Windows 关闭按钮系统约定红
-              _CsdBtn(icon: Icons.close, color: scheme.onSurface, hoverBg: const Color(0xFFE81123), onTap: () => windowManager.close()),
-            ])),
-          ]),
-        ),
-      ),
-    );
-  }
-
   Future<void> _addFiles(AppState state) async {
     final r = await FilePicker.pickFiles(
         type: FileType.custom,
@@ -417,35 +370,6 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> with WindowLi
       final paths = r.where((f) => f.path != null).map((f) => f.path!).toList();
       if (paths.isNotEmpty) state.addFilesToContainer(widget.containerId, paths);
     }
-  }
-}
-
-class _CsdBtn extends StatefulWidget {
-  final IconData icon;
-  final Color color;
-  final Color? hoverBg;
-  final VoidCallback onTap;
-  const _CsdBtn({required this.icon, required this.color, this.hoverBg, required this.onTap});
-  @override
-  State<_CsdBtn> createState() => _CsdBtnState();
-}
-
-class _CsdBtnState extends State<_CsdBtn> {
-  bool _hovering = false;
-  @override
-  Widget build(BuildContext context) {
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovering = true),
-      onExit: (_) => setState(() => _hovering = false),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: Container(
-          width: 46, height: 36,
-          color: _hovering ? (widget.hoverBg?.withAlpha(200) ?? widget.color.withAlpha(30)) : Colors.transparent,
-          child: Center(child: Icon(widget.icon, size: 16, color: _hovering && widget.hoverBg != null ? Colors.white : widget.color)),
-        ),
-      ),
-    );
   }
 }
 

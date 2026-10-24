@@ -50,6 +50,8 @@ import '../widgets/step_editors/video_filter_step_editor.dart';
 import '../widgets/step_editors/video_geometry_step_editor.dart';
 import '../widgets/step_editors/video_overlay_step_editor.dart';
 import '../widgets/wallpaper_background.dart';
+// Linux CSD：独立面板窗口复用全应用唯一的 WindowChromeBar（见 _PanelActionBar）。
+import '../widgets/window_chrome.dart';
 import 'pipeline_editor_page.dart' show AiPanelApi, AiPanelView;
 
 /// ════════════════════════════════════════════════════════════════════════
@@ -513,16 +515,25 @@ class _DetachedPanelAppState extends State<DetachedPanelApp>
       home: ChangeNotifierProvider<AppState>.value(
         value: _store.app,
         child: Builder(
-          builder: (context) => _store.suspended
-              ? const SizedBox.shrink()
-              : withWallpaper(
-                  context,
-                  !_store.ready
-                      ? const _Connecting()
-                      : widget.args.panel == DetachedPanel.ai
-                      ? _AiWindow(store: _store)
-                      : _PropsWindow(store: _store),
-                ),
+          builder: (context) {
+            if (_store.suspended) return const SizedBox.shrink();
+            final panel = withWallpaper(
+              context,
+              !_store.ready
+                  ? const _Connecting()
+                  : widget.args.panel == DetachedPanel.ai
+                  ? _AiWindow(store: _store)
+                  : _PropsWindow(store: _store),
+            );
+            // Linux 独立面板窗口和主窗口一样是无边框的（TitleBarStyle.hidden）：
+            // 标题栏 / 窗口按钮由 _PanelActionBar 里的 WindowChromeBar 提供，
+            // 但那条标题栏只负责「排布」，不包缩放热区，所以根节点补一层
+            // 四边 6px 的 DragToResizeArea。Windows / macOS 有系统边框，
+            // 绝不能再加（会与系统缩放热区叠加成「鬼影」手感）。
+            return Platform.isLinux
+                ? DragToResizeArea(resizeEdgeSize: 6, child: panel)
+                : panel;
+          },
         ),
       ),
     );
@@ -546,136 +557,60 @@ class _Connecting extends StatelessWidget {
   }
 }
 
-/// System-independent title and window actions; closing docks the panel safely.
-class _PanelActionBar extends StatefulWidget {
+/// 独立面板窗口的标题栏 / 动作栏。
+///
+/// 复用全应用唯一的 [WindowChromeBar]（与主窗口、编辑器、容器详情同一份
+/// 玻璃标题栏实现）：
+///  * Linux：窗口是无边框的（main.dart 里 TitleBarStyle.hidden），标题栏必须
+///    自带拖动区与「最小化 / 最大化 / 关闭」三颗窗口按钮；
+///  * Windows / macOS：系统标题栏已有窗口按钮，这里只保留一条应用内动作栏
+///    （标题 + 吸附回主窗口），关掉窗口按钮与拖动区，避免出现双份按钮。
+///
+/// 关闭语义保持不变：
+///  * Linux 的关闭按钮走 windowManager.close() → [_DetachedPanelAppState.onWindowClose]
+///    → dockBack（面板收回应用内），与旧版「关闭并收回面板」一致；
+///  * Windows / macOS 点系统 X 同样走 onWindowClose → dockBack。
+/// 最大化图标状态由 [WindowChromeBar] 自己维护，本组件不再需要 WindowListener。
+class _PanelActionBar extends StatelessWidget {
   const _PanelActionBar({required this.store, required this.title});
+
   final PanelWindowStore store;
   final String title;
 
   @override
-  State<_PanelActionBar> createState() => _PanelActionBarState();
-}
-
-class _PanelActionBarState extends State<_PanelActionBar> with WindowListener {
-  bool _maximized = false;
-
-  @override
-  void initState() {
-    super.initState();
-    windowManager.addListener(this);
-    if (Platform.isLinux) unawaited(_refreshMaximized());
-  }
-
-  Future<void> _refreshMaximized() async {
-    final value = await windowManager.isMaximized();
-    if (mounted) setState(() => _maximized = value);
-  }
-
-  @override
-  void onWindowMaximize() => unawaited(_refreshMaximized());
-  @override
-  void onWindowUnmaximize() => unawaited(_refreshMaximized());
-
-  Future<void> _toggleMaximize() async {
-    if (await windowManager.isMaximized()) {
-      await windowManager.unmaximize();
-    } else {
-      await windowManager.maximize();
-    }
-  }
-
-  @override
-  void dispose() {
-    windowManager.removeListener(this);
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final isZh = widget.store.isZh;
-    Widget action(IconData icon, String label, VoidCallback callback) =>
-        IconButton(
-          tooltip: label,
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints.tightFor(width: 32, height: 32),
-          iconSize: 16,
-          onPressed: callback,
-          icon: Icon(icon),
-        );
-    // Window buttons live outside the drag area so their clicks never move it.
+    final isZh = store.isZh;
+    final bool isLinux = Platform.isLinux;
+    // WindowChromeBar 的标题不是 Flexible：面板窗口最窄可到 280px（见
+    // _installChrome 的 setMinimumSize），「吸附按钮 + 标题 + 三颗窗口按钮」
+    // 在窄窗口下会超宽。按窗口宽度给标题一个上限，超出部分省略，
+    // 避免 RenderFlex overflow（标题压到窗口按钮下面）。
+    final double reservedWidth = 46 + (isLinux ? 46.0 * 3 : 0) + 32;
+    final double availableTitleWidth =
+        MediaQuery.sizeOf(context).width - reservedWidth;
     return withoutAppTextScale(
       context,
-      Container(
-        height: 36,
-        decoration: BoxDecoration(
-          color: scheme.primaryContainer.withAlpha(60),
-          border: Border(
-            bottom: BorderSide(color: scheme.outlineVariant.withAlpha(70)),
+      WindowChromeBar(
+        // 标题字色 / 字号由 WindowChromeBar 的 DefaultTextStyle 统一提供。
+        title: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: availableTitleWidth < 24 ? 24 : availableTitleWidth,
           ),
+          child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
         ),
-        child: Row(
-          children: [
-            Expanded(
-              child: DragToMoveArea(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onDoubleTap: Platform.isLinux
-                      ? () => unawaited(_toggleMaximize())
-                      : null,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.open_in_new,
-                          size: 13,
-                          color: scheme.primary,
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            widget.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
+        leading: [
+          Tooltip(
+            message: isZh ? '吸附回主窗口' : 'Dock back',
+            child: WindowChromeButton(
+              icon: Icons.close_fullscreen,
+              color: scheme.primary,
+              onTap: () => unawaited(store.dockBack()),
             ),
-            action(
-              Icons.close_fullscreen,
-              isZh ? '吸附回主窗口' : 'Dock back',
-              () => unawaited(widget.store.dockBack()),
-            ),
-            if (Platform.isLinux) ...[
-              action(
-                Icons.remove,
-                isZh ? '最小化' : 'Minimize',
-                () => unawaited(windowManager.minimize()),
-              ),
-              action(
-                _maximized ? Icons.filter_none : Icons.crop_square,
-                isZh
-                    ? (_maximized ? '还原' : '最大化')
-                    : (_maximized ? 'Restore' : 'Maximize'),
-                () => unawaited(_toggleMaximize()),
-              ),
-              action(
-                Icons.close,
-                isZh ? '关闭并收回面板' : 'Close and dock panel',
-                () => unawaited(widget.store.dockBack()),
-              ),
-            ],
-          ],
-        ),
+          ),
+        ],
+        showWindowButtons: isLinux,
+        dragToMove: isLinux,
       ),
     );
   }

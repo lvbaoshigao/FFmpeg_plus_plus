@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:liquid_glass_tab_bar/liquid_glass_tab_bar.dart';
 import 'package:provider/provider.dart';
 
 import '../models/models.dart';
@@ -13,8 +14,9 @@ import '../theme/app_strings.dart';
 import '../theme/settings_typography.dart';
 import '../widgets/app_card.dart';
 import '../widgets/glass_panel.dart';
+import '../widgets/liquid_glass_mobile_nav.dart';
 import '../widgets/liquid_modality_pills.dart';
-import '../widgets/liquid_stretch_tabs.dart';
+import '../widgets/masonry_grid.dart';
 import '../widgets/mobile_glass_pill.dart';
 import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_ui.dart';
@@ -22,6 +24,7 @@ import '../widgets/model_editor_sheet.dart';
 import '../widgets/option_menu_bar.dart';
 import '../widgets/toast.dart';
 import '../widgets/wallpaper_background.dart';
+import '../widgets/window_chrome.dart';
 import 'settings_page.dart'
     show applyProfilePreset, fetchAiBalance, listAiModels, pingAi;
 
@@ -160,6 +163,19 @@ Widget aiSettingsContent(BuildContext ctx, AppState state) {
   );
 }
 
+/// PC 端「MCP / AI」总览（设置 → AI / MCP 的桌面布局）。
+///
+/// 设计目标：与 PC 设置页同一套设计语言 —— AppCard 玻璃卡 + 12/14px 间距 +
+/// 1180 宽度上限，而不是把移动端卡片上下堆叠后放大。结构：
+///
+///  * 顶部状态带：标题 + 说明、AI / MCP 开关、提供商 / 模型数量、当前提供商、
+///    MCP 运行状态（故障时显示错误原因）；
+///  * 主区左：「提供商管理」——响应式 2 列卡网格（名称 / provider / 模型数 /
+///    启用状态 / 「当前」徽标，点卡直达详情），带「管理」「添加提供商」入口；
+///  * 主区右：MCP 服务 / 权限 / 高级设置三张分组卡（宽度 < 900 时下移成单列）。
+///
+/// 功能区一个不少：AI 开关、MCP 开关、提供商列表与添加入口、权限四项、
+/// MCP 端口/地址/应用/令牌/两个开关、高级设置入口全部保留。
 class _DesktopAiSettingsOverview extends StatelessWidget {
   final AppState state;
 
@@ -174,69 +190,518 @@ class _DesktopAiSettingsOverview extends StatelessWidget {
       0,
       (count, profile) => count + _modelCount(profile),
     );
+    final active = cfg.aiProfiles
+        .where((p) => p.id == cfg.activeAiProfileId)
+        .firstOrNull;
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 900;
-        final left = Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _AiProviderEntry(cfg: cfg, state: state, s: s, scheme: scheme),
-            const SizedBox(height: 12),
-            _PermissionsSection(cfg: cfg, s: s, state: state),
-          ],
+        final providerPanel = _DesktopProviderManagementPanel(
+          state: state,
+          cfg: cfg,
+          s: s,
+          scheme: scheme,
         );
-        final right = Column(
+        // flush: true —— 两列布局的间距由本页控制，分组卡不再各加 12px
+        // 横向内缩（否则右栏会比左栏窄一圈，出现「手机卡片放大」的错位感）。
+        final sideRail = Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _McpSection(cfg: cfg, s: s, state: state, scheme: scheme),
+            _McpSection(
+              cfg: cfg,
+              s: s,
+              state: state,
+              scheme: scheme,
+              flush: true,
+            ),
             const SizedBox(height: 12),
-            _AdvancedSection(cfg: cfg, s: s, scheme: scheme),
+            _PermissionsSection(
+              cfg: cfg,
+              s: s,
+              state: state,
+              flush: true,
+            ),
+            const SizedBox(height: 12),
+            _AdvancedSection(cfg: cfg, s: s, scheme: scheme, flush: true),
           ],
         );
 
         return Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 1180),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
-                  child: _AiProvidersHero(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _DesktopAiStatusBand(
                     cfg: cfg,
                     s: s,
                     scheme: scheme,
+                    state: state,
                     providerCount: cfg.aiProfiles.length,
                     modelCount: totalModels,
-                    onAiEnabledChanged: (enabled) => state.updateConfig(
-                      (config) => config..aiEnabled = enabled,
-                    ),
-                    onMcpEnabledChanged: state.toggleMcpServer,
+                    activeProfile: active,
                   ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: wide
-                      ? Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(child: left),
-                            const SizedBox(width: 14),
-                            Expanded(child: right),
-                          ],
-                        )
-                      : Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [left, const SizedBox(height: 12), right],
-                        ),
-                ),
-                const SizedBox(height: 20),
-              ],
+                  const SizedBox(height: 14),
+                  if (wide)
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(flex: 3, child: providerPanel),
+                        const SizedBox(width: 14),
+                        Expanded(flex: 2, child: sideRail),
+                      ],
+                    )
+                  else
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        providerPanel,
+                        const SizedBox(height: 14),
+                        sideRail,
+                      ],
+                    ),
+                ],
+              ),
             ),
           ),
         );
       },
+    );
+  }
+}
+
+/// PC 端 AI 开关按钮（与移动端 Hero 的 FilledButton.tonalIcon 同语义、
+/// 桌面 36px 档位）。Key 与移动端一致，测试/无障碍沿用同一批 key。
+class _DesktopToggleButton extends StatelessWidget {
+  final Key toggleKey;
+  final String label;
+  final bool enabled;
+  final ValueChanged<bool> onChanged;
+
+  const _DesktopToggleButton({
+    required this.toggleKey,
+    required this.label,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final s = AppStrings.of(
+      context.select<AppState, String>((st) => st.config.language),
+    );
+    return FilledButton.tonalIcon(
+      key: toggleKey,
+      onPressed: () => onChanged(!enabled),
+      icon: Icon(
+        enabled ? Icons.toggle_on_outlined : Icons.toggle_off_outlined,
+        size: AppControlSize.comfortable.iconSize,
+      ),
+      label: Text(
+        '$label · ${enabled ? (s.isZh ? '启用' : 'On') : (s.isZh ? '关闭' : 'Off')}',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      style: AppControlSize.comfortable.buttonStyle(filled: enabled),
+    );
+  }
+}
+
+/// 顶部状态带：仪表盘的一行「总览」，替代移动端 Hero 的卡片堆叠。
+class _DesktopAiStatusBand extends StatelessWidget {
+  final AppConfig cfg;
+  final AppStrings s;
+  final ColorScheme scheme;
+  final AppState state;
+  final int providerCount;
+  final int modelCount;
+  final AiProfile? activeProfile;
+
+  const _DesktopAiStatusBand({
+    required this.cfg,
+    required this.s,
+    required this.scheme,
+    required this.state,
+    required this.providerCount,
+    required this.modelCount,
+    required this.activeProfile,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final sem = scheme.sem;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final look = activeProfile == null
+        ? _ProviderLook(Icons.auto_awesome_outlined, scheme.primary)
+        : _providerLook(activeProfile!, scheme);
+    final mcpColor = state.mcpError != null
+        ? sem.danger
+        : (state.mcpRunning ? sem.success : scheme.onSurfaceVariant);
+    return AppCard(
+      style: cfg.cardStyle,
+      radius: 20,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 16, 16, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: scheme.primary.withAlpha(isDark ? 34 : 22),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: scheme.primary.withAlpha(isDark ? 60 : 40),
+                      width: 0.8,
+                    ),
+                  ),
+                  child: Icon(
+                    Icons.auto_awesome,
+                    size: 23,
+                    color: scheme.primary,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        s.mcpTitle,
+                        style: TextStyle(
+                          fontSize: 18,
+                          height: 1.15,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.1,
+                          color: scheme.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        s.isZh
+                            ? 'AI 助手、提供商与 MCP 服务的统一控制台'
+                            : 'One console for AI providers, permissions and the MCP server',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: SettingsTypography.description.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                _DesktopToggleButton(
+                  toggleKey: const ValueKey('ai_enabled_toggle'),
+                  label: 'AI',
+                  enabled: cfg.aiEnabled,
+                  onChanged: (value) =>
+                      state.updateConfig((c) => c..aiEnabled = value),
+                ),
+                const SizedBox(width: 8),
+                _DesktopToggleButton(
+                  toggleKey: const ValueKey('mcp_enabled_toggle'),
+                  label: 'MCP',
+                  enabled: cfg.mcpEnabled,
+                  onChanged: state.toggleMcpServer,
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                _AiStatChip(
+                  icon: Icons.hub_outlined,
+                  label: s.aiProviderCount(providerCount),
+                  scheme: scheme,
+                ),
+                _AiStatChip(
+                  icon: Icons.widgets_outlined,
+                  label: s.aiModelCount(modelCount),
+                  scheme: scheme,
+                ),
+                _AiStatChip(
+                  icon: activeProfile == null
+                      ? Icons.radio_button_unchecked
+                      : Icons.check_circle_outline,
+                  label: activeProfile == null
+                      ? s.aiNoProviders
+                      : '${s.aiProviderCurrent}: ${activeProfile!.name}',
+                  scheme: scheme,
+                  color: activeProfile == null
+                      ? scheme.onSurfaceVariant
+                      : look.color,
+                ),
+                _AiStatChip(
+                  icon: state.mcpError != null
+                      ? Icons.error_outline
+                      : Icons.dns_outlined,
+                  label:
+                      state.mcpError ??
+                      (state.mcpRunning ? s.mcpRunning : s.mcpStopped),
+                  scheme: scheme,
+                  color: mcpColor,
+                ),
+                if (!cfg.aiEnabled)
+                  _AiStatChip(
+                    icon: Icons.power_settings_new,
+                    label: s.aiAiDisabledHint,
+                    scheme: scheme,
+                    color: sem.warning,
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// PC 端「提供商管理」面板：标题 + 管理 / 添加入口 + 响应式提供商卡网格。
+class _DesktopProviderManagementPanel extends StatelessWidget {
+  final AppState state;
+  final AppConfig cfg;
+  final AppStrings s;
+  final ColorScheme scheme;
+
+  const _DesktopProviderManagementPanel({
+    required this.state,
+    required this.cfg,
+    required this.s,
+    required this.scheme,
+  });
+
+  void _push(BuildContext context, Widget page) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(allowSnapshotting: false, builder: (_) => page),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final profiles = cfg.aiProfiles;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // 面板约 685px 宽时 2 列（每列 ~337）；被拖窄到 560 以下退单列。
+        final columns = constraints.maxWidth >= 560 ? 2 : 1;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 0, 0, 10),
+              child: Row(
+                children: [
+                  Icon(Icons.hub_outlined, size: 16, color: scheme.primary),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          s.aiProviders,
+                          style: TextStyle(
+                            fontSize: 15,
+                            height: 1.2,
+                            fontWeight: FontWeight.w700,
+                            color: scheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          s.aiProvidersSubtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  OutlinedButton.icon(
+                    style: AppControlSize.comfortable.buttonStyle(),
+                    onPressed: () =>
+                        _push(context, MobileAiProvidersPage(state: state)),
+                    icon: const Icon(Icons.list_alt_outlined, size: 16),
+                    label: Text(
+                      s.isZh ? '管理' : 'Manage',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton.tonalIcon(
+                    style: AppControlSize.comfortable.buttonStyle(filled: true),
+                    onPressed: () =>
+                        _push(context, const MobileAiProviderDetailPage()),
+                    icon: const Icon(Icons.add, size: 16),
+                    label: Text(
+                      s.aiNewProvider,
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (profiles.isEmpty)
+              AppCard(
+                style: cfg.cardStyle,
+                radius: 16,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 22, 16, 22),
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.auto_awesome_outlined,
+                        size: 28,
+                        color: scheme.primary,
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        s.aiNoProvidersHint,
+                        textAlign: TextAlign.center,
+                        style: SettingsTypography.description.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              MasonryGrid(
+                columns: columns,
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  for (final profile in profiles)
+                    _DesktopProviderTile(
+                      key: ValueKey('desktop_provider_${profile.id}'),
+                      cardStyle: cfg.cardStyle,
+                      s: s,
+                      scheme: scheme,
+                      isDark: isDark,
+                      profile: profile,
+                      active: profile.id == cfg.activeAiProfileId,
+                      onTap: () => _push(
+                        context,
+                        MobileAiProviderDetailPage(profileId: profile.id),
+                      ),
+                    ),
+                ],
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// PC 端提供商卡：名称 / provider · 模型数 / 启用状态 / 「当前」徽标。
+class _DesktopProviderTile extends StatelessWidget {
+  final String cardStyle;
+  final AppStrings s;
+  final ColorScheme scheme;
+  final bool isDark;
+  final AiProfile profile;
+  final bool active;
+  final VoidCallback onTap;
+
+  const _DesktopProviderTile({
+    super.key,
+    required this.cardStyle,
+    required this.s,
+    required this.scheme,
+    required this.isDark,
+    required this.profile,
+    required this.active,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final modelCount = _modelCount(profile);
+    final providerLabel = profile.provider.isEmpty
+        ? (s.isZh ? '未指定' : 'Unknown')
+        : profile.provider;
+    final meta = profile.group.isEmpty
+        ? '$providerLabel · ${s.aiModelCount(modelCount)}'
+        : '$providerLabel · ${s.aiModelCount(modelCount)} · ${profile.group}';
+    return AppCard(
+      style: cardStyle,
+      radius: 16,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 11, 8, 11),
+        child: Row(
+          children: [
+            _ProviderIconTile(
+              profile: profile,
+              scheme: scheme,
+              isDark: isDark,
+              size: 38,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          profile.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13.5,
+                            height: 1.2,
+                            fontWeight: FontWeight.w600,
+                            color: scheme.onSurface,
+                          ),
+                        ),
+                      ),
+                      if (active) ...[
+                        const SizedBox(width: 6),
+                        _CurrentBadge(
+                          label: s.aiProviderCurrent,
+                          scheme: scheme,
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    meta,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      height: 1.3,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 6),
+            _AiStatusPill(enabled: profile.enabled, s: s, scheme: scheme),
+            Icon(Icons.chevron_right, size: 18, color: scheme.outline),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -251,63 +716,64 @@ class MobileAiProvidersPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = AppStrings.of(state.config.language);
     final desktop = !_useMobileAiLayout(context);
-    return withWallpaper(
-      context,
-      Scaffold(
-        backgroundColor: Colors.transparent,
-        body: SafeArea(
-          bottom: false,
-          child: Column(
-            children: [
-              Expanded(
-                child: Column(
-                  children: [
-                    if (desktop)
-                      _DesktopProviderHeader(
-                        title: s.aiProviders,
-                        onBack: () => Navigator.of(context).maybePop(),
-                      )
-                    else
-                      MobileSubPageTopBar(
-                        title: Text(s.aiProviders),
-                        onBack: () => Navigator.of(context).maybePop(),
-                      ),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        child: Center(
-                          child: ConstrainedBox(
-                            constraints: BoxConstraints(
-                              maxWidth: desktop ? 1120 : double.infinity,
-                            ),
-                            child: _MobileAiSettingsView(state: state),
-                          ),
-                        ),
-                      ),
+    final Widget page = Scaffold(
+      backgroundColor: Colors.transparent,
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            if (desktop)
+              _DesktopProviderHeader(
+                title: s.aiProviders,
+                subtitle: s.aiProvidersSubtitle,
+                onBack: () => Navigator.of(context).maybePop(),
+              )
+            else
+              MobileSubPageTopBar(
+                title: Text(s.aiProviders),
+                onBack: () => Navigator.of(context).maybePop(),
+              ),
+            Expanded(
+              child: SingleChildScrollView(
+                child: Center(
+                  child: ConstrainedBox(
+                    // 与 PC 设置页 / AI 总览仪表盘同一宽度上限，避免宽屏下
+                    // 页面像「手机版放大」一样被拉满。
+                    constraints: BoxConstraints(
+                      maxWidth: desktop ? 1180 : double.infinity,
                     ),
-                  ],
+                    child: _MobileAiSettingsView(state: state),
+                  ),
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
+    // 壁纸 → WindowChrome（Linux 36px 玻璃 CSD）→ Scaffold；非 Linux no-op。
+    return withWallpaper(context, WindowChrome(child: page));
   }
 }
 
 class _DesktopProviderHeader extends StatelessWidget {
   final String title;
+
+  /// 标题下的说明行（PC 端标题栏补一句上下文，与设置页顶栏的层级一致）。
+  final String? subtitle;
   final VoidCallback onBack;
   final List<Widget> actions;
 
   const _DesktopProviderHeader({
     required this.title,
+    this.subtitle,
     required this.onBack,
     this.actions = const [],
   });
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return GlassTopBar(
       title: Row(
         children: [
@@ -318,7 +784,29 @@ class _DesktopProviderHeader extends StatelessWidget {
           ),
           const SizedBox(width: 4),
           Expanded(
-            child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 15.5),
+                ),
+                if (subtitle != null)
+                  Text(
+                    subtitle!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w400,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+              ],
+            ),
           ),
         ],
       ),
@@ -539,6 +1027,214 @@ class _MobileAiSettingsViewState extends State<_MobileAiSettingsView> {
     return list;
   }
 
+  /// PC 端提供商列表：工具栏（搜索 / 仅启用 / 添加提供商）+ 响应式 2~3 列网格。
+  ///
+  /// 复用移动端同一批组件（_AiSearchBar / _AiProviderCard / _AiAddProviderCard /
+  /// _AiEmptyState），只改排布密度与入口位置：移动端仍是「Hero + 单列列表」。
+  Widget _buildDesktopProviderBrowser({
+    required AppConfig cfg,
+    required AppStrings s,
+    required ColorScheme scheme,
+    required bool isDark,
+    required List<AiProfile> providers,
+    required bool noEnabled,
+    required bool showResultsHeader,
+    required int providerCount,
+    required int totalModels,
+  }) {
+    final state = widget.state;
+    Widget emptyAction(IconData icon, String label, VoidCallback onTap) =>
+        _AiGlassActionButton(icon: icon, label: label, onTap: onTap);
+
+    final Widget body;
+    if (_searching) {
+      body = Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: _AiSearchLoading(
+          s: s,
+          query: _searchCtrl.text.trim(),
+          scheme: scheme,
+        ),
+      );
+    } else if (_query.isNotEmpty && providers.isEmpty) {
+      body = Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: _AiEmptyState(
+          icon: Icons.search_rounded,
+          title: s.aiNoSearchResults,
+          hint: s.aiNoSearchResultsHint(_query),
+          action: emptyAction(
+            Icons.cancel_outlined,
+            s.aiClearSearch,
+            () => _clearSearch(unfocus: true),
+          ),
+        ),
+      );
+    } else if (cfg.aiProfiles.isEmpty) {
+      body = Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: _AiEmptyState(
+          icon: Icons.auto_awesome_outlined,
+          title: s.aiNoProviders,
+          hint: s.aiNoProvidersHint,
+        ),
+      );
+    } else if (noEnabled) {
+      body = Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: _AiEmptyState(
+          icon: Icons.filter_alt_off_outlined,
+          title: s.aiNoEnabledProviders,
+          hint: s.aiNoEnabledProvidersHint,
+          action: emptyAction(
+            Icons.filter_alt_off_outlined,
+            s.aiShowAll,
+            () => setState(() => _enabledOnly = false),
+          ),
+        ),
+      );
+    } else {
+      body = LayoutBuilder(
+        builder: (context, constraints) {
+          // 1180 宽度上限内：>=1040 三列、>=680 两列、更窄单列
+          //（例如设置页右侧面板被拖窄时）。
+          final columns = constraints.maxWidth >= 1040
+              ? 3
+              : (constraints.maxWidth >= 680 ? 2 : 1);
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: MasonryGrid(
+              columns: columns,
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                for (var i = 0; i < providers.length; i++)
+                  _AiProviderCard(
+                    // 与移动端一致：查询变化时换 key，重新播入场动画。
+                    key: ValueKey('${providers[i].id}|$_query|$_enabledOnly'),
+                    cardStyle: cfg.cardStyle,
+                    s: s,
+                    scheme: scheme,
+                    isDark: isDark,
+                    profile: providers[i],
+                    active: providers[i].id == cfg.activeAiProfileId,
+                    chips: _chipModels(providers[i], _query),
+                    index: i,
+                    onTap: () => _openProvider(providers[i]),
+                  ),
+                // 与移动端列表尾部的「添加提供商」入口对应
+                _AiAddProviderCard(
+                  cardStyle: cfg.cardStyle,
+                  s: s,
+                  scheme: scheme,
+                  onTap: _openNewProvider,
+                ),
+              ],
+            ),
+          );
+        },
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+          child: Row(
+            children: [
+              Expanded(
+                child: _AiSearchBar(
+                  pillStyle: cfg.pillStyle,
+                  controller: _searchCtrl,
+                  focusNode: _searchFocus,
+                  s: s,
+                  scheme: scheme,
+                  showClear: _searchCtrl.text.isNotEmpty,
+                  filterActive: _enabledOnly,
+                  onChanged: _onQueryChanged,
+                  onFilter: () => setState(() => _enabledOnly = !_enabledOnly),
+                  onClear: () => _clearSearch(),
+                ),
+              ),
+              const SizedBox(width: 10),
+              _AiFilterPill(
+                active: _enabledOnly,
+                label: s.aiEnabledOnly,
+                tooltip: _enabledOnly ? s.aiEnabledOnly : s.aiFilter,
+                scheme: scheme,
+                onTap: () => setState(() => _enabledOnly = !_enabledOnly),
+              ),
+              const SizedBox(width: 10),
+              FilledButton.tonalIcon(
+                style: AppControlSize.comfortable.buttonStyle(filled: true),
+                onPressed: _openNewProvider,
+                icon: const Icon(Icons.add, size: 17),
+                label: Text(
+                  s.aiNewProvider,
+                  style: const TextStyle(fontSize: 12.5),
+                ),
+              ),
+            ],
+          ),
+        ),
+        // 工具栏第二行：AI / MCP 开关 + 统计（移动端 Hero 里的功能在 PC 端
+        // 收成一行，避免整块卡片堆叠）。
+        const SizedBox(height: 10),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            children: [
+              _DesktopToggleButton(
+                toggleKey: const ValueKey('ai_enabled_toggle'),
+                label: 'AI',
+                enabled: cfg.aiEnabled,
+                onChanged: (value) =>
+                    state.updateConfig((c) => c..aiEnabled = value),
+              ),
+              const SizedBox(width: 8),
+              _DesktopToggleButton(
+                toggleKey: const ValueKey('mcp_enabled_toggle'),
+                label: 'MCP',
+                enabled: cfg.mcpEnabled,
+                onChanged: state.toggleMcpServer,
+              ),
+              const SizedBox(width: 12),
+              _AiStatChip(
+                icon: Icons.hub_outlined,
+                label: s.aiProviderCount(providerCount),
+                scheme: scheme,
+              ),
+              const SizedBox(width: 8),
+              _AiStatChip(
+                icon: Icons.widgets_outlined,
+                label: s.aiModelCount(totalModels),
+                scheme: scheme,
+              ),
+              const Spacer(),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+        if (showResultsHeader)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+            child: Text(
+              s.aiSearchResultsCount(providers.length),
+              style: TextStyle(
+                fontSize: 15.5,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.1,
+                color: scheme.onSurface,
+              ),
+            ),
+          ),
+        body,
+        const SizedBox(height: 24),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = widget.state;
@@ -558,6 +1254,21 @@ class _MobileAiSettingsViewState extends State<_MobileAiSettingsView> {
     final showResultsHeader =
         _query.isNotEmpty && !_searching && providers.isNotEmpty;
     final noEnabled = _enabledOnly && providers.isEmpty && _query.isEmpty;
+
+    // PC 端（宽 ≥ 900 且非移动平台）走「工具栏 + 多列网格」；移动端布局不变。
+    if (!isMobilePlatform && MediaQuery.sizeOf(context).width >= 900) {
+      return _buildDesktopProviderBrowser(
+        cfg: cfg,
+        s: s,
+        scheme: scheme,
+        isDark: isDark,
+        providers: providers,
+        noEnabled: noEnabled,
+        showResultsHeader: showResultsHeader,
+        providerCount: cfg.aiProfiles.length,
+        totalModels: totalModels,
+      );
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -820,36 +1531,42 @@ class _AiStatChip extends StatelessWidget {
   final String label;
   final ColorScheme scheme;
 
+  /// 强调色。默认主题色；PC 仪表盘用它表达 MCP 运行 / 故障、当前提供商等
+  /// 语义色（成功绿 / 警告黄 / 品牌色），避免一屏全是主题色 chip。
+  final Color? color;
+
   const _AiStatChip({
     required this.icon,
     required this.label,
     required this.scheme,
+    this.color,
   });
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final c = color ?? scheme.primary;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
       decoration: BoxDecoration(
-        color: scheme.primary.withAlpha(isDark ? 24 : 16),
+        color: c.withAlpha(isDark ? 24 : 16),
         borderRadius: BorderRadius.circular(999),
         border: Border.all(
-          color: scheme.primary.withAlpha(isDark ? 56 : 42),
+          color: c.withAlpha(isDark ? 56 : 42),
           width: 0.7,
         ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 12.5, color: scheme.primary),
+          Icon(icon, size: 12.5, color: c),
           const SizedBox(width: 5),
           Text(
             label,
             style: TextStyle(
               fontSize: 10.5,
               fontWeight: FontWeight.w500,
-              color: scheme.primary,
+              color: c,
             ),
           ),
         ],
@@ -1010,6 +1727,84 @@ class _SearchActionButton extends StatelessWidget {
                   ),
                 ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// PC 工具栏里的「仅显示已启用」筛选胶囊（36px 高，与工具条按钮同档）。
+///
+/// 与 [_SearchActionButton] 的漏斗图标同一状态源（_enabledOnly），桌面端多给
+/// 一个带文字的显式入口，避免只有一枚图标时「不知道该筛选什么」。
+class _AiFilterPill extends StatelessWidget {
+  final bool active;
+  final String label;
+  final String tooltip;
+  final ColorScheme scheme;
+  final VoidCallback onTap;
+
+  const _AiFilterPill({
+    required this.active,
+    required this.label,
+    required this.tooltip,
+    required this.scheme,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final color = active ? scheme.primary : scheme.onSurfaceVariant;
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(999),
+          onTap: onTap,
+          splashColor: Colors.transparent,
+          highlightColor: Colors.transparent,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            curve: Curves.easeOut,
+            height: AppControlSize.comfortable.height,
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            decoration: BoxDecoration(
+              color: active
+                  ? scheme.primary.withAlpha(isDark ? 36 : 22)
+                  : scheme.surfaceContainerHighest.withAlpha(
+                      isDark ? 60 : 90,
+                    ),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: active
+                    ? scheme.primary.withAlpha(isDark ? 90 : 70)
+                    : scheme.outlineVariant.withAlpha(isDark ? 60 : 80),
+                width: 0.7,
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  active ? Icons.filter_alt : Icons.filter_alt_outlined,
+                  size: 16,
+                  color: color,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  maxLines: 1,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    color: color,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1700,10 +2495,15 @@ class _PermissionsSection extends StatelessWidget {
   final AppStrings s;
   final AppState state;
 
+  /// PC 仪��盘的两列布局由外层控制间距，传 true 去掉分组卡自带的 12px
+  /// 横向缩进（移动端保持 false，几何规格不变）。
+  final bool flush;
+
   const _PermissionsSection({
     required this.cfg,
     required this.s,
     required this.state,
+    this.flush = false,
   });
 
   @override
@@ -1712,6 +2512,7 @@ class _PermissionsSection extends StatelessWidget {
       cardStyle: cfg.cardStyle,
       icon: Icons.shield_outlined,
       title: s.aiPermissions,
+      horizontalInset: flush ? 0 : 12,
       children: [
         _AiSwitchTile(
           icon: Icons.visibility_outlined,
@@ -1754,10 +2555,14 @@ class _AdvancedSection extends StatelessWidget {
   final AppStrings s;
   final ColorScheme scheme;
 
+  /// 见 [_PermissionsSection.flush]。
+  final bool flush;
+
   const _AdvancedSection({
     required this.cfg,
     required this.s,
     required this.scheme,
+    this.flush = false,
   });
 
   @override
@@ -1766,6 +2571,7 @@ class _AdvancedSection extends StatelessWidget {
       cardStyle: cfg.cardStyle,
       icon: Icons.tune,
       title: s.aiAdvanced,
+      horizontalInset: flush ? 0 : 12,
       subtitle: s.isZh
           ? '图生成模式 / 思考 / 自动命名 / 会话模式 / 系统提示词'
           : 'Image mode, thinking, auto-naming, session mode, system prompt',
@@ -1786,11 +2592,15 @@ class _McpSection extends StatelessWidget {
   final AppState state;
   final ColorScheme scheme;
 
+  /// 见 [_PermissionsSection.flush]。
+  final bool flush;
+
   const _McpSection({
     required this.cfg,
     required this.s,
     required this.state,
     required this.scheme,
+    this.flush = false,
   });
 
   Future<void> _copy(BuildContext context, String text) async {
@@ -1811,6 +2621,7 @@ class _McpSection extends StatelessWidget {
       cardStyle: cfg.cardStyle,
       icon: Icons.dns_outlined,
       title: s.mcpService,
+      horizontalInset: flush ? 0 : 12,
       optionHeader: true,
       subtitle: enabled
           ? (s.isZh
@@ -2441,13 +3252,18 @@ class _MobileAiProviderDetailPageState
         : (_draft.name.trim().isEmpty
               ? s.aiProviderDetail
               : _draft.name.trim());
+    // 底部动作按钮簇的左右侧必须用 select 订阅：只 read 配置的话，在设置里切换
+    // 「底部动作按钮位置」后返回本页不会重建，按钮仍停在旧的一侧。
+    final bottomActionSide = context.select<AppState, String>(
+      (st) => st.config.mobileBottomActionSide,
+    );
 
-    return withWallpaper(
-      context,
-      Scaffold(
+    final Widget page = Scaffold(
         backgroundColor: Colors.transparent,
-        // bottom: false——底部切换栏（NavGlassShell）自带 bottomSafe padding
+        // bottom:false：底部菜单栏 AppLiquidTabBar 自带 bottomGap + 安全区，
+        // 外层 SafeArea 再吃掉安全区会变成双倍底部留白。
         body: SafeArea(
+          bottom: false,
           child: Column(
             children: [
               if (useMobileLayout)
@@ -2490,6 +3306,10 @@ class _MobileAiProviderDetailPageState
               else
                 _DesktopProviderHeader(
                   title: title,
+                  subtitle: _isNew
+                      ? (s.isZh ? '新建提供商配置' : 'New provider configuration')
+                      : '${_draft.provider.isEmpty ? s.aiProviderDetail : _draft.provider}'
+                            ' · ${s.aiModelCount(_modelCount(_draft))}',
                   onBack: () => Navigator.of(context).maybePop(),
                   actions: [
                     if (_tab == 1)
@@ -2546,7 +3366,7 @@ class _MobileAiProviderDetailPageState
                             child: Center(
                               child: ConstrainedBox(
                                 constraints: const BoxConstraints(
-                                  maxWidth: 1120,
+                                  maxWidth: 1180,
                                 ),
                                 child: _buildProviderTabContent(
                                   context,
@@ -2561,12 +3381,20 @@ class _MobileAiProviderDetailPageState
                       ),
               ),
               if (useMobileLayout)
-                _buildBottomTabBar(context, state, scheme, s),
+                _buildBottomTabBar(
+                  context,
+                  state,
+                  scheme,
+                  s,
+                  bottomActionSide,
+                ),
             ],
           ),
         ),
-      ),
-    );
+      );
+    // 壁纸 → WindowChrome（Linux 36px 玻璃 CSD）→ Scaffold：WindowChrome 必须
+    // 嵌在 withWallpaper 的内层，标题栏玻璃才能采样到壁纸；非 Linux 平台 no-op。
+    return withWallpaper(context, WindowChrome(child: page));
   }
 
   Widget _buildProviderTabContent(
@@ -2609,6 +3437,11 @@ class _MobileAiProviderDetailPageState
     );
   }
 
+  /// PC 详情页左栏：提供商身份 + 「基本 / 模型」导航（可折叠）。
+  ///
+  /// 几何与 PC 设置页左栏逐项对齐（190 / 64 宽、margin(10,12,6,16)、圆角 18），
+  /// 并补上提供商身份区 —— 否则宽屏上只有一个「两个 tab 的窄条」，像把手机
+  /// 底栏竖过来放大，而不是 PC 的导航栏。
   Widget _buildDesktopProviderSidebar(
     BuildContext context,
     AppState state,
@@ -2617,6 +3450,11 @@ class _MobileAiProviderDetailPageState
   ) {
     final collapsed = _desktopSidebarCollapsed;
     final cardStyle = state.config.cardStyle;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final displayName = _draft.name.trim().isEmpty
+        ? s.aiNewProvider
+        : _draft.name.trim();
+
     Widget item({
       required int index,
       required IconData icon,
@@ -2626,15 +3464,15 @@ class _MobileAiProviderDetailPageState
       return Tooltip(
         message: collapsed ? title : '',
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 3),
+          padding: const EdgeInsets.symmetric(vertical: 2),
           child: Material(
             color: selected ? scheme.primary.withAlpha(24) : Colors.transparent,
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(11),
             child: InkWell(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(11),
               onTap: () => setState(() => _tab = index),
               child: SizedBox(
-                height: 42,
+                height: 40,
                 child: Row(
                   mainAxisAlignment: collapsed
                       ? MainAxisAlignment.center
@@ -2642,7 +3480,7 @@ class _MobileAiProviderDetailPageState
                   children: [
                     Padding(
                       padding: EdgeInsets.symmetric(
-                        horizontal: collapsed ? 0 : 12,
+                        horizontal: collapsed ? 0 : 11,
                       ),
                       child: Icon(
                         icon,
@@ -2676,35 +3514,109 @@ class _MobileAiProviderDetailPageState
       );
     }
 
+    final Widget toggleButton = IconButton(
+      key: const ValueKey('provider_desktop_sidebar_toggle'),
+      tooltip: collapsed
+          ? (s.isZh ? '展开侧边栏' : 'Expand sidebar')
+          : (s.isZh ? '收起侧边栏' : 'Collapse sidebar'),
+      visualDensity: VisualDensity.compact,
+      onPressed: () => setState(() => _desktopSidebarCollapsed = !collapsed),
+      icon: Icon(
+        collapsed
+            ? Icons.keyboard_double_arrow_right
+            : Icons.keyboard_double_arrow_left,
+        size: 17,
+      ),
+    );
+
     return AnimatedContainer(
       key: const ValueKey('provider_desktop_sidebar'),
       duration: const Duration(milliseconds: 180),
       curve: Curves.easeOutCubic,
-      width: collapsed ? 72 : 196,
-      margin: const EdgeInsets.fromLTRB(12, 8, 8, 12),
+      width: collapsed ? 64 : 190,
+      margin: const EdgeInsets.fromLTRB(10, 12, 6, 16),
       child: AppCard(
         style: cardStyle,
-        radius: 16,
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        radius: 18,
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Align(
-              alignment: collapsed ? Alignment.center : Alignment.centerRight,
-              child: IconButton(
-                key: const ValueKey('provider_desktop_sidebar_toggle'),
-                tooltip: collapsed
-                    ? (s.isZh ? '展开侧边栏' : 'Expand sidebar')
-                    : (s.isZh ? '收起侧边栏' : 'Collapse sidebar'),
-                onPressed: () =>
-                    setState(() => _desktopSidebarCollapsed = !collapsed),
-                icon: Icon(
-                  collapsed
-                      ? Icons.keyboard_double_arrow_right
-                      : Icons.keyboard_double_arrow_left,
-                  size: 18,
+            if (collapsed) ...[
+              Center(child: toggleButton),
+              const SizedBox(height: 2),
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: _ProviderIconTile(
+                    profile: _draft,
+                    scheme: scheme,
+                    isDark: isDark,
+                    size: 30,
+                  ),
                 ),
               ),
-            ),
+            ] else ...[
+              // 提供商身份：侧栏顶部给出「正在编辑谁」的上下文。
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 8, 4, 10),
+                child: Row(
+                  children: [
+                    _ProviderIconTile(
+                      profile: _draft,
+                      scheme: scheme,
+                      isDark: isDark,
+                      size: 34,
+                    ),
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            displayName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              height: 1.2,
+                              fontWeight: FontWeight.w600,
+                              color: scheme.onSurface,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          _AiStatusPill(
+                            enabled: _draft.enabled,
+                            s: s,
+                            scheme: scheme,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // 分组标题 + 折叠按钮（PC 设置页左栏同一结构）。
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 0, 2, 2),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        s.isZh ? '配置' : 'Configuration',
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.4,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                    toggleButton,
+                  ],
+                ),
+              ),
+            ],
             item(index: 0, icon: Icons.tune_rounded, title: s.aiBasic),
             item(index: 1, icon: Icons.widgets_outlined, title: s.aiModelsTab),
           ],
@@ -2713,18 +3625,40 @@ class _MobileAiProviderDetailPageState
     );
   }
 
-  /// 底部「基本 / 模型」小药丸。
+  /// 底部区域 = 「模型页动作按钮簇」+「基本 / 模型菜单栏」。
   ///
-  /// 设计稿要求：两个分段本身只占一颗小药丸的宽度；切到模型页时，左右各
-  /// 长出一颗圆形动作药丸（云端获取 / 添加自定义模型），而不是把整条底栏
-  /// 拉满。基本页只保留中间的分段药丸。
+  /// 用户 2026-10 的明确要求（与主界面统一）：
+  /// * 菜单栏必须是**同一个模块**（liquid_glass_tab_bar → [AppLiquidTabBar]）
+  ///   与**同一套尺寸**（[kAppLiquidTabBarStyle]：胶囊 52 / 内缩 4 / 左右 14 /
+  ///   底部 8 / 图标 22），不再自绘 LiquidStretchTabs 底栏；
+  /// * 「从云端获取模型 / 添加自定义模型」两颗按钮保留，做成 **44×44 正圆**，
+  ///   两个按钮**同侧**、整簇按 [AppConfig.mobileBottomActionSide] 靠左或靠右；
+  /// * 菜单栏和按钮**分开摆放**：按钮簇在菜单栏上方、留 10px 间距，
+  ///   仅「模型」tab 出现（与旧行为一致），用 AnimatedSize/AnimatedOpacity 出现消失。
+  ///
+  /// 底部安全区由 [AppLiquidTabBar] 自己承担（内部 bottomGap + MediaQuery
+  /// padding），本页外层 SafeArea 因此必须 bottom:false，避免双倍留白。
   Widget _buildBottomTabBar(
     BuildContext context,
     AppState state,
     ColorScheme scheme,
     AppStrings s,
+    String bottomActionSide,
   ) {
-    final cfg = state.config;
+    final bool alignLeft = bottomActionSide == 'left';
+    final bool showActions = _tab == 1;
+    final bool reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final Duration motion = reduceMotion
+        ? Duration.zero
+        : const Duration(milliseconds: 240);
+    // 动作按钮簇占位高度：44 圆钮 + 10 与菜单栏的分隔。收起时 AnimatedSize
+    // 把它压成 0，菜单栏随之上移，内容区多出让给列表的空间。
+    //
+    // 取 56 而不是 54：MobileGlassPill 的玻璃描边会给子项留 0.7px 内边距，
+    // 行高必须 ≥ 44 + 2×0.7 才能让 44×44 的动作按钮拿到完整高度（否则会被
+    // 压成 42.6 高，圆钮变成扁椭圆）。
+    const double clusterHeight = 56;
+
     Widget round({
       required Key key,
       required IconData icon,
@@ -2732,6 +3666,8 @@ class _MobileAiProviderDetailPageState
       required VoidCallback? onTap,
       Color? color,
     }) {
+      // MobileGlassPill(radius:22) 包 44×44 的 action → 正圆玻璃按钮，
+      // 与顶栏的圆形返回/保存按钮同一套材质与命中尺寸。
       return MobileGlassPill(
         radius: 22,
         padding: EdgeInsets.zero,
@@ -2748,82 +3684,95 @@ class _MobileAiProviderDetailPageState
       );
     }
 
-    return SafeArea(
-      top: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // 切到模型页时，左右两颗圆形动作药丸从 0 宽度「长出来」，
-            // 与中间小药丸的非线性拉伸同拍；不是瞬间出现。
-            AnimatedSize(
-              duration: const Duration(milliseconds: 240),
-              curve: Curves.easeOutBack,
-              alignment: Alignment.centerRight,
-              child: _tab == 1
-                  ? round(
-                      key: const ValueKey('provider_models_fetch_round'),
-                      icon: _fetchingModels
-                          ? Icons.cloud_sync_outlined
-                          : Icons.cloud_download_outlined,
-                      tooltip: s.isZh ? '从云端获取模型列表' : 'Fetch models',
-                      onTap: _fetchingModels
-                          ? null
-                          : () => _fetchModels(context, state, s),
-                    )
-                  : const SizedBox(width: 0, height: 44),
-            ),
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 240),
-              curve: Curves.easeOutCubic,
-              width: _tab == 1 ? 6 : 0,
-              height: 1,
-            ),
-            SizedBox(
-              width: 164,
-              child: LiquidStretchTabs(
-                key: const ValueKey('ai_provider_top_tabs'),
-                style: cfg.pillStyle,
-                height: 40,
-                radius: 20,
-                semanticsLabel: '${s.aiBasic} / ${s.aiModelsTab}',
-                selectedIndex: _tab,
-                onChanged: (index) {
-                  if (_tab != index) setState(() => _tab = index);
-                },
-                tabs: [
-                  LiquidStretchTab(icon: Icons.tune_rounded, label: s.aiBasic),
-                  LiquidStretchTab(
-                    icon: Icons.widgets_outlined,
-                    label: s.aiModelsTab,
+    // 两个按钮同侧成簇：水平内边距 14 与菜单栏的 horizontalMargin 对齐，
+    // 让「按钮簇边缘」与「菜单栏胶囊边缘」在同一条竖线上。
+    final Widget actions = Padding(
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+      child: Row(
+        mainAxisAlignment: alignLeft
+            ? MainAxisAlignment.start
+            : MainAxisAlignment.end,
+        children: [
+          round(
+            key: const ValueKey('provider_models_fetch_round'),
+            icon: _fetchingModels
+                ? Icons.cloud_sync_outlined
+                : Icons.cloud_download_outlined,
+            tooltip: s.isZh ? '从云端获取模型列表' : 'Fetch models',
+            onTap: _fetchingModels
+                ? null
+                : () => _fetchModels(context, state, s),
+          ),
+          const SizedBox(width: 10),
+          round(
+            key: const ValueKey('provider_models_add_round'),
+            icon: Icons.add,
+            tooltip: s.isZh ? '添加自定义模型' : 'Add custom model',
+            color: scheme.primary,
+            onTap: () => _openModelSheet(context, s, 0, isNew: true),
+          ),
+        ],
+      ),
+    );
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 出现 / 消失：AnimatedSize 让菜单栏上方的空间在 0 ↔ 54 之间平滑
+        // 长缩（菜单栏本身不跳变），AnimatedOpacity 让按钮簇淡入淡出；
+        // 减弱动态效果时两者时长都为 0（直接出现，不做位移动画）。
+        AnimatedSize(
+          duration: motion,
+          curve: Curves.easeOutCubic,
+          alignment: alignLeft
+              ? Alignment.bottomLeft
+              : Alignment.bottomRight,
+          child: SizedBox(
+            height: showActions ? clusterHeight : 0,
+            // 高度为 0 时按钮仍会被布局（OverflowBox 保证它能按 44px 排版），
+            // ClipRect 负责裁掉；隐藏态再用 IgnorePointer 防止透明按钮拦截点击。
+            child: ClipRect(
+              child: OverflowBox(
+                alignment: alignLeft
+                    ? Alignment.centerLeft
+                    : Alignment.centerRight,
+                minHeight: clusterHeight,
+                maxHeight: clusterHeight,
+                child: AnimatedOpacity(
+                  opacity: showActions ? 1 : 0,
+                  duration: motion,
+                  curve: Curves.easeOut,
+                  child: IgnorePointer(
+                    ignoring: !showActions,
+                    child: actions,
                   ),
-                ],
+                ),
               ),
             ),
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 240),
-              curve: Curves.easeOutCubic,
-              width: _tab == 1 ? 6 : 0,
-              height: 1,
+          ),
+        ),
+        // 菜单栏：与主界面底部导航完全同模块同尺寸；自带底部安全区与
+        // bottomGap，外层不要再套 SafeArea / Padding bottom（双倍留白）。
+        AppLiquidTabBar(
+          key: const ValueKey('ai_provider_top_tabs'),
+          currentIndex: _tab,
+          selectedColor: scheme.primary,
+          unselectedColor: scheme.onSurfaceVariant,
+          onTap: (index) {
+            if (_tab != index) setState(() => _tab = index);
+          },
+          items: [
+            LiquidGlassTabItem(
+              icon: const Icon(Icons.tune_rounded),
+              label: s.aiBasic,
             ),
-            AnimatedSize(
-              duration: const Duration(milliseconds: 240),
-              curve: Curves.easeOutBack,
-              alignment: Alignment.centerLeft,
-              child: _tab == 1
-                  ? round(
-                      key: const ValueKey('provider_models_add_round'),
-                      icon: Icons.add,
-                      tooltip: s.isZh ? '添加自定义模型' : 'Add custom model',
-                      color: scheme.primary,
-                      onTap: () => _openModelSheet(context, s, 0, isNew: true),
-                    )
-                  : const SizedBox(width: 0, height: 44),
+            LiquidGlassTabItem(
+              icon: const Icon(Icons.widgets_outlined),
+              label: s.aiModelsTab,
             ),
           ],
         ),
-      ),
+      ],
     );
   }
 
@@ -2836,6 +3785,7 @@ class _MobileAiProviderDetailPageState
     ColorScheme scheme,
   ) {
     final cfg = state.config;
+    final desktop = !_useMobileAiLayout(context);
     final isZh = s.isZh;
     final isActive =
         !_isNew && _draft.enabled && cfg.activeAiProfileId == _draft.id;
@@ -2844,13 +3794,17 @@ class _MobileAiProviderDetailPageState
       key: const ValueKey('ai_provider_config'),
       // 基本页只有三张卡：一次性布局，避免浅滚动区里惰性构建导致
       // 页尾按钮在窄屏上暂时不存在（无障碍焦点 / 测试都更难命中）。
-      padding: const EdgeInsets.fromLTRB(12, 4, 12, 20),
+      // PC 端左右各 16：分组卡 horizontalInset 传 0，避免 12+16 叠成双倍内缩。
+      padding: desktop
+          ? const EdgeInsets.fromLTRB(16, 8, 16, 24)
+          : const EdgeInsets.fromLTRB(12, 4, 12, 20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // ── 基本信息：名称 / 启用 / 请求格式 / Response API ──
           _AiSectionCard(
             cardStyle: cfg.cardStyle,
+            horizontalInset: desktop ? 0 : 12,
             icon: Icons.badge_outlined,
             title: s.aiBasicInfo,
             children: [
@@ -2947,6 +3901,7 @@ class _MobileAiProviderDetailPageState
           // ── 连接：API 地址 / 路径 / Key ──
           _AiSectionCard(
             cardStyle: cfg.cardStyle,
+            horizontalInset: desktop ? 0 : 12,
             icon: Icons.link_outlined,
             title: s.aiConnection,
             children: [
@@ -3020,6 +3975,7 @@ class _MobileAiProviderDetailPageState
           // ── 管理：分组 / 多 Key / 余额 / 代理 / 自定义请求 ──
           _AiSectionCard(
             cardStyle: cfg.cardStyle,
+            horizontalInset: desktop ? 0 : 12,
             icon: Icons.tune,
             title: s.aiManagement,
             children: [
@@ -3082,23 +4038,32 @@ class _MobileAiProviderDetailPageState
           ),
           const SizedBox(height: 16),
           if (!_isNew && _draft.enabled && !isActive) ...[
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.tonalIcon(
-                style: AppControlSize.large.buttonStyle(filled: true),
-                icon: Icon(
-                  Icons.radio_button_off,
-                  size: AppControlSize.large.iconSize,
+            // 移动端保持通栏主按钮；PC 端通栏按钮会显得像「手机页放大」，
+            // 收成右下角一颗固定宽度的次级主行动（与设置页按钮密度一致）。
+            Align(
+              alignment: desktop ? Alignment.centerRight : Alignment.center,
+              child: SizedBox(
+                width: desktop ? 260 : double.infinity,
+                child: FilledButton.tonalIcon(
+                  style: AppControlSize.large.buttonStyle(filled: true),
+                  icon: Icon(
+                    Icons.radio_button_off,
+                    size: AppControlSize.large.iconSize,
+                  ),
+                  label: Text(
+                    s.aiProviderUse,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  onPressed: () {
+                    state.updateConfig((c) => c..activeAiProfileId = _draft.id);
+                    setState(() {});
+                    showToast(
+                      context,
+                      s.aiProviderUse,
+                      type: ToastType.success,
+                    );
+                  },
                 ),
-                label: Text(
-                  s.aiProviderUse,
-                  style: const TextStyle(fontSize: 13),
-                ),
-                onPressed: () {
-                  state.updateConfig((c) => c..activeAiProfileId = _draft.id);
-                  setState(() {});
-                  showToast(context, s.aiProviderUse, type: ToastType.success);
-                },
               ),
             ),
             const SizedBox(height: 10),
@@ -3210,6 +4175,7 @@ class _MobileAiProviderDetailPageState
     ColorScheme scheme,
   ) {
     final cfg = state.config;
+    final desktop = !_useMobileAiLayout(context);
     final models = _draft.models;
     final isZh = s.isZh;
     final hasModels = models.isNotEmpty;
@@ -3232,7 +4198,10 @@ class _MobileAiProviderDetailPageState
       key: const ValueKey('ai_provider_models'),
       // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
       addRepaintBoundaries: false,
-      padding: const EdgeInsets.fromLTRB(12, 4, 12, 20),
+      // PC 端左右 16：与基本信息页 / 左栏留白对齐，不再是手机版 12。
+      padding: desktop
+          ? const EdgeInsets.fromLTRB(16, 8, 16, 24)
+          : const EdgeInsets.fromLTRB(12, 4, 12, 20),
       itemCount: itemCount,
       addAutomaticKeepAlives: false,
       itemBuilder: (_, index) {
@@ -4069,9 +5038,7 @@ class _MobileMultiKeyPageState extends State<MobileMultiKeyPage> {
       context.select<AppState, String>((st) => st.config.language),
     );
     final filled = _keys.where((k) => k.isNotEmpty).length;
-    return withWallpaper(
-      context,
-      Scaffold(
+    final Widget page = Scaffold(
         backgroundColor: Colors.transparent,
         body: SafeArea(
           child: Column(
@@ -4157,8 +5124,9 @@ class _MobileMultiKeyPageState extends State<MobileMultiKeyPage> {
             ],
           ),
         ),
-      ),
-    );
+      );
+    // 壁纸 → WindowChrome（Linux 36px 玻璃 CSD）→ Scaffold；非 Linux no-op。
+    return withWallpaper(context, WindowChrome(child: page));
   }
 }
 
@@ -4182,9 +5150,7 @@ class MobileAiAdvancedPage extends StatelessWidget {
         final isDark = Theme.of(context).brightness == Brightness.dark;
         final mobileLayout = _useMobileAiLayout(context);
 
-        return withWallpaper(
-          context,
-          Scaffold(
+        final Widget page = Scaffold(
             backgroundColor: Colors.transparent,
             body: SafeArea(
               child: Column(
@@ -4213,7 +5179,7 @@ class MobileAiAdvancedPage extends StatelessWidget {
                     child: Center(
                       child: ConstrainedBox(
                         constraints: BoxConstraints(
-                          maxWidth: mobileLayout ? double.infinity : 1120,
+                          maxWidth: mobileLayout ? double.infinity : 1180,
                         ),
                         child: ListView(
                           // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
@@ -4402,8 +5368,9 @@ class MobileAiAdvancedPage extends StatelessWidget {
                 ],
               ),
             ),
-          ),
-        );
+          );
+        // 壁纸 → WindowChrome（Linux 36px 玻璃 CSD）→ Scaffold；非 Linux no-op。
+        return withWallpaper(context, WindowChrome(child: page));
       },
     );
   }
@@ -4434,6 +5401,10 @@ class _AiSectionCard extends StatelessWidget {
   final bool optionHeader;
   final List<Widget> children;
 
+  /// 卡片左右外边距。移动端分组卡固定 12（与二级页内容缩进一致）；
+  /// PC 仪表盘两列布局由外层决定间距，传 0 避免双层内缩。
+  final double horizontalInset;
+
   const _AiSectionCard({
     required this.cardStyle,
     required this.icon,
@@ -4443,6 +5414,7 @@ class _AiSectionCard extends StatelessWidget {
     this.onTap,
     this.optionHeader = false,
     this.children = const <Widget>[],
+    this.horizontalInset = 12,
   });
   @override
   Widget build(BuildContext context) {
@@ -4484,7 +5456,7 @@ class _AiSectionCard extends StatelessWidget {
       ],
     );
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+      padding: EdgeInsets.symmetric(horizontal: horizontalInset),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
