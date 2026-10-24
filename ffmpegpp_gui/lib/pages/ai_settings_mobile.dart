@@ -148,7 +148,7 @@ List<String> _chipModels(AiProfile p, String query) {
 /// PC 与移动端共用的「MCP / AI」设置内容。
 ///
 /// 结构：
-/// - 首屏 Hero：提供商标题 + 统计 + AI 助手开关；
+/// - 首屏「服务」卡：AI 助手 / MCP 服务两个总开关（选项行）+ 统计；
 /// - 玻璃搜索胶囊：支持名称 / 模型搜索，带筛选、清空、加载态与无结果态；
 /// - 提供商卡片列表 + 添加提供商（全部走 AppCard，跟随全局卡片玻璃）；
 /// - MCP 服务 / 权限 / 高级设置（搜索态下自动收起，专注结果）。
@@ -168,11 +168,12 @@ Widget aiSettingsContent(BuildContext ctx, AppState state) {
 /// 设计目标：与 PC 设置页同一套设计语言 —— AppCard 玻璃卡 + 12/14px 间距 +
 /// 1180 宽度上限，而不是把移动端卡片上下堆叠后放大。结构：
 ///
-///  * 顶部状态带：标题 + 说明、AI / MCP 开关、提供商 / 模型数量、当前提供商、
-///    MCP 运行状态（故障时显示错误原因）；
+///  * 顶部状态带：标题 + 说明、提供商 / 模型数量、当前提供商、MCP 运行状态
+///    （故障时显示错误原因）；
 ///  * 主区左：「提供商管理」——响应式 2 列卡网格（名称 / provider / 模型数 /
 ///    启用状态 / 「当前」徽标，点卡直达详情），带「管理」「添加提供商」入口；
-///  * 主区右：MCP 服务 / 权限 / 高级设置三张分组卡（宽度 < 900 时下移成单列）。
+///  * 主区右：服务卡（AI / MCP 两个总开关，与主设置界面同款选项行）/
+///    MCP 服务 / 权限 / 高级设置（宽度 < 900 时下移成单列）。
 ///
 /// 功能区一个不少：AI 开关、MCP 开关、提供商列表与添加入口、权限四项、
 /// MCP 端口/地址/应用/令牌/两个开关、高级设置入口全部保留。
@@ -208,6 +209,16 @@ class _DesktopAiSettingsOverview extends StatelessWidget {
         final sideRail = Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // 服务两个总开关放在右栏最上方：与主设置界面同款的选项行，
+            // 不再挤在顶部状态带右侧当两颗大块按钮。
+            _AiServiceOptionsCard(
+              cfg: cfg,
+              s: s,
+              state: state,
+              scheme: scheme,
+              flush: true,
+            ),
+            const SizedBox(height: 12),
             _McpSection(
               cfg: cfg,
               s: s,
@@ -273,44 +284,7 @@ class _DesktopAiSettingsOverview extends StatelessWidget {
   }
 }
 
-/// PC 端 AI 开关按钮（与移动端 Hero 的 FilledButton.tonalIcon 同语义、
-/// 桌面 36px 档位）。Key 与移动端一致，测试/无障碍沿用同一批 key。
-class _DesktopToggleButton extends StatelessWidget {
-  final Key toggleKey;
-  final String label;
-  final bool enabled;
-  final ValueChanged<bool> onChanged;
-
-  const _DesktopToggleButton({
-    required this.toggleKey,
-    required this.label,
-    required this.enabled,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final s = AppStrings.of(
-      context.select<AppState, String>((st) => st.config.language),
-    );
-    return FilledButton.tonalIcon(
-      key: toggleKey,
-      onPressed: () => onChanged(!enabled),
-      icon: Icon(
-        enabled ? Icons.toggle_on_outlined : Icons.toggle_off_outlined,
-        size: AppControlSize.comfortable.iconSize,
-      ),
-      label: Text(
-        '$label · ${enabled ? (s.isZh ? '启用' : 'On') : (s.isZh ? '关闭' : 'Off')}',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      style: AppControlSize.comfortable.buttonStyle(filled: enabled),
-    );
-  }
-}
-
-/// 顶部状态带：仪表盘的一行「总览」，替代移动端 Hero 的卡片堆叠。
+/// 顶部状态带：仪表盘的一行「总览」（数量 / 当前提供商 / MCP 运行状态）。
 class _DesktopAiStatusBand extends StatelessWidget {
   final AppConfig cfg;
   final AppStrings s;
@@ -395,21 +369,6 @@ class _DesktopAiStatusBand extends StatelessWidget {
                       ),
                     ],
                   ),
-                ),
-                const SizedBox(width: 12),
-                _DesktopToggleButton(
-                  toggleKey: const ValueKey('ai_enabled_toggle'),
-                  label: 'AI',
-                  enabled: cfg.aiEnabled,
-                  onChanged: (value) =>
-                      state.updateConfig((c) => c..aiEnabled = value),
-                ),
-                const SizedBox(width: 8),
-                _DesktopToggleButton(
-                  toggleKey: const ValueKey('mcp_enabled_toggle'),
-                  label: 'MCP',
-                  enabled: cfg.mcpEnabled,
-                  onChanged: state.toggleMcpServer,
                 ),
               ],
             ),
@@ -832,17 +791,19 @@ class _MobileAiSettingsOverview extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // AI / MCP 两个总开关改为与主设置界面同款的选项行（服务卡），
+        // 不再是两颗大块按钮；统计 chips 收进卡片底部。
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
-          child: _AiProvidersHero(
+          child: _AiServiceOptionsCard(
             cfg: cfg,
             s: s,
+            state: state,
             scheme: scheme,
+            flush: true,
+            showStats: true,
             providerCount: cfg.aiProfiles.length,
             modelCount: totalModels,
-            onAiEnabledChanged: (v) =>
-                state.updateConfig((c) => c..aiEnabled = v),
-            onMcpEnabledChanged: state.toggleMcpServer,
           ),
         ),
         Padding(
@@ -1030,7 +991,7 @@ class _MobileAiSettingsViewState extends State<_MobileAiSettingsView> {
   /// PC 端提供商列表：工具栏（搜索 / 仅启用 / 添加提供商）+ 响应式 2~3 列网格。
   ///
   /// 复用移动端同一批组件（_AiSearchBar / _AiProviderCard / _AiAddProviderCard /
-  /// _AiEmptyState），只改排布密度与入口位置：移动端仍是「Hero + 单列列表」。
+  /// _AiEmptyState），只改排布密度与入口位置：移动端仍是「服务卡 + 单列列表」。
   Widget _buildDesktopProviderBrowser({
     required AppConfig cfg,
     required AppStrings s,
@@ -1178,41 +1139,20 @@ class _MobileAiSettingsViewState extends State<_MobileAiSettingsView> {
             ],
           ),
         ),
-        // 工具栏第二行：AI / MCP 开关 + 统计（移动端 Hero 里的功能在 PC 端
-        // 收成一行，避免整块卡片堆叠）。
+        // 工具栏第二行：服务选项卡（AI / MCP 两个总开关，与主设置界面
+        // 同款选项行；不再是两颗并排的大块按钮）。统计 chips 收进卡片底部。
         const SizedBox(height: 10),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Row(
-            children: [
-              _DesktopToggleButton(
-                toggleKey: const ValueKey('ai_enabled_toggle'),
-                label: 'AI',
-                enabled: cfg.aiEnabled,
-                onChanged: (value) =>
-                    state.updateConfig((c) => c..aiEnabled = value),
-              ),
-              const SizedBox(width: 8),
-              _DesktopToggleButton(
-                toggleKey: const ValueKey('mcp_enabled_toggle'),
-                label: 'MCP',
-                enabled: cfg.mcpEnabled,
-                onChanged: state.toggleMcpServer,
-              ),
-              const SizedBox(width: 12),
-              _AiStatChip(
-                icon: Icons.hub_outlined,
-                label: s.aiProviderCount(providerCount),
-                scheme: scheme,
-              ),
-              const SizedBox(width: 8),
-              _AiStatChip(
-                icon: Icons.widgets_outlined,
-                label: s.aiModelCount(totalModels),
-                scheme: scheme,
-              ),
-              const Spacer(),
-            ],
+          child: _AiServiceOptionsCard(
+            cfg: cfg,
+            s: s,
+            state: state,
+            scheme: scheme,
+            flush: true,
+            showStats: true,
+            providerCount: providerCount,
+            modelCount: totalModels,
           ),
         ),
         const SizedBox(height: 14),
@@ -1243,7 +1183,7 @@ class _MobileAiSettingsViewState extends State<_MobileAiSettingsView> {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
-    // 搜索态：有查询（或正在搜索）时收起 Hero 与下半屏设置，把空间让给结果；
+    // 搜索态：有查询（或正在搜索）时收起服务卡与下半屏设置，把空间让给结果；
     // 不按「输入框是否聚焦」收起 —— 否则用户聚焦后清空内容会找不到退出路径。
     final searchingMode = _searching || _query.isNotEmpty;
     final providers = _visibleProviders(_query);
@@ -1273,7 +1213,7 @@ class _MobileAiSettingsViewState extends State<_MobileAiSettingsView> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Hero：进入搜索态后收起，把纵向空间让给结果（设计稿的搜索态没有标题区）。
+        // 服务卡：进入搜索态后收起，把纵向空间让给结果（搜索态没有标题区）。
         AnimatedSize(
           duration: reduceMotion
               ? Duration.zero
@@ -1284,15 +1224,15 @@ class _MobileAiSettingsViewState extends State<_MobileAiSettingsView> {
               ? const SizedBox(width: double.infinity, height: 0)
               : Padding(
                   padding: const EdgeInsets.fromLTRB(12, 6, 12, 14),
-                  child: _AiProvidersHero(
+                  child: _AiServiceOptionsCard(
                     cfg: cfg,
                     s: s,
+                    state: state,
                     scheme: scheme,
+                    flush: true,
+                    showStats: true,
                     providerCount: cfg.aiProfiles.length,
                     modelCount: totalModels,
-                    onAiEnabledChanged: (v) =>
-                        state.updateConfig((c) => c..aiEnabled = v),
-                    onMcpEnabledChanged: state.toggleMcpServer,
                   ),
                 ),
         ),
@@ -1413,118 +1353,8 @@ class _MobileAiSettingsViewState extends State<_MobileAiSettingsView> {
 }
 
 // ═══════════════════════════════════════════
-// 首屏：Hero / 搜索 / 提供商卡片 / 空态
+// 首屏：服务选项 / 搜索 / 提供商卡片 / 空态
 // ═══════════════════════════════════════════
-
-class _AiProvidersHero extends StatelessWidget {
-  final AppConfig cfg;
-  final AppStrings s;
-  final ColorScheme scheme;
-  final int providerCount;
-  final int modelCount;
-  final ValueChanged<bool> onAiEnabledChanged;
-  final ValueChanged<bool> onMcpEnabledChanged;
-
-  const _AiProvidersHero({
-    required this.cfg,
-    required this.s,
-    required this.scheme,
-    required this.providerCount,
-    required this.modelCount,
-    required this.onAiEnabledChanged,
-    required this.onMcpEnabledChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final sem = scheme.sem;
-    Widget toggle({
-      required Key key,
-      required String label,
-      required bool enabled,
-      required ValueChanged<bool> onChanged,
-    }) {
-      return Expanded(
-        child: SizedBox(
-          height: 42,
-          child: FilledButton.tonalIcon(
-            key: key,
-            onPressed: () => onChanged(!enabled),
-            icon: Icon(
-              enabled ? Icons.toggle_on_outlined : Icons.toggle_off_outlined,
-              size: 18,
-            ),
-            label: Text(
-              '$label · ${enabled ? (s.isZh ? '启用' : 'On') : (s.isZh ? '关闭' : 'Off')}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            style: AppControlSize.comfortable.buttonStyle(filled: enabled),
-          ),
-        ),
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          children: [
-            toggle(
-              key: const ValueKey('ai_enabled_toggle'),
-              label: 'AI',
-              enabled: cfg.aiEnabled,
-              onChanged: onAiEnabledChanged,
-            ),
-            const SizedBox(width: 8),
-            toggle(
-              key: const ValueKey('mcp_enabled_toggle'),
-              label: 'MCP',
-              enabled: cfg.mcpEnabled,
-              onChanged: onMcpEnabledChanged,
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 7,
-          runSpacing: 6,
-          children: [
-            _AiStatChip(
-              icon: Icons.hub_outlined,
-              label: s.aiProviderCount(providerCount),
-              scheme: scheme,
-            ),
-            _AiStatChip(
-              icon: Icons.widgets_outlined,
-              label: s.aiModelCount(modelCount),
-              scheme: scheme,
-            ),
-          ],
-        ),
-        if (!cfg.aiEnabled) ...[
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Icon(Icons.power_settings_new, size: 13, color: sem.warning),
-              const SizedBox(width: 5),
-              Flexible(
-                child: Text(
-                  s.aiAiDisabledHint,
-                  style: TextStyle(
-                    fontSize: 11,
-                    height: 1.3,
-                    color: sem.warning,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ],
-    );
-  }
-}
 
 class _AiStatChip extends StatelessWidget {
   final IconData icon;
@@ -2882,12 +2712,20 @@ class _AiSwitchTile extends StatelessWidget {
   final bool value;
   final ValueChanged<bool> onChanged;
 
+  /// 可选：把 Key 落在内部 [Switch] 上（而不是整行）。
+  ///
+  /// 「服务」卡用它在保持既有 ValueKey('ai_enabled_toggle') /
+  /// ValueKey('mcp_enabled_toggle') 的前提下把两个总开关做成标准选项行，
+  /// 测试与无障碍仍能按原 Key 精确定位到 Switch 本身。
+  final Key? switchKey;
+
   const _AiSwitchTile({
     required this.icon,
     required this.title,
     required this.desc,
     required this.value,
     required this.onChanged,
+    this.switchKey,
   });
 
   @override
@@ -2937,6 +2775,7 @@ class _AiSwitchTile extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             Switch(
+              key: switchKey,
               value: value,
               onChanged: onChanged,
               materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -2961,6 +2800,135 @@ class _AiDivider extends StatelessWidget {
         thickness: 0.5,
         color: scheme.outlineVariant.withAlpha(60),
       ),
+    );
+  }
+}
+
+/// 「服务」选项卡：AI 助手 / MCP 服务的两个总开关。
+///
+/// 用户反馈（2026-10）：提供商界面里的 AI / MCP 原本是两颗大块
+/// FilledButton，和主设置界面的选项行（图标块 + 标题 + 说明 + Switch）风格
+/// 割裂、显得突兀。现统一收敛成一张与「权限」卡同款的选项卡：
+///
+///  * 卡内标题行：服务图标 + 「服务」/「Services」+ 一句总说明；
+///  * 两行选项复用 [_AiSwitchTile]，Key 落在内部 [Switch] 上
+///    （保留 ValueKey('ai_enabled_toggle') / ValueKey('mcp_enabled_toggle')）；
+///  * MCP 行说明动态反映运行状态：运行中 + http://host:port / 未启动 /
+///    state.mcpError（故障原因），不再是一颗只有「启用/关闭」字样的按钮；
+///  * AI 停用时在卡内保留警告文案（与旧 Hero 行为一致）；
+///  * [flush] 供 PC 两列布局用（去掉分组卡自带的 12px 横向缩进）；
+///  * [showStats] 在卡片底部附提供商 / 模型数量 chips（移动端 Hero 的统计）。
+class _AiServiceOptionsCard extends StatelessWidget {
+  final AppConfig cfg;
+  final AppStrings s;
+  final AppState state;
+  final ColorScheme scheme;
+
+  /// true = 不加自带 12px 横向缩进（调用方自己控制，用于 PC 两列布局）。
+  final bool flush;
+
+  /// 是否附带提供商 / 模型数量 chips（移动端总览用；PC 状态带已有统计）。
+  final bool showStats;
+
+  final int providerCount;
+  final int modelCount;
+
+  const _AiServiceOptionsCard({
+    required this.cfg,
+    required this.s,
+    required this.state,
+    required this.scheme,
+    this.flush = false,
+    this.showStats = false,
+    this.providerCount = 0,
+    this.modelCount = 0,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final sem = scheme.sem;
+    final host = cfg.mcpHost.isEmpty ? '127.0.0.1' : cfg.mcpHost;
+    final url = 'http://$host:${cfg.mcpPort}';
+    final String mcpDesc;
+    if (state.mcpError != null) {
+      mcpDesc = state.mcpError!;
+    } else if (state.mcpRunning) {
+      mcpDesc = s.isZh ? '运行中 · $url' : 'Running · $url';
+    } else {
+      mcpDesc = s.isZh ? '未启动' : 'Not running';
+    }
+    return _AiSectionCard(
+      cardStyle: cfg.cardStyle,
+      icon: Icons.cloud_outlined,
+      title: s.isZh ? '服务' : 'Services',
+      subtitle: s.isZh
+          ? 'AI 助手与 MCP 服务的总开关'
+          : 'Master switches for the AI assistant and MCP server',
+      optionHeader: true,
+      horizontalInset: flush ? 0 : 12,
+      children: [
+        _AiSwitchTile(
+          icon: Icons.auto_awesome_outlined,
+          title: s.isZh ? 'AI 助手' : 'AI assistant',
+          desc: s.isZh
+              ? 'AI 对话、提供商与工具调用总开关'
+              : 'Master switch for AI chat, providers and tool calls',
+          value: cfg.aiEnabled,
+          switchKey: const ValueKey('ai_enabled_toggle'),
+          onChanged: (value) =>
+              state.updateConfig((c) => c..aiEnabled = value),
+        ),
+        if (!cfg.aiEnabled)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(44, 0, 0, 8),
+            child: Row(
+              children: [
+                Icon(Icons.power_settings_new, size: 13, color: sem.warning),
+                const SizedBox(width: 5),
+                Flexible(
+                  child: Text(
+                    s.aiAiDisabledHint,
+                    style: TextStyle(
+                      fontSize: 11,
+                      height: 1.3,
+                      color: sem.warning,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        const _AiDivider(),
+        _AiSwitchTile(
+          icon: Icons.dns_outlined,
+          // 与右侧「MCP 服务」分组的标题刻意区分：同一区域两张卡若都叫
+          // 「MCP 服务」，用户和测试都难以分辨（find.text 也会重复命中）。
+          title: s.isZh ? 'MCP 服务（外部访问）' : 'MCP server (external)',
+          desc: mcpDesc,
+          value: cfg.mcpEnabled,
+          switchKey: const ValueKey('mcp_enabled_toggle'),
+          onChanged: (value) => state.toggleMcpServer(value),
+        ),
+        if (showStats) ...[
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 7,
+            runSpacing: 6,
+            children: [
+              _AiStatChip(
+                icon: Icons.hub_outlined,
+                label: s.aiProviderCount(providerCount),
+                scheme: scheme,
+              ),
+              _AiStatChip(
+                icon: Icons.widgets_outlined,
+                label: s.aiModelCount(modelCount),
+                scheme: scheme,
+              ),
+            ],
+          ),
+        ],
+      ],
     );
   }
 }

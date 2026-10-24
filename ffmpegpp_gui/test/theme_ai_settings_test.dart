@@ -175,9 +175,18 @@ void main() {
     expect(tester.takeException(), isNull);
 
     await pumpAt(const Size(1280, 900));
-    // 顶部状态带：AI / MCP 开关（沿用移动端同一批 Key）。
+    // AI / MCP 两个总开关沿用同一批 Key，但现在落在「服务」卡内两行选项的
+    // Switch 上（不再是状态带右上角两颗大块按钮）。
     expect(find.byKey(const ValueKey('ai_enabled_toggle')), findsOneWidget);
     expect(find.byKey(const ValueKey('mcp_enabled_toggle')), findsOneWidget);
+    expect(
+      tester.widget(find.byKey(const ValueKey('ai_enabled_toggle'))),
+      isA<Switch>(),
+    );
+    expect(find.text('服务'), findsOneWidget);
+    expect(find.text('AI 助手'), findsOneWidget);
+    // MCP 行标题与右栏「MCP 服务」分组卡刻意区分开（避免 find.text 重复命中）。
+    expect(find.text('MCP 服务（外部访问）'), findsOneWidget);
     // 提供商管理区：标题 + 管理入口 + 两张提供商卡（名称 / 当前徽标）。
     expect(find.text('提供商'), findsOneWidget);
     expect(find.text('管理'), findsOneWidget);
@@ -188,6 +197,14 @@ void main() {
     expect(find.text('MCP 服务'), findsOneWidget);
     expect(find.text('权限'), findsOneWidget);
     expect(find.text('高级'), findsOneWidget);
+
+    // 服务卡里的选项行可直接切换：AI 关闭后警告文案出现（状态带 + 卡内）。
+    await tester.tap(find.byKey(const ValueKey('ai_enabled_toggle')));
+    await tester.pumpAndSettle();
+    expect(find.text('AI 助手已停用，提供商不会参与对话'), findsWidgets);
+    await tester.tap(find.byKey(const ValueKey('ai_enabled_toggle')));
+    await tester.pumpAndSettle();
+    expect(find.text('AI 助手已停用，提供商不会参与对话'), findsNothing);
 
     // 快捷入口：点提供商卡直达详情页（不再是「只能进二级列表」）。
     await tester.tap(find.text('Claude'));

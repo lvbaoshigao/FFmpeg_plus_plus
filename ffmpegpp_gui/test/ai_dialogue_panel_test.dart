@@ -12,6 +12,8 @@ import 'package:provider/provider.dart';
 AiPanelView _testPanel({
   List<Map<String, dynamic>>? initialMessages,
   void Function(AiPanelApi api)? onApiReady,
+  bool mobileSheet = false,
+  VoidCallback? onCloseRequested,
 }) => AiPanelView(
   strings: AppStrings.en,
   existingNodes: const [],
@@ -20,6 +22,8 @@ AiPanelView _testPanel({
   hideHeader: true,
   initialMessages: initialMessages,
   onApiReady: onApiReady,
+  mobileSheet: mobileSheet,
+  onCloseRequested: onCloseRequested,
   onApplyGraph: (_, connections) {},
   onMergeGraph: (_, connections) {},
   onModifyNodeParams: (_, params) => true,
@@ -540,6 +544,34 @@ void main() {
         isFalse,
       );
     });
+
+    test('mobile AI sidebar width is comfortable on narrow panels', () {
+      // 旧实现 min(340, 86%)：320dp 时只有 275dp，文字被截断。
+      expect(mobileAiSidebarWidth(320), closeTo(300.8, 0.001));
+      expect(mobileAiSidebarWidth(320), greaterThan(320 * 0.86));
+      expect(mobileAiSidebarWidth(0), 0);
+      expect(mobileAiSidebarWidth(-8), 0);
+      expect(mobileAiSidebarWidth(1000), 400);
+    });
+
+    test('mobile AI header metrics keep 320dp from overflowing', () {
+      final compact = AiMobileHeaderMetrics.forWidth(320);
+      expect(compact.compact, isTrue);
+      expect(compact.actionSize, 32);
+      expect(compact.actionIconSize, 18);
+      expect(compact.modelChipWidth, 88);
+
+      final normal = AiMobileHeaderMetrics.forWidth(412);
+      expect(normal.compact, isFalse);
+      expect(normal.modelChipWidth, greaterThan(compact.modelChipWidth));
+
+      // 单行 header 固定部分 = 3 个动作按钮 + 机器人图标 + 图标间距 +
+      // 模型 chip + pill 横向内边距；必须给「AI 助手」标题留出空间。
+      final fixed =
+          3 * compact.actionSize + 16 + 6 + compact.modelChipWidth + 8;
+      expect(fixed, lessThan(320 - 16));
+      expect(320 - 16 - fixed, greaterThan(40));
+    });
   });
 
   // ──────────────────────────────────────────────────────────────────────
@@ -682,6 +714,41 @@ void main() {
       // blocks 为 null 的普通回复 + 带 text 块的回复（老历史）都必须走
       // MarkdownBody，不能退化成 SelectableText 纯文本。
       expect(find.byType(MarkdownBody), findsWidgets);
+      await _teardownPanel(tester);
+    });
+
+    testWidgets('mobile sheet renders a single-row header + full-height sidebar', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(360, 780);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await _pumpPanel(
+        tester,
+        _testPanel(mobileSheet: true, onCloseRequested: () {}),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // 单行 header：历史 / 标题 / 模型 chip / 工具 / 关闭 在同一颗药丸里，
+      // 不再有宿主第二行模型药丸。
+      expect(
+        find.byKey(const ValueKey('ai-mobile-sheet-header')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('ai-mobile-model-chip')),
+        findsOneWidget,
+      );
+
+      // 侧栏挂在面板根 Stack（全高覆盖层），而不是缩在消息区里的半高抽屉；
+      // 分段标签改成竖排 + FittedBox(scaleDown)，窄屏/大字号不出现省略号。
+      expect(find.byKey(const ValueKey('ai-mobile-sidebar')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('ai-mobile-sidebar-tabs')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
       await _teardownPanel(tester);
     });
   });

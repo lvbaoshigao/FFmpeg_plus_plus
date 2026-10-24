@@ -378,7 +378,57 @@ void main() {
     await tester.pump();
     final aiToggle = find.byKey(const ValueKey('ai_enabled_toggle'));
     final mcpToggle = find.byKey(const ValueKey('mcp_enabled_toggle'));
+    // AI / MCP 不再是大块按钮：两个 Key 落在「服务」卡内两行选项的 Switch 上，
+    // 同一张卡里两行等宽（窄屏 320 无溢出）。
+    expect(tester.widget<Switch>(aiToggle), isA<Switch>());
+    expect(tester.widget<Switch>(mcpToggle), isA<Switch>());
     expect(tester.getSize(aiToggle).width, tester.getSize(mcpToggle).width);
+    expect(find.text('服务'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await _flushSaveTimers(tester);
+  });
+
+  testWidgets('「服务」卡：AI / MCP 两行选项可切换，AI 关闭提示保留', (tester) async {
+    tester.view.physicalSize = const Size(412, 915);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final state = AppState();
+    state.updateConfig(
+      (c) => c
+        ..cardStyle = 'gray'
+        ..pillStyle = 'gray'
+        ..aiEnabled = true
+        ..mcpEnabled = true,
+    );
+    await tester.pumpWidget(
+      _harness(
+        state,
+        Builder(
+          builder: (ctx) =>
+              SingleChildScrollView(child: aiSettingsContent(ctx, state)),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 服务卡存在：标题 + 说明 + 两行选项（不再是两颗并排的大块按钮）。
+    expect(find.text('服务'), findsOneWidget);
+    expect(find.text('AI 助手与 MCP 服务的总开关'), findsOneWidget);
+    expect(find.text('AI 助手'), findsOneWidget);
+    expect(find.text('MCP 服务（外部访问）'), findsOneWidget);
+    expect(find.text('AI 助手已停用，提供商不会参与对话'), findsNothing);
+
+    // 整行可点（标题文字位于选项行的 InkWell 内）→ AI 关闭，警告文案出现。
+    await tester.tap(find.text('AI 助手'));
+    await tester.pumpAndSettle();
+    expect(state.config.aiEnabled, isFalse);
+    expect(find.text('AI 助手已停用，提供商不会参与对话'), findsOneWidget);
+
+    // MCP 行同样可点：从「已启用」关闭（不会启动真实 MCP 服务器）。
+    expect(state.config.mcpEnabled, isTrue);
+    await tester.tap(find.byKey(const ValueKey('mcp_enabled_toggle')));
+    await tester.pumpAndSettle();
+    expect(state.config.mcpEnabled, isFalse);
     expect(tester.takeException(), isNull);
     await _flushSaveTimers(tester);
   });
