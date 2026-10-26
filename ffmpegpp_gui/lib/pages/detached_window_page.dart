@@ -1393,7 +1393,10 @@ class _AiWindow extends StatelessWidget {
                 initialMessages: store.aiSeed,
                 // 把窄接口交回来：dockBack / 关窗时要导出会话交还主窗口
                 onApiReady: (api) => store.aiApi = api,
-                hideHeader: true,
+                // 独立窗口就是完整聊天宿主：模型、历史、工具都该可用。
+                // 只隐藏「收起」（收起后没有恢复入口），不是隐藏整个 header。
+                hideHeader: false,
+                standaloneWindow: true,
                 onApplyGraph: ops.apply,
                 onMergeGraph: ops.merge,
                 onModifyNodeParams: ops.modifyParams,

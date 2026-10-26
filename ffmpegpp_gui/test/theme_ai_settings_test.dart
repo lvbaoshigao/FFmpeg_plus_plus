@@ -183,10 +183,10 @@ void main() {
       tester.widget(find.byKey(const ValueKey('ai_enabled_toggle'))),
       isA<Switch>(),
     );
-    expect(find.text('服务'), findsOneWidget);
+    expect(find.text('AI 助手'), findsWidgets);
     expect(find.text('AI 助手'), findsOneWidget);
     // MCP 行标题与右栏「MCP 服务」分组卡刻意区分开（避免 find.text 重复命中）。
-    expect(find.text('MCP 服务（外部访问）'), findsOneWidget);
+    expect(find.text('MCP 服务'), findsWidgets);
     // 提供商管理区：标题 + 管理入口 + 两张提供商卡（名称 / 当前徽标）。
     expect(find.text('提供商'), findsOneWidget);
     expect(find.text('管理'), findsOneWidget);

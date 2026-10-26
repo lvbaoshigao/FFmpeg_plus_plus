@@ -35,6 +35,7 @@ import '../services/thumbnail_service.dart';
 import '../theme/app_control_size.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_strings.dart';
+import '../theme/app_text_scale.dart';
 import '../theme/app_theme.dart';
 import '../widgets/ai_workflow_card.dart';
 import '../widgets/animated_popup.dart';
@@ -3930,49 +3931,51 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             if (await _onWillPop()) nav.pop();
           },
           child: Scaffold(
-          backgroundColor: Colors.transparent,
-          appBar: Platform.isWindows
-              ? AppBar(
-                  leading: IconButton(
-                    icon: const Icon(Icons.arrow_back),
-                    onPressed: () async {
-                      final nav = Navigator.of(context);
-                      if (await _onWillPop()) nav.pop();
-                    },
-                  ),
-                  title: Text(
-                    s.isZh
-                        ? '编辑: ${widget.video.filename}'
-                        : 'Edit: ${widget.video.filename}',
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
+            backgroundColor: Colors.transparent,
+            appBar: Platform.isWindows
+                ? AppBar(
+                    leading: IconButton(
+                      icon: const Icon(Icons.arrow_back),
+                      onPressed: () async {
+                        final nav = Navigator.of(context);
+                        if (await _onWillPop()) nav.pop();
+                      },
                     ),
-                  ),
-                  actions: [
-                    if (context.read<AppState>().config.aiEnabled) ...[
-                      _buildTopAiBar(scheme, s),
-                      const SizedBox(width: 4),
-                    ],
-                    IconButton(
-                      icon: const Icon(Icons.file_upload_outlined, size: 20),
-                      tooltip: s.isZh ? '导出配置' : 'Export Config',
-                      onPressed: _nodes.isEmpty ? null : () => _exportConfig(s),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.only(right: 12),
-                      // 保存按钮：仅软盘图标，不显示文字
-                      child: IconButton.filled(
-                        onPressed: _save,
-                        icon: const Icon(Icons.save_outlined, size: 18),
-                        tooltip: s.save,
-                        style: _saveButtonStyle(scheme),
+                    title: Text(
+                      s.isZh
+                          ? '编辑: ${widget.video.filename}'
+                          : 'Edit: ${widget.video.filename}',
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
-                  ],
-                )
-              : null,
-          body: _buildBody(scheme, s),
+                    actions: [
+                      if (context.read<AppState>().config.aiEnabled) ...[
+                        withoutAppTextScale(context, _buildTopAiBar(scheme, s)),
+                        const SizedBox(width: 4),
+                      ],
+                      IconButton(
+                        icon: const Icon(Icons.file_upload_outlined, size: 20),
+                        tooltip: s.isZh ? '导出配置' : 'Export Config',
+                        onPressed: _nodes.isEmpty
+                            ? null
+                            : () => _exportConfig(s),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(right: 12),
+                        // 保存按钮：仅软盘图标，不显示文字
+                        child: IconButton.filled(
+                          onPressed: _save,
+                          icon: const Icon(Icons.save_outlined, size: 18),
+                          tooltip: s.save,
+                          style: _saveButtonStyle(scheme),
+                        ),
+                      ),
+                    ],
+                  )
+                : null,
+            body: _buildBody(scheme, s),
           ),
         ),
       ),
@@ -5530,6 +5533,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                                     s,
                                     key: const ValueKey('ai-float'),
                                     startExpanded: true,
+                                    initialMessages: _aiSessionCache,
+                                    onApiReady: (api) => _aiPanelApi = api,
                                     onTitleGenerated: (t) =>
                                         setState(() => _aiSessionTitle = t),
                                     onCollapseRequested: () =>
@@ -6111,6 +6116,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                                     onCollapseRequested: () {
                                       _stashAiSession();
                                       setState(() => _aiDrawerOpen = false);
+                                    },
+                                    // 在编辑器内浮出小窗（不切系统窗口）
+                                    onInlineFloat: () {
+                                      _stashAiSession();
+                                      setState(() {
+                                        _aiDrawerOpen = false;
+                                        _aiDetached = true;
+                                        _aiMinimized = false;
+                                        _aiExternal = false;
+                                      });
                                     },
                                     // 拖出为独立系统窗口（PS 式的再往外拖一层）
                                     onFloatOut: () =>
@@ -8379,6 +8394,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     minimized: _aiMinimized,
     onMinimize: () => setState(() => _aiMinimized = !_aiMinimized),
     onToggleDetach: () => setState(() {
+      if (_aiDetached) _stashAiSession();
       _aiDetached = !_aiDetached;
       if (!_aiDetached) {
         _aiDrawerOpen = true;
@@ -9811,6 +9827,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     return <String, dynamic>{
       'panel': panel.id,
       'config': cfg.toJson(),
+      // 配置 JSON 不含 Key（落盘安全），但独立 AI 窗口必须能发请求。
+      // 凭据只经本机通道传递，不写文件。
+      'aiCredentials': aiCredentialsOf(cfg),
       'appDataDir': _detachedAppDataDir,
       'appData': {
         'videos': [
@@ -9989,9 +10008,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         {
           final json = args['config'];
           if (json is! Map) return false;
-          await _appState.updateConfig(
-            (_) => AppConfig.fromJson(Map<String, dynamic>.from(json)),
-          );
+          final next = AppConfig.fromJson(Map<String, dynamic>.from(json));
+          // 主窗口是新配置的持久化归属：子窗口发来的 JSON 不含 Key，
+          // 必须把凭据合并回去，否则一次面板内改模型就会把主窗口的 Key 清空。
+          final creds = args['aiCredentials'];
+          applyAiCredentials(next, creds ?? aiCredentialsOf(_appState.config));
+          await _appState.updateConfig((_) => next);
           return true;
         }
 
@@ -10159,6 +10181,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     bool hideHeader = false,
     bool mobileSheet = false,
     VoidCallback? onCloseRequested,
+    List<Map<String, dynamic>>? initialMessages,
+    VoidCallback? onFloatOut,
+    VoidCallback? onInlineFloat,
+    bool standaloneWindow = false,
+    void Function(AiPanelApi api)? onApiReady,
   }) {
     final ops = _aiOps;
     return AiPanelView(
@@ -10169,6 +10196,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       hideHeader: hideHeader,
       mobileSheet: mobileSheet,
       onCloseRequested: onCloseRequested,
+      initialMessages: initialMessages,
+      onFloatOut: onFloatOut,
+      onInlineFloat: onInlineFloat,
+      standaloneWindow: standaloneWindow,
+      onApiReady: onApiReady,
       strings: s,
       existingNodes: _nodes,
       existingConnections: _connections,
@@ -12259,6 +12291,13 @@ class AiPanelView extends StatefulWidget {
   /// 以及独立窗口里自己嵌的那一份都不传）——此时不渲染这个按钮。
   final VoidCallback? onFloatOut;
 
+  /// 「在节点编辑器内浮出小窗」入口。桌面抽屉传入；浮窗 / 独立窗口不再传。
+  final VoidCallback? onInlineFloat;
+
+  /// 独立系统窗口模式：模型、历史、工具都可用，但隐藏「收起」按钮
+  /// （窗口本身就是容器，收起只会剩下一个无法恢复的 AI 药丸）。
+  final bool standaloneWindow;
+
   /// 面板就绪后把自己的窄接口交出去，宿主靠它导出 / 导入会话。
   final void Function(AiPanelApi api)? onApiReady;
   const AiPanelView({
@@ -12288,6 +12327,8 @@ class AiPanelView extends StatefulWidget {
     this.onCloseRequested,
     this.initialMessages,
     this.onFloatOut,
+    this.onInlineFloat,
+    this.standaloneWindow = false,
     this.onApiReady,
   });
   @override
@@ -12318,7 +12359,9 @@ String mergeContinuationText(String previous, String next) {
   if (previous.isEmpty || next.isEmpty) return previous + next;
   final endsSentence = RegExp(r'[.!?。！？:：;；)\]}"”]$').hasMatch(previous);
   final startsWithSpace = RegExp(r'^\s').hasMatch(next);
-  return endsSentence && !startsWithSpace ? '$previous $next' : '$previous$next';
+  return endsSentence && !startsWithSpace
+      ? '$previous $next'
+      : '$previous$next';
 }
 
 /// 工具调用轮里「流式正文」与「非流式完整响应正文」的取舍。
@@ -12611,14 +12654,49 @@ Future<void> applyAiModelChoice(BuildContext context, String model) async {
   final appState = context.read<AppState>();
   final cfg = appState.config;
   final pid = cfg.activeAiProfileId;
-  final idx = pid.isEmpty
+  final activeIdx = pid.isEmpty
       ? -1
       : cfg.aiProfiles.indexWhere((p) => p.id == pid && p.enabled);
-  if (idx >= 0) {
-    await appState.updateConfig((c) => c..aiProfiles[idx].model = model);
+  // 模型可能属于另一个已启用供应商。旧实现只写当前配置的 model，
+  // 于是跨供应商选择时「点完还是用旧供应商发请求」。这里按模型反查归属，
+  // 同时切换 activeAiProfileId —— 这才是“选择模型提供商”的完整语义。
+  var ownerIdx = -1;
+  for (var i = 0; i < cfg.aiProfiles.length; i++) {
+    final p = cfg.aiProfiles[i];
+    if (!p.enabled) continue;
+    if (p.models.any((m) => m.enabled && m.id.trim() == model)) {
+      ownerIdx = i;
+      break;
+    }
+  }
+  if (ownerIdx >= 0) {
+    await appState.updateConfig((c) {
+      c.aiProfiles[ownerIdx].model = model;
+      c.activeAiProfileId = c.aiProfiles[ownerIdx].id;
+      return c;
+    });
+  } else if (activeIdx >= 0) {
+    await appState.updateConfig((c) => c..aiProfiles[activeIdx].model = model);
   } else {
     await appState.updateConfig((c) => c..aiModel = model);
   }
+}
+
+/// 模型选项的显示文案：`供应商 · 模型`。
+///
+/// 只显示模型名时，用户无法判断这次请求会走哪个供应商（尤其两个供应商
+/// 都配置了同名模型）。优先使用当前生效配置，其次按模型反查归属。
+String aiModelOptionLabel(AppConfig cfg, String model, AiProfile? active) {
+  if (active != null &&
+      active.models.any((m) => m.enabled && m.id.trim() == model)) {
+    return active.name.trim().isEmpty ? model : '${active.name} · $model';
+  }
+  for (final p in cfg.aiProfiles.where((p) => p.enabled)) {
+    if (p.models.any((m) => m.enabled && m.id.trim() == model)) {
+      return p.name.trim().isEmpty ? model : '${p.name} · $model';
+    }
+  }
+  return model;
 }
 
 /// 单次流式请求的私有状态。
@@ -15033,7 +15111,7 @@ Available actions: __TOOLS__''';
       child: Column(
         children: [
           if (mobileSheet)
-            _buildMobileSheetHeader(scheme, s)
+            withoutAppTextScale(context, _buildMobileSheetHeader(scheme, s))
           else if (!widget.hideHeader)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 6, 4),
@@ -15066,7 +15144,22 @@ Available actions: __TOOLS__''';
                       ),
                     ),
                   ),
-                  _buildModelSelector(scheme, s),
+                  Flexible(child: _buildModelSelector(scheme, s)),
+                  // 在节点编辑器内浮出小窗：主窗口抽屉专属入口。
+                  if (widget.onInlineFloat != null)
+                    IconButton(
+                      icon: const Icon(
+                        Icons.picture_in_picture_alt_outlined,
+                        size: 17,
+                      ),
+                      tooltip: s.isZh ? '浮出为内嵌小窗' : 'Float as inline window',
+                      onPressed: widget.onInlineFloat,
+                      constraints: const BoxConstraints(
+                        minWidth: 32,
+                        minHeight: 32,
+                      ),
+                      padding: EdgeInsets.zero,
+                    ),
                   // 拖出为独立系统窗口（只有主窗口的 AI 抽屉会传 onFloatOut）
                   if (widget.onFloatOut != null)
                     IconButton(
@@ -15108,22 +15201,23 @@ Available actions: __TOOLS__''';
                       padding: EdgeInsets.zero,
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.remove, size: 18),
-                    tooltip: s.isZh ? '收起' : 'Collapse',
-                    onPressed: () {
-                      if (widget.onCollapseRequested != null) {
-                        widget.onCollapseRequested!();
-                      } else {
-                        setState(() => _expanded = false);
-                      }
-                    },
-                    constraints: const BoxConstraints(
-                      minWidth: 32,
-                      minHeight: 32,
+                  if (!widget.standaloneWindow)
+                    IconButton(
+                      icon: const Icon(Icons.remove, size: 18),
+                      tooltip: s.isZh ? '收起' : 'Collapse',
+                      onPressed: () {
+                        if (widget.onCollapseRequested != null) {
+                          widget.onCollapseRequested!();
+                        } else {
+                          setState(() => _expanded = false);
+                        }
+                      },
+                      constraints: const BoxConstraints(
+                        minWidth: 32,
+                        minHeight: 32,
+                      ),
+                      padding: EdgeInsets.zero,
                     ),
-                    padding: EdgeInsets.zero,
-                  ),
                 ],
               ),
             ),
@@ -15236,9 +15330,7 @@ Available actions: __TOOLS__''';
                   MobileGlassPillAction(
                     icon: Icons.extension_outlined,
                     tooltip: s.isZh ? '工具' : 'Tools',
-                    color: toolsOpen
-                        ? scheme.primary
-                        : scheme.onSurfaceVariant,
+                    color: toolsOpen ? scheme.primary : scheme.onSurfaceVariant,
                     size: metrics.actionSize,
                     iconSize: metrics.actionIconSize,
                     onTap: () => unawaited(
@@ -15279,7 +15371,7 @@ Available actions: __TOOLS__''';
         : (options.isNotEmpty ? options.first : '');
     final label = current.isEmpty
         ? (s.isZh ? '未配置' : 'No model')
-        : current;
+        : aiModelOptionLabel(cfg, current, _effectiveProfile);
     return SizedBox(
       width: width,
       height: 28,
@@ -15305,14 +15397,12 @@ Available actions: __TOOLS__''';
                         ? Icons.radio_button_checked
                         : Icons.radio_button_off,
                     size: 13,
-                    color: model == current
-                        ? scheme.primary
-                        : scheme.outline,
+                    color: model == current ? scheme.primary : scheme.outline,
                   ),
                   const SizedBox(width: 6),
                   Flexible(
                     child: Text(
-                      model,
+                      aiModelOptionLabel(cfg, model, _effectiveProfile),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 12),
@@ -15350,11 +15440,9 @@ Available actions: __TOOLS__''';
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w600,
-                    color: current.isEmpty
-                        ? scheme.outline
-                        : scheme.onSurface,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    color: current.isEmpty ? scheme.outline : scheme.onSurface,
                   ),
                 ),
               ),
@@ -15505,15 +15593,23 @@ Available actions: __TOOLS__''';
       );
     }
     final selectedModel = models.contains(selected) ? selected : models.first;
-    return SizedBox(
-      width: 190,
+    // 不能再用固定 190px：模型名 + 「供应商 · 」前缀会被硬截断成
+    // “deepseek-chat…” 甚至只剩省略号。让菜单随内容收缩，但设上限，
+    // 保证右侧工具按钮不被顶走。
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 200),
       child: OptionMenuBar<String>(
         expandable: true,
         value: selectedModel,
-        leadingIcon: Icons.memory,
         triggerHeight: 34,
-        items: [for (final model in models) OptionItem(model, model)],
-        onChanged: (model) => setState(() => _sessionModel = model),
+        items: [
+          for (final model in models)
+            OptionItem(model, aiModelOptionLabel(cfg, model, profile)),
+        ],
+        onChanged: (model) {
+          unawaited(applyAiModelChoice(context, model));
+          setState(() => _sessionModel = model);
+        },
       ),
     );
   }
@@ -16190,31 +16286,35 @@ Available actions: __TOOLS__''';
   );
 
   /// 侧栏自己的顶部栏：标题 + 关闭（44px 触控目标）。
-  Widget _buildMobileSidebarHeader(ColorScheme scheme, AppStrings s) => SizedBox(
-    height: 44,
-    child: Row(
-      children: [
-        const SizedBox(width: 6),
-        Icon(Icons.smart_toy_outlined, size: 18, color: scheme.primary),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            s.aiChatTitle,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-          ),
+  Widget _buildMobileSidebarHeader(ColorScheme scheme, AppStrings s) =>
+      SizedBox(
+        height: 44,
+        child: Row(
+          children: [
+            const SizedBox(width: 6),
+            Icon(Icons.smart_toy_outlined, size: 18, color: scheme.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                s.aiChatTitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: s.isZh ? '关闭侧栏' : 'Close sidebar',
+              onPressed: () => setState(() => _historyOpen = false),
+              icon: const Icon(Icons.close, size: 19),
+              constraints: const BoxConstraints.tightFor(width: 44, height: 44),
+              padding: EdgeInsets.zero,
+            ),
+          ],
         ),
-        IconButton(
-          tooltip: s.isZh ? '关闭侧栏' : 'Close sidebar',
-          onPressed: () => setState(() => _historyOpen = false),
-          icon: const Icon(Icons.close, size: 19),
-          constraints: const BoxConstraints.tightFor(width: 44, height: 44),
-          padding: EdgeInsets.zero,
-        ),
-      ],
-    ),
-  );
+      );
 
   /// 侧栏分段标签（对话 / 历史 / 工具）。
   ///
@@ -16411,17 +16511,12 @@ Available actions: __TOOLS__''';
         );
       }
     }
-    items.add(
-      Divider(height: 12, color: scheme.outlineVariant.withAlpha(50)),
-    );
+    items.add(Divider(height: 12, color: scheme.outlineVariant.withAlpha(50)));
     items.add(
       ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
         leading: const Icon(Icons.save_outlined, size: 19),
-        title: Text(
-          s.isZh ? '保存当前会话' : 'Save current chat',
-          maxLines: 1,
-        ),
+        title: Text(s.isZh ? '保存当前会话' : 'Save current chat', maxLines: 1),
         enabled: !_loading,
         onTap: _loading
             ? null
@@ -16559,8 +16654,7 @@ Available actions: __TOOLS__''';
                                     overflow: TextOverflow.ellipsis,
                                     style: const TextStyle(fontSize: 11),
                                   ),
-                                  enabled:
-                                      !_loading && _activeRequest == null,
+                                  enabled: !_loading && _activeRequest == null,
                                   onTap: () {
                                     _loadHistorySession(session, s);
                                     setState(() => _historyOpen = false);
@@ -16628,15 +16722,16 @@ Available actions: __TOOLS__''';
     if (_loading) return _historyFilePath;
     // 过滤空 assistant 占位（停止/异常路径可能残留），但保留有 blocks 的
     // 工具结果消息（content 可能为空，blocks 不为空）。
-    final persistable = <
-      ({
-        String role,
-        String content,
-        int? inputTokens,
-        int? outputTokens,
-        List<Map<String, dynamic>>? blocks,
-      })
-    >[];
+    final persistable =
+        <
+          ({
+            String role,
+            String content,
+            int? inputTokens,
+            int? outputTokens,
+            List<Map<String, dynamic>>? blocks,
+          })
+        >[];
     for (final m in _messages) {
       if (!shouldPersistHistoryMessage(
         role: m.role,
@@ -16699,12 +16794,7 @@ Available actions: __TOOLS__''';
       padding: const EdgeInsets.only(bottom: 8),
       children: [
         Padding(
-          padding: EdgeInsets.fromLTRB(
-            isMobilePlatform ? 12 : 12,
-            8,
-            12,
-            4,
-          ),
+          padding: EdgeInsets.fromLTRB(isMobilePlatform ? 12 : 12, 8, 12, 4),
           child: Row(
             children: [
               Text(
@@ -16790,9 +16880,7 @@ Available actions: __TOOLS__''';
     return Tooltip(
       message:
           (isDisabled
-              ? (s.isZh
-                    ? '已禁用 - $enableHint'
-                    : 'Disabled - $enableHint')
+              ? (s.isZh ? '已禁用 - $enableHint' : 'Disabled - $enableHint')
               : '${t.desc}\n${t.template}') +
           (permitted
               ? ''

@@ -17,6 +17,7 @@ import '../theme/app_strings.dart';
 import '../widgets/app_card.dart';
 import '../widgets/fppx_password.dart';
 import '../widgets/glass_panel.dart';
+import '../widgets/liquid_glass_mobile_nav.dart';
 import '../widgets/mobile_glass_pill.dart';
 // 生效的菜单栏位置（底部 ↔ 左右竖排导轨）：列表底部留白随之在 96 / 20 间切换
 import '../widgets/mobile_nav_scope.dart';
@@ -33,6 +34,7 @@ class _ConfigEntry {
   PipelineGraph graph;
   String description;
   DateTime updatedAt;
+
   /// 导出用的文件格式：'legacy' = 旧版 FPPX（gzip+JSON），'v2' = 新版模块化二进制。
   /// 库内部始终存 JSON 图，此字段只决定导出 .fppx 时走哪种格式。
   String format;
@@ -58,9 +60,13 @@ class _ConfigEntry {
   factory _ConfigEntry.fromJson(Map<String, dynamic> json) => _ConfigEntry(
     id: json['id'] as String? ?? _uuid.v4(),
     name: json['name'] as String? ?? '',
-    graph: json['graph'] != null ? PipelineGraph.fromJson(json['graph'] as Map<String, dynamic>) : PipelineGraph(),
+    graph: json['graph'] != null
+        ? PipelineGraph.fromJson(json['graph'] as Map<String, dynamic>)
+        : PipelineGraph(),
     description: json['description'] as String? ?? '',
-    updatedAt: json['updated_at'] != null ? DateTime.tryParse(json['updated_at'] as String) ?? DateTime.now() : DateTime.now(),
+    updatedAt: json['updated_at'] != null
+        ? DateTime.tryParse(json['updated_at'] as String) ?? DateTime.now()
+        : DateTime.now(),
     format: json['format'] as String? ?? 'legacy',
   );
 }
@@ -95,7 +101,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     setState(() {
       _configs.clear();
       for (final json in list) {
-        try { _configs.add(_ConfigEntry.fromJson(json as Map<String, dynamic>)); } catch (_) {}
+        try {
+          _configs.add(_ConfigEntry.fromJson(json as Map<String, dynamic>));
+        } catch (_) {}
       }
       _quickConfigs
         ..clear()
@@ -106,7 +114,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
 
   Future<void> _saveLibrary() async {
     final state = context.read<AppState>();
-    await state.configService.saveLibrary(_configs.map((e) => e.toJson()).toList());
+    await state.configService.saveLibrary(
+      _configs.map((e) => e.toJson()).toList(),
+    );
   }
 
   void _newConfig() {
@@ -119,68 +129,94 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       builder: (ctx) {
         // 新建时选择文件版本：新版为 v2 模块化二进制（Beta），旧版完全兼容历史行为
         var newFormat = false;
-        return StatefulBuilder(builder: (ctx, setDialogState) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Row(children: [
-            Icon(Icons.add_circle_outline, size: 20, color: scheme.primary),
-            const SizedBox(width: 8),
-            Text(zh ? '新建配置' : 'New Config', style: TextStyle(color: scheme.onSurface)),
-          ]),
-          content: SizedBox(
-            width: MediaQuery.sizeOf(ctx).width < 440
-                ? MediaQuery.sizeOf(ctx).width - 64
-                : 360,
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-            TextField(
-              controller: nameCtrl, autofocus: true,
-              decoration: InputDecoration(
-                labelText: zh ? '配置名称' : 'Config Name',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-              style: TextStyle(fontSize: 14, color: scheme.onSurface),
-              onSubmitted: (_) {
-                Navigator.pop(ctx);
-                _createEntry(nameCtrl.text, zh, newFormat: newFormat);
-              },
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
             ),
-            const SizedBox(height: 12),
-            SegmentedButton<bool>(
-              segments: [
-                ButtonSegment(
-                  value: false,
-                  label: Text(zh ? '旧版' : 'Legacy'),
-                  icon: const Icon(Icons.history, size: 16),
-                ),
-                ButtonSegment(
-                  value: true,
-                  label: Text(
-                    zh ? '新版 Beta' : 'New Beta',
-                    maxLines: 1,
-                    softWrap: false,
-                  ),
-                  icon: const Icon(Icons.auto_awesome, size: 16),
+            title: Row(
+              children: [
+                Icon(Icons.add_circle_outline, size: 20, color: scheme.primary),
+                const SizedBox(width: 8),
+                Text(
+                  zh ? '新建配置' : 'New Config',
+                  style: TextStyle(color: scheme.onSurface),
                 ),
               ],
-              selected: {newFormat},
-              onSelectionChanged: (s) => setDialogState(() => newFormat = s.first),
             ),
-            const SizedBox(height: 6),
-            Text(
-              newFormat
-                  ? (zh ? '模块化二进制格式，导出前深度校验；旧版软件无法读取' : 'Modular binary with deep validation; not readable by older builds')
-                  : (zh ? '与历史版本完全兼容的经典格式' : 'Classic format, fully compatible'),
-              style: TextStyle(fontSize: 11, color: scheme.outline),
+            content: SizedBox(
+              width: MediaQuery.sizeOf(ctx).width < 440
+                  ? MediaQuery.sizeOf(ctx).width - 64
+                  : 360,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameCtrl,
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      labelText: zh ? '配置名称' : 'Config Name',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    style: TextStyle(fontSize: 14, color: scheme.onSurface),
+                    onSubmitted: (_) {
+                      Navigator.pop(ctx);
+                      _createEntry(nameCtrl.text, zh, newFormat: newFormat);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  SegmentedButton<bool>(
+                    segments: [
+                      ButtonSegment(
+                        value: false,
+                        label: Text(zh ? '旧版' : 'Legacy'),
+                        icon: const Icon(Icons.history, size: 16),
+                      ),
+                      ButtonSegment(
+                        value: true,
+                        label: Text(
+                          zh ? '新版 Beta' : 'New Beta',
+                          maxLines: 1,
+                          softWrap: false,
+                        ),
+                        icon: const Icon(Icons.auto_awesome, size: 16),
+                      ),
+                    ],
+                    selected: {newFormat},
+                    onSelectionChanged: (s) =>
+                        setDialogState(() => newFormat = s.first),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    newFormat
+                        ? (zh
+                              ? '模块化二进制格式，导出前深度校验；旧版软件无法读取'
+                              : 'Modular binary with deep validation; not readable by older builds')
+                        : (zh
+                              ? '与历史版本完全兼容的经典格式'
+                              : 'Classic format, fully compatible'),
+                    style: TextStyle(fontSize: 11, color: scheme.outline),
+                  ),
+                ],
+              ),
             ),
-          ])),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx),
-                child: Text(zh ? '取消' : 'Cancel')),
-            FilledButton(onPressed: () {
-              Navigator.pop(ctx);
-              _createEntry(nameCtrl.text, zh, newFormat: newFormat);
-            }, child: Text(zh ? '创建' : 'Create')),
-          ],
-        ));
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(zh ? '取消' : 'Cancel'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _createEntry(nameCtrl.text, zh, newFormat: newFormat);
+                },
+                child: Text(zh ? '创建' : 'Create'),
+              ),
+            ],
+          ),
+        );
       },
       // 统一在对话框关闭后释放：点遮罩/按 Esc 关闭时不会走任何按钮回调，
       // 原先那几处 dispose() 都不会执行，controller 就泄漏了。
@@ -188,9 +224,13 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
   }
 
   void _createEntry(String rawName, bool zh, {bool newFormat = false}) {
-    final name = rawName.trim().isEmpty ? (zh ? '新配置' : 'New Config') : rawName.trim();
+    final name = rawName.trim().isEmpty
+        ? (zh ? '新配置' : 'New Config')
+        : rawName.trim();
     final entry = _ConfigEntry(
-      id: _uuid.v4(), name: name, graph: PipelineGraph(),
+      id: _uuid.v4(),
+      name: name,
+      graph: PipelineGraph(),
       format: newFormat ? 'v2' : 'legacy',
     );
     setState(() => _configs.add(entry));
@@ -210,7 +250,12 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     if (picked?.path == null) return;
     final name = picked!.name;
     if (!name.endsWith('.fppx')) {
-      if (mounted) showToast(context, zh ? '请选择 .fppx 文件' : 'Please select a .fppx file', type: ToastType.warning);
+      if (mounted)
+        showToast(
+          context,
+          zh ? '请选择 .fppx 文件' : 'Please select a .fppx file',
+          type: ToastType.warning,
+        );
       return;
     }
     final path = picked.path!;
@@ -220,12 +265,20 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     // 新旧格式由 C++ 端解析（第 5 字节 0xFF = 新版），导入与校验行为完全一致。
     // 加密文件的口令流程由共享组件处理（首次不带口令 → need_password → 弹框重试）。
     final result = await importFppxWithPassword(
-        context, FppxService(state.backend), path, force: force, zh: zh);
+      context,
+      FppxService(state.backend),
+      path,
+      force: force,
+      zh: zh,
+    );
     if (!mounted) return;
     if (result == null) return;
 
     if (!result.success) {
-      _showImportErrors(zh ? '导入失败' : 'Import Failed', result.errors.isEmpty ? [result.error ?? ''] : result.errors);
+      _showImportErrors(
+        zh ? '导入失败' : 'Import Failed',
+        result.errors.isEmpty ? [result.error ?? ''] : result.errors,
+      );
       return;
     }
 
@@ -236,11 +289,16 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         context: context,
         builder: (ctx) => AlertDialog(
           // 同 project_page：不再覆盖 shape（否则会连主题的细描边一起丢掉）
-          title: Row(children: [
-            Icon(Icons.help_outline, size: 20, color: scheme.sem.warning),
-            const SizedBox(width: 8),
-            Text(zh ? '发现未知节点' : 'Unknown Node Type', style: TextStyle(color: scheme.onSurface)),
-          ]),
+          title: Row(
+            children: [
+              Icon(Icons.help_outline, size: 20, color: scheme.sem.warning),
+              const SizedBox(width: 8),
+              Text(
+                zh ? '发现未知节点' : 'Unknown Node Type',
+                style: TextStyle(color: scheme.onSurface),
+              ),
+            ],
+          ),
           content: Text(
             zh
                 ? '程序找不到ID为$ids节点的具体含义，可能是因为版本太旧，你可以尝试强制导入，但这可能会发生意料之外的事情'
@@ -248,8 +306,14 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
             style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(zh ? '取消' : 'Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(zh ? '强制导入' : 'Force Import')),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(zh ? '取消' : 'Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(zh ? '强制导入' : 'Force Import'),
+            ),
           ],
         ),
       );
@@ -262,23 +326,53 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     }
 
     if (result.warnings.isNotEmpty) {
-      final proceed = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
-        title: Row(children: [
-          Icon(Icons.warning_amber, size: 20, color: scheme.sem.warning),
-          const SizedBox(width: 8),
-          Text(zh ? '版本警告' : 'Version Warning', style: TextStyle(color: scheme.onSurface)),
-        ]),
-        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          for (final w in result.warnings) Padding(padding: const EdgeInsets.only(bottom: 4),
-            child: Text('• $w', style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant))),
-          const SizedBox(height: 8),
-          Text(zh ? '是否继续导入？' : 'Continue importing?', style: TextStyle(fontSize: 13, color: scheme.onSurface)),
-        ]),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(zh ? '取消' : 'Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(zh ? '继续' : 'Continue')),
-        ],
-      ));
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.warning_amber, size: 20, color: scheme.sem.warning),
+              const SizedBox(width: 8),
+              Text(
+                zh ? '版本警告' : 'Version Warning',
+                style: TextStyle(color: scheme.onSurface),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final w in result.warnings)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    '• $w',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 8),
+              Text(
+                zh ? '是否继续导入？' : 'Continue importing?',
+                style: TextStyle(fontSize: 13, color: scheme.onSurface),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(zh ? '取消' : 'Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(zh ? '继续' : 'Continue'),
+            ),
+          ],
+        ),
+      );
       if (proceed != true || !mounted) return;
     }
 
@@ -296,12 +390,14 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         description: result.description,
         createdAt: now,
         updatedAt: now,
-        items: [for (final item in result.quickItems)
-          QuickConfigItem(
-            key: item['key'] as String? ?? '',
-            params: (item['params'] as Map<String, dynamic>?) ?? {},
-            enabled: item['enabled'] != false,
-          )],
+        items: [
+          for (final item in result.quickItems)
+            QuickConfigItem(
+              key: item['key'] as String? ?? '',
+              params: (item['params'] as Map<String, dynamic>?) ?? {},
+              enabled: item['enabled'] != false,
+            ),
+        ],
       );
       await QuickConfigStorage.save(cfg);
       if (!mounted) return;
@@ -309,13 +405,22 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         _quickConfigs.insert(0, cfg);
         _tabIndex = 1; // 跳到快捷配置标签页
       });
-      showToast(context, zh ? '已导入为快捷配置: $baseName' : 'Imported as quick config: $baseName', type: ToastType.success);
+      showToast(
+        context,
+        zh ? '已导入为快捷配置: $baseName' : 'Imported as quick config: $baseName',
+        type: ToastType.success,
+      );
       return;
     }
 
     final graph = result.graph;
     if (graph == null) {
-      if (mounted) showToast(context, zh ? '该文件不是节点编辑器配置' : 'Not a node editor config', type: ToastType.warning);
+      if (mounted)
+        showToast(
+          context,
+          zh ? '该文件不是节点编辑器配置' : 'Not a node editor config',
+          type: ToastType.warning,
+        );
       return;
     }
     final entry = _ConfigEntry(
@@ -327,7 +432,12 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     );
     if (mounted) setState(() => _configs.add(entry));
     _saveLibrary();
-    if (mounted) showToast(context, zh ? '已导入: $baseName' : 'Imported: $baseName', type: ToastType.success);
+    if (mounted)
+      showToast(
+        context,
+        zh ? '已导入: $baseName' : 'Imported: $baseName',
+        type: ToastType.success,
+      );
   }
 
   /// 强制导入确认后对同一文件重试（免得让用户再选一次文件）
@@ -335,19 +445,35 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     final zh = AppStrings.of(context.read<AppState>().config.language).isZh;
     final state = context.read<AppState>();
     final result = await importFppxWithPassword(
-        context, FppxService(state.backend), path, force: force, zh: zh);
+      context,
+      FppxService(state.backend),
+      path,
+      force: force,
+      zh: zh,
+    );
     if (!mounted) return;
     if (result == null) return;
     if (!result.success) {
-      _showImportErrors(zh ? '导入失败' : 'Import Failed', result.errors.isEmpty ? [result.error ?? ''] : result.errors);
+      _showImportErrors(
+        zh ? '导入失败' : 'Import Failed',
+        result.errors.isEmpty ? [result.error ?? ''] : result.errors,
+      );
       return;
     }
     final graph = result.graph;
     if (graph == null) {
-      if (mounted) showToast(context, zh ? '配置解析失败' : 'Config parse failed', type: ToastType.warning);
+      if (mounted)
+        showToast(
+          context,
+          zh ? '配置解析失败' : 'Config parse failed',
+          type: ToastType.warning,
+        );
       return;
     }
-    final baseName = path.split(Platform.pathSeparator).last.replaceAll(RegExp(r'\.[^.]+$'), '');
+    final baseName = path
+        .split(Platform.pathSeparator)
+        .last
+        .replaceAll(RegExp(r'\.[^.]+$'), '');
     final entry = _ConfigEntry(
       id: _uuid.v4(),
       name: baseName,
@@ -357,43 +483,77 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     );
     setState(() => _configs.add(entry));
     _saveLibrary();
-    showToast(context, zh ? '已导入: $baseName' : 'Imported: $baseName', type: ToastType.success);
+    showToast(
+      context,
+      zh ? '已导入: $baseName' : 'Imported: $baseName',
+      type: ToastType.success,
+    );
   }
 
   void _showImportErrors(String title, List<String> errors) {
     final zh = AppStrings.of(context.read<AppState>().config.language).isZh;
     final scheme = Theme.of(context).colorScheme;
-    showDialog(context: context, builder: (ctx) {
-      return AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(children: [
-          Icon(Icons.error_outline, size: 20, color: scheme.error),
-          const SizedBox(width: 8),
-          Text(title, style: TextStyle(color: scheme.onSurface)),
-        ]),
-        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          for (final e in errors) Padding(padding: const EdgeInsets.only(bottom: 4),
-            child: Text('• $e', style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant))),
-        ]),
-        actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: Text(zh ? '知道了' : 'OK'))],
-      );
-    });
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Row(
+            children: [
+              Icon(Icons.error_outline, size: 20, color: scheme.error),
+              const SizedBox(width: 8),
+              Text(title, style: TextStyle(color: scheme.onSurface)),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final e in errors)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    '• $e',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(zh ? '知道了' : 'OK'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   void _openEditor(_ConfigEntry entry) {
-    final dummyVideo = VideoFile(id: 'config_${entry.id}', filename: entry.name);
-    Navigator.of(context).push(smoothRoute(
-      PipelineEditorPage(
-        video: dummyVideo.copyWith(pipelineGraph: entry.graph),
-        onSave: (graph) {
-          setState(() {
-            entry.graph = graph;
-            entry.updatedAt = DateTime.now();
-          });
-          _saveLibrary();
-        },
+    final dummyVideo = VideoFile(
+      id: 'config_${entry.id}',
+      filename: entry.name,
+    );
+    Navigator.of(context).push(
+      smoothRoute(
+        PipelineEditorPage(
+          video: dummyVideo.copyWith(pipelineGraph: entry.graph),
+          onSave: (graph) {
+            setState(() {
+              entry.graph = graph;
+              entry.updatedAt = DateTime.now();
+            });
+            _saveLibrary();
+          },
+        ),
       ),
-    ));
+    );
   }
 
   void _renameEntry(_ConfigEntry entry) {
@@ -404,17 +564,34 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text(zh ? '重命名' : 'Rename', style: TextStyle(color: scheme.onSurface)),
+        title: Text(
+          zh ? '重命名' : 'Rename',
+          style: TextStyle(color: scheme.onSurface),
+        ),
         content: TextField(
-          controller: ctrl, autofocus: true,
-          decoration: InputDecoration(border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
+          controller: ctrl,
+          autofocus: true,
+          decoration: InputDecoration(
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+          ),
           style: TextStyle(fontSize: 14, color: scheme.onSurface),
-          onSubmitted: (_) { Navigator.pop(ctx); _doRename(entry, ctrl.text, zh); },
+          onSubmitted: (_) {
+            Navigator.pop(ctx);
+            _doRename(entry, ctrl.text, zh);
+          },
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(zh ? '取消' : 'Cancel')),
-          FilledButton(onPressed: () { Navigator.pop(ctx); _doRename(entry, ctrl.text, zh); },
-              child: Text(zh ? '确认' : 'Confirm')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(zh ? '取消' : 'Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _doRename(entry, ctrl.text, zh);
+            },
+            child: Text(zh ? '确认' : 'Confirm'),
+          ),
         ],
       ),
     ).whenComplete(ctrl.dispose);
@@ -423,7 +600,10 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
   void _doRename(_ConfigEntry entry, String rawName, bool zh) {
     final name = rawName.trim();
     if (name.isEmpty || name == entry.name) return;
-    setState(() { entry.name = name; entry.updatedAt = DateTime.now(); });
+    setState(() {
+      entry.name = name;
+      entry.updatedAt = DateTime.now();
+    });
     _saveLibrary();
   }
 
@@ -475,7 +655,10 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       );
       if (!mounted) return;
       if (!exportRes.success) {
-        _showImportErrors(zh ? '无法导出' : 'Cannot Export', exportRes.errors.isEmpty ? [exportRes.error ?? ''] : exportRes.errors);
+        _showImportErrors(
+          zh ? '无法导出' : 'Cannot Export',
+          exportRes.errors.isEmpty ? [exportRes.error ?? ''] : exportRes.errors,
+        );
         return;
       }
       final saved = await FilePicker.saveFile(
@@ -488,15 +671,26 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       result = saved.scheme == 'file' ? saved.toFilePath() : saved.toString();
     } catch (e) {
       if (mounted) {
-        showToast(context, zh ? '导出失败: $e' : 'Export failed: $e', type: ToastType.error);
+        showToast(
+          context,
+          zh ? '导出失败: $e' : 'Export failed: $e',
+          type: ToastType.error,
+        );
       }
       return;
     } finally {
       if (tmpPath != null) {
-        try { await File(tmpPath).delete(); } catch (_) {}
+        try {
+          await File(tmpPath).delete();
+        } catch (_) {}
       }
     }
-    if (mounted) showToast(context, zh ? '已导出: $result' : 'Exported: $result', type: ToastType.success);
+    if (mounted)
+      showToast(
+        context,
+        zh ? '已导出: $result' : 'Exported: $result',
+        type: ToastType.success,
+      );
   }
 
   /// 导出选项：介绍、是否加密、口令、算法。
@@ -523,11 +717,17 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         builder: (ctx, setDialogState) {
           final width = MediaQuery.sizeOf(ctx).width;
           return AlertDialog(
-            title: Row(children: [
-              Icon(Icons.file_upload_outlined, size: 20, color: scheme.primary),
-              const SizedBox(width: 8),
-              Text(title, style: TextStyle(color: scheme.onSurface)),
-            ]),
+            title: Row(
+              children: [
+                Icon(
+                  Icons.file_upload_outlined,
+                  size: 20,
+                  color: scheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Text(title, style: TextStyle(color: scheme.onSurface)),
+              ],
+            ),
             content: SizedBox(
               width: width < 480 ? width - 64 : 400,
               child: SingleChildScrollView(
@@ -613,7 +813,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                           items: [
                             DropdownMenuItem(
                               value: FppxService.algoAes256Cbc,
-                              child: Text(zh ? 'AES-256（推荐）' : 'AES-256 (recommended)'),
+                              child: Text(
+                                zh ? 'AES-256（推荐）' : 'AES-256 (recommended)',
+                              ),
                             ),
                             const DropdownMenuItem(
                               value: FppxService.algoAes128Cbc,
@@ -628,7 +830,10 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                     ],
                     if (err != null) ...[
                       const SizedBox(height: 8),
-                      Text(err!, style: TextStyle(fontSize: 11, color: scheme.error)),
+                      Text(
+                        err!,
+                        style: TextStyle(fontSize: 11, color: scheme.error),
+                      ),
                     ],
                   ],
                 ),
@@ -643,11 +848,16 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                 onPressed: () {
                   if (allowEncryption && encrypt) {
                     if (pwdCtrl.text.isEmpty) {
-                      setDialogState(() => err = zh ? '口令不能为空' : 'Password cannot be empty');
+                      setDialogState(
+                        () => err = zh ? '口令不能为空' : 'Password cannot be empty',
+                      );
                       return;
                     }
                     if (pwdCtrl.text != pwd2Ctrl.text) {
-                      setDialogState(() => err = zh ? '两次输入的口令不一致' : 'Passwords do not match');
+                      setDialogState(
+                        () =>
+                            err = zh ? '两次输入的口令不一致' : 'Passwords do not match',
+                      );
                       return;
                     }
                   }
@@ -692,8 +902,10 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     if (opts == null || !mounted) return;
     cfg.description = opts.description;
     final state = context.read<AppState>();
-    final items = [for (final i in cfg.items)
-      {'key': i.key, 'params': i.params, 'enabled': i.enabled}];
+    final items = [
+      for (final i in cfg.items)
+        {'key': i.key, 'params': i.params, 'enabled': i.enabled},
+    ];
     String? result;
     String? tmpPath;
     try {
@@ -710,7 +922,10 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       );
       if (!mounted) return;
       if (!exportRes.success) {
-        _showImportErrors(zh ? '无法导出' : 'Cannot Export', exportRes.errors.isEmpty ? [exportRes.error ?? ''] : exportRes.errors);
+        _showImportErrors(
+          zh ? '无法导出' : 'Cannot Export',
+          exportRes.errors.isEmpty ? [exportRes.error ?? ''] : exportRes.errors,
+        );
         return;
       }
       final saved = await FilePicker.saveFile(
@@ -723,15 +938,26 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       result = saved.scheme == 'file' ? saved.toFilePath() : saved.toString();
     } catch (e) {
       if (mounted) {
-        showToast(context, zh ? '导出失败: $e' : 'Export failed: $e', type: ToastType.error);
+        showToast(
+          context,
+          zh ? '导出失败: $e' : 'Export failed: $e',
+          type: ToastType.error,
+        );
       }
       return;
     } finally {
       if (tmpPath != null) {
-        try { await File(tmpPath).delete(); } catch (_) {}
+        try {
+          await File(tmpPath).delete();
+        } catch (_) {}
       }
     }
-    if (mounted) showToast(context, zh ? '已导出: $result' : 'Exported: $result', type: ToastType.success);
+    if (mounted)
+      showToast(
+        context,
+        zh ? '已导出: $result' : 'Exported: $result',
+        type: ToastType.success,
+      );
   }
 
   void _deleteEntry(int index) {
@@ -742,12 +968,22 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Text(zh ? '确认删除' : 'Confirm Delete'),
-        content: Text(zh ? '确定要删除「${entry.name}」吗？' : 'Delete "${entry.name}"?',
-            style: TextStyle(fontSize: 13, color: Theme.of(ctx).colorScheme.onSurfaceVariant)),
+        content: Text(
+          zh ? '确定要删除「${entry.name}」吗？' : 'Delete "${entry.name}"?',
+          style: TextStyle(
+            fontSize: 13,
+            color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+          ),
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(zh ? '取消' : 'Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(zh ? '取消' : 'Cancel'),
+          ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+            ),
             onPressed: () {
               Navigator.pop(ctx);
               setState(() => _configs.removeAt(index));
@@ -771,64 +1007,90 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       context: context,
       builder: (ctx) {
         var selected = QuickFileType.video;
-        return StatefulBuilder(builder: (ctx, setDialogState) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Row(children: [
-            Icon(Icons.bolt_outlined, size: 20, color: scheme.primary),
-            const SizedBox(width: 8),
-            Text(zh ? '新建快捷配置' : 'New Quick Config', style: TextStyle(color: scheme.onSurface)),
-          ]),
-          content: SizedBox(
-            width: MediaQuery.sizeOf(ctx).width < 440
-                ? MediaQuery.sizeOf(ctx).width - 64
-                : 360,
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-            TextField(
-              controller: nameCtrl, autofocus: true,
-              decoration: InputDecoration(
-                labelText: zh ? '配置名称' : 'Config Name',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-              style: TextStyle(fontSize: 14, color: scheme.onSurface),
-              onSubmitted: (_) {
-                Navigator.pop(ctx);
-                _createQuickConfig(nameCtrl.text, selected, zh);
-              },
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
             ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<QuickFileType>(
-              initialValue: selected,
-              decoration: InputDecoration(
-                labelText: zh ? '文件类型' : 'File Type',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-              items: [
-                for (final t in QuickFileType.values)
-                  DropdownMenuItem(value: t, child: Text(t.label(zh))),
+            title: Row(
+              children: [
+                Icon(Icons.bolt_outlined, size: 20, color: scheme.primary),
+                const SizedBox(width: 8),
+                Text(
+                  zh ? '新建快捷配置' : 'New Quick Config',
+                  style: TextStyle(color: scheme.onSurface),
+                ),
               ],
-              onChanged: (v) {
-                if (v != null) setDialogState(() => selected = v);
-              },
             ),
-          ])),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: Text(zh ? '取消' : 'Cancel')),
-            TextButton(
-              onPressed: () {
-                Navigator.pop(ctx);
-                _createQuickConfig(nameCtrl.text, selected, zh, openEditor: true);
-              },
-              child: Text(zh ? '创建并编辑' : 'Create & Edit'),
+            content: SizedBox(
+              width: MediaQuery.sizeOf(ctx).width < 440
+                  ? MediaQuery.sizeOf(ctx).width - 64
+                  : 360,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameCtrl,
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      labelText: zh ? '配置名称' : 'Config Name',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    style: TextStyle(fontSize: 14, color: scheme.onSurface),
+                    onSubmitted: (_) {
+                      Navigator.pop(ctx);
+                      _createQuickConfig(nameCtrl.text, selected, zh);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<QuickFileType>(
+                    initialValue: selected,
+                    decoration: InputDecoration(
+                      labelText: zh ? '文件类型' : 'File Type',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    items: [
+                      for (final t in QuickFileType.values)
+                        DropdownMenuItem(value: t, child: Text(t.label(zh))),
+                    ],
+                    onChanged: (v) {
+                      if (v != null) setDialogState(() => selected = v);
+                    },
+                  ),
+                ],
+              ),
             ),
-            FilledButton(
-              onPressed: () {
-                Navigator.pop(ctx);
-                _createQuickConfig(nameCtrl.text, selected, zh);
-              },
-              child: Text(zh ? '创建' : 'Create'),
-            ),
-          ],
-        ));
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(zh ? '取消' : 'Cancel'),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _createQuickConfig(
+                    nameCtrl.text,
+                    selected,
+                    zh,
+                    openEditor: true,
+                  );
+                },
+                child: Text(zh ? '创建并编辑' : 'Create & Edit'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _createQuickConfig(nameCtrl.text, selected, zh);
+                },
+                child: Text(zh ? '创建' : 'Create'),
+              ),
+            ],
+          ),
+        );
       },
     ).whenComplete(nameCtrl.dispose);
   }
@@ -855,7 +1117,11 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     await QuickConfigStorage.save(cfg);
     if (!mounted) return;
     setState(() => _quickConfigs.insert(0, cfg));
-    showToast(context, zh ? '已创建快捷配置' : 'Quick config created', type: ToastType.success);
+    showToast(
+      context,
+      zh ? '已创建快捷配置' : 'Quick config created',
+      type: ToastType.success,
+    );
     if (openEditor && mounted) _openQuickEditor(cfg);
   }
 
@@ -891,12 +1157,20 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         title: Text(zh ? '确认删除' : 'Confirm Delete'),
         content: Text(
           zh ? '确定要删除「${cfg.name}」吗？' : 'Delete "${cfg.name}"?',
-          style: TextStyle(fontSize: 13, color: Theme.of(ctx).colorScheme.onSurfaceVariant),
+          style: TextStyle(
+            fontSize: 13,
+            color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+          ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(zh ? '取消' : 'Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(zh ? '取消' : 'Cancel'),
+          ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+            ),
             onPressed: () => Navigator.pop(ctx, true),
             child: Text(zh ? '删除' : 'Delete'),
           ),
@@ -907,54 +1181,100 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     await QuickConfigStorage.delete(cfg.id);
     if (!mounted) return;
     setState(() => _quickConfigs.removeWhere((c) => c.id == cfg.id));
-    showToast(context, zh ? '已删除快捷配置' : 'Quick config deleted', type: ToastType.success);
+    showToast(
+      context,
+      zh ? '已删除快捷配置' : 'Quick config deleted',
+      type: ToastType.success,
+    );
   }
 
   Widget _buildEmptyState(ColorScheme scheme, bool zh) {
     return Padding(
       padding: const EdgeInsets.only(top: 48, bottom: 16),
-      child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Icon(Icons.folder_open_outlined, size: 48, color: scheme.outline.withAlpha(80)),
-        const SizedBox(height: 12),
-        Text(zh ? '还没有配置' : 'No configs yet', style: TextStyle(color: scheme.outline, fontSize: 14)),
-        const SizedBox(height: 6),
-        Text(zh ? '点击「新建」创建节点编辑器配置模板' : 'Click "New" to create a node editor config',
-            style: TextStyle(color: scheme.outline.withAlpha(120), fontSize: 12)),
-        const SizedBox(height: 6),
-        // 原先这里有一颗裸 `OutlinedButton.icon`（Material 描边按钮），与整页的
-        // 玻璃药丸 + 纯文字指路风格明显割裂（用户反馈「配置库的导入 ffpx 按钮比较
-        // 与其他 UI 割裂」）。导入入口本就是顶栏那颗玻璃药丸，这里改成与
-        // _buildQuickEmptyState 完全同款的文案指路，不再单开一个异类按钮。
-        Text(zh ? '或点上栏「⬇」导入 .fppx 文件' : 'Or use ⬇ in the top bar to import a .fppx',
-            style: TextStyle(color: scheme.outline.withAlpha(120), fontSize: 12)),
-        const SizedBox(height: 16),
-        FilledButton.icon(
-          onPressed: _newConfig,
-          icon: const Icon(Icons.add, size: 18),
-          label: Text(zh ? '新建配置' : 'New Config'),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.folder_open_outlined,
+              size: 48,
+              color: scheme.outline.withAlpha(80),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              zh ? '还没有配置' : 'No configs yet',
+              style: TextStyle(color: scheme.outline, fontSize: 14),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              zh
+                  ? '点击「新建」创建节点编辑器配置模板'
+                  : 'Click "New" to create a node editor config',
+              style: TextStyle(
+                color: scheme.outline.withAlpha(120),
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(height: 6),
+            // 原先这里有一颗裸 `OutlinedButton.icon`（Material 描边按钮），与整页的
+            // 玻璃药丸 + 纯文字指路风格明显割裂（用户反馈「配置库的导入 ffpx 按钮比较
+            // 与其他 UI 割裂」）。导入入口本就是顶栏那颗玻璃药丸，这里改成与
+            // _buildQuickEmptyState 完全同款的文案指路，不再单开一个异类按钮。
+            Text(
+              zh
+                  ? '或点上栏「⬇」导入 .fppx 文件'
+                  : 'Or use ⬇ in the top bar to import a .fppx',
+              style: TextStyle(
+                color: scheme.outline.withAlpha(120),
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: _newConfig,
+              icon: const Icon(Icons.add, size: 18),
+              label: Text(zh ? '新建配置' : 'New Config'),
+            ),
+          ],
         ),
-      ])),
+      ),
     );
   }
 
   Widget _buildQuickEmptyState(ColorScheme scheme, bool zh) {
     return Padding(
       padding: const EdgeInsets.only(top: 48, bottom: 16),
-      child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Icon(Icons.bolt_outlined, size: 48, color: scheme.outline.withAlpha(80)),
-        const SizedBox(height: 12),
-        Text(zh ? '还没有快捷配置' : 'No quick configs yet',
-            style: TextStyle(color: scheme.outline, fontSize: 14)),
-        const SizedBox(height: 6),
-        Text(zh ? '点击顶栏「⚡」新建快捷配置' : 'Click the bolt icon to create one',
-            style: TextStyle(color: scheme.outline.withAlpha(120), fontSize: 12)),
-        const SizedBox(height: 16),
-        FilledButton.icon(
-          onPressed: _newQuickConfig,
-          icon: const Icon(Icons.bolt, size: 18),
-          label: Text(zh ? '新建快捷配置' : 'New Quick Config'),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.bolt_outlined,
+              size: 48,
+              color: scheme.outline.withAlpha(80),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              zh ? '还没有快捷配置' : 'No quick configs yet',
+              style: TextStyle(color: scheme.outline, fontSize: 14),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              zh ? '点击顶栏「⚡」新建快捷配置' : 'Click the bolt icon to create one',
+              style: TextStyle(
+                color: scheme.outline.withAlpha(120),
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: _newQuickConfig,
+              icon: const Icon(Icons.bolt, size: 18),
+              label: Text(zh ? '新建快捷配置' : 'New Quick Config'),
+            ),
+          ],
         ),
-      ])),
+      ),
     );
   }
 
@@ -963,56 +1283,94 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       // 左侧图标/文字与右侧操作按钮显式居中对齐（Row 默认即 center，写明意图）：
       // 配合标题的「单行省略」，大字号下文字不会换成两行把图标与按钮顶偏。
-      child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-        Container(
-          width: 42, height: 42,
-          decoration: BoxDecoration(
-            color: scheme.primaryContainer,
-            borderRadius: BorderRadius.circular(10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: scheme.primaryContainer,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              _quickTypeIcon(cfg.fileType),
+              size: 20,
+              color: scheme.onPrimaryContainer,
+            ),
           ),
-          child: Icon(_quickTypeIcon(cfg.fileType), size: 20, color: scheme.onPrimaryContainer),
-        ),
-        const SizedBox(width: 14),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          // 名称单行省略：字号调大时不再折成两行，卡片高度与图标中心线保持稳定
-          Text(cfg.name, maxLines: 1, overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: scheme.onSurface)),
-          const SizedBox(height: 3),
-          // 元信息行：Row 内文本不换行，只能溢出（debug 下黄黑条纹）。
-          // 用 FittedBox 等比缩小而不是省略，三段信息在任何字号下都完整可见。
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.centerLeft,
-            child: Row(children: [
-              Icon(_quickTypeIcon(cfg.fileType), size: 11, color: scheme.outline.withAlpha(100)),
-              const SizedBox(width: 3),
-              Text(cfg.fileType.label(zh), style: TextStyle(fontSize: 11, color: scheme.outline)),
-              const SizedBox(width: 8),
-              Text('${cfg.items.length} ${zh ? '项' : 'items'}',
-                  style: TextStyle(fontSize: 11, color: scheme.outline)),
-            ]),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 名称单行省略：字号调大时不再折成两行，卡片高度与图标中心线保持稳定
+                Text(
+                  cfg.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                    color: scheme.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                // 元信息行：Row 内文本不换行，只能溢出（debug 下黄黑条纹）。
+                // 用 FittedBox 等比缩小而不是省略，三段信息在任何字号下都完整可见。
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Row(
+                    children: [
+                      Icon(
+                        _quickTypeIcon(cfg.fileType),
+                        size: 11,
+                        color: scheme.outline.withAlpha(100),
+                      ),
+                      const SizedBox(width: 3),
+                      Text(
+                        cfg.fileType.label(zh),
+                        style: TextStyle(fontSize: 11, color: scheme.outline),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '${cfg.items.length} ${zh ? '项' : 'items'}',
+                        style: TextStyle(fontSize: 11, color: scheme.outline),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
-        ])),
-        IconButton(
-          icon: Icon(Icons.edit_outlined, size: 18, color: scheme.outline),
-          tooltip: zh ? '编辑' : 'Edit',
-          onPressed: () => _openQuickEditor(cfg),
-        ),
-        IconButton(
-          icon: Icon(Icons.file_upload_outlined, size: 18, color: scheme.outline),
-          tooltip: zh ? '导出为新版文件 (Beta)' : 'Export as new-format file (Beta)',
-          onPressed: () => _exportQuickConfig(cfg),
-        ),
-        IconButton(
-          icon: Icon(Icons.delete_outline, size: 18, color: scheme.outline),
-          tooltip: zh ? '删除' : 'Delete',
-          onPressed: () => _deleteQuickConfig(cfg),
-        ),
-      ]),
+          IconButton(
+            icon: Icon(Icons.edit_outlined, size: 18, color: scheme.outline),
+            tooltip: zh ? '编辑' : 'Edit',
+            onPressed: () => _openQuickEditor(cfg),
+          ),
+          IconButton(
+            icon: Icon(
+              Icons.file_upload_outlined,
+              size: 18,
+              color: scheme.outline,
+            ),
+            tooltip: zh ? '导出为新版文件 (Beta)' : 'Export as new-format file (Beta)',
+            onPressed: () => _exportQuickConfig(cfg),
+          ),
+          IconButton(
+            icon: Icon(Icons.delete_outline, size: 18, color: scheme.outline),
+            tooltip: zh ? '删除' : 'Delete',
+            onPressed: () => _deleteQuickConfig(cfg),
+          ),
+        ],
+      ),
     );
 
     // 卡片样式由「主题→样式→卡片样式」（AppConfig.cardStyle）接管
-    final cardStyle = context.select<AppState, String>((s) => s.config.cardStyle);
+    final cardStyle = context.select<AppState, String>(
+      (s) => s.config.cardStyle,
+    );
     return AppCard(
       style: cardStyle,
       radius: 16,
@@ -1022,70 +1380,88 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
   }
 
   IconData _quickTypeIcon(QuickFileType type) => switch (type) {
-        QuickFileType.video => Icons.videocam_outlined,
-        QuickFileType.image => Icons.image_outlined,
-        QuickFileType.audio => Icons.audiotrack_outlined,
-      };
+    QuickFileType.video => Icons.videocam_outlined,
+    QuickFileType.image => Icons.image_outlined,
+    QuickFileType.audio => Icons.audiotrack_outlined,
+  };
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     // 只订阅语言字段：进度心跳/日志等无关通知不再重建本页
-    final zh = AppStrings.of(context.select<AppState, String>((s) => s.config.language)).isZh;
+    final zh = AppStrings.of(
+      context.select<AppState, String>((s) => s.config.language),
+    ).isZh;
 
     return Scaffold(
       backgroundColor: Colors.transparent,
-      body: Stack(children: [
-        // 标签页内容：顶部标签切换「节点编辑器 / 快捷配置」，
-        // 不再用上下两块区域堆叠（原方案）—— 二者用标签区分。
-        isMobilePlatform
-            ? Padding(
-                padding: EdgeInsets.only(top: MobileUi.pageTopPadding(context)),
-                child: !_loaded
-                    ? const Center(child: CircularProgressIndicator())
-                    : Column(children: [
-                        _buildTabSelector(scheme, zh),
-                        Expanded(
-                          child: ListView(
-                            // 开窗卡所在列表必须关（见 app_card 的
-                            // _WallpaperWindowPainter）
-                            addRepaintBoundaries: false,
-                            padding: MobileUi.mainListPadding(
-                                placement: MobileNavPlacementScope.of(context)),
-                            children: _buildTabContent(scheme, zh),
-                          ),
-                        ),
-                      ]),
-              )
-            : Column(children: [
-                GlassTopBar(
-                  // 顶栏高度固定 56：标题必须单行省略，否则大字号下换行会顶出栏外
-                  title: Text(zh ? '配置库' : 'Config Library',
-                      maxLines: 1, overflow: TextOverflow.ellipsis),
-                  actions: _buildTopActions(scheme, zh),
-                ),
-                _buildTabSelector(scheme, zh),
-                Expanded(
+      body: Stack(
+        children: [
+          // 标签页内容：顶部标签切换「节点编辑器 / 快捷配置」，
+          // 不再用上下两块区域堆叠（原方案）—— 二者用标签区分。
+          isMobilePlatform
+              ? Padding(
+                  padding: EdgeInsets.only(
+                    top: MobileUi.pageTopPadding(context),
+                  ),
                   child: !_loaded
                       ? const Center(child: CircularProgressIndicator())
-                      : ListView(
-                            // 开窗卡所在列表必须关（见 app_card 的
-                            // _WallpaperWindowPainter）
-                            addRepaintBoundaries: false,
-                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                            children: _buildTabContent(scheme, zh),
-                          ),
+                      : Column(
+                          children: [
+                            Expanded(
+                              child: ListView(
+                                // 开窗卡所在列表必须关（见 app_card 的
+                                // _WallpaperWindowPainter）
+                                addRepaintBoundaries: false,
+                                // 切换器已移到底栏上方，列表底部只需普通间距；
+                                // 底栏让位由切换器自身的 padding 负责。
+                                padding: MobileUi.mainListPadding(
+                                  placement: MobileNavPlacementScope.of(
+                                    context,
+                                  ),
+                                ).copyWith(bottom: 8),
+                                children: _buildTabContent(scheme, zh),
+                              ),
+                            ),
+                            _buildMobileTabSelector(context, zh),
+                          ],
+                        ),
+                )
+              : Column(
+                  children: [
+                    GlassTopBar(
+                      // 顶栏高度固定 56：标题必须单行省略，否则大字号下换行会顶出栏外
+                      title: Text(
+                        zh ? '配置库' : 'Config Library',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      actions: _buildTopActions(scheme, zh),
+                    ),
+                    _buildTabSelector(scheme, zh),
+                    Expanded(
+                      child: !_loaded
+                          ? const Center(child: CircularProgressIndicator())
+                          : ListView(
+                              // 开窗卡所在列表必须关（见 app_card 的
+                              // _WallpaperWindowPainter）
+                              addRepaintBoundaries: false,
+                              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                              children: _buildTabContent(scheme, zh),
+                            ),
+                    ),
+                  ],
                 ),
-              ]),
-        // 移动端顶栏浮层（不影响滚动）
-        if (isMobilePlatform)
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: _buildMobileTopBar(scheme, zh),
-          ),
-      ]),
+          // 移动端顶栏浮层（不影响滚动）
+          if (isMobilePlatform)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: _buildMobileTopBar(scheme, zh),
+            ),
+        ],
+      ),
     );
   }
 
@@ -1095,15 +1471,59 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
   Widget _buildTabSelector(ColorScheme scheme, bool zh) {
     return MobileSegmentedPills(
       tabs: [
-        MobilePillTab(zh ? '节点编辑器' : 'Node Editor',
-            icon: Icons.account_tree, badge: '${_configs.length}'),
-        MobilePillTab(zh ? '快捷配置' : 'Quick Config',
-            icon: Icons.bolt, badge: '${_quickConfigs.length}'),
+        MobilePillTab(
+          zh ? '节点编辑器' : 'Node Editor',
+          icon: Icons.account_tree,
+          badge: '${_configs.length}',
+        ),
+        MobilePillTab(
+          zh ? '快捷配置' : 'Quick Config',
+          icon: Icons.bolt,
+          badge: '${_quickConfigs.length}',
+        ),
       ],
       selectedIndex: _tabIndex,
       onSelected: (i) => setState(() => _tabIndex = i),
       margin: EdgeInsets.fromLTRB(
-          isMobilePlatform ? 8 : 16, 12, isMobilePlatform ? 8 : 16, 6),
+        isMobilePlatform ? 8 : 16,
+        12,
+        isMobilePlatform ? 8 : 16,
+        6,
+      ),
+    );
+  }
+
+  /// 移动端标签切换器：放在主导航胶囊**上方**（用户要求）——拇指区可达，
+  /// 且与主界面底栏同用 liquid_glass_tab_bar 模块，不再各写一套玻璃。
+  ///
+  /// 底栏是悬浮胶囊、叠在内容之上，所以这里必须按它实际占用的高度让位
+  /// （安全区 + 胶囊高度 + 底部间距），否则切换器会被胶囊压住。
+  Widget _buildMobileTabSelector(BuildContext context, bool zh) {
+    final placement = MobileNavPlacementScope.of(context);
+    final double bottom = placement == MobileNavPlacement.bottom
+        ? MediaQuery.paddingOf(context).bottom +
+              kAppLiquidTabBarStyle.capsuleHeight +
+              (kAppLiquidTabBarStyle.bottomGap ?? 8) +
+              8
+        : 16;
+    return Padding(
+      padding: EdgeInsets.only(bottom: bottom),
+      child: AppLiquidTabBar(
+        currentIndex: _tabIndex,
+        onTap: (i) => setState(() => _tabIndex = i),
+        items: [
+          LiquidGlassTabItem(
+            icon: const Icon(Icons.account_tree_outlined),
+            label: zh ? '节点编辑器 ${_configs.length}' : 'Nodes ${_configs.length}',
+          ),
+          LiquidGlassTabItem(
+            icon: const Icon(Icons.bolt_outlined),
+            label: zh
+                ? '快捷配置 ${_quickConfigs.length}'
+                : 'Quick ${_quickConfigs.length}',
+          ),
+        ],
+      ),
     );
   }
 
@@ -1121,7 +1541,8 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       if (_configs.isEmpty)
         _buildEmptyState(scheme, zh)
       else
-        for (var i = 0; i < _configs.length; i++) _buildCard(_configs[i], i, scheme, zh),
+        for (var i = 0; i < _configs.length; i++)
+          _buildCard(_configs[i], i, scheme, zh),
     ];
   }
 
@@ -1164,8 +1585,11 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     return MobilePillTopBar(
       // 药丸高度固定（MobileUi.pillHeight）：标题单行省略；顶栏内部已用
       // DefaultTextStyle.maxLines 兜底，这里再显式声明一次意图，避免以后回归。
-      title: Text(zh ? '配置库' : 'Config Library',
-          maxLines: 1, overflow: TextOverflow.ellipsis),
+      title: Text(
+        zh ? '配置库' : 'Config Library',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
       actions: _buildTopActions(scheme, zh),
       // 配置库右上角只有 3 个固定操作（导入 .fppx / 新建快捷配置 / 新建配置），
       // 数量固定且都属于高频入口 —— 用户反馈「主界面配置库右上角的药丸不要折叠」，
@@ -1178,103 +1602,213 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     final now = DateTime.now();
     final diff = now.difference(dt);
     if (diff.inMinutes < 1) return zh ? '刚刚' : 'just now';
-    if (diff.inHours < 1) return zh ? '${diff.inMinutes} 分钟前' : '${diff.inMinutes}m ago';
-    if (diff.inDays < 1) return zh ? '${diff.inHours} 小时前' : '${diff.inHours}h ago';
-    if (diff.inDays < 30) return zh ? '${diff.inDays} 天前' : '${diff.inDays}d ago';
+    if (diff.inHours < 1)
+      return zh ? '${diff.inMinutes} 分钟前' : '${diff.inMinutes}m ago';
+    if (diff.inDays < 1)
+      return zh ? '${diff.inHours} 小时前' : '${diff.inHours}h ago';
+    if (diff.inDays < 30)
+      return zh ? '${diff.inDays} 天前' : '${diff.inDays}d ago';
     return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
   }
 
-  Widget _buildCard(_ConfigEntry entry, int index, ColorScheme scheme, bool zh) {
+  Widget _buildCard(
+    _ConfigEntry entry,
+    int index,
+    ColorScheme scheme,
+    bool zh,
+  ) {
     final nodeCount = entry.graph.nodes.length;
     final connCount = entry.graph.connections.length;
 
     final content = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       // 同快捷配置卡片：显式居中对齐 + 单行省略，避免大字号下标签折行把图标顶偏
-      child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-        Container(
-          width: 42, height: 42,
-          decoration: BoxDecoration(
-            color: scheme.primaryContainer,
-            borderRadius: BorderRadius.circular(10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: scheme.primaryContainer,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              Icons.account_tree,
+              size: 20,
+              color: scheme.onPrimaryContainer,
+            ),
           ),
-          child: Icon(Icons.account_tree, size: 20, color: scheme.onPrimaryContainer),
-        ),
-        const SizedBox(width: 14),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(entry.name, maxLines: 1, overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: scheme.onSurface)),
-          const SizedBox(height: 3),
-          // 同快捷配置卡片：FittedBox 等比缩小，节点数/连线数/时间在大字号下
-          // 既不会换行也不会溢出卡片，三段信息都保留。
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.centerLeft,
-            child: Row(children: [
-              Icon(Icons.circle, size: 6, color: scheme.outline.withAlpha(100)),
-              const SizedBox(width: 4),
-              Text('$nodeCount ${zh ? '节点' : 'nodes'}', style: TextStyle(fontSize: 11, color: scheme.outline)),
-              const SizedBox(width: 8),
-              Icon(Icons.circle, size: 6, color: scheme.outline.withAlpha(100)),
-              const SizedBox(width: 4),
-              Text('$connCount ${zh ? '连线' : 'links'}', style: TextStyle(fontSize: 11, color: scheme.outline)),
-              const SizedBox(width: 8),
-              Icon(Icons.access_time, size: 11, color: scheme.outline.withAlpha(100)),
-              const SizedBox(width: 3),
-              Text(_formatTime(entry.updatedAt, zh), style: TextStyle(fontSize: 11, color: scheme.outline)),
-            ]),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  entry.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                    color: scheme.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                // 同快捷配置卡片：FittedBox 等比缩小，节点数/连线数/时间在大字号下
+                // 既不会换行也不会溢出卡片，三段信息都保留。
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.circle,
+                        size: 6,
+                        color: scheme.outline.withAlpha(100),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        '$nodeCount ${zh ? '节点' : 'nodes'}',
+                        style: TextStyle(fontSize: 11, color: scheme.outline),
+                      ),
+                      const SizedBox(width: 8),
+                      Icon(
+                        Icons.circle,
+                        size: 6,
+                        color: scheme.outline.withAlpha(100),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        '$connCount ${zh ? '连线' : 'links'}',
+                        style: TextStyle(fontSize: 11, color: scheme.outline),
+                      ),
+                      const SizedBox(width: 8),
+                      Icon(
+                        Icons.access_time,
+                        size: 11,
+                        color: scheme.outline.withAlpha(100),
+                      ),
+                      const SizedBox(width: 3),
+                      Text(
+                        _formatTime(entry.updatedAt, zh),
+                        style: TextStyle(fontSize: 11, color: scheme.outline),
+                      ),
+                    ],
+                  ),
+                ),
+                if (entry.description.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    entry.description,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: scheme.outline.withAlpha(150),
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
-          if (entry.description.isNotEmpty) ...[
-            const SizedBox(height: 2),
-            Text(entry.description, maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 11, color: scheme.outline.withAlpha(150))),
-          ],
-        ])),
-        PopupMenuButton<String>(
-          icon: Icon(Icons.more_vert, size: 18, color: scheme.outline),
-          itemBuilder: (_) => [
-            PopupMenuItem(value: 'edit', child: Row(children: [
-              Icon(Icons.edit_outlined, size: 16, color: scheme.onSurface),
-              const SizedBox(width: 8),
-              Text(zh ? '编辑' : 'Edit'),
-            ])),
-            PopupMenuItem(value: 'rename', child: Row(children: [
-              Icon(Icons.drive_file_rename_outline, size: 16, color: scheme.onSurface),
-              const SizedBox(width: 8),
-              Text(zh ? '重命名' : 'Rename'),
-            ])),
-            PopupMenuItem(value: 'duplicate', child: Row(children: [
-              Icon(Icons.copy_outlined, size: 16, color: scheme.onSurface),
-              const SizedBox(width: 8),
-              Text(zh ? '复制' : 'Duplicate'),
-            ])),
-            PopupMenuItem(value: 'export', child: Row(children: [
-              Icon(Icons.file_upload_outlined, size: 16, color: scheme.onSurface),
-              const SizedBox(width: 8),
-              Text(zh ? '导出' : 'Export'),
-            ])),
-            const PopupMenuDivider(),
-            PopupMenuItem(value: 'delete', child: Row(children: [
-              Icon(Icons.delete_outline, size: 16, color: scheme.error),
-              const SizedBox(width: 8),
-              Text(zh ? '删除' : 'Delete', style: TextStyle(color: scheme.error)),
-            ])),
-          ],
-          onSelected: (action) {
-            switch (action) {
-              case 'edit': _openEditor(entry);
-              case 'rename': _renameEntry(entry);
-              case 'duplicate': _duplicateEntry(entry);
-              case 'export': _exportEntry(entry);
-              case 'delete': _deleteEntry(index);
-            }
-          },
-        ),
-      ]),
+          PopupMenuButton<String>(
+            icon: Icon(Icons.more_vert, size: 18, color: scheme.outline),
+            itemBuilder: (_) => [
+              PopupMenuItem(
+                value: 'edit',
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.edit_outlined,
+                      size: 16,
+                      color: scheme.onSurface,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(zh ? '编辑' : 'Edit'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'rename',
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.drive_file_rename_outline,
+                      size: 16,
+                      color: scheme.onSurface,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(zh ? '重命名' : 'Rename'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'duplicate',
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.copy_outlined,
+                      size: 16,
+                      color: scheme.onSurface,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(zh ? '复制' : 'Duplicate'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'export',
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.file_upload_outlined,
+                      size: 16,
+                      color: scheme.onSurface,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(zh ? '导出' : 'Export'),
+                  ],
+                ),
+              ),
+              const PopupMenuDivider(),
+              PopupMenuItem(
+                value: 'delete',
+                child: Row(
+                  children: [
+                    Icon(Icons.delete_outline, size: 16, color: scheme.error),
+                    const SizedBox(width: 8),
+                    Text(
+                      zh ? '删除' : 'Delete',
+                      style: TextStyle(color: scheme.error),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            onSelected: (action) {
+              switch (action) {
+                case 'edit':
+                  _openEditor(entry);
+                case 'rename':
+                  _renameEntry(entry);
+                case 'duplicate':
+                  _duplicateEntry(entry);
+                case 'export':
+                  _exportEntry(entry);
+                case 'delete':
+                  _deleteEntry(index);
+              }
+            },
+          ),
+        ],
+      ),
     );
 
     // 卡片样式由「主题→样式→卡片样式」（AppConfig.cardStyle）接管
-    final cardStyle = context.select<AppState, String>((s) => s.config.cardStyle);
+    final cardStyle = context.select<AppState, String>(
+      (s) => s.config.cardStyle,
+    );
     return AppCard(
       style: cardStyle,
       radius: 16,
@@ -1284,7 +1818,6 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     );
   }
 }
-
 
 class _ExportOptions {
   const _ExportOptions({

@@ -245,15 +245,6 @@ class _SidebarState extends State<Sidebar> {
                         ),
                       ),
                     ),
-                    const SizedBox(width: 4),
-                    Icon(
-                      _collapsed ? Icons.chevron_right : Icons.chevron_left,
-                      size: 18,
-                      color: scheme.outline,
-                    ),
-                  ] else ...[
-                    const SizedBox(width: 6),
-                    Icon(Icons.chevron_right, size: 18, color: scheme.outline),
                   ],
                 ],
               ),

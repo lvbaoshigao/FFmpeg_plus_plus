@@ -837,6 +837,42 @@ class _LinuxPanelProcess {
 }
 
 /// ════════════════════════════════════════════════════════════════════════
+/// 把配置里的 AI 凭据抽成旁路数据。
+///
+/// `AppConfig.toJson()` / `AiProfile.toJson()` 出于安全考虑**不写 Key**，
+/// 但独立 AI 窗口需要真的发请求。早先直接把配置 JSON 推过去，子窗口里的
+/// Key 永远为空，于是所有请求 401 —— 这就是「独立窗口选不了模型/发不出消息」
+/// 的根因。凭据只走本机回环（Unix socket / 方法通道）且随更新回传，不落盘。
+Map<String, dynamic> aiCredentialsOf(AppConfig cfg) => <String, dynamic>{
+  'global': cfg.aiApiKey,
+  'profiles': <String, dynamic>{
+    for (final profile in cfg.aiProfiles)
+      profile.id: <String, dynamic>{
+        'key': profile.apiKey,
+        'keys': List<String>.from(profile.apiKeys),
+      },
+  },
+};
+
+/// 把 [aiCredentialsOf] 的结果覆盖回 [cfg]（按 profile id 对齐）。
+void applyAiCredentials(AppConfig cfg, Object? raw) {
+  if (raw is! Map) return;
+  final global = raw['global'];
+  if (global is String) cfg.aiApiKey = global;
+  final profiles = raw['profiles'];
+  if (profiles is! Map) return;
+  for (final profile in cfg.aiProfiles) {
+    final entry = profiles[profile.id];
+    if (entry is! Map) continue;
+    final key = entry['key'];
+    if (key is String) profile.apiKey = key;
+    final keys = entry['keys'];
+    if (keys is List) {
+      profile.apiKeys = keys.whereType<String>().toList();
+    }
+  }
+}
+
 /// 子窗口用的「镜像 AppState」
 /// ════════════════════════════════════════════════════════════════════════
 ///
@@ -890,6 +926,7 @@ class MirrorAppState extends AppState {
     if (cfg is Map) {
       try {
         _config = AppConfig.fromJson(Map<String, dynamic>.from(cfg));
+        applyAiCredentials(_config, snapshot['aiCredentials']);
       } catch (_) {}
     }
     final data = snapshot['appData'];
@@ -959,7 +996,10 @@ class MirrorAppState extends AppState {
   Future<void> updateConfig(AppConfig Function(AppConfig) f) async {
     _config = f(_config);
     notifyListeners();
-    await send(PanelMethod.updateConfig, {'config': _config.toJson()});
+    await send(PanelMethod.updateConfig, {
+      'config': _config.toJson(),
+      'aiCredentials': aiCredentialsOf(_config),
+    });
   }
 
   @override

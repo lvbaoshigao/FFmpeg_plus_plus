@@ -5,6 +5,11 @@ import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 
+// 子页面（配置库等）只 import 本文件即可拿到统一的底栏样式与条目类型，
+// 不必各自直接依赖 liquid_glass_tab_bar。
+export 'package:liquid_glass_tab_bar/liquid_glass_tab_bar.dart'
+    show LiquidGlassTabItem, LiquidGlassTabBarStyle;
+
 /// 全应用统一的底部液态玻璃菜单栏外观。
 ///
 /// 主界面底部导航（[LiquidGlassMobileNav]）与各子页面底部的胶囊切换栏
@@ -56,7 +61,7 @@ class AppLiquidTabBar extends StatelessWidget {
 const LiquidGlassTabBarStyle kAppLiquidTabBarStyle = LiquidGlassTabBarStyle(
   capsuleHeight: 52,
   capsuleInset: 4,
-  horizontalMargin: 14,
+  horizontalMargin: 24,
   bottomGap: 8,
   iconSize: 22,
 );

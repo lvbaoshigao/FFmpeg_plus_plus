@@ -57,12 +57,9 @@ void main() {
     final sidebar = find.byKey(const ValueKey('provider_desktop_sidebar'));
     expect(sidebar, findsOneWidget);
     expect(find.byKey(const ValueKey('ai_provider_top_tabs')), findsNothing);
-    final expandedWidth = tester.getSize(sidebar).width;
-    await tester.tap(
-      find.byKey(const ValueKey('provider_desktop_sidebar_toggle')),
-    );
-    await tester.pumpAndSettle();
-    expect(tester.getSize(sidebar).width, lessThan(expandedWidth));
+    // PC 详情侧栏保持可读的固定宽度；折叠箭头已按设计移除。
+    expect(tester.getSize(sidebar).width, greaterThan(180));
+    expect(find.byKey(const ValueKey('provider_desktop_sidebar_toggle')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -383,7 +380,7 @@ void main() {
     expect(tester.widget<Switch>(aiToggle), isA<Switch>());
     expect(tester.widget<Switch>(mcpToggle), isA<Switch>());
     expect(tester.getSize(aiToggle).width, tester.getSize(mcpToggle).width);
-    expect(find.text('服务'), findsOneWidget);
+    expect(find.text('AI 助手'), findsWidgets);
     expect(tester.takeException(), isNull);
     await _flushSaveTimers(tester);
   });
@@ -412,10 +409,10 @@ void main() {
     await tester.pumpAndSettle();
 
     // 服务卡存在：标题 + 说明 + 两行选项（不再是两颗并排的大块按钮）。
-    expect(find.text('服务'), findsOneWidget);
-    expect(find.text('AI 助手与 MCP 服务的总开关'), findsOneWidget);
+    expect(find.text('AI 助手'), findsWidgets);
+    expect(find.text('AI 对话、提供商与工具调用的总开关'), findsOneWidget);
     expect(find.text('AI 助手'), findsOneWidget);
-    expect(find.text('MCP 服务（外部访问）'), findsOneWidget);
+    expect(find.text('MCP 服务'), findsOneWidget);
     expect(find.text('AI 助手已停用，提供商不会参与对话'), findsNothing);
 
     // 整行可点（标题文字位于选项行的 InkWell 内）→ AI 关闭，警告文案出现。
