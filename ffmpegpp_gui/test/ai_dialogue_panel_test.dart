@@ -160,6 +160,12 @@ void main() {
       await tester.tap(find.text('Completed · 2 steps'));
       await tester.pump();
       expect(find.text('Final answer'), findsOneWidget);
+      // task-9 C：工具卡片默认折叠（只有运行中才自动展开），所以展开工作流
+      // 卡片之后结果不会直接铺开，要再点一次工具卡片标题。
+      expect(find.text('Probe metadata'), findsNothing);
+      expect(find.text('probe · Done'), findsOneWidget);
+      await tester.tap(find.text('probe · Done'));
+      await tester.pump();
       expect(find.text('Probe metadata'), findsOneWidget);
       final exported = api!.exportMessages();
       api!.importMessages(exported);
@@ -304,6 +310,157 @@ void main() {
       final assistantOnlyTail = List<String>.filled(120, 'assistant')
         ..[0] = 'user';
       expect(requestHistoryStartIndex(assistantOnlyTail), 0);
+    });
+
+    test('request window keeps tool calls paired with their results', () {
+      // 两个完整回合，每回合：user / assistant(tool_use) / tool_result / 正文。
+      final entries = <AiHistoryEntry>[
+        const AiHistoryEntry(role: 'user', estimatedTokens: 10),
+        const AiHistoryEntry(
+          role: 'assistant',
+          hasToolCalls: true,
+          estimatedTokens: 10,
+        ),
+        const AiHistoryEntry(
+          role: 'assistant',
+          hasToolResults: true,
+          estimatedTokens: 10,
+        ),
+        const AiHistoryEntry(role: 'assistant', estimatedTokens: 10),
+        const AiHistoryEntry(role: 'user', estimatedTokens: 10),
+        const AiHistoryEntry(
+          role: 'assistant',
+          hasToolCalls: true,
+          estimatedTokens: 10,
+        ),
+        const AiHistoryEntry(
+          role: 'assistant',
+          hasToolResults: true,
+          estimatedTokens: 10,
+        ),
+        const AiHistoryEntry(role: 'assistant', estimatedTokens: 10),
+      ];
+      // 预算只够最后几条时，起点必须退回到该回合的 user：否则窗口会以
+      // assistant(tool_calls) 或孤立 tool_result 开头，供应商直接 400。
+      final window = requestHistoryIndices(entries, maxMessages: 3);
+      expect(window.first, 0); // 首条 user 意图被单独保留
+      expect(window, containsAll(<int>[4, 5, 6, 7]));
+      expect(entries[window[1]].isUser, isTrue);
+      // 条数足够时不裁剪（返回全部下标，顺序不变）。
+      expect(requestHistoryIndices(entries, maxMessages: 100), [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+      ]);
+      // token 预算生效时同样对齐到 user 回合边界。
+      final byTokens = requestHistoryIndices(entries, maxTokens: 20);
+      expect(byTokens.first, 0);
+      expect(byTokens, containsAll(<int>[4, 5, 6]));
+      // 空历史 / 单条历史。
+      expect(requestHistoryIndices(const <AiHistoryEntry>[]), isEmpty);
+      expect(
+        requestHistoryIndices(const [
+          AiHistoryEntry(role: 'user', estimatedTokens: 3),
+        ]),
+        [0],
+      );
+    });
+
+    test('truncation heuristic only flags obviously unfinished text', () {
+      // 未闭合的代码围栏 = 一定被截断。
+      expect(looksTruncatedText('\u0060\u0060\u0060dart\nvoid main() {'), isTrue);
+      expect(
+        looksTruncatedText('\u0060\u0060\u0060dart\nvoid main() {}\n\u0060\u0060\u0060'),
+        isFalse,
+      );
+      // 结尾是「后面还该有内容」的符号。
+      expect(looksTruncatedText('第一，'), isTrue);
+      expect(looksTruncatedText('a, b,'), isTrue);
+      expect(looksTruncatedText('步骤如下：'), isTrue);
+      expect(looksTruncatedText('调用 foo('), isTrue);
+      // 正常收尾不续写（否则每条回复都会白跑一轮请求）。
+      expect(looksTruncatedText('已经说完了。'), isFalse);
+      expect(looksTruncatedText('done'), isFalse);
+      expect(looksTruncatedText('   '), isFalse);
+      expect(looksTruncatedText('(a)'), isFalse);
+    });
+
+    test('continuation dedupe removes a repeated prefix', () {
+      // 模型把整段又写了一遍：只留新增部分。
+      expect(
+        stripRepeatedContinuation('Hello world', 'Hello world again'),
+        'again',
+      );
+      // 只重复了尾部若干字符（>= 12）也要剥掉。
+      const prev = '这是第一段的完整内容，接下来要讲第二段的具体细节';
+      expect(
+        stripRepeatedContinuation(prev, '接下来要讲第二段的具体细节，然后继续。'),
+        '，然后继续。',
+      );
+      // 完全新内容原样保留；空输入不崩。
+      expect(stripRepeatedContinuation('abc', '完全不同的一段'), '完全不同的一段');
+      expect(stripRepeatedContinuation('', 'x'), 'x');
+    });
+
+    test('token estimate mirrors the SDK counter', () {
+      expect(estimateRequestTokens(''), 0);
+      // 4 个非空白字符 ≈ 1 token；空白不计入字符估算。
+      expect(estimateRequestTokens('abcd'), greaterThan(0));
+      expect(
+        estimateRequestTokens('hello world'),
+        greaterThanOrEqualTo(estimateRequestTokens('helloworld')),
+      );
+    });
+
+    test('auto-continue also covers providers without finish_reason', () {
+      // 中转 / 自建网关常常整条流都不回 finish_reason：正文看起来被截断才续写。
+      final noReason = AiAutoContinuePolicy();
+      expect(
+        noReason.shouldContinue(
+          finishReason: null,
+          content: '第一段讲完了，',
+          stopRequested: false,
+        ),
+        isTrue,
+      );
+      expect(noReason.rounds, 1);
+      // 同样缺 finish_reason，但正文已正常收尾 → 不白跑一轮。
+      final finished = AiAutoContinuePolicy();
+      expect(
+        finished.shouldContinue(
+          finishReason: ai.FinishReason.unknown,
+          content: '已经说完了。',
+          stopRequested: false,
+        ),
+        isFalse,
+      );
+      // 本轮带工具调用时不叠加续写（工具轮有自己的循环）。
+      final toolRound = AiAutoContinuePolicy();
+      expect(
+        toolRound.shouldContinue(
+          finishReason: ai.FinishReason.maxTokens,
+          content: 'partial',
+          stopRequested: false,
+          toolCallsPresent: true,
+        ),
+        isFalse,
+      );
+      // 调用方显式给出判断结果时以它为准。
+      final explicit = AiAutoContinuePolicy();
+      expect(
+        explicit.shouldContinue(
+          finishReason: null,
+          content: '无关内容',
+          stopRequested: false,
+          contentLooksTruncated: true,
+        ),
+        isTrue,
+      );
     });
 
     test('auto-continue policy is bounded and ignores empty/stopped turns', () {

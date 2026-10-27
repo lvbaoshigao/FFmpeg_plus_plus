@@ -120,11 +120,26 @@ class _AnimatedMenuRoute<T> extends PopupRoute<T> {
   @override
   final String barrierLabel;
 
-  @override
-  Duration get transitionDuration => const Duration(milliseconds: 150);
+  /// 缓动曲线缓存。
+  ///
+  /// buildTransitions 在过渡期间每帧都会跑：每帧新建 CurvedAnimation 会让它
+  /// 向 animation 注册的监听一路累积（自己从不注销），一次开/关就残留几十个
+  /// 孤儿监听。这里建一次、复用到 route 销毁。
+  CurvedAnimation? _fade;
+  CurvedAnimation? _scale;
 
   @override
-  Duration get reverseTransitionDuration => const Duration(milliseconds: 120);
+  void dispose() {
+    _fade?.dispose();
+    _scale?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Duration get transitionDuration => const Duration(milliseconds: 200);
+
+  @override
+  Duration get reverseTransitionDuration => const Duration(milliseconds: 140);
 
   @override
   bool get barrierDismissible => true;
@@ -150,14 +165,28 @@ class _AnimatedMenuRoute<T> extends PopupRoute<T> {
   @override
   Widget buildTransitions(BuildContext context, Animation<double> animation,
       Animation<double> secondaryAnimation, Widget child) {
-    final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
+    final curved = _fade ??= CurvedAnimation(
+      parent: animation,
+      curve: Curves.easeOut,
+      reverseCurve: Curves.easeIn,
+    );
     // 锚点：菜单从靠近点击处的那个角「长出来」，比整体居中缩放更自然。
     final alignX = position.dx > screenSize.width / 2 ? 1.0 : -1.0;
     final alignY = position.dy > screenSize.height / 2 ? 1.0 : -1.0;
+    // 用户要求：下拉菜单要「缩放展开」而不是老式瞬时弹出。
+    // 0.96 → 0.86 让缩放可感知，easeOutBack 带一点过冲，与 OptionMenuBar /
+    // ScaleMenuButton 的浮层动画保持同一语言（同一时长、同一曲线、同一锚点规则）。
+    // reverseCurve 必须给：收起时若沿用 easeOutBack，头几帧 scale 会先涨到
+    // ~1.006 再缩，肉眼能看到「先弹一下再收」。
+    final scale = _scale ??= CurvedAnimation(
+      parent: animation,
+      curve: Curves.easeOutBack,
+      reverseCurve: Curves.easeInCubic,
+    );
     return FadeTransition(
       opacity: curved,
       child: ScaleTransition(
-        scale: Tween<double>(begin: 0.96, end: 1.0).animate(curved),
+        scale: Tween<double>(begin: 0.86, end: 1.0).animate(scale),
         alignment: Alignment(alignX, alignY),
         child: child,
       ),

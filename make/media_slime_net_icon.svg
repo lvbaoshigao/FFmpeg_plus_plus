@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">媒体史莱姆捕捉器</title>
+  <desc id="desc">手绘风格火柴人用完整可见的抄网捕捉三个分别带有播放、音频和音乐符号的柔和配色史莱姆。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fbfaf6"/>
+      <stop offset="1" stop-color="#f0f3f7"/>
+    </linearGradient>
+    <linearGradient id="blueSlime" x1="0" y1="0" x2=".9" y2="1">
+      <stop offset="0" stop-color="#9bb5e6"/>
+      <stop offset="1" stop-color="#718fcf"/>
+    </linearGradient>
+    <linearGradient id="greenSlime" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#a8d0c7"/>
+      <stop offset="1" stop-color="#7fb5aa"/>
+    </linearGradient>
+    <linearGradient id="purpleSlime" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b8ade0"/>
+      <stop offset="1" stop-color="#9789cb"/>
+    </linearGradient>
+    <linearGradient id="netRim" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f9fbff"/>
+      <stop offset="1" stop-color="#c9d5e4"/>
+    </linearGradient>
+    <clipPath id="netBagClip">
+      <path d="M594 126 C563 157 542 198 561 237 C585 284 635 345 682 379 C721 407 772 432 806 428 C842 423 864 393 852 360 C833 311 776 241 718 194 C671 157 624 127 594 126Z"/>
+    </clipPath>
+    <clipPath id="iconClip"><rect x="0" y="0" width="1024" height="1024" rx="84"/></clipPath>
+    <style>
+      .ink{stroke:#303746;stroke-linecap:round;stroke-linejoin:round}
+      .motion{fill:none;stroke-linecap:round;stroke-linejoin:round;opacity:.75}
+      .shine{fill:none;stroke:#f8fbff;stroke-linecap:round;stroke-linejoin:round;opacity:.86}
+      .mesh{fill:none;stroke:#aabbd2;stroke-width:8;stroke-linecap:round;opacity:.72}
+      .mediaOutline{stroke-width:9;stroke-linecap:round;stroke-linejoin:round}
+    </style>
+  </defs>
+  <g clip-path="url(#iconClip)">
+    <!-- Quiet, nearly monochrome background -->
+    <rect width="1024" height="1024" fill="url(#bg)"/>
+    <circle cx="510" cy="515" r="470" fill="#e5edf7" opacity=".58"/>
+    <circle cx="512" cy="500" r="405" fill="#f7f9fb" opacity=".58"/>
+    <path d="M70 916 Q277 871 470 907" fill="none" stroke="#c7d4e6" stroke-width="15" stroke-linecap="round" opacity=".8"/>
+
+    <!-- A few restrained movement marks -->
+    <g class="motion" stroke="#9fb3d2" stroke-width="10">
+      <path d="M115 382 l32 -19"/><path d="M101 431 l40 -2"/><path d="M147 333 l26 21"/>
+      <path d="M905 150 q28 21 39 50"/><path d="M884 420 q-17 22 -34 27"/>
+      <path d="M557 720 q-14 27 -2 48"/><path d="M910 806 q-24 35 -44 43"/>
+      <path d="M575 443 q14 -24 39 -34"/><path d="M520 657 q-3 30 15 51"/>
+    </g>
+
+    <!-- Net bag, completely outlined and with readable mesh -->
+    <path d="M594 126 C563 157 542 198 561 237 C585 284 635 345 682 379 C721 407 772 432 806 428 C842 423 864 393 852 360 C833 311 776 241 718 194 C671 157 624 127 594 126Z"
+          fill="#f9fbff" fill-opacity=".56" stroke="#303746" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+    <g clip-path="url(#netBagClip)" class="mesh">
+      <path d="M531 142 L816 444"/><path d="M561 114 L851 414"/><path d="M594 92 L881 383"/><path d="M630 78 L903 354"/><path d="M667 69 L915 323"/><path d="M704 69 L919 290"/>
+      <path d="M558 89 L525 267"/><path d="M605 92 L573 310"/><path d="M653 103 L624 344"/><path d="M701 119 L673 375"/><path d="M749 145 L723 402"/><path d="M796 182 L768 425"/><path d="M843 230 L812 438"/><path d="M885 289 L851 441"/>
+    </g>
+    <!-- Net hoop: oval and rim remain fully visible -->
+    <ellipse cx="704" cy="229" rx="224" ry="103" transform="rotate(47 704 229)" fill="none" stroke="#303746" stroke-width="19"/>
+    <ellipse cx="704" cy="229" rx="208" ry="88" transform="rotate(47 704 229)" fill="none" stroke="url(#netRim)" stroke-width="7" opacity=".95"/>
+
+    <!-- Net handle -->
+    <path d="M418 619 L618 232" fill="none" stroke="#303746" stroke-width="25" stroke-linecap="round"/>
+    <path d="M418 619 L618 232" fill="none" stroke="#8392ad" stroke-width="10" stroke-linecap="round"/>
+    <path d="M607 249 l-14 -8 18 -30 15 9Z" fill="#6e7b95" stroke="#303746" stroke-width="7" stroke-linejoin="round"/>
+
+    <!-- Three slightly overlapping, soft-coloured media slimes -->
+    <!-- Play slime -->
+    <g id="play-slime">
+      <path d="M478 465 C489 423 535 400 576 416 C616 389 656 408 675 444 C699 470 705 502 691 533 C684 556 665 573 639 584 C621 593 607 603 596 627 C585 649 568 660 553 644 C542 632 547 611 541 593 C507 588 480 567 471 535 C461 510 466 484 478 465Z"
+            fill="url(#blueSlime)" stroke="#607fbd" class="mediaOutline"/>
+      <path d="M495 464 C511 435 539 427 564 434" class="shine" stroke-width="12"/>
+      <path d="M494 483 l11 -15" class="shine" stroke-width="9"/>
+      <path d="M544 475 Q539 469 539 481" fill="none" stroke="#dce8fb" stroke-width="7" stroke-linecap="round"/>
+      <path d="M554 480 L554 548 Q554 557 564 551 L617 520 Q626 514 616 507 L565 477 Q554 471 554 480Z" fill="#f8fbff" stroke="#f8fbff" stroke-width="5" stroke-linejoin="round"/>
+      <path d="M486 548 Q501 572 529 576" fill="none" stroke="#d3dff5" stroke-width="7" stroke-linecap="round" opacity=".8"/>
+    </g>
+
+    <!-- Audio slime -->
+    <g id="audio-slime">
+      <path d="M674 584 C694 551 731 539 764 551 C797 532 836 545 855 573 C881 584 900 611 896 643 C893 676 873 700 843 710 C829 716 819 726 817 749 C815 772 801 792 785 782 C771 773 775 747 767 727 C732 732 697 713 679 687 C660 658 658 612 674 584Z"
+            fill="url(#greenSlime)" stroke="#719f99" class="mediaOutline"/>
+      <path d="M702 584 Q717 562 740 564" class="shine" stroke-width="12"/>
+      <path d="M690 604 l10 -12" class="shine" stroke-width="8"/>
+      <path d="M735 617 L735 675 Q735 683 743 679 L768 664 L788 684 Q794 690 800 682 L809 670 Q813 664 807 659 L788 641 L788 612 Q788 603 779 608 L735 617Z" fill="#f8fbff" stroke="#f8fbff" stroke-width="4" stroke-linejoin="round"/>
+      <path d="M815 615 Q835 633 815 653" fill="none" stroke="#f8fbff" stroke-width="9" stroke-linecap="round"/>
+      <path d="M833 603 Q865 633 835 665" fill="none" stroke="#f8fbff" stroke-width="9" stroke-linecap="round"/>
+    </g>
+
+    <!-- Music slime -->
+    <g id="music-slime">
+      <path d="M553 758 C570 726 604 709 636 718 C665 696 702 706 721 732 C744 749 755 780 749 810 C743 844 722 862 694 872 C674 879 662 897 657 920 C652 944 634 956 620 943 C608 931 616 906 612 891 C579 892 551 873 538 847 C522 819 533 782 553 758Z"
+            fill="url(#purpleSlime)" stroke="#877bb8" class="mediaOutline"/>
+      <path d="M571 758 Q590 738 613 741" class="shine" stroke-width="12"/>
+      <path d="M560 779 l11 -14" class="shine" stroke-width="8"/>
+      <path d="M622 780 L622 829 C610 823 595 826 588 838 C579 852 588 866 602 865 C617 864 629 851 629 837 L629 797 L661 791 L661 824 C650 817 635 821 628 833 C621 847 631 859 644 857 C659 856 670 842 670 829 L670 768Z" fill="#f8fbff" stroke="#f8fbff" stroke-width="5" stroke-linejoin="round"/>
+      <path d="M562 843 Q577 867 602 872" fill="none" stroke="#ddd7f3" stroke-width="7" stroke-linecap="round" opacity=".85"/>
+    </g>
+
+    <!-- Stick figure: hair, head, expressive face -->
+    <g id="stick-figure" class="ink">
+      <!-- hair tufts -->
+      <path d="M182 456 Q199 426 225 418" fill="none" stroke-width="9"/>
+      <path d="M219 441 Q242 413 272 411" fill="none" stroke-width="8"/>
+      <!-- head -->
+      <path d="M146 502 C146 449 188 414 238 420 C285 424 317 460 317 506 C318 552 284 588 239 592 C189 597 151 563 146 523Z" fill="#fbfaf7" stroke-width="13"/>
+      <path d="M220 479 Q228 491 227 502" fill="none" stroke-width="12"/>
+      <path d="M258 469 Q267 481 266 493" fill="none" stroke-width="12"/>
+      <!-- hoodie and torso -->
+      <path d="M201 582 Q226 574 253 588 L301 658 L278 749 L191 766 L171 692Z" fill="#d9e2ee" stroke-width="13"/>
+      <path d="M205 589 Q224 620 252 623 L270 676" fill="none" stroke="#8c9ab0" stroke-width="8"/>
+      <path d="M225 620 L246 667 L226 700" fill="none" stroke-width="7"/>
+      <path d="M193 602 L169 644 L188 672" fill="none" stroke-width="8"/>
+      <!-- backpack -->
+      <path d="M168 623 Q145 617 130 641 L109 707 Q105 727 124 738 L164 754 Q182 752 189 729 L204 662 Q208 641 190 632Z" fill="#68758d" stroke-width="12"/>
+      <path d="M132 655 Q151 643 177 658 L164 708 Q146 716 122 700Z" fill="#8794aa" stroke-width="7"/>
+      <path d="M139 653 L132 686 M177 660 L168 695" fill="none" stroke="#303746" stroke-width="6"/>
+      <rect x="127" y="690" width="12" height="18" rx="4" fill="#d2dce9" stroke-width="4"/>
+      <!-- legs, crouched in motion -->
+      <path d="M199 756 L144 836 L83 898" fill="none" stroke-width="32"/>
+      <path d="M256 754 L344 815 L296 893" fill="none" stroke-width="32"/>
+      <path d="M83 898 L55 922 Q52 934 69 936 L146 929 Q160 925 148 912 L117 892Z" fill="#f5f6f7" stroke-width="12"/>
+      <path d="M296 893 L274 921 Q270 934 287 935 L370 930 Q385 925 372 911 L334 887Z" fill="#f5f6f7" stroke-width="12"/>
+      <path d="M65 917 L143 911 M285 917 L367 912" fill="none" stroke="#8f9bb0" stroke-width="7"/>
+      <!-- arms reaching for net handle -->
+      <path d="M246 613 Q280 600 306 575 L382 636" fill="none" stroke-width="24"/>
+      <path d="M207 637 Q244 658 291 673 L409 590" fill="none" stroke-width="23"/>
+      <!-- hands around handle -->
+      <circle cx="386" cy="635" r="22" fill="#fbfaf7" stroke-width="10"/>
+      <circle cx="415" cy="588" r="21" fill="#fbfaf7" stroke-width="10"/>
+    </g>
+
+  </g>
+</svg>

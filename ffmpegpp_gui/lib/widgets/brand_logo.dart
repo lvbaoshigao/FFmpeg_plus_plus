@@ -2,21 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 /// ════════════════════════════════════════════════════════════════════
-/// AI 提供商品牌 logo（本地 SVG，无网络依赖）
+/// AI 提供商 / 模型品牌 logo（本地 SVG，无网络依赖）
 /// ════════════════════════════════════════════════════════════════════
 ///
-/// 之前 AI 设置里的提供商图标全部是 Material 图标近似（如 `waves` 代表
-/// DeepSeek），用户无法一眼认出「这是哪家的模型」。这里改为**真实品牌
-/// SVG**（取自 simple-icons，24×24 viewBox）：
+/// 图标判定规则（用户要求）：
+///  * **模型**：按模型 id 正则匹配品牌 —— id 里出现 gpt 就是 OpenAI 图标、
+///    出现 deepseek 就是 DeepSeek 图标，以此类推（见 brandForModelId）。
+///    供应商叫什么名字不影响模型图标：自建中转站下的 gpt-4o 依然显示 OpenAI。
+///  * **供应商**：只有当供应商名字**全字匹配**某个品牌名时才替换
+///    （OpenAI / DeepSeek / Anthropic…，见 brandForProviderName）；
+///    「我的 OpenAI 中转」这类名字不匹配，继续用通用 Material 图标。
 ///
-///  * 资源在 `assets/brand_icons/`，由 pubspec.yaml 声明；
-///  * 通过 [detectAiBrand] 按 名称 / provider / API 地址 / 模型 id 识别品牌；
-///  * 渲染统一走 [BrandLogo]：`SvgPicture.asset` + `ColorFilter.srcIn` 着色，
-///    不引入任何新的 pub 依赖（项目已有 flutter_svg ^2.3.0）；
-///  * 未知品牌返回 null，调用方继续用通用 Material 图标兜底。
-///
-/// 品牌色只用于「46dp 图标块的低饱和底 + logo 着色」，不直接铺纯品牌色，
-/// 深浅主题下都能读清。
+/// 资源在 assets/brand_icons/（pubspec.yaml 已声明），渲染统一走
+/// BrandLogo：SvgPicture.asset + ColorFilter.srcIn 单色着色。
 enum AiBrand {
   openai,
   anthropic,
@@ -63,59 +61,102 @@ extension AiBrandInfo on AiBrand {
   };
 }
 
-/// 根据提供商配置识别品牌；识别不出时返回 null（调用方用通用图标）。
+/// 模型 id → 品牌的正则表（**顺序敏感**，先命中先返回）。
 ///
-/// 判断顺序很重要：
-///  * `openrouter` 必须早于 `openai`（前缀相同）；
-///  * `ollama` 必须早于 `llama/meta`（"ollama" 里含子串 "llama"）。
-AiBrand? detectAiBrand({
-  required String name,
-  required String provider,
-  String apiUrl = '',
-  String model = '',
-}) {
-  final key = '$name $provider $apiUrl $model'.toLowerCase();
-  if (key.trim().isEmpty) return null;
-  if (key.contains('openrouter')) return AiBrand.openrouter;
-  if (key.contains('anthropic') || key.contains('claude')) {
-    return AiBrand.anthropic;
-  }
-  if (key.contains('deepseek')) return AiBrand.deepseek;
-  if (key.contains('ollama')) return AiBrand.ollama;
-  if (key.contains('gemini') || key.contains('generativelanguage')) {
-    return AiBrand.gemini;
-  }
-  if (key.contains('mistral')) return AiBrand.mistral;
-  if (key.contains('qwen') ||
-      key.contains('tongyi') ||
-      key.contains('dashscope') ||
-      key.contains('alibaba')) {
-    return AiBrand.qwen;
-  }
-  if (key.contains('xai') || key.contains('grok')) return AiBrand.xai;
-  if (key.contains('meta-llama') ||
-      key.contains('meta llama') ||
-      key.contains('llama') ||
-      key.contains('meta.ai')) {
-    return AiBrand.meta;
-  }
-  if (key.contains('google')) return AiBrand.gemini;
-  if (key.contains('openai') ||
-      key.contains('chatgpt') ||
-      key.contains('gpt') ||
-      key.contains('azure') ||
-      key.contains('codex') ||
-      key.contains('davinci')) {
-    return AiBrand.openai;
+/// 说明：
+///  * deepseek 必须在宽泛规则之前；claude 与 anthropic 合并一条；
+///  * gpt / chatgpt 合并成一条；o1/o3/o4（OpenAI 推理模型）单独列出，
+///    用 \b 边界避免误伤无关串；
+///  * meta-llama 与 llama 同归 Meta；ollama 是**供应商**名，但模型 id 里
+///    出现 ollama 通常表示本地拉取的模型名，归 Ollama 品牌合理，故排在 llama 前。
+final List<(RegExp, AiBrand)> _modelBrandRules = [
+  (RegExp(r'openrouter'), AiBrand.openrouter),
+  (RegExp(r'deepseek'), AiBrand.deepseek),
+  (RegExp(r'claude|anthropic'), AiBrand.anthropic),
+  (RegExp(r'ollama'), AiBrand.ollama),
+  (RegExp(r'gemini|gemma|palm|generativelanguage'), AiBrand.gemini),
+  (RegExp(r'mistral|mixtral|codestral|magistral|pixtral'), AiBrand.mistral),
+  (RegExp(r'meta[-_ ]?llama|llama|code[-_ ]?llama'), AiBrand.meta),
+  (RegExp(r'qwen|qwq|tongyi|dashscope'), AiBrand.qwen),
+  (RegExp(r'grok|\bx[-_]?ai\b'), AiBrand.xai),
+  (
+    RegExp(r'gpt|chatgpt|davinci|codex|whisper|dall[-_ ]?e|\bo[134]\b'),
+    AiBrand.openai,
+  ),
+];
+
+/// 模型 id → 品牌（正则匹配，大小写不敏感）。
+///
+/// 用户要求：模型图标看**模型 id**，不看供应商。例如供应商叫「我的中转站」，
+/// 但模型是 gpt-4o，仍应显示 OpenAI 图标。
+///
+/// 兼容「供应商/模型」形式（OpenRouter 风格 openai/gpt-4o）：整串参与匹配，
+/// 因此 openai/gpt-4o 命中 gpt → OpenAI，
+/// anthropic/claude-3.5-sonnet 命中 claude → Anthropic。
+AiBrand? brandForModelId(String modelId) {
+  final id = modelId.trim().toLowerCase();
+  if (id.isEmpty) return null;
+  for (final rule in _modelBrandRules) {
+    if (rule.$1.hasMatch(id)) return rule.$2;
   }
   return null;
 }
 
+/// 供应商名字归一化：小写，并去掉**分隔符**（空格 / 点 / 下划线 / 连字符）。
+///
+/// 这样 Open AI、open-ai、x.ai 都能落到同一张表的 key 上。
+///
+/// 注意：**不能**把「非字母数字」整类删掉 —— 那样「我的 OpenAI 中转」
+/// 会被归一成 openai 而误命中 OpenAI，与「只有名字全字匹配才替换图标」
+/// 的契约相反（中文、额外单词必须保留，从而自然不匹配）。
+String _normalizeBrandName(String value) =>
+    value.toLowerCase().replaceAll(RegExp(r'[\s._\-]'), '');
+
+/// 供应商名字 → 品牌（**仅全字匹配**）。
+///
+/// 用户要求：只有当供应商名字正好是品牌名（OpenAI、DeepSeek…）时才替换
+/// 供应商图标；「我的 OpenAI 中转」「Company GPT Gateway」这类名字不匹配，
+/// 继续用通用 Material 图标。
+AiBrand? brandForProviderName(String name) {
+  final key = _normalizeBrandName(name);
+  if (key.isEmpty) return null;
+  return _providerBrandNames[key];
+}
+
+const Map<String, AiBrand> _providerBrandNames = {
+  'openai': AiBrand.openai,
+  'chatgpt': AiBrand.openai,
+  'azureopenai': AiBrand.openai,
+  'anthropic': AiBrand.anthropic,
+  'anthropicclaude': AiBrand.anthropic,
+  'claude': AiBrand.anthropic,
+  'deepseek': AiBrand.deepseek,
+  'deepseekai': AiBrand.deepseek,
+  'google': AiBrand.gemini,
+  'googleai': AiBrand.gemini,
+  'googlegemini': AiBrand.gemini,
+  'gemini': AiBrand.gemini,
+  'ollama': AiBrand.ollama,
+  'openrouter': AiBrand.openrouter,
+  'mistral': AiBrand.mistral,
+  'mistralai': AiBrand.mistral,
+  'meta': AiBrand.meta,
+  'metallama': AiBrand.meta,
+  'llama': AiBrand.meta,
+  'xai': AiBrand.xai,
+  'grok': AiBrand.xai,
+  'qwen': AiBrand.qwen,
+  'alibaba': AiBrand.qwen,
+  'alibabacloud': AiBrand.qwen,
+  'tongyi': AiBrand.qwen,
+  'dashscope': AiBrand.qwen,
+};
+
 /// 品牌 logo：本地 SVG + 单色着色。
 ///
-/// * [size] 是 logo 的边长（提供商图标块 46dp 时取 25dp 左右）；
-/// * [color] 由调用方按「深色主题提亮 / 浅色主题压暗」计算后传入，
-///   `ColorFilter.srcIn` 会把 SVG 的所有不透明部分替换成该颜色。
+/// * size 是 logo 的边长（提供商图标块 46dp 时取 25dp 左右）；
+/// * color 由调用方按「深色主题提亮 / 浅色主题压暗」计算后传入，
+///   ColorFilter.srcIn 会把 SVG 的所有不透明部分替换成该颜色。
 class BrandLogo extends StatelessWidget {
   final AiBrand brand;
   final double size;

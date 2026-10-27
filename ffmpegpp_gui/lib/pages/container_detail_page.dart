@@ -14,6 +14,8 @@ import '../widgets/app_card.dart';
 import '../widgets/mobile_glass_pill.dart';
 import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_ui.dart';
+// 统一下拉/弹出菜单样式（圆角 14 + 200ms 缩放展开，替代 PopupMenuButton）
+import '../widgets/option_menu_bar.dart';
 import '../widgets/wallpaper_background.dart';
 // Linux 客户端修饰（CSD）：统一使用全应用唯一的 window_chrome.dart 实现。
 import '../widgets/window_chrome.dart';
@@ -104,15 +106,18 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
       IconButton(icon: const Icon(Icons.add, size: 20),
           tooltip: s.containerAddFiles,
           onPressed: () => _addFiles(state)),
-      PopupMenuButton<ContainerSortMode>(
-        icon: const Icon(Icons.sort, size: 20),
+      // 排序菜单：统一为 ScaleMenuButton（圆角 14 浮层 + 200ms 缩放展开），
+      // 不再是系统 PopupMenuButton 的直角瞬时弹出。
+      ScaleMenuButton<ContainerSortMode>(
+        icon: Icons.sort,
+        iconSize: 20,
         tooltip: s.isZh ? '排序' : 'Sort',
-        onSelected: (mode) => state.sortContainerBy(container.id, mode),
-        itemBuilder: (_) => [
-          PopupMenuItem(value: ContainerSortMode.name, child: Text(s.containerSortName)),
-          PopupMenuItem(value: ContainerSortMode.size, child: Text(s.containerSortSize)),
-          PopupMenuItem(value: ContainerSortMode.duration, child: Text(s.containerSortDuration)),
+        items: [
+          OptionItem(ContainerSortMode.name, s.containerSortName),
+          OptionItem(ContainerSortMode.size, s.containerSortSize),
+          OptionItem(ContainerSortMode.duration, s.containerSortDuration),
         ],
+        onSelected: (mode) => state.sortContainerBy(container.id, mode),
       ),
       const SizedBox(width: 8),
     ];
@@ -154,20 +159,19 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
               bg: scheme.primary,
               onTap: () => _addFiles(state),
             ),
-            PopupMenuButton<ContainerSortMode>(
-              icon: Icon(Icons.sort, size: 19, color: scheme.onSurface),
+            // 排序菜单：与桌面端同一个 ScaleMenuButton（浮层宽度由 menuWidth 控制，
+            // 不再依赖 PopupMenuButton 的 constraints 去压制菜单宽度）。
+            ScaleMenuButton<ContainerSortMode>(
+              icon: Icons.sort,
+              iconSize: 19,
+              size: 34,
               tooltip: s.isZh ? '排序' : 'Sort',
-              padding: EdgeInsets.zero,
-              // constraints 作用于「弹出的菜单」而非按钮本身：这里放宽按钮
-              // 最小尺寸的同时必须带 maxWidth，否则菜单宽度上限会被覆盖成
-              // 无上限，按最长条目撑开（PC 端菜单过宽的根源之一）。
-              constraints: const BoxConstraints(minWidth: 34, minHeight: 34, maxWidth: 280),
-              onSelected: (mode) => state.sortContainerBy(container.id, mode),
-              itemBuilder: (_) => [
-                PopupMenuItem(value: ContainerSortMode.name, child: Text(s.containerSortName)),
-                PopupMenuItem(value: ContainerSortMode.size, child: Text(s.containerSortSize)),
-                PopupMenuItem(value: ContainerSortMode.duration, child: Text(s.containerSortDuration)),
+              items: [
+                OptionItem(ContainerSortMode.name, s.containerSortName),
+                OptionItem(ContainerSortMode.size, s.containerSortSize),
+                OptionItem(ContainerSortMode.duration, s.containerSortDuration),
               ],
+              onSelected: (mode) => state.sortContainerBy(container.id, mode),
             ),
           ],
         )

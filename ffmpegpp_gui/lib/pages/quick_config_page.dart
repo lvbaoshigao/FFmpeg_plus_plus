@@ -8,6 +8,8 @@ import '../models/quick_config.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import '../widgets/app_card.dart';
+// 统一下拉样式：OptionMenuBar（圆角 14 浮层 + 200ms 缩放展开）
+import '../widgets/option_menu_bar.dart';
 
 /// 预设选项：值 + 显示标签。
 typedef _Preset = ({Object value, String label});
@@ -698,6 +700,7 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
         value: value,
         options: presets,
         onChanged: (v) => _updateParam(itemKey, paramKey, v),
+        isZh: isZh,
       );
     }
 
@@ -1085,20 +1088,13 @@ class _NumberDropdown extends StatelessWidget {
         ),
         ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 220),
-          child: DropdownButtonFormField<int>(
-            initialValue: options.contains(value) ? value : options.first,
-            isDense: true,
-            isExpanded: true,
-            decoration: InputDecoration(
-              isDense: true,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-            ),
-            style: TextStyle(fontSize: 14, color: scheme.onSurface),
-            items: options.map((v) => DropdownMenuItem(value: v, child: Text('$v°'))).toList(),
-            onChanged: (v) {
-              if (v != null) onChanged(v);
-            },
+          // 统一下拉样式：OptionMenuBar（圆角 14 浮层 + 200ms 缩放展开）
+          child: OptionMenuBar<int>(
+            value: options.contains(value) ? value : options.first,
+            items: [
+              for (final v in options) OptionItem(v, '$v°'),
+            ],
+            onChanged: onChanged,
           ),
         ),
       ],
@@ -1113,12 +1109,16 @@ class _PresetDropdown extends StatelessWidget {
   final List<_Preset> options;
   final ValueChanged<Object> onChanged;
 
+  /// 界面语言：搜索框占位符 / 空态文案要跟界面走，不能写死中文。
+  final bool isZh;
+
   const _PresetDropdown({
     super.key,
     required this.label,
     required this.value,
     required this.options,
     required this.onChanged,
+    required this.isZh,
   });
 
   @override
@@ -1139,20 +1139,18 @@ class _PresetDropdown extends StatelessWidget {
         ),
         ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 260),
-          child: DropdownButtonFormField<Object>(
-            initialValue: value,
-            isDense: true,
-            isExpanded: true,
-            decoration: InputDecoration(
-              isDense: true,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-            ),
-            style: TextStyle(fontSize: 14, color: scheme.onSurface),
-            items: entries.map((e) => DropdownMenuItem(value: e.value, child: Text(e.label))).toList(),
-            onChanged: (v) {
-              if (v != null) onChanged(v);
-            },
+          // 统一下拉样式：OptionMenuBar（圆角 14 浮层 + 200ms 缩放展开）。
+          // 编码预设（x264 的 10 档 preset）条目多，给更宽的浮层并开启搜索。
+          child: OptionMenuBar<Object>(
+            value: value,
+            menuWidth: 260,
+            searchable: entries.length > 7,
+            searchHint: isZh ? '搜索选项' : 'Search options',
+            emptyLabel: isZh ? '无匹配项' : 'No matches',
+            items: [
+              for (final e in entries) OptionItem(e.value, e.label),
+            ],
+            onChanged: onChanged,
           ),
         ),
       ],
@@ -1188,20 +1186,13 @@ class _DropdownField extends StatelessWidget {
         ),
         ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 220),
-          child: DropdownButtonFormField<dynamic>(
-            initialValue: options.contains(value) ? value : options.firstOrNull,
-            isDense: true,
-            isExpanded: true,
-            decoration: InputDecoration(
-              isDense: true,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-            ),
-            style: TextStyle(fontSize: 14, color: scheme.onSurface),
-            items: options.map((v) => DropdownMenuItem(value: v, child: Text('$v'))).toList(),
-            onChanged: (v) {
-              if (v != null) onChanged(v);
-            },
+          // 统一下拉样式：OptionMenuBar（圆角 14 浮层 + 200ms 缩放展开）
+          child: OptionMenuBar<dynamic>(
+            value: options.contains(value) ? value : options.firstOrNull,
+            items: [
+              for (final v in options) OptionItem<dynamic>(v, '$v'),
+            ],
+            onChanged: onChanged,
           ),
         ),
       ],

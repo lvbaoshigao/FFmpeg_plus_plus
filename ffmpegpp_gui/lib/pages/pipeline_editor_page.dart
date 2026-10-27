@@ -40,6 +40,8 @@ import '../theme/app_theme.dart';
 import '../widgets/ai_workflow_card.dart';
 import '../widgets/animated_popup.dart';
 import '../widgets/app_card.dart';
+// 模型 / 供应商品牌 logo（本地 SVG 单色着色）：模型选择器每行左侧的图标
+import '../widgets/brand_logo.dart';
 import '../widgets/fppx_password.dart';
 import '../widgets/gate_symbol_painter.dart';
 import '../widgets/glass_panel.dart';
@@ -4129,157 +4131,86 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           ),
         ),
         const SizedBox(width: 6),
-        // 配置一键选择（写入全局 activeAiProfileId，AI 面板跟随）
-        Container(
+        // 配置 / 模型一键选择（写入全局 activeAiProfileId，AI 面板跟随）。
+        //
+        // 旧实现是系统 PopupMenuButton：直角 + 瞬时弹出，与 OptionMenuBar 的
+        // 圆角浮层不是一套视觉语言（task-9 F）。换成同一个控件后顺带获得
+        // 搜索框与「选中项药丸」；条目语义保持原样（profile: / model: / 自定义）。
+        SizedBox(
           height: pill.height,
-          padding: EdgeInsets.symmetric(horizontal: pill.padH),
-          decoration: pillDeco(scheme.surfaceContainerHighest.withAlpha(90)),
-          child: PopupMenuButton<String>(
-            tooltip: s.isZh ? 'AI 配置 / 模型' : 'AI Profile / Model',
-            padding: EdgeInsets.zero,
-            // constraints 作用于弹出的菜单而非按钮本身：给按钮最小宽度，
-            // 同时必须带 maxWidth，否则会覆盖默认 280 上限导致菜单过宽
-            constraints: const BoxConstraints(minWidth: 140, maxWidth: 280),
-            onSelected: (v) {
-              if (v == '__custom_model__') {
-                _promptTopCustomModel(scheme, s);
-              } else if (v.startsWith('model:')) {
-                _applyModelChoice(v.substring(6));
-              } else {
-                final id = v.startsWith('profile:') ? v.substring(8) : '';
-                context.read<AppState>().updateConfig(
-                  (c) => c..activeAiProfileId = id,
-                );
-              }
-            },
-            itemBuilder: (_) => [
-              PopupMenuItem<String>(
-                enabled: false,
-                child: Text(
-                  s.isZh ? '配置' : 'Profiles',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    color: scheme.outline,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 240),
+            child: OptionMenuBar<String>(
+              expandable: true,
+              searchable: true,
+              searchHint: s.isZh
+                  ? '搜索配置 / 模型'
+                  : 'Search profiles / models',
+              menuWidth: 320,
+              triggerHeight: pill.height,
+              leadingWidget: pillIcon(Icons.tune, color: scheme.primary),
+              // 选中模型时把供应商名放在前面（"OpenAI gpt-4o"）；只选配置时
+              // 不重复显示（否则会变成 "OpenAI OpenAI"）。
+              label: modelOptions.contains(showModel)
+                  ? (activeProfile?.name ?? (s.isZh ? '默认' : 'Default'))
+                  : null,
+              value: modelOptions.contains(showModel)
+                  ? 'model:$showModel'
+                  : 'profile:${cfg.activeAiProfileId}',
+              items: [
+                for (final p in profiles)
+                  OptionItem(
+                    'profile:${p.id}',
+                    p.name,
+                    icon: Icons.folder_outlined,
                   ),
-                ),
-              ),
-              for (final p in profiles)
-                PopupMenuItem(
-                  value: 'profile:${p.id}',
-                  child: Row(
-                    children: [
-                      Icon(
-                        cfg.activeAiProfileId == p.id
-                            ? Icons.radio_button_checked
-                            : Icons.radio_button_off,
-                        size: 13,
-                        color: cfg.activeAiProfileId == p.id
-                            ? scheme.primary
-                            : scheme.outline,
-                      ),
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: Text(
-                          p.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 12),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              if (profiles.isNotEmpty) const PopupMenuDivider(),
-              PopupMenuItem(
-                value: 'profile:',
-                child: Text(
+                OptionItem(
+                  'profile:',
                   s.isZh ? '默认配置' : 'Default',
-                  style: const TextStyle(fontSize: 12),
+                  icon: Icons.folder_off_outlined,
                 ),
-              ),
-              const PopupMenuDivider(),
-              PopupMenuItem<String>(
-                enabled: false,
-                child: Text(
-                  s.isZh ? '模型' : 'Model',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    color: scheme.outline,
+                for (final m in modelOptions)
+                  OptionItem(
+                    'model:$m',
+                    m,
+                    leading: brandForModelId(m) == null
+                        ? Icon(
+                            Icons.memory,
+                            size: 15,
+                            color: scheme.onSurfaceVariant,
+                          )
+                        : BrandLogo(
+                            brand: brandForModelId(m)!,
+                            size: 15,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                    keywords: m,
                   ),
-                ),
-              ),
-              // 供应商配置里的模型清单（动态）。当前配置没配模型时会汇总其它已启用
-              // 配置的模型；一个都没有就明确提示去设置里添加。
-              for (final m in modelOptions)
-                PopupMenuItem<String>(
-                  value: 'model:$m',
-                  child: Row(
-                    children: [
-                      Icon(
-                        m == showModel
-                            ? Icons.radio_button_checked
-                            : Icons.radio_button_off,
-                        size: 13,
-                        color: m == showModel ? scheme.primary : scheme.outline,
-                      ),
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: Text(
-                          m,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 12),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              if (modelOptions.isEmpty)
-                PopupMenuItem<String>(
-                  enabled: false,
-                  child: Text(
+                if (modelOptions.isEmpty)
+                  OptionItem(
+                    '',
                     s.isZh
                         ? '未配置模型（设置 → AI 中添加）'
                         : 'No models configured (Settings → AI)',
-                    style: TextStyle(fontSize: 11, color: scheme.outline),
                   ),
-                ),
-              PopupMenuItem(
-                value: '__custom_model__',
-                child: Text(
+                OptionItem(
+                  '__custom_model__',
                   s.isZh ? '自定义模型...' : 'Custom model...',
-                  style: const TextStyle(fontSize: 12),
-                ),
-              ),
-            ],
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                pillIcon(Icons.tune, color: scheme.primary),
-                const SizedBox(width: 4),
-                ConstrainedBox(
-                  // 文本上限：配置名 + 模型名都很长时不再把顶栏撑开
-                  constraints: const BoxConstraints(maxWidth: 220),
-                  child: Text(
-                    '${activeProfile?.name ?? (s.isZh ? '默认' : 'Default')} · '
-                    '${showModel.isEmpty ? (s.isZh ? '未配置模型' : 'No model') : showModel}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: scheme.onSurface,
-                    ),
-                  ),
-                ),
-                Icon(
-                  Icons.arrow_drop_down,
-                  size: pill.iconSize,
-                  color: scheme.outline,
+                  icon: Icons.add,
                 ),
               ],
+              onChanged: (v) {
+                if (v == '__custom_model__') {
+                  _promptTopCustomModel(scheme, s);
+                } else if (v.startsWith('model:')) {
+                  _applyModelChoice(v.substring(6));
+                } else if (v.startsWith('profile:')) {
+                  final id = v.substring(8);
+                  context.read<AppState>().updateConfig(
+                    (c) => c..activeAiProfileId = id,
+                  );
+                }
+              },
             ),
           ),
         ),
@@ -10811,18 +10742,53 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                     // 盒径与同排按钮一致（改造前是 28，比相邻的 26 大 2px）
                     width: _kMobileBarBtnBox,
                     height: _kMobileBarBtnBox,
-                    child: PopupMenuButton<String>(
+                    child: ScaleMenuButton<String>(
+                      icon: Icons.more_vert,
                       tooltip: s.isZh ? '更多操作' : 'More actions',
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(
-                        minWidth: _kMobileBarBtnBox,
-                        minHeight: _kMobileBarBtnBox,
-                      ),
-                      icon: Icon(
-                        Icons.more_vert,
-                        size: 18,
-                        color: scheme.onSurfaceVariant,
-                      ),
+                      size: _kMobileBarBtnBox,
+                      iconSize: 18,
+                      menuWidth: 230,
+                      items: [
+                        OptionItem(
+                          'export',
+                          s.isZh ? '导出配置' : 'Export Config',
+                          icon: Icons.file_upload_outlined,
+                        ),
+                        OptionItem(
+                          'import',
+                          s.importConfig,
+                          icon: Icons.file_download_outlined,
+                        ),
+                        OptionItem(
+                          'probe',
+                          s.isZh ? '探测模式' : 'Probe',
+                          icon: Icons.search,
+                          subtitle: _probeMode
+                              ? (s.isZh ? '已开启' : 'On')
+                              : (s.isZh ? '已关闭' : 'Off'),
+                        ),
+                        OptionItem(
+                          'hide',
+                          s.isZh ? '隐藏逻辑线' : 'Hide logic',
+                          icon: Icons.route,
+                          subtitle: _hideLogic
+                              ? (s.isZh ? '已隐藏' : 'Hidden')
+                              : (s.isZh ? '显示中' : 'Shown'),
+                        ),
+                        OptionItem(
+                          'format',
+                          s.isZh ? '写入格式' : 'Write format',
+                          icon: Icons.save_as_outlined,
+                          subtitle: _writeFormat == 'v2' ? 'v2' : 'legacy',
+                        ),
+                        OptionItem(
+                          'orientation',
+                          _isLandscape
+                              ? (s.isZh ? '切换到竖屏' : 'Switch to portrait')
+                              : (s.isZh ? '切换到横屏' : 'Switch to landscape'),
+                          icon: Icons.screen_rotation,
+                        ),
+                      ],
                       onSelected: (v) {
                         switch (v) {
                           case 'export':
@@ -10849,149 +10815,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                             break;
                         }
                       },
-                      itemBuilder: (_) => [
-                        PopupMenuItem(
-                          value: 'export',
-                          enabled: _nodes.isNotEmpty,
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.file_upload_outlined,
-                                size: 16,
-                                color: scheme.onSurfaceVariant,
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                s.isZh ? '导出配置' : 'Export Config',
-                                style: const TextStyle(fontSize: 13),
-                              ),
-                            ],
-                          ),
-                        ),
-                        PopupMenuItem(
-                          value: 'import',
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.file_download_outlined,
-                                size: 16,
-                                color: scheme.onSurfaceVariant,
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                s.importConfig,
-                                style: const TextStyle(fontSize: 13),
-                              ),
-                            ],
-                          ),
-                        ),
-                        PopupMenuItem(
-                          value: 'probe',
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.search,
-                                size: 16,
-                                color: _probeMode
-                                    ? scheme.primary
-                                    : scheme.onSurfaceVariant,
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                s.isZh ? '探测模式' : 'Probe',
-                                style: const TextStyle(fontSize: 13),
-                              ),
-                              if (_probeMode) ...[
-                                const Spacer(),
-                                Icon(
-                                  Icons.check,
-                                  size: 14,
-                                  color: scheme.primary,
-                                ),
-                              ],
-                            ],
-                          ),
-                        ),
-                        PopupMenuItem(
-                          value: 'hide',
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.route,
-                                size: 16,
-                                color: _hideLogic
-                                    ? scheme.error
-                                    : scheme.onSurfaceVariant,
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                s.isZh ? '隐藏逻辑线' : 'Hide logic',
-                                style: const TextStyle(fontSize: 13),
-                              ),
-                              if (_hideLogic) ...[
-                                const Spacer(),
-                                Icon(
-                                  Icons.check,
-                                  size: 14,
-                                  color: scheme.error,
-                                ),
-                              ],
-                            ],
-                          ),
-                        ),
-                        // 写入格式（与桌面端工具栏那枚标识同一个开关）
-                        PopupMenuItem(
-                          value: 'format',
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.save_as_outlined,
-                                size: 16,
-                                color: _writeFormat == 'v2'
-                                    ? scheme.primary
-                                    : scheme.onSurfaceVariant,
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                s.isZh ? '写入格式' : 'Write format',
-                                style: const TextStyle(fontSize: 13),
-                              ),
-                              const Spacer(),
-                              Text(
-                                _writeFormat == 'v2' ? 'v2' : 'legacy',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: _writeFormat == 'v2'
-                                      ? scheme.primary
-                                      : scheme.outline,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        PopupMenuItem(
-                          value: 'orientation',
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.screen_rotation,
-                                size: 16,
-                                color: scheme.onSurfaceVariant,
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                _isLandscape
-                                    ? (s.isZh ? '切换到竖屏' : 'Switch to portrait')
-                                    : (s.isZh
-                                          ? '切换到横屏'
-                                          : 'Switch to landscape'),
-                                style: const TextStyle(fontSize: 13),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
                     ),
                   ),
                 ],
@@ -12385,12 +12208,88 @@ String mergeToolRoundText({required String streamed, String? nonStream}) {
   return streamed;
 }
 
-/// maxTokens 自动续写的轮次上限与决策（纯状态机）。
+/// 判断一段「没有明确 finish_reason」的正文是否看起来被截断了。
 ///
-/// 用类而不是散落的 bool 是为了让「最多 2-3 轮、空响应不续写、用户停止不续写」
-/// 这三条硬约束能被离线测试直接驱动。调用方在每轮明确收到
-/// [ai.FinishReason.maxTokens] 且正文非空时才继续；达到上限后本函数永远返回
-/// false，因此不可能出现无限续写。
+/// 根因：OpenAI 兼容中转 / 自建网关经常整条流都不回 `finish_reason`。
+/// SDK 的 parseStreamChunk 只有在收到该字段时才发 done chunk，于是 UI 侧既拿
+/// 不到 maxTokens、也拿不到 stop，旧策略一律不续写 —— 用户看到的就是
+/// 「话说一半就没了」。
+///
+/// 但不能「没有 finish_reason 就续写」：正常结束同样可能不带该字段，那样每条
+/// 回复都要白跑一轮请求，还容易被模型理解成「重新回答」而复述。所以只认明显
+/// 写了一半的形态：
+///  * 未闭合的 ``` 代码围栏（出现奇数次）；
+///  * 以逗号 / 顿号 / 冒号 / 连接符 / 左括号 / 竖线这类「后面还该有内容」的
+///    符号结尾。
+/// 其余（句号、右括号、右引号、普通字符收尾）都按「已经说完了」处理。
+bool looksTruncatedText(String text) {
+  final trimmed = text.trimRight();
+  if (trimmed.isEmpty) return false;
+  final fences = RegExp(r'```').allMatches(trimmed).length;
+  if (fences.isOdd) return true;
+  const trailing = <int>[
+    0x2C, // ,
+    0xFF0C, // ，
+    0x3001, // 、
+    0x3A, // :
+    0xFF1A, // ：
+    0x3B, // ;
+    0xFF1B, // ；
+    0x2D, // -
+    0x2014, // —
+    0x2013, // –
+    0x28, // (
+    0xFF08, // （
+    0x7B, // {
+    0x3010, // 【
+    0x300A, // 《
+    0x7C, // |
+    0x2F, // /
+    0x3D, // =
+  ];
+  return trailing.contains(trimmed.codeUnitAt(trimmed.length - 1));
+}
+
+/// 续写轮去重：有些模型会把「已经写过的那段」原样再输出一遍（尤其把
+/// continue 指令理解成「重新回答」的兼容网关）。若新段落以旧正文的结尾片段
+/// 开头，就把这段重复去掉 —— 否则用户会看到同一句话出现两遍。
+///
+/// 只在**续写轮**调用（正常首轮不适用）。最短重叠 12 字符，避免把
+/// 「好的，」这类常见短前缀误判成重复而吞掉真正的新内容。
+String stripRepeatedContinuation(String previous, String next) {
+  if (previous.isEmpty || next.isEmpty) return next;
+  if (next.startsWith(previous)) {
+    return next.substring(previous.length).trimLeft();
+  }
+  final maxOverlap = math.min(previous.length, next.length);
+  for (var len = maxOverlap; len >= 12; len--) {
+    if (previous.endsWith(next.substring(0, len))) {
+      return next.substring(len);
+    }
+  }
+  return next;
+}
+
+/// 与 flutter_ai_sdk 的 TokenCounter 同一条估算公式（去空白字符数 / 4 与
+/// 词数 × 1.3 取平均）。
+///
+/// 为什么自己实现而不直接调 SDK：请求侧裁剪必须能在离线测试里精确断言；而且
+/// [ai.ContextManager] 用的是同一条公式 —— 只要我们的估算不小于它的估算，
+/// 它内部的 slidingWindow 就永远不会触发（那套 LRU 会删出孤立 tool 消息）。
+int estimateRequestTokens(String text) {
+  if (text.isEmpty) return 0;
+  final nonWhitespace = text.replaceAll(RegExp(r'\s+'), '');
+  final charEstimate = (nonWhitespace.length / 4).ceil();
+  final words = text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length;
+  final wordEstimate = (words * 1.3).ceil();
+  return ((charEstimate + wordEstimate) / 2).ceil();
+}
+
+/// 自动续写的轮次上限与决策（纯状态机）。
+///
+/// 用类而不是散落的 bool 是为了让「最多 3 轮、空响应不续写、用户停止不续写、
+/// 有工具调用不续写」这几条硬约束能被离线测试直接驱动。达到上限后本函数永远
+/// 返回 false，因此不可能出现无限续写。
 class AiAutoContinuePolicy {
   AiAutoContinuePolicy({this.maxRounds = 3}) : assert(maxRounds > 0);
 
@@ -12409,19 +12308,35 @@ class AiAutoContinuePolicy {
 
   /// 是否应发起下一轮续写；返回 true 时内部轮次 +1。
   ///
-  /// 必须同时满足：模型明确因 maxTokens 停止、已有非空正文、用户没有按停止、
-  /// 未超过 [maxRounds]。空响应不续写 —— 否则模型只回了一个 finishReason 时
-  /// 会反复请求同一件事。
+  /// 硬约束（任意一条不满足就不续写）：用户按了停止 / 已达 [maxRounds] /
+  /// 正文为空 / 本轮带工具调用（工具轮有自己的循环，不能叠加续写）。
+  ///
+  /// 触发条件：
+  ///  * 模型明确返回 [ai.FinishReason.maxTokens]（旧行为，最可靠）；
+  ///  * finish_reason 缺失（null）或 [ai.FinishReason.unknown] —— 供应商根本
+  ///    没回该字段时，只有正文看起来被截断（见 [looksTruncatedText]）才续写，
+  ///    避免每条正常回复都白跑一轮请求。
   bool shouldContinue({
     required ai.FinishReason? finishReason,
     required String content,
     required bool stopRequested,
+    bool toolCallsPresent = false,
+    bool? contentLooksTruncated,
   }) {
     if (stopRequested || exhausted) return false;
-    if (finishReason != ai.FinishReason.maxTokens) return false;
+    if (toolCallsPresent) return false;
     if (content.trim().isEmpty) return false;
-    _rounds++;
-    return true;
+    if (finishReason == ai.FinishReason.maxTokens) {
+      _rounds++;
+      return true;
+    }
+    if (finishReason == null || finishReason == ai.FinishReason.unknown) {
+      final truncated = contentLooksTruncated ?? looksTruncatedText(content);
+      if (!truncated) return false;
+      _rounds++;
+      return true;
+    }
+    return false;
   }
 
   void reset() => _rounds = 0;
@@ -12447,6 +12362,100 @@ int requestHistoryStartIndex(List<String> roles, {int maxMessages = 100}) {
   // 避免请求以 assistant 开头。
   final nearestUser = roles.lastIndexOf('user', start);
   return nearestUser >= 0 ? nearestUser : start;
+}
+
+/// 一条 UI 消息在「请求侧裁剪」里的轻量视图。
+///
+/// 只带裁剪需要的字段（角色 / 是否带工具调用 / 是否带工具结果 / token 估算），
+/// 这样裁剪逻辑是纯函数，测试不必构造整条 UI 消息 record。
+class AiHistoryEntry {
+  const AiHistoryEntry({
+    required this.role,
+    this.hasToolCalls = false,
+    this.hasToolResults = false,
+    this.estimatedTokens = 0,
+  });
+
+  final String role;
+  final bool hasToolCalls;
+  final bool hasToolResults;
+  final int estimatedTokens;
+
+  bool get isUser => role == 'user';
+}
+
+/// 请求侧「结构安全」裁剪：返回应该装进 context 的消息下标（升序）。
+///
+/// 根因（用户反馈「连续对话能力很差 / 聊着聊着就断」）：
+///  * 只按条数截断，长对话仍会撞上 [ai.ContextManager] 的 slidingWindow；
+///    而 SDK 的 _removeLRUMessage 是「删最早一条 user + 紧随其后的 assistant」，
+///    如果那条 assistant 带着 tool_calls，它后面的 tool 消息就变成孤立消息，
+///    OpenAI / Anthropic 直接 400 —— 表现为对话突然「坏掉」；
+///  * 按 token 截断时若正好切在 assistant(tool_calls) 与 tool_result 之间，
+///    同样是孤立 tool 消息。
+///
+/// 因此这里同时做三件事：
+///  1. 按条数 + 估算 token 双重预算，从**最新**往前取；
+///  2. 窗口起点向后对齐到 user 消息 —— 一个 user 回合 = user + 其后所有
+///     assistant 消息，工具调用与工具结果都在同一回合内，不会被拆开；
+///  3. 首个 user 回合若被裁掉，仍单独保留「首条 user 消息」：那是用户的原始
+///     意图，长会话里模型丢了它就会答非所问。
+///
+/// [maxTokens] <= 0 表示不做 token 预算（只按条数，等价旧行为）。
+List<int> requestHistoryIndices(
+  List<AiHistoryEntry> entries, {
+  int maxMessages = 100,
+  int maxTokens = 0,
+}) {
+  final count = entries.length;
+  if (count == 0) return const <int>[];
+  final limit = maxMessages <= 0 ? count : maxMessages;
+  var start = count;
+  var used = 0;
+  for (var i = count - 1; i >= 0; i--) {
+    final nextCount = count - i;
+    final nextTokens = used + entries[i].estimatedTokens;
+    // 至少保留一条（最新的那条永远进窗口），否则预算极小时会得到空上下文。
+    if (nextCount > limit) break;
+    if (maxTokens > 0 && nextTokens > maxTokens && i < count - 1) break;
+    used = nextTokens;
+    start = i;
+  }
+  // 起点对齐到 user 回合边界：assistant(tool_calls) 与 tool_result 必须同组。
+  var aligned = start;
+  while (aligned < count && !entries[aligned].isUser) {
+    aligned++;
+  }
+  if (aligned < count) {
+    start = aligned;
+  } else {
+    // 窗口里一条 user 都没有（预算极小 / 异常历史）：向前找最近一条 user，
+    // 避免请求以 assistant 或 tool 消息开头。
+    var back = start - 1;
+    while (back >= 0 && !entries[back].isUser) {
+      back--;
+    }
+    if (back >= 0) start = back;
+  }
+  // 对齐后若把某个 tool_result 与它的 tool_use 拆开（窗口首条就是工具结果），
+  // 再向前退到该回合的 user 消息。
+  var guard = 0;
+  while (start > 0 && entries[start].hasToolResults && guard++ < count) {
+    start--;
+    while (start > 0 && !entries[start].isUser) {
+      start--;
+    }
+  }
+  final indices = <int>[for (var i = start; i < count; i++) i];
+  // 保留首条 user 意图：窗口丢掉了它时单独补回最前面（一条 user 消息的
+  // token 开销远小于「模型不知道用户到底要什么」的代价）。
+  if (start > 0) {
+    final firstUser = entries.indexWhere((e) => e.isUser);
+    if (firstUser >= 0 && firstUser < start && !indices.contains(firstUser)) {
+      indices.insert(0, firstUser);
+    }
+  }
+  return indices;
 }
 
 /// 组装 assistant 消息的 UI blocks（思考 / 正文 / 工具调用）。
@@ -12767,6 +12776,7 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
   @override
   void importMessages(List<Map<String, dynamic>> messages) {
     _historyFilePath = null;
+    _historyTitleOverride = null;
     setState(() {
       _messages.clear();
       for (final m in messages) {
@@ -12808,6 +12818,13 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
   /// File backing the current session. Reused so auto-saves overwrite instead of
   /// creating a new history entry after every assistant turn.
   String? _historyFilePath;
+
+  /// 用户手动改过的会话标题（仅当前会话有效）。
+  ///
+  /// _saveCurrentSession 每次都用「首条用户消息前 24 字」重新推导标题并原地
+  /// 覆盖同一个文件，于是「重命名当前会话 → 再发一条消息」会把标题静默改
+  /// 回去。这里记住用户的选择，保存时优先用它；新建/删除当前会话时清空。
+  String? _historyTitleOverride;
   bool _savingHistory = false;
 
   Future<void> _pickAttachments() async {
@@ -12957,6 +12974,9 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
   /// 最近一次工具执行结果文本。_handleToolCalls 用它回填给模型，而不再依赖
   /// `_messages.last.content` —— 停止时 UI 追加会被抑制，但模型结果不能丢。
   String _lastToolResultText = '';
+
+  /// 单个工具调用的计时器：结果块写入 durationMs，工具卡片据此显示耗时。
+  final Stopwatch _toolCallWatch = Stopwatch();
   List<PipelineNode>? _pendingNodes;
   List<PipelineConnection>? _pendingConnections;
   bool _pendingIsModify = false;
@@ -13510,7 +13530,11 @@ Available actions: __TOOLS__''';
     if (ok == true) {
       await action();
     } else {
-      _addToolResult('confirm', s.isZh ? '用户拒绝执行 $desc' : 'User denied: $desc');
+      _addToolResult(
+        'confirm',
+        s.isZh ? '用户拒绝执行 $desc' : 'User denied: $desc',
+        isError: true,
+      );
     }
   }
 
@@ -13533,8 +13557,16 @@ Available actions: __TOOLS__''';
       ];
       _activeToolCallId = call.id;
       _lastToolResultText = '';
+      // 工具卡片要显示「耗时」：每个调用单独计时。
+      _toolCallWatch
+        ..reset()
+        ..start();
       if (!_toolActions.contains(tool)) {
-        _addToolResult('blocked', 'Unknown or unavailable action.');
+        _addToolResult(
+          'blocked',
+          'Unknown or unavailable action.',
+          isError: true,
+        );
         results.add(
           ai.Message.toolResult(
             toolCallId: call.id,
@@ -13557,7 +13589,11 @@ Available actions: __TOOLS__''';
       }
       // 被禁用的工具：即使 AI 调用了也不执行（也不告诉 AI 结果）
       if (_disabledTools.contains(tool)) {
-        _addToolResult('blocked', 'Tool $tool is disabled by user');
+        _addToolResult(
+          'blocked',
+          'Tool $tool is disabled by user',
+          isError: true,
+        );
         results.add(
           ai.Message.toolResult(
             toolCallId: call.id,
@@ -14016,9 +14052,19 @@ Available actions: __TOOLS__''';
     return int.tryParse(raw) ?? double.tryParse(raw) ?? raw;
   }
 
-  void _addToolResult(String toolName, String result) {
+  void _addToolResult(
+    String toolName,
+    String result, {
+    bool isError = false,
+  }) {
     // 结果文本始终记录：_handleToolCalls 需要把它回填给模型。
     _lastToolResultText = result;
+    // 结果写入即停止计时（下一次工具调用会 reset()+start()）。不 stop 的话
+    // isRunning 恒为真：迟到的 / 并非本次计时的结果也会被写上错误的
+    // durationMs，异步工具（pick_file / ask_user）还会把上一段等待算进去。
+    final int? elapsedMs =
+        _toolCallWatch.isRunning ? _toolCallWatch.elapsedMilliseconds : null;
+    _toolCallWatch.stop();
     // 停止 / 重发竞态：工具执行（确认弹窗 / 文件选择）返回时用户可能已经
     // 停止，甚至已经发出新请求。此时把迟到气泡追加到列表尾部会排在新消息
     // 之后（错序），所以只回填模型结果、不写 UI。
@@ -14035,6 +14081,11 @@ Available actions: __TOOLS__''';
             'name': toolName,
             'content': result,
             if (_activeToolCallId != null) 'toolCallId': _activeToolCallId,
+            // 工具卡片据此显示「失败」：被拦截 / 被禁用 / 用户拒绝的工具根本
+            // 没执行，旧实现只认 'Error:' 前缀，会把它们渲染成绿色「完成 ✓」。
+            if (isError) 'isError': true,
+            // 工具卡片显示耗时（毫秒）；旧历史没有这个字段时只显示状态。
+            'durationMs': ?elapsedMs,
           },
         ],
       ));
@@ -14277,7 +14328,10 @@ Available actions: __TOOLS__''';
             ? [_pipelineToolDefinition()]
             : null,
         baseUrl: _sdkBaseUrl(apiUrl, anthropic: anthropic),
-        timeout: const Duration(seconds: 60),
+        // 这个超时是「整条请求」的看门狗，不是首字节超时：60s 会把长回答 /
+        // 推理模型直接掐断（用户反馈「连续对话经常截断」）。放到 5 分钟，
+        // 同时 _send 的异常分支会保留已经流式收到的内容并标注「已中断」。
+        timeout: const Duration(minutes: 5),
         headers: {
           if (anthropic) 'anthropic-version': '2023-06-01',
           ...?customHeaders,
@@ -14432,16 +14486,52 @@ Available actions: __TOOLS__''';
       final imageBudget = AiAttachmentBudget();
       final msgIdx = _messages.length - 1;
       final currentUser = _messages[msgIdx - 1];
-      // 请求侧历史窗口：UI 列表不动。起点向最近 user 消息对齐，避免把
-      // assistant tool_calls 和紧随其后的 tool_result 拆散。
-      final windowStart = requestHistoryStartIndex(
-        _messages.map((message) => message.role).toList(),
+      // 请求侧历史窗口：UI 列表不动。这里同时做条数 + token 双重预算，并把
+      // 窗口起点对齐到 user 回合边界，保证 assistant(tool_calls) 与它的
+      // tool_result 永远成对出现（见 requestHistoryIndices 的根因说明）。
+      final contextWindow = profile?.contextWindow ?? cfg.aiContextWindow;
+      final systemTokens = estimateRequestTokens(fullPrompt) + 4;
+      // 留 10% 余量：SDK 的 ContextManager 用同一条公式再估一次，只要我们的
+      // 估算不小于它，它内部的 slidingWindow 就不会触发（那套 LRU 会删出孤立
+      // tool 消息，供应商直接 400）。
+      // 下限必须是 1 而不是 0：requestHistoryIndices 把 maxTokens <= 0 当作
+      // 「不做 token 预算」，于是「上下文窗口已经装不下 system + maxTokens」
+      // 这种最该裁剪的边界反而会发全量历史，触发 SDK 的 slidingWindow
+      // 删出孤立 tool_result → 供应商 400。
+      final historyTokenBudget = math.max(
+        1,
+        ((contextWindow - effMaxTokens - systemTokens) * 0.9).round(),
+      );
+      final historyEntries = <AiHistoryEntry>[];
+      for (var i = 0; i < msgIdx - 1; i++) {
+        final message = _messages[i];
+        final blocks = message.blocks ?? const <Map<String, dynamic>>[];
+        var tokens = estimateRequestTokens(message.content) + 4;
+        for (final block in blocks) {
+          final inline =
+              block['thinking'] ?? block['text'] ?? block['content'] ?? '';
+          tokens += estimateRequestTokens(inline.toString());
+          final input = block['input'];
+          if (input is Map) tokens += estimateRequestTokens(jsonEncode(input));
+        }
+        historyEntries.add(
+          AiHistoryEntry(
+            role: message.role,
+            hasToolCalls: blocks.any((b) => b['type'] == 'tool_use'),
+            hasToolResults: blocks.any((b) => b['type'] == 'tool_result'),
+            estimatedTokens: tokens,
+          ),
+        );
+      }
+      final historyIndices = requestHistoryIndices(
+        historyEntries,
+        maxTokens: historyTokenBudget,
       );
       // 已知的 assistant tool_call id：只有它出现过，后面的 tool_result 才能
       // 以 tool 角色发回。老版本历史存了 toolCallId 但没存 tool_use 块，直接
       // 发孤立 tool 消息会被 OpenAI / Anthropic 400 拒绝。
       final pendingToolCallIds = <String>{};
-      for (var i = windowStart; i < msgIdx - 1; i++) {
+      for (final i in historyIndices) {
         final message = _messages[i];
         final blocks = message.blocks ?? const <Map<String, dynamic>>[];
         final toolCalls = assistantToolCallsFromBlocks(blocks);
@@ -14674,10 +14764,15 @@ Available actions: __TOOLS__''';
           toolCalls = response.toolCalls ?? const <ai.ToolCallContent>[];
         }
 
-        final roundText = mergeToolRoundText(
+        final rawRoundText = mergeToolRoundText(
           streamed: responseText.toString(),
           nonStream: response?.text,
         );
+        // 续写轮去重：模型把已经写过的内容又输出一遍时先剥掉重复前缀，
+        // 否则用户会看到同一段话出现两次（「续写绝不重复内容」）。
+        final roundText = addedPartialAssistant
+            ? stripRepeatedContinuation(roundBase, rawRoundText)
+            : rawRoundText;
         bubbleContent = mergeContinuationText(roundBase, roundText);
         final inTok = response?.usage?.promptTokens ?? usage?.promptTokens;
         final outTok =
@@ -14720,11 +14815,16 @@ Available actions: __TOOLS__''';
           // 明确给出 maxTokens；此时把「继续」指令只放进请求上下文，下一轮
           // 合并进同一个气泡。空正文 / 用户停止 / 达到 3 轮上限都不续写，
           // 因此不会无限循环。
+          // finishReason 取舍：非流式补全（工具轮）的 response 更权威；纯流式
+          // 时 response 为 null，用 done chunk 的 streamFinishReason。两者都缺失
+          //（中转 / 自建网关根本不回 finish_reason）时用 looksTruncatedText
+          // 判定「是否看起来被截断」，不再一律放弃续写。
           final finishReason = response?.finishReason ?? streamFinishReason;
           if (autoContinue.shouldContinue(
             finishReason: finishReason,
             content: bubbleContent,
             stopRequested: request.stopRequested,
+            toolCallsPresent: toolCalls.isNotEmpty,
           )) {
             if (!mounted || request.stopRequested) break;
             // 已被截断的部分留在 context 里作为 assistant 回合，下一轮只说
@@ -14841,14 +14941,25 @@ Available actions: __TOOLS__''';
       }
       appState.logAiResponse('AI request failed', error: true);
       if (!mounted || !_isCurrentRequest(request)) return;
-      // 失败时同样清掉空占位，避免「空白气泡 + 错误气泡」两个并排。
-      _removeTrailingEmptyAssistant();
+      // 关键：超时 / 断流时**不能**丢掉已经流式收到的内容。旧实现先清掉占位
+      // 再追加一条「请求失败」，用户看到的是「写了半屏的回答凭空消失」——
+      // 这正是「连续对话总是截断」的第二个来源（第一个是 60s 超时）。
+      final partialContent =
+          _messages.isNotEmpty && _messages.last.role == 'assistant'
+          ? _messages.last.content.trim()
+          : '';
+      // 只有占位确实是空的时候才移除，避免「空白气泡 + 提示气泡」并排。
+      if (partialContent.isEmpty) _removeTrailingEmptyAssistant();
       setState(() {
         _messages.add((
           role: 'assistant',
-          content: widget.strings.isZh
-              ? '请求失败，请检查连接与模型设置。'
-              : 'Request failed. Check connection and model settings.',
+          content: partialContent.isNotEmpty
+              ? (widget.strings.isZh
+                    ? '（已中断）请求失败，上面已生成的内容已保留。'
+                    : '(Interrupted) The request failed; the partial answer above is kept.')
+              : (widget.strings.isZh
+                    ? '请求失败，请检查连接与模型设置。'
+                    : 'Request failed. Check connection and model settings.'),
           inputTokens: null,
           outputTokens: null,
           blocks: null,
@@ -15145,6 +15256,19 @@ Available actions: __TOOLS__''';
                     ),
                   ),
                   Flexible(child: _buildModelSelector(scheme, s)),
+                  // 新建会话：清空当前对话并断开历史文件绑定。
+                  // 桌面抽屉 / 独立窗口此前都没有这个入口（用户反馈「独立窗口
+                  // 仍然缺少很多组件」），想开新话题只能把旧对话整个删掉。
+                  IconButton(
+                    icon: const Icon(Icons.add_comment_outlined, size: 17),
+                    tooltip: s.isZh ? '新建会话' : 'New chat',
+                    onPressed: _startNewChat,
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                    padding: EdgeInsets.zero,
+                  ),
                   // 在节点编辑器内浮出小窗：主窗口抽屉专属入口。
                   if (widget.onInlineFloat != null)
                     IconButton(
@@ -15369,89 +15493,73 @@ Available actions: __TOOLS__''';
     final current = options.contains(raw)
         ? raw
         : (options.isNotEmpty ? options.first : '');
-    final label = current.isEmpty
-        ? (s.isZh ? '未配置' : 'No model')
-        : aiModelOptionLabel(cfg, current, _effectiveProfile);
+    // 模型列表统一走 OptionMenuBar 的浮层：与 PC 顶栏同一个外观 / 动画，
+    // 长模型名在 280 宽的浮层里完整可见（系统 PopupMenu 只有 220 宽、
+    // 还把选项挤成省略号）。左侧图标按模型 id 判定品牌，判不出来用 memory。
+    Widget leadingFor(String model) {
+      final brand = brandForModelId(model);
+      return brand == null
+          ? Icon(Icons.memory, size: 13, color: scheme.primary)
+          : BrandLogo(brand: brand, size: 13, color: scheme.primary);
+    }
+
     return SizedBox(
       width: width,
       height: 28,
-      child: PopupMenuButton<String>(
+      child: OptionMenuBar<String>(
         key: const ValueKey('ai-mobile-model-chip'),
-        tooltip: s.isZh ? '切换模型' : 'Switch model',
-        padding: EdgeInsets.zero,
-        constraints: const BoxConstraints(minWidth: 220, maxWidth: 320),
-        onSelected: (model) {
+        expandable: true,
+        searchable: options.length > 4,
+        searchHint: s.isZh ? '搜索模型' : 'Search models',
+        menuWidth: 280,
+        triggerHeight: 28,
+        leadingWidget: current.isEmpty ? null : leadingFor(current),
+        value: current,
+        items: [
+          for (final model in options)
+            OptionItem(
+              model,
+              aiModelOptionLabel(cfg, model, _effectiveProfile),
+              leading: leadingFor(model),
+              keywords: model,
+            ),
+          if (options.isEmpty)
+            OptionItem('', s.isZh ? '未配置' : 'No model'),
+        ],
+        onChanged: (model) {
+          if (model.isEmpty) return;
           // 与 PC 顶栏同一写回路径：既更新配置又同步会话级覆盖，避免
           // 「点了没反应」或「发出去还是旧模型」。
           unawaited(applyAiModelChoice(context, model));
           setState(() => _sessionModel = model);
         },
-        itemBuilder: (_) => [
-          for (final model in options)
-            PopupMenuItem<String>(
-              value: model,
-              child: Row(
-                children: [
-                  Icon(
-                    model == current
-                        ? Icons.radio_button_checked
-                        : Icons.radio_button_off,
-                    size: 13,
-                    color: model == current ? scheme.primary : scheme.outline,
-                  ),
-                  const SizedBox(width: 6),
-                  Flexible(
-                    child: Text(
-                      aiModelOptionLabel(cfg, model, _effectiveProfile),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          if (options.isEmpty)
-            PopupMenuItem<String>(
-              enabled: false,
-              child: Text(
-                s.isZh
-                    ? '未配置模型（设置 → AI 中添加）'
-                    : 'No models configured (Settings → AI)',
-                style: TextStyle(fontSize: 11, color: scheme.outline),
-              ),
-            ),
-        ],
-        child: Container(
-          height: 28,
-          padding: const EdgeInsets.symmetric(horizontal: 7),
-          decoration: BoxDecoration(
-            color: scheme.surface.withAlpha(120),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: scheme.outlineVariant.withAlpha(90)),
-          ),
-          child: Row(
-            children: [
-              Icon(Icons.memory, size: 12, color: scheme.primary),
-              const SizedBox(width: 4),
-              Expanded(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                    color: current.isEmpty ? scheme.outline : scheme.onSurface,
-                  ),
-                ),
-              ),
-              Icon(Icons.arrow_drop_down, size: 14, color: scheme.outline),
-            ],
-          ),
-        ),
       ),
     );
+  }
+
+  /// 新建会话：清空当前对话、断开历史文件绑定，回到「未开始」状态。
+  ///
+  /// 不这么做的话，清空消息后 _historyFilePath 仍指向旧文件，下一轮自动保存
+  /// 会把新话题写回旧会话里（两个话题混成一条历史）。
+  void _startNewChat() {
+    if (_loading) _stopGeneration();
+    setState(() {
+      _messages.clear();
+      _historyFilePath = null;
+      _historyTitleOverride = null;
+      // 注意：_historySessions 是 listSessions() 读出来的「已保存会话」，
+      // 新建会话没有理由清空它（清空会让侧栏当场显示「暂无历史记录」，
+      // 而磁盘上的会话文件都还在，用户以为被删了）。
+      _totalInputTokens = 0;
+      _totalOutputTokens = 0;
+      _lastGenSpeed = null;
+      _pendingNodes = null;
+      _pendingConnections = null;
+      _titleGenerated = false;
+      _ctrl.clear();
+      _attachments.clear();
+    });
+    widget.onTitleGenerated?.call('');
   }
 
   /// 关闭移动端弹层 / 侧栏：优先用宿主传入的 onCloseRequested，退化为折叠或 pop。
@@ -15593,18 +15701,42 @@ Available actions: __TOOLS__''';
       );
     }
     final selectedModel = models.contains(selected) ? selected : models.first;
-    // 不能再用固定 190px：模型名 + 「供应商 · 」前缀会被硬截断成
-    // “deepseek-chat…” 甚至只剩省略号。让菜单随内容收缩，但设上限，
-    // 保证右侧工具按钮不被顶走。
+    // 模型名过长时不能显示不全：触发按钮放宽到 260，**浮层固定 340 宽**并
+    // 支持搜索 —— 之前菜单跟着 200px 的按钮宽度走，「供应商 · 模型」直接被
+    // 省略号吃掉（用户反馈「模型名称过长显示不全」）。
+    //
+    // 左侧图标按模型 id 判定品牌（本地 SVG）；判不出来才用 memory 图标。
+    // 旧 OptionMenuBar 用 Icons.circle_outlined 兜底，于是「模型选择框左边
+    // 一直有个圆圈」——现在没有品牌就不渲染圆圈。
+    Widget leadingFor(String model) {
+      final brand = brandForModelId(model);
+      return brand == null
+          ? Icon(Icons.memory, size: 15, color: scheme.onSurfaceVariant)
+          : BrandLogo(
+              brand: brand,
+              size: 15,
+              color: scheme.onSurfaceVariant,
+            );
+    }
+
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 200),
+      constraints: const BoxConstraints(maxWidth: 260),
       child: OptionMenuBar<String>(
         expandable: true,
-        value: selectedModel,
+        searchable: true,
+        searchHint: s.isZh ? '搜索模型' : 'Search models',
+        menuWidth: 340,
         triggerHeight: 34,
+        leadingWidget: leadingFor(selectedModel),
+        value: selectedModel,
         items: [
           for (final model in models)
-            OptionItem(model, aiModelOptionLabel(cfg, model, profile)),
+            OptionItem(
+              model,
+              aiModelOptionLabel(cfg, model, profile),
+              leading: leadingFor(model),
+              keywords: model,
+            ),
         ],
         onChanged: (model) {
           unawaited(applyAiModelChoice(context, model));
@@ -15653,7 +15785,15 @@ Available actions: __TOOLS__''';
                         _messages[end].role == 'assistant') {
                       end++;
                     }
-                    final process = <Widget>[];
+                    // 过程块跨消息配对：tool_use 与紧随其后的 tool_result 合并成
+                    // 一张工具卡片（见 _buildProcessWidgets）。
+                    final process = <Widget>[
+                      ..._buildProcessWidgets(
+                        start: i,
+                        end: end,
+                        scheme: scheme,
+                      ),
+                    ];
                     final answers = <Widget>[];
                     for (var j = i; j < end; j++) {
                       final current = _messages[j];
@@ -15661,12 +15801,6 @@ Available actions: __TOOLS__''';
                       final resultOnly =
                           blocks.isNotEmpty &&
                           blocks.every((b) => b['type'] == 'tool_result');
-                      for (final block in blocks) {
-                        if (block['type'] != 'text' &&
-                            block['type'] != 'attachment') {
-                          process.add(_buildBlock(block, scheme));
-                        }
-                      }
                       final calls = RegExp(
                         r'\[TOOL_CALL:([^\]]+)\]',
                       ).allMatches(current.content);
@@ -16483,32 +16617,7 @@ Available actions: __TOOLS__''';
       );
     } else {
       for (final session in _historySessions) {
-        items.add(
-          ListTile(
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 8,
-              vertical: 2,
-            ),
-            leading: const Icon(Icons.forum_outlined, size: 19),
-            title: Text(
-              session['title'] as String? ?? 'Untitled',
-              maxLines: 2,
-              style: const TextStyle(fontSize: 12.5),
-              overflow: TextOverflow.ellipsis,
-            ),
-            subtitle: Text(
-              session['model'] as String? ?? '',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 11),
-            ),
-            enabled: !_loading && _activeRequest == null,
-            onTap: () {
-              _loadHistorySession(session, s);
-              setState(() => _historyOpen = false);
-            },
-          ),
-        );
+        items.add(_buildHistorySessionTile(session, s));
       }
     }
     items.add(Divider(height: 12, color: scheme.outlineVariant.withAlpha(50)));
@@ -16541,6 +16650,7 @@ Available actions: __TOOLS__''';
         onTap: () async {
           await AiChatHistory.clearAll();
           _historyFilePath = null;
+          _historyTitleOverride = null;
           if (mounted) setState(() => _historySessions = []);
         },
       ),
@@ -16633,33 +16743,7 @@ Available actions: __TOOLS__''';
                         : ListView(
                             children: [
                               for (final session in _historySessions)
-                                ListTile(
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 2,
-                                  ),
-                                  leading: const Icon(
-                                    Icons.forum_outlined,
-                                    size: 19,
-                                  ),
-                                  title: Text(
-                                    session['title'] as String? ?? 'Untitled',
-                                    maxLines: 2,
-                                    style: const TextStyle(fontSize: 12.5),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  subtitle: Text(
-                                    session['model'] as String? ?? '',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(fontSize: 11),
-                                  ),
-                                  enabled: !_loading && _activeRequest == null,
-                                  onTap: () {
-                                    _loadHistorySession(session, s);
-                                    setState(() => _historyOpen = false);
-                                  },
-                                ),
+                                _buildHistorySessionTile(session, s),
                             ],
                           ),
                   ),
@@ -16672,6 +16756,205 @@ Available actions: __TOOLS__''';
     ),
   );
 
+  /// 历史会话项（桌面侧栏与移动端历史页共用）。
+  ///
+  /// 支持桌面右键（onSecondaryTapDown）、移动端长按，以及行尾「更多」按钮
+  /// 三种入口 —— 用户反馈「历史记录不支持右键删除单个对话」，此前只有顶部
+  /// 「清空历史」，想删一条只能全清。
+  Widget _buildHistorySessionTile(
+    Map<String, dynamic> session,
+    AppStrings s,
+  ) {
+    final scheme = Theme.of(context).colorScheme;
+    final enabled = !_loading && _activeRequest == null;
+    return GestureDetector(
+      // 生成中禁用：否则右键/长按仍能打开菜单并删掉**正在生成**的当前会话，
+      // 流式 listener 随后对已清空的 _messages 按下标赋值 → RangeError。
+      onSecondaryTapDown: enabled
+          ? (details) => _showHistoryItemMenu(session, details.globalPosition)
+          : null,
+      onLongPressStart: enabled
+          ? (details) => _showHistoryItemMenu(session, details.globalPosition)
+          : null,
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        leading: const Icon(Icons.forum_outlined, size: 19),
+        title: Text(
+          session['title'] as String? ?? 'Untitled',
+          maxLines: 2,
+          style: const TextStyle(fontSize: 12.5),
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Text(
+          session['model'] as String? ?? '',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 11),
+        ),
+        trailing: Builder(
+          builder: (buttonContext) => IconButton(
+            tooltip: s.isZh ? '对话操作' : 'Chat actions',
+            iconSize: 16,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            color: scheme.outline,
+            onPressed: enabled
+                ? () {
+                    final box =
+                        buttonContext.findRenderObject() as RenderBox?;
+                    final pos = box == null
+                        ? Offset.zero
+                        : box.localToGlobal(Offset(0, box.size.height));
+                    _showHistoryItemMenu(session, pos);
+                  }
+                : null,
+            icon: const Icon(Icons.more_horiz),
+          ),
+        ),
+        enabled: enabled,
+        onTap: () {
+          _loadHistorySession(session, s);
+          setState(() => _historyOpen = false);
+        },
+      ),
+    );
+  }
+
+  /// 历史会话的操作菜单：重命名 / 删除此对话。
+  ///
+  /// 用 showAnimatedMenu（与 OptionMenuBar 同一套浮层外观与动画），位置取
+  /// 右键 / 长按的全局坐标，桌面与移动端共用同一份实现。
+  Future<void> _showHistoryItemMenu(
+    Map<String, dynamic> session,
+    Offset position,
+  ) async {
+    final s = widget.strings;
+    final file = session['_file'] as String?;
+    if (file == null || file.isEmpty) return;
+    final scheme = Theme.of(context).colorScheme;
+    Widget row(IconData icon, String label, {Color? color}) => Row(
+      children: [
+        Icon(icon, size: 15, color: color ?? scheme.onSurfaceVariant),
+        const SizedBox(width: 8),
+        Text(
+          label,
+          style: TextStyle(fontSize: 12.5, color: color ?? scheme.onSurface),
+        ),
+      ],
+    );
+    final action = await showAnimatedMenu<String>(
+      context: context,
+      position: position,
+      width: 168,
+      items: [
+        AnimatedMenuEntry<String>(
+          value: 'rename',
+          child: row(Icons.edit_outlined, s.isZh ? '重命名' : 'Rename'),
+        ),
+        AnimatedMenuEntry<String>(
+          value: 'delete',
+          child: row(
+            Icons.delete_outline,
+            s.isZh ? '删除此对话' : 'Delete chat',
+            color: scheme.error,
+          ),
+        ),
+      ],
+    );
+    if (!mounted || action == null) return;
+    if (action == 'rename') {
+      await _renameHistorySession(session);
+    } else if (action == 'delete') {
+      await _deleteHistorySession(session);
+    }
+  }
+
+  /// 删除单条历史会话。
+  ///
+  /// 删的正好是**当前会话**时必须断开 _historyFilePath 并清空对话，否则下一次
+  /// 自动保存会把同一个文件重新写出来（用户会看到「删了又回来」）。
+  Future<void> _deleteHistorySession(Map<String, dynamic> session) async {
+    final file = session['_file'] as String?;
+    if (file == null || file.isEmpty) return;
+    await AiChatHistory.deleteSession(file);
+    final wasCurrent = _historyFilePath == file;
+    if (wasCurrent) {
+      // 先断开正在进行的生成：否则流式回调会在清空后的 _messages 上按
+      // activeAssistantIdx 赋值（越界 RangeError，且异常不在 _send 的
+      // try 里，会变成未捕获异常）。
+      if (_loading || _activeRequest != null) _stopGeneration();
+      _historyFilePath = null;
+      _historyTitleOverride = null;
+      if (mounted) {
+        setState(() {
+          _messages.clear();
+          _totalInputTokens = 0;
+          _totalOutputTokens = 0;
+          _lastGenSpeed = null;
+          _pendingNodes = null;
+          _pendingConnections = null;
+          _titleGenerated = false;
+        });
+      }
+      widget.onTitleGenerated?.call('');
+    }
+    await _loadHistorySessions();
+    if (!mounted) return;
+    showToast(context, widget.strings.isZh ? '对话已删除' : 'Chat deleted');
+  }
+
+  /// 重命名单条历史会话：改标题后原地覆盖同一个文件（消息原样回写）。
+  Future<void> _renameHistorySession(Map<String, dynamic> session) async {
+    final file = session['_file'] as String?;
+    if (file == null || file.isEmpty) return;
+    final s = widget.strings;
+    final ctrl = TextEditingController(text: session['title'] as String? ?? '');
+    final title = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(s.isZh ? '重命名对话' : 'Rename chat'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: InputDecoration(labelText: s.isZh ? '标题' : 'Title'),
+          onSubmitted: (value) => Navigator.of(dialogContext).pop(value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(s.isZh ? '取消' : 'Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(ctrl.text.trim()),
+            child: Text(s.isZh ? '确定' : 'OK'),
+          ),
+        ],
+      ),
+    );
+    // 对话框退场动画（~150ms）期间 TextField 仍可能重建，立刻 dispose 会命中
+    // 「A TextEditingController was used after being disposed」。
+    Future<void>.delayed(const Duration(milliseconds: 300), ctrl.dispose);
+    if (!mounted || title == null || title.isEmpty) return;
+    await AiChatHistory.saveSession(
+      title: title,
+      provider: (session['provider'] as String?) ?? _effectiveProvider,
+      model: (session['model'] as String?) ?? _effectiveModel,
+      messages: ((session['messages'] as List?) ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .toList(),
+      filePath: file,
+    );
+    if (file == _historyFilePath) {
+      // 当前会话：记住新标题，否则下一次自动保存会按首条用户消息重新推导
+      // 并原地覆盖（用户的重命名静默丢失）；同时同步顶部标题。
+      _historyTitleOverride = title;
+      widget.onTitleGenerated?.call(title);
+    }
+    await _loadHistorySessions();
+    if (!mounted) return;
+    showToast(context, s.isZh ? '已重命名' : 'Renamed');
+  }
+
   /// 加载一条历史会话到当前面板。
   ///
   /// token 字段用 historyMessage*Tokens 读取：本文件此前保存写
@@ -16680,6 +16963,8 @@ Available actions: __TOOLS__''';
   void _loadHistorySession(Map<String, dynamic> entry, AppStrings s) {
     final msgs = (entry['messages'] as List?) ?? [];
     _historyFilePath = entry['_file'] as String?;
+    // 换会话了：上一个会话的手动标题不能带过来。
+    _historyTitleOverride = entry['title'] as String?;
     setState(() {
       _messages.clear();
       _messages.addAll(
@@ -16745,10 +17030,13 @@ Available actions: __TOOLS__''';
     final userMsgs = persistable.where((m) => m.role == 'user').toList();
     if (userMsgs.isEmpty) return null;
     final title = userMsgs.first.content.replaceAll(RegExp(r'\s+'), ' ').trim();
-    final t = title.isEmpty
-        ? (userMsgs.first.blocks?.firstOrNull?['name'] as String? ??
-              'Attachments')
-        : (title.length > 24 ? '${title.substring(0, 24)}…' : title);
+    // 用户手动重命名过就不要再推导（否则原地覆盖会把新标题改回去）。
+    final t =
+        _historyTitleOverride ??
+        (title.isEmpty
+            ? (userMsgs.first.blocks?.firstOrNull?['name'] as String? ??
+                  'Attachments')
+            : (title.length > 24 ? '${title.substring(0, 24)}…' : title));
     _savingHistory = true;
     try {
       final path = await AiChatHistory.saveSession(
@@ -17428,123 +17716,380 @@ Available actions: __TOOLS__''';
     );
   }
 
+  /// 过程块入口：text 走 Markdown，thinking 走思考条，tool_use / tool_result
+  /// 走工具卡片。真正的「配对」发生在 _buildProcessWidgets（它能看到同一段
+  /// assistant 消息里的全部块）；这里只处理单个块（文本协议 [TOOL_CALL:] 与
+  /// 老历史落单的工具结果都会走到这条路径）。
   Widget _buildBlock(Map<String, dynamic> block, ColorScheme scheme) {
     final type = block['type'] as String? ?? 'text';
-    // 思考 / 工具调用块的基准字号，与正文同源（移动端大一档）：
-    // 这些块在带工具调用的回复里往往占了大半篇幅，字号不跟着正文走会显得断层。
-    final double fs = isMobilePlatform ? 13 : 12;
     if (type == 'text') {
-      // 正文块也必须走 Markdown 渲染：现在 assistant 消息为了跨轮保留 tool_use
+      // 正文块也必须走 Markdown 渲染：assistant 消息为了跨轮保留 tool_use
       // 结构会带 blocks（thinking / text / tool_use），若这里退回 SelectableText，
       // 带 blocks 的回复就会丢掉标题/列表/表格/代码块，宽表格的横向滚动修复
       // 也会失效。
       return _buildAssistantContent(block['text'] as String? ?? '', scheme);
     }
-    final label = switch (type) {
-      'thinking' => '思考',
-      'tool_use' => '调用工具: ${block['name'] ?? 'unknown'}',
-      'tool_result' => '工具结果',
-      _ => type,
-    };
-    final icon = switch (type) {
-      'thinking' => Icons.psychology_outlined,
-      'tool_use' => Icons.handyman_outlined,
-      'tool_result' => Icons.receipt_long_outlined,
-      _ => Icons.info_outline,
-    };
-    final body = switch (type) {
-      'thinking' => block['thinking'] as String? ?? '',
-      'tool_use' => const JsonEncoder.withIndent(
-        '  ',
-      ).convert(block['input'] ?? {}),
-      'tool_result' => block['content']?.toString() ?? '',
-      _ => block.toString(),
-    };
-    // 思考耗时（毫秒），由流式解析记录
-    final thinkMs = (block['durationMs'] as num?)?.toInt();
-    return Theme(
-      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 4),
-        child: ExpansionTile(
-          backgroundColor: scheme.surfaceContainerHighest.withAlpha(50),
-          collapsedBackgroundColor: scheme.surfaceContainerHighest.withAlpha(
-            50,
+    if (type == 'thinking') return _buildThinkingBlock(block, scheme);
+    if (type == 'tool_use' || type == 'tool_result') {
+      return _buildToolCard(
+        use: type == 'tool_use' ? block : null,
+        result: type == 'tool_result' ? block : null,
+        scheme: scheme,
+      );
+    }
+    // 未知块：保持等宽纯文本兜底，别把整条消息渲染崩掉。
+    return _ProcessTile(
+      icon: Icons.info_outline,
+      accent: scheme.outline,
+      title: type,
+      child: SelectableText(
+        block.toString(),
+        style: TextStyle(
+          fontSize: isMobilePlatform ? 12 : 11,
+          height: 1.45,
+          fontFamily: AppTheme.monoFont,
+          color: scheme.onSurface.withAlpha(190),
+        ),
+      ),
+    );
+  }
+
+  /// 把一段连续 assistant 消息里的「过程块」拍平并配对。
+  ///
+  /// 关键点：tool_use 与它的 tool_result 在 UI 里是**两条消息**（工具结果各占
+  /// 一条，带 toolCallId），所以配对必须跨消息做；按 toolCallId 匹配，老历史
+  /// 没有 id 时退化成「紧随其后的第一个 tool_result」。
+  List<Widget> _buildProcessWidgets({
+    required int start,
+    required int end,
+    required ColorScheme scheme,
+  }) {
+    final flat = <Map<String, dynamic>>[];
+    for (var j = start; j < end; j++) {
+      for (final block in _messages[j].blocks ?? const <Map<String, dynamic>>[]) {
+        final type = block['type'] as String? ?? 'text';
+        if (type == 'text' || type == 'attachment') continue;
+        flat.add(block);
+      }
+    }
+    final consumed = <int>{};
+    final widgets = <Widget>[];
+    for (var i = 0; i < flat.length; i++) {
+      if (consumed.contains(i)) continue;
+      final block = flat[i];
+      final type = block['type'] as String? ?? 'text';
+      if (type == 'thinking') {
+        widgets.add(_buildThinkingBlock(block, scheme));
+        continue;
+      }
+      if (type == 'tool_use') {
+        final id = block['id'] as String?;
+        int? resultIdx;
+        for (var k = i + 1; k < flat.length; k++) {
+          if (consumed.contains(k)) continue;
+          if (flat[k]['type'] != 'tool_result') continue;
+          final resultId = flat[k]['toolCallId'] as String?;
+          // 有 id 时严格匹配；任一侧缺 id（老历史 / 文本协议）则接受最近一条。
+          if (id != null && resultId != null && resultId != id) continue;
+          resultIdx = k;
+          break;
+        }
+        if (resultIdx != null) consumed.add(resultIdx);
+        widgets.add(
+          _buildToolCard(
+            use: block,
+            result: resultIdx == null ? null : flat[resultIdx],
+            scheme: scheme,
           ),
-          // 移动端整块放大一档：折叠标题是可点区域，8px 内边距 + 11px 标题
-          // 只有约 32px 高，低于 44px 触摸标准（此处是常用交互）。
-          tilePadding: EdgeInsets.symmetric(
-            horizontal: isMobilePlatform ? 10 : 8,
-          ),
-          childrenPadding: EdgeInsets.fromLTRB(
-            isMobilePlatform ? 10 : 8,
-            0,
-            isMobilePlatform ? 10 : 8,
-            8,
-          ),
-          // 思考默认折叠（紧凑）；工具结果默认展开
-          initiallyExpanded: _loading || type == 'tool_result',
-          dense: !isMobilePlatform,
-          title: Row(
-            children: [
-              Icon(
-                icon,
-                size: isMobilePlatform ? 15 : 13,
-                color: type == 'thinking' ? scheme.primary : scheme.outline,
+        );
+        continue;
+      }
+      if (type == 'tool_result') {
+        // 落单的工具结果（老历史没有 tool_use 块）：单独一张卡。
+        widgets.add(_buildToolCard(use: null, result: block, scheme: scheme));
+        continue;
+      }
+      widgets.add(_buildBlock(block, scheme));
+    }
+    return widgets;
+  }
+
+  /// 思考块：**靠左、限宽**的紧凑折叠条。
+  ///
+  /// 旧实现是全宽 ExpansionTile：和工具卡片并排时整行都被「思考」占满，视觉上
+  /// 像卡住不动（用户反馈「折叠后宽度也比较大」+「看着像卡死」）。现在折叠
+  /// 标题只有「图标 + 思考 + 耗时」，宽度随内容收缩（上限 480），生成中默认
+  /// 展开（能实时看到思考在动），结束后自动收回。
+  Widget _buildThinkingBlock(Map<String, dynamic> block, ColorScheme scheme) {
+    final s = widget.strings;
+    final body = block['thinking'] as String? ?? '';
+    final durationMs = (block['durationMs'] as num?)?.toInt();
+    return _ProcessTile(
+      icon: Icons.psychology_outlined,
+      accent: scheme.primary,
+      title: s.isZh ? '思考' : 'Thinking',
+      trailing: durationMs == null ? null : _formatProcessDuration(durationMs),
+      initiallyExpanded: _loading,
+      maxWidth: 480,
+      maxBodyHeight: isMobilePlatform ? 220 : 160,
+      child: SelectableText(
+        body,
+        style: TextStyle(
+          fontSize: isMobilePlatform ? 12 : 11,
+          height: 1.45,
+          fontFamily: AppTheme.monoFont,
+          color: scheme.onSurface.withAlpha(190),
+        ),
+      ),
+    );
+  }
+
+  /// 工具卡片：把 tool_use 与紧随其后的 tool_result 合并成一张卡。
+  ///
+  /// 旧实现是两块各自独立的 ExpansionTile：tool_use 只显示一坨静态 JSON、
+  /// 完全没有运行状态，和思考块并排时整段看着像卡死。现在：
+  ///  * 运行中 → 小 spinner + 「执行中」；
+  ///  * 完成 → ✓ / ✗ + 耗时；
+  ///  * 默认折叠，展开才看参数与结果（运行中默认展开，方便看正在干什么）。
+  Widget _buildToolCard({
+    Map<String, dynamic>? use,
+    Map<String, dynamic>? result,
+    required ColorScheme scheme,
+  }) {
+    final s = widget.strings;
+    final name = (use?['name'] ?? result?['name'] ?? 'tool').toString();
+    final args = use?['input'];
+    final resultText = result?['content']?.toString() ?? '';
+    final running = result == null && _loading;
+    final failed =
+        result != null &&
+        (resultText.startsWith('Error:') ||
+            resultText.startsWith('Blocked:') ||
+            (result['isError'] as bool? ?? false));
+    final durationMs = (result?['durationMs'] as num?)?.toInt();
+    final status = running
+        ? (s.isZh ? '执行中' : 'Running')
+        : (failed
+              ? (s.isZh ? '失败' : 'Failed')
+              : (s.isZh ? '完成' : 'Done'));
+    final accent = running
+        ? scheme.primary
+        : (failed ? scheme.error : scheme.outline);
+    final fs = isMobilePlatform ? 12.0 : 11.0;
+    final hasArgs = args is Map && args.isNotEmpty;
+    return _ProcessTile(
+      accent: accent,
+      icon: Icons.handyman_outlined,
+      title: '$name · $status',
+      trailing: durationMs == null ? null : _formatProcessDuration(durationMs),
+      leading: running
+          ? SizedBox(
+              width: 11,
+              height: 11,
+              child: CircularProgressIndicator(
+                strokeWidth: 1.5,
+                color: accent,
               ),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: fs - 1,
-                    color: type == 'thinking' ? scheme.primary : scheme.outline,
-                    fontStyle: FontStyle.italic,
-                  ),
-                ),
-              ),
-              if (thinkMs != null) ...[
-                const SizedBox(width: 6),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 5,
-                    vertical: 1,
-                  ),
-                  decoration: BoxDecoration(
-                    color: scheme.surfaceContainerHighest.withAlpha(120),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    thinkMs >= 1000
-                        ? '${(thinkMs / 1000).toStringAsFixed(1)}s'
-                        : '${thinkMs}ms',
-                    style: TextStyle(fontSize: fs - 3, color: scheme.outline),
-                  ),
-                ),
-              ],
-            ],
-          ),
-          children: [
-            // 等宽字体 + 可滚动，长 JSON/日志不会被截断
-            ConstrainedBox(
-              constraints: BoxConstraints(
-                maxHeight: isMobilePlatform ? 220 : 160,
-              ),
-              child: SingleChildScrollView(
-                child: SelectableText(
-                  body,
-                  style: TextStyle(
-                    fontSize: fs - 1,
-                    color: scheme.onSurface.withAlpha(190),
-                    height: 1.45,
-                    fontFamily: AppTheme.monoFont,
-                  ),
-                ),
+            )
+          : Icon(
+              failed ? Icons.close_rounded : Icons.check_rounded,
+              size: 13,
+              color: accent,
+            ),
+      initiallyExpanded: running,
+      maxWidth: 520,
+      maxBodyHeight: isMobilePlatform ? 220 : 180,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (hasArgs) ...[
+            Text(
+              s.isZh ? '参数' : 'Arguments',
+              style: TextStyle(fontSize: fs - 1, color: scheme.outline),
+            ),
+            const SizedBox(height: 2),
+            SelectableText(
+              const JsonEncoder.withIndent('  ').convert(args),
+              style: TextStyle(
+                fontSize: fs,
+                height: 1.45,
+                fontFamily: AppTheme.monoFont,
+                color: scheme.onSurface.withAlpha(190),
               ),
             ),
           ],
+          if (resultText.isNotEmpty) ...[
+            if (hasArgs) const SizedBox(height: 6),
+            Text(
+              s.isZh ? '结果' : 'Result',
+              style: TextStyle(fontSize: fs - 1, color: scheme.outline),
+            ),
+            const SizedBox(height: 2),
+            SelectableText(
+              resultText,
+              style: TextStyle(
+                fontSize: fs,
+                height: 1.45,
+                fontFamily: AppTheme.monoFont,
+                color: failed ? scheme.error : scheme.onSurface.withAlpha(190),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// 过程耗时文案：<1s 用毫秒，否则一位小数的秒。
+  static String _formatProcessDuration(int ms) => ms >= 1000
+      ? '${(ms / 1000).toStringAsFixed(1)}s'
+      : '${ms}ms';
+}
+
+/// 「过程条目」的紧凑折叠条（思考块 / 工具卡片共用）。
+///
+/// 为什么不用 ExpansionTile：它由 ListTile 派生，标题行会被强制拉满宿主宽度
+/// （用户反馈「思考过程折叠后宽度也比较大」），而且默认带 ListTile 的 16px
+/// 左右内边距与 56px 最小高度，两条并排就显得又宽又空。
+///
+/// 这里自己画一条 28~32px 高的圆角行：左图标、中间标题、右侧状态/耗时、最右
+/// 展开箭头；整条**靠左收缩**（Align + maxWidth），点一下展开内容，内容区自带
+/// 滚动与高度上限，长 JSON / 长思考都不会把气泡撑爆。
+class _ProcessTile extends StatefulWidget {
+  const _ProcessTile({
+    required this.icon,
+    required this.title,
+    required this.accent,
+    required this.child,
+    this.leading,
+    this.trailing,
+    this.initiallyExpanded = false,
+    this.maxWidth = 520,
+    this.maxBodyHeight = 180,
+  });
+
+  final IconData icon;
+  final String title;
+  final Color accent;
+  final Widget child;
+
+  /// 覆盖左侧图标（运行中用 spinner，完成用 ✓ / ✗）。
+  final Widget? leading;
+
+  /// 右侧文字（耗时 / 状态）。
+  final String? trailing;
+
+  final bool initiallyExpanded;
+
+  /// 折叠行与展开内容的最大宽度：让整块靠左收缩，而不是占满整行。
+  final double maxWidth;
+
+  /// 展开内容的最大高度（超出内部滚动）。
+  final double maxBodyHeight;
+
+  @override
+  State<_ProcessTile> createState() => _ProcessTileState();
+}
+
+class _ProcessTileState extends State<_ProcessTile> {
+  late bool _expanded = widget.initiallyExpanded;
+
+  @override
+  void didUpdateWidget(covariant _ProcessTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 从「运行中」变「已完成」时自动收回：完成后的过程不该继续占满屏幕。
+    if (oldWidget.initiallyExpanded && !widget.initiallyExpanded && _expanded) {
+      _expanded = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final double fs = isMobilePlatform ? 13 : 12;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: widget.maxWidth),
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Semantics(
+                button: true,
+                expanded: _expanded,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () => setState(() => _expanded = !_expanded),
+                  child: Container(
+                    constraints: BoxConstraints(
+                      minHeight: isMobilePlatform ? 32 : 28,
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: scheme.surfaceContainerHighest.withAlpha(60),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: scheme.outlineVariant.withAlpha(60),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        widget.leading ??
+                            Icon(widget.icon, size: 13, color: widget.accent),
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            widget.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: fs - 1,
+                              color: widget.accent,
+                              fontStyle: FontStyle.italic,
+                            ),
+                          ),
+                        ),
+                        if (widget.trailing != null) ...[
+                          const SizedBox(width: 6),
+                          Text(
+                            widget.trailing!,
+                            style: TextStyle(
+                              fontSize: fs - 3,
+                              color: scheme.outline,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(width: 2),
+                        Icon(
+                          _expanded ? Icons.expand_less : Icons.expand_more,
+                          size: 14,
+                          color: scheme.outline,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              if (_expanded)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: widget.maxBodyHeight,
+                    ),
+                    child: SingleChildScrollView(child: widget.child),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );

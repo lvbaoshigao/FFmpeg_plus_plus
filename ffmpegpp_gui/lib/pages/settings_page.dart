@@ -5030,39 +5030,22 @@ Widget _buildAutosave(BuildContext ctx, AppState state) {
           ctx,
           SizedBox(
             width: 104,
-            child: DropdownButtonFormField<int>(
-              borderRadius: BorderRadius.circular(12),
-              initialValue: cfg.autosaveIntervalSec,
-              isDense: true,
-              isExpanded: true,
-              style: TextStyle(fontSize: 12, color: clr),
-              dropdownColor: scheme.surface,
-              decoration: InputDecoration(
-                isDense: true,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
+            // 统一下拉样式：OptionMenuBar（圆角 14 浮层 + 200ms 缩放展开），
+            // 替代 DropdownButtonFormField 的老式系统下拉。
+            child: OptionMenuBar<int>(
+              value: cfg.autosaveIntervalSec,
+              triggerHeight: 34,
               items: [
                 for (final sec in [10, 30, 60, 120, 300])
-                  DropdownMenuItem(
-                    value: sec,
-                    child: Text(
-                      sec < 60
-                          ? (s.isZh ? '$sec 秒' : '$sec s')
-                          : (s.isZh ? '${sec ~/ 60} 分钟' : '${sec ~/ 60} min'),
-                    ),
+                  OptionItem(
+                    sec,
+                    sec < 60
+                        ? (s.isZh ? '$sec 秒' : '$sec s')
+                        : (s.isZh ? '${sec ~/ 60} 分钟' : '${sec ~/ 60} min'),
                   ),
               ],
-              onChanged: (v) {
-                if (v != null) {
-                  state.updateConfig((c) => c..autosaveIntervalSec = v);
-                }
-              },
+              onChanged: (v) =>
+                  state.updateConfig((c) => c..autosaveIntervalSec = v),
             ),
           ),
         ),
@@ -5128,41 +5111,16 @@ Widget _buildTasks(BuildContext ctx, AppState state) {
               ctx,
               SizedBox(
                 width: 104,
-                child: DropdownButtonFormField<int>(
-                  borderRadius: BorderRadius.circular(12),
-                  initialValue: cfg.maxConcurrentTasks,
-                  isDense: true,
-                  isExpanded: true,
-                  style: TextStyle(fontSize: 12, color: clr),
-                  dropdownColor: scheme.surface,
-                  decoration: InputDecoration(
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
+                // 统一下拉样式：OptionMenuBar（圆角 14 浮层 + 200ms 缩放展开）
+                child: OptionMenuBar<int>(
+                  value: cfg.maxConcurrentTasks,
+                  triggerHeight: 34,
                   items: [
-                    ...List.generate(
-                      8,
-                      (i) => DropdownMenuItem(
-                        value: i + 1,
-                        child: Text('${i + 1}'),
-                      ),
-                    ),
-                    DropdownMenuItem(
-                      value: 0,
-                      child: Text(s.isZh ? '不限制' : 'Unlimited'),
-                    ),
+                    for (var i = 1; i <= 8; i++) OptionItem(i, '$i'),
+                    OptionItem(0, s.isZh ? '不限制' : 'Unlimited'),
                   ],
-                  onChanged: (v) {
-                    if (v != null) {
-                      state.updateConfig((c) => c..maxConcurrentTasks = v);
-                    }
-                  },
+                  onChanged: (v) =>
+                      state.updateConfig((c) => c..maxConcurrentTasks = v),
                 ),
               ),
             ),
@@ -5190,33 +5148,15 @@ Widget _buildTasks(BuildContext ctx, AppState state) {
               ctx,
               SizedBox(
                 width: 104,
-                child: DropdownButtonFormField<int>(
-                  borderRadius: BorderRadius.circular(12),
-                  initialValue: cfg.probeThreads,
-                  isDense: true,
-                  isExpanded: true,
-                  style: TextStyle(fontSize: 12, color: clr),
-                  dropdownColor: scheme.surface,
-                  decoration: InputDecoration(
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  items: List.generate(
-                    8,
-                    (i) =>
-                        DropdownMenuItem(value: i + 1, child: Text('${i + 1}')),
-                  ),
-                  onChanged: (v) {
-                    if (v != null) {
-                      state.updateConfig((c) => c..probeThreads = v);
-                    }
-                  },
+                // 统一下拉样式：OptionMenuBar（圆角 14 浮层 + 200ms 缩放展开）
+                child: OptionMenuBar<int>(
+                  value: cfg.probeThreads,
+                  triggerHeight: 34,
+                  items: [
+                    for (var i = 1; i <= 8; i++) OptionItem(i, '$i'),
+                  ],
+                  onChanged: (v) =>
+                      state.updateConfig((c) => c..probeThreads = v),
                 ),
               ),
             ),

@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:liquid_glass_tab_bar/liquid_glass_tab_bar.dart';
 import 'package:provider/provider.dart';
 
 import '../models/models.dart';
@@ -1569,14 +1568,11 @@ class _ProviderIconTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final look = _providerLook(profile, scheme);
-    // 品牌识别：名称 / 协议 / API 地址 / 当前模型任一命中即可。
-    // 命中时用本地 SVG logo；未识别（自建/小众供应商）继续用通用图标。
-    final brand = detectAiBrand(
-      name: profile.name,
-      provider: profile.provider,
-      apiUrl: profile.apiUrl,
-      model: profile.model,
-    );
+    // 品牌识别只看**供应商名字**，且必须全字匹配（用户要求）：
+    // 名字正好是 OpenAI / DeepSeek / Anthropic… 才换品牌 logo；
+    // 「我的 OpenAI 中转」这类自定义名继续用通用图标，否则所有中转站
+    // 都会冒充官方供应商。模型图标另见 _AiModelRow（按模型 id 判定）。
+    final brand = brandForProviderName(profile.name);
     final accent = brand?.accent ?? look.color;
     // 低饱和品牌底：品牌色与卡片表面按主题混合，避免 46dp 色块过艳；
     // logo 着色在深色主题里提亮、浅色主题里压暗，保证对比度。
@@ -4426,6 +4422,22 @@ class _AiModelRow extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     final bool hasIdSubtitle = entry.displayName.trim().isNotEmpty;
+    // 模型图标按**模型 id** 判定（用户要求）：id 里出现 gpt / deepseek / claude…
+    // 就显示对应品牌 logo，与供应商叫什么名字无关 —— 自建中转站下的 gpt-4o
+    // 依然显示 OpenAI 图标。认不出的模型（内部代号、微调名）继续用通用机器人图标。
+    final brand = brandForModelId(entry.id);
+    // 深色主题提亮、浅色主题压暗，保证小尺寸 logo 在 32dp 浅底上的对比度；
+    // 非当前模型再往「次要文字色」靠一档，保留原来「当前 / 普通」的视觉区分。
+    final brandInk = brand == null
+        ? null
+        : (isDark
+              ? Color.lerp(brand.accent, Colors.white, 0.34)!
+              : Color.lerp(brand.accent, Colors.black, 0.12)!);
+    final iconInk = brandInk == null
+        ? (isActive ? scheme.primary : scheme.onSurfaceVariant)
+        : (isActive
+              ? brandInk
+              : Color.lerp(brandInk, scheme.onSurfaceVariant, 0.45)!);
     return AppCard(
       key: ValueKey('model_row_${entry.id}'),
       style: cardStyle,
@@ -4442,11 +4454,20 @@ class _AiModelRow extends StatelessWidget {
                 color: scheme.primary.withAlpha(isDark ? 26 : 16),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Icon(
-                isActive ? Icons.smart_toy : Icons.smart_toy_outlined,
-                size: 17,
-                color: isActive ? scheme.primary : scheme.onSurfaceVariant,
-              ),
+              // 尺寸 / 底色与原来的机器人图标块完全一致，只换「画什么」：
+              // 认得出品牌就画品牌 logo，认不出才回退通用图标。
+              //
+              // 必须给 alignment：Container 的 width/height 会折成 tight 约束，
+              // 没有 alignment 时 BrandLogo 的 size 参数会被撑成整块 32×32，
+              // 而 Icon 自带 Center 仍是 17px —— 相邻行图标一大一小。
+              alignment: Alignment.center,
+              child: brand == null
+                  ? Icon(
+                      isActive ? Icons.smart_toy : Icons.smart_toy_outlined,
+                      size: 17,
+                      color: iconInk,
+                    )
+                  : BrandLogo(brand: brand, size: 18, color: iconInk),
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -4526,15 +4547,32 @@ class _AiModelRow extends StatelessWidget {
                 ),
               ),
             ),
-            PopupMenuButton<_ModelRowAction>(
+            // 更多操作：不再用系统 PopupMenuButton（瞬时弹出 + 直角阴影，
+            // 用户反馈「过于古老」），改用与全站下拉同款的缩放展开浮层
+            // （0.86→1.0、easeOutBack、圆角 14、危险项 error 色）。
+            ScaleMenuButton<_ModelRowAction>(
               key: ValueKey('model_menu_${entry.id}'),
+              icon: Icons.more_vert,
               tooltip: isZh ? '更多操作' : 'More actions',
-              icon: Icon(
-                Icons.more_vert,
-                size: 18,
-                color: scheme.onSurfaceVariant,
-              ),
-              padding: EdgeInsets.zero,
+              items: [
+                if (!isActive)
+                  OptionItem(
+                    _ModelRowAction.use,
+                    isZh ? '设为当前模型' : 'Use as current',
+                    icon: Icons.check_circle_outline,
+                  ),
+                OptionItem(
+                  _ModelRowAction.edit,
+                  isZh ? '编辑模型' : 'Edit model',
+                  icon: Icons.tune,
+                ),
+                OptionItem(
+                  _ModelRowAction.delete,
+                  isZh ? '删除模型' : 'Delete model',
+                  icon: Icons.delete_outline,
+                  danger: true,
+                ),
+              ],
               onSelected: (action) {
                 switch (action) {
                   case _ModelRowAction.use:
@@ -4545,50 +4583,6 @@ class _AiModelRow extends StatelessWidget {
                     onDelete();
                 }
               },
-              itemBuilder: (context) => [
-                if (!isActive)
-                  PopupMenuItem<_ModelRowAction>(
-                    value: _ModelRowAction.use,
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.check_circle_outline,
-                          size: 17,
-                          color: scheme.onSurfaceVariant,
-                        ),
-                        const SizedBox(width: 8),
-                        Text(isZh ? '设为当前模型' : 'Use as current'),
-                      ],
-                    ),
-                  ),
-                PopupMenuItem<_ModelRowAction>(
-                  value: _ModelRowAction.edit,
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.tune,
-                        size: 17,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(isZh ? '编辑模型' : 'Edit model'),
-                    ],
-                  ),
-                ),
-                PopupMenuItem<_ModelRowAction>(
-                  value: _ModelRowAction.delete,
-                  child: Row(
-                    children: [
-                      Icon(Icons.delete_outline, size: 17, color: scheme.error),
-                      const SizedBox(width: 8),
-                      Text(
-                        isZh ? '删除模型' : 'Delete model',
-                        style: TextStyle(color: scheme.error),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
             ),
           ],
         ),
@@ -5125,9 +5119,9 @@ class _AiSectionCard extends StatelessWidget {
   }
 }
 
-/// 移动端 AI 设置下拉菜单宽度上限。
-/// 约束 OptionMenuBar 触发钮的最大宽度，避免展开面板按最长条目撑开
-/// （窄屏溢出、桌面端「宽度极大」）。
+/// 移动端 AI 设置下拉**触发钮**的宽度上限（浮层宽度另由 menuWidth 控制）。
+/// 触发钮要挤在「标签 + 下拉」一行里，所以压到 156；浮层默认 220，
+/// 避免长条目被按钮宽度截成省略号。
 const double _kAiMenuWidth = 156;
 
 /// AI 设置用下拉菜单。
@@ -5138,6 +5132,15 @@ class _AiDropdown extends StatelessWidget {
   final String value;
   final List<(String, String, IconData)> entries;
   final ValueChanged<String> onSelected;
+
+  /// 浮层宽度：触发钮为了和标签挤一行只占 [_kAiMenuWidth]（156），
+  /// 浮层若跟着按钮宽度，长文案（「OpenAI 兼容」「Anthropic (Claude)」）会被
+  /// 截成省略号。这里按最长条目自动放宽到 220 / 260，不再传死宽度。
+  double get _panelWidth => entries.any((e) => e.$2.length > 14) ? 260 : 220;
+
+  /// 条目多（例如以后接模型列表）才在浮层里加搜索框；
+  /// 2~4 个短选项的下拉不加，免得白白多一个输入框。
+  bool get _searchable => entries.length > 8;
 
   const _AiDropdown({
     required this.value,
@@ -5158,6 +5161,9 @@ class _AiDropdown extends StatelessWidget {
           for (final e in entries) OptionItem<String>(e.$1, e.$2, icon: e.$3),
         ],
         onChanged: onSelected,
+        menuWidth: _panelWidth,
+        searchable: _searchable,
+        searchHint: _searchable ? '搜索' : null,
       ),
     );
   }

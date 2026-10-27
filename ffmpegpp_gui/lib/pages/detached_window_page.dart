@@ -1397,6 +1397,10 @@ class _AiWindow extends StatelessWidget {
                 // 只隐藏「收起」（收起后没有恢复入口），不是隐藏整个 header。
                 hideHeader: false,
                 standaloneWindow: true,
+                // 关键：必须直接展开。AiPanelView.startExpanded 默认 false，
+                // 不传就只剩一颗 14px 的「AI」药丸 —— 用户看到「拖出为独立
+                // 窗口后 AI 界面只有一个按钮，点击后才进入」就是这个原因。
+                startExpanded: true,
                 onApplyGraph: ops.apply,
                 onMergeGraph: ops.merge,
                 onModifyNodeParams: ops.modifyParams,

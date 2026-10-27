@@ -222,8 +222,9 @@ class AppState extends ChangeNotifier {
     if (!config.debugMode &&
         cat != 'error' &&
         cat != 'progress' &&
-        cat != 'warn')
+        cat != 'warn') {
       return;
+    }
 
     _logEntries.add(
       LogEntry(timestamp: DateTime.now(), message: message, category: cat),
@@ -780,8 +781,9 @@ class AppState extends ChangeNotifier {
             if (referenced.contains(ent.path)) continue;
             if (olderThan != null) {
               try {
-                if (now.difference(await ent.lastModified()) < olderThan)
+                if (now.difference(await ent.lastModified()) < olderThan) {
                   continue;
+                }
               } catch (_) {}
             }
             try {
@@ -954,8 +956,9 @@ class AppState extends ChangeNotifier {
           '  音频: ${info['audio_codec']} ${info['audio_channels']}ch ${info['audio_sample_rate']}Hz',
           category: 'ffmpeg',
         );
-        if (info['has_subtitles'] == true)
+        if (info['has_subtitles'] == true) {
           addLog('  字幕: ${info['subtitle_count']} 轨道', category: 'ffmpeg');
+        }
         if (info['is_hdr'] == true) addLog('  HDR: 是', category: 'ffmpeg');
       } else {
         _probeErrors[vf.filepath] = resp['error'] as String? ?? 'Unknown';
@@ -1004,8 +1007,9 @@ class AppState extends ChangeNotifier {
     if (!isCacheCopy) return;
     if (_videos.any((v) => v.filepath == filepath)) return; // 仍有引用，不删
     // 队列/历史里的任务仍引用该副本（重新开始/查看输出），不删
-    if (_tasks.any((t) => t.inputPath == filepath || t.outputPath == filepath))
+    if (_tasks.any((t) => t.inputPath == filepath || t.outputPath == filepath)) {
       return;
+    }
     try {
       final f = File(filepath);
       if (f.existsSync()) f.deleteSync();
@@ -1499,8 +1503,9 @@ class AppState extends ChangeNotifier {
         : video.filepath.replaceAll(RegExp(r'[^\\/]+$'), '');
     // filepath 无分隔符时正则返回空串，会导致写入文件系统根目录（M-13）
     if (dir.isEmpty) dir = Directory.current.path;
-    if (!dir.endsWith('/') && !dir.endsWith('\\'))
+    if (!dir.endsWith('/') && !dir.endsWith('\\')) {
       dir = '$dir${Platform.pathSeparator}';
+    }
     var out = '$dir$fn';
     if (out == video.filepath) {
       final be = fn.replaceAll(RegExp(r'\.[^.]+$'), '');
@@ -1798,26 +1803,31 @@ class AppState extends ChangeNotifier {
       category: 'info',
     );
     if (c.crf != null) addLog('  CRF: ${c.crf}', category: 'info');
-    if (c.videoBitrate != null)
+    if (c.videoBitrate != null) {
       addLog('  视频码率: ${c.videoBitrate}kbps', category: 'info');
-    if (c.resolutionW != null)
+    }
+    if (c.resolutionW != null) {
       addLog('  分辨率: ${c.resolutionW}x${c.resolutionH}', category: 'info');
-    if (c.framerate != null)
+    }
+    if (c.framerate != null) {
       addLog('  帧率: ${c.framerate}fps', category: 'info');
+    }
     addLog(
       '  音频: ${c.audioCodec} ${c.audioBitrate ?? '默认'}kbps ${c.audioChannels ?? '原始'}ch',
       category: 'info',
     );
-    if (c.subtitleEnabled)
+    if (c.subtitleEnabled) {
       addLog(
         '  字幕: ${c.subtitleSource} ${c.subtitleFile ?? '内嵌#${c.subtitleIndex}'}',
         category: 'info',
       );
-    if (c.startTime != null || c.endTime != null)
+    }
+    if (c.startTime != null || c.endTime != null) {
       addLog(
         '  截取: ${c.startTime ?? 0}s - ${c.endTime ?? '末尾'}',
         category: 'info',
       );
+    }
 
     StreamSubscription<ProgressUpdate>? sub;
     // 进度消息先登记、按 300ms 批量冲刷（见类头「进度心跳节流」注释），
@@ -1900,11 +1910,12 @@ class AppState extends ChangeNotifier {
         );
         addLog('任务完成: ${task.filename} (${d?['duration']}s)', category: 'info');
         final sz = d?['output_size'] as int?;
-        if (sz != null)
+        if (sz != null) {
           addLog(
             '  输出大小: ${(sz / 1024 / 1024).toStringAsFixed(1)}MB',
             category: 'info',
           );
+        }
         final cmd = (d?['command'] as List?)?.cast<String>();
         if (cmd != null) addLog('  命令: ${cmd.join(' ')}', category: 'ffmpeg');
         onTaskFinished?.call(task.filename, TaskStatus.completed);
@@ -2179,8 +2190,9 @@ class AppState extends ChangeNotifier {
           _queueProgress(taskId, () {
             final i = _tasks.indexWhere((t) => t.id == taskId);
             // 已取消/已完成/已失败的任务不再被进度消息改回 processing
-            if (i < 0 || _tasks[i].status != TaskStatus.processing)
+            if (i < 0 || _tasks[i].status != TaskStatus.processing) {
               return false;
+            }
             final overallProgress =
                 (stepProgress + u.progress / 100 / expandedCalls.length) * 100;
             // 更新当前步骤的进度
@@ -2288,8 +2300,9 @@ class AppState extends ChangeNotifier {
             case 'concat':
               var files =
                   (p['files'] as List?)?.cast<String>() ?? const <String>[];
-              if (files.isEmpty)
+              if (files.isEmpty) {
                 files = await _resolveMergeFiles(p['input'] as String?);
+              }
               resp = await backend.concat(
                 task.id,
                 files: files,
@@ -2301,8 +2314,9 @@ class AppState extends ChangeNotifier {
             case 'image_sequence':
               var files =
                   (p['files'] as List?)?.cast<String>() ?? const <String>[];
-              if (files.isEmpty)
+              if (files.isEmpty) {
                 files = await _resolveMergeFiles(p['input'] as String?);
+              }
               resp = await backend.imageSequence(
                 task.id,
                 files: files,
@@ -2485,8 +2499,9 @@ class AppState extends ChangeNotifier {
       final args = <String>['-y'];
       if (startTime != null) args.addAll(['-ss', '$startTime']);
       args.addAll(['-i', input]);
-      if (endTime != null)
+      if (endTime != null) {
         args.addAll(['-to', '${endTime - (startTime ?? 0)}']);
+      }
       args.addAll(['-vf', 'fps=$fps', '$outDir/frame_%06d.$fmt']);
 
       addLog('帧提取: $_ffmpegBin ${args.join(' ')}', category: 'info');
@@ -3892,8 +3907,9 @@ class AppState extends ChangeNotifier {
     if (_envOk) {
       addLog('FFmpeg 环境正常: $_ffmpegVersion', category: 'info');
       final path = ffmpegInfo?['path'] as String?;
-      if (path != null && path.isNotEmpty)
+      if (path != null && path.isNotEmpty) {
         addLog('  路径: $path', category: 'info');
+      }
     } else {
       addLog('FFmpeg 环境异常: ${env['error'] ?? '未知错误'}', category: 'error');
     }
@@ -4573,8 +4589,9 @@ class AppState extends ChangeNotifier {
   Future<List<String>> _mcpAllowedRoots() async {
     final roots = <String>[];
     roots.add(Directory.systemTemp.path); // 临时工作目录
-    if (config.defaultOutputDir.isNotEmpty)
+    if (config.defaultOutputDir.isNotEmpty) {
       roots.add(config.defaultOutputDir); // 输出目录
+    }
     try {
       final docs = await getApplicationDocumentsDirectory();
       roots.add(
@@ -4692,8 +4709,9 @@ class AppState extends ChangeNotifier {
             return ('Error: path not allowed: $path (MCP 仅允许项目内已知目录)', true);
           }
           final dir = Directory(path);
-          if (!await dir.exists())
+          if (!await dir.exists()) {
             return ('Error: directory not found: $path', true);
+          }
           // 异步遍历，避免在 UI isolate 同步 listSync/statSync 卡界面；
           // 限制单次返回条目数（.take(50)）与深度（list 非递归，深度 1）
           final entries = <Map<String, dynamic>>[];
@@ -4917,11 +4935,12 @@ class AppState extends ChangeNotifier {
         final types = LogicGateType.values.map((t) => t.name).toList();
         return (jsonEncode(types), false);
       case 'get_graph_stats':
-        if (_currentPipelineGraph == null)
+        if (_currentPipelineGraph == null) {
           return (
             jsonEncode({'nodes': 0, 'gates': 0, 'connections': 0}),
             false,
           );
+        }
         final g = _currentPipelineGraph!;
         return (
           jsonEncode({

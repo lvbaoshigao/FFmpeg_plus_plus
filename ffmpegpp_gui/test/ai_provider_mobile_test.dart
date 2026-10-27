@@ -12,6 +12,7 @@ import 'package:ffmpegpp_gui/pages/ai_settings_mobile.dart';
 import 'package:ffmpegpp_gui/providers/app_state.dart';
 import 'package:ffmpegpp_gui/theme/app_control_size.dart';
 import 'package:ffmpegpp_gui/theme/app_theme.dart';
+import 'package:ffmpegpp_gui/widgets/brand_logo.dart';
 import 'package:ffmpegpp_gui/widgets/liquid_glass_mobile_nav.dart';
 import 'package:ffmpegpp_gui/widgets/mobile_glass_pill.dart';
 import 'package:ffmpegpp_gui/widgets/option_menu_bar.dart';
@@ -641,5 +642,117 @@ void main() {
     expect(find.text('自定义提供商'), findsOneWidget);
 
     await _flushSaveTimers(tester);
+  });
+
+  // ── 品牌图标判定（用户原话：模型看 id、供应商只看名字全字匹配）──
+  group('AI 品牌图标', () {
+    test('模型图标按模型 id 正则判定，与供应商叫什么无关', () {
+      // 用户举例：id 里出现 gpt 就是 OpenAI 图标、出现 deepseek 就是 DeepSeek。
+      expect(brandForModelId('gpt-4o'), AiBrand.openai);
+      expect(brandForModelId('openai/gpt-4o-mini'), AiBrand.openai);
+      expect(brandForModelId('o3-mini'), AiBrand.openai);
+      expect(brandForModelId('claude-3.5-sonnet'), AiBrand.anthropic);
+      expect(brandForModelId('deepseek-chat'), AiBrand.deepseek);
+      expect(brandForModelId('gemini-2.5-pro'), AiBrand.gemini);
+      expect(brandForModelId('qwen3-max'), AiBrand.qwen);
+      // 认不出的模型（内部代号 / 微调名）回退通用图标
+      expect(brandForModelId('my-finetune-v3'), isNull);
+      expect(brandForModelId('  '), isNull);
+    });
+
+    test('供应商图标只认全字匹配的品牌名', () {
+      expect(brandForProviderName('OpenAI'), AiBrand.openai);
+      expect(brandForProviderName('DeepSeek'), AiBrand.deepseek);
+      expect(brandForProviderName('azure openai'), AiBrand.openai);
+      expect(brandForProviderName('Company GPT Gateway'), isNull);
+      // 归一化只去分隔符（空格/点/下划线/连字符），不能把中文一起剥光：
+      // 否则「我的 OpenAI 中转」会被归一成 openai 而冒充官方图标。
+      expect(brandForProviderName('我的 OpenAI 中转'), isNull);
+      expect(brandForProviderName('OpenAI 中转站'), isNull);
+      // 分隔符本身仍要能归一（Open AI / open-ai / x.ai 是同一个品牌）
+      expect(brandForProviderName('Open AI'), AiBrand.openai);
+      expect(brandForProviderName('x.ai'), AiBrand.xai);
+    });
+
+    testWidgets('自建中转站的供应商名不冒充官方品牌图标', (tester) async {
+      tester.view.physicalSize = const Size(412, 915);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final state = AppState();
+      final relay = AiProfile(name: '我的 OpenAI 中转', provider: 'openai');
+      relay.models.add(AiModelEntry(id: 'gpt-4o'));
+      state.updateConfig((c) {
+        c.aiProfiles.add(relay);
+        c.activeAiProfileId = relay.id;
+        c.cardStyle = 'gray';
+        c.pillStyle = 'gray';
+        return c;
+      });
+      await tester.pumpWidget(
+        _harness(state, MobileAiProvidersPage(state: state)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('我的 OpenAI 中转'), findsOneWidget);
+      // 名字不是「OpenAI」本身 → 通用图标，不是品牌 logo
+      expect(find.byType(BrandLogo), findsNothing);
+      await _flushSaveTimers(tester);
+
+      // 名字正好是 OpenAI → 换成品牌 logo（另起一份状态，避免依赖原地改名的通知）
+      final official = AiProfile(name: 'OpenAI', provider: 'openai');
+      official.models.add(AiModelEntry(id: 'gpt-4o'));
+      final state2 = AppState();
+      state2.updateConfig((c) {
+        c.aiProfiles.add(official);
+        c.activeAiProfileId = official.id;
+        c.cardStyle = 'gray';
+        c.pillStyle = 'gray';
+        return c;
+      });
+      await tester.pumpWidget(
+        _harness(state2, MobileAiProvidersPage(state: state2)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('OpenAI'), findsOneWidget);
+      expect(find.byType(BrandLogo), findsOneWidget);
+      await _flushSaveTimers(tester);
+    });
+
+    testWidgets('模型行图标看模型 id：gpt-4o 用品牌 logo，自建模型回退通用图标', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(412, 915);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final state = AppState();
+      // 供应商名故意不匹配任何品牌：模型行的图标只应由模型 id 决定
+      final relay = AiProfile(name: '我的中转站', provider: 'openai');
+      relay.models.addAll([
+        AiModelEntry(id: 'gpt-4o'),
+        AiModelEntry(id: 'my-internal-v1'),
+      ]);
+      state.updateConfig((c) {
+        c.aiProfiles.add(relay);
+        c.activeAiProfileId = relay.id;
+        c.cardStyle = 'gray';
+        c.pillStyle = 'gray';
+        return c;
+      });
+      await tester.pumpWidget(
+        _harness(state, MobileAiProviderDetailPage(profileId: relay.id)),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(_tabLabel('模型'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('model_row_gpt-4o')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('model_row_my-internal-v1')),
+        findsOneWidget,
+      );
+      // 两行模型里只有 gpt-4o 命中品牌，所以恰好 1 个品牌 logo
+      expect(find.byType(BrandLogo), findsOneWidget);
+      await _flushSaveTimers(tester);
+    });
   });
 }

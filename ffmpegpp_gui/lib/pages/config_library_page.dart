@@ -22,6 +22,8 @@ import '../widgets/mobile_glass_pill.dart';
 // 生效的菜单栏位置（底部 ↔ 左右竖排导轨）：列表底部留白随之在 96 / 20 间切换
 import '../widgets/mobile_nav_scope.dart';
 import '../widgets/mobile_ui.dart';
+// 统一下拉/弹出菜单样式（圆角 14 + 200ms 缩放展开，替代 PopupMenuButton）
+import '../widgets/option_menu_bar.dart';
 import '../widgets/toast.dart';
 import 'pipeline_editor_page.dart';
 import 'quick_config_page.dart';
@@ -250,12 +252,13 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     if (picked?.path == null) return;
     final name = picked!.name;
     if (!name.endsWith('.fppx')) {
-      if (mounted)
+      if (mounted) {
         showToast(
           context,
           zh ? '请选择 .fppx 文件' : 'Please select a .fppx file',
           type: ToastType.warning,
         );
+      }
       return;
     }
     final path = picked.path!;
@@ -415,12 +418,13 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
 
     final graph = result.graph;
     if (graph == null) {
-      if (mounted)
+      if (mounted) {
         showToast(
           context,
           zh ? '该文件不是节点编辑器配置' : 'Not a node editor config',
           type: ToastType.warning,
         );
+      }
       return;
     }
     final entry = _ConfigEntry(
@@ -432,12 +436,13 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     );
     if (mounted) setState(() => _configs.add(entry));
     _saveLibrary();
-    if (mounted)
+    if (mounted) {
       showToast(
         context,
         zh ? '已导入: $baseName' : 'Imported: $baseName',
         type: ToastType.success,
       );
+    }
   }
 
   /// 强制导入确认后对同一文件重试（免得让用户再选一次文件）
@@ -462,12 +467,13 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     }
     final graph = result.graph;
     if (graph == null) {
-      if (mounted)
+      if (mounted) {
         showToast(
           context,
           zh ? '配置解析失败' : 'Config parse failed',
           type: ToastType.warning,
         );
+      }
       return;
     }
     final baseName = path
@@ -685,12 +691,13 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         } catch (_) {}
       }
     }
-    if (mounted)
+    if (mounted) {
       showToast(
         context,
         zh ? '已导出: $result' : 'Exported: $result',
         type: ToastType.success,
       );
+    }
   }
 
   /// 导出选项：介绍、是否加密、口令、算法。
@@ -802,29 +809,19 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                           ),
                         ),
                         const SizedBox(height: 8),
-                        DropdownButtonFormField<int>(
-                          initialValue: algo,
-                          decoration: InputDecoration(
-                            labelText: zh ? '加密算法' : 'Cipher',
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                          ),
+                        // 统一下拉样式：OptionMenuBar（圆角 14 浮层 + 200ms 缩放展开）。
+                        // 原来的 InputDecoration.labelText 由 OptionMenuBar.label 承接。
+                        OptionMenuBar<int>(
+                          value: algo,
+                          label: zh ? '加密算法' : 'Cipher',
                           items: [
-                            DropdownMenuItem(
-                              value: FppxService.algoAes256Cbc,
-                              child: Text(
-                                zh ? 'AES-256（推荐）' : 'AES-256 (recommended)',
-                              ),
+                            OptionItem(
+                              FppxService.algoAes256Cbc,
+                              zh ? 'AES-256（推荐）' : 'AES-256 (recommended)',
                             ),
-                            const DropdownMenuItem(
-                              value: FppxService.algoAes128Cbc,
-                              child: Text('AES-128'),
-                            ),
+                            const OptionItem(FppxService.algoAes128Cbc, 'AES-128'),
                           ],
-                          onChanged: (v) {
-                            if (v != null) setDialogState(() => algo = v);
-                          },
+                          onChanged: (v) => setDialogState(() => algo = v),
                         ),
                       ],
                     ],
@@ -952,12 +949,13 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         } catch (_) {}
       }
     }
-    if (mounted)
+    if (mounted) {
       showToast(
         context,
         zh ? '已导出: $result' : 'Exported: $result',
         type: ToastType.success,
       );
+    }
   }
 
   void _deleteEntry(int index) {
@@ -1045,21 +1043,15 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                     },
                   ),
                   const SizedBox(height: 12),
-                  DropdownButtonFormField<QuickFileType>(
-                    initialValue: selected,
-                    decoration: InputDecoration(
-                      labelText: zh ? '文件类型' : 'File Type',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
+                  // 统一下拉样式：OptionMenuBar（圆角 14 浮层 + 200ms 缩放展开）
+                  OptionMenuBar<QuickFileType>(
+                    value: selected,
+                    label: zh ? '文件类型' : 'File Type',
                     items: [
                       for (final t in QuickFileType.values)
-                        DropdownMenuItem(value: t, child: Text(t.label(zh))),
+                        OptionItem(t, t.label(zh)),
                     ],
-                    onChanged: (v) {
-                      if (v != null) setDialogState(() => selected = v);
-                    },
+                    onChanged: (v) => setDialogState(() => selected = v),
                   ),
                 ],
               ),
@@ -1602,12 +1594,15 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     final now = DateTime.now();
     final diff = now.difference(dt);
     if (diff.inMinutes < 1) return zh ? '刚刚' : 'just now';
-    if (diff.inHours < 1)
+    if (diff.inHours < 1) {
       return zh ? '${diff.inMinutes} 分钟前' : '${diff.inMinutes}m ago';
-    if (diff.inDays < 1)
+    }
+    if (diff.inDays < 1) {
       return zh ? '${diff.inHours} 小时前' : '${diff.inHours}h ago';
-    if (diff.inDays < 30)
+    }
+    if (diff.inDays < 30) {
       return zh ? '${diff.inDays} 天前' : '${diff.inDays}d ago';
+    }
     return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
   }
 
@@ -1712,78 +1707,34 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
               ],
             ),
           ),
-          PopupMenuButton<String>(
-            icon: Icon(Icons.more_vert, size: 18, color: scheme.outline),
-            itemBuilder: (_) => [
-              PopupMenuItem(
-                value: 'edit',
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.edit_outlined,
-                      size: 16,
-                      color: scheme.onSurface,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(zh ? '编辑' : 'Edit'),
-                  ],
-                ),
+          // 统一为 ScaleMenuButton：与其它下拉菜单同一套浮层外观/缩放展开动画，
+          // 危险项（删除）走 danger 的 error 色，不再有 PopupMenuDivider 的直角分隔线。
+          ScaleMenuButton<String>(
+            icon: Icons.more_vert,
+            iconSize: 18,
+            tooltip: zh ? '更多操作' : 'More',
+            items: [
+              OptionItem('edit', zh ? '编辑' : 'Edit', icon: Icons.edit_outlined),
+              OptionItem(
+                'rename',
+                zh ? '重命名' : 'Rename',
+                icon: Icons.drive_file_rename_outline,
               ),
-              PopupMenuItem(
-                value: 'rename',
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.drive_file_rename_outline,
-                      size: 16,
-                      color: scheme.onSurface,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(zh ? '重命名' : 'Rename'),
-                  ],
-                ),
+              OptionItem(
+                'duplicate',
+                zh ? '复制' : 'Duplicate',
+                icon: Icons.copy_outlined,
               ),
-              PopupMenuItem(
-                value: 'duplicate',
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.copy_outlined,
-                      size: 16,
-                      color: scheme.onSurface,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(zh ? '复制' : 'Duplicate'),
-                  ],
-                ),
+              OptionItem(
+                'export',
+                zh ? '导出' : 'Export',
+                icon: Icons.file_upload_outlined,
               ),
-              PopupMenuItem(
-                value: 'export',
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.file_upload_outlined,
-                      size: 16,
-                      color: scheme.onSurface,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(zh ? '导出' : 'Export'),
-                  ],
-                ),
-              ),
-              const PopupMenuDivider(),
-              PopupMenuItem(
-                value: 'delete',
-                child: Row(
-                  children: [
-                    Icon(Icons.delete_outline, size: 16, color: scheme.error),
-                    const SizedBox(width: 8),
-                    Text(
-                      zh ? '删除' : 'Delete',
-                      style: TextStyle(color: scheme.error),
-                    ),
-                  ],
-                ),
+              OptionItem(
+                'delete',
+                zh ? '删除' : 'Delete',
+                icon: Icons.delete_outline,
+                danger: true,
               ),
             ],
             onSelected: (action) {
