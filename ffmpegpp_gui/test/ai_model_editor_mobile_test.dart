@@ -4,7 +4,6 @@ import 'package:ffmpegpp_gui/providers/app_state.dart';
 import 'package:ffmpegpp_gui/theme/app_theme.dart';
 import 'package:ffmpegpp_gui/widgets/liquid_glass_mobile_nav.dart';
 import 'package:ffmpegpp_gui/widgets/liquid_modality_pills.dart';
-import 'package:ffmpegpp_gui/widgets/liquid_stretch_tabs.dart';
 import 'package:ffmpegpp_gui/widgets/model_editor_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -33,57 +32,6 @@ Finder _tabLabel(String label) => find
     .first;
 
 void main() {
-  group('LiquidStretchTabs', () {
-    testWidgets('should stretch the selected indicator then settle', (
-      tester,
-    ) async {
-      final state = AppState();
-      state.updateConfig((c) => c..pillStyle = 'gray');
-      var selected = 0;
-      await tester.pumpWidget(
-        _harness(
-          state,
-          StatefulBuilder(
-            builder: (context, setState) => Center(
-              child: SizedBox(
-                width: 360,
-                child: LiquidStretchTabs(
-                  style: 'gray',
-                  selectedIndex: selected,
-                  onChanged: (index) => setState(() => selected = index),
-                  tabs: const [
-                    LiquidStretchTab(
-                      icon: Icons.tune_rounded,
-                      label: '基本',
-                    ),
-                    LiquidStretchTab(
-                      icon: Icons.widgets_outlined,
-                      label: '模型',
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      final finder = find.byKey(LiquidStretchTabs.indicatorKey);
-      expect(finder, findsOneWidget);
-      final initialWidth = tester.getSize(finder).width;
-
-      await tester.tap(find.text('模型'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 120));
-      final stretchedWidth = tester.getSize(finder).width;
-      expect(stretchedWidth, greaterThan(initialWidth + 2));
-
-      await tester.pumpAndSettle();
-      expect(tester.getSize(finder).width, closeTo(initialWidth, 1.5));
-      await _flushSaveTimers(tester);
-    });
-  });
-
   group('ModelEditorSheet', () {
     testWidgets('should show all fields and sync image modality with vision', (
       tester,
@@ -239,8 +187,8 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      // 底栏已统一为主界面同模块的 AppLiquidTabBar（liquid_glass_tab_bar），
-      // 不再使用自绘的 LiquidStretchTabs；Key 保持不变以免其它用例漂移。
+      // 底栏统一为主界面同模块的 AppLiquidTabBar（liquid_glass_tab_bar）；
+      // Key 保持不变以免其它用例漂移。
       expect(find.byType(AppLiquidTabBar), findsOneWidget);
       expect(
         find.byKey(const ValueKey('ai_provider_top_tabs')),

@@ -320,21 +320,24 @@ class AppTheme {
             borderSide: BorderSide(color: scheme.primary, width: 1.5),
           ),
         ),
+        // 下拉/菜单统一外观：与 OptionMenuBar / AppDropdown 的浮层同款
+        // （圆角 14、elevation 10、surface 背景），避免系统 DropdownMenu 与
+        // 自定义面板出现两种圆角/阴影。
         menuStyle: MenuStyle(
           shape: WidgetStatePropertyAll(
             RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(22),
+              borderRadius: BorderRadius.circular(14),
               side: BorderSide(color: scheme.outlineVariant.withAlpha(70)),
             ),
           ),
           surfaceTintColor: WidgetStatePropertyAll(scheme.surface),
-          elevation: const WidgetStatePropertyAll(12),
+          elevation: const WidgetStatePropertyAll(10),
           padding: const WidgetStatePropertyAll(
             EdgeInsets.symmetric(vertical: 8),
           ),
-          backgroundColor: WidgetStatePropertyAll(
-            scheme.surfaceContainerHighest.withAlpha(240),
-          ),
+          // 与 OptionMenuBar / AppDropdown 的浮层同色：统一用 surface，
+          // 不再混用 surfaceContainerHighest（深色下会偏亮、和自定义面板不一致）。
+          backgroundColor: WidgetStatePropertyAll(scheme.surface),
           shadowColor: WidgetStatePropertyAll(
             Colors.black.withAlpha(isDark ? 80 : 30),
           ),
@@ -352,8 +355,8 @@ class AppTheme {
       // 默认的 280 上限，菜单就会按最长条目无限撑宽（见各页面注释）。
       popupMenuTheme: PopupMenuThemeData(
         color: scheme.surface,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        elevation: 8,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        elevation: 10,
       ),
       // 所有对话框统一风格：
       // - 液态玻璃 / 模糊：半透明磨砂背景（透出后面玻璃层）+ 细边框 + 无 M3 tint；

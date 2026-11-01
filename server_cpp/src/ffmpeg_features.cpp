@@ -10,7 +10,7 @@ namespace {
 
 // 解析 ffmpeg -encoders / -decoders 输出，按类型分类
 // 格式: D/E A/V/S. ...  codec_name  description
-std::vector<std::string> parseCodecsByType(const std::string& output, char mediaType, bool encodeOnly) {
+std::vector<std::string> parseCodecsByType(const std::string& output, char mediaType) {
     std::vector<std::string> result;
     std::istringstream iss(output);
     std::string line;
@@ -22,12 +22,16 @@ std::vector<std::string> parseCodecsByType(const std::string& output, char media
             if (line.find("------") != std::string::npos) started = true;
             continue;
         }
-        if (line.empty() || line.size() < 7) continue;
-        // line[0]=D(解码)/. line[1]=E(编码)/. line[2]=V/A/S/.  ...
-        char enc = line[1];
-        char media = line[2];
-        if (media != mediaType) continue;
-        if (encodeOnly && enc != 'E') continue;
+        // 真实输出形如 " V....D a64multi   Multicolor charset…"：
+        //   第 0 列是空格，第 1 列是媒体类型（V/A/S），第 2~6 列是标志位
+        //   （.F.... 帧级多线程 / .....D 直接渲染 等），下标 7 起是名字。
+        // 旧实现把 line[1] 当成 D/E 列、line[2] 当成媒体类型，而 -encoders /
+        // -decoders 输出里根本没有 D/E 列，于是 media 恒为 '.'，整张表被
+        // continue 掉 —— encoders_*/decoders_* 永远是空数组。
+        // 编解码器本来就分别由 -encoders / -decoders 取，无需再按列区分。
+        if (line.empty() || line.size() < 8) continue;
+        if (line.find('=') != std::string::npos) continue;  // 图例行 " V..... = Video"
+        if (mediaType != 0 && line[1] != mediaType) continue;
 
         size_t name_start = line.find_first_not_of(" \t", 7);
         if (name_start == std::string::npos) continue;
@@ -48,7 +52,9 @@ std::vector<std::string> parseFormats(const std::string& output) {
     while (std::getline(iss, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (!started) {
-            if (line.find("------") != std::string::npos) started = true;
+            // 真实输出的分隔行是 " ---"（3 个横线），旧实现找 "------"（6 个），
+            // 于是 started 永远为 false，formats 恒为空数组。
+            if (line.find("---") != std::string::npos) started = true;
             continue;
         }
         if (line.empty() || line.size() < 4) continue;
@@ -83,24 +89,29 @@ std::vector<std::string> parseFilters(const std::string& output) {
             continue;
         }
         if (line.empty()) continue;
-        // 跳过标志位 (T.S./N.A./.. 等)
-        size_t pos = 0;
-        int spaceCount = 0;
-        while (pos < line.size() && spaceCount < 3) {
-            if (line[pos] == ' ') {
-                spaceCount++;
-                // 跳过连续空格
-                while (pos < line.size() && line[pos] == ' ') pos++;
-            } else {
-                pos++;
-            }
+        // 真实输出形如 " TSC aap               AA->A      Apply Affine …"：
+        // 第 1~3 列是标志位（T/S/C 或 '.'），第 5 列起是滤镜名，再后面是
+        // "输入->输出" 列。
+        // 旧实现「跳过 3 段空格」会落到第 4 列，也就是 "AA->A" 这个签名列，
+        // 于是 filters 里全是 V->V / AA->A，连 scale 都没有。
+        // 现在的规则：按空白切成 token，"X->Y" 签名前面那个 token 才是滤镜名
+        // （标志位 "TSC"/"..." 也在签名前面，所以不能简单取第一个 token）。
+        // 这样图例行（"T.. = Timeline support"）与分隔行会被自动跳过。
+        std::istringstream tss(line);
+        std::string t0, t1, t2;
+        if (!(tss >> t0)) continue;
+        if (!(tss >> t1)) continue;
+        if (!(tss >> t2)) continue;
+        std::string name;
+        if (t2.find("->") != std::string::npos) {
+            name = t1;                       // 有标志位列：flags name X->Y
+        } else if (t1.find("->") != std::string::npos) {
+            name = t0;                       // 无标志位列
+        } else {
+            continue;                        // 图例行/分隔行
         }
-        size_t name_start = line.find_first_not_of(" \t", pos);
-        if (name_start == std::string::npos) continue;
-        size_t name_end = line.find_first_of(" \t", name_start);
-        if (name_end != std::string::npos) {
-            result.push_back(line.substr(name_start, name_end - name_start));
-        }
+        if (name.empty() || name.find_first_not_of('-') == std::string::npos) continue;
+        result.push_back(name);
     }
     return result;
 }
@@ -169,14 +180,14 @@ json queryFFmpegFeatures() {
     // 使用 -encoders / -decoders（比 -codecs 更清晰）
     auto enc_pr = Subprocess::run({getFFmpegPath(), "-encoders"}, 10);
     if (enc_pr.exit_code == 0) {
-        result["encoders_video"] = parseCodecsByType(enc_pr.stdout_output, 'V', true);
-        result["encoders_audio"] = parseCodecsByType(enc_pr.stdout_output, 'A', true);
+        result["encoders_video"] = parseCodecsByType(enc_pr.stdout_output, 'V');
+        result["encoders_audio"] = parseCodecsByType(enc_pr.stdout_output, 'A');
     }
 
     auto dec_pr = Subprocess::run({getFFmpegPath(), "-decoders"}, 10);
     if (dec_pr.exit_code == 0) {
-        result["decoders_video"] = parseCodecsByType(dec_pr.stdout_output, 'V', false);
-        result["decoders_audio"] = parseCodecsByType(dec_pr.stdout_output, 'A', false);
+        result["decoders_video"] = parseCodecsByType(dec_pr.stdout_output, 'V');
+        result["decoders_audio"] = parseCodecsByType(dec_pr.stdout_output, 'A');
     }
 
     // 格式（容器）

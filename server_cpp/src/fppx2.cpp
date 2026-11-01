@@ -1416,7 +1416,9 @@ Fppx2Result fppx2Import(const std::string& path, bool force, const std::string& 
     if (sawCrc) {
         uint32_t actual = fppxCrc32(bytes.data(), crcStart);
         if (actual != crcStored) {
-            char a[8], b2[8];
+            // "%08x" 需要 8 位十六进制 + 结尾 NUL = 9 字节；缓冲开 8 会被截成
+            // 7 位并丢掉最后一位，报错信息里的 CRC 值本身是错的。
+            char a[9], b2[9];
             std::snprintf(a, sizeof(a), "%08x", actual);
             std::snprintf(b2, sizeof(b2), "%08x", crcStored);
             r.errors.push_back(std::string("CRC32 校验失败（期望 0x") + b2 + "，实际 0x" + a +
@@ -1440,6 +1442,10 @@ Fppx2Result fppx2Import(const std::string& path, bool force, const std::string& 
         return r;
     }
     if (!ok) return r; // parse 内部已填 errors
+    // 语义校验（环路、悬空连线、逻辑块归属、参数张冠李戴等）只往 r.errors 里
+    // 累积，不会让上面的 parse 返回 false。旧代码无条件置 success=true，
+    // 结果是"校验不通过"的配置被当成正常导入，GUI 静默应用一张残缺的图。
+    if (!r.errors.empty()) return r;
     r.success = true;
     return r;
 }

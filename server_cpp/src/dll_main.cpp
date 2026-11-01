@@ -37,6 +37,12 @@ static std::atomic<bool> g_shutdownFlag{false};
 static std::set<std::string> g_cancelledTaskIds;
 static std::mutex g_cancelMutex;
 
+// 已推入输入队列、尚未被 worker 取走的请求 id。
+// 「停止所有」（cancel 不带 task_ids）是内联处理的，此刻这些请求还躺在队列里，
+// 必须登记下来，否则全局标志被下一个任务启动清零后它们会照常执行。
+static std::set<std::string> g_pendingRequestIds;
+static std::mutex g_pendingMutex;
+
 // Expiry index keeps cleanup work proportional to expired records.
 using CancelExpiryMap = std::multimap<std::chrono::steady_clock::time_point, std::string>;
 static CancelExpiryMap g_cancelledTaskExpirations;
@@ -155,6 +161,21 @@ static void workerLoop() {
         slog("dll worker: processing action=%s", action.c_str());
 
         const std::string reqId = req.value("id", "");
+
+        // 每个任务启动时清掉全局「停止所有」标志。
+        // cancel 不带 task_ids 时是内联处理的（见 ffmpegpp_request）：若不清零，
+        // 一次「队列空闲时的停止所有」会把 g_cancelFlag 永久置为 true，此后
+        // 每个任务的 isCancelled() 第一句就返回 true，transcode/subtitle/concat…
+        // 全都"一起步就被 reap"，用户只能重启 App 才能恢复（唯一的复位点在
+        // ffmpegpp_init，而运行期 init 直接 return 0，清不掉）。
+        // 安全性：排队中的请求已在 cancel 处理时写入 g_cancelledTaskIds
+        // （见 ffmpegpp_request 的 hasTaskIds==false 分支），清零不会漏掉它们。
+        g_cancelFlag.store(false);
+        {
+            std::lock_guard<std::mutex> pendLock(g_pendingMutex);
+            g_pendingRequestIds.erase(reqId);
+        }
+
         try {
             // 队列中已被取消的任务直接跳过（cancel 携带 task_ids 时），
             // 避免「停止所有」后后端仍继续执行排队任务
@@ -211,6 +232,8 @@ static void workerLoop() {
                 handleConcat(req, isCancelled);
             } else if (action == "image_sequence") {
                 handleImageSequence(req, isCancelled);
+            } else if (action == "remove_metadata") {
+                handleRemoveMetadata(req, isCancelled);
             } else if (action == "custom_command") {
                 handleCustomCommand(req, isCancelled);
             } else {
@@ -277,6 +300,8 @@ FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
     slog("dll request: %s", line.substr(0, 200).c_str());
 
     // cancel/ping/shutdown 内联处理（不进工作线程队列）
+    // 进入队列的请求 id（登记后供「停止所有」取消尚未开始的任务）
+    std::string pendingId;
     try {
         json req = json::parse(line);
         if (!req.is_object() || (req.contains("action") && !req["action"].is_string()) ||
@@ -284,6 +309,7 @@ FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
             JsonWriter::reply("unknown", false, nullptr, "请求 action/id 必须是字符串");
             return -1;
         }
+        pendingId = req.value("id", "");
         std::string action = req.value("action", "");
 
         if (action == "pause" || action == "resume") {
@@ -327,6 +353,25 @@ FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
                                     && !params["task_ids"].empty();
             if (!hasTaskIds) {
                 g_cancelFlag.store(true);
+                // 「停止所有」同时取消尚未开始执行的排队请求：把它们的 id 写进
+                // g_cancelledTaskIds，worker 取到时会走"任务已取消"分支。
+                // 不这么做的话，全局标志会在下一个任务启动时被清零，排队任务照跑。
+                std::lock_guard<std::mutex> pendLock(g_pendingMutex);
+                std::lock_guard<std::mutex> cancelLock(g_cancelMutex);
+                const auto cancelNow = std::chrono::steady_clock::now();
+                for (const auto& pid : g_pendingRequestIds) {
+                    if (pid.empty()) continue;
+                    g_cancelledTaskIds.insert(pid);
+                    auto existing = g_cancelledTaskExpiryById.find(pid);
+                    if (existing != g_cancelledTaskExpiryById.end()) {
+                        g_cancelledTaskExpirations.erase(existing->second);
+                        g_cancelledTaskExpiryById.erase(existing);
+                    }
+                    auto expiry = g_cancelledTaskExpirations.emplace(
+                        cancelNow + std::chrono::seconds(kCancelledIdTtlSeconds + 1), pid);
+                    g_cancelledTaskExpiryById[pid] = expiry;
+                }
+                g_pendingRequestIds.clear();
             } else {
                 std::lock_guard<std::mutex> lock(g_cancelMutex);
                 auto now = std::chrono::steady_clock::now();
@@ -413,6 +458,10 @@ FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
         return -1;
     }
 
+    {
+        std::lock_guard<std::mutex> pendLock(g_pendingMutex);
+        if (!pendingId.empty()) g_pendingRequestIds.insert(pendingId);
+    }
     pushInput(line);
     return 0;
 }

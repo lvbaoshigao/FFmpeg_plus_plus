@@ -10,6 +10,7 @@ import 'image_crop_step_editor.dart';
 import 'image_rotate_step_editor.dart';
 import 'image_scale_step_editor.dart';
 import 'image_sharpen_step_editor.dart';
+import 'metadata_strip_step_editor.dart';
 import 'video_crop_step_editor.dart';
 import 'video_filter_step_editor.dart';
 import 'video_geometry_step_editor.dart';
@@ -130,6 +131,14 @@ class _GenericMediaStepEditorState extends State<GenericMediaStepEditor> {
     final cb = widget.onChanged;
     // 子编辑器 key 带 mediaKind：保证切类型必走 initState（initDefaults 重新注入）
     switch (_n.type) {
+      case PipelineStepType.metadataStrip:
+        return MetadataStripStepEditor(
+          key: ValueKey('${_n.id}:$k'),
+          params: p,
+          onChanged: cb,
+          isZh: zh,
+          mediaKind: k,
+        );
       case PipelineStepType.mediaConvert:
         return switch (k) {
           MediaType.video => AvProcessStepEditor(key: ValueKey('${_n.id}:$k'), params: p, onChanged: cb, isZh: zh),

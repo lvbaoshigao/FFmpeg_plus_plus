@@ -114,6 +114,18 @@ enum PipelineStepType {
   mediaOverlay,
   output,
 
+  // Appended to preserve serialized enum indices for existing graphs.
+  imageCompress,
+  audioNormalize,
+  audioNoiseGate,
+  videoFrameRate,
+
+  // 媒体功能节点（第二轮，继续追加以保持既有索引不变）
+  metadataStrip, // 元数据删除：图片/音频/视频三合一（通用节点）
+  audioDenoise, // 音频降噪（afftdn）
+  audioSilenceTrim, // 首尾静音裁剪（silenceremove）
+  videoDeinterlace, // 视频去隔行（yadif）
+
   /// 新版 .fppx 强制导入的未知类型节点：真实类型 ID 存 [PipelineNode.unknownTypeId]，
   /// 仅可编辑/保存/原样导出，不参与转码执行。
   unknown,
@@ -211,6 +223,22 @@ class PipelineStep {
         return '叠加';
       case PipelineStepType.output:
         return '输出';
+      case PipelineStepType.imageCompress:
+        return '图片压缩';
+      case PipelineStepType.audioNormalize:
+        return '响度标准化';
+      case PipelineStepType.audioNoiseGate:
+        return '音频噪声门';
+      case PipelineStepType.videoFrameRate:
+        return '帧率转换';
+      case PipelineStepType.metadataStrip:
+        return '元数据删除';
+      case PipelineStepType.audioDenoise:
+        return '音频降噪';
+      case PipelineStepType.audioSilenceTrim:
+        return '静音裁剪';
+      case PipelineStepType.videoDeinterlace:
+        return '视频去隔行';
       case PipelineStepType.unknown:
         return '未知节点';
     }
@@ -294,6 +322,22 @@ class PipelineStep {
         return 'Overlay';
       case PipelineStepType.output:
         return 'Output';
+      case PipelineStepType.imageCompress:
+        return 'Image Compress';
+      case PipelineStepType.audioNormalize:
+        return 'Loudness Normalize';
+      case PipelineStepType.audioNoiseGate:
+        return 'Noise Gate';
+      case PipelineStepType.videoFrameRate:
+        return 'Frame Rate';
+      case PipelineStepType.metadataStrip:
+        return 'Metadata Strip';
+      case PipelineStepType.audioDenoise:
+        return 'Audio Denoise';
+      case PipelineStepType.audioSilenceTrim:
+        return 'Silence Trim';
+      case PipelineStepType.videoDeinterlace:
+        return 'Deinterlace';
       case PipelineStepType.unknown:
         return 'Unknown';
     }
@@ -316,14 +360,20 @@ enum LogicGateType {
   xnor, // 同或门：输入相同时输出 1
   const1, // 恒 1：恒定输出 1（无输入）
   const0, // 恒 0：恒定输出 0（无输入）
-  timeTrigger; // 时间触发器：系统时间匹配时输出 1，否则 0（无输入，需配置时间/日期）
+  timeTrigger, // 时间触发器：系统时间匹配时输出 1，否则 0（无输入，需配置时间/日期）
+  random, // 按节点 ID 哈希与概率输出
+  filenameMatch, // 文本包含匹配
+  extensionMatch; // 文本后缀匹配
 
   /// 该逻辑门的常规输入数（恒1/恒0/时间触发器 为 0，非门为 1，其余为 2）
   int get inputCount => switch (this) {
     LogicGateType.not => 1,
     LogicGateType.const1 ||
     LogicGateType.const0 ||
-    LogicGateType.timeTrigger => 0,
+    LogicGateType.timeTrigger ||
+    LogicGateType.random ||
+    LogicGateType.filenameMatch ||
+    LogicGateType.extensionMatch => 0,
     _ => 2,
   };
 
@@ -342,6 +392,9 @@ enum LogicGateType {
     LogicGateType.const1 => '1',
     LogicGateType.const0 => '0',
     LogicGateType.timeTrigger => isZh ? '时间' : 'Time',
+    LogicGateType.random => isZh ? '随机' : 'RAND',
+    LogicGateType.filenameMatch => isZh ? '文件名' : 'NAME',
+    LogicGateType.extensionMatch => isZh ? '扩展名' : 'EXT',
   };
 }
 
@@ -435,6 +488,7 @@ class PipelineNode {
   // ── 通用节点（跨格式）：媒体类型是必选属性 ──────────────────
   /// 通用节点集合：语义跨 音/视频/图片。
   static const Set<PipelineStepType> genericMediaTypes = <PipelineStepType>{
+    PipelineStepType.metadataStrip,
     PipelineStepType.mediaConvert,
     PipelineStepType.mediaScale,
     PipelineStepType.mediaCrop,
@@ -463,6 +517,11 @@ class PipelineNode {
   /// 不在表中的组合在选择器里不出现（如「缩放」没有音频语义）。
   static const Map<PipelineStepType, List<MediaType>>
   genericSupportedKinds = <PipelineStepType, List<MediaType>>{
+    PipelineStepType.metadataStrip: <MediaType>[
+      MediaType.video,
+      MediaType.image,
+      MediaType.audio,
+    ],
     PipelineStepType.mediaConvert: <MediaType>[
       MediaType.video,
       MediaType.image,
@@ -484,6 +543,11 @@ class PipelineNode {
   /// 否则残留键已登记在别的旧节点名下，v2 导出会判 PKC_MISMATCH 拒绝写盘。
   static const Map<PipelineStepType, Map<MediaType, Set<String>>>
   genericParamKeys = <PipelineStepType, Map<MediaType, Set<String>>>{
+    PipelineStepType.metadataStrip: <MediaType, Set<String>>{
+      MediaType.video: <String>{'keep_chapters'},
+      MediaType.image: <String>{},
+      MediaType.audio: <String>{'remove_cover'},
+    },
     PipelineStepType.mediaConvert: <MediaType, Set<String>>{
       MediaType.video: <String>{
         'video_codec',
@@ -715,6 +779,22 @@ class PipelineNode {
         return '叠加';
       case PipelineStepType.output:
         return '输出';
+      case PipelineStepType.imageCompress:
+        return '图片压缩';
+      case PipelineStepType.audioNormalize:
+        return '响度标准化';
+      case PipelineStepType.audioNoiseGate:
+        return '音频噪声门';
+      case PipelineStepType.videoFrameRate:
+        return '帧率转换';
+      case PipelineStepType.metadataStrip:
+        return '元数据删除';
+      case PipelineStepType.audioDenoise:
+        return '音频降噪';
+      case PipelineStepType.audioSilenceTrim:
+        return '静音裁剪';
+      case PipelineStepType.videoDeinterlace:
+        return '视频去隔行';
       case PipelineStepType.unknown:
         return '未知节点${unknownTypeId == null ? '' : ' $unknownTypeId'}';
     }
@@ -798,6 +878,22 @@ class PipelineNode {
         return 'Overlay';
       case PipelineStepType.output:
         return 'Output';
+      case PipelineStepType.imageCompress:
+        return 'Image Compress';
+      case PipelineStepType.audioNormalize:
+        return 'Loudness Normalize';
+      case PipelineStepType.audioNoiseGate:
+        return 'Noise Gate';
+      case PipelineStepType.videoFrameRate:
+        return 'Frame Rate';
+      case PipelineStepType.metadataStrip:
+        return 'Metadata Strip';
+      case PipelineStepType.audioDenoise:
+        return 'Audio Denoise';
+      case PipelineStepType.audioSilenceTrim:
+        return 'Silence Trim';
+      case PipelineStepType.videoDeinterlace:
+        return 'Deinterlace';
       case PipelineStepType.unknown:
         return 'Unknown';
     }
@@ -836,12 +932,19 @@ class PipelineNode {
       PipelineStepType.imageNoise => {MediaType.image},
       PipelineStepType.imageSharpen => {MediaType.image},
       PipelineStepType.imageDenoise => {MediaType.image},
-      PipelineStepType.imageChannelExtract => {MediaType.image},
+      PipelineStepType.imageChannelExtract ||
+      PipelineStepType.imageCompress => {MediaType.image},
       PipelineStepType.videoCrop => {MediaType.video},
       PipelineStepType.videoFilter => {MediaType.video},
       PipelineStepType.videoGeometry => {MediaType.video},
       PipelineStepType.videoOverlay => {MediaType.video},
-      PipelineStepType.audioFade => {MediaType.audio},
+      PipelineStepType.audioFade ||
+      PipelineStepType.audioNormalize ||
+      PipelineStepType.audioNoiseGate ||
+      PipelineStepType.audioDenoise ||
+      PipelineStepType.audioSilenceTrim => {MediaType.audio},
+      PipelineStepType.videoFrameRate ||
+      PipelineStepType.videoDeinterlace => {MediaType.video},
       PipelineStepType.imageAdjust => {MediaType.image},
       PipelineStepType.output => {
         MediaType.video,
@@ -855,7 +958,8 @@ class PipelineNode {
       PipelineStepType.mediaRotate ||
       PipelineStepType.mediaColor ||
       PipelineStepType.mediaSharpen ||
-      PipelineStepType.mediaOverlay => const <MediaType>{},
+      PipelineStepType.mediaOverlay ||
+      PipelineStepType.metadataStrip => const <MediaType>{},
     };
   }
 
@@ -890,12 +994,19 @@ class PipelineNode {
       PipelineStepType.imageNoise => MediaType.image,
       PipelineStepType.imageSharpen => MediaType.image,
       PipelineStepType.imageDenoise => MediaType.image,
-      PipelineStepType.imageChannelExtract => MediaType.image,
+      PipelineStepType.imageChannelExtract ||
+      PipelineStepType.imageCompress => MediaType.image,
       PipelineStepType.videoCrop => MediaType.video,
       PipelineStepType.videoFilter => MediaType.video,
       PipelineStepType.videoGeometry => MediaType.video,
       PipelineStepType.videoOverlay => MediaType.video,
-      PipelineStepType.audioFade => MediaType.audio,
+      PipelineStepType.audioFade ||
+      PipelineStepType.audioNormalize ||
+      PipelineStepType.audioNoiseGate ||
+      PipelineStepType.audioDenoise ||
+      PipelineStepType.audioSilenceTrim => MediaType.audio,
+      PipelineStepType.videoFrameRate ||
+      PipelineStepType.videoDeinterlace => MediaType.video,
       PipelineStepType.imageAdjust => MediaType.image,
       PipelineStepType.output => null,
       PipelineStepType.unknown => null,
@@ -905,7 +1016,8 @@ class PipelineNode {
       PipelineStepType.mediaRotate ||
       PipelineStepType.mediaColor ||
       PipelineStepType.mediaSharpen ||
-      PipelineStepType.mediaOverlay => null,
+      PipelineStepType.mediaOverlay ||
+      PipelineStepType.metadataStrip => null,
     };
   }
 

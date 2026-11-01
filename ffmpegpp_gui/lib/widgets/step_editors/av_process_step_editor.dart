@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../platform/app_platform.dart';
+import '../app_dropdown.dart';
 import '../app_slider.dart';
 import 'editor_kit.dart';
 
@@ -142,43 +143,48 @@ class _AvProcessStepEditorState extends State<AvProcessStepEditor> with StepEdit
     final current = p['video_codec'] as String? ?? 'libx264';
     final safe = _allCodecs.contains(current) ? current : _allCodecs.first;
 
-    return DropdownButtonFormField<String>(
-      borderRadius: BorderRadius.circular(12),
-      initialValue: safe, isExpanded: true, decoration: InputDecoration(labelText: zh ? '编码器' : 'Codec'),
-      dropdownColor: cs.surface, style: TextStyle(fontSize: 13, color: cs.onSurface),
-      items: _allCodecs.map((codec) {
-        final label = codec == 'copy' ? _copyLabel(zh) : (_codecLabels[codec] ?? codec);
-        final isAccel = accel.contains(codec);
-        final isCpu = (_gpuCodecs['CPU'] ?? []).contains(codec);
-        final isCopy = codec == 'copy';
+    final items = _allCodecs.map((codec) {
+      final label = codec == 'copy' ? _copyLabel(zh) : (_codecLabels[codec] ?? codec);
+      final isAccel = accel.contains(codec);
+      final isCpu = (_gpuCodecs['CPU'] ?? []).contains(codec);
+      final isCopy = codec == 'copy';
 
-        String suffix = '';
-        Color textColor = cs.onSurface;
-        if (gpu != 'CPU' && !isCopy) {
-          if (isAccel) {
-            suffix = ' ⚡$gpu';
-            textColor = cs.primary;
-          } else if (isCpu) {
-            suffix = ' (CPU)';
-            textColor = cs.onSurfaceVariant;
-          }
+      var suffix = '';
+      var textColor = cs.onSurfaceVariant;
+      var weight = FontWeight.w400;
+      if (gpu != 'CPU' && !isCopy) {
+        if (isAccel) {
+          suffix = ' ⚡$gpu';
+          textColor = cs.primary;
+          weight = FontWeight.w600;
+        } else if (isCpu) {
+          suffix = ' (CPU)';
+          textColor = cs.onSurfaceVariant;
         }
+      }
+      return AppDropdownItem<String>(
+        codec,
+        '$label$suffix',
+        textColor: textColor,
+        fontWeight: weight,
+      );
+    }).toList();
 
-        return DropdownMenuItem(
-          value: codec,
-          child: Text('$label$suffix', style: TextStyle(fontSize: 13, color: textColor,
-              fontWeight: isAccel && gpu != 'CPU' ? FontWeight.w600 : FontWeight.w400)),
-        );
-      }).toList(),
+    return AppDropdown<String>(
+      label: zh ? '编码器' : 'Codec',
+      value: safe,
+      height: 44,
+      searchable: true,
+      searchHint: zh ? '搜索编码器' : 'Search codec',
+      emptyLabel: zh ? '无匹配编码器' : 'No matching codec',
+      items: items,
       onChanged: (v) {
-        if (v != null) {
-          update('video_codec', v);
-          // 切换编码器后按新上限夹取已存的 CRF（AV1/VP9 上限 63，H.26x 上限 51），
-          // 否则 Slider 断言崩溃且 ffmpeg 收到超界 CRF
-          final maxCrf = _crfMaxForCodec(v);
-          final cur = (p['crf'] as num?)?.toInt();
-          if (cur != null && cur > maxCrf) p['crf'] = maxCrf;
-        }
+        update('video_codec', v);
+        // 切换编码器后按新上限夹取已存的 CRF（AV1/VP9 上限 63，H.26x 上限 51），
+        // 否则 Slider 断言崩溃且 ffmpeg 收到超界 CRF
+        final maxCrf = _crfMaxForCodec(v);
+        final cur = (p['crf'] as num?)?.toInt();
+        if (cur != null && cur > maxCrf) p['crf'] = maxCrf;
       },
     );
   }

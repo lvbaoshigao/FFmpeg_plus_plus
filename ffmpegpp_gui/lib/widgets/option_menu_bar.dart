@@ -34,6 +34,13 @@ class OptionItem<T> {
   /// 额外的搜索关键词（label/subtitle 之外，例如英文名、别名）。
   final String? keywords;
 
+  /// 条目文字颜色（null = 跟随主题的 onSurfaceVariant；选中时仍用主题色）。
+  /// 供「硬编编码器标紫 / 软编标灰」这类语义分组使用。
+  final Color? textColor;
+
+  /// 条目文字字重（null = 跟随主题 bodyMedium；选中时仍加粗）。
+  final FontWeight? fontWeight;
+
   const OptionItem(
     this.value,
     this.label, {
@@ -42,6 +49,8 @@ class OptionItem<T> {
     this.leading,
     this.danger = false,
     this.keywords,
+    this.textColor,
+    this.fontWeight,
   });
 
   /// 搜索匹配：忽略空格/连字符/下划线/点/斜杠/冒号，避免
@@ -147,12 +156,12 @@ Widget _optionRow<T>({
                       fontSize: 12.5,
                       fontWeight: selected
                           ? FontWeight.values[(weight.value ~/ 100).clamp(0, 8)]
-                          : weight,
+                          : (item.fontWeight ?? weight),
                       color: item.danger
                           ? scheme.error
                           : (selected
                                 ? scheme.primary
-                                : scheme.onSurfaceVariant),
+                                : (item.textColor ?? scheme.onSurfaceVariant)),
                     ),
                   ),
                   if (item.subtitle != null) ...[
@@ -591,8 +600,8 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            color: scheme.onSurface,
+                            fontWeight: current?.fontWeight ?? FontWeight.w500,
+                            color: current?.textColor ?? scheme.onSurface,
                           ),
                         ),
                       ),

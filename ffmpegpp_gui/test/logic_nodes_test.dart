@@ -193,6 +193,39 @@ void main() {
     });
   });
 
+  group('新增控制节点', () {
+    test('文件名包含门使用配置文本求值并禁用步骤', () {
+      final g = _chain(extra: [
+        PipelineConnection(id: 'e1', fromNodeId: 'G', toNodeId: 'A', kind: 'control'),
+      ]);
+      g.nodes.add(_node('G', PipelineStepType.start, gate: 'filenameMatch',
+          params: {'text': 'Holiday clip', 'pattern': 'holidayx'}));
+      expect(_stepCalls(_build(g)), 1);
+    });
+
+    test('后缀门可用于对扩展名文本进行比较', () {
+      final g = _chain(extra: [
+        PipelineConnection(id: 'e1', fromNodeId: 'G', toNodeId: 'A', kind: 'control'),
+      ]);
+      g.nodes.add(_node('G', PipelineStepType.start, gate: 'extensionMatch',
+          params: {'text': 'movie.mp4', 'pattern': '.mp4'}));
+      expect(_stepCalls(_build(g)), 2);
+    });
+
+    test('随机门 0% 与 100% 概率稳定可预测', () {
+      final makeGraph = (num chance) {
+        final g = _chain(extra: [
+          PipelineConnection(id: 'e1', fromNodeId: 'G', toNodeId: 'A', kind: 'control'),
+        ]);
+        g.nodes.add(_node('G', PipelineStepType.start, gate: 'random',
+            params: {'probability': chance}));
+        return g;
+      };
+      expect(_stepCalls(_build(makeGraph(0))), 1);
+      expect(_stepCalls(_build(makeGraph(100))), 2);
+    });
+  });
+
   group('B3 末步豁免不再静默', () {
     test('条件块覆盖最后一个处理步骤 → 写入 plan.warnings 且该步仍执行', () {
       final blocks = [

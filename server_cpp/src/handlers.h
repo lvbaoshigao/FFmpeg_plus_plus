@@ -46,6 +46,7 @@ void handleQueryFeatures(const json& req);
 void handleTranscode(const json& req, const CancelCheck& isCancelled);
 void handleSubtitle(const json& req, const CancelCheck& isCancelled);
 void handleExtractFrame(const json& req, const CancelCheck& isCancelled);
+void handleRemoveMetadata(const json& req, const CancelCheck& isCancelled);
 void handleConcat(const json& req, const CancelCheck& isCancelled);
 void handleImageSequence(const json& req, const CancelCheck& isCancelled);
 void handleCustomCommand(const json& req, const CancelCheck& isCancelled);

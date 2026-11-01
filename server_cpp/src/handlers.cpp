@@ -867,6 +867,55 @@ void handleCustomCommand(const json& req, const CancelCheck& isCancelled) {
     runFFmpegProcess(req["id"], tokens, isCancelled, output_path);
 }
 
+// ═══════════════════════════════════════════
+// handleRemoveMetadata — 删除元数据（图片 / 音频 / 视频通用）
+// ═══════════════════════════════════════════
+//
+// 用 stream copy（-c copy）完成，不重新编码：
+//   · 图片：去掉 EXIF / XMP / ICC 等容器级元数据，像素保持不变；
+//   · 音频：去掉 ID3 / Vorbis comment / MP4 tags 等；
+//   · 视频：去掉容器级 tags、章节（可选保留），流数据原样复制。
+// 与音频元信息编辑不同，这里面向"清理痕迹"而不是编辑单个标签。
+void handleRemoveMetadata(const json& req, const CancelCheck& isCancelled) {
+    json params = getParams(req);
+    std::string input = params.value("input", "");
+    std::string output = params.value("output", "");
+    bool keep_chapters = params.value("keep_chapters", false);
+    bool remove_cover = params.value("remove_cover", false);
+
+    if (input.empty() || output.empty()) {
+        JsonWriter::reply(req["id"], false, nullptr, "缺少输入或输出路径");
+        return;
+    }
+    if (!isPathSafe(input) || !isPathSafe(output)) {
+        JsonWriter::reply(req["id"], false, nullptr, "路径包含不安全字符");
+        return;
+    }
+
+    std::vector<std::string> cmd = {
+        getFFmpegPath(), "-y", "-i", input,
+        // 映射全部流后统一清空全局/流级元数据
+        "-map", "0",
+        "-map_metadata", "-1",
+    };
+    if (!keep_chapters) {
+        cmd.push_back("-map_chapters");
+        cmd.push_back("-1");
+    }
+    // 音频封面在容器里是一条 attached_pic 视频流，不属于 tags；
+    // 需要连封面一起清理时用 -vn 丢掉视频流（由 GUI 仅在音频类型下开启）。
+    if (remove_cover) {
+        cmd.push_back("-vn");
+    }
+    cmd.push_back("-c");
+    cmd.push_back("copy");
+    cmd.push_back(output);
+
+    slog("removeMetadata: input=%s output=%s keep_chapters=%d remove_cover=%d",
+         input.c_str(), output.c_str(), keep_chapters ? 1 : 0, remove_cover ? 1 : 0);
+    runFFmpegProcess(req["id"], cmd, isCancelled, output);
+}
+
 // ── FPPX 配置文件（无论成败都把 errors/warnings 结构化带回，GUI 据此弹窗）──
 
 void handleFppxImport(const json& req) {

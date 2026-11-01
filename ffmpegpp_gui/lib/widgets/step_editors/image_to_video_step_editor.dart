@@ -91,32 +91,29 @@ class _ImageToVideoStepEditorState extends State<ImageToVideoStepEditor> with St
 
         const SizedBox(height: 8),
 
-        // 输出格式 + 编码器
+        // 输出格式 + 编码器（统一走 EditorDropdown，与其它节点面板同一套下拉外观）
         Row(children: [
-          Expanded(child: DropdownButtonFormField<String>(
-            borderRadius: BorderRadius.circular(12),
-            initialValue: fmt, isExpanded: true,
-            style: TextStyle(fontSize: 13, color: cs.onSurface),
-            dropdownColor: cs.surface,
-            decoration: InputDecoration(labelText: zh ? '格式' : 'Format', isDense: true,
-                labelStyle: TextStyle(color: cs.onSurface),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
-            items: ['mp4', 'mkv', 'avi', 'webm'].map((f) => DropdownMenuItem(value: f, child: Text(f.toUpperCase()))).toList(),
-            onChanged: (v) { if (v != null) update('output_format', v); },
+          Expanded(child: EditorDropdown(
+            label: zh ? '格式' : 'Format',
+            value: const ['mp4', 'mkv', 'avi', 'webm'].contains(fmt) ? fmt : 'mp4',
+            items: const [
+              ('mp4', 'MP4'),
+              ('mkv', 'MKV'),
+              ('avi', 'AVI'),
+              ('webm', 'WEBM'),
+            ],
+            onChanged: (v) => update('output_format', v),
           )),
           const SizedBox(width: 12),
-          Expanded(child: DropdownButtonFormField<String>(
-            borderRadius: BorderRadius.circular(12),
-            initialValue: codec, isExpanded: true,
-            style: TextStyle(fontSize: 13, color: cs.onSurface),
-            dropdownColor: cs.surface,
-            decoration: InputDecoration(labelText: zh ? '编码器' : 'Codec', isDense: true,
-                labelStyle: TextStyle(color: cs.onSurface),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
-            items: ['h264', 'h265', 'vp9'].map((c) => DropdownMenuItem(value: c, child: Text(c.toUpperCase()))).toList(),
-            onChanged: (v) { if (v != null) update('video_codec', v); },
+          Expanded(child: EditorDropdown(
+            label: zh ? '编码器' : 'Codec',
+            value: const ['h264', 'h265', 'vp9'].contains(codec) ? codec : 'h264',
+            items: const [
+              ('h264', 'H264'),
+              ('h265', 'H265'),
+              ('vp9', 'VP9'),
+            ],
+            onChanged: (v) => update('video_codec', v),
           )),
         ]),
       ],

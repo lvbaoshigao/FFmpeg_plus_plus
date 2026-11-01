@@ -19,9 +19,13 @@ import '../widgets/gate_symbol_painter.dart';
 import '../widgets/node_icons.dart';
 import '../widgets/step_editors/audio_compressor_step_editor.dart';
 import '../widgets/step_editors/audio_convert_step_editor.dart';
+import '../widgets/step_editors/audio_denoise_step_editor.dart';
 import '../widgets/step_editors/audio_fade_step_editor.dart';
 import '../widgets/step_editors/audio_metadata_step_editor.dart';
+import '../widgets/step_editors/audio_noise_gate_step_editor.dart';
+import '../widgets/step_editors/audio_normalize_step_editor.dart';
 import '../widgets/step_editors/audio_quality_step_editor.dart';
+import '../widgets/step_editors/audio_silence_trim_step_editor.dart';
 import '../widgets/step_editors/audio_speed_step_editor.dart';
 import '../widgets/step_editors/audio_volume_step_editor.dart';
 import '../widgets/step_editors/av_process_step_editor.dart';
@@ -33,6 +37,7 @@ import '../widgets/step_editors/generic_step_editor.dart';
 import '../widgets/step_editors/image_adjust_step_editor.dart';
 import '../widgets/step_editors/image_brightness_step_editor.dart';
 import '../widgets/step_editors/image_channel_extract_step_editor.dart';
+import '../widgets/step_editors/image_compress_step_editor.dart';
 import '../widgets/step_editors/image_convert_step_editor.dart';
 import '../widgets/step_editors/image_crop_step_editor.dart';
 import '../widgets/step_editors/image_denoise_step_editor.dart';
@@ -46,7 +51,9 @@ import '../widgets/step_editors/speed_step_editor.dart';
 import '../widgets/step_editors/start_step_editor.dart';
 import '../widgets/step_editors/subtitle_step_editor.dart';
 import '../widgets/step_editors/video_crop_step_editor.dart';
+import '../widgets/step_editors/video_deinterlace_step_editor.dart';
 import '../widgets/step_editors/video_filter_step_editor.dart';
+import '../widgets/step_editors/video_frame_rate_step_editor.dart';
 import '../widgets/step_editors/video_geometry_step_editor.dart';
 import '../widgets/step_editors/video_overlay_step_editor.dart';
 import '../widgets/wallpaper_background.dart';
@@ -939,6 +946,39 @@ class _PropsWindowState extends State<_PropsWindow> {
 /// 与主窗口 `_buildStepEditor` 的 switch **逐分支对应**：这里不重新实现任何
 /// 参数语义，只是把同一个 step editor 装配起来。新增节点类型时两处都要加
 /// （主窗口那份在 pipeline_editor_page.dart 的 `_buildStepEditor`）。
+Widget _buildDetachedConditionGate(
+  BuildContext context,
+  PanelWindowStore store,
+  PipelineNode node,
+  bool isZh,
+) {
+  final gate = node.gate!;
+  final probability = ((node.params['probability'] as num?)?.toDouble() ?? 50).clamp(0, 100).toDouble();
+  final label = switch (gate) {
+    LogicGateType.random => isZh ? '命中概率 (%)' : 'Probability (%)',
+    LogicGateType.filenameMatch => isZh ? '文本包含' : 'Text contains',
+    LogicGateType.extensionMatch => isZh ? '文本后缀' : 'Text suffix',
+    _ => '',
+  };
+  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    Text(label, style: Theme.of(context).textTheme.labelMedium),
+    if (gate == LogicGateType.random)
+      Slider(value: probability, min: 0, max: 100, divisions: 100,
+        onChanged: (value) { node.params['probability'] = value; store.pushParams(node); })
+    else ...[
+      TextFormField(initialValue: node.params['text'] as String? ?? '',
+        decoration: InputDecoration(hintText: isZh ? '待测文本' : 'Text to test'),
+        onChanged: (value) { node.params['text'] = value; store.pushParams(node); }),
+      TextFormField(initialValue: node.params['pattern'] as String? ?? '',
+        decoration: InputDecoration(hintText: isZh ? '匹配文本' : 'Match pattern'),
+        onChanged: (value) { node.params['pattern'] = value; store.pushParams(node); }),
+    ],
+    const SizedBox(height: 6),
+    Text(isZh ? '连接到步骤的使能端' : 'Connect to a step enable input',
+      style: Theme.of(context).textTheme.bodySmall),
+  ]);
+}
+
 Widget buildDetachedNodeEditor(PanelWindowStore store, PipelineNode node) {
   final isZh = store.isZh;
   final v = store.video;
@@ -947,9 +987,18 @@ Widget buildDetachedNodeEditor(PanelWindowStore store, PipelineNode node) {
 
   if (node.isGate && node.gate != null) {
     return Builder(
-      builder: (context) => node.gate == LogicGateType.timeTrigger
-          ? _buildDetachedTimeTrigger(context, store, node, isZh)
-          : _buildDetachedGateInfo(context, store, node, isZh),
+      builder: (context) {
+        final gate = node.gate!;
+        if (gate == LogicGateType.timeTrigger) {
+          return _buildDetachedTimeTrigger(context, store, node, isZh);
+        }
+        if (gate == LogicGateType.random ||
+            gate == LogicGateType.filenameMatch ||
+            gate == LogicGateType.extensionMatch) {
+          return _buildDetachedConditionGate(context, store, node, isZh);
+        }
+        return _buildDetachedGateInfo(context, store, node, isZh);
+      },
     );
   }
 
@@ -1286,6 +1335,56 @@ Widget buildDetachedNodeEditor(PanelWindowStore store, PipelineNode node) {
         onChanged: onChanged,
         isZh: isZh,
       );
+    case PipelineStepType.imageCompress:
+      editor = ImageCompressStepEditor(
+        key: ValueKey(node.id),
+        params: params,
+        onChanged: onChanged,
+        isZh: isZh,
+      );
+    case PipelineStepType.audioNormalize:
+      editor = AudioNormalizeStepEditor(
+        key: ValueKey(node.id),
+        params: params,
+        onChanged: onChanged,
+        isZh: isZh,
+      );
+    case PipelineStepType.audioNoiseGate:
+      editor = AudioNoiseGateStepEditor(
+        key: ValueKey(node.id),
+        params: params,
+        onChanged: onChanged,
+        isZh: isZh,
+      );
+    case PipelineStepType.videoFrameRate:
+      editor = VideoFrameRateStepEditor(
+        key: ValueKey(node.id),
+        params: params,
+        onChanged: onChanged,
+        isZh: isZh,
+      );
+    case PipelineStepType.audioDenoise:
+      editor = AudioDenoiseStepEditor(
+        key: ValueKey(node.id),
+        params: params,
+        onChanged: onChanged,
+        isZh: isZh,
+      );
+    case PipelineStepType.audioSilenceTrim:
+      editor = AudioSilenceTrimStepEditor(
+        key: ValueKey(node.id),
+        params: params,
+        onChanged: onChanged,
+        isZh: isZh,
+      );
+    case PipelineStepType.videoDeinterlace:
+      editor = VideoDeinterlaceStepEditor(
+        key: ValueKey(node.id),
+        params: params,
+        onChanged: onChanged,
+        isZh: isZh,
+      );
+    case PipelineStepType.metadataStrip:
     case PipelineStepType.mediaConvert:
     case PipelineStepType.mediaScale:
     case PipelineStepType.mediaCrop:
@@ -1559,6 +1658,9 @@ Widget _buildDetachedGateInfo(
           : 'Outputs 1 while the system clock is inside the configured window',
       const [],
     ),
+    LogicGateType.random => (zh ? '随机门' : 'Random Gate', zh ? '按概率输出' : 'Outputs according to configured probability', const []),
+    LogicGateType.filenameMatch => (zh ? '文本包含' : 'Text Contains', zh ? '待测文本包含匹配文本时输出 1' : 'Outputs 1 when text contains the pattern', const []),
+    LogicGateType.extensionMatch => (zh ? '文本后缀' : 'Text Suffix', zh ? '待测文本以匹配文本结尾时输出 1' : 'Outputs 1 when text ends with the pattern', const []),
   };
 
   return SingleChildScrollView(

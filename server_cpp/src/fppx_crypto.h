@@ -72,8 +72,5 @@ bool constantTimeEquals(const uint8_t* a, const uint8_t* b, size_t len);
 // 平台密码学安全随机数：Windows BCryptGenRandom / 其它平台 /dev/urandom
 bool randomBytes(uint8_t* out, size_t len);
 
-// 32 字节随机十六进制串（仅用于调试/日志；密钥材料不得使用）
-std::string randomHex32();
-
 } // namespace fppx_crypto
 } // namespace ffmpegpp

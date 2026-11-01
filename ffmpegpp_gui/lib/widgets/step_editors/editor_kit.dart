@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../app_dropdown.dart';
 import '../app_slider.dart';
 
 /// 步骤编辑器公共组件库（editor_kit）。
@@ -8,7 +9,7 @@ import '../app_slider.dart';
 /// - [ParamsStepEditor] + [StepEditorState]：`params`/`isZh` 字段、`p` 参数表、
 ///   `update`（原 `_update`）、`initDefaults`（原 initState 里的 putIfAbsent 排）
 /// - [StepEditorScaffold]：标题 + 内容 + 底部信息框（[EditorInfoBox]）骨架
-/// - [EditorDropdown]：统一样式的 `DropdownButtonFormField<String>`（dense / 普通两种形态）
+/// - [EditorDropdown]：统一样式的下拉（内部委托 AppDropdown，dense / 普通两种形态）
 /// - [NumberRangeFields]：「最小值/最大值」双数字输入行
 /// - [LabeledSlider]：「标签: 值」文本 + 滑杆行
 /// - [editorDenseField]：统一的高密度 InputDecoration
@@ -136,11 +137,13 @@ class EditorInfoBox extends StatelessWidget {
 /// 统一的字符串下拉选择框。
 ///
 /// [items] 为 `(参数值, 显示文本)` 列表；[onChanged] 收到的值已做 null 保护。
-/// 两种原样形态（均保留 dropdownColor: cs.surface、style fontSize 13、
-/// borderRadius 12、isExpanded）：
-/// - [dense] = true（默认）：isDense + 圆角 8 OutlineInputBorder + contentPadding h12 v10
-/// - [dense] = false：仅 `InputDecoration(labelText: label)`
-/// [labelColor] 供个别带自定义 labelStyle 的变体（image_to_video 格式/编码器行）。
+///
+/// 外观统一委托给 [AppDropdown]：触发钮为胶囊按钮、浮层为圆角 14 + 200ms
+/// 缩放展开，与工具栏 / 设置页的下拉完全同一套视觉，不再使用系统
+/// DropdownButtonFormField 的直角菜单与瞬时弹出。
+/// - [dense] = true（默认）：高度 36（属性面板的紧凑行）
+/// - [dense] = false：高度 44（常规表单）
+/// [labelColor] 供个别带自定义标签颜色的变体。
 class EditorDropdown extends StatelessWidget {
   const EditorDropdown({
     super.key,
@@ -161,28 +164,15 @@ class EditorDropdown extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final decoration = dense
-        ? InputDecoration(
-            labelText: label,
-            isDense: true,
-            labelStyle: labelColor == null ? null : TextStyle(color: labelColor),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          )
-        : InputDecoration(labelText: label);
-    return DropdownButtonFormField<String>(
-      borderRadius: BorderRadius.circular(12),
-      initialValue: value,
-      isExpanded: true,
-      decoration: decoration,
-      dropdownColor: cs.surface,
-      style: TextStyle(fontSize: 13, color: cs.onSurface),
+    return AppDropdown<String>(
+      label: label,
+      value: value,
+      height: dense ? 36 : 44,
+      labelColor: labelColor,
       items: [
-        for (final (v, text) in items)
-          DropdownMenuItem(value: v, child: Text(text, style: TextStyle(fontSize: 13, color: cs.onSurface))),
+        for (final (v, text) in items) AppDropdownItem<String>(v, text),
       ],
-      onChanged: (v) { if (v != null) onChanged?.call(v); },
+      onChanged: (v) => onChanged?.call(v),
     );
   }
 }

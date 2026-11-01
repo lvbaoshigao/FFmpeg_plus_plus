@@ -162,6 +162,32 @@ const NodeTypeSpec kTypes[] = {
      MK_VIDEO, MK_VIDEO, false, 0,
      {COMMON_KEYS, "media_type", "overlay_path", "position", "opacity", "margin",
       "overlay_scale"}},
+
+    // ── 媒体功能节点（ID 自 0x25 顺延，勿插队以免破坏既有文件往返）──
+    {makeTypeId(0x25), "imageCompress", nullptr, "图片压缩",
+     MK_IMAGE, MK_IMAGE, false, 0,
+     {COMMON_KEYS, "output_format", "quality"}},
+    {makeTypeId(0x26), "audioNormalize", nullptr, "响度标准化",
+     MK_AUDIO, MK_AUDIO, false, 0,
+     {COMMON_KEYS, "target_i", "target_tp", "target_lra"}},
+    {makeTypeId(0x27), "audioNoiseGate", nullptr, "音频噪声门",
+     MK_AUDIO, MK_AUDIO, false, 0,
+     {COMMON_KEYS, "threshold_db", "ratio", "attack", "release"}},
+    {makeTypeId(0x28), "videoFrameRate", nullptr, "帧率转换",
+     MK_VIDEO, MK_VIDEO, false, 0, {COMMON_KEYS, "fps"}},
+
+    // ── 媒体功能节点（第二轮，ID 自 0x29 顺延）──
+    {makeTypeId(0x29), "metadataStrip", nullptr, "元数据删除",
+     MK_VIDEO | MK_IMAGE | MK_AUDIO, MK_VIDEO | MK_IMAGE | MK_AUDIO /*实际由 media_type 决定*/,
+     false, 0, {COMMON_KEYS, "media_type", "keep_chapters", "remove_cover"}},
+    {makeTypeId(0x2A), "audioDenoise", nullptr, "音频降噪",
+     MK_AUDIO, MK_AUDIO, false, 0,
+     {COMMON_KEYS, "noise_reduction", "noise_floor"}},
+    {makeTypeId(0x2B), "audioSilenceTrim", nullptr, "静音裁剪",
+     MK_AUDIO, MK_AUDIO, false, 0,
+     {COMMON_KEYS, "mode", "threshold_db", "min_duration"}},
+    {makeTypeId(0x2C), "videoDeinterlace", nullptr, "视频去隔行",
+     MK_VIDEO, MK_VIDEO, false, 0, {COMMON_KEYS, "mode", "parity"}},
 };
 
 // ── 结构性节点（源/输出）──────────────────────────────────────

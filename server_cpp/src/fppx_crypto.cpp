@@ -490,18 +490,5 @@ bool randomBytes(uint8_t* out, size_t len) {
 #endif
 }
 
-std::string randomHex32() {
-    uint8_t b[16];
-    if (!randomBytes(b, sizeof(b))) return std::string();
-    static const char* hex = "0123456789abcdef";
-    std::string s;
-    s.reserve(32);
-    for (int i = 0; i < 16; ++i) {
-        s.push_back(hex[b[i] >> 4]);
-        s.push_back(hex[b[i] & 0x0F]);
-    }
-    return s;
-}
-
 } // namespace fppx_crypto
 } // namespace ffmpegpp

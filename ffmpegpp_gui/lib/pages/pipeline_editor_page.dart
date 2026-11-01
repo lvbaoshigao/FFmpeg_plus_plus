@@ -53,9 +53,13 @@ import '../widgets/node_icons.dart';
 import '../widgets/option_menu_bar.dart';
 import '../widgets/step_editors/audio_compressor_step_editor.dart';
 import '../widgets/step_editors/audio_convert_step_editor.dart';
+import '../widgets/step_editors/audio_denoise_step_editor.dart';
 import '../widgets/step_editors/audio_fade_step_editor.dart';
 import '../widgets/step_editors/audio_metadata_step_editor.dart';
+import '../widgets/step_editors/audio_noise_gate_step_editor.dart';
+import '../widgets/step_editors/audio_normalize_step_editor.dart';
 import '../widgets/step_editors/audio_quality_step_editor.dart';
+import '../widgets/step_editors/audio_silence_trim_step_editor.dart';
 import '../widgets/step_editors/audio_speed_step_editor.dart';
 import '../widgets/step_editors/audio_volume_step_editor.dart';
 import '../widgets/step_editors/av_process_step_editor.dart';
@@ -67,6 +71,7 @@ import '../widgets/step_editors/generic_step_editor.dart';
 import '../widgets/step_editors/image_adjust_step_editor.dart';
 import '../widgets/step_editors/image_brightness_step_editor.dart';
 import '../widgets/step_editors/image_channel_extract_step_editor.dart';
+import '../widgets/step_editors/image_compress_step_editor.dart';
 import '../widgets/step_editors/image_convert_step_editor.dart';
 import '../widgets/step_editors/image_crop_step_editor.dart';
 import '../widgets/step_editors/image_denoise_step_editor.dart';
@@ -81,7 +86,9 @@ import '../widgets/step_editors/speed_step_editor.dart';
 import '../widgets/step_editors/start_step_editor.dart';
 import '../widgets/step_editors/subtitle_step_editor.dart';
 import '../widgets/step_editors/video_crop_step_editor.dart';
+import '../widgets/step_editors/video_deinterlace_step_editor.dart';
 import '../widgets/step_editors/video_filter_step_editor.dart';
+import '../widgets/step_editors/video_frame_rate_step_editor.dart';
 import '../widgets/step_editors/video_geometry_step_editor.dart';
 import '../widgets/step_editors/video_overlay_step_editor.dart';
 import '../widgets/toast.dart';
@@ -1699,20 +1706,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   void _showConnectionMenu(Offset screenPos, PipelineConnection conn) {
     final s = AppStrings.of(context.read<AppState>().config.language);
-    showMenu<String>(
+    // 右键菜单也统一走 showAnimatedMenu：圆角 14 浮层 + 缩放展开，
+    // 不再使用系统 showMenu（直角、瞬时弹出、与 AppDropdown 不一致）。
+    showAnimatedMenu<String>(
       context: context,
-      position: RelativeRect.fromLTRB(
-        screenPos.dx,
-        screenPos.dy,
-        screenPos.dx + 1,
-        screenPos.dy + 1,
-      ),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      constraints: isMobilePlatform
-          ? const BoxConstraints(minWidth: 120, maxWidth: 160)
-          : const BoxConstraints(minWidth: 160, maxWidth: 240),
+      position: screenPos,
+      width: isMobilePlatform ? 160 : 200,
       items: [
-        PopupMenuItem(
+        AnimatedMenuEntry<String>(
           value: 'delete',
           child: Row(
             children: [
@@ -2854,6 +2855,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   // ── 通用节点（跨 音/视频/图片，创建后在属性里选择媒体类型）──
   static const _genericTypes = [
+    PipelineStepType.metadataStrip,
     PipelineStepType.mediaConvert,
     PipelineStepType.mediaScale,
     PipelineStepType.mediaCrop,
@@ -2873,6 +2875,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     PipelineStepType.frame,
     PipelineStepType.speed,
     PipelineStepType.extractAudio,
+    PipelineStepType.videoFrameRate,
+    PipelineStepType.videoDeinterlace,
   ];
   static const _audioTypes = [
     PipelineStepType.audioQuality,
@@ -2881,12 +2885,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     PipelineStepType.audioCompressor,
     PipelineStepType.audioMetadata,
     PipelineStepType.audioFade,
+    PipelineStepType.audioNormalize,
+    PipelineStepType.audioNoiseGate,
+    PipelineStepType.audioDenoise,
+    PipelineStepType.audioSilenceTrim,
   ];
   static const _imageTypes = [
     PipelineStepType.imageBrightness,
     PipelineStepType.imageNoise,
     PipelineStepType.imageDenoise,
     PipelineStepType.imageChannelExtract,
+    PipelineStepType.imageCompress,
   ];
   static const _containerTypes = [
     PipelineStepType.concatMedia,
@@ -3260,6 +3269,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         if (src.type == PipelineStepType.imageConvert) {
           return src.params['output_format'] as String? ?? 'png';
         }
+        if (src.type == PipelineStepType.imageCompress) {
+          final fmt =
+              (src.params['output_format'] as String? ?? 'keep').toLowerCase();
+          if (fmt != 'keep') return fmt == 'jpeg' ? 'jpg' : fmt;
+        }
         final result = trace(src.id);
         if (result != null) return result;
       }
@@ -3282,6 +3296,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     if (node.isGate && node.gate != null) {
       if (node.gate == LogicGateType.timeTrigger) {
         return _buildTimeTriggerEditor(node, isZh);
+      }
+      if (node.gate == LogicGateType.random ||
+          node.gate == LogicGateType.filenameMatch ||
+          node.gate == LogicGateType.extensionMatch) {
+        return _buildConditionGateEditor(node, isZh);
       }
       return _buildGateInfoEditor(node, isZh);
     }
@@ -3610,6 +3629,56 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           onChanged: onChanged,
           isZh: isZh,
         );
+      case PipelineStepType.imageCompress:
+        editor = ImageCompressStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.audioNormalize:
+        editor = AudioNormalizeStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.audioNoiseGate:
+        editor = AudioNoiseGateStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.videoFrameRate:
+        editor = VideoFrameRateStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.audioDenoise:
+        editor = AudioDenoiseStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.audioSilenceTrim:
+        editor = AudioSilenceTrimStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.videoDeinterlace:
+        editor = VideoDeinterlaceStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.metadataStrip:
       case PipelineStepType.mediaConvert:
       case PipelineStepType.mediaScale:
       case PipelineStepType.mediaCrop:
@@ -6516,6 +6585,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       if (g.isConstant) {
         return g == LogicGateType.const1 ? '1' : '0';
       }
+      if (g == LogicGateType.timeTrigger ||
+          g == LogicGateType.random ||
+          g == LogicGateType.filenameMatch ||
+          g == LogicGateType.extensionMatch) {
+        return '?';
+      }
       final inputs = _connections
           .where((c) => c.toNodeId == n.id && c.kind == 'control')
           .toList();
@@ -6710,6 +6785,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             : 'Outputs 1 while the system clock is inside the configured window',
         const [],
       ),
+      LogicGateType.random => (zh ? '随机门' : 'Random Gate', zh ? '按设定概率输出信号' : 'Outputs a stable signal based on configured probability', const []),
+      LogicGateType.filenameMatch => (zh ? '文本包含' : 'Text Contains', zh ? '待测文本包含匹配文本时输出 1' : 'Outputs 1 when text contains the pattern', const []),
+      LogicGateType.extensionMatch => (zh ? '文本后缀' : 'Text Suffix', zh ? '待测文本以匹配文本结尾时输出 1' : 'Outputs 1 when text ends with the pattern', const []),
     };
 
     return SingleChildScrollView(
@@ -6901,10 +6979,46 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       LogicGateType.const1 => s.isZh ? '恒 1' : 'Constant 1',
       LogicGateType.const0 => s.isZh ? '恒 0' : 'Constant 0',
       LogicGateType.timeTrigger => s.isZh ? '时间触发器' : 'Time Trigger',
+      LogicGateType.random => s.isZh ? '随机门' : 'Random Gate',
+      LogicGateType.filenameMatch => s.isZh ? '文件名匹配' : 'Filename Match',
+      LogicGateType.extensionMatch => s.isZh ? '文本后缀匹配' : 'Text Suffix Match',
     };
   }
 
   /// 时间触发器右面板编辑器（日期/时间选择，实时修改节点参数）
+  Widget _buildConditionGateEditor(PipelineNode node, bool isZh) {
+    final gate = node.gate!;
+    final probability = ((node.params['probability'] as num?)?.toDouble() ?? 50).clamp(0, 100).toDouble();
+    final pattern = node.params['pattern'] as String? ?? '';
+    final label = switch (gate) {
+      LogicGateType.random => isZh ? '命中概率 (%)' : 'Probability (%)',
+      LogicGateType.filenameMatch => isZh ? '文本包含' : 'Text contains',
+      LogicGateType.extensionMatch => isZh ? '文本后缀' : 'Text suffix',
+      _ => '',
+    };
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(isZh ? '条件门' : 'Condition gate', style: const TextStyle(fontWeight: FontWeight.w600)),
+      const SizedBox(height: 8),
+      Text(label, style: Theme.of(context).textTheme.labelMedium),
+      if (gate == LogicGateType.random)
+        Slider(value: probability, min: 0, max: 100, divisions: 100,
+          label: probability.toStringAsFixed(0),
+          onChanged: (value) => setState(() => node.params['probability'] = value))
+      else ...[
+        TextFormField(initialValue: node.params['text'] as String? ?? '',
+          decoration: InputDecoration(hintText: isZh ? '待测文本' : 'Text to test', isDense: true),
+          onChanged: (value) => node.params['text'] = value),
+        const SizedBox(height: 6),
+        TextFormField(initialValue: pattern, decoration: InputDecoration(
+          hintText: isZh ? '匹配文本' : 'Match pattern', isDense: true),
+          onChanged: (value) => node.params['pattern'] = value),
+      ],
+      const SizedBox(height: 6),
+      Text(isZh ? '通过控制线连接到步骤的使能端。' : 'Connect to a step enable input.',
+        style: Theme.of(context).textTheme.bodySmall),
+    ]);
+  }
+
   Widget _buildTimeTriggerEditor(PipelineNode node, bool isZh) {
     final scheme = Theme.of(context).colorScheme;
     final now = DateTime.now();
@@ -13326,10 +13440,11 @@ Never delete A or B to "insert" a node.
 
 ## Media flow compatibility
 - start → (video|audio|image) → ... → output
-- Video producers/processors: avProcess, subtitle, clip, speed, videoCrop, frame (frame outputs image)
-- Audio: audioConvert, audioQuality, audioSpeed, audioVolume, audioCompressor, audioMetadata, extractAudio
-- Image: imageConvert, imageCrop, imageRotate, imageScale, imageBrightness, imageNoise, imageSharpen, imageDenoise, imageChannelExtract
+- Video producers/processors: avProcess, subtitle, clip, speed, videoCrop, videoFrameRate, videoDeinterlace, frame (frame outputs image)
+- Audio: audioConvert, audioQuality, audioSpeed, audioVolume, audioCompressor, audioNormalize, audioNoiseGate, audioDenoise, audioSilenceTrim, audioMetadata, extractAudio
+- Image: imageConvert, imageCompress, imageCrop, imageRotate, imageScale, imageBrightness, imageNoise, imageSharpen, imageDenoise, imageChannelExtract
 - Composite: concatMedia (same-type inputs), imageToVideo (images → video)
+- Generic (media_type required): metadataStrip (video/image/audio), mediaConvert, mediaScale, mediaCrop, mediaRotate, mediaColor, mediaSharpen, mediaOverlay
 Never connect a video node to an audio node or vice versa.
 
 ## Node types & key params
@@ -13343,6 +13458,8 @@ Video:
 - clip: start_time, end_time (seconds; include start_time when clipping a range)
 - speed: speed (0.25-4.0)
 - videoCrop: crop_mode (keep|remove), crop_x, crop_y, crop_w, crop_h
+- videoFrameRate: fps (1-240; converts to constant frame rate, audio copied)
+- videoDeinterlace: mode (0=frame output, 1=field output), parity (-1=auto, 0=TFF, 1=BFF)
 
 Audio:
 - audioConvert: audio_codec (aac|libmp3lame|libopus|libvorbis|flac|pcm_s16le), output_format (m4a|mp3|ogg|flac|wav)
@@ -13350,11 +13467,17 @@ Audio:
 - audioSpeed: atempo (0.5-2.0)
 - audioVolume: volume_db (-30 to +30)
 - audioCompressor: threshold, ratio, attack, release, makeup, knee
+- audioNormalize: target_i (-70 to -5 LUFS, default -16), target_tp (-9 to 0 dBTP, default -1.5), target_lra (1-50 LU, default 11)
+- audioNoiseGate: threshold_db (-80 to 0, default -30), ratio (1-20), attack (ms), release (ms)
+- audioDenoise: noise_reduction (0.01-97 dB, default 12), noise_floor (-80 to -20 dB, default -30)
+- audioSilenceTrim: mode (both|leading|trailing), threshold_db (-60 to -20, default -40), min_duration (seconds)
 - audioMetadata: title, artist, album, cover_path, lyrics_path
 - extractAudio: extract_mode (full|clip), start_time, end_time, audio_codec, output_format
 
 Image:
 - imageConvert: output_format (png|jpg|webp|bmp|ico), quality (1-100)
+- imageCompress: output_format (keep|jpg|webp|png), quality (1-100; JPEG/WebP only, PNG ignores it)
+- metadataStrip (generic): media_type (video|image|audio), keep_chapters (video only), remove_cover (audio only); strips all container tags via stream copy
 - imageCrop: crop_x, crop_y, crop_w, crop_h
 - imageRotate: angle (90|180|270)
 - imageScale: scale_mode (percent|fixed|fit), scale_factor

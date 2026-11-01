@@ -148,13 +148,14 @@ class _FrameStepEditorState extends State<FrameStepEditor> with StepEditorState<
 
         const SizedBox(height: 8),
         Row(children: [
-          SizedBox(width: 120, child: DropdownButtonFormField<String>(
-            borderRadius: BorderRadius.circular(12),
-            initialValue: p['output_format'] as String? ?? 'png', isExpanded: true,
-            decoration: InputDecoration(labelText: zh ? '格式' : 'Format'),
-            dropdownColor: cs.surface, style: TextStyle(fontSize: 13, color: cs.onSurface),
-            items: _formats.map((f) => DropdownMenuItem(value: f, child: Text(f.toUpperCase(), style: TextStyle(fontSize: 13, color: cs.onSurface)))).toList(),
-            onChanged: (v) { if (v != null) { setState(() => p['output_format'] = v); widget.onChanged(); } },
+          SizedBox(width: 120, child: EditorDropdown(
+            label: zh ? '格式' : 'Format',
+            value: _formats.contains(p['output_format']) ? p['output_format'] as String : _formats.first,
+            items: [for (final f in _formats) (f, f.toUpperCase())],
+            onChanged: (v) {
+              setState(() => p['output_format'] = v);
+              widget.onChanged();
+            },
           )),
           const SizedBox(width: 12),
           if (mode != 'single')

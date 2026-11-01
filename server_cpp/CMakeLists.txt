@@ -39,66 +39,6 @@ set(MINIZ_SOURCES
 )
 
 # ═══════════════════════════════════════════════
-# EXE 目标（调试/向后兼容，仅当 main.cpp 存在时构建）
-# ═══════════════════════════════════════════════
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
-add_executable(server
-    src/main.cpp
-    ${SHARED_SOURCES}
-)
-
-target_include_directories(server PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
-
-if(WIN32)
-    target_link_libraries(server PRIVATE kernel32 user32 bcrypt)
-    set_target_properties(server PROPERTIES WIN32_EXECUTABLE FALSE)
-else()
-    target_link_libraries(server PRIVATE pthread)
-endif()
-
-if(MSVC)
-    target_compile_options(server PRIVATE /O2 /W3 /utf-8 /MP12)
-else()
-    target_compile_options(server PRIVATE -O2 -Wall)
-endif()
-
-# 构建后用 mt.exe 替换 UAC manifest（asInvoker，不需要管理员权限）
-if(MSVC)
-    set(ICON_RC "${CMAKE_CURRENT_SOURCE_DIR}/icon.rc")
-    set(ICON_RES "${CMAKE_CURRENT_BINARY_DIR}/icon.res")
-    if(EXISTS "${ICON_RC}")
-        add_custom_command(
-            OUTPUT "${ICON_RES}"
-            COMMAND rc.exe /fo"${ICON_RES}" "${ICON_RC}"
-            DEPENDS "${ICON_RC}"
-            COMMENT "Compiling icon resource"
-        )
-        target_sources(server PRIVATE "${ICON_RES}")
-    endif()
-
-    find_program(MT_EXECUTABLE mt.exe
-        HINTS
-            "C:/Program Files (x86)/Windows Kits/10/bin/10.0.26100.0/x64"
-            "C:/Program Files (x86)/Windows Kits/10/bin/10.0.22621.0/x64"
-            "C:/Program Files (x86)/Windows Kits/10/bin/10.0.22000.0/x64"
-    )
-    if(MT_EXECUTABLE)
-        add_custom_command(TARGET server POST_BUILD
-            COMMAND "${MT_EXECUTABLE}" -nologo
-                -manifest "${CMAKE_CURRENT_SOURCE_DIR}/server.exe.manifest"
-                -outputresource:"$<TARGET_FILE:server>"
-            COMMENT "Embedding asInvoker manifest into server.exe"
-        )
-    else()
-        message(WARNING "mt.exe not found - server.exe will require admin privileges!")
-    endif()
-endif()
-endif() # EXISTS main.cpp
-
-# ═══════════════════════════════════════════════
 # 共享库目标（主要部署方式）
 # ═══════════════════════════════════════════════
 add_library(ffmpegpp SHARED

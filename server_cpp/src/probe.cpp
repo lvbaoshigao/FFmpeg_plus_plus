@@ -59,6 +59,15 @@ std::string formatDuration(double seconds) {
     return buf;
 }
 
+// 静态图片编码：出现在音频容器里的这类 "视频流" 其实是内嵌封面，
+// 不是真正的视频轨（mp3/m4a/flac 的封面常见 codec=png / mjpeg，
+// 而且 MP4 的 covr 封面 attached_pic 常常是 0，只能靠编码名兜底）。
+bool isStillPictureCodec(const std::string& codec) {
+    return codec == "png" || codec == "mjpeg" || codec == "bmp" ||
+           codec == "webp" || codec == "tiff" || codec == "gif" ||
+           codec == "ppm";
+}
+
 } // namespace
 
 ProbeResult probeFile(const std::string& filepath) {
@@ -81,7 +90,9 @@ ProbeResult probeFile(const std::string& filepath) {
         "width,height,pix_fmt,nb_frames,avg_frame_rate,r_frame_rate,"
         "color_space,color_transfer,color_primaries,sample_aspect_ratio,"
         "channels,channel_layout,sample_rate",
-        "-show_entries", "stream_disposition=forced,default",
+        // attached_pic 必须显式列出：ffprobe 只会输出这里点名的 disposition 字段，
+        // 缺了它内嵌封面流就永远读成 0，无法与真正的视频轨区分。
+        "-show_entries", "stream_disposition=forced,default,attached_pic",
         "-show_format", filepath
     };
     auto pr = Subprocess::run(cmd, 240);
@@ -157,12 +168,32 @@ ProbeResult probeVideo(const std::string& filepath) {
         auto format = data.value("format", json::object());
         auto streams = data.value("streams", json::array());
 
-        json video, audio;
+        json video, audio, cover;
         json subtitles = json::array();
         int sub_counter = 0;  // 字幕流序号（si 参数用，从 0 开始）
+        // 先判断有没有音频轨：有音频时，静态图片编码的 video 流只能是封面。
+        bool hasAudio = false;
+        for (auto& s : streams) {
+            if (s.value("codec_type", "") == "audio") { hasAudio = true; break; }
+        }
         for (auto& s : streams) {
             std::string type = s.value("codec_type", "");
-            if (type == "video" && video.is_null()) video = s;
+            if (type == "video") {
+                auto disp = s.value("disposition", json::object());
+                const bool attached_pic = disp.value("attached_pic", 0) == 1;
+                // 静态图片编码只有在"单帧 + 存在音频"时才算封面：
+                // MJPEG 视频（avi/mov + 音轨）是多帧真视频，不能误杀。
+                const bool cover_by_codec = hasAudio &&
+                    isStillPictureCodec(s.value("codec_name", "")) &&
+                    s.value("nb_frames", "0") == "1";
+                if (attached_pic || cover_by_codec) {
+                    // 封面流：记录下来但不参与"视频轨"判定，否则带封面的 mp3/m4a
+                    // 会被整条链路当成视频处理（缩略图、码率、转码参数全错）。
+                    if (cover.is_null()) cover = s;
+                } else if (video.is_null()) {
+                    video = s;
+                }
+            }
             else if (type == "audio" && audio.is_null()) audio = s;
             else if (type == "subtitle") {
                 auto tags = s.value("tags", json::object());
@@ -194,11 +225,22 @@ ProbeResult probeVideo(const std::string& filepath) {
         try { format_duration = std::stod(format.value("duration", "0.0")); } catch (...) {}
 
         // 检测文件媒体类型：video / audio / image
-        std::string media_type = "video";
+        // 旧逻辑用 "duration <= 0.1" 判断图片，但 ffprobe 对读不出时长的
+        // 视频（duration=N/A、流式容器、损坏文件）也会返回 0，于是整段视频
+        // 被当成图片走静帧链路。改为看解复用器类型（静态图片都是 *_pipe /
+        // image2），只有"单帧且没有音频"时才按图片兜底。
+        const std::string format_name = format.value("format_name", "");
+        const bool still_image_format =
+            format_name.find("_pipe") != std::string::npos ||
+            format_name.rfind("image2", 0) == 0;
+        std::string media_type;
         if (video.is_null()) {
             media_type = "audio";
-        } else if (format_duration <= 0.1 || video.value("nb_frames", "0") == "1") {
+        } else if (still_image_format ||
+                   (audio.is_null() && video.value("nb_frames", "0") == "1")) {
             media_type = "image";
+        } else {
+            media_type = "video";
         }
 
         auto sep_pos = filepath.find_last_of("/\\");
@@ -209,6 +251,7 @@ ProbeResult probeVideo(const std::string& filepath) {
             {"filename", (sep_pos != std::string::npos) ? filepath.substr(sep_pos + 1) : filepath},
             {"filepath", filepath},
             {"media_type", media_type},
+            {"has_cover", !cover.is_null()},
             {"format", format.value("format_name", "N/A")},
             {"format_long_name", format.value("format_long_name", "N/A")},
             {"size", format_size},

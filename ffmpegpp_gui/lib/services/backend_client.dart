@@ -155,6 +155,25 @@ class BackendClient {
     );
   }
 
+  /// 删除元数据（图片 / 音频 / 视频通用，C++ 端 stream copy，不重编码）
+  Future<Map<String, dynamic>> removeMetadata(
+    String taskId, {
+    required String input,
+    required String output,
+    bool keepChapters = false,
+    bool removeCover = false,
+  }) {
+    return _runTracked(
+      taskId,
+      () => _process.requestWithId(taskId, 'remove_metadata', {
+        'input': input,
+        'output': output,
+        if (keepChapters) 'keep_chapters': true,
+        if (removeCover) 'remove_cover': true,
+      }),
+    );
+  }
+
   /// 合并音频/视频
   Future<Map<String, dynamic>> concat(String taskId, {
     required List<String> files, required String output,

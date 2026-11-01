@@ -90,6 +90,22 @@ IconData stepIconFor(PipelineStepType t) {
       return Icons.layers_outlined;
     case PipelineStepType.output:
       return Icons.save_alt_outlined;
+    case PipelineStepType.imageCompress:
+      return Icons.compress;
+    case PipelineStepType.audioNormalize:
+      return Icons.graphic_eq;
+    case PipelineStepType.audioNoiseGate:
+      return Icons.noise_aware;
+    case PipelineStepType.videoFrameRate:
+      return Icons.slow_motion_video;
+    case PipelineStepType.metadataStrip:
+      return Icons.cleaning_services_outlined;
+    case PipelineStepType.audioDenoise:
+      return Icons.auto_fix_high;
+    case PipelineStepType.audioSilenceTrim:
+      return Icons.volume_mute;
+    case PipelineStepType.videoDeinterlace:
+      return Icons.blur_linear;
     case PipelineStepType.unknown:
       return Icons.help_outline;
   }

@@ -3266,7 +3266,7 @@ class _MobileAiProviderDetailPageState
   /// 用户 2026-10 的明确要求（与主界面统一）：
   /// * 菜单栏必须是**同一个模块**（liquid_glass_tab_bar → [AppLiquidTabBar]）
   ///   与**同一套尺寸**（[kAppLiquidTabBarStyle]：胶囊 52 / 内缩 4 / 左右 14 /
-  ///   底部 8 / 图标 22），不再自绘 LiquidStretchTabs 底栏；
+  ///   底部 8 / 图标 22），不自绘底栏；
   /// * 「从云端获取模型 / 添加自定义模型」两颗按钮保留，做成 **44×44 正圆**，
   ///   两个按钮**同侧**、整簇按 [AppConfig.mobileBottomActionSide] 靠左或靠右；
   /// * 菜单栏和按钮**分开摆放**：按钮簇在菜单栏上方、留 10px 间距，

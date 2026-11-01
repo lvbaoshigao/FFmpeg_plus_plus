@@ -222,6 +222,9 @@ Fppx2Result fppxLegacyImport(const std::string& path) {
         r.errors.push_back("软件版本不兼容: 配置要求 v" + std::to_string(minSw) + ".x~v" +
                            std::to_string(minSw + compatCount) + ".x，当前 v" +
                            std::to_string(LEGACY_CURRENT_SOFTWARE_MAJOR) + ".0");
+        // 只记 errors 不返回的话，下面依然会置 success=true，而 GUI 只在
+        // success=false 时展示 errors —— 版本不兼容的配置会被静默导入。
+        return r;
     }
     bool isHigherConfig = configMajor > LEGACY_CONFIG_MAJOR ||
                           (configMajor == LEGACY_CONFIG_MAJOR && configMinor > LEGACY_CONFIG_MINOR);
@@ -269,9 +272,12 @@ Fppx2Result fppxLegacyImport(const std::string& path) {
         return r;
     }
 
-    // 旧版非节点编辑器载荷（Dart 行为：存入 legacyConfig 由 GUI 拒绝）
+    // 旧版非节点编辑器载荷（旧 Dart 行为：存入 legacyConfig 由 GUI 拒绝）。
+    // 这里必须给错误：否则 success=true + graph=null，GUI 只能显示一句笼统的
+    // "导入失败"（errors 为空）或直接打开一张空图。
     r.legacy = parsed;
-    r.success = true;
+    r.errors.push_back("该配置不是节点编辑器格式（mode=" + std::to_string(static_cast<int>(mode)) +
+                       "），无法导入");
     return r;
 }
 

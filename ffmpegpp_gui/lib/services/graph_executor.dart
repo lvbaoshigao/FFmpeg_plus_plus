@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'dart:math' as math;
+
 import '../models/models.dart';
 
 class ExecutionStep {
@@ -27,6 +29,7 @@ class ExecutionStep {
   /// true / null = 执行（null = 没有使能连线，或门值未知时 fail-open）。
   /// 由 _buildPlanForOutput 求值、buildBackendCalls 消费。
   bool? enabled;
+  bool? gateEnabled;
 
   /// 链式累积（逻辑块参数 [`LogicBlock.accumulate`]）：每轮迭代的输入承接上一轮输出。
   bool accumulate;
@@ -75,7 +78,8 @@ class ExecutionPlan {
   /// 计划构建期间产生的非致命告警（如节点参数非法被忽略）。
   /// 调用方读取后可写入日志，便于用户定位「为什么这一步没生效」。
   final List<String> warnings;
-  ExecutionPlan({required this.startNode, required this.steps, this.outputNode, List<String>? warnings})
+  final PipelineGraph graph;
+  ExecutionPlan({required this.startNode, required this.steps, required this.graph, this.outputNode, List<String>? warnings})
       : warnings = warnings ?? [];
 }
 
@@ -510,6 +514,14 @@ class GraphExecutor {
             PipelineStepType.videoGeometry => 'video_geometry',
             PipelineStepType.videoOverlay => 'video_overlay',
             PipelineStepType.audioFade => 'audio_fade',
+            PipelineStepType.imageCompress => 'image_compress',
+            PipelineStepType.audioNormalize => 'audio_normalize',
+            PipelineStepType.audioNoiseGate => 'audio_noise_gate',
+            PipelineStepType.videoFrameRate => 'video_frame_rate',
+            PipelineStepType.metadataStrip => 'metadata_strip',
+            PipelineStepType.audioDenoise => 'audio_denoise',
+            PipelineStepType.audioSilenceTrim => 'audio_silence_trim',
+            PipelineStepType.videoDeinterlace => 'video_deinterlace',
             PipelineStepType.imageAdjust => 'image_adjust',
             // 通用节点：action 由属性里选的媒体类型决定（复用既有 action，后端零改动）
             PipelineStepType.mediaConvert => switch (n.mediaKind) {
@@ -591,15 +603,9 @@ class GraphExecutor {
     // 环路 / 悬空输入 / 未知门值一律 fail-open 按启用处理，不会因为一个说不清的
     // 门把用户原本正常的转码静默停掉（即：无门图的既有行为 100% 不变）。
     final planWarnings = <String>[];
-    for (final step in steps) {
-      if (_stepEnable(graph, step) == false) {
-        step.enabled = false;
-        planWarnings.add('步骤「${step.action}」的使能端被逻辑门判为 0，已按「禁用」跳过该步');
-      }
-    }
 
     return ExecutionPlan(
-        startNode: start, steps: steps, outputNode: output, warnings: planWarnings);
+        startNode: start, steps: steps, graph: graph, outputNode: output, warnings: planWarnings);
   }
 
   // ── 解析所有执行计划 ──
@@ -628,7 +634,7 @@ class GraphExecutor {
   // 与编辑器 _gateOutputValue 的显示口径保持一致，避免"画布显示 0、执行却照跑"。
 
   /// 求一个逻辑门的输出值。null = 未知。
-  static bool? _gateValue(PipelineGraph graph, PipelineNode gate, Set<String> stack) {
+  static bool? _gateValue(PipelineGraph graph, PipelineNode gate, Set<String> stack, String inputPath) {
     if (stack.contains(gate.id)) return null; // 环路 → 未知
     stack.add(gate.id);
     try {
@@ -641,6 +647,17 @@ class GraphExecutor {
           return false;
         case LogicGateType.timeTrigger:
           return _evalTimeTrigger(gate);
+        case LogicGateType.random:
+          final chance = ((gate.params['probability'] as num?)?.toDouble() ?? 50).clamp(0, 100);
+          return _hashPath(gate.id) % 100 < chance;
+        case LogicGateType.filenameMatch:
+          final text = (gate.params['text'] as String? ?? '').toLowerCase();
+          final pattern = (gate.params['pattern'] as String? ?? '').toLowerCase();
+          return text.isNotEmpty && pattern.isNotEmpty && text.contains(pattern);
+        case LogicGateType.extensionMatch:
+          final text = (gate.params['text'] as String? ?? '').toLowerCase();
+          final pattern = (gate.params['pattern'] as String? ?? '').toLowerCase();
+          return text.isNotEmpty && pattern.isNotEmpty && text.endsWith(pattern);
         case LogicGateType.and:
         case LogicGateType.nand:
         case LogicGateType.or:
@@ -661,7 +678,7 @@ class GraphExecutor {
         final src = graph.nodes.where((n) => n.id == c.fromNodeId).firstOrNull;
         values.add(src == null
             ? null
-            : (src.isGate ? _gateValue(graph, src, stack) : true));
+            : (src.isGate ? _gateValue(graph, src, stack, inputPath) : true));
       }
       final hasUnknown = values.contains(null);
 
@@ -689,6 +706,9 @@ class GraphExecutor {
         case LogicGateType.const1:
         case LogicGateType.const0:
         case LogicGateType.timeTrigger:
+        case LogicGateType.random:
+        case LogicGateType.filenameMatch:
+        case LogicGateType.extensionMatch:
           return null; // 已在上方返回，这里仅为穷尽 switch
       }
     } finally {
@@ -696,7 +716,15 @@ class GraphExecutor {
     }
   }
 
-  /// 时间触发器判定，与编辑器 _timeTriggerValue 同款规则。
+  static int _hashPath(String value) {
+    var hash = 0x811c9dc5;
+    for (final unit in value.codeUnits) {
+      hash = ((hash ^ unit) * 0x01000193) & 0xffffffff;
+    }
+    return hash;
+  }
+
+  /// 时间触发器判定，与编辑器 _timeTriggerValue 同款规则.
   /// 参数：tt_date(yyyy-MM-dd，空=每天) / tt_start(HH:mm) / tt_end(HH:mm，空=精确时刻)。
   static bool _evalTimeTrigger(PipelineNode gate) {
     final now = DateTime.now();
@@ -731,7 +759,7 @@ class GraphExecutor {
   ///
   /// 为什么是「整步」而不是「单个节点」：执行链是单输入单输出的串行链，一个
   /// ExecutionStep 内的多个节点（merged）共享同一次 ffmpeg 调用，无法只跑一部分。
-  static bool? _stepEnable(PipelineGraph graph, ExecutionStep step) {
+  static bool? _stepEnable(PipelineGraph graph, ExecutionStep step, String inputPath) {
     var sawDisabled = false;
     for (final node in step.nodes) {
       final edges = graph.connections
@@ -746,7 +774,7 @@ class GraphExecutor {
         final src = graph.nodes.where((x) => x.id == e.fromNodeId).firstOrNull;
         final v = src == null
             ? null
-            : (src.isGate ? _gateValue(graph, src, <String>{}) : true);
+            : (src.isGate ? _gateValue(graph, src, <String>{}, inputPath) : true);
         if (v == true) anyTrue = true;
         if (v != false) allFalse = false;
       }
@@ -874,7 +902,8 @@ class GraphExecutor {
       // [FIX A1] 使能端：逻辑门判为 0 的步骤整步跳过（见 _stepEnable）。
       // 末步是写最终产物的那一步，跳过它等于任务没有产物 —— 与其静默产出
       // 一个"没跑任何处理"的结果，不如直接让构建失败并把原因告诉用户。
-      if (step.enabled == false) {
+      step.gateEnabled = _stepEnable(plan.graph, step, inputPath);
+      if (step.enabled == false || step.gateEnabled == false) {
         if (isLast) {
           return fail('最后一个处理步骤「${step.action}」被逻辑门禁用（使能端 = 0），'
               '任务不会有任何产物。请检查该步骤的使能连线，或断开它');
@@ -1380,6 +1409,46 @@ class GraphExecutor {
           currentInput = outPath;
           continue;
 
+        // ── 图片压缩（复用 Dart 端 image_convert 执行器）──
+        // 与图片转换共用同一套质量语义：JPEG 用 -q:v（quality 0→最差，100→最佳），
+        // WebP 用 -quality，PNG 无质量参数（下面会给出告警，避免"压了但没变化"
+        // 被误认为节点失效）。format=keep 时沿用源文件扩展名，保持容器不变。
+        case 'image_compress':
+          final node = step.nodes.first;
+          final p = node.params;
+          final srcExt = currentInput.split('.').last.toLowerCase();
+          final requested = (p['output_format'] as String? ?? 'keep').toLowerCase();
+          // keep：沿用源后缀（.jpeg 就保持 .jpeg，避免输出路径与实际文件不一致）；
+          // 显式格式：jpeg/jpg 统一写成 .jpg（_runImageConvert 两者都识别）。
+          final String outExt;
+          if (requested == 'keep') {
+            outExt = (srcExt == 'jpeg' || srcExt == 'jpg' || srcExt == 'webp' || srcExt == 'png')
+                ? srcExt
+                : 'jpg';
+          } else {
+            outExt = requested == 'jpeg' ? 'jpg' : requested;
+          }
+          final quality = ((p['quality'] as num?)?.toInt() ?? 75).clamp(1, 100);
+          if (outExt == 'png') {
+            warnings.add('图片压缩：PNG 是无损格式，质量参数对它无效（仅 JPEG/WebP 生效）；'
+                '需要靠质量压缩时请选择 JPEG 或 WebP');
+          }
+          final outPath = isLast
+              ? outputPath.replaceAll(RegExp(r'\.[^.]+$'), '.$outExt')
+              : _tempPath(inputPath, i, outExt, tmpSalt);
+          if (!isLast) tempFiles.add(outPath);
+          calls.add(BackendCall(
+            action: 'image_compress',
+            params: {
+              'input': currentInput,
+              'output': outPath,
+              'quality': quality,
+            },
+          ));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
         case 'audio_convert':
           final node = step.nodes.first;
           final p = node.params;
@@ -1554,6 +1623,192 @@ class GraphExecutor {
           currentInput = outPath;
           continue;
 
+        // ── 响度标准化（EBU R128 / loudnorm）──
+        // 后端 transcode 已支持 af_filters，直接下发 loudnorm 滤镜；
+        // 单遍模式（默认）实时完成，不需要额外的测量步骤。
+        case 'audio_normalize':
+          final node = step.nodes.first;
+          final p = node.params;
+          final targetI = _clampD(p['target_i'], -70.0, -5.0, -16.0);
+          final targetTp = _clampD(p['target_tp'], -9.0, 0.0, -1.5);
+          final targetLra = _clampD(p['target_lra'], 1.0, 50.0, 11.0);
+          final ext = currentInput.split('.').last.toLowerCase();
+          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext, tmpSalt);
+          if (!isLast) tempFiles.add(outPath);
+          final loudnorm = 'loudnorm=I=${targetI.toStringAsFixed(1)}'
+              ':TP=${targetTp.toStringAsFixed(1)}'
+              ':LRA=${targetLra.toStringAsFixed(1)}';
+          calls.add(BackendCall(action: 'transcode', params: {
+            'input': currentInput, 'output': outPath,
+            'options': {
+              'video_codec': 'none',
+              'audio_codec': _codecForFormat[ext] ?? 'aac',
+              'af_filters': [loudnorm],
+              'overwrite': true,
+            },
+          }));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
+        // ── 音频噪声门（agate）──
+        // 面板上的阈值用 dB 表达更直观，agate 的 threshold 却是 0~1 线性幅度，
+        // 这里统一换算（dBFS → 线性），并对参数做范围钳制。
+        case 'audio_noise_gate':
+          final node = step.nodes.first;
+          final p = node.params;
+          final thresholdDb = _clampD(p['threshold_db'], -80.0, 0.0, -30.0);
+          final linear = math.pow(10.0, thresholdDb / 20.0).toDouble().clamp(0.0001, 1.0);
+          final ratio = _clampD(p['ratio'], 1.0, 20.0, 2.0);
+          final attack = _clampD(p['attack'], 0.01, 2000.0, 20.0);
+          final release = _clampD(p['release'], 0.01, 9000.0, 250.0);
+          final ext = currentInput.split('.').last.toLowerCase();
+          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext, tmpSalt);
+          if (!isLast) tempFiles.add(outPath);
+          final gate = 'agate=threshold=${linear.toStringAsFixed(4)}'
+              ':ratio=${ratio.toStringAsFixed(1)}'
+              ':attack=${attack.toStringAsFixed(0)}'
+              ':release=${release.toStringAsFixed(0)}';
+          calls.add(BackendCall(action: 'transcode', params: {
+            'input': currentInput, 'output': outPath,
+            'options': {
+              'video_codec': 'none',
+              'audio_codec': _codecForFormat[ext] ?? 'aac',
+              'af_filters': [gate],
+              'overwrite': true,
+            },
+          }));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
+        // ── 视频帧率转换 ──
+        // 后端 transcode 原生支持 options.framerate（输出 -r），
+        // 比手拼 fps 滤镜更稳（VFR 源也能收敛到恒定帧率）。
+        // 扩展名保持不变，音频直接 copy，避免额外音质损失。
+        case 'video_frame_rate':
+          final node = step.nodes.first;
+          final p = node.params;
+          final fps = _clampD(p['fps'], 1.0, 240.0, 30.0);
+          final ext = currentInput.split('.').last.toLowerCase();
+          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext, tmpSalt);
+          if (!isLast) tempFiles.add(outPath);
+          final opts = _defaultAvOptions()
+            ..['framerate'] = fps
+            ..['audio_codec'] = 'copy';
+          calls.add(BackendCall(action: 'transcode', params: {
+            'input': currentInput, 'output': outPath,
+            'options': opts,
+          }));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
+        // ── 元数据删除（图片 / 音频 / 视频三合一）──
+        // 走 C++ 原生 remove_metadata：stream copy 清空容器 tags + 章节，
+        // 不重新编码，因此对三种媒体都无损、速度只受磁盘复制限制。
+        case 'metadata_strip':
+          final node = step.nodes.first;
+          final p = node.params;
+          final ext = currentInput.split('.').last.toLowerCase();
+          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext, tmpSalt);
+          if (!isLast) tempFiles.add(outPath);
+          calls.add(BackendCall(action: 'metadata_strip', params: {
+            'input': currentInput, 'output': outPath,
+            'keep_chapters': p['keep_chapters'] == true,
+            'remove_cover': p['remove_cover'] == true,
+          }));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
+        // ── 音频降噪（afftdn）──
+        // FFT 频域降噪：nr = 噪声衰减量(dB)，nf = 噪声底(dB)。
+        case 'audio_denoise':
+          final node = step.nodes.first;
+          final p = node.params;
+          final nr = _clampD(p['noise_reduction'], 0.01, 97.0, 12.0);
+          final nf = _clampD(p['noise_floor'], -80.0, -20.0, -30.0);
+          final ext = currentInput.split('.').last.toLowerCase();
+          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext, tmpSalt);
+          if (!isLast) tempFiles.add(outPath);
+          final filter =
+              'afftdn=nr=${nr.toStringAsFixed(2)}:nf=${nf.toStringAsFixed(0)}';
+          calls.add(BackendCall(action: 'transcode', params: {
+            'input': currentInput, 'output': outPath,
+            'options': {
+              'video_codec': 'none',
+              'audio_codec': _codecForFormat[ext] ?? 'aac',
+              'af_filters': [filter],
+              'overwrite': true,
+            },
+          }));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
+        // ── 首尾静音裁剪（silenceremove）──
+        case 'audio_silence_trim':
+          final node = step.nodes.first;
+          final p = node.params;
+          final mode = p['mode'] as String? ?? 'both';
+          final threshold = _clampD(p['threshold_db'], -60.0, -20.0, -40.0);
+          final minDur = _clampD(p['min_duration'], 0.0, 10.0, 0.1);
+          final ext = currentInput.split('.').last.toLowerCase();
+          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext, tmpSalt);
+          if (!isLast) tempFiles.add(outPath);
+          final th = '${threshold.toStringAsFixed(1)}dB';
+          final gap = minDur.toStringAsFixed(2);
+          final parts = <String>[];
+          if (mode != 'trailing') {
+            parts
+              ..add('start_periods=1')
+              ..add('start_threshold=$th')
+              ..add('start_silence=$gap');
+          }
+          if (mode != 'leading') {
+            parts
+              ..add('stop_periods=-1')
+              ..add('stop_threshold=$th')
+              ..add('stop_silence=$gap');
+          }
+          final filter = 'silenceremove=${parts.join(':')}';
+          calls.add(BackendCall(action: 'transcode', params: {
+            'input': currentInput, 'output': outPath,
+            'options': {
+              'video_codec': 'none',
+              'audio_codec': _codecForFormat[ext] ?? 'aac',
+              'af_filters': [filter],
+              'overwrite': true,
+            },
+          }));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
+        // ── 视频去隔行（yadif）──
+        // mode: 0=每帧输出（send_frame），1=每场输出（send_field）；
+        // parity: -1=自动，0=上场优先，1=下场优先。
+        case 'video_deinterlace':
+          final node = step.nodes.first;
+          final p = node.params;
+          final yadifMode = ((p['mode'] as num?)?.toInt() ?? 0).clamp(0, 1);
+          final parity = ((p['parity'] as num?)?.toInt() ?? -1).clamp(-1, 1);
+          final ext = currentInput.split('.').last.toLowerCase();
+          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext, tmpSalt);
+          if (!isLast) tempFiles.add(outPath);
+          final filter = 'yadif=mode=$yadifMode:parity=$parity:deint=0';
+          final opts = _defaultAvOptions()
+            ..['audio_codec'] = 'copy'
+            ..['vf_filters'] = [filter];
+          calls.add(BackendCall(action: 'transcode', params: {
+            'input': currentInput, 'output': outPath,
+            'options': opts,
+          }));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
         case 'audio_metadata':
           final node = step.nodes.first;
           final p = node.params;
@@ -1678,6 +1933,11 @@ class GraphExecutor {
         } else if (step.action == 'image_convert') {
           final n = step.nodes.first;
           overrideExt = n.params['output_format'] as String? ?? 'png';
+        } else if (step.action == 'image_compress') {
+          // format=keep 时沿用源扩展名（不覆盖），显式格式才改后缀
+          final n = step.nodes.first;
+          final fmt = (n.params['output_format'] as String? ?? 'keep').toLowerCase();
+          if (fmt != 'keep') overrideExt = fmt == 'jpeg' ? 'jpg' : fmt;
         } else if (step.action == 'image_adjust') {
           // 图片调整保持输入格式（不改变容器），extension 沿用源文件
         }
@@ -1785,6 +2045,30 @@ class GraphExecutor {
               break;
             case PipelineStepType.imageConvert:
               descs.add('图片转换(→${n.params['output_format'] ?? 'png'})');
+              break;
+            case PipelineStepType.imageCompress:
+              descs.add('图片压缩(→${n.params['output_format'] ?? 'keep'}, 质量 ${n.params['quality'] ?? 75})');
+              break;
+            case PipelineStepType.audioNormalize:
+              descs.add('响度标准化(I=${n.params['target_i'] ?? -16} LUFS)');
+              break;
+            case PipelineStepType.audioNoiseGate:
+              descs.add('噪声门(阈值 ${n.params['threshold_db'] ?? -30}dB)');
+              break;
+            case PipelineStepType.videoFrameRate:
+              descs.add('帧率转换(→${n.params['fps'] ?? 30}fps)');
+              break;
+            case PipelineStepType.metadataStrip:
+              descs.add('元数据删除(${n.mediaKind?.name ?? '未选类型'})');
+              break;
+            case PipelineStepType.audioDenoise:
+              descs.add('音频降噪(${n.params['noise_reduction'] ?? 12}dB)');
+              break;
+            case PipelineStepType.audioSilenceTrim:
+              descs.add('静音裁剪(${n.params['mode'] ?? 'both'}, ${n.params['threshold_db'] ?? -40}dB)');
+              break;
+            case PipelineStepType.videoDeinterlace:
+              descs.add('视频去隔行(mode ${n.params['mode'] ?? 0})');
               break;
             case PipelineStepType.imageCrop:
               descs.add('图片裁剪(${n.params['crop_w'] ?? '?'}x${n.params['crop_h'] ?? '?'})');

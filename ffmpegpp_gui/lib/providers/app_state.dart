@@ -2261,6 +2261,22 @@ class AppState extends ChangeNotifier {
             case 'image_convert':
               resp = await _runImageConvert(p);
               break;
+            case 'image_compress':
+              // 图片压缩与图片转换共用执行器（质量/格式语义完全一致），
+              // 只把日志标签区分开，便于在任务日志里看出是压缩节点。
+              resp = await _runImageConvert(p, label: '图片压缩');
+              break;
+            case 'metadata_strip':
+              // 元数据删除由 C++ 原生 handleRemoveMetadata 执行（stream copy），
+              // 图片/音频/视频共用同一条链路，Dart 侧不启动额外进程。
+              resp = await backend.removeMetadata(
+                task.id,
+                input: p['input'] as String,
+                output: p['output'] as String,
+                keepChapters: p['keep_chapters'] == true,
+                removeCover: p['remove_cover'] == true,
+              );
+              break;
             case 'image_crop':
               resp = await _runImageCrop(p);
               break;
@@ -2582,7 +2598,10 @@ class AppState extends ChangeNotifier {
     };
   }
 
-  Future<Map<String, dynamic>> _runImageConvert(Map<String, dynamic> p) async {
+  Future<Map<String, dynamic>> _runImageConvert(
+    Map<String, dynamic> p, {
+    String label = '图片转换',
+  }) async {
     final input = p['input'] as String;
     final output = p['output'] as String;
     final quality = (p['quality'] as num?)?.toInt() ?? 95;
@@ -2609,10 +2628,10 @@ class AppState extends ChangeNotifier {
         args.addAll(['-quality', '${quality.clamp(0, 100)}']);
       }
       args.add(output);
-      addLog('图片转换: $_ffmpegBin ${args.join(' ')}', category: 'info');
+      addLog('$label: $_ffmpegBin ${args.join(' ')}', category: 'info');
       final result = await Process.run(_ffmpegBin, args);
       if (result.exitCode == 0 && File(output).existsSync()) {
-        addLog('图片转换完成: $output', category: 'info');
+        addLog('$label完成: $output', category: 'info');
         return {
           'success': true,
           'data': {'output_path': output},
@@ -2620,14 +2639,14 @@ class AppState extends ChangeNotifier {
       } else {
         // 完整 stderr + 命令一并返回，队列卡片「详细错误」可查看
         return _ffmpegFailResult(
-          '图片转换',
+          label,
           (result.stderr as String).trim(),
           args,
         );
       }
     } catch (e) {
-      addLog('图片转换异常: $e', category: 'error');
-      return {'success': false, 'error': '图片转换异常: $e'};
+      addLog('$label异常: $e', category: 'error');
+      return {'success': false, 'error': '$label异常: $e'};
     }
   }
 

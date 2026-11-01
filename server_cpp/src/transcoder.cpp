@@ -434,10 +434,14 @@ std::vector<std::string> buildTranscodeCommand(
                 throw std::runtime_error("start_time 必须是数字");
             }
             double duration = end_time - start_time;
-            if (duration > 0) {
-                cmd.push_back("-t");
-                cmd.push_back(std::to_string(duration));
+            if (!(duration > 0)) {
+                // 旧实现只在 duration > 0 时才加 -t/-to：end_time <= start_time 时
+                // 命令里既没有 -t 也没有 -to，ffmpeg 会从 -ss 一路编码到文件末尾，
+                // 用户要 5 秒片段却拿到几分钟成品，且 success=true 毫无提示。
+                throw std::runtime_error("结束时间必须大于开始时间");
             }
+            cmd.push_back("-t");
+            cmd.push_back(std::to_string(duration));
         } else {
             cmd.push_back("-to");
             cmd.push_back(std::to_string(end_time));

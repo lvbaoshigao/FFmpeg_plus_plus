@@ -248,7 +248,14 @@ class _AnimatedMenuBody<T> extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final popupTheme = Theme.of(context).popupMenuTheme;
-    final radius = BorderRadius.circular(18);
+    // 圆角直接取主题 popupMenuTheme（现为 14），与 OptionMenuBar / AppDropdown
+    // 的浮层保持一致；主题未配置时回退到同一数值。
+    final themeShape = popupTheme.shape;
+    var radius = BorderRadius.circular(14);
+    if (themeShape is RoundedRectangleBorder &&
+        themeShape.borderRadius is BorderRadius) {
+      radius = themeShape.borderRadius as BorderRadius;
+    }
     // 条目列表先单独构造：下面按 width 决定是否再套一层 IntrinsicWidth。
     final list = SingleChildScrollView(
       padding: const EdgeInsets.symmetric(vertical: 6),

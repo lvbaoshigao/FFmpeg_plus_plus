@@ -41,11 +41,6 @@ static fs::path tmpFile(const std::string& name) {
     return dir / name;
 }
 
-static json readAll(const fs::path& p) {
-    std::ifstream f(p, std::ios::binary);
-    return json::parse(f);
-}
-
 static std::vector<uint8_t> readBin(const fs::path& p) {
     std::ifstream f(p, std::ios::binary);
     return std::vector<uint8_t>((std::istreambuf_iterator<char>(f)),

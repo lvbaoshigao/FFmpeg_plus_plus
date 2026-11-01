@@ -48,6 +48,18 @@ class GateSymbolPainter extends CustomPainter {
       _drawClock(canvas, stroke, hw, hh, math.min(w, h));
       return;
     }
+    if (gate == LogicGateType.random ||
+        gate == LogicGateType.filenameMatch ||
+        gate == LogicGateType.extensionMatch) {
+      final label = switch (gate) {
+        LogicGateType.random => '%',
+        LogicGateType.filenameMatch => 'A*',
+        LogicGateType.extensionMatch => 'END',
+        _ => '',
+      };
+      _label(canvas, label, Offset(hw, hh), math.min(w, h) * 0.30);
+      return;
+    }
 
     final negated = gate == LogicGateType.nand ||
         gate == LogicGateType.nor ||
