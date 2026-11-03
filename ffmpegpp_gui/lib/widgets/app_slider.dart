@@ -45,9 +45,8 @@ import 'liquid_glass_fallback.dart' show cachedGlassBlur, effectiveGlassSigma;
 // 重新实现这些且极易引入行为回归。这里只替换「轨道形状 / thumb 形状 / 配色」
 // 这几处纯外观插槽，其余行为完全沿用 framework。
 //
-// 唯一自绘的是 [AppProgressBar]：它的几何（高度、圆角）以及「是否画末尾停止点」
-// 由 SDK 版本 / 主题决定，无法保证与滑块视觉一致，所以自己画圆角轨道 + 进度，
-// 并用 TweenAnimationBuilder 做平滑过渡。
+// 唯一自绘的是 [AppProgressBar]：CustomPainter 统一掌控圆角轨道、确定进度的彗星
+// 高光和不确定态的运动，避免 SDK 版本或主题差异改变进度条的形状与节奏。
 
 /// 统一轨道高度 —— **胶囊**（两端全圆角）。
 ///
@@ -81,9 +80,7 @@ const Duration _kValueAnimationDuration = Duration(milliseconds: 180);
 /// 主题字段完整、避免其它调用点拿到 null。
 const int _kOverlayAlpha = 31;
 
-/// 进度条不确定态（来回滑动）一个周期的时长。
-/// 与 framework 的 `_kIndeterminateLinearDuration` 保持一致：它的四条缓动曲线
-/// 直接搬过来（见 [_IndeterminateBarPainter]），这样不确定进度的节奏与系统一致。
+/// 进度条不确定态彗星穿过轨道的周期。
 const int _kIndeterminateDurationMs = 1800;
 
 // ── 拖动彗星拖尾 ──
@@ -1554,9 +1551,8 @@ class _ParticleLayerState extends State<_ParticleLayer>
 ///
 /// - value 非 null：确定进度。值变化时用 [TweenAnimationBuilder] 平滑过渡，
 ///   避免「进度一卡一卡地跳」。
-/// - value 为 null：不确定进度（不知道还要多久），自己画两条来回滑动的进度线，
-///   节奏与 framework 的 LinearProgressIndicator 完全一致
-///   （四条缓动曲线照搬，周期 [_kIndeterminateDurationMs]）。
+/// - value 为 null：不确定进度（不知道还要多久），显示沿轨道行进的渐隐彗星；
+///   RTL 时反向行进，并遵循系统减少动态效果偏好。
 ///
 /// 替代直接用 LinearProgressIndicator：它的圆角/高度/是否画末尾停止点由 SDK 版本
 /// 与主题决定，无法保证与滑块视觉统一。
@@ -1595,6 +1591,8 @@ class AppProgressBar extends StatelessWidget {
     final Color barColor = color ?? scheme.primary;
     final double? v = value;
     final Color? trackColor = backgroundColor;
+    final bool reduceMotion = MediaQuery.of(context).disableAnimations;
+    final TextDirection textDirection = Directionality.of(context);
 
     // 显式指定了轨道色 → 用实色（旧行为，兼容调用方）；否则用统一玻璃底。
     final Widget track = trackColor != null
@@ -1621,11 +1619,15 @@ class AppProgressBar extends StatelessWidget {
           children: [
             track,
             if (v == null)
-              _IndeterminateBar(color: barColor)
+              _IndeterminateBar(
+                color: barColor,
+                animate: !reduceMotion,
+                textDirection: textDirection,
+              )
             else
               TweenAnimationBuilder<double>(
                 tween: Tween<double>(end: v.clamp(0.0, 1.0)),
-                duration: animationDuration,
+                duration: reduceMotion ? Duration.zero : animationDuration,
                 curve: Curves.easeOutCubic,
                 builder:
                     (BuildContext context, double animated, Widget? child) =>
@@ -1633,6 +1635,7 @@ class AppProgressBar extends StatelessWidget {
                           painter: _AppProgressBarPainter(
                             valueColor: barColor,
                             value: animated,
+                            textDirection: textDirection,
                           ),
                         ),
               ),
@@ -1643,43 +1646,129 @@ class AppProgressBar extends StatelessWidget {
   }
 }
 
-/// 确定进度条的画笔：只画已填充的胶囊（留空段由玻璃底负责）。
+/// Paints a capsule fill and its restrained leading-edge comet highlight.
 class _AppProgressBarPainter extends CustomPainter {
-  const _AppProgressBarPainter({required this.valueColor, required this.value});
+  const _AppProgressBarPainter({
+    required this.valueColor,
+    required this.value,
+    required this.textDirection,
+  });
 
   final Color valueColor;
   final double value;
+  final TextDirection textDirection;
 
   @override
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty) return;
-    // 半径 = 高度一半 → 两端半圆；进度很小时 Skia 会自动收窄半径，
-    // 画出来仍是一个小圆头而不是方块。
-    final double w = size.width * value.clamp(0.0, 1.0);
-    if (w <= 0.01) return;
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, 0, w, size.height),
-        Radius.circular(size.height / 2),
-      ),
-      Paint()..color = valueColor,
+    final double fillWidth = size.width * value.clamp(0.0, 1.0);
+    if (fillWidth <= 0.01) return;
+
+    final bool isLtr = textDirection == TextDirection.ltr;
+    final double fillLeft = isLtr ? 0 : size.width - fillWidth;
+    final double fillRight = isLtr ? fillWidth : size.width;
+    final RRect fill = RRect.fromRectAndRadius(
+      Rect.fromLTRB(fillLeft, 0, fillRight, size.height),
+      Radius.circular(size.height / 2),
     );
+    canvas.drawRRect(fill, Paint()..color = valueColor);
+
+    final double headX = isLtr ? fillRight : fillLeft;
+    final double tailLength = math.min(
+      fillWidth,
+      math.max(size.height * 2.4, size.width * 0.14),
+    );
+    final double tailX = headX + (isLtr ? -tailLength : tailLength);
+    canvas.save();
+    canvas.clipRRect(fill);
+    _drawComet(
+      canvas,
+      size: size,
+      tail: Offset(tailX, size.height / 2),
+      head: Offset(headX, size.height / 2),
+      color: _cometHighlight(valueColor),
+      glowAlpha: 0.34,
+    );
+    canvas.restore();
   }
 
   @override
   bool shouldRepaint(_AppProgressBarPainter oldDelegate) =>
-      oldDelegate.value != value || oldDelegate.valueColor != valueColor;
+      oldDelegate.value != value ||
+      oldDelegate.valueColor != valueColor ||
+      oldDelegate.textDirection != textDirection;
 }
 
-/// 不确定进度条：两条来回滑动的进度线叠在玻璃轨道上。
+Color _cometHighlight(Color color) =>
+    color.computeLuminance() > 0.48 ? Colors.black : Colors.white;
+
+Color _withScaledAlpha(Color color, double opacity) =>
+    color.withValues(alpha: color.a * opacity);
+
+/// Paints a directional ribbon and a restrained glow at its leading head.
+void _drawComet(
+  Canvas canvas, {
+  required Size size,
+  required Offset tail,
+  required Offset head,
+  required Color color,
+  required double glowAlpha,
+}) {
+  final double length = (head.dx - tail.dx).abs();
+  if (length <= 0.01 || size.height <= 0) return;
+  final Rect ribbon = Rect.fromLTRB(
+    math.min(tail.dx, head.dx),
+    0,
+    math.max(tail.dx, head.dx),
+    size.height,
+  );
+  final Color transparent = _withScaledAlpha(color, 0);
+  final Color middle = _withScaledAlpha(color, 0.38);
+  final Color bright = _withScaledAlpha(color, 0.92);
+  canvas.drawRRect(
+    RRect.fromRectAndRadius(ribbon, Radius.circular(size.height / 2)),
+    Paint()
+      ..shader = ui.Gradient.linear(
+        tail,
+        head,
+        [transparent, middle, bright, color],
+        const [0, 0.42, 0.82, 1],
+      ),
+  );
+
+  final double radius = math.min(size.height * 1.25, length * 0.42);
+  if (radius <= 0.01) return;
+  canvas.drawCircle(
+    head,
+    radius,
+    Paint()
+      ..shader = ui.Gradient.radial(
+        head,
+        radius,
+        [
+          _withScaledAlpha(Colors.white, glowAlpha),
+          _withScaledAlpha(Colors.white, glowAlpha * 0.24),
+          _withScaledAlpha(Colors.white, 0),
+        ],
+        const [0, 0.44, 1],
+      ),
+  );
+}
+
+/// Static or animated indeterminate progress; static mode creates no ticker.
 ///
-/// 缓动曲线（line1Head / line1Tail / line2Head / line2Tail）与周期 1800ms
-/// 直接取自 framework 的 _LinearProgressIndicatorPainter；这里只画滑动线段，
-/// 轨道由调用方垫在下面的 [AppTrackGlass] 负责。
+/// The comet is clipped to the capsule so it never paints square ends outside
+/// the track. The track itself is supplied by [AppTrackGlass].
 class _IndeterminateBar extends StatefulWidget {
-  const _IndeterminateBar({required this.color});
+  const _IndeterminateBar({
+    required this.color,
+    required this.animate,
+    required this.textDirection,
+  });
 
   final Color color;
+  final bool animate;
+  final TextDirection textDirection;
 
   @override
   State<_IndeterminateBar> createState() => _IndeterminateBarState();
@@ -1687,100 +1776,99 @@ class _IndeterminateBar extends StatefulWidget {
 
 class _IndeterminateBarState extends State<_IndeterminateBar>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
+  AnimationController? _controller;
 
   @override
   void initState() {
     super.initState();
-    // 同样的理由：在 initState 里创建，避免 late 字段在 dispose 时才被求值。
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: _kIndeterminateDurationMs),
-    )..repeat();
+    _updateAnimation();
+  }
+
+  @override
+  void didUpdateWidget(covariant _IndeterminateBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.animate != widget.animate) _updateAnimation();
+  }
+
+  void _updateAnimation() {
+    if (widget.animate) {
+      _controller ??= AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: _kIndeterminateDurationMs),
+      );
+      _controller!.repeat();
+    } else {
+      _controller?.dispose();
+      _controller = null;
+    }
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _controller?.dispose();
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) {
-    return CustomPaint(
-      size: Size.infinite,
-      painter: _IndeterminateBarPainter(
-        valueColor: widget.color,
-        animation: _controller,
-        textDirection: Directionality.of(context),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => CustomPaint(
+    size: Size.infinite,
+    painter: _IndeterminateBarPainter(
+      valueColor: widget.color,
+      animation: _controller,
+      textDirection: widget.textDirection,
+      staticPhase: 0.5,
+    ),
+  );
 }
 
-/// 不确定进度条的画笔（曲线参数与 framework 一致）。
+/// Moves a single comet across the track, reversing in RTL layouts.
 class _IndeterminateBarPainter extends CustomPainter {
   _IndeterminateBarPainter({
     required this.valueColor,
     required this.animation,
     required this.textDirection,
+    required this.staticPhase,
   }) : super(repaint: animation);
 
   final Color valueColor;
-  final Animation<double> animation;
+  final Animation<double>? animation;
   final TextDirection textDirection;
-
-  // 与 framework 完全相同的四条曲线（周期 1800ms）。
-  static const Curve _line1Head = Interval(
-    0.0,
-    750.0 / _kIndeterminateDurationMs,
-    curve: Cubic(0.2, 0.0, 0.8, 1.0),
-  );
-  static const Curve _line1Tail = Interval(
-    333.0 / _kIndeterminateDurationMs,
-    (333.0 + 750.0) / _kIndeterminateDurationMs,
-    curve: Cubic(0.4, 0.0, 1.0, 1.0),
-  );
-  static const Curve _line2Head = Interval(
-    1000.0 / _kIndeterminateDurationMs,
-    (1000.0 + 567.0) / _kIndeterminateDurationMs,
-    curve: Cubic(0.0, 0.0, 0.65, 1.0),
-  );
-  static const Curve _line2Tail = Interval(
-    1267.0 / _kIndeterminateDurationMs,
-    (1267.0 + 533.0) / _kIndeterminateDurationMs,
-    curve: Cubic(0.10, 0.0, 0.45, 1.0),
-  );
+  final double staticPhase;
 
   @override
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty) return;
-    // 半径 = 半高：滑动线段本身也是胶囊（两端圆头），与轨道同语言。
-    final Radius radius = Radius.circular(size.height / 2);
-
+    final RRect track = RRect.fromRectAndRadius(
+      Offset.zero & size,
+      Radius.circular(size.height / 2),
+    );
     final bool isLtr = textDirection == TextDirection.ltr;
-    void drawLine(double startFraction, double endFraction) {
-      if (endFraction - startFraction <= 0) return;
-      final double left =
-          (isLtr ? startFraction : 1 - endFraction) * size.width;
-      final double right =
-          (isLtr ? endFraction : 1 - startFraction) * size.width;
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTRB(left, 0, right, size.height),
-          radius,
-        ),
-        Paint()..color = valueColor,
-      );
-    }
-
-    final double t = animation.value;
-    drawLine(_line1Tail.transform(t), _line1Head.transform(t));
-    drawLine(_line2Tail.transform(t), _line2Head.transform(t));
+    final double cometLength = math.min(
+      size.width,
+      math.max(size.height * 2.2, size.width * 0.26),
+    );
+    final double phase = (animation?.value ?? staticPhase).clamp(0.0, 1.0);
+    final double headX = isLtr
+        ? -cometLength + (size.width + cometLength * 2) * phase
+        : size.width + cometLength - (size.width + cometLength * 2) * phase;
+    final double tailX = headX + (isLtr ? -cometLength : cometLength);
+    canvas.save();
+    canvas.clipRRect(track);
+    _drawComet(
+      canvas,
+      size: size,
+      tail: Offset(tailX, size.height / 2),
+      head: Offset(headX, size.height / 2),
+      color: valueColor,
+      glowAlpha: 0.68,
+    );
+    canvas.restore();
   }
 
   @override
   bool shouldRepaint(_IndeterminateBarPainter oldDelegate) =>
       oldDelegate.valueColor != valueColor ||
-      oldDelegate.textDirection != textDirection;
+      oldDelegate.textDirection != textDirection ||
+      oldDelegate.staticPhase != staticPhase ||
+      oldDelegate.animation != animation;
 }

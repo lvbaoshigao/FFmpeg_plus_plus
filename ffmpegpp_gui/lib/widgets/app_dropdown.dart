@@ -35,12 +35,21 @@ class AppDropdownItem<T> {
   });
 }
 
+/// A labeled group of options in an [AppDropdown].
+class AppDropdownGroup<T> {
+  final String label;
+  final List<AppDropdownItem<T>> items;
+
+  const AppDropdownGroup(this.label, this.items);
+}
+
 class AppDropdown<T> extends StatelessWidget {
   const AppDropdown({
     super.key,
     this.label,
     required this.value,
-    required this.items,
+    this.items = const [],
+    this.groups = const [],
     this.onChanged,
     this.height = 36,
     this.labelColor,
@@ -55,6 +64,7 @@ class AppDropdown<T> extends StatelessWidget {
   final String? label;
   final T value;
   final List<AppDropdownItem<T>> items;
+  final List<AppDropdownGroup<T>> groups;
   final ValueChanged<T>? onChanged;
 
   /// 触发钮高度（默认 36；紧凑工具栏可传 30~34，表单可传 40~44）。
@@ -73,12 +83,37 @@ class AppDropdown<T> extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    if (items.isEmpty) return const SizedBox.shrink();
+    final menuItems = <OptionItem<T>>[
+      for (final item in items)
+        OptionItem<T>(
+          item.value,
+          item.label,
+          icon: item.icon,
+          subtitle: item.subtitle,
+          danger: item.danger,
+          textColor: item.textColor,
+          fontWeight: item.fontWeight,
+        ),
+      for (final group in groups)
+        for (final item in group.items)
+          OptionItem<T>(
+            item.value,
+            item.label,
+            icon: item.icon,
+            subtitle: item.subtitle,
+            danger: item.danger,
+            textColor: item.textColor,
+            fontWeight: item.fontWeight,
+            groupLabel: group.label,
+          ),
+    ];
+    if (menuItems.isEmpty) return const SizedBox.shrink();
 
     // 防御：调用点可能在异步刷新后传入了已不存在的旧值。回退到首项，
     // 避免 OptionMenuBar 的“当前值”变成空白而看起来像坏掉。
-    final safeValue =
-        items.any((e) => e.value == value) ? value : items.first.value;
+    final safeValue = menuItems.any((e) => e.value == value)
+        ? value
+        : menuItems.first.value;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -101,21 +136,10 @@ class AppDropdown<T> extends StatelessWidget {
         ],
         OptionMenuBar<T>(
           value: safeValue,
-          items: [
-            for (final it in items)
-              OptionItem<T>(
-                it.value,
-                it.label,
-                icon: it.icon,
-                subtitle: it.subtitle,
-                danger: it.danger,
-                textColor: it.textColor,
-                fontWeight: it.fontWeight,
-              ),
-          ],
+          items: menuItems,
           onChanged: (v) => onChanged?.call(v),
           triggerHeight: height,
-          searchable: searchable ?? items.length > 8,
+          searchable: searchable ?? menuItems.length > 8,
           searchHint: searchHint,
           emptyLabel: emptyLabel,
           menuWidth: menuWidth,

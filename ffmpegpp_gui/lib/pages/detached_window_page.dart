@@ -419,11 +419,16 @@ class _DetachedPanelAppState extends State<DetachedPanelApp>
 
   Future<void> _installChrome() async {
     final isAi = widget.args.panel == DetachedPanel.ai;
-    final title = isAi
-        ? (_store.isZh ? 'FFmpeg++ · AI 助手' : 'FFmpeg++ · AI Assistant')
-        : (_store.isZh
-              ? 'FFmpeg++ · 元素 / 属性'
-              : 'FFmpeg++ · Elements / Properties');
+    final title = switch (widget.args.panel) {
+      DetachedPanel.ai =>
+        _store.isZh ? 'FFmpeg++ · AI 助手' : 'FFmpeg++ · AI Assistant',
+      DetachedPanel.elements =>
+        _store.isZh ? 'FFmpeg++ · 元素' : 'FFmpeg++ · Elements',
+      DetachedPanel.properties =>
+        _store.isZh ? 'FFmpeg++ · 属性' : 'FFmpeg++ · Properties',
+      DetachedPanel.props =>
+        _store.isZh ? 'FFmpeg++ · 元素 / 属性' : 'FFmpeg++ · Elements / Properties',
+    };
     try {
       await windowManager.ensureInitialized();
       await windowManager.setPreventClose(true);
@@ -651,58 +656,72 @@ class _PropsWindowState extends State<_PropsWindow> {
     final store = widget.store;
     final scheme = Theme.of(context).colorScheme;
     final s = store.strings;
+    final elementsOnly = store.args.panel == DetachedPanel.elements;
+    final propertiesOnly = store.args.panel == DetachedPanel.properties;
     return Scaffold(
       body: Column(
         children: [
           _PanelActionBar(
             store: store,
-            title: s.isZh ? '元素 / 属性' : 'Elements / Properties',
+            title: elementsOnly
+                ? (s.isZh ? '元素' : 'Elements')
+                : propertiesOnly
+                ? (s.isZh ? '属性' : 'Properties')
+                : (s.isZh ? '元素 / 属性' : 'Elements / Properties'),
           ),
           Expanded(
-            child: LayoutBuilder(
-              builder: (ctx, cons) {
-                const dividerH = 10.0;
-                final usable = (cons.maxHeight - dividerH).clamp(0.0, 1e9);
-                final minPaneHeight = usable < 180 ? usable / 2 : 90.0;
-                final topH = (usable * _fraction).clamp(
-                  minPaneHeight,
-                  usable - minPaneHeight,
-                );
-                return Column(
-                  children: [
-                    SizedBox(height: topH, child: _toolbox(scheme, s)),
-                    MouseRegion(
-                      cursor: SystemMouseCursors.resizeRow,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onVerticalDragUpdate: (d) {
-                          setState(() {
-                            _fraction =
-                                ((_fraction * usable + d.delta.dy) / usable)
-                                    .clamp(0.12, 0.88);
-                          });
-                        },
-                        child: Container(
-                          height: dividerH,
-                          color: Colors.transparent,
-                          child: Center(
-                            child: Container(
-                              width: 44,
-                              height: 4,
-                              decoration: BoxDecoration(
-                                color: scheme.primary.withAlpha(90),
-                                borderRadius: BorderRadius.circular(2),
+            child: elementsOnly
+                ? _toolbox(scheme, s)
+                : propertiesOnly
+                ? _properties(scheme, s)
+                : LayoutBuilder(
+                    builder: (ctx, cons) {
+                      const dividerH = 10.0;
+                      final usable = (cons.maxHeight - dividerH).clamp(
+                        0.0,
+                        1e9,
+                      );
+                      final minPaneHeight = usable < 180 ? usable / 2 : 90.0;
+                      final topH = (usable * _fraction).clamp(
+                        minPaneHeight,
+                        usable - minPaneHeight,
+                      );
+                      return Column(
+                        children: [
+                          SizedBox(height: topH, child: _toolbox(scheme, s)),
+                          MouseRegion(
+                            cursor: SystemMouseCursors.resizeRow,
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onVerticalDragUpdate: (d) {
+                                setState(() {
+                                  _fraction =
+                                      ((_fraction * usable + d.delta.dy) /
+                                              usable)
+                                          .clamp(0.12, 0.88);
+                                });
+                              },
+                              child: Container(
+                                height: dividerH,
+                                color: Colors.transparent,
+                                child: Center(
+                                  child: Container(
+                                    width: 44,
+                                    height: 4,
+                                    decoration: BoxDecoration(
+                                      color: scheme.primary.withAlpha(90),
+                                      borderRadius: BorderRadius.circular(2),
+                                    ),
+                                  ),
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      ),
-                    ),
-                    Expanded(child: _properties(scheme, s)),
-                  ],
-                );
-              },
-            ),
+                          Expanded(child: _properties(scheme, s)),
+                        ],
+                      );
+                    },
+                  ),
           ),
         ],
       ),
@@ -775,7 +794,20 @@ class _PropsWindowState extends State<_PropsWindow> {
                 )
               : SingleChildScrollView(
                   padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-                  child: Wrap(spacing: 4, runSpacing: 4, children: children),
+                  child: store.config.nodeEditorElementLayout == 'list'
+                      ? Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            for (var i = 0; i < children.length; i++)
+                              Padding(
+                                padding: EdgeInsets.only(
+                                  bottom: i == children.length - 1 ? 0 : 4,
+                                ),
+                                child: children[i],
+                              ),
+                          ],
+                        )
+                      : Wrap(spacing: 4, runSpacing: 4, children: children),
                 ),
         ),
       ],
@@ -821,6 +853,7 @@ class _PropsWindowState extends State<_PropsWindow> {
   Widget _chip(ColorScheme scheme, AppStrings s, Map<String, dynamic> e) {
     final type = stepTypeFromId(e['id'] as String? ?? '');
     final tag = e['tag'] as String? ?? '';
+    final listLayout = widget.store.config.nodeEditorElementLayout == 'list';
     final label = s.isZh
         ? (e['label'] as String? ?? type.name)
         : (e['labelEn'] as String? ?? type.name);
@@ -830,21 +863,42 @@ class _PropsWindowState extends State<_PropsWindow> {
         borderRadius: BorderRadius.circular(6),
         onTap: () => unawaited(widget.store.addNode(type.name)),
         child: Container(
+          width: listLayout ? double.infinity : null,
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
           decoration: BoxDecoration(
-            color: nodeAccentColor(type, scheme).withAlpha(180),
+            color: listLayout
+                ? scheme.surfaceContainerLow.withAlpha(150)
+                : nodeAccentColor(type, scheme).withAlpha(180),
             borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
+            border: Border.all(
+              color: listLayout
+                  ? nodeAccentColor(type, scheme).withAlpha(150)
+                  : scheme.outlineVariant.withAlpha(60),
+            ),
           ),
           child: Row(
-            mainAxisSize: MainAxisSize.min,
+            mainAxisSize: listLayout ? MainAxisSize.max : MainAxisSize.min,
             children: [
-              Icon(stepIconFor(type), size: 13, color: scheme.onSurface),
-              const SizedBox(width: 4),
-              Text(
-                label,
-                style: TextStyle(fontSize: 11, color: scheme.onSurface),
+              Icon(
+                stepIconFor(type),
+                size: 13,
+                color: nodeAccentColor(type, scheme),
               ),
+              const SizedBox(width: 4),
+              if (listLayout)
+                Expanded(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11, color: scheme.onSurface),
+                  ),
+                )
+              else
+                Text(
+                  label,
+                  style: TextStyle(fontSize: 11, color: scheme.onSurface),
+                ),
               if (tag.isNotEmpty) ...[
                 const SizedBox(width: 4),
                 Text(

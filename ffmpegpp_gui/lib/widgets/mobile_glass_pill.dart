@@ -174,8 +174,9 @@ class _PillGlassKey {
 }
 
 class _MobileGlassPillState extends State<MobileGlassPill>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late final AnimationController _pressController;
+  late final AnimationController _returnController;
   int? _pointer;
   Offset? _origin;
   final ValueNotifier<Offset> _drag = ValueNotifier(Offset.zero);
@@ -187,11 +188,18 @@ class _MobileGlassPillState extends State<MobileGlassPill>
       vsync: this,
       duration: const Duration(milliseconds: 150),
     );
+    _returnController = AnimationController.unbounded(vsync: this)
+      ..addStatusListener((status) {
+        if (status == AnimationStatus.completed) {
+          _drag.value = Offset.zero;
+        }
+      });
   }
 
   @override
   void dispose() {
     _pressController.dispose();
+    _returnController.dispose();
     _drag.dispose();
     super.dispose();
   }
@@ -225,48 +233,65 @@ class _MobileGlassPillState extends State<MobileGlassPill>
     if (_pointer != null) return;
     _pointer = event.pointer;
     _origin = event.position;
+    _returnController
+      ..stop()
+      ..value = 0;
     _drag.value = Offset.zero;
     _setPressed(true);
   }
 
   void _pointerMove(PointerMoveEvent event) {
     if (event.pointer != _pointer || _origin == null) return;
+    if (MediaQuery.disableAnimationsOf(context)) return;
     final delta = event.position - _origin!;
-    _drag.value = Offset(
-      (delta.dx * 0.12).clamp(-6.0, 6.0),
-      (delta.dy * 0.12).clamp(-4.0, 4.0),
+    final target = Offset(
+      (delta.dx * 0.12).clamp(-10.0, 10.0),
+      (delta.dy * 0.12).clamp(-6.0, 6.0),
     );
-    // Pointer updates only notify the paint transform.
+    _drag.value = Offset.lerp(_drag.value, target, 0.38)!;
   }
 
   void _pointerEnd(PointerEvent event) {
     if (event.pointer != _pointer) return;
     _pointer = null;
     _origin = null;
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _drag.value = Offset.zero;
+    } else {
+      _returnController.animateWith(
+        SpringSimulation(
+          const SpringDescription(mass: 1, stiffness: 420, damping: 28),
+          _returnController.value,
+          1,
+          _returnController.velocity,
+        ),
+      );
+    }
     _setPressed(false);
   }
 
   Widget _pressedTransform(Widget child) {
     return AnimatedBuilder(
-      animation: Listenable.merge([_pressController, _drag]),
+      animation: Listenable.merge([_pressController, _returnController, _drag]),
       child: child,
       builder: (context, child) {
         final amount = _pressController.value.clamp(-0.2, 1.0);
-        // Compress vertically while allowing the sides to bulge slightly.
-        // This remains a paint-only transform: the glass subtree (and its
-        // shader uniforms/backdrop) is kept as AnimatedBuilder's child.
         final scale = 1 - (amount * 0.025);
         final horizontal = scale * (1 + (amount * 0.012));
         final vertical = scale * (1 - (amount * 0.012));
-        return Transform(
-          alignment: Alignment.center,
-          transform: Matrix4.diagonal3Values(horizontal, vertical, 1)
-            ..setTranslationRaw(
-              _drag.value.dx * amount,
-              _drag.value.dy * amount,
-              0,
+        final drag = _drag.value * (1 - _returnController.value);
+        final dx = drag.dx;
+        final dy = drag.dy;
+        return Transform.translate(
+          offset: Offset(dx, dy),
+          child: Transform.rotate(
+            angle: (-dx * 0.0025).clamp(-0.03, 0.03),
+            child: Transform(
+              alignment: Alignment.center,
+              transform: Matrix4.diagonal3Values(horizontal, vertical, 1),
+              child: child,
             ),
-          child: child,
+          ),
         );
       },
     );

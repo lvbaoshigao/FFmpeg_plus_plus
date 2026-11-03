@@ -9,6 +9,7 @@ import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_strings.dart';
+import 'app_slider.dart';
 import 'glass_panel.dart';
 import 'toast.dart';
 
@@ -294,10 +295,9 @@ class _TaskFloatLayerState extends State<TaskFloatLayer> {
                     ),
                     const SizedBox(height: 10),
                     // Determinate updates avoid perpetual motion and respect reduced motion.
-                    LinearProgressIndicator(
+                    AppProgressBar(
                       value: progress,
                       semanticsLabel: task.filename,
-                      semanticsValue: '${(progress * 100).round()}%',
                     ),
                     const SizedBox(height: 8),
                     Row(
@@ -341,7 +341,9 @@ class _TaskFloatLayerState extends State<TaskFloatLayer> {
                             paused
                                 ? Icons.play_circle_outline
                                 : Icons.pause_circle_outline,
-                            color: paused ? scheme.sem.success : scheme.sem.info,
+                            color: paused
+                                ? scheme.sem.success
+                                : scheme.sem.info,
                           ),
                         ),
                         IconButton(

@@ -104,9 +104,7 @@ class _LiquidModalityPillsState extends State<LiquidModalityPills>
     final double from =
         _fromWeights[value] ?? _weightsFor(widget.selected)[value] ?? 1;
     final double to = _toWeights[value] ?? from;
-    final Curve curve = to >= from
-        ? Curves.easeOutBack
-        : Curves.easeInOutCubic;
+    final Curve curve = to >= from ? Curves.easeOutBack : Curves.easeInOutCubic;
     final double t = curve.transform(progress.clamp(0.0, 1.0));
     return (from + (to - from) * t).clamp(0.55, 1.80);
   }
@@ -197,9 +195,7 @@ class _LiquidModalityPillsState extends State<LiquidModalityPills>
                       isDark,
                       total <= 0
                           ? available / math.max(1, count)
-                          : available *
-                                (weights[widget.order[i]] ?? 1) /
-                                total,
+                          : available * (weights[widget.order[i]] ?? 1) / total,
                     ),
                   ),
                 ],
@@ -295,7 +291,7 @@ class _LiquidModalityPillsState extends State<LiquidModalityPills>
 
 /// 单颗模态药丸的视觉表面。
 ///
-/// 选中：主题色渐变（含顶部高光）+ 主题色描边 + 柔和投影；
+/// 选中：淡化主题色实底 + 主题色描边 + 柔和投影；
 /// 未选中：surfaceContainerHighest 实底 + outlineVariant 细边。
 class _ModalityPillSurface extends StatelessWidget {
   final bool selected;
@@ -324,22 +320,10 @@ class _ModalityPillSurface extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: selected
-            ? null
+            ? scheme.primary.withValues(alpha: isDark ? 0.24 : 0.12)
             : scheme.surfaceContainerHighest.withValues(
                 alpha: isDark ? 0.55 : 0.80,
               ),
-        gradient: selected
-            ? LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  scheme.primary.withValues(alpha: isDark ? 0.34 : 0.22),
-                  scheme.primary.withValues(alpha: isDark ? 0.16 : 0.10),
-                  Colors.white.withValues(alpha: isDark ? 0.05 : 0.12),
-                ],
-                stops: const [0, 0.58, 1],
-              )
-            : null,
         borderRadius: BorderRadius.circular(radius),
         border: Border.all(
           color: hovering
@@ -352,9 +336,7 @@ class _ModalityPillSurface extends StatelessWidget {
         boxShadow: selected
             ? [
                 BoxShadow(
-                  color: scheme.primary.withValues(
-                    alpha: isDark ? 0.20 : 0.14,
-                  ),
+                  color: scheme.primary.withValues(alpha: isDark ? 0.20 : 0.14),
                   blurRadius: 8,
                   offset: const Offset(0, 2),
                 ),

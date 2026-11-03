@@ -1,9 +1,12 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'
     show KeyDownEvent, KeyRepeatEvent, LogicalKeyboardKey;
+import 'package:provider/provider.dart';
 
+import '../providers/app_state.dart';
 import '../theme/app_text_scale.dart';
 
 /// 统一的「菜单栏选项」控件 —— 融合两处参考样式：
@@ -23,6 +26,7 @@ class OptionItem<T> {
   final T value;
   final String label;
   final String? subtitle;
+  final String? groupLabel;
   final IconData? icon;
 
   /// 自定义前置控件（品牌 SVG logo 之类）—— 有它时优先于 [icon]。
@@ -45,6 +49,7 @@ class OptionItem<T> {
     this.value,
     this.label, {
     this.subtitle,
+    this.groupLabel,
     this.icon,
     this.leading,
     this.danger = false,
@@ -60,6 +65,7 @@ class OptionItem<T> {
     if (needle.isEmpty) return true;
     return _normalizeForSearch(label).contains(needle) ||
         _normalizeForSearch(subtitle ?? '').contains(needle) ||
+        _normalizeForSearch(groupLabel ?? '').contains(needle) ||
         _normalizeForSearch(keywords ?? '').contains(needle);
   }
 }
@@ -72,14 +78,52 @@ String _normalizeForSearch(String value) =>
 Widget _menuPanelShell({
   required ColorScheme scheme,
   required Widget child,
+  required String appearance,
   double radius = 14,
 }) {
-  return Material(
-    elevation: 10,
-    color: scheme.surface,
+  final dark = scheme.brightness == Brightness.dark;
+  final blur = switch (appearance) {
+    'liquid' => 18.0,
+    'frosted' => 14.0,
+    'highlight' => 11.0,
+    _ => 0.0,
+  };
+  final surface = switch (appearance) {
+    'liquid' => scheme.surface.withAlpha(dark ? 190 : 208),
+    'frosted' => scheme.surface.withAlpha(dark ? 200 : 218),
+    'highlight' => scheme.surface.withAlpha(dark ? 216 : 230),
+    _ => scheme.surface,
+  };
+  final tint = switch (appearance) {
+    'liquid' => scheme.primary.withAlpha(dark ? 22 : 14),
+    'frosted' => scheme.primary.withAlpha(dark ? 52 : 34),
+    'highlight' => scheme.primary.withAlpha(dark ? 35 : 22),
+    _ => Colors.transparent,
+  };
+  final border = switch (appearance) {
+    'liquid' => scheme.onSurface.withAlpha(dark ? 38 : 54),
+    'frosted' => scheme.primary.withAlpha(dark ? 88 : 72),
+    'highlight' => scheme.primary.withAlpha(dark ? 126 : 108),
+    _ => Colors.transparent,
+  };
+  return ClipRRect(
     borderRadius: BorderRadius.circular(radius),
-    clipBehavior: Clip.antiAlias,
-    child: child,
+    child: BackdropFilter(
+      filter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+      child: Material(
+        elevation: 10,
+        color: Color.alphaBlend(tint, surface),
+        borderRadius: BorderRadius.circular(radius),
+        clipBehavior: Clip.antiAlias,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(radius),
+            border: Border.all(color: border),
+          ),
+          child: child,
+        ),
+      ),
+    ),
   );
 }
 
@@ -266,6 +310,7 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
 
   /// 下方空间不足时改为向上弹出。
   bool _openUp = false;
+  String _dropdownAppearance = 'theme';
 
   /// 键盘高亮项下标（null = 还没开始键盘导航，例如纯鼠标打开）。
   int? _highlightIndex;
@@ -455,7 +500,9 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
       final index = _highlightIndex;
       if (items.isEmpty) return KeyEventResult.handled;
       _pick(
-        items[(index == null || index < 0 || index >= items.length) ? 0 : index],
+        items[(index == null || index < 0 || index >= items.length)
+            ? 0
+            : index],
       );
       return KeyEventResult.handled;
     }
@@ -504,6 +551,8 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
 
   @override
   Widget build(BuildContext context) {
+    _dropdownAppearance =
+        context.watch<AppState?>()?.config.dropdownAppearance ?? 'theme';
     // 「字体大小的调整不要应用于选项文字」（用户要求）：下拉按钮与分段药丸的宽度
     // 是固定的（设置页 _kMenuWidth = 116），字号一大框内文字就只剩省略号，
     // 而且「选中了什么」本身也会被字号变化搅乱。整棵控件退回到「只跟系统字号」：
@@ -627,6 +676,52 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
     );
   }
 
+  List<Widget> _buildGroupedRows(
+    BuildContext context,
+    List<OptionItem<T>> items,
+  ) {
+    final children = <Widget>[];
+    String? previousGroup;
+    for (var i = 0; i < items.length; i++) {
+      final item = items[i];
+      if (item.groupLabel != null && item.groupLabel != previousGroup) {
+        children.add(
+          Padding(
+            padding: EdgeInsets.fromLTRB(12, i == 0 ? 8 : 12, 12, 3),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                item.groupLabel!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.primary,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.25,
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+      previousGroup = item.groupLabel;
+      children.add(
+        KeyedSubtree(
+          key: i < _rowKeys.length ? _rowKeys[i] : null,
+          child: _optionRow<T>(
+            context: context,
+            item: item,
+            selected: _selected(item),
+            highlighted: _highlightIndex == i,
+            onTap: () => _pick(item),
+          ),
+        ),
+      );
+    }
+    return children;
+  }
+
   /// 浮层宽度：显式 OptionMenuBar.menuWidth 优先（模型列表要更宽），
   /// 否则跟随触发按钮；两者都夹在「屏幕宽度 - 24」以内。
   double _panelWidth(BuildContext overlayContext) {
@@ -663,6 +758,7 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
     final items = _visibleItems;
     final panel = _menuPanelShell(
       scheme: scheme,
+      appearance: _dropdownAppearance,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxHeight: 320),
         child: Column(
@@ -683,19 +779,7 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
                   padding: const EdgeInsets.symmetric(vertical: 4),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
-                    children: [
-                      for (var i = 0; i < items.length; i++)
-                        KeyedSubtree(
-                          key: i < _rowKeys.length ? _rowKeys[i] : null,
-                          child: _optionRow<T>(
-                            context: overlayContext,
-                            item: items[i],
-                            selected: _selected(items[i]),
-                            highlighted: _highlightIndex == i,
-                            onTap: () => _pick(items[i]),
-                          ),
-                        ),
-                    ],
+                    children: _buildGroupedRows(overlayContext, items),
                   ),
                 ),
               ),
@@ -894,19 +978,19 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
                 it.leading!,
                 const SizedBox(width: 4),
               ] else
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 180),
-                transitionBuilder: (child, anim) =>
-                    FadeTransition(opacity: anim, child: child),
-                child: it.icon == null
-                    ? const SizedBox.shrink()
-                    : Icon(
-                        it.icon,
-                        key: ValueKey(it.value.toString() + sel.toString()),
-                        size: 14,
-                        color: sel ? scheme.primary : scheme.onSurfaceVariant,
-                      ),
-              ),
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 180),
+                  transitionBuilder: (child, anim) =>
+                      FadeTransition(opacity: anim, child: child),
+                  child: it.icon == null
+                      ? const SizedBox.shrink()
+                      : Icon(
+                          it.icon,
+                          key: ValueKey(it.value.toString() + sel.toString()),
+                          size: 14,
+                          color: sel ? scheme.primary : scheme.onSurfaceVariant,
+                        ),
+                ),
               if (it.icon != null) const SizedBox(width: 4),
               Flexible(
                 child: Text(
@@ -1158,6 +1242,7 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
     final maxHeight = math.max(96.0, math.min(320.0, available));
     final panel = _menuPanelShell(
       scheme: scheme,
+      appearance: 'theme',
       child: ConstrainedBox(
         constraints: BoxConstraints(maxHeight: maxHeight),
         child: SingleChildScrollView(
@@ -1205,10 +1290,7 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
               followerAnchor: _openUp
                   ? Alignment.bottomRight
                   : Alignment.topRight,
-              offset: Offset(
-                _panelDx(overlayContext, width),
-                _openUp ? -4 : 4,
-              ),
+              offset: Offset(_panelDx(overlayContext, width), _openUp ? -4 : 4),
               child: Align(
                 alignment: _openUp ? Alignment.bottomRight : Alignment.topRight,
                 child: SizedBox(

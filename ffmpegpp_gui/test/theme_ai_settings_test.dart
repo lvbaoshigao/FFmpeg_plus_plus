@@ -25,6 +25,51 @@ Widget _harness(AppState state, Widget child) =>
     );
 
 void main() {
+  test(
+    'dropdown appearance defaults, migrates invalid values, and serializes',
+    () {
+      expect(AppConfig.fromJson({}).dropdownAppearance, 'theme');
+      expect(AppConfig().toJson()['dropdown_appearance'], 'theme');
+      expect(
+        AppConfig.fromJson({
+          'dropdown_appearance': 'unknown',
+        }).dropdownAppearance,
+        'theme',
+      );
+
+      for (final appearance in ['theme', 'liquid', 'frosted', 'highlight']) {
+        final restored = AppConfig.fromJson({
+          'dropdown_appearance': appearance,
+        });
+        expect(restored.dropdownAppearance, appearance);
+        expect(
+          AppConfig.fromJson(restored.toJson()).dropdownAppearance,
+          appearance,
+        );
+      }
+    },
+  );
+
+  test('node editor element layout defaults and serializes', () {
+    expect(AppConfig.fromJson({}).nodeEditorElementLayout, 'traditional');
+    expect(AppConfig().toJson()['node_editor_element_layout'], 'traditional');
+    expect(
+      AppConfig.fromJson({
+        'node_editor_element_layout': 'unsupported',
+      }).nodeEditorElementLayout,
+      'traditional',
+    );
+
+    for (final layout in ['traditional', 'list']) {
+      final config = AppConfig.fromJson({'node_editor_element_layout': layout});
+      expect(config.nodeEditorElementLayout, layout);
+      expect(
+        AppConfig.fromJson(config.toJson()).nodeEditorElementLayout,
+        layout,
+      );
+    }
+  });
+
   testWidgets('desktop AI submenu and info pages use the shared glass header', (
     tester,
   ) async {
@@ -126,9 +171,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 600));
   });
 
-  testWidgets('PC 端 AI 总览：仪表盘布局（状态带 + 提供商管理 + 权限/MCP/高级）', (
-    tester,
-  ) async {
+  testWidgets('PC 端 AI 总览：仪表盘布局（状态带 + 提供商管理 + 权限/MCP/高级）', (tester) async {
     tester.view.physicalSize = const Size(900, 900);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);

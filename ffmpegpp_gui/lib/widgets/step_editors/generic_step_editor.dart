@@ -18,7 +18,7 @@ import 'video_overlay_step_editor.dart';
 
 /// 通用节点（语义跨 音/视频/图片）的属性编辑器外壳。
 ///
-/// 顶部是**必选**的媒体类型单选（SegmentedButton），下方按所选类型
+/// 顶部是**必选**的媒体类型下拉选择，下方按所选类型
 /// 复用既有单格式编辑器 —— 参数键与对应旧节点完全一致，执行层也按
 /// `media_type` 派发到既有 action，后端零改动。
 ///
@@ -55,7 +55,7 @@ class GenericMediaStepEditor extends StatefulWidget {
 class _GenericMediaStepEditorState extends State<GenericMediaStepEditor> {
   PipelineNode get _n => widget.node;
 
-  /// 类型选择器上方的区块（顶部小内边距 + 标题行 + 分段按钮）。
+  /// 类型选择器上方的区块（顶部小内边距 + 标题行 + 下拉框）。
   Widget _buildTypeSelector(MediaType? current, List<MediaType> supported) {
     final cs = Theme.of(context).colorScheme;
     String label(MediaType k) => switch (k) {
@@ -73,23 +73,25 @@ class _GenericMediaStepEditorState extends State<GenericMediaStepEditor> {
               style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: cs.onSurface)),
         ]),
         const SizedBox(height: 8),
-        SizedBox(
-          width: double.infinity,
-          child: SegmentedButton<MediaType>(
-            // key 含当前类型：切类型后子编辑器必然重建（initState 重跑 initDefaults）
-            key: ValueKey('${_n.id}:$_kTag:${current?.name ?? 'none'}'),
-            segments: [
-              for (final k in supported)
-                ButtonSegment(value: k, label: Text(label(k), style: const TextStyle(fontSize: 12))),
-            ],
-            selected: {if (current != null && supported.contains(current)) current},
-            showSelectedIcon: false,
-            onSelectionChanged: (sel) {
-              if (sel.isEmpty) return;
-              setState(() => _n.setGenericMediaType(sel.first));
-              widget.onChanged();
-            },
-          ),
+        EditorDropdown(
+          label: widget.isZh ? '选择媒体类型' : 'Select media type',
+          value: current != null && supported.contains(current)
+              ? current.name
+              : '',
+          items: [
+            if (current == null || !supported.contains(current))
+              ('', widget.isZh ? '请选择' : 'Select'),
+            for (final kind in supported) (kind.name, label(kind)),
+          ],
+          dense: false,
+          onChanged: (value) {
+            if (value.isEmpty) return;
+            final kind = MediaType.values.firstWhere(
+              (candidate) => candidate.name == value,
+            );
+            setState(() => _n.setGenericMediaType(kind));
+            widget.onChanged();
+          },
         ),
       ]),
     );
@@ -121,8 +123,6 @@ class _GenericMediaStepEditorState extends State<GenericMediaStepEditor> {
       ),
     );
   }
-
-  String get _kTag => _n.mediaKind?.name ?? 'none';
 
   /// 按类型复用既有单格式编辑器（参数键与对应旧节点完全一致）。
   Widget _buildSubEditor(MediaType k) {

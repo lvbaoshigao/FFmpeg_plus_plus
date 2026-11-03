@@ -2333,6 +2333,10 @@ class AppConfig {
   // 仅桌面端生效；移动端没有侧边栏/玻璃顶栏。
   String menuStyle;
 
+  /// 下拉菜单外观：'theme' 保留原有主题表面，'liquid' 液态玻璃，
+  /// 'frosted' 主题色毛玻璃，'highlight' 高光玻璃。
+  String dropdownAppearance;
+
   /// 软件渲染自动降级已执行过一次的标记（由 main.dart 的 _autoTuneGlass 写入）。
   ///
   /// 语义：自动降级对每个安装只**主动**执行一次。之后用户若在设置里手动把
@@ -2411,6 +2415,9 @@ class AppConfig {
   /// 节点编辑器右下角的小地图：显示全图节点分布与当前视口框，点击可跳转。
   /// 默认开启（大图定位神器）；它压在画布右下角，嫌挡视线可在此关闭。
   bool nodeMiniMap;
+
+  /// 节点编辑器元素布局：'traditional' 传统芯片布局 / 'list' 列表布局。
+  String nodeEditorElementLayout;
 
   /// 拖动节点时对齐到网格（吸附）。默认开启 —— 手工挪到「差不多对齐」的
   /// 位置在整理大图时很费神；需要像素级精确摆放时可以关掉。
@@ -2575,6 +2582,7 @@ class AppConfig {
     this.navAutoHide = false,
     this.pillStyle = 'liquid',
     this.menuStyle = 'liquid',
+    this.dropdownAppearance = 'theme',
     this.glassAutoTuned = false,
     this.glassFollowTheme = false,
     this.sliderParticles = true,
@@ -2587,6 +2595,7 @@ class AppConfig {
     this.settingsGlassMode = 'follow',
     this.gateStd = 'ansi',
     this.nodeMiniMap = true,
+    this.nodeEditorElementLayout = 'traditional',
     this.nodeSnap = true,
     List<String>? favoriteNodeTypes,
     List<String>? recentNodeTypes,
@@ -2756,6 +2765,12 @@ class AppConfig {
     navAutoHide: json['nav_auto_hide'] as bool? ?? false,
     pillStyle: _migrateSurfaceStyle(json['pill_style'] as String?),
     menuStyle: _migrateSurfaceStyle(json['menu_style'] as String? ?? 'liquid'),
+    dropdownAppearance: () {
+      final value = json['dropdown_appearance'];
+      return const ['theme', 'liquid', 'frosted', 'highlight'].contains(value)
+          ? value as String
+          : 'theme';
+    }(),
     glassAutoTuned: json['glass_auto_tuned'] as bool? ?? false,
     glassFollowTheme: json['glass_follow_theme'] as bool? ?? false,
     settingsGlassMode: _migrateSettingsGlass(json),
@@ -2774,6 +2789,12 @@ class AppConfig {
         true,
     gateStd: json['gate_std'] as String? ?? 'ansi',
     nodeMiniMap: json['node_mini_map'] as bool? ?? true,
+    nodeEditorElementLayout: () {
+      final value = json['node_editor_element_layout'];
+      return const ['traditional', 'list'].contains(value)
+          ? value as String
+          : 'traditional';
+    }(),
     nodeSnap: json['node_snap'] as bool? ?? true,
     favoriteNodeTypes: _safeStringList(json['favorite_node_types']),
     recentNodeTypes: _safeStringList(json['recent_node_types']),
@@ -2907,6 +2928,7 @@ class AppConfig {
     'card_style': cardStyle, 'nav_style': navStyle, 'pill_style': pillStyle,
     'nav_auto_hide': navAutoHide,
     'menu_style': menuStyle,
+    'dropdown_appearance': dropdownAppearance,
     'glass_auto_tuned': glassAutoTuned,
     'glass_follow_theme': glassFollowTheme,
     'settings_glass_mode': settingsGlassMode,
@@ -2915,6 +2937,7 @@ class AppConfig {
     'no_card_glass': noCardGlass,
     'gate_std': gateStd,
     'node_mini_map': nodeMiniMap, 'node_snap': nodeSnap,
+    'node_editor_element_layout': nodeEditorElementLayout,
     'favorite_node_types': favoriteNodeTypes,
     'recent_node_types': recentNodeTypes,
     // 粒子特效：新键 + 旧键一起写出，回滚到旧版本也读得到同一个开关

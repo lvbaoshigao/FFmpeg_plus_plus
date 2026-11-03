@@ -1,9 +1,11 @@
 import 'dart:io';
 
+import 'package:ffmpegpp_gui/providers/app_state.dart';
 import 'package:ffmpegpp_gui/widgets/app_dropdown.dart';
 import 'package:ffmpegpp_gui/widgets/step_editors/editor_kit.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
 
 /// 下拉菜单样式统一回归测试。
 ///
@@ -125,5 +127,83 @@ void main() {
       onChanged: (_) {},
     )));
     expect(find.text('甲'), findsOneWidget);
+  });
+
+  testWidgets('grouped options render headers below search and remain selectable', (
+    tester,
+  ) async {
+    String? picked;
+    await tester.pumpWidget(_wrap(AppDropdown<String>(
+      value: 'a1',
+      searchable: true,
+      groups: const [
+        AppDropdownGroup('Supplier A', [
+          AppDropdownItem('a1', 'Alpha'),
+          AppDropdownItem('a2', 'Atlas'),
+        ]),
+        AppDropdownGroup('Supplier B', [
+          AppDropdownItem('b1', 'Beta'),
+        ]),
+      ],
+      onChanged: (value) => picked = value,
+    )));
+
+    await tester.tap(find.text('Alpha'));
+    await tester.pumpAndSettle();
+    expect(find.text('Supplier A'), findsOneWidget);
+    expect(find.text('Supplier B'), findsOneWidget);
+    expect(
+      tester.getBottomLeft(find.byType(TextField)).dy,
+      lessThan(tester.getTopLeft(find.text('Supplier A')).dy),
+    );
+
+    await tester.tap(find.text('Beta'));
+    await tester.pumpAndSettle();
+    expect(picked, 'b1');
+  });
+
+  testWidgets('global dropdown appearance config controls glass treatment', (
+    tester,
+  ) async {
+    final state = AppState();
+    await state.updateConfig((config) => config..dropdownAppearance = 'frosted');
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppState>.value(
+        value: state,
+        child: MaterialApp(
+          theme: ThemeData(useMaterial3: true),
+          home: Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 260,
+                child: AppDropdown<String>(
+                  value: 'one',
+                  items: const [
+                    AppDropdownItem('one', 'One'),
+                    AppDropdownItem('two', 'Two'),
+                  ],
+                  onChanged: (_) {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('One'));
+    await tester.pumpAndSettle();
+    expect(find.byType(BackdropFilter), findsOneWidget);
+    final theme = ThemeData(useMaterial3: true);
+    final panel = tester.widgetList<Material>(find.byType(Material)).firstWhere(
+          (material) => material.borderRadius == BorderRadius.circular(14),
+        );
+    expect(
+      panel.color,
+      Color.alphaBlend(
+        theme.colorScheme.primary.withAlpha(34),
+        theme.colorScheme.surface.withAlpha(218),
+      ),
+    );
   });
 }

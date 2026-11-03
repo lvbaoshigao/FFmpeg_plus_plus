@@ -63,12 +63,18 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 160));
     await gesture.moveBy(const Offset(60, 15));
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
     final transform = tester.widget<Transform>(
       find.descendant(of: pill, matching: find.byType(Transform)).first,
     );
     expect(transform.transform.entry(0, 3), greaterThan(0));
     expect(tester.getSize(pill), size);
+    await gesture.moveBy(const Offset(-120, 0));
+    await tester.pump(const Duration(milliseconds: 140));
+    final reversedTransform = tester.widget<Transform>(
+      find.descendant(of: pill, matching: find.byType(Transform)).first,
+    );
+    expect(reversedTransform.transform.entry(0, 3), lessThan(0));
     await gesture.up();
     await tester.pumpAndSettle();
     expect(taps, 0);

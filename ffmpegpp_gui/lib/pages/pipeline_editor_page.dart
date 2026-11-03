@@ -362,6 +362,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// 引擎）。这是比 [_panelDetached]（应用内浮动小窗）更外面的一层状态：外置
   /// 期间主窗口里连浮动小窗都不该再画，否则同一份面板会同时出现在两处。
   bool _panelExternal = false;
+  bool _elementsExternal = false;
+  bool _propertiesExternal = false;
   bool _aiExternal = false;
 
   /// 上一次推给独立窗口的「结构指纹」。拖动滑块时 `setState` 会高频触发同步，
@@ -406,11 +408,15 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// 'legacy' = 旧版 JSON，'v2' = 新版模块化二进制。
   late String _writeFormat = widget.configFormat;
 
-  /// .fppx 体积估算的缓存签名：每次提交（_commitChange / undo / redo）+1。
+  /// 图 JSON 的缓存签名：每次提交（_commitChange / undo / redo）+1。
   int _sizeTick = 0;
   int _sizeTickCached = -1;
-  int _sizeBytesCached = 0;
-  String _sizeFormatCached = '';
+  String _graphJsonSizeCached = '';
+  int? _lastExportedFppxSize;
+  String? _lastExportedGraphJson;
+  String? _lastExportedFormat;
+  String? _inputSizePath;
+  Future<int?>? _inputSizeFuture;
 
   // 直接对对象做深拷贝，避免节点 params 是活引用导致 undo 快照被后续参数编辑回溯改写。
   // 原先走 jsonEncode→jsonDecode 往返：一次快照需序列化整图 + 反序列化重建全部对象，
@@ -489,7 +495,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final graph = _currentGraph();
     context.read<AppState>().setCurrentPipeline(graph);
     _scheduleAutosave(graph);
-    // 体积估算的缓存签名：任何一次提交都可能改变配置体积
+    // 图 JSON 的缓存签名：任何一次提交都可能改变配置内容
     _sizeTick++;
   }
 
@@ -1936,11 +1942,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
     // 写盘由 C++ 端完成（写前完整校验；失败不落盘并带回 errors）
     // 这里重新读一次 _writeFormat：上面那个对话框里可以直接改写入格式
+    final exportFormat = _writeFormat;
     final exportRes = await FppxService(appState.backend).exportGraph(
       graph,
       tmpPath,
       description: desc,
-      newFormat: _writeFormat == 'v2',
+      newFormat: exportFormat == 'v2',
       encrypted: opts.encrypted,
       password: opts.password,
       encryptAlgo: opts.encryptAlgo,
@@ -2009,11 +2016,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       appState.addLog('[导出] $w', category: 'info');
     }
 
+    final exportBytes = await File(tmpPath).readAsBytes();
     final saved = await FilePicker.saveFile(
       dialogTitle: zh ? '保存配置文件' : 'Save Config File',
       fileName: exportName,
       mimeType: 'application/octet-stream',
-      bytes: await File(tmpPath).readAsBytes(),
+      bytes: exportBytes,
     );
     try {
       await File(tmpPath).delete();
@@ -2024,6 +2032,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         : saved.toString();
 
     if (mounted) {
+      setState(() {
+        _lastExportedFppxSize = exportBytes.length;
+        _lastExportedGraphJson = jsonEncode(graph.toJson());
+        _lastExportedFormat = exportFormat;
+      });
       showToast(
         context,
         zh ? '已导出: $result' : 'Exported: $result',
@@ -3270,8 +3283,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           return src.params['output_format'] as String? ?? 'png';
         }
         if (src.type == PipelineStepType.imageCompress) {
-          final fmt =
-              (src.params['output_format'] as String? ?? 'keep').toLowerCase();
+          final fmt = (src.params['output_format'] as String? ?? 'keep')
+              .toLowerCase();
           if (fmt != 'keep') return fmt == 'jpeg' ? 'jpg' : fmt;
         }
         final result = trace(src.id);
@@ -4212,9 +4225,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             child: OptionMenuBar<String>(
               expandable: true,
               searchable: true,
-              searchHint: s.isZh
-                  ? '搜索配置 / 模型'
-                  : 'Search profiles / models',
+              searchHint: s.isZh ? '搜索配置 / 模型' : 'Search profiles / models',
               menuWidth: 320,
               triggerHeight: pill.height,
               leadingWidget: pillIcon(Icons.tune, color: scheme.primary),
@@ -4242,6 +4253,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                   OptionItem(
                     'model:$m',
                     m,
+                    groupLabel:
+                        aiModelProviderLabel(cfg, m, activeProfile).isEmpty
+                        ? (s.isZh ? '未指定提供商' : 'Unknown provider')
+                        : aiModelProviderLabel(cfg, m, activeProfile),
                     leading: brandForModelId(m) == null
                         ? Icon(
                             Icons.memory,
@@ -4395,18 +4410,23 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     //    一次就会出现「双重 36px」顶部空白，并把 AI 抽屉/右侧面板的可视高度
     //    压掉 36px。Windows/macOS 用系统标题栏，同样不需要内边距 ——
     //    旧实现里 macOS 也误垫了 36px，这里一并修正。
-    final topPad = isMobilePlatform
-        ? (_isLandscape ? 0.0 : MediaQuery.of(context).padding.top)
+    final mobileSafeTop = isMobilePlatform && !_isLandscape
+        ? MediaQuery.paddingOf(context).top
+        : 0.0;
+    final mobileSafeBottom = isMobilePlatform && !_isLandscape
+        ? MediaQuery.paddingOf(context).bottom
         : 0.0;
     final content = Padding(
-      padding: EdgeInsets.only(top: topPad),
+      padding: EdgeInsets.zero,
       child: Column(
         children: [
           // 移动端：顶部栏已移除（舍弃最顶层菜单栏），系统返回手势/实体 back 键
           // 由 PopScope 拦截处理；横竖屏切换与返回按钮已移至画布浮动控件。
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+              padding: isMobilePlatform
+                  ? EdgeInsets.zero
+                  : const EdgeInsets.fromLTRB(12, 4, 12, 0),
               child: LayoutBuilder(
                 builder: (ctx, cons) {
                   // 移动端（横竖屏通用）：画布 + 贴右边界的窄竖直 sidebar，
@@ -4418,7 +4438,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                         _buildCanvas(scheme, s),
                         // 顶部浮动菜单栏（默认收起 → 上滑出屏 + 透明；右下角"≡"按钮展开）
                         Positioned(
-                          top: 0,
+                          top: mobileSafeTop,
                           left: 0,
                           right: 0,
                           child: AnimatedSlide(
@@ -4451,27 +4471,21 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                         ),
                         // 底部浮动菜单栏 - 左侧缩放（右下角工具条已移除，工具迁移到顶部栏）
                         Positioned(
-                          bottom: 8,
+                          bottom: 8 + mobileSafeBottom,
                           left: 8,
                           child: _buildMobileBottomLeftBar(scheme, s),
                         ),
                         // File details sit above the zoom controls, leaving taps unobstructed.
                         Positioned(
                           bottom:
-                              16 +
+                              mobileSafeBottom +
+                              14 +
                               _kMobileBarHeight *
-                                  math.min(
-                                    context
-                                        .read<AppState>()
-                                        .config
-                                        .editorZoomScale
-                                        .clamp(1.0, 1.6),
-                                    math.max(
-                                      1.0,
-                                      (MediaQuery.sizeOf(context).width - 106) /
-                                          156,
-                                    ),
-                                  ),
+                                  context
+                                      .read<AppState>()
+                                      .config
+                                      .editorToolbarScale
+                                      .clamp(1.0, 1.1),
                           left: 0,
                           right: 0,
                           child: Center(child: _buildMobileFileInfo(scheme, s)),
@@ -4480,6 +4494,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                         if (_isLogicBoxSelecting)
                           Positioned(
                             top:
+                                mobileSafeTop +
                                 _kMobileBarHeight *
                                     context
                                         .read<AppState>()
@@ -4544,8 +4559,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                         // 宽度再收窄一档（330→300 / 0.78→0.72），菜单栏不至于过宽。
                         if (_mobilePropsShown)
                           Positioned(
-                            top: _isLandscape ? 44 : 56,
-                            bottom: 12,
+                            top: mobileSafeTop + (_isLandscape ? 44 : 56),
+                            bottom: 12 + mobileSafeBottom,
                             right: 8,
                             width: math.min(
                               _isLandscape ? 300.0 : 296.0,
@@ -4568,7 +4583,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                       // 面板隐藏、拖出为应用内浮窗、或已外置到系统窗口时：画布独占整幅
                       // 宽度，分割线与右侧面板一起让位（面板本体改在别处渲染）。
                       final panelInSidebar =
-                          !_panelHidden && !_panelDetached && !_panelExternal;
+                          !_panelHidden &&
+                          !_panelDetached &&
+                          !_panelExternal &&
+                          !(_elementsExternal && _propertiesExternal);
                       final canvasW = panelInSidebar
                           ? totalW * fraction
                           : totalW;
@@ -4871,7 +4889,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                     final cur =
                         _miniMapFloat ??
                         Offset(
-                          math.max(0.0, viewSize.width - _kMiniMapW - 10),
+                          isMobilePlatform ? 0.0 : 10.0,
                           math.max(0.0, viewSize.height - _kMiniMapH - 10),
                         );
                     setState(() {
@@ -5439,7 +5457,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
               // 右下角浮层的基线：移动端与左下缩放条、中央信息条**同一行**
               // （bottom = 8）。原来写死 40，工具条缩放后它仍停在原地，
               // 表现为「位置固定、不随内容自适应」（用户反馈）。
-              final cornerBottom = isMobilePlatform ? 8.0 : 10.0;
+              final cornerBottom =
+                  (isMobilePlatform ? 8.0 : 10.0) +
+                  (isMobilePlatform && !_isLandscape
+                      ? MediaQuery.paddingOf(context).bottom
+                      : 0.0);
               final miniFloat = _miniMapFloat;
               final miniMap = _buildMiniMap(scheme, s, viewSize);
               final zoomPill = _buildZoomPill(scheme, s);
@@ -5460,7 +5482,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                 children: [
                   if (showMiniMap && miniFloat == null)
                     Positioned(
-                      right: 10,
+                      left: isMobilePlatform ? null : 10,
+                      right: isMobilePlatform ? 10 : null,
                       bottom: cornerBottom,
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
@@ -5494,7 +5517,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                     ),
                   // 浮动小窗①：元素 / 属性面板（拖出后）。
                   // 已外置到系统窗口时不再画：同一份面板不能同时出现在两处。
-                  if (_panelDetached && !_panelHidden && !_panelExternal)
+                  if (_panelDetached &&
+                      !_panelHidden &&
+                      !_panelExternal &&
+                      !(_elementsExternal && _propertiesExternal))
                     _floatingPanelBox(
                       scheme: scheme,
                       pos: _clampFloatTo(
@@ -6785,9 +6811,23 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             : 'Outputs 1 while the system clock is inside the configured window',
         const [],
       ),
-      LogicGateType.random => (zh ? '随机门' : 'Random Gate', zh ? '按设定概率输出信号' : 'Outputs a stable signal based on configured probability', const []),
-      LogicGateType.filenameMatch => (zh ? '文本包含' : 'Text Contains', zh ? '待测文本包含匹配文本时输出 1' : 'Outputs 1 when text contains the pattern', const []),
-      LogicGateType.extensionMatch => (zh ? '文本后缀' : 'Text Suffix', zh ? '待测文本以匹配文本结尾时输出 1' : 'Outputs 1 when text ends with the pattern', const []),
+      LogicGateType.random => (
+        zh ? '随机门' : 'Random Gate',
+        zh
+            ? '按设定概率输出信号'
+            : 'Outputs a stable signal based on configured probability',
+        const [],
+      ),
+      LogicGateType.filenameMatch => (
+        zh ? '文本包含' : 'Text Contains',
+        zh ? '待测文本包含匹配文本时输出 1' : 'Outputs 1 when text contains the pattern',
+        const [],
+      ),
+      LogicGateType.extensionMatch => (
+        zh ? '文本后缀' : 'Text Suffix',
+        zh ? '待测文本以匹配文本结尾时输出 1' : 'Outputs 1 when text ends with the pattern',
+        const [],
+      ),
     };
 
     return SingleChildScrollView(
@@ -6988,7 +7028,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// 时间触发器右面板编辑器（日期/时间选择，实时修改节点参数）
   Widget _buildConditionGateEditor(PipelineNode node, bool isZh) {
     final gate = node.gate!;
-    final probability = ((node.params['probability'] as num?)?.toDouble() ?? 50).clamp(0, 100).toDouble();
+    final probability = ((node.params['probability'] as num?)?.toDouble() ?? 50)
+        .clamp(0, 100)
+        .toDouble();
     final pattern = node.params['pattern'] as String? ?? '';
     final label = switch (gate) {
       LogicGateType.random => isZh ? '命中概率 (%)' : 'Probability (%)',
@@ -6996,27 +7038,51 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       LogicGateType.extensionMatch => isZh ? '文本后缀' : 'Text suffix',
       _ => '',
     };
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(isZh ? '条件门' : 'Condition gate', style: const TextStyle(fontWeight: FontWeight.w600)),
-      const SizedBox(height: 8),
-      Text(label, style: Theme.of(context).textTheme.labelMedium),
-      if (gate == LogicGateType.random)
-        Slider(value: probability, min: 0, max: 100, divisions: 100,
-          label: probability.toStringAsFixed(0),
-          onChanged: (value) => setState(() => node.params['probability'] = value))
-      else ...[
-        TextFormField(initialValue: node.params['text'] as String? ?? '',
-          decoration: InputDecoration(hintText: isZh ? '待测文本' : 'Text to test', isDense: true),
-          onChanged: (value) => node.params['text'] = value),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          isZh ? '条件门' : 'Condition gate',
+          style: const TextStyle(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 8),
+        Text(label, style: Theme.of(context).textTheme.labelMedium),
+        if (gate == LogicGateType.random)
+          Slider(
+            value: probability,
+            min: 0,
+            max: 100,
+            divisions: 100,
+            label: probability.toStringAsFixed(0),
+            onChanged: (value) =>
+                setState(() => node.params['probability'] = value),
+          )
+        else ...[
+          TextFormField(
+            initialValue: node.params['text'] as String? ?? '',
+            decoration: InputDecoration(
+              hintText: isZh ? '待测文本' : 'Text to test',
+              isDense: true,
+            ),
+            onChanged: (value) => node.params['text'] = value,
+          ),
+          const SizedBox(height: 6),
+          TextFormField(
+            initialValue: pattern,
+            decoration: InputDecoration(
+              hintText: isZh ? '匹配文本' : 'Match pattern',
+              isDense: true,
+            ),
+            onChanged: (value) => node.params['pattern'] = value,
+          ),
+        ],
         const SizedBox(height: 6),
-        TextFormField(initialValue: pattern, decoration: InputDecoration(
-          hintText: isZh ? '匹配文本' : 'Match pattern', isDense: true),
-          onChanged: (value) => node.params['pattern'] = value),
+        Text(
+          isZh ? '通过控制线连接到步骤的使能端。' : 'Connect to a step enable input.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
       ],
-      const SizedBox(height: 6),
-      Text(isZh ? '通过控制线连接到步骤的使能端。' : 'Connect to a step enable input.',
-        style: Theme.of(context).textTheme.bodySmall),
-    ]);
+    );
   }
 
   Widget _buildTimeTriggerEditor(PipelineNode node, bool isZh) {
@@ -8415,7 +8481,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         _panelMinimized = false;
       }
     }),
-    onExternal: _panelExternal
+    onExternal: _panelExternal || _elementsExternal || _propertiesExternal
         ? null
         : () => _openExternalPanel(DetachedPanel.props),
     onHide: () => setState(() {
@@ -8461,6 +8527,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final node = _selectedNode;
     final previewType = _previewedToolboxType;
     final showPreview = node == null && previewType != null;
+    final showElements = !_elementsExternal;
+    final showProperties = !_propertiesExternal;
+    final showBoth = showElements && showProperties;
 
     // Determine what to show in properties
     final logicBlock = _selectedLogicBlockId != null
@@ -8471,7 +8540,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       builder: (ctx, constraints) {
         final totalH = constraints.maxHeight;
         const dividerH = 10.0;
-        final usable = totalH - dividerH;
+        final usable = math.max(0.0, totalH - (showBoth ? dividerH : 0));
         // 拖动分割线时只重建两个高度值（见下方 ValueListenableBuilder），
         // 不再整页 setState 重建工具箱与属性编辑器。
         return ValueListenableBuilder<double>(
@@ -8482,249 +8551,292 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             return Column(
               children: [
                 // ── 元素工具栏 ──
-                SizedBox(
-                  height: toolboxH,
-                  child: Column(
-                    children: [
-                      _buildCollapsibleHeader(
-                        scheme: scheme,
-                        icon: Icons.widgets_outlined,
-                        title: s.isZh ? '元素' : 'Elements',
-                        expanded: _toolboxExpanded,
-                        onToggle: () => setState(
-                          () => _toolboxExpanded = !_toolboxExpanded,
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              _showOnlyAvailable
-                                  ? '${_visibleNodeTypes().length}'
-                                  : '${_allNodeTypes.length}',
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: scheme.outline,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            // 「显示可用」：按当前文件的媒体类型只留下接得上的节点
-                            //（视频文件 → 视频节点 + 提取音频后可用的音频节点）
-                            Tooltip(
-                              message: _showOnlyAvailable
-                                  ? (s.isZh ? '显示全部元素' : 'Show all elements')
-                                  : (s.isZh
-                                        ? '只显示当前文件可用的元素'
-                                        : 'Only show elements usable for this file'),
-                              child: InkWell(
-                                borderRadius: BorderRadius.circular(6),
-                                onTap: () => setState(
-                                  () =>
-                                      _showOnlyAvailable = !_showOnlyAvailable,
-                                ),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(2),
-                                  child: Icon(
-                                    _showOnlyAvailable
-                                        ? Icons.filter_alt
-                                        : Icons.filter_alt_outlined,
+                if (showElements)
+                  SizedBox(
+                    height: showBoth ? toolboxH : usable,
+                    child: Column(
+                      children: [
+                        _buildCollapsibleHeader(
+                          scheme: scheme,
+                          icon: Icons.widgets_outlined,
+                          title: s.isZh ? '元素' : 'Elements',
+                          expanded: _toolboxExpanded,
+                          onToggle: () => setState(
+                            () => _toolboxExpanded = !_toolboxExpanded,
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (!isMobilePlatform)
+                                IconButton(
+                                  tooltip: s.isZh
+                                      ? '元素独立窗口'
+                                      : 'Open elements window',
+                                  visualDensity: VisualDensity.compact,
+                                  constraints: const BoxConstraints.tightFor(
+                                    width: 24,
+                                    height: 24,
+                                  ),
+                                  padding: EdgeInsets.zero,
+                                  onPressed: () => _openExternalPanel(
+                                    DetachedPanel.elements,
+                                  ),
+                                  icon: const Icon(
+                                    Icons.desktop_windows_outlined,
                                     size: 14,
-                                    color: _showOnlyAvailable
-                                        ? scheme.primary
-                                        : scheme.outline,
+                                  ),
+                                ),
+                              Text(
+                                _showOnlyAvailable
+                                    ? '${_visibleNodeTypes().length}'
+                                    : '${_allNodeTypes.length}',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: scheme.outline,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              // 「显示可用」：按当前文件的媒体类型只留下接得上的节点
+                              //（视频文件 → 视频节点 + 提取音频后可用的音频节点）
+                              Tooltip(
+                                message: _showOnlyAvailable
+                                    ? (s.isZh ? '显示全部元素' : 'Show all elements')
+                                    : (s.isZh
+                                          ? '只显示当前文件可用的元素'
+                                          : 'Only show elements usable for this file'),
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(6),
+                                  onTap: () => setState(
+                                    () => _showOnlyAvailable =
+                                        !_showOnlyAvailable,
+                                  ),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(2),
+                                    child: Icon(
+                                      _showOnlyAvailable
+                                          ? Icons.filter_alt
+                                          : Icons.filter_alt_outlined,
+                                      size: 14,
+                                      color: _showOnlyAvailable
+                                          ? scheme.primary
+                                          : scheme.outline,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (_toolboxExpanded)
-                        Expanded(
-                          child: SingleChildScrollView(
-                            padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-                            // 搜索框 + 内容都由 _buildToolboxBody 提供，移动端弹层共用同一份
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _buildToolboxSearch(scheme, s, dense: true),
-                                _buildToolboxBody(scheme, s, dense: true),
-                              ],
-                            ),
+                            ],
                           ),
                         ),
-                    ],
+                        if (_toolboxExpanded)
+                          Expanded(
+                            child: SingleChildScrollView(
+                              padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                              // 搜索框 + 内容都由 _buildToolboxBody 提供，移动端弹层共用同一份
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _buildToolboxSearch(scheme, s, dense: true),
+                                  _buildToolboxBody(scheme, s, dense: true),
+                                ],
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
-                ),
 
                 // ── 可拖动分割线（元素 / 属性之间调整大小） ──
-                MouseRegion(
-                  cursor: SystemMouseCursors.resizeRow,
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onVerticalDragUpdate: (d) {
-                      _toolboxFraction =
-                          ((_toolboxFraction * usable + d.delta.dy) / usable)
-                              .clamp(0.15, 0.85);
-                      _toolboxFractionNotifier.value = _toolboxFraction;
-                    },
-                    child: Container(
-                      height: 10,
-                      color: Colors.transparent,
-                      child: Center(
-                        child: Container(
-                          width: 44,
-                          height: 4,
-                          decoration: BoxDecoration(
-                            color: scheme.primary.withAlpha(90),
-                            borderRadius: BorderRadius.circular(2),
+                if (showBoth)
+                  MouseRegion(
+                    cursor: SystemMouseCursors.resizeRow,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onVerticalDragUpdate: (d) {
+                        _toolboxFraction =
+                            ((_toolboxFraction * usable + d.delta.dy) / usable)
+                                .clamp(0.15, 0.85);
+                        _toolboxFractionNotifier.value = _toolboxFraction;
+                      },
+                      child: Container(
+                        height: 10,
+                        color: Colors.transparent,
+                        child: Center(
+                          child: Container(
+                            width: 44,
+                            height: 4,
+                            decoration: BoxDecoration(
+                              color: scheme.primary.withAlpha(90),
+                              borderRadius: BorderRadius.circular(2),
+                            ),
                           ),
                         ),
                       ),
                     ),
                   ),
-                ),
 
                 // ── 属性编辑器 ──
-                SizedBox(
-                  height: editorH,
-                  child: Column(
-                    children: [
-                      _buildCollapsibleHeader(
-                        scheme: scheme,
-                        icon: logicBlock != null
-                            ? (_logicTypeIcon(logicBlock.type))
-                            : node != null
-                            ? _stepIcon(node.type)
-                            : (showPreview
-                                  ? _stepIcon(previewType)
-                                  : Icons.tune_outlined),
-                        title: logicBlock != null
-                            ? logicBlock.label(s.isZh)
-                            : node != null
-                            ? (node.isGate && node.gate != null
-                                  ? _gatePropertyTitle(node, s)
-                                  : (s.isZh ? node.label : node.labelEn))
-                            : showPreview
-                            ? (s.isZh
-                                  ? PipelineNode(
-                                      id: '',
-                                      type: previewType,
-                                    ).label
-                                  : PipelineNode(
-                                      id: '',
-                                      type: previewType,
-                                    ).labelEn)
-                            : (s.isZh ? '属性' : 'Properties'),
-                        expanded: _editorExpanded,
-                        onToggle: () =>
-                            setState(() => _editorExpanded = !_editorExpanded),
-                      ),
-                      if (_editorExpanded)
-                        Expanded(
-                          child: logicBlock != null
-                              ? SingleChildScrollView(
-                                  padding: const EdgeInsets.all(4),
-                                  child: LogicBlockEditor(
-                                    key: ValueKey(logicBlock.id),
-                                    block: logicBlock,
-                                    childNodes: _nodes
-                                        .where(
-                                          (n) => logicBlock.childNodeIds
-                                              .contains(n.id),
-                                        )
-                                        .toList(),
-                                    onChanged: () {
-                                      setState(() {});
-                                      _markDirty();
-                                    },
-                                    isZh: s.isZh,
+                if (showProperties)
+                  SizedBox(
+                    height: showBoth ? editorH : usable,
+                    child: Column(
+                      children: [
+                        _buildCollapsibleHeader(
+                          scheme: scheme,
+                          icon: logicBlock != null
+                              ? (_logicTypeIcon(logicBlock.type))
+                              : node != null
+                              ? _stepIcon(node.type)
+                              : (showPreview
+                                    ? _stepIcon(previewType)
+                                    : Icons.tune_outlined),
+                          title: logicBlock != null
+                              ? logicBlock.label(s.isZh)
+                              : node != null
+                              ? (node.isGate && node.gate != null
+                                    ? _gatePropertyTitle(node, s)
+                                    : (s.isZh ? node.label : node.labelEn))
+                              : showPreview
+                              ? (s.isZh
+                                    ? PipelineNode(
+                                        id: '',
+                                        type: previewType,
+                                      ).label
+                                    : PipelineNode(
+                                        id: '',
+                                        type: previewType,
+                                      ).labelEn)
+                              : (s.isZh ? '属性' : 'Properties'),
+                          expanded: _editorExpanded,
+                          onToggle: () => setState(
+                            () => _editorExpanded = !_editorExpanded,
+                          ),
+                          trailing: !isMobilePlatform
+                              ? IconButton(
+                                  tooltip: s.isZh
+                                      ? '属性独立窗口'
+                                      : 'Open properties window',
+                                  visualDensity: VisualDensity.compact,
+                                  constraints: const BoxConstraints.tightFor(
+                                    width: 24,
+                                    height: 24,
+                                  ),
+                                  padding: EdgeInsets.zero,
+                                  onPressed: () => _openExternalPanel(
+                                    DetachedPanel.properties,
+                                  ),
+                                  icon: const Icon(
+                                    Icons.desktop_windows_outlined,
+                                    size: 14,
                                   ),
                                 )
-                              : node != null
-                              ? SingleChildScrollView(
-                                  padding: const EdgeInsets.all(4),
-                                  child: _buildStepEditor(node, s.isZh),
-                                )
-                              : showPreview
-                              ? SingleChildScrollView(
-                                  padding: const EdgeInsets.all(4),
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 12,
-                                          vertical: 6,
-                                        ),
-                                        margin: const EdgeInsets.only(
-                                          bottom: 8,
-                                          left: 16,
-                                          right: 16,
-                                          top: 8,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: scheme.primaryContainer
-                                              .withAlpha(60),
-                                          borderRadius: BorderRadius.circular(
-                                            8,
+                              : null,
+                        ),
+                        if (_editorExpanded)
+                          Expanded(
+                            child: logicBlock != null
+                                ? SingleChildScrollView(
+                                    padding: const EdgeInsets.all(4),
+                                    child: LogicBlockEditor(
+                                      key: ValueKey(logicBlock.id),
+                                      block: logicBlock,
+                                      childNodes: _nodes
+                                          .where(
+                                            (n) => logicBlock.childNodeIds
+                                                .contains(n.id),
+                                          )
+                                          .toList(),
+                                      onChanged: () {
+                                        setState(() {});
+                                        _markDirty();
+                                      },
+                                      isZh: s.isZh,
+                                    ),
+                                  )
+                                : node != null
+                                ? SingleChildScrollView(
+                                    padding: const EdgeInsets.all(4),
+                                    child: _buildStepEditor(node, s.isZh),
+                                  )
+                                : showPreview
+                                ? SingleChildScrollView(
+                                    padding: const EdgeInsets.all(4),
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 12,
+                                            vertical: 6,
                                           ),
-                                        ),
-                                        child: Row(
-                                          children: [
-                                            Icon(
-                                              Icons.preview_outlined,
-                                              size: 14,
-                                              color: scheme.primary,
+                                          margin: const EdgeInsets.only(
+                                            bottom: 8,
+                                            left: 16,
+                                            right: 16,
+                                            top: 8,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: scheme.primaryContainer
+                                                .withAlpha(60),
+                                            borderRadius: BorderRadius.circular(
+                                              8,
                                             ),
-                                            const SizedBox(width: 6),
-                                            Text(
-                                              s.isZh
-                                                  ? '预览 · 双击添加到画布'
-                                                  : 'Preview · double-click to add',
-                                              style: TextStyle(
-                                                fontSize: 11,
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              Icon(
+                                                Icons.preview_outlined,
+                                                size: 14,
                                                 color: scheme.primary,
                                               ),
-                                            ),
-                                          ],
+                                              const SizedBox(width: 6),
+                                              Text(
+                                                s.isZh
+                                                    ? '预览 · 双击添加到画布'
+                                                    : 'Preview · double-click to add',
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  color: scheme.primary,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
                                         ),
-                                      ),
-                                      _buildStepEditor(
-                                        PipelineNode(
-                                          id: '__preview__',
-                                          type: previewType,
+                                        _buildStepEditor(
+                                          PipelineNode(
+                                            id: '__preview__',
+                                            type: previewType,
+                                          ),
+                                          s.isZh,
                                         ),
-                                        s.isZh,
-                                      ),
-                                    ],
+                                      ],
+                                    ),
+                                  )
+                                : Center(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          Icons.touch_app_outlined,
+                                          size: 32,
+                                          color: scheme.outline.withAlpha(80),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          s.isZh
+                                              ? '选择节点开始编辑'
+                                              : 'Select a node to edit',
+                                          style: TextStyle(
+                                            color: scheme.outline,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                )
-                              : Center(
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        Icons.touch_app_outlined,
-                                        size: 32,
-                                        color: scheme.outline.withAlpha(80),
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        s.isZh
-                                            ? '选择节点开始编辑'
-                                            : 'Select a node to edit',
-                                        style: TextStyle(
-                                          color: scheme.outline,
-                                          fontSize: 12,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                        ),
-                    ],
+                          ),
+                      ],
+                    ),
                   ),
-                ),
               ],
             );
           },
@@ -8918,6 +9030,27 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final gap = dense ? 4.0 : 6.0;
     final sectionGap = dense ? 8.0 : 10.0;
     final state = context.read<AppState>();
+    final listLayout = state.config.nodeEditorElementLayout == 'list';
+    var listLayoutIndex = 0;
+
+    Widget arrangeItems(List<Widget> items) {
+      if (listLayout) {
+        return Column(
+          key: ValueKey('node-editor-element-list-layout-${listLayoutIndex++}'),
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var i = 0; i < items.length; i++)
+              Padding(
+                padding: EdgeInsets.only(
+                  bottom: i == items.length - 1 ? 0 : gap,
+                ),
+                child: items[i],
+              ),
+          ],
+        );
+      }
+      return Wrap(spacing: gap, runSpacing: gap, children: items);
+    }
 
     final hits = _toolboxSearchHits(_toolboxQuery, s);
     if (_toolboxQuery.trim().isNotEmpty) {
@@ -8944,11 +9077,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             s.isZh ? '搜索结果 · ${hits.length}' : '${hits.length} result(s)',
           ),
           SizedBox(height: gap),
-          Wrap(
-            spacing: gap,
-            runSpacing: gap,
-            children: [for (final t in hits) _buildToolboxItem(t, scheme, s)],
-          ),
+          arrangeItems([for (final t in hits) _buildToolboxItem(t, scheme, s)]),
         ],
       );
     }
@@ -8971,11 +9100,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       return [
         _categoryLabel(scheme, icon, label),
         SizedBox(height: gap),
-        Wrap(
-          spacing: gap,
-          runSpacing: gap,
-          children: [for (final t in shown) _buildToolboxItem(t, scheme, s)],
-        ),
+        arrangeItems([for (final t in shown) _buildToolboxItem(t, scheme, s)]),
         SizedBox(height: sectionGap),
       ];
     }
@@ -8994,23 +9119,15 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         if (favs.isNotEmpty) ...[
           _categoryLabel(scheme, Icons.star, s.isZh ? '收藏' : 'Favourites'),
           SizedBox(height: gap),
-          Wrap(
-            spacing: gap,
-            runSpacing: gap,
-            children: [for (final t in favs) _buildToolboxItem(t, scheme, s)],
-          ),
+          arrangeItems([for (final t in favs) _buildToolboxItem(t, scheme, s)]),
           SizedBox(height: sectionGap),
         ],
         ...section(Icons.history, s.isZh ? '最近使用' : 'Recent', recents),
         // start / output 恒定展示：它们不受媒体类型约束。
-        Wrap(
-          spacing: gap,
-          runSpacing: gap,
-          children: [
-            _buildToolboxItem(PipelineStepType.start, scheme, s),
-            _buildToolboxItem(PipelineStepType.output, scheme, s),
-          ],
-        ),
+        arrangeItems([
+          _buildToolboxItem(PipelineStepType.start, scheme, s),
+          _buildToolboxItem(PipelineStepType.output, scheme, s),
+        ]),
         SizedBox(height: sectionGap),
         ...section(
           Icons.category_outlined,
@@ -9034,24 +9151,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           s.isZh ? '逻辑' : 'Logic',
         ),
         SizedBox(height: gap),
-        Wrap(
-          spacing: gap,
-          runSpacing: gap,
-          children: [
-            for (final t in LogicBlockType.values)
-              _buildLogicToolboxItem(t, scheme, s),
-          ],
-        ),
+        arrangeItems([
+          for (final t in LogicBlockType.values)
+            _buildLogicToolboxItem(t, scheme, s),
+        ]),
         // 逻辑门分组：符号小、数量多，间距再紧一档
         SizedBox(height: gap),
-        Wrap(
-          spacing: dense ? 3 : 4,
-          runSpacing: dense ? 3 : 4,
-          children: [
-            for (final g in LogicGateType.values)
-              _buildGateToolboxItem(g, scheme, s),
-          ],
-        ),
+        arrangeItems([
+          for (final g in LogicGateType.values)
+            _buildGateToolboxItem(g, scheme, s),
+        ]),
         if (widget.containerInfo != null) ...[
           SizedBox(height: sectionGap),
           ...section(
@@ -9071,6 +9180,33 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   ) {
     final dummy = PipelineNode(id: '', type: t);
     final tag = dummy.mediaTag;
+    final listLayout =
+        context.read<AppState>().config.nodeEditorElementLayout == 'list';
+    Widget visual({
+      bool selected = false,
+      bool favorite = false,
+      double opacity = 1,
+    }) => listLayout
+        ? _toolboxListRow(
+            label: s.isZh ? dummy.label : dummy.labelEn,
+            tag: tag,
+            icon: _stepIcon(t),
+            accent: _nodeColor(t, scheme),
+            scheme: scheme,
+            selected: selected,
+            favorite: favorite,
+            opacity: opacity,
+          )
+        : _toolboxChip(
+            t,
+            dummy,
+            tag,
+            scheme,
+            s,
+            isSelected: selected,
+            isFav: favorite,
+            opacity: opacity,
+          );
     // 移动端：工具箱是全屏弹层盖在画布上，拖拽落点被弹层拦截、竖向拖拽又被
     // 列表滚动抢走 —— 拖拽在手机上不可用。改为「点按即添加到画布中心」。
     if (isMobilePlatform) {
@@ -9079,7 +9215,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         // 长按 = 收藏 / 取消收藏。触摸设备没有右键，而「收藏」需要一个入口
         // —— 长按工具箱元素不会与点按（添加到画布）冲突。
         onLongPress: () => _toggleFavoriteType(t),
-        child: _toolboxChip(t, dummy, tag, scheme, s),
+        child: visual(favorite: _isFavoriteType(t)),
       );
     }
     return Draggable<Object>(
@@ -9118,7 +9254,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           ),
         ),
       ),
-      childWhenDragging: _toolboxChip(t, dummy, tag, scheme, s, opacity: 0.3),
+      childWhenDragging: visual(
+        selected: _previewedToolboxType == t,
+        favorite: _isFavoriteType(t),
+        opacity: 0.3,
+      ),
       child: GestureDetector(
         onTap: () {
           setState(() {
@@ -9137,15 +9277,76 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         // 右键切换收藏。桌面端刻意不挂 onLongPress：长按是拖拽前的自然停顿，
         // 会误触发收藏。
         onSecondaryTap: () => _toggleFavoriteType(t),
-        child: _toolboxChip(
-          t,
-          dummy,
-          tag,
-          scheme,
-          s,
-          isSelected: _previewedToolboxType == t,
-          isFav: _isFavoriteType(t),
+        child: visual(
+          selected: _previewedToolboxType == t,
+          favorite: _isFavoriteType(t),
         ),
+      ),
+    );
+  }
+
+  Widget _toolboxListRow({
+    required String label,
+    required IconData icon,
+    required Color accent,
+    required ColorScheme scheme,
+    String tag = '',
+    bool selected = false,
+    bool favorite = false,
+    double opacity = 1,
+  }) {
+    final alpha = (opacity.clamp(0.0, 1.0) * 255).round();
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 150),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: selected
+            ? scheme.primary.withAlpha(40 * alpha ~/ 255)
+            : scheme.surfaceContainerLow.withAlpha(150 * alpha ~/ 255),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color:
+              (selected
+                      ? scheme.primary
+                      : favorite
+                      ? scheme.primary.withAlpha(150)
+                      : scheme.outlineVariant.withAlpha(90))
+                  .withAlpha(alpha),
+          width: selected ? 1.5 : 1,
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 15, color: accent.withAlpha(alpha)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: isMobilePlatform ? 11 : 12,
+                color: scheme.onSurface.withAlpha(alpha),
+                fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+              ),
+            ),
+          ),
+          if (tag.isNotEmpty) ...[
+            const SizedBox(width: 6),
+            Text(
+              tag,
+              style: TextStyle(
+                fontSize: 9,
+                color: scheme.outline.withAlpha(alpha),
+              ),
+            ),
+          ],
+          if (favorite) ...[
+            const SizedBox(width: 6),
+            Icon(Icons.star, size: 12, color: scheme.primary.withAlpha(alpha)),
+          ],
+        ],
       ),
     );
   }
@@ -9184,55 +9385,22 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final label = logicBlockTypeLabel(type, s.isZh);
     final icon = _logicTypeIcon(type);
     final isSelected = _previewedLogicType == type;
-    // 移动端：逻辑块必须先框选画布上的元素才能创建。旧实现要求「双击」工具项
-    // 才进入框选模式，且工具箱弹层仍然盖在画布上方 —— 双击无效、拖动更不可能，
-    // 逻辑块在移动端完全加不上。改为：点按即收起弹层并直接进入框选模式，
-    // 画布上方会出现红色提示条引导手指框选。
-    if (isMobilePlatform) {
-      return GestureDetector(
-        onTap: () {
-          setState(() => _mobileToolboxOpen = false);
-          _startLogicBoxSelect(type, s);
-        },
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-          decoration: BoxDecoration(
-            color: context.sem.danger.withAlpha(30),
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: context.sem.danger.withAlpha(80)),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 12, color: context.sem.danger),
-              const SizedBox(width: 3),
-              Text(
-                label,
-                style: TextStyle(fontSize: 9, color: scheme.onSurface),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-    return GestureDetector(
-      onTap: () {
-        setState(() {
-          _previewedLogicType = _previewedLogicType == type ? null : type;
-          _previewedToolboxType = null;
-          _selectedNodeIds.clear();
-          _lastSelectedId = null;
-          _selectedLogicBlockId = null;
-        });
-      },
-      onDoubleTap: () => _startLogicBoxSelect(type, s),
-      child: AnimatedContainer(
+    final listLayout =
+        context.read<AppState>().config.nodeEditorElementLayout == 'list';
+    Widget visual() {
+      if (listLayout) {
+        return _toolboxListRow(
+          label: label,
+          icon: icon,
+          accent: context.sem.danger,
+          scheme: scheme,
+          tag: s.isZh ? '逻辑块' : 'Logic',
+          selected: isSelected,
+        );
+      }
+      return AnimatedContainer(
         duration: const Duration(milliseconds: 150),
-        padding: EdgeInsets.symmetric(
-          horizontal: isMobilePlatform ? 8 : 10,
-          vertical: isMobilePlatform ? 5 : 5,
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
         decoration: BoxDecoration(
           color: isSelected
               ? context.sem.danger.withAlpha(60)
@@ -9256,22 +9424,39 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              icon,
-              size: isMobilePlatform ? 12 : 14,
-              color: context.sem.danger,
-            ),
-            SizedBox(width: isMobilePlatform ? 3 : 4),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: isMobilePlatform ? 9 : 12,
-                color: scheme.onSurface,
-              ),
-            ),
+            Icon(icon, size: 12, color: context.sem.danger),
+            const SizedBox(width: 3),
+            Text(label, style: TextStyle(fontSize: 9, color: scheme.onSurface)),
           ],
         ),
-      ),
+      );
+    }
+
+    // 移动端：逻辑块必须先框选画布上的元素才能创建。旧实现要求「双击」工具项
+    // 才进入框选模式，且工具箱弹层仍然盖在画布上方 —— 双击无效、拖动更不可能，
+    // 逻辑块在移动端完全加不上。改为：点按即收起弹层并直接进入框选模式，
+    // 画布上方会出现红色提示条引导手指框选。
+    if (isMobilePlatform) {
+      return GestureDetector(
+        onTap: () {
+          setState(() => _mobileToolboxOpen = false);
+          _startLogicBoxSelect(type, s);
+        },
+        child: visual(),
+      );
+    }
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _previewedLogicType = _previewedLogicType == type ? null : type;
+          _previewedToolboxType = null;
+          _selectedNodeIds.clear();
+          _lastSelectedId = null;
+          _selectedLogicBlockId = null;
+        });
+      },
+      onDoubleTap: () => _startLogicBoxSelect(type, s),
+      child: visual(),
     );
   }
 
@@ -9282,11 +9467,23 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     AppStrings s,
   ) {
     final sym = gate.symbol(s.isZh);
+    final listLayout =
+        context.read<AppState>().config.nodeEditorElementLayout == 'list';
+    Widget visual({double opacity = 1}) => listLayout
+        ? _toolboxListRow(
+            label: gate.name.toUpperCase(),
+            tag: sym,
+            icon: Icons.rule,
+            accent: scheme.tertiary,
+            scheme: scheme,
+            opacity: opacity,
+          )
+        : _gateChip(gate, scheme, s, opacity: opacity);
     if (isMobilePlatform) {
       // 与 _buildToolboxItem 同理：弹层遮挡画布，拖拽不可用 → 点按即添加。
       return GestureDetector(
         onTap: () => _mobileAddGate(gate),
-        child: _gateChip(gate, scheme, s),
+        child: visual(),
       );
     }
     return Draggable<Object>(
@@ -9315,8 +9512,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           ),
         ),
       ),
-      childWhenDragging: _gateChip(gate, scheme, s, opacity: 0.3),
-      child: _gateChip(gate, scheme, s),
+      childWhenDragging: visual(opacity: 0.3),
+      child: visual(),
     );
   }
 
@@ -9669,6 +9866,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       return;
     }
     final isAi = panel == DetachedPanel.ai;
+    final isElements = panel == DetachedPanel.elements;
+    final isProperties = panel == DetachedPanel.properties;
     // 抽屉 / 浮窗一让位，里面的 AiPanelView 就 unmount 了，会话随之丢失。
     // 先把消息导出来落在 _aiSessionCache 上，交给子窗口续上。
     if (isAi) _stashAiSession();
@@ -9680,11 +9879,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         _aiMinimized = false;
         _aiFloatPos = null;
       } else {
-        _panelExternal = true;
-        _panelDetached = false;
-        _panelMinimized = false;
-        _panelFloatPos = null;
-        _panelHidden = false;
+        if (isElements) {
+          _elementsExternal = true;
+        } else if (isProperties) {
+          _propertiesExternal = true;
+        } else {
+          _panelExternal = true;
+          _panelDetached = false;
+          _panelMinimized = false;
+          _panelFloatPos = null;
+          _panelHidden = false;
+        }
       }
     });
     final id = await MultiWindowService.openPanel(
@@ -9699,6 +9904,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         if (isAi) {
           _aiExternal = false;
           _aiDrawerOpen = true;
+        } else if (isElements) {
+          _elementsExternal = false;
+        } else if (isProperties) {
+          _propertiesExternal = false;
         } else {
           _panelExternal = false;
           _panelDetached = true;
@@ -9716,12 +9925,24 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   void _dockExternalPanel(DetachedPanel? panel, {bool fromWindow = false}) {
     if (panel == null) return;
     final isAi = panel == DetachedPanel.ai;
-    final live = isAi ? _aiExternal : _panelExternal;
+    final isElements = panel == DetachedPanel.elements;
+    final isProperties = panel == DetachedPanel.properties;
+    final live = isAi
+        ? _aiExternal
+        : isElements
+        ? _elementsExternal
+        : isProperties
+        ? _propertiesExternal
+        : _panelExternal;
     if (live && mounted) {
       setState(() {
         if (isAi) {
           _aiExternal = false;
           _aiDrawerOpen = true; // 收回后直接展开，用户能立刻看到内容
+        } else if (isElements) {
+          _elementsExternal = false;
+        } else if (isProperties) {
+          _propertiesExternal = false;
         } else {
           _panelExternal = false;
           _panelDetached = false; // 一路收回右栏，不留中间态
@@ -9785,7 +10006,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   ///  * 结构指纹变了（选中节点 / 增删节点 / 连线 / 换主题）→ 推整份快照；
   ///  * 只有参数动了 → 只推选中节点的参数。
   void _syncOpenPanels() {
-    if (isMobilePlatform || (!_panelExternal && !_aiExternal)) return;
+    if (isMobilePlatform ||
+        (!_panelExternal &&
+            !_elementsExternal &&
+            !_propertiesExternal &&
+            !_aiExternal)) {
+      return;
+    }
     _panelSyncTimer ??= Timer(const Duration(milliseconds: 50), () {
       _panelSyncTimer = null;
       if (mounted) _flushOpenPanels();
@@ -9794,29 +10021,29 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   void _flushOpenPanels() {
     if (isMobilePlatform) return;
-    final propsOpen =
-        _panelExternal && MultiWindowService.isOpen(DetachedPanel.props);
-    final aiOpen = _aiExternal && MultiWindowService.isOpen(DetachedPanel.ai);
-    if (!propsOpen && !aiOpen) return;
+    final openPanels = <DetachedPanel>[
+      if (_panelExternal && MultiWindowService.isOpen(DetachedPanel.props))
+        DetachedPanel.props,
+      if (_elementsExternal &&
+          MultiWindowService.isOpen(DetachedPanel.elements))
+        DetachedPanel.elements,
+      if (_propertiesExternal &&
+          MultiWindowService.isOpen(DetachedPanel.properties))
+        DetachedPanel.properties,
+      if (_aiExternal && MultiWindowService.isOpen(DetachedPanel.ai))
+        DetachedPanel.ai,
+    ];
+    if (openPanels.isEmpty) return;
     final shape = _graphShape();
     if (shape != _pushedShape) {
       _pushedShape = shape;
       _pushedParams = null;
-      if (propsOpen) {
+      for (final panel in openPanels) {
         unawaited(
           MultiWindowService.push(
-            DetachedPanel.props,
+            panel,
             PanelPush.snapshot,
-            panelSnapshot(DetachedPanel.props),
-          ),
-        );
-      }
-      if (aiOpen) {
-        unawaited(
-          MultiWindowService.push(
-            DetachedPanel.ai,
-            PanelPush.snapshot,
-            panelSnapshot(DetachedPanel.ai),
+            panelSnapshot(panel),
           ),
         );
       }
@@ -9828,23 +10055,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     if (sig == _pushedParams) return;
     _pushedParams = sig;
     final payload = <String, dynamic>{'nodeId': node.id, 'params': node.params};
-    if (propsOpen) {
-      unawaited(
-        MultiWindowService.push(
-          DetachedPanel.props,
-          PanelPush.nodeParams,
-          payload,
-        ),
-      );
-    }
-    if (aiOpen) {
-      unawaited(
-        MultiWindowService.push(
-          DetachedPanel.ai,
-          PanelPush.nodeParams,
-          payload,
-        ),
-      );
+    for (final panel in openPanels) {
+      unawaited(MultiWindowService.push(panel, PanelPush.nodeParams, payload));
     }
   }
 
@@ -10130,7 +10342,15 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   @override
   void onPanelWindowGone(DetachedPanel panel) {
     final isAi = panel == DetachedPanel.ai;
-    final live = isAi ? _aiExternal : _panelExternal;
+    final isElements = panel == DetachedPanel.elements;
+    final isProperties = panel == DetachedPanel.properties;
+    final live = isAi
+        ? _aiExternal
+        : isElements
+        ? _elementsExternal
+        : isProperties
+        ? _propertiesExternal
+        : _panelExternal;
     _pushedShape = null;
     _pushedParams = null;
     if (!live || !mounted) return;
@@ -10138,6 +10358,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       if (isAi) {
         _aiExternal = false;
         _aiDrawerOpen = true;
+      } else if (isElements) {
+        _elementsExternal = false;
+      } else if (isProperties) {
+        _propertiesExternal = false;
       } else {
         _panelExternal = false;
         _panelDetached = false;
@@ -10400,8 +10624,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
-                // 面板内部自己渲染单行 header（历史/标题/模型/工具/关闭），
-                // 宿主不再插一层 header，避免「上下两层菜单」。
+                // 面板内部自己渲染分层 header，宿主不再插一层，避免重复菜单。
                 Expanded(child: panelContent),
                 // Android 手势导航：isScrollControlled 的底部弹层不会自动避让系统
                 // 导航条，这里显式预留底部安全区，避免输入框被手势条遮挡。
@@ -10592,43 +10815,50 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   // ── 底栏 ──
 
-  /// .fppx 配置体积（字节，估算）。
-  ///
-  /// 底栏此前显示的是**源视频**的体积（`video.sizeMb`），放在「配置」的位置上
-  /// 完全对不上（用户反馈「显示的是错误数值」）。这里改为按当前写入格式估算配置
-  /// 体积：旧版是 JSON 文本、新版是模块化二进制（magic + mode + 描述 + 载荷 +
-  /// CRC 等固定头），不落盘即可算出量级，故展示时标注「≈」。
-  ///
-  /// 用 [_sizeTick] 做缓存签名：拖动只改坐标、长度可能不变，每次提交才 +1，
-  /// 避免每帧重跑 jsonEncode。
-  int _fppxSizeBytes() {
-    if (_sizeTickCached == _sizeTick && _sizeFormatCached == _writeFormat) {
-      return _sizeBytesCached;
+  String _currentGraphJsonForSize() {
+    if (_sizeTickCached != _sizeTick) {
+      _graphJsonSizeCached = jsonEncode(_currentGraph().toJson());
+      _sizeTickCached = _sizeTick;
     }
-    final payload = utf8.encode(jsonEncode(_currentGraph().toJson())).length;
-    // 容器开销（不含介绍文本自身）：
-    //   新版 v2 = 文件头 6 + 索引模块 67（13 + 9×6）+ 介绍模块头 5
-    //            + 加密信息模块 6 + 载荷模块头 5 + CRC 模块 9 + 结尾模块 5 = 103
-    //     （规范 §9：总长 = 103 + L + D）
-    //   旧版 = 定长头 + gzip 包装，量级仍是 JSON 长度上下
-    // 加密会再多出：索引多一条 9 + 0x02 扩展载荷 44 + MAC 模块 37
-    //             + PKCS#7 填充 1~16（此处按未加密估算，只作量级提示）
-    final bytes = _writeFormat == 'v2' ? payload + 103 : payload + 24;
-    _sizeTickCached = _sizeTick;
-    _sizeFormatCached = _writeFormat;
-    _sizeBytesCached = bytes;
-    return bytes;
+    return _graphJsonSizeCached;
+  }
+
+  Future<int?> _inputFileSize() {
+    final path = widget.video.filepath.trim();
+    if (_inputSizeFuture == null || path != _inputSizePath) {
+      _inputSizePath = path;
+      _inputSizeFuture = path.isEmpty
+          ? Future<int?>.value()
+          : File(path).length();
+    }
+    return _inputSizeFuture!;
+  }
+
+  String _formatExactBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    final kb = bytes / 1024;
+    if (kb < 1024) return '${kb.toStringAsFixed(1)} KB';
+    final mb = kb / 1024;
+    if (mb < 1024) return '${mb.toStringAsFixed(2)} MB';
+    return '${(mb / 1024).toStringAsFixed(2)} GB';
+  }
+
+  String _inputSizeLabel(AppStrings s, AsyncSnapshot<int?> snapshot) {
+    if (snapshot.hasError) return s.isZh ? '不可用' : 'Unavailable';
+    if (snapshot.connectionState != ConnectionState.done) return '…';
+    final bytes = snapshot.data;
+    if (bytes == null) return '—';
+    return _formatExactBytes(bytes);
   }
 
   String _fppxSizeLabel(AppStrings s) {
-    final bytes = _fppxSizeBytes();
-    final kb = bytes / 1024;
-    final text = kb >= 1024
-        ? '${(kb / 1024).toStringAsFixed(2)} MB'
-        : kb >= 0.1
-        ? '${kb.toStringAsFixed(1)} KB'
-        : '$bytes B';
-    return s.isZh ? '.fppx ≈ $text' : '.fppx ≈ $text';
+    final size = _lastExportedFppxSize;
+    if (size == null ||
+        _lastExportedGraphJson != _currentGraphJsonForSize() ||
+        _lastExportedFormat != _writeFormat) {
+      return s.isZh ? '.fppx 未导出' : '.fppx not exported';
+    }
+    return '.fppx ${_formatExactBytes(size)}';
   }
 
   Widget _buildBottomBar(ColorScheme scheme, AppStrings s) {
@@ -10659,11 +10889,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                       Icon(Icons.info_outline, size: 13, color: scheme.outline),
                       const SizedBox(width: 5),
                       Expanded(
-                        child: Text(
-                          '${v.resolution}  |  ${v.durationStr}  |  ${_fppxSizeLabel(s)}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: scheme.outline, fontSize: 11),
+                        child: FutureBuilder<int?>(
+                          future: _inputFileSize(),
+                          builder: (context, snapshot) => Text(
+                            '${v.resolution}  |  ${v.durationStr}  |  ${s.isZh ? '源' : 'Source'} ${_inputSizeLabel(s, snapshot)}  |  ${_fppxSizeLabel(s)}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: scheme.outline,
+                              fontSize: 11,
+                            ),
+                          ),
                         ),
                       ),
                       if (_autosaveIndicator) ...[
@@ -10693,11 +10929,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                 Icon(Icons.info_outline, size: 14, color: scheme.outline),
                 const SizedBox(width: 6),
                 Flexible(
-                  child: Text(
-                    '${v.resolution}  |  ${v.durationStr}  |  ${_fppxSizeLabel(s)}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: scheme.outline, fontSize: 12),
+                  child: FutureBuilder<int?>(
+                    future: _inputFileSize(),
+                    builder: (context, snapshot) => Text(
+                      '${v.resolution}  |  ${v.durationStr}  |  ${s.isZh ? '源' : 'Source'} ${_inputSizeLabel(s, snapshot)}  |  ${_fppxSizeLabel(s)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: scheme.outline, fontSize: 12),
+                    ),
                   ),
                 ),
                 if (_autosaveIndicator) ...[
@@ -11026,21 +11265,34 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       0.5,
       1.6,
     );
-    final maxW = math.max(96.0, MediaQuery.of(context).size.width - 48);
+    final maxW = math.max(0.0, MediaQuery.sizeOf(context).width - 16);
     return Container(
-      // 高度跟随缩放设置，与左下缩放条同一档节奏
-      height: 22.0 + 2.0 * zoomScale,
+      height: 34.0 + 2.0 * zoomScale,
       constraints: BoxConstraints(maxWidth: maxW),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
         color: scheme.surface.withAlpha(180),
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Text(
-        '${v.resolution} | ${v.durationStr} | ${_fppxSizeLabel(s)} | ${_nodes.length} $nodesLabel',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(fontSize: 9, color: scheme.outline),
+      child: FutureBuilder<int?>(
+        future: _inputFileSize(),
+        builder: (context, snapshot) => Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              '${v.resolution} | ${v.durationStr} | ${_nodes.length} $nodesLabel',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 9, color: scheme.outline),
+            ),
+            Text(
+              '${s.isZh ? '源' : 'Source'} ${_inputSizeLabel(s, snapshot)} | ${_fppxSizeLabel(s)}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 9, color: scheme.outline),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -11249,20 +11501,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     // 右侧停靠窄卡片：填满 Positioned 给出的高度（top..bottom），内容单列滚动。
     // chrome 全面收紧：内边距 12/10→8/6，头部图标/文字/按钮缩小一档，
     // 分隔线上下间隙压缩 —— 修复「菜单栏过大、选项间隔太散」的观感。
-    return Container(
+    return GlassPanel(
+      radius: 14,
+      blur: 12,
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      decoration: BoxDecoration(
-        color: scheme.surface.withAlpha(244),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: scheme.outlineVariant.withAlpha(120)),
-        boxShadow: [
-          BoxShadow(
-            color: scheme.shadow.withAlpha(70),
-            blurRadius: 18,
-            offset: const Offset(-2, 2),
-          ),
-        ],
-      ),
       child: Column(
         mainAxisSize: MainAxisSize.max,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -12456,27 +12698,24 @@ class AiAutoContinuePolicy {
   void reset() => _rounds = 0;
 }
 
-/// 构建请求上下文时「从 UI 历史里的哪一条开始」装进 context（只读）。
-///
-/// 根因：旧实现发送时直接 _messages.removeRange(0, ...)，把用户刚看过的
-/// 历史从**界面**里删掉。现在 UI 永远保留完整对话；请求侧只取最近
-/// [maxMessages] 条，真正的 token 裁剪交给 [ai.ContextManager]
-/// （它按 maxTokens - reservedTokens 滑窗删除最旧消息，同样只发生在请求上下文，
-/// 不动 UI 列表）。
-///
-/// 窗口起点会向后对齐到最近的 user 消息：避免窗口正好切在 assistant
-/// tool_calls 与紧随其后的 tool_result 之间，否则 OpenAI 会因
-/// 「tool 消息前没有对应 tool_calls」直接 400。
-int requestHistoryStartIndex(List<String> roles, {int maxMessages = 100}) {
-  if (maxMessages <= 0 || roles.length <= maxMessages) return 0;
-  final start = roles.length - maxMessages;
-  final aligned = roles.indexOf('user', start);
-  if (aligned >= 0) return aligned;
-  // 窗口内没有 user（极短 maxMessages / 异常历史）：向更早找最近一条 user，
-  // 避免请求以 assistant 开头。
-  final nearestUser = roles.lastIndexOf('user', start);
-  return nearestUser >= 0 ? nearestUser : start;
-}
+int aiContinuationOutputBudget({
+  required int contextWindow,
+  required int systemTokens,
+  required int currentUserTokens,
+  required int partialAnswerTokens,
+  required int continuationPromptTokens,
+  required int requestedMaxTokens,
+}) => math.max(
+  0,
+  math.min(
+    requestedMaxTokens,
+    contextWindow -
+        systemTokens -
+        currentUserTokens -
+        partialAnswerTokens -
+        continuationPromptTokens,
+  ),
+);
 
 /// 一条 UI 消息在「请求侧裁剪」里的轻量视图。
 ///
@@ -12509,13 +12748,10 @@ class AiHistoryEntry {
 ///    同样是孤立 tool 消息。
 ///
 /// 因此这里同时做三件事：
-///  1. 按条数 + 估算 token 双重预算，从**最新**往前取；
-///  2. 窗口起点向后对齐到 user 消息 —— 一个 user 回合 = user + 其后所有
-///     assistant 消息，工具调用与工具结果都在同一回合内，不会被拆开；
-///  3. 首个 user 回合若被裁掉，仍单独保留「首条 user 消息」：那是用户的原始
-///     意图，长会话里模型丢了它就会答非所问。
-///
-/// [maxTokens] <= 0 表示不做 token 预算（只按条数，等价旧行为）。
+/// 从最新回合向前取完整回合，不能为了塞入超预算的大回合而突破 token 限额。
+/// 首条 user 意图仅在与选中回合总量仍落在预算内时额外保留。
+/// 完整回合优先于 [maxMessages] 上限，避免拆开工具调用与结果。
+/// [maxTokens] <= 0 表示不做 token 预算。
 List<int> requestHistoryIndices(
   List<AiHistoryEntry> entries, {
   int maxMessages = 100,
@@ -12524,50 +12760,46 @@ List<int> requestHistoryIndices(
   final count = entries.length;
   if (count == 0) return const <int>[];
   final limit = maxMessages <= 0 ? count : maxMessages;
+  final userStarts = <int>[
+    for (var i = 0; i < count; i++)
+      if (entries[i].isUser) i,
+  ];
+  if (userStarts.isEmpty) return const <int>[];
+
   var start = count;
-  var used = 0;
-  for (var i = count - 1; i >= 0; i--) {
-    final nextCount = count - i;
-    final nextTokens = used + entries[i].estimatedTokens;
-    // 至少保留一条（最新的那条永远进窗口），否则预算极小时会得到空上下文。
-    if (nextCount > limit) break;
-    if (maxTokens > 0 && nextTokens > maxTokens && i < count - 1) break;
-    used = nextTokens;
-    start = i;
-  }
-  // 起点对齐到 user 回合边界：assistant(tool_calls) 与 tool_result 必须同组。
-  var aligned = start;
-  while (aligned < count && !entries[aligned].isUser) {
-    aligned++;
-  }
-  if (aligned < count) {
-    start = aligned;
-  } else {
-    // 窗口里一条 user 都没有（预算极小 / 异常历史）：向前找最近一条 user，
-    // 避免请求以 assistant 或 tool 消息开头。
-    var back = start - 1;
-    while (back >= 0 && !entries[back].isUser) {
-      back--;
+  var selectedMessages = 0;
+  var selectedTokens = 0;
+  for (var turn = userStarts.length - 1; turn >= 0; turn--) {
+    final turnStart = userStarts[turn];
+    final turnEnd = turn + 1 < userStarts.length ? userStarts[turn + 1] : count;
+    final turnMessages = turnEnd - turnStart;
+    final turnTokens = entries
+        .skip(turnStart)
+        .take(turnMessages)
+        .fold<int>(0, (total, entry) => total + entry.estimatedTokens);
+    // Keep the latest turn intact even when it exceeds maxMessages; splitting
+    // a tool round is more harmful than exceeding the soft message-count cap.
+    if (selectedMessages > 0 && selectedMessages + turnMessages > limit) {
+      break;
     }
-    if (back >= 0) start = back;
+    if (maxTokens > 0 && selectedTokens + turnTokens > maxTokens) break;
+    start = turnStart;
+    selectedMessages += turnMessages;
+    selectedTokens += turnTokens;
   }
-  // 对齐后若把某个 tool_result 与它的 tool_use 拆开（窗口首条就是工具结果），
-  // 再向前退到该回合的 user 消息。
-  var guard = 0;
-  while (start > 0 && entries[start].hasToolResults && guard++ < count) {
-    start--;
-    while (start > 0 && !entries[start].isUser) {
-      start--;
-    }
-  }
-  final indices = <int>[for (var i = start; i < count; i++) i];
-  // 保留首条 user 意图：窗口丢掉了它时单独补回最前面（一条 user 消息的
-  // token 开销远小于「模型不知道用户到底要什么」的代价）。
-  if (start > 0) {
-    final firstUser = entries.indexWhere((e) => e.isUser);
-    if (firstUser >= 0 && firstUser < start && !indices.contains(firstUser)) {
-      indices.insert(0, firstUser);
-    }
+
+  final indices = start == count
+      ? <int>[]
+      : <int>[for (var i = start; i < count; i++) i];
+  // Keep the initial user intent only when it fits alongside the selected turns.
+  final firstUser = userStarts.first;
+  if (firstUser < start &&
+      (maxMessages <= 0 ||
+          selectedMessages > limit ||
+          selectedMessages + 1 <= limit) &&
+      (maxTokens <= 0 ||
+          selectedTokens + entries[firstUser].estimatedTokens <= maxTokens)) {
+    indices.insert(0, firstUser);
   }
   return indices;
 }
@@ -12708,46 +12940,6 @@ bool shouldPersistHistoryMessage({
 double mobileAiSidebarWidth(double panelWidth) =>
     math.min(400.0, math.max(0.0, panelWidth * 0.94));
 
-/// 移动端 AI 弹层「单行 header」的尺寸决策。
-///
-/// 必须保证 320dp 不溢出：3 个动作按钮 + 标题 + 模型 chip。紧凑档把动作按钮
-/// 缩到 32、模型 chip 缩到 88，标题仍有空间显示「AI 助手」；常规档给模型
-/// 更宽的位置。抽成纯类便于离线测试边界值。
-class AiMobileHeaderMetrics {
-  const AiMobileHeaderMetrics({
-    required this.height,
-    required this.actionSize,
-    required this.actionIconSize,
-    required this.modelChipWidth,
-    required this.compact,
-  });
-
-  final double height;
-  final double actionSize;
-  final double actionIconSize;
-  final double modelChipWidth;
-  final bool compact;
-
-  factory AiMobileHeaderMetrics.forWidth(double width) {
-    if (width < 360) {
-      return const AiMobileHeaderMetrics(
-        height: 44,
-        actionSize: 32,
-        actionIconSize: 18,
-        modelChipWidth: 88,
-        compact: true,
-      );
-    }
-    return const AiMobileHeaderMetrics(
-      height: 48,
-      actionSize: 34,
-      actionIconSize: 19,
-      modelChipWidth: 132,
-      compact: false,
-    );
-  }
-}
-
 /// 模型候选清单：当前生效配置优先，再汇总其它启用配置的模型（去重保序）。
 ///
 /// 由宿主顶栏（_PipelineEditorPageState）与面板内移动端模型 chip 共用同一份
@@ -12805,21 +12997,26 @@ Future<void> applyAiModelChoice(BuildContext context, String model) async {
   }
 }
 
-/// 模型选项的显示文案：`供应商 · 模型`。
-///
-/// 只显示模型名时，用户无法判断这次请求会走哪个供应商（尤其两个供应商
-/// 都配置了同名模型）。优先使用当前生效配置，其次按模型反查归属。
-String aiModelOptionLabel(AppConfig cfg, String model, AiProfile? active) {
+String aiModelProviderLabel(AppConfig cfg, String model, AiProfile? active) {
+  AiProfile? owner;
   if (active != null &&
       active.models.any((m) => m.enabled && m.id.trim() == model)) {
-    return active.name.trim().isEmpty ? model : '${active.name} · $model';
+    owner = active;
+  } else {
+    owner = cfg.aiProfiles
+        .where(
+          (profile) =>
+              profile.enabled &&
+              profile.models.any(
+                (entry) => entry.enabled && entry.id.trim() == model,
+              ),
+        )
+        .firstOrNull;
   }
-  for (final p in cfg.aiProfiles.where((p) => p.enabled)) {
-    if (p.models.any((m) => m.enabled && m.id.trim() == model)) {
-      return p.name.trim().isEmpty ? model : '${p.name} · $model';
-    }
-  }
-  return model;
+  final provider = owner?.provider.trim() ?? '';
+  if (provider.isNotEmpty) return provider;
+  final profileName = owner?.name.trim() ?? '';
+  return profileName.isNotEmpty ? profileName : cfg.aiProvider.trim();
 }
 
 /// 单次流式请求的私有状态。
@@ -12892,6 +13089,7 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
     _historyFilePath = null;
     _historyTitleOverride = null;
     setState(() {
+      _requestHistoryOmittedCount = 0;
       _messages.clear();
       for (final m in messages) {
         _messages.add((
@@ -12924,6 +13122,7 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
   _messages = [];
   bool _loading = false;
   bool _pickingAttachments = false;
+  int _requestHistoryOmittedCount = 0;
   final List<AiChatAttachment> _attachments = [];
   bool _historyOpen = false;
   List<Map<String, dynamic>> _historySessions = [];
@@ -14175,18 +14374,15 @@ Available actions: __TOOLS__''';
     return int.tryParse(raw) ?? double.tryParse(raw) ?? raw;
   }
 
-  void _addToolResult(
-    String toolName,
-    String result, {
-    bool isError = false,
-  }) {
+  void _addToolResult(String toolName, String result, {bool isError = false}) {
     // 结果文本始终记录：_handleToolCalls 需要把它回填给模型。
     _lastToolResultText = result;
     // 结果写入即停止计时（下一次工具调用会 reset()+start()）。不 stop 的话
     // isRunning 恒为真：迟到的 / 并非本次计时的结果也会被写上错误的
     // durationMs，异步工具（pick_file / ask_user）还会把上一段等待算进去。
-    final int? elapsedMs =
-        _toolCallWatch.isRunning ? _toolCallWatch.elapsedMilliseconds : null;
+    final int? elapsedMs = _toolCallWatch.isRunning
+        ? _toolCallWatch.elapsedMilliseconds
+        : null;
     _toolCallWatch.stop();
     // 停止 / 重发竞态：工具执行（确认弹窗 / 文件选择）返回时用户可能已经
     // 停止，甚至已经发出新请求。此时把迟到气泡追加到列表尾部会排在新消息
@@ -14477,6 +14673,9 @@ Available actions: __TOOLS__''';
       // 所以「停止后立刻重发」不会被静默吞掉（见 _AiStreamRequest 注释）。
       return;
     }
+    if (_requestHistoryOmittedCount != 0) {
+      setState(() => _requestHistoryOmittedCount = 0);
+    }
     _followLatest = true;
 
     final appState = context.read<AppState>();
@@ -14551,10 +14750,64 @@ Available actions: __TOOLS__''';
       );
       return;
     }
-    // 历史不再在发送时裁剪！旧实现从这里 _messages.removeRange 掉最旧消息，
-    // 用户往上滚就发现对话被删了。现在 UI 永远保留完整历史；请求侧窗口由
-    // requestHistoryStartIndex 只读截取，token 级裁剪交给 ai.ContextManager
-    //（maxTokens - reservedTokens 滑窗，只动请求上下文）。
+    final canvasJson = jsonEncode({
+      'nodes': widget.existingNodes.map((n) => n.toJson()).toList(),
+      'connections': widget.existingConnections.map((c) => c.toJson()).toList(),
+    });
+    final customPrompt = cfg.aiSystemPrompt;
+    final basePrompt = customPrompt.isNotEmpty
+        ? '$customPrompt\n\n$_systemPrompt'
+        : _systemPrompt;
+    final fullPrompt = '$basePrompt\n\nCurrent canvas state:\n$canvasJson';
+    final vision =
+        modelEntry?.capabilities.contains(AiModelCapability.vision) ?? false;
+    final contextWindow = profile?.contextWindow ?? cfg.aiContextWindow;
+    final systemTokens = estimateRequestTokens(fullPrompt) + 4;
+    final attachmentMetadata = _attachments
+        .map(
+          (attachment) => jsonEncode({
+            'name': attachment.name,
+            'local_path': attachment.path,
+            'bytes': attachment.size,
+            'mime_type': attachment.mimeType,
+          }),
+        )
+        .join('\n');
+    final userContextText = [
+      if (text.isNotEmpty) text,
+      if (_attachments.isNotEmpty)
+        'Local attachments (not uploaded; use existing tools to inspect paths):\n'
+            '$attachmentMetadata',
+    ].join('\n\n');
+    var imageTokens = 0;
+    var remainingImageBytes = AiChatAttachments.maxInlineBytes;
+    for (final attachment in _attachments) {
+      if (!vision ||
+          !attachment.isImage ||
+          attachment.size > AiChatAttachments.maxImageBytes ||
+          attachment.size > remainingImageBytes) {
+        continue;
+      }
+      remainingImageBytes -= attachment.size;
+      imageTokens += 765;
+    }
+    final currentUserTokens =
+        estimateRequestTokens(userContextText) + 4 + imageTokens;
+    final availableHistoryTokens =
+        contextWindow - effMaxTokens - systemTokens - currentUserTokens;
+    if (availableHistoryTokens < 0) {
+      showToast(
+        context,
+        widget.strings.isZh
+            ? '当前提示词和附件已超过模型上下文可用空间，请缩短内容或移除附件。'
+            : 'The prompt and attachments exceed the available model context. Shorten the message or remove attachments.',
+        type: ToastType.warning,
+      );
+      return;
+    }
+    final historyTokenBudget = (availableHistoryTokens * 0.9).floor();
+    // UI 永远保留完整历史；请求侧只把符合 token 预算的完整回合传给 SDK，
+    // 让其 ContextManager 不必在工具调用中途自行滑窗裁剪。
     appState.logAiRequest(text);
 
     final request = _AiStreamRequest();
@@ -14592,39 +14845,15 @@ Available actions: __TOOLS__''';
     // 每个请求独立一份续写预算（最多 3 轮），换气泡时 reset。
     final autoContinue = AiAutoContinuePolicy();
     try {
-      final canvasJson = jsonEncode({
-        'nodes': widget.existingNodes.map((n) => n.toJson()).toList(),
-        'connections': widget.existingConnections
-            .map((c) => c.toJson())
-            .toList(),
-      });
-      final customPrompt = cfg.aiSystemPrompt;
-      final basePrompt = customPrompt.isNotEmpty
-          ? '$customPrompt\n\n$_systemPrompt'
-          : _systemPrompt;
-      final fullPrompt = '$basePrompt\n\nCurrent canvas state:\n$canvasJson';
-
-      final vision =
-          modelEntry?.capabilities.contains(AiModelCapability.vision) ?? false;
       final imageBudget = AiAttachmentBudget();
       final msgIdx = _messages.length - 1;
       final currentUser = _messages[msgIdx - 1];
       // 请求侧历史窗口：UI 列表不动。这里同时做条数 + token 双重预算，并把
       // 窗口起点对齐到 user 回合边界，保证 assistant(tool_calls) 与它的
       // tool_result 永远成对出现（见 requestHistoryIndices 的根因说明）。
-      final contextWindow = profile?.contextWindow ?? cfg.aiContextWindow;
-      final systemTokens = estimateRequestTokens(fullPrompt) + 4;
       // 留 10% 余量：SDK 的 ContextManager 用同一条公式再估一次，只要我们的
       // 估算不小于它，它内部的 slidingWindow 就不会触发（那套 LRU 会删出孤立
       // tool 消息，供应商直接 400）。
-      // 下限必须是 1 而不是 0：requestHistoryIndices 把 maxTokens <= 0 当作
-      // 「不做 token 预算」，于是「上下文窗口已经装不下 system + maxTokens」
-      // 这种最该裁剪的边界反而会发全量历史，触发 SDK 的 slidingWindow
-      // 删出孤立 tool_result → 供应商 400。
-      final historyTokenBudget = math.max(
-        1,
-        ((contextWindow - effMaxTokens - systemTokens) * 0.9).round(),
-      );
       final historyEntries = <AiHistoryEntry>[];
       for (var i = 0; i < msgIdx - 1; i++) {
         final message = _messages[i];
@@ -14637,6 +14866,17 @@ Available actions: __TOOLS__''';
           final input = block['input'];
           if (input is Map) tokens += estimateRequestTokens(jsonEncode(input));
         }
+        if (vision) {
+          tokens +=
+              AiChatAttachments.fromBlocks(message.blocks)
+                  .where(
+                    (attachment) =>
+                        attachment.isImage &&
+                        attachment.size <= AiChatAttachments.maxImageBytes,
+                  )
+                  .length *
+              765;
+        }
         historyEntries.add(
           AiHistoryEntry(
             role: message.role,
@@ -14646,10 +14886,28 @@ Available actions: __TOOLS__''';
           ),
         );
       }
-      final historyIndices = requestHistoryIndices(
-        historyEntries,
-        maxTokens: historyTokenBudget,
+      final historyIndices = historyTokenBudget <= 0
+          ? const <int>[]
+          : requestHistoryIndices(
+              historyEntries,
+              maxTokens: historyTokenBudget,
+            );
+      if (mounted) {
+        setState(() {
+          _requestHistoryOmittedCount =
+              historyEntries.length - historyIndices.length;
+        });
+      }
+      // Prepare the latest user turn first so older vision attachments cannot
+      // consume the request-wide inline-image budget before the current prompt.
+      final attachments = AiChatAttachments.fromBlocks(currentUser.blocks);
+      final currentContent = await AiChatAttachments.sdkContent(
+        currentUser.content,
+        attachments,
+        vision: vision,
+        budget: imageBudget,
       );
+      if (!mounted || request.stopRequested) return;
       // 已知的 assistant tool_call id：只有它出现过，后面的 tool_result 才能
       // 以 tool 角色发回。老版本历史存了 toolCallId 但没存 tool_use 块，直接
       // 发孤立 tool 消息会被 OpenAI / Anthropic 400 拒绝。
@@ -14745,15 +15003,6 @@ Available actions: __TOOLS__''';
         }
       }
       if (!mounted || request.stopRequested) return;
-
-      final attachments = AiChatAttachments.fromBlocks(currentUser.blocks);
-      final currentContent = await AiChatAttachments.sdkContent(
-        currentUser.content,
-        attachments,
-        vision: vision,
-        budget: imageBudget,
-      );
-      if (!mounted || request.stopRequested) return;
       sdkClient ??= _createAiClient(
         provider: effProvider,
         apiKey: effKey,
@@ -14792,7 +15041,7 @@ Available actions: __TOOLS__''';
         ai.FinishReason? streamFinishReason;
         final completeToolCalls = <ai.ToolCallContent>[];
         late final StreamSubscription<ai.StreamChunk> subscription;
-        subscription = sdkClient
+        subscription = sdkClient!
             .streamChat('', addToContext: false)
             .listen(
               (chunk) {
@@ -14950,8 +15199,48 @@ Available actions: __TOOLS__''';
             toolCallsPresent: toolCalls.isNotEmpty,
           )) {
             if (!mounted || request.stopRequested) break;
-            // 已被截断的部分留在 context 里作为 assistant 回合，下一轮只说
-            // 「继续」；但 UI 不新增用户气泡。
+            final continuationMaxTokens = aiContinuationOutputBudget(
+              contextWindow: contextWindow,
+              systemTokens: systemTokens,
+              currentUserTokens: currentUserTokens,
+              partialAnswerTokens: estimateRequestTokens(bubbleContent) + 4,
+              continuationPromptTokens:
+                  estimateRequestTokens(
+                    AiAutoContinuePolicy.continuationPrompt,
+                  ) +
+                  4,
+              requestedMaxTokens: effMaxTokens,
+            );
+            if (continuationMaxTokens == 0) {
+              final notice = widget.strings.isZh
+                  ? '（上下文窗口已满，回答可能不完整。）'
+                  : '(The context window is full; this answer may be incomplete.)';
+              finalContent = '$bubbleContent\n\n$notice';
+              break;
+            }
+            // Rebuild a compact continuation context. The SDK's sliding window
+            // counts the partial answer as input for the next round and could
+            // otherwise evict the current user turn before the continuation.
+            final continuationClient = _createAiClient(
+              provider: effProvider,
+              apiKey: effKey,
+              apiUrl: effUrl,
+              model: effModel,
+              maxTokens: continuationMaxTokens,
+              contextWindow: contextWindow,
+              temperature: effTemp,
+              topP: effTopP,
+              systemPrompt: fullPrompt,
+              customHeaders: profile?.customHeaders,
+            );
+            continuationClient.context.addMessage(
+              ai.Message(role: ai.MessageRole.user, content: currentContent),
+            );
+            continuationClient.context.addMessage(
+              ai.Message.assistant(bubbleContent),
+            );
+            sdkClient.dispose();
+            sdkClient = continuationClient;
             addedPartialAssistant = true;
             setState(() => _continuing = true);
             sdkClient.context.addMessage(
@@ -14959,7 +15248,12 @@ Available actions: __TOOLS__''';
             );
             continue;
           }
-          finalContent = bubbleContent;
+          finalContent =
+              autoContinue.exhausted &&
+                  (finishReason == ai.FinishReason.maxTokens ||
+                      looksTruncatedText(bubbleContent))
+              ? '$bubbleContent\n\n${widget.strings.isZh ? '（回答可能不完整。）' : '(The answer may be incomplete.)'}'
+              : bubbleContent;
           break;
         }
 
@@ -15335,8 +15629,7 @@ Available actions: __TOOLS__''';
   Widget _buildExpanded(ColorScheme scheme) {
     final s = widget.strings;
     // 移动端弹层模式（task-6）与桌面抽屉分叉：
-    //  * header 改由面板自己渲染成**单行**（历史 + 标题 + 模型 chip + 工具 + 关闭），
-    //    不再让宿主在弹层里再画一层「标题药丸 + 模型药丸」；
+    //  * header 由面板自己分层渲染会话操作和模型选择器，不再让宿主再画一层；
     //  * 侧边栏提升到本方法最外层 Stack，覆盖 header 与 composer 的**全高**，
     //    而不是缩在消息区里变成小抽屉；
     //  * 桌面抽屉 / 浮动小窗 / 独立窗口完全走原路径（GlassPanel + 内联工具侧栏）。
@@ -15468,9 +15761,12 @@ Available actions: __TOOLS__''';
                 ],
               ),
             ),
-          // 状态条：正在生成 / token 用量 / 生成速度。
-          // 移动端改为紧凑 chip，一行或自动换行，不再用三段裸文字挤成一坨。
-          if (_loading || _totalInputTokens > 0 || _totalOutputTokens > 0)
+          // 状态信息单独占一层，避免与标题和输入区争抢空间。
+          if (_loading ||
+              _totalInputTokens > 0 ||
+              _totalOutputTokens > 0 ||
+              _requestHistoryOmittedCount > 0 ||
+              _lastGenSpeed != null)
             _buildStatusRow(scheme, s),
           // 显式指定颜色：主题若把 dividerColor 定成 onSurface 一类的强色，
           // 头部与内容之间就会横着一条抢眼的分割线。
@@ -15525,75 +15821,105 @@ Available actions: __TOOLS__''';
     );
   }
 
-  /// 移动端单行 header：历史 / 标题 / 紧凑模型 chip / 工具 / 关闭。
-  ///
-  /// 尺寸走 AiMobileHeaderMetrics：320dp 用紧凑档（动作 32、模型 chip 88），
-  /// 保证「AI 助手」标题不被挤没、模型名可省略、整行不溢出。
+  /// 移动端分层 header：第一行放会话操作，第二行给模型选择器完整宽度。
   Widget _buildMobileSheetHeader(ColorScheme scheme, AppStrings s) {
     final cfg = context.read<AppState>().config;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 2, 8, 4),
+      padding: const EdgeInsets.fromLTRB(8, 2, 8, 6),
       child: MobileGlassPill(
         key: const ValueKey('ai-mobile-sheet-header'),
         style: cfg.pillStyle,
         radius: MobileUi.pillRadius,
-        padding: const EdgeInsets.symmetric(horizontal: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final metrics = AiMobileHeaderMetrics.forWidth(
-              constraints.maxWidth,
-            );
-            return SizedBox(
-              height: metrics.height,
-              child: Row(
-                children: [
-                  MobileGlassPillAction(
-                    icon: Icons.menu,
-                    tooltip: s.isZh ? '历史记录' : 'History',
-                    color: scheme.onSurfaceVariant,
-                    size: metrics.actionSize,
-                    iconSize: metrics.actionIconSize,
-                    onTap: () => unawaited(openHistoryAt()),
-                  ),
-                  Icon(Icons.smart_toy, size: 16, color: scheme.primary),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      s.aiChatTitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: scheme.onSurface,
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  height: 40,
+                  child: Row(
+                    children: [
+                      MobileGlassPillAction(
+                        icon: Icons.menu,
+                        tooltip: s.isZh ? '历史记录' : 'History',
+                        color: scheme.onSurfaceVariant,
+                        size: 34,
+                        iconSize: 19,
+                        onTap: () => unawaited(openHistoryAt()),
                       ),
-                    ),
+                      const SizedBox(width: 4),
+                      Icon(Icons.smart_toy, size: 18, color: scheme.primary),
+                      const SizedBox(width: 7),
+                      Expanded(
+                        child: Text(
+                          s.aiChatTitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: scheme.onSurface,
+                          ),
+                        ),
+                      ),
+                      MobileGlassPillAction(
+                        key: const ValueKey('ai-mobile-new-chat'),
+                        icon: Icons.add_comment_outlined,
+                        tooltip: s.isZh ? '新建会话' : 'New chat',
+                        color: scheme.onSurfaceVariant,
+                        size: 34,
+                        iconSize: 18,
+                        onTap: _startNewChat,
+                      ),
+                      MobileGlassPillAction(
+                        icon: Icons.extension_outlined,
+                        tooltip: s.isZh ? '工具' : 'Tools',
+                        color: toolsOpen
+                            ? scheme.primary
+                            : scheme.onSurfaceVariant,
+                        size: 34,
+                        iconSize: 19,
+                        onTap: () => unawaited(
+                          openMobileSidebarPage(_AiMobileSidebarPage.tools),
+                        ),
+                      ),
+                      MobileGlassPillAction(
+                        icon: Icons.close,
+                        tooltip: s.isZh ? '关闭' : 'Close',
+                        color: scheme.onSurface,
+                        size: 34,
+                        iconSize: 19,
+                        onTap: _requestMobileSheetClose,
+                      ),
+                    ],
                   ),
-                  _buildMobileModelChip(
-                    scheme,
-                    s,
-                    width: metrics.modelChipWidth,
+                ),
+                const SizedBox(height: 4),
+                SizedBox(
+                  height: 32,
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.memory_outlined,
+                        size: 17,
+                        color: scheme.primary,
+                      ),
+                      const SizedBox(width: 7),
+                      Expanded(
+                        child: LayoutBuilder(
+                          builder: (context, modelConstraints) =>
+                              _buildMobileModelChip(
+                                scheme,
+                                s,
+                                width: modelConstraints.maxWidth,
+                              ),
+                        ),
+                      ),
+                    ],
                   ),
-                  MobileGlassPillAction(
-                    icon: Icons.extension_outlined,
-                    tooltip: s.isZh ? '工具' : 'Tools',
-                    color: toolsOpen ? scheme.primary : scheme.onSurfaceVariant,
-                    size: metrics.actionSize,
-                    iconSize: metrics.actionIconSize,
-                    onTap: () => unawaited(
-                      openMobileSidebarPage(_AiMobileSidebarPage.tools),
-                    ),
-                  ),
-                  MobileGlassPillAction(
-                    icon: Icons.close,
-                    tooltip: s.isZh ? '关闭' : 'Close',
-                    color: scheme.onSurface,
-                    size: metrics.actionSize,
-                    iconSize: metrics.actionIconSize,
-                    onTap: _requestMobileSheetClose,
-                  ),
-                ],
-              ),
+                ),
+              ],
             );
           },
         ),
@@ -15603,8 +15929,7 @@ Available actions: __TOOLS__''';
 
   /// 移动端 header 里的紧凑模型 chip：点击弹出与 PC 顶栏同一份模型清单。
   ///
-  /// 用固定宽度（见 AiMobileHeaderMetrics）保证 320dp 不溢出；模型名过长时
-  /// 省略号收尾，完整名称在弹层菜单里可见。
+  /// 模型名过长时省略号收尾，完整名称在弹层菜单里可见。
   Widget _buildMobileModelChip(
     ColorScheme scheme,
     AppStrings s, {
@@ -15642,12 +15967,15 @@ Available actions: __TOOLS__''';
           for (final model in options)
             OptionItem(
               model,
-              aiModelOptionLabel(cfg, model, _effectiveProfile),
+              model,
+              groupLabel:
+                  aiModelProviderLabel(cfg, model, _effectiveProfile).isEmpty
+                  ? (s.isZh ? '未指定提供商' : 'Unknown provider')
+                  : aiModelProviderLabel(cfg, model, _effectiveProfile),
               leading: leadingFor(model),
               keywords: model,
             ),
-          if (options.isEmpty)
-            OptionItem('', s.isZh ? '未配置' : 'No model'),
+          if (options.isEmpty) OptionItem('', s.isZh ? '未配置' : 'No model'),
         ],
         onChanged: (model) {
           if (model.isEmpty) return;
@@ -15675,6 +16003,7 @@ Available actions: __TOOLS__''';
       // 而磁盘上的会话文件都还在，用户以为被删了）。
       _totalInputTokens = 0;
       _totalOutputTokens = 0;
+      _requestHistoryOmittedCount = 0;
       _lastGenSpeed = null;
       _pendingNodes = null;
       _pendingConnections = null;
@@ -15701,53 +16030,86 @@ Available actions: __TOOLS__''';
   }
 
   /// 移动端状态条：生成中 / token / 速度统一成紧凑 chips。
-  Widget _buildStatusRow(ColorScheme scheme, AppStrings s) => Padding(
-    padding: EdgeInsets.fromLTRB(
-      widget.mobileSheet ? 12 : 16,
-      0,
-      widget.mobileSheet ? 12 : 16,
-      6,
-    ),
-    child: Wrap(
-      spacing: 6,
-      runSpacing: 4,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        if (_loading)
-          _statusChip(
-            scheme,
-            leading: SizedBox(
-              width: 10,
-              height: 10,
-              child: CircularProgressIndicator(
-                strokeWidth: 1.4,
-                color: scheme.primary,
-              ),
+  Widget _buildStatusRow(ColorScheme scheme, AppStrings s) {
+    final chips = <Widget>[
+      if (_loading)
+        _statusChip(
+          scheme,
+          leading: SizedBox(
+            width: 10,
+            height: 10,
+            child: CircularProgressIndicator(
+              strokeWidth: 1.4,
+              color: scheme.primary,
             ),
-            text: _continuing
-                ? (s.isZh ? '继续生成…' : 'Continuing…')
-                : (s.isZh ? '生成中…' : 'Generating…'),
-            emphasize: true,
           ),
-        if (_totalInputTokens > 0 || _totalOutputTokens > 0)
-          _statusChip(
-            scheme,
-            leading: Icon(Icons.data_usage, size: 10, color: scheme.outline),
-            text: s.isZh
-                ? '输入 $_totalInputTokens / 输出 $_totalOutputTokens token'
-                : 'In $_totalInputTokens / Out $_totalOutputTokens tokens',
+          text: _continuing
+              ? (s.isZh ? '继续生成…' : 'Continuing…')
+              : (s.isZh ? '生成中…' : 'Generating…'),
+          emphasize: true,
+        ),
+      if (_totalInputTokens > 0 || _totalOutputTokens > 0)
+        _statusChip(
+          scheme,
+          leading: Icon(Icons.data_usage, size: 10, color: scheme.outline),
+          text: s.isZh
+              ? (widget.mobileSheet
+                    ? '输入 $_totalInputTokens · 输出 $_totalOutputTokens'
+                    : '输入 $_totalInputTokens / 输出 $_totalOutputTokens token')
+              : (widget.mobileSheet
+                    ? '$_totalInputTokens in · $_totalOutputTokens out'
+                    : 'In $_totalInputTokens / Out $_totalOutputTokens tokens'),
+        ),
+      if (_requestHistoryOmittedCount > 0)
+        _statusChip(
+          scheme,
+          leading: Icon(
+            Icons.history_toggle_off,
+            size: 10,
+            color: scheme.outline,
           ),
-        if (_lastGenSpeed != null)
-          _statusChip(
-            scheme,
-            leading: Icon(Icons.speed, size: 10, color: scheme.outline),
-            text: s.isZh
-                ? '${_lastGenSpeed!.toStringAsFixed(0)} 字符/秒'
-                : '${_lastGenSpeed!.toStringAsFixed(0)} chars/s',
-          ),
-      ],
-    ),
-  );
+          text: s.isZh
+              ? '本轮使用近期上下文，省略 $_requestHistoryOmittedCount 条旧消息'
+              : 'Recent context only · $_requestHistoryOmittedCount older messages omitted',
+        ),
+      if (_lastGenSpeed != null)
+        _statusChip(
+          scheme,
+          leading: Icon(Icons.speed, size: 10, color: scheme.outline),
+          text: s.isZh
+              ? '${_lastGenSpeed!.toStringAsFixed(0)} 字符/秒'
+              : '${_lastGenSpeed!.toStringAsFixed(0)} chars/s',
+        ),
+    ];
+    final content = widget.mobileSheet
+        ? SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Row(
+              children: [
+                for (var i = 0; i < chips.length; i++) ...[
+                  if (i > 0) const SizedBox(width: 6),
+                  chips[i],
+                ],
+              ],
+            ),
+          )
+        : Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: chips,
+          );
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        widget.mobileSheet ? 12 : 16,
+        0,
+        widget.mobileSheet ? 12 : 16,
+        widget.mobileSheet ? 0 : 6,
+      ),
+      child: content,
+    );
+  }
 
   Widget _statusChip(
     ColorScheme scheme, {
@@ -15835,11 +16197,7 @@ Available actions: __TOOLS__''';
       final brand = brandForModelId(model);
       return brand == null
           ? Icon(Icons.memory, size: 15, color: scheme.onSurfaceVariant)
-          : BrandLogo(
-              brand: brand,
-              size: 15,
-              color: scheme.onSurfaceVariant,
-            );
+          : BrandLogo(brand: brand, size: 15, color: scheme.onSurfaceVariant);
     }
 
     return ConstrainedBox(
@@ -15856,7 +16214,10 @@ Available actions: __TOOLS__''';
           for (final model in models)
             OptionItem(
               model,
-              aiModelOptionLabel(cfg, model, profile),
+              model,
+              groupLabel: aiModelProviderLabel(cfg, model, profile).isEmpty
+                  ? (s.isZh ? '未指定提供商' : 'Unknown provider')
+                  : aiModelProviderLabel(cfg, model, profile),
               leading: leadingFor(model),
               keywords: model,
             ),
@@ -16059,7 +16420,9 @@ Available actions: __TOOLS__''';
             if (_attachments.isNotEmpty)
               ConstrainedBox(
                 constraints: BoxConstraints(
-                  maxHeight: constraints.maxHeight * 0.22,
+                  maxHeight:
+                      constraints.maxHeight *
+                      (widget.mobileSheet ? 0.12 : 0.22),
                 ),
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -16072,7 +16435,10 @@ Available actions: __TOOLS__''';
             if (_pendingNodes != null)
               ConstrainedBox(
                 constraints: BoxConstraints(
-                  maxHeight: math.max(0, constraints.maxHeight * 0.35),
+                  maxHeight: math.max(
+                    0,
+                    constraints.maxHeight * (widget.mobileSheet ? 0.2 : 0.35),
+                  ),
                 ),
                 child: SingleChildScrollView(
                   child: Container(
@@ -16884,10 +17250,7 @@ Available actions: __TOOLS__''';
   /// 支持桌面右键（onSecondaryTapDown）、移动端长按，以及行尾「更多」按钮
   /// 三种入口 —— 用户反馈「历史记录不支持右键删除单个对话」，此前只有顶部
   /// 「清空历史」，想删一条只能全清。
-  Widget _buildHistorySessionTile(
-    Map<String, dynamic> session,
-    AppStrings s,
-  ) {
+  Widget _buildHistorySessionTile(Map<String, dynamic> session, AppStrings s) {
     final scheme = Theme.of(context).colorScheme;
     final enabled = !_loading && _activeRequest == null;
     return GestureDetector(
@@ -16923,8 +17286,7 @@ Available actions: __TOOLS__''';
             color: scheme.outline,
             onPressed: enabled
                 ? () {
-                    final box =
-                        buttonContext.findRenderObject() as RenderBox?;
+                    final box = buttonContext.findRenderObject() as RenderBox?;
                     final pos = box == null
                         ? Offset.zero
                         : box.localToGlobal(Offset(0, box.size.height));
@@ -17013,6 +17375,7 @@ Available actions: __TOOLS__''';
           _messages.clear();
           _totalInputTokens = 0;
           _totalOutputTokens = 0;
+          _requestHistoryOmittedCount = 0;
           _lastGenSpeed = null;
           _pendingNodes = null;
           _pendingConnections = null;
@@ -17089,6 +17452,7 @@ Available actions: __TOOLS__''';
     // 换会话了：上一个会话的手动标题不能带过来。
     _historyTitleOverride = entry['title'] as String?;
     setState(() {
+      _requestHistoryOmittedCount = 0;
       _messages.clear();
       _messages.addAll(
         msgs.map((m) {
@@ -17889,7 +18253,8 @@ Available actions: __TOOLS__''';
   }) {
     final flat = <Map<String, dynamic>>[];
     for (var j = start; j < end; j++) {
-      for (final block in _messages[j].blocks ?? const <Map<String, dynamic>>[]) {
+      for (final block
+          in _messages[j].blocks ?? const <Map<String, dynamic>>[]) {
         final type = block['type'] as String? ?? 'text';
         if (type == 'text' || type == 'attachment') continue;
         flat.add(block);
@@ -17992,9 +18357,7 @@ Available actions: __TOOLS__''';
     final durationMs = (result?['durationMs'] as num?)?.toInt();
     final status = running
         ? (s.isZh ? '执行中' : 'Running')
-        : (failed
-              ? (s.isZh ? '失败' : 'Failed')
-              : (s.isZh ? '完成' : 'Done'));
+        : (failed ? (s.isZh ? '失败' : 'Failed') : (s.isZh ? '完成' : 'Done'));
     final accent = running
         ? scheme.primary
         : (failed ? scheme.error : scheme.outline);
@@ -18009,10 +18372,7 @@ Available actions: __TOOLS__''';
           ? SizedBox(
               width: 11,
               height: 11,
-              child: CircularProgressIndicator(
-                strokeWidth: 1.5,
-                color: accent,
-              ),
+              child: CircularProgressIndicator(strokeWidth: 1.5, color: accent),
             )
           : Icon(
               failed ? Icons.close_rounded : Icons.check_rounded,
@@ -18065,9 +18425,8 @@ Available actions: __TOOLS__''';
   }
 
   /// 过程耗时文案：<1s 用毫秒，否则一位小数的秒。
-  static String _formatProcessDuration(int ms) => ms >= 1000
-      ? '${(ms / 1000).toStringAsFixed(1)}s'
-      : '${ms}ms';
+  static String _formatProcessDuration(int ms) =>
+      ms >= 1000 ? '${(ms / 1000).toStringAsFixed(1)}s' : '${ms}ms';
 }
 
 /// 「过程条目」的紧凑折叠条（思考块 / 工具卡片共用）。

@@ -640,6 +640,7 @@ class _SettingsPageState extends State<SettingsPage> {
             '底部', 'bottom', 'nav', '导航', '药丸', 'pill', '表面', 'surface',
             '菜单', 'menu', '侧边栏', 'sidebar', '顶栏', 'topbar', '顶部菜单',
             '毛玻璃', 'frosted', '透明度', '不透明度', 'opacity', 'alpha',
+            '下拉菜单', 'dropdown', 'highlight glass',
             '边框', '描边', '线条', 'border', 'outline', 'stroke', '颜色', '宽度',
             '跟随主题色', 'follow', 'gpu', '实验',
             // 拆卡后的三张卡标题也要能被搜到（预设 / 玻璃与材质 / 特效）
@@ -695,7 +696,8 @@ class _SettingsPageState extends State<SettingsPage> {
             // 否则移动端在设置里搜「自动保存」找不到东西。
             '编辑模式', '快速模式', 'edit', 'mode', 'classic', '蓝图', 'blueprint',
             '自动保存', '草稿', '保存间隔', 'autosave', 'draft', 'save',
-            '横屏', 'landscape',
+            '横屏', 'landscape', '元素布局', '节点布局', 'element layout',
+            'traditional', 'list',
           ],
           build: _buildNodeEditorStyleCard,
         ),
@@ -1410,88 +1412,91 @@ class _SettingsPageState extends State<SettingsPage> {
       width: _sectionNavCollapsed ? 64 : 190,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(10, 12, 6, 16),
-        child: _cardShell(
-          context,
-          state,
-          ListView(
-            addRepaintBoundaries: false,
-            padding: EdgeInsets.symmetric(
-              horizontal: _sectionNavCollapsed ? 4 : 6,
-              vertical: 6,
-            ),
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Tooltip(
-                  message: _sectionNavCollapsed
-                      ? (AppStrings.of(state.config.language).isZh
-                            ? '展开设置导航'
-                            : 'Expand settings navigation')
-                      : (AppStrings.of(state.config.language).isZh
-                            ? '收起设置导航'
-                            : 'Collapse settings navigation'),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: () => setState(
-                      () => _sectionNavCollapsed = !_sectionNavCollapsed,
-                    ),
-                    child: Container(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: _sectionNavCollapsed ? 6 : 12,
-                        vertical: 9,
+        child: GlassPanel(
+          radius: 20,
+          blur: 12,
+          style: state.config.menuStyle,
+          child: Material(
+            color: Colors.transparent,
+            child: ListView(
+              addRepaintBoundaries: false,
+              padding: EdgeInsets.symmetric(
+                horizontal: _sectionNavCollapsed ? 4 : 6,
+                vertical: 6,
+              ),
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Tooltip(
+                    message: _sectionNavCollapsed
+                        ? (AppStrings.of(state.config.language).isZh
+                              ? '展开设置导航'
+                              : 'Expand settings navigation')
+                        : (AppStrings.of(state.config.language).isZh
+                              ? '收起设置导航'
+                              : 'Collapse settings navigation'),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => setState(
+                        () => _sectionNavCollapsed = !_sectionNavCollapsed,
                       ),
-                      decoration: BoxDecoration(
-                        color: scheme.surfaceContainerHighest.withAlpha(45),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: _sectionNavCollapsed
-                            ? MainAxisAlignment.center
-                            : MainAxisAlignment.start,
-                        children: [
-                          Icon(
-                            _sectionNavCollapsed
-                                ? Icons.chevron_right
-                                : Icons.chevron_left,
-                            size: 17,
-                            color: scheme.onSurfaceVariant,
-                          ),
-                          if (!_sectionNavCollapsed) ...[
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                AppStrings.of(state.config.language).isZh
-                                    ? '收起导航'
-                                    : 'Collapse navigation',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: scheme.onSurfaceVariant,
+                      child: Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: _sectionNavCollapsed ? 6 : 12,
+                          vertical: 9,
+                        ),
+                        decoration: BoxDecoration(
+                          color: scheme.surfaceContainerHighest.withAlpha(45),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: _sectionNavCollapsed
+                              ? MainAxisAlignment.center
+                              : MainAxisAlignment.start,
+                          children: [
+                            Icon(
+                              _sectionNavCollapsed
+                                  ? Icons.chevron_right
+                                  : Icons.chevron_left,
+                              size: 17,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                            if (!_sectionNavCollapsed) ...[
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  AppStrings.of(state.config.language).isZh
+                                      ? '收起导航'
+                                      : 'Collapse navigation',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: scheme.onSurfaceVariant,
+                                  ),
                                 ),
                               ),
-                            ),
+                            ],
                           ],
-                        ],
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-              for (final sec in _sections)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 2),
-                  child: _navItem(
-                    sec,
-                    searching,
-                    hitCounts[sec.id] ?? 0,
-                    scheme,
-                    collapsed: _sectionNavCollapsed,
+                for (final sec in _sections)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 2),
+                    child: _navItem(
+                      sec,
+                      searching,
+                      hitCounts[sec.id] ?? 0,
+                      scheme,
+                      collapsed: _sectionNavCollapsed,
+                    ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
-          radius: 16,
         ),
       ),
     );
@@ -1523,12 +1528,10 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
-            color: selected ? scheme.primary.withAlpha(34) : Colors.transparent,
-            border: Border.all(
-              color: selected
-                  ? scheme.primary.withAlpha(90)
-                  : Colors.transparent,
-            ),
+            color: selected
+                ? scheme.secondaryContainer.withAlpha(200)
+                : Colors.transparent,
+            border: Border.all(color: Colors.transparent),
           ),
           child: collapsed
               ? Center(
@@ -1563,7 +1566,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           fontSize: 12.5,
                           fontWeight: selected ? FontWeight.w600 : null,
                           color: selected
-                              ? scheme.primary
+                              ? scheme.onSecondaryContainer
                               : scheme.onSurfaceVariant,
                         ),
                       ),
@@ -2841,6 +2844,39 @@ Widget _buildSurfaceStyleCard(BuildContext ctx, AppState state) {
 
       // ② 表面样式
       _glass(ctx, state, zh ? '表面样式' : 'Surface style', [
+        _optionRow(
+          ctx,
+          icon: Icons.arrow_drop_down_circle_outlined,
+          label: zh ? '下拉菜单外观' : 'Dropdown appearance',
+          scope: zh
+              ? '统一应用于桌面端和移动端的下拉菜单'
+              : 'Applies to dropdown menus on desktop and mobile',
+          value: cfg.dropdownAppearance,
+          items: [
+            OptionItem(
+              'theme',
+              zh ? '跟随主题（当前外观）' : 'Follow theme (current)',
+              icon: Icons.palette_outlined,
+            ),
+            OptionItem(
+              'liquid',
+              zh ? '液态玻璃' : 'Liquid glass',
+              icon: Icons.water_drop_outlined,
+            ),
+            OptionItem(
+              'frosted',
+              zh ? '主题色毛玻璃' : 'Theme-tinted frosted glass',
+              icon: Icons.blur_on_outlined,
+            ),
+            OptionItem(
+              'highlight',
+              zh ? '高光玻璃' : 'Highlight glass',
+              icon: Icons.auto_awesome_outlined,
+            ),
+          ],
+          onSelected: (v) =>
+              state.updateConfig((c) => c..dropdownAppearance = v),
+        ),
         // 布局统一：左 = 图标 + 文字（含作用范围说明），右 = 下拉菜单（展开动画）
         _styleRow(
           ctx,
@@ -3949,6 +3985,42 @@ Widget _buildNodeEditorStyleCard(BuildContext ctx, AppState state) {
   final clr = scheme.onSurface;
 
   return _glass(ctx, state, s.nodeEditorStyleLabel, [
+    // 元素布局：兼容已有的传统芯片布局；列表为另一种编辑器排布。
+    Row(
+      children: [
+        Expanded(
+          child: Text(
+            s.isZh ? '元素布局' : 'Element layout',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: clr, fontSize: 12),
+          ),
+        ),
+        SizedBox(
+          width: _kMenuWidth,
+          child: OptionMenuBar<String>(
+            expandable: true,
+            value: cfg.nodeEditorElementLayout,
+            items: [
+              OptionItem(
+                'traditional',
+                s.isZh ? '传统' : 'Traditional',
+                icon: Icons.view_module_outlined,
+              ),
+              OptionItem(
+                'list',
+                s.isZh ? '列表' : 'List',
+                icon: Icons.view_list_outlined,
+              ),
+            ],
+            onChanged: (value) => state.updateConfig(
+              (config) => config..nodeEditorElementLayout = value,
+            ),
+          ),
+        ),
+      ],
+    ),
+    const SizedBox(height: 10),
     // 画布背景：下拉菜单样式（跟随全局 / 灰色 / 黑色 / 白色）
     Row(
       children: [
@@ -5152,9 +5224,7 @@ Widget _buildTasks(BuildContext ctx, AppState state) {
                 child: OptionMenuBar<int>(
                   value: cfg.probeThreads,
                   triggerHeight: 34,
-                  items: [
-                    for (var i = 1; i <= 8; i++) OptionItem(i, '$i'),
-                  ],
+                  items: [for (var i = 1; i <= 8; i++) OptionItem(i, '$i')],
                   onChanged: (v) =>
                       state.updateConfig((c) => c..probeThreads = v),
                 ),

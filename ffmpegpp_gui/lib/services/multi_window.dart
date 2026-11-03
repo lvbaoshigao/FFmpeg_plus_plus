@@ -35,8 +35,14 @@ import 'panel_process_ipc.dart';
 
 /// 独立面板的类型。
 enum DetachedPanel {
-  /// 元素 / 属性面板。
+  /// 兼容原有的元素 / 属性组合面板。
   props('props'),
+
+  /// 独立的元素面板。
+  elements('elements'),
+
+  /// 独立的属性面板。
+  properties('properties'),
 
   /// AI 助手面板。
   ai('ai');

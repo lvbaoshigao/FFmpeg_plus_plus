@@ -30,6 +30,14 @@ import 'quick_config_page.dart';
 
 const _uuid = Uuid();
 
+const _kCompactMobileTabStyle = LiquidGlassTabBarStyle(
+  capsuleHeight: 36,
+  capsuleInset: 2,
+  horizontalMargin: 0,
+  bottomGap: 0,
+  iconSize: 16,
+);
+
 class _ConfigEntry {
   final String id;
   String name;
@@ -819,7 +827,10 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                               FppxService.algoAes256Cbc,
                               zh ? 'AES-256（推荐）' : 'AES-256 (recommended)',
                             ),
-                            const OptionItem(FppxService.algoAes128Cbc, 'AES-128'),
+                            const OptionItem(
+                              FppxService.algoAes128Cbc,
+                              'AES-128',
+                            ),
                           ],
                           onChanged: (v) => setDialogState(() => algo = v),
                         ),
@@ -1398,25 +1409,77 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                   ),
                   child: !_loaded
                       ? const Center(child: CircularProgressIndicator())
-                      : Column(
-                          children: [
-                            Expanded(
-                              child: ListView(
-                                // 开窗卡所在列表必须关（见 app_card 的
-                                // _WallpaperWindowPainter）
-                                addRepaintBoundaries: false,
-                                // 切换器已移到底栏上方，列表底部只需普通间距；
-                                // 底栏让位由切换器自身的 padding 负责。
-                                padding: MobileUi.mainListPadding(
-                                  placement: MobileNavPlacementScope.of(
-                                    context,
+                      : LayoutBuilder(
+                          builder: (context, constraints) {
+                            final placement = MobileNavPlacementScope.of(
+                              context,
+                            );
+                            final handSide = context.select<AppState, String>(
+                              (state) => state.config.mobileBottomActionSide,
+                            );
+                            final leftHanded = handSide == 'left';
+                            final selectorWidth = (constraints.maxWidth / 3)
+                                .clamp(96.0, 160.0);
+                            final selectorHeight =
+                                _kCompactMobileTabStyle.capsuleHeight;
+                            final safeBottom = MediaQuery.paddingOf(
+                              context,
+                            ).bottom;
+                            final selectorBottom =
+                                placement == MobileNavPlacement.bottom
+                                ? safeBottom +
+                                      kAppLiquidTabBarStyle.capsuleHeight +
+                                      (kAppLiquidTabBarStyle.bottomGap ?? 8) +
+                                      10
+                                : 12.0;
+                            final listPadding = MobileUi.mainListPadding(
+                              placement: placement,
+                            );
+                            final sideInset =
+                                placement == MobileNavPlacement.bottom
+                                ? 8.0
+                                : selectorWidth + 18;
+                            return Stack(
+                              children: [
+                                Positioned.fill(
+                                  child: ListView(
+                                    addRepaintBoundaries: false,
+                                    padding: EdgeInsets.fromLTRB(
+                                      listPadding.left +
+                                          (placement !=
+                                                      MobileNavPlacement
+                                                          .bottom &&
+                                                  leftHanded
+                                              ? sideInset
+                                              : 0),
+                                      listPadding.top,
+                                      listPadding.right +
+                                          (placement !=
+                                                      MobileNavPlacement
+                                                          .bottom &&
+                                                  !leftHanded
+                                              ? sideInset
+                                              : 0),
+                                      placement == MobileNavPlacement.bottom
+                                          ? (selectorBottom +
+                                                selectorHeight +
+                                                12)
+                                          : listPadding.bottom,
+                                    ),
+                                    children: _buildTabContent(scheme, zh),
                                   ),
-                                ).copyWith(bottom: 8),
-                                children: _buildTabContent(scheme, zh),
-                              ),
-                            ),
-                            _buildMobileTabSelector(context, zh),
-                          ],
+                                ),
+                                Positioned(
+                                  left: leftHanded ? 8 : null,
+                                  right: leftHanded ? null : 8,
+                                  bottom: selectorBottom,
+                                  width: selectorWidth,
+                                  height: selectorHeight,
+                                  child: _buildMobileTabSelector(context, zh),
+                                ),
+                              ],
+                            );
+                          },
                         ),
                 )
               : Column(
@@ -1485,37 +1548,22 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     );
   }
 
-  /// 移动端标签切换器：放在主导航胶囊**上方**（用户要求）——拇指区可达，
-  /// 且与主界面底栏同用 liquid_glass_tab_bar 模块，不再各写一套玻璃。
-  ///
-  /// 底栏是悬浮胶囊、叠在内容之上，所以这里必须按它实际占用的高度让位
-  /// （安全区 + 胶囊高度 + 底部间距），否则切换器会被胶囊压住。
+  /// 紧凑标签切换器贴近底部，并按左右手偏好靠边；仍复用主导航的液态玻璃栏。
   Widget _buildMobileTabSelector(BuildContext context, bool zh) {
-    final placement = MobileNavPlacementScope.of(context);
-    final double bottom = placement == MobileNavPlacement.bottom
-        ? MediaQuery.paddingOf(context).bottom +
-              kAppLiquidTabBarStyle.capsuleHeight +
-              (kAppLiquidTabBarStyle.bottomGap ?? 8) +
-              8
-        : 16;
-    return Padding(
-      padding: EdgeInsets.only(bottom: bottom),
-      child: AppLiquidTabBar(
-        currentIndex: _tabIndex,
-        onTap: (i) => setState(() => _tabIndex = i),
-        items: [
-          LiquidGlassTabItem(
-            icon: const Icon(Icons.account_tree_outlined),
-            label: zh ? '节点编辑器 ${_configs.length}' : 'Nodes ${_configs.length}',
-          ),
-          LiquidGlassTabItem(
-            icon: const Icon(Icons.bolt_outlined),
-            label: zh
-                ? '快捷配置 ${_quickConfigs.length}'
-                : 'Quick ${_quickConfigs.length}',
-          ),
-        ],
-      ),
+    return AppLiquidTabBar(
+      currentIndex: _tabIndex,
+      onTap: (i) => setState(() => _tabIndex = i),
+      style: _kCompactMobileTabStyle,
+      items: [
+        LiquidGlassTabItem(
+          icon: const Icon(Icons.account_tree_outlined),
+          label: zh ? '节点' : 'Nodes',
+        ),
+        LiquidGlassTabItem(
+          icon: const Icon(Icons.bolt_outlined),
+          label: zh ? '快捷' : 'Quick',
+        ),
+      ],
     );
   }
 

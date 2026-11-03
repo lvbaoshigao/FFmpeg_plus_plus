@@ -292,24 +292,42 @@ void main() {
   // AI 对话机制：纯逻辑（离线，不联网）
   // ──────────────────────────────────────────────────────────────────────
   group('AI dialogue mechanics (pure)', () {
+    test('model provider labels follow the model owner', () {
+      final openAi = AiProfile(name: 'Primary', provider: 'OpenAI');
+      openAi.models.add(AiModelEntry(id: 'gpt-6'));
+      final claude = AiProfile(name: 'Backup', provider: 'Anthropic');
+      claude.models.add(AiModelEntry(id: 'claude-sonnet'));
+      final cfg = AppConfig()..aiProfiles.addAll([openAi, claude]);
+
+      expect(aiModelProviderLabel(cfg, 'gpt-6', null), 'OpenAI');
+      expect(aiModelProviderLabel(cfg, 'claude-sonnet', null), 'Anthropic');
+      expect(aiModelProviderLabel(cfg, 'missing-model', null), cfg.aiProvider);
+    });
+
     test('request history window never mutates the UI list', () {
-      final roles = List<String>.generate(
+      final entries = List<AiHistoryEntry>.generate(
         150,
-        (i) => i.isEven ? 'user' : 'assistant',
+        (i) => AiHistoryEntry(
+          role: i.isEven ? 'user' : 'assistant',
+          estimatedTokens: 1,
+        ),
       );
-      final copy = List<String>.of(roles);
-      final start = requestHistoryStartIndex(roles);
+      final copy = List<AiHistoryEntry>.of(entries);
+      final window = requestHistoryIndices(entries);
       // 只读：构造请求窗口不能像旧实现那样 removeRange 掉 UI 历史。
-      expect(roles, copy);
-      expect(start, greaterThan(0));
-      expect(150 - start, lessThanOrEqualTo(100));
-      // 窗口起点对齐到 user，避免 assistant tool_calls 与 tool_result 被拆散。
-      expect(roles[start], 'user');
-      expect(requestHistoryStartIndex(roles, maxMessages: 1000), 0);
-      // 窗口内没有 user 时向更早回退，避免请求以 assistant 开头。
-      final assistantOnlyTail = List<String>.filled(120, 'assistant')
-        ..[0] = 'user';
-      expect(requestHistoryStartIndex(assistantOnlyTail), 0);
+      expect(entries, copy);
+      expect(window.length, lessThanOrEqualTo(100));
+      expect(window.first, greaterThan(0));
+      expect(entries[window.first].isUser, isTrue);
+      expect(requestHistoryIndices(entries, maxMessages: 1000).length, 150);
+      // 没有 user 起点的异常历史不发孤立 assistant/tool 消息。
+      expect(
+        requestHistoryIndices([
+          for (var i = 0; i < 120; i++)
+            const AiHistoryEntry(role: 'assistant', estimatedTokens: 1),
+        ]),
+        isEmpty,
+      );
     });
 
     test('request window keeps tool calls paired with their results', () {
@@ -357,10 +375,10 @@ void main() {
         6,
         7,
       ]);
-      // token 预算生效时同样对齐到 user 回合边界。
+      // 不得为了保留旧消息突破 token 预算；完整工具回合超预算时整体舍弃。
       final byTokens = requestHistoryIndices(entries, maxTokens: 20);
-      expect(byTokens.first, 0);
-      expect(byTokens, containsAll(<int>[4, 5, 6]));
+      expect(byTokens, [0]);
+      expect(requestHistoryIndices(entries, maxTokens: 50), [0, 4, 5, 6, 7]);
       // 空历史 / 单条历史。
       expect(requestHistoryIndices(const <AiHistoryEntry>[]), isEmpty);
       expect(
@@ -373,9 +391,14 @@ void main() {
 
     test('truncation heuristic only flags obviously unfinished text', () {
       // 未闭合的代码围栏 = 一定被截断。
-      expect(looksTruncatedText('\u0060\u0060\u0060dart\nvoid main() {'), isTrue);
       expect(
-        looksTruncatedText('\u0060\u0060\u0060dart\nvoid main() {}\n\u0060\u0060\u0060'),
+        looksTruncatedText('\u0060\u0060\u0060dart\nvoid main() {'),
+        isTrue,
+      );
+      expect(
+        looksTruncatedText(
+          '\u0060\u0060\u0060dart\nvoid main() {}\n\u0060\u0060\u0060',
+        ),
         isFalse,
       );
       // 结尾是「后面还该有内容」的符号。
@@ -398,10 +421,7 @@ void main() {
       );
       // 只重复了尾部若干字符（>= 12）也要剥掉。
       const prev = '这是第一段的完整内容，接下来要讲第二段的具体细节';
-      expect(
-        stripRepeatedContinuation(prev, '接下来要讲第二段的具体细节，然后继续。'),
-        '，然后继续。',
-      );
+      expect(stripRepeatedContinuation(prev, '接下来要讲第二段的具体细节，然后继续。'), '，然后继续。');
       // 完全新内容原样保留；空输入不崩。
       expect(stripRepeatedContinuation('abc', '完全不同的一段'), '完全不同的一段');
       expect(stripRepeatedContinuation('', 'x'), 'x');
@@ -529,10 +549,38 @@ void main() {
       expect(mergeContinuationText('', 'abc'), 'abc');
       expect(mergeContinuationText('abc', ''), 'abc');
       // 半句截断：直接拼回去。
-      expect(mergeContinuationText('The quick brown f', 'ox'), 'The quick brown fox');
+      expect(
+        mergeContinuationText('The quick brown f', 'ox'),
+        'The quick brown fox',
+      );
       // 句末 + 下一段无前导空白：补一个空格，避免英文粘字。
       expect(mergeContinuationText('End.', 'Next'), 'End. Next');
       expect(mergeContinuationText('End.', ' Next'), 'End. Next');
+    });
+
+    test('continuation output leaves room for the prior partial answer', () {
+      expect(
+        aiContinuationOutputBudget(
+          contextWindow: 100,
+          systemTokens: 10,
+          currentUserTokens: 10,
+          partialAnswerTokens: 20,
+          continuationPromptTokens: 10,
+          requestedMaxTokens: 40,
+        ),
+        40,
+      );
+      expect(
+        aiContinuationOutputBudget(
+          contextWindow: 50,
+          systemTokens: 10,
+          currentUserTokens: 10,
+          partialAnswerTokens: 20,
+          continuationPromptTokens: 10,
+          requestedMaxTokens: 40,
+        ),
+        0,
+      );
     });
 
     test('tool-round text never shrinks the streamed answer', () {
@@ -556,10 +604,7 @@ void main() {
     });
 
     test('history token keys are read both ways', () {
-      expect(
-        historyMessageInputTokens({'in': 11, 'out': 12}),
-        11,
-      );
+      expect(historyMessageInputTokens({'in': 11, 'out': 12}), 11);
       expect(
         historyMessageInputTokens({'inputTokens': 21, 'outputTokens': 22}),
         21,
@@ -634,11 +679,7 @@ void main() {
         isTrue,
       );
       expect(
-        shouldPersistHistoryMessage(
-          role: 'user',
-          content: '',
-          blocks: null,
-        ),
+        shouldPersistHistoryMessage(role: 'user', content: '', blocks: null),
         isTrue,
       );
       // 工具结果消息正文可能为空，但 blocks 非空，必须保留。
@@ -710,25 +751,6 @@ void main() {
       expect(mobileAiSidebarWidth(-8), 0);
       expect(mobileAiSidebarWidth(1000), 400);
     });
-
-    test('mobile AI header metrics keep 320dp from overflowing', () {
-      final compact = AiMobileHeaderMetrics.forWidth(320);
-      expect(compact.compact, isTrue);
-      expect(compact.actionSize, 32);
-      expect(compact.actionIconSize, 18);
-      expect(compact.modelChipWidth, 88);
-
-      final normal = AiMobileHeaderMetrics.forWidth(412);
-      expect(normal.compact, isFalse);
-      expect(normal.modelChipWidth, greaterThan(compact.modelChipWidth));
-
-      // 单行 header 固定部分 = 3 个动作按钮 + 机器人图标 + 图标间距 +
-      // 模型 chip + pill 横向内边距；必须给「AI 助手」标题留出空间。
-      final fixed =
-          3 * compact.actionSize + 16 + 6 + compact.modelChipWidth + 8;
-      expect(fixed, lessThan(320 - 16));
-      expect(320 - 16 - fixed, greaterThan(40));
-    });
   });
 
   // ──────────────────────────────────────────────────────────────────────
@@ -744,10 +766,7 @@ void main() {
       AiPanelApi? api;
       final history = <Map<String, dynamic>>[
         for (var i = 0; i < 120; i++)
-          {
-            'role': i.isEven ? 'user' : 'assistant',
-            'content': 'message $i',
-          },
+          {'role': i.isEven ? 'user' : 'assistant', 'content': 'message $i'},
       ];
       await _pumpPanel(
         tester,
@@ -758,11 +777,13 @@ void main() {
       );
       expect(api, isNotNull);
       expect(api!.exportMessages().length, 120);
-      // 模拟发送时计算请求窗口：只取最近 100 条，但 UI 历史仍是完整的 120。
-      final start = requestHistoryStartIndex(
-        api!.exportMessages().map((m) => m['role'] as String).toList(),
+      // 请求侧按回合截取最近历史，但 UI 和交接数据仍保留全部 120 条。
+      final exported = api!.exportMessages();
+      final window = requestHistoryIndices(
+        exported.map((m) => AiHistoryEntry(role: m['role'] as String)).toList(),
       );
-      expect(start, greaterThan(0));
+      expect(window.length, lessThanOrEqualTo(100));
+      expect(window.first, greaterThan(0));
       expect(api!.exportMessages().length, 120);
       api!.importMessages(api!.exportMessages());
       await tester.pump();
@@ -874,10 +895,10 @@ void main() {
       await _teardownPanel(tester);
     });
 
-    testWidgets('mobile sheet renders a single-row header + full-height sidebar', (
+    testWidgets('mobile sheet renders a layered header + full-height sidebar', (
       tester,
     ) async {
-      tester.view.physicalSize = const Size(360, 780);
+      tester.view.physicalSize = const Size(320, 480);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
       await _pumpPanel(
@@ -887,8 +908,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
-      // 单行 header：历史 / 标题 / 模型 chip / 工具 / 关闭 在同一颗药丸里，
-      // 不再有宿主第二行模型药丸。
+      // 会话操作和模型选择器分层显示，窄屏不再挤成一排。
       expect(
         find.byKey(const ValueKey('ai-mobile-sheet-header')),
         findsOneWidget,
@@ -897,6 +917,15 @@ void main() {
         find.byKey(const ValueKey('ai-mobile-model-chip')),
         findsOneWidget,
       );
+      expect(find.byKey(const ValueKey('ai-mobile-new-chat')), findsOneWidget);
+      final header = tester.getRect(
+        find.byKey(const ValueKey('ai-mobile-sheet-header')),
+      );
+      final modelChip = tester.getRect(
+        find.byKey(const ValueKey('ai-mobile-model-chip')),
+      );
+      expect(modelChip.left, greaterThanOrEqualTo(header.left));
+      expect(modelChip.right, lessThanOrEqualTo(header.right));
 
       // 侧栏挂在面板根 Stack（全高覆盖层），而不是缩在消息区里的半高抽屉；
       // 分段标签改成竖排 + FittedBox(scaleDown)，窄屏/大字号不出现省略号。
