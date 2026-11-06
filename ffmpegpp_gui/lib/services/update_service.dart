@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
 
 const _currentVersion = '5.30.51';
@@ -52,6 +53,40 @@ class UpdateResult {
   final String? downloadSha256;
   UpdateResult({this.remoteVersion, this.releaseNotes, this.downloadUrl, this.password, this.error, this.releaseNotesError = false, this.source = UpdateSource.github, this.downloadSha256});
   bool get hasUpdate => remoteVersion != null && compareVersions(remoteVersion!, _currentVersion) > 0;
+}
+
+/// 下载结果。
+///
+/// 旧的 [downloadUpdate] 直接返回路径字符串（调用方已在使用），为了不破坏
+/// 编译与既有语义，保留其签名；需要「是否做过完整性校验」的调用方改用
+/// [downloadUpdateWithResult] 拿本对象。
+class DownloadResult {
+  /// 落盘后的完整路径。
+  final String path;
+
+  /// 是否完成密码学完整性校验（发布方 SHA-256 与实际文件一致）。
+  ///
+  /// 发布方未提供 `.sha256` 时为 false —— 此时文件只通过了基础校验
+  /// （非空 + 扩展名与本平台匹配，见 [warnings]）。false 不等于文件损坏，
+  /// UI 应据此提示「未做完整性校验」，而不是静默安装。
+  final bool verified;
+
+  /// 下载过程中记录的非致命告警（例如服务端未返回 Content-Length）。
+  final List<String> warnings;
+
+  /// 实际写入的字节数。
+  final int bytes;
+
+  /// 默认 verified=false：拿不到校验结论时一律按「未校验」对待，
+  /// 避免新增字段时漏传导致误报「已验证」。
+  const DownloadResult({
+    required this.path,
+    this.verified = false,
+    this.warnings = const <String>[],
+    this.bytes = 0,
+  });
+
+  bool get hasWarnings => warnings.isNotEmpty;
 }
 
 enum UpdateSource { lanzou, github }
@@ -260,12 +295,6 @@ bool _isArm64() {
 }
 bool? _arm64Cache;
 
-/// 下载更新包。
-///
-/// 安全约束（H-4）：
-/// - 只接受 https：明文 http 可被中间人替换安装包，直接拒绝。
-/// - 若提供 [expectedSha256]，下载后必须比对，不一致立即删除并报错。
-///   发布侧应把安装包的 SHA-256 放在同名 `.sha256` 资产里，由调用方先取回。
 /// [FIX M-5] 净化下载文件名，避免 Windows 保留名 / 结尾点空格 / 非法字符
 /// 导致文件被系统裁剪或写入失败：
 /// - 去掉结尾的 '.' 与空格（Windows 会静默裁剪）；
@@ -291,7 +320,36 @@ String _safeDownloadName(String rawName) {
   return '$safeBase$ext';
 }
 
+/// 下载更新包，只返回落盘路径（旧签名，保持既有调用方不变）。
+///
+/// 需要「是否做过完整性校验」的调用方请用 [downloadUpdateWithResult]；
+/// 本函数等价于取 `.path`，校验失败同样抛异常。
 Future<String> downloadUpdate(String url, {
+  void Function(int received, int total)? onProgress,
+  String? expectedSha256,
+}) async {
+  final result = await downloadUpdateWithResult(
+    url,
+    onProgress: onProgress,
+    expectedSha256: expectedSha256,
+  );
+  return result.path;
+}
+
+/// 下载更新包并返回带校验信息的结果对象。
+///
+/// 安全约束（H-4）：
+/// - 只接受 https：明文 http 可被中间人替换安装包，直接拒绝。
+/// - 提供 [expectedSha256] 时必须比对，不一致立即删除并报错；匹配时
+///   [DownloadResult.verified] == true。
+/// - 【本次修复】未提供 [expectedSha256]（发布方没传 .sha256）时，不再
+///   「下载完直接交给安装器」：至少做基础校验 —— 文件非空 + 扩展名与本平台
+///   匹配（.deb/.AppImage | .exe | .dmg | .apk）。不通过就删文件并抛错，
+///   通过则 verified=false，并在 warnings 里说明「只做了基础校验」，
+///   由 UI 提示用户，而不是让用户以为已经校验过。
+/// - 服务端没返回 Content-Length（total == -1）时无法校验长度：记录告警后
+///   按实际收到的字节继续（不直接失败），由 SHA-256 或基础校验兜底。
+Future<DownloadResult> downloadUpdateWithResult(String url, {
   void Function(int received, int total)? onProgress,
   String? expectedSha256,
 }) async {
@@ -309,9 +367,12 @@ Future<String> downloadUpdate(String url, {
   final fileName = _safeDownloadName(rawName);
   final savePath = '${dir.path}$_s$fileName';
 
+  final warnings = <String>[];
+  var verified = false;
   final client = HttpClient();
   final file = File(savePath);
   IOSink? sink;
+  var received = 0;
   try {
     final request = await client.getUrl(uri);
     request.followRedirects = true;
@@ -326,8 +387,15 @@ Future<String> downloadUpdate(String url, {
     }
 
     final total = response.contentLength;
+    // contentLength 为 -1 表示服务端没给长度（chunked 传输），此时无法用
+    // 「收到字节数 == 声明长度」判断完整性：只记录告警，不中断下载。
+    if (total < 0) {
+      _warn(
+        warnings,
+        '服务端未返回 Content-Length，无法校验下载长度（已按实际收到的字节数继续）',
+      );
+    }
     sink = file.openWrite();
-    var received = 0;
     await for (final chunk in response) {
       sink.add(chunk);
       received += chunk.length;
@@ -337,7 +405,6 @@ Future<String> downloadUpdate(String url, {
     await sink.close();
     sink = null;
 
-    // contentLength 为 -1 表示服务端没给长度，此时无法校验完整性
     if (total > 0 && received != total) {
       throw Exception('下载不完整：$received / $total 字节');
     }
@@ -349,6 +416,15 @@ Future<String> downloadUpdate(String url, {
       if (actual != expected) {
         throw Exception('安装包校验失败：SHA-256 不匹配（期望 $expected，实际 $actual）');
       }
+      verified = true;
+    } else {
+      // 没有发布方哈希时的兜底：至少确认这是「给本平台的、非空的安装包」，
+      // 而不是 404 错误页、其他平台的包或 0 字节的半截文件。
+      _checkBasicPackage(bytes: received, fileName: fileName);
+      _warn(
+        warnings,
+        '发布方未提供 SHA-256，仅完成基础校验（非空 + 扩展名/平台匹配），未做完整性强校验',
+      );
     }
   } catch (_) {
     // 失败时清掉半截文件，避免下次被误当成有效安装包执行
@@ -358,7 +434,51 @@ Future<String> downloadUpdate(String url, {
   } finally {
     client.close();
   }
-  return savePath;
+  return DownloadResult(
+    path: savePath,
+    verified: verified,
+    warnings: warnings,
+    bytes: received,
+  );
+}
+
+/// 当前平台允许的安装包扩展名（小写、带点）。
+Set<String> _allowedPackageExtensions() {
+  if (Platform.isWindows) return const <String>{'.exe'};
+  if (Platform.isMacOS) return const <String>{'.dmg'};
+  if (Platform.isAndroid) return const <String>{'.apk'};
+  // Linux：发行包是 .deb；同时接受 .AppImage（需用户自行运行，
+  // installAndRestart 的 dpkg 分支只对 .deb 有效）。
+  return const <String>{'.deb', '.appimage'};
+}
+
+/// 取文件名的扩展名（小写、带点）；没有扩展名返回空串。
+String _packageExtension(String fileName) {
+  final dot = fileName.lastIndexOf('.');
+  return dot > 0 ? fileName.substring(dot).toLowerCase() : '';
+}
+
+/// 缺 SHA-256 时的基础校验：文件非空 + 扩展名与本平台匹配。
+/// 不通过直接抛异常（调用方会删掉该文件，不会交给安装器执行）。
+void _checkBasicPackage({required int bytes, required String fileName}) {
+  if (bytes <= 0) {
+    throw Exception('安装包校验失败：文件为空（0 字节），可能下载被中断或被服务端拒绝');
+  }
+  final ext = _packageExtension(fileName);
+  final allowed = _allowedPackageExtensions();
+  if (!allowed.contains(ext)) {
+    throw Exception(
+      '安装包校验失败：扩展名 "${ext.isEmpty ? '(无)' : ext}" '
+      '与当前平台（${Platform.operatingSystem}）不匹配，'
+      '期望 ${allowed.join(' / ')}',
+    );
+  }
+}
+
+/// 记录一条非致命告警：进 warnings 供 UI 展示，同时写日志便于排查。
+void _warn(List<String> warnings, String message) {
+  warnings.add(message);
+  debugPrint('[UpdateService] $message');
 }
 
 Future<void> installAndRestart(String filePath) async {

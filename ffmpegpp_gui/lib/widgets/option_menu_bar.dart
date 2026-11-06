@@ -82,28 +82,35 @@ Widget _menuPanelShell({
   double radius = 14,
 }) {
   final dark = scheme.brightness == Brightness.dark;
+  // 四种外观必须「一眼能看出来不一样」（用户反馈「选哪个主题都长一个样」）：
+  // 旧值把透明度压在同一区间（190~230），且主色着色都很淡，实际观感差别几乎
+  // 为零。这里按「越来越实、着色越来越重、描边越来越亮」拉开梯度：
+  //   theme     纯主题表面（不透明、无模糊、无描边）
+  //   liquid    最通透（模糊最强、底色最淡、只留一道中性描边）
+  //   frosted   主色毛玻璃（底色偏实、主色着色明显、主色描边）
+  //   highlight 高光玻璃（底色最实、主色最亮描边 + 顶部高光）
   final blur = switch (appearance) {
-    'liquid' => 18.0,
+    'liquid' => 20.0,
     'frosted' => 14.0,
-    'highlight' => 11.0,
+    'highlight' => 12.0,
     _ => 0.0,
   };
   final surface = switch (appearance) {
-    'liquid' => scheme.surface.withAlpha(dark ? 190 : 208),
-    'frosted' => scheme.surface.withAlpha(dark ? 200 : 218),
-    'highlight' => scheme.surface.withAlpha(dark ? 216 : 230),
+    'liquid' => scheme.surface.withAlpha(dark ? 150 : 168),
+    'frosted' => scheme.surface.withAlpha(dark ? 206 : 222),
+    'highlight' => scheme.surface.withAlpha(dark ? 224 : 236),
     _ => scheme.surface,
   };
   final tint = switch (appearance) {
-    'liquid' => scheme.primary.withAlpha(dark ? 22 : 14),
-    'frosted' => scheme.primary.withAlpha(dark ? 52 : 34),
-    'highlight' => scheme.primary.withAlpha(dark ? 35 : 22),
+    'liquid' => scheme.primary.withAlpha(dark ? 30 : 20),
+    'frosted' => scheme.primary.withAlpha(dark ? 74 : 52),
+    'highlight' => scheme.primary.withAlpha(dark ? 44 : 30),
     _ => Colors.transparent,
   };
   final border = switch (appearance) {
-    'liquid' => scheme.onSurface.withAlpha(dark ? 38 : 54),
-    'frosted' => scheme.primary.withAlpha(dark ? 88 : 72),
-    'highlight' => scheme.primary.withAlpha(dark ? 126 : 108),
+    'liquid' => scheme.onSurface.withAlpha(dark ? 60 : 76),
+    'frosted' => scheme.primary.withAlpha(dark ? 120 : 100),
+    'highlight' => scheme.primary.withAlpha(dark ? 168 : 150),
     _ => Colors.transparent,
   };
   return ClipRRect(
@@ -1242,7 +1249,13 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
     final maxHeight = math.max(96.0, math.min(320.0, available));
     final panel = _menuPanelShell(
       scheme: scheme,
-      appearance: 'theme',
+      // 与 OptionMenuBar 共用「下拉菜单外观」配置：原先写死 'theme'，于是
+      // 图标动作菜单永远是主题表面，用户在小窗里改过的外观在这里失效。
+      appearance:
+          Provider.of<AppState?>(overlayContext, listen: false)
+              ?.config
+              .dropdownAppearance ??
+          'theme',
       child: ConstrainedBox(
         constraints: BoxConstraints(maxHeight: maxHeight),
         child: SingleChildScrollView(

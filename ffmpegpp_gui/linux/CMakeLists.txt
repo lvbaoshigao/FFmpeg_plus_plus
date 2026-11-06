@@ -135,3 +135,42 @@ if(NOT CMAKE_BUILD_TYPE MATCHES "Debug")
   install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
     COMPONENT Runtime)
 endif()
+
+# === 应用图标与桌面条目 ===
+# 把 hicolor 图标树装进 bundle，供：
+# 1) 桌面环境按图标名解析（.desktop 的 Icon=com.ffmpegpp.gui）；
+# 2) 窗口在 X11 下直接按路径取图（见 runner/my_application.cc）。
+set(APP_ICON_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/runner/icons/hicolor")
+foreach(icon_size IN ITEMS 16 22 24 32 48 64 128 256 512)
+  install(FILES "${APP_ICON_SOURCE}/${icon_size}x${icon_size}/apps/${APPLICATION_ID}.png"
+    DESTINATION "share/icons/hicolor/${icon_size}x${icon_size}/apps"
+    COMPONENT Runtime)
+endforeach()
+
+# 启动器脚本：把 XDG_DATA_DIRS 指向 bundle 内 share 目录，让桌面条目的
+# 图标名能通过 bundle 自带的 hicolor 图标树解析到，再 exec 主程序。
+configure_file("runner/ffmpegpp_launcher.sh.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/ffmpegpp_launcher.sh" @ONLY)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/ffmpegpp_launcher.sh"
+  DESTINATION "." RENAME "ffmpegpp"
+  PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+             GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+  COMPONENT Runtime)
+
+# 在 bundle 内生成 .desktop 条目：Exec 指向 bundle 里的启动器脚本，
+# Icon 用图标名（由上面的 hicolor 图标树解析）。
+install(CODE "
+  file(WRITE \"\${CMAKE_INSTALL_PREFIX}/share/${APPLICATION_ID}/${BINARY_NAME}.desktop\"
+    \"[Desktop Entry]
+Type=Application
+Version=1.0
+Name=FFmpeg++
+GenericName=Video Processing Tool
+Comment=Graph-based FFmpeg video processing tool
+Exec=\${CMAKE_INSTALL_PREFIX}/ffmpegpp
+Icon=${APPLICATION_ID}
+Terminal=false
+Categories=AudioVideo;Video;
+StartupNotify=true
+\")
+  " COMPONENT Runtime)

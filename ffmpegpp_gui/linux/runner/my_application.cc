@@ -7,11 +7,74 @@
 
 #include <string>
 #include <unistd.h>
+#include <vector>
 
 #include "flutter/generated_plugin_registrant.h"
 // 独立面板窗口（desktop_multi_window）：子窗口是独立引擎，插件不会自动
 // 注册进去，必须在这里给新注册表再跑一遍 fl_register_plugins。
 #include "desktop_multi_window/desktop_multi_window_plugin.h"
+
+namespace {
+
+// 当前可执行文件所在目录（用于定位随包安装的图标资源）。
+std::string ExecutableDirectory() {
+  char buf[4096];
+  ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+  if (n <= 0) return std::string();
+  buf[n] = '\0';
+  const std::string path(buf);
+  const auto pos = path.find_last_of('/');
+  return pos == std::string::npos ? std::string() : path.substr(0, pos);
+}
+
+// 把目录加入 GTK 图标主题搜索路径（append 语义，不覆盖系统默认路径）。
+// 这样桌面环境的图标名解析（Wayland/GNOME、X11 fallback）能找到 bundle 内的
+// share/icons/hicolor 图标树。
+void EnsureIconThemeSearchPath(const std::string& dir) {
+  if (dir.empty() || !g_file_test(dir.c_str(), G_FILE_TEST_IS_DIR)) return;
+  GtkIconTheme* theme = gtk_icon_theme_get_default();
+  if (!theme) return;
+  gtk_icon_theme_append_search_path(theme, dir.c_str());
+}
+
+// 设置窗口图标（主窗口与独立面板窗口都经过 activate，都会走到这里）。
+// 1) 图标主题搜索路径加入 bundle 的 share/icons，让图标名可解析；
+// 2) gtk_window_set_icon_name：Wayland/GNOME 以及 X11 无 _NET_WM_ICON 时按名解析；
+// 3) gtk_window_set_icon_from_file：直接写入窗口像素（X11 _NET_WM_ICON 首选）。
+void SetupWindowIcon(GtkWindow* window) {
+  const std::string exe_dir = ExecutableDirectory();
+  const std::string app_id = APPLICATION_ID;
+
+  // 注意：bundle 布局里主程序与 share/ 同目录（bundle/ffmpegpp_gui、
+  // bundle/share/icons/...），不要再加 ../。
+  if (!exe_dir.empty()) {
+    EnsureIconThemeSearchPath(exe_dir + "/share/icons");
+  }
+  gtk_window_set_icon_name(window, app_id.c_str());
+
+  std::vector<std::string> candidates;
+  if (!exe_dir.empty()) {
+    candidates.push_back(
+        exe_dir + "/share/icons/hicolor/256x256/apps/" + app_id + ".png");
+    candidates.push_back(
+        exe_dir + "/share/icons/hicolor/128x128/apps/" + app_id + ".png");
+  }
+#ifdef APP_ICON_SOURCE_DIR
+  // dev 模式（flutter run）bundle 未安装，图标还在源码树里。
+  candidates.push_back(std::string(APP_ICON_SOURCE_DIR) +
+                       "/hicolor/256x256/apps/" + app_id + ".png");
+#endif
+  for (const auto& candidate : candidates) {
+    GError* error = nullptr;
+    if (gtk_window_set_icon_from_file(window, candidate.c_str(), &error)) {
+      if (error) g_error_free(error);
+      return;
+    }
+    if (error) g_error_free(error);
+  }
+}
+
+}  // namespace
 
 struct _MyApplication {
   GtkApplication parent_instance;
@@ -43,6 +106,7 @@ static void my_application_activate(GApplication* application) {
   }
 
   gtk_window_set_default_size(window, 1280, 720);
+  SetupWindowIcon(window);
   gtk_widget_show(GTK_WIDGET(window));
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();

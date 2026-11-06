@@ -53,16 +53,29 @@ class AiChatHistory {
   }
 
   /// 保存一次会话。返回保存的文件路径，失败返回 null。
+  ///
+  /// 原子写（不再直接覆盖目标文件）：先序列化到内存，再写同目录的
+  /// `<目标>.tmp`，写完 flush 后用 rename 替换目标。
+  /// - 进程在写入中途被杀：旧会话文件保持完整，最多留下一个 .tmp；
+  ///   listSessions 只认 .json（.tmp / .bak 不匹配），不会去解析半截内容。
+  /// - 序列化失败（循环引用等）：连 .tmp 都不会创建，旧文件不受影响。
+  /// - 失败（含 rename 失败）仍返回 null，且 finally 会清掉残留 .tmp。
   static Future<String?> saveSession({
     required String title,
     required String provider,
     required String model,
     required List<Map<String, dynamic>> messages,
     String? filePath,
+    // 会话级累计用量。消息里只存「最后一段流式回复」的用量，多轮工具调用 /
+    // 续写轮的消耗在重载后会丢；把累计值一起存下来，重开会话统计才和关掉前
+    // 一致（旧文件没有这两个字段时读取侧回退为按消息求和）。
+    int? totalInputTokens,
+    int? totalOutputTokens,
   }) async {
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    File? tmp;
     try {
       await _ensureDir();
-      final ts = DateTime.now().millisecondsSinceEpoch;
       final dir = await _historyDir();
       final file = filePath != null && filePath.isNotEmpty
           ? File(filePath)
@@ -72,14 +85,78 @@ class AiChatHistory {
         'provider': provider,
         'model': model,
         'saved_at': DateTime.now().toIso8601String(),
+        if (totalInputTokens != null) 'total_in': totalInputTokens,
+        if (totalOutputTokens != null) 'total_out': totalOutputTokens,
         'messages': messages,
       };
-      await file.writeAsString(
-        const JsonEncoder.withIndent('  ').convert(data),
-      );
+      final text = const JsonEncoder.withIndent('  ').convert(data);
+      tmp = File('${file.path}.tmp');
+      // flush: true 让内容真正落到磁盘再 rename，避免「rename 成功但数据还在页面缓存」
+      await tmp.writeAsString(text, flush: true);
+      await _replaceAtomically(tmp: tmp, target: file);
+      // rename 已消费 tmp（路径不存在了），置空避免 finally 再去删
+      tmp = null;
       return file.path;
     } catch (_) {
       return null;
+    } finally {
+      // 任何失败路径都不留 .tmp 垃圾
+      if (tmp != null) {
+        try {
+          if (await tmp.exists()) await tmp.delete();
+        } catch (_) {}
+      }
+    }
+  }
+
+  /// 用 [tmp] 原子替换 [target]。
+  ///
+  /// POSIX（Linux / macOS / Android）：rename 覆盖已存在文件是原子操作，
+  /// 读者要么读到旧文件、要么读到新文件，不存在「半截 JSON」的中间态。
+  ///
+  /// Windows：`File.rename` 在目标已存在时抛 FileSystemException
+  /// （底层 RenameFile/MoveFile 不覆盖），因此退化为三步：
+  ///   1) 旧文件改名为 `<目标>.bak`（为 rename 让路）
+  ///   2) `.tmp` rename 到目标（仍是 rename，原子）
+  ///   3) 删除 `.bak`
+  /// 第 2 步失败时把 `.bak` 改回原名，旧会话不丢；第 3 步失败只会留下
+  /// 一个 .bak，listSessions 只认 .json，不会把它当成会话。
+  /// 代价：Windows 上 1↔2 之间有一个极短的「目标不存在」窗口，
+  /// 但旧内容始终在 .bak 里，不会像原来那样被截断成半截文件。
+  static Future<void> _replaceAtomically({
+    required File tmp,
+    required File target,
+  }) async {
+    if (!Platform.isWindows) {
+      await tmp.rename(target.path);
+      return;
+    }
+    final bak = File('${target.path}.bak');
+    var movedOldAside = false;
+    try {
+      if (await target.exists()) {
+        if (await bak.exists()) {
+          try {
+            await bak.delete();
+          } catch (_) {}
+        }
+        await target.rename(bak.path);
+        movedOldAside = true;
+      }
+      await tmp.rename(target.path);
+    } catch (_) {
+      // 回滚：新文件没 rename 成功，把旧文件改回原名
+      if (movedOldAside && !await target.exists()) {
+        try {
+          await bak.rename(target.path);
+        } catch (_) {}
+      }
+      rethrow;
+    }
+    if (movedOldAside) {
+      try {
+        await bak.delete();
+      } catch (_) {}
     }
   }
 

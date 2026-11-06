@@ -23,6 +23,10 @@ class ConfigService {
   Future<void>? _saveInFlight;
   bool _dirty = false;
 
+  /// 每次 [update] 自增，用于判断“本次写盘完成时是否又有新改动”，
+  /// 避免旧写盘把新改动误标成已保存。
+  int _editGeneration = 0;
+
   Future<void> load() async {
     final dir = await _configDir();
     final file = File('$dir$_s$_filename');
@@ -53,12 +57,18 @@ class ConfigService {
   Future<void> save() async {
     _saveTimer?.cancel();
     _saveTimer = null;
-    _dirty = false;
+    final generation = _editGeneration;
     // 串行化写入，避免两次保存交错写同一个文件产生半截 JSON
     final prev = _saveInFlight;
     final next = () async {
       if (prev != null) {
-        await prev;
+        // 上一次写盘失败不能让后续所有写盘都失败：这里只记录，继续本次写。
+        // （原实现直接 await，一次失败即永久断掉写盘链。）
+        try {
+          await prev;
+        } catch (error, stack) {
+          debugPrint('[ConfigService] previous save failed: $error\n$stack');
+        }
       }
       await AiCredentialStore.save(_config);
       final dir = await _configDir();
@@ -66,9 +76,20 @@ class ConfigService {
       await file.writeAsString(
         const JsonEncoder.withIndent('  ').convert(_config.toJson()),
       );
+      // 只有真正写成功、且期间没有新的修改，才清除脏标记。
+      if (generation == _editGeneration) {
+        _dirty = false;
+      }
     }();
     _saveInFlight = next;
-    return next;
+    try {
+      await next;
+    } finally {
+      // 按引用清空，避免把后来者的 in-flight 引用抹掉。
+      if (identical(_saveInFlight, next)) {
+        _saveInFlight = null;
+      }
+    }
   }
 
   /// 修改配置。落盘是防抖的：滑块拖动等高频调用只会在停止后写一次磁盘，
@@ -76,6 +97,7 @@ class ConfigService {
   Future<void> update(AppConfig Function(AppConfig) transform) async {
     _config = transform(_config);
     _dirty = true;
+    _editGeneration++;
     _saveTimer?.cancel();
     _saveTimer = Timer(_saveDebounce, () {
       if (_dirty) save();

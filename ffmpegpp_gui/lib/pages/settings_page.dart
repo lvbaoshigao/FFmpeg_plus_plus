@@ -1149,6 +1149,12 @@ class _SettingsPageState extends State<SettingsPage> {
         // 漏在签名外会「选了左侧但页面不重建、下拉仍显示旧值」
         // （与 mobileNavPlacement / 字重改不了同一条根因）。
         state.config.mobileBottomActionSide,
+        // 下拉菜单外观：同样是被受控 _optionRow 直读的字段。漏在签名外时，
+        // 选完「液态玻璃 / 毛玻璃 / 高光」配置写进去了但设置页不重建，下拉
+        // 触发框仍显示旧选项（用户反馈「选择主题时框框不会选中这个主题，
+        // 仅仅局限于下拉控制栏的主题切换」），而其它控件因为字段都在签名里
+        // 所以表现正常。
+        state.config.dropdownAppearance,
         // 滑动自动收起底部菜单栏：受控 SwitchListTile 直读 config，
         // 漏在签名外会「点了没反应」（与 mobileNavPlacement 同根因）。
         state.config.navAutoHide,

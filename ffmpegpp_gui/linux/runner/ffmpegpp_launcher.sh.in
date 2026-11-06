@@ -1,0 +1,7 @@
+#!/bin/sh
+# FFmpeg++ 启动器：把 XDG_DATA_DIRS 指向 bundle 根目录下的 share（与本脚本同级的目录），
+# 让桌面条目的 Icon=com.ffmpegpp.gui 能通过 bundle 自带的 hicolor 图标树
+# （share/icons/hicolor）解析到，然后再 exec 主程序。
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+export XDG_DATA_DIRS="$SELF_DIR/share${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
+exec "$SELF_DIR/@BINARY_NAME@" "$@"

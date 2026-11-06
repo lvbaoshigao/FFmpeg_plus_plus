@@ -14545,6 +14545,45 @@ Available actions: __TOOLS__''';
     return null;
   }
 
+  /// 把异常翻译成用户能看懂的说明。
+  ///
+  /// 旧实现对**任何**异常都写「（已中断）请求失败」，用户于是以为是自己或
+  /// 系统「莫名其妙中断」了回答（实际多为网关超时 / 限流 / 断连）。这里按类型
+  /// 区分，并且只有真正被截断时才会提到「已保留上文」。
+  String _aiFailureNote(Object error, AppStrings s) {
+    final raw = error.toString();
+    final lower = raw.toLowerCase();
+    final kept = s.isZh
+        ? '上面已生成的内容已保留。'
+        : 'The partial answer above is kept.';
+    if (error is TimeoutException || lower.contains('timeout')) {
+      return s.isZh
+          ? '（请求超时）等待模型响应过久，已自动停止。$kept'
+          : '(Timed out) The model took too long to respond. $kept';
+    }
+    if (lower.contains('429') || lower.contains('rate limit')) {
+      return s.isZh
+          ? '（被限流）请求过于频繁或额度用尽，请稍后再试。$kept'
+          : '(Rate limited) Too many requests or quota exhausted. $kept';
+    }
+    if (lower.contains('socket') ||
+        lower.contains('connection') ||
+        lower.contains('network') ||
+        lower.contains('502') ||
+        lower.contains('503') ||
+        lower.contains('504')) {
+      return s.isZh
+          ? '（连接中断）与模型服务的连接断开了。$kept'
+          : '(Connection lost) The connection to the model service dropped. $kept';
+    }
+    if (lower.contains('401') || lower.contains('403')) {
+      return s.isZh
+          ? '（鉴权失败）请检查 API Key 与接口地址。$kept'
+          : '(Auth failed) Check the API key and endpoint. $kept';
+    }
+    return s.isZh ? '（回答被截断）请求失败：$raw' : '(Truncated) Request failed: $raw';
+  }
+
   @override
   void dispose() {
     for (final attachment in _attachments) {
@@ -14648,9 +14687,13 @@ Available actions: __TOOLS__''';
             : null,
         baseUrl: _sdkBaseUrl(apiUrl, anthropic: anthropic),
         // 这个超时是「整条请求」的看门狗，不是首字节超时：60s 会把长回答 /
-        // 推理模型直接掐断（用户反馈「连续对话经常截断」）。放到 5 分钟，
-        // 同时 _send 的异常分支会保留已经流式收到的内容并标注「已中断」。
-        timeout: const Duration(minutes: 5),
+        // 推理模型直接掐断（用户反馈「连续对话经常截断」）。
+        //
+        // 5 分钟仍然不够：长回答 + 推理模型 + 工具轮之后继续生成，很容易跑过
+        // 5 分钟，用户看到的就是「什么都没点，它自己中断了」。放宽到 20 分钟，
+        // 真正卡死时仍能兜底退出；异常分支会保留已收到的内容并按类型说明原因
+        // （见 _aiFailureNote，不再一律写成「已中断」）。
+        timeout: const Duration(minutes: 20),
         headers: {
           if (anthropic) 'anthropic-version': '2023-06-01',
           ...?customHeaders,
@@ -14793,9 +14836,24 @@ Available actions: __TOOLS__''';
     }
     final currentUserTokens =
         estimateRequestTokens(userContextText) + 4 + imageTokens;
-    final availableHistoryTokens =
-        contextWindow - effMaxTokens - systemTokens - currentUserTokens;
+    // 长对话鲁棒性：旧实现只要「上下文窗口 - 输出预算 - 系统提示 - 本轮输入」
+    // 为负就直接拒绝发送，于是画布变大 / 历史变长之后，同一个对话会突然发不
+    // 出去（用户反馈「长对话有问题」）。正确顺序是先砍输出预算，再丢历史，
+    // 只有连本轮输入都放不下时才拒绝。
+    var effectiveMaxTokens = effMaxTokens;
+    var availableHistoryTokens =
+        contextWindow - effectiveMaxTokens - systemTokens - currentUserTokens;
     if (availableHistoryTokens < 0) {
+      // 输出预算至少留 256，其余让给输入；再不足则退化为「无历史」。
+      final shrunk = math.max(256, contextWindow - systemTokens - currentUserTokens);
+      if (shrunk < effectiveMaxTokens) {
+        effectiveMaxTokens = shrunk;
+        availableHistoryTokens =
+            contextWindow - effectiveMaxTokens - systemTokens - currentUserTokens;
+      }
+    }
+    if (availableHistoryTokens < 0) {
+      // 本轮输入 + 系统提示本身就超窗：这才是真正无法发送的情况。
       showToast(
         context,
         widget.strings.isZh
@@ -14810,6 +14868,10 @@ Available actions: __TOOLS__''';
     // 让其 ContextManager 不必在工具调用中途自行滑窗裁剪。
     appState.logAiRequest(text);
 
+    // 本次请求已消耗的 token（跨工具轮累加）。声明在 try 之外：停止 / 失败
+    // 分支也要把它记进会话统计。
+    var totalInputTokens = 0;
+    var totalOutputTokens = 0;
     final request = _AiStreamRequest();
     _activeRequest = request;
     setState(() {
@@ -14941,7 +15003,7 @@ Available actions: __TOOLS__''';
           apiKey: effKey,
           apiUrl: effUrl,
           model: effModel,
-          maxTokens: effMaxTokens,
+          maxTokens: effectiveMaxTokens,
           contextWindow: profile?.contextWindow ?? cfg.aiContextWindow,
           temperature: effTemp,
           topP: effTopP,
@@ -15008,7 +15070,7 @@ Available actions: __TOOLS__''';
         apiKey: effKey,
         apiUrl: effUrl,
         model: effModel,
-        maxTokens: effMaxTokens,
+        maxTokens: effectiveMaxTokens,
         contextWindow: profile?.contextWindow ?? cfg.aiContextWindow,
         temperature: effTemp,
         topP: effTopP,
@@ -15019,8 +15081,6 @@ Available actions: __TOOLS__''';
         ai.Message(role: ai.MessageRole.user, content: currentContent),
       );
       var activeAssistantIdx = msgIdx;
-      var totalInputTokens = 0;
-      var totalOutputTokens = 0;
       String? finalContent;
       // 当前 assistant 气泡的累计正文：maxTokens 续写会把它和下一轮文本合并，
       // 而不是新建气泡 / 重复用户气泡。
@@ -15149,8 +15209,9 @@ Available actions: __TOOLS__''';
         final inTok = response?.usage?.promptTokens ?? usage?.promptTokens;
         final outTok =
             response?.usage?.completionTokens ?? usage?.completionTokens;
-        totalInputTokens += inTok ?? 0;
-        totalOutputTokens += outTok ?? 0;
+        // usage 字段在不同供应商/SDK 版本里可能是 num：统一收敛成 int 再累加。
+        totalInputTokens += (inTok as num?)?.toInt() ?? 0;
+        totalOutputTokens += (outTok as num?)?.toInt() ?? 0;
         // 续写轮只追加新增文本（见 addedPartialAssistant 注释）。
         final contextAssistantText = addedPartialAssistant
             ? roundText
@@ -15171,8 +15232,8 @@ Available actions: __TOOLS__''';
           _messages[activeAssistantIdx] = (
             role: 'assistant',
             content: bubbleContent,
-            inputTokens: inTok,
-            outputTokens: outTok,
+            inputTokens: (inTok as num?)?.toInt(),
+            outputTokens: (outTok as num?)?.toInt(),
             blocks: _assistantBlocks(
               thinking: thinking,
               text: bubbleContent,
@@ -15209,7 +15270,7 @@ Available actions: __TOOLS__''';
                     AiAutoContinuePolicy.continuationPrompt,
                   ) +
                   4,
-              requestedMaxTokens: effMaxTokens,
+              requestedMaxTokens: effectiveMaxTokens,
             );
             if (continuationMaxTokens == 0) {
               final notice = widget.strings.isZh
@@ -15305,6 +15366,10 @@ Available actions: __TOOLS__''';
         setState(() {
           _loading = false;
           _continuing = false;
+          // 停止前已经跑完的轮次同样消耗了 token：旧实现只在成功收尾累加，
+          // 于是「聊到一半点停止」会让本次统计凭空变少（用户反馈统计不准）。
+          _totalInputTokens += totalInputTokens;
+          _totalOutputTokens += totalOutputTokens;
         });
         _scrollToBottom();
         return;
@@ -15371,9 +15436,7 @@ Available actions: __TOOLS__''';
         _messages.add((
           role: 'assistant',
           content: partialContent.isNotEmpty
-              ? (widget.strings.isZh
-                    ? '（已中断）请求失败，上面已生成的内容已保留。'
-                    : '(Interrupted) The request failed; the partial answer above is kept.')
+              ? _aiFailureNote(e, widget.strings)
               : (widget.strings.isZh
                     ? '请求失败，请检查连接与模型设置。'
                     : 'Request failed. Check connection and model settings.'),
@@ -15383,6 +15446,9 @@ Available actions: __TOOLS__''';
         ));
         _loading = false;
         _continuing = false;
+        // 失败/超时前已跑完的轮次同样计入统计。
+        _totalInputTokens += totalInputTokens;
+        _totalOutputTokens += totalOutputTokens;
       });
       _scrollToBottom();
     } finally {
@@ -17470,12 +17536,20 @@ Available actions: __TOOLS__''';
       );
       _sessionProvider = (entry['provider'] as String?) ?? _sessionProvider;
       _sessionModel = (entry['model'] as String?) ?? _sessionModel;
-      // 恢复 token 统计
-      _totalInputTokens = 0;
-      _totalOutputTokens = 0;
-      for (final m in _messages) {
-        _totalInputTokens += m.inputTokens ?? 0;
-        _totalOutputTokens += m.outputTokens ?? 0;
+      // 恢复 token 统计：优先用保存时的会话累计值（多轮工具调用 / 续写轮的
+      // 消耗只体现在累计值里）；旧会话文件没有该字段时回退按消息求和。
+      final storedIn = (entry['total_in'] as num?)?.toInt();
+      final storedOut = (entry['total_out'] as num?)?.toInt();
+      if (storedIn != null || storedOut != null) {
+        _totalInputTokens = storedIn ?? 0;
+        _totalOutputTokens = storedOut ?? 0;
+      } else {
+        _totalInputTokens = 0;
+        _totalOutputTokens = 0;
+        for (final m in _messages) {
+          _totalInputTokens += m.inputTokens ?? 0;
+          _totalOutputTokens += m.outputTokens ?? 0;
+        }
       }
     });
     _scrollToBottom();
@@ -17543,6 +17617,9 @@ Available actions: __TOOLS__''';
             )
             .toList(),
         filePath: _historyFilePath,
+        // 会话级累计用量：消息里的 in/out 只是最后一轮，重开统计会变少。
+        totalInputTokens: _totalInputTokens,
+        totalOutputTokens: _totalOutputTokens,
       );
       if (path != null) _historyFilePath = path;
       return path;
@@ -17933,8 +18010,16 @@ Available actions: __TOOLS__''';
             width: double.infinity,
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final maxBubbleWidth =
+                // 桌面端面板可能非常宽（独立窗口 / 大屏）。纯按比例取 80% 会让
+                // 正文每行长度失控（用户反馈「PC 端会话过宽」），这里再压一个
+                // 可读行宽上限：860 逻辑像素约等于 60~70 个中文字符 / 90 个西文
+                // 字符，接近排版惯例（45~75 字符/行）。
+                const desktopBubbleCap = 860.0;
+                final proportional =
                     (constraints.maxWidth - avatarSlot) * 0.8;
+                final maxBubbleWidth = isMobilePlatform
+                    ? proportional
+                    : math.min(proportional, desktopBubbleCap);
                 final bubble = ConstrainedBox(
                   constraints: BoxConstraints(maxWidth: maxBubbleWidth),
                   child: Container(

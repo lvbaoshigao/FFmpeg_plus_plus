@@ -19,6 +19,10 @@ apply_standard_settings(${BINARY_NAME})
 # Add preprocessor definitions for the application ID.
 add_definitions(-DAPPLICATION_ID="${APPLICATION_ID}")
 
+# 图标资源源码目录：dev 模式（flutter run）bundle 未安装时，
+# my_application.cc 通过该路径在源码树里找到窗口图标。
+add_definitions(-DAPP_ICON_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/icons")
+
 # Add dependency libraries. Add any application-specific dependencies here.
 target_link_libraries(${BINARY_NAME} PRIVATE flutter)
 target_link_libraries(${BINARY_NAME} PRIVATE PkgConfig::GTK)
