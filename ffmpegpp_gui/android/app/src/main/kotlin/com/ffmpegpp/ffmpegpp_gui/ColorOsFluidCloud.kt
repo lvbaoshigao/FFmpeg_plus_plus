@@ -145,7 +145,7 @@ object ColorOsFluidCloud {
      * 不保证真显示出来 —— 调用方据此给白名单引导文案。
      */
     fun postTestNotification(context: Context): String {
-        val shared = shareTaskDone(context, "FFmpeg++", "测试通知 · 流体云", true)
+        val shared = shareIntent(context, buildDoneIntent("FFmpeg++", "测试通知 · 流体云", true))
         if (shared) return "fluidcloud"
         val ok = postPlainNotification(context, "FFmpeg++", "测试通知 · 系统通知")
         return if (ok) "notification" else "unsupported"
