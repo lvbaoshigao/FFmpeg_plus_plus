@@ -1,5 +1,3 @@
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
 
 import '../models/models.dart';
@@ -7,6 +5,7 @@ import '../theme/app_control_size.dart';
 import '../theme/settings_typography.dart';
 import 'app_card.dart';
 import 'app_slider.dart';
+import 'liquid_glass_fallback.dart';
 import 'liquid_modality_pills.dart';
 import 'mobile_glass_pill.dart';
 
@@ -230,7 +229,7 @@ class _ModelEditorSheetState extends State<ModelEditorSheet> {
             // 全应用玻璃卡一致的「主题色薄着色 + 背景模糊」，同时把圆角裁切交给
             // ClipRRect，模糊层不会溢出到圆角外。
             child: BackdropFilter(
-              filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+              filter: cachedGlassBlur(18),
               child: DecoratedBox(
                 key: const ValueKey('model_editor_sheet'),
                 decoration: BoxDecoration(

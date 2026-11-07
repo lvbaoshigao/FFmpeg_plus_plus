@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../theme/app_control_size.dart';
 import '../app_dropdown.dart';
 import '../app_slider.dart';
 
@@ -264,12 +265,21 @@ class LabeledSlider extends StatelessWidget {
   }
 }
 
-/// 统一的高密度输入框装饰（isDense + 圆角 8 边框 + contentPadding h12 v10）。
+/// 统一的高密度输入框装饰（isDense + 圆角 10 边框 + contentPadding h12 v10）。
+///
+/// 三件事必须与主题 / [AppControlSize] 同源，否则同一页的输入框会参差：
+/// * `borderRadius: 10` —— 与 `app_theme.dart` 的 `inputDecorationTheme` 一致
+///   （这里原本写 8，导致属性面板圆角比设置页小一档，肉眼可辨）；
+/// * `visualDensity: fieldDensity` —— 桌面端 ThemeData 默认 compact(-2,-2)，
+///   `InputDecorator` 会把 -8 直接加进高度，不压平的话本装饰在桌面端比移动端矮 8px；
+/// * `contentPadding` h12 v10 —— 与移动端档位一致（桌面主题是 v12，这里统一走 v10
+///   以保持编辑器密集表单的行高）。
 InputDecoration editorDenseField(String label, {String? hint, String? suffixText}) => InputDecoration(
   labelText: label,
   isDense: true,
   hintText: hint,
   suffixText: suffixText,
-  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
   contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+  visualDensity: AppControlSize.fieldDensity,
 );

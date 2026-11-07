@@ -1,5 +1,4 @@
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'
@@ -8,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import '../providers/app_state.dart';
 import '../theme/app_text_scale.dart';
+import 'liquid_glass_fallback.dart';
 
 /// 统一的「菜单栏选项」控件 —— 融合两处参考样式：
 /// * 触发按钮：设置→任务卡片下拉菜单的外观（圆角描边、紧凑高度、展开/收起动画）；
@@ -116,7 +116,8 @@ Widget _menuPanelShell({
   return ClipRRect(
     borderRadius: BorderRadius.circular(radius),
     child: BackdropFilter(
-      filter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+      // σ 只有 0 / 8 / 12 三档，走进程级缓存避免每次 build 新建 native filter。
+      filter: cachedGlassBlur(blur),
       child: Material(
         elevation: 10,
         color: Color.alphaBlend(tint, surface),

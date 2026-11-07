@@ -17193,7 +17193,11 @@ Available actions: __TOOLS__''';
       ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
         leading: const Icon(Icons.save_outlined, size: 19),
-        title: Text(s.isZh ? '保存当前会话' : 'Save current chat', maxLines: 1),
+        title: Text(
+          s.isZh ? '保存当前会话' : 'Save current chat',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
         enabled: !_loading,
         onTap: _loading
             ? null
@@ -17214,7 +17218,11 @@ Available actions: __TOOLS__''';
       ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
         leading: const Icon(Icons.delete_outline, size: 19),
-        title: Text(s.isZh ? '清空历史' : 'Clear history', maxLines: 1),
+        title: Text(
+          s.isZh ? '清空历史' : 'Clear history',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
         onTap: () async {
           await AiChatHistory.clearAll();
           _historyFilePath = null;

@@ -193,6 +193,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                           zh ? '新版 Beta' : 'New Beta',
                           maxLines: 1,
                           softWrap: false,
+                          overflow: TextOverflow.ellipsis,
                         ),
                         icon: const Icon(Icons.auto_awesome, size: 16),
                       ),

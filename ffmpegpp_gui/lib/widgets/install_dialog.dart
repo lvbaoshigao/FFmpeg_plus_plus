@@ -302,10 +302,18 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
         Row(children: [
           Icon(done ? Icons.check_circle : Icons.download, size: 16, color: accent),
           const SizedBox(width: 6),
-          Text(name, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-          const Spacer(),
-          if (done)
+          // 名称可能是较长的文件名 / 发行包名：用 Expanded 吃掉剩余宽度并省略，
+          // 右侧「已选择」仍靠右；原先裸 Text + Spacer 在长名称时会让本行溢出。
+          Expanded(child: Text(
+            name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface),
+          )),
+          if (done) ...[
+            const SizedBox(width: 8),
             Text('已选择', style: TextStyle(fontSize: 10, color: accent, fontWeight: FontWeight.w600)),
+          ],
         ]),
         const SizedBox(height: 4),
         Text(desc, style: TextStyle(fontSize: 11, color: scheme.outline)),
@@ -314,20 +322,26 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
             child: Text(selectedPath, style: TextStyle(fontSize: 9, color: scheme.outline, fontFamily: AppTheme.monoFont),
                 maxLines: 1, overflow: TextOverflow.ellipsis)),
         const SizedBox(height: 8),
+        // 两个按钮并排：窄对话框 / 放大字号时按比例收缩而不是顶出边界
+        // （Flexible 为 loose，宽度够时按钮仍按自身内容宽度排布）。
         Row(children: [
-          OutlinedButton.icon(
+          Flexible(child: OutlinedButton.icon(
             onPressed: onDownload,
             icon: const Icon(Icons.open_in_browser, size: 16),
-            label: Text(done ? '重新下载' : '打开下载页', style: const TextStyle(fontSize: 12)),
+            label: Text(done ? '重新下载' : '打开下载页',
+                maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12)),
             style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8)),
-          ),
+          )),
           const SizedBox(width: 8),
-          FilledButton.tonalIcon(
+          Flexible(child: FilledButton.tonalIcon(
             onPressed: onPick,
             icon: const Icon(Icons.folder_open, size: 16),
-            label: Text(done ? '重新选择' : '选择已下载的文件', style: const TextStyle(fontSize: 12)),
+            label: Text(done ? '重新选择' : '选择已下载的文件',
+                maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12)),
             style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8)),
-          ),
+          )),
         ]),
       ]),
     );

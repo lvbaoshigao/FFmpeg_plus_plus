@@ -246,7 +246,14 @@ class _FrameStepEditorState extends State<FrameStepEditor> with StepEditorState<
           onChanged: (v) { p['fps_rate'] = double.tryParse(v) ?? 1.0; setState(() {}); widget.onChanged(); },
         )),
         const SizedBox(width: 12),
-        Text(zh ? '≈ $frameCount 帧' : '≈ $frameCount frames', style: TextStyle(fontSize: 12, color: cs.outline)),
+        Flexible(
+          child: Text(
+            zh ? '≈ $frameCount 帧' : '≈ $frameCount frames',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 12, color: cs.outline),
+          ),
+        ),
       ]),
     ];
   }
@@ -263,8 +270,14 @@ class _FrameStepEditorState extends State<FrameStepEditor> with StepEditorState<
           onChanged: (v) { p['fps_rate'] = double.tryParse(v) ?? 1.0; setState(() {}); widget.onChanged(); },
         )),
         const SizedBox(width: 12),
-        Text(zh ? '≈ $totalFrames 帧 (${dur.toStringAsFixed(1)}s)' : '≈ $totalFrames frames (${dur.toStringAsFixed(1)}s)',
-          style: TextStyle(fontSize: 12, color: cs.outline)),
+        Flexible(
+          child: Text(
+            zh ? '≈ $totalFrames 帧 (${dur.toStringAsFixed(1)}s)' : '≈ $totalFrames frames (${dur.toStringAsFixed(1)}s)',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 12, color: cs.outline),
+          ),
+        ),
       ]),
       const SizedBox(height: 8),
       Container(
