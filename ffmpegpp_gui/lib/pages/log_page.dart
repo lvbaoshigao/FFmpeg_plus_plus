@@ -74,14 +74,30 @@ class _LogPageState extends State<LogPage> {
           WindowChrome(
             child: Scaffold(
               backgroundColor: Colors.transparent,
-              body: Column(children: [
-                _toolbar(scheme, cfg, entries, filtered, isZh),
-                _filterBar(scheme, isZh),
-                Expanded(child: filtered.isEmpty
-                    ? Center(child: Text(isZh ? '暂无日志' : 'No logs yet',
-                        style: TextStyle(color: scheme.outline, fontSize: 13)))
-                    : _buildList(filtered, scheme, cfg, isZh)),
-              ]),
+              // 移动端沉浸：顶栏与过滤条一起浮在内容上（同一个浮动层），
+              // 日志条目滚动时从底下穿过，不再被顶栏截断。
+              // 桌面端保持原 Column 布局（顶栏非浮动药丸，谈不上沉浸）。
+              body: isMobilePlatform
+                  ? ImmersiveTopBar(
+                      bar: Column(mainAxisSize: MainAxisSize.min, children: [
+                        _toolbar(scheme, cfg, entries, filtered, isZh),
+                        _filterBar(scheme, isZh),
+                      ]),
+                      child: filtered.isEmpty
+                          ? Center(child: Text(isZh ? '暂无日志' : 'No logs yet',
+                              style: TextStyle(color: scheme.outline, fontSize: 13)))
+                          : _buildList(filtered, scheme, cfg, isZh,
+                              topInset: ImmersiveTopBar.insetOf(context) +
+                                  _filterBarExtent),
+                    )
+                  : Column(children: [
+                      _toolbar(scheme, cfg, entries, filtered, isZh),
+                      _filterBar(scheme, isZh),
+                      Expanded(child: filtered.isEmpty
+                          ? Center(child: Text(isZh ? '暂无日志' : 'No logs yet',
+                              style: TextStyle(color: scheme.outline, fontSize: 13)))
+                          : _buildList(filtered, scheme, cfg, isZh)),
+                    ]),
             ),
           ),
         );
@@ -203,7 +219,12 @@ class _LogPageState extends State<LogPage> {
     );
   }
 
-  Widget _buildList(List<LogEntry> filtered, ColorScheme scheme, AppConfig cfg, bool isZh) {
+  /// 移动端过滤条总高度（外壳 40 + margin 上下各 8）：沉浸布局里顶栏与过滤条
+  /// 同层浮动，列表顶部要一起让出（见 body 的 ImmersiveTopBar）。
+  static const double _filterBarExtent = 56;
+
+  Widget _buildList(List<LogEntry> filtered, ColorScheme scheme, AppConfig cfg,
+      bool isZh, {double topInset = 0}) {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12),
       child: GlassPanel(
@@ -215,7 +236,7 @@ class _LogPageState extends State<LogPage> {
         radius: 16,
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
         child: ListView.builder(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          padding: EdgeInsets.fromLTRB(12, topInset + 4, 12, 4),
           itemCount: filtered.length,
           itemBuilder: (_, i) {
         final entry = filtered[i];

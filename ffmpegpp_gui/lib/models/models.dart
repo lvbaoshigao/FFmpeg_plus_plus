@@ -2436,6 +2436,17 @@ class AppConfig {
   bool debugMode;
   bool saveLogs;
   bool enableSystemNotification;
+
+  /// 允许将转码进度展示在 ColorOS「流体云」上（端侧意图共享创进度卡，
+  /// 见 services/fluid_cloud_progress.dart 与 ColorOsFluidCloud.kt）。
+  /// 设置项仅在 ColorOS 且 Provider 可达时显示；非 ColorOS 上该值无效果。
+  bool fluidCloudProgress;
+
+  /// 允许将转码进度展示在小米「超级岛」上（HyperOS 3 焦点通知，
+  /// 见 services/island_progress.dart 与 HyperOsIsland.kt）。
+  /// 设置项仅在支持岛的 HyperOS（persist.sys.feature.island + 协议 ≥3 +
+  /// 焦点通知权限）上显示；其余系统上该值无效果。
+  bool islandProgress;
   String logSavePath;
 
   /// 默认编辑方式：0 = 节点编辑器，1 = 快速模式。
@@ -2602,6 +2613,8 @@ class AppConfig {
     this.debugMode = false,
     this.saveLogs = false,
     this.enableSystemNotification = false,
+    this.fluidCloudProgress = false,
+    this.islandProgress = false,
     this.logSavePath = '',
     this.editMode = 0,
     this.useNodeEditorLandscape = false,
@@ -2809,6 +2822,8 @@ class AppConfig {
     saveLogs: json['save_logs'] as bool? ?? false,
     enableSystemNotification:
         json['enable_system_notification'] as bool? ?? false,
+    fluidCloudProgress: json['fluid_cloud_progress'] as bool? ?? false,
+    islandProgress: json['island_progress'] as bool? ?? false,
     logSavePath: json['log_save_path'] as String? ?? '',
     // 传统模式（旧值 2）已移除：自动迁移为节点编辑器
     // [FIX M-7] 旧值 2（传统模式）已移除→迁移为 0；用 _asInt 容错解析避免浮点 JSON 抛错
@@ -2953,6 +2968,8 @@ class AppConfig {
     'debug_mode': debugMode,
     'save_logs': saveLogs,
     'enable_system_notification': enableSystemNotification,
+    'fluid_cloud_progress': fluidCloudProgress,
+    'island_progress': islandProgress,
     'log_save_path': logSavePath,
     'edit_mode': editMode,
     'use_node_editor_landscape': useNodeEditorLandscape,

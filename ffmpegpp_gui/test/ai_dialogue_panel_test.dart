@@ -895,7 +895,7 @@ void main() {
       await _teardownPanel(tester);
     });
 
-    testWidgets('mobile sheet renders a layered header + full-height sidebar', (
+    testWidgets('mobile sheet renders a single-row header + full-height sidebar', (
       tester,
     ) async {
       tester.view.physicalSize = const Size(320, 480);
@@ -908,7 +908,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
-      // 会话操作和模型选择器分层显示，窄屏不再挤成一排。
+      // 会话操作与模型选择器同处一行（窄屏靠 Expanded 收窄 chip，不再折行）。
       expect(
         find.byKey(const ValueKey('ai-mobile-sheet-header')),
         findsOneWidget,

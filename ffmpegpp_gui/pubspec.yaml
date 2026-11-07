@@ -51,6 +51,12 @@ dependency_overrides:
   # 本地 vendor：修复上游 u_size 未写入导致的 shader 全 NaN（无 3D/玻璃失效）
   oc_liquid_glass:
     path: third_party/oc_liquid_glass
+  # 本地 vendor：上游 0.2.0-dev.4 的 shader 无法产出合法 SkSL，导致 Windows/Linux
+  # 构建在 flutter_assemble 阶段失败（flutter/flutter#182400）。上游 1.0.0-dev.2
+  # 是 API 全换的重写版，liquid_glass_tab_bar 升不上去，只能就地修补。
+  # 补丁清单与复验方法见 third_party/liquid_glass_renderer/VENDOR.md
+  liquid_glass_renderer:
+    path: third_party/liquid_glass_renderer
 
 dev_dependencies:
   flutter_test:

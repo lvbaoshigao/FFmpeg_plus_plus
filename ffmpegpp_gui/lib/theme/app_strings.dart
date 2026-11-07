@@ -232,7 +232,6 @@ class AppStrings {
 
   // ── MCP / AI ──
   String get mcpTitle => lang == 'zh' ? 'MCP / AI' : 'MCP / AI';
-  String get mcpEnable => lang == 'zh' ? '启用 MCP 服务' : 'Enable MCP Server';
   String get mcpPort => lang == 'zh' ? '端口' : 'Port';
   String get aiApiKey => lang == 'zh' ? 'API Key' : 'API Key';
   String get aiApiUrl => lang == 'zh' ? 'API 地址' : 'API URL';
@@ -242,10 +241,7 @@ class AppStrings {
   String get aiListModels => lang == 'zh' ? '获取模型列表' : 'List Models';
   String get aiChatTitle => lang == 'zh' ? 'AI 助手' : 'AI Assistant';
   String get aiChatHint => lang == 'zh' ? '描述你想对媒体文件做的处理...' : 'Describe what processing you want...';
-  String get aiSettings => lang == 'zh' ? 'AI 设置' : 'AI Settings';
   String get aiNotConfigured => lang == 'zh' ? '请先在设置中配置 AI API Key' : 'Please configure AI API Key in Settings first';
-  String get aiEnable => lang == 'zh' ? '启用 AI 助手' : 'Enable AI Assistant';
-  String get aiMoreOptions => lang == 'zh' ? '更多选项' : 'More Options';
   String get aiReadAccess => lang == 'zh' ? '读取权限' : 'Read Access';
   String get aiReadAccessDesc => lang == 'zh' ? '允许 AI 读取文件信息和目录' : 'Allow AI to read files and directories';
   String get aiWriteAccess => lang == 'zh' ? '写入权限' : 'Write Access';
@@ -312,8 +308,6 @@ class AppStrings {
   String get aiDisabledStatus => lang == 'zh' ? '已停用' : 'Disabled';
   String aiModelCount(int n) =>
       lang == 'zh' ? '$n 个模型' : '$n ${n == 1 ? 'model' : 'models'}';
-  String aiProviderCount(int n) =>
-      lang == 'zh' ? '$n 个提供商' : '$n ${n == 1 ? 'provider' : 'providers'}';
   String get aiShowAll => lang == 'zh' ? '查看全部' : 'Show all';
   String get aiNoModels => lang == 'zh' ? '未添加模型' : 'No models yet';
   String get aiNoProvidersHint => lang == 'zh'

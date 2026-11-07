@@ -15,7 +15,10 @@ import '../services/android_platform.dart';
 import '../services/backend_client.dart';
 import '../services/config_service.dart';
 import '../services/ffmpeg_installer.dart';
+// ColorOS 流体云进度卡（设置→任务→通知，见 ColorOsFluidCloud.kt）
+import '../services/fluid_cloud_progress.dart';
 import '../services/graph_executor.dart';
+import '../services/island_progress.dart';
 import '../services/native_process.dart';
 
 class AppState extends ChangeNotifier {
@@ -134,6 +137,19 @@ class AppState extends ChangeNotifier {
   /// 任务列表内容变化后调用：版本号 +1 并通知 UI。
   void _tasksNotify() {
     _tasksVersion++;
+    // ColorOS 流体云进度卡：队列进入空闲（完成/失败/取消的状态落盘都汇聚
+    // 到这里）时销卡。开关关闭时整段 O(1) 短路。
+    if (config.fluidCloudProgress) {
+      FluidCloudProgress.syncQueueIdle(
+        _tasks.any((t) => t.status == TaskStatus.processing),
+      );
+    }
+    // 小米「超级岛」进度卡：同上，队列空闲时销掉岛上的进度通知。
+    if (config.islandProgress) {
+      IslandProgress.syncQueueIdle(
+        _tasks.any((t) => t.status == TaskStatus.processing),
+      );
+    }
     notifyListeners();
   }
 
@@ -189,6 +205,32 @@ class AppState extends ChangeNotifier {
     if (changed) {
       _tasksVersion++;
       _safeNotify(); // [FIX S-6] dispose 后短路
+      // ColorOS 流体云进度卡：把仍在 processing 的任务进度推给原生
+      // （开关关闭 / 非 Android / 未达节流阈值时服务内 O(1) 短路）。
+      if (config.fluidCloudProgress) {
+        for (final taskId in pending.keys) {
+          final i = _tasks.indexWhere((t) => t.id == taskId);
+          if (i >= 0 && _tasks[i].status == TaskStatus.processing) {
+            FluidCloudProgress.reportProgress(
+              _tasks[i].filename,
+              _tasks[i].progress,
+            );
+          }
+        }
+      }
+      // 小米「超级岛」进度卡：同上，按各自开关独立生效（设置项按能力条件
+      // 显隐，理论上不会同时开启，两条链路互不影响）。
+      if (config.islandProgress) {
+        for (final taskId in pending.keys) {
+          final i = _tasks.indexWhere((t) => t.id == taskId);
+          if (i >= 0 && _tasks[i].status == TaskStatus.processing) {
+            IslandProgress.reportProgress(
+              _tasks[i].filename,
+              _tasks[i].progress,
+            );
+          }
+        }
+      }
     }
   }
 

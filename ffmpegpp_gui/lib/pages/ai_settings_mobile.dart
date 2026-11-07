@@ -511,40 +511,64 @@ class MobileAiProvidersPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = AppStrings.of(state.config.language);
     final desktop = !_useMobileAiLayout(context);
+    // 移动端沉浸式骨架：药丸顶栏浮在列表上，条目可滑到顶栏底下
+    // （列表顶部留白见 _MobileAiSettingsView 内的 insetOf）。
+    // 桌面端保持原 Column + _DesktopProviderHeader 布局。
+    //
+    // ⚠️ 沉浸分支不套 SafeArea：MobileSubPageTopBar 自己处理状态栏
+    // （safeTop + barInsetTop），insetOf 与顶栏读同一个 padding.top，两边
+    // 口径一致；若把沉浸分支放进 SafeArea 再从外面取 insetOf，会多算一条
+    // 状态栏（见 ImmersiveTopBar.insetOf 注释）。
     final Widget page = Scaffold(
       backgroundColor: Colors.transparent,
-      body: SafeArea(
-        bottom: false,
-        child: Column(
-          children: [
-            if (desktop)
-              _DesktopProviderHeader(
-                title: s.aiProviders,
-                subtitle: s.aiProvidersSubtitle,
-                onBack: () => Navigator.of(context).maybePop(),
-              )
-            else
-              MobileSubPageTopBar(
+      body: desktop
+          ? SafeArea(
+              bottom: false,
+              child: Column(
+                children: [
+                  _DesktopProviderHeader(
+                    title: s.aiProviders,
+                    subtitle: s.aiProvidersSubtitle,
+                    onBack: () => Navigator.of(context).maybePop(),
+                  ),
+                  Expanded(
+                    // 移动端不在这里套滚动：_MobileAiSettingsView 自己返回
+                    // Stack(ListView + 底部悬浮搜索药丸)，这样药丸才能真正贴在屏幕
+                    // 角落，而不是当成列表子项被一起滚走。
+                    // PC 端保持原样（一整列卡片，由外层统一滚动）。
+                    //
+                    // ⚠️ 判定条件必须与 _MobileAiSettingsView.build 里的分支**逐字一致**
+                    // （`!isMobilePlatform && width >= 900`）。页面层的 desktop 走的是
+                    // `_useMobileAiLayout`（阈值 700），两者在 700~899 宽的桌面窗口上会
+                    // 分叉：那时视图内部走移动端布局，外层若不给滚动，一列卡片就会直接
+                    // 溢出（而不是可滚动）。
+                    child: (!isMobilePlatform &&
+                            MediaQuery.sizeOf(context).width >= 900)
+                        ? SingleChildScrollView(
+                            child: Center(
+                              child: ConstrainedBox(
+                                // 与 PC 设置页 / AI 总览仪表盘同一宽度上限，避免宽屏下
+                                // 页面像「手机版放大」一样被拉满。
+                                constraints: const BoxConstraints(maxWidth: 1180),
+                                child: _MobileAiSettingsView(state: state),
+                              ),
+                            ),
+                          )
+                        : _MobileAiSettingsView(state: state),
+                  ),
+                ],
+              ),
+            )
+          : ImmersiveTopBar(
+              bar: MobileSubPageTopBar(
                 title: Text(s.aiProviders),
                 onBack: () => Navigator.of(context).maybePop(),
               ),
-            Expanded(
-              child: SingleChildScrollView(
-                child: Center(
-                  child: ConstrainedBox(
-                    // 与 PC 设置页 / AI 总览仪表盘同一宽度上限，避免宽屏下
-                    // 页面像「手机版放大」一样被拉满。
-                    constraints: BoxConstraints(
-                      maxWidth: desktop ? 1180 : double.infinity,
-                    ),
-                    child: _MobileAiSettingsView(state: state),
-                  ),
-                ),
+              child: _MobileAiSettingsView(
+                state: state,
+                topInset: ImmersiveTopBar.insetOf(context) + 4,
               ),
             ),
-          ],
-        ),
-      ),
     );
     // 壁纸 → WindowChrome（Linux 36px 玻璃 CSD）→ Scaffold；非 Linux no-op。
     return withWallpaper(context, WindowChrome(child: page));
@@ -723,7 +747,12 @@ class _AiProviderEntry extends StatelessWidget {
 
 class _MobileAiSettingsView extends StatefulWidget {
   final AppState state;
-  const _MobileAiSettingsView({required this.state});
+
+  /// 沉浸式顶栏预留高度（含状态栏）：移动端条目要能滑到药丸顶栏底下，
+  /// 列表顶部得先让出这一截（否则首屏第一张卡被药丸压住）。
+  /// 桌面 / 无沉浸布局传 0（默认）。
+  final double topInset;
+  const _MobileAiSettingsView({required this.state, this.topInset = 0});
 
   @override
   State<_MobileAiSettingsView> createState() => _MobileAiSettingsViewState();
@@ -1038,10 +1067,10 @@ class _MobileAiSettingsViewState extends State<_MobileAiSettingsView> {
       );
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        // 服务卡：进入搜索态后收起，把纵向空间让给结果（搜索态没有标题区）。
+    // 内容项先收进一个局部列表：滚动主体与底部悬浮药丸两个位置都要用到它，
+    // 这样也不必把整段 children 再缩进一层。
+    final List<Widget> content = <Widget>[
+      // 服务卡：进入搜索态后收起，把纵向空间让给结果（搜索态没有标题区）。
         AnimatedSize(
           duration: reduceMotion
               ? Duration.zero
@@ -1140,9 +1169,47 @@ class _MobileAiSettingsViewState extends State<_MobileAiSettingsView> {
               onTap: _openProvider,
             ),
           ),
-        const SizedBox(height: 12),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
+      const SizedBox(height: 12),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: _AiAddProviderCard(
+          cardStyle: cfg.cardStyle,
+          s: s,
+          scheme: scheme,
+          onTap: _openNewProvider,
+        ),
+      ),
+    ];
+
+    // 搜索药丸改成**真正悬浮**在底部：内容区自己滚动，药丸用 Stack + Positioned
+    // 贴左下 / 右下角（方向跟「底部动作按钮位置」设置一致），不随列表滚走。
+    //
+    // 旧实现把药丸当成列表里的一个子项（夹在提供商列表与「添加提供商」卡之间）：
+    // 一滑就滚出屏幕，收起态只是颗莫名卡在页面中段的圆钮，与「底部悬浮搜索」的
+    // 意图完全不符。为此外层 MobileAiProvidersPage 在移动端不再套
+    // SingleChildScrollView —— 滚动交给这里的 ListView。
+    final double safeBottom = MediaQuery.paddingOf(context).bottom;
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: ListView(
+            // 壁纸开窗卡所在列表必须关闭 repaint boundary：开窗 painter 要按当前
+            // 变换每帧重算，不能被子项缓存平移。
+            addRepaintBoundaries: false,
+            // 底部预留药丸高度（48）+ 上下外边距，最后一张卡不会被盖住。
+            // 顶部预留沉浸顶栏高度（无沉浸布局时为 0），条目可滑到药丸底下。
+            padding: EdgeInsets.only(
+              top: widget.topInset,
+              bottom: 84 + safeBottom,
+            ),
+            children: content,
+          ),
+        ),
+        Positioned(
+          left: 12,
+          right: 12,
+          bottom: 16 + safeBottom,
+          // 收起态是 48 的圆钮（内部 Align 按 side 贴左/右），展开态占满整行。
           child: _AiSearchPill(
             pillStyle: cfg.pillStyle,
             controller: _searchCtrl,
@@ -1158,17 +1225,6 @@ class _MobileAiSettingsViewState extends State<_MobileAiSettingsView> {
             forceExpanded: searchingMode,
           ),
         ),
-        const SizedBox(height: 10),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: _AiAddProviderCard(
-            cardStyle: cfg.cardStyle,
-            s: s,
-            scheme: scheme,
-            onTap: _openNewProvider,
-          ),
-        ),
-        const SizedBox(height: 28),
       ],
     );
   }
@@ -3283,93 +3339,125 @@ class _MobileAiProviderDetailPageState
       (st) => st.config.mobileBottomActionSide,
     );
 
-    final Widget page = Scaffold(
-      backgroundColor: Colors.transparent,
+    // 移动端沉浸式骨架：药丸顶栏浮在内容上（条目可滑到顶栏底下，滚动体
+    // 顶部留白见 _buildBasicTab / _buildModelsTab 的 insetOf）；底部「基本/
+    // 模型」切换栏照旧贴底（AppLiquidTabBar 自带 bottomGap + 安全区）。
+    // 桌面端保持原 Column + _DesktopProviderHeader 布局。
+    //
+    // ⚠️ 沉浸分支不套 SafeArea：MobileSubPageTopBar 自己处理状态栏
+    // （safeTop + barInsetTop），insetOf 与顶栏读同一个 padding.top，两边
+    // 口径一致；若把沉浸分支放进 SafeArea 再从外面取 insetOf，会多算一条
+    // 状态栏（见 ImmersiveTopBar.insetOf 注释）。
+    final Widget body;
+    if (useMobileLayout) {
+      body = ImmersiveTopBar(
+        bar: MobileSubPageTopBar(
+          title: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          onBack: () => Navigator.of(context).maybePop(),
+          inlineActionLimit: 3,
+          actions: [
+            if (!_isNew)
+              MobileGlassPillAction(
+                key: const ValueKey('provider_delete'),
+                icon: Icons.delete_outline,
+                tooltip: s.remove,
+                color: scheme.error,
+                onTap: _delete,
+              ),
+            if (_tab == 1)
+              MobileGlassPillAction(
+                key: const ValueKey('provider_model_search'),
+                icon: Icons.search,
+                tooltip: s.isZh ? '搜索模型' : 'Search models',
+                color: scheme.onSurface,
+                onTap: () => setState(() {
+                  _showModelSearch = !_showModelSearch;
+                  if (!_showModelSearch) _modelSearchCtrl.clear();
+                }),
+              ),
+            MobileGlassPillAction(
+              icon: Icons.check_rounded,
+              tooltip: s.save,
+              color: scheme.primary,
+              onTap: _save,
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            Expanded(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    maxWidth: double.infinity,
+                  ),
+                  child: _buildProviderTabContent(
+                    context,
+                    state,
+                    s,
+                    scheme,
+                  ),
+                ),
+              ),
+            ),
+            _buildBottomTabBar(context, state, scheme, s, bottomActionSide),
+          ],
+        ),
+      );
+    } else {
       // bottom:false：底部菜单栏 AppLiquidTabBar 自带 bottomGap + 安全区，
       // 外层 SafeArea 再吃掉安全区会变成双倍底部留白。
-      body: SafeArea(
+      body = SafeArea(
         bottom: false,
         child: Column(
           children: [
-            if (useMobileLayout)
-              MobileSubPageTopBar(
-                title: Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+            _DesktopProviderHeader(
+              title: title,
+              subtitle: _isNew
+                  ? (s.isZh ? '新建提供商配置' : 'New provider configuration')
+                  : '${_draft.provider.isEmpty ? s.aiProviderDetail : _draft.provider}'
+                        ' · ${s.aiModelCount(_modelCount(_draft))}',
+              onBack: () => Navigator.of(context).maybePop(),
+              actions: [
+                if (_tab == 1)
+                  IconButton(
+                    key: const ValueKey('provider_model_search'),
+                    tooltip: s.isZh ? '搜索模型' : 'Search models',
+                    onPressed: () => setState(() {
+                      _showModelSearch = !_showModelSearch;
+                      if (!_showModelSearch) _modelSearchCtrl.clear();
+                    }),
+                    icon: const Icon(Icons.search),
+                  ),
+                if (!_isNew)
+                  IconButton(
+                    key: const ValueKey('provider_delete'),
+                    tooltip: s.remove,
+                    onPressed: _delete,
+                    icon: Icon(Icons.delete_outline, color: scheme.error),
+                  ),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  onPressed: _save,
+                  icon: const Icon(Icons.save_outlined, size: 18),
+                  label: Text(s.save),
                 ),
-                onBack: () => Navigator.of(context).maybePop(),
-                inlineActionLimit: 3,
-                actions: [
-                  if (!_isNew)
-                    MobileGlassPillAction(
-                      key: const ValueKey('provider_delete'),
-                      icon: Icons.delete_outline,
-                      tooltip: s.remove,
-                      color: scheme.error,
-                      onTap: _delete,
-                    ),
-                  if (_tab == 1)
-                    MobileGlassPillAction(
-                      key: const ValueKey('provider_model_search'),
-                      icon: Icons.search,
-                      tooltip: s.isZh ? '搜索模型' : 'Search models',
-                      color: scheme.onSurface,
-                      onTap: () => setState(() {
-                        _showModelSearch = !_showModelSearch;
-                        if (!_showModelSearch) _modelSearchCtrl.clear();
-                      }),
-                    ),
-                  MobileGlassPillAction(
-                    icon: Icons.check_rounded,
-                    tooltip: s.save,
-                    color: scheme.primary,
-                    onTap: _save,
-                  ),
-                ],
-              )
-            else
-              _DesktopProviderHeader(
-                title: title,
-                subtitle: _isNew
-                    ? (s.isZh ? '新建提供商配置' : 'New provider configuration')
-                    : '${_draft.provider.isEmpty ? s.aiProviderDetail : _draft.provider}'
-                          ' · ${s.aiModelCount(_modelCount(_draft))}',
-                onBack: () => Navigator.of(context).maybePop(),
-                actions: [
-                  if (_tab == 1)
-                    IconButton(
-                      key: const ValueKey('provider_model_search'),
-                      tooltip: s.isZh ? '搜索模型' : 'Search models',
-                      onPressed: () => setState(() {
-                        _showModelSearch = !_showModelSearch;
-                        if (!_showModelSearch) _modelSearchCtrl.clear();
-                      }),
-                      icon: const Icon(Icons.search),
-                    ),
-                  if (!_isNew)
-                    IconButton(
-                      key: const ValueKey('provider_delete'),
-                      tooltip: s.remove,
-                      onPressed: _delete,
-                      icon: Icon(Icons.delete_outline, color: scheme.error),
-                    ),
-                  const SizedBox(width: 8),
-                  FilledButton.icon(
-                    onPressed: _save,
-                    icon: const Icon(Icons.save_outlined, size: 18),
-                    label: Text(s.save),
-                  ),
-                  const SizedBox(width: 16),
-                ],
-              ),
+                const SizedBox(width: 16),
+              ],
+            ),
             Expanded(
-              child: useMobileLayout
-                  ? Center(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildDesktopProviderSidebar(context, state, s, scheme),
+                  Expanded(
+                    child: Center(
                       child: ConstrainedBox(
-                        constraints: const BoxConstraints(
-                          maxWidth: double.infinity,
-                        ),
+                        constraints: const BoxConstraints(maxWidth: 1180),
                         child: _buildProviderTabContent(
                           context,
                           state,
@@ -3377,32 +3465,18 @@ class _MobileAiProviderDetailPageState
                           scheme,
                         ),
                       ),
-                    )
-                  : Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _buildDesktopProviderSidebar(context, state, s, scheme),
-                        Expanded(
-                          child: Center(
-                            child: ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 1180),
-                              child: _buildProviderTabContent(
-                                context,
-                                state,
-                                s,
-                                scheme,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
                     ),
+                  ),
+                ],
+              ),
             ),
-            if (useMobileLayout)
-              _buildBottomTabBar(context, state, scheme, s, bottomActionSide),
           ],
         ),
-      ),
+      );
+    }
+    final Widget page = Scaffold(
+      backgroundColor: Colors.transparent,
+      body: body,
     );
     // 壁纸 → WindowChrome（Linux 36px 玻璃 CSD）→ Scaffold：WindowChrome 必须
     // 嵌在 withWallpaper 的内层，标题栏玻璃才能采样到壁纸；非 Linux 平台 no-op。
@@ -3777,9 +3851,13 @@ class _MobileAiProviderDetailPageState
       // 旧值 12+12=24 让本页卡片比设置页窄一圈（用户反馈「卡片宽度参考设置页」）。
       // 上 12 / 下 48 与设置二级页完全一致：顶部与药丸之间留出呼吸区，
       // 底部不会在菜单栏处被「一刀切」（用户反馈的「上下都截断」）。
+      // 移动端顶部再加沉浸顶栏高度（insetOf）：条目可滑到药丸底下。
       padding: desktop
           ? const EdgeInsets.fromLTRB(16, 8, 16, 24)
-          : const EdgeInsets.only(top: 12, bottom: 48),
+          : EdgeInsets.only(
+              top: ImmersiveTopBar.insetOf(context) + 12,
+              bottom: 48,
+            ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -4187,9 +4265,15 @@ class _MobileAiProviderDetailPageState
       // 模型行本身就是通栏 AppCard（没有自带左右外边距），所以移动端这里
       // 直接给 12；基本页的卡片自带 horizontalInset，那边给 0。两边最终宽度
       // 都是「屏宽 − 24」，与设置页一致。
+      // 移动端顶部再加沉浸顶栏高度（insetOf）：条目可滑到药丸底下。
       padding: desktop
           ? const EdgeInsets.fromLTRB(16, 8, 16, 24)
-          : const EdgeInsets.fromLTRB(12, 12, 12, 48),
+          : EdgeInsets.fromLTRB(
+              12,
+              ImmersiveTopBar.insetOf(context) + 12,
+              12,
+              48,
+            ),
       itemCount: itemCount,
       addAutomaticKeepAlives: false,
       itemBuilder: (_, index) {
@@ -4904,22 +4988,27 @@ class _MobileMultiKeyPageState extends State<MobileMultiKeyPage> {
       context.select<AppState, String>((st) => st.config.language),
     );
     final filled = _keys.where((k) => k.isNotEmpty).length;
+    // 移动端沉浸：药丸顶栏浮在列表上，条目可滑到顶栏底下（列表顶部留白
+    // 含 insetOf）。本页只有移动布局，无需桌面分支。
+    //
+    // ⚠️ 不套 SafeArea：MobileSubPageTopBar 自己处理状态栏，insetOf 与
+    // 顶栏读同一个 padding.top（见 ImmersiveTopBar.insetOf 注释）。
     final Widget page = Scaffold(
       backgroundColor: Colors.transparent,
-      body: SafeArea(
-        child: Column(
-          children: [
-            MobileSubPageTopBar(
-              title: Text(
-                s.isZh ? 'API Keys 管理（$filled）' : 'API Keys ($filled)',
-              ),
-              onBack: () => Navigator.of(context).maybePop(),
-            ),
-            Expanded(
-              child: ListView(
-                // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
-                addRepaintBoundaries: false,
-                padding: MobileUi.subListPadding(top: 4, bottom: 16),
+      body: ImmersiveTopBar(
+        bar: MobileSubPageTopBar(
+          title: Text(
+            s.isZh ? 'API Keys 管理（$filled）' : 'API Keys ($filled)',
+          ),
+          onBack: () => Navigator.of(context).maybePop(),
+        ),
+        child: ListView(
+          // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
+          addRepaintBoundaries: false,
+          padding: MobileUi.subListPadding(
+            top: ImmersiveTopBar.insetOf(context) + 4,
+            bottom: 16,
+          ),
                 children: [
                   _AiSectionCard(
                     cardStyle: context.read<AppState>().config.cardStyle,
@@ -4984,9 +5073,6 @@ class _MobileMultiKeyPageState extends State<MobileMultiKeyPage> {
                   ),
                 ],
               ),
-            ),
-          ],
-        ),
       ),
     );
     // 壁纸 → WindowChrome（Linux 36px 玻璃 CSD）→ Scaffold；非 Linux no-op。
@@ -5003,6 +5089,15 @@ class _MobileMultiKeyPageState extends State<MobileMultiKeyPage> {
 class MobileAiAdvancedPage extends StatelessWidget {
   const MobileAiAdvancedPage({super.key});
 
+  /// 页内分区标题（分组头）：复用设置主界面的 [SettingsSectionHeading]，只补一层
+  /// 12px 横向内边距，让标题外缘与卡片外缘对齐（卡片自身也内缩 12，见
+  /// [_AiSectionCard.horizontalInset]）。分组头的内边距本身是 4/8，因此标题文字会比
+  /// 卡片内文字再左移 12px —— 这正是设置主界面的既定层级，不另造一套。
+  Widget _group(String title, IconData icon) => Padding(
+    padding: const EdgeInsets.fromLTRB(12, 2, 12, 2),
+    child: SettingsSectionHeading(title: title, icon: icon),
+  );
+
   @override
   Widget build(BuildContext context) {
     // 壁纸 + 窗口 chrome 放在 Consumer **外面**：旧写法把 withWallpaper 放在
@@ -5018,55 +5113,50 @@ class MobileAiAdvancedPage extends StatelessWidget {
             final cfg = state.config;
             final s = AppStrings.of(cfg.language);
             final scheme = Theme.of(context).colorScheme;
-            final clr = scheme.onSurface;
             final isDark = Theme.of(context).brightness == Brightness.dark;
             final mobileLayout = _useMobileAiLayout(context);
 
-            final Widget page = Scaffold(
-              backgroundColor: Colors.transparent,
-              body: SafeArea(
-                child: Column(
-                  children: [
-                    if (mobileLayout)
-                      MobileSubPageTopBar(
-                        title: Text(s.aiAdvanced),
-                        onBack: () => Navigator.of(context).maybePop(),
-                      )
-                    else
-                      GlassTopBar(
-                        title: Row(
-                          children: [
-                            IconButton(
-                              tooltip: MaterialLocalizations.of(
-                                context,
-                              ).backButtonTooltip,
-                              onPressed: () => Navigator.of(context).maybePop(),
-                              icon: const Icon(Icons.arrow_back),
-                            ),
-                            Text(s.aiAdvanced),
-                          ],
-                        ),
-                      ),
-                    Expanded(
-                      child: Center(
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxWidth: mobileLayout ? double.infinity : 1180,
-                          ),
-                          child: ListView(
+            // 内容体抽成局部变量：移动端「沉浸式」骨架（列表浮在顶栏下、条目可
+            // 以滑到药丸底下）与桌面端通栏 Column 布局共用同一份列表。
+            final Widget content = Center(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: mobileLayout ? double.infinity : 1180,
+                ),
+                child: ListView(
                             // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
                             addRepaintBoundaries: false,
                             padding: mobileLayout
-                                ? MobileUi.subListPadding(top: 4, bottom: 16)
+                                ? EdgeInsets.fromLTRB(
+                                    MobileUi.subPagePaddingH,
+                                    // 沉浸式顶栏：预留顶栏（含状态栏）高度，
+                                    // 首屏第一张卡落在药丸下沿，往下滑就钻到药丸底下。
+                                    ImmersiveTopBar.insetOf(context) + 4,
+                                    MobileUi.subPagePaddingH,
+                                    16,
+                                  )
                                 : const EdgeInsets.fromLTRB(16, 12, 16, 24),
                             children: [
-                              // ── 生成（图生成模式 + 思考过程） ──
-                              // 原先这张卡把 图生成/思考/自动命名/标题提示词 全塞在一起，
-                              // 现按关注点拆成「生成」「命名」两张卡，层级更清晰。
+                              // 整页按「生成 / 会话 / 提示词」三个关注点分组。
+                              //
+                              // 旧版本是四张同权重的卡直接平铺：图生成模式 + 思考过程
+                              // 挤一张、自动命名 + 标题提示词挤一张、会话模式 + 跳过项
+                              // 挤一张，全页既没有分区标题，也没有「哪些项互相关联」的
+                              // 暗示 —— 读过去就是一堆开关、下拉、输入框混在一起。
+                              // 现在：
+                              //  * 顶部加分区标题（与设置主界面同一套 SettingsSectionHeading）；
+                              //  * 「会话模式」卡里混着的 5 个跳过项 chip 拆成独立卡 ——
+                              //    它只影响询问模式，和「模式本身」不是同一件事；
+                              //  * 卡标题不再重复卡内下拉的 label（旧版卡标题和下拉文字
+                              //    都是「会话模式」，同一句话连着出现两次）。
+                              _group(s.isZh ? '生成' : 'Generation', Icons.auto_fix_high_outlined),
                               _AiSectionCard(
                                 cardStyle: cfg.cardStyle,
                                 icon: Icons.auto_fix_high_outlined,
-                                title: s.isZh ? '生成' : 'Generation',
+                                title: s.isZh ? '图生成' : 'Graph Generation',
+                                subtitle: s.isZh
+                                    ? 'AI 改图落到哪里：整张重画，还是只改选中的节点'
+                                    : 'Where AI edits land: a new graph, or the selected nodes only',
                                 children: [
                                   // 图生成模式改为下拉菜单（窄屏下自动换成「标签在上」）
                                   _AiDropdownRow(
@@ -5096,7 +5186,8 @@ class MobileAiAdvancedPage extends StatelessWidget {
                                   ),
                                 ],
                               ),
-                              const SizedBox(height: 12),
+                              const SizedBox(height: 18),
+                              _group(s.isZh ? '会话' : 'Conversation', Icons.forum_outlined),
                               // ── 会话命名 ──
                               _AiSectionCard(
                                 cardStyle: cfg.cardStyle,
@@ -5141,14 +5232,18 @@ class MobileAiAdvancedPage extends StatelessWidget {
                                 ],
                               ),
                               const SizedBox(height: 12),
-                              // ── 会话模式 + 询问跳过 ──
+                              // ── 会话模式 ──
+                              // 原来那句 10px 说明放在卡内、紧贴下拉下面，字号比全页
+                              // 正文小两档、颜色又是最浅的 outline —— 既不像正文也不像
+                              // 注释。抬到卡头字幕位（subtitle），与其它卡的说明同一层。
                               _AiSectionCard(
                                 cardStyle: cfg.cardStyle,
                                 icon: Icons.forum_outlined,
                                 title: s.aiApproveModeLabel,
+                                subtitle: s.aiApproveModeDesc,
                                 children: [
                                   _AiDropdownRow(
-                                    label: s.aiApproveModeLabel,
+                                    label: s.isZh ? '默认行为' : 'Default behavior',
                                     value: cfg.aiApproveMode,
                                     entries: [
                                       (
@@ -5166,20 +5261,18 @@ class MobileAiAdvancedPage extends StatelessWidget {
                                       (c) => c..aiApproveMode = v,
                                     ),
                                   ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    s.aiApproveModeDesc,
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      color: scheme.outline,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Text(
-                                    s.aiAskSkipLabel,
-                                    style: TextStyle(fontSize: 12, color: clr),
-                                  ),
-                                  const SizedBox(height: 6),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              // ── 跳过询问（原「会话模式」卡里的 chip 组） ──
+                              _AiSectionCard(
+                                cardStyle: cfg.cardStyle,
+                                icon: Icons.playlist_add_check_circle_outlined,
+                                title: s.aiAskSkipLabel,
+                                subtitle: s.isZh
+                                    ? '仅在「询问」模式下生效：勾选的操作 AI 直接执行，不再弹确认'
+                                    : 'Ask mode only: checked actions run without confirmation',
+                                children: [
                                   Wrap(
                                     spacing: 6,
                                     runSpacing: 6,
@@ -5209,12 +5302,16 @@ class MobileAiAdvancedPage extends StatelessWidget {
                                   ),
                                 ],
                               ),
-                              const SizedBox(height: 12),
+                              const SizedBox(height: 18),
+                              _group(s.isZh ? '提示词' : 'Prompt', Icons.article_outlined),
                               // ── 自定义系统提示词 ──
                               _AiSectionCard(
                                 cardStyle: cfg.cardStyle,
                                 icon: Icons.article_outlined,
                                 title: s.aiCustomPrompt,
+                                subtitle: s.isZh
+                                    ? '追加在内置提示词之前，留空则只用内置提示词'
+                                    : 'Prepended to the built-in prompt; leave empty to use the default only',
                                 children: [
                                   _AiField(
                                     value: cfg.aiSystemPrompt,
@@ -5231,15 +5328,46 @@ class MobileAiAdvancedPage extends StatelessWidget {
                             ],
                           ),
                         ),
+                      );
+
+          // 顶栏沉浸：移动端列表铺满整屏、顶栏浮在最上层（条目可滑到药丸底下，
+          // 透过玻璃显示）；桌面端仍是「通栏顶栏 + 内容区」的 Column。
+          final Widget page = Scaffold(
+            backgroundColor: Colors.transparent,
+            body: SafeArea(
+              child: mobileLayout
+                  ? ImmersiveTopBar(
+                      bar: MobileSubPageTopBar(
+                        title: Text(s.aiAdvanced),
+                        onBack: () => Navigator.of(context).maybePop(),
                       ),
+                      child: content,
+                    )
+                  : Column(
+                      children: [
+                        GlassTopBar(
+                          title: Row(
+                            children: [
+                              IconButton(
+                                tooltip: MaterialLocalizations.of(
+                                  context,
+                                ).backButtonTooltip,
+                                onPressed: () =>
+                                    Navigator.of(context).maybePop(),
+                                icon: const Icon(Icons.arrow_back),
+                              ),
+                              Text(s.aiAdvanced),
+                            ],
+                          ),
+                        ),
+                        Expanded(child: content),
+                      ],
                     ),
-                  ],
-                ),
-              ),
-            );
-            // 壁纸与 WindowChrome 已提到外层（见 build 开头）。
-            return page;
-          },
+            ),
+          );
+          // 壁纸与 WindowChrome 已提到外层（见 build 开头）。
+          return page;
+        },
         ),
       ),
     );

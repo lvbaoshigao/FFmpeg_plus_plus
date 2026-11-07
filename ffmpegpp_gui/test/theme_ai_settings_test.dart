@@ -341,8 +341,12 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('图生成模式'), findsOneWidget);
-    // 「会话模式」出现 2 次：卡片标题 + 下拉行标签共用 aiApproveModeLabel
-    expect(find.text('会话模式'), findsNWidgets(2));
+    // 卡标题与卡内下拉 label 不再重复：卡片标题是「会话模式」，下拉行标签
+    // 改成「默认行为」，因此「会话模式」全页只出现 1 次。
+    expect(find.text('会话模式'), findsOneWidget);
+    expect(find.text('默认行为'), findsOneWidget);
+    // 跳过项已从「会话模式」卡拆成独立卡（只影响询问模式）。
+    expect(find.text('询问模式下无需确认的操作'), findsOneWidget);
     expect(find.text('自定义系统提示词'), findsOneWidget);
     // 让配置落盘防抖定时器跑完，避免 Timer pending 断言
     await tester.pump(const Duration(milliseconds: 600));

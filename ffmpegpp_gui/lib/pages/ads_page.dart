@@ -65,19 +65,89 @@ class AdsPage extends StatelessWidget {
     // BackdropFilter 采样同一棵树里更早绘制的像素，若套在壁纸外层，标题栏
     // 下方没有任何已绘制内容，只会透出窗口底色。
     // 不传 title / onBack：本页自带 GlassTopBar / MobileSubPageTopBar。
+    // 内容区提取：移动端沉浸（ImmersiveTopBar，列表钻到药丸顶栏底下）与
+    // 桌面端 Column 布局共用同一棵内容树。移动端列表顶部留白必须含顶栏高度
+    // （ImmersiveTopBar.insetOf），否则首屏第一条被药丸压住。
+    final Widget content = Center(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: isMobilePlatform ? double.infinity : 960,
+        ),
+        child: kAds.isEmpty
+            ? _emptyState(context, scheme, s)
+            : ListView.separated(
+                // 开窗卡所在列表必须关：子项若被自动套上 RepaintBoundary，
+                // 滚动时会直接复用旧图层平移，卡内壁纸跟着卡走（见 app_card 的
+                // _WallpaperWindowPainter）。
+                addRepaintBoundaries: false,
+                padding: isMobilePlatform
+                    ? MobileUi.subListPadding(
+                        top: ImmersiveTopBar.insetOf(context) + 10, bottom: 24)
+                    : const EdgeInsets.fromLTRB(16, 10, 16, 24),
+                itemCount: kAds.length,
+                separatorBuilder: (_, _) =>
+                    const SizedBox(height: 10),
+                itemBuilder: (ctx, i) => AppCard(
+                  style: cardStyle,
+                  radius: 14,
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        kAds[i].title,
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: scheme.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        kAds[i].body,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: scheme.onSurfaceVariant,
+                          height: 1.4,
+                        ),
+                      ),
+                      if (kAds[i].url.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          kAds[i].url,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: scheme.primary,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+      ),
+    );
+
     return withWallpaper(
       context,
       WindowChrome(
         child: Scaffold(
           backgroundColor: Colors.transparent,
-          body: Column(
-            children: [
-              isMobilePlatform
-                  ? MobileSubPageTopBar(
-                      title: title,
-                      onBack: () => Navigator.of(context).maybePop(),
-                    )
-                  : GlassTopBar(
+          // 移动端：沉浸式浮动药丸顶栏（滚动条目从底下穿过）；
+          // 桌面端：保持 Column + GlassTopBar 不变。
+          body: isMobilePlatform
+              ? ImmersiveTopBar(
+                  bar: MobileSubPageTopBar(
+                    title: title,
+                    onBack: () => Navigator.of(context).maybePop(),
+                  ),
+                  child: content,
+                )
+              : Column(
+                  children: [
+                    GlassTopBar(
                       title: title,
                       actions: [
                         IconButton(
@@ -91,70 +161,9 @@ class AdsPage extends StatelessWidget {
                         ),
                       ],
                     ),
-              Expanded(
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxWidth: isMobilePlatform ? double.infinity : 960,
-                    ),
-                    child: kAds.isEmpty
-                        ? _emptyState(context, scheme, s)
-                        : ListView.separated(
-                            // 开窗卡所在列表必须关：子项若被自动套上 RepaintBoundary，
-                            // 滚动时会直接复用旧图层平移，卡内壁纸跟着卡走（见 app_card 的
-                            // _WallpaperWindowPainter）。
-                            addRepaintBoundaries: false,
-                            padding: isMobilePlatform
-                                ? MobileUi.subListPadding(top: 10, bottom: 24)
-                                : const EdgeInsets.fromLTRB(16, 10, 16, 24),
-                            itemCount: kAds.length,
-                            separatorBuilder: (_, _) =>
-                                const SizedBox(height: 10),
-                            itemBuilder: (ctx, i) => AppCard(
-                              style: cardStyle,
-                              radius: 14,
-                              padding: const EdgeInsets.all(14),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    kAds[i].title,
-                                    style: TextStyle(
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w700,
-                                      color: scheme.onSurface,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    kAds[i].body,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: scheme.onSurfaceVariant,
-                                      height: 1.4,
-                                    ),
-                                  ),
-                                  if (kAds[i].url.isNotEmpty) ...[
-                                    const SizedBox(height: 6),
-                                    Text(
-                                      kAds[i].url,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: scheme.primary,
-                                      ),
-                                    ),
-                                  ],
-                                ],
-                              ),
-                            ),
-                          ),
-                  ),
+                    Expanded(child: content),
+                  ],
                 ),
-              ),
-            ],
-          ),
         ),
       ),
     );

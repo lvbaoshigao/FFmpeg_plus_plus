@@ -265,8 +265,10 @@ class _CommandPageState extends State<CommandPage> {
       WindowChrome(
         child: Scaffold(
           backgroundColor: Colors.transparent,
-          body: Column(children: [
-            MobileSubPageTopBar(
+          // 移动端沉浸：药丸顶栏浮在内容上，内容整体置于底层（顶部让出
+          // 顶栏高度，见 ImmersiveTopBar），不再被顶栏截断。
+          body: ImmersiveTopBar(
+            bar: MobileSubPageTopBar(
               title: Row(mainAxisSize: MainAxisSize.min, children: [
                 Icon(Icons.terminal_outlined, size: 20, color: scheme.primary),
                 const SizedBox(width: 8),
@@ -283,19 +285,20 @@ class _CommandPageState extends State<CommandPage> {
               ],
               onBack: () => Navigator.of(context).maybePop(),
             ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: MobileUi.subPagePaddingH, vertical: 8),
-                child: Column(children: [
-                  _buildMobileInputArea(scheme, s, zh),
-                  const SizedBox(height: 10),
-                  Expanded(child: _buildMobileOutputArea(scheme, s, zh)),
-                ]),
+            child: Padding(
+              padding: EdgeInsets.only(
+                top: ImmersiveTopBar.insetOf(context) + 8,
+                left: MobileUi.subPagePaddingH,
+                right: MobileUi.subPagePaddingH,
+                bottom: 8 + MediaQuery.paddingOf(context).bottom,
               ),
+              child: Column(children: [
+                _buildMobileInputArea(scheme, s, zh),
+                const SizedBox(height: 10),
+                Expanded(child: _buildMobileOutputArea(scheme, s, zh)),
+              ]),
             ),
-            SizedBox(height: MediaQuery.paddingOf(context).bottom),
-          ]),
+          ),
         ),
       ),
     );

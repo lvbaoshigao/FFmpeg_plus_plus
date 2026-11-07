@@ -165,45 +165,64 @@ void main() {
   testWidgets('global dropdown appearance config controls glass treatment', (
     tester,
   ) async {
-    final state = AppState();
-    await state.updateConfig((config) => config..dropdownAppearance = 'frosted');
-    await tester.pumpWidget(
-      ChangeNotifierProvider<AppState>.value(
-        value: state,
-        child: MaterialApp(
-          theme: ThemeData(useMaterial3: true),
-          home: Scaffold(
-            body: Center(
-              child: SizedBox(
-                width: 260,
-                child: AppDropdown<String>(
-                  value: 'one',
-                  items: const [
-                    AppDropdownItem('one', 'One'),
-                    AppDropdownItem('two', 'Two'),
-                  ],
-                  onChanged: (_) {},
+    final theme = ThemeData(useMaterial3: true);
+    final cs = theme.colorScheme;
+
+    // 打开下拉并取出「浮层面板」那颗 Material（半径 14 是它的唯一标识）。
+    Future<Material> openPanel(String appearance) async {
+      final state = AppState();
+      await state.updateConfig((c) => c..dropdownAppearance = appearance);
+      await tester.pumpWidget(
+        ChangeNotifierProvider<AppState>.value(
+          value: state,
+          child: MaterialApp(
+            theme: theme,
+            home: Scaffold(
+              body: Center(
+                child: SizedBox(
+                  width: 260,
+                  child: AppDropdown<String>(
+                    value: 'one',
+                    items: const [
+                      AppDropdownItem('one', 'One'),
+                      AppDropdownItem('two', 'Two'),
+                    ],
+                    onChanged: (_) {},
+                  ),
                 ),
               ),
             ),
           ),
         ),
-      ),
+      );
+      await tester.tap(find.text('One'));
+      await tester.pumpAndSettle();
+      return tester.widgetList<Material>(find.byType(Material)).firstWhere(
+        (material) => material.borderRadius == BorderRadius.circular(14),
+      );
+    }
+
+    // theme：唯一一档「实心」——不模糊、不染色。
+    expect((await openPanel('theme')).color, cs.surface);
+    expect(find.byType(BackdropFilter), findsNothing);
+
+    // liquid：最通透（底色 alpha 远低于 frosted），且必然带背景模糊。
+    final liquid = await openPanel('liquid');
+    expect(find.byType(BackdropFilter), findsOneWidget);
+    expect(
+      liquid.color,
+      Color.alphaBlend(cs.primary.withAlpha(14), cs.surface.withAlpha(134)),
     );
 
-    await tester.tap(find.text('One'));
-    await tester.pumpAndSettle();
+    // frosted：主题色毛玻璃 —— 模糊 + 明显的主题色染色。
+    final frosted = await openPanel('frosted');
     expect(find.byType(BackdropFilter), findsOneWidget);
-    final theme = ThemeData(useMaterial3: true);
-    final panel = tester.widgetList<Material>(find.byType(Material)).firstWhere(
-          (material) => material.borderRadius == BorderRadius.circular(14),
-        );
     expect(
-      panel.color,
-      Color.alphaBlend(
-        theme.colorScheme.primary.withAlpha(34),
-        theme.colorScheme.surface.withAlpha(218),
-      ),
+      frosted.color,
+      Color.alphaBlend(cs.primary.withAlpha(66), cs.surface.withAlpha(212)),
     );
+
+    // 两档必须真的不一样（用户原话：「几个样式别无两样」）。
+    expect(liquid.color, isNot(frosted.color));
   });
 }

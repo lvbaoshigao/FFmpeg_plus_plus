@@ -15,6 +15,8 @@ import '../services/multi_window.dart';
 import '../theme/app_strings.dart';
 import '../theme/app_text_scale.dart';
 import '../theme/app_theme.dart';
+// 独立窗口里的条件门滑块同样走统一实现（玻璃轨道 + 彗星拖尾）
+import '../widgets/app_slider.dart';
 import '../widgets/gate_symbol_painter.dart';
 import '../widgets/node_icons.dart';
 import '../widgets/step_editors/audio_compressor_step_editor.dart';
@@ -1017,7 +1019,7 @@ Widget _buildDetachedConditionGate(
   return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
     Text(label, style: Theme.of(context).textTheme.labelMedium),
     if (gate == LogicGateType.random)
-      Slider(value: probability, min: 0, max: 100, divisions: 100,
+      AppSlider(value: probability, min: 0, max: 100, divisions: 100,
         onChanged: (value) { node.params['probability'] = value; store.pushParams(node); })
     else ...[
       TextFormField(initialValue: node.params['text'] as String? ?? '',

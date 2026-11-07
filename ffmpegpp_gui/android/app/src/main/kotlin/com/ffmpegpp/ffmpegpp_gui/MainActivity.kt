@@ -31,6 +31,66 @@ class MainActivity : FlutterActivity() {
                 when (call.method) {
                     "nativeLibraryDir" -> result.success(applicationInfo.nativeLibraryDir)
                     "wallpaperColors" -> result.success(wallpaperColors())
+                    // ── 小米澎湃 OS 超级岛（详见 HyperOsIsland.kt）──
+                    // islandStatus：返回 islandSupported / focusProtocolVersion /
+                    //               hasFocusPermission，供 Dart 显示「已接入超级岛」。
+                    // notifyTaskDone：任务完成通知；OS3 且有权限时自动上岛。
+                    "islandStatus" -> result.success(HyperOsIsland.status(applicationContext))
+                    // ── ColorOS 流体云（详见 ColorOsFluidCloud.kt）──
+                    // fluidCloudStatus：返回 colorOs / colorOsVersion /
+                    //                   intentShareAvailable，供 Dart 显示接入状态。
+                    "fluidCloudStatus" ->
+                        result.success(ColorOsFluidCloud.status(applicationContext))
+                    // fluidCloudProgress / fluidCloudEnd：转码进度卡（Dart 侧
+                    // services/fluid_cloud_progress.dart 节流后调用）。
+                    "fluidCloudProgress" -> {
+                        val filename = call.argument<String>("filename") ?: ""
+                        val progress = (call.argument<Number>("progress") ?: 0).toInt()
+                        result.success(
+                            ColorOsFluidCloud.postProgress(applicationContext, filename, progress)
+                        )
+                    }
+                    "fluidCloudEnd" ->
+                        result.success(ColorOsFluidCloud.endProgress(applicationContext))
+                    // islandProgress / islandEnd：超级岛进度卡（Dart 侧
+                    // services/island_progress.dart 节流后调用）。
+                    "islandProgress" -> {
+                        val filename = call.argument<String>("filename") ?: ""
+                        val progress = (call.argument<Number>("progress") ?: 0).toInt()
+                        result.success(
+                            HyperOsIsland.postProgress(applicationContext, filename, progress)
+                        )
+                    }
+                    "islandEnd" ->
+                        result.success(HyperOsIsland.endProgress(applicationContext))
+                    "notifyTaskDone" -> {
+                        val title = call.argument<String>("title") ?: "FFmpeg++"
+                        val body = call.argument<String>("body") ?: ""
+                        val success = call.argument<Boolean>("success") ?: true
+                        // 按 ROM 分发：ColorOS 走流体云（创卡失败自动退化普通通知），
+                        // 其他（含 HyperOS）走超级岛；两者内部失败均不抛异常。
+                        result.success(
+                            if (ColorOsFluidCloud.isColorOs()) {
+                                ColorOsFluidCloud.postTaskDone(
+                                    applicationContext, title, body, success
+                                )
+                            } else {
+                                HyperOsIsland.postTaskDone(
+                                    applicationContext, title, body, success
+                                )
+                            }
+                        )
+                    }
+                    // 设置页「发送测试通知」：按当前系统选路（ColorOS 流体云 /
+                    // 澎湃 OS 超级岛 / 普通通知），回报走了哪条供 UI 引导。
+                    "testNotification" ->
+                        result.success(
+                            if (ColorOsFluidCloud.isColorOs()) {
+                                ColorOsFluidCloud.postTestNotification(applicationContext)
+                            } else {
+                                HyperOsIsland.postTestNotification(applicationContext)
+                            }
+                        )
                     "openUrl" -> {
                         val url = call.argument<String>("url") ?: ""
                         if (url.isEmpty()) {
@@ -414,6 +474,9 @@ class MainActivity : FlutterActivity() {
                     android.Manifest.permission.READ_MEDIA_VIDEO,
                     android.Manifest.permission.READ_MEDIA_AUDIO,
                     android.Manifest.permission.READ_MEDIA_IMAGES,
+                    // 任务完成通知 / 小米超级岛：Android 13+ 通知同样要运行时授权，
+                    // 借应用唯一的权限入口一起申请，省得再弹一次框。
+                    android.Manifest.permission.POST_NOTIFICATIONS,
                 )
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.M -> arrayOf(
                     android.Manifest.permission.READ_EXTERNAL_STORAGE,

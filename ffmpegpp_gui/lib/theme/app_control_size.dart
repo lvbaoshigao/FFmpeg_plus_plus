@@ -48,18 +48,6 @@ class AppControlSize {
   /// 大：全宽主行动按钮（如移动端 AI 设置页的「设为当前」）。
   static const AppControlSize large = AppControlSize._(44, 19, 18, 12);
 
-  /// 表单行「标签列」的固定宽度。
-  ///
-  /// 够放「监听地址:」/「Bind host:」这类最长的标签；中英文切换、行与行之间
-  /// 标签宽度不一致时，下面输入框的左边缘会跟着错开 —— 固定住才不会。
-  /// 桌面设置页与移动端 AI 设置页共用同一个值。
-  static const double labelW = 76;
-
-  /// 表单行「动作列」的固定宽度。
-  ///
-  /// 够放「应用」/「Apply」；固定住可避免语言切换或按钮文案变长时整行重排。
-  static const double actionW = 84;
-
   /// 映射成 Filled / Outlined / Text 通用的 [ButtonStyle]。
   ///
   /// 三处关键覆盖（缺一个就会与主题打架）：
@@ -132,47 +120,16 @@ class AppControlSize {
   /// 单行文字行盒的估算高度（字号 13 时约 19px）。
   ///
   /// 仅用于估算 `contentPadding` 以尽量减少内部溢出；最终高度不靠它 ——
-  /// 见 [fieldBox]。本应用允许用户换字体，行盒高度会变，所以不能拿它当唯一依据。
+  /// 由外部紧高度约束钉死。本应用允许用户换字体，行盒高度会变，所以不能拿它当唯一依据。
   static const double _kLineBox = 19;
 
   /// 档位对应的输入框内边距。
   ///
   /// 给「自己手写 `InputDecoration`（自带 border / fillColor）」的输入框复用 ——
-  /// 那些输入框用不了 [denseInput]（会丢边框），但纵向内边距必须同源，
+  /// 这类手写装饰不走统一高密度装饰（会丢边框），但纵向内边距必须同源，
   /// 否则同页两种输入框高度会差 2~4px。用它的输入框别忘了同时带上 [fieldDensity]。
   EdgeInsets get fieldPadding => EdgeInsets.symmetric(
     horizontal: padH,
     vertical: ((height - _kLineBox) / 2).clamp(0.0, 20.0),
   );
-
-  /// 把输入框钉死到档位高度。
-  ///
-  /// 不靠 `contentPadding` 去「凑」高度：行盒高度取决于实际字体（本应用允许用户换字体），
-  /// 算出来的值必然有偏差。从外部给一个紧高度约束，[InputDecorator] 会把内部内容
-  /// 垂直居中，得到与字体无关的稳定高度。
-  Widget fieldBox(Widget child) => SizedBox(height: height, child: child);
-
-  /// 与该档位等高的输入框装饰。
-  ///
-  /// 只覆盖 `isDense` / `contentPadding` / `suffixIconConstraints` / `visualDensity`：
-  /// 边框、聚焦色、填充色仍继承主题。
-  InputDecoration denseInput({
-    String? hintText,
-    String? labelText,
-    TextStyle? hintStyle,
-    TextStyle? labelStyle,
-    Widget? suffixIcon,
-  }) {
-    return InputDecoration(
-      hintText: hintText,
-      labelText: labelText,
-      hintStyle: hintStyle,
-      labelStyle: labelStyle,
-      suffixIcon: suffixIcon,
-      isDense: true,
-      contentPadding: fieldPadding,
-      suffixIconConstraints: iconSlot,
-      visualDensity: fieldDensity,
-    );
-  }
 }

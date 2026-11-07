@@ -19,9 +19,6 @@ class FppxService {
   static const int algoAes128Cbc = 0x01; // AES-128-CBC + PKCS#7 + HMAC-SHA256
   static const int algoAes256Cbc = 0x02; // AES-256-CBC + PKCS#7 + HMAC-SHA256（默认）
 
-  /// 旧版格式结构上没有任何位置放加密字段，故永远不支持加密。
-  static bool supportsEncryption({required bool newFormat}) => newFormat;
-
   /// 导入 .fppx（新旧格式由 C++ 自动路由）。
   ///
   /// 当 [FppxImportResult.unknownTypeIds] 非空且 [FppxImportResult.graph] 为 null 时，

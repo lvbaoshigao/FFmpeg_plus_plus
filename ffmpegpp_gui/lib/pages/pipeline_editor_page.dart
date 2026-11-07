@@ -40,6 +40,9 @@ import '../theme/app_theme.dart';
 import '../widgets/ai_workflow_card.dart';
 import '../widgets/animated_popup.dart';
 import '../widgets/app_card.dart';
+// 统一滑块：条件门「命中概率」也走 AppSlider，否则这一条没有玻璃轨道与
+// 彗星拖尾，与属性面板里其它滑块外观不一致（见 app_slider.dart 文件头）。
+import '../widgets/app_slider.dart';
 // 模型 / 供应商品牌 logo（本地 SVG 单色着色）：模型选择器每行左侧的图标
 import '../widgets/brand_logo.dart';
 import '../widgets/fppx_password.dart';
@@ -7048,7 +7051,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         const SizedBox(height: 8),
         Text(label, style: Theme.of(context).textTheme.labelMedium),
         if (gate == LogicGateType.random)
-          Slider(
+          AppSlider(
             value: probability,
             min: 0,
             max: 100,
@@ -12382,9 +12385,6 @@ abstract class AiPanelApi {
 
   /// 用主窗口交接过来的会话覆盖当前会话。
   void importMessages(List<Map<String, dynamic>> messages);
-
-  /// 设置会话级模型覆盖（不改全局配置）。
-  void applySessionModel(String model);
 }
 
 /// AI 面板的全部图操作回调。
@@ -13379,14 +13379,6 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
     if (cfg.aiProfiles.isNotEmpty) return '';
     if (cfg.aiApiKey.trim().isEmpty || cfg.aiApiUrl.trim().isEmpty) return '';
     return cfg.aiModel;
-  }
-
-  /// 外部（移动端弹层头部的模型药丸）切换模型时同步会话级选择，
-  /// 否则已加载的会话会继续沿用旧模型，表现为「点了没反应」。
-  @override
-  void applySessionModel(String model) {
-    if (!mounted) return;
-    setState(() => _sessionModel = model);
   }
 
   String get _effectiveApproveMode =>
@@ -15849,7 +15841,13 @@ Available actions: __TOOLS__''';
             _buildStatusRow(scheme, s),
           // 显式指定颜色：主题若把 dividerColor 定成 onSurface 一类的强色，
           // 头部与内容之间就会横着一条抢眼的分割线。
-          Divider(height: 1, color: scheme.outlineVariant.withAlpha(70)),
+          //
+          // 移动端弹层不画这条线：头部是一颗**带左右外边距的浮动玻璃药丸**，
+          // 在它下面拉一条通栏细线，等于给浮动元素加了个「表格边框」，反而
+          // 更像两个拼接的区块（这也是「违和」的来源之一）。桌面抽屉头部是
+          // 通栏行，仍保留分隔线。
+          if (!mobileSheet)
+            Divider(height: 1, color: scheme.outlineVariant.withAlpha(70)),
           Expanded(
             child: mobileSheet
                 ? _buildChatBody(scheme, s)
@@ -15900,107 +15898,83 @@ Available actions: __TOOLS__''';
     );
   }
 
-  /// 移动端分层 header：第一行放会话操作，第二行给模型选择器完整宽度。
+  /// 移动端单行 header：会话操作 + 模型选择器挤在同一行（模型 chip 占弹性宽度）。
   Widget _buildMobileSheetHeader(ColorScheme scheme, AppStrings s) {
     final cfg = context.read<AppState>().config;
+    // 单行头部（44）：[菜单] [模型 chip] [新建] [工具] [关闭]。
+    //
+    // 旧实现是两行玻璃药丸（40 + 4 + 32）外加一条全宽分隔线，整块约 94px。
+    // 弹层高度只有屏幕的 60%~80%，光这块 chrome 就吃掉一成多，正文区被压得
+    // 又短又窄 —— 这是「太挤」的主要来源之一。而静态标题「AI 助手」其实不
+    // 携带信息（弹层本身就是 AI 助手），真正需要一眼看到的是「在跟哪个模型
+    // 说话」，所以把标题位让给模型 chip，只留机器人图标表身份。
+    // 头部总高 94 → 60（44 内容 + 药丸上下 4 + 外层 2/6），省下的全给消息区。
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 2, 8, 6),
       child: MobileGlassPill(
         key: const ValueKey('ai-mobile-sheet-header'),
         style: cfg.pillStyle,
         radius: MobileUi.pillRadius,
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SizedBox(
-                  height: 40,
-                  child: Row(
-                    children: [
-                      MobileGlassPillAction(
-                        icon: Icons.menu,
-                        tooltip: s.isZh ? '历史记录' : 'History',
-                        color: scheme.onSurfaceVariant,
-                        size: 34,
-                        iconSize: 19,
-                        onTap: () => unawaited(openHistoryAt()),
-                      ),
-                      const SizedBox(width: 4),
-                      Icon(Icons.smart_toy, size: 18, color: scheme.primary),
-                      const SizedBox(width: 7),
-                      Expanded(
-                        child: Text(
-                          s.aiChatTitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: scheme.onSurface,
-                          ),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: SizedBox(
+          height: 44,
+          child: Row(
+            children: [
+              MobileGlassPillAction(
+                icon: Icons.menu,
+                tooltip: s.isZh ? '历史记录' : 'History',
+                color: scheme.onSurfaceVariant,
+                size: 34,
+                iconSize: 19,
+                onTap: () => unawaited(openHistoryAt()),
+              ),
+              const SizedBox(width: 2),
+              Icon(Icons.smart_toy, size: 18, color: scheme.primary),
+              const SizedBox(width: 8),
+              // 模型 chip 吃掉剩余宽度并封顶 210：名字过长时省略号收尾，
+              // 完整名称在弹层菜单里可见（与旧实现一致）。
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: LayoutBuilder(
+                    builder: (context, modelConstraints) =>
+                        _buildMobileModelChip(
+                          scheme,
+                          s,
+                          width: math.min(modelConstraints.maxWidth, 210),
                         ),
-                      ),
-                      MobileGlassPillAction(
-                        key: const ValueKey('ai-mobile-new-chat'),
-                        icon: Icons.add_comment_outlined,
-                        tooltip: s.isZh ? '新建会话' : 'New chat',
-                        color: scheme.onSurfaceVariant,
-                        size: 34,
-                        iconSize: 18,
-                        onTap: _startNewChat,
-                      ),
-                      MobileGlassPillAction(
-                        icon: Icons.extension_outlined,
-                        tooltip: s.isZh ? '工具' : 'Tools',
-                        color: toolsOpen
-                            ? scheme.primary
-                            : scheme.onSurfaceVariant,
-                        size: 34,
-                        iconSize: 19,
-                        onTap: () => unawaited(
-                          openMobileSidebarPage(_AiMobileSidebarPage.tools),
-                        ),
-                      ),
-                      MobileGlassPillAction(
-                        icon: Icons.close,
-                        tooltip: s.isZh ? '关闭' : 'Close',
-                        color: scheme.onSurface,
-                        size: 34,
-                        iconSize: 19,
-                        onTap: _requestMobileSheetClose,
-                      ),
-                    ],
                   ),
                 ),
-                const SizedBox(height: 4),
-                SizedBox(
-                  height: 32,
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.memory_outlined,
-                        size: 17,
-                        color: scheme.primary,
-                      ),
-                      const SizedBox(width: 7),
-                      Expanded(
-                        child: LayoutBuilder(
-                          builder: (context, modelConstraints) =>
-                              _buildMobileModelChip(
-                                scheme,
-                                s,
-                                width: modelConstraints.maxWidth,
-                              ),
-                        ),
-                      ),
-                    ],
-                  ),
+              ),
+              MobileGlassPillAction(
+                key: const ValueKey('ai-mobile-new-chat'),
+                icon: Icons.add_comment_outlined,
+                tooltip: s.isZh ? '新建会话' : 'New chat',
+                color: scheme.onSurfaceVariant,
+                size: 34,
+                iconSize: 18,
+                onTap: _startNewChat,
+              ),
+              MobileGlassPillAction(
+                icon: Icons.extension_outlined,
+                tooltip: s.isZh ? '工具' : 'Tools',
+                color: toolsOpen ? scheme.primary : scheme.onSurfaceVariant,
+                size: 34,
+                iconSize: 19,
+                onTap: () => unawaited(
+                  openMobileSidebarPage(_AiMobileSidebarPage.tools),
                 ),
-              ],
-            );
-          },
+              ),
+              MobileGlassPillAction(
+                icon: Icons.close,
+                tooltip: s.isZh ? '关闭' : 'Close',
+                color: scheme.onSurface,
+                size: 34,
+                iconSize: 19,
+                onTap: _requestMobileSheetClose,
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -16196,8 +16170,10 @@ Available actions: __TOOLS__''';
     required String text,
     bool emphasize = false,
   }) => Container(
-    height: 22,
-    padding: const EdgeInsets.symmetric(horizontal: 8),
+    // 移动端抬到 24 / 11：9.5px 在 3x 屏上比正文（13）小 26%，是这一屏里
+    // 唯一「蚂蚁字」，读起来和整体不成比例。
+    height: widget.mobileSheet ? 24 : 22,
+    padding: EdgeInsets.symmetric(horizontal: widget.mobileSheet ? 9 : 8),
     decoration: BoxDecoration(
       color: emphasize
           ? scheme.primary.withAlpha(24)
@@ -16217,7 +16193,7 @@ Available actions: __TOOLS__''';
         Text(
           text,
           style: TextStyle(
-            fontSize: 9.5,
+            fontSize: widget.mobileSheet ? 11 : 9.5,
             color: emphasize ? scheme.primary : scheme.outline,
             fontWeight: emphasize ? FontWeight.w600 : FontWeight.w400,
           ),
@@ -16630,14 +16606,16 @@ Available actions: __TOOLS__''';
               ),
               child: DecoratedBox(
                 decoration: BoxDecoration(
+                  // 与卡片/药丸同一档圆角（14 → 16）：这一屏里 14 只出现在
+                  // 输入框上，和消息气泡（15）、玻璃药丸（24+）都不是一个体系。
                   color: scheme.surfaceContainerLow.withAlpha(220),
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(16),
                   border: Border.all(
                     color: scheme.outlineVariant.withAlpha(90),
                   ),
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.all(4),
+                  padding: const EdgeInsets.all(6),
                   child: Row(
                     // 输入框多行后行高会长，底对齐才能让发送 / 停止键始终贴在最后一行旁边
                     crossAxisAlignment: CrossAxisAlignment.end,
@@ -16672,21 +16650,28 @@ Available actions: __TOOLS__''';
                               color: scheme.onSurface,
                             ),
                             decoration: InputDecoration(
+                              // 外层容器已经是「圆角面 + 描边」，输入区不再自带
+                              // 边框：旧实现是描边容器里再套一个描边输入框，两层
+                              // 圆角半径还不同（14 / 36），错位处看起来就是「挤」。
+                              // 顺带去掉 labelText —— floatingLabelBehavior: never
+                              // 让 label 常驻占位，于是真正的提示语 aiChatHint 永远
+                              // 显示不出来。
                               hintText: s.aiChatHint,
-                              labelText: s.isZh ? '消息' : 'Message',
-                              floatingLabelBehavior:
-                                  FloatingLabelBehavior.never,
                               hintStyle: TextStyle(
-                                fontSize: 12,
+                                fontSize: 13,
                                 color: scheme.outline,
                               ),
                               isDense: true,
-                              contentPadding: btn.fieldPadding,
-                              // 压平桌面端的 -8px 密度偏移，否则同一份 contentPadding 在两端高度不同
-                              visualDensity: AppControlSize.fieldDensity,
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(btn.radius),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 10,
                               ),
+                              // 压平桌面端的 -8px 密度偏移，否则同一份
+                              // contentPadding 在两端高度不同
+                              visualDensity: AppControlSize.fieldDensity,
+                              border: InputBorder.none,
+                              enabledBorder: InputBorder.none,
+                              focusedBorder: InputBorder.none,
                               suffixIconConstraints: AppControlSize.iconSlot,
                             ),
                             // 桌面端单行：Enter 直接发送；移动端多行：回车即换行，发送靠右侧圆钮
@@ -16838,49 +16823,62 @@ Available actions: __TOOLS__''';
                   ],
                 ),
               ),
-              const SizedBox(height: 18),
-              Wrap(
-                alignment: WrapAlignment.center,
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final h in hints)
-                    ActionChip(
-                      avatar: Icon(
-                        Icons.bolt,
-                        size: isMobilePlatform ? 15 : 14,
-                        color: scheme.primary,
-                      ),
-                      label: Text(
-                        h,
-                        style: TextStyle(fontSize: isMobilePlatform ? 12 : 11),
-                      ),
-                      // 移动端去掉 compact 密度并改胶囊形：原实现 11px 字 + compact
-                      // 的行高只有约 27px，手指点不准 —— 而这几条示例正是主入口。
-                      shape: const StadiumBorder(),
+              const SizedBox(height: 16),
+              // 示例建议改成等宽整行（左对齐图标 + 两行文案 + 右上箭头）：
+              // 旧实现是一排参差的 ActionChip，长短不同的中文会在 380 宽的容器
+              // 里各自折成 1~2 行，右缘参差不齐、高度也不一致，整块看着很乱。
+              // 整行按钮同时把点击目标从 ~30px 提到 44px，命中率也顺带解决。
+              for (final h in hints)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Material(
+                    // 底色与描边直接交给 Material：InkWell 的水波纹是画在 Material
+                    // 自身上的，若再套一层带填充色的 Container，波纹会被完全盖住，
+                    // 点上去没有任何反馈。
+                    color: scheme.surfaceContainerHighest.withAlpha(60),
+                    clipBehavior: Clip.antiAlias,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
                       side: BorderSide(
-                        color: scheme.outlineVariant.withAlpha(120),
+                        color: scheme.outlineVariant.withAlpha(110),
                       ),
-                      backgroundColor: scheme.surfaceContainerHighest.withAlpha(
-                        70,
-                      ),
-                      labelPadding: EdgeInsets.symmetric(
-                        horizontal: isMobilePlatform ? 6 : 0,
-                        vertical: isMobilePlatform ? 3 : 0,
-                      ),
-                      visualDensity: isMobilePlatform
-                          ? VisualDensity.standard
-                          : VisualDensity.compact,
-                      materialTapTargetSize: isMobilePlatform
-                          ? MaterialTapTargetSize.padded
-                          : MaterialTapTargetSize.shrinkWrap,
-                      onPressed: () {
+                    ),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(14),
+                      onTap: () {
                         _ctrl.text = h;
                         _send();
                       },
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+                        child: Row(
+                          children: [
+                            Icon(Icons.bolt, size: 16, color: scheme.primary),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                h,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  height: 1.35,
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Icon(
+                              Icons.north_east,
+                              size: 14,
+                              color: scheme.outline,
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
-                ],
-              ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -18036,8 +18034,10 @@ Available actions: __TOOLS__''';
                 // 可读行宽上限：860 逻辑像素约等于 60~70 个中文字符 / 90 个西文
                 // 字符，接近排版惯例（45~75 字符/行）。
                 const desktopBubbleCap = 860.0;
-                final proportional =
-                    (constraints.maxWidth - avatarSlot) * 0.8;
+                // 移动端放宽到 86%：80% 在 360 宽的弹层上只剩 ~258px，
+                // 中文长段落被折成一根窄柱，纵向拉得很长；86% 能少折 1~2 行。
+                final proportional = (constraints.maxWidth - avatarSlot) *
+                    (isMobilePlatform ? 0.86 : 0.8);
                 final maxBubbleWidth = isMobilePlatform
                     ? proportional
                     : math.min(proportional, desktopBubbleCap);

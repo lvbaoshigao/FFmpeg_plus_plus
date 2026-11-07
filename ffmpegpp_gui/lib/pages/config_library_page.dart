@@ -1423,10 +1423,20 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                             );
                             final leftHanded = handSide == 'left';
                             // 宽度不再按屏幕 1/3 拉伸（宽屏上会拉成细长条）：
-                            // 两个选项各 76，总宽固定 152，比例约 3.5:1。
+                            // 两个选项各 76，总宽固定 152。
                             const selectorWidth = 152.0;
+                            // ⚠️ 盒子高度必须按组件的**真实**高度算，不能只给
+                            // capsuleHeight：LiquidGlassTabBarStyle.barHeight =
+                            // capsuleHeight + 2 × capsuleInset，且组件在 build 里
+                            // 另加了 6px 顶部余量（_topPadding，给投影与放大的
+                            // 液滴留空间）。旧值只给 44，组件内部再按
+                            // MediaQuery.padding.bottom 预留一次安全区，于是
+                            // Padding 把 50px 高的胶囊压成几十甚至十几 px
+                            // —— 这就是「切换器又扁又贴底」的根因。
                             final selectorHeight =
-                                _kCompactMobileTabStyle.capsuleHeight;
+                                _kCompactMobileTabStyle.capsuleHeight +
+                                2 * _kCompactMobileTabStyle.capsuleInset +
+                                6;
                             final safeBottom = MediaQuery.paddingOf(
                               context,
                             ).bottom;
@@ -1436,7 +1446,11 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                                       kAppLiquidTabBarStyle.capsuleHeight +
                                       (kAppLiquidTabBarStyle.bottomGap ?? 8) +
                                       10
-                                : 12.0;
+                                // 侧边导航时底部同样有手势区：旧值只给 12，
+                                // 靠组件内部那次（错误的）安全区把它顶上来；
+                                // 现在内部安全区被移除（见下方 removePadding），
+                                // 必须在这里显式加上。
+                                : 12.0 + safeBottom;
                             final listPadding = MobileUi.mainListPadding(
                               placement: placement,
                             );
@@ -1480,7 +1494,14 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                                   bottom: selectorBottom,
                                   width: selectorWidth,
                                   height: selectorHeight,
-                                  child: _buildMobileTabSelector(context, zh),
+                                  // 安全区已在 selectorBottom 里算过一次；组件内部
+                                  // 还会按 MediaQuery.padding.bottom 再预留一次，
+                                  // 这里必须把它清零，否则盒子里再被吃掉一份高度。
+                                  child: MediaQuery.removePadding(
+                                    context: context,
+                                    removeBottom: true,
+                                    child: _buildMobileTabSelector(context, zh),
+                                  ),
                                 ),
                               ],
                             );

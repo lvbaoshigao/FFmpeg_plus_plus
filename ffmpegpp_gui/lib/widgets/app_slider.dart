@@ -741,7 +741,8 @@ class _AppSliderState extends State<AppSlider>
         ? kAppCompactTrackHeight
         : kAppTrackHeight;
     final _TrackCfg cfg = _trackCfgOf(context);
-    // 彗星颜色跟填充段的明暗走：浅色填充配深色彗星，否则白彗星在浅色块上不可见。
+    // 彗星恒为白色掠光（见 [_cometHighlight]）：深色主题的 primary 是 tone 80，
+    // 按亮度二选一会一路判成黑色。
     // 系统开启「减弱动态效果」时完全不做特效（无障碍 + 省电）。
     final bool particlesOn =
         widget.particles &&
@@ -972,7 +973,9 @@ class _AppRangeSliderState extends State<AppRangeSlider> {
 /// * 光带：从尾端透明渐变到前缘实色的胶囊，裁剪在填充段内部，圆角端不会
 ///   露出方角；
 /// * 光晕：前缘一层径向白色光，拖动时更亮（静态时保持克制，避免整屏发光）；
-/// * 颜色：浅色填充配深色彗星，否则白彗星在浅色块上不可见。
+/// * 颜色：恒为白色高光（见 [_cometHighlight]）。旧规则「浅色填充配深色彗星」
+///   在 Material 3 深色主题下必然判成纯黑（primary 是 tone 80，亮度 ≈ 0.56），
+///   看起来是一道黑色污渍。
 ///
 /// 关闭「彗星拖尾」时不构建本层，因此没有动画、也没有额外绘制成本。
 class _CometFillPainter extends CustomPainter {
@@ -1230,9 +1233,20 @@ class _AppProgressBarPainter extends CustomPainter {
       oldDelegate.showComet != showComet;
 }
 
-/// 彗星在填充色上的对比色：浅色填充配深彗星，深色填充配白彗星。
-Color _cometHighlight(Color color) =>
-    color.computeLuminance() > 0.48 ? Colors.black : Colors.white;
+/// 彗星颜色：**恒为白色掠光**，不再按填充明暗二选一。
+///
+/// 曾经的规则是「浅色填充配黑色彗星」（`computeLuminance() > 0.48 → 黑`），
+/// 但在 Material 3 里深色主题的 `primary` 是 tone 80（相对亮度 ≈ 0.56），
+/// 于是**任何深色主题下彗星都恒为纯黑**：16px 高的胶囊上一条不透明的黑色
+/// 渐变带 + 白色光晕，看起来是一道污渍而不是光（用户反馈「怎么是黑色的」）。
+///
+/// 现在统一画白色高光：深色填充上是明显的高光，浅色填充上靠光晕与填充边缘
+/// 的明度差读出掠光；填充本身越亮，高光 alpha 越收敛，避免整条胶囊糊成一片白。
+/// [fill] 只用来决定这个 alpha，不再决定色相。
+Color _cometHighlight(Color fill) {
+  final double lum = fill.computeLuminance();
+  return Colors.white.withValues(alpha: lum > 0.62 ? 0.70 : 1.0);
+}
 
 Color _withScaledAlpha(Color color, double opacity) =>
     color.withValues(alpha: color.a * opacity);

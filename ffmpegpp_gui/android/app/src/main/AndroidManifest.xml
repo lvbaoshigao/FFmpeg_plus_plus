@@ -1,6 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- 网络（AI 助手 / 更新检查） -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- 任务完成通知 / 小米超级岛：Android 13+ 必须显式声明并运行时申请 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <!-- 媒体文件读取（Android 13+ 分区媒体权限） -->
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"/>
@@ -62,6 +64,9 @@
 
          In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
     <queries>
+        <!-- ColorOS 流体云：端侧意图共享 Provider（ColorOsFluidCloud.kt）。
+             Android 11+ 包可见性过滤下不声明它，Provider 直接不可达。 -->
+        <provider android:authorities="IntelligentIntent"/>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>

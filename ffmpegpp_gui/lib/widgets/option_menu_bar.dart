@@ -73,8 +73,34 @@ class OptionItem<T> {
 String _normalizeForSearch(String value) =>
     value.toLowerCase().replaceAll(RegExp(r'[\s\-_./:（）()]'), '');
 
-/// 浮层面板的公共外观（Material 卡片）。OptionMenuBar 与 ScaleMenuButton 共用，
+/// 浮层面板的公共外观。OptionMenuBar 与 ScaleMenuButton 共用，
 /// 保证「所有下拉/弹出菜单」视觉统一。
+///
+/// ## 四档外观为什么重做
+///
+/// 旧实现只改了两三个数字：底色 alpha 150/206/224、σ 20/14/12，其余（底色色相、
+/// 描边、圆角、没有高光）完全一致，于是「液态玻璃 / 主题色毛玻璃 / 高光玻璃」
+/// 在屏上几乎是同一块圆角矩形，只是深浅差一点点 —— 用户的原话是「几个样式
+/// 别无两样，并且严重不符合描述」。三处实打实的问题：
+///
+/// 1. `Material(elevation: 10)` 写在 `ClipRRect` **里面**：Material 的投影画在
+///    自己的外框外侧，随即被外层裁剪吃掉，面板从来没有投影 —— 四个样式都缺
+///    「浮在内容之上」的层次感（参见 app_card 的同款注意：阴影必须在裁剪外层）。
+/// 2. `'highlight'` 一档只有「更实的底 + 更亮的描边」，**没有任何高光**，
+///    名不副实。
+/// 3. σ 直接传 20/14/12，绕过了 [effectiveGlassSigma]（桌面端全站统一钳到 ≤8，
+///    见 liquid_glass_fallback.dart 的内存说明）：桌面端 20 和 12 落到同一个
+///    σ，加上底色都很实，模糊效果等于没做。
+///
+/// 现在按「透明度 / 模糊 / 主题色染色 / 描边 / 镜面高光 / 投影」六个维度一并
+/// 拉开，四档各自兑现设置页里的描述：
+///
+/// | 档位 | 观感 |
+/// |---|---|
+/// | `theme` | 不透明主题表面，无模糊无着色，1px 中性细边 —— 唯一一档「实心」 |
+/// | `liquid` | 最通透：底色最淡、模糊最强，靠对角镜面渐变 + 白色内亮边表达玻璃棱边 |
+/// | `frosted` | 主题色毛玻璃：中等通透 + 重主题色染色、哑光、主题色描边，无高光 |
+/// | `highlight` | 顶部一道高光带 + 最亮的主题色描边 + 主题色微光投影 |
 Widget _menuPanelShell({
   required ColorScheme scheme,
   required Widget child,
@@ -82,56 +108,143 @@ Widget _menuPanelShell({
   double radius = 14,
 }) {
   final dark = scheme.brightness == Brightness.dark;
-  // 四种外观必须「一眼能看出来不一样」（用户反馈「选哪个主题都长一个样」）：
-  // 旧值把透明度压在同一区间（190~230），且主色着色都很淡，实际观感差别几乎
-  // 为零。这里按「越来越实、着色越来越重、描边越来越亮」拉开梯度：
-  //   theme     纯主题表面（不透明、无模糊、无描边）
-  //   liquid    最通透（模糊最强、底色最淡、只留一道中性描边）
-  //   frosted   主色毛玻璃（底色偏实、主色着色明显、主色描边）
-  //   highlight 高光玻璃（底色最实、主色最亮描边 + 顶部高光）
-  final blur = switch (appearance) {
-    'liquid' => 20.0,
-    'frosted' => 14.0,
-    'highlight' => 12.0,
+
+  // σ：桌面端由 effectiveGlassSigma 钳到 ≤8（离屏纹理内存），移动端可按档位
+  // 拉开真实差距。theme 档完全不模糊。
+  final double sigma = switch (appearance) {
+    'liquid' => effectiveGlassSigma(18),
+    'frosted' => effectiveGlassSigma(12),
+    'highlight' => effectiveGlassSigma(6),
     _ => 0.0,
   };
-  final surface = switch (appearance) {
-    'liquid' => scheme.surface.withAlpha(dark ? 150 : 168),
-    'frosted' => scheme.surface.withAlpha(dark ? 206 : 222),
-    'highlight' => scheme.surface.withAlpha(dark ? 224 : 236),
+
+  // 底色：四档是**单调递增的不透明度阶梯**（liquid < highlight < frosted < theme），
+  // 并与各自的染色叠加后落在 ≈51% / 65% / 85% / 100%：液态玻璃最透但仍保证
+  // 12.5px 菜单文字可读（菜单不是装饰，通透到读不清就失去意义了）。
+  final Color fill = switch (appearance) {
+    'liquid' => scheme.surface.withAlpha(dark ? 118 : 134),
+    'frosted' => scheme.surface.withAlpha(dark ? 196 : 212),
+    'highlight' => scheme.surface.withAlpha(dark ? 150 : 166),
     _ => scheme.surface,
   };
-  final tint = switch (appearance) {
-    'liquid' => scheme.primary.withAlpha(dark ? 30 : 20),
-    'frosted' => scheme.primary.withAlpha(dark ? 74 : 52),
-    'highlight' => scheme.primary.withAlpha(dark ? 44 : 30),
+
+  // 主题色染色：frosted 最重（「主题色」毛玻璃），liquid 只留一丝冷调，
+  // theme 不染色 —— 这就是「跟随主题」与另外三档的根本差别。
+  final Color tint = switch (appearance) {
+    'liquid' => scheme.primary.withAlpha(dark ? 22 : 14),
+    'frosted' => scheme.primary.withAlpha(dark ? 92 : 66),
+    'highlight' => scheme.primary.withAlpha(dark ? 40 : 26),
     _ => Colors.transparent,
   };
-  final border = switch (appearance) {
-    'liquid' => scheme.onSurface.withAlpha(dark ? 60 : 76),
-    'frosted' => scheme.primary.withAlpha(dark ? 120 : 100),
-    'highlight' => scheme.primary.withAlpha(dark ? 168 : 150),
-    _ => Colors.transparent,
+
+  final Color borderColor = switch (appearance) {
+    // 中性细边：液态玻璃的「边」主要靠下面的镜面渐变表达，描边只做收口，
+    // 太亮会变成一圈白框，反而像实心卡片。
+    'liquid' => scheme.onSurface.withAlpha(dark ? 34 : 46),
+    'frosted' => scheme.primary.withAlpha(dark ? 130 : 108),
+    'highlight' => scheme.primary.withAlpha(dark ? 196 : 172),
+    _ => scheme.outlineVariant.withAlpha(dark ? 120 : 140),
   };
-  return ClipRRect(
-    borderRadius: BorderRadius.circular(radius),
-    child: BackdropFilter(
-      // σ 只有 0 / 8 / 12 三档，走进程级缓存避免每次 build 新建 native filter。
-      filter: cachedGlassBlur(blur),
-      child: Material(
-        elevation: 10,
-        color: Color.alphaBlend(tint, surface),
-        borderRadius: BorderRadius.circular(radius),
-        clipBehavior: Clip.antiAlias,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(radius),
-            border: Border.all(color: border),
-          ),
-          child: child,
-        ),
-      ),
+  final double borderWidth = appearance == 'highlight' ? 1.4 : 1.0;
+
+  // 镜面高光：只有 liquid（对角掠光）与 highlight（顶部高光带）有。
+  // frosted 必须是哑光的 —— 毛玻璃上再来一道反光，就和「液态玻璃」分不开了。
+  final Gradient? sheen = switch (appearance) {
+    'liquid' => LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [
+        Colors.white.withAlpha(dark ? 34 : 92),
+        Colors.white.withAlpha(0),
+        Colors.white.withAlpha(dark ? 10 : 28),
+      ],
+      stops: const [0.0, 0.42, 1.0],
     ),
+    'highlight' => LinearGradient(
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      colors: [
+        Colors.white.withAlpha(dark ? 62 : 132),
+        Colors.white.withAlpha(dark ? 12 : 22),
+        Colors.white.withAlpha(0),
+      ],
+      stops: const [0.0, 0.28, 0.62],
+    ),
+    _ => null,
+  };
+
+  final List<BoxShadow> shadows = switch (appearance) {
+    'liquid' => [
+      BoxShadow(
+        color: Colors.black.withAlpha(dark ? 118 : 54),
+        blurRadius: 26,
+        spreadRadius: -4,
+        offset: const Offset(0, 10),
+      ),
+    ],
+    'frosted' => [
+      BoxShadow(
+        color: Colors.black.withAlpha(dark ? 104 : 46),
+        blurRadius: 20,
+        spreadRadius: -2,
+        offset: const Offset(0, 7),
+      ),
+    ],
+    'highlight' => [
+      // 主题色微光 + 一层正常投影：高光玻璃要「亮但不飘」，只靠白光会糊掉。
+      BoxShadow(
+        color: scheme.primary.withAlpha(dark ? 44 : 28),
+        blurRadius: 22,
+        spreadRadius: -4,
+        offset: const Offset(0, 6),
+      ),
+      BoxShadow(
+        color: Colors.black.withAlpha(dark ? 108 : 48),
+        blurRadius: 18,
+        spreadRadius: -2,
+        offset: const Offset(0, 6),
+      ),
+    ],
+    _ => [
+      BoxShadow(
+        color: Colors.black.withAlpha(dark ? 86 : 36),
+        blurRadius: 16,
+        spreadRadius: -2,
+        offset: const Offset(0, 4),
+      ),
+    ],
+  };
+
+  final BorderRadius r = BorderRadius.circular(radius);
+
+  // 绘制顺序（外→内）：镜面/描边 → 底色(Material) → 内容。
+  // 镜面是**叠加**层（渐变带 alpha），底色从下面透上来，所以不受
+  // 「BoxDecoration 不能同时给 color 与 gradient」的限制。
+  //
+  // 底色仍然放在 Material 上：InkWell 的水波纹由最近的 Material 绘制，
+  // 只有底色同层波纹才可见（挪到上面的 DecoratedBox 会被底色盖掉）。
+  Widget panel = Material(
+    color: Color.alphaBlend(tint, fill),
+    borderRadius: r,
+    clipBehavior: Clip.antiAlias,
+    child: DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: r,
+        gradient: sheen,
+        border: Border.all(color: borderColor, width: borderWidth),
+      ),
+      child: child,
+    ),
+  );
+  if (sigma > 0) {
+    panel = BackdropFilter(filter: cachedGlassBlur(sigma), child: panel);
+  }
+  // 先裁剪再模糊：BackdropFilter 必须在裁剪内，否则会把面板外也糊掉。
+  panel = ClipRRect(borderRadius: r, child: panel);
+  // 投影画在裁剪**外层**（旧写法把 elevation 放在 ClipRRect 里，被裁得一点不剩）。
+  return DecoratedBox(
+    decoration: BoxDecoration(borderRadius: r, boxShadow: shadows),
+    child: panel,
   );
 }
 

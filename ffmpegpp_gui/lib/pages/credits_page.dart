@@ -44,19 +44,61 @@ class CreditsPage extends StatelessWidget {
     // 顺序：WindowChrome 必须在 _withWallpaper（壁纸 Stack）的**内层** —— 标题栏
     // 玻璃用 BackdropFilter 采样同一棵树里更早绘制的像素；套在外面只会透出窗口
     // 底色。不传 title / onBack：本页自带顶栏与返回键。
+    // 内容区提取：移动端沉浸（ImmersiveTopBar，条目钻到药丸顶栏底下）与
+    // 桌面端 Column 布局共用同一棵内容树。移动端列表顶部留白必须含顶栏高度
+    // （ImmersiveTopBar.insetOf），否则首屏第一条被药丸压住。
+    final Widget content = Center(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: isMobilePlatform ? double.infinity : 960,
+        ),
+        child: ListView(
+          // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
+          addRepaintBoundaries: false,
+          padding: isMobilePlatform
+              ? MobileUi.subListPadding(
+                  top: ImmersiveTopBar.insetOf(context) + 8, bottom: 24)
+              : const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          children: [
+            Text(
+              s.aboutReferencesIntro,
+              style: TextStyle(fontSize: 13, color: scheme.outline),
+            ),
+            const SizedBox(height: 14),
+            _projectCard(
+              context,
+              scheme,
+              s,
+              name: 'tabler-icons',
+              license: 'MIT License',
+              desc: s.isZh
+                  ? '逻辑门矢量图标（节点编辑器 IEEE 逻辑门符号）'
+                  : 'Vector logic-gate icons (IEEE gate symbols in the node editor)',
+              url: 'https://github.com/tabler/tabler-icons',
+            ),
+          ],
+        ),
+      ),
+    );
+
     return _withWallpaper(
       context,
       WindowChrome(
         child: Scaffold(
           backgroundColor: Colors.transparent,
-          body: Column(
-            children: [
-              isMobilePlatform
-                  ? MobileSubPageTopBar(
-                      title: title,
-                      onBack: () => Navigator.of(context).maybePop(),
-                    )
-                  : GlassTopBar(
+          // 移动端：沉浸式浮动药丸顶栏（滚动条目从底下穿过）；
+          // 桌面端：保持 Column + GlassTopBar 不变。
+          body: isMobilePlatform
+              ? ImmersiveTopBar(
+                  bar: MobileSubPageTopBar(
+                    title: title,
+                    onBack: () => Navigator.of(context).maybePop(),
+                  ),
+                  child: content,
+                )
+              : Column(
+                  children: [
+                    GlassTopBar(
                       title: title,
                       actions: [
                         IconButton(
@@ -70,42 +112,9 @@ class CreditsPage extends StatelessWidget {
                         ),
                       ],
                     ),
-              Expanded(
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxWidth: isMobilePlatform ? double.infinity : 960,
-                    ),
-                    child: ListView(
-                      // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
-                      addRepaintBoundaries: false,
-                      padding: isMobilePlatform
-                          ? MobileUi.subListPadding(top: 8, bottom: 24)
-                          : const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                      children: [
-                        Text(
-                          s.aboutReferencesIntro,
-                          style: TextStyle(fontSize: 13, color: scheme.outline),
-                        ),
-                        const SizedBox(height: 14),
-                        _projectCard(
-                          context,
-                          scheme,
-                          s,
-                          name: 'tabler-icons',
-                          license: 'MIT License',
-                          desc: s.isZh
-                              ? '逻辑门矢量图标（节点编辑器 IEEE 逻辑门符号）'
-                              : 'Vector logic-gate icons (IEEE gate symbols in the node editor)',
-                          url: 'https://github.com/tabler/tabler-icons',
-                        ),
-                      ],
-                    ),
-                  ),
+                    Expanded(child: content),
+                  ],
                 ),
-              ),
-            ],
-          ),
         ),
       ),
     );

@@ -21,6 +21,8 @@ import '../app.dart' show wallpaperImageProvider;
 import '../models/models.dart';
 import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
+// ColorOS 流体云进度开关的能力判定（Android 专用，见 ColorOsFluidCloud.kt）
+import '../services/android_platform.dart';
 import '../services/ffmpeg_installer.dart';
 // 高刷新率开关的即时生效（Android 专用，见 services/refresh_rate.dart）
 import '../services/refresh_rate.dart';
@@ -1178,6 +1180,8 @@ class _SettingsPageState extends State<SettingsPage> {
         state.config.maxConcurrentTasks,
         state.config.probeThreads,
         state.config.enableSystemNotification,
+        state.config.fluidCloudProgress,
+        state.config.islandProgress,
         state.config.highRefreshRate,
         state.config.noPreload,
         state.config.debugMode,
@@ -2180,48 +2184,83 @@ void _pushSettingsSubPage(
   Navigator.of(context).push(
     MaterialPageRoute(
       allowSnapshotting: false,
-      builder: (ctx) => Consumer<AppState>(
-        // 包裹顺序：WindowChrome 必须在 withWallpaper 的**内层**。
-        // 标题栏玻璃用 BackdropFilter 采样「同一棵树里更早绘制的内容」；若写成
-        // WindowChrome(child: withWallpaper(...))，标题栏下方没有任何已绘制的
-        // 像素（本路由不透明、旧路由不再绘制），玻璃只会透出窗口底色。
-        //
-        // WindowChrome 不传 title / onBack：页面自己的 MobileSubPageTopBar
-        // 已经承担返回与标题，避免出现「两层标题 / 两个返回」。
-        builder: (ctx2, state, _) => withWallpaper(
-          ctx2,
-          WindowChrome(
-            child: Scaffold(
-              backgroundColor: Colors.transparent,
-              body: Column(
-                children: [
-                  MobileSubPageTopBar(
-                    title: Text(title),
-                    onBack: () => Navigator.of(ctx2).maybePop(),
-                  ),
-                  Expanded(
-                    child: ListView(
-                      // addRepaintBoundaries:false —— 见移动端主列表同款注释：
-                      // 壁纸开窗 painter 必须每帧按当前变换重算，不能被子项缓存平移。
-                      // 左右间距与设置主界面卡片对齐（主界面 = ListView + 分区卡内边距 14）。
-                      // 此前为 0：MCP/AI 等二级页卡片通顶通底，比主界面卡片明显更宽。
-                      addRepaintBoundaries: false,
-                      // Cards in this page already own the shared 12px inset via
-                      // _glass/_AiSectionCard. Do not add another 12px here: that
-                      // made every secondary-page card narrower than the provider
-                      // card on the MCP/AI page.
-                      padding: const EdgeInsets.only(top: 12, bottom: 48),
-                      children: [contentBuilder(ctx2, state)],
-                    ),
-                  ),
-                ],
+      builder: (_) =>
+          _SettingsSubPageShell(title: title, contentBuilder: contentBuilder),
+    ),
+  );
+}
+
+/// 设置二级 / 三级页的**静态外壳**：壁纸 + 玻璃标题栏 + 内容列表。
+///
+/// 这个组件本身不订阅任何配置，[Consumer] 只包住列表里的那一项内容。旧写法把
+/// `Consumer<AppState>` 放在路由 builder 的最外层、`withWallpaper(...)` 写在它的
+/// builder 里，于是「在这一页点任意开关 → updateConfig → notifyListeners」都会把
+/// 整个路由子树重建一遍：壁纸层重新解码/重建 Image、玻璃标题栏重新做一次
+/// BackdropFilter 采样、`WallpaperWindowScope` 重新建作用域——表现为「点任何元素
+/// 背景都会闪一下 / 变一下」（高级页已按同一思路修过，这里补齐）。
+///
+/// 把外壳提到 Consumer 外面后，点击只重建 `children` 里的那一个 Widget，背景层与
+/// 标题栏的 Element 一直存活。
+///
+/// 包裹顺序：`WindowChrome` 必须在 `withWallpaper` 的**内层**。标题栏玻璃用
+/// BackdropFilter 采样「同一棵树里更早绘制的内容」；若写成
+/// `WindowChrome(child: withWallpaper(...))`，标题栏下方没有任何已绘制的像素
+/// （本路由不透明、旧路由不再绘制），玻璃只会透出窗口底色。
+///
+/// `WindowChrome` 不传 title / onBack：页面自己的 [MobileSubPageTopBar] 已经承担
+/// 返回与标题，避免出现「两层标题 / 两个返回」。
+class _SettingsSubPageShell extends StatelessWidget {
+  final String title;
+  final Widget Function(BuildContext, AppState) contentBuilder;
+
+  const _SettingsSubPageShell({
+    required this.title,
+    required this.contentBuilder,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return withWallpaper(
+      context,
+      WindowChrome(
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          // 沉浸式顶栏：列表铺满整个内容区、顶栏浮在上面。旧写法是
+          // Column([顶栏, Expanded(列表)])，列表到顶栏下沿就被截断，滚动时
+          // 条目被硬切在药丸下面；改 Stack 后条目会钻到药丸底下，透过玻璃显示。
+          body: ImmersiveTopBar(
+            bar: MobileSubPageTopBar(
+              title: Text(title),
+              onBack: () => Navigator.of(context).maybePop(),
+            ),
+            child: ListView(
+              // addRepaintBoundaries:false —— 见移动端主列表同款注释：
+              // 壁纸开窗 painter 必须每帧按当前变换重算，不能被子项缓存平移。
+              // 左右间距与设置主界面卡片对齐（主界面 = ListView + 分区卡内边距 14）。
+              // 此前为 0：MCP/AI 等二级页卡片通顶通底，比主界面卡片明显更宽。
+              addRepaintBoundaries: false,
+              // Cards in this page already own the shared 12px inset via
+              // _glass/_AiSectionCard. Do not add another 12px here: that
+              // made every secondary-page card narrower than the provider
+              // card on the MCP/AI page.
+              //
+              // top 用 ImmersiveTopBar.insetOf：预留顶栏（含状态栏）高度，
+              // 首屏第一张卡正好落在药丸下沿，往下滑就钻进去。
+              padding: EdgeInsets.only(
+                top: ImmersiveTopBar.insetOf(context) + 4,
+                bottom: 48,
               ),
+              children: [
+                Consumer<AppState>(
+                  builder: (ctx, state, _) => contentBuilder(ctx, state),
+                ),
+              ],
             ),
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 Widget _glass(
@@ -2861,7 +2900,9 @@ Widget _buildSurfaceStyleCard(BuildContext ctx, AppState state) {
           items: [
             OptionItem(
               'theme',
-              zh ? '跟随主题（当前外观）' : 'Follow theme (current)',
+              // 「当前外观」太含糊：这一档的实质是「不透明、不模糊、只跟主题色」，
+              // 标签直接写清楚，免得用户选了之后发现「说好的玻璃呢」。
+              zh ? '跟随主题（不透明）' : 'Follow theme (opaque)',
               icon: Icons.palette_outlined,
             ),
             OptionItem(
@@ -5272,8 +5313,209 @@ Widget _buildTasks(BuildContext ctx, AppState state) {
           onChanged: (v) =>
               state.updateConfig((c) => c..enableSystemNotification = v),
         ),
+        // ColorOS 流体云：满足条件才显示（见 _buildFluidCloudProgressTile）。
+        _buildFluidCloudProgressTile(ctx, state, clr),
+        // 小米「超级岛」进度：满足条件才显示（见 _buildIslandProgressTile）。
+        _buildIslandProgressTile(ctx, state, clr),
+        // 「发送测试通知」：仅 Android。点击后按当前系统自动选路
+        // （澎湃 OS → 小米超级岛 / ColorOS → 流体云 / 其它 → 普通通知），
+        // 验证通知能否真正送达 —— MIUI/澎湃 OS 未进白名单时会静默丢弃。
+        if (isAndroidPlatform) ...[
+          const SizedBox(height: 4),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: () => _sendTestNotification(ctx, s),
+              icon: const Icon(Icons.notification_add, size: 14),
+              label: Text(
+                s.isZh ? '发送测试通知' : 'Send test notification',
+                style: const TextStyle(fontSize: 12),
+              ),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            s.isZh
+                ? '按当前系统自动选路：澎湃 OS → 小米超级岛，ColorOS → 流体云，'
+                    '其它 → 普通通知。MIUI/澎湃 OS 需将本应用加入「通知」与'
+                    '「自启动」白名单（部分版本需 root），否则通知会被静默丢弃。'
+                : 'Routes automatically: HyperOS → Super Island, ColorOS → Fluid '
+                    'Cloud, others → plain notification. On MIUI/HyperOS the app '
+                    'must be in the notification & autostart whitelists (root may '
+                    'be required), otherwise notifications are silently dropped.',
+            style: SettingsTypography.description.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ],
       ]),
     ],
+  );
+}
+
+/// 「通知」卡片 →「发送测试通知」：调原生按系统选路发送一条测试通知，
+/// 并把「走了哪条路」回显出来。返回值见 [AndroidPlatformBridge.testNotification]。
+Future<void> _sendTestNotification(BuildContext ctx, AppStrings s) async {
+  final path = await AndroidPlatformBridge.testNotification();
+  if (!ctx.mounted) return;
+  // 无论走哪条路都带白名单引导：MIUI/澎湃 OS 对未进白名单应用的通知是
+  // 静默丢弃（不报错），用户只会看到「什么都没发生」。
+  final hint = s.isZh
+      ? '。若未出现在通知栏/岛上，请在系统设置中将本应用加入「通知」与'
+          '「自启动」白名单（部分 MIUI 版本需 root）'
+      : '. If nothing appears, add this app to the notification & autostart '
+          'whitelists in system settings (root may be required on some MIUI versions)';
+  switch (path) {
+    case 'island':
+      showToast(
+        ctx,
+        (s.isZh
+                ? '已通过小米超级岛发送测试通知'
+                : 'Test notification sent via Xiaomi Super Island') +
+            hint,
+        type: ToastType.success,
+      );
+    case 'fluidcloud':
+      showToast(
+        ctx,
+        (s.isZh
+                ? '已通过 ColorOS 流体云发送测试通知'
+                : 'Test notification sent via ColorOS Fluid Cloud') +
+            hint,
+        type: ToastType.success,
+      );
+    case 'notification':
+      showToast(
+        ctx,
+        (s.isZh
+                ? '已通过普通系统通知发送测试'
+                : 'Test notification sent as a plain notification') +
+            hint,
+        type: ToastType.success,
+      );
+    default:
+      showToast(
+        ctx,
+        s.isZh
+            ? '测试通知发送失败：系统版本过旧或通知被系统拒绝'
+            : 'Test notification failed: system too old or notification rejected',
+        type: ToastType.error,
+      );
+  }
+}
+
+/// ColorOS 流体云能力状态（进程内只查一次）。与 [_maxRateFuture] 同款
+/// 「缓存同一个 Future 实例」手法：FutureBuilder 若在 build 里新建 Future，
+/// 会在「完成 → 重建 → 又新建 → 又完成」之间自激循环。
+Future<Map<String, Object?>?>? _fluidCloudStatusFuture;
+
+/// 「允许将进度展示在流体云上」（设置→任务→通知，仅 ColorOS）。
+///
+/// 显示条件（不满足则整个不渲染，连占位高度都不留）：
+///  1. ColorOS（含 OnePlus / realme 国行等 oplus 系，原生 SystemProperties 判定）；
+///  2. 端侧意图共享 Provider 可达（Android 11+ 包可见性 + 系统支持流体云）。
+/// 权限/系统开关层面是否真的能显示，运行时才知道 —— 创卡失败会静默退化，
+/// 不影响任务本身（见 services/fluid_cloud_progress.dart）。
+Widget _buildFluidCloudProgressTile(
+  BuildContext ctx,
+  AppState state,
+  Color clr,
+) {
+  final cfg = state.config;
+  final s = AppStrings.of(cfg.language);
+  final scheme = Theme.of(ctx).colorScheme;
+  final future = _fluidCloudStatusFuture ??=
+      AndroidPlatformBridge.fluidCloudStatus();
+  return FutureBuilder<Map<String, Object?>?>(
+    future: future,
+    builder: (context, snap) {
+      final st = snap.data;
+      // 非 Android / 非 ColorOS / Provider 不可达 / 尚未查到：一律隐藏。
+      if (st == null ||
+          st['colorOs'] != true ||
+          st['intentShareAvailable'] != true) {
+        return const SizedBox.shrink();
+      }
+      return SwitchListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        title: Text(
+          s.isZh ? '允许将进度展示在流体云上' : 'Show progress in Fluid Cloud',
+          style: TextStyle(color: clr, fontSize: 13),
+        ),
+        subtitle: Text(
+          s.isZh
+              ? '转码进行中时，进度以 ColorOS 流体云胶囊/卡片展示'
+              : 'Show transcoding progress as a ColorOS Fluid Cloud capsule',
+          style: SettingsTypography.description.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        value: cfg.fluidCloudProgress,
+        onChanged: (v) => state.updateConfig((c) => c..fluidCloudProgress = v),
+      );
+    },
+  );
+}
+
+/// 小米「超级岛」能力状态（进程内只查一次）。与 [_fluidCloudStatusFuture]
+/// 同款「缓存同一个 Future 实例」手法：FutureBuilder 若在 build 里新建 Future，
+/// 会在「完成 → 重建 → 又新建 → 又完成」之间自激循环。
+Future<Map<String, Object?>?>? _islandStatusFuture;
+
+/// 「允许将进度展示在超级岛上」（设置→任务→通知，仅支持岛的 HyperOS）。
+///
+/// 显示条件（不满足则整个不渲染，连占位高度都不留）：
+///  1. HyperOS 支持岛（`persist.sys.feature.island`，原生反射判定）；
+///  2. 焦点通知协议 ≥3（OS3 才有岛，OS1/OS2 模板不互通）；
+///  3. 应用持有焦点通知权限（关闭时只会退化成普通通知，展示开关是误导）。
+/// 权限/系统开关层面是否真的能显示，运行时才知道 —— 发送失败会静默退化，
+/// 不影响任务本身（见 services/island_progress.dart）。
+Widget _buildIslandProgressTile(
+  BuildContext ctx,
+  AppState state,
+  Color clr,
+) {
+  final cfg = state.config;
+  final s = AppStrings.of(cfg.language);
+  final scheme = Theme.of(ctx).colorScheme;
+  final future = _islandStatusFuture ??= AndroidPlatformBridge.islandStatus();
+  return FutureBuilder<Map<String, Object?>?>(
+    future: future,
+    builder: (context, snap) {
+      final st = snap.data;
+      // 非 Android / 不支持岛 / 协议 <3 / 无焦点通知权限 / 尚未查到：一律隐藏。
+      if (st == null ||
+          st['islandSupported'] != true ||
+          (st['focusProtocolVersion'] as num? ?? 0) < 3 ||
+          st['hasFocusPermission'] != true) {
+        return const SizedBox.shrink();
+      }
+      return SwitchListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        title: Text(
+          s.isZh ? '允许将进度展示在超级岛上' : 'Show progress on Super Island',
+          style: TextStyle(color: clr, fontSize: 13),
+        ),
+        subtitle: Text(
+          s.isZh
+              ? '转码进行中时，进度以小米超级岛焦点卡片展示'
+              : 'Show transcoding progress as a Xiaomi Super Island card',
+          style: SettingsTypography.description.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        value: cfg.islandProgress,
+        onChanged: (v) => state.updateConfig((c) => c..islandProgress = v),
+      );
+    },
   );
 }
 

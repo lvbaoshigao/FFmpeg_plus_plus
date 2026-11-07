@@ -133,9 +133,6 @@ Color nodeAccentColor(PipelineStepType t, ColorScheme scheme,
   }
 }
 
-/// 节点类型的稳定 id（跨引擎传输用；`PipelineStepType.name` 是权威来源）。
-String stepTypeId(PipelineStepType t) => t.name;
-
 /// 由 id 还原节点类型；未知 id 回退 [PipelineStepType.unknown]。
 PipelineStepType stepTypeFromId(String id) => PipelineStepType.values
     .firstWhere((t) => t.name == id, orElse: () => PipelineStepType.unknown);

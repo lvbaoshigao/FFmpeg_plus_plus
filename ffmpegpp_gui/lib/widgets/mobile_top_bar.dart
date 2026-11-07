@@ -455,3 +455,54 @@ class MobileSubPageTopBar extends StatelessWidget {
     );
   }
 }
+
+/// 二级 / 三级页的「沉浸式」顶栏布局：顶栏**浮**在滚动内容之上。
+///
+/// 旧写法是 `Column([顶栏, Expanded(列表)])` —— 顶栏独占一行，列表到它下沿就
+/// 戛然而止，滚动时条目被硬生生切在顶栏下面（用户原话：「条目能置于底层显示，
+/// 而不是被菜单栏截断」）。改成 Stack 之后：
+///
+/// * 列表铺满整个内容区，顶栏叠在最上层；
+/// * 首屏因为 `padding.top` 预留了顶栏高度，第一张卡正好落在药丸下沿；
+/// * 一旦往下滑，卡片就**钻到药丸底下**，透过顶栏玻璃显示出来 —— 顶栏是
+///   [MobileGlassPill]（BackdropFilter / 液态玻璃），采样的是「同一棵树里更早
+///   绘制的像素」，所以能糊出身后滑过的内容。
+///
+/// 前提：顶栏必须是**浮动药丸**形态（[MobileSubPageTopBar]）。通栏不透明顶栏
+/// 没有「透过玻璃看到内容」这一步，钻进去只会被整块遮住，谈不上沉浸。
+class ImmersiveTopBar extends StatelessWidget {
+  /// 顶栏（通常直接传 [MobileSubPageTopBar]）。
+  final Widget bar;
+
+  /// 滚动内容（ListView / SingleChildScrollView / CustomScrollView）。
+  ///
+  /// 注意把 [insetOf] 加进自己的 `padding.top`，否则首屏第一条会被顶栏压住。
+  final Widget child;
+
+  const ImmersiveTopBar({super.key, required this.bar, required this.child});
+
+  /// 顶栏实际占用的高度（**含状态栏**），给滚动体预留顶部留白。
+  ///
+  /// = 状态栏 + [MobileUi.barInsetTop] + [MobileUi.pillHeight] +
+  /// [MobileUi.barInsetBottom]，与 [MobileSubPageTopBar] 内部的 Padding 用的是
+  /// 同一组常量，几何改动后这里自动跟上，不必逐页改数字。
+  ///
+  /// ⚠️ 必须在**与顶栏相同的** BuildContext 里取：页面外层若已有 `SafeArea`
+  /// （`MediaQuery.padding.top` 被清零），这里同样读到 0，两边一致；若跑到
+  /// SafeArea 外面取，就会多算一条状态栏，首屏第一张卡被白白顶下去一截。
+  static double insetOf(BuildContext context) =>
+      MediaQuery.paddingOf(context).top +
+      MobileUi.barInsetTop +
+      MobileUi.pillHeight +
+      MobileUi.barInsetBottom;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Positioned.fill(child: child),
+        Positioned(left: 0, right: 0, top: 0, child: bar),
+      ],
+    );
+  }
+}

@@ -711,6 +711,14 @@ class _AppShellState extends State<AppShell> with WindowListener {
       final escBody = body.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
       final script = 'display notification "$escBody" with title "$escTitle"';
       Process.run('osascript', ['-e', script]).ignore();
+    } else if (Platform.isAndroid) {
+      // 安卓走原生通道：澎湃 OS（HyperOS 3 且应用开了焦点通知权限）会自动以
+      // 「小米超级岛」展示，其余 ROM 退化为普通系统通知（见 HyperOsIsland.kt）。
+      AndroidPlatformBridge.notifyTaskDone(
+        title: title,
+        body: body,
+        success: status == TaskStatus.completed,
+      );
     } else {
       // notify-send 直接收独立 argv，无需 shell 拼接，天然安全。
       final urgency = status == TaskStatus.completed ? 'normal' : 'critical';

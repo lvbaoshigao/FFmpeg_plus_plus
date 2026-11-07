@@ -542,12 +542,6 @@ class MultiWindowService {
   static bool isOpen(DetachedPanel panel) =>
       _openWindows.containsKey(panel) || _linuxPanels.containsKey(panel);
 
-  /// 忘掉一个面板窗口（主窗口自己决定不再使用时调用）。
-  static void forget(DetachedPanel panel) {
-    _openWindows.remove(panel);
-    _linuxPanels.remove(panel);
-  }
-
   static Future<void> _ensureLinuxHost() async {
     if (_linuxServer != null) return;
     final pending = _startingLinuxServer;
@@ -988,14 +982,6 @@ class MirrorAppState extends AppState {
       }
     }
     notifyListeners();
-  }
-
-  /// 只刷新配置（主窗口改了设置时推送，避免整份快照重发）。
-  void hydrateConfig(Map<String, dynamic> json) {
-    try {
-      _config = AppConfig.fromJson(json);
-      notifyListeners();
-    } catch (_) {}
   }
 
   @override

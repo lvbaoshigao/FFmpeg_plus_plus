@@ -80,9 +80,11 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
         : ListView.builder(
             // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
             addRepaintBoundaries: false,
-            // 移动端与其它二级页统一（左右 12、下 16）；桌面端保持原内边距
+            // 移动端与其它二级页统一（左右 12、下 16）；桌面端保持原内边距。
+            // 移动端顶部要含沉浸顶栏高度（insetOf），否则首行被药丸压住。
             padding: isMobilePlatform
-                ? MobileUi.subListPadding(top: 4, bottom: 16)
+                ? MobileUi.subListPadding(
+                    top: ImmersiveTopBar.insetOf(context) + 4, bottom: 16)
                 : const EdgeInsets.fromLTRB(16, 4, 16, 16),
             itemCount: items.length,
             itemBuilder: (ctx, i) {
@@ -122,12 +124,12 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
       const SizedBox(width: 8),
     ];
 
-    final content = Column(children: [
-      // 移动端：二级页面玻璃药丸顶栏（返回圆钮 + 操作药丸 + 标题药丸），
-      // 与其它子页面（命令/日志/设置二级页）保持一致；
-      // 桌面端保留原平铺工具栏。
-      if (isMobilePlatform)
-        MobileSubPageTopBar(
+    final Widget content;
+    if (isMobilePlatform) {
+      // 移动端沉浸：列表钻到药丸顶栏底下（见 ImmersiveTopBar），
+      // 顶部留白 = 顶栏实际高度（insetOf），否则首行被药丸压住。
+      content = ImmersiveTopBar(
+        bar: MobileSubPageTopBar(
           title: Row(mainAxisSize: MainAxisSize.min, children: [
             Icon(Icons.folder_special, size: 15, color: scheme.primary),
             const SizedBox(width: 4),
@@ -174,38 +176,42 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
               onSelected: (mode) => state.sortContainerBy(container.id, mode),
             ),
           ],
-        )
-      else
-      Padding(
-        // 垂直内边距上下相等：原先下边距只有 2，工具栏整体偏上。
-        // Linux 的 36px 自绘标题栏已统一由 WindowChrome 让位（内容整体下移），
-        // 这里不再额外留 40；macOS 走系统标题栏，保留历史上的 40 视觉间距。
-        padding: EdgeInsets.fromLTRB(8, Platform.isMacOS ? 40 : 4, 8, 4),
-        child: Row(children: [
-          IconButton(icon: const Icon(Icons.arrow_back, size: 20), onPressed: () => Navigator.pop(context)),
-          const SizedBox(width: 4),
-          // 标题组由「裸 GestureDetector + Spacer」改为 Expanded：容器名拿到有界宽度，
-          // 大字号/超长名称时单行省略，而不是把整条工具栏撑到横向溢出。
-          // Expanded 已吸收全部剩余空间，操作按钮依旧被顶到最右侧（原 Spacer 的作用）。
-          Expanded(
-            child: GestureDetector(
-              onDoubleTap: () => _rename(state, container, s),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.folder_special, size: 18, color: scheme.primary),
-                const SizedBox(width: 6),
-                Flexible(
-                  child: Text(container.name, maxLines: 1, overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-                ),
-                Text('  (${container.fileCount})', style: TextStyle(fontSize: 12, color: scheme.outline)),
-              ]),
+        ),
+        child: listWidget,
+      );
+    } else {
+      content = Column(children: [
+        Padding(
+          // 垂直内边距上下相等：原先下边距只有 2，工具栏整体偏上。
+          // Linux 的 36px 自绘标题栏已统一由 WindowChrome 让位（内容整体下移），
+          // 这里不再额外留 40；macOS 走系统标题栏，保留历史上的 40 视觉间距。
+          padding: EdgeInsets.fromLTRB(8, Platform.isMacOS ? 40 : 4, 8, 4),
+          child: Row(children: [
+            IconButton(icon: const Icon(Icons.arrow_back, size: 20), onPressed: () => Navigator.pop(context)),
+            const SizedBox(width: 4),
+            // 标题组由「裸 GestureDetector + Spacer」改为 Expanded：容器名拿到有界宽度，
+            // 大字号/超长名称时单行省略，而不是把整条工具栏撑到横向溢出。
+            // Expanded 已吸收全部剩余空间，操作按钮依旧被顶到最右侧（原 Spacer 的作用）。
+            Expanded(
+              child: GestureDetector(
+                onDoubleTap: () => _rename(state, container, s),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.folder_special, size: 18, color: scheme.primary),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(container.name, maxLines: 1, overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+                  ),
+                  Text('  (${container.fileCount})', style: TextStyle(fontSize: 12, color: scheme.outline)),
+                ]),
+              ),
             ),
-          ),
-          ...toolbarActions,
-        ]),
-      ),
-      Expanded(child: listWidget),
-    ]);
+            ...toolbarActions,
+          ]),
+        ),
+        Expanded(child: listWidget),
+      ]);
+    }
 
     // Linux 客户端修饰（CSD）：统一使用 widgets/window_chrome.dart。
     //  * WindowChrome 必须放在 withWallpaper 的**内层**：标题栏玻璃用

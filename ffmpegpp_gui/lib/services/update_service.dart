@@ -85,8 +85,6 @@ class DownloadResult {
     this.warnings = const <String>[],
     this.bytes = 0,
   });
-
-  bool get hasWarnings => warnings.isNotEmpty;
 }
 
 enum UpdateSource { lanzou, github }
