@@ -3348,11 +3348,14 @@ List<Widget> _buildGlassMaterialItems(BuildContext ctx, AppState state) {
   ];
 }
 
-/// 「特效」卡：滑块拖动时的彗星拖尾（自 [_buildSurfaceStyleCard] 的 ④ 使用）。
+/// 「特效」卡：全局彗星拖尾（自 [_buildSurfaceStyleCard] 的 ④ 使用）。
 ///
 /// 单独成卡（而不是并进「玻璃与材质」）：它是动画项，跟玻璃材质不是一个主题。
 /// 关闭后彗星层连 Ticker / 绘制层都不建，是低配设备换帧率的开关
 /// （见 widgets/app_slider.dart 的性能约定）。
+///
+/// 现在是**全局**开关：滑块、确定 / 不确定进度条、开屏加载条共用
+/// widgets/app_slider.dart 里唯一的 [_drawComet]；旧版「粒子喷射」实现已删除。
 ///
 /// 注意：这一项从 2026-09 起由「离散粒子」改为「连续彗星拖尾」，但**配置字段名与
 /// JSON 键刻意保持不变**（`sliderParticles` / `slider_particles` / 旧键
@@ -3367,14 +3370,14 @@ List<Widget> _buildEffectItems(BuildContext ctx, AppState state) {
       dense: true,
       contentPadding: EdgeInsets.zero,
       title: Text(
-        zh ? '滑块彗星拖尾' : 'Slider comet trail',
+        zh ? '彗星拖尾' : 'Comet trail',
         style: TextStyle(color: clr, fontSize: 13),
       ),
       subtitle: Text(
         zh
-            ? '拖动滑块时从把手（填充段最右端）向左甩出的彗星尾迹，最多占轨道总长 22%（关闭后零帧开销）'
-            : 'Comet trail pulled left from the handle while dragging, up to 22% of the track '
-                  '(off = zero frame cost)',
+            ? '全局特效：滑块、进度条、开屏加载条统一使用同一套彗星光带（开屏效果为准，PC 与移动端一致）；关闭后不再绘制，零帧开销'
+            : 'One comet for sliders, progress bars and the splash loader '
+                  '(PC and mobile alike); off = nothing is painted',
         style: SettingsTypography.description.copyWith(
           color: scheme.onSurfaceVariant,
         ),

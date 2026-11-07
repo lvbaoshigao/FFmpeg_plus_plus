@@ -781,24 +781,29 @@ class _MobileAiSettingsViewState extends State<_MobileAiSettingsView> {
     if (unfocus) _searchFocus.unfocus();
   }
 
-  void _openProvider(AiProfile p) {
+  /// 打开提供商详情。**await + setState**：详情页里可能改名、开关启用、
+  /// 增删模型，返回后本页若不强刷，卡片上还是打开前的旧文案（本页没有
+  /// Consumer 包裹，不会自己跟着 AppState 重建）。
+  Future<void> _openProvider(AiProfile p) async {
     _searchFocus.unfocus();
-    Navigator.of(context).push(
+    await Navigator.of(context).push(
       MaterialPageRoute<void>(
         allowSnapshotting: false,
         builder: (_) => MobileAiProviderDetailPage(profileId: p.id),
       ),
     );
+    if (mounted) setState(() {});
   }
 
-  void _openNewProvider() {
+  Future<void> _openNewProvider() async {
     _searchFocus.unfocus();
-    Navigator.of(context).push(
+    await Navigator.of(context).push(
       MaterialPageRoute<void>(
         allowSnapshotting: false,
         builder: (_) => const MobileAiProviderDetailPage(),
       ),
     );
+    if (mounted) setState(() {});
   }
 
   List<AiProfile> _visibleProviders(String query) {
@@ -1006,6 +1011,12 @@ class _MobileAiSettingsViewState extends State<_MobileAiSettingsView> {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    // 本页是 Navigator.push 进来的，外层没有 Consumer 包裹：显式订阅
+    // 「底部动作按钮位置」，否则在设置里改完左右手偏好后，底部搜索药丸
+    // 仍停在旧的一侧（要退出重进才生效）。
+    final bottomActionSide = context.select<AppState, String>(
+      (st) => st.config.mobileBottomActionSide,
+    );
     // 搜索态：有查询（或正在搜索）时收起服务卡与下半屏设置，把空间让给结果；
     // 不按「输入框是否聚焦」收起 —— 否则用户聚焦后清空内容会找不到退出路径。
     final searchingMode = _searching || _query.isNotEmpty;
@@ -1050,22 +1061,9 @@ class _MobileAiSettingsViewState extends State<_MobileAiSettingsView> {
                   ),
                 ),
         ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: _AiSearchBar(
-            pillStyle: cfg.pillStyle,
-            controller: _searchCtrl,
-            focusNode: _searchFocus,
-            s: s,
-            scheme: scheme,
-            showClear: _searchCtrl.text.isNotEmpty,
-            filterActive: _enabledOnly,
-            onChanged: _onQueryChanged,
-            onFilter: () => setState(() => _enabledOnly = !_enabledOnly),
-            onClear: () => _clearSearch(),
-          ),
-        ),
-        const SizedBox(height: 14),
+        // 搜索框不再占顶部：移动端改到底部的圆形药丸（见页面尾部 _AiSearchPill），
+        // 未展开时只占一个圆钮，把纵向空间还给内容。
+        const SizedBox(height: 10),
         if (showResultsHeader)
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
@@ -1128,29 +1126,39 @@ class _MobileAiSettingsViewState extends State<_MobileAiSettingsView> {
         else
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Column(
-              children: [
-                for (var i = 0; i < providers.length; i++)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 9),
-                    child: _AiProviderCard(
-                      // 查询变化时换 key：卡片重新播放入场动画，
-                      // 同时避免筛选前后同 id 卡片复用导致 chip 内容闪变。
-                      key: ValueKey('${providers[i].id}|$_query|$_enabledOnly'),
-                      cardStyle: cfg.cardStyle,
-                      s: s,
-                      scheme: scheme,
-                      isDark: isDark,
-                      profile: providers[i],
-                      active: providers[i].id == cfg.activeAiProfileId,
-                      chips: _chipModels(providers[i], _query),
-                      index: i,
-                      onTap: () => _openProvider(providers[i]),
-                    ),
-                  ),
-              ],
+            child: _AiProviderListCard(
+              cardStyle: cfg.cardStyle,
+              s: s,
+              scheme: scheme,
+              isDark: isDark,
+              providers: providers,
+              activeId: cfg.activeAiProfileId,
+              query: _query,
+              // 只在搜索时展示命中的模型 chip：平时每行只两行文字，列表更紧凑。
+              showChips: _query.isNotEmpty,
+              chipsOf: (p) => _chipModels(p, _query),
+              onTap: _openProvider,
             ),
           ),
+        const SizedBox(height: 12),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: _AiSearchPill(
+            pillStyle: cfg.pillStyle,
+            controller: _searchCtrl,
+            focusNode: _searchFocus,
+            s: s,
+            scheme: scheme,
+            showClear: _searchCtrl.text.isNotEmpty,
+            filterActive: _enabledOnly,
+            onChanged: _onQueryChanged,
+            onFilter: () => setState(() => _enabledOnly = !_enabledOnly),
+            onClear: () => _clearSearch(),
+            side: bottomActionSide,
+            forceExpanded: searchingMode,
+          ),
+        ),
+        const SizedBox(height: 10),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: _AiAddProviderCard(
@@ -1272,6 +1280,333 @@ class _AiSearchBar extends StatelessWidget {
     );
   }
 }
+
+
+// ═══════════════════════════════════════════
+// 提供商列表（单卡多行）与底部搜索药丸
+// ═══════════════════════════════════════════
+
+/// 提供商列表：**一整张卡**里放多行（参考设置界面「一卡多选项」的做法）。
+///
+/// 改动原因（用户反馈）：「每个提供商占用宽度过大，改为一个卡片里面有多个选项，
+/// 并删除提供商左边奇怪的图标」。旧实现每个提供商一张 AppCard + 左侧 46px 的
+/// 字母图标块，纵向排开像一列大按钮；现在合并为一张卡，行内只保留名称 / 模型数 /
+/// 状态 / 箭头，不再有图标块。
+class _AiProviderListCard extends StatelessWidget {
+  final String cardStyle;
+  final AppStrings s;
+  final ColorScheme scheme;
+  final bool isDark;
+  final List<AiProfile> providers;
+  final String activeId;
+  final String query;
+  final bool showChips;
+  final List<String> Function(AiProfile) chipsOf;
+  final void Function(AiProfile) onTap;
+
+  const _AiProviderListCard({
+    required this.cardStyle,
+    required this.s,
+    required this.scheme,
+    required this.isDark,
+    required this.providers,
+    required this.activeId,
+    required this.query,
+    required this.showChips,
+    required this.chipsOf,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      style: cardStyle,
+      radius: 20,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var i = 0; i < providers.length; i++) ...[
+            if (i > 0)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                child: Divider(
+                  height: 1,
+                  thickness: 0.5,
+                  color: scheme.outlineVariant.withAlpha(60),
+                ),
+              ),
+            _row(providers[i]),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _row(AiProfile profile) {
+    final active = profile.id == activeId;
+    final modelCount = _modelCount(profile);
+    final countLabel = modelCount == 0 ? s.aiNoModels : s.aiModelCount(modelCount);
+    final chips = showChips ? chipsOf(profile) : const <String>[];
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => onTap(profile),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 11, 10, 11),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            profile.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 14.5,
+                              height: 1.2,
+                              fontWeight: FontWeight.w600,
+                              color: scheme.onSurface,
+                            ),
+                          ),
+                        ),
+                        if (active) ...[
+                          const SizedBox(width: 6),
+                          _CurrentBadge(
+                            label: s.aiProviderCurrent,
+                            scheme: scheme,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 84),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerRight,
+                      child: _AiStatusPill(
+                        enabled: profile.enabled,
+                        s: s,
+                        scheme: scheme,
+                      ),
+                    ),
+                  ),
+                  Icon(Icons.chevron_right, size: 19, color: scheme.outline),
+                ],
+              ),
+              const SizedBox(height: 2),
+              Text(
+                profile.group.isEmpty
+                    ? countLabel
+                    : '$countLabel  ·  ${profile.group}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  height: 1.3,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+              if (chips.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final id in chips)
+                      _AiModelChip(label: id, scheme: scheme),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 底部搜索药丸：未激活时是一个圆形搜索图标（贴左/右下角，方向跟
+/// 「底部动作按钮位置」设置一致），点一下才展开成完整的搜索框。
+///
+/// 用户原话：「MCP/AI 对于移动端的搜索框放在下方（以药丸样式出现，未点击时在
+/// 左下/右下（依据设置偏好定）以圆形搜索图标展示，点击后才展开为搜索框（要有
+/// 动画）」。展开/收起用 AnimatedSize + 对齐方式联动，保证圆钮位置不跳。
+class _AiSearchPill extends StatefulWidget {
+  final String pillStyle;
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final AppStrings s;
+  final ColorScheme scheme;
+  final bool showClear;
+  final bool filterActive;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onFilter;
+  final VoidCallback onClear;
+
+  /// 'left' / 'right'：来自 config.mobileBottomActionSide。
+  final String side;
+
+  /// 已有搜索词 / 正在搜索时必须保持展开，否则用户清空输入后药丸会莫名收回。
+  final bool forceExpanded;
+
+  const _AiSearchPill({
+    required this.pillStyle,
+    required this.controller,
+    required this.focusNode,
+    required this.s,
+    required this.scheme,
+    required this.showClear,
+    required this.filterActive,
+    required this.onChanged,
+    required this.onFilter,
+    required this.onClear,
+    required this.side,
+    this.forceExpanded = false,
+  });
+
+  @override
+  State<_AiSearchPill> createState() => _AiSearchPillState();
+}
+
+class _AiSearchPillState extends State<_AiSearchPill> {
+  bool _expanded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _expanded = widget.forceExpanded;
+  }
+
+  @override
+  void didUpdateWidget(covariant _AiSearchPill old) {
+    super.didUpdateWidget(old);
+    if (widget.forceExpanded && !_expanded) _expanded = true;
+  }
+
+  void _collapse() {
+    widget.controller.clear();
+    widget.onChanged('');
+    widget.focusNode.unfocus();
+    setState(() => _expanded = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final align = widget.side == 'right'
+        ? Alignment.centerRight
+        : Alignment.centerLeft;
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final duration = reduceMotion
+        ? Duration.zero
+        : const Duration(milliseconds: 260);
+
+    // 收起态 = 一颗圆钮；展开态 = 完整搜索框 + 收起键。
+    //
+    // 两种状态都放在**同一个** AnimatedSize 里：直接 if/else 返回不同子树的话，
+    // 首次展开时 AnimatedSize 是新建的，会「啪」地跳到最终尺寸（没有动画）。
+    final Widget collapsed = Tooltip(
+      message: widget.s.aiProvidersSearchHint,
+      child: MobileGlassPill(
+        style: widget.pillStyle,
+        radius: 999,
+        height: _searchPillCollapsedSize,
+        padding: EdgeInsets.zero,
+        child: Semantics(
+          button: true,
+          label: widget.s.aiProvidersSearchHint,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(999),
+            onTap: () {
+              setState(() => _expanded = true);
+              widget.focusNode.requestFocus();
+            },
+            child: SizedBox(
+              width: _searchPillCollapsedSize,
+              height: _searchPillCollapsedSize,
+              child: Icon(
+                Icons.search_rounded,
+                size: 22,
+                color: widget.scheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final Widget expanded = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(
+          child: _AiSearchBar(
+            pillStyle: widget.pillStyle,
+            controller: widget.controller,
+            focusNode: widget.focusNode,
+            s: widget.s,
+            scheme: widget.scheme,
+            showClear: widget.showClear,
+            filterActive: widget.filterActive,
+            onChanged: widget.onChanged,
+            onFilter: widget.onFilter,
+            onClear: widget.onClear,
+          ),
+        ),
+        const SizedBox(width: 8),
+        // 收起按钮：让用户能把展开的搜索框缩回圆形图标。
+        SizedBox(
+          width: _searchPillCollapsedSize,
+          height: _searchPillCollapsedSize,
+          child: IconButton(
+            tooltip: widget.s.isZh ? '收起搜索' : 'Collapse search',
+            onPressed: _collapse,
+            padding: EdgeInsets.zero,
+            icon: Icon(
+              Icons.keyboard_arrow_down_rounded,
+              size: 22,
+              color: widget.scheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ],
+    );
+
+    return AnimatedSize(
+      duration: duration,
+      curve: Curves.easeOutCubic,
+      alignment: align,
+      child: Align(
+        alignment: align,
+        child: AnimatedSwitcher(
+          duration: duration,
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          transitionBuilder: (child, animation) => FadeTransition(
+            opacity: animation,
+            child: ScaleTransition(
+              alignment: align,
+              scale: Tween<double>(begin: 0.92, end: 1).animate(animation),
+              child: child,
+            ),
+          ),
+          child: _expanded
+              ? KeyedSubtree(key: const ValueKey('ai_search_expanded'), child: expanded)
+              : KeyedSubtree(key: const ValueKey('ai_search_collapsed'), child: collapsed),
+        ),
+      ),
+    );
+  }
+}
+
+/// 收起的搜索药丸直径：与底部动作按钮同档，避免比导航按钮小一圈。
+const double _searchPillCollapsedSize = 48;
 
 class _SearchActionButton extends StatelessWidget {
   final IconData icon;
@@ -3347,6 +3682,18 @@ class _MobileAiProviderDetailPageState
             color: scheme.primary,
             onTap: () => _openModelSheet(context, s, 0, isNew: true),
           ),
+          // 「清空模型」并入同一簇：用户要求它与上面两颗**同款式（圆形按钮）**，
+          // 并从列表顶部的大卡挪到下方。没有模型时整个按钮不出现。
+          if (_draft.models.isNotEmpty) ...[
+            const SizedBox(width: 10),
+            round(
+              key: const ValueKey('provider_models_clear_round'),
+              icon: Icons.delete_sweep_outlined,
+              tooltip: s.isZh ? '清空模型列表' : 'Clear models',
+              color: scheme.error,
+              onTap: () => _clearModels(s),
+            ),
+          ],
         ],
       ),
     );
@@ -3426,9 +3773,13 @@ class _MobileAiProviderDetailPageState
       // 基本页只有三张卡：一次性布局，避免浅滚动区里惰性构建导致
       // 页尾按钮在窄屏上暂时不存在（无障碍焦点 / 测试都更难命中）。
       // PC 端左右各 16：分组卡 horizontalInset 传 0，避免 12+16 叠成双倍内缩。
+      // 移动端左右留白交给卡片的 horizontalInset(12)，这里不再叠一层：
+      // 旧值 12+12=24 让本页卡片比设置页窄一圈（用户反馈「卡片宽度参考设置页」）。
+      // 上 12 / 下 48 与设置二级页完全一致：顶部与药丸之间留出呼吸区，
+      // 底部不会在菜单栏处被「一刀切」（用户反馈的「上下都截断」）。
       padding: desktop
           ? const EdgeInsets.fromLTRB(16, 8, 16, 24)
-          : const EdgeInsets.fromLTRB(12, 4, 12, 20),
+          : const EdgeInsets.only(top: 12, bottom: 48),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -3820,19 +4171,25 @@ class _MobileAiProviderDetailPageState
                     m.id.toLowerCase().contains(query);
               })
               .toList(growable: false);
-    // 头部（统计 + 云端获取） + 每个模型一行 + 「添加自定义模型 →」。
+    // 头部（标题 + 可选搜索） + 每个模型一行。
     // 模型可能上百条（例如从 OpenRouter 拉取）：仍用 builder 惰性构建，
     // 每帧只为视口内的行创建 widget。
-    // 0 = header / 1 = 顶部「添加自定义模型」/ 2.. = 过滤后的模型行。
-    final itemCount = visibleModels.length + 2;
+    // 0 = header / 1..N = 过滤后的模型行。
+    //
+    // 增 / 删 / 清空三个入口**不在这里**：它们是页面底栏那簇 44×44 圆形玻璃按钮
+    // （见 _buildBottomTabBar），与「基本 / 模型」切换栏同处底部，样式完全一致。
+    final itemCount = visibleModels.length + 1;
     return ListView.builder(
       key: const ValueKey('ai_provider_models'),
       // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
       addRepaintBoundaries: false,
       // PC 端左右 16：与基本信息页 / 左栏留白对齐，不再是手机版 12。
+      // 模型行本身就是通栏 AppCard（没有自带左右外边距），所以移动端这里
+      // 直接给 12；基本页的卡片自带 horizontalInset，那边给 0。两边最终宽度
+      // 都是「屏宽 − 24」，与设置页一致。
       padding: desktop
           ? const EdgeInsets.fromLTRB(16, 8, 16, 24)
-          : const EdgeInsets.fromLTRB(12, 4, 12, 20),
+          : const EdgeInsets.fromLTRB(12, 12, 12, 48),
       itemCount: itemCount,
       addAutomaticKeepAlives: false,
       itemBuilder: (_, index) {
@@ -3846,142 +4203,65 @@ class _MobileAiProviderDetailPageState
                   title: isZh ? '模型' : 'Models',
                   icon: Icons.widgets_outlined,
                 ),
-                AppCard(
-                  style: cfg.cardStyle,
-                  radius: 20,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Text(
-                          hasModels
-                              ? (isZh
-                                    ? '共 ${models.length} 个模型'
-                                    : '${models.length} ${models.length == 1 ? 'model' : 'models'}')
-                              : (isZh
-                                    ? '还没有模型。从云端获取，或手动添加一个。'
-                                    : 'No models yet. Fetch from the cloud or add one.'),
-                          style: SettingsTypography.description.copyWith(
-                            color: scheme.onSurfaceVariant,
-                          ),
-                        ),
-                        if (_showModelSearch) ...[
-                          const SizedBox(height: 10),
-                          TextField(
-                            key: const ValueKey('provider_model_search_field'),
-                            controller: _modelSearchCtrl,
-                            autofocus: true,
-                            onChanged: (_) => setState(() {}),
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: scheme.onSurface,
-                            ),
-                            decoration: InputDecoration(
-                              isDense: true,
-                              hintText: isZh
-                                  ? '搜索模型名称或 ID'
-                                  : 'Search model or ID',
-                              prefixIcon: const Icon(Icons.search, size: 18),
-                              suffixIcon: _modelSearchCtrl.text.isEmpty
-                                  ? null
-                                  : IconButton(
-                                      tooltip: isZh ? '清空' : 'Clear',
-                                      icon: const Icon(Icons.close, size: 16),
-                                      onPressed: () =>
-                                          setState(_modelSearchCtrl.clear),
-                                    ),
-                              filled: true,
-                              fillColor: scheme.surfaceContainerHighest
-                                  .withAlpha(50),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(10),
-                                borderSide: BorderSide(
-                                  color: scheme.outlineVariant.withAlpha(70),
-                                ),
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(10),
-                                borderSide: BorderSide(
-                                  color: scheme.outlineVariant.withAlpha(70),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                        const SizedBox(height: 10),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                style: AppControlSize.comfortable.buttonStyle(),
-                                icon: _fetchingModels
-                                    ? const SizedBox(
-                                        width: 14,
-                                        height: 14,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                    : Icon(
-                                        Icons.cloud_download_outlined,
-                                        size:
-                                            AppControlSize.comfortable.iconSize,
-                                      ),
-                                label: Text(
-                                  isZh ? '从云端获取模型列表' : 'Fetch models',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontSize: 12),
-                                ),
-                                onPressed: _fetchingModels
-                                    ? null
-                                    : () => _fetchModels(context, state, s),
-                              ),
-                            ),
-                            if (hasModels) ...[
-                              const SizedBox(width: 8),
-                              SizedBox(
-                                width: AppControlSize.comfortable.height,
-                                height: AppControlSize.comfortable.height,
-                                child: IconButton(
-                                  tooltip: isZh ? '清空模型列表' : 'Clear models',
-                                  icon: Icon(
-                                    Icons.delete_sweep_outlined,
-                                    size: AppControlSize.comfortable.iconSize,
-                                    color: scheme.error,
-                                  ),
-                                  padding: EdgeInsets.zero,
-                                  constraints: BoxConstraints.tightFor(
-                                    width: AppControlSize.comfortable.height,
-                                    height: AppControlSize.comfortable.height,
-                                  ),
-                                  onPressed: () => _clearModels(s),
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ],
+                if (!hasModels)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(2, 0, 2, 4),
+                    child: Text(
+                      isZh
+                          ? '还没有模型。用下方的圆形按钮添加，或从云端获取。'
+                          : 'No models yet. Add one below, or fetch from the cloud.',
+                      style: SettingsTypography.description.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
                   ),
-                ),
+                // 搜索框改成独立小卡：原来的「统计 + 云端获取」大卡已按用户要求删除，
+                // 搜索能力不能跟着消失，所以单独留一条。
+                if (_showModelSearch)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: AppCard(
+                      style: cfg.cardStyle,
+                      radius: 16,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+                        child: TextField(
+                          key: const ValueKey('provider_model_search_field'),
+                          controller: _modelSearchCtrl,
+                          autofocus: true,
+                          onChanged: (_) => setState(() {}),
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: scheme.onSurface,
+                          ),
+                          decoration: InputDecoration(
+                            isDense: true,
+                            hintText: isZh
+                                ? '搜索模型名称或 ID'
+                                : 'Search model or ID',
+                            prefixIcon: const Icon(Icons.search, size: 18),
+                            suffixIcon: _modelSearchCtrl.text.isEmpty
+                                ? null
+                                : IconButton(
+                                    tooltip: isZh ? '清空' : 'Clear',
+                                    icon: const Icon(Icons.close, size: 16),
+                                    onPressed: () =>
+                                        setState(_modelSearchCtrl.clear),
+                                  ),
+                            border: InputBorder.none,
+                            enabledBorder: InputBorder.none,
+                            focusedBorder: InputBorder.none,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
           );
         }
-        if (index == 1) {
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: _AddCustomModelRow(
-              cardStyle: cfg.cardStyle,
-              isZh: isZh,
-              onTap: () => _openModelSheet(context, s, 0, isNew: true),
-            ),
-          );
-        }
-        if (index <= visibleModels.length + 1) {
-          final int i = index - 2;
+        if (index <= visibleModels.length) {
+          final int i = index - 1;
           final AiModelEntry entry = visibleModels[i];
           return Padding(
             padding: const EdgeInsets.only(bottom: 6),
@@ -4296,6 +4576,7 @@ class _AiNavRow extends StatelessWidget {
   }
 }
 
+
 /// 「标签(+说明) + 右侧开关」行。
 class _AiSwitchRow extends StatelessWidget {
   final IconData? icon;
@@ -4591,50 +4872,6 @@ class _AiModelRow extends StatelessWidget {
   }
 }
 
-/// 「添加自定义模型 →」行：打开空条目的底部编辑面板。
-class _AddCustomModelRow extends StatelessWidget {
-  final String cardStyle;
-  final bool isZh;
-  final VoidCallback onTap;
-
-  const _AddCustomModelRow({
-    required this.cardStyle,
-    required this.isZh,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return AppCard(
-      key: const ValueKey('add_custom_model'),
-      style: cardStyle,
-      radius: 16,
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-        child: Row(
-          children: [
-            Icon(Icons.add_circle_outline, size: 18, color: scheme.primary),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                isZh ? '添加自定义模型' : 'Add custom model',
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w500,
-                  color: scheme.primary,
-                ),
-              ),
-            ),
-            Icon(Icons.arrow_forward_rounded, size: 16, color: scheme.primary),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 // ═══════════════════════════════════════════
 // 二级菜单：多 Key 管理 / 单模型生成参数
 // ═══════════════════════════════════════════
@@ -4768,233 +5005,243 @@ class MobileAiAdvancedPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<AppState>(
-      builder: (context, state, _) {
-        final cfg = state.config;
-        final s = AppStrings.of(cfg.language);
-        final scheme = Theme.of(context).colorScheme;
-        final clr = scheme.onSurface;
-        final isDark = Theme.of(context).brightness == Brightness.dark;
-        final mobileLayout = _useMobileAiLayout(context);
+    // 壁纸 + 窗口 chrome 放在 Consumer **外面**：旧写法把 withWallpaper 放在
+    // Consumer 的 builder 里，于是「点任意元素 → 写配置 → notifyListeners」都会
+    // 重建整棵背景层（壁纸 Image + 玻璃标题栏 + 开窗作用域），表现为
+    // 「在 MCP/AI 高级界面点任何东西背景都会变一下」（用户反馈的原话）。
+    // 现在点击只重建内容树，背景层实例保持不变。
+    return withWallpaper(
+      context,
+      WindowChrome(
+        child: Consumer<AppState>(
+          builder: (context, state, _) {
+            final cfg = state.config;
+            final s = AppStrings.of(cfg.language);
+            final scheme = Theme.of(context).colorScheme;
+            final clr = scheme.onSurface;
+            final isDark = Theme.of(context).brightness == Brightness.dark;
+            final mobileLayout = _useMobileAiLayout(context);
 
-        final Widget page = Scaffold(
-          backgroundColor: Colors.transparent,
-          body: SafeArea(
-            child: Column(
-              children: [
-                if (mobileLayout)
-                  MobileSubPageTopBar(
-                    title: Text(s.aiAdvanced),
-                    onBack: () => Navigator.of(context).maybePop(),
-                  )
-                else
-                  GlassTopBar(
-                    title: Row(
-                      children: [
-                        IconButton(
-                          tooltip: MaterialLocalizations.of(
-                            context,
-                          ).backButtonTooltip,
-                          onPressed: () => Navigator.of(context).maybePop(),
-                          icon: const Icon(Icons.arrow_back),
+            final Widget page = Scaffold(
+              backgroundColor: Colors.transparent,
+              body: SafeArea(
+                child: Column(
+                  children: [
+                    if (mobileLayout)
+                      MobileSubPageTopBar(
+                        title: Text(s.aiAdvanced),
+                        onBack: () => Navigator.of(context).maybePop(),
+                      )
+                    else
+                      GlassTopBar(
+                        title: Row(
+                          children: [
+                            IconButton(
+                              tooltip: MaterialLocalizations.of(
+                                context,
+                              ).backButtonTooltip,
+                              onPressed: () => Navigator.of(context).maybePop(),
+                              icon: const Icon(Icons.arrow_back),
+                            ),
+                            Text(s.aiAdvanced),
+                          ],
                         ),
-                        Text(s.aiAdvanced),
-                      ],
-                    ),
-                  ),
-                Expanded(
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxWidth: mobileLayout ? double.infinity : 1180,
                       ),
-                      child: ListView(
-                        // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
-                        addRepaintBoundaries: false,
-                        padding: mobileLayout
-                            ? MobileUi.subListPadding(top: 4, bottom: 16)
-                            : const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                        children: [
-                          // ── 生成（图生成模式 + 思考过程） ──
-                          // 原先这张卡把 图生成/思考/自动命名/标题提示词 全塞在一起，
-                          // 现按关注点拆成「生成」「命名」两张卡，层级更清晰。
-                          _AiSectionCard(
-                            cardStyle: cfg.cardStyle,
-                            icon: Icons.auto_fix_high_outlined,
-                            title: s.isZh ? '生成' : 'Generation',
-                            children: [
-                              // 图生成模式改为下拉菜单（窄屏下自动换成「标签在上」）
-                              _AiDropdownRow(
-                                label: s.aiGraphModeLabel,
-                                value: cfg.aiGraphMode,
-                                entries: [
-                                  ('redo', s.aiGraphModeRedo, Icons.refresh),
-                                  (
-                                    'modify',
-                                    s.aiGraphModeModify,
-                                    Icons.edit_outlined,
-                                  ),
-                                ],
-                                onSelected: (v) => state.updateConfig(
-                                  (c) => c..aiGraphMode = v,
-                                ),
-                              ),
-                              const _AiDivider(),
-                              _AiSwitchTile(
-                                icon: Icons.psychology_outlined,
-                                title: s.aiShowThinking,
-                                desc: s.aiShowThinkingDesc,
-                                value: cfg.aiShowThinking,
-                                onChanged: (v) => state.updateConfig(
-                                  (c) => c..aiShowThinking = v,
-                                ),
-                              ),
-                            ],
+                    Expanded(
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxWidth: mobileLayout ? double.infinity : 1180,
                           ),
-                          const SizedBox(height: 12),
-                          // ── 会话命名 ──
-                          _AiSectionCard(
-                            cardStyle: cfg.cardStyle,
-                            icon: Icons.label_outline,
-                            title: s.isZh ? '会话命名' : 'Conversation Title',
+                          child: ListView(
+                            // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
+                            addRepaintBoundaries: false,
+                            padding: mobileLayout
+                                ? MobileUi.subListPadding(top: 4, bottom: 16)
+                                : const EdgeInsets.fromLTRB(16, 12, 16, 24),
                             children: [
-                              _AiSwitchTile(
-                                icon: Icons.title,
-                                title: s.aiAutoTitleLabel,
-                                desc: s.aiAutoTitleDesc,
-                                value: cfg.aiAutoTitle,
-                                onChanged: (v) => state.updateConfig(
-                                  (c) => c..aiAutoTitle = v,
-                                ),
-                              ),
-                              // 展开/收起带动画，避免提示词输入框「瞬间出现」的割裂感
-                              AnimatedSize(
-                                duration: const Duration(milliseconds: 200),
-                                curve: Curves.easeOutCubic,
-                                alignment: Alignment.topCenter,
-                                child: cfg.aiAutoTitle
-                                    ? Padding(
-                                        padding: const EdgeInsets.only(top: 10),
-                                        child: _AiLabeledField(
-                                          label: s.aiTitlePromptLabel,
-                                          child: _AiField(
-                                            value: cfg.aiTitlePrompt,
-                                            scheme: scheme,
-                                            minLines: 2,
-                                            maxLines: 4,
-                                            onCommit: (v) => state.updateConfig(
-                                              (c) => c..aiTitlePrompt = v,
-                                            ),
-                                          ),
-                                        ),
-                                      )
-                                    : const SizedBox(
-                                        width: double.infinity,
-                                        height: 0,
+                              // ── 生成（图生成模式 + 思考过程） ──
+                              // 原先这张卡把 图生成/思考/自动命名/标题提示词 全塞在一起，
+                              // 现按关注点拆成「生成」「命名」两张卡，层级更清晰。
+                              _AiSectionCard(
+                                cardStyle: cfg.cardStyle,
+                                icon: Icons.auto_fix_high_outlined,
+                                title: s.isZh ? '生成' : 'Generation',
+                                children: [
+                                  // 图生成模式改为下拉菜单（窄屏下自动换成「标签在上」）
+                                  _AiDropdownRow(
+                                    label: s.aiGraphModeLabel,
+                                    value: cfg.aiGraphMode,
+                                    entries: [
+                                      ('redo', s.aiGraphModeRedo, Icons.refresh),
+                                      (
+                                        'modify',
+                                        s.aiGraphModeModify,
+                                        Icons.edit_outlined,
                                       ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          // ── 会话模式 + 询问跳过 ──
-                          _AiSectionCard(
-                            cardStyle: cfg.cardStyle,
-                            icon: Icons.forum_outlined,
-                            title: s.aiApproveModeLabel,
-                            children: [
-                              _AiDropdownRow(
-                                label: s.aiApproveModeLabel,
-                                value: cfg.aiApproveMode,
-                                entries: [
-                                  (
-                                    'ask',
-                                    s.aiApproveModeAsk,
-                                    Icons.help_outline,
+                                    ],
+                                    onSelected: (v) => state.updateConfig(
+                                      (c) => c..aiGraphMode = v,
+                                    ),
                                   ),
-                                  (
-                                    'auto',
-                                    s.aiApproveModeAuto,
-                                    Icons.bolt_outlined,
+                                  const _AiDivider(),
+                                  _AiSwitchTile(
+                                    icon: Icons.psychology_outlined,
+                                    title: s.aiShowThinking,
+                                    desc: s.aiShowThinkingDesc,
+                                    value: cfg.aiShowThinking,
+                                    onChanged: (v) => state.updateConfig(
+                                      (c) => c..aiShowThinking = v,
+                                    ),
                                   ),
                                 ],
-                                onSelected: (v) => state.updateConfig(
-                                  (c) => c..aiApproveMode = v,
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                s.aiApproveModeDesc,
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: scheme.outline,
-                                ),
                               ),
                               const SizedBox(height: 12),
-                              Text(
-                                s.aiAskSkipLabel,
-                                style: TextStyle(fontSize: 12, color: clr),
-                              ),
-                              const SizedBox(height: 6),
-                              Wrap(
-                                spacing: 6,
-                                runSpacing: 6,
+                              // ── 会话命名 ──
+                              _AiSectionCard(
+                                cardStyle: cfg.cardStyle,
+                                icon: Icons.label_outline,
+                                title: s.isZh ? '会话命名' : 'Conversation Title',
                                 children: [
-                                  for (final key in _askSkipKeys)
-                                    _AiToggleChip(
-                                      label: _askSkipLabel(key, s.isZh),
-                                      selected: cfg.aiAskSkipTools.contains(
-                                        key,
-                                      ),
-                                      scheme: scheme,
-                                      isDark: isDark,
-                                      onTap: () {
-                                        state.updateConfig((c) {
-                                          final set = c.aiAskSkipTools.toSet();
-                                          if (set.contains(key)) {
-                                            set.remove(key);
-                                          } else {
-                                            set.add(key);
-                                          }
-                                          c.aiAskSkipTools = set.toList();
-                                          return c;
-                                        });
-                                      },
+                                  _AiSwitchTile(
+                                    icon: Icons.title,
+                                    title: s.aiAutoTitleLabel,
+                                    desc: s.aiAutoTitleDesc,
+                                    value: cfg.aiAutoTitle,
+                                    onChanged: (v) => state.updateConfig(
+                                      (c) => c..aiAutoTitle = v,
                                     ),
+                                  ),
+                                  // 展开/收起带动画，避免提示词输入框「瞬间出现」的割裂感
+                                  AnimatedSize(
+                                    duration: const Duration(milliseconds: 200),
+                                    curve: Curves.easeOutCubic,
+                                    alignment: Alignment.topCenter,
+                                    child: cfg.aiAutoTitle
+                                        ? Padding(
+                                            padding: const EdgeInsets.only(top: 10),
+                                            child: _AiLabeledField(
+                                              label: s.aiTitlePromptLabel,
+                                              child: _AiField(
+                                                value: cfg.aiTitlePrompt,
+                                                scheme: scheme,
+                                                minLines: 2,
+                                                maxLines: 4,
+                                                onCommit: (v) => state.updateConfig(
+                                                  (c) => c..aiTitlePrompt = v,
+                                                ),
+                                              ),
+                                            ),
+                                          )
+                                        : const SizedBox(
+                                            width: double.infinity,
+                                            height: 0,
+                                          ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              // ── 会话模式 + 询问跳过 ──
+                              _AiSectionCard(
+                                cardStyle: cfg.cardStyle,
+                                icon: Icons.forum_outlined,
+                                title: s.aiApproveModeLabel,
+                                children: [
+                                  _AiDropdownRow(
+                                    label: s.aiApproveModeLabel,
+                                    value: cfg.aiApproveMode,
+                                    entries: [
+                                      (
+                                        'ask',
+                                        s.aiApproveModeAsk,
+                                        Icons.help_outline,
+                                      ),
+                                      (
+                                        'auto',
+                                        s.aiApproveModeAuto,
+                                        Icons.bolt_outlined,
+                                      ),
+                                    ],
+                                    onSelected: (v) => state.updateConfig(
+                                      (c) => c..aiApproveMode = v,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    s.aiApproveModeDesc,
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: scheme.outline,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    s.aiAskSkipLabel,
+                                    style: TextStyle(fontSize: 12, color: clr),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Wrap(
+                                    spacing: 6,
+                                    runSpacing: 6,
+                                    children: [
+                                      for (final key in _askSkipKeys)
+                                        _AiToggleChip(
+                                          label: _askSkipLabel(key, s.isZh),
+                                          selected: cfg.aiAskSkipTools.contains(
+                                            key,
+                                          ),
+                                          scheme: scheme,
+                                          isDark: isDark,
+                                          onTap: () {
+                                            state.updateConfig((c) {
+                                              final set = c.aiAskSkipTools.toSet();
+                                              if (set.contains(key)) {
+                                                set.remove(key);
+                                              } else {
+                                                set.add(key);
+                                              }
+                                              c.aiAskSkipTools = set.toList();
+                                              return c;
+                                            });
+                                          },
+                                        ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              // ── 自定义系统提示词 ──
+                              _AiSectionCard(
+                                cardStyle: cfg.cardStyle,
+                                icon: Icons.article_outlined,
+                                title: s.aiCustomPrompt,
+                                children: [
+                                  _AiField(
+                                    value: cfg.aiSystemPrompt,
+                                    scheme: scheme,
+                                    hint: s.aiCustomPromptHint,
+                                    minLines: 3,
+                                    maxLines: 6,
+                                    onCommit: (v) => state.updateConfig(
+                                      (c) => c..aiSystemPrompt = v,
+                                    ),
+                                  ),
                                 ],
                               ),
                             ],
                           ),
-                          const SizedBox(height: 12),
-                          // ── 自定义系统提示词 ──
-                          _AiSectionCard(
-                            cardStyle: cfg.cardStyle,
-                            icon: Icons.article_outlined,
-                            title: s.aiCustomPrompt,
-                            children: [
-                              _AiField(
-                                value: cfg.aiSystemPrompt,
-                                scheme: scheme,
-                                hint: s.aiCustomPromptHint,
-                                minLines: 3,
-                                maxLines: 6,
-                                onCommit: (v) => state.updateConfig(
-                                  (c) => c..aiSystemPrompt = v,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
+                        ),
                       ),
                     ),
-                  ),
+                  ],
                 ),
-              ],
-            ),
-          ),
-        );
-        // 壁纸 → WindowChrome（Linux 36px 玻璃 CSD）→ Scaffold；非 Linux no-op。
-        return withWallpaper(context, WindowChrome(child: page));
-      },
+              ),
+            );
+            // 壁纸与 WindowChrome 已提到外层（见 build 开头）。
+            return page;
+          },
+        ),
+      ),
     );
   }
 }
@@ -5188,10 +5435,10 @@ class _AiDropdownRow extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     return LayoutBuilder(
       builder: (context, constraints) {
-        // 412 宽的手机上卡片内容约 332：标签 + 下拉（164）完全放得下，
-        // 沿用 380 的阈值会让「请求格式 / 图生成模式」在正常手机上也无谓换行。
-        // 320 宽时内容约 240，才退回「标签在上」。
-        final compact = constraints.maxWidth < 300;
+        // 只在「真的很窄」时退回标签在上：320 宽设备的卡片内容约 240，仍可左右排。
+        // 之前 300 的阈值 + 双倍内缩会让正常手机上的「请求格式」也变成上下排布
+        //（用户要求该栏固定左文字右下拉）。
+        final compact = constraints.maxWidth < 240;
         final dropdown = _AiDropdown(
           value: value,
           entries: entries,

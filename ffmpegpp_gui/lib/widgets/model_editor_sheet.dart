@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 
 import '../models/models.dart';
@@ -221,331 +223,352 @@ class _ModelEditorSheetState extends State<ModelEditorSheet> {
         constraints: BoxConstraints(maxHeight: maxHeight * 0.94),
         child: SafeArea(
           top: false,
-          child: DecoratedBox(
-            key: const ValueKey('model_editor_sheet'),
-            decoration: BoxDecoration(
-              color: scheme.surfaceContainerHigh,
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(26),
-              ),
-              border: Border(
-                top: BorderSide(
-                  color: scheme.outlineVariant.withAlpha(isDark ? 70 : 90),
-                  width: 0.7,
-                ),
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: scheme.shadow.withValues(alpha: isDark ? 0.42 : 0.20),
-                  blurRadius: 26,
-                  offset: const Offset(0, -8),
-                ),
-              ],
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(top: 8, bottom: 2),
-                  child: Container(
-                    width: 38,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: scheme.onSurfaceVariant.withValues(alpha: 0.35),
-                      borderRadius: BorderRadius.circular(999),
+          child: ClipRRect(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
+            // 面板背景跟随主题色（不再用中性 surfaceContainerHigh）+ 背景模糊：
+            // 用户反馈模型编辑面板「背景样式为主题色与其他界面违和」，这里改成和
+            // 全应用玻璃卡一致的「主题色薄着色 + 背景模糊」，同时把圆角裁切交给
+            // ClipRRect，模糊层不会溢出到圆角外。
+            child: BackdropFilter(
+              filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+              child: DecoratedBox(
+                key: const ValueKey('model_editor_sheet'),
+                decoration: BoxDecoration(
+                  color: Color.alphaBlend(
+                    scheme.primary.withValues(alpha: isDark ? 0.10 : 0.06),
+                    scheme.surface.withValues(alpha: 0.92),
+                  ),
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(26),
+                  ),
+                  border: Border(
+                    top: BorderSide(
+                      color: scheme.outlineVariant.withAlpha(isDark ? 70 : 90),
+                      width: 0.7,
                     ),
                   ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: scheme.shadow.withValues(alpha: isDark ? 0.42 : 0.20),
+                      blurRadius: 26,
+                      offset: const Offset(0, -8),
+                    ),
+                  ],
                 ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 2, 8, 2),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Semantics(
-                              header: true,
-                              child: Text(
-                                title,
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                  color: scheme.onSurface,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8, bottom: 2),
+                      child: Container(
+                        width: 38,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: scheme.onSurfaceVariant.withValues(alpha: 0.35),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 2, 8, 2),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Semantics(
+                                  header: true,
+                                  child: Text(
+                                    title,
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                      color: scheme.onSurface,
+                                    ),
+                                  ),
                                 ),
-                              ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  widget.isZh
+                                      ? '仅对该模型生效；留空项继承提供商默认值'
+                                      : 'Applies to this model only; empty fields inherit provider defaults',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: SettingsTypography.description.copyWith(
+                                    color: scheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
                             ),
-                            const SizedBox(height: 2),
-                            Text(
-                              widget.isZh
-                                  ? '仅对该模型生效；留空项继承提供商默认值'
-                                  : 'Applies to this model only; empty fields inherit provider defaults',
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: SettingsTypography.description.copyWith(
+                          ),
+                          if (hasOverrides)
+                            IconButton(
+                              tooltip: widget.isZh
+                                  ? '恢复继承默认'
+                                  : 'Inherit defaults',
+                              icon: Icon(
+                                Icons.restart_alt,
+                                size: 19,
                                 color: scheme.onSurfaceVariant,
                               ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (hasOverrides)
-                        IconButton(
-                          tooltip: widget.isZh
-                              ? '恢复继承默认'
-                              : 'Inherit defaults',
-                          icon: Icon(
-                            Icons.restart_alt,
-                            size: 19,
-                            color: scheme.onSurfaceVariant,
-                          ),
-                          constraints: const BoxConstraints.tightFor(
-                            width: 44,
-                            height: 44,
-                          ),
-                          onPressed: _resetInherited,
-                        ),
-                      IconButton(
-                        key: const ValueKey('model_sheet_close'),
-                        tooltip: widget.isZh ? '取消' : 'Cancel',
-                        icon: Icon(
-                          Icons.close_rounded,
-                          size: 20,
-                          color: scheme.onSurfaceVariant,
-                        ),
-                        constraints: const BoxConstraints.tightFor(
-                          width: 44,
-                          height: 44,
-                        ),
-                        onPressed: () => Navigator.of(context).maybePop(),
-                      ),
-                    ],
-                  ),
-                ),
-                Flexible(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _SheetSection(
-                          cardStyle: widget.cardStyle,
-                          title: widget.isZh ? '基本信息' : 'Basic info',
-                          children: [
-                            _LabeledField(
-                              label: widget.isZh ? '显示名称' : 'Display name',
-                              child: _SheetTextField(
-                                key: const ValueKey(
-                                  'model_sheet_display_name',
-                                ),
-                                controller: _displayName,
-                                hint: widget.isZh
-                                    ? '例如 GPT-6（留空显示 ID）'
-                                    : 'e.g. GPT-6 (empty falls back to ID)',
-                                onChanged: (_) => setState(() {}),
+                              constraints: const BoxConstraints.tightFor(
+                                width: 44,
+                                height: 44,
                               ),
+                              onPressed: _resetInherited,
                             ),
-                            _LabeledField(
-                              label: widget.isZh ? '模型 ID' : 'Model ID',
-                              error: _idError,
-                              hint: widget.isZh
-                                  ? '供应商提供的模型标识'
-                                  : 'Model identifier from the provider',
-                              child: _SheetTextField(
-                                key: const ValueKey('model_sheet_id'),
-                                controller: _id,
-                                hint: 'gpt-6',
-                                onChanged: (_) {
-                                  if (_idError != null) {
-                                    setState(() => _idError = null);
-                                  }
-                                },
-                              ),
-                            ),
-                            _SwitchRow(
-                              label: widget.isZh ? '是否启用' : 'Enabled',
-                              description: widget.isZh
-                                  ? '停用后不参与模型选择'
-                                  : 'Disabled models stay hidden from selection',
-                              value: _enabled,
-                              onChanged: (value) =>
-                                  setState(() => _enabled = value),
-                            ),
-                          ],
-                        ),
-                        _SheetSection(
-                          cardStyle: widget.cardStyle,
-                          title: widget.isZh ? '生成参数' : 'Generation',
-                          children: [
-                            _LabeledField(
-                              label: widget.isZh ? '上下文' : 'Context',
-                              hint: widget.isZh
-                                  ? '继承默认：${widget.defaultContextWindow}'
-                                  : 'Inherit default: ${widget.defaultContextWindow}',
-                              child: _SheetTextField(
-                                key: const ValueKey('model_sheet_context'),
-                                controller: _context,
-                                keyboardType: TextInputType.number,
-                                hint: widget.defaultContextWindow.toString(),
-                                onChanged: (_) => setState(() {}),
-                              ),
-                            ),
-                            _LabeledField(
-                              label: widget.isZh ? '最大输出' : 'Max output',
-                              hint: widget.isZh
-                                  ? '继承默认：${widget.defaultMaxTokens}'
-                                  : 'Inherit default: ${widget.defaultMaxTokens}',
-                              child: _SheetTextField(
-                                key: const ValueKey(
-                                  'model_sheet_max_tokens',
-                                ),
-                                controller: _maxTokens,
-                                keyboardType: TextInputType.number,
-                                hint: widget.defaultMaxTokens.toString(),
-                                onChanged: (_) => setState(() {}),
-                              ),
-                            ),
-                            _ParamSliderRow(
-                              label: widget.isZh ? '温度' : 'Temperature',
-                              value:
-                                  _entry.temperature ??
-                                  widget.defaultTemperature,
-                              min: 0,
-                              max: 2,
-                              divisions: 20,
-                              decimals: 1,
-                              customized: _entry.temperature != null,
-                              fallbackLabel: widget.defaultTemperature
-                                  .toStringAsFixed(1),
-                              resetLabel: widget.isZh ? '默认' : 'Default',
-                              onReset: () =>
-                                  setState(() => _entry.temperature = null),
-                              onCommit: (value) =>
-                                  setState(() => _entry.temperature = value),
-                              scheme: scheme,
-                            ),
-                            _ParamSliderRow(
-                              label: 'Top_P',
-                              value: _entry.topP ?? 1.0,
-                              min: 0,
-                              max: 1,
-                              divisions: 20,
-                              decimals: 2,
-                              customized: _entry.topP != null,
-                              fallbackLabel: '1.00',
-                              resetLabel: widget.isZh ? '默认' : 'Default',
-                              onReset: () => setState(() => _entry.topP = null),
-                              onCommit: (value) =>
-                                  setState(() => _entry.topP = value),
-                              scheme: scheme,
-                            ),
-                          ],
-                        ),
-                        _SheetSection(
-                          cardStyle: widget.cardStyle,
-                          title: widget.isZh ? '支持输入' : 'Input',
-                          subtitle: widget.isZh
-                              ? '点击切换，长按拖动排序；至少保留一种'
-                              : 'Tap to toggle, long press to reorder; keep at least one',
-                          children: [
-                            MobileGlassPill(
-                              style: widget.pillStyle,
-                              radius: 26,
-                              padding: const EdgeInsets.all(4),
-                              child: LiquidModalityPills(
-                                key: const ValueKey('model_sheet_input'),
-                                keyPrefix: 'model_sheet_input',
-                                order: _inputOrder,
-                                selected: _inputSelected,
-                                isZh: widget.isZh,
-                                labelOf: (value) =>
-                                    _modalityLabel(value, widget.isZh).$1,
-                                iconOf: (value) =>
-                                    _modalityLabel(value, widget.isZh).$2,
-                                onToggle: (value) => _toggleModality(
-                                  input: true,
-                                  value: value,
-                                ),
-                                onReorder: (from, to) => _reorderModality(
-                                  input: true,
-                                  oldIndex: from,
-                                  newIndex: to,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        _SheetSection(
-                          cardStyle: widget.cardStyle,
-                          title: widget.isZh ? '支持输出' : 'Output',
-                          subtitle: widget.isZh
-                              ? '点击切换，长按拖动排序；至少保留一种'
-                              : 'Tap to toggle, long press to reorder; keep at least one',
-                          children: [
-                            MobileGlassPill(
-                              style: widget.pillStyle,
-                              radius: 26,
-                              padding: const EdgeInsets.all(4),
-                              child: LiquidModalityPills(
-                                key: const ValueKey('model_sheet_output'),
-                                keyPrefix: 'model_sheet_output',
-                                order: _outputOrder,
-                                selected: _outputSelected,
-                                isZh: widget.isZh,
-                                labelOf: (value) =>
-                                    _modalityLabel(value, widget.isZh).$1,
-                                iconOf: (value) =>
-                                    _modalityLabel(value, widget.isZh).$2,
-                                onToggle: (value) => _toggleModality(
-                                  input: false,
-                                  value: value,
-                                ),
-                                onReorder: (from, to) => _reorderModality(
-                                  input: false,
-                                  oldIndex: from,
-                                  newIndex: to,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(4, 2, 4, 0),
-                          child: Text(
-                            widget.isZh
-                                ? '输入选「图像」会自动补上视觉能力；ID 不能与同提供商下的其它模型重复。'
-                                : 'Selecting Image as input also enables the vision capability; IDs must be unique within this provider.',
-                            style: SettingsTypography.description.copyWith(
+                          IconButton(
+                            key: const ValueKey('model_sheet_close'),
+                            tooltip: widget.isZh ? '取消' : 'Cancel',
+                            icon: Icon(
+                              Icons.close_rounded,
+                              size: 20,
                               color: scheme.onSurfaceVariant,
                             ),
+                            constraints: const BoxConstraints.tightFor(
+                              width: 44,
+                              height: 44,
+                            ),
+                            onPressed: () => Navigator.of(context).maybePop(),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                  child: Row(
-                    children: [
-                      TextButton(
-                        key: const ValueKey('model_sheet_cancel'),
-                        onPressed: () => Navigator.of(context).maybePop(),
-                        child: Text(widget.isZh ? '取消' : 'Cancel'),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: FilledButton(
-                          key: const ValueKey('model_sheet_done'),
-                          style: AppControlSize.large.buttonStyle(filled: true),
-                          onPressed: _done,
-                          child: Text(widget.isZh ? '完成' : 'Done'),
+                    Flexible(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _SheetSection(
+                              cardStyle: widget.cardStyle,
+                              title: widget.isZh ? '基本信息' : 'Basic info',
+                              children: [
+                                _LabeledField(
+                                  label: widget.isZh ? '显示名称' : 'Display name',
+                                  child: _SheetTextField(
+                                    key: const ValueKey(
+                                      'model_sheet_display_name',
+                                    ),
+                                    controller: _displayName,
+                                    hint: widget.isZh
+                                        ? '例如 GPT-6（留空显示 ID）'
+                                        : 'e.g. GPT-6 (empty falls back to ID)',
+                                    onChanged: (_) => setState(() {}),
+                                  ),
+                                ),
+                                _LabeledField(
+                                  label: widget.isZh ? '模型 ID' : 'Model ID',
+                                  error: _idError,
+                                  hint: widget.isZh
+                                      ? '供应商提供的模型标识'
+                                      : 'Model identifier from the provider',
+                                  child: _SheetTextField(
+                                    key: const ValueKey('model_sheet_id'),
+                                    controller: _id,
+                                    hint: 'gpt-6',
+                                    onChanged: (_) {
+                                      if (_idError != null) {
+                                        setState(() => _idError = null);
+                                      }
+                                    },
+                                  ),
+                                ),
+                                _SwitchRow(
+                                  label: widget.isZh ? '是否启用' : 'Enabled',
+                                  description: widget.isZh
+                                      ? '停用后不参与模型选择'
+                                      : 'Disabled models stay hidden from selection',
+                                  value: _enabled,
+                                  onChanged: (value) =>
+                                      setState(() => _enabled = value),
+                                ),
+                              ],
+                            ),
+                            _SheetSection(
+                              cardStyle: widget.cardStyle,
+                              title: widget.isZh ? '生成参数' : 'Generation',
+                              children: [
+                                _LabeledField(
+                                  label: widget.isZh ? '上下文' : 'Context',
+                                  hint: widget.isZh
+                                      ? '继承默认：${widget.defaultContextWindow}'
+                                      : 'Inherit default: ${widget.defaultContextWindow}',
+                                  child: _SheetTextField(
+                                    key: const ValueKey('model_sheet_context'),
+                                    controller: _context,
+                                    keyboardType: TextInputType.number,
+                                    hint: widget.defaultContextWindow.toString(),
+                                    onChanged: (_) => setState(() {}),
+                                  ),
+                                ),
+                                _LabeledField(
+                                  label: widget.isZh ? '最大输出' : 'Max output',
+                                  hint: widget.isZh
+                                      ? '继承默认：${widget.defaultMaxTokens}'
+                                      : 'Inherit default: ${widget.defaultMaxTokens}',
+                                  child: _SheetTextField(
+                                    key: const ValueKey(
+                                      'model_sheet_max_tokens',
+                                    ),
+                                    controller: _maxTokens,
+                                    keyboardType: TextInputType.number,
+                                    hint: widget.defaultMaxTokens.toString(),
+                                    onChanged: (_) => setState(() {}),
+                                  ),
+                                ),
+                                _ParamSliderRow(
+                                  label: widget.isZh ? '温度' : 'Temperature',
+                                  value:
+                                      _entry.temperature ??
+                                      widget.defaultTemperature,
+                                  min: 0,
+                                  max: 2,
+                                  divisions: 20,
+                                  decimals: 1,
+                                  customized: _entry.temperature != null,
+                                  fallbackLabel: widget.defaultTemperature
+                                      .toStringAsFixed(1),
+                                  resetLabel: widget.isZh ? '默认' : 'Default',
+                                  onReset: () =>
+                                      setState(() => _entry.temperature = null),
+                                  onCommit: (value) =>
+                                      setState(() => _entry.temperature = value),
+                                  scheme: scheme,
+                                ),
+                                _ParamSliderRow(
+                                  label: 'Top_P',
+                                  value: _entry.topP ?? 1.0,
+                                  min: 0,
+                                  max: 1,
+                                  divisions: 20,
+                                  decimals: 2,
+                                  customized: _entry.topP != null,
+                                  fallbackLabel: '1.00',
+                                  resetLabel: widget.isZh ? '默认' : 'Default',
+                                  onReset: () => setState(() => _entry.topP = null),
+                                  onCommit: (value) =>
+                                      setState(() => _entry.topP = value),
+                                  scheme: scheme,
+                                ),
+                              ],
+                            ),
+                            _SheetSection(
+                              cardStyle: widget.cardStyle,
+                              title: widget.isZh ? '支持输入' : 'Input',
+                              subtitle: widget.isZh
+                                  ? '点击切换，长按拖动排序；至少保留一种'
+                                  : 'Tap to toggle, long press to reorder; keep at least one',
+                              children: [
+                                MobileGlassPill(
+                                  style: widget.pillStyle,
+                                  radius: 26,
+                                  padding: const EdgeInsets.all(4),
+                                  child: LiquidModalityPills(
+                                    key: const ValueKey('model_sheet_input'),
+                                    keyPrefix: 'model_sheet_input',
+                                    order: _inputOrder,
+                                    selected: _inputSelected,
+                                    isZh: widget.isZh,
+                                    labelOf: (value) =>
+                                        _modalityLabel(value, widget.isZh).$1,
+                                    iconOf: (value) =>
+                                        _modalityLabel(value, widget.isZh).$2,
+                                    onToggle: (value) => _toggleModality(
+                                      input: true,
+                                      value: value,
+                                    ),
+                                    onReorder: (from, to) => _reorderModality(
+                                      input: true,
+                                      oldIndex: from,
+                                      newIndex: to,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            _SheetSection(
+                              cardStyle: widget.cardStyle,
+                              title: widget.isZh ? '支持输出' : 'Output',
+                              subtitle: widget.isZh
+                                  ? '点击切换，长按拖动排序；至少保留一种'
+                                  : 'Tap to toggle, long press to reorder; keep at least one',
+                              children: [
+                                MobileGlassPill(
+                                  style: widget.pillStyle,
+                                  radius: 26,
+                                  padding: const EdgeInsets.all(4),
+                                  child: LiquidModalityPills(
+                                    key: const ValueKey('model_sheet_output'),
+                                    keyPrefix: 'model_sheet_output',
+                                    order: _outputOrder,
+                                    selected: _outputSelected,
+                                    isZh: widget.isZh,
+                                    labelOf: (value) =>
+                                        _modalityLabel(value, widget.isZh).$1,
+                                    iconOf: (value) =>
+                                        _modalityLabel(value, widget.isZh).$2,
+                                    onToggle: (value) => _toggleModality(
+                                      input: false,
+                                      value: value,
+                                    ),
+                                    onReorder: (from, to) => _reorderModality(
+                                      input: false,
+                                      oldIndex: from,
+                                      newIndex: to,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(4, 2, 4, 0),
+                              child: Text(
+                                widget.isZh
+                                    ? '输入选「图像」会自动补上视觉能力；ID 不能与同提供商下的其它模型重复。'
+                                    : 'Selecting Image as input also enables the vision capability; IDs must be unique within this provider.',
+                                style: SettingsTypography.description.copyWith(
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                    Padding(
+                      // 底部安全区留在内容里而不是再包一层 SafeArea：
+                      // 面板背景（模糊 + 主题色薄染）一直铺到屏幕底边才是沉浸的，
+                      // 按钮仍然落在系统导航栏上方。
+                      padding: EdgeInsets.fromLTRB(
+                        16,
+                        8,
+                        16,
+                        12 + MediaQuery.viewPaddingOf(context).bottom,
+                      ),
+                      child: Row(
+                        children: [
+                          TextButton(
+                            key: const ValueKey('model_sheet_cancel'),
+                            onPressed: () => Navigator.of(context).maybePop(),
+                            child: Text(widget.isZh ? '取消' : 'Cancel'),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: FilledButton(
+                              key: const ValueKey('model_sheet_done'),
+                              style: AppControlSize.large.buttonStyle(filled: true),
+                              onPressed: _done,
+                              child: Text(widget.isZh ? '完成' : 'Done'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         ),

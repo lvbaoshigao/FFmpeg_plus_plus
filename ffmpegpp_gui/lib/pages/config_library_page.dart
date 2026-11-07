@@ -30,12 +30,15 @@ import 'quick_config_page.dart';
 
 const _uuid = Uuid();
 
+// 底部「节点 / 快捷」切换器：高度与图标按主菜单栏同一档放大到 44 / 18。
+// 旧值 36px 高、最宽又被拉到 160px，在宽屏手机上接近 4.4:1 的细长条，
+// 与 52px 的主菜单栏和内容卡片明显不成比例（用户反馈「长宽比异常」）。
 const _kCompactMobileTabStyle = LiquidGlassTabBarStyle(
-  capsuleHeight: 36,
-  capsuleInset: 2,
+  capsuleHeight: 44,
+  capsuleInset: 3,
   horizontalMargin: 0,
   bottomGap: 0,
-  iconSize: 16,
+  iconSize: 18,
 );
 
 class _ConfigEntry {
@@ -1418,8 +1421,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                               (state) => state.config.mobileBottomActionSide,
                             );
                             final leftHanded = handSide == 'left';
-                            final selectorWidth = (constraints.maxWidth / 3)
-                                .clamp(96.0, 160.0);
+                            // 宽度不再按屏幕 1/3 拉伸（宽屏上会拉成细长条）：
+                            // 两个选项各 76，总宽固定 152，比例约 3.5:1。
+                            const selectorWidth = 152.0;
                             final selectorHeight =
                                 _kCompactMobileTabStyle.capsuleHeight;
                             final safeBottom = MediaQuery.paddingOf(

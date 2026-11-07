@@ -206,15 +206,18 @@ void main() {
       expect(find.text('GPT-6'), findsOneWidget);
       expect(find.text('gpt-6'), findsOneWidget);
       expect(find.text('Claude-opus'), findsOneWidget);
-      expect(find.text('添加自定义模型'), findsOneWidget);
-      expect(find.byKey(const ValueKey('add_custom_model')), findsOneWidget);
-      // 模型页底部的两个圆形动作药丸（云端获取 / 添加自定义模型）。
+      // 增 / 删 / 清空三个入口统一为底栏的圆形玻璃按钮（与「基本 / 模型」
+      // 切换栏同一处），列表顶部原来的「从云端获取模型列表」大卡已按用户要求删除。
       expect(
         find.byKey(const ValueKey('provider_models_fetch_round')),
         findsOneWidget,
       );
       expect(
         find.byKey(const ValueKey('provider_models_add_round')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('provider_models_clear_round')),
         findsOneWidget,
       );
 
@@ -281,7 +284,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(_tabLabel('模型'));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('add_custom_model')));
+      await tester.tap(find.byKey(const ValueKey('provider_models_add_round')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('model_editor_sheet')), findsOneWidget);
 

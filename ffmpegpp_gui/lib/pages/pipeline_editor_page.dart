@@ -4475,17 +4475,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                           left: 8,
                           child: _buildMobileBottomLeftBar(scheme, s),
                         ),
-                        // File details sit above the zoom controls, leaving taps unobstructed.
+                        // 文件信息条（分辨率/时长/节点数 · 源大小/.fppx）紧贴在缩放
+                        // 药丸**上方**。偏移必须按药丸的绘制高度算：
+                        // bottom(8) + 38 × _mobileZoomBarScale() + 间隙(8)。
+                        // 旧写法用 editorToolbarScale（顶部栏系数）算，缩放条一调大
+                        // 就会压住信息条、一调小信息条又飘到半空。
                         Positioned(
                           bottom:
                               mobileSafeBottom +
-                              14 +
-                              _kMobileBarHeight *
-                                  context
-                                      .read<AppState>()
-                                      .config
-                                      .editorToolbarScale
-                                      .clamp(1.0, 1.1),
+                              8 +
+                              _kMobileBarHeight * _mobileZoomBarScale() +
+                              8,
                           left: 0,
                           right: 0,
                           child: Center(child: _buildMobileFileInfo(scheme, s)),
@@ -11190,16 +11190,29 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// Minimum touch target for mobile action buttons, including overflow menus.
   static const double _kMobileBarBtnBox = 34;
 
+  /// 移动端底部缩放药丸的**实际**缩放系数（唯一来源）。
+  ///
+  /// 药丸用 [Transform.scale] 放大，布局盒仍是 [_kMobileBarHeight] 高，而绘制
+  /// 高度是 [_kMobileBarHeight] × scale —— 任何需要「排在这颗药丸上方」的悬浮
+  /// 元素都必须用这个系数算偏移，否则药丸调大 / 调小后就会重叠或飘走。
+  ///
+  /// 历史上文件信息条错用了 editorToolbarScale（顶部工具栏的系数），于是用户把
+  /// 「缩放条大小」调大后药丸长高、信息条不动，看起来就是
+  /// 「节点文件描述偏移到上方去了」。
+  double _mobileZoomBarScale() {
+    return math.min(
+      context.read<AppState>().config.editorZoomScale.clamp(1.0, 1.6),
+      math.max(1.0, (MediaQuery.sizeOf(context).width - 106) / 156),
+    );
+  }
+
   // ── 移动端专用：底部左侧缩放条 ──
 
   Widget _buildMobileBottomLeftBar(ColorScheme scheme, AppStrings s) {
     // 放大镜药丸大小可在设置中调节（editorZoomScale）。
     // 药丸总高 / 圆角 / 按钮盒与顶部工具栏共用 _kMobileBar* 常量（见上）。
     // Clamp visual scaling so controls stay clear of the right corner.
-    final scale = math.min(
-      context.read<AppState>().config.editorZoomScale.clamp(1.0, 1.6),
-      math.max(1.0, (MediaQuery.sizeOf(context).width - 106) / 156),
-    );
+    final scale = _mobileZoomBarScale();
     return Transform.scale(
       scale: scale,
       alignment: Alignment.bottomLeft,

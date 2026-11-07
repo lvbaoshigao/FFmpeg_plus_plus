@@ -1,6 +1,5 @@
 import 'dart:math' as math;
 // Float32List：彗星拖尾的轨迹环形缓冲（预分配、零每帧分配，见 [_Particle]）。
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -83,86 +82,13 @@ const int _kOverlayAlpha = 31;
 /// 进度条不确定态彗星穿过轨道的周期。
 const int _kIndeterminateDurationMs = 1800;
 
-// ── 拖动彗星拖尾 ──
+// ── 彗星拖尾 ──
 //
-// 连续方向光线：平滑轨迹共用亮核心、窄光带、宽柔光三层方向渐变。
-// 固定池最多 12 条，每帧最多 36 次 drawPath；复用 Path/Paint，不用
-// PathMetrics、模糊或 saveLayer。渐变着色器按当前几何更新。
-// 使用实时尖端与时间采样，避免高刷新率下头部跳动；松手淡出后停止 Ticker。
-// RepaintBoundary 隔离动画，减少动画或配置关闭时不建动画层。
-
-/// For verifying the non-public comet particle integration behavior in tests.
-@visibleForTesting
-class CometTrailTestProbe {
-  const CometTrailTestProbe._();
-
-  static List<double> sampleAges({
-    required int samples,
-    required double life,
-  }) => _seedSampleAges(samples, life);
-
-  static double sampledElapsed(double dt, double interval) =>
-      _sampleRemainder(dt, interval);
-
-  static double speedEnvelope(double speed) => cometSpeedEnvelope(speed);
-}
-
-/// 池容量（上限）。实际同时存活的条数由拖尾带宽度折算，见 [_particleActiveCount]。
-const int _kParticlePool = 12;
-
-/// 拖尾带里两条彗星平均占用的横向像素。
-///
-/// 旧版（小圆点）取 2.3px 就够；改成拖尾后每条彗星本身就很长，密度必须放疏，
-/// 否则 32 条最长 22% 轨道长的拖尾会叠成一坨实色、完全看不出「一条一条」。
-/// 想整体调密 / 调疏只改这一个值（越小越密）。
-const double _kParticleSpacing = 12;
-
-/// 窄轨道维持三条错开的光线。
-const int _kParticleMinActive = 3;
-
-/// 彗星横向寿命（秒）：一条彗星从发射到消失要走多久。
-/// 速度由「消亡距离 ÷ 寿命」反推（见 [_ParticleField._respawn]），所以改这里只影响
-/// 快慢，不会破坏「最远 22%」的约束。
-const double _kParticleLifeMin = 0.50;
-const double _kParticleLifeMax = 0.95;
-
-/// 消亡距离下限 / 上限（相对**轨道总长**）。
-///
-/// 旧版上限 0.15 是「圆点带」的约束；拖尾更长，这里放宽到 0.22（留 3% 余量，
-/// 避免 ClipRRect 的圆角端把边界彗星裁出硬边）。每条彗星在这两个值之间随机取值，
-/// 所以消失点不统一（8%~22%）。
-const double _kParticleSpanMin = 0.08;
-const double _kParticleSpanMax = 0.22;
-
-/// 发射点抖动（px）：让彗星不从同一条竖线上出发。
-/// 它从消亡距离里**扣掉**（见 [_ParticleField._respawn]），因此不会把 22% 撑大。
-const double _kParticleJitter = 3;
-
-// ── 拖尾几何 ──
-
-/// 轨迹环形缓冲的点数上限（每条彗星预分配这么长）。
-///
-/// 配合 [_kParticleTrailSampleDt] 决定单条拖尾覆盖的时间跨度
-/// （42 × 22ms ≈ 0.93s），覆盖最长粒子寿命。
-const int _kParticleTrailCap = 42;
-
-List<double> _seedSampleAges(int samples, double life) =>
-    List<double>.generate(samples, (index) {
-      final fraction = samples <= 1 ? 1.0 : index / (samples - 1);
-      return 1 - life * fraction;
-    });
-
-double _sampleRemainder(double elapsed, double interval) => elapsed % interval;
-
-/// 轨迹采样间隔（秒）。**按时间采样而不是按帧**：否则 144Hz 屏上的拖尾只有
-/// 60Hz 的 41% 长（同样的点数被更短的时间填满）。
-const double _kParticleTrailSampleDt = 1 / 45;
-
-/// 松手后整条拖尾带的淡出时长。
-const Duration _kParticleFadeOut = Duration(milliseconds: 240);
-
-/// 单帧最大积分步长：页面卡顿 / 后台回来时不要让彗星「瞬移」。
-const double _kParticleMaxStep = 0.05;
+// 全应用只保留一套实现：[_CometFillPainter]（填充段前缘光带 + 光晕），与开屏
+// 加载进度条的 [_AppProgressBarPainter] 同源，都调用 [_drawComet]。旧版「粒子
+// 喷射」实现（_Particle / _ParticleField / _ParticlePainter / _ParticleLayer /
+// CometTrailTestProbe / cometSpeedEnvelope）已整体删除 —— 用户要求特效以开屏
+// 进度条为准并全局统一，PC 与移动端一致。
 
 // ═══════════════════════════════════════════
 // 表面配置指纹（玻璃 / 彗星拖尾开关）
@@ -751,8 +677,6 @@ class _AppSliderState extends State<AppSlider>
 
   Animation<double>? _valueTween;
 
-  double get _cometIntensity => cometSpeedEnvelope(_dragSpeed);
-
   double _clamp(double v) =>
       v < widget.min ? widget.min : (v > widget.max ? widget.max : v);
 
@@ -877,20 +801,21 @@ class _AppSliderState extends State<AppSlider>
               widget.onChangeEnd?.call(nv);
             },
           ),
-          // ③ 拖动时从把手（填充段最右端）向左喷出的粒子（纯前景装饰，
-          //     IgnorePointer 保证不抢手势）。发射点 = fillEnd，见 [_ParticleLayer]。
+          // ③ 填充段前缘的彗星（与开屏进度条同款：光带渐变 + 光晕，裁剪在
+          //     胶囊内）。纯前景装饰层，IgnorePointer 保证不抢手势。
           if (particlesOn)
             Positioned.fill(
               child: IgnorePointer(
-                child: _ParticleLayer(
-                  active: _dragValue != null,
-                  fillStart: 0,
-                  fillEnd: _fillFraction.clamp(0.0, 1.0),
-                  trackHeight: trackHeight,
-                  color: accent.computeLuminance() > 0.55
-                      ? Colors.black
-                      : Colors.white,
-                  intensity: _cometIntensity,
+                child: CustomPaint(
+                  painter: _CometFillPainter(
+                    startFraction: 0,
+                    endFraction: _fillFraction.clamp(0.0, 1.0),
+                    color: accent,
+                    trackHeight: trackHeight,
+                    insetX: _kTrackInsetX,
+                    textDirection: Directionality.of(context),
+                    dragging: _dragValue != null,
+                  ),
                 ),
               ),
             ),
@@ -1014,18 +939,20 @@ class _AppRangeSliderState extends State<AppRangeSlider> {
               widget.onChangeEnd?.call(v);
             },
           ),
-          // 拖动时从**区间的右端**（= 用户说的「滑块最右端」）向左喷出的粒子。
+          // 区间两端之间的填充段前缘彗星，与 [AppSlider] / 开屏进度条一致。
           if (particlesOn)
             Positioned.fill(
               child: IgnorePointer(
-                child: _ParticleLayer(
-                  active: _dragging,
-                  fillStart: _fractionOf(widget.values.start),
-                  fillEnd: _fractionOf(widget.values.end),
-                  trackHeight: trackHeight,
-                  color: accent.computeLuminance() > 0.55
-                      ? Colors.black
-                      : Colors.white,
+                child: CustomPaint(
+                  painter: _CometFillPainter(
+                    startFraction: _fractionOf(widget.values.start),
+                    endFraction: _fractionOf(widget.values.end),
+                    color: accent,
+                    trackHeight: trackHeight,
+                    insetX: _kTrackInsetX,
+                    textDirection: Directionality.of(context),
+                    dragging: _dragging,
+                  ),
                 ),
               ),
             ),
@@ -1036,526 +963,116 @@ class _AppRangeSliderState extends State<AppRangeSlider> {
 }
 
 // ═══════════════════════════════════════════
-// 拖动彗星拖尾
+// 彗星拖尾（滑块 / 区间滑块 / 进度条共用）
 // ═══════════════════════════════════════════
 
-/// 一条彗星的全部状态（固定池子里的元素，反复复用，不新建对象）。
+/// 填充段前缘的彗星光带 + 光晕 —— 与开屏加载进度条完全同款
+/// （[_AppProgressBarPainter] 也用 [_drawComet] 画同一图形）。
 ///
-/// 除了「头部」自己的运动状态，它还持有一段**预分配**的轨迹环形缓冲：三条等长
-/// Float32List 交织存 (x, y, u)，u = 写入该点时的寿命进度（0 = 刚发射）。
-/// 绘制时用 u 反查亮度 / 线宽，于是「发射端最亮 → 远端渐隐」自动成立。
-class _Particle {
-  /// 轨道局部坐标（px）：[x] 相对轨道左端，[y] 相对轨道竖直中心（= 头部位置）。
-  double x = 0;
-  double y = 0;
-
-  /// 向左速度（px/s，正值 = 向左）。由「消亡距离 ÷ 寿命」反推，见 [_respawn]。
-  double vx = 60;
-
-  /// 竖直漂移（px/s）：让拖尾带看起来是「甩」出来的，而不是整齐平移的一条线。
-  double vy = 0;
-
-  /// Weak cross-axis acceleration, gives the trajectory a soft curved arc.
-  double ay = 0;
-
-  /// 已存活 / 总寿命（秒）。`寿命 × 速度` 就是这条彗星的消亡距离。
-  double life = 0;
-  double lifeMax = 0.7;
-
-  /// 亮度抖动系数：让同一时刻的彗星不是一个亮度，避免整条带一起「呼吸」。
-  double tone = 1;
-
-  /// 是否已被首次点亮（未点亮的彗星不参与绘制，避免开局挤在发射点上）。
-  bool alive = false;
-
-  // ── 轨迹环形缓冲（构造期一次性分配，之后零分配）──
-  final Float32List _tx = Float32List(_kParticleTrailCap);
-  final Float32List _ty = Float32List(_kParticleTrailCap);
-  final Float32List _tu = Float32List(_kParticleTrailCap);
-
-  /// 下一个写入槽位。
-  int _head = 0;
-
-  /// 有效点数（≤ [_kParticleTrailCap]）。
-  int _count = 0;
-
-  /// 采样时间累加器（把帧间隔攒够 [_kParticleTrailSampleDt] 才推一个点）。
-  double _acc = 0;
-
-  void _push(double px, double py, double u) {
-    _tx[_head] = px;
-    _ty[_head] = py;
-    _tu[_head] = u;
-    _head = (_head + 1) % _kParticleTrailCap;
-    if (_count < _kParticleTrailCap) _count++;
-  }
-
-  /// 清空轨迹并以发射点起头。
-  ///
-  /// **必须在 [_ParticleField._respawn] 与 [_ParticleField.reset] 里调用**：
-  /// 池子复用时不重置的话，上一条彗星的旧轨迹会残留下来，画成一条横跨整条带的
-  /// 直线（首帧 / 把手被拖过发射点之后尤其明显）。
-  void _resetTrail(double px, double py) {
-    _count = 0;
-    _head = 0;
-    _acc = 0;
-    _push(px, py, 1);
-  }
-
-  /// 环形缓冲的物理下标：i = 0 最旧（发射端），i = [_count] - 1 最新（运动尖端）。
-  int _slot(int i) =>
-      (_head - _count + i + _kParticleTrailCap) % _kParticleTrailCap;
-  double txAt(int i) => _tx[_slot(i)];
-  double tyAt(int i) => _ty[_slot(i)];
-}
-
-/// 当前「拖尾带」宽度下应当同时存活的彗星条数。
+/// * 光带：从尾端透明渐变到前缘实色的胶囊，裁剪在填充段内部，圆角端不会
+///   露出方角；
+/// * 光晕：前缘一层径向白色光，拖动时更亮（静态时保持克制，避免整屏发光）；
+/// * 颜色：浅色填充配深色彗星，否则白彗星在浅色块上不可见。
 ///
-/// 带越宽能放越多，但**不能线性放大**：条数一旦超过带内像素数，拖尾就会连成一片
-/// 实色，也就没有颗粒感了（用户要求「有颗粒感但不过于密集」）。因此按
-/// [_kParticleSpacing] 折算密度，再夹在 [_kParticleMinActive] 与池容量之间。
-int _particleActiveCount(double bandWidth) => (bandWidth / _kParticleSpacing)
-    .round()
-    .clamp(_kParticleMinActive, _kParticlePool);
-
-/// Speed curve for the comet tail: fast drags stretch and brighten it.
-@visibleForTesting
-double cometSpeedEnvelope(double speed) => (speed / 900).clamp(0.0, 1.0);
-
-/// 彗星池：按时间步长积分推进所有彗星，走完自己的消亡距离就回到发射点重新发射，
-/// 同时按固定时间间隔把位置写进各自的轨迹环形缓冲。
-///
-/// 放在 State 里持有、由 painter 复用（painter 每帧会被重建，池子不能跟着重建，
-/// 否则每帧都会重新随机、拖尾看起来是闪烁的噪声）。
-class _ParticleField {
-  _ParticleField(this._rnd);
-
-  final math.Random _rnd;
-
-  /// 池子按上限分配；实际同时存活的只有前 [activeCount] 条。
-  final List<_Particle> all = List<_Particle>.generate(
-    _kParticlePool,
-    (_) => _Particle(),
-  );
-
-  /// 上一次积分的时间戳（秒）。
-  double lastT = 0;
-
-  /// 当前宽度下同时存活的条数（由 [advance] 按轨道宽度刷新）。
-  int activeCount = _kParticleMinActive;
-
-  /// 是否已按「首次绘制」铺开过整池彗星。
-  bool _seeded = false;
-
-  void reset() {
-    lastT = 0;
-    _seeded = false;
-    for (final _Particle p in all) {
-      p.alive = false;
-      p.life = 0;
-      // 清空轨迹：池子是复用的，残留的旧轨迹会画成一条横跨整条带的直线。
-      p._resetTrail(0, 0);
-    }
-  }
-
-  /// 在发射点上重新发射一条彗星。
-  ///
-  /// [emitterX] = 填充段最右端（= 把手），[trackWidth] = 轨道总长（px）。
-  /// 消亡距离取 `trackWidth × 8%~22%` 且**逐条独立随机** —— 这正是用户要的
-  /// 「每个彗星消失位置不统一」。
-  void _respawn(
-    _Particle p,
-    double emitterX,
-    double halfHeight,
-    double trackWidth,
-  ) {
-    final double span =
-        trackWidth *
-        (_kParticleSpanMin +
-            _rnd.nextDouble() * (_kParticleSpanMax - _kParticleSpanMin));
-    // 发射点抖动要从消亡距离里扣掉，否则「最远不超过 22%」会被撑大一点点。
-    final double jitter = _rnd.nextDouble() * _kParticleJitter;
-    final double travel = math.max(0.6, span - jitter);
-    p.lifeMax =
-        _kParticleLifeMin +
-        _rnd.nextDouble() * (_kParticleLifeMax - _kParticleLifeMin);
-    // 速度由「距离 ÷ 寿命」反推：走得远的彗星更快，于是整条带是同步向前流的，
-    // 不会出现「近处慢慢爬、远处已经飞出去」的割裂感。
-    p.vx = travel / p.lifeMax;
-    p.x = emitterX - jitter;
-    // 竖直方向限制在胶囊内部（±0.5 半高），避免彗星被圆角裁掉一半。
-    p.y = (_rnd.nextDouble() * 2 - 1) * halfHeight * 0.5;
-    p.vy = (_rnd.nextDouble() * 2 - 1) * 8;
-    p.ay = (_rnd.nextDouble() * 2 - 1) * 34;
-    p.tone = 0.72 + _rnd.nextDouble() * 0.28;
-    p.life = 0;
-    p.alive = true;
-    // 旧轨迹立即作废：新彗星从新发射点重新开始攒尾。
-    p._resetTrail(p.x, p.y);
-  }
-
-  /// 拖动开始时把整池彗星铺开：让每条「已经飞了一会儿」且**尾巴已经长好**，
-  /// 于是第一帧就是一条流动中的拖尾带，而不是整池从发射点齐射。
-  void _seed(double emitterX, double halfHeight, double trackWidth) {
-    for (int i = 0; i < all.length; i++) {
-      final _Particle p = all[i];
-      _respawn(p, emitterX, halfHeight, trackWidth);
-      if (i >= activeCount) {
-        // 这一宽度下用不到的彗星先不点亮，等轨道变宽再自动加入。
-        p.alive = false;
-        continue;
-      }
-      p.life = _rnd.nextDouble() * p.lifeMax * 0.85;
-      p.x = emitterX - p.vx * p.life;
-      // 把尾补成「已经飞过的一段直线」：沿 -vx 反推发射锚点，再等分插值。
-      final double u1 = (p.life / p.lifeMax).clamp(0.0, 1.0);
-      final double ax = p.x + p.vx * p.life;
-      final double ay = p.y - p.vy * p.life;
-      final int n = math.min(
-        _kParticleTrailCap,
-        (p.life / _kParticleTrailSampleDt).ceil() + 1,
-      );
-      p._count = 0;
-      p._head = 0;
-      p._acc = 0;
-      final ages = _seedSampleAges(n, u1);
-      for (int k = 0; k < n; k++) {
-        // Seed chronological history from emitter (dim) to current tip (bright).
-        final double f = n <= 1 ? 1.0 : k / (n - 1);
-        p._push(ax + (p.x - ax) * f, ay + (p.y - ay) * f, ages[k]);
-      }
-    }
-    _seeded = true;
-  }
-
-  /// 推进 [dt] 秒。[emitterX] 是当前发射点（轨道局部坐标）。
-  /// Large frame gaps are integrated in bounded substeps to avoid lost travel
-  /// while keeping an individual integration step below [_kParticleMaxStep].
-  void advance(
-    double dt,
-    double emitterX,
-    double halfHeight,
-    double trackWidth,
-  ) {
-    // 拖尾带宽度 = 最远消亡距离（轨道总长 × 22%），密度按它折算。
-    activeCount = _particleActiveCount(trackWidth * _kParticleSpanMax);
-    if (!_seeded) {
-      _seed(emitterX, halfHeight, trackWidth);
-      return;
-    }
-    if (dt <= 0) return;
-    var remaining = dt;
-    while (remaining > 0) {
-      final step = math.min(remaining, _kParticleMaxStep);
-      _advanceStep(step, emitterX, halfHeight, trackWidth);
-      remaining -= step;
-    }
-  }
-
-  void _advanceStep(
-    double dt,
-    double emitterX,
-    double halfHeight,
-    double trackWidth,
-  ) {
-    final double yLimit = halfHeight * 0.62;
-    for (int i = 0; i < all.length; i++) {
-      final _Particle p = all[i];
-      if (i >= activeCount) {
-        p.alive = false;
-        continue;
-      }
-      if (!p.alive) {
-        _respawn(p, emitterX, halfHeight, trackWidth);
-        continue;
-      }
-      p.life += dt;
-      p.x -= p.vx * dt;
-      // Integrate a restrained ballistic arc; damp acceleration near the capsule edge.
-      final edgeFactor = (1 - (p.y.abs() / yLimit).clamp(0.0, 1.0));
-      p.vy += p.ay * edgeFactor * dt;
-      p.y += p.vy * dt;
-      // Softly reverse and damp at the capsule boundary instead of clipping a hard line.
-      if (p.y > yLimit) {
-        p.y = yLimit;
-        p.vy = -p.vy.abs() * 0.62;
-        p.ay = -p.ay.abs();
-      } else if (p.y < -yLimit) {
-        p.y = -yLimit;
-        p.vy = p.vy.abs() * 0.62;
-        p.ay = p.ay.abs();
-      }
-      // 按固定**时间**间隔采样（不是每帧），帧率越高尾越长的问题由此消除。
-      p._acc += dt;
-      if (p._acc >= _kParticleTrailSampleDt) {
-        // Retain fractional remainder so sample cadence stays consistent at
-        // variable frame rates; chronological age makes the moving tip brightest.
-        p._acc = _sampleRemainder(p._acc, _kParticleTrailSampleDt);
-        p._push(p.x, p.y, p.life / p.lifeMax);
-      }
-      // 回收条件有两个：
-      // ① 走完自己的寿命（= 走完自己的消亡距离）—— 这就是「消失位置不统一」的来源；
-      // ② 把手被向左拖过头、发射点跑到了这条彗星右边：它此刻落在「还没被填充」的
-      //    区域里，直接回收重发（_respawn 会作废旧尾），否则整条带会一起瞬移消失。
-      if (p.life >= p.lifeMax || p.x > emitterX) {
-        _respawn(p, emitterX, halfHeight, trackWidth);
-      }
-    }
-  }
-}
-
-/// Paints continuous gradient ribbons with a bright core and soft outer bands.
-class _ParticlePainter extends CustomPainter {
-  _ParticlePainter({
-    required this.field,
-    required this.controller,
-    required this.fade,
-    required this.fillStart,
-    required this.fillEnd,
+/// 关闭「彗星拖尾」时不构建本层，因此没有动画、也没有额外绘制成本。
+class _CometFillPainter extends CustomPainter {
+  const _CometFillPainter({
+    required this.startFraction,
+    required this.endFraction,
     required this.color,
-    required this.intensity,
+    required this.trackHeight,
+    required this.insetX,
     required this.textDirection,
-    required Listenable repaint,
-  }) : super(repaint: repaint);
+    this.dragging = false,
+  });
 
-  final _ParticleField field;
-  final AnimationController controller;
-  final AnimationController fade;
-  final double fillStart;
-  final double fillEnd;
+  /// 填充段起点 / 终点占整条轨道的比例（0..1）。
+  final double startFraction;
+  final double endFraction;
+
+  /// 填充色；彗星颜色由它推导。
   final Color color;
-  final double intensity;
+
+  /// 胶囊高度（= 轨道高）。
+  final double trackHeight;
+
+  /// 轨道左右留白，与 [_kTrackInsetX] 保持一致。
+  final double insetX;
+
   final TextDirection textDirection;
+
+  /// 拖动中：前缘更亮、光带更长。
+  final bool dragging;
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (size.isEmpty) return;
-    final double t =
-        (controller.lastElapsedDuration ?? Duration.zero).inMicroseconds / 1e6;
-    final double dt = (t - field.lastT).clamp(0.0, 0.1);
-    field.lastT = t;
+    if (size.isEmpty || trackHeight <= 0) return;
+    final double trackW = size.width - insetX * 2;
+    if (trackW <= 1) return;
 
-    // RTL：值 0 在右侧，填充段从右往左长；发射点统一取填充段「值更大」的那一端，
-    // 也就是用户说的「滑块最右端」。
-    final bool ltr = textDirection == TextDirection.ltr;
-    double px(double frac) => (ltr ? frac : 1 - frac) * size.width;
-    final double emitterX = px(fillEnd.clamp(0.0, 1.0));
-    final double otherEnd = px(fillStart.clamp(0.0, 1.0));
-    // 已填充段（= 主题色实心胶囊）的左右边界；拖尾只画在这一段里。
-    final double fillLeft = math.min(otherEnd, emitterX);
-    final double fillRight = math.max(otherEnd, emitterX);
+    final double lo = math.min(
+      startFraction.clamp(0.0, 1.0),
+      endFraction.clamp(0.0, 1.0),
+    );
+    final double hi = math.max(
+      startFraction.clamp(0.0, 1.0),
+      endFraction.clamp(0.0, 1.0),
+    );
+    if (hi - lo <= 0.0005) return;
 
-    // 轨道总长（= 用户说的「滑块总长」）：消亡距离按它折算，于是拖尾带最多
-    // 22%（[_kParticleSpanMax]），单条彗星落在 8%~22% 之间。
-    final double trackWidth = size.width;
+    final bool isLtr = textDirection == TextDirection.ltr;
+    // 前缘：LTR 是右端，RTL 是左端。
+    final double headX = insetX + trackW * (isLtr ? hi : 1 - lo);
+    final double tailEdgeX = insetX + trackW * (isLtr ? lo : 1 - hi);
+    final double span = (headX - tailEdgeX).abs();
 
-    field.advance(dt, emitterX, size.height / 2, trackWidth);
+    final double tailLength = math.min(
+      span,
+      math.max(trackHeight * (dragging ? 3.6 : 2.4), trackW * 0.14),
+    );
+    final double tailX = headX + (isLtr ? -tailLength : tailLength);
 
-    final double baseAlpha = (1 - fade.value).clamp(0.0, 1.0);
-    if (baseAlpha <= 0.001) return;
-    final double cy = size.height / 2;
+    // 裁剪区域 = 填充段胶囊；绘制坐标系下移到轨道垂直居中的位置。
+    final RRect clip = RRect.fromRectAndRadius(
+      Rect.fromLTRB(
+        math.min(headX, tailEdgeX),
+        0,
+        math.max(headX, tailEdgeX),
+        trackHeight,
+      ),
+      Radius.circular(trackHeight / 2),
+    );
     canvas.save();
-    canvas.clipRect(Rect.fromLTRB(fillLeft, 0, fillRight, size.height));
-    for (final p in field.all) {
-      if (!p.alive || p._count < 2) continue;
-      final progress = (p.life / p.lifeMax).clamp(0.0, 1.0);
-      final birth = Curves.easeOut.transform((progress / 0.12).clamp(0.0, 1.0));
-      final death = Curves.easeInOut.transform(
-        ((1 - progress) / 0.32).clamp(0.0, 1.0),
-      );
-      final alpha = baseAlpha * p.tone * birth * death;
-      final head = Offset(p.x, cy + p.y);
-      final tail = Offset(p.txAt(0), cy + p.tyAt(0));
-      if ((head.dx - tail.dx).abs() < 0.8 || alpha < 0.008) continue;
-      _trail
-        ..reset()
-        ..moveTo(head.dx, head.dy);
-      for (var i = p._count - 1; i > 0; i--) {
-        final x = p.txAt(i);
-        final y = cy + p.tyAt(i);
-        _trail.quadraticBezierTo(
-          x,
-          y,
-          (x + p.txAt(i - 1)) * 0.5,
-          (y + cy + p.tyAt(i - 1)) * 0.5,
-        );
-      }
-      _trail.lineTo(tail.dx, tail.dy);
-      final width = 0.75 + intensity * 0.35;
-      _drawRibbon(canvas, tail, head, width * 5, alpha * 0.10);
-      _drawRibbon(canvas, tail, head, width * 2.4, alpha * 0.28);
-      _drawRibbon(canvas, tail, head, width, alpha * 0.96);
-    }
+    canvas.translate(0, (size.height - trackHeight) / 2);
+    canvas.clipRRect(clip);
+    _drawComet(
+      canvas,
+      size: Size(size.width, trackHeight),
+      tail: Offset(tailX, trackHeight / 2),
+      head: Offset(headX, trackHeight / 2),
+      color: _cometHighlight(color),
+      glowAlpha: dragging ? 0.42 : 0.30,
+    );
     canvas.restore();
   }
 
-  final Path _trail = Path();
-  final Paint _paint = Paint()
-    ..isAntiAlias = true
-    ..style = PaintingStyle.stroke
-    ..strokeCap = StrokeCap.round
-    ..strokeJoin = StrokeJoin.round;
-
-  void _drawRibbon(
-    Canvas canvas,
-    Offset tail,
-    Offset head,
-    double width,
-    double alpha,
-  ) {
-    _paint
-      ..strokeWidth = width
-      ..shader = ui.Gradient.linear(
-        tail,
-        head,
-        <Color>[
-          color.withValues(alpha: 0),
-          color.withValues(alpha: alpha * 0.10),
-          color.withValues(alpha: alpha * 0.40),
-          color.withValues(alpha: alpha),
-        ],
-        const <double>[0, 0.30, 0.72, 1],
-      );
-    canvas.drawPath(_trail, _paint);
-  }
-
   @override
-  bool shouldRepaint(_ParticlePainter oldDelegate) =>
-      oldDelegate.field != field ||
-      oldDelegate.fillStart != fillStart ||
-      oldDelegate.fillEnd != fillEnd ||
-      oldDelegate.color != color ||
-      oldDelegate.intensity != intensity ||
-      oldDelegate.textDirection != textDirection;
+  bool shouldRepaint(_CometFillPainter old) =>
+      old.startFraction != startFraction ||
+      old.endFraction != endFraction ||
+      old.color != color ||
+      old.trackHeight != trackHeight ||
+      old.insetX != insetX ||
+      old.textDirection != textDirection ||
+      old.dragging != dragging;
 }
 
-/// 彗星层：只在拖动期间起 Ticker，松手淡出后自毁（返回零尺寸）。
+
+/// 统一进度条：与滑块同一套胶囊玻璃轨道 + 前缘彗星。
 ///
-/// [fillStart] / [fillEnd] 是填充段在轨道上的比例（0..1，相对轨道起点）；
-/// 发射点取其中**更靠右**的一端 —— 用户要求「彗星从滑块最右端触发发射」。
-class _ParticleLayer extends StatefulWidget {
-  const _ParticleLayer({
-    required this.active,
-    required this.fillStart,
-    required this.fillEnd,
-    required this.trackHeight,
-    required this.color,
-    this.intensity = 0,
-  });
-
-  final bool active;
-  final double fillStart;
-  final double fillEnd;
-  final double trackHeight;
-  final Color color;
-  final double intensity;
-
-  @override
-  State<_ParticleLayer> createState() => _ParticleLayerState();
-}
-
-class _ParticleLayerState extends State<_ParticleLayer>
-    with TickerProviderStateMixin {
-  // 在 initState 里显式创建（不要用 `late final X = ...` 的惰性初始化器：那样
-  // 组件若在首次 build 前就被移除，dispose() 反而会去创建一个已失效的 Ticker）。
-  late final AnimationController _tick;
-  late final AnimationController _fade;
-  final _ParticleField _field = _ParticleField(math.Random());
-
-  @override
-  void initState() {
-    super.initState();
-    _tick = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 1),
-    );
-    _fade = AnimationController(vsync: this, duration: _kParticleFadeOut);
-    _fade.addStatusListener((AnimationStatus st) {
-      if (st != AnimationStatus.completed) return;
-      // 淡出结束：停掉 Ticker 并重建一次，让 build 返回零尺寸（彻底不做绘制）。
-      _tick.stop();
-      if (mounted) setState(() {});
-    });
-    if (widget.active) _start();
-  }
-
-  void _start() {
-    _field.reset();
-    _fade.value = 0;
-    if (!_tick.isAnimating) _tick.repeat();
-  }
-
-  @override
-  void didUpdateWidget(covariant _ParticleLayer oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.active && !oldWidget.active) {
-      _start();
-    } else if (!widget.active && oldWidget.active) {
-      _fade.forward(from: 0);
-    }
-  }
-
-  @override
-  void dispose() {
-    _tick.dispose();
-    _fade.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (!_tick.isAnimating && !_fade.isAnimating) {
-      // 静止：不建任何绘制层（拖动以外的时间零开销）。
-      return const SizedBox.shrink();
-    }
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: _kTrackInsetX),
-      child: Align(
-        alignment: Alignment.center,
-        child: SizedBox(
-          height: widget.trackHeight,
-          width: double.infinity,
-          // 裁到胶囊内：彗星不会溢出圆角两端。最左端那几条的尾尖因此被自然截断，
-          // 而这**不会**让拖尾带超过 22% —— 上限由消亡距离本身保证。
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(widget.trackHeight / 2),
-            child: RepaintBoundary(
-              child: CustomPaint(
-                size: Size.infinite,
-                painter: _ParticlePainter(
-                  field: _field,
-                  controller: _tick,
-                  fade: _fade,
-                  fillStart: widget.fillStart,
-                  fillEnd: widget.fillEnd,
-                  color: widget.color,
-                  intensity: widget.intensity,
-                  textDirection: Directionality.of(context),
-                  repaint: Listenable.merge(<Listenable>[_tick, _fade]),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ═══════════════════════════════════════════
-// AppProgressBar：进度条（确定 / 不确定）
-// ═══════════════════════════════════════════
-
-/// 统一进度条：胶囊轨道（高 [kAppTrackHeight]、两端半圆）、进度用主题色，
-/// 未完成部分是与滑块完全一致的玻璃底（[AppTrackGlass]）。
-///
-/// - value 非 null：确定进度。值变化时用 [TweenAnimationBuilder] 平滑过渡，
-///   避免「进度一卡一卡地跳」。
-/// - value 为 null：不确定进度（不知道还要多久），显示沿轨道行进的渐隐彗星；
-///   RTL 时反向行进，并遵循系统减少动态效果偏好。
-///
-/// 替代直接用 LinearProgressIndicator：它的圆角/高度/是否画末尾停止点由 SDK 版本
-/// 与主题决定，无法保证与滑块视觉统一。
+/// 开屏加载动画（lib/app.dart）用的就是这个组件 —— 用户要求「彗星拖尾特效以
+/// 开屏界面的加载进度条特效为准并适配全局」，因此滑块也改走同一条 [_drawComet]
+/// 绘制路径：全应用只有这一种彗星外观，旧版粒子喷射实现已删除。
 class AppProgressBar extends StatelessWidget {
   const AppProgressBar({
     super.key,
@@ -1593,6 +1110,12 @@ class AppProgressBar extends StatelessWidget {
     final Color? trackColor = backgroundColor;
     final bool reduceMotion = MediaQuery.of(context).disableAnimations;
     final TextDirection textDirection = Directionality.of(context);
+    // 「设置 → 样式 → 彗星拖尾」现在是**全局**开关：滑块、确定进度、
+    // 不确定进度、开屏加载条都走同一条 [_drawComet]。关掉后连绘制都不做
+    // （不是画完再透明），低配设备能真正省掉这部分开销。
+    final bool cometOn =
+        _trackCfgOf(context).particles &&
+        !MediaQuery.disableAnimationsOf(context);
 
     // 显式指定了轨道色 → 用实色（旧行为，兼容调用方）；否则用统一玻璃底。
     final Widget track = trackColor != null
@@ -1623,6 +1146,7 @@ class AppProgressBar extends StatelessWidget {
                 color: barColor,
                 animate: !reduceMotion,
                 textDirection: textDirection,
+                showComet: cometOn,
               )
             else
               TweenAnimationBuilder<double>(
@@ -1636,6 +1160,7 @@ class AppProgressBar extends StatelessWidget {
                             valueColor: barColor,
                             value: animated,
                             textDirection: textDirection,
+                            showComet: cometOn,
                           ),
                         ),
               ),
@@ -1652,11 +1177,15 @@ class _AppProgressBarPainter extends CustomPainter {
     required this.valueColor,
     required this.value,
     required this.textDirection,
+    this.showComet = true,
   });
 
   final Color valueColor;
   final double value;
   final TextDirection textDirection;
+
+  /// 「设置 → 样式 → 彗星拖尾」：关闭时只画纯胶囊填充，不画光带与光晕。
+  final bool showComet;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1678,6 +1207,7 @@ class _AppProgressBarPainter extends CustomPainter {
       fillWidth,
       math.max(size.height * 2.4, size.width * 0.14),
     );
+    if (!showComet) return;
     final double tailX = headX + (isLtr ? -tailLength : tailLength);
     canvas.save();
     canvas.clipRRect(fill);
@@ -1696,16 +1226,18 @@ class _AppProgressBarPainter extends CustomPainter {
   bool shouldRepaint(_AppProgressBarPainter oldDelegate) =>
       oldDelegate.value != value ||
       oldDelegate.valueColor != valueColor ||
-      oldDelegate.textDirection != textDirection;
+      oldDelegate.textDirection != textDirection ||
+      oldDelegate.showComet != showComet;
 }
 
+/// 彗星在填充色上的对比色：浅色填充配深彗星，深色填充配白彗星。
 Color _cometHighlight(Color color) =>
     color.computeLuminance() > 0.48 ? Colors.black : Colors.white;
 
 Color _withScaledAlpha(Color color, double opacity) =>
     color.withValues(alpha: color.a * opacity);
 
-/// Paints a directional ribbon and a restrained glow at its leading head.
+/// 画一条方向性光带 + 前缘光晕 —— 开屏进度条与滑块彗星的**唯一定义**。
 void _drawComet(
   Canvas canvas, {
   required Size size,
@@ -1755,6 +1287,7 @@ void _drawComet(
   );
 }
 
+
 /// Static or animated indeterminate progress; static mode creates no ticker.
 ///
 /// The comet is clipped to the capsule so it never paints square ends outside
@@ -1764,11 +1297,15 @@ class _IndeterminateBar extends StatefulWidget {
     required this.color,
     required this.animate,
     required this.textDirection,
+    this.showComet = true,
   });
 
   final Color color;
   final bool animate;
   final TextDirection textDirection;
+
+  /// 「设置 → 样式 → 彗星拖尾」的全局开关。
+  final bool showComet;
 
   @override
   State<_IndeterminateBar> createState() => _IndeterminateBarState();
@@ -1817,6 +1354,7 @@ class _IndeterminateBarState extends State<_IndeterminateBar>
       animation: _controller,
       textDirection: widget.textDirection,
       staticPhase: 0.5,
+      showComet: widget.showComet,
     ),
   );
 }
@@ -1828,12 +1366,14 @@ class _IndeterminateBarPainter extends CustomPainter {
     required this.animation,
     required this.textDirection,
     required this.staticPhase,
+    this.showComet = true,
   }) : super(repaint: animation);
 
   final Color valueColor;
   final Animation<double>? animation;
   final TextDirection textDirection;
   final double staticPhase;
+  final bool showComet;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1851,6 +1391,7 @@ class _IndeterminateBarPainter extends CustomPainter {
     final double headX = isLtr
         ? -cometLength + (size.width + cometLength * 2) * phase
         : size.width + cometLength - (size.width + cometLength * 2) * phase;
+    if (!showComet) return;
     final double tailX = headX + (isLtr ? -cometLength : cometLength);
     canvas.save();
     canvas.clipRRect(track);
@@ -1870,5 +1411,6 @@ class _IndeterminateBarPainter extends CustomPainter {
       oldDelegate.valueColor != valueColor ||
       oldDelegate.textDirection != textDirection ||
       oldDelegate.staticPhase != staticPhase ||
-      oldDelegate.animation != animation;
+      oldDelegate.animation != animation ||
+      oldDelegate.showComet != showComet;
 }

@@ -1,40 +1,44 @@
 import 'package:ffmpegpp_gui/widgets/app_slider.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  group('Comet trail samples', () {
-    test(
-      'should put the bright tip after the dim emitter in chronological order',
-      () {
-        final ages = CometTrailTestProbe.sampleAges(samples: 4, life: 0.75);
-
-        expect(ages.first, 1);
-        expect(ages.last, 0.25);
-        expect(ages[0], greaterThan(ages[1]));
-        expect(ages[1], greaterThan(ages[2]));
-        expect(ages[2], greaterThan(ages[3]));
-      },
-    );
-
-    test('should retain elapsed sample remainder', () {
-      expect(
-        CometTrailTestProbe.sampledElapsed(0.1, 1 / 45),
-        closeTo(0.011111, 0.00001),
+  // 彗星拖尾现已全应用统一为「填充段前缘光带 + 光晕」（与开屏加载进度条同源），
+  // 旧的粒子喷射实现（含 CometTrailTestProbe 的采样/包络）已整体删除。
+  // 这里改为只验证唯一剩下的行为约束：进度条在确定 / 不确定两种状态下都能
+  // 正常构建，且关闭动画时不创建 Ticker。
+  group('Comet trail', () {
+    testWidgets('determinate progress bar paints its comet', (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: SizedBox(width: 140, child: AppProgressBar(value: 0.4)),
+            ),
+          ),
+        ),
       );
+      expect(find.byType(AppProgressBar), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
 
-    test('should intensify only after drag speed rises', () {
-      expect(CometTrailTestProbe.speedEnvelope(0), 0);
-      expect(CometTrailTestProbe.speedEnvelope(450), closeTo(0.5, 1e-12));
-      expect(CometTrailTestProbe.speedEnvelope(900), 1);
-      expect(CometTrailTestProbe.speedEnvelope(1800), 1);
-    });
-
-    test('should keep emitter-only first sample dim', () {
-      expect(
-        CometTrailTestProbe.sampleAges(samples: 1, life: 0.8).single,
-        closeTo(0.2, 1e-12),
+    testWidgets('indeterminate progress bar animates without exceptions', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: SizedBox(width: 140, child: AppProgressBar()),
+            ),
+          ),
+        ),
       );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(tester.takeException(), isNull);
+      // 让 ticker 走到结尾，确认没有越界的渐变端点。
+      await tester.pump(const Duration(seconds: 2));
+      expect(tester.takeException(), isNull);
     });
   });
 }

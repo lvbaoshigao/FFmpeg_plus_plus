@@ -112,6 +112,48 @@
 - `dart analyze` 五个改动文件：仅剩“第三方包不存在”类环境报错，无新增语法/类型错误；
 - `git diff --check` 通过（`update_service.dart` 的 CRLF 已归一为 LF）。
 
+## 二·补三 本轮移动端与视觉一致性修复
+
+用户逐条反馈的 8 项，全部落到代码。
+
+### 1. 配置库底部「节点 / 快捷」切换器长宽比异常
+`config_library_page.dart` 的 `_kCompactMobileTabStyle` 原为 36 高、宽度按屏宽 1/3 拉伸（上限 160），宽屏手机上成了 4.4:1 的细长条。改为固定宽 152、高 44（图标 18），比例约 3.5:1，与主菜单栏（52）和内容卡片的视觉重量对齐。
+
+### 2. 彗星拖尾全应用统一（并删除旧实现）
+- 旧实现有两套：`widgets/app_slider.dart` 里的「粒子喷射」（`_Particle` / `_ParticleField` / `_ParticlePainter` / `_ParticleLayer` / `cometSpeedEnvelope` / `CometTrailTestProbe`，约 600 行），以及进度条的「前缘光带」。两者观感完全不同。
+- 现整体删除粒子那一套，滑块 / 区间滑块改用与开屏加载条**同一个** `_drawComet`（新增 `_CometFillPainter`：光带渐变 + 前缘光晕，裁剪在填充段胶囊内，拖动时更亮更长）。PC 与移动端共用 `AppSlider`，因此自动一致。
+- `AppProgressBar` / `_IndeterminateBar` 增加 `showComet`，由设置里的 `sliderParticles` 统一控制：关掉后连绘制都不做（不是画完再透明），低配设备真正省帧。
+- 设置项文案由「滑块彗星拖尾」改为「彗星拖尾」，说明改为「滑块、进度条、开屏加载条统一」。
+- `test/comet_trail_test.dart` 改写为验证进度条确定 / 不确定两态都能构建且无异常（原探针随旧实现一起删除）。
+
+### 3. MCP/AI 移动端搜索框改为底部药丸
+新增 `_AiSearchPill`：收起态是 48×48 圆形玻璃钮，按 `config.mobileBottomActionSide` 贴左下 / 右下；点一下用 `AnimatedSize` + `AnimatedSwitcher`（淡入 + 0.92→1 缩放）展开成完整搜索框，右侧另给「收起」键。顶部原来的整条搜索框删除，纵向空间还给列表。已有搜索词时强制展开，避免清空输入后药丸莫名收回。
+
+### 4. 提供商列表改为单卡多行 + 去掉左侧图标
+新增 `_AiProviderListCard`：一张 `AppCard` 内按行排列所有提供商（名称 / 当前徽标 / 启用状态 / chevron + 「模型数 · 分组」副标题，搜索命中时才追加模型 chip），行间 0.5px 分隔线。移动端不再「一家一张大卡 + 左边一块字母图标」（`_ProviderIconTile`）；PC 端仍保留原来的多列 Masonry 网格与卡片图标。
+
+### 5. 模型页：删掉顶部大卡、清空并到底部圆钮、编辑面板沉浸
+- 删除模型列表顶部那张「模型统计 + 从云端获取模型列表」大卡；
+- 增 / 获取 / 清空三个入口统一为底栏那簇 44×44 圆形玻璃按钮（`provider_models_add_round` / `provider_models_fetch_round` / 新增 `provider_models_clear_round`），无模型时清空键不出现；
+- 模型搜索框改为一张独立小卡（大卡删掉后不能把搜索能力一起删掉）；
+- `widgets/model_editor_sheet.dart`：背景由中性 `surfaceContainerHigh` 改为「主题色薄染 + 18σ 背景模糊」（`ClipRRect` → `BackdropFilter` → `DecoratedBox`），与全应用玻璃卡一致；底部安全区从外层 `SafeArea` 挪进内容 padding，面板背景一直铺到屏幕底边（沉浸），按钮仍落在导航栏上方。
+
+### 6. 提供商详情页沉浸 / 宽度 / 请求格式左右排布
+- 修正「双倍内缩」：原来 ListView 左右 12 + 卡片 `horizontalInset` 12 = 屏宽 − 48，比设置二级页（−24）窄一圈。现在基本页由卡片给 12、ListView 给 0；模型页（通栏卡片）由 ListView 给 12。两页最终宽度都等于设置页；
+- 上下留白对齐设置二级页：上 12、下 48，内容不再在顶部药丸 / 底部菜单栏处被「一刀切」；
+- `_AiDropdownRow`（请求格式、图生成模式等）的「标签在上」阈值由 300 降到 240，正常手机宽度固定「左文字 + 右下拉」。
+
+### 7. MCP/AI 高级页「点任意元素背景都会变」
+根因：`MobileAiAdvancedPage` 把 `withWallpaper(context, WindowChrome(...))` 写在 `Consumer<AppState>` 的 **builder 里面** —— 点任何开关都会 `updateConfig` → `notifyListeners` → 整个背景层（壁纸 Image + 玻璃标题栏 + 开窗 `WallpaperWindowScope`）重建。现在把壁纸 / WindowChrome 提到 `Consumer` 外面，点击只重建内容树，背景实例保持不变。
+
+### 8. 移动端节点编辑器「节点文件描述偏移到上方」
+根因：文件信息条（分辨率 / 时长 / 节点数 · 源大小 /.fppx）的 `bottom` 偏移用的是 `editorToolbarScale`（顶部工具栏系数），而它下面的缩放药丸实际按 `editorZoomScale` 走 `Transform.scale` —— 两个配置项不同，用户调大缩放条后药丸长高、信息条不动（被压住，或看着像飘上去）。抽出唯一来源 `_mobileZoomBarScale()`，信息条偏移改为 `8 + 38 × scale + 8`。
+
+### 验证
+- `dart analyze lib test`：**No errors，无新增 warning**（仅剩 3 条既有 info 级 lint，与本轮无关）；
+- `git diff --check` 通过；
+- 本机 Flutter SDK 位于只读挂载，`flutter test` / `flutter build` 无法运行，因此本轮为静态验证。随 UI 变化的断言已同步更新（`comet_trail_test.dart`、`ai_model_editor_mobile_test.dart`），建议在完整环境补跑 `flutter test`。
+
 ## 三、Linux 应用图标集成（已完成并实测）
 
 ### 改动文件
