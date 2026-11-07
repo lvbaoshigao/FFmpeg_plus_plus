@@ -4472,26 +4472,19 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                             ),
                           ),
                         ),
-                        // 底部浮动菜单栏 - 左侧缩放（右下角工具条已移除，工具迁移到顶部栏）
+                        // 底部文件信息栏（落底样式）：全宽 + border-top，
+                        // 与桌面 _buildBottomBar 一致，不再悬浮于缩放药丸上方。
                         Positioned(
-                          bottom: 8 + mobileSafeBottom,
-                          left: 8,
-                          child: _buildMobileBottomLeftBar(scheme, s),
-                        ),
-                        // 文件信息条（分辨率/时长/节点数 · 源大小/.fppx）紧贴在缩放
-                        // 药丸**上方**。偏移必须按药丸的绘制高度算：
-                        // bottom(8) + 38 × _mobileZoomBarScale() + 间隙(8)。
-                        // 旧写法用 editorToolbarScale（顶部栏系数）算，缩放条一调大
-                        // 就会压住信息条、一调小信息条又飘到半空。
-                        Positioned(
-                          bottom:
-                              mobileSafeBottom +
-                              8 +
-                              _kMobileBarHeight * _mobileZoomBarScale() +
-                              8,
+                          bottom: mobileSafeBottom,
                           left: 0,
                           right: 0,
-                          child: Center(child: _buildMobileFileInfo(scheme, s)),
+                          child: _buildMobileFileInfo(scheme, s),
+                        ),
+                        // 缩放药丸浮在信息栏上方
+                        Positioned(
+                          bottom: mobileSafeBottom + 34 + 8,
+                          left: 8,
+                          child: _buildMobileBottomLeftBar(scheme, s),
                         ),
                         // 逻辑块框选提示条（用具箱点按「循环」后出现，引导用户手指框选）
                         if (_isLogicBoxSelecting)
@@ -10525,9 +10518,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         transitionDuration: const Duration(milliseconds: 240),
         pageBuilder: (ctx, anim, anim2) {
           final w = MediaQuery.of(ctx).size.width;
-          // 横屏侧栏收窄，避免 AI 面板大面积遮挡画布。header 已在面板内部，
-          // 因此这里只需要 SafeArea + Expanded，不再套宿主 header。
-          final panelW = math.min(w, (w * 0.46).clamp(300.0, 400.0));
+          // 横屏侧栏收窄（用户反馈「玻璃太宽」）：46%→42%，clamp 280–360。
+          final panelW = math.min(w, (w * 0.42).clamp(280.0, 360.0));
           return Align(
             alignment: Alignment.centerLeft,
             child: Material(
@@ -11276,19 +11268,15 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   Widget _buildMobileFileInfo(ColorScheme scheme, AppStrings s) {
     final v = widget.video;
     final nodesLabel = s.isZh ? '节点' : 'nodes';
-    // The information strip sits above the controls and can use the page width.
-    final zoomScale = context.read<AppState>().config.editorZoomScale.clamp(
-      0.5,
-      1.6,
-    );
-    final maxW = math.max(0.0, MediaQuery.sizeOf(context).width - 16);
+    // 落底信息栏：全宽 + border-top，与桌面 _buildBottomBar 一致。
     return Container(
-      height: 34.0 + 2.0 * zoomScale,
-      constraints: BoxConstraints(maxWidth: maxW),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      height: 34,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
       decoration: BoxDecoration(
-        color: scheme.surface.withAlpha(180),
-        borderRadius: BorderRadius.circular(12),
+        color: scheme.surface,
+        border: Border(
+          top: BorderSide(color: scheme.outlineVariant.withAlpha(50)),
+        ),
       ),
       child: FutureBuilder<int?>(
         future: _inputFileSize(),
@@ -12944,14 +12932,12 @@ bool shouldPersistHistoryMessage({
   return content.trim().isNotEmpty || (blocks != null && blocks.isNotEmpty);
 }
 
-/// 移动端 AI 侧栏宽度：最多 400dp，且最多占面板宽度的 94%。
+/// 移动端 AI 侧栏宽度：最多 360dp，且最多占面板宽度的 88%。
 ///
-/// 旧实现 `min(340, 86%)`：320dp 窄屏上只有 275dp，历史标题 / 工具名被挤成
-/// 「…」；而且侧栏挂在消息区内部，只拿到「消息区高度」，盖不住 header 与
-/// 输入框。加大到 94% 并迁到面板外层后，文字有足够宽度、也不被裁高度。
-/// 抽成纯函数便于离线单测（Linux 测试环境 isMobilePlatform=false）。
+/// 旧实现 `min(340, 86%)` 窄屏文字截断；旧改 `min(400, 94%)` 又太宽
+/// （用户反馈「玻璃太宽、侧边栏特别宽」）。折中取 360 / 88%。
 double mobileAiSidebarWidth(double panelWidth) =>
-    math.min(400.0, math.max(0.0, panelWidth * 0.94));
+    math.min(360.0, math.max(0.0, panelWidth * 0.88));
 
 /// 模型候选清单：当前生效配置优先，再汇总其它启用配置的模型（去重保序）。
 ///
@@ -15913,7 +15899,9 @@ Available actions: __TOOLS__''';
       padding: const EdgeInsets.fromLTRB(8, 2, 8, 6),
       child: MobileGlassPill(
         key: const ValueKey('ai-mobile-sheet-header'),
-        style: cfg.pillStyle,
+        // AI 面板玻璃固定中性灰：不用 cfg.pillStyle（theme 样式会走
+        // harmonizedAccent 染主题色，用户反馈「AI 界面变主题色」）。
+        style: SurfaceStyle.gray,
         radius: MobileUi.pillRadius,
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
         child: SizedBox(
@@ -16608,7 +16596,8 @@ Available actions: __TOOLS__''';
                 decoration: BoxDecoration(
                   // 与卡片/药丸同一档圆角（14 → 16）：这一屏里 14 只出现在
                   // 输入框上，和消息气泡（15）、玻璃药丸（24+）都不是一个体系。
-                  color: scheme.surfaceContainerLow.withAlpha(220),
+                  // 取色与消息气泡/工具栏统一为 scheme.surface，消除色差
+                  color: scheme.surface.withAlpha(220),
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(
                     color: scheme.outlineVariant.withAlpha(90),

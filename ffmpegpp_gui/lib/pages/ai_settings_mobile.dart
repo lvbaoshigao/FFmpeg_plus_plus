@@ -3387,9 +3387,11 @@ class _MobileAiProviderDetailPageState
             ),
           ],
         ),
-        child: Column(
+        // 沉浸底栏：内容铺满全屏，菜单栏浮在底部（Stack 覆盖），
+        // 信息流可从下方穿插滚动，而非被 Column 截断。
+        child: Stack(
           children: [
-            Expanded(
+            Positioned.fill(
               child: Center(
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(
@@ -3404,7 +3406,18 @@ class _MobileAiProviderDetailPageState
                 ),
               ),
             ),
-            _buildBottomTabBar(context, state, scheme, s, bottomActionSide),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: _buildBottomTabBar(
+                context,
+                state,
+                scheme,
+                s,
+                bottomActionSide,
+              ),
+            ),
           ],
         ),
       );
@@ -3856,7 +3869,9 @@ class _MobileAiProviderDetailPageState
           ? const EdgeInsets.fromLTRB(16, 8, 16, 24)
           : EdgeInsets.only(
               top: ImmersiveTopBar.insetOf(context) + 12,
-              bottom: 48,
+              // 沉浸底栏：内容可从菜单栏下方穿插，底部留足底栏高度
+              // （动作簇 66 + tab 栏 74 + 安全区），最后一项仍可滚出。
+              bottom: 140 + MediaQuery.paddingOf(context).bottom,
             ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -4272,7 +4287,8 @@ class _MobileAiProviderDetailPageState
               12,
               ImmersiveTopBar.insetOf(context) + 12,
               12,
-              48,
+              // 沉浸底栏：与 _buildBasicTab 同款底部让位
+              140 + MediaQuery.paddingOf(context).bottom,
             ),
       itemCount: itemCount,
       addAutomaticKeepAlives: false,

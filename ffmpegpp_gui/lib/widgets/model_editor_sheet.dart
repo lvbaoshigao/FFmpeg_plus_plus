@@ -225,19 +225,15 @@ class _ModelEditorSheetState extends State<ModelEditorSheet> {
         // content padding below, so the buttons stay above the nav bar.
         child: ClipRRect(
           borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
-          // 面板背景跟随主题色（不再用中性 surfaceContainerHigh）+ 背景模糊：
-          // 用户反馈模型编辑面板「背景样式为主题色与其他界面违和」，这里改成和
-          // 全应用玻璃卡一致的「主题色薄着色 + 背景模糊」，同时把圆角裁切交给
-          // ClipRRect，模糊层不会溢出到圆角外。
+          // 面板背景中性 surface + 背景模糊，不加主题色着色：
+          // 用户反馈「玻璃染主题色且观感奇怪」，去掉 primary 薄着色，
+          // 与发送框等中性玻璃保持一致；圆角裁切交给 ClipRRect，模糊层不溢出。
           child: BackdropFilter(
             filter: cachedGlassBlur(18),
             child: DecoratedBox(
               key: const ValueKey('model_editor_sheet'),
               decoration: BoxDecoration(
-                color: Color.alphaBlend(
-                  scheme.primary.withValues(alpha: isDark ? 0.10 : 0.06),
-                  scheme.surface.withValues(alpha: 0.92),
-                ),
+                color: scheme.surface.withValues(alpha: 0.94),
                 borderRadius: const BorderRadius.vertical(
                   top: Radius.circular(26),
                 ),

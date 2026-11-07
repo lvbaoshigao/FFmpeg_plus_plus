@@ -802,9 +802,9 @@ class _AppSliderState extends State<AppSlider>
               widget.onChangeEnd?.call(nv);
             },
           ),
-          // ③ 填充段前缘的彗星（与开屏进度条同款：光带渐变 + 光晕，裁剪在
-          //     胶囊内）。纯前景装饰层，IgnorePointer 保证不抢手势。
-          if (particlesOn)
+          // ③ 填充段前缘的彗星：仅拖动时显示（静止不常驻），
+          //     光晕/尾长随拖速动态变化。纯前景装饰层，IgnorePointer 不抢手势。
+          if (particlesOn && _dragValue != null)
             Positioned.fill(
               child: IgnorePointer(
                 child: CustomPaint(
@@ -815,7 +815,8 @@ class _AppSliderState extends State<AppSlider>
                     trackHeight: trackHeight,
                     insetX: _kTrackInsetX,
                     textDirection: Directionality.of(context),
-                    dragging: _dragValue != null,
+                    dragging: true,
+                    speed: _dragSpeed.clamp(0.0, 1.0),
                   ),
                 ),
               ),
@@ -987,6 +988,7 @@ class _CometFillPainter extends CustomPainter {
     required this.insetX,
     required this.textDirection,
     this.dragging = false,
+    this.speed = 0,
   });
 
   /// 填充段起点 / 终点占整条轨道的比例（0..1）。
@@ -1006,6 +1008,9 @@ class _CometFillPainter extends CustomPainter {
 
   /// 拖动中：前缘更亮、光带更长。
   final bool dragging;
+
+  /// 拖动速度 0..1：驱动尾长与光晕强度动态变化，快速拖动时彗星更长更亮。
+  final double speed;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1029,11 +1034,9 @@ class _CometFillPainter extends CustomPainter {
     final double tailEdgeX = insetX + trackW * (isLtr ? lo : 1 - hi);
     final double span = (headX - tailEdgeX).abs();
 
-    final double tailLength = math.min(
-      span,
-      math.max(trackHeight * (dragging ? 3.6 : 2.4), trackW * 0.14),
-    );
-    final double tailX = headX + (isLtr ? -tailLength : tailLength);
+    // 彗尾铺满整个填充段：渐变从填充起点（alpha=0）自然过渡到前缘高光，
+    // 不再截短彗尾导致填充段边缘硬切断的「割裂」观感。
+    final double tailX = tailEdgeX;
 
     // 裁剪区域 = 填充段胶囊；绘制坐标系下移到轨道垂直居中的位置。
     final RRect clip = RRect.fromRectAndRadius(
@@ -1054,7 +1057,8 @@ class _CometFillPainter extends CustomPainter {
       tail: Offset(tailX, trackHeight / 2),
       head: Offset(headX, trackHeight / 2),
       color: _cometHighlight(color),
-      glowAlpha: dragging ? 0.42 : 0.30,
+      // 光晕随拖速增强：慢拖微光 0.34、快拖亮光 0.60
+      glowAlpha: dragging ? 0.34 + speed * 0.26 : 0.30,
     );
     canvas.restore();
   }
@@ -1067,7 +1071,8 @@ class _CometFillPainter extends CustomPainter {
       old.trackHeight != trackHeight ||
       old.insetX != insetX ||
       old.textDirection != textDirection ||
-      old.dragging != dragging;
+      old.dragging != dragging ||
+      old.speed != speed;
 }
 
 
@@ -1206,12 +1211,9 @@ class _AppProgressBarPainter extends CustomPainter {
     canvas.drawRRect(fill, Paint()..color = valueColor);
 
     final double headX = isLtr ? fillRight : fillLeft;
-    final double tailLength = math.min(
-      fillWidth,
-      math.max(size.height * 2.4, size.width * 0.14),
-    );
     if (!showComet) return;
-    final double tailX = headX + (isLtr ? -tailLength : tailLength);
+    // 彗尾铺满整个填充段，消除硬边「割裂」
+    final double tailX = isLtr ? fillLeft : fillRight;
     canvas.save();
     canvas.clipRRect(fill);
     _drawComet(

@@ -1445,7 +1445,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                                 ? safeBottom +
                                       kAppLiquidTabBarStyle.capsuleHeight +
                                       (kAppLiquidTabBarStyle.bottomGap ?? 8) +
-                                      10
+                                      18
                                 // 侧边导航时底部同样有手势区：旧值只给 12，
                                 // 靠组件内部那次（错误的）安全区把它顶上来；
                                 // 现在内部安全区被移除（见下方 removePadding），
@@ -1489,8 +1489,16 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                                   ),
                                 ),
                                 Positioned(
-                                  left: leftHanded ? 8 : null,
-                                  right: leftHanded ? null : 8,
+                                  left: leftHanded
+                                      ? (kAppLiquidTabBarStyle
+                                            .horizontalMargin ??
+                                          24)
+                                      : null,
+                                  right: leftHanded
+                                      ? null
+                                      : (kAppLiquidTabBarStyle
+                                            .horizontalMargin ??
+                                          24),
                                   bottom: selectorBottom,
                                   width: selectorWidth,
                                   height: selectorHeight,
