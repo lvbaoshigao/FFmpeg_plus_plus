@@ -61,22 +61,15 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; ── 主程序 ──
 Source: "{#SourceRoot}\{#MyAppExeName}";                         DestDir: "{app}"; Flags: ignoreversion
 
-; ── C++ 后端 DLL ──
-Source: "{#SourceRoot}\ffmpegpp.dll";                            DestDir: "{app}"; Flags: ignoreversion
-
-; ── Flutter 运行时 ──
-Source: "{#SourceRoot}\flutter_windows.dll";                     DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceRoot}\dartjni.dll";                             DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-
-; ── 插件 DLL ──
-Source: "{#SourceRoot}\desktop_drop_plugin.dll";                 DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceRoot}\screen_retriever_windows_plugin.dll";     DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceRoot}\window_manager_plugin.dll";               DestDir: "{app}"; Flags: ignoreversion
-
-; ── VC++ 运行时（如存在） ──
-Source: "{#SourceRoot}\msvcp140.dll";                            DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#SourceRoot}\vcruntime140.dll";                        DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#SourceRoot}\vcruntime140_1.dll";                      DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+; ── 运行时与插件 DLL（一律通配收录）──
+; DLL 集合由构建期决定，不做手工清单：flutter_windows.dll、ffmpegpp.dll、
+; generated_plugins.cmake 的 FLUTTER_PLUGIN_LIST 各 *_plugin.dll
+; （desktop_drop / desktop_multi_window / flutter_secure_storage_windows /
+; screen_retriever_windows / window_manager）、FFI 的 dartjni.dll、
+; VC++ 运行时（构建目录里有才打包）。手工清单必然漂移 —— 2026-11-07 就漏了
+; desktop_multi_window_plugin.dll 与 flutter_secure_storage_windows_plugin.dll，
+; 安装后启动报「由于找不到 xxx.dll，无法继续执行代码」。新增原生插件无需再改本脚本。
+Source: "{#SourceRoot}\*.dll";                                   DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 ; ── Flutter AOT 编译产物 + 资源 ──
 Source: "{#SourceRoot}\data\*";                                  DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs createallsubdirs
