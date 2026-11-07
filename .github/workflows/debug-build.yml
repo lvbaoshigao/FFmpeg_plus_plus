@@ -38,6 +38,14 @@ on:
 env:
   VER: ${{ inputs.version }}
 
+# 调试构建按「目标平台」分组：同一平台重复触发时取消上一次。
+# 调试包只用于验证「当前代码能否编过」，旧的那次结果没有意义，
+# 让它继续跑只会白占 runner（Android 一次 20~40 分钟）。
+# Android 的 ffmpeg 缓存 save 发生在编译成功后，被取消也不会写坏缓存。
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.target }}
+  cancel-in-progress: true
+
 jobs:
   # ══════════════════════════════════════════
   # Windows x86_64
@@ -74,12 +82,14 @@ jobs:
             }
           }
 
+      # key 不含源码哈希：稳定命中，源码改动由 CMake 依赖图做增量重编
       - name: Cache C++ backend build
         uses: actions/cache@v5
         with:
           path: server_cpp/build_win
-          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v1-${{ hashFiles('server_cpp/CMakeLists.txt', 'server_cpp/src/**', 'server_cpp/include/**') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v2-${{ hashFiles('server_cpp/CMakeLists.txt') }}
           restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cpp-v2-
             ${{ runner.os }}-${{ runner.arch }}-cpp-v1-
 
       - name: Build C++ backend (ffmpegpp.dll)
@@ -111,14 +121,19 @@ jobs:
 
       - name: Build Inno Setup installer
         run: |
-          choco install innosetup -y
-          $env:PATH += ";C:\Program Files (x86)\Inno Setup 6"
+          # 镜像通常已预装 Inno Setup 6，仅缺失时才 choco（省 30~60s）
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          }
           $langDir = "C:\Program Files (x86)\Inno Setup 6\Languages"
           Copy-Item "make\ChineseSimplified.isl" "$langDir\ChineseSimplified.isl" -Force
           Copy-Item "make\ChineseTraditional.isl" "$langDir\ChineseTraditional.isl" -Force
           New-Item -ItemType Directory -Force -Path build
           tar -xzf "FFmpeg++_v$env:VER_windows-x64_portable.tar.gz" -C build
-          iscc make\setup.iss
+          & $iscc make\setup.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
         shell: pwsh
         env:
           VER: ${{ inputs.version }}
@@ -156,12 +171,16 @@ jobs:
           cache: true
           pub-cache: true
 
+      # key 不含源码哈希：稳定命中，源码改动由 CMake 依赖图做增量重编。
+      # 原先把 src/include 的 hash 放进 key，等于「源码一变就换一份缓存」，
+      # 精确 key 永不命中、缓存条目还会迅速膨胀把仓库 10GB 额度挤爆。
       - name: Cache C++ backend build
         uses: actions/cache@v5
         with:
           path: server_cpp/build_linux
-          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v1-${{ hashFiles('server_cpp/CMakeLists.txt', 'server_cpp/src/**', 'server_cpp/include/**') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v2-${{ hashFiles('server_cpp/CMakeLists.txt') }}
           restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cpp-v2-
             ${{ runner.os }}-${{ runner.arch }}-cpp-v1-
 
       - name: Build C++ backend (libffmpegpp.so)
@@ -190,9 +209,11 @@ jobs:
       - name: Build .deb package
         run: |
           mkdir -p deb/DEBIAN deb/opt/ffmpegpp deb/usr/bin deb/usr/share/applications deb/usr/share/icons/hicolor/256x256/apps
-          cat > deb/DEBIAN/control << 'EOF'
+          # heredoc 必须无引号，${VER} 才会展开；此处原先写死 5.30.51，
+          # 传 version=5.31.0 时会出现「文件名 5.31、包内 Version 5.30」。
+          cat > deb/DEBIAN/control << EOF
           Package: ffmpegpp
-          Version: 5.30.51
+          Version: ${VER}
           Architecture: amd64
           Maintainer: lvbaoshigao <noreply@github.com>
           Description: FFmpeg++ - Advanced video/image/audio processing tool
@@ -249,28 +270,25 @@ jobs:
           sudo apt-get install -y cmake g++ libgtk-3-dev pkg-config ninja-build clang curl git unzip xz-utils \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-good
 
-      - name: Setup Flutter (manual for ARM64)
-        run: |
-          git clone https://github.com/flutter/flutter.git -b stable --depth 1 "$HOME/flutter"
-          echo "$HOME/flutter/bin" >> $GITHUB_PATH
-          export PATH="$HOME/flutter/bin:$PATH"
-          flutter precache --linux
-          flutter doctor -v
-
-      - name: Cache pub dependencies
-        uses: actions/cache@v5
+      # subosito/flutter-action 支持 aarch64 runner，SDK 与 engine artifacts
+      # 都会进缓存；原先手写 clone 每次重拉 1GB+ 且完全不复用。
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
         with:
-          path: ~/.pub-cache
-          key: ${{ runner.os }}-${{ runner.arch }}-pub-${{ hashFiles('ffmpegpp_gui/pubspec.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-pub-
+          channel: stable
+          cache: true
+          pub-cache: true
 
+      # key 不含源码哈希：稳定命中，源码改动由 CMake 依赖图做增量重编。
+      # 原先把 src/include 的 hash 放进 key，等于「源码一变就换一份缓存」，
+      # 精确 key 永不命中、缓存条目还会迅速膨胀把仓库 10GB 额度挤爆。
       - name: Cache C++ backend build
         uses: actions/cache@v5
         with:
           path: server_cpp/build_linux
-          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v1-${{ hashFiles('server_cpp/CMakeLists.txt', 'server_cpp/src/**', 'server_cpp/include/**') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v2-${{ hashFiles('server_cpp/CMakeLists.txt') }}
           restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cpp-v2-
             ${{ runner.os }}-${{ runner.arch }}-cpp-v1-
 
       - name: Build C++ backend (libffmpegpp.so)
@@ -299,9 +317,11 @@ jobs:
       - name: Build .deb package
         run: |
           mkdir -p deb/DEBIAN deb/opt/ffmpegpp deb/usr/bin deb/usr/share/applications deb/usr/share/icons/hicolor/256x256/apps
-          cat > deb/DEBIAN/control << 'EOF'
+          # heredoc 必须无引号，${VER} 才会展开；此处原先写死 5.30.51，
+          # 传 version=5.31.0 时会出现「文件名 5.31、包内 Version 5.30」。
+          cat > deb/DEBIAN/control << EOF
           Package: ffmpegpp
-          Version: 5.30.51
+          Version: ${VER}
           Architecture: arm64
           Maintainer: lvbaoshigao <noreply@github.com>
           Description: FFmpeg++ - Advanced video/image/audio processing tool
@@ -359,12 +379,14 @@ jobs:
           cache: true
           pub-cache: true
 
+      # key 不含源码哈希：稳定命中，源码改动由 CMake 依赖图做增量重编
       - name: Cache C++ backend build
         uses: actions/cache@v5
         with:
           path: server_cpp/build_macos
-          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v1-${{ hashFiles('server_cpp/CMakeLists.txt', 'server_cpp/src/**', 'server_cpp/include/**') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v2-${{ hashFiles('server_cpp/CMakeLists.txt') }}
           restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cpp-v2-
             ${{ runner.os }}-${{ runner.arch }}-cpp-v1-
 
       - name: Build C++ backend (libffmpegpp.dylib)
@@ -437,9 +459,6 @@ jobs:
   debug-android:
     if: inputs.target == 'android'
     runs-on: ubuntu-24.04
-    concurrency:
-      group: debug-android-${{ github.ref }}
-      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v5
         with:
@@ -479,15 +498,10 @@ jobs:
         run: |
           sudo $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses >/dev/null || true
 
-      - name: Cache pub dependencies
-        uses: actions/cache@v5
-        with:
-          path: ~/.pub-cache
-          key: ${{ runner.os }}-${{ runner.arch }}-android-pub-${{ hashFiles('ffmpegpp_gui/pubspec.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-android-pub-
-
-      # 缓存交叉编译产物：key 含脚本+源码 hash，源码或脚本变更会强制重建。
+      # 缓存交叉编译产物。key 只含 ffmpeg 的构建输入（脚本 + env.sh），
+      # 不含 server_cpp 源码 —— libffmpegpp.so 的增量由脚本内的 SRC_HASH stamp
+      # 自行判断（见 build_ffmpeg.sh §7），CI 层再掺源码 hash 只会让每次改动
+      # 都产生一份新缓存，挤爆 10GB 额度且精确 key 永不命中。
       # cache 的 save-always 输入已被 GitHub 弃用（行为也不符合预期），
       # 改为官方推荐的 restore/save 分离写法：ffmpeg 编译成功后立即保存，
       # 即使后续 APK 打包失败，下次重跑也不必从零编译 ffmpeg。
@@ -497,8 +511,10 @@ jobs:
           path: |
             ${{ runner.temp }}/android-build
             ${{ env.ANDROID_SDK_ROOT }}/ndk/26.1.10909125/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/local
-          key: ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v2-${{ hashFiles('build/android/build_ffmpeg.sh', 'build/android/env.sh', 'server_cpp/CMakeLists.txt', 'server_cpp/src/**', 'server_cpp/include/**') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v3-${{ hashFiles('build/android/build_ffmpeg.sh', 'build/android/env.sh') }}
           restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v3-
+            ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v2-
             ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v1-
 
       - name: Cache Gradle home
@@ -531,7 +547,7 @@ jobs:
           path: |
             ${{ runner.temp }}/android-build
             ${{ env.ANDROID_SDK_ROOT }}/ndk/26.1.10909125/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/local
-          key: ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v2-${{ hashFiles('build/android/build_ffmpeg.sh', 'build/android/env.sh', 'server_cpp/CMakeLists.txt', 'server_cpp/src/**', 'server_cpp/include/**') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v3-${{ hashFiles('build/android/build_ffmpeg.sh', 'build/android/env.sh') }}
 
       - name: Flutter pub get & generate local.properties
         run: |

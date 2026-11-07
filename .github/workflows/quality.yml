@@ -30,11 +30,23 @@ on:
   pull_request:
     paths:
       - 'ffmpegpp_gui/**'
+      # PR 改的如果就是这个 workflow 本身，也要跑一次验证语法/行为
+      - '.github/workflows/quality.yml'
   workflow_dispatch:
+
+# 同一分支连续 push 时取消上一次：旧的排队只会白占 runner，
+# 而且被更新的提交取代后结果本来就不再需要（最后一次才有效）。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   analyze-and-test:
     runs-on: ubuntu-24.04
+
+    # 卡死保护：正常 analyze+test 约 3~5 分钟，20 分钟足够。
+    # 没有这个上限时，分析器偶发挂起会一直占住 runner 直到默认 6 小时。
+    timeout-minutes: 20
 
     # 所有 run 步骤默认在 flutter 包目录下执行（仓库根是 C++ 后端 + 多平台工程）
     defaults:
@@ -44,20 +56,18 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # `cache: true` 缓存 Flutter SDK + engine artifacts，
+      # `pub-cache: true` 缓存 ~/.pub-cache（key 自动含 pubspec.lock 哈希）。
+      # 因此**不要**再手写一个 actions/cache 去缓存 ~/.pub-cache：
+      # 两者路径相同，会让每次运行多一次 restore + 一次 save，纯属浪费。
+      # 若要锁定版本避免上游 stable 发新版导致 CI 突然变红，
+      # 加 `flutter-version: '3.44.1'`（需与本地一致）。
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
           pub-cache: true
-
-      - name: Cache pub dependencies
-        uses: actions/cache@v5
-        with:
-          path: ~/.pub-cache
-          key: ${{ runner.os }}-pub-${{ hashFiles('ffmpegpp_gui/pubspec.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-pub-
 
       - name: Install dependencies
         run: flutter pub get

@@ -8,6 +8,18 @@ name: Build & Release
 on:
   workflow_dispatch:
 
+# 发布流程不能被自动取消：跑到一半被掐断会留下半套 artifact。
+# 但重复触发仍应排队而不是并行（并行会争抢同一 tag 的 Release）。
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+# 版本号只在这里改。原先 5.30.51 硬编码在 deb control ×2、DMG 名、tag、
+# Release 名共 5 处，改版本要逐处找，漏一处就出现「文件名 5.31 而包内
+# Version 仍是 5.30」的不一致。
+env:
+  APP_VERSION: '5.30.51'
+
 jobs:
   # ══════════════════════════════════════════
   # 编译阶段 — Windows x86_64
@@ -41,12 +53,21 @@ jobs:
             }
           }
 
+      # 缓存 CMake/NMake 的 **增量构建目录**，key 只含构建配置（CMakeLists.txt），
+      # **不含源码哈希**。原因：
+      #   * 原先 key 里带 server_cpp/src|include 的 hash → 源码每改一次就产生一个
+      #     全新 key；精确 key 永不命中，只能靠 restore-keys 兜底恢复旧目录，同时
+      #     每次运行都会 save 一份几百 MB 的新缓存，几轮就把仓库 10GB 缓存额度
+      #     挤爆（GitHub 按 LRU 淘汰，最终连有用的那份也被清掉）。
+      #   * 去掉源码 hash 后 key 稳定，每次精确命中；源码改动交给 CMake 自己的
+      #     依赖图做增量重编 —— 这才是「缓存 + 增量编译」应有的分工。
       - name: Cache C++ backend build
         uses: actions/cache@v5
         with:
           path: server_cpp/build_win
-          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v1-${{ hashFiles('server_cpp/CMakeLists.txt', 'server_cpp/src/**', 'server_cpp/include/**') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v2-${{ hashFiles('server_cpp/CMakeLists.txt') }}
           restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cpp-v2-
             ${{ runner.os }}-${{ runner.arch }}-cpp-v1-
 
       - name: Build C++ backend (ffmpegpp.dll)
@@ -101,12 +122,14 @@ jobs:
           cache: true
           pub-cache: true
 
+      # key 不含源码哈希 → 稳定命中，增量重编交给 CMake（理由见 compile-windows）
       - name: Cache C++ backend build
         uses: actions/cache@v5
         with:
           path: server_cpp/build_linux
-          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v1-${{ hashFiles('server_cpp/CMakeLists.txt', 'server_cpp/src/**', 'server_cpp/include/**') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v2-${{ hashFiles('server_cpp/CMakeLists.txt') }}
           restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cpp-v2-
             ${{ runner.os }}-${{ runner.arch }}-cpp-v1-
 
       - name: Build C++ backend (libffmpegpp.so)
@@ -152,28 +175,26 @@ jobs:
           sudo apt-get install -y cmake g++ libgtk-3-dev pkg-config ninja-build clang curl git unzip xz-utils \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-good
 
-      - name: Setup Flutter (manual for ARM64)
-        run: |
-          git clone https://github.com/flutter/flutter.git -b stable --depth 1 "$HOME/flutter"
-          echo "$HOME/flutter/bin" >> $GITHUB_PATH
-          export PATH="$HOME/flutter/bin:$PATH"
-          flutter precache --linux
-          flutter doctor -v
-
-      - name: Cache pub dependencies
-        uses: actions/cache@v5
+      # subosito/flutter-action 支持 aarch64 runner（按 uname -m 自动选架构），
+      # 且 `cache: true` 会把 SDK + engine artifacts 一起缓存。
+      # 原先手写 `git clone --depth 1` 每次都要重新拉整个仓库（1GB+，1~2 分钟）
+      # 且完全不复用 —— 这是 ARM64 job 里最大的一块固定开销。
+      # 若某天 action 在 arm64 上不可用，回退方式就是还原成 clone + precache。
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
         with:
-          path: ~/.pub-cache
-          key: ${{ runner.os }}-${{ runner.arch }}-pub-${{ hashFiles('ffmpegpp_gui/pubspec.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-pub-
+          channel: stable
+          cache: true
+          pub-cache: true
 
+      # key 不含源码哈希 → 稳定命中，增量重编交给 CMake（理由见 compile-windows）
       - name: Cache C++ backend build
         uses: actions/cache@v5
         with:
           path: server_cpp/build_linux
-          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v1-${{ hashFiles('server_cpp/CMakeLists.txt', 'server_cpp/src/**', 'server_cpp/include/**') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v2-${{ hashFiles('server_cpp/CMakeLists.txt') }}
           restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cpp-v2-
             ${{ runner.os }}-${{ runner.arch }}-cpp-v1-
 
       - name: Build C++ backend (libffmpegpp.so)
@@ -220,12 +241,14 @@ jobs:
           cache: true
           pub-cache: true
 
+      # key 不含源码哈希 → 稳定命中，增量重编交给 CMake（理由见 compile-windows）
       - name: Cache C++ backend build
         uses: actions/cache@v5
         with:
           path: server_cpp/build_macos
-          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v1-${{ hashFiles('server_cpp/CMakeLists.txt', 'server_cpp/src/**', 'server_cpp/include/**') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v2-${{ hashFiles('server_cpp/CMakeLists.txt') }}
           restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cpp-v2-
             ${{ runner.os }}-${{ runner.arch }}-cpp-v1-
 
       - name: Build C++ backend (libffmpegpp.dylib)
@@ -285,6 +308,9 @@ jobs:
   # ══════════════════════════════════════════
   compile-android:
     runs-on: ubuntu-24.04
+    # ffmpeg 交叉编译在缓存 miss 时要 40~60 分钟，给足上限；
+    # 没有 timeout 时偶发卡死会一直占住 runner 直到默认的 6 小时。
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
 
@@ -321,7 +347,14 @@ jobs:
         run: |
           sudo $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses >/dev/null || true
 
-      # 缓存交叉编译产物：key 含脚本+源码 hash，源码或脚本变更会强制重建。
+      # 缓存交叉编译产物。key 只含 **ffmpeg 的构建输入**（脚本 + env.sh，
+      # 后者决定 FFMPEG_VERSION 与编译开关），不含 server_cpp 源码：
+      #   * ffmpeg 是全量编译（build_ffmpeg.sh 内部按 stamp 判断），它的输入
+      #     只有这两个脚本 —— 把它们放进 key 才能保证「脚本一变就重建」。
+      #   * libffmpegpp.so 的增量由脚本自己的 SRC_HASH stamp 判断
+      #     （见 build_ffmpeg.sh §7：源码变了就 rm -rf server_cpp_build 重编）。
+      #     把 server_cpp 源码也塞进 key，只会让每次改后端都产生一份全新缓存，
+      #     精确 key 永远不命中、缓存体积迅速膨胀 —— 这与 stamp 机制重复且有害。
       # cache 的 save-always 输入已被 GitHub 弃用（行为也不符合预期），
       # 改为官方推荐的 restore/save 分离写法：ffmpeg 编译成功后立即保存，
       # 即使后续 APK 打包失败，下次重跑也不必从零编译 ffmpeg。
@@ -331,8 +364,9 @@ jobs:
           path: |
             ${{ runner.temp }}/android-build
             ${{ env.ANDROID_SDK_ROOT }}/ndk/26.1.10909125/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/local
-          key: ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v2-${{ hashFiles('build/android/build_ffmpeg.sh', 'build/android/env.sh', 'server_cpp/CMakeLists.txt', 'server_cpp/src/**', 'server_cpp/include/**') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v3-${{ hashFiles('build/android/build_ffmpeg.sh', 'build/android/env.sh') }}
           restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v3-
             ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v2-
 
       # 交叉编译 ffmpeg/ffprobe（--enable-mediacodec，含硬编）+ libffmpegpp.so。
@@ -355,7 +389,7 @@ jobs:
           path: |
             ${{ runner.temp }}/android-build
             ${{ env.ANDROID_SDK_ROOT }}/ndk/26.1.10909125/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/local
-          key: ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v2-${{ hashFiles('build/android/build_ffmpeg.sh', 'build/android/env.sh', 'server_cpp/CMakeLists.txt', 'server_cpp/src/**', 'server_cpp/include/**') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v3-${{ hashFiles('build/android/build_ffmpeg.sh', 'build/android/env.sh') }}
 
       # 以新鲜 dist/ 产物为准同步到 jniLibs（覆盖 git 追踪的旧二进制），
       # 然后按与本地一致的流程打 APK。
@@ -395,9 +429,13 @@ jobs:
 
       - name: Build Inno Setup installer
         run: |
-          choco install innosetup -y
-          $env:PATH += ";C:\Program Files (x86)\Inno Setup 6"
-          # Copy Chinese language files from repo
+          # windows-latest 镜像通常已预装 Inno Setup 6；只在确实缺失时才装，
+          # 省掉每次 30~60s 的 choco 解析 + 下载（choco 本身启动就要几秒）。
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          }
           $langDir = "C:\Program Files (x86)\Inno Setup 6\Languages"
           Copy-Item "make\ChineseSimplified.isl" "$langDir\ChineseSimplified.isl" -Force
           Copy-Item "make\ChineseTraditional.isl" "$langDir\ChineseTraditional.isl" -Force
@@ -405,7 +443,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path build
           tar -xzf bundle/windows-bundle.tar.gz -C build
           # Run Inno Setup
-          iscc make\setup.iss
+          & $iscc make\setup.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
         shell: pwsh
 
       - name: Upload Windows installer
@@ -438,9 +477,11 @@ jobs:
           mkdir -p deb/usr/share/icons/hicolor/256x256/apps
 
           # Control file
-          cat > deb/DEBIAN/control << 'EOF'
+          # 注意：heredoc 用不带引号的 EOF，${APP_VERSION} 才会被展开；
+          # 原先写死 5.30.51 且用 'EOF'，改版本时这里永远跟不上。
+          cat > deb/DEBIAN/control << EOF
           Package: ffmpegpp
-          Version: 5.30.51
+          Version: ${APP_VERSION}
           Architecture: amd64
           Maintainer: lvbaoshigao <noreply@github.com>
           Description: FFmpeg++ - Advanced video/image/audio processing tool
@@ -475,13 +516,13 @@ jobs:
           chmod -R 755 deb/opt/ffmpegpp/
 
           # Build deb
-          dpkg-deb --root-owner-group --build deb ffmpegpp_5.30.51_amd64.deb
+          dpkg-deb --root-owner-group --build deb ffmpegpp_${APP_VERSION}_amd64.deb
 
       - name: Upload Linux x64 deb
         uses: actions/upload-artifact@v6
         with:
           name: linux-x64-deb
-          path: ffmpegpp_5.30.51_amd64.deb
+          path: ffmpegpp_*_amd64.deb
 
   # ══════════════════════════════════════════
   # 打包阶段 — Linux ARM64 (.deb)
@@ -506,9 +547,11 @@ jobs:
           mkdir -p deb/usr/share/applications
           mkdir -p deb/usr/share/icons/hicolor/256x256/apps
 
-          cat > deb/DEBIAN/control << 'EOF'
+          # 注意：heredoc 用不带引号的 EOF，${APP_VERSION} 才会被展开；
+          # 原先写死 5.30.51 且用 'EOF'，改版本时这里永远跟不上。
+          cat > deb/DEBIAN/control << EOF
           Package: ffmpegpp
-          Version: 5.30.51
+          Version: ${APP_VERSION}
           Architecture: arm64
           Maintainer: lvbaoshigao <noreply@github.com>
           Description: FFmpeg++ - Advanced video/image/audio processing tool
@@ -539,13 +582,13 @@ jobs:
           cp "make/FFmpeg++.png" deb/usr/share/icons/hicolor/256x256/apps/ffmpegpp.png
           chmod -R 755 deb/opt/ffmpegpp/
 
-          dpkg-deb --root-owner-group --build deb ffmpegpp_5.30.51_arm64.deb
+          dpkg-deb --root-owner-group --build deb ffmpegpp_${APP_VERSION}_arm64.deb
 
       - name: Upload Linux ARM64 deb
         uses: actions/upload-artifact@v6
         with:
           name: linux-arm64-deb
-          path: ffmpegpp_5.30.51_arm64.deb
+          path: ffmpegpp_*_arm64.deb
 
   # ══════════════════════════════════════════
   # 打包阶段 — macOS (.dmg)
@@ -567,16 +610,16 @@ jobs:
           mkdir -p dmg_staging
           tar -xzf bundle/macos-app.tar.gz -C dmg_staging
           ln -s /Applications dmg_staging/Applications
-          hdiutil create -volname "FFmpeg++" -srcfolder dmg_staging -ov -format UDZO "FFmpeg++_v5.30.51_macOS.dmg"
+          hdiutil create -volname "FFmpeg++" -srcfolder dmg_staging -ov -format UDZO "FFmpeg++_v${APP_VERSION}_macOS.dmg"
 
       - name: Upload macOS DMG
         uses: actions/upload-artifact@v6
         with:
           name: macos-dmg
-          path: FFmpeg++_v5.30.51_macOS.dmg
+          path: FFmpeg++_v*_macOS.dmg
 
   # ══════════════════════════════════════════
-  # 发布阶段 — 创建 Release (v5.30.51)
+  # 发布阶段 — 创建 Release（tag 取自 env.APP_VERSION）
   # ══════════════════════════════════════════
   release:
     needs: [package-windows, package-linux-x64, package-linux-arm64, package-macos, compile-android]
@@ -596,8 +639,10 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: 5.30.51
-          name: "Release 5.30.51"
+          # tag / Release 名统一取 env.APP_VERSION（原先两处各写一遍 5.30.51，
+          # 改版本时极易只改了一处，导致 tag 与产物版本号对不上）
+          tag_name: ${{ env.APP_VERSION }}
+          name: "Release ${{ env.APP_VERSION }}"
           body: |
             ## Release Notes
 
