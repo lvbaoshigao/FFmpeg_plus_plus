@@ -1490,15 +1490,11 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                                 ),
                                 Positioned(
                                   left: leftHanded
-                                      ? (kAppLiquidTabBarStyle
-                                            .horizontalMargin ??
-                                          24)
+                                      ? kAppLiquidTabBarStyle.horizontalMargin
                                       : null,
                                   right: leftHanded
                                       ? null
-                                      : (kAppLiquidTabBarStyle
-                                            .horizontalMargin ??
-                                          24),
+                                      : kAppLiquidTabBarStyle.horizontalMargin,
                                   bottom: selectorBottom,
                                   width: selectorWidth,
                                   height: selectorHeight,

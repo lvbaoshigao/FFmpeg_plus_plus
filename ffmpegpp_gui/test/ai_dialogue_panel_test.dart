@@ -743,13 +743,18 @@ void main() {
       );
     });
 
-    test('mobile AI sidebar width is comfortable on narrow panels', () {
-      // 旧实现 min(340, 86%)：320dp 时只有 275dp，文字被截断。
-      expect(mobileAiSidebarWidth(320), closeTo(300.8, 0.001));
+    test('mobile AI sidebar width stays comfortable without full-bleed', () {
+      // 演进史：
+      //  * min(340, 86%) —— 320dp 上只有 275dp，标题被截断；
+      //  * min(400, 94%) —— 修了截断，但用户反馈「侧边栏特别宽」（2026-11-07）；
+      //  * min(360, 88%) —— 封顶收紧到 360，窄屏仍比最初的 86% 宽。
+      expect(mobileAiSidebarWidth(320), closeTo(281.6, 0.001));
       expect(mobileAiSidebarWidth(320), greaterThan(320 * 0.86));
       expect(mobileAiSidebarWidth(0), 0);
       expect(mobileAiSidebarWidth(-8), 0);
-      expect(mobileAiSidebarWidth(1000), 400);
+      // 宽屏必须封顶，不能随面板宽度线性涨到 400。
+      expect(mobileAiSidebarWidth(1000), 360);
+      expect(mobileAiSidebarWidth(1000), lessThan(400));
     });
   });
 

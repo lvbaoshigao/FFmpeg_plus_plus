@@ -170,6 +170,11 @@ void main() {
 
     // 打开下拉并取出「浮层面板」那颗 Material（半径 14 是它的唯一标识）。
     Future<Material> openPanel(String appearance) async {
+      // 面板浮层挂在 OptionMenuBar 的 State 上（OverlayPortal）：同构 pumpWidget
+      // 换根会复用 State，上一轮的面板不会自动关闭，第二轮 tap(find.text('One'))
+      // 会撞上「触发钮 + 残留面板项」两颗文本。先挂一棵空树整体卸载上一棵
+      // （State.dispose 撤掉浮层），保证每轮都从干净状态起步。
+      await tester.pumpWidget(const SizedBox.shrink());
       final state = AppState();
       await state.updateConfig((c) => c..dropdownAppearance = appearance);
       await tester.pumpWidget(

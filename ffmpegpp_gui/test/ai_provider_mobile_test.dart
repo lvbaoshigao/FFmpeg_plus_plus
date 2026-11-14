@@ -229,15 +229,18 @@ void main() {
 
     // 壁纸：withWallpaper 里铺的壁纸 Image 应存在
     expect(find.byType(Image), findsWidgets);
-    // 设计稿改为底部小药丸：分段控件位于内容区下方，不再占用顶部。
+    // 设计稿改为底部小药丸：分段控件位于屏幕底部，不再占用顶部。
     expect(find.byKey(const ValueKey('ai_provider_top_tabs')), findsOneWidget);
+    // 沉浸底栏（2026-11 底部菜单栏改版）：内容铺满全屏、信息流可从菜单栏
+    // 下方穿插，「基本/模型」药丸浮在底部。旧断言「药丸顶 ≥ 内容底」描述的
+    // 是 Column 上下切分；新契约：内容底 ≥ 药丸顶（内容不被菜单栏截断）。
+    final tabsTop = tester
+        .getTopLeft(find.byKey(const ValueKey('ai_provider_top_tabs')))
+        .dy;
+    expect(tabsTop, greaterThan(700.0)); // 药丸在屏幕底部，不在顶部
     expect(
-      tester.getTopLeft(find.byKey(const ValueKey('ai_provider_top_tabs'))).dy,
-      greaterThanOrEqualTo(
-        tester
-            .getBottomLeft(find.byKey(const ValueKey('ai_provider_config')))
-            .dy,
-      ),
+      tester.getBottomLeft(find.byKey(const ValueKey('ai_provider_config'))).dy,
+      greaterThanOrEqualTo(tabsTop),
     );
     // 底栏 = AppLiquidTabBar：每项会绘制「未选中色 + 选中色」两层，
     // 因此标签文本命中 2 个（这是 liquid_glass_tab_bar 的滑动胶囊实现，
@@ -606,6 +609,12 @@ void main() {
     // 非搜索态不展示模型 chips，保持列表紧凑（对应设计稿的提供商列表页）。
     expect(find.text('gpt-4o'), findsNothing);
 
+    // 搜索药丸默认收起成圆钮（搜索框不占顶部、改到底部悬浮药丸的改版）：
+    // 先点圆钮展开，才有带 ai_provider_search 的输入框。
+    final collapsed = find.byKey(const ValueKey('ai_search_collapsed'));
+    expect(collapsed, findsOneWidget);
+    await tester.tap(collapsed);
+    await tester.pumpAndSettle();
     final search = find.byKey(const ValueKey('ai_provider_search'));
     expect(search, findsOneWidget);
 
@@ -675,7 +684,10 @@ void main() {
     });
 
     testWidgets('自建中转站的供应商名不冒充官方品牌图标', (tester) async {
-      tester.view.physicalSize = const Size(412, 915);
+      // 用桌面视口：移动端列表行是「纯文字紧凑行」（_AiProviderListCard，
+      // 不带头像），品牌头像契约（_ProviderIconTile）只在 PC 多列网格卡片与
+      // 详情页渲染 —— 要断言 BrandLogo 必须走到带头像的布局。
+      tester.view.physicalSize = const Size(1280, 900);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
 

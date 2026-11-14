@@ -157,7 +157,8 @@ void main() {
         video,
         AppConfig(defaultOutputDir: '/tmp/outdir'),
       );
-      expect(out, '/tmp/outdir/photo.jpeg');
+      // 输出路径用平台分隔符拼接（Windows 是反斜杠）：比较前归一化为 '/'。
+      expect(out.replaceAll('\\', '/'), '/tmp/outdir/photo.jpeg');
     });
 
     test('keep 格式沿用源扩展名（png 输入 → png 输出）并提示质量无效', () {
@@ -373,7 +374,8 @@ void main() {
         video,
         AppConfig(defaultOutputDir: '/tmp/outdir'),
       );
-      expect(out, '/tmp/outdir/photo.webp');
+      // 输出路径用平台分隔符拼接（Windows 是反斜杠）：比较前归一化为 '/'。
+      expect(out.replaceAll('\\', '/'), '/tmp/outdir/photo.webp');
     });
 
     test('图片压缩 keep 格式沿用源后缀', () {
@@ -394,7 +396,8 @@ void main() {
         video,
         AppConfig(defaultOutputDir: '/tmp/outdir'),
       );
-      expect(out, '/tmp/outdir/photo.jpg');
+      // 输出路径用平台分隔符拼接（Windows 是反斜杠）：比较前归一化为 '/'。
+      expect(out.replaceAll('\\', '/'), '/tmp/outdir/photo.jpg');
     });
   });
 }

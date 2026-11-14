@@ -347,6 +347,14 @@ void main() {
     expect(find.text('默认行为'), findsOneWidget);
     // 跳过项已从「会话模式」卡拆成独立卡（只影响询问模式）。
     expect(find.text('询问模式下无需确认的操作'), findsOneWidget);
+    // 「自定义系统提示词」是全页最后一张卡：分组拆卡 + 卡卡带说明后页面
+    // 高度超过 412×915 一屏，ListView 懒构建屏外条目不入树，find.text 查不到。
+    // 从屏内纯文本（不吃手势）上划到页尾再断言，不再依赖「整页恰好塞进一屏」。
+    await tester.drag(
+      find.text('询问模式下无需确认的操作'),
+      const Offset(0, -900),
+    );
+    await tester.pumpAndSettle();
     expect(find.text('自定义系统提示词'), findsOneWidget);
     // 让配置落盘防抖定时器跑完，避免 Timer pending 断言
     await tester.pump(const Duration(milliseconds: 600));

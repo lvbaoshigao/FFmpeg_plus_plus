@@ -48,7 +48,12 @@ void main() {
         supportDirectory: directory,
       );
       expect(prepared.managed, isTrue);
-      expect(prepared.path, startsWith('${directory.path}/ai_attachments/'));
+      // 路径比较归一化分隔符：产品用 Platform.pathSeparator 拼接（Windows
+      // 是反斜杠），硬编码 '/' 的前缀断言在 Windows 上会误红。
+      expect(
+        prepared.path.replaceAll('\\', '/'),
+        startsWith('${directory.path.replaceAll('\\', '/')}/ai_attachments/'),
+      );
       expect(prepared.path, isNot(contains('..')));
       expect(prepared.mimeType, 'image/png');
       expect(await File(prepared.path).length(), 8);
@@ -98,7 +103,10 @@ void main() {
         anthropic: false,
       );
       expect(blocks, hasLength(1));
-      expect(blocks.single['text'], contains(attachment.path));
+      // metadata 是 jsonEncode 出来的（Windows 路径反斜杠被转义成 \\），
+      // 直接 contains 原始路径在 Windows 上永远匹配不上 —— 与 JSON 转义后
+      // 的形式比对，两个平台都成立。
+      expect(blocks.single['text'], contains(jsonEncode(attachment.path)));
     });
     test('should encode OpenAI images with image_url', () async {
       final blocks = await AiChatAttachments.content(

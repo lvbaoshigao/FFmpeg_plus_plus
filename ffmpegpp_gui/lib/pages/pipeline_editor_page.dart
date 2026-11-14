@@ -15886,7 +15886,6 @@ Available actions: __TOOLS__''';
 
   /// 移动端单行 header：会话操作 + 模型选择器挤在同一行（模型 chip 占弹性宽度）。
   Widget _buildMobileSheetHeader(ColorScheme scheme, AppStrings s) {
-    final cfg = context.read<AppState>().config;
     // 单行头部（44）：[菜单] [模型 chip] [新建] [工具] [关闭]。
     //
     // 旧实现是两行玻璃药丸（40 + 4 + 32）外加一条全宽分隔线，整块约 94px。

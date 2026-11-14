@@ -1032,7 +1032,6 @@ class _CometFillPainter extends CustomPainter {
     // 前缘：LTR 是右端，RTL 是左端。
     final double headX = insetX + trackW * (isLtr ? hi : 1 - lo);
     final double tailEdgeX = insetX + trackW * (isLtr ? lo : 1 - hi);
-    final double span = (headX - tailEdgeX).abs();
 
     // 彗尾铺满整个填充段：渐变从填充起点（alpha=0）自然过渡到前缘高光，
     // 不再截短彗尾导致填充段边缘硬切断的「割裂」观感。
