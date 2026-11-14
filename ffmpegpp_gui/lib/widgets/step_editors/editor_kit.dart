@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../theme/app_control_size.dart';
@@ -54,11 +56,36 @@ mixin StepEditorState<W extends ParamsStepEditor> on State<W> {
     defaults.forEach((key, value) => p.putIfAbsent(key, () => value));
   }
 
+  /// 页面级提交（[ParamsStepEditor.onChanged]）的节流窗口。
+  ///
+  /// 拖动滑块时每个 tick 都会 [update]，而页面级 onChanged 会 setState
+  /// 整页（画布 + 全部节点）并同步外置面板 —— 逐帧重建会掉帧、滑条
+  /// 「不随拖动自然跟随」。首个 tick 立即提交（离散编辑保持即时），
+  /// 窗口内的 tick 只标脏，窗口到期补一次收最终值。
+  /// 编辑器自身的 setState 不受影响（参数标签仍逐帧跟值）。
+  Timer? _pageCommitTimer;
+  bool _pageCommitDirty = false;
+  static const Duration _pageCommitThrottle = Duration(milliseconds: 80);
+
   /// 更新参数并通知外部（等价原逐字重复的：
   /// `void _update(String key, dynamic value) { setState(() => p[key] = value); widget.onChanged(); }`）
   void update(String key, dynamic value) {
     setState(() => p[key] = value);
+    _schedulePageCommit();
+  }
+
+  void _schedulePageCommit() {
+    if (_pageCommitTimer != null) {
+      _pageCommitDirty = true;
+      return;
+    }
     widget.onChanged();
+    _pageCommitTimer = Timer(_pageCommitThrottle, () {
+      _pageCommitTimer = null;
+      if (!_pageCommitDirty || !mounted) return;
+      _pageCommitDirty = false;
+      widget.onChanged();
+    });
   }
 }
 

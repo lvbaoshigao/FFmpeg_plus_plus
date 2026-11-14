@@ -131,7 +131,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('设为当前模型'), findsOneWidget);
 
-    // 打开时高亮第一项；↓ 移到第二项，Enter 选中。
+    // 打开时不高亮任何项（不「框住」第一项）；首次 ↓ 显示高亮并落在
+    // 第一项，再次 ↓ 移到第二项，Enter 选中。
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);

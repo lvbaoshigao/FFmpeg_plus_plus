@@ -46,6 +46,18 @@ Windows/Linux 需要 SkSL，因此仍然是致命错误。
 高光的公式与参数一字未动。唯一的近似是法线导数由硬件 `dFdx` 换成步长 1px 的
 前向差分 —— 二者本就是同量纲的同一阶近似。
 
+## 附：让 `flutter analyze` 保持干净的四处等价改写
+
+这四处不涉及渲染，只是分析器诊断（`flutter analyze` 的 info 级），但本项目
+要求 `flutter analyze` 零输出，故一并改掉：
+
+| 文件 | 上游写法 | 诊断 | 改法 |
+| --- | --- | --- | --- |
+| `lib/liquid_glass_renderer.dart` | `library liquid_glass_renderer;` | `unnecessary_library_name` | `library;`（保留 `library` 关键字，库级文档注释才不会变成 dangling） |
+| `lib/src/internal/transform_tracking_repaint_boundary_mixin.dart` | `this.layer ??= ...` | `unnecessary_this` | `layer ??= ...` |
+| `lib/src/liquid_glass_settings.dart` | `with EquatableMixin` | `deprecated_member_use`（equatable 2.1.0 起 `EquatableMixin` 弃用） | `with Equatable`（2.1.0 里是 `abstract mixin class Equatable`，mixin 用法等价） |
+| `lib/src/liquid_shape.dart` | `extends OutlinedBorder with EquatableMixin` | 同上 | `with Equatable` |
+
 ## 未收录的目录
 
 `test/`（2.6MB）、`example/`、`doc/`、`coverage/`、`dart_test.yaml`、

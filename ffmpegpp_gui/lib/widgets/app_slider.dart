@@ -1037,14 +1037,10 @@ class _CometFillPainter extends CustomPainter {
     // 不再截短彗尾导致填充段边缘硬切断的「割裂」观感。
     final double tailX = tailEdgeX;
 
-    // 裁剪区域 = 填充段胶囊；绘制坐标系下移到轨道垂直居中的位置。
+    // 裁剪区域 = 整条轨道胶囊（而非填充段）：光晕/粒子要能溢出填充前缘，
+    // 被填满胶囊裁掉一半就只剩渐变、没有「掠光」感。
     final RRect clip = RRect.fromRectAndRadius(
-      Rect.fromLTRB(
-        math.min(headX, tailEdgeX),
-        0,
-        math.max(headX, tailEdgeX),
-        trackHeight,
-      ),
+      Rect.fromLTRB(insetX, 0, insetX + trackW, trackHeight),
       Radius.circular(trackHeight / 2),
     );
     canvas.save();
@@ -1058,6 +1054,7 @@ class _CometFillPainter extends CustomPainter {
       color: _cometHighlight(color),
       // 光晕随拖速增强：慢拖微光 0.34、快拖亮光 0.60
       glowAlpha: dragging ? 0.34 + speed * 0.26 : 0.30,
+      speed: speed,
     );
     canvas.restore();
   }
@@ -1214,7 +1211,13 @@ class _AppProgressBarPainter extends CustomPainter {
     // 彗尾铺满整个填充段，消除硬边「割裂」
     final double tailX = isLtr ? fillLeft : fillRight;
     canvas.save();
-    canvas.clipRRect(fill);
+    // 裁到整条轨道胶囊，让前缘光晕能溢出填充段（与滑块同口径）。
+    canvas.clipRRect(
+      RRect.fromRectAndRadius(
+        Offset.zero & size,
+        Radius.circular(size.height / 2),
+      ),
+    );
     _drawComet(
       canvas,
       size: size,
@@ -1252,7 +1255,8 @@ Color _cometHighlight(Color fill) {
 Color _withScaledAlpha(Color color, double opacity) =>
     color.withValues(alpha: color.a * opacity);
 
-/// 画一条方向性光带 + 前缘光晕 —— 开屏进度条与滑块彗星的**唯一定义**。
+/// 画一条方向性光带 + 前缘光晕 + 速度粒子拖尾 —— 开屏进度条与滑块彗星的
+/// **唯一定义**。粒子相位固定（不用 RNG）：每次重绘位置稳定，不会闪烁跳动。
 void _drawComet(
   Canvas canvas, {
   required Size size,
@@ -1260,6 +1264,7 @@ void _drawComet(
   required Offset head,
   required Color color,
   required double glowAlpha,
+  double speed = 0,
 }) {
   final double length = (head.dx - tail.dx).abs();
   if (length <= 0.01 || size.height <= 0) return;
@@ -1282,6 +1287,24 @@ void _drawComet(
         const [0, 0.42, 0.82, 1],
       ),
   );
+
+  // 粒子拖尾：前缘后方散落几颗小亮点，随拖速变多变亮（用户要的
+  //「彗星那样的粒子特效」）。越靠近彗尾越暗，被随后的光晕自然盖过。
+  final int specks = 4 + (speed * 5).round();
+  for (int i = 1; i <= specks; i++) {
+    final double t = i / (specks + 1); // 0=尾 1=头
+    final double x = tail.dx + (head.dx - tail.dx) * (1 - t * 0.9);
+    final double wobble =
+        (i.isEven ? 1 : -1) * size.height * (0.14 + 0.08 * ((i * 7) % 3));
+    final double alpha = ((1 - t) * (0.16 + speed * 0.5) + 0.08).clamp(0.0, 1.0);
+    final double r =
+        size.height * (0.055 + 0.035 * ((i * 5) % 3)) * (1 + speed * 0.6);
+    canvas.drawCircle(
+      Offset(x, head.dy + wobble),
+      r,
+      Paint()..color = _withScaledAlpha(color, alpha),
+    );
+  }
 
   final double radius = math.min(size.height * 1.25, length * 0.42);
   if (radius <= 0.01) return;

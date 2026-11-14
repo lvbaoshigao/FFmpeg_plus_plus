@@ -2565,9 +2565,12 @@ class _SettingSlider extends StatefulWidget {
 class _SettingSliderState extends State<_SettingSlider> {
   double? _dragValue;
 
-  /// [ _SettingSlider.liveCommit] 的节流定时器：拖动时每 80ms 才写一次配置，
-  /// 否则每帧都 notifyListeners → 整页（含液态玻璃卡片）逐帧重建会掉帧。
+  /// [ _SettingSlider.liveCommit] 的节流：拖动时每 80ms 至多写一次配置。
+  /// **首帧立即写**（拖动即生效），窗口内的后续 tick 只暂存最新值、窗口
+  /// 到期补写一次 —— 旧实现「每个 tick 都 cancel+重建 Timer」在连续拖动时
+  /// 永远等不到触发，配置只在停顿/松手才写，表现为「不随拖动自然跟随」。
   Timer? _liveTimer;
+  double? _livePending;
   static const Duration _liveThrottle = Duration(milliseconds: 80);
 
   double get _current => _dragValue ?? widget.value;
@@ -2576,15 +2579,29 @@ class _SettingSliderState extends State<_SettingSlider> {
     setState(() => _dragValue = v);
     // 仅本地更新不触发父级重建，确保滑动全程流畅无中断
     if (!widget.liveCommit) return;
-    _liveTimer?.cancel();
+    _livePending = v;
+    // 窗口内只暂存；窗口的尾沿定时器会统一补写，不要按 tick 重置窗口。
+    if (_liveTimer != null) return;
+    _flushLive();
+  }
+
+  /// 立即写一次配置并开启 80ms 窗口；窗口到期时若有暂存值再补写一次。
+  void _flushLive() {
+    final double v = _livePending ?? _current;
+    _livePending = null;
+    widget.onCommit(v);
     _liveTimer = Timer(_liveThrottle, () {
-      if (mounted) widget.onCommit(v);
+      _liveTimer = null;
+      final double? pending = _livePending;
+      _livePending = null;
+      if (pending != null && mounted) widget.onCommit(pending);
     });
   }
 
   void _onChangeEnd(double v) {
     _liveTimer?.cancel();
     _liveTimer = null;
+    _livePending = null;
     widget.onCommit(v);
     setState(() => _dragValue = null);
   }
@@ -5398,6 +5415,17 @@ Future<void> _sendTestNotification(BuildContext ctx, AppStrings s) async {
                 : 'Test notification sent as a plain notification') +
             hint,
         type: ToastType.success,
+      );
+    case 'no_permission':
+      // 通知总开关 / 运行时权限没开：系统会静默丢弃一切通知（超级岛也一样），
+      // 必须先去系统设置开启，否则「发了也白发」。
+      showToast(
+        ctx,
+        s.isZh
+            ? '系统通知权限未开启：请到 系统设置→通知→FFmpeg++ 允许通知后重试'
+            : 'Notifications are disabled for this app: enable them in '
+                'System Settings → Notifications → FFmpeg++, then retry',
+        type: ToastType.error,
       );
     default:
       showToast(

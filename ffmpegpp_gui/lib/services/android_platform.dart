@@ -125,7 +125,8 @@ class AndroidPlatformBridge {
 
   /// 发送一条「测试通知」，按当前系统自动选路，返回走了哪条：
   /// `'island'`（澎湃 OS 超级岛）/ `'fluidcloud'`（ColorOS 流体云）/
-  /// `'notification'`（普通系统通知）/ `'unsupported'`（系统太旧或被拒绝）/
+  /// `'notification'`（普通系统通知）/ `'no_permission'`（系统通知开关或
+  /// 运行时权限未开，通知必然不显示）/ `'unsupported'`（系统太旧或被拒绝）/
   /// `null`（非 Android 或调用失败）。
   ///
   /// ⚠️ 返回值只代表「选了哪条路」，不代表通知一定显示 —— MIUI/澎湃 OS 上

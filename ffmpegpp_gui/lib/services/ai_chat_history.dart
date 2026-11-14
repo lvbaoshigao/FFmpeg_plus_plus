@@ -85,8 +85,8 @@ class AiChatHistory {
         'provider': provider,
         'model': model,
         'saved_at': DateTime.now().toIso8601String(),
-        if (totalInputTokens != null) 'total_in': totalInputTokens,
-        if (totalOutputTokens != null) 'total_out': totalOutputTokens,
+        'total_in': ?totalInputTokens,
+        'total_out': ?totalOutputTokens,
         'messages': messages,
       };
       final text = const JsonEncoder.withIndent('  ').convert(data);

@@ -213,14 +213,14 @@ void main() {
     });
 
     test('随机门 0% 与 100% 概率稳定可预测', () {
-      final makeGraph = (num chance) {
+      PipelineGraph makeGraph(num chance) {
         final g = _chain(extra: [
           PipelineConnection(id: 'e1', fromNodeId: 'G', toNodeId: 'A', kind: 'control'),
         ]);
         g.nodes.add(_node('G', PipelineStepType.start, gate: 'random',
             params: {'probability': chance}));
         return g;
-      };
+      }
       expect(_stepCalls(_build(makeGraph(0))), 1);
       expect(_stepCalls(_build(makeGraph(100))), 2);
     });

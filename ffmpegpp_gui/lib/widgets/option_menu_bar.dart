@@ -20,8 +20,8 @@ import 'liquid_glass_fallback.dart';
 ///   （替代 DropdownMenu / RadioListTile 单选组），选中即回调并收起。
 ///
 /// 浮层动效（用户要求「缩放展开」而不是老式下拉）：
-/// 面板从锚点角 0.86 → 1.0 缩放 + 淡入，200ms easeOutBack（轻微过冲），
-/// 收起 140ms 反向。条目本身沿用设置页左侧菜单的选中药丸动画。
+/// 面板从锚点角 0.95 → 1.0 缩放 + 淡入，200ms easeOutCubic，收起 140ms 反向
+/// （无回弹过冲）。条目为现代菜单行：尾部对勾 + 微弱底色，不做药丸填充。
 class OptionItem<T> {
   final T value;
   final String label;
@@ -105,7 +105,7 @@ Widget _menuPanelShell({
   required ColorScheme scheme,
   required Widget child,
   required String appearance,
-  double radius = 14,
+  double radius = 12,
 }) {
   final dark = scheme.brightness == Brightness.dark;
 
@@ -140,23 +140,24 @@ Widget _menuPanelShell({
   final Color borderColor = switch (appearance) {
     // 中性细边：液态玻璃的「边」主要靠下面的镜面渐变表达，描边只做收口，
     // 太亮会变成一圈白框，反而像实心卡片。
-    'liquid' => scheme.onSurface.withAlpha(dark ? 34 : 46),
-    'frosted' => scheme.primary.withAlpha(dark ? 130 : 108),
-    'highlight' => scheme.primary.withAlpha(dark ? 196 : 172),
-    _ => scheme.outlineVariant.withAlpha(dark ? 120 : 140),
+    'liquid' => scheme.onSurface.withAlpha(dark ? 30 : 40),
+    'frosted' => scheme.primary.withAlpha(dark ? 112 : 92),
+    'highlight' => scheme.primary.withAlpha(dark ? 168 : 146),
+    _ => scheme.outlineVariant.withAlpha(dark ? 110 : 128),
   };
-  final double borderWidth = appearance == 'highlight' ? 1.4 : 1.0;
+  final double borderWidth = appearance == 'highlight' ? 1.2 : 1.0;
 
   // 镜面高光：只有 liquid（对角掠光）与 highlight（顶部高光带）有。
   // frosted 必须是哑光的 —— 毛玻璃上再来一道反光，就和「液态玻璃」分不开了。
+  // 高光整体压低（用户反馈「跟塑料片一样」）：亮部只留一丝，不再糊住内容。
   final Gradient? sheen = switch (appearance) {
     'liquid' => LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
       colors: [
-        Colors.white.withAlpha(dark ? 34 : 92),
+        Colors.white.withAlpha(dark ? 22 : 52),
         Colors.white.withAlpha(0),
-        Colors.white.withAlpha(dark ? 10 : 28),
+        Colors.white.withAlpha(dark ? 6 : 14),
       ],
       stops: const [0.0, 0.42, 1.0],
     ),
@@ -164,8 +165,8 @@ Widget _menuPanelShell({
       begin: Alignment.topCenter,
       end: Alignment.bottomCenter,
       colors: [
-        Colors.white.withAlpha(dark ? 62 : 132),
-        Colors.white.withAlpha(dark ? 12 : 22),
+        Colors.white.withAlpha(dark ? 40 : 84),
+        Colors.white.withAlpha(dark ? 8 : 14),
         Colors.white.withAlpha(0),
       ],
       stops: const [0.0, 0.28, 0.62],
@@ -274,19 +275,17 @@ Widget _optionRow<T>({
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
         curve: Curves.easeOut,
-        margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          // 选中 = 主题色药丸；键盘高亮 = 同色更淡的一档（弱于选中，避免混淆）
+          // 现代菜单行范式（Notion / Ant / Headless）：整行微底色，不做药丸。
+          // 选中靠尾部对勾 + 极淡主题色染，悬停/键盘高亮用中性微底色。
+          borderRadius: BorderRadius.circular(8),
           color: selected
-              ? accent.withAlpha(34)
-              : (highlighted ? accent.withAlpha(16) : Colors.transparent),
-          border: Border.all(
-            color: selected
-                ? accent.withAlpha(90)
-                : (highlighted ? accent.withAlpha(44) : Colors.transparent),
-          ),
+              ? accent.withAlpha(20)
+              : (highlighted
+                    ? scheme.onSurface.withAlpha(12)
+                    : Colors.transparent),
         ),
         child: Row(
           children: [
@@ -319,13 +318,16 @@ Widget _optionRow<T>({
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 12.5,
+                      // 选中态不再染主题色（对勾已表达选中）：文字只提
+                      // 一档字重 + 用正常前景色，避免「药丸+描边+色字+对勾」
+                      // 四重强调的杂乱观感。
                       fontWeight: selected
                           ? FontWeight.values[(weight.value ~/ 100).clamp(0, 8)]
                           : (item.fontWeight ?? weight),
                       color: item.danger
                           ? scheme.error
                           : (selected
-                                ? scheme.primary
+                                ? scheme.onSurface
                                 : (item.textColor ?? scheme.onSurfaceVariant)),
                     ),
                   ),
@@ -504,18 +506,19 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
     _query = '';
     _searchCtrl.clear();
     final items = _visibleItems;
-    // 打开时键盘高亮默认落在当前选中项：先看清「现在选的是什么」，
-    // 之后按 ↑/↓ 才真正移动。
+    // 打开时不做键盘高亮（用户反馈「点击性质的选择框默认框住第一个」）：
+    // 选中态已由对勾 + 微底色表达，预置高亮会「框住」一行造成误选错觉。
+    // ↑/↓ 首次按下时才显示高亮（落在当前选中项上，见 _moveHighlight）。
     setState(() {
       _expanded = true;
-      _highlightIndex = _selectedIndex(items);
+      _highlightIndex = null;
       _syncRowKeys(items.length);
     });
     _ovCtrl.forward(from: 0);
     // 选中项可能在滚动区之外：等浮层首帧布局完成后把它滚进可视区，
-    // 否则长列表里「默认高亮当前选中项」根本看不见。
+    // 否则长列表里看不到「现在选的是什么」。
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _ensureHighlightVisible();
+      if (mounted) _ensureSelectedVisible(items);
     });
   }
 
@@ -536,6 +539,16 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
   void _ensureHighlightVisible() {
     final index = _highlightIndex;
     if (index == null || index < 0 || index >= _rowKeys.length) return;
+    final rowContext = _rowKeys[index].currentContext;
+    if (rowContext != null) {
+      Scrollable.ensureVisible(rowContext, alignment: 0.5);
+    }
+  }
+
+  /// 打开浮层时把「当前选中行」滚进可视区（不设高亮，只滚动）。
+  void _ensureSelectedVisible(List<OptionItem<T>> items) {
+    final index = _selectedIndex(items);
+    if (index < 0 || index >= _rowKeys.length) return;
     final rowContext = _rowKeys[index].currentContext;
     if (rowContext != null) {
       Scrollable.ensureVisible(rowContext, alignment: 0.5);
@@ -620,9 +633,12 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
       final items = _visibleItems;
       final index = _highlightIndex;
       if (items.isEmpty) return KeyEventResult.handled;
+      // 无高亮时回退到「当前选中项」而不是第 0 项 —— 用户反馈
+      //「选择框默认框住第一个」：打开菜单直接回车不应误选首项。
+      final fallback = _selectedIndex(items);
       _pick(
         items[(index == null || index < 0 || index >= items.length)
-            ? 0
+            ? (fallback >= 0 ? fallback : 0)
             : index],
       );
       return KeyEventResult.handled;
@@ -947,18 +963,19 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
                     autofocus: !widget.searchable,
                     // PC 键盘：↑/↓ 移动高亮、Enter/Space 选中、Esc 关闭
                     onKeyEvent: _onPanelKey,
-                    // 展开 / 收起动画：淡入 + 从锚点角缩放（200ms easeOutBack，
-                    // 轻微过冲 = 用户要求的「缩放展开」而不是老式瞬时下拉）。
+                    // 展开 / 收起动画：淡入 + 轻微缩放（200ms easeOutCubic）。
+                    // 不再用 0.86 + easeOutBack 的回弹过冲 —— 弹一下显得廉价，
+                    // 现代菜单是「轻微缩放 + 淡入」的克制动效（Notion/Headless）。
                     child: FadeTransition(
                       opacity: CurvedAnimation(
                         parent: _ovCtrl,
                         curve: Curves.easeOut,
                       ),
                       child: ScaleTransition(
-                        scale: Tween<double>(begin: 0.86, end: 1.0).animate(
+                        scale: Tween<double>(begin: 0.95, end: 1.0).animate(
                           CurvedAnimation(
                             parent: _ovCtrl,
-                            curve: Curves.easeOutBack,
+                            curve: Curves.easeOutCubic,
                           ),
                         ),
                         // 锚点与弹出方向一致：向下弹从左上角放大，向上弹从左下角放大
@@ -1219,7 +1236,9 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
     _portal.show();
     setState(() {
       _expanded = true;
-      _highlightIndex = 0;
+      // 不预置高亮：打开就「框住」第一行会被误读为已选中
+      // （用户反馈「选择框默认框住第一个」）。↑/↓ 才显示高亮。
+      _highlightIndex = null;
     });
     _ctrl.forward(from: 0);
   }
@@ -1428,10 +1447,11 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
                       curve: Curves.easeOut,
                     ),
                     child: ScaleTransition(
-                      scale: Tween<double>(begin: 0.86, end: 1.0).animate(
+                      // 与主浮层同款克制动效：0.95 轻微缩放，无回弹过冲。
+                      scale: Tween<double>(begin: 0.95, end: 1.0).animate(
                         CurvedAnimation(
                           parent: _ctrl,
-                          curve: Curves.easeOutBack,
+                          curve: Curves.easeOutCubic,
                         ),
                       ),
                       alignment: _openUp

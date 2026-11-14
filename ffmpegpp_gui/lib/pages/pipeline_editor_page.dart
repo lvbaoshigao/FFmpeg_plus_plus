@@ -4472,17 +4472,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                             ),
                           ),
                         ),
-                        // 底部文件信息栏（落底样式）：全宽 + border-top，
-                        // 与桌面 _buildBottomBar 一致，不再悬浮于缩放药丸上方。
+                        // 底部文件信息药丸：浮动圆角（与缩放药丸同语言），
+                        // 左右留白 8、离底 6，不再是通长落底条。
                         Positioned(
-                          bottom: mobileSafeBottom,
-                          left: 0,
-                          right: 0,
+                          bottom: mobileSafeBottom + 6,
+                          left: 8,
+                          right: 8,
                           child: _buildMobileFileInfo(scheme, s),
                         ),
-                        // 缩放药丸浮在信息栏上方
+                        // 缩放药丸浮在信息药丸上方
                         Positioned(
-                          bottom: mobileSafeBottom + 34 + 8,
+                          bottom: mobileSafeBottom + 6 + 34 + 8,
                           left: 8,
                           child: _buildMobileBottomLeftBar(scheme, s),
                         ),
@@ -10551,7 +10551,18 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                     ],
                   ),
                   clipBehavior: Clip.antiAlias,
-                  child: SafeArea(child: panelContent),
+                  // 挖孔摄像头适配（用户反馈「有摄像头的地方不显示内容，被截断」）：
+                  // 节点编辑器横屏是 immersiveSticky，系统栏隐藏后 MediaQuery.padding
+                  // 归零，SafeArea 形同虚设，面板内容直接铺到挖孔底下被摄像头挡住。
+                  // viewPadding 是物理显示内嵌（挖孔），沉浸下保持原值，用它避让。
+                  child: Padding(
+                    padding: EdgeInsets.only(
+                      left: MediaQuery.viewPaddingOf(ctx).left,
+                      top: MediaQuery.viewPaddingOf(ctx).top,
+                      bottom: MediaQuery.viewPaddingOf(ctx).bottom,
+                    ),
+                    child: panelContent,
+                  ),
                 ),
               ),
             ),
@@ -11268,15 +11279,24 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   Widget _buildMobileFileInfo(ColorScheme scheme, AppStrings s) {
     final v = widget.video;
     final nodesLabel = s.isZh ? '节点' : 'nodes';
-    // 落底信息栏：全宽 + border-top，与桌面 _buildBottomBar 一致。
+    // 浮动信息药丸（用户反馈「直接大下巴在下面特别丑」）：不再做通长
+    // 不透明落底条，改为与缩放药丸同语言的圆角浮动药丸 —— 半透明底 +
+    // 细描边 + 轻投影，左右留白由外层 Positioned 给，画布不再被一条
+    // 实心板压死在屏幕下沿。
     return Container(
       height: 34,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
       decoration: BoxDecoration(
-        color: scheme.surface,
-        border: Border(
-          top: BorderSide(color: scheme.outlineVariant.withAlpha(50)),
-        ),
+        color: scheme.surface.withAlpha(220),
+        borderRadius: BorderRadius.circular(_kMobileBarRadius),
+        border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
+        boxShadow: [
+          BoxShadow(
+            color: scheme.shadow.withAlpha(30),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: FutureBuilder<int?>(
         future: _inputFileSize(),
@@ -15658,6 +15678,9 @@ Available actions: __TOOLS__''';
     return GlassPanel(
       radius: 14,
       blur: 12,
+      // AI 面板玻璃固定中性灰（同展开壳）：跟随全局样式会走 harmonizedAccent
+      // 染主题色，用户反馈「AI 界面玻璃严重串色」。
+      style: SurfaceStyle.gray,
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
         onTap: () => setState(() => _expanded = true),
@@ -16390,7 +16413,8 @@ Available actions: __TOOLS__''';
                         AiWorkflowCard(
                           key: ValueKey('workflow-$i'),
                           active: active,
-                          style: context.read<AppState>().config.cardStyle,
+                          // AI 界面玻璃固定中性灰（防「串色」），不随全局 cardStyle。
+                          style: SurfaceStyle.gray,
                           summary: active
                               ? (s.isZh ? '正在处理' : 'Working')
                               : (s.isZh
@@ -16591,17 +16615,23 @@ Available actions: __TOOLS__''';
                 isMobilePlatform ? 12 : 12,
                 isMobilePlatform ? 8 : 12,
               ),
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  // 与卡片/药丸同一档圆角（14 → 16）：这一屏里 14 只出现在
-                  // 输入框上，和消息气泡（15）、玻璃药丸（24+）都不是一个体系。
-                  // 取色与消息气泡/工具栏统一为 scheme.surface，消除色差
-                  color: scheme.surface.withAlpha(220),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: scheme.outlineVariant.withAlpha(90),
-                  ),
-                ),
+              // 输入框过宽（用户反馈）：面板越宽输入框越像拉满的横条。
+              // 合成器内容封顶 520 并水平居中 —— 窄抽屉 (<520) 不受影响，
+              // 宽抽屉 / 独立窗口下输入条与消息列宽度协调。
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 520),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      // 与卡片/药丸同一档圆角（14 → 16）：这一屏里 14 只出现在
+                      // 输入框上，和消息气泡（15）、玻璃药丸（24+）都不是一个体系。
+                      // 取色与消息气泡/工具栏统一为 scheme.surface，消除色差
+                      color: scheme.surface.withAlpha(220),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: scheme.outlineVariant.withAlpha(90),
+                      ),
+                    ),
                 child: Padding(
                   padding: const EdgeInsets.all(6),
                   child: Row(
@@ -16721,6 +16751,8 @@ Available actions: __TOOLS__''';
                     ],
                   ),
                 ),
+              ),
+              ),
               ),
             ),
           ],
@@ -16942,7 +16974,8 @@ Available actions: __TOOLS__''';
             child: IgnorePointer(
               ignoring: !_historyOpen,
               child: AppCard(
-                style: context.read<AppState>().config.cardStyle,
+                // AI 面板玻璃固定中性灰（防「串色」），不随全局 cardStyle。
+                style: SurfaceStyle.gray,
                 radius: 16,
                 padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
                 child: Column(
@@ -17018,7 +17051,9 @@ Available actions: __TOOLS__''';
     ];
     return MobileGlassPill(
       key: const ValueKey('ai-mobile-sidebar-tabs'),
-      style: context.read<AppState>().config.pillStyle,
+      // AI 面板玻璃固定中性灰：不用 cfg.pillStyle（theme 样式会走
+      // harmonizedAccent 染主题色，用户反馈「AI 界面玻璃严重串色」）。
+      style: SurfaceStyle.gray,
       radius: MobileUi.pillRadius,
       padding: const EdgeInsets.all(3),
       child: SizedBox(
@@ -17245,16 +17280,18 @@ Available actions: __TOOLS__''';
           bottom: 0,
           left: _historyOpen ? 0 : -constraints.maxWidth,
           width: math.min(260, constraints.maxWidth * 0.62),
-          child: IgnorePointer(
-            ignoring: !_historyOpen,
-            child: AppCard(
-              style: context.read<AppState>().config.cardStyle,
-              radius: 14,
-              padding: const EdgeInsets.all(10),
-              child: Column(
-                children: [
-                  MobileGlassPill(
-                    child: Row(
+            child: IgnorePointer(
+              ignoring: !_historyOpen,
+              child: AppCard(
+                // AI 面板玻璃固定中性灰（防「串色」），不随全局 cardStyle。
+                style: SurfaceStyle.gray,
+                radius: 14,
+                padding: const EdgeInsets.all(10),
+                child: Column(
+                  children: [
+                    MobileGlassPill(
+                      style: SurfaceStyle.gray,
+                      child: Row(
                       children: [
                         Expanded(child: Text(s.isZh ? '历史会话' : 'History')),
                         IconButton(

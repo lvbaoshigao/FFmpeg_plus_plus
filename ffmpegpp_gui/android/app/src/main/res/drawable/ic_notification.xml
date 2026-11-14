@@ -1,0 +1,12 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 通知栏小图标：必须是纯白 + 透明底的单色图。
+         不能复用 ic_launcher（自适应图标）：多数 ROM（MIUI/澎湃尤其）会拒收
+         "Bad notification posted: Couldn't create icon"，通知被静默丢弃。 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,2A10,10 0 1,0 12,22A10,10 0 1,0 12,2zM10,16.5V7.5L15.5,12z" />
+</vector>

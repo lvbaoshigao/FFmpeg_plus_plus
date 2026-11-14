@@ -39,13 +39,13 @@ void main() {
     await tester.tap(find.text('MP4'));
     await tester.pumpAndSettle();
 
-    // 浮层打开：条目出现，且面板使用统一圆角 14（不是系统菜单的直角）
+    // 浮层打开：条目出现，且面板使用统一圆角 12（不是系统菜单的直角）
     expect(find.text('MKV'), findsOneWidget);
     expect(find.text('WebM'), findsOneWidget);
     final panel = tester.widgetList<Material>(find.byType(Material)).where(
-          (m) => m.borderRadius == BorderRadius.circular(14),
+          (m) => m.borderRadius == BorderRadius.circular(12),
         );
-    expect(panel, isNotEmpty, reason: '浮层面板应使用圆角 14 的统一外壳');
+    expect(panel, isNotEmpty, reason: '浮层面板应使用圆角 12 的统一外壳');
 
     await tester.tap(find.text('MKV'));
     await tester.pumpAndSettle();
@@ -168,7 +168,7 @@ void main() {
     final theme = ThemeData(useMaterial3: true);
     final cs = theme.colorScheme;
 
-    // 打开下拉并取出「浮层面板」那颗 Material（半径 14 是它的唯一标识）。
+    // 打开下拉并取出「浮层面板」那颗 Material（半径 12 是它的唯一标识）。
     Future<Material> openPanel(String appearance) async {
       // 面板浮层挂在 OptionMenuBar 的 State 上（OverlayPortal）：同构 pumpWidget
       // 换根会复用 State，上一轮的面板不会自动关闭，第二轮 tap(find.text('One'))
@@ -203,7 +203,7 @@ void main() {
       await tester.tap(find.text('One'));
       await tester.pumpAndSettle();
       return tester.widgetList<Material>(find.byType(Material)).firstWhere(
-        (material) => material.borderRadius == BorderRadius.circular(14),
+        (material) => material.borderRadius == BorderRadius.circular(12),
       );
     }
 

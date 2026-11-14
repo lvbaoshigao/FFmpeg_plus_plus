@@ -3,7 +3,9 @@ package com.ffmpegpp.ffmpegpp_gui
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -145,6 +147,7 @@ object ColorOsFluidCloud {
      * 不保证真显示出来 —— 调用方据此给白名单引导文案。
      */
     fun postTestNotification(context: Context): String {
+        if (!HyperOsIsland.notificationsEnabled(context)) return "no_permission"
         val shared = shareIntent(context, buildDoneIntent("FFmpeg++", "测试通知 · 流体云", true))
         if (shared) return "fluidcloud"
         val ok = postPlainNotification(context, "FFmpeg++", "测试通知 · 系统通知")
@@ -313,6 +316,27 @@ object ColorOsFluidCloud {
 
     // ────────────────────────────── 普通通知兜底 ──────────────────────────
 
+    /** 与 [HyperOsIsland.smallIcon] 同款：纯白单色图标，绝不用自适应启动图标。 */
+    private fun smallIcon(context: Context): Int {
+        val id = context.resources
+            .getIdentifier("ic_notification", "drawable", context.packageName)
+        return if (id != 0) id else android.R.drawable.ic_dialog_info
+    }
+
+    /** 与 [HyperOsIsland.contentIntent] 同款：点通知打开应用（autoCancel 依赖它）。 */
+    private fun contentIntent(context: Context): PendingIntent? = try {
+        val launch =
+            context.packageManager.getLaunchIntentForPackage(context.packageName)
+                ?: return null
+        launch.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        PendingIntent.getActivity(
+            context, 0, launch,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    } catch (e: Exception) {
+        null
+    }
+
     /** 普通系统通知兜底：与 HyperOsIsland.postTaskDone 的非岛路径同款实现。 */
     private fun postPlainNotification(
         context: Context,
@@ -331,8 +355,9 @@ object ColorOsFluidCloud {
             val notification = Notification.Builder(context, CHANNEL_ID)
                 .setContentTitle(title)
                 .setContentText(body)
-                .setSmallIcon(context.applicationInfo.icon)
+                .setSmallIcon(smallIcon(context))
                 .setAutoCancel(true)
+                .setContentIntent(contentIntent(context))
                 .build()
             // id 固定 0：同一时刻只保留最新一条「任务完成」，避免刷屏。
             nm.notify(CHANNEL_ID, 0, notification)

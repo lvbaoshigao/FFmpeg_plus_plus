@@ -3,7 +3,9 @@ package com.ffmpegpp.ffmpegpp_gui
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.provider.Settings
 import org.json.JSONArray
@@ -82,16 +84,58 @@ object HyperOsIsland {
         "hasFocusPermission" to hasFocusPermission(context),
     )
 
+    // ────────────────────────────── 通知基建 ──────────────────────────────
+
+    /** 系统级通知开关是否打开（Android 13+ 还需运行时权限）。 */
+    fun notificationsEnabled(context: Context): Boolean = try {
+        val nm =
+            context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.areNotificationsEnabled()
+    } catch (e: Exception) {
+        false
+    }
+
+    /**
+     * 通知小图标：纯白单色 `drawable/ic_notification`。
+     * 绝不能用 `applicationInfo.icon`（自适应启动图标）—— 多数 ROM（MIUI/澎湃
+     * 尤甚）会以 "Bad notification posted: Couldn't create icon" 拒收，通知被
+     * **静默丢弃**，是「通知完全不显示」的头号原因。
+     */
+    private fun smallIcon(context: Context): Int {
+        val id = context.resources
+            .getIdentifier("ic_notification", "drawable", context.packageName)
+        return if (id != 0) id else android.R.drawable.ic_dialog_info
+    }
+
+    /**
+     * 点击通知打开应用（`setAutoCancel` 也依赖它才能生效）。
+     * 没有 contentIntent 时点通知**什么都不发生**（旧实现就是这样）。
+     */
+    private fun contentIntent(context: Context): PendingIntent? = try {
+        val launch =
+            context.packageManager.getLaunchIntentForPackage(context.packageName)
+                ?: return null
+        launch.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        PendingIntent.getActivity(
+            context, 0, launch,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    } catch (e: Exception) {
+        null
+    }
+
     /**
      * 测试通知：按当前系统决定走哪条路，返回结果：
      *  * `island`       —— 澎湃 OS，已走小米超级岛
      *  * `notification` —— 其它 ROM，走普通系统通知
+     *  * `no_permission` —— 系统通知开关/运行时权限未开（通知必然不显示）
      *  * `unsupported`  —— 系统太旧，或通知被系统拒绝
      *
      * 返回值只说明「走了哪条路」，不保证真显示出来：应用若没进通知/自启动
      * 白名单，MIUI 会静默丢弃 —— 调用方据此给出引导文案。
      */
     fun postTestNotification(context: Context): String {
+        if (!notificationsEnabled(context)) return "no_permission"
         val island = isIslandSupported() &&
             focusProtocolVersion(context) >= 3 &&
             hasFocusPermission(context)
@@ -112,6 +156,10 @@ object HyperOsIsland {
 
     /**
      * 发送「任务完成」通知；支持岛的设备带上 `miui.focus.param` 自动上岛。
+     *
+     * 岛参数只在「三件套全过」时附加（含 [hasFocusPermission]）：无焦点权限时
+     * 附加 `miui.focus.param` 在 HyperOS 上可能整条被丢 —— 普通通知也跟着消失，
+     * 所以宁可不上岛也要保证通知可见。
      *
      * @return true 表示通知已交给系统（不代表一定显示在岛上——权限关闭时退化）。
      */
@@ -135,12 +183,14 @@ object HyperOsIsland {
             val builder = Notification.Builder(context, CHANNEL_ID)
                 .setContentTitle(title)
                 .setContentText(body)
-                .setSmallIcon(context.applicationInfo.icon)
+                .setSmallIcon(smallIcon(context))
                 .setAutoCancel(true)
+                .setContentIntent(contentIntent(context))
 
-            // 只有「真的有岛」才加扩展参数：不支持的设备加了也是白加，
-            // 但 JSON 组装成本极低，这里不做强分支，保留一份实现即可。
-            if (isIslandSupported() && focusProtocolVersion(context) >= 3) {
+            // 三件套全过才加岛扩展参数（见方法注释：无权限时附加会整条被丢）。
+            if (isIslandSupported() && focusProtocolVersion(context) >= 3 &&
+                hasFocusPermission(context)
+            ) {
                 builder.extras.putString(
                     "miui.focus.param",
                     buildIslandParam(title, body, success)
@@ -186,10 +236,13 @@ object HyperOsIsland {
             val builder = Notification.Builder(context, PROGRESS_CHANNEL_ID)
                 .setContentTitle(filename)
                 .setContentText("转码进度 $pct%")
-                .setSmallIcon(context.applicationInfo.icon)
+                .setSmallIcon(smallIcon(context))
                 .setOnlyAlertOnce(true)
+                .setContentIntent(contentIntent(context))
 
-            if (isIslandSupported() && focusProtocolVersion(context) >= 3) {
+            if (isIslandSupported() && focusProtocolVersion(context) >= 3 &&
+                hasFocusPermission(context)
+            ) {
                 builder.extras.putString(
                     "miui.focus.param",
                     buildIslandProgressParam(filename, pct)

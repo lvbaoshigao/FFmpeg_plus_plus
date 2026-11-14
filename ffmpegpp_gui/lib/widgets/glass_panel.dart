@@ -124,7 +124,9 @@ class GlassPanel extends StatelessWidget {
             second: useThemeColor ? themeColor2 : -1,
           );
     final baseAlt = (follow || solidTheme) ? accentAlt : scheme.surface;
-    final borderColor = (follow || solidTheme)
+    // gray 档描边恒为中性：follow（玻璃底色遵循主题色）只影响玻璃底/纯色，
+    // 不能把「中性灰」面板的边框也染成主题色 —— 那就是用户反馈的「串色」。
+    final borderColor = (follow || solidTheme) && effect != SurfaceStyle.gray
         ? accent.withAlpha(isDark ? 110 : 150)
         : scheme.outlineVariant;
     // 主题渐变色：设置了 themeColor2（>=0）时，主题色在 themeColor→themeColor2 之间渐变
