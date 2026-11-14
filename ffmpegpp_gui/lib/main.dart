@@ -118,8 +118,10 @@ void main(List<String> arguments) async {
     PaintingBinding.instance.imageCache.maximumSizeBytes = 24 << 20; // 24MB
     PaintingBinding.instance.imageCache.maximumSize = 150; // 最多 150 张
   } else {
-    PaintingBinding.instance.imageCache.maximumSizeBytes = 48 << 20; // 48MB
-    PaintingBinding.instance.imageCache.maximumSize = 300; // 最多 300 张
+    // 32MB 足够（缩略图 80×45、缓存宽度已限 ≤720px），实测常驻占用不到一半。
+    // 48MB 在玻璃纹理之外仍贡献可观 RSS，是 500MB+ 的一个可削减项。
+    PaintingBinding.instance.imageCache.maximumSizeBytes = 32 << 20; // 32MB
+    PaintingBinding.instance.imageCache.maximumSize = 200; // 最多 200 张
   }
   _startupLog('1a-ImageCache capped');
 

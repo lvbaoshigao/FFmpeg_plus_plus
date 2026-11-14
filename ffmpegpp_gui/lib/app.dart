@@ -199,12 +199,13 @@ class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
   }
 
   /// Android onTrimMemory(level≥40) → Flutter memoryPressure：
-  /// 系统内存吃紧时立刻释放图片缓存（壁纸/缩略图，移动端上限 24MB），
+  /// 系统内存吃紧时立刻释放图片缓存（壁纸/缩略图）与壁纸预模糊图，
   /// 把内存还给系统，降低被杀后台的概率。UI 侧图片会按需重新解码。
   @override
   void didHaveMemoryPressure() {
     PaintingBinding.instance.imageCache.clear();
     PaintingBinding.instance.imageCache.clearLiveImages();
+    WallpaperBlurCache.release();
   }
 
   Future<void> _requestMediaPermissions() async {

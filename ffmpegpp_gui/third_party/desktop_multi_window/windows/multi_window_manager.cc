@@ -140,13 +140,18 @@ std::vector<std::string> MultiWindowManager::GetAllWindowIds() {
 
 void MultiWindowManager::RemoveWindow(const std::string& window_id) {
   auto it = windows_.find(window_id);
-  if (it != windows_.end()) {
-    windows_.erase(it);
-    NotifyWindowsChanged();
+  if (it == windows_.end()) {
+    return;
   }
-  
-  // quit application if no windows left
-  if (windows_.empty()) {
+  windows_.erase(it);
+  NotifyWindowsChanged();
+
+  // Quit only when every window is truly gone — including managed child
+  // Flutter windows that may still be tearing down their engines.  Without
+  // the managed_flutter_windows_ guard, closing a single detached panel
+  // could see windows_ momentarily empty (main wrapper already released)
+  // and PostQuitMessage would kill the whole app mid-close.
+  if (windows_.empty() && managed_flutter_windows_.empty()) {
     PostQuitMessage(0);
   }
 }
@@ -166,6 +171,11 @@ void MultiWindowManager::CleanupRemovedWindows() {
     }
   }
   pending_remove_ids_.clear();
+
+  // After cleanup, if every window and managed engine is gone, quit.
+  if (windows_.empty() && managed_flutter_windows_.empty()) {
+    PostQuitMessage(0);
+  }
 }
 
 void MultiWindowManager::NotifyWindowsChanged() {
