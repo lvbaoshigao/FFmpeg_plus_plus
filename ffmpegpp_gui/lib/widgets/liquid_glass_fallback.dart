@@ -1,6 +1,10 @@
+import 'dart:io' show Platform;
+import 'dart:math' as math;
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart' as lgw;
 import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
 
@@ -17,10 +21,51 @@ import '../providers/app_state.dart';
 /// **Windows 默认 Skia 下 shader 玻璃整体跳过（_RenderLiquidGlassGroup.paint
 /// 直接退回 super.paint），玻璃完全不可见**。
 ///
-/// 所有液态玻璃分支必须先用 [gpuGlassEnabledOf] gate：
-/// - true（移动端，或桌面端用户在设置里显式开启 PC GPU 玻璃）：走 GPU shader；
-/// - false：用 [LiquidGlassBackdrop]（高斯模糊 + 液态玻璃倒角高光画笔）回退，
-///   保证玻璃可见、且背景就是真实壁纸而不是整块消失/倒置。
+/// [gpuGlassEnabledOf] 仅门控 oc_liquid_glass 的高级 backdrop 折射路径。
+/// 移动端且引擎支持时使用该路径；桌面端改由 [LiquidGlassBackdrop] 提供
+/// liquid_glass_widgets 标准 Paint.shader 表面（预热成功且圆角兼容时），
+/// 否则保留高斯模糊与倒角高光；标准路径不捕获背景、不提供任意底层内容折射。
+
+bool get _isDesktopGlassPlatform =>
+    !kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS);
+
+Future<bool>? _desktopGlassInitialization;
+bool _desktopGlassReady = false;
+Future<bool> Function()? _desktopGlassTestLoader;
+
+/// Preload only the standard shader, once per engine, before any window runs.
+/// No widget starts async initialization; failures retain the legacy backdrop.
+Future<bool> initializeDesktopGlass() =>
+    _desktopGlassInitialization ??= _initializeDesktopGlass();
+
+Future<bool> _initializeDesktopGlass() async {
+  if (!_isDesktopGlassPlatform) return false;
+  try {
+    final loader = _desktopGlassTestLoader;
+    if (loader != null) return _desktopGlassReady = await loader();
+    // preWarm swallows asset errors. Probe the exact asset first: Flutter's
+    // FragmentProgram registry caches it, so preWarm reuses the same program.
+    final program = await FragmentProgram.fromAsset(
+      'packages/liquid_glass_widgets/shaders/lightweight_glass.frag',
+    );
+    final probe = program.fragmentShader();
+    probe.dispose();
+    await lgw.LightweightLiquidGlass.preWarm();
+    // No public package ready getter exists. The probe verifies the load path;
+    // the package also retains its own tinted fallback if shader creation fails.
+    return _desktopGlassReady = true;
+  } catch (error) {
+    debugPrint('Desktop standard glass unavailable: $error');
+    return _desktopGlassReady = false;
+  }
+}
+
+@visibleForTesting
+void resetDesktopGlassForTesting({Future<bool> Function()? loader}) {
+  _desktopGlassInitialization = null;
+  _desktopGlassReady = false;
+  _desktopGlassTestLoader = loader;
+}
 
 /// 当前平台是否支持 shader 级液态玻璃 backdrop。
 bool get shaderGlassSupported => ImageFilter.isShaderFilterSupported;
@@ -52,7 +97,7 @@ const OCLiquidGlassSettings kLiquidGlassSettings = OCLiquidGlassSettings(
 /// 函数读取 —— 也刻意**不**再订阅它：订阅只会让拨动开关重建全部玻璃，而它已
 /// 不影响任何渲染分支（`shaderGlassSupported` 与 `isMobilePlatform` 都是常量）。
 ///
-/// 为什么桌面端无条件关闭（2026-09-18 实测复现）：
+/// 以下为原 oc backdrop 路径的历史问题记录（不是本次适配的实机测量）：
 /// * `ImageFilter.shader` 要求 shader 的第一个 vec2 uniform 由引擎写入「绑定纹理
 ///   尺寸」，第一个 sampler2D 为滤镜输入，而 `FlutterFragCoord()` 处于该纹理的
 ///   像素空间（Impeller：`Size size = input_snapshot->texture->GetSize();
@@ -109,8 +154,10 @@ OCLiquidGlassSettings liquidGlassSettingsFor(GlassTuning t) {
 ///
 /// σ16/18 的高斯模糊要在面板尺寸之外再多分配约 3σ 的离屏纹理；限制到 8 能
 /// 减少每个 BackdropFilter 的采样与纹理面积，同时仍保留桌面液态玻璃的层次感。
-double effectiveGlassSigma(double value) =>
-    isMobilePlatform ? value.clamp(0.0, 24.0) : value.clamp(0.0, 8.0);
+double effectiveGlassSigma(double value) {
+  if (!value.isFinite || value <= 0) return 0;
+  return value.clamp(0.0, isMobilePlatform ? 24.0 : 8.0);
+}
 
 /// `ImageFilter.blur` 的进程级实例缓存（所有玻璃表面统一走这里）。
 ///
@@ -261,7 +308,8 @@ class GlassTuning {
 
 /// 订阅玻璃细节参数。
 GlassTuning glassTuningOf(BuildContext context) =>
-    context.select<AppState, GlassTuning>((s) {
+    context.select<AppState?, GlassTuning>((s) {
+      if (s == null) return const GlassTuning();
       final c = s.config;
       return GlassTuning(
         blur: c.glassBlur,
@@ -515,15 +563,18 @@ class LiquidGlassPainter extends CustomPainter {
       old.edge != edge;
 }
 
-/// 无 Impeller 平台的液态玻璃回退容器：
-/// 阴影 → 圆角裁剪 → 高斯模糊 backdrop → [LiquidGlassPainter] 倒角高光 → child。
-/// 视觉上保留「通透 + 模糊 + 玻璃棱边光泽」的液态玻璃体感，仅没有 GPU 折射。
+/// 液态玻璃兼容表面：桌面预热成功时使用 lightweight 标准 shader，
+/// 自带普通背景模糊，不捕获背景纹理、不提供任意底层内容折射。
+/// 未初始化、失败、高对比或非统一圆角保留旧模糊与倒角高光路径；移动端不变。
 class LiquidGlassBackdrop extends StatelessWidget {
   final BorderRadius borderRadius;
 
-  /// 背景模糊 σ。调用方自行处理平台 clamp（桌面端限 8）。
+  /// 背景模糊 σ。在容器边界统一处理平台 clamp（桌面端限 8）。
   /// 传 null 时取自「设置 → 样式 → 玻璃细节」的模糊度。
   final double? sigma;
+
+  /// 显式调参供无 Provider 的公共表面使用；未传时安全订阅配置。
+  final GlassTuning? tuning;
   final double opacity;
   final BoxShadow? shadow;
   final Widget child;
@@ -532,6 +583,7 @@ class LiquidGlassBackdrop extends StatelessWidget {
     super.key,
     required this.borderRadius,
     this.sigma,
+    this.tuning,
     this.opacity = 1.0,
     this.shadow,
     required this.child,
@@ -540,8 +592,8 @@ class LiquidGlassBackdrop extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // 高光 / 位置 / 边缘光统一从配置读，调用方无需逐个透传。
-    final tuning = glassTuningOf(context);
-    final resolvedSigma = sigma ?? tuning.blur;
+    final tuning = this.tuning ?? glassTuningOf(context);
+    final resolvedSigma = effectiveGlassSigma(sigma ?? tuning.blur);
     // 图层算法注意（Skia/Windows 实测相关）：
     // 1. 这里绝不能再包 RepaintBoundary。BackdropFilter 的输入（背后场景）
     //    在 Skia 下会被光栅缓存——若外层有 RepaintBoundary，玻璃自身内容
@@ -550,22 +602,55 @@ class LiquidGlassBackdrop extends StatelessWidget {
     //    用法（CupertinoNavBar 等）外层都不加 RepaintBoundary。
     // 2. 光影画笔用 painter（内容之下）而非 foregroundPainter（内容之上）：
     //    大半径镜面光斑叠在文字上会形成「玻璃里有东西」的脏观感。
-    Widget glass = ClipRRect(
-      borderRadius: borderRadius,
-      child: BackdropFilter(
-        filter: cachedGlassBlur(resolvedSigma),
-        child: CustomPaint(
-          painter: LiquidGlassPainter(
+    final corner = borderRadius.topLeft;
+    final uniformCircular =
+        corner.x == corner.y &&
+        borderRadius.topRight == corner &&
+        borderRadius.bottomLeft == corner &&
+        borderRadius.bottomRight == corner;
+    final standard =
+        _isDesktopGlassPlatform &&
+        _desktopGlassReady &&
+        uniformCircular &&
+        !MediaQuery.highContrastOf(context);
+    Widget glass = standard
+        ? ClipRRect(
             borderRadius: borderRadius,
-            opacity: opacity,
-            highlight: tuning.highlight,
-            lightPos: tuning.lightPos,
-            edge: tuning.edge,
-          ),
-          child: child,
-        ),
-      ),
-    );
+            child: lgw.LightweightLiquidGlass(
+              shape: lgw.LiquidRoundedRectangle(borderRadius: corner.x),
+              // The child already supplies tint and clarity; do not double-fill.
+              // No backgroundKey: live blur, no toImage capture or fake refraction.
+              settings: lgw.LiquidGlassSettings(
+                glassColor: Colors.transparent,
+                blur: resolvedSigma,
+                lightAngle:
+                    math.pi / 2 + tuning.lightPos.clamp(0.0, 1.0) * math.pi,
+                lightIntensity:
+                    0.5 *
+                    tuning.highlight.clamp(0.0, 1.6) *
+                    opacity.clamp(0.0, 1.0),
+                rimLight: tuning.edge.clamp(0.0, 2.0) * opacity.clamp(0.0, 1.0),
+                saturation: 1,
+              ),
+              child: child,
+            ),
+          )
+        : ClipRRect(
+            borderRadius: borderRadius,
+            child: BackdropFilter(
+              filter: cachedGlassBlur(resolvedSigma),
+              child: CustomPaint(
+                painter: LiquidGlassPainter(
+                  borderRadius: borderRadius,
+                  opacity: opacity,
+                  highlight: tuning.highlight,
+                  lightPos: tuning.lightPos,
+                  edge: tuning.edge,
+                ),
+                child: child,
+              ),
+            ),
+          );
     final shadow = this.shadow;
     if (shadow != null) {
       glass = DecoratedBox(

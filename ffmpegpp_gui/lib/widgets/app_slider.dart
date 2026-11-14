@@ -1030,8 +1030,8 @@ class _CometFillPainter extends CustomPainter {
 
     final bool isLtr = textDirection == TextDirection.ltr;
     // 前缘：LTR 是右端，RTL 是左端。
-    final double headX = insetX + trackW * (isLtr ? hi : 1 - lo);
-    final double tailEdgeX = insetX + trackW * (isLtr ? lo : 1 - hi);
+    final double headX = insetX + trackW * (isLtr ? hi : 1 - hi);
+    final double tailEdgeX = insetX + trackW * (isLtr ? lo : 1 - lo);
 
     // 彗尾铺满整个填充段：渐变从填充起点（alpha=0）自然过渡到前缘高光，
     // 不再截短彗尾导致填充段边缘硬切断的「割裂」观感。
@@ -1070,7 +1070,6 @@ class _CometFillPainter extends CustomPainter {
       old.dragging != dragging ||
       old.speed != speed;
 }
-
 
 /// 统一进度条：与滑块同一套胶囊玻璃轨道 + 前缘彗星。
 ///
@@ -1296,7 +1295,10 @@ void _drawComet(
     final double x = tail.dx + (head.dx - tail.dx) * (1 - t * 0.9);
     final double wobble =
         (i.isEven ? 1 : -1) * size.height * (0.14 + 0.08 * ((i * 7) % 3));
-    final double alpha = ((1 - t) * (0.16 + speed * 0.5) + 0.08).clamp(0.0, 1.0);
+    final double alpha = ((1 - t) * (0.16 + speed * 0.5) + 0.08).clamp(
+      0.0,
+      1.0,
+    );
     final double r =
         size.height * (0.055 + 0.035 * ((i * 5) % 3)) * (1 + speed * 0.6);
     canvas.drawCircle(
@@ -1324,7 +1326,6 @@ void _drawComet(
       ),
   );
 }
-
 
 /// Static or animated indeterminate progress; static mode creates no ticker.
 ///
@@ -1373,8 +1374,9 @@ class _IndeterminateBarState extends State<_IndeterminateBar>
       );
       _controller!.repeat();
     } else {
-      _controller?.dispose();
-      _controller = null;
+      // A SingleTickerProvider can create only one ticker over its lifetime.
+      // Keep the controller for subsequent accessibility preference changes.
+      _controller?.stop();
     }
   }
 
@@ -1389,7 +1391,7 @@ class _IndeterminateBarState extends State<_IndeterminateBar>
     size: Size.infinite,
     painter: _IndeterminateBarPainter(
       valueColor: widget.color,
-      animation: _controller,
+      animation: widget.animate ? _controller : null,
       textDirection: widget.textDirection,
       staticPhase: 0.5,
       showComet: widget.showComet,
@@ -1429,10 +1431,26 @@ class _IndeterminateBarPainter extends CustomPainter {
     final double headX = isLtr
         ? -cometLength + (size.width + cometLength * 2) * phase
         : size.width + cometLength - (size.width + cometLength * 2) * phase;
-    if (!showComet) return;
     final double tailX = headX + (isLtr ? -cometLength : cometLength);
     canvas.save();
     canvas.clipRRect(track);
+    // Loading is functional feedback, not optional comet decoration.
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTRB(
+          math.min(tailX, headX),
+          0,
+          math.max(tailX, headX),
+          size.height,
+        ),
+        Radius.circular(size.height / 2),
+      ),
+      Paint()..color = valueColor,
+    );
+    if (!showComet) {
+      canvas.restore();
+      return;
+    }
     _drawComet(
       canvas,
       size: size,

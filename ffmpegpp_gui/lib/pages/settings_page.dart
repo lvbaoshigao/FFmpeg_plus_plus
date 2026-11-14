@@ -1147,6 +1147,7 @@ class _SettingsPageState extends State<SettingsPage> {
         state.config.predictiveBack,
         state.config.useDynamicColor,
         state.config.mobileNavPlacement,
+        state.config.mobileTheme,
         // 底部动作按钮所在侧（仅移动端）：受控 _optionRow 直读 config，
         // 漏在签名外会「选了左侧但页面不重建、下拉仍显示旧值」
         // （与 mobileNavPlacement / 字重改不了同一条根因）。
@@ -1637,7 +1638,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   /// 右侧面板：当前分区的全部设置卡片。
-  /// 切换分区时淡入 + 轻微位移动画。
+  /// 分区即时替换，不叠加旧分区的整页退场动画。
   Widget _buildSectionPane(
     _SectionDef sec,
     BuildContext ctx,
@@ -1646,76 +1647,62 @@ class _SettingsPageState extends State<SettingsPage> {
   ) {
     return LayoutBuilder(
       builder: (ctx, _) {
-        return AnimatedSwitcher(
-          duration: const Duration(milliseconds: 200),
-          switchInCurve: Curves.easeOutCubic,
-          switchOutCurve: Curves.easeIn,
-          transitionBuilder: (child, anim) => FadeTransition(
-            opacity: anim,
-            child: SlideTransition(
-              position: Tween(
-                begin: const Offset(0.02, 0),
-                end: Offset.zero,
-              ).animate(anim),
-              child: child,
-            ),
-          ),
-          child: SingleChildScrollView(
-            key: ValueKey('pane_${sec.id}'),
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // 分区标题行（左侧菜单已高亮当前分区，这里提供上下文）
-                Padding(
-                  padding: const EdgeInsets.only(left: 4, bottom: 10),
-                  child: Row(
-                    children: [
-                      Icon(sec.icon, size: 16, color: scheme.primary),
-                      const SizedBox(width: 7),
-                      Text(
-                        sec.title(
-                          AppStrings.of(ctx.read<AppState>().config.language),
-                        ),
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          color: scheme.onSurface,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Divider(
-                          color: scheme.outlineVariant.withAlpha(70),
-                          height: 1,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                MasonryGrid(
-                  // 桌面设置使用一致的单列列表，避免多列卡片高度错位和扫描负担。
-                  columns: 1,
-                  spacing: 8,
-                  runSpacing: 8,
+        // 不保留退场整页：避免双份玻璃绘制及快速返回时 GlobalKey 冲突。
+        return SingleChildScrollView(
+          key: ValueKey('pane_${sec.id}'),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 分区标题行（左侧菜单已高亮当前分区，这里提供上下文）
+              Padding(
+                padding: const EdgeInsets.only(left: 4, bottom: 10),
+                child: Row(
                   children: [
-                    for (final c in sec.cards)
-                      // GlobalKey：搜索结果「定位」时用 Scrollable.ensureVisible 滚到这里
-                      KeyedSubtree(
-                        key: _cardKey(c.id),
-                        child: _highlightWrap(
-                          c.id,
-                          // 不包 RepaintBoundary：它会光栅缓存玻璃卡的开窗 painter，
-                          // 滚动时直接复用旧图层平移 → 卡内壁纸跟着卡片走
-                          //（见 app_card 的 _WallpaperWindowPainter）。
-                          // 搜索定位依赖外层 KeyedSubtree 的 GlobalKey，与本层无关。
-                          c.build(ctx, state),
-                        ),
+                    Icon(sec.icon, size: 16, color: scheme.primary),
+                    const SizedBox(width: 7),
+                    Text(
+                      sec.title(
+                        AppStrings.of(ctx.read<AppState>().config.language),
                       ),
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: scheme.onSurface,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Divider(
+                        color: scheme.outlineVariant.withAlpha(70),
+                        height: 1,
+                      ),
+                    ),
                   ],
                 ),
-              ],
-            ),
+              ),
+              MasonryGrid(
+                // 桌面设置使用一致的单列列表，避免多列卡片高度错位和扫描负担。
+                columns: 1,
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final c in sec.cards)
+                    // GlobalKey：搜索结果「定位」时用 Scrollable.ensureVisible 滚到这里
+                    KeyedSubtree(
+                      key: _cardKey(c.id),
+                      child: _highlightWrap(
+                        c.id,
+                        // 不包 RepaintBoundary：它会光栅缓存玻璃卡的开窗 painter，
+                        // 滚动时直接复用旧图层平移 → 卡内壁纸跟着卡片走
+                        //（见 app_card 的 _WallpaperWindowPainter）。
+                        // 搜索定位依赖外层 KeyedSubtree 的 GlobalKey，与本层无关。
+                        c.build(ctx, state),
+                      ),
+                    ),
+                ],
+              ),
+            ],
           ),
         );
       },
@@ -2682,6 +2669,19 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
   return Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
+      if (isMobilePlatform) ...[
+        _glass(ctx, state, s.isZh ? '移动端主题' : 'Mobile theme', [
+          Text(s.isZh ? '仅移动 AI 对话与共享菜单；主题色、字体与材质独立。' : 'Mobile AI dialogue and shared menus only; colors, fonts and materials stay independent.', style: SettingsTypography.description.copyWith(color: scheme.onSurfaceVariant)),
+          const SizedBox(height: 8),
+          OptionMenuBar<String>(
+            value: cfg.mobileTheme,
+            triggerHeight: 44,
+            items: [OptionItem('follow', s.isZh ? '跟随现有主题' : 'Follow existing theme'), const OptionItem('miuix', 'ZeroUI / Miuix-inspired')],
+            onChanged: (value) => state.updateConfig((c) => c..mobileTheme = value),
+          ),
+        ]),
+        const SizedBox(height: 8),
+      ],
       _glass(ctx, state, s.isZh ? '模式' : 'Appearance mode', [
         // 亮 / 暗色切换
         SwitchListTile(
@@ -5360,12 +5360,12 @@ Widget _buildTasks(BuildContext ctx, AppState state) {
           Text(
             s.isZh
                 ? '按当前系统自动选路：澎湃 OS → 小米超级岛，ColorOS → 流体云，'
-                    '其它 → 普通通知。MIUI/澎湃 OS 需将本应用加入「通知」与'
-                    '「自启动」白名单（部分版本需 root），否则通知会被静默丢弃。'
+                      '其它 → 普通通知。MIUI/澎湃 OS 需将本应用加入「通知」与'
+                      '「自启动」白名单（部分版本需 root），否则通知会被静默丢弃。'
                 : 'Routes automatically: HyperOS → Super Island, ColorOS → Fluid '
-                    'Cloud, others → plain notification. On MIUI/HyperOS the app '
-                    'must be in the notification & autostart whitelists (root may '
-                    'be required), otherwise notifications are silently dropped.',
+                      'Cloud, others → plain notification. On MIUI/HyperOS the app '
+                      'must be in the notification & autostart whitelists (root may '
+                      'be required), otherwise notifications are silently dropped.',
             style: SettingsTypography.description.copyWith(
               color: scheme.onSurfaceVariant,
             ),
@@ -5385,9 +5385,9 @@ Future<void> _sendTestNotification(BuildContext ctx, AppStrings s) async {
   // 静默丢弃（不报错），用户只会看到「什么都没发生」。
   final hint = s.isZh
       ? '。若未出现在通知栏/岛上，请在系统设置中将本应用加入「通知」与'
-          '「自启动」白名单（部分 MIUI 版本需 root）'
+            '「自启动」白名单（部分 MIUI 版本需 root）'
       : '. If nothing appears, add this app to the notification & autostart '
-          'whitelists in system settings (root may be required on some MIUI versions)';
+            'whitelists in system settings (root may be required on some MIUI versions)';
   switch (path) {
     case 'island':
       showToast(
@@ -5424,7 +5424,7 @@ Future<void> _sendTestNotification(BuildContext ctx, AppStrings s) async {
         s.isZh
             ? '系统通知权限未开启：请到 系统设置→通知→FFmpeg++ 允许通知后重试'
             : 'Notifications are disabled for this app: enable them in '
-                'System Settings → Notifications → FFmpeg++, then retry',
+                  'System Settings → Notifications → FFmpeg++, then retry',
         type: ToastType.error,
       );
     default:
@@ -5505,11 +5505,7 @@ Future<Map<String, Object?>?>? _islandStatusFuture;
 ///  3. 应用持有焦点通知权限（关闭时只会退化成普通通知，展示开关是误导）。
 /// 权限/系统开关层面是否真的能显示，运行时才知道 —— 发送失败会静默退化，
 /// 不影响任务本身（见 services/island_progress.dart）。
-Widget _buildIslandProgressTile(
-  BuildContext ctx,
-  AppState state,
-  Color clr,
-) {
+Widget _buildIslandProgressTile(BuildContext ctx, AppState state, Color clr) {
   final cfg = state.config;
   final s = AppStrings.of(cfg.language);
   final scheme = Theme.of(ctx).colorScheme;

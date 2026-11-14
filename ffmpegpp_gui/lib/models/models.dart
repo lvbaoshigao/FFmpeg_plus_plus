@@ -2337,6 +2337,9 @@ class AppConfig {
   /// 'frosted' 主题色毛玻璃，'highlight' 高光玻璃。
   String dropdownAppearance;
 
+  /// Independent mobile AI/menu design; does not mutate global materials.
+  String mobileTheme;
+
   /// 软件渲染自动降级已执行过一次的标记（由 main.dart 的 _autoTuneGlass 写入）。
   ///
   /// 语义：自动降级对每个安装只**主动**执行一次。之后用户若在设置里手动把
@@ -2594,6 +2597,7 @@ class AppConfig {
     this.pillStyle = 'liquid',
     this.menuStyle = 'liquid',
     this.dropdownAppearance = 'theme',
+    this.mobileTheme = 'follow',
     this.glassAutoTuned = false,
     this.glassFollowTheme = false,
     this.sliderParticles = true,
@@ -2778,6 +2782,7 @@ class AppConfig {
     navAutoHide: json['nav_auto_hide'] as bool? ?? false,
     pillStyle: _migrateSurfaceStyle(json['pill_style'] as String?),
     menuStyle: _migrateSurfaceStyle(json['menu_style'] as String? ?? 'liquid'),
+    mobileTheme: json['mobile_theme'] == 'miuix' ? 'miuix' : 'follow',
     dropdownAppearance: () {
       final value = json['dropdown_appearance'];
       return const ['theme', 'liquid', 'frosted', 'highlight'].contains(value)
@@ -2944,6 +2949,7 @@ class AppConfig {
     'nav_auto_hide': navAutoHide,
     'menu_style': menuStyle,
     'dropdown_appearance': dropdownAppearance,
+    'mobile_theme': mobileTheme,
     'glass_auto_tuned': glassAutoTuned,
     'glass_follow_theme': glassFollowTheme,
     'settings_glass_mode': settingsGlassMode,

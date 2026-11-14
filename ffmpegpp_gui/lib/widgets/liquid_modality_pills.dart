@@ -3,6 +3,10 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart' show listEquals, setEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart' show CustomSemanticsAction;
+import 'package:provider/provider.dart';
+
+import '../providers/app_state.dart';
+import 'liquid_glass_fallback.dart';
 
 /// 模型模态（输入 / 输出）。
 abstract final class LiquidModalities {
@@ -317,22 +321,37 @@ class _ModalityPillSurface extends StatelessWidget {
     final Color contentColor = selected
         ? scheme.primary
         : scheme.onSurfaceVariant;
-    return DecoratedBox(
+    final liquid = context.select<AppState?, bool>(
+      (s) => s?.config.glassEffect == 'liquid',
+    );
+    final tuning = glassTuningOf(context);
+    final fill = selected
+        ? scheme.primary.withValues(alpha: isDark ? 0.24 : 0.12)
+        : scheme.surfaceContainerHighest.withValues(
+            alpha: isDark ? 0.55 : 0.80,
+          );
+    final border = hovering
+        ? scheme.primary
+        : selected
+        ? scheme.primary.withValues(alpha: 0.44)
+        : scheme.outlineVariant.withValues(alpha: 0.60);
+    final edge = edgeBorder(border.a, hovering ? 1.4 : 0.7, tuning.edge);
+    Widget surface = DecoratedBox(
       decoration: BoxDecoration(
-        color: selected
-            ? scheme.primary.withValues(alpha: isDark ? 0.24 : 0.12)
-            : scheme.surfaceContainerHighest.withValues(
-                alpha: isDark ? 0.55 : 0.80,
-              ),
+        color: liquid
+            ? fill.withAlpha(tunedGlassAlpha((fill.a * 255).round(), tuning))
+            : fill,
         borderRadius: BorderRadius.circular(radius),
-        border: Border.all(
-          color: hovering
-              ? scheme.primary
-              : selected
-              ? scheme.primary.withValues(alpha: 0.44)
-              : scheme.outlineVariant.withValues(alpha: 0.60),
-          width: hovering ? 1.4 : 0.7,
-        ),
+        border: liquid && tuning.edge <= 0
+            ? null
+            : Border.all(
+                color: liquid ? border.withValues(alpha: edge.alpha) : border,
+                width: liquid
+                    ? edge.width
+                    : hovering
+                    ? 1.4
+                    : 0.7,
+              ),
         boxShadow: selected
             ? [
                 BoxShadow(
@@ -366,5 +385,14 @@ class _ModalityPillSurface extends StatelessWidget {
         ),
       ),
     );
+    if (liquid) {
+      surface = LiquidGlassBackdrop(
+        borderRadius: BorderRadius.circular(radius),
+        sigma: tunedGlassSigma(16, tuning),
+        tuning: tuning,
+        child: surface,
+      );
+    }
+    return surface;
   }
 }

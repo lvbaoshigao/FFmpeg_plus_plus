@@ -2,6 +2,7 @@ import 'package:ffmpegpp_gui/models/models.dart';
 import 'package:ffmpegpp_gui/pages/pipeline_editor_page.dart';
 import 'package:ffmpegpp_gui/providers/app_state.dart';
 import 'package:ffmpegpp_gui/theme/app_strings.dart';
+import 'package:ffmpegpp_gui/theme/mobile_visual_theme.dart';
 import 'package:ffmpegpp_gui/widgets/ai_workflow_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_ai_sdk/flutter_ai_sdk.dart' as ai;
@@ -40,13 +41,27 @@ AiPanelView _testPanel({
   onCancelTasks: () {},
 );
 
-Future<void> _pumpPanel(WidgetTester tester, AiPanelView panel) async {
-  final state = AppState();
-  addTearDown(state.dispose);
+Future<void> _pumpPanel(
+  WidgetTester tester,
+  AiPanelView panel, {
+  AppState? appState,
+  ThemeData? theme,
+  bool disposeState = true,
+  TextScaler textScaler = TextScaler.noScaling,
+}) async {
+  final state = appState ?? AppState();
+  if (disposeState) addTearDown(state.dispose);
   await tester.pumpWidget(
     ChangeNotifierProvider<AppState>.value(
       value: state,
-      child: MaterialApp(home: Scaffold(body: panel)),
+      child: MaterialApp(
+        theme: theme,
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+          child: child!,
+        ),
+        home: Scaffold(body: panel),
+      ),
     ),
   );
   await tester.pump();
@@ -900,47 +915,223 @@ void main() {
       await _teardownPanel(tester);
     });
 
-    testWidgets('mobile sheet renders a single-row header + full-height sidebar', (
+    testWidgets('composer stays transparent under a filled input theme', (
       tester,
     ) async {
-      tester.view.physicalSize = const Size(320, 480);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
       await _pumpPanel(
         tester,
-        _testPanel(mobileSheet: true, onCloseRequested: () {}),
+        _testPanel(mobileSheet: true),
+        theme: ThemeData(
+          inputDecorationTheme: const InputDecorationTheme(
+            filled: true,
+            fillColor: Colors.red,
+            floatingLabelBehavior: FloatingLabelBehavior.never,
+          ),
+        ),
       );
+      final field = find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField &&
+            widget.decoration?.hintText == AppStrings.en.aiChatHint,
+      );
+      expect(field, findsOneWidget);
+      final decoration = find.descendant(
+        of: field,
+        matching: find.byType(InputDecorator),
+      );
+      final input = tester.widget<InputDecorator>(decoration);
+      expect(input.decoration.filled, isFalse);
+      expect(input.decoration.label, isNull);
+      expect(input.decoration.labelText, isNull);
+      expect(
+        find.descendant(
+          of: field,
+          matching: find.text(AppStrings.en.aiChatHint),
+        ),
+        findsOneWidget,
+      );
+      await tester.enterText(field, 'Draft message');
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-
-      // 会话操作与模型选择器同处一行（窄屏靠 Expanded 收窄 chip，不再折行）。
       expect(
-        find.byKey(const ValueKey('ai-mobile-sheet-header')),
-        findsOneWidget,
+        tester
+            .widget<EditableText>(
+              find.descendant(of: field, matching: find.byType(EditableText)),
+            )
+            .controller
+            .text,
+        'Draft message',
       );
       expect(
-        find.byKey(const ValueKey('ai-mobile-model-chip')),
-        findsOneWidget,
-      );
-      expect(find.byKey(const ValueKey('ai-mobile-new-chat')), findsOneWidget);
-      final header = tester.getRect(
-        find.byKey(const ValueKey('ai-mobile-sheet-header')),
-      );
-      final modelChip = tester.getRect(
-        find.byKey(const ValueKey('ai-mobile-model-chip')),
-      );
-      expect(modelChip.left, greaterThanOrEqualTo(header.left));
-      expect(modelChip.right, lessThanOrEqualTo(header.right));
-
-      // 侧栏挂在面板根 Stack（全高覆盖层），而不是缩在消息区里的半高抽屉；
-      // 分段标签改成竖排 + FittedBox(scaleDown)，窄屏/大字号不出现省略号。
-      expect(find.byKey(const ValueKey('ai-mobile-sidebar')), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('ai-mobile-sidebar-tabs')),
-        findsOneWidget,
+        tester.widget<InputDecorator>(decoration).decoration.filled,
+        isFalse,
       );
       expect(tester.takeException(), isNull);
       await _teardownPanel(tester);
     });
+
+    testWidgets(
+      'mobile model chip has a 44px live target with narrow keyboard layout',
+      (tester) async {
+        tester.view.physicalSize = const Size(320, 640);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final state = AppState();
+        const model = 'very-long-model-name-for-mobile-layout';
+        final profile = AiProfile(
+          name: 'Mobile provider',
+          provider: 'openai',
+          model: model,
+        );
+        profile.models.add(AiModelEntry(id: model));
+        profile.enabled = true;
+        state.updateConfig((config) {
+          config.aiProfiles.add(profile);
+          config.activeAiProfileId = profile.id;
+          return config;
+        });
+        await _pumpPanel(
+          tester,
+          _testPanel(mobileSheet: true),
+          appState: state,
+          textScaler: const TextScaler.linear(2),
+        );
+        await tester.pumpAndSettle();
+        final chip = find.byKey(const ValueKey('ai-mobile-model-chip'));
+        final trigger = find.descendant(
+          of: chip,
+          matching: find.byType(InkWell),
+        );
+        final target = tester.getRect(trigger);
+        expect(target.height, greaterThanOrEqualTo(44));
+        expect(target.width, greaterThanOrEqualTo(44));
+        final header = tester.getRect(
+          find.byKey(const ValueKey('ai-mobile-sheet-header')),
+        );
+        expect(target.left, greaterThanOrEqualTo(header.left));
+        expect(target.right, lessThanOrEqualTo(header.right));
+        expect(target.top, greaterThanOrEqualTo(header.top));
+        expect(target.bottom, lessThanOrEqualTo(header.bottom));
+        expect(header.height, lessThanOrEqualTo(60));
+        final modelLabelsBeforeOpen = find.text(model).evaluate().length;
+        // Tap near the enlarged edge, not merely the label's center.
+        await tester.tapAt(Offset(target.center.dx, target.top + 2));
+        await tester.pumpAndSettle();
+        expect(find.text('openai'), findsWidgets);
+        expect(
+          find.text(model).evaluate().length,
+          greaterThan(modelLabelsBeforeOpen),
+        );
+        await tester.tapAt(const Offset(310, 350));
+        await tester.pumpAndSettle();
+        final field = find.byWidgetPredicate(
+          (widget) =>
+              widget is TextField &&
+              widget.decoration?.hintText == AppStrings.en.aiChatHint,
+        );
+        await tester.tap(field);
+        tester.view.viewInsets = const FakeViewPadding(bottom: 280);
+        await tester.pumpAndSettle();
+        await tester.enterText(field, 'Draft');
+        await tester.pumpAndSettle();
+        final fieldRect = tester.getRect(field);
+        expect(fieldRect.bottom, lessThanOrEqualTo(640 - 280));
+        expect(tester.getRect(trigger).height, greaterThanOrEqualTo(44));
+        expect(tester.takeException(), isNull);
+        await _teardownPanel(tester);
+      },
+    );
+
+    testWidgets('mobile design switches locally without losing dialogue', (
+      tester,
+    ) async {
+      final state = AppState();
+      AiPanelApi? api;
+      final panel = _testPanel(
+        mobileSheet: true,
+        initialMessages: const [
+          {'role': 'user', 'content': 'Keep this conversation'},
+        ],
+        onApiReady: (value) => api = value,
+      );
+      final base = ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.red),
+      );
+      await _pumpPanel(
+        tester,
+        panel,
+        appState: state,
+        theme: base.copyWith(
+          extensions: const [MobileVisualTheme(enabled: true)],
+        ),
+      );
+      await tester.pumpAndSettle();
+      final before = api!.exportMessages();
+      final field = find.byType(TextField).first;
+      final scheme = Theme.of(tester.element(field)).colorScheme;
+      expect(scheme.surface.r, scheme.surface.g);
+      expect(scheme.primary, base.colorScheme.primary);
+      await _pumpPanel(
+        tester,
+        panel,
+        appState: state,
+        theme: base,
+        disposeState: false,
+      );
+      await tester.pumpAndSettle();
+      expect(api!.exportMessages(), before);
+      expect(
+        Theme.of(tester.element(field)).colorScheme.surface,
+        base.colorScheme.surface,
+      );
+      api!.importMessages([]);
+      await _teardownPanel(tester);
+    });
+
+    testWidgets(
+      'mobile sheet renders a single-row header + full-height sidebar',
+      (tester) async {
+        tester.view.physicalSize = const Size(320, 480);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        await _pumpPanel(
+          tester,
+          _testPanel(mobileSheet: true, onCloseRequested: () {}),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+
+        // 会话操作与模型选择器同处一行（窄屏靠 Expanded 收窄 chip，不再折行）。
+        expect(
+          find.byKey(const ValueKey('ai-mobile-sheet-header')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('ai-mobile-model-chip')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('ai-mobile-new-chat')),
+          findsOneWidget,
+        );
+        final header = tester.getRect(
+          find.byKey(const ValueKey('ai-mobile-sheet-header')),
+        );
+        final modelChip = tester.getRect(
+          find.byKey(const ValueKey('ai-mobile-model-chip')),
+        );
+        expect(modelChip.left, greaterThanOrEqualTo(header.left));
+        expect(modelChip.right, lessThanOrEqualTo(header.right));
+
+        // 侧栏挂在面板根 Stack（全高覆盖层），而不是缩在消息区里的半高抽屉；
+        // 分段标签改成竖排 + FittedBox(scaleDown)，窄屏/大字号不出现省略号。
+        expect(find.byKey(const ValueKey('ai-mobile-sidebar')), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('ai-mobile-sidebar-tabs')),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+        await _teardownPanel(tester);
+      },
+    );
   });
 }

@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import '../providers/app_state.dart';
 import '../theme/app_text_scale.dart';
+import '../theme/mobile_visual_theme.dart';
 import 'liquid_glass_fallback.dart';
 
 /// 统一的「菜单栏选项」控件 —— 融合两处参考样式：
@@ -101,18 +102,19 @@ String _normalizeForSearch(String value) =>
 /// | `liquid` | 最通透：底色最淡、模糊最强，靠对角镜面渐变 + 白色内亮边表达玻璃棱边 |
 /// | `frosted` | 主题色毛玻璃：中等通透 + 重主题色染色、哑光、主题色描边，无高光 |
 /// | `highlight` | 顶部一道高光带 + 最亮的主题色描边 + 主题色微光投影 |
-Widget _menuPanelShell({
+Widget optionMenuPanel({
   required ColorScheme scheme,
   required Widget child,
   required String appearance,
   double radius = 12,
+  GlassTuning tuning = const GlassTuning(),
 }) {
   final dark = scheme.brightness == Brightness.dark;
 
   // σ：桌面端由 effectiveGlassSigma 钳到 ≤8（离屏纹理内存），移动端可按档位
   // 拉开真实差距。theme 档完全不模糊。
   final double sigma = switch (appearance) {
-    'liquid' => effectiveGlassSigma(18),
+    'liquid' => tunedGlassSigma(18, tuning),
     'frosted' => effectiveGlassSigma(12),
     'highlight' => effectiveGlassSigma(6),
     _ => 0.0,
@@ -122,7 +124,9 @@ Widget _menuPanelShell({
   // 并与各自的染色叠加后落在 ≈51% / 65% / 85% / 100%：液态玻璃最透但仍保证
   // 12.5px 菜单文字可读（菜单不是装饰，通透到读不清就失去意义了）。
   final Color fill = switch (appearance) {
-    'liquid' => scheme.surface.withAlpha(dark ? 118 : 134),
+    'liquid' => scheme.surface.withAlpha(
+      tunedGlassAlpha(dark ? 118 : 134, tuning),
+    ),
     'frosted' => scheme.surface.withAlpha(dark ? 196 : 212),
     'highlight' => scheme.surface.withAlpha(dark ? 150 : 166),
     _ => scheme.surface,
@@ -131,7 +135,9 @@ Widget _menuPanelShell({
   // 主题色染色：frosted 最重（「主题色」毛玻璃），liquid 只留一丝冷调，
   // theme 不染色 —— 这就是「跟随主题」与另外三档的根本差别。
   final Color tint = switch (appearance) {
-    'liquid' => scheme.primary.withAlpha(dark ? 22 : 14),
+    'liquid' => scheme.primary.withAlpha(
+      tunedGlassAlpha(dark ? 22 : 14, tuning),
+    ),
     'frosted' => scheme.primary.withAlpha(dark ? 92 : 66),
     'highlight' => scheme.primary.withAlpha(dark ? 40 : 26),
     _ => Colors.transparent,
@@ -151,16 +157,6 @@ Widget _menuPanelShell({
   // frosted 必须是哑光的 —— 毛玻璃上再来一道反光，就和「液态玻璃」分不开了。
   // 高光整体压低（用户反馈「跟塑料片一样」）：亮部只留一丝，不再糊住内容。
   final Gradient? sheen = switch (appearance) {
-    'liquid' => LinearGradient(
-      begin: Alignment.topLeft,
-      end: Alignment.bottomRight,
-      colors: [
-        Colors.white.withAlpha(dark ? 22 : 52),
-        Colors.white.withAlpha(0),
-        Colors.white.withAlpha(dark ? 6 : 14),
-      ],
-      stops: const [0.0, 0.42, 1.0],
-    ),
     'highlight' => LinearGradient(
       begin: Alignment.topCenter,
       end: Alignment.bottomCenter,
@@ -232,12 +228,36 @@ Widget _menuPanelShell({
       decoration: BoxDecoration(
         borderRadius: r,
         gradient: sheen,
-        border: Border.all(color: borderColor, width: borderWidth),
+        border: appearance == 'liquid'
+            ? (tuning.edge <= 0
+                  ? null
+                  : Border.all(
+                      color: borderColor.withValues(
+                        alpha: edgeBorder(
+                          borderColor.a,
+                          borderWidth,
+                          tuning.edge,
+                        ).alpha,
+                      ),
+                      width: edgeBorder(
+                        borderColor.a,
+                        borderWidth,
+                        tuning.edge,
+                      ).width,
+                    ))
+            : Border.all(color: borderColor, width: borderWidth),
       ),
       child: child,
     ),
   );
-  if (sigma > 0) {
+  if (appearance == 'liquid') {
+    panel = LiquidGlassBackdrop(
+      borderRadius: r,
+      sigma: sigma,
+      tuning: tuning,
+      child: panel,
+    );
+  } else if (sigma > 0) {
     panel = BackdropFilter(filter: cachedGlassBlur(sigma), child: panel);
   }
   // 先裁剪再模糊：BackdropFilter 必须在裁剪内，否则会把面板外也糊掉。
@@ -431,8 +451,6 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
   /// 触发按钮宽度：浮层与按钮等宽（由 LayoutBuilder 写入）。
   double _triggerWidth = 200;
 
-  /// 下方空间不足时改为向上弹出。
-  bool _openUp = false;
   String _dropdownAppearance = 'theme';
 
   /// 键盘高亮项下标（null = 还没开始键盘导航，例如纯鼠标打开）。
@@ -501,7 +519,6 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
 
   /// 展开浮层（箭头旋转动画由 _expanded 驱动，浮层本身由 _ovCtrl 驱动）。
   void _open() {
-    _openUp = _shouldOpenUp();
     _portal.show();
     _query = '';
     _searchCtrl.clear();
@@ -662,17 +679,6 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _ensureHighlightVisible();
     });
-  }
-
-  /// 触发按钮下方剩余空间不足（< 320px）且上方更宽裕 → 向上弹出。
-  bool _shouldOpenUp() {
-    final ro = context.findRenderObject();
-    if (ro is! RenderBox || !ro.hasSize) return false;
-    final top = ro.localToGlobal(Offset.zero).dy;
-    final bottom = top + ro.size.height;
-    final screenH = MediaQuery.of(context).size.height;
-    final below = screenH - bottom;
-    return below < 320 && top > below;
   }
 
   bool _selected(OptionItem<T> it) => it.value == widget.value;
@@ -891,37 +897,74 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
   /// 浮层选项列表：挂在 Overlay 上，因此**不会**撑高宿主卡片。
   /// 高度上限 320 可滚动；点面板外（全屏透明遮罩）/ Esc / 选中某项都会关闭。
   Widget _buildOverlay(BuildContext overlayContext) {
-    final scheme = Theme.of(overlayContext).colorScheme;
+    final visual = MobileVisualTheme.of(overlayContext);
+    final scheme = visual.applyTo(Theme.of(overlayContext)).colorScheme;
+    final media = MediaQuery.of(overlayContext);
+    final ro = context.findRenderObject();
+    final hasBox = ro is RenderBox && ro.hasSize;
+    final triggerTop = hasBox ? ro.localToGlobal(Offset.zero).dy : 0.0;
+    final triggerBottom = triggerTop + (hasBox ? ro.size.height : 0.0);
+    final safeTop = media.padding.top + 8;
+    final safeBottom = math.max(
+      safeTop,
+      media.size.height -
+          math.max(media.padding.bottom, media.viewInsets.bottom) -
+          8,
+    );
+    final aboveEnd = (triggerTop - 4).clamp(safeTop, safeBottom);
+    final belowStart = (triggerBottom + 4).clamp(safeTop, safeBottom);
+    final above = aboveEnd - safeTop;
+    final below = safeBottom - belowStart;
+    final openUp = below < 320 && above > below;
+    final maxHeight = math.min(320.0, openUp ? above : below);
+    final panelDy = openUp ? aboveEnd - triggerTop : belowStart - triggerBottom;
     final items = _visibleItems;
-    final panel = _menuPanelShell(
+    final rows = items.isEmpty
+        ? <Widget>[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
+              child: Text(
+                widget.emptyLabel ?? '无匹配项',
+                style: TextStyle(fontSize: 12, color: scheme.outline),
+              ),
+            ),
+          ]
+        : _buildGroupedRows(overlayContext, items);
+    // 空间不足时整个面板可滚动，搜索 header 不再挤出 Column；正常空间仍固定搜索框。
+    final compact = widget.searchable && maxHeight < 96;
+    final panel = optionMenuPanel(
       scheme: scheme,
       appearance: _dropdownAppearance,
+      tuning: glassTuningOf(overlayContext),
+      radius: visual.menuRadius,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 320),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (widget.searchable) _buildSearchField(overlayContext, scheme),
-            if (items.isEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
-                child: Text(
-                  widget.emptyLabel ?? '无匹配项',
-                  style: TextStyle(fontSize: 12, color: scheme.outline),
+        constraints: BoxConstraints(maxHeight: maxHeight),
+        child: compact
+            ? SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildSearchField(overlayContext, scheme),
+                    ...rows,
+                  ],
                 ),
               )
-            else
-              Flexible(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: _buildGroupedRows(overlayContext, items),
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (widget.searchable)
+                    _buildSearchField(overlayContext, scheme),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: rows,
+                      ),
+                    ),
                   ),
-                ),
+                ],
               ),
-          ],
-        ),
       ),
     );
     return Positioned.fill(
@@ -945,16 +988,14 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
             CompositedTransformFollower(
               link: _link,
               showWhenUnlinked: false,
-              targetAnchor: _openUp ? Alignment.topLeft : Alignment.bottomLeft,
-              followerAnchor: _openUp
-                  ? Alignment.bottomLeft
-                  : Alignment.topLeft,
+              targetAnchor: openUp ? Alignment.topLeft : Alignment.bottomLeft,
+              followerAnchor: openUp ? Alignment.bottomLeft : Alignment.topLeft,
               offset: Offset(
                 _panelDx(overlayContext, _panelWidth(overlayContext)),
-                _openUp ? -4 : 4,
+                panelDy,
               ),
               child: Align(
-                alignment: _openUp ? Alignment.bottomLeft : Alignment.topLeft,
+                alignment: openUp ? Alignment.bottomLeft : Alignment.topLeft,
                 child: SizedBox(
                   width: _panelWidth(overlayContext),
                   child: Focus(
@@ -979,7 +1020,7 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
                           ),
                         ),
                         // 锚点与弹出方向一致：向下弹从左上角放大，向上弹从左下角放大
-                        alignment: _openUp
+                        alignment: openUp
                             ? Alignment.bottomLeft
                             : Alignment.topLeft,
                         child: panel,
@@ -1202,9 +1243,6 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
   final LayerLink _link = LayerLink();
   bool _expanded = false;
 
-  /// 按钮靠近屏幕底部时改为向上弹出（见 _shouldOpenUp）。
-  bool _openUp = false;
-
   /// 键盘高亮行下标（null = 还没开始键盘导航）。
   ///
   /// 被替换掉的 PopupMenuButton 支持 Esc / ↑↓ / Enter；这里补齐同样的能力，
@@ -1232,7 +1270,6 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
 
   void _open() {
     if (widget.items.isEmpty) return;
-    _openUp = _shouldOpenUp();
     _portal.show();
     setState(() {
       _expanded = true;
@@ -1277,21 +1314,6 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
-  }
-
-  /// 触发按钮下方剩余空间不足、上方更宽裕 → 向上弹出。
-  ///
-  /// 模型行末尾的 ⋮ 在可滚动列表里，滚到底部时按钮就贴着屏幕下沿：
-  /// 浮层恒向下弹会被 Overlay 的 Stack 裁掉，「删除模型」等末项点不到
-  /// （被替换掉的 PopupMenuButton 会自动上移）。
-  bool _shouldOpenUp() {
-    final ro = context.findRenderObject();
-    if (ro is! RenderBox || !ro.hasSize) return false;
-    final top = ro.localToGlobal(Offset.zero).dy;
-    final bottom = top + ro.size.height;
-    final screenH = MediaQuery.of(context).size.height;
-    final below = screenH - bottom;
-    return below < 240 && top > below;
   }
 
   void _close() {
@@ -1349,9 +1371,6 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
     );
   }
 
-  /// 浮层水平平移量：浮层右缘对齐触发钮右缘、向左铺 width。
-  ///
-  /// 按钮贴着屏幕左边时（行内 ⋮ 靠左的布局），左缘会跑出屏幕。
   double _panelDx(BuildContext overlayContext, double panelW) {
     final ro = context.findRenderObject();
     if (ro is! RenderBox || !ro.hasSize) return 0;
@@ -1364,30 +1383,37 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
   }
 
   Widget _buildOverlay(BuildContext overlayContext) {
-    final scheme = Theme.of(overlayContext).colorScheme;
-    final media = MediaQuery.sizeOf(overlayContext);
+    final visual = MobileVisualTheme.of(overlayContext);
+    final scheme = visual.applyTo(Theme.of(overlayContext)).colorScheme;
+    final media = MediaQuery.of(overlayContext);
     final width = math.min(
       widget.menuWidth ?? 220.0,
-      math.max(140.0, media.width - 24),
+      math.max(140.0, media.size.width - 24),
     );
-    // 浮层高度上限：屏幕够高时给 320（条目多时可滚），靠近屏幕上下沿时
-    // 按实际可用空间收紧 —— 否则条目会被 Overlay 的 Stack 直接裁掉。
     final ro = context.findRenderObject();
     final hasBox = ro is RenderBox && ro.hasSize;
     final triggerTop = hasBox ? ro.localToGlobal(Offset.zero).dy : 0.0;
     final triggerBottom = triggerTop + (hasBox ? ro.size.height : 0.0);
-    final available = _openUp
-        ? triggerTop - 16
-        : media.height - triggerBottom - 16;
-    final maxHeight = math.max(96.0, math.min(320.0, available));
-    final panel = _menuPanelShell(
+    final safeTop = media.padding.top + 8;
+    final safeBottom = math.max(
+      safeTop,
+      media.size.height -
+          math.max(media.padding.bottom, media.viewInsets.bottom) -
+          8,
+    );
+    final aboveEnd = (triggerTop - 4).clamp(safeTop, safeBottom);
+    final belowStart = (triggerBottom + 4).clamp(safeTop, safeBottom);
+    final above = aboveEnd - safeTop;
+    final below = safeBottom - belowStart;
+    final openUp = below < 320 && above > below;
+    final maxHeight = math.min(320.0, openUp ? above : below);
+    final panelDy = openUp ? aboveEnd - triggerTop : belowStart - triggerBottom;
+    final panel = optionMenuPanel(
       scheme: scheme,
-      // 与 OptionMenuBar 共用「下拉菜单外观」配置：原先写死 'theme'，于是
-      // 图标动作菜单永远是主题表面，用户在小窗里改过的外观在这里失效。
+      tuning: glassTuningOf(overlayContext),
+      radius: visual.menuRadius,
       appearance:
-          Provider.of<AppState?>(overlayContext, listen: false)
-              ?.config
-              .dropdownAppearance ??
+          overlayContext.watch<AppState?>()?.config.dropdownAppearance ??
           'theme',
       child: ConstrainedBox(
         constraints: BoxConstraints(maxHeight: maxHeight),
@@ -1428,17 +1454,13 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
             CompositedTransformFollower(
               link: _link,
               showWhenUnlinked: false,
-              // 触发按钮在右端：浮层右上角对齐按钮右下角；按钮贴底时改为
-              // 向上弹（浮层右下角对齐按钮右上角）。
-              targetAnchor: _openUp
-                  ? Alignment.topRight
-                  : Alignment.bottomRight,
-              followerAnchor: _openUp
+              targetAnchor: openUp ? Alignment.topRight : Alignment.bottomRight,
+              followerAnchor: openUp
                   ? Alignment.bottomRight
                   : Alignment.topRight,
-              offset: Offset(_panelDx(overlayContext, width), _openUp ? -4 : 4),
+              offset: Offset(_panelDx(overlayContext, width), panelDy),
               child: Align(
-                alignment: _openUp ? Alignment.bottomRight : Alignment.topRight,
+                alignment: openUp ? Alignment.bottomRight : Alignment.topRight,
                 child: SizedBox(
                   width: width,
                   child: FadeTransition(
@@ -1447,18 +1469,15 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
                       curve: Curves.easeOut,
                     ),
                     child: ScaleTransition(
-                      // 与主浮层同款克制动效：0.95 轻微缩放，无回弹过冲。
                       scale: Tween<double>(begin: 0.95, end: 1.0).animate(
                         CurvedAnimation(
                           parent: _ctrl,
                           curve: Curves.easeOutCubic,
                         ),
                       ),
-                      alignment: _openUp
+                      alignment: openUp
                           ? Alignment.bottomRight
                           : Alignment.topRight,
-                      // 键盘焦点落在浮层上：Esc / ↑↓ / Enter 都能用
-                      // （被替换掉的 PopupMenuButton 本来就有这些能力）。
                       child: Focus(
                         autofocus: true,
                         onKeyEvent: _onPanelKey,

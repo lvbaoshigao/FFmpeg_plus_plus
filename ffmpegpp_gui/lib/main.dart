@@ -59,6 +59,8 @@ void _startupLog(String msg) {
 
 void main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Each detached engine must preload too, before its early-return branch.
+  await initializeDesktopGlass();
 
   // ── 本进程是不是「独立面板窗口」？──
   // 必须在**任何主窗口逻辑之前**判定，三个理由：

@@ -20,6 +20,131 @@ List<OptionItem<String>> _items() => const [
 ];
 
 void main() {
+  testWidgets('动作菜单安全区与键盘变化不越界且极小高度可滚动', (tester) async {
+    tester.view.physicalSize = const Size(400, 360);
+    tester.view.devicePixelRatio = 1;
+    tester.view.padding = const FakeViewPadding(top: 20, bottom: 24);
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          resizeToAvoidBottomInset: false,
+          body: Center(
+            child: ScaleMenuButton<String>(
+              icon: Icons.more_vert,
+              items: List.generate(
+                30,
+                (i) => OptionItem('item$i', 'Action $i'),
+              ),
+              onSelected: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pumpAndSettle();
+    Rect panelRect() => tester.getRect(find.byType(ClipRRect).last);
+    expect(tester.takeException(), isNull);
+    expect(panelRect().top, greaterThanOrEqualTo(20));
+    expect(panelRect().bottom, lessThanOrEqualTo(336));
+    tester.view.viewInsets = const FakeViewPadding(bottom: 210);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(panelRect().top, greaterThanOrEqualTo(20));
+    expect(panelRect().bottom, lessThanOrEqualTo(150));
+    tester.view.viewInsets = const FakeViewPadding(bottom: 310);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(panelRect().bottom, lessThanOrEqualTo(50));
+  });
+
+  testWidgets('搜索浮层按安全区和键盘变化重算可用高度', (tester) async {
+    tester.view.physicalSize = const Size(400, 360);
+    tester.view.devicePixelRatio = 1;
+    tester.view.padding = const FakeViewPadding(top: 20, bottom: 24);
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          resizeToAvoidBottomInset: false,
+          body: Align(
+            alignment: Alignment.center,
+            child: SizedBox(
+              width: 180,
+              child: OptionMenuBar<String>(
+                value: 'item0',
+                searchable: true,
+                items: List.generate(
+                  30,
+                  (i) => OptionItem('item$i', 'Item $i'),
+                ),
+                onChanged: (_) {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Item 0'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    Rect panelRect() => tester.getRect(
+      find
+          .ancestor(
+            of: find.byType(TextField),
+            matching: find.byType(ClipRRect),
+          )
+          .first,
+    );
+    var rect = panelRect();
+    expect(rect.top, greaterThanOrEqualTo(20));
+    expect(rect.bottom, lessThanOrEqualTo(336));
+    tester.view.viewInsets = const FakeViewPadding(bottom: 210);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    rect = panelRect();
+    expect(rect.top, greaterThanOrEqualTo(20));
+    expect(rect.bottom, lessThanOrEqualTo(150));
+    await tester.enterText(find.byType(TextField), 'no match');
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('极小可用空间下搜索header与空状态可滚动而不overflow', (tester) async {
+    tester.view.physicalSize = const Size(400, 120);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      _host(
+        SizedBox(
+          width: 180,
+          child: OptionMenuBar<String>(
+            value: 'alpha',
+            searchable: true,
+            items: _items(),
+            onChanged: (_) {},
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Alpha'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.enterText(find.byType(TextField), 'no match');
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    final rect = tester.getRect(
+      find
+          .ancestor(
+            of: find.byType(TextField),
+            matching: find.byType(ClipRRect),
+          )
+          .first,
+    );
+    expect(rect.top, greaterThanOrEqualTo(0));
+    expect(rect.bottom, lessThanOrEqualTo(120));
+  });
   testWidgets('搜索框里按空格不会选中条目（面板不能抢走搜索框的按键）', (tester) async {
     final picked = <String>[];
     await tester.pumpWidget(

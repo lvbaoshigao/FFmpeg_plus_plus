@@ -39,6 +39,9 @@ dependencies:
   flutter_markdown_plus: ^1.0.12
   just_audio: ^0.10.6
   oc_liquid_glass: ^0.3.0
+  # Verified upstream 1.17.3; path dependency avoids unavailable Dart registry sockets.
+  liquid_glass_widgets:
+    path: third_party/liquid_glass_widgets
   flutter_svg: ^2.3.0
   flutter_ai_sdk: ^1.9.0
   liquid_glass_tab_bar: ^0.1.0-dev.10

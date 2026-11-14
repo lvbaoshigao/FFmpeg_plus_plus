@@ -37,6 +37,7 @@ import '../theme/app_semantic_colors.dart';
 import '../theme/app_strings.dart';
 import '../theme/app_text_scale.dart';
 import '../theme/app_theme.dart';
+import '../theme/mobile_visual_theme.dart';
 import '../widgets/ai_workflow_card.dart';
 import '../widgets/animated_popup.dart';
 import '../widgets/app_card.dart';
@@ -10595,6 +10596,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       backgroundColor: Colors.transparent,
       barrierColor: Colors.black.withValues(alpha: 0.24),
       builder: (ctx) {
+        final scheme = MobileVisualTheme.of(ctx).applyTo(Theme.of(ctx)).colorScheme;
         final media = MediaQuery.of(ctx);
         final insets = media.viewInsets.bottom;
         // Preserve the safe top edge while letting the keyboard expand the sheet.
@@ -14564,9 +14566,7 @@ Available actions: __TOOLS__''';
   String _aiFailureNote(Object error, AppStrings s) {
     final raw = error.toString();
     final lower = raw.toLowerCase();
-    final kept = s.isZh
-        ? '上面已生成的内容已保留。'
-        : 'The partial answer above is kept.';
+    final kept = s.isZh ? '上面已生成的内容已保留。' : 'The partial answer above is kept.';
     if (error is TimeoutException || lower.contains('timeout')) {
       return s.isZh
           ? '（请求超时）等待模型响应过久，已自动停止。$kept'
@@ -14856,11 +14856,17 @@ Available actions: __TOOLS__''';
         contextWindow - effectiveMaxTokens - systemTokens - currentUserTokens;
     if (availableHistoryTokens < 0) {
       // 输出预算至少留 256，其余让给输入；再不足则退化为「无历史」。
-      final shrunk = math.max(256, contextWindow - systemTokens - currentUserTokens);
+      final shrunk = math.max(
+        256,
+        contextWindow - systemTokens - currentUserTokens,
+      );
       if (shrunk < effectiveMaxTokens) {
         effectiveMaxTokens = shrunk;
         availableHistoryTokens =
-            contextWindow - effectiveMaxTokens - systemTokens - currentUserTokens;
+            contextWindow -
+            effectiveMaxTokens -
+            systemTokens -
+            currentUserTokens;
       }
     }
     if (availableHistoryTokens < 0) {
@@ -15645,6 +15651,15 @@ Available actions: __TOOLS__''';
 
   @override
   Widget build(BuildContext context) {
+    final base = Theme.of(context);
+    final visual = base.extension<MobileVisualTheme>() ?? const MobileVisualTheme();
+    return Theme(
+      data: visual.applyTo(base),
+      child: Builder(builder: _buildThemedPanel),
+    );
+  }
+
+  Widget _buildThemedPanel(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     // AnimatedSwitcher 让展开/收起两个状态都能平滑过渡。
     // 关键点：两个 child 必须有不同 key，否则 Flutter 认为是同一个 widget
@@ -15924,7 +15939,7 @@ Available actions: __TOOLS__''';
         // AI 面板玻璃固定中性灰：不用 cfg.pillStyle（theme 样式会走
         // harmonizedAccent 染主题色，用户反馈「AI 界面变主题色」）。
         style: SurfaceStyle.gray,
-        radius: MobileUi.pillRadius,
+        radius: MobileVisualTheme.of(context).enabled ? MobileVisualTheme.of(context).chatRadius : MobileUi.pillRadius,
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
         child: SizedBox(
           height: 44,
@@ -16016,14 +16031,14 @@ Available actions: __TOOLS__''';
 
     return SizedBox(
       width: width,
-      height: 28,
+      height: 44,
       child: OptionMenuBar<String>(
         key: const ValueKey('ai-mobile-model-chip'),
         expandable: true,
         searchable: options.length > 4,
         searchHint: s.isZh ? '搜索模型' : 'Search models',
         menuWidth: 280,
-        triggerHeight: 28,
+        triggerHeight: 44,
         leadingWidget: current.isEmpty ? null : leadingFor(current),
         value: current,
         items: [
@@ -16476,7 +16491,7 @@ Available actions: __TOOLS__''';
                       // 移动端侧栏已经提升到 _buildExpanded 的全高覆盖层
                       //（能盖住 header 与输入框）；这里只保留桌面端在消息区内部
                       // 的历史侧栏，桌面布局逐像素不变。
-                      if (!isMobilePlatform)
+                      if (!isMobilePlatform && !widget.mobileSheet)
                         Positioned.fill(child: _buildHistorySidebar(s)),
                     ],
                   ),
@@ -16626,133 +16641,140 @@ Available actions: __TOOLS__''';
                       // 与卡片/药丸同一档圆角（14 → 16）：这一屏里 14 只出现在
                       // 输入框上，和消息气泡（15）、玻璃药丸（24+）都不是一个体系。
                       // 取色与消息气泡/工具栏统一为 scheme.surface，消除色差
-                      color: scheme.surface.withAlpha(220),
-                      borderRadius: BorderRadius.circular(16),
+                      color: MobileVisualTheme.of(context).enabled ? scheme.surfaceContainer : scheme.surface.withAlpha(220),
+                      borderRadius: BorderRadius.circular(MobileVisualTheme.of(context).chatRadius),
                       border: Border.all(
                         color: scheme.outlineVariant.withAlpha(90),
                       ),
                     ),
-                child: Padding(
-                  padding: const EdgeInsets.all(6),
-                  child: Row(
-                    // 输入框多行后行高会长，底对齐才能让发送 / 停止键始终贴在最后一行旁边
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      IconButton(
-                        tooltip: s.isZh ? '添加附件' : 'Add attachments',
-                        onPressed: _loading || _pickingAttachments
-                            ? null
-                            : _pickAttachments,
-                        constraints: BoxConstraints.tightFor(
-                          width: touchSize,
-                          height: touchSize,
-                        ),
-                        padding: EdgeInsets.zero,
-                        icon: Icon(Icons.add, size: isMobilePlatform ? 20 : 22),
-                      ),
-                      // 输入框与右侧发送键同档（comfortable 36）：改造前输入框随主题算出约 32，
-                      // 发送键却是写死的 40×40 圆形 —— 一个矮一个高，底部那行看着就歪。
-                      // 多行时不能再套 fieldBox 钉死高度（会把第二行裁掉），改用 minHeight 兜底。
-                      Expanded(
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(minHeight: touchSize),
-                          child: TextField(
-                            controller: _ctrl,
-                            scrollPadding: const EdgeInsets.all(24),
-                            onTap: () {
-                              _followLatest = true;
-                              _scrollToBottom();
-                            },
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: scheme.onSurface,
-                            ),
-                            decoration: InputDecoration(
-                              // 外层容器已经是「圆角面 + 描边」，输入区不再自带
-                              // 边框：旧实现是描边容器里再套一个描边输入框，两层
-                              // 圆角半径还不同（14 / 36），错位处看起来就是「挤」。
-                              // 顺带去掉 labelText —— floatingLabelBehavior: never
-                              // 让 label 常驻占位，于是真正的提示语 aiChatHint 永远
-                              // 显示不出来。
-                              hintText: s.aiChatHint,
-                              hintStyle: TextStyle(
-                                fontSize: 13,
-                                color: scheme.outline,
-                              ),
-                              isDense: true,
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 10,
-                              ),
-                              // 压平桌面端的 -8px 密度偏移，否则同一份
-                              // contentPadding 在两端高度不同
-                              visualDensity: AppControlSize.fieldDensity,
-                              border: InputBorder.none,
-                              enabledBorder: InputBorder.none,
-                              focusedBorder: InputBorder.none,
-                              suffixIconConstraints: AppControlSize.iconSlot,
-                            ),
-                            // 桌面端单行：Enter 直接发送；移动端多行：回车即换行，发送靠右侧圆钮
-                            onSubmitted: maxInputLines > 1
+                    child: Padding(
+                      padding: const EdgeInsets.all(6),
+                      child: Row(
+                        // 输入框多行后行高会长，底对齐才能让发送 / 停止键始终贴在最后一行旁边
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          IconButton(
+                            tooltip: s.isZh ? '添加附件' : 'Add attachments',
+                            onPressed: _loading || _pickingAttachments
                                 ? null
-                                : (_) => _send(),
-                            minLines: 1,
-                            maxLines: maxInputLines,
-                            textInputAction: maxInputLines > 1
-                                ? TextInputAction.newline
-                                : TextInputAction.send,
+                                : _pickAttachments,
+                            constraints: BoxConstraints.tightFor(
+                              width: touchSize,
+                              height: touchSize,
+                            ),
+                            padding: EdgeInsets.zero,
+                            icon: Icon(
+                              Icons.add,
+                              size: isMobilePlatform ? 20 : 22,
+                            ),
                           ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      SizedBox(
-                        width: touchSize,
-                        height: touchSize,
-                        // 生成中：圆钮由「禁用加载圈」换成「停止」。原实现 onPressed: null，
-                        // 模型返回一慢，用户唯一能做的就是等（移动端还得先关掉弹层才能干别的）。
-                        // 点停止会关闭当前 HTTP 连接，并保留已经流式收到的部分内容。
-                        child: Tooltip(
-                          message: _loading
-                              ? (s.isZh ? '停止生成' : 'Stop generating')
-                              : (s.isZh ? '发送消息' : 'Send message'),
-                          child: _loading
-                              ? FilledButton(
-                                  onPressed: _stopGeneration,
-                                  style: FilledButton.styleFrom(
-                                    padding: EdgeInsets.zero,
-                                    minimumSize: Size.square(touchSize),
-                                    fixedSize: Size.square(touchSize),
-                                    tapTargetSize:
-                                        MaterialTapTargetSize.shrinkWrap,
-                                    shape: const CircleBorder(),
-                                  ),
-                                  child: Icon(
-                                    Icons.stop_rounded,
-                                    size: btn.iconSize,
-                                  ),
-                                )
-                              : FilledButton(
-                                  onPressed: _send,
-                                  style: FilledButton.styleFrom(
-                                    padding: EdgeInsets.zero,
-                                    minimumSize: Size.square(touchSize),
-                                    fixedSize: Size.square(touchSize),
-                                    tapTargetSize:
-                                        MaterialTapTargetSize.shrinkWrap,
-                                    shape: const CircleBorder(),
-                                  ),
-                                  child: Icon(
-                                    Icons.send,
-                                    size: isMobilePlatform ? 19 : btn.iconSize,
-                                  ),
+                          // 输入框与右侧发送键同档（comfortable 36）：改造前输入框随主题算出约 32，
+                          // 发送键却是写死的 40×40 圆形 —— 一个矮一个高，底部那行看着就歪。
+                          // 多行时不能再套 fieldBox 钉死高度（会把第二行裁掉），改用 minHeight 兜底。
+                          Expanded(
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(minHeight: touchSize),
+                              child: TextField(
+                                controller: _ctrl,
+                                scrollPadding: const EdgeInsets.all(24),
+                                onTap: () {
+                                  _followLatest = true;
+                                  _scrollToBottom();
+                                },
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: scheme.onSurface,
                                 ),
-                        ),
+                                decoration: InputDecoration(
+                                  // 外层容器已经是「圆角面 + 描边」，输入区不再自带
+                                  // 边框：旧实现是描边容器里再套一个描边输入框，两层
+                                  // 圆角半径还不同（14 / 36），错位处看起来就是「挤」。
+                                  // 顺带去掉 labelText —— floatingLabelBehavior: never
+                                  // 让 label 常驻占位，于是真正的提示语 aiChatHint 永远
+                                  // 显示不出来。
+                                  filled: false,
+                                  hintText: s.aiChatHint,
+                                  hintStyle: TextStyle(
+                                    fontSize: 13,
+                                    color: scheme.outline,
+                                  ),
+                                  isDense: true,
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 10,
+                                  ),
+                                  // 压平桌面端的 -8px 密度偏移，否则同一份
+                                  // contentPadding 在两端高度不同
+                                  visualDensity: AppControlSize.fieldDensity,
+                                  border: InputBorder.none,
+                                  enabledBorder: InputBorder.none,
+                                  focusedBorder: InputBorder.none,
+                                  suffixIconConstraints:
+                                      AppControlSize.iconSlot,
+                                ),
+                                // 桌面端单行：Enter 直接发送；移动端多行：回车即换行，发送靠右侧圆钮
+                                onSubmitted: maxInputLines > 1
+                                    ? null
+                                    : (_) => _send(),
+                                minLines: 1,
+                                maxLines: maxInputLines,
+                                textInputAction: maxInputLines > 1
+                                    ? TextInputAction.newline
+                                    : TextInputAction.send,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          SizedBox(
+                            width: touchSize,
+                            height: touchSize,
+                            // 生成中：圆钮由「禁用加载圈」换成「停止」。原实现 onPressed: null，
+                            // 模型返回一慢，用户唯一能做的就是等（移动端还得先关掉弹层才能干别的）。
+                            // 点停止会关闭当前 HTTP 连接，并保留已经流式收到的部分内容。
+                            child: Tooltip(
+                              message: _loading
+                                  ? (s.isZh ? '停止生成' : 'Stop generating')
+                                  : (s.isZh ? '发送消息' : 'Send message'),
+                              child: _loading
+                                  ? FilledButton(
+                                      onPressed: _stopGeneration,
+                                      style: FilledButton.styleFrom(
+                                        padding: EdgeInsets.zero,
+                                        minimumSize: Size.square(touchSize),
+                                        fixedSize: Size.square(touchSize),
+                                        tapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                        shape: const CircleBorder(),
+                                      ),
+                                      child: Icon(
+                                        Icons.stop_rounded,
+                                        size: btn.iconSize,
+                                      ),
+                                    )
+                                  : FilledButton(
+                                      onPressed: _send,
+                                      style: FilledButton.styleFrom(
+                                        padding: EdgeInsets.zero,
+                                        minimumSize: Size.square(touchSize),
+                                        fixedSize: Size.square(touchSize),
+                                        tapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                        shape: const CircleBorder(),
+                                      ),
+                                      child: Icon(
+                                        Icons.send,
+                                        size: isMobilePlatform
+                                            ? 19
+                                            : btn.iconSize,
+                                      ),
+                                    ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 ),
-              ),
-              ),
               ),
             ),
           ],
@@ -17280,18 +17302,18 @@ Available actions: __TOOLS__''';
           bottom: 0,
           left: _historyOpen ? 0 : -constraints.maxWidth,
           width: math.min(260, constraints.maxWidth * 0.62),
-            child: IgnorePointer(
-              ignoring: !_historyOpen,
-              child: AppCard(
-                // AI 面板玻璃固定中性灰（防「串色」），不随全局 cardStyle。
-                style: SurfaceStyle.gray,
-                radius: 14,
-                padding: const EdgeInsets.all(10),
-                child: Column(
-                  children: [
-                    MobileGlassPill(
-                      style: SurfaceStyle.gray,
-                      child: Row(
+          child: IgnorePointer(
+            ignoring: !_historyOpen,
+            child: AppCard(
+              // AI 面板玻璃固定中性灰（防「串色」），不随全局 cardStyle。
+              style: SurfaceStyle.gray,
+              radius: 14,
+              padding: const EdgeInsets.all(10),
+              child: Column(
+                children: [
+                  MobileGlassPill(
+                    style: SurfaceStyle.gray,
+                    child: Row(
                       children: [
                         Expanded(child: Text(s.isZh ? '历史会话' : 'History')),
                         IconButton(
@@ -17945,7 +17967,7 @@ Available actions: __TOOLS__''';
     // 气泡圆角：靠头像那一角收小（聊天气泡的通用语言）。四个角一律 12 时，
     // 一组对话看上去像几块并列的卡片，方向感全靠头像硬撑。
     const Radius rTail = Radius.circular(4);
-    final Radius rBig = Radius.circular(isMobilePlatform ? 15 : 14);
+    final Radius rBig = Radius.circular(MobileVisualTheme.of(context).bubbleRadius(isMobilePlatform ? 15 : 14));
     final BorderRadius bubbleRadius = isUser
         ? BorderRadius.only(
             topLeft: rBig,
@@ -18061,7 +18083,8 @@ Available actions: __TOOLS__''';
                 const desktopBubbleCap = 860.0;
                 // 移动端放宽到 86%：80% 在 360 宽的弹层上只剩 ~258px，
                 // 中文长段落被折成一根窄柱，纵向拉得很长；86% 能少折 1~2 行。
-                final proportional = (constraints.maxWidth - avatarSlot) *
+                final proportional =
+                    (constraints.maxWidth - avatarSlot) *
                     (isMobilePlatform ? 0.86 : 0.8);
                 final maxBubbleWidth = isMobilePlatform
                     ? proportional

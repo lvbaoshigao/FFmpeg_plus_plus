@@ -467,6 +467,13 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "0.1.0-dev.10"
+  liquid_glass_widgets:
+    dependency: "direct main"
+    description:
+      path: "third_party/liquid_glass_widgets"
+      relative: true
+    source: path
+    version: "1.17.3"
   logger:
     dependency: transitive
     description:

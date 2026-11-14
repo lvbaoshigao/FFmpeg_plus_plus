@@ -23,6 +23,7 @@ import 'theme/app_semantic_colors.dart';
 import 'theme/app_strings.dart';
 import 'theme/app_text_scale.dart';
 import 'theme/app_theme.dart';
+import 'theme/mobile_visual_theme.dart';
 import 'widgets/app_slider.dart';
 import 'widgets/liquid_glass_mobile_nav.dart';
 import 'widgets/mobile_bottom_nav.dart';
@@ -236,6 +237,7 @@ class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
         useDynamicColor: isAndroidPlatform && s.config.useDynamicColor,
         predictiveBack: isAndroidPlatform && s.config.predictiveBack,
         glassEffect: s.config.glassEffect,
+        mobileTheme: s.config.mobileTheme,
         monetSeed: _monetSeed,
       ),
       builder: (context, k, _) {
@@ -243,6 +245,10 @@ class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
         final dynamicSeed = k.useDynamicColor
             ? (k.monetSeed ?? k.themeColor)
             : null;
+        final mobileVisual = resolveMobileVisualTheme(k.mobileTheme, isMobile: isMobilePlatform);
+        ThemeData withMobileVisual(ThemeData base) => mobileVisual.enabled
+            ? base.copyWith(extensions: [...base.extensions.values, mobileVisual])
+            : base;
         return MaterialApp(
           key: const ValueKey('app'),
           title: 'FFmpeg++',
@@ -255,7 +261,7 @@ class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
             GlobalWidgetsLocalizations.delegate,
             GlobalCupertinoLocalizations.delegate,
           ],
-          theme: AppTheme.light(
+          theme: withMobileVisual(AppTheme.light(
             seedColor: k.themeColor,
             useThemeColor: k.useThemeColor,
             fontFamily: k.fontFamily,
@@ -264,8 +270,8 @@ class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
             dynamicSeed: dynamicSeed,
             predictiveBack: k.predictiveBack,
             glassEffect: k.glassEffect,
-          ),
-          darkTheme: AppTheme.dark(
+          )),
+          darkTheme: withMobileVisual(AppTheme.dark(
             seedColor: k.themeColor,
             useThemeColor: k.useThemeColor,
             fontFamily: k.fontFamily,
@@ -274,7 +280,7 @@ class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
             dynamicSeed: dynamicSeed,
             predictiveBack: k.predictiveBack,
             glassEffect: k.glassEffect,
-          ),
+          )),
           themeMode: k.darkMode ? ThemeMode.dark : ThemeMode.light,
           // 禁用 Android 12+ 的「拉伸过滚动」效果：它在 Impeller 下用
           // ImageFiltered(shader) 把整页内容截进离屏纹理再做形变——液态玻璃
@@ -349,6 +355,7 @@ class _ThemeKey {
   final bool useDynamicColor;
   final bool predictiveBack;
   final String glassEffect;
+  final String mobileTheme;
   final int? monetSeed;
   const _ThemeKey({
     required this.lang,
@@ -362,6 +369,7 @@ class _ThemeKey {
     required this.useDynamicColor,
     required this.predictiveBack,
     required this.glassEffect,
+    required this.mobileTheme,
     required this.monetSeed,
   });
 
@@ -379,6 +387,7 @@ class _ThemeKey {
       other.useDynamicColor == useDynamicColor &&
       other.predictiveBack == predictiveBack &&
       other.glassEffect == glassEffect &&
+      other.mobileTheme == mobileTheme &&
       other.monetSeed == monetSeed;
 
   @override
@@ -394,6 +403,7 @@ class _ThemeKey {
     useDynamicColor,
     predictiveBack,
     glassEffect,
+    mobileTheme,
     monetSeed,
   );
 }
@@ -459,6 +469,18 @@ class _SplashScreenState extends State<_SplashScreen> {
       ),
     );
   }
+}
+
+/// Stable desktop cache slot; selection must not replace the page Element.
+class CachedPageSlot extends StatelessWidget {
+  const CachedPageSlot({super.key, required this.active, required this.child});
+
+  final bool active;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) =>
+      TickerMode(enabled: active, child: child);
 }
 
 class AppShell extends StatefulWidget {
@@ -1305,7 +1327,8 @@ class _AppShellState extends State<AppShell> with WindowListener {
   /// 所有页面同时存在于 IndexedStack（已访问的缓存、未访问的占位），
   /// 切换零重建、零动画开销。
   ///
-  /// 每个槽位**固定**是 `KeyedSubtree(key: ValueKey(i))`，子节点才是页面本身：
+  /// 每个槽位固定为 CachedPageSlot，内部 TickerMode 仅启用当前页动画。
+  /// 索引 key 与槽位类型恒定，子节点才是页面本身：
   /// 之前当前页走 `_page(i)`（内部又包了一层 KeyedSubtree）、非当前页直接放裸页面
   /// widget，同一个槽位的 runtimeType 会随选中页切换而变（KeyedSubtree ↔ ProjectPage）
   /// → framework 判定无法复用 Element，整页 State 被销毁重建（滚动位置、多选状态
@@ -1314,8 +1337,9 @@ class _AppShellState extends State<AppShell> with WindowListener {
     index: current,
     children: [
       for (var i = 0; i < 6; i++)
-        KeyedSubtree(
+        CachedPageSlot(
           key: ValueKey<int>(i),
+          active: i == current,
           // 当前页走 _page(i)（顺带刷新 LRU）；非当前页直接取缓存，未访问则为空占位
           child: i == current
               ? _page(i)
