@@ -138,12 +138,10 @@ Widget optionMenuPanel({
     _ => scheme.surface,
   };
 
-  // 主题色染色：frosted 最重（「主题色」毛玻璃），liquid 只留一丝冷调，
-  // theme 不染色 —— 这就是「跟随主题」与另外三档的根本差别。
+  // 主题色染色：frosted / highlight 是「主题色毛玻璃」档，明确带色；
+  // **liquid 档不染色** —— 它靠折射与边缘光表达玻璃，混一点 primary 会让
+  // 中性玻璃带上主题色（用户反馈「下拉菜单的高光玻璃参杂了主题色」）。
   final Color tint = switch (appearance) {
-    'liquid' => scheme.primary.withAlpha(
-      tunedGlassAlpha(dark ? 22 : 14, tuning),
-    ),
     'frosted' => scheme.primary.withAlpha(dark ? 92 : 66),
     'highlight' => scheme.primary.withAlpha(dark ? 40 : 26),
     _ => Colors.transparent,

@@ -57,4 +57,22 @@ void main() {
       }
     },
   );
+
+  test('miuix actually changes something visible', () {
+    final visual = resolveMobileVisualTheme('miuix', isMobile: true);
+    // 圆角是主题切换最直观的差异（中性表面在暗色下只差几个 RGB 点）。
+    expect(visual.cardRadius(16), greaterThan(16));
+    expect(visual.cardRadius(20), greaterThan(20));
+    // 关闭时逐像素不变。
+    expect(
+      resolveMobileVisualTheme('follow', isMobile: true).cardRadius(16),
+      16,
+    );
+    // High / Highest 必须分两档，否则对话框与卡片同色。
+    final themed = visual.applyTo(ThemeData());
+    expect(
+      themed.colorScheme.surfaceContainerHigh,
+      isNot(themed.colorScheme.surfaceContainerLow),
+    );
+  });
 }

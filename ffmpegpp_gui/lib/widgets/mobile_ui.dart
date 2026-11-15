@@ -97,32 +97,32 @@ class MobilePillTopBar extends StatelessWidget {
       body = normal;
     } else {
       body = Stack(alignment: Alignment.center, children: [
-        AnimatedOpacity(
-          opacity: searchOpen ? 0.0 : 1.0,
-          duration: _fade,
-          child: AnimatedScale(
-            scale: searchOpen ? 0.9 : 1.0,
-            duration: _fade,
-            curve: Curves.easeOutCubic,
-            child: IgnorePointer(ignoring: searchOpen, child: normal),
-          ),
+        // ⚠️ 这里**不能**做 opacity 动画。顶栏药丸是 BackdropFilter / 液态玻璃，
+        // 外面套一层 AnimatedOpacity 会生成 OpacityLayer，迫使 backdrop 走
+        // saveLayer —— 动画期间采不到背景，药丸整块先变黑再恢复正常
+        // （用户反馈「搜索图标点击后药丸背景先变黑」）。
+        // 改成瞬时切换 + 只对搜索药丸做缩放：没有透明度层，也就没有黑帧。
+        Visibility(
+          visible: !searchOpen,
+          maintainState: true,
+          child: IgnorePointer(ignoring: searchOpen, child: normal),
         ),
-        AnimatedOpacity(
-          opacity: searchOpen ? 1.0 : 0.0,
+        AnimatedScale(
+          scale: searchOpen ? 1.0 : 0.86,
+          alignment: Alignment.center,
           duration: _fade,
-          child: IgnorePointer(
-            ignoring: !searchOpen,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              // 展开动画 = 缩放 + 淡入：整颗药丸从 0.86 放大到 1.0 出现，
-              // 不再像旧实现那样把同一颗 44px 药丸横向拉到 [MobileUi.searchPillWidth]
-              // （宽度突变时边框与内边距像被「两把刀」左右撕开）。
-              // 锚点取 center：药丸本身在顶栏里水平居中，从中心放大最自然。
-              child: AnimatedScale(
-                scale: searchOpen ? 1.0 : 0.86,
-                alignment: Alignment.center,
-                duration: _fade,
-                curve: Curves.easeOutCubic,
+          curve: Curves.easeOutCubic,
+          child: Visibility(
+            visible: searchOpen,
+            maintainState: true,
+            child: IgnorePointer(
+              ignoring: !searchOpen,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                // 展开动画 = 缩放：整颗药丸从 0.86 放大到 1.0 出现，
+                // 不再像旧实现那样把同一颗 44px 药丸横向拉到 [MobileUi.searchPillWidth]
+                // （宽度突变时边框与内边距像被「两把刀」左右撕开）。
+                // 锚点取 center：药丸本身在顶栏里水平居中，从中心放大最自然。
                 child: MobileGlassPill(
                   radius: MobileUi.pillRadius,
                   // 只留水平内边距：药丸总高 = MobileUi.pillHeight(44)，与标题 /

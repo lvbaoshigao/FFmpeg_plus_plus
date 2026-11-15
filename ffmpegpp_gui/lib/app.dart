@@ -19,6 +19,7 @@ import 'providers/app_state.dart';
 import 'services/android_platform.dart';
 import 'services/update_service.dart' as updater;
 import 'theme/app_neutral_surface.dart';
+import 'theme/app_page_transitions.dart';
 import 'theme/app_semantic_colors.dart';
 import 'theme/app_strings.dart';
 import 'theme/app_text_scale.dart';
@@ -1487,14 +1488,9 @@ Route<T> smoothRoute<T>(Widget page) => PageRouteBuilder<T>(
   transitionDuration: const Duration(milliseconds: 280),
   reverseTransitionDuration: const Duration(milliseconds: 240),
   transitionsBuilder: (_, anim, c, child) {
-    // 用 Tween.chain(CurveTween) 而不是 CurvedAnimation：后者会往 anim 上挂
-    // 状态监听，而 transitionsBuilder 在路由重建时可能被多次调用
-    // （animated_popup.dart 里已因同类写法残留过孤儿监听）。
-    return SlideTransition(
-      position: Tween(begin: const Offset(0.06, 0), end: Offset.zero)
-          .chain(CurveTween(curve: Curves.easeOutCubic))
-          .animate(anim),
-      child: child,
-    );
+    // 与 Android 主题转场共用同一段位移实现（含「按方向取向」的缓动）：
+    // 旧写法用 SlideTransition + CurveTween，pop 时动画值 1→0 会让
+    // easeOut 变成「先慢后快」，用户反馈的返回卡顿就是这一条。
+    return AppSlideInTransition(animation: anim, child: child);
   },
 );

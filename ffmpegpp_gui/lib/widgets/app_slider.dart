@@ -664,6 +664,13 @@ class _AppSliderState extends State<AppSlider>
   double _instantSpeed = 0;
   Duration? _lastCometTickAt;
 
+  /// 上一次指针移动方向（-1 / 0 / 1）。
+  ///
+  /// 用来识别「往回拉」：不处理的话，反向那一瞬间 `_dragSpeed` 还停在正向的
+  /// 高值上，尾巴仍是一长条亮光，看起来就像「手已经往回走了、彗星还赖在
+  /// 原来的位置上」—— 用户反馈的「往回拉就不跟手」。
+  int _dragDir = 0;
+
   /// 速度的指数衰减时间常数：越小越跟手，越大尾巴越「黏」。
   static const double _kSpeedDecayTau = 0.09;
 
@@ -683,10 +690,11 @@ class _AppSliderState extends State<AppSlider>
     final now = SchedulerBinding.instance.currentSystemFrameTimeStamp;
     final last = _lastDragAt;
     if (last == null) {
-      // 拖动开始：启动相位循环。速度从 0 起算。
+      // 拖动开始：启动相位循环。速度与方向都从 0 起算。
       _lastCometTickAt = now;
       _dragSpeed = 0;
       _instantSpeed = 0;
+      _dragDir = 0;
       if (_cometAllowed && !_cometPhase.isAnimating) _cometPhase.repeat();
     } else {
       final seconds =
@@ -696,6 +704,16 @@ class _AppSliderState extends State<AppSlider>
             ((value - _lastDragValue).abs() / seconds) /
             (widget.max - widget.min).abs().clamp(0.001, double.infinity);
         _instantSpeed = instant.clamp(0.0, 1.0);
+      }
+      // 方向翻转：把速度清零，尾巴立刻收短，手感才「跟手」。
+      final double delta = value - _lastDragValue;
+      if (delta != 0) {
+        final int dir = delta > 0 ? 1 : -1;
+        if (_dragDir != 0 && dir != _dragDir) {
+          _dragSpeed = 0;
+          _instantSpeed = 0;
+        }
+        _dragDir = dir;
       }
     }
     _lastDragValue = value;
@@ -858,6 +876,7 @@ class _AppSliderState extends State<AppSlider>
               _lastCometTickAt = null;
               _dragSpeed = 0;
               _instantSpeed = 0;
+              _dragDir = 0;
               // 松手即停相位：彗星层同时被 _dragValue == null 卸掉，
               // 不会留下一条不会动的残影。
               _cometPhase.stop();
@@ -1240,19 +1259,18 @@ class _CometFillPainter extends CustomPainter {
     final double headX = insetX + trackW * (isLtr ? hi : 1 - hi);
     final double tailEdgeX = insetX + trackW * (isLtr ? lo : 1 - lo);
 
-    // 彗尾长度与拖速挂钩：慢拖只在指前留一小段掠光（35%），快拖拉到近乎
-    // 整个填充段。旧实现恒等于填充段全长、速度只改亮度 —— 于是"滑得越快
-    // 尾巴越长"的预期落空，观感是彗星没跟上手指。
+    // 尾迹长度用**绝对像素**而不是「占填充段的比例」。
     //
-    // 缩短的只是这层白色掠光，填充本身仍由 framework 的 Slider 画满，
-    // 所以不会出现"填充段边缘被硬切"的割裂。
-    final double tailReach = (0.35 + 0.60 * speed.clamp(0.0, 1.0)).clamp(
-      0.0,
-      1.0,
+    // 比例写法（旧实现 0.35~0.95）在快满的进度条上会拉出一条贯穿整条轨道的
+    // 白色渐变 —— 用户反馈「拖尾渐变做的太长了」；而在低进度时又短到看不见。
+    // 固定 46~96px 后，无论填充多长，彗星都是同一颗「同样长尾巴」的彗星。
+    final double dir = headX >= tailEdgeX ? 1.0 : -1.0;
+    final double fullSpan = (headX - tailEdgeX).abs();
+    final double tailLen = math.min(
+      fullSpan,
+      46.0 + 50.0 * speed.clamp(0.0, 1.0),
     );
-    final double tailX = atZero
-        ? headX
-        : headX + (tailEdgeX - headX) * tailReach;
+    final double tailX = atZero ? headX : headX - dir * tailLen;
 
     // 裁剪区域 = 整条轨道胶囊（而非填充段）：光晕/粒子要能溢出填充前缘，
     // 被填满胶囊裁掉一半就只剩渐变、没有「掠光」感。

@@ -6,6 +6,7 @@ import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_neutral_surface.dart';
+import '../theme/mobile_visual_theme.dart';
 import 'liquid_glass_fallback.dart';
 import 'wallpaper_background.dart';
 
@@ -172,7 +173,9 @@ class _AppCardState extends State<AppCard> {
     // 模糊 σ 与「是否走 shader」统一来自 liquid_glass_fallback（各调用点固定 σ +
     // 桌面端 ≤8 钳制；PC 端默认不走 shader，见 gpuGlassEnabledOf）。
     final op = key.op.clamp(0.0, 1.0);
-    final radius = widget.radius;
+    // ZeroUI（Miuix）下整体放大一档圆角：这是主题切换时最直观的可见差异，
+    // 光靠中性表面（暗色只差几个 RGB 点）用户会以为「切了没反应」。
+    final radius = MobileVisualTheme.of(context).cardRadius(widget.radius);
     final br = BorderRadius.circular(radius);
     // 主题渐变（起色→止色）只属于「跟随主题色」卡片：
     // - theme 卡：纯色变渐变；

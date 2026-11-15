@@ -4473,38 +4473,19 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                             ),
                           ),
                         ),
-                        // 底部**一行** dock：缩放药丸 + 文件信息药丸左右并排。
-                        //
-                        // 旧布局是上下两粒叠放（信息条贴底 +6、缩放条在它上方
-                        // +48），而信息条通长 34dp、底色 surface@220、两行 9px
-                        // 小字 —— 暗色下就是一整条压在画布下沿的近黑板，也就是
-                        // 用户说的「雷霆大黑边展示信息」。合并成一行后少占 40dp
-                        // 竖向空间，也彻底去掉「通长深色条」这个形状。
+                        // 左下：缩放药丸（唯一保留的底部药丸）
                         Positioned(
-                          bottom: mobileSafeBottom + 6,
                           left: 8,
-                          right: 8,
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              // 缩放药丸用 Transform.scale 放大，布局盒仍是
-                              // 38×108；放进 Row 必须按 scale 预留宽度，否则
-                              // 调大「缩放条大小」后会盖住右侧的信息药丸。
-                              SizedBox(
-                                width:
-                                    _kMobileZoomBarBaseWidth *
-                                    _mobileZoomBarScale(),
-                                height:
-                                    _kMobileBarHeight * _mobileZoomBarScale(),
-                                child: Align(
-                                  alignment: Alignment.bottomLeft,
-                                  child: _buildMobileBottomLeftBar(scheme, s),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(child: _buildMobileFileInfo(scheme, s)),
-                            ],
-                          ),
+                          bottom: mobileSafeBottom + 6,
+                          child: _buildMobileBottomLeftBar(scheme, s),
+                        ),
+                        // 右下角：节点/文件信息改成**淡文字**，不再占一条药丸，
+                        // 也就不会和左下药丸挤在同一行（用户要求「在角落里以淡
+                        // 文字显示，不要撞到药丸里」）。
+                        Positioned(
+                          right: 12,
+                          bottom: mobileSafeBottom + 8,
+                          child: _buildMobileFileInfo(scheme, s),
                         ),
                         // 逻辑块框选提示条（用具箱点按「循环」后出现，引导用户手指框选）
                         if (_isLogicBoxSelecting)
@@ -11217,13 +11198,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// Minimum touch target for mobile action buttons, including overflow menus.
   static const double _kMobileBarBtnBox = 34;
 
-  /// 底部缩放药丸的**布局基准宽度**：3 × [_kMobileBarBtnBox] + 2 × 2 间距
-  /// + 2 × 1 内边距。
-  ///
-  /// 药丸本身用 Transform.scale 放大，布局盒恒为 38×108；把它放进 Row 时必须
-  /// 按 scale 预留宽度，否则用户把「缩放条大小」调大后会盖住右侧的信息药丸。
-  static const double _kMobileZoomBarBaseWidth = 108;
-
   /// 移动端底部缩放药丸的**实际**缩放系数（唯一来源）。
   ///
   /// 药丸用 [Transform.scale] 放大，布局盒仍是 [_kMobileBarHeight] 高，而绘制
@@ -11307,41 +11281,31 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   Widget _buildMobileFileInfo(ColorScheme scheme, AppStrings s) {
     final v = widget.video;
     final nodesLabel = s.isZh ? '节点' : 'nodes';
-    // 单行窄药丸：只常驻最常看的「分辨率 · 时长 · 节点数」，长按看完整信息
-    // （源大小 / FPPX 大小改成按需查看，不再用第二行 9px 小字常驻占位）。
+    // 右下角的**淡文字**：只常驻最常看的「分辨率 · 时长 · 节点数」。
     //
-    // 高度与缩放药丸统一为 _kMobileBarHeight，两粒药丸现在同排同高，
-    // 不再出现「上面一粒、下面一条」的错层。
+    // 之前是通长 34dp 的近黑药丸（用户说的「雷霆大黑边」），合并成一行后仍和
+    // 缩放药丸抢横向空间；现在彻底去容器，改成角落里的低对比度文字 —— 看得见
+    // 但不抢画面，也不会撞到药丸。完整信息（源大小 / FPPX）仍然长按查看。
     final summary =
         '${v.resolution} · ${v.durationStr} · ${_nodes.length} $nodesLabel';
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onLongPress: () => _showMobileFileInfoSheet(s),
-      child: Container(
-        height: _kMobileBarHeight,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        decoration: BoxDecoration(
-          color: scheme.surface.withAlpha(220),
-          borderRadius: BorderRadius.circular(_kMobileBarRadius),
-          border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
-          boxShadow: [
-            BoxShadow(
-              color: scheme.shadow.withAlpha(30),
-              blurRadius: 6,
-              offset: const Offset(0, 2),
-            ),
-          ],
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.sizeOf(context).width * 0.62,
         ),
-        child: Center(
-          // 系统字号放大时这行会顶出 38dp：这里退回「只跟系统字号」，
-          // 应用内字号不再叠加（下拉/药丸类 chrome 的统一口径）。
-          child: withoutAppTextScale(
-            context,
-            Text(
-              summary,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 10.5, color: scheme.onSurfaceVariant),
+        child: withoutAppTextScale(
+          context,
+          Text(
+            summary,
+            textAlign: TextAlign.right,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 9.5,
+              height: 1.2,
+              color: scheme.onSurface.withAlpha(96),
             ),
           ),
         ),

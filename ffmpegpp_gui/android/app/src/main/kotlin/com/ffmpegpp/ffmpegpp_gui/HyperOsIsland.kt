@@ -351,6 +351,8 @@ object HyperOsIsland {
                         dismissIsland = true,
                         islandTimeoutSec = 60,
                         timeoutMin = 5,
+                        // 完成类通知：首次出现直接展开（一眼看到结果），之后不再抢焦点。
+                        firstFloat = true,
                     )
                 )
             }
@@ -407,6 +409,10 @@ object HyperOsIsland {
                         dismissIsland = false,
                         islandTimeoutSec = 600,
                         timeoutMin = 30,
+                        // ⚠️ 进度卡**不能**首次展开：旧实现设成 true，配合
+                        // updatable 的持续更新，岛会一直停在展开态挡住状态栏。
+                        firstFloat = false,
+                        progress = pct,
                     )
                 )
             }
@@ -466,6 +472,8 @@ object HyperOsIsland {
         dismissIsland: Boolean,
         islandTimeoutSec: Int,
         timeoutMin: Int,
+        firstFloat: Boolean,
+        progress: Int? = null,
     ): String {
         fun picInfo(): JSONObject = JSONObject().put("type", 1).put("pic", iconKey)
 
@@ -484,6 +492,20 @@ object HyperOsIsland {
         val bigArea = JSONObject()
             .put("imageTextInfoLeft", line)
             .put("picInfo", picInfo())
+
+        // 进度组件 2（纯净版进度条）：只传 progress + 起止颜色，**不传任何 picXXX**
+        // 图标字段 —— 一旦带上 picForward/picMiddle/picEnd，就变成「带实体图形的
+        // 进度组件 1」（外卖/打车那种带运动实体的语义），观感与含义都跑偏。
+        // 见《小米超级岛模板库》3.8。
+        if (progress != null) {
+            bigArea.put(
+                "progressInfo",
+                JSONObject()
+                    .put("progress", progress.coerceIn(0, 100))
+                    .put("colorProgress", HIGHLIGHT)
+                    .put("colorProgressEnd", HIGHLIGHT),
+            )
+        }
 
         val smallArea = JSONObject().put("picInfo", picInfo())
 
@@ -504,7 +526,7 @@ object HyperOsIsland {
             .put("protocol", 1)
             .put("business", business) // 必填：运营场景统计
             .put("updatable", updatable)
-            .put("islandFirstFloat", true) // 首次直接展开态
+            .put("islandFirstFloat", firstFloat) // 首次是否直接展开
             .put("enableFloat", false) // 更新时不再抢焦点
             .put("timeout", timeoutMin) // 单位 min
             .put("ticker", content)

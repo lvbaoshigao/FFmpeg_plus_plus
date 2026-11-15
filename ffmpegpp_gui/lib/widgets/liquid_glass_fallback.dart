@@ -79,11 +79,15 @@ bool get shaderGlassSupported => ImageFilter.isShaderFilterSupported;
 const OCLiquidGlassSettings kLiquidGlassSettings = OCLiquidGlassSettings(
   // refractStrength（负 = 凹透镜）给水滴折射；spec 给柔和的角部镜面光泽；
   // blurRadiusPx/lightbandStrength 关闭（光带在较高内容上是横向分界线）。
+  //
+  // 2026-11-15：spec 从 0.62/48/10 收到 0.40/64/6。原来的角部高光在小面积
+  // 控件（药丸 / 下拉）上会糊成四块「斜面」，用户反馈「莫名其妙有倒角高光」；
+  // 收窄宽度 + 提高聚焦度后只剩一点湿润的光泽。
   refractStrength: -0.10,
   blurRadiusPx: 0.0,
-  specStrength: 0.62,
-  specPower: 48,
-  specWidth: 10,
+  specStrength: 0.40,
+  specPower: 64,
+  specWidth: 6,
   lightbandStrength: 0.0,
   lightbandColor: Colors.white,
 );
@@ -505,68 +509,43 @@ class LiquidGlassPainter extends CustomPainter {
     canvas.save();
     canvas.clipRRect(rrect);
 
-    // 受光方向：p=0 → 左上（基准），p=1 → 右下。渐变轴随之翻转。
-    final begin = Alignment(-1 + 2 * p, -1 + 2 * p);
-    final end = Alignment(1 - 2 * p, 1 - 2 * p);
+    // 受光方向 p 已在上面解析：只影响柔光带的起止位置。
 
-    // 1) 对角倒角边：亮→暗过渡的棱边
-    if (e > 0.001) {
-      final rim = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = (1.8 * e).clamp(0.4, 4.0)
-        ..shader = LinearGradient(
-          begin: begin,
-          end: end,
-          colors: [
-            // 亮部从 0.62 降到 0.46、暗部从 0.18 提到 0.24：玻璃底已经是中性灰
-            // （见 themedGlassBase），原来按「51% 主题色底」调的白色棱线在灰底上
-            // 会亮得像一圈塑料包边。降低亮部、加重暗部，厚度感改由明暗对比给出。
-            Colors.white.withValues(alpha: (0.46 * e).clamp(0.0, 1.0) * o),
-            Colors.white.withValues(alpha: (0.05 * e).clamp(0.0, 1.0) * o),
-            Colors.black.withValues(alpha: (0.24 * e).clamp(0.0, 1.0) * o),
-          ],
-          stops: const [0.0, 0.45, 1.0],
-        ).createShader(rrect.outerRect);
-      canvas.drawRRect(rrect.deflate(0.7), rim);
-
-      // 2) 内圈细亮线（玻璃内壁反光）
+    // 1) 顶部柔光带（取代旧的对角倒角棱）。
+    //
+    // 旧实现沿对角线画「亮→暗」两条棱 + 两团镜面光斑来模拟厚玻璃的折射棱，
+    // 实际观感是「四个角莫名其妙各挂一块斜面高光」（用户反馈的「莫名其妙的
+    // 倒角高光」）。玻璃的厚度改由「一条自上而下衰减的柔光 + 描边」表达，
+    // 更接近 iOS 26 那种干净的水面感。
+    if (h > 0.001) {
+      final double topAlpha = (0.14 * h * o).clamp(0.0, 1.0);
       canvas.drawRRect(
-        rrect.deflate(2.2),
+        rrect,
+        Paint()
+          ..shader = LinearGradient(
+            begin: Alignment(0, -1 + p * 0.6),
+            end: const Alignment(0, 1),
+            colors: [
+              Colors.white.withValues(alpha: topAlpha),
+              Colors.white.withValues(alpha: topAlpha * 0.22),
+              Colors.white.withValues(alpha: 0),
+            ],
+            stops: const [0.0, 0.30, 0.72],
+          ).createShader(rrect.outerRect),
+      );
+    }
+
+    // 2) 内圈细亮线（玻璃内壁反光）—— 只在贴边 1px 处，没有斜面。
+    if (e > 0.001) {
+      canvas.drawRRect(
+        rrect.deflate(1.0),
         Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = (0.8 * e).clamp(0.3, 2.0)
           ..color = Colors.white.withValues(
-            alpha: (0.12 * e).clamp(0.0, 1.0) * o,
+            alpha: (0.10 * e).clamp(0.0, 1.0) * o,
           ),
       );
-    }
-
-    // 3) 对向镜面光斑：主光 + 副光（柔和径向渐变）。位置随 lightPos 沿对角线移动。
-    if (h > 0.001) {
-      final shortest = size.shortestSide;
-      final spotR = shortest * 0.55;
-      void spot(Offset c, double alpha) {
-        canvas.drawCircle(
-          c,
-          spotR,
-          Paint()
-            ..shader = RadialGradient(
-              colors: [
-                Colors.white.withValues(alpha: (alpha * h).clamp(0.0, 1.0)),
-                Colors.white.withValues(alpha: 0.0),
-              ],
-            ).createShader(Rect.fromCircle(center: c, radius: spotR)),
-        );
-      }
-
-      Offset along(double fromX, double fromY, double toX, double toY) =>
-          Offset(
-            size.width * (fromX + (toX - fromX) * p),
-            size.height * (fromY + (toY - fromY) * p),
-          );
-
-      spot(along(0.14, 0.10, 0.86, 0.90), 0.17 * o);
-      spot(along(0.88, 0.92, 0.12, 0.08), 0.10 * o);
     }
 
     canvas.restore();

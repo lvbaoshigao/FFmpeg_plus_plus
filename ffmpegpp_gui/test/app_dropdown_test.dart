@@ -212,12 +212,11 @@ void main() {
     expect(find.byType(BackdropFilter), findsNothing);
 
     // liquid：最通透（底色 alpha 远低于 frosted），且必然带背景模糊。
+    // 并且**不带主题色染色** —— 玻璃靠折射与边缘光表达，混 primary 会让人
+    // 觉得「高光玻璃参杂了主题色」（2026-11-15 用户反馈）。
     final liquid = await openPanel('liquid');
     expect(find.byType(BackdropFilter), findsOneWidget);
-    expect(
-      liquid.color,
-      Color.alphaBlend(cs.primary.withAlpha(14), cs.surface.withAlpha(134)),
-    );
+    expect(liquid.color, cs.surface.withAlpha(134));
 
     // frosted：主题色毛玻璃 —— 模糊 + 明显的主题色染色。
     final frosted = await openPanel('frosted');

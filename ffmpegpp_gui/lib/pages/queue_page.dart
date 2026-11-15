@@ -378,10 +378,15 @@ class _QueuePageState extends State<QueuePage> {
         ),
       // 紧凑资源占用（CPU/内存/GPU）：左右各 4px 由药丸内边距承担，
       // 与 34×34 圆形按钮垂直居中对齐（不再额外加 SizedBox）。
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4),
-        child: _monitorBar(scheme, state),
-      ),
+      //
+      // 窄屏上不显示：5 个操作按钮 + 这条占用读数会把标题挤成「处理…」
+      // （360dp 屏实测只剩两三个字符）。顶栏布局本身也有标题保底宽度，
+      // 这里再从源头少塞一块。
+      if (MediaQuery.sizeOf(context).width >= 430)
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: _monitorBar(scheme, state),
+        ),
     ];
   }
 

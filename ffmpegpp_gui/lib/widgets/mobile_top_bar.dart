@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 // Esc 收起溢出操作（桌面端键盘可达）；只取需要的两个名字，避免整包 services 泄漏到本文件。
 import 'package:flutter/services.dart' show KeyDownEvent, LogicalKeyboardKey;
@@ -246,13 +248,34 @@ class _MobilePillBarLayoutState extends State<MobilePillBarLayout>
   }
 
   /// 放得下：保持原来的「左半 + 间距 + 右半」一行，不引入任何额外动画层。
-  Widget _plainRow() => Row(children: [
-        Expanded(child: _leadingHalf()),
-        if (widget.actions.isNotEmpty) ...[
-          const SizedBox(width: _pillBarGap),
-          _actionsPill(widget.actions),
-        ],
-      ]);
+  ///
+  /// [availableWidth] 用来给操作药丸设上限：**标题至少要留
+  /// [_titlePillMinWidth]**。没有这条约束时，操作药丸会先按自然宽度占位
+  /// （队列页的「5 个按钮 + 资源占用条」能吃掉 ~310dp），剩下的 Expanded 标题
+  /// 只剩两三个字符 —— 用户看到的「处理队列」变成「处理…」。其他主 Tab 页
+  /// （项目 / 配置库 / 设置）是同一套布局，同一处修完一起生效。
+  Widget _plainRow(double availableWidth) {
+    final double leadingWidth =
+        widget.leading == null ? 0.0 : MobileUi.pillHeight + _pillBarGap;
+    final double maxActions = availableWidth.isFinite
+        ? math.max(
+            MobileUi.pillHeight,
+            availableWidth - leadingWidth - _titlePillMinWidth - _pillBarGap,
+          )
+        : double.infinity;
+    return Row(children: [
+      Expanded(child: _leadingHalf()),
+      if (widget.actions.isNotEmpty) ...[
+        const SizedBox(width: _pillBarGap),
+        ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: maxActions),
+          // 操作真的放不下时由 _actionsPill 内部的 FittedBox 等比缩小，
+          // 而不是把标题压没。
+          child: _actionsPill(widget.actions),
+        ),
+      ],
+    ]);
+  }
 
   /// 放不下：右半只留「…」；展开后左半滑出、全部操作自右向左滑入。
   Widget _overflowRow() => Row(children: [
@@ -368,7 +391,7 @@ class _MobilePillBarLayoutState extends State<MobilePillBarLayout>
           focusNode: _focusNode,
           skipTraversal: true,
           onKeyEvent: _onKey,
-          child: overflow ? _overflowRow() : _plainRow(),
+          child: overflow ? _overflowRow() : _plainRow(constraints.maxWidth),
         ),
       );
     });

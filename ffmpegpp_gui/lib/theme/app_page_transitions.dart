@@ -78,6 +78,64 @@ class AppPageTransitionsBuilder extends PageTransitionsBuilder {
   }
 }
 
+/// 新页的位移因子（1 = 完全在屏幕外，0 = 归位）。
+///
+/// ⚠️ 必须区分动画方向。控制器在 push 时 0→1、pop 时 1→0：
+/// 如果一律写成 `1 - easeOut(value)`，pop 时会变成
+/// **先几乎不动、最后一下冲出去**（easeOut 在 v≈1 处斜率≈0）——
+/// 用户反馈的「返回速度非线性、一开始特别慢后续超级快」就是这一条。
+/// 反向时改走 `easeOut(1 - v)`，两个方向就都是「快起慢收」。
+double appEnterFactor(Animation<double> animation, Curve curve) {
+  final double v = animation.value.clamp(0.0, 1.0);
+  if (animation.status == AnimationStatus.reverse) {
+    return curve.transform((1.0 - v).clamp(0.0, 1.0));
+  }
+  return 1.0 - curve.transform(v);
+}
+
+/// 旧页视差因子（0 = 未位移，1 = 位移到位）。同样按方向取映射。
+double _appExitFactor(Animation<double> animation, Curve curve) {
+  final double v = animation.value.clamp(0.0, 1.0);
+  if (animation.status == AnimationStatus.reverse) {
+    return 1.0 - curve.transform((1.0 - v).clamp(0.0, 1.0));
+  }
+  return curve.transform(v);
+}
+
+/// 新页从右侧滑入（`fraction × 屏宽` → 0）。纯位移，不做任何 opacity。
+///
+/// 暴露出来是给 `smoothRoute` 复用：它是 `PageRouteBuilder` 自带
+/// transitionsBuilder，完全绕过 `pageTransitionsTheme`，只改主题的话
+/// 「项目页→编辑器」「容器详情」这些页面仍会走旧转场。
+class AppSlideInTransition extends StatelessWidget {
+  const AppSlideInTransition({
+    super.key,
+    required this.animation,
+    required this.child,
+    this.fraction = 0.06,
+    this.curve = Curves.easeOutCubic,
+  });
+
+  final Animation<double> animation;
+  final Widget child;
+  final double fraction;
+  final Curve curve;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: animation,
+      child: child,
+      builder: (context, child) {
+        final double f = appEnterFactor(animation, curve);
+        final double dx = f * fraction * MediaQuery.sizeOf(context).width;
+        if (dx.abs() < 0.01) return child!;
+        return Transform.translate(offset: Offset(dx, 0), child: child);
+      },
+    );
+  }
+}
+
 /// 新页位移（0 → 1 = 从右侧 `fraction × 屏宽` 滑到 0）。
 class _AppPageEnterTransition extends StatelessWidget {
   const _AppPageEnterTransition({
@@ -93,19 +151,12 @@ class _AppPageEnterTransition extends StatelessWidget {
   final Widget child;
 
   @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: animation,
-      // child 只建一次：整页子树不参与每帧重建，只有 Transform 在变。
-      child: child,
-      builder: (context, child) {
-        final double t = curve.transform(animation.value.clamp(0.0, 1.0));
-        final double dx = (1 - t) * fraction * MediaQuery.sizeOf(context).width;
-        if (dx.abs() < 0.01) return child!;
-        return Transform.translate(offset: Offset(dx, 0), child: child);
-      },
-    );
-  }
+  Widget build(BuildContext context) => AppSlideInTransition(
+    animation: animation,
+    fraction: fraction,
+    curve: curve,
+    child: child,
+  );
 }
 
 /// 旧页视差（0 → 1 = 从 0 左移到 `-fraction × 屏宽`）。不淡出。
@@ -128,8 +179,8 @@ class _AppPageExitTransition extends StatelessWidget {
       animation: animation,
       child: child,
       builder: (context, child) {
-        final double t = curve.transform(animation.value.clamp(0.0, 1.0));
-        final double dx = -t * fraction * MediaQuery.sizeOf(context).width;
+        final double f = _appExitFactor(animation, curve);
+        final double dx = -f * fraction * MediaQuery.sizeOf(context).width;
         if (dx.abs() < 0.01) return child!;
         return Transform.translate(offset: Offset(dx, 0), child: child);
       },

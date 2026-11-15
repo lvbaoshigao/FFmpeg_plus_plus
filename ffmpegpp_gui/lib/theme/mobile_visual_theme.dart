@@ -13,6 +13,14 @@ class MobileVisualTheme extends ThemeExtension<MobileVisualTheme> {
   double get chatInset => enabled ? 16 : 12;
   double bubbleRadius(double fallback) => enabled ? 20 : fallback;
 
+  /// 卡片 / 面板圆角。
+  ///
+  /// ZeroUI 的可见差异主要在「表面变中性 + 圆角整体变大一档」：
+  /// 中性表面在暗色下只差几个 RGB 点，光靠它用户会觉得「切了没反应」；
+  /// 圆角 16 → 22 是全站一眼能看出来的那部分。药丸不加（44 高的胶囊要
+  /// 保持正圆，半径一变大就变成圆角矩形）。
+  double cardRadius(double base) => enabled ? base + 6 : base;
+
   static MobileVisualTheme of(BuildContext context) =>
       Theme.of(context).extension<MobileVisualTheme>() ??
       const MobileVisualTheme();
