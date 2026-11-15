@@ -14,11 +14,11 @@ concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
 
-# 版本号只在这里改。原先 5.30.51 硬编码在 deb control ×2、DMG 名、tag、
+# 版本号只在这里改。原先 6.0.0-beta1 硬编码在 deb control ×2、DMG 名、tag、
 # Release 名共 5 处，改版本要逐处找，漏一处就出现「文件名 5.31 而包内
 # Version 仍是 5.30」的不一致。
 env:
-  APP_VERSION: '5.30.51'
+  APP_VERSION: '6.0.0-beta1'
 
 jobs:
   # ══════════════════════════════════════════
@@ -478,7 +478,7 @@ jobs:
 
           # Control file
           # 注意：heredoc 用不带引号的 EOF，${APP_VERSION} 才会被展开；
-          # 原先写死 5.30.51 且用 'EOF'，改版本时这里永远跟不上。
+          # 原先写死 6.0.0-beta1 且用 'EOF'，改版本时这里永远跟不上。
           cat > deb/DEBIAN/control << EOF
           Package: ffmpegpp
           Version: ${APP_VERSION}
@@ -548,7 +548,7 @@ jobs:
           mkdir -p deb/usr/share/icons/hicolor/256x256/apps
 
           # 注意：heredoc 用不带引号的 EOF，${APP_VERSION} 才会被展开；
-          # 原先写死 5.30.51 且用 'EOF'，改版本时这里永远跟不上。
+          # 原先写死 6.0.0-beta1 且用 'EOF'，改版本时这里永远跟不上。
           cat > deb/DEBIAN/control << EOF
           Package: ffmpegpp
           Version: ${APP_VERSION}
@@ -639,7 +639,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          # tag / Release 名统一取 env.APP_VERSION（原先两处各写一遍 5.30.51，
+          # tag / Release 名统一取 env.APP_VERSION（原先两处各写一遍 6.0.0-beta1，
           # 改版本时极易只改了一处，导致 tag 与产物版本号对不上）
           tag_name: ${{ env.APP_VERSION }}
           name: "Release ${{ env.APP_VERSION }}"
