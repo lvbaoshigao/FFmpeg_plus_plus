@@ -42,12 +42,6 @@ class AppPageTransitionsBuilder extends PageTransitionsBuilder {
   @override
   Duration get transitionDuration => const Duration(milliseconds: 280);
 
-  /// 新页入场曲线：起手快、收尾稳。
-  static const Curve _enterCurve = Curves.easeOutCubic;
-
-  /// 旧页视差曲线：与新页同向但更慢，形成层次。
-  static const Curve _exitCurve = Curves.easeOutCubic;
-
   /// 新页相对屏宽的起手位移（正 = 从右侧进入）。
   static const double _enterFraction = 0.06;
 
@@ -64,11 +58,9 @@ class AppPageTransitionsBuilder extends PageTransitionsBuilder {
   ) {
     final Widget content = _AppPageExitTransition(
       animation: secondaryAnimation,
-      curve: _exitCurve,
       fraction: _exitFraction,
       child: _AppPageEnterTransition(
         animation: animation,
-        curve: _enterCurve,
         fraction: _enterFraction,
         child: child,
       ),
@@ -78,29 +70,23 @@ class AppPageTransitionsBuilder extends PageTransitionsBuilder {
   }
 }
 
-/// 新页的位移因子（1 = 完全在屏幕外，0 = 归位）。
+/// 新页位移因子（1 = 完全在屏幕外，0 = 归位）。
 ///
-/// ⚠️ 必须区分动画方向。控制器在 push 时 0→1、pop 时 1→0：
-/// 如果一律写成 `1 - easeOut(value)`，pop 时会变成
-/// **先几乎不动、最后一下冲出去**（easeOut 在 v≈1 处斜率≈0）——
-/// 用户反馈的「返回速度非线性、一开始特别慢后续超级快」就是这一条。
-/// 反向时改走 `easeOut(1 - v)`，两个方向就都是「快起慢收」。
-double appEnterFactor(Animation<double> animation, Curve curve) {
-  final double v = animation.value.clamp(0.0, 1.0);
-  if (animation.status == AnimationStatus.reverse) {
-    return curve.transform((1.0 - v).clamp(0.0, 1.0));
-  }
-  return 1.0 - curve.transform(v);
-}
+/// **线性**，且只依赖 `animation.value`，不区分动画方向。
+///
+/// 前一版按 `animation.status` 取向（push 用 `1 - easeOut(v)`、pop 用
+/// `easeOut(1 - v)`），本意是让两个方向都「快起慢收」，但在**预测式返回**上翻车：
+/// 手势拖动期间路由 animation 的 status 仍是 `completed`（只有松手 commit 后才
+/// 切成 reverse），于是 commit 那一帧因子从 `1 - v` 跳到 `easeOut(1 - v)` ——
+/// 画面先抖一下/突然消失，再弹回上一级（用户反馈「到 15% 动画突然消失，随后
+/// 返回上一级」）。线性 + 只读 value 之后，手指拖多少页面就走多少，
+/// 手势、程序化 push/pop 全部同一映射。
+double appEnterFactor(Animation<double> animation) =>
+    1.0 - animation.value.clamp(0.0, 1.0);
 
-/// 旧页视差因子（0 = 未位移，1 = 位移到位）。同样按方向取映射。
-double _appExitFactor(Animation<double> animation, Curve curve) {
-  final double v = animation.value.clamp(0.0, 1.0);
-  if (animation.status == AnimationStatus.reverse) {
-    return 1.0 - curve.transform((1.0 - v).clamp(0.0, 1.0));
-  }
-  return curve.transform(v);
-}
+/// 旧页视差因子（0 = 未位移，1 = 位移到位）。同为线性、不区分方向。
+double _appExitFactor(Animation<double> animation) =>
+    animation.value.clamp(0.0, 1.0);
 
 /// 新页从右侧滑入（`fraction × 屏宽` → 0）。纯位移，不做任何 opacity。
 ///
@@ -113,13 +99,11 @@ class AppSlideInTransition extends StatelessWidget {
     required this.animation,
     required this.child,
     this.fraction = 0.06,
-    this.curve = Curves.easeOutCubic,
   });
 
   final Animation<double> animation;
   final Widget child;
   final double fraction;
-  final Curve curve;
 
   @override
   Widget build(BuildContext context) {
@@ -127,7 +111,7 @@ class AppSlideInTransition extends StatelessWidget {
       animation: animation,
       child: child,
       builder: (context, child) {
-        final double f = appEnterFactor(animation, curve);
+        final double f = appEnterFactor(animation);
         final double dx = f * fraction * MediaQuery.sizeOf(context).width;
         if (dx.abs() < 0.01) return child!;
         return Transform.translate(offset: Offset(dx, 0), child: child);
@@ -140,36 +124,28 @@ class AppSlideInTransition extends StatelessWidget {
 class _AppPageEnterTransition extends StatelessWidget {
   const _AppPageEnterTransition({
     required this.animation,
-    required this.curve,
     required this.fraction,
     required this.child,
   });
 
   final Animation<double> animation;
-  final Curve curve;
   final double fraction;
   final Widget child;
 
   @override
-  Widget build(BuildContext context) => AppSlideInTransition(
-    animation: animation,
-    fraction: fraction,
-    curve: curve,
-    child: child,
-  );
+  Widget build(BuildContext context) =>
+      AppSlideInTransition(animation: animation, fraction: fraction, child: child);
 }
 
 /// 旧页视差（0 → 1 = 从 0 左移到 `-fraction × 屏宽`）。不淡出。
 class _AppPageExitTransition extends StatelessWidget {
   const _AppPageExitTransition({
     required this.animation,
-    required this.curve,
     required this.fraction,
     required this.child,
   });
 
   final Animation<double> animation;
-  final Curve curve;
   final double fraction;
   final Widget child;
 
@@ -179,7 +155,7 @@ class _AppPageExitTransition extends StatelessWidget {
       animation: animation,
       child: child,
       builder: (context, child) {
-        final double f = _appExitFactor(animation, curve);
+        final double f = _appExitFactor(animation);
         final double dx = -f * fraction * MediaQuery.sizeOf(context).width;
         if (dx.abs() < 0.01) return child!;
         return Transform.translate(offset: Offset(dx, 0), child: child);

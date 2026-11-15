@@ -38,9 +38,9 @@ import org.json.JSONObject
  *    `notify()` 不抛异常也不显示，旧实现直接 notify 后返回 true，UI 以为发成功。
  * 3. **岛 JSON 结构改正**：旧实现的 `bigIslandArea` / `smallIslandArea` 里直接平铺
  *    `pic` / `title` / `content`，而模板要求的是**分区对象**
- *    （`imageTextInfoLeft.picInfo` + `miui.focus.paramtextInfo`）。字段不匹配时系统
- *    的行为是**整条丢弃**而不是降级 —— 这是「开了岛也什么都不显示」的直接原因。
- *    另外补上必填的 `business`，以及更新类通知需要的 `updatable`。
+ *    （`imageTextInfoLeft.picInfo` + `textInfo`；注意不是 `miui.focus.paramtextInfo`）。
+ *    字段不匹配时系统的行为是**整条丢弃**而不是降级 —— 这是「开了岛也什么都不显示」
+ *    的直接原因。另外补上必填的 `business`，以及更新类通知需要的 `updatable`。
  * 4. **图标走 miui.focus.pics**：`pic` 里写的 key 必须在 `miui.focus.pics` 里注册过，
  *    否则图标区域空白；这里注册应用自己的通知图标。
  */
@@ -441,26 +441,37 @@ object HyperOsIsland {
     /**
      * 组装 `miui.focus.param`。
      *
-     * 结构严格按官方「基础数据构建」：
+     * 结构严格按官方《基础数据构建》+《模板库》第四部分（摘要态）：
      * ```
      * param_v2 {
      *   protocol / business(必填) / updatable / islandFirstFloat / enableFloat /
      *   timeout / ticker / aodTitle
      *   param_island {
      *     islandProperty / islandTimeout / dismissIsland / highlightColor
-     *     bigIslandArea {                      // 分区对象，不是平铺字段
-     *       imageTextInfoLeft { type, picInfo{type,pic}, miui.focus.paramtextInfo{...} }
-     *       picInfo { type, pic }
+     *     bigIslandArea {                       // 摘要态大岛：A 区 + B 区
+     *       imageTextInfoLeft {                 // A 区：图文组件 1
+     *         type, picInfo{type,pic},
+     *         textInfo{frontTitle,title,content,narrowFont,showHighlightColor}
+     *       }
+     *       progressTextInfo {                  // B 区：进度文本组件（仅进度卡）
+     *         progressInfo{progress,colorReach}, textInfo{...}
+     *       }
      *     }
-     *     smallIslandArea { picInfo { type, pic } }
+     *     smallIslandArea {                     // 摘要态小岛
+     *       combinePicInfo {                    // 有进度时：图标 + 外圈环形进度
+     *         picInfo{type,pic},
+     *         progressInfo{progress,colorReach,colorUnReach,isCCW}
+     *       }                                   // 无进度时退化为 picInfo
+     *     }
      *   }
-     *   baseInfo { type, title, content }      // 焦点通知展开态
+     *   baseInfo { type, title, content }       // 焦点通知展开态
      * }
      * ```
      *
-     * 旧实现把 `pic` / `title` / `content` 直接塞进 `bigIslandArea`，系统认不出
-     * 任何模板分区，于是**整条通知被丢弃**（不是降级）—— 这就是「开了超级岛
-     * 也什么都不显示」的根因。
+     * ⚠️ 摘要态**没有** `miui.focus.paramtextInfo` 这个 key —— 那是《开发指南》
+     * 里展开态示例的写法，套到 `imageTextInfoLeft` 里系统认不出来，大岛就只剩
+     * 一个图标。摘要态的文本字段名也不同：`showHighlightColor`（不是
+     * `useHighLight`）。
      */
     private fun islandJson(
         business: String,
@@ -477,37 +488,77 @@ object HyperOsIsland {
     ): String {
         fun picInfo(): JSONObject = JSONObject().put("type", 1).put("pic", iconKey)
 
-        val line = JSONObject()
+        val pct = progress?.coerceIn(0, 100)
+
+        // ── 大岛（摘要态）A 区：图文组件 1 ─────────────────────────────────
+        //
+        // 结构是 imageTextInfoLeft{ type, picInfo, textInfo }，**不是**
+        // `miui.focus.paramtextInfo`（那个 key 只出现在《开发指南》的展开态示例里，
+        // 摘要态用它会认不出来 → 大岛只剩一个图标）。字段名同理：
+        // 摘要态 textInfo 用 `showHighlightColor`，不是 `useHighLight`。
+        val aZone = JSONObject()
             .put("type", 1)
             .put("picInfo", picInfo())
             .put(
-                "miui.focus.paramtextInfo",
+                "textInfo",
                 JSONObject()
                     .put("frontTitle", frontTitle)
                     .put("title", title)
                     .put("content", content)
-                    .put("useHighLight", false),
+                    .put("narrowFont", false)
+                    .put("showHighlightColor", true),
             )
 
-        val bigArea = JSONObject()
-            .put("imageTextInfoLeft", line)
-            .put("picInfo", picInfo())
+        val bigArea = JSONObject().put("imageTextInfoLeft", aZone)
 
-        // 进度组件 2（纯净版进度条）：只传 progress + 起止颜色，**不传任何 picXXX**
-        // 图标字段 —— 一旦带上 picForward/picMiddle/picEnd，就变成「带实体图形的
-        // 进度组件 1」（外卖/打车那种带运动实体的语义），观感与含义都跑偏。
-        // 见《小米超级岛模板库》3.8。
-        if (progress != null) {
+        // ── 大岛 B 区：进度文本组件（文本 + 线性进度条）─────────────────────
+        //
+        // 模板库 4.1 的 B 区可用组件里有 `progressTextInfo`（文本 + 环形/线性进度），
+        // 这才是「大岛上加进度条」的正确位置；把 `progressInfo` 直接平铺进
+        // bigIslandArea 不是合法 B 区成员（上一版就是这么写的，所以看不到条）。
+        if (pct != null) {
             bigArea.put(
-                "progressInfo",
+                "progressTextInfo",
                 JSONObject()
-                    .put("progress", progress.coerceIn(0, 100))
-                    .put("colorProgress", HIGHLIGHT)
-                    .put("colorProgressEnd", HIGHLIGHT),
+                    .put(
+                        "progressInfo",
+                        JSONObject()
+                            .put("progress", pct)
+                            .put("colorReach", HIGHLIGHT),
+                    )
+                    .put(
+                        "textInfo",
+                        JSONObject()
+                            .put("frontTitle", "")
+                            .put("title", "$pct%")
+                            .put("content", "")
+                            .put("showHighlightColor", false),
+                    ),
             )
         }
 
-        val smallArea = JSONObject().put("picInfo", picInfo())
+        // ── 小岛（摘要态）：进度用「图标 + 外圈环形进度」───────────────────
+        //
+        // combinePicInfo 是小岛唯一能表达进度的组件（模板库 4.3）：
+        // 图标周围一圈环形进度，会随每次 updatable 更新实时变化。
+        // 只给 picInfo 时小岛恒定只有图标，这就是「小岛看不到百分比」的原因。
+        val smallArea = if (pct != null) {
+            JSONObject().put(
+                "combinePicInfo",
+                JSONObject()
+                    .put("picInfo", picInfo())
+                    .put(
+                        "progressInfo",
+                        JSONObject()
+                            .put("progress", pct)
+                            .put("colorReach", HIGHLIGHT)
+                            .put("colorUnReach", "#33FFFFFF")
+                            .put("isCCW", false),
+                    ),
+            )
+        } else {
+            JSONObject().put("picInfo", picInfo())
+        }
 
         val island = JSONObject()
             .put("islandProperty", 1) // 1 = 信息展示为主
@@ -517,6 +568,7 @@ object HyperOsIsland {
             .put("bigIslandArea", bigArea)
             .put("smallIslandArea", smallArea)
 
+        // 展开态（焦点通知）：文本组件 2。
         val baseInfo = JSONObject()
             .put("type", 2)
             .put("title", title)
