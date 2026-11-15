@@ -58,6 +58,8 @@ The Projects page is the entry point: the sidebar switches between Projects / Qu
 Config Library / Settings. Media appears as cards with drag-and-drop import, thumbnail previews and
 automatic ffprobe detection (codec, resolution, duration, bitrate). From a selected file you can open
 the node editor, apply a quick-config preset, and every processing job lands in the shared queue.
+Use a file card’s **More → Apply saved configuration** menu to reuse a compatible node or quick-config
+preset for video, audio or images. Applying changes only that file’s pipeline; enqueue it separately when ready.
 
 ### Node Editor
 

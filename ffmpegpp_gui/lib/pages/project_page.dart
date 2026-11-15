@@ -40,9 +40,31 @@ class ProjectPage extends StatefulWidget {
 }
 
 class ProjectPageState extends State<ProjectPage> {
-  static const _videoExts = ['mp4', 'avi', 'mkv', 'mov', 'flv', 'wmv', 'webm', 'm4v', 'mpg', 'mpeg', '3gp', 'ts', 'm2ts'];
+  static const _videoExts = [
+    'mp4',
+    'avi',
+    'mkv',
+    'mov',
+    'flv',
+    'wmv',
+    'webm',
+    'm4v',
+    'mpg',
+    'mpeg',
+    '3gp',
+    'ts',
+    'm2ts',
+  ];
   static final _audioExts = kAudioExts.toList();
-  static const _imageExts = ['png', 'jpg', 'jpeg', 'bmp', 'webp', 'tiff', 'tif'];
+  static const _imageExts = [
+    'png',
+    'jpg',
+    'jpeg',
+    'bmp',
+    'webp',
+    'tiff',
+    'tif',
+  ];
   static final _exts = [..._videoExts, ..._audioExts, ..._imageExts];
 
   String _searchQuery = '';
@@ -50,10 +72,9 @@ class ProjectPageState extends State<ProjectPage> {
   final Set<String> _selectedIds = {};
   final Set<String> _selectedContainerIds = {};
   bool _dragging = false;
+
   /// 移动端多选模式：长按单个项目进入，选中项高亮（左侧不再常驻复选框）。
   bool _selectionMode = false;
-
-
 
   void _enterSelectionMode() {
     if (_selectionMode) return;
@@ -70,7 +91,9 @@ class ProjectPageState extends State<ProjectPage> {
 
   /// 多选模式下若已无任何选中项，自动退出多选界面。
   void _refreshSelectionMode() {
-    if (_selectionMode && _selectedIds.isEmpty && _selectedContainerIds.isEmpty) {
+    if (_selectionMode &&
+        _selectedIds.isEmpty &&
+        _selectedContainerIds.isEmpty) {
       _selectionMode = false;
     }
   }
@@ -82,7 +105,9 @@ class ProjectPageState extends State<ProjectPage> {
         if (!_selectedIds.remove(v.id)) _selectedIds.add(v.id);
       }
       for (final c in state.containers) {
-        if (!_selectedContainerIds.remove(c.id)) _selectedContainerIds.add(c.id);
+        if (!_selectedContainerIds.remove(c.id)) {
+          _selectedContainerIds.add(c.id);
+        }
       }
       _refreshSelectionMode();
     });
@@ -126,16 +151,15 @@ class ProjectPageState extends State<ProjectPage> {
     if (mounted && _dragging) setState(() => _dragging = false);
     // Use the basename's final extension: paths may contain dots in parent
     // directories, and extension-less paths must not be mistaken for media.
-    final paths = details.files
-        .map((file) => file.path)
-        .where((path) {
-          final normalizedPath = path.replaceAll('\\', '/');
-          final name = normalizedPath.substring(normalizedPath.lastIndexOf('/') + 1);
-          final dot = name.lastIndexOf('.');
-          if (dot <= 0 || dot == name.length - 1) return false;
-          return _exts.contains(name.substring(dot + 1).toLowerCase());
-        })
-        .toList();
+    final paths = details.files.map((file) => file.path).where((path) {
+      final normalizedPath = path.replaceAll('\\', '/');
+      final name = normalizedPath.substring(
+        normalizedPath.lastIndexOf('/') + 1,
+      );
+      final dot = name.lastIndexOf('.');
+      if (dot <= 0 || dot == name.length - 1) return false;
+      return _exts.contains(name.substring(dot + 1).toLowerCase());
+    }).toList();
     if (paths.isNotEmpty && mounted) {
       context.read<AppState>().addVideos(paths);
     }
@@ -159,130 +183,209 @@ class ProjectPageState extends State<ProjectPage> {
         final query = _searchQuery.trim().toLowerCase();
         final videos = query.isEmpty
             ? state.videos
-            : state.videos.where((v) => v.filename.toLowerCase().contains(query)).toList();
+            : state.videos
+                  .where((v) => v.filename.toLowerCase().contains(query))
+                  .toList();
 
         return Scaffold(
           backgroundColor: Colors.transparent,
-          body: Stack(children: [
-            // 全屏可滚动的内容（移动端顶部留出药丸空间）
-            if (isMobilePlatform)
-              Padding(
-                padding: EdgeInsets.only(top: MobileUi.pageTopPadding(context)),
-                child: _buildBody(context, state, videos, s, clr, scheme),
-              )
-            else
-              Column(children: [
-                GlassTopBar(
-                  title: _searchVisible
-                      ? TextField(
-                          autofocus: true,
-                          style: TextStyle(fontSize: 14, color: scheme.onSurface),
-                          decoration: InputDecoration(
-                            hintText: s.searchVideos,
-                            hintStyle: TextStyle(color: scheme.outline, fontSize: 14),
-                            border: InputBorder.none,
-                            prefixIcon: Icon(Icons.search, size: 18, color: scheme.outline),
-                            prefixIconConstraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+          body: Stack(
+            children: [
+              // 全屏可滚动的内容（移动端顶部留出药丸空间）
+              if (isMobilePlatform)
+                Padding(
+                  padding: EdgeInsets.only(
+                    top: MobileUi.pageTopPadding(context),
+                  ),
+                  child: _buildBody(context, state, videos, s, clr, scheme),
+                )
+              else
+                Column(
+                  children: [
+                    GlassTopBar(
+                      title: _searchVisible
+                          ? TextField(
+                              autofocus: true,
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: scheme.onSurface,
+                              ),
+                              decoration: InputDecoration(
+                                hintText: s.searchVideos,
+                                hintStyle: TextStyle(
+                                  color: scheme.outline,
+                                  fontSize: 14,
+                                ),
+                                border: InputBorder.none,
+                                prefixIcon: Icon(
+                                  Icons.search,
+                                  size: 18,
+                                  color: scheme.outline,
+                                ),
+                                prefixIconConstraints: const BoxConstraints(
+                                  minWidth: 36,
+                                  minHeight: 36,
+                                ),
+                              ),
+                              onChanged: (v) =>
+                                  setState(() => _searchQuery = v),
+                            )
+                          : Text(s.navProjects),
+                      actions: [
+                        IconButton(
+                          icon: Icon(
+                            _searchVisible ? Icons.close : Icons.search,
+                            size: 20,
                           ),
-                          onChanged: (v) => setState(() => _searchQuery = v),
-                        )
-                      : Text(s.navProjects),
-                  actions: [
-                    IconButton(
-                      icon: Icon(_searchVisible ? Icons.close : Icons.search, size: 20),
-                      tooltip: _searchVisible ? s.close : s.search,
-                      onPressed: () => setState(() {
-                        _searchVisible = !_searchVisible;
-                        if (!_searchVisible) _searchQuery = '';
-                      }),
-                    ),
-                    if (state.videos.isNotEmpty || state.containers.isNotEmpty)
-                      IconButton(
-                        icon: Icon(
-                          _selectedIds.length == state.videos.length && _selectedContainerIds.length == state.containers.length
-                              ? Icons.deselect : Icons.select_all,
-                          size: 20,
+                          tooltip: _searchVisible ? s.close : s.search,
+                          onPressed: () => setState(() {
+                            _searchVisible = !_searchVisible;
+                            if (!_searchVisible) _searchQuery = '';
+                          }),
                         ),
-                        tooltip: _selectedIds.isEmpty && _selectedContainerIds.isEmpty ? s.selectAll : s.deselectAll,
-                        onPressed: () => setState(() {
-                          if (_selectedIds.length == state.videos.length && _selectedContainerIds.length == state.containers.length) {
-                            _selectedIds.clear();
-                            _selectedContainerIds.clear();
-                          } else {
-                            _selectedIds.addAll(state.videos.map((v) => v.id));
-                            _selectedContainerIds.addAll(state.containers.map((c) => c.id));
-                          }
-                        }),
-                      ),
-                    if (_selectedIds.isNotEmpty || _selectedContainerIds.isNotEmpty)
-                      IconButton(
-                        icon: Icon(Icons.delete_outline, size: 20, color: scheme.error),
-                        tooltip: s.deleteSelected,
-                        onPressed: () => _deleteSelected(state),
-                      ),
-                    IconButton(
-                      icon: const Icon(Icons.file_download_outlined, size: 20),
-                      tooltip: s.isZh ? '导入配置' : 'Import Config',
-                      onPressed: state.videos.isEmpty ? null : () => _importConfig(state, s),
-                    ),
-                    // 圆形图标按钮：新建容器（主题色描边玻璃圆底）+ 添加文件（主色圆底），无文字
-                    if (state.config.editMode != 1) ...[
-                      const SizedBox(width: 6),
-                      Tooltip(
-                        message: s.container,
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(20),
-                          onTap: () => _showContainerMenu(context, state, s),
-                          child: Container(
-                            width: 40, height: 40,
-                            decoration: BoxDecoration(
-                              color: scheme.primaryContainer.withAlpha(160),
-                              shape: BoxShape.circle,
-                              border: Border.all(color: scheme.primary.withAlpha(90), width: 1.2),
+                        if (state.videos.isNotEmpty ||
+                            state.containers.isNotEmpty)
+                          IconButton(
+                            icon: Icon(
+                              _selectedIds.length == state.videos.length &&
+                                      _selectedContainerIds.length ==
+                                          state.containers.length
+                                  ? Icons.deselect
+                                  : Icons.select_all,
+                              size: 20,
                             ),
-                            child: Icon(Icons.create_new_folder_outlined, size: 18, color: scheme.primary),
+                            tooltip:
+                                _selectedIds.isEmpty &&
+                                    _selectedContainerIds.isEmpty
+                                ? s.selectAll
+                                : s.deselectAll,
+                            onPressed: () => setState(() {
+                              if (_selectedIds.length == state.videos.length &&
+                                  _selectedContainerIds.length ==
+                                      state.containers.length) {
+                                _selectedIds.clear();
+                                _selectedContainerIds.clear();
+                              } else {
+                                _selectedIds.addAll(
+                                  state.videos.map((v) => v.id),
+                                );
+                                _selectedContainerIds.addAll(
+                                  state.containers.map((c) => c.id),
+                                );
+                              }
+                            }),
+                          ),
+                        if (_selectedIds.isNotEmpty ||
+                            _selectedContainerIds.isNotEmpty)
+                          IconButton(
+                            icon: Icon(
+                              Icons.delete_outline,
+                              size: 20,
+                              color: scheme.error,
+                            ),
+                            tooltip: s.deleteSelected,
+                            onPressed: () => _deleteSelected(state),
+                          ),
+                        IconButton(
+                          icon: const Icon(
+                            Icons.file_download_outlined,
+                            size: 20,
+                          ),
+                          tooltip: s.isZh ? '导入配置' : 'Import Config',
+                          onPressed: state.videos.isEmpty
+                              ? null
+                              : () => _importConfig(state, s),
+                        ),
+                        // 圆形图标按钮：新建容器（主题色描边玻璃圆底）+ 添加文件（主色圆底），无文字
+                        if (state.config.editMode != 1) ...[
+                          const SizedBox(width: 6),
+                          Tooltip(
+                            message: s.container,
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(20),
+                              onTap: () =>
+                                  _showContainerMenu(context, state, s),
+                              child: Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  color: scheme.primaryContainer.withAlpha(160),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: scheme.primary.withAlpha(90),
+                                    width: 1.2,
+                                  ),
+                                ),
+                                child: Icon(
+                                  Icons.create_new_folder_outlined,
+                                  size: 18,
+                                  color: scheme.primary,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                        const SizedBox(width: 10),
+                        Tooltip(
+                          message: s.addVideo,
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(20),
+                            onTap: () => _pick(state),
+                            child: Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                color: scheme.primary,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: scheme.primary.withAlpha(90),
+                                  width: 1.2,
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: scheme.primary.withAlpha(90),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
+                              ),
+                              child: Icon(
+                                Icons.add,
+                                size: 24,
+                                color: scheme.onPrimary,
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                    ],
-                    const SizedBox(width: 10),
-                    Tooltip(
-                      message: s.addVideo,
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(20),
-                        onTap: () => _pick(state),
-                        child: Container(
-                          width: 40, height: 40,
-                          decoration: BoxDecoration(
-                            color: scheme.primary,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: scheme.primary.withAlpha(90), width: 1.2),
-                            boxShadow: [BoxShadow(color: scheme.primary.withAlpha(90), blurRadius: 8, offset: const Offset(0, 2))],
-                          ),
-                          child: Icon(Icons.add, size: 24, color: scheme.onPrimary),
+                      ],
+                    ),
+                    Expanded(
+                      child: DropTarget(
+                        onDragDone: _onDrop,
+                        onDragEntered: (_) => setState(() => _dragging = true),
+                        onDragExited: (_) => setState(() => _dragging = false),
+                        child: _buildBody(
+                          context,
+                          state,
+                          videos,
+                          s,
+                          clr,
+                          scheme,
                         ),
                       ),
                     ),
                   ],
                 ),
-                Expanded(
-                  child: DropTarget(
-                    onDragDone: _onDrop,
-                    onDragEntered: (_) => setState(() => _dragging = true),
-                    onDragExited: (_) => setState(() => _dragging = false),
-                    child: _buildBody(context, state, videos, s, clr, scheme),
-                  ),
+              // 移动端顶栏浮层（不影响滚动）
+              if (isMobilePlatform)
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: _buildMobileTopBar(context, state, s, scheme, clr),
                 ),
-              ]),
-            // 移动端顶栏浮层（不影响滚动）
-            if (isMobilePlatform)
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: _buildMobileTopBar(context, state, s, scheme, clr),
-              ),
-          ]),
+            ],
+          ),
         );
       },
     );
@@ -292,27 +395,39 @@ class ProjectPageState extends State<ProjectPage> {
   /// 左标题药丸（多选时变成「已选 N 项 + 关闭」）+ 右动作药丸；
   /// 搜索时标题/动作层整体淡出缩放，同一颗搜索药丸「变长」到 200px 并居中。
   Widget _buildMobileTopBar(
-      BuildContext context, AppState state, AppStrings s, ColorScheme scheme, Color clr) {
+    BuildContext context,
+    AppState state,
+    AppStrings s,
+    ColorScheme scheme,
+    Color clr,
+  ) {
     final inSelection = _selectionMode;
     final selectedCount = _selectedIds.length + _selectedContainerIds.length;
 
     final Widget titleChild = inSelection
-        ? Row(mainAxisSize: MainAxisSize.min, children: [
-            Flexible(
-              child: Text(
-                '${s.isZh ? '已选' : 'Selected'} $selectedCount ${s.isZh ? '项' : 'items'}',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface),
+        ? Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Text(
+                  '${s.isZh ? '已选' : 'Selected'} $selectedCount ${s.isZh ? '项' : 'items'}',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.onSurface,
+                  ),
+                ),
               ),
-            ),
-            const SizedBox(width: 6),
-            // 关闭多选：统一使用 34×34 圆形动作按钮（与主界面一致）
-            MobileGlassPillAction(
-              icon: Icons.close,
-              tooltip: s.isZh ? '退出多选' : 'Exit selection',
-              color: scheme.onSurfaceVariant,
-              onTap: _exitSelectionMode,
-            ),
-          ])
+              const SizedBox(width: 6),
+              // 关闭多选：统一使用 34×34 圆形动作按钮（与主界面一致）
+              MobileGlassPillAction(
+                icon: Icons.close,
+                tooltip: s.isZh ? '退出多选' : 'Exit selection',
+                color: scheme.onSurfaceVariant,
+                onTap: _exitSelectionMode,
+              ),
+            ],
+          )
         : Text(s.navProjects);
 
     return MobilePillTopBar(
@@ -339,8 +454,13 @@ class ProjectPageState extends State<ProjectPage> {
   /// 移动端顶栏右侧动作（长药丸内）：多选=全选/反选/删除；普通=搜索/导入/容器/添加。
   /// 全部使用统一的 [MobileGlassPillAction]（34×34 圆形、透明涟漪），
   /// 取代此前本页私有 _pillAction（各页各写一份，尺寸/内边距却各不相同）。
-  List<Widget> _buildMobileActions(BuildContext context, AppState state, AppStrings s,
-      ColorScheme scheme, bool inSelection) {
+  List<Widget> _buildMobileActions(
+    BuildContext context,
+    AppState state,
+    AppStrings s,
+    ColorScheme scheme,
+    bool inSelection,
+  ) {
     if (inSelection) {
       return [
         MobileGlassPillAction(
@@ -367,7 +487,6 @@ class ProjectPageState extends State<ProjectPage> {
       ];
     }
     return [
-
       MobileGlassPillAction(
         icon: Icons.search,
         tooltip: s.search,
@@ -384,9 +503,13 @@ class ProjectPageState extends State<ProjectPage> {
         tooltip: s.isZh ? '导入配置' : 'Import Config',
         color: scheme.onSurface,
         onTap: state.videos.isEmpty
-            ? () => showToast(context,
-                s.isZh ? '请先用「+」添加文件，再导入配置并应用' : 'Add files with "+" first, then import a config to apply',
-                type: ToastType.info)
+            ? () => showToast(
+                context,
+                s.isZh
+                    ? '请先用「+」添加文件，再导入配置并应用'
+                    : 'Add files with "+" first, then import a config to apply',
+                type: ToastType.info,
+              )
             : () => _importConfig(state, s),
       ),
       if (state.config.editMode != 1)
@@ -407,21 +530,48 @@ class ProjectPageState extends State<ProjectPage> {
     ];
   }
 
-  Widget _buildBody(BuildContext context, AppState state, List videos, AppStrings s, Color clr, ColorScheme scheme) {
+  Widget _buildBody(
+    BuildContext context,
+    AppState state,
+    List videos,
+    AppStrings s,
+    Color clr,
+    ColorScheme scheme,
+  ) {
     // 探测进度提示：导入大文件时 ffprobe 可能要数十秒，
     // 顶部贴一个明显的"探测中"提示，避免用户以为卡死而关掉 app 触发 ANR。
     final probingBanner = state.probingVideos && !_dragging
-        ? _ProbingBanner(text: s.probingVideo, hint: s.probingHint, scheme: scheme)
+        ? _ProbingBanner(
+            text: s.probingVideo,
+            hint: s.probingHint,
+            scheme: scheme,
+          )
         : null;
 
     if (_dragging) {
       return Container(
         color: scheme.primary.withAlpha(30),
-        child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Icon(Icons.cloud_upload_outlined, size: 64, color: scheme.primary),
-          const SizedBox(height: 16),
-          Text(s.dropToAdd, style: TextStyle(fontSize: 18, color: scheme.primary, fontWeight: FontWeight.w600)),
-        ])),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.cloud_upload_outlined,
+                size: 64,
+                color: scheme.primary,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                s.dropToAdd,
+                style: TextStyle(
+                  fontSize: 18,
+                  color: scheme.primary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
       );
     }
 
@@ -431,142 +581,210 @@ class ProjectPageState extends State<ProjectPage> {
           constraints: const BoxConstraints(maxWidth: 420),
           child: Padding(
             padding: const EdgeInsets.all(28),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              // 用户要求：空状态只保留媒体图标，不要主题色矩形底/描边。
-              Icon(
-                Icons.movie_creation_outlined,
-                size: 56,
-                color: scheme.primary,
-              ),
-              const SizedBox(height: 24),
-              Text(s.noVideos, textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
-              const SizedBox(height: 8),
-              Text(s.clickAdd, textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: clr)),
-              if (!isMobilePlatform) ...[
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // 用户要求：空状态只保留媒体图标，不要主题色矩形底/描边。
+                Icon(
+                  Icons.movie_creation_outlined,
+                  size: 56,
+                  color: scheme.primary,
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  s.noVideos,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                ),
                 const SizedBox(height: 8),
-                Text(s.dragDropHint, textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: clr.withAlpha(170))),
+                Text(
+                  s.clickAdd,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(color: clr),
+                ),
+                if (!isMobilePlatform) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    s.dragDropHint,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: clr.withAlpha(170)),
+                  ),
+                ],
+                const SizedBox(height: 22),
+                FilledButton.icon(
+                  onPressed: () => _pick(state),
+                  icon: const Icon(Icons.add),
+                  label: Text(s.addVideo),
+                ),
               ],
-              const SizedBox(height: 22),
-              FilledButton.icon(
-                onPressed: () => _pick(state),
-                icon: const Icon(Icons.add),
-                label: Text(s.addVideo),
-              ),
-            ]),
+            ),
           ),
         ),
       );
     }
 
     final standalone = state.standaloneVideos;
-    final filteredStandalone = _searchQuery.isEmpty ? standalone
-        : standalone.where((v) => v.filename.toLowerCase().contains(_searchQuery.toLowerCase())).toList();
+    final filteredStandalone = _searchQuery.isEmpty
+        ? standalone
+        : standalone
+              .where(
+                (v) => v.filename.toLowerCase().contains(
+                  _searchQuery.toLowerCase(),
+                ),
+              )
+              .toList();
     final containerCount = state.containers.length;
     final totalCount = containerCount + filteredStandalone.length;
 
     if (totalCount == 0 && _searchQuery.isNotEmpty) {
-      return Center(child: Text(s.noMatch, style: TextStyle(fontSize: 14, color: clr)));
+      return Center(
+        child: Text(s.noMatch, style: TextStyle(fontSize: 14, color: clr)),
+      );
     }
 
-    return Column(children: [
-      ?probingBanner,
-      Expanded(child: ListView.builder(
-        // 开窗卡所在列表必须关：子项若被自动套上 RepaintBoundary，
-        // 滚动时会直接复用旧图层平移，卡内壁纸跟着卡走（见 app_card 的
-        // _WallpaperWindowPainter）。
-        addRepaintBoundaries: false,
-        // 移动端走统一内边距令牌（左右 8 + 底部按菜单栏位置让出：底部悬浮胶囊
-        // 让出 96px，左右竖排导轨只留 20px）；桌面端保持 16
-        padding: isMobilePlatform
-            ? MobileUi.mainListPadding(
-                top: probingBanner != null ? 4 : 16,
-                placement: MobileNavPlacementScope.of(context))
-            : EdgeInsets.fromLTRB(16, probingBanner != null ? 4 : 16, 16, 16),
-        itemCount: totalCount,
-        itemBuilder: (_, i) {
-        if (i < containerCount) {
-          final c = state.containers[i];
-          final isSelected = _selectedContainerIds.contains(c.id);
-          if (!isMobilePlatform) {
-            return Row(children: [
-              Checkbox(
-                value: isSelected,
-                onChanged: (v) => setState(() {
-                  if (v == true) { _selectedContainerIds.add(c.id); }
-                  else { _selectedContainerIds.remove(c.id); }
-                }),
-                visualDensity: VisualDensity.compact,
-              ),
-              Expanded(child: ContainerCard(container: c)),
-            ]);
-          }
-          return _mobileSelectableItem(
-            isSelected: isSelected,
-            scheme: scheme,
-            onLongPress: () {
-              _enterSelectionMode();
-              setState(() => _selectedContainerIds.add(c.id));
-            },
-            onTap: () {
-              if (_selectionMode) {
-                setState(() {
-                  if (!_selectedContainerIds.remove(c.id)) _selectedContainerIds.add(c.id);
-                  _refreshSelectionMode();
-                });
+    return Column(
+      children: [
+        ?probingBanner,
+        Expanded(
+          child: ListView.builder(
+            // 开窗卡所在列表必须关：子项若被自动套上 RepaintBoundary，
+            // 滚动时会直接复用旧图层平移，卡内壁纸跟着卡走（见 app_card 的
+            // _WallpaperWindowPainter）。
+            addRepaintBoundaries: false,
+            // 移动端走统一内边距令牌（左右 8 + 底部按菜单栏位置让出：底部悬浮胶囊
+            // 让出 96px，左右竖排导轨只留 20px）；桌面端保持 16
+            padding: isMobilePlatform
+                ? MobileUi.mainListPadding(
+                    top: probingBanner != null ? 4 : 16,
+                    placement: MobileNavPlacementScope.of(context),
+                  )
+                : EdgeInsets.fromLTRB(
+                    16,
+                    probingBanner != null ? 4 : 16,
+                    16,
+                    16,
+                  ),
+            itemCount: totalCount,
+            itemBuilder: (_, i) {
+              if (i < containerCount) {
+                final c = state.containers[i];
+                final isSelected = _selectedContainerIds.contains(c.id);
+                if (!isMobilePlatform) {
+                  return Row(
+                    children: [
+                      Checkbox(
+                        value: isSelected,
+                        onChanged: (v) => setState(() {
+                          if (v == true) {
+                            _selectedContainerIds.add(c.id);
+                          } else {
+                            _selectedContainerIds.remove(c.id);
+                          }
+                        }),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      Expanded(child: ContainerCard(container: c)),
+                    ],
+                  );
+                }
+                return _mobileSelectableItem(
+                  isSelected: isSelected,
+                  scheme: scheme,
+                  onLongPress: () {
+                    _enterSelectionMode();
+                    setState(() => _selectedContainerIds.add(c.id));
+                  },
+                  onTap: () {
+                    if (_selectionMode) {
+                      setState(() {
+                        if (!_selectedContainerIds.remove(c.id)) {
+                          _selectedContainerIds.add(c.id);
+                        }
+                        _refreshSelectionMode();
+                      });
+                    }
+                  },
+                  child: ContainerCard(container: c),
+                );
               }
+              final video = filteredStandalone[i - containerCount];
+              final isSelected = _selectedIds.contains(video.id);
+              if (!isMobilePlatform) {
+                return Row(
+                  children: [
+                    Checkbox(
+                      value: isSelected,
+                      onChanged: (v) => setState(() {
+                        if (v == true) {
+                          _selectedIds.add(video.id);
+                        } else {
+                          _selectedIds.remove(video.id);
+                        }
+                      }),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    Expanded(
+                      child: state.config.editMode == 1
+                          ? GestureDetector(
+                              onTap: () => _showQuickConfigDialog(
+                                context,
+                                state,
+                                video,
+                                s,
+                              ),
+                              child: VideoCard(
+                                video: video,
+                                onEdit: (current) => _showQuickConfigDialog(
+                                  context,
+                                  state,
+                                  current,
+                                  s,
+                                ),
+                              ),
+                            )
+                          : VideoCard(video: video),
+                    ),
+                  ],
+                );
+              }
+              return _mobileSelectableItem(
+                isSelected: isSelected,
+                scheme: scheme,
+                onLongPress: () {
+                  _enterSelectionMode();
+                  setState(() => _selectedIds.add(video.id));
+                },
+                onTap: () {
+                  if (_selectionMode) {
+                    setState(() {
+                      if (!_selectedIds.remove(video.id)) {
+                        _selectedIds.add(video.id);
+                      }
+                      _refreshSelectionMode();
+                    });
+                  } else if (state.config.editMode == 1) {
+                    _showQuickConfigDialog(context, state, video, s);
+                  }
+                },
+                child: state.config.editMode == 1
+                    ? VideoCard(
+                        video: video,
+                        onEdit: (current) =>
+                            _showQuickConfigDialog(context, state, current, s),
+                      )
+                    : VideoCard(video: video),
+              );
             },
-            child: ContainerCard(container: c),
-          );
-        }
-        final video = filteredStandalone[i - containerCount];
-        final isSelected = _selectedIds.contains(video.id);
-        if (!isMobilePlatform) {
-          return Row(children: [
-            Checkbox(
-              value: isSelected,
-              onChanged: (v) => setState(() {
-                if (v == true) { _selectedIds.add(video.id); }
-                else { _selectedIds.remove(video.id); }
-              }),
-              visualDensity: VisualDensity.compact,
-            ),
-            Expanded(
-              child: state.config.editMode == 1
-                  ? GestureDetector(
-                      onTap: () => _showQuickConfigDialog(context, state, video, s),
-                      child: VideoCard(video: video, onEdit: () => _showQuickConfigDialog(context, state, video, s)),
-                    )
-                  : VideoCard(video: video),
-            ),
-          ]);
-        }
-        return _mobileSelectableItem(
-          isSelected: isSelected,
-          scheme: scheme,
-          onLongPress: () {
-            _enterSelectionMode();
-            setState(() => _selectedIds.add(video.id));
-          },
-          onTap: () {
-            if (_selectionMode) {
-              setState(() {
-                if (!_selectedIds.remove(video.id)) _selectedIds.add(video.id);
-                _refreshSelectionMode();
-              });
-            } else if (state.config.editMode == 1) {
-              _showQuickConfigDialog(context, state, video, s);
-            }
-          },
-          child: state.config.editMode == 1
-              ? VideoCard(video: video, onEdit: () => _showQuickConfigDialog(context, state, video, s))
-              : VideoCard(video: video),
-        );
-      },
-    )),
-    ]);
+          ),
+        ),
+      ],
+    );
   }
 
   /// 移动端可多选条目：长按进入多选模式，选中项高亮（不显示常驻复选框）。
@@ -586,7 +804,9 @@ class ProjectPageState extends State<ProjectPage> {
         curve: Curves.easeOut,
         padding: const EdgeInsets.all(2),
         decoration: BoxDecoration(
-          color: isSelected ? scheme.primaryContainer.withAlpha(80) : Colors.transparent,
+          color: isSelected
+              ? scheme.primaryContainer.withAlpha(80)
+              : Colors.transparent,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
             color: isSelected ? scheme.primary : Colors.transparent,
@@ -608,7 +828,13 @@ class ProjectPageState extends State<ProjectPage> {
     if (picked?.path == null) return;
     final name = picked!.name;
     if (!name.endsWith('.fppx')) {
-      if (mounted) showToast(context, zh ? '请选择 .fppx 文件' : 'Please select a .fppx file', type: ToastType.warning);
+      if (mounted) {
+        showToast(
+          context,
+          zh ? '请选择 .fppx 文件' : 'Please select a .fppx file',
+          type: ToastType.warning,
+        );
+      }
       return;
     }
     final path = picked.path!;
@@ -629,11 +855,16 @@ class ProjectPageState extends State<ProjectPage> {
           // 去掉 shape 覆盖：原来写死 radius 16 会把主题 dialogTheme 的
           // 圆角(22) 和 0.6px 细描边一起盖掉（RoundedRectangleBorder.side 默认 none），
           // 导致这个对话框比全局其他对话框「方一块、还没边框」。
-          title: Row(children: [
-            Icon(Icons.help_outline, size: 20, color: scheme.sem.warning),
-            const SizedBox(width: 8),
-            Text(zh ? '发现未知节点' : 'Unknown Node Type', style: TextStyle(color: scheme.onSurface)),
-          ]),
+          title: Row(
+            children: [
+              Icon(Icons.help_outline, size: 20, color: scheme.sem.warning),
+              const SizedBox(width: 8),
+              Text(
+                zh ? '发现未知节点' : 'Unknown Node Type',
+                style: TextStyle(color: scheme.onSurface),
+              ),
+            ],
+          ),
           content: Text(
             zh
                 ? '程序找不到ID为$ids节点的具体含义，可能是因为版本太旧，你可以尝试强制导入，但这可能会发生意料之外的事情'
@@ -641,14 +872,26 @@ class ProjectPageState extends State<ProjectPage> {
             style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(s.cancel)),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(zh ? '强制导入' : 'Force Import')),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(s.cancel),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(zh ? '强制导入' : 'Force Import'),
+            ),
           ],
         ),
       );
       if (!mounted) return;
       if (goOn == true) {
-        final retry = await importFppxWithPassword(context, svc, path, force: true, zh: zh);
+        final retry = await importFppxWithPassword(
+          context,
+          svc,
+          path,
+          force: true,
+          zh: zh,
+        );
         if (!mounted) return;
         if (retry == null) return;
         imported = retry;
@@ -660,7 +903,11 @@ class ProjectPageState extends State<ProjectPage> {
         final detail = imported.errors.isNotEmpty
             ? imported.errors.join('\n')
             : (imported.error ?? '');
-        showToast(context, zh ? '配置加载失败: $detail' : 'Load failed: $detail', type: ToastType.error);
+        showToast(
+          context,
+          zh ? '配置加载失败: $detail' : 'Load failed: $detail',
+          type: ToastType.error,
+        );
       }
       return;
     }
@@ -672,189 +919,364 @@ class ProjectPageState extends State<ProjectPage> {
 
     await showDialog(
       context: context,
-      builder: (ctx) => StatefulBuilder(builder: (ctx, setDlgState) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Row(children: [
-            Icon(Icons.file_download_outlined, size: 20, color: scheme.primary),
-            const SizedBox(width: 8),
-            Text(zh ? '导入配置' : 'Import Config', style: TextStyle(color: scheme.onSurface)),
-          ]),
-          content: SizedBox(width: 480, child: SingleChildScrollView(child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 兼容性错误
-              if (fppx.errors.isNotEmpty)
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(10),
-                  margin: const EdgeInsets.only(bottom: 12),
-                  decoration: BoxDecoration(color: scheme.errorContainer, borderRadius: BorderRadius.circular(8)),
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Row(children: [
-                      Icon(Icons.error_outline, size: 16, color: scheme.error),
-                      const SizedBox(width: 6),
-                      Text(zh ? '加载失败' : 'Load Failed',
-                          style: TextStyle(fontSize: 13, color: scheme.error, fontWeight: FontWeight.w700)),
-                    ]),
-                    const SizedBox(height: 6),
-                    ...fppx.errors.map((e) => Padding(
-                      padding: const EdgeInsets.only(bottom: 3),
-                      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text('• ', style: TextStyle(color: scheme.error)),
-                        Expanded(child: Text(e, style: TextStyle(fontSize: 12, color: scheme.onErrorContainer))),
-                      ]),
-                    )),
-                  ]),
-                ),
-
-              // 高版本警告
-              if (fppx.warnings.isNotEmpty)
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(10),
-                  margin: const EdgeInsets.only(bottom: 12),
-                  // 警告条：底色/描边/文字全部改用语义色 warning 的 container
-                  // 配对。原先 `Colors.orange.withAlpha(30)` 在深色主题下几乎不可见，
-                  // 且这个橙与主题种子色毫无关系。
-                  decoration: BoxDecoration(color: scheme.sem.warningContainer, borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: scheme.sem.warning.withAlpha(60))),
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Row(children: [
-                      Icon(Icons.warning_amber, size: 16, color: scheme.sem.onWarningContainer),
-                      const SizedBox(width: 6),
-                      Text(zh ? '版本警告' : 'Version Warning',
-                          style: TextStyle(fontSize: 13, color: scheme.sem.onWarningContainer, fontWeight: FontWeight.w700)),
-                    ]),
-                    const SizedBox(height: 6),
-                    ...fppx.warnings.map((w) => Padding(
-                      padding: const EdgeInsets.only(bottom: 3),
-                      child: Text('• $w', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
-                    )),
-                  ]),
-                ),
-
-              // 信息
-              _infoRow(scheme, zh ? '配置版本' : 'Config Version', fppx.configVersionStr),
-              _infoRow(scheme, zh ? '兼容软件' : 'Compatible', fppx.softwareRangeStr),
-              _infoRow(scheme, zh ? '模式' : 'Mode', fppx.isNodeEditor
-                  ? (zh ? '节点编辑器' : 'Node Editor')
-                  : (fppx.isQuick ? (zh ? '快速模式' : 'Quick Mode') : (zh ? '传统模式' : 'Legacy'))),
-              if (fppx.graph != null)
-                _infoRow(scheme, zh ? '内容' : 'Content',
-                    '${fppx.graph!.nodes.length} ${zh ? '节点' : 'nodes'}, ${fppx.graph!.connections.length} ${zh ? '连线' : 'links'}')
-              else if (fppx.isQuick)
-                _infoRow(scheme, zh ? '内容' : 'Content',
-                    '${fppx.quickItems.length} ${zh ? '项参数' : 'param items'}'),
-              _infoRow(scheme, zh ? '适用类型' : 'Media Type', fppx.detectedMediaLabel(zh)),
-              // 旧版（legacy 模式）配置没有节点图，无法应用到视频
-              if (fppx.showLegacyNote) ...[
-                const SizedBox(height: 8),
-                Text(
-                  zh ? '旧版配置暂不支持直接应用到视频，仅可查看信息。'
-                     : 'Legacy configs cannot be applied to videos directly.',
-                  style: TextStyle(fontSize: 12, color: scheme.outline),
-                ),
-              ],
-
-              // 介绍
-              if (fppx.description.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Text(zh ? '介绍' : 'Description', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.primary)),
-                const SizedBox(height: 4),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: scheme.surfaceContainerHighest.withAlpha(80),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(fppx.description, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
-                ),
-              ],
-
-              // 选择视频
-              const SizedBox(height: 16),
-              Text(zh ? '应用到哪些文件？' : 'Apply to which files?',
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-              if (fppx.detectedMediaTypes.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4, bottom: 4),
-                  child: Text(
-                    zh ? '仅显示与配置兼容的${fppx.detectedMediaLabel(zh)}文件' : 'Showing only compatible ${fppx.detectedMediaLabel(zh)} files',
-                    style: TextStyle(fontSize: 11, color: scheme.outline),
-                  ),
-                ),
-              const SizedBox(height: 8),
-              ...state.videos.where((v) {
-                if (!v.parsed) return false;
-                final configTypes = fppx.detectedMediaTypes;
-                if (configTypes.isEmpty) return true;
-                return configTypes.contains(v.fileMediaType);
-              }).map((v) => CheckboxListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                title: Text(v.filename, style: TextStyle(fontSize: 13, color: scheme.onSurface)),
-                subtitle: Text(v.resolution, style: TextStyle(fontSize: 11, color: scheme.outline)),
-                value: selectedVideos.contains(v.id),
-                onChanged: (checked) => setDlgState(() {
-                  if (checked == true) { selectedVideos.add(v.id); } else { selectedVideos.remove(v.id); }
-                }),
-              )),
-              if (state.videos.where((v) {
-                if (!v.parsed) return false;
-                final configTypes = fppx.detectedMediaTypes;
-                if (configTypes.isEmpty) return true;
-                return configTypes.contains(v.fileMediaType);
-              }).isEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Text(zh ? '没有兼容的文件' : 'No compatible files',
-                      style: TextStyle(fontSize: 12, color: scheme.outline)),
-                ),
-            ],
-          ))),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: Text(s.cancel)),
-            FilledButton(
-              // 无图且非快速模式的配置（旧版 legacy）无法应用到视频 → 禁用应用按钮
-              onPressed: (selectedVideos.isEmpty || !fppx.isCompatible || (fppx.graph == null && !fppx.isQuick)) ? null : () {
-                for (final vid in selectedVideos) {
-                  final video = state.videos.firstWhere((v) => v.id == vid);
-                  if (fppx.graph != null) {
-                    final graphCopy = fppx.graph!.copy();
-                    for (final n in graphCopy.nodes) {
-                      if (n.type == PipelineStepType.start) {
-                        n.params['file_media_type'] = video.fileMediaType.name;
-                      }
-                    }
-                    state.updateVideoPipeline(vid, graphCopy);
-                  } else if (fppx.isQuick) {
-                    // 快速模式：命令参数 → 生成节点图 → 应用
-                    final qc = QuickConfig(
-                      id: 'fppx_quick_import',
-                      fileType: inferQuickFileTypeFromMaps(fppx.quickItems),
-                      name: '',
-                      items: [for (final item in fppx.quickItems)
-                        QuickConfigItem(
-                          key: item['key'] as String? ?? '',
-                          params: (item['params'] as Map<String, dynamic>?) ?? {},
-                          enabled: item['enabled'] != false,
-                        )],
-                    );
-                    final result = buildGraphFromQuickConfig(qc, isZh: zh);
-                    state.updateVideoPipeline(vid, result.graph);
-                  }
-                }
-                Navigator.pop(ctx);
-                showToast(context, zh ? '已应用到 ${selectedVideos.length} 个视频' : 'Applied to ${selectedVideos.length} videos', type: ToastType.success);
-              },
-              child: Text(zh ? '应用' : 'Apply'),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlgState) {
+          return AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
             ),
-          ],
-        );
-      }),
+            title: Row(
+              children: [
+                Icon(
+                  Icons.file_download_outlined,
+                  size: 20,
+                  color: scheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  zh ? '导入配置' : 'Import Config',
+                  style: TextStyle(color: scheme.onSurface),
+                ),
+              ],
+            ),
+            content: SizedBox(
+              width: 480,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // 兼容性错误
+                    if (fppx.errors.isNotEmpty)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        margin: const EdgeInsets.only(bottom: 12),
+                        decoration: BoxDecoration(
+                          color: scheme.errorContainer,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.error_outline,
+                                  size: 16,
+                                  color: scheme.error,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  zh ? '加载失败' : 'Load Failed',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: scheme.error,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            ...fppx.errors.map(
+                              (e) => Padding(
+                                padding: const EdgeInsets.only(bottom: 3),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      '• ',
+                                      style: TextStyle(color: scheme.error),
+                                    ),
+                                    Expanded(
+                                      child: Text(
+                                        e,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: scheme.onErrorContainer,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                    // 高版本警告
+                    if (fppx.warnings.isNotEmpty)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        margin: const EdgeInsets.only(bottom: 12),
+                        // 警告条：底色/描边/文字全部改用语义色 warning 的 container
+                        // 配对。原先 `Colors.orange.withAlpha(30)` 在深色主题下几乎不可见，
+                        // 且这个橙与主题种子色毫无关系。
+                        decoration: BoxDecoration(
+                          color: scheme.sem.warningContainer,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: scheme.sem.warning.withAlpha(60),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.warning_amber,
+                                  size: 16,
+                                  color: scheme.sem.onWarningContainer,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  zh ? '版本警告' : 'Version Warning',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: scheme.sem.onWarningContainer,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            ...fppx.warnings.map(
+                              (w) => Padding(
+                                padding: const EdgeInsets.only(bottom: 3),
+                                child: Text(
+                                  '• $w',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: scheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                    // 信息
+                    _infoRow(
+                      scheme,
+                      zh ? '配置版本' : 'Config Version',
+                      fppx.configVersionStr,
+                    ),
+                    _infoRow(
+                      scheme,
+                      zh ? '兼容软件' : 'Compatible',
+                      fppx.softwareRangeStr,
+                    ),
+                    _infoRow(
+                      scheme,
+                      zh ? '模式' : 'Mode',
+                      fppx.isNodeEditor
+                          ? (zh ? '节点编辑器' : 'Node Editor')
+                          : (fppx.isQuick
+                                ? (zh ? '快速模式' : 'Quick Mode')
+                                : (zh ? '传统模式' : 'Legacy')),
+                    ),
+                    if (fppx.graph != null)
+                      _infoRow(
+                        scheme,
+                        zh ? '内容' : 'Content',
+                        '${fppx.graph!.nodes.length} ${zh ? '节点' : 'nodes'}, ${fppx.graph!.connections.length} ${zh ? '连线' : 'links'}',
+                      )
+                    else if (fppx.isQuick)
+                      _infoRow(
+                        scheme,
+                        zh ? '内容' : 'Content',
+                        '${fppx.quickItems.length} ${zh ? '项参数' : 'param items'}',
+                      ),
+                    _infoRow(
+                      scheme,
+                      zh ? '适用类型' : 'Media Type',
+                      fppx.detectedMediaLabel(zh),
+                    ),
+                    // 旧版（legacy 模式）配置没有节点图，无法应用到视频
+                    if (fppx.showLegacyNote) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        zh
+                            ? '旧版配置暂不支持直接应用到视频，仅可查看信息。'
+                            : 'Legacy configs cannot be applied to videos directly.',
+                        style: TextStyle(fontSize: 12, color: scheme.outline),
+                      ),
+                    ],
+
+                    // 介绍
+                    if (fppx.description.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        zh ? '介绍' : 'Description',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: scheme.primary,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: scheme.surfaceContainerHighest.withAlpha(80),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          fppx.description,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: scheme.onSurface,
+                          ),
+                        ),
+                      ),
+                    ],
+
+                    // 选择视频
+                    const SizedBox(height: 16),
+                    Text(
+                      zh ? '应用到哪些文件？' : 'Apply to which files?',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: scheme.onSurface,
+                      ),
+                    ),
+                    if (fppx.detectedMediaTypes.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4, bottom: 4),
+                        child: Text(
+                          zh
+                              ? '仅显示与配置兼容的${fppx.detectedMediaLabel(zh)}文件'
+                              : 'Showing only compatible ${fppx.detectedMediaLabel(zh)} files',
+                          style: TextStyle(fontSize: 11, color: scheme.outline),
+                        ),
+                      ),
+                    const SizedBox(height: 8),
+                    ...state.videos
+                        .where((v) {
+                          if (!v.parsed) return false;
+                          final configTypes = fppx.detectedMediaTypes;
+                          if (configTypes.isEmpty) return true;
+                          return configTypes.contains(v.fileMediaType);
+                        })
+                        .map(
+                          (v) => CheckboxListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(
+                              v.filename,
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: scheme.onSurface,
+                              ),
+                            ),
+                            subtitle: Text(
+                              v.resolution,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: scheme.outline,
+                              ),
+                            ),
+                            value: selectedVideos.contains(v.id),
+                            onChanged: (checked) => setDlgState(() {
+                              if (checked == true) {
+                                selectedVideos.add(v.id);
+                              } else {
+                                selectedVideos.remove(v.id);
+                              }
+                            }),
+                          ),
+                        ),
+                    if (state.videos.where((v) {
+                      if (!v.parsed) return false;
+                      final configTypes = fppx.detectedMediaTypes;
+                      if (configTypes.isEmpty) return true;
+                      return configTypes.contains(v.fileMediaType);
+                    }).isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Text(
+                          zh ? '没有兼容的文件' : 'No compatible files',
+                          style: TextStyle(fontSize: 12, color: scheme.outline),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(s.cancel),
+              ),
+              FilledButton(
+                // 无图且非快速模式的配置（旧版 legacy）无法应用到视频 → 禁用应用按钮
+                onPressed:
+                    (selectedVideos.isEmpty ||
+                        !fppx.isCompatible ||
+                        (fppx.graph == null && !fppx.isQuick))
+                    ? null
+                    : () {
+                        for (final vid in selectedVideos) {
+                          final video = state.videos.firstWhere(
+                            (v) => v.id == vid,
+                          );
+                          if (fppx.graph != null) {
+                            final graphCopy = fppx.graph!.copy();
+                            for (final n in graphCopy.nodes) {
+                              if (n.type == PipelineStepType.start) {
+                                n.params['file_media_type'] =
+                                    video.fileMediaType.name;
+                              }
+                            }
+                            state.updateVideoPipeline(vid, graphCopy);
+                          } else if (fppx.isQuick) {
+                            // 快速模式：命令参数 → 生成节点图 → 应用
+                            final qc = QuickConfig(
+                              id: 'fppx_quick_import',
+                              fileType: inferQuickFileTypeFromMaps(
+                                fppx.quickItems,
+                              ),
+                              name: '',
+                              items: [
+                                for (final item in fppx.quickItems)
+                                  QuickConfigItem(
+                                    key: item['key'] as String? ?? '',
+                                    params:
+                                        (item['params']
+                                            as Map<String, dynamic>?) ??
+                                        {},
+                                    enabled: item['enabled'] != false,
+                                  ),
+                              ],
+                            );
+                            final result = buildGraphFromQuickConfig(
+                              qc,
+                              isZh: zh,
+                            );
+                            state.updateVideoPipeline(vid, result.graph);
+                          }
+                        }
+                        Navigator.pop(ctx);
+                        showToast(
+                          context,
+                          zh
+                              ? '已应用到 ${selectedVideos.length} 个视频'
+                              : 'Applied to ${selectedVideos.length} videos',
+                          type: ToastType.success,
+                        );
+                      },
+                child: Text(zh ? '应用' : 'Apply'),
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 
@@ -864,11 +1286,31 @@ class ProjectPageState extends State<ProjectPage> {
     final scale = MediaQuery.textScalerOf(context).scale(1.0);
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
-      child: Row(children: [
-        SizedBox(width: (90 * scale).clamp(90.0, 130.0), child: Text(label, style: TextStyle(fontSize: 12, color: scheme.outline), overflow: TextOverflow.ellipsis)),
-        const SizedBox(width: 8),
-        Expanded(child: Text(value, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: scheme.onSurface), maxLines: 1, overflow: TextOverflow.ellipsis)),
-      ]),
+      child: Row(
+        children: [
+          SizedBox(
+            width: (90 * scale).clamp(90.0, 130.0),
+            child: Text(
+              label,
+              style: TextStyle(fontSize: 12, color: scheme.outline),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              value,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: scheme.onSurface,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -886,8 +1328,12 @@ class ProjectPageState extends State<ProjectPage> {
     if (r.isEmpty) return;
     final paths = <String>[];
     for (final f in r) {
-      final ext = f.name.contains('.') ? f.name.substring(f.name.lastIndexOf('.')) : '';
-      final stem = f.name.contains('.') ? f.name.substring(0, f.name.lastIndexOf('.')) : f.name;
+      final ext = f.name.contains('.')
+          ? f.name.substring(f.name.lastIndexOf('.'))
+          : '';
+      final stem = f.name.contains('.')
+          ? f.name.substring(0, f.name.lastIndexOf('.'))
+          : f.name;
 
       // 非 file:// 来源（Android SAF 的 content://、iOS 的 UIDocumentPicker 等）
       // 走流式拷贝：IOSink.addStream 自带 back-pressure（sink 缓冲满时暂停 source），
@@ -895,7 +1341,8 @@ class ProjectPageState extends State<ProjectPage> {
       // 避免 >100MB 文件直接 OOM 闪退（即便 1GB 也只占 ~64KB 中间缓冲）。
       if (f.path == null) {
         try {
-          final destPath = '${Directory.systemTemp.path}/ffmpegpp_import_${stem}_${DateTime.now().millisecondsSinceEpoch}$ext';
+          final destPath =
+              '${Directory.systemTemp.path}/ffmpegpp_import_${stem}_${DateTime.now().millisecondsSinceEpoch}$ext';
           final sink = File(destPath).openWrite();
           try {
             await sink.addStream(f.readAsByteStream());
@@ -917,10 +1364,16 @@ class ProjectPageState extends State<ProjectPage> {
         // 旧副本并删掉刚生成的这份。
         //
         // v13：原来的 int size 字段换成 lengthSync()，无法确定长度时为 null。
-        final reuse = _reuseExistingImportCopy(f.path!, f.name, f.lengthSync() ?? 0);
+        final reuse = _reuseExistingImportCopy(
+          f.path!,
+          f.name,
+          f.lengthSync() ?? 0,
+        );
         if (reuse != null) {
           paths.add(reuse);
-          try { File(f.path!).deleteSync(); } catch (_) {}
+          try {
+            File(f.path!).deleteSync();
+          } catch (_) {}
         } else {
           paths.add(f.path!);
         }
@@ -944,10 +1397,14 @@ class ProjectPageState extends State<ProjectPage> {
     if (size <= 0) return null;
     if (!newPath.replaceAll('\\', '/').contains('/file_picker/')) return null;
     try {
-      final pluginDir =
-          Directory('${Directory.systemTemp.path}${Platform.pathSeparator}file_picker');
+      final pluginDir = Directory(
+        '${Directory.systemTemp.path}${Platform.pathSeparator}file_picker',
+      );
       if (!pluginDir.existsSync()) return null;
-      for (final ent in pluginDir.listSync(recursive: true, followLinks: false)) {
+      for (final ent in pluginDir.listSync(
+        recursive: true,
+        followLinks: false,
+      )) {
         if (ent is! File) continue;
         if (ent.path == newPath) continue;
         if (!ent.path.replaceAll('\\', '/').endsWith('/$name')) continue;
@@ -965,7 +1422,12 @@ class ProjectPageState extends State<ProjectPage> {
   /// 快速模式：选择文件后弹出快速配置选择对话框。
   /// - 选预设 → 参数编辑 → 保存并把启用项翻译成节点图应用到该文件；
   /// - 「现场编辑」→ 直接打开节点编辑器（PipelineEditorPage）。
-  Future<void> _showQuickConfigDialog(BuildContext context, AppState state, VideoFile video, AppStrings s) async {
+  Future<void> _showQuickConfigDialog(
+    BuildContext context,
+    AppState state,
+    VideoFile video,
+    AppStrings s,
+  ) async {
     final zh = s.isZh;
     final fileType = _fileTypeForMediaType(video.fileMediaType);
     final configs = await QuickConfigStorage.loadAll(fileType);
@@ -996,38 +1458,61 @@ class ProjectPageState extends State<ProjectPage> {
       // 为空 → 图片输出与输入完全相同。这里把启用项翻译成节点图再应用。
       final result = buildGraphFromQuickConfig(saved, isZh: zh);
       if (result.isEmpty) {
-        showToast(context,
-          zh ? '该预设没有可应用的处理项。${result.skippedNotes.join(' ')}' : 'No applicable items. ${result.skippedNotes.join(' ')}',
-          type: ToastType.warning);
+        showToast(
+          context,
+          zh
+              ? '该预设没有可应用的处理项。${result.skippedNotes.join(' ')}'
+              : 'No applicable items. ${result.skippedNotes.join(' ')}',
+          type: ToastType.warning,
+        );
         return;
       }
       state.updateVideoPipeline(video.id, result.graph);
-      final note = result.skippedNotes.isEmpty ? '' : (zh ? '；${result.skippedNotes.join('；')}' : '; ${result.skippedNotes.join('; ')}');
-      showToast(context,
-        zh ? '已应用 ${result.appliedKeys.length} 项设置，加入队列后生效$note'
-           : 'Applied ${result.appliedKeys.length} settings, effective when queued$note',
-        type: ToastType.success);
+      final note = result.skippedNotes.isEmpty
+          ? ''
+          : (zh
+                ? '；${result.skippedNotes.join('；')}'
+                : '; ${result.skippedNotes.join('; ')}');
+      showToast(
+        context,
+        zh
+            ? '已应用 ${result.appliedKeys.length} 项设置，加入队列后生效$note'
+            : 'Applied ${result.appliedKeys.length} settings, effective when queued$note',
+        type: ToastType.success,
+      );
     } else if (identical(selected, _quickPickLiveEdit)) {
       _openLiveEditor(context, state, video, s);
     }
   }
 
   /// 现场编辑：打开节点编辑器自由编排处理流程。
-  void _openLiveEditor(BuildContext context, AppState state, VideoFile video, AppStrings s) {
-    Navigator.of(context).push(smoothRoute(PipelineEditorPage(
-      video: video,
-      onSave: (graph) {
-        state.updateVideoPipeline(video.id, graph);
-      },
-    )));
+  void _openLiveEditor(
+    BuildContext context,
+    AppState state,
+    VideoFile video,
+    AppStrings s,
+  ) {
+    Navigator.of(context).push(
+      smoothRoute(
+        PipelineEditorPage(
+          video: video,
+          onSave: (graph) {
+            state.updateVideoPipeline(video.id, graph);
+          },
+        ),
+      ),
+    );
   }
 
   QuickFileType _fileTypeForMediaType(MediaType? mt) {
     if (mt == null) return QuickFileType.video;
     switch (mt) {
-      case MediaType.image: return QuickFileType.image;
-      case MediaType.audio: return QuickFileType.audio;
-      default: return QuickFileType.video;
+      case MediaType.image:
+        return QuickFileType.image;
+      case MediaType.audio:
+        return QuickFileType.audio;
+      default:
+        return QuickFileType.video;
     }
   }
 
@@ -1040,8 +1525,13 @@ class ProjectPageState extends State<ProjectPage> {
       final name = await showDialog<String>(
         context: context,
         builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Text(zh ? '容器名称' : 'Container Name', style: TextStyle(color: scheme.onSurface)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Text(
+            zh ? '容器名称' : 'Container Name',
+            style: TextStyle(color: scheme.onSurface),
+          ),
           content: TextField(
             controller: ctrl,
             autofocus: true,
@@ -1049,8 +1539,14 @@ class ProjectPageState extends State<ProjectPage> {
             onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: Text(s.cancel)),
-            FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text.trim()), child: Text(zh ? '创建' : 'Create')),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(s.cancel),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+              child: Text(zh ? '创建' : 'Create'),
+            ),
           ],
         ),
       ).whenComplete(() => ctrl.dispose());
@@ -1058,9 +1554,15 @@ class ProjectPageState extends State<ProjectPage> {
       if (empty) {
         state.addEmptyContainer(name);
       } else {
-        final r = await FilePicker.pickFiles(type: FileType.custom, allowedExtensions: _exts);
+        final r = await FilePicker.pickFiles(
+          type: FileType.custom,
+          allowedExtensions: _exts,
+        );
         if (r.isNotEmpty) {
-          final paths = r.where((f) => f.path != null).map((f) => f.path!).toList();
+          final paths = r
+              .where((f) => f.path != null)
+              .map((f) => f.path!)
+              .toList();
           if (paths.isNotEmpty) state.addContainer(name, paths);
         }
       }
@@ -1076,51 +1578,91 @@ class ProjectPageState extends State<ProjectPage> {
           child: GlassPanel(
             radius: 22,
             blur: 16,
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const SizedBox(height: 8),
-            Container(width: 36, height: 4, decoration: BoxDecoration(color: scheme.outlineVariant, borderRadius: BorderRadius.circular(2))),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
-              child: Row(children: [
-                Icon(Icons.create_new_folder_outlined, size: 18, color: scheme.primary),
-                const SizedBox(width: 8),
-                Text(zh ? '新建容器' : 'New Container',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-              ]),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 8),
+                Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: scheme.outlineVariant,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.create_new_folder_outlined,
+                        size: 18,
+                        color: scheme.primary,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        zh ? '新建容器' : 'New Container',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: scheme.onSurface,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                ListTile(
+                  leading: Icon(
+                    Icons.create_new_folder_outlined,
+                    color: scheme.primary,
+                  ),
+                  title: Text(zh ? '创建空容器' : 'Empty Container'),
+                  subtitle: Text(
+                    zh
+                        ? '先创建容器，稍后再添加文件（存于程序临时目录）'
+                        : 'Create an empty container, add files later',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    promptCreate(zh ? '新容器' : 'New Container', empty: true);
+                  },
+                ),
+                ListTile(
+                  leading: Icon(Icons.folder_open, color: scheme.primary),
+                  title: Text(s.containerFromFolder),
+                  subtitle: Text(
+                    zh
+                        ? '选择一个文件夹，其中的媒体文件将作为容器内容'
+                        : 'Select a folder, media files inside become container items',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    final dir = await FilePicker.getDirectoryPath();
+                    if (dir != null) state.addContainerFromFolder(dir);
+                  },
+                ),
+                ListTile(
+                  leading: Icon(
+                    Icons.file_copy_outlined,
+                    color: scheme.primary,
+                  ),
+                  title: Text(s.containerFromFiles),
+                  subtitle: Text(
+                    zh
+                        ? '手动选择多个文件放入新容器'
+                        : 'Manually select files for a new container',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    promptCreate(zh ? '新容器' : 'New Container');
+                  },
+                ),
+                const SizedBox(height: 6),
+              ],
             ),
-            ListTile(
-              leading: Icon(Icons.create_new_folder_outlined, color: scheme.primary),
-              title: Text(zh ? '创建空容器' : 'Empty Container'),
-              subtitle: Text(zh ? '先创建容器，稍后再添加文件（存于程序临时目录）' : 'Create an empty container, add files later',
-                  style: const TextStyle(fontSize: 12)),
-              onTap: () {
-                Navigator.pop(ctx);
-                promptCreate(zh ? '新容器' : 'New Container', empty: true);
-              },
-            ),
-            ListTile(
-              leading: Icon(Icons.folder_open, color: scheme.primary),
-              title: Text(s.containerFromFolder),
-              subtitle: Text(zh ? '选择一个文件夹，其中的媒体文件将作为容器内容' : 'Select a folder, media files inside become container items',
-                  style: const TextStyle(fontSize: 12)),
-              onTap: () async {
-                Navigator.pop(ctx);
-                final dir = await FilePicker.getDirectoryPath();
-                if (dir != null) state.addContainerFromFolder(dir);
-              },
-            ),
-            ListTile(
-              leading: Icon(Icons.file_copy_outlined, color: scheme.primary),
-              title: Text(s.containerFromFiles),
-              subtitle: Text(zh ? '手动选择多个文件放入新容器' : 'Manually select files for a new container',
-                  style: const TextStyle(fontSize: 12)),
-              onTap: () {
-                Navigator.pop(ctx);
-                promptCreate(zh ? '新容器' : 'New Container');
-              },
-            ),
-            const SizedBox(height: 6),
-          ]),
           ),
         ),
       ),
@@ -1136,7 +1678,11 @@ class _ProbingBanner extends StatefulWidget {
   final String text;
   final String hint;
   final ColorScheme scheme;
-  const _ProbingBanner({required this.text, required this.hint, required this.scheme});
+  const _ProbingBanner({
+    required this.text,
+    required this.hint,
+    required this.scheme,
+  });
 
   @override
   State<_ProbingBanner> createState() => _ProbingBannerState();
@@ -1163,32 +1709,43 @@ class _ProbingBannerState extends State<_ProbingBanner>
       decoration: BoxDecoration(
         color: widget.scheme.primaryContainer.withAlpha(160),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: widget.scheme.primary.withAlpha(80), width: 1),
+        border: Border.all(
+          color: widget.scheme.primary.withAlpha(80),
+          width: 1,
+        ),
       ),
-      child: Row(children: [
-        RotationTransition(
-          turns: _ctrl,
-          child: Icon(Icons.sync, size: 18, color: widget.scheme.primary),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(widget.text,
-                  style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: widget.scheme.onPrimaryContainer)),
-              Text(widget.hint,
-                  style: TextStyle(
-                      fontSize: 11,
-                      color: widget.scheme.onPrimaryContainer.withAlpha(160))),
-            ],
+      child: Row(
+        children: [
+          RotationTransition(
+            turns: _ctrl,
+            child: Icon(Icons.sync, size: 18, color: widget.scheme.primary),
           ),
-        ),
-      ]),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  widget.text,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: widget.scheme.onPrimaryContainer,
+                  ),
+                ),
+                Text(
+                  widget.hint,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: widget.scheme.onPrimaryContainer.withAlpha(160),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1211,26 +1768,44 @@ class _QuickConfigPicker extends StatelessWidget {
   Widget build(BuildContext context) {
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: Row(children: [
-        Icon(Icons.tune, size: 20, color: scheme.primary),
-        const SizedBox(width: 8),
-        Text(isZh ? '选择快速配置' : 'Select Quick Config',
-            style: TextStyle(color: scheme.onSurface, fontSize: 16)),
-      ]),
+      title: Row(
+        children: [
+          Icon(Icons.tune, size: 20, color: scheme.primary),
+          const SizedBox(width: 8),
+          Text(
+            isZh ? '选择快速配置' : 'Select Quick Config',
+            style: TextStyle(color: scheme.onSurface, fontSize: 16),
+          ),
+        ],
+      ),
       content: SizedBox(
         width: 400,
         child: configs.isEmpty
             ? Padding(
                 padding: const EdgeInsets.symmetric(vertical: 24),
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(Icons.inbox_outlined, size: 48, color: scheme.outlineVariant),
-                  const SizedBox(height: 12),
-                  Text(isZh ? '暂无匹配的快速配置' : 'No matching quick configs',
-                      style: TextStyle(fontSize: 14, color: scheme.outline)),
-                  const SizedBox(height: 4),
-                  Text(isZh ? '请先在设置中创建快速配置' : 'Create one in Settings first',
-                      style: TextStyle(fontSize: 12, color: scheme.outline.withAlpha(150))),
-                ]),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.inbox_outlined,
+                      size: 48,
+                      color: scheme.outlineVariant,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      isZh ? '暂无匹配的快速配置' : 'No matching quick configs',
+                      style: TextStyle(fontSize: 14, color: scheme.outline),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      isZh ? '请先在设置中创建快速配置' : 'Create one in Settings first',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: scheme.outline.withAlpha(150),
+                      ),
+                    ),
+                  ],
+                ),
               )
             : ListView.separated(
                 shrinkWrap: true,
@@ -1240,15 +1815,38 @@ class _QuickConfigPicker extends StatelessWidget {
                   final cfg = configs[i];
                   return ListTile(
                     leading: _fileTypeIcon(cfg.fileType),
-                    title: Text(cfg.name.isNotEmpty ? cfg.name : '(unnamed)',
-                        style: TextStyle(fontSize: 14, color: scheme.onSurface, fontWeight: FontWeight.w500)),
+                    title: Text(
+                      cfg.name.isNotEmpty ? cfg.name : '(unnamed)',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: scheme.onSurface,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
                     subtitle: cfg.description.isNotEmpty
-                        ? Text(cfg.description, maxLines: 1, overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontSize: 11, color: scheme.outline))
+                        ? Text(
+                            cfg.description,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: scheme.outline,
+                            ),
+                          )
                         : Text(
-                            isZh ? '${cfg.items.where((i) => i.enabled).length} 项已启用' : '${cfg.items.where((i) => i.enabled).length} items enabled',
-                            style: TextStyle(fontSize: 11, color: scheme.outline.withAlpha(150))),
-                    trailing: Icon(Icons.chevron_right, size: 18, color: scheme.outline),
+                            isZh
+                                ? '${cfg.items.where((i) => i.enabled).length} 项已启用'
+                                : '${cfg.items.where((i) => i.enabled).length} items enabled',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: scheme.outline.withAlpha(150),
+                            ),
+                          ),
+                    trailing: Icon(
+                      Icons.chevron_right,
+                      size: 18,
+                      color: scheme.outline,
+                    ),
                     onTap: () => Navigator.pop(context, cfg),
                   );
                 },
@@ -1260,8 +1858,10 @@ class _QuickConfigPicker extends StatelessWidget {
         TextButton.icon(
           onPressed: () => Navigator.pop(context, _quickPickLiveEdit),
           icon: Icon(Icons.tune, size: 16, color: scheme.primary),
-          label: Text(isZh ? '现场编辑' : 'Live Edit',
-              style: TextStyle(color: scheme.primary)),
+          label: Text(
+            isZh ? '现场编辑' : 'Live Edit',
+            style: TextStyle(color: scheme.primary),
+          ),
         ),
         TextButton(
           onPressed: () => Navigator.pop(context),
@@ -1273,7 +1873,8 @@ class _QuickConfigPicker extends StatelessWidget {
 
   Widget _fileTypeIcon(QuickFileType ft) {
     return Container(
-      width: 32, height: 32,
+      width: 32,
+      height: 32,
       decoration: BoxDecoration(
         color: scheme.primaryContainer.withAlpha(120),
         borderRadius: BorderRadius.circular(8),
@@ -1284,7 +1885,8 @@ class _QuickConfigPicker extends StatelessWidget {
           QuickFileType.image => Icons.image_outlined,
           QuickFileType.audio => Icons.audiotrack_outlined,
         },
-        size: 16, color: scheme.primary,
+        size: 16,
+        color: scheme.primary,
       ),
     );
   }
@@ -1323,7 +1925,10 @@ class _FppxView {
     final types = <MediaType>{};
     if (graph != null) {
       for (final n in graph.nodes) {
-        if (n.type == PipelineStepType.start || n.type == PipelineStepType.output) continue;
+        if (n.type == PipelineStepType.start ||
+            n.type == PipelineStepType.output) {
+          continue;
+        }
         types.addAll(n.inputTypes);
       }
     }
@@ -1349,10 +1954,14 @@ class _FppxView {
 
   String detectedMediaLabel(bool isZh) {
     if (detectedMediaTypes.isEmpty) return isZh ? '通用' : 'Generic';
-    return detectedMediaTypes.map((t) => switch (t) {
-      MediaType.video => isZh ? '视频' : 'Video',
-      MediaType.image => isZh ? '图片' : 'Image',
-      MediaType.audio => isZh ? '音频' : 'Audio',
-    }).join(' / ');
+    return detectedMediaTypes
+        .map(
+          (t) => switch (t) {
+            MediaType.video => isZh ? '视频' : 'Video',
+            MediaType.image => isZh ? '图片' : 'Image',
+            MediaType.audio => isZh ? '音频' : 'Audio',
+          },
+        )
+        .join(' / ');
   }
 }

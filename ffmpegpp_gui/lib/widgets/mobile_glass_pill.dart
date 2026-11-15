@@ -382,21 +382,7 @@ class _MobileGlassPillState extends State<MobileGlassPill>
         color: style == SurfaceStyle.liquid && gpuGlass
             ? Colors.transparent
             : tint,
-        // A shallow reflection adds volume without another backdrop layer.
-        gradient: style == SurfaceStyle.liquid
-            ? LinearGradient(
-                begin: Alignment(-1 + tuning.lightPos * 2, -1),
-                end: Alignment(1 - tuning.lightPos * 2, 1),
-                colors: [
-                  Colors.white.withValues(
-                    alpha: (0.065 * tuning.highlight * op).clamp(0.0, 0.16),
-                  ),
-                  Colors.transparent,
-                  Colors.black.withValues(alpha: 0.035 * op),
-                ],
-                stops: const [0, 0.48, 1],
-              )
-            : null,
+        // 光照交给玻璃引擎处理，避免内容上再叠一层独立的斜向亮暗带。
         borderRadius: BorderRadius.circular(widget.radius),
         border: Border.all(
           color: style == SurfaceStyle.blur

@@ -56,3 +56,13 @@ __pycache__/
 
 # ---- 工具误产出的临时文件（曾误提交 wb_an_a1/a2.txt）----
 wb_an_*
+
+# ---- 死代码审计排除：文档/更改说明与扫描报告，不是源码输入 ----
+/README.md
+/README_EN.md
+/docs/audit_report.md
+/docs/ui_audit_2026-11-07.md
+/docs/mobile_android_validation.md
+/ffmpegpp_gui/third_party/liquid_glass_renderer/CHANGELOG.md
+/ffmpegpp_gui/third_party/desktop_multi_window/CHANGELOG.md
+/_deadcode_report.txt

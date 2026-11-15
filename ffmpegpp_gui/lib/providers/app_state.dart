@@ -187,8 +187,8 @@ class AppState extends ChangeNotifier {
   /// 登记一个任务的进度应用闭包（闭包内须自行检查任务仍存在且仍在 processing）。
   void _queueProgress(String taskId, bool Function() apply) {
     _pendingProgress[taskId] = apply;
-    _progressFlushTimer?.cancel();
-    _progressFlushTimer = Timer(_progressFlushInterval, _flushProgress);
+    // 保留当前窗口的截止时间，持续进度事件也必须每 300ms 刷新。
+    _progressFlushTimer ??= Timer(_progressFlushInterval, _flushProgress);
   }
 
   void _flushProgress() {

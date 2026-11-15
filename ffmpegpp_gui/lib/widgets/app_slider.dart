@@ -82,6 +82,17 @@ const int _kOverlayAlpha = 31;
 /// 进度条不确定态彗星穿过轨道的周期。
 const int _kIndeterminateDurationMs = 1800;
 
+const Duration _kCometFadeDuration = Duration(milliseconds: 180);
+
+double _cometOpacity(Duration? releasedAt) => releasedAt == null
+    ? 1
+    : (1 -
+              (SchedulerBinding.instance.currentSystemFrameTimeStamp -
+                          releasedAt)
+                      .inMicroseconds /
+                  _kCometFadeDuration.inMicroseconds)
+          .clamp(0.0, 1.0);
+
 // ── 彗星拖尾 ──
 //
 // 全应用只保留一套实现：[_CometFillPainter]（填充段前缘光带 + 光晕），与开屏
@@ -641,8 +652,7 @@ class AppSlider extends StatefulWidget {
   State<AppSlider> createState() => _AppSliderState();
 }
 
-class _AppSliderState extends State<AppSlider>
-    with TickerProviderStateMixin {
+class _AppSliderState extends State<AppSlider> with TickerProviderStateMixin {
   // 两个 ticker：_valueController 管数值动画，_cometPhase 管彗星相位。
   // 必须是 TickerProviderStateMixin —— SingleTickerProviderStateMixin 只允许
   // 挂一个 ticker，第二个 controller 会直接抛断言。
@@ -653,6 +663,7 @@ class _AppSliderState extends State<AppSlider>
   double? _dragValue;
   double _lastDragValue = 0;
   Duration? _lastDragAt;
+  Duration? _releasedAt;
 
   /// 平滑后的拖动速度（0..1）。
   ///
@@ -687,6 +698,8 @@ class _AppSliderState extends State<AppSlider>
   bool _cometAllowed = false;
 
   void _handleDragValue(double value) {
+    _releasedAt = null;
+    if (_cometAllowed && !_cometPhase.isAnimating) _cometPhase.repeat();
     final now = SchedulerBinding.instance.currentSystemFrameTimeStamp;
     final last = _lastDragAt;
     if (last == null) {
@@ -730,12 +743,16 @@ class _AppSliderState extends State<AppSlider>
         ? 1 / 60
         : ((now - last).inMicroseconds / Duration.microsecondsPerSecond).clamp(
             0.001,
-            0.1,
+            double.infinity,
           );
     final double decay = math.exp(-dt / _kSpeedDecayTau);
     _dragSpeed = math.max(_dragSpeed * decay, _instantSpeed);
     _instantSpeed = 0;
     if (_dragSpeed < 0.004) _dragSpeed = 0;
+    if (_releasedAt != null && _cometOpacity(_releasedAt) == 0) {
+      _cometPhase.stop();
+      setState(() => _releasedAt = null);
+    }
   }
 
   /// 实际绘制出来的值：拖动时 = 手指值，其余时候 = 数值动画的当前帧。
@@ -792,6 +809,12 @@ class _AppSliderState extends State<AppSlider>
 
   void _animateTo(double target) {
     final double to = _clamp(target);
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _valueController.stop();
+      _valueTween = null;
+      _shown = to;
+      return;
+    }
     if ((to - _shown).abs() < 1e-9) {
       // 直接赋值即可：本方法只从 didUpdateWidget 调用，之后紧接着就是本组件的重建，
       // 不需要（也不应该在 build 期间）再 setState。
@@ -827,6 +850,19 @@ class _AppSliderState extends State<AppSlider>
         cfg.particles &&
         !MediaQuery.disableAnimationsOf(context);
     _cometAllowed = particlesOn;
+    if (!particlesOn) {
+      _releasedAt = null;
+      _cometPhase.stop();
+      _lastCometTickAt = null;
+      _dragSpeed = 0;
+      _instantSpeed = 0;
+    }
+    if (MediaQuery.disableAnimationsOf(context) &&
+        _valueController.isAnimating) {
+      _valueController.stop();
+      _valueTween = null;
+      _shown = _clamp(widget.value);
+    }
 
     return SliderTheme(
       data: appSliderThemeFor(
@@ -859,6 +895,12 @@ class _AppSliderState extends State<AppSlider>
             max: widget.max,
             divisions: widget.divisions,
             label: widget.label,
+            onChangeStart: (double value) {
+              _releasedAt = null;
+              _lastDragAt = null;
+              _handleDragValue(value);
+              _valueController.stop();
+            },
             onChanged: widget.onChanged == null
                 ? null
                 : (double nv) {
@@ -873,14 +915,11 @@ class _AppSliderState extends State<AppSlider>
                   },
             onChangeEnd: (double nv) {
               _lastDragAt = null;
-              _lastCometTickAt = null;
-              _dragSpeed = 0;
+              // 复用相位 ticker 做短淡出，结束后卸层并停止调度。
               _instantSpeed = 0;
-              _dragDir = 0;
-              // 松手即停相位：彗星层同时被 _dragValue == null 卸掉，
-              // 不会留下一条不会动的残影。
-              _cometPhase.stop();
-              _cometPhase.value = 0;
+              _releasedAt = _cometAllowed && _cometPhase.isAnimating
+                  ? SchedulerBinding.instance.currentSystemFrameTimeStamp
+                  : null;
               setState(() {
                 _dragValue = null;
                 _shown = _clamp(nv);
@@ -891,7 +930,7 @@ class _AppSliderState extends State<AppSlider>
           // ③ 填充段前缘的彗星：仅拖动时显示（静止不常驻），
           //     光晕/尾长随拖速动态变化，相位由 _cometPhase 驱动。
           //     纯前景装饰层，IgnorePointer 不抢手势。
-          if (particlesOn && _dragValue != null)
+          if (particlesOn && (_dragValue != null || _releasedAt != null))
             Positioned.fill(
               child: IgnorePointer(
                 // 只重建这一层（CustomPaint），不 setState 整个 Slider：
@@ -908,6 +947,8 @@ class _AppSliderState extends State<AppSlider>
                       insetX: _kTrackInsetX,
                       textDirection: Directionality.of(context),
                       dragging: true,
+                      motionDirection: _dragDir,
+                      opacity: _cometOpacity(_releasedAt),
                       speed: _dragSpeed.clamp(0.0, 1.0),
                       phase: _cometPhase.value,
                     ),
@@ -996,6 +1037,9 @@ class _AppRangeSliderState extends State<AppRangeSlider>
   double _dragSpeed = 0;
   double _instantSpeed = 0;
   Duration? _lastTickAt;
+  Duration? _releasedAt;
+  double? _headValue;
+  int _dragDir = 0;
 
   /// 与 [_AppSliderState._cometAllowed] 同义：特效关闭 / 减弱动态效果时不空转 ticker。
   bool _cometAllowed = false;
@@ -1031,10 +1075,22 @@ class _AppRangeSliderState extends State<AppRangeSlider>
   }
 
   void _handleValues(RangeValues v) {
+    _releasedAt = null;
+    if (_cometAllowed && !_cometPhase.isAnimating) _cometPhase.repeat();
     final now = SchedulerBinding.instance.currentSystemFrameTimeStamp;
     final RangeValues? last = _lastValues;
     final Duration? lastAt = _lastMoveAt;
     if (last != null && lastAt != null) {
+      final startDelta = v.start - last.start;
+      final endDelta = v.end - last.end;
+      final movesStart = startDelta.abs() > endDelta.abs();
+      final delta = movesStart ? startDelta : endDelta;
+      if (delta != 0) {
+        final dir = delta > 0 ? 1 : -1;
+        if (_dragDir != 0 && dir != _dragDir) _dragSpeed = 0;
+        _dragDir = dir;
+        _headValue = movesStart ? v.start : v.end;
+      }
       final double seconds =
           (now - lastAt).inMicroseconds / Duration.microsecondsPerSecond;
       if (seconds > 0) {
@@ -1061,12 +1117,16 @@ class _AppRangeSliderState extends State<AppRangeSlider>
         ? 1 / 60
         : ((now - last).inMicroseconds / Duration.microsecondsPerSecond).clamp(
             0.001,
-            0.1,
+            double.infinity,
           );
     final double decay = math.exp(-dt / _kSpeedDecayTau);
     _dragSpeed = math.max(_dragSpeed * decay, _instantSpeed);
     _instantSpeed = 0;
     if (_dragSpeed < 0.004) _dragSpeed = 0;
+    if (_releasedAt != null && _cometOpacity(_releasedAt) == 0) {
+      _cometPhase.stop();
+      setState(() => _releasedAt = null);
+    }
   }
 
   double _fractionOf(double v) {
@@ -1088,6 +1148,13 @@ class _AppRangeSliderState extends State<AppRangeSlider>
         cfg.particles &&
         !MediaQuery.disableAnimationsOf(context);
     _cometAllowed = particlesOn;
+    if (!particlesOn) {
+      _releasedAt = null;
+      _cometPhase.stop();
+      _lastTickAt = null;
+      _dragSpeed = 0;
+      _instantSpeed = 0;
+    }
     final RangeValues shown = _dragValues ?? widget.values;
 
     return SliderTheme(
@@ -1118,9 +1185,12 @@ class _AppRangeSliderState extends State<AppRangeSlider>
             max: widget.max,
             divisions: widget.divisions,
             labels: widget.labels,
-            onChangeStart: (_) {
-              _lastValues = null;
-              _lastMoveAt = null;
+            onChangeStart: (values) {
+              _releasedAt = null;
+              _headValue = null;
+              _dragDir = 0;
+              _lastValues = values;
+              _lastMoveAt = SchedulerBinding.instance.currentSystemFrameTimeStamp;
               _lastTickAt = null;
               _dragSpeed = 0;
               _instantSpeed = 0;
@@ -1139,11 +1209,10 @@ class _AppRangeSliderState extends State<AppRangeSlider>
             onChangeEnd: (RangeValues v) {
               _lastValues = null;
               _lastMoveAt = null;
-              _lastTickAt = null;
-              _dragSpeed = 0;
               _instantSpeed = 0;
-              _cometPhase.stop();
-              _cometPhase.value = 0;
+              _releasedAt = _cometAllowed && _cometPhase.isAnimating
+                  ? SchedulerBinding.instance.currentSystemFrameTimeStamp
+                  : null;
               setState(() {
                 _dragging = false;
                 // 保留最后值，等上层写回后再由 didUpdateWidget 交还控制权。
@@ -1153,7 +1222,7 @@ class _AppRangeSliderState extends State<AppRangeSlider>
             },
           ),
           // 区间两端之间的填充段前缘彗星，与 [AppSlider] / 开屏进度条一致。
-          if (particlesOn)
+          if (particlesOn && (_dragging || _releasedAt != null))
             Positioned.fill(
               child: IgnorePointer(
                 child: AnimatedBuilder(
@@ -1166,7 +1235,10 @@ class _AppRangeSliderState extends State<AppRangeSlider>
                       trackHeight: trackHeight,
                       insetX: _kTrackInsetX,
                       textDirection: Directionality.of(context),
-                      dragging: _dragging,
+                      dragging: true,
+                      headFraction: _fractionOf(_headValue ?? shown.end),
+                      motionDirection: _dragDir,
+                      opacity: _cometOpacity(_releasedAt),
                       speed: _dragSpeed.clamp(0.0, 1.0),
                       phase: _cometPhase.value,
                     ),
@@ -1206,6 +1278,9 @@ class _CometFillPainter extends CustomPainter {
     this.dragging = false,
     this.speed = 0,
     this.phase = 0,
+    this.headFraction,
+    this.motionDirection = 0,
+    this.opacity = 1,
   });
 
   /// 填充段起点 / 终点占整条轨道的比例（0..1）。
@@ -1235,6 +1310,11 @@ class _CometFillPainter extends CustomPainter {
   /// 无需改动：它们各自有驱动源，共享同一份 [_drawComet] 绘制。
   final double phase;
 
+  /// Logical drag direction; mirror once for RTL, not according to fill growth.
+  final int motionDirection;
+  final double? headFraction;
+  final double opacity;
+
   @override
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty || trackHeight <= 0) return;
@@ -1256,7 +1336,8 @@ class _CometFillPainter extends CustomPainter {
 
     final bool isLtr = textDirection == TextDirection.ltr;
     // 前缘：LTR 是右端，RTL 是左端。
-    final double headX = insetX + trackW * (isLtr ? hi : 1 - hi);
+    final double head = (headFraction ?? hi).clamp(0.0, 1.0);
+    final double headX = insetX + trackW * (isLtr ? head : 1 - head);
     final double tailEdgeX = insetX + trackW * (isLtr ? lo : 1 - lo);
 
     // 尾迹长度用**绝对像素**而不是「占填充段的比例」。
@@ -1264,8 +1345,12 @@ class _CometFillPainter extends CustomPainter {
     // 比例写法（旧实现 0.35~0.95）在快满的进度条上会拉出一条贯穿整条轨道的
     // 白色渐变 —— 用户反馈「拖尾渐变做的太长了」；而在低进度时又短到看不见。
     // 固定 46~96px 后，无论填充多长，彗星都是同一颗「同样长尾巴」的彗星。
-    final double dir = headX >= tailEdgeX ? 1.0 : -1.0;
-    final double fullSpan = (headX - tailEdgeX).abs();
+    final double dir = motionDirection == 0
+        ? (headX >= tailEdgeX ? 1.0 : -1.0)
+        : motionDirection.toDouble() * (isLtr ? 1 : -1);
+    final double fullSpan = motionDirection == 0
+        ? (headX - tailEdgeX).abs()
+        : (dir > 0 ? headX - insetX : insetX + trackW - headX);
     final double tailLen = math.min(
       fullSpan,
       46.0 + 50.0 * speed.clamp(0.0, 1.0),
@@ -1294,6 +1379,7 @@ class _CometFillPainter extends CustomPainter {
           : (dragging ? 0.34 + speed * 0.26 : 0.30),
       speed: speed,
       phase: phase,
+      opacity: opacity,
     );
     canvas.restore();
   }
@@ -1308,7 +1394,10 @@ class _CometFillPainter extends CustomPainter {
       old.textDirection != textDirection ||
       old.dragging != dragging ||
       old.speed != speed ||
-      old.phase != phase;
+      old.phase != phase ||
+      old.headFraction != headFraction ||
+      old.motionDirection != motionDirection ||
+      old.opacity != opacity;
 }
 
 /// 统一进度条：与滑块同一套胶囊玻璃轨道 + 前缘彗星。
@@ -1505,8 +1594,11 @@ void _drawComet(
   required double glowAlpha,
   double speed = 0,
   double phase = 0,
+  double opacity = 1,
 }) {
-  if (size.height <= 0) return;
+  if (size.height <= 0 || opacity <= 0) return;
+  color = _withScaledAlpha(color, opacity);
+  glowAlpha *= opacity;
   final double length = (head.dx - tail.dx).abs();
   // 不再因为「尾长为 0」整层 return：拖到最左端时前缘光晕仍应存在，
   // 旧写法会让彗星在 0 附近突然闪断一下。

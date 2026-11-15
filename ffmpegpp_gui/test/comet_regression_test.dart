@@ -124,10 +124,16 @@ void main() {
           ),
         ),
       );
+      final slider = tester.widget<RangeSlider>(find.byType(RangeSlider));
+      slider.onChangeStart!(slider.values);
+      slider.onChanged!(const RangeValues(0.1, 0.7));
+      await tester.pump();
       final painter = painterOf(tester, '_CometFillPainter');
       images.add(
         (await tester.runAsync(() => pixels(painter, const Size(240, 24))))!,
       );
+      // Reset animation phase and drag state before comparing the other axis.
+      await tester.pumpWidget(const SizedBox());
     }
     var difference = 0;
     for (var y = 0; y < 24; y++) {

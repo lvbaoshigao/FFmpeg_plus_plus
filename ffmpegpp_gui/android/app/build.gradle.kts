@@ -93,3 +93,9 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    testImplementation("junit:junit:4.13.2")
+    // Execute production JSON builders on the JVM rather than Android stub methods.
+    testImplementation("org.json:json:20180813")
+}

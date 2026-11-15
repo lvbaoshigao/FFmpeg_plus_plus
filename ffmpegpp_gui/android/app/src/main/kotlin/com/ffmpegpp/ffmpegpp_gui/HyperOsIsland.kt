@@ -11,7 +11,6 @@ import android.graphics.drawable.Icon
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import org.json.JSONObject
 
 /**
  * 小米澎湃 OS「小米超级岛」接入 + 应用通知基建。
@@ -46,7 +45,6 @@ import org.json.JSONObject
  */
 object HyperOsIsland {
 
-    private const val TAG = "HyperOsIsland"
 
     /** 任务完成通知：高重要性，允许横幅/响铃。 */
     private const val DONE_CHANNEL_ID = "ffmpegpp_task_done"
@@ -57,9 +55,6 @@ object HyperOsIsland {
     private const val PROGRESS_CHANNEL_ID = "ffmpegpp_island_progress"
     private const val PROGRESS_CHANNEL_NAME = "转码进度"
     private const val PROGRESS_NOTIFY_ID = 1
-
-    /** 本应用在超级岛上的强调色（朱砂，与主题点缀色一致）。 */
-    private const val HIGHLIGHT = "#FF6B4A"
 
     /** 自定义图标的注册 key（必须与 `miui.focus.pics` Bundle 里的 key 一致）。 */
     private const val PIC_KEY = "miui.focus.pic_ffmpegpp"
@@ -242,17 +237,19 @@ object HyperOsIsland {
      * 点击通知打开应用（`setAutoCancel` 也依赖它才能生效）。
      * 没有 contentIntent 时点通知**什么都不发生**（旧实现就是这样）。
      */
-    private fun contentIntent(context: Context): PendingIntent? = try {
-        val launch =
-            context.packageManager.getLaunchIntentForPackage(context.packageName)
-                ?: return null
-        launch.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        PendingIntent.getActivity(
-            context, 0, launch,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-    } catch (e: Exception) {
-        null
+    private fun contentIntent(context: Context): PendingIntent? {
+        return try {
+            val launch =
+                context.packageManager.getLaunchIntentForPackage(context.packageName)
+                    ?: return null
+            launch.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            PendingIntent.getActivity(
+                context, 0, launch,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        } catch (e: Exception) {
+            null
+        }
     }
 
     /**
@@ -439,39 +436,8 @@ object HyperOsIsland {
     // ────────────────────────────── 岛 JSON ──────────────────────────────
 
     /**
-     * 组装 `miui.focus.param`。
-     *
-     * 结构严格按官方《基础数据构建》+《模板库》第四部分（摘要态）：
-     * ```
-     * param_v2 {
-     *   protocol / business(必填) / updatable / islandFirstFloat / enableFloat /
-     *   timeout / ticker / aodTitle
-     *   param_island {
-     *     islandProperty / islandTimeout / dismissIsland / highlightColor
-     *     bigIslandArea {                       // 摘要态大岛：A 区 + B 区
-     *       imageTextInfoLeft {                 // A 区：图文组件 1
-     *         type, picInfo{type,pic},
-     *         textInfo{frontTitle,title,content,narrowFont,showHighlightColor}
-     *       }
-     *       progressTextInfo {                  // B 区：进度文本组件（仅进度卡）
-     *         progressInfo{progress,colorReach}, textInfo{...}
-     *       }
-     *     }
-     *     smallIslandArea {                     // 摘要态小岛
-     *       combinePicInfo {                    // 有进度时：图标 + 外圈环形进度
-     *         picInfo{type,pic},
-     *         progressInfo{progress,colorReach,colorUnReach,isCCW}
-     *       }                                   // 无进度时退化为 picInfo
-     *     }
-     *   }
-     *   baseInfo { type, title, content }       // 焦点通知展开态
-     * }
-     * ```
-     *
-     * ⚠️ 摘要态**没有** `miui.focus.paramtextInfo` 这个 key —— 那是《开发指南》
-     * 里展开态示例的写法，套到 `imageTextInfoLeft` 里系统认不出来，大岛就只剩
-     * 一个图标。摘要态的文本字段名也不同：`showHighlightColor`（不是
-     * `useHighLight`）。
+     * miui.focus.param JSON: expanded progress plus big/small island components.
+     * Kept Android-independent in [XiaomiIslandPayload] for JVM regression tests.
      */
     private fun islandJson(
         business: String,
@@ -485,107 +451,8 @@ object HyperOsIsland {
         timeoutMin: Int,
         firstFloat: Boolean,
         progress: Int? = null,
-    ): String {
-        fun picInfo(): JSONObject = JSONObject().put("type", 1).put("pic", iconKey)
-
-        val pct = progress?.coerceIn(0, 100)
-
-        // ── 大岛（摘要态）A 区：图文组件 1 ─────────────────────────────────
-        //
-        // 结构是 imageTextInfoLeft{ type, picInfo, textInfo }，**不是**
-        // `miui.focus.paramtextInfo`（那个 key 只出现在《开发指南》的展开态示例里，
-        // 摘要态用它会认不出来 → 大岛只剩一个图标）。字段名同理：
-        // 摘要态 textInfo 用 `showHighlightColor`，不是 `useHighLight`。
-        val aZone = JSONObject()
-            .put("type", 1)
-            .put("picInfo", picInfo())
-            .put(
-                "textInfo",
-                JSONObject()
-                    .put("frontTitle", frontTitle)
-                    .put("title", title)
-                    .put("content", content)
-                    .put("narrowFont", false)
-                    .put("showHighlightColor", true),
-            )
-
-        val bigArea = JSONObject().put("imageTextInfoLeft", aZone)
-
-        // ── 大岛 B 区：进度文本组件（文本 + 线性进度条）─────────────────────
-        //
-        // 模板库 4.1 的 B 区可用组件里有 `progressTextInfo`（文本 + 环形/线性进度），
-        // 这才是「大岛上加进度条」的正确位置；把 `progressInfo` 直接平铺进
-        // bigIslandArea 不是合法 B 区成员（上一版就是这么写的，所以看不到条）。
-        if (pct != null) {
-            bigArea.put(
-                "progressTextInfo",
-                JSONObject()
-                    .put(
-                        "progressInfo",
-                        JSONObject()
-                            .put("progress", pct)
-                            .put("colorReach", HIGHLIGHT),
-                    )
-                    .put(
-                        "textInfo",
-                        JSONObject()
-                            .put("frontTitle", "")
-                            .put("title", "$pct%")
-                            .put("content", "")
-                            .put("showHighlightColor", false),
-                    ),
-            )
-        }
-
-        // ── 小岛（摘要态）：进度用「图标 + 外圈环形进度」───────────────────
-        //
-        // combinePicInfo 是小岛唯一能表达进度的组件（模板库 4.3）：
-        // 图标周围一圈环形进度，会随每次 updatable 更新实时变化。
-        // 只给 picInfo 时小岛恒定只有图标，这就是「小岛看不到百分比」的原因。
-        val smallArea = if (pct != null) {
-            JSONObject().put(
-                "combinePicInfo",
-                JSONObject()
-                    .put("picInfo", picInfo())
-                    .put(
-                        "progressInfo",
-                        JSONObject()
-                            .put("progress", pct)
-                            .put("colorReach", HIGHLIGHT)
-                            .put("colorUnReach", "#33FFFFFF")
-                            .put("isCCW", false),
-                    ),
-            )
-        } else {
-            JSONObject().put("picInfo", picInfo())
-        }
-
-        val island = JSONObject()
-            .put("islandProperty", 1) // 1 = 信息展示为主
-            .put("islandTimeout", islandTimeoutSec)
-            .put("dismissIsland", dismissIsland)
-            .put("highlightColor", HIGHLIGHT)
-            .put("bigIslandArea", bigArea)
-            .put("smallIslandArea", smallArea)
-
-        // 展开态（焦点通知）：文本组件 2。
-        val baseInfo = JSONObject()
-            .put("type", 2)
-            .put("title", title)
-            .put("content", content)
-
-        val v2 = JSONObject()
-            .put("protocol", 1)
-            .put("business", business) // 必填：运营场景统计
-            .put("updatable", updatable)
-            .put("islandFirstFloat", firstFloat) // 首次是否直接展开
-            .put("enableFloat", false) // 更新时不再抢焦点
-            .put("timeout", timeoutMin) // 单位 min
-            .put("ticker", content)
-            .put("aodTitle", title)
-            .put("param_island", island)
-            .put("baseInfo", baseInfo)
-
-        return JSONObject().put("param_v2", v2).toString()
-    }
+    ): String = XiaomiIslandPayload.build(
+        business, frontTitle, title, content, iconKey, updatable, dismissIsland,
+        islandTimeoutSec, timeoutMin, firstFloat, progress,
+    )
 }

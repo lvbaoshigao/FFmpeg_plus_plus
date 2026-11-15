@@ -56,17 +56,41 @@ class AppPageTransitionsBuilder extends PageTransitionsBuilder {
     Animation<double> secondaryAnimation,
     Widget child,
   ) {
-    final Widget content = _AppPageExitTransition(
+    Widget content(double enterFraction) => _AppPageExitTransition(
       animation: secondaryAnimation,
       fraction: _exitFraction,
       child: _AppPageEnterTransition(
         animation: animation,
-        fraction: _enterFraction,
+        fraction: enterFraction,
         child: child,
       ),
     );
-    if (!predictiveBack) return content;
-    return _PredictiveBackDetector(route: route, child: content);
+    if (!predictiveBack) return content(_enterFraction);
+    return _PredictiveBackDetector(
+      route: route,
+      builder: (fraction) => content(fraction ?? _enterFraction),
+    );
+  }
+}
+
+/// 二级页面路由：保留 Material 路由兼容性，让旧页 secondaryAnimation 联动。
+class AppPageRoute<T> extends MaterialPageRoute<T> {
+  AppPageRoute({required super.builder}) : super(allowSnapshotting: false);
+
+  @override
+  Duration get transitionDuration => const Duration(milliseconds: 280);
+
+  @override
+  Duration get reverseTransitionDuration => const Duration(milliseconds: 240);
+
+  @override
+  Widget buildTransitions(BuildContext context, Animation<double> animation,
+      Animation<double> secondaryAnimation, Widget child) {
+    final configured = Theme.of(context).pageTransitionsTheme.builders[TargetPlatform.android];
+    final transitions = configured is AppPageTransitionsBuilder
+        ? configured
+        : const AppPageTransitionsBuilder();
+    return transitions.buildTransitions(this, context, animation, secondaryAnimation, child);
   }
 }
 
@@ -107,6 +131,7 @@ class AppSlideInTransition extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (MediaQuery.disableAnimationsOf(context)) return child;
     return AnimatedBuilder(
       animation: animation,
       child: child,
@@ -151,6 +176,7 @@ class _AppPageExitTransition extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (MediaQuery.disableAnimationsOf(context)) return child;
     return AnimatedBuilder(
       animation: animation,
       child: child,
@@ -171,10 +197,10 @@ class _AppPageExitTransition extends StatelessWidget {
 /// `route.isCurrent && route.popGestureEnabled` —— 后者在 `PopScope(canPop: false)`
 /// 的页面上是 false（编辑器页就是），此时不能吞掉手势。
 class _PredictiveBackDetector extends StatefulWidget {
-  const _PredictiveBackDetector({required this.route, required this.child});
+  const _PredictiveBackDetector({required this.route, required this.builder});
 
   final PageRoute<dynamic> route;
-  final Widget child;
+  final Widget Function(double? fraction) builder;
 
   @override
   State<_PredictiveBackDetector> createState() => _PredictiveBackDetectorState();
@@ -182,8 +208,39 @@ class _PredictiveBackDetector extends StatefulWidget {
 
 class _PredictiveBackDetectorState extends State<_PredictiveBackDetector>
     with WidgetsBindingObserver {
+  bool _active = false;
+  bool _receiving = false;
+  double _direction = 1;
+  NavigatorState? _navigator;
+  Animation<double>? _commitAnimation;
+
   bool get _canStart =>
-      widget.route.isCurrent && widget.route.popGestureEnabled;
+      !_active && widget.route.isCurrent && widget.route.popGestureEnabled;
+
+  void _gestureChanged() {
+    if (_navigator?.userGestureInProgress == true || !mounted) return;
+    void apply() {
+      if (!mounted) return;
+      setState(() {
+        _active = false;
+        _receiving = false;
+      });
+    }
+
+    // dispose 里兜底释放手势前已先移除本监听器，故通知到达时若我们仍在
+    // 树上（mounted），直接复位是安全的。
+    apply();
+  }
+
+  void _stopCommittedGesture(AnimationStatus status) {
+    if (status != AnimationStatus.dismissed &&
+        status != AnimationStatus.completed) {
+      return;
+    }
+    _commitAnimation?.removeStatusListener(_stopCommittedGesture);
+    _commitAnimation = null;
+    _navigator?.didStopUserGesture();
+  }
 
   @override
   void initState() {
@@ -194,6 +251,32 @@ class _PredictiveBackDetectorState extends State<_PredictiveBackDetector>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _commitAnimation?.removeStatusListener(_stopCommittedGesture);
+    // A route removed mid-gesture (drag, commit, or the cancel animation) must
+    // not leave the Navigator stuck in user-gesture mode: the framework only
+    // releases ownership from an animation-status listener that never fires
+    // when the route is disposed while still animating. Drop our own
+    // notifier listener first — didStopUserGesture notifies synchronously
+    // and would otherwise call setState while the tree is locked.
+    final navigator = _navigator;
+    if (navigator != null) {
+      navigator.userGestureInProgressNotifier.removeListener(_gestureChanged);
+      // A live route owns the framework cancellation listener until its
+      // forward animation finishes, even if this detector is removed by a
+      // theme change. Only take over that cleanup if the route was removed.
+      final frameworkCancelling =
+          !_receiving && _commitAnimation == null && widget.route.isActive;
+      if (_active && !frameworkCancelling && navigator.userGestureInProgress) {
+        // Navigator also notifies widgets outside this route. Defer until the
+        // tree is unlocked, rather than triggering their rebuilds in dispose.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (navigator.mounted && navigator.userGestureInProgress) {
+            navigator.didStopUserGesture();
+          }
+        });
+      }
+      _navigator = null;
+    }
     super.dispose();
   }
 
@@ -201,23 +284,49 @@ class _PredictiveBackDetectorState extends State<_PredictiveBackDetector>
   bool handleStartBackGesture(PredictiveBackEvent backEvent) {
     // 实体返回键（isButtonEvent）不是手势，交给系统默认路径处理。
     if (backEvent.isButtonEvent || !_canStart) return false;
+    if (_navigator != widget.route.navigator) {
+      _navigator?.userGestureInProgressNotifier.removeListener(_gestureChanged);
+      _navigator = widget.route.navigator;
+      _navigator?.userGestureInProgressNotifier.addListener(_gestureChanged);
+    }
+    setState(() {
+      _active = _receiving = true;
+      _direction = backEvent.swipeEdge == SwipeEdge.left ? 1 : -1;
+    });
     widget.route.handleStartBackGesture(progress: 1 - backEvent.progress);
     return true;
   }
 
   @override
   void handleUpdateBackGestureProgress(PredictiveBackEvent backEvent) {
+    if (!_receiving) return;
     widget.route.handleUpdateBackGestureProgress(
       progress: 1 - backEvent.progress,
     );
   }
 
   @override
-  void handleCancelBackGesture() => widget.route.handleCancelBackGesture();
+  void handleCancelBackGesture() {
+    if (!_receiving) return;
+    _receiving = false;
+    widget.route.handleCancelBackGesture();
+  }
 
   @override
-  void handleCommitBackGesture() => widget.route.handleCommitBackGesture();
+  void handleCommitBackGesture() {
+    if (!_receiving) return;
+    _receiving = false;
+    // Flutter 3.44's handleCommitBackGesture restarts reverse from upperBound.
+    // Pop already reverses from the drag value, so keep that continuous animation.
+    _commitAnimation = widget.route.animation;
+    _commitAnimation?.addStatusListener(_stopCommittedGesture);
+    if (widget.route.isCurrent) _navigator?.pop();
+    if (_commitAnimation?.isAnimating != true) {
+      _stopCommittedGesture(AnimationStatus.dismissed);
+    }
+  }
 
   @override
-  Widget build(BuildContext context) => widget.child;
+  Widget build(BuildContext context) =>
+      widget.builder(_active ? _direction : null);
 }

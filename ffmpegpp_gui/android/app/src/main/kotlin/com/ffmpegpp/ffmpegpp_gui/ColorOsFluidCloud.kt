@@ -8,10 +8,8 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.UUID
 
 /**
  * OPPO ColorOS「流体云」接入：任务完成通知 + 转码进度卡。
@@ -52,15 +50,8 @@ object ColorOsFluidCloud {
     private const val EXTRA_INTENT_DATA = "intentData"
     private const val RESULT_KEY = "result"
 
-    /** 调测环境固定 serviceId；正式环境由 OPPO 联调提供后替换（见类注释 ⚠️）。 */
-    private const val SERVICE_ID_LAUNCHER = "999800001"
-    private const val SERVICE_ID_FLUID_CLOUD = "999900001"
-
     /** 「任务完成」通知卡的实体固定 ID：同 id 创卡=刷新，只保留最新一条。 */
     private const val DONE_ENTITY_ID = "ffmpegpp_task_done"
-
-    /** 进度卡的实体固定 ID：全应用只维护一张进度卡（并发任务时显示最近更新的）。 */
-    private const val PROGRESS_ENTITY_ID = "ffmpegpp_progress"
 
     /** 本应用在流体云上的强调色（朱砂，与主题点缀色 / 超级岛一致）。 */
     private const val HIGHLIGHT = "#FF6B4A"
@@ -81,11 +72,10 @@ object ColorOsFluidCloud {
         val method = clazz.getDeclaredMethod(
             "get", String::class.java, String::class.java
         )
-        for (key in arrayOf("ro.build.version.oplorom", "ro.build.version.opporom")) {
-            val v = method.invoke(null, key, "") as? String ?: ""
-            if (v.isNotEmpty()) return v
-        }
-        ""
+        arrayOf("ro.build.version.oplorom", "ro.build.version.opporom")
+            .asSequence()
+            .map { key -> method.invoke(null, key, "") as? String ?: "" }
+            .firstOrNull { it.isNotEmpty() } ?: ""
     } catch (e: Exception) {
         ""
     }
@@ -230,39 +220,17 @@ object ColorOsFluidCloud {
      * ⚠️ milestone 进行中状态码（code=0 "processing"）为占位，联调时按
      *    「垂域里程碑」校准。
      */
-    private fun buildProgressIntent(filename: String, progress: Int, actionStatus: Int): String {
-        val entity = baseEntity(PROGRESS_ENTITY_ID)
-            .put("milestone", JSONObject().put("code", 0).put("text", "processing"))
-            .put("capsule", capsuleJson("FFmpeg++ ", "$progress%"))
-            .put("primary", primaryJson("FFmpeg++", filename))
-            .put(
-                "secondaryData",
-                JSONObject().put("type", "PROGRESS").put("progress", progress)
-            )
-
-        return baseIntent(actionStatus).put("intentEntity", entity).toString()
-    }
+    private fun buildProgressIntent(filename: String, progress: Int, actionStatus: Int): String =
+        ColorOsIntentPayload.buildProgressIntent(filename, progress, actionStatus)
 
     /** 销卡 `IntelligentIntent`：actionStatus=2，只需身份字段（结构同创卡）。 */
-    private fun buildProgressEndIntent(): String {
-        val entity = baseEntity(PROGRESS_ENTITY_ID)
-        return baseIntent(actionStatus = 2).put("intentEntity", entity).toString()
-    }
+    private fun buildProgressEndIntent(): String = ColorOsIntentPayload.buildProgressEndIntent()
 
     // ────────────────────────────── JSON 组装 ─────────────────────────────
 
     /** `IntelligentIntent` 公共骨架：identifier/timestamp/serviceId/intentAction。 */
-    private fun baseIntent(actionStatus: Int): JSONObject = JSONObject()
-        .put("intentName", "FFmpegpp.Task")
-        .put("identifier", UUID.randomUUID().toString()) // 单次共享唯一标识
-        .put("timestamp", System.currentTimeMillis())
-        .put(
-            "serviceId",
-            JSONObject()
-                .put("launcher", SERVICE_ID_LAUNCHER)
-                .put("fluidCloud", SERVICE_ID_FLUID_CLOUD)
-        )
-        .put("intentAction", JSONObject().put("actionStatus", actionStatus))
+    private fun baseIntent(actionStatus: Int): JSONObject =
+        ColorOsIntentPayload.baseIntent(actionStatus)
 
     /** `intentEntity` 公共骨架：TASK 场景 + 固定 entityId（intentAction 只在顶层）。 */
     private fun baseEntity(entityId: String): JSONObject = JSONObject()
@@ -304,7 +272,8 @@ object ColorOsFluidCloud {
      * 端侧意图共享：调 IntelligentIntentProvider.shareIntent，解析 ShareResult。
      * @return code == 0（成功）。
      */
-    private fun shareIntent(context: Context, intentData: String): Boolean = try {
+    private fun shareIntent(context: Context, intentData: String): Boolean {
+        return try {
         val client = context.contentResolver
             .acquireUnstableContentProviderClient(PROVIDER_AUTHORITY)
             ?: return false
@@ -324,6 +293,7 @@ object ColorOsFluidCloud {
         // 典型失败：SecurityException（无权限）、IllegalState（Provider 异常）。
         android.util.Log.w(TAG, "shareIntent failed: " + e.message)
         false
+        }
     }
 
     // ────────────────────────────── 普通通知兜底 ──────────────────────────

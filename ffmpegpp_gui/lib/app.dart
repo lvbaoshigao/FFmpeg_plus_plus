@@ -1482,15 +1482,4 @@ class _KeepAliveState extends State<_KeepAlive>
 ///   玻璃 shader 在过渡期间采不到背景（下拉浮层「点一下闪一下」就是这个机制）。
 ///   这里与 `theme/app_page_transitions.dart` 里 Android 的转场同一套视觉：新页
 ///   从右侧 6% 滑入，全程无 opacity、无 surface 底板。
-Route<T> smoothRoute<T>(Widget page) => PageRouteBuilder<T>(
-  pageBuilder: (_, a, b) => page,
-  allowSnapshotting: false,
-  transitionDuration: const Duration(milliseconds: 280),
-  reverseTransitionDuration: const Duration(milliseconds: 240),
-  transitionsBuilder: (_, anim, c, child) {
-    // 与 Android 主题转场共用同一段位移实现（含「按方向取向」的缓动）：
-    // 旧写法用 SlideTransition + CurveTween，pop 时动画值 1→0 会让
-    // easeOut 变成「先慢后快」，用户反馈的返回卡顿就是这一条。
-    return AppSlideInTransition(animation: anim, child: child);
-  },
-);
+Route<T> smoothRoute<T>(Widget page) => AppPageRoute<T>(builder: (_) => page);

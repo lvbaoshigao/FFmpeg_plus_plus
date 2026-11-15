@@ -8,8 +8,10 @@ import '../app.dart';
 import '../models/models.dart';
 import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
+import '../services/saved_config_application.dart';
 import '../services/thumbnail_service.dart';
 import '../theme/app_strings.dart';
+import '../widgets/animated_popup.dart';
 import '../widgets/app_card.dart';
 import '../widgets/mobile_glass_pill.dart';
 import '../widgets/mobile_top_bar.dart';
@@ -71,12 +73,25 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
     final hasParsed = files.any((v) => v.parsed);
 
     final listWidget = items.isEmpty
-        ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.folder_open, size: 48, color: scheme.outline.withAlpha(80)),
-            const SizedBox(height: 8),
-            Text(s.isZh ? '容器为空，点击 + 添加文件' : 'Empty container, tap + to add files',
-                style: TextStyle(color: scheme.outline, fontSize: 13)),
-          ]))
+        ? Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.folder_open,
+                  size: 48,
+                  color: scheme.outline.withAlpha(80),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  s.isZh
+                      ? '容器为空，点击 + 添加文件'
+                      : 'Empty container, tap + to add files',
+                  style: TextStyle(color: scheme.outline, fontSize: 13),
+                ),
+              ],
+            ),
+          )
         : ListView.builder(
             // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
             addRepaintBoundaries: false,
@@ -84,7 +99,9 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
             // 移动端顶部要含沉浸顶栏高度（insetOf），否则首行被药丸压住。
             padding: isMobilePlatform
                 ? MobileUi.subListPadding(
-                    top: ImmersiveTopBar.insetOf(context) + 4, bottom: 16)
+                    top: ImmersiveTopBar.insetOf(context) + 4,
+                    bottom: 16,
+                  )
                 : const EdgeInsets.fromLTRB(16, 4, 16, 16),
             itemCount: items.length,
             itemBuilder: (ctx, i) {
@@ -99,15 +116,21 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
 
     // 工具栏按钮
     final toolbarActions = <Widget>[
-      IconButton(icon: const Icon(Icons.edit_note, size: 20),
-          tooltip: s.isZh ? '编辑节点图' : 'Edit Pipeline',
-          onPressed: hasParsed ? () => _editPipeline(state, container) : null),
-      IconButton(icon: const Icon(Icons.drive_file_rename_outline, size: 20),
-          tooltip: s.isZh ? '重命名' : 'Rename',
-          onPressed: () => _rename(state, container, s)),
-      IconButton(icon: const Icon(Icons.add, size: 20),
-          tooltip: s.containerAddFiles,
-          onPressed: () => _addFiles(state)),
+      IconButton(
+        icon: const Icon(Icons.edit_note, size: 20),
+        tooltip: s.isZh ? '编辑节点图' : 'Edit Pipeline',
+        onPressed: hasParsed ? () => _editPipeline(state, container) : null,
+      ),
+      IconButton(
+        icon: const Icon(Icons.drive_file_rename_outline, size: 20),
+        tooltip: s.isZh ? '重命名' : 'Rename',
+        onPressed: () => _rename(state, container, s),
+      ),
+      IconButton(
+        icon: const Icon(Icons.add, size: 20),
+        tooltip: s.containerAddFiles,
+        onPressed: () => _addFiles(state),
+      ),
       // 排序菜单：统一为 ScaleMenuButton（圆角 14 浮层 + 200ms 缩放展开），
       // 不再是系统 PopupMenuButton 的直角瞬时弹出。
       ScaleMenuButton<ContainerSortMode>(
@@ -130,17 +153,32 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
       // 顶部留白 = 顶栏实际高度（insetOf），否则首行被药丸压住。
       content = ImmersiveTopBar(
         bar: MobileSubPageTopBar(
-          title: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.folder_special, size: 15, color: scheme.primary),
-            const SizedBox(width: 4),
-            // 标题药丸按内容取宽，长容器名约束在屏宽 1/3 内省略
-            ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.34),
-              child: Text(container.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-            ),
-            Text(' (${container.fileCount})',
-                style: TextStyle(fontSize: 11, color: scheme.outline, fontWeight: FontWeight.normal)),
-          ]),
+          title: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.folder_special, size: 15, color: scheme.primary),
+              const SizedBox(width: 4),
+              // 标题药丸按内容取宽，长容器名约束在屏宽 1/3 内省略
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: MediaQuery.of(context).size.width * 0.34,
+                ),
+                child: Text(
+                  container.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Text(
+                ' (${container.fileCount})',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: scheme.outline,
+                  fontWeight: FontWeight.normal,
+                ),
+              ),
+            ],
+          ),
           actions: [
             MobileGlassPillAction(
               icon: Icons.edit_note,
@@ -180,37 +218,62 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
         child: listWidget,
       );
     } else {
-      content = Column(children: [
-        Padding(
-          // 垂直内边距上下相等：原先下边距只有 2，工具栏整体偏上。
-          // Linux 的 36px 自绘标题栏已统一由 WindowChrome 让位（内容整体下移），
-          // 这里不再额外留 40；macOS 走系统标题栏，保留历史上的 40 视觉间距。
-          padding: EdgeInsets.fromLTRB(8, Platform.isMacOS ? 40 : 4, 8, 4),
-          child: Row(children: [
-            IconButton(icon: const Icon(Icons.arrow_back, size: 20), onPressed: () => Navigator.pop(context)),
-            const SizedBox(width: 4),
-            // 标题组由「裸 GestureDetector + Spacer」改为 Expanded：容器名拿到有界宽度，
-            // 大字号/超长名称时单行省略，而不是把整条工具栏撑到横向溢出。
-            // Expanded 已吸收全部剩余空间，操作按钮依旧被顶到最右侧（原 Spacer 的作用）。
-            Expanded(
-              child: GestureDetector(
-                onDoubleTap: () => _rename(state, container, s),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(Icons.folder_special, size: 18, color: scheme.primary),
-                  const SizedBox(width: 6),
-                  Flexible(
-                    child: Text(container.name, maxLines: 1, overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+      content = Column(
+        children: [
+          Padding(
+            // 垂直内边距上下相等：原先下边距只有 2，工具栏整体偏上。
+            // Linux 的 36px 自绘标题栏已统一由 WindowChrome 让位（内容整体下移），
+            // 这里不再额外留 40；macOS 走系统标题栏，保留历史上的 40 视觉间距。
+            padding: EdgeInsets.fromLTRB(8, Platform.isMacOS ? 40 : 4, 8, 4),
+            child: Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.arrow_back, size: 20),
+                  onPressed: () => Navigator.pop(context),
+                ),
+                const SizedBox(width: 4),
+                // 标题组由「裸 GestureDetector + Spacer」改为 Expanded：容器名拿到有界宽度，
+                // 大字号/超长名称时单行省略，而不是把整条工具栏撑到横向溢出。
+                // Expanded 已吸收全部剩余空间，操作按钮依旧被顶到最右侧（原 Spacer 的作用）。
+                Expanded(
+                  child: GestureDetector(
+                    onDoubleTap: () => _rename(state, container, s),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.folder_special,
+                          size: 18,
+                          color: scheme.primary,
+                        ),
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            container.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: scheme.onSurface,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          '  (${container.fileCount})',
+                          style: TextStyle(fontSize: 12, color: scheme.outline),
+                        ),
+                      ],
+                    ),
                   ),
-                  Text('  (${container.fileCount})', style: TextStyle(fontSize: 12, color: scheme.outline)),
-                ]),
-              ),
+                ),
+                ...toolbarActions,
+              ],
             ),
-            ...toolbarActions,
-          ]),
-        ),
-        Expanded(child: listWidget),
-      ]);
+          ),
+          Expanded(child: listWidget),
+        ],
+      );
     }
 
     // Linux 客户端修饰（CSD）：统一使用 widgets/window_chrome.dart。
@@ -226,78 +289,209 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
     return _withWallpaper(
       context,
       WindowChrome(
-        child: Scaffold(
-          backgroundColor: Colors.transparent,
-          body: content,
-        ),
+        child: Scaffold(backgroundColor: Colors.transparent, body: content),
       ),
     );
   }
 
-  Widget _buildItem(AppState state, AppStrings s, ColorScheme scheme,
-      FileContainer container, ContainerItem item, VideoFile video) {
+  Widget _buildItem(
+    AppState state,
+    AppStrings s,
+    ColorScheme scheme,
+    FileContainer container,
+    ContainerItem item,
+    VideoFile video,
+  ) {
     final clr = scheme.onSurface;
     final isEditing = _editingIndex == item.index;
 
     final row = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      child: Row(children: [
+      child: Row(
+        children: [
           // 编号
           GestureDetector(
-            onDoubleTap: () => setState(() { _editingIndex = item.index; _indexCtrl.text = '${item.index}'; }),
+            onDoubleTap: () => setState(() {
+              _editingIndex = item.index;
+              _indexCtrl.text = '${item.index}';
+            }),
             child: isEditing
-                ? SizedBox(width: 40, child: TextField(
-                    controller: _indexCtrl, autofocus: true, textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: scheme.primary),
-                    decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(vertical: 6), border: OutlineInputBorder()),
-                    onSubmitted: (v) {
-                      final newIdx = int.tryParse(v);
-                      if (newIdx != null && newIdx > 0 && newIdx <= container.items.length) state.updateContainerItemIndex(container.id, item.fileId, newIdx);
-                      setState(() => _editingIndex = null);
-                    },
-                  ))
+                ? SizedBox(
+                    width: 40,
+                    child: TextField(
+                      controller: _indexCtrl,
+                      autofocus: true,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: scheme.primary,
+                      ),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(vertical: 6),
+                        border: OutlineInputBorder(),
+                      ),
+                      onSubmitted: (v) {
+                        final newIdx = int.tryParse(v);
+                        if (newIdx != null &&
+                            newIdx > 0 &&
+                            newIdx <= container.items.length) {
+                          state.updateContainerItemIndex(
+                            container.id,
+                            item.fileId,
+                            newIdx,
+                          );
+                        }
+                        setState(() => _editingIndex = null);
+                      },
+                    ),
+                  )
                 : Container(
-                    width: 36, height: 36,
-                    decoration: BoxDecoration(color: scheme.primaryContainer.withAlpha(80), borderRadius: BorderRadius.circular(6)),
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: scheme.primaryContainer.withAlpha(80),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
                     // 固定 36×36 容器内的单行序号：字号调大时等比缩小而不是换行/溢出
                     child: Center(
                       child: FittedBox(
                         fit: BoxFit.scaleDown,
-                        child: Text('${item.index}', maxLines: 1,
-                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: scheme.primary)),
+                        child: Text(
+                          '${item.index}',
+                          maxLines: 1,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            color: scheme.primary,
+                          ),
+                        ),
                       ),
                     ),
                   ),
           ),
           const SizedBox(width: 8),
           // 缩略图
-          ClipRRect(borderRadius: BorderRadius.circular(4),
-            child: _Thumb(filepath: video.filepath, isAudio: video.fileMediaType == MediaType.audio, ffmpeg: state.config.ffmpegPath)),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: _Thumb(
+              filepath: video.filepath,
+              isAudio: video.fileMediaType == MediaType.audio,
+              ffmpeg: state.config.ffmpegPath,
+            ),
+          ),
           const SizedBox(width: 8),
           // 文件信息
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-            Text(video.filename, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: clr), maxLines: 1, overflow: TextOverflow.ellipsis),
-            // 分辨率/时长/大小信息行单行省略：大字号下折成两行会把卡片撑高，
-            // 并让右侧操作按钮与文件名首行错位
-            if (video.parsed)
-              Text('${video.resolution != "N/A" ? "${video.resolution}  •  " : ""}${video.durationStr}  •  ${formatFileSize(video.sizeMb)}',
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant))
-            else
-              Text(s.probing, maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 11, color: scheme.outline)),
-          ])),
-          // 仅删除按钮
-          IconButton(icon: Icon(Icons.arrow_upward, size: 16, color: scheme.outline), tooltip: s.isZh ? '上移' : 'Move Up',
-              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-              onPressed: item.index > 1 ? () => _swapItems(state, container, item.index, item.index - 1) : null),
-          IconButton(icon: Icon(Icons.arrow_downward, size: 16, color: scheme.outline), tooltip: s.isZh ? '下移' : 'Move Down',
-              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-              onPressed: item.index < container.items.length ? () => _swapItems(state, container, item.index, item.index + 1) : null),
-          IconButton(icon: Icon(Icons.close, size: 16, color: scheme.error), tooltip: s.remove,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-              onPressed: () => state.removeFileFromContainer(container.id, item.fileId)),
-        ]),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  video.filename,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                    color: clr,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                // 分辨率/时长/大小信息行单行省略：大字号下折成两行会把卡片撑高，
+                // 并让右侧操作按钮与文件名首行错位
+                if (video.parsed)
+                  Text(
+                    '${video.resolution != "N/A" ? "${video.resolution}  •  " : ""}${video.durationStr}  •  ${formatFileSize(video.sizeMb)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  )
+                else
+                  Text(
+                    s.probing,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11, color: scheme.outline),
+                  ),
+              ],
+            ),
+          ),
+          Builder(
+            builder: (buttonContext) => IconButton(
+              icon: const Icon(Icons.more_vert),
+              tooltip: s.isZh ? '更多' : 'More',
+              onPressed: () {
+                final box = buttonContext.findRenderObject() as RenderBox;
+                final origin = box.localToGlobal(Offset.zero);
+                showAnimatedMenu<String>(
+                  context: buttonContext,
+                  position: Offset(origin.dx, origin.dy + box.size.height),
+                  width: 240,
+                  items: [
+                    AnimatedMenuEntry<String>(
+                      value: 'apply',
+                      child: Text(
+                        s.isZh
+                            ? '应用到文件（不覆盖容器流程）'
+                            : 'Apply to file (does not change container pipeline)',
+                      ),
+                    ),
+                    AnimatedMenuEntry<String>(
+                      value: item.index > 1 ? 'up' : null,
+                      child: Text(s.isZh ? '上移' : 'Move up'),
+                    ),
+                    AnimatedMenuEntry<String>(
+                      value: item.index < container.items.length
+                          ? 'down'
+                          : null,
+                      child: Text(s.isZh ? '下移' : 'Move down'),
+                    ),
+                    AnimatedMenuEntry<String>(
+                      value: 'remove',
+                      child: Text(s.remove),
+                    ),
+                  ],
+                ).then((action) {
+                  if (!buttonContext.mounted || action == null) return;
+                  switch (action) {
+                    case 'apply':
+                      showApplySavedConfig(
+                        buttonContext,
+                        state,
+                        video,
+                        fileOnlyInContainer: true,
+                      );
+                    case 'up':
+                      if (item.index > 1) {
+                        _swapItems(
+                          state,
+                          container,
+                          item.index,
+                          item.index - 1,
+                        );
+                      }
+                    case 'down':
+                      if (item.index < container.items.length) {
+                        _swapItems(
+                          state,
+                          container,
+                          item.index,
+                          item.index + 1,
+                        );
+                      }
+                    case 'remove':
+                      state.removeFileFromContainer(container.id, item.fileId);
+                  }
+                });
+              },
+            ),
+          ),
+        ],
+      ),
     );
 
     // 卡片统一走 AppCard：移动端跟随「卡片样式」（liquid/blur/theme/gray），
@@ -319,31 +513,45 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
 
   void _rename(AppState state, FileContainer container, AppStrings s) {
     final ctrl = TextEditingController(text: container.name);
-    showDialog(context: context, builder: (ctx) {
-      final cs = Theme.of(ctx).colorScheme;
-      return AlertDialog(
-        title: Text(s.isZh ? '重命名容器' : 'Rename Container', style: TextStyle(color: cs.onSurface)),
-        content: TextField(
-          controller: ctrl, autofocus: true,
-          style: TextStyle(color: cs.onSurface),
-          decoration: InputDecoration(
-            hintText: s.isZh ? '容器名称' : 'Container name',
-            hintStyle: TextStyle(color: cs.outline),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        final cs = Theme.of(ctx).colorScheme;
+        return AlertDialog(
+          title: Text(
+            s.isZh ? '重命名容器' : 'Rename Container',
+            style: TextStyle(color: cs.onSurface),
           ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx),
-              child: Text(s.isZh ? '取消' : 'Cancel')),
-          FilledButton(onPressed: () {
-            if (ctrl.text.trim().isNotEmpty) {
-              state.renameContainer(container.id, ctrl.text.trim());
-            }
-            Navigator.pop(ctx);
-          }, child: Text(s.isZh ? '确定' : 'OK')),
-        ],
-      );
-    }).then((_) => ctrl.dispose());
+          content: TextField(
+            controller: ctrl,
+            autofocus: true,
+            style: TextStyle(color: cs.onSurface),
+            decoration: InputDecoration(
+              hintText: s.isZh ? '容器名称' : 'Container name',
+              hintStyle: TextStyle(color: cs.outline),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(s.isZh ? '取消' : 'Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (ctrl.text.trim().isNotEmpty) {
+                  state.renameContainer(container.id, ctrl.text.trim());
+                }
+                Navigator.pop(ctx);
+              },
+              child: Text(s.isZh ? '确定' : 'OK'),
+            ),
+          ],
+        );
+      },
+    ).then((_) => ctrl.dispose());
   }
 
   void _editPipeline(AppState state, FileContainer container) {
@@ -357,14 +565,21 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
     for (final f in files) {
       typeCounts[f.fileMediaType] = (typeCounts[f.fileMediaType] ?? 0) + 1;
     }
-    Navigator.of(context).push(smoothRoute(
-      PipelineEditorPage(
-        video: firstParsed,
-        initialGraph: container.pipelineGraph,
-        containerInfo: (name: container.name, fileCount: container.fileCount, typeCounts: typeCounts, fileIds: files.map((f) => f.id).toList()),
-        onSave: (graph) => state.updateContainerPipeline(container.id, graph),
+    Navigator.of(context).push(
+      smoothRoute(
+        PipelineEditorPage(
+          video: firstParsed,
+          initialGraph: container.pipelineGraph,
+          containerInfo: (
+            name: container.name,
+            fileCount: container.fileCount,
+            typeCounts: typeCounts,
+            fileIds: files.map((f) => f.id).toList(),
+          ),
+          onSave: (graph) => state.updateContainerPipeline(container.id, graph),
+        ),
       ),
-    ));
+    );
   }
 
   Widget _withWallpaper(BuildContext context, Widget child) =>
@@ -372,13 +587,35 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
 
   Future<void> _addFiles(AppState state) async {
     final r = await FilePicker.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['mp4', 'mkv', 'mov', 'avi', 'webm', 'flv', 'wmv', 'ts', 'mpg', 'mpeg', 'm4v', '3gp',
-          ...kAudioExts,
-          'png', 'jpg', 'jpeg', 'bmp', 'webp', 'tiff', 'tif']);
+      type: FileType.custom,
+      allowedExtensions: [
+        'mp4',
+        'mkv',
+        'mov',
+        'avi',
+        'webm',
+        'flv',
+        'wmv',
+        'ts',
+        'mpg',
+        'mpeg',
+        'm4v',
+        '3gp',
+        ...kAudioExts,
+        'png',
+        'jpg',
+        'jpeg',
+        'bmp',
+        'webp',
+        'tiff',
+        'tif',
+      ],
+    );
     if (r.isNotEmpty) {
       final paths = r.where((f) => f.path != null).map((f) => f.path!).toList();
-      if (paths.isNotEmpty) state.addFilesToContainer(widget.containerId, paths);
+      if (paths.isNotEmpty) {
+        state.addFilesToContainer(widget.containerId, paths);
+      }
     }
   }
 }
@@ -395,16 +632,36 @@ class _Thumb extends StatefulWidget {
 class _ThumbState extends State<_Thumb> {
   String? _path;
   @override
-  void initState() { super.initState(); _load(); }
+  void initState() {
+    super.initState();
+    _load();
+  }
+
   Future<void> _load() async {
-    final p = await ThumbnailService.ensureThumbnail(widget.filepath,
-        ffmpeg: widget.ffmpeg, isAudio: widget.isAudio);
+    final p = await ThumbnailService.ensureThumbnail(
+      widget.filepath,
+      ffmpeg: widget.ffmpeg,
+      isAudio: widget.isAudio,
+    );
     if (mounted && p != null) setState(() => _path = p);
   }
+
   @override
   Widget build(BuildContext context) {
     // 缩略图按显示尺寸 3x 封顶解码（1080p 源 ~8MB/张）
-    if (_path != null) return Image.file(File(_path!), width: 40, height: 25, cacheWidth: 120, fit: widget.isAudio ? BoxFit.contain : BoxFit.cover);
-    return Icon(widget.isAudio ? Icons.music_note : Icons.movie_outlined, size: 16, color: Theme.of(context).colorScheme.outline);
+    if (_path != null) {
+      return Image.file(
+        File(_path!),
+        width: 40,
+        height: 25,
+        cacheWidth: 120,
+        fit: widget.isAudio ? BoxFit.contain : BoxFit.cover,
+      );
+    }
+    return Icon(
+      widget.isAudio ? Icons.music_note : Icons.movie_outlined,
+      size: 16,
+      color: Theme.of(context).colorScheme.outline,
+    );
   }
 }
