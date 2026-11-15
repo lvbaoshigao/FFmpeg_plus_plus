@@ -20,6 +20,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Flutter 版本与 build-release.yml / debug-build.yml 一致（理由见那边）。
+# 门禁与构建必须用同一 Flutter，否则 analyze/test 结果对发布产物没有参考性。
+env:
+  FLUTTER_VERSION: '3.50.0'
+
 jobs:
   analyze-and-test:
     runs-on: ubuntu-24.04
@@ -40,12 +45,13 @@ jobs:
       # `pub-cache: true` 缓存 ~/.pub-cache（key 自动含 pubspec.lock 哈希）。
       # 因此**不要**再手写一个 actions/cache 去缓存 ~/.pub-cache：
       # 两者路径相同，会让每次运行多一次 restore + 一次 save，纯属浪费。
-      # 若要锁定版本避免上游 stable 发新版导致 CI 突然变红，
-      # 加 `flutter-version: '3.44.1'`（需与本地一致）。
+      # 版本锁定在 workflow 级 env.FLUTTER_VERSION（与两个构建 workflow 一致）：
+      # 上游 stable 发新版不会让门禁突然变红，本地/CI/Release 的 Flutter 同源。
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
           pub-cache: true
 

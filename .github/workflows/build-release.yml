@@ -19,6 +19,17 @@ concurrency:
 # Version 仍是 5.30」的不一致。
 env:
   APP_VERSION: '6.0.0-beta1'
+  # 全平台锁定同一 Flutter 版本，原因：
+  #   1) 保证同一 Release 里各平台产物来自同一 Flutter，
+  #      避免「stable 发了新版 → x64 平台已 3.51、arm64 平台还是 3.50」；
+  #   2) Linux arm64 job 只能 git clone 安装 SDK（见该 job 注释），
+  #      clone 安装只能按版本号进行、不能按 channel —— 不锁版本
+  #      它就和其余 action 安装的 job 必然漂移；
+  #   3) 缓存 key 稳定（action 的 key 与手动安装的 key 都含版本号），
+  #      每次精确命中，不再随 stable 发版产生新缓存条目。
+  # 升级 Flutter：只改这一行（如 '3.51.0'）。缓存随 key 自动切换，
+  # 首跑重新下载 SDK，之后命中缓存。
+  FLUTTER_VERSION: '3.50.0'
 
 jobs:
   # ══════════════════════════════════════════
@@ -33,6 +44,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
           pub-cache: true
 
@@ -113,12 +125,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake g++ libgtk-3-dev pkg-config ninja-build \
+            libsecret-1-dev \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-good
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
           pub-cache: true
 
@@ -173,19 +187,56 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake g++ libgtk-3-dev pkg-config ninja-build clang curl git unzip xz-utils \
+            libsecret-1-dev \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-good
 
-      # subosito/flutter-action 支持 aarch64 runner（按 uname -m 自动选架构），
-      # 且 `cache: true` 会把 SDK + engine artifacts 一起缓存。
-      # 原先手写 `git clone --depth 1` 每次都要重新拉整个仓库（1GB+，1~2 分钟）
-      # 且完全不复用 —— 这是 ARM64 job 里最大的一块固定开销。
-      # 若某天 action 在 arm64 上不可用，回退方式就是还原成 clone + precache。
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+      # ── 安装 Flutter（原生 arm64 SDK）─────────────────────────────────
+      # subosito/flutter-action 在 aarch64 runner 上装不了 SDK：它依赖的
+      # releases_linux.json 清单里只有 dart_sdk_arch=x64 的条目
+      # （官方 release 通道从未发布 Linux arm64 归档），而 action 按
+      # RUNNER_ARCH=ARM64 自动取架构做过滤 → `any` 解析结果为空 →
+      # "Unable to determine Flutter version for channel: stable
+      #  version: any architecture: arm64"。
+      # 但 Flutter 官方**有** arm64 宿主引擎产物
+      # （flutter_infra_release/flutter/<engine>/linux-arm64/artifacts.zip，
+      # 3.50.0 已核实存在），所以像本地一样 clone 仓库、让工具自举下载
+      # 宿主产物再 precache，即可得到原生 arm64 SDK。
+      # SDK 按版本号缓存：精确命中时直接复用整个 SDK（免拉 1GB+ 仓库）；
+      # stable 发新版时改 workflow 级 FLUTTER_VERSION 即切换。
+      - name: Cache Flutter SDK (arm64)
+        uses: actions/cache@v5
         with:
-          channel: stable
-          cache: true
-          pub-cache: true
+          path: ${{ runner.temp }}/flutter
+          key: flutter-sdk-${{ env.FLUTTER_VERSION }}-linux-arm64-v1
+
+      - name: Install Flutter ${{ env.FLUTTER_VERSION }} (native arm64)
+        run: |
+          set -euo pipefail
+          if [ ! -x "${RUNNER_TEMP}/flutter/bin/flutter" ]; then
+            # 缓存 miss / 上次部分克隆可能留下空目录，先清掉，
+            # 否则 git clone 会拒绝写入非空目录
+            rm -rf "${RUNNER_TEMP}/flutter"
+            git clone https://github.com/flutter/flutter.git \
+              --branch "${FLUTTER_VERSION}" --depth 1 "${RUNNER_TEMP}/flutter"
+          fi
+          # 写入 GITHUB_PATH，后续步骤（flutter pub get / build）才能找到命令
+          echo "${RUNNER_TEMP}/flutter/bin" >> "${GITHUB_PATH}"
+          # 首次运行工具会自动下载 arm64 Dart SDK + 宿主产物；
+          # precache --linux 再补齐 linux 目标产物（embedder/gtk），
+          # 让构建阶段不再走网、全部产物进缓存。
+          flutter config --no-analytics
+          flutter --version
+          flutter precache --linux
+
+      # pub 缓存与 SDK 缓存分开：key 含 pubspec.lock 哈希（lock 变化自动换），
+      # 不能并进 SDK 的 key —— 否则 pubspec 一动就要重建 1GB+ 的 SDK 缓存。
+      - name: Cache pub cache (arm64)
+        uses: actions/cache@v5
+        with:
+          path: ~/.pub-cache
+          key: flutter-pub-${{ env.FLUTTER_VERSION }}-linux-arm64-${{ hashFiles('ffmpegpp_gui/pubspec.lock') }}
+          restore-keys: |
+            flutter-pub-${{ env.FLUTTER_VERSION }}-linux-arm64-
 
       # key 不含源码哈希 → 稳定命中，增量重编交给 CMake（理由见 compile-windows）
       - name: Cache C++ backend build
@@ -238,6 +289,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
           pub-cache: true
 
@@ -318,6 +370,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
           pub-cache: true
 

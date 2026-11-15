@@ -11,8 +11,13 @@
 
 #define MyAppName "FFmpeg++"
 #define MyAppVersion "6.0.0-beta1"
-; 纯数字版本号（Windows 版本资源要求 x.x.x.x，不能包含 beta 等字符）
-#define MyAppVersionNumeric "6.0.0-beta1.0"
+; 纯数字版本号（Windows 版本资源要求 x.x.x.x，不能包含 beta 等字符）。
+; 从 MyAppVersion 派生（单一版本源）：去掉 '-' 之后的预发布后缀，再补第四段 0：
+;   6.0.0-beta1 → 6.0.0.0；6.1.0 → 6.1.0.0。
+; 注意 MyAppVersion 须保持 x.y.z[-tag] 三段数字形式，否则派生值非法。
+#define _MyAppVersionPrePos Pos('-', MyAppVersion)
+#define _MyAppVersionBase (_MyAppVersionPrePos = 0 ? MyAppVersion : Copy(MyAppVersion, 1, _MyAppVersionPrePos - 1))
+#define MyAppVersionNumeric (_MyAppVersionBase + '.0')
 #define MyAppPublisher "氯堡拾稿"
 #define MyAppURL "https://blog-clstone.netlify.app/"
 #define MyAppGitHub "https://github.com/lvbaoshigao/FFmpeg_plus_plus"
