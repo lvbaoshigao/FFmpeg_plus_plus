@@ -212,6 +212,9 @@ jobs:
       - name: Install Flutter ${{ env.FLUTTER_VERSION }} (native arm64)
         run: |
           set -euo pipefail
+          # GITHUB_PATH 只对「后续步骤」生效、不改当前 shell 的 PATH，
+          # 本步骤内调用 flutter 必须先 export，否则 command not found
+          export PATH="${RUNNER_TEMP}/flutter/bin:${PATH}"
           if [ ! -x "${RUNNER_TEMP}/flutter/bin/flutter" ]; then
             # 缓存 miss / 上次部分克隆可能留下空目录，先清掉，
             # 否则 git clone 会拒绝写入非空目录
