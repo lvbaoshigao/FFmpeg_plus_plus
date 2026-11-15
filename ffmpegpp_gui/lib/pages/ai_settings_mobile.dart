@@ -5544,8 +5544,10 @@ class _AiDropdown extends StatelessWidget {
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: _kAiMenuWidth + 8),
       child: OptionMenuBar<String>(
-        // key 绑定当前值：配置被外部改动后重建时显示最新选中项
-        key: ValueKey('aiDropdown_${entries.length}_$value'),
+        // 不再把 value 塞进 key：那会在每次选值后重建 State，收起动画刚起步
+        // 就被卸载（浮层「啪」地消失 / 闪一下）。下标高亮的重置已由
+        // OptionMenuBar.didUpdateWidget 在 value 变化时统一处理。
+        key: ValueKey('aiDropdown_${entries.length}'),
         triggerHeight: AppControlSize.large.height,
         value: value,
         items: [

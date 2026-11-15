@@ -29,20 +29,66 @@ class AndroidPlatformBridge {
   ///
   /// 澎湃 OS（HyperOS 3）上会自动以「小米超级岛」的形态展示；其它 ROM
   /// 退化为普通系统通知。原生侧见 `HyperOsIsland.kt`（含能力判定与
-  /// `miui.focus.param` 组装）。失败静默 —— 通知从来不是关键路径。
-  static Future<void> notifyTaskDone({
+  /// `miui.focus.param` 组装）。
+  ///
+  /// 返回 false 表示**没送达**（Android 13+ 通知权限被拒、系统通知总开关关闭、
+  /// 或系统版本过低）。旧实现返回 void 并吞掉异常，UI 只能看到「什么都没发生」；
+  /// 现在把结果带回来，调用方据此提示用户去开权限。
+  static Future<bool?> notifyTaskDone({
     required String title,
     required String body,
     required bool success,
   }) async {
-    if (!isAndroidPlatform) return;
+    if (!isAndroidPlatform) return null;
     try {
-      await _channel.invokeMethod('notifyTaskDone', {
+      return await _channel.invokeMethod<bool>('notifyTaskDone', {
         'title': title,
         'body': body,
         'success': success,
       });
-    } catch (_) {}
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 通知能力状态：
+  /// `{postNotificationsGranted, notificationsEnabled, islandAvailable,
+  ///   islandSupported, focusProtocolVersion, hasFocusPermission,
+  ///   channelDoneExists, channelProgressExists}`。
+  ///
+  /// 设置页用它解释「为什么没有通知 / 为什么不上岛」，并决定显示
+  /// 「请求权限」还是「去系统设置」。
+  static Future<Map<String, Object?>?> notificationStatus() async {
+    if (!isAndroidPlatform) return null;
+    try {
+      return await _channel.invokeMapMethod<String, Object?>('notificationStatus');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 申请 Android 13+ 的 POST_NOTIFICATIONS 权限。
+  ///
+  /// 返回 true 表示**现在已授权**；false 表示刚弹出系统对话框（或已被永久拒绝），
+  /// 调用方需要在回到前台后重新 [notificationStatus] 才能拿到最终结果。
+  static Future<bool> requestNotificationPermission() async {
+    if (!isAndroidPlatform) return false;
+    try {
+      return await _channel.invokeMethod<bool>('requestNotificationPermission') ??
+          false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 跳到系统「应用通知」页（权限被永久拒绝时唯一的补救入口）。
+  static Future<bool> openNotificationSettings() async {
+    if (!isAndroidPlatform) return false;
+    try {
+      return await _channel.invokeMethod<bool>('openNotificationSettings') ?? false;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// 超级岛能力状态：`{islandSupported, focusProtocolVersion, hasFocusPermission}`。

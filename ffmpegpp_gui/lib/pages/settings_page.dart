@@ -2671,7 +2671,14 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
     children: [
       if (isMobilePlatform) ...[
         _glass(ctx, state, s.isZh ? '移动端主题' : 'Mobile theme', [
-          Text(s.isZh ? '仅移动 AI 对话与共享菜单；主题色、字体与材质独立。' : 'Mobile AI dialogue and shared menus only; colors, fonts and materials stay independent.', style: SettingsTypography.description.copyWith(color: scheme.onSurfaceVariant)),
+          Text(
+            s.isZh
+                ? '全站中性表面 + 更大圆角（菜单 20 / 气泡 20）；主题色、字体与材质保持独立。'
+                : 'Neutral surfaces and larger radii (menus 20 / bubbles 20) across the whole app; accent, fonts and materials stay independent.',
+            style: SettingsTypography.description.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
           const SizedBox(height: 8),
           OptionMenuBar<String>(
             value: cfg.mobileTheme,
@@ -3552,12 +3559,21 @@ class _StylePreset {
   /// 预览卡的样式类别：'liquid' | 'theme' | 'blur' | 'gray' | 'clear'
   final String preview;
   final _StyleValues values;
+
+  /// 该预设的玻璃是**中性**的（不染色），因此套用时关闭壁纸取色（Monet）。
+  ///
+  /// 刻意放在 `_StylePreset` 而不是 `_StyleValues`：`_StyleValues.matches` 是
+  /// 全等比较，往里加字段会让所有老配置的「预设高亮」失效（点了不变亮）。
+  /// 放在这一层只影响 `apply`，不参与匹配。
+  final bool neutralGlass;
+
   const _StylePreset({
     required this.id,
     required this.name,
     required this.desc,
     required this.preview,
     required this.values,
+    this.neutralGlass = false,
   });
 
   /// 写入整套外观字段，并回传同一个 [AppConfig] 实例。
@@ -3568,6 +3584,12 @@ class _StylePreset {
   /// RETURN_OF_INVALID_TYPE_FROM_CLOSURE）。
   AppConfig apply(AppConfig c) {
     values.applyTo(c);
+    if (neutralGlass) {
+      // 中性玻璃的底色取自中性灰，不再由 primary 混出（见 themedGlassBase）。
+      // 若继续开着 Monet，页面其余部分仍是壁纸色，玻璃反而灰掉 —— 观感割裂。
+      // 这是一次**显式**改动：预设卡上已注明「中性玻璃 · 关闭壁纸取色」。
+      c.useDynamicColor = false;
+    }
     return c;
   }
 
@@ -3585,8 +3607,9 @@ final List<_StylePreset> _stylePresets = [
   _StylePreset(
     id: 'liquid',
     name: (zh) => zh ? '液态玻璃' : 'Liquid',
-    desc: (zh) => zh ? '折射玻璃' : 'Refraction',
+    desc: (zh) => zh ? '折射玻璃 · 中性玻璃并关闭壁纸取色' : 'Refraction · neutral glass, wallpaper color off',
     preview: 'liquid',
+    neutralGlass: true,
     values: const _StyleValues(
       cardStyle: 'liquid',
       navStyle: 'liquid',
@@ -3606,8 +3629,9 @@ final List<_StylePreset> _stylePresets = [
   _StylePreset(
     id: 'airy',
     name: (zh) => zh ? '轻薄通透' : 'Airy',
-    desc: (zh) => zh ? '高透光' : 'High clarity',
+    desc: (zh) => zh ? '高透光 · 中性玻璃并关闭壁纸取色' : 'High clarity · neutral glass, wallpaper color off',
     preview: 'clear',
+    neutralGlass: true,
     values: const _StyleValues(
       cardStyle: 'liquid',
       navStyle: 'liquid',
@@ -5330,10 +5354,12 @@ Widget _buildTasks(BuildContext ctx, AppState state) {
           onChanged: (v) =>
               state.updateConfig((c) => c..enableSystemNotification = v),
         ),
+        // 通知健康状态（权限 / 系统开关）：解释「为什么没有通知」并给出补救入口。
+        _NotificationHealthTile(clr: clr, scheme: scheme, s: s),
         // ColorOS 流体云：满足条件才显示（见 _buildFluidCloudProgressTile）。
         _buildFluidCloudProgressTile(ctx, state, clr),
-        // 小米「超级岛」进度：满足条件才显示（见 _buildIslandProgressTile）。
-        _buildIslandProgressTile(ctx, state, clr),
+        // 小米「超级岛」进度：能力不满足时禁用开关 + 说明原因，不再整体隐藏。
+        _IslandProgressTile(clr: clr, scheme: scheme, s: s, state: state),
         // 「发送测试通知」：仅 Android。点击后按当前系统自动选路
         // （澎湃 OS → 小米超级岛 / ColorOS → 流体云 / 其它 → 普通通知），
         // 验证通知能否真正送达 —— MIUI/澎湃 OS 未进白名单时会静默丢弃。
@@ -5492,55 +5518,295 @@ Widget _buildFluidCloudProgressTile(
   );
 }
 
-/// 小米「超级岛」能力状态（进程内只查一次）。与 [_fluidCloudStatusFuture]
-/// 同款「缓存同一个 Future 实例」手法：FutureBuilder 若在 build 里新建 Future，
-/// 会在「完成 → 重建 → 又新建 → 又完成」之间自激循环。
-Future<Map<String, Object?>?>? _islandStatusFuture;
-
-/// 「允许将进度展示在超级岛上」（设置→任务→通知，仅支持岛的 HyperOS）。
+/// 通知健康状态（Android）：把「为什么没有通知」的三个前置条件摊开。
 ///
-/// 显示条件（不满足则整个不渲染，连占位高度都不留）：
-///  1. HyperOS 支持岛（`persist.sys.feature.island`，原生反射判定）；
-///  2. 焦点通知协议 ≥3（OS3 才有岛，OS1/OS2 模板不互通）；
-///  3. 应用持有焦点通知权限（关闭时只会退化成普通通知，展示开关是误导）。
-/// 权限/系统开关层面是否真的能显示，运行时才知道 —— 发送失败会静默退化，
-/// 不影响任务本身（见 services/island_progress.dart）。
-Widget _buildIslandProgressTile(BuildContext ctx, AppState state, Color clr) {
-  final cfg = state.config;
-  final s = AppStrings.of(cfg.language);
-  final scheme = Theme.of(ctx).colorScheme;
-  final future = _islandStatusFuture ??= AndroidPlatformBridge.islandStatus();
-  return FutureBuilder<Map<String, Object?>?>(
-    future: future,
-    builder: (context, snap) {
-      final st = snap.data;
-      // 非 Android / 不支持岛 / 协议 <3 / 无焦点通知权限 / 尚未查到：一律隐藏。
-      if (st == null ||
-          st['islandSupported'] != true ||
-          (st['focusProtocolVersion'] as num? ?? 0) < 3 ||
-          st['hasFocusPermission'] != true) {
-        return const SizedBox.shrink();
-      }
-      return SwitchListTile(
-        dense: true,
-        contentPadding: EdgeInsets.zero,
-        title: Text(
-          s.isZh ? '允许将进度展示在超级岛上' : 'Show progress on Super Island',
-          style: TextStyle(color: clr, fontSize: 13),
+/// 背景：Android 13+ 的 POST_NOTIFICATIONS 被拒后 `NotificationManager.notify()`
+/// 既不抛异常也不显示，用户只会看到「任务完成了，通知栏里什么都没有」。这里显示
+/// 权限与系统总开关，并给出两个**唯一有效**的补救入口：当场请求权限、跳到系统
+/// 「应用通知」页；回到前台时会自动重新查询（否则改完权限回来界面还停在旧状态）。
+class _NotificationHealthTile extends StatefulWidget {
+  const _NotificationHealthTile({
+    required this.clr,
+    required this.scheme,
+    required this.s,
+  });
+
+  final Color clr;
+  final ColorScheme scheme;
+  final AppStrings s;
+
+  @override
+  State<_NotificationHealthTile> createState() =>
+      _NotificationHealthTileState();
+}
+
+class _NotificationHealthTileState extends State<_NotificationHealthTile>
+    with WidgetsBindingObserver {
+  Map<String, Object?>? _status;
+  bool _requesting = false;
+
+  /// 是否已完成首次查询。
+  ///
+  /// 必须与 `_status == null` 区分开：非 Android 上 `notificationStatus()`
+  /// 恒为 null，若只判断 null 就会永远停在「正在检查通知状态…」。
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _refresh();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refresh();
+  }
+
+  Future<void> _refresh() async {
+    final st = await AndroidPlatformBridge.notificationStatus();
+    if (!mounted) return;
+    setState(() {
+      _status = st;
+      _loading = false;
+    });
+  }
+
+  Future<void> _request() async {
+    setState(() => _requesting = true);
+    await AndroidPlatformBridge.requestNotificationPermission();
+    if (!mounted) return;
+    // 系统对话框刚弹出时权限还没落定：稍等一下再查（回前台也会再刷一次）。
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    if (!mounted) return;
+    setState(() => _requesting = false);
+    await _refresh();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final st = _status;
+    final s = widget.s;
+    final scheme = widget.scheme;
+    // 非 Android（查询返回 null）与首次查询中：都不占位。
+    if (_loading || st == null) return const SizedBox.shrink();
+    final granted = st['postNotificationsGranted'] == true;
+    final enabled = st['notificationsEnabled'] == true;
+
+    Widget statusRow(IconData icon, String label, String value, bool good) {
+      final color = good ? scheme.primary : scheme.error;
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(
+          children: [
+            Icon(icon, size: 14, color: color),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12, color: widget.clr),
+              ),
+            ),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+            ),
+          ],
         ),
-        subtitle: Text(
-          s.isZh
-              ? '转码进行中时，进度以小米超级岛焦点卡片展示'
-              : 'Show transcoding progress as a Xiaomi Super Island card',
-          style: SettingsTypography.description.copyWith(
-            color: scheme.onSurfaceVariant,
-          ),
-        ),
-        value: cfg.islandProgress,
-        onChanged: (v) => state.updateConfig((c) => c..islandProgress = v),
       );
-    },
-  );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 2, bottom: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          statusRow(
+            Icons.shield_outlined,
+            s.isZh ? '通知权限（Android 13+）' : 'Notification permission (13+)',
+            granted
+                ? (s.isZh ? '已允许' : 'Allowed')
+                : (s.isZh ? '未允许' : 'Denied'),
+            granted,
+          ),
+          statusRow(
+            Icons.notifications_active_outlined,
+            s.isZh ? '系统通知开关' : 'System notification switch',
+            enabled ? (s.isZh ? '已开启' : 'On') : (s.isZh ? '已关闭' : 'Off'),
+            enabled,
+          ),
+          Wrap(
+            spacing: 4,
+            children: [
+              if (!granted)
+                TextButton(
+                  onPressed: _requesting ? null : _request,
+                  child: Text(
+                    _requesting
+                        ? (s.isZh ? '请求中…' : 'Requesting…')
+                        : (s.isZh ? '请求权限' : 'Grant permission'),
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              TextButton(
+                onPressed: () =>
+                    AndroidPlatformBridge.openNotificationSettings(),
+                child: Text(
+                  s.isZh ? '去系统设置' : 'Open settings',
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
+              TextButton(
+                onPressed: _refresh,
+                child: Text(
+                  s.isZh ? '重新检查' : 'Recheck',
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 「允许将进度展示在超级岛上」。
+///
+/// 与旧实现的差别：**能力不满足时不再整体隐藏**，而是禁用开关 + 在副标题里
+/// 说明缺哪一项，并给「重新检测」。旧实现只要三项里任一不满足就
+/// `SizedBox.shrink()` —— 用户根本不知道有这个功能，也无从知道怎么开。
+class _IslandProgressTile extends StatefulWidget {
+  const _IslandProgressTile({
+    required this.clr,
+    required this.scheme,
+    required this.s,
+    required this.state,
+  });
+
+  final Color clr;
+  final ColorScheme scheme;
+  final AppStrings s;
+  final AppState state;
+
+  @override
+  State<_IslandProgressTile> createState() => _IslandProgressTileState();
+}
+
+class _IslandProgressTileState extends State<_IslandProgressTile> {
+  Map<String, Object?>? _status;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  Future<void> _refresh() async {
+    if (mounted) setState(() => _loading = true);
+    final st = await AndroidPlatformBridge.islandStatus();
+    if (!mounted) return;
+    setState(() {
+      _status = st;
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) return const SizedBox.shrink();
+    final st = _status;
+    // 非 Android 或查询失败：没有可解释的内容，整块不显示。
+    if (st == null) return const SizedBox.shrink();
+
+    final s = widget.s;
+    final scheme = widget.scheme;
+    final supported = st['islandSupported'] == true;
+    final protocol = (st['focusProtocolVersion'] as num?)?.toInt() ?? 0;
+    final focus = st['hasFocusPermission'] == true;
+    final available = supported && protocol >= 3 && focus;
+
+    final String reason;
+    if (!supported) {
+      reason = s.isZh
+          ? '本机不支持超级岛：需要澎湃 OS 3 且系统开启了岛能力'
+          : 'No Super Island on this device (needs HyperOS 3 with Island support)';
+    } else if (protocol < 3) {
+      reason = s.isZh
+          ? '焦点通知协议版本为 $protocol（需要 3 / OS3）'
+          : 'Focus protocol is $protocol (OS3 / 3 required)';
+    } else {
+      reason = s.isZh
+          ? '尚未获得「焦点通知」权限：请在系统设置 → 通知 → FFmpeg++ 中开启焦点通知'
+          : 'Focus notification permission is off: enable it in System Settings → '
+                'Notifications → FFmpeg++';
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SwitchListTile(
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          title: Text(
+            s.isZh ? '允许将进度展示在超级岛上' : 'Show progress on Super Island',
+            style: TextStyle(color: widget.clr, fontSize: 13),
+          ),
+          subtitle: Text(
+            available
+                ? (s.isZh
+                      ? '转码进行中时，进度以小米超级岛焦点卡片展示'
+                      : 'Show transcoding progress as a Xiaomi Super Island card')
+                : reason,
+            style: SettingsTypography.description.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          value: available && widget.state.config.islandProgress,
+          onChanged: available
+              ? (v) => widget.state.updateConfig((c) => c..islandProgress = v)
+              : null,
+        ),
+        if (!available)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Wrap(
+              spacing: 4,
+              children: [
+                TextButton(
+                  onPressed: () =>
+                      AndroidPlatformBridge.openNotificationSettings(),
+                  child: Text(
+                    s.isZh ? '去系统设置' : 'Open settings',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+                TextButton(
+                  onPressed: _refresh,
+                  child: Text(
+                    s.isZh ? '重新检测' : 'Recheck',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
 }
 
 /// 「高级 → 预加载」卡片：关闭预加载开关。

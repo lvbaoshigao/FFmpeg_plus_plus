@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../widgets/app_slider.dart' show appSliderThemeFor;
 import 'app_neutral_surface.dart';
+import 'app_page_transitions.dart';
 import 'app_semantic_colors.dart';
 
 class AppTheme {
@@ -132,23 +133,22 @@ class AppTheme {
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
-      // 预测式返回手势（Android 14+）：开启时 Android 使用 PredictiveBack 转场，
-      // 关闭时回退到 Zoom 转场。iOS/macOS 沿用 Cupertino，桌面沿用 Zoom。
-      // 转场：一律使用 framework 自带实现 —— 这样 Android 的**预测式返回**
-      // （PredictiveBackPageTransitionsBuilder 内部安装的手势检测器）才能正常工作；
-      // 之前自写「只在 popGestureInProgress 时才委托给官方 builder」的包装恰好绕过了
-      // 那个检测器，导致预测式返回彻底失效（返回退化成普通 Zoom）。
+      // 转场：Android 用自写的位移式转场（见 theme/app_page_transitions.dart）。
       //
-      // 「进入二级页先黑一下 / 玻璃变黑」的根因不是转场曲线，而是快照：Zoom 默认
-      // allowSnapshotting=true，会把进入的路由光栅化成离屏快照（采不到 BackdropFilter
-      // 的 backdrop）。现在改为**在路由层**关快照（MaterialPageRoute/PageRouteBuilder
-      // 都有 allowSnapshotting 参数；本仓库在 app.dart 的 smoothRoute 与各 MaterialPageRoute
-      // 调用点统一传 false），转场动画保持 framework 原样。
+      // 之前用 framework 的 PredictiveBackPageTransitionsBuilder，它非手势时委托
+      // FadeForwards：旧页上垫一层 ColoredBox(ColorScheme.surface)、旧页前 25% 就
+      // 淡出、新页 75% 才淡入 —— 深色下前 ~112ms 只剩一块 surface 实色，就是
+      // 「进入二级页先黑一下」。Zoom 更糟（scrim 是硬编码纯黑）。
+      //
+      // 「玻璃变黑」的另一个历史根因是快照：Zoom 默认 allowSnapshotting=true 会把
+      // 进入的路由光栅化，采不到 BackdropFilter 的 backdrop。本仓库已在路由层统一
+      // 关快照（smoothRoute 与各 MaterialPageRoute 都传 allowSnapshotting: false），
+      // 与本次转场改动互不影响。
       pageTransitionsTheme: PageTransitionsTheme(
         builders: <TargetPlatform, PageTransitionsBuilder>{
-          TargetPlatform.android: predictiveBack
-              ? const PredictiveBackPageTransitionsBuilder()
-              : const ZoomPageTransitionsBuilder(),
+          TargetPlatform.android: AppPageTransitionsBuilder(
+            predictiveBack: predictiveBack,
+          ),
           TargetPlatform.iOS: const CupertinoPageTransitionsBuilder(),
           TargetPlatform.macOS: const CupertinoPageTransitionsBuilder(),
           TargetPlatform.windows: const ZoomPageTransitionsBuilder(),

@@ -130,6 +130,9 @@ object ColorOsFluidCloud {
         body: String,
         success: Boolean
     ): Boolean {
+        // 无通知权限时流体云同样不会出现（它依附于通知），直接返回 false 让上层
+        // 能给出「去开通知权限」的提示，而不是以为发成功了。
+        if (!HyperOsIsland.canPost(context)) return false
         // 流体云：创卡成功即收工（卡片本身会在通知中心呈现，不再补发普通通知，
         // 避免同一条「任务完成」在通知中心出现两份）。
         if (shareIntent(context, buildDoneIntent(title, body, success))) return true
@@ -147,7 +150,9 @@ object ColorOsFluidCloud {
      * 不保证真显示出来 —— 调用方据此给白名单引导文案。
      */
     fun postTestNotification(context: Context): String {
-        if (!HyperOsIsland.notificationsEnabled(context)) return "no_permission"
+        // canPost 同时覆盖 Android 13+ 的 POST_NOTIFICATIONS 与系统通知总开关：
+        // 权限被拒时 notify() 不会报错也不会显示，必须提前拦住。
+        if (!HyperOsIsland.canPost(context)) return "no_permission"
         val shared = shareIntent(context, buildDoneIntent("FFmpeg++", "测试通知 · 流体云", true))
         if (shared) return "fluidcloud"
         val ok = postPlainNotification(context, "FFmpeg++", "测试通知 · 系统通知")
@@ -184,14 +189,21 @@ object ColorOsFluidCloud {
      *
      * @return 系统是否接受该次创卡/刷新（false 只代表没显示，不影响任务）。
      */
-    fun postProgress(context: Context, filename: String, progress: Int): Boolean = try {
-        val action = if (progressCardCreated) 1 else 0
-        val ok = shareIntent(context, buildProgressIntent(filename, progress, action))
-        if (ok) progressCardCreated = true
-        ok
-    } catch (e: Exception) {
-        android.util.Log.w(TAG, "postProgress failed: " + e.message)
-        false
+    fun postProgress(context: Context, filename: String, progress: Int): Boolean {
+        // 无通知权限时流体云同样不会出现（它依附于通知），提前短路避免每次心跳
+        // 都白跑一次跨进程调用。
+        //
+        // 注意这里必须是**块体**函数：表达式体（`= try { ... }`）里不允许 `return`。
+        if (!HyperOsIsland.canPost(context)) return false
+        return try {
+            val action = if (progressCardCreated) 1 else 0
+            val ok = shareIntent(context, buildProgressIntent(filename, progress, action))
+            if (ok) progressCardCreated = true
+            ok
+        } catch (e: Exception) {
+            android.util.Log.w(TAG, "postProgress failed: " + e.message)
+            false
+        }
     }
 
     /**
@@ -344,14 +356,19 @@ object ColorOsFluidCloud {
         body: String
     ): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        if (!HyperOsIsland.canPost(context)) return false
         return try {
             val nm =
                 context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            nm.createNotificationChannel(
-                NotificationChannel(
-                    CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_DEFAULT
+            // 通道在 MainActivity.onCreate 已预注册；这里只在缺失时补建
+            // （重复 create 同名通道改不动重要性，但不会报错）。
+            if (nm.getNotificationChannel(CHANNEL_ID) == null) {
+                nm.createNotificationChannel(
+                    NotificationChannel(
+                        CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_HIGH
+                    )
                 )
-            )
+            }
             val notification = Notification.Builder(context, CHANNEL_ID)
                 .setContentTitle(title)
                 .setContentText(body)

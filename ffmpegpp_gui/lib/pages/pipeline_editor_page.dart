@@ -4473,19 +4473,38 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                             ),
                           ),
                         ),
-                        // 底部文件信息药丸：浮动圆角（与缩放药丸同语言），
-                        // 左右留白 8、离底 6，不再是通长落底条。
+                        // 底部**一行** dock：缩放药丸 + 文件信息药丸左右并排。
+                        //
+                        // 旧布局是上下两粒叠放（信息条贴底 +6、缩放条在它上方
+                        // +48），而信息条通长 34dp、底色 surface@220、两行 9px
+                        // 小字 —— 暗色下就是一整条压在画布下沿的近黑板，也就是
+                        // 用户说的「雷霆大黑边展示信息」。合并成一行后少占 40dp
+                        // 竖向空间，也彻底去掉「通长深色条」这个形状。
                         Positioned(
                           bottom: mobileSafeBottom + 6,
                           left: 8,
                           right: 8,
-                          child: _buildMobileFileInfo(scheme, s),
-                        ),
-                        // 缩放药丸浮在信息药丸上方
-                        Positioned(
-                          bottom: mobileSafeBottom + 6 + 34 + 8,
-                          left: 8,
-                          child: _buildMobileBottomLeftBar(scheme, s),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              // 缩放药丸用 Transform.scale 放大，布局盒仍是
+                              // 38×108；放进 Row 必须按 scale 预留宽度，否则
+                              // 调大「缩放条大小」后会盖住右侧的信息药丸。
+                              SizedBox(
+                                width:
+                                    _kMobileZoomBarBaseWidth *
+                                    _mobileZoomBarScale(),
+                                height:
+                                    _kMobileBarHeight * _mobileZoomBarScale(),
+                                child: Align(
+                                  alignment: Alignment.bottomLeft,
+                                  child: _buildMobileBottomLeftBar(scheme, s),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(child: _buildMobileFileInfo(scheme, s)),
+                            ],
+                          ),
                         ),
                         // 逻辑块框选提示条（用具箱点按「循环」后出现，引导用户手指框选）
                         if (_isLogicBoxSelecting)
@@ -11198,6 +11217,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// Minimum touch target for mobile action buttons, including overflow menus.
   static const double _kMobileBarBtnBox = 34;
 
+  /// 底部缩放药丸的**布局基准宽度**：3 × [_kMobileBarBtnBox] + 2 × 2 间距
+  /// + 2 × 1 内边距。
+  ///
+  /// 药丸本身用 Transform.scale 放大，布局盒恒为 38×108；把它放进 Row 时必须
+  /// 按 scale 预留宽度，否则用户把「缩放条大小」调大后会盖住右侧的信息药丸。
+  static const double _kMobileZoomBarBaseWidth = 108;
+
   /// 移动端底部缩放药丸的**实际**缩放系数（唯一来源）。
   ///
   /// 药丸用 [Transform.scale] 放大，布局盒仍是 [_kMobileBarHeight] 高，而绘制
@@ -11281,42 +11307,104 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   Widget _buildMobileFileInfo(ColorScheme scheme, AppStrings s) {
     final v = widget.video;
     final nodesLabel = s.isZh ? '节点' : 'nodes';
-    // 浮动信息药丸（用户反馈「直接大下巴在下面特别丑」）：不再做通长
-    // 不透明落底条，改为与缩放药丸同语言的圆角浮动药丸 —— 半透明底 +
-    // 细描边 + 轻投影，左右留白由外层 Positioned 给，画布不再被一条
-    // 实心板压死在屏幕下沿。
-    return Container(
-      height: 34,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-      decoration: BoxDecoration(
-        color: scheme.surface.withAlpha(220),
-        borderRadius: BorderRadius.circular(_kMobileBarRadius),
-        border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
-        boxShadow: [
-          BoxShadow(
-            color: scheme.shadow.withAlpha(30),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
+    // 单行窄药丸：只常驻最常看的「分辨率 · 时长 · 节点数」，长按看完整信息
+    // （源大小 / FPPX 大小改成按需查看，不再用第二行 9px 小字常驻占位）。
+    //
+    // 高度与缩放药丸统一为 _kMobileBarHeight，两粒药丸现在同排同高，
+    // 不再出现「上面一粒、下面一条」的错层。
+    final summary =
+        '${v.resolution} · ${v.durationStr} · ${_nodes.length} $nodesLabel';
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onLongPress: () => _showMobileFileInfoSheet(s),
+      child: Container(
+        height: _kMobileBarHeight,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: scheme.surface.withAlpha(220),
+          borderRadius: BorderRadius.circular(_kMobileBarRadius),
+          border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
+          boxShadow: [
+            BoxShadow(
+              color: scheme.shadow.withAlpha(30),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Center(
+          // 系统字号放大时这行会顶出 38dp：这里退回「只跟系统字号」，
+          // 应用内字号不再叠加（下拉/药丸类 chrome 的统一口径）。
+          child: withoutAppTextScale(
+            context,
+            Text(
+              summary,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 10.5, color: scheme.onSurfaceVariant),
+            ),
           ),
-        ],
+        ),
       ),
-      child: FutureBuilder<int?>(
-        future: _inputFileSize(),
-        builder: (context, snapshot) => Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+    );
+  }
+
+  /// 长按底部信息药丸 -> 完整文件信息。
+  ///
+  /// 之所以把「源大小 / FPPX 大小」搬到这里：它们不是随画面变化的实时值，
+  /// 常驻在画布下沿只会把信息条撑成两行（也就撑成了那条「大黑边」）。
+  Future<void> _showMobileFileInfoSheet(AppStrings s) async {
+    final v = widget.video;
+    final int? bytes = await _inputFileSize();
+    if (!mounted) return;
+    final scheme = Theme.of(context).colorScheme;
+    final rows = <(String, String)>[
+      (s.isZh ? '分辨率' : 'Resolution', v.resolution),
+      (s.isZh ? '时长' : 'Duration', v.durationStr),
+      (s.isZh ? '节点' : 'Nodes', '${_nodes.length}'),
+      (
+        s.isZh ? '源大小' : 'Source size',
+        bytes == null ? '—' : _formatExactBytes(bytes),
+      ),
+      ('.fppx', _fppxSizeLabel(s)),
+    ];
+    await showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              '${v.resolution} | ${v.durationStr} | ${_nodes.length} $nodesLabel',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 9, color: scheme.outline),
-            ),
-            Text(
-              '${s.isZh ? '源' : 'Source'} ${_inputSizeLabel(s, snapshot)} | ${_fppxSizeLabel(s)}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 9, color: scheme.outline),
-            ),
+            for (final (label, value) in rows)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Row(
+                  children: [
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const Spacer(),
+                    Flexible(
+                      child: Text(
+                        value,
+                        textAlign: TextAlign.right,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          color: scheme.onSurface,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
           ],
         ),
       ),
@@ -15924,7 +16012,9 @@ Available actions: __TOOLS__''';
 
   /// 移动端单行 header：会话操作 + 模型选择器挤在同一行（模型 chip 占弹性宽度）。
   Widget _buildMobileSheetHeader(ColorScheme scheme, AppStrings s) {
-    // 单行头部（44）：[菜单] [模型 chip] [新建] [工具] [关闭]。
+    // 单行头部（44）：[菜单] [模型 chip] [新建] [关闭]。
+    //
+    // 「工具」入口已并入 ≡（侧栏有 工具 页签），头部从 5 个控件降到 4 个。
     //
     // 旧实现是两行玻璃药丸（40 + 4 + 32）外加一条全宽分隔线，整块约 94px。
     // 弹层高度只有屏幕的 60%~80%，光这块 chrome 就吃掉一成多，正文区被压得
@@ -15932,13 +16022,22 @@ Available actions: __TOOLS__''';
     // 携带信息（弹层本身就是 AI 助手），真正需要一眼看到的是「在跟哪个模型
     // 说话」，所以把标题位让给模型 chip，只留机器人图标表身份。
     // 头部总高 94 → 60（44 内容 + 药丸上下 4 + 外层 2/6），省下的全给消息区。
+    // 头部药丸现在跟随「样式 → 顶部药丸」（pillStyle）。
+    //
+    // 之前这里硬编码 SurfaceStyle.gray，理由是「跟随全局样式会走 harmonizedAccent
+    // 染主题色 → AI 界面玻璃串色」。但玻璃底色已经改成中性灰
+    // （themedGlassBase 的非跟随分支不再混 primary），串色的前提消失了；
+    // 继续写死 gray 只会让「液态玻璃」在 AI 界面上完全看不出来。
+    // 注意用 read 而不是 select：这里由外层 Builder 调用，provider 的
+    // select 要求「调用方元素正在 build」，否则会抛
+    // `Tried to use context.select outside of the build method`。
+    // 样式变更时面板本来也会随 AppState 通知重建，够用。
+    final String pillStyle = context.read<AppState>().config.pillStyle;
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 2, 8, 6),
       child: MobileGlassPill(
         key: const ValueKey('ai-mobile-sheet-header'),
-        // AI 面板玻璃固定中性灰：不用 cfg.pillStyle（theme 样式会走
-        // harmonizedAccent 染主题色，用户反馈「AI 界面变主题色」）。
-        style: SurfaceStyle.gray,
+        style: pillStyle,
         radius: MobileVisualTheme.of(context).enabled ? MobileVisualTheme.of(context).chatRadius : MobileUi.pillRadius,
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
         child: SizedBox(
@@ -15980,16 +16079,8 @@ Available actions: __TOOLS__''';
                 iconSize: 18,
                 onTap: _startNewChat,
               ),
-              MobileGlassPillAction(
-                icon: Icons.extension_outlined,
-                tooltip: s.isZh ? '工具' : 'Tools',
-                color: toolsOpen ? scheme.primary : scheme.onSurfaceVariant,
-                size: 34,
-                iconSize: 19,
-                onTap: () => unawaited(
-                  openMobileSidebarPage(_AiMobileSidebarPage.tools),
-                ),
-              ),
+              // 「工具」按钮已并入 ≡：侧栏本来就有 工具 页签，头部再放一个入口
+              // 纯属重复（同一功能两个按钮挤在 44dp 里，是「太挤」的直接来源）。
               MobileGlassPillAction(
                 icon: Icons.close,
                 tooltip: s.isZh ? '关闭' : 'Close',
@@ -16138,7 +16229,10 @@ Available actions: __TOOLS__''';
                     ? '$_totalInputTokens in · $_totalOutputTokens out'
                     : 'In $_totalInputTokens / Out $_totalOutputTokens tokens'),
         ),
-      if (_requestHistoryOmittedCount > 0)
+      // 移动端只留两枚 chip（生成中 / token 用量）。
+      // 「省略了多少条旧消息」「字符/秒」属于诊断信息，在只有 60~80% 屏高的
+      // 弹层里会占掉输入框上方整整一行的视觉重量；桌面宽度足够，保持原样。
+      if (!widget.mobileSheet && _requestHistoryOmittedCount > 0)
         _statusChip(
           scheme,
           leading: Icon(
@@ -16150,7 +16244,7 @@ Available actions: __TOOLS__''';
               ? '本轮使用近期上下文，省略 $_requestHistoryOmittedCount 条旧消息'
               : 'Recent context only · $_requestHistoryOmittedCount older messages omitted',
         ),
-      if (_lastGenSpeed != null)
+      if (!widget.mobileSheet && _lastGenSpeed != null)
         _statusChip(
           scheme,
           leading: Icon(Icons.speed, size: 10, color: scheme.outline),
@@ -17073,9 +17167,9 @@ Available actions: __TOOLS__''';
     ];
     return MobileGlassPill(
       key: const ValueKey('ai-mobile-sidebar-tabs'),
-      // AI 面板玻璃固定中性灰：不用 cfg.pillStyle（theme 样式会走
-      // harmonizedAccent 染主题色，用户反馈「AI 界面玻璃严重串色」）。
-      style: SurfaceStyle.gray,
+      // 与头部同一口径：跟随 pillStyle（串色的前提已由中性玻璃底消除）。
+      // read 而非 select：本方法同样可能被 Builder 链路调用。
+      style: context.read<AppState>().config.pillStyle,
       radius: MobileUi.pillRadius,
       padding: const EdgeInsets.all(3),
       child: SizedBox(

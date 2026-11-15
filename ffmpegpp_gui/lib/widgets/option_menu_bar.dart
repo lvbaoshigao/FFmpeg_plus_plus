@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'
     show KeyDownEvent, KeyRepeatEvent, LogicalKeyboardKey;
+import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/app_state.dart';
@@ -108,6 +109,11 @@ Widget optionMenuPanel({
   required String appearance,
   double radius = 12,
   GlassTuning tuning = const GlassTuning(),
+  /// 是否允许走 GPU 液态玻璃 shader（移动端 + Impeller）。
+  ///
+  /// 由调用点用 `gpuGlassEnabledOf(context)` 传进来：这个函数没有 BuildContext，
+  /// 而 shader 路径必须由平台能力决定（桌面端一律走回退）。
+  bool gpuGlass = false,
 }) {
   final dark = scheme.brightness == Brightness.dark;
 
@@ -214,6 +220,13 @@ Widget optionMenuPanel({
 
   final BorderRadius r = BorderRadius.circular(radius);
 
+  /// 只有「液态玻璃档 + 平台支持 shader」才走真折射表面。
+  final bool useShader = gpuGlass && appearance == 'liquid';
+
+  /// shader 路径的底色交给 OCLiquidGlass，Material 必须透明 —— 否则同一层
+  /// 颜色会叠两次（顶部药丸那边踩过：切换配置时整块变成一片色）。
+  final Color tinted = Color.alphaBlend(tint, fill);
+
   // 绘制顺序（外→内）：镜面/描边 → 底色(Material) → 内容。
   // 镜面是**叠加**层（渐变带 alpha），底色从下面透上来，所以不受
   // 「BoxDecoration 不能同时给 color 与 gradient」的限制。
@@ -221,7 +234,7 @@ Widget optionMenuPanel({
   // 底色仍然放在 Material 上：InkWell 的水波纹由最近的 Material 绘制，
   // 只有底色同层波纹才可见（挪到上面的 DecoratedBox 会被底色盖掉）。
   Widget panel = Material(
-    color: Color.alphaBlend(tint, fill),
+    color: useShader ? Colors.transparent : tinted,
     borderRadius: r,
     clipBehavior: Clip.antiAlias,
     child: DecoratedBox(
@@ -250,7 +263,21 @@ Widget optionMenuPanel({
       child: child,
     ),
   );
-  if (appearance == 'liquid') {
+  if (useShader) {
+    // 移动端（Impeller）：真正的折射玻璃 —— 与顶部药丸同一支 shader、同一份
+    // settings。此前 liquid 档在所有平台都只走 BackdropFilter + 手画高光，
+    // 所以用户「完全看不出液态在哪」。
+    panel = RepaintBoundary(
+      child: OCLiquidGlassGroup(
+        settings: liquidGlassSettingsFor(tuning),
+        child: OCLiquidGlass(
+          borderRadius: radius,
+          color: tinted,
+          child: panel,
+        ),
+      ),
+    );
+  } else if (appearance == 'liquid') {
     panel = LiquidGlassBackdrop(
       borderRadius: r,
       sigma: sigma,
@@ -473,17 +500,45 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
   /// 会直接抛断言。
   late final AnimationController _ovCtrl;
 
-  /// 浮层收起动画结束后再真正卸载的宽限时长（略大于动画时长，避免尾帧被截断）。
-  static const Duration _overlayHideDelay = Duration(milliseconds: 240);
+  /// 展开/收起曲线（**字段**，不是 build 内联创建）。
+  ///
+  /// 旧写法在 build 里 `CurvedAnimation(parent: _ovCtrl, ...)` 每帧新建：每帧都
+  /// 往 parent 挂一个监听且从不注销，一次开/关就残留几十个孤儿监听 —— 这也是
+  /// 「点击后闪一下」的放大器（`animated_popup.dart:123-136` 已修过同一个坑）。
+  ///
+  /// `easeOutBack` 自带约 10% 过冲，配合 0.88→1 的缩放映射 ≈ 1.2% 的回弹，
+  /// 就是用户要的「Q 弹」。注意**不能**把它用在 FadeTransition 上（opacity
+  /// 必须落在 0..1，过冲会直接触发断言），所以淡入另用一条 easeOut。
+  late final CurvedAnimation _ovCurve;
+  late final CurvedAnimation _ovFade;
+  late final Animation<double> _ovScale;
+
+  /// 浮层收起动画结束后再真正卸载的宽限时长（略大于 reverseDuration，
+  /// 否则尾帧会被 `_portal.hide()` 截断）。
+  static const Duration _overlayHideDelay = Duration(milliseconds: 200);
+
+  static const Duration _overlayOpenDuration = Duration(milliseconds: 320);
+  static const Duration _overlayCloseDuration = Duration(milliseconds: 160);
 
   @override
   void initState() {
     super.initState();
     _ovCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 200),
-      reverseDuration: const Duration(milliseconds: 140),
+      duration: _overlayOpenDuration,
+      reverseDuration: _overlayCloseDuration,
     );
+    _ovCurve = CurvedAnimation(
+      parent: _ovCtrl,
+      curve: Curves.easeOutBack,
+      reverseCurve: Curves.easeInCubic,
+    );
+    _ovFade = CurvedAnimation(
+      parent: _ovCtrl,
+      curve: Curves.easeOut,
+      reverseCurve: Curves.easeIn,
+    );
+    _ovScale = Tween<double>(begin: 0.88, end: 1.0).animate(_ovCurve);
     _syncRowKeys();
   }
 
@@ -491,10 +546,16 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
   void didUpdateWidget(covariant OptionMenuBar<T> oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.items.length != widget.items.length) _syncRowKeys();
+    // 外部改掉选中值 -> 重置键盘高亮，否则 ↑/↓ 会从旧下标继续走。
+    // 旧方案是让调用点把 value 塞进 ValueKey 强制重建 State
+    // （ai_settings_mobile 的 _AiDropdown），代价是收起动画中途被卸载。
+    if (widget.value != oldWidget.value) _highlightIndex = null;
   }
 
   @override
   void dispose() {
+    _ovCurve.dispose();
+    _ovFade.dispose();
     _ovCtrl.dispose();
     _searchCtrl.dispose();
     super.dispose();
@@ -694,8 +755,14 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
 
   @override
   Widget build(BuildContext context) {
-    _dropdownAppearance =
-        context.watch<AppState?>()?.config.dropdownAppearance ?? 'theme';
+    // 只订阅真正影响渲染的那个字段。
+    //
+    // 旧写法 `context.watch<AppState?>()` 是全量订阅：选中一项 -> onChanged ->
+    // updateConfig -> notifyListeners，触发器与已经在场的浮层会一起重建，
+    // 玻璃表面跟着重新采样 —— 视觉上就是「点一下闪一下」。
+    _dropdownAppearance = context.select<AppState?, String>(
+      (s) => s?.config.dropdownAppearance ?? 'theme',
+    );
     // 「字体大小的调整不要应用于选项文字」（用户要求）：下拉按钮与分段药丸的宽度
     // 是固定的（设置页 _kMenuWidth = 116），字号一大框内文字就只剩省略号，
     // 而且「选中了什么」本身也会被字号变化搅乱。整棵控件退回到「只跟系统字号」：
@@ -747,6 +814,10 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
               color: Colors.transparent,
               child: InkWell(
                 borderRadius: BorderRadius.circular(12),
+                // 触发框底色只有 surface@60，水波纹会明显透出来（全应用其它按钮
+                // 都已显式关掉：mobile_glass_pill / mobile_top_bar / sidebar）。
+                splashColor: Colors.transparent,
+                highlightColor: Colors.transparent,
                 onTap: _toggle,
                 child: Container(
                   height: widget.triggerHeight,
@@ -937,8 +1008,14 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
       appearance: _dropdownAppearance,
       tuning: glassTuningOf(overlayContext),
       radius: visual.menuRadius,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxHeight: maxHeight),
+      gpuGlass: gpuGlassEnabledOf(overlayContext),
+      // 内容层淡入挂在**玻璃之内**（optionMenuPanel 会把 child 放进 Material
+      // 与模糊层内部）：这样 OpacityLayer 只作用于文字/条目，不会像旧实现那样
+      // 把 BackdropFilter 的 backdrop 切断（那正是「点一下闪一下」的成因）。
+      child: FadeTransition(
+        opacity: _ovFade,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: maxHeight),
         child: compact
             ? SingleChildScrollView(
                 child: Column(
@@ -965,7 +1042,8 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
                   ),
                 ],
               ),
-      ),
+          ),
+        ),
     );
     return Positioned.fill(
       // 浮层挂在 Overlay 上（不在宿主卡片里），同样要退回到「只跟系统字号」，
@@ -1004,27 +1082,19 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
                     autofocus: !widget.searchable,
                     // PC 键盘：↑/↓ 移动高亮、Enter/Space 选中、Esc 关闭
                     onKeyEvent: _onPanelKey,
-                    // 展开 / 收起动画：淡入 + 轻微缩放（200ms easeOutCubic）。
-                    // 不再用 0.86 + easeOutBack 的回弹过冲 —— 弹一下显得廉价，
-                    // 现代菜单是「轻微缩放 + 淡入」的克制动效（Notion/Headless）。
-                    child: FadeTransition(
-                      opacity: CurvedAnimation(
-                        parent: _ovCtrl,
-                        curve: Curves.easeOut,
-                      ),
-                      child: ScaleTransition(
-                        scale: Tween<double>(begin: 0.95, end: 1.0).animate(
-                          CurvedAnimation(
-                            parent: _ovCtrl,
-                            curve: Curves.easeOutCubic,
-                          ),
-                        ),
-                        // 锚点与弹出方向一致：向下弹从左上角放大，向上弹从左下角放大
-                        alignment: openUp
-                            ? Alignment.bottomLeft
-                            : Alignment.topLeft,
-                        child: panel,
-                      ),
+                    // 展开 / 收起：从锚点角落 0.88 → 1 的 easeOutBack（约 1.2% 回弹，
+                    // 即「Q 弹」）。玻璃本体**不参与任何 opacity 动画** —— 旧实现
+                    // 把整块 panel（内含 BackdropFilter/shader）包在 FadeTransition
+                    // 里，OpacityLayer 强制 saveLayer，动画期间 backdrop 采样失效，
+                    // alpha 到 1.0 时突然接通，用户看到的就是「点一下闪一下」。
+                    // 条目淡入已下沉到面板内部的 FadeTransition（见 panel 的 child）。
+                    child: ScaleTransition(
+                      // 锚点与弹出方向一致：向下弹从左上角放大，向上弹从左下角放大
+                      scale: _ovScale,
+                      alignment: openUp
+                          ? Alignment.bottomLeft
+                          : Alignment.topLeft,
+                      child: panel,
                     ),
                   ),
                 ),
@@ -1250,6 +1320,13 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
   int? _highlightIndex;
   late final AnimationController _ctrl;
 
+  /// 与 [OptionMenuBar] 同一套「Q 弹」曲线：缩放用带过冲的 easeOutBack，
+  /// 条目淡入用不带过冲的 easeOut（opacity 必须落在 0..1）。
+  /// 两者都是字段：build 内联新建 CurvedAnimation 会累积孤儿监听。
+  late final CurvedAnimation _mountCurve;
+  late final CurvedAnimation _mountFade;
+  late final Animation<double> _mountScale;
+
   static const Duration _hideDelay = Duration(milliseconds: 200);
 
   @override
@@ -1257,13 +1334,26 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
     super.initState();
     _ctrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 180),
-      reverseDuration: const Duration(milliseconds: 130),
+      duration: const Duration(milliseconds: 320),
+      reverseDuration: const Duration(milliseconds: 160),
     );
+    _mountCurve = CurvedAnimation(
+      parent: _ctrl,
+      curve: Curves.easeOutBack,
+      reverseCurve: Curves.easeInCubic,
+    );
+    _mountFade = CurvedAnimation(
+      parent: _ctrl,
+      curve: Curves.easeOut,
+      reverseCurve: Curves.easeIn,
+    );
+    _mountScale = Tween<double>(begin: 0.88, end: 1.0).animate(_mountCurve);
   }
 
   @override
   void dispose() {
+    _mountCurve.dispose();
+    _mountFade.dispose();
     _ctrl.dispose();
     super.dispose();
   }
@@ -1412,10 +1502,14 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
       scheme: scheme,
       tuning: glassTuningOf(overlayContext),
       radius: visual.menuRadius,
-      appearance:
-          overlayContext.watch<AppState?>()?.config.dropdownAppearance ??
-          'theme',
-      child: ConstrainedBox(
+      appearance: overlayContext.select<AppState?, String>(
+        (s) => s?.config.dropdownAppearance ?? 'theme',
+      ),
+      gpuGlass: gpuGlassEnabledOf(overlayContext),
+      // 条目淡入放在玻璃内部（与 OptionMenuBar 同一口径），缩放挂在外面。
+      child: FadeTransition(
+        opacity: _mountFade,
+        child: ConstrainedBox(
         constraints: BoxConstraints(maxHeight: maxHeight),
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(vertical: 4),
@@ -1436,6 +1530,7 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
                 ),
             ],
           ),
+        ),
         ),
       ),
     );
@@ -1463,26 +1558,17 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
                 alignment: openUp ? Alignment.bottomRight : Alignment.topRight,
                 child: SizedBox(
                   width: width,
-                  child: FadeTransition(
-                    opacity: CurvedAnimation(
-                      parent: _ctrl,
-                      curve: Curves.easeOut,
-                    ),
-                    child: ScaleTransition(
-                      scale: Tween<double>(begin: 0.95, end: 1.0).animate(
-                        CurvedAnimation(
-                          parent: _ctrl,
-                          curve: Curves.easeOutCubic,
-                        ),
-                      ),
-                      alignment: openUp
-                          ? Alignment.bottomRight
-                          : Alignment.topRight,
-                      child: Focus(
-                        autofocus: true,
-                        onKeyEvent: _onPanelKey,
-                        child: panel,
-                      ),
+                  // 玻璃本体不做 opacity 动画（同 OptionMenuBar）：只缩放，
+                  // 条目淡入已下沉到 panel 内部。
+                  child: ScaleTransition(
+                    scale: _mountScale,
+                    alignment: openUp
+                        ? Alignment.bottomRight
+                        : Alignment.topRight,
+                    child: Focus(
+                      autofocus: true,
+                      onKeyEvent: _onPanelKey,
+                      child: panel,
                     ),
                   ),
                 ),

@@ -6,13 +6,15 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.graphics.drawable.Icon
 import android.os.Build
+import android.os.Bundle
 import android.provider.Settings
-import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * 小米澎湃 OS「小米超级岛」接入。
+ * 小米澎湃 OS「小米超级岛」接入 + 应用通知基建。
  *
  * 文档：<https://dev.mi.com/xiaomihyperos/documentation/detail?pId=2131>
  *
@@ -27,18 +29,40 @@ import org.json.JSONObject
  *     1=OS1 / 2=OS2 / 3=OS3（只有 OS3 有岛）
  *  3. `content://miui.statusbar.notification.public` —— 应用是否被允许发焦点通知
  *
- * 之所以判定要做在 Kotlin 侧：前两条依赖隐藏 API（SystemProperties 反射）与
- * MIUI 私有 Settings 键，Dart 层拿不到；而且 JSON 组装紧贴通知构建，留在原生
- * 侧可以少一次跨语言往返。
+ * ## 2026-11-15 重写要点（「完全没有通知 / 岛上什么都没有」的根因）
+ *
+ * 1. **通道改为启动时预注册**（[ensureChannels]）：之前只在第一次发通知时才
+ *    `createNotificationChannel`。这种「运行中新建的通道」在部分 ROM 上会被静默
+ *    降级，用户在系统「通知」页也看不到分类、无法单独开启。
+ * 2. **发送前预检权限**（[canPost]）：Android 13+ 的 POST_NOTIFICATIONS 被拒时
+ *    `notify()` 不抛异常也不显示，旧实现直接 notify 后返回 true，UI 以为发成功。
+ * 3. **岛 JSON 结构改正**：旧实现的 `bigIslandArea` / `smallIslandArea` 里直接平铺
+ *    `pic` / `title` / `content`，而模板要求的是**分区对象**
+ *    （`imageTextInfoLeft.picInfo` + `miui.focus.paramtextInfo`）。字段不匹配时系统
+ *    的行为是**整条丢弃**而不是降级 —— 这是「开了岛也什么都不显示」的直接原因。
+ *    另外补上必填的 `business`，以及更新类通知需要的 `updatable`。
+ * 4. **图标走 miui.focus.pics**：`pic` 里写的 key 必须在 `miui.focus.pics` 里注册过，
+ *    否则图标区域空白；这里注册应用自己的通知图标。
  */
 object HyperOsIsland {
 
     private const val TAG = "HyperOsIsland"
-    private const val CHANNEL_ID = "ffmpegpp_task_done"
-    private const val CHANNEL_NAME = "任务完成"
+
+    /** 任务完成通知：高重要性，允许横幅/响铃。 */
+    private const val DONE_CHANNEL_ID = "ffmpegpp_task_done"
+    private const val DONE_CHANNEL_NAME = "任务完成"
+    private const val DONE_NOTIFY_ID = 0
+
+    /** 转码进度：低重要性 + onlyAlertOnce，秒级刷新不得反复出声。 */
+    private const val PROGRESS_CHANNEL_ID = "ffmpegpp_island_progress"
+    private const val PROGRESS_CHANNEL_NAME = "转码进度"
+    private const val PROGRESS_NOTIFY_ID = 1
 
     /** 本应用在超级岛上的强调色（朱砂，与主题点缀色一致）。 */
     private const val HIGHLIGHT = "#FF6B4A"
+
+    /** 自定义图标的注册 key（必须与 `miui.focus.pics` Bundle 里的 key 一致）。 */
+    private const val PIC_KEY = "miui.focus.pic_ffmpegpp"
 
     // ────────────────────────────── 能力查询 ──────────────────────────────
 
@@ -68,7 +92,7 @@ object HyperOsIsland {
     /** 应用是否开启了焦点通知权限（关闭时岛会退化成普通通知）。 */
     fun hasFocusPermission(context: Context): Boolean = try {
         val uri = android.net.Uri.parse("content://miui.statusbar.notification.public")
-        val extras = android.os.Bundle().apply {
+        val extras = Bundle().apply {
             putString("package", context.packageName)
         }
         val bundle = context.contentResolver.call(uri, "canShowFocus", null, extras)
@@ -77,20 +101,127 @@ object HyperOsIsland {
         false
     }
 
-    /** 三件套汇总，供 Dart 侧做「是否已接入超级岛」的状态展示。 */
+    /** 三件套是否齐备（支持岛 + 协议 ≥3 + 焦点通知权限）。 */
+    fun isIslandAvailable(context: Context): Boolean =
+        isIslandSupported() &&
+            focusProtocolVersion(context) >= 3 &&
+            hasFocusPermission(context)
+
+    /**
+     * 综合状态，供 Dart 侧解释「为什么没有通知 / 为什么不上岛」：
+     *  * `islandSupported` / `focusProtocolVersion` / `hasFocusPermission` / `islandAvailable`
+     *  * `postNotificationsGranted` —— Android 13+ 的运行时通知权限
+     *  * `notificationsEnabled`    —— 系统通知总开关
+     *  * `channelDoneExists` / `channelProgressExists` —— 通道是否已注册
+     */
     fun status(context: Context): Map<String, Any?> = mapOf(
         "islandSupported" to isIslandSupported(),
         "focusProtocolVersion" to focusProtocolVersion(context),
         "hasFocusPermission" to hasFocusPermission(context),
+        "islandAvailable" to isIslandAvailable(context),
+        "postNotificationsGranted" to notificationsPermissionGranted(context),
+        "notificationsEnabled" to notificationsEnabled(context),
+        "channelDoneExists" to channelExists(context, true),
+        "channelProgressExists" to channelExists(context, false),
     )
 
     // ────────────────────────────── 通知基建 ──────────────────────────────
 
-    /** 系统级通知开关是否打开（Android 13+ 还需运行时权限）。 */
+    /**
+     * 注册（或补齐）两条通知通道。**Activity 启动时调用一次**。
+     *
+     * 通道一旦创建，其重要性就由用户接管（再 create 同名 id 改不动重要性），
+     * 所以这里只在缺失时创建，已存在则保留用户的设置。
+     */
+    fun ensureChannels(context: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        try {
+            val nm =
+                context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (nm.getNotificationChannel(DONE_CHANNEL_ID) == null) {
+                nm.createNotificationChannel(
+                    NotificationChannel(
+                        DONE_CHANNEL_ID,
+                        DONE_CHANNEL_NAME,
+                        NotificationManager.IMPORTANCE_HIGH,
+                    ).apply {
+                        description = "任务完成 / 处理失败提醒"
+                        enableVibration(true)
+                        setShowBadge(true)
+                    }
+                )
+            }
+            if (nm.getNotificationChannel(PROGRESS_CHANNEL_ID) == null) {
+                nm.createNotificationChannel(
+                    NotificationChannel(
+                        PROGRESS_CHANNEL_ID,
+                        PROGRESS_CHANNEL_NAME,
+                        NotificationManager.IMPORTANCE_LOW,
+                    ).apply {
+                        description = "转码进度（静默、持续更新）"
+                        setShowBadge(false)
+                    }
+                )
+            }
+        } catch (e: Exception) {
+            // 通道注册失败不致命：发送前还会再兜底一次。
+        }
+    }
+
+    /** 通道是否已注册（供设置页判断系统里能不能单独开关）。 */
+    fun channelExists(context: Context, done: Boolean): Boolean = try {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            false
+        } else {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE)
+                as NotificationManager
+            nm.getNotificationChannel(
+                if (done) DONE_CHANNEL_ID else PROGRESS_CHANNEL_ID
+            ) != null
+        }
+    } catch (e: Exception) {
+        false
+    }
+
+    /** Android 13+ 的 POST_NOTIFICATIONS 运行时权限（更低版本恒为 true）。 */
+    fun notificationsPermissionGranted(context: Context): Boolean = try {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            true
+        } else {
+            context.checkSelfPermission(
+                android.Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+        }
+    } catch (e: Exception) {
+        false
+    }
+
+    /** 系统级通知总开关（用户在系统设置里可能整体关掉）。 */
     fun notificationsEnabled(context: Context): Boolean = try {
         val nm =
             context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.areNotificationsEnabled()
+    } catch (e: Exception) {
+        false
+    }
+
+    /**
+     * 现在能否真正送达一条通知。
+     *
+     * Android 13+ 权限被拒时 `notify()` **不抛异常也不显示**，所以必须在发送前
+     * 预检；否则调用方只能看到「返回 true 但什么都没出现」。
+     */
+    fun canPost(context: Context): Boolean =
+        notificationsEnabled(context) && notificationsPermissionGranted(context)
+
+    /** 跳到系统「应用通知」页（用户手动开权限 / 改分类的唯一入口）。 */
+    fun openNotificationSettings(context: Context): Boolean = try {
+        val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+        true
     } catch (e: Exception) {
         false
     }
@@ -125,20 +256,42 @@ object HyperOsIsland {
     }
 
     /**
+     * `miui.focus.pics`：把应用通知图标注册成 [PIC_KEY]。
+     *
+     * 岛 JSON 里的 `pic` 只是**键名**，真正的图要在这个 extras Bundle 里给；
+     * 键名没注册时图标区域空白（部分模板会因此整条不展示）。
+     */
+    private fun picsBundle(context: Context): Bundle {
+        val extras = Bundle()
+        try {
+            val pics = Bundle()
+            pics.putParcelable(
+                PIC_KEY,
+                Icon.createWithResource(context, smallIcon(context)),
+            )
+            extras.putBundle("miui.focus.pics", pics)
+        } catch (e: Exception) {
+            // 图标注册失败不影响文字内容展示。
+        }
+        return extras
+    }
+
+    /**
      * 测试通知：按当前系统决定走哪条路，返回结果：
      *  * `island`       —— 澎湃 OS，已走小米超级岛
      *  * `notification` —— 其它 ROM，走普通系统通知
-     *  * `no_permission` —— 系统通知开关/运行时权限未开（通知必然不显示）
+     *  * `no_permission` —— 系统通知开关 / 运行时权限未开（通知必然不显示）
      *  * `unsupported`  —— 系统太旧，或通知被系统拒绝
      *
      * 返回值只说明「走了哪条路」，不保证真显示出来：应用若没进通知/自启动
      * 白名单，MIUI 会静默丢弃 —— 调用方据此给出引导文案。
      */
     fun postTestNotification(context: Context): String {
+        ensureChannels(context)
+        // 权限与总开关分开判断：前者能当场请求，后者只能跳系统设置。
+        if (!notificationsPermissionGranted(context)) return "no_permission"
         if (!notificationsEnabled(context)) return "no_permission"
-        val island = isIslandSupported() &&
-            focusProtocolVersion(context) >= 3 &&
-            hasFocusPermission(context)
+        val island = isIslandAvailable(context)
         val ok = postTaskDone(
             context,
             "FFmpeg++",
@@ -170,82 +323,91 @@ object HyperOsIsland {
         success: Boolean
     ): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        if (!canPost(context)) return false
         return try {
+            ensureChannels(context)
             val nm =
                 context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            // 复用同一条通道：岛通知走的就是普通通知流程。
-            nm.createNotificationChannel(
-                NotificationChannel(
-                    CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_DEFAULT
-                )
-            )
 
-            val builder = Notification.Builder(context, CHANNEL_ID)
+            val builder = Notification.Builder(context, DONE_CHANNEL_ID)
                 .setContentTitle(title)
                 .setContentText(body)
+                .setStyle(Notification.BigTextStyle().bigText(body))
                 .setSmallIcon(smallIcon(context))
                 .setAutoCancel(true)
                 .setContentIntent(contentIntent(context))
+                .addExtras(picsBundle(context))
 
-            // 三件套全过才加岛扩展参数（见方法注释：无权限时附加会整条被丢）。
-            if (isIslandSupported() && focusProtocolVersion(context) >= 3 &&
-                hasFocusPermission(context)
-            ) {
+            if (isIslandAvailable(context)) {
                 builder.extras.putString(
                     "miui.focus.param",
-                    buildIslandParam(title, body, success)
+                    islandJson(
+                        business = "ffmpegpp_task_done",
+                        frontTitle = if (success) "已完成" else "处理失败",
+                        title = title,
+                        content = body,
+                        iconKey = PIC_KEY,
+                        updatable = false,
+                        dismissIsland = true,
+                        islandTimeoutSec = 60,
+                        timeoutMin = 5,
+                    )
                 )
             }
 
             // id 用固定值：同一时刻只保留最新一条「任务完成」，避免队列刷屏
             // 把岛挤掉（岛一次只显示一条焦点通知）。
-            nm.notify(CHANNEL_ID, 0, builder.build())
+            nm.notify(DONE_CHANNEL_ID, DONE_NOTIFY_ID, builder.build())
             true
         } catch (e: Exception) {
             false
         }
     }
 
-    // ────────────────────────────── 进度通知 ──────────────────────────────
-
-    /** 进度通知通道与固定 id：同一时刻只保留最新一张进度卡。 */
-    private const val PROGRESS_CHANNEL_ID = "ffmpegpp_island_progress"
-    private const val PROGRESS_CHANNEL_NAME = "转码进度"
-    private const val PROGRESS_NOTIFY_ID = 1
-
     /**
      * 转码进度通知：支持岛的设备带 `miui.focus.param` 上岛（进度卡），
-     * 不支持的设备退化为一条不断刷新的普通通知。
+     * 不支持的设备退化为一条不断刷新的普通通知（带系统进度条）。
      *
      * @return true 表示通知已交给系统（不代表一定显示在岛上——权限关闭时退化）。
      */
     fun postProgress(context: Context, filename: String, progress: Int): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        if (!canPost(context)) return false
         return try {
+            ensureChannels(context)
             val nm =
                 context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            // 低重要性 + onlyAlertOnce：秒级刷新的进度通知不得反复出声/横幅。
-            nm.createNotificationChannel(
-                NotificationChannel(
-                    PROGRESS_CHANNEL_ID, PROGRESS_CHANNEL_NAME,
-                    NotificationManager.IMPORTANCE_LOW
-                )
-            )
 
             val pct = progress.coerceIn(0, 100)
+            val content = "转码进度 $pct%"
             val builder = Notification.Builder(context, PROGRESS_CHANNEL_ID)
                 .setContentTitle(filename)
-                .setContentText("转码进度 $pct%")
+                .setContentText(content)
                 .setSmallIcon(smallIcon(context))
                 .setOnlyAlertOnce(true)
+                // ongoing：进度卡不该被一划就没（旧实现没设，划掉后要等下一次心跳
+                // 才重建；进程被冻结时那张卡就永远回不来了）。
+                .setOngoing(true)
+                .setProgress(100, pct, false)
                 .setContentIntent(contentIntent(context))
+                .addExtras(picsBundle(context))
 
-            if (isIslandSupported() && focusProtocolVersion(context) >= 3 &&
-                hasFocusPermission(context)
-            ) {
+            if (isIslandAvailable(context)) {
                 builder.extras.putString(
                     "miui.focus.param",
-                    buildIslandProgressParam(filename, pct)
+                    islandJson(
+                        business = "ffmpegpp_island_progress",
+                        frontTitle = "转码中",
+                        title = "$pct%",
+                        content = filename,
+                        iconKey = PIC_KEY,
+                        // 更新类通知必须 updatable，否则系统按「一次性通知」处理，
+                        // 后续同 id 的更新会被丢弃或重新弹一次。
+                        updatable = true,
+                        dismissIsland = false,
+                        islandTimeoutSec = 600,
+                        timeoutMin = 30,
+                    )
                 )
             }
 
@@ -256,10 +418,7 @@ object HyperOsIsland {
         }
     }
 
-    /**
-     * 队列空闲时销掉进度通知（没发过卡时 cancel 也无害）。
-     * 进度通知不设 ongoing：中途被用户划掉后，下一次进度心跳会自动重建。
-     */
+    /** 队列空闲时销掉进度通知（没发过卡时 cancel 也无害）。 */
     fun endProgress(context: Context): Boolean {
         return try {
             val nm =
@@ -271,83 +430,87 @@ object HyperOsIsland {
         }
     }
 
+    // ────────────────────────────── 岛 JSON ──────────────────────────────
+
     /**
-     * 组装进度卡的 `miui.focus.param` JSON（结构同 [buildIslandParam]，
-     * 差异：business 区分、进度卡不自动收走、后续更新不抢焦点）。
+     * 组装 `miui.focus.param`。
      *
-     * ⚠️ 进度专用模板字段以《小米超级岛模板库》另册为准，这里先用通用
-     * 「文本 + 图标」结构占位（内容即百分比），换模板只替换 area 字段。
+     * 结构严格按官方「基础数据构建」：
+     * ```
+     * param_v2 {
+     *   protocol / business(必填) / updatable / islandFirstFloat / enableFloat /
+     *   timeout / ticker / aodTitle
+     *   param_island {
+     *     islandProperty / islandTimeout / dismissIsland / highlightColor
+     *     bigIslandArea {                      // 分区对象，不是平铺字段
+     *       imageTextInfoLeft { type, picInfo{type,pic}, miui.focus.paramtextInfo{...} }
+     *       picInfo { type, pic }
+     *     }
+     *     smallIslandArea { picInfo { type, pic } }
+     *   }
+     *   baseInfo { type, title, content }      // 焦点通知展开态
+     * }
+     * ```
+     *
+     * 旧实现把 `pic` / `title` / `content` 直接塞进 `bigIslandArea`，系统认不出
+     * 任何模板分区，于是**整条通知被丢弃**（不是降级）—— 这就是「开了超级岛
+     * 也什么都不显示」的根因。
      */
-    private fun buildIslandProgressParam(filename: String, progress: Int): String {
-        val content = "转码进度 $progress%"
+    private fun islandJson(
+        business: String,
+        frontTitle: String,
+        title: String,
+        content: String,
+        iconKey: String,
+        updatable: Boolean,
+        dismissIsland: Boolean,
+        islandTimeoutSec: Int,
+        timeoutMin: Int,
+    ): String {
+        fun picInfo(): JSONObject = JSONObject().put("type", 1).put("pic", iconKey)
 
-        val small = JSONObject()
-            .put("pic", "miui.focus.pic_ok")
-            .put("title", filename)
-            .put("content", content)
+        val line = JSONObject()
+            .put("type", 1)
+            .put("picInfo", picInfo())
+            .put(
+                "miui.focus.paramtextInfo",
+                JSONObject()
+                    .put("frontTitle", frontTitle)
+                    .put("title", title)
+                    .put("content", content)
+                    .put("useHighLight", false),
+            )
 
-        val big = JSONObject()
-            .put("pic", "miui.focus.pic_ok")
-            .put("title", filename)
-            .put("content", content)
+        val bigArea = JSONObject()
+            .put("imageTextInfoLeft", line)
+            .put("picInfo", picInfo())
+
+        val smallArea = JSONObject().put("picInfo", picInfo())
 
         val island = JSONObject()
-            .put("islandProperty", 1) // 1=信息展示为主
-            .put("islandTimeout", 60) // 60s 无更新回落（进度心跳会持续续期）
-            .put("dismissIsland", false) // 进度卡不自动收走，等 endProgress 销卡
+            .put("islandProperty", 1) // 1 = 信息展示为主
+            .put("islandTimeout", islandTimeoutSec)
+            .put("dismissIsland", dismissIsland)
             .put("highlightColor", HIGHLIGHT)
-            .put("bigIslandArea", big)
-            .put("smallIslandArea", small)
+            .put("bigIslandArea", bigArea)
+            .put("smallIslandArea", smallArea)
+
+        val baseInfo = JSONObject()
+            .put("type", 2)
+            .put("title", title)
+            .put("content", content)
 
         val v2 = JSONObject()
-            .put("business", "ffmpegpp_island_progress")
+            .put("protocol", 1)
+            .put("business", business) // 必填：运营场景统计
+            .put("updatable", updatable)
             .put("islandFirstFloat", true) // 首次直接展开态
             .put("enableFloat", false) // 更新时不再抢焦点
-            .put("timeout", 5) // 5 分钟无更新时普通通知自动消失（兜底）
-            .put("param_island", island)
-            .put("aodTitle", filename)
+            .put("timeout", timeoutMin) // 单位 min
             .put("ticker", content)
-
-        return JSONObject().put("param_v2", v2).toString()
-    }
-
-    /**
-     * 组装 `miui.focus.param` JSON。
-     *
-     * ⚠️ 具体模板字段以《小米超级岛模板库》为准（文档第三章另册）。
-     * 这里用的是通用「文本 + 图标」结构（`bigIslandArea` / `smallIslandArea`
-     * 的 title/content/pic），若换模板只需替换这两个对象的字段，判定与通道
-     * 部分不用动。
-     */
-    private fun buildIslandParam(title: String, body: String, success: Boolean): String {
-        val iconKey = if (success) "miui.focus.pic_ok" else "miui.focus.pic_err"
-
-        val small = JSONObject()
-            .put("pic", iconKey)
-            .put("title", title)
-            .put("content", body)
-
-        val big = JSONObject()
-            .put("pic", iconKey)
-            .put("title", title)
-            .put("content", body)
-
-        val island = JSONObject()
-            .put("islandProperty", 1) // 1=信息展示为主
-            .put("islandTimeout", 60) // 岛停留 60s 后自动消失
-            .put("dismissIsland", true) // 用完即走
-            .put("highlightColor", HIGHLIGHT)
-            .put("bigIslandArea", big)
-            .put("smallIslandArea", small)
-
-        val v2 = JSONObject()
-            .put("business", "ffmpegpp_task_done")
-            .put("islandFirstFloat", true) // 首次直接展开态
-            .put("enableFloat", false) // 更新时不再抢焦点
-            .put("timeout", 5) // 5 分钟后普通通知自动消失
-            .put("param_island", island)
             .put("aodTitle", title)
-            .put("ticker", title)
+            .put("param_island", island)
+            .put("baseInfo", baseInfo)
 
         return JSONObject().put("param_v2", v2).toString()
     }

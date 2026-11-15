@@ -247,9 +247,13 @@ class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
             ? (k.monetSeed ?? k.themeColor)
             : null;
         final mobileVisual = resolveMobileVisualTheme(k.mobileTheme, isMobile: isMobilePlatform);
-        ThemeData withMobileVisual(ThemeData base) => mobileVisual.enabled
-            ? base.copyWith(extensions: [...base.extensions.values, mobileVisual])
-            : base;
+        // 必须走 applyTo，而不是「只把扩展塞进 extensions」：applyTo 才会把
+        // surface / surfaceContainer* 换成中性灰，并同步 dialog / popupMenu /
+        // bottomSheet 的底色。旧写法只在 extensions 里挂了一个 enabled 标记，
+        // 主题层没有任何可见变化 —— 这就是「切到 ZeroUI 大部分界面纹丝不动」
+        // 的根因（全站只有 AI 面板、移动 AI 弹层、下拉浮层自己调了 applyTo）。
+        ThemeData withMobileVisual(ThemeData base) =>
+            mobileVisual.enabled ? mobileVisual.applyTo(base) : base;
         return MaterialApp(
           key: const ValueKey('app'),
           title: 'FFmpeg++',
@@ -737,11 +741,26 @@ class _AppShellState extends State<AppShell> with WindowListener {
     } else if (Platform.isAndroid) {
       // 安卓走原生通道：澎湃 OS（HyperOS 3 且应用开了焦点通知权限）会自动以
       // 「小米超级岛」展示，其余 ROM 退化为普通系统通知（见 HyperOsIsland.kt）。
+      //
+      // 返回 false = 没送达（Android 13+ 权限被拒 / 系统通知总开关关闭）。
+      // 旧实现完全吞掉结果，用户只会看到「任务完成了但通知栏什么都没有」，
+      // 这里明确提示一次并指路。
       AndroidPlatformBridge.notifyTaskDone(
         title: title,
         body: body,
         success: status == TaskStatus.completed,
-      );
+      ).then((ok) {
+        if (ok != false || !mounted) return;
+        final isZh = context.read<AppState>().config.language == 'zh';
+        showToast(
+          context,
+          isZh
+              ? '系统通知未送达：请在 系统设置 → 通知 → FFmpeg++ 中允许通知'
+              : 'Notification not delivered: allow notifications for FFmpeg++ '
+                    'in System Settings → Notifications',
+          type: ToastType.warning,
+        );
+      });
     } else {
       // notify-send 直接收独立 argv，无需 shell 拼接，天然安全。
       final urgency = status == TaskStatus.completed ? 'normal' : 'critical';
@@ -1454,36 +1473,28 @@ class _KeepAliveState extends State<_KeepAlive>
   }
 }
 
-/// 二级页面统一转场：位移为主、淡入为辅，并**关闭 framework 的路由快照**。
+/// 二级页面统一转场：纯位移，**不做页面级淡入**，并关闭 framework 的路由快照。
 ///
-/// - 关闭快照（allowSnapshotting: false）：Zoom/预测式返回转场默认会把进入的路由
-///   光栅化成离屏快照，而快照采不到 BackdropFilter 的 backdrop —— 玻璃区域会变黑、
-///   首帧还会整屏黑一下（「进入二级菜单屏幕总会先黑一下」）。在路由层关掉即可解决，
-///   不必替换 framework 的转场实现（替换会连预测式返回的手势检测一起丢掉）。
-/// - 观感：以前是「淡入为主（0→1）+ 3% 位移」，进入第一帧几乎全透明，看起来发飘；
-///   现在位移放到 6%、时长 220ms、反向 180ms，曲线 easeOutCubic/easeInCubic，
-///   以滑入为主、淡入仅作辅助，落地感更实。
+/// - 关闭快照（allowSnapshotting: false）：转场默认会把进入的路由光栅化成离屏快照，
+///   而快照采不到 BackdropFilter 的 backdrop —— 玻璃区域会变黑、首帧整屏黑一下。
+/// - 不再用 FadeTransition：整页一层 OpacityLayer 会让页内 BackdropFilter / 液态
+///   玻璃 shader 在过渡期间采不到背景（下拉浮层「点一下闪一下」就是这个机制）。
+///   这里与 `theme/app_page_transitions.dart` 里 Android 的转场同一套视觉：新页
+///   从右侧 6% 滑入，全程无 opacity、无 surface 底板。
 Route<T> smoothRoute<T>(Widget page) => PageRouteBuilder<T>(
   pageBuilder: (_, a, b) => page,
   allowSnapshotting: false,
-  transitionDuration: const Duration(milliseconds: 220),
-  reverseTransitionDuration: const Duration(milliseconds: 180),
+  transitionDuration: const Duration(milliseconds: 280),
+  reverseTransitionDuration: const Duration(milliseconds: 240),
   transitionsBuilder: (_, anim, c, child) {
-    final curve = CurvedAnimation(
-      parent: anim,
-      curve: Curves.easeOutCubic,
-      reverseCurve: Curves.easeInCubic,
-    );
+    // 用 Tween.chain(CurveTween) 而不是 CurvedAnimation：后者会往 anim 上挂
+    // 状态监听，而 transitionsBuilder 在路由重建时可能被多次调用
+    // （animated_popup.dart 里已因同类写法残留过孤儿监听）。
     return SlideTransition(
-      position: Tween(
-        begin: const Offset(0.06, 0),
-        end: Offset.zero,
-      ).animate(curve),
-      child: FadeTransition(
-        // 淡入只做辅助：不完全透明起步，避免第一帧「空屏」
-        opacity: Tween<double>(begin: 0.55, end: 1.0).animate(curve),
-        child: child,
-      ),
+      position: Tween(begin: const Offset(0.06, 0), end: Offset.zero)
+          .chain(CurveTween(curve: Curves.easeOutCubic))
+          .animate(anim),
+      child: child,
     );
   },
 );

@@ -348,15 +348,30 @@ Color themedGlassBase(
   bool followTheme, {
   int second = -1,
 }) {
-  final accent = harmonizedAccent(scheme, tone);
-  final blended = followTheme && second >= 0
-      ? Color.lerp(
-          accent,
-          harmonizedAccentGradient(scheme, [Color(second)], tone).first,
-          0.35,
-        )!
-      : accent;
-  return Color.lerp(scheme.surface, blended, followTheme ? 0.42 : 0.12)!;
+  if (followTheme) {
+    final accent = harmonizedAccent(scheme, tone);
+    final blended = second >= 0
+        ? Color.lerp(
+            accent,
+            harmonizedAccentGradient(scheme, [Color(second)], tone).first,
+            0.35,
+          )!
+        : accent;
+    return Color.lerp(scheme.surface, blended, 0.42)!;
+  }
+  // 非跟随（默认）：玻璃底必须是**中性**的，不再混 12% primary。
+  //
+  // 旧实现在 `followTheme == false` 时也混了 12% 主题色 —— Android 开启动态
+  // 取色（Monet）时，壁纸色相会一路渗进卡片 / 药丸 / 菜单的玻璃底，用户看到的
+  // 就是「选了液态玻璃，满屏还是莫奈色」。玻璃的质感该来自折射与边缘光，
+  // 不是来自颜色。
+  //
+  // 提亮 8/255 而不是直接返回 surface：纯 surface 与页面底色完全同色，玻璃会
+  // 彻底"消失"，分层只剩描边可读。
+  return Color.alphaBlend(
+    Colors.white.withValues(alpha: 8 / 255),
+    neutralGray(scheme.surface),
+  );
 }
 
 /// 协调主题色的渐变版（主题渐变 themeColor2 生效时用）。
@@ -503,9 +518,12 @@ class LiquidGlassPainter extends CustomPainter {
           begin: begin,
           end: end,
           colors: [
-            Colors.white.withValues(alpha: (0.62 * e).clamp(0.0, 1.0) * o),
-            Colors.white.withValues(alpha: (0.06 * e).clamp(0.0, 1.0) * o),
-            Colors.black.withValues(alpha: (0.18 * e).clamp(0.0, 1.0) * o),
+            // 亮部从 0.62 降到 0.46、暗部从 0.18 提到 0.24：玻璃底已经是中性灰
+            // （见 themedGlassBase），原来按「51% 主题色底」调的白色棱线在灰底上
+            // 会亮得像一圈塑料包边。降低亮部、加重暗部，厚度感改由明暗对比给出。
+            Colors.white.withValues(alpha: (0.46 * e).clamp(0.0, 1.0) * o),
+            Colors.white.withValues(alpha: (0.05 * e).clamp(0.0, 1.0) * o),
+            Colors.black.withValues(alpha: (0.24 * e).clamp(0.0, 1.0) * o),
           ],
           stops: const [0.0, 0.45, 1.0],
         ).createShader(rrect.outerRect);
@@ -518,7 +536,7 @@ class LiquidGlassPainter extends CustomPainter {
           ..style = PaintingStyle.stroke
           ..strokeWidth = (0.8 * e).clamp(0.3, 2.0)
           ..color = Colors.white.withValues(
-            alpha: (0.16 * e).clamp(0.0, 1.0) * o,
+            alpha: (0.12 * e).clamp(0.0, 1.0) * o,
           ),
       );
     }

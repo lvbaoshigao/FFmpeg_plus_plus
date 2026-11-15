@@ -18,6 +18,17 @@ import java.io.File
 
 class MainActivity : FlutterActivity() {
 
+    /** requestPermissions 的请求码：通知权限（与媒体权限 1001 分开）。 */
+    private val requestNotifications = 1002
+
+    override fun onCreate(savedInstanceState: android.os.Bundle?) {
+        super.onCreate(savedInstanceState)
+        // 通知通道在启动时就注册：用户进系统「通知」页能看到「任务完成 / 转码进度」
+        // 两个分类并分别开关。若等第一次发通知才建通道，部分 ROM 会把它当成运行期
+        // 新建的通道静默降级，用户在设置里也无从开启 —— 是「完全没有通知」的成因之一。
+        HyperOsIsland.ensureChannels(applicationContext)
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         // 与 Dart 侧 services/android_platform.dart、services/shell_open.dart 对应：
@@ -36,6 +47,29 @@ class MainActivity : FlutterActivity() {
                     //               hasFocusPermission，供 Dart 显示「已接入超级岛」。
                     // notifyTaskDone：任务完成通知；OS3 且有权限时自动上岛。
                     "islandStatus" -> result.success(HyperOsIsland.status(applicationContext))
+                    // 通知权限 / 总开关 / 通道状态：设置页据此显示
+                    // 「为什么没有通知」并给出「请求权限 / 去系统设置」入口。
+                    "notificationStatus" ->
+                        result.success(HyperOsIsland.status(applicationContext))
+                    // 单独申请 POST_NOTIFICATIONS（Android 13+）。返回值表示
+                    // 「现在是否已授权」—— false 表示刚弹出系统对话框，调用方需
+                    // 在回前台后重新查询状态。
+                    "requestNotificationPermission" -> {
+                        val granted = HyperOsIsland.notificationsPermissionGranted(
+                            applicationContext
+                        )
+                        if (!granted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            requestPermissions(
+                                arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+                                requestNotifications
+                            )
+                        }
+                        result.success(granted)
+                    }
+                    "openNotificationSettings" ->
+                        result.success(
+                            HyperOsIsland.openNotificationSettings(applicationContext)
+                        )
                     // ── ColorOS 流体云（详见 ColorOsFluidCloud.kt）──
                     // fluidCloudStatus：返回 colorOs / colorOsVersion /
                     //                   intentShareAvailable，供 Dart 显示接入状态。

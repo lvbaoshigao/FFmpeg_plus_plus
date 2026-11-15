@@ -22,14 +22,23 @@ class MobileVisualTheme extends ThemeExtension<MobileVisualTheme> {
     final scheme = base.colorScheme;
     final page = AppNeutralSurface.background(scheme.brightness);
     final card = AppNeutralSurface.card(scheme.brightness);
+    final cardHigh = AppNeutralSurface.cardHigh(scheme.brightness);
     return base.copyWith(
       colorScheme: scheme.copyWith(
         surface: page,
         surfaceContainer: card,
         surfaceContainerLow: page,
+        // High / Highest 必须分两档：对话框取 High、输入框填充取 Highest，
+        // 同色会让浮层与卡片糊成一片（暗色下只剩描边可辨）。
         surfaceContainerHigh: card,
-        surfaceContainerHighest: card,
+        surfaceContainerHighest: cardHigh,
       ),
+      // 下面这几个主题的底色是**在 AppTheme 构建时**用 fromSeed 的 scheme
+      // 烘死的，只改 colorScheme 不会让它们跟着变（典型症状：Miuix 下卡片已经
+      // 是中性灰，对话框/弹出菜单却还是带主题色调的旧色）。
+      dialogTheme: base.dialogTheme.copyWith(backgroundColor: cardHigh),
+      popupMenuTheme: base.popupMenuTheme.copyWith(color: cardHigh),
+      bottomSheetTheme: base.bottomSheetTheme.copyWith(backgroundColor: card),
       extensions: [
         ...base.extensions.values.where((e) => e is! MobileVisualTheme),
         this,

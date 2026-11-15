@@ -642,30 +642,82 @@ class AppSlider extends StatefulWidget {
 }
 
 class _AppSliderState extends State<AppSlider>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
+  // 两个 ticker：_valueController 管数值动画，_cometPhase 管彗星相位。
+  // 必须是 TickerProviderStateMixin —— SingleTickerProviderStateMixin 只允许
+  // 挂一个 ticker，第二个 controller 会直接抛断言。
+
   /// 拖动中的本地值。非 null 表示用户正在拖动 —— 此时直接跟手、不做数值动画，
   /// 既避免填充边缘落后手指，也避免和上层回传的 value 互相打架
   /// （上层可能只在 onChangeEnd 才写全局配置，拖动期间 value 根本不变）。
   double? _dragValue;
   double _lastDragValue = 0;
   Duration? _lastDragAt;
+
+  /// 平滑后的拖动速度（0..1）。
+  ///
+  /// 旧实现是 `max(prev * 0.72, instant)`：既没有按经过时间衰减，也只在指针
+  /// 移动时才更新 —— 快划一下后速度会长期饱和在 1，光晕与粒子糊成一片
+  /// （用户反馈「滑动过快跟随也有问题」）。现在由彗星 ticker 每帧按
+  /// `exp(-dt / tau)` 衰减，指针移动时再由瞬时值抬升。
   double _dragSpeed = 0;
+  double _instantSpeed = 0;
+  Duration? _lastCometTickAt;
+
+  /// 速度的指数衰减时间常数：越小越跟手，越大尾巴越「黏」。
+  static const double _kSpeedDecayTau = 0.09;
+
+  /// 彗星相位（0..1 循环）：驱动尾迹亮点向前缘流动 + 前缘光晕脉动。
+  ///
+  /// 只在拖动期间推进（松手 `stop()`）—— 静止的滑块不该常驻动画：
+  /// 既省电，也让 `disableAnimations`（减弱动态效果）下的行为保持为零帧。
+  late final AnimationController _cometPhase;
+
+  /// 本帧是否允许跑彗星（用户开关 + 无障碍「减弱动态效果」都在 build 里判定）。
+  ///
+  /// 拖动回调里没有现成的 `particlesOn`，用这个字段避免在事件里再读一次
+  /// Provider / MediaQuery，也避免"关掉特效后 ticker 还在空转"。
+  bool _cometAllowed = false;
 
   void _handleDragValue(double value) {
     final now = SchedulerBinding.instance.currentSystemFrameTimeStamp;
     final last = _lastDragAt;
-    if (last != null) {
+    if (last == null) {
+      // 拖动开始：启动相位循环。速度从 0 起算。
+      _lastCometTickAt = now;
+      _dragSpeed = 0;
+      _instantSpeed = 0;
+      if (_cometAllowed && !_cometPhase.isAnimating) _cometPhase.repeat();
+    } else {
       final seconds =
           (now - last).inMicroseconds / Duration.microsecondsPerSecond;
       if (seconds > 0) {
         final instant =
             ((value - _lastDragValue).abs() / seconds) /
             (widget.max - widget.min).abs().clamp(0.001, double.infinity);
-        _dragSpeed = math.max(_dragSpeed * 0.72, instant);
+        _instantSpeed = instant.clamp(0.0, 1.0);
       }
     }
     _lastDragValue = value;
     _lastDragAt = now;
+  }
+
+  /// 每帧推进速度衰减。瞬时速度只消费一次（指针移动时重新写入），
+  /// 于是「按住不动」时速度会自己落回 0，而不是冻在上一次的瞬时值上。
+  void _tickCometSpeed() {
+    final now = SchedulerBinding.instance.currentSystemFrameTimeStamp;
+    final last = _lastCometTickAt;
+    _lastCometTickAt = now;
+    final double dt = last == null
+        ? 1 / 60
+        : ((now - last).inMicroseconds / Duration.microsecondsPerSecond).clamp(
+            0.001,
+            0.1,
+          );
+    final double decay = math.exp(-dt / _kSpeedDecayTau);
+    _dragSpeed = math.max(_dragSpeed * decay, _instantSpeed);
+    _instantSpeed = 0;
+    if (_dragSpeed < 0.004) _dragSpeed = 0;
   }
 
   /// 实际绘制出来的值：拖动时 = 手指值，其余时候 = 数值动画的当前帧。
@@ -695,6 +747,13 @@ class _AppSliderState extends State<AppSlider>
       duration: _kValueAnimationDuration,
     );
     _valueController.addListener(_handleValueTick);
+    // 相位周期取 1400ms：尾迹亮点以肉眼可辨的速度向光晕流动，且 0→1 回绕时
+    // 位置跳变最小（每颗亮点只前移约 1/3 个尾迹）。
+    _cometPhase = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    );
+    _cometPhase.addListener(_tickCometSpeed);
   }
 
   void _handleValueTick() {
@@ -729,6 +788,7 @@ class _AppSliderState extends State<AppSlider>
 
   @override
   void dispose() {
+    _cometPhase.dispose();
     _valueController.dispose();
     super.dispose();
   }
@@ -748,6 +808,7 @@ class _AppSliderState extends State<AppSlider>
         widget.particles &&
         cfg.particles &&
         !MediaQuery.disableAnimationsOf(context);
+    _cometAllowed = particlesOn;
 
     return SliderTheme(
       data: appSliderThemeFor(
@@ -793,8 +854,14 @@ class _AppSliderState extends State<AppSlider>
                     widget.onChanged!(nv);
                   },
             onChangeEnd: (double nv) {
-              _dragSpeed = 0;
               _lastDragAt = null;
+              _lastCometTickAt = null;
+              _dragSpeed = 0;
+              _instantSpeed = 0;
+              // 松手即停相位：彗星层同时被 _dragValue == null 卸掉，
+              // 不会留下一条不会动的残影。
+              _cometPhase.stop();
+              _cometPhase.value = 0;
               setState(() {
                 _dragValue = null;
                 _shown = _clamp(nv);
@@ -803,20 +870,28 @@ class _AppSliderState extends State<AppSlider>
             },
           ),
           // ③ 填充段前缘的彗星：仅拖动时显示（静止不常驻），
-          //     光晕/尾长随拖速动态变化。纯前景装饰层，IgnorePointer 不抢手势。
+          //     光晕/尾长随拖速动态变化，相位由 _cometPhase 驱动。
+          //     纯前景装饰层，IgnorePointer 不抢手势。
           if (particlesOn && _dragValue != null)
             Positioned.fill(
               child: IgnorePointer(
-                child: CustomPaint(
-                  painter: _CometFillPainter(
-                    startFraction: 0,
-                    endFraction: _fillFraction.clamp(0.0, 1.0),
-                    color: accent,
-                    trackHeight: trackHeight,
-                    insetX: _kTrackInsetX,
-                    textDirection: Directionality.of(context),
-                    dragging: true,
-                    speed: _dragSpeed.clamp(0.0, 1.0),
+                // 只重建这一层（CustomPaint），不 setState 整个 Slider：
+                // 拖动期间每帧都要变相位，走 setState 会让 framework 的
+                // Slider 也跟着重建 + 重新布局。
+                child: AnimatedBuilder(
+                  animation: _cometPhase,
+                  builder: (context, _) => CustomPaint(
+                    painter: _CometFillPainter(
+                      startFraction: 0,
+                      endFraction: _fillFraction.clamp(0.0, 1.0),
+                      color: accent,
+                      trackHeight: trackHeight,
+                      insetX: _kTrackInsetX,
+                      textDirection: Directionality.of(context),
+                      dragging: true,
+                      speed: _dragSpeed.clamp(0.0, 1.0),
+                      phase: _cometPhase.value,
+                    ),
                   ),
                 ),
               ),
@@ -883,9 +958,97 @@ class AppRangeSlider extends StatefulWidget {
   State<AppRangeSlider> createState() => _AppRangeSliderState();
 }
 
-class _AppRangeSliderState extends State<AppRangeSlider> {
+class _AppRangeSliderState extends State<AppRangeSlider>
+    with SingleTickerProviderStateMixin {
   /// 是否有手指按在任一端（决定彗星拖尾是否甩出）。
   bool _dragging = false;
+
+  /// 拖动中的本地区间。
+  ///
+  /// framework 的 [RangeSlider] 是完全受控的：上层若只在 `onChangeEnd` 才写回
+  /// `values`，拖动期间 `widget.values` 根本不变 —— 旧实现直接透传，于是
+  /// 彗星的 start/end 停在旧位置，看起来「完全不动」。
+  /// 这里持有本地副本，并在 [didUpdateWidget] 里确认上层已追上后交还控制权。
+  RangeValues? _dragValues;
+
+  late final AnimationController _cometPhase;
+  RangeValues? _lastValues;
+  Duration? _lastMoveAt;
+  double _dragSpeed = 0;
+  double _instantSpeed = 0;
+  Duration? _lastTickAt;
+
+  /// 与 [_AppSliderState._cometAllowed] 同义：特效关闭 / 减弱动态效果时不空转 ticker。
+  bool _cometAllowed = false;
+
+  static const double _kSpeedDecayTau = 0.09;
+
+  @override
+  void initState() {
+    super.initState();
+    _cometPhase = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    );
+    _cometPhase.addListener(_tickSpeed);
+  }
+
+  @override
+  void didUpdateWidget(covariant AppRangeSlider oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final RangeValues? local = _dragValues;
+    if (local == null || _dragging) return;
+    // 上层已追上 -> 交回受控值；外部显式改动（预设/重置）-> 同样以外部为准。
+    // 注意不能在 onChangeEnd 里立刻清：上层可能异步写回，清了 thumb 会回弹。
+    if (widget.values == local || widget.values != oldWidget.values) {
+      _dragValues = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _cometPhase.dispose();
+    super.dispose();
+  }
+
+  void _handleValues(RangeValues v) {
+    final now = SchedulerBinding.instance.currentSystemFrameTimeStamp;
+    final RangeValues? last = _lastValues;
+    final Duration? lastAt = _lastMoveAt;
+    if (last != null && lastAt != null) {
+      final double seconds =
+          (now - lastAt).inMicroseconds / Duration.microsecondsPerSecond;
+      if (seconds > 0) {
+        final double moved = math.max(
+          (v.start - last.start).abs(),
+          (v.end - last.end).abs(),
+        );
+        final double span = (widget.max - widget.min).abs().clamp(
+          0.001,
+          double.infinity,
+        );
+        _instantSpeed = (moved / seconds / span).clamp(0.0, 1.0);
+      }
+    }
+    _lastValues = v;
+    _lastMoveAt = now;
+  }
+
+  void _tickSpeed() {
+    final now = SchedulerBinding.instance.currentSystemFrameTimeStamp;
+    final Duration? last = _lastTickAt;
+    _lastTickAt = now;
+    final double dt = last == null
+        ? 1 / 60
+        : ((now - last).inMicroseconds / Duration.microsecondsPerSecond).clamp(
+            0.001,
+            0.1,
+          );
+    final double decay = math.exp(-dt / _kSpeedDecayTau);
+    _dragSpeed = math.max(_dragSpeed * decay, _instantSpeed);
+    _instantSpeed = 0;
+    if (_dragSpeed < 0.004) _dragSpeed = 0;
+  }
 
   double _fractionOf(double v) {
     final double span = widget.max - widget.min;
@@ -905,6 +1068,8 @@ class _AppRangeSliderState extends State<AppRangeSlider> {
         widget.particles &&
         cfg.particles &&
         !MediaQuery.disableAnimationsOf(context);
+    _cometAllowed = particlesOn;
+    final RangeValues shown = _dragValues ?? widget.values;
 
     return SliderTheme(
       data: appSliderThemeFor(
@@ -929,15 +1094,42 @@ class _AppRangeSliderState extends State<AppRangeSlider> {
             ),
           ),
           RangeSlider(
-            values: widget.values,
+            values: shown,
             min: widget.min,
             max: widget.max,
             divisions: widget.divisions,
             labels: widget.labels,
-            onChangeStart: (_) => setState(() => _dragging = true),
-            onChanged: widget.onChanged,
+            onChangeStart: (_) {
+              _lastValues = null;
+              _lastMoveAt = null;
+              _lastTickAt = null;
+              _dragSpeed = 0;
+              _instantSpeed = 0;
+              if (_cometAllowed && !_cometPhase.isAnimating) {
+                _cometPhase.repeat();
+              }
+              setState(() => _dragging = true);
+            },
+            onChanged: widget.onChanged == null
+                ? null
+                : (RangeValues v) {
+                    _handleValues(v);
+                    setState(() => _dragValues = v);
+                    widget.onChanged!(v);
+                  },
             onChangeEnd: (RangeValues v) {
-              setState(() => _dragging = false);
+              _lastValues = null;
+              _lastMoveAt = null;
+              _lastTickAt = null;
+              _dragSpeed = 0;
+              _instantSpeed = 0;
+              _cometPhase.stop();
+              _cometPhase.value = 0;
+              setState(() {
+                _dragging = false;
+                // 保留最后值，等上层写回后再由 didUpdateWidget 交还控制权。
+                _dragValues = v;
+              });
               widget.onChangeEnd?.call(v);
             },
           ),
@@ -945,15 +1137,20 @@ class _AppRangeSliderState extends State<AppRangeSlider> {
           if (particlesOn)
             Positioned.fill(
               child: IgnorePointer(
-                child: CustomPaint(
-                  painter: _CometFillPainter(
-                    startFraction: _fractionOf(widget.values.start),
-                    endFraction: _fractionOf(widget.values.end),
-                    color: accent,
-                    trackHeight: trackHeight,
-                    insetX: _kTrackInsetX,
-                    textDirection: Directionality.of(context),
-                    dragging: _dragging,
+                child: AnimatedBuilder(
+                  animation: _cometPhase,
+                  builder: (context, _) => CustomPaint(
+                    painter: _CometFillPainter(
+                      startFraction: _fractionOf(shown.start),
+                      endFraction: _fractionOf(shown.end),
+                      color: accent,
+                      trackHeight: trackHeight,
+                      insetX: _kTrackInsetX,
+                      textDirection: Directionality.of(context),
+                      dragging: _dragging,
+                      speed: _dragSpeed.clamp(0.0, 1.0),
+                      phase: _cometPhase.value,
+                    ),
                   ),
                 ),
               ),
@@ -989,6 +1186,7 @@ class _CometFillPainter extends CustomPainter {
     required this.textDirection,
     this.dragging = false,
     this.speed = 0,
+    this.phase = 0,
   });
 
   /// 填充段起点 / 终点占整条轨道的比例（0..1）。
@@ -1012,6 +1210,12 @@ class _CometFillPainter extends CustomPainter {
   /// 拖动速度 0..1：驱动尾长与光晕强度动态变化，快速拖动时彗星更长更亮。
   final double speed;
 
+  /// 彗星相位 0..1：驱动尾迹亮点向前缘流动 + 前缘光晕脉动。
+  ///
+  /// 默认 0 让进度条（[_AppProgressBarPainter] / [_IndeterminateBarPainter]）
+  /// 无需改动：它们各自有驱动源，共享同一份 [_drawComet] 绘制。
+  final double phase;
+
   @override
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty || trackHeight <= 0) return;
@@ -1026,16 +1230,29 @@ class _CometFillPainter extends CustomPainter {
       startFraction.clamp(0.0, 1.0),
       endFraction.clamp(0.0, 1.0),
     );
-    if (hi - lo <= 0.0005) return;
+    // 填充为 0 时不再整层 return：拖到最左端要让前缘光晕自然收掉，
+    // 而不是「啪」地消失（旧行为）。尾长会随之为 0，[_drawComet] 内部
+    // 只画光晕、不画光带。
+    final bool atZero = hi - lo <= 0.0005;
 
     final bool isLtr = textDirection == TextDirection.ltr;
     // 前缘：LTR 是右端，RTL 是左端。
     final double headX = insetX + trackW * (isLtr ? hi : 1 - hi);
     final double tailEdgeX = insetX + trackW * (isLtr ? lo : 1 - lo);
 
-    // 彗尾铺满整个填充段：渐变从填充起点（alpha=0）自然过渡到前缘高光，
-    // 不再截短彗尾导致填充段边缘硬切断的「割裂」观感。
-    final double tailX = tailEdgeX;
+    // 彗尾长度与拖速挂钩：慢拖只在指前留一小段掠光（35%），快拖拉到近乎
+    // 整个填充段。旧实现恒等于填充段全长、速度只改亮度 —— 于是"滑得越快
+    // 尾巴越长"的预期落空，观感是彗星没跟上手指。
+    //
+    // 缩短的只是这层白色掠光，填充本身仍由 framework 的 Slider 画满，
+    // 所以不会出现"填充段边缘被硬切"的割裂。
+    final double tailReach = (0.35 + 0.60 * speed.clamp(0.0, 1.0)).clamp(
+      0.0,
+      1.0,
+    );
+    final double tailX = atZero
+        ? headX
+        : headX + (tailEdgeX - headX) * tailReach;
 
     // 裁剪区域 = 整条轨道胶囊（而非填充段）：光晕/粒子要能溢出填充前缘，
     // 被填满胶囊裁掉一半就只剩渐变、没有「掠光」感。
@@ -1052,9 +1269,13 @@ class _CometFillPainter extends CustomPainter {
       tail: Offset(tailX, trackHeight / 2),
       head: Offset(headX, trackHeight / 2),
       color: _cometHighlight(color),
-      // 光晕随拖速增强：慢拖微光 0.34、快拖亮光 0.60
-      glowAlpha: dragging ? 0.34 + speed * 0.26 : 0.30,
+      // 光晕随拖速增强：慢拖微光 0.34、快拖亮光 0.60。
+      // 填充为 0 时只有「正在拖动」才画光晕 —— 静止在 0 的滑块不该常驻一团白光。
+      glowAlpha: atZero
+          ? (dragging ? 0.50 : 0.0)
+          : (dragging ? 0.34 + speed * 0.26 : 0.30),
       speed: speed,
+      phase: phase,
     );
     canvas.restore();
   }
@@ -1068,7 +1289,8 @@ class _CometFillPainter extends CustomPainter {
       old.insetX != insetX ||
       old.textDirection != textDirection ||
       old.dragging != dragging ||
-      old.speed != speed;
+      old.speed != speed ||
+      old.phase != phase;
 }
 
 /// 统一进度条：与滑块同一套胶囊玻璃轨道 + 前缘彗星。
@@ -1264,52 +1486,69 @@ void _drawComet(
   required Color color,
   required double glowAlpha,
   double speed = 0,
+  double phase = 0,
 }) {
+  if (size.height <= 0) return;
   final double length = (head.dx - tail.dx).abs();
-  if (length <= 0.01 || size.height <= 0) return;
-  final Rect ribbon = Rect.fromLTRB(
-    math.min(tail.dx, head.dx),
-    0,
-    math.max(tail.dx, head.dx),
-    size.height,
-  );
-  final Color transparent = _withScaledAlpha(color, 0);
-  final Color middle = _withScaledAlpha(color, 0.38);
-  final Color bright = _withScaledAlpha(color, 0.92);
-  canvas.drawRRect(
-    RRect.fromRectAndRadius(ribbon, Radius.circular(size.height / 2)),
-    Paint()
-      ..shader = ui.Gradient.linear(
-        tail,
-        head,
-        [transparent, middle, bright, color],
-        const [0, 0.42, 0.82, 1],
-      ),
-  );
+  // 不再因为「尾长为 0」整层 return：拖到最左端时前缘光晕仍应存在，
+  // 旧写法会让彗星在 0 附近突然闪断一下。
+  final bool hasRibbon = length > 0.5;
+  if (hasRibbon) {
+    final Rect ribbon = Rect.fromLTRB(
+      math.min(tail.dx, head.dx),
+      0,
+      math.max(tail.dx, head.dx),
+      size.height,
+    );
+    final Color transparent = _withScaledAlpha(color, 0);
+    final Color middle = _withScaledAlpha(color, 0.38);
+    final Color bright = _withScaledAlpha(color, 0.92);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(ribbon, Radius.circular(size.height / 2)),
+      Paint()
+        ..shader = ui.Gradient.linear(
+          tail,
+          head,
+          [transparent, middle, bright, color],
+          const [0, 0.42, 0.82, 1],
+        ),
+    );
 
-  // 粒子拖尾：前缘后方散落几颗小亮点，随拖速变多变亮（用户要的
-  //「彗星那样的粒子特效」）。越靠近彗尾越暗，被随后的光晕自然盖过。
-  final int specks = 4 + (speed * 5).round();
-  for (int i = 1; i <= specks; i++) {
-    final double t = i / (specks + 1); // 0=尾 1=头
-    final double x = tail.dx + (head.dx - tail.dx) * (1 - t * 0.9);
-    final double wobble =
-        (i.isEven ? 1 : -1) * size.height * (0.14 + 0.08 * ((i * 7) % 3));
-    final double alpha = ((1 - t) * (0.16 + speed * 0.5) + 0.08).clamp(
-      0.0,
-      1.0,
-    );
-    final double r =
-        size.height * (0.055 + 0.035 * ((i * 5) % 3)) * (1 + speed * 0.6);
-    canvas.drawCircle(
-      Offset(x, head.dy + wobble),
-      r,
-      Paint()..color = _withScaledAlpha(color, alpha),
-    );
+    // 粒子拖尾：前缘后方散落几颗小亮点，随拖速变多变亮（用户要的
+    //「彗星那样的粒子特效」）。t = 0 在尾、1 在头，越靠头越亮。
+    //
+    // `phase` 让每颗亮点朝前缘漂移并循环（0→1 回绕），于是拖动期间是
+    // 一条**在跑**的尾迹，而不是一张静止的散点图 —— 这正是用户反馈
+    // 「彗星拖尾没动效」的直接原因（旧实现相位固定）。
+    final int specks = 4 + (speed * 5).round();
+    for (int i = 1; i <= specks; i++) {
+      final double travel = ((i / (specks + 1)) + phase * 0.85) % 1.0;
+      final double x = tail.dx + (head.dx - tail.dx) * travel;
+      final double wobble =
+          (i.isEven ? 1 : -1) * size.height * (0.14 + 0.08 * ((i * 7) % 3));
+      final double alpha = (travel * (0.16 + speed * 0.5) + 0.08).clamp(
+        0.0,
+        1.0,
+      );
+      final double r =
+          size.height * (0.055 + 0.035 * ((i * 5) % 3)) * (1 + speed * 0.6);
+      canvas.drawCircle(
+        Offset(x, head.dy + wobble),
+        r,
+        Paint()..color = _withScaledAlpha(color, alpha),
+      );
+    }
   }
 
-  final double radius = math.min(size.height * 1.25, length * 0.42);
+  // 前缘光晕的半径只由轨道高决定（与尾长解耦）。旧写法
+  // `min(height * 1.25, length * 0.42)` 会在尾巴变短时把光晕一起压没 ——
+  // 而新设计里尾巴本来就随速度缩短，光晕必须独立存活。
+  final double radius = size.height * (1.12 + 0.30 * speed.clamp(0.0, 1.0));
   if (radius <= 0.01) return;
+  // 轻微脉动（±12%）：相位只在拖动期间推进，静止时不会常驻发光。
+  final double pulse = 1 + 0.12 * math.sin(phase * 2 * math.pi);
+  final double glow = (glowAlpha * pulse).clamp(0.0, 1.0);
+  if (glow <= 0.002) return;
   canvas.drawCircle(
     head,
     radius,
@@ -1318,8 +1557,8 @@ void _drawComet(
         head,
         radius,
         [
-          _withScaledAlpha(Colors.white, glowAlpha),
-          _withScaledAlpha(Colors.white, glowAlpha * 0.24),
+          _withScaledAlpha(Colors.white, glow),
+          _withScaledAlpha(Colors.white, glow * 0.24),
           _withScaledAlpha(Colors.white, 0),
         ],
         const [0, 0.44, 1],
