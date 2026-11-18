@@ -206,7 +206,11 @@ class SegmentedControlContentState extends State<SegmentedControlContent> {
 
     final box = context.findRenderObject()! as RenderBox;
     final currentRelative = (_mainAlign + 1) / 2;
-    final segmentWidth = 1.0 / widget.segments.length;
+    // Segment centers span the full [0, 1] range, so adjacent centers are
+    // separated by n - 1 intervals rather than n item widths.
+    final segmentWidth = widget.segments.length > 1
+        ? 1.0 / (widget.segments.length - 1)
+        : 1.0;
     final indicatorWidth = 1.0 / widget.segments.length;
     final draggableRange = 1.0 - indicatorWidth;
     final mainVelocity = widget.direction == Axis.horizontal
@@ -236,7 +240,9 @@ class SegmentedControlContentState extends State<SegmentedControlContent> {
       final targetSegmentIndex = DraggableIndicatorPhysics.computeTargetIndex(
         currentRelativeX: currentRelative,
         velocityX: 0,
-        itemWidth: 1.0 / widget.segments.length,
+        itemWidth: widget.segments.length > 1
+            ? 1.0 / (widget.segments.length - 1)
+            : 1.0,
         itemCount: widget.segments.length,
       );
       setState(() {

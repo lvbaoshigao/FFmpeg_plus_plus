@@ -4,6 +4,16 @@ import 'package:flutter/foundation.dart';
 import 'native_bridge.dart';
 
 class NativeProcessManager {
+  NativeProcessManager() : _bridgeFactory = NativeBridge.new;
+
+  /// Uses an isolated transport without loading a native library in tests.
+  @visibleForTesting
+  NativeProcessManager.withBridgeFactory(
+    NativeBridge Function(String path) bridgeFactory,
+  ) : _bridgeFactory = bridgeFactory;
+
+  final NativeBridge Function(String path) _bridgeFactory;
+
   // DLL 模式
   NativeBridge? _bridge;
   Timer? _pollTimer;
@@ -50,7 +60,7 @@ class NativeProcessManager {
 
     debugPrint('[DLL] loading: $dllPath');
     try {
-      _bridge = NativeBridge(dllPath);
+      _bridge = _bridgeFactory(dllPath);
       final result = _bridge!.init();
       debugPrint('[DLL] init returned: $result');
       if (result != 0) {
@@ -122,8 +132,14 @@ class NativeProcessManager {
   }
 
   void _sendRequest(Map<String, dynamic> req) {
-    if (_bridge == null) return;
-    _bridge!.request(jsonEncode(req));
+    final bridge = _bridge;
+    if (bridge == null) throw StateError('后端未启动');
+    final result = bridge.request(jsonEncode(req));
+    if (result != 0) {
+      // Rejection may not enqueue a reply. Both request paths catch this and
+      // remove their pending completer before returning a failure immediately.
+      throw StateError('后端拒绝请求 (code=$result)');
+    }
   }
 
   Future<Map<String, dynamic>> request(
@@ -236,7 +252,14 @@ class NativeProcessManager {
     if (taskIds != null && taskIds.isNotEmpty) {
       req['params'] = {'task_ids': taskIds};
     }
-    _sendRequest(req);
+    try {
+      _sendRequest(req);
+    } catch (_) {
+      // Cancellation is fire-and-forget: preserve caller cleanup on rejection.
+      if (!_disposed && !_errorController.isClosed) {
+        _errorController.add('取消请求被拒绝或发送失败');
+      }
+    }
   }
 
   /// 后端关闭/销毁时完成所有挂起请求，防止调用方 Future 永久挂起

@@ -91,8 +91,9 @@ typedef GlassBrightnessWidgetBuilder = Widget Function(
 /// scope starts a periodic sampler (every [sampleInterval]) when scrolling
 /// begins and stops it when scrolling ends, with one trailing sample to
 /// capture the settled state. While nothing moves, the sample rate is zero.
-/// The capture itself is downscaled to roughly 16 physical pixels per grid
-/// cell, so the readback is a few kilobytes regardless of screen size.
+/// The capture ratio targets roughly 16 pixels per cell height and is clamped
+/// to 0.05–0.5. The entire content boundary is captured, so readback size also
+/// depends on boundary dimensions and is not a fixed memory budget.
 ///
 /// Because the automatic triggers are scroll-driven, content that changes
 /// **without** emitting scroll notifications — pan/zoom viewers such as
@@ -255,7 +256,7 @@ class GlassContentAwareScope extends StatefulWidget {
       }
     }
     final total = votesLight + votesDark;
-    if (total == 0) return current;
+    if (total == 0 || votesLight == votesDark) return current;
     // Dual-threshold hysteresis on top of sticky ties: each direction needs
     // a supermajority, so boundary content keeps the current appearance.
     if (current == Brightness.light) {
@@ -508,9 +509,12 @@ class GlassContentAwareScopeState extends State<GlassContentAwareScope> {
       final image = await boundary.toImage(pixelRatio: pixelRatio);
       final width = image.width;
       final height = image.height;
-      final byteData =
-          await image.toByteData(format: ui.ImageByteFormat.rawRgba);
-      image.dispose();
+      final ByteData? byteData;
+      try {
+        byteData = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      } finally {
+        image.dispose();
+      }
       if (!mounted || byteData == null) return;
       final rgba = byteData.buffer.asUint8List();
       final background = widget.backgroundColor ??
@@ -548,7 +552,7 @@ class GlassContentAwareScopeState extends State<GlassContentAwareScope> {
     } catch (e, stack) {
       // Transient capture failure (boundary mid-mutation, detached layer).
       // The next scroll tick retries; never let sampling take a screen down.
-      // Surface errors in debug/profile so programming mistakes are visible.
+      // Surface errors in debug builds so programming mistakes are visible.
       assert(() {
         FlutterError.reportError(FlutterErrorDetails(
           exception: e,

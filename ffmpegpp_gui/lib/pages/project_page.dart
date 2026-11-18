@@ -1325,9 +1325,15 @@ class ProjectPageState extends State<ProjectPage> {
       type: FileType.custom,
       allowedExtensions: _exts,
     );
-    if (r.isEmpty) return;
+    await importPickedFiles(state, r);
+  }
+
+  /// Processes picker results without substituting previously cached content.
+  @visibleForTesting
+  Future<void> importPickedFiles(AppState state, List<PlatformFile> files) async {
+    if (files.isEmpty) return;
     final paths = <String>[];
-    for (final f in r) {
+    for (final f in files) {
       final ext = f.name.contains('.')
           ? f.name.substring(f.name.lastIndexOf('.'))
           : '';
@@ -1355,68 +1361,12 @@ class ProjectPageState extends State<ProjectPage> {
           // 详见 AndroidPlatformBridge 的 ensureReadableImport 兜底逻辑。
         }
       } else {
-        // 有真实磁盘路径：直接用（FilePicker 已写入临时目录）。
-        //
-        // Android 上这个路径是 file_picker 刚复制出来的副本
-        // （<cacheDir>/file_picker/<时间戳>/<文件名>）—— 同一个大文件被重复导入
-        // （试一次、删掉、再导入，或分多次添加）就会在缓存里留下多份 400MB 的副本，
-        // 应用体积成倍膨胀。这里若缓存里已存在「同名 + 同大小」的旧副本，就复用
-        // 旧副本并删掉刚生成的这份。
-        //
-        // v13：原来的 int size 字段换成 lengthSync()，无法确定长度时为 null。
-        final reuse = _reuseExistingImportCopy(
-          f.path!,
-          f.name,
-          f.lengthSync() ?? 0,
-        );
-        if (reuse != null) {
-          paths.add(reuse);
-          try {
-            File(f.path!).deleteSync();
-          } catch (_) {}
-        } else {
-          paths.add(f.path!);
-        }
+        // Names and lengths do not identify content. Always retain the file
+        // selected this time; it may also be an external original, not a cache.
+        paths.add(f.path!);
       }
     }
-    if (paths.isNotEmpty) state.addVideos(paths);
-  }
-
-  /// 在 file_picker 的插件缓存目录里找一份「同名 + 同大小」的已有副本供复用，
-  /// 找不到（或不在插件缓存里）返回 null。
-  ///
-  /// 背景见 [_pick] 里 Android 分支的说明：file_picker 每次选择都会在
-  /// `<cacheDir>/file_picker/<时间戳>/` 下新建一份完整副本，400MB 的视频分两次
-  /// 导入就会占掉 800MB。这里只比对「文件名 + 字节数」，不读内容、不算哈希
-  /// —— 读一遍 400MB 本身就要几秒，而同名同大小的媒体文件几乎必然是同一份。
-  ///
-  /// 查找范围严格限定在插件缓存目录内：桌面端 `f.path` 是用户自己的文件路径，
-  /// 这种情况下直接返回 null（不会去动用户目录）。任何异常都返回 null，
-  /// 调用方继续使用新副本。
-  String? _reuseExistingImportCopy(String newPath, String name, int size) {
-    if (size <= 0) return null;
-    if (!newPath.replaceAll('\\', '/').contains('/file_picker/')) return null;
-    try {
-      final pluginDir = Directory(
-        '${Directory.systemTemp.path}${Platform.pathSeparator}file_picker',
-      );
-      if (!pluginDir.existsSync()) return null;
-      for (final ent in pluginDir.listSync(
-        recursive: true,
-        followLinks: false,
-      )) {
-        if (ent is! File) continue;
-        if (ent.path == newPath) continue;
-        if (!ent.path.replaceAll('\\', '/').endsWith('/$name')) continue;
-        try {
-          if (ent.lengthSync() != size) continue;
-        } catch (_) {
-          continue;
-        }
-        return ent.path;
-      }
-    } catch (_) {}
-    return null;
+    if (paths.isNotEmpty) await state.addVideos(paths);
   }
 
   /// 快速模式：选择文件后弹出快速配置选择对话框。

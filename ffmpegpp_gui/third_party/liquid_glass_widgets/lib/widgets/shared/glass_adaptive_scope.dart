@@ -24,10 +24,10 @@
 // Phase 3 — Runtime hysteresis (ongoing, very low overhead):
 //   Degrades quality when P95 > targetFrameMs × 1.5 for 2 consecutive windows
 //   (GlassQualityAdapter.degradeWindowCount).
-//   Upgrades quality (if allowStepUp) when P95 < targetFrameMs × 0.6
-//   for 10 consecutive windows. Hard 8-second cooldown between any change.
-//   Degradation is 5× faster than recovery — jank is noticed immediately;
-//   recovery should be invisible and stable.
+//   Under-budget windows (P95 < targetFrameMs × 0.6) increment a recovery
+//   counter; neutral windows decrement it and over-budget windows reset it.
+//   Recovery requires a count of 10 and allowStepUp. Changes also respect
+//   an 8-second cooldown; counter ratios are not timing guarantees.
 //
 // ## Key design constraint
 //
@@ -250,8 +250,8 @@ class GlassAdaptiveDiagnostic {
 /// value object.
 ///
 /// **Experimental** — this API is available in 0.8.0 for community feedback.
-/// Phase 2 timing thresholds (12 ms / 20 ms P75) have been validated by
-/// reasoning but not yet by broad real-device data. If you observe unexpected
+/// Phase 2 uses configurable P75 thresholds of 20 ms and 28 ms by default.
+/// These thresholds are heuristics. If you observe unexpected
 /// quality degradation or promotion, please file an issue with your device
 /// model, raster timings (from Flutter DevTools), and the quality tier you
 /// expected vs received.
@@ -307,15 +307,10 @@ class GlassAdaptiveScopeConfig {
   /// Defaults to [GlassQuality.premium].
   final GlassQuality maxQuality;
 
-  /// The quality to display before the warm-up benchmark completes.
-  /// When null (the default), the scope determines the best safe quality
-  /// (maxQuality on Apple, standard on Android).
-  ///
-  /// **Warning for Android**: Forcing this to [GlassQuality.premium] bypasses
-  /// the conservative seeding. While `LiquidGlassWidgets.initialize()` protects
-  /// against ANRs by pre-compiling the shaders, if you disable warm-up
-  /// (`warmUpMode: GlassWarmUpMode.never`), forcing premium on
-  /// frame 1 may cause a severe stutter or ANR on GLES-only Android devices.
+  /// Initial quality used to skip the warm-up benchmark.
+  /// When null, the adapter uses the session cache when available, otherwise
+  /// starts at [maxQuality] on all platforms. Static probe and quality bounds
+  /// may limit the selected quality; runtime adaptation remains active.
   final GlassQuality? initialQuality;
 
   /// The raster frame duration target in milliseconds. Defaults to `16` (60 fps).
@@ -324,9 +319,9 @@ class GlassAdaptiveScopeConfig {
   /// Whether the scope may increase quality after sustained good performance.
   /// Defaults to `true`.
   ///
-  /// When enabled, recovery requires 10 consecutive under-budget windows
-  /// (about 20 seconds) plus an 8-second cooldown, keeping the transition
-  /// stable and unobtrusive.
+  /// Recovery requires an under-budget counter of 10 and an elapsed
+  /// 8-second cooldown since the last change. Neutral windows decrement
+  /// the counter; over-budget windows reset it.
   final bool allowStepUp;
 
   /// The P75 warmup threshold (ms) below which the device is classified as
@@ -539,11 +534,8 @@ class GlassAdaptiveScope extends StatefulWidget {
   ///   premium experience (Best Foot Forward). If a device is too slow, Phase 2
   ///   will demote it after the warmup.
   ///
-  /// **Warning for Android**: Forcing this to [GlassQuality.premium] bypasses
-  /// the conservative seeding. While `LiquidGlassWidgets.initialize()` protects
-  /// against ANRs by pre-compiling the shaders, if you disable warm-up
-  /// (`warmUpMode: GlassWarmUpMode.never`), forcing premium on
-  /// frame 1 may cause a severe stutter or ANR on GLES-only Android devices.
+  /// Shader warm-up can reduce first-use compilation work, but does not
+  /// guarantee that a device can sustain the selected quality.
   final GlassQuality? initialQuality;
 
   /// The raster frame duration target in milliseconds.
@@ -560,8 +552,8 @@ class GlassAdaptiveScope extends StatefulWidget {
   /// good performance, such as after thermal recovery or a conservative warm-up
   /// decision.
   ///
-  /// Defaults to `true`. Recovery uses 10 consecutive under-budget windows
-  /// (about 20 seconds) plus an 8-second cooldown to prevent oscillation.
+  /// Defaults to `true`. Recovery requires an under-budget counter of 10
+  /// and an elapsed 8-second cooldown. Neutral windows decrement the counter.
   /// Set this to `false` to keep quality from increasing after warm-up.
   final bool allowStepUp;
 

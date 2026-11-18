@@ -249,6 +249,8 @@ class _GlassSwitchState extends State<GlassSwitch>
   // ---------------------------------------------------------------------------
   bool _isDragging = false;
   bool _isPressed = false;
+  // Raw pointer cancellation can race the tap recognizer's callbacks.
+  bool _pointerCancelled = false;
   bool _dragAbandonedExternally = false;
   bool _justEndedDrag = false;
   double _dragVirtualPx = 0.0;
@@ -484,6 +486,19 @@ class _GlassSwitchState extends State<GlassSwitch>
     ));
   }
 
+  void _onPointerDown(PointerDownEvent event) {
+    _pointerCancelled = false;
+  }
+
+  void _onPointerCancel(PointerCancelEvent event) {
+    _pointerCancelled = true;
+    if (_isDragging) {
+      _onDragCancel();
+    } else {
+      _isPressed = false;
+    }
+  }
+
   void _onDragDown(DragDownDetails details) {
     // Fires on frame 0 (without waiting for kPressTimeout) so the thumb blooms
     // the instant the finger touches the switch.
@@ -496,6 +511,10 @@ class _GlassSwitchState extends State<GlassSwitch>
 
   void _onTapUp(TapUpDetails details) {
     _isPressed = false;
+    if (_pointerCancelled) {
+      _pointerCancelled = false;
+      return;
+    }
     // A tap is confirmed only when no horizontal drag was registered.
     if (!_isDragging) {
       // Fire haptic immediately — user feels the click the instant they lift.
@@ -549,6 +568,12 @@ class _GlassSwitchState extends State<GlassSwitch>
 
   void _onDragCancel() {
     _isPressed = false;
+    // Cancellation must restore the controlled value; no onChanged is fired.
+    _positionController.stop();
+    _overshootController.stop();
+    _dragOvershootPx = 0.0;
+    _releaseOvershootStartPx = 0.0;
+    _positionController.value = widget.value ? 1.0 : 0.0;
     setState(() => _isDragging = false);
     _settleOvershoot();
     // Deflate bloom smoothly.
@@ -684,24 +709,27 @@ class _GlassSwitchState extends State<GlassSwitch>
         MediaQuery.maybeOf(context) ?? const MediaQueryData();
 
     return GlassFocusRegion(
-        enabled: true,
-        focusNode: widget.focusNode,
-        autofocus: widget.autofocus,
-        semanticLabel: widget.semanticLabel ?? 'Switch',
-        isButton: true,
-        toggled: widget.value,
-        semanticOnTap: _handleTap,
-        shape: const StadiumBorder(),
-        isFocusedNotifier: _isFocused,
-        isHoveredNotifier: _isHovered,
-        onKeyboardActivate: _activateFromKeyboard,
-        child: MediaQuery(
-          // Use a responsive 3 px horizontal drag slop (instead of Flutter's
-          // default 18 px kTouchSlop, which is ~90% of the switch's 20 px
-          // runway!) so horizontal drags engage immediately like native UISwitch.
-          data: baseMediaQuery.copyWith(
-            gestureSettings: const DeviceGestureSettings(touchSlop: 3.0),
-          ),
+      enabled: true,
+      focusNode: widget.focusNode,
+      autofocus: widget.autofocus,
+      semanticLabel: widget.semanticLabel ?? 'Switch',
+      isButton: true,
+      toggled: widget.value,
+      semanticOnTap: _handleTap,
+      shape: const StadiumBorder(),
+      isFocusedNotifier: _isFocused,
+      isHoveredNotifier: _isHovered,
+      onKeyboardActivate: _activateFromKeyboard,
+      child: MediaQuery(
+        // Use a responsive 3 px horizontal drag slop (instead of Flutter's
+        // default 18 px kTouchSlop, which is ~90% of the switch's 20 px
+        // runway!) so horizontal drags engage immediately like native UISwitch.
+        data: baseMediaQuery.copyWith(
+          gestureSettings: const DeviceGestureSettings(touchSlop: 3.0),
+        ),
+        child: Listener(
+          onPointerDown: _onPointerDown,
+          onPointerCancel: _onPointerCancel,
           child: GestureDetector(
             excludeFromSemantics: true,
             // NOTE: We do NOT use onTap here. Having both onTap and onHorizontalDrag*
@@ -838,7 +866,9 @@ class _GlassSwitchState extends State<GlassSwitch>
               ),
             ),
           ),
-        ));
+        ),
+      ),
+    );
   }
 
   Widget _buildThumb(

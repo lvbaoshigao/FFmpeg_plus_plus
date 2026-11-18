@@ -213,8 +213,8 @@ class _GlassFocusRegionState extends State<GlassFocusRegion> {
   bool _hadRecentPointerEvent = false;
   bool _suppressRing = false;
 
-  late final ValueNotifier<bool> _isFocusedNotifier;
-  late final ValueNotifier<bool> _isHoveredNotifier;
+  late ValueNotifier<bool> _isFocusedNotifier;
+  late ValueNotifier<bool> _isHoveredNotifier;
 
   // null in observe mode; owned or adopted in interactive mode.
   FocusNode? _internalFocusNode;
@@ -225,7 +225,14 @@ class _GlassFocusRegionState extends State<GlassFocusRegion> {
   @override
   void initState() {
     super.initState();
+    _bindResources();
+  }
 
+  void _bindResources() {
+    _ownsFocusNotifier = false;
+    _ownsHoverNotifier = false;
+    _hadRecentPointerEvent = false;
+    _suppressRing = false;
     if (widget._isObserveMode) {
       // Observe mode: listen to the external FocusNode; no FocusableActionDetector.
       // We also listen to FocusManager.highlightMode so the ring only shows for
@@ -237,6 +244,7 @@ class _GlassFocusRegionState extends State<GlassFocusRegion> {
       _ownsHoverNotifier = true;
       widget.observedFocusNode!.addListener(_onObservedFocusChange);
       FocusManager.instance.addHighlightModeListener(_onHighlightModeChange);
+      _onObservedFocusChange();
       return;
     }
 
@@ -307,32 +315,81 @@ class _GlassFocusRegionState extends State<GlassFocusRegion> {
   void didUpdateWidget(covariant GlassFocusRegion oldWidget) {
     super.didUpdateWidget(oldWidget);
 
+    if (oldWidget._isObserveMode != widget._isObserveMode) {
+      _unbindResources(oldWidget, replacing: true);
+      _bindResources();
+      return;
+    }
     if (widget._isObserveMode) {
-      // Rewire the listener if the caller swapped the focus node.
       if (oldWidget.observedFocusNode != widget.observedFocusNode) {
         oldWidget.observedFocusNode!.removeListener(_onObservedFocusChange);
         widget.observedFocusNode!.addListener(_onObservedFocusChange);
-        _isFocusedNotifier.value = widget.observedFocusNode!.hasFocus;
+        _hadRecentPointerEvent = false;
+        _suppressRing = false;
+        _onObservedFocusChange();
       }
       return;
     }
 
-    // Interactive mode.
-    if (oldWidget.canRequestFocus != widget.canRequestFocus) {
-      _internalFocusNode!.canRequestFocus = widget.canRequestFocus;
+    if (oldWidget.focusNode != widget.focusNode) {
+      if (oldWidget.focusNode == null &&
+          !identical(_internalFocusNode, widget.focusNode)) {
+        _internalFocusNode!.dispose();
+      }
+      _internalFocusNode = widget.focusNode ?? FocusNode();
+    }
+    _internalFocusNode!.canRequestFocus = widget.canRequestFocus;
+    if (oldWidget.isFocusedNotifier != widget.isFocusedNotifier) {
+      final previous = _isFocusedNotifier;
+      final value = previous.value;
+      if (_ownsFocusNotifier &&
+          !identical(previous, widget.isFocusedNotifier)) {
+        previous.dispose();
+      }
+      _ownsFocusNotifier = widget.isFocusedNotifier == null;
+      _isFocusedNotifier = widget.isFocusedNotifier ?? ValueNotifier(value);
+      _isFocusedNotifier.value = value;
+    }
+    if (oldWidget.isHoveredNotifier != widget.isHoveredNotifier) {
+      final previous = _isHoveredNotifier;
+      final value = previous.value;
+      if (_ownsHoverNotifier &&
+          !identical(previous, widget.isHoveredNotifier)) {
+        previous.dispose();
+      }
+      _ownsHoverNotifier = widget.isHoveredNotifier == null;
+      _isHoveredNotifier = widget.isHoveredNotifier ?? ValueNotifier(value);
+      _isHoveredNotifier.value = value;
+    }
+  }
+
+  void _unbindResources(GlassFocusRegion binding, {bool replacing = false}) {
+    if (binding._isObserveMode) {
+      binding.observedFocusNode!.removeListener(_onObservedFocusChange);
+      FocusManager.instance.removeHighlightModeListener(_onHighlightModeChange);
+    } else if (binding.focusNode == null &&
+        !(replacing &&
+            (identical(_internalFocusNode, widget.focusNode) ||
+                identical(_internalFocusNode, widget.observedFocusNode)))) {
+      _internalFocusNode?.dispose();
+    }
+    _internalFocusNode = null;
+    _actions = const {};
+    if (_ownsFocusNotifier &&
+        !(replacing &&
+            identical(_isFocusedNotifier, widget.isFocusedNotifier))) {
+      _isFocusedNotifier.dispose();
+    }
+    if (_ownsHoverNotifier &&
+        !(replacing &&
+            identical(_isHoveredNotifier, widget.isHoveredNotifier))) {
+      _isHoveredNotifier.dispose();
     }
   }
 
   @override
   void dispose() {
-    if (widget._isObserveMode) {
-      widget.observedFocusNode!.removeListener(_onObservedFocusChange);
-      FocusManager.instance.removeHighlightModeListener(_onHighlightModeChange);
-    } else {
-      if (widget.focusNode == null) _internalFocusNode?.dispose();
-    }
-    if (_ownsFocusNotifier) _isFocusedNotifier.dispose();
-    if (_ownsHoverNotifier) _isHoveredNotifier.dispose();
+    _unbindResources(widget);
     super.dispose();
   }
 

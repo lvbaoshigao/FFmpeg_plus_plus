@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:uuid/uuid.dart';
+
 import '../models/models.dart';
 
 class ExecutionStep {
@@ -889,9 +891,10 @@ class GraphExecutor {
         ..addAll(warnings);
       return null;
     }
-    // 以输出节点 id + 最终输出路径作盐，区分同源多输出计划的中间文件，避免并发时互相覆盖
-    // （即便两个输出节点命名相同，id 也保证盐唯一）
-    final tmpSalt = _stableHash('${plan.outputNode?.id ?? ''}\u0000$outputPath');
+    // Keep user-visible frame output naming stable; intermediates belong to
+    // this build, even when the same plan is queued repeatedly.
+    final outputSalt = _stableHash('${plan.outputNode?.id ?? ''}\u0000$outputPath');
+    final tmpSalt = '${const Uuid().v4()}_${++_buildSequence}';
 
     var currentInput = inputPath;
 
@@ -973,7 +976,9 @@ class GraphExecutor {
           if (subNodes.isNotEmpty) {
             final avOpts = avNodes.isNotEmpty ? _avOptions(avNodes.first) : _defaultAvOptions();
             if (speedFilters != null) {
-              avOpts['vf_filters'] = [speedFilters.$1];
+              avOpts['vf_filters'] = [
+                ...?avOpts['vf_filters'] as List?, speedFilters.$1,
+              ];
               avOpts['af_filters'] = [speedFilters.$2];
             }
             calls.add(BackendCall(
@@ -988,7 +993,9 @@ class GraphExecutor {
           } else if (avNodes.isNotEmpty) {
             final opts = _avOptions(avNodes.first);
             if (speedFilters != null) {
-              opts['vf_filters'] = [speedFilters.$1];
+              opts['vf_filters'] = [
+                ...?opts['vf_filters'] as List?, speedFilters.$1,
+              ];
               opts['af_filters'] = [speedFilters.$2];
             }
             calls.add(BackendCall(
@@ -1028,11 +1035,9 @@ class GraphExecutor {
           final baseName = isLast
               ? outputPath.replaceAll(RegExp(r'\.[^.]+$'), '')
               : '${outputPath.replaceAll(RegExp(r'\.[^.]+$'), '')}_step$i';
-          // [FIX M-15] 帧目录必须包含本次执行会话唯一盐 tmpSalt：同一源文件的两个输出计划
-          // 并发抽帧（maxConcurrentTasks>1）时，framesDir 才能彼此区分、不互相覆盖帧目录。
-          // tmpSalt 由 plan.outputNode.id + outputPath 经稳定 FNV-1a 哈希得出：同一计划内多次
-          // 调用得到同一目录，不同计划得到不同目录（不使用易碰撞/不稳定的 String.hashCode）。
-          final framesDir = '${baseName}_frames_$tmpSalt';
+          // Only intermediate frame directories get a fresh build identity.
+          // Final frame outputs retain their previous public name.
+          final framesDir = '${baseName}_frames_${isLast ? outputSalt : tmpSalt}';
 
           if (mode == 'single') {
             final time = (p['time'] as num?)?.toDouble() ?? 0;
@@ -1205,6 +1210,23 @@ class GraphExecutor {
         case 'image_scale':
           final node = step.nodes.first;
           final p = node.params;
+          if (p['scale_mode'] == 'absolute') {
+            final width = p['target_w'];
+            final height = p['target_h'];
+            final hasWidth = width is num && width.isFinite && width >= 1;
+            final hasHeight = height is num && height.isFinite && height >= 1;
+            if (!hasWidth && !hasHeight) {
+              return fail('图片绝对缩放缺少有效目标尺寸');
+            }
+            if ((width != null && (!hasWidth)) ||
+                (height != null && (!hasHeight))) {
+              return fail('图片绝对缩放目标尺寸必须为正数');
+            }
+            if (!const {'contain', 'cover', 'fill', 'inside', 'outside'}
+                .contains(p['fit'] ?? 'contain')) {
+              return fail('图片绝对缩放 fit 无效');
+            }
+          }
           final ext = currentInput.split('.').last;
           final outPath = isLast
               ? outputPath
@@ -1215,6 +1237,9 @@ class GraphExecutor {
             params: {
               'input': currentInput,
               'output': outPath,
+              if (p['target_w'] != null) 'target_w': p['target_w'],
+              if (p['target_h'] != null) 'target_h': p['target_h'],
+              if (p['fit'] != null) 'fit': p['fit'],
               if (p['scale_factor'] != null) 'scale_factor': p['scale_factor'],
               if (p['scale_mode'] != null) 'scale_mode': p['scale_mode'],
               if (p['random_min'] != null) 'random_min': p['random_min'],
@@ -2163,6 +2188,64 @@ class GraphExecutor {
     return lines.join('\n');
   }
 
+  /// Plans the absolute image resize filter without probing or executing FFmpeg.
+  static String absoluteImageScaleFilter(
+    Map<String, dynamic> params, int sourceWidth, int sourceHeight,
+  ) {
+    if (sourceWidth <= 0 || sourceHeight <= 0) {
+      throw const FormatException('源图片尺寸无效');
+    }
+    int dimension(String key) {
+      final value = params[key];
+      if (value == null) return 0;
+      if (value is! num || !value.isFinite || value < 1) {
+        throw const FormatException('图片目标尺寸必须为正数');
+      }
+      return value.toInt();
+    }
+    final width = dimension('target_w');
+    final height = dimension('target_h');
+    if (width == 0 && height == 0) {
+      throw const FormatException('图片绝对缩放缺少有效目标尺寸');
+    }
+    final fit = params['fit'] ?? 'contain';
+    if (!const {'contain', 'cover', 'fill', 'inside', 'outside'}.contains(fit)) {
+      throw const FormatException('图片绝对缩放 fit 无效');
+    }
+    if (fit == 'fill' && width > 0 && height > 0) {
+      return 'scale=$width:$height';
+    }
+    final cover = fit == 'cover' || fit == 'outside';
+    // Compare and apply rational scales exactly. Floating point turns e.g.
+    // 100 * (29 / 100) into 28.999..., losing a pixel when rounded down.
+    // BigInt also prevents overflow in the cross-products for large dimensions.
+    final sw = BigInt.from(sourceWidth);
+    final sh = BigInt.from(sourceHeight);
+    final w = BigInt.from(width);
+    final h = BigInt.from(height);
+    final useWidth = height == 0 || (width > 0 &&
+        (cover ? w * sh >= h * sw : w * sh <= h * sw));
+    var numerator = useWidth ? w : h;
+    var denominator = useWidth ? sw : sh;
+    if ((fit == 'inside' && numerator > denominator) ||
+        (fit == 'outside' && numerator < denominator)) {
+      numerator = BigInt.one;
+      denominator = BigInt.one;
+    }
+    BigInt scaleDimension(BigInt source) {
+      final product = source * numerator;
+      final rounded = cover
+          ? (product + denominator - BigInt.one) ~/ denominator
+          : product ~/ denominator;
+      return rounded < BigInt.one ? BigInt.one : rounded;
+    }
+    final scaledWidth = scaleDimension(sw);
+    final scaledHeight = scaleDimension(sh);
+    final scale = 'scale=$scaledWidth:$scaledHeight';
+    return fit == 'cover' && width > 0 && height > 0
+        ? '$scale,crop=$width:$height:(iw-ow)/2:(ih-oh)/2' : scale;
+  }
+
   // ── 参数转译 ──
 
   static const _codecForFormat = {
@@ -2180,6 +2263,9 @@ class GraphExecutor {
       'audio_codec': p['audio_codec'] ?? 'aac',
       'overwrite': true,
     };
+    if (p['vf_filters'] is List) {
+      opts['vf_filters'] = List<dynamic>.of(p['vf_filters'] as List);
+    }
     final rateMode = p['rate_mode'] as String? ?? 'keep';
     if (rateMode == 'crf' && p['crf'] != null) {
       opts['crf'] = p['crf'];
@@ -2326,14 +2412,16 @@ class GraphExecutor {
 
     // 主输入在 filter_complex 中记为 [0:v]，叠加图 [1:v]；透明度用 format=rgba+colorchannelmixer。
     // 注意：叠加图缩放必须按比例缩放后再对齐，scale 的 -2 保证偶数高度。
-    final parts = <String>[];
-    parts.add('[1:v]scale=iw*${(scalePct / 100).toStringAsFixed(4)}:-2');
-    if (opacity < 1.0) {
-      parts.add('format=rgba,colorchannelmixer=aa=${opacity.toStringAsFixed(3)}');
-    }
-    parts.add('ovr');
-    parts.add('[0:v][ovr]overlay=$offset[v]');
-    return parts.join(';');
+    final filters = <String>[
+      'scale=iw*${(scalePct / 100).toStringAsFixed(4)}:-2',
+      if (opacity < 1.0) ...[
+        'format=rgba',
+        'colorchannelmixer=aa=${opacity.toStringAsFixed(3)}',
+      ],
+    ];
+    // Commas connect filters in a chain; labels name its output. Only the
+    // boundary between this chain and the two-input overlay uses a semicolon.
+    return '[1:v]${filters.join(',')}[ovr];[0:v][ovr]overlay=$offset[v]';
   }
 
   /// 音频淡入/淡出滤镜串（afade）。
@@ -2421,11 +2509,14 @@ class GraphExecutor {
     // 按「本次运行」创建一个随机子目录，目录属主即当前进程，既避免跨会话
     // 撞名，也避免其它用户/进程提前占位。
     final dir = _sessionTempDir();
-    return '$dir${Platform.pathSeparator}ffmpegpp_${pathHash}_${base}_step$step.$ext';
+    // Keep the sequence outside the 32-bit hash so distinct builds cannot
+    // collide merely because their hash does. salt is generated internally.
+    return '$dir${Platform.pathSeparator}ffmpegpp_${salt}_${pathHash}_${base}_step$step.$ext';
   }
 
   // 进程级独占临时子目录：惰性创建，整个会话复用（每个任务内部仍用哈希+步骤区分，
   // 互不覆盖）。放在 systemTemp 下以继承系统临时目录的清理策略。
+  static int _buildSequence = 0;
   static String? _sessionTempDirPath;
   static String _sessionTempDir() {
     final existing = _sessionTempDirPath;

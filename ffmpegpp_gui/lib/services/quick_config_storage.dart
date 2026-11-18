@@ -12,6 +12,17 @@ class QuickConfigStorage {
   QuickConfigStorage._();
 
   static final String _sep = Platform.pathSeparator;
+  static Future<void> _pending = Future<void>.value();
+
+  // Test seams: tests must restore these after awaiting all operations.
+  static Directory? directoryOverride;
+  static Future<void> Function(File file, String contents)? writeOverride;
+
+  static Future<void> _serialize(Future<void> Function() operation) {
+    final result = _pending.then((_) => operation());
+    _pending = result.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    return result;
+  }
 
   /// 用户数据目录（与 pipeline_autosave.dart 的 _baseDir 一致）。
   static Future<String> _baseDir() async {
@@ -33,10 +44,9 @@ class QuickConfigStorage {
   }
 
   static Future<Directory> _configsDir() async {
-    final dir = Directory('${await _baseDir()}$_sep' 'quick_configs');
-    if (!await dir.exists()) {
-      try { await dir.create(recursive: true); } catch (_) {}
-    }
+    final dir = directoryOverride ??
+        Directory('${await _baseDir()}$_sep' 'quick_configs');
+    await dir.create(recursive: true);
     return dir;
   }
 
@@ -85,19 +95,36 @@ class QuickConfigStorage {
     }
   }
 
-  /// 保存一份配置（覆盖同名文件）。
+  /// 保存调用时的快照。写入或替换失败会向调用方抛出，旧文件不预先删除。
   static Future<void> save(QuickConfig cfg) async {
-    try {
-      final f = await _fileFor(cfg.id);
-      await f.writeAsString(const JsonEncoder.withIndent('  ').convert(cfg.toJson()));
-    } catch (_) {}
+    final id = cfg.id;
+    final contents = const JsonEncoder.withIndent('  ').convert(cfg.toJson());
+    await _serialize(() async {
+      final target = await _fileFor(id);
+      final staging = await target.parent.createTemp('.quick-config-');
+      final temporary = File('${staging.path}${_sep}config.tmp');
+      try {
+        final writer = writeOverride;
+        if (writer != null) {
+          await writer(temporary, contents);
+        } else {
+          await temporary.writeAsString(contents, flush: true);
+        }
+        // Never replace the destination with a truncated or altered write.
+        if (await temporary.readAsString() != contents) {
+          throw const FileSystemException('Incomplete quick configuration write');
+        }
+        await temporary.rename(target.path);
+      } finally {
+        // Cleanup must not turn a committed save into a reported failure.
+        try { await staging.delete(recursive: true); } catch (_) {}
+      }
+    });
   }
 
-  /// 删除指定配置。
-  static Future<void> delete(String id) async {
-    try {
-      final f = await _fileFor(id);
-      if (await f.exists()) await f.delete();
-    } catch (_) {}
-  }
+  /// 删除与保存使用同一队列；失败向调用方抛出。
+  static Future<void> delete(String id) => _serialize(() async {
+    final file = await _fileFor(id);
+    if (await file.exists()) await file.delete();
+  });
 }

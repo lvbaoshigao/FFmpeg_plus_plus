@@ -1323,7 +1323,7 @@ class PipelineGraph {
       return PipelineNode(
         id: newId,
         type: n.type,
-        params: Map.of(n.params),
+        params: PipelineNode.deepCopyMap(n.params),
         x: n.x,
         y: n.y,
         gateType: n.gateType,
@@ -1342,7 +1342,21 @@ class PipelineGraph {
         .toList();
     final newBlocks = logicBlocks.map((b) {
       final nb = b.copy();
+      nb.params = PipelineNode.deepCopyMap(b.params);
       nb.childNodeIds = b.childNodeIds.map((cid) => idMap[cid] ?? cid).toList();
+      // Selection entries are node references too. Rewrite only this known
+      // field, leaving arbitrary strings and unresolved references untouched.
+      final selections = nb.params['selections'];
+      if (selections is List) {
+        for (final selection in selections) {
+          if (selection is Map) {
+            final nodeId = selection['nodeId'];
+            if (nodeId is String && idMap.containsKey(nodeId)) {
+              selection['nodeId'] = idMap[nodeId];
+            }
+          }
+        }
+      }
       return nb;
     }).toList();
     return PipelineGraph(
@@ -1708,6 +1722,99 @@ class TranscodeConfig {
     this.audioConvertSampleRate,
   });
 
+  /// Complete task snapshot; backend options intentionally omit UI/branch fields.
+  Map<String, dynamic> toJson() => {
+    'video_codec': videoCodec,
+    'gpu': gpu,
+    'preset': preset,
+    'crf': crf,
+    'video_bitrate': videoBitrate,
+    'framerate': framerate,
+    'resolution_w': resolutionW,
+    'resolution_h': resolutionH,
+    'audio_codec': audioCodec,
+    'audio_bitrate': audioBitrate,
+    'audio_channels': audioChannels,
+    'subtitle_enabled': subtitleEnabled,
+    'subtitle_source': subtitleSource,
+    'subtitle_file': subtitleFile,
+    'subtitle_index': subtitleIndex,
+    'subtitle_index2': subtitleIndex2,
+    'subtitle_font_name': subtitleFontName,
+    'subtitle_font_size': subtitleFontSize,
+    'subtitle_font_color': subtitleFontColor,
+    'subtitle_outline_width': subtitleOutlineWidth,
+    'subtitle_outline_color': subtitleOutlineColor,
+    'output_format': outputFormat,
+    'naming_mode': namingMode,
+    'naming_value': namingValue,
+    'start_time': startTime,
+    'end_time': endTime,
+    'speed': speed,
+    'frame_extract_mode': frameExtractMode,
+    'frame_time': frameTime,
+    'frame_range_start': frameRangeStart,
+    'frame_range_end': frameRangeEnd,
+    'frame_fps': frameFps,
+    'frame_format': frameFormat,
+    'image_output_format': imageOutputFormat,
+    'image_quality': imageQuality,
+    'crop_x': cropX,
+    'crop_y': cropY,
+    'crop_w': cropW,
+    'crop_h': cropH,
+    'audio_convert_codec': audioConvertCodec,
+    'audio_convert_format': audioConvertFormat,
+    'audio_convert_bitrate': audioConvertBitrate,
+    'audio_convert_sample_rate': audioConvertSampleRate,
+  };
+
+  factory TranscodeConfig.fromJson(Map<String, dynamic> json) => TranscodeConfig(
+    videoCodec: json['video_codec'] as String? ?? 'h264',
+    gpu: json['gpu'] as String? ?? 'CPU',
+    preset: json['preset'] as String? ?? 'medium',
+    crf: (json['crf'] as num?)?.toInt(),
+    videoBitrate: (json['video_bitrate'] as num?)?.toInt(),
+    framerate: (json['framerate'] as num?)?.toDouble(),
+    resolutionW: (json['resolution_w'] as num?)?.toInt(),
+    resolutionH: (json['resolution_h'] as num?)?.toInt(),
+    audioCodec: json['audio_codec'] as String? ?? 'aac',
+    audioBitrate: json.containsKey('audio_bitrate') ? (json['audio_bitrate'] as num?)?.toInt() : 128,
+    audioChannels: (json['audio_channels'] as num?)?.toInt(),
+    subtitleEnabled: json['subtitle_enabled'] as bool? ?? false,
+    subtitleSource: json['subtitle_source'] as String? ?? 'external',
+    subtitleFile: json['subtitle_file'] as String?,
+    subtitleIndex: (json['subtitle_index'] as num?)?.toInt() ?? 0,
+    subtitleIndex2: (json['subtitle_index2'] as num?)?.toInt(),
+    subtitleFontName: json['subtitle_font_name'] as String? ?? 'Arial',
+    subtitleFontSize: (json['subtitle_font_size'] as num?)?.toInt() ?? 24,
+    subtitleFontColor: json['subtitle_font_color'] as String? ?? '#FFFFFF',
+    subtitleOutlineWidth: (json['subtitle_outline_width'] as num?)?.toInt() ?? 2,
+    subtitleOutlineColor: json['subtitle_outline_color'] as String? ?? '#000000',
+    outputFormat: json['output_format'] as String? ?? 'keep',
+    namingMode: json['naming_mode'] as String? ?? 'keep',
+    namingValue: json['naming_value'] as String? ?? '_processed',
+    startTime: (json['start_time'] as num?)?.toDouble(),
+    endTime: (json['end_time'] as num?)?.toDouble(),
+    speed: (json['speed'] as num?)?.toDouble(),
+    frameExtractMode: json['frame_extract_mode'] as String? ?? 'none',
+    frameTime: (json['frame_time'] as num?)?.toDouble(),
+    frameRangeStart: (json['frame_range_start'] as num?)?.toDouble(),
+    frameRangeEnd: (json['frame_range_end'] as num?)?.toDouble(),
+    frameFps: (json['frame_fps'] as num?)?.toDouble(),
+    frameFormat: json['frame_format'] as String? ?? 'png',
+    imageOutputFormat: json['image_output_format'] as String?,
+    imageQuality: (json['image_quality'] as num?)?.toInt() ?? 95,
+    cropX: (json['crop_x'] as num?)?.toInt(),
+    cropY: (json['crop_y'] as num?)?.toInt(),
+    cropW: (json['crop_w'] as num?)?.toInt(),
+    cropH: (json['crop_h'] as num?)?.toInt(),
+    audioConvertCodec: json['audio_convert_codec'] as String?,
+    audioConvertFormat: json['audio_convert_format'] as String?,
+    audioConvertBitrate: (json['audio_convert_bitrate'] as num?)?.toInt(),
+    audioConvertSampleRate: json['audio_convert_sample_rate'] as String?,
+  );
+
   Map<String, dynamic> toBackendOptions() {
     final opts = <String, dynamic>{
       'video_codec': videoCodec,
@@ -1791,6 +1898,9 @@ class BackendCall {
     if (accumulate) 'accumulate': true,
     if (errorPolicy != 'stop') 'error_policy': errorPolicy,
     if (retries > 0) 'retries': retries,
+    'use_vars': useVars,
+    'loop_index_base': loopIndexBase,
+    'loop_index_step': loopIndexStep,
   };
 
   factory BackendCall.fromJson(Map<String, dynamic> json) => BackendCall(
@@ -1802,6 +1912,9 @@ class BackendCall {
     accumulate: json['accumulate'] == true,
     errorPolicy: json['error_policy'] as String? ?? 'stop',
     retries: (json['retries'] as num?)?.toInt() ?? 0,
+    useVars: json['use_vars'] as bool? ?? true,
+    loopIndexBase: (json['loop_index_base'] as num?)?.toInt() ?? 1,
+    loopIndexStep: (json['loop_index_step'] as num?)?.toInt() ?? 1,
   );
 }
 
@@ -1928,6 +2041,7 @@ class TaskInfo {
   Map<String, dynamic> toJson() => {
     'id': id,
     'video_id': videoId,
+    'config': config.toJson(),
     'filename': filename,
     'input_path': inputPath,
     'output_path': outputPath,
@@ -1963,7 +2077,9 @@ class TaskInfo {
     logLines:
         (json['log_lines'] as List?)?.map((e) => e.toString()).toList() ??
         const [],
-    config: TranscodeConfig(),
+    config: json['config'] is Map
+        ? TranscodeConfig.fromJson((json['config'] as Map).cast<String, dynamic>())
+        : TranscodeConfig(),
     outputSize: (json['output_size'] as num?)?.toInt(),
     duration: (json['duration'] as num?)?.toDouble(),
     command: (json['command'] as List?)?.map((e) => e.toString()).toList(),

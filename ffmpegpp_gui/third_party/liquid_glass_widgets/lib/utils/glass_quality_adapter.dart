@@ -11,7 +11,7 @@
 ///
 ///   **Phase 2 — Warm-up benchmark** (first 180 measured frames ≈ 3 s at 60 fps):
 ///   - Skips the first [GlassQualityAdapter.skipInitialFrames] frames (default
-///     60 ≈ 1 s) to let shader compilation and first-route transitions settle.
+///     90 ≈ 1.5 s at 60 Hz) for shader compilation and route transitions.
 ///   - Collects `rasterDuration` via [SchedulerBinding.addTimingsCallback]
 ///   - Computes the P75 raster time across the collected frames
 ///   - P75 < 20 ms  → remain at [GlassQuality.premium]
@@ -22,12 +22,12 @@
 ///   **Phase 3 — Runtime hysteresis** (ongoing, very low overhead):
 ///   - Maintains a rolling ring buffer of the last 120 raster durations
 ///   - Degrades one tier when P95 > targetFrameMs × 1.5 for 2 consecutive
-///     sliding windows
-///   - Upgrades one tier when P95 < targetFrameMs × 0.6 for 10 consecutive
-///     sliding windows (only if `allowStepUp` is `true`)
+///     non-overlapping windows
+///   - Upgrades when the under-budget counter reaches 10 (`allowStepUp` only).
+///     Neutral windows decrement this counter; over-budget windows reset it.
 ///   - Hard cooldown: minimum 8 seconds between any quality change
-///   - Degradation is 3× faster than recovery — jank is noticed immediately,
-///     but quality recovery must be invisible (slow and stable)
+///   - The default counters are 2 windows down and 10 up; cooldown and
+///     neutral-window decay also affect the time until a change.
 ///
 /// **This class is internal — do NOT export from the barrel file.**
 ///
@@ -255,8 +255,8 @@ class GlassQualityAdapter {
   /// step-down. Default: 2.
   static int degradeWindowCount = 2;
 
-  /// Number of consecutive under-budget windows that trigger a quality
-  /// step-up (only when [allowStepUp] is `true`). Default: 10.
+  /// Under-budget counter required for a quality step-up. Neutral windows
+  /// decrement it; over-budget windows reset it. Default: 10.
   static int upgradeWindowCount = 10;
 
   // Raster time measures the glass only while nothing else competes for the
@@ -269,7 +269,13 @@ class GlassQualityAdapter {
   // and the tail of the work.
 
   static int _holds = 0;
-  static int _settle = 0;
+  static int _settleGeneration = 0;
+  static int _releasedSettleFrames = 0;
+
+  // Each scope consumes its own recovery frames, never another scope's.
+  // New adapters conservatively observe the latest release in full.
+  int _seenSettleGeneration = -1;
+  int _remainingSettleFrames = 0;
 
   /// Frames dropped after the last hold is released. Default: 120 (about one
   /// second at 120 Hz).
@@ -297,7 +303,10 @@ class GlassQualityAdapter {
   /// Frames reported while a hold is open count toward neither the warm-up
   /// benchmark nor runtime degradation. After the last hold is released,
   /// [settleFramesAfterHold] further frames are dropped before measuring
-  /// resumes. Holds nest, and are safe to open when no adapter exists.
+  /// resumes, independently for each adapter. Stop/start and reset preserve
+  /// unconsumed recovery frames. A newly created adapter conservatively drops
+  /// the latest release's full recovery window, even if older adapters finished
+  /// theirs. Holds nest, and are safe to open when no adapter exists.
   static GlassMeasurementHold holdMeasurement() {
     _holds++;
     return GlassMeasurementHold._();
@@ -307,7 +316,9 @@ class GlassQualityAdapter {
     if (_holds == 0) return;
     _holds--;
     if (_holds == 0) {
-      _settle = settleFramesAfterHold > 0 ? settleFramesAfterHold : 0;
+      _releasedSettleFrames =
+          settleFramesAfterHold > 0 ? settleFramesAfterHold : 0;
+      _settleGeneration++;
     }
   }
 
@@ -315,7 +326,8 @@ class GlassQualityAdapter {
   @visibleForTesting
   static void resetMeasurementHoldsForTesting() {
     _holds = 0;
-    _settle = 0;
+    _releasedSettleFrames = 0;
+    _settleGeneration++;
   }
 
   /// Minimum time between consecutive quality changes.
@@ -487,7 +499,7 @@ class GlassQualityAdapter {
   /// benchmark re-runs from scratch; the current quality is preserved until the
   /// new benchmark completes, at which point it may change.
   ///
-  /// If the adapter was stopped, this restarts it.
+  /// A stopped adapter remains stopped; call [start] to register frame timings.
   void reset() {
     _warmupDurations.clear();
     _window.clear();
@@ -521,7 +533,11 @@ class GlassQualityAdapter {
   ///
   /// ```dart
   /// final adapter = GlassQualityAdapter(...);
-  /// adapter.simulateFrameTimings(_frames(180, 15000)); // 15 ms → standard
+  /// // With default thresholds and quality bounds, 24 ms selects standard.
+  /// adapter.simulateFrameTimings(_frames(
+  ///   GlassQualityAdapter.skipInitialFrames + GlassQualityAdapter.warmupFrames,
+  ///   24000,
+  /// ));
   /// expect(adapter.currentQuality, GlassQuality.standard);
   /// ```
   @visibleForTesting
@@ -767,8 +783,14 @@ class GlassQualityAdapter {
     // Frames under a hold, or just after it, measure the other work, not the
     // glass.
     if (_holds > 0) return;
-    final skip = _settle < timings.length ? _settle : timings.length;
-    _settle -= skip;
+    if (_seenSettleGeneration != _settleGeneration) {
+      _seenSettleGeneration = _settleGeneration;
+      _remainingSettleFrames = _releasedSettleFrames;
+    }
+    final skip = _remainingSettleFrames < timings.length
+        ? _remainingSettleFrames
+        : timings.length;
+    _remainingSettleFrames -= skip;
 
     for (final timing in timings.skip(skip)) {
       final rasterUs = timing.rasterDuration.inMicroseconds;

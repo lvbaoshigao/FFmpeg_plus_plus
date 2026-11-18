@@ -9,6 +9,21 @@ import 'ai_credential_store.dart';
 final _s = Platform.pathSeparator;
 
 class ConfigService {
+  ConfigService({
+    AiCredentialStore? credentialStore,
+    Future<Directory> Function()? supportDirectory,
+  }) : _credentialStore = credentialStore ?? AiCredentialStore(),
+       _supportDirectory = supportDirectory ?? getApplicationSupportDirectory;
+
+  final AiCredentialStore _credentialStore;
+  final Future<Directory> Function() _supportDirectory;
+  AppConfig? _pendingMigration;
+  bool _settingsLoadFailed = false;
+
+  /// Non-null when a save was withheld to preserve unrecovered credentials.
+  String? get persistenceError => _persistenceError;
+  String? _persistenceError;
+
   static const _filename = 'settings.json';
   static const _libraryFilename = 'config_library.json';
   static const _taskHistoryFilename = 'task_history.json';
@@ -31,6 +46,8 @@ class ConfigService {
     final dir = await _configDir();
     final file = File('$dir$_s$_filename');
     Map<String, dynamic> json = {};
+    _settingsLoadFailed = true;
+    _pendingMigration = null;
     try {
       if (await file.exists()) {
         final decoded = jsonDecode(await file.readAsString());
@@ -41,23 +58,32 @@ class ConfigService {
         }
         json = decoded;
       }
-    } on FormatException catch (error) {
-      debugPrint('[ConfigService] Invalid settings file: $error');
+      _config = AppConfig.fromJson(json);
+      _settingsLoadFailed = false;
+      _persistenceError = null;
+    } catch (_) {
+      _persistenceError =
+          'Settings could not be loaded; original file preserved.';
+      debugPrint('[ConfigService] $_persistenceError');
       _config = AppConfig();
       return;
     }
-    _config = AppConfig.fromJson(json);
     if (!json.containsKey('use_dynamic_color') && Platform.isAndroid) {
       _config.useDynamicColor = true;
     }
-    await AiCredentialStore.restore(_config);
-    if (_containsLegacyAiKeys(json)) await save();
+    await _credentialStore.restore(_config);
+    if (_containsLegacyAiKeys(json)) {
+      // Keep a separate snapshot: later UI edits must not discard a credential
+      // whose only persisted copy is still in the legacy settings file.
+      _pendingMigration = _snapshot(_config);
+      await save();
+    }
   }
 
   Future<void> save() async {
     _saveTimer?.cancel();
     _saveTimer = null;
-    final generation = _editGeneration;
+    _dirty = true;
     // 串行化写入，避免两次保存交错写同一个文件产生半截 JSON
     final prev = _saveInFlight;
     final next = () async {
@@ -70,12 +96,39 @@ class ConfigService {
           debugPrint('[ConfigService] previous save failed: $error\n$stack');
         }
       }
-      await AiCredentialStore.save(_config);
+      // The preceding queued save may have cleared the shared dirty flag.
+      _dirty = true;
+      if (_settingsLoadFailed) {
+        _persistenceError =
+            'Settings could not be loaded; original file preserved.';
+        debugPrint('[ConfigService] $_persistenceError');
+        return;
+      }
+      final generation = _editGeneration;
+      final snapshot = _snapshot(_config);
+      final migration = _pendingMigration;
+      if (migration != null) {
+        if (!await _credentialStore.save(migration, migrationOnly: true)) {
+          _persistenceError =
+              'Credentials were not saved; settings file preserved.';
+          debugPrint('[ConfigService] $_persistenceError');
+          return;
+        }
+        // Never replay an older credential after its migration succeeded.
+        _pendingMigration = null;
+      }
+      if (!await _credentialStore.save(snapshot)) {
+        _persistenceError =
+            'Credentials were not saved; settings file preserved.';
+        debugPrint('[ConfigService] $_persistenceError');
+        return;
+      }
       final dir = await _configDir();
       final file = File('$dir$_s$_filename');
       await file.writeAsString(
-        const JsonEncoder.withIndent('  ').convert(_config.toJson()),
+        const JsonEncoder.withIndent('  ').convert(snapshot.toJson()),
       );
+      _persistenceError = null;
       // 只有真正写成功、且期间没有新的修改，才清除脏标记。
       if (generation == _editGeneration) {
         _dirty = false;
@@ -90,6 +143,20 @@ class ConfigService {
         _saveInFlight = null;
       }
     }
+  }
+
+  // Detach nested settings without decoding credentials a second time.
+  AppConfig _snapshot(AppConfig source) {
+    final copy = AppConfig.fromJson(
+      jsonDecode(jsonEncode(source.toJson())) as Map<String, dynamic>,
+    );
+    copy.aiApiKey = source.aiApiKey;
+    for (var index = 0; index < source.aiProfiles.length; index++) {
+      copy.aiProfiles[index]
+        ..apiKey = source.aiProfiles[index].apiKey
+        ..apiKeys = List<String>.of(source.aiProfiles[index].apiKeys);
+    }
+    return copy;
   }
 
   /// 修改配置。落盘是防抖的：滑块拖动等高频调用只会在停止后写一次磁盘，
@@ -194,7 +261,7 @@ class ConfigService {
   }
 
   Future<String> _configDir() async {
-    final appDir = await getApplicationSupportDirectory();
+    final appDir = await _supportDirectory();
     final dir = Directory('${appDir.path}${_s}ffmpegpp_gui');
     if (!await dir.exists()) await dir.create(recursive: true);
     return dir.path;

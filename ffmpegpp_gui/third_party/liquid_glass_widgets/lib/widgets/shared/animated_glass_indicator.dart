@@ -75,30 +75,26 @@ class AnimatedGlassIndicator extends StatelessWidget {
 
   /// Optional glass settings override.
   ///
-  /// When non-null, fields in [settings] that differ from the
-  /// [LiquidGlassSettings()] constructor defaults are applied **on top of**
-  /// [baseIndicatorSettings] — not as a full replacement. This means
-  /// `chromaticAberration: 0.15` (the iOS 26 iridescent rim default) is
-  /// preserved unless the caller explicitly overrides it.
+  /// By default, values differing from [LiquidGlassSettings] constructor defaults
+  /// are merged onto the indicator preset. Use [replaceSettings] to preserve
+  /// explicit constructor-default values as well.
   ///
-  /// **`blur` is always zero for indicator pills.** An indicator is a refractive
-  /// lens, not a frosted pane. Applying a [BackdropFilter] blur to a lens
-  /// samples an already-blurred image, destroying the SDF rim and specular
-  /// highlights and reducing the pill to an opaque blur blob. Any `blur` value
-  /// you pass here is silently neutralised.
-  ///
-  /// Example — increase lens refraction while keeping iOS 26 aberration:
-  /// ```dart
-  /// indicatorSettings: LiquidGlassSettings(refractiveIndex: 1.25)
-  /// ```
-  ///
-  /// To fully reset to the `LiquidGlassSettings()` constructor defaults,
-  /// start from that and specify every field you want:
-  /// ```dart
-  /// indicatorSettings: AnimatedGlassIndicator.baseIndicatorSettings
-  ///     .copyWith(refractiveIndex: 1.15, chromaticAberration: 0.0)
-  /// ```
+  /// Blur is always zero for the refractive indicator lens. Visibility and pinch
+  /// remain controlled by the indicator animation in either mode.
   final LiquidGlassSettings? settings;
+
+  /// Whether [settings] completely replaces the theme and indicator preset.
+  ///
+  /// Defaults to false for compatibility with partial settings overrides.
+  /// With null [settings], the theme/preset is used regardless of this flag.
+  /// To change one field, including an explicit zero or constructor default,
+  /// preserve the other preset values with:
+  /// ```dart
+  /// settings: AnimatedGlassIndicator.baseIndicatorSettings
+  ///     .copyWith(chromaticAberration: 0.01),
+  /// replaceSettings: true,
+  /// ```
+  final bool replaceSettings;
 
   /// Padding to apply around the indicator (e.g., for GlassTabBar.bottom).
   final EdgeInsetsGeometry padding;
@@ -154,6 +150,7 @@ class AnimatedGlassIndicator extends StatelessWidget {
     required this.isBackgroundIndicator,
     this.borderRadius = GlassDefaults.capsuleRadius,
     this.settings,
+    this.replaceSettings = false,
     this.padding = EdgeInsets.zero,
     this.expansion = const EdgeInsets.all(8.0),
     this.backgroundKey,
@@ -195,10 +192,10 @@ class AnimatedGlassIndicator extends StatelessWidget {
   /// treated as intentional overrides. Fields the caller left at the
   /// constructor default are filled from [base] instead.
   ///
-  /// Edge-case: if a caller explicitly wants a field value that happens to
-  /// equal the [LiquidGlassSettings()] default (e.g. `chromaticAberration:
-  /// 0.01`), they should start from [baseIndicatorSettings] and use
-  /// [LiquidGlassSettings.copyWith] directly to express the intent clearly.
+  /// Values equal to [LiquidGlassSettings()] defaults (for example,
+  /// `chromaticAberration: 0.01`) are treated as unspecified. Starting from
+  /// [baseIndicatorSettings] and using [LiquidGlassSettings.copyWith] does not
+  /// bypass this limitation: the settings object does not retain field origins.
   ///
   /// `blur` is **always neutralised** regardless of [override]. An indicator
   /// pill is a refractive lens; applying a BackdropFilter blur causes it to
@@ -397,7 +394,8 @@ class AnimatedGlassIndicator extends StatelessWidget {
                   s.lensModel == GlassLensModel.paraxial)
               ? LiquidGlassSettings.ios27Indicator
               : themedBase;
-      base = _mergeWithBase(s, presetBase);
+      base =
+          replaceSettings ? s.copyWith(blur: 0) : _mergeWithBase(s, presetBase);
     }
     // The paraxial lens is the defining optic of the iOS 27 lens
     // (`_UILiquidLensView`); the classic iOS 26 indicator is spherical. The

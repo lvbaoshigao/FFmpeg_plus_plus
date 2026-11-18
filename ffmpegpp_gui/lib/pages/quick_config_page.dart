@@ -18,7 +18,7 @@ typedef _Preset = ({Object value, String label});
 /// 左侧列配置项，右侧编辑参数；通过 showDialog 打开，onSave 回调保存更新后的配置。
 class QuickConfigPage extends StatefulWidget {
   final QuickConfig config;
-  final void Function(QuickConfig updated) onSave;
+  final Future<void> Function(QuickConfig updated) onSave;
 
   const QuickConfigPage({
     super.key,
@@ -34,6 +34,7 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
   late QuickConfig _config;
   String? _selectedKey;
   bool _dirty = false;
+  bool _saving = false;
 
   @override
   void initState() {
@@ -82,13 +83,29 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
     });
   }
 
-  void _save() {
-    widget.onSave(_config);
-    setState(() => _dirty = false);
-    Navigator.pop(context, _config);
+  Future<void> _save() async {
+    if (_saving) return;
+    FocusScope.of(context).unfocus();
+    setState(() => _saving = true);
+    final snapshot = _deepCopy(_config);
+    try {
+      await widget.onSave(snapshot);
+      if (!mounted) return;
+      setState(() => _dirty = false);
+      Navigator.pop(context, snapshot);
+    } catch (_) {
+      if (!mounted) return;
+      final isZh = AppStrings.of(context.read<AppState>().config.language).isZh;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(isZh ? '保存失败，更改仍保留，请重试。' : 'Save failed. Your changes are retained. Please retry.'),
+      ));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   Future<bool> _onWillPop() async {
+    if (_saving) return false;
     if (!_dirty) return true;
     final scheme = Theme.of(context).colorScheme;
     final isZh = AppStrings.of(context.read<AppState>().config.language).isZh;
@@ -290,7 +307,9 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
         final nav = Navigator.of(context);
         if (await _onWillPop() && nav.mounted) nav.pop();
       },
-      child: Dialog(
+      child: AbsorbPointer(
+        absorbing: _saving,
+        child: Dialog(
         backgroundColor: Colors.transparent,
         surfaceTintColor: Colors.transparent,
         insetPadding: EdgeInsets.zero,
@@ -328,6 +347,7 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
             ),
           ),
         ),
+      ),
       ),
     );
   }
@@ -395,7 +415,7 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
             icon: const Icon(Icons.save_outlined, size: 16),
             // 按钮文字单行省略（窄窗口/大字号下不再折行把按钮撑高）
             label: Text(isZh ? '保存' : 'Save', maxLines: 1, overflow: TextOverflow.ellipsis),
-            onPressed: _dirty ? _save : null,
+            onPressed: _dirty && !_saving ? _save : null,
             style: FilledButton.styleFrom(
               padding: EdgeInsets.symmetric(horizontal: 14, vertical: isMobileContext ? 0 : 0),
               // 修复：原先 minimumSize.zero + shrinkWrap 把按钮压成一条扁条，

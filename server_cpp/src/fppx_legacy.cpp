@@ -13,6 +13,7 @@
 #endif
 
 #include "fppx2_format.h"
+#include "fppx_atomic_file.h"
 #include "fppx_gzip.h"
 #include "fppx_validate.h"
 #include "node_registry.h"
@@ -61,20 +62,7 @@ bool readFileBytes(const std::string& path, std::vector<uint8_t>& out, std::stri
     return true;
 }
 
-bool writeFileBytes(const std::string& path, const std::vector<uint8_t>& data, std::string& err) {
-    std::ofstream f(legacyUtf8ToPath(path), std::ios::binary | std::ios::trunc);
-    if (!f) {
-        err = "无法写入文件（路径不可用或被占用）: " + path;
-        return false;
-    }
-    if (!data.empty()) f.write(reinterpret_cast<const char*>(data.data()), data.size());
-    f.flush();
-    if (!f) {
-        err = "写入文件失败（磁盘满或无权限）: " + path;
-        return false;
-    }
-    return true;
-}
+
 
 } // namespace
 
@@ -161,7 +149,18 @@ Fppx2Result fppxLegacyExport(const json& params) {
     file.insert(file.end(), compressed.begin(), compressed.end());
 
     std::string err;
-    if (!writeFileBytes(path, file, err)) {
+    const std::lock_guard<std::mutex> lock(fd::exportPublicationMutex());
+    fd::PendingExport pending(legacyUtf8ToPath(path));
+    if (!pending.write(file, err)) {
+        r.errors.push_back(err);
+        return r;
+    }
+    const Fppx2Result verify = fppxLegacyImport(pending.path());
+    if (!verify.success || verify.mode != r.mode || verify.graph != graph) {
+        r.errors.push_back("旧版导出临时文件自校验失败，原文件未更改");
+        return r;
+    }
+    if (!pending.commit(err)) {
         r.errors.push_back(err);
         return r;
     }

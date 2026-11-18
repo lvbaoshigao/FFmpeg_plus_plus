@@ -414,7 +414,14 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
             ),
         ],
       );
-      await QuickConfigStorage.save(cfg);
+      try {
+        await QuickConfigStorage.save(cfg);
+      } catch (_) {
+        if (mounted) {
+          showToast(context, zh ? '快捷配置保存失败，请重试' : 'Could not save quick config. Please retry.', type: ToastType.error);
+        }
+        return;
+      }
       if (!mounted) return;
       setState(() {
         _quickConfigs.insert(0, cfg);
@@ -1121,7 +1128,14 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       updatedAt: now,
       items: quickDefaultsFor(type),
     );
-    await QuickConfigStorage.save(cfg);
+    try {
+      await QuickConfigStorage.save(cfg);
+    } catch (_) {
+      if (mounted) {
+        showToast(context, zh ? '快捷配置保存失败，请重试' : 'Could not save quick config. Please retry.', type: ToastType.error);
+      }
+      return;
+    }
     if (!mounted) return;
     setState(() => _quickConfigs.insert(0, cfg));
     showToast(
@@ -1185,7 +1199,14 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       ),
     );
     if (confirmed != true) return;
-    await QuickConfigStorage.delete(cfg.id);
+    try {
+      await QuickConfigStorage.delete(cfg.id);
+    } catch (_) {
+      if (mounted) {
+        showToast(context, zh ? '快捷配置删除失败，请重试' : 'Could not delete quick config. Please retry.', type: ToastType.error);
+      }
+      return;
+    }
     if (!mounted) return;
     setState(() => _quickConfigs.removeWhere((c) => c.id == cfg.id));
     showToast(

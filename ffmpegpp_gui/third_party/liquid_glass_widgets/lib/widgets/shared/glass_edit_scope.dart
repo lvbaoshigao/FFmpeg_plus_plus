@@ -142,7 +142,13 @@ class _GlassEditScopeState extends State<GlassEditScope> {
   void didUpdateWidget(covariant GlassEditScope oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.controller != oldWidget.controller) {
-      oldWidget.controller?.removeListener(_handleControllerChanged);
+      _controller.removeListener(_handleControllerChanged);
+      // Only dispose a controller owned by this scope, unless the caller
+      // adopts that same instance as its external controller.
+      if (oldWidget.controller == null &&
+          !identical(_controller, widget.controller)) {
+        _controller.dispose();
+      }
       _controller = widget.controller ??
           GlassEditController(initialMode: widget.initialMode);
       _controller.addListener(_handleControllerChanged);

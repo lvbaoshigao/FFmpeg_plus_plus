@@ -62,6 +62,14 @@ static void closePipeHandle(HANDLE& handle) {
     handle = nullptr;
 }
 
+// Returns false if bytes had to be discarded. Subtraction avoids size overflow.
+// Applies per stdout capture / stderr capture or pending progress line (16 MiB).
+static bool appendOutputBounded(std::string& output, const char* data, size_t count) {
+    const size_t room = kMaxOutputBytes - output.size();
+    output.append(data, std::min(count, room));
+    return count <= room;
+}
+
 // UTF-8 → UTF-16 宽字符串转换
 std::wstring Subprocess::utf8ToWide(const std::string& s) {
     if (s.empty()) return L"";
@@ -245,12 +253,7 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
                 // 避免用未定义的 n 继续累积输出
                 break;
             }
-            if (stdout_data.size() + n > kMaxOutputBytes) {
-                stdout_data.append(buf, std::min<size_t>(n, kMaxOutputBytes - stdout_data.size()));
-            } else {
-                stdout_data.append(buf, n);
-            }
-            if (stdout_data.size() >= kMaxOutputBytes) {
+            if (!appendOutputBounded(stdout_data, buf, n)) {
                 truncated = true;
                 TerminateProcess(pi.hProcess, 1);
                 break;
@@ -262,12 +265,7 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
             if (!ReadFile(hStderrRead, buf, std::min((DWORD)sizeof(buf)-1, avail), &n, nullptr)) {
                 break;
             }
-            if (stderr_data.size() + n > kMaxOutputBytes) {
-                stderr_data.append(buf, std::min<size_t>(n, kMaxOutputBytes - stderr_data.size()));
-            } else {
-                stderr_data.append(buf, n);
-            }
-            if (stderr_data.size() >= kMaxOutputBytes) {
+            if (!appendOutputBounded(stderr_data, buf, n)) {
                 truncated = true;
                 TerminateProcess(pi.hProcess, 1);
                 break;
@@ -301,40 +299,43 @@ ProcessResult Subprocess::run(const std::vector<std::string>& cmd, int timeout_s
     // 兜底排空：与主循环保持同一上限，避免子进程在被 kill 前疯狂输出导致无界累积（L-6）
     // [FIX H-9] 先 PeekNamedPipe 探测可读数据量，避免写端被孙进程持有导致 ReadFile
     // 永久阻塞（worker 线程挂死，后续请求不再响应）；并设总体超时上限与 POSIX 对齐（15s）。
-    {
+    if (!truncated) {
         auto drainDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
-        while (std::chrono::steady_clock::now() < drainDeadline) {
+        while (!truncated && std::chrono::steady_clock::now() < drainDeadline) {
             DWORD avail = 0;
             if (!PeekNamedPipe(hStdoutRead, nullptr, 0, nullptr, &avail, nullptr) || avail == 0) break;
             DWORD want = (DWORD)std::min<size_t>(sizeof(buf) - 1, (size_t)avail);
             DWORD n = 0;
             if (!ReadFile(hStdoutRead, buf, want, &n, nullptr) || n == 0) break;
-            if (stdout_data.size() + n > kMaxOutputBytes) {
-                size_t room = kMaxOutputBytes - stdout_data.size();
-                if (room > 0) stdout_data.append(buf, room);
+            if (!appendOutputBounded(stdout_data, buf, n)) {
                 truncated = true;
                 break;
             }
-            stdout_data.append(buf, n);
         }
-        while (std::chrono::steady_clock::now() < drainDeadline) {
+        while (!truncated && std::chrono::steady_clock::now() < drainDeadline) {
             DWORD avail = 0;
             if (!PeekNamedPipe(hStderrRead, nullptr, 0, nullptr, &avail, nullptr) || avail == 0) break;
             DWORD want = (DWORD)std::min<size_t>(sizeof(buf) - 1, (size_t)avail);
             DWORD n = 0;
             if (!ReadFile(hStderrRead, buf, want, &n, nullptr) || n == 0) break;
-            if (stderr_data.size() + n > kMaxOutputBytes) {
-                size_t room = kMaxOutputBytes - stderr_data.size();
-                if (room > 0) stderr_data.append(buf, room);
+            if (!appendOutputBounded(stderr_data, buf, n)) {
                 truncated = true;
                 break;
             }
-            stderr_data.append(buf, n);
         }
     }
 
-    result.stdout_output = stdout_data;
-    result.stderr_output = stderr_data;
+    if (truncated) {
+        // Also covers overflow discovered only while draining after exit code 0.
+        result.exit_code = -1;
+        TerminateProcess(pi.hProcess, 1);
+        if (WaitForSingleObject(pi.hProcess, 3000) != WAIT_OBJECT_0) {
+            TerminateProcess(pi.hProcess, 1);
+            WaitForSingleObject(pi.hProcess, 3000);
+        }
+    }
+    result.stdout_output.swap(stdout_data);
+    result.stderr_output.swap(stderr_data);
     result.output_truncated = truncated;
 
     CloseHandle(pi.hProcess);
@@ -356,6 +357,17 @@ ProcessResult Subprocess::runWithProgress(
 
     std::string cmdline = vectorToCommandLine(cmd);
     std::wstring wcmdline = utf8ToWide(cmdline);
+
+    // Construct throwing C++ state before owning any OS resources.
+    std::vector<wchar_t> cmdBuf(wcmdline.begin(), wcmdline.end());
+    cmdBuf.push_back(L'\0');
+    std::mutex stderr_mutex;
+    std::string stderr_line_buf, stdout_data;
+    std::atomic<bool> readStop{false};
+    std::atomic<bool> readerFailed{false};
+    std::atomic<bool> outputTruncated{false};
+    std::thread stderr_thread, stdout_thread;
+    bool suspended = false;
 
     SECURITY_ATTRIBUTES sa = {sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
     HANDLE hStdoutRead = nullptr, hStdoutWrite = nullptr;
@@ -382,8 +394,6 @@ ProcessResult Subprocess::runWithProgress(
     si.dwFlags = STARTF_USESTDHANDLES;
 
     PROCESS_INFORMATION pi = {};
-    std::vector<wchar_t> cmdBuf(wcmdline.begin(), wcmdline.end());
-    cmdBuf.push_back(L'\0');
     BOOL ok = CreateProcessW(nullptr, cmdBuf.data(),
                              nullptr, nullptr, TRUE, CREATE_NO_WINDOW,
                              nullptr, nullptr, &si, &pi);
@@ -398,126 +408,164 @@ ProcessResult Subprocess::runWithProgress(
         return result;
     }
 
-    // stderr 读取线程：缓冲读取（避免逐字节系统调用 + 每字节加锁），按 \r 和 \n 分割行
-    std::mutex stderr_mutex;
-    std::string stderr_line_buf;
-    // [FIX H-10] 取消/卸载时置位 readStop，让原本阻塞在 ReadFile 的读取线程能周期性
-    // 检查并自行退出（配合下方 PeekNamedPipe 探询），避免写端被孙进程持有导致 join 永久阻塞。
-    std::atomic<bool> readStop{false};
-    std::thread stderr_thread([hStderrRead, &on_stderr_line, &stderr_mutex, &stderr_line_buf, &readStop]() {
-        char buf[4096];
-        while (!readStop.load()) {
-            DWORD avail = 0;
-            // [FIX H-10] 先探再读：管道损坏/关闭时 PeekNamedPipe 失败立即退出；
-            // 无数据时用短轮询 + readStop 检查，避免 ReadFile 永久阻塞。
-            if (!PeekNamedPipe(hStderrRead, nullptr, 0, nullptr, &avail, nullptr)) break;
-            if (avail == 0) { Sleep(10); continue; }
-            DWORD n = 0;
-            DWORD want = (DWORD)std::min<size_t>(sizeof(buf), (size_t)avail);
-            if (!ReadFile(hStderrRead, buf, want, &n, nullptr) || n == 0) break;
-            size_t seg_start = 0;
-            for (DWORD i = 0; i < n; ++i) {
-                if (buf[i] == '\r' || buf[i] == '\n') {
-                    // 行内片段一次加锁并入缓冲，避免逐字节加锁
-                    if (i > seg_start) {
-                        std::lock_guard<std::mutex> lock(stderr_mutex);
-                        stderr_line_buf.append(buf + seg_start, i - seg_start);
+    // Buffered stderr reader splits on \r and \n. Both readers poll empty
+    // pipes and read only available bytes; readStop is checked between reads.
+    // Keep thread objects outside the try so all failure paths can join them.
+    try {
+        stderr_thread = std::thread([hStderrRead, &on_stderr_line, &stderr_mutex, &stderr_line_buf, &readStop, &readerFailed, &outputTruncated]() {
+            try {
+                char buf[4096];
+                while (!readStop.load()) {
+                    DWORD avail = 0;
+                    // [FIX H-10] 先探再读：管道损坏/关闭时 PeekNamedPipe 失败立即退出；
+                    // 无数据时用短轮询 + readStop 检查，避免 ReadFile 永久阻塞。
+                    if (!PeekNamedPipe(hStderrRead, nullptr, 0, nullptr, &avail, nullptr)) break;
+                    if (avail == 0) { Sleep(10); continue; }
+                    DWORD n = 0;
+                    DWORD want = (DWORD)std::min<size_t>(sizeof(buf), (size_t)avail);
+                    if (!ReadFile(hStderrRead, buf, want, &n, nullptr) || n == 0) break;
+                    size_t seg_start = 0;
+                    for (DWORD i = 0; i < n; ++i) {
+                        if (buf[i] == '\r' || buf[i] == '\n') {
+                            // 行内片段一次加锁并入缓冲，避免逐字节加锁
+                            if (i > seg_start) {
+                                std::lock_guard<std::mutex> lock(stderr_mutex);
+                                if (!appendOutputBounded(stderr_line_buf, buf + seg_start, i - seg_start)) {
+                                    outputTruncated.store(true);
+                                    readStop.store(true);
+                                    return;
+                                }
+                            }
+                            seg_start = i + 1;
+                            std::string line;
+                            {
+                                std::lock_guard<std::mutex> lock(stderr_mutex);
+                                line.swap(stderr_line_buf);  // 移动而非拷贝
+                            }
+                            if (!line.empty() && line.back() == '\r') line.pop_back();
+                            if (!line.empty()) {
+                                try {
+                                    on_stderr_line(line);
+                                } catch (...) {
+                                    // 回调异常不应导致线程崩溃
+                                }
+                            }
+                        }
                     }
-                    seg_start = i + 1;
-                    std::string line;
-                    {
+                    if (n > seg_start) {
                         std::lock_guard<std::mutex> lock(stderr_mutex);
-                        line.swap(stderr_line_buf);  // 移动而非拷贝
-                    }
-                    if (!line.empty() && line.back() == '\r') line.pop_back();
-                    if (!line.empty()) {
-                        try {
-                            on_stderr_line(line);
-                        } catch (...) {
-                            // 回调异常不应导致线程崩溃
+                        if (!appendOutputBounded(stderr_line_buf, buf + seg_start, n - seg_start)) {
+                            outputTruncated.store(true);
+                            readStop.store(true);
+                            return;
                         }
                     }
                 }
+            } catch (...) {
+                readerFailed.store(true);
+                readStop.store(true);
             }
-            if (n > seg_start) {
-                std::lock_guard<std::mutex> lock(stderr_mutex);
-                stderr_line_buf.append(buf + seg_start, n - seg_start);
+        });
+
+        // stdout 读取线程
+        stdout_thread = std::thread([hStdoutRead, &stdout_data, &readStop, &readerFailed, &outputTruncated]() {
+            try {
+                char buf[4096];
+                while (!readStop.load()) {
+                    DWORD avail = 0;
+                    // [FIX H-10] 先探再读，同 stderr 线程；写端关闭后 PeekNamedPipe 返回 avail==0，
+                    // 经短轮询检查 readStop 后退出，避免阻塞在 ReadFile。
+                    if (!PeekNamedPipe(hStdoutRead, nullptr, 0, nullptr, &avail, nullptr)) break;
+                    if (avail == 0) { Sleep(10); continue; }
+                    DWORD n = 0;
+                    DWORD want = (DWORD)std::min<size_t>(sizeof(buf), (size_t)avail);
+                    if (!ReadFile(hStdoutRead, buf, want, &n, nullptr) || n == 0) break;
+                    if (!appendOutputBounded(stdout_data, buf, n)) {
+                        outputTruncated.store(true);
+                        readStop.store(true);
+                        return;
+                    }
+                }
+            } catch (...) {
+                readerFailed.store(true);
+                readStop.store(true);
             }
-        }
-    });
+        });
 
-    // stdout 读取线程
-    std::string stdout_data;
-    std::thread stdout_thread([hStdoutRead, &stdout_data, &readStop]() {
-        char buf[4096];
-        while (!readStop.load()) {
-            DWORD avail = 0;
-            // [FIX H-10] 先探再读，同 stderr 线程；写端关闭后 PeekNamedPipe 返回 avail==0，
-            // 经短轮询检查 readStop 后退出，避免阻塞在 ReadFile。
-            if (!PeekNamedPipe(hStdoutRead, nullptr, 0, nullptr, &avail, nullptr)) break;
-            if (avail == 0) { Sleep(10); continue; }
-            DWORD n = 0;
-            DWORD want = (DWORD)std::min<size_t>(sizeof(buf), (size_t)avail);
-            if (!ReadFile(hStdoutRead, buf, want, &n, nullptr) || n == 0) break;
-            stdout_data.append(buf, n);  // append(buf,n) 免去多余 strlen 扫描
-        }
-    });
-
-    // 主线程：等待进程退出、取消，或在暂停/恢复之间切换挂起状态
-    auto start = std::chrono::steady_clock::now();
-    bool suspended = false;
-    while (true) {
-        if (isCancelled && isCancelled()) {
-            // 终止前先恢复：避免留下被挂起、无法被系统回收的线程状态。
-            if (suspended) { setProcessSuspended(pi.hProcess, false); suspended = false; }
-            TerminateProcess(pi.hProcess, 1);
-            result.exit_code = -1;
-            break;
-        }
-
-        DWORD exit_code = STILL_ACTIVE;
-        if (!GetExitCodeProcess(pi.hProcess, &exit_code)) {
-            result.exit_code = -1;
-            break;
-        }
-        if (exit_code != STILL_ACTIVE) {
-            result.exit_code = (int)exit_code;
-            break;
-        }
-
-        // 真实暂停：挂起整个 ffmpeg 进程（CPU 归零、不再产出），恢复时解挂。
-        const bool wantPaused = currentTaskPaused();
-        if (wantPaused != suspended) {
-            if (setProcessSuspended(pi.hProcess, wantPaused)) {
-                suspended = wantPaused;
-            } else {
-                // 挂起/恢复失败：终止并如实报错，而不是让任务卡在「已暂停」。
-                TerminateProcess(pi.hProcess, 1);
+        // 主线程：等待进程退出、取消，或在暂停/恢复之间切换挂起状态
+        auto start = std::chrono::steady_clock::now();
+        while (true) {
+            if (readerFailed.load() || outputTruncated.load()) {
                 result.exit_code = -1;
                 break;
             }
-        }
-
-        if (timeout_sec > 0) {
-            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-                std::chrono::steady_clock::now() - start).count();
-            if (elapsed >= timeout_sec) {
+            if (isCancelled && isCancelled()) {
+                // 终止前先恢复：避免留下被挂起、无法被系统回收的线程状态。
                 if (suspended) { setProcessSuspended(pi.hProcess, false); suspended = false; }
                 TerminateProcess(pi.hProcess, 1);
                 result.exit_code = -1;
                 break;
             }
+
+            DWORD exit_code = STILL_ACTIVE;
+            if (!GetExitCodeProcess(pi.hProcess, &exit_code)) {
+                result.exit_code = -1;
+                break;
+            }
+            if (exit_code != STILL_ACTIVE) {
+                result.exit_code = (int)exit_code;
+                break;
+            }
+
+            // 真实暂停：挂起整个 ffmpeg 进程（CPU 归零、不再产出），恢复时解挂。
+            const bool wantPaused = currentTaskPaused();
+            if (wantPaused != suspended) {
+                if (setProcessSuspended(pi.hProcess, wantPaused)) {
+                    suspended = wantPaused;
+                } else {
+                    // 挂起/恢复失败：终止并如实报错，而不是让任务卡在「已暂停」。
+                    TerminateProcess(pi.hProcess, 1);
+                    result.exit_code = -1;
+                    break;
+                }
+            }
+
+            if (timeout_sec > 0) {
+                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                    std::chrono::steady_clock::now() - start).count();
+                if (elapsed >= timeout_sec) {
+                    if (suspended) { setProcessSuspended(pi.hProcess, false); suspended = false; }
+                    TerminateProcess(pi.hProcess, 1);
+                    result.exit_code = -1;
+                    break;
+                }
+            }
+
+            Sleep(suspended ? 50 : 100);
         }
 
-        Sleep(suspended ? 50 : 100);
+    } catch (...) {
+        // Includes second-thread construction and caller cancellation exceptions.
+        // Neither joinable reader may be destroyed while unwinding this scope.
+        result.exit_code = -1;
     }
 
-    // 确保进程已退出：写端随子进程退出而关闭，读取线程会读到 EOF 自然退出。
-    // [FIX H-10] 进程退出后先置位 readStop，作为写端被孙进程持有时的兜底，
-    // 确保 join 不会永久阻塞在仍阻塞于 ReadFile 的读取线程上。
+    // Stop the child before joining readers; readers only read bytes reported by
+    // PeekNamedPipe and can exit even if a descendant retains a pipe writer.
+    if (result.exit_code == -1) {
+        if (suspended) setProcessSuspended(pi.hProcess, false);
+        TerminateProcess(pi.hProcess, 1);
+        readStop.store(true);
+    }
+    // Bounded process wait. Each pipe has exactly one reader and ReadFile
+    // requests no more than PeekNamedPipe reported, so an inherited writer
+    // cannot keep a reader blocked waiting for additional bytes. Stop alone
+    // would not interrupt an arbitrary blocking ReadFile or caller callback.
+    // Keep read handles open until both readers have joined.
     if (WaitForSingleObject(pi.hProcess, 3000) != WAIT_OBJECT_0) {
         TerminateProcess(pi.hProcess, 1);
         WaitForSingleObject(pi.hProcess, 3000);
+        result.exit_code = -1;
     }
     readStop.store(true);
     if (stderr_thread.joinable()) stderr_thread.join();
@@ -525,16 +573,21 @@ ProcessResult Subprocess::runWithProgress(
     CloseHandle(hStderrRead);
     CloseHandle(hStdoutRead);
 
-    result.stdout_output = stdout_data;
-    {
-        std::lock_guard<std::mutex> lock(stderr_mutex);
-        if (!stderr_line_buf.empty()) {
-            on_stderr_line(stderr_line_buf);
-        }
-    }
-
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
+    result.output_truncated = outputTruncated.load();
+    if (readerFailed.load() || result.output_truncated) result.exit_code = -1;
+
+    // All handles and readers are released before invoking caller code again.
+    result.stdout_output.swap(stdout_data);
+    // Do not deliver an overflow-truncated line as a complete progress record.
+    if (!result.output_truncated && !stderr_line_buf.empty() && on_stderr_line) {
+        try {
+            on_stderr_line(stderr_line_buf);
+        } catch (...) {
+            // Match the per-line callback policy in the stderr reader.
+        }
+    }
     return result;
 }
 

@@ -7,13 +7,22 @@ import 'package:flutter_test/flutter_test.dart';
 const _front = ValueKey('front');
 const _back = ValueKey('back');
 
-Future<void> _gesture(WidgetTester tester, String method, {double progress = 0, int edge = 0, bool button = false}) async {
+Future<void> _gesture(
+  WidgetTester tester,
+  String method, {
+  double progress = 0,
+  SwipeEdge edge = SwipeEdge.left,
+  bool button = false,
+}) async {
+  final width = tester.view.physicalSize.width / tester.view.devicePixelRatio;
   await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
     'flutter/backgesture',
-    const StandardMethodCodec().encodeMethodCall(MethodCall(method, <String, dynamic>{
-      'touchOffset': button ? null : <double>[5, 300],
+    StandardMethodCodec().encodeMethodCall(MethodCall(method, <String, dynamic>{
+      'touchOffset': button
+          ? null
+          : <double>[edge == SwipeEdge.left ? 5 : width - 5, 300],
       'progress': progress,
-      'swipeEdge': edge,
+      'swipeEdge': edge.index,
     })),
     (_) {},
   );
@@ -68,7 +77,7 @@ void main() {
     testWidgets('$label predictive updates follow full-width progress from either edge', (tester) async {
       final (navigator, route) = await _mount(tester, smooth: smooth);
       final width = tester.view.physicalSize.width / tester.view.devicePixelRatio;
-      for (final edge in [0, 1]) {
+      for (final edge in SwipeEdge.values) {
         await _gesture(tester, 'startBackGesture', edge: edge);
         await tester.pump();
         expect(navigator.currentState!.userGestureInProgress, isTrue);
@@ -76,7 +85,8 @@ void main() {
           await _gesture(tester, 'updateBackGestureProgress', progress: progress, edge: edge);
           await tester.pump();
           expect(route.animation!.value, closeTo(1 - progress, 1e-6));
-          expect(_x(tester, _front), closeTo(width * progress * (edge == 0 ? 1 : -1), .01));
+          final direction = edge == SwipeEdge.left ? 1.0 : -1.0;
+          expect(_x(tester, _front), closeTo(width * progress * direction, .01));
           expect(_x(tester, _back), closeTo(-width * .04 * (1 - progress), .01));
         }
         await _gesture(tester, 'cancelBackGesture');

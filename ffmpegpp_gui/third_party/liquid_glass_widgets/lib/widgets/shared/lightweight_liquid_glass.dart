@@ -38,11 +38,10 @@ RenderRepaintBoundary? _safeGetBoundary(GlobalKey? key) {
   return null;
 }
 
-/// A lightweight, high-performance glass effect widget optimized for
-/// scrollable lists and universal platform compatibility.
+/// A glass effect widget using a fragment shader and optional backdrop blur.
 ///
-/// This widget uses a custom fragment shader to achieve iOS 26 liquid glass
-/// aesthetics while being 5-10x faster than BackdropFilter-based approaches.
+/// Rendering support and cost depend on the backend, blur settings, and
+/// background capture. No fixed performance advantage is guaranteed.
 ///
 /// **Lightweight-Specific Parameters:**
 /// - [glowIntensity]: Interactive glow strength (0.0-1.0, button press feedback)
@@ -193,9 +192,8 @@ class _LightweightLiquidGlassState extends State<LightweightLiquidGlass>
   bool _loggedCreation = false;
   ui.Image? _backgroundImage;
 
-  // Ticker-driven background refresh (same proven pattern as GlassEffect).
-  // Fires every frame while a backgroundKey is active; stops automatically
-  // when no key is present — zero overhead for glass widgets without a background.
+  // Samples background geometry while active, then suspends after stable ticks.
+  // Content-only repaints are not currently tracked.
   late final Ticker _ticker;
   Size? _lastCaptureSize;
   Offset? _lastCapturePosition;
@@ -287,8 +285,8 @@ class _LightweightLiquidGlassState extends State<LightweightLiquidGlass>
     final currentSize = boundary.size;
     final currentPos = (boundary as RenderBox).localToGlobal(Offset.zero);
 
-    // Only re-capture when geometry changes or on first capture.
-    // toImageSync is synchronous and stays in GPU memory — cheap but not free.
+    // Re-capture on geometry changes or first capture. This does not detect
+    // content-only changes inside a fixed-size background.
     final bool needsCapture = _backgroundImage == null ||
         _lastCaptureSize != currentSize ||
         _lastCapturePosition != currentPos;
@@ -314,10 +312,8 @@ class _LightweightLiquidGlassState extends State<LightweightLiquidGlass>
 
   /// Initiates an async background capture via [RenderRepaintBoundary.toImage].
   ///
-  /// Using [toImage] (Future-based) instead of [toImageSync] is critical:
-  /// [toImage] resolves AFTER the GPU compositor has flushed the current frame,
-  /// guaranteeing valid pixel content. [toImageSync] races the GPU and returns
-  /// an all-black image on the first frame, causing the "black on first load" bug.
+  /// The boundary must have completed painting before capture. Awaiting the
+  /// image does not itself guarantee that layout and painting were up to date.
   ///
   /// The [_capturePending] flag prevents concurrent captures from stacking up
   /// when the ticker fires multiple times before the first capture completes.
@@ -364,11 +360,9 @@ class _LightweightLiquidGlassState extends State<LightweightLiquidGlass>
 
   /// Halts background-capture Tickers during app lifecycle transitions.
   ///
-  /// Stopping captures on [AppLifecycleState.inactive] / [paused] prevents
-  /// GPU texture creation/destruction from racing with [surfaceChanged] on
-  /// the raster thread — the root cause of the ANR observed on Vulkan devices.
-  /// Captures restart one frame after [resumed] to let the new surface
-  /// stabilise before any [toImage] calls.
+  /// Stops scheduling captures while inactive, paused, or hidden. Captures
+  /// already in flight are not cancelled. Resume schedules a post-frame check;
+  /// this does not guarantee native surface or raster-thread completion.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     switch (state) {
@@ -378,8 +372,7 @@ class _LightweightLiquidGlassState extends State<LightweightLiquidGlass>
         if (_ticker.isActive) _ticker.stop();
         break;
       case AppLifecycleState.resumed:
-        // Restart one frame after resume so surfaceChanged has completed
-        // and the raster thread is not holding any surface locks.
+        // Recheck the background boundary after the next frame.
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted && !_isDisposed) _updateTicker();
         });

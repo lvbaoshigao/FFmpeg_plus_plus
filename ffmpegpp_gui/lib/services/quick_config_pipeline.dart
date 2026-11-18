@@ -207,8 +207,7 @@ QuickPipelineResult buildGraphFromQuickConfig(QuickConfig cfg, {required bool is
         final w = (resize.params['w'] as num?)?.toInt() ?? 0;
         final h = (resize.params['h'] as num?)?.toInt() ?? 0;
         if (w > 0 || h > 0) {
-          // scale_mode='absolute'：执行期用 ffprobe 探测源尺寸换算缩放系数，
-          // 等比缩放以目标短边为准（保持纵横比）。
+          // 执行期探测源尺寸，按 fit 规划等比、裁剪、拉伸及单向缩放。
           middle.add(_node(PipelineStepType.imageScale, {
             'scale_mode': 'absolute',
             if (w > 0) 'target_w': w,

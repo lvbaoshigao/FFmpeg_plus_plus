@@ -140,6 +140,15 @@ static void joinAuxThreads() {
     }
 }
 
+// Handler implementations access const req["id"], which is undefined for a
+// missing key. Validate before dispatch instead of relying on exception catches.
+static bool hasRequestId(const json& req) {
+    if (!req.is_object()) return false;
+    const auto id = req.find("id");
+    return id != req.end() && id->is_string() &&
+           !id->get_ref<const std::string&>().empty();
+}
+
 static void workerLoop() {
     slog("dll worker: thread started");
 
@@ -150,17 +159,26 @@ static void workerLoop() {
         if (line.empty()) continue;
 
         json req;
+        std::string action;
+        std::string reqId;
         try {
             req = json::parse(line);
+            // Defend the queue boundary too: internal producers can bypass FFI.
+            if (!hasRequestId(req)) {
+                JsonWriter::reply("unknown", false, nullptr,
+                                  "请求缺少有效 id（必须是非空字符串）");
+                continue;
+            }
+            reqId = req.at("id").get<std::string>();
+            action = req.value("action", "");
         } catch (...) {
-            slog("dll worker: JSON parse error");
+            slog("dll worker: invalid request");
+            JsonWriter::reply(reqId.empty() ? "unknown" : reqId, false, nullptr,
+                              "请求格式无效");
             continue;
         }
 
-        std::string action = req.value("action", "");
-        slog("dll worker: processing action=%s", action.c_str());
-
-        const std::string reqId = req.value("id", "");
+        slog("dll worker: processing request");
 
         // 每个任务启动时清掉全局「停止所有」标志。
         // cancel 不带 task_ids 时是内联处理的（见 ffmpegpp_request）：若不清零，
@@ -240,11 +258,11 @@ static void workerLoop() {
                 JsonWriter::reply(reqId, false, nullptr, "未知 action: " + action);
             }
         } catch (const std::exception& e) {
-            slog("dll worker: EXCEPTION: %s", e.what());
-            JsonWriter::reply(req.value("id", ""), false, nullptr, std::string("服务器异常: ") + e.what());
+            slog("dll worker: request processing exception");
+            JsonWriter::reply(reqId, false, nullptr, std::string("服务器异常: ") + e.what());
         } catch (...) {
             slog("dll worker: UNKNOWN EXCEPTION");
-            JsonWriter::reply(req.value("id", ""), false, nullptr, "服务器未知异常");
+            JsonWriter::reply(reqId, false, nullptr, "服务器未知异常");
         }
     }
 
@@ -254,36 +272,64 @@ static void workerLoop() {
 extern "C" {
 
 FFMPEGPP_API int ffmpegpp_init() {
-    std::lock_guard<std::mutex> lock(g_initMutex);
-    if (g_running.load()) return 0;
+    // Include locking in the ABI boundary: no C++ exception may reach FFI.
+    try {
+        std::lock_guard<std::mutex> lock(g_initMutex);
+        if (g_running.load()) return 0;
+        // Never overwrite a joinable thread if a previous rollback itself
+        // encountered an OS synchronization failure.
+        if (g_workerThread.joinable() || g_cancelCleanupThread.joinable()) return -1;
 
-    slog_init();
-    slog("=== DLL INIT v%s ===", SERVER_VERSION);
+        try {
+            slog_init();
+            slog("=== DLL INIT v%s ===", SERVER_VERSION);
+            resetMessageQueues();
+            {
+                std::lock_guard<std::mutex> cancelLock(g_cancelMutex);
+                g_cancelledTaskIds.clear();
+                g_cancelledTaskExpirations.clear();
+                g_cancelledTaskExpiryById.clear();
+            }
+            {
+                std::lock_guard<std::mutex> pendingLock(g_pendingMutex);
+                g_pendingRequestIds.clear();
+            }
+            Subprocess::clearAllPaused();
+            JsonWriter::start();
+            g_shutdownFlag.store(false);
+            g_cancelFlag.store(false);
+            resetInputWake();
 
-    resetMessageQueues();
-    {
-        std::lock_guard<std::mutex> cancelLock(g_cancelMutex);
-        g_cancelledTaskIds.clear();
-        g_cancelledTaskExpirations.clear();
-        g_cancelledTaskExpiryById.clear();
+            startCancelledTaskCleanup();
+            g_workerThread = std::thread(workerLoop);
+            slog("dll init: worker thread started");
+            // Publish ready only after both threads exist. Requests remain
+            // excluded by g_initMutex until the initialization commits.
+            JsonWriter::send({{"type", "ready"}, {"version", SERVER_VERSION}});
+            g_running.store(true);
+            return 0;
+        } catch (...) {
+            g_shutdownFlag.store(true);
+            g_cancelFlag.store(true);
+            g_running.store(false);
+            // No requests were accepted during init, so the worker can only
+            // be waiting on the empty input queue. Wake before joining it.
+            try {
+                wakeInput();
+                if (g_workerThread.joinable()) g_workerThread.join();
+            } catch (...) {}
+            // Roll back every independent resource even if another cleanup
+            // fails. Never detach a thread that still uses DLL globals.
+            try { stopCancelledTaskCleanup(); } catch (...) {}
+            try { JsonWriter::stop(); } catch (...) {}
+            try { resetMessageQueues(); } catch (...) {}
+            try { slog("dll init: failed; rollback attempted"); } catch (...) {}
+            try { slog_cleanup(); } catch (...) {}
+            return -1;
+        }
+    } catch (...) {
+        return -1;
     }
-    startCancelledTaskCleanup();
-    // 重新初始化：上一个「会话」遗留的暂停标记不能带到本次运行。
-    Subprocess::clearAllPaused();
-    JsonWriter::start();
-
-    JsonWriter::send({{"type", "ready"}, {"version", SERVER_VERSION}});
-
-    g_shutdownFlag.store(false);
-    g_cancelFlag.store(false);
-    resetInputWake();  // 清掉历史 wake 标志，避免重初始化后 worker 立即退出
-    
-    // 先创建线程，再设置运行标志（避免 workerLoop 在线程对象完全赋值前就开始运行）
-    g_workerThread = std::thread(workerLoop);
-    g_running.store(true);
-
-    slog("dll init: worker thread started");
-    return 0;
 }
 
 FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
@@ -297,7 +343,6 @@ FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
     while (len < kMaxRequestLen && json_utf8[len] != '\0') ++len;
     if (len >= kMaxRequestLen) return -1;
     std::string line(json_utf8, len);
-    slog("dll request: %s", line.substr(0, 200).c_str());
 
     // cancel/ping/shutdown 内联处理（不进工作线程队列）
     // 进入队列的请求 id（登记后供「停止所有」取消尚未开始的任务）
@@ -412,6 +457,13 @@ FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
             JsonWriter::reply(req.value("id", ""), true, {{"message", "paths updated"}});
             return 0;
         }
+        // Inline control messages above historically allow an omitted id (e.g.
+        // ping/shutdown). All handler/worker requests require a correlation id.
+        if (!hasRequestId(req)) {
+            JsonWriter::reply("unknown", false, nullptr,
+                              "请求缺少有效 id（必须是非空字符串）");
+            return -1;
+        }
         if (action == "probe" || action == "check_env" || action == "query_ffmpeg_features" ||
             action == "fppx_import" ||
             action == "fppx2_import" || action == "fppx2_export" ||
@@ -430,7 +482,7 @@ FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
                         else if (act == "fppx_legacy_import") handleFppxLegacyImport(req);
                         else handleFppxLegacyExport(req);
                     } catch (const std::exception& e) {
-                        slog("aux thread exception: %s", e.what());
+                        slog("aux thread: request processing exception");
                         JsonWriter::reply(req.value("id", ""), false, nullptr, std::string("服务器异常: ") + e.what());
                     } catch (...) {
                         slog("aux thread: unknown exception");
@@ -438,18 +490,18 @@ FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
                     }
                 });
             } catch (const std::exception& e) {
-                slog("spawnAuxThread failed: %s", e.what());
+                slog("spawnAuxThread failed");
                 JsonWriter::reply(req.value("id", ""), false, nullptr, std::string("线程创建失败: ") + e.what());
                 return -1;
             }
             return 0;
         }
     } catch (const json::parse_error& e) {
-        slog("dll request: JSON parse error: %s", e.what());
+        slog("dll request: JSON parse error");
         JsonWriter::reply("unknown", false, nullptr, std::string("JSON 解析错误: ") + e.what());
         return -1;
     } catch (const std::exception& e) {
-        slog("dll request: exception: %s", e.what());
+        slog("dll request: exception");
         JsonWriter::reply("unknown", false, nullptr, std::string("请求处理异常: ") + e.what());
         return -1;
     } catch (...) {

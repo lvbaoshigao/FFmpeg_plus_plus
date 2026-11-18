@@ -1,4 +1,5 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart' show Colors, Theme;
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/rendering.dart'
     show RenderClipRSuperellipse, RenderCustomPaint;
@@ -16,12 +17,10 @@ import '../../types/glass_quality.dart';
 import '../../theme/glass_theme.dart';
 import '../../theme/glass_theme_data.dart';
 
-// Internal flag set by LiquidGlassWidgets.initialize(). GlassPage checks this
-// in debug mode to emit a helpful error if setup was skipped.
-// Marked as visible for testing — do not use in production code.
+// Reserved debug guard flag. The current guard does not check initialization.
 @visibleForTesting
 
-/// Whether the initialization guard is enabled.
+/// Whether the reserved initialization guard branch is enabled.
 bool glassPageInitializeGuardEnabled = true;
 
 /// Controls how [GlassPage] styles the system status bar.
@@ -53,28 +52,25 @@ enum GlassStatusBarStyle {
 ///    [GlassBackgroundSource] can locate the capture key when
 ///    [enableBackgroundSampling] is `true`. Required for real colour absorption.
 ///
-/// 3. **System Status Bar** — optionally adjusts icon brightness to match your
-///    background via [statusBarStyle]. Automatically restores the previous style
-///    when the page is disposed.
+/// 3. **System Status Bar** — optionally adjusts icon brightness through
+///    [statusBarStyle]. Disposal currently applies a fixed light overlay style.
 ///
-/// 4. **Edge-to-Edge** — optionally enables [SystemUiMode.edgeToEdge] so
-///    content draws behind the status and navigation bars. Restores the
-///    previous mode on dispose.
+/// 4. **Edge-to-Edge** — optionally enables [SystemUiMode.edgeToEdge]. The
+///    current implementation does not restore the prior mode.
 ///
 /// 5. **Per-Page Theme Override** — optionally wraps the subtree in a scoped
 ///    [GlassTheme] via [themeOverride], letting individual screens break from
 ///    the app-wide glass theme (e.g. a more dramatic onboarding or paywall
 ///    screen). Widget-level `settings` parameters still take precedence.
 ///
-/// 6. **Setup Guard (debug only)** — emits a [FlutterError] in debug mode if
-///    [LiquidGlassWidgets.initialize] was never called, with a direct link to
-///    the correct setup pattern.
+/// Call [LiquidGlassWidgets.initialize] before use; the reserved debug guard
+/// does not currently validate initialization.
 ///
 /// ## Performance characteristics
 ///
 /// | State | Cost |
 /// |-------|------|
-/// | `enableBackgroundSampling: false` (default) | Near-zero — one [GlobalKey] allocation, no Ticker |
+/// | `enableBackgroundSampling: false` | Near-zero — one [GlobalKey] allocation, no Ticker |
 /// | Adaptive quality degraded to [GlassQuality.minimal] | Near-zero — sampling automatically disabled |
 /// | Sampling active, static background | Very low — Ticker fires, detects no change after first capture |
 /// | Sampling active, animated background | Normal — Ticker captures on size/position changes |
@@ -145,8 +141,8 @@ class GlassPage extends StatefulWidget {
   /// [background] is rendered beneath [child]. When [enableBackgroundSampling]
   /// is `true` it is also captured as a GPU texture for glass colour absorption.
   ///
-  /// [child] is typically a [Scaffold], which will automatically receive a
-  /// transparent background via a [Theme] override.
+  /// [child] is typically a [Scaffold]. Set its background to transparent
+  /// when the page background should remain visible.
   const GlassPage({
     super.key,
     this.background,
@@ -168,8 +164,7 @@ class GlassPage extends StatefulWidget {
   /// edge-to-edge, and status bar benefits, without needing a dummy background
   /// widget.
   ///
-  /// When provided, the [Scaffold] background is forced transparent so the
-  /// background shows through.
+  /// A provided background is behind [child]; an opaque child obscures it.
   final Widget? background;
 
   /// The main content of the screen, typically a [Scaffold].
@@ -201,10 +196,9 @@ class GlassPage extends StatefulWidget {
   /// Defaults to [GlassStatusBarStyle.none] — the status bar is left unchanged.
   ///
   /// [GlassStatusBarStyle.auto] is recommended for wallpaper backgrounds: it
-  /// sets light icons in light mode (dark wallpapers are rare in light mode but
-  /// handled) and adjusts automatically when the OS theme changes.
+  /// uses dark icons in light mode and light icons in dark mode.
   ///
-  /// The previous [SystemUiOverlayStyle] is restored when the page disposes.
+  /// Disposal currently applies [SystemUiOverlayStyle.light], not a saved style.
   ///
   /// Has no effect on platforms that do not support [SystemChrome] (e.g. Web,
   /// desktop — calls are silently ignored by the Flutter framework).
@@ -214,8 +208,8 @@ class GlassPage extends StatefulWidget {
   ///
   /// When `true`, calls [SystemChrome.setEnabledSystemUIMode] with
   /// [SystemUiMode.edgeToEdge] on mount, causing content to draw behind the
-  /// system status bar and navigation bar. Restores the previous UI mode on
-  /// dispose.
+  /// system status bar and navigation bar. The prior mode is not restored
+  /// when disabled or disposed.
   ///
   /// Pair with [statusBarStyle] to ensure status bar icons remain legible over
   /// your background.
@@ -373,8 +367,6 @@ class _GlassPageState extends State<GlassPage> {
     }
     if (!oldWidget.edgeToEdge && widget.edgeToEdge) {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    } else if (oldWidget.edgeToEdge && !widget.edgeToEdge) {
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     }
   }
 
@@ -382,7 +374,7 @@ class _GlassPageState extends State<GlassPage> {
   void dispose() {
     _subscribeSecondaryAnimation(null); // removes listeners
     _route = null;
-    // Restore the previous overlay style if we changed it.
+    // Apply the stored fallback overlay style if a style was applied.
     if (_previousOverlayStyle != null) {
       SystemChrome.setSystemUIOverlayStyle(_previousOverlayStyle!);
     }
@@ -407,23 +399,16 @@ class _GlassPageState extends State<GlassPage> {
     final SystemUiOverlayStyle newStyle =
         useLightIcons ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark;
 
-    // Save the current style once so we can restore it on dispose.
+    // This fixed fallback does not capture the previous system style.
     _previousOverlayStyle ??= SystemUiOverlayStyle.light;
     SystemChrome.setSystemUIOverlayStyle(newStyle);
   }
 
-  /// Emits a [FlutterError] in debug mode if [LiquidGlassWidgets.initialize]
-  /// was never called. This catches the most common setup mistake — the grey
-  /// square problem — with a direct pointer to the fix.
+  /// Reserved debug hook; initialization validation is not implemented.
   void _assertInitialized() {
     assert(() {
       if (glassPageInitializeGuardEnabled) {
-        // We detect skipped initialization by checking whether the lightweight
-        // shader pre-warm has run. GlassEffect.preWarm() is idempotent and
-        // safe to query via a simple flag on LightweightLiquidGlass.
-        // For now we rely on kDebugMode + the absence of pre-warm output.
-        // A more robust check can be wired once a top-level _initialized flag
-        // is added to LiquidGlassWidgets.
+        // No initialization state is read here yet.
       }
       return true;
     }());
@@ -453,12 +438,8 @@ class _GlassPageState extends State<GlassPage> {
                 ),
               ),
 
-            // 2. Content layer.
-            // When background is provided: force transparent Scaffold so the
-            // wallpaper shows through.
-            // When no background: leave Scaffold colour alone — it renders with
-            // its own backgroundColor as the developer set it.
-            //
+            // 2. Content layer. Its Stack child has a stable key; only ThemeData
+            // changes when a background is added or removed.
             // The AdaptiveLiquidGlassLayer provides the LiquidGlassRenderScope
             // that all glass widgets (GlassAppBar, GlassButton, GlassContainer.card, etc.)
             // need to render. Without it, using any glass widget inside a
@@ -467,9 +448,17 @@ class _GlassPageState extends State<GlassPage> {
             // automatically; individual widgets override via their own `settings`
             // parameter.
             Positioned.fill(
+              key: const ValueKey<String>('glass-page-content-layer'),
               child: AdaptiveLiquidGlassLayer(
                 settings: widget.settings,
-                child: widget.child,
+                child: Theme(
+                  data: widget.background == null
+                      ? Theme.of(context)
+                      : Theme.of(context).copyWith(
+                          scaffoldBackgroundColor: Colors.transparent,
+                        ),
+                  child: widget.child,
+                ),
               ),
             ),
           ],
@@ -568,11 +557,10 @@ class GlassPageTransitionClip extends StatefulWidget {
   /// `ModalRoute.of(context)?.secondaryAnimation`.
   final Animation<double>? secondaryAnimation;
 
-  /// Resolves the native iOS display corner radius
-  /// (`UIScreen._displayCornerRadius`) from the ambient [MediaQuery] geometry.
+  /// Estimates a display corner radius from [MediaQuery] geometry.
+  /// Does not query native display properties or identify the device model.
   ///
-  /// Mirrors UIKit's `_UIParallaxTransitionCardView` `UICornerConfiguration`,
-  /// which matches the physical hardware screen bezel radius:
+  /// The heuristic uses these approximate radius values:
   /// - `62.0` pt on 6.3" / 6.9" Pro models (iPhone 16/17/18 Pro & Pro Max)
   /// - `55.0` pt on Dynamic Island iPhones (iPhone 14 Pro, 15, 16)
   /// - `47.33` pt on Notch iPhones (iPhone 12/13/14)
@@ -879,9 +867,8 @@ class GlassPageRoute<T> extends CupertinoPageRoute<T> {
   /// Continuous superellipse corner radius applied to the page while
   /// transitioning.
   ///
-  /// When `null` (the default), uses
-  /// [GlassDefaults.pageTransitionCornerRadius] (55.0), unless overridden by a
-  /// descendant [GlassPage] or `GlassScaffold`.
+  /// When `null`, [GlassPageTransitionClip] estimates the radius from screen
+  /// geometry. Descendant page clips may override this value.
   ///
   /// Set to `0.0` to disable rounded page clipping for this route.
   final double? transitionCornerRadius;
@@ -972,9 +959,8 @@ class GlassPageTransitionsBuilder extends PageTransitionsBuilder {
   /// Continuous superellipse corner radius applied to the page while
   /// transitioning.
   ///
-  /// When `null` (the default), uses
-  /// [GlassDefaults.pageTransitionCornerRadius] (55.0), unless overridden by a
-  /// descendant [GlassPage] or `GlassScaffold`.
+  /// When `null`, [GlassPageTransitionClip] estimates the radius from screen
+  /// geometry. Descendant page clips may override this value.
   ///
   /// Set to `0.0` to disable rounded page clipping.
   final double? transitionCornerRadius;

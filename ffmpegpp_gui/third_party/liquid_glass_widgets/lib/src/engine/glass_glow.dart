@@ -12,8 +12,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/rendering.dart';
-import '../../../widgets/shared/inherited_liquid_glass.dart';
-import '../../../utils/glass_spring.dart';
+import '../../widgets/shared/inherited_liquid_glass.dart';
+import '../../utils/glass_spring.dart';
 import 'rendering/liquid_glass_render_object.dart';
 
 /// {@template glass_glow}

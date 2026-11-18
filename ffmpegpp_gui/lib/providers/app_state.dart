@@ -20,8 +20,18 @@ import '../services/fluid_cloud_progress.dart';
 import '../services/graph_executor.dart';
 import '../services/island_progress.dart';
 import '../services/native_process.dart';
+import '../services/task_process_runner.dart';
 
 class AppState extends ChangeNotifier {
+  AppState() : _importCacheDirectoryForTest = null;
+
+  /// Exercises mobile import cleanup against an isolated test directory.
+  @visibleForTesting
+  AppState.forImportCleanupTest({required Directory cacheDirectory})
+    : _importCacheDirectoryForTest = cacheDirectory;
+
+  final Directory? _importCacheDirectoryForTest;
+
   /// 共享随机数生成器：避免随机参数生成时每处 new Random()，
   /// 否则同一毫秒内多次实例化会因时间种子相同而退化为固定偏移的伪随机序列。
   static final Random _rng = Random();
@@ -117,15 +127,28 @@ class AppState extends ChangeNotifier {
   // 取消标记：cancelProcessing 置位后，正在途中的任务完成/失败回调不得覆盖
   // cancelled 状态，processNextTask 也不得继续拉取 pending 任务。
   bool _cancelRequested = false;
-  // [FIX H-3/H-8] 调度批次计数：startAll/processSingleTask 自增，收尾续体比对
-  // 本批次编号决定是否继续拉取；「停止所有」(cancelProcessing) 与「单任务取消」
-  // (cancelTask) 用此区分，避免二者状态语义互相污染。
-  int _runGeneration = 0;
+
   // 单个任务取消：cancelTask 只取消指定任务（不触碰全局 _cancelRequested），
   // 多任务并发时其余任务继续执行。
   final Set<String> _cancelledTaskIds = {};
   // 每个任务正在运行的本地 ffmpeg 进程（供 cancelTask 只终止该任务名下的进程）
-  final Map<String, List<Process>> _localProcessesByTask = {};
+  final Map<String, TaskProcessRun> _taskRuns = {};
+  TaskProcessRunner _taskProcessRunner = TaskProcessRunner();
+  final Map<TaskProcessRun, TaskInfo> _runInputs = {};
+  final Set<String> _deferredImportCleanup = {};
+  bool _taskProcessTestMode = false;
+
+  @visibleForTesting
+  void setTaskProcessRunnerForTest(TaskProcessRunner runner) {
+    _taskProcessRunner = runner;
+    _taskProcessTestMode = true;
+  }
+
+  @visibleForTesting
+  bool isTaskRunActiveForTest(String id) => _taskRuns.containsKey(id);
+
+  bool _ownsRun(String id, TaskProcessRun run) =>
+      !_disposed && identical(_taskRuns[id], run) && !run.isCancelled;
 
   // ── 任务列表版本号 ──
   // _tasks 是原地更新（元素级 copyWith 替换），List 引用永远不变，
@@ -689,6 +712,7 @@ class AppState extends ChangeNotifier {
 
   /// 任务列表发生结构性变化后调用：防抖合并连续变化，500ms 后落盘。
   void _scheduleTaskPersist() {
+    if (_taskProcessTestMode) return;
     _taskPersistTimer?.cancel();
     _taskPersistTimer = Timer(
       const Duration(milliseconds: 500),
@@ -1042,14 +1066,36 @@ class AppState extends ChangeNotifier {
   /// 清理这些副本（仅当没有其它条目仍引用同一路径时才删除）。
   void _cleanupTempImportFile(String filepath) {
     if (filepath.isEmpty) return;
-    final normalized = filepath.replaceAll('\\', '/');
-    final isCacheCopy =
-        normalized.contains('file_picker') ||
-        normalized.contains('ffmpegpp_import');
-    if (!isCacheCopy) return;
+    if (_runInputs.values.any(
+      (t) => t.inputPath == filepath || t.outputPath == filepath,
+    )) {
+      _deferredImportCleanup.add(filepath);
+      return;
+    }
+    // Desktop imports are original files, even when their names resemble caches.
+    if (!isMobilePlatform && _importCacheDirectoryForTest == null) return;
+    try {
+      final root = (_importCacheDirectoryForTest ?? Directory.systemTemp)
+          .resolveSymbolicLinksSync();
+      final resolved = File(filepath).resolveSymbolicLinksSync();
+      final separator = Platform.pathSeparator;
+      final pickerRoot = '$root${separator}file_picker$separator';
+      final parent = File(resolved).parent.path;
+      final name = resolved.substring(resolved.lastIndexOf(separator) + 1);
+      // Resolve links and '..' before checking directory boundaries. Streaming
+      // copies are direct children of the app cache, not arbitrary descendants.
+      final isCacheCopy =
+          resolved.startsWith(pickerRoot) ||
+          (parent == root && name.startsWith('ffmpegpp_import_'));
+      if (!isCacheCopy) return;
+    } on FileSystemException {
+      return; // Uncertain ownership must preserve the file.
+    }
     if (_videos.any((v) => v.filepath == filepath)) return; // 仍有引用，不删
     // 队列/历史里的任务仍引用该副本（重新开始/查看输出），不删
-    if (_tasks.any((t) => t.inputPath == filepath || t.outputPath == filepath)) {
+    if (_tasks.any(
+      (t) => t.inputPath == filepath || t.outputPath == filepath,
+    )) {
       return;
     }
     try {
@@ -1719,16 +1765,14 @@ class AppState extends ChangeNotifier {
     final t = _tasks.removeAt(i);
     _tasks.insert(0, t);
     _tasksNotify();
-    // [FIX H-3/H-8] 新批次：自增 generation 并传入，旧批次在途续体不会继续拉取
-    final gen = ++_runGeneration;
-    processNextTask(generation: gen);
+    // Resume scheduling without invalidating other running task identities.
+    processNextTask();
   }
 
   void processAllTasks() {
     _cancelRequested = false;
-    // [FIX H-3/H-8] 新批次自增 generation
-    final gen = ++_runGeneration;
-    processNextTask(generation: gen);
+    // Repeated starts simply fill available slots.
+    processNextTask();
   }
 
   /// 仅测试用：直接注入任务实例（模拟 pending/failed/流水线任务进队列页）。
@@ -1746,20 +1790,22 @@ class AppState extends ChangeNotifier {
     _currentTaskId = id;
   }
 
+  /// generation is retained for source compatibility and intentionally ignored.
   Future<void> processNextTask({int? generation}) async {
-    final gen = generation ?? _runGeneration;
-    if (_cancelRequested) return;
+    if (_cancelRequested || _disposed) return;
     final limit = config.maxConcurrentTasks == 0
         ? 999
         : config.maxConcurrentTasks;
-    while (_runningTaskIds.length < limit) {
-      if (_cancelRequested) break;
-      final pi = _tasks.indexWhere((t) => t.status == TaskStatus.pending);
+    while (!_cancelRequested && !_disposed && _runningTaskIds.length < limit) {
+      final pi = _tasks.indexWhere(
+        (t) =>
+            t.status == TaskStatus.pending && !_runningTaskIds.contains(t.id),
+      );
       if (pi < 0) break;
-      // [FIX H-3] 二次确认：状态可能被并发的 cancelTask 改掉，避免已取消任务被改回 processing
-      if (_tasks[pi].status != TaskStatus.pending) continue;
       final task = _tasks[pi];
-      // 只有确实要开始执行时才移除取消标记（收敛 H-3 竞态窗口）
+      final run = _taskProcessRunner.createRun();
+      _taskRuns[task.id] = run;
+      _runInputs[run] = task;
       _cancelledTaskIds.remove(task.id);
       _runningTaskIds.add(task.id);
       _currentTaskId = task.id;
@@ -1769,53 +1815,56 @@ class AppState extends ChangeNotifier {
       addLog('开始处理: ${task.filename}', category: 'info');
       addLog('输入: ${task.inputPath}', category: 'info');
       addLog('输出: ${task.outputPath}', category: 'info');
-      // catchError 必不可少：后端调用一旦抛异常/超时，没有它 .then 永不执行，
-      // task id 会永远滞留在 _runningTaskIds、processing 恒为 true，队列卡死。
-      _runTask(task)
-          .then((_) {
-            _runningTaskIds.remove(task.id);
-            if (_currentTaskId == task.id) _currentTaskId = null;
-            // [FIX H-3/H-8] 仅本批次仍有效才继续拉取，避免「停止所有」与「单任务取消」互相污染
-            if (gen == _runGeneration &&
-                !_cancelRequested &&
-                _tasks.any((t) => t.status == TaskStatus.pending)) {
-              processNextTask(generation: gen);
-            }
-          })
-          .catchError((Object e, StackTrace st) {
-            _runningTaskIds.remove(task.id);
-            if (_currentTaskId == task.id) _currentTaskId = null;
-            final fi = _tasks.indexWhere((t) => t.id == task.id);
-            // 已取消的任务保持 cancelled，不被异常覆盖为 failed
-            if (fi >= 0 &&
-                !_cancelRequested &&
-                _isLiveStatus(_tasks[fi].status)) {
-              _tasks[fi] = _tasks[fi].copyWith(
-                status: TaskStatus.failed,
-                error: '处理异常: $e',
-              );
-              _tasksNotify();
-              _scheduleTaskPersist();
-            }
-            if (gen == _runGeneration &&
-                !_cancelRequested &&
-                _tasks.any((t) => t.status == TaskStatus.pending)) {
-              processNextTask(generation: gen);
-            }
-          });
+      unawaited(_executeTaskRun(task, run));
     }
   }
 
-  Future<void> _runTask(TaskInfo task) async {
+  Future<void> _executeTaskRun(TaskInfo task, TaskProcessRun run) async {
+    try {
+      await _runTask(run, task);
+    } on TaskProcessCancelled {
+      // Terminal cancellation never enters retry or continue policies.
+    } catch (error) {
+      final i = _tasks.indexWhere((t) => t.id == task.id);
+      if (_ownsRun(task.id, run) && i >= 0 && _isLiveStatus(_tasks[i].status)) {
+        _tasks[i] = _tasks[i].copyWith(
+          status: TaskStatus.failed,
+          error: '$error',
+        );
+        _tasksNotify();
+        _scheduleTaskPersist();
+      }
+    } finally {
+      await run.idle;
+      _runInputs.remove(run);
+      for (final path in _deferredImportCleanup.toList()) {
+        _deferredImportCleanup.remove(path);
+        _cleanupTempImportFile(path);
+      }
+      if (identical(_taskRuns[task.id], run)) {
+        _taskRuns.remove(task.id);
+        _runningTaskIds.remove(task.id);
+        _pendingProgress.remove(task.id);
+        if (_currentTaskId == task.id) _currentTaskId = null;
+        if (!_disposed) {
+          _tasksNotify();
+          if (!_cancelRequested) unawaited(processNextTask());
+        }
+      }
+    }
+  }
+
+  Future<void> _runTask(TaskProcessRun run, TaskInfo task) async {
+    run.throwIfCancelled();
     final pi = _tasks.indexWhere((t) => t.id == task.id);
     if (pi < 0) return;
     _ensureOutputDir(task.outputPath);
     if (task.pipelineCalls != null && task.pipelineCalls!.isNotEmpty) {
-      await _processPipelineTask(task.id);
+      await _processPipelineTask(run, task.id);
     } else if (task.command != null && task.command!.isNotEmpty) {
-      await _processCustomCommand(task.id, task);
+      await _processCustomCommand(run, task.id, task);
     } else {
-      await _processLegacyTask(task.id, task);
+      await _processLegacyTask(run, task.id, task);
     }
   }
 
@@ -1838,7 +1887,11 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<void> _processLegacyTask(String taskId, TaskInfo task) async {
+  Future<void> _processLegacyTask(
+    TaskProcessRun run,
+    String taskId,
+    TaskInfo task,
+  ) async {
     final c = task.config;
     addLog(
       '编码器: ${c.videoCodec}, GPU: ${c.gpu}, 预设: ${c.preset}',
@@ -1877,6 +1930,7 @@ class AppState extends ChangeNotifier {
     sub = backend.progressStream.listen((u) {
       if (u.taskId == taskId) {
         _queueProgress(taskId, () {
+          if (!_ownsRun(taskId, run)) return false;
           final i = _tasks.indexWhere((t) => t.id == taskId);
           // 已取消/已完成/已失败的任务不再被进度消息改回 processing
           if (i < 0 || _tasks[i].status != TaskStatus.processing) return false;
@@ -1934,7 +1988,10 @@ class AppState extends ChangeNotifier {
 
     final fi = _tasks.indexWhere((t) => t.id == taskId);
     // 取消后若用户重新开始（_cancelRequested 复位），旧任务在途响应不得把 cancelled 改回终态
-    if (fi >= 0 && !_cancelRequested && _isLiveStatus(_tasks[fi].status)) {
+    if (_ownsRun(taskId, run) &&
+        fi >= 0 &&
+        !_cancelRequested &&
+        _isLiveStatus(_tasks[fi].status)) {
       if (resp['success'] == true) {
         final d = resp['data'] as Map<String, dynamic>?;
         _tasks[fi] = _tasks[fi].copyWith(
@@ -1977,7 +2034,11 @@ class AppState extends ChangeNotifier {
   }
 
   /// 处理用户自定义 FFmpeg 命令任务
-  Future<void> _processCustomCommand(String taskId, TaskInfo task) async {
+  Future<void> _processCustomCommand(
+    TaskProcessRun run,
+    String taskId,
+    TaskInfo task,
+  ) async {
     addLog('自定义命令: ${task.command!.join(' ')}', category: 'info');
 
     StreamSubscription<ProgressUpdate>? sub;
@@ -1986,6 +2047,7 @@ class AppState extends ChangeNotifier {
     sub = backend.progressStream.listen((u) {
       if (u.taskId == taskId) {
         _queueProgress(taskId, () {
+          if (!_ownsRun(taskId, run)) return false;
           final i = _tasks.indexWhere((t) => t.id == taskId);
           // 已取消/已完成/已失败的任务不再被进度消息改回 processing
           if (i < 0 || _tasks[i].status != TaskStatus.processing) return false;
@@ -2024,7 +2086,10 @@ class AppState extends ChangeNotifier {
 
     final fi = _tasks.indexWhere((t) => t.id == taskId);
     // 取消后若用户重新开始（_cancelRequested 复位），旧任务在途响应不得把 cancelled 改回终态
-    if (fi >= 0 && !_cancelRequested && _isLiveStatus(_tasks[fi].status)) {
+    if (_ownsRun(taskId, run) &&
+        fi >= 0 &&
+        !_cancelRequested &&
+        _isLiveStatus(_tasks[fi].status)) {
       if (resp['success'] == true) {
         final d = resp['data'] as Map<String, dynamic>?;
         _tasks[fi] = _tasks[fi].copyWith(
@@ -2057,7 +2122,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<void> _processPipelineTask(String taskId) async {
+  Future<void> _processPipelineTask(TaskProcessRun run, String taskId) async {
     final ti = _tasks.indexWhere((t) => t.id == taskId);
     if (ti < 0) return;
     final task = _tasks[ti];
@@ -2200,8 +2265,12 @@ class AppState extends ChangeNotifier {
     // input 的步骤时链路断裂，第三步指向不存在的旧路径）。
     final actualOutputFor = <String, String>{};
     for (var ci = 0; ci < expandedCalls.length; ci++) {
-      // 取消后不再执行后续步骤（本地 Process.run 步骤无法被 kill，必须靠这里停下）
-      if (_cancelRequested || _cancelledTaskIds.contains(taskId)) break;
+      // Cancelled identities never start another step.
+      if (!_ownsRun(taskId, run) ||
+          _cancelRequested ||
+          _cancelledTaskIds.contains(taskId)) {
+        break;
+      }
       final call = expandedCalls[ci];
       // 沿执行链向前查找：若本步 input 等于某步「计划 output」且那一步改写了实际产物，
       // 则用实际产物路径替换（中间有「不消费/不产出」的步骤也不会断裂）。
@@ -2230,6 +2299,7 @@ class AppState extends ChangeNotifier {
       sub = backend.progressStream.listen((u) {
         if (u.taskId == taskId) {
           _queueProgress(taskId, () {
+            if (!_ownsRun(taskId, run)) return false;
             final i = _tasks.indexWhere((t) => t.id == taskId);
             // 已取消/已完成/已失败的任务不再被进度消息改回 processing
             if (i < 0 || _tasks[i].status != TaskStatus.processing) {
@@ -2266,6 +2336,7 @@ class AppState extends ChangeNotifier {
       try {
         for (var attempt = 0; ; attempt++) {
           final p = call.params;
+          run.throwIfCancelled();
           switch (call.action) {
             case 'transcode':
               // 缺 options 时用空对象兜底：直接 as 转换会抛 TypeError 被外层 catch
@@ -2298,15 +2369,15 @@ class AppState extends ChangeNotifier {
               break;
             case 'extract_frames_range':
             case 'extract_frames_all':
-              resp = await _runFrameExtraction(p);
+              resp = await _runFrameExtraction(run, p);
               break;
             case 'image_convert':
-              resp = await _runImageConvert(p);
+              resp = await _runImageConvert(run, p);
               break;
             case 'image_compress':
               // 图片压缩与图片转换共用执行器（质量/格式语义完全一致），
               // 只把日志标签区分开，便于在任务日志里看出是压缩节点。
-              resp = await _runImageConvert(p, label: '图片压缩');
+              resp = await _runImageConvert(run, p, label: '图片压缩');
               break;
             case 'metadata_strip':
               // 元数据删除由 C++ 原生 handleRemoveMetadata 执行（stream copy），
@@ -2320,46 +2391,47 @@ class AppState extends ChangeNotifier {
               );
               break;
             case 'image_crop':
-              resp = await _runImageCrop(p);
+              resp = await _runImageCrop(run, p);
               break;
             case 'image_rotate':
-              resp = await _runImageRotate(p);
+              resp = await _runImageRotate(run, p);
               break;
             case 'image_scale':
-              resp = await _runImageScale(p);
+              resp = await _runImageScale(run, p);
               break;
             case 'image_brightness':
-              resp = await _runImageBrightness(p);
+              resp = await _runImageBrightness(run, p);
               break;
             case 'image_noise':
-              resp = await _runImageNoise(p);
+              resp = await _runImageNoise(run, p);
               break;
             case 'image_sharpen':
-              resp = await _runImageSharpen(p);
+              resp = await _runImageSharpen(run, p);
               break;
             case 'image_denoise':
-              resp = await _runImageDenoise(p);
+              resp = await _runImageDenoise(run, p);
               break;
             case 'image_channel_extract':
-              resp = await _runImageChannelExtract(p);
+              resp = await _runImageChannelExtract(run, p);
               break;
             case 'image_adjust':
-              resp = await _runImageAdjust(p);
+              resp = await _runImageAdjust(run, p);
               break;
             case 'video_crop':
-              resp = await _runVideoCrop(taskId, p, callIndex: ci);
+              resp = await _runVideoCrop(run, taskId, p, callIndex: ci);
               break;
             case 'extract_audio':
-              resp = await _runExtractAudio(taskId, p, callIndex: ci);
+              resp = await _runExtractAudio(run, taskId, p, callIndex: ci);
               break;
             case 'audio_metadata':
-              resp = await _runAudioMetadata(task.id, p);
+              resp = await _runAudioMetadata(run, task.id, p);
               break;
             case 'concat':
               var files =
                   (p['files'] as List?)?.cast<String>() ?? const <String>[];
               if (files.isEmpty) {
                 files = await _resolveMergeFiles(p['input'] as String?);
+                run.throwIfCancelled();
               }
               resp = await backend.concat(
                 task.id,
@@ -2374,6 +2446,7 @@ class AppState extends ChangeNotifier {
                   (p['files'] as List?)?.cast<String>() ?? const <String>[];
               if (files.isEmpty) {
                 files = await _resolveMergeFiles(p['input'] as String?);
+                run.throwIfCancelled();
               }
               resp = await backend.imageSequence(
                 task.id,
@@ -2384,11 +2457,13 @@ class AppState extends ChangeNotifier {
               );
               break;
             case '_file_copy':
+              run.throwIfCancelled();
               resp = await _runFileCopy(p);
               break;
             default:
               resp = {'success': false, 'error': '未知动作: ${call.action}'};
           }
+          run.throwIfCancelled();
           // 成功即结束；否则还有重试次数就再跑一遍（参数未变，重跑是安全的）
           if (resp['success'] == true || attempt >= call.retries) break;
           addLog(
@@ -2405,6 +2480,10 @@ class AppState extends ChangeNotifier {
         await sub.cancel();
       }
 
+      if (!_ownsRun(taskId, run)) {
+        _cleanupTempFiles(cleanupCalls);
+        return;
+      }
       if (resp['success'] != true) {
         // 失败策略（逻辑块参数 onError）：
         //   'continue' → 记一条警告日志后跳过本步，继续后面的步骤；
@@ -2419,7 +2498,8 @@ class AppState extends ChangeNotifier {
           continue;
         }
         final fi2 = _tasks.indexWhere((t) => t.id == taskId);
-        if (fi2 >= 0 &&
+        if (_ownsRun(taskId, run) &&
+            fi2 >= 0 &&
             !_cancelRequested &&
             _isLiveStatus(_tasks[fi2].status)) {
           _tasks[fi2] = _tasks[fi2].copyWith(
@@ -2439,7 +2519,7 @@ class AppState extends ChangeNotifier {
       }
       // 标记当前步骤为完成
       final fiDone = _tasks.indexWhere((t) => t.id == taskId);
-      if (fiDone >= 0) {
+      if (_ownsRun(taskId, run) && fiDone >= 0) {
         final newCallProgresses = List<double>.from(
           _tasks[fiDone].callProgresses,
         );
@@ -2478,7 +2558,10 @@ class AppState extends ChangeNotifier {
     }
 
     final fi3 = _tasks.indexWhere((t) => t.id == taskId);
-    if (fi3 >= 0 && !_cancelRequested && _isLiveStatus(_tasks[fi3].status)) {
+    if (_ownsRun(taskId, run) &&
+        fi3 >= 0 &&
+        !_cancelRequested &&
+        _isLiveStatus(_tasks[fi3].status)) {
       final outSize = await _measureOutputSize(task.outputPath);
       // [FIX 收尾下标必须在 await 之后重新解析] _measureOutputSize 是**异步**目录
       // 遍历 + 逐项 length()（帧提取可能产出上万张 PNG，耗时可达数秒）。这段窗口
@@ -2488,7 +2571,8 @@ class AppState extends ChangeNotifier {
       // 任务**，把它错标成「已完成 100%」。因此这里按 id 重新定位，并重新确认
       // 该任务仍在 processing（等待期间可能已被取消或被重跑）。
       final fiDone = _tasks.indexWhere((t) => t.id == taskId);
-      if (fiDone >= 0 &&
+      if (_ownsRun(taskId, run) &&
+          fiDone >= 0 &&
           !_cancelRequested &&
           _isLiveStatus(_tasks[fiDone].status)) {
         _tasks[fiDone] = _tasks[fiDone].copyWith(
@@ -2541,6 +2625,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<Map<String, dynamic>> _runFrameExtraction(
+    TaskProcessRun run,
     Map<String, dynamic> p,
   ) async {
     final input = p['input'] as String;
@@ -2563,7 +2648,7 @@ class AppState extends ChangeNotifier {
       args.addAll(['-vf', 'fps=$fps', '$outDir/frame_%06d.$fmt']);
 
       addLog('帧提取: $_ffmpegBin ${args.join(' ')}', category: 'info');
-      final result = await Process.run(_ffmpegBin, args);
+      final result = await run.run(_ffmpegBin, args);
       if (result.exitCode == 0) {
         // 异步遍历目录计数：帧提取可产出上万张 PNG，原 listSync() 会在
         // UI isolate 同步枚举全部目录项并构造 File 对象，导致界面冻结。
@@ -2580,6 +2665,8 @@ class AppState extends ChangeNotifier {
       } else {
         return _ffmpegFailResult('帧提取', (result.stderr as String).trim(), args);
       }
+    } on TaskProcessCancelled {
+      rethrow;
     } catch (e) {
       return {'success': false, 'error': '帧提取异常: $e'};
     }
@@ -2641,6 +2728,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<Map<String, dynamic>> _runImageConvert(
+    TaskProcessRun run,
     Map<String, dynamic> p, {
     String label = '图片转换',
   }) async {
@@ -2671,7 +2759,7 @@ class AppState extends ChangeNotifier {
       }
       args.add(output);
       addLog('$label: $_ffmpegBin ${args.join(' ')}', category: 'info');
-      final result = await Process.run(_ffmpegBin, args);
+      final result = await run.run(_ffmpegBin, args);
       if (result.exitCode == 0 && File(output).existsSync()) {
         addLog('$label完成: $output', category: 'info');
         return {
@@ -2680,19 +2768,20 @@ class AppState extends ChangeNotifier {
         };
       } else {
         // 完整 stderr + 命令一并返回，队列卡片「详细错误」可查看
-        return _ffmpegFailResult(
-          label,
-          (result.stderr as String).trim(),
-          args,
-        );
+        return _ffmpegFailResult(label, (result.stderr as String).trim(), args);
       }
+    } on TaskProcessCancelled {
+      rethrow;
     } catch (e) {
       addLog('$label异常: $e', category: 'error');
       return {'success': false, 'error': '$label异常: $e'};
     }
   }
 
-  Future<Map<String, dynamic>> _runImageCrop(Map<String, dynamic> p) async {
+  Future<Map<String, dynamic>> _runImageCrop(
+    TaskProcessRun run,
+    Map<String, dynamic> p,
+  ) async {
     final input = p['input'] as String;
     final output = p['output'] as String;
     final cropW = (p['crop_w'] as num?)?.toInt() ?? 0;
@@ -2707,7 +2796,7 @@ class AppState extends ChangeNotifier {
     // 按源尺寸钳制裁剪矩形：越界的 crop 参数会让 ffmpeg 直接报错
     // （"Invalid too big or non positive size"），此前表现为任务失败或
     // 用户误以为"输出与输入相同"。这里探测源宽高后做统一钳制。
-    final src = await _probeImageSize(input);
+    final src = await _probeImageSize(run, input);
     int useW = cropW, useH = cropH;
     if (src != null) {
       final (sw, sh) = src;
@@ -2732,7 +2821,7 @@ class AppState extends ChangeNotifier {
       final cropFilter = 'crop=$useW:$useH:$cropX:$cropY';
       final args = <String>['-y', '-i', input, '-vf', cropFilter, output];
       addLog('图片裁剪: $_ffmpegBin ${args.join(' ')}', category: 'info');
-      final result = await Process.run(_ffmpegBin, args);
+      final result = await run.run(_ffmpegBin, args);
       if (result.exitCode == 0 && File(output).existsSync()) {
         addLog('图片裁剪完成: $output', category: 'info');
         return {
@@ -2747,6 +2836,8 @@ class AppState extends ChangeNotifier {
           args,
         );
       }
+    } on TaskProcessCancelled {
+      rethrow;
     } catch (e) {
       addLog('图片裁剪异常: $e', category: 'error');
       return {'success': false, 'error': '图片裁剪异常: $e'};
@@ -2754,6 +2845,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<Map<String, dynamic>> _runVideoCrop(
+    TaskProcessRun run,
     String taskId,
     Map<String, dynamic> p, {
     int? callIndex,
@@ -2770,7 +2862,7 @@ class AppState extends ChangeNotifier {
     }
 
     try {
-      final totalDuration = await _probeDuration(input);
+      final totalDuration = await _probeDuration(run, input);
       final outDir = File(output).parent;
       if (!outDir.existsSync()) outDir.createSync(recursive: true);
       final cropFilter = 'crop=$cropW:$cropH:$cropX:$cropY';
@@ -2786,12 +2878,15 @@ class AppState extends ChangeNotifier {
       ];
       addLog('视频裁剪: $_ffmpegBin ${args.join(' ')}', category: 'info');
       return await _runFfmpegWithProgress(
+        run,
         taskId,
         args,
         '视频裁剪',
         totalDuration: totalDuration,
         callIndex: callIndex,
       );
+    } on TaskProcessCancelled {
+      rethrow;
     } catch (e) {
       addLog('视频裁剪异常: $e', category: 'error');
       return {'success': false, 'error': '视频裁剪异常: $e'};
@@ -2834,9 +2929,9 @@ class AppState extends ChangeNotifier {
     'truehd': 'mka',
   };
 
-  Future<String?> _probeAudioCodec(String input) async {
+  Future<String?> _probeAudioCodec(TaskProcessRun run, String input) async {
     try {
-      final result = await Process.run(_ffprobeBin, [
+      final result = await run.run(_ffprobeBin, [
         '-v',
         'quiet',
         '-select_streams',
@@ -2851,13 +2946,15 @@ class AppState extends ChangeNotifier {
         final codec = (result.stdout as String).trim().split('\n').first.trim();
         if (codec.isNotEmpty) return codec;
       }
+    } on TaskProcessCancelled {
+      rethrow;
     } catch (_) {}
     return null;
   }
 
-  Future<double?> _probeDuration(String input) async {
+  Future<double?> _probeDuration(TaskProcessRun run, String input) async {
     try {
-      final result = await Process.run(_ffprobeBin, [
+      final result = await run.run(_ffprobeBin, [
         '-v',
         'quiet',
         '-show_entries',
@@ -2869,15 +2966,17 @@ class AppState extends ChangeNotifier {
       if (result.exitCode == 0) {
         return double.tryParse((result.stdout as String).trim());
       }
+    } on TaskProcessCancelled {
+      rethrow;
     } catch (_) {}
     return null;
   }
 
   /// 探测图片/视频首条视频流的宽高（像素）。失败返回 null。
   /// 用于裁剪参数按源尺寸钳制、绝对尺寸缩放换算缩放系数。
-  Future<(int, int)?> _probeImageSize(String input) async {
+  Future<(int, int)?> _probeImageSize(TaskProcessRun run, String input) async {
     try {
-      final result = await Process.run(_ffprobeBin, [
+      final result = await run.run(_ffprobeBin, [
         '-v',
         'quiet',
         '-select_streams',
@@ -2897,6 +2996,8 @@ class AppState extends ChangeNotifier {
           if (w != null && h != null && w > 0 && h > 0) return (w, h);
         }
       }
+    } on TaskProcessCancelled {
+      rethrow;
     } catch (_) {}
     return null;
   }
@@ -2908,11 +3009,11 @@ class AppState extends ChangeNotifier {
 
   /// 当前正在运行的本地 ffmpeg 进程集合（供 cancelProcessing 终止）。
   /// 用 Set 而非单字段：maxConcurrentTasks>1 时多个本地任务并发，单字段会被覆盖。
-  final Set<Process> _localFfmpegProcesses = {};
 
   /// 按"完整行"解析进度：原实现直接对网络分块 firstMatch，
   /// `time=` 跨 chunk 边界时进度会漏更新。
   void _parseFfmpegProgressLine(
+    TaskProcessRun run,
     String taskId,
     String line,
     double? totalDuration,
@@ -2933,6 +3034,7 @@ class AppState extends ChangeNotifier {
       // 本地 ffmpeg 的 stderr 进度行同样高频，走 300ms 批量节流
       // （见类头「进度心跳节流」注释），避免每行都整树重建。
       _queueProgress(taskId, () {
+        if (!_ownsRun(taskId, run)) return false;
         final i = _tasks.indexWhere((tk) => tk.id == taskId);
         if (i < 0 || _tasks[i].status != TaskStatus.processing) return false;
         List<double> newCallProgresses = _tasks[i].callProgresses;
@@ -2953,76 +3055,59 @@ class AppState extends ChangeNotifier {
 
   /// 本地 ffmpeg 进程 stderr 的保留行数上限（[FIX M3]，≈22KB）。
   /// _ffmpegFailResult 最多用最后 120 行，这里留足余量。
-  static const int _kStderrTailLines = 200;
 
   Future<Map<String, dynamic>> _runFfmpegWithProgress(
+    TaskProcessRun run,
     String taskId,
     List<String> args,
     String label, {
     double? totalDuration,
     int? callIndex,
   }) async {
-    Process? process;
+    var pendingLine = '';
+    void consume(String chunk) {
+      if (!_ownsRun(taskId, run)) return;
+      final text = pendingLine + chunk;
+      final lines = text.split(RegExp(r'[\r\n]'));
+      pendingLine = lines.removeLast();
+      // A malformed log line must not grow without bound.
+      if (pendingLine.length > 65536) {
+        pendingLine = pendingLine.substring(pendingLine.length - 65536);
+      }
+      for (final line in lines) {
+        _parseFfmpegProgressLine(run, taskId, line, totalDuration, callIndex);
+      }
+    }
+
     try {
-      process = await Process.start(_ffmpegBin, args);
-      _localFfmpegProcesses.add(process);
-      _localProcessesByTask.putIfAbsent(taskId, () => []).add(process);
-      // [FIX M3] 只保留 stderr 的**尾部若干行**，不再整段缓冲。
-      //
-      // 原实现用 StringBuffer 累积整个进程的 stderr，而它的唯一用途是失败时交给
-      // _ffmpegFailResult —— 后者只要最后 120 行（前 3 行用于摘要）。于是：
-      //   · 成功路径上这段缓冲被**完全丢弃**，白留一路；
-      //   · 带 -stats 的 ffmpeg 每 ~0.5s 一行、约 110 字节，3 小时任务 ≈ 2.4MB，
-      //     末尾 toString()+trim() 再复制一份，且 maxConcurrentTasks > 1 时成倍叠加。
-      // _kStderrTailLines 取 200 行（≈22KB），对 120 行的上限留足余量。
-      final tailLines = <String>[];
-      final lineBuf = StringBuffer();
-      process.stderr.transform(utf8.decoder).listen((chunk) {
-        lineBuf.write(chunk);
-        final text = lineBuf.toString();
-        int start = 0;
-        int nl;
-        while ((nl = text.indexOf('\n', start)) >= 0) {
-          final line = text.substring(start, nl);
-          _parseFfmpegProgressLine(taskId, line, totalDuration, callIndex);
-          tailLines.add(line);
-          start = nl + 1;
-        }
-        if (tailLines.length > _kStderrTailLines) {
-          tailLines.removeRange(0, tailLines.length - _kStderrTailLines);
-        }
-        // 保留未完成的行（可能跨 chunk）
-        lineBuf.clear();
-        if (start < text.length) lineBuf.write(text.substring(start));
-      });
-      process.stdout.drain<void>();
-      final exitCode = await process.exitCode;
-      final stderr = tailLines.join('\n').trim();
+      final result = await run.run(_ffmpegBin, args, onStderr: consume);
+      run.throwIfCancelled();
+      if (pendingLine.isNotEmpty) {
+        _parseFfmpegProgressLine(
+          run,
+          taskId,
+          pendingLine,
+          totalDuration,
+          callIndex,
+        );
+      }
       final output = args.last;
-      if (exitCode == 0 && File(output).existsSync()) {
-        addLog('$label完成: $output', category: 'info');
+      if (result.exitCode == 0 && File(output).existsSync()) {
         return {
           'success': true,
           'data': {'output_path': output},
         };
-      } else {
-        // 完整 stderr + 命令一并返回，队列卡片「详细错误」可查看
-        return _ffmpegFailResult(label, stderr, args);
       }
+      return _ffmpegFailResult(label, (result.stderr as String).trim(), args);
+    } on TaskProcessCancelled {
+      rethrow;
     } catch (e) {
-      addLog('$label异常: $e', category: 'error');
       return {'success': false, 'error': '$label异常: $e'};
-    } finally {
-      _localFfmpegProcesses.remove(process);
-      final taskProcs = _localProcessesByTask[taskId];
-      if (taskProcs != null) {
-        taskProcs.remove(process);
-        if (taskProcs.isEmpty) _localProcessesByTask.remove(taskId);
-      }
     }
   }
 
   Future<Map<String, dynamic>> _runExtractAudio(
+    TaskProcessRun run,
     String taskId,
     Map<String, dynamic> p, {
     int? callIndex,
@@ -3034,8 +3119,8 @@ class AppState extends ChangeNotifier {
     final endTime = p['end_time'] as num?;
 
     try {
-      final sourceCodec = await _probeAudioCodec(input);
-      final totalDuration = await _probeDuration(input);
+      final sourceCodec = await _probeAudioCodec(run, input);
+      final totalDuration = await _probeDuration(run, input);
       addLog('源音频编码: ${sourceCodec ?? "未知"}', category: 'info');
 
       final outExt = output.split('.').last.toLowerCase();
@@ -3084,6 +3169,7 @@ class AppState extends ChangeNotifier {
           ? (totalDuration - startTime).toDouble()
           : (endTime?.toDouble() ?? totalDuration ?? 0.0);
       final result = await _runFfmpegWithProgress(
+        run,
         taskId,
         args,
         '提取音频',
@@ -3093,13 +3179,18 @@ class AppState extends ChangeNotifier {
       // 供调度循环把运行时改写的扩展名传播给下游步骤的 input
       if (result['success'] == true) result['_actual_output'] = output;
       return result;
+    } on TaskProcessCancelled {
+      rethrow;
     } catch (e) {
       addLog('提取音频异常: $e', category: 'error');
       return {'success': false, 'error': '提取音频异常: $e'};
     }
   }
 
-  Future<Map<String, dynamic>> _runImageRotate(Map<String, dynamic> p) async {
+  Future<Map<String, dynamic>> _runImageRotate(
+    TaskProcessRun run,
+    Map<String, dynamic> p,
+  ) async {
     final input = p['input'] as String;
     final output = p['output'] as String;
     final mode = p['rotate_mode'] as String? ?? 'fixed';
@@ -3128,7 +3219,7 @@ class AppState extends ChangeNotifier {
       }
       final args = <String>['-y', '-i', input, '-vf', vf, output];
       addLog('图片旋转: $_ffmpegBin ${args.join(' ')}', category: 'info');
-      final result = await Process.run(_ffmpegBin, args);
+      final result = await run.run(_ffmpegBin, args);
       if (result.exitCode == 0 && File(output).existsSync()) {
         addLog('图片旋转完成: $output', category: 'info');
         return {
@@ -3143,13 +3234,18 @@ class AppState extends ChangeNotifier {
           args,
         );
       }
+    } on TaskProcessCancelled {
+      rethrow;
     } catch (e) {
       addLog('图片旋转异常: $e', category: 'error');
       return {'success': false, 'error': '图片旋转异常: $e'};
     }
   }
 
-  Future<Map<String, dynamic>> _runImageScale(Map<String, dynamic> p) async {
+  Future<Map<String, dynamic>> _runImageScale(
+    TaskProcessRun run,
+    Map<String, dynamic> p,
+  ) async {
     final input = p['input'] as String;
     final output = p['output'] as String;
     final mode = p['scale_mode'] as String? ?? 'fixed';
@@ -3167,34 +3263,19 @@ class AppState extends ChangeNotifier {
       if (!outDir.existsSync()) outDir.createSync(recursive: true);
       String vf;
       if (mode == 'absolute') {
-        // 绝对尺寸模式（快捷配置「缩放」）：探测源尺寸换算缩放系数，
-        // 目标短边优先、等比缩放，保持纵横比不变形。
-        final src = await _probeImageSize(input);
+        final src = await _probeImageSize(run, input);
         if (src == null) {
           return {'success': false, 'error': '无法读取源图片尺寸，缩放失败'};
         }
         final (sw, sh) = src;
-        final targetW = (p['target_w'] as num?)?.toInt() ?? 0;
-        final targetH = (p['target_h'] as num?)?.toInt() ?? 0;
-        final double fW = targetW > 0 ? targetW / sw : 0;
-        final double fH = targetH > 0 ? targetH / sh : 0;
-        factor = switch ((fW > 0, fH > 0)) {
-          (true, true) => (fW < fH ? fW : fH), // 两边都给了 → 取小值（contain）
-          (true, false) => fW,
-          (false, true) => fH,
-          _ => 1.0,
-        };
-        addLog(
-          '图片缩放(绝对): ${sw}x$sh → 目标 ${targetW}x$targetH, 系数 ${factor.toStringAsFixed(3)}',
-          category: 'info',
-        );
-        vf = 'scale=trunc(iw*$factor/2)*2:trunc(ih*$factor/2)*2';
+        vf = GraphExecutor.absoluteImageScaleFilter(p, sw, sh);
+        addLog('图片缩放(绝对): ${sw}x$sh → $vf', category: 'info');
       } else {
         vf = 'scale=trunc(iw*$factor/2)*2:trunc(ih*$factor/2)*2';
       }
       final args = <String>['-y', '-i', input, '-vf', vf, output];
       addLog('图片缩放: $_ffmpegBin ${args.join(' ')}', category: 'info');
-      final result = await Process.run(_ffmpegBin, args);
+      final result = await run.run(_ffmpegBin, args);
       if (result.exitCode == 0 && File(output).existsSync()) {
         addLog('图片缩放完成: $output', category: 'info');
         return {
@@ -3209,6 +3290,8 @@ class AppState extends ChangeNotifier {
           args,
         );
       }
+    } on TaskProcessCancelled {
+      rethrow;
     } catch (e) {
       addLog('图片缩放异常: $e', category: 'error');
       return {'success': false, 'error': '图片缩放异常: $e'};
@@ -3216,6 +3299,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<Map<String, dynamic>> _runImageBrightness(
+    TaskProcessRun run,
     Map<String, dynamic> p,
   ) async {
     final input = p['input'] as String;
@@ -3236,7 +3320,7 @@ class AppState extends ChangeNotifier {
       final vf = 'eq=brightness=$brightness';
       final args = <String>['-y', '-i', input, '-vf', vf, output];
       addLog('图片亮度: $_ffmpegBin ${args.join(' ')}', category: 'info');
-      final result = await Process.run(_ffmpegBin, args);
+      final result = await run.run(_ffmpegBin, args);
       if (result.exitCode == 0 && File(output).existsSync()) {
         addLog('图片亮度调整完成: $output', category: 'info');
         return {
@@ -3251,13 +3335,18 @@ class AppState extends ChangeNotifier {
           args,
         );
       }
+    } on TaskProcessCancelled {
+      rethrow;
     } catch (e) {
       addLog('图片亮度调整异常: $e', category: 'error');
       return {'success': false, 'error': '图片亮度调整异常: $e'};
     }
   }
 
-  Future<Map<String, dynamic>> _runImageNoise(Map<String, dynamic> p) async {
+  Future<Map<String, dynamic>> _runImageNoise(
+    TaskProcessRun run,
+    Map<String, dynamic> p,
+  ) async {
     final input = p['input'] as String;
     final output = p['output'] as String;
     final mode = p['noise_mode'] as String? ?? 'fixed';
@@ -3280,7 +3369,7 @@ class AppState extends ChangeNotifier {
       final vf = 'noise=alls=$strength:allf=$noiseType';
       final args = <String>['-y', '-i', input, '-vf', vf, output];
       addLog('图片噪声: $_ffmpegBin ${args.join(' ')}', category: 'info');
-      final result = await Process.run(_ffmpegBin, args);
+      final result = await run.run(_ffmpegBin, args);
       if (result.exitCode == 0 && File(output).existsSync()) {
         addLog('图片噪声添加完成: $output', category: 'info');
         return {
@@ -3295,13 +3384,18 @@ class AppState extends ChangeNotifier {
           args,
         );
       }
+    } on TaskProcessCancelled {
+      rethrow;
     } catch (e) {
       addLog('图片噪声添加异常: $e', category: 'error');
       return {'success': false, 'error': '图片噪声添加异常: $e'};
     }
   }
 
-  Future<Map<String, dynamic>> _runImageSharpen(Map<String, dynamic> p) async {
+  Future<Map<String, dynamic>> _runImageSharpen(
+    TaskProcessRun run,
+    Map<String, dynamic> p,
+  ) async {
     final input = p['input'] as String;
     final output = p['output'] as String;
     final mode = p['sharpen_mode'] as String? ?? 'fixed';
@@ -3320,7 +3414,7 @@ class AppState extends ChangeNotifier {
       final vf = 'unsharp=5:5:$strength:5:5:0';
       final args = <String>['-y', '-i', input, '-vf', vf, output];
       addLog('图片锐化: $_ffmpegBin ${args.join(' ')}', category: 'info');
-      final result = await Process.run(_ffmpegBin, args);
+      final result = await run.run(_ffmpegBin, args);
       if (result.exitCode == 0 && File(output).existsSync()) {
         addLog('图片锐化完成: $output', category: 'info');
         return {
@@ -3335,13 +3429,18 @@ class AppState extends ChangeNotifier {
           args,
         );
       }
+    } on TaskProcessCancelled {
+      rethrow;
     } catch (e) {
       addLog('图片锐化异常: $e', category: 'error');
       return {'success': false, 'error': '图片锐化异常: $e'};
     }
   }
 
-  Future<Map<String, dynamic>> _runImageDenoise(Map<String, dynamic> p) async {
+  Future<Map<String, dynamic>> _runImageDenoise(
+    TaskProcessRun run,
+    Map<String, dynamic> p,
+  ) async {
     final input = p['input'] as String;
     final output = p['output'] as String;
     final method = p['denoise_method'] as String? ?? 'hqdn3d';
@@ -3366,7 +3465,7 @@ class AppState extends ChangeNotifier {
       }
       final args = <String>['-y', '-i', input, '-vf', vf, output];
       addLog('图片降噪: $_ffmpegBin ${args.join(' ')}', category: 'info');
-      final result = await Process.run(_ffmpegBin, args);
+      final result = await run.run(_ffmpegBin, args);
       if (result.exitCode == 0 && File(output).existsSync()) {
         addLog('图片降噪完成: $output', category: 'info');
         return {
@@ -3381,6 +3480,8 @@ class AppState extends ChangeNotifier {
           args,
         );
       }
+    } on TaskProcessCancelled {
+      rethrow;
     } catch (e) {
       addLog('图片降噪异常: $e', category: 'error');
       return {'success': false, 'error': '图片降噪异常: $e'};
@@ -3388,6 +3489,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<Map<String, dynamic>> _runImageChannelExtract(
+    TaskProcessRun run,
     Map<String, dynamic> p,
   ) async {
     final input = p['input'] as String;
@@ -3423,7 +3525,7 @@ class AppState extends ChangeNotifier {
       }
       final args = <String>['-y', '-i', input, '-vf', vf, output];
       addLog('通道提取: $_ffmpegBin ${args.join(' ')}', category: 'info');
-      final result = await Process.run(_ffmpegBin, args);
+      final result = await run.run(_ffmpegBin, args);
       if (result.exitCode == 0 && File(output).existsSync()) {
         addLog('通道提取完成: $output', category: 'info');
         return {
@@ -3438,6 +3540,8 @@ class AppState extends ChangeNotifier {
           args,
         );
       }
+    } on TaskProcessCancelled {
+      rethrow;
     } catch (e) {
       addLog('通道提取异常: $e', category: 'error');
       return {'success': false, 'error': '通道提取异常: $e'};
@@ -3446,7 +3550,10 @@ class AppState extends ChangeNotifier {
 
   /// 图片调整：饱和度 / 伽马 / 对比度（eq 滤镜）。
   /// 三个参数都为默认值时退化为"直接复制"，避免无意义的二次编码。
-  Future<Map<String, dynamic>> _runImageAdjust(Map<String, dynamic> p) async {
+  Future<Map<String, dynamic>> _runImageAdjust(
+    TaskProcessRun run,
+    Map<String, dynamic> p,
+  ) async {
     final input = p['input'] as String;
     final output = p['output'] as String;
     final sat = _clampNum(p['saturation'], 0.0, 3.0, 1.0);
@@ -3467,7 +3574,7 @@ class AppState extends ChangeNotifier {
           ':contrast=${contrast.toStringAsFixed(3)}';
       final args = <String>['-y', '-i', input, '-vf', vf, output];
       addLog('图片调整: $_ffmpegBin ${args.join(' ')}', category: 'info');
-      final result = await Process.run(_ffmpegBin, args);
+      final result = await run.run(_ffmpegBin, args);
       if (result.exitCode == 0 && File(output).existsSync()) {
         addLog('图片调整完成: $output', category: 'info');
         return {
@@ -3481,6 +3588,8 @@ class AppState extends ChangeNotifier {
           args,
         );
       }
+    } on TaskProcessCancelled {
+      rethrow;
     } catch (e) {
       addLog('图片调整异常: $e', category: 'error');
       return {'success': false, 'error': '图片调整异常: $e'};
@@ -3506,6 +3615,8 @@ class AppState extends ChangeNotifier {
         'success': true,
         'data': {'output_path': output},
       };
+    } on TaskProcessCancelled {
+      rethrow;
     } catch (e) {
       addLog('文件复制失败: $e', category: 'error');
       return {'success': false, 'error': '文件复制失败: $e'};
@@ -3513,6 +3624,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<Map<String, dynamic>> _runAudioMetadata(
+    TaskProcessRun run,
     String taskId,
     Map<String, dynamic> p,
   ) async {
@@ -3527,6 +3639,8 @@ class AppState extends ChangeNotifier {
     if (lyricsPath.isNotEmpty) {
       try {
         lyricsContent = await File(lyricsPath).readAsString();
+      } on TaskProcessCancelled {
+        rethrow;
       } catch (_) {}
     }
 
@@ -3647,6 +3761,8 @@ class AppState extends ChangeNotifier {
           } else {
             File(path).deleteSync();
           }
+        } on TaskProcessCancelled {
+          rethrow;
         } catch (_) {}
       }
     }
@@ -3663,25 +3779,9 @@ class AppState extends ChangeNotifier {
   /// 因此所有「杀掉本地进程」的路径都必须先 SIGCONT，否则会出现
   /// 「已取消但 ffmpeg 还在」的假取消。
   void _resumeLocalProcesses(String taskId) {
-    if (Platform.isWindows) return; // Windows 的本地进程不支持信号暂停
-    for (final p
-        in (_localProcessesByTask[taskId] ?? const <Process>[]).toList()) {
-      try {
-        Process.killPid(p.pid, ProcessSignal.sigcont);
-      } catch (_) {}
-    }
+    _taskRuns[taskId]?.resume();
   }
 
-  void _resumeAllLocalProcesses() {
-    if (Platform.isWindows) return;
-    for (final p in _localFfmpegProcesses.toList()) {
-      try {
-        Process.killPid(p.pid, ProcessSignal.sigcont);
-      } catch (_) {}
-    }
-  }
-
-  /// 同步解冻某任务名下的真实进程（删除记录 / 取消前调用）。
   void _unpauseTaskProcessesNow(String taskId) {
     _resumeLocalProcesses(taskId);
     if (pythonProcess.isRunning && backend.isTaskRunning(taskId)) {
@@ -3727,13 +3827,17 @@ class AppState extends ChangeNotifier {
     } else {
       if (before != TaskStatus.paused) return false;
     }
+    final runBefore = _taskRuns[taskId];
     final signaled = await _signalTaskProcesses(taskId, pause: pause);
-    if (pause && !signaled) {
+    if (!identical(runBefore, _taskRuns[taskId]) ||
+        (runBefore?.isCancelled ?? false)) {
+      return false;
+    }
+    if (!signaled) {
       addLog('无法暂停：当前没有可冻结的进程（可能正处在步骤切换的空档）', category: 'warn');
       return false;
     }
-    // 恢复时即便 signaled == false 也继续下面的状态回写：后端暂停标记必须被
-    // 清掉（进程可能刚好在暂停后结束），否则同一 id 重跑会「启动即冻结」。
+    // Apply only to the same run that received the signal.
     final j = _tasks.indexWhere((t) => t.id == taskId);
     if (j < 0) return false;
     final now = _tasks[j].status;
@@ -3763,18 +3867,8 @@ class AppState extends ChangeNotifier {
     if (override != null) return override(taskId, pause);
     var signaled = false;
     // 1) Dart 侧直接启动的 ffmpeg（提音频 / 视频裁剪 / 帧提取等走 dart:io Process）
-    final procs = _localProcessesByTask[taskId];
-    if (procs != null && procs.isNotEmpty && !Platform.isWindows) {
-      for (final p in procs.toList()) {
-        try {
-          Process.killPid(
-            p.pid,
-            pause ? ProcessSignal.sigstop : ProcessSignal.sigcont,
-          );
-          signaled = true;
-        } catch (_) {}
-      }
-    }
+    final run = _taskRuns[taskId];
+    if (run != null) signaled = pause ? run.pause() : run.resume();
     // 2) C++ 后端里的 ffmpeg 子进程。只有该任务的请求确实还在后端执行时才发信号：
     //    否则后端只是给一个空 id 记个暂停标记，UI 却显示「已暂停」—— 假暂停。
     if (backend.isTaskRunning(taskId) && pythonProcess.isRunning) {
@@ -3793,8 +3887,11 @@ class AppState extends ChangeNotifier {
     // 否则正在跑的 .then 回调回来后看到还有 pending 任务就会立刻重启队列，
     // 「停止所有」就失效了。
     _cancelRequested = true;
-    // [FIX H-3/H-8] 终止所有在途调度批次：在途 .then 续体比对 generation 失效，不再继续拉取
-    _runGeneration++;
+    for (final run in _taskRuns.values) {
+      run.cancel();
+    }
+    // Each run has already latched cancellation before notifying the backend.
+
     // 携带任务 id 集合：后端 worker 处理这些任务前会直接跳过
     // （否则「停止所有」后，C++ 单线程 worker 仍会执行队列中剩余任务）
     // 暂停中的任务也在这份名单里：它仍占着并发槽位、进程还活着，
@@ -3805,12 +3902,7 @@ class AppState extends ChangeNotifier {
         .toList();
     backend.cancel(ids);
     // 本地 ffmpeg 若被 SIGSTOP，SIGTERM 会一直挂起到恢复后才生效 → 先解冻再 kill
-    _resumeAllLocalProcesses();
-    for (final p in _localFfmpegProcesses.toList()) {
-      try {
-        p.kill();
-      } catch (_) {}
-    }
+
     // 后端暂停标记一并清掉，避免同名 id 重跑时「启动即冻结」
     for (final id in ids) {
       if (pythonProcess.isRunning) unawaited(backend.resume(id));
@@ -3821,7 +3913,7 @@ class AppState extends ChangeNotifier {
         _tasks[i] = _tasks[i].copyWith(status: TaskStatus.cancelled);
       }
     }
-    _runningTaskIds.clear();
+    _runningTaskIds.removeWhere((id) => !_taskRuns.containsKey(id));
     _currentTaskId = null;
     _tasksNotify();
     _scheduleTaskPersist();
@@ -3837,26 +3929,18 @@ class AppState extends ChangeNotifier {
     // [FIX H-3] 先置状态（copyWith cancelled），再写取消标记：避免「置 processing」与
     // 「写 cancelledTaskIds」之间的竞态窗口丢失取消意图。
     _tasks[i] = _tasks[i].copyWith(status: TaskStatus.cancelled);
+    _taskRuns[taskId]?.cancel();
     _cancelledTaskIds.add(taskId);
     // 先解冻再发取消：暂停中的进程必须先 SIGCONT，否则 SIGTERM 会一直挂起
     //（假取消）。顺序反了也不会死锁（C++ 的 reap 会补 SIGCONT），但这样最直观。
     _unpauseTaskProcessesNow(taskId);
     // 通知后端跳过该任务（若仍在队列/未开始）
     backend.cancel([taskId]);
-    final procs = _localProcessesByTask[taskId];
-    if (procs != null) {
-      for (final p in procs.toList()) {
-        try {
-          p.kill();
-        } catch (_) {}
-      }
-    }
-    // 从运行序列移除，释放 slots 让队列继续拉取下一个 pending 任务
-    _runningTaskIds.remove(taskId);
-    if (_currentTaskId == taskId) _currentTaskId = null;
+    // Actual run retains its slot until exit and both streams settle.
+    if (!_taskRuns.containsKey(taskId)) _runningTaskIds.remove(taskId);
     _tasksNotify();
     _scheduleTaskPersist();
-    // 单任务取消不触碰 _cancelRequested / _runGeneration，继续当前批次拉取
+    // Other runs remain live; refill only genuinely available slots.
     if (!_cancelRequested &&
         _tasks.any((t) => t.status == TaskStatus.pending)) {
       processNextTask();
@@ -3889,6 +3973,7 @@ class AppState extends ChangeNotifier {
   }
 
   void removeTask(String id) {
+    _taskRuns[id]?.cancel();
     final ri = _tasks.indexWhere((t) => t.id == id);
     if (ri >= 0 && _tasks[ri].status == TaskStatus.paused) {
       // 直接删记录会让被冻结的 ffmpeg 永远停在 SIGSTOP（占着进程却无人回收）：
@@ -3897,16 +3982,8 @@ class AppState extends ChangeNotifier {
       _cancelledTaskIds.add(id);
       _unpauseTaskProcessesNow(id);
       backend.cancel([id]);
-      final procs = _localProcessesByTask[id];
-      if (procs != null) {
-        for (final p in procs.toList()) {
-          try {
-            p.kill();
-          } catch (_) {}
-        }
-      }
-      _runningTaskIds.remove(id);
-      if (_currentTaskId == id) _currentTaskId = null;
+      _taskRuns[id]?.cancel();
+      if (!_taskRuns.containsKey(id)) _runningTaskIds.remove(id);
     }
     String? removedInput;
     _tasks.removeWhere((t) {
@@ -5148,6 +5225,12 @@ class AppState extends ChangeNotifier {
   Future<Map<String, dynamic>> probeMedia(String path) => backend.probe(path);
 
   Future<void> shutdown() async {
+    _cancelRequested = true;
+    final runs = _taskRuns.values.toList();
+    for (final run in runs) {
+      run.cancel();
+    }
+    await Future.wait(runs.map((run) => run.idle));
     // 配置写盘是防抖的，退出前必须强制落盘，否则最后一次修改会丢失
     await configService.flush();
     // 队列结果历史同样落盘（防抖未触发时强制写一次）
@@ -5158,6 +5241,9 @@ class AppState extends ChangeNotifier {
 
   @override
   void dispose() {
+    for (final run in _taskRuns.values) {
+      run.cancel();
+    }
     _disposed = true; // [FIX S-6] 之后所有 _safeNotify 直接短路
     _taskPersistTimer?.cancel();
     _progressFlushTimer?.cancel();
