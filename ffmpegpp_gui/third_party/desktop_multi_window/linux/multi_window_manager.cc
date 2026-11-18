@@ -11,6 +11,19 @@
 
 namespace {
 
+// Pick an RGBA visual before realization so Flutter can reveal rounded corners.
+void EnableTransparentWindowSurface(GtkWindow* window) {
+  GtkWidget* widget = GTK_WIDGET(window);
+  GdkScreen* screen = gtk_widget_get_screen(widget);
+  if (screen != nullptr) {
+    GdkVisual* visual = gdk_screen_get_rgba_visual(screen);
+    if (visual != nullptr) {
+      gtk_widget_set_visual(widget, visual);
+    }
+  }
+  gtk_widget_set_app_paintable(widget, TRUE);
+}
+
 struct DeferredViewDestroy {
   GtkWidget* window;
   GtkWidget* view;
@@ -58,6 +71,7 @@ std::string MultiWindowManager::Create(FlValue* args) {
   // Create GTK window
   GtkApplication* app = GTK_APPLICATION(g_application_get_default());
   GtkWindow* window = GTK_WINDOW(gtk_application_window_new(app));
+  EnableTransparentWindowSurface(window);
   gtk_application_add_window(app, window);
 
   // Always use CSD for detached windows, including non-GNOME X11 desktops.

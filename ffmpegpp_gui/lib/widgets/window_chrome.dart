@@ -36,6 +36,70 @@ const double kWindowChromeHeight = 36;
 /// 当前平台是否使用自绘窗口修饰。
 bool get usesWindowChrome => isLinuxPlatform;
 
+/// Linux 窗口普通状态下的圆角半径。
+const double kLinuxWindowCornerRadius = 16;
+
+/// 裁剪 Linux Flutter 窗口内容并在最大化时恢复直角。
+class LinuxWindowFrame extends StatefulWidget {
+  const LinuxWindowFrame({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  State<LinuxWindowFrame> createState() => _LinuxWindowFrameState();
+}
+
+class _LinuxWindowFrameState extends State<LinuxWindowFrame>
+    with WindowListener {
+  bool _maximized = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (isLinuxPlatform) {
+      windowManager.addListener(this);
+      unawaited(_refreshMaximized());
+    }
+  }
+
+  Future<void> _refreshMaximized() async {
+    try {
+      final maximized = await windowManager.isMaximized();
+      if (mounted && maximized != _maximized) {
+        setState(() => _maximized = maximized);
+      }
+    } catch (_) {
+      // 插件初始化早于 Flutter 首帧时保留普通窗口的圆角。
+    }
+  }
+
+  @override
+  void onWindowMaximize() {
+    if (mounted && !_maximized) setState(() => _maximized = true);
+  }
+
+  @override
+  void onWindowUnmaximize() {
+    if (mounted && _maximized) setState(() => _maximized = false);
+  }
+
+  @override
+  void dispose() {
+    if (isLinuxPlatform) windowManager.removeListener(this);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!isLinuxPlatform) return widget.child;
+    final radius = _maximized ? 0.0 : kLinuxWindowCornerRadius;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(radius),
+      child: widget.child,
+    );
+  }
+}
+
 /// 把一个全屏页面包进 Linux 自绘窗口修饰里。
 ///
 /// * 非 Linux → 原样返回 [child]（Windows/macOS 系统标题栏、移动端无窗口）。

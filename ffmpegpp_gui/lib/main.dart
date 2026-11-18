@@ -386,6 +386,8 @@ Future<void> _initWindow() async {
       }),
     );
   } else {
+    // Linux 无边框窗口需要透明原生底色，才能露出 Flutter 圆角裁剪外的桌面。
+    await windowManager.setBackgroundColor(Colors.transparent);
     // Linux：自定义标题栏（Flutter 自绘 CSD，见 app.dart _buildCsdTitleBar）
     await windowManager.setTitleBarStyle(TitleBarStyle.hidden);
   }

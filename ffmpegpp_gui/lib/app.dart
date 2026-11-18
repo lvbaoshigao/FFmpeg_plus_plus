@@ -332,12 +332,14 @@ class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
             final Color baseSurface = AppNeutralSurface.background(
               Theme.of(context).brightness,
             );
-            return AppTextScale(
-              systemScale: sysScale,
-              appScale: appScale,
-              child: MediaQuery(
-                data: mq.copyWith(textScaler: TextScaler.linear(scale)),
-                child: ColoredBox(color: baseSurface, child: child!),
+            return LinuxWindowFrame(
+              child: AppTextScale(
+                systemScale: sysScale,
+                appScale: appScale,
+                child: MediaQuery(
+                  data: mq.copyWith(textScaler: TextScaler.linear(scale)),
+                  child: ColoredBox(color: baseSurface, child: child!),
+                ),
               ),
             );
           },

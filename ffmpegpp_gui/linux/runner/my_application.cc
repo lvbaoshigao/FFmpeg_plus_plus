@@ -37,6 +37,19 @@ void EnsureIconThemeSearchPath(const std::string& dir) {
   gtk_icon_theme_append_search_path(theme, dir.c_str());
 }
 
+// 在 GTK 窗口创建/realize 前选择 RGBA visual，允许 Flutter 圆角外透明。
+void EnableTransparentWindowSurface(GtkWindow* window) {
+  GtkWidget* widget = GTK_WIDGET(window);
+  GdkScreen* screen = gtk_widget_get_screen(widget);
+  if (screen != nullptr) {
+    GdkVisual* visual = gdk_screen_get_rgba_visual(screen);
+    if (visual != nullptr) {
+      gtk_widget_set_visual(widget, visual);
+    }
+  }
+  gtk_widget_set_app_paintable(widget, TRUE);
+}
+
 // 设置窗口图标（主窗口与独立面板窗口都经过 activate，都会走到这里）。
 // 1) 图标主题搜索路径加入 bundle 的 share/icons，让图标名可解析；
 // 2) gtk_window_set_icon_name：Wayland/GNOME 以及 X11 无 _NET_WM_ICON 时按名解析；
@@ -87,6 +100,7 @@ static void my_application_activate(GApplication* application) {
   MyApplication* self = MY_APPLICATION(application);
   GtkWindow* window =
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
+  EnableTransparentWindowSurface(window);
 
   gboolean use_header_bar = FALSE;
 #ifdef GDK_WINDOWING_X11

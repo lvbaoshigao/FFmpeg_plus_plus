@@ -435,6 +435,9 @@ class _DetachedPanelAppState extends State<DetachedPanelApp>
       await windowManager.ensureInitialized();
       await windowManager.setPreventClose(true);
       windowManager.addListener(this);
+      if (Platform.isLinux) {
+        await windowManager.setBackgroundColor(Colors.transparent);
+      }
       await windowManager.setTitleBarStyle(
         Platform.isLinux ? TitleBarStyle.hidden : TitleBarStyle.normal,
       );
@@ -514,14 +517,16 @@ class _DetachedPanelAppState extends State<DetachedPanelApp>
           AppTextScale.minScale,
           AppTextScale.maxScale,
         );
-        return AppTextScale(
-          systemScale: mq.textScaler.scale(14.0) / 14.0,
-          appScale: appScale,
-          child: MediaQuery(
-            data: mq.copyWith(textScaler: TextScaler.linear(scale)),
-            child: ChangeNotifierProvider<AppState>.value(
-              value: _store.app,
-              child: child!,
+        return LinuxWindowFrame(
+          child: AppTextScale(
+            systemScale: mq.textScaler.scale(14.0) / 14.0,
+            appScale: appScale,
+            child: MediaQuery(
+              data: mq.copyWith(textScaler: TextScaler.linear(scale)),
+              child: ChangeNotifierProvider<AppState>.value(
+                value: _store.app,
+                child: child!,
+              ),
             ),
           ),
         );
