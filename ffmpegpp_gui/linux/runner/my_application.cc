@@ -127,6 +127,12 @@ static void my_application_activate(GApplication* application) {
   fl_dart_project_set_dart_entrypoint_arguments(project, self->dart_entrypoint_arguments);
 
   FlView* view = fl_view_new(project);
+  // Flutter's default view clear color is opaque black. The Flutter root is
+  // rounded with ClipRRect, so an opaque view clear color shows through the
+  // anti-aliased corner pixels as black halos. Keep the view transparent so
+  // those pixels reveal the RGBA GTK window surface instead.
+  GdkRGBA transparent = {0.0, 0.0, 0.0, 0.0};
+  fl_view_set_background_color(view, &transparent);
   gtk_widget_show(GTK_WIDGET(view));
   gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
 

@@ -1190,6 +1190,10 @@ class _AppShellState extends State<AppShell> with WindowListener {
             Positioned.fill(child: Container(color: base)),
             Positioned.fill(
               child: Image(
+                // Keep the last decoded frame while a new size-specific provider is
+                // resolving during live window resize. Without gapless playback,
+                // Image briefly paints the base color on every resize tick.
+                gaplessPlayback: true,
                 image: wallpaperImageProvider(bg, size.width, size.height, dpr),
                 fit: BoxFit.cover,
                 errorBuilder: (_, a, b) {

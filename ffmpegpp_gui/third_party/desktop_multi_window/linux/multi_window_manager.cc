@@ -105,6 +105,10 @@ std::string MultiWindowManager::Create(FlValue* args) {
 
   // Create Flutter view
   auto fl_view = fl_view_new(project);
+  // Match the main window: ClipRRect's anti-aliased corner pixels must blend
+  // with the RGBA GTK surface, not Flutter's default opaque black clear color.
+  GdkRGBA transparent = {0.0, 0.0, 0.0, 0.0};
+  fl_view_set_background_color(fl_view, &transparent);
   gtk_widget_show(GTK_WIDGET(fl_view));
   gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(fl_view));
 

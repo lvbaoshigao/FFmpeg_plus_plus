@@ -947,7 +947,6 @@ class _AppSliderState extends State<AppSlider> with TickerProviderStateMixin {
                       insetX: _kTrackInsetX,
                       textDirection: Directionality.of(context),
                       dragging: true,
-                      motionDirection: _dragDir,
                       opacity: _cometOpacity(_releasedAt),
                       speed: _dragSpeed.clamp(0.0, 1.0),
                       phase: _cometPhase.value,
@@ -1038,7 +1037,7 @@ class _AppRangeSliderState extends State<AppRangeSlider>
   double _instantSpeed = 0;
   Duration? _lastTickAt;
   Duration? _releasedAt;
-  double? _headValue;
+  bool _cometAtStart = false;
   int _dragDir = 0;
 
   /// 与 [_AppSliderState._cometAllowed] 同义：特效关闭 / 减弱动态效果时不空转 ticker。
@@ -1089,7 +1088,7 @@ class _AppRangeSliderState extends State<AppRangeSlider>
         final dir = delta > 0 ? 1 : -1;
         if (_dragDir != 0 && dir != _dragDir) _dragSpeed = 0;
         _dragDir = dir;
-        _headValue = movesStart ? v.start : v.end;
+        _cometAtStart = movesStart;
       }
       final double seconds =
           (now - lastAt).inMicroseconds / Duration.microsecondsPerSecond;
@@ -1187,7 +1186,7 @@ class _AppRangeSliderState extends State<AppRangeSlider>
             labels: widget.labels,
             onChangeStart: (values) {
               _releasedAt = null;
-              _headValue = null;
+              _cometAtStart = false;
               _dragDir = 0;
               _lastValues = values;
               _lastMoveAt = SchedulerBinding.instance.currentSystemFrameTimeStamp;
@@ -1236,8 +1235,7 @@ class _AppRangeSliderState extends State<AppRangeSlider>
                       insetX: _kTrackInsetX,
                       textDirection: Directionality.of(context),
                       dragging: true,
-                      headFraction: _fractionOf(_headValue ?? shown.end),
-                      motionDirection: _dragDir,
+                      headAtStart: _cometAtStart,
                       opacity: _cometOpacity(_releasedAt),
                       speed: _dragSpeed.clamp(0.0, 1.0),
                       phase: _cometPhase.value,
@@ -1278,8 +1276,7 @@ class _CometFillPainter extends CustomPainter {
     this.dragging = false,
     this.speed = 0,
     this.phase = 0,
-    this.headFraction,
-    this.motionDirection = 0,
+    this.headAtStart = false,
     this.opacity = 1,
   });
 
@@ -1310,9 +1307,8 @@ class _CometFillPainter extends CustomPainter {
   /// 无需改动：它们各自有驱动源，共享同一份 [_drawComet] 绘制。
   final double phase;
 
-  /// Logical drag direction; mirror once for RTL, not according to fill growth.
-  final int motionDirection;
-  final double? headFraction;
+  /// Whether the highlight follows the start handle of a range slider.
+  final bool headAtStart;
   final double opacity;
 
   @override
@@ -1335,27 +1331,24 @@ class _CometFillPainter extends CustomPainter {
     final bool atZero = hi - lo <= 0.0005;
 
     final bool isLtr = textDirection == TextDirection.ltr;
-    // 前缘：LTR 是右端，RTL 是左端。
-    final double head = (headFraction ?? hi).clamp(0.0, 1.0);
+    // 彗星头跟随把手，尾迹始终伸向填充段内侧。RTL 只镜像轨道坐标。
+    final double head = headAtStart ? lo : hi;
+    final double tailEdge = headAtStart ? hi : lo;
     final double headX = insetX + trackW * (isLtr ? head : 1 - head);
-    final double tailEdgeX = insetX + trackW * (isLtr ? lo : 1 - lo);
+    final double tailEdgeX =
+        insetX + trackW * (isLtr ? tailEdge : 1 - tailEdge);
 
     // 尾迹长度用**绝对像素**而不是「占填充段的比例」。
     //
     // 比例写法（旧实现 0.35~0.95）在快满的进度条上会拉出一条贯穿整条轨道的
     // 白色渐变 —— 用户反馈「拖尾渐变做的太长了」；而在低进度时又短到看不见。
     // 固定 46~96px 后，无论填充多长，彗星都是同一颗「同样长尾巴」的彗星。
-    final double dir = motionDirection == 0
-        ? (headX >= tailEdgeX ? 1.0 : -1.0)
-        : motionDirection.toDouble() * (isLtr ? 1 : -1);
-    final double fullSpan = motionDirection == 0
-        ? (headX - tailEdgeX).abs()
-        : (dir > 0 ? headX - insetX : insetX + trackW - headX);
+    final double span = tailEdgeX - headX;
     final double tailLen = math.min(
-      fullSpan,
+      span.abs(),
       46.0 + 50.0 * speed.clamp(0.0, 1.0),
     );
-    final double tailX = atZero ? headX : headX - dir * tailLen;
+    final double tailX = atZero ? headX : headX + span.sign * tailLen;
 
     // 裁剪区域 = 整条轨道胶囊（而非填充段）：光晕/粒子要能溢出填充前缘，
     // 被填满胶囊裁掉一半就只剩渐变、没有「掠光」感。
@@ -1395,8 +1388,7 @@ class _CometFillPainter extends CustomPainter {
       old.dragging != dragging ||
       old.speed != speed ||
       old.phase != phase ||
-      old.headFraction != headFraction ||
-      old.motionDirection != motionDirection ||
+      old.headAtStart != headAtStart ||
       old.opacity != opacity;
 }
 
@@ -1536,7 +1528,7 @@ class _AppProgressBarPainter extends CustomPainter {
 
     final double headX = isLtr ? fillRight : fillLeft;
     if (!showComet) return;
-    // 彗尾铺满整个填充段，消除硬边「割裂」
+    // 彗尾随填充段伸缩，进度回退时也朝向填充起点。
     final double tailX = isLtr ? fillLeft : fillRight;
     canvas.save();
     // 裁到整条轨道胶囊，让前缘光晕能溢出填充段（与滑块同口径）。

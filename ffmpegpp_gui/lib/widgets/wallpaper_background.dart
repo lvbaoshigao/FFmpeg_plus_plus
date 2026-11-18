@@ -44,6 +44,10 @@ Widget withWallpaper(
     children.addAll([
       Positioned.fill(
         child: Image(
+          // Keep the previous frame while the resized provider is decoding.
+          // Window resizing changes cache dimensions every frame; gapless playback
+          // prevents the wallpaper from disappearing until the resize settles.
+          gaplessPlayback: true,
           image: wallpaperImageProvider(
             bg,
             MediaQuery.sizeOf(context).width,
