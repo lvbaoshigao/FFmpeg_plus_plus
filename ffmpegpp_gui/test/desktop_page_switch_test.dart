@@ -40,6 +40,19 @@ class _TickingPageState extends State<_TickingPage>
 Finder _settingsRow(String section) =>
     find.byKey(ValueKey('settings_section_$section'));
 
+Iterable<TextSpan> _textSpans(InlineSpan span) sync* {
+  if (span is! TextSpan) return;
+  yield span;
+  for (final child in span.children ?? const <InlineSpan>[]) {
+    yield* _textSpans(child);
+  }
+}
+
+String _highlightedText(Text widget) => _textSpans(widget.textSpan!)
+    .where((span) => span.style?.backgroundColor != null)
+    .map((span) => span.text ?? '')
+    .join();
+
 Finder get _settingsSelection =>
     find.byKey(const ValueKey('settings_section_selection'));
 
@@ -47,6 +60,7 @@ Future<void> _pumpDesktopSettings(
   WidgetTester tester, {
   bool disableAnimations = false,
   Size size = const Size(1280, 1100),
+  String language = 'en',
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -54,7 +68,7 @@ Future<void> _pumpDesktopSettings(
   final state = AppState();
   state.config.cardStyle = 'gray';
   state.config.menuStyle = 'gray';
-  state.config.language = 'en';
+  state.config.language = language;
   addTearDown(state.dispose);
   await tester.pumpWidget(
     ChangeNotifierProvider<AppState>.value(
@@ -189,6 +203,67 @@ void main() {
       expect(_settingsSelection, findsOneWidget);
       await tester.pumpAndSettle();
       expect(tester.getRect(_settingsSelection), generalBounds);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets(
+      'should match aliases, fuzzy terms, and highlight result labels',
+      (tester) async {
+        await _pumpDesktopSettings(tester);
+        final search = find.byType(TextField).first;
+
+        await tester.enterText(search, 'GROU');
+        await tester.pumpAndSettle();
+        final background = tester.widget<Text>(
+          find.byKey(const ValueKey('settings-search-result-background')),
+        );
+        expect(background.textSpan!.toPlainText(), 'Background');
+        expect(_highlightedText(background), 'grou');
+
+        await tester.enterText(search, 'wallp');
+        await tester.pumpAndSettle();
+        final keyword = tester.widget<Text>(
+          find.byKey(const ValueKey('settings-search-evidence-background')),
+        );
+        expect(keyword.textSpan!.toPlainText(), 'wallpaper');
+        expect(_highlightedText(keyword), 'wallp');
+
+        await tester.enterText(search, 'autsave');
+        await tester.pumpAndSettle();
+        final autosave = tester.widget<Text>(
+          find.byKey(const ValueKey('settings-search-result-autosave')),
+        );
+        expect(autosave.textSpan!.toPlainText(), 'Autosave');
+        expect(
+          _textSpans(autosave.textSpan!)
+              .where((span) => span.style?.backgroundColor != null)
+              .map((span) => span.text ?? '')
+              .join(),
+          'Autosave',
+        );
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+
+    testWidgets('should match Chinese aliases and highlight visible labels', (
+      tester,
+    ) async {
+      await _pumpDesktopSettings(tester, language: 'zh');
+      await tester.enterText(find.byType(TextField).first, '壁纸');
+      await tester.pumpAndSettle();
+      final background = tester.widget<Text>(
+        find.byKey(const ValueKey('settings-search-result-background')),
+      );
+      expect(background.textSpan!.toPlainText(), '背景');
+      expect(
+        _textSpans(background.textSpan!)
+            .where((span) => span.style?.backgroundColor != null)
+            .map((span) => span.text ?? '')
+            .join(),
+        '背景',
+      );
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
     });

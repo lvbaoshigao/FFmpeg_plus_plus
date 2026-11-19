@@ -8,30 +8,43 @@ import 'package:ffmpegpp_gui/widgets/mobile_glass_pill.dart';
 import 'package:ffmpegpp_gui/widgets/mobile_top_bar.dart';
 import 'package:ffmpegpp_gui/widgets/mobile_ui.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
-Widget _harness(AppState state, Widget child, {double width = 412}) =>
-    ChangeNotifierProvider<AppState>.value(
-      value: state,
-      child: MaterialApp(
-        theme: AppTheme.dark(),
-        home: Scaffold(
-          body: Align(
-            alignment: Alignment.topCenter,
-            child: SizedBox(width: width, child: child),
-          ),
-        ),
+Widget _harness(
+  AppState state,
+  Widget child, {
+  double width = 412,
+  bool disableAnimations = false,
+}) => ChangeNotifierProvider<AppState>.value(
+  value: state,
+  child: MaterialApp(
+    theme: AppTheme.dark(),
+    builder: (context, child) => MediaQuery(
+      data: MediaQuery.of(
+        context,
+      ).copyWith(disableAnimations: disableAnimations),
+      child: child!,
+    ),
+    home: Scaffold(
+      body: Align(
+        alignment: Alignment.topCenter,
+        child: SizedBox(width: width, child: child),
       ),
-    );
+    ),
+  ),
+);
 
 AppState _state() {
   final state = AppState();
   // 纯色样式：避开测试环境里的 GPU shader 路径
-  state.updateConfig((c) => c
-    ..cardStyle = 'gray'
-    ..pillStyle = 'gray'
-    ..navStyle = 'gray');
+  state.updateConfig(
+    (c) => c
+      ..cardStyle = 'gray'
+      ..pillStyle = 'gray'
+      ..navStyle = 'gray',
+  );
   return state;
 }
 
@@ -41,6 +54,208 @@ Future<void> _flush(WidgetTester tester) async {
 }
 
 void main() {
+  group('MobilePillTopBar', () {
+    testWidgets(
+      'should extend a circular search action left into a centered field',
+      (tester) async {
+        tester.view.physicalSize = const Size(412, 915);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final previousFocus = FocusNode(debugLabel: 'Previous control');
+        final searchFocus = FocusNode(debugLabel: 'Search input');
+        final controller = TextEditingController();
+        addTearDown(previousFocus.dispose);
+        addTearDown(searchFocus.dispose);
+        addTearDown(controller.dispose);
+        final state = _state();
+        var searching = false;
+        var closed = 0;
+        await tester.pumpWidget(
+          _harness(
+            state,
+            StatefulBuilder(
+              builder: (context, setState) => Focus(
+                focusNode: previousFocus,
+                child: MobilePillTopBar(
+                  title: const Text('Settings'),
+                  actions: [
+                    MobileGlassPillAction(
+                      icon: Icons.search,
+                      tooltip: 'search',
+                      color: Colors.white,
+                      onTap: () => setState(() => searching = true),
+                    ),
+                  ],
+                  searching: searching,
+                  searchChild: MobileSearchPill(
+                    controller: controller,
+                    focusNode: searchFocus,
+                    hint: 'Search settings',
+                    onClose: () => setState(() {
+                      searching = false;
+                      closed++;
+                    }),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        previousFocus.requestFocus();
+        await tester.pump();
+        final surface = find.byKey(const ValueKey('mobile_search_surface'));
+        final surfaceElement = tester.element(surface);
+        final collapsed = tester.getRect(surface);
+        expect(collapsed.size, const Size(44, 44));
+        expect(tester.widget<MobileGlassPill>(surface).radius, 22);
+        expect(find.byType(TextField), findsNothing);
+        expect(
+          tester.getSemantics(
+            find.byKey(const ValueKey('mobile_search_action_semantics')),
+          ),
+          isSemantics(tooltip: 'search', isButton: true, hasTapAction: true),
+        );
+
+        await tester.tap(find.byTooltip('search'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 80));
+        final growing = tester.getRect(surface);
+        expect(growing.left, lessThan(collapsed.left));
+        expect(growing.width, greaterThan(collapsed.width));
+        expect(growing.width, lessThan(MobileUi.searchPillWidth + 24));
+        expect(growing.height, MobileUi.pillHeight);
+        final titleFade = find.byKey(
+          const ValueKey('mobile_top_bar_normal_fade'),
+        );
+        expect(
+          tester.widget<Opacity>(titleFade).opacity,
+          allOf(greaterThan(0), lessThan(1)),
+        );
+        // The fading title/actions contain no live backdrop-filter surface.
+        expect(
+          find.descendant(
+            of: titleFade,
+            matching: find.byType(MobileGlassPill),
+          ),
+          findsNothing,
+        );
+        expect(
+          tester
+              .widget<TweenAnimationBuilder<double>>(
+                find.byKey(const ValueKey('mobile_top_bar_normal')),
+              )
+              .tween
+              .end,
+          0,
+        );
+        await tester.pumpAndSettle();
+
+        final expanded = tester.getRect(surface);
+        expect(expanded.width, MobileUi.searchPillWidth + 24);
+        expect(expanded.height, MobileUi.pillHeight);
+        expect(expanded.center.dx, closeTo(206, 0.01));
+        expect(expanded.center.dy, collapsed.center.dy);
+        expect(tester.element(surface), same(surfaceElement));
+        expect(searchFocus.hasPrimaryFocus, isTrue);
+        expect(find.bySemanticsLabel('Settings'), findsNothing);
+        await tester.enterText(find.byType(TextField), 'video');
+        expect(controller.text, 'video');
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pumpAndSettle();
+        expect(closed, 1);
+        expect(find.byType(TextField), findsNothing);
+        expect(tester.getRect(surface), collapsed);
+        expect(previousFocus.hasPrimaryFocus, isTrue);
+
+        await tester.tap(find.byTooltip('search'));
+        await tester.pumpAndSettle();
+        expect(controller.text, 'video');
+        await tester.tap(find.byIcon(Icons.close));
+        await tester.pumpAndSettle();
+        expect(closed, 2);
+        expect(searchFocus.hasFocus, isFalse);
+        expect(tester.getRect(surface).size, const Size(44, 44));
+        expect(tester.takeException(), isNull);
+        await _flush(tester);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+
+    testWidgets('should constrain the centered field and honor reduced motion', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(412, 915);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final state = _state();
+      Widget build(bool searching) => _harness(
+        state,
+        MobilePillTopBar(
+          title: const Text('Settings'),
+          actions: [
+            MobileGlassPillAction(
+              icon: Icons.search,
+              tooltip: 'search',
+              color: Colors.white,
+              onTap: () {},
+            ),
+          ],
+          searching: searching,
+          searchChild: MobileSearchPill(
+            hint: 'Search settings',
+            width: 600,
+            onClose: () {},
+          ),
+        ),
+        width: 180,
+        disableAnimations: true,
+      );
+      await tester.pumpWidget(build(false));
+      await tester.pump();
+      await tester.pumpWidget(build(true));
+      await tester.pump();
+      final surface = find.byKey(const ValueKey('mobile_search_surface'));
+      final rect = tester.getRect(surface);
+      expect(rect.width, 180 - MobileUi.barInsetH * 2);
+      expect(rect.height, MobileUi.pillHeight);
+      expect(rect.center.dx, closeTo(206, 0.01));
+      expect(
+        tester
+            .widget<AnimatedPositioned>(
+              find.byKey(const ValueKey('mobile_search_position')),
+            )
+            .duration,
+        Duration.zero,
+      );
+      expect(
+        tester
+            .widget<TweenAnimationBuilder<double>>(
+              find.byKey(const ValueKey('mobile_top_bar_normal')),
+            )
+            .duration,
+        Duration.zero,
+      );
+      // Check search-owned animations, not tooltip/theme animations below them.
+      for (final key in [
+        'mobile_search_collapsed_icon',
+        'mobile_search_content',
+      ]) {
+        expect(
+          tester.widget<AnimatedOpacity>(find.byKey(ValueKey(key))).duration,
+          Duration.zero,
+        );
+      }
+      expect(find.byType(TextField), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(build(false));
+      await tester.pump();
+      expect(tester.getRect(surface).size, const Size(44, 44));
+      expect(find.byType(TextField), findsNothing);
+      await _flush(tester);
+    });
+  });
+
   testWidgets('主界面基准顶栏：标题 + 动作药丸可构建且高度为 44', (tester) async {
     tester.view.physicalSize = const Size(412, 915);
     tester.view.devicePixelRatio = 1.0;
@@ -158,6 +373,11 @@ void main() {
     expect(find.text('日志'), findsOneWidget);
     expect(find.byIcon(Icons.arrow_back), findsOneWidget);
     expect(find.byIcon(Icons.copy), findsOneWidget);
+    final actionPill = find.ancestor(
+      of: find.byIcon(Icons.copy),
+      matching: find.byType(MobileGlassPill),
+    ).first;
+    expect(tester.getSize(actionPill), const Size(44, 44));
 
     // 标题药丸在返回按钮右侧（标题在左，与主界面一致）
     final backX = tester.getCenter(find.byIcon(Icons.arrow_back)).dx;

@@ -1,4 +1,7 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show KeyDownEvent, LogicalKeyboardKey;
 
 import '../theme/mobile_ui.dart';
 import 'mobile_glass_pill.dart';
@@ -17,19 +20,12 @@ export '../theme/mobile_ui.dart' show MobileUi;
 /// ═══════════════════════════════════════════════════════════════════════════
 /// 主 Tab 页统一顶栏 —— 主界面（项目页）顶栏的唯一实现。
 ///
-/// 结构（与主界面一致）：
-///   Padding(8, safeTop+6, 8, 6)
-///     Stack(center)
-///       ├ 常规层：[MobilePillBarLayout] —— 左标题药丸(44/22/pad14, 可按压)
-///       │         + 间距 + 右操作药丸(44/22/pad6)；操作放不下时右半只留「…」，
-///       │         点开向左展开（详见 MobilePillBarLayout 注释）
-///       │         搜索时整体 220ms 淡出 + 缩放 0.9（仍占位）
-///       └ 搜索层：同一颗搜索药丸 220ms 淡入 + 缩放 0.86→1.0（锚点居中），
-///                 尺寸恒为 [MobileUi.searchPillWidth] × [MobileUi.pillHeight]
+/// 搜索圆钮保持 44 × 44；展开时同一玻璃表面向左延展并移动到顶栏中央，
+/// 标题与其它操作渐隐。搜索内容只在展开时挂载，避免隐藏输入框抢走焦点。
 ///
 /// [searchChild] 为 null 时不启用搜索层（如配置库、队列页）。
 /// ═══════════════════════════════════════════════════════════════════════════
-class MobilePillTopBar extends StatelessWidget {
+class MobilePillTopBar extends StatefulWidget {
   /// 左标题药丸内容（文字 / 多选计数行等）
   final Widget title;
 
@@ -55,104 +51,325 @@ class MobilePillTopBar extends StatelessWidget {
     this.collapseActions = true,
   });
 
-  /// 搜索层淡入淡出 + 缩放的时长（落在 180~220ms 区间；缩放与淡入共用一个时长，
-  /// 不再像旧实现那样「220ms 淡入 + 320ms 变长」两条节奏互相打架）。
-  static const Duration _fade = Duration(milliseconds: 220);
+  @override
+  State<MobilePillTopBar> createState() => _MobilePillTopBarState();
+}
+
+class _MobilePillTopBarState extends State<MobilePillTopBar> {
+  static const Duration _duration = Duration(milliseconds: 220);
+  static const double _searchPadding = 12;
+
+  bool _keepSearchSurface = false;
+  FocusNode? _previousFocus;
+
+  @override
+  void initState() {
+    super.initState();
+    _keepSearchSurface = _searchOpen;
+  }
+
+  bool get _searchOpen => widget.searchChild != null && widget.searching;
+
+  @override
+  void didUpdateWidget(covariant MobilePillTopBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final wasOpen = oldWidget.searchChild != null && oldWidget.searching;
+    if (_searchOpen && !wasOpen) {
+      _keepSearchSurface = true;
+      _previousFocus = FocusManager.instance.primaryFocus;
+    } else if (!_searchOpen && wasOpen) {
+      final previous = _previousFocus;
+      _previousFocus = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted &&
+            !_searchOpen &&
+            previous != null &&
+            previous.context != null &&
+            previous.canRequestFocus) {
+          previous.requestFocus();
+        }
+      });
+    }
+    if (widget.searchChild == null) {
+      _keepSearchSurface = false;
+    }
+  }
+
+  void _finishSearchTransition() {
+    if (_searchOpen || !_keepSearchSurface) {
+      return;
+    }
+    // A zero-duration transition can finish while LayoutBuilder is updating.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_searchOpen && _keepSearchSurface) {
+        setState(() => _keepSearchSurface = false);
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    final safeTop = MediaQuery.of(context).padding.top;
-    final search = searchChild;
-    final hasSearch = search != null;
-    final searchOpen = hasSearch && searching;
+    final search = widget.searchChild;
+    final searchOpen = _searchOpen;
+    final duration = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : _duration;
+    final singleAction = widget.actions.length == 1
+        ? widget.actions.single
+        : null;
+    final standaloneSearch =
+        search != null &&
+        singleAction is MobileGlassPillAction &&
+        singleAction.icon == Icons.search;
 
+    final titleContent = DefaultTextStyle.merge(
+      style: MobileUi.titleStyle(context),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      child: widget.title,
+    );
+    final barPadding = EdgeInsets.only(
+      right: standaloneSearch ? MobileUi.pillHeight + 8 : 0,
+      bottom: 6,
+    );
     final normal = Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      // 左半标题药丸（占满剩余宽度、内容左对齐、长标题省略号收尾）+
-      // 右半操作药丸；「左右原则」与操作溢出收纳统一交给 MobilePillBarLayout，
-      // 本页不再自己判断宽度 / 拼 FittedBox。
-      child: MobilePillBarLayout(
-        titlePill: MobileGlassPill(
-          radius: MobileUi.pillRadius,
-          height: MobileUi.pillHeight,
-          padding: const EdgeInsets.symmetric(horizontal: MobileUi.titlePillPadH),
-          pressable: true,
-          child: DefaultTextStyle.merge(
-            style: MobileUi.titleStyle(context),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            child: title,
+      padding: barPadding,
+      child: SizedBox(
+        height: MobileUi.pillHeight,
+        child: MobilePillBarLayout(
+          titlePill: MobileGlassPill(
+            radius: MobileUi.pillRadius,
+            height: MobileUi.pillHeight,
+            padding: const EdgeInsets.symmetric(
+              horizontal: MobileUi.titlePillPadH,
+            ),
+            pressable: true,
+            child: titleContent,
           ),
+          actions: standaloneSearch ? const [] : widget.actions,
+          forceCollapsed: searchOpen,
+          collapseActions: widget.collapseActions,
         ),
-        actions: actions,
-        // 搜索态下右侧不允许停留在「操作已展开」形态：搜索药丸会盖住它
-        forceCollapsed: searchOpen,
-        // 折叠策略逐页可控（配置库关掉折叠，见 MobilePillTopBar.collapseActions）
-        collapseActions: collapseActions,
       ),
     );
 
-    final Widget body;
-    if (!hasSearch) {
-      body = normal;
-    } else {
-      body = Stack(alignment: Alignment.center, children: [
-        // ⚠️ 这里**不能**做 opacity 动画。顶栏药丸是 BackdropFilter / 液态玻璃，
-        // 外面套一层 AnimatedOpacity 会生成 OpacityLayer，迫使 backdrop 走
-        // saveLayer —— 动画期间采不到背景，药丸整块先变黑再恢复正常
-        // （用户反馈「搜索图标点击后药丸背景先变黑」）。
-        // 改成瞬时切换 + 只对搜索药丸做缩放：没有透明度层，也就没有黑帧。
-        Visibility(
-          visible: !searchOpen,
-          maintainState: true,
-          child: IgnorePointer(ignoring: searchOpen, child: normal),
-        ),
-        AnimatedScale(
-          scale: searchOpen ? 1.0 : 0.86,
-          alignment: Alignment.center,
-          duration: _fade,
-          curve: Curves.easeOutCubic,
-          child: Visibility(
-            visible: searchOpen,
-            maintainState: true,
-            child: IgnorePointer(
-              ignoring: !searchOpen,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                // 展开动画 = 缩放：整颗药丸从 0.86 放大到 1.0 出现，
-                // 不再像旧实现那样把同一颗 44px 药丸横向拉到 [MobileUi.searchPillWidth]
-                // （宽度突变时边框与内边距像被「两把刀」左右撕开）。
-                // 锚点取 center：药丸本身在顶栏里水平居中，从中心放大最自然。
-                child: MobileGlassPill(
-                  radius: MobileUi.pillRadius,
-                  // 只留水平内边距：药丸总高 = MobileUi.pillHeight(44)，与标题 /
-                  // 操作药丸严格等高（旧的 vertical 内边距会让它高出 4px）。
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  // 收起态只换内容、不换外壳尺寸：宽度恒为 MobileUi.searchPillWidth，
-                  // 缩放期间零布局跳动；同时避免空闲时也构建 autofocus 的 TextField
-                  // （那会在页面首帧抢走输入焦点）。
-                  child: searchOpen
-                      ? search
-                      : const SizedBox(
-                          width: MobileUi.searchPillWidth,
-                          height: MobileUi.pillHeight,
-                        ),
-                ),
-              ),
-            ),
+    // A fading BackdropFilter samples its own saveLayer and can flash black.
+    // Fade a lightweight painted plate instead; restore live glass at rest.
+    Widget flatPill(Widget child, double padding) => SizedBox(
+      height: MobileUi.pillHeight,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(MobileUi.pillRadius),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.12),
+            width: 0.7,
           ),
         ),
-      ]);
-    }
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: padding),
+          child: Center(widthFactor: 1, child: child),
+        ),
+      ),
+    );
 
+    Widget fadingNormal(double availableWidth) => Padding(
+      padding: barPadding,
+      child: Row(
+        children: [
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: flatPill(titleContent, MobileUi.titlePillPadH),
+            ),
+          ),
+          if (!standaloneSearch && widget.actions.isNotEmpty) ...[
+            const SizedBox(width: 8),
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: math.max(
+                  MobileUi.pillHeight,
+                  availableWidth - MobileUi.pillHeight * 2 - 8,
+                ),
+              ),
+              child: flatPill(
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: widget.actions,
+                  ),
+                ),
+                MobileUi.actionsPillPadH,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
     return Padding(
       padding: EdgeInsets.fromLTRB(
         MobileUi.barInsetH,
-        safeTop + MobileUi.barInsetTop,
+        MediaQuery.paddingOf(context).top + MobileUi.barInsetTop,
         MobileUi.barInsetH,
         MobileUi.barInsetBottom,
       ),
-      child: body,
+      child: search == null
+          ? normal
+          : LayoutBuilder(
+              builder: (context, constraints) {
+                final screenWidth = math.max(
+                  0.0,
+                  MediaQuery.sizeOf(context).width - MobileUi.barInsetH * 2,
+                );
+                final availableWidth = math.min(
+                  constraints.maxWidth,
+                  screenWidth,
+                );
+                final contentWidth = search is MobileSearchPill
+                    ? search.width
+                    : MobileUi.searchPillWidth;
+                final expandedWidth = math.min(
+                  availableWidth,
+                  math.max(
+                    MobileUi.pillHeight,
+                    contentWidth + _searchPadding * 2,
+                  ),
+                );
+                final collapsedWidth = math.min(
+                  MobileUi.pillHeight,
+                  availableWidth,
+                );
+                return Align(
+                  alignment: Alignment.topCenter,
+                  heightFactor: 1,
+                  child: SizedBox(
+                    width: availableWidth,
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        ExcludeFocus(
+                          excluding: searchOpen,
+                          child: ExcludeSemantics(
+                            excluding: searchOpen,
+                            child: IgnorePointer(
+                              ignoring: searchOpen,
+                              child: TweenAnimationBuilder<double>(
+                                key: const ValueKey('mobile_top_bar_normal'),
+                                tween: Tween<double>(end: searchOpen ? 0 : 1),
+                                duration: duration,
+                                curve: Curves.easeOutCubic,
+                                builder: (context, opacity, _) => opacity == 1
+                                    ? normal
+                                    : Opacity(
+                                        key: const ValueKey(
+                                          'mobile_top_bar_normal_fade',
+                                        ),
+                                        opacity: opacity,
+                                        child: fadingNormal(availableWidth),
+                                      ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        AnimatedPositioned(
+                          key: const ValueKey('mobile_search_position'),
+                          duration: duration,
+                          curve: Curves.easeOutCubic,
+                          top: 0,
+                          right: searchOpen
+                              ? (availableWidth - expandedWidth) / 2
+                              : 0,
+                          width: searchOpen ? expandedWidth : collapsedWidth,
+                          height: MobileUi.pillHeight,
+                          onEnd: _finishSearchTransition,
+                          child: Offstage(
+                            offstage:
+                                !standaloneSearch &&
+                                !searchOpen &&
+                                (duration == Duration.zero ||
+                                    !_keepSearchSurface),
+                            child: MobileGlassPill(
+                              key: const ValueKey('mobile_search_surface'),
+                              radius: MobileUi.pillRadius,
+                              height: MobileUi.pillHeight,
+                              padding: EdgeInsets.zero,
+                              // Keep glass outside opacity layers so its backdrop stays live.
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  ExcludeFocus(
+                                    excluding: searchOpen,
+                                    child: ExcludeSemantics(
+                                      excluding: searchOpen,
+                                      child: IgnorePointer(
+                                        ignoring: searchOpen,
+                                        child: AnimatedOpacity(
+                                          key: const ValueKey(
+                                            'mobile_search_collapsed_icon',
+                                          ),
+                                          opacity: searchOpen ? 0 : 1,
+                                          duration: duration,
+                                          child: Center(
+                                            child: standaloneSearch
+                                                ? Semantics(
+                                                    key: const ValueKey(
+                                                      'mobile_search_action_semantics',
+                                                    ),
+                                                    container: true,
+                                                    button: true,
+                                                    child: singleAction,
+                                                  )
+                                                : Icon(
+                                                    Icons.search,
+                                                    size:
+                                                        MobileUi.actionIconSize,
+                                                    color: Theme.of(
+                                                      context,
+                                                    ).colorScheme.onSurface,
+                                                  ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  IgnorePointer(
+                                    ignoring: !searchOpen,
+                                    child: ClipRect(
+                                      child: OverflowBox(
+                                        alignment: Alignment.centerRight,
+                                        minWidth: expandedWidth,
+                                        maxWidth: expandedWidth,
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: _searchPadding,
+                                          ),
+                                          child: AnimatedOpacity(
+                                            key: const ValueKey(
+                                              'mobile_search_content',
+                                            ),
+                                            opacity: searchOpen ? 1 : 0,
+                                            duration: duration,
+                                            curve: Curves.easeOutCubic,
+                                            child: searchOpen
+                                                ? search
+                                                : const SizedBox.shrink(),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
     );
   }
 }
@@ -161,10 +378,10 @@ class MobilePillTopBar extends StatelessWidget {
 /// 统一搜索药丸内容 —— 主界面与设置页此前各写一份（含 6 个 border 的清零），
 /// 这里收敛为唯一实现：[MobilePillTopBar.searchChild] 传它即可。
 ///
-/// 尺寸固定 [MobileUi.searchPillWidth] × 44；输入框自身不带任何 Material 边框，
+/// 默认宽度 [MobileUi.searchPillWidth]，窄屏按可用空间收缩；输入框不带 Material 边框，
 /// 液态玻璃药丸就是容器。
 /// ═══════════════════════════════════════════════════════════════════════════
-class MobileSearchPill extends StatelessWidget {
+class MobileSearchPill extends StatefulWidget {
   final TextEditingController? controller;
   final FocusNode? focusNode;
   final String hint;
@@ -183,51 +400,104 @@ class MobileSearchPill extends StatelessWidget {
   });
 
   @override
+  State<MobileSearchPill> createState() => _MobileSearchPillState();
+}
+
+class _MobileSearchPillState extends State<MobileSearchPill> {
+  final _localFocus = FocusNode(debugLabel: 'Mobile search');
+  FocusNode get _fieldFocus => widget.focusNode ?? _localFocus;
+
+  @override
+  void initState() {
+    super.initState();
+    // FocusScope.autofocus leaves an already focused control active. Opening
+    // search explicitly moves focus to the newly mounted field.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _fieldFocus.requestFocus();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _localFocus.dispose();
+    super.dispose();
+  }
+
+  void _close() {
+    _fieldFocus.unfocus();
+    widget.onClose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return SizedBox(
-      width: width,
-      height: MobileUi.pillHeight,
-      child: Row(children: [
-        Icon(Icons.search, size: 18, color: scheme.onSurfaceVariant),
-        const SizedBox(width: 8),
-        Expanded(
-          child: TextField(
-            controller: controller,
-            focusNode: focusNode,
-            autofocus: true,
-            style: TextStyle(fontSize: 14, color: scheme.onSurface),
-            cursorColor: scheme.onSurfaceVariant,
-            decoration: InputDecoration(
-              hintText: hint,
-              hintStyle: TextStyle(color: scheme.onSurfaceVariant, fontSize: 14),
-              // filled 必须显式关掉：全局 InputDecorationTheme 是 filled: true +
-              // fillColor(surfaceContainerHighest/80)，这里不写 filled 就会继承它，
-              // 于是药丸内部多出一块暗色圆角矩形 —— 即用户反馈的
-              // 「设置与主界面的搜索框内怎么有个暗色的矩形」。
-              // 搜索框的容器是液态玻璃药丸本身，不需要任何填充。
-              filled: false,
-              // 显式清掉所有状态下的主题色边框：液态玻璃药丸本身就是容器，
-              // 不再让 Material3 给一个 primary 色的下划线 / 轮廓。
-              border: InputBorder.none,
-              focusedBorder: InputBorder.none,
-              enabledBorder: InputBorder.none,
-              disabledBorder: InputBorder.none,
-              errorBorder: InputBorder.none,
-              focusedErrorBorder: InputBorder.none,
-              isCollapsed: true,
-              contentPadding: const EdgeInsets.symmetric(vertical: 13),
-            ),
-            onChanged: onChanged,
+
+    return Focus(
+      skipTraversal: true,
+      onKeyEvent: (node, event) {
+        if (event is KeyDownEvent &&
+            event.logicalKey == LogicalKeyboardKey.escape) {
+          _close();
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: SizedBox(
+        width: math.min(
+          widget.width,
+          math.max(
+            0.0,
+            MediaQuery.sizeOf(context).width - MobileUi.barInsetH * 2,
           ),
         ),
-        MobileGlassPillAction(
-          icon: Icons.close,
-          tooltip: MaterialLocalizations.of(context).cancelButtonLabel,
-          color: scheme.onSurfaceVariant,
-          onTap: onClose,
+        height: MobileUi.pillHeight,
+        child: Row(
+          children: [
+            Icon(Icons.search, size: 18, color: scheme.onSurfaceVariant),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextField(
+                controller: widget.controller,
+                focusNode: _fieldFocus,
+                style: TextStyle(fontSize: 14, color: scheme.onSurface),
+                cursorColor: scheme.onSurfaceVariant,
+                decoration: InputDecoration(
+                  hintText: widget.hint,
+                  hintStyle: TextStyle(
+                    color: scheme.onSurfaceVariant,
+                    fontSize: 14,
+                  ),
+                  // filled 必须显式关掉：全局 InputDecorationTheme 是 filled: true +
+                  // fillColor(surfaceContainerHighest/80)，这里不写 filled 就会继承它，
+                  // 于是药丸内部多出一块暗色圆角矩形 —— 即用户反馈的
+                  // 「设置与主界面的搜索框内怎么有个暗色的矩形」。
+                  // 搜索框的容器是液态玻璃药丸本身，不需要任何填充。
+                  filled: false,
+                  // 显式清掉所有状态下的主题色边框：液态玻璃药丸本身就是容器，
+                  // 不再让 Material3 给一个 primary 色的下划线 / 轮廓。
+                  border: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  disabledBorder: InputBorder.none,
+                  errorBorder: InputBorder.none,
+                  focusedErrorBorder: InputBorder.none,
+                  isCollapsed: true,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 13),
+                ),
+                onChanged: widget.onChanged,
+              ),
+            ),
+            MobileGlassPillAction(
+              icon: Icons.close,
+              tooltip: MaterialLocalizations.of(context).cancelButtonLabel,
+              color: scheme.onSurfaceVariant,
+              onTap: _close,
+            ),
+          ],
         ),
-      ]),
+      ),
     );
   }
 }

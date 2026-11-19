@@ -58,6 +58,7 @@ import 'command_page.dart';
 import 'credits_page.dart';
 import 'keybinding_page.dart';
 import 'log_page.dart';
+import 'settings_search.dart';
 
 final _s = Platform.pathSeparator;
 
@@ -289,6 +290,54 @@ Future<void> openExternalUrl(String url) => ShellOpen.url(url);
 // 设置项元数据 —— 分区 / 卡片 / 搜索关键字
 // ═══════════════════════════════════════════
 
+TextSpan _searchLabelSpan(
+  String text,
+  SettingsSearch search,
+  TextStyle style,
+  Color highlightColor,
+) {
+  final ranges = search.highlights(text);
+  if (ranges.isEmpty) {
+    return TextSpan(text: text, style: style);
+  }
+  final markedStyle = style.copyWith(
+    color: highlightColor,
+    fontWeight: FontWeight.w700,
+    backgroundColor: highlightColor.withAlpha(30),
+  );
+  final spans = <TextSpan>[];
+  var start = 0;
+  for (final range in ranges) {
+    if (range.start > start) {
+      spans.add(TextSpan(text: text.substring(start, range.start)));
+    }
+    spans.add(
+      TextSpan(
+        text: text.substring(range.start, range.end),
+        style: markedStyle,
+      ),
+    );
+    start = range.end;
+  }
+  if (start < text.length) {
+    spans.add(TextSpan(text: text.substring(start)));
+  }
+  return TextSpan(style: style, children: spans);
+}
+
+Text _highlightedSearchText(
+  String text,
+  SettingsSearch search,
+  TextStyle style,
+  Color highlightColor, {
+  Key? key,
+}) => Text.rich(
+  _searchLabelSpan(text, search, style, highlightColor),
+  key: key,
+  maxLines: 1,
+  overflow: TextOverflow.ellipsis,
+);
+
 class _CardDef {
   final String id;
   final String Function(AppStrings) title;
@@ -307,44 +356,6 @@ class _CardDef {
     required this.keywords,
     required this.build,
   });
-
-  /// 中英文标题 + 关键字都参与匹配，关键字支持多词（空格分隔，AND）。
-  /// 例如 "字体 大小" / "font size" 会同时要求两个词都命中。
-  int matchScore(String query) {
-    final tokens = query
-        .trim()
-        .toLowerCase()
-        .split(RegExp(r'\s+'))
-        .where((t) => t.isNotEmpty)
-        .toList(growable: false);
-    if (tokens.isEmpty) return 0;
-    final zh = title(AppStrings.zh).toLowerCase();
-    final en = title(AppStrings.en).toLowerCase();
-    var score = 0;
-    for (final token in tokens) {
-      if (zh == token || en == token) {
-        score += 10;
-        continue;
-      }
-      if (zh.startsWith(token) || en.startsWith(token)) {
-        score += 6;
-        continue;
-      }
-      if (zh.contains(token) || en.contains(token)) {
-        score += 4;
-        continue;
-      }
-      final kw = keywords.where((k) => k.contains(token)).toList();
-      if (kw.isNotEmpty) {
-        score += kw.any((k) => k == token) ? 3 : 1;
-        continue;
-      }
-      return -1;
-    }
-    return score;
-  }
-
-  bool matches(String query) => matchScore(query) >= 0;
 }
 
 class _SectionDef {
@@ -358,19 +369,6 @@ class _SectionDef {
     required this.icon,
     required this.cards,
   });
-
-  /// 分区标题也参与搜索：输入「外观」时整组卡片都应出现在结果里。
-  bool matches(String query) {
-    final tokens = query
-        .trim()
-        .toLowerCase()
-        .split(RegExp(r'\s+'))
-        .where((t) => t.isNotEmpty);
-    if (tokens.isEmpty) return true;
-    final zh = title(AppStrings.zh).toLowerCase();
-    final en = title(AppStrings.en).toLowerCase();
-    return tokens.every((t) => zh.contains(t) || en.contains(t));
-  }
 }
 
 // ═══════════════════════════════════════════
@@ -396,6 +394,74 @@ class _SettingsPageState extends State<SettingsPage> {
   final TextEditingController _searchCtrl = TextEditingController();
   final FocusNode _searchFocus = FocusNode();
   String _query = '';
+  String _parsedQuery = '';
+  SettingsSearch _search = SettingsSearch('');
+
+  SettingsSearch get _searchQuery {
+    if (_parsedQuery != _query) {
+      _parsedQuery = _query;
+      _search = SettingsSearch(_query);
+    }
+    return _search;
+  }
+
+  List<(_SectionDef, List<_CardDef>)> _searchGroups(
+    SettingsSearch query,
+    AppStrings strings,
+  ) {
+    if (query.isEmpty) {
+      return const [];
+    }
+    final alternate = strings.isZh ? AppStrings.en : AppStrings.zh;
+    final groups = <(_SectionDef, List<_CardDef>, int)>[];
+    for (final section in _sections) {
+      final hits = <(_CardDef, int)>[];
+      for (final card in section.cards) {
+        final score = query.score(
+          title: card.title(strings),
+          alternateTitle: card.title(alternate),
+          keywords: card.keywords,
+          section: section.title(strings),
+          alternateSection: section.title(alternate),
+        );
+        if (score > 0) {
+          hits.add((card, score));
+        }
+      }
+      if (hits.isEmpty) {
+        continue;
+      }
+      hits.sort((a, b) {
+        final byScore = b.$2.compareTo(a.$2);
+        return byScore != 0 ? byScore : a.$1.id.compareTo(b.$1.id);
+      });
+      groups.add((section, [for (final hit in hits) hit.$1], hits.first.$2));
+    }
+    groups.sort((a, b) {
+      final byScore = b.$3.compareTo(a.$3);
+      return byScore != 0
+          ? byScore
+          : _sections.indexOf(a.$1).compareTo(_sections.indexOf(b.$1));
+    });
+    return [for (final (section, cards, _) in groups) (section, cards)];
+  }
+
+  List<String> _matchingLabels(
+    _SectionDef section,
+    _CardDef card,
+    AppStrings strings,
+  ) {
+    final alternate = strings.isZh ? AppStrings.en : AppStrings.zh;
+    return _searchQuery.evidence(
+      title: card.title(strings),
+      section: section.title(strings),
+      candidates: [
+        card.title(alternate),
+        ...card.keywords,
+        section.title(alternate),
+      ],
+    );
+  }
 
   /// 移动端搜索是否展开（内联展开在顶栏下方，而非弹出对话框）。
   bool _searchExpanded = false;
@@ -483,9 +549,16 @@ class _SettingsPageState extends State<SettingsPage> {
     _CardDef c,
     ColorScheme scheme,
     AppStrings s,
-    BuildContext ctx,
   ) {
-    final AppStrings ls = AppStrings.of(ctx.read<AppState>().config.language);
+    final sectionTitle = sec.title(s);
+    final cardTitle = c.title(s);
+    final matchingKeywords = _matchingLabels(sec, c, s);
+    final search = _searchQuery;
+    final titleStyle = TextStyle(
+      fontSize: 11,
+      fontWeight: FontWeight.w600,
+      color: scheme.onSurfaceVariant,
+    );
     return Padding(
       padding: const EdgeInsets.fromLTRB(2, 0, 2, 4),
       child: Row(
@@ -493,15 +566,59 @@ class _SettingsPageState extends State<SettingsPage> {
           Icon(sec.icon, size: 13, color: scheme.primary),
           const SizedBox(width: 6),
           Expanded(
-            child: Text(
-              '${sec.title(ls)} · ${c.title(ls)}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: scheme.onSurfaceVariant,
-              ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: _highlightedSearchText(
+                        sectionTitle,
+                        search,
+                        titleStyle,
+                        scheme.primary,
+                      ),
+                    ),
+                    Text(' · ', style: titleStyle),
+                    Flexible(
+                      child: _highlightedSearchText(
+                        cardTitle,
+                        search,
+                        titleStyle,
+                        scheme.primary,
+                        key: ValueKey('settings-search-result-${c.id}'),
+                      ),
+                    ),
+                  ],
+                ),
+                if (matchingKeywords.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text.rich(
+                      TextSpan(
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                        children: [
+                          for (var i = 0; i < matchingKeywords.length; i++) ...[
+                            if (i > 0) const TextSpan(text: ' · '),
+                            _searchLabelSpan(
+                              matchingKeywords[i],
+                              search,
+                              const TextStyle(),
+                              scheme.primary,
+                            ),
+                          ],
+                        ],
+                      ),
+                      key: ValueKey('settings-search-evidence-${c.id}'),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
             ),
           ),
           TextButton.icon(
@@ -1225,29 +1342,16 @@ class _SettingsPageState extends State<SettingsPage> {
         final state = context.read<AppState>();
         final s = AppStrings.of(state.config.language);
         final scheme = Theme.of(context).colorScheme;
+        final query = _searchQuery;
+        final searching = !query.isEmpty;
+        final hitsBySection = _searchGroups(query, s);
         if (isMobilePlatform) {
           // ═══════════════════════════════════════
           // 移动端独立设置界面
           // ═══════════════════════════════════════
-          final query = _query.trim().toLowerCase();
-          final searching = query.isNotEmpty;
-          final visible = <(_SectionDef, List<_CardDef>)>[];
-          for (final sec in _sections) {
-            final sectionHit = sec.matches(query);
-            final hits = sec.cards
-                .where((c) => sectionHit || c.matches(query))
-                .toList();
-            if (query.isNotEmpty) {
-              hits.sort((a, b) {
-                final byScore = b
-                    .matchScore(query)
-                    .compareTo(a.matchScore(query));
-                if (byScore != 0) return byScore;
-                return a.id.compareTo(b.id);
-              });
-            }
-            if (hits.isNotEmpty) visible.add((sec, hits));
-          }
+          final visible = searching
+              ? hitsBySection
+              : [for (final section in _sections) (section, section.cards)];
 
           return Scaffold(
             backgroundColor: Colors.transparent,
@@ -1286,6 +1390,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           state,
                           scheme,
                           s,
+                          query: query,
                         ),
                       const SizedBox(height: 16),
                     ],
@@ -1305,26 +1410,6 @@ class _SettingsPageState extends State<SettingsPage> {
         // ═══════════════════════════════════════
         // 桌面端设置界面：左侧主菜单（分区导航）+ 右侧子选项面板
         // ═══════════════════════════════════════
-        final query = _query.trim().toLowerCase();
-        final searching = query.isNotEmpty;
-
-        // 搜索时跨分区收集命中卡片（右侧分组展示）；未搜索时只看选中分区
-        final hitsBySection = <(_SectionDef, List<_CardDef>)>[];
-        if (searching) {
-          for (final sec in _sections) {
-            final sectionHit = sec.matches(query);
-            final hits =
-                sec.cards.where((c) => sectionHit || c.matches(query)).toList()
-                  ..sort((a, b) {
-                    final byScore = b
-                        .matchScore(query)
-                        .compareTo(a.matchScore(query));
-                    if (byScore != 0) return byScore;
-                    return a.id.compareTo(b.id);
-                  });
-            if (hits.isNotEmpty) hitsBySection.add((sec, hits));
-          }
-        }
         // 选中分区兜底（分区增删后不悬空）
         if (_sections.indexWhere((sec) => sec.id == _selectedSection) < 0) {
           _selectedSection = _sections.first.id;
@@ -1778,16 +1863,17 @@ class _SettingsPageState extends State<SettingsPage> {
                     children: [
                       Icon(sec.icon, size: 14, color: scheme.primary),
                       const SizedBox(width: 7),
-                      Text(
+                      _highlightedSearchText(
                         sec.title(
                           AppStrings.of(ctx.read<AppState>().config.language),
                         ),
-                        style: TextStyle(
+                        _searchQuery,
+                        const TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
                           letterSpacing: 0.9,
-                          color: scheme.primary,
                         ),
+                        scheme.primary,
                       ),
                       const SizedBox(width: 8),
                       Text(
@@ -1822,7 +1908,6 @@ class _SettingsPageState extends State<SettingsPage> {
                             c,
                             scheme,
                             AppStrings.of(state.config.language),
-                            ctx,
                           ),
                           _highlightWrap(
                             c.id,
@@ -1844,9 +1929,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   // ── 移动端专用 ──
 
-  /// 移动端顶栏：统一走 [MobilePillTopBar]（主界面基准的唯一实现）——
-  /// 左标题药丸 + 右搜索按钮药丸；搜索时标题层淡出缩放，同一颗搜索药丸
-  /// 从 44px「变长」到 200px 并水平居中，关闭即收起并清空。
+  /// 搜索圆钮向左展开至居中，标题药丸同步淡出。
   Widget _buildMobileTopBar(AppStrings s, ColorScheme scheme) {
     return MobilePillTopBar(
       title: Text(s.settingsTitle),
@@ -1855,12 +1938,7 @@ class _SettingsPageState extends State<SettingsPage> {
           icon: Icons.search,
           tooltip: s.setSearchHint,
           color: scheme.onSurface,
-          onTap: () {
-            setState(() => _searchExpanded = true);
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) _searchFocus.requestFocus();
-            });
-          },
+          onTap: () => setState(() => _searchExpanded = true),
         ),
       ],
       // 主界面不折叠（用户要求「主界面不要搞...了」）。本页常驻操作只有「搜索」
@@ -1874,13 +1952,46 @@ class _SettingsPageState extends State<SettingsPage> {
         hint: s.setSearchHint,
         onChanged: (v) => setState(() => _query = v),
         onClose: () {
+          _searchCtrl.clear();
           setState(() {
             _searchExpanded = false;
-            _searchCtrl.clear();
             _query = '';
           });
-          _searchFocus.unfocus();
         },
+      ),
+    );
+  }
+
+  Widget _searchMatchBadges(
+    String cardId,
+    List<String> keywords,
+    SettingsSearch query,
+    ColorScheme scheme,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(56, 0, 16, 6),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 4,
+        children: [
+          for (final keyword in keywords)
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: scheme.primary.withAlpha(22),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                child: _highlightedSearchText(
+                  keyword,
+                  query,
+                  TextStyle(fontSize: 10, color: scheme.onSurfaceVariant),
+                  scheme.primary,
+                  key: ValueKey('settings-match-$cardId-$keyword'),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -1900,8 +2011,9 @@ class _SettingsPageState extends State<SettingsPage> {
     BuildContext context,
     AppState state,
     ColorScheme scheme,
-    AppStrings s,
-  ) {
+    AppStrings s, {
+    required SettingsSearch query,
+  }) {
     if (cards.isEmpty) return const SizedBox.shrink();
 
     // 一个分区 = 一张卡：条目之间用细分隔线区分。
@@ -1911,13 +2023,22 @@ class _SettingsPageState extends State<SettingsPage> {
     // 于是回到分区级卡片 —— 视觉上更整、滚动距离更短，靠分隔线仍能分清单项。
     final rows = <Widget>[];
     for (var i = 0; i < cards.length; i++) {
-      // 全局搜索跳转过来时高亮命中的设置行（见 _highlightWrap）
+      final card = cards[i];
+      final matchingKeywords = _matchingLabels(sec, card, s);
+      final row = _buildMobileRow(card, context, state, scheme, s);
       rows.add(
         KeyedSubtree(
-          key: _cardKey(cards[i].id),
+          key: _cardKey(card.id),
           child: _highlightWrap(
-            cards[i].id,
-            _buildMobileRow(cards[i], context, state, scheme, s),
+            card.id,
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                row,
+                if (matchingKeywords.isNotEmpty)
+                  _searchMatchBadges(card.id, matchingKeywords, query, scheme),
+              ],
+            ),
           ),
         ),
       );
@@ -1939,11 +2060,13 @@ class _SettingsPageState extends State<SettingsPage> {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
-          child: Text(
+          child: _highlightedSearchText(
             sec.title(s),
-            style: SettingsTypography.sectionTitle.copyWith(
+            query,
+            SettingsTypography.sectionTitle.copyWith(
               color: scheme.onSurfaceVariant,
             ),
+            scheme.primary,
           ),
         ),
         Padding(
@@ -1967,6 +2090,12 @@ class _SettingsPageState extends State<SettingsPage> {
     AppStrings s,
   ) {
     final title = c.title(s);
+    final highlightedTitle = _highlightedSearchText(
+      title,
+      _searchQuery,
+      TextStyle(fontSize: 14, color: scheme.onSurface),
+      scheme.primary,
+    );
 
     // 纯开关：直接在一级菜单右侧放 Switch
     if (c.id == 'predictiveBack') {
@@ -1975,10 +2104,7 @@ class _SettingsPageState extends State<SettingsPage> {
         value: cfg.predictiveBack,
         onChanged: (v) => state.updateConfig((cc) => cc..predictiveBack = v),
         secondary: _miIcon(scheme, c.icon),
-        title: Text(
-          title,
-          style: TextStyle(fontSize: 14, color: scheme.onSurface),
-        ),
+        title: highlightedTitle,
         subtitle: Text(
           s.predictiveBackHint,
           style: SettingsTypography.description.copyWith(
@@ -1991,16 +2117,13 @@ class _SettingsPageState extends State<SettingsPage> {
 
     // 语言：一级菜单右侧放紧凑的中/EN 分段切换
     if (c.id == 'language') {
-      return _mobileLanguageRow(state, scheme, c.icon);
+      return _mobileLanguageRow(state, scheme, c.icon, highlightedTitle);
     }
 
     // 命令 / 日志：直接进入对应页面（它们的「内容」本身就是入口，不套二级页）
     return ListTile(
       leading: _miIcon(scheme, c.icon),
-      title: Text(
-        title,
-        style: TextStyle(fontSize: 14, color: scheme.onSurface),
-      ),
+      title: highlightedTitle,
       trailing: Icon(Icons.chevron_right, size: 20, color: scheme.outline),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       onTap: () {
@@ -2033,14 +2156,16 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   /// 语言行：左边「语言」标题，右边中文 / EN 紧凑分段切换。
-  Widget _mobileLanguageRow(AppState state, ColorScheme scheme, IconData icon) {
+  Widget _mobileLanguageRow(
+    AppState state,
+    ColorScheme scheme,
+    IconData icon,
+    Widget title,
+  ) {
     final cfg = state.config;
     return ListTile(
       leading: _miIcon(scheme, icon),
-      title: Text(
-        AppStrings.of(cfg.language).language,
-        style: TextStyle(fontSize: 14, color: scheme.onSurface),
-      ),
+      title: title,
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       // 统一「菜单栏选项」控件：行内分段药丸（选中主题色药丸 + 图标淡入动画）
       //
@@ -6630,6 +6755,8 @@ Future<void> _clearCache(
   final scope = await showDialog<_CacheScope>(
     context: ctx,
     builder: (dCtx) => AlertDialog(
+      scrollable: true,
+      icon: Icon(Icons.cleaning_services_outlined, color: scheme.primary),
       title: Text(
         s.isZh ? '清除缓存' : 'Clear Cache',
         style: TextStyle(color: scheme.onSurface),
@@ -6850,11 +6977,11 @@ void _showUpdateDialog(
   showDialog(
     context: ctx,
     builder: (dCtx) => AlertDialog(
+      scrollable: true,
       icon: Icon(Icons.system_update, color: scheme.primary, size: 32),
       title: Text(s.updateAvailable, style: TextStyle(color: scheme.onSurface)),
       content: SizedBox(
-        // 窄屏（手机）下固定 420 宽会溢出：移动端撑满对话框宽度
-        width: isMobilePlatform ? double.maxFinite : 420,
+        width: 420,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -7390,7 +7517,10 @@ class _FfmpegCardState extends State<_FfmpegCard> {
             ),
             FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              style: FilledButton.styleFrom(backgroundColor: s.error),
+              style: FilledButton.styleFrom(
+                backgroundColor: s.error,
+                foregroundColor: s.onError,
+              ),
               child: Text(isZh ? '删除' : 'Delete'),
             ),
           ],

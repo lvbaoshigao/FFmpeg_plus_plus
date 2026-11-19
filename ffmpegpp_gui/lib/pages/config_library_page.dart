@@ -985,34 +985,35 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     final entry = _configs[index];
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text(zh ? '确认删除' : 'Confirm Delete'),
-        content: Text(
-          zh ? '确定要删除「${entry.name}」吗？' : 'Delete "${entry.name}"?',
-          style: TextStyle(
-            fontSize: 13,
-            color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+      builder: (ctx) {
+        final colors = Theme.of(ctx).colorScheme;
+        return AlertDialog(
+          scrollable: true,
+          icon: Icon(Icons.delete_outline, color: colors.error),
+          title: Text(zh ? '确认删除' : 'Confirm Delete'),
+          content: Text(
+            zh ? '确定要删除「${entry.name}」吗？' : 'Delete "${entry.name}"?',
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(zh ? '取消' : 'Cancel'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(ctx).colorScheme.error,
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(zh ? '取消' : 'Cancel'),
             ),
-            onPressed: () {
-              Navigator.pop(ctx);
-              setState(() => _configs.removeAt(index));
-              _saveLibrary();
-            },
-            child: Text(zh ? '删除' : 'Delete'),
-          ),
-        ],
-      ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: colors.error,
+                foregroundColor: colors.onError,
+              ),
+              onPressed: () {
+                Navigator.pop(ctx);
+                setState(() => _configs.removeAt(index));
+                _saveLibrary();
+              },
+              child: Text(zh ? '删除' : 'Delete'),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -1173,30 +1174,31 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     final zh = AppStrings.of(context.read<AppState>().config.language).isZh;
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text(zh ? '确认删除' : 'Confirm Delete'),
-        content: Text(
-          zh ? '确定要删除「${cfg.name}」吗？' : 'Delete "${cfg.name}"?',
-          style: TextStyle(
-            fontSize: 13,
-            color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+      builder: (ctx) {
+        final colors = Theme.of(ctx).colorScheme;
+        return AlertDialog(
+          scrollable: true,
+          icon: Icon(Icons.delete_outline, color: colors.error),
+          title: Text(zh ? '确认删除' : 'Confirm Delete'),
+          content: Text(
+            zh ? '确定要删除「${cfg.name}」吗？' : 'Delete "${cfg.name}"?',
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(zh ? '取消' : 'Cancel'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(ctx).colorScheme.error,
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(zh ? '取消' : 'Cancel'),
             ),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(zh ? '删除' : 'Delete'),
-          ),
-        ],
-      ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: colors.error,
+                foregroundColor: colors.onError,
+              ),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(zh ? '删除' : 'Delete'),
+            ),
+          ],
+        );
+      },
     );
     if (confirmed != true) return;
     try {

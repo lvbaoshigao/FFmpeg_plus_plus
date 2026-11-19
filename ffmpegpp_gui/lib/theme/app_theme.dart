@@ -130,6 +130,12 @@ class AppTheme {
         ? tt.apply(fontFamily: fontFamily, fontFamilyFallback: fallback)
         : tt.apply(fontFamilyFallback: fallback);
 
+    // Modal content stays legible over wallpaper without adding a blur layer.
+    final modalSurface = glassEffect == 'none'
+        ? scheme.surfaceContainerHigh
+        : scheme.surfaceContainerHigh.withAlpha(isDark ? 245 : 247);
+    const modalRadius = Radius.circular(22);
+
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
@@ -218,7 +224,7 @@ class AppTheme {
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: scheme.surfaceContainerHighest.withAlpha(80),
-        hintStyle: TextStyle(color: scheme.outline, fontSize: 13),
+        hintStyle: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13),
         labelStyle: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13),
         floatingLabelStyle: TextStyle(
           color: scheme.primary,
@@ -237,11 +243,15 @@ class AppTheme {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: scheme.primary, width: 1.5),
+          borderSide: BorderSide(color: scheme.primary, width: 2),
         ),
         errorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
           borderSide: BorderSide(color: scheme.error, width: 1),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: scheme.error, width: 2),
         ),
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 12,
@@ -358,24 +368,38 @@ class AppTheme {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         elevation: 10,
       ),
-      // 所有对话框统一风格：
-      // - 液态玻璃 / 模糊：半透明磨砂背景（透出后面玻璃层）+ 细边框 + 无 M3 tint；
-      // - none（透明）：恢复高不透明实心背景，避免文字透底难读。
+      // Shared modal surfaces follow the app's rounded panels. Theme-only
+      // styling preserves route focus, semantics, motion, and per-dialog sizing.
       dialogTheme: DialogThemeData(
-        backgroundColor: glassEffect == 'none'
-            ? scheme.surfaceContainerHigh
-            : scheme.surfaceContainerHigh.withAlpha(isDark ? 0xE4 : 0xDC),
+        backgroundColor: modalSurface,
         surfaceTintColor: Colors.transparent,
-        elevation: 6,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(22),
-          side: BorderSide(
-            color: glassEffect == 'none'
-                ? Colors.transparent
-                : scheme.outlineVariant.withAlpha(isDark ? 70 : 90),
-            width: 0.6,
-          ),
+        shadowColor: Colors.black.withAlpha(isDark ? 90 : 35),
+        elevation: 8,
+        // Transparent dialog wrappers let their own panel draw the edge.
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.all(modalRadius),
         ),
+        titleTextStyle: appliedTt.titleMedium?.copyWith(
+          fontSize: 18,
+          fontWeight: w.value < FontWeight.w600.value ? FontWeight.w600 : w,
+        ),
+        contentTextStyle: appliedTt.bodyMedium?.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+        // A 320dp viewport still has room for the standard 280dp dialog.
+        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      ),
+      bottomSheetTheme: BottomSheetThemeData(
+        // Modal sheets inherit this color so MobileVisualTheme can replace it.
+        backgroundColor: modalSurface,
+        surfaceTintColor: Colors.transparent,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: modalRadius),
+        ),
+        // Keep handle visibility opt-in; custom sheets already draw their own.
+        dragHandleColor: scheme.onSurfaceVariant,
+        dragHandleSize: const Size(36, 4),
       ),
       // 语义色（成功/警告/危险/信息/中性）：见 theme/app_semantic_colors.dart。
       // 注入到主题层后，所有 `scheme.sem.xxx` 与

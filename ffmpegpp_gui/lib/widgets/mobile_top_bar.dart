@@ -215,17 +215,29 @@ class _MobilePillBarLayoutState extends State<MobilePillBarLayout>
         ),
       ]);
 
-  /// 操作药丸：44 高、左右内边距 6，内容用 FittedBox 兜底
-  /// （极端窄屏等比缩小，而不是横向溢出）。
-  Widget _actionsPill(List<Widget> actions) => MobileGlassPill(
+  /// 单图标操作保持 44 × 44 正圆；多操作沿用横向药丸。
+  /// FittedBox 只在空间不足时缩小内容，不改变外壳比例。
+  Widget _actionsPill(List<Widget> actions) {
+    final circular =
+        actions.length == 1 &&
+        (actions.single is MobileGlassPillAction ||
+            actions.single is PopupMenuButton);
+    return SizedBox(
+      width: circular ? MobileUi.pillHeight : null,
+      height: circular ? MobileUi.pillHeight : null,
+      child: MobileGlassPill(
         radius: MobileUi.pillRadius,
         height: MobileUi.pillHeight,
-        padding: const EdgeInsets.symmetric(horizontal: MobileUi.actionsPillPadH),
+        padding: circular
+            ? EdgeInsets.zero
+            : const EdgeInsets.symmetric(horizontal: MobileUi.actionsPillPadH),
         child: FittedBox(
           fit: BoxFit.scaleDown,
           child: Row(mainAxisSize: MainAxisSize.min, children: actions),
         ),
-      );
+      ),
+    );
+  }
 
   /// 真实可用宽度是否容不下全部操作（= 是否要把操作收进「…」）。
   ///
