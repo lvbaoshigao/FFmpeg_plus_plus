@@ -7,6 +7,7 @@ import '../theme/app_neutral_surface.dart';
 import '../theme/app_strings.dart';
 import 'app_card.dart' show SurfaceStyle;
 import 'liquid_glass_fallback.dart';
+import 'tabler_icon.dart';
 
 // ═══════════════════════════════════════════════════════════════
 // 侧边导轨（MobileNavRail）与子页面玻璃切换栏（MobileNavStyleTabBar）
@@ -513,15 +514,11 @@ class _MobileNavRailState extends State<MobileNavRail> {
     final look = navGlassLook(scheme, isDark, pal);
     final style = look.style;
 
-    final items = <(IconData, IconData, String)>[
-      (Icons.movie_outlined, Icons.movie, s.navProjects),
-      (Icons.list_alt_outlined, Icons.list_alt, s.navQueue),
-      (
-        Icons.folder_copy_outlined,
-        Icons.folder_copy,
-        lang == 'zh' ? '配置库' : 'Configs',
-      ),
-      (Icons.settings_outlined, Icons.settings, s.navSettings),
+    final items = <(TablerGlyph, String)>[
+      (TablerGlyph.movie, s.navProjects),
+      (TablerGlyph.listDetails, s.navQueue),
+      (TablerGlyph.folders, lang == 'zh' ? '配置库' : 'Configs'),
+      (TablerGlyph.settings, s.navSettings),
     ];
 
     // 页面索引映射：0=项目, 1=队列, 3=配置库, 4=设置
@@ -653,9 +650,8 @@ class _MobileNavRailState extends State<MobileNavRail> {
                       SizedBox(
                         height: itemExtent,
                         child: _NavItem(
-                          icon: items[i].$1,
-                          activeIcon: items[i].$2,
-                          label: items[i].$3,
+                          glyph: items[i].$1,
+                          label: items[i].$2,
                           selected: i == itemIdx,
                           selectedColor: selectedColor,
                           unselectedColor: unselectedColor,
@@ -797,9 +793,8 @@ class _MobileNavRailState extends State<MobileNavRail> {
                           SizedBox(
                             width: itemW,
                             child: _NavItem(
-                              icon: items[i].$1,
-                              activeIcon: items[i].$2,
-                              label: items[i].$3,
+                              glyph: items[i].$1,
+                              label: items[i].$2,
                               selected: i == itemIdx,
                               selectedColor: selectedColor,
                               unselectedColor: unselectedColor,
@@ -1080,8 +1075,7 @@ class _MobileNavRailState extends State<MobileNavRail> {
 }
 
 class _NavItem extends StatelessWidget {
-  final IconData icon;
-  final IconData activeIcon;
+  final TablerGlyph glyph;
   final String label;
   final bool selected;
   final Color selectedColor;
@@ -1095,8 +1089,7 @@ class _NavItem extends StatelessWidget {
   final double maxWidth;
 
   const _NavItem({
-    required this.icon,
-    required this.activeIcon,
+    required this.glyph,
     required this.label,
     required this.selected,
     required this.selectedColor,
@@ -1133,11 +1126,8 @@ class _NavItem extends StatelessWidget {
               TweenAnimationBuilder<Color?>(
                 tween: ColorTween(end: color),
                 duration: const Duration(milliseconds: 220),
-                builder: (ctx, c, child) => Icon(
-                  selected ? activeIcon : icon,
-                  size: 27,
-                  color: c,
-                ),
+                builder: (ctx, c, child) =>
+                    TablerIcon(glyph, size: 27, color: c),
               ),
               const SizedBox(height: 1),
               TweenAnimationBuilder<Color?>(

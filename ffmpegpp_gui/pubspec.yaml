@@ -74,3 +74,5 @@ flutter:
     - rele/zfb.jpg
     - rele/logic_gates/
     - assets/brand_icons/
+    - assets/tabler_icons/outline/
+    - assets/tabler_icons/LICENSE

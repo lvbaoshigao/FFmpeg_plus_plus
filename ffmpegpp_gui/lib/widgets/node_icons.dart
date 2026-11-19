@@ -1,115 +1,61 @@
 import 'package:flutter/material.dart';
 
 import '../models/models.dart';
+import 'tabler_icon.dart';
 
-/// 节点类型的图标与配色。
+/// 节点类型对应的 Tabler 图标。
 ///
-/// 从 `pipeline_editor_page.dart` 抽出来的原因：独立面板窗口是**另一个
-/// Flutter 引擎**，没法调用页面 State 上的私有方法；而图标又不能用
-/// `IconData(codePoint)` 动态构造 —— 那会让 release 构建的
-/// `--tree-shake-icons` 直接报错（"non-constant instances of IconData"）。
-/// 所以这里放一份**纯函数**，页面与独立窗口共用同一份图标表。
-///
-/// 行为与原页面内的 `_stepIcon` / `_nodeColor` 完全一致。
-IconData stepIconFor(PipelineStepType t) {
-  switch (t) {
-    case PipelineStepType.start:
-      return Icons.movie_outlined;
-    case PipelineStepType.avProcess:
-      return Icons.tune_outlined;
-    case PipelineStepType.subtitle:
-      return Icons.subtitles_outlined;
-    case PipelineStepType.clip:
-      return Icons.content_cut;
-    case PipelineStepType.frame:
-      return Icons.photo_camera_outlined;
-    case PipelineStepType.speed:
-      return Icons.speed;
-    case PipelineStepType.imageConvert:
-      return Icons.image;
-    case PipelineStepType.audioConvert:
-      return Icons.audiotrack;
-    case PipelineStepType.audioQuality:
-      return Icons.equalizer;
-    case PipelineStepType.audioSpeed:
-      return Icons.speed;
-    case PipelineStepType.audioVolume:
-      return Icons.volume_up;
-    case PipelineStepType.audioCompressor:
-      return Icons.compress;
-    case PipelineStepType.audioMetadata:
-      return Icons.library_music;
-    case PipelineStepType.extractAudio:
-      return Icons.music_note;
-    case PipelineStepType.concatMedia:
-      return Icons.merge_type;
-    case PipelineStepType.imageToVideo:
-      return Icons.movie_creation;
-    case PipelineStepType.imageCrop:
-      return Icons.crop;
-    case PipelineStepType.imageRotate:
-      return Icons.rotate_right;
-    case PipelineStepType.imageScale:
-      return Icons.photo_size_select_large;
-    case PipelineStepType.imageBrightness:
-      return Icons.brightness_6;
-    case PipelineStepType.imageNoise:
-      return Icons.grain;
-    case PipelineStepType.imageSharpen:
-      return Icons.deblur;
-    case PipelineStepType.imageDenoise:
-      return Icons.blur_on;
-    case PipelineStepType.imageChannelExtract:
-      return Icons.color_lens_outlined;
-    case PipelineStepType.videoCrop:
-      return Icons.crop_free;
-    case PipelineStepType.videoFilter:
-      return Icons.auto_fix_high;
-    case PipelineStepType.videoGeometry:
-      return Icons.aspect_ratio;
-    case PipelineStepType.videoOverlay:
-      return Icons.layers_outlined;
-    case PipelineStepType.audioFade:
-      return Icons.gradient;
-    case PipelineStepType.imageAdjust:
-      return Icons.tune;
-    // ── 通用节点（跨格式；具体媒体类型由属性选择）──
-    case PipelineStepType.mediaConvert:
-      return Icons.swap_horiz;
-    case PipelineStepType.mediaScale:
-      return Icons.photo_size_select_large;
-    case PipelineStepType.mediaCrop:
-      return Icons.crop;
-    case PipelineStepType.mediaRotate:
-      return Icons.rotate_right;
-    case PipelineStepType.mediaColor:
-      return Icons.tune;
-    case PipelineStepType.mediaSharpen:
-      return Icons.deblur;
-    case PipelineStepType.mediaOverlay:
-      return Icons.layers_outlined;
-    case PipelineStepType.output:
-      return Icons.save_alt_outlined;
-    case PipelineStepType.imageCompress:
-      return Icons.compress;
-    case PipelineStepType.audioNormalize:
-      return Icons.graphic_eq;
-    case PipelineStepType.audioNoiseGate:
-      return Icons.noise_aware;
-    case PipelineStepType.videoFrameRate:
-      return Icons.slow_motion_video;
-    case PipelineStepType.metadataStrip:
-      return Icons.cleaning_services_outlined;
-    case PipelineStepType.audioDenoise:
-      return Icons.auto_fix_high;
-    case PipelineStepType.audioSilenceTrim:
-      return Icons.volume_mute;
-    case PipelineStepType.videoDeinterlace:
-      return Icons.blur_linear;
-    case PipelineStepType.unknown:
-      return Icons.help_outline;
-  }
-}
+/// 主编辑器与独立面板窗口共享此映射；新增节点时须补齐穷尽分支。
+/// SVG 资源统一由 [TablerIcon] 加载。
+TablerGlyph stepIconFor(PipelineStepType type) => switch (type) {
+  PipelineStepType.start => TablerGlyph.movie,
+  PipelineStepType.avProcess => TablerGlyph.adjustmentsHorizontal,
+  PipelineStepType.subtitle => TablerGlyph.subtitles,
+  PipelineStepType.clip => TablerGlyph.scissors,
+  PipelineStepType.frame => TablerGlyph.camera,
+  PipelineStepType.speed => TablerGlyph.gauge,
+  PipelineStepType.imageConvert => TablerGlyph.photoCog,
+  PipelineStepType.audioConvert => TablerGlyph.fileMusic,
+  PipelineStepType.audioQuality => TablerGlyph.equalizer,
+  PipelineStepType.audioSpeed => TablerGlyph.gauge,
+  PipelineStepType.audioVolume => TablerGlyph.volume,
+  PipelineStepType.audioCompressor => TablerGlyph.waveSine,
+  PipelineStepType.audioMetadata => TablerGlyph.tag,
+  PipelineStepType.extractAudio => TablerGlyph.music,
+  PipelineStepType.concatMedia => TablerGlyph.arrowsJoin,
+  PipelineStepType.imageToVideo => TablerGlyph.video,
+  PipelineStepType.imageCrop => TablerGlyph.crop,
+  PipelineStepType.imageRotate => TablerGlyph.rotateClockwise,
+  PipelineStepType.imageScale => TablerGlyph.resize,
+  PipelineStepType.imageBrightness => TablerGlyph.brightness,
+  PipelineStepType.imageNoise => TablerGlyph.grain,
+  PipelineStepType.imageSharpen => TablerGlyph.focus2,
+  PipelineStepType.imageDenoise => TablerGlyph.sparkles,
+  PipelineStepType.imageChannelExtract => TablerGlyph.palette,
+  PipelineStepType.videoCrop => TablerGlyph.crop,
+  PipelineStepType.videoFilter => TablerGlyph.wand,
+  PipelineStepType.videoGeometry => TablerGlyph.aspectRatio,
+  PipelineStepType.videoOverlay => TablerGlyph.layersIntersect,
+  PipelineStepType.audioFade => TablerGlyph.chartLine,
+  PipelineStepType.imageAdjust => TablerGlyph.adjustmentsHorizontal,
+  PipelineStepType.mediaConvert => TablerGlyph.switchHorizontal,
+  PipelineStepType.mediaScale => TablerGlyph.resize,
+  PipelineStepType.mediaCrop => TablerGlyph.crop,
+  PipelineStepType.mediaRotate => TablerGlyph.rotateClockwise,
+  PipelineStepType.mediaColor => TablerGlyph.colorFilter,
+  PipelineStepType.mediaSharpen => TablerGlyph.focus2,
+  PipelineStepType.mediaOverlay => TablerGlyph.layersIntersect,
+  PipelineStepType.output => TablerGlyph.fileExport,
+  PipelineStepType.imageCompress => TablerGlyph.arrowsMinimize,
+  PipelineStepType.audioNormalize => TablerGlyph.equalizer,
+  PipelineStepType.audioNoiseGate => TablerGlyph.waveSquare,
+  PipelineStepType.videoFrameRate => TablerGlyph.clockPlay,
+  PipelineStepType.metadataStrip => TablerGlyph.eraser,
+  PipelineStepType.audioDenoise => TablerGlyph.sparkles,
+  PipelineStepType.audioSilenceTrim => TablerGlyph.volume3,
+  PipelineStepType.videoDeinterlace => TablerGlyph.lineHeight,
+  PipelineStepType.unknown => TablerGlyph.helpCircle,
+};
 
 /// 节点强调底色（工具栏芯片 / 节点卡片用）。
 Color nodeAccentColor(PipelineStepType t, ColorScheme scheme,

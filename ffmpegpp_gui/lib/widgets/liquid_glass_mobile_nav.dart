@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import 'mobile_bottom_nav.dart' show NavGlassShell, navGlassPalOf;
+import 'tabler_icon.dart';
 
 // 子页面（配置库等）只 import 本文件即可拿到统一的底栏样式与条目类型，
 // 不必各自直接依赖 liquid_glass_tab_bar。
@@ -88,6 +89,12 @@ class LiquidGlassMobileNav extends StatelessWidget {
     );
     final strings = AppStrings.of(language);
     final index = _pageOrder.indexOf(selectedIndex);
+    final items = <(TablerGlyph, String)>[
+      (TablerGlyph.movie, strings.navProjects),
+      (TablerGlyph.listDetails, strings.navQueue),
+      (TablerGlyph.folders, language == 'zh' ? '配置库' : 'Configs'),
+      (TablerGlyph.settings, strings.navSettings),
+    ];
 
     // 菜单样式跟随设置（设置→外观→菜单样式）：liquid 走 AppLiquidTabBar，
     // theme/gray/blur 由 NavGlassShell 统一渲染（与侧边导轨同一套视觉语义）。
@@ -101,22 +108,8 @@ class LiquidGlassMobileNav extends StatelessWidget {
         currentIndex: index < 0 ? 0 : index,
         onTap: (tabIndex) => onSelected(_pageOrder[tabIndex]),
         items: [
-          LiquidGlassTabItem(
-            icon: const Icon(Icons.movie_outlined),
-            label: strings.navProjects,
-          ),
-          LiquidGlassTabItem(
-            icon: const Icon(Icons.list_alt_outlined),
-            label: strings.navQueue,
-          ),
-          LiquidGlassTabItem(
-            icon: const Icon(Icons.folder_copy_outlined),
-            label: language == 'zh' ? '配置库' : 'Configs',
-          ),
-          LiquidGlassTabItem(
-            icon: const Icon(Icons.settings_outlined),
-            label: strings.navSettings,
-          ),
+          for (final (glyph, label) in items)
+            LiquidGlassTabItem(icon: TablerIcon(glyph), label: label),
         ],
       );
     } else {
@@ -130,18 +123,7 @@ class LiquidGlassMobileNav extends StatelessWidget {
         child: _FlatNavBar(
           selectedIndex: index < 0 ? 0 : index,
           onTap: (tabIndex) => onSelected(_pageOrder[tabIndex]),
-          labels: [
-            strings.navProjects,
-            strings.navQueue,
-            language == 'zh' ? '配置库' : 'Configs',
-            strings.navSettings,
-          ],
-          icons: const [
-            Icons.movie_outlined,
-            Icons.list_alt_outlined,
-            Icons.folder_copy_outlined,
-            Icons.settings_outlined,
-          ],
+          items: items,
         ),
       );
     }
@@ -164,14 +146,12 @@ class _FlatNavBar extends StatelessWidget {
   const _FlatNavBar({
     required this.selectedIndex,
     required this.onTap,
-    required this.labels,
-    required this.icons,
+    required this.items,
   });
 
   final int selectedIndex;
   final ValueChanged<int> onTap;
-  final List<String> labels;
-  final List<IconData> icons;
+  final List<(TablerGlyph, String)> items;
 
   @override
   Widget build(BuildContext context) {
@@ -180,7 +160,7 @@ class _FlatNavBar extends StatelessWidget {
       height: 52,
       child: Row(
         children: [
-          for (var i = 0; i < icons.length; i++)
+          for (var i = 0; i < items.length; i++)
             Expanded(
               child: InkWell(
                 borderRadius: BorderRadius.circular(26),
@@ -188,8 +168,8 @@ class _FlatNavBar extends StatelessWidget {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(
-                      icons[i],
+                    TablerIcon(
+                      items[i].$1,
                       size: 22,
                       color: i == selectedIndex
                           ? scheme.primary
@@ -197,7 +177,7 @@ class _FlatNavBar extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      labels[i],
+                      items[i].$2,
                       style: TextStyle(
                         fontSize: 10,
                         color: i == selectedIndex

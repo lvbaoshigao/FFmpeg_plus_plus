@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import 'glass_panel.dart';
+import 'tabler_icon.dart';
 
 class Sidebar extends StatefulWidget {
   final int selectedIndex;
@@ -60,13 +61,13 @@ class _SidebarState extends State<Sidebar> {
     final clr = scheme.onSurfaceVariant;
 
     final debug = context.select<AppState, bool>((s) => s.config.debugMode);
-    final items = <(IconData, String)>[
-      (Icons.movie_outlined, s.navProjects),
-      (Icons.list_alt_outlined, s.navQueue),
-      (Icons.terminal_outlined, s.navCommand),
-      (Icons.folder_copy_outlined, lang == 'zh' ? '配置库' : 'Configs'),
-      (Icons.settings_outlined, s.navSettings),
-      if (debug) (Icons.terminal, lang == 'zh' ? '日志' : 'Logs'),
+    final items = <(TablerGlyph, String)>[
+      (TablerGlyph.movie, s.navProjects),
+      (TablerGlyph.listDetails, s.navQueue),
+      (TablerGlyph.terminal2, s.navCommand),
+      (TablerGlyph.folders, lang == 'zh' ? '配置库' : 'Configs'),
+      (TablerGlyph.settings, s.navSettings),
+      if (debug) (TablerGlyph.fileText, lang == 'zh' ? '日志' : 'Logs'),
     ];
 
     // 当 debug 模式关闭时，如果当前选中的是 Logs 页面，自动切回设置页面
@@ -261,10 +262,11 @@ class _SidebarState extends State<Sidebar> {
   Widget _navItem(
     ColorScheme scheme,
     Color clr,
-    (IconData, String) item,
+    (TablerGlyph, String) item,
     int i,
   ) {
     final sel = i == widget.selectedIndex;
+    final icon = TablerIcon(item.$1, size: 20, color: sel ? scheme.primary : clr);
     // 选中态只由滑动遮罩表达；图标/文字瞬时变色（无多余动画，避免卡顿与尺寸不一致）
     // 固定宽度内容（图标 + 固定间距 + 文字），所有项图标/文字首字对齐，
     // 整个单元在导航项内水平居中，遮罩固定宽度与其一致。
@@ -293,11 +295,7 @@ class _SidebarState extends State<Sidebar> {
                       ? Row(
                           mainAxisAlignment: MainAxisAlignment.start,
                           children: [
-                            Icon(
-                              item.$1,
-                              size: 20,
-                              color: sel ? scheme.primary : clr,
-                            ),
+                            icon,
                             const SizedBox(width: 12),
                             // Expanded 撑满：文字长短不影响图标起点
                             Expanded(
@@ -319,13 +317,7 @@ class _SidebarState extends State<Sidebar> {
                           ],
                         )
                       // 收起态：仅图标，水平居中
-                      : Center(
-                          child: Icon(
-                            item.$1,
-                            size: 20,
-                            color: sel ? scheme.primary : clr,
-                          ),
-                        ),
+                      : Center(child: icon),
                 ),
               );
               // 收起（无文字）时用 tooltip 补上名称

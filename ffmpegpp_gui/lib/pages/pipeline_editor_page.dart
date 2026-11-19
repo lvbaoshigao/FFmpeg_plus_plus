@@ -95,6 +95,7 @@ import '../widgets/step_editors/video_filter_step_editor.dart';
 import '../widgets/step_editors/video_frame_rate_step_editor.dart';
 import '../widgets/step_editors/video_geometry_step_editor.dart';
 import '../widgets/step_editors/video_overlay_step_editor.dart';
+import '../widgets/tabler_icon.dart';
 import '../widgets/toast.dart';
 import '../widgets/wallpaper_background.dart';
 // 全应用统一的 Linux 自绘窗口修饰（CSD）：编辑器不再自己画 36px 标题栏，
@@ -924,7 +925,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     return idx >= 0 ? _nodes[idx] : null;
   }
 
-  IconData _stepIcon(PipelineStepType t) => stepIconFor(t);
+  TablerGlyph _stepIcon(PipelineStepType t) => stepIconFor(t);
 
   Color _nodeColor(
     PipelineStepType t,
@@ -3031,7 +3032,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
               color: _nodeColor(t, scheme),
               borderRadius: BorderRadius.circular(5),
             ),
-            child: Icon(_stepIcon(t), size: 13, color: scheme.onSurface),
+            child: TablerIcon(
+              _stepIcon(t),
+              size: 13,
+              color: scheme.onSurface,
+            ),
           ),
           const SizedBox(width: 8),
           Flexible(
@@ -7788,7 +7793,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                           children: [
                             Row(
                               children: [
-                                Icon(
+                                TablerIcon(
                                   _stepIcon(node.type),
                                   size: 17,
                                   color: selected
@@ -8559,7 +8564,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                       children: [
                         _buildCollapsibleHeader(
                           scheme: scheme,
-                          icon: Icons.widgets_outlined,
+                          icon: const Icon(Icons.widgets_outlined),
                           title: s.isZh ? '元素' : 'Elements',
                           expanded: _toolboxExpanded,
                           onToggle: () => setState(
@@ -8684,12 +8689,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                         _buildCollapsibleHeader(
                           scheme: scheme,
                           icon: logicBlock != null
-                              ? (_logicTypeIcon(logicBlock.type))
+                              ? Icon(_logicTypeIcon(logicBlock.type))
                               : node != null
-                              ? _stepIcon(node.type)
+                              ? TablerIcon(_stepIcon(node.type))
                               : (showPreview
-                                    ? _stepIcon(previewType)
-                                    : Icons.tune_outlined),
+                                    ? TablerIcon(_stepIcon(previewType))
+                                    : const Icon(Icons.tune_outlined)),
                           title: logicBlock != null
                               ? logicBlock.label(s.isZh)
                               : node != null
@@ -8859,7 +8864,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   Widget _buildCollapsibleHeader({
     required ColorScheme scheme,
-    required IconData icon,
+    required Widget icon,
     required String title,
     required bool expanded,
     required VoidCallback onToggle,
@@ -8871,7 +8876,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Row(
           children: [
-            Icon(icon, size: 15, color: scheme.primary),
+            IconTheme.merge(
+              data: IconThemeData(size: 15, color: scheme.primary),
+              child: icon,
+            ),
             const SizedBox(width: 6),
             Expanded(
               child: Text(
@@ -9191,7 +9199,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         ? _toolboxListRow(
             label: s.isZh ? dummy.label : dummy.labelEn,
             tag: tag,
-            icon: _stepIcon(t),
+            icon: TablerIcon(_stepIcon(t)),
             accent: _nodeColor(t, scheme),
             scheme: scheme,
             selected: selected,
@@ -9237,7 +9245,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
+              TablerIcon(
                 _stepIcon(t),
                 size: isMobilePlatform ? 12 : 14,
                 color: scheme.onSurface,
@@ -9288,7 +9296,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   Widget _toolboxListRow({
     required String label,
-    required IconData icon,
+    required Widget icon,
     required Color accent,
     required ColorScheme scheme,
     String tag = '',
@@ -9319,7 +9327,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       ),
       child: Row(
         children: [
-          Icon(icon, size: 15, color: accent.withAlpha(alpha)),
+          IconTheme.merge(
+            data: IconThemeData(size: 15, color: accent.withAlpha(alpha)),
+            child: icon,
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -9392,7 +9403,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       if (listLayout) {
         return _toolboxListRow(
           label: label,
-          icon: icon,
+          icon: Icon(icon),
           accent: context.sem.danger,
           scheme: scheme,
           tag: s.isZh ? '逻辑块' : 'Logic',
@@ -9474,7 +9485,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         ? _toolboxListRow(
             label: gate.name.toUpperCase(),
             tag: sym,
-            icon: Icons.rule,
+            icon: const Icon(Icons.rule),
             accent: scheme.tertiary,
             scheme: scheme,
             opacity: opacity,
@@ -9606,7 +9617,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
+          TablerIcon(
             _stepIcon(t),
             size: isMobilePlatform ? 12 : 14,
             color: fade(scheme.onSurface),
@@ -11593,12 +11604,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         children: [
           Row(
             children: [
-              Icon(
-                logicBlock != null
-                    ? (_logicTypeIcon(logicBlock.type))
-                    : _stepIcon(node!.type),
-                size: 15,
-                color: scheme.primary,
+              IconTheme.merge(
+                data: IconThemeData(size: 15, color: scheme.primary),
+                child: logicBlock != null
+                    ? Icon(_logicTypeIcon(logicBlock.type))
+                    : TablerIcon(_stepIcon(node!.type)),
               ),
               const SizedBox(width: 4),
               Expanded(

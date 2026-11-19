@@ -58,6 +58,7 @@ import '../widgets/step_editors/video_filter_step_editor.dart';
 import '../widgets/step_editors/video_frame_rate_step_editor.dart';
 import '../widgets/step_editors/video_geometry_step_editor.dart';
 import '../widgets/step_editors/video_overlay_step_editor.dart';
+import '../widgets/tabler_icon.dart';
 import '../widgets/wallpaper_background.dart';
 // Linux CSD：独立面板窗口复用全应用唯一的 WindowChromeBar（见 _PanelActionBar）。
 import '../widgets/window_chrome.dart';
@@ -886,7 +887,7 @@ class _PropsWindowState extends State<_PropsWindow> {
           child: Row(
             mainAxisSize: listLayout ? MainAxisSize.max : MainAxisSize.min,
             children: [
-              Icon(
+              TablerIcon(
                 stepIconFor(type),
                 size: 13,
                 color: nodeAccentColor(type, scheme),
@@ -968,10 +969,11 @@ class _PropsWindowState extends State<_PropsWindow> {
       ),
       child: Row(
         children: [
-          Icon(
-            node.isGate ? Icons.rule : stepIconFor(node.type),
-            size: 15,
-            color: scheme.primary,
+          IconTheme.merge(
+            data: IconThemeData(size: 15, color: scheme.primary),
+            child: node.isGate
+                ? const Icon(Icons.rule)
+                : TablerIcon(stepIconFor(node.type)),
           ),
           const SizedBox(width: 6),
           Expanded(

@@ -17,6 +17,59 @@ import '../widgets/window_chrome.dart';
 class CreditsPage extends StatelessWidget {
   const CreditsPage({super.key});
 
+  static const _projects = [
+    (
+      name: 'tabler-icons',
+      license: 'MIT License',
+      descZh: '桌面与移动端主导航、管线节点（含独立面板）及 IEEE 逻辑门使用的线框 SVG 图标。',
+      descEn:
+          'Outline SVG icons for desktop and mobile navigation, pipeline '
+          'nodes (including detached panels), and IEEE logic gates.',
+      url: 'https://github.com/tabler/tabler-icons',
+    ),
+    (
+      name: 'oc_liquid_glass',
+      license: 'MIT License',
+      descZh: '在支持的设备上为卡片、面板和移动端胶囊控件提供 GPU 液态玻璃效果。',
+      descEn:
+          'GPU liquid-glass effects for cards, panels, and mobile pill '
+          'controls on supported devices.',
+      url: 'https://github.com/heyarny/oc_liquid_glass',
+    ),
+    (
+      name: 'liquid_glass_widgets',
+      license: 'MIT License',
+      descZh: '为桌面端卡片和面板提供轻量液态玻璃材质。',
+      descEn: 'Lightweight liquid-glass material for desktop cards and panels.',
+      url: 'https://github.com/sdegenaar/liquid_glass_widgets',
+    ),
+    (
+      name: 'liquid_glass_tab_bar',
+      license: 'MIT License',
+      descZh: '用于移动端液态玻璃底栏和子页面标签切换。',
+      descEn: 'Liquid-glass bottom navigation and tab switching on mobile.',
+      url: 'https://github.com/KananTaghili/liquid_glass_tab_bar',
+    ),
+    (
+      name: 'liquid_glass_renderer',
+      license: 'MIT License',
+      descZh: '为液态玻璃底栏提供折射渲染。本项目使用带 Windows 与 Linux 着色器兼容补丁的版本。',
+      descEn:
+          'Refraction rendering for the liquid-glass tab bar. This app '
+          'uses a version patched for shader compatibility on Windows and Linux.',
+      url: 'https://pub.dev/packages/liquid_glass_renderer',
+    ),
+    (
+      name: 'flutter_svg',
+      license: 'MIT License',
+      descZh: '用于加载和渲染 Tabler 图标、逻辑门及 AI 服务商标识等 SVG 资源。',
+      descEn:
+          'Loads and renders SVG assets such as Tabler icons, logic gates, '
+          'and AI provider logos.',
+      url: 'https://pub.dev/packages/flutter_svg',
+    ),
+  ];
+
   /// 与其它二级页（容器详情等）一致：有壁纸铺壁纸，无壁纸至少铺一层不透明
   /// 主题底色。修复点：此前本页 Scaffold 透明且外层没有铺任何背景，
   /// 与其它二级页（容器详情等）一致：有壁纸铺壁纸，无壁纸至少铺一层不透明
@@ -57,25 +110,27 @@ class CreditsPage extends StatelessWidget {
           addRepaintBoundaries: false,
           padding: isMobilePlatform
               ? MobileUi.subListPadding(
-                  top: ImmersiveTopBar.insetOf(context) + 8, bottom: 24)
+                  top: ImmersiveTopBar.insetOf(context) + 8,
+                  bottom: 24,
+                )
               : const EdgeInsets.fromLTRB(16, 8, 16, 24),
           children: [
             Text(
               s.aboutReferencesIntro,
               style: TextStyle(fontSize: 13, color: scheme.outline),
             ),
-            const SizedBox(height: 14),
-            _projectCard(
-              context,
-              scheme,
-              s,
-              name: 'tabler-icons',
-              license: 'MIT License',
-              desc: s.isZh
-                  ? '逻辑门矢量图标（节点编辑器 IEEE 逻辑门符号）'
-                  : 'Vector logic-gate icons (IEEE gate symbols in the node editor)',
-              url: 'https://github.com/tabler/tabler-icons',
-            ),
+            for (final project in _projects) ...[
+              const SizedBox(height: 14),
+              _projectCard(
+                context,
+                scheme,
+                s,
+                name: project.name,
+                license: project.license,
+                desc: s.isZh ? project.descZh : project.descEn,
+                url: project.url,
+              ),
+            ],
           ],
         ),
       ),
