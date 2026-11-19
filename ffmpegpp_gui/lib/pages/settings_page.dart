@@ -30,7 +30,6 @@ import '../services/shell_open.dart';
 import '../services/update_service.dart' as updater;
 // 控件高度档位令牌：MCP 卡的输入框/按钮、AI 配置详情页的按钮统一按档位取高度，
 // 不再用 `SizedBox(height: 30)` 压高度（会与主题 v12 内边距打架）
-import '../theme/app_neutral_surface.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_strings.dart';
 import '../theme/app_text_scale.dart';
@@ -40,9 +39,6 @@ import '../widgets/app_slider.dart';
 import '../widgets/font_picker.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/install_dialog.dart';
-// harmonizedAccent（协调主题色，解决「选主题色太亮」）/ neutralGray（真中性灰，
-// 解决「灰色夹杂主题色」）/ GlassTuning（玻璃细节参数）都在这里。
-import '../widgets/liquid_glass_fallback.dart';
 import '../widgets/masonry_grid.dart';
 import '../widgets/mobile_glass_pill.dart';
 // 生效的菜单栏位置：设置页自身也在主 Tab 的 PageView 里，底部让出的高度
@@ -2944,6 +2940,11 @@ Widget _buildSurfaceStyleCard(BuildContext ctx, AppState state) {
               zh ? '高光玻璃' : 'Highlight glass',
               icon: Icons.auto_awesome_outlined,
             ),
+            OptionItem(
+              'gray',
+              zh ? '极简灰（不透明）' : 'Minimal gray (opaque)',
+              icon: Icons.layers_outlined,
+            ),
           ],
           onSelected: (v) =>
               state.updateConfig((c) => c..dropdownAppearance = v),
@@ -3454,44 +3455,25 @@ List<Widget> _buildEffectItems(BuildContext ctx, AppState state) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// 样式预设（样式卡顶部的可视化方案选择）
+// 样式预设
 // ═══════════════════════════════════════════════════════════════════
 
-/// 一套样式预设的「外观补丁」值对象。
+/// 一套样式预设控制的全局材质参数。
 ///
-/// ## 为什么要有它
-///
-/// 改造前每套预设各写一份 `apply`（级联写 8~11 个外观字段）和一份 `matches`
-/// （只挑 1~4 个字段比对），两边长期不对称，于是「预设芯片高亮」与「实际观感」
-/// 会脱钩：
-///
-/// - `liquid` 写入 11 个字段，`matches` 只看 4 个（卡片族样式、glassEffect、
-///   glassFollowTheme、通透度）；手动把「高光强度」拖到别处，它照样亮着；
-/// - `clear` 写入 11 个字段，`matches` 只看 2 个 → 手动把通透度拖到 82%，
-///   「轻薄通透」就亮起来，但模糊度/高光/边缘光还是上一套的值，看到的并不是它；
-/// - `theme` 写入 `themeTone = 0.55`，而其余四套完全不碰这个字段 → 从「主题色」
-///   切回「液态玻璃」后协调度仍残留 0.55（默认 0.45），观感与新装不一致，
-///   但 `matches` 仍然报「已选中」。这是唯一一处真正会让观感偏离预设名义值的残留。
-///
-/// 现在 `applyTo` 与 `matches` 共用同一份数据，字段不可能再漏；每次套用都写满
-/// 全部字段（幂等），上一套预设的残留值会被彻底覆盖。
-///
-/// ## 数值网格约束
-///
-/// 预设写入的数值必须落在「玻璃细节」滑块的网格上，否则用户一碰滑块数值就被
-/// 吸附走、预设再也不会匹配：模糊度 step 1、通透度/高光位置 step 0.05、
-/// 高光强度/边缘光 step 0.1、主题色协调度 step 0.05。
-/// 原 `clear` 的通透度 0.82 不在 0.05 网格上（滑块只能取到 0.80/0.85），
-/// 已修正为 0.80。
+/// 主题色与晨雾需要启用主题配色，其他方案保留用户此前的开关选择。
+/// 壁纸、取色来源、显卡兼容选项和移动端独立主题均由各自的设置控制。
 @immutable
-class _StyleValues {
+final class _StyleValues {
   final String cardStyle;
   final String navStyle;
   final String pillStyle;
   final String menuStyle;
+  final String dropdownAppearance;
+  final String canvasBg;
   final String glassEffect;
-  final String settingsGlassMode;
   final bool glassFollowTheme;
+  final bool? useThemeColor;
+  final double cardOpacity;
   final double glassBlur;
   final double glassClarity;
   final double glassHighlight;
@@ -3504,9 +3486,12 @@ class _StyleValues {
     required this.navStyle,
     required this.pillStyle,
     required this.menuStyle,
+    required this.dropdownAppearance,
+    required this.canvasBg,
     required this.glassEffect,
-    required this.settingsGlassMode,
     required this.glassFollowTheme,
+    this.useThemeColor,
+    required this.cardOpacity,
     required this.glassBlur,
     required this.glassClarity,
     required this.glassHighlight,
@@ -3515,439 +3500,266 @@ class _StyleValues {
     required this.themeTone,
   });
 
-  /// 全部字段一次写齐（幂等）。级联表达式的值就是接收者，可直接喂 `updateConfig`。
-  void applyTo(AppConfig c) {
-    c
-      ..cardStyle = cardStyle
-      ..navStyle = navStyle
-      ..pillStyle = pillStyle
-      ..menuStyle = menuStyle
-      ..glassEffect = glassEffect
-      ..settingsGlassMode = settingsGlassMode
-      ..glassFollowTheme = glassFollowTheme
-      ..glassBlur = glassBlur
-      ..glassClarity = glassClarity
-      ..glassHighlight = glassHighlight
-      ..glassLightPos = glassLightPos
-      ..glassEdge = glassEdge
-      ..themeTone = themeTone;
-  }
+  AppConfig applyTo(AppConfig config) => config
+    ..cardStyle = cardStyle
+    ..navStyle = navStyle
+    ..pillStyle = pillStyle
+    ..menuStyle = menuStyle
+    ..dropdownAppearance = dropdownAppearance
+    ..canvasBg = canvasBg
+    ..glassEffect = glassEffect
+    ..glassFollowTheme = glassFollowTheme
+    ..cardOpacity = cardOpacity
+    ..glassBlur = glassBlur
+    ..glassClarity = glassClarity
+    ..glassHighlight = glassHighlight
+    ..glassLightPos = glassLightPos
+    ..glassEdge = glassEdge
+    ..themeTone = themeTone
+    ..useThemeColor = useThemeColor ?? config.useThemeColor
+    // 旧版的实心与磨砂开关都从 settingsGlassMode 派生。
+    ..settingsGlassMode = 'follow'
+    ..borderEnabled = false;
 
-  /// 与 [applyTo] 逐字段一一对应。double 留 0.005 容差（JSON 往返的浮点误差）。
-  bool matches(AppConfig c) =>
-      c.cardStyle == cardStyle &&
-      c.navStyle == navStyle &&
-      c.pillStyle == pillStyle &&
-      c.menuStyle == menuStyle &&
-      c.glassEffect == glassEffect &&
-      c.settingsGlassMode == settingsGlassMode &&
-      c.glassFollowTheme == glassFollowTheme &&
-      (c.glassBlur - glassBlur).abs() < 0.005 &&
-      (c.glassClarity - glassClarity).abs() < 0.005 &&
-      (c.glassHighlight - glassHighlight).abs() < 0.005 &&
-      (c.glassLightPos - glassLightPos).abs() < 0.005 &&
-      (c.glassEdge - glassEdge).abs() < 0.005 &&
-      (c.themeTone - themeTone).abs() < 0.005;
+  bool matches(AppConfig config) =>
+      config.cardStyle == cardStyle &&
+      config.navStyle == navStyle &&
+      config.pillStyle == pillStyle &&
+      config.menuStyle == menuStyle &&
+      config.dropdownAppearance == dropdownAppearance &&
+      config.canvasBg == canvasBg &&
+      config.glassEffect == glassEffect &&
+      config.glassFollowTheme == glassFollowTheme &&
+      (useThemeColor == null || config.useThemeColor == useThemeColor) &&
+      _near(config.cardOpacity, cardOpacity) &&
+      _near(config.glassBlur, glassBlur) &&
+      _near(config.glassClarity, glassClarity) &&
+      _near(config.glassHighlight, glassHighlight) &&
+      _near(config.glassLightPos, glassLightPos) &&
+      _near(config.glassEdge, glassEdge) &&
+      _near(config.themeTone, themeTone) &&
+      config.settingsGlassMode == 'follow' &&
+      !config.borderEnabled;
+
+  // 容纳滑块刻度的浮点舍入误差。
+  bool _near(double actual, double expected) =>
+      (actual - expected).abs() < 0.000001;
 }
 
-/// 一套样式预设：名字/说明/预览类别 + 一份 [_StyleValues]。
-class _StylePreset {
-  final String id;
-  final String Function(bool zh) name;
-  final String Function(bool zh) desc;
+@immutable
+final class _StylePreset {
+  const _StylePreset(
+    this.zhName,
+    this.enName,
+    this.zhDescription,
+    this.enDescription,
+    this.values,
+  );
 
-  /// 预览卡的样式类别：'liquid' | 'theme' | 'blur' | 'gray' | 'clear'
-  final String preview;
+  final String zhName;
+  final String enName;
+  final String zhDescription;
+  final String enDescription;
   final _StyleValues values;
 
-  /// 该预设的玻璃是**中性**的（不染色），因此套用时关闭壁纸取色（Monet）。
-  ///
-  /// 刻意放在 `_StylePreset` 而不是 `_StyleValues`：`_StyleValues.matches` 是
-  /// 全等比较，往里加字段会让所有老配置的「预设高亮」失效（点了不变亮）。
-  /// 放在这一层只影响 `apply`，不参与匹配。
-  final bool neutralGlass;
-
-  const _StylePreset({
-    required this.id,
-    required this.name,
-    required this.desc,
-    required this.preview,
-    required this.values,
-    this.neutralGlass = false,
-  });
-
-  /// 写入整套外观字段，并回传同一个 [AppConfig] 实例。
-  ///
-  /// 必须返回值：调用点是 `updateConfig((c) => p.apply(c))`，而 `updateConfig`
-  /// 要一个 `AppConfig Function(AppConfig)`。级联写入只改字段、不换引用，
-  /// 所以直接回传接收者即可（改成 `void` 会让调用点报
-  /// RETURN_OF_INVALID_TYPE_FROM_CLOSURE）。
-  AppConfig apply(AppConfig c) {
-    values.applyTo(c);
-    if (neutralGlass) {
-      // 中性玻璃的底色取自中性灰，不再由 primary 混出（见 themedGlassBase）。
-      // 若继续开着 Monet，页面其余部分仍是壁纸色，玻璃反而灰掉 —— 观感割裂。
-      // 这是一次**显式**改动：预设卡上已注明「中性玻璃 · 关闭壁纸取色」。
-      c.useDynamicColor = false;
-    }
-    return c;
-  }
-
-  bool matches(AppConfig c) => values.matches(c);
+  String name(bool zh) => zh ? zhName : enName;
+  String description(bool zh) => zh ? zhDescription : enDescription;
 }
 
-/// 6 套预设。默认值全部有出处（见 AppConfig 里各字段注释）——
-/// `liquid` 的一组数值与 AppConfig 的出厂默认完全一致，所以首次启动
-/// 「液态玻璃」必然处于选中态。
-///
-/// 不拥有玻璃参数的两套（theme / gray，都是 glassEffect = 'none'，玻璃参数
-/// 在该模式下不参与渲染）仍然把玻璃参数写回出厂默认，这样「切过去再切回来」
-/// 的结果是确定的，而不是被动继承上一套预设的残留。
-final List<_StylePreset> _stylePresets = [
+const _stylePresets = [
   _StylePreset(
-    id: 'liquid',
-    name: (zh) => zh ? '液态玻璃' : 'Liquid',
-    desc: (zh) => zh ? '折射玻璃 · 中性玻璃并关闭壁纸取色' : 'Refraction · neutral glass, wallpaper color off',
-    preview: 'liquid',
-    neutralGlass: true,
-    values: const _StyleValues(
-      cardStyle: 'liquid',
-      navStyle: 'liquid',
-      pillStyle: 'liquid',
-      menuStyle: 'liquid',
+    '液态玻璃',
+    'Liquid glass',
+    '中性折射玻璃，带明显高光和亮边。',
+    'Neutral refractive glass with defined highlights and edges.',
+    _StyleValues(
+      cardStyle: SurfaceStyle.liquid,
+      navStyle: SurfaceStyle.liquid,
+      pillStyle: SurfaceStyle.liquid,
+      menuStyle: SurfaceStyle.liquid,
+      dropdownAppearance: 'liquid',
+      canvasBg: 'global',
       glassEffect: 'liquid',
-      settingsGlassMode: 'follow',
       glassFollowTheme: false,
-      glassBlur: 16.0,
+      cardOpacity: 0.70,
+      glassBlur: 16,
       glassClarity: 0.45,
-      glassHighlight: 1.0,
+      glassHighlight: 1.2,
       glassLightPos: 0.0,
-      glassEdge: 1.0,
+      glassEdge: 1.3,
       themeTone: 0.45,
     ),
   ),
   _StylePreset(
-    id: 'airy',
-    name: (zh) => zh ? '轻薄通透' : 'Airy',
-    desc: (zh) => zh ? '高透光 · 中性玻璃并关闭壁纸取色' : 'High clarity · neutral glass, wallpaper color off',
-    preview: 'clear',
-    neutralGlass: true,
-    values: const _StyleValues(
-      cardStyle: 'liquid',
-      navStyle: 'liquid',
-      pillStyle: 'liquid',
-      menuStyle: 'liquid',
+    '轻薄通透',
+    'Airy',
+    '底色更淡、模糊更少，保留细亮边。',
+    'Light tint, less blur, and a fine luminous edge.',
+    _StyleValues(
+      cardStyle: SurfaceStyle.liquid,
+      navStyle: SurfaceStyle.liquid,
+      pillStyle: SurfaceStyle.liquid,
+      menuStyle: SurfaceStyle.liquid,
+      dropdownAppearance: 'highlight',
+      canvasBg: 'global',
       glassEffect: 'liquid',
-      settingsGlassMode: 'follow',
       glassFollowTheme: false,
-      // 通透度 0.82 → 0.80：0.82 落在滑块 0.05 网格之外，
-      // 用户一旦碰过通透度滑块，本预设就永远无法再次匹配。
-      glassBlur: 24.0,
+      cardOpacity: 0.52,
+      glassBlur: 6,
       glassClarity: 0.80,
-      glassHighlight: 1.3,
-      glassLightPos: 0.25,
-      glassEdge: 1.4,
-      themeTone: 0.45,
-    ),
-  ),
-  _StylePreset(
-    id: 'theme',
-    name: (zh) => zh ? '主题色' : 'Accent',
-    desc: (zh) => zh ? '协调实色' : 'Harmonized',
-    preview: 'theme',
-    values: const _StyleValues(
-      cardStyle: 'theme',
-      navStyle: 'theme',
-      pillStyle: 'theme',
-      menuStyle: 'theme',
-      glassEffect: 'none',
-      settingsGlassMode: 'solid',
-      glassFollowTheme: true,
-      glassBlur: 16.0,
-      glassClarity: 0.45,
-      glassHighlight: 1.0,
-      glassLightPos: 0.0,
-      glassEdge: 1.0,
-      themeTone: 0.55,
-    ),
-  ),
-  _StylePreset(
-    id: 'blur',
-    name: (zh) => zh ? '扁平模糊' : 'Flat blur',
-    desc: (zh) => zh ? '易读' : 'Readable',
-    preview: 'blur',
-    values: const _StyleValues(
-      cardStyle: 'blur',
-      navStyle: 'blur',
-      pillStyle: 'blur',
-      menuStyle: 'blur',
-      glassEffect: 'blur',
-      settingsGlassMode: 'follow',
-      glassFollowTheme: false,
-      glassBlur: 20.0,
-      glassClarity: 0.55,
-      glassHighlight: 0.6,
-      glassLightPos: 0.0,
+      glassHighlight: 0.5,
+      glassLightPos: 0.15,
       glassEdge: 0.5,
       themeTone: 0.45,
     ),
   ),
   _StylePreset(
-    id: 'clear',
-    name: (zh) => zh ? '晨雾' : 'Daybreak',
-    desc: (zh) => zh ? '轻盈低对比' : 'Soft & quiet',
-    preview: 'clear',
-    values: const _StyleValues(
-      cardStyle: 'liquid',
-      navStyle: 'liquid',
-      pillStyle: 'liquid',
-      menuStyle: 'liquid',
-      glassEffect: 'liquid',
-      settingsGlassMode: 'follow',
+    '主题色',
+    'Accent',
+    '不透明的主题色表面，保留已选主题配色。',
+    'Opaque surfaces in your selected theme colors.',
+    _StyleValues(
+      cardStyle: SurfaceStyle.theme,
+      navStyle: SurfaceStyle.theme,
+      pillStyle: SurfaceStyle.theme,
+      menuStyle: SurfaceStyle.theme,
+      dropdownAppearance: 'theme',
+      canvasBg: 'global',
+      glassEffect: 'none',
       glassFollowTheme: true,
-      glassBlur: 14.0,
-      glassClarity: 0.75,
-      glassHighlight: 0.4,
-      glassLightPos: 0.25,
-      glassEdge: 0.3,
-      themeTone: 0.5,
+      useThemeColor: true,
+      cardOpacity: 0.70,
+      glassBlur: 0,
+      glassClarity: 0.0,
+      glassHighlight: 0.0,
+      glassLightPos: 0.0,
+      glassEdge: 0.0,
+      themeTone: 0.55,
     ),
   ),
   _StylePreset(
-    id: 'gray',
-    name: (zh) => zh ? '极简灰' : 'Minimal gray',
-    desc: (zh) => zh ? '中性无彩' : 'Neutral',
-    preview: 'gray',
-    values: const _StyleValues(
-      cardStyle: 'gray',
-      navStyle: 'gray',
-      pillStyle: 'gray',
-      menuStyle: 'gray',
-      glassEffect: 'none',
-      settingsGlassMode: 'follow',
+    '扁平模糊',
+    'Flat blur',
+    '柔化背景的平面磨砂玻璃，没有折射和亮边。',
+    'Flat frosted glass softens the backdrop without refraction.',
+    _StyleValues(
+      cardStyle: SurfaceStyle.blur,
+      navStyle: SurfaceStyle.blur,
+      pillStyle: SurfaceStyle.blur,
+      menuStyle: SurfaceStyle.blur,
+      dropdownAppearance: 'frosted',
+      canvasBg: 'global',
+      glassEffect: 'blur',
       glassFollowTheme: false,
-      glassBlur: 16.0,
-      glassClarity: 0.45,
-      glassHighlight: 1.0,
+      cardOpacity: 0.82,
+      glassBlur: 10,
+      glassClarity: 0.55,
+      glassHighlight: 0.0,
       glassLightPos: 0.0,
-      glassEdge: 1.0,
+      glassEdge: 0.0,
+      themeTone: 0.45,
+    ),
+  ),
+  _StylePreset(
+    '晨雾',
+    'Morning mist',
+    '淡主题色毛玻璃，浓雾般的模糊柔化背景。',
+    'Dense frosted glass with a soft tint from your theme.',
+    _StyleValues(
+      cardStyle: SurfaceStyle.blur,
+      navStyle: SurfaceStyle.blur,
+      pillStyle: SurfaceStyle.blur,
+      menuStyle: SurfaceStyle.blur,
+      dropdownAppearance: 'frosted',
+      canvasBg: 'global',
+      glassEffect: 'blur',
+      glassFollowTheme: true,
+      useThemeColor: true,
+      cardOpacity: 0.86,
+      glassBlur: 28,
+      glassClarity: 0.35,
+      glassHighlight: 0.0,
+      glassLightPos: 0.25,
+      glassEdge: 0.0,
+      themeTone: 0.75,
+    ),
+  ),
+  _StylePreset(
+    '极简灰',
+    'Minimal gray',
+    '中性灰卡片和导航，搭配不透明下拉菜单。',
+    'Neutral gray cards and navigation with opaque dropdowns.',
+    _StyleValues(
+      cardStyle: SurfaceStyle.gray,
+      navStyle: SurfaceStyle.gray,
+      pillStyle: SurfaceStyle.gray,
+      menuStyle: SurfaceStyle.gray,
+      dropdownAppearance: 'gray',
+      canvasBg: 'gray',
+      glassEffect: 'none',
+      glassFollowTheme: false,
+      cardOpacity: 0.70,
+      glassBlur: 0,
+      glassClarity: 0.0,
+      glassHighlight: 0.0,
+      glassLightPos: 0.0,
+      glassEdge: 0.0,
       themeTone: 0.45,
     ),
   ),
 ];
 
-/// 使用真实模糊滤镜及液态玻璃画笔预览每套参数，不改动全局配置。
-Widget _presetSwatch(BuildContext ctx, _StylePreset p, bool selected) {
-  final scheme = Theme.of(ctx).colorScheme;
-  final cfg = ctx.read<AppState>().config;
-  final v = p.values;
-  final tuning = GlassTuning(
-    blur: v.glassBlur,
-    clarity: v.glassClarity,
-    highlight: v.glassHighlight,
-    lightPos: v.glassLightPos,
-    edge: v.glassEdge,
-  );
-  final dark = scheme.brightness == Brightness.dark;
-  final solid = v.cardStyle == 'theme' || v.cardStyle == 'gray';
-  final base = v.cardStyle == 'gray'
-      ? AppNeutralSurface.card(scheme.brightness)
-      : v.glassFollowTheme || v.cardStyle == 'theme'
-      ? harmonizedAccent(scheme, v.themeTone)
-      : scheme.surface;
-  final radius = BorderRadius.circular(12);
-  final opacity = cfg.cardOpacity.clamp(0.0, 1.0);
-  Widget surface = DecoratedBox(
-    decoration: BoxDecoration(
-      color: solid
-          ? base
-          : base.withAlpha(
-              (tunedGlassAlpha(dark ? 110 : 130, tuning) * opacity).round(),
-            ),
-      borderRadius: radius,
-    ),
-    child: Padding(
-      padding: const EdgeInsets.all(8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(
-            Icons.tune,
-            size: 16,
-            applyTextScaling: false,
-            color: scheme.onSurface,
-          ),
-          const Spacer(),
-          Text(
-            'Aa 123',
-            // This miniature is decorative; the font card previews actual sizing.
-            textScaler: TextScaler.noScaling,
-            style: TextStyle(
-              fontSize: 12,
-              height: 1.2,
-              color: scheme.onSurface,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Container(
-            height: 3,
-            width: 38,
-            color: scheme.onSurface.withAlpha(90),
-          ),
-        ],
-      ),
-    ),
-  );
-  if (!solid) {
-    surface = ClipRRect(
-      borderRadius: radius,
-      child: BackdropFilter(
-        filter: cachedGlassBlur(tunedGlassSigma(16, tuning)),
-        child: CustomPaint(
-          foregroundPainter: v.cardStyle == 'blur'
-              ? null
-              : LiquidGlassPainter(
-                  borderRadius: radius,
-                  opacity: opacity,
-                  highlight: tuning.highlight,
-                  lightPos: tuning.lightPos,
-                  edge: tuning.edge,
-                ),
-          child: surface,
-        ),
-      ),
-    );
-  }
-  return ExcludeSemantics(
-    child: SizedBox(
-      width: 88,
-      height: 72,
-      child: ClipRRect(
-        borderRadius: radius,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            ColoredBox(color: scheme.surfaceContainerHighest),
-            Positioned(
-              left: -12,
-              top: -10,
-              child: Container(
-                width: 66,
-                height: 66,
-                decoration: BoxDecoration(
-                  color: scheme.primary.withAlpha(150),
-                  shape: BoxShape.circle,
-                ),
-              ),
-            ),
-            Positioned(
-              right: -8,
-              bottom: -20,
-              child: Container(
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(
-                  color: scheme.tertiary.withAlpha(130),
-                  shape: BoxShape.circle,
-                ),
-              ),
-            ),
-            Padding(padding: const EdgeInsets.all(6), child: surface),
-          ],
-        ),
-      ),
-    ),
-  );
-}
-
-/// 样式预设选择行（样式卡顶部）。点一下即套用整套外观。
+/// 根据当前材质显示预设，手工修改后显示「自定义」。
 List<Widget> _buildStylePresets(BuildContext ctx, AppState state) {
-  final cfg = state.config;
-  final scheme = Theme.of(ctx).colorScheme;
-  final clr = scheme.onSurface;
-  final zh = cfg.language == 'zh';
+  final zh = state.config.language == 'zh';
+  return [
+    Selector<AppState, _StylePreset?>(
+      selector: (_, app) => _stylePresets
+          .where((preset) => preset.values.matches(app.config))
+          .firstOrNull,
+      builder: (context, current, _) {
+        final description =
+            current?.description(zh) ??
+            (zh
+                ? '当前材质与预设不同。选择预设可套用整套材质。'
+                : 'Current materials differ from the presets.');
 
-  Widget entry(_StylePreset p) {
-    final selected = p.matches(cfg);
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: Semantics(
-        button: true,
-        selected: selected,
-        label: '${p.name(zh)}, ${p.desc(zh)}',
-        child: InkWell(
-          borderRadius: BorderRadius.circular(16),
-          onTap: () => state.updateConfig((c) => p.apply(c)),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
-              color: selected
-                  ? scheme.primary.withAlpha(30)
-                  : scheme.surfaceContainerHighest.withAlpha(60),
-              border: Border.all(
-                color: selected
-                    ? scheme.primary
-                    : scheme.outlineVariant.withAlpha(80),
-                width: selected ? 1.5 : 0.8,
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            OptionMenuBar<_StylePreset?>(
+              value: current,
+              leadingIcon: Icons.palette_outlined,
+              triggerHeight: 48,
+              items: [
+                if (current == null) OptionItem(null, zh ? '自定义' : 'Custom'),
+                for (final preset in _stylePresets)
+                  OptionItem(
+                    preset,
+                    preset.name(zh),
+                    subtitle: preset.description(zh),
+                  ),
+              ],
+              onChanged: (preset) {
+                if (preset != null) {
+                  state.updateConfig(preset.values.applyTo);
+                }
+              },
+            ),
+            const SizedBox(height: 6),
+            Text(
+              description,
+              style: SettingsTypography.description.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
             ),
-            child: Column(
-              children: [
-                _presetSwatch(ctx, p, selected),
-                const SizedBox(height: 5),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (selected) ...[
-                      Icon(
-                        Icons.check_circle,
-                        size: 12,
-                        applyTextScaling: false,
-                        color: scheme.primary,
-                      ),
-                      const SizedBox(width: 4),
-                    ],
-                    Text(
-                      p.name(zh),
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: selected ? FontWeight.w600 : null,
-                        color: selected ? scheme.primary : clr,
-                      ),
-                    ),
-                  ],
-                ),
-                Text(
-                  p.desc(zh),
-                  style: SettingsTypography.description.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  return [
-    // 不再自带「预设方案」小标题：拆卡之后它就是「样式预设」这张卡的正文，
-    // 再加一层小标题会与卡片标题重复（用户对重复项敏感）。
-    SizedBox(
-      height: 142,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: EdgeInsets.zero,
-        itemCount: _stylePresets.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 4),
-        itemBuilder: (context, index) => entry(_stylePresets[index]),
-      ),
+          ],
+        );
+      },
     ),
   ];
 }
+
 
 /// 「玻璃细节」卡：模糊度 / 通透度 / 高光强度与位置 / 边缘光。
 ///

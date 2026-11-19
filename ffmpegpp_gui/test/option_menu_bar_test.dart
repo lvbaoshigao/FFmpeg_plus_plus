@@ -1,5 +1,6 @@
 import 'package:ffmpegpp_gui/widgets/option_menu_bar.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -20,6 +21,221 @@ List<OptionItem<String>> _items() => const [
 ];
 
 void main() {
+  group('OptionMenuBar long lists', () {
+    testWidgets(
+      'should keep the active search field when keyboard reduces height',
+      (tester) async {
+        tester.view.physicalSize = const Size(400, 600);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        await tester.pumpWidget(
+          _host(
+            SizedBox(
+              width: 230,
+              child: OptionMenuBar<int>(
+                value: 179,
+                searchable: true,
+                items: List.generate(180, (i) => OptionItem(i, 'Model $i')),
+                onChanged: (_) {},
+              ),
+            ),
+          ),
+        );
+        await tester.tap(find.text('Model 179'));
+        await tester.pumpAndSettle();
+        final field = tester.state(find.byType(TextField));
+        tester.view.viewInsets = const FakeViewPadding(bottom: 270);
+        await tester.pumpAndSettle();
+        expect(tester.state(find.byType(TextField)), same(field));
+        expect(
+          tester
+              .widget<EditableText>(find.byType(EditableText))
+              .focusNode
+              .hasFocus,
+          isTrue,
+        );
+        await tester.enterText(find.byType(TextField), 'Model 17');
+        await tester.pumpAndSettle();
+        expect(find.byType(TextField), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+    testWidgets(
+      'should preserve scroll when parent recreates equivalent options',
+      (tester) async {
+        late StateSetter refresh;
+        await tester.pumpWidget(
+          _host(
+            StatefulBuilder(
+              builder: (context, setState) {
+                refresh = setState;
+                return SizedBox(
+                  width: 240,
+                  child: OptionMenuBar<int>(
+                    value: 0,
+                    items: List.generate(180, (i) => OptionItem(i, 'Model $i')),
+                    onChanged: (_) {},
+                  ),
+                );
+              },
+            ),
+          ),
+        );
+        await tester.tap(find.text('Model 0'));
+        await tester.pumpAndSettle();
+        await tester.drag(find.byType(ListView), const Offset(0, -620));
+        await tester.pumpAndSettle();
+        final state = tester.state<ScrollableState>(
+          find.descendant(
+            of: find.byType(ListView),
+            matching: find.byType(Scrollable),
+          ),
+        );
+        final offset = state.position.pixels;
+        expect(offset, greaterThan(400));
+        refresh(() {});
+        await tester.pumpAndSettle();
+        expect(state.position.pixels, closeTo(offset, 0.5));
+        expect(tester.takeException(), isNull);
+      },
+    );
+    testWidgets('should build visible options lazily', (tester) async {
+      final items = List.generate(300, (i) => OptionItem(i, 'Model $i'));
+      await tester.pumpWidget(
+        _host(
+          SizedBox(
+            width: 240,
+            child: OptionMenuBar<int>(
+              value: 0,
+              items: items,
+              onChanged: (_) {},
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Model 0'));
+      await tester.pumpAndSettle();
+      final mountedRows = find.descendant(
+        of: find.byType(ListView),
+        matching: find.byType(InkWell),
+      );
+      expect(mountedRows.evaluate().length, lessThan(30));
+      expect(find.text('Model 299'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('should reveal a selected option outside the lazy viewport', (
+      tester,
+    ) async {
+      final items = List.generate(
+        180,
+        (i) => OptionItem(
+          i,
+          i < 30
+              ? 'Model $i'
+              : 'Model $i extended context and reasoning capabilities '
+                    'with a full multi-line provider identifier',
+          groupLabel: i % 12 == 0 ? 'Provider $i' : null,
+        ),
+      );
+      final selectedName = items.last.label;
+      await tester.pumpWidget(
+        _host(
+          SizedBox(
+            width: 240,
+            child: OptionMenuBar<int>(
+              value: 179,
+              items: items,
+              onChanged: (_) {},
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text(selectedName));
+      await tester.pumpAndSettle();
+      final selected = find.descendant(
+        of: find.byType(ListView),
+        matching: find.text(selectedName),
+      );
+      expect(selected.hitTestable(), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('should wrap the full model ID with large system text', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(360, 740);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      const id = 'organization/reasoning-model-preview-2026-extended-context';
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context)
+                .copyWith(
+                  textScaler: const TextScaler.linear(1.7),
+                  boldText: true,
+                )
+                .applyTextStyleOverrides(
+                  lineHeightScaleFactorOverride: 1.6,
+                  letterSpacingOverride: 1.0,
+                  wordSpacingOverride: null,
+                  paragraphSpacingOverride: null,
+                ),
+            child: child!,
+          ),
+          home: Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 220,
+                child: OptionMenuBar<String>(
+                  value: id,
+                  menuWidth: 320,
+                  itemLabelMaxLines: null,
+                  items: const [OptionItem(id, id, groupLabel: 'Organization')],
+                  onChanged: (_) {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text(id));
+      await tester.pumpAndSettle();
+      final name = find.descendant(
+        of: find.byType(ListView),
+        matching: find.text(id),
+      );
+      final paragraph = tester.renderObject<RenderParagraph>(name);
+      expect(paragraph.didExceedMaxLines, isFalse);
+      expect(tester.getSize(name).height, greaterThan(35));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('should scroll keyboard action highlights to lazy rows', (
+      tester,
+    ) async {
+      int? selected;
+      await tester.pumpWidget(
+        _host(
+          ScaleMenuButton<int>(
+            icon: Icons.more_vert,
+            items: List.generate(120, (i) => OptionItem(i, 'Action $i')),
+            onSelected: (value) => selected = value,
+          ),
+        ),
+      );
+      await tester.tap(find.byIcon(Icons.more_vert));
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pumpAndSettle();
+      expect(find.text('Action 119').hitTestable(), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(selected, 119);
+      expect(tester.takeException(), isNull);
+    });
+  });
   testWidgets('动作菜单安全区与键盘变化不越界且极小高度可滚动', (tester) async {
     tester.view.physicalSize = const Size(400, 360);
     tester.view.devicePixelRatio = 1;

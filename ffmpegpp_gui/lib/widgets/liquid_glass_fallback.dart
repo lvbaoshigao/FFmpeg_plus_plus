@@ -457,15 +457,14 @@ Widget withConfigurableBorder(
   );
 }
 
-/// Skia 回退的液态玻璃光影画笔 —— 画在内容**之上**的前景层：
-///  1. 对角倒角边：受光亮边 → 背光暗边（模拟厚玻璃的折射棱），
-///     替代旧版「仅顶部一条高光」的单薄观感；
-///  2. 内圈细亮线：玻璃内壁的反光；
-///  3. 两团柔和镜面光斑（对应 shader 的 L1/L2 对向灯）。
+/// Skia 兼容的液态玻璃受光层，通常绘制在内容之下。
+///
+/// 薄层方向性柔光、外缘镜面反光和内缘回光均只使用白色透明渐变，
+/// 不绘制黑色轮廓、不增加离屏滤镜。光源从左上平滑移动到右下。
 ///
 /// 所有透明度都乘 [opacity]，cardOpacity=0 时只剩纯背景模糊。
 /// 高光强度 / 位置 / 边缘光三项由「设置 → 样式 → 玻璃细节」控制
-/// （[highlight] / [lightPos] / [edge]），默认值 1.0 / 0.0 / 1.0 即改动前观感。
+/// （[highlight] / [lightPos] / [edge]），默认值为 1.0 / 0.0 / 1.0。
 class LiquidGlassPainter extends CustomPainter {
   final BorderRadius borderRadius;
   final double opacity;
@@ -509,42 +508,61 @@ class LiquidGlassPainter extends CustomPainter {
     canvas.save();
     canvas.clipRRect(rrect);
 
-    // 受光方向 p 已在上面解析：只影响柔光带的起止位置。
-
-    // 1) 顶部柔光带（取代旧的对角倒角棱）。
-    //
-    // 旧实现沿对角线画「亮→暗」两条棱 + 两团镜面光斑来模拟厚玻璃的折射棱，
-    // 实际观感是「四个角莫名其妙各挂一块斜面高光」（用户反馈的「莫名其妙的
-    // 倒角高光」）。玻璃的厚度改由「一条自上而下衰减的柔光 + 描边」表达，
-    // 更接近 iOS 26 那种干净的水面感。
+    // Rotate the light without collapsing its direction at the midpoint.
+    final angle = -3 * math.pi / 4 + p * math.pi;
+    final light = Alignment(math.cos(angle), math.sin(angle));
+    final opposite = Alignment(-light.x, -light.y);
+    final rect = rrect.outerRect;
     if (h > 0.001) {
-      final double topAlpha = (0.14 * h * o).clamp(0.0, 1.0);
       canvas.drawRRect(
         rrect,
         Paint()
           ..shader = LinearGradient(
-            begin: Alignment(0, -1 + p * 0.6),
-            end: const Alignment(0, 1),
+            begin: light,
+            end: opposite,
             colors: [
-              Colors.white.withValues(alpha: topAlpha),
-              Colors.white.withValues(alpha: topAlpha * 0.22),
+              Colors.white.withValues(alpha: 0.16 * h * o),
+              Colors.white.withValues(alpha: 0.025 * h * o),
               Colors.white.withValues(alpha: 0),
             ],
-            stops: const [0.0, 0.30, 0.72],
-          ).createShader(rrect.outerRect),
+            stops: const [0, 0.24, 0.60],
+          ).createShader(rect),
       );
     }
-
-    // 2) 内圈细亮线（玻璃内壁反光）—— 只在贴边 1px 处，没有斜面。
     if (e > 0.001) {
+      // A bright incident rim and weaker transmitted rim imply thickness
+      // without a dark outline or four isolated corner blobs.
       canvas.drawRRect(
-        rrect.deflate(1.0),
+        rrect.deflate(0.75),
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = (0.8 * e).clamp(0.3, 2.0)
-          ..color = Colors.white.withValues(
-            alpha: (0.10 * e).clamp(0.0, 1.0) * o,
-          ),
+          ..strokeWidth = 1.15
+          ..shader = LinearGradient(
+            begin: light,
+            end: opposite,
+            colors: [
+              Colors.white.withValues(alpha: (0.52 * e * o).clamp(0, 1)),
+              Colors.white.withValues(alpha: 0.035 * e * o),
+              Colors.white.withValues(alpha: 0.22 * e * o),
+            ],
+            stops: const [0, 0.58, 1],
+          ).createShader(rect),
+      );
+      canvas.drawRRect(
+        rrect.deflate(2.4),
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.7
+          ..shader = LinearGradient(
+            begin: light,
+            end: opposite,
+            colors: [
+              Colors.white.withValues(alpha: 0),
+              Colors.white.withValues(alpha: 0.025 * e * o),
+              Colors.white.withValues(alpha: 0.16 * e * o),
+            ],
+            stops: const [0, 0.55, 1],
+          ).createShader(rect),
       );
     }
 
@@ -608,6 +626,7 @@ class LiquidGlassBackdrop extends StatelessWidget {
     final standard =
         _isDesktopGlassPlatform &&
         _desktopGlassReady &&
+        opacity > 0.001 &&
         uniformCircular &&
         !MediaQuery.highContrastOf(context);
     Widget glass = standard
@@ -619,6 +638,12 @@ class LiquidGlassBackdrop extends StatelessWidget {
               // No backgroundKey: live blur, no toImage capture or fake refraction.
               settings: lgw.LiquidGlassSettings(
                 glassColor: Colors.transparent,
+                // Tint is owned by the child. Avoid the shader's adaptive
+                // black frost floor and default all-over interactive glow.
+                bodyMode: lgw.GlassBodyMode.clear,
+                glowIntensity: 0,
+                thickness: 10,
+                fresnelStrength: 0.35 * tuning.edge * opacity.clamp(0.0, 1.0),
                 blur: resolvedSigma,
                 lightAngle:
                     math.pi / 2 + tuning.lightPos.clamp(0.0, 1.0) * math.pi,
@@ -628,6 +653,10 @@ class LiquidGlassBackdrop extends StatelessWidget {
                     opacity.clamp(0.0, 1.0),
                 rimLight: tuning.edge.clamp(0.0, 2.0) * opacity.clamp(0.0, 1.0),
                 saturation: 1,
+                // Keep native shader absorption/shading from drawing dark rims.
+                edgeAbsorption: 0,
+                rimShade: 0,
+                rimShadeEnds: 0,
               ),
               child: child,
             ),

@@ -2450,7 +2450,7 @@ class AppConfig {
   String menuStyle;
 
   /// 下拉菜单外观：'theme' 保留原有主题表面，'liquid' 液态玻璃，
-  /// 'frosted' 主题色毛玻璃，'highlight' 高光玻璃。
+  /// 'frosted' 主题色毛玻璃，'highlight' 高光玻璃，'gray' 不透明中性灰。
   String dropdownAppearance;
 
   /// Independent mobile AI/menu design; does not mutate global materials.
@@ -2901,7 +2901,7 @@ class AppConfig {
     mobileTheme: json['mobile_theme'] == 'miuix' ? 'miuix' : 'follow',
     dropdownAppearance: () {
       final value = json['dropdown_appearance'];
-      return const ['theme', 'liquid', 'frosted', 'highlight'].contains(value)
+      return const ['theme', 'liquid', 'frosted', 'highlight', 'gray'].contains(value)
           ? value as String
           : 'theme';
     }(),

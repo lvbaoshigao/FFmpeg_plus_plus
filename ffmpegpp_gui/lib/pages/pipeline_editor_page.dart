@@ -4222,83 +4222,87 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         // 旧实现是系统 PopupMenuButton：直角 + 瞬时弹出，与 OptionMenuBar 的
         // 圆角浮层不是一套视觉语言（task-9 F）。换成同一个控件后顺带获得
         // 搜索框与「选中项药丸」；条目语义保持原样（profile: / model: / 自定义）。
-        SizedBox(
-          height: pill.height,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 240),
-            child: OptionMenuBar<String>(
-              expandable: true,
-              searchable: true,
-              searchHint: s.isZh ? '搜索配置 / 模型' : 'Search profiles / models',
-              menuWidth: 320,
-              triggerHeight: pill.height,
-              leadingWidget: pillIcon(Icons.tune, color: scheme.primary),
-              // 选中模型时把供应商名放在前面（"OpenAI gpt-4o"）；只选配置时
-              // 不重复显示（否则会变成 "OpenAI OpenAI"）。
-              label: modelOptions.contains(showModel)
-                  ? (activeProfile?.name ?? (s.isZh ? '默认' : 'Default'))
-                  : null,
-              value: modelOptions.contains(showModel)
-                  ? 'model:$showModel'
-                  : 'profile:${cfg.activeAiProfileId}',
-              items: [
-                for (final p in profiles)
+        Tooltip(
+          message: showModel.isNotEmpty ? showModel : (activeProfile?.name ?? ''),
+          child: SizedBox(
+            height: pill.height,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 240),
+              child: OptionMenuBar<String>(
+                expandable: true,
+                searchable: true,
+                searchHint: s.isZh ? '搜索配置 / 模型' : 'Search profiles / models',
+                itemLabelMaxLines: null,
+                menuWidth: _aiModelMenuWidth(context, [
+                  ...modelOptions,
+                  for (final profile in profiles) profile.name,
+                ]),
+                triggerHeight: pill.height,
+                leadingWidget: pillIcon(Icons.tune, color: scheme.primary),
+                // Provider names already appear in menu groups; reserve the
+                // trigger's remaining width for the model identifier.
+                value: modelOptions.contains(showModel)
+                    ? 'model:$showModel'
+                    : 'profile:${cfg.activeAiProfileId}',
+                items: [
+                  for (final p in profiles)
+                    OptionItem(
+                      'profile:${p.id}',
+                      p.name,
+                      icon: Icons.folder_outlined,
+                    ),
                   OptionItem(
-                    'profile:${p.id}',
-                    p.name,
-                    icon: Icons.folder_outlined,
+                    'profile:',
+                    s.isZh ? '默认配置' : 'Default',
+                    icon: Icons.folder_off_outlined,
                   ),
-                OptionItem(
-                  'profile:',
-                  s.isZh ? '默认配置' : 'Default',
-                  icon: Icons.folder_off_outlined,
-                ),
-                for (final m in modelOptions)
+                  for (final m in modelOptions)
+                    OptionItem(
+                      'model:$m',
+                      m,
+                      groupLabel:
+                          aiModelProviderLabel(cfg, m, activeProfile).isEmpty
+                          ? (s.isZh ? '未指定提供商' : 'Unknown provider')
+                          : aiModelProviderLabel(cfg, m, activeProfile),
+                      leading: brandForModelId(m) == null
+                          ? Icon(
+                              Icons.memory,
+                              size: 15,
+                              color: scheme.onSurfaceVariant,
+                            )
+                          : BrandLogo(
+                              brand: brandForModelId(m)!,
+                              size: 15,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                      keywords: m,
+                    ),
+                  if (modelOptions.isEmpty)
+                    OptionItem(
+                      '',
+                      s.isZh
+                          ? '未配置模型（设置 → AI 中添加）'
+                          : 'No models configured (Settings → AI)',
+                    ),
                   OptionItem(
-                    'model:$m',
-                    m,
-                    groupLabel:
-                        aiModelProviderLabel(cfg, m, activeProfile).isEmpty
-                        ? (s.isZh ? '未指定提供商' : 'Unknown provider')
-                        : aiModelProviderLabel(cfg, m, activeProfile),
-                    leading: brandForModelId(m) == null
-                        ? Icon(
-                            Icons.memory,
-                            size: 15,
-                            color: scheme.onSurfaceVariant,
-                          )
-                        : BrandLogo(
-                            brand: brandForModelId(m)!,
-                            size: 15,
-                            color: scheme.onSurfaceVariant,
-                          ),
-                    keywords: m,
+                    '__custom_model__',
+                    s.isZh ? '自定义模型...' : 'Custom model...',
+                    icon: Icons.add,
                   ),
-                if (modelOptions.isEmpty)
-                  OptionItem(
-                    '',
-                    s.isZh
-                        ? '未配置模型（设置 → AI 中添加）'
-                        : 'No models configured (Settings → AI)',
-                  ),
-                OptionItem(
-                  '__custom_model__',
-                  s.isZh ? '自定义模型...' : 'Custom model...',
-                  icon: Icons.add,
-                ),
-              ],
-              onChanged: (v) {
-                if (v == '__custom_model__') {
-                  _promptTopCustomModel(scheme, s);
-                } else if (v.startsWith('model:')) {
-                  _applyModelChoice(v.substring(6));
-                } else if (v.startsWith('profile:')) {
-                  final id = v.substring(8);
-                  context.read<AppState>().updateConfig(
-                    (c) => c..activeAiProfileId = id,
-                  );
-                }
-              },
+                ],
+                onChanged: (v) {
+                  if (v == '__custom_model__') {
+                    _promptTopCustomModel(scheme, s);
+                  } else if (v.startsWith('model:')) {
+                    _applyModelChoice(v.substring(6));
+                  } else if (v.startsWith('profile:')) {
+                    final id = v.substring(8);
+                    context.read<AppState>().updateConfig(
+                      (c) => c..activeAiProfileId = id,
+                    );
+                  }
+                },
+              ),
             ),
           ),
         ),
@@ -13013,6 +13017,43 @@ bool shouldPersistHistoryMessage({
 double mobileAiSidebarWidth(double panelWidth) =>
     math.min(360.0, math.max(0.0, panelWidth * 0.88));
 
+// Chat token updates rebuild headers frequently. Cache text measurements by
+// font, system scale and candidate IDs instead of laying out every model again.
+final _aiModelMenuWidths = <(TextStyle?, double, TextDirection, String), double>{};
+
+// The overlay clamps this preferred width to the window; long names wrap.
+double _aiModelMenuWidth(BuildContext context, Iterable<String> labels) {
+  final style = Theme.of(context).textTheme.bodyMedium?.copyWith(
+    fontSize: 12.5,
+    fontWeight: FontWeight.w600,
+  );
+  final scale = AppTextScale.systemScaleOf(context).clamp(
+    AppTextScale.minScale, AppTextScale.maxScale);
+  final direction = Directionality.of(context);
+  final names = labels.toList(growable: false);
+  final key = (style, scale, direction, names.join('\u0000'));
+  final cached = _aiModelMenuWidths[key];
+  if (cached != null) return cached;
+  final painter = TextPainter(
+    textDirection: direction,
+    textScaler: TextScaler.linear(scale),
+  );
+  var width = 280.0;
+  for (final label in names) {
+    painter.text = TextSpan(text: label, style: style);
+    painter.layout();
+    // Panel/row padding, brand icon, gaps and the selection checkmark.
+    width = math.max(width, painter.width + 88);
+  }
+  painter.dispose();
+  final result = math.min(width.ceilToDouble(), 560.0);
+  if (_aiModelMenuWidths.length >= 24) {
+    _aiModelMenuWidths.remove(_aiModelMenuWidths.keys.first);
+  }
+  _aiModelMenuWidths[key] = result;
+  return result;
+}
+
 /// 模型候选清单：当前生效配置优先，再汇总其它启用配置的模型（去重保序）。
 ///
 /// 由宿主顶栏（_PipelineEditorPageState）与面板内移动端模型 chip 共用同一份
@@ -16019,8 +16060,8 @@ Available actions: __TOOLS__''';
               const SizedBox(width: 2),
               Icon(Icons.smart_toy, size: 18, color: scheme.primary),
               const SizedBox(width: 8),
-              // 模型 chip 吃掉剩余宽度并封顶 210：名字过长时省略号收尾，
-              // 完整名称在弹层菜单里可见（与旧实现一致）。
+              // Use all remaining header space for the selected model.
+              // Full identifiers remain available in the menu and tooltip.
               Expanded(
                 child: Align(
                   alignment: Alignment.centerLeft,
@@ -16029,7 +16070,7 @@ Available actions: __TOOLS__''';
                         _buildMobileModelChip(
                           scheme,
                           s,
-                          width: math.min(modelConstraints.maxWidth, 210),
+                          width: modelConstraints.maxWidth,
                         ),
                   ),
                 ),
@@ -16074,9 +16115,8 @@ Available actions: __TOOLS__''';
     final current = options.contains(raw)
         ? raw
         : (options.isNotEmpty ? options.first : '');
-    // 模型列表统一走 OptionMenuBar 的浮层：与 PC 顶栏同一个外观 / 动画，
-    // 长模型名在 280 宽的浮层里完整可见（系统 PopupMenu 只有 220 宽、
-    // 还把选项挤成省略号）。左侧图标按模型 id 判定品牌，判不出来用 memory。
+    // Size the menu independently of the compact trigger. Keep brand icons
+    // consistent with the desktop selector.
     Widget leadingFor(String model) {
       final brand = brandForModelId(model);
       return brand == null
@@ -16084,39 +16124,43 @@ Available actions: __TOOLS__''';
           : BrandLogo(brand: brand, size: 13, color: scheme.primary);
     }
 
-    return SizedBox(
-      width: width,
-      height: 44,
-      child: OptionMenuBar<String>(
-        key: const ValueKey('ai-mobile-model-chip'),
-        expandable: true,
-        searchable: options.length > 4,
-        searchHint: s.isZh ? '搜索模型' : 'Search models',
-        menuWidth: 280,
-        triggerHeight: 44,
-        leadingWidget: current.isEmpty ? null : leadingFor(current),
-        value: current,
-        items: [
-          for (final model in options)
-            OptionItem(
-              model,
-              model,
-              groupLabel:
-                  aiModelProviderLabel(cfg, model, _effectiveProfile).isEmpty
-                  ? (s.isZh ? '未指定提供商' : 'Unknown provider')
-                  : aiModelProviderLabel(cfg, model, _effectiveProfile),
-              leading: leadingFor(model),
-              keywords: model,
-            ),
-          if (options.isEmpty) OptionItem('', s.isZh ? '未配置' : 'No model'),
-        ],
-        onChanged: (model) {
-          if (model.isEmpty) return;
-          // 与 PC 顶栏同一写回路径：既更新配置又同步会话级覆盖，避免
-          // 「点了没反应」或「发出去还是旧模型」。
-          unawaited(applyAiModelChoice(context, model));
-          setState(() => _sessionModel = model);
-        },
+    return Tooltip(
+      message: current,
+      child: SizedBox(
+        width: width,
+        height: 44,
+        child: OptionMenuBar<String>(
+          key: const ValueKey('ai-mobile-model-chip'),
+          expandable: true,
+          searchable: options.length > 4,
+          searchHint: s.isZh ? '搜索模型' : 'Search models',
+          itemLabelMaxLines: null,
+          menuWidth: _aiModelMenuWidth(context, options),
+          triggerHeight: 44,
+          leadingWidget: current.isEmpty ? null : leadingFor(current),
+          value: current,
+          items: [
+            for (final model in options)
+              OptionItem(
+                model,
+                model,
+                groupLabel:
+                    aiModelProviderLabel(cfg, model, _effectiveProfile).isEmpty
+                    ? (s.isZh ? '未指定提供商' : 'Unknown provider')
+                    : aiModelProviderLabel(cfg, model, _effectiveProfile),
+                leading: leadingFor(model),
+                keywords: model,
+              ),
+            if (options.isEmpty) OptionItem('', s.isZh ? '未配置' : 'No model'),
+          ],
+          onChanged: (model) {
+            if (model.isEmpty) return;
+            // 与 PC 顶栏同一写回路径：既更新配置又同步会话级覆盖，避免
+            // 「点了没反应」或「发出去还是旧模型」。
+            unawaited(applyAiModelChoice(context, model));
+            setState(() => _sessionModel = model);
+          },
+        ),
       ),
     );
   }
@@ -16324,9 +16368,8 @@ Available actions: __TOOLS__''';
       );
     }
     final selectedModel = models.contains(selected) ? selected : models.first;
-    // 模型名过长时不能显示不全：触发按钮放宽到 260，**浮层固定 340 宽**并
-    // 支持搜索 —— 之前菜单跟着 200px 的按钮宽度走，「供应商 · 模型」直接被
-    // 省略号吃掉（用户反馈「模型名称过长显示不全」）。
+    // The compact trigger shares header space with chat actions. Measure the
+    // menu separately so desktop, floating and detached windows show full IDs.
     //
     // 左侧图标按模型 id 判定品牌（本地 SVG）；判不出来才用 memory 图标。
     // 旧 OptionMenuBar 用 Icons.circle_outlined 兜底，于是「模型选择框左边
@@ -16338,32 +16381,36 @@ Available actions: __TOOLS__''';
           : BrandLogo(brand: brand, size: 15, color: scheme.onSurfaceVariant);
     }
 
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 260),
-      child: OptionMenuBar<String>(
-        expandable: true,
-        searchable: true,
-        searchHint: s.isZh ? '搜索模型' : 'Search models',
-        menuWidth: 340,
-        triggerHeight: 34,
-        leadingWidget: leadingFor(selectedModel),
-        value: selectedModel,
-        items: [
-          for (final model in models)
-            OptionItem(
-              model,
-              model,
-              groupLabel: aiModelProviderLabel(cfg, model, profile).isEmpty
-                  ? (s.isZh ? '未指定提供商' : 'Unknown provider')
-                  : aiModelProviderLabel(cfg, model, profile),
-              leading: leadingFor(model),
-              keywords: model,
-            ),
-        ],
-        onChanged: (model) {
-          unawaited(applyAiModelChoice(context, model));
-          setState(() => _sessionModel = model);
-        },
+    return Tooltip(
+      message: selectedModel,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 260),
+        child: OptionMenuBar<String>(
+          expandable: true,
+          searchable: true,
+          searchHint: s.isZh ? '搜索模型' : 'Search models',
+          itemLabelMaxLines: null,
+          menuWidth: _aiModelMenuWidth(context, models),
+          triggerHeight: 34,
+          leadingWidget: leadingFor(selectedModel),
+          value: selectedModel,
+          items: [
+            for (final model in models)
+              OptionItem(
+                model,
+                model,
+                groupLabel: aiModelProviderLabel(cfg, model, profile).isEmpty
+                    ? (s.isZh ? '未指定提供商' : 'Unknown provider')
+                    : aiModelProviderLabel(cfg, model, profile),
+                leading: leadingFor(model),
+                keywords: model,
+              ),
+          ],
+          onChanged: (model) {
+            unawaited(applyAiModelChoice(context, model));
+            setState(() => _sessionModel = model);
+          },
+        ),
       ),
     );
   }

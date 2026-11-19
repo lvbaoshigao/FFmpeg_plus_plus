@@ -93,7 +93,7 @@ class _CardGlassKey {
 ///
 /// 样式由 [style]（AppConfig.cardStyle 四值）决定：
 /// - 'liquid' 移动端：oc_liquid_glass GPU 液态玻璃（与底部导航/药丸同参数）；
-///             桌面端：背景模糊 + 上亮下暗体感渐变玻璃
+///             桌面端：壁纸窄边折射 + 方向性亮缘，无壁纸时用兼容 shader/模糊
 /// - 'blur'   扁平高斯模糊 + 半透明 surface
 /// - 'theme'  跟随主题色纯色（主题渐变时渐变；不透明度对可读性做下限钳制）
 /// - 'gray'   灰色纯色容器（surfaceContainerHigh）
@@ -301,38 +301,21 @@ class _AppCardState extends State<AppCard> {
             // 液态玻璃卡比无壁纸时扁平一块（两条路径观感不一致）。
             final BoxShadow? shadow;
             if (blurLike) {
-              final int topAlpha =
-                  (((isDark ? 124.0 : 146.0) * op * tScale).round()).clamp(
-                    0,
-                    255,
-                  );
-              final int bottomAlpha =
-                  (((isDark ? 70.0 : 92.0) * op * tScale).round()).clamp(
-                    0,
-                    255,
-                  );
-              tint = null;
-              // 上下不同透明度 + 外阴影 + 白色边缘光：扁平模糊也需要体积感，
-              // 否则整张卡就是一块半透明纸片。
-              tintGrad = LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  glassBase.withAlpha(topAlpha),
-                  glassBase.withAlpha((topAlpha + bottomAlpha) ~/ 2),
-                  glassBase.withAlpha(bottomAlpha),
-                ],
+              // Frosted material is matte: uniform tint, no lens or specular rim.
+              tint = glassBase.withAlpha(
+                ((isDark ? 116 : 142) * op * tScale).round().clamp(0, 255),
               );
+              tintGrad = null;
               shadow = BoxShadow(
-                color: Colors.black.withAlpha(isDark ? 72 : 30),
-                blurRadius: 22,
-                offset: const Offset(0, 8),
+                color: Colors.black.withAlpha(isDark ? 28 : 12),
+                blurRadius: 12,
+                offset: const Offset(0, 3),
               );
               border = Border.all(
                 color: Colors.white.withValues(
-                  alpha: isDark ? 0.16 : 0.28,
+                  alpha: (isDark ? 0.07 : 0.12) * op,
                 ),
-                width: 0.7,
+                width: 0.6,
               );
             } else if (gpuGlass) {
               tint = glassBase.withAlpha(
@@ -391,15 +374,21 @@ class _AppCardState extends State<AppCard> {
                   screen: w.screen,
                   overlay: w.overlayColor,
                   sigma: sigma,
+                  borderRadius: br,
+                  refraction: blurLike || MediaQuery.highContrastOf(ctx)
+                      ? 0
+                      : op,
                 ),
                 child: CustomPaint(
-                  painter: LiquidGlassPainter(
-                    borderRadius: br,
-                    opacity: op,
-                    highlight: tuning.highlight,
-                    lightPos: tuning.lightPos,
-                    edge: tuning.edge,
-                  ),
+                  painter: blurLike
+                      ? null
+                      : LiquidGlassPainter(
+                          borderRadius: br,
+                          opacity: op,
+                          highlight: tuning.highlight,
+                          lightPos: tuning.lightPos,
+                          edge: tuning.edge,
+                        ),
                   child: Container(
                     padding: widget.padding,
                     decoration: BoxDecoration(
@@ -427,58 +416,38 @@ class _AppCardState extends State<AppCard> {
             // （后者把「液态玻璃」也改成扁平模糊，长列表更易读）。
             // σ 与 tint 分别由「玻璃细节」的模糊度 / 通透度控制（默认观感不变）。
             // BackdropFilter 外层不包 RepaintBoundary（Skia 缓存导致玻璃与背景脱节）
-            final int topAlpha =
-                (((isDark ? 124.0 : 146.0) * op * tScale).round()).clamp(0, 255);
-            final int bottomAlpha =
-                (((isDark ? 70.0 : 92.0) * op * tScale).round()).clamp(0, 255);
+            final alpha = ((isDark ? 116 : 142) * op * tScale).round().clamp(
+              0,
+              255,
+            );
             return DecoratedBox(
               decoration: BoxDecoration(
                 borderRadius: br,
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withAlpha(isDark ? 72 : 30),
-                    blurRadius: 22,
-                    offset: const Offset(0, 8),
+                    color: Colors.black.withAlpha(isDark ? 28 : 12),
+                    blurRadius: 12,
+                    offset: const Offset(0, 3),
                   ),
                 ],
               ),
               child: ClipRRect(
                 borderRadius: br,
                 child: BackdropFilter(
-                  // σ 已由 effectiveGlassSigma 按平台钳制；走缓存避免每帧每卡新建
-                  // 一份持有 native handle 的 ImageFilter（见 cachedGlassBlur 注释）。
                   filter: cachedGlassBlur(sigma),
-                  child: CustomPaint(
-                    // 高光 / 边缘光：与液态玻璃回退同一支画笔，扁平模糊同样有玻璃光泽
-                    painter: LiquidGlassPainter(
+                  child: Container(
+                    padding: widget.padding,
+                    decoration: BoxDecoration(
                       borderRadius: br,
-                      opacity: op,
-                      highlight: tuning.highlight,
-                      lightPos: tuning.lightPos,
-                      edge: tuning.edge,
-                    ),
-                    child: Container(
-                      padding: widget.padding,
-                      decoration: BoxDecoration(
-                        borderRadius: br,
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            glassBase.withAlpha(topAlpha),
-                            glassBase.withAlpha((topAlpha + bottomAlpha) ~/ 2),
-                            glassBase.withAlpha(bottomAlpha),
-                          ],
+                      color: glassBase.withAlpha(alpha),
+                      border: Border.all(
+                        color: Colors.white.withValues(
+                          alpha: (isDark ? 0.07 : 0.12) * op,
                         ),
-                        border: Border.all(
-                          color: Colors.white.withValues(
-                            alpha: isDark ? 0.16 : 0.28,
-                          ),
-                          width: 0.7,
-                        ),
+                        width: 0.6,
                       ),
-                      child: inner,
                     ),
+                    child: inner,
                   ),
                 ),
               ),
@@ -509,8 +478,8 @@ class _AppCardState extends State<AppCard> {
                   color: tint,
                   shadow: BoxShadow(
                     color: Colors.black.withAlpha(isDark ? 80 : 34),
-                blurRadius: 24,
-                offset: const Offset(0, 8),
+                    blurRadius: 24,
+                    offset: const Offset(0, 8),
                   ),
                   child: Container(
                     padding: widget.padding,
@@ -630,9 +599,9 @@ class _AppCardState extends State<AppCard> {
 ///    壁纸），这里只做一次普通 drawImageRect。同一张图被页内所有玻璃卡共享，
 ///    每帧不再产生任何模糊。
 ///  - **回退**：没有预模糊图时（无壁纸 / 尚未生成 / 生成失败）在本方法里实时
-///    模糊。这是老路径：每次 paint 都要为「整屏 dst」跑一次高斯模糊，模糊需要
-///    在目标外多分配约 3σ 的离屏纹理，是「开玻璃后进程常驻内存几百 MB」的
-///    主要来源 —— 所以正常情况不应走到这里。
+///    模糊。采样区域限制为卡片可见范围加 3σ 边距，避免每卡过滤整屏。
+/// 液态表面额外在 ≤8 逻辑像素的边缘分三圈、四方向偏移采样原始壁纸；
+/// 中心保持对齐，文字不参与折射，不生成离屏图像。
 ///
 /// 已知限制：模糊在壁纸图像边界处会向透明衰减（贴屏幕边缘的卡片可能有
 /// 极窄的边缘变暗，通常被遮罩色盖住）；背景上若出现壁纸之外的内容
@@ -648,6 +617,10 @@ class _WallpaperWindowPainter extends CustomPainter {
   final Size screen;
   final Color overlay;
   final double sigma;
+  final BorderRadius borderRadius;
+
+  /// Lens strength; zero for matte blur and high-contrast surfaces.
+  final double refraction;
 
   // [FIX 开窗DPR] 原本还有 devicePixelRatio 字段：paint 误把逆变换后的画布
   // 空间当设备像素、用它放大矩形与 σ。实际画布 CTM 不含 DPR（根级 DPR 在
@@ -658,6 +631,8 @@ class _WallpaperWindowPainter extends CustomPainter {
     required this.screen,
     required this.overlay,
     required this.sigma,
+    required this.borderRadius,
+    this.refraction = 0,
     this.blurred,
   });
 
@@ -680,11 +655,12 @@ class _WallpaperWindowPainter extends CustomPainter {
     // 逆变换对**任意可逆变换**都成立（旋转 / 斜切 / 非等比一并支持），旧版
     // 手算「设备平移 ÷ 总缩放」只支持纯平移 + 等比缩放、其余情况静默放弃绘制
     // 的失败路径也被这条方案覆盖。
-    final inv = Matrix4.tryInvert(
-      Matrix4.fromFloat64List(canvas.getTransform()),
-    );
+    if (size.isEmpty || screen.isEmpty) return;
+    final transform = Matrix4.fromFloat64List(canvas.getTransform());
+    final inv = Matrix4.tryInvert(transform);
     if (inv == null) return; // 退化变换（行列式为 0）：不存在可绘制区域
     canvas.save();
+    canvas.clipRect(Offset.zero & size);
     canvas.transform(inv.storage);
     // —— 以下所有坐标都是屏幕逻辑坐标 ——
     final Rect screenRect = Rect.fromLTWH(0, 0, screen.width, screen.height);
@@ -726,13 +702,93 @@ class _WallpaperWindowPainter extends CustomPainter {
         ..imageFilter = cachedGlassBlur(sigma)
         // 此处是放大采样，low 足够且不生成 mipmap。
         ..filterQuality = FilterQuality.low;
-      canvas.drawImageRect(image, Rect.fromLTWH(0, 0, iw, ih), cover, p);
+      // Bound the temporary blur to this card (plus its sampling gutter),
+      // rather than filtering an entire wallpaper while the cache is pending.
+      final visible = MatrixUtils.transformRect(
+        transform,
+        Offset.zero & size,
+      ).inflate(3 * sigma).intersect(screenRect);
+      if (!visible.isEmpty) {
+        final source = Rect.fromLTRB(
+          (visible.left - cover.left) / scale,
+          (visible.top - cover.top) / scale,
+          (visible.right - cover.left) / scale,
+          (visible.bottom - cover.top) / scale,
+        );
+        canvas.drawImageRect(image, source, visible, p);
+      }
     }
     if (overlay.a > 0) {
       // 遮罩同样画在逻辑空间，与卡外背景叠的那层逐像素一致
       canvas.drawRect(screenRect, Paint()..color = overlay);
     }
     canvas.restore();
+    _paintRefraction(canvas, size, inv);
+  }
+
+  /// Reuses the original image only within a narrow, three-step meniscus.
+  /// The center stays registered to the wallpaper; no child is transformed.
+  /// Twelve clipped bilinear draws replace texture capture or shader filters.
+  void _paintRefraction(Canvas canvas, Size size, Matrix4 inverse) {
+    final strength = refraction.clamp(0.0, 1.0);
+    if (strength <= 0.001 || size.shortestSide < 24) return;
+    final rim = borderRadius.toRRect(Offset.zero & size).scaleRadii();
+    final width = math.min(8.0, size.shortestSide * 0.12);
+    final iw = image.width.toDouble();
+    final ih = image.height.toDouble();
+    final scale = math.max(screen.width / iw, screen.height / ih);
+    final cover = Rect.fromLTWH(
+      (screen.width - iw * scale) / 2,
+      (screen.height - ih * scale) / 2,
+      iw * scale,
+      ih * scale,
+    );
+    final rect = Offset.zero & size;
+    final corners = [
+      rect.topLeft,
+      rect.topRight,
+      rect.bottomRight,
+      rect.bottomLeft,
+    ];
+    const normals = [Offset(0, 1), Offset(-1, 0), Offset(0, -1), Offset(1, 0)];
+    final paint = Paint()..filterQuality = FilterQuality.low;
+    for (var band = 0; band < 3; band++) {
+      final fraction = 1 - band / 3;
+      final ring = Path()
+        ..fillType = PathFillType.evenOdd
+        ..addRRect(rim.deflate(width * band / 3))
+        ..addRRect(rim.deflate(width * (band + 1) / 3));
+      // Applying the same wallpaper overlay to each sample preserves the
+      // background's configured brightness, including very dark wallpapers.
+      final alpha = strength * fraction * 0.72;
+      final overlayAlpha = overlay.a * alpha;
+      paint.color = Colors.white.withValues(
+        alpha: alpha * (1 - overlay.a) / (1 - overlayAlpha),
+      );
+      for (var side = 0; side < 4; side++) {
+        final sector = Path()
+          ..moveTo(rect.center.dx, rect.center.dy)
+          ..lineTo(corners[side].dx, corners[side].dy)
+          ..lineTo(corners[(side + 1) % 4].dx, corners[(side + 1) % 4].dy)
+          ..close();
+        canvas.save();
+        canvas.clipPath(ring);
+        canvas.clipPath(sector, doAntiAlias: false);
+        final offset = normals[side] * (5 * fraction * fraction);
+        // Clip in card coordinates first, then shift the screen-aligned
+        // image by a local normal. Rotation/scale do not displace the center.
+        canvas.translate(offset.dx, offset.dy);
+        canvas.transform(inverse.storage);
+        canvas.drawImageRect(image, Rect.fromLTWH(0, 0, iw, ih), cover, paint);
+        if (overlay.a > 0) {
+          canvas.drawRect(
+            cover,
+            Paint()..color = overlay.withValues(alpha: overlay.a * alpha),
+          );
+        }
+        canvas.restore();
+      }
+    }
   }
 
   @override
@@ -742,5 +798,7 @@ class _WallpaperWindowPainter extends CustomPainter {
       old.blurred != blurred ||
       old.screen != screen ||
       old.overlay != overlay ||
-      old.sigma != sigma;
+      old.sigma != sigma ||
+      old.borderRadius != borderRadius ||
+      old.refraction != refraction;
 }
