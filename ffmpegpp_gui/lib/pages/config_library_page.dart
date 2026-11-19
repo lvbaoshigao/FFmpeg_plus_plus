@@ -144,23 +144,11 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         var newFormat = false;
         return StatefulBuilder(
           builder: (ctx, setDialogState) => AlertDialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            title: Row(
-              children: [
-                Icon(Icons.add_circle_outline, size: 20, color: scheme.primary),
-                const SizedBox(width: 8),
-                Text(
-                  zh ? '新建配置' : 'New Config',
-                  style: TextStyle(color: scheme.onSurface),
-                ),
-              ],
-            ),
+            scrollable: true,
+            icon: Icon(Icons.add_circle_outline, color: scheme.primary),
+            title: Text(zh ? '新建配置' : 'New Config'),
             content: SizedBox(
-              width: MediaQuery.sizeOf(ctx).width < 440
-                  ? MediaQuery.sizeOf(ctx).width - 64
-                  : 360,
+              width: 360,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -180,27 +168,24 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                     },
                   ),
                   const SizedBox(height: 12),
-                  SegmentedButton<bool>(
-                    segments: [
-                      ButtonSegment(
-                        value: false,
-                        label: Text(zh ? '旧版' : 'Legacy'),
-                        icon: const Icon(Icons.history, size: 16),
+                  OptionMenuBar<bool>(
+                    label: zh ? '文件格式' : 'File format',
+                    value: newFormat,
+                    triggerHeight: 44,
+                    items: [
+                      OptionItem(
+                        false,
+                        zh ? '旧版' : 'Legacy',
+                        icon: Icons.history,
                       ),
-                      ButtonSegment(
-                        value: true,
-                        label: Text(
-                          zh ? '新版 Beta' : 'New Beta',
-                          maxLines: 1,
-                          softWrap: false,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        icon: const Icon(Icons.auto_awesome, size: 16),
+                      OptionItem(
+                        true,
+                        zh ? '新版 Beta' : 'New Beta',
+                        icon: Icons.auto_awesome,
                       ),
                     ],
-                    selected: {newFormat},
-                    onSelectionChanged: (s) =>
-                        setDialogState(() => newFormat = s.first),
+                    onChanged: (value) =>
+                        setDialogState(() => newFormat = value),
                   ),
                   const SizedBox(height: 6),
                   Text(
@@ -1030,23 +1015,11 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         var selected = QuickFileType.video;
         return StatefulBuilder(
           builder: (ctx, setDialogState) => AlertDialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            title: Row(
-              children: [
-                Icon(Icons.bolt_outlined, size: 20, color: scheme.primary),
-                const SizedBox(width: 8),
-                Text(
-                  zh ? '新建快捷配置' : 'New Quick Config',
-                  style: TextStyle(color: scheme.onSurface),
-                ),
-              ],
-            ),
+            scrollable: true,
+            icon: Icon(Icons.bolt_outlined, color: scheme.primary),
+            title: Text(zh ? '新建快捷配置' : 'New Quick Config'),
             content: SizedBox(
-              width: MediaQuery.sizeOf(ctx).width < 440
-                  ? MediaQuery.sizeOf(ctx).width - 64
-                  : 360,
+              width: 360,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -1447,7 +1420,10 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                             final leftHanded = handSide == 'left';
                             // 宽度不再按屏幕 1/3 拉伸（宽屏上会拉成细长条）：
                             // 两个选项各 76，总宽固定 152。
-                            const selectorWidth = 152.0;
+                            final selectorWidth =
+                                (constraints.maxWidth -
+                                        2 * kAppLiquidTabBarStyle.horizontalMargin)
+                                    .clamp(0.0, 152.0);
                             // ⚠️ 盒子高度必须按组件的**真实**高度算，不能只给
                             // capsuleHeight：LiquidGlassTabBarStyle.barHeight =
                             // capsuleHeight + 2 × capsuleInset，且组件在 build 里
@@ -1477,36 +1453,14 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                             final listPadding = MobileUi.mainListPadding(
                               placement: placement,
                             );
-                            final sideInset =
-                                placement == MobileNavPlacement.bottom
-                                ? 8.0
-                                : selectorWidth + 18;
+
                             return Stack(
                               children: [
                                 Positioned.fill(
                                   child: ListView(
                                     addRepaintBoundaries: false,
-                                    padding: EdgeInsets.fromLTRB(
-                                      listPadding.left +
-                                          (placement !=
-                                                      MobileNavPlacement
-                                                          .bottom &&
-                                                  leftHanded
-                                              ? sideInset
-                                              : 0),
-                                      listPadding.top,
-                                      listPadding.right +
-                                          (placement !=
-                                                      MobileNavPlacement
-                                                          .bottom &&
-                                                  !leftHanded
-                                              ? sideInset
-                                              : 0),
-                                      placement == MobileNavPlacement.bottom
-                                          ? (selectorBottom +
-                                                selectorHeight +
-                                                12)
-                                          : listPadding.bottom,
+                                    padding: listPadding.copyWith(
+                                      bottom: selectorBottom + selectorHeight + 12,
                                     ),
                                     children: _buildTabContent(scheme, zh),
                                   ),

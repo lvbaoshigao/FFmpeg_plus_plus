@@ -1,8 +1,8 @@
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
+import '../../services/directory_picker.dart';
 import 'editor_kit.dart';
 
 class OutputStepEditor extends ParamsStepEditor {
@@ -72,7 +72,7 @@ class _OutputStepEditorState extends State<OutputStepEditor> with StepEditorStat
   }
 
   Future<void> _browseDir() async {
-    final result = await FilePicker.getDirectoryPath();
+    final result = await pickLocalDirectory();
     if (result != null) {
       if (!mounted) return;
       _dirCtrl.text = result;

@@ -9,6 +9,7 @@ import '../app.dart' show smoothRoute;
 import '../models/models.dart';
 import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
+import '../services/directory_picker.dart';
 import '../services/fppx2_service.dart';
 import '../services/quick_config_pipeline.dart';
 import '../services/quick_config_storage.dart';
@@ -68,6 +69,7 @@ class ProjectPageState extends State<ProjectPage> {
   static final _exts = [..._videoExts, ..._audioExts, ..._imageExts];
 
   String _searchQuery = '';
+  final TextEditingController _searchController = TextEditingController();
   bool _searchVisible = false;
   final Set<String> _selectedIds = {};
   final Set<String> _selectedContainerIds = {};
@@ -76,9 +78,20 @@ class ProjectPageState extends State<ProjectPage> {
   /// 移动端多选模式：长按单个项目进入，选中项高亮（左侧不再常驻复选框）。
   bool _selectionMode = false;
 
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   void _enterSelectionMode() {
     if (_selectionMode) return;
-    setState(() => _selectionMode = true);
+    setState(() {
+      _selectionMode = true;
+      _searchVisible = false;
+      _searchQuery = '';
+      _searchController.clear();
+    });
   }
 
   void _exitSelectionMode() {
@@ -173,31 +186,66 @@ class ProjectPageState extends State<ProjectPage> {
 
     // 只在媒体库相关状态变化时重建（视频/容器数量、探测状态、语言），
     // 不再订阅整个 AppState——进度心跳/日志/任务通知不会触发本页重建。
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+        final compact =
+            isMobilePlatform ||
+            constraints.maxWidth < 600 * textScale.clamp(1.0, 1.5);
+        return _buildProjectContent(
+          context,
+          compact: compact,
+          scheme: scheme,
+          clr: clr,
+        );
+      },
+    );
+  }
+
+  Widget _buildProjectContent(
+    BuildContext context, {
+    required bool compact,
+    required ColorScheme scheme,
+    required Color clr,
+  }) {
     return Selector<AppState, int>(
-      selector: (_, state) => state.librarySignature,
+      selector: (_, state) => Object.hash(
+        state.librarySignature,
+        state.config.editMode,
+        state.config.menuStyle,
+        state.config.pillStyle,
+      ),
       builder: (context, _, _) {
         final state = context.read<AppState>();
         final s = AppStrings.of(state.config.language);
 
-        // 搜索过滤（查询串小写化一次，避免每项重复 toLowerCase）
-        final query = _searchQuery.trim().toLowerCase();
-        final videos = query.isEmpty
-            ? state.videos
-            : state.videos
-                  .where((v) => v.filename.toLowerCase().contains(query))
-                  .toList();
-
+        final library = _buildBody(
+          context,
+          state,
+          s,
+          clr,
+          scheme,
+          compact: compact,
+        );
+        final content = isMobilePlatform
+            ? library
+            : DropTarget(
+                onDragDone: _onDrop,
+                onDragEntered: (_) => setState(() => _dragging = true),
+                onDragExited: (_) => setState(() => _dragging = false),
+                child: library,
+              );
         return Scaffold(
           backgroundColor: Colors.transparent,
           body: Stack(
             children: [
-              // 全屏可滚动的内容（移动端顶部留出药丸空间）
-              if (isMobilePlatform)
-                Padding(
-                  padding: EdgeInsets.only(
-                    top: MobileUi.pageTopPadding(context),
-                  ),
-                  child: _buildBody(context, state, videos, s, clr, scheme),
+              // Wrapping actions determine their own height at large text sizes.
+              if (compact)
+                Column(
+                  children: [
+                    _buildMobileTopBar(context, state, s, scheme, clr),
+                    Expanded(child: content),
+                  ],
                 )
               else
                 Column(
@@ -205,6 +253,7 @@ class ProjectPageState extends State<ProjectPage> {
                     GlassTopBar(
                       title: _searchVisible
                           ? TextField(
+                              controller: _searchController,
                               autofocus: true,
                               style: TextStyle(
                                 fontSize: 14,
@@ -240,7 +289,10 @@ class ProjectPageState extends State<ProjectPage> {
                           tooltip: _searchVisible ? s.close : s.search,
                           onPressed: () => setState(() {
                             _searchVisible = !_searchVisible;
-                            if (!_searchVisible) _searchQuery = '';
+                            if (!_searchVisible) {
+                              _searchQuery = '';
+                              _searchController.clear();
+                            }
                           }),
                         ),
                         if (state.videos.isNotEmpty ||
@@ -296,93 +348,28 @@ class ProjectPageState extends State<ProjectPage> {
                               ? null
                               : () => _importConfig(state, s),
                         ),
-                        // 圆形图标按钮：新建容器（主题色描边玻璃圆底）+ 添加文件（主色圆底），无文字
                         if (state.config.editMode != 1) ...[
                           const SizedBox(width: 6),
-                          Tooltip(
-                            message: s.container,
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(20),
-                              onTap: () =>
-                                  _showContainerMenu(context, state, s),
-                              child: Container(
-                                width: 40,
-                                height: 40,
-                                decoration: BoxDecoration(
-                                  color: scheme.primaryContainer.withAlpha(160),
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: scheme.primary.withAlpha(90),
-                                    width: 1.2,
-                                  ),
-                                ),
-                                child: Icon(
-                                  Icons.create_new_folder_outlined,
-                                  size: 18,
-                                  color: scheme.primary,
-                                ),
-                              ),
+                          IconButton.outlined(
+                            key: const ValueKey('project_container'),
+                            tooltip: s.container,
+                            onPressed: () =>
+                                _showContainerMenu(context, state, s),
+                            icon: const Icon(
+                              Icons.create_new_folder_outlined,
+                              size: 20,
+                            ),
+                            style: IconButton.styleFrom(
+                              foregroundColor: scheme.onSurface,
                             ),
                           ),
                         ],
                         const SizedBox(width: 10),
-                        Tooltip(
-                          message: s.addVideo,
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(20),
-                            onTap: () => _pick(state),
-                            child: Container(
-                              width: 40,
-                              height: 40,
-                              decoration: BoxDecoration(
-                                color: scheme.primary,
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: scheme.primary.withAlpha(90),
-                                  width: 1.2,
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: scheme.primary.withAlpha(90),
-                                    blurRadius: 8,
-                                    offset: const Offset(0, 2),
-                                  ),
-                                ],
-                              ),
-                              child: Icon(
-                                Icons.add,
-                                size: 24,
-                                color: scheme.onPrimary,
-                              ),
-                            ),
-                          ),
-                        ),
+                        _addFilesButton(state, s, scheme),
                       ],
                     ),
-                    Expanded(
-                      child: DropTarget(
-                        onDragDone: _onDrop,
-                        onDragEntered: (_) => setState(() => _dragging = true),
-                        onDragExited: (_) => setState(() => _dragging = false),
-                        child: _buildBody(
-                          context,
-                          state,
-                          videos,
-                          s,
-                          clr,
-                          scheme,
-                        ),
-                      ),
-                    ),
+                    Expanded(child: content),
                   ],
-                ),
-              // 移动端顶栏浮层（不影响滚动）
-              if (isMobilePlatform)
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  child: _buildMobileTopBar(context, state, s, scheme, clr),
                 ),
             ],
           ),
@@ -391,9 +378,45 @@ class ProjectPageState extends State<ProjectPage> {
     );
   }
 
-  /// 移动端顶栏：统一走 [MobilePillTopBar]（主界面基准的唯一实现）——
-  /// 左标题药丸（多选时变成「已选 N 项 + 关闭」）+ 右动作药丸；
-  /// 搜索时标题/动作层整体淡出缩放，同一颗搜索药丸「变长」到 200px 并居中。
+  Widget _addFilesButton(
+    AppState state,
+    AppStrings s,
+    ColorScheme scheme, {
+    Key key = const ValueKey('project_add_files'),
+    bool compact = false,
+  }) => GlassPanel(
+    radius: 8,
+    style: compact ? state.config.pillStyle : state.config.menuStyle,
+    child: OutlinedButton.icon(
+      key: key,
+      onPressed: () => _pick(state),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: scheme.onSurface,
+        backgroundColor: Colors.transparent,
+        side: BorderSide.none,
+        minimumSize: const Size(0, 48),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      ),
+      icon: const Icon(Icons.add, size: 20),
+      label: Text(s.addVideo, textAlign: TextAlign.center),
+    ),
+  );
+
+  void _importOrExplain(AppState state, AppStrings s) {
+    if (state.videos.isEmpty) {
+      showToast(
+        context,
+        s.isZh
+            ? '请先添加文件，再导入配置并应用'
+            : 'Add files first, then import a config to apply',
+        type: ToastType.info,
+      );
+    } else {
+      _importConfig(state, s);
+    }
+  }
+
+  /// Keep search in its circular pill and let labeled actions wrap naturally.
   Widget _buildMobileTopBar(
     BuildContext context,
     AppState state,
@@ -403,57 +426,62 @@ class ProjectPageState extends State<ProjectPage> {
   ) {
     final inSelection = _selectionMode;
     final selectedCount = _selectedIds.length + _selectedContainerIds.length;
-
-    final Widget titleChild = inSelection
-        ? Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Flexible(
-                child: Text(
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        MobilePillTopBar(
+          title: inSelection
+              ? Text(
                   '${s.isZh ? '已选' : 'Selected'} $selectedCount ${s.isZh ? '项' : 'items'}',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
+                )
+              : Text(s.navProjects),
+          actions: inSelection
+              ? []
+              : [
+                  MobileGlassPillAction(
+                    key: const ValueKey('project_search'),
+                    icon: Icons.search,
+                    tooltip: s.search,
                     color: scheme.onSurface,
+                    size: 44,
+                    padding: EdgeInsets.zero,
+                    onTap: openSearch,
                   ),
-                ),
-              ),
-              const SizedBox(width: 6),
-              // 关闭多选：统一使用 34×34 圆形动作按钮（与主界面一致）
-              MobileGlassPillAction(
-                icon: Icons.close,
-                tooltip: s.isZh ? '退出多选' : 'Exit selection',
-                color: scheme.onSurfaceVariant,
-                onTap: _exitSelectionMode,
-              ),
-            ],
-          )
-        : Text(s.navProjects);
-
-    return MobilePillTopBar(
-      title: titleChild,
-      actions: _buildMobileActions(context, state, s, scheme, inSelection),
-      // 主界面不折叠：搜索 / 导入 / 容器 / 添加（多选态则是 全选 / 反选 / 删除）
-      // 全部 inline 挤在同一颗药丸里。用户要求「主界面不要搞...了（右上角药丸
-      // 样式不用折叠，因为项挤在一个药丸里比较合适）」。极端窄屏由
-      // _actionsPill 内的 FittedBox 等比缩小兜底，不会 RenderFlex 溢出。
-      collapseActions: false,
-      searching: _searchVisible,
-      // 搜索药丸：搜索时从 44px 变长到 200px 并水平居中（与设置页同一实现）
-      searchChild: MobileSearchPill(
-        hint: s.searchVideos,
-        onChanged: (v) => setState(() => _searchQuery = v),
-        onClose: () => setState(() {
-          _searchVisible = false;
-          _searchQuery = '';
-        }),
-      ),
+                ],
+          collapseActions: false,
+          searching: _searchVisible,
+          searchChild: MobileSearchPill(
+            controller: _searchController,
+            hint: s.searchVideos,
+            onChanged: (v) => setState(() => _searchQuery = v),
+            onClose: () => setState(() {
+              _searchVisible = false;
+              _searchQuery = '';
+              _searchController.clear();
+            }),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+          child: Wrap(
+            key: const ValueKey('project_actions'),
+            spacing: 8,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: _buildMobileActions(
+              context,
+              state,
+              s,
+              scheme,
+              inSelection,
+            ),
+          ),
+        ),
+      ],
     );
   }
 
-  /// 移动端顶栏右侧动作（长药丸内）：多选=全选/反选/删除；普通=搜索/导入/容器/添加。
-  /// 全部使用统一的 [MobileGlassPillAction]（34×34 圆形、透明涟漪），
-  /// 取代此前本页私有 _pillAction（各页各写一份，尺寸/内边距却各不相同）。
   List<Widget> _buildMobileActions(
     BuildContext context,
     AppState state,
@@ -461,83 +489,76 @@ class ProjectPageState extends State<ProjectPage> {
     ColorScheme scheme,
     bool inSelection,
   ) {
+    final secondaryStyle = TextButton.styleFrom(
+      foregroundColor: scheme.onSurface,
+      minimumSize: const Size(0, 48),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+    );
     if (inSelection) {
       return [
-        MobileGlassPillAction(
-          icon: Icons.select_all,
-          tooltip: s.selectAll,
-          color: scheme.onSurface,
-          onTap: () => setState(() {
+        TextButton.icon(
+          key: const ValueKey('project_exit_selection'),
+          onPressed: _exitSelectionMode,
+          style: secondaryStyle,
+          icon: const Icon(Icons.close, size: 20),
+          label: Text(s.isZh ? '退出多选' : 'Exit selection'),
+        ),
+        TextButton.icon(
+          key: const ValueKey('project_select_all'),
+          onPressed: () => setState(() {
             _selectedIds.addAll(state.videos.map((v) => v.id));
             _selectedContainerIds.addAll(state.containers.map((c) => c.id));
           }),
+          style: secondaryStyle,
+          icon: const Icon(Icons.select_all, size: 20),
+          label: Text(s.selectAll),
         ),
-        MobileGlassPillAction(
-          icon: Icons.flip,
-          tooltip: s.isZh ? '反选' : 'Invert',
-          color: scheme.onSurface,
-          onTap: () => _invertSelection(state),
+        TextButton.icon(
+          key: const ValueKey('project_invert_selection'),
+          onPressed: () => _invertSelection(state),
+          style: secondaryStyle,
+          icon: const Icon(Icons.flip, size: 20),
+          label: Text(s.isZh ? '反选' : 'Invert'),
         ),
-        MobileGlassPillAction(
-          icon: Icons.delete_outline,
-          tooltip: s.deleteSelected,
-          color: scheme.error,
-          onTap: () => _deleteSelected(state),
+        TextButton.icon(
+          key: const ValueKey('project_delete_selected'),
+          onPressed: () => _deleteSelected(state),
+          style: secondaryStyle.copyWith(
+            foregroundColor: WidgetStatePropertyAll(scheme.error),
+          ),
+          icon: const Icon(Icons.delete_outline, size: 20),
+          label: Text(s.deleteSelected),
         ),
       ];
     }
     return [
-      MobileGlassPillAction(
-        icon: Icons.search,
-        tooltip: s.search,
-        color: scheme.onSurface,
-        onTap: () => setState(() {
-          _searchVisible = !_searchVisible;
-          if (!_searchVisible) _searchQuery = '';
-        }),
-      ),
-      // 导入配置：修复“点击无任何响应”——原先视频列表为空时 onTap 直接传 null，
-      // 按钮可点但毫无反馈。空列表时给出明确的操作引导提示。
-      MobileGlassPillAction(
-        icon: Icons.file_download_outlined,
-        tooltip: s.isZh ? '导入配置' : 'Import Config',
-        color: scheme.onSurface,
-        onTap: state.videos.isEmpty
-            ? () => showToast(
-                context,
-                s.isZh
-                    ? '请先用「+」添加文件，再导入配置并应用'
-                    : 'Add files with "+" first, then import a config to apply',
-                type: ToastType.info,
-              )
-            : () => _importConfig(state, s),
+      _addFilesButton(state, s, scheme, compact: true),
+      TextButton.icon(
+        key: const ValueKey('project_import_config'),
+        onPressed: () => _importOrExplain(state, s),
+        style: secondaryStyle,
+        icon: const Icon(Icons.file_download_outlined, size: 20),
+        label: Text(s.isZh ? '导入配置' : 'Import Config'),
       ),
       if (state.config.editMode != 1)
-        MobileGlassPillAction(
-          icon: Icons.create_new_folder_outlined,
-          tooltip: s.container,
-          color: scheme.onSurface,
-          onTap: () => _showContainerMenu(context, state, s),
+        TextButton.icon(
+          key: const ValueKey('project_container'),
+          onPressed: () => _showContainerMenu(context, state, s),
+          style: secondaryStyle,
+          icon: const Icon(Icons.create_new_folder_outlined, size: 20),
+          label: Text(s.container),
         ),
-      // 主题色实心「+」CTA
-      MobileGlassPillAction(
-        icon: Icons.add,
-        tooltip: s.addVideo,
-        color: scheme.onPrimary,
-        bg: scheme.primary,
-        onTap: () => _pick(state),
-      ),
     ];
   }
 
   Widget _buildBody(
     BuildContext context,
     AppState state,
-    List videos,
     AppStrings s,
     Color clr,
-    ColorScheme scheme,
-  ) {
+    ColorScheme scheme, {
+    required bool compact,
+  }) {
     // 探测进度提示：导入大文件时 ffprobe 可能要数十秒，
     // 顶部贴一个明显的"探测中"提示，避免用户以为卡死而关掉 app 触发 ANR。
     final probingBanner = state.probingVideos && !_dragging
@@ -579,50 +600,54 @@ class ProjectPageState extends State<ProjectPage> {
       return Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 420),
-          child: Padding(
-            padding: const EdgeInsets.all(28),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // 用户要求：空状态只保留媒体图标，不要主题色矩形底/描边。
-                Icon(
-                  Icons.movie_creation_outlined,
-                  size: 56,
-                  color: scheme.primary,
-                ),
-                const SizedBox(height: 24),
-                Text(
-                  s.noVideos,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  s.clickAdd,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodyMedium?.copyWith(color: clr),
-                ),
-                if (!isMobilePlatform) ...[
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.all(28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // 用户要求：空状态只保留媒体图标，不要主题色矩形底/描边。
+                  Icon(
+                    Icons.movie_creation_outlined,
+                    size: 56,
+                    color: scheme.primary,
+                  ),
+                  const SizedBox(height: 24),
+                  Text(
+                    s.noVideos,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                   const SizedBox(height: 8),
                   Text(
-                    s.dragDropHint,
+                    s.clickAdd,
                     textAlign: TextAlign.center,
                     style: Theme.of(
                       context,
-                    ).textTheme.bodySmall?.copyWith(color: clr.withAlpha(170)),
+                    ).textTheme.bodyMedium?.copyWith(color: clr),
+                  ),
+                  if (!isMobilePlatform) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      s.dragDropHint,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: clr.withAlpha(170),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 22),
+                  _addFilesButton(
+                    state,
+                    s,
+                    scheme,
+                    key: const ValueKey('project_empty_add_files'),
+                    compact: compact,
                   ),
                 ],
-                const SizedBox(height: 22),
-                FilledButton.icon(
-                  onPressed: () => _pick(state),
-                  icon: const Icon(Icons.add),
-                  label: Text(s.addVideo),
-                ),
-              ],
+              ),
             ),
           ),
         ),
@@ -630,19 +655,16 @@ class ProjectPageState extends State<ProjectPage> {
     }
 
     final standalone = state.standaloneVideos;
-    final filteredStandalone = _searchQuery.isEmpty
+    final query = _searchQuery.trim().toLowerCase();
+    final filteredStandalone = query.isEmpty
         ? standalone
         : standalone
-              .where(
-                (v) => v.filename.toLowerCase().contains(
-                  _searchQuery.toLowerCase(),
-                ),
-              )
+              .where((v) => v.filename.toLowerCase().contains(query))
               .toList();
     final containerCount = state.containers.length;
     final totalCount = containerCount + filteredStandalone.length;
 
-    if (totalCount == 0 && _searchQuery.isNotEmpty) {
+    if (totalCount == 0 && query.isNotEmpty) {
       return Center(
         child: Text(s.noMatch, style: TextStyle(fontSize: 14, color: clr)),
       );
@@ -659,10 +681,12 @@ class ProjectPageState extends State<ProjectPage> {
             addRepaintBoundaries: false,
             // 移动端走统一内边距令牌（左右 8 + 底部按菜单栏位置让出：底部悬浮胶囊
             // 让出 96px，左右竖排导轨只留 20px）；桌面端保持 16
-            padding: isMobilePlatform
+            padding: compact
                 ? MobileUi.mainListPadding(
                     top: probingBanner != null ? 4 : 16,
-                    placement: MobileNavPlacementScope.of(context),
+                    placement: isMobilePlatform
+                        ? MobileNavPlacementScope.of(context)
+                        : MobileNavPlacement.left,
                   )
                 : EdgeInsets.fromLTRB(
                     16,
@@ -675,7 +699,7 @@ class ProjectPageState extends State<ProjectPage> {
               if (i < containerCount) {
                 final c = state.containers[i];
                 final isSelected = _selectedContainerIds.contains(c.id);
-                if (!isMobilePlatform) {
+                if (!compact) {
                   return Row(
                     children: [
                       Checkbox(
@@ -715,7 +739,7 @@ class ProjectPageState extends State<ProjectPage> {
               }
               final video = filteredStandalone[i - containerCount];
               final isSelected = _selectedIds.contains(video.id);
-              if (!isMobilePlatform) {
+              if (!compact) {
                 return Row(
                   children: [
                     Checkbox(
@@ -800,7 +824,9 @@ class ProjectPageState extends State<ProjectPage> {
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 160),
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 160),
         curve: Curves.easeOut,
         padding: const EdgeInsets.all(2),
         decoration: BoxDecoration(
@@ -1521,97 +1547,112 @@ class ProjectPageState extends State<ProjectPage> {
     // 液态玻璃菜单
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+      ),
       backgroundColor: Colors.transparent,
       builder: (ctx) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-          child: GlassPanel(
-            radius: 22,
-            blur: 16,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const SizedBox(height: 8),
-                Container(
-                  width: 36,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: scheme.outlineVariant,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
-                  child: Row(
-                    children: [
-                      Icon(
+          child: SingleChildScrollView(
+            child: GlassPanel(
+              radius: 22,
+              blur: 16,
+              // Ink must paint above the glass decoration, not behind it.
+              child: Material(
+                key: const ValueKey('project_container_menu_material'),
+                type: MaterialType.transparency,
+                borderRadius: BorderRadius.circular(22),
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(height: 8),
+                    Container(
+                      width: 36,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: scheme.outlineVariant,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.create_new_folder_outlined,
+                            size: 18,
+                            color: scheme.primary,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              zh ? '新建容器' : 'New Container',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: scheme.onSurface,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    ListTile(
+                      leading: Icon(
                         Icons.create_new_folder_outlined,
-                        size: 18,
                         color: scheme.primary,
                       ),
-                      const SizedBox(width: 8),
-                      Text(
-                        zh ? '新建容器' : 'New Container',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: scheme.onSurface,
-                        ),
+                      title: Text(zh ? '创建空容器' : 'Empty Container'),
+                      subtitle: Text(
+                        zh
+                            ? '先创建容器，稍后再添加文件（存于程序临时目录）'
+                            : 'Create an empty container, add files later',
+                        style: const TextStyle(fontSize: 12),
                       ),
-                    ],
-                  ),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        promptCreate(zh ? '新容器' : 'New Container', empty: true);
+                      },
+                    ),
+                    ListTile(
+                      leading: Icon(Icons.folder_open, color: scheme.primary),
+                      title: Text(s.containerFromFolder),
+                      subtitle: Text(
+                        zh
+                            ? '选择一个文件夹，其中的媒体文件将作为容器内容'
+                            : 'Select a folder, media files inside become container items',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      onTap: () async {
+                        Navigator.pop(ctx);
+                        final dir = await pickLocalDirectory();
+                        if (dir != null) state.addContainerFromFolder(dir);
+                      },
+                    ),
+                    ListTile(
+                      leading: Icon(
+                        Icons.file_copy_outlined,
+                        color: scheme.primary,
+                      ),
+                      title: Text(s.containerFromFiles),
+                      subtitle: Text(
+                        zh
+                            ? '手动选择多个文件放入新容器'
+                            : 'Manually select files for a new container',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        promptCreate(zh ? '新容器' : 'New Container');
+                      },
+                    ),
+                    const SizedBox(height: 6),
+                  ],
                 ),
-                ListTile(
-                  leading: Icon(
-                    Icons.create_new_folder_outlined,
-                    color: scheme.primary,
-                  ),
-                  title: Text(zh ? '创建空容器' : 'Empty Container'),
-                  subtitle: Text(
-                    zh
-                        ? '先创建容器，稍后再添加文件（存于程序临时目录）'
-                        : 'Create an empty container, add files later',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    promptCreate(zh ? '新容器' : 'New Container', empty: true);
-                  },
-                ),
-                ListTile(
-                  leading: Icon(Icons.folder_open, color: scheme.primary),
-                  title: Text(s.containerFromFolder),
-                  subtitle: Text(
-                    zh
-                        ? '选择一个文件夹，其中的媒体文件将作为容器内容'
-                        : 'Select a folder, media files inside become container items',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                  onTap: () async {
-                    Navigator.pop(ctx);
-                    final dir = await FilePicker.getDirectoryPath();
-                    if (dir != null) state.addContainerFromFolder(dir);
-                  },
-                ),
-                ListTile(
-                  leading: Icon(
-                    Icons.file_copy_outlined,
-                    color: scheme.primary,
-                  ),
-                  title: Text(s.containerFromFiles),
-                  subtitle: Text(
-                    zh
-                        ? '手动选择多个文件放入新容器'
-                        : 'Manually select files for a new container',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    promptCreate(zh ? '新容器' : 'New Container');
-                  },
-                ),
-                const SizedBox(height: 6),
-              ],
+              ),
             ),
           ),
         ),

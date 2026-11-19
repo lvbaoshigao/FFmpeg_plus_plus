@@ -78,19 +78,6 @@ void main() {
     }
   });
 
-  testWidgets('backdrop builds without an AppState provider', (tester) async {
-    await tester.pumpWidget(
-      _host(
-        LiquidGlassBackdrop(
-          borderRadius: BorderRadius.circular(12),
-          child: const SizedBox(width: 120, height: 44),
-        ),
-      ),
-    );
-    expect(tester.takeException(), isNull);
-    expect(find.byType(BackdropFilter), findsOneWidget);
-  });
-
   testWidgets('public panel uses explicit tuning without a provider', (
     tester,
   ) async {

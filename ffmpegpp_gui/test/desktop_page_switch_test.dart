@@ -172,6 +172,17 @@ void main() {
   });
 
   group('SettingsPage desktop navigation', () {
+    testWidgets('should open the shared language dropdown', (tester) async {
+      await _pumpDesktopSettings(tester);
+      final selector = find.byKey(const ValueKey('settings_language_menu'));
+      expect(find.text('简体中文'), findsNothing);
+      await tester.tap(selector);
+      await tester.pumpAndSettle();
+      expect(find.text('简体中文'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+
     testWidgets('should keep row hit testing live while one selection moves', (
       tester,
     ) async {

@@ -39,40 +39,92 @@ class ContainerCard extends StatelessWidget {
     // 仅供按钮回调使用（read 不建立订阅）
     final state = context.read<AppState>();
 
+    final actions = [
+      IconButton(
+        icon: Icon(Icons.login, size: 20, color: scheme.primary),
+        tooltip: s.containerEnter,
+        onPressed: () => _enter(context, state),
+      ),
+      IconButton(
+        icon: Icon(Icons.edit_outlined, size: 20, color: clr),
+        tooltip: s.edit,
+        onPressed: parsedCount > 0 ? () => _editPipeline(context, state) : null,
+      ),
+      IconButton(
+        icon: const Icon(Icons.play_arrow, size: 20),
+        tooltip: s.containerQueueAll,
+        onPressed: parsedCount > 0
+            ? () => state.addContainerTasks(container.id)
+            : null,
+      ),
+      IconButton(
+        icon: const Icon(Icons.close, size: 18),
+        tooltip: s.remove,
+        onPressed: () => state.removeContainer(container.id),
+      ),
+    ];
+
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: Padding(
         padding: const EdgeInsets.all(10),
-        child: Row(children: [
-          Container(
-            width: 48, height: 48,
-            decoration: BoxDecoration(
-              color: scheme.primaryContainer.withAlpha(80),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Icon(Icons.folder_special, color: scheme.primary, size: 22),
-              Text('${container.fileCount}', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: scheme.primary)),
-            ])),
-          ),
-          const SizedBox(width: 12),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-            Text(container.name, style: TextStyle(fontWeight: FontWeight.w600, color: clr), maxLines: 1, overflow: TextOverflow.ellipsis),
-            const SizedBox(height: 2),
-            Text('${container.fileCount} ${s.containerFiles}  •  ${formatFileSize(totalSize)}  •  $parsedCount/${container.fileCount} ${s.isZh ? "已解析" : "parsed"}',
-                maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
-          ])),
-          IconButton(icon: Icon(Icons.login, size: 20, color: scheme.primary), tooltip: s.containerEnter,
-              onPressed: () => _enter(context, state)),
-          IconButton(icon: Icon(Icons.edit_outlined, size: 20, color: clr), tooltip: s.edit,
-              onPressed: parsedCount > 0 ? () => _editPipeline(context, state) : null),
-          IconButton(icon: Icon(Icons.play_arrow, size: 20, color: parsedCount > 0 ? scheme.primary : scheme.outline),
-              tooltip: s.containerQueueAll,
-              onPressed: parsedCount > 0 ? () => state.addContainerTasks(container.id) : null),
-          IconButton(icon: Icon(Icons.close, size: 18, color: clr), tooltip: s.remove,
-              onPressed: () => state.removeContainer(container.id)),
-        ]),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 440 ||
+                MediaQuery.textScalerOf(context).scale(14) > 21;
+            final details = Row(
+              children: [
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: SizedBox.square(
+                    dimension: 44,
+                    child: Icon(Icons.folder_special_outlined,
+                        color: scheme.onSurfaceVariant, size: 22),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        container.name,
+                        style: TextStyle(fontWeight: FontWeight.w600, color: clr),
+                        maxLines: compact ? 2 : 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${container.fileCount} ${s.containerFiles} · '
+                        '${formatFileSize(totalSize)} · '
+                        '$parsedCount/${container.fileCount} '
+                        '${s.isZh ? '已解析' : 'parsed'}',
+                        maxLines: compact ? 3 : 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            );
+            if (compact) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  details,
+                  const SizedBox(height: 4),
+                  Wrap(alignment: WrapAlignment.end, children: actions),
+                ],
+              );
+            }
+            return Row(children: [Expanded(child: details), ...actions]);
+          },
+        ),
       ),
     );
   }

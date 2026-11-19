@@ -132,7 +132,9 @@ class LiquidGlassMobileNav extends StatelessWidget {
       ignoring: hidden,
       child: AnimatedSlide(
         offset: hidden ? const Offset(0, 1.2) : Offset.zero,
-        duration: const Duration(milliseconds: 240),
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 240),
         curve: Curves.easeInOutCubic,
         child: bar,
       ),
@@ -162,30 +164,46 @@ class _FlatNavBar extends StatelessWidget {
         children: [
           for (var i = 0; i < items.length; i++)
             Expanded(
-              child: InkWell(
-                borderRadius: BorderRadius.circular(26),
-                onTap: () => onTap(i),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    TablerIcon(
-                      items[i].$1,
-                      size: 22,
-                      color: i == selectedIndex
-                          ? scheme.primary
-                          : scheme.onSurfaceVariant,
+              child: Semantics(
+                button: true,
+                selected: i == selectedIndex,
+                label: items[i].$2,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(26),
+                  onTap: () => onTap(i),
+                  child: ExcludeSemantics(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        TablerIcon(
+                          items[i].$1,
+                          size: 22,
+                          color: i == selectedIndex
+                              ? scheme.primary
+                              : scheme.onSurfaceVariant,
+                        ),
+                        const SizedBox(height: 2),
+                        Flexible(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 2),
+                            child: Text(
+                              items[i].$2,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 10,
+                                height: 1,
+                                color: i == selectedIndex
+                                    ? scheme.primary
+                                    : scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      items[i].$2,
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: i == selectedIndex
-                            ? scheme.primary
-                            : scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),

@@ -2,8 +2,10 @@
 // 主界面基准顶栏（MobilePillTopBar）/ 二级页顶栏（MobileSubPageTopBar）/
 // 统一分段控件（MobileSegmentedPills）/ 搜索药丸（MobileSearchPill）
 // 在折叠与展开两种状态下都能构建，且尺寸令牌与主界面基准一致。
+import 'package:ffmpegpp_gui/pages/project_page.dart';
 import 'package:ffmpegpp_gui/providers/app_state.dart';
 import 'package:ffmpegpp_gui/theme/app_theme.dart';
+import 'package:ffmpegpp_gui/widgets/glass_panel.dart';
 import 'package:ffmpegpp_gui/widgets/mobile_glass_pill.dart';
 import 'package:ffmpegpp_gui/widgets/mobile_top_bar.dart';
 import 'package:ffmpegpp_gui/widgets/mobile_ui.dart';
@@ -17,14 +19,16 @@ Widget _harness(
   Widget child, {
   double width = 412,
   bool disableAnimations = false,
+  double textScale = 1,
 }) => ChangeNotifierProvider<AppState>.value(
   value: state,
   child: MaterialApp(
     theme: AppTheme.dark(),
     builder: (context, child) => MediaQuery(
-      data: MediaQuery.of(
-        context,
-      ).copyWith(disableAnimations: disableAnimations),
+      data: MediaQuery.of(context).copyWith(
+        disableAnimations: disableAnimations,
+        textScaler: TextScaler.linear(textScale),
+      ),
       child: child!,
     ),
     home: Scaffold(
@@ -54,6 +58,81 @@ Future<void> _flush(WidgetTester tester) async {
 }
 
 void main() {
+  group('ProjectPage compact actions', () {
+    testWidgets(
+      'should keep labeled actions reachable at 320dp and large text',
+      (tester) async {
+        tester.view.physicalSize = const Size(320, 720);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final semantics = tester.ensureSemantics();
+        try {
+          final state = _state();
+          state.updateConfig(
+            (config) => config
+              ..language = 'en'
+              ..editMode = 0,
+          );
+          await tester.pumpWidget(
+            _harness(
+              state,
+              const ProjectPage(),
+              width: 320,
+              textScale: 2,
+              disableAnimations: true,
+            ),
+          );
+          await tester.pumpAndSettle();
+          final add = find.byKey(const ValueKey('project_add_files'));
+          final actions = find.byKey(const ValueKey('project_actions'));
+          expect(find.byType(MobilePillTopBar), findsOneWidget);
+          expect(
+            tester.getSemantics(add),
+            isSemantics(label: 'Add File', isButton: true, hasTapAction: true),
+          );
+          for (final key in [
+            'project_add_files',
+            'project_import_config',
+            'project_container',
+          ]) {
+            final rect = tester.getRect(find.byKey(ValueKey(key)));
+            expect(rect.left, greaterThanOrEqualTo(8));
+            expect(rect.right, lessThanOrEqualTo(312));
+            expect(rect.height, greaterThanOrEqualTo(48));
+            expect(rect.bottom, lessThan(720));
+          }
+          expect(tester.getSize(actions).height, greaterThan(48));
+          expect(
+            find.descendant(of: actions, matching: find.byType(FittedBox)),
+            findsNothing,
+          );
+          final surface = find
+              .ancestor(of: add, matching: find.byType(GlassPanel))
+              .first;
+          expect(tester.widget<GlassPanel>(surface).style, 'gray');
+          state.updateConfig((config) => config..pillStyle = 'theme');
+          await tester.pumpAndSettle();
+          expect(tester.widget<GlassPanel>(surface).style, 'theme');
+          expect(tester.takeException(), isNull);
+
+          await tester.tap(find.byKey(const ValueKey('project_import_config')));
+          await tester.pump();
+          expect(
+            find.text('Add files first, then import a config to apply'),
+            findsOneWidget,
+          );
+          await tester.pump(const Duration(seconds: 3));
+          await tester.pumpAndSettle();
+          expect(tester.takeException(), isNull);
+          await _flush(tester);
+          await tester.pumpWidget(const SizedBox.shrink());
+          state.dispose();
+        } finally {
+          semantics.dispose();
+        }
+      },
+    );
+  });
   group('MobilePillTopBar', () {
     testWidgets(
       'should extend a circular search action left into a centered field',

@@ -413,7 +413,6 @@ void main() {
     await tester.pumpAndSettle();
 
     // 服务卡存在：标题 + 说明 + 两行选项（不再是两颗并排的大块按钮）。
-    expect(find.text('AI 助手'), findsWidgets);
     expect(find.text('AI 对话、提供商与工具调用的总开关'), findsOneWidget);
     expect(find.text('AI 助手'), findsOneWidget);
     expect(find.text('MCP 服务'), findsOneWidget);

@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart' show CustomSemanticsAction;
 
 import '../models/models.dart';
 import '../theme/app_control_size.dart';
-import '../theme/settings_typography.dart';
 import 'app_card.dart';
 import 'app_slider.dart';
-import 'liquid_glass_fallback.dart';
 import 'liquid_modality_pills.dart';
 import 'mobile_glass_pill.dart';
 
@@ -55,6 +54,7 @@ class _ModelEditorSheetState extends State<ModelEditorSheet> {
     text: _entry.displayName,
   );
   late final TextEditingController _id = TextEditingController(text: _entry.id);
+  final FocusNode _idFocus = FocusNode();
   late final TextEditingController _context = TextEditingController(
     text: _entry.contextWindow?.toString() ?? '',
   );
@@ -104,6 +104,7 @@ class _ModelEditorSheetState extends State<ModelEditorSheet> {
   void dispose() {
     _displayName.dispose();
     _id.dispose();
+    _idFocus.dispose();
     _context.dispose();
     _maxTokens.dispose();
     super.dispose();
@@ -167,6 +168,7 @@ class _ModelEditorSheetState extends State<ModelEditorSheet> {
     final error = _validateId(_id.text);
     if (error != null) {
       setState(() => _idError = error);
+      _idFocus.requestFocus();
       return;
     }
     _entry
@@ -199,375 +201,323 @@ class _ModelEditorSheetState extends State<ModelEditorSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final bool isDark = Theme.of(context).brightness == Brightness.dark;
-    final bool hasOverrides =
-        _entry.contextWindow != null ||
-        _entry.maxTokens != null ||
-        _entry.temperature != null ||
-        _entry.topP != null;
-    final double maxHeight =
-        (MediaQuery.sizeOf(context).height -
-                MediaQuery.viewInsetsOf(context).bottom)
-            .clamp(240.0, double.infinity);
-    final String title = widget.isNew
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final sheetTheme = theme.bottomSheetTheme;
+    final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
+    final title = widget.isNew
         ? (widget.isZh ? '添加自定义模型' : 'Add custom model')
         : (widget.isZh ? '编辑模型' : 'Edit model');
+    final actionStyle = AppControlSize.large
+        .buttonStyle(filled: true)
+        .copyWith(
+          minimumSize: const WidgetStatePropertyAll(Size(48, 48)),
+          padding: const WidgetStatePropertyAll(
+            EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          ),
+        );
 
-    return Padding(
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.viewInsetsOf(context).bottom,
-      ),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxHeight: maxHeight * 0.94),
-        // NOTE: no SafeArea here. The panel background (tint + blur) must
-        // reach the screen edge; the bottom inset is applied once, in the
-        // content padding below, so the buttons stay above the nav bar.
-        child: ClipRRect(
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
-          // 面板背景中性 surface + 背景模糊，不加主题色着色：
-          // 用户反馈「玻璃染主题色且观感奇怪」，去掉 primary 薄着色，
-          // 与发送框等中性玻璃保持一致；圆角裁切交给 ClipRRect，模糊层不溢出。
-          child: BackdropFilter(
-            filter: cachedGlassBlur(18),
-            child: DecoratedBox(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availableHeight = (constraints.maxHeight - keyboardInset).clamp(
+          0.0,
+          MediaQuery.sizeOf(context).height,
+        );
+        return Padding(
+          padding: EdgeInsets.only(bottom: keyboardInset),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: availableHeight * 0.96),
+            child: Material(
               key: const ValueKey('model_editor_sheet'),
-              decoration: BoxDecoration(
-                color: scheme.surface.withValues(alpha: 0.94),
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(26),
-                ),
-                border: Border(
-                  top: BorderSide(
-                    color: scheme.outlineVariant.withAlpha(isDark ? 70 : 90),
-                    width: 0.7,
+              color: sheetTheme.backgroundColor ?? scheme.surface,
+              surfaceTintColor: sheetTheme.surfaceTintColor,
+              shape:
+                  sheetTheme.shape ??
+                  const RoundedRectangleBorder(
+                    borderRadius: BorderRadius.vertical(
+                      top: Radius.circular(24),
+                    ),
                   ),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: scheme.shadow.withValues(alpha: isDark ? 0.42 : 0.20),
-                    blurRadius: 26,
-                    offset: const Offset(0, -8),
-                  ),
-                ],
-              ),
+              clipBehavior: Clip.antiAlias,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8, bottom: 2),
-                    child: Container(
-                      width: 38,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: scheme.onSurfaceVariant.withValues(alpha: 0.35),
-                        borderRadius: BorderRadius.circular(999),
+                  Center(
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 10, bottom: 4),
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color:
+                              sheetTheme.dragHandleColor ??
+                              scheme.onSurfaceVariant,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                        child: SizedBox.fromSize(
+                          size: sheetTheme.dragHandleSize ?? const Size(36, 4),
+                        ),
                       ),
                     ),
                   ),
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 2, 8, 2),
+                    padding: const EdgeInsets.fromLTRB(20, 4, 8, 12),
                     child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Semantics(
-                                header: true,
-                                child: Text(
-                                  title,
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                    color: scheme.onSurface,
-                                  ),
+                          child: Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Semantics(
+                              header: true,
+                              child: Text(
+                                title,
+                                style: theme.textTheme.titleLarge?.copyWith(
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
-                              const SizedBox(height: 2),
-                              Text(
-                                widget.isZh
-                                    ? '仅对该模型生效；留空项继承提供商默认值'
-                                    : 'Applies to this model only; empty fields inherit provider defaults',
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: SettingsTypography.description.copyWith(
-                                  color: scheme.onSurfaceVariant,
-                                ),
-                              ),
-                            ],
+                            ),
                           ),
                         ),
-                        if (hasOverrides)
-                          IconButton(
-                            tooltip: widget.isZh
-                                ? '恢复继承默认'
-                                : 'Inherit defaults',
-                            icon: Icon(
-                              Icons.restart_alt,
-                              size: 19,
-                              color: scheme.onSurfaceVariant,
-                            ),
-                            constraints: const BoxConstraints.tightFor(
-                              width: 44,
-                              height: 44,
-                            ),
-                            onPressed: _resetInherited,
-                          ),
+                        const SizedBox(width: 8),
                         IconButton(
                           key: const ValueKey('model_sheet_close'),
                           tooltip: widget.isZh ? '取消' : 'Cancel',
-                          icon: Icon(
-                            Icons.close_rounded,
-                            size: 20,
-                            color: scheme.onSurfaceVariant,
-                          ),
-                          constraints: const BoxConstraints.tightFor(
-                            width: 44,
-                            height: 44,
+                          constraints: const BoxConstraints(
+                            minWidth: 48,
+                            minHeight: 48,
                           ),
                           onPressed: () => Navigator.of(context).maybePop(),
+                          icon: const Icon(Icons.close_rounded, size: 22),
                         ),
                       ],
                     ),
                   ),
                   Flexible(
                     child: SingleChildScrollView(
-                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+                      key: const ValueKey('model_sheet_scroll'),
+                      keyboardDismissBehavior:
+                          ScrollViewKeyboardDismissBehavior.onDrag,
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          _SheetSection(
-                            cardStyle: widget.cardStyle,
-                            title: widget.isZh ? '基本信息' : 'Basic info',
-                            children: [
-                              _LabeledField(
-                                label: widget.isZh ? '显示名称' : 'Display name',
-                                child: _SheetTextField(
-                                  key: const ValueKey(
-                                    'model_sheet_display_name',
-                                  ),
-                                  controller: _displayName,
-                                  hint: widget.isZh
-                                      ? '例如 GPT-6（留空显示 ID）'
-                                      : 'e.g. GPT-6 (empty falls back to ID)',
-                                  onChanged: (_) => setState(() {}),
-                                ),
-                              ),
-                              _LabeledField(
-                                label: widget.isZh ? '模型 ID' : 'Model ID',
-                                error: _idError,
-                                hint: widget.isZh
-                                    ? '供应商提供的模型标识'
-                                    : 'Model identifier from the provider',
-                                child: _SheetTextField(
-                                  key: const ValueKey('model_sheet_id'),
-                                  controller: _id,
-                                  hint: 'gpt-6',
-                                  onChanged: (_) {
-                                    if (_idError != null) {
-                                      setState(() => _idError = null);
-                                    }
-                                  },
-                                ),
-                              ),
-                              _SwitchRow(
-                                label: widget.isZh ? '是否启用' : 'Enabled',
-                                description: widget.isZh
-                                    ? '停用后不参与模型选择'
-                                    : 'Disabled models stay hidden from selection',
-                                value: _enabled,
-                                onChanged: (value) =>
-                                    setState(() => _enabled = value),
-                              ),
-                            ],
+                          _buildDetails(),
+                          _buildCapabilities(),
+                          _buildAdvanced(scheme),
+                        ],
+                      ),
+                    ),
+                  ),
+                  DecoratedBox(
+                    key: const ValueKey('model_sheet_footer'),
+                    decoration: BoxDecoration(
+                      color: sheetTheme.backgroundColor ?? scheme.surface,
+                      border: Border(
+                        top: BorderSide(color: scheme.outlineVariant),
+                      ),
+                    ),
+                    child: Padding(
+                      padding: EdgeInsets.fromLTRB(
+                        20,
+                        12,
+                        20,
+                        12 + MediaQuery.paddingOf(context).bottom,
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: TextButton(
+                              key: const ValueKey('model_sheet_cancel'),
+                              style: actionStyle,
+                              onPressed: () => Navigator.of(context).maybePop(),
+                              child: Text(widget.isZh ? '取消' : 'Cancel'),
+                            ),
                           ),
-                          _SheetSection(
-                            cardStyle: widget.cardStyle,
-                            title: widget.isZh ? '生成参数' : 'Generation',
-                            children: [
-                              _LabeledField(
-                                label: widget.isZh ? '上下文' : 'Context',
-                                hint: widget.isZh
-                                    ? '继承默认：${widget.defaultContextWindow}'
-                                    : 'Inherit default: ${widget.defaultContextWindow}',
-                                child: _SheetTextField(
-                                  key: const ValueKey('model_sheet_context'),
-                                  controller: _context,
-                                  keyboardType: TextInputType.number,
-                                  hint: widget.defaultContextWindow.toString(),
-                                  onChanged: (_) => setState(() {}),
-                                ),
-                              ),
-                              _LabeledField(
-                                label: widget.isZh ? '最大输出' : 'Max output',
-                                hint: widget.isZh
-                                    ? '继承默认：${widget.defaultMaxTokens}'
-                                    : 'Inherit default: ${widget.defaultMaxTokens}',
-                                child: _SheetTextField(
-                                  key: const ValueKey(
-                                    'model_sheet_max_tokens',
-                                  ),
-                                  controller: _maxTokens,
-                                  keyboardType: TextInputType.number,
-                                  hint: widget.defaultMaxTokens.toString(),
-                                  onChanged: (_) => setState(() {}),
-                                ),
-                              ),
-                              _ParamSliderRow(
-                                label: widget.isZh ? '温度' : 'Temperature',
-                                value:
-                                    _entry.temperature ??
-                                    widget.defaultTemperature,
-                                min: 0,
-                                max: 2,
-                                divisions: 20,
-                                decimals: 1,
-                                customized: _entry.temperature != null,
-                                fallbackLabel: widget.defaultTemperature
-                                    .toStringAsFixed(1),
-                                resetLabel: widget.isZh ? '默认' : 'Default',
-                                onReset: () =>
-                                    setState(() => _entry.temperature = null),
-                                onCommit: (value) =>
-                                    setState(() => _entry.temperature = value),
-                                scheme: scheme,
-                              ),
-                              _ParamSliderRow(
-                                label: 'Top_P',
-                                value: _entry.topP ?? 1.0,
-                                min: 0,
-                                max: 1,
-                                divisions: 20,
-                                decimals: 2,
-                                customized: _entry.topP != null,
-                                fallbackLabel: '1.00',
-                                resetLabel: widget.isZh ? '默认' : 'Default',
-                                onReset: () => setState(() => _entry.topP = null),
-                                onCommit: (value) =>
-                                    setState(() => _entry.topP = value),
-                                scheme: scheme,
-                              ),
-                            ],
-                          ),
-                          _SheetSection(
-                            cardStyle: widget.cardStyle,
-                            title: widget.isZh ? '支持输入' : 'Input',
-                            subtitle: widget.isZh
-                                ? '点击切换，长按拖动排序；至少保留一种'
-                                : 'Tap to toggle, long press to reorder; keep at least one',
-                            children: [
-                              MobileGlassPill(
-                                style: widget.pillStyle,
-                                radius: 26,
-                                padding: const EdgeInsets.all(4),
-                                child: LiquidModalityPills(
-                                  key: const ValueKey('model_sheet_input'),
-                                  keyPrefix: 'model_sheet_input',
-                                  order: _inputOrder,
-                                  selected: _inputSelected,
-                                  isZh: widget.isZh,
-                                  labelOf: (value) =>
-                                      _modalityLabel(value, widget.isZh).$1,
-                                  iconOf: (value) =>
-                                      _modalityLabel(value, widget.isZh).$2,
-                                  onToggle: (value) => _toggleModality(
-                                    input: true,
-                                    value: value,
-                                  ),
-                                  onReorder: (from, to) => _reorderModality(
-                                    input: true,
-                                    oldIndex: from,
-                                    newIndex: to,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          _SheetSection(
-                            cardStyle: widget.cardStyle,
-                            title: widget.isZh ? '支持输出' : 'Output',
-                            subtitle: widget.isZh
-                                ? '点击切换，长按拖动排序；至少保留一种'
-                                : 'Tap to toggle, long press to reorder; keep at least one',
-                            children: [
-                              MobileGlassPill(
-                                style: widget.pillStyle,
-                                radius: 26,
-                                padding: const EdgeInsets.all(4),
-                                child: LiquidModalityPills(
-                                  key: const ValueKey('model_sheet_output'),
-                                  keyPrefix: 'model_sheet_output',
-                                  order: _outputOrder,
-                                  selected: _outputSelected,
-                                  isZh: widget.isZh,
-                                  labelOf: (value) =>
-                                      _modalityLabel(value, widget.isZh).$1,
-                                  iconOf: (value) =>
-                                      _modalityLabel(value, widget.isZh).$2,
-                                  onToggle: (value) => _toggleModality(
-                                    input: false,
-                                    value: value,
-                                  ),
-                                  onReorder: (from, to) => _reorderModality(
-                                    input: false,
-                                    oldIndex: from,
-                                    newIndex: to,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(4, 2, 4, 0),
-                            child: Text(
-                              widget.isZh
-                                  ? '输入选「图像」会自动补上视觉能力；ID 不能与同提供商下的其它模型重复。'
-                                  : 'Selecting Image as input also enables the vision capability; IDs must be unique within this provider.',
-                              style: SettingsTypography.description.copyWith(
-                                color: scheme.onSurfaceVariant,
-                              ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: FilledButton(
+                              key: const ValueKey('model_sheet_done'),
+                              style: actionStyle,
+                              onPressed: _done,
+                              child: Text(widget.isZh ? '完成' : 'Done'),
                             ),
                           ),
                         ],
                       ),
                     ),
                   ),
-                  Padding(
-                    // 底部安全区留在内容里而不是再包一层 SafeArea：
-                    // 面板背景（模糊 + 主题色薄染）一直铺到屏幕底边才是沉浸的，
-                    // 按钮仍然落在系统导航栏上方。
-                    padding: EdgeInsets.fromLTRB(
-                      16,
-                      8,
-                      16,
-                      12 + MediaQuery.viewPaddingOf(context).bottom,
-                    ),
-                    child: Row(
-                      children: [
-                        TextButton(
-                          key: const ValueKey('model_sheet_cancel'),
-                          onPressed: () => Navigator.of(context).maybePop(),
-                          child: Text(widget.isZh ? '取消' : 'Cancel'),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: FilledButton(
-                            key: const ValueKey('model_sheet_done'),
-                            style: AppControlSize.large.buttonStyle(filled: true),
-                            onPressed: _done,
-                            child: Text(widget.isZh ? '完成' : 'Done'),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
                 ],
               ),
             ),
           ),
+        );
+      },
+    );
+  }
+
+  Widget _buildDetails() => _SheetSection(
+    cardStyle: widget.cardStyle,
+    title: widget.isZh ? '模型信息' : 'Model details',
+    subtitle: widget.isZh
+        ? '名称便于识别，模型 ID 用于发送请求。'
+        : 'The name is for you. The model ID is sent to the provider.',
+    children: [
+      _SheetTextField(
+        key: const ValueKey('model_sheet_display_name'),
+        label: widget.isZh ? '显示名称' : 'Display name',
+        controller: _displayName,
+        hint: widget.isZh ? '例如 GPT-6' : 'e.g. GPT-6',
+        helper: widget.isZh
+            ? '选填，留空时显示模型 ID'
+            : 'Optional; uses the model ID when empty',
+      ),
+      _SheetTextField(
+        key: const ValueKey('model_sheet_id'),
+        label: widget.isZh ? '模型 ID' : 'Model ID',
+        controller: _id,
+        focusNode: _idFocus,
+        hint: 'gpt-6',
+        helper: widget.isZh
+            ? '必填，与供应商提供的标识一致；同一提供商内不可重复。'
+            : 'Required. Use the provider’s exact identifier; it must be unique here.',
+        error: _idError,
+        onChanged: (_) {
+          if (_idError != null) {
+            setState(() => _idError = null);
+          }
+        },
+      ),
+      _SwitchRow(
+        label: widget.isZh ? '是否启用' : 'Enabled',
+        description: widget.isZh
+            ? '停用后不参与模型选择'
+            : 'Disabled models stay hidden from selection',
+        value: _enabled,
+        onChanged: (value) => setState(() => _enabled = value),
+      ),
+    ],
+  );
+
+  Widget _buildCapabilities() => _SheetSection(
+    cardStyle: widget.cardStyle,
+    title: widget.isZh ? '模型能力' : 'Capabilities',
+    subtitle: widget.isZh
+        ? '选择支持的输入与输出类型；每项至少保留一种。'
+        : 'Choose the supported input and output types. Keep at least one of each.',
+    children: [
+      _SheetModalities(
+        keyPrefix: 'model_sheet_input',
+        label: widget.isZh ? '支持输入' : 'Input',
+        order: _inputOrder,
+        selected: _inputSelected,
+        isZh: widget.isZh,
+        pillStyle: widget.pillStyle,
+        onToggle: (value) => _toggleModality(input: true, value: value),
+        onReorder: (from, to) =>
+            _reorderModality(input: true, oldIndex: from, newIndex: to),
+      ),
+      const SizedBox(height: 20),
+      _SheetModalities(
+        keyPrefix: 'model_sheet_output',
+        label: widget.isZh ? '支持输出' : 'Output',
+        order: _outputOrder,
+        selected: _outputSelected,
+        isZh: widget.isZh,
+        pillStyle: widget.pillStyle,
+        onToggle: (value) => _toggleModality(input: false, value: value),
+        onReorder: (from, to) =>
+            _reorderModality(input: false, oldIndex: from, newIndex: to),
+      ),
+      const SizedBox(height: 12),
+      Text(
+        widget.isZh
+            ? '点击切换，长按拖动排序。图像输入会同时启用视觉能力。'
+            : 'Tap to toggle; hold and drag to reorder. Image input also enables vision.',
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
         ),
       ),
+    ],
+  );
+
+  Widget _buildAdvanced(ColorScheme scheme) {
+    final hasOverrides =
+        _context.text.isNotEmpty ||
+        _maxTokens.text.isNotEmpty ||
+        _entry.temperature != null ||
+        _entry.topP != null;
+    return _SheetSection(
+      cardStyle: widget.cardStyle,
+      title: widget.isZh ? '高级参数' : 'Advanced parameters',
+      subtitle: widget.isZh
+          ? '仅对该模型生效。留空或恢复默认，即继承提供商设置。'
+          : 'Applies to this model only. Leave fields empty or reset to inherit provider defaults.',
+      children: [
+        _SheetTextField(
+          key: const ValueKey('model_sheet_context'),
+          label: widget.isZh ? '上下文' : 'Context',
+          controller: _context,
+          keyboardType: TextInputType.number,
+          hint: widget.defaultContextWindow.toString(),
+          helper: widget.isZh
+              ? '继承默认：${widget.defaultContextWindow} tokens'
+              : 'Provider default: ${widget.defaultContextWindow} tokens',
+          onChanged: (_) => setState(() {}),
+        ),
+        _SheetTextField(
+          key: const ValueKey('model_sheet_max_tokens'),
+          label: widget.isZh ? '最大输出' : 'Max output',
+          controller: _maxTokens,
+          keyboardType: TextInputType.number,
+          hint: widget.defaultMaxTokens.toString(),
+          helper: widget.isZh
+              ? '继承默认：${widget.defaultMaxTokens} tokens'
+              : 'Provider default: ${widget.defaultMaxTokens} tokens',
+          onChanged: (_) => setState(() {}),
+        ),
+        _ParamSliderRow(
+          label: widget.isZh ? '温度' : 'Temperature',
+          value: _entry.temperature ?? widget.defaultTemperature,
+          min: 0,
+          max: 2,
+          divisions: 20,
+          decimals: 1,
+          customized: _entry.temperature != null,
+          fallbackLabel: widget.defaultTemperature.toStringAsFixed(1),
+          resetLabel: widget.isZh ? '默认' : 'Default',
+          onReset: () => setState(() => _entry.temperature = null),
+          onCommit: (value) => setState(() => _entry.temperature = value),
+          scheme: scheme,
+        ),
+        _ParamSliderRow(
+          label: 'Top_P',
+          value: _entry.topP ?? 1.0,
+          min: 0,
+          max: 1,
+          divisions: 20,
+          decimals: 2,
+          customized: _entry.topP != null,
+          fallbackLabel: '1.00',
+          resetLabel: widget.isZh ? '默认' : 'Default',
+          onReset: () => setState(() => _entry.topP = null),
+          onCommit: (value) => setState(() => _entry.topP = value),
+          scheme: scheme,
+        ),
+        Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: TextButton.icon(
+            key: const ValueKey('model_sheet_reset_defaults'),
+            onPressed: hasOverrides ? _resetInherited : null,
+            style: TextButton.styleFrom(
+              minimumSize: const Size(48, 48),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+              alignment: AlignmentDirectional.centerStart,
+            ),
+            icon: const Icon(Icons.restart_alt_rounded, size: 20),
+            label: Text(widget.isZh ? '恢复继承默认' : 'Use provider defaults'),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -589,19 +539,19 @@ class _SheetSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.only(bottom: 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
+            padding: const EdgeInsets.fromLTRB(4, 0, 4, 10),
             child: Semantics(
               header: true,
               child: Text(
                 title,
-                style: SettingsTypography.sectionTitle.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
               ),
             ),
           ),
@@ -609,18 +559,18 @@ class _SheetSection extends StatelessWidget {
             style: cardStyle,
             radius: 20,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+              padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   if (subtitle != null) ...[
                     Text(
                       subtitle!,
-                      style: SettingsTypography.description.copyWith(
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: scheme.onSurfaceVariant,
                       ),
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 20),
                   ],
                   ...children,
                 ],
@@ -633,55 +583,112 @@ class _SheetSection extends StatelessWidget {
   }
 }
 
-class _LabeledField extends StatelessWidget {
+/// Keeps the existing liquid control where labels fit, and reflows at large text.
+class _SheetModalities extends StatelessWidget {
+  final String keyPrefix;
   final String label;
-  final Widget child;
-  final String? hint;
-  final String? error;
+  final List<String> order;
+  final Set<String> selected;
+  final bool isZh;
+  final String pillStyle;
+  final ValueChanged<String> onToggle;
+  final void Function(int, int) onReorder;
 
-  const _LabeledField({
+  const _SheetModalities({
+    required this.keyPrefix,
     required this.label,
-    required this.child,
-    this.hint,
-    this.error,
+    required this.order,
+    required this.selected,
+    required this.isZh,
+    required this.pillStyle,
+    required this.onToggle,
+    required this.onReorder,
   });
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              color: scheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 6),
-          child,
-          if (error != null) ...[
-            const SizedBox(height: 4),
-            Text(
-              error!,
-              style: TextStyle(fontSize: 10.5, color: scheme.error),
-            ),
-          ] else if (hint != null) ...[
-            const SizedBox(height: 4),
-            Text(
-              hint!,
-              style: TextStyle(
-                fontSize: 10.5,
-                height: 1.35,
-                color: scheme.outline,
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(label, style: theme.textTheme.titleSmall),
+        const SizedBox(height: 10),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final textScale = MediaQuery.textScalerOf(context).scale(12) / 12;
+            // LiquidModalityPills distributes a single row by selection weight.
+            // Give every label enough room rather than shrinking system text.
+            if (constraints.maxWidth >= 280 && textScale <= 1.2) {
+              return MobileGlassPill(
+                style: pillStyle,
+                radius: 28,
+                padding: const EdgeInsets.all(4),
+                child: LiquidModalityPills(
+                  key: ValueKey(keyPrefix),
+                  keyPrefix: keyPrefix,
+                  height: 48,
+                  order: order,
+                  selected: selected,
+                  isZh: isZh,
+                  labelOf: (value) => _modalityLabel(value, isZh).$1,
+                  iconOf: (value) => _modalityLabel(value, isZh).$2,
+                  onToggle: onToggle,
+                  onReorder: onReorder,
+                ),
+              );
+            }
+            return Wrap(
+              key: ValueKey(keyPrefix),
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (var index = 0; index < order.length; index++)
+                  _wrappedModality(context, order[index], index),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _wrappedModality(BuildContext context, String value, int index) {
+    final (label, icon) = _modalityLabel(value, isZh);
+    Widget chip({bool feedback = false}) => FilterChip(
+      avatar: Icon(icon, size: 18),
+      label: Text(label),
+      selected: selected.contains(value),
+      onSelected: feedback ? null : (_) => onToggle(value),
+      materialTapTargetSize: MaterialTapTargetSize.padded,
+      visualDensity: VisualDensity.standard,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+    );
+    return Semantics(
+      key: ValueKey('${keyPrefix}_$value'),
+      hint: isZh ? '长按拖动可排序' : 'Hold and drag to reorder',
+      customSemanticsActions: {
+        if (index > 0)
+          CustomSemanticsAction(label: isZh ? '左移' : 'Move left'): () =>
+              onReorder(index, index - 1),
+        if (index < order.length - 1)
+          CustomSemanticsAction(label: isZh ? '右移' : 'Move right'): () =>
+              onReorder(index, index + 1),
+      },
+      child: DragTarget<String>(
+        onWillAcceptWithDetails: (details) =>
+            details.data != value && order.contains(details.data),
+        onAcceptWithDetails: (details) =>
+            onReorder(order.indexOf(details.data), index),
+        builder: (context, candidateData, rejectedData) =>
+            LongPressDraggable<String>(
+              data: value,
+              feedback: Material(
+                color: Colors.transparent,
+                child: chip(feedback: true),
               ),
+              childWhenDragging: Opacity(opacity: 0.4, child: chip()),
+              child: chip(),
             ),
-          ],
-        ],
       ),
     );
   }
@@ -689,62 +696,77 @@ class _LabeledField extends StatelessWidget {
 
 class _SheetTextField extends StatelessWidget {
   final TextEditingController controller;
+  final String label;
   final String? hint;
+  final String? helper;
+  final String? error;
   final TextInputType? keyboardType;
+  final FocusNode? focusNode;
   final ValueChanged<String>? onChanged;
 
   const _SheetTextField({
     super.key,
     required this.controller,
+    required this.label,
     this.hint,
+    this.helper,
+    this.error,
     this.keyboardType,
+    this.focusNode,
     this.onChanged,
   });
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final bool isDark = Theme.of(context).brightness == Brightness.dark;
-    const AppControlSize size = AppControlSize.large;
-    return TextField(
-      controller: controller,
-      keyboardType: keyboardType,
-      onChanged: onChanged,
-      style: TextStyle(fontSize: 13.5, height: 1.2, color: scheme.onSurface),
-      cursorColor: scheme.primary,
-      textAlignVertical: TextAlignVertical.center,
-      decoration: InputDecoration(
-        isDense: true,
-        hintText: hint,
-        hintStyle: TextStyle(
-          fontSize: 12.5,
-          color: scheme.onSurfaceVariant.withAlpha(170),
-        ),
-        filled: true,
-        fillColor: scheme.surfaceContainerHighest.withAlpha(isDark ? 76 : 100),
-        contentPadding: size.fieldPadding,
-        visualDensity: AppControlSize.fieldDensity,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide(
-            color: scheme.outlineVariant.withAlpha(isDark ? 64 : 95),
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ExcludeSemantics(
+            child: Text(label, style: theme.textTheme.titleSmall),
           ),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide(
-            color: scheme.outlineVariant.withAlpha(isDark ? 64 : 95),
+          const SizedBox(height: 8),
+          Semantics(
+            label: label,
+            child: TextField(
+              controller: controller,
+              focusNode: focusNode,
+              keyboardType: keyboardType,
+              textInputAction: TextInputAction.next,
+              onChanged: onChanged,
+              style: theme.textTheme.bodyLarge,
+              textAlignVertical: TextAlignVertical.center,
+              scrollPadding: const EdgeInsets.all(24),
+              decoration: InputDecoration(
+                hintText: hint,
+                hintStyle: theme.textTheme.bodyMedium?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+                helperText: helper,
+                helperMaxLines: 5,
+                helperStyle: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+                errorText: error,
+                errorMaxLines: 5,
+                errorStyle: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.error,
+                ),
+                constraints: const BoxConstraints(minHeight: 48),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 14,
+                ),
+                visualDensity: AppControlSize.fieldDensity,
+              ),
+              onTapOutside: (_) => FocusScope.of(context).unfocus(),
+            ),
           ),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide(
-            color: scheme.primary.withAlpha(210),
-            width: 1.4,
-          ),
-        ),
+        ],
       ),
-      onTapOutside: (_) => FocusScope.of(context).unfocus(),
     );
   }
 }
@@ -764,47 +786,23 @@ class _SwitchRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: () => onChanged(!value),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 44),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      label,
-                      style: TextStyle(fontSize: 13, color: scheme.onSurface),
-                    ),
-                    if (description != null) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        description!,
-                        style: SettingsTypography.description.copyWith(
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
+    final theme = Theme.of(context);
+    return SwitchListTile(
+      key: const ValueKey('model_sheet_enabled'),
+      contentPadding: EdgeInsets.zero,
+      title: Text(label, style: theme.textTheme.titleSmall),
+      subtitle: description == null
+          ? null
+          : Text(
+              description!,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
               ),
-              const SizedBox(width: 8),
-              Switch(
-                key: const ValueKey('model_sheet_enabled'),
-                value: value,
-                onChanged: onChanged,
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-            ],
-          ),
-        ),
-      ),
+            ),
+      value: value,
+      onChanged: onChanged,
+      materialTapTargetSize: MaterialTapTargetSize.padded,
+      visualDensity: VisualDensity.standard,
     );
   }
 }
@@ -863,8 +861,8 @@ class _ParamSliderRowState extends State<_ParamSliderRow> {
                   widget.customized
                       ? '${widget.label}: ${effective.toStringAsFixed(widget.decimals)}'
                       : '${widget.label}: ${widget.fallbackLabel}',
-                  style: TextStyle(
-                    fontSize: 12,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w500,
                     color: widget.scheme.onSurface,
                   ),
                 ),
@@ -876,27 +874,26 @@ class _ParamSliderRowState extends State<_ParamSliderRow> {
                     widget.onReset();
                   },
                   style: TextButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    minimumSize: const Size(0, 40),
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    minimumSize: const Size(48, 48),
                   ),
-                  child: Text(
-                    widget.resetLabel,
-                    style: const TextStyle(fontSize: 11),
-                  ),
+                  child: Text(widget.resetLabel),
                 ),
             ],
           ),
-          AppSlider(
-            value: effective,
-            min: widget.min,
-            max: widget.max,
-            divisions: widget.divisions,
-            onChanged: (value) => setState(() => _drag = value),
-            onChangeEnd: (value) {
-              widget.onCommit(value);
-              setState(() => _drag = null);
-            },
+          Semantics(
+            label: widget.label,
+            child: AppSlider(
+              value: effective,
+              min: widget.min,
+              max: widget.max,
+              divisions: widget.divisions,
+              onChanged: (value) => setState(() => _drag = value),
+              onChangeEnd: (value) {
+                widget.onCommit(value);
+                setState(() => _drag = null);
+              },
+            ),
           ),
         ],
       ),
@@ -905,16 +902,12 @@ class _ParamSliderRowState extends State<_ParamSliderRow> {
 }
 
 /// 模态显示名 / 图标（与 ai_settings_mobile.dart 中的模型行保持一致）。
-(String, IconData) _modalityLabel(String modality, bool isZh) =>
-    switch (modality) {
-      LiquidModalities.text => (
-        isZh ? '文本' : 'Text',
-        Icons.text_fields_rounded,
-      ),
-      LiquidModalities.image => (isZh ? '图像' : 'Image', Icons.image_outlined),
-      LiquidModalities.voice => (
-        isZh ? '语音' : 'Voice',
-        Icons.graphic_eq_rounded,
-      ),
-      _ => (modality, Icons.label_outline),
-    };
+(String, IconData) _modalityLabel(
+  String modality,
+  bool isZh,
+) => switch (modality) {
+  LiquidModalities.text => (isZh ? '文本' : 'Text', Icons.text_fields_rounded),
+  LiquidModalities.image => (isZh ? '图像' : 'Image', Icons.image_outlined),
+  LiquidModalities.voice => (isZh ? '语音' : 'Voice', Icons.graphic_eq_rounded),
+  _ => (modality, Icons.label_outline),
+};

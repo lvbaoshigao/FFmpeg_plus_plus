@@ -23,6 +23,7 @@ import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 // ColorOS 流体云进度开关的能力判定（Android 专用，见 ColorOsFluidCloud.kt）
 import '../services/android_platform.dart';
+import '../services/directory_picker.dart';
 import '../services/ffmpeg_installer.dart';
 // 高刷新率开关的即时生效（Android 专用，见 services/refresh_rate.dart）
 import '../services/refresh_rate.dart';
@@ -1364,7 +1365,15 @@ class _SettingsPageState extends State<SettingsPage> {
                 // 各玻璃卡片内部已有 OCLiquidGlassGroup→RepaintBoundary→OCLiquidGlass 的
                 // 独立层，隔绝了无关重绘，不再需要外层 RepaintBoundary。
                 if (visible.isEmpty && searching)
-                  _emptyState(scheme, s)
+                  Padding(
+                    padding: EdgeInsets.only(
+                      top: MobileUi.pageTopPadding(context),
+                      bottom: MediaQuery.viewInsetsOf(context).bottom > 0
+                          ? 0
+                          : MobileUi.navClearanceFor(MobileNavPlacementScope.of(context)),
+                    ),
+                    child: _emptyState(scheme, s),
+                  )
                 else
                   ListView(
                     // addRepaintBoundaries:false：卡片内的壁纸开窗 painter 必须每帧
@@ -2115,7 +2124,7 @@ class _SettingsPageState extends State<SettingsPage> {
       );
     }
 
-    // 语言：一级菜单右侧放紧凑的中/EN 分段切换
+    // 语言选项直接在一级菜单展开。
     if (c.id == 'language') {
       return _mobileLanguageRow(state, scheme, c.icon, highlightedTitle);
     }
@@ -2155,30 +2164,47 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  /// 语言行：左边「语言」标题，右边中文 / EN 紧凑分段切换。
+  /// The language picker uses the same menu as the other settings controls.
   Widget _mobileLanguageRow(
     AppState state,
     ColorScheme scheme,
     IconData icon,
     Widget title,
   ) {
-    final cfg = state.config;
-    return ListTile(
-      leading: _miIcon(scheme, icon),
-      title: title,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
-      // 统一「菜单栏选项」控件：行内分段药丸（选中主题色药丸 + 图标淡入动画）
-      //
-      // 宽度 108：两个短选项（中文 / EN）足够紧凑。此前 128 时两段各约 62px，
-      // 在只有 2~3 个汉字的标签旁留下大片空白，视觉上「选项卡过宽」。
-      trailing: SizedBox(
-        width: 108,
-        child: OptionMenuBar<String>(
-          expandable: false,
-          value: cfg.language,
-          items: const [OptionItem('zh', '中文'), OptionItem('en', 'EN')],
-          onChanged: (v) => state.updateConfig((c) => c..language = v),
-        ),
+    final label = AppStrings.of(state.config.language).languageInterface;
+    final menu = _languageMenu(state, label);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final inline =
+              constraints.maxWidth >= 220 &&
+              MediaQuery.textScalerOf(context).scale(14) <= 21;
+          final labelRow = Row(
+            children: [
+              _miIcon(scheme, icon),
+              const SizedBox(width: 12),
+              Expanded(child: title),
+            ],
+          );
+          return Flex(
+            direction: inline ? Axis.horizontal : Axis.vertical,
+            crossAxisAlignment: inline
+                ? CrossAxisAlignment.center
+                : CrossAxisAlignment.stretch,
+            children: [
+              if (inline) ...[
+                Expanded(child: labelRow),
+                const SizedBox(width: 12),
+                SizedBox(width: 124, child: menu),
+              ] else ...[
+                labelRow,
+                const SizedBox(height: 6),
+                menu,
+              ],
+            ],
+          );
+        },
       ),
     );
   }
@@ -2258,29 +2284,32 @@ class _SettingsPageState extends State<SettingsPage> {
   );
 
   Widget _emptyState(ColorScheme scheme, AppStrings s) => Center(
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(Icons.search_off, size: 44, color: scheme.outline.withAlpha(140)),
-        const SizedBox(height: 12),
-        Text(
-          s.setNoMatch,
-          style: TextStyle(fontSize: 14, color: scheme.onSurface),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          s.setNoMatchHint,
-          style: SettingsTypography.description.copyWith(
-            color: scheme.onSurfaceVariant,
+    child: SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.search_off, size: 44, color: scheme.outline.withAlpha(140)),
+          const SizedBox(height: 12),
+          Text(
+            s.setNoMatch,
+            style: TextStyle(fontSize: 14, color: scheme.onSurface),
           ),
-        ),
-        const SizedBox(height: 14),
-        TextButton.icon(
-          icon: const Icon(Icons.close, size: 15),
-          label: Text(s.setClearSearch, style: const TextStyle(fontSize: 12)),
-          onPressed: _clearSearch,
-        ),
-      ],
+          const SizedBox(height: 4),
+          Text(
+            s.setNoMatchHint,
+            style: SettingsTypography.description.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 14),
+          TextButton.icon(
+            icon: const Icon(Icons.close, size: 15),
+            label: Text(s.setClearSearch, style: const TextStyle(fontSize: 12)),
+            onPressed: _clearSearch,
+          ),
+        ],
+      ),
     ),
   );
 }
@@ -4835,59 +4864,34 @@ Widget _buildPredictiveBack(BuildContext ctx, AppState state) {
     ),
   ]);
 }
+Widget _languageMenu(AppState state, String label) => Semantics(
+  label: label,
+  child: OptionMenuBar<String>(
+    key: const ValueKey('settings_language_menu'),
+    value: state.config.language,
+    triggerHeight: 44,
+    menuWidth: 176,
+    items: const [OptionItem('zh', '简体中文'), OptionItem('en', 'English')],
+    onChanged: (value) => state.updateConfig((c) => c..language = value),
+  ),
+);
 
 Widget _buildLanguage(BuildContext ctx, AppState state) {
-  final cfg = state.config;
-  final s = AppStrings.of(cfg.language);
-  final scheme = Theme.of(ctx).colorScheme;
-  final clr = scheme.onSurface;
-
-  if (isMobilePlatform) {
-    // 移动端：全宽单选（与其它设置项等长），避免下拉菜单宽度过短。
-    return _glass(ctx, state, s.language, [
-      // 统一「菜单栏选项」控件：按钮 + 展开选项列表
-      OptionMenuBar<String>(
-        value: cfg.language,
-        items: const [
-          OptionItem('zh', '中文 (简体)', icon: Icons.language),
-          OptionItem('en', 'English', icon: Icons.language),
-        ],
-        onChanged: (v) => state.updateConfig((c) => c..language = v),
-      ),
-    ]);
-  }
-
-  return _glass(ctx, state, s.language, [
-    // 左右布局：标签在左、下拉在右（固定宽度，不再整行拉满）
+  final strings = AppStrings.of(state.config.language);
+  return _glass(ctx, state, strings.language, [
     Row(
       children: [
-        Expanded(
-          child: Text(
-            s.languageInterface,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: clr, fontSize: 12),
-          ),
-        ),
-        // 宽度统一取 _kMenuWidth（含前置图标后留给文字约 54px）：标签用
-        // 「中文 / English」而不是「中文 (简体)」，保证框内文字完整不被截断。
+        Expanded(child: Text(strings.languageInterface)),
+        const SizedBox(width: 12),
         SizedBox(
           width: _kMenuWidth,
-          child: OptionMenuBar<String>(
-            expandable: true,
-            value: cfg.language,
-            leadingIcon: Icons.language,
-            items: [
-              OptionItem('zh', s.isZh ? '中文' : 'Chinese'),
-              const OptionItem('en', 'English'),
-            ],
-            onChanged: (v) => state.updateConfig((c) => c..language = v),
-          ),
+          child: _languageMenu(state, strings.languageInterface),
         ),
       ],
     ),
   ]);
 }
+
 
 Widget _buildFont(BuildContext ctx, AppState state) {
   final cfg = state.config;
@@ -5060,7 +5064,7 @@ Widget _buildOutput(BuildContext ctx, AppState state) {
       cfg.defaultOutputDir,
       (v) => state.updateConfig((c) => c..defaultOutputDir = v),
       () async {
-        final d = await FilePicker.getDirectoryPath();
+        final d = await pickLocalDirectory();
         if (d != null) state.updateConfig((c) => c..defaultOutputDir = d);
       },
     ),
@@ -5071,7 +5075,7 @@ Widget _buildOutput(BuildContext ctx, AppState state) {
       cfg.intermediateDir,
       (v) => state.updateConfig((c) => c..intermediateDir = v),
       () async {
-        final d = await FilePicker.getDirectoryPath();
+        final d = await pickLocalDirectory();
         if (d != null) state.updateConfig((c) => c..intermediateDir = d);
       },
     ),
@@ -5937,7 +5941,7 @@ Widget _buildDebug(BuildContext ctx, AppState state) {
         cfg.logSavePath,
         (v) => state.updateConfig((c) => c..logSavePath = v),
         () async {
-          final d = await FilePicker.getDirectoryPath();
+          final d = await pickLocalDirectory();
           if (d != null) state.updateConfig((c) => c..logSavePath = d);
         },
       ),

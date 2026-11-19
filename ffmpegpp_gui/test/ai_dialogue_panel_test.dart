@@ -167,7 +167,7 @@ void main() {
       );
       final userTextWidget = tester.widget<SelectableText>(shortUserLabel);
       final scheme = Theme.of(tester.element(shortUserLabel)).colorScheme;
-      expect(userTextWidget.style?.color, scheme.onPrimaryContainer);
+      expect(userTextWidget.style?.color, scheme.onSecondaryContainer);
       expect(find.text('Final answer'), findsOneWidget);
       expect(find.text('Probe metadata'), findsNothing);
       expect(find.text('clip.mp4'), findsOneWidget);
@@ -1036,12 +1036,18 @@ void main() {
         final fieldRect = tester.getRect(field);
         expect(fieldRect.bottom, lessThanOrEqualTo(640 - 280));
         expect(tester.getRect(trigger).height, greaterThanOrEqualTo(44));
+        // The landscape-height keyboard leaves only 160 logical pixels.
+        tester.view.physicalSize = const Size(320, 440);
+        await tester.pumpAndSettle();
+        expect(tester.widget<TextField>(field).maxLines, 1);
+        expect(tester.getRect(field).bottom, lessThanOrEqualTo(160));
+        expect(tester.widget<TextField>(field).controller?.text, 'Draft');
         expect(tester.takeException(), isNull);
         await _teardownPanel(tester);
       },
     );
 
-    testWidgets('mobile design switches locally without losing dialogue', (
+    testWidgets('mobile chat follows global colors and typography live', (
       tester,
     ) async {
       final state = AppState();
@@ -1050,45 +1056,54 @@ void main() {
         mobileSheet: true,
         initialMessages: const [
           {'role': 'user', 'content': 'Keep this conversation'},
+          {'role': 'assistant', 'content': 'Keep this reply'},
         ],
         onApiReady: (value) => api = value,
       );
       final base = ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.red),
+        fontFamily: 'Workspace Light',
       );
+      final mobileTheme = const MobileVisualTheme(enabled: true).applyTo(base);
       await _pumpPanel(
         tester,
         panel,
         appState: state,
-        theme: base.copyWith(
-          extensions: const [MobileVisualTheme(enabled: true)],
-        ),
+        theme: mobileTheme,
       );
       await tester.pumpAndSettle();
       final before = api!.exportMessages();
       final field = find.byType(TextField).first;
       final scheme = Theme.of(tester.element(field)).colorScheme;
-      expect(scheme.surface.r, scheme.surface.g);
-      expect(scheme.primary, base.colorScheme.primary);
+      expect(scheme, mobileTheme.colorScheme);
+      final markdown = find.byType(MarkdownBody).first;
+      expect(tester.widget<MarkdownBody>(markdown).styleSheet?.p?.fontFamily,
+          'Workspace Light');
+      final updated = ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal, brightness: Brightness.dark),
+        fontFamily: 'Workspace Dark',
+      );
       await _pumpPanel(
         tester,
         panel,
         appState: state,
-        theme: base,
+        theme: updated,
         disposeState: false,
       );
       await tester.pumpAndSettle();
       expect(api!.exportMessages(), before);
       expect(
-        Theme.of(tester.element(field)).colorScheme.surface,
-        base.colorScheme.surface,
+        Theme.of(tester.element(field)).colorScheme,
+        updated.colorScheme,
       );
+      expect(tester.widget<MarkdownBody>(markdown).styleSheet?.p?.fontFamily,
+          'Workspace Dark');
       api!.importMessages([]);
       await _teardownPanel(tester);
     });
 
     testWidgets(
-      'mobile sheet renders a single-row header + full-height sidebar',
+      'mobile sheet keeps compact controls and opens a full-height history sidebar',
       (tester) async {
         tester.view.physicalSize = const Size(320, 480);
         tester.view.devicePixelRatio = 1;
@@ -1110,7 +1125,7 @@ void main() {
           findsOneWidget,
         );
         expect(
-          find.byKey(const ValueKey('ai-mobile-new-chat')),
+          find.byKey(const ValueKey('ai-chat-actions')),
           findsOneWidget,
         );
         final header = tester.getRect(
@@ -1122,9 +1137,17 @@ void main() {
         expect(modelChip.left, greaterThanOrEqualTo(header.left));
         expect(modelChip.right, lessThanOrEqualTo(header.right));
 
-        // 侧栏挂在面板根 Stack（全高覆盖层），而不是缩在消息区里的半高抽屉；
-        // 分段标签改成竖排 + FittedBox(scaleDown)，窄屏/大字号不出现省略号。
-        expect(find.byKey(const ValueKey('ai-mobile-sidebar')), findsOneWidget);
+        await tester.tap(find.byTooltip('Chat actions'));
+        await tester.pumpAndSettle();
+        expect(find.text('New chat'), findsOneWidget);
+        await tester.tapAt(const Offset(308, 350));
+        await tester.pumpAndSettle();
+        final sidebar = find.byKey(const ValueKey('ai-mobile-sidebar'));
+        expect(sidebar, findsNothing);
+        await tester.tap(find.byTooltip('History'));
+        await tester.pumpAndSettle();
+        expect(sidebar, findsOneWidget);
+        expect(tester.getSize(sidebar).height, 480);
         expect(
           find.byKey(const ValueKey('ai-mobile-sidebar-tabs')),
           findsOneWidget,

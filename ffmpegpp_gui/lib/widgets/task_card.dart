@@ -696,8 +696,16 @@ class TaskCard extends StatelessWidget {
     final stats = <(String, String, IconData)>[
       (s.qFps, _dashIfNa(task.fps, zh), Icons.videocam_outlined),
       (s.qBitrate, _dashIfNa(task.bitrate, zh), Icons.trending_up),
-      (s.qSize, task.outputSize == null ? s.qNone : task.outputSizeStr, Icons.storage),
-      (s.qFrames, task.frame > 0 ? '${task.frame}' : s.qNone, Icons.filter_frames),
+      (
+        s.qSize,
+        task.outputSize == null ? s.qNone : task.outputSizeStr,
+        Icons.storage,
+      ),
+      (
+        s.qFrames,
+        task.frame > 0 ? '${task.frame}' : s.qNone,
+        Icons.filter_frames,
+      ),
     ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
@@ -721,96 +729,106 @@ class TaskCard extends StatelessWidget {
             _ErrorPanel(message: task.error!, scheme: scheme, s: s),
           ],
           const SizedBox(height: kQueuePanelGap),
-          // ③ 两栏：基本信息 / 高级
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: _detailColumn(
-                  title: zh ? '基本信息' : 'Basic info',
-                  icon: Icons.info_outline,
-                  scheme: scheme,
-                  children: [
-                    _SummaryBar(task: task, scheme: scheme, s: s),
-                    const SizedBox(height: 10),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final stacked =
+                  constraints.maxWidth < 560 ||
+                  MediaQuery.textScalerOf(context).scale(14) > 21;
+              final basic = _detailColumn(
+                title: zh ? '基本信息' : 'Basic info',
+                icon: Icons.info_outline,
+                scheme: scheme,
+                children: [
+                  _SummaryBar(task: task, scheme: scheme, s: s),
+                  const SizedBox(height: 10),
+                  _SectionTitle(
+                    icon: Icons.folder_outlined,
+                    title: s.qFileInfo,
+                    scheme: scheme,
+                  ),
+                  const SizedBox(height: 6),
+                  _FileInfoPanel(task: task, s: s, scheme: scheme),
+                  const SizedBox(height: 10),
+                  _SectionTitle(
+                    icon: Icons.speed,
+                    title: s.qTechStats,
+                    scheme: scheme,
+                  ),
+                  const SizedBox(height: 6),
+                  _StatsGrid(stats: stats, scheme: scheme),
+                ],
+              );
+              final advanced = _detailColumn(
+                title: zh ? '高级' : 'Advanced',
+                icon: Icons.tune,
+                scheme: scheme,
+                children: [
+                  if (hasPipeline) ...[
                     _SectionTitle(
-                      icon: Icons.folder_outlined,
-                      title: s.qFileInfo,
+                      icon: Icons.account_tree,
+                      title: s.qPipeline,
                       scheme: scheme,
+                      trailing: _CountBadge(
+                        text: '${calls.length} ${s.qSteps}',
+                        scheme: scheme,
+                      ),
                     ),
                     const SizedBox(height: 6),
-                    _FileInfoPanel(task: task, s: s, scheme: scheme),
-                    const SizedBox(height: 10),
-                    _SectionTitle(
-                      icon: Icons.speed,
-                      title: s.qTechStats,
-                      scheme: scheme,
-                    ),
-                    const SizedBox(height: 6),
-                    _StatsGrid(stats: stats, scheme: scheme),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _detailColumn(
-                  title: zh ? '高级' : 'Advanced',
-                  icon: Icons.tune,
-                  scheme: scheme,
-                  children: [
-                    if (hasPipeline) ...[
-                      _SectionTitle(
-                        icon: Icons.account_tree,
-                        title: s.qPipeline,
-                        scheme: scheme,
-                        trailing: _CountBadge(
-                          text: '${calls.length} ${s.qSteps}',
-                          scheme: scheme,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      _PanelBox(
-                        padding: const EdgeInsets.all(10),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            _NodeTimeline(
-                              calls: calls,
-                              progresses: task.callProgresses,
-                              currentIndex: task.currentCallIndex,
-                              status: task.status,
-                              zh: zh,
-                            ),
-                            const SizedBox(height: 8),
-                            _PipelineLegend(scheme: scheme, s: s),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                    ],
-                    if (hasLogs)
-                      _LogsPanel(
-                        command: task.command,
-                        logLines: task.logLines,
-                        error: task.error,
-                        scheme: scheme,
-                        s: s,
-                      )
-                    else
-                      _PanelBox(
-                        padding: const EdgeInsets.all(10),
-                        child: Text(
-                          zh ? '暂无命令或日志' : 'No command or logs',
-                          style: TextStyle(
-                            fontSize: kQueueFsLabel,
-                            color: scheme.outline,
+                    _PanelBox(
+                      padding: const EdgeInsets.all(10),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _NodeTimeline(
+                            calls: calls,
+                            progresses: task.callProgresses,
+                            currentIndex: task.currentCallIndex,
+                            status: task.status,
+                            zh: zh,
                           ),
+                          const SizedBox(height: 8),
+                          _PipelineLegend(scheme: scheme, s: s),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                  if (hasLogs)
+                    _LogsPanel(
+                      command: task.command,
+                      logLines: task.logLines,
+                      error: task.error,
+                      scheme: scheme,
+                      s: s,
+                    )
+                  else
+                    _PanelBox(
+                      padding: const EdgeInsets.all(10),
+                      child: Text(
+                        zh ? '暂无命令或日志' : 'No command or logs',
+                        style: TextStyle(
+                          fontSize: kQueueFsLabel,
+                          color: scheme.outline,
                         ),
                       ),
-                  ],
-                ),
-              ),
-            ],
+                    ),
+                ],
+              );
+              if (stacked) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [basic, const SizedBox(height: 10), advanced],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: basic),
+                  const SizedBox(width: 10),
+                  Expanded(child: advanced),
+                ],
+              );
+            },
           ),
         ],
       ),
@@ -818,6 +836,7 @@ class TaskCard extends StatelessWidget {
   }
 
   /// 两栏布局里的单栏：栏标题 + 内容（宽度由外层 Expanded 决定）。
+
   Widget _detailColumn({
     required String title,
     required IconData icon,

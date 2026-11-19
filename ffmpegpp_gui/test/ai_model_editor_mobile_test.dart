@@ -9,14 +9,76 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
-Widget _harness(AppState state, Widget child) =>
-    ChangeNotifierProvider<AppState>.value(
-      value: state,
-      child: MaterialApp(
-        theme: AppTheme.dark(),
-        home: Scaffold(body: child),
+Widget _harness(
+  AppState state,
+  Widget child, {
+  ThemeData? theme,
+  TextScaler textScaler = TextScaler.noScaling,
+}) => ChangeNotifierProvider<AppState>.value(
+  value: state,
+  child: MaterialApp(
+    theme: theme ?? AppTheme.dark(),
+    builder: (context, child) => MediaQuery(
+      data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+      child: child!,
+    ),
+    home: Scaffold(body: child),
+  ),
+);
+
+Finder _modelField(String key) => find.descendant(
+  of: find.byKey(ValueKey(key)),
+  matching: find.byType(TextField),
+);
+
+Future<void> _openEditor(
+  WidgetTester tester,
+  AppState state, {
+  required AiModelEntry entry,
+  required ValueChanged<AiModelEntry?> onResult,
+  bool isZh = true,
+  bool isNew = false,
+  ThemeData? theme,
+  TextScaler textScaler = TextScaler.noScaling,
+}) async {
+  await tester.pumpWidget(
+    _harness(
+      state,
+      Builder(
+        builder: (context) => Center(
+          child: ElevatedButton(
+            key: const ValueKey('open_model_sheet'),
+            onPressed: () async {
+              onResult(
+                await showModalBottomSheet<AiModelEntry>(
+                  context: context,
+                  isScrollControlled: true,
+                  useSafeArea: true,
+                  backgroundColor: Colors.transparent,
+                  builder: (_) => ModelEditorSheet(
+                    entry: entry,
+                    isNew: isNew,
+                    defaultContextWindow: 128000,
+                    defaultMaxTokens: 4096,
+                    defaultTemperature: 0.3,
+                    isZh: isZh,
+                    cardStyle: 'gray',
+                    pillStyle: 'gray',
+                  ),
+                ),
+              );
+            },
+            child: const Text('open'),
+          ),
+        ),
       ),
-    );
+      theme: theme,
+      textScaler: textScaler,
+    ),
+  );
+  await tester.tap(find.byKey(const ValueKey('open_model_sheet')));
+  await tester.pumpAndSettle();
+}
 
 Future<void> _flushSaveTimers(WidgetTester tester) async {
   await tester.pump(const Duration(seconds: 1));
@@ -118,10 +180,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(
         tester.widget<LiquidModalityPills>(inputPills).selected,
-        containsAll(<String>[
-          LiquidModalities.text,
-          LiquidModalities.image,
-        ]),
+        containsAll(<String>[LiquidModalities.text, LiquidModalities.image]),
       );
 
       // ID 重复时不能关闭面板。
@@ -152,6 +211,220 @@ void main() {
       expect(result!.topP, 0.9);
       await _flushSaveTimers(tester);
     });
+
+    testWidgets('should keep edits local when canceled from the footer', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(412, 915);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final state = AppState();
+      addTearDown(state.dispose);
+      final entry = AiModelEntry(
+        id: 'saved-model',
+        displayName: 'Saved model',
+        contextWindow: 32000,
+        maxTokens: 1000,
+        temperature: 0.7,
+        topP: 0.8,
+      );
+      final original = entry.copy().toJson();
+      var didClose = false;
+      AiModelEntry? result;
+      await _openEditor(
+        tester,
+        state,
+        entry: entry,
+        onResult: (value) {
+          didClose = true;
+          result = value;
+        },
+      );
+      await tester.enterText(
+        _modelField('model_sheet_display_name'),
+        'Changed',
+      );
+      await tester.enterText(_modelField('model_sheet_id'), 'changed-model');
+      final enabled = find.byKey(const ValueKey('model_sheet_enabled'));
+      await tester.ensureVisible(enabled);
+      await tester.pumpAndSettle();
+      await tester.tap(enabled);
+      final image = find.byKey(const ValueKey('model_sheet_input_image'));
+      await tester.ensureVisible(image);
+      await tester.pumpAndSettle();
+      await tester.tap(image);
+      final reset = find.byKey(const ValueKey('model_sheet_reset_defaults'));
+      await tester.ensureVisible(reset);
+      await tester.pumpAndSettle();
+      await tester.tap(reset);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('model_sheet_cancel')));
+      await tester.pumpAndSettle();
+      expect(didClose, isTrue);
+      expect(result, isNull);
+      expect(entry.toJson(), original);
+      expect(tester.takeException(), isNull);
+      await _flushSaveTimers(tester);
+    });
+
+    testWidgets(
+      'should reset advanced overrides without changing capabilities',
+      (tester) async {
+        tester.view.physicalSize = const Size(412, 915);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
+        final state = AppState();
+        addTearDown(state.dispose);
+        final entry = AiModelEntry(
+          id: 'saved-model',
+          contextWindow: 32000,
+          maxTokens: 1000,
+          temperature: 0.7,
+          topP: 0.8,
+          capabilities: [AiModelCapability.chat, AiModelCapability.tools],
+          inputModalities: [LiquidModalities.voice, LiquidModalities.text],
+        );
+        AiModelEntry? result;
+        await _openEditor(
+          tester,
+          state,
+          entry: entry,
+          onResult: (value) => result = value,
+        );
+        final reset = find.byKey(const ValueKey('model_sheet_reset_defaults'));
+        await tester.ensureVisible(reset);
+        await tester.pumpAndSettle();
+        await tester.tap(reset);
+        await tester.pumpAndSettle();
+        expect(tester.widget<TextButton>(reset).onPressed, isNull);
+        expect(
+          tester
+              .widget<TextField>(_modelField('model_sheet_context'))
+              .controller!
+              .text,
+          isEmpty,
+        );
+        expect(
+          tester
+              .widget<TextField>(_modelField('model_sheet_max_tokens'))
+              .controller!
+              .text,
+          isEmpty,
+        );
+        expect(find.text('温度: 0.3'), findsOneWidget);
+        expect(find.text('Top_P: 1.00'), findsOneWidget);
+        await tester.tap(find.byKey(const ValueKey('model_sheet_done')));
+        await tester.pumpAndSettle();
+        expect(result, isNotNull);
+        expect(result!.contextWindow, isNull);
+        expect(result!.maxTokens, isNull);
+        expect(result!.temperature, isNull);
+        expect(result!.topP, isNull);
+        expect(result!.capabilities, entry.capabilities);
+        expect(result!.inputModalities, entry.inputModalities);
+        expect(entry.contextWindow, 32000);
+        expect(entry.temperature, 0.7);
+        expect(tester.takeException(), isNull);
+        await _flushSaveTimers(tester);
+      },
+    );
+
+    testWidgets(
+      'should wrap capabilities and keep footer above a keyboard at 320dp',
+      (tester) async {
+        tester.view.physicalSize = const Size(320, 680);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
+        final state = AppState();
+        addTearDown(state.dispose);
+        final entry = AiModelEntry(
+          id: 'legacy-vision',
+          capabilities: [AiModelCapability.chat, AiModelCapability.vision],
+        );
+        final theme = AppTheme.light();
+        AiModelEntry? result;
+        await _openEditor(
+          tester,
+          state,
+          entry: entry,
+          isZh: false,
+          theme: theme,
+          textScaler: const TextScaler.linear(2),
+          onResult: (value) => result = value,
+        );
+        final material = tester.widget<Material>(
+          find.byKey(const ValueKey('model_editor_sheet')),
+        );
+        expect(material.color, theme.bottomSheetTheme.backgroundColor);
+        expect(material.shape, theme.bottomSheetTheme.shape);
+        expect(
+          tester.widget(find.byKey(const ValueKey('model_sheet_input'))),
+          isA<Wrap>(),
+        );
+        final text = find.byKey(const ValueKey('model_sheet_input_text'));
+        final image = find.byKey(const ValueKey('model_sheet_input_image'));
+        final voice = find.byKey(const ValueKey('model_sheet_input_voice'));
+        expect(
+          tester.getTopLeft(voice).dy,
+          greaterThan(tester.getTopLeft(text).dy),
+        );
+        final imageChip = find.descendant(
+          of: image,
+          matching: find.byType(FilterChip),
+        );
+        expect(tester.widget<FilterChip>(imageChip).selected, isTrue);
+        await tester.ensureVisible(image);
+        await tester.pumpAndSettle();
+        await tester.tap(image);
+        await tester.pump();
+        expect(tester.widget<FilterChip>(imageChip).selected, isFalse);
+        await tester.ensureVisible(voice);
+        await tester.pumpAndSettle();
+        for (var move = 0; move < 2; move++) {
+          final reorder = tester
+              .widget<Semantics>(voice)
+              .properties
+              .customSemanticsActions!;
+          reorder.entries
+              .singleWhere((entry) => entry.key.label == 'Move left')
+              .value();
+          await tester.pump();
+        }
+        await tester.ensureVisible(voice);
+        await tester.pumpAndSettle();
+        await tester.tap(voice);
+        await tester.pumpAndSettle();
+
+        tester.view.viewInsets = const FakeViewPadding(bottom: 260);
+        await tester.pumpAndSettle();
+        final maxTokens = _modelField('model_sheet_max_tokens');
+        await tester.ensureVisible(maxTokens);
+        await tester.pumpAndSettle();
+        await tester.enterText(maxTokens, '8192');
+        await tester.pumpAndSettle();
+        final done = find.byKey(const ValueKey('model_sheet_done'));
+        final cancel = find.byKey(const ValueKey('model_sheet_cancel'));
+        expect(tester.getRect(done).bottom, lessThanOrEqualTo(420));
+        expect(tester.getSize(done).height, greaterThanOrEqualTo(48));
+        expect(tester.getSize(cancel).height, greaterThanOrEqualTo(48));
+        expect(done.hitTestable(), findsOneWidget);
+        expect(cancel.hitTestable(), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        await tester.tap(done);
+        await tester.pumpAndSettle();
+        expect(result!.maxTokens, 8192);
+        expect(result!.contextWindow, isNull);
+        expect(result!.temperature, isNull);
+        expect(result!.topP, isNull);
+        expect(result!.inputModalities, [
+          LiquidModalities.voice,
+          LiquidModalities.text,
+        ]);
+        expect(result!.capabilities, isNot(contains(AiModelCapability.vision)));
+        expect(entry.capabilities, contains(AiModelCapability.vision));
+        await _flushSaveTimers(tester);
+      },
+    );
   });
 
   group('MobileAiProviderDetailPage model tab', () {
@@ -181,10 +454,7 @@ void main() {
       });
 
       await tester.pumpWidget(
-        _harness(
-          state,
-          MobileAiProviderDetailPage(profileId: profile.id),
-        ),
+        _harness(state, MobileAiProviderDetailPage(profileId: profile.id)),
       );
       await tester.pumpAndSettle();
       // 底栏统一为主界面同模块的 AppLiquidTabBar（liquid_glass_tab_bar）；
@@ -248,10 +518,7 @@ void main() {
       expect(find.text('删除模型？'), findsOneWidget);
       await tester.tap(find.text('移除'));
       await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('model_row_claude-opus')),
-        findsNothing,
-      );
+      expect(find.byKey(const ValueKey('model_row_claude-opus')), findsNothing);
       expect(tester.takeException(), isNull);
       await _flushSaveTimers(tester);
     });
@@ -276,10 +543,7 @@ void main() {
         return c;
       });
       await tester.pumpWidget(
-        _harness(
-          state,
-          MobileAiProviderDetailPage(profileId: profile.id),
-        ),
+        _harness(state, MobileAiProviderDetailPage(profileId: profile.id)),
       );
       await tester.pumpAndSettle();
       await tester.tap(_tabLabel('模型'));

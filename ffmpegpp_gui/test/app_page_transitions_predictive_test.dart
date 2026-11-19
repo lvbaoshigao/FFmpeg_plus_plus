@@ -17,7 +17,7 @@ Future<void> _gesture(
   final width = tester.view.physicalSize.width / tester.view.devicePixelRatio;
   await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
     'flutter/backgesture',
-    StandardMethodCodec().encodeMethodCall(MethodCall(method, <String, dynamic>{
+    const StandardMethodCodec().encodeMethodCall(MethodCall(method, <String, dynamic>{
       'touchOffset': button
           ? null
           : <double>[edge == SwipeEdge.left ? 5 : width - 5, 300],

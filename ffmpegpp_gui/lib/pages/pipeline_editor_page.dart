@@ -50,8 +50,6 @@ import '../widgets/fppx_password.dart';
 import '../widgets/gate_symbol_painter.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/liquid_glass_fallback.dart';
-import '../widgets/mobile_glass_pill.dart';
-import '../widgets/mobile_ui.dart';
 // 节点图标/配色表：与独立面板窗口共用（见该文件顶部说明）
 import '../widgets/node_icons.dart';
 import '../widgets/option_menu_bar.dart';
@@ -10530,10 +10528,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         barrierLabel: MaterialLocalizations.of(
           context,
         ).modalBarrierDismissLabel,
-        barrierColor: Colors.black.withValues(alpha: 0.24),
+        barrierColor: scheme.scrim.withAlpha(76),
         transitionDuration: const Duration(milliseconds: 240),
         pageBuilder: (ctx, anim, anim2) {
-          final w = MediaQuery.of(ctx).size.width;
+          final scheme = Theme.of(ctx).colorScheme;
+          final w = MediaQuery.sizeOf(ctx).width;
           // 横屏侧栏收窄（用户反馈「玻璃太宽」）：46%→42%，clamp 280–360。
           final panelW = math.min(w, (w * 0.42).clamp(280.0, 360.0));
           return Align(
@@ -10609,9 +10608,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.transparent,
-      barrierColor: Colors.black.withValues(alpha: 0.24),
+      barrierColor: scheme.scrim.withAlpha(76),
       builder: (ctx) {
-        final scheme = MobileVisualTheme.of(ctx).applyTo(Theme.of(ctx)).colorScheme;
+        final theme = Theme.of(ctx);
+        final scheme = theme.colorScheme;
         final media = MediaQuery.of(ctx);
         final insets = media.viewInsets.bottom;
         // Preserve the safe top edge while letting the keyboard expand the sheet.
@@ -10628,7 +10628,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           child: Container(
             height: sheetH,
             decoration: BoxDecoration(
-              color: scheme.surface,
+              color: theme.bottomSheetTheme.backgroundColor ?? scheme.surface,
               borderRadius: const BorderRadius.vertical(
                 top: Radius.circular(22),
               ),
@@ -13444,17 +13444,7 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
   // *所有*消息重解析，造成滚动/输入期间卡顿与闪烁。这里按主题关键色做缓存，
   // 主题不变时复用同一实例。
   MarkdownStyleSheet? _mdStyle;
-  ({
-    Brightness brightness,
-    Color primary,
-    Color onSurface,
-    Color onSurfaceVariant,
-    Color primaryContainer,
-    Color surfaceContainerHighest,
-    Color outline,
-    Color outlineVariant,
-  })?
-  _mdStyleKey;
+  (ColorScheme, TextStyle)? _mdStyleKey;
 
   static const _uuid = Uuid();
 
@@ -15754,366 +15744,207 @@ Available actions: __TOOLS__''';
 
   @override
   Widget build(BuildContext context) {
-    final base = Theme.of(context);
-    final visual = base.extension<MobileVisualTheme>() ?? const MobileVisualTheme();
-    return Theme(
-      data: visual.applyTo(base),
-      child: Builder(builder: _buildThemedPanel),
-    );
-  }
-
-  Widget _buildThemedPanel(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    // AnimatedSwitcher 让展开/收起两个状态都能平滑过渡。
-    // 关键点：两个 child 必须有不同 key，否则 Flutter 认为是同一个 widget
-    // 不触发切换动画，导致"展开后收不回"。
-    // ScaleTransition 的 begin 取 0.96（收起时新 child 是从小变大）。
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 220),
-      switchInCurve: Curves.easeOutCubic,
-      switchOutCurve: Curves.easeInCubic,
-      transitionBuilder: (child, anim) => FadeTransition(
-        opacity: anim,
-        child: ScaleTransition(
-          scale: Tween(begin: 0.96, end: 1.0).animate(anim),
-          alignment: Alignment.bottomRight,
-          child: child,
-        ),
-      ),
-      child: _expanded
-          ? KeyedSubtree(
-              key: const ValueKey('ai-expanded'),
-              child: _buildExpanded(scheme),
-            )
-          : KeyedSubtree(
-              key: const ValueKey('ai-collapsed'),
-              child: _buildCollapsed(scheme),
-            ),
+    final (panelStyle, cardStyle) = context.select<AppState, (String, String)>(
+      (state) => (state.config.menuStyle, state.config.cardStyle),
     );
+    return _expanded
+        ? _buildExpanded(scheme, panelStyle, cardStyle)
+        : _buildCollapsed(scheme, panelStyle);
   }
 
-  Widget _buildCollapsed(ColorScheme scheme) {
-    return GlassPanel(
-      radius: 14,
-      blur: 12,
-      // AI 面板玻璃固定中性灰（同展开壳）：跟随全局样式会走 harmonizedAccent
-      // 染主题色，用户反馈「AI 界面玻璃严重串色」。
-      style: SurfaceStyle.gray,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: () => setState(() => _expanded = true),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.smart_toy, size: 18, color: scheme.primary),
-              const SizedBox(width: 6),
-              Text(
-                'AI',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: scheme.primary,
-                ),
-              ),
-            ],
-          ),
+  Widget _buildCollapsed(ColorScheme scheme, String style) => GlassPanel(
+    radius: 14,
+    blur: 12,
+    style: style,
+    child: InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: () => setState(() => _expanded = true),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.chat_bubble_outline, size: 18, color: scheme.onSurface),
+            const SizedBox(width: 6),
+            Text('AI', style: TextStyle(color: scheme.onSurface)),
+          ],
         ),
       ),
-    );
-  }
+    ),
+  );
 
-  Widget _buildExpanded(ColorScheme scheme) {
-    final s = widget.strings;
-    // 移动端弹层模式（task-6）与桌面抽屉分叉：
-    //  * header 由面板自己分层渲染会话操作和模型选择器，不再让宿主再画一层；
-    //  * 侧边栏提升到本方法最外层 Stack，覆盖 header 与 composer 的**全高**，
-    //    而不是缩在消息区里变成小抽屉；
-    //  * 桌面抽屉 / 浮动小窗 / 独立窗口完全走原路径（GlassPanel + 内联工具侧栏）。
-    final mobileSheet = widget.mobileSheet;
-    final body = SizedBox.expand(
-      child: Column(
-        children: [
-          if (mobileSheet)
-            withoutAppTextScale(context, _buildMobileSheetHeader(scheme, s))
-          else if (!widget.hideHeader)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 6, 4),
+  Widget _buildExpanded(
+    ColorScheme scheme,
+    String panelStyle,
+    String cardStyle,
+  ) {
+    final strings = widget.strings;
+    final mobile = widget.mobileSheet;
+    final duration = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 180);
+    final content = LayoutBuilder(
+      builder: (context, constraints) {
+        final compactHeight = mobile && constraints.maxHeight < 165;
+        return Column(
+          children: [
+            if ((!widget.hideHeader || mobile) && !compactHeight)
+              _buildChatHeader(scheme, strings),
+            if (!compactHeight &&
+                (_loading ||
+                    _totalInputTokens > 0 ||
+                    _totalOutputTokens > 0 ||
+                    _requestHistoryOmittedCount > 0 ||
+                    _lastGenSpeed != null))
+              _buildStatusRow(scheme, strings),
+            Expanded(
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // 菜单 / 历史侧栏（设计稿左上角汉堡按钮）
-                  IconButton(
-                    icon: const Icon(Icons.menu, size: 18),
-                    tooltip: s.isZh ? '聊天菜单' : 'Chat menu',
-                    onPressed: () => isMobilePlatform
-                        ? openMobileSidebarPage(_AiMobileSidebarPage.history)
-                        : _toggleHistoryAt(),
-                    constraints: const BoxConstraints(
-                      minWidth: 32,
-                      minHeight: 32,
+                  if (!mobile)
+                    AnimatedContainer(
+                      duration: duration,
+                      curve: Curves.easeOutCubic,
+                      width: _toolsOpen
+                          ? math.min(156, constraints.maxWidth * 0.39)
+                          : 0,
+                      clipBehavior: Clip.hardEdge,
+                      decoration: BoxDecoration(
+                        border: BorderDirectional(
+                          end: BorderSide(color: scheme.outlineVariant),
+                        ),
+                      ),
+                      child: _toolsOpen
+                          ? _buildToolsSidebar(scheme, strings)
+                          : const SizedBox.shrink(),
                     ),
-                    padding: EdgeInsets.zero,
-                  ),
-                  Icon(Icons.smart_toy, size: 18, color: scheme.primary),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      s.aiChatTitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: scheme.onSurface,
-                      ),
-                    ),
-                  ),
-                  Flexible(child: _buildModelSelector(scheme, s)),
-                  // 新建会话：清空当前对话并断开历史文件绑定。
-                  // 桌面抽屉 / 独立窗口此前都没有这个入口（用户反馈「独立窗口
-                  // 仍然缺少很多组件」），想开新话题只能把旧对话整个删掉。
-                  IconButton(
-                    icon: const Icon(Icons.add_comment_outlined, size: 17),
-                    tooltip: s.isZh ? '新建会话' : 'New chat',
-                    onPressed: _startNewChat,
-                    constraints: const BoxConstraints(
-                      minWidth: 32,
-                      minHeight: 32,
-                    ),
-                    padding: EdgeInsets.zero,
-                  ),
-                  // 在节点编辑器内浮出小窗：主窗口抽屉专属入口。
-                  if (widget.onInlineFloat != null)
-                    IconButton(
-                      icon: const Icon(
-                        Icons.picture_in_picture_alt_outlined,
-                        size: 17,
-                      ),
-                      tooltip: s.isZh ? '浮出为内嵌小窗' : 'Float as inline window',
-                      onPressed: widget.onInlineFloat,
-                      constraints: const BoxConstraints(
-                        minWidth: 32,
-                        minHeight: 32,
-                      ),
-                      padding: EdgeInsets.zero,
-                    ),
-                  // 拖出为独立系统窗口（只有主窗口的 AI 抽屉会传 onFloatOut）
-                  if (widget.onFloatOut != null)
-                    IconButton(
-                      icon: const Icon(
-                        Icons.desktop_windows_outlined,
-                        size: 17,
-                      ),
-                      tooltip: s.isZh ? '拖出为独立窗口' : 'Open in separate window',
-                      onPressed: widget.onFloatOut,
-                      constraints: const BoxConstraints(
-                        minWidth: 32,
-                        minHeight: 32,
-                      ),
-                      padding: EdgeInsets.zero,
-                    ),
-                  // 工具侧边栏开关
-                  Tooltip(
-                    message: s.isZh
-                        ? (toolsOpen ? '收起工具面板' : '展开工具面板')
-                        : (toolsOpen ? 'Collapse tools' : 'Expand tools'),
-                    child: IconButton(
-                      icon: AnimatedRotation(
-                        turns: toolsOpen ? 0.5 : 0,
-                        duration: const Duration(milliseconds: 200),
-                        curve: Curves.easeOutCubic,
-                        child: const Icon(Icons.extension_outlined, size: 18),
-                      ),
-                      tooltip: s.isZh ? '工具' : 'Tools',
-                      onPressed: () => isMobilePlatform
-                          ? openMobileSidebarPage(_AiMobileSidebarPage.tools)
-                          : setState(() {
-                              _toolsOpen = !_toolsOpen;
-                              if (_toolsOpen) _historyOpen = false;
-                            }),
-                      constraints: const BoxConstraints(
-                        minWidth: 32,
-                        minHeight: 32,
-                      ),
-                      padding: EdgeInsets.zero,
-                    ),
-                  ),
-                  if (!widget.standaloneWindow)
-                    IconButton(
-                      icon: const Icon(Icons.remove, size: 18),
-                      tooltip: s.isZh ? '收起' : 'Collapse',
-                      onPressed: () {
-                        if (widget.onCollapseRequested != null) {
-                          widget.onCollapseRequested!();
-                        } else {
-                          setState(() => _expanded = false);
-                        }
-                      },
-                      constraints: const BoxConstraints(
-                        minWidth: 32,
-                        minHeight: 32,
-                      ),
-                      padding: EdgeInsets.zero,
-                    ),
+                  Expanded(child: _buildChatBody(scheme, strings, cardStyle)),
                 ],
               ),
             ),
-          // 状态信息单独占一层，避免与标题和输入区争抢空间。
-          if (_loading ||
-              _totalInputTokens > 0 ||
-              _totalOutputTokens > 0 ||
-              _requestHistoryOmittedCount > 0 ||
-              _lastGenSpeed != null)
-            _buildStatusRow(scheme, s),
-          // 显式指定颜色：主题若把 dividerColor 定成 onSurface 一类的强色，
-          // 头部与内容之间就会横着一条抢眼的分割线。
-          //
-          // 移动端弹层不画这条线：头部是一颗**带左右外边距的浮动玻璃药丸**，
-          // 在它下面拉一条通栏细线，等于给浮动元素加了个「表格边框」，反而
-          // 更像两个拼接的区块（这也是「违和」的来源之一）。桌面抽屉头部是
-          // 通栏行，仍保留分隔线。
-          if (!mobileSheet)
-            Divider(height: 1, color: scheme.outlineVariant.withAlpha(70)),
-          Expanded(
-            child: mobileSheet
-                ? _buildChatBody(scheme, s)
-                : Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      // ── 可折叠工具侧边栏 ──
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        curve: Curves.easeOutCubic,
-                        width: _toolsOpen ? 150 : 0,
-                        decoration: BoxDecoration(
-                          border: Border(
-                            right: BorderSide(
-                              color: scheme.outlineVariant.withAlpha(60),
-                            ),
-                          ),
-                        ),
-                        clipBehavior: Clip.hardEdge,
-                        child: _toolsOpen
-                            ? _buildToolsSidebar(scheme, s)
-                            : const SizedBox.shrink(),
-                      ),
-                      // ── 聊天主区 ──
-                      Expanded(child: _buildChatBody(scheme, s)),
-                    ],
-                  ),
-          ),
-        ],
-      ),
+          ],
+        );
+      },
     );
-    if (mobileSheet) {
-      // 全高侧栏覆盖层：放在 body 之后，于是能盖住 header 与输入框；
-      // 侧栏自身带滑入动画和半透明遮罩，关掉后仍保留在树里以便动画收回。
+    if (mobile) {
       return Stack(
+        fit: StackFit.expand,
         children: [
-          Positioned.fill(child: body),
-          Positioned.fill(child: _buildMobileSidebar(scheme, s)),
+          ExcludeFocus(
+            excluding: _historyOpen,
+            child: ExcludeSemantics(excluding: _historyOpen, child: content),
+          ),
+          _buildMobileSidebar(scheme, strings, cardStyle),
         ],
       );
     }
-    if (isMobilePlatform) return body;
-    return GlassPanel(
-      radius: 16,
-      blur: 14,
-      style: SurfaceStyle.gray,
-      child: body,
-    );
+    return GlassPanel(radius: 16, blur: 14, style: panelStyle, child: content);
   }
 
-  /// 移动端单行 header：会话操作 + 模型选择器挤在同一行（模型 chip 占弹性宽度）。
-  Widget _buildMobileSheetHeader(ColorScheme scheme, AppStrings s) {
-    // 单行头部（44）：[菜单] [模型 chip] [新建] [关闭]。
-    //
-    // 「工具」入口已并入 ≡（侧栏有 工具 页签），头部从 5 个控件降到 4 个。
-    //
-    // 旧实现是两行玻璃药丸（40 + 4 + 32）外加一条全宽分隔线，整块约 94px。
-    // 弹层高度只有屏幕的 60%~80%，光这块 chrome 就吃掉一成多，正文区被压得
-    // 又短又窄 —— 这是「太挤」的主要来源之一。而静态标题「AI 助手」其实不
-    // 携带信息（弹层本身就是 AI 助手），真正需要一眼看到的是「在跟哪个模型
-    // 说话」，所以把标题位让给模型 chip，只留机器人图标表身份。
-    // 头部总高 94 → 60（44 内容 + 药丸上下 4 + 外层 2/6），省下的全给消息区。
-    // 头部药丸现在跟随「样式 → 顶部药丸」（pillStyle）。
-    //
-    // 之前这里硬编码 SurfaceStyle.gray，理由是「跟随全局样式会走 harmonizedAccent
-    // 染主题色 → AI 界面玻璃串色」。但玻璃底色已经改成中性灰
-    // （themedGlassBase 的非跟随分支不再混 primary），串色的前提消失了；
-    // 继续写死 gray 只会让「液态玻璃」在 AI 界面上完全看不出来。
-    // 注意用 read 而不是 select：这里由外层 Builder 调用，provider 的
-    // select 要求「调用方元素正在 build」，否则会抛
-    // `Tried to use context.select outside of the build method`。
-    // 样式变更时面板本来也会随 AppState 通知重建，够用。
-    final String pillStyle = context.read<AppState>().config.pillStyle;
+  Widget _buildChatHeader(ColorScheme scheme, AppStrings strings) {
+    final mobile = widget.mobileSheet;
+    final zh = strings.isZh;
+    final controlSize = mobile ? 44.0 : 36.0;
+    final tools = _toolsOpen;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 2, 8, 6),
-      child: MobileGlassPill(
-        key: const ValueKey('ai-mobile-sheet-header'),
-        style: pillStyle,
-        radius: MobileVisualTheme.of(context).enabled ? MobileVisualTheme.of(context).chatRadius : MobileUi.pillRadius,
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-        child: SizedBox(
-          height: 44,
-          child: Row(
-            children: [
-              MobileGlassPillAction(
-                icon: Icons.menu,
-                tooltip: s.isZh ? '历史记录' : 'History',
-                color: scheme.onSurfaceVariant,
-                size: 34,
-                iconSize: 19,
-                onTap: () => unawaited(openHistoryAt()),
-              ),
-              const SizedBox(width: 2),
-              Icon(Icons.smart_toy, size: 18, color: scheme.primary),
-              const SizedBox(width: 8),
-              // Use all remaining header space for the selected model.
-              // Full identifiers remain available in the menu and tooltip.
-              Expanded(
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: LayoutBuilder(
-                    builder: (context, modelConstraints) =>
-                        _buildMobileModelChip(
-                          scheme,
-                          s,
-                          width: modelConstraints.maxWidth,
-                        ),
-                  ),
-                ),
-              ),
-              MobileGlassPillAction(
-                key: const ValueKey('ai-mobile-new-chat'),
-                icon: Icons.add_comment_outlined,
-                tooltip: s.isZh ? '新建会话' : 'New chat',
-                color: scheme.onSurfaceVariant,
-                size: 34,
-                iconSize: 18,
-                onTap: _startNewChat,
-              ),
-              // 「工具」按钮已并入 ≡：侧栏本来就有 工具 页签，头部再放一个入口
-              // 纯属重复（同一功能两个按钮挤在 44dp 里，是「太挤」的直接来源）。
-              MobileGlassPillAction(
-                icon: Icons.close,
-                tooltip: s.isZh ? '关闭' : 'Close',
-                color: scheme.onSurface,
-                size: 34,
-                iconSize: 19,
-                onTap: _requestMobileSheetClose,
-              ),
-            ],
+      key: ValueKey(mobile ? 'ai-mobile-sheet-header' : 'ai-desktop-header'),
+      padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+      child: Row(
+        children: [
+          SizedBox.square(
+            dimension: controlSize,
+            child: IconButton(
+              tooltip: zh ? '历史记录' : 'History',
+              padding: EdgeInsets.zero,
+              onPressed: () => unawaited(openHistoryAt()),
+              icon: const Icon(Icons.history, size: 20),
+            ),
           ),
-        ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: mobile
+                ? LayoutBuilder(
+                    builder: (context, constraints) => _buildMobileModelChip(
+                      scheme,
+                      strings,
+                      width: constraints.maxWidth,
+                    ),
+                  )
+                : Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: _buildModelSelector(scheme, strings),
+                  ),
+          ),
+          const SizedBox(width: 6),
+          ScaleMenuButton<VoidCallback>(
+            key: const ValueKey('ai-chat-actions'),
+            icon: Icons.more_horiz,
+            iconSize: 20,
+            size: controlSize,
+            menuWidth: 224,
+            tooltip: zh ? '聊天操作' : 'Chat actions',
+            items: [
+              OptionItem(
+                _startNewChat,
+                zh ? '新建会话' : 'New chat',
+                icon: Icons.add_comment_outlined,
+              ),
+              OptionItem(
+                () {
+                  if (mobile) {
+                    unawaited(
+                      openMobileSidebarPage(_AiMobileSidebarPage.tools),
+                    );
+                  } else {
+                    setState(() {
+                      _toolsOpen = !_toolsOpen;
+                      if (_toolsOpen) _historyOpen = false;
+                    });
+                  }
+                },
+                zh
+                    ? (tools ? '收起工具面板' : '工具')
+                    : (tools ? 'Hide tools' : 'Tools'),
+                icon: Icons.extension_outlined,
+              ),
+              if (widget.onInlineFloat case final onFloat?)
+                OptionItem(
+                  onFloat,
+                  zh ? '浮出为内嵌小窗' : 'Float as inline window',
+                  icon: Icons.picture_in_picture_alt_outlined,
+                ),
+              if (widget.onFloatOut case final onFloat?)
+                OptionItem(
+                  onFloat,
+                  zh ? '拖出为独立窗口' : 'Open in separate window',
+                  icon: Icons.desktop_windows_outlined,
+                ),
+              if (!mobile && !widget.standaloneWindow)
+                OptionItem(
+                  widget.onCollapseRequested ??
+                      () => setState(() => _expanded = false),
+                  zh ? '收起' : 'Collapse',
+                  icon: Icons.remove,
+                ),
+            ],
+            onSelected: (action) => action(),
+          ),
+          if (mobile)
+            SizedBox.square(
+              dimension: controlSize,
+              child: IconButton(
+                tooltip: zh ? '关闭' : 'Close',
+                padding: EdgeInsets.zero,
+                onPressed: _requestMobileSheetClose,
+                icon: const Icon(Icons.close, size: 20),
+              ),
+            ),
+        ],
       ),
     );
   }
 
-  /// 移动端 header 里的紧凑模型 chip：点击弹出与 PC 顶栏同一份模型清单。
-  ///
-  /// 模型名过长时省略号收尾，完整名称在弹层菜单里可见。
   Widget _buildMobileModelChip(
     ColorScheme scheme,
     AppStrings s, {
@@ -16428,17 +16259,13 @@ Available actions: __TOOLS__''';
   /// AI 面板聊天区（消息列表 + 待批准图 + 输入框）。
   /// 独立成方法，便于桌面端「内联工具侧栏 + 聊天区」与移动端
   /// 「聊天区 + 侧栏页面」两种布局复用同一段内容。
-  Widget _buildChatBody(ColorScheme scheme, AppStrings s) {
+  Widget _buildChatBody(ColorScheme scheme, AppStrings s, String cardStyle) {
     const btn = AppControlSize.comfortable;
     // 移动端输入框做成多行自适应。桌面端有物理 Enter（onSubmitted 直接发送）更快；
     // 移动端软键盘换行只能靠 ↵ 键，写死单行等于「长描述只能挤成一行横着滚」。
     return LayoutBuilder(
       builder: (context, constraints) {
-        final compact = constraints.maxHeight < 320;
-        // Mobile composer uses 44px controls: the old 48px send circle looked
-        // oversized and forced the input/send baseline to disagree.
-        final touchSize = isMobilePlatform ? 44.0 : btn.height;
-        final int maxInputLines = isMobilePlatform ? (compact ? 2 : 4) : 1;
+        final compact = constraints.maxHeight < 225;
         final Widget messageArea = _messages.isEmpty
             ? _buildEmptyState(scheme, s)
             : ListView.builder(
@@ -16544,7 +16371,7 @@ Available actions: __TOOLS__''';
                           key: ValueKey('workflow-$i'),
                           active: active,
                           // AI 界面玻璃固定中性灰（防「串色」），不随全局 cardStyle。
-                          style: SurfaceStyle.gray,
+                          style: cardStyle,
                           summary: active
                               ? (s.isZh ? '正在处理' : 'Working')
                               : (s.isZh
@@ -16607,7 +16434,9 @@ Available actions: __TOOLS__''';
                       //（能盖住 header 与输入框）；这里只保留桌面端在消息区内部
                       // 的历史侧栏，桌面布局逐像素不变。
                       if (!isMobilePlatform && !widget.mobileSheet)
-                        Positioned.fill(child: _buildHistorySidebar(s)),
+                        Positioned.fill(
+                          child: _buildHistorySidebar(s, cardStyle),
+                        ),
                     ],
                   ),
                 ),
@@ -16738,157 +16567,18 @@ Available actions: __TOOLS__''';
                   ),
                 ),
               ),
-            Padding(
-              padding: EdgeInsets.fromLTRB(
-                isMobilePlatform ? 12 : 12,
-                isMobilePlatform ? 6 : 12,
-                isMobilePlatform ? 12 : 12,
-                isMobilePlatform ? 8 : 12,
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: math.min(
+                  constraints.maxHeight,
+                  math.max(60, constraints.maxHeight * 0.62),
+                ),
               ),
-              // 输入框过宽（用户反馈）：面板越宽输入框越像拉满的横条。
-              // 合成器内容封顶 520 并水平居中 —— 窄抽屉 (<520) 不受影响，
-              // 宽抽屉 / 独立窗口下输入条与消息列宽度协调。
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 520),
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      // 与卡片/药丸同一档圆角（14 → 16）：这一屏里 14 只出现在
-                      // 输入框上，和消息气泡（15）、玻璃药丸（24+）都不是一个体系。
-                      // 取色与消息气泡/工具栏统一为 scheme.surface，消除色差
-                      color: MobileVisualTheme.of(context).enabled ? scheme.surfaceContainer : scheme.surface.withAlpha(220),
-                      borderRadius: BorderRadius.circular(MobileVisualTheme.of(context).chatRadius),
-                      border: Border.all(
-                        color: scheme.outlineVariant.withAlpha(90),
-                      ),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(6),
-                      child: Row(
-                        // 输入框多行后行高会长，底对齐才能让发送 / 停止键始终贴在最后一行旁边
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          IconButton(
-                            tooltip: s.isZh ? '添加附件' : 'Add attachments',
-                            onPressed: _loading || _pickingAttachments
-                                ? null
-                                : _pickAttachments,
-                            constraints: BoxConstraints.tightFor(
-                              width: touchSize,
-                              height: touchSize,
-                            ),
-                            padding: EdgeInsets.zero,
-                            icon: Icon(
-                              Icons.add,
-                              size: isMobilePlatform ? 20 : 22,
-                            ),
-                          ),
-                          // 输入框与右侧发送键同档（comfortable 36）：改造前输入框随主题算出约 32，
-                          // 发送键却是写死的 40×40 圆形 —— 一个矮一个高，底部那行看着就歪。
-                          // 多行时不能再套 fieldBox 钉死高度（会把第二行裁掉），改用 minHeight 兜底。
-                          Expanded(
-                            child: ConstrainedBox(
-                              constraints: BoxConstraints(minHeight: touchSize),
-                              child: TextField(
-                                controller: _ctrl,
-                                scrollPadding: const EdgeInsets.all(24),
-                                onTap: () {
-                                  _followLatest = true;
-                                  _scrollToBottom();
-                                },
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: scheme.onSurface,
-                                ),
-                                decoration: InputDecoration(
-                                  // 外层容器已经是「圆角面 + 描边」，输入区不再自带
-                                  // 边框：旧实现是描边容器里再套一个描边输入框，两层
-                                  // 圆角半径还不同（14 / 36），错位处看起来就是「挤」。
-                                  // 顺带去掉 labelText —— floatingLabelBehavior: never
-                                  // 让 label 常驻占位，于是真正的提示语 aiChatHint 永远
-                                  // 显示不出来。
-                                  filled: false,
-                                  hintText: s.aiChatHint,
-                                  hintStyle: TextStyle(
-                                    fontSize: 13,
-                                    color: scheme.outline,
-                                  ),
-                                  isDense: true,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 10,
-                                  ),
-                                  // 压平桌面端的 -8px 密度偏移，否则同一份
-                                  // contentPadding 在两端高度不同
-                                  visualDensity: AppControlSize.fieldDensity,
-                                  border: InputBorder.none,
-                                  enabledBorder: InputBorder.none,
-                                  focusedBorder: InputBorder.none,
-                                  suffixIconConstraints:
-                                      AppControlSize.iconSlot,
-                                ),
-                                // 桌面端单行：Enter 直接发送；移动端多行：回车即换行，发送靠右侧圆钮
-                                onSubmitted: maxInputLines > 1
-                                    ? null
-                                    : (_) => _send(),
-                                minLines: 1,
-                                maxLines: maxInputLines,
-                                textInputAction: maxInputLines > 1
-                                    ? TextInputAction.newline
-                                    : TextInputAction.send,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          SizedBox(
-                            width: touchSize,
-                            height: touchSize,
-                            // 生成中：圆钮由「禁用加载圈」换成「停止」。原实现 onPressed: null，
-                            // 模型返回一慢，用户唯一能做的就是等（移动端还得先关掉弹层才能干别的）。
-                            // 点停止会关闭当前 HTTP 连接，并保留已经流式收到的部分内容。
-                            child: Tooltip(
-                              message: _loading
-                                  ? (s.isZh ? '停止生成' : 'Stop generating')
-                                  : (s.isZh ? '发送消息' : 'Send message'),
-                              child: _loading
-                                  ? FilledButton(
-                                      onPressed: _stopGeneration,
-                                      style: FilledButton.styleFrom(
-                                        padding: EdgeInsets.zero,
-                                        minimumSize: Size.square(touchSize),
-                                        fixedSize: Size.square(touchSize),
-                                        tapTargetSize:
-                                            MaterialTapTargetSize.shrinkWrap,
-                                        shape: const CircleBorder(),
-                                      ),
-                                      child: Icon(
-                                        Icons.stop_rounded,
-                                        size: btn.iconSize,
-                                      ),
-                                    )
-                                  : FilledButton(
-                                      onPressed: _send,
-                                      style: FilledButton.styleFrom(
-                                        padding: EdgeInsets.zero,
-                                        minimumSize: Size.square(touchSize),
-                                        fixedSize: Size.square(touchSize),
-                                        tapTargetSize:
-                                            MaterialTapTargetSize.shrinkWrap,
-                                        shape: const CircleBorder(),
-                                      ),
-                                      child: Icon(
-                                        Icons.send,
-                                        size: isMobilePlatform
-                                            ? 19
-                                            : btn.iconSize,
-                                      ),
-                                    ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+              child: SingleChildScrollView(
+                child: _buildComposer(
+                  scheme,
+                  s,
+                  compact: compact || constraints.maxWidth < 224,
                 ),
               ),
             ),
@@ -16899,6 +16589,137 @@ Available actions: __TOOLS__''';
   }
 
   /// 空对话时的引导：说明文字 + 几个可一键发送的示例提示（点击直接发起请求）。
+  Widget _buildComposer(
+    ColorScheme scheme,
+    AppStrings strings, {
+    required bool compact,
+  }) {
+    final mobile = widget.mobileSheet;
+    final zh = strings.isZh;
+    final side = mobile ? 44.0 : 36.0;
+    final editingStyle = Theme.of(context).textTheme.bodyMedium;
+    final field = TextField(
+      key: const ValueKey('ai-chat-input'),
+      controller: _ctrl,
+      minLines: 1,
+      maxLines: compact ? 1 : (mobile ? 4 : 3),
+      textInputAction: mobile && !compact
+          ? TextInputAction.newline
+          : TextInputAction.send,
+      onSubmitted: mobile && !compact ? null : (_) => unawaited(_send()),
+      onTap: () {
+        _followLatest = true;
+        _scrollToBottom();
+      },
+      style: editingStyle?.copyWith(height: 1.4, color: scheme.onSurface),
+      decoration: InputDecoration(
+        filled: false,
+        hintText: strings.aiChatHint,
+        hintStyle: editingStyle?.copyWith(color: scheme.onSurfaceVariant),
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        border: InputBorder.none,
+        enabledBorder: InputBorder.none,
+        focusedBorder: UnderlineInputBorder(
+          borderSide: BorderSide(color: scheme.primary),
+        ),
+      ),
+    );
+    final attach = SizedBox.square(
+      dimension: side,
+      child: IconButton(
+        tooltip: zh ? '添加附件' : 'Add attachments',
+        padding: EdgeInsets.zero,
+        icon: const Icon(Icons.attach_file, size: 20),
+        onPressed: _loading || _pickingAttachments ? null : _pickAttachments,
+      ),
+    );
+    final send = ValueListenableBuilder<TextEditingValue>(
+      valueListenable: _ctrl,
+      builder: (context, draft, _) {
+        final label = _loading
+            ? (zh ? '停止生成' : 'Stop generating')
+            : (zh ? '发送消息' : 'Send message');
+        final glyph = Icon(
+          _loading ? Icons.stop_rounded : Icons.arrow_upward,
+          size: 19,
+        );
+        final action = _loading
+            ? _stopGeneration
+            : (draft.text.trim().isEmpty && _attachments.isEmpty ||
+                      _pickingAttachments
+                  ? null
+                  : _send);
+        final style = FilledButton.styleFrom(
+          minimumSize: Size.square(side),
+          padding: compact
+              ? EdgeInsets.zero
+              : const EdgeInsets.symmetric(horizontal: 14),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        );
+        if (compact) {
+          return Tooltip(
+            message: label,
+            child: SizedBox.square(
+              dimension: side,
+              child: FilledButton.tonal(
+                onPressed: action,
+                style: style,
+                child: glyph,
+              ),
+            ),
+          );
+        }
+        return Tooltip(
+          message: label,
+          child: FilledButton.tonalIcon(
+            onPressed: action,
+            style: style,
+            icon: glyph,
+            label: Text(_loading ? (zh ? '停止' : 'Stop') : (zh ? '发送' : 'Send')),
+          ),
+        );
+      },
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720),
+          child: Material(
+            key: const ValueKey('ai-chat-composer'),
+            color: scheme.surfaceContainerLow,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(color: scheme.outlineVariant),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: compact
+                  ? Row(
+                      children: [
+                        attach,
+                        Expanded(child: field),
+                        send,
+                      ],
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        field,
+                        Row(children: [attach, const Spacer(), send]),
+                      ],
+                    ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildEmptyState(ColorScheme scheme, AppStrings s) {
     final hints = <String>[
       s.isZh
@@ -17067,6 +16888,7 @@ Available actions: __TOOLS__''';
   }
 
   Future<void> openMobileSidebarPage(_AiMobileSidebarPage page) async {
+    FocusManager.instance.primaryFocus?.unfocus();
     setState(() {
       _mobileSidebarPage = page;
       _historyOpen = true;
@@ -17086,175 +16908,123 @@ Available actions: __TOOLS__''';
   ///  * 宽度 mobileAiSidebarWidth：最多 400 且占面板 94%；
   ///  * 自带标题 + 关闭 + 分段标签，内容页全部可滚动（历史/工具把操作项做成
   ///    列表尾项，不再用固定 Column 挤压滚动区）。
-  Widget _buildMobileSidebar(ColorScheme scheme, AppStrings s) => LayoutBuilder(
-    builder: (context, constraints) {
-      final width = mobileAiSidebarWidth(constraints.maxWidth);
-      return Stack(
+  Widget _buildMobileSidebar(
+    ColorScheme scheme,
+    AppStrings strings,
+    String cardStyle,
+  ) {
+    if (!_historyOpen) {
+      return const SizedBox.shrink();
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) => Stack(
         children: [
-          if (_historyOpen)
-            Positioned.fill(
-              child: GestureDetector(
-                onTap: () => setState(() => _historyOpen = false),
-                child: ColoredBox(color: scheme.scrim.withAlpha(60)),
-              ),
+          Positioned.fill(
+            child: GestureDetector(
+              excludeFromSemantics: true,
+              onTap: () => setState(() => _historyOpen = false),
+              child: ColoredBox(color: scheme.scrim.withAlpha(68)),
             ),
-          AnimatedPositioned(
-            key: const ValueKey('ai-mobile-sidebar'),
-            duration: MediaQuery.disableAnimationsOf(context)
-                ? Duration.zero
-                : const Duration(milliseconds: 220),
-            curve: Curves.easeOutCubic,
+          ),
+          PositionedDirectional(
+            start: 0,
             top: 0,
             bottom: 0,
-            left: _historyOpen ? 0 : -width,
-            width: width,
-            child: IgnorePointer(
-              ignoring: !_historyOpen,
-              child: AppCard(
-                // AI 面板玻璃固定中性灰（防「串色」），不随全局 cardStyle。
-                style: SurfaceStyle.gray,
-                radius: 16,
-                padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
-                child: Column(
-                  children: [
-                    _buildMobileSidebarHeader(scheme, s),
-                    const SizedBox(height: 6),
-                    _buildMobileSidebarTabs(scheme, s),
-                    const SizedBox(height: 6),
-                    Expanded(
-                      child: switch (_mobileSidebarPage) {
-                        _AiMobileSidebarPage.conversation =>
-                          _buildCurrentConversationSidebar(scheme, s),
-                        _AiMobileSidebarPage.history =>
-                          _buildMobileHistorySidebar(s),
-                        _AiMobileSidebarPage.tools => _buildToolsSidebar(
-                          scheme,
-                          s,
+            width: mobileAiSidebarWidth(constraints.maxWidth),
+            child: AppCard(
+              key: const ValueKey('ai-mobile-sidebar'),
+              style: cardStyle,
+              radius: 16,
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+              child: Column(
+                children: [
+                  if (_mobileSidebarPage == _AiMobileSidebarPage.history)
+                    _historyHeader(strings, mobile: true)
+                  else
+                    Row(
+                      children: [
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            strings.aiChatTitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.titleSmall,
+                          ),
                         ),
-                      },
+                        IconButton(
+                          tooltip: strings.isZh ? '关闭侧栏' : 'Close sidebar',
+                          onPressed: () => setState(() => _historyOpen = false),
+                          icon: const Icon(Icons.close, size: 19),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
+                  _buildMobileSidebarTabs(scheme, strings),
+                  Expanded(
+                    child: switch (_mobileSidebarPage) {
+                      _AiMobileSidebarPage.conversation =>
+                        _buildCurrentConversationSidebar(scheme, strings),
+                      _AiMobileSidebarPage.history => _buildHistoryList(
+                        strings,
+                        mobile: true,
+                      ),
+                      _AiMobileSidebarPage.tools => _buildToolsSidebar(
+                        scheme,
+                        strings,
+                      ),
+                    },
+                  ),
+                ],
               ),
             ),
           ),
         ],
-      );
-    },
-  );
+      ),
+    );
+  }
 
-  /// 侧栏自己的顶部栏：标题 + 关闭（44px 触控目标）。
-  Widget _buildMobileSidebarHeader(ColorScheme scheme, AppStrings s) =>
-      SizedBox(
-        height: 44,
-        child: Row(
-          children: [
-            const SizedBox(width: 6),
-            Icon(Icons.smart_toy_outlined, size: 18, color: scheme.primary),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                s.aiChatTitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-            IconButton(
-              tooltip: s.isZh ? '关闭侧栏' : 'Close sidebar',
-              onPressed: () => setState(() => _historyOpen = false),
-              icon: const Icon(Icons.close, size: 19),
-              constraints: const BoxConstraints.tightFor(width: 44, height: 44),
-              padding: EdgeInsets.zero,
-            ),
-          ],
-        ),
-      );
-
-  /// 侧栏分段标签（对话 / 历史 / 工具）。
-  ///
-  /// 不复用 MobileSegmentedPills：那个组件是「图标 + 文字」横排，每项还要
-  /// 左右 8px 内边距 —— 320dp 侧栏 + 大字号时文字会被 ellipsis（用户反馈
-  /// 「侧边栏文字显示不全」）。这里改成「图标在上、标签在下」的竖排，并用
-  /// FittedBox(scaleDown) 兜底：宁可整项等比缩小，也不出现「…」。
-  Widget _buildMobileSidebarTabs(ColorScheme scheme, AppStrings s) {
-    final tabs = <({IconData icon, String label})>[
-      (icon: Icons.chat_bubble_outline, label: s.isZh ? '对话' : 'Chat'),
-      (icon: Icons.history, label: s.isZh ? '历史' : 'History'),
-      (icon: Icons.extension_outlined, label: s.isZh ? '工具' : 'Tools'),
-    ];
-    return MobileGlassPill(
+  Widget _buildMobileSidebarTabs(ColorScheme scheme, AppStrings strings) {
+    final labels = strings.isZh
+        ? const ['对话', '历史', '工具']
+        : const ['Chat', 'History', 'Tools'];
+    return Padding(
       key: const ValueKey('ai-mobile-sidebar-tabs'),
-      // 与头部同一口径：跟随 pillStyle（串色的前提已由中性玻璃底消除）。
-      // read 而非 select：本方法同样可能被 Builder 链路调用。
-      style: context.read<AppState>().config.pillStyle,
-      radius: MobileUi.pillRadius,
-      padding: const EdgeInsets.all(3),
-      child: SizedBox(
-        height: 50,
-        child: Row(
-          children: [
-            for (var i = 0; i < tabs.length; i++)
-              Expanded(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => unawaited(
-                    openMobileSidebarPage(_AiMobileSidebarPage.values[i]),
-                  ),
-                  child: AnimatedContainer(
-                    duration: MediaQuery.disableAnimationsOf(context)
-                        ? Duration.zero
-                        : const Duration(milliseconds: 200),
-                    margin: const EdgeInsets.all(1),
-                    decoration: BoxDecoration(
-                      color: _mobileSidebarPage.index == i
-                          ? scheme.primary.withAlpha(60)
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(
-                        MobileUi.pillRadius - 3,
-                      ),
-                      border: _mobileSidebarPage.index == i
-                          ? Border.all(color: scheme.primary.withAlpha(110))
-                          : null,
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 2),
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              tabs[i].icon,
-                              size: 17,
-                              color: _mobileSidebarPage.index == i
-                                  ? scheme.primary
-                                  : scheme.outline,
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              tabs[i].label,
-                              maxLines: 1,
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: _mobileSidebarPage.index == i
-                                    ? scheme.primary
-                                    : scheme.outline,
-                              ),
-                            ),
-                          ],
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          for (final page in _AiMobileSidebarPage.values)
+            Expanded(
+              child: Semantics(
+                button: true,
+                selected: page == _mobileSidebarPage,
+                child: Material(
+                  color: page == _mobileSidebarPage
+                      ? scheme.secondaryContainer
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(10),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(10),
+                    onTap: () => unawaited(openMobileSidebarPage(page)),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(minHeight: 44),
+                      child: Center(
+                        child: Text(
+                          labels[page.index],
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: page == _mobileSidebarPage
+                                ? scheme.onSecondaryContainer
+                                : scheme.onSurfaceVariant,
+                          ),
                         ),
                       ),
                     ),
                   ),
                 ),
               ),
-          ],
-        ),
+            ),
+        ],
       ),
     );
   }
@@ -17326,285 +17096,271 @@ Available actions: __TOOLS__''';
   /// 旧实现是 Column[Expanded(ListView), 保存按钮, 清空按钮]：底部两颗按钮固定
   /// 吃掉高度，小屏 / 大字号时列表可视区被压得很短，且历史标题 maxLines 2 仍
   /// 可能因宽度不足而显示不全。现在侧栏加宽 + 全高 + 单一滚动结构。
-  Widget _buildMobileHistorySidebar(AppStrings s) {
-    final scheme = Theme.of(context).colorScheme;
-    final items = <Widget>[];
+  Widget _buildHistoryList(AppStrings strings, {required bool mobile}) {
     if (_historySessions.isEmpty) {
-      items.add(
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 36),
-          child: Center(
-            child: Text(
-              s.isZh ? '暂无历史记录' : 'No history yet',
-              style: TextStyle(fontSize: 12.5, color: scheme.outline),
-            ),
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Text(
+            strings.isZh ? '暂无历史记录' : 'No history yet',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall,
           ),
         ),
       );
-    } else {
-      for (final session in _historySessions) {
-        items.add(_buildHistorySessionTile(session, s));
-      }
     }
-    items.add(Divider(height: 12, color: scheme.outlineVariant.withAlpha(50)));
-    items.add(
-      ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        leading: const Icon(Icons.save_outlined, size: 19),
-        title: Text(
-          s.isZh ? '保存当前会话' : 'Save current chat',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        enabled: !_loading,
-        onTap: _loading
-            ? null
-            : () async {
-                final saved = await _saveCurrentSession();
-                await _loadHistorySessions();
-                if (!mounted) return;
-                showToast(
-                  context,
-                  saved == null
-                      ? (s.isZh ? '无法保存会话' : 'Could not save session')
-                      : (s.isZh ? '会话已保存' : 'Session saved'),
-                );
-              },
+    return ListView.builder(
+      key: ValueKey(
+        mobile ? 'ai-mobile-history-list' : 'ai-desktop-history-list',
       ),
-    );
-    items.add(
-      ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        leading: const Icon(Icons.delete_outline, size: 19),
-        title: Text(
-          s.isZh ? '清空历史' : 'Clear history',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        onTap: () async {
-          await AiChatHistory.clearAll();
-          _historyFilePath = null;
-          _historyTitleOverride = null;
-          if (mounted) setState(() => _historySessions = []);
-        },
-      ),
-    );
-    return ListView(
-      key: const ValueKey('ai-mobile-history-list'),
       padding: const EdgeInsets.only(bottom: 12),
-      children: items,
+      itemCount: _historySessions.length,
+      itemBuilder: (_, index) => _buildHistorySessionTile(
+        _historySessions[index],
+        strings,
+        mobile: mobile,
+      ),
     );
   }
 
-  Widget _buildHistorySidebar(AppStrings s) => LayoutBuilder(
-    builder: (context, constraints) => Stack(
-      children: [
-        if (_historyOpen)
-          Positioned.fill(
-            child: GestureDetector(
-              onTap: () => setState(() => _historyOpen = false),
-              child: ColoredBox(
-                color: Theme.of(context).colorScheme.scrim.withAlpha(60),
+  Widget _buildHistorySidebar(AppStrings strings, String cardStyle) {
+    if (!_historyOpen) {
+      return const SizedBox.shrink();
+    }
+    final scheme = Theme.of(context).colorScheme;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = math.min(248.0, math.max(0.0, constraints.maxWidth - 24));
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: GestureDetector(
+                excludeFromSemantics: true,
+                onTap: () => setState(() => _historyOpen = false),
+                child: ColoredBox(color: scheme.scrim.withAlpha(60)),
               ),
+            ),
+            PositionedDirectional(
+              start: 0,
+              top: 0,
+              bottom: 0,
+              width: width,
+              child: AppCard(
+                key: const ValueKey('ai-desktop-history'),
+                style: cardStyle,
+                radius: 14,
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                child: Column(
+                  children: [
+                    _historyHeader(strings, mobile: false),
+                    Expanded(child: _buildHistoryList(strings, mobile: false)),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _historyHeader(AppStrings strings, {required bool mobile}) {
+    final zh = strings.isZh;
+    final size = mobile ? 44.0 : 34.0;
+    return Row(
+      key: ValueKey(
+        mobile ? 'ai-mobile-history-heading' : 'ai-desktop-history-heading',
+      ),
+      children: [
+        const SizedBox(width: 8),
+        Expanded(
+          child: Semantics(
+            header: true,
+            child: Text(
+              zh ? '历史会话' : 'History',
+              style: Theme.of(context).textTheme.titleSmall,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
-        AnimatedPositioned(
-          duration: MediaQuery.disableAnimationsOf(context)
-              ? Duration.zero
-              : const Duration(milliseconds: 220),
-          curve: Curves.easeOutCubic,
-          top: 0,
-          bottom: 0,
-          left: _historyOpen ? 0 : -constraints.maxWidth,
-          width: math.min(260, constraints.maxWidth * 0.62),
-          child: IgnorePointer(
-            ignoring: !_historyOpen,
-            child: AppCard(
-              // AI 面板玻璃固定中性灰（防「串色」），不随全局 cardStyle。
-              style: SurfaceStyle.gray,
-              radius: 14,
-              padding: const EdgeInsets.all(10),
-              child: Column(
-                children: [
-                  MobileGlassPill(
-                    style: SurfaceStyle.gray,
-                    child: Row(
-                      children: [
-                        Expanded(child: Text(s.isZh ? '历史会话' : 'History')),
-                        IconButton(
-                          tooltip: s.isZh ? '保存当前会话' : 'Save session',
-                          onPressed: _loading
-                              ? null
-                              : () async {
-                                  final saved = await _saveCurrentSession();
-                                  final sessions =
-                                      await AiChatHistory.listSessions();
-                                  if (!mounted || !context.mounted) return;
-                                  setState(() => _historySessions = sessions);
-                                  showToast(
-                                    context,
-                                    saved == null
-                                        ? (s.isZh
-                                              ? '无法保存会话'
-                                              : 'Could not save session')
-                                        : (s.isZh ? '会话已保存' : 'Session saved'),
-                                  );
-                                },
-                          icon: const Icon(Icons.save_outlined, size: 18),
-                        ),
-                        IconButton(
-                          tooltip: s.isZh ? '清空历史' : 'Clear history',
-                          onPressed: () async {
-                            await AiChatHistory.clearAll();
-                            _historyFilePath = null;
-                            if (mounted) {
-                              setState(() => _historySessions = []);
-                            }
-                          },
-                          icon: const Icon(Icons.delete_outline, size: 18),
-                        ),
-                        IconButton(
-                          tooltip: s.isZh ? '关闭历史' : 'Close history',
-                          onPressed: () => setState(() => _historyOpen = false),
-                          icon: const Icon(Icons.close),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Expanded(
-                    child: _historySessions.isEmpty
-                        ? Center(
-                            child: Text(s.isZh ? '暂无历史记录' : 'No history yet'),
-                          )
-                        : ListView(
-                            children: [
-                              for (final session in _historySessions)
-                                _buildHistorySessionTile(session, s),
-                            ],
-                          ),
-                  ),
-                ],
+        ),
+        ScaleMenuButton<VoidCallback>(
+          tooltip: zh ? '历史记录操作' : 'History actions',
+          icon: Icons.more_horiz,
+          size: size,
+          menuWidth: 198,
+          items: [
+            if (!_loading)
+              OptionItem(
+                () => unawaited(_saveHistoryFromSidebar(strings)),
+                zh ? '保存当前会话' : 'Save current chat',
+                icon: Icons.save_outlined,
               ),
-            ),
+            if (_historySessions.isNotEmpty)
+              OptionItem(
+                () => unawaited(_clearChatHistory()),
+                zh ? '清空历史' : 'Clear history',
+                icon: Icons.delete_outline,
+                danger: true,
+              ),
+          ],
+          onSelected: (action) => action(),
+        ),
+        SizedBox.square(
+          dimension: size,
+          child: IconButton(
+            tooltip: zh ? '关闭历史' : 'Close history',
+            padding: EdgeInsets.zero,
+            onPressed: () => setState(() => _historyOpen = false),
+            icon: const Icon(Icons.close, size: 18),
           ),
         ),
       ],
-    ),
-  );
+    );
+  }
 
-  /// 历史会话项（桌面侧栏与移动端历史页共用）。
-  ///
-  /// 支持桌面右键（onSecondaryTapDown）、移动端长按，以及行尾「更多」按钮
-  /// 三种入口 —— 用户反馈「历史记录不支持右键删除单个对话」，此前只有顶部
-  /// 「清空历史」，想删一条只能全清。
-  Widget _buildHistorySessionTile(Map<String, dynamic> session, AppStrings s) {
-    final scheme = Theme.of(context).colorScheme;
+  Future<void> _saveHistoryFromSidebar(AppStrings strings) async {
+    final saved = await _saveCurrentSession();
+    await _loadHistorySessions();
+    if (!mounted) return;
+    showToast(
+      context,
+      saved == null
+          ? (strings.isZh ? '无法保存会话' : 'Could not save session')
+          : (strings.isZh ? '会话已保存' : 'Session saved'),
+    );
+  }
+
+  Future<void> _clearChatHistory() async {
+    await AiChatHistory.clearAll();
+    if (!mounted) return;
+    setState(() {
+      _historyFilePath = null;
+      _historyTitleOverride = null;
+      _historySessions = [];
+    });
+  }
+
+  List<OptionItem<VoidCallback>> _sessionActions(
+    Map<String, dynamic> session,
+    AppStrings strings,
+  ) => [
+    OptionItem(
+      () => unawaited(_renameHistorySession(session)),
+      strings.isZh ? '重命名' : 'Rename',
+      icon: Icons.edit_outlined,
+    ),
+    OptionItem(
+      () => unawaited(_deleteHistorySession(session)),
+      strings.isZh ? '删除此对话' : 'Delete chat',
+      icon: Icons.delete_outline,
+      danger: true,
+    ),
+  ];
+
+  Widget _buildHistorySessionTile(
+    Map<String, dynamic> session,
+    AppStrings strings, {
+    required bool mobile,
+  }) {
+    final theme = Theme.of(context);
+    final file = session['_file'] as String?;
     final enabled = !_loading && _activeRequest == null;
+    final items = enabled && file != null && file.isNotEmpty
+        ? _sessionActions(session, strings)
+        : const <OptionItem<VoidCallback>>[];
+    final model = session['model'] as String? ?? '';
     return GestureDetector(
-      // 生成中禁用：否则右键/长按仍能打开菜单并删掉**正在生成**的当前会话，
-      // 流式 listener 随后对已清空的 _messages 按下标赋值 → RangeError。
-      onSecondaryTapDown: enabled
-          ? (details) => _showHistoryItemMenu(session, details.globalPosition)
-          : null,
-      onLongPressStart: enabled
-          ? (details) => _showHistoryItemMenu(session, details.globalPosition)
-          : null,
+      // The primary action menu matches other application dropdowns.
+      onSecondaryTapDown: items.isEmpty
+          ? null
+          : (details) => unawaited(
+              _showSessionContextMenu(items, details.globalPosition),
+            ),
+      onLongPressStart: items.isEmpty
+          ? null
+          : (details) => unawaited(
+              _showSessionContextMenu(items, details.globalPosition),
+            ),
       child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        leading: const Icon(Icons.forum_outlined, size: 19),
+        contentPadding: const EdgeInsetsDirectional.only(start: 10, end: 2),
+        minVerticalPadding: 6,
         title: Text(
-          session['title'] as String? ?? 'Untitled',
+          session['title'] as String? ??
+              (strings.isZh ? '未命名会话' : 'Untitled chat'),
           maxLines: 2,
-          style: const TextStyle(fontSize: 12.5),
+          style: theme.textTheme.bodyMedium,
           overflow: TextOverflow.ellipsis,
         ),
-        subtitle: Text(
-          session['model'] as String? ?? '',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 11),
-        ),
-        trailing: Builder(
-          builder: (buttonContext) => IconButton(
-            tooltip: s.isZh ? '对话操作' : 'Chat actions',
-            iconSize: 16,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-            color: scheme.outline,
-            onPressed: enabled
-                ? () {
-                    final box = buttonContext.findRenderObject() as RenderBox?;
-                    final pos = box == null
-                        ? Offset.zero
-                        : box.localToGlobal(Offset(0, box.size.height));
-                    _showHistoryItemMenu(session, pos);
-                  }
-                : null,
-            icon: const Icon(Icons.more_horiz),
-          ),
+        subtitle: model.isEmpty
+            ? null
+            : Text(
+                model,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+        selected: file != null && file == _historyFilePath,
+        selectedTileColor: theme.colorScheme.secondaryContainer,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        trailing: ScaleMenuButton<VoidCallback>(
+          tooltip: strings.isZh ? '对话操作' : 'Session actions',
+          size: mobile ? 44 : 34,
+          icon: Icons.more_horiz,
+          menuWidth: 188,
+          items: items,
+          onSelected: (action) => action(),
         ),
         enabled: enabled,
-        onTap: () {
-          _loadHistorySession(session, s);
-          setState(() => _historyOpen = false);
-        },
+        onTap: enabled
+            ? () {
+                _loadHistorySession(session, strings);
+                setState(() => _historyOpen = false);
+              }
+            : null,
       ),
     );
   }
 
-  /// 历史会话的操作菜单：重命名 / 删除此对话。
-  ///
-  /// 用 showAnimatedMenu（与 OptionMenuBar 同一套浮层外观与动画），位置取
-  /// 右键 / 长按的全局坐标，桌面与移动端共用同一份实现。
-  Future<void> _showHistoryItemMenu(
-    Map<String, dynamic> session,
+  Future<void> _showSessionContextMenu(
+    List<OptionItem<VoidCallback>> items,
     Offset position,
   ) async {
-    final s = widget.strings;
-    final file = session['_file'] as String?;
-    if (file == null || file.isEmpty) return;
-    final scheme = Theme.of(context).colorScheme;
-    Widget row(IconData icon, String label, {Color? color}) => Row(
-      children: [
-        Icon(icon, size: 15, color: color ?? scheme.onSurfaceVariant),
-        const SizedBox(width: 8),
-        Text(
-          label,
-          style: TextStyle(fontSize: 12.5, color: color ?? scheme.onSurface),
-        ),
-      ],
-    );
-    final action = await showAnimatedMenu<String>(
+    final theme = Theme.of(context);
+    final action = await showAnimatedMenu<VoidCallback>(
       context: context,
       position: position,
-      width: 168,
+      width: 188,
       items: [
-        AnimatedMenuEntry<String>(
-          value: 'rename',
-          child: row(Icons.edit_outlined, s.isZh ? '重命名' : 'Rename'),
-        ),
-        AnimatedMenuEntry<String>(
-          value: 'delete',
-          child: row(
-            Icons.delete_outline,
-            s.isZh ? '删除此对话' : 'Delete chat',
-            color: scheme.error,
+        for (final item in items)
+          AnimatedMenuEntry(
+            value: item.value,
+            child: Row(
+              children: [
+                Icon(
+                  item.icon,
+                  size: 16,
+                  color: item.danger ? theme.colorScheme.error : null,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    item.label,
+                    style: item.danger
+                        ? TextStyle(color: theme.colorScheme.error)
+                        : null,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
       ],
     );
-    if (!mounted || action == null) return;
-    if (action == 'rename') {
-      await _renameHistorySession(session);
-    } else if (action == 'delete') {
-      await _deleteHistorySession(session);
-    }
+    if (mounted) action?.call();
   }
 
-  /// 删除单条历史会话。
-  ///
-  /// 删的正好是**当前会话**时必须断开 _historyFilePath 并清空对话，否则下一次
-  /// 自动保存会把同一个文件重新写出来（用户会看到「删了又回来」）。
   Future<void> _deleteHistorySession(Map<String, dynamic> session) async {
     final file = session['_file'] as String?;
     if (file == null || file.isEmpty) return;
@@ -18043,7 +17799,10 @@ Available actions: __TOOLS__''';
   /// 助手消息统一左对齐，并留出与普通气泡相同的头像列；工作流卡片不再
   /// 独占整行。用户消息靠右、助手消息靠左，形成稳定的非对称对话节奏。
   Widget _assistantEnvelope(Widget child, ColorScheme scheme) {
-    final double avatarR = isMobilePlatform ? 15 : 14;
+    if (widget.mobileSheet) {
+      return SizedBox(width: double.infinity, child: child);
+    }
+    const avatarR = 14.0;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -18075,10 +17834,12 @@ Available actions: __TOOLS__''';
     final isUser = msg.role == 'user';
     // 移动端正文与气泡整体放大一档：12px 正文 + 28px 头像在手机上偏小，
     // 中文长段落读起来吃力（桌面端维持原尺寸，观感逐像素不变）。
-    final double fs = isMobilePlatform ? 13 : 12;
-    final double avatarR = isMobilePlatform ? 15 : 14;
+    final mobile = widget.mobileSheet;
+    final messageStyle = Theme.of(context).textTheme.bodyMedium ?? const TextStyle(fontSize: 14);
+    final fs = messageStyle.fontSize ?? 14.0;
+    const avatarR = 14.0;
     // 头像列宽（直径 + 与气泡的 8px 间隙），同组后续消息用它占位。
-    final double avatarSlot = avatarR * 2 + 8;
+    final avatarSlot = mobile ? 0.0 : avatarR * 2 + 8;
     // 气泡圆角：靠头像那一角收小（聊天气泡的通用语言）。四个角一律 12 时，
     // 一组对话看上去像几块并列的卡片，方向感全靠头像硬撑。
     const Radius rTail = Radius.circular(4);
@@ -18162,9 +17923,8 @@ Available actions: __TOOLS__''';
       bodyWidget = isUser
           ? SelectableText(
               msg.content,
-              style: TextStyle(
-                fontSize: fs,
-                color: scheme.onPrimaryContainer,
+              style: messageStyle.copyWith(
+                color: scheme.onSecondaryContainer,
                 height: 1.5,
               ),
             )
@@ -18181,7 +17941,7 @@ Available actions: __TOOLS__''';
       );
     }
     // 占位只替代头像本身；下面仍会统一添加头像与气泡间距。
-    final Widget avatarGap = SizedBox(width: avatarR * 2);
+    const avatarGap = SizedBox(width: avatarR * 2);
     return Padding(
       padding: EdgeInsets.only(bottom: gapAfter),
       child: Column(
@@ -18199,9 +17959,9 @@ Available actions: __TOOLS__''';
                 // 移动端放宽到 86%：80% 在 360 宽的弹层上只剩 ~258px，
                 // 中文长段落被折成一根窄柱，纵向拉得很长；86% 能少折 1~2 行。
                 final proportional =
-                    (constraints.maxWidth - avatarSlot) *
-                    (isMobilePlatform ? 0.86 : 0.8);
-                final maxBubbleWidth = isMobilePlatform
+                    math.max(0.0, constraints.maxWidth - avatarSlot) *
+                    (mobile ? (isUser ? 0.90 : 1) : 0.8);
+                final maxBubbleWidth = mobile
                     ? proportional
                     : math.min(proportional, desktopBubbleCap);
                 final bubble = ConstrainedBox(
@@ -18213,7 +17973,7 @@ Available actions: __TOOLS__''';
                     ),
                     decoration: BoxDecoration(
                       color: isUser
-                          ? scheme.primaryContainer
+                          ? scheme.secondaryContainer
                           : scheme.surfaceContainerHigh,
                       borderRadius: bubbleRadius,
                     ),
@@ -18223,7 +17983,7 @@ Available actions: __TOOLS__''';
                 return Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (!isUser) ...[
+                    if (!mobile && !isUser) ...[
                       if (showAvatar)
                         CircleAvatar(
                           radius: avatarR,
@@ -18246,7 +18006,7 @@ Available actions: __TOOLS__''';
                         child: bubble,
                       ),
                     ),
-                    if (isUser) ...[
+                    if (!mobile && isUser) ...[
                       const SizedBox(width: 8),
                       if (showAvatar)
                         CircleAvatar(
@@ -18287,51 +18047,44 @@ Available actions: __TOOLS__''';
 
   /// 按主题关键色缓存的 Markdown 样式（主题不变即复用同一实例）。
   MarkdownStyleSheet _markdownStyle(ColorScheme scheme) {
-    final key = (
-      brightness: scheme.brightness,
-      primary: scheme.primary,
-      onSurface: scheme.onSurface,
-      onSurfaceVariant: scheme.onSurfaceVariant,
-      primaryContainer: scheme.primaryContainer,
-      surfaceContainerHighest: scheme.surfaceContainerHighest,
-      outline: scheme.outline,
-      outlineVariant: scheme.outlineVariant,
-    );
+    final body =
+        Theme.of(context).textTheme.bodyMedium ?? const TextStyle(fontSize: 14);
+    final key = (scheme, body);
     if (_mdStyleKey != key) {
       _mdStyleKey = key;
       // 正文基准字号：移动端比桌面端大一档（12 → 13）。助手回复的主体是
       // Markdown，字号全写死 12 时手机上正文偏小，而标题比它大 2~4px 又显得
       // 层级过陡。这里改成相对基准，两端层级比例一致。
       // 该值只依赖 isMobilePlatform（进程内恒定），因此不必进缓存键。
-      final double fs = isMobilePlatform ? 13 : 12;
+      final fs = body.fontSize ?? 14.0;
       _mdStyle = MarkdownStyleSheet(
-        p: TextStyle(fontSize: fs, color: scheme.onSurface, height: 1.5),
-        h1: TextStyle(
+        p: body.copyWith(fontSize: fs, color: scheme.onSurface, height: 1.5),
+        h1: body.copyWith(
           fontSize: fs + 4,
           fontWeight: FontWeight.w700,
           color: scheme.primary,
           height: 1.3,
         ),
-        h2: TextStyle(
+        h2: body.copyWith(
           fontSize: fs + 3,
           fontWeight: FontWeight.w700,
           color: scheme.primary,
           height: 1.3,
         ),
-        h3: TextStyle(
+        h3: body.copyWith(
           fontSize: fs + 2,
           fontWeight: FontWeight.w600,
           color: scheme.onSurface,
           height: 1.3,
         ),
-        h4: TextStyle(
+        h4: body.copyWith(
           fontSize: fs + 1,
           fontWeight: FontWeight.w600,
           color: scheme.onSurface,
           height: 1.3,
         ),
-        listBullet: TextStyle(fontSize: fs, color: scheme.primary),
-        blockquote: TextStyle(
+        listBullet: body.copyWith(fontSize: fs, color: scheme.primary),
+        blockquote: body.copyWith(
           fontSize: fs,
           color: scheme.onSurfaceVariant,
           fontStyle: FontStyle.italic,
@@ -18348,7 +18101,7 @@ Available actions: __TOOLS__''';
           horizontal: 10,
           vertical: 4,
         ),
-        code: TextStyle(
+        code: body.copyWith(
           fontSize: fs - 1,
           color: scheme.primary,
           backgroundColor: scheme.surfaceContainerHighest,
@@ -18360,28 +18113,28 @@ Available actions: __TOOLS__''';
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: scheme.outlineVariant.withAlpha(60)),
         ),
-        a: TextStyle(
+        a: body.copyWith(
           fontSize: fs,
           color: scheme.primary,
           decoration: TextDecoration.underline,
           decorationColor: scheme.primary.withAlpha(120),
         ),
-        strong: TextStyle(
+        strong: body.copyWith(
           fontSize: fs,
           color: scheme.onSurface,
           fontWeight: FontWeight.w700,
         ),
-        em: TextStyle(
+        em: body.copyWith(
           fontSize: fs,
           color: scheme.onSurface,
           fontStyle: FontStyle.italic,
         ),
-        tableHead: TextStyle(
+        tableHead: body.copyWith(
           fontSize: fs - 1,
           fontWeight: FontWeight.w700,
           color: scheme.onSurface,
         ),
-        tableBody: TextStyle(fontSize: fs - 1, color: scheme.onSurface),
+        tableBody: body.copyWith(fontSize: fs - 1, color: scheme.onSurface),
         tableBorder: TableBorder.all(
           color: scheme.outlineVariant.withAlpha(80),
         ),
@@ -18406,6 +18159,7 @@ Available actions: __TOOLS__''';
   }
 
   /// 渲染助手回复：把 [TOOL_CALL:...] 标记转成可视的工具调用块，其余为 Markdown。
+
   Widget _buildAssistantContent(String content, ColorScheme scheme) {
     final toolRe = RegExp(r'\[TOOL_CALL:([^\]]+)\]');
     final matches = toolRe.allMatches(content).toList();

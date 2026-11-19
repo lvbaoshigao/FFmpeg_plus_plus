@@ -3,6 +3,7 @@ import 'package:ffmpegpp_gui/pages/container_detail_page.dart';
 import 'package:ffmpegpp_gui/pages/pipeline_editor_page.dart';
 import 'package:ffmpegpp_gui/providers/app_state.dart';
 import 'package:ffmpegpp_gui/services/saved_config_application.dart';
+import 'package:ffmpegpp_gui/widgets/container_card.dart';
 import 'package:ffmpegpp_gui/widgets/video_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -93,6 +94,34 @@ void main() {
     expect(editor.video.pipelineGraph, same(currentGraph));
     await tester.pumpWidget(const SizedBox());
     state.dispose();
+  });
+
+  testWidgets('should keep a container title and actions visible at 2x text', (tester) async {
+    tester.view.physicalSize = const Size(320, 600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final state = MemoryState([photo.copyWith(parsed: true)]);
+    addTearDown(state.dispose);
+    final container = FileContainer(id: 'container', name: 'Media collection',
+        items: [ContainerItem(fileId: photo.id, index: 1)]);
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppState>.value(
+        value: state,
+        child: MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(2)),
+            child: child!,
+          ),
+          home: Scaffold(body: ContainerCard(container: container)),
+        ),
+      ),
+    );
+    final title = tester.getRect(find.text('Media collection'));
+    expect(title.width, greaterThan(170));
+    expect(tester.getRect(find.byIcon(Icons.login)).top, greaterThan(title.bottom));
+    expect(find.byType(IconButton), findsNWidgets(4));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
   });
 
   testWidgets('container file retains preset menu with reorder actions', (

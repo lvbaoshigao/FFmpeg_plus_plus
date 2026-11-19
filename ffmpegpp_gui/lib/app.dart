@@ -624,11 +624,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
       if (!mounted || !_mobilePageController.hasClients) return;
       final current = _mobilePageController.page?.round() ?? idx;
       if (current == idx) return; // 已在该 Tab（底部导航点击路径）→ 无需重复动画
-      _mobilePageController.animateToPage(
-        idx,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOutCubic,
-      );
+      _showMobilePage(idx);
     });
   }
 
@@ -1182,8 +1178,16 @@ class _AppShellState extends State<AppShell> with WindowListener {
     if (idx >= 0 &&
         _mobilePageController.hasClients &&
         (_mobilePageController.page?.round() ?? idx) != idx) {
+      _showMobilePage(idx);
+    }
+  }
+
+  void _showMobilePage(int index) {
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _mobilePageController.jumpToPage(index);
+    } else {
       _mobilePageController.animateToPage(
-        idx,
+        index,
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOutCubic,
       );

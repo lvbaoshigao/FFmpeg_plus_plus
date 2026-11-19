@@ -534,136 +534,142 @@ class _MobileNavRailState extends State<MobileNavRail> {
     // 药丸间距：每个药丸之间留 4px 间隔
     const pillGap = 4.0;
 
-    // ── 竖排导轨（左 / 右）────────────────────────────────────────────────
-    //
-    // 与横排**完全独立**的构建分支：横排分支一字未改（底部形态是绝大多数用户
-    // 的形态，不能为了竖排把它的像素、手势、遮罩动画改坏）。竖排复用同一套
-    // 「主轴线」状态与吸附逻辑（_dragX / _itemCenter / _endDrag），只把
-    // dx↔dy、Row↔Column、宽↔高对调，因此两种形态的选中反馈完全一致。
-    //
-    // 尺寸：短边（屏幕上的宽度）与底部形态的栏高同为 60；每项在主轴（纵轴）上
-    // 固定 54，**不撑满可用高度** —— 导轨是一颗悬浮胶囊，拉满整屏高会退化成像
-    // 素系统侧边栏，与现有玻璃语言不符；内容总高由药丸数决定，再由外层 Row 的
-    // 交叉轴对齐把它居中。
     Widget buildRailBar() {
-      // 宽度取自文件级常量：AppShell 要让出同宽给内容区（见 kMobileNavRailExtent）
-      const barExtent = kMobileNavRailExtent;
-      // 圆角直接用外层的 radius（= 栏高 60 / 2），两处同为 30，不重复声明
-      const itemExtent = 54.0;
-      // 交叉轴可用宽度 = 短边 − 上下各 4px 内边距（与横排的 padding 对称）
-      const crossExtent = barExtent - 8;
-      final totalMain =
-          itemExtent * items.length + pillGap * (items.length - 1);
+      const padding = EdgeInsets.all(4);
       return Container(
-        width: barExtent,
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+        width: kMobileNavRailExtent,
+        padding: padding,
         decoration: BoxDecoration(
-          // 与横排同一条规则：liquid 的 tint 由 OCLiquidGlass 承担，内层不再叠色
           color: style == SurfaceStyle.liquid ? Colors.transparent : look.tint,
           borderRadius: BorderRadius.circular(radius),
           border: Border.all(color: look.borderColor, width: look.borderWidth),
         ),
         clipBehavior: Clip.antiAlias,
-        child: SizedBox(
-          height: totalMain,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            // ── 点按：切到纵轴上最近的药丸（与横排同一套「最近中心」判定） ──
-            onTapUp: (d) => widget.onSelected(
-              itemToPage[_nearestIndex(
-                    d.localPosition.dy,
-                    itemExtent,
-                    pillGap,
-                    items.length,
-                  )] ??
-                  0,
-            ),
-            // ── 长按：遮罩放大反馈 + 抓取，随后跟随手指 ──
-            onLongPressStart: (d) => setState(() {
-              _longPressActive = true;
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            // Use the actual viewport after safe areas, the keyboard and the
+            // glass shell. Keep the floating rail's regular size when it fits.
+            const minItemExtent = 44.0;
+            const regularItemExtent = 54.0;
+            final totalGap = pillGap * (items.length - 1);
+            final itemExtent =
+                ((constraints.maxHeight - totalGap) / items.length)
+                    .clamp(minItemExtent, regularItemExtent)
+                    .toDouble();
+            final totalExtent = itemExtent * items.length + totalGap;
+            final scrolls = totalExtent > constraints.maxHeight + 0.01;
+            const crossExtent = kMobileNavRailExtent - 8;
+
+            void startDrag(double position) {
               final nearest = _nearestIndex(
-                d.localPosition.dy,
+                position,
                 itemExtent,
                 pillGap,
                 items.length,
               );
-              final grabCenter = _itemCenter(nearest, itemExtent, pillGap);
-              _dragGrabOffset = d.localPosition.dy - grabCenter;
-              _dragX.value = grabCenter;
-            }),
-            onLongPressMoveUpdate: (d) {
-              _dragX.value = (d.localPosition.dy - _dragGrabOffset).clamp(
+              final center = _itemCenter(nearest, itemExtent, pillGap);
+              _dragGrabOffset = position - center;
+              _dragX.value = center;
+            }
+
+            void updateDrag(double position) {
+              _dragX.value = (position - _dragGrabOffset).clamp(
                 itemExtent / 2,
-                totalMain - itemExtent / 2,
+                totalExtent - itemExtent / 2,
               );
-            },
-            onLongPressEnd: (_) {
-              _longPressActive = false;
-              _endDrag(itemExtent, items.length, pillGap, itemToPage);
-            },
-            onLongPressCancel: () {
-              _longPressActive = false;
-              _dragX.value = null;
-            },
-            // ── 纵向快速滑动：同样走拖动跟随（轴向换成 dy） ──
-            onVerticalDragStart: (d) {
-              final nearest = _nearestIndex(
-                d.localPosition.dy,
-                itemExtent,
-                pillGap,
-                items.length,
-              );
-              final grabCenter = _itemCenter(nearest, itemExtent, pillGap);
-              _dragGrabOffset = d.localPosition.dy - grabCenter;
-              _dragX.value = grabCenter;
-            },
-            onVerticalDragUpdate: (d) {
-              _dragX.value = (d.localPosition.dy - _dragGrabOffset).clamp(
-                itemExtent / 2,
-                totalMain - itemExtent / 2,
-              );
-            },
-            onVerticalDragEnd: (_) =>
-                _endDrag(itemExtent, items.length, pillGap, itemToPage),
-            onVerticalDragCancel: () {
-              // 长按已接管时由长按流程收尾（与横排同规则）
-              if (_longPressActive) return;
-              _dragX.value = null;
-            },
-            child: Stack(
-              children: [
-                _buildRailMask(
-                  itemIdx,
-                  itemExtent,
-                  pillGap,
-                  items.length,
-                  scheme: scheme,
-                  isDark: isDark,
-                  style: style,
-                ),
-                // 药丸列：主轴按固定 54 依次排布，交叉轴 stretch 撑满 52
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    for (var i = 0; i < items.length; i++) ...[
-                      if (i > 0) const SizedBox(height: pillGap),
-                      SizedBox(
-                        height: itemExtent,
-                        child: _NavItem(
-                          glyph: items[i].$1,
-                          label: items[i].$2,
-                          selected: i == itemIdx,
-                          selectedColor: selectedColor,
-                          unselectedColor: unselectedColor,
-                          maxWidth: crossExtent,
-                        ),
+            }
+
+            void endDrag() =>
+                _endDrag(itemExtent, items.length, pillGap, itemToPage);
+
+            return SingleChildScrollView(
+              primary: false,
+              // With clipped items a plain swipe scrolls the viewport. A
+              // long press can still drag the selection, as in the full rail.
+              physics: scrolls
+                  ? const ClampingScrollPhysics()
+                  : const NeverScrollableScrollPhysics(),
+              child: SizedBox(
+                height: totalExtent,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  excludeFromSemantics: true,
+                  onTapUp: (details) {
+                    final index = _nearestIndex(
+                      details.localPosition.dy,
+                      itemExtent,
+                      pillGap,
+                      items.length,
+                    );
+                    widget.onSelected(itemToPage[index]!);
+                  },
+                  onLongPressStart: (details) {
+                    _longPressActive = true;
+                    startDrag(details.localPosition.dy);
+                  },
+                  onLongPressMoveUpdate: (details) =>
+                      updateDrag(details.localPosition.dy),
+                  onLongPressEnd: (_) {
+                    _longPressActive = false;
+                    endDrag();
+                  },
+                  onLongPressCancel: () {
+                    _longPressActive = false;
+                    _dragX.value = null;
+                  },
+                  onVerticalDragStart: scrolls
+                      ? null
+                      : (details) => startDrag(details.localPosition.dy),
+                  onVerticalDragUpdate: scrolls
+                      ? null
+                      : (details) => updateDrag(details.localPosition.dy),
+                  onVerticalDragEnd: scrolls ? null : (_) => endDrag(),
+                  onVerticalDragCancel: scrolls
+                      ? null
+                      : () {
+                          if (!_longPressActive) _dragX.value = null;
+                        },
+                  child: Stack(
+                    children: [
+                      _buildRailMask(
+                        itemIdx,
+                        itemExtent,
+                        pillGap,
+                        items.length,
+                        scheme: scheme,
+                        isDark: isDark,
+                        style: style,
+                      ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          for (var i = 0; i < items.length; i++) ...[
+                            if (i > 0) const SizedBox(height: pillGap),
+                            SizedBox(
+                              height: itemExtent,
+                              child: _NavItem(
+                                key: ValueKey(
+                                  'mobile-rail-item-${itemToPage[i]}',
+                                ),
+                                glyph: items[i].$1,
+                                label: items[i].$2,
+                                selected: i == itemIdx,
+                                selectedColor: selectedColor,
+                                unselectedColor: unselectedColor,
+                                maxWidth: crossExtent,
+                                onActivate: () =>
+                                    widget.onSelected(itemToPage[i]!),
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                     ],
-                  ],
+                  ),
                 ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         ),
       );
     }
@@ -1016,10 +1022,12 @@ class _MobileNavRailState extends State<MobileNavRail> {
         valueListenable: _pageTick,
         builder: (context, _, _) {
           final dragging = dragPos != null;
+          final reducedMotion = MediaQuery.disableAnimationsOf(context);
           final mask = AnimatedScale(
-            // Keep tactile feedback consistent in the vertical rail layout.
-            scale: dragging ? 1.25 : 1.0,
-            duration: const Duration(milliseconds: 150),
+            scale: dragging && !reducedMotion ? 1.25 : 1.0,
+            duration: reducedMotion
+                ? Duration.zero
+                : const Duration(milliseconds: 150),
             curve: Curves.easeOutBack,
             child: RepaintBoundary(child: navMaskPill(scheme, isDark, style)),
           );
@@ -1054,7 +1062,7 @@ class _MobileNavRailState extends State<MobileNavRail> {
           // 位置来源③：吸附（260ms）。follow 分支用 Duration.zero —— 逐帧 1:1
           // 跟随，不引入一帧延迟（与横排同一实现）。
           return AnimatedPositioned(
-            duration: followTop != null
+            duration: reducedMotion || followTop != null
                 ? Duration.zero
                 : const Duration(milliseconds: 260),
             curve: Curves.easeOutCubic,
@@ -1074,81 +1082,129 @@ class _MobileNavRailState extends State<MobileNavRail> {
   }
 }
 
-class _NavItem extends StatelessWidget {
+class _NavItem extends StatefulWidget {
   final TablerGlyph glyph;
   final String label;
   final bool selected;
   final Color selectedColor;
   final Color unselectedColor;
-
-
-  /// 可用宽度（= 父级 SizedBox 给出的 itemW）。
-  /// [FIX UI-文字缩放溢出] 把内容宽度钉死为 itemW，使 FittedBox(scaleDown)
-  /// 只做**纵向**缩放；否则 FittedBox 会以无界宽度测量子节点，长标签会从
-  /// 「省略号」变成「整体缩小」，破坏既有排版语义。
   final double maxWidth;
+  final VoidCallback? onActivate;
 
   const _NavItem({
+    super.key,
     required this.glyph,
     required this.label,
     required this.selected,
     required this.selectedColor,
     required this.unselectedColor,
     required this.maxWidth,
+    this.onActivate,
   });
 
   @override
+  State<_NavItem> createState() => _NavItemState();
+}
+
+class _NavItemState extends State<_NavItem> {
+  bool _showFocus = false;
+
+  @override
   Widget build(BuildContext context) {
-    final color = selected ? selectedColor : unselectedColor;
-    // 纯展示：点按/拖动统一由父级 GestureDetector 处理，避免手势竞争。
-    //
-    // [FIX UI-文字缩放溢出] 原实现把 Column 直接放进 Row(crossAxisAlignment:
-    // stretch) 的**紧高度**约束里：图标 27 + 间距 1 + 文字 (9.0 ×
-    // textScale × height 1.1)。textScale 上限是 AppTextScale.maxScale = 2.6
-    // （系统字号 × 应用内字号，见 app.dart），此时内容高约 53.7px，而栏内可用
-    // 高度只有 60 - 上下 padding 8 = 52px → 必然抛「A RenderFlex overflowed by N pixels」并在
-    // debug 下画黄黑溢出条纹。现在外面套一层 FittedBox(scaleDown)：内容超高时
-    // 整体等比缩小到刚好放下；正常字号不会触发缩放（像素与改动前一致）。
-    // 宽度用 maxWidth 钉死为 itemW，保证 Text 仍在 itemW 内做 ellipsis，
-    // 而不是被无界测量后整体缩小。
-    return Semantics(
-      selected: selected,
-      button: true,
-      label: label,
-      child: FittedBox(
-        fit: BoxFit.scaleDown,
-        child: SizedBox(
-          width: maxWidth,
-          child: Column(
+    final color = widget.selected
+        ? widget.selectedColor
+        : widget.unselectedColor;
+    final duration = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 220);
+    final scheme = Theme.of(context).colorScheme;
+    final highContrast = MediaQuery.highContrastOf(context);
+    final focusColor = highContrast
+        ? (scheme.brightness == Brightness.dark ? Colors.white : Colors.black)
+        : scheme.onSurface;
+    // Keep visible text within the item at large text scales. The semantics
+    // node retains the full label and the entire row's hit bounds.
+    final content = FittedBox(
+      fit: BoxFit.scaleDown,
+      child: SizedBox(
+        width: widget.maxWidth,
+        child: TweenAnimationBuilder<Color?>(
+          tween: ColorTween(end: color),
+          duration: duration,
+          builder: (context, color, _) => Column(
             mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              TweenAnimationBuilder<Color?>(
-                tween: ColorTween(end: color),
-                duration: const Duration(milliseconds: 220),
-                builder: (ctx, c, child) =>
-                    TablerIcon(glyph, size: 27, color: c),
-              ),
+              TablerIcon(widget.glyph, size: 27, color: color),
               const SizedBox(height: 1),
-              TweenAnimationBuilder<Color?>(
-                tween: ColorTween(end: color),
-                duration: const Duration(milliseconds: 220),
-                builder: (ctx, c, child) => Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 9.0,
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                    color: c,
-                    height: 1.1,
-                  ),
+              Text(
+                widget.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 9,
+                  fontWeight: widget.selected
+                      ? FontWeight.w600
+                      : FontWeight.w500,
+                  color: color,
+                  height: 1.1,
                 ),
               ),
             ],
           ),
         ),
       ),
+    );
+    // The rail's GestureDetector still handles pointer tap, long press and drag.
+    final activate = widget.onActivate;
+    return Semantics(
+      container: true,
+      button: true,
+      selected: widget.selected,
+      label: widget.label,
+      onTap: activate,
+      child: activate == null
+          ? ExcludeSemantics(child: content)
+          : FocusableActionDetector(
+              actions: {
+                ActivateIntent: CallbackAction<ActivateIntent>(
+                  onInvoke: (_) {
+                    activate();
+                    return null;
+                  },
+                ),
+                ButtonActivateIntent: CallbackAction<ButtonActivateIntent>(
+                  onInvoke: (_) {
+                    activate();
+                    return null;
+                  },
+                ),
+              },
+              onShowFocusHighlight: (show) => setState(() => _showFocus = show),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  ExcludeSemantics(child: content),
+                  if (_showFocus)
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: Padding(
+                          padding: const EdgeInsets.all(2),
+                          child: DecoratedBox(
+                            key: const ValueKey('mobile-rail-focus-ring'),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(22),
+                              border: Border.all(
+                                color: focusColor,
+                                width: highContrast ? 3 : 2,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
     );
   }
 }
