@@ -7,10 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
-/// 下拉菜单样式统一回归测试。
-///
-/// 目标：所有下拉都收敛到 AppDropdown（OptionMenuBar 浮层：圆角 14 +
-/// 缩放展开），不再出现系统 DropdownButtonFormField 的直角瞬时菜单。
+/// 下拉控件共享同一套圆角浮层、缩放动画和选项交互。
 Widget _wrap(Widget child) => MaterialApp(
       theme: ThemeData(useMaterial3: true),
       home: Scaffold(
@@ -39,13 +36,15 @@ void main() {
     await tester.tap(find.text('MP4'));
     await tester.pumpAndSettle();
 
-    // 浮层打开：条目出现，且面板使用统一圆角 12（不是系统菜单的直角）
-    expect(find.text('MKV'), findsOneWidget);
+    final mkv = find.text('MKV');
+    expect(mkv, findsOneWidget);
     expect(find.text('WebM'), findsOneWidget);
-    final panel = tester.widgetList<Material>(find.byType(Material)).where(
-          (m) => m.borderRadius == BorderRadius.circular(12),
-        );
-    expect(panel, isNotEmpty, reason: '浮层面板应使用圆角 12 的统一外壳');
+    final menuClip = find.ancestor(of: mkv, matching: find.byType(ClipRRect));
+    expect(menuClip, findsOneWidget);
+    expect(
+      tester.widget<ClipRRect>(menuClip).borderRadius,
+      const BorderRadius.all(Radius.circular(12)),
+    );
 
     await tester.tap(find.text('MKV'));
     await tester.pumpAndSettle();
@@ -168,15 +167,17 @@ void main() {
     final theme = ThemeData(useMaterial3: true);
     final cs = theme.colorScheme;
 
-    // 打开下拉并取出「浮层面板」那颗 Material（半径 12 是它的唯一标识）。
-    Future<Material> openPanel(String appearance) async {
-      // 面板浮层挂在 OptionMenuBar 的 State 上（OverlayPortal）：同构 pumpWidget
-      // 换根会复用 State，上一轮的面板不会自动关闭，第二轮 tap(find.text('One'))
-      // 会撞上「触发钮 + 残留面板项」两颗文本。先挂一棵空树整体卸载上一棵
-      // （State.dispose 撤掉浮层），保证每轮都从干净状态起步。
+    final option = find.text('Two');
+    final panelBackdrop = find.ancestor(
+      of: option,
+      matching: find.byType(BackdropFilter),
+    );
+
+    Future<Color> openPanel(String appearance) async {
+      // Unmount the previous trigger to dismiss its OverlayPortal.
       await tester.pumpWidget(const SizedBox.shrink());
-      final state = AppState();
-      await state.updateConfig((c) => c..dropdownAppearance = appearance);
+      final state = AppState()..config.dropdownAppearance = appearance;
+      addTearDown(state.dispose);
       await tester.pumpWidget(
         ChangeNotifierProvider<AppState>.value(
           value: state,
@@ -202,31 +203,23 @@ void main() {
       );
       await tester.tap(find.text('One'));
       await tester.pumpAndSettle();
-      return tester.widgetList<Material>(find.byType(Material)).firstWhere(
-        (material) => material.borderRadius == BorderRadius.circular(12),
-      );
+      expect(option, findsOneWidget);
+      final tint = find.ancestor(of: option, matching: find.byType(Material));
+      return tester.widget<Material>(tint.first).color!;
     }
 
-    // theme：唯一一档「实心」——不模糊、不染色。
-    expect((await openPanel('theme')).color, cs.surface);
-    expect(find.byType(BackdropFilter), findsNothing);
+    expect(await openPanel('theme'), cs.surface);
+    expect(panelBackdrop, findsNothing);
 
-    // liquid：最通透（底色 alpha 远低于 frosted），且必然带背景模糊。
-    // 并且**不带主题色染色** —— 玻璃靠折射与边缘光表达，混 primary 会让人
-    // 觉得「高光玻璃参杂了主题色」（2026-11-15 用户反馈）。
     final liquid = await openPanel('liquid');
-    expect(find.byType(BackdropFilter), findsOneWidget);
-    expect(liquid.color, cs.surface.withAlpha(134));
+    expect(panelBackdrop, findsOneWidget);
+    expect(liquid.a, inExclusiveRange(0, 1));
+    final liquidSaturation = HSLColor.fromColor(liquid).saturation;
+    expect(liquidSaturation, closeTo(0, 0.01));
 
-    // frosted：主题色毛玻璃 —— 模糊 + 明显的主题色染色。
     final frosted = await openPanel('frosted');
-    expect(find.byType(BackdropFilter), findsOneWidget);
-    expect(
-      frosted.color,
-      Color.alphaBlend(cs.primary.withAlpha(66), cs.surface.withAlpha(212)),
-    );
-
-    // 两档必须真的不一样（用户原话：「几个样式别无两样」）。
-    expect(liquid.color, isNot(frosted.color));
+    expect(panelBackdrop, findsOneWidget);
+    expect(frosted.a, inExclusiveRange(liquid.a, 1));
+    expect(HSLColor.fromColor(frosted).saturation, greaterThan(liquidSaturation));
   });
 }

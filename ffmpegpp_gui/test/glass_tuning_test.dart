@@ -118,61 +118,78 @@ void main() {
     expect(find.byType(BackdropFilter), findsOneWidget);
   });
 
-  for (final appearance in ['theme', 'frosted', 'highlight']) {
-    testWidgets('$appearance panel retains visuals when tuning changes', (
+  group('optionMenuPanel', () {
+    const contentKey = ValueKey('menuContent');
+    final scheme = ColorScheme.fromSeed(seedColor: Colors.blue);
+    final content = find.byKey(contentKey);
+    final material = find
+        .ancestor(of: content, matching: find.byType(Material))
+        .first;
+    final backdrop = find.ancestor(
+      of: content,
+      matching: find.byType(BackdropFilter),
+    );
+
+    Future<void> showPanel(
+      WidgetTester tester,
+      String appearance,
+      GlassTuning tuning,
+    ) => tester.pumpWidget(
+      _host(
+        optionMenuPanel(
+          scheme: scheme,
+          appearance: appearance,
+          tuning: tuning,
+          child: const SizedBox(key: contentKey, width: 120, height: 44),
+        ),
+      ),
+    );
+
+    testWidgets('should keep the theme surface opaque when tuning changes', (
       tester,
     ) async {
-      final scheme = ColorScheme.fromSeed(seedColor: Colors.blue);
-      Future<void> build(GlassTuning tuning) => tester.pumpWidget(
-        _host(
-          optionMenuPanel(
-            scheme: scheme,
-            appearance: appearance,
-            tuning: tuning,
-            child: const SizedBox(width: 120, height: 44),
-          ),
-        ),
-      );
-      await build(const GlassTuning());
-      final color = tester.widget<Material>(find.byType(Material).last).color;
-      final decoration = tester
-          .widget<DecoratedBox>(find.byType(DecoratedBox).last)
-          .decoration;
-      final filters = tester
-          .widgetList<BackdropFilter>(find.byType(BackdropFilter))
-          .map((w) => w.filter)
-          .toList();
-      await build(
-        const GlassTuning(
-          blur: 0,
-          clarity: 1,
-          highlight: 0,
-          lightPos: 1,
-          edge: 0,
-        ),
-      );
-      expect(tester.widget<Material>(find.byType(Material).last).color, color);
-      expect(
-        tester.widget<DecoratedBox>(find.byType(DecoratedBox).last).decoration,
-        decoration,
-      );
-      expect(
-        tester
-            .widgetList<BackdropFilter>(find.byType(BackdropFilter))
-            .map((w) => w.filter)
-            .toList(),
-        filters,
-      );
-      expect(find.byType(LiquidGlassBackdrop), findsNothing);
+      await showPanel(tester, 'theme', const GlassTuning(blur: 30, clarity: 1));
+      expect(tester.widget<Material>(material).color, scheme.surface);
+      expect(backdrop, findsNothing);
     });
-  }
+
+    for (final (appearance, baseSigma) in [
+      ('frosted', 8.0),
+      ('highlight', 4.0),
+    ]) {
+      testWidgets('should update $appearance tint and blur with tuning', (
+        tester,
+      ) async {
+        await showPanel(tester, appearance, const GlassTuning());
+        final initialTint = tester.widget<Material>(material).color!;
+        expect(
+          tester.widget<BackdropFilter>(backdrop).filter,
+          same(cachedGlassBlur(baseSigma)),
+        );
+
+        await showPanel(
+          tester,
+          appearance,
+          const GlassTuning(blur: 8, clarity: 0.65),
+        );
+        final tunedTint = tester.widget<Material>(material).color!;
+        expect(tunedTint.a, inExclusiveRange(0, initialTint.a));
+        expect(tunedTint.withValues(alpha: initialTint.a), initialTint);
+        expect(
+          tester.widget<BackdropFilter>(backdrop).filter,
+          same(cachedGlassBlur(baseSigma / 2)),
+        );
+        expect(find.byType(LiquidGlassBackdrop), findsNothing);
+      });
+    }
+  });
 
   for (final scale in [false, true]) {
     testWidgets(
       '${scale ? 'ScaleMenuButton' : 'OptionMenuBar'} subscribes to liquid tuning',
       (tester) async {
-        final state = _State();
-        state.config.dropdownAppearance = 'liquid';
+        final state = _State()..config.dropdownAppearance = 'liquid';
+        addTearDown(state.dispose);
         final menu = scale
             ? ScaleMenuButton<String>(
                 icon: Icons.more_vert,
@@ -192,8 +209,13 @@ void main() {
           scale ? find.byIcon(Icons.more_vert) : find.text('One'),
         );
         await tester.pumpAndSettle();
-        expect(find.byType(LiquidGlassBackdrop), findsOneWidget);
-        expect(find.byType(BackdropFilter), findsOneWidget);
+        final backdrop = find.byType(LiquidGlassBackdrop);
+        final filter = find.byType(BackdropFilter);
+        expect(tester.widget<LiquidGlassBackdrop>(backdrop).sigma, 6);
+        expect(
+          tester.widget<BackdropFilter>(filter).filter,
+          same(cachedGlassBlur(6)),
+        );
         state.config
           ..glassBlur = 3
           ..glassClarity = 1
@@ -202,10 +224,11 @@ void main() {
           ..glassEdge = 0;
         state.changed();
         await tester.pumpAndSettle();
-        final glass = tester.widget<LiquidGlassBackdrop>(
-          find.byType(LiquidGlassBackdrop),
+        expect(tester.widget<LiquidGlassBackdrop>(backdrop).sigma, 1.125);
+        expect(
+          tester.widget<BackdropFilter>(filter).filter,
+          same(cachedGlassBlur(1.125)),
         );
-        expect(glass.sigma, tunedGlassSigma(18, const GlassTuning(blur: 3)));
         final painter = _painter(tester);
         expect(painter.highlight, 0.2);
         expect(painter.lightPos, 0.8);

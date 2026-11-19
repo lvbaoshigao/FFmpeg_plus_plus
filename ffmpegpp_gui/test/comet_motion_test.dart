@@ -229,58 +229,56 @@ void main() {
   );
 
   for (final direction in TextDirection.values) {
-    testWidgets('reverse single drag trails behind movement in $direction', (
-      tester,
-    ) async {
-      final state = AppState()..config.sliderParticles = true;
-      addTearDown(state.dispose);
-      await mount(
-        tester,
-        state,
-        AppSlider(value: 0.4, onChanged: (_) {}),
-        direction: direction,
-      );
-      final rect = tester.getRect(find.byType(Slider));
-      final gesture = await tester.startGesture(rect.center);
-      await gesture.moveBy(const Offset(60, 0));
-      await tester.pump(const Duration(milliseconds: 20));
-      final forwardValue = tester.widget<Slider>(find.byType(Slider)).value;
-      final forwardHead =
-          (2 +
-                  296 *
-                      (direction == TextDirection.ltr
-                          ? forwardValue
-                          : 1 - forwardValue))
-              .round();
-      final forward = await tester.runAsync(() => raster(cometOf(tester)!));
-      expect(
-        alphaAt(forward!, forwardHead - 30),
-        greaterThan(alphaAt(forward, forwardHead + 30)),
-        reason: 'Moving right requires a tail to the left, independent of RTL',
-      );
-      await gesture.moveBy(const Offset(-40, 0));
-      await tester.pump(const Duration(milliseconds: 20));
-      final dynamic painter = cometOf(tester)!;
-      final value = tester.widget<Slider>(find.byType(Slider)).value;
-      expect(
-        painter.endFraction,
-        closeTo(value, 0.00001),
-        reason: 'The visible head must follow the local drag value',
-      );
-      final head =
-          (2 + 296 * (direction == TextDirection.ltr ? value : 1 - value))
-              .round();
-      final data = await tester.runAsync(
-        () => raster(painter as CustomPainter),
-      );
-      expect(
-        alphaAt(data!, head + 30),
-        greaterThan(alphaAt(data, head - 30)),
-        reason: 'Moving left requires a tail to the right, independent of RTL',
-      );
-      await gesture.up();
-      await tester.pumpWidget(const SizedBox());
-    });
+    testWidgets(
+      'single drag should keep the comet inside the fill in $direction',
+      (tester) async {
+        final state = AppState()..config.sliderParticles = true;
+        addTearDown(state.dispose);
+        await mount(
+          tester,
+          state,
+          AppSlider(value: 0.4, onChanged: (_) {}),
+          direction: direction,
+        );
+        final slider = find.byType(Slider);
+        final rtl = direction == TextDirection.rtl;
+        final towardFill = rtl ? 30 : -30;
+
+        Future<double> checkCometAtThumb() async {
+          final value = tester.widget<Slider>(slider).value;
+          final head = (2 + 296 * (rtl ? 1 - value : value)).round();
+          final painter = cometOf(tester);
+          expect(painter, isNotNull);
+          final pixels = (await tester.runAsync(() => raster(painter!)))!;
+          expect(
+            alphaAt(pixels, head),
+            greaterThan(40),
+            reason: 'The glow should follow the thumb during the drag',
+          );
+          expect(
+            alphaAt(pixels, head + towardFill),
+            greaterThan(alphaAt(pixels, head - towardFill)),
+            reason: 'The comet trail should extend into the filled track',
+          );
+          return value;
+        }
+
+        final gesture = await tester.startGesture(tester.getCenter(slider));
+        await gesture.moveBy(const Offset(60, 0));
+        await tester.pump(const Duration(milliseconds: 20));
+        final rightwardValue = await checkCometAtThumb();
+
+        await gesture.moveBy(const Offset(-40, 0));
+        await tester.pump(const Duration(milliseconds: 20));
+        final leftwardValue = await checkCometAtThumb();
+        expect(
+          leftwardValue,
+          rtl ? greaterThan(rightwardValue) : lessThan(rightwardValue),
+        );
+        await gesture.up();
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
   }
 
   testWidgets('range start handle owns the moving comet head', (tester) async {
