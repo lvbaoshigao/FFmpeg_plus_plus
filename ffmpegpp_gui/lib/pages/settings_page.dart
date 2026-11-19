@@ -543,13 +543,24 @@ class _SettingsPageState extends State<SettingsPage> {
 
   /// 选择左侧主菜单的分区：顺手清空搜索，右侧完整展示该分区。
   void _selectSection(String id) {
-    if (_query.isNotEmpty) {
-      _searchCtrl.clear();
+    if (_selectedSection == id && _query.isEmpty) return;
+    _searchCtrl.clear();
+    _searchFocus.unfocus();
+    setState(() {
       _query = '';
-    }
-    if (_selectedSection == id) return;
-    setState(() => _selectedSection = id);
+      _selectedSection = id;
+    });
   }
+
+  Duration get _sectionTransitionDuration =>
+      MediaQuery.disableAnimationsOf(context)
+      ? Duration.zero
+      : const Duration(milliseconds: 180);
+
+  // The InkWells and selection share this font-based extent, including at
+  // large text scales. Search badges and collapse never change row geometry.
+  double get _sectionNavRowHeight =>
+      math.max(40, MediaQuery.textScalerOf(context).scale(12.5) * 1.4 + 18);
 
   static final List<_SectionDef> _sections = [
     // 「通用」收纳不属于视觉外观的全局项（语言），与「外观」解耦。
@@ -1299,21 +1310,20 @@ class _SettingsPageState extends State<SettingsPage> {
 
         // 搜索时跨分区收集命中卡片（右侧分组展示）；未搜索时只看选中分区
         final hitsBySection = <(_SectionDef, List<_CardDef>)>[];
-        for (final sec in _sections) {
-          final sectionHit = sec.matches(query);
-          final hits = sec.cards
-              .where((c) => sectionHit || c.matches(query))
-              .toList();
-          if (query.isNotEmpty) {
-            hits.sort((a, b) {
-              final byScore = b
-                  .matchScore(query)
-                  .compareTo(a.matchScore(query));
-              if (byScore != 0) return byScore;
-              return a.id.compareTo(b.id);
-            });
+        if (searching) {
+          for (final sec in _sections) {
+            final sectionHit = sec.matches(query);
+            final hits =
+                sec.cards.where((c) => sectionHit || c.matches(query)).toList()
+                  ..sort((a, b) {
+                    final byScore = b
+                        .matchScore(query)
+                        .compareTo(a.matchScore(query));
+                    if (byScore != 0) return byScore;
+                    return a.id.compareTo(b.id);
+                  });
+            if (hits.isNotEmpty) hitsBySection.add((sec, hits));
           }
-          if (hits.isNotEmpty) hitsBySection.add((sec, hits));
         }
         // 选中分区兜底（分区增删后不悬空）
         if (_sections.indexWhere((sec) => sec.id == _selectedSection) < 0) {
@@ -1332,44 +1342,42 @@ class _SettingsPageState extends State<SettingsPage> {
                 center: _searchField(scheme, s),
               ),
               Expanded(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                // Keep the detail subtree in the same slot when resizing.
+                child: Flex(
+                  direction: MediaQuery.sizeOf(context).width < 700
+                      ? Axis.vertical
+                      : Axis.horizontal,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // 左：主菜单（分区导航，搜索时显示命中数徽标）
                     if (MediaQuery.sizeOf(context).width < 700)
-                      Expanded(
-                        child: Column(
-                          children: [
-                            _buildCompactSectionNav(
-                              hitsBySection,
-                              searching,
-                              scheme,
-                              state,
-                            ),
-                            Expanded(
-                              child: searching
-                                  ? (hitsBySection.isEmpty
-                                        ? _emptyState(scheme, s)
-                                        : _buildSearchResults(
-                                            hitsBySection,
-                                            context,
-                                            state,
-                                            scheme,
-                                          ))
-                                  : _buildSectionPane(
-                                      selectedSec,
-                                      context,
-                                      state,
-                                      scheme,
-                                    ),
-                            ),
-                          ],
-                        ),
+                      _buildCompactSectionNav(
+                        hitsBySection,
+                        searching,
+                        scheme,
+                        state,
                       )
-                    else ...[
+                    else
                       _buildSectionNav(hitsBySection, searching, scheme, state),
-                      // 右：子选项面板（搜索时为跨分区命中结果）
-                      Expanded(
+                    Expanded(
+                      // Animate only the live pane; never retain an outgoing
+                      // glass surface or a second set of card GlobalKeys.
+                      child: TweenAnimationBuilder<double>(
+                        key: ValueKey(
+                          'settings_detail_${searching ? 'search' : selectedSec.id}',
+                        ),
+                        tween: Tween(
+                          begin: MediaQuery.disableAnimationsOf(context)
+                              ? 1
+                              : 0,
+                          end: 1,
+                        ),
+                        duration: _sectionTransitionDuration,
+                        curve: Curves.easeOutCubic,
+                        builder: (context, progress, child) =>
+                            Transform.translate(
+                              offset: Offset(0, 6 * (1 - progress)),
+                              child: child,
+                            ),
                         child: searching
                             ? (hitsBySection.isEmpty
                                   ? _emptyState(scheme, s)
@@ -1386,7 +1394,7 @@ class _SettingsPageState extends State<SettingsPage> {
                                 scheme,
                               ),
                       ),
-                    ],
+                    ),
                   ],
                 ),
               ),
@@ -1407,109 +1415,173 @@ class _SettingsPageState extends State<SettingsPage> {
     ColorScheme scheme,
     AppState state,
   ) {
-    final hitCounts = <String, int>{
-      for (final (sec, cards) in hitsBySection) sec.id: cards.length,
-    };
-    // 整条左栏收进**一个**容器（用户反馈：父选项各占一张小卡时，左栏被切
-    // 成一摞碎片）。条目本身不再各自套卡 —— 选中态仍由 _navItem 的主题色胶囊
-    // 表达；容器材质仍走 _cardShell → AppCard，跟随「主题 → 样式 → 卡片样式」。
+    final s = AppStrings.of(state.config.language);
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 180),
+      duration: _sectionTransitionDuration,
       curve: Curves.easeOutCubic,
       width: _sectionNavCollapsed ? 64 : 190,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(10, 12, 6, 16),
-        child: GlassPanel(
-          radius: 20,
-          blur: 12,
-          style: state.config.menuStyle,
-          child: Material(
-            color: Colors.transparent,
-            child: ListView(
-              addRepaintBoundaries: false,
-              padding: EdgeInsets.symmetric(
-                horizontal: _sectionNavCollapsed ? 4 : 6,
-                vertical: 6,
-              ),
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Tooltip(
-                    message: _sectionNavCollapsed
-                        ? (AppStrings.of(state.config.language).isZh
-                              ? '展开设置导航'
-                              : 'Expand settings navigation')
-                        : (AppStrings.of(state.config.language).isZh
-                              ? '收起设置导航'
-                              : 'Collapse settings navigation'),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(12),
-                      onTap: () => setState(
-                        () => _sectionNavCollapsed = !_sectionNavCollapsed,
-                      ),
-                      child: Container(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: _sectionNavCollapsed ? 6 : 12,
-                          vertical: 9,
-                        ),
-                        decoration: BoxDecoration(
-                          color: scheme.surfaceContainerHighest.withAlpha(45),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Keep labels out of the intermediate, icon-only collapse widths.
+          final collapsed = constraints.maxWidth < 150;
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(10, 12, 6, 16),
+            child: GlassPanel(
+              radius: 20,
+              blur: 12,
+              style: state.config.menuStyle,
+              child: Material(
+                color: Colors.transparent,
+                child: ListView(
+                  addRepaintBoundaries: false,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: collapsed ? 4 : 6,
+                    vertical: 6,
+                  ),
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Tooltip(
+                        message: _sectionNavCollapsed
+                            ? (s.isZh ? '展开设置导航' : 'Expand settings navigation')
+                            : (s.isZh
+                                  ? '收起设置导航'
+                                  : 'Collapse settings navigation'),
+                        child: InkWell(
+                          key: const ValueKey('settings_section_nav_toggle'),
                           borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: _sectionNavCollapsed
-                              ? MainAxisAlignment.center
-                              : MainAxisAlignment.start,
-                          children: [
-                            Icon(
-                              _sectionNavCollapsed
-                                  ? Icons.chevron_right
-                                  : Icons.chevron_left,
-                              size: 17,
-                              color: scheme.onSurfaceVariant,
+                          onTap: () => setState(
+                            () => _sectionNavCollapsed = !_sectionNavCollapsed,
+                          ),
+                          child: Container(
+                            height: _sectionNavRowHeight,
+                            padding: EdgeInsets.symmetric(
+                              horizontal: collapsed ? 6 : 12,
                             ),
-                            if (!_sectionNavCollapsed) ...[
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Text(
-                                  AppStrings.of(state.config.language).isZh
-                                      ? '收起导航'
-                                      : 'Collapse navigation',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: scheme.onSurfaceVariant,
-                                  ),
-                                ),
+                            decoration: BoxDecoration(
+                              color: scheme.surfaceContainerHighest.withAlpha(
+                                45,
                               ),
-                            ],
-                          ],
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: collapsed
+                                  ? MainAxisAlignment.center
+                                  : MainAxisAlignment.start,
+                              children: [
+                                Icon(
+                                  _sectionNavCollapsed
+                                      ? Icons.chevron_right
+                                      : Icons.chevron_left,
+                                  size: 17,
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                                if (!collapsed) ...[
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                      s.isZh ? '收起导航' : 'Collapse navigation',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        height: 1.4,
+                                        color: scheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ),
-                for (final sec in _sections)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 2),
-                    child: _navItem(
-                      sec,
+                    _buildSectionNavItems(
+                      hitsBySection,
                       searching,
-                      hitCounts[sec.id] ?? 0,
                       scheme,
-                      collapsed: _sectionNavCollapsed,
+                      collapsed: collapsed,
                     ),
-                  ),
-              ],
+                  ],
+                ),
+              ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
 
-  /// 主菜单条目：图标 + 分区名，选中态为主题色药丸（颜色/字重随选中过渡）。
+  Widget _buildSectionNavItems(
+    List<(_SectionDef, List<_CardDef>)> hitsBySection,
+    bool searching,
+    ColorScheme scheme, {
+    bool collapsed = false,
+    Axis direction = Axis.vertical,
+  }) {
+    final counts = <String, int>{
+      for (final (sec, cards) in hitsBySection) sec.id: cards.length,
+    };
+    final vertical = direction == Axis.vertical;
+    final rowHeight = _sectionNavRowHeight;
+    final index = _sections.indexWhere((sec) => sec.id == _selectedSection);
+    final rows = [
+      for (final sec in _sections)
+        Padding(
+          padding: EdgeInsets.only(
+            bottom: vertical ? 2 : 0,
+            right: vertical ? 0 : 6,
+          ),
+          child: SizedBox(
+            height: rowHeight,
+            width: vertical ? null : 112,
+            child: _navItem(
+              sec,
+              searching,
+              counts[sec.id] ?? 0,
+              scheme,
+              collapsed: collapsed,
+            ),
+          ),
+        ),
+    ];
+    return Stack(
+      children: [
+        AnimatedPositionedDirectional(
+          // Font changes resize real hit targets immediately, so snap the
+          // decoration to the new geometry rather than tweening stale bounds.
+          key: ValueKey(rowHeight),
+          duration: _sectionTransitionDuration,
+          curve: Curves.easeOutCubic,
+          top: vertical ? index * (rowHeight + 2) : 0,
+          start: vertical ? 0 : index * 118.0,
+          end: vertical ? 0 : null,
+          width: vertical ? null : 112,
+          height: rowHeight,
+          child: IgnorePointer(
+            child: DecoratedBox(
+              key: const ValueKey('settings_section_selection'),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                color: scheme.secondaryContainer.withAlpha(200),
+              ),
+            ),
+          ),
+        ),
+        if (vertical)
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: rows,
+          )
+        else
+          Row(mainAxisSize: MainAxisSize.min, children: rows),
+      ],
+    );
+  }
+
+  /// Each actual row owns input immediately; the moving background is decoration.
   Widget _navItem(
     _SectionDef sec,
     bool searching,
@@ -1521,85 +1593,72 @@ class _SettingsPageState extends State<SettingsPage> {
     final title = sec.title(
       AppStrings.of(context.read<AppState>().config.language),
     );
-    return Tooltip(
-      message: collapsed ? title : '',
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () => _selectSection(sec.id),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOut,
-          padding: EdgeInsets.symmetric(
-            horizontal: collapsed ? 6 : 12,
-            vertical: 9,
-          ),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            color: selected
-                ? scheme.secondaryContainer.withAlpha(200)
-                : Colors.transparent,
-            border: Border.all(color: Colors.transparent),
-          ),
-          child: collapsed
-              ? Center(
-                  child: Icon(
-                    sec.icon,
-                    size: 17,
-                    color: selected ? scheme.primary : scheme.onSurfaceVariant,
-                  ),
-                )
-              : Row(
-                  children: [
-                    AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 180),
-                      transitionBuilder: (child, anim) =>
-                          FadeTransition(opacity: anim, child: child),
-                      child: Icon(
-                        sec.icon,
-                        key: ValueKey('${sec.id}_$selected'),
-                        size: 16,
-                        color: selected
-                            ? scheme.primary
-                            : scheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: selected ? FontWeight.w600 : null,
-                          color: selected
-                              ? scheme.onSecondaryContainer
-                              : scheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                    // 搜索时：该分区命中的设置项数量徽标
-                    if (searching)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 7,
-                          vertical: 1,
-                        ),
-                        decoration: BoxDecoration(
-                          color: scheme.primary.withAlpha(28),
-                          borderRadius: BorderRadius.circular(9),
-                        ),
+    final icon = Icon(
+      sec.icon,
+      key: ValueKey('${sec.id}_$selected'),
+      size: 17,
+      color: selected ? scheme.primary : scheme.onSurfaceVariant,
+    );
+    return Semantics(
+      selected: selected,
+      button: true,
+      label: collapsed ? title : null,
+      child: Tooltip(
+        message: collapsed ? title : '',
+        excludeFromSemantics: true,
+        child: InkWell(
+          key: ValueKey('settings_section_${sec.id}'),
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => _selectSection(sec.id),
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: collapsed ? 6 : 12,
+              vertical: 9,
+            ),
+            child: collapsed
+                ? Center(child: icon)
+                : Row(
+                    children: [
+                      icon,
+                      const SizedBox(width: 10),
+                      Expanded(
                         child: Text(
-                          '$hitCount',
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
-                            color: scheme.primary,
+                            fontSize: 12.5,
+                            height: 1.4,
+                            fontWeight: selected ? FontWeight.w600 : null,
+                            color: selected
+                                ? scheme.onSecondaryContainer
+                                : scheme.onSurfaceVariant,
                           ),
                         ),
                       ),
-                  ],
-                ),
+                      if (searching)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: scheme.primary.withAlpha(28),
+                            borderRadius: BorderRadius.circular(9),
+                          ),
+                          child: Text(
+                            '$hitCount',
+                            style: TextStyle(
+                              fontSize: 10,
+                              height: 1.4,
+                              fontWeight: FontWeight.w600,
+                              color: scheme.primary,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+          ),
         ),
       ),
     );
@@ -1611,24 +1670,17 @@ class _SettingsPageState extends State<SettingsPage> {
     ColorScheme scheme,
     AppState state,
   ) {
-    final counts = <String, int>{
-      for (final (sec, cards) in hitsBySection) sec.id: cards.length,
-    };
     return SizedBox(
-      height: 52,
-      child: ListView(
+      height: _sectionNavRowHeight + 8,
+      child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
-        children: [
-          for (final sec in _sections)
-            Padding(
-              padding: const EdgeInsets.only(right: 6),
-              child: SizedBox(
-                width: 112,
-                child: _navItem(sec, searching, counts[sec.id] ?? 0, scheme),
-              ),
-            ),
-        ],
+        child: _buildSectionNavItems(
+          hitsBySection,
+          searching,
+          scheme,
+          direction: Axis.horizontal,
+        ),
       ),
     );
   }

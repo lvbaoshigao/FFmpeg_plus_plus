@@ -10,6 +10,7 @@ import 'package:provider/provider.dart';
 
 import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
+import 'desktop_resize_scope.dart';
 
 /// 液态玻璃能力判定与 Skia 回退渲染。
 ///
@@ -608,7 +609,10 @@ class LiquidGlassBackdrop extends StatelessWidget {
   Widget build(BuildContext context) {
     // 高光 / 位置 / 边缘光统一从配置读，调用方无需逐个透传。
     final tuning = this.tuning ?? glassTuningOf(context);
-    final resolvedSigma = effectiveGlassSigma(sigma ?? tuning.blur);
+    final resizing = DesktopResizeScope.isResizingOf(context);
+    final resolvedSigma = resizing
+        ? 0.0
+        : effectiveGlassSigma(sigma ?? tuning.blur);
     // 图层算法注意（Skia/Windows 实测相关）：
     // 1. 这里绝不能再包 RepaintBoundary。BackdropFilter 的输入（背后场景）
     //    在 Skia 下会被光栅缓存——若外层有 RepaintBoundary，玻璃自身内容
@@ -664,6 +668,7 @@ class LiquidGlassBackdrop extends StatelessWidget {
         : ClipRRect(
             borderRadius: borderRadius,
             child: BackdropFilter(
+              enabled: resolvedSigma > 0,
               filter: cachedGlassBlur(resolvedSigma),
               child: CustomPaint(
                 painter: LiquidGlassPainter(

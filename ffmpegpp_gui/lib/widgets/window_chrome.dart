@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../platform/app_platform.dart';
+import 'desktop_resize_scope.dart';
 import 'liquid_glass_fallback.dart';
 
 /// ════════════════════════════════════════════════════════════════════
@@ -374,6 +375,7 @@ class _WindowChromeBarState extends State<WindowChromeBar>
     // Windows/macOS 上仍显示应用内动作栏）也保持同一材质。
     return ClipRect(
       child: BackdropFilter(
+        enabled: !DesktopResizeScope.isResizingOf(context) && sigma > 0,
         filter: cachedGlassBlur(sigma),
         child: bar,
       ),

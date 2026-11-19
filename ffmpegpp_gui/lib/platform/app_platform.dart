@@ -12,6 +12,10 @@ bool get isMobilePlatform => !kIsWeb && (Platform.isAndroid || Platform.isIOS);
 /// 是否为 Android。
 bool get isAndroidPlatform => !kIsWeb && Platform.isAndroid;
 
+/// Whether the app runs in a native desktop window.
+bool get isDesktopPlatform =>
+    !kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS);
+
 /// 是否为 Linux（桌面端）。
 bool get isLinuxPlatform => !kIsWeb && Platform.isLinux;
 

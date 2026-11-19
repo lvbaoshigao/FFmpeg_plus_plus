@@ -8,97 +8,142 @@ import 'package:provider/provider.dart';
 import '../app.dart';
 import '../providers/app_state.dart';
 import '../theme/app_neutral_surface.dart';
+import 'desktop_resize_scope.dart';
 // effectiveGlassSigma / glassTuningOf：开窗预模糊的 σ 必须与 AppCard 开窗
 // painter 用的完全一致，否则玻璃里的清晰度会与「模糊度」设置脱节。
 import 'liquid_glass_fallback.dart';
 
-/// 二级页面统一的壁纸背景（与主界面一致）：固定中性底色 + 壁纸 +
-/// 「背景不透明度」控制的遮罩。无壁纸时也铺一层不透明中性底色，
-/// 避免移动端 push 出的新路由在返回过渡首帧露出系统窗口黑底。
-///
-/// 子级 Scaffold 需要透明底色才能透出壁纸，本组件已统一包一层
-/// [Theme] 将 scaffoldBackgroundColor（及可选 appBarTheme）置透明。
-///
-/// 壁纸统一走 wallpaperImageProvider（按物理分辨率等比降采样解码）：
-/// 直接 Image.file 会按原图尺寸解码（4K 壁纸 ~33MB），且与主界面
-/// 解码的 provider key 不同、缓存无法复用。
-///
-/// 订阅为细粒度 select（仅 backgroundImage/backgroundOpacity），
-/// 转码进度/日志的 notifyListeners 不会触发包壁纸的整页重建。
+/// Gives an application route the shared opaque backdrop and optional wallpaper.
 Widget withWallpaper(
-  BuildContext context,
+  BuildContext _,
   Widget child, {
-
-  /// 同时把 AppBar 背景置透明（管线编辑器等自带顶栏的页面需要）
   bool transparentAppBar = false,
-}) {
-  final bg = context.select<AppState, String>((s) => s.config.backgroundImage);
-  final theme = Theme.of(context);
-  final base = AppNeutralSurface.background(theme.brightness);
-  final children = <Widget>[Positioned.fill(child: ColoredBox(color: base))];
-  if (bg.isNotEmpty && File(bg).existsSync()) {
-    final op = context
-        .select<AppState, double>((s) => s.config.backgroundOpacity)
-        .clamp(0.0, 1.0);
-    final a = ((1.0 - op) * 220).round().clamp(20, 240);
-    children.addAll([
-      Positioned.fill(
-        child: Image(
-          // Keep the previous frame while the resized provider is decoding.
-          // Window resizing changes cache dimensions every frame; gapless playback
-          // prevents the wallpaper from disappearing until the resize settles.
-          gaplessPlayback: true,
-          image: wallpaperImageProvider(
-            bg,
-            MediaQuery.sizeOf(context).width,
-            MediaQuery.sizeOf(context).height,
-            MediaQuery.devicePixelRatioOf(context),
-          ),
-          fit: BoxFit.cover,
-          errorBuilder: (_, _, _) => const SizedBox.shrink(),
+}) => WallpaperBackground(transparentAppBar: transparentAppBar, child: child);
+
+/// Renders the same wallpaper and tint behind the main window and its routes.
+final class WallpaperBackground extends StatelessWidget {
+  /// Displays [child] over the configured wallpaper.
+  const WallpaperBackground({
+    super.key,
+    this.transparentAppBar = false,
+    required this.child,
+  });
+
+  /// Whether route app bars should let the wallpaper show through.
+  final bool transparentAppBar;
+
+  /// The content on top of the wallpaper.
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final (path, opacity) = context.select<AppState, (String, double)>(
+      (state) => (state.config.backgroundImage, state.config.backgroundOpacity),
+    );
+    final theme = Theme.of(context);
+    final base = AppNeutralSurface.background(theme.brightness);
+    final alpha = ((1.0 - opacity.clamp(0.0, 1.0)) * 220).round().clamp(20, 240);
+    return _WallpaperViewport(
+      path: path,
+      background: base,
+      overlay: base.withAlpha(alpha),
+      child: Theme(
+        data: theme.copyWith(
+          scaffoldBackgroundColor: Colors.transparent,
+          appBarTheme: transparentAppBar
+              ? theme.appBarTheme.copyWith(backgroundColor: Colors.transparent)
+              : null,
         ),
+        child: child,
       ),
-      Positioned.fill(child: ColoredBox(color: base.withAlpha(a))),
-    ]);
+    );
   }
-  children.add(
-    Theme(
-      data: theme.copyWith(
-        scaffoldBackgroundColor: Colors.transparent,
-        appBarTheme: transparentAppBar
-            ? theme.appBarTheme.copyWith(backgroundColor: Colors.transparent)
-            : null,
+}
+
+class _WallpaperViewport extends StatefulWidget {
+  const _WallpaperViewport({
+    required this.path,
+    required this.background,
+    required this.overlay,
+    required this.child,
+  });
+
+  final String path;
+  final Color background;
+  final Color overlay;
+  final Widget child;
+
+  @override
+  State<_WallpaperViewport> createState() => _WallpaperViewportState();
+}
+
+class _WallpaperViewportState extends State<_WallpaperViewport> {
+  ({String path, Size size, double dpr})? _decodeTarget;
+  ImageProvider<Object>? _provider;
+  late bool _pathExists = _fileExists(widget.path);
+
+  static bool _fileExists(String path) =>
+      path.isNotEmpty && File(path).existsSync();
+
+  @override
+  void didUpdateWidget(_WallpaperViewport oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.path != widget.path) {
+      _pathExists = _fileExists(widget.path);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final path = widget.path;
+    final hasWallpaper = path.isNotEmpty && _pathExists;
+    final resizing = DesktopResizeScope.isResizingOf(context);
+    if (!hasWallpaper) {
+      _provider = null;
+      _decodeTarget = null;
+    } else if (!resizing || path != _decodeTarget?.path) {
+      final size = MediaQuery.sizeOf(context);
+      final dpr = MediaQuery.devicePixelRatioOf(context);
+      final target = (path: path, size: size, dpr: dpr);
+      if (!size.isEmpty && target != _decodeTarget) {
+        _provider = wallpaperImageProvider(path, size.width, size.height, dpr);
+        _decodeTarget = target;
+      } else if (size.isEmpty && path != _decodeTarget?.path) {
+        _provider = null;
+        _decodeTarget = null;
+      }
+    }
+
+    // BoxFit.cover scales the displayed image immediately. Both the image and
+    // the window cache keep the same decode target until the viewport settles.
+    final provider = _provider;
+    return WallpaperWindowScope(
+      provider: provider,
+      screenSize: _decodeTarget?.size ?? Size.zero,
+      overlayColor: widget.overlay,
+      child: Stack(
+        children: [
+          Positioned.fill(child: ColoredBox(color: widget.background)),
+          if (provider != null) ...[
+            Positioned.fill(
+              child: Image(
+                key: ValueKey(path),
+                image: provider,
+                fit: BoxFit.cover,
+                gaplessPlayback: true,
+                errorBuilder: (_, _, _) => const SizedBox.shrink(),
+              ),
+            ),
+            Positioned.fill(child: ColoredBox(color: widget.overlay)),
+          ],
+          KeyedSubtree(
+            key: const ValueKey('wallpaper-content'),
+            child: widget.child,
+          ),
+        ],
       ),
-      child: child,
-    ),
-  );
-  // 壁纸窗口作用域：把当前壁纸解析为 ui.Image 下发给页内玻璃卡，
-  // 供「滚动中的玻璃卡开窗」绑定渲染（见 WallpaperWindowScope 注释）。
-  // 无壁纸（纯色/底色）时 provider 为 null，玻璃卡走原 BackdropFilter 路径
-  // —— 纯色背景的模糊采样恒定，本就不存在图层分离。
-  final provider = (bg.isNotEmpty && File(bg).existsSync())
-      ? wallpaperImageProvider(
-          bg,
-          MediaQuery.sizeOf(context).width,
-          MediaQuery.sizeOf(context).height,
-          MediaQuery.devicePixelRatioOf(context),
-        )
-      : null;
-  return WallpaperWindowScope(
-    provider: provider,
-    screenSize: MediaQuery.sizeOf(context),
-    overlayColor: base.withAlpha(
-      ((1.0 -
-                      context.select<AppState, double>(
-                        (s) => s.config.backgroundOpacity,
-                      ))
-                  .clamp(0.0, 1.0) *
-              220)
-          .round()
-          .clamp(20, 240),
-    ),
-    child: Stack(children: children),
-  );
+    );
+  }
 }
 
 /// 开窗用的静态壁纸源：玻璃卡 paint 时直接把这份数据按当前帧变换
@@ -680,6 +725,9 @@ class _WallpaperWindowScopeState extends State<WallpaperWindowScope> {
   /// σ 必须与 AppCard 开窗 painter 用的完全一致：
   /// `effectiveGlassSigma(glassTuningOf(context).blur)`（见 app_card.dart）。
   void _requestBlur() {
+    if (DesktopResizeScope.isResizingOf(context)) {
+      return;
+    }
     final src = _window.value?.image;
     if (src == null) return;
     WallpaperBlurCache.request(

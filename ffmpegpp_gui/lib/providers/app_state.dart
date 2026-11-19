@@ -64,30 +64,32 @@ class AppState extends ChangeNotifier {
   String get ffmpegVersion => _ffmpegVersion;
 
   final List<VideoFile> _videos = [];
-  List<VideoFile> get videos => UnmodifiableListView(_videos);
+  late final _videosView = UnmodifiableListView(_videos);
+  List<VideoFile> get videos => _videosView;
 
-  // ── id → VideoFile 索引（惰性、按通知周期失效）──
-  // 容器卡片与容器详情页原先都靠 `videos.where((v) => v.id == item.fileId)`
-  // 反查：容器卡是 O(items × videos)、详情页 itemBuilder 内更退化成 O(items²)，
-  // 都会随进度心跳（~3.3Hz）反复执行。这里改为 O(1) 查表。
-  //
-  // 失效策略选「notifyListeners 时置空、下次查询时重建」而不是在每个
-  // `_videos` 变更点手工同步：`_videos` 有 10 处变更点（add/removeWhere/
-  // clear/下标替换 × 4 个方法），漏掉任何一处都会得到静默错误的查询结果；
-  // 而所有变更路径后面都必然跟一次 notifyListeners，所以挂在这里是唯一
-  // 不会遗漏的位置。重建是惰性的：一次通知周期内无论多少张卡查询，最多
-  // 只重建一次（O(n)），远小于原先每卡一次的 O(n) 扫描。
+  // Task progress and log updates share this notifier. Only mutations to
+  // the media list invalidate the lookup used by project and container rows.
   Map<String, VideoFile>? _videoIndexCache;
 
-  /// 按 id 查视频（容器卡片 / 容器详情页用），找不到返回 null。
-  ///
-  /// 刻意不对外暴露整张 Map：Map 实例会在每次通知后重建，若被塞进
-  /// `context.select` 会因引用变化而次次判定为「已变更」，反而放大重建。
+  /// Looks up a library file by id.
   VideoFile? videoById(String id) {
-    final cache =
-        _videoIndexCache ??
-        (_videoIndexCache = {for (final v in _videos) v.id: v});
+    final cache = _videoIndexCache ??= {for (final file in _videos) file.id: file};
     return cache[id];
+  }
+
+  void _addVideo(VideoFile file) {
+    _videos.add(file);
+    _videoIndexCache = null;
+  }
+
+  void _replaceVideo(int index, VideoFile file) {
+    _videos[index] = file;
+    _videoIndexCache = null;
+  }
+
+  void _removeVideosWhere(bool Function(VideoFile) matches) {
+    _videos.removeWhere(matches);
+    _videoIndexCache = null;
   }
 
   int _probeCount = 0;
@@ -185,15 +187,6 @@ class AppState extends ChangeNotifier {
   void _safeNotify() {
     if (_disposed) return;
     notifyListeners();
-  }
-
-  /// 每次通知都让视频索引失效，下次 [videoById] 查询时惰性重建。
-  /// 挂在 notifyListeners 上而不是各变更点，理由见 `_videoIndexCache` 的注释。
-  /// 代价为零：置空只是一个字段写入，真正的重建发生在真有查询时（每周期最多一次）。
-  @override
-  void notifyListeners() {
-    _videoIndexCache = null;
-    super.notifyListeners();
   }
 
   // ── 进度心跳节流 ──
@@ -924,7 +917,7 @@ class AppState extends ChangeNotifier {
     for (final fp in filepaths) {
       final path = await _ensureReadableForProbe(fp);
       final vf = VideoFile.fromFilepath(path);
-      _videos.add(vf);
+      _addVideo(vf);
       entries.add(vf);
     }
     notifyListeners();
@@ -1000,12 +993,14 @@ class AppState extends ChangeNotifier {
         if (idx >= 0) {
           // 探测较慢时用户可能已改过该视频的配置/管线：合并时保留，避免被探测结果静默覆盖
           final prev = _videos[idx];
-          _videos[idx] = VideoFile.fromProbeResult(vf.filepath, info, id: vf.id)
-              .copyWith(
-                config: prev.config,
-                pipelineGraph: prev.pipelineGraph,
-                pipelineMode: prev.pipelineMode,
-              );
+          _replaceVideo(
+            idx,
+            VideoFile.fromProbeResult(vf.filepath, info, id: vf.id).copyWith(
+              config: prev.config,
+              pipelineGraph: prev.pipelineGraph,
+              pipelineMode: prev.pipelineMode,
+            ),
+          );
           _probeErrors.remove(vf.filepath);
           _scheduleProbeNotify();
         }
@@ -1040,7 +1035,7 @@ class AppState extends ChangeNotifier {
 
   void removeVideo(String id) {
     VideoFile? removed;
-    _videos.removeWhere((v) {
+    _removeVideosWhere((v) {
       if (v.id == id) {
         removed = v;
         return true;
@@ -1054,6 +1049,7 @@ class AppState extends ChangeNotifier {
   void clearAllVideos() {
     final paths = _videos.map((v) => v.filepath).toList();
     _videos.clear();
+    _videoIndexCache = null;
     for (final p in paths) {
       _cleanupTempImportFile(p);
     }
@@ -1107,7 +1103,7 @@ class AppState extends ChangeNotifier {
   void updateVideoConfig(String id, TranscodeConfig c) {
     final i = _videos.indexWhere((v) => v.id == id);
     if (i >= 0) {
-      _videos[i] = _videos[i].copyWith(config: c);
+      _replaceVideo(i, _videos[i].copyWith(config: c));
       notifyListeners();
     }
   }
@@ -1115,7 +1111,7 @@ class AppState extends ChangeNotifier {
   void updateVideoPipeline(String id, PipelineGraph graph) {
     final i = _videos.indexWhere((v) => v.id == id);
     if (i >= 0) {
-      _videos[i] = _videos[i].copyWith(pipelineGraph: graph);
+      _replaceVideo(i, _videos[i].copyWith(pipelineGraph: graph));
       notifyListeners();
     }
   }
@@ -1150,7 +1146,7 @@ class AppState extends ChangeNotifier {
         // 容器路径同样需要保证 ffprobe 可读取（Android 上 SAF 缓存路径在子进程不可见）。
         final path = await _ensureReadableForProbe(fp);
         final vf = VideoFile.fromFilepath(path);
-        _videos.add(vf);
+        _addVideo(vf);
         entries.add(vf);
       }
       final items = List.generate(
@@ -1226,7 +1222,7 @@ class AppState extends ChangeNotifier {
     final container = _containers[idx];
     final removedPaths = <String>[];
     for (final item in container.items) {
-      _videos.removeWhere((v) {
+      _removeVideosWhere((v) {
         if (v.id == item.fileId) {
           removedPaths.add(v.filepath);
           return true;
@@ -1261,7 +1257,7 @@ class AppState extends ChangeNotifier {
       // 否则后续 ffprobe 会以"无法读取文件"失败。
       final path = await _ensureReadableForProbe(filepaths[i]);
       final vf = VideoFile.fromFilepath(path);
-      _videos.add(vf);
+      _addVideo(vf);
       entries.add(vf);
       newItems.add(ContainerItem(fileId: vf.id, index: baseIndex + i));
     }
@@ -1296,7 +1292,7 @@ class AppState extends ChangeNotifier {
       expanded: container.expanded,
     );
     String? removedPath;
-    _videos.removeWhere((v) {
+    _removeVideosWhere((v) {
       if (v.id == fileId) {
         removedPath = v.filepath;
         return true;

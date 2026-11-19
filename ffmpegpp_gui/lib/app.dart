@@ -26,6 +26,7 @@ import 'theme/app_text_scale.dart';
 import 'theme/app_theme.dart';
 import 'theme/mobile_visual_theme.dart';
 import 'widgets/app_slider.dart';
+import 'widgets/desktop_resize_scope.dart';
 import 'widgets/liquid_glass_mobile_nav.dart';
 import 'widgets/mobile_bottom_nav.dart';
 // 生效的菜单栏位置下发（底部 ↔ 左右竖排导轨时，主 Tab 各页的底部留白随之切换）
@@ -332,13 +333,15 @@ class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
             final Color baseSurface = AppNeutralSurface.background(
               Theme.of(context).brightness,
             );
-            return LinuxWindowFrame(
-              child: AppTextScale(
-                systemScale: sysScale,
-                appScale: appScale,
-                child: MediaQuery(
-                  data: mq.copyWith(textScaler: TextScaler.linear(scale)),
-                  child: ColoredBox(color: baseSurface, child: child!),
+            return DesktopResizeScope(
+              child: LinuxWindowFrame(
+                child: AppTextScale(
+                  systemScale: sysScale,
+                  appScale: appScale,
+                  child: MediaQuery(
+                    data: mq.copyWith(textScaler: TextScaler.linear(scale)),
+                    child: ColoredBox(color: baseSurface, child: child!),
+                  ),
                 ),
               ),
             );
@@ -1010,7 +1013,6 @@ class _AppShellState extends State<AppShell> with WindowListener {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     // 用 select 只监听导航索引，避免任何进度/日志 notify 都重建整棵页面树。
     final nav = context.select<AppState, int>((s) => s.selectedNav);
     // 菜单栏位置设置（'auto' / 'bottom' / 'left' / 'right'）。必须在这里订阅：
@@ -1168,75 +1170,10 @@ class _AppShellState extends State<AppShell> with WindowListener {
       body = WindowChrome(child: page);
     }
 
-    // 壁纸：独立 Selector，只监听 backgroundImage/backgroundOpacity，
-    // 进度 tick 之类的 notify 不会重建这棵子树。
-    return Selector<AppState, (String, double)>(
-      selector: (_, s) =>
-          (s.config.backgroundImage, s.config.backgroundOpacity),
-      builder: (context, bgTuple, _) {
-        final bg = bgTuple.$1;
-        final hasBg = bg.isNotEmpty && _bgFileExists(bg);
-        final base = AppNeutralSurface.background(scheme.brightness);
-        if (!hasBg) return Scaffold(backgroundColor: base, body: body);
-        // 有壁纸时：壁纸铺底 + 半透明遮罩 + 透明 Scaffold（让子页面也能看到壁纸）
-        final a = ((1.0 - bgTuple.$2) * 220).round().clamp(20, 240);
-        // 内存优化 + 防拉伸防模糊：按「屏幕物理分辨率」等比缩放解码壁纸
-        // （而不是按逻辑尺寸 cacheWidth/cacheHeight 强扯成矩形去解码）。
-        final size = MediaQuery.sizeOf(context);
-        final dpr = MediaQuery.devicePixelRatioOf(context);
-        final Widget stacked = Stack(
-          children: [
-            // 不透明中性底色铺底：避免子页面返回过渡首帧露出系统窗口黑底
-            Positioned.fill(child: Container(color: base)),
-            Positioned.fill(
-              child: Image(
-                // Keep the last decoded frame while a new size-specific provider is
-                // resolving during live window resize. Without gapless playback,
-                // Image briefly paints the base color on every resize tick.
-                gaplessPlayback: true,
-                image: wallpaperImageProvider(bg, size.width, size.height, dpr),
-                fit: BoxFit.cover,
-                errorBuilder: (_, a, b) {
-                  clearBgCache();
-                  return const SizedBox.shrink();
-                },
-              ),
-            ),
-            Positioned.fill(child: Container(color: base.withAlpha(a))),
-            // 用 Theme 覆盖 scaffoldBackgroundColor 为透明，让子页面 Scaffold 不遮壁纸
-            Theme(
-              data: Theme.of(
-                context,
-              ).copyWith(scaffoldBackgroundColor: Colors.transparent),
-              child: Scaffold(backgroundColor: Colors.transparent, body: body),
-            ),
-          ],
-        );
-        // 壁纸窗口作用域：把壁纸解析为 ui.Image 下发给主 Tab 各页的玻璃卡，
-        // 让它们走「开窗绑定渲染」（同帧、同变换光栅化 → 滚动零滞后）。
-        // 此前主壳自己手写壁纸 Stack、未提供 scope，主 Tab 的玻璃卡只能走
-        // BackdropFilter：同一个「滚动中玻璃与背景图层分离」的缺陷在二级页
-        // 已修好、在主界面却依然存在，同一套 cardStyle 出现两种渲染结果。
-        // provider 与上方 Image 使用同参数的 ResizeImage（== 相等），
-        // 命中同一 ImageCache 条目，不二次解码、不额外占内存。
-        return WallpaperWindowScope(
-          provider: wallpaperImageProvider(bg, size.width, size.height, dpr),
-          screenSize: size,
-          // 遮罩色必须与叠在壁纸上那层完全一致，否则卡内壁纸亮度与
-          // 卡外背景对不上。
-          overlayColor: base.withAlpha(a),
-          child: stacked,
-        );
-      },
+    return WallpaperBackground(
+      child: Scaffold(backgroundColor: Colors.transparent, body: body),
     );
   }
-
-  static final Map<String, bool> _bgCache = {};
-  static bool _bgFileExists(String path) {
-    return _bgCache.putIfAbsent(path, () => File(path).existsSync());
-  }
-
-  static void clearBgCache() => _bgCache.clear();
 
   /// 底部导航点击：切换选中页，并让 PageView 滑动到对应位置（带滑动动画）。
   void _selectMobileNav(int i) {

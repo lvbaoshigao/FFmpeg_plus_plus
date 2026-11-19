@@ -17,6 +17,7 @@ import '../theme/app_text_scale.dart';
 import '../theme/app_theme.dart';
 // 独立窗口里的条件门滑块同样走统一实现（玻璃轨道 + 彗星拖尾）
 import '../widgets/app_slider.dart';
+import '../widgets/desktop_resize_scope.dart';
 import '../widgets/gate_symbol_painter.dart';
 import '../widgets/node_icons.dart';
 import '../widgets/step_editors/audio_compressor_step_editor.dart';
@@ -518,15 +519,17 @@ class _DetachedPanelAppState extends State<DetachedPanelApp>
           AppTextScale.minScale,
           AppTextScale.maxScale,
         );
-        return LinuxWindowFrame(
-          child: AppTextScale(
-            systemScale: mq.textScaler.scale(14.0) / 14.0,
-            appScale: appScale,
-            child: MediaQuery(
-              data: mq.copyWith(textScaler: TextScaler.linear(scale)),
-              child: ChangeNotifierProvider<AppState>.value(
-                value: _store.app,
-                child: child!,
+        return DesktopResizeScope(
+          child: LinuxWindowFrame(
+            child: AppTextScale(
+              systemScale: systemScale,
+              appScale: appScale,
+              child: MediaQuery(
+                data: mq.copyWith(textScaler: TextScaler.linear(scale)),
+                child: ChangeNotifierProvider<AppState>.value(
+                  value: _store.app,
+                  child: child!,
+                ),
               ),
             ),
           ),

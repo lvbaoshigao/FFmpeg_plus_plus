@@ -1,7 +1,10 @@
+import 'dart:ui' show Tristate;
+
 import 'package:ffmpegpp_gui/app.dart';
 import 'package:ffmpegpp_gui/pages/settings_page.dart';
 import 'package:ffmpegpp_gui/providers/app_state.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
@@ -32,6 +35,42 @@ class _TickingPageState extends State<_TickingPage>
 
   @override
   Widget build(BuildContext context) => const SizedBox();
+}
+
+Finder _settingsRow(String section) =>
+    find.byKey(ValueKey('settings_section_$section'));
+
+Finder get _settingsSelection =>
+    find.byKey(const ValueKey('settings_section_selection'));
+
+Future<void> _pumpDesktopSettings(
+  WidgetTester tester, {
+  bool disableAnimations = false,
+  Size size = const Size(1280, 1100),
+}) async {
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  final state = AppState();
+  state.config.cardStyle = 'gray';
+  state.config.menuStyle = 'gray';
+  state.config.language = 'en';
+  addTearDown(state.dispose);
+  await tester.pumpWidget(
+    ChangeNotifierProvider<AppState>.value(
+      value: state,
+      child: MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(disableAnimations: disableAnimations),
+          child: child!,
+        ),
+        home: const SettingsPage(),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
 }
 
 void main() {
@@ -116,5 +155,175 @@ void main() {
     expect(panes, findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
+  });
+
+  group('SettingsPage desktop navigation', () {
+    testWidgets('should keep row hit testing live while one selection moves', (
+      tester,
+    ) async {
+      await _pumpDesktopSettings(tester);
+      final general = _settingsRow('general');
+      final advanced = _settingsRow('advanced');
+      final generalBounds = tester.getRect(general);
+      final advancedBounds = tester.getRect(advanced);
+      expect(_settingsSelection, findsOneWidget);
+      expect(tester.getRect(_settingsSelection), generalBounds);
+
+      await tester.tap(advanced);
+      await tester.pump();
+      expect(find.byKey(const ValueKey('pane_advanced')), findsOneWidget);
+      expect(find.byKey(const ValueKey('pane_general')), findsNothing);
+      expect(tester.getRect(_settingsSelection), generalBounds);
+      await tester.pump(const Duration(milliseconds: 40));
+      final movingBounds = tester.getRect(_settingsSelection);
+      expect(movingBounds.top, greaterThan(generalBounds.top));
+      expect(movingBounds.top, lessThan(advancedBounds.top));
+      expect(tester.getRect(general), generalBounds);
+      expect(tester.getRect(advanced), advancedBounds);
+
+      // The decoration can overlap another row without taking its input.
+      await tester.tapAt(generalBounds.center);
+      await tester.pump();
+      expect(find.byKey(const ValueKey('pane_general')), findsOneWidget);
+      expect(find.byKey(const ValueKey('pane_advanced')), findsNothing);
+      expect(_settingsSelection, findsOneWidget);
+      await tester.pumpAndSettle();
+      expect(tester.getRect(_settingsSelection), generalBounds);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('should leave search through the active row and still Locate', (
+      tester,
+    ) async {
+      await _pumpDesktopSettings(tester);
+      final search = find.byType(TextField).first;
+      await tester.enterText(search, 'preload');
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('pane_general')), findsNothing);
+      await tester.tap(_settingsRow('general'));
+      await tester.pumpAndSettle();
+      expect(tester.widget<TextField>(search).controller!.text, isEmpty);
+      expect(find.byKey(const ValueKey('pane_general')), findsOneWidget);
+      expect(find.widgetWithIcon(TextButton, Icons.my_location), findsNothing);
+
+      await tester.enterText(search, 'preload');
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.widgetWithIcon(TextButton, Icons.my_location).first,
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('pane_advanced')), findsOneWidget);
+      expect(
+        tester.getRect(_settingsSelection),
+        tester.getRect(_settingsRow('advanced')),
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets(
+      'should match scaled hit bounds throughout collapse and search',
+      (tester) async {
+        await _pumpDesktopSettings(tester);
+        final initialHeight = tester.getSize(_settingsRow('general')).height;
+        tester.platformDispatcher.textScaleFactorTestValue = 2;
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+        await tester.pump();
+        expect(
+          tester.getSize(_settingsRow('general')).height,
+          greaterThan(initialHeight),
+        );
+        expect(
+          tester.getRect(_settingsSelection),
+          tester.getRect(_settingsRow('general')),
+        );
+        await tester.enterText(find.byType(TextField).first, 'no-such-setting');
+        await tester.pumpAndSettle();
+        final rowHeight = tester.getSize(_settingsRow('general')).height;
+        await tester.tap(
+          find.byKey(const ValueKey('settings_section_nav_toggle')),
+        );
+        await tester.pump();
+        for (var frame = 0; frame < 5; frame++) {
+          await tester.pump(const Duration(milliseconds: 40));
+          expect(
+            tester.getRect(_settingsSelection),
+            tester.getRect(_settingsRow('general')),
+          );
+          expect(tester.getSize(_settingsRow('general')).height, rowHeight);
+          expect(tester.takeException(), isNull);
+        }
+        await tester.tap(_settingsRow('general'));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('pane_general')), findsOneWidget);
+        expect(tester.getSize(_settingsRow('general')).height, rowHeight);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+
+    testWidgets('should honor reduced motion, keyboard and compact resizing', (
+      tester,
+    ) async {
+      await _pumpDesktopSettings(
+        tester,
+        disableAnimations: true,
+        size: const Size(1280, 400),
+      );
+      final advanced = _settingsRow('advanced');
+      // InkWell leaves Focus.focusNode null when Focus owns the node itself.
+      final focus = Focus.of(
+        tester.element(
+          find.descendant(of: advanced, matching: find.byType(Icon)).first,
+        ),
+      );
+      focus.requestFocus();
+      await tester.pump();
+      expect(focus.hasPrimaryFocus, isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      final pane = find.byKey(const ValueKey('pane_advanced'));
+      expect(pane, findsOneWidget);
+      expect(tester.getRect(_settingsSelection), tester.getRect(advanced));
+      expect(
+        tester.getSemantics(advanced).flagsCollection.isSelected,
+        Tristate.isTrue,
+      );
+      final paneElement = tester.element(pane);
+      final scrollable = tester.state<ScrollableState>(
+        find.descendant(of: pane, matching: find.byType(Scrollable)).first,
+      );
+      // Track a real, in-range scroll offset instead of transient overscroll.
+      expect(scrollable.position.maxScrollExtent, greaterThan(0));
+      final offset = scrollable.position.maxScrollExtent / 2;
+      scrollable.position.jumpTo(offset);
+      await tester.pumpAndSettle();
+      expect(scrollable.position.pixels, closeTo(offset, 0.01));
+      for (final width in [620.0, 1280.0, 620.0]) {
+        tester.view.physicalSize = Size(width, 400);
+        await tester.pumpAndSettle();
+        expect(tester.element(pane), same(paneElement));
+        expect(
+          scrollable.position.maxScrollExtent,
+          greaterThanOrEqualTo(offset),
+        );
+        expect(scrollable.position.pixels, closeTo(offset, 0.01));
+        expect(_settingsSelection, findsOneWidget);
+        expect(tester.takeException(), isNull);
+      }
+      await Scrollable.ensureVisible(
+        tester.element(_settingsRow('processing')),
+      );
+      await tester.tap(_settingsRow('processing'));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('pane_processing')), findsOneWidget);
+      expect(pane, findsNothing);
+      expect(
+        tester.getRect(_settingsSelection),
+        tester.getRect(_settingsRow('processing')),
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
   });
 }

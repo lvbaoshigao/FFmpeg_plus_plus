@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_neutral_surface.dart';
 import '../theme/mobile_visual_theme.dart';
+import 'desktop_resize_scope.dart';
 import 'liquid_glass_fallback.dart';
 import 'wallpaper_background.dart';
 
@@ -288,6 +289,7 @@ class _AppCardState extends State<AppCard> {
       // 滚动零滞后。壁纸源不可用（无壁纸 / 未加载完 / 非平移变换）时
       // 回退到下方原 BackdropFilter / shader 路径。
       final win = WallpaperWindowScope.maybeOf(context);
+      final resizing = DesktopResizeScope.isResizingOf(context);
       core = ValueListenableBuilder<WallpaperWindow?>(
         valueListenable: win ?? _noWindow,
         builder: (ctx, w, _) {
@@ -365,22 +367,22 @@ class _AppCardState extends State<AppCard> {
             final Widget glassSurface = ClipRRect(
               borderRadius: br,
               child: CustomPaint(
-                painter: _WallpaperWindowPainter(
-                  image: w.image,
-                  // 预模糊整屏壁纸（所有玻璃卡共享一张）：非 null 时 painter
-                  // 只做普通贴图，不再每帧每卡跑高斯模糊。为 null 时回退实时
-                  // 模糊（见 painter 注释）。
-                  blurred: w.blurred,
-                  screen: w.screen,
-                  overlay: w.overlayColor,
-                  sigma: sigma,
-                  borderRadius: br,
-                  refraction: blurLike || MediaQuery.highContrastOf(ctx)
-                      ? 0
-                      : op,
-                ),
+                painter: resizing
+                    ? null
+                    : _WallpaperWindowPainter(
+                        image: w.image,
+                        // Cache one blurred wallpaper for all glass cards.
+                        blurred: w.blurred,
+                        screen: w.screen,
+                        overlay: w.overlayColor,
+                        sigma: sigma,
+                        borderRadius: br,
+                        refraction: blurLike || MediaQuery.highContrastOf(ctx)
+                            ? 0
+                            : op,
+                      ),
                 child: CustomPaint(
-                  painter: blurLike
+                  painter: blurLike || resizing
                       ? null
                       : LiquidGlassPainter(
                           borderRadius: br,
@@ -434,6 +436,7 @@ class _AppCardState extends State<AppCard> {
               child: ClipRRect(
                 borderRadius: br,
                 child: BackdropFilter(
+                  enabled: !resizing && sigma > 0,
                   filter: cachedGlassBlur(sigma),
                   child: Container(
                     padding: widget.padding,

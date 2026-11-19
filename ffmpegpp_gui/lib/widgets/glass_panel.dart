@@ -6,6 +6,7 @@ import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../theme/app_neutral_surface.dart';
 import 'app_card.dart' show SurfaceStyle;
+import 'desktop_resize_scope.dart';
 import 'liquid_glass_fallback.dart';
 import 'mobile_glass_pill.dart';
 
@@ -319,12 +320,14 @@ class GlassPanel extends StatelessWidget {
     // 这里不再重复计算。
 
     if (effect == 'blur') {
+      final resizing = DesktopResizeScope.isResizingOf(context);
       // 仅高斯模糊背景：半透明 + 模糊，无渐变、无阴影、无折射 —— 最简洁
       // （同 liquid 回退：BackdropFilter 外层不包 RepaintBoundary，避免
       //   Skia 光栅缓存导致玻璃内容与背后背景脱节）
       return ClipRRect(
         borderRadius: br,
         child: BackdropFilter(
+          enabled: !resizing && sigma > 0,
           filter: cachedGlassBlur(sigma),
           child: Container(
             padding: padding,
