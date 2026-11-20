@@ -48,48 +48,26 @@ jobs:
           cache: true
           pub-cache: true
 
-      - name: Setup MSVC
+      - name: Verify Windows build helpers
         shell: pwsh
-        run: |
-          # 手动调用 vcvars64.bat 导出 MSVC 编译环境（INCLUDE/LIB/LIBPATH/PATH）。
-          # 替代已停更的 ilammy/msvc-dev-cmd（其最新 v1.13.0 仍运行在 Node 20，
-          # GitHub Actions 已弃用 Node 20）。经 vswhere 定位 VS 安装路径，兼容
-          # CI 上的 Enterprise 与本地 Community 版本。
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          if (-not $vs) { throw "MSVC with VC.Tools.x86.x64 not found via vswhere" }
-          $vcvars = Join-Path $vs "VC\Auxiliary\Build\vcvars64.bat"
-          cmd /c "call `"$vcvars`" && set" | ForEach-Object {
-            if ($_ -match '^(INCLUDE|LIB|LIBPATH|PATH)=') {
-              Add-Content -Path $env:GITHUB_ENV -Value $_
-            }
-          }
+        run: ./build/windows/test_build_backend.ps1
 
-      # 缓存 CMake/NMake 的 **增量构建目录**，key 只含构建配置（CMakeLists.txt），
-      # **不含源码哈希**。原因：
-      #   * 原先 key 里带 server_cpp/src|include 的 hash → 源码每改一次就产生一个
-      #     全新 key；精确 key 永不命中，只能靠 restore-keys 兜底恢复旧目录，同时
-      #     每次运行都会 save 一份几百 MB 的新缓存，几轮就把仓库 10GB 缓存额度
-      #     挤爆（GitHub 按 LRU 淘汰，最终连有用的那份也被清掉）。
-      #   * 去掉源码 hash 后 key 稳定，每次精确命中；源码改动交给 CMake 自己的
-      #     依赖图做增量重编 —— 这才是「缓存 + 增量编译」应有的分工。
+      - name: Setup MSVC
+        id: msvc
+        shell: pwsh
+        run: ./build/windows/setup_msvc.ps1
+
+      # CMake records absolute compiler/SDK paths. A cache may only be restored
+      # when the runner toolchain and checkout root match exactly.
       - name: Cache C++ backend build
         uses: actions/cache@v5
         with:
           path: server_cpp/build_win
-          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v2-${{ hashFiles('server_cpp/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-cpp-v2-
-            ${{ runner.os }}-${{ runner.arch }}-cpp-v1-
+          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v3-${{ steps.msvc.outputs.compiler-fingerprint }}-${{ hashFiles('server_cpp/CMakeLists.txt', 'build/windows/setup_msvc.ps1', 'build/windows/build_backend.ps1') }}
 
       - name: Build C++ backend (ffmpegpp.dll)
-        run: |
-          cd server_cpp
-          if not exist build_win mkdir build_win
-          cd build_win
-          cmake .. -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release
-          nmake
-        shell: cmd
+        shell: pwsh
+        run: ./build/windows/build_backend.ps1
 
       - name: Build Flutter GUI
         run: |
@@ -403,6 +381,9 @@ jobs:
         run: |
           sudo $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses >/dev/null || true
 
+      - name: Verify Android build helpers
+        run: python3 build/android/test_build_helpers.py BuildHelpers
+
       # 缓存交叉编译产物。key 只含 **ffmpeg 的构建输入**（脚本 + env.sh，
       # 后者决定 FFMPEG_VERSION 与编译开关），不含 server_cpp 源码：
       #   * ffmpeg 是全量编译（build_ffmpeg.sh 内部按 stamp 判断），它的输入
@@ -446,6 +427,14 @@ jobs:
             ${{ runner.temp }}/android-build
             ${{ env.ANDROID_SDK_ROOT }}/ndk/26.1.10909125/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/local
           key: ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v3-${{ hashFiles('build/android/build_ffmpeg.sh', 'build/android/env.sh') }}
+
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/gradle-home
+          key: ${{ runner.os }}-${{ runner.arch }}-gradle-v2-${{ hashFiles('ffmpegpp_gui/android/build.gradle.kts', 'ffmpegpp_gui/android/app/build.gradle.kts', 'ffmpegpp_gui/android/settings.gradle.kts', 'ffmpegpp_gui/android/gradle.properties', 'ffmpegpp_gui/android/gradle/wrapper/gradle-wrapper.properties', 'build/android/gradle-repositories.init.gradle', 'ffmpegpp_gui/pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-gradle-v2-
 
       # 以新鲜 dist/ 产物为准同步到 jniLibs（覆盖 git 追踪的旧二进制），
       # 然后按与本地一致的流程打 APK。

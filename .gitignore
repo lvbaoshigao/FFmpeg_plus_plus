@@ -32,6 +32,9 @@
 !/build/build_all.sh
 !/build/build_desktop.sh
 !/build/android/
+!/build/windows/
+/build/windows/*
+!/build/windows/*.ps1
 
 # 安装包输出目录（Inno Setup 的 OutputDir）
 /dist/

@@ -1,0 +1,53 @@
+import org.gradle.api.artifacts.repositories.MavenArtifactRepository
+
+// Maven Central's Google-hosted mirror serves the same coordinates. Register
+// it before dependency resolution, including in Flutter's SDK included build;
+// changing only the application's settings repositories does not cover it.
+def mirrorUrl = System.getenv('FFMPEGPP_MAVEN_CENTRAL_MIRROR') ?:
+    'https://maven-central.storage-download.googleapis.com/maven2/'
+def mirrorUri = new URI(mirrorUrl)
+if (mirrorUri.scheme != 'https' || !mirrorUri.host) {
+    throw new GradleException('FFMPEGPP_MAVEN_CENTRAL_MIRROR must be an HTTPS repository URL')
+}
+
+def preferCentralMirror = { repositories ->
+    def mirror = repositories.findByName('ffmpegppMavenCentralMirror')
+    if (mirror == null) {
+        mirror = repositories.maven {
+            name = 'ffmpegppMavenCentralMirror'
+            url = mirrorUri
+        }
+    }
+    // Keep Google, the plugin portal, and other project repositories available.
+    repositories.remove(mirror)
+    repositories.addFirst(mirror)
+}
+
+// Adding plugin repositories removes Gradle's implicit plugin portal fallback.
+// Keep it explicit for Kotlin DSL and plugin marker coordinates.
+def ensurePluginRepositories = { repositories ->
+    repositories.google()
+    repositories.mavenCentral()
+    repositories.gradlePluginPortal()
+}
+
+def projectRepositoriesAllowed = true
+gradle.beforeSettings { settings ->
+    preferCentralMirror(settings.pluginManagement.repositories)
+    ensurePluginRepositories(settings.pluginManagement.repositories)
+    preferCentralMirror(settings.dependencyResolutionManagement.repositories)
+}
+
+gradle.settingsEvaluated { settings ->
+    preferCentralMirror(settings.dependencyResolutionManagement.repositories)
+    projectRepositoriesAllowed =
+        settings.dependencyResolutionManagement.repositoriesMode.get() ==
+            org.gradle.api.initialization.resolve.RepositoriesMode.PREFER_PROJECT
+}
+
+gradle.beforeProject { project ->
+    preferCentralMirror(project.buildscript.repositories)
+    if (projectRepositoriesAllowed) {
+        preferCentralMirror(project.repositories)
+    }
+}

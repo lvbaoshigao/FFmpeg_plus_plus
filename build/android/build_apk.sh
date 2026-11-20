@@ -69,34 +69,24 @@ if ! grep -aq 'h264_mediacodec' "$JNI_DIR/libffmpeg.so"; then
 fi
 echo "jniLibs 已就绪（dist → jniLibs 字节同步；PT_INTERP + mediacodec 验收通过）"
 
-# ── 2. file_picker compileSdk 补丁（幂等） ──
-# file_picker 8.x 固定 compileSdk 34，而其依赖 flutter_plugin_android_lifecycle
-# 2.0.35 要求 ≥36；在 pub 缓存里打补丁，避免 AAR 元数据检查失败。
-# 先确保 pub 缓存包含 file_picker（自愈，不依赖 workflow 时序）
-if command -v flutter &>/dev/null; then
-  (cd "$FFMPEGPP_ROOT/ffmpegpp_gui" && flutter pub get) || true
-fi
+# Resolve exactly the checked-in package constraints. A failed pub get must
+# stop here instead of allowing Gradle to consume a stale plugin configuration.
+command -v flutter >/dev/null || { echo "ERROR: Flutter is not on PATH" >&2; exit 1; }
+(cd "$FFMPEGPP_ROOT/ffmpegpp_gui" && flutter pub get)
+FLUTTER_EXECUTABLE=$(readlink -f "$(command -v flutter)")
+FLUTTER_SDK_DIR=$(cd "$(dirname "$FLUTTER_EXECUTABLE")/.." && pwd)
+python3 "$SCRIPT_DIR/configure_local_properties.py" \
+  --android-dir "$FFMPEGPP_ROOT/ffmpegpp_gui/android" \
+  --flutter-sdk "$FLUTTER_SDK_DIR" \
+  --android-sdk "$ANDROID_SDK_ROOT"
 bash "$SCRIPT_DIR/patch_pubcache.sh"
 
-# ── 3. Gradle 构建（含 OOM 重试） ──
+# Share the repository policy with all Gradle builds, including Flutter SDK's
+# included build. The application repositories alone cannot affect that build.
+source "$SCRIPT_DIR/gradle_retry.sh"
 cd "$FFMPEGPP_ROOT/ffmpegpp_gui/android"
-# gradlew 的可执行位在 Windows 上检出/提交时容易丢失（git status 里表现为
-# 纯 mode 变更）。这里自愈 chmod，保证任何环境下 ./gradlew 都能直接执行。
-chmod +x gradlew 2>/dev/null || true
-# 只编 arm64-v8a：Flutter Gradle 插件读取 project 属性 target-platform
-# （默认 android-arm,android-arm64,android-x64）。限制后 jni 等插件的
-# CMake 也不会为 4 个 ABI 重复编译，省一半磁盘和编译时间。
-ARGS=(-Ptarget-platform=android-arm64)
-for i in 1 2 3 4 5 6 7 8 9 10; do
-  echo "======== ATTEMPT $i ========"
-  if ./gradlew :app:assembleRelease --no-daemon "${ARGS[@]}" "$@"; then
-    echo "BUILD SUCCESS on attempt $i"
-    echo "APK: $FFMPEGPP_ROOT/ffmpegpp_gui/build/app/outputs/flutter-apk/app-release.apk"
-    exit 0
-  fi
-  rc=$?
-  echo "attempt $i failed (rc=$rc), sleeping 20s..."
-  sleep 20
-done
-echo "ALL ATTEMPTS FAILED"
-exit 1
+chmod +x gradlew
+ARGS=(-Ptarget-platform=android-arm64
+      --init-script "$SCRIPT_DIR/gradle-repositories.init.gradle")
+ffmpegpp_gradle_retry ./gradlew :app:assembleRelease --no-daemon "${ARGS[@]}" "$@"
+echo "APK: $FFMPEGPP_ROOT/ffmpegpp_gui/build/app/outputs/flutter-apk/app-release.apk"

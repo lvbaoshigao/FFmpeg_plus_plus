@@ -68,41 +68,26 @@ jobs:
           cache: true
           pub-cache: true
 
-      - name: Setup MSVC
+      - name: Verify Windows build helpers
         shell: pwsh
-        run: |
-          # 手动调用 vcvars64.bat 导出 MSVC 编译环境（INCLUDE/LIB/LIBPATH/PATH）。
-          # 替代已停更的 ilammy/msvc-dev-cmd（其最新 v1.13.0 仍运行在 Node 20，
-          # GitHub Actions 已弃用 Node 20）。经 vswhere 定位 VS 安装路径，兼容
-          # CI 上的 Enterprise 与本地 Community 版本。
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          if (-not $vs) { throw "MSVC with VC.Tools.x86.x64 not found via vswhere" }
-          $vcvars = Join-Path $vs "VC\Auxiliary\Build\vcvars64.bat"
-          cmd /c "call `"$vcvars`" && set" | ForEach-Object {
-            if ($_ -match '^(INCLUDE|LIB|LIBPATH|PATH)=') {
-              Add-Content -Path $env:GITHUB_ENV -Value $_
-            }
-          }
+        run: ./build/windows/test_build_backend.ps1
 
-      # key 不含源码哈希：稳定命中，源码改动由 CMake 依赖图做增量重编
+      - name: Setup MSVC
+        id: msvc
+        shell: pwsh
+        run: ./build/windows/setup_msvc.ps1
+
+      # CMake records absolute compiler/SDK paths. A cache may only be restored
+      # when the runner toolchain and checkout root match exactly.
       - name: Cache C++ backend build
         uses: actions/cache@v5
         with:
           path: server_cpp/build_win
-          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v2-${{ hashFiles('server_cpp/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-cpp-v2-
-            ${{ runner.os }}-${{ runner.arch }}-cpp-v1-
+          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v3-${{ steps.msvc.outputs.compiler-fingerprint }}-${{ hashFiles('server_cpp/CMakeLists.txt', 'build/windows/setup_msvc.ps1', 'build/windows/build_backend.ps1') }}
 
       - name: Build C++ backend (ffmpegpp.dll)
-        run: |
-          cd server_cpp
-          if not exist build_win mkdir build_win
-          cd build_win
-          cmake .. -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release
-          nmake
-        shell: cmd
+        shell: pwsh
+        run: ./build/windows/build_backend.ps1
 
       - name: Build Flutter GUI
         run: |
@@ -548,6 +533,9 @@ jobs:
         run: |
           sudo $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses >/dev/null || true
 
+      - name: Verify Android build helpers
+        run: python3 build/android/test_build_helpers.py BuildHelpers
+
       # 缓存交叉编译产物。key 只含 ffmpeg 的构建输入（脚本 + env.sh），
       # 不含 server_cpp 源码 —— libffmpegpp.so 的增量由脚本内的 SRC_HASH stamp
       # 自行判断（见 build_ffmpeg.sh §7），CI 层再掺源码 hash 只会让每次改动
@@ -567,13 +555,13 @@ jobs:
             ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v2-
             ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v1-
 
-      - name: Cache Gradle home
+      - name: Cache Gradle dependencies
         uses: actions/cache@v5
         with:
           path: ${{ runner.temp }}/gradle-home
-          key: ${{ runner.os }}-${{ runner.arch }}-gradle-v1-${{ hashFiles('ffmpegpp_gui/android/build.gradle.kts', 'ffmpegpp_gui/android/app/build.gradle.kts', 'ffmpegpp_gui/android/settings.gradle.kts', 'ffmpegpp_gui/android/gradle.properties', 'ffmpegpp_gui/pubspec.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-gradle-v2-${{ hashFiles('ffmpegpp_gui/android/build.gradle.kts', 'ffmpegpp_gui/android/app/build.gradle.kts', 'ffmpegpp_gui/android/settings.gradle.kts', 'ffmpegpp_gui/android/gradle.properties', 'ffmpegpp_gui/android/gradle/wrapper/gradle-wrapper.properties', 'build/android/gradle-repositories.init.gradle', 'ffmpegpp_gui/pubspec.lock') }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-gradle-v1-
+            ${{ runner.os }}-${{ runner.arch }}-gradle-v2-
 
       # build_ffmpeg.sh 会 source env.sh，而 env.sh 只对「未设置」的环境变量
       # 给默认值，因此这里显式 export 的变量会胜出，把工具链指向 runner 路径。
@@ -599,17 +587,8 @@ jobs:
             ${{ env.ANDROID_SDK_ROOT }}/ndk/26.1.10909125/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/local
           key: ${{ runner.os }}-${{ runner.arch }}-ffmpeg-ndk26.1-v3-${{ hashFiles('build/android/build_ffmpeg.sh', 'build/android/env.sh') }}
 
-      - name: Flutter pub get & generate local.properties
-        run: |
-          cd ffmpegpp_gui
-          flutter pub get
-          # settings.gradle.kts 必须读取 local.properties 获取 sdk.dir / flutter.sdk
-          flutter_root=$(cd "$(dirname "$(readlink -f "$(which flutter)")")/.." && pwd)
-          echo "sdk.dir=${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}" > android/local.properties
-          echo "flutter.sdk=${flutter_root}" >> android/local.properties
-          echo "Generated android/local.properties: sdk.dir=$(sed -n '1s/.*=//p' android/local.properties) flutter.sdk=${flutter_root}"
-        env:
-          PUB_CACHE: ${{ env.PUB_CACHE }}
+      # build_apk.sh owns pub resolution and local.properties generation for
+      # both release and debug builds; do not resolve dependencies twice.
 
       - name: Build APK
         run: |

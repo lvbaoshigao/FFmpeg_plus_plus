@@ -12,8 +12,14 @@ build/
 ├── android/                # Android 端
 │   ├── env.sh              # 公共环境：自动定位仓库根/缓存根 + 工具链
 │   ├── build_ffmpeg.sh     # 交叉编译内置 ffmpeg/ffprobe + libffmpegpp.so（arm64）
-│   ├── build_apk.sh        # 构建 APK（含 OOM 重试；自动打 file_picker 补丁）
-│   └── patch_pubcache.sh   # 幂等修补 pub 缓存 file_picker compileSdk 34→36
+│   ├── build_apk.sh        # SDK 路径、依赖与 APK；网络/资源失败才重试
+│   ├── gradle_retry.sh     # 保留实际退出码，有界指数退避
+│   ├── gradle-repositories.init.gradle # 主构建与 included build 的仓库策略
+│   └── patch_pubcache.sh   # 按实际 package_config 幂等修补旧插件
+└── windows/                # GitHub Actions 与本地 PowerShell 构建入口
+    ├── setup_msvc.ps1     # 当前 MSVC/SDK 环境与缓存指纹
+    ├── build_backend.ps1  # 验证工具链缓存；配置失败立即停止
+    └── test_build_backend.ps1 # 无编译器依赖的构建脚本契约测试
 ```
 
 ## 快速开始
@@ -43,7 +49,10 @@ build/android/build_apk.sh
 | `JAVA_HOME` | sdb2 `apk_analysis/tools/jdk-21.0.2+13` | JDK |
 | `ANDROID_HOME` | sdb2 `android-sdk` | Android SDK |
 | `GRADLE_USER_HOME` | sdb2 `gradle-home` | Gradle 缓存（转 SSD 时用符号链接保持路径） |
-| `PUB_CACHE` | sdb2 `dart-pub-cache` | pub 依赖缓存 |
+| `PUB_CACHE` | 保留现有环境值，否则 sdb2 `dart-pub-cache` | pub 依赖缓存；`FFMPEGPP_PUB_CACHE` 可显式覆盖 |
+| `FFMPEGPP_MAVEN_CENTRAL_MIRROR` | Google 托管的 Maven Central 镜像 | 可覆盖为信任的 HTTPS 镜像，官方仓库仍保留 |
+| `FFMPEGPP_RETRY_MAX_ATTEMPTS` | `5` | Gradle 暂时性失败的总尝试次数，上限 10 |
+| `FFMPEGPP_RETRY_BASE_DELAY` | `20` | 指数退避初值（秒），最多等待 180 秒 |
 | `NDK_HOME` | sdb2 `reversing/tools/ndk/android-ndk-r26d` | NDK（r26d） |
 
 > 注意：本机 sdb2 只有 20G，Gradle 的
@@ -59,10 +68,26 @@ build/android/build_apk.sh
 | Linux 桌面 | `ffmpegpp_gui/build/linux/x64/release/bundle/` |
 | Windows 桌面 | `ffmpegpp_gui/build/windows/x64/runner/Release/` |
 
+## 构建脚本验证（不编译应用）
+
+```sh
+python3 build/android/test_build_helpers.py BuildHelpers
+```
+
+```powershell
+pwsh -NoProfile -File ./build/windows/test_build_backend.ps1
+```
+
+可选的 Gradle 复合构建验证仅运行临时工程的仓库检查任务。设置 `JAVA_HOME` 和
+`FFMPEGPP_TEST_GRADLE` 后运行 `python3 build/android/test_build_helpers.py GradleRepositories`，
+可检查主构建和 included build 在不同仓库模式下均优先使用镜像并保留插件门户。
+
 ## 注意事项
 
-- 系统内存紧张（7.7G），Android 构建偶发 OOM SIGKILL —— `build_apk.sh` 内置
-  10 次重试循环，Gradle 缓存保证每次从上次进度继续，属正常现象。
+- Android 的 HTTP 429、暂时性网络故障、daemon 消失或资源不足按指数退避重试；
+  编译/配置错误立即返回真实失败码，最后一次失败后不会再等待。
+- Windows 后端缓存同时绑定编译器路径/版本、SDK、生成器与源码路径。runner
+  更新 MSVC 后不会恢复另一工具链的对象；脚本还会检查旧 CMakeCache 并仅清理已识别的构建目录。
 - 不要修改 `org.gradle.configuration-cache` 相关属性（会导致构建失败）。
 - 桌面端更新机制/安装器不适用于移动端；GPU 硬编码器在 Android 上不可用，
   自动回退 CPU 编码。

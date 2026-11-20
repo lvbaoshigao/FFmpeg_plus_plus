@@ -20,10 +20,9 @@ export ANDROID_HOME="${ANDROID_HOME:-$_FFMPEGPP_DISK/android-sdk}"
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
 export ANDROID_USER_HOME="${ANDROID_USER_HOME:-$_FFMPEGPP_DISK/.android}"
 export GRADLE_USER_HOME="${GRADLE_USER_HOME:-$_FFMPEGPP_DISK/gradle-home}"
-# PUB_CACHE 必须显式覆盖：运行环境常预置 PUB_CACHE 指向嵌套的
-# .../dart-pub-cache/cache（空缓存），而实际依赖在根目录 .../dart-pub-cache。
-# 自定义路径请用 FFMPEGPP_PUB_CACHE。
-export PUB_CACHE="${FFMPEGPP_PUB_CACHE:-$_FFMPEGPP_DISK/dart-pub-cache}"
+# Respect the cache selected by flutter-action; an explicit project override
+# still takes precedence for local installations with a different cache layout.
+export PUB_CACHE="${FFMPEGPP_PUB_CACHE:-${PUB_CACHE:-$_FFMPEGPP_DISK/dart-pub-cache}}"
 export NDK_HOME="${NDK_HOME:-$_FFMPEGPP_DISK/reversing/tools/ndk/android-ndk-r26d}"
 export FLUTTER_BIN="${FLUTTER_BIN:-/mnt/devtools/apps/flutter/bin}"
 
